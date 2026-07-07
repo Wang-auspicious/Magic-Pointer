@@ -11,9 +11,11 @@ let drawing = false;
 let points = [];
 let selectedPayload = null;
 let lastPointer = null;
-let fadeRaf = null;
-let trailAlpha = 1;
 let selectionAnchor = null;
+let trailAlpha = 1;
+let fadeRaf = null;
+let captureMode = false;
+let requestSeq = 0;
 
 function resize() {
   dpr = window.devicePixelRatio || 1;
@@ -41,12 +43,13 @@ function addPoint(e) {
 }
 
 function drawSmoothPath(path, alpha = 1) {
-  if (path.length < 2) return;
+  if (path.length < 2 || alpha <= 0.02) return;
   ctx.save();
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
+  ctx.globalCompositeOperation = 'lighter';
 
-  function stroke(width, color, blur = 0) {
+  function trace(width, color, blur = 0, a = alpha) {
     ctx.beginPath();
     ctx.moveTo(path[0].x, path[0].y);
     for (let i = 1; i < path.length - 1; i++) {
@@ -56,7 +59,7 @@ function drawSmoothPath(path, alpha = 1) {
     }
     const end = path[path.length - 1];
     ctx.lineTo(end.x, end.y);
-    ctx.globalAlpha = alpha;
+    ctx.globalAlpha = a;
     ctx.strokeStyle = color;
     ctx.lineWidth = width;
     ctx.shadowColor = color;
@@ -64,29 +67,23 @@ function drawSmoothPath(path, alpha = 1) {
     ctx.stroke();
   }
 
-  // Softer Gemini-like trail: fewer hard layers, more glow falloff.
-  ctx.globalCompositeOperation = 'lighter';
-  stroke(30, 'rgba(96, 165, 250, 0.10)', 24);
-  stroke(20, 'rgba(96, 165, 250, 0.16)', 16);
-  stroke(11, 'rgba(59, 130, 246, 0.34)', 9);
-  stroke(4.2, 'rgba(37, 99, 235, 0.60)', 5);
-  stroke(1.4, 'rgba(225, 240, 255, 0.72)', 1.5);
+  // Single-color feel: one soft body plus one faint highlight. No obvious bands.
+  trace(18, 'rgba(64, 132, 255, 0.26)', 24, alpha * 0.85);
+  trace(9, 'rgba(47, 111, 255, 0.50)', 12, alpha * 0.80);
+  trace(2, 'rgba(226, 241, 255, 0.58)', 2, alpha * 0.55);
   ctx.globalCompositeOperation = 'source-over';
-
   ctx.restore();
 }
 
 function drawPointer(p) {
-  if (!p) return;
+  if (!p || captureMode) return;
   ctx.save();
   ctx.translate(p.x - 1, p.y - 1);
   ctx.rotate(-0.08);
 
-  // Smooth 32px-class cursor. Tip is at (0,0); body extends down-right like
-  // the native cursor, with a complete closed outline and subtle glow.
   const path = new Path2D();
   path.moveTo(0, 0);
-  path.quadraticCurveTo(1.5, 0.4, 3.2, 1.3);
+  path.quadraticCurveTo(1.4, 0.3, 3.0, 1.2);
   path.lineTo(20.5, 11.2);
   path.quadraticCurveTo(23.3, 12.8, 22.2, 14.8);
   path.quadraticCurveTo(21.6, 15.8, 20.1, 16.0);
@@ -99,14 +96,14 @@ function drawPointer(p) {
   path.lineTo(0.4, 23.0);
   path.quadraticCurveTo(-1.1, 24.5, -1.7, 22.3);
   path.lineTo(-1.8, 2.1);
-  path.quadraticCurveTo(-2.1, -0.4, 0, 0);
+  path.quadraticCurveTo(-1.8, -0.3, 0, 0);
   path.closePath();
 
-  ctx.shadowColor = 'rgba(37, 99, 235, .56)';
-  ctx.shadowBlur = 8;
+  ctx.shadowColor = 'rgba(37, 99, 235, .46)';
+  ctx.shadowBlur = 7;
   ctx.fillStyle = 'rgba(255, 255, 255, .98)';
-  ctx.strokeStyle = 'rgba(37, 99, 235, .92)';
-  ctx.lineWidth = 1.55;
+  ctx.strokeStyle = 'rgba(37, 99, 235, .88)';
+  ctx.lineWidth = 1.45;
   ctx.fill(path);
   ctx.stroke(path);
   ctx.restore();
@@ -114,12 +111,11 @@ function drawPointer(p) {
 
 function render() {
   clear();
-  if (points.length && trailAlpha > 0.02) drawSmoothPath(points, trailAlpha);
+  if (!captureMode && points.length) drawSmoothPath(points, trailAlpha);
   drawPointer(lastPointer);
 }
 
-
-function fadeTrail(duration = 720) {
+function fadeTrail(duration = 760) {
   if (fadeRaf) cancelAnimationFrame(fadeRaf);
   const start = performance.now();
   const from = trailAlpha;
@@ -163,20 +159,44 @@ function showPill() {
   commandInput.focus();
 }
 
+function hideVisualsForCapture() {
+  captureMode = true;
+  pill.classList.add('hidden');
+  result.classList.add('hidden');
+  hint.classList.add('dim');
+  clear();
+}
+
+function restoreAfterCapture(seq) {
+  if (seq !== requestSeq) return;
+  captureMode = false;
+  render();
+}
+
 function runSelectedCommand(action = 'command') {
   if (!selectedPayload) return;
+  const seq = ++requestSeq;
   if (!selectionAnchor && lastPointer) selectionAnchor = { ...lastPointer };
-  fadeTrail(360);
   const command = commandInput.value.trim();
-  window.magicPointer?.done({
-    ...selectedPayload,
-    action,
-    command,
-  });
+  const payload = { ...selectedPayload, action, command };
+
+  // Critical: remove our own overlay before Python ImageGrab runs.
+  hideVisualsForCapture();
+  setTimeout(() => {
+    window.magicPointer?.done(payload);
+    // Show thinking only after the clean capture should have happened.
+    setTimeout(() => {
+      if (seq === requestSeq) {
+        restoreAfterCapture(seq);
+        showResult({ ok: null, status: 'Thinking...' });
+      }
+    }, 1050);
+  }, 260);
 }
 
 function showResult(payload) {
   if (!payload) return;
+  captureMode = false;
   const anchor = selectionAnchor || lastPointer || { x: window.innerWidth / 2, y: window.innerHeight / 2 };
   const x = Math.min(window.innerWidth - 590, Math.max(18, anchor.x + 40));
   const y = Math.min(window.innerHeight - 180, Math.max(18, anchor.y + 48));
@@ -208,6 +228,8 @@ function resetOverlay() {
   lastPointer = null;
   selectionAnchor = null;
   trailAlpha = 1;
+  captureMode = false;
+  requestSeq += 1;
   if (fadeRaf) cancelAnimationFrame(fadeRaf);
   fadeRaf = null;
   pill.classList.add('hidden');
@@ -226,6 +248,7 @@ window.addEventListener('pointerdown', (e) => {
   if (e.button !== 0) return;
   if (e.target.closest('#pill') || e.target.closest('#result')) return;
   if (fadeRaf) cancelAnimationFrame(fadeRaf);
+  captureMode = false;
   drawing = true;
   points = [];
   selectedPayload = null;
@@ -239,11 +262,10 @@ window.addEventListener('pointerdown', (e) => {
 });
 
 window.addEventListener('pointermove', (e) => {
+  if (captureMode) return;
   if (!drawing) {
-    if (selectedPayload) return;
     lastPointer = { x: e.clientX, y: e.clientY, t: performance.now() };
-    clear();
-    drawPointer(lastPointer);
+    render();
     return;
   }
   addPoint(e);
@@ -281,6 +303,9 @@ commandInput.addEventListener('keydown', (e) => {
 
 window.magicPointer?.onShow(() => resetOverlay());
 window.magicPointer?.onHide(() => resetOverlay());
-window.magicPointer?.onResult((payload) => showResult(payload));
+window.magicPointer?.onResult((payload) => {
+  requestSeq += 1;
+  showResult(payload);
+});
 
 resize();

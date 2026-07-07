@@ -223,6 +223,5 @@ ipcMain.on('overlay:done', (_event, payload) => {
     capturePad: 54,
   };
   log(`overlay:done action=${enriched.action || 'capture'} points=${enriched.points?.length || 0}`);
-  overlayWindow?.webContents.send('overlay:result', { ok: null, status: 'Thinking...' });
   runPythonBridge(enriched);
 });
