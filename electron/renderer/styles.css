@@ -9,6 +9,11 @@
   font-family: Inter, "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
+/* Keep only the Magic Pointer cursor visible. Native hand/I-beam cursors look like visual glitches over the custom pointer. */
+*, input, button, textarea, [data-drag-handle="true"], .result, .result * {
+  cursor: none !important;
+}
+
 #trail {
   position: fixed;
   inset: 0;
@@ -145,13 +150,13 @@
   animation: pillIn 180ms cubic-bezier(.2, .9, .2, 1.08) both;
   pointer-events: auto;
   user-select: text;
-  cursor: auto;
+  cursor: none;
   z-index: 2147483646;
 }
 
 .result.dragging {
   transition: none;
-  cursor: grabbing;
+  cursor: none;
 }
 
 .result.hidden { display: none; }
@@ -159,16 +164,16 @@
   color: #1d4ed8;
   font-weight: 760;
   margin-bottom: 6px;
-  cursor: grab;
+  cursor: none;
   user-select: none;
   touch-action: none;
 }
 .result.dragging .title {
-  cursor: grabbing;
+  cursor: none;
 }
 .result .content {
   user-select: text;
-  cursor: text;
+  cursor: none;
 }
 .result .muted {
   color: #64748b;

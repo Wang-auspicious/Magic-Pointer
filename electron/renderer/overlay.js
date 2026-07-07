@@ -95,32 +95,40 @@ function drawPointer(p) {
   ctx.save();
   ctx.translate(p.x - 1, p.y - 1);
   ctx.rotate(-0.08);
+  ctx.scale(0.92, 0.92);
 
+  // Paper-plane style pointer: compact, concave back, no long cursor tail.
   const path = new Path2D();
-  path.moveTo(0, 0);
-  path.quadraticCurveTo(1.4, 0.3, 3.0, 1.2);
-  path.lineTo(20.5, 11.2);
-  path.quadraticCurveTo(23.3, 12.8, 22.2, 14.8);
-  path.quadraticCurveTo(21.6, 15.8, 20.1, 16.0);
-  path.lineTo(12.5, 17.4);
-  path.lineTo(17.2, 26.5);
-  path.quadraticCurveTo(18.0, 28.1, 16.4, 28.9);
-  path.lineTo(11.2, 31.4);
-  path.quadraticCurveTo(9.5, 32.1, 8.8, 30.4);
-  path.lineTo(4.2, 19.2);
-  path.lineTo(0.4, 23.0);
-  path.quadraticCurveTo(-1.1, 24.5, -1.7, 22.3);
-  path.lineTo(-1.8, 2.1);
-  path.quadraticCurveTo(-1.8, -0.3, 0, 0);
+  path.moveTo(-2.0, -0.8);
+  path.quadraticCurveTo(-0.8, -1.4, 1.2, -0.4);
+  path.lineTo(27.0, 11.6);
+  path.quadraticCurveTo(30.0, 13.0, 27.0, 14.6);
+  path.lineTo(11.6, 18.0);
+  path.lineTo(7.2, 28.2);
+  path.quadraticCurveTo(6.1, 30.8, 4.4, 28.3);
+  path.lineTo(0.3, 18.3);
+  path.lineTo(-6.4, 22.0);
+  path.quadraticCurveTo(-8.6, 23.2, -7.4, 20.8);
+  path.lineTo(-1.5, 12.3);
+  path.lineTo(-3.7, 2.1);
+  path.quadraticCurveTo(-4.2, -0.3, -2.0, -0.8);
   path.closePath();
 
-  ctx.shadowColor = 'rgba(37, 99, 235, .46)';
+  ctx.shadowColor = 'rgba(37, 99, 235, .44)';
   ctx.shadowBlur = 7;
-  ctx.fillStyle = 'rgba(255, 255, 255, .98)';
-  ctx.strokeStyle = 'rgba(37, 99, 235, .88)';
-  ctx.lineWidth = 1.45;
+  ctx.fillStyle = 'rgba(255, 255, 255, .985)';
+  ctx.strokeStyle = 'rgba(37, 99, 235, .92)';
+  ctx.lineWidth = 1.55;
   ctx.fill(path);
   ctx.stroke(path);
+
+  // Small inner fold line gives the paper-plane feel without becoming a tail.
+  ctx.beginPath();
+  ctx.moveTo(-1.2, 12.2);
+  ctx.quadraticCurveTo(7.5, 13.6, 21.8, 12.7);
+  ctx.strokeStyle = 'rgba(96, 165, 250, .34)';
+  ctx.lineWidth = 1.0;
+  ctx.stroke();
   ctx.restore();
 }
 
