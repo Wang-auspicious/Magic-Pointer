@@ -80,3 +80,80 @@ external_zip/screenpipe
 ```
 
 Do not overwrite the partial `external/*` folders until we decide whether to remove or replace them.
+
+
+## Language / stack audit after ZIP extraction
+
+### OmniParser
+
+- Local: `external/omniparser`
+- Main language: Python.
+- Role: screenshot -> structured UI elements / icon boxes / interactable regions.
+- Direct-use risk: requires model weights and a separate Python environment; not lightweight enough for immediate default install.
+- Practical path: add an optional `omniparser` backend later, not part of the first launch flow.
+
+### nut.js
+
+- Local: `external/nut.js`
+- Main language: TypeScript / Node native providers.
+- Role: cross-platform mouse/keyboard/image automation from Electron/Node.
+- Practical path: use as the Electron action-execution layer after the overlay/AI bridge is stable.
+
+### whisper.cpp
+
+- Local: `external/whisper.cpp`
+- Main language: C/C++.
+- Role: local/offline STT.
+- Practical path: either build `whisper-cli` and call it from Electron/Python, or use its npm/package bindings later. This is the right replacement for Windows Win+H.
+
+### UI-TARS Desktop
+
+- Local ZIP: `external_zip/UI-TARS-desktop-main`
+- Main language: TypeScript monorepo, Electron-style desktop agent architecture.
+- Role: architecture reference for GUI-agent event loop, model/runtime adapters, visualizer, and desktop app organization.
+- Practical path: study architecture, do not vendor directly.
+
+### screenpipe
+
+- Local ZIP: `external_zip/screenpipe-main`
+- Main language: Rust + TypeScript.
+- Role: local screen/audio capture, memory, API/server, desktop app.
+- Practical path: architecture reference for session/history/local memory. Too heavy to embed now.
+
+### Microsoft UFO
+
+- Clone was incomplete; ZIP not available locally.
+- Main expected stack: Python-centric Windows GUI automation / agent framework.
+- Role: Windows-specific architecture reference for UI Automation + vision + action execution.
+- Practical path: skip until downloaded; our cross-platform route should not depend on UFO.
+
+## Integration actually started
+
+Implemented bridge:
+
+```text
+Electron overlay gesture/action
+  -> electron/main.js ipcMain overlay:done
+  -> spawn Python scripts/electron_bridge.py
+  -> Python captures bbox, registers PointerObject, updates TaskContext, calls existing vision model
+  -> JSON result sent back to Electron renderer
+  -> Electron shows a local result card near the pointer
+```
+
+New file:
+
+```text
+scripts/electron_bridge.py
+```
+
+Updated files:
+
+```text
+electron/main.js
+electron/preload.js
+electron/renderer/index.html
+electron/renderer/overlay.js
+electron/renderer/styles.css
+```
+
+This is the first real stitching point. It keeps Electron responsible for feel/visuals and Python responsible for AI/backend state.

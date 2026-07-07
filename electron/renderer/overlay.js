@@ -2,6 +2,7 @@
 const ctx = canvas.getContext('2d');
 const pill = document.getElementById('pill');
 const hint = document.getElementById('hint');
+const result = document.getElementById('result');
 
 let dpr = window.devicePixelRatio || 1;
 let drawing = false;
@@ -99,6 +100,34 @@ function render() {
   drawPointer(lastPointer);
 }
 
+
+function showResult(payload) {
+  if (!payload) return;
+  const anchor = lastPointer || { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+  const x = Math.min(window.innerWidth - 590, Math.max(18, anchor.x + 56));
+  const y = Math.min(window.innerHeight - 180, Math.max(18, anchor.y + 50));
+  result.style.left = `${x}px`;
+  result.style.top = `${y}px`;
+  if (payload.ok === null) {
+    result.innerHTML = `<div class="title">Thinking</div><div class="muted">${payload.status || 'Processing...'}</div>`;
+  } else if (payload.ok) {
+    const answer = String(payload.answer || '').slice(0, 1600);
+    result.innerHTML = `<div class="title">${payload.prompt || 'Result'}</div>${escapeHtml(answer)}`;
+  } else {
+    result.innerHTML = `<div class="title">Bridge error</div><div class="muted">${escapeHtml(payload.error || 'Unknown error')}</div>`;
+  }
+  result.classList.remove('hidden');
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
 function showPill() {
   if (!lastPointer) return;
   const x = Math.min(window.innerWidth - 430, Math.max(18, lastPointer.x + 56));
@@ -112,6 +141,8 @@ function resetOverlay() {
   points = [];
   lastPointer = null;
   pill.classList.add('hidden');
+  result.classList.add('hidden');
+  result.textContent = '';
   hint.classList.remove('dim');
   clear();
 }
@@ -171,5 +202,6 @@ pill.addEventListener('click', (e) => {
 
 window.magicPointer?.onShow(() => resetOverlay());
 window.magicPointer?.onHide(() => resetOverlay());
+window.magicPointer?.onResult((payload) => showResult(payload));
 
 resize();

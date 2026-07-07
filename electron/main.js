@@ -1,5 +1,6 @@
 ﻿const { app, BrowserWindow, globalShortcut, ipcMain, screen } = require('electron');
 const path = require('path');
+const { spawn } = require('child_process');
 
 let overlayWindow = null;
 
@@ -66,6 +67,53 @@ app.on('will-quit', () => {
 });
 
 ipcMain.on('overlay:hide', hideOverlay);
+function runPythonBridge(payload) {
+  if (!overlayWindow) return;
+  const py = process.env.MAGIC_POINTER_PYTHON || 'python';
+  const root = path.resolve(__dirname, '..');
+  const child = spawn(py, ['scripts/electron_bridge.py'], {
+    cwd: root,
+    stdio: ['pipe', 'pipe', 'pipe'],
+    windowsHide: true,
+  });
+
+  let stdout = '';
+  let stderr = '';
+  child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+  child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+  child.on('error', (error) => {
+    overlayWindow?.webContents.send('overlay:result', {
+      ok: false,
+      error: `${error.name}: ${error.message}`,
+    });
+  });
+  child.on('close', (code) => {
+    let parsed = null;
+    try {
+      const lines = stdout.trim().split(/\r?\n/).filter(Boolean);
+      parsed = JSON.parse(lines[lines.length - 1] || '{}');
+    } catch (error) {
+      parsed = { ok: false, error: `Could not parse bridge output: ${error.message}`, raw: stdout };
+    }
+    if (code !== 0 && parsed && parsed.ok !== true) {
+      parsed.code = code;
+      parsed.stderr = stderr.slice(0, 2000);
+    }
+    overlayWindow?.webContents.send('overlay:result', parsed);
+  });
+
+  child.stdin.write(JSON.stringify(payload));
+  child.stdin.end();
+}
+
 ipcMain.on('overlay:done', (_event, payload) => {
-  console.log('[magic-pointer-overlay]', JSON.stringify(payload));
+  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  const enriched = {
+    ...payload,
+    screenBounds: display.bounds,
+    capturePad: 54,
+  };
+  console.log('[magic-pointer-overlay]', JSON.stringify(enriched));
+  overlayWindow?.webContents.send('overlay:result', { ok: null, status: 'Thinking?' });
+  runPythonBridge(enriched);
 });

@@ -102,3 +102,33 @@
   0%, 100% { transform: scaleY(.54); opacity: .55; }
   50% { transform: scaleY(1); opacity: 1; }
 }
+
+
+.result {
+  position: fixed;
+  max-width: 560px;
+  min-width: 320px;
+  padding: 16px 18px;
+  border-radius: 24px;
+  color: #0f172a;
+  background: rgba(255, 255, 255, 0.90);
+  border: 1px solid rgba(147, 197, 253, 0.82);
+  box-shadow:
+    0 24px 70px rgba(15, 23, 42, 0.18),
+    0 0 0 8px rgba(96, 165, 250, 0.08);
+  backdrop-filter: blur(22px) saturate(1.35);
+  font-size: 15px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  animation: pillIn 180ms cubic-bezier(.2, .9, .2, 1.08) both;
+}
+
+.result.hidden { display: none; }
+.result .title {
+  color: #1d4ed8;
+  font-weight: 760;
+  margin-bottom: 6px;
+}
+.result .muted {
+  color: #64748b;
+}
