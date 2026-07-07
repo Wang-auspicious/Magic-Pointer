@@ -1,12 +1,15 @@
-﻿const canvas = document.getElementById('trail');
+const canvas = document.getElementById('trail');
 const ctx = canvas.getContext('2d');
 const pill = document.getElementById('pill');
+const commandInput = document.getElementById('command');
+const runButton = document.getElementById('run');
 const hint = document.getElementById('hint');
 const result = document.getElementById('result');
 
 let dpr = window.devicePixelRatio || 1;
 let drawing = false;
 let points = [];
+let selectedPayload = null;
 let lastPointer = null;
 let fadeRaf = null;
 
@@ -25,9 +28,7 @@ function clear() {
 }
 
 function dist(a, b) {
-  const dx = a.x - b.x;
-  const dy = a.y - b.y;
-  return Math.hypot(dx, dy);
+  return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
 function addPoint(e) {
@@ -61,11 +62,11 @@ function drawSmoothPath(path, alpha = 1) {
     ctx.stroke();
   }
 
-  // Reference-like stack: broad glow, blue body, white hot core.
-  stroke(54, 'rgba(147, 197, 253, 0.20)', 34);
-  stroke(34, 'rgba(96, 165, 250, 0.36)', 24);
-  stroke(18, 'rgba(37, 99, 235, 0.68)', 14);
-  stroke(5, 'rgba(248, 251, 255, 0.92)', 5);
+  // Closer to the reference: the glow is visible, but not a huge marker.
+  stroke(32, 'rgba(147, 197, 253, 0.20)', 22);
+  stroke(19, 'rgba(96, 165, 250, 0.34)', 15);
+  stroke(9, 'rgba(37, 99, 235, 0.72)', 8);
+  stroke(2.6, 'rgba(248, 251, 255, 0.94)', 3);
 
   ctx.restore();
 }
@@ -74,21 +75,22 @@ function drawPointer(p) {
   if (!p) return;
   ctx.save();
   ctx.translate(p.x, p.y);
-  ctx.rotate(-0.18);
+  ctx.rotate(-0.10);
   ctx.beginPath();
+  // Native cursor on Windows is usually 32x32. This is slightly larger only
+  // because of the glow/stroke, not a giant custom cursor.
   ctx.moveTo(0, 0);
-  ctx.lineTo(35, 15);
-  ctx.lineTo(17, 22);
-  ctx.lineTo(26, 47);
-  ctx.lineTo(12, 52);
-  ctx.lineTo(4, 25);
-  ctx.lineTo(0, 0);
+  ctx.lineTo(23, 10);
+  ctx.lineTo(11, 15);
+  ctx.lineTo(17, 32);
+  ctx.lineTo(8, 35);
+  ctx.lineTo(2, 17);
   ctx.closePath();
-  ctx.shadowColor = 'rgba(37, 99, 235, .82)';
-  ctx.shadowBlur = 22;
-  ctx.fillStyle = 'rgba(255, 255, 255, .96)';
-  ctx.strokeStyle = 'rgba(37, 99, 235, .98)';
-  ctx.lineWidth = 3;
+  ctx.shadowColor = 'rgba(37, 99, 235, .62)';
+  ctx.shadowBlur = 12;
+  ctx.fillStyle = 'rgba(255, 255, 255, .98)';
+  ctx.strokeStyle = 'rgba(37, 99, 235, .94)';
+  ctx.lineWidth = 2;
   ctx.fill();
   ctx.stroke();
   ctx.restore();
@@ -100,19 +102,53 @@ function render() {
   drawPointer(lastPointer);
 }
 
+function computeSelectionPayload() {
+  const xs = points.map((p) => p.x);
+  const ys = points.map((p) => p.y);
+  return {
+    points: [...points],
+    bbox: {
+      x1: Math.min(...xs),
+      y1: Math.min(...ys),
+      x2: Math.max(...xs),
+      y2: Math.max(...ys),
+    },
+  };
+}
+
+function showPill() {
+  if (!lastPointer) return;
+  const x = Math.min(window.innerWidth - 438, Math.max(18, lastPointer.x + 34));
+  const y = Math.min(window.innerHeight - 64, Math.max(18, lastPointer.y - 20));
+  pill.style.left = `${x}px`;
+  pill.style.top = `${y}px`;
+  pill.classList.remove('hidden');
+  commandInput.value = '';
+  commandInput.focus();
+}
+
+function runSelectedCommand(action = 'command') {
+  if (!selectedPayload) return;
+  const command = commandInput.value.trim();
+  window.magicPointer?.done({
+    ...selectedPayload,
+    action,
+    command,
+  });
+}
 
 function showResult(payload) {
   if (!payload) return;
   const anchor = lastPointer || { x: window.innerWidth / 2, y: window.innerHeight / 2 };
-  const x = Math.min(window.innerWidth - 590, Math.max(18, anchor.x + 56));
-  const y = Math.min(window.innerHeight - 180, Math.max(18, anchor.y + 50));
+  const x = Math.min(window.innerWidth - 590, Math.max(18, anchor.x + 40));
+  const y = Math.min(window.innerHeight - 180, Math.max(18, anchor.y + 48));
   result.style.left = `${x}px`;
   result.style.top = `${y}px`;
   if (payload.ok === null) {
     result.innerHTML = `<div class="title">Thinking</div><div class="muted">${payload.status || 'Processing...'}</div>`;
   } else if (payload.ok) {
     const answer = String(payload.answer || '').slice(0, 1600);
-    result.innerHTML = `<div class="title">${payload.prompt || 'Result'}</div>${escapeHtml(answer)}`;
+    result.innerHTML = `<div class="title">${escapeHtml(payload.prompt || 'Result')}</div>${escapeHtml(answer)}`;
   } else {
     result.innerHTML = `<div class="title">Bridge error</div><div class="muted">${escapeHtml(payload.error || 'Unknown error')}</div>`;
   }
@@ -128,32 +164,29 @@ function escapeHtml(value) {
     .replaceAll("'", '&#039;');
 }
 
-function showPill() {
-  if (!lastPointer) return;
-  const x = Math.min(window.innerWidth - 430, Math.max(18, lastPointer.x + 56));
-  const y = Math.min(window.innerHeight - 100, Math.max(18, lastPointer.y - 34));
-  pill.style.left = `${x}px`;
-  pill.style.top = `${y}px`;
-  pill.classList.remove('hidden');
-}
-
 function resetOverlay() {
   points = [];
+  selectedPayload = null;
   lastPointer = null;
   pill.classList.add('hidden');
   result.classList.add('hidden');
   result.textContent = '';
+  commandInput.value = '';
   hint.classList.remove('dim');
   clear();
 }
 
 window.addEventListener('resize', resize);
+
 window.addEventListener('pointerdown', (e) => {
   if (e.button !== 0) return;
+  if (e.target.closest('#pill') || e.target.closest('#result')) return;
   if (fadeRaf) cancelAnimationFrame(fadeRaf);
   drawing = true;
   points = [];
+  selectedPayload = null;
   pill.classList.add('hidden');
+  result.classList.add('hidden');
   hint.classList.add('dim');
   addPoint(e);
   render();
@@ -162,8 +195,10 @@ window.addEventListener('pointerdown', (e) => {
 window.addEventListener('pointermove', (e) => {
   if (!drawing) {
     lastPointer = { x: e.clientX, y: e.clientY, t: performance.now() };
-    clear();
-    drawPointer(lastPointer);
+    if (!selectedPayload) {
+      clear();
+      drawPointer(lastPointer);
+    }
     return;
   }
   addPoint(e);
@@ -175,29 +210,26 @@ window.addEventListener('pointerup', (e) => {
   drawing = false;
   addPoint(e);
   render();
-  showPill();
-  const xs = points.map(p => p.x);
-  const ys = points.map(p => p.y);
-  window.magicPointer?.done({
-    points,
-    bbox: {
-      x1: Math.min(...xs),
-      y1: Math.min(...ys),
-      x2: Math.max(...xs),
-      y2: Math.max(...ys),
-    },
-  });
+  if (points.length >= 2) {
+    selectedPayload = computeSelectionPayload();
+    showPill();
+  }
 });
 
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') window.magicPointer?.hide();
   if (e.key.toLowerCase() === 'r') resetOverlay();
+  if (e.key === 'Enter' && !pill.classList.contains('hidden')) runSelectedCommand('command');
 });
 
-pill.addEventListener('click', (e) => {
-  const action = e.target?.dataset?.action;
-  if (!action) return;
-  window.magicPointer?.done({ action, points });
+pill.addEventListener('pointerdown', (e) => e.stopPropagation());
+pill.addEventListener('click', (e) => e.stopPropagation());
+runButton.addEventListener('click', () => runSelectedCommand('command'));
+commandInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    runSelectedCommand('command');
+  }
 });
 
 window.magicPointer?.onShow(() => resetOverlay());

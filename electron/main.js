@@ -179,12 +179,15 @@ function runPythonBridge(payload) {
     cwd: ROOT,
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
+    env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' },
   });
 
   let stdout = '';
   let stderr = '';
-  child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
-  child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stdout.on('data', (chunk) => { stdout += chunk; });
+  child.stderr.on('data', (chunk) => { stderr += chunk; });
   child.on('error', (error) => {
     log(`bridge spawn error ${error.name}: ${error.message}`);
     overlayWindow?.webContents.send('overlay:result', {

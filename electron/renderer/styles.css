@@ -42,56 +42,73 @@
   position: fixed;
   display: flex;
   align-items: center;
-  gap: 14px;
-  height: 70px;
-  padding: 0 22px;
+  gap: 10px;
+  width: min(420px, calc(100vw - 36px));
+  height: 46px;
+  padding: 0 12px;
   border-radius: 999px;
-  background: rgba(235, 244, 255, 0.86);
-  border: 3px solid rgba(37, 99, 235, 0.94);
+  background: rgba(239, 246, 255, 0.88);
+  border: 2px solid rgba(37, 99, 235, 0.92);
   box-shadow:
-    0 22px 55px rgba(37, 99, 235, 0.22),
-    0 0 0 10px rgba(96, 165, 250, 0.09),
-    inset 0 1px 0 rgba(255, 255, 255, 0.9);
-  backdrop-filter: blur(22px) saturate(1.45);
-  transform-origin: 30px 50%;
-  animation: pillIn 190ms cubic-bezier(.2, .9, .2, 1.08) both;
+    0 16px 42px rgba(37, 99, 235, 0.20),
+    0 0 0 6px rgba(96, 165, 250, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(18px) saturate(1.35);
+  transform-origin: 24px 50%;
+  animation: pillIn 170ms cubic-bezier(.2, .9, .2, 1.08) both;
 }
 
 .pill.hidden { display: none; }
 
-.pill button {
+.pill input {
+  flex: 1;
+  min-width: 0;
   border: 0;
-  padding: 0 4px;
+  outline: 0;
   background: transparent;
   color: #1d4ed8;
-  font-size: 30px;
+  font-size: 17px;
   line-height: 1;
-  font-weight: 760;
-  letter-spacing: -0.03em;
+  font-weight: 650;
+  letter-spacing: -0.02em;
 }
 
-.pill button:not(:first-of-type) {
-  display: none;
+.pill input::placeholder {
+  color: rgba(37, 99, 235, 0.50);
+  font-weight: 560;
+}
+
+.pill button {
+  border: 0;
+  width: 31px;
+  height: 31px;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.92);
+  color: white;
+  font-size: 18px;
+  line-height: 1;
+  font-weight: 760;
 }
 
 .equalizer {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  width: 52px;
-  height: 44px;
+  gap: 4px;
+  width: 30px;
+  height: 28px;
   justify-content: center;
+  opacity: 0.92;
 }
 
 .equalizer span {
-  width: 7px;
-  height: 24px;
+  width: 4px;
+  height: 15px;
   border-radius: 999px;
   background: #2563eb;
   animation: bounce 820ms ease-in-out infinite;
 }
-.equalizer span:nth-child(2) { animation-delay: 120ms; height: 34px; }
-.equalizer span:nth-child(3) { animation-delay: 240ms; height: 20px; }
+.equalizer span:nth-child(2) { animation-delay: 120ms; height: 23px; }
+.equalizer span:nth-child(3) { animation-delay: 240ms; height: 13px; }
 
 @keyframes pillIn {
   from { opacity: 0; transform: translateY(10px) scale(.94); filter: blur(3px); }

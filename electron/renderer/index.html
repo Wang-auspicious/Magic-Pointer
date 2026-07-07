@@ -11,9 +11,8 @@
   <div id="hint" class="hint">Hold and sweep a line, circle an object, or gesture over anything</div>
   <div id="pill" class="pill hidden">
     <div class="equalizer" aria-hidden="true"><span></span><span></span><span></span></div>
-    <button data-action="add">Add this</button>
-    <button data-action="merge">Merge these</button>
-    <button data-action="compare">Compare</button>
+    <input id="command" autocomplete="off" spellcheck="false" placeholder="Tell me what to do... / ?????..." />
+    <button id="run" title="Run">?</button>
   </div>
   <div id="result" class="result hidden"></div>
   <script src="overlay.js"></script>

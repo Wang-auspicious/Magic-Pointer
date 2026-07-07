@@ -68,12 +68,12 @@ def main() -> int:
 
     payload = _read_payload()
     if not payload:
-        print(json.dumps({"ok": False, "error": "empty payload"}, ensure_ascii=False))
+        print(json.dumps({"ok": False, "error": "empty payload"}, ensure_ascii=True))
         return 2
 
     bbox = _global_bbox(payload)
     if bbox[2] - bbox[0] < 8 or bbox[3] - bbox[1] < 8:
-        print(json.dumps({"ok": False, "error": "bbox too small", "bbox": bbox}, ensure_ascii=False))
+        print(json.dumps({"ok": False, "error": "bbox too small", "bbox": bbox}, ensure_ascii=True))
         return 2
 
     obj_id = new_object_id()
@@ -136,7 +136,7 @@ def main() -> int:
         "bbox": bbox,
         "prompt": prompt,
         "answer": answer,
-    }, ensure_ascii=False))
+    }, ensure_ascii=True))
     return 0
 
 
