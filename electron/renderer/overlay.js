@@ -12,6 +12,8 @@ let points = [];
 let selectedPayload = null;
 let lastPointer = null;
 let fadeRaf = null;
+let trailAlpha = 1;
+let selectionAnchor = null;
 
 function resize() {
   dpr = window.devicePixelRatio || 1;
@@ -64,11 +66,11 @@ function drawSmoothPath(path, alpha = 1) {
 
   // Softer Gemini-like trail: fewer hard layers, more glow falloff.
   ctx.globalCompositeOperation = 'lighter';
-  stroke(42, 'rgba(96, 165, 250, 0.11)', 28);
-  stroke(30, 'rgba(96, 165, 250, 0.16)', 20);
-  stroke(18, 'rgba(59, 130, 246, 0.28)', 12);
-  stroke(7, 'rgba(37, 99, 235, 0.62)', 7);
-  stroke(2.2, 'rgba(210, 231, 255, 0.88)', 2);
+  stroke(30, 'rgba(96, 165, 250, 0.10)', 24);
+  stroke(20, 'rgba(96, 165, 250, 0.16)', 16);
+  stroke(11, 'rgba(59, 130, 246, 0.34)', 9);
+  stroke(4.2, 'rgba(37, 99, 235, 0.60)', 5);
+  stroke(1.4, 'rgba(225, 240, 255, 0.72)', 1.5);
   ctx.globalCompositeOperation = 'source-over';
 
   ctx.restore();
@@ -85,26 +87,26 @@ function drawPointer(p) {
   const path = new Path2D();
   path.moveTo(0, 0);
   path.quadraticCurveTo(1.5, 0.4, 3.2, 1.3);
-  path.lineTo(24, 13.2);
-  path.quadraticCurveTo(27.4, 15.1, 26.2, 17.4);
-  path.quadraticCurveTo(25.5, 18.6, 23.7, 18.9);
-  path.lineTo(14.6, 20.4);
-  path.lineTo(20.2, 31.2);
-  path.quadraticCurveTo(21.1, 33.0, 19.2, 34.0);
-  path.lineTo(13.0, 37.0);
-  path.quadraticCurveTo(11.0, 37.9, 10.2, 35.8);
-  path.lineTo(4.9, 22.6);
-  path.lineTo(0.5, 27.0);
-  path.quadraticCurveTo(-1.3, 28.8, -2.0, 26.2);
-  path.lineTo(-2.2, 2.4);
+  path.lineTo(20.5, 11.2);
+  path.quadraticCurveTo(23.3, 12.8, 22.2, 14.8);
+  path.quadraticCurveTo(21.6, 15.8, 20.1, 16.0);
+  path.lineTo(12.5, 17.4);
+  path.lineTo(17.2, 26.5);
+  path.quadraticCurveTo(18.0, 28.1, 16.4, 28.9);
+  path.lineTo(11.2, 31.4);
+  path.quadraticCurveTo(9.5, 32.1, 8.8, 30.4);
+  path.lineTo(4.2, 19.2);
+  path.lineTo(0.4, 23.0);
+  path.quadraticCurveTo(-1.1, 24.5, -1.7, 22.3);
+  path.lineTo(-1.8, 2.1);
   path.quadraticCurveTo(-2.1, -0.4, 0, 0);
   path.closePath();
 
   ctx.shadowColor = 'rgba(37, 99, 235, .56)';
-  ctx.shadowBlur = 10;
+  ctx.shadowBlur = 8;
   ctx.fillStyle = 'rgba(255, 255, 255, .98)';
   ctx.strokeStyle = 'rgba(37, 99, 235, .92)';
-  ctx.lineWidth = 1.8;
+  ctx.lineWidth = 1.55;
   ctx.fill(path);
   ctx.stroke(path);
   ctx.restore();
@@ -112,8 +114,27 @@ function drawPointer(p) {
 
 function render() {
   clear();
-  if (points.length) drawSmoothPath(points, 1);
+  if (points.length && trailAlpha > 0.02) drawSmoothPath(points, trailAlpha);
   drawPointer(lastPointer);
+}
+
+
+function fadeTrail(duration = 720) {
+  if (fadeRaf) cancelAnimationFrame(fadeRaf);
+  const start = performance.now();
+  const from = trailAlpha;
+  function tick(now) {
+    const t = Math.min(1, (now - start) / duration);
+    const eased = 1 - Math.pow(1 - t, 3);
+    trailAlpha = from * (1 - eased);
+    render();
+    if (t < 1) fadeRaf = requestAnimationFrame(tick);
+    else {
+      trailAlpha = 0;
+      render();
+    }
+  }
+  fadeRaf = requestAnimationFrame(tick);
 }
 
 function computeSelectionPayload() {
@@ -131,9 +152,10 @@ function computeSelectionPayload() {
 }
 
 function showPill() {
-  if (!lastPointer) return;
-  const x = Math.min(window.innerWidth - 438, Math.max(18, lastPointer.x + 34));
-  const y = Math.min(window.innerHeight - 64, Math.max(18, lastPointer.y - 20));
+  const anchor = selectionAnchor || lastPointer;
+  if (!anchor) return;
+  const x = Math.min(window.innerWidth - 438, Math.max(18, anchor.x + 30));
+  const y = Math.min(window.innerHeight - 64, Math.max(18, anchor.y - 18));
   pill.style.left = `${x}px`;
   pill.style.top = `${y}px`;
   pill.classList.remove('hidden');
@@ -143,6 +165,8 @@ function showPill() {
 
 function runSelectedCommand(action = 'command') {
   if (!selectedPayload) return;
+  if (!selectionAnchor && lastPointer) selectionAnchor = { ...lastPointer };
+  fadeTrail(360);
   const command = commandInput.value.trim();
   window.magicPointer?.done({
     ...selectedPayload,
@@ -153,7 +177,7 @@ function runSelectedCommand(action = 'command') {
 
 function showResult(payload) {
   if (!payload) return;
-  const anchor = lastPointer || { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+  const anchor = selectionAnchor || lastPointer || { x: window.innerWidth / 2, y: window.innerHeight / 2 };
   const x = Math.min(window.innerWidth - 590, Math.max(18, anchor.x + 40));
   const y = Math.min(window.innerHeight - 180, Math.max(18, anchor.y + 48));
   result.style.left = `${x}px`;
@@ -182,6 +206,10 @@ function resetOverlay() {
   points = [];
   selectedPayload = null;
   lastPointer = null;
+  selectionAnchor = null;
+  trailAlpha = 1;
+  if (fadeRaf) cancelAnimationFrame(fadeRaf);
+  fadeRaf = null;
   pill.classList.add('hidden');
   result.classList.add('hidden');
   result.textContent = '';
@@ -201,6 +229,8 @@ window.addEventListener('pointerdown', (e) => {
   drawing = true;
   points = [];
   selectedPayload = null;
+  selectionAnchor = null;
+  trailAlpha = 1;
   pill.classList.add('hidden');
   result.classList.add('hidden');
   hint.classList.add('dim');
@@ -210,11 +240,10 @@ window.addEventListener('pointerdown', (e) => {
 
 window.addEventListener('pointermove', (e) => {
   if (!drawing) {
+    if (selectedPayload) return;
     lastPointer = { x: e.clientX, y: e.clientY, t: performance.now() };
-    if (!selectedPayload) {
-      clear();
-      drawPointer(lastPointer);
-    }
+    clear();
+    drawPointer(lastPointer);
     return;
   }
   addPoint(e);
@@ -228,7 +257,9 @@ window.addEventListener('pointerup', (e) => {
   render();
   if (points.length >= 2) {
     selectedPayload = computeSelectionPayload();
+    selectionAnchor = lastPointer ? { ...lastPointer } : null;
     showPill();
+    fadeTrail(900);
   }
 });
 
