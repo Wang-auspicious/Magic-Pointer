@@ -17,6 +17,8 @@ let fadeRaf = null;
 let captureMode = false;
 let requestSeq = 0;
 let submitting = false;
+let renderRaf = null;
+let resultDrag = null;
 
 function resize() {
   dpr = window.devicePixelRatio || 1;
@@ -32,15 +34,26 @@ function clear() {
   ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
 }
 
+function scheduleRender() {
+  if (renderRaf) return;
+  renderRaf = requestAnimationFrame(() => {
+    renderRaf = null;
+    render();
+  });
+}
+
 function dist(a, b) {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
 function addPoint(e) {
-  const p = { x: e.clientX, y: e.clientY, t: performance.now() };
-  const last = points[points.length - 1];
-  if (!last || dist(p, last) > 3.5) points.push(p);
-  lastPointer = p;
+  const batch = typeof e.getCoalescedEvents === 'function' ? e.getCoalescedEvents() : [e];
+  for (const ev of batch) {
+    const p = { x: ev.clientX, y: ev.clientY, t: performance.now() };
+    const last = points[points.length - 1];
+    if (!last || dist(p, last) > 4.2) points.push(p);
+    lastPointer = p;
+  }
 }
 
 function drawSmoothPath(path, alpha = 1) {
@@ -70,10 +83,9 @@ function drawSmoothPath(path, alpha = 1) {
 
   // Gemini-like feel: one broad blurred ribbon with a very gentle inner energy.
   // Keep alpha close between layers so it reads as one soft band, not stacked stripes.
-  trace(20, 'rgba(77, 144, 255, 0.18)', 30, alpha * 0.92);
-  trace(13, 'rgba(63, 133, 255, 0.28)', 20, alpha * 0.72);
-  trace(7, 'rgba(49, 119, 255, 0.24)', 9, alpha * 0.55);
-  trace(2, 'rgba(230, 244, 255, 0.34)', 3, alpha * 0.40);
+  trace(18, 'rgba(77, 144, 255, 0.20)', 14, alpha * 0.86);
+  trace(9, 'rgba(49, 119, 255, 0.30)', 7, alpha * 0.62);
+  trace(2, 'rgba(232, 246, 255, 0.38)', 1.5, alpha * 0.34);
   ctx.globalCompositeOperation = 'source-over';
   ctx.restore();
 }
@@ -206,18 +218,21 @@ function runSelectedCommand(action = 'command') {
 function showResult(payload) {
   if (!payload) return;
   captureMode = false;
-  const anchor = selectionAnchor || lastPointer || { x: window.innerWidth / 2, y: window.innerHeight / 2 };
-  const x = Math.min(window.innerWidth - 590, Math.max(18, anchor.x + 40));
-  const y = Math.min(window.innerHeight - 180, Math.max(18, anchor.y + 48));
-  result.style.left = `${x}px`;
-  result.style.top = `${y}px`;
+  const alreadyVisible = !result.classList.contains('hidden');
+  if (!alreadyVisible) {
+    const anchor = selectionAnchor || lastPointer || { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+    const x = Math.min(window.innerWidth - 590, Math.max(18, anchor.x + 40));
+    const y = Math.min(window.innerHeight - 180, Math.max(18, anchor.y + 48));
+    result.style.left = `${x}px`;
+    result.style.top = `${y}px`;
+  }
   if (payload.ok === null) {
-    result.innerHTML = `<div class="title">Thinking</div><div class="muted">${payload.status || 'Processing...'}</div>`;
+    result.innerHTML = `<div class="title" data-drag-handle="true">Thinking</div><div class="content muted">${escapeHtml(payload.status || 'Processing...')}</div>`;
   } else if (payload.ok) {
     const answer = String(payload.answer || '').slice(0, 1600);
-    result.innerHTML = `<div class="title">${escapeHtml(payload.prompt || 'Result')}</div>${escapeHtml(answer)}`;
+    result.innerHTML = `<div class="title" data-drag-handle="true">${escapeHtml(payload.prompt || 'Result')}</div><div class="content">${escapeHtml(answer)}</div>`;
   } else {
-    result.innerHTML = `<div class="title">Bridge error</div><div class="muted">${escapeHtml(payload.error || 'Unknown error')}</div>`;
+    result.innerHTML = `<div class="title" data-drag-handle="true">Bridge error</div><div class="content muted">${escapeHtml(payload.error || 'Unknown error')}</div>`;
   }
   result.classList.remove('hidden');
 }
@@ -241,7 +256,10 @@ function resetOverlay() {
   requestSeq += 1;
   submitting = false;
   if (fadeRaf) cancelAnimationFrame(fadeRaf);
+  if (renderRaf) cancelAnimationFrame(renderRaf);
   fadeRaf = null;
+  renderRaf = null;
+  resultDrag = null;
   pill.classList.add('hidden');
   result.classList.add('hidden');
   result.textContent = '';
@@ -268,18 +286,18 @@ window.addEventListener('pointerdown', (e) => {
   result.classList.add('hidden');
   hint.classList.add('dim');
   addPoint(e);
-  render();
+  scheduleRender();
 });
 
 window.addEventListener('pointermove', (e) => {
   if (captureMode) return;
   if (!drawing) {
     lastPointer = { x: e.clientX, y: e.clientY, t: performance.now() };
-    render();
+    scheduleRender();
     return;
   }
   addPoint(e);
-  render();
+  scheduleRender();
 });
 
 window.addEventListener('pointerup', (e) => {
@@ -311,6 +329,42 @@ commandInput.addEventListener('keydown', (e) => {
     runSelectedCommand('command');
   }
 });
+
+
+result.addEventListener('pointerdown', (e) => {
+  const handle = e.target.closest('[data-drag-handle="true"]');
+  if (e.button !== 0 || !handle) return;
+  e.preventDefault();
+  const rect = result.getBoundingClientRect();
+  resultDrag = {
+    pointerId: e.pointerId,
+    offsetX: e.clientX - rect.left,
+    offsetY: e.clientY - rect.top,
+  };
+  result.setPointerCapture(e.pointerId);
+  result.classList.add('dragging');
+});
+
+result.addEventListener('pointermove', (e) => {
+  if (!resultDrag || resultDrag.pointerId !== e.pointerId) return;
+  const maxX = Math.max(18, window.innerWidth - result.offsetWidth - 18);
+  const maxY = Math.max(18, window.innerHeight - result.offsetHeight - 18);
+  const x = Math.min(maxX, Math.max(18, e.clientX - resultDrag.offsetX));
+  const y = Math.min(maxY, Math.max(18, e.clientY - resultDrag.offsetY));
+  result.style.left = `${x}px`;
+  result.style.top = `${y}px`;
+  lastPointer = { x: e.clientX, y: e.clientY, t: performance.now() };
+  scheduleRender();
+});
+
+function stopResultDrag(e) {
+  if (!resultDrag || resultDrag.pointerId !== e.pointerId) return;
+  try { result.releasePointerCapture(e.pointerId); } catch (_) {}
+  resultDrag = null;
+  result.classList.remove('dragging');
+}
+result.addEventListener('pointerup', stopResultDrag);
+result.addEventListener('pointercancel', stopResultDrag);
 
 window.magicPointer?.onShow(() => resetOverlay());
 window.magicPointer?.onHide(() => resetOverlay());

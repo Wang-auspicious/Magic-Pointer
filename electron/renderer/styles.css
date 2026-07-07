@@ -17,6 +17,7 @@
   background: transparent;
   pointer-events: none;
   z-index: 2147483647;
+  will-change: contents;
 }
 
 .hint {
@@ -142,8 +143,15 @@
   line-height: 1.45;
   white-space: pre-wrap;
   animation: pillIn 180ms cubic-bezier(.2, .9, .2, 1.08) both;
-  pointer-events: none;
+  pointer-events: auto;
+  user-select: text;
+  cursor: auto;
   z-index: 2147483646;
+}
+
+.result.dragging {
+  transition: none;
+  cursor: grabbing;
 }
 
 .result.hidden { display: none; }
@@ -151,6 +159,16 @@
   color: #1d4ed8;
   font-weight: 760;
   margin-bottom: 6px;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+.result.dragging .title {
+  cursor: grabbing;
+}
+.result .content {
+  user-select: text;
+  cursor: text;
 }
 .result .muted {
   color: #64748b;
