@@ -100,6 +100,68 @@ def _global_points(payload: dict[str, Any]) -> list[tuple[int, int]]:
     return out
 
 
+def _display_rect_px(payload: dict[str, Any]) -> tuple[int, int, int, int] | None:
+    bounds = payload.get("screenBounds") or {}
+    try:
+        scale = _coord_scale(payload)
+        x = int(round(float(bounds.get("x") or 0) * scale))
+        y = int(round(float(bounds.get("y") or 0) * scale))
+        w = int(round(float(bounds.get("width") or 0) * scale))
+        h = int(round(float(bounds.get("height") or 0) * scale))
+    except Exception:
+        return None
+    if w <= 0 or h <= 0:
+        return None
+    return (x, y, x + w, y + h)
+
+
+def _expand_capture_bbox(selection_bbox: tuple[int, int, int, int], payload: dict[str, Any]) -> tuple[int, int, int, int]:
+    """Use a broader model crop than the exact stroke bbox.
+
+    A Magic Pointer stroke is a semantic target signal, not a screenshot rectangle.
+    Tiny filename/word sweeps need surrounding UI context for vision models to read
+    the whole row/line reliably. Keep object bbox precise, but send a wider crop.
+    """
+
+    x1, y1, x2, y2 = selection_bbox
+    scale = _coord_scale(payload)
+    w = max(1, x2 - x1)
+    h = max(1, y2 - y1)
+    cx = (x1 + x2) / 2
+    cy = (y1 + y2) / 2
+    target_w = max(w + int(round(180 * scale)), int(round(760 * scale)))
+    target_h = max(h + int(round(120 * scale)), int(round(220 * scale)))
+    left = int(round(cx - target_w / 2))
+    top = int(round(cy - target_h / 2))
+    right = int(round(cx + target_w / 2))
+    bottom = int(round(cy + target_h / 2))
+
+    display = _display_rect_px(payload)
+    if display:
+        dx1, dy1, dx2, dy2 = display
+        # Preserve requested size as much as possible while staying on-screen.
+        if left < dx1:
+            right += dx1 - left
+            left = dx1
+        if right > dx2:
+            left -= right - dx2
+            right = dx2
+        if top < dy1:
+            bottom += dy1 - top
+            top = dy1
+        if bottom > dy2:
+            top -= bottom - dy2
+            bottom = dy2
+        left = max(dx1, left)
+        top = max(dy1, top)
+        right = min(dx2, right)
+        bottom = min(dy2, bottom)
+
+    if right - left < 8 or bottom - top < 8:
+        return selection_bbox
+    return left, top, right, bottom
+
+
 def _prompt_for(payload: dict[str, Any]) -> str:
     command = str(payload.get("command") or "").strip()
     if command:
@@ -288,25 +350,27 @@ def main() -> int:
         print(json.dumps({"ok": False, "error": "empty payload"}, ensure_ascii=True))
         return 2
 
-    bbox = _global_bbox(payload)
-    if bbox[2] - bbox[0] < 8 or bbox[3] - bbox[1] < 8:
-        print(json.dumps({"ok": False, "error": "bbox too small", "bbox": bbox}, ensure_ascii=True))
+    selection_bbox = _global_bbox(payload)
+    if selection_bbox[2] - selection_bbox[0] < 8 or selection_bbox[3] - selection_bbox[1] < 8:
+        print(json.dumps({"ok": False, "error": "bbox too small", "bbox": selection_bbox}, ensure_ascii=True))
         return 2
+
+    stroke_points = _global_points(payload)
+    capture_bbox = _expand_capture_bbox(selection_bbox, payload)
 
     obj_id = new_object_id()
     image_path = CAPTURE_DIR / f"{obj_id}.png"
     pointer_image_path = CAPTURE_DIR / f"{obj_id}.pointer.png"
-    image = ImageGrab.grab(bbox=bbox, all_screens=True)
+    image = ImageGrab.grab(bbox=capture_bbox, all_screens=True)
     image.save(image_path)
 
-    stroke_points = _global_points(payload)
-    model_image_path = _make_pointer_annotated_image(image_path, pointer_image_path, bbox, stroke_points)
-    row_candidates = _estimate_row_candidates(image_path, bbox)
-    stroke_candidates = _score_stroke_candidates(stroke_points, bbox, row_candidates)
+    model_image_path = _make_pointer_annotated_image(image_path, pointer_image_path, capture_bbox, stroke_points)
+    row_candidates = _estimate_row_candidates(image_path, capture_bbox)
+    stroke_candidates = _score_stroke_candidates(stroke_points, capture_bbox, row_candidates)
     candidate_text = _candidate_context(stroke_candidates)
 
     prompt = _prompt_for(payload)
-    screen_ctx = build_screen_context(bbox, image_path)
+    screen_ctx = build_screen_context(capture_bbox, image_path)
     tasks = TaskContextStore(OBJECT_DIR)
     store = ObjectStore(OBJECT_DIR)
     task_result = tasks.active_task(auto_rollover=True)
@@ -322,7 +386,7 @@ def main() -> int:
         + screen_ctx.to_prompt_context()
         + ("\n\n" + candidate_text if candidate_text else "")
         + "\n\n"
-        + tasks.build_reference_context(store, task_id, obj_id, bbox)
+        + tasks.build_reference_context(store, task_id, obj_id, selection_bbox)
     )
 
     answer = ask_vision_model(
@@ -336,20 +400,23 @@ def main() -> int:
         id=obj_id,
         alias="this",
         kind="electron_pointer_sweep",
-        bbox=bbox,
+        bbox=selection_bbox,
         image_path=str(image_path.relative_to(ROOT)),
         app_title=str(payload.get("sourceApp") or "Electron Overlay"),
         prompt=prompt,
         answer=answer,
         created_at=datetime.now().isoformat(timespec="seconds"),
         screen_context={
-            "selection_bbox": screen_ctx.selection_bbox,
+            "selection_bbox": selection_bbox,
+            "capture_bbox": capture_bbox,
             "pointer_annotated_image_path": str(pointer_image_path.relative_to(ROOT)),
             "annotated_image_path": str(screen_ctx.annotated_image_path.relative_to(ROOT)) if screen_ctx.annotated_image_path else None,
             "windows": [w.__dict__ for w in screen_ctx.windows],
             "electron_payload": {
                 "action": payload.get("action"),
                 "bbox": payload.get("bbox"),
+                "selection_bbox": selection_bbox,
+                "capture_bbox": capture_bbox,
                 "screenBounds": payload.get("screenBounds"),
                 "scaleFactor": _coord_scale(payload),
                 "viewport": payload.get("viewport"),
@@ -367,7 +434,8 @@ def main() -> int:
         "taskId": updated_task.get("id"),
         "imagePath": str(image_path.relative_to(ROOT)),
         "pointerImagePath": str(pointer_image_path.relative_to(ROOT)),
-        "bbox": bbox,
+        "bbox": selection_bbox,
+        "captureBbox": capture_bbox,
         "prompt": prompt,
         "answer": answer,
         "strokeCandidates": stroke_candidates[:5],
