@@ -93,43 +93,39 @@ function drawSmoothPath(path, alpha = 1) {
 function drawPointer(p) {
   if (!p || captureMode) return;
   ctx.save();
-  // Keep the visual hot spot at the paper-plane nose while trying a mirrored,
-  // slightly clockwise variant. Nose still points upper-left.
-  ctx.translate(p.x - 1, p.y - 1);
-  ctx.rotate(0.20); // ~11.5 degrees clockwise.
-  ctx.scale(-0.92, 0.92);
-  ctx.translate(-24, 0);
+  // Google-style concave quadrilateral cursor: white fill, blue outline, soft glow.
+  // Hot spot is the upper-left tip. No paper-plane fold, no long tail.
+  ctx.translate(p.x, p.y);
+  ctx.rotate(-0.045);
+  ctx.scale(0.92, 0.92);
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
 
   const path = new Path2D();
-  path.moveTo(29.0, -3.0);                 // visual tip / hot spot, mirrored to upper-left on screen
-  path.quadraticCurveTo(26.2, -4.0, 23.0, -2.2);
-  path.lineTo(-4.0, 10.0);                 // upper wing
-  path.quadraticCurveTo(-6.4, 11.2, -3.8, 12.8);
-  path.lineTo(11.6, 16.7);                 // inner fold/notch
-  path.lineTo(16.0, 27.0);                 // lower wing point
-  path.quadraticCurveTo(17.2, 29.4, 19.0, 27.0);
-  path.lineTo(24.0, 18.0);
-  path.lineTo(27.4, 21.6);                 // soft concave back, no left spike
-  path.quadraticCurveTo(29.0, 23.1, 28.5, 20.4);
-  path.lineTo(25.2, 11.2);
-  path.lineTo(31.0, 0.0);
-  path.quadraticCurveTo(32.0, -2.0, 29.0, -3.0);
+  path.moveTo(0.0, 0.0);                    // upper-left tip / hot spot
+  path.quadraticCurveTo(1.0, -1.0, 3.0, 0.0);
+  path.lineTo(31.5, 13.2);                  // right point
+  path.quadraticCurveTo(35.0, 14.9, 31.5, 16.9);
+  path.lineTo(13.4, 21.5);                  // inward notch / concave corner
+  path.lineTo(6.2, 36.5);                   // lower point
+  path.quadraticCurveTo(4.5, 40.0, 3.2, 36.2);
+  path.lineTo(-1.7, 3.8);
+  path.quadraticCurveTo(-2.1, 1.2, 0.0, 0.0);
   path.closePath();
 
-  ctx.shadowColor = 'rgba(37, 99, 235, .44)';
-  ctx.shadowBlur = 7;
-  ctx.fillStyle = 'rgba(255, 255, 255, .985)';
-  ctx.strokeStyle = 'rgba(37, 99, 235, .92)';
-  ctx.lineWidth = 1.55;
+  // Outer blue halo, then crisp blue border, then white interior.
+  ctx.shadowColor = 'rgba(37, 99, 235, .48)';
+  ctx.shadowBlur = 10;
+  ctx.fillStyle = 'rgba(255, 255, 255, .99)';
+  ctx.strokeStyle = 'rgba(37, 99, 235, .94)';
+  ctx.lineWidth = 2.2;
   ctx.fill(path);
   ctx.stroke(path);
 
-  ctx.beginPath();
-  ctx.moveTo(25.2, 11.0);
-  ctx.quadraticCurveTo(16.8, 12.3, 3.0, 11.2);
-  ctx.strokeStyle = 'rgba(96, 165, 250, .30)';
-  ctx.lineWidth = 1.0;
-  ctx.stroke();
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = 'rgba(96, 165, 250, .38)';
+  ctx.lineWidth = 0.8;
+  ctx.stroke(path);
   ctx.restore();
 }
 
