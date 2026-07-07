@@ -101,6 +101,149 @@ def _make_pointer_annotated_image(raw_path: Path, out_path: Path, bbox: tuple[in
     return out_path
 
 
+
+
+def _point_in_polygon(point: tuple[float, float], polygon: list[tuple[int, int]]) -> bool:
+    if len(polygon) < 3:
+        return False
+    x, y = point
+    inside = False
+    j = len(polygon) - 1
+    for i in range(len(polygon)):
+        xi, yi = polygon[i]
+        xj, yj = polygon[j]
+        if ((yi > y) != (yj > y)) and (x < (xj - xi) * (y - yi) / max((yj - yi), 1e-6) + xi):
+            inside = not inside
+        j = i
+    return inside
+
+
+def _dist_point_to_rect(p: tuple[float, float], r: tuple[int, int, int, int]) -> float:
+    x, y = p
+    dx = max(r[0] - x, 0, x - r[2])
+    dy = max(r[1] - y, 0, y - r[3])
+    return (dx * dx + dy * dy) ** 0.5
+
+
+def _rect_center(r: tuple[int, int, int, int]) -> tuple[float, float]:
+    return ((r[0] + r[2]) / 2, (r[1] + r[3]) / 2)
+
+
+def _estimate_row_candidates(raw_path: Path, bbox: tuple[int, int, int, int]) -> list[dict[str, Any]]:
+    """Dependency-free row/object candidates for list-like UIs.
+
+    This is not OCR. It finds horizontal bands with enough visual ink, which works
+    well for file lists, menus, tables, and document lines. OmniParser/OCR should
+    replace this later, but this already gives local stroke-aware grounding.
+    """
+
+    import numpy as np
+
+    with Image.open(raw_path).convert("L") as img:
+        arr = np.array(img)
+    h, w = arr.shape
+    # Edge/ink density: text/icons differ from background.
+    gx = np.abs(np.diff(arr.astype("int16"), axis=1))
+    row_score = gx.mean(axis=1)
+    if row_score.max() <= 0:
+        return []
+    threshold = max(float(row_score.mean() + row_score.std() * 0.55), float(row_score.max() * 0.18))
+    active = row_score > threshold
+    bands: list[tuple[int, int]] = []
+    start: int | None = None
+    for i, flag in enumerate(active):
+        if flag and start is None:
+            start = i
+        elif not flag and start is not None:
+            if i - start >= 5:
+                bands.append((start, i))
+            start = None
+    if start is not None and h - start >= 5:
+        bands.append((start, h))
+
+    # Merge close fragments into UI rows.
+    merged: list[tuple[int, int]] = []
+    for a, b in bands:
+        if merged and a - merged[-1][1] <= 10:
+            merged[-1] = (merged[-1][0], b)
+        else:
+            merged.append((a, b))
+
+    candidates: list[dict[str, Any]] = []
+    for idx, (a, b) in enumerate(merged, 1):
+        if b - a > 95:  # likely large toolbar/panel, not a row
+            continue
+        # Expand to a comfortable row height so stroke/center tests are stable.
+        cy = (a + b) / 2
+        row_h = max(28, min(58, (b - a) + 18))
+        y1 = int(max(0, cy - row_h / 2))
+        y2 = int(min(h, cy + row_h / 2))
+        candidates.append({
+            "id": f"row_{idx}",
+            "kind": "visual_row_candidate",
+            "bbox_local": (0, y1, w, y2),
+            "bbox_global": (bbox[0], bbox[1] + y1, bbox[2], bbox[1] + y2),
+        })
+    return candidates[:30]
+
+
+def _score_stroke_candidates(points: list[tuple[int, int]], bbox: tuple[int, int, int, int], candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not points or not candidates:
+        return []
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    stroke_box = (min(xs), min(ys), max(xs), max(ys))
+    stroke_center = _rect_center(stroke_box)
+    end = points[-1]
+    closed = len(points) >= 8 and ((points[0][0] - points[-1][0]) ** 2 + (points[0][1] - points[-1][1]) ** 2) ** 0.5 < max(80, min(stroke_box[2]-stroke_box[0], stroke_box[3]-stroke_box[1]) * 0.35)
+
+    scored: list[dict[str, Any]] = []
+    for c in candidates:
+        r = c["bbox_global"]
+        assert isinstance(r, tuple)
+        # How many stroke samples hit the candidate row.
+        hits = sum(1 for p in points if r[0] <= p[0] <= r[2] and r[1] <= p[1] <= r[3])
+        hit_ratio = hits / max(1, len(points))
+        center_dist = _dist_point_to_rect(stroke_center, r)
+        end_dist = _dist_point_to_rect(end, r)
+        inside = _point_in_polygon(_rect_center(r), points) if closed else False
+        score = hit_ratio * 8.0
+        if inside:
+            score += 4.0
+        score += max(0.0, 2.5 - center_dist / 70.0)
+        score += max(0.0, 1.8 - end_dist / 60.0)
+        # Prefer rows not spanning the very top toolbar if center is lower.
+        if r[3] < stroke_box[1] - 20:
+            score -= 2.0
+        item = dict(c)
+        item.update({
+            "score": round(score, 3),
+            "hit_ratio": round(hit_ratio, 3),
+            "center_distance": round(center_dist, 1),
+            "end_distance": round(end_dist, 1),
+            "inside_closed_stroke": inside,
+        })
+        scored.append(item)
+    scored.sort(key=lambda x: float(x.get("score", 0)), reverse=True)
+    return scored[:8]
+
+
+def _candidate_context(scored: list[dict[str, Any]]) -> str:
+    if not scored:
+        return ""
+    lines = [
+        "Local stroke-aware candidate picking:",
+        "These are dependency-free visual row candidates scored by the user's blue stroke. Higher score is more likely to be THIS.",
+        "Use candidate #1 as THIS unless the image clearly contradicts it.",
+    ]
+    for i, c in enumerate(scored[:5], 1):
+        lines.append(
+            f"{i}. id={c.get('id')}, kind={c.get('kind')}, bbox_global={c.get('bbox_global')}, "
+            f"score={c.get('score')}, hit_ratio={c.get('hit_ratio')}, "
+            f"inside_closed_stroke={c.get('inside_closed_stroke')}, center_distance={c.get('center_distance')}, end_distance={c.get('end_distance')}"
+        )
+    return "\n".join(lines)
+
 def main() -> int:
     CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
     OBJECT_DIR.mkdir(parents=True, exist_ok=True)
@@ -124,6 +267,9 @@ def main() -> int:
 
     stroke_points = _global_points(payload)
     model_image_path = _make_pointer_annotated_image(image_path, pointer_image_path, bbox, stroke_points)
+    row_candidates = _estimate_row_candidates(image_path, bbox)
+    stroke_candidates = _score_stroke_candidates(stroke_points, bbox, row_candidates)
+    candidate_text = _candidate_context(stroke_candidates)
 
     prompt = _prompt_for(payload)
     screen_ctx = build_screen_context(bbox, image_path)
@@ -140,6 +286,7 @@ def main() -> int:
         "If the blue stroke encloses multiple candidates, identify the most central/most likely target and mention ambiguity briefly.\n"
         "Reply as a concise action card, not a long chat.\n\n"
         + screen_ctx.to_prompt_context()
+        + ("\n\n" + candidate_text if candidate_text else "")
         + "\n\n"
         + tasks.build_reference_context(store, task_id, obj_id, bbox)
     )
@@ -170,6 +317,7 @@ def main() -> int:
                 "action": payload.get("action"),
                 "bbox": payload.get("bbox"),
                 "points_count": len(stroke_points),
+                "stroke_candidates": stroke_candidates[:5],
             },
         },
     )
@@ -185,6 +333,7 @@ def main() -> int:
         "bbox": bbox,
         "prompt": prompt,
         "answer": answer,
+        "strokeCandidates": stroke_candidates[:5],
     }, ensure_ascii=True))
     return 0
 
