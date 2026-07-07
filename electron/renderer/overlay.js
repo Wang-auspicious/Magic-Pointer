@@ -93,25 +93,27 @@ function drawSmoothPath(path, alpha = 1) {
 function drawPointer(p) {
   if (!p || captureMode) return;
   ctx.save();
+  // Keep the visual hot spot at the paper-plane nose while trying a mirrored,
+  // slightly clockwise variant. Nose still points upper-left.
   ctx.translate(p.x - 1, p.y - 1);
-  ctx.rotate(-0.08);
-  ctx.scale(0.92, 0.92);
+  ctx.rotate(0.20); // ~11.5 degrees clockwise.
+  ctx.scale(-0.92, 0.92);
+  ctx.translate(-24, 0);
 
-  // Paper-plane style pointer with a conventional cursor direction: tip points upper-left.
   const path = new Path2D();
-  path.moveTo(-5.0, -4.0);                 // visual tip / hot spot
-  path.quadraticCurveTo(-2.6, -5.0, 0.2, -3.2);
-  path.lineTo(29.0, 10.2);                 // upper wing
-  path.quadraticCurveTo(31.6, 11.4, 28.8, 13.0);
-  path.lineTo(13.0, 17.0);                 // inner fold/notch
-  path.lineTo(8.4, 28.0);                  // lower wing point
-  path.quadraticCurveTo(7.3, 30.7, 5.4, 28.2);
-  path.lineTo(0.0, 18.6);
-  path.lineTo(-4.0, 22.8);                 // concave back, not a long tail
-  path.quadraticCurveTo(-6.0, 24.8, -5.4, 21.7);
-  path.lineTo(-1.8, 11.8);
-  path.lineTo(-6.8, 0.0);
-  path.quadraticCurveTo(-7.8, -2.4, -5.0, -4.0);
+  path.moveTo(29.0, -3.0);                 // visual tip / hot spot, mirrored to upper-left on screen
+  path.quadraticCurveTo(26.2, -4.0, 23.0, -2.2);
+  path.lineTo(-4.0, 10.0);                 // upper wing
+  path.quadraticCurveTo(-6.4, 11.2, -3.8, 12.8);
+  path.lineTo(11.6, 16.7);                 // inner fold/notch
+  path.lineTo(16.0, 27.0);                 // lower wing point
+  path.quadraticCurveTo(17.2, 29.4, 19.0, 27.0);
+  path.lineTo(24.0, 18.0);
+  path.lineTo(27.4, 21.6);                 // soft concave back, no left spike
+  path.quadraticCurveTo(29.0, 23.1, 28.5, 20.4);
+  path.lineTo(25.2, 11.2);
+  path.lineTo(31.0, 0.0);
+  path.quadraticCurveTo(32.0, -2.0, 29.0, -3.0);
   path.closePath();
 
   ctx.shadowColor = 'rgba(37, 99, 235, .44)';
@@ -122,11 +124,10 @@ function drawPointer(p) {
   ctx.fill(path);
   ctx.stroke(path);
 
-  // Inner fold, short and diagonal, to avoid a tail-like silhouette.
   ctx.beginPath();
-  ctx.moveTo(-1.4, 11.6);
-  ctx.quadraticCurveTo(7.4, 12.8, 22.0, 11.6);
-  ctx.strokeStyle = 'rgba(96, 165, 250, .32)';
+  ctx.moveTo(25.2, 11.0);
+  ctx.quadraticCurveTo(16.8, 12.3, 3.0, 11.2);
+  ctx.strokeStyle = 'rgba(96, 165, 250, .30)';
   ctx.lineWidth = 1.0;
   ctx.stroke();
   ctx.restore();
