@@ -1,0 +1,38 @@
+﻿# Runtime/generated data
+data/captures/*
+data/objects/*
+data/runtime/*
+!data/README.md
+
+# Local secrets
+.env
+secrets/
+
+# Python cache
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Node/Electron dependencies
+node_modules/
+npm-debug.log*
+
+# External reference repos / downloaded archives
+external/
+external_zip/
+*.zip
+
+# Local reference/demo media not part of source release
+/演示*.*
+/demo1_ascii.png
+/微信图片*.*
+/magic pointer.pdf
+/Shaping the future of AI interaction by reimagining the mouse pointer — Google DeepMind.html
+/Shaping the future of AI interaction by reimagining the mouse pointer — Google DeepMind_files/
+
+# Local editor/agent state
+.omx/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

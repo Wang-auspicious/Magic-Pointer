@@ -1,0 +1,24 @@
+{
+  "name": "magic-pointer",
+  "version": "1.0.0",
+  "description": "Magic Pointer Open - cross-platform AI pointer overlay",
+  "main": "electron/main.js",
+  "directories": {
+    "test": "tests"
+  },
+  "scripts": {
+    "overlay": "electron electron/main.js",
+    "test": "node --check electron/main.js && node --check electron/preload.js && node --check electron/renderer/overlay.js"
+  },
+  "keywords": [
+    "ai-pointer",
+    "overlay",
+    "electron"
+  ],
+  "author": "",
+  "license": "MIT",
+  "type": "commonjs",
+  "devDependencies": {
+    "electron": "^43.0.0"
+  }
+}

@@ -1,0 +1,4 @@
+﻿# Python dependencies for MVP0
+openai>=2.0.0
+Pillow>=10.0.0
+pyperclip>=1.8.0
