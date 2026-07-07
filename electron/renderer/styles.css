@@ -134,16 +134,18 @@ html, body {
   0%, 100% {
     box-shadow:
       0 24px 70px rgba(15, 23, 42, 0.18),
-      0 0 0 8px rgba(96, 165, 250, 0.08),
-      0 0 24px rgba(37, 99, 235, 0.10);
-    border-color: rgba(147, 197, 253, 0.78);
+      0 0 22px rgba(96, 165, 250, 0.16),
+      0 0 46px rgba(37, 99, 235, 0.10);
+    border-color: rgba(147, 197, 253, 0.76);
+    background: rgba(255, 255, 255, 0.90);
   }
   50% {
     box-shadow:
-      0 28px 78px rgba(15, 23, 42, 0.20),
-      0 0 0 9px rgba(96, 165, 250, 0.12),
-      0 0 34px rgba(37, 99, 235, 0.18);
-    border-color: rgba(96, 165, 250, 0.95);
+      0 30px 82px rgba(15, 23, 42, 0.20),
+      0 0 36px rgba(96, 165, 250, 0.34),
+      0 0 74px rgba(37, 99, 235, 0.28);
+    border-color: rgba(59, 130, 246, 0.96);
+    background: rgba(255, 255, 255, 0.94);
   }
 }
 
