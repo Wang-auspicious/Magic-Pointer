@@ -1,4 +1,18 @@
 ﻿$ProjectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$PidPath = Join-Path $ProjectDir 'data\runtime\electron.pid'
+if (Test-Path $PidPath) {
+    try {
+        $TargetPid = [int](Get-Content -Path $PidPath -Raw).Trim()
+        $proc = Get-Process -Id $TargetPid -ErrorAction SilentlyContinue
+        if ($proc) {
+            Write-Host "Stopping Magic Pointer PID from pidfile $TargetPid"
+            Stop-Process -Id $TargetPid -Force -ErrorAction SilentlyContinue
+        }
+        Remove-Item -Path $PidPath -Force -ErrorAction SilentlyContinue
+    } catch {
+        Write-Host "Could not stop pidfile process: $($_.Exception.Message)"
+    }
+}
 $matches = @()
 try {
     $matches = Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {

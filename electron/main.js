@@ -11,6 +11,7 @@ let mousePollTimer = null;
 const ROOT = path.resolve(__dirname, '..');
 const RUNTIME_DIR = path.join(ROOT, 'data', 'runtime');
 const LOG_PATH = path.join(RUNTIME_DIR, 'electron.log');
+const PID_PATH = path.join(RUNTIME_DIR, 'electron.pid');
 
 function log(message) {
   try {
@@ -155,7 +156,11 @@ function startMouseShakePolling() {
 }
 
 app.whenReady().then(() => {
-  log('app ready');
+  try {
+    fs.mkdirSync(RUNTIME_DIR, { recursive: true });
+    fs.writeFileSync(PID_PATH, String(process.pid), 'utf8');
+  } catch (_) {}
+  log(`app ready pid=${process.pid}`);
   createOverlayWindow();
   const ok = globalShortcut.register('Control+Alt+M', () => showOverlay('hotkey'));
   log(`register hotkey Control+Alt+M ok=${ok}`);
@@ -165,6 +170,7 @@ app.whenReady().then(() => {
 });
 
 app.on('will-quit', () => {
+  try { fs.unlinkSync(PID_PATH); } catch (_) {}
   globalShortcut.unregisterAll();
   if (mousePollTimer) clearInterval(mousePollTimer);
   log('app will quit');
