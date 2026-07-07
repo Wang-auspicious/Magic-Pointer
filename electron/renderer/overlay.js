@@ -62,11 +62,14 @@ function drawSmoothPath(path, alpha = 1) {
     ctx.stroke();
   }
 
-  // Closer to the reference: the glow is visible, but not a huge marker.
-  stroke(32, 'rgba(147, 197, 253, 0.20)', 22);
-  stroke(19, 'rgba(96, 165, 250, 0.34)', 15);
-  stroke(9, 'rgba(37, 99, 235, 0.72)', 8);
-  stroke(2.6, 'rgba(248, 251, 255, 0.94)', 3);
+  // Softer Gemini-like trail: fewer hard layers, more glow falloff.
+  ctx.globalCompositeOperation = 'lighter';
+  stroke(42, 'rgba(96, 165, 250, 0.11)', 28);
+  stroke(30, 'rgba(96, 165, 250, 0.16)', 20);
+  stroke(18, 'rgba(59, 130, 246, 0.28)', 12);
+  stroke(7, 'rgba(37, 99, 235, 0.62)', 7);
+  stroke(2.2, 'rgba(210, 231, 255, 0.88)', 2);
+  ctx.globalCompositeOperation = 'source-over';
 
   ctx.restore();
 }
@@ -74,25 +77,36 @@ function drawSmoothPath(path, alpha = 1) {
 function drawPointer(p) {
   if (!p) return;
   ctx.save();
-  ctx.translate(p.x, p.y);
-  ctx.rotate(-0.10);
-  ctx.beginPath();
-  // Native cursor on Windows is usually 32x32. This is slightly larger only
-  // because of the glow/stroke, not a giant custom cursor.
-  ctx.moveTo(0, 0);
-  ctx.lineTo(23, 10);
-  ctx.lineTo(11, 15);
-  ctx.lineTo(17, 32);
-  ctx.lineTo(8, 35);
-  ctx.lineTo(2, 17);
-  ctx.closePath();
-  ctx.shadowColor = 'rgba(37, 99, 235, .62)';
-  ctx.shadowBlur = 12;
+  ctx.translate(p.x - 1, p.y - 1);
+  ctx.rotate(-0.08);
+
+  // Smooth 32px-class cursor. Tip is at (0,0); body extends down-right like
+  // the native cursor, with a complete closed outline and subtle glow.
+  const path = new Path2D();
+  path.moveTo(0, 0);
+  path.quadraticCurveTo(1.5, 0.4, 3.2, 1.3);
+  path.lineTo(24, 13.2);
+  path.quadraticCurveTo(27.4, 15.1, 26.2, 17.4);
+  path.quadraticCurveTo(25.5, 18.6, 23.7, 18.9);
+  path.lineTo(14.6, 20.4);
+  path.lineTo(20.2, 31.2);
+  path.quadraticCurveTo(21.1, 33.0, 19.2, 34.0);
+  path.lineTo(13.0, 37.0);
+  path.quadraticCurveTo(11.0, 37.9, 10.2, 35.8);
+  path.lineTo(4.9, 22.6);
+  path.lineTo(0.5, 27.0);
+  path.quadraticCurveTo(-1.3, 28.8, -2.0, 26.2);
+  path.lineTo(-2.2, 2.4);
+  path.quadraticCurveTo(-2.1, -0.4, 0, 0);
+  path.closePath();
+
+  ctx.shadowColor = 'rgba(37, 99, 235, .56)';
+  ctx.shadowBlur = 10;
   ctx.fillStyle = 'rgba(255, 255, 255, .98)';
-  ctx.strokeStyle = 'rgba(37, 99, 235, .94)';
-  ctx.lineWidth = 2;
-  ctx.fill();
-  ctx.stroke();
+  ctx.strokeStyle = 'rgba(37, 99, 235, .92)';
+  ctx.lineWidth = 1.8;
+  ctx.fill(path);
+  ctx.stroke(path);
   ctx.restore();
 }
 
@@ -177,8 +191,10 @@ function resetOverlay() {
 }
 
 window.addEventListener('resize', resize);
+window.addEventListener('contextmenu', (e) => { e.preventDefault(); window.magicPointer?.hide(); });
 
 window.addEventListener('pointerdown', (e) => {
+  if (e.button === 2) { window.magicPointer?.hide(); return; }
   if (e.button !== 0) return;
   if (e.target.closest('#pill') || e.target.closest('#result')) return;
   if (fadeRaf) cancelAnimationFrame(fadeRaf);
