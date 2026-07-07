@@ -1,12 +1,27 @@
-﻿$matches = Get-CimInstance Win32_Process | Where-Object {
-    ($_.Name -eq 'pythonw.exe' -or $_.Name -eq 'python.exe') -and
-    ($_.CommandLine -like '*app.main*')
+﻿$ProjectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$matches = @()
+try {
+    $matches = Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
+        ($_.Name -in @('pythonw.exe','python.exe','electron.exe','node.exe','cmd.exe')) -and
+        (
+            $_.CommandLine -like '*app.main*' -or
+            $_.CommandLine -like '*electron/main.js*' -or
+            $_.CommandLine -like '*electron\main.js*' -or
+            $_.CommandLine -like '*npm.cmd run overlay*'
+        )
+    } | ForEach-Object { [PSCustomObject]@{ Id=$_.ProcessId; Label=$_.CommandLine } }
+} catch {
+    Write-Host "Command-line process query unavailable, using path fallback: $($_.Exception.Message)"
+    $matches = Get-Process -ErrorAction SilentlyContinue | Where-Object {
+        ($_.ProcessName -in @('electron','node','python','pythonw','cmd')) -and
+        ($_.Path -like "$ProjectDir*" -or $_.Path -like "*\node_modules\electron\*")
+    } | ForEach-Object { [PSCustomObject]@{ Id=$_.Id; Label=$_.Path } }
 }
 if (-not $matches) {
     Write-Host 'No Magic Pointer background process found.'
     exit 0
 }
 foreach ($p in $matches) {
-    Write-Host "Stopping PID $($p.ProcessId): $($p.CommandLine)"
-    Stop-Process -Id $p.ProcessId -Force
+    Write-Host "Stopping PID $($p.Id): $($p.Label)"
+    Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
 }
