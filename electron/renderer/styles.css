@@ -50,12 +50,13 @@ html, body {
 .pill {
   position: fixed;
   display: flex;
-  align-items: center;
-  gap: 10px;
-  width: min(420px, calc(100vw - 36px));
-  height: 46px;
-  padding: 0 12px;
-  border-radius: 999px;
+  align-items: flex-start;
+  gap: 9px;
+  width: min(305px, calc(100vw - 36px));
+  min-height: 44px;
+  height: auto;
+  padding: 7px 10px;
+  border-radius: 24px;
   background: rgba(239, 246, 255, 0.88);
   border: 2px solid rgba(37, 99, 235, 0.92);
   box-shadow:
@@ -70,7 +71,7 @@ html, body {
 
 .pill.hidden { display: none; }
 
-.pill input {
+.pill textarea {
   flex: 1;
   min-width: 0;
   border: 0;
@@ -78,12 +79,19 @@ html, body {
   background: transparent;
   color: #1d4ed8;
   font-size: 17px;
-  line-height: 1;
+  line-height: 20px;
+  min-height: 24px;
+  max-height: 76px;
+  overflow-y: auto;
+  resize: none;
+  font-family: inherit;
   font-weight: 650;
   letter-spacing: -0.02em;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
-.pill input::placeholder {
+.pill textarea::placeholder {
   color: rgba(37, 99, 235, 0.50);
   font-weight: 560;
 }
@@ -92,6 +100,8 @@ html, body {
   border: 0;
   width: 31px;
   height: 31px;
+  flex: 0 0 31px;
+  margin-top: 0;
   border-radius: 999px;
   background: rgba(37, 99, 235, 0.92);
   color: white;
@@ -106,6 +116,8 @@ html, body {
   gap: 4px;
   width: 30px;
   height: 28px;
+  flex: 0 0 30px;
+  margin-top: 1px;
   justify-content: center;
   opacity: 0.92;
 }

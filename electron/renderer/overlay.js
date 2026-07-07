@@ -107,13 +107,13 @@ function drawPointer(p) {
 
   const path = new Path2D();
   path.moveTo(0.0, 0.0);                    // upper-left tip / hot spot
-  path.quadraticCurveTo(0.9, -0.8, 2.4, 0.0);
-  path.lineTo(25.2, 12.2);                  // right point, visibly tighter
-  path.quadraticCurveTo(28.2, 13.7, 25.5, 15.3);
-  path.lineTo(11.2, 18.5);                  // inward notch / concave corner
-  path.lineTo(6.0, 31.2);                   // lower point, visibly tighter
-  path.quadraticCurveTo(4.7, 34.2, 3.5, 31.0);
-  path.lineTo(-1.2, 3.6);
+  path.quadraticCurveTo(0.8, -0.7, 2.2, 0.0);
+  path.lineTo(21.8, 13.8);                  // right-top point moved inward/down for symmetry
+  path.quadraticCurveTo(24.6, 15.5, 21.9, 16.8);
+  path.lineTo(10.2, 18.7);                  // inward notch / concave corner
+  path.lineTo(5.8, 28.6);                   // lower point pulled inward/up: tighter angle
+  path.quadraticCurveTo(4.6, 31.2, 3.5, 28.4);
+  path.lineTo(-1.0, 3.5);
   path.quadraticCurveTo(-1.9, 1.1, 0.0, 0.0);
   path.closePath();
 
@@ -188,12 +188,13 @@ function computeSelectionPayload() {
 function showPill() {
   const anchor = selectionAnchor || lastPointer;
   if (!anchor) return;
-  const x = Math.min(window.innerWidth - 438, Math.max(18, anchor.x + 30));
-  const y = Math.min(window.innerHeight - 64, Math.max(18, anchor.y - 18));
+  const x = Math.min(window.innerWidth - 330, Math.max(18, anchor.x + 30));
+  const y = Math.min(window.innerHeight - 120, Math.max(18, anchor.y - 18));
   pill.style.left = `${x}px`;
   pill.style.top = `${y}px`;
   pill.classList.remove('hidden');
   commandInput.value = '';
+  resizeCommandInput();
   commandInput.focus();
 }
 
@@ -264,6 +265,11 @@ function escapeHtml(value) {
     .replaceAll("'", '&#039;');
 }
 
+function resizeCommandInput() {
+  commandInput.style.height = '24px';
+  commandInput.style.height = `${Math.min(commandInput.scrollHeight, 76)}px`;
+}
+
 function resetOverlay() {
   points = [];
   selectedPayload = null;
@@ -282,6 +288,7 @@ function resetOverlay() {
   result.classList.add('hidden');
   result.textContent = '';
   commandInput.value = '';
+  resizeCommandInput();
   hint.classList.remove('dim');
   clear();
 }
@@ -360,10 +367,13 @@ window.addEventListener('keydown', (e) => {
 pill.addEventListener('pointerdown', (e) => e.stopPropagation());
 pill.addEventListener('click', (e) => e.stopPropagation());
 runButton.addEventListener('click', () => runSelectedCommand('command'));
+commandInput.addEventListener('input', resizeCommandInput);
 commandInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') {
+  if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     runSelectedCommand('command');
+  } else {
+    requestAnimationFrame(resizeCommandInput);
   }
 });
 
