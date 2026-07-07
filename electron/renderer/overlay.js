@@ -95,7 +95,7 @@ function drawSmoothPath(path, alpha = 1) {
 function drawPointer(p) {
   if (!p || captureMode) return;
   const now = performance.now();
-  const pulse = 0.5 + 0.5 * Math.sin(now / 760);
+  const pulse = 0.5 + 0.5 * Math.sin(now / 430);
   ctx.save();
   // Google-style concave quadrilateral cursor: white fill, blue outline, soft breathing glow.
   // Hot spot is the upper-left tip. Narrower wings than the previous version.
@@ -108,27 +108,28 @@ function drawPointer(p) {
   const path = new Path2D();
   path.moveTo(0.0, 0.0);                    // upper-left tip / hot spot
   path.quadraticCurveTo(0.8, -0.7, 2.2, 0.0);
-  path.lineTo(21.8, 13.8);                  // right-top point moved inward/down for symmetry
-  path.quadraticCurveTo(24.6, 15.5, 21.9, 16.8);
-  path.lineTo(10.2, 18.7);                  // inward notch / concave corner
-  path.lineTo(5.8, 28.6);                   // lower point pulled inward/up: tighter angle
-  path.quadraticCurveTo(4.6, 31.2, 3.5, 28.4);
+  path.lineTo(22.4, 18.8);                  // upper-right vertex pulled DOWN to the marked symmetric position
+  path.quadraticCurveTo(24.8, 20.5, 21.6, 21.2);
+  path.lineTo(10.9, 20.4);                  // inward notch / center pinch
+  path.lineTo(5.6, 30.0);                   // lower wing balanced against the lowered upper vertex
+  path.quadraticCurveTo(4.5, 32.7, 3.4, 29.8);
   path.lineTo(-1.0, 3.5);
   path.quadraticCurveTo(-1.9, 1.1, 0.0, 0.0);
   path.closePath();
 
-  // Visible breathing glow: a blurred blue aura, then crisp blue border.
+  // Visible breathing glow: blurred blue aura that clearly brightens/dims.
   ctx.save();
-  ctx.globalAlpha = 0.42 + pulse * 0.34;
-  ctx.shadowColor = `rgba(37, 99, 235, ${0.58 + pulse * 0.22})`;
-  ctx.shadowBlur = 14 + pulse * 13;
-  ctx.strokeStyle = 'rgba(59, 130, 246, .58)';
-  ctx.lineWidth = 6.5;
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.globalAlpha = 0.46 + pulse * 0.46;
+  ctx.shadowColor = `rgba(37, 99, 235, ${0.72 + pulse * 0.24})`;
+  ctx.shadowBlur = 20 + pulse * 20;
+  ctx.strokeStyle = `rgba(59, 130, 246, ${0.42 + pulse * 0.30})`;
+  ctx.lineWidth = 9.5;
   ctx.stroke(path);
   ctx.restore();
 
-  ctx.shadowColor = `rgba(37, 99, 235, ${0.40 + pulse * 0.26})`;
-  ctx.shadowBlur = 9 + pulse * 8;
+  ctx.shadowColor = `rgba(37, 99, 235, ${0.52 + pulse * 0.34})`;
+  ctx.shadowBlur = 12 + pulse * 12;
   ctx.fillStyle = 'rgba(255, 255, 255, .99)';
   ctx.strokeStyle = 'rgba(37, 99, 235, .96)';
   ctx.lineWidth = 2.15;

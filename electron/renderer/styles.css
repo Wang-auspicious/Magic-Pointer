@@ -146,18 +146,18 @@ html, body {
   0%, 100% {
     box-shadow:
       0 24px 70px rgba(15, 23, 42, 0.18),
-      0 0 22px rgba(96, 165, 250, 0.16),
-      0 0 46px rgba(37, 99, 235, 0.10);
-    border-color: rgba(147, 197, 253, 0.76);
+      0 0 26px rgba(96, 165, 250, 0.20),
+      0 0 58px rgba(37, 99, 235, 0.14);
+    border-color: rgba(147, 197, 253, 0.78);
     background: rgba(255, 255, 255, 0.90);
   }
   50% {
     box-shadow:
-      0 30px 82px rgba(15, 23, 42, 0.20),
-      0 0 36px rgba(96, 165, 250, 0.34),
-      0 0 74px rgba(37, 99, 235, 0.28);
-    border-color: rgba(59, 130, 246, 0.96);
-    background: rgba(255, 255, 255, 0.94);
+      0 32px 86px rgba(15, 23, 42, 0.20),
+      0 0 52px rgba(96, 165, 250, 0.52),
+      0 0 104px rgba(37, 99, 235, 0.42);
+    border-color: rgba(37, 99, 235, 1);
+    background: rgba(255, 255, 255, 0.955);
   }
 }
 
