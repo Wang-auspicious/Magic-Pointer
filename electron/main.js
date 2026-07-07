@@ -220,8 +220,9 @@ ipcMain.on('overlay:done', (_event, payload) => {
   const enriched = {
     ...payload,
     screenBounds: display.bounds,
+    scaleFactor: display.scaleFactor || payload?.viewport?.dpr || 1,
     capturePad: 54,
   };
-  log(`overlay:done action=${enriched.action || 'capture'} points=${enriched.points?.length || 0}`);
+  log(`overlay:done action=${enriched.action || 'capture'} points=${enriched.points?.length || 0} scale=${enriched.scaleFactor} bounds=${display.bounds.x},${display.bounds.y},${display.bounds.width},${display.bounds.height}`);
   runPythonBridge(enriched);
 });

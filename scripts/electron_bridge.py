@@ -38,16 +38,47 @@ def _read_payload() -> dict[str, Any]:
     return json.loads(raw)
 
 
+def _coord_scale(payload: dict[str, Any]) -> float:
+    """Electron renderer sends CSS/DIP coordinates; PIL ImageGrab uses physical pixels.
+
+    On high-DPI Windows this is the difference between the user sweeping a file row
+    and the backend cropping the toolbar above it. Prefer Electron display scale;
+    fall back to renderer DPR for older payloads.
+    """
+
+    try:
+        scale = float(payload.get("scaleFactor") or 0)
+    except Exception:
+        scale = 0.0
+    if scale <= 0:
+        try:
+            scale = float((payload.get("viewport") or {}).get("dpr") or 1.0)
+        except Exception:
+            scale = 1.0
+    return max(0.5, min(4.0, scale))
+
+
+def _capture_pad_px(payload: dict[str, Any]) -> int:
+    # capturePad is expressed in overlay/DIP units. Convert it with the same DPI
+    # scale as the pointer coordinates, otherwise the context crop is asymmetric.
+    try:
+        pad = float(payload.get("capturePad") or 54)
+    except Exception:
+        pad = 54.0
+    return int(round(pad * _coord_scale(payload)))
+
+
 def _global_bbox(payload: dict[str, Any]) -> tuple[int, int, int, int]:
     bbox = payload.get("bbox") or {}
     bounds = payload.get("screenBounds") or {}
-    ox = int(bounds.get("x") or 0)
-    oy = int(bounds.get("y") or 0)
-    pad = int(payload.get("capturePad") or 54)
-    x1 = int(float(bbox.get("x1", 0))) + ox - pad
-    y1 = int(float(bbox.get("y1", 0))) + oy - pad
-    x2 = int(float(bbox.get("x2", x1 + 1))) + ox + pad
-    y2 = int(float(bbox.get("y2", y1 + 1))) + oy + pad
+    scale = _coord_scale(payload)
+    ox = float(bounds.get("x") or 0)
+    oy = float(bounds.get("y") or 0)
+    pad = _capture_pad_px(payload)
+    x1 = int(round((float(bbox.get("x1", 0)) + ox) * scale)) - pad
+    y1 = int(round((float(bbox.get("y1", 0)) + oy) * scale)) - pad
+    x2 = int(round((float(bbox.get("x2", bbox.get("x1", 0) + 1)) + ox) * scale)) + pad
+    y2 = int(round((float(bbox.get("y2", bbox.get("y1", 0) + 1)) + oy) * scale)) + pad
     left, right = sorted((x1, x2))
     top, bottom = sorted((y1, y2))
     return left, top, right, bottom
@@ -55,12 +86,15 @@ def _global_bbox(payload: dict[str, Any]) -> tuple[int, int, int, int]:
 
 def _global_points(payload: dict[str, Any]) -> list[tuple[int, int]]:
     bounds = payload.get("screenBounds") or {}
-    ox = int(bounds.get("x") or 0)
-    oy = int(bounds.get("y") or 0)
+    scale = _coord_scale(payload)
+    ox = float(bounds.get("x") or 0)
+    oy = float(bounds.get("y") or 0)
     out: list[tuple[int, int]] = []
     for p in payload.get("points") or []:
         try:
-            out.append((int(float(p.get("x", 0))) + ox, int(float(p.get("y", 0))) + oy))
+            x = (float(p.get("x", 0)) + ox) * scale
+            y = (float(p.get("y", 0)) + oy) * scale
+            out.append((int(round(x)), int(round(y))))
         except Exception:
             continue
     return out
@@ -316,6 +350,9 @@ def main() -> int:
             "electron_payload": {
                 "action": payload.get("action"),
                 "bbox": payload.get("bbox"),
+                "screenBounds": payload.get("screenBounds"),
+                "scaleFactor": _coord_scale(payload),
+                "viewport": payload.get("viewport"),
                 "points_count": len(stroke_points),
                 "stroke_candidates": stroke_candidates[:5],
             },

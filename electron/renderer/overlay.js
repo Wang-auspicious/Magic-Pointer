@@ -16,6 +16,7 @@ let trailAlpha = 1;
 let fadeRaf = null;
 let captureMode = false;
 let requestSeq = 0;
+let submitting = false;
 
 function resize() {
   dpr = window.devicePixelRatio || 1;
@@ -67,10 +68,12 @@ function drawSmoothPath(path, alpha = 1) {
     ctx.stroke();
   }
 
-  // Single-color feel: one soft body plus one faint highlight. No obvious bands.
-  trace(18, 'rgba(64, 132, 255, 0.26)', 24, alpha * 0.85);
-  trace(9, 'rgba(47, 111, 255, 0.50)', 12, alpha * 0.80);
-  trace(2, 'rgba(226, 241, 255, 0.58)', 2, alpha * 0.55);
+  // Gemini-like feel: one broad blurred ribbon with a very gentle inner energy.
+  // Keep alpha close between layers so it reads as one soft band, not stacked stripes.
+  trace(20, 'rgba(77, 144, 255, 0.18)', 30, alpha * 0.92);
+  trace(13, 'rgba(63, 133, 255, 0.28)', 20, alpha * 0.72);
+  trace(7, 'rgba(49, 119, 255, 0.24)', 9, alpha * 0.55);
+  trace(2, 'rgba(230, 244, 255, 0.34)', 3, alpha * 0.40);
   ctx.globalCompositeOperation = 'source-over';
   ctx.restore();
 }
@@ -144,6 +147,11 @@ function computeSelectionPayload() {
       x2: Math.max(...xs),
       y2: Math.max(...ys),
     },
+    viewport: {
+      width: window.innerWidth,
+      height: window.innerHeight,
+      dpr: window.devicePixelRatio || 1,
+    },
   };
 }
 
@@ -174,7 +182,8 @@ function restoreAfterCapture(seq) {
 }
 
 function runSelectedCommand(action = 'command') {
-  if (!selectedPayload) return;
+  if (!selectedPayload || submitting) return;
+  submitting = true;
   const seq = ++requestSeq;
   if (!selectionAnchor && lastPointer) selectionAnchor = { ...lastPointer };
   const command = commandInput.value.trim();
@@ -230,6 +239,7 @@ function resetOverlay() {
   trailAlpha = 1;
   captureMode = false;
   requestSeq += 1;
+  submitting = false;
   if (fadeRaf) cancelAnimationFrame(fadeRaf);
   fadeRaf = null;
   pill.classList.add('hidden');
@@ -287,8 +297,9 @@ window.addEventListener('pointerup', (e) => {
 
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') window.magicPointer?.hide();
-  if (e.key.toLowerCase() === 'r') resetOverlay();
-  if (e.key === 'Enter' && !pill.classList.contains('hidden')) runSelectedCommand('command');
+  if (e.key.toLowerCase() === 'r' && e.target !== commandInput) resetOverlay();
+  // Enter inside the input is handled by commandInput below. Do not bubble-submit twice.
+  if (e.key === 'Enter' && e.target !== commandInput && !pill.classList.contains('hidden')) runSelectedCommand('command');
 });
 
 pill.addEventListener('pointerdown', (e) => e.stopPropagation());
@@ -305,6 +316,7 @@ window.magicPointer?.onShow(() => resetOverlay());
 window.magicPointer?.onHide(() => resetOverlay());
 window.magicPointer?.onResult((payload) => {
   requestSeq += 1;
+  submitting = false;
   showResult(payload);
 });
 
