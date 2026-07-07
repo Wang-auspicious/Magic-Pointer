@@ -97,21 +97,21 @@ function drawPointer(p) {
   ctx.rotate(-0.08);
   ctx.scale(0.92, 0.92);
 
-  // Paper-plane style pointer: compact, concave back, no long cursor tail.
+  // Paper-plane style pointer with a conventional cursor direction: tip points upper-left.
   const path = new Path2D();
-  path.moveTo(-2.0, -0.8);
-  path.quadraticCurveTo(-0.8, -1.4, 1.2, -0.4);
-  path.lineTo(27.0, 11.6);
-  path.quadraticCurveTo(30.0, 13.0, 27.0, 14.6);
-  path.lineTo(11.6, 18.0);
-  path.lineTo(7.2, 28.2);
-  path.quadraticCurveTo(6.1, 30.8, 4.4, 28.3);
-  path.lineTo(0.3, 18.3);
-  path.lineTo(-6.4, 22.0);
-  path.quadraticCurveTo(-8.6, 23.2, -7.4, 20.8);
-  path.lineTo(-1.5, 12.3);
-  path.lineTo(-3.7, 2.1);
-  path.quadraticCurveTo(-4.2, -0.3, -2.0, -0.8);
+  path.moveTo(-5.0, -4.0);                 // visual tip / hot spot
+  path.quadraticCurveTo(-2.6, -5.0, 0.2, -3.2);
+  path.lineTo(29.0, 10.2);                 // upper wing
+  path.quadraticCurveTo(31.6, 11.4, 28.8, 13.0);
+  path.lineTo(13.0, 17.0);                 // inner fold/notch
+  path.lineTo(8.4, 28.0);                  // lower wing point
+  path.quadraticCurveTo(7.3, 30.7, 5.4, 28.2);
+  path.lineTo(0.0, 18.6);
+  path.lineTo(-4.0, 22.8);                 // concave back, not a long tail
+  path.quadraticCurveTo(-6.0, 24.8, -5.4, 21.7);
+  path.lineTo(-1.8, 11.8);
+  path.lineTo(-6.8, 0.0);
+  path.quadraticCurveTo(-7.8, -2.4, -5.0, -4.0);
   path.closePath();
 
   ctx.shadowColor = 'rgba(37, 99, 235, .44)';
@@ -122,11 +122,11 @@ function drawPointer(p) {
   ctx.fill(path);
   ctx.stroke(path);
 
-  // Small inner fold line gives the paper-plane feel without becoming a tail.
+  // Inner fold, short and diagonal, to avoid a tail-like silhouette.
   ctx.beginPath();
-  ctx.moveTo(-1.2, 12.2);
-  ctx.quadraticCurveTo(7.5, 13.6, 21.8, 12.7);
-  ctx.strokeStyle = 'rgba(96, 165, 250, .34)';
+  ctx.moveTo(-1.4, 11.6);
+  ctx.quadraticCurveTo(7.4, 12.8, 22.0, 11.6);
+  ctx.strokeStyle = 'rgba(96, 165, 250, .32)';
   ctx.lineWidth = 1.0;
   ctx.stroke();
   ctx.restore();

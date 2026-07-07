@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import os
+import re
 import time
 from io import BytesIO
 from pathlib import Path
@@ -17,6 +18,18 @@ DEFAULT_SYSTEM_PROMPT = """你是 Magic Pointer Open 的屏幕对象助手。
 请基于截图内容直接回答。若截图信息不足，请明确说缺什么，不要编造。
 输出要短、可执行、中文优先；需要时给出步骤或要点。"""
 
+
+
+def _plain_error_excerpt(text: str, limit: int = 220) -> str:
+    """Turn gateway HTML/error pages into a compact user-facing message."""
+
+    text = re.sub(r"<script[\s\S]*?</script>", " ", text or "", flags=re.I)
+    text = re.sub(r"<style[\s\S]*?</style>", " ", text, flags=re.I)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    if not text:
+        return "\u670d\u52a1\u7aef\u6ca1\u6709\u8fd4\u56de\u53ef\u8bfb\u9519\u8bef\u4fe1\u606f\u3002"
+    return text[:limit]
 
 def read_local_secret(name: str) -> str | None:
     if os.getenv("MAGIC_POINTER_DISABLE_LOCAL_SECRETS") == "1":
@@ -130,9 +143,11 @@ def ask_vision_model(
 
 
         last_exc: Exception | None = None
-        # Try full payload twice; if the gateway drops TLS, fall back to primary
-        # image only while keeping structured text context.
-        attempts = [(True, 0.0), (True, 0.8), (False, 1.2)]
+        last_http_error: tuple[int, str] | None = None
+        # Try full payload twice; if the gateway is unstable or dislikes the
+        # multimodal payload, fall back to primary image only while keeping text
+        # context. 5xx must not dump gateway HTML into the UI.
+        attempts = [(True, 0.0), (True, 0.9), (False, 1.3)]
         for include_extras, delay in attempts:
             if delay:
                 time.sleep(delay)
@@ -140,16 +155,23 @@ def ask_vision_model(
                 payload = build_payload(include_extras=include_extras)
                 with httpx.Client(timeout=120, follow_redirects=True) as client:
                     response = client.post(f"{base_url}/chat/completions", headers=headers, json=payload)
+                if response.status_code >= 500:
+                    last_http_error = (response.status_code, _plain_error_excerpt(response.text))
+                    continue
                 if response.status_code >= 400:
-                    return f"AI \u8c03\u7528\u5931\u8d25\uff1aHTTP {response.status_code}\n\n{response.text[:1200]}"
+                    detail = _plain_error_excerpt(response.text)
+                    return f"AI \u8c03\u7528\u5931\u8d25\uff1aHTTP {response.status_code}\u3002\n{detail}\n\n\u622a\u56fe\u548c\u5bf9\u8c61\u5df2\u4fdd\u5b58\uff0c\u53ef\u4ee5\u7a0d\u540e\u91cd\u8bd5\u3002"
                 data = response.json()
                 answer = data["choices"][0]["message"].get("content") or ""
-                if not include_extras and extra_image_paths:
-                    answer += "\n\n(Gateway was unstable, so this request fell back to the primary screenshot plus structured context.)"
+                if not include_extras and (extra_image_paths or labeled_extra_images):
+                    answer += "\n\n\uff08\u7f51\u5173\u4e0d\u7a33\u5b9a\uff0c\u672c\u6b21\u5df2\u964d\u7ea7\u4e3a\u4e3b\u622a\u56fe + \u7ed3\u6784\u5316\u4e0a\u4e0b\u6587\u3002\uff09"
                 return answer
             except (httpx.ConnectError, httpx.ReadError, httpx.RemoteProtocolError, httpx.TimeoutException) as exc:
                 last_exc = exc
                 continue
+        if last_http_error:
+            code, detail = last_http_error
+            return f"AI \u8c03\u7528\u5931\u8d25\uff1aHTTP {code}\uff08\u670d\u52a1\u7aef/\u4ee3\u7406\u7f51\u5173\u4e34\u65f6\u9519\u8bef\uff09\u3002\n{detail}\n\n\u622a\u56fe\u548c\u5bf9\u8c61\u5df2\u4fdd\u5b58\uff1b\u8fd9\u901a\u5e38\u4e0d\u662f\u4f60\u753b\u5f97\u592a\u5927\uff0c\u800c\u662f\u4e0a\u6e38\u7f51\u5173\u77ed\u65f6\u4e0d\u53ef\u7528\u3002\u8bf7\u7a0d\u540e\u91cd\u8bd5\u3002"
         if last_exc:
             raise last_exc
         raise RuntimeError("unknown API failure")
