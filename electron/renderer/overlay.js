@@ -19,6 +19,8 @@ let requestSeq = 0;
 let submitting = false;
 let renderRaf = null;
 let resultDrag = null;
+let pulseRaf = null;
+let lastPulseFrame = 0;
 
 function resize() {
   dpr = window.devicePixelRatio || 1;
@@ -92,39 +94,41 @@ function drawSmoothPath(path, alpha = 1) {
 
 function drawPointer(p) {
   if (!p || captureMode) return;
+  const now = performance.now();
+  const pulse = 0.5 + 0.5 * Math.sin(now / 760);
   ctx.save();
-  // Google-style concave quadrilateral cursor: white fill, blue outline, soft glow.
-  // Hot spot is the upper-left tip. No paper-plane fold, no long tail.
+  // Google-style concave quadrilateral cursor: white fill, blue outline, soft breathing glow.
+  // Hot spot is the upper-left tip. Narrower wings than the previous version.
   ctx.translate(p.x, p.y);
   ctx.rotate(-0.045);
-  ctx.scale(0.92, 0.92);
+  ctx.scale(0.90, 0.90);
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
 
   const path = new Path2D();
   path.moveTo(0.0, 0.0);                    // upper-left tip / hot spot
-  path.quadraticCurveTo(1.0, -1.0, 3.0, 0.0);
-  path.lineTo(31.5, 13.2);                  // right point
-  path.quadraticCurveTo(35.0, 14.9, 31.5, 16.9);
-  path.lineTo(13.4, 21.5);                  // inward notch / concave corner
-  path.lineTo(6.2, 36.5);                   // lower point
-  path.quadraticCurveTo(4.5, 40.0, 3.2, 36.2);
-  path.lineTo(-1.7, 3.8);
-  path.quadraticCurveTo(-2.1, 1.2, 0.0, 0.0);
+  path.quadraticCurveTo(1.0, -0.9, 2.7, 0.0);
+  path.lineTo(28.0, 12.6);                  // right point, pulled inward
+  path.quadraticCurveTo(31.0, 14.0, 28.2, 15.7);
+  path.lineTo(12.5, 19.2);                  // inward notch / concave corner
+  path.lineTo(6.2, 33.5);                   // lower point, pulled upward/inward
+  path.quadraticCurveTo(4.7, 36.7, 3.4, 33.2);
+  path.lineTo(-1.4, 3.7);
+  path.quadraticCurveTo(-1.9, 1.1, 0.0, 0.0);
   path.closePath();
 
-  // Outer blue halo, then crisp blue border, then white interior.
-  ctx.shadowColor = 'rgba(37, 99, 235, .48)';
-  ctx.shadowBlur = 10;
+  // Soft breathing halo + crisp blue border.
+  ctx.shadowColor = `rgba(37, 99, 235, ${0.34 + pulse * 0.18})`;
+  ctx.shadowBlur = 8 + pulse * 5;
   ctx.fillStyle = 'rgba(255, 255, 255, .99)';
   ctx.strokeStyle = 'rgba(37, 99, 235, .94)';
-  ctx.lineWidth = 2.2;
+  ctx.lineWidth = 2.15;
   ctx.fill(path);
   ctx.stroke(path);
 
   ctx.shadowBlur = 0;
-  ctx.strokeStyle = 'rgba(96, 165, 250, .38)';
-  ctx.lineWidth = 0.8;
+  ctx.strokeStyle = 'rgba(96, 165, 250, .34)';
+  ctx.lineWidth = 0.75;
   ctx.stroke(path);
   ctx.restore();
 }
@@ -232,7 +236,7 @@ function showResult(payload) {
     result.style.top = `${y}px`;
   }
   if (payload.ok === null) {
-    result.innerHTML = `<div class="title" data-drag-handle="true">Thinking</div><div class="content muted">${escapeHtml(payload.status || 'Processing...')}</div>`;
+    result.innerHTML = `<div class="title thinking-title" data-drag-handle="true"><span class="spinner" aria-hidden="true"></span>Thinking</div><div class="content muted">${escapeHtml(payload.status || 'Processing...')}</div>`;
   } else if (payload.ok) {
     const answer = String(payload.answer || '').slice(0, 1600);
     result.innerHTML = `<div class="title" data-drag-handle="true">${escapeHtml(payload.prompt || 'Result')}</div><div class="content">${escapeHtml(answer)}</div>`;
@@ -271,6 +275,25 @@ function resetOverlay() {
   commandInput.value = '';
   hint.classList.remove('dim');
   clear();
+}
+
+
+function startPulseLoop() {
+  if (pulseRaf) return;
+  function tick(now) {
+    if (now - lastPulseFrame > 33) {
+      lastPulseFrame = now;
+      if (!captureMode) render();
+    }
+    pulseRaf = requestAnimationFrame(tick);
+  }
+  pulseRaf = requestAnimationFrame(tick);
+}
+
+function stopPulseLoop() {
+  if (pulseRaf) cancelAnimationFrame(pulseRaf);
+  pulseRaf = null;
+  lastPulseFrame = 0;
 }
 
 window.addEventListener('resize', resize);
@@ -371,8 +394,8 @@ function stopResultDrag(e) {
 result.addEventListener('pointerup', stopResultDrag);
 result.addEventListener('pointercancel', stopResultDrag);
 
-window.magicPointer?.onShow(() => resetOverlay());
-window.magicPointer?.onHide(() => resetOverlay());
+window.magicPointer?.onShow(() => { resetOverlay(); startPulseLoop(); });
+window.magicPointer?.onHide(() => { stopPulseLoop(); resetOverlay(); });
 window.magicPointer?.onResult((payload) => {
   requestSeq += 1;
   submitting = false;
