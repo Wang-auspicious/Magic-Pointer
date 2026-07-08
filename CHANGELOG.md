@@ -20,6 +20,7 @@
 - Added regression tests for grounding schemas, Explorer dependency fallback, and action bridge rejection paths.
 - Improved Explorer copy-path flow: added PowerShell COM/UIA fallback when Python UIA packages are missing, and suppresses misleading manual-shortcut answers when safe path grounding fails.
 - Added local file content understanding scaffold: Explorer-grounded PDF/HTML/TXT/MD/DOCX/ZIP files can be read locally and injected into model context for summarize/explain/key-point prompts.
+- Added UFO-inspired Windows app adapter harness with Office Word/Excel native selection context via COM/PowerShell and a hard local permission policy for future write-back actions.
 
 - Added local `secrets/*.txt` config fallback for API key/base URL/model.
 - Switched AI call path to direct OpenAI-compatible HTTP chat completions for 78code compatibility.

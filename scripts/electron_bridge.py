@@ -12,6 +12,7 @@ if str(ROOT) not in sys.path:
 
 from PIL import Image, ImageDraw, ImageGrab
 
+from app.adapters import default_adapter_registry, format_adapter_context
 from app.ai_client import ask_vision_model
 from app.object_store import ObjectStore, PointerObject, new_object_id
 from app.file_context import format_local_file_context, read_local_file_context, wants_file_content
@@ -403,6 +404,8 @@ def main() -> int:
     if primary_path and not wants_copy_path(prompt) and (wants_file_content(prompt) or (primary_grounded and primary_grounded.kind in {"file", "folder", "archive"})):
         local_file_context = read_local_file_context(primary_path)
     local_file_text = format_local_file_context(local_file_context)
+    app_adapter_context = default_adapter_registry().read_first_context(window_dicts, selection=pointer_selection, command=prompt)
+    app_adapter_text = format_adapter_context(app_adapter_context)
 
     tasks = TaskContextStore(OBJECT_DIR)
     store = ObjectStore(OBJECT_DIR)
@@ -419,6 +422,7 @@ def main() -> int:
         + screen_ctx.to_prompt_context()
         + ("\n\n" + grounding_text if grounding_text else "")
         + ("\n\n" + local_file_text if local_file_text else "")
+        + ("\n\n" + app_adapter_text if app_adapter_text else "")
         + ("\n\n" + candidate_text if candidate_text else "")
         + "\n\n"
         + tasks.build_reference_context(store, task_id, obj_id, selection_bbox)
@@ -457,6 +461,7 @@ def main() -> int:
             "windows": window_dicts,
             "grounding": pointer_result.to_dict(),
             "local_file_context": local_file_context.to_dict() if local_file_context else None,
+            "app_adapter_context": app_adapter_context.to_dict() if app_adapter_context else None,
             "electron_payload": {
                 "action": payload.get("action"),
                 "bbox": payload.get("bbox"),
@@ -486,6 +491,7 @@ def main() -> int:
         "strokeCandidates": stroke_candidates[:5],
         "grounding": pointer_result.to_dict(),
         "localFileContext": local_file_context.to_dict() if local_file_context else None,
+        "appAdapterContext": app_adapter_context.to_dict() if app_adapter_context else None,
         "actionProposals": [proposal.to_dict() for proposal in pointer_result.proposals],
     }, ensure_ascii=True))
     return 0
