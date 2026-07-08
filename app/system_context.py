@@ -189,6 +189,7 @@ def list_visible_windows() -> list[dict[str, object]]:
                 return True
             windows.append(
                 {
+                    "hwnd": int(hwnd),
                     "z_order": len(windows) + 1,
                     "title": title,
                     "class_name": get_class_name(hwnd),

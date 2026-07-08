@@ -14,6 +14,7 @@ Rect = tuple[int, int, int, int]
 @dataclass
 class WindowObject:
     index: int
+    hwnd: int
     title: str
     class_name: str
     pid: int
@@ -129,6 +130,7 @@ def build_screen_context(selection_bbox: Rect, image_path: Path) -> ScreenContex
         windows.append(
             WindowObject(
                 index=idx,
+                hwnd=int(item.get("hwnd", 0) or 0),
                 title=str(item.get("title", "")),
                 class_name=str(item.get("class_name", "")),
                 pid=int(item.get("pid", 0) or 0),

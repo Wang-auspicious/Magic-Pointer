@@ -230,3 +230,27 @@
 3. No execution/write-back yet.
 4. No system tray/native shell integration yet.
 
+## v0.2.0-alpha / Pointer-first local grounding and safe action scaffold
+
+### Completed
+
+- Added platform-neutral `grounding` and `actions` schemas for selected objects, grounded local objects, typed action proposals, confirmation policy, and execution results.
+- Added an Explorer file grounder that can combine Shell COM selected items and UIA list-item rectangles when available.
+- Added safe fallback behavior: if COM/UIA dependencies are missing or no file item is confidently hit, the system only records low-confidence Explorer window context and does not propose file actions.
+- Added `MagicPointerOperator` as a pointer-first operator layer: human movement selects intent/object, the model receives local grounding context, and actions remain typed proposals.
+- Added a minimal safe execution path for `copy_text_to_clipboard`: explicit UI confirmation, allowlisted executor, and main-process proposal provenance token before the renderer can execute.
+- Added Electron overlay support for safe Markdown output and confirmable action chips.
+
+### Closer to desktop AGI
+
+- The project now has a real object-to-action seam instead of pure screenshot Q&A.
+- This keeps Magic Pointer compatible with future Computer Use: human pointer input narrows the target, local adapters ground it, and AI plans remain separated from OS execution.
+- The implementation borrows the useful parts of UFO/UI-TARS style systems without adopting an always-autonomous screenshot-click loop.
+
+### Remaining distance
+
+1. Only Explorer file/path grounding has a first scaffold; Chrome DOM, UIA text fields, OCR, Office/PDF, and app-specific adapters are still missing.
+2. The only executable action is confirmed clipboard copy. Click/type/open/move/file operations need typed commands, per-action policy, and verification before enabling.
+3. No multi-step planner/verifier loop yet; there is no automatic recovery when an action fails.
+4. UIA/COM dependencies are optional and not packaged as a polished installer path yet.
+5. Local grounding confidence still needs real Windows Explorer integration tests on live desktops.

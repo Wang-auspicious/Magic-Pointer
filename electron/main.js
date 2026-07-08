@@ -2,6 +2,7 @@
 const path = require('path');
 const { spawn } = require('child_process');
 const fs = require('fs');
+const crypto = require('crypto');
 
 let overlayWindow = null;
 let mousePoints = [];
@@ -12,6 +13,10 @@ const ROOT = path.resolve(__dirname, '..');
 const RUNTIME_DIR = path.join(ROOT, 'data', 'runtime');
 const LOG_PATH = path.join(RUNTIME_DIR, 'electron.log');
 const PID_PATH = path.join(RUNTIME_DIR, 'electron.pid');
+const ACTION_PROPOSAL_TTL_MS = 2 * 60 * 1000;
+const ALLOWED_ACTION_TYPES = new Set(['copy_text_to_clipboard']);
+
+const pendingActionProposals = new Map();
 
 function log(message) {
   try {
@@ -20,6 +25,48 @@ function log(message) {
   } catch (_) {
     // Logging must never break the overlay.
   }
+}
+
+function prunePendingActionProposals(now = Date.now()) {
+  for (const [token, entry] of pendingActionProposals.entries()) {
+    if (!entry || entry.expiresAt <= now) pendingActionProposals.delete(token);
+  }
+}
+
+function safeClone(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function registerActionProposals(parsed) {
+  if (!parsed || !Array.isArray(parsed.actionProposals)) return;
+
+  prunePendingActionProposals();
+  const now = Date.now();
+  const safeProposals = [];
+  for (const proposal of parsed.actionProposals.slice(0, 5)) {
+    if (!proposal || typeof proposal !== 'object') continue;
+    if (!ALLOWED_ACTION_TYPES.has(proposal.action_type)) continue;
+
+    const token = crypto.randomUUID();
+    const canonical = safeClone(proposal);
+    pendingActionProposals.set(token, {
+      proposal: canonical,
+      createdAt: now,
+      expiresAt: now + ACTION_PROPOSAL_TTL_MS,
+    });
+    safeProposals.push({ ...canonical, action_token: token });
+  }
+
+  parsed.actionProposals = safeProposals;
+}
+
+function takePendingActionProposal(token) {
+  prunePendingActionProposals();
+  if (typeof token !== 'string' || !token) return null;
+  const entry = pendingActionProposals.get(token);
+  if (!entry) return null;
+  pendingActionProposals.delete(token);
+  return safeClone(entry.proposal);
 }
 
 const gotLock = app.requestSingleInstanceLock();
@@ -178,10 +225,10 @@ app.on('will-quit', () => {
 
 ipcMain.on('overlay:hide', hideOverlay);
 
-function runPythonBridge(payload) {
+function runPythonBridge(payload, scriptPath = 'scripts/electron_bridge.py') {
   if (!overlayWindow) return;
   const py = process.env.MAGIC_POINTER_PYTHON || 'python';
-  const child = spawn(py, ['scripts/electron_bridge.py'], {
+  const child = spawn(py, [scriptPath], {
     cwd: ROOT,
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
@@ -213,7 +260,10 @@ function runPythonBridge(payload) {
       parsed.code = code;
       parsed.stderr = stderr.slice(0, 2000);
     }
-    log(`bridge close code=${code} ok=${parsed?.ok}`);
+    if (scriptPath === 'scripts/electron_bridge.py') {
+      registerActionProposals(parsed);
+    }
+    log(`bridge close script=${scriptPath} code=${code} ok=${parsed?.ok}`);
     overlayWindow?.webContents.send('overlay:result', parsed);
   });
 
@@ -231,4 +281,26 @@ ipcMain.on('overlay:done', (_event, payload) => {
   };
   log(`overlay:done action=${enriched.action || 'capture'} points=${enriched.points?.length || 0} scale=${enriched.scaleFactor} bounds=${display.bounds.x},${display.bounds.y},${display.bounds.width},${display.bounds.height}`);
   runPythonBridge(enriched);
+});
+
+
+ipcMain.on('overlay:execute-action', (_event, payload) => {
+  const token = payload?.actionToken || payload?.action_token;
+  const proposal = takePendingActionProposal(token);
+  if (!proposal) {
+    log('overlay:execute-action rejected missing-or-expired token');
+    overlayWindow?.webContents.send('overlay:result', {
+      ok: false,
+      prompt: 'Action result',
+      error: 'Action expired or was not proposed by this session.',
+    });
+    return;
+  }
+
+  const enriched = {
+    proposal,
+    confirmed: payload?.confirmed === true,
+  };
+  log(`overlay:execute-action type=${proposal.action_type || 'unknown'} confirmed=${enriched.confirmed}`);
+  runPythonBridge(enriched, 'scripts/action_bridge.py');
 });

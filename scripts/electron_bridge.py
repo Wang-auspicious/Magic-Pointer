@@ -14,8 +14,10 @@ from PIL import Image, ImageDraw, ImageGrab
 
 from app.ai_client import ask_vision_model
 from app.object_store import ObjectStore, PointerObject, new_object_id
+from app.pointer_operator import MagicPointerOperator, format_grounding_for_prompt
 from app.screen_context import build_screen_context
 from app.task_context import TaskContextStore
+from app.grounding.schema import PointerSelection
 
 CAPTURE_DIR = ROOT / "data" / "captures"
 OBJECT_DIR = ROOT / "data" / "objects"
@@ -371,6 +373,30 @@ def main() -> int:
 
     prompt = _prompt_for(payload)
     screen_ctx = build_screen_context(capture_bbox, image_path)
+    window_dicts = [w.__dict__ for w in screen_ctx.windows]
+    selection_point = stroke_points[-1] if stroke_points else ((selection_bbox[0] + selection_bbox[2]) // 2, (selection_bbox[1] + selection_bbox[3]) // 2)
+    pointer_selection = PointerSelection(
+        id=obj_id,
+        point=selection_point,
+        bbox=selection_bbox,
+        selected_at=datetime.now().isoformat(timespec="seconds"),
+        source="electron_overlay",
+        metadata={
+            "capture_bbox": capture_bbox,
+            "screen_bounds": payload.get("screenBounds"),
+            "scale_factor": _coord_scale(payload),
+        },
+    )
+    pointer_operator = MagicPointerOperator()
+    pointer_result = pointer_operator.observe(
+        selection=pointer_selection,
+        command=prompt,
+        windows=window_dicts,
+        stroke_points=stroke_points,
+        row_candidates=stroke_candidates,
+    )
+    grounding_text = format_grounding_for_prompt(pointer_result)
+
     tasks = TaskContextStore(OBJECT_DIR)
     store = ObjectStore(OBJECT_DIR)
     task_result = tasks.active_task(auto_rollover=True)
@@ -384,6 +410,7 @@ def main() -> int:
         "If the blue stroke encloses multiple candidates, identify the most central/most likely target and mention ambiguity briefly.\n"
         "Reply as a concise action card, not a long chat.\n\n"
         + screen_ctx.to_prompt_context()
+        + ("\n\n" + grounding_text if grounding_text else "")
         + ("\n\n" + candidate_text if candidate_text else "")
         + "\n\n"
         + tasks.build_reference_context(store, task_id, obj_id, selection_bbox)
@@ -411,7 +438,8 @@ def main() -> int:
             "capture_bbox": capture_bbox,
             "pointer_annotated_image_path": str(pointer_image_path.relative_to(ROOT)),
             "annotated_image_path": str(screen_ctx.annotated_image_path.relative_to(ROOT)) if screen_ctx.annotated_image_path else None,
-            "windows": [w.__dict__ for w in screen_ctx.windows],
+            "windows": window_dicts,
+            "grounding": pointer_result.to_dict(),
             "electron_payload": {
                 "action": payload.get("action"),
                 "bbox": payload.get("bbox"),
@@ -439,6 +467,8 @@ def main() -> int:
         "prompt": prompt,
         "answer": answer,
         "strokeCandidates": stroke_candidates[:5],
+        "grounding": pointer_result.to_dict(),
+        "actionProposals": [proposal.to_dict() for proposal in pointer_result.proposals],
     }, ensure_ascii=True))
     return 0
 

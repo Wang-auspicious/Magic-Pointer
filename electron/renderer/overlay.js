@@ -21,6 +21,7 @@ let renderRaf = null;
 let resultDrag = null;
 let pulseRaf = null;
 let lastPulseFrame = 0;
+let currentActionProposals = [];
 
 function resize() {
   dpr = window.devicePixelRatio || 1;
@@ -246,15 +247,49 @@ function showResult(payload) {
     result.style.left = `${x}px`;
     result.style.top = `${y}px`;
   }
+  currentActionProposals = Array.isArray(payload.actionProposals) ? payload.actionProposals.slice(0, 3) : [];
   if (payload.ok === null) {
+    currentActionProposals = [];
     result.innerHTML = `<div class="title thinking-title" data-drag-handle="true"><span class="spinner" aria-hidden="true"></span>Thinking</div><div class="content muted">${escapeHtml(payload.status || 'Processing...')}</div>`;
   } else if (payload.ok) {
     const answer = String(payload.answer || '').slice(0, 1600);
-    result.innerHTML = `<div class="title" data-drag-handle="true">${escapeHtml(payload.prompt || 'Result')}</div><div class="content">${escapeHtml(answer)}</div>`;
+    result.innerHTML = `<div class="title" data-drag-handle="true">${escapeHtml(payload.prompt || 'Result')}</div><div class="content">${renderSafeMarkdown(answer)}</div>${renderActionProposals(currentActionProposals)}`;
   } else {
+    currentActionProposals = [];
     result.innerHTML = `<div class="title" data-drag-handle="true">Bridge error</div><div class="content muted">${escapeHtml(payload.error || 'Unknown error')}</div>`;
   }
   result.classList.remove('hidden');
+}
+
+
+function renderActionProposals(proposals) {
+  const executable = proposals.filter((proposal) => typeof proposal?.action_token === 'string' && proposal.action_token.length > 0);
+  if (!executable.length) return '';
+  const buttons = executable.map((proposal, index) => {
+    const originalIndex = currentActionProposals.indexOf(proposal);
+    const label = actionProposalLabel(proposal);
+    const confirm = proposal.confirmation_required === true ? 'Confirm ' : '';
+    return `<button class="action-chip" type="button" data-action-index="${originalIndex >= 0 ? originalIndex : index}">${escapeHtml(confirm + label)}</button>`;
+  }).join('');
+  return `<div class="actions">${buttons}</div>`;
+}
+
+function actionProposalLabel(proposal) {
+  switch (proposal?.action_type) {
+    case 'copy_text_to_clipboard':
+      return 'copy path';
+    default:
+      return String(proposal?.action_type || 'run action').replaceAll('_', ' ');
+  }
+}
+
+function executeActionProposal(index) {
+  const proposal = currentActionProposals[index];
+  if (!proposal || typeof proposal.action_token !== 'string') return;
+  const actionToken = proposal.action_token;
+  currentActionProposals = [];
+  showResult({ ok: null, status: 'Executing action...' });
+  window.magicPointer?.executeAction({ actionToken, proposalId: proposal.id, confirmed: true });
 }
 
 function escapeHtml(value) {
@@ -266,6 +301,65 @@ function escapeHtml(value) {
     .replaceAll("'", '&#039;');
 }
 
+function renderSafeMarkdown(value) {
+  const lines = String(value).replace(/\r\n?/g, '\n').split('\n');
+  let html = '';
+  let inList = false;
+
+  lines.forEach((line, index) => {
+    const listMatch = line.match(/^\s*-\s+(.*)$/);
+    if (listMatch) {
+      if (!inList) {
+        html += '<ul>';
+        inList = true;
+      }
+      html += `<li>${renderSafeMarkdownInline(listMatch[1])}</li>`;
+      return;
+    }
+
+    if (inList) {
+      html += '</ul>';
+      inList = false;
+    }
+
+    if (line.length > 0) html += renderSafeMarkdownInline(line);
+    if (index < lines.length - 1) html += '<br>';
+  });
+
+  if (inList) html += '</ul>';
+  return html;
+}
+
+function renderSafeMarkdownInline(text, options = {}) {
+  const allowBold = options.allowBold !== false;
+  let html = '';
+  let i = 0;
+
+  while (i < text.length) {
+    if (text[i] === '`') {
+      const end = text.indexOf('`', i + 1);
+      if (end !== -1) {
+        html += `<code>${escapeHtml(text.slice(i + 1, end))}</code>`;
+        i = end + 1;
+        continue;
+      }
+    }
+
+    if (allowBold && text.startsWith('**', i)) {
+      const end = text.indexOf('**', i + 2);
+      if (end !== -1 && end > i + 2) {
+        html += `<strong>${renderSafeMarkdownInline(text.slice(i + 2, end), { allowBold: false })}</strong>`;
+        i = end + 2;
+        continue;
+      }
+    }
+
+    html += escapeHtml(text[i]);
+    i += 1;
+  }
+
+  return html;
+}
 function resizeCommandInput() {
   commandInput.style.height = '24px';
   commandInput.style.height = `${Math.min(commandInput.scrollHeight, 76)}px`;
@@ -378,6 +472,14 @@ commandInput.addEventListener('keydown', (e) => {
   }
 });
 
+
+result.addEventListener('click', (e) => {
+  const actionButton = e.target.closest('[data-action-index]');
+  if (!actionButton) return;
+  e.preventDefault();
+  e.stopPropagation();
+  executeActionProposal(Number(actionButton.dataset.actionIndex));
+});
 
 result.addEventListener('pointerdown', (e) => {
   const handle = e.target.closest('[data-drag-handle="true"]');

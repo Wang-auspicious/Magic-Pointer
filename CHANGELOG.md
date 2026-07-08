@@ -11,6 +11,14 @@
 
 ## Unreleased
 
+- Added v0.2.0-alpha pointer-first local grounding/action scaffold:
+  - platform-neutral grounding and action schemas;
+  - Explorer file grounding adapter with optional COM/UIA backends and safe fallback;
+  - `MagicPointerOperator` observation/proposal pipeline;
+  - typed clipboard-copy action bridge with confirmation and main-process proposal provenance tokens;
+  - safe Markdown result rendering and action chips in the Electron overlay.
+- Added regression tests for grounding schemas, Explorer dependency fallback, and action bridge rejection paths.
+
 - Added local `secrets/*.txt` config fallback for API key/base URL/model.
 - Switched AI call path to direct OpenAI-compatible HTTP chat completions for 78code compatibility.
 - Verified 78code `gpt-5.4-mini` text and vision calls.

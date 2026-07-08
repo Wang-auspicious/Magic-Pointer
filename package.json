@@ -8,7 +8,7 @@
   },
   "scripts": {
     "overlay": "electron electron/main.js",
-    "test": "node --check electron/main.js && node --check electron/preload.js && node --check electron/renderer/overlay.js"
+    "test": "node --check electron/main.js && node --check electron/preload.js && node --check electron/renderer/overlay.js && node tests/overlay_static_test.js"
   },
   "keywords": [
     "ai-pointer",
