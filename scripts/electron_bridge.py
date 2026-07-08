@@ -14,6 +14,7 @@ from PIL import Image, ImageDraw, ImageGrab
 
 from app.ai_client import ask_vision_model
 from app.object_store import ObjectStore, PointerObject, new_object_id
+from app.file_context import format_local_file_context, read_local_file_context, wants_file_content
 from app.pointer_operator import MagicPointerOperator, format_grounding_for_prompt, wants_copy_path
 from app.screen_context import build_screen_context
 from app.task_context import TaskContextStore
@@ -396,6 +397,12 @@ def main() -> int:
         row_candidates=stroke_candidates,
     )
     grounding_text = format_grounding_for_prompt(pointer_result)
+    local_file_context = None
+    primary_grounded = pointer_result.grounding.primary
+    primary_path = str((primary_grounded.metadata or {}).get("path") or "") if primary_grounded else ""
+    if primary_path and not wants_copy_path(prompt) and (wants_file_content(prompt) or (primary_grounded and primary_grounded.kind in {"file", "folder", "archive"})):
+        local_file_context = read_local_file_context(primary_path)
+    local_file_text = format_local_file_context(local_file_context)
 
     tasks = TaskContextStore(OBJECT_DIR)
     store = ObjectStore(OBJECT_DIR)
@@ -411,6 +418,7 @@ def main() -> int:
         "Reply as a concise action card, not a long chat.\n\n"
         + screen_ctx.to_prompt_context()
         + ("\n\n" + grounding_text if grounding_text else "")
+        + ("\n\n" + local_file_text if local_file_text else "")
         + ("\n\n" + candidate_text if candidate_text else "")
         + "\n\n"
         + tasks.build_reference_context(store, task_id, obj_id, selection_bbox)
@@ -448,6 +456,7 @@ def main() -> int:
             "annotated_image_path": str(screen_ctx.annotated_image_path.relative_to(ROOT)) if screen_ctx.annotated_image_path else None,
             "windows": window_dicts,
             "grounding": pointer_result.to_dict(),
+            "local_file_context": local_file_context.to_dict() if local_file_context else None,
             "electron_payload": {
                 "action": payload.get("action"),
                 "bbox": payload.get("bbox"),
@@ -476,6 +485,7 @@ def main() -> int:
         "answer": answer,
         "strokeCandidates": stroke_candidates[:5],
         "grounding": pointer_result.to_dict(),
+        "localFileContext": local_file_context.to_dict() if local_file_context else None,
         "actionProposals": [proposal.to_dict() for proposal in pointer_result.proposals],
     }, ensure_ascii=True))
     return 0

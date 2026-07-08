@@ -27,6 +27,13 @@ def test_resolve_child_path_handles_hidden_extension_names() -> None:
         assert resolve_child_path(str(folder), "demo.pdf") == str(file_path)
         assert resolve_child_path(str(folder), "demo") == str(file_path)
 
+        em_dash = chr(0x2014)
+        replacement = chr(0xFFFD)
+        special = folder / ("Shaping the future of AI interaction by reimagining the mouse pointer " + em_dash + " Google DeepMind.html")
+        special.write_text("x", encoding="utf-8")
+        mangled = "Shaping the future of AI interaction by reimagining the mouse pointer " + replacement * 2 + " Google DeepMind.html"
+        assert resolve_child_path(str(folder), mangled) == str(special)
+
 
 def test_copy_path_intent_detection() -> None:
     assert wants_copy_path('把这个文件的完整路径复制到剪贴板') is True
@@ -41,6 +48,18 @@ def test_stroke_scoring_prefers_hit_rect() -> None:
     miss = score_item_against_stroke((0, 80, 100, 120), selection, stroke)
     assert hit > miss
     assert hit > 1
+
+
+
+
+def test_horizontal_underline_prefers_row_above() -> None:
+    selection = (20, 36, 280, 62)
+    stroke = [(30, 44), (120, 45), (260, 44)]
+    row_above = (0, 0, 300, 40)
+    row_below = (0, 48, 300, 88)
+    above_score = score_item_against_stroke(row_above, selection, stroke)
+    below_score = score_item_against_stroke(row_below, selection, stroke)
+    assert above_score > below_score
 
 
 def test_explorer_grounder_degrades_without_optional_deps() -> None:
@@ -115,6 +134,7 @@ def main() -> None:
     test_resolve_child_path_handles_hidden_extension_names()
     test_copy_path_intent_detection()
     test_stroke_scoring_prefers_hit_rect()
+    test_horizontal_underline_prefers_row_above()
     test_explorer_grounder_degrades_without_optional_deps()
     test_explorer_window_detection_includes_chinese_title()
     test_operator_no_explorer_is_non_destructive()

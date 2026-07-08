@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -20,6 +21,15 @@ def _as_list(value: Any) -> list[Any]:
     if value is None:
         return []
     return value if isinstance(value, list) else [value]
+
+
+def _match_key(value: str) -> str:
+    # UIA/PowerShell can mangle Unicode punctuation (for example em dash -> replacement chars).
+    # Compare a punctuation-insensitive key so visible Explorer names still resolve to files.
+    value = value.replace(chr(0xFFFD), " ")
+    value = re.sub(r"[^\w]+", " ", value.casefold(), flags=re.UNICODE)
+    return " ".join(value.split())
+
 
 EXPLORER_CLASSES = {"CabinetWClass", "ExploreWClass"}
 
@@ -54,6 +64,61 @@ def dist_point_to_rect(point: tuple[float, float], rect: BoundingBox) -> float:
     return (dx * dx + dy * dy) ** 0.5
 
 
+def _horizontal_overlap_ratio(a_left: float, a_right: float, b_left: float, b_right: float) -> float:
+    overlap = max(0.0, min(a_right, b_right) - max(a_left, b_left))
+    return overlap / max(1.0, min(a_right - a_left, b_right - b_left))
+
+
+def _horizontal_underline(stroke_points: list[Point]) -> tuple[bool, float, float, float]:
+    if len(stroke_points) < 2:
+        return False, 0.0, 0.0, 0.0
+    xs = [float(p[0]) for p in stroke_points]
+    ys = [float(p[1]) for p in stroke_points]
+    x_min, x_max = min(xs), max(xs)
+    y_min, y_max = min(ys), max(ys)
+    x_range = x_max - x_min
+    y_range = y_max - y_min
+    is_horizontal = x_range >= 36 and y_range <= max(16.0, x_range * 0.18)
+    y_mid = sorted(ys)[len(ys) // 2]
+    return is_horizontal, y_mid, x_min, x_max
+
+
+def _underline_semantic_bonus(item_bbox: BoundingBox, stroke_points: list[Point]) -> float:
+    """Interpret a horizontal stroke just below text as an underline of the row above."""
+
+    is_underline, stroke_y, stroke_x1, stroke_x2 = _horizontal_underline(stroke_points)
+    if not is_underline:
+        return 0.0
+
+    left, top, right, bottom = item_bbox
+    width_overlap = _horizontal_overlap_ratio(left, right, stroke_x1, stroke_x2)
+    if width_overlap <= 0.08:
+        return 0.0
+
+    height = max(1.0, float(bottom - top))
+    gap_below_item = stroke_y - bottom
+    bonus = 0.0
+
+    # The common user gesture here is an underline: the stroke is inside the
+    # lower part of the file name row or in the small gap immediately below it.
+    # In that case the semantic target is the row above the line, not the row
+    # that starts below the line.
+    if top <= stroke_y <= bottom:
+        vertical_fraction = (stroke_y - top) / height
+        if vertical_fraction >= 0.42:
+            bonus += (4.0 + 3.0 * vertical_fraction) * width_overlap
+    elif 0 <= gap_below_item <= min(24.0, height * 0.75):
+        bonus += (7.0 - gap_below_item * 0.18) * width_overlap
+
+    # Penalize rows that begin below the underline. This prevents a line drawn
+    # under row N from being captured as row N+1 just because the line is closer
+    # to that row's top edge.
+    if top >= stroke_y - 2:
+        bonus -= min(5.0, 3.0 + (top - stroke_y) / 12.0) * width_overlap
+
+    return bonus
+
+
 def score_item_against_stroke(item_bbox: BoundingBox, selection_bbox: BoundingBox, stroke_points: list[Point]) -> float:
     """Score a candidate item using pointer samples and selection overlap."""
 
@@ -66,6 +131,7 @@ def score_item_against_stroke(item_bbox: BoundingBox, selection_bbox: BoundingBo
         score += 8.0 * hits / max(1, len(stroke_points))
         score += max(0.0, 2.5 - dist_point_to_rect(rect_center(selection_bbox), item_bbox) / 70.0)
         score += max(0.0, 1.8 - dist_point_to_rect(stroke_points[-1], item_bbox) / 60.0)
+        score += _underline_semantic_bonus(item_bbox, stroke_points)
     return round(score, 3)
 
 
@@ -103,12 +169,19 @@ def resolve_child_path(folder_path: str | None, visible_name: str | None) -> str
     try:
         normalized = name.casefold()
         trimmed = name.rstrip("." + chr(0x2026)).casefold()
+        normalized_key = _match_key(name)
         for child in folder.iterdir():
             child_name = child.name.casefold()
             child_stem = child.stem.casefold()
+            child_key = _match_key(child.name)
+            child_stem_key = _match_key(child.stem)
             if child_name == normalized or child_stem == normalized:
                 return str(child)
             if trimmed and (child_name.startswith(trimmed) or child_stem.startswith(trimmed)):
+                return str(child)
+            if normalized_key and (normalized_key == child_key or normalized_key == child_stem_key):
+                return str(child)
+            if len(normalized_key) >= 12 and (normalized_key in child_key or child_key in normalized_key):
                 return str(child)
     except OSError:
         return None
@@ -281,6 +354,8 @@ class ExplorerFileGrounder(BaseGrounder):
 
         script = f"""
 $ErrorActionPreference = "Stop"
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$OutputEncoding = [Console]::OutputEncoding
 $hwnd = [int64]{int(hwnd)}
 $result = [ordered]@{{
   folder_path = $null
