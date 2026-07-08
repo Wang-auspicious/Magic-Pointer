@@ -14,7 +14,7 @@ from PIL import Image, ImageDraw, ImageGrab
 
 from app.ai_client import ask_vision_model
 from app.object_store import ObjectStore, PointerObject, new_object_id
-from app.pointer_operator import MagicPointerOperator, format_grounding_for_prompt
+from app.pointer_operator import MagicPointerOperator, format_grounding_for_prompt, wants_copy_path
 from app.screen_context import build_screen_context
 from app.task_context import TaskContextStore
 from app.grounding.schema import PointerSelection
@@ -416,12 +416,20 @@ def main() -> int:
         + tasks.build_reference_context(store, task_id, obj_id, selection_bbox)
     )
 
-    answer = ask_vision_model(
-        model_image_path,
-        prompt,
-        context_text=context,
-        labeled_extra_images=[("IMAGE RAW / raw crop without pointer stroke", image_path)],
-    )
+    if pointer_result.proposals:
+        answer = '已识别到本地文件对象。点击下方确认按钮后，我会把完整路径复制到剪贴板。'
+    else:
+        answer = ask_vision_model(
+            model_image_path,
+            prompt,
+            context_text=context,
+            labeled_extra_images=[("IMAGE RAW / raw crop without pointer stroke", image_path)],
+        )
+        if wants_copy_path(prompt):
+            answer = (
+                '我没有安全拿到这个文件的完整路径，所以没有执行。'
+                '这次不会让你自己按快捷键冒充完成；请重试并尽量划中文件名/文件行。'
+            )
 
     obj = PointerObject(
         id=obj_id,

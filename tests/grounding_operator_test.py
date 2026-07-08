@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -8,14 +9,29 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.actions import ActionProposal, SafetyLevel
 from app.actions.executor import SafeActionExecutor
 from app.grounding.base import GroundingBundle
-from app.grounding.explorer_adapter import ExplorerFileGrounder, file_url_to_path, is_explorer_window, score_item_against_stroke
+from app.grounding.explorer_adapter import ExplorerFileGrounder, file_url_to_path, is_explorer_window, resolve_child_path, score_item_against_stroke
 from app.grounding.schema import GroundedObject, PointerSelection
-from app.pointer_operator import MagicPointerOperator, format_grounding_for_prompt
+from app.pointer_operator import MagicPointerOperator, format_grounding_for_prompt, wants_copy_path
 
 
 def test_file_url_to_path() -> None:
     assert file_url_to_path("file:///C:/Users/demo/Desktop") == r"C:\Users\demo\Desktop"
     assert file_url_to_path("https://example.com") is None
+
+
+def test_resolve_child_path_handles_hidden_extension_names() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        folder = Path(tmp)
+        file_path = folder / "demo.pdf"
+        file_path.write_text("x", encoding="utf-8")
+        assert resolve_child_path(str(folder), "demo.pdf") == str(file_path)
+        assert resolve_child_path(str(folder), "demo") == str(file_path)
+
+
+def test_copy_path_intent_detection() -> None:
+    assert wants_copy_path('把这个文件的完整路径复制到剪贴板') is True
+    assert wants_copy_path("copy path") is True
+    assert wants_copy_path("explain this file") is False
 
 
 def test_stroke_scoring_prefers_hit_rect() -> None:
@@ -96,6 +112,8 @@ def test_executor_requires_confirmation() -> None:
 
 def main() -> None:
     test_file_url_to_path()
+    test_resolve_child_path_handles_hidden_extension_names()
+    test_copy_path_intent_detection()
     test_stroke_scoring_prefers_hit_rect()
     test_explorer_grounder_degrades_without_optional_deps()
     test_explorer_window_detection_includes_chinese_title()

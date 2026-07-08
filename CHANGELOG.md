@@ -18,6 +18,7 @@
   - typed clipboard-copy action bridge with confirmation and main-process proposal provenance tokens;
   - safe Markdown result rendering and action chips in the Electron overlay.
 - Added regression tests for grounding schemas, Explorer dependency fallback, and action bridge rejection paths.
+- Improved Explorer copy-path flow: added PowerShell COM/UIA fallback when Python UIA packages are missing, and suppresses misleading manual-shortcut answers when safe path grounding fails.
 
 - Added local `secrets/*.txt` config fallback for API key/base URL/model.
 - Switched AI call path to direct OpenAI-compatible HTTP chat completions for 78code compatibility.

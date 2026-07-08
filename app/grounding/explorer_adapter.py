@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import base64
+import json
 import os
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -11,6 +14,12 @@ from app.grounding.schema import BoundingBox, GroundedObject, PointerSelection
 
 JsonDict = dict[str, Any]
 Point = tuple[int, int]
+
+
+def _as_list(value: Any) -> list[Any]:
+    if value is None:
+        return []
+    return value if isinstance(value, list) else [value]
 
 EXPLORER_CLASSES = {"CabinetWClass", "ExploreWClass"}
 
@@ -79,6 +88,33 @@ def file_metadata(path: str | None) -> JsonDict:
         return {"path": path, "name": os.path.basename(path)}
 
 
+def resolve_child_path(folder_path: str | None, visible_name: str | None) -> str | None:
+    """Resolve an Explorer UIA item name to a child path when possible."""
+
+    if not folder_path or not visible_name:
+        return None
+    name = str(visible_name).strip().strip('"')
+    if not name:
+        return None
+    folder = Path(folder_path)
+    direct = folder / name
+    if direct.exists():
+        return str(direct)
+    try:
+        normalized = name.casefold()
+        trimmed = name.rstrip("." + chr(0x2026)).casefold()
+        for child in folder.iterdir():
+            child_name = child.name.casefold()
+            child_stem = child.stem.casefold()
+            if child_name == normalized or child_stem == normalized:
+                return str(child)
+            if trimmed and (child_name.startswith(trimmed) or child_stem.startswith(trimmed)):
+                return str(child)
+    except OSError:
+        return None
+    return None
+
+
 def is_explorer_window(window: JsonDict) -> bool:
     class_name = str(window.get("class_name") or "")
     title = str(window.get("title") or "")
@@ -136,6 +172,25 @@ class ExplorerFileGrounder(BaseGrounder):
 
         ui_items, uia_messages = self._read_uia_items(hwnd, folder_path)
         traces.append(GroundingTrace(self.name + ":uia", uia_messages, {"item_count": len(ui_items)}))
+
+        # pywin32/pywinauto are often absent on user machines. PowerShell can
+        # still access Explorer COM and Windows UI Automation without Python
+        # packages, so use it as a no-extra-dependency fallback before giving up.
+        if not selected_paths or not ui_items:
+            ps_folder, ps_selected, ps_items, ps_messages = self._read_powershell_explorer_state(hwnd)
+            if ps_folder and not folder_path:
+                folder_path = ps_folder
+            if ps_selected and not selected_paths:
+                selected_paths = ps_selected
+            if ps_items and not ui_items:
+                ui_items = ps_items
+            traces.append(
+                GroundingTrace(
+                    self.name + ":powershell",
+                    ps_messages,
+                    {"folder_path": ps_folder, "selected_paths": ps_selected, "item_count": len(ps_items)},
+                )
+            )
 
         scored_items: list[tuple[float, ExplorerItem]] = []
         if selection.bbox:
@@ -218,6 +273,133 @@ class ExplorerFileGrounder(BaseGrounder):
             app_title=str(window.get("title") or "Explorer"),
             metadata=meta,
         )
+
+    def _read_powershell_explorer_state(self, hwnd: int) -> tuple[str | None, list[str], list[ExplorerItem], list[str]]:
+        messages: list[str] = []
+        if not hwnd:
+            return None, [], [], ["missing hwnd"]
+
+        script = f"""
+$ErrorActionPreference = "Stop"
+$hwnd = [int64]{int(hwnd)}
+$result = [ordered]@{{
+  folder_path = $null
+  selected_paths = @()
+  items = @()
+  messages = @()
+}}
+function Add-Message([string]$message) {{ $result.messages += $message }}
+try {{
+  $shell = New-Object -ComObject Shell.Application
+  foreach ($window in @($shell.Windows())) {{
+    try {{
+      if ([int64]$window.HWND -ne $hwnd) {{ continue }}
+      try {{
+        $folderPath = [string]$window.Document.Folder.Self.Path
+        if ($folderPath) {{ $result.folder_path = $folderPath }}
+      }} catch {{ Add-Message("powershell folder path unavailable: " + $_.Exception.Message) }}
+      try {{
+        foreach ($item in @($window.Document.SelectedItems())) {{
+          if ($item.Path) {{ $result.selected_paths += [string]$item.Path }}
+        }}
+      }} catch {{ Add-Message("powershell selected items unavailable: " + $_.Exception.Message) }}
+      Add-Message("powershell com matched shell window")
+      break
+    }} catch {{ }}
+  }}
+}} catch {{ Add-Message("powershell com failed: " + $_.Exception.Message) }}
+
+try {{
+  Add-Type -AssemblyName WindowsBase
+  Add-Type -AssemblyName UIAutomationClient
+  Add-Type -AssemblyName UIAutomationTypes
+  $root = [System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]$hwnd)
+  if ($null -eq $root) {{
+    Add-Message("powershell uia missing root")
+  }} else {{
+    $all = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
+    $limit = [Math]::Min($all.Count, 900)
+    for ($i = 0; $i -lt $limit; $i++) {{
+      try {{
+        $element = $all.Item($i)
+        $controlType = [string]$element.Current.ControlType.ProgrammaticName
+        if ($controlType -notmatch '(ListItem|DataItem)') {{ continue }}
+        $name = ([string]$element.Current.Name).Trim()
+        if (-not $name) {{ continue }}
+        $rect = $element.Current.BoundingRectangle
+        if ($rect.Width -le 0 -or $rect.Height -le 0) {{ continue }}
+        $selected = $false
+        try {{
+          $pattern = $null
+          if ($element.TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern, [ref]$pattern)) {{
+            $selected = [bool]$pattern.Current.IsSelected
+          }}
+        }} catch {{ }}
+        $result.items += [ordered]@{{
+          name = $name
+          bbox = @([int]$rect.Left, [int]$rect.Top, [int]$rect.Right, [int]$rect.Bottom)
+          selected = $selected
+          control_type = $controlType
+        }}
+      }} catch {{ }}
+    }}
+    Add-Message("powershell uia items read: " + $result.items.Count)
+  }}
+}} catch {{ Add-Message("powershell uia failed: " + $_.Exception.Message) }}
+
+$result | ConvertTo-Json -Depth 6 -Compress
+"""
+        encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
+        try:
+            proc = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                encoding="utf-8",
+                errors="replace",
+            )
+        except Exception as exc:
+            return None, [], [], [f"powershell probe failed: {type(exc).__name__}: {exc}"]
+        if proc.returncode != 0:
+            err = (proc.stderr or proc.stdout).strip().replace("\r", " ").replace("\n", " ")[:500]
+            return None, [], [], [f"powershell probe exited {proc.returncode}: {err}"]
+        try:
+            output_lines = [line for line in proc.stdout.splitlines() if line.strip()]
+            data = json.loads(output_lines[-1]) if output_lines else {}
+        except Exception as exc:
+            raw = proc.stdout.strip().replace("\r", " ").replace("\n", " ")[:500]
+            return None, [], [], [f"powershell probe invalid json: {type(exc).__name__}: {exc}; raw={raw}"]
+
+        folder_path = data.get("folder_path") if isinstance(data.get("folder_path"), str) else None
+        selected_paths = [str(item) for item in _as_list(data.get("selected_paths")) if item]
+        raw_messages = _as_list(data.get("messages"))
+        messages.extend(str(item) for item in raw_messages)
+
+        items: list[ExplorerItem] = []
+        for raw in _as_list(data.get("items")):
+            if not isinstance(raw, dict):
+                continue
+            name = str(raw.get("name") or "").strip()
+            bbox_data = raw.get("bbox") or []
+            if not name or len(bbox_data) != 4:
+                continue
+            try:
+                bbox: BoundingBox = tuple(int(v) for v in bbox_data)  # type: ignore[assignment]
+            except Exception:
+                continue
+            path = resolve_child_path(folder_path, name)
+            items.append(
+                ExplorerItem(
+                    name=name,
+                    path=path,
+                    bbox=bbox,
+                    selected=bool(raw.get("selected")),
+                    source="powershell_uia",
+                    metadata={"control_type": raw.get("control_type")},
+                )
+            )
+        return folder_path, selected_paths, items, messages
 
     def _read_shell_window(self, hwnd: int) -> tuple[str | None, list[str], list[str]]:
         messages: list[str] = []

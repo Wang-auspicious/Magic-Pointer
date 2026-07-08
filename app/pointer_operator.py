@@ -10,6 +10,13 @@ from app.grounding.schema import GroundedObject, PointerSelection
 
 JsonDict = dict[str, Any]
 
+COPY_PATH_TOKENS = ("复制路径", "完整路径", "文件路径", "copy path", "file path", "full path", "路径")
+
+
+def wants_copy_path(command: str) -> bool:
+    command_l = (command or "").strip().lower()
+    return any(token in command_l for token in COPY_PATH_TOKENS)
+
 
 @dataclass(frozen=True)
 class PointerOperatorResult:
@@ -68,13 +75,12 @@ class MagicPointerOperator:
         return PointerOperatorResult(grounding=grounding, proposals=proposals)
 
     def propose(self, command: str, grounding: GroundingBundle) -> list[ActionProposal]:
-        command_l = (command or "").strip().lower()
         primary = grounding.primary
         if not primary:
             return []
         path = str(primary.metadata.get("path") or "")
         proposals: list[ActionProposal] = []
-        if path and any(token in command_l for token in ("复制路径", "copy path", "file path", "路径")):
+        if path and wants_copy_path(command):
             proposals.append(
                 ActionProposal(
                     id=f"proposal:{primary.id}:copy_path",
