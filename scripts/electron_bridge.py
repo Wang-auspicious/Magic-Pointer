@@ -13,6 +13,7 @@ if str(ROOT) not in sys.path:
 from PIL import Image, ImageDraw, ImageGrab
 
 from app.adapters import default_adapter_registry, format_adapter_context
+from app.actions.office import clean_replacement_text, make_word_replace_selection_proposal, wants_word_rewrite
 from app.ai_client import ask_vision_model
 from app.object_store import ObjectStore, PointerObject, new_object_id
 from app.file_context import format_local_file_context, read_local_file_context, wants_file_content
@@ -406,7 +407,12 @@ def main() -> int:
     local_file_text = format_local_file_context(local_file_context)
     app_adapter_context = default_adapter_registry().read_first_context(window_dicts, selection=pointer_selection, command=prompt)
     app_adapter_text = format_adapter_context(app_adapter_context)
-
+    word_rewrite_mode = bool(
+        app_adapter_context
+        and app_adapter_context.app == "word"
+        and wants_word_rewrite(prompt)
+        and (app_adapter_context.content or "").strip()
+    )
     tasks = TaskContextStore(OBJECT_DIR)
     store = ObjectStore(OBJECT_DIR)
     task_result = tasks.active_task(auto_rollover=True)
@@ -428,8 +434,19 @@ def main() -> int:
         + tasks.build_reference_context(store, task_id, obj_id, selection_bbox)
     )
 
+    if word_rewrite_mode:
+        context += (
+            "\n\nWord write-back proposal mode:\n"
+            "The user is asking to transform the currently selected Word text. "
+            "Return ONLY the replacement text that should replace the selection. "
+            "Do not add explanations, markdown headings, bullets, quotes, or labels. "
+            "The app will show a separate confirmation preview before any write occurs."
+        )
+
+    action_proposals = list(pointer_result.proposals)
+
     if pointer_result.proposals:
-        answer = '已识别到本地文件对象。点击下方确认按钮后，我会把完整路径复制到剪贴板。'
+        answer = '\u5df2\u8bc6\u522b\u5230\u672c\u5730\u6587\u4ef6\u5bf9\u8c61\u3002\u70b9\u51fb\u4e0b\u65b9\u786e\u8ba4\u6309\u94ae\u540e\uff0c\u6211\u4f1a\u628a\u5b8c\u6574\u8def\u5f84\u590d\u5236\u5230\u526a\u8d34\u677f\u3002'
     else:
         answer = ask_vision_model(
             model_image_path,
@@ -437,10 +454,25 @@ def main() -> int:
             context_text=context,
             labeled_extra_images=[("IMAGE RAW / raw crop without pointer stroke", image_path)],
         )
+        if word_rewrite_mode and app_adapter_context is not None:
+            replacement_text = clean_replacement_text(answer)
+            word_proposal = make_word_replace_selection_proposal(app_adapter_context, command=prompt, replacement_text=replacement_text)
+            if word_proposal is not None:
+                action_proposals.append(word_proposal)
+                before_preview = str(word_proposal.parameters.get("expected_text_excerpt") or "")[:420]
+                after_preview = str(word_proposal.parameters.get("replacement_text_excerpt") or "")[:420]
+                document = str(word_proposal.parameters.get("document") or "Word document")
+                answer = (
+                    "\u5df2\u751f\u6210 Word \u9009\u4e2d\u6587\u672c\u66ff\u6362\u9884\u6848\uff0c\u5c1a\u672a\u5199\u5165\u3002\n"
+                    f"\u6587\u6863\uff1a{document}\n"
+                    f"\u539f\u6587\u9884\u89c8\uff1a{before_preview}\n"
+                    f"\u66ff\u6362\u4e3a\uff1a{after_preview}\n"
+                    "\u786e\u8ba4\u540e\u4f1a\u518d\u6b21\u6821\u9a8c\u5f53\u524d Word \u6587\u6863\u548c\u9009\u533a\uff0c\u5339\u914d\u624d\u6267\u884c\uff1b\u6267\u884c\u540e\u4f1a\u7ed9\u51fa\u64a4\u56de\u6309\u94ae\u3002"
+                )
         if wants_copy_path(prompt):
             answer = (
-                '我没有安全拿到这个文件的完整路径，所以没有执行。'
-                '这次不会让你自己按快捷键冒充完成；请重试并尽量划中文件名/文件行。'
+                '\u6211\u6ca1\u6709\u5b89\u5168\u62ff\u5230\u8fd9\u4e2a\u6587\u4ef6\u7684\u5b8c\u6574\u8def\u5f84\uff0c\u6240\u4ee5\u6ca1\u6709\u6267\u884c\u3002'
+                '\u8fd9\u6b21\u4e0d\u4f1a\u8ba9\u4f60\u81ea\u5df1\u6309\u5feb\u6377\u952e\u5192\u5145\u5b8c\u6210\uff1b\u8bf7\u91cd\u8bd5\u5e76\u5c3d\u91cf\u5212\u4e2d\u6587\u4ef6\u540d/\u6587\u4ef6\u884c\u3002'
             )
 
     obj = PointerObject(
@@ -492,7 +524,7 @@ def main() -> int:
         "grounding": pointer_result.to_dict(),
         "localFileContext": local_file_context.to_dict() if local_file_context else None,
         "appAdapterContext": app_adapter_context.to_dict() if app_adapter_context else None,
-        "actionProposals": [proposal.to_dict() for proposal in pointer_result.proposals],
+        "actionProposals": [proposal.to_dict() for proposal in action_proposals],
     }, ensure_ascii=True))
     return 0
 

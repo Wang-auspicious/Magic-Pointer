@@ -158,7 +158,7 @@ The current task context now supports a lightweight `DESTINATION` alias:
 - Prompts such as `????`, `????`, `target`, or `there` resolve to the explicit destination in the current task.
 - Destination is task-scoped; old task history is not used unless the user restores that task.
 
-This is still a context/understanding layer only. The app does not yet write back into the destination automatically.
+Destination write-back is still limited. Word selected text is the first experimental typed write action with explicit confirmation, live selection verification, history, and undo.
 
 ## MVP1-delta command bar
 

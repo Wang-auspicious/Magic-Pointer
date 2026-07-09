@@ -15,6 +15,7 @@ READ_ONLY_PREFIXES = ("read_", "inspect_", "explain_")
 WRITE_ACTIONS = {
     "office_replace_selection",
     "office_write_selection",
+    "office_undo_last_action",
     "paste_text_to_foreground",
     "wechat_send_message",
 }

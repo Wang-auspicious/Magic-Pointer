@@ -32,6 +32,22 @@ def proposal(action_type: str = "copy_text_to_clipboard") -> dict[str, Any]:
     }
 
 
+def word_replace_proposal() -> dict[str, Any]:
+    return {
+        "id": "word-replace-test",
+        "action_type": "office_replace_selection",
+        "parameters": {
+            "document": r"C:\demo\doc.docx",
+            "selection_start": 1,
+            "selection_end": 4,
+            "expected_text_sha256": "0" * 64,
+            "replacement_text": "new text",
+        },
+        "safety_level": "high",
+        "confirmation_required": True,
+    }
+
+
 def test_missing_proposal_is_rejected() -> None:
     code, output = run_bridge({})
     assert code == 2
@@ -47,6 +63,15 @@ def test_confirmation_is_required_before_clipboard_copy() -> None:
     assert output["executionResult"]["error"] == "confirmation required"
 
 
+def test_word_replace_selection_requires_confirmation_when_not_confirmed() -> None:
+    code, output = run_bridge({"proposal": word_replace_proposal(), "confirmed": False})
+    assert code == 1
+    assert output["ok"] is False
+    assert output["executionResult"]["status"] == "skipped"
+    assert output["executionResult"]["error"] == "confirmation required"
+    assert output.get("actionProposals") == []
+
+
 def test_unsupported_action_is_not_executed_even_when_confirmed() -> None:
     code, output = run_bridge({"proposal": proposal("type_arbitrary_text"), "confirmed": True})
     assert code == 1
@@ -58,6 +83,7 @@ def test_unsupported_action_is_not_executed_even_when_confirmed() -> None:
 def main() -> None:
     test_missing_proposal_is_rejected()
     test_confirmation_is_required_before_clipboard_copy()
+    test_word_replace_selection_requires_confirmation_when_not_confirmed()
     test_unsupported_action_is_not_executed_even_when_confirmed()
     print("action bridge test ok")
 

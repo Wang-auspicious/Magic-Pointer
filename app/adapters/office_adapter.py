@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import subprocess
 from dataclasses import dataclass
@@ -162,7 +163,7 @@ $result | ConvertTo-Json -Depth 8 -Compress
         script = '''
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
-$result = [ordered]@{ app="word"; method="com:word.selection"; hwnd=$null; document=$null; text=$null; selection_type=$null; messages=@() }
+$result = [ordered]@{ app="word"; method="com:word.selection"; hwnd=$null; document=$null; text=$null; selection_type=$null; selection_start=$null; selection_end=$null; messages=@() }
 try {
   $word = [Runtime.InteropServices.Marshal]::GetActiveObject("Word.Application")
   try { if ($word.ActiveWindow) { $result.hwnd = [int64]$word.ActiveWindow.Hwnd } } catch {}
@@ -170,6 +171,7 @@ try {
   $sel = $word.Selection
   if ($null -eq $sel) { throw "No Word selection" }
   $result.selection_type = [string]$sel.Type
+  try { $result.selection_start = [int]$sel.Start; $result.selection_end = [int]$sel.End } catch {}
   $result.text = [string]$sel.Text
 } catch { $result.messages += $_.Exception.Message }
 $result | ConvertTo-Json -Depth 6 -Compress
@@ -178,15 +180,19 @@ $result | ConvertTo-Json -Depth 6 -Compress
         if not probe.ok:
             return AdapterReadContext(adapter=self.name, app="word", window=window, capabilities=self._base_caps("word"), error=probe.error)
         data = probe.data
+        raw_text = str(data.get("text") or "")
+        artifacts = {k: data.get(k) for k in ("hwnd", "document", "selection_type", "selection_start", "selection_end", "messages")}
+        artifacts["selection_text_sha256"] = hashlib.sha256(raw_text.encode("utf-8", errors="surrogatepass")).hexdigest()
+        artifacts["selection_text_chars"] = len(raw_text)
         return AdapterReadContext(
             adapter=self.name,
             app="word",
             window=window,
             label=str(data.get("document") or "Word selection"),
             method=str(data.get("method") or "com:word.selection"),
-            content=str(data.get("text") or "").strip(),
+            content=raw_text,
             capabilities=self._base_caps("word"),
-            artifacts={k: data.get(k) for k in ("hwnd", "document", "selection_type", "messages")},
+            artifacts=artifacts,
             error="; ".join(str(x) for x in _as_list(data.get("messages")) if x) or None,
         )
 

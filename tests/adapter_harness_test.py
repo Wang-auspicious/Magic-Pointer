@@ -6,6 +6,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.actions.policy import LocalPermissionPolicy
+from app.actions.office import make_word_replace_selection_proposal, text_sha256, wants_word_rewrite
 from app.actions.schema import ActionProposal, SafetyLevel
 from app.adapters import default_adapter_registry, format_adapter_context
 from app.adapters.office_adapter import OfficeAdapter, OfficeProbeResult, office_app_from_window
@@ -55,6 +56,42 @@ def test_excel_context_formatting_with_fake_com_probe() -> None:
         office_module._run_powershell_json = original
 
 
+def test_word_context_exposes_replace_selection_capabilities_with_fake_probe() -> None:
+    original = office_module._run_powershell_json
+    try:
+        office_module._run_powershell_json = lambda script, **kwargs: OfficeProbeResult(True, {
+            "method": "com:word.selection",
+            "hwnd": 456,
+            "document": r"C:\demo\doc.docx",
+            "selection_type": "wdSelectionNormal",
+            "selection_start": 10,
+            "selection_end": 23,
+            "text": "  Keep exact spacing\r",
+            "messages": [],
+        })
+        ctx = OfficeAdapter().read_context({"class_name": "OpusApp", "title": "Document1 - Word", "hwnd": 456})
+        assert ctx.app == "word"
+        assert ctx.content == "  Keep exact spacing\r"
+        assert ctx.artifacts["selection_start"] == 10
+        assert ctx.artifacts["selection_text_sha256"] == text_sha256("  Keep exact spacing\r")
+        rendered = format_adapter_context(ctx)
+        assert "replace_selection" in rendered
+        proposal = make_word_replace_selection_proposal(ctx, command="rewrite this", replacement_text="Keep precise spacing.")
+        assert proposal is not None
+        assert proposal.action_type == "office_replace_selection"
+        assert proposal.confirmation_required is True
+        assert proposal.parameters["expected_text_sha256"] == text_sha256("  Keep exact spacing\r")
+        assert proposal.parameters["selection_start"] == 10
+    finally:
+        office_module._run_powershell_json = original
+
+
+def test_word_rewrite_intent_supports_chinese_commands() -> None:
+    assert wants_word_rewrite("\u5e2e\u6211\u6da6\u8272\u8fd9\u6bb5") is True
+    assert wants_word_rewrite("rewrite this paragraph") is True
+    assert wants_word_rewrite("just explain this") is False
+
+
 def test_permission_policy_blocks_and_confirms() -> None:
     policy = LocalPermissionPolicy()
     assert policy.decide(ActionProposal(id="r", action_type="read_selection", safety_level=SafetyLevel.READ_ONLY)).requires_confirmation is False
@@ -69,6 +106,8 @@ def main() -> None:
     test_office_window_matching()
     test_registry_skips_overlay_and_reads_first_office_context()
     test_excel_context_formatting_with_fake_com_probe()
+    test_word_context_exposes_replace_selection_capabilities_with_fake_probe()
+    test_word_rewrite_intent_supports_chinese_commands()
     test_permission_policy_blocks_and_confirms()
     print("adapter harness test ok")
 

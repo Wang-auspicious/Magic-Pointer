@@ -265,19 +265,53 @@ function showResult(payload) {
 function renderActionProposals(proposals) {
   const executable = proposals.filter((proposal) => typeof proposal?.action_token === 'string' && proposal.action_token.length > 0);
   if (!executable.length) return '';
+  const previews = executable.map((proposal) => renderActionPreview(proposal)).join('');
   const buttons = executable.map((proposal, index) => {
     const originalIndex = currentActionProposals.indexOf(proposal);
     const label = actionProposalLabel(proposal);
     const confirm = proposal.confirmation_required === true ? 'Confirm ' : '';
     return `<button class="action-chip" type="button" data-action-index="${originalIndex >= 0 ? originalIndex : index}">${escapeHtml(confirm + label)}</button>`;
   }).join('');
-  return `<div class="actions">${buttons}</div>`;
+  return `<div class="action-previews">${previews}</div><div class="actions">${buttons}</div>`;
+}
+
+function renderActionPreview(proposal) {
+  const params = proposal?.parameters || {};
+  if (proposal?.action_type === 'office_replace_selection') {
+    const document = params.document || proposal?.target?.description || 'Word document';
+    const before = params.expected_text_excerpt || '';
+    const after = params.replacement_text_excerpt || '';
+    return [
+      '<div class="action-preview danger">',
+      '<div class="action-preview-title">Word write preview</div>',
+      `<div><strong>Document:</strong> ${escapeHtml(document)}</div>`,
+      `<div><strong>Before:</strong><pre>${escapeHtml(before)}</pre></div>`,
+      `<div><strong>After:</strong><pre>${escapeHtml(after)}</pre></div>`,
+      '<div class="muted">Will re-check the active Word document and selection before writing.</div>',
+      '</div>',
+    ].join('');
+  }
+  if (proposal?.action_type === 'office_undo_last_action') {
+    const document = params.document || proposal?.target?.description || 'Word document';
+    return [
+      '<div class="action-preview warning">',
+      '<div class="action-preview-title">Undo Magic Pointer Word edit</div>',
+      `<div><strong>Document:</strong> ${escapeHtml(document)}</div>`,
+      '<div class="muted">Use immediately after the write; this calls Word native undo after confirming the document.</div>',
+      '</div>',
+    ].join('');
+  }
+  return '';
 }
 
 function actionProposalLabel(proposal) {
   switch (proposal?.action_type) {
     case 'copy_text_to_clipboard':
       return 'copy path';
+    case 'office_replace_selection':
+      return 'replace Word selection';
+    case 'office_undo_last_action':
+      return 'undo Word edit';
     default:
       return String(proposal?.action_type || 'run action').replaceAll('_', ' ');
   }

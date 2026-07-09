@@ -14,7 +14,7 @@ const RUNTIME_DIR = path.join(ROOT, 'data', 'runtime');
 const LOG_PATH = path.join(RUNTIME_DIR, 'electron.log');
 const PID_PATH = path.join(RUNTIME_DIR, 'electron.pid');
 const ACTION_PROPOSAL_TTL_MS = 2 * 60 * 1000;
-const ALLOWED_ACTION_TYPES = new Set(['copy_text_to_clipboard']);
+const ALLOWED_ACTION_TYPES = new Set(['copy_text_to_clipboard', 'office_replace_selection', 'office_undo_last_action']);
 
 const pendingActionProposals = new Map();
 
@@ -260,9 +260,7 @@ function runPythonBridge(payload, scriptPath = 'scripts/electron_bridge.py') {
       parsed.code = code;
       parsed.stderr = stderr.slice(0, 2000);
     }
-    if (scriptPath === 'scripts/electron_bridge.py') {
-      registerActionProposals(parsed);
-    }
+    registerActionProposals(parsed);
     log(`bridge close script=${scriptPath} code=${code} ok=${parsed?.ok}`);
     overlayWindow?.webContents.send('overlay:result', parsed);
   });

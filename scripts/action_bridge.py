@@ -11,11 +11,19 @@ if str(ROOT) not in sys.path:
 
 from app.actions import ActionProposal
 from app.actions.executor import SafeActionExecutor
+from app.actions.schema import ExecutionStatus
 
 
 def read_payload() -> dict[str, Any]:
     raw = sys.stdin.read().strip()
     return json.loads(raw) if raw else {}
+
+
+def _followup_proposals(result_output: dict[str, Any]) -> list[dict[str, Any]]:
+    undo = result_output.get("undo_proposal")
+    if isinstance(undo, dict):
+        return [undo]
+    return []
 
 
 def main() -> int:
@@ -30,19 +38,25 @@ def main() -> int:
         print(json.dumps({"ok": False, "error": f"invalid proposal: {type(exc).__name__}: {exc}"}, ensure_ascii=False))
         return 2
     result = SafeActionExecutor().execute(proposal, confirmed=bool(payload.get("confirmed")))
-    ok = result.status.value == "succeeded"
+    ok = result.status == ExecutionStatus.SUCCEEDED
     if ok:
         if proposal.action_type == "copy_text_to_clipboard":
             answer = "Copied to clipboard."
+        elif proposal.action_type == "office_replace_selection":
+            answer = "Word selection replaced. You can use the undo action below immediately if needed."
+        elif proposal.action_type == "office_undo_last_action":
+            answer = "Magic Pointer Word edit undone."
         else:
             answer = "Action completed."
     else:
         answer = result.error or "Action was not executed."
+    output = result.to_dict()
     print(json.dumps({
         "ok": ok,
         "prompt": "Action result",
         "answer": answer,
-        "executionResult": result.to_dict(),
+        "executionResult": output,
+        "actionProposals": _followup_proposals(result.output) if ok else [],
     }, ensure_ascii=False))
     return 0 if ok else 1
 

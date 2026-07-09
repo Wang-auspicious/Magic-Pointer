@@ -18,9 +18,25 @@ const harness = [
   "  confirmation_required: true,",
   "  action_token: 'tok-1',",
   "}];",
+  "const replaceProposal = {",
+  "  id: 'p3',",
+  "  action_type: 'office_replace_selection',",
+  "  confirmation_required: true,",
+  "  action_token: 'tok-3',",
+  "  parameters: { document: 'C:/demo/doc.docx', expected_text_excerpt: '<old>', replacement_text_excerpt: 'new text' },",
+  "};",
+  "const undoProposal = {",
+  "  id: 'p4',",
+  "  action_type: 'office_undo_last_action',",
+  "  confirmation_required: true,",
+  "  action_token: 'tok-4',",
+  "  parameters: { document: 'C:/demo/doc.docx' },",
+  "};",
   "globalThis.testResult = {",
   `  markdown: renderSafeMarkdown(${JSON.stringify(markdownInput)}),`,
   "  chips: renderActionProposals(currentActionProposals),",
+  "  replace: renderActionProposals([replaceProposal]),",
+  "  undo: renderActionProposals([undoProposal]),",
   "  noTokenChips: renderActionProposals([{ id: 'p2', action_type: 'copy_text_to_clipboard' }]),",
   "};",
 ].join('\n');
@@ -42,3 +58,9 @@ assert(context.testResult.chips.includes('data-action-index="0"'));
 assert(context.testResult.chips.includes('Confirm copy path'));
 assert.strictEqual(context.testResult.noTokenChips, '');
 console.log('overlay static test ok');
+
+assert(context.testResult.replace.includes('Word write preview'));
+assert(context.testResult.replace.includes('Confirm replace Word selection'));
+assert(context.testResult.replace.includes('&lt;old&gt;'));
+assert(context.testResult.undo.includes('Undo Magic Pointer Word edit'));
+assert(context.testResult.undo.includes('Confirm undo Word edit'));

@@ -270,3 +270,45 @@ html, body {
 .result .action-chip:active {
   transform: translateY(1px) scale(0.99);
 }
+
+
+.result .action-previews {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+.result .action-preview {
+  border: 1px solid rgba(37, 99, 235, 0.18);
+  border-radius: 14px;
+  padding: 10px 11px;
+  background: rgba(248, 251, 255, 0.78);
+  user-select: text;
+}
+.result .action-preview.danger {
+  border-color: rgba(220, 38, 38, 0.22);
+  background: rgba(255, 247, 237, 0.78);
+}
+.result .action-preview.warning {
+  border-color: rgba(245, 158, 11, 0.28);
+  background: rgba(255, 251, 235, 0.82);
+}
+.result .action-preview-title {
+  color: #1d4ed8;
+  font-size: 13px;
+  font-weight: 800;
+  margin-bottom: 4px;
+}
+.result .action-preview pre {
+  margin: 4px 0 7px;
+  max-height: 94px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border-radius: 9px;
+  padding: 7px 8px;
+  background: rgba(255, 255, 255, 0.74);
+  color: #0f172a;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.35;
+}
