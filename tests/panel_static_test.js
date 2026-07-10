@@ -27,5 +27,7 @@ assert(context.testResult.replace.includes('确认替换当前选区'));
 assert(context.testResult.replace.includes('&lt;old&gt;'));
 assert(context.testResult.undo.includes('Precise Magic Pointer restore'));
 assert(context.testResult.undo.includes('确认恢复上次修改'));
+assert(source.includes("runButton.addEventListener('click', () => submitCommand())"));
+assert(!source.includes("runButton.addEventListener('click', submitCommand)"));
 assert(!source.includes('????????'));
 console.log('panel static test ok');

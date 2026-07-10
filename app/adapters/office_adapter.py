@@ -5,6 +5,7 @@ import hashlib
 import json
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from app.adapters.base import AdapterCapability, AdapterReadContext, AppAdapter
@@ -20,6 +21,7 @@ OFFICE_CLASS_TO_APP = {
 WORD_COM_PROG_ID = "Word.Application"
 WPS_WRITER_COM_PROG_ID = "KWPS.Application"
 ALLOWED_WORD_COM_PROG_IDS = {WORD_COM_PROG_ID, WPS_WRITER_COM_PROG_ID}
+WORD_SELECTION_VBS = Path(__file__).resolve().parents[2] / "scripts" / "office_selection_probe.vbs"
 
 
 def office_app_from_window(window: JsonDict) -> str | None:
@@ -83,6 +85,29 @@ def _run_powershell_json(script: str, *, timeout: int = 6) -> OfficeProbeResult:
     except Exception as exc:
         raw = proc.stdout.strip().replace("\r", " ").replace("\n", " ")[:1000]
         return OfficeProbeResult(False, {}, f"invalid powershell json: {type(exc).__name__}: {exc}; raw={raw}")
+
+
+def _run_word_selection_vbs(prog_id: str, *, timeout: int = 3) -> OfficeProbeResult:
+    try:
+        proc = subprocess.run(
+            ["cscript.exe", "//nologo", "//U", str(WORD_SELECTION_VBS), prog_id],
+            capture_output=True,
+            timeout=timeout,
+        )
+    except Exception as exc:
+        return OfficeProbeResult(False, {}, f"cscript failed: {type(exc).__name__}: {exc}")
+    stdout = proc.stdout.decode("utf-16le", errors="replace").lstrip("\ufeff").strip()
+    stderr = proc.stderr.decode("utf-16le", errors="replace").lstrip("\ufeff").strip()
+    try:
+        lines = [line for line in stdout.splitlines() if line.strip()]
+        data = json.loads(lines[-1]) if lines else {}
+    except Exception as exc:
+        raw = stdout.replace("\r", " ").replace("\n", " ")[:1000]
+        return OfficeProbeResult(False, {}, f"invalid cscript json: {type(exc).__name__}: {exc}; raw={raw}")
+    if proc.returncode != 0 or data.get("ok") is False:
+        error = str(data.get("error") or stderr or f"cscript exited {proc.returncode}")[:1000]
+        return OfficeProbeResult(False, data, error)
+    return OfficeProbeResult(True, data)
 
 
 class OfficeAdapter(AppAdapter):
@@ -179,14 +204,30 @@ $result | ConvertTo-Json -Depth 8 -Compress
         if prog_id not in ALLOWED_WORD_COM_PROG_IDS:
             prog_id = WORD_COM_PROG_ID
         host = word_host_from_prog_id(prog_id)
+        fast_probe = _run_word_selection_vbs(prog_id)
+        if fast_probe.ok:
+            data = {
+                **fast_probe.data,
+                "app": "word",
+                "host": host,
+                "com_prog_id": prog_id,
+                "method": "com:word.selection.cscript",
+                "messages": [],
+            }
+            return self._word_context_from_data(window, data, host=host, prog_id=prog_id)
         script = '''
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
-$result = [ordered]@{ app="word"; host="''' + host + '''"; com_prog_id="''' + prog_id + '''"; method="com:word.selection"; hwnd=$null; document=$null; text=$null; selection_type=$null; selection_start=$null; selection_end=$null; messages=@() }
+$result = [ordered]@{ app="word"; host="''' + host + '''"; com_prog_id="''' + prog_id + '''"; method="com:word.selection"; hwnd=$null; document=$null; document_name=$null; document_path=$null; document_saved=$null; text=$null; selection_type=$null; selection_start=$null; selection_end=$null; messages=@() }
 try {
   $word = [Runtime.InteropServices.Marshal]::GetActiveObject("''' + prog_id + '''")
   try { if ($word.ActiveWindow) { $result.hwnd = [int64]$word.ActiveWindow.Hwnd } } catch {}
-  if ($word.ActiveDocument) { $result.document = [string]$word.ActiveDocument.FullName }
+  if ($word.ActiveDocument) {
+    $result.document = [string]$word.ActiveDocument.FullName
+    $result.document_name = [string]$word.ActiveDocument.Name
+    $result.document_path = [string]$word.ActiveDocument.Path
+    $result.document_saved = [bool]$word.ActiveDocument.Saved
+  }
   $sel = $word.Selection
   if ($null -eq $sel) { throw "No Word selection" }
   $result.selection_type = [string]$sel.Type
@@ -202,14 +243,27 @@ $result | ConvertTo-Json -Depth 6 -Compress
 '''
         probe = _run_powershell_json(script)
         if not probe.ok:
-            return AdapterReadContext(adapter=self.name, app="word", window=window, capabilities=self._base_caps("word"), error=probe.error)
-        data = probe.data
+            error = "; ".join(part for part in (fast_probe.error, probe.error) if part)
+            return AdapterReadContext(adapter=self.name, app="word", window=window, capabilities=self._base_caps("word"), error=error)
+        return self._word_context_from_data(window, probe.data, host=host, prog_id=prog_id)
+
+    def _word_context_from_data(
+        self,
+        window: JsonDict,
+        data: JsonDict,
+        *,
+        host: str,
+        prog_id: str,
+    ) -> AdapterReadContext:
         raw_text = str(data.get("text") or "")
         artifacts = {
             k: data.get(k)
             for k in (
                 "hwnd",
                 "document",
+                "document_name",
+                "document_path",
+                "document_saved",
                 "selection_type",
                 "selection_start",
                 "selection_end",

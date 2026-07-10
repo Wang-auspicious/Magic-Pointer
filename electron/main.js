@@ -3,6 +3,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const crypto = require('crypto');
+const { SelectionSessionStore } = require('./selection_session');
 
 let overlayWindow = null;
 let panelWindow = null;
@@ -16,9 +17,13 @@ const RUNTIME_DIR = path.join(ROOT, 'data', 'runtime');
 const LOG_PATH = path.join(RUNTIME_DIR, 'electron.log');
 const PID_PATH = path.join(RUNTIME_DIR, 'electron.pid');
 const ACTION_PROPOSAL_TTL_MS = 2 * 60 * 1000;
+const SELECTION_SESSION_TTL_MS = 2 * 60 * 1000;
 const ALLOWED_ACTION_TYPES = new Set(['copy_text_to_clipboard', 'office_replace_selection', 'office_undo_last_action']);
 
 const pendingActionProposals = new Map();
+const selectionSessions = new SelectionSessionStore({ ttlMs: SELECTION_SESSION_TTL_MS });
+const activeSessionChildren = new Map();
+let activeSelectionSessionToken = null;
 
 function log(message) {
   try {
@@ -39,7 +44,7 @@ function safeClone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-function registerActionProposals(parsed) {
+function registerActionProposals(parsed, selectionSessionToken = null) {
   if (!parsed || !Array.isArray(parsed.actionProposals)) return;
 
   prunePendingActionProposals();
@@ -53,6 +58,7 @@ function registerActionProposals(parsed) {
     const canonical = safeClone(proposal);
     pendingActionProposals.set(token, {
       proposal: canonical,
+      selectionSessionToken,
       createdAt: now,
       expiresAt: now + ACTION_PROPOSAL_TTL_MS,
     });
@@ -62,13 +68,36 @@ function registerActionProposals(parsed) {
   parsed.actionProposals = safeProposals;
 }
 
-function takePendingActionProposal(token) {
+function takePendingActionProposal(token, selectionSessionToken = null) {
   prunePendingActionProposals();
   if (typeof token !== 'string' || !token) return null;
   const entry = pendingActionProposals.get(token);
   if (!entry) return null;
+  if (entry.selectionSessionToken && entry.selectionSessionToken !== selectionSessionToken) return null;
   pendingActionProposals.delete(token);
   return safeClone(entry.proposal);
+}
+
+function invalidateActionProposalsForSession(selectionSessionToken) {
+  if (!selectionSessionToken) return;
+  for (const [token, entry] of pendingActionProposals.entries()) {
+    if (entry?.selectionSessionToken === selectionSessionToken) pendingActionProposals.delete(token);
+  }
+}
+
+function cancelSessionChild(selectionSessionToken) {
+  const child = activeSessionChildren.get(selectionSessionToken);
+  activeSessionChildren.delete(selectionSessionToken);
+  if (!child || child.killed) return;
+  try { child.kill(); } catch (_) {}
+}
+
+function invalidateSelectionSession(selectionSessionToken) {
+  if (!selectionSessionToken) return;
+  cancelSessionChild(selectionSessionToken);
+  invalidateActionProposalsForSession(selectionSessionToken);
+  selectionSessions.cancel(selectionSessionToken);
+  if (activeSelectionSessionToken === selectionSessionToken) activeSelectionSessionToken = null;
 }
 
 const gotLock = app.requestSingleInstanceLock();
@@ -76,9 +105,8 @@ if (!gotLock) {
   app.quit();
 } else {
   app.on('second-instance', () => {
-    log('second-instance -> showPanel');
-    showOverlay('second-instance', 900);
-    showPanel('second-instance');
+    log('second-instance -> beginSelectionSession');
+    beginSelectionSession('second-instance');
   });
 }
 
@@ -122,7 +150,7 @@ function createPanelWindow() {
   if (panelWindow) return panelWindow;
   panelWindow = new BrowserWindow({
     width: 420,
-    height: 160,
+    height: 188,
     frame: false,
     transparent: true,
     backgroundColor: '#00000000',
@@ -159,7 +187,7 @@ function positionPanelNearCursor() {
 
 function resizePanel(height) {
   if (!panelWindow || panelWindow.isDestroyed()) return;
-  const desiredHeight = Math.max(160, Math.min(360, Math.round(Number(height) || 160)));
+  const desiredHeight = Math.max(188, Math.min(380, Math.round(Number(height) || 188)));
   const cursor = screen.getCursorScreenPoint();
   const display = screen.getDisplayNearestPoint(cursor);
   const workArea = display.workArea || display.bounds;
@@ -169,15 +197,19 @@ function resizePanel(height) {
   panelWindow.setBounds({ x, y, width: current.width, height: desiredHeight });
 }
 
-function showPanel(reason = 'manual') {
+function showPanel(reason = 'manual', payload = {}, { focusInput = true } = {}) {
   const win = createPanelWindow();
   const reveal = () => {
     if (!panelWindow || panelWindow.isDestroyed()) return;
     positionPanelNearCursor();
-    win.show();
-    win.focus();
-    win.webContents.send('panel:show', { reason });
-    log(`showPanel reason=${reason}`);
+    if (focusInput) {
+      win.show();
+      win.focus();
+    } else {
+      win.showInactive();
+    }
+    win.webContents.send('panel:show', { reason, focusInput, ...payload });
+    log(`showPanel reason=${reason} focus=${focusInput}`);
   };
   if (win.webContents.isLoadingMainFrame()) win.webContents.once('did-finish-load', reveal);
   else reveal();
@@ -185,8 +217,10 @@ function showPanel(reason = 'manual') {
 
 function hidePanel({ hideObserver = false } = {}) {
   if (!panelWindow) return;
+  const sessionToken = activeSelectionSessionToken;
   panelWindow.webContents.send('panel:hide');
   panelWindow.hide();
+  invalidateSelectionSession(sessionToken);
   if (hideObserver) hideOverlay();
   log('hidePanel');
 }
@@ -309,6 +343,52 @@ function startMouseShakePolling() {
   log('mouse shake polling started');
 }
 
+function panelPayloadForSession(entry) {
+  return {
+    selectionSessionToken: entry.token,
+    selectionSnapshotId: entry.snapshot?.snapshot_id || null,
+    captureSummary: entry.summary,
+    suggestedCommands: entry.suggestedCommands,
+  };
+}
+
+function beginSelectionSession(reason = 'manual') {
+  if (activeSelectionSessionToken) invalidateSelectionSession(activeSelectionSessionToken);
+
+  const cursor = screen.getCursorScreenPoint();
+  const display = screen.getDisplayNearestPoint(cursor);
+  const entry = selectionSessions.create({ reason, cursor });
+  activeSelectionSessionToken = entry.token;
+  createPanelWindow();
+  showOverlay(`${reason}-capturing`, 0);
+  log(`selection session capture start reason=${reason} token=${entry.token}`);
+
+  let child = null;
+  child = runPythonBridge(
+    {
+      mode: 'capture_selection_snapshot',
+      reason,
+      cursor,
+      screenBounds: display.bounds,
+      scaleFactor: display.scaleFactor || 1,
+    },
+    'scripts/selection_snapshot_bridge.py',
+    'panel',
+    {
+      onComplete: (parsed) => {
+        if (activeSessionChildren.get(entry.token) === child) activeSessionChildren.delete(entry.token);
+        const current = selectionSessions.get(entry.token);
+        if (!current || activeSelectionSessionToken !== entry.token) return;
+        const attached = selectionSessions.attachSnapshot(entry.token, parsed);
+        if (!attached) return;
+        log(`selection session capture done token=${entry.token} status=${attached.snapshot?.status || 'missing'} app=${attached.summary?.app || 'none'}`);
+        showPanel(reason, panelPayloadForSession(attached), { focusInput: true });
+      },
+    },
+  );
+  if (child) activeSessionChildren.set(entry.token, child);
+}
+
 app.whenReady().then(() => {
   try {
     fs.mkdirSync(RUNTIME_DIR, { recursive: true });
@@ -321,10 +401,9 @@ app.whenReady().then(() => {
       hidePanel({ hideObserver: true });
       return;
     }
-    showOverlay('hotkey-observer', 900);
-    showPanel('hotkey');
+    beginSelectionSession('hotkey');
   });
-  log(`register hotkey Control+Alt+M observer+panel ok=${ok}`);
+  log(`register hotkey Control+Alt+M selection-session ok=${ok}`);
   startMouseShakePolling();
   // First launch should show once so the user knows the background process is alive.
   setTimeout(() => showOverlay('startup', 1400), 650);
@@ -352,7 +431,7 @@ function sendBridgeResult(target, parsed) {
   win?.webContents.send(channel, parsed);
 }
 
-function runPythonBridge(payload, scriptPath = 'scripts/electron_bridge.py', target = 'overlay') {
+function runPythonBridge(payload, scriptPath = 'scripts/electron_bridge.py', target = 'overlay', options = {}) {
   if (!resultTargetWindow(target)) return;
   const py = process.env.MAGIC_POINTER_PYTHON || 'python';
   const child = spawn(py, [scriptPath], {
@@ -364,13 +443,24 @@ function runPythonBridge(payload, scriptPath = 'scripts/electron_bridge.py', tar
 
   let stdout = '';
   let stderr = '';
+  let delivered = false;
+  const deliver = (parsed) => {
+    if (delivered) return;
+    delivered = true;
+    if (typeof options.onComplete === 'function') {
+      options.onComplete(parsed);
+      return;
+    }
+    registerActionProposals(parsed, options.selectionSessionToken || null);
+    sendBridgeResult(target, parsed);
+  };
   child.stdout.setEncoding('utf8');
   child.stderr.setEncoding('utf8');
   child.stdout.on('data', (chunk) => { stdout += chunk; });
   child.stderr.on('data', (chunk) => { stderr += chunk; });
   child.on('error', (error) => {
     log(`bridge spawn error ${error.name}: ${error.message}`);
-    sendBridgeResult(target, {
+    deliver({
       ok: false,
       error: `${error.name}: ${error.message}`,
     });
@@ -387,13 +477,13 @@ function runPythonBridge(payload, scriptPath = 'scripts/electron_bridge.py', tar
       parsed.code = code;
       parsed.stderr = stderr.slice(0, 2000);
     }
-    registerActionProposals(parsed);
     log(`bridge close script=${scriptPath} code=${code} ok=${parsed?.ok}`);
-    sendBridgeResult(target, parsed);
+    deliver(parsed);
   });
 
   child.stdin.write(JSON.stringify(payload));
   child.stdin.end();
+  return child;
 }
 
 ipcMain.on('overlay:done', (_event, payload) => {
@@ -412,26 +502,72 @@ ipcMain.on('overlay:done', (_event, payload) => {
 
 
 ipcMain.on('panel:submit-selection-command', (_event, payload) => {
+  const selectionSessionToken = payload?.selectionSessionToken;
+  const session = selectionSessions.get(selectionSessionToken);
+  if (!session || !session.snapshot) {
+    log('panel:submit-selection-command rejected missing-or-expired session');
+    sendBridgeResult('panel', {
+      ok: false,
+      error: '当前 THIS 已过期，请重新激活 Magic Pointer。',
+      selectionSessionToken: selectionSessionToken || null,
+    });
+    return;
+  }
+
+  cancelSessionChild(selectionSessionToken);
+  const requestId = selectionSessions.startRequest(selectionSessionToken);
+  if (!requestId) return;
   const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
   const enriched = {
     ...payload,
+    selectionSessionId: selectionSessionToken,
+    selectionSnapshot: safeClone(session.snapshot),
+    requestId,
     screenBounds: display.bounds,
     scaleFactor: display.scaleFactor || 1,
     source: 'observer_selection_panel',
   };
-  log(`panel:submit-selection-command command_len=${String(enriched.command || '').length}`);
-  runPythonBridge(enriched, 'scripts/selection_bridge.py', 'panel');
+  log(`panel:submit-selection-command token=${selectionSessionToken} request=${requestId} command_len=${String(enriched.command || '').length}`);
+  let child = null;
+  child = runPythonBridge(enriched, 'scripts/selection_bridge.py', 'panel', {
+    onComplete: (parsed) => {
+      if (activeSessionChildren.get(selectionSessionToken) === child) activeSessionChildren.delete(selectionSessionToken);
+      if (!selectionSessions.isCurrentRequest(selectionSessionToken, requestId)) {
+        log(`panel result ignored stale token=${selectionSessionToken} request=${requestId}`);
+        return;
+      }
+      selectionSessions.finishRequest(selectionSessionToken, requestId);
+      parsed.selectionSessionToken = selectionSessionToken;
+      parsed.selectionSnapshotId = session.snapshot?.snapshot_id || null;
+      parsed.requestId = requestId;
+      registerActionProposals(parsed, selectionSessionToken);
+      sendBridgeResult('panel', parsed);
+    },
+  });
+  if (child) activeSessionChildren.set(selectionSessionToken, child);
 });
 
 function executeActionForTarget(payload, target) {
   const token = payload?.actionToken || payload?.action_token;
-  const proposal = takePendingActionProposal(token);
+  const selectionSessionToken = payload?.selectionSessionToken || null;
+  if (target === 'panel' && !selectionSessions.get(selectionSessionToken)) {
+    log(`${target}:execute-action rejected expired selection session`);
+    sendBridgeResult(target, {
+      ok: false,
+      prompt: 'Action result',
+      error: '当前 THIS 已过期，请重新激活 Magic Pointer。',
+      selectionSessionToken,
+    });
+    return;
+  }
+  const proposal = takePendingActionProposal(token, selectionSessionToken);
   if (!proposal) {
     log(`${target}:execute-action rejected missing-or-expired token`);
     sendBridgeResult(target, {
       ok: false,
       prompt: 'Action result',
       error: 'Action expired or was not proposed by this session.',
+      selectionSessionToken,
     });
     return;
   }
@@ -441,7 +577,17 @@ function executeActionForTarget(payload, target) {
     confirmed: payload?.confirmed === true,
   };
   log(`${target}:execute-action type=${proposal.action_type || 'unknown'} confirmed=${enriched.confirmed}`);
-  runPythonBridge(enriched, 'scripts/action_bridge.py', target);
+  runPythonBridge(enriched, 'scripts/action_bridge.py', target, {
+    onComplete: (parsed) => {
+      if (target === 'panel' && !selectionSessions.get(selectionSessionToken)) {
+        log(`${target}:action result ignored expired selection session`);
+        return;
+      }
+      parsed.selectionSessionToken = selectionSessionToken;
+      registerActionProposals(parsed, selectionSessionToken);
+      sendBridgeResult(target, parsed);
+    },
+  });
 }
 
 ipcMain.on('overlay:execute-action', (_event, payload) => executeActionForTarget(payload, 'overlay'));

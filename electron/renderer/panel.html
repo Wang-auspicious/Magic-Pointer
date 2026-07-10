@@ -13,11 +13,19 @@
       <span>Magic Pointer</span>
       <button id="close" class="panel-close" title="关闭" aria-label="关闭">×</button>
     </div>
+    <div id="capture" class="capture-summary" aria-live="polite">
+      <div class="capture-heading">
+        <span id="capture-label">正在锁定 THIS</span>
+        <span id="capture-detail"></span>
+      </div>
+      <div id="capture-excerpt" class="capture-excerpt"></div>
+    </div>
+    <div id="suggestions" class="suggestion-row" aria-label="建议动作"></div>
     <div class="panel-input-row">
-      <textarea id="command" rows="1" autocomplete="off" spellcheck="false" placeholder="解释、改写、翻译，或撤回上次修改"></textarea>
+      <textarea id="command" rows="1" autocomplete="off" spellcheck="false" placeholder="告诉我怎么处理 THIS"></textarea>
       <button id="run" title="执行" aria-label="执行">↑</button>
     </div>
-    <div id="result" class="panel-result muted">等待当前选区</div>
+    <div id="result" class="panel-result muted" aria-live="polite" hidden></div>
   </section>
   <script src="panel.js"></script>
 </body>

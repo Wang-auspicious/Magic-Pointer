@@ -125,6 +125,8 @@ class SafeActionExecutor:
 
         expected_hash = str(params.get("expected_text_sha256") or "")
         expected_doc = str(params.get("document") or "")
+        expected_doc_name = str(params.get("document_name") or "")
+        expected_hwnd = _optional_int(params.get("hwnd"))
         expected_start = _optional_int(params.get("selection_start"))
         expected_end = _optional_int(params.get("selection_end"))
         com_prog_id = _word_com_prog_id(params.get("com_prog_id"))
@@ -139,18 +141,23 @@ function FromB64Utf16([string]$Value) {{ if ([string]::IsNullOrEmpty($Value)) {{
 function Sha256Text([string]$Value) {{ $bytes = [System.Text.Encoding]::UTF8.GetBytes($Value); $hash = [System.Security.Cryptography.SHA256]::Create().ComputeHash($bytes); return (($hash | ForEach-Object {{ $_.ToString("x2") }}) -join "") }}
 $replacement = FromB64Utf16 "{_b64_utf16le(replacement)}"
 $expectedDoc = FromB64Utf16 "{_b64_utf16le(expected_doc)}"
+$expectedDocName = FromB64Utf16 "{_b64_utf16le(expected_doc_name)}"
 $expectedHash = {_ps_literal_string(expected_hash)}
 $comProgId = {_ps_literal_string(com_prog_id)}
+$expectedHwnd = {('$null' if expected_hwnd is None else str(expected_hwnd))}
 $expectedStart = {('$null' if expected_start is None else str(expected_start))}
 $expectedEnd = {('$null' if expected_end is None else str(expected_end))}
-$result = [ordered]@{{ ok=$false; app="word"; method="com:word.selection.replace"; com_prog_id=$comProgId; document=$null; hwnd=$null; selection_start=$null; selection_end=$null; after_selection_end=$null; before_text=$null; before_sha256=$null; after_text=$null; after_sha256=$null; left_anchor_sha256=$null; left_anchor_chars=0; right_anchor_sha256=$null; right_anchor_chars=0; replacement_chars=$replacement.Length; error=$null }}
+$result = [ordered]@{{ ok=$false; app="word"; method="com:word.selection.replace"; com_prog_id=$comProgId; document=$null; document_name=$null; hwnd=$null; selection_start=$null; selection_end=$null; after_selection_end=$null; before_text=$null; before_sha256=$null; after_text=$null; after_sha256=$null; left_anchor_sha256=$null; left_anchor_chars=0; right_anchor_sha256=$null; right_anchor_chars=0; replacement_chars=$replacement.Length; error=$null }}
 try {{
   $word = [Runtime.InteropServices.Marshal]::GetActiveObject($comProgId)
   try {{ if ($word.ActiveWindow) {{ $result.hwnd = [int64]$word.ActiveWindow.Hwnd }} }} catch {{}}
   if (-not $word.ActiveDocument) {{ throw "No active Word document" }}
   $doc = $word.ActiveDocument
   $result.document = [string]$doc.FullName
+  $result.document_name = [string]$doc.Name
   if ($expectedDoc -and $result.document -ne $expectedDoc) {{ throw "Active Word document changed before execution" }}
+  if ($expectedDocName -and $result.document_name -ne $expectedDocName) {{ throw "Active Word document name changed before execution" }}
+  if ($null -ne $expectedHwnd -and [int64]$result.hwnd -ne [int64]$expectedHwnd) {{ throw "Active Word window changed before execution" }}
   $sel = $word.Selection
   if ($null -eq $sel) {{ throw "No Word selection" }}
   $result.selection_start = [int]$sel.Start
@@ -205,7 +212,7 @@ $result | ConvertTo-Json -Depth 8 -Compress
                 ExecutionStatus.FAILED,
                 confirmed=confirmed,
                 error=str(data.get("error") or "Word replace failed"),
-                output={k: data.get(k) for k in ("document", "selection_start", "selection_end", "before_sha256")},
+                output={k: data.get(k) for k in ("document", "document_name", "hwnd", "selection_start", "selection_end", "before_sha256")},
                 metadata=metadata,
             )
 
@@ -226,6 +233,10 @@ $result | ConvertTo-Json -Depth 8 -Compress
             selection_start=_optional_int(data.get("selection_start")),
             selection_end=_optional_int(data.get("selection_end")),
             after_selection_end=_optional_int(data.get("after_selection_end")),
+            selection_session_id=str(params.get("selection_session_id") or "") or None,
+            selection_snapshot_id=str(params.get("selection_snapshot_id") or "") or None,
+            source_window_hwnd=_optional_int(params.get("hwnd")),
+            source_window_title=str(params.get("source_window_title") or "") or None,
             left_anchor_sha256=str(data.get("left_anchor_sha256") or "") or None,
             left_anchor_chars=_optional_int(data.get("left_anchor_chars")),
             right_anchor_sha256=str(data.get("right_anchor_sha256") or "") or None,
@@ -236,6 +247,8 @@ $result | ConvertTo-Json -Depth 8 -Compress
                 "command": params.get("command"),
                 "office_host": params.get("office_host"),
                 "com_prog_id": data.get("com_prog_id") or com_prog_id,
+                "selection_session_id": params.get("selection_session_id"),
+                "selection_snapshot_id": params.get("selection_snapshot_id"),
             },
         )
         self.history_store.append(record)

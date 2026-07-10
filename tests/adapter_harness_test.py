@@ -64,65 +64,110 @@ def test_excel_context_formatting_with_fake_com_probe() -> None:
 
 
 def test_word_context_exposes_replace_selection_capabilities_with_fake_probe() -> None:
-    original = office_module._run_powershell_json
+    original_fast = office_module._run_word_selection_vbs
+    original_fallback = office_module._run_powershell_json
     try:
-        office_module._run_powershell_json = lambda script, **kwargs: OfficeProbeResult(True, {
-            "method": "com:word.selection",
+        office_module._run_word_selection_vbs = lambda prog_id, **kwargs: OfficeProbeResult(True, {
             "hwnd": 456,
             "document": r"C:\demo\doc.docx",
+            "document_name": "doc.docx",
+            "document_path": r"C:\demo",
+            "document_saved": True,
             "selection_type": "wdSelectionNormal",
             "selection_start": 10,
             "selection_end": 23,
             "text": "  Keep exact spacing\r",
-            "host": "microsoft_word",
-            "com_prog_id": "Word.Application",
-            "messages": [],
         })
+        office_module._run_powershell_json = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("PowerShell fallback must not run after a successful fast probe")
+        )
         ctx = OfficeAdapter().read_context({"class_name": "OpusApp", "title": "Document1 - Word", "hwnd": 456})
         assert ctx.app == "word"
+        assert ctx.method == "com:word.selection.cscript"
         assert ctx.content == "  Keep exact spacing\r"
         assert ctx.artifacts["selection_start"] == 10
         assert ctx.artifacts["selection_text_sha256"] == text_sha256("  Keep exact spacing\r")
         rendered = format_adapter_context(ctx)
         assert "replace_selection" in rendered
-        proposal = make_word_replace_selection_proposal(ctx, command="rewrite this", replacement_text="Keep precise spacing.")
+        proposal = make_word_replace_selection_proposal(
+            ctx,
+            command="rewrite this",
+            replacement_text="Keep precise spacing.",
+            selection_session_id="session-1",
+            selection_snapshot_id="snapshot-1",
+        )
         assert proposal is not None
         assert proposal.action_type == "office_replace_selection"
         assert proposal.confirmation_required is True
         assert proposal.parameters["expected_text_sha256"] == text_sha256("  Keep exact spacing\r")
         assert proposal.parameters["selection_start"] == 10
         assert proposal.parameters["com_prog_id"] == "Word.Application"
+        assert proposal.parameters["document_name"] == "doc.docx"
+        assert proposal.parameters["selection_session_id"] == "session-1"
+        assert proposal.target.selection_id == "snapshot-1"
     finally:
-        office_module._run_powershell_json = original
+        office_module._run_word_selection_vbs = original_fast
+        office_module._run_powershell_json = original_fallback
 
 
 def test_wps_collapsed_selection_is_not_rewriteable() -> None:
-    original = office_module._run_powershell_json
-    scripts: list[str] = []
+    original_fast = office_module._run_word_selection_vbs
+    original_fallback = office_module._run_powershell_json
+    prog_ids: list[str] = []
     try:
-        def fake_probe(script: str, **_kwargs) -> OfficeProbeResult:
-            scripts.append(script)
+        def fake_probe(prog_id: str, **_kwargs) -> OfficeProbeResult:
+            prog_ids.append(prog_id)
             return OfficeProbeResult(True, {
-                "method": "com:word.selection",
-                "host": "wps_writer",
-                "com_prog_id": WPS_WRITER_COM_PROG_ID,
                 "hwnd": 789,
                 "document": r"C:\demo\wps.docx",
                 "selection_type": "1",
                 "selection_start": 12,
                 "selection_end": 12,
                 "text": "",
-                "messages": ["No text is selected."],
             })
 
-        office_module._run_powershell_json = fake_probe
+        office_module._run_word_selection_vbs = fake_probe
+        office_module._run_powershell_json = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("PowerShell fallback must not run after a successful fast probe")
+        )
         ctx = OfficeAdapter().read_context({"class_name": "OpusApp", "title": "Document1 - WPS Office", "hwnd": 789})
         assert ctx.content == ""
         assert ctx.artifacts["com_prog_id"] == WPS_WRITER_COM_PROG_ID
-        assert WPS_WRITER_COM_PROG_ID in scripts[0]
-        assert make_word_replace_selection_proposal(ctx, command="改写这段", replacement_text="new") is None
+        assert prog_ids == [WPS_WRITER_COM_PROG_ID]
+        assert make_word_replace_selection_proposal(ctx, command="\u6539\u5199\u8fd9\u6bb5", replacement_text="new") is None
     finally:
-        office_module._run_powershell_json = original
+        office_module._run_word_selection_vbs = original_fast
+        office_module._run_powershell_json = original_fallback
+
+
+def test_word_context_falls_back_to_powershell_when_fast_probe_fails() -> None:
+    original_fast = office_module._run_word_selection_vbs
+    original_fallback = office_module._run_powershell_json
+    try:
+        office_module._run_word_selection_vbs = lambda prog_id, **kwargs: OfficeProbeResult(
+            False,
+            {},
+            "fast probe unavailable",
+        )
+        office_module._run_powershell_json = lambda script, **kwargs: OfficeProbeResult(True, {
+            "method": "com:word.selection",
+            "hwnd": 456,
+            "document": r"C:\demo\doc.docx",
+            "document_name": "doc.docx",
+            "document_path": r"C:\demo",
+            "document_saved": True,
+            "selection_type": "2",
+            "selection_start": 0,
+            "selection_end": 8,
+            "text": "fallback",
+            "messages": [],
+        })
+        ctx = OfficeAdapter().read_context({"class_name": "OpusApp", "title": "Document1 - Word", "hwnd": 456})
+        assert ctx.content == "fallback"
+        assert ctx.method == "com:word.selection"
+    finally:
+        office_module._run_word_selection_vbs = original_fast
+        office_module._run_powershell_json = original_fallback
 
 
 def test_word_rewrite_intent_supports_chinese_commands() -> None:
@@ -147,6 +192,7 @@ def main() -> None:
     test_excel_context_formatting_with_fake_com_probe()
     test_word_context_exposes_replace_selection_capabilities_with_fake_probe()
     test_wps_collapsed_selection_is_not_rewriteable()
+    test_word_context_falls_back_to_powershell_when_fast_probe_fails()
     test_word_rewrite_intent_supports_chinese_commands()
     test_permission_policy_blocks_and_confirms()
     print("adapter harness test ok")

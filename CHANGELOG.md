@@ -11,6 +11,27 @@
 
 ## Unreleased
 
+- Added observer selection sessions aligned with the public Google Magic Pointer
+  interaction principles:
+  - the hotkey freezes the foremost native selection before the panel takes
+    focus;
+  - the compact panel identifies `THIS`, its source, excerpt, and contextual
+    actions without opening as a chat transcript;
+  - commands, model requests, and action proposals carry short-lived session
+    provenance, and stale results are ignored;
+  - Word write proposals retain document, window, range, and content-hash
+    verification.
+- Added a fast read-only Word/WPS selection probe using `cscript`, with the
+  existing PowerShell COM path retained as fallback. Real Word snapshot time is
+  now 356-428 ms and full hotkey-to-panel time is about 560-770 ms on the
+  reference machine.
+- Fixed the panel run button so a mouse click submits the command text instead
+  of serializing the browser click event.
+- Added selection-session, frozen-snapshot, fast-probe/fallback, stale-request,
+  and panel interaction regression coverage.
+- Added `GOOGLE_MAGIC_POINTER_ALIGNMENT.md` to keep public evidence, local demo
+  observations, deliberate product differences, and V2 acceptance criteria in
+  one tracked decision record.
 - Reworked the in-progress observer-first flow after real desktop review:
   - kept the native mouse fully usable and replaced the duplicate custom cursor with a transient observer aura;
   - reduced the selection command panel to a compact, content-sized local tool;

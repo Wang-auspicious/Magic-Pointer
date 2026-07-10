@@ -24,6 +24,16 @@ class AdapterCapability:
             "enabled": self.enabled,
         }
 
+    @classmethod
+    def from_dict(cls, data: JsonDict) -> "AdapterCapability":
+        return cls(
+            name=str(data.get("name") or ""),
+            description=str(data.get("description") or ""),
+            safety_level=str(data.get("safety_level") or "read_only"),
+            requires_confirmation=bool(data.get("requires_confirmation", False)),
+            enabled=bool(data.get("enabled", True)),
+        )
+
 
 @dataclass(frozen=True)
 class AdapterReadContext:
@@ -53,6 +63,24 @@ class AdapterReadContext:
             "artifacts": dict(self.artifacts),
             "error": self.error,
         }
+
+    @classmethod
+    def from_dict(cls, data: JsonDict) -> "AdapterReadContext":
+        return cls(
+            adapter=str(data.get("adapter") or ""),
+            app=str(data.get("app") or ""),
+            window=dict(data.get("window") or {}),
+            content=data.get("content"),
+            label=data.get("label"),
+            method=data.get("method"),
+            capabilities=[
+                AdapterCapability.from_dict(item)
+                for item in list(data.get("capabilities") or [])
+                if isinstance(item, dict)
+            ],
+            artifacts=dict(data.get("artifacts") or {}),
+            error=data.get("error"),
+        )
 
 
 class AppAdapter(ABC):

@@ -50,6 +50,10 @@ def test_history_recent_undoable_and_mark_undone() -> None:
             selection_start=5,
             selection_end=8,
             after_selection_end=8,
+            selection_session_id="session-1",
+            selection_snapshot_id="snapshot-1",
+            source_window_hwnd=123,
+            source_window_title="doc.docx - Word",
             left_anchor_sha256="left-hash",
             left_anchor_chars=4,
             right_anchor_sha256="right-hash",
@@ -58,11 +62,15 @@ def test_history_recent_undoable_and_mark_undone() -> None:
         store.append(failed)
         store.append(success)
         assert store.recent_undoable(app="word").id == "hist-ok"
+        assert store.recent_undoable_for_session("session-1", app="word").id == "hist-ok"
+        assert store.recent_undoable_for_session("session-2", app="word") is None
         assert store.recent_undoable(app="word").left_anchor_chars == 4
         undo = make_word_undo_proposal(success)
         assert undo.action_type == "office_undo_last_action"
         assert undo.confirmation_required is True
         assert undo.parameters["history_id"] == "hist-ok"
+        assert undo.parameters["selection_session_id"] == "session-1"
+        assert undo.target.selection_id == "snapshot-1"
         store.mark_undone("hist-ok")
         assert store.get("hist-ok").undone_at is not None
         assert store.recent_undoable(app="word") is None
@@ -121,6 +129,10 @@ def test_executor_records_history_and_returns_undo_proposal_with_fake_word_com()
                 "expected_text_sha256": text_sha256("old"),
                 "replacement_text": "new",
                 "replacement_text_sha256": text_sha256("new"),
+                "selection_session_id": "session-1",
+                "selection_snapshot_id": "snapshot-1",
+                "source_window_title": "doc.docx - Word",
+                "hwnd": 123,
             },
             safety_level=SafetyLevel.HIGH,
             confirmation_required=True,
@@ -138,6 +150,9 @@ def test_executor_records_history_and_returns_undo_proposal_with_fake_word_com()
         assert records[0].after_selection_end == 8
         assert records[0].left_anchor_chars == 4
         assert records[0].right_anchor_chars == 5
+        assert records[0].selection_session_id == "session-1"
+        assert records[0].selection_snapshot_id == "snapshot-1"
+        assert records[0].source_window_hwnd == 123
 
         undo = ActionProposal.from_dict(result.output["undo_proposal"])
         undo_result = executor.execute(undo, confirmed=True)

@@ -34,6 +34,71 @@ textarea, textarea * {
   user-select: none;
   -webkit-app-region: drag;
 }
+.capture-summary {
+  margin-top: 7px;
+  padding: 8px 10px;
+  border: 1px solid rgba(37, 99, 235, 0.20);
+  border-radius: 8px;
+  background: rgba(239, 246, 255, 0.72);
+}
+.capture-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+#capture-label {
+  flex: 0 0 auto;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 800;
+}
+#capture-detail {
+  min-width: 0;
+  overflow: hidden;
+  color: #64748b;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.capture-excerpt {
+  margin-top: 3px;
+  overflow: hidden;
+  color: #334155;
+  font-size: 12px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.suggestion-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 7px;
+  overflow: hidden;
+}
+.suggestion-chip {
+  flex: 0 0 auto;
+  min-width: 58px;
+  height: 28px;
+  border: 1px solid rgba(37, 99, 235, 0.22);
+  border-radius: 8px;
+  padding: 0 11px;
+  background: rgba(255, 255, 255, 0.94);
+  color: #1d4ed8;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 750;
+}
+.suggestion-chip:hover {
+  background: rgba(219, 234, 254, 0.82);
+}
+.suggestion-chip:focus-visible,
+.panel-close:focus-visible,
+.panel-input-row button:focus-visible,
+.action-chip:focus-visible {
+  outline: 2px solid rgba(37, 99, 235, 0.72);
+  outline-offset: 2px;
+}
 .panel-close {
   -webkit-app-region: no-drag;
   border: 0;
@@ -53,7 +118,7 @@ textarea, textarea * {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  margin-top: 8px;
+  margin-top: 7px;
 }
 .panel-input-row textarea {
   box-sizing: border-box;
@@ -96,6 +161,11 @@ textarea, textarea * {
   border: 1px solid rgba(147, 197, 253, 0.5);
   font-size: 13px;
   line-height: 1.5;
+}
+.panel-result[hidden],
+.suggestion-row[hidden],
+.capture-excerpt[hidden] {
+  display: none;
 }
 .panel-result .title {
   color: #1d4ed8;

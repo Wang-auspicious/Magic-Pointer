@@ -2,14 +2,26 @@ const commandInput = document.getElementById('command');
 const runButton = document.getElementById('run');
 const closeButton = document.getElementById('close');
 const result = document.getElementById('result');
+const capture = document.getElementById('capture');
+const captureLabel = document.getElementById('capture-label');
+const captureDetail = document.getElementById('capture-detail');
+const captureExcerpt = document.getElementById('capture-excerpt');
+const suggestions = document.getElementById('suggestions');
+const inputRow = document.querySelector('.panel-input-row');
 
 let currentActionProposals = [];
+let currentSelectionSessionToken = null;
 let submitting = false;
 
 function syncPanelSize() {
   requestAnimationFrame(() => {
-    const contentHeight = 116 + Math.min(result.scrollHeight, 244);
-    window.magicPointerPanel?.resize({ height: Math.max(160, Math.min(360, contentHeight)) });
+    const resultHeight = result.hidden ? 0 : Math.min(result.scrollHeight + 8, 224);
+    const contentHeight = 54
+      + capture.scrollHeight
+      + suggestions.scrollHeight
+      + inputRow.scrollHeight
+      + resultHeight;
+    window.magicPointerPanel?.resize({ height: Math.max(188, Math.min(380, contentHeight)) });
   });
 }
 
@@ -140,9 +152,15 @@ function renderActionProposals(proposals) {
 function showResult(payload) {
   submitting = false;
   if (!payload) return;
+  if (
+    payload.selectionSessionToken
+    && currentSelectionSessionToken
+    && payload.selectionSessionToken !== currentSelectionSessionToken
+  ) return;
+  result.hidden = false;
   currentActionProposals = Array.isArray(payload.actionProposals) ? payload.actionProposals.slice(0, 5) : [];
   if (payload.ok === null) {
-    result.innerHTML = `<div class="title">处理中</div><div class="muted">${escapeHtml(payload.status || '正在读取当前选区…')}</div>`;
+    result.innerHTML = `<div class="title">处理中</div><div class="muted">${escapeHtml(payload.status || '正在处理 THIS…')}</div>`;
     syncPanelSize();
     return;
   }
@@ -151,18 +169,23 @@ function showResult(payload) {
     result.innerHTML = `<div class="title">${escapeHtml(payload.prompt || 'Result')}</div><div>${renderSafeMarkdown(answer)}</div>${renderActionProposals(currentActionProposals)}`;
   } else {
     currentActionProposals = [];
-    result.innerHTML = `<div class="title">未完成</div><div class="muted">${escapeHtml(payload.error || '未知错误')}</div>`;
+    result.innerHTML = `<div class="title">未完成</div><div class="muted">${escapeHtml(payload.error || '未能完成当前操作')}</div>`;
   }
   syncPanelSize();
 }
 
-function submitCommand() {
+function submitCommand(commandOverride = null) {
   if (submitting) return;
-  const command = commandInput.value.trim();
-  if (!command) return;
+  const command = String(commandOverride || commandInput.value).trim();
+  if (!command || !currentSelectionSessionToken) return;
+  commandInput.value = command;
+  resizeCommandInput();
   submitting = true;
-  showResult({ ok: null, status: '正在读取当前应用的真实选区…' });
-  window.magicPointerPanel?.submitSelectionCommand({ command });
+  showResult({ ok: null, status: '正在处理 THIS…' });
+  window.magicPointerPanel?.submitSelectionCommand({
+    command,
+    selectionSessionToken: currentSelectionSessionToken,
+  });
 }
 
 function executeActionProposal(index) {
@@ -171,10 +194,31 @@ function executeActionProposal(index) {
   const actionToken = proposal.action_token;
   currentActionProposals = [];
   showResult({ ok: null, status: '正在校验并执行…' });
-  window.magicPointerPanel?.executeAction({ actionToken, proposalId: proposal.id, confirmed: true });
+  window.magicPointerPanel?.executeAction({
+    actionToken,
+    proposalId: proposal.id,
+    confirmed: true,
+    selectionSessionToken: currentSelectionSessionToken,
+  });
 }
 
-runButton.addEventListener('click', submitCommand);
+function renderCaptureSummary(summary, suggestedCommands = []) {
+  const safeSummary = summary && typeof summary === 'object' ? summary : {};
+  captureLabel.textContent = safeSummary.label || 'THIS 暂不可用';
+  captureDetail.textContent = safeSummary.detail || '';
+  captureExcerpt.textContent = safeSummary.excerpt || '';
+  captureExcerpt.hidden = !safeSummary.excerpt;
+
+  const commands = suggestedCommands.slice(0, 4);
+  suggestions.innerHTML = commands.map((item, index) => (
+    `<button type="button" class="suggestion-chip" data-suggestion-index="${index}">${escapeHtml(item.label || item.command || '')}</button>`
+  )).join('');
+  suggestions.hidden = commands.length === 0;
+  suggestions.dataset.commands = JSON.stringify(commands);
+  syncPanelSize();
+}
+
+runButton.addEventListener('click', () => submitCommand());
 closeButton.addEventListener('click', () => window.magicPointerPanel?.hide());
 commandInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) {
@@ -189,14 +233,35 @@ result.addEventListener('click', (e) => {
   e.preventDefault();
   executeActionProposal(Number(actionButton.dataset.actionIndex));
 });
+suggestions.addEventListener('click', (e) => {
+  const button = e.target.closest('[data-suggestion-index]');
+  if (!button) return;
+  let commands = [];
+  try { commands = JSON.parse(suggestions.dataset.commands || '[]'); } catch (_) {}
+  const item = commands[Number(button.dataset.suggestionIndex)];
+  if (!item?.command) return;
+  submitCommand(item.command);
+});
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') window.magicPointerPanel?.hide();
 });
-window.magicPointerPanel?.onShow(() => {
+window.magicPointerPanel?.onShow((payload = {}) => {
   submitting = false;
-  window.magicPointerPanel?.resize({ height: 160 });
+  currentSelectionSessionToken = payload.selectionSessionToken || null;
+  currentActionProposals = [];
+  result.hidden = true;
+  result.innerHTML = '';
+  renderCaptureSummary(payload.captureSummary, payload.suggestedCommands || []);
+  window.magicPointerPanel?.resize({ height: 188 });
   resizeCommandInput();
-  commandInput.focus();
-  commandInput.select();
+  if (payload.focusInput !== false) {
+    commandInput.focus();
+    commandInput.select();
+  }
+});
+window.magicPointerPanel?.onHide(() => {
+  currentSelectionSessionToken = null;
+  currentActionProposals = [];
+  submitting = false;
 });
 window.magicPointerPanel?.onResult(showResult);

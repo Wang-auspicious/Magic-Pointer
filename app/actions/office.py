@@ -64,6 +64,8 @@ def make_word_replace_selection_proposal(
     *,
     command: str,
     replacement_text: str,
+    selection_session_id: str | None = None,
+    selection_snapshot_id: str | None = None,
 ) -> ActionProposal | None:
     if ctx.app != "word":
         return None
@@ -76,6 +78,8 @@ def make_word_replace_selection_proposal(
 
     artifacts = dict(ctx.artifacts or {})
     document = artifacts.get("document") or ctx.label
+    document_name = artifacts.get("document_name")
+    source_window_title = str((ctx.window or {}).get("title") or "")
     selection_start = artifacts.get("selection_start")
     selection_end = artifacts.get("selection_end")
     try:
@@ -93,21 +97,27 @@ def make_word_replace_selection_proposal(
         id=proposal_id,
         action_type="office_replace_selection",
         target=ActionTarget(
+            selection_id=selection_snapshot_id,
             description=f"Word selection in {_basename(str(document) if document else None)}",
             metadata={
                 "app": "word",
                 "document": document,
+                "document_name": document_name,
                 "hwnd": artifacts.get("hwnd"),
                 "selection_start": selection_start,
                 "selection_end": selection_end,
                 "expected_text_sha256": before_hash,
                 "office_host": artifacts.get("host"),
                 "com_prog_id": artifacts.get("com_prog_id"),
+                "selection_session_id": selection_session_id,
+                "selection_snapshot_id": selection_snapshot_id,
+                "source_window_title": source_window_title,
             },
         ),
         parameters={
             "app": "word",
             "document": document,
+            "document_name": document_name,
             "hwnd": artifacts.get("hwnd"),
             "selection_type": artifacts.get("selection_type"),
             "selection_start": selection_start,
@@ -120,6 +130,9 @@ def make_word_replace_selection_proposal(
             "command": command,
             "office_host": artifacts.get("host"),
             "com_prog_id": artifacts.get("com_prog_id"),
+            "selection_session_id": selection_session_id,
+            "selection_snapshot_id": selection_snapshot_id,
+            "source_window_title": source_window_title,
         },
         safety_level=SafetyLevel.HIGH,
         confirmation_required=True,
@@ -128,11 +141,15 @@ def make_word_replace_selection_proposal(
             "adapter": ctx.adapter,
             "method": ctx.method,
             "document": document,
+            "document_name": document_name,
             "selection_start": selection_start,
             "selection_end": selection_end,
             "expected_text_sha256": before_hash,
             "replacement_text_sha256": after_hash,
             "office_host": artifacts.get("host"),
             "com_prog_id": artifacts.get("com_prog_id"),
+            "selection_session_id": selection_session_id,
+            "selection_snapshot_id": selection_snapshot_id,
+            "source_window_title": source_window_title,
         },
     )

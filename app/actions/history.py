@@ -54,6 +54,10 @@ class ActionHistoryRecord:
     selection_start: int | None = None
     selection_end: int | None = None
     after_selection_end: int | None = None
+    selection_session_id: str | None = None
+    selection_snapshot_id: str | None = None
+    source_window_hwnd: int | None = None
+    source_window_title: str | None = None
     left_anchor_sha256: str | None = None
     left_anchor_chars: int | None = None
     right_anchor_sha256: str | None = None
@@ -93,6 +97,10 @@ class ActionHistoryRecord:
             "selection_start": self.selection_start,
             "selection_end": self.selection_end,
             "after_selection_end": self.after_selection_end,
+            "selection_session_id": self.selection_session_id,
+            "selection_snapshot_id": self.selection_snapshot_id,
+            "source_window_hwnd": self.source_window_hwnd,
+            "source_window_title": self.source_window_title,
             "left_anchor_sha256": self.left_anchor_sha256,
             "left_anchor_chars": self.left_anchor_chars,
             "right_anchor_sha256": self.right_anchor_sha256,
@@ -122,6 +130,10 @@ class ActionHistoryRecord:
             selection_start=_optional_int(data.get("selection_start")),
             selection_end=_optional_int(data.get("selection_end")),
             after_selection_end=_optional_int(data.get("after_selection_end")),
+            selection_session_id=data.get("selection_session_id"),
+            selection_snapshot_id=data.get("selection_snapshot_id"),
+            source_window_hwnd=_optional_int(data.get("source_window_hwnd")),
+            source_window_title=data.get("source_window_title"),
             left_anchor_sha256=data.get("left_anchor_sha256"),
             left_anchor_chars=_optional_int(data.get("left_anchor_chars")),
             right_anchor_sha256=data.get("right_anchor_sha256"),
@@ -184,6 +196,21 @@ class ActionHistoryStore:
                 return record
         return None
 
+    def recent_undoable_for_session(
+        self,
+        selection_session_id: str,
+        *,
+        app: str | None = None,
+    ) -> ActionHistoryRecord | None:
+        for record in reversed(self.records()):
+            if record.selection_session_id != selection_session_id:
+                continue
+            if app is not None and record.app != app:
+                continue
+            if record.is_undoable:
+                return record
+        return None
+
     def mark_undone(self, history_id: str, *, undone_at: str | None = None) -> ActionHistoryRecord | None:
         records = self.records()
         updated: list[ActionHistoryRecord] = []
@@ -211,18 +238,32 @@ def make_word_undo_proposal(record: ActionHistoryRecord) -> ActionProposal:
         id=f"undo-{record.id}",
         action_type="office_undo_last_action",
         target=ActionTarget(
+            selection_id=record.selection_snapshot_id,
             description=record.target_label or "Word selection",
-            metadata={"app": "word", "document": record.document, "history_id": record.id},
+            metadata={
+                "app": "word",
+                "document": record.document,
+                "history_id": record.id,
+                "selection_session_id": record.selection_session_id,
+                "selection_snapshot_id": record.selection_snapshot_id,
+            },
         ),
         parameters={
             "app": "word",
             "history_id": record.id,
             "document": record.document,
             "target_label": record.target_label,
+            "selection_session_id": record.selection_session_id,
+            "selection_snapshot_id": record.selection_snapshot_id,
         },
         safety_level=SafetyLevel.HIGH,
         confirmation_required=True,
         rationale="Precisely restore the text changed by this Magic Pointer Word write without using global Ctrl+Z.",
         created_at=now_iso(),
-        metadata={"history_id": record.id, "source_proposal_id": record.proposal_id},
+        metadata={
+            "history_id": record.id,
+            "source_proposal_id": record.proposal_id,
+            "selection_session_id": record.selection_session_id,
+            "selection_snapshot_id": record.selection_snapshot_id,
+        },
     )
