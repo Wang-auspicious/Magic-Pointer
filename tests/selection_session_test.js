@@ -24,6 +24,17 @@ assert.strictEqual(attached.state, 'ready');
 assert.strictEqual(attached.snapshot.snapshot_id, 'snapshot-1');
 assert.strictEqual(attached.suggestedCommands.length, 2);
 
+const laidOut = store.setPanelLayout('session-1', {
+  nonce: 'layout-1',
+  geometry: {
+    anchorCursor: { x: 10, y: 20 },
+    selectionRects: [{ x: 30, y: 40, width: 50, height: 20 }],
+  },
+}, 275);
+assert.strictEqual(laidOut.panelLayoutNonce, 'layout-1');
+assert.strictEqual(laidOut.panelGeometry.selectionRects.length, 1);
+assert.strictEqual(store.setPanelPlacement('session-1', { mode: 'right-anchor' }, 280).panelPlacement.mode, 'right-anchor');
+
 const request1 = store.startRequest('session-1', 300);
 const request2 = store.startRequest('session-1', 350);
 assert.strictEqual(request1, 'request-1');

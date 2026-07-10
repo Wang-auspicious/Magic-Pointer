@@ -4,6 +4,11 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const crypto = require('crypto');
 const { SelectionSessionStore } = require('./selection_session');
+const {
+  chooseAnchorRect,
+  computePanelPlacement,
+  normalizeNativeSelectionRectangles,
+} = require('./panel_position');
 
 let overlayWindow = null;
 let panelWindow = null;
@@ -174,34 +179,96 @@ function createPanelWindow() {
   return panelWindow;
 }
 
-function positionPanelNearCursor() {
-  if (!panelWindow) return;
-  const cursor = screen.getCursorScreenPoint();
-  const display = screen.getDisplayNearestPoint(cursor);
-  const bounds = display.workArea || display.bounds;
-  const size = panelWindow.getBounds();
-  const x = Math.min(bounds.x + bounds.width - size.width - 18, Math.max(bounds.x + 18, cursor.x + 28));
-  const y = Math.min(bounds.y + bounds.height - size.height - 18, Math.max(bounds.y + 18, cursor.y + 30));
-  panelWindow.setBounds({ x, y, width: size.width, height: size.height });
+function panelGeometryForSession(entry) {
+  const context = entry?.snapshot?.context || {};
+  const artifacts = context.artifacts || {};
+  const rawRectangles = artifacts.selection_rectangles;
+  const coordinateSpace = String(
+    artifacts.selection_rectangles_coordinate_space
+    || (context.adapter === 'uia_text_selection' ? 'physical_screen_pixels' : 'electron_dip'),
+  );
+  const shouldConvertPhysicalPixels = (
+    coordinateSpace === 'physical_screen_pixels'
+    && process.platform === 'win32'
+    && typeof screen.screenToDipRect === 'function'
+  );
+  const selectionRects = normalizeNativeSelectionRectangles(rawRectangles, (rect) => {
+    if (!shouldConvertPhysicalPixels) return rect;
+    return screen.screenToDipRect(null, {
+      x: Math.floor(rect.x),
+      y: Math.floor(rect.y),
+      width: Math.ceil(rect.width),
+      height: Math.ceil(rect.height),
+    });
+  });
+  return {
+    coordinateSpace: 'electron_dip',
+    sourceCoordinateSpace: coordinateSpace,
+    anchorCursor: entry?.cursor || screen.getCursorScreenPoint(),
+    selectionRects,
+  };
 }
 
-function resizePanel(height) {
-  if (!panelWindow || panelWindow.isDestroyed()) return;
-  const desiredHeight = Math.max(188, Math.min(380, Math.round(Number(height) || 188)));
-  const cursor = screen.getCursorScreenPoint();
-  const display = screen.getDisplayNearestPoint(cursor);
+function displayForPanelGeometry(geometry) {
+  const cursor = geometry?.anchorCursor || screen.getCursorScreenPoint();
+  const anchorRect = chooseAnchorRect(geometry?.selectionRects || [], cursor);
+  if (anchorRect && typeof screen.getDisplayMatching === 'function') {
+    return screen.getDisplayMatching({
+      x: Math.round(anchorRect.x),
+      y: Math.round(anchorRect.y),
+      width: Math.max(1, Math.round(anchorRect.width)),
+      height: Math.max(1, Math.round(anchorRect.height)),
+    });
+  }
+  return screen.getDisplayNearestPoint(cursor);
+}
+
+function positionPanelForSession(entry, height = 188) {
+  if (!panelWindow || panelWindow.isDestroyed()) return null;
+  const geometry = entry?.panelGeometry || panelGeometryForSession(entry);
+  const display = displayForPanelGeometry(geometry);
   const workArea = display.workArea || display.bounds;
   const current = panelWindow.getBounds();
-  const x = Math.min(workArea.x + workArea.width - current.width - 18, Math.max(workArea.x + 18, current.x));
-  const y = Math.min(workArea.y + workArea.height - desiredHeight - 18, Math.max(workArea.y + 18, current.y));
-  panelWindow.setBounds({ x, y, width: current.width, height: desiredHeight });
+  const desiredHeight = Math.max(188, Math.min(380, Math.round(Number(height) || 188)));
+  const placement = computePanelPlacement({
+    workArea,
+    panelSize: { width: current.width, height: desiredHeight },
+    cursor: geometry.anchorCursor,
+    selectionRects: geometry.selectionRects,
+    preferredMode: entry?.panelPlacement?.mode || null,
+  });
+  panelWindow.setBounds(placement.bounds);
+  if (entry?.token) selectionSessions.setPanelPlacement(entry.token, placement);
+  log(
+    `panel positioned token=${entry?.token || 'none'} mode=${placement.mode}`
+    + ` rects=${geometry.selectionRects.length} overlap=${Math.round(placement.overlapArea)}`
+    + ` bounds=${placement.bounds.x},${placement.bounds.y},${placement.bounds.width},${placement.bounds.height}`,
+  );
+  return placement;
 }
 
-function showPanel(reason = 'manual', payload = {}, { focusInput = true } = {}) {
+function resizePanel(payload = {}) {
+  if (!panelWindow || panelWindow.isDestroyed()) return;
+  const selectionSessionToken = payload?.selectionSessionToken;
+  const entry = selectionSessions.get(selectionSessionToken);
+  if (
+    !entry
+    || selectionSessionToken !== activeSelectionSessionToken
+    || payload?.layoutNonce !== entry.panelLayoutNonce
+  ) {
+    log(`panel resize ignored stale token=${selectionSessionToken || 'none'}`);
+    return;
+  }
+  positionPanelForSession(entry, payload?.height);
+}
+
+function showPanel(reason = 'manual', payload = {}, { focusInput = true, sessionEntry = null } = {}) {
   const win = createPanelWindow();
   const reveal = () => {
     if (!panelWindow || panelWindow.isDestroyed()) return;
-    positionPanelNearCursor();
+    const currentEntry = sessionEntry?.token ? selectionSessions.get(sessionEntry.token) : null;
+    if (sessionEntry?.token && (!currentEntry || currentEntry.token !== activeSelectionSessionToken)) return;
+    positionPanelForSession(currentEntry || sessionEntry, 188);
     if (focusInput) {
       win.show();
       win.focus();
@@ -347,6 +414,7 @@ function panelPayloadForSession(entry) {
   return {
     selectionSessionToken: entry.token,
     selectionSnapshotId: entry.snapshot?.snapshot_id || null,
+    panelLayoutNonce: entry.panelLayoutNonce,
     captureSummary: entry.summary,
     suggestedCommands: entry.suggestedCommands,
   };
@@ -381,8 +449,13 @@ function beginSelectionSession(reason = 'manual') {
         if (!current || activeSelectionSessionToken !== entry.token) return;
         const attached = selectionSessions.attachSnapshot(entry.token, parsed);
         if (!attached) return;
+        const laidOut = selectionSessions.setPanelLayout(entry.token, {
+          nonce: crypto.randomUUID(),
+          geometry: panelGeometryForSession(attached),
+        });
+        if (!laidOut) return;
         log(`selection session capture done token=${entry.token} status=${attached.snapshot?.status || 'missing'} app=${attached.summary?.app || 'none'}`);
-        showPanel(reason, panelPayloadForSession(attached), { focusInput: true });
+        showPanel(reason, panelPayloadForSession(laidOut), { focusInput: true, sessionEntry: laidOut });
       },
     },
   );
@@ -419,7 +492,7 @@ app.on('will-quit', () => {
 
 ipcMain.on('overlay:hide', hideOverlay);
 ipcMain.on('panel:hide', () => hidePanel({ hideObserver: true }));
-ipcMain.on('panel:resize', (_event, payload) => resizePanel(payload?.height));
+ipcMain.on('panel:resize', (_event, payload) => resizePanel(payload));
 
 function resultTargetWindow(target) {
   return target === 'panel' ? panelWindow : overlayWindow;

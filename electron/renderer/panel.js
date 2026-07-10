@@ -11,17 +11,30 @@ const inputRow = document.querySelector('.panel-input-row');
 
 let currentActionProposals = [];
 let currentSelectionSessionToken = null;
+let currentPanelLayoutNonce = null;
 let submitting = false;
 
 function syncPanelSize() {
+  const selectionSessionToken = currentSelectionSessionToken;
+  const layoutNonce = currentPanelLayoutNonce;
   requestAnimationFrame(() => {
+    if (
+      !selectionSessionToken
+      || !layoutNonce
+      || selectionSessionToken !== currentSelectionSessionToken
+      || layoutNonce !== currentPanelLayoutNonce
+    ) return;
     const resultHeight = result.hidden ? 0 : Math.min(result.scrollHeight + 8, 224);
     const contentHeight = 54
       + capture.scrollHeight
       + suggestions.scrollHeight
       + inputRow.scrollHeight
       + resultHeight;
-    window.magicPointerPanel?.resize({ height: Math.max(188, Math.min(380, contentHeight)) });
+    window.magicPointerPanel?.resize({
+      height: Math.max(188, Math.min(380, contentHeight)),
+      selectionSessionToken,
+      layoutNonce,
+    });
   });
 }
 
@@ -248,6 +261,7 @@ window.addEventListener('keydown', (e) => {
 window.magicPointerPanel?.onShow((payload = {}) => {
   submitting = false;
   currentSelectionSessionToken = payload.selectionSessionToken || null;
+  currentPanelLayoutNonce = payload.panelLayoutNonce || null;
   currentActionProposals = [];
   commandInput.value = '';
   result.hidden = true;
@@ -262,6 +276,7 @@ window.magicPointerPanel?.onShow((payload = {}) => {
 });
 window.magicPointerPanel?.onHide(() => {
   currentSelectionSessionToken = null;
+  currentPanelLayoutNonce = null;
   currentActionProposals = [];
   submitting = false;
 });

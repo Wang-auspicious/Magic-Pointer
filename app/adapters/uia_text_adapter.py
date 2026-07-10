@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from app.adapters.base import AdapterCapability, AdapterReadContext, AppAdapter
+from app.adapters.pdf_selection_recovery import recover_local_pdf_selection
 
 JsonDict = dict[str, Any]
 
@@ -129,7 +130,7 @@ def _ensure_uia_probe() -> UiaProbeResult:
     return _compile_uia_probe()
 
 
-def _run_uia_selection_probe(hwnd: int, *, timeout: float = 1.2) -> UiaProbeResult:
+def _run_uia_selection_probe(hwnd: int, *, timeout: float = 2.5) -> UiaProbeResult:
     prepared = _ensure_uia_probe()
     if not prepared.ok:
         return prepared
@@ -276,6 +277,91 @@ class UiaTextSelectionAdapter(AppAdapter):
                 },
             )
 
+        method = "uia:text-pattern.selection"
+        selection_rectangles = list(data.get("rectangles") or [])[:32]
+        rectangle_count_total = int(
+            data.get("rectangle_count_total")
+            or len(data.get("rectangles") or [])
+        )
+        rectangles_truncated = bool(data.get("rectangles_truncated"))
+        raw_text = text
+        recovery_artifacts: JsonDict = {}
+        if (
+            app == "pdf"
+            and str(window.get("class_name") or "") == "Chrome_WidgetWin_1"
+        ):
+            recovery = recover_local_pdf_selection(data)
+            raw_text_sha256 = hashlib.sha256(
+                raw_text.encode("utf-8", errors="surrogatepass")
+            ).hexdigest()
+            if not recovery.ok:
+                return AdapterReadContext(
+                    adapter=self.name,
+                    app=app,
+                    window=window,
+                    method="pdf:verified-visible-selection",
+                    capabilities=capabilities,
+                    artifacts={
+                        "source_hwnd": hwnd,
+                        "source_pid": expected_pid,
+                        "observed_root_hwnd": observed_root_hwnd,
+                        "observed_pid": observed_pid,
+                        "uia_selection_text_chars": len(raw_text),
+                        "uia_selection_text_sha256": raw_text_sha256,
+                        "uia_selection_rectangle_count_total": rectangle_count_total,
+                        "uia_selection_rectangles_truncated": rectangles_truncated,
+                        "pdf_document_path": recovery.document_path,
+                        "pdf_page_number": recovery.page_number,
+                        "pdf_page_selector_number": data.get(
+                            "page_selector_number"
+                        ),
+                        "pdf_page_ancestor_number": data.get(
+                            "page_ancestor_number"
+                        ),
+                        "pdf_recovery_error": recovery.error,
+                        "probe_elapsed_ms": data.get("elapsed_ms"),
+                    },
+                    error=(
+                        "The visible Chromium PDF selection could not be verified "
+                        "against the local document text layer."
+                    ),
+                )
+            text = recovery.text
+            selection_rectangles = [
+                [float(part) for part in rectangle]
+                for rectangle in recovery.rectangles
+            ]
+            rectangle_count_total = len(selection_rectangles)
+            rectangles_truncated = False
+            method = "pdf:screen-highlight+local-text-layer"
+            recovery_artifacts = {
+                "selection_context": recovery.context,
+                "selection_source": "verified_visible_local_pdf_text",
+                "pdf_document_path": recovery.document_path,
+                "pdf_page_number": recovery.page_number,
+                "pdf_page_selector_number": data.get("page_selector_number"),
+                "pdf_page_ancestor_number": data.get("page_ancestor_number"),
+                "pdf_uia_matching_core_sha256": hashlib.sha256(
+                    recovery.uia_matching_core.encode(
+                        "utf-8",
+                        errors="surrogatepass",
+                    )
+                ).hexdigest(),
+                "pdf_uia_matching_core_chars": len(recovery.uia_matching_core),
+                "pdf_dropped_uia_rectangle_count": (
+                    recovery.dropped_uia_rectangle_count
+                ),
+                "uia_selection_text_chars": len(raw_text),
+                "uia_selection_text_sha256": raw_text_sha256,
+                "uia_selection_rectangle_count_total": int(
+                    data.get("rectangle_count_total")
+                    or len(data.get("rectangles") or [])
+                ),
+                "uia_selection_rectangles_truncated": bool(
+                    data.get("rectangles_truncated")
+                ),
+            }
+
         artifacts = {
             "source_hwnd": hwnd,
             "source_pid": expected_pid,
@@ -285,11 +371,15 @@ class UiaTextSelectionAdapter(AppAdapter):
             "automation_id": data.get("automation_id"),
             "control_type": data.get("control_type"),
             "range_count": data.get("range_count"),
-            "selection_rectangles": list(data.get("rectangles") or [])[:32],
+            "selection_rectangles": selection_rectangles,
+            "selection_rectangles_coordinate_space": "physical_screen_pixels",
+            "selection_rectangle_count_total": rectangle_count_total,
+            "selection_rectangles_truncated": rectangles_truncated,
             "selection_text_chars": len(text),
             "selection_text_sha256": hashlib.sha256(text.encode("utf-8", errors="surrogatepass")).hexdigest(),
             "truncated": bool(data.get("truncated")),
             "probe_elapsed_ms": data.get("elapsed_ms"),
+            **recovery_artifacts,
         }
         return AdapterReadContext(
             adapter=self.name,
@@ -297,7 +387,7 @@ class UiaTextSelectionAdapter(AppAdapter):
             window=window,
             content=text,
             label=str(window.get("title") or data.get("element_name") or "Selected text"),
-            method="uia:text-pattern.selection",
+            method=method,
             capabilities=capabilities,
             artifacts=artifacts,
         )

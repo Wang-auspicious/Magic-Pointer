@@ -26,6 +26,9 @@ class SelectionSessionStore {
       snapshot: null,
       summary: null,
       suggestedCommands: [],
+      panelLayoutNonce: null,
+      panelGeometry: null,
+      panelPlacement: null,
       activeRequestId: null,
       createdAt: now,
       expiresAt: now + this.ttlMs,
@@ -49,6 +52,22 @@ class SelectionSessionStore {
       ? payload.suggestedCommands.slice(0, 4)
       : [];
     entry.state = entry.snapshot ? 'ready' : 'unavailable';
+    return entry;
+  }
+
+  setPanelLayout(token, { nonce, geometry }, now = Date.now()) {
+    const entry = this.get(token, now);
+    if (!entry || typeof nonce !== 'string' || !nonce) return null;
+    entry.panelLayoutNonce = nonce;
+    entry.panelGeometry = geometry || null;
+    entry.panelPlacement = null;
+    return entry;
+  }
+
+  setPanelPlacement(token, placement, now = Date.now()) {
+    const entry = this.get(token, now);
+    if (!entry) return null;
+    entry.panelPlacement = placement || null;
     return entry;
   }
 

@@ -108,15 +108,25 @@ def format_adapter_context(ctx: AdapterReadContext | None) -> str:
     if ctx.error:
         lines.append(f"read_error={ctx.error!r}")
     if ctx.artifacts:
-        safe_artifacts = {k: v for k, v in ctx.artifacts.items() if k not in {"raw"}}
+        safe_artifacts = {
+            k: v
+            for k, v in ctx.artifacts.items()
+            if k not in {"raw", "selection_context"}
+        }
         lines.append(f"artifacts={safe_artifacts!r}")
     if ctx.capabilities:
         lines.append("capabilities:")
         for cap in ctx.capabilities:
             lines.append(f"- {cap.name}: {cap.description} safety={cap.safety_level} confirm={cap.requires_confirmation} enabled={cap.enabled}")
     if ctx.content:
-        lines.append("content_excerpt:")
+        lines.append("selected_text_exact:")
         lines.append("```text")
         lines.append(ctx.content[:16000])
+        lines.append("```")
+    selection_context = str(ctx.artifacts.get("selection_context") or "").strip()
+    if selection_context:
+        lines.append("surrounding_context_from_same_document:")
+        lines.append("```text")
+        lines.append(selection_context[:16000])
         lines.append("```")
     return "\n".join(lines)

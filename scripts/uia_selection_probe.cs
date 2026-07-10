@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows;
 using System.Windows.Automation;
@@ -21,12 +22,22 @@ internal static class UiaSelectionProbe
         public int ProcessId;
         public int RootHwnd;
         public int RangeCount;
+        public int RectangleCountTotal;
+        public bool RectanglesTruncated;
         public readonly List<Rect> Rectangles = new List<Rect>();
+        public string DocumentLocation = "";
+        public int PageNumber;
+        public int PageSelectorNumber;
+        public int PageAncestorNumber;
+        public Rect PageRectangle = Rect.Empty;
+        public string SelectionContainerText = "";
+        public Rect SelectionContainerRectangle = Rect.Empty;
         public string Error = "";
     }
 
     public static int Main(string[] args)
     {
+        EnableDpiAwareness();
         Console.OutputEncoding = new UTF8Encoding(false);
         Stopwatch stopwatch = Stopwatch.StartNew();
         SelectionResult result = new SelectionResult();
@@ -81,6 +92,11 @@ internal static class UiaSelectionProbe
                 {
                     result.Error = "No non-empty UI Automation text selection was exposed.";
                 }
+
+                if (result.Ok)
+                {
+                    PopulateSelectionMetadata(root, result);
+                }
             }
         }
         catch (Exception ex)
@@ -91,6 +107,31 @@ internal static class UiaSelectionProbe
         stopwatch.Stop();
         WriteResult(result, hwndValue, stopwatch.ElapsedMilliseconds);
         return result.Ok ? 0 : 1;
+    }
+
+    [DllImport("Shcore.dll")]
+    private static extern int SetProcessDpiAwareness(int awareness);
+
+    [DllImport("user32.dll")]
+    private static extern bool SetProcessDPIAware();
+
+    private static void EnableDpiAwareness()
+    {
+        try
+        {
+            SetProcessDpiAwareness(2);
+            return;
+        }
+        catch
+        {
+        }
+        try
+        {
+            SetProcessDPIAware();
+        }
+        catch
+        {
+        }
     }
 
     private static void TryElementAndAncestors(
@@ -174,6 +215,8 @@ internal static class UiaSelectionProbe
         StringBuilder text = new StringBuilder();
         List<Rect> rectangles = new List<Rect>();
         int nonEmptyRanges = 0;
+        int rectangleCountTotal = 0;
+        bool rectanglesTruncated = false;
         bool truncated = false;
 
         foreach (TextPatternRange range in ranges)
@@ -221,13 +264,20 @@ internal static class UiaSelectionProbe
                 Rect[] rangeRectangles = range.GetBoundingRectangles();
                 if (rangeRectangles != null)
                 {
-                    int rectangleLimit = Math.Min(rangeRectangles.Length, 32 - rectangles.Count);
-                    for (int index = 0; index < rectangleLimit; index++)
+                    for (int index = 0; index < rangeRectangles.Length; index++)
                     {
                         Rect rectangle = rangeRectangles[index];
                         if (!rectangle.IsEmpty && rectangle.Width > 0 && rectangle.Height > 0)
                         {
-                            rectangles.Add(rectangle);
+                            rectangleCountTotal++;
+                            if (rectangles.Count < 32)
+                            {
+                                rectangles.Add(rectangle);
+                            }
+                            else
+                            {
+                                rectanglesTruncated = true;
+                            }
                         }
                     }
                 }
@@ -255,8 +305,264 @@ internal static class UiaSelectionProbe
         result.ControlType = SafeControlType(element);
         result.ProcessId = SafeProcessId(element);
         result.RangeCount = nonEmptyRanges;
+        result.RectangleCountTotal = rectangleCountTotal;
+        result.RectanglesTruncated = rectanglesTruncated;
         result.Rectangles.AddRange(rectangles);
         result.Error = "";
+    }
+
+    private static void PopulateSelectionMetadata(AutomationElement root, SelectionResult result)
+    {
+        TryReadDocumentLocationAndPage(root, result);
+        TryFindSelectionContainerAndPage(root, result);
+    }
+
+    private static void TryReadDocumentLocationAndPage(
+        AutomationElement root,
+        SelectionResult result)
+    {
+        try
+        {
+            Condition condition = new PropertyCondition(
+                AutomationElement.ControlTypeProperty,
+                ControlType.Edit);
+            AutomationElementCollection edits = root.FindAll(TreeScope.Descendants, condition);
+            int limit = Math.Min(edits.Count, 24);
+            for (int index = 0; index < limit; index++)
+            {
+                AutomationElement edit = edits[index];
+                string automationId = SafeString(
+                    edit,
+                    AutomationElement.AutomationIdProperty);
+                string value = SafeValue(edit);
+                if (
+                    string.IsNullOrEmpty(result.DocumentLocation)
+                    && value.IndexOf(".pdf", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    result.DocumentLocation = value;
+                }
+                if (
+                    result.PageSelectorNumber <= 0
+                    && string.Equals(
+                        automationId,
+                        "pageselector",
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    int parsedPage;
+                    if (int.TryParse(value, out parsedPage) && parsedPage > 0)
+                    {
+                        result.PageSelectorNumber = parsedPage;
+                    }
+                }
+            }
+            if (result.PageNumber <= 0)
+            {
+                result.PageNumber = result.PageSelectorNumber;
+            }
+        }
+        catch
+        {
+        }
+    }
+
+    private static void TryFindSelectionContainerAndPage(
+        AutomationElement root,
+        SelectionResult result)
+    {
+        Rect selectionBounds = UnionRectangles(result.Rectangles);
+        if (selectionBounds.IsEmpty)
+        {
+            return;
+        }
+
+        AutomationElement bestElement = null;
+        double bestOverlap = 0;
+        double bestArea = double.PositiveInfinity;
+        try
+        {
+            Condition condition = new PropertyCondition(
+                AutomationElement.ControlTypeProperty,
+                ControlType.Text);
+            AutomationElementCollection textElements = root.FindAll(
+                TreeScope.Descendants,
+                condition);
+            int limit = Math.Min(textElements.Count, 2048);
+            for (int index = 0; index < limit; index++)
+            {
+                AutomationElement element = textElements[index];
+                Rect rectangle = SafeBoundingRectangle(element);
+                double overlap = IntersectionArea(rectangle, selectionBounds);
+                if (overlap <= 0)
+                {
+                    continue;
+                }
+                double area = rectangle.Width * rectangle.Height;
+                if (
+                    area <= 0
+                    || overlap < bestOverlap
+                    || (Math.Abs(overlap - bestOverlap) < 0.5 && area >= bestArea))
+                {
+                    continue;
+                }
+                bestElement = element;
+                bestOverlap = overlap;
+                bestArea = area;
+            }
+        }
+        catch
+        {
+        }
+
+        if (bestElement != null)
+        {
+            result.SelectionContainerText = SafeString(
+                bestElement,
+                AutomationElement.NameProperty);
+            result.SelectionContainerRectangle = SafeBoundingRectangle(bestElement);
+            TryReadPageFromAncestors(bestElement, selectionBounds, result);
+        }
+    }
+
+    private static void TryReadPageFromAncestors(
+        AutomationElement element,
+        Rect selectionBounds,
+        SelectionResult result)
+    {
+        TreeWalker walker = TreeWalker.ControlViewWalker;
+        AutomationElement current = element;
+        for (int depth = 0; current != null && depth < 24; depth++)
+        {
+            try
+            {
+                ControlType controlType = current.Current.ControlType;
+                Rect rectangle = SafeBoundingRectangle(current);
+                if (
+                    controlType == ControlType.Group
+                    && ContainsRect(rectangle, selectionBounds, 3))
+                {
+                    result.PageRectangle = rectangle;
+                    int ancestorPage = FirstPositiveInteger(
+                        SafeString(current, AutomationElement.NameProperty));
+                    if (ancestorPage > 0)
+                    {
+                        result.PageAncestorNumber = ancestorPage;
+                        result.PageNumber = ancestorPage;
+                    }
+                    else if (result.PageNumber <= 0)
+                    {
+                        result.PageNumber = result.PageSelectorNumber;
+                    }
+                    return;
+                }
+                current = walker.GetParent(current);
+            }
+            catch
+            {
+                return;
+            }
+        }
+    }
+
+    private static string SafeValue(AutomationElement element)
+    {
+        try
+        {
+            object patternObject;
+            if (!element.TryGetCurrentPattern(ValuePattern.Pattern, out patternObject))
+            {
+                return "";
+            }
+            ValuePattern pattern = patternObject as ValuePattern;
+            return pattern == null ? "" : pattern.Current.Value ?? "";
+        }
+        catch
+        {
+            return "";
+        }
+    }
+
+    private static Rect SafeBoundingRectangle(AutomationElement element)
+    {
+        try
+        {
+            Rect rectangle = element.Current.BoundingRectangle;
+            return rectangle.IsEmpty || rectangle.Width <= 0 || rectangle.Height <= 0
+                ? Rect.Empty
+                : rectangle;
+        }
+        catch
+        {
+            return Rect.Empty;
+        }
+    }
+
+    private static Rect UnionRectangles(List<Rect> rectangles)
+    {
+        Rect union = Rect.Empty;
+        foreach (Rect rectangle in rectangles)
+        {
+            if (rectangle.IsEmpty || rectangle.Width <= 0 || rectangle.Height <= 0)
+            {
+                continue;
+            }
+            if (union.IsEmpty)
+            {
+                union = rectangle;
+            }
+            else
+            {
+                union.Union(rectangle);
+            }
+        }
+        return union;
+    }
+
+    private static bool ContainsRect(Rect outer, Rect inner, double tolerance)
+    {
+        if (outer.IsEmpty || inner.IsEmpty)
+        {
+            return false;
+        }
+        return (
+            outer.Left <= inner.Left + tolerance
+            && outer.Top <= inner.Top + tolerance
+            && outer.Right >= inner.Right - tolerance
+            && outer.Bottom >= inner.Bottom - tolerance
+        );
+    }
+
+    private static double IntersectionArea(Rect left, Rect right)
+    {
+        if (left.IsEmpty || right.IsEmpty)
+        {
+            return 0;
+        }
+        double width = Math.Max(
+            0,
+            Math.Min(left.Right, right.Right) - Math.Max(left.Left, right.Left));
+        double height = Math.Max(
+            0,
+            Math.Min(left.Bottom, right.Bottom) - Math.Max(left.Top, right.Top));
+        return width * height;
+    }
+
+    private static int FirstPositiveInteger(string value)
+    {
+        int current = 0;
+        bool hasDigits = false;
+        foreach (char character in value ?? "")
+        {
+            if (character >= '0' && character <= '9')
+            {
+                hasDigits = true;
+                current = (current * 10) + (character - '0');
+            }
+            else if (hasDigits)
+            {
+                return current > 0 ? current : 0;
+            }
+        }
+        return hasDigits && current > 0 ? current : 0;
     }
 
     private static int SafeProcessId(AutomationElement element)
@@ -399,6 +705,32 @@ internal static class UiaSelectionProbe
         return builder.ToString();
     }
 
+    private static void AppendJsonRect(StringBuilder json, Rect rectangle)
+    {
+        if (rectangle.IsEmpty || rectangle.Width <= 0 || rectangle.Height <= 0)
+        {
+            json.Append("null");
+            return;
+        }
+        json.Append('[');
+        json.Append(rectangle.Left.ToString(
+            "R",
+            System.Globalization.CultureInfo.InvariantCulture));
+        json.Append(',');
+        json.Append(rectangle.Top.ToString(
+            "R",
+            System.Globalization.CultureInfo.InvariantCulture));
+        json.Append(',');
+        json.Append(rectangle.Width.ToString(
+            "R",
+            System.Globalization.CultureInfo.InvariantCulture));
+        json.Append(',');
+        json.Append(rectangle.Height.ToString(
+            "R",
+            System.Globalization.CultureInfo.InvariantCulture));
+        json.Append(']');
+    }
+
     private static void WriteResult(SelectionResult result, long hwnd, long elapsedMilliseconds)
     {
         StringBuilder json = new StringBuilder();
@@ -416,6 +748,24 @@ internal static class UiaSelectionProbe
         json.Append(result.Truncated ? "true" : "false");
         json.Append(",\"range_count\":");
         json.Append(result.RangeCount);
+        json.Append(",\"rectangle_count_total\":");
+        json.Append(result.RectangleCountTotal);
+        json.Append(",\"rectangles_truncated\":");
+        json.Append(result.RectanglesTruncated ? "true" : "false");
+        json.Append(",\"document_location\":");
+        json.Append(JsonString(result.DocumentLocation));
+        json.Append(",\"page_number\":");
+        json.Append(result.PageNumber);
+        json.Append(",\"page_selector_number\":");
+        json.Append(result.PageSelectorNumber);
+        json.Append(",\"page_ancestor_number\":");
+        json.Append(result.PageAncestorNumber);
+        json.Append(",\"page_rect\":");
+        AppendJsonRect(json, result.PageRectangle);
+        json.Append(",\"selection_container_text\":");
+        json.Append(JsonString(result.SelectionContainerText));
+        json.Append(",\"selection_container_rect\":");
+        AppendJsonRect(json, result.SelectionContainerRectangle);
         json.Append(",\"element_name\":");
         json.Append(JsonString(result.ElementName));
         json.Append(",\"automation_id\":");
