@@ -4,6 +4,15 @@ import ctypes
 from ctypes import wintypes
 
 
+def get_foreground_window_handle() -> int:
+    """Return the exact foreground top-level window handle on Windows."""
+
+    try:
+        return int(ctypes.windll.user32.GetForegroundWindow() or 0)
+    except Exception:
+        return 0
+
+
 def get_foreground_window_title() -> str:
     """Return the foreground window title on Windows.
 
@@ -12,7 +21,7 @@ def get_foreground_window_title() -> str:
 
     try:
         user32 = ctypes.windll.user32
-        hwnd = user32.GetForegroundWindow()
+        hwnd = get_foreground_window_handle()
         if not hwnd:
             return ""
         length = user32.GetWindowTextLengthW(hwnd)

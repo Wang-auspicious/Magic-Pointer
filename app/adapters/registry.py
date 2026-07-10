@@ -5,6 +5,7 @@ from typing import Any
 
 from app.adapters.base import AdapterReadContext, AppAdapter
 from app.adapters.office_adapter import OfficeAdapter
+from app.adapters.uia_text_adapter import UiaTextSelectionAdapter
 
 JsonDict = dict[str, Any]
 
@@ -34,4 +35,4 @@ class AppAdapterRegistry:
 
 
 def default_adapter_registry() -> AppAdapterRegistry:
-    return AppAdapterRegistry(adapters=[OfficeAdapter()])
+    return AppAdapterRegistry(adapters=[OfficeAdapter(), UiaTextSelectionAdapter()])

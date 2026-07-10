@@ -12,9 +12,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from app.adapters import default_adapter_registry
-from app.system_context import list_visible_windows
+from app.system_context import get_foreground_window_handle, list_visible_windows
 
-MAGIC_WINDOW_MARKERS = ("Magic Pointer", "Electron Overlay")
+MAGIC_WINDOW_TITLES = {"Magic Pointer Overlay", "Magic Pointer Panel"}
 SNAPSHOT_TTL_SECONDS = 120
 
 
@@ -27,10 +27,17 @@ def _window_dicts() -> list[dict[str, Any]]:
     windows: list[dict[str, Any]] = []
     for item in list_visible_windows():
         title = str(item.get("title") or "")
-        if any(marker in title for marker in MAGIC_WINDOW_MARKERS):
+        if title in MAGIC_WINDOW_TITLES:
             continue
         windows.append(dict(item))
-    return windows
+    foreground_hwnd = get_foreground_window_handle()
+    if foreground_hwnd:
+        foreground = next(
+            (item for item in windows if int(item.get("hwnd") or 0) == foreground_hwnd),
+            None,
+        )
+        return [foreground] if foreground is not None else []
+    return []
 
 
 def _read_target_context(
@@ -74,7 +81,21 @@ def _summary_for(target_window: dict[str, Any] | None, app_ctx: Any) -> dict[str
         "word": "Word/WPS",
         "excel": "Excel",
         "powerpoint": "PowerPoint",
+        "browser": "\u6d4f\u89c8\u5668",
+        "pdf": "PDF",
+        "application": "\u5e94\u7528",
     }.get(app_name, app_name)
+    if app_ctx.error and not content.strip():
+        return {
+            "state": "error",
+            "label": f"{display_app} \u00b7 \u9009\u533a\u8bfb\u53d6\u5931\u8d25",
+            "detail": "\u672a\u80fd\u53ef\u9760\u8bfb\u53d6\u5f53\u524d\u9009\u533a\uff0c\u8bf7\u91cd\u8bd5",
+            "excerpt": "",
+            "app": app_name,
+            "hasContent": False,
+            "canRewrite": False,
+            "error": str(app_ctx.error),
+        }
     count = int(artifacts.get("selection_text_chars") or len(content))
     label = f"THIS · {display_app} 选区" if content.strip() else f"{display_app} · 未检测到文本选区"
     detail_parts = []
@@ -123,12 +144,17 @@ def capture_snapshot(
         registry=registry,
     )
     summary = _summary_for(target_window, app_ctx)
+    source_kind = (
+        "native_selection"
+        if app_ctx is not None and summary["state"] in {"ready", "empty"}
+        else "foreground_window"
+    )
     snapshot = {
         "snapshot_id": f"selection-{uuid.uuid4().hex[:16]}",
         "captured_at": captured.isoformat(),
         "expires_at": (captured + timedelta(seconds=SNAPSHOT_TTL_SECONDS)).isoformat(),
         "status": summary["state"],
-        "source_kind": "native_selection" if app_ctx is not None else "foreground_window",
+        "source_kind": source_kind,
         "source_window": target_window,
         "context": None if app_ctx is None else app_ctx.to_dict(),
     }

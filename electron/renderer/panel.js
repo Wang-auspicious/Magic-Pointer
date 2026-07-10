@@ -249,6 +249,7 @@ window.magicPointerPanel?.onShow((payload = {}) => {
   submitting = false;
   currentSelectionSessionToken = payload.selectionSessionToken || null;
   currentActionProposals = [];
+  commandInput.value = '';
   result.hidden = true;
   result.innerHTML = '';
   renderCaptureSummary(payload.captureSummary, payload.suggestedCommands || []);

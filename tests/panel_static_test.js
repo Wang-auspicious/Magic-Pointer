@@ -29,5 +29,6 @@ assert(context.testResult.undo.includes('Precise Magic Pointer restore'));
 assert(context.testResult.undo.includes('确认恢复上次修改'));
 assert(source.includes("runButton.addEventListener('click', () => submitCommand())"));
 assert(!source.includes("runButton.addEventListener('click', submitCommand)"));
+assert(source.includes("commandInput.value = '';"));
 assert(!source.includes('????????'));
 console.log('panel static test ok');

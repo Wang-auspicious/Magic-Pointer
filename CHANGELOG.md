@@ -11,6 +11,27 @@
 
 ## Unreleased
 
+- Added V2 native selected-text support for Chromium/Firefox-style applications
+  and PDF readers through Windows UI Automation:
+  - reads `TextPattern.GetSelection()` without sending keys or touching the
+    clipboard;
+  - validates the selected element against the frozen foreground HWND and PID;
+  - records source element identity, text hash, range count, and selection
+    rectangles;
+  - labels browser, PDF, and other application selections separately and keeps
+    the capability read-only.
+- Added a small C# UI Automation probe that is compiled locally into ignored
+  runtime data using the Windows compiler already present on the machine.
+- Bound snapshot capture to the exact Windows foreground handle instead of the
+  first Z-order window, and fail closed when that handle is Magic Pointer or
+  cannot be matched.
+- Narrowed self-window filtering to the exact `Magic Pointer Overlay` and
+  `Magic Pointer Panel` titles so legitimate documents containing the product
+  name are not ignored.
+- New pointer sessions now clear old command text before binding a new `THIS`.
+- Verified real Edge HTML and Edge PDF selections with unchanged clipboard
+  sequence numbers. Warm PDF hotkey capture completed in about 805 ms and the
+  panel appeared in about 827 ms; a cold Electron run took about 1.1 seconds.
 - Added observer selection sessions aligned with the public Google Magic Pointer
   interaction principles:
   - the hotkey freezes the foremost native selection before the panel takes
