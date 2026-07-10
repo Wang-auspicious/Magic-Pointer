@@ -37,7 +37,7 @@ ACTION_PROMPTS = {
 
 
 def _read_payload() -> dict[str, Any]:
-    raw = sys.stdin.read().strip()
+    raw = sys.stdin.read().lstrip("\ufeff").strip()
     if not raw:
         return {}
     return json.loads(raw)

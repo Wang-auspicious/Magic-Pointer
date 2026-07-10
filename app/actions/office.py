@@ -78,6 +78,11 @@ def make_word_replace_selection_proposal(
     document = artifacts.get("document") or ctx.label
     selection_start = artifacts.get("selection_start")
     selection_end = artifacts.get("selection_end")
+    try:
+        if selection_start is not None and selection_end is not None and int(selection_end) <= int(selection_start):
+            return None
+    except Exception:
+        return None
     before_hash = str(artifacts.get("selection_text_sha256") or text_sha256(original_text))
     after_hash = text_sha256(replacement)
     proposal_id = f"word-replace-{uuid.uuid4().hex[:12]}"
@@ -96,6 +101,8 @@ def make_word_replace_selection_proposal(
                 "selection_start": selection_start,
                 "selection_end": selection_end,
                 "expected_text_sha256": before_hash,
+                "office_host": artifacts.get("host"),
+                "com_prog_id": artifacts.get("com_prog_id"),
             },
         ),
         parameters={
@@ -111,6 +118,8 @@ def make_word_replace_selection_proposal(
             "replacement_text_sha256": after_hash,
             "replacement_text_excerpt": after_excerpt,
             "command": command,
+            "office_host": artifacts.get("host"),
+            "com_prog_id": artifacts.get("com_prog_id"),
         },
         safety_level=SafetyLevel.HIGH,
         confirmation_required=True,
@@ -123,5 +132,7 @@ def make_word_replace_selection_proposal(
             "selection_end": selection_end,
             "expected_text_sha256": before_hash,
             "replacement_text_sha256": after_hash,
+            "office_host": artifacts.get("host"),
+            "com_prog_id": artifacts.get("com_prog_id"),
         },
     )

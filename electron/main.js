@@ -5,9 +5,11 @@ const fs = require('fs');
 const crypto = require('crypto');
 
 let overlayWindow = null;
+let panelWindow = null;
 let mousePoints = [];
 let lastShakeTrigger = 0;
 let mousePollTimer = null;
+let overlayHideTimer = null;
 
 const ROOT = path.resolve(__dirname, '..');
 const RUNTIME_DIR = path.join(ROOT, 'data', 'runtime');
@@ -74,8 +76,9 @@ if (!gotLock) {
   app.quit();
 } else {
   app.on('second-instance', () => {
-    log('second-instance -> showOverlay');
-    showOverlay('second-instance');
+    log('second-instance -> showPanel');
+    showOverlay('second-instance', 900);
+    showPanel('second-instance');
   });
 }
 
@@ -108,27 +111,129 @@ function createOverlayWindow() {
   overlayWindow.setAlwaysOnTop(true, 'screen-saver');
   overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   overlayWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+  overlayWindow.setIgnoreMouseEvents(true, { forward: true });
 
-  overlayWindow.on('blur', () => {
-    if (overlayWindow && overlayWindow.isVisible()) overlayWindow.focus();
-  });
   overlayWindow.on('closed', () => {
     overlayWindow = null;
   });
 }
 
-function showOverlay(reason = 'manual') {
+function createPanelWindow() {
+  if (panelWindow) return panelWindow;
+  panelWindow = new BrowserWindow({
+    width: 420,
+    height: 160,
+    frame: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    fullscreenable: false,
+    resizable: false,
+    movable: true,
+    skipTaskbar: true,
+    show: false,
+    alwaysOnTop: true,
+    hasShadow: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  panelWindow.setAlwaysOnTop(true, 'screen-saver');
+  panelWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  panelWindow.loadFile(path.join(__dirname, 'renderer', 'panel.html'));
+  panelWindow.on('closed', () => { panelWindow = null; });
+  return panelWindow;
+}
+
+function positionPanelNearCursor() {
+  if (!panelWindow) return;
+  const cursor = screen.getCursorScreenPoint();
+  const display = screen.getDisplayNearestPoint(cursor);
+  const bounds = display.workArea || display.bounds;
+  const size = panelWindow.getBounds();
+  const x = Math.min(bounds.x + bounds.width - size.width - 18, Math.max(bounds.x + 18, cursor.x + 28));
+  const y = Math.min(bounds.y + bounds.height - size.height - 18, Math.max(bounds.y + 18, cursor.y + 30));
+  panelWindow.setBounds({ x, y, width: size.width, height: size.height });
+}
+
+function resizePanel(height) {
+  if (!panelWindow || panelWindow.isDestroyed()) return;
+  const desiredHeight = Math.max(160, Math.min(360, Math.round(Number(height) || 160)));
+  const cursor = screen.getCursorScreenPoint();
+  const display = screen.getDisplayNearestPoint(cursor);
+  const workArea = display.workArea || display.bounds;
+  const current = panelWindow.getBounds();
+  const x = Math.min(workArea.x + workArea.width - current.width - 18, Math.max(workArea.x + 18, current.x));
+  const y = Math.min(workArea.y + workArea.height - desiredHeight - 18, Math.max(workArea.y + 18, current.y));
+  panelWindow.setBounds({ x, y, width: current.width, height: desiredHeight });
+}
+
+function showPanel(reason = 'manual') {
+  const win = createPanelWindow();
+  const reveal = () => {
+    if (!panelWindow || panelWindow.isDestroyed()) return;
+    positionPanelNearCursor();
+    win.show();
+    win.focus();
+    win.webContents.send('panel:show', { reason });
+    log(`showPanel reason=${reason}`);
+  };
+  if (win.webContents.isLoadingMainFrame()) win.webContents.once('did-finish-load', reveal);
+  else reveal();
+}
+
+function hidePanel({ hideObserver = false } = {}) {
+  if (!panelWindow) return;
+  panelWindow.webContents.send('panel:hide');
+  panelWindow.hide();
+  if (hideObserver) hideOverlay();
+  log('hidePanel');
+}
+
+function sendCursorToOverlay(pos = screen.getCursorScreenPoint()) {
+  if (!overlayWindow || !overlayWindow.isVisible()) return;
+  const display = screen.getDisplayNearestPoint(pos);
+  const desired = display.bounds;
+  const current = overlayWindow.getBounds();
+  if (
+    current.x !== desired.x
+    || current.y !== desired.y
+    || current.width !== desired.width
+    || current.height !== desired.height
+  ) {
+    overlayWindow.setBounds(desired);
+  }
+  const bounds = overlayWindow.getBounds();
+  overlayWindow.webContents.send('overlay:cursor', {
+    x: pos.x - bounds.x,
+    y: pos.y - bounds.y,
+    globalX: pos.x,
+    globalY: pos.y,
+  });
+}
+
+
+function showOverlay(reason = 'manual', durationMs = 0) {
   if (!overlayWindow) return;
+  if (overlayHideTimer) clearTimeout(overlayHideTimer);
+  overlayHideTimer = null;
   const cursor = screen.getCursorScreenPoint();
   const display = screen.getDisplayNearestPoint(cursor);
   overlayWindow.setBounds(display.bounds);
-  overlayWindow.show();
-  overlayWindow.focus();
-  overlayWindow.webContents.send('overlay:show', { reason });
-  log(`showOverlay reason=${reason} cursor=${cursor.x},${cursor.y}`);
+  overlayWindow.setIgnoreMouseEvents(true, { forward: true });
+  overlayWindow.showInactive();
+  overlayWindow.webContents.send('overlay:show', { reason, observerMode: true });
+  sendCursorToOverlay(cursor);
+  log(`showOverlay observer reason=${reason} cursor=${cursor.x},${cursor.y}`);
+  if (durationMs > 0) {
+    overlayHideTimer = setTimeout(() => hideOverlay(), durationMs);
+  }
 }
 
 function hideOverlay() {
+  if (overlayHideTimer) clearTimeout(overlayHideTimer);
+  overlayHideTimer = null;
   if (!overlayWindow) return;
   overlayWindow.webContents.send('overlay:hide');
   overlayWindow.hide();
@@ -188,15 +293,17 @@ function looksLikeMouseShake(now) {
 function startMouseShakePolling() {
   if (mousePollTimer) clearInterval(mousePollTimer);
   mousePollTimer = setInterval(() => {
-    if (!overlayWindow || overlayWindow.isVisible()) return;
     const now = Date.now();
     const pos = screen.getCursorScreenPoint();
+    if (overlayWindow && overlayWindow.isVisible()) sendCursorToOverlay(pos);
+    if (panelWindow && panelWindow.isVisible()) return;
+    if (!overlayWindow || overlayWindow.isVisible()) return;
     mousePoints.push({ t: now, x: pos.x, y: pos.y });
     if (mousePoints.length > 28) mousePoints.shift();
     if (now - lastShakeTrigger > 900 && looksLikeMouseShake(now)) {
       lastShakeTrigger = now;
       mousePoints = [];
-      showOverlay('mouse-shake');
+      showOverlay('mouse-shake', 1600);
     }
   }, 35);
   log('mouse shake polling started');
@@ -209,24 +316,44 @@ app.whenReady().then(() => {
   } catch (_) {}
   log(`app ready pid=${process.pid}`);
   createOverlayWindow();
-  const ok = globalShortcut.register('Control+Alt+M', () => showOverlay('hotkey'));
-  log(`register hotkey Control+Alt+M ok=${ok}`);
+  const ok = globalShortcut.register('Control+Alt+M', () => {
+    if (panelWindow && panelWindow.isVisible()) {
+      hidePanel({ hideObserver: true });
+      return;
+    }
+    showOverlay('hotkey-observer', 900);
+    showPanel('hotkey');
+  });
+  log(`register hotkey Control+Alt+M observer+panel ok=${ok}`);
   startMouseShakePolling();
   // First launch should show once so the user knows the background process is alive.
-  setTimeout(() => showOverlay('startup'), 650);
+  setTimeout(() => showOverlay('startup', 1400), 650);
 });
 
 app.on('will-quit', () => {
   try { fs.unlinkSync(PID_PATH); } catch (_) {}
   globalShortcut.unregisterAll();
   if (mousePollTimer) clearInterval(mousePollTimer);
+  try { panelWindow?.close(); } catch (_) {}
   log('app will quit');
 });
 
 ipcMain.on('overlay:hide', hideOverlay);
+ipcMain.on('panel:hide', () => hidePanel({ hideObserver: true }));
+ipcMain.on('panel:resize', (_event, payload) => resizePanel(payload?.height));
 
-function runPythonBridge(payload, scriptPath = 'scripts/electron_bridge.py') {
-  if (!overlayWindow) return;
+function resultTargetWindow(target) {
+  return target === 'panel' ? panelWindow : overlayWindow;
+}
+
+function sendBridgeResult(target, parsed) {
+  const win = resultTargetWindow(target);
+  const channel = target === 'panel' ? 'panel:result' : 'overlay:result';
+  win?.webContents.send(channel, parsed);
+}
+
+function runPythonBridge(payload, scriptPath = 'scripts/electron_bridge.py', target = 'overlay') {
+  if (!resultTargetWindow(target)) return;
   const py = process.env.MAGIC_POINTER_PYTHON || 'python';
   const child = spawn(py, [scriptPath], {
     cwd: ROOT,
@@ -243,7 +370,7 @@ function runPythonBridge(payload, scriptPath = 'scripts/electron_bridge.py') {
   child.stderr.on('data', (chunk) => { stderr += chunk; });
   child.on('error', (error) => {
     log(`bridge spawn error ${error.name}: ${error.message}`);
-    overlayWindow?.webContents.send('overlay:result', {
+    sendBridgeResult(target, {
       ok: false,
       error: `${error.name}: ${error.message}`,
     });
@@ -262,7 +389,7 @@ function runPythonBridge(payload, scriptPath = 'scripts/electron_bridge.py') {
     }
     registerActionProposals(parsed);
     log(`bridge close script=${scriptPath} code=${code} ok=${parsed?.ok}`);
-    overlayWindow?.webContents.send('overlay:result', parsed);
+    sendBridgeResult(target, parsed);
   });
 
   child.stdin.write(JSON.stringify(payload));
@@ -282,12 +409,26 @@ ipcMain.on('overlay:done', (_event, payload) => {
 });
 
 
-ipcMain.on('overlay:execute-action', (_event, payload) => {
+
+
+ipcMain.on('panel:submit-selection-command', (_event, payload) => {
+  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  const enriched = {
+    ...payload,
+    screenBounds: display.bounds,
+    scaleFactor: display.scaleFactor || 1,
+    source: 'observer_selection_panel',
+  };
+  log(`panel:submit-selection-command command_len=${String(enriched.command || '').length}`);
+  runPythonBridge(enriched, 'scripts/selection_bridge.py', 'panel');
+});
+
+function executeActionForTarget(payload, target) {
   const token = payload?.actionToken || payload?.action_token;
   const proposal = takePendingActionProposal(token);
   if (!proposal) {
-    log('overlay:execute-action rejected missing-or-expired token');
-    overlayWindow?.webContents.send('overlay:result', {
+    log(`${target}:execute-action rejected missing-or-expired token`);
+    sendBridgeResult(target, {
       ok: false,
       prompt: 'Action result',
       error: 'Action expired or was not proposed by this session.',
@@ -299,6 +440,9 @@ ipcMain.on('overlay:execute-action', (_event, payload) => {
     proposal,
     confirmed: payload?.confirmed === true,
   };
-  log(`overlay:execute-action type=${proposal.action_type || 'unknown'} confirmed=${enriched.confirmed}`);
-  runPythonBridge(enriched, 'scripts/action_bridge.py');
-});
+  log(`${target}:execute-action type=${proposal.action_type || 'unknown'} confirmed=${enriched.confirmed}`);
+  runPythonBridge(enriched, 'scripts/action_bridge.py', target);
+}
+
+ipcMain.on('overlay:execute-action', (_event, payload) => executeActionForTarget(payload, 'overlay'));
+ipcMain.on('panel:execute-action', (_event, payload) => executeActionForTarget(payload, 'panel'));

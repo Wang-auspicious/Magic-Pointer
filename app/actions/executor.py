@@ -8,7 +8,7 @@ from app.actions.history import ActionHistoryRecord, ActionHistoryStore, make_wo
 from app.actions.office import text_sha256
 from app.actions.policy import LocalPermissionPolicy
 from app.actions.schema import ActionProposal, ExecutionResult, ExecutionStatus
-from app.adapters.office_adapter import _run_powershell_json
+from app.adapters.office_adapter import ALLOWED_WORD_COM_PROG_IDS, WORD_COM_PROG_ID, _run_powershell_json
 
 JsonDict = dict[str, Any]
 
@@ -41,13 +41,13 @@ def _ps_literal_string(value: str | None) -> str:
     return "'" + str(value or "").replace("'", "''") + "'"
 
 
-class SafeActionExecutor:
-    '''Typed execution layer with policy, precondition, and history checks.
+def _word_com_prog_id(value: Any) -> str:
+    prog_id = str(value or WORD_COM_PROG_ID)
+    return prog_id if prog_id in ALLOWED_WORD_COM_PROG_IDS else WORD_COM_PROG_ID
 
-    The model can propose actions, but it cannot execute arbitrary text. Every
-    write action is a named verb, requires explicit confirmation, and is verified
-    against live application state before mutation.
-    '''
+
+class SafeActionExecutor:
+    """Typed execution layer with policy, precondition, and history checks."""
 
     def __init__(self, *, policy: LocalPermissionPolicy | None = None, history_store: ActionHistoryStore | None = None) -> None:
         self.policy = policy or LocalPermissionPolicy()
@@ -93,32 +93,11 @@ class SafeActionExecutor:
         decision = self.policy.decide(proposal)
         metadata = {"policy_decision": decision.to_dict()}
         if proposal.action_type not in SUPPORTED_ACTION_TYPES:
-            return self._result(
-                proposal,
-                started,
-                ExecutionStatus.FAILED,
-                confirmed=confirmed,
-                error=f"unsupported action_type: {proposal.action_type}",
-                metadata=metadata,
-            )
+            return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error=f"unsupported action_type: {proposal.action_type}", metadata=metadata)
         if not decision.allowed:
-            return self._result(
-                proposal,
-                started,
-                ExecutionStatus.FAILED,
-                confirmed=confirmed,
-                error=decision.reason,
-                metadata=metadata,
-            )
+            return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error=decision.reason, metadata=metadata)
         if decision.requires_confirmation and not confirmed:
-            return self._result(
-                proposal,
-                started,
-                ExecutionStatus.SKIPPED,
-                confirmed=False,
-                error="confirmation required",
-                metadata=metadata,
-            )
+            return self._result(proposal, started, ExecutionStatus.SKIPPED, confirmed=False, error="confirmation required", metadata=metadata)
 
         if proposal.action_type == "copy_text_to_clipboard":
             return self._copy_text_to_clipboard(proposal, started, confirmed=confirmed, metadata=metadata)
@@ -134,23 +113,9 @@ class SafeActionExecutor:
             import pyperclip
 
             pyperclip.copy(text)
-            return self._result(
-                proposal,
-                started,
-                ExecutionStatus.SUCCEEDED,
-                confirmed=confirmed,
-                output={"copied_chars": len(text)},
-                metadata=metadata,
-            )
+            return self._result(proposal, started, ExecutionStatus.SUCCEEDED, confirmed=confirmed, output={"copied_chars": len(text)}, metadata=metadata)
         except Exception as exc:
-            return self._result(
-                proposal,
-                started,
-                ExecutionStatus.FAILED,
-                confirmed=confirmed,
-                error=f"clipboard copy failed: {type(exc).__name__}: {exc}",
-                metadata=metadata,
-            )
+            return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error=f"clipboard copy failed: {type(exc).__name__}: {exc}", metadata=metadata)
 
     def _office_replace_selection(self, proposal: ActionProposal, started: str, *, confirmed: bool, metadata: JsonDict) -> ExecutionResult:
         params = dict(proposal.parameters)
@@ -162,11 +127,12 @@ class SafeActionExecutor:
         expected_doc = str(params.get("document") or "")
         expected_start = _optional_int(params.get("selection_start"))
         expected_end = _optional_int(params.get("selection_end"))
+        com_prog_id = _word_com_prog_id(params.get("com_prog_id"))
         replacement_hash = text_sha256(replacement)
         if params.get("replacement_text_sha256") and str(params.get("replacement_text_sha256")) != replacement_hash:
             return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="replacement_text hash mismatch", metadata=metadata)
 
-        script = f'''
+        script = f"""
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 function FromB64Utf16([string]$Value) {{ if ([string]::IsNullOrEmpty($Value)) {{ return "" }}; return [System.Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($Value)) }}
@@ -174,14 +140,16 @@ function Sha256Text([string]$Value) {{ $bytes = [System.Text.Encoding]::UTF8.Get
 $replacement = FromB64Utf16 "{_b64_utf16le(replacement)}"
 $expectedDoc = FromB64Utf16 "{_b64_utf16le(expected_doc)}"
 $expectedHash = {_ps_literal_string(expected_hash)}
+$comProgId = {_ps_literal_string(com_prog_id)}
 $expectedStart = {('$null' if expected_start is None else str(expected_start))}
 $expectedEnd = {('$null' if expected_end is None else str(expected_end))}
-$result = [ordered]@{{ ok=$false; app="word"; method="com:word.selection.replace"; document=$null; hwnd=$null; selection_start=$null; selection_end=$null; before_text=$null; before_sha256=$null; after_sha256=$null; replacement_chars=$replacement.Length; error=$null }}
+$result = [ordered]@{{ ok=$false; app="word"; method="com:word.selection.replace"; com_prog_id=$comProgId; document=$null; hwnd=$null; selection_start=$null; selection_end=$null; after_selection_end=$null; before_text=$null; before_sha256=$null; after_text=$null; after_sha256=$null; left_anchor_sha256=$null; left_anchor_chars=0; right_anchor_sha256=$null; right_anchor_chars=0; replacement_chars=$replacement.Length; error=$null }}
 try {{
-  $word = [Runtime.InteropServices.Marshal]::GetActiveObject("Word.Application")
+  $word = [Runtime.InteropServices.Marshal]::GetActiveObject($comProgId)
   try {{ if ($word.ActiveWindow) {{ $result.hwnd = [int64]$word.ActiveWindow.Hwnd }} }} catch {{}}
   if (-not $word.ActiveDocument) {{ throw "No active Word document" }}
-  $result.document = [string]$word.ActiveDocument.FullName
+  $doc = $word.ActiveDocument
+  $result.document = [string]$doc.FullName
   if ($expectedDoc -and $result.document -ne $expectedDoc) {{ throw "Active Word document changed before execution" }}
   $sel = $word.Selection
   if ($null -eq $sel) {{ throw "No Word selection" }}
@@ -193,6 +161,17 @@ try {{
   if ($expectedHash -and $result.before_sha256 -ne $expectedHash) {{ throw "Word selection text changed before execution" }}
   if ($null -ne $expectedStart -and [int]$sel.Start -ne [int]$expectedStart) {{ throw "Word selection start changed before execution" }}
   if ($null -ne $expectedEnd -and [int]$sel.End -ne [int]$expectedEnd) {{ throw "Word selection end changed before execution" }}
+  $start = [int]$sel.Start
+  $end = [int]$sel.End
+  $anchorSize = 64
+  $leftStart = [Math]::Max(0, $start - $anchorSize)
+  $rightEnd = [Math]::Min([int]$doc.Content.End, $end + $anchorSize)
+  $leftAnchor = [string]$doc.Range([int]$leftStart, [int]$start).Text
+  $rightAnchor = [string]$doc.Range([int]$end, [int]$rightEnd).Text
+  $result.left_anchor_chars = $leftAnchor.Length
+  $result.right_anchor_chars = $rightAnchor.Length
+  if ($leftAnchor.Length -gt 0) {{ $result.left_anchor_sha256 = Sha256Text $leftAnchor }}
+  if ($rightAnchor.Length -gt 0) {{ $result.right_anchor_sha256 = Sha256Text $rightAnchor }}
   $undoRecord = $null
   $undoStarted = $false
   try {{ $undoRecord = $word.Application.UndoRecord; if ($null -ne $undoRecord) {{ $undoRecord.StartCustomRecord("Magic Pointer Replace Selection"); $undoStarted = $true }} }} catch {{}}
@@ -201,13 +180,20 @@ try {{
   }} finally {{
     if ($undoStarted -and $null -ne $undoRecord) {{ try {{ $undoRecord.EndCustomRecord() }} catch {{}} }}
   }}
-  $result.after_sha256 = Sha256Text $replacement
+  $result.after_selection_end = [int]($start + $replacement.Length)
+  $writtenRange = $doc.Range([int]$start, [int]$result.after_selection_end)
+  $result.after_text = [string]$writtenRange.Text
+  $result.after_sha256 = Sha256Text $result.after_text
+  if ($result.after_sha256 -ne (Sha256Text $replacement)) {{
+    try {{ $writtenRange.Text = $before }} catch {{}}
+    throw "Word write verification failed; the original text was restored."
+  }}
   $result.ok = $true
 }} catch {{
   $result.error = $_.Exception.Message
 }}
 $result | ConvertTo-Json -Depth 8 -Compress
-'''
+"""
         probe = _run_powershell_json(script, timeout=10)
         if not probe.ok:
             return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error=probe.error, metadata=metadata)
@@ -235,9 +221,22 @@ $result | ConvertTo-Json -Depth 8 -Compress
             after_sha256=str(data.get("after_sha256") or replacement_hash),
             before_excerpt=excerpt(before_text),
             after_excerpt=excerpt(replacement),
+            before_text=before_text,
+            after_text=replacement,
             selection_start=_optional_int(data.get("selection_start")),
             selection_end=_optional_int(data.get("selection_end")),
-            metadata={"method": data.get("method"), "hwnd": data.get("hwnd"), "command": params.get("command")},
+            after_selection_end=_optional_int(data.get("after_selection_end")),
+            left_anchor_sha256=str(data.get("left_anchor_sha256") or "") or None,
+            left_anchor_chars=_optional_int(data.get("left_anchor_chars")),
+            right_anchor_sha256=str(data.get("right_anchor_sha256") or "") or None,
+            right_anchor_chars=_optional_int(data.get("right_anchor_chars")),
+            metadata={
+                "method": data.get("method"),
+                "hwnd": data.get("hwnd"),
+                "command": params.get("command"),
+                "office_host": params.get("office_host"),
+                "com_prog_id": data.get("com_prog_id") or com_prog_id,
+            },
         )
         self.history_store.append(record)
         undo_proposal = make_word_undo_proposal(record)
@@ -265,38 +264,122 @@ $result | ConvertTo-Json -Depth 8 -Compress
             return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="No undoable Magic Pointer Word action was found", metadata=metadata)
         if not record.is_undoable:
             return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="That Magic Pointer action is not undoable", metadata=metadata)
+        if record.before_text is None or record.after_text is None:
+            return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="That history record does not contain precise restore text", metadata=metadata)
 
         expected_doc = record.document or str(params.get("document") or "")
-        script = f'''
+        start_pos = record.selection_start
+        after_end = record.after_selection_end
+        before_text = record.before_text
+        after_text = record.after_text
+        after_hash = record.after_sha256 or text_sha256(after_text)
+        com_prog_id = _word_com_prog_id(record.metadata.get("com_prog_id"))
+        left_anchor_hash = record.left_anchor_sha256 or ""
+        left_anchor_chars = record.left_anchor_chars or 0
+        right_anchor_hash = record.right_anchor_sha256 or ""
+        right_anchor_chars = record.right_anchor_chars or 0
+        script = f"""
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 function FromB64Utf16([string]$Value) {{ if ([string]::IsNullOrEmpty($Value)) {{ return "" }}; return [System.Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($Value)) }}
+function Sha256Text([string]$Value) {{ $bytes = [System.Text.Encoding]::UTF8.GetBytes($Value); $hash = [System.Security.Cryptography.SHA256]::Create().ComputeHash($bytes); return (($hash | ForEach-Object {{ $_.ToString("x2") }}) -join "") }}
 $expectedDoc = FromB64Utf16 "{_b64_utf16le(expected_doc)}"
-$result = [ordered]@{{ ok=$false; app="word"; method="com:word.application.undo"; document=$null; error=$null }}
+$beforeText = FromB64Utf16 "{_b64_utf16le(before_text)}"
+$afterText = FromB64Utf16 "{_b64_utf16le(after_text)}"
+$afterHash = {_ps_literal_string(after_hash)}
+$comProgId = {_ps_literal_string(com_prog_id)}
+$leftAnchorHash = {_ps_literal_string(left_anchor_hash)}
+$leftAnchorChars = {left_anchor_chars}
+$rightAnchorHash = {_ps_literal_string(right_anchor_hash)}
+$rightAnchorChars = {right_anchor_chars}
+$startPos = {('$null' if start_pos is None else str(start_pos))}
+$afterEnd = {('$null' if after_end is None else str(after_end))}
+$result = [ordered]@{{ ok=$false; app="word"; method="com:word.range.precise_restore"; com_prog_id=$comProgId; document=$null; restored_by=$null; match_count=0; error=$null }}
 try {{
-  $word = [Runtime.InteropServices.Marshal]::GetActiveObject("Word.Application")
+  $word = [Runtime.InteropServices.Marshal]::GetActiveObject($comProgId)
   if (-not $word.ActiveDocument) {{ throw "No active Word document" }}
-  $result.document = [string]$word.ActiveDocument.FullName
+  $doc = $word.ActiveDocument
+  $result.document = [string]$doc.FullName
   if ($expectedDoc -and $result.document -ne $expectedDoc) {{ throw "Active Word document changed before undo" }}
-  try {{ [void]$word.Undo(1) }} catch {{ [void]$word.Undo() }}
+  $restored = $false
+  if ($null -ne $startPos -and $null -ne $afterEnd) {{
+    try {{
+      $range = $doc.Range([int]$startPos, [int]$afterEnd)
+      $current = [string]$range.Text
+      if ((Sha256Text $current) -eq $afterHash -or $current -eq $afterText) {{
+        $range.Text = $beforeText
+        $result.restored_by = "recorded_range"
+        $restored = $true
+      }}
+    }} catch {{}}
+  }}
+  if (-not $restored -and ($leftAnchorHash -or $rightAnchorHash)) {{
+    $matches = @()
+    $searchStart = 0
+    $documentEnd = [int]$doc.Content.End
+    while ($searchStart -lt $documentEnd -and $matches.Count -lt 2) {{
+      $range = $doc.Range([int]$searchStart, [int]$documentEnd)
+      $find = $range.Find
+      $find.ClearFormatting()
+      $find.Text = $afterText
+      $find.Forward = $true
+      $find.Wrap = 0
+      $find.MatchWildcards = $false
+      if (-not $find.Execute()) {{ break }}
+      $anchorOk = $true
+      if ($leftAnchorHash) {{
+        if ([int]$range.Start -lt [int]$leftAnchorChars) {{
+          $anchorOk = $false
+        }} else {{
+          $left = [string]$doc.Range([int]$range.Start - [int]$leftAnchorChars, [int]$range.Start).Text
+          if ((Sha256Text $left) -ne $leftAnchorHash) {{ $anchorOk = $false }}
+        }}
+      }}
+      if ($anchorOk -and $rightAnchorHash) {{
+        $rightEnd = [int]$range.End + [int]$rightAnchorChars
+        if ($rightEnd -gt [int]$doc.Content.End) {{
+          $anchorOk = $false
+        }} else {{
+          $right = [string]$doc.Range([int]$range.End, [int]$rightEnd).Text
+          if ((Sha256Text $right) -ne $rightAnchorHash) {{ $anchorOk = $false }}
+        }}
+      }}
+      if ($anchorOk) {{ $matches += ,([ordered]@{{ start=[int]$range.Start; end=[int]$range.End }}) }}
+      $nextStart = [int]$range.End
+      if ($nextStart -le $searchStart) {{ $nextStart = $searchStart + 1 }}
+      $searchStart = $nextStart
+    }}
+    $result.match_count = $matches.Count
+    if ($matches.Count -eq 1) {{
+      $match = $matches[0]
+      $range = $doc.Range([int]$match.start, [int]$match.end)
+      if ((Sha256Text ([string]$range.Text)) -ne $afterHash) {{ throw "Unique restore match changed before replacement" }}
+      $range.Text = $beforeText
+      $result.restored_by = "anchored_text_match"
+      $restored = $true
+    }} elseif ($matches.Count -gt 1) {{
+      throw "Magic Pointer replacement text appears more than once; refusing an ambiguous restore."
+    }}
+  }}
+  if (-not $restored) {{ throw "Could not find the Magic Pointer replacement text to restore; document may have been edited inside that span." }}
   $result.ok = $true
 }} catch {{
   $result.error = $_.Exception.Message
 }}
 $result | ConvertTo-Json -Depth 6 -Compress
-'''
+"""
         probe = _run_powershell_json(script, timeout=10)
         if not probe.ok:
             return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error=probe.error, metadata=metadata)
         data = probe.data
         if not data.get("ok"):
-            return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error=str(data.get("error") or "Word undo failed"), metadata=metadata)
+            return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error=str(data.get("error") or "Word precise undo failed"), metadata=metadata)
         updated = self.history_store.mark_undone(record.id)
         return self._result(
             proposal,
             started,
             ExecutionStatus.SUCCEEDED,
             confirmed=confirmed,
-            output={"history_id": record.id, "document": record.document, "undone_at": None if updated is None else updated.undone_at},
+            output={"history_id": record.id, "document": record.document, "undone_at": None if updated is None else updated.undone_at, "restored_by": data.get("restored_by")},
             metadata=metadata,
         )

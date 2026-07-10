@@ -333,7 +333,7 @@ class MagicPointerApp:
             self._destroy_selection_window()
             if bbox[2] - bbox[0] < 24 or bbox[3] - bbox[1] < 24:
                 self._show_home_if_needed()
-                self._status.set("???????????")
+                self._status.set("选择范围太小，请重试")
                 return
             stroke = [(int(px), int(py)) for px, py in points]
             self.root.after(90, lambda: self.capture_and_prompt(bbox, stroke_points=stroke))

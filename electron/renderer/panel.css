@@ -1,0 +1,156 @@
+html, body, *, input, button, textarea, .panel-shell, .panel-shell * {
+  cursor: default !important;
+}
+textarea, textarea * {
+  cursor: text !important;
+}
+.panel-body {
+  background: transparent;
+  user-select: text;
+  overflow: hidden;
+}
+.panel-shell {
+  box-sizing: border-box;
+  width: 100vw;
+  height: 100vh;
+  padding: 12px;
+  border-radius: 8px;
+  color: #0f172a;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(37, 99, 235, 0.28);
+  box-shadow:
+    0 18px 48px rgba(15, 23, 42, 0.20),
+    0 0 28px rgba(37, 99, 235, 0.12);
+  backdrop-filter: blur(18px) saturate(1.2);
+  font-family: Inter, "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+}
+.panel-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #1d4ed8;
+  font-size: 14px;
+  font-weight: 700;
+  user-select: none;
+  -webkit-app-region: drag;
+}
+.panel-close {
+  -webkit-app-region: no-drag;
+  border: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: transparent;
+  color: #475569;
+  font-size: 20px;
+  line-height: 1;
+}
+.panel-close:hover {
+  background: rgba(15, 23, 42, 0.06);
+  color: #0f172a;
+}
+.panel-input-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 8px;
+}
+.panel-input-row textarea {
+  box-sizing: border-box;
+  flex: 1;
+  height: 42px;
+  min-height: 42px;
+  max-height: 72px;
+  resize: none;
+  border: 1px solid rgba(37, 99, 235, 0.18);
+  border-radius: 8px;
+  padding: 9px 10px;
+  outline: 0;
+  background: rgba(248, 251, 255, 0.86);
+  color: #0f172a;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.42;
+}
+.panel-input-row textarea:focus {
+  border-color: rgba(37, 99, 235, 0.72);
+  box-shadow: 0 0 0 4px rgba(96, 165, 250, 0.14);
+}
+.panel-input-row button {
+  border: 0;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: rgba(37, 99, 235, 0.94);
+  color: white;
+  font-size: 20px;
+  font-weight: 700;
+}
+.panel-result {
+  margin-top: 7px;
+  max-height: 244px;
+  overflow: auto;
+  padding: 10px;
+  border-radius: 8px;
+  background: rgba(248, 251, 255, 0.76);
+  border: 1px solid rgba(147, 197, 253, 0.5);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.panel-result .title {
+  color: #1d4ed8;
+  font-weight: 780;
+  margin-bottom: 6px;
+}
+.panel-result .muted, .muted {
+  color: #64748b;
+}
+.panel-result .actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+  user-select: none;
+}
+.panel-result .action-chip {
+  border: 1px solid rgba(37, 99, 235, 0.26);
+  border-radius: 8px;
+  padding: 7px 12px;
+  background: rgba(239, 246, 255, 0.95);
+  color: #1d4ed8;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 740;
+}
+.panel-result .action-preview {
+  border: 1px solid rgba(37, 99, 235, 0.18);
+  border-radius: 8px;
+  padding: 10px 11px;
+  margin-top: 10px;
+  background: rgba(255, 255, 255, 0.74);
+}
+.panel-result .action-preview.danger {
+  border-color: rgba(220, 38, 38, 0.24);
+  background: rgba(255, 247, 237, 0.82);
+}
+.panel-result .action-preview.warning {
+  border-color: rgba(245, 158, 11, 0.30);
+  background: rgba(255, 251, 235, 0.86);
+}
+.panel-result .action-preview-title {
+  color: #1d4ed8;
+  font-weight: 820;
+  margin-bottom: 5px;
+}
+.panel-result pre {
+  margin: 4px 0 8px;
+  max-height: 115px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border-radius: 6px;
+  padding: 8px 9px;
+  background: rgba(255, 255, 255, 0.84);
+  font-family: inherit;
+  font-size: 13px;
+}

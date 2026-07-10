@@ -17,6 +17,10 @@ OFFICE_CLASS_TO_APP = {
     "PPTFrameClass": "powerpoint",
 }
 
+WORD_COM_PROG_ID = "Word.Application"
+WPS_WRITER_COM_PROG_ID = "KWPS.Application"
+ALLOWED_WORD_COM_PROG_IDS = {WORD_COM_PROG_ID, WPS_WRITER_COM_PROG_ID}
+
 
 def office_app_from_window(window: JsonDict) -> str | None:
     class_name = str(window.get("class_name") or "")
@@ -30,6 +34,17 @@ def office_app_from_window(window: JsonDict) -> str | None:
     if "powerpoint" in title or title.endswith(".pptx") or title.endswith(".ppt"):
         return "powerpoint"
     return None
+
+
+def word_com_prog_id_from_window(window: JsonDict) -> str:
+    title = str(window.get("title") or "").lower()
+    if "wps office" in title or "wps writer" in title:
+        return WPS_WRITER_COM_PROG_ID
+    return WORD_COM_PROG_ID
+
+
+def word_host_from_prog_id(prog_id: str) -> str:
+    return "wps_writer" if prog_id == WPS_WRITER_COM_PROG_ID else "microsoft_word"
 
 
 def _as_list(value: Any) -> list[Any]:
@@ -160,19 +175,28 @@ $result | ConvertTo-Json -Depth 8 -Compress
         )
 
     def _read_word(self, window: JsonDict) -> AdapterReadContext:
+        prog_id = word_com_prog_id_from_window(window)
+        if prog_id not in ALLOWED_WORD_COM_PROG_IDS:
+            prog_id = WORD_COM_PROG_ID
+        host = word_host_from_prog_id(prog_id)
         script = '''
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
-$result = [ordered]@{ app="word"; method="com:word.selection"; hwnd=$null; document=$null; text=$null; selection_type=$null; selection_start=$null; selection_end=$null; messages=@() }
+$result = [ordered]@{ app="word"; host="''' + host + '''"; com_prog_id="''' + prog_id + '''"; method="com:word.selection"; hwnd=$null; document=$null; text=$null; selection_type=$null; selection_start=$null; selection_end=$null; messages=@() }
 try {
-  $word = [Runtime.InteropServices.Marshal]::GetActiveObject("Word.Application")
+  $word = [Runtime.InteropServices.Marshal]::GetActiveObject("''' + prog_id + '''")
   try { if ($word.ActiveWindow) { $result.hwnd = [int64]$word.ActiveWindow.Hwnd } } catch {}
   if ($word.ActiveDocument) { $result.document = [string]$word.ActiveDocument.FullName }
   $sel = $word.Selection
   if ($null -eq $sel) { throw "No Word selection" }
   $result.selection_type = [string]$sel.Type
   try { $result.selection_start = [int]$sel.Start; $result.selection_end = [int]$sel.End } catch {}
-  $result.text = [string]$sel.Text
+  if ($null -ne $result.selection_start -and $null -ne $result.selection_end -and [int]$result.selection_end -le [int]$result.selection_start) {
+    $result.text = ""
+    $result.messages += "No text is selected."
+  } else {
+    $result.text = [string]$sel.Text
+  }
 } catch { $result.messages += $_.Exception.Message }
 $result | ConvertTo-Json -Depth 6 -Compress
 '''
@@ -181,7 +205,21 @@ $result | ConvertTo-Json -Depth 6 -Compress
             return AdapterReadContext(adapter=self.name, app="word", window=window, capabilities=self._base_caps("word"), error=probe.error)
         data = probe.data
         raw_text = str(data.get("text") or "")
-        artifacts = {k: data.get(k) for k in ("hwnd", "document", "selection_type", "selection_start", "selection_end", "messages")}
+        artifacts = {
+            k: data.get(k)
+            for k in (
+                "hwnd",
+                "document",
+                "selection_type",
+                "selection_start",
+                "selection_end",
+                "messages",
+                "host",
+                "com_prog_id",
+            )
+        }
+        artifacts["host"] = data.get("host") or host
+        artifacts["com_prog_id"] = data.get("com_prog_id") or prog_id
         artifacts["selection_text_sha256"] = hashlib.sha256(raw_text.encode("utf-8", errors="surrogatepass")).hexdigest()
         artifacts["selection_text_chars"] = len(raw_text)
         return AdapterReadContext(

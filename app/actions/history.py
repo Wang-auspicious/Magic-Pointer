@@ -34,9 +34,9 @@ def excerpt(value: str | None, limit: int = 700) -> str:
 class ActionHistoryRecord:
     """Audit record for one confirmed local write action.
 
-    Keep full document text out of the journal. The executor stores hashes,
-    short excerpts, document/range identity, and relies on Office's native undo
-    stack for actual rollback.
+    For precise delayed undo we keep before/after text locally. This is a local
+    desktop action ledger, not prompt context: callers should surface excerpts in
+    UI and avoid sending full history back to models unless the user asks.
     """
 
     id: str
@@ -49,8 +49,15 @@ class ActionHistoryRecord:
     after_sha256: str | None = None
     before_excerpt: str | None = None
     after_excerpt: str | None = None
+    before_text: str | None = None
+    after_text: str | None = None
     selection_start: int | None = None
     selection_end: int | None = None
+    after_selection_end: int | None = None
+    left_anchor_sha256: str | None = None
+    left_anchor_chars: int | None = None
+    right_anchor_sha256: str | None = None
+    right_anchor_chars: int | None = None
     status: str = "succeeded"
     confirmed: bool = True
     created_at: str = field(default_factory=now_iso)
@@ -65,6 +72,8 @@ class ActionHistoryRecord:
             and self.undone_at is None
             and self.action_type == "office_replace_selection"
             and self.app == "word"
+            and self.before_text is not None
+            and self.after_text is not None
         )
 
     def to_dict(self) -> JsonDict:
@@ -79,8 +88,15 @@ class ActionHistoryRecord:
             "after_sha256": self.after_sha256,
             "before_excerpt": self.before_excerpt,
             "after_excerpt": self.after_excerpt,
+            "before_text": self.before_text,
+            "after_text": self.after_text,
             "selection_start": self.selection_start,
             "selection_end": self.selection_end,
+            "after_selection_end": self.after_selection_end,
+            "left_anchor_sha256": self.left_anchor_sha256,
+            "left_anchor_chars": self.left_anchor_chars,
+            "right_anchor_sha256": self.right_anchor_sha256,
+            "right_anchor_chars": self.right_anchor_chars,
             "status": self.status,
             "confirmed": self.confirmed,
             "created_at": self.created_at,
@@ -101,8 +117,15 @@ class ActionHistoryRecord:
             after_sha256=data.get("after_sha256"),
             before_excerpt=data.get("before_excerpt"),
             after_excerpt=data.get("after_excerpt"),
+            before_text=data.get("before_text"),
+            after_text=data.get("after_text"),
             selection_start=_optional_int(data.get("selection_start")),
             selection_end=_optional_int(data.get("selection_end")),
+            after_selection_end=_optional_int(data.get("after_selection_end")),
+            left_anchor_sha256=data.get("left_anchor_sha256"),
+            left_anchor_chars=_optional_int(data.get("left_anchor_chars")),
+            right_anchor_sha256=data.get("right_anchor_sha256"),
+            right_anchor_chars=_optional_int(data.get("right_anchor_chars")),
             status=str(data.get("status") or "succeeded"),
             confirmed=bool(data.get("confirmed", True)),
             created_at=str(data.get("created_at") or now_iso()),
@@ -168,7 +191,7 @@ class ActionHistoryStore:
         stamp = undone_at or now_iso()
         for record in records:
             if record.id == history_id:
-                record = replace(record, undone_at=stamp)
+                record = replace(record, undone_at=stamp, before_text=None, after_text=None)
                 matched = record
             updated.append(record)
         if matched is None:
@@ -199,7 +222,7 @@ def make_word_undo_proposal(record: ActionHistoryRecord) -> ActionProposal:
         },
         safety_level=SafetyLevel.HIGH,
         confirmation_required=True,
-        rationale="Undo the last Magic Pointer Word write via Word native undo stack. Use immediately after the write.",
+        rationale="Precisely restore the text changed by this Magic Pointer Word write without using global Ctrl+Z.",
         created_at=now_iso(),
         metadata={"history_id": record.id, "source_proposal_id": record.proposal_id},
     )

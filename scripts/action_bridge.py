@@ -15,7 +15,7 @@ from app.actions.schema import ExecutionStatus
 
 
 def read_payload() -> dict[str, Any]:
-    raw = sys.stdin.read().strip()
+    raw = sys.stdin.read().lstrip("\ufeff").strip()
     return json.loads(raw) if raw else {}
 
 
@@ -43,9 +43,9 @@ def main() -> int:
         if proposal.action_type == "copy_text_to_clipboard":
             answer = "Copied to clipboard."
         elif proposal.action_type == "office_replace_selection":
-            answer = "Word selection replaced. You can use the undo action below immediately if needed."
+            answer = "文档选区已替换。之后即使继续编辑，也可以通过下方动作尝试精确恢复这一次修改。"
         elif proposal.action_type == "office_undo_last_action":
-            answer = "Magic Pointer Word edit undone."
+            answer = "已精确恢复这一次 Magic Pointer 文档修改。"
         else:
             answer = "Action completed."
     else:

@@ -21,6 +21,8 @@ let renderRaf = null;
 let resultDrag = null;
 let pulseRaf = null;
 let lastPulseFrame = 0;
+let observerMode = false;
+let hintTimer = null;
 let currentActionProposals = [];
 
 function resize() {
@@ -144,10 +146,38 @@ function drawPointer(p) {
   ctx.restore();
 }
 
+function drawObserverAura(p) {
+  if (!p) return;
+  const now = performance.now();
+  const pulse = 0.5 + 0.5 * Math.sin(now / 420);
+  ctx.save();
+  ctx.translate(p.x + 2, p.y + 2);
+  ctx.globalCompositeOperation = 'lighter';
+
+  const outer = ctx.createRadialGradient(0, 0, 2, 0, 0, 20 + pulse * 4);
+  outer.addColorStop(0, `rgba(191, 219, 254, ${0.20 + pulse * 0.08})`);
+  outer.addColorStop(0.42, `rgba(59, 130, 246, ${0.14 + pulse * 0.08})`);
+  outer.addColorStop(1, 'rgba(37, 99, 235, 0)');
+  ctx.fillStyle = outer;
+  ctx.beginPath();
+  ctx.arc(0, 0, 24 + pulse * 4, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = `rgba(96, 165, 250, ${0.24 + pulse * 0.12})`;
+  ctx.lineWidth = 1.2;
+  ctx.shadowColor = 'rgba(37, 99, 235, 0.32)';
+  ctx.shadowBlur = 10 + pulse * 5;
+  ctx.beginPath();
+  ctx.arc(0, 0, 9 + pulse * 1.5, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
 function render() {
   clear();
   if (!captureMode && points.length) drawSmoothPath(points, trailAlpha);
-  drawPointer(lastPointer);
+  if (observerMode) drawObserverAura(lastPointer);
+  else drawPointer(lastPointer);
 }
 
 function fadeTrail(duration = 760) {
@@ -295,9 +325,9 @@ function renderActionPreview(proposal) {
     const document = params.document || proposal?.target?.description || 'Word document';
     return [
       '<div class="action-preview warning">',
-      '<div class="action-preview-title">Undo Magic Pointer Word edit</div>',
+      '<div class="action-preview-title">Precise Magic Pointer restore</div>',
       `<div><strong>Document:</strong> ${escapeHtml(document)}</div>`,
-      '<div class="muted">Use immediately after the write; this calls Word native undo after confirming the document.</div>',
+      '<div class="muted">Restores this Magic Pointer edit from local history; it does not press Ctrl+Z.</div>',
       '</div>',
     ].join('');
   }
@@ -550,8 +580,29 @@ function stopResultDrag(e) {
 result.addEventListener('pointerup', stopResultDrag);
 result.addEventListener('pointercancel', stopResultDrag);
 
-window.magicPointer?.onShow(() => { resetOverlay(); startPulseLoop(); });
-window.magicPointer?.onHide(() => { stopPulseLoop(); resetOverlay(); });
+window.magicPointer?.onShow((payload) => {
+  resetOverlay();
+  observerMode = payload?.observerMode === true;
+  if (hintTimer) clearTimeout(hintTimer);
+  if (payload?.reason === 'startup') {
+    hint.classList.remove('dim');
+    hintTimer = setTimeout(() => hint.classList.add('dim'), 900);
+  } else {
+    hint.classList.add('dim');
+  }
+  startPulseLoop();
+});
+window.magicPointer?.onCursor((payload) => {
+  if (!payload) return;
+  lastPointer = { x: Number(payload.x) || 0, y: Number(payload.y) || 0, t: performance.now() };
+  scheduleRender();
+});
+window.magicPointer?.onHide(() => {
+  if (hintTimer) clearTimeout(hintTimer);
+  hintTimer = null;
+  stopPulseLoop();
+  resetOverlay();
+});
 window.magicPointer?.onResult((payload) => {
   requestSeq += 1;
   submitting = false;

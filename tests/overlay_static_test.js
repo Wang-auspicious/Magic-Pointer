@@ -62,5 +62,5 @@ console.log('overlay static test ok');
 assert(context.testResult.replace.includes('Word write preview'));
 assert(context.testResult.replace.includes('Confirm replace Word selection'));
 assert(context.testResult.replace.includes('&lt;old&gt;'));
-assert(context.testResult.undo.includes('Undo Magic Pointer Word edit'));
+assert(context.testResult.undo.includes('Precise Magic Pointer restore'));
 assert(context.testResult.undo.includes('Confirm undo Word edit'));

@@ -49,6 +49,15 @@ def get_ai_config() -> tuple[str | None, str | None, str]:
     return api_key, base_url, model
 
 
+def _httpx_client(httpx_module, *, timeout: int = 120):
+    """Use environment proxies when valid, but survive malformed proxy variables."""
+
+    try:
+        return httpx_module.Client(timeout=timeout, follow_redirects=True)
+    except httpx_module.InvalidURL:
+        return httpx_module.Client(timeout=timeout, follow_redirects=True, trust_env=False)
+
+
 def _image_data_url(image_path: Path, max_edge: int = 1600, jpeg_quality: int = 82) -> str:
     """Return an optimized image data URL for model input.
 
@@ -73,6 +82,65 @@ def _image_data_url(image_path: Path, max_edge: int = 1600, jpeg_quality: int = 
     except Exception:
         encoded = base64.b64encode(image_path.read_bytes()).decode("ascii")
         return f"data:image/png;base64,{encoded}"
+
+
+def ask_text_model(user_prompt: str, context_text: str | None = None, system_prompt: str | None = None) -> str:
+    """Ask the configured OpenAI-compatible model with text-only context."""
+
+    api_key, base_url, model = get_ai_config()
+    if not api_key:
+        excerpt = (context_text or user_prompt or "").strip()[:900]
+        return (
+            "未检测到 OPENAI_API_KEY 或 secrets/openai_key.txt，因此没有调用文本模型。\n\n"
+            f"当前读取到的上下文：{excerpt}"
+        )
+
+    try:
+        import httpx
+
+        base_url = (base_url or "https://api.openai.com/v1").rstrip("/")
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "User-Agent": "curl/8.0",
+        }
+        content = user_prompt.strip() or "解释当前选中的内容"
+        if context_text:
+            content += "\n\n" + context_text
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt or "你是 Magic Pointer 的本地选区助手。只基于提供的真实应用上下文回答，不要编造。"},
+                {"role": "user", "content": content},
+            ],
+            "max_tokens": 1200,
+        }
+        last_exc: Exception | None = None
+        last_http_error: tuple[int, str] | None = None
+        for delay in (0.0, 0.8):
+            if delay:
+                time.sleep(delay)
+            try:
+                with _httpx_client(httpx, timeout=120) as client:
+                    response = client.post(f"{base_url}/chat/completions", headers=headers, json=payload)
+                if response.status_code >= 500:
+                    last_http_error = (response.status_code, _plain_error_excerpt(response.text))
+                    continue
+                if response.status_code >= 400:
+                    return f"AI 调用失败：HTTP {response.status_code}。\n{_plain_error_excerpt(response.text)}"
+                data = response.json()
+                return data["choices"][0]["message"].get("content") or ""
+            except (httpx.ConnectError, httpx.ReadError, httpx.RemoteProtocolError, httpx.TimeoutException) as exc:
+                last_exc = exc
+                continue
+        if last_http_error:
+            code, detail = last_http_error
+            return f"AI 调用失败：HTTP {code}。\n{detail}"
+        if last_exc:
+            raise last_exc
+        raise RuntimeError("unknown API failure")
+    except Exception as exc:
+        return f"AI 调用失败：{type(exc).__name__}: {exc}"
 
 
 def ask_vision_model(
@@ -153,7 +221,7 @@ def ask_vision_model(
                 time.sleep(delay)
             try:
                 payload = build_payload(include_extras=include_extras)
-                with httpx.Client(timeout=120, follow_redirects=True) as client:
+                with _httpx_client(httpx, timeout=120) as client:
                     response = client.post(f"{base_url}/chat/completions", headers=headers, json=payload)
                 if response.status_code >= 500:
                     last_http_error = (response.status_code, _plain_error_excerpt(response.text))

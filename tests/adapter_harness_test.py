@@ -9,7 +9,13 @@ from app.actions.policy import LocalPermissionPolicy
 from app.actions.office import make_word_replace_selection_proposal, text_sha256, wants_word_rewrite
 from app.actions.schema import ActionProposal, SafetyLevel
 from app.adapters import default_adapter_registry, format_adapter_context
-from app.adapters.office_adapter import OfficeAdapter, OfficeProbeResult, office_app_from_window
+from app.adapters.office_adapter import (
+    WPS_WRITER_COM_PROG_ID,
+    OfficeAdapter,
+    OfficeProbeResult,
+    office_app_from_window,
+    word_com_prog_id_from_window,
+)
 import app.adapters.office_adapter as office_module
 
 
@@ -17,6 +23,7 @@ def test_office_window_matching() -> None:
     assert office_app_from_window({"class_name": "XLMAIN", "title": "Book1 - Excel"}) == "excel"
     assert office_app_from_window({"class_name": "OpusApp", "title": "Document1 - Word"}) == "word"
     assert office_app_from_window({"class_name": "CabinetWClass", "title": "Desktop - File Explorer"}) is None
+    assert word_com_prog_id_from_window({"class_name": "OpusApp", "title": "Document1 - WPS Office"}) == WPS_WRITER_COM_PROG_ID
 
 
 def test_registry_skips_overlay_and_reads_first_office_context() -> None:
@@ -67,6 +74,8 @@ def test_word_context_exposes_replace_selection_capabilities_with_fake_probe() -
             "selection_start": 10,
             "selection_end": 23,
             "text": "  Keep exact spacing\r",
+            "host": "microsoft_word",
+            "com_prog_id": "Word.Application",
             "messages": [],
         })
         ctx = OfficeAdapter().read_context({"class_name": "OpusApp", "title": "Document1 - Word", "hwnd": 456})
@@ -82,6 +91,36 @@ def test_word_context_exposes_replace_selection_capabilities_with_fake_probe() -
         assert proposal.confirmation_required is True
         assert proposal.parameters["expected_text_sha256"] == text_sha256("  Keep exact spacing\r")
         assert proposal.parameters["selection_start"] == 10
+        assert proposal.parameters["com_prog_id"] == "Word.Application"
+    finally:
+        office_module._run_powershell_json = original
+
+
+def test_wps_collapsed_selection_is_not_rewriteable() -> None:
+    original = office_module._run_powershell_json
+    scripts: list[str] = []
+    try:
+        def fake_probe(script: str, **_kwargs) -> OfficeProbeResult:
+            scripts.append(script)
+            return OfficeProbeResult(True, {
+                "method": "com:word.selection",
+                "host": "wps_writer",
+                "com_prog_id": WPS_WRITER_COM_PROG_ID,
+                "hwnd": 789,
+                "document": r"C:\demo\wps.docx",
+                "selection_type": "1",
+                "selection_start": 12,
+                "selection_end": 12,
+                "text": "",
+                "messages": ["No text is selected."],
+            })
+
+        office_module._run_powershell_json = fake_probe
+        ctx = OfficeAdapter().read_context({"class_name": "OpusApp", "title": "Document1 - WPS Office", "hwnd": 789})
+        assert ctx.content == ""
+        assert ctx.artifacts["com_prog_id"] == WPS_WRITER_COM_PROG_ID
+        assert WPS_WRITER_COM_PROG_ID in scripts[0]
+        assert make_word_replace_selection_proposal(ctx, command="改写这段", replacement_text="new") is None
     finally:
         office_module._run_powershell_json = original
 
@@ -107,6 +146,7 @@ def main() -> None:
     test_registry_skips_overlay_and_reads_first_office_context()
     test_excel_context_formatting_with_fake_com_probe()
     test_word_context_exposes_replace_selection_capabilities_with_fake_probe()
+    test_wps_collapsed_selection_is_not_rewriteable()
     test_word_rewrite_intent_supports_chinese_commands()
     test_permission_policy_blocks_and_confirms()
     print("adapter harness test ok")

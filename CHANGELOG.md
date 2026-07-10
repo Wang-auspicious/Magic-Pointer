@@ -11,6 +11,17 @@
 
 ## Unreleased
 
+- Reworked the in-progress observer-first flow after real desktop review:
+  - kept the native mouse fully usable and replaced the duplicate custom cursor with a transient observer aura;
+  - reduced the selection command panel to a compact, content-sized local tool;
+  - fixed corrupted Chinese panel/bridge/model strings and restored safe Markdown rendering;
+  - stopped the selection bridge from scanning past an unsupported foreground app into a background Office window;
+  - added WPS Writer selection support through `KWPS.Application`, including collapsed-selection rejection;
+  - added post-write verification and context-anchored delayed restore for Word-compatible documents;
+  - made ambiguous restore attempts fail closed instead of replacing the first full-document text match;
+  - redacted full before/after restore text after a successful undo;
+  - hardened the HTTP client against malformed proxy environment variables;
+  - added focused pytest coverage and a real-size Electron panel preview helper.
 - Added v0.2.0-alpha pointer-first local grounding/action scaffold:
   - platform-neutral grounding and action schemas;
   - Explorer file grounding adapter with optional COM/UIA backends and safe fallback;

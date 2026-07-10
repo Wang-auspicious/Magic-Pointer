@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from app.ai_client import get_ai_config
+from app.ai_client import _httpx_client, get_ai_config
 
 
 def main() -> int:
@@ -25,7 +25,7 @@ def main() -> int:
             "Content-Type": "application/json",
             "User-Agent": "curl/8.0",
         }
-        with httpx.Client(timeout=60, follow_redirects=True) as client:
+        with _httpx_client(httpx, timeout=60) as client:
             models = client.get(f"{base_url}/models", headers=headers)
             print("models:", models.status_code, models.text[:300].replace("\n", " "))
             response = client.post(
