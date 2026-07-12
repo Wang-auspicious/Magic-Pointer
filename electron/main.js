@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const { SelectionSessionStore } = require('./selection_session');
 const { InteractionEpisodeStore, inferReferenceMode } = require('./interaction_episode');
 const { ActivationGate } = require('./activation_gate');
+const { captureEligibility } = require('./result_surface_policy');
 const {
   chooseAnchorRect,
   computeInlineRailWidth,
@@ -513,6 +514,7 @@ function panelPayloadForSession(entry) {
     panelLayoutNonce: entry.panelLayoutNonce,
     captureSummary: entry.summary,
     suggestedCommands: entry.suggestedCommands,
+    captureEligibility: entry.captureEligibility,
   };
 }
 
@@ -576,6 +578,7 @@ function beginSelectionSession(reason = 'manual') {
         if (!current || activeSelectionSessionToken !== entry.token) return;
         const attached = selectionSessions.attachSnapshot(entry.token, parsed);
         if (!attached) return;
+        attached.captureEligibility = captureEligibility({ snapshot: attached.snapshot, summary: attached.summary });
         const laidOut = selectionSessions.setPanelLayout(entry.token, {
           nonce: crypto.randomUUID(),
           geometry: panelGeometryForSession(attached),
@@ -715,6 +718,15 @@ ipcMain.on('panel:submit-selection-command', (_event, payload) => {
     sendBridgeResult('panel', {
       ok: false,
       error: '当前 THIS 已过期，请重新激活 Magic Pointer。',
+      selectionSessionToken: selectionSessionToken || null,
+    });
+    return;
+  }
+  if (!session.captureEligibility?.commandReady) {
+    log('panel:submit-selection-command rejected ineligible capture');
+    sendBridgeResult('panel', {
+      ok: false,
+      error: session.captureEligibility?.message || '当前选区不可用，请重新选择。',
       selectionSessionToken: selectionSessionToken || null,
     });
     return;

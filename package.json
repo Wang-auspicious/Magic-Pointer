@@ -8,7 +8,7 @@
   },
   "scripts": {
     "overlay": "electron electron/main.js",
-    "test": "node --check electron/main.js && node --check electron/panel_position.js && node --check electron/selection_session.js && node --check electron/interaction_episode.js && node --check electron/activation_gate.js && node --check electron/preload.js && node --check electron/renderer/overlay.js && node --check electron/renderer/panel.js && node --check electron/renderer/reader.js && node tests/panel_position_test.js && node tests/selection_session_test.js && node tests/interaction_episode_test.js && node tests/activation_gate_test.js && node tests/overlay_static_test.js && node tests/panel_static_test.js && node tests/reader_static_test.js"
+    "test": "node --check electron/main.js && node --check electron/panel_position.js && node --check electron/selection_session.js && node --check electron/interaction_episode.js && node --check electron/activation_gate.js && node --check electron/result_surface_policy.js && node --check electron/preload.js && node --check electron/renderer/overlay.js && node --check electron/renderer/panel.js && node --check electron/renderer/reader.js && node tests/panel_position_test.js && node tests/selection_session_test.js && node tests/interaction_episode_test.js && node tests/activation_gate_test.js && node tests/result_surface_policy_test.js && node tests/overlay_static_test.js && node tests/panel_static_test.js && node tests/reader_static_test.js"
   },
   "keywords": [
     "ai-pointer",

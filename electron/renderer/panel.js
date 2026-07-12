@@ -5,12 +5,14 @@ const inlineRail = document.getElementById('inline-action-rail');
 const railStateIcon = document.getElementById('rail-state-icon');
 const primaryIntentButton = document.getElementById('primary-intent');
 const commandRow = document.getElementById('command-row');
+const closeButton = document.getElementById('panel-close');
 
 let currentActionProposals = [];
 let currentSelectionSessionToken = null;
 let currentPanelLayoutNonce = null;
 let currentPrimaryCommand = null;
 let submitting = false;
+let autoDismissTimer = null;
 
 function computeRailWidth(text) {
   const content = String(text || '');
@@ -261,6 +263,25 @@ function renderPrimaryIntent(summary, suggestedCommands = []) {
   setRailState('ready');
 }
 
+function renderCaptureEligibility(captureEligibility) {
+  if (autoDismissTimer) window.clearTimeout(autoDismissTimer);
+  autoDismissTimer = null;
+  primaryIntentButton.disabled = false;
+  if (!captureEligibility) return true;
+  if (captureEligibility.commandReady === false) {
+    currentPrimaryCommand = null;
+    primaryIntentButton.disabled = true;
+    commandRow.hidden = true;
+    setRailState('error', captureEligibility.message || '当前选区不可用');
+    const delay = Number(captureEligibility.autoDismissMs);
+    if (Number.isFinite(delay) && delay > 0) {
+      autoDismissTimer = window.setTimeout(() => window.magicPointerPanel?.hide(), delay);
+    }
+    return false;
+  }
+  return true;
+}
+
 runButton.addEventListener('click', () => submitCommand());
 commandInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) {
@@ -274,6 +295,7 @@ commandInput.addEventListener('input', () => {
 primaryIntentButton.addEventListener('click', () => {
   if (currentPrimaryCommand) submitCommand(currentPrimaryCommand);
 });
+closeButton.addEventListener('click', () => window.magicPointerPanel?.hide());
 result.addEventListener('click', (e) => {
   const actionButton = e.target.closest('[data-action-index]');
   if (!actionButton) return;
@@ -292,10 +314,14 @@ window.magicPointerPanel?.onShow((payload = {}) => {
   commandInput.value = '';
   result.hidden = true;
   result.innerHTML = '';
-  renderPrimaryIntent(payload.captureSummary, payload.suggestedCommands || []);
+  if (renderCaptureEligibility(payload.captureEligibility)) {
+    renderPrimaryIntent(payload.captureSummary, payload.suggestedCommands || []);
+  }
   syncPanelSize();
 });
 window.magicPointerPanel?.onHide(() => {
+  if (autoDismissTimer) window.clearTimeout(autoDismissTimer);
+  autoDismissTimer = null;
   currentSelectionSessionToken = null;
   currentPanelLayoutNonce = null;
   currentActionProposals = [];

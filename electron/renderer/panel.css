@@ -132,6 +132,26 @@ input, input * {
 .rail-run:hover {
   background: #1d4ed8;
 }
+.panel-close {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  -webkit-app-region: no-drag;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: #64748b;
+  background: transparent;
+  font: 700 17px/1 system-ui;
+}
+.panel-close:hover,
+.panel-close:focus-visible {
+  color: #0f172a;
+  background: rgba(15, 23, 42, 0.08);
+  outline: none;
+}
 @keyframes rail-pulse {
   0%, 100% { transform: scale(0.88); opacity: 0.72; }
   50% { transform: scale(1); opacity: 1; }
