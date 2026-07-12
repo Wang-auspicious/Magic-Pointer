@@ -480,6 +480,11 @@ function hasVisibleTemporarySurface() {
   );
 }
 
+function hasActiveSelectionCapture() {
+  if (!activeSelectionSessionToken) return false;
+  return selectionSessions.get(activeSelectionSessionToken)?.state === 'capturing';
+}
+
 function dismissTemporarySurfaces({ invalidateSession = true, hideObserver = false } = {}) {
   const sessionToken = activeSelectionSessionToken;
   if (readerWindow && !readerWindow.isDestroyed()) {
@@ -749,7 +754,10 @@ app.whenReady().then(() => {
   log(`app ready pid=${process.pid}`);
   createOverlayWindow();
   const ok = globalShortcut.register('Control+Alt+M', () => {
-    const decision = activationGate.decide({ hasVisibleSurface: hasVisibleTemporarySurface() });
+    const decision = activationGate.decide({
+      hasVisibleSurface: hasVisibleTemporarySurface(),
+      isActivationBusy: hasActiveSelectionCapture(),
+    });
     log(`activation hotkey decision=${decision}`);
     if (decision === 'ignore') return;
     if (decision === 'dismiss') {

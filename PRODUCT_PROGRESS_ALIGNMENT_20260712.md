@@ -371,3 +371,17 @@
 - 关闭行为：结果出现后 Rail 自动退场；再次热键关闭全部；A 点击外部/远离/显式关闭后消失；B 提供文字“关闭”和“固定”，不注册全局 Escape。
 - 设计规格：`docs/superpowers/specs/2026-07-12-contextual-result-surface-design.md`。
 - 优先级调整：M3 暂停在设计盘点阶段；必须先完成 M1.1 热键去抖、失败短路、A result surface 与确定性关闭，因为这是 CEO 真实验收的阻断缺陷，而非视觉微调。
+
+### 2026-07-12：M1.1 上下文结果表面恢复实施与验证
+
+- `c828c29`：引入 ActivationGate 与统一临时表面关闭；初版 600ms 去抖在真实重放中暴露“跨 600ms 的长重复链仍可能二次 activate”，因此没有停在测试全绿的假结论。
+- `c2b0dc0`：捕获 `unsupported/error/empty` 在命令前 fail closed；主进程拒绝提交，Rail 禁用输入、显示实际宿主错误并在 1800ms 自动关闭。
+- `f687402`：新增默认 A 上下文结果窗口；普通翻译/解释贴近冻结选区，Rail 在 A 就绪后隐藏；长内容和 action proposal 只进入 `expandable`，不自动打开 Reader。
+- `134a746`：B 只允许从 A 主动展开；Reader 新增文字“固定/关闭”，未固定且与其交互后失焦关闭，高度限制为工作区 72%。
+- 真实视觉证据：`data/runtime/contextual_result_preview_20260712.png` 为 A 普通翻译；`data/runtime/secondary_reader_preview_20260712.png` 为 B 写回确认。A 的短结果原生滚动条在视觉检查中被发现，并通过先失败的静态测试后隐藏轨道、保留滚动能力。
+- 真实进程：最新验证进程 PID 29300，`Control+Alt+M` 注册成功。
+- 失败短路实测：09:44:39.595 捕获 `status=error`，09:44:41.468 自动 `dismissTemporarySurfaces`，约 1.87 秒；没有提交 selection command，也没有打开 Reader。
+- 热键实测：捕获开始后，安静间隔后的明确第二次热键产生 `decision=dismiss`，活动 snapshot bridge 以 `code=null` 被取消。连续重复链增加 busy + quiet gate：捕获期间相邻 repeat 一律忽略；至少 300ms 安静且超过 600ms 的新按压才被视为明确关闭。
+- 自动验证：本轮 Node 全量测试通过；Python 回归为 64 项通过。最终提交前再次运行新鲜全量验证。
+- 未冒充通过：本轮没有稳定控制用户 Edge 活动标签页，未把旧 Edge/PDF 基线或隔离预览冒充新的真实前台翻译通过。Edge PDF 原生读取仍有 `fcd52fb`/`3f0299a` 的既有证据，但更新后的 A 完整链路需要 CEO 再次按真实选区验收。
+- 明确欠账：Obsidian 内嵌 PDF 仍未实现原生选区适配；现在会快速、准确失败，不再伪装成已有结果。该能力进入 P5 adapter backlog，不与本次结果表面恢复混合。

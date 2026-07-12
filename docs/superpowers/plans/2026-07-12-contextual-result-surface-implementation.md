@@ -8,6 +8,8 @@
 
 **Tech Stack:** Electron 43, CommonJS JavaScript, context-isolated preload IPC, Node `assert` tests, Python snapshot bridge and pytest.
 
+**Execution status (2026-07-12):** Tasks 1—4 implemented and committed. Task 5 automated, visual, process, repeat-gate, explicit-dismiss, and unsupported auto-dismiss checks completed; a fresh deterministic Edge foreground-selection run remains a stated manual verification rather than an inferred pass.
+
 ## Global Constraints
 
 - Default result mode is A (`inline`); Dashboard may later persist A/B, but this plan does not build the Dashboard page.
