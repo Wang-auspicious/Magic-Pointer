@@ -55,6 +55,42 @@ def _selection_context_text(app_ctx: Any, target_window: dict[str, Any] | None) 
     )
 
 
+def _interaction_episode_context(payload: Any) -> str:
+    if not isinstance(payload, dict) or payload.get("version") != 1:
+        return ""
+    slots = payload.get("slots")
+    if not isinstance(slots, dict):
+        return ""
+    lines = [
+        "Interaction episode v1:",
+        f"episode_id={str(payload.get('episodeId') or '')!r}",
+        "Resolve THIS, THAT, THESE, and HERE only from the bound slots below; never infer them from global history.",
+    ]
+
+    def append_object(alias: str, item: Any) -> None:
+        if not isinstance(item, dict) or not str(item.get("objectId") or "").strip():
+            lines.append(f"{alias}: null")
+            return
+        lines.append(
+            f"{alias}: id={str(item.get('objectId'))!r}, app={str(item.get('app') or '')!r}, "
+            f"window={str(item.get('windowTitle') or '')!r}, label={str(item.get('label') or '')!r}"
+        )
+        content = str(item.get("content") or "").strip()
+        if content:
+            lines.append(f"{alias}_content:\n---\n{content[:12000]}\n---")
+
+    append_object("THIS", slots.get("this"))
+    append_object("THAT", slots.get("that"))
+    these = slots.get("these")
+    if isinstance(these, list) and these:
+        for index, item in enumerate(these[:12], 1):
+            append_object(f"THESE[{index}]", item)
+    else:
+        lines.append("THESE: []")
+    append_object("HERE", slots.get("here"))
+    return "\n".join(lines)
+
+
 def _read_target_context(windows: list[dict[str, Any]], command: str) -> tuple[dict[str, Any] | None, Any]:
     target_window = windows[0] if windows else None
     if target_window is None:
@@ -148,7 +184,10 @@ def main() -> int:
         }, ensure_ascii=False))
         return 1
 
+    episode_context = _interaction_episode_context(payload.get("interactionEpisode"))
     context_text = _selection_context_text(app_ctx, target_window)
+    if episode_context:
+        context_text += "\n\n" + episode_context
     action_proposals = []
     selection_snapshot_id = str((snapshot or {}).get("snapshot_id") or "").strip() or None
 
@@ -201,6 +240,7 @@ def main() -> int:
         "actionProposals": action_proposals,
         "selectionSessionId": selection_session_id or None,
         "selectionSnapshotId": selection_snapshot_id,
+        "interactionEpisodeId": (payload.get("interactionEpisode") or {}).get("episodeId") if isinstance(payload.get("interactionEpisode"), dict) else None,
     }, ensure_ascii=False))
     return 0
 

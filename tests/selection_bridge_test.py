@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import scripts.action_bridge as action_bridge
 import scripts.electron_bridge as electron_bridge
 import scripts.selection_bridge as selection_bridge
-from scripts.selection_bridge import _context_from_snapshot, _read_target_context, _wants_undo
+from scripts.selection_bridge import _context_from_snapshot, _interaction_episode_context, _read_target_context, _wants_undo
 
 
 class _FakeAdapter:
@@ -87,6 +87,26 @@ def test_expired_snapshot_fails_closed() -> None:
     })
     assert context is None
     assert error == "selection snapshot expired"
+
+
+def test_interaction_episode_context_exposes_only_bound_slots() -> None:
+    text = _interaction_episode_context({
+        "version": 1,
+        "episodeId": "episode-1",
+        "slots": {
+            "this": {"objectId": "selection:b", "label": "B", "content": "Beta"},
+            "that": {"objectId": "selection:a", "label": "A", "content": "Alpha"},
+            "these": [
+                {"objectId": "selection:a", "label": "A", "content": "Alpha"},
+                {"objectId": "selection:b", "label": "B", "content": "Beta"},
+            ],
+            "here": {"objectId": "selection:d", "label": "Draft", "app": "word"},
+        },
+    })
+    assert "Interaction episode v1" in text
+    assert "THIS" in text and "THAT" in text and "THESE[1]" in text and "HERE" in text
+    assert "Alpha" in text and "Beta" in text
+    assert "global history" in text
 
 
 def test_selection_bridge_source_has_no_question_mark_corruption() -> None:

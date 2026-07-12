@@ -4,6 +4,7 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const crypto = require('crypto');
 const { SelectionSessionStore } = require('./selection_session');
+const { InteractionEpisodeStore, inferReferenceMode } = require('./interaction_episode');
 const {
   chooseAnchorRect,
   computeInlineRailWidth,
@@ -33,6 +34,7 @@ const ALLOWED_ACTION_TYPES = new Set(['copy_text_to_clipboard', 'office_replace_
 
 const pendingActionProposals = new Map();
 const selectionSessions = new SelectionSessionStore({ ttlMs: SELECTION_SESSION_TTL_MS });
+const interactionEpisodes = new InteractionEpisodeStore({ ttlMs: 30 * 60 * 1000 });
 const activeSessionChildren = new Map();
 let activeSelectionSessionToken = null;
 
@@ -496,6 +498,36 @@ function panelPayloadForSession(entry) {
   };
 }
 
+function episodeObjectForSession(entry) {
+  const snapshot = entry?.snapshot || {};
+  const context = snapshot.context || {};
+  const sourceWindow = snapshot.source_window || {};
+  return {
+    snapshotId: String(snapshot.snapshot_id || ''),
+    selectionSessionToken: entry?.token || '',
+    app: String(context.app || entry?.summary?.app || ''),
+    windowTitle: String(sourceWindow.title || context?.window?.title || ''),
+    label: String(entry?.summary?.label || context.label || '当前选区'),
+    kind: String(snapshot.source_kind || 'native_selection'),
+    capturedAt: String(snapshot.captured_at || ''),
+    expiresAt: String(snapshot.expires_at || ''),
+    content: String(context.content || ''),
+  };
+}
+
+function bindEpisodeForCommand(session, command) {
+  const mode = inferReferenceMode(command);
+  const object = episodeObjectForSession(session);
+  if (mode === 'here') interactionEpisodes.bindHere(object);
+  else {
+    interactionEpisodes.bindPointedObject(object);
+    if (mode === 'these') interactionEpisodes.bindThese();
+  }
+  const episode = interactionEpisodes.contextPayload();
+  log(`interaction episode bind mode=${mode} episode=${episode?.episodeId || 'none'} session=${session?.token || 'none'}`);
+  return episode;
+}
+
 function beginSelectionSession(reason = 'manual') {
   if (activeSelectionSessionToken) invalidateSelectionSession(activeSelectionSessionToken);
   if (readerWindow && !readerWindow.isDestroyed()) readerWindow.hide();
@@ -670,6 +702,7 @@ ipcMain.on('panel:submit-selection-command', (_event, payload) => {
   const requestId = selectionSessions.startRequest(selectionSessionToken);
   if (!requestId) return;
   const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  const interactionEpisode = bindEpisodeForCommand(session, payload?.command);
   const enriched = {
     ...payload,
     selectionSessionId: selectionSessionToken,
@@ -678,6 +711,7 @@ ipcMain.on('panel:submit-selection-command', (_event, payload) => {
     screenBounds: display.bounds,
     scaleFactor: display.scaleFactor || 1,
     source: 'observer_selection_panel',
+    interactionEpisode,
   };
   log(`panel:submit-selection-command token=${selectionSessionToken} request=${requestId} command_len=${String(enriched.command || '').length}`);
   let child = null;

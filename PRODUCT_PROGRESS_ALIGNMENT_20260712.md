@@ -35,7 +35,7 @@
 ### Git
 
 - 当前分支：`main`
-- 已提交可靠基线：`3f0299a Verify PDF selections and avoid target overlap`
+- 已提交可靠基线：`3194e45 feat: replace summary bubble with inline action rail`
 - 本地缓存的 `origin/main`：`8960991 Lower cursor upper vertex and boost glow pulse`
 - 本地相对远端跟踪点：ahead 9
 - GitHub 实时状态：上次 TLS 连接失败，尚未二次确认；不能把本地远端缓存冒充线上实时状态。
@@ -66,7 +66,7 @@
 |---|---|---:|---|---|
 | P1 | 一行式 Inline Action Rail | 90% | M1 可提交；欠真实自动夹具 | 真实选区旁一行出现、焦点不变、动作可执行、长结果不污染初始 rail |
 | P2 | 自然唤起与低误触预热 | 25% | 有旧 detector/observer | 热键稳定；wiggle 可配置、低误触；对象在显示 rail 前完成冻结 |
-| P3 | THIS/THAT/THESE/HERE 连续对象会话 | 30% | 有单对象 session 和旧 task context | 连续四步短指令不重述上下文，目标/集合可纠正、过期时 fail closed |
+| P3 | THIS/THAT/THESE/HERE 连续对象会话 | 65% | M2 内存 episode 已接主路径 | 连续四步短指令不重述上下文，目标/集合可纠正、过期时 fail closed |
 | P4 | 跨应用 Destination 与安全写回 | 35% | Word 已可靠，其余不足 | Word/WPS、标准网页输入、受控浏览器 DOM 至少三条真实写入路径可验证可撤销 |
 | P5 | 多类型对象 Grounding | 45% | 文本/PDF/Explorer 较强 | 文本、文件、DOM 控件、表格、图片对象、视频帧有统一身份与能力模型 |
 | P6 | 语音/键盘/鼠标统一短命令 | 15% | 有 Windows dictation 旧入口 | push-to-talk、partial/final、键盘修正、无麦克风降级，共用同一 intent |
@@ -348,3 +348,17 @@
 - 已知欠账：当前 Edge 会复用用户既有进程与标签页，临时自动化夹具不能稳定保持测试页为活动页；不把夹具失败误报为产品失败，也不为此阻塞 M2。后续在 P10 的确定性桌面 E2E 夹具中统一解决。
 - 本轮新增的用户任务能力：用户可以在指针旁保持极轻的一行入口，同时在不污染该入口的独立面中阅读长结果、核对写入 diff 并确认安全动作。
 - 下一大块：M2 Interaction Episode。优先完成 THIS/THAT/THESE/HERE 的对象槽位和连续四步 fixture，不继续打磨 Reader 阴影、圆角或字距。
+
+### 2026-07-12：M2 Interaction Episode 主路径完成
+
+- 新增 `InteractionEpisodeStore`，生命周期为 30 分钟空闲 TTL，独立于单次 120 秒 `SelectionSession`；一个 episode 可跨越多次真实热键选区，但过期后整组槽位 fail closed，不从全局历史猜测。
+- 槽位语义落地：新来源进入 THIS，前一个 THIS 自动成为 THAT；`these/those/them/both/这些/那些/它们/两者/一起/合并` 建立 THESE；`here/there/这里/那里/放到/写到/插入到` 只绑定 HERE，不覆盖来源对象。
+- 对象引用包含 snapshot ID、来源应用、窗口、标签、冻结选区内容与时间边界；内容最多 12000 字，只保存在 Electron 内存并随当前请求发送，不写入持久全局聊天历史。
+- episode 在用户真正提交命令时绑定，而不是鼠标路过或只打开 rail 时绑定，降低误指向污染。
+- Python `selection_bridge.py` 已把已绑定 THIS/THAT/THESE/HERE 编成明确上下文；系统提示禁止从 global history 推测缺失代词。Word 写入仍只允许当前有效 SelectionSession，旧 episode 对象只能参与理解，不能绕过写入校验。
+- 连续 fixture 覆盖：浏览器 A → PDF B → THESE(A,B) → Word HERE；同时覆盖 HERE 不覆盖 THIS、对象去重、内存 payload 不重复 `selectedText` 字段、30 分钟过期清空与新 episode 隔离。
+- TDD 证据：Node 测试先因模块不存在失败，Python 测试先因 episode formatter 不存在失败；实现后目标测试转绿。
+- 新鲜全量验证：`npm test` 全绿；`python -m pytest -q` 为 `64 passed in 8.78s`；最新 Electron PID 55504，热键注册成功。
+- 本轮新增的用户任务能力：用户可连续指向两个来源形成 THIS/THAT 或 THESE，再指向目标位置建立 HERE；后续短命令无需把对象名称、窗口和选区内容重新描述一遍。
+- 已知欠账：目前没有可视化槽位纠正控件；`correctReference` 数据接口已具备，但“不是这个/移除第二个”的 rail 微交互仍待后续 episode UX。HERE 目前是可信目标引用，真正向网页/其他宿主写入属于 M3 Destination Adapter。
+- 下一大块：M3 Destination Adapter。优先做统一 destination contract、标准 HTML 输入 fixture 的写前身份验证/写后回读/receipt/精确撤销，不回头微调 Reader 视觉。
