@@ -21,6 +21,8 @@ assert(js.includes("event.key === 'Escape'"));
 assert(css.includes('@media (prefers-reduced-motion: reduce)'));
 assert(css.includes('max-width: 440px'));
 assert(css.includes('min-width: 280px'));
+assert(css.includes('.result-content::-webkit-scrollbar'));
+assert(css.includes('scrollbar-width: none'));
 assert(preload.includes("contextBridge.exposeInMainWorld('magicPointerResult'"));
 assert(main.includes('function createResultWindow()'));
 assert(main.includes("ipcMain.on('panel:show-contextual-result'"));

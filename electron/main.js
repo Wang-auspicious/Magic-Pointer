@@ -47,6 +47,8 @@ let currentResultSessionToken = null;
 let resultHasFocused = false;
 let resultShownAt = 0;
 let resultFarSince = 0;
+let readerPinned = false;
+let readerHasFocused = false;
 
 function log(message) {
   try {
@@ -257,6 +259,14 @@ function createReaderWindow() {
   readerWindow.setAlwaysOnTop(true, 'floating');
   readerWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   readerWindow.loadFile(path.join(__dirname, 'renderer', 'reader.html'));
+  readerWindow.on('focus', () => { readerHasFocused = true; });
+  readerWindow.on('blur', () => {
+    setTimeout(() => {
+      if (readerHasFocused && !readerPinned && readerWindow?.isVisible()) {
+        dismissTemporarySurfaces({ invalidateSession: true, hideObserver: true });
+      }
+    }, 0);
+  });
   readerWindow.on('closed', () => { readerWindow = null; });
   return readerWindow;
 }
@@ -267,7 +277,11 @@ function showReader(payload = {}) {
   const display = screen.getDisplayNearestPoint(cursor);
   const workArea = display.workArea || display.bounds;
   const width = Math.min(420, Math.max(320, workArea.width - 32));
-  const height = Math.min(520, Math.max(280, workArea.height - 32));
+  const maxHeight = Math.max(240, Math.floor(workArea.height * 0.72));
+  const answerLength = String(payload?.answer || payload?.error || '').length;
+  const proposalCount = Array.isArray(payload?.actionProposals) ? payload.actionProposals.length : 0;
+  const estimatedHeight = 190 + Math.min(260, Math.ceil(answerLength / 48) * 22) + Math.min(160, proposalCount * 96);
+  const height = Math.min(maxHeight, Math.max(240, estimatedHeight));
   const bounds = {
     x: workArea.x + workArea.width - width - 16,
     y: workArea.y + 16,
@@ -277,6 +291,8 @@ function showReader(payload = {}) {
   const reveal = () => {
     if (!readerWindow || readerWindow.isDestroyed()) return;
     readerWindow.setBounds(bounds);
+    readerPinned = false;
+    readerHasFocused = false;
     readerWindow.showInactive();
     readerWindow.webContents.send('reader:show', payload);
     log(`showReader token=${payload?.selectionSessionToken || 'none'}`);
@@ -419,6 +435,8 @@ function showContextualResult(payload = {}) {
   currentResultSessionToken = selectionSessionToken;
   resultHasFocused = false;
   resultFarSince = 0;
+  readerPinned = false;
+  readerHasFocused = false;
   const win = createResultWindow();
   const deliver = () => {
     if (!resultWindow || resultWindow.isDestroyed()) return;
@@ -482,6 +500,8 @@ function dismissTemporarySurfaces({ invalidateSession = true, hideObserver = fal
   resultHasFocused = false;
   resultShownAt = 0;
   resultFarSince = 0;
+  readerPinned = false;
+  readerHasFocused = false;
   if (hideObserver) hideOverlay();
   log('dismissTemporarySurfaces');
 }
@@ -678,6 +698,8 @@ function bindEpisodeForCommand(session, command) {
 function beginSelectionSession(reason = 'manual') {
   if (activeSelectionSessionToken) invalidateSelectionSession(activeSelectionSessionToken);
   if (readerWindow && !readerWindow.isDestroyed()) readerWindow.hide();
+  readerPinned = false;
+  readerHasFocused = false;
 
   const cursor = screen.getCursorScreenPoint();
   const display = screen.getDisplayNearestPoint(cursor);
@@ -966,19 +988,19 @@ ipcMain.on('overlay:execute-action', (_event, payload) => executeActionForTarget
 ipcMain.on('panel:execute-action', (_event, payload) => executeActionForTarget(payload, 'panel'));
 ipcMain.on('result:execute-action', (_event, payload) => executeActionForTarget(payload, 'result'));
 ipcMain.on('reader:execute-action', (_event, payload) => executeActionForTarget(payload, 'reader'));
-ipcMain.on('reader:hide', () => {
-  if (readerWindow && !readerWindow.isDestroyed()) readerWindow.hide();
+ipcMain.on('reader:hide', () => dismissTemporarySurfaces({ invalidateSession: true, hideObserver: true }));
+ipcMain.on('reader:set-pinned', (_event, payload) => {
+  readerPinned = payload?.pinned === true;
+  log(`reader pinned=${readerPinned}`);
 });
-ipcMain.on('panel:open-secondary', (_event, payload) => {
+ipcMain.on('reader:resize', (_event, payload) => {
   const selectionSessionToken = payload?.selectionSessionToken || null;
-  if (!selectionSessions.get(selectionSessionToken)) {
-    log('panel:open-secondary rejected missing-or-expired session');
-    sendBridgeResult('panel', {
-      ok: false,
-      error: '当前 THIS 已过期，请重新激活 Magic Pointer。',
-      selectionSessionToken,
-    });
-    return;
-  }
-  showReader(payload);
+  if (!readerWindow || readerWindow.isDestroyed() || !selectionSessions.get(selectionSessionToken)) return;
+  const cursor = screen.getCursorScreenPoint();
+  const display = screen.getDisplayNearestPoint(cursor);
+  const workArea = display.workArea || display.bounds;
+  const current = readerWindow.getBounds();
+  const maxHeight = Math.max(240, Math.floor(workArea.height * 0.72));
+  const height = Math.min(maxHeight, Math.max(240, Math.ceil(Number(payload?.height) || current.height)));
+  readerWindow.setBounds({ ...current, y: Math.max(workArea.y + 16, Math.min(current.y, workArea.y + workArea.height - height - 16)), height });
 });

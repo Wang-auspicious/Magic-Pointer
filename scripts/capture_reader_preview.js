@@ -18,7 +18,7 @@ app.whenReady().then(async () => {
     frame: false,
     transparent: true,
     backgroundColor: '#00000000',
-    webPreferences: { contextIsolation: true, nodeIntegration: false },
+    webPreferences: { contextIsolation: true, nodeIntegration: false, offscreen: true },
   });
   try {
     await window.loadFile(path.join(ROOT, 'electron', 'renderer', 'reader.html'));
@@ -38,6 +38,15 @@ app.whenReady().then(async () => {
         }
       }]
     })`);
+    const readerHeight = await window.webContents.executeJavaScript(`
+      Math.ceil(
+        (document.querySelector('.reader-header')?.offsetHeight || 0)
+        + document.getElementById('reader-content').scrollHeight
+        + (document.getElementById('reader-actions').hidden ? 0 : document.getElementById('reader-actions').scrollHeight)
+        + 2
+      )
+    `);
+    window.setSize(420, Math.max(240, Math.min(520, readerHeight)));
     await new Promise((resolve) => setTimeout(resolve, 250));
     const image = await window.webContents.capturePage();
     fs.mkdirSync(path.dirname(OUTPUT), { recursive: true });

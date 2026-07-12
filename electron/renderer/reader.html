@@ -17,7 +17,10 @@
             <div id="reader-context" class="reader-context"></div>
           </div>
         </div>
-        <button id="reader-close" class="reader-close" type="button" aria-label="关闭">×</button>
+        <div class="reader-window-actions">
+          <button id="reader-pin" class="reader-pin" type="button" aria-label="固定阅读器" aria-pressed="false">固定</button>
+          <button id="reader-close" class="reader-close" type="button" aria-label="关闭">关闭</button>
+        </div>
       </header>
       <main id="reader-content" class="reader-content" tabindex="0"></main>
       <footer id="reader-actions" class="reader-actions" hidden></footer>

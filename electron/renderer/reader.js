@@ -3,6 +3,7 @@ const contextNode = document.getElementById('reader-context');
 const contentNode = document.getElementById('reader-content');
 const actionsNode = document.getElementById('reader-actions');
 const closeButton = document.getElementById('reader-close');
+const pinButton = document.getElementById('reader-pin');
 
 let currentActionProposals = [];
 let currentSelectionSessionToken = '';
@@ -97,6 +98,14 @@ function renderPayload(payload = {}) {
   contentNode.innerHTML = answer ? renderSafeMarkdown(answer) : '<p class="reader-empty">结果已生成，请确认下一步操作。</p>';
   renderProposals(payload.actionProposals);
   contentNode.scrollTop = 0;
+  window.requestAnimationFrame(() => {
+    const headerHeight = document.querySelector('.reader-header')?.offsetHeight || 0;
+    const actionsHeight = actionsNode.hidden ? 0 : actionsNode.scrollHeight;
+    window.magicPointerReader?.resize({
+      selectionSessionToken: currentSelectionSessionToken,
+      height: headerHeight + contentNode.scrollHeight + actionsHeight + 2,
+    });
+  });
 }
 
 actionsNode.addEventListener('click', (event) => {
@@ -115,6 +124,12 @@ actionsNode.addEventListener('click', (event) => {
 });
 
 closeButton.addEventListener('click', () => window.magicPointerReader?.hide());
+pinButton.addEventListener('click', () => {
+  const pinned = pinButton.getAttribute('aria-pressed') !== 'true';
+  pinButton.setAttribute('aria-pressed', String(pinned));
+  pinButton.textContent = pinned ? '已固定' : '固定';
+  window.magicPointerReader?.setPinned(pinned);
+});
 window.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') window.magicPointerReader?.hide();
 });
@@ -123,6 +138,8 @@ window.magicPointerReader?.onShow((payload) => renderPayload(payload));
 window.magicPointerReader?.onHide(() => {
   currentActionProposals = [];
   currentSelectionSessionToken = '';
+  pinButton.setAttribute('aria-pressed', 'false');
+  pinButton.textContent = '固定';
 });
 window.magicPointerReader?.onResult((payload) => {
   if (payload.selectionSessionToken && currentSelectionSessionToken && payload.selectionSessionToken !== currentSelectionSessionToken) return;

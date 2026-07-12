@@ -48,19 +48,23 @@ html, body {
   white-space: nowrap;
 }
 
-.reader-close {
-  width: 28px;
+.reader-window-actions { display: flex; align-items: center; gap: 4px; -webkit-app-region: no-drag; }
+.reader-close,
+.reader-pin {
+  min-width: 42px;
   height: 28px;
-  padding: 0;
+  padding: 0 8px;
   color: rgba(226, 232, 240, 0.72);
-  font: 20px/26px system-ui;
+  font: 650 11px/28px inherit;
   background: transparent;
   border: 0;
   border-radius: 9px;
   cursor: pointer;
   -webkit-app-region: no-drag;
 }
-.reader-close:hover, .reader-close:focus-visible { color: white; background: rgba(255, 255, 255, 0.09); outline: none; }
+.reader-close:hover, .reader-close:focus-visible,
+.reader-pin:hover, .reader-pin:focus-visible,
+.reader-pin[aria-pressed="true"] { color: white; background: rgba(255, 255, 255, 0.09); outline: none; }
 
 .reader-content {
   min-height: 0;
