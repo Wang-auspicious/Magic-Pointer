@@ -9,6 +9,7 @@ from app.actions.history import ActionHistoryRecord, ActionHistoryStore, make_wo
 from app.actions.office import text_sha256
 from app.actions.shopping_list import make_shopping_list_undo_proposal
 from app.actions.calendar import make_calendar_undo_proposal
+from app.actions.draft_writer import write_draft_to_target
 from app.actions.policy import LocalPermissionPolicy
 from app.actions.schema import ActionProposal, ExecutionResult, ExecutionStatus
 from app.adapters.office_adapter import ALLOWED_WORD_COM_PROG_IDS, WORD_COM_PROG_ID, _run_powershell_json
@@ -73,11 +74,7 @@ class SafeActionExecutor:
         self.history_store = history_store or ActionHistoryStore()
         self.shopping_list_store = shopping_list_store or ShoppingListStore()
         self.calendar_event_store = calendar_event_store or CalendarEventStore()
-        self.draft_writer = draft_writer or self._unavailable_draft_writer
-
-    @staticmethod
-    def _unavailable_draft_writer(_parameters: JsonDict) -> JsonDict:
-        return {"ok": False, "error": "Windows draft writer is not available"}
+        self.draft_writer = draft_writer or write_draft_to_target
 
     def preview(self, proposal: ActionProposal) -> JsonDict:
         decision = self.policy.decide(proposal)
@@ -177,7 +174,17 @@ class SafeActionExecutor:
             return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="draft writer violated no-submit contract", metadata=metadata)
         if _optional_int(receipt.get("target_hwnd")) != expected_hwnd:
             return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="draft writer target mismatch", metadata=metadata)
-        if int(receipt.get("written_chars") or -1) != len(text):
+        delivery_mode = str(receipt.get("delivery_mode") or "full_prompt")
+        if delivery_mode == "artifact_reference":
+            artifact_contract_valid = (
+                bool(str(params.get("prompt_artifact") or "").strip())
+                and int(receipt.get("source_chars") or -1) == len(text)
+                and int(receipt.get("written_chars") or 0) > 0
+                and str(receipt.get("method") or "").startswith("keyboard:terminal-")
+            )
+            if not artifact_contract_valid:
+                return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="terminal artifact-reference verification failed", metadata=metadata)
+        elif int(receipt.get("written_chars") or -1) != len(text):
             return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="draft writer character-count verification failed", metadata=metadata)
         if receipt.get("verified") is not True:
             return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="draft writer did not verify the write", metadata=metadata)

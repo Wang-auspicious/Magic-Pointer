@@ -85,3 +85,26 @@ def test_executor_fails_closed_if_writer_reports_submit() -> None:
 
     assert result.status == ExecutionStatus.FAILED
     assert "submit" in result.error.lower()
+
+
+def test_executor_accepts_verified_terminal_artifact_reference() -> None:
+    action = proposal()
+
+    def writer(parameters):
+        return {
+            "ok": True,
+            "target_hwnd": parameters["target_hwnd"],
+            "target_title": parameters["target_title"],
+            "written_chars": 72,
+            "source_chars": len(parameters["text"]),
+            "method": "keyboard:terminal-artifact-reference",
+            "delivery_mode": "artifact_reference",
+            "verified": True,
+            "submit_sent": False,
+        }
+
+    result = SafeActionExecutor(draft_writer=writer).execute(action, confirmed=False)
+
+    assert result.status == ExecutionStatus.SUCCEEDED
+    assert result.output["delivery_mode"] == "artifact_reference"
+    assert result.output["source_chars"] == len(action.parameters["text"])
