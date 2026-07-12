@@ -5,6 +5,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const { SelectionSessionStore } = require('./selection_session');
 const { InteractionEpisodeStore, inferReferenceMode } = require('./interaction_episode');
+const { ActivationGate } = require('./activation_gate');
 const {
   chooseAnchorRect,
   computeInlineRailWidth,
@@ -14,6 +15,7 @@ const {
 
 let overlayWindow = null;
 let panelWindow = null;
+let resultWindow = null;
 let readerWindow = null;
 let mousePoints = [];
 let lastShakeTrigger = 0;
@@ -35,6 +37,7 @@ const ALLOWED_ACTION_TYPES = new Set(['copy_text_to_clipboard', 'office_replace_
 const pendingActionProposals = new Map();
 const selectionSessions = new SelectionSessionStore({ ttlMs: SELECTION_SESSION_TTL_MS });
 const interactionEpisodes = new InteractionEpisodeStore({ ttlMs: 30 * 60 * 1000 });
+const activationGate = new ActivationGate({ debounceMs: 600 });
 const activeSessionChildren = new Map();
 let activeSelectionSessionToken = null;
 
@@ -356,17 +359,32 @@ function showPanel(reason = 'manual', payload = {}, { focusInput = true, session
   else reveal();
 }
 
-function hidePanel({ hideObserver = false } = {}) {
+function hasVisibleTemporarySurface() {
+  return Boolean(
+    (panelWindow && panelWindow.isVisible())
+    || (resultWindow && resultWindow.isVisible())
+    || (readerWindow && readerWindow.isVisible())
+  );
+}
+
+function dismissTemporarySurfaces({ invalidateSession = true, hideObserver = false } = {}) {
+  const sessionToken = activeSelectionSessionToken;
   if (readerWindow && !readerWindow.isDestroyed()) {
     readerWindow.webContents.send('reader:hide');
     readerWindow.hide();
   }
-  if (!panelWindow) return;
-  const sessionToken = activeSelectionSessionToken;
-  panelWindow.webContents.send('panel:hide');
-  panelWindow.hide();
-  invalidateSelectionSession(sessionToken);
+  if (resultWindow && !resultWindow.isDestroyed()) resultWindow.hide();
+  if (panelWindow && !panelWindow.isDestroyed()) {
+    panelWindow.webContents.send('panel:hide');
+    panelWindow.hide();
+  }
+  if (invalidateSession) invalidateSelectionSession(sessionToken);
   if (hideObserver) hideOverlay();
+  log('dismissTemporarySurfaces');
+}
+
+function hidePanel({ hideObserver = false } = {}) {
+  dismissTemporarySurfaces({ invalidateSession: true, hideObserver });
   log('hidePanel');
 }
 
@@ -579,8 +597,11 @@ app.whenReady().then(() => {
   log(`app ready pid=${process.pid}`);
   createOverlayWindow();
   const ok = globalShortcut.register('Control+Alt+M', () => {
-    if (panelWindow && panelWindow.isVisible()) {
-      hidePanel({ hideObserver: true });
+    const decision = activationGate.decide({ hasVisibleSurface: hasVisibleTemporarySurface() });
+    log(`activation hotkey decision=${decision}`);
+    if (decision === 'ignore') return;
+    if (decision === 'dismiss') {
+      dismissTemporarySurfaces({ invalidateSession: true, hideObserver: true });
       return;
     }
     beginSelectionSession('hotkey');
@@ -596,6 +617,7 @@ app.on('will-quit', () => {
   globalShortcut.unregisterAll();
   if (mousePollTimer) clearInterval(mousePollTimer);
   try { panelWindow?.close(); } catch (_) {}
+  try { resultWindow?.close(); } catch (_) {}
   try { readerWindow?.close(); } catch (_) {}
   log('app will quit');
 });

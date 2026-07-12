@@ -1,0 +1,22 @@
+const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
+const { ActivationGate } = require('../electron/activation_gate');
+
+const gate = new ActivationGate({ debounceMs: 600 });
+assert.strictEqual(gate.decide({ now: 1000, hasVisibleSurface: false }), 'activate');
+for (const now of [1050, 1100, 1250, 1599]) {
+  assert.strictEqual(gate.decide({ now, hasVisibleSurface: true }), 'ignore');
+}
+assert.strictEqual(gate.decide({ now: 1600, hasVisibleSurface: true }), 'dismiss');
+assert.strictEqual(gate.decide({ now: 2200, hasVisibleSurface: false }), 'activate');
+
+const mainSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
+assert(mainSource.includes("const { ActivationGate } = require('./activation_gate');"));
+assert(mainSource.includes('function hasVisibleTemporarySurface()'));
+assert(mainSource.includes('function dismissTemporarySurfaces('));
+assert(mainSource.includes("decision === 'ignore'"));
+assert(mainSource.includes("decision === 'dismiss'"));
+assert(mainSource.includes('resultWindow && resultWindow.isVisible()'));
+
+console.log('activation gate test ok');
