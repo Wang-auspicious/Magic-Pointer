@@ -385,3 +385,12 @@
 - 自动验证：本轮 Node 全量测试通过；Python 回归为 64 项通过。最终提交前再次运行新鲜全量验证。
 - 未冒充通过：本轮没有稳定控制用户 Edge 活动标签页，未把旧 Edge/PDF 基线或隔离预览冒充新的真实前台翻译通过。Edge PDF 原生读取仍有 `fcd52fb`/`3f0299a` 的既有证据，但更新后的 A 完整链路需要 CEO 再次按真实选区验收。
 - 明确欠账：Obsidian 内嵌 PDF 仍未实现原生选区适配；现在会快速、准确失败，不再伪装成已有结果。该能力进入 P5 adapter backlog，不与本次结果表面恢复混合。
+
+### 2026-07-12：产品路线纠偏为 Action-first 原生 Dashboard
+
+- CEO 复核指出当前实现主要仍是“选中文字后问答”，没有交付演示 7—10 和静态演示中的真实基础 action。该判断与代码现状一致：除 Word 写回/撤销和复制路径外，购物清单、日历、路线、表格 merge、预约和图像操作均未形成闭环。
+- 前序 M1/M1.1 仅归类为 grounding、安全和交互外壳，不再作为“核心产品功能完成”对外描述。
+- Windows 第三方软件缺少 Google 自有系统的统一对象层；复杂且不统一的高频动作优先承载到 Magic Pointer 原生 Dashboard GUI，外部软件写入继续使用白名单 adapter。
+- 第一 action 切片确定为演示 7 的 `Add this`：可靠文本对象 → typed shopping-list action → 原生 Dashboard 真实写入 → 回读验证 → item 高亮 → receipt/精确撤销。
+- 设计规格：`docs/superpowers/specs/2026-07-12-native-dashboard-shopping-list-design.md`。
+- M3 Destination Adapter 暂改为“原生 Dashboard Destination Provider”先行；完成购物清单真实闭环后，按 Calendar、Route、Table Merge、Reservation、Image Canvas 顺序推进，不再继续增加问答表面。
