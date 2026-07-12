@@ -28,6 +28,7 @@ from .shopping_list import (
     make_shopping_list_undo_proposal,
     wants_shopping_list_add,
 )
+from .calendar import CALENDAR_TARGET_URI, make_calendar_create_proposal, make_calendar_undo_proposal
 
 __all__ += [
     "ActionHistoryRecord",
@@ -38,4 +39,7 @@ __all__ += [
     "make_shopping_list_check_proposal",
     "make_shopping_list_undo_proposal",
     "wants_shopping_list_add",
+    "CALENDAR_TARGET_URI",
+    "make_calendar_create_proposal",
+    "make_calendar_undo_proposal",
 ]

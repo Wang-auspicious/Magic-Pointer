@@ -43,6 +43,8 @@ const ALLOWED_ACTION_TYPES = new Set([
   'shopping_list_add',
   'shopping_list_set_checked',
   'shopping_list_undo_add',
+  'calendar_event_create',
+  'calendar_event_undo_create',
 ]);
 
 const pendingActionProposals = new Map();

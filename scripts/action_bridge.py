@@ -52,6 +52,10 @@ def main() -> int:
             answer = "购物清单状态已更新。"
         elif proposal.action_type == "shopping_list_undo_add":
             answer = "已撤销这次购物清单添加。"
+        elif proposal.action_type == "calendar_event_create":
+            answer = "本地日历事件已创建并验证。"
+        elif proposal.action_type == "calendar_event_undo_create":
+            answer = "已撤销这次本地日历创建。"
         else:
             answer = "Action completed."
     else:

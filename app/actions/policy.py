@@ -25,6 +25,8 @@ INTERNAL_DASHBOARD_ACTIONS = {
     "shopping_list_undo_add",
 }
 SHOPPING_LIST_TARGET_URI = "magic-pointer://dashboard/shopping-list/default"
+CALENDAR_TARGET_URI = "magic-pointer://dashboard/calendar/local"
+CALENDAR_ACTIONS = {"calendar_event_create", "calendar_event_undo_create"}
 
 
 @dataclass(frozen=True)
@@ -57,6 +59,13 @@ class LocalPermissionPolicy:
             if target_uri != SHOPPING_LIST_TARGET_URI:
                 return PermissionDecision(False, True, "internal dashboard action target is not allowlisted", SafetyLevel.DESTRUCTIVE)
             return PermissionDecision(True, False, "reversible local Magic Pointer dashboard action", SafetyLevel.LOW)
+        if action_type in CALENDAR_ACTIONS:
+            target_uri = proposal.target.object_id if proposal.target is not None else None
+            if target_uri != CALENDAR_TARGET_URI:
+                return PermissionDecision(False, True, "local calendar action target is not allowlisted", SafetyLevel.DESTRUCTIVE)
+            if action_type == "calendar_event_create":
+                return PermissionDecision(True, True, "calendar creation requires explicit review and confirmation", SafetyLevel.MEDIUM)
+            return PermissionDecision(True, False, "receipt-bound local calendar undo", SafetyLevel.LOW)
         if action_type.startswith(READ_ONLY_PREFIXES) or proposal.safety_level == SafetyLevel.READ_ONLY:
             return PermissionDecision(True, False, "read-only adapter action", SafetyLevel.READ_ONLY)
         return PermissionDecision(True, proposal.needs_confirmation(), "default confirmation policy", proposal.safety_level)

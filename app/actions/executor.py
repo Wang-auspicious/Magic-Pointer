@@ -7,10 +7,12 @@ from typing import Any
 from app.actions.history import ActionHistoryRecord, ActionHistoryStore, make_word_undo_proposal, new_history_id, excerpt
 from app.actions.office import text_sha256
 from app.actions.shopping_list import make_shopping_list_undo_proposal
+from app.actions.calendar import make_calendar_undo_proposal
 from app.actions.policy import LocalPermissionPolicy
 from app.actions.schema import ActionProposal, ExecutionResult, ExecutionStatus
 from app.adapters.office_adapter import ALLOWED_WORD_COM_PROG_IDS, WORD_COM_PROG_ID, _run_powershell_json
 from app.dashboard.shopping_list import ShoppingListError, ShoppingListStore
+from app.dashboard.calendar import CalendarConflict, CalendarError, CalendarEventStore
 
 JsonDict = dict[str, Any]
 
@@ -21,6 +23,8 @@ SUPPORTED_ACTION_TYPES = {
     "shopping_list_add",
     "shopping_list_set_checked",
     "shopping_list_undo_add",
+    "calendar_event_create",
+    "calendar_event_undo_create",
 }
 
 
@@ -60,10 +64,12 @@ class SafeActionExecutor:
         policy: LocalPermissionPolicy | None = None,
         history_store: ActionHistoryStore | None = None,
         shopping_list_store: ShoppingListStore | None = None,
+        calendar_event_store: CalendarEventStore | None = None,
     ) -> None:
         self.policy = policy or LocalPermissionPolicy()
         self.history_store = history_store or ActionHistoryStore()
         self.shopping_list_store = shopping_list_store or ShoppingListStore()
+        self.calendar_event_store = calendar_event_store or CalendarEventStore()
 
     def preview(self, proposal: ActionProposal) -> JsonDict:
         decision = self.policy.decide(proposal)
@@ -123,6 +129,10 @@ class SafeActionExecutor:
             return self._shopping_list_set_checked(proposal, started, confirmed=confirmed, metadata=metadata)
         if proposal.action_type == "shopping_list_undo_add":
             return self._shopping_list_undo_add(proposal, started, confirmed=confirmed, metadata=metadata)
+        if proposal.action_type == "calendar_event_create":
+            return self._calendar_event_create(proposal, started, confirmed=confirmed, metadata=metadata)
+        if proposal.action_type == "calendar_event_undo_create":
+            return self._calendar_event_undo_create(proposal, started, confirmed=confirmed, metadata=metadata)
         return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="unreachable action dispatch", metadata=metadata)
 
     def _shopping_list_add(self, proposal: ActionProposal, started: str, *, confirmed: bool, metadata: JsonDict) -> ExecutionResult:
@@ -175,6 +185,49 @@ class SafeActionExecutor:
             )
             return self._result(proposal, started, ExecutionStatus.SUCCEEDED, confirmed=confirmed, output=stored, metadata=metadata)
         except ShoppingListError as exc:
+            return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error=str(exc), metadata=metadata)
+
+    def _calendar_event_create(self, proposal: ActionProposal, started: str, *, confirmed: bool, metadata: JsonDict) -> ExecutionResult:
+        params = dict(proposal.parameters)
+        try:
+            stored = self.calendar_event_store.create_event(
+                params.get("event") or {},
+                idempotency_key=str(params.get("idempotency_key") or ""),
+                source=params.get("source") or {},
+                allow_conflict=params.get("allow_conflict", False),
+            )
+            undo = make_calendar_undo_proposal(receipt_id=stored["receipt_id"], event=stored["event"])
+            return self._result(
+                proposal,
+                started,
+                ExecutionStatus.SUCCEEDED,
+                confirmed=confirmed,
+                output={**stored, "calendar_id": "local-calendar", "undo_proposal": undo.to_dict()},
+                metadata=metadata,
+            )
+        except CalendarConflict as exc:
+            return self._result(
+                proposal,
+                started,
+                ExecutionStatus.FAILED,
+                confirmed=confirmed,
+                error=str(exc),
+                output={"conflicts": exc.conflicts},
+                metadata=metadata,
+            )
+        except CalendarError as exc:
+            return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error=str(exc), metadata=metadata)
+
+    def _calendar_event_undo_create(self, proposal: ActionProposal, started: str, *, confirmed: bool, metadata: JsonDict) -> ExecutionResult:
+        params = dict(proposal.parameters)
+        try:
+            stored = self.calendar_event_store.undo_create(
+                str(params.get("event_id") or ""),
+                str(params.get("receipt_id") or ""),
+                str(params.get("expected_updated_at") or ""),
+            )
+            return self._result(proposal, started, ExecutionStatus.SUCCEEDED, confirmed=confirmed, output=stored, metadata=metadata)
+        except CalendarError as exc:
             return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error=str(exc), metadata=metadata)
 
     def _copy_text_to_clipboard(self, proposal: ActionProposal, started: str, *, confirmed: bool, metadata: JsonDict) -> ExecutionResult:
