@@ -24,6 +24,12 @@ const calendarEventsRoot = document.getElementById('calendar-events');
 const calendarEmpty = document.getElementById('calendar-empty');
 const upcomingCount = document.getElementById('upcoming-count');
 const calendarDraftSource = document.getElementById('calendar-draft-source');
+const routeView = document.getElementById('route-view');
+const routeOrigin = document.getElementById('route-origin');
+const routeDestination = document.getElementById('route-destination');
+const routeOpen = document.getElementById('route-open');
+const routeNotice = document.getElementById('route-notice');
+const routeSource = document.getElementById('route-source');
 
 let currentState = { revision: 0, items: [] };
 let highlightItemId = null;
@@ -126,11 +132,12 @@ function renderState(state) {
 }
 
 function setActiveView(view) {
-  activeView = view === 'calendar' ? 'calendar' : 'shopping-list';
+  activeView = ['calendar', 'route'].includes(view) ? view : 'shopping-list';
   workspace.dataset.view = activeView;
-  viewTitle.textContent = activeView === 'calendar' ? '日历' : '购物清单';
+  viewTitle.textContent = activeView === 'calendar' ? '日历' : activeView === 'route' ? '路线' : '购物清单';
   calendarView.hidden = activeView !== 'calendar';
-  shoppingViews.forEach((element) => { element.hidden = activeView === 'calendar'; });
+  routeView.hidden = activeView !== 'route';
+  shoppingViews.forEach((element) => { element.hidden = activeView !== 'shopping-list'; });
   document.querySelectorAll('[data-view-target]').forEach((button) => {
     const selected = button.dataset.viewTarget === activeView;
     button.classList.toggle('is-active', selected);
@@ -138,7 +145,23 @@ function setActiveView(view) {
     else button.removeAttribute('aria-current');
   });
   if (activeView === 'calendar') window.magicPointerDashboard.calendarRequestState();
-  else window.magicPointerDashboard.requestState();
+  else if (activeView === 'shopping-list') window.magicPointerDashboard.requestState();
+}
+
+function updateRouteState() {
+  routeOpen.disabled = !routeOrigin.value.trim() || !routeDestination.value.trim();
+  routeNotice.hidden = true;
+}
+
+function applyRouteDraft(draft = {}) {
+  routeOrigin.value = draft.origin || '';
+  routeDestination.value = draft.destination || '';
+  const radio = document.querySelector(`input[name="travel-mode"][value="${draft.travel_mode || 'driving'}"]`);
+  if (radio) radio.checked = true;
+  const originApp = draft.origin_source?.app || 'THAT';
+  const destinationApp = draft.destination_source?.app || 'THIS';
+  routeSource.textContent = `起点来自 ${originApp} · 终点来自 ${destinationApp}`;
+  updateRouteState();
 }
 
 function calendarEventFromForm() {
@@ -284,6 +307,9 @@ window.magicPointerDashboard.onShow((payload = {}) => {
   if (payload.view === 'calendar' || (!payload.view && activeView === 'calendar')) {
     setActiveView('calendar');
     if (payload.calendarDraft) applyCalendarDraft(payload.calendarDraft);
+  } else if (payload.view === 'route' || (!payload.view && activeView === 'route')) {
+    setActiveView('route');
+    if (payload.routeDraft) applyRouteDraft(payload.routeDraft);
   } else {
     setActiveView('shopping-list');
   }
@@ -321,6 +347,13 @@ window.magicPointerDashboard.onCalendarState((payload = {}) => {
   updateCalendarForm({ preview: false });
 });
 
+window.magicPointerDashboard.onRouteResult((payload = {}) => {
+  routeOpen.disabled = false;
+  routeOpen.textContent = '在 Google Maps 中查看路线';
+  routeNotice.hidden = payload.ok === true;
+  routeNotice.textContent = payload.error || '';
+});
+
 document.querySelectorAll('[data-view-target]').forEach((button) => {
   button.addEventListener('click', () => setActiveView(button.dataset.viewTarget));
 });
@@ -356,6 +389,25 @@ calendarForm.addEventListener('submit', (event) => {
 });
 
 document.getElementById('calendar-refresh').addEventListener('click', () => window.magicPointerDashboard.calendarRequestState());
+routeOrigin.addEventListener('input', updateRouteState);
+routeDestination.addEventListener('input', updateRouteState);
+document.getElementById('route-swap').addEventListener('click', () => {
+  const origin = routeOrigin.value;
+  routeOrigin.value = routeDestination.value;
+  routeDestination.value = origin;
+  updateRouteState();
+});
+routeOpen.addEventListener('click', () => {
+  if (routeOpen.disabled) return;
+  const travelMode = document.querySelector('input[name="travel-mode"]:checked')?.value || 'driving';
+  routeOpen.disabled = true;
+  routeOpen.textContent = '正在打开…';
+  window.magicPointerDashboard.openRoute({
+    origin: routeOrigin.value.trim(),
+    destination: routeDestination.value.trim(),
+    travelMode,
+  });
+});
 
 document.getElementById('dashboard-close').addEventListener('click', () => window.magicPointerDashboard.hide());
 document.getElementById('dashboard-refresh').addEventListener('click', () => {

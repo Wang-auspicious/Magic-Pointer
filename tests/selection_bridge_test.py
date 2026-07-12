@@ -12,6 +12,7 @@ import scripts.electron_bridge as electron_bridge
 import scripts.selection_bridge as selection_bridge
 from scripts.selection_bridge import (
     _calendar_response,
+    _route_response,
     _context_from_snapshot,
     _interaction_episode_context,
     _read_target_context,
@@ -179,6 +180,26 @@ def test_calendar_response_opens_reviewable_draft_without_action() -> None:
     output = _calendar_response(payload, target, app_ctx, snapshot)
     assert output["intentKind"] == "calendar_event_draft"
     assert output["calendarDraft"]["event"]["title"] == "设计评审"
+    assert output["actionProposals"] == []
+
+
+def test_route_response_uses_bound_episode_without_model_action() -> None:
+    output = _route_response({
+        "command": "规划路线",
+        "selectionSessionId": "session-route",
+        "interactionEpisode": {
+            "episodeId": "episode-route",
+            "slots": {
+                "that": {"objectId": "a", "content": "上海博物馆"},
+                "this": {"objectId": "b", "content": "上海虹桥站"},
+                "these": [],
+            },
+        },
+    })
+    assert output["ok"] is True
+    assert output["intentKind"] == "route_draft"
+    assert output["routeDraft"]["origin"] == "上海博物馆"
+    assert output["routeDraft"]["destination"] == "上海虹桥站"
     assert output["actionProposals"] == []
 
 

@@ -14,6 +14,7 @@ from app.actions.history import ActionHistoryStore, make_word_undo_proposal
 from app.actions.office import clean_replacement_text, make_word_replace_selection_proposal, wants_word_rewrite
 from app.actions.shopping_list import make_shopping_list_add_proposal, wants_shopping_list_add
 from app.actions.calendar_draft import parse_calendar_draft, wants_calendar_draft
+from app.actions.route_draft import parse_route_draft, wants_route_draft
 from app.adapters import AdapterReadContext, default_adapter_registry, format_adapter_context
 from app.ai_client import ask_text_model
 from app.system_context import list_visible_windows
@@ -230,6 +231,33 @@ def _calendar_response(
     }
 
 
+def _route_response(payload: dict[str, Any]) -> dict[str, Any] | None:
+    command = str(payload.get("command") or "").strip()
+    if not wants_route_draft(command):
+        return None
+    draft = parse_route_draft(payload.get("interactionEpisode"))
+    selection_session_id = str(payload.get("selectionSessionId") or "").strip() or None
+    if draft["missing_fields"]:
+        return {
+            "ok": False,
+            "prompt": command,
+            "error": "当前对象会话没有两个可靠地点。请依次选中起点和终点后再规划路线。",
+            "actionProposals": [],
+            "routeDraft": draft,
+            "intentKind": "route_draft",
+            "selectionSessionId": selection_session_id,
+        }
+    return {
+        "ok": True,
+        "prompt": command,
+        "answer": "路线卡已打开，请核对起点和终点。",
+        "actionProposals": [],
+        "routeDraft": draft,
+        "intentKind": "route_draft",
+        "selectionSessionId": selection_session_id,
+    }
+
+
 def main() -> int:
     payload = read_payload()
     command = str(payload.get("command") or "").strip()
@@ -284,6 +312,11 @@ def main() -> int:
     if calendar_response is not None:
         print(json.dumps(calendar_response, ensure_ascii=False))
         return 0 if calendar_response.get("ok") is True else 1
+
+    route_response = _route_response(payload)
+    if route_response is not None:
+        print(json.dumps(route_response, ensure_ascii=False))
+        return 0 if route_response.get("ok") is True else 1
 
     episode_context = _interaction_episode_context(payload.get("interactionEpisode"))
     context_text = _selection_context_text(app_ctx, target_window)

@@ -425,7 +425,7 @@ Dashboard 已提供真实列表状态、未完成计数、来源应用与窗口�
 |---:|---|---|---|---|
 | A1 | 原生购物清单 | 主闭环完成，待 CEO 真实桌面验收 | 选区到写入、高亮、勾选、精确撤销、重启持久化均可亲手验证 | 提交 Dashboard 切片；真实 Electron 中走一次 PDF/网页选区；处理验收暴露的阻断缺陷后冻结 A1 |
 | A2 | 原生日历 | 本地主闭环完成，待 CEO 真实桌面验收 | 从日期/时间文本形成结构化事件草稿；Dashboard 可编辑；冲突检测；显式确认；保存回读；receipt/撤销 | 冻结非阻断视觉细节；真实选区验收后进入 A3 Route，不把本地事件冒充 Outlook/Google 同步 |
-| A3 | 原生路线规划 | 未开始 | 两个地点通过 THIS/THAT 绑定；路线卡给出交通方式、时长、距离和备选；来源清楚；可交换起终点 | 建 RouteRequest/RouteResult schema、可替换 provider 和 Dashboard 地图/列表双视图 |
+| A3 | 原生路线规划 | Maps URL 主闭环完成；原生时长 provider 待接 | 两个地点通过 THIS/THAT 绑定；来源清楚；可交换起终点；显式打开真实地图路线 | 已完成安全 Maps URL provider；后续接授权 Routes API/自托管 OSRM 后才在 Dashboard 展示距离、时长和 geometry |
 | A4 | 表格收集与 Merge | 未开始 | 多个选区进入暂存托盘，列映射可预览，冲突单元格必须人工决定，导出前后可核验 | 先做 THESE 收集篮与统一二维数据模型，再接 Excel/CSV 导出；绝不直接覆盖用户原表 |
 | A5 | 预约/表单任务 | 未开始 | 约束采集、候选比较、确认页、最终提交边界清晰；未经确认不产生外部副作用 | 先做本地 Reservation Draft 与模拟 provider；真实外部提交必须独立 adapter 和显式确认 |
 | A6 | 图片/画布动作 | 未开始 | 指向图像对象后可抠图、局部修改、组合到画布；每次编辑有版本和可撤销历史 | 先做 Dashboard Canvas 和本地 artifact，随后接图像模型；不把任意屏幕截图默认上传 |
@@ -452,3 +452,14 @@ Dashboard 已提供真实列表状态、未完成计数、来源应用与窗口�
 - 中文端到端 fixture 真实运行 `selection_bridge.py → calendar_bridge.py`：未确认创建被拒绝；确认后事件写入、来源回读；随后使用精确 receipt 撤销，列表恢复为空。新鲜全量验证为 Python `110 passed in 20.06s`，Node/Electron `npm test` 全绿。
 - A2 明确欠账：首版不支持 recurrence、外部日历同步、相对日期自动解析和 DST 模糊时间自动决策；这些不会阻塞本地动作主链，也不会以隐藏自动化方式猜测。CEO 若需要外部日历，将作为 provider connector 独立授权、确认和验收。
 - 下一大块固定为 A3 Route：THIS/THAT 两个地点 → 结构化 RouteRequest → provider preview → Dashboard 路线卡与交换起终点；不回头给购物清单做排序，也不先给日历做月视图装饰。
+
+### 2026-07-12：A3 Route 基础动作闭环完成
+
+- 路线 provider 选择经过官方接口核对：没有把 OSMF 公共 Nominatim 或 OSRM 演示实例硬编码成产品后端。公共 Nominatim 有 1 req/s、专用 User-Agent、缓存、隐私与可切换 provider 等限制；A3 首版采用官方无需 API Key 的 Google Maps Directions URL，距离和时长交由真实地图计算，Dashboard 不伪造数字。
+- `RouteDraft` 只消费当前 Interaction Episode。THESE 正好两项时保持集合顺序；否则 THAT 为起点、THIS 为终点。每项必须来自冻结对象 content，折叠后 1—240 字符；空内容、控制字符、超长内容、少于两个对象均 fail closed，不用泛化 label 或全局历史补猜。
+- 严格命令覆盖“规划路线 / 这两个地方怎么走 / Route these / get directions between these”。selection bridge 在模型前返回 `intentKind=route_draft` 且 `actionProposals=[]`，主进程打开 Dashboard 路线页，不自动启动外部地图。
+- Dashboard 新增路线导航、起终点编辑、交换按钮、驾车/公交/步行/骑行选择、对象来源和明确的外部地图边界。页面明确说明本地不计算距离和时长，避免把静态装饰地图冒充真实路线。
+- renderer 只提交 origin、destination、travelMode。Electron 主进程使用纯函数构造 URL，并在打开前二次核验 HTTPS、`www.google.com`、`/maps/dir/`、`api=1`、起终点、交通方式、参数白名单和 2048 字符上限；IPC 只接受 Dashboard webContents。非法 host、未知参数、非法 mode 和空地点全部拒绝。
+- 端到端 fixture 从中文 THAT/THIS episode 运行 selection bridge，再跨语言调用 Node route policy，验证生成的中文地址正确 percent-encode 且 URL 通过 allowlist。新鲜全量验证：Python `116 passed in 22.20s`，Node/Electron `npm test` 全绿。
+- A3 当前欠账被明确隔离：尚未接入可承诺 SLA 的地理编码和路线 JSON provider，因此 Dashboard 不展示原生距离、预计时间、备选路径或地图 geometry。后续接入用户授权 Google Routes API、商业 provider 或自托管 Nominatim/OSRM 时复用 RouteDraft 与路线卡，不改变用户操作模型。
+- 下一大块固定为 A4 Table Merge：THESE 多个表格/文本块进入收集篮，先做统一二维数据模型、列映射、冲突预览与安全导出；不继续美化路线背景图。

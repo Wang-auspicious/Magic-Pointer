@@ -1,5 +1,6 @@
 ﻿const { app, BrowserWindow, globalShortcut, ipcMain, screen } = require('electron');
 const path = require('path');
+const { shell } = require('electron');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -8,6 +9,7 @@ const { InteractionEpisodeStore, inferReferenceMode } = require('./interaction_e
 const { ActivationGate } = require('./activation_gate');
 const { captureEligibility, classifyResult, normalizeResultPreference } = require('./result_surface_policy');
 const { canAutoExecuteInternalProposal } = require('./internal_action_policy');
+const { buildGoogleMapsDirectionsUrl, isAllowedGoogleMapsDirectionsUrl } = require('./route_policy');
 const {
   chooseAnchorRect,
   computeInlineRailWidth,
@@ -1028,6 +1030,11 @@ ipcMain.on('panel:submit-selection-command', (_event, payload) => {
         sendBridgeResult('panel', parsed);
         return;
       }
+      if (parsed?.intentKind === 'route_draft' && parsed?.routeDraft) {
+        showDashboard({ view: 'route', routeDraft: parsed.routeDraft }, { activate: false });
+        sendBridgeResult('panel', parsed);
+        return;
+      }
       const autoProposal = parsed.actionProposals?.find((proposal) => proposal.id === parsed.autoExecuteProposalId);
       if (canAutoExecuteInternalProposal(parsed, autoProposal)) {
         log(`trusted internal auto-execute type=${autoProposal.action_type} proposal=${autoProposal.id}`);
@@ -1220,4 +1227,25 @@ ipcMain.on('dashboard:calendar-undo-create', (event, payload) => {
     receiptId: payload?.receiptId,
     expectedUpdatedAt: payload?.expectedUpdatedAt,
   });
+});
+ipcMain.on('dashboard:route-open', async (event, payload) => {
+  if (!isDashboardSender(event)) return;
+  const url = buildGoogleMapsDirectionsUrl(payload);
+  if (!url || !isAllowedGoogleMapsDirectionsUrl(url)) {
+    dashboardWindow?.webContents.send('dashboard:route-result', {
+      ok: false,
+      error: '起点、终点或交通方式无效，未打开外部地图。',
+    });
+    return;
+  }
+  try {
+    await shell.openExternal(url);
+    dashboardWindow?.webContents.send('dashboard:route-result', { ok: true });
+    log(`route external opened mode=${String(payload?.travelMode || '')}`);
+  } catch (error) {
+    dashboardWindow?.webContents.send('dashboard:route-result', {
+      ok: false,
+      error: `无法打开默认浏览器：${error.message}`,
+    });
+  }
 });

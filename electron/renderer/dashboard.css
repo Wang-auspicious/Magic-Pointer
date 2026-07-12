@@ -91,6 +91,7 @@ button { font: inherit; }
   font-weight: 800;
 }
 .nav-icon-calendar { color: #f2efff; background: rgba(200, 190, 255, .18); }
+.nav-icon-route { color: #e8f7f2; background: rgba(84, 196, 148, .18); }
 
 .sidebar-foot {
   display: flex;
@@ -356,6 +357,30 @@ kbd { padding: 3px 7px; color: #5f6471; border: 1px solid #dfe1e7; border-bottom
 .calendar-empty p { margin: 12px 0 4px; color: #686e7c; font-size: 12px; font-weight: 620; }
 .calendar-empty small { max-width: 200px; font-size: 9px; line-height: 1.5; }
 
+.route-shell { display: grid; grid-template-columns: minmax(320px, .9fr) minmax(280px, 1.1fr); gap: 18px; margin-top: 26px; }
+.route-card { padding: 22px; border: 1px solid var(--line); border-radius: 18px; background: #fff; box-shadow: 0 12px 36px rgba(34, 36, 50, .05); }
+.route-explainer { margin: -2px 0 18px; color: var(--muted); font-size: 11px; line-height: 1.55; }
+.route-point { margin-bottom: 7px; }
+.route-swap { display: grid; width: 30px; height: 30px; margin: 0 10px 7px auto; place-items: center; color: #5d52c6; border: 1px solid #dedaf8; border-radius: 9px; background: #f4f2ff; cursor: pointer; font-size: 16px; }
+.travel-modes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 15px 0; padding: 0; border: 0; }
+.travel-modes legend { margin-bottom: 7px; color: #656b79; font-size: 10px; font-weight: 620; }
+.travel-modes label { position: relative; }
+.travel-modes input { position: absolute; opacity: 0; }
+.travel-modes span { display: block; padding: 8px 3px; color: #6d7280; border: 1px solid #e4e5ea; border-radius: 8px; background: #fafafd; cursor: pointer; font-size: 10px; text-align: center; }
+.travel-modes input:checked + span { color: #564ac6; border-color: #bcb4ef; background: #efedff; font-weight: 650; }
+.route-open { width: 100%; margin-top: 8px; }
+.route-preview { position: relative; min-height: 430px; overflow: hidden; border: 1px solid #dfe1e8; border-radius: 18px; background: #eef2ef; }
+.route-map-grid { position: absolute; inset: 0; opacity: .6; background-image: linear-gradient(28deg, transparent 46%, rgba(133, 150, 142, .16) 47%, rgba(133, 150, 142, .16) 50%, transparent 51%), linear-gradient(92deg, transparent 46%, rgba(133, 150, 142, .13) 47%, rgba(133, 150, 142, .13) 50%, transparent 51%); background-size: 84px 72px, 110px 90px; }
+.route-path { position: absolute; top: 37%; left: 25%; width: 51%; height: 30%; border-top: 5px solid #6a5be4; border-right: 5px solid #6a5be4; border-radius: 0 50% 0 0; transform: rotate(-9deg); }
+.route-pin { position: absolute; z-index: 2; display: grid; width: 34px; height: 34px; place-items: center; color: #fff; border: 4px solid rgba(255, 255, 255, .9); border-radius: 50% 50% 50% 8px; background: #6758df; box-shadow: 0 6px 18px rgba(49, 44, 94, .22); font-size: 10px; font-weight: 800; transform: rotate(-45deg); }
+.route-pin::first-letter { transform: rotate(45deg); }
+.route-pin-a { top: 29%; left: 19%; }
+.route-pin-b { top: 59%; right: 17%; background: #2d9b6f; }
+.route-preview-copy { position: absolute; right: 18px; bottom: 18px; left: 18px; padding: 14px 16px; border: 1px solid rgba(255, 255, 255, .8); border-radius: 12px; background: rgba(255, 255, 255, .86); backdrop-filter: blur(10px); }
+.route-preview-copy strong, .route-preview-copy span { display: block; }
+.route-preview-copy strong { font-size: 12px; }
+.route-preview-copy span { margin-top: 4px; color: var(--muted); font-size: 9px; }
+
 button:focus-visible,
 input:focus-visible { outline: 2px solid rgba(104, 87, 229, .55); outline-offset: 2px; }
 
@@ -363,6 +388,7 @@ input:focus-visible { outline: 2px solid rgba(104, 87, 229, .55); outline-offset
   .app-shell { grid-template-columns: 168px minmax(0, 1fr); }
   .workspace { padding: 24px; }
   .calendar-layout { grid-template-columns: 1fr; }
+  .route-shell { grid-template-columns: 1fr; }
 }
 
 @media (prefers-reduced-motion: reduce) {

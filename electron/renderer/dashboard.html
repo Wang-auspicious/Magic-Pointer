@@ -22,6 +22,10 @@
           <span class="nav-icon nav-icon-calendar" aria-hidden="true">▦</span>
           <span>日历</span>
         </button>
+        <button class="nav-item" type="button" data-view-target="route">
+          <span class="nav-icon nav-icon-route" aria-hidden="true">↗</span>
+          <span>路线</span>
+        </button>
       </nav>
       <div class="sidebar-foot">
         <span class="status-dot" aria-hidden="true"></span>
@@ -148,6 +152,50 @@
           <p>选中“牛奶”“咖啡豆”或任何短文本，唤起 Magic Pointer 后说“添加这个”。</p>
           <div class="shortcut-hint" aria-label="快捷键 Ctrl Alt M">
             <kbd>Ctrl</kbd><span>+</span><kbd>Alt</kbd><span>+</span><kbd>M</kbd>
+          </div>
+        </div>
+      </section>
+
+      <section id="route-view" class="dashboard-view" hidden>
+        <div class="route-shell">
+          <div class="route-card">
+            <div class="calendar-card-head">
+              <div>
+                <p class="eyebrow">ROUTE DRAFT</p>
+                <h2>核对路线</h2>
+              </div>
+              <span class="local-badge">MAPS URL</span>
+            </div>
+            <p class="route-explainer">Magic Pointer 只绑定起点和终点；距离、时长与道路详情将在 Google Maps 中计算。</p>
+            <label class="field field-wide route-point">
+              <span>起点</span>
+              <input id="route-origin" type="text" maxlength="240" autocomplete="off" />
+            </label>
+            <button id="route-swap" class="route-swap" type="button" aria-label="交换起点和终点">⇅</button>
+            <label class="field field-wide route-point">
+              <span>终点</span>
+              <input id="route-destination" type="text" maxlength="240" autocomplete="off" />
+            </label>
+            <fieldset class="travel-modes">
+              <legend>交通方式</legend>
+              <label><input type="radio" name="travel-mode" value="driving" checked /><span>驾车</span></label>
+              <label><input type="radio" name="travel-mode" value="transit" /><span>公交</span></label>
+              <label><input type="radio" name="travel-mode" value="walking" /><span>步行</span></label>
+              <label><input type="radio" name="travel-mode" value="bicycling" /><span>骑行</span></label>
+            </fieldset>
+            <div id="route-source" class="draft-source">需要两个已绑定地点</div>
+            <div id="route-notice" class="calendar-warning" role="status" aria-live="polite" hidden></div>
+            <button id="route-open" class="primary-button route-open" type="button" disabled>在 Google Maps 中查看路线</button>
+          </div>
+          <div class="route-preview" aria-hidden="true">
+            <div class="route-map-grid"></div>
+            <span class="route-pin route-pin-a">A</span>
+            <span class="route-path"></span>
+            <span class="route-pin route-pin-b">B</span>
+            <div class="route-preview-copy">
+              <strong>路线将在外部地图打开</strong>
+              <span>不会在本地伪造距离或预计时间</span>
+            </div>
           </div>
         </div>
       </section>
