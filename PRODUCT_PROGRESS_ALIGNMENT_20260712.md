@@ -394,3 +394,48 @@
 - 第一 action 切片确定为演示 7 的 `Add this`：可靠文本对象 → typed shopping-list action → 原生 Dashboard 真实写入 → 回读验证 → item 高亮 → receipt/精确撤销。
 - 设计规格：`docs/superpowers/specs/2026-07-12-native-dashboard-shopping-list-design.md`。
 - M3 Destination Adapter 暂改为“原生 Dashboard Destination Provider”先行；完成购物清单真实闭环后，按 Calendar、Route、Table Merge、Reservation、Image Canvas 顺序推进，不再继续增加问答表面。
+
+### 2026-07-12：A1 原生购物清单真实动作闭环完成
+
+#### 本轮让用户真正能完成的新任务
+
+用户现在可以在支持可靠文本选区的 PDF、网页或文档中选中一个短条目，例如“有机牛奶 2 盒”，唤起 Magic Pointer 后输入“添加这个”“加入购物清单”或严格等价的英文短命令。该命令不会再进入通用问答模型，也不会返回一段“你可以把它加入购物清单”的建议文本，而是由本地确定性解析器生成 `shopping_list_add` 类型动作。主进程只会在意图种类、提案 ID、目标 URI、安全等级、`trusted_local_intent` 和 `auto_execute` 标记全部匹配时自动执行。执行器把条目真实写入 Magic Pointer 用户数据目录，重新读取并核对条目 ID、文本、幂等键和移除状态；只有回读验证成功，界面才显示完成。成功后原生 Dashboard 在当前屏幕右侧以非抢焦点方式打开，滚动到新增条目并进行短时高亮，因此用户能直接看到“动作发生在哪里、写入了什么”，而不是只看到一句成功提示。
+
+Dashboard 已提供真实列表状态、未完成计数、来源应用与窗口、刷新、勾选完成、撤销添加、关闭按钮、Esc 关闭和 `Ctrl+Alt+D` 显示/隐藏。勾选不是前端假状态：界面提交 `item_id + expected_updated_at`，Python 桥重新加载当前记录，只有版本仍一致时才构造 `shopping_list_set_checked` 动作并写入；如果条目已经变化，会拒绝旧操作并返回最新列表。撤销也不是按文本搜索删除，而是同时核验 item ID、该次添加的 receipt ID 和更新时间，只精确撤销 Magic Pointer 自己创建且之后未被改动的那一条。列表文件采用版本化 JSON、临时文件原子替换和进程内/跨进程文件锁；并发添加测试证明多个同时写入不会互相覆盖。相同 SelectionSnapshot 和相同条目的动作重放使用同一幂等键，第二次执行返回 `created=false`，不会产生重复项。
+
+#### 本轮 Git 切片
+
+- `9e62dd4 feat: persist verified dashboard shopping items`：版本化持久存储、原子写入、严格条目校验、回读验证、添加回执、状态修改与精确撤销。
+- `0a38b6c feat: execute reversible shopping list actions`：三种 typed action、目标 URI 白名单、LocalPermissionPolicy、安全执行器、桥接消息与撤销提案。
+- `d17dbcc feat: route add-this into trusted local actions`：`Add this / 添加这个` 在模型调用之前短路成本地动作；Electron 对自动执行条件做逐字段硬校验，并把用户数据目录显式传给桥进程。
+- 当前待提交 Dashboard 切片：原生窗口、窄 preload API、串行 Dashboard 操作队列、自动打开与条目高亮、勾选/撤销 UI、Dashboard 专用 Python 桥、并发锁和端到端测试。
+
+#### 新鲜验证与视觉证据
+
+- Python 全量：`82 passed in 16.44s`。
+- Electron/Node 全量：`npm test` 全绿，包含主进程、preload、全部 renderer 语法检查和 Dashboard 静态安全契约。
+- 端到端测试：真实运行 `selection_bridge.py → action_bridge.py → shopping_list_bridge.py`，使用中文“添加这个”和中文 PDF 条目，验证真实写入、来源保留、Dashboard 回读与幂等重放。
+- 并发测试：8 个工作线程并发添加 16 个不同条目，最终 16 项全部存在，无 PermissionError、无丢项。
+- 视觉检查：通过真实 Chromium 打开 Dashboard，检查 1280×720 视口下的侧栏、概览、空状态、关闭按钮和内容卡。检查发现快捷键提示被 flex 主轴排成纵列，已经改成独立横向 `shortcut-hint`。Dashboard 保持一轮视觉精修后即停止，不继续围绕阴影、圆角和字距打转。
+- 本轮没有启动子代理，没有执行 `rm`，没有删除或暂存用户 PDF、交接文档及演示素材。Playwright 产生的本地临时目录不纳入提交。
+
+#### 当前 Action-first 产品对齐表（后续工作的唯一主顺序）
+
+| 顺序 | 大功能 | 当前状态 | “完整可用”验收门槛 | 下一次推进内容 |
+|---:|---|---|---|---|
+| A1 | 原生购物清单 | 主闭环完成，待 CEO 真实桌面验收 | 选区到写入、高亮、勾选、精确撤销、重启持久化均可亲手验证 | 提交 Dashboard 切片；真实 Electron 中走一次 PDF/网页选区；处理验收暴露的阻断缺陷后冻结 A1 |
+| A2 | 原生日历 | 未开始 | 从日期/时间文本或自然命令形成结构化事件草稿；Dashboard 月/周视图可编辑；冲突检测；保存回读；receipt/撤销 | 先定义 CalendarEvent schema、时区/DST 规则和本地 provider，再做 GUI，不调用系统日历写入 |
+| A3 | 原生路线规划 | 未开始 | 两个地点通过 THIS/THAT 绑定；路线卡给出交通方式、时长、距离和备选；来源清楚；可交换起终点 | 建 RouteRequest/RouteResult schema、可替换 provider 和 Dashboard 地图/列表双视图 |
+| A4 | 表格收集与 Merge | 未开始 | 多个选区进入暂存托盘，列映射可预览，冲突单元格必须人工决定，导出前后可核验 | 先做 THESE 收集篮与统一二维数据模型，再接 Excel/CSV 导出；绝不直接覆盖用户原表 |
+| A5 | 预约/表单任务 | 未开始 | 约束采集、候选比较、确认页、最终提交边界清晰；未经确认不产生外部副作用 | 先做本地 Reservation Draft 与模拟 provider；真实外部提交必须独立 adapter 和显式确认 |
+| A6 | 图片/画布动作 | 未开始 | 指向图像对象后可抠图、局部修改、组合到画布；每次编辑有版本和可撤销历史 | 先做 Dashboard Canvas 和本地 artifact，随后接图像模型；不把任意屏幕截图默认上传 |
+| A7 | 统一动作中心 | 部分底层已具备 | 所有动作共享 accepted/running/verifying/succeeded/failed/cancelled 状态、活动队列、历史、重试、撤销 | 在 A2 前抽取通用 Operation/Receipt 存储，避免每个动作卡重复造生命周期 |
+| A8 | 产品化设置与权限 | 未开始 | Dashboard 可选 A/B 结果偏好且默认 A；配置热键、模型、隐私、数据保留、启动项；权限可解释 | 在 A2/A3 形成后开始设置页骨架，不提前做空 Dashboard 菜单 |
+
+#### 明确欠账与停止条件
+
+- A1 尚未宣称“最终完成”：自动化已经覆盖核心链路，但还需要在真实运行的 Electron 中由 CEO 使用自己的 PDF/网页选区走一次。真实验收只修复阻断操作的问题，例如 Dashboard 未出现、条目未写入、勾选失效、窗口无法关闭；非阻断的颜色与间距意见记录到设计债，不阻塞 A2。
+- 当前 Dashboard 只有购物清单一个导航项，这是刻意的渐进交付，不会伪造不可用的日历、地图、预约入口。A2 开始时才增加对应导航和页面。
+- 当前可靠来源仍受 adapter 能力边界限制。Edge HTML/PDF、Word/WPS 等已支持路径可以进入动作；Obsidian 内嵌 PDF 仍会准确 fail closed。不能为了让“添加这个”看似万能而把未验真的 OCR 猜测直接写入清单。
+- 当前动作成功后 Dashboard 使用 `showInactive()`，避免夺走 PDF/文档焦点；用户若要操作清单可点击 Dashboard，或用 `Ctrl+Alt+D` 主动打开。若 CEO 实测认为成功后应直接聚焦，必须作为设置项而不是全局强制行为。
+- 下一开发大块固定为 A2 Calendar，不继续扩展购物清单筛选、拖拽排序、主题皮肤或装饰动画。只有 CEO 真实验收发现 A1 主链阻断时才回到 A1。

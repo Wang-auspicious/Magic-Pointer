@@ -19,6 +19,7 @@ let overlayWindow = null;
 let panelWindow = null;
 let resultWindow = null;
 let readerWindow = null;
+let dashboardWindow = null;
 let mousePoints = [];
 let lastShakeTrigger = 0;
 let mousePollTimer = null;
@@ -57,6 +58,8 @@ let resultShownAt = 0;
 let resultFarSince = 0;
 let readerPinned = false;
 let readerHasFocused = false;
+let dashboardRequestSerial = 0;
+let dashboardOperationQueue = Promise.resolve();
 
 function log(message) {
   try {
@@ -277,6 +280,58 @@ function createReaderWindow() {
   });
   readerWindow.on('closed', () => { readerWindow = null; });
   return readerWindow;
+}
+
+function createDashboardWindow() {
+  if (dashboardWindow && !dashboardWindow.isDestroyed()) return dashboardWindow;
+  dashboardWindow = new BrowserWindow({
+    width: 860,
+    height: 640,
+    minWidth: 680,
+    minHeight: 540,
+    frame: false,
+    transparent: false,
+    backgroundColor: '#f7f8fb',
+    fullscreenable: true,
+    resizable: true,
+    movable: true,
+    skipTaskbar: false,
+    show: false,
+    hasShadow: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  dashboardWindow.loadFile(path.join(__dirname, 'renderer', 'dashboard.html'));
+  dashboardWindow.on('closed', () => { dashboardWindow = null; });
+  return dashboardWindow;
+}
+
+function showDashboard(payload = {}, options = {}) {
+  const win = createDashboardWindow();
+  const cursor = screen.getCursorScreenPoint();
+  const display = screen.getDisplayNearestPoint(cursor);
+  const workArea = display.workArea || display.bounds;
+  const width = Math.min(860, Math.max(680, workArea.width - 48));
+  const height = Math.min(640, Math.max(540, workArea.height - 48));
+  const bounds = {
+    x: workArea.x + workArea.width - width - 24,
+    y: workArea.y + Math.max(24, Math.floor((workArea.height - height) / 2)),
+    width,
+    height,
+  };
+  const reveal = () => {
+    if (!dashboardWindow || dashboardWindow.isDestroyed()) return;
+    dashboardWindow.setBounds(bounds);
+    if (options.activate === false) dashboardWindow.showInactive();
+    else dashboardWindow.show();
+    dashboardWindow.webContents.send('dashboard:show', payload);
+    log(`showDashboard highlight=${payload.highlightItemId || 'none'}`);
+  };
+  if (win.webContents.isLoadingMainFrame()) win.webContents.once('did-finish-load', reveal);
+  else reveal();
 }
 
 function showReader(payload = {}) {
@@ -775,6 +830,11 @@ app.whenReady().then(() => {
     beginSelectionSession('hotkey');
   });
   log(`register hotkey Control+Alt+M selection-session ok=${ok}`);
+  const dashboardHotkeyOk = globalShortcut.register('Control+Alt+D', () => {
+    if (dashboardWindow?.isVisible()) dashboardWindow.hide();
+    else showDashboard({}, { activate: true });
+  });
+  log(`register hotkey Control+Alt+D dashboard ok=${dashboardHotkeyOk}`);
   startMouseShakePolling();
   // First launch should show once so the user knows the background process is alive.
   setTimeout(() => showOverlay('startup', 1400), 650);
@@ -787,6 +847,7 @@ app.on('will-quit', () => {
   try { panelWindow?.close(); } catch (_) {}
   try { resultWindow?.close(); } catch (_) {}
   try { readerWindow?.close(); } catch (_) {}
+  try { dashboardWindow?.close(); } catch (_) {}
   log('app will quit');
 });
 
@@ -814,6 +875,7 @@ ipcMain.on('result:expand', (_event, payload) => {
 });
 
 function resultTargetWindow(target) {
+  if (target === 'dashboard') return dashboardWindow;
   if (target === 'reader') return readerWindow;
   if (target === 'result') return resultWindow;
   return target === 'panel' ? panelWindow : overlayWindow;
@@ -821,7 +883,9 @@ function resultTargetWindow(target) {
 
 function sendBridgeResult(target, parsed) {
   const win = resultTargetWindow(target);
-  const channel = target === 'reader'
+  const channel = target === 'dashboard'
+    ? 'dashboard:state'
+    : target === 'reader'
     ? 'reader:result'
     : target === 'result'
       ? 'result:result'
@@ -970,7 +1034,14 @@ ipcMain.on('panel:submit-selection-command', (_event, payload) => {
           confirmed: false,
           selectionSessionToken,
         }, 'panel', {
-          onComplete: (actionResult) => sendBridgeResult('panel', actionResult),
+          onComplete: (actionResult) => {
+            const output = actionResult?.executionResult?.output || {};
+            const highlightItemId = output?.verified === true ? output?.item?.id : null;
+            if (actionResult?.ok === true && highlightItemId) {
+              showDashboard({ highlightItemId }, { activate: false });
+            }
+            sendBridgeResult('panel', actionResult);
+          },
         });
         return;
       }
@@ -1044,4 +1115,53 @@ ipcMain.on('reader:resize', (_event, payload) => {
   const maxHeight = Math.max(240, Math.floor(workArea.height * 0.72));
   const height = Math.min(maxHeight, Math.max(240, Math.ceil(Number(payload?.height) || current.height)));
   readerWindow.setBounds({ ...current, y: Math.max(workArea.y + 16, Math.min(current.y, workArea.y + workArea.height - height - 16)), height });
+});
+
+function isDashboardSender(event) {
+  return Boolean(dashboardWindow && !dashboardWindow.isDestroyed() && event.sender === dashboardWindow.webContents);
+}
+
+function queueDashboardOperation(operation, payload = {}) {
+  const requestId = `dashboard-${++dashboardRequestSerial}`;
+  dashboardOperationQueue = dashboardOperationQueue
+    .catch(() => undefined)
+    .then(() => new Promise((resolve) => {
+      if (!dashboardWindow || dashboardWindow.isDestroyed()) {
+        resolve();
+        return;
+      }
+      runPythonBridge({
+        operation,
+        requestId,
+        ...payload,
+      }, 'scripts/shopping_list_bridge.py', 'dashboard', {
+        onComplete: (parsed) => {
+          sendBridgeResult('dashboard', parsed);
+          resolve();
+        },
+      });
+    }));
+}
+
+ipcMain.on('dashboard:hide', (event) => {
+  if (isDashboardSender(event)) dashboardWindow.hide();
+});
+ipcMain.on('dashboard:request-state', (event) => {
+  if (isDashboardSender(event)) queueDashboardOperation('list');
+});
+ipcMain.on('dashboard:set-checked', (event, payload) => {
+  if (!isDashboardSender(event)) return;
+  queueDashboardOperation('set_checked', {
+    itemId: payload?.itemId,
+    checked: payload?.checked,
+    expectedUpdatedAt: payload?.expectedUpdatedAt,
+  });
+});
+ipcMain.on('dashboard:undo-add', (event, payload) => {
+  if (!isDashboardSender(event)) return;
+  queueDashboardOperation('undo_add', {
+    itemId: payload?.itemId,
+    receiptId: payload?.receiptId,
+    expectedUpdatedAt: payload?.expectedUpdatedAt,
+  });
 });

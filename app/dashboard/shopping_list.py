@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import uuid
+from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
@@ -11,6 +13,8 @@ from typing import Any
 JsonDict = dict[str, Any]
 STORE_VERSION = 1
 LIST_ID = "default-shopping-list"
+_PROCESS_LOCKS: dict[str, threading.RLock] = {}
+_PROCESS_LOCKS_GUARD = threading.Lock()
 
 
 class ShoppingListError(RuntimeError):
@@ -123,6 +127,36 @@ class ShoppingListStore:
         except OSError as exc:
             raise ShoppingListDataError(f"could not persist shopping list: {type(exc).__name__}: {exc}") from exc
 
+    @contextmanager
+    def _mutation_lock(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        lock_path = self.path.with_suffix(self.path.suffix + ".lock")
+        lock_key = str(lock_path.resolve())
+        with _PROCESS_LOCKS_GUARD:
+            process_lock = _PROCESS_LOCKS.setdefault(lock_key, threading.RLock())
+        with process_lock, lock_path.open("a+b") as handle:
+            handle.seek(0, os.SEEK_END)
+            if handle.tell() == 0:
+                handle.write(b"\0")
+                handle.flush()
+            handle.seek(0)
+            if os.name == "nt":
+                import msvcrt
+
+                msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                handle.seek(0)
+                if os.name == "nt":
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
     @staticmethod
     def _find_item(state: JsonDict, item_id: str) -> JsonDict:
         item = next((entry for entry in state["list"]["items"] if entry.get("id") == item_id), None)
@@ -142,6 +176,22 @@ class ShoppingListStore:
         }
 
     def add_item(
+        self,
+        text: str,
+        *,
+        idempotency_key: str,
+        source: Any,
+        now: str | None = None,
+    ) -> JsonDict:
+        with self._mutation_lock():
+            return self._add_item_unlocked(
+                text,
+                idempotency_key=idempotency_key,
+                source=source,
+                now=now,
+            )
+
+    def _add_item_unlocked(
         self,
         text: str,
         *,
@@ -210,6 +260,22 @@ class ShoppingListStore:
         *,
         now: str | None = None,
     ) -> JsonDict:
+        with self._mutation_lock():
+            return self._set_checked_unlocked(
+                item_id,
+                checked,
+                expected_updated_at,
+                now=now,
+            )
+
+    def _set_checked_unlocked(
+        self,
+        item_id: str,
+        checked: bool,
+        expected_updated_at: str,
+        *,
+        now: str | None = None,
+    ) -> JsonDict:
         if not isinstance(checked, bool):
             raise ShoppingListValidationError("checked must be boolean")
         state = self._load()
@@ -228,6 +294,22 @@ class ShoppingListStore:
         return {"verified": True, "item": deepcopy(verified), "revision": state["revision"]}
 
     def undo_add(
+        self,
+        item_id: str,
+        receipt_id: str,
+        expected_updated_at: str,
+        *,
+        now: str | None = None,
+    ) -> JsonDict:
+        with self._mutation_lock():
+            return self._undo_add_unlocked(
+                item_id,
+                receipt_id,
+                expected_updated_at,
+                now=now,
+            )
+
+    def _undo_add_unlocked(
         self,
         item_id: str,
         receipt_id: str,

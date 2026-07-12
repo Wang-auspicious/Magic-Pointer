@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -11,6 +12,21 @@ from app.dashboard.shopping_list import (
     ShoppingListStore,
     ShoppingListValidationError,
 )
+
+
+def test_concurrent_adds_do_not_lose_items(tmp_path: Path) -> None:
+    def add(index: int) -> None:
+        ShoppingListStore(tmp_path).add_item(
+            f"item {index}",
+            idempotency_key=f"concurrent-{index}",
+            source={"app": "test"},
+        )
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(add, range(16)))
+
+    state = ShoppingListStore(tmp_path).public_list()
+    assert {item["text"] for item in state["items"]} == {f"item {index}" for index in range(16)}
 
 
 def test_add_is_persistent_verified_and_idempotent(tmp_path: Path) -> None:

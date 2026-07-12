@@ -40,3 +40,12 @@ contextBridge.exposeInMainWorld('magicPointerReader', {
   onHide: (callback) => ipcRenderer.on('reader:hide', () => callback()),
   onResult: (callback) => ipcRenderer.on('reader:result', (_event, payload) => callback(payload)),
 });
+
+contextBridge.exposeInMainWorld('magicPointerDashboard', {
+  hide: () => ipcRenderer.send('dashboard:hide'),
+  requestState: () => ipcRenderer.send('dashboard:request-state'),
+  setChecked: (payload) => ipcRenderer.send('dashboard:set-checked', payload),
+  undoAdd: (payload) => ipcRenderer.send('dashboard:undo-add', payload),
+  onShow: (callback) => ipcRenderer.on('dashboard:show', (_event, payload) => callback(payload)),
+  onState: (callback) => ipcRenderer.on('dashboard:state', (_event, payload) => callback(payload)),
+});
