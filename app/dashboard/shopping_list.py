@@ -30,7 +30,7 @@ class ShoppingListDataError(ShoppingListError):
 
 
 def _now_iso() -> str:
-    return datetime.now().astimezone().isoformat(timespec="seconds")
+    return datetime.now().astimezone().isoformat(timespec="microseconds")
 
 
 def _default_root() -> Path:

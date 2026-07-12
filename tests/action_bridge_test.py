@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -9,7 +10,10 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def run_bridge(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
+def run_bridge(payload: dict[str, Any], *, user_data_dir: Path | None = None) -> tuple[int, dict[str, Any]]:
+    env = dict(os.environ)
+    if user_data_dir is not None:
+        env["MAGIC_POINTER_USER_DATA_DIR"] = str(user_data_dir)
     proc = subprocess.run(
         [sys.executable, "scripts/action_bridge.py"],
         input=json.dumps(payload, ensure_ascii=False),
@@ -17,6 +21,7 @@ def run_bridge(payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         capture_output=True,
         cwd=ROOT,
         timeout=15,
+        env=env,
     )
     lines = [line for line in proc.stdout.splitlines() if line.strip()]
     assert lines, proc.stderr
@@ -45,6 +50,21 @@ def word_replace_proposal() -> dict[str, Any]:
         },
         "safety_level": "high",
         "confirmation_required": True,
+    }
+
+
+def shopping_add_proposal() -> dict[str, Any]:
+    return {
+        "id": "shopping-add-test",
+        "action_type": "shopping_list_add",
+        "target": {"object_id": "magic-pointer://dashboard/shopping-list/default"},
+        "parameters": {
+            "item_text": "1 lb Spaghetti",
+            "idempotency_key": "bridge-key-1",
+            "source": {"selection_snapshot_id": "snap-1", "app": "pdf"},
+        },
+        "safety_level": "low",
+        "confirmation_required": False,
     }
 
 
@@ -78,6 +98,20 @@ def test_unsupported_action_is_not_executed_even_when_confirmed() -> None:
     assert output["ok"] is False
     assert output["executionResult"]["status"] == "failed"
     assert "unsupported action_type" in output["executionResult"]["error"]
+
+
+def test_shopping_add_executes_without_second_confirmation_and_returns_undo(tmp_path: Path) -> None:
+    code, output = run_bridge(
+        {"proposal": shopping_add_proposal(), "confirmed": False},
+        user_data_dir=tmp_path,
+    )
+    assert code == 0
+    assert output["ok"] is True
+    assert output["answer"] == "已加入购物清单。"
+    assert output["executionResult"]["output"]["verified"] is True
+    assert output["executionResult"]["output"]["item"]["text"] == "1 lb Spaghetti"
+    assert output["actionProposals"][0]["action_type"] == "shopping_list_undo_add"
+    assert (tmp_path / "dashboard" / "shopping_list.json").exists()
 
 
 def main() -> None:

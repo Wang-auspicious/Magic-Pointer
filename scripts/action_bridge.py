@@ -46,6 +46,12 @@ def main() -> int:
             answer = "文档选区已替换。之后即使继续编辑，也可以通过下方动作尝试精确恢复这一次修改。"
         elif proposal.action_type == "office_undo_last_action":
             answer = "已精确恢复这一次 Magic Pointer 文档修改。"
+        elif proposal.action_type == "shopping_list_add":
+            answer = "已加入购物清单。"
+        elif proposal.action_type == "shopping_list_set_checked":
+            answer = "购物清单状态已更新。"
+        elif proposal.action_type == "shopping_list_undo_add":
+            answer = "已撤销这次购物清单添加。"
         else:
             answer = "Action completed."
     else:
