@@ -32,6 +32,7 @@ external_zip/
 
 # Local editor/agent state
 .omx/
+.superpowers/
 .vscode/
 .idea/
 .DS_Store

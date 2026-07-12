@@ -362,3 +362,12 @@
 - 本轮新增的用户任务能力：用户可连续指向两个来源形成 THIS/THAT 或 THESE，再指向目标位置建立 HERE；后续短命令无需把对象名称、窗口和选区内容重新描述一遍。
 - 已知欠账：目前没有可视化槽位纠正控件；`correctReference` 数据接口已具备，但“不是这个/移除第二个”的 rail 微交互仍待后续 episode UX。HERE 目前是可信目标引用，真正向网页/其他宿主写入属于 M3 Destination Adapter。
 - 下一大块：M3 Destination Adapter。优先做统一 destination contract、标准 HTML 输入 fixture 的写前身份验证/写后回读/receipt/精确撤销，不回头微调 Reader 视觉。
+
+### 2026-07-12：CEO 实测暴露 M1.1 结果表面阻断问题
+
+- 真实操作：在 Obsidian 内嵌 PDF 选中文字，输入“翻译”。产品错误地保留“结果已在侧边打开”Rail，并打开巨大空白 Reader；结果只是无法读取 Obsidian 对象，用户不知道如何关闭。
+- 日志根因：一次热键按压在约 0.7 秒内触发七次 SelectionSession；最终冻结窗口为 Obsidian，现有 PDF 适配器不支持其内嵌阅读器；失败说明仍被长答案规则送入 Reader；`showInactive()` Rail 无法接收 Escape。
+- 已批准恢复方向：默认使用方案 A 的就地上下文结果；Dashboard 未来允许切换 A/B，默认 A；长内容和高风险操作也不自动进入 B，必须由用户点击“展开/查看并确认”。
+- 关闭行为：结果出现后 Rail 自动退场；再次热键关闭全部；A 点击外部/远离/显式关闭后消失；B 提供文字“关闭”和“固定”，不注册全局 Escape。
+- 设计规格：`docs/superpowers/specs/2026-07-12-contextual-result-surface-design.md`。
+- 优先级调整：M3 暂停在设计盘点阶段；必须先完成 M1.1 热键去抖、失败短路、A result surface 与确定性关闭，因为这是 CEO 真实验收的阻断缺陷，而非视觉微调。
