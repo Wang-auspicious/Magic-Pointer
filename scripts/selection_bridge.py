@@ -17,9 +17,14 @@ from app.actions.calendar_draft import parse_calendar_draft, wants_calendar_draf
 from app.actions.route_draft import parse_route_draft, wants_route_draft
 from app.adapters import AdapterReadContext, default_adapter_registry, format_adapter_context
 from app.ai_client import ask_text_model
+from app.actions.draft_delivery import DraftDeliveryError, make_draft_delivery_proposal
+from app.review import ReviewSessionError, ReviewSessionStore, compile_review_prompt, write_prompt_artifact
 from app.system_context import list_visible_windows
 
 MAGIC_WINDOW_MARKERS = ("Magic Pointer", "Electron Overlay")
+REVIEW_RECORD_PREFIXES = ("验收：", "验收:", "记录问题：", "记录问题:", "批注：", "批注:", "review:")
+REVIEW_COMPILE_COMMANDS = ("整理验收意见", "生成改进提示词", "compile review")
+REVIEW_DELIVERY_COMMANDS = ("把验收意见填到这里", "填入这里", "写到这个输入框", "deliver review here")
 
 
 def read_payload() -> dict[str, Any]:
@@ -40,6 +45,25 @@ def _window_dicts() -> list[dict[str, Any]]:
 def _wants_undo(command: str) -> bool:
     normalized = str(command or "").lower()
     return any(token in normalized for token in ("undo", "restore", "revert", "\u64a4\u56de", "\u64a4\u9500", "\u8fd8\u539f"))
+
+
+def _review_instruction(command: str) -> str | None:
+    value = str(command or "").strip()
+    lowered = value.lower()
+    for prefix in REVIEW_RECORD_PREFIXES:
+        if lowered.startswith(prefix.lower()):
+            return value[len(prefix):].strip()
+    return None
+
+
+def _wants_review_compile(command: str) -> bool:
+    value = str(command or "").strip().lower()
+    return any(token in value for token in REVIEW_COMPILE_COMMANDS)
+
+
+def _wants_review_delivery(command: str) -> bool:
+    value = str(command or "").strip().lower()
+    return any(token in value for token in REVIEW_DELIVERY_COMMANDS)
 
 
 def _selection_context_text(app_ctx: Any, target_window: dict[str, Any] | None) -> str:
@@ -140,6 +164,117 @@ def _context_from_snapshot(
     except Exception as exc:
         return dict(target_window or {}), None, snapshot, f"invalid selection context: {type(exc).__name__}: {exc}"
     return dict(target_window or {}), app_ctx, snapshot, None
+
+
+def _review_response(
+    payload: dict[str, Any],
+    target_window: dict[str, Any] | None,
+    snapshot: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    command = str(payload.get("command") or "").strip()
+    instruction = _review_instruction(command)
+    wants_delivery = _wants_review_delivery(command)
+    wants_compile = _wants_review_compile(command)
+    if instruction is None and not wants_delivery and not wants_compile:
+        return None
+    selection_session_id = str(payload.get("selectionSessionId") or "").strip() or None
+    selection_snapshot_id = str((snapshot or {}).get("snapshot_id") or "").strip() or None
+    store = ReviewSessionStore()
+    try:
+        if instruction is not None:
+            recorded = store.record(snapshot, instruction)
+            anchor = recorded["anchor"]
+            location = (
+                f"第 {anchor['page_number']} 页"
+                if anchor.get("page_number")
+                else (anchor.get("document_label") or anchor.get("app") or "当前对象")
+            )
+            verb = "已记录" if recorded["recorded"] else "这条意见已存在"
+            return {
+                "ok": True,
+                "prompt": command,
+                "answer": (
+                    f"{verb} · 第 {recorded['anchor_count']} 条 · {location}\n"
+                    "继续翻页批注；完成后说“整理验收意见”或在目标输入框说“把验收意见填到这里”。"
+                ),
+                "actionProposals": [],
+                "intentKind": "review_anchor_recorded",
+                "reviewSession": {
+                    "session_id": recorded["session_id"],
+                    "anchor_count": recorded["anchor_count"],
+                    "last_anchor": anchor,
+                },
+                "selectionSessionId": selection_session_id,
+                "selectionSnapshotId": selection_snapshot_id,
+            }
+
+        active = store.active()
+        if active is None or not active.get("anchors"):
+            return {
+                "ok": False,
+                "prompt": command,
+                "error": "当前没有验收批注。请先在交付物中选中或指向问题位置，并说“验收：你的意见”。",
+                "actionProposals": [],
+                "intentKind": "review_draft_delivery" if wants_delivery else "review_prompt_compiled",
+                "selectionSessionId": selection_session_id,
+                "selectionSnapshotId": selection_snapshot_id,
+            }
+
+        prompt = compile_review_prompt(active)
+        artifact = write_prompt_artifact(active, prompt)
+        if wants_delivery:
+            proposal = make_draft_delivery_proposal(
+                prompt,
+                target_window=target_window or {},
+                target_point=payload.get("targetPoint") or (snapshot or {}).get("target_point"),
+                review_session_id=str(active.get("session_id") or ""),
+                prompt_artifact=str(artifact),
+            )
+            return {
+                "ok": True,
+                "prompt": command,
+                "answer": f"正在把 {len(active['anchors'])} 条验收意见组成的完整草稿填入目标输入框；不会发送。",
+                "actionProposals": [proposal.to_dict()],
+                "autoExecuteProposalId": proposal.id,
+                "intentKind": "review_draft_delivery",
+                "reviewSession": {
+                    "session_id": active["session_id"],
+                    "anchor_count": len(active["anchors"]),
+                },
+                "promptArtifact": str(artifact),
+                "selectionSessionId": selection_session_id,
+                "selectionSnapshotId": selection_snapshot_id,
+            }
+
+        return {
+            "ok": True,
+            "prompt": command,
+            "answer": prompt,
+            "reviewPrompt": prompt,
+            "actionProposals": [],
+            "intentKind": "review_prompt_compiled",
+            "reviewSession": {
+                "session_id": active["session_id"],
+                "anchor_count": len(active["anchors"]),
+            },
+            "promptArtifact": str(artifact),
+            "selectionSessionId": selection_session_id,
+            "selectionSnapshotId": selection_snapshot_id,
+        }
+    except (ReviewSessionError, DraftDeliveryError, ValueError) as exc:
+        return {
+            "ok": False,
+            "prompt": command,
+            "error": str(exc),
+            "actionProposals": [],
+            "intentKind": (
+                "review_draft_delivery"
+                if wants_delivery
+                else ("review_prompt_compiled" if wants_compile else "review_anchor_recorded")
+            ),
+            "selectionSessionId": selection_session_id,
+            "selectionSnapshotId": selection_snapshot_id,
+        }
 
 
 def _shopping_list_response(
@@ -302,6 +437,11 @@ def main() -> int:
             "selectionSessionId": selection_session_id or None,
         }, ensure_ascii=False))
         return 1
+
+    review_response = _review_response(payload, target_window, snapshot)
+    if review_response is not None:
+        print(json.dumps(review_response, ensure_ascii=False))
+        return 0 if review_response.get("ok") is True else 1
 
     shopping_response = _shopping_list_response(payload, target_window, app_ctx, snapshot)
     if shopping_response is not None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 from datetime import datetime
 from typing import Any
 
@@ -25,6 +26,7 @@ SUPPORTED_ACTION_TYPES = {
     "shopping_list_undo_add",
     "calendar_event_create",
     "calendar_event_undo_create",
+    "paste_text_to_foreground",
 }
 
 
@@ -65,11 +67,17 @@ class SafeActionExecutor:
         history_store: ActionHistoryStore | None = None,
         shopping_list_store: ShoppingListStore | None = None,
         calendar_event_store: CalendarEventStore | None = None,
+        draft_writer: Any | None = None,
     ) -> None:
         self.policy = policy or LocalPermissionPolicy()
         self.history_store = history_store or ActionHistoryStore()
         self.shopping_list_store = shopping_list_store or ShoppingListStore()
         self.calendar_event_store = calendar_event_store or CalendarEventStore()
+        self.draft_writer = draft_writer or self._unavailable_draft_writer
+
+    @staticmethod
+    def _unavailable_draft_writer(_parameters: JsonDict) -> JsonDict:
+        return {"ok": False, "error": "Windows draft writer is not available"}
 
     def preview(self, proposal: ActionProposal) -> JsonDict:
         decision = self.policy.decide(proposal)
@@ -133,7 +141,54 @@ class SafeActionExecutor:
             return self._calendar_event_create(proposal, started, confirmed=confirmed, metadata=metadata)
         if proposal.action_type == "calendar_event_undo_create":
             return self._calendar_event_undo_create(proposal, started, confirmed=confirmed, metadata=metadata)
+        if proposal.action_type == "paste_text_to_foreground":
+            return self._paste_text_to_foreground(proposal, started, confirmed=confirmed, metadata=metadata)
         return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="unreachable action dispatch", metadata=metadata)
+
+    def _paste_text_to_foreground(
+        self,
+        proposal: ActionProposal,
+        started: str,
+        *,
+        confirmed: bool,
+        metadata: JsonDict,
+    ) -> ExecutionResult:
+        params = dict(proposal.parameters)
+        text = str(params.get("text") or "")
+        expected_hash = str(params.get("text_sha256") or "")
+        expected_hwnd = _optional_int(params.get("target_hwnd"))
+        if not text:
+            return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="draft text is empty", metadata=metadata)
+        if params.get("submit") is not False:
+            return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="draft delivery submit must be false", metadata=metadata)
+        if expected_hwnd is None:
+            return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="draft target hwnd is missing", metadata=metadata)
+        actual_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        if not expected_hash or expected_hash != actual_hash:
+            return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="draft text hash mismatch", metadata=metadata)
+        try:
+            receipt = self.draft_writer(params)
+        except Exception as exc:
+            return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error=f"draft writer failed: {type(exc).__name__}: {exc}", metadata=metadata)
+        if not isinstance(receipt, dict) or receipt.get("ok") is not True:
+            error = receipt.get("error") if isinstance(receipt, dict) else "invalid writer receipt"
+            return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error=str(error or "draft writer failed"), metadata=metadata)
+        if receipt.get("submit_sent") is not False:
+            return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="draft writer violated no-submit contract", metadata=metadata)
+        if _optional_int(receipt.get("target_hwnd")) != expected_hwnd:
+            return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="draft writer target mismatch", metadata=metadata)
+        if int(receipt.get("written_chars") or -1) != len(text):
+            return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="draft writer character-count verification failed", metadata=metadata)
+        if receipt.get("verified") is not True:
+            return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="draft writer did not verify the write", metadata=metadata)
+        return self._result(
+            proposal,
+            started,
+            ExecutionStatus.SUCCEEDED,
+            confirmed=confirmed,
+            output=dict(receipt),
+            metadata=metadata,
+        )
 
     def _shopping_list_add(self, proposal: ActionProposal, started: str, *, confirmed: bool, metadata: JsonDict) -> ExecutionResult:
         params = dict(proposal.parameters)

@@ -56,6 +56,8 @@ def main() -> int:
             answer = "本地日历事件已创建并验证。"
         elif proposal.action_type == "calendar_event_undo_create":
             answer = "已撤销这次本地日历创建。"
+        elif proposal.action_type == "paste_text_to_foreground":
+            answer = "草稿已完整填入目标输入框，未发送；请检查后由你点击发送。"
         else:
             answer = "Action completed."
     else:

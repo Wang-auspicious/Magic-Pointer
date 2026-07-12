@@ -52,6 +52,28 @@ class LocalPermissionPolicy:
         action_type = proposal.action_type
         if action_type in BLOCKED_ACTIONS:
             return PermissionDecision(False, True, f"{action_type} is blocked until an adapter-specific verifier exists.", SafetyLevel.DESTRUCTIVE)
+        if action_type == "paste_text_to_foreground":
+            explicit_no_submit = (
+                proposal.metadata.get("trusted_local_intent") is True
+                and proposal.metadata.get("explicit_user_delivery_intent") is True
+                and proposal.metadata.get("no_submit") is True
+                and proposal.parameters.get("submit") is False
+                and bool(proposal.parameters.get("target_hwnd"))
+                and bool(proposal.parameters.get("text_sha256"))
+            )
+            if explicit_no_submit:
+                return PermissionDecision(
+                    True,
+                    False,
+                    "explicit user-requested local draft delivery with submit disabled",
+                    SafetyLevel.LOW,
+                )
+            return PermissionDecision(
+                True,
+                True,
+                "cross-application text write requires explicit user intent",
+                SafetyLevel.HIGH,
+            )
         if action_type in WRITE_ACTIONS:
             return PermissionDecision(True, True, f"{action_type} writes to another app and needs explicit confirmation.", SafetyLevel.HIGH)
         if action_type in INTERNAL_DASHBOARD_ACTIONS:
