@@ -1,18 +1,24 @@
 const commandInput = document.getElementById('command');
 const runButton = document.getElementById('run');
-const closeButton = document.getElementById('close');
 const result = document.getElementById('result');
-const capture = document.getElementById('capture');
-const captureLabel = document.getElementById('capture-label');
-const captureDetail = document.getElementById('capture-detail');
-const captureExcerpt = document.getElementById('capture-excerpt');
-const suggestions = document.getElementById('suggestions');
-const inputRow = document.querySelector('.panel-input-row');
+const inlineRail = document.getElementById('inline-action-rail');
+const railStateIcon = document.getElementById('rail-state-icon');
+const primaryIntentButton = document.getElementById('primary-intent');
+const commandRow = document.getElementById('command-row');
 
 let currentActionProposals = [];
 let currentSelectionSessionToken = null;
 let currentPanelLayoutNonce = null;
+let currentPrimaryCommand = null;
 let submitting = false;
+
+function computeRailWidth(text) {
+  const content = String(text || '');
+  const textWidth = Array.from(content).reduce((width, character) => (
+    width + (character.codePointAt(0) > 0x7f ? 14 : 8)
+  ), 0);
+  return Math.max(88, Math.min(360, Math.round(68 + textWidth)));
+}
 
 function syncPanelSize() {
   const selectionSessionToken = currentSelectionSessionToken;
@@ -24,23 +30,33 @@ function syncPanelSize() {
       || selectionSessionToken !== currentSelectionSessionToken
       || layoutNonce !== currentPanelLayoutNonce
     ) return;
-    const resultHeight = result.hidden ? 0 : Math.min(result.scrollHeight + 8, 224);
-    const contentHeight = 54
-      + capture.scrollHeight
-      + suggestions.scrollHeight
-      + inputRow.scrollHeight
-      + resultHeight;
+    const primaryIntent = primaryIntentButton.hidden
+      ? (commandInput.value || commandInput.placeholder)
+      : primaryIntentButton.textContent;
     window.magicPointerPanel?.resize({
-      height: Math.max(188, Math.min(380, contentHeight)),
+      width: computeRailWidth(primaryIntent),
+      height: 44,
       selectionSessionToken,
       layoutNonce,
     });
   });
 }
 
-function resizeCommandInput() {
-  commandInput.style.height = '42px';
-  commandInput.style.height = `${Math.min(72, Math.max(42, commandInput.scrollHeight))}px`;
+function setRailState(state, label = null) {
+  const nextState = ['ready', 'input', 'running', 'success', 'error'].includes(state) ? state : 'ready';
+  inlineRail.dataset.state = nextState;
+  railStateIcon.textContent = {
+    ready: '✦',
+    input: '✦',
+    running: '…',
+    success: '✓',
+    error: '!',
+  }[nextState];
+  if (label !== null) {
+    primaryIntentButton.textContent = String(label);
+    primaryIntentButton.hidden = false;
+    commandRow.hidden = true;
+  }
   syncPanelSize();
 }
 
@@ -170,19 +186,34 @@ function showResult(payload) {
     && currentSelectionSessionToken
     && payload.selectionSessionToken !== currentSelectionSessionToken
   ) return;
-  result.hidden = false;
   currentActionProposals = Array.isArray(payload.actionProposals) ? payload.actionProposals.slice(0, 5) : [];
   if (payload.ok === null) {
-    result.innerHTML = `<div class="title">处理中</div><div class="muted">${escapeHtml(payload.status || '正在处理 THIS…')}</div>`;
-    syncPanelSize();
+    result.hidden = true;
+    setRailState('running', payload.status || '正在处理…');
     return;
   }
   if (payload.ok) {
     const answer = String(payload.answer || '').slice(0, 2600);
-    result.innerHTML = `<div class="title">${escapeHtml(payload.prompt || 'Result')}</div><div>${renderSafeMarkdown(answer)}</div>${renderActionProposals(currentActionProposals)}`;
+    const proposalHtml = renderActionProposals(currentActionProposals);
+    const needsSecondaryReader = Boolean(proposalHtml) || answer.length > 42 || /\r?\n/.test(answer);
+    if (needsSecondaryReader) {
+      result.hidden = true;
+      result.innerHTML = '';
+      window.magicPointerPanel?.openSecondaryResult({
+        ...payload,
+        answer,
+        actionProposals: currentActionProposals,
+        selectionSessionToken: currentSelectionSessionToken,
+      });
+      setRailState('success', proposalHtml ? '查看结果并确认' : '结果已在侧边打开');
+      return;
+    }
+    result.hidden = true;
+    setRailState('success', answer.split(/\r?\n/, 1)[0].slice(0, 42) || '完成');
   } else {
     currentActionProposals = [];
-    result.innerHTML = `<div class="title">未完成</div><div class="muted">${escapeHtml(payload.error || '未能完成当前操作')}</div>`;
+    result.hidden = true;
+    setRailState('error', payload.error || '未能完成当前操作');
   }
   syncPanelSize();
 }
@@ -192,9 +223,8 @@ function submitCommand(commandOverride = null) {
   const command = String(commandOverride || commandInput.value).trim();
   if (!command || !currentSelectionSessionToken) return;
   commandInput.value = command;
-  resizeCommandInput();
   submitting = true;
-  showResult({ ok: null, status: '正在处理 THIS…' });
+  showResult({ ok: null, status: '正在处理…' });
   window.magicPointerPanel?.submitSelectionCommand({
     command,
     selectionSessionToken: currentSelectionSessionToken,
@@ -215,45 +245,40 @@ function executeActionProposal(index) {
   });
 }
 
-function renderCaptureSummary(summary, suggestedCommands = []) {
+function renderPrimaryIntent(summary, suggestedCommands = []) {
   const safeSummary = summary && typeof summary === 'object' ? summary : {};
-  captureLabel.textContent = safeSummary.label || 'THIS 暂不可用';
-  captureDetail.textContent = safeSummary.detail || '';
-  captureExcerpt.textContent = safeSummary.excerpt || '';
-  captureExcerpt.hidden = !safeSummary.excerpt;
-
-  const commands = suggestedCommands.slice(0, 4);
-  suggestions.innerHTML = commands.map((item, index) => (
-    `<button type="button" class="suggestion-chip" data-suggestion-index="${index}">${escapeHtml(item.label || item.command || '')}</button>`
-  )).join('');
-  suggestions.hidden = commands.length === 0;
-  suggestions.dataset.commands = JSON.stringify(commands);
-  syncPanelSize();
+  const commands = safeSummary.hasContent === true ? suggestedCommands.slice(0, 1) : [];
+  const primary = commands[0] || null;
+  currentPrimaryCommand = primary?.command || null;
+  if (currentPrimaryCommand) {
+    primaryIntentButton.textContent = primary.label || primary.command;
+    primaryIntentButton.hidden = false;
+    commandRow.hidden = true;
+  } else {
+    primaryIntentButton.hidden = true;
+    commandRow.hidden = false;
+  }
+  setRailState('ready');
 }
 
 runButton.addEventListener('click', () => submitCommand());
-closeButton.addEventListener('click', () => window.magicPointerPanel?.hide());
 commandInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     submitCommand();
   }
 });
-commandInput.addEventListener('input', resizeCommandInput);
+commandInput.addEventListener('input', () => {
+  setRailState('input');
+});
+primaryIntentButton.addEventListener('click', () => {
+  if (currentPrimaryCommand) submitCommand(currentPrimaryCommand);
+});
 result.addEventListener('click', (e) => {
   const actionButton = e.target.closest('[data-action-index]');
   if (!actionButton) return;
   e.preventDefault();
   executeActionProposal(Number(actionButton.dataset.actionIndex));
-});
-suggestions.addEventListener('click', (e) => {
-  const button = e.target.closest('[data-suggestion-index]');
-  if (!button) return;
-  let commands = [];
-  try { commands = JSON.parse(suggestions.dataset.commands || '[]'); } catch (_) {}
-  const item = commands[Number(button.dataset.suggestionIndex)];
-  if (!item?.command) return;
-  submitCommand(item.command);
 });
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') window.magicPointerPanel?.hide();
@@ -263,21 +288,18 @@ window.magicPointerPanel?.onShow((payload = {}) => {
   currentSelectionSessionToken = payload.selectionSessionToken || null;
   currentPanelLayoutNonce = payload.panelLayoutNonce || null;
   currentActionProposals = [];
+  currentPrimaryCommand = null;
   commandInput.value = '';
   result.hidden = true;
   result.innerHTML = '';
-  renderCaptureSummary(payload.captureSummary, payload.suggestedCommands || []);
-  window.magicPointerPanel?.resize({ height: 188 });
-  resizeCommandInput();
-  if (payload.focusInput !== false) {
-    commandInput.focus();
-    commandInput.select();
-  }
+  renderPrimaryIntent(payload.captureSummary, payload.suggestedCommands || []);
+  syncPanelSize();
 });
 window.magicPointerPanel?.onHide(() => {
   currentSelectionSessionToken = null;
   currentPanelLayoutNonce = null;
   currentActionProposals = [];
+  currentPrimaryCommand = null;
   submitting = false;
 });
 window.magicPointerPanel?.onResult(showResult);

@@ -15,7 +15,16 @@ contextBridge.exposeInMainWorld('magicPointerPanel', {
   resize: (payload) => ipcRenderer.send('panel:resize', payload),
   submitSelectionCommand: (payload) => ipcRenderer.send('panel:submit-selection-command', payload),
   executeAction: (payload) => ipcRenderer.send('panel:execute-action', payload),
+  openSecondaryResult: (payload) => ipcRenderer.send('panel:open-secondary', payload),
   onShow: (callback) => ipcRenderer.on('panel:show', (_event, payload) => callback(payload)),
   onHide: (callback) => ipcRenderer.on('panel:hide', callback),
   onResult: (callback) => ipcRenderer.on('panel:result', (_event, payload) => callback(payload)),
+});
+
+contextBridge.exposeInMainWorld('magicPointerReader', {
+  hide: () => ipcRenderer.send('reader:hide'),
+  executeAction: (payload) => ipcRenderer.send('reader:execute-action', payload),
+  onShow: (callback) => ipcRenderer.on('reader:show', (_event, payload) => callback(payload)),
+  onHide: (callback) => ipcRenderer.on('reader:hide', () => callback()),
+  onResult: (callback) => ipcRenderer.on('reader:result', (_event, payload) => callback(payload)),
 });

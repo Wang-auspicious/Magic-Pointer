@@ -9,21 +9,13 @@
 </head>
 <body class="panel-body">
   <section id="panel" class="panel-shell">
-    <div class="panel-title" data-drag-handle="true">
-      <span>Magic Pointer</span>
-      <button id="close" class="panel-close" title="关闭" aria-label="关闭">×</button>
-    </div>
-    <div id="capture" class="capture-summary" aria-live="polite">
-      <div class="capture-heading">
-        <span id="capture-label">正在锁定 THIS</span>
-        <span id="capture-detail"></span>
+    <div id="inline-action-rail" class="inline-action-rail" data-state="ready" data-drag-handle="true">
+      <span id="rail-state-icon" class="rail-state-icon" aria-hidden="true">✦</span>
+      <button id="primary-intent" class="primary-intent" type="button" hidden></button>
+      <div id="command-row" class="rail-command-row">
+        <input id="command" type="text" autocomplete="off" spellcheck="false" placeholder="输入短命令" aria-label="Magic Pointer 短命令" />
+        <button id="run" class="rail-run" type="button" title="执行" aria-label="执行">↑</button>
       </div>
-      <div id="capture-excerpt" class="capture-excerpt"></div>
-    </div>
-    <div id="suggestions" class="suggestion-row" aria-label="建议动作"></div>
-    <div class="panel-input-row">
-      <textarea id="command" rows="1" autocomplete="off" spellcheck="false" placeholder="告诉我怎么处理 THIS"></textarea>
-      <button id="run" title="执行" aria-label="执行">↑</button>
     </div>
     <div id="result" class="panel-result muted" aria-live="polite" hidden></div>
   </section>

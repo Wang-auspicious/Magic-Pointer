@@ -1,5 +1,6 @@
 const assert = require('assert');
 const {
+  computeInlineRailWidth,
   computePanelPlacement,
   intersectionArea,
   normalizeNativeSelectionRectangles,
@@ -20,6 +21,13 @@ function assertAvoids(bounds, rectangles) {
 
 const workArea = { x: 0, y: 0, width: 1920, height: 1040 };
 const panelSize = { width: 420, height: 188 };
+assert.strictEqual(typeof computeInlineRailWidth, 'function');
+assert.strictEqual(computeInlineRailWidth(''), 88);
+assert.strictEqual(computeInlineRailWidth('Add this'), 132);
+assert.strictEqual(computeInlineRailWidth('把这个加入右侧的购物清单'), 236);
+assert.strictEqual(computeInlineRailWidth('x'.repeat(100)), 360);
+
+const inlineRailSize = { width: computeInlineRailWidth('Add this'), height: 44 };
 
 const centeredRects = [
   { x: 900, y: 500, width: 180, height: 40 },
@@ -32,6 +40,17 @@ const centered = computePanelPlacement({
 });
 assertInside(centered.bounds, workArea);
 assertAvoids(centered.bounds, centeredRects);
+
+const centeredRail = computePanelPlacement({
+  workArea,
+  panelSize: inlineRailSize,
+  cursor: { x: 1060, y: 530 },
+  selectionRects: centeredRects,
+});
+assertInside(centeredRail.bounds, workArea);
+assertAvoids(centeredRail.bounds, centeredRects);
+assert.strictEqual(centeredRail.bounds.height, 44);
+assert.strictEqual(centeredRail.bounds.width, 132);
 
 const rightEdgeRects = [
   { x: 1760, y: 500, width: 120, height: 36 },

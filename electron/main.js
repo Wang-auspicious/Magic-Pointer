@@ -6,12 +6,14 @@ const crypto = require('crypto');
 const { SelectionSessionStore } = require('./selection_session');
 const {
   chooseAnchorRect,
+  computeInlineRailWidth,
   computePanelPlacement,
   normalizeNativeSelectionRectangles,
 } = require('./panel_position');
 
 let overlayWindow = null;
 let panelWindow = null;
+let readerWindow = null;
 let mousePoints = [];
 let lastShakeTrigger = 0;
 let mousePollTimer = null;
@@ -23,6 +25,10 @@ const LOG_PATH = path.join(RUNTIME_DIR, 'electron.log');
 const PID_PATH = path.join(RUNTIME_DIR, 'electron.pid');
 const ACTION_PROPOSAL_TTL_MS = 2 * 60 * 1000;
 const SELECTION_SESSION_TTL_MS = 2 * 60 * 1000;
+const PANEL_RAIL_HEIGHT = 44;
+const PANEL_RAIL_MIN_WIDTH = 88;
+const PANEL_RAIL_MAX_WIDTH = 360;
+const PANEL_MAX_HEIGHT = 380;
 const ALLOWED_ACTION_TYPES = new Set(['copy_text_to_clipboard', 'office_replace_selection', 'office_undo_last_action']);
 
 const pendingActionProposals = new Map();
@@ -154,8 +160,8 @@ function createOverlayWindow() {
 function createPanelWindow() {
   if (panelWindow) return panelWindow;
   panelWindow = new BrowserWindow({
-    width: 420,
-    height: 188,
+    width: PANEL_RAIL_MIN_WIDTH,
+    height: PANEL_RAIL_HEIGHT,
     frame: false,
     transparent: true,
     backgroundColor: '#00000000',
@@ -177,6 +183,58 @@ function createPanelWindow() {
   panelWindow.loadFile(path.join(__dirname, 'renderer', 'panel.html'));
   panelWindow.on('closed', () => { panelWindow = null; });
   return panelWindow;
+}
+
+function createReaderWindow() {
+  if (readerWindow && !readerWindow.isDestroyed()) return readerWindow;
+  readerWindow = new BrowserWindow({
+    width: 420,
+    height: 520,
+    frame: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    fullscreenable: false,
+    resizable: true,
+    movable: true,
+    skipTaskbar: true,
+    show: false,
+    alwaysOnTop: true,
+    hasShadow: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  readerWindow.setAlwaysOnTop(true, 'floating');
+  readerWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  readerWindow.loadFile(path.join(__dirname, 'renderer', 'reader.html'));
+  readerWindow.on('closed', () => { readerWindow = null; });
+  return readerWindow;
+}
+
+function showReader(payload = {}) {
+  const win = createReaderWindow();
+  const cursor = screen.getCursorScreenPoint();
+  const display = screen.getDisplayNearestPoint(cursor);
+  const workArea = display.workArea || display.bounds;
+  const width = Math.min(420, Math.max(320, workArea.width - 32));
+  const height = Math.min(520, Math.max(280, workArea.height - 32));
+  const bounds = {
+    x: workArea.x + workArea.width - width - 16,
+    y: workArea.y + 16,
+    width,
+    height,
+  };
+  const reveal = () => {
+    if (!readerWindow || readerWindow.isDestroyed()) return;
+    readerWindow.setBounds(bounds);
+    readerWindow.showInactive();
+    readerWindow.webContents.send('reader:show', payload);
+    log(`showReader token=${payload?.selectionSessionToken || 'none'}`);
+  };
+  if (win.webContents.isLoadingMainFrame()) win.webContents.once('did-finish-load', reveal);
+  else reveal();
 }
 
 function panelGeometryForSession(entry) {
@@ -223,16 +281,25 @@ function displayForPanelGeometry(geometry) {
   return screen.getDisplayNearestPoint(cursor);
 }
 
-function positionPanelForSession(entry, height = 188) {
+function positionPanelForSession(entry, size = {}) {
   if (!panelWindow || panelWindow.isDestroyed()) return null;
   const geometry = entry?.panelGeometry || panelGeometryForSession(entry);
   const display = displayForPanelGeometry(geometry);
   const workArea = display.workArea || display.bounds;
   const current = panelWindow.getBounds();
-  const desiredHeight = Math.max(188, Math.min(380, Math.round(Number(height) || 188)));
+  const requestedHeight = Math.round(Number(size?.height) || PANEL_RAIL_HEIGHT);
+  const desiredHeight = Math.max(
+    PANEL_RAIL_HEIGHT,
+    Math.min(PANEL_MAX_HEIGHT, requestedHeight),
+  );
+  const maxWidth = desiredHeight === PANEL_RAIL_HEIGHT ? PANEL_RAIL_MAX_WIDTH : 420;
+  const desiredWidth = Math.max(
+    PANEL_RAIL_MIN_WIDTH,
+    Math.min(maxWidth, Math.round(Number(size?.width) || current.width || PANEL_RAIL_MIN_WIDTH)),
+  );
   const placement = computePanelPlacement({
     workArea,
-    panelSize: { width: current.width, height: desiredHeight },
+    panelSize: { width: desiredWidth, height: desiredHeight },
     cursor: geometry.anchorCursor,
     selectionRects: geometry.selectionRects,
     preferredMode: entry?.panelPlacement?.mode || null,
@@ -259,7 +326,7 @@ function resizePanel(payload = {}) {
     log(`panel resize ignored stale token=${selectionSessionToken || 'none'}`);
     return;
   }
-  positionPanelForSession(entry, payload?.height);
+  positionPanelForSession(entry, { width: payload?.width, height: payload?.height });
 }
 
 function showPanel(reason = 'manual', payload = {}, { focusInput = true, sessionEntry = null } = {}) {
@@ -268,7 +335,12 @@ function showPanel(reason = 'manual', payload = {}, { focusInput = true, session
     if (!panelWindow || panelWindow.isDestroyed()) return;
     const currentEntry = sessionEntry?.token ? selectionSessions.get(sessionEntry.token) : null;
     if (sessionEntry?.token && (!currentEntry || currentEntry.token !== activeSelectionSessionToken)) return;
-    positionPanelForSession(currentEntry || sessionEntry, 188);
+    const initialIntent = payload?.suggestedCommands?.[0];
+    const initialLabel = initialIntent?.label || initialIntent?.command || '输入短命令';
+    positionPanelForSession(currentEntry || sessionEntry, {
+      width: computeInlineRailWidth(initialLabel),
+      height: PANEL_RAIL_HEIGHT,
+    });
     if (focusInput) {
       win.show();
       win.focus();
@@ -283,6 +355,10 @@ function showPanel(reason = 'manual', payload = {}, { focusInput = true, session
 }
 
 function hidePanel({ hideObserver = false } = {}) {
+  if (readerWindow && !readerWindow.isDestroyed()) {
+    readerWindow.webContents.send('reader:hide');
+    readerWindow.hide();
+  }
   if (!panelWindow) return;
   const sessionToken = activeSelectionSessionToken;
   panelWindow.webContents.send('panel:hide');
@@ -422,6 +498,7 @@ function panelPayloadForSession(entry) {
 
 function beginSelectionSession(reason = 'manual') {
   if (activeSelectionSessionToken) invalidateSelectionSession(activeSelectionSessionToken);
+  if (readerWindow && !readerWindow.isDestroyed()) readerWindow.hide();
 
   const cursor = screen.getCursorScreenPoint();
   const display = screen.getDisplayNearestPoint(cursor);
@@ -455,7 +532,7 @@ function beginSelectionSession(reason = 'manual') {
         });
         if (!laidOut) return;
         log(`selection session capture done token=${entry.token} status=${attached.snapshot?.status || 'missing'} app=${attached.summary?.app || 'none'}`);
-        showPanel(reason, panelPayloadForSession(laidOut), { focusInput: true, sessionEntry: laidOut });
+        showPanel(reason, panelPayloadForSession(laidOut), { focusInput: false, sessionEntry: laidOut });
       },
     },
   );
@@ -487,6 +564,7 @@ app.on('will-quit', () => {
   globalShortcut.unregisterAll();
   if (mousePollTimer) clearInterval(mousePollTimer);
   try { panelWindow?.close(); } catch (_) {}
+  try { readerWindow?.close(); } catch (_) {}
   log('app will quit');
 });
 
@@ -495,12 +573,13 @@ ipcMain.on('panel:hide', () => hidePanel({ hideObserver: true }));
 ipcMain.on('panel:resize', (_event, payload) => resizePanel(payload));
 
 function resultTargetWindow(target) {
+  if (target === 'reader') return readerWindow;
   return target === 'panel' ? panelWindow : overlayWindow;
 }
 
 function sendBridgeResult(target, parsed) {
   const win = resultTargetWindow(target);
-  const channel = target === 'panel' ? 'panel:result' : 'overlay:result';
+  const channel = target === 'reader' ? 'reader:result' : target === 'panel' ? 'panel:result' : 'overlay:result';
   win?.webContents.send(channel, parsed);
 }
 
@@ -623,7 +702,8 @@ ipcMain.on('panel:submit-selection-command', (_event, payload) => {
 function executeActionForTarget(payload, target) {
   const token = payload?.actionToken || payload?.action_token;
   const selectionSessionToken = payload?.selectionSessionToken || null;
-  if (target === 'panel' && !selectionSessions.get(selectionSessionToken)) {
+  const isSelectionSurface = target === 'panel' || target === 'reader';
+  if (isSelectionSurface && !selectionSessions.get(selectionSessionToken)) {
     log(`${target}:execute-action rejected expired selection session`);
     sendBridgeResult(target, {
       ok: false,
@@ -652,7 +732,7 @@ function executeActionForTarget(payload, target) {
   log(`${target}:execute-action type=${proposal.action_type || 'unknown'} confirmed=${enriched.confirmed}`);
   runPythonBridge(enriched, 'scripts/action_bridge.py', target, {
     onComplete: (parsed) => {
-      if (target === 'panel' && !selectionSessions.get(selectionSessionToken)) {
+      if (isSelectionSurface && !selectionSessions.get(selectionSessionToken)) {
         log(`${target}:action result ignored expired selection session`);
         return;
       }
@@ -665,3 +745,20 @@ function executeActionForTarget(payload, target) {
 
 ipcMain.on('overlay:execute-action', (_event, payload) => executeActionForTarget(payload, 'overlay'));
 ipcMain.on('panel:execute-action', (_event, payload) => executeActionForTarget(payload, 'panel'));
+ipcMain.on('reader:execute-action', (_event, payload) => executeActionForTarget(payload, 'reader'));
+ipcMain.on('reader:hide', () => {
+  if (readerWindow && !readerWindow.isDestroyed()) readerWindow.hide();
+});
+ipcMain.on('panel:open-secondary', (_event, payload) => {
+  const selectionSessionToken = payload?.selectionSessionToken || null;
+  if (!selectionSessions.get(selectionSessionToken)) {
+    log('panel:open-secondary rejected missing-or-expired session');
+    sendBridgeResult('panel', {
+      ok: false,
+      error: '当前 THIS 已过期，请重新激活 Magic Pointer。',
+      selectionSessionToken,
+    });
+    return;
+  }
+  showReader(payload);
+});

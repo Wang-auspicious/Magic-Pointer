@@ -2,6 +2,20 @@ const DEFAULT_MARGIN = 18;
 const DEFAULT_GAP = 14;
 const DEFAULT_AVOIDANCE_PADDING = 10;
 
+function computeInlineRailWidth(text, {
+  minWidth = 88,
+  maxWidth = 360,
+  chromeWidth = 68,
+  asciiWidth = 8,
+  wideWidth = 14,
+} = {}) {
+  const content = String(text || '');
+  const textWidth = Array.from(content).reduce((width, character) => (
+    width + (character.codePointAt(0) > 0x7f ? wideWidth : asciiWidth)
+  ), 0);
+  return Math.max(minWidth, Math.min(maxWidth, Math.round(chromeWidth + textWidth)));
+}
+
 function finiteNumber(value, fallback = 0) {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
@@ -231,6 +245,7 @@ function computePanelPlacement({
 
 module.exports = {
   chooseAnchorRect,
+  computeInlineRailWidth,
   computePanelPlacement,
   intersectionArea,
   normalizeNativeSelectionRectangles,

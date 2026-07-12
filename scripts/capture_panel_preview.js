@@ -3,7 +3,9 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
-const OUTPUT = path.join(ROOT, 'data', 'runtime', 'panel_preview.png');
+const OUTPUT = path.join(ROOT, 'data', 'runtime', 'inline_rail_preview_20260712.png');
+
+app.setPath('userData', path.join(ROOT, 'data', 'runtime', 'inline-rail-preview-profile-20260712'));
 
 app.disableHardwareAcceleration();
 
@@ -11,12 +13,12 @@ app.whenReady().then(async () => {
   const window = new BrowserWindow({
     x: 40,
     y: 40,
-    width: 420,
-    height: 220,
+    width: 132,
+    height: 44,
     show: true,
     frame: false,
-    transparent: false,
-    backgroundColor: '#ffffff',
+    transparent: true,
+    backgroundColor: '#00000000',
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -26,19 +28,10 @@ app.whenReady().then(async () => {
     await window.loadFile(path.join(ROOT, 'electron', 'renderer', 'panel.html'));
     await window.webContents.executeJavaScript(`
       currentSelectionSessionToken = 'preview-session';
-      renderCaptureSummary(
-        {
-          label: 'THIS · Word/WPS 选区',
-          detail: '42 字 · 产品说明.docx',
-          excerpt: 'Magic Pointer 应该留在用户当前的工作流里，而不是把任务搬进聊天窗口。',
-          hasContent: true,
-          canRewrite: true
-        },
-        [
-          { label: '解释', command: '解释这段内容' },
-          { label: '改写', command: '改写这段内容，让它更清晰简洁' },
-          { label: '翻译', command: '把这段内容翻译成中文' }
-        ]
+      currentPanelLayoutNonce = 'preview-layout';
+      renderPrimaryIntent(
+        { hasContent: true },
+        [{ label: 'Add this', command: 'Add this' }]
       );
     `);
     await new Promise((resolve) => setTimeout(resolve, 250));
