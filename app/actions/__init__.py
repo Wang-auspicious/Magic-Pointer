@@ -29,6 +29,7 @@ from .shopping_list import (
     wants_shopping_list_add,
 )
 from .calendar import CALENDAR_TARGET_URI, make_calendar_create_proposal, make_calendar_undo_proposal
+from .calendar_draft import parse_calendar_draft, wants_calendar_draft
 
 __all__ += [
     "ActionHistoryRecord",
@@ -42,4 +43,6 @@ __all__ += [
     "CALENDAR_TARGET_URI",
     "make_calendar_create_proposal",
     "make_calendar_undo_proposal",
+    "parse_calendar_draft",
+    "wants_calendar_draft",
 ]

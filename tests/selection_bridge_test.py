@@ -11,6 +11,7 @@ import scripts.action_bridge as action_bridge
 import scripts.electron_bridge as electron_bridge
 import scripts.selection_bridge as selection_bridge
 from scripts.selection_bridge import (
+    _calendar_response,
     _context_from_snapshot,
     _interaction_episode_context,
     _read_target_context,
@@ -149,6 +150,36 @@ def test_shopping_list_response_is_local_typed_action() -> None:
     assert output["selectionSnapshotId"] == "snapshot-1"
 
     assert _shopping_list_response({**payload, "command": "Explain this"}, target, app_ctx, snapshot) is None
+
+
+def test_calendar_response_opens_reviewable_draft_without_action() -> None:
+    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat()
+    payload = {
+        "command": "添加到日历",
+        "selectionSessionId": "session-calendar",
+        "selectionSnapshot": {
+            "snapshot_id": "snapshot-calendar",
+            "expires_at": expires_at,
+            "source_window": {"title": "活动.pdf - Microsoft Edge", "hwnd": 123},
+            "context": {
+                "adapter": "uia_text_selection",
+                "app": "pdf",
+                "window": {"title": "活动.pdf - Microsoft Edge", "hwnd": 123},
+                "content": "设计评审\n2026年7月20日 10:00-11:00\n地点：A 会议室",
+                "label": "活动.pdf",
+                "method": "uia:text-pattern.selection",
+                "capabilities": [],
+                "artifacts": {},
+                "error": None,
+            },
+        },
+    }
+    target, app_ctx, snapshot, error = _context_from_snapshot(payload)
+    assert error is None
+    output = _calendar_response(payload, target, app_ctx, snapshot)
+    assert output["intentKind"] == "calendar_event_draft"
+    assert output["calendarDraft"]["event"]["title"] == "设计评审"
+    assert output["actionProposals"] == []
 
 
 def test_selection_bridge_source_has_no_question_mark_corruption() -> None:

@@ -877,7 +877,7 @@ ipcMain.on('result:expand', (_event, payload) => {
 });
 
 function resultTargetWindow(target) {
-  if (target === 'dashboard') return dashboardWindow;
+  if (target === 'dashboard' || target === 'calendar-dashboard') return dashboardWindow;
   if (target === 'reader') return readerWindow;
   if (target === 'result') return resultWindow;
   return target === 'panel' ? panelWindow : overlayWindow;
@@ -885,8 +885,10 @@ function resultTargetWindow(target) {
 
 function sendBridgeResult(target, parsed) {
   const win = resultTargetWindow(target);
-  const channel = target === 'dashboard'
-    ? 'dashboard:state'
+  const channel = target === 'calendar-dashboard'
+    ? 'dashboard:calendar-state'
+    : target === 'dashboard'
+      ? 'dashboard:state'
     : target === 'reader'
     ? 'reader:result'
     : target === 'result'
@@ -1021,6 +1023,11 @@ ipcMain.on('panel:submit-selection-command', (_event, payload) => {
       parsed.selectionSnapshotId = session.snapshot?.snapshot_id || null;
       parsed.requestId = requestId;
       registerActionProposals(parsed, selectionSessionToken);
+      if (parsed?.intentKind === 'calendar_event_draft' && parsed?.calendarDraft) {
+        showDashboard({ view: 'calendar', calendarDraft: parsed.calendarDraft }, { activate: false });
+        sendBridgeResult('panel', parsed);
+        return;
+      }
       const autoProposal = parsed.actionProposals?.find((proposal) => proposal.id === parsed.autoExecuteProposalId);
       if (canAutoExecuteInternalProposal(parsed, autoProposal)) {
         log(`trusted internal auto-execute type=${autoProposal.action_type} proposal=${autoProposal.id}`);
@@ -1145,6 +1152,28 @@ function queueDashboardOperation(operation, payload = {}) {
     }));
 }
 
+function queueCalendarOperation(operation, payload = {}) {
+  const requestId = `calendar-${++dashboardRequestSerial}`;
+  dashboardOperationQueue = dashboardOperationQueue
+    .catch(() => undefined)
+    .then(() => new Promise((resolve) => {
+      if (!dashboardWindow || dashboardWindow.isDestroyed()) {
+        resolve();
+        return;
+      }
+      runPythonBridge({
+        operation,
+        requestId,
+        ...payload,
+      }, 'scripts/calendar_bridge.py', 'calendar-dashboard', {
+        onComplete: (parsed) => {
+          sendBridgeResult('calendar-dashboard', parsed);
+          resolve();
+        },
+      });
+    }));
+}
+
 ipcMain.on('dashboard:hide', (event) => {
   if (isDashboardSender(event)) dashboardWindow.hide();
 });
@@ -1163,6 +1192,31 @@ ipcMain.on('dashboard:undo-add', (event, payload) => {
   if (!isDashboardSender(event)) return;
   queueDashboardOperation('undo_add', {
     itemId: payload?.itemId,
+    receiptId: payload?.receiptId,
+    expectedUpdatedAt: payload?.expectedUpdatedAt,
+  });
+});
+ipcMain.on('dashboard:calendar-request-state', (event) => {
+  if (isDashboardSender(event)) queueCalendarOperation('list');
+});
+ipcMain.on('dashboard:calendar-preview', (event, payload) => {
+  if (!isDashboardSender(event)) return;
+  queueCalendarOperation('preview', { event: payload?.event });
+});
+ipcMain.on('dashboard:calendar-create', (event, payload) => {
+  if (!isDashboardSender(event)) return;
+  queueCalendarOperation('create', {
+    event: payload?.event,
+    idempotencyKey: payload?.idempotencyKey,
+    source: payload?.source,
+    allowConflict: payload?.allowConflict === true,
+    confirmed: payload?.confirmed === true,
+  });
+});
+ipcMain.on('dashboard:calendar-undo-create', (event, payload) => {
+  if (!isDashboardSender(event)) return;
+  queueCalendarOperation('undo_create', {
+    eventId: payload?.eventId,
     receiptId: payload?.receiptId,
     expectedUpdatedAt: payload?.expectedUpdatedAt,
   });

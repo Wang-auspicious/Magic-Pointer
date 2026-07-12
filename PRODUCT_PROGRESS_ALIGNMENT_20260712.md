@@ -424,7 +424,7 @@ Dashboard 已提供真实列表状态、未完成计数、来源应用与窗口�
 | 顺序 | 大功能 | 当前状态 | “完整可用”验收门槛 | 下一次推进内容 |
 |---:|---|---|---|---|
 | A1 | 原生购物清单 | 主闭环完成，待 CEO 真实桌面验收 | 选区到写入、高亮、勾选、精确撤销、重启持久化均可亲手验证 | 提交 Dashboard 切片；真实 Electron 中走一次 PDF/网页选区；处理验收暴露的阻断缺陷后冻结 A1 |
-| A2 | 原生日历 | 未开始 | 从日期/时间文本或自然命令形成结构化事件草稿；Dashboard 月/周视图可编辑；冲突检测；保存回读；receipt/撤销 | 先定义 CalendarEvent schema、时区/DST 规则和本地 provider，再做 GUI，不调用系统日历写入 |
+| A2 | 原生日历 | 本地主闭环完成，待 CEO 真实桌面验收 | 从日期/时间文本形成结构化事件草稿；Dashboard 可编辑；冲突检测；显式确认；保存回读；receipt/撤销 | 冻结非阻断视觉细节；真实选区验收后进入 A3 Route，不把本地事件冒充 Outlook/Google 同步 |
 | A3 | 原生路线规划 | 未开始 | 两个地点通过 THIS/THAT 绑定；路线卡给出交通方式、时长、距离和备选；来源清楚；可交换起终点 | 建 RouteRequest/RouteResult schema、可替换 provider 和 Dashboard 地图/列表双视图 |
 | A4 | 表格收集与 Merge | 未开始 | 多个选区进入暂存托盘，列映射可预览，冲突单元格必须人工决定，导出前后可核验 | 先做 THESE 收集篮与统一二维数据模型，再接 Excel/CSV 导出；绝不直接覆盖用户原表 |
 | A5 | 预约/表单任务 | 未开始 | 约束采集、候选比较、确认页、最终提交边界清晰；未经确认不产生外部副作用 | 先做本地 Reservation Draft 与模拟 provider；真实外部提交必须独立 adapter 和显式确认 |
@@ -439,3 +439,16 @@ Dashboard 已提供真实列表状态、未完成计数、来源应用与窗口�
 - 当前可靠来源仍受 adapter 能力边界限制。Edge HTML/PDF、Word/WPS 等已支持路径可以进入动作；Obsidian 内嵌 PDF 仍会准确 fail closed。不能为了让“添加这个”看似万能而把未验真的 OCR 猜测直接写入清单。
 - 当前动作成功后 Dashboard 使用 `showInactive()`，避免夺走 PDF/文档焦点；用户若要操作清单可点击 Dashboard，或用 `Ctrl+Alt+D` 主动打开。若 CEO 实测认为成功后应直接聚焦，必须作为设置项而不是全局强制行为。
 - 下一开发大块固定为 A2 Calendar，不继续扩展购物清单筛选、拖拽排序、主题皮肤或装饰动画。只有 CEO 真实验收发现 A1 主链阻断时才回到 A1。
+
+### 2026-07-12：A2 原生本地 Calendar 动作闭环完成
+
+- `7c11cff` 固化原生日历设计与实施计划：选区只生成草稿，不自动创建；事件创建属于中风险，必须在 Dashboard 显式确认；本地 provider 不冒充 Outlook/Google Calendar；冲突采用半开时间区间；撤销绑定 event ID、receipt ID 和事件版本。
+- `9e44abe` 实现版本化 `CalendarEventStore`。事件包含标题、带偏移的开始/结束、IANA 时区、地点、备注、来源、幂等键和创建回执；保存使用原子替换与进程内/跨进程锁，写入后逐字段回读。14 个存储测试覆盖无效标题、无 offset、未知时区、结束早于开始、超长字段、相邻不冲突、重叠冲突、显式允许冲突、幂等、精确撤销、损坏 schema 和 16 路并发创建。
+- `fc753a2` 增加 `calendar_event_create` 与 `calendar_event_undo_create` typed actions、固定目标 `magic-pointer://dashboard/calendar/local`、LocalPermissionPolicy 和 `calendar_bridge.py`。未确认创建返回 skipped/失败且不写入；确认创建返回 verified event、receipt 和 undo proposal；目标 URI 不匹配直接拒绝。
+- 严格本地意图新增“添加到日历 / 把这个加入日历 / Add this to my calendar”等有限命令。解析器支持明确的 `YYYY年M月D日`、当前年 `M月D日`、24 小时时间范围和中文上午/下午单时间；相对“下周五”等不会猜测，作为 warning 和缺失日期进入草稿。中文活动海报 fixture 能提取标题、日期、开始、结束、地点、时区和来源哈希。
+- `selection_bridge.py` 在模型调用之前返回 `calendar_event_draft`，且 `actionProposals=[]`。Electron 收到后用 `showInactive()` 打开 Dashboard 日历页；只有用户在卡片中点击“创建事件”才由窄 preload API 发送 confirmed create。重叠事件先显示冲突，第一次点击只进入二次确认态，第二次才带 `allowConflict=true` 执行；执行器仍在写入前重新检测冲突。
+- Dashboard 新增可切换的“日历”导航、本地日历标识、事件草稿表单、日期/时间/地点/备注字段、来源摘要、缺字段与 warning、冲突摘要、近期日程、高亮和 receipt 撤销。`Ctrl+Alt+D` 重新打开时保留上次页面；Esc 和关闭按钮只隐藏窗口，日历与购物清单数据均从持久 store 回读。
+- 视觉检查发现切换到日历后购物清单概览残留：组件 `.summary { display:flex }` 覆盖 `hidden`。已加入 `[hidden] { display: none !important; }` 并增加静态回归断言。修正后日历页只保留本地日历概览、左侧事件核对卡和右侧近期日程，不继续微调阴影/字距。
+- 中文端到端 fixture 真实运行 `selection_bridge.py → calendar_bridge.py`：未确认创建被拒绝；确认后事件写入、来源回读；随后使用精确 receipt 撤销，列表恢复为空。新鲜全量验证为 Python `110 passed in 20.06s`，Node/Electron `npm test` 全绿。
+- A2 明确欠账：首版不支持 recurrence、外部日历同步、相对日期自动解析和 DST 模糊时间自动决策；这些不会阻塞本地动作主链，也不会以隐藏自动化方式猜测。CEO 若需要外部日历，将作为 provider connector 独立授权、确认和验收。
+- 下一大块固定为 A3 Route：THIS/THAT 两个地点 → 结构化 RouteRequest → provider preview → Dashboard 路线卡与交换起终点；不回头给购物清单做排序，也不先给日历做月视图装饰。

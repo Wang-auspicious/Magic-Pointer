@@ -46,6 +46,11 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
   requestState: () => ipcRenderer.send('dashboard:request-state'),
   setChecked: (payload) => ipcRenderer.send('dashboard:set-checked', payload),
   undoAdd: (payload) => ipcRenderer.send('dashboard:undo-add', payload),
+  calendarRequestState: () => ipcRenderer.send('dashboard:calendar-request-state'),
+  calendarPreview: (payload) => ipcRenderer.send('dashboard:calendar-preview', payload),
+  calendarCreate: (payload) => ipcRenderer.send('dashboard:calendar-create', payload),
+  calendarUndoCreate: (payload) => ipcRenderer.send('dashboard:calendar-undo-create', payload),
   onShow: (callback) => ipcRenderer.on('dashboard:show', (_event, payload) => callback(payload)),
   onState: (callback) => ipcRenderer.on('dashboard:state', (_event, payload) => callback(payload)),
+  onCalendarState: (callback) => ipcRenderer.on('dashboard:calendar-state', (_event, payload) => callback(payload)),
 });

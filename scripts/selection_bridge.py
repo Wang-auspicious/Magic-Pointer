@@ -13,6 +13,7 @@ if str(ROOT) not in sys.path:
 from app.actions.history import ActionHistoryStore, make_word_undo_proposal
 from app.actions.office import clean_replacement_text, make_word_replace_selection_proposal, wants_word_rewrite
 from app.actions.shopping_list import make_shopping_list_add_proposal, wants_shopping_list_add
+from app.actions.calendar_draft import parse_calendar_draft, wants_calendar_draft
 from app.adapters import AdapterReadContext, default_adapter_registry, format_adapter_context
 from app.ai_client import ask_text_model
 from app.system_context import list_visible_windows
@@ -193,6 +194,42 @@ def _shopping_list_response(
     }
 
 
+def _calendar_response(
+    payload: dict[str, Any],
+    target_window: dict[str, Any] | None,
+    app_ctx: AdapterReadContext | None,
+    snapshot: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    command = str(payload.get("command") or "").strip()
+    if not wants_calendar_draft(command):
+        return None
+    selection_session_id = str(payload.get("selectionSessionId") or "").strip() or None
+    selection_snapshot_id = str((snapshot or {}).get("snapshot_id") or "").strip() or None
+    if app_ctx is None or not (app_ctx.content or "").strip() or not selection_snapshot_id:
+        return {
+            "ok": False,
+            "prompt": command,
+            "error": "没有读取到可靠的活动文本，未创建日历草稿。",
+            "actionProposals": [],
+            "intentKind": "calendar_event_draft",
+            "selectionSessionId": selection_session_id,
+            "selectionSnapshotId": selection_snapshot_id,
+        }
+    draft = parse_calendar_draft(app_ctx, selection_snapshot_id=selection_snapshot_id)
+    return {
+        "ok": True,
+        "prompt": command,
+        "answer": "日历草稿已打开，请核对时间后创建。",
+        "selectionContext": app_ctx.to_dict(),
+        "sourceWindow": target_window,
+        "actionProposals": [],
+        "calendarDraft": draft,
+        "intentKind": "calendar_event_draft",
+        "selectionSessionId": selection_session_id,
+        "selectionSnapshotId": selection_snapshot_id,
+    }
+
+
 def main() -> int:
     payload = read_payload()
     command = str(payload.get("command") or "").strip()
@@ -242,6 +279,11 @@ def main() -> int:
     if shopping_response is not None:
         print(json.dumps(shopping_response, ensure_ascii=False))
         return 0 if shopping_response.get("ok") is True else 1
+
+    calendar_response = _calendar_response(payload, target_window, app_ctx, snapshot)
+    if calendar_response is not None:
+        print(json.dumps(calendar_response, ensure_ascii=False))
+        return 0 if calendar_response.get("ok") is True else 1
 
     episode_context = _interaction_episode_context(payload.get("interactionEpisode"))
     context_text = _selection_context_text(app_ctx, target_window)

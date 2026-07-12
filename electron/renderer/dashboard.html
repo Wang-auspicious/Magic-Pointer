@@ -14,9 +14,13 @@
         <span>Magic Pointer</span>
       </div>
       <nav>
-        <button class="nav-item is-active" type="button" aria-current="page">
+        <button class="nav-item is-active" type="button" data-view-target="shopping-list" aria-current="page">
           <span class="nav-icon" aria-hidden="true">✓</span>
           <span>购物清单</span>
+        </button>
+        <button class="nav-item" type="button" data-view-target="calendar">
+          <span class="nav-icon nav-icon-calendar" aria-hidden="true">▦</span>
+          <span>日历</span>
         </button>
       </nav>
       <div class="sidebar-foot">
@@ -29,12 +33,12 @@
       <header class="topbar">
         <div>
           <p class="eyebrow">ACTION SPACE</p>
-          <h1>购物清单</h1>
+          <h1 id="view-title">购物清单</h1>
         </div>
         <button id="dashboard-close" class="icon-button" type="button" aria-label="关闭 Dashboard" title="关闭">×</button>
       </header>
 
-      <section class="summary" aria-label="清单概览">
+      <section class="summary dashboard-view" data-shopping-view aria-label="清单概览">
         <div class="summary-copy">
           <p id="summary-label">准备好添加第一件商品</p>
           <span>在任意应用选中文字，然后告诉 Magic Pointer“添加这个”。</span>
@@ -45,7 +49,87 @@
         </div>
       </section>
 
-      <section class="list-card" aria-labelledby="list-title">
+      <section id="calendar-view" class="dashboard-view" hidden>
+        <div class="calendar-summary">
+          <div>
+            <p class="calendar-summary-title">本地日历</p>
+            <span>事件保存在这台电脑；创建前始终由你确认。</span>
+          </div>
+          <div class="summary-count">
+            <strong id="upcoming-count">0</strong>
+            <span>未来事件</span>
+          </div>
+        </div>
+
+        <div class="calendar-layout">
+          <form id="calendar-event-form" class="calendar-card" novalidate>
+            <div class="calendar-card-head">
+              <div>
+                <p class="eyebrow">EVENT DRAFT</p>
+                <h2>核对事件</h2>
+              </div>
+              <span class="local-badge">LOCAL</span>
+            </div>
+            <div id="calendar-draft-source" class="draft-source">手动创建本地事件</div>
+            <label class="field field-wide">
+              <span>标题</span>
+              <input id="calendar-title" name="title" type="text" maxlength="160" autocomplete="off" required />
+            </label>
+            <div class="field-row">
+              <label class="field">
+                <span>日期</span>
+                <input id="calendar-date" name="date" type="date" required />
+              </label>
+              <label class="field">
+                <span>时区</span>
+                <input id="calendar-timezone" name="timezone" type="text" value="Asia/Shanghai" readonly />
+              </label>
+            </div>
+            <div class="field-row">
+              <label class="field">
+                <span>开始</span>
+                <input id="calendar-start" name="start" type="time" required />
+              </label>
+              <label class="field">
+                <span>结束</span>
+                <input id="calendar-end" name="end" type="time" required />
+              </label>
+            </div>
+            <label class="field field-wide">
+              <span>地点</span>
+              <input id="calendar-location" name="location" type="text" maxlength="240" autocomplete="off" />
+            </label>
+            <label class="field field-wide">
+              <span>备注</span>
+              <textarea id="calendar-notes" name="notes" maxlength="4000" rows="3"></textarea>
+            </label>
+            <div id="calendar-warning" class="calendar-warning" role="status" aria-live="polite" hidden></div>
+            <div id="calendar-conflicts" class="calendar-conflicts" hidden></div>
+            <div class="calendar-actions">
+              <span id="calendar-form-status">填写完整时间后可创建</span>
+              <button id="calendar-create" class="primary-button" type="submit" disabled>创建事件</button>
+            </div>
+          </form>
+
+          <section class="calendar-card agenda-card" aria-labelledby="agenda-title">
+            <div class="calendar-card-head">
+              <div>
+                <p class="eyebrow">UPCOMING</p>
+                <h2 id="agenda-title">近期日程</h2>
+              </div>
+              <button id="calendar-refresh" class="quiet-button" type="button">刷新</button>
+            </div>
+            <div id="calendar-events" class="calendar-events" aria-live="polite"></div>
+            <div id="calendar-empty" class="calendar-empty">
+              <span aria-hidden="true">▦</span>
+              <p>还没有本地事件</p>
+              <small>从活动海报或明确的日期时间文本创建一条。</small>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="list-card dashboard-view" data-shopping-view aria-labelledby="list-title">
         <div class="list-card-head">
           <div>
             <h2 id="list-title">我的清单</h2>
