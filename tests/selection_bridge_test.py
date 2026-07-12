@@ -10,7 +10,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import scripts.action_bridge as action_bridge
 import scripts.electron_bridge as electron_bridge
 import scripts.selection_bridge as selection_bridge
-from scripts.selection_bridge import _context_from_snapshot, _interaction_episode_context, _read_target_context, _wants_undo
+from scripts.selection_bridge import (
+    _context_from_snapshot,
+    _interaction_episode_context,
+    _read_target_context,
+    _shopping_list_response,
+    _wants_undo,
+)
 
 
 class _FakeAdapter:
@@ -107,6 +113,42 @@ def test_interaction_episode_context_exposes_only_bound_slots() -> None:
     assert "THIS" in text and "THAT" in text and "THESE[1]" in text and "HERE" in text
     assert "Alpha" in text and "Beta" in text
     assert "global history" in text
+
+
+def test_shopping_list_response_is_local_typed_action() -> None:
+    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat()
+    payload = {
+        "command": "Add this",
+        "selectionSessionId": "session-1",
+        "selectionSnapshot": {
+            "snapshot_id": "snapshot-1",
+            "expires_at": expires_at,
+            "source_window": {"title": "Recipe.pdf - Microsoft Edge", "hwnd": 123},
+            "context": {
+                "adapter": "uia_text_selection",
+                "app": "pdf",
+                "window": {"title": "Recipe.pdf - Microsoft Edge", "hwnd": 123},
+                "content": "1 lb Spaghetti",
+                "label": "Recipe.pdf",
+                "method": "uia:text-pattern.selection",
+                "capabilities": [],
+                "artifacts": {},
+                "error": None,
+            },
+        },
+    }
+    target, app_ctx, snapshot, error = _context_from_snapshot(payload)
+    assert error is None
+    output = _shopping_list_response(payload, target, app_ctx, snapshot)
+    assert output is not None
+    assert output["ok"] is True
+    assert output["intentKind"] == "shopping_list_add"
+    assert output["answer"] == "正在加入购物清单…"
+    assert output["autoExecuteProposalId"] == output["actionProposals"][0]["id"]
+    assert output["actionProposals"][0]["action_type"] == "shopping_list_add"
+    assert output["selectionSnapshotId"] == "snapshot-1"
+
+    assert _shopping_list_response({**payload, "command": "Explain this"}, target, app_ctx, snapshot) is None
 
 
 def test_selection_bridge_source_has_no_question_mark_corruption() -> None:

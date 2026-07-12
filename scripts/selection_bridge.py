@@ -12,6 +12,7 @@ if str(ROOT) not in sys.path:
 
 from app.actions.history import ActionHistoryStore, make_word_undo_proposal
 from app.actions.office import clean_replacement_text, make_word_replace_selection_proposal, wants_word_rewrite
+from app.actions.shopping_list import make_shopping_list_add_proposal, wants_shopping_list_add
 from app.adapters import AdapterReadContext, default_adapter_registry, format_adapter_context
 from app.ai_client import ask_text_model
 from app.system_context import list_visible_windows
@@ -139,6 +140,59 @@ def _context_from_snapshot(
     return dict(target_window or {}), app_ctx, snapshot, None
 
 
+def _shopping_list_response(
+    payload: dict[str, Any],
+    target_window: dict[str, Any] | None,
+    app_ctx: AdapterReadContext | None,
+    snapshot: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    command = str(payload.get("command") or "").strip()
+    if not wants_shopping_list_add(command):
+        return None
+    selection_session_id = str(payload.get("selectionSessionId") or "").strip() or None
+    selection_snapshot_id = str((snapshot or {}).get("snapshot_id") or "").strip() or None
+    if app_ctx is None or not (app_ctx.content or "").strip():
+        return {
+            "ok": False,
+            "prompt": command,
+            "answer": "",
+            "error": "没有读取到可靠的明确条目，未写入购物清单。",
+            "actionProposals": [],
+            "intentKind": "shopping_list_add",
+            "selectionSessionId": selection_session_id,
+            "selectionSnapshotId": selection_snapshot_id,
+        }
+    proposal = make_shopping_list_add_proposal(
+        app_ctx,
+        command=command,
+        selection_session_id=selection_session_id,
+        selection_snapshot_id=selection_snapshot_id,
+    )
+    if proposal is None:
+        return {
+            "ok": False,
+            "prompt": command,
+            "answer": "",
+            "error": "请选择 1—160 个字符、最多两行的明确条目后重试。",
+            "actionProposals": [],
+            "intentKind": "shopping_list_add",
+            "selectionSessionId": selection_session_id,
+            "selectionSnapshotId": selection_snapshot_id,
+        }
+    return {
+        "ok": True,
+        "prompt": command,
+        "answer": "正在加入购物清单…",
+        "selectionContext": app_ctx.to_dict(),
+        "sourceWindow": target_window,
+        "actionProposals": [proposal.to_dict()],
+        "autoExecuteProposalId": proposal.id,
+        "intentKind": "shopping_list_add",
+        "selectionSessionId": selection_session_id,
+        "selectionSnapshotId": selection_snapshot_id,
+    }
+
+
 def main() -> int:
     payload = read_payload()
     command = str(payload.get("command") or "").strip()
@@ -183,6 +237,11 @@ def main() -> int:
             "selectionSessionId": selection_session_id or None,
         }, ensure_ascii=False))
         return 1
+
+    shopping_response = _shopping_list_response(payload, target_window, app_ctx, snapshot)
+    if shopping_response is not None:
+        print(json.dumps(shopping_response, ensure_ascii=False))
+        return 0 if shopping_response.get("ok") is True else 1
 
     episode_context = _interaction_episode_context(payload.get("interactionEpisode"))
     context_text = _selection_context_text(app_ctx, target_window)

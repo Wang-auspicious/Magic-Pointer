@@ -7,6 +7,7 @@ const { SelectionSessionStore } = require('./selection_session');
 const { InteractionEpisodeStore, inferReferenceMode } = require('./interaction_episode');
 const { ActivationGate } = require('./activation_gate');
 const { captureEligibility, classifyResult, normalizeResultPreference } = require('./result_surface_policy');
+const { canAutoExecuteInternalProposal } = require('./internal_action_policy');
 const {
   chooseAnchorRect,
   computeInlineRailWidth,
@@ -34,7 +35,14 @@ const PANEL_RAIL_MIN_WIDTH = 88;
 const PANEL_RAIL_MAX_WIDTH = 360;
 const PANEL_MAX_HEIGHT = 380;
 const RESULT_SURFACE_MODE = normalizeResultPreference(process.env.MAGIC_POINTER_RESULT_MODE);
-const ALLOWED_ACTION_TYPES = new Set(['copy_text_to_clipboard', 'office_replace_selection', 'office_undo_last_action']);
+const ALLOWED_ACTION_TYPES = new Set([
+  'copy_text_to_clipboard',
+  'office_replace_selection',
+  'office_undo_last_action',
+  'shopping_list_add',
+  'shopping_list_set_checked',
+  'shopping_list_undo_add',
+]);
 
 const pendingActionProposals = new Map();
 const selectionSessions = new SelectionSessionStore({ ttlMs: SELECTION_SESSION_TTL_MS });
@@ -828,7 +836,12 @@ function runPythonBridge(payload, scriptPath = 'scripts/electron_bridge.py', tar
     cwd: ROOT,
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
-    env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' },
+    env: {
+      ...process.env,
+      PYTHONIOENCODING: 'utf-8',
+      PYTHONUTF8: '1',
+      MAGIC_POINTER_USER_DATA_DIR: app.getPath('userData'),
+    },
   });
 
   let stdout = '';
@@ -942,13 +955,32 @@ ipcMain.on('panel:submit-selection-command', (_event, payload) => {
       parsed.selectionSnapshotId = session.snapshot?.snapshot_id || null;
       parsed.requestId = requestId;
       registerActionProposals(parsed, selectionSessionToken);
+      const autoProposal = parsed.actionProposals?.find((proposal) => proposal.id === parsed.autoExecuteProposalId);
+      if (canAutoExecuteInternalProposal(parsed, autoProposal)) {
+        log(`trusted internal auto-execute type=${autoProposal.action_type} proposal=${autoProposal.id}`);
+        sendBridgeResult('panel', {
+          ok: null,
+          status: '正在加入购物清单…',
+          selectionSessionToken,
+          requestId,
+        });
+        executeActionForTarget({
+          actionToken: autoProposal.action_token,
+          proposalId: autoProposal.id,
+          confirmed: false,
+          selectionSessionToken,
+        }, 'panel', {
+          onComplete: (actionResult) => sendBridgeResult('panel', actionResult),
+        });
+        return;
+      }
       sendBridgeResult('panel', parsed);
     },
   });
   if (child) activeSessionChildren.set(selectionSessionToken, child);
 });
 
-function executeActionForTarget(payload, target) {
+function executeActionForTarget(payload, target, options = {}) {
   const token = payload?.actionToken || payload?.action_token;
   const selectionSessionToken = payload?.selectionSessionToken || null;
   const isSelectionSurface = target === 'panel' || target === 'result' || target === 'reader';
@@ -987,7 +1019,8 @@ function executeActionForTarget(payload, target) {
       }
       parsed.selectionSessionToken = selectionSessionToken;
       registerActionProposals(parsed, selectionSessionToken);
-      sendBridgeResult(target, parsed);
+      if (typeof options.onComplete === 'function') options.onComplete(parsed);
+      else sendBridgeResult(target, parsed);
     },
   });
 }
