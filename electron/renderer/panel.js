@@ -11,6 +11,7 @@ let currentActionProposals = [];
 let currentSelectionSessionToken = null;
 let currentPanelLayoutNonce = null;
 let currentPrimaryCommand = null;
+let currentCaptureSummary = null;
 let submitting = false;
 let autoDismissTimer = null;
 
@@ -196,26 +197,26 @@ function showResult(payload) {
   }
   if (payload.ok) {
     const answer = String(payload.answer || '').slice(0, 2600);
-    const proposalHtml = renderActionProposals(currentActionProposals);
-    const needsSecondaryReader = Boolean(proposalHtml) || answer.length > 42 || /\r?\n/.test(answer);
-    if (needsSecondaryReader) {
-      result.hidden = true;
-      result.innerHTML = '';
-      window.magicPointerPanel?.openSecondaryResult({
-        ...payload,
-        answer,
-        actionProposals: currentActionProposals,
-        selectionSessionToken: currentSelectionSessionToken,
-      });
-      setRailState('success', proposalHtml ? '查看结果并确认' : '结果已在侧边打开');
-      return;
-    }
     result.hidden = true;
-    setRailState('success', answer.split(/\r?\n/, 1)[0].slice(0, 42) || '完成');
+    result.innerHTML = '';
+    setRailState('running', '正在呈现结果…');
+    window.magicPointerPanel?.showContextualResult({
+      ...payload,
+      answer,
+      actionProposals: currentActionProposals,
+      sourceLabel: currentCaptureSummary?.label || '',
+      selectionSessionToken: currentSelectionSessionToken,
+    });
   } else {
     currentActionProposals = [];
     result.hidden = true;
-    setRailState('error', payload.error || '未能完成当前操作');
+    result.innerHTML = '';
+    setRailState('running', '正在呈现结果…');
+    window.magicPointerPanel?.showContextualResult({
+      ...payload,
+      sourceLabel: currentCaptureSummary?.label || '',
+      selectionSessionToken: currentSelectionSessionToken,
+    });
   }
   syncPanelSize();
 }
@@ -311,6 +312,7 @@ window.magicPointerPanel?.onShow((payload = {}) => {
   currentPanelLayoutNonce = payload.panelLayoutNonce || null;
   currentActionProposals = [];
   currentPrimaryCommand = null;
+  currentCaptureSummary = payload.captureSummary || null;
   commandInput.value = '';
   result.hidden = true;
   result.innerHTML = '';
@@ -326,6 +328,7 @@ window.magicPointerPanel?.onHide(() => {
   currentPanelLayoutNonce = null;
   currentActionProposals = [];
   currentPrimaryCommand = null;
+  currentCaptureSummary = null;
   submitting = false;
 });
 window.magicPointerPanel?.onResult(showResult);

@@ -19,4 +19,18 @@ function captureEligibility({ snapshot = null, summary = null } = {}) {
   return { commandReady: false, state, message, autoDismissMs: 1800 };
 }
 
-module.exports = { captureEligibility };
+function normalizeResultPreference(value = 'inline') {
+  return value === 'reader' ? 'reader' : 'inline';
+}
+
+function classifyResult(payload = {}, preference = 'inline') {
+  if (payload.ok !== true) return 'inline-error';
+  if (normalizeResultPreference(preference) === 'reader') return 'reader';
+  const answer = String(payload.answer || '');
+  const proposals = Array.isArray(payload.actionProposals) ? payload.actionProposals : [];
+  const lineCount = answer ? answer.split(/\r?\n/).length : 0;
+  if (proposals.length > 0 || answer.length > 280 || lineCount > 4) return 'expandable';
+  return 'inline';
+}
+
+module.exports = { captureEligibility, classifyResult, normalizeResultPreference };

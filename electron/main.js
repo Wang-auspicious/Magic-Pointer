@@ -6,7 +6,7 @@ const crypto = require('crypto');
 const { SelectionSessionStore } = require('./selection_session');
 const { InteractionEpisodeStore, inferReferenceMode } = require('./interaction_episode');
 const { ActivationGate } = require('./activation_gate');
-const { captureEligibility } = require('./result_surface_policy');
+const { captureEligibility, classifyResult, normalizeResultPreference } = require('./result_surface_policy');
 const {
   chooseAnchorRect,
   computeInlineRailWidth,
@@ -33,6 +33,7 @@ const PANEL_RAIL_HEIGHT = 44;
 const PANEL_RAIL_MIN_WIDTH = 88;
 const PANEL_RAIL_MAX_WIDTH = 360;
 const PANEL_MAX_HEIGHT = 380;
+const RESULT_SURFACE_MODE = normalizeResultPreference(process.env.MAGIC_POINTER_RESULT_MODE);
 const ALLOWED_ACTION_TYPES = new Set(['copy_text_to_clipboard', 'office_replace_selection', 'office_undo_last_action']);
 
 const pendingActionProposals = new Map();
@@ -41,6 +42,11 @@ const interactionEpisodes = new InteractionEpisodeStore({ ttlMs: 30 * 60 * 1000 
 const activationGate = new ActivationGate({ debounceMs: 600 });
 const activeSessionChildren = new Map();
 let activeSelectionSessionToken = null;
+let currentResultPayload = null;
+let currentResultSessionToken = null;
+let resultHasFocused = false;
+let resultShownAt = 0;
+let resultFarSince = 0;
 
 function log(message) {
   try {
@@ -191,6 +197,42 @@ function createPanelWindow() {
   return panelWindow;
 }
 
+function createResultWindow() {
+  if (resultWindow && !resultWindow.isDestroyed()) return resultWindow;
+  resultWindow = new BrowserWindow({
+    width: 360,
+    height: 160,
+    frame: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    fullscreenable: false,
+    resizable: false,
+    movable: true,
+    skipTaskbar: true,
+    show: false,
+    alwaysOnTop: true,
+    hasShadow: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  resultWindow.setAlwaysOnTop(true, 'floating');
+  resultWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  resultWindow.loadFile(path.join(__dirname, 'renderer', 'result.html'));
+  resultWindow.on('focus', () => { resultHasFocused = true; });
+  resultWindow.on('blur', () => {
+    setTimeout(() => {
+      if (resultHasFocused && resultWindow?.isVisible() && !readerWindow?.isVisible()) {
+        dismissTemporarySurfaces({ invalidateSession: true, hideObserver: true });
+      }
+    }, 0);
+  });
+  resultWindow.on('closed', () => { resultWindow = null; });
+  return resultWindow;
+}
+
 function createReaderWindow() {
   if (readerWindow && !readerWindow.isDestroyed()) return readerWindow;
   readerWindow = new BrowserWindow({
@@ -335,6 +377,58 @@ function resizePanel(payload = {}) {
   positionPanelForSession(entry, { width: payload?.width, height: payload?.height });
 }
 
+function positionResultForSession(entry, size = {}) {
+  if (!resultWindow || resultWindow.isDestroyed()) return null;
+  const geometry = entry?.panelGeometry || panelGeometryForSession(entry);
+  const display = displayForPanelGeometry(geometry);
+  const workArea = display.workArea || display.bounds;
+  const width = Math.max(280, Math.min(440, Math.round(Number(size.width) || 360)));
+  const height = Math.max(92, Math.min(360, Math.round(Number(size.height) || 160)));
+  const placement = computePanelPlacement({
+    workArea,
+    panelSize: { width, height },
+    cursor: geometry.anchorCursor,
+    selectionRects: geometry.selectionRects,
+  });
+  resultWindow.setBounds(placement.bounds);
+  log(`result positioned token=${entry?.token || 'none'} mode=${placement.mode} bounds=${placement.bounds.x},${placement.bounds.y},${width},${height}`);
+  return placement;
+}
+
+function hidePanelWindowOnly() {
+  if (!panelWindow || panelWindow.isDestroyed()) return;
+  panelWindow.webContents.send('panel:hide');
+  panelWindow.hide();
+}
+
+function showContextualResult(payload = {}) {
+  const selectionSessionToken = payload?.selectionSessionToken || null;
+  const entry = selectionSessions.get(selectionSessionToken);
+  if (!entry || selectionSessionToken !== activeSelectionSessionToken) {
+    log('showContextualResult rejected stale session');
+    return;
+  }
+  const resultMode = classifyResult(payload, RESULT_SURFACE_MODE);
+  const enriched = { ...payload, resultMode };
+  if (resultMode === 'reader') {
+    hidePanelWindowOnly();
+    showReader(enriched);
+    return;
+  }
+  currentResultPayload = safeClone(enriched);
+  currentResultSessionToken = selectionSessionToken;
+  resultHasFocused = false;
+  resultFarSince = 0;
+  const win = createResultWindow();
+  const deliver = () => {
+    if (!resultWindow || resultWindow.isDestroyed()) return;
+    positionResultForSession(entry, { width: 360, height: 160 });
+    resultWindow.webContents.send('result:show', enriched);
+  };
+  if (win.webContents.isLoadingMainFrame()) win.webContents.once('did-finish-load', deliver);
+  else deliver();
+}
+
 function showPanel(reason = 'manual', payload = {}, { focusInput = true, sessionEntry = null } = {}) {
   const win = createPanelWindow();
   const reveal = () => {
@@ -374,12 +468,20 @@ function dismissTemporarySurfaces({ invalidateSession = true, hideObserver = fal
     readerWindow.webContents.send('reader:hide');
     readerWindow.hide();
   }
-  if (resultWindow && !resultWindow.isDestroyed()) resultWindow.hide();
+  if (resultWindow && !resultWindow.isDestroyed()) {
+    resultWindow.webContents.send('result:hide');
+    resultWindow.hide();
+  }
   if (panelWindow && !panelWindow.isDestroyed()) {
     panelWindow.webContents.send('panel:hide');
     panelWindow.hide();
   }
   if (invalidateSession) invalidateSelectionSession(sessionToken);
+  currentResultPayload = null;
+  currentResultSessionToken = null;
+  resultHasFocused = false;
+  resultShownAt = 0;
+  resultFarSince = 0;
   if (hideObserver) hideOverlay();
   log('dismissTemporarySurfaces');
 }
@@ -427,6 +529,30 @@ function showOverlay(reason = 'manual', durationMs = 0) {
   if (durationMs > 0) {
     overlayHideTimer = setTimeout(() => hideOverlay(), durationMs);
   }
+}
+
+function distanceFromPointToRect(point, rect) {
+  const dx = Math.max(rect.x - point.x, 0, point.x - (rect.x + rect.width));
+  const dy = Math.max(rect.y - point.y, 0, point.y - (rect.y + rect.height));
+  return Math.hypot(dx, dy);
+}
+
+function maybeDismissResultForCursor(pos, now) {
+  if (!resultWindow?.isVisible() || now - resultShownAt < 500) return;
+  const entry = selectionSessions.get(currentResultSessionToken);
+  if (!entry) {
+    dismissTemporarySurfaces({ invalidateSession: true, hideObserver: true });
+    return;
+  }
+  const resultDistance = distanceFromPointToRect(pos, resultWindow.getBounds());
+  const selectionDistances = (entry.panelGeometry?.selectionRects || []).map((rect) => distanceFromPointToRect(pos, rect));
+  const nearest = Math.min(resultDistance, ...selectionDistances, Number.POSITIVE_INFINITY);
+  if (nearest <= 220) {
+    resultFarSince = 0;
+    return;
+  }
+  if (!resultFarSince) resultFarSince = now;
+  if (now - resultFarSince >= 450) dismissTemporarySurfaces({ invalidateSession: true, hideObserver: true });
 }
 
 function hideOverlay() {
@@ -493,6 +619,7 @@ function startMouseShakePolling() {
   mousePollTimer = setInterval(() => {
     const now = Date.now();
     const pos = screen.getCursorScreenPoint();
+    maybeDismissResultForCursor(pos, now);
     if (overlayWindow && overlayWindow.isVisible()) sendCursorToOverlay(pos);
     if (panelWindow && panelWindow.isVisible()) return;
     if (!overlayWindow || overlayWindow.isVisible()) return;
@@ -628,15 +755,39 @@ app.on('will-quit', () => {
 ipcMain.on('overlay:hide', hideOverlay);
 ipcMain.on('panel:hide', () => hidePanel({ hideObserver: true }));
 ipcMain.on('panel:resize', (_event, payload) => resizePanel(payload));
+ipcMain.on('panel:show-contextual-result', (_event, payload) => showContextualResult(payload));
+ipcMain.on('result:ready', (_event, payload) => {
+  const selectionSessionToken = payload?.selectionSessionToken || null;
+  const entry = selectionSessions.get(selectionSessionToken);
+  if (!entry || selectionSessionToken !== currentResultSessionToken || selectionSessionToken !== activeSelectionSessionToken) return;
+  positionResultForSession(entry, payload);
+  resultWindow?.showInactive();
+  resultShownAt = Date.now();
+  hidePanelWindowOnly();
+  log(`result ready token=${selectionSessionToken}`);
+});
+ipcMain.on('result:hide', () => dismissTemporarySurfaces({ invalidateSession: true, hideObserver: true }));
+ipcMain.on('result:expand', (_event, payload) => {
+  const selectionSessionToken = payload?.selectionSessionToken || null;
+  if (!selectionSessions.get(selectionSessionToken) || selectionSessionToken !== currentResultSessionToken) return;
+  if (resultWindow && !resultWindow.isDestroyed()) resultWindow.hide();
+  showReader({ ...currentResultPayload, ...payload, resultMode: 'reader' });
+  log(`result expanded token=${selectionSessionToken}`);
+});
 
 function resultTargetWindow(target) {
   if (target === 'reader') return readerWindow;
+  if (target === 'result') return resultWindow;
   return target === 'panel' ? panelWindow : overlayWindow;
 }
 
 function sendBridgeResult(target, parsed) {
   const win = resultTargetWindow(target);
-  const channel = target === 'reader' ? 'reader:result' : target === 'panel' ? 'panel:result' : 'overlay:result';
+  const channel = target === 'reader'
+    ? 'reader:result'
+    : target === 'result'
+      ? 'result:result'
+      : target === 'panel' ? 'panel:result' : 'overlay:result';
   win?.webContents.send(channel, parsed);
 }
 
@@ -770,7 +921,7 @@ ipcMain.on('panel:submit-selection-command', (_event, payload) => {
 function executeActionForTarget(payload, target) {
   const token = payload?.actionToken || payload?.action_token;
   const selectionSessionToken = payload?.selectionSessionToken || null;
-  const isSelectionSurface = target === 'panel' || target === 'reader';
+  const isSelectionSurface = target === 'panel' || target === 'result' || target === 'reader';
   if (isSelectionSurface && !selectionSessions.get(selectionSessionToken)) {
     log(`${target}:execute-action rejected expired selection session`);
     sendBridgeResult(target, {
@@ -813,6 +964,7 @@ function executeActionForTarget(payload, target) {
 
 ipcMain.on('overlay:execute-action', (_event, payload) => executeActionForTarget(payload, 'overlay'));
 ipcMain.on('panel:execute-action', (_event, payload) => executeActionForTarget(payload, 'panel'));
+ipcMain.on('result:execute-action', (_event, payload) => executeActionForTarget(payload, 'result'));
 ipcMain.on('reader:execute-action', (_event, payload) => executeActionForTarget(payload, 'reader'));
 ipcMain.on('reader:hide', () => {
   if (readerWindow && !readerWindow.isDestroyed()) readerWindow.hide();

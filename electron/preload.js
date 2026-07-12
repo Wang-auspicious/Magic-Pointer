@@ -16,9 +16,20 @@ contextBridge.exposeInMainWorld('magicPointerPanel', {
   submitSelectionCommand: (payload) => ipcRenderer.send('panel:submit-selection-command', payload),
   executeAction: (payload) => ipcRenderer.send('panel:execute-action', payload),
   openSecondaryResult: (payload) => ipcRenderer.send('panel:open-secondary', payload),
+  showContextualResult: (payload) => ipcRenderer.send('panel:show-contextual-result', payload),
   onShow: (callback) => ipcRenderer.on('panel:show', (_event, payload) => callback(payload)),
   onHide: (callback) => ipcRenderer.on('panel:hide', callback),
   onResult: (callback) => ipcRenderer.on('panel:result', (_event, payload) => callback(payload)),
+});
+
+contextBridge.exposeInMainWorld('magicPointerResult', {
+  hide: () => ipcRenderer.send('result:hide'),
+  ready: (payload) => ipcRenderer.send('result:ready', payload),
+  expand: (payload) => ipcRenderer.send('result:expand', payload),
+  executeAction: (payload) => ipcRenderer.send('result:execute-action', payload),
+  onShow: (callback) => ipcRenderer.on('result:show', (_event, payload) => callback(payload)),
+  onHide: (callback) => ipcRenderer.on('result:hide', () => callback()),
+  onResult: (callback) => ipcRenderer.on('result:result', (_event, payload) => callback(payload)),
 });
 
 contextBridge.exposeInMainWorld('magicPointerReader', {
