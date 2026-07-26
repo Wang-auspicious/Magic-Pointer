@@ -45,6 +45,37 @@ def _clipboard_reader() -> str:
     return str(pyperclip.paste() or "")
 
 
+def map_execute_result(planned: dict[str, Any], receipt: dict[str, Any]) -> dict[str, Any]:
+    """Map an execution receipt onto an honest bridge result.
+
+    - verified local synchronous action -> ok:true, state "completed"
+    - queued/running agent task -> ok:true, state "accepted" (explicitly not finished)
+    - anything else -> ok:false with the receipt status preserved
+    """
+    status = str(receipt.get("status") or "")
+    base = {"match": planned.get("match"), "plan": planned.get("plan"), "receipt": receipt}
+    if status == "succeeded":
+        return {"ok": True, "state": "completed", **base}
+    if status == "accepted":
+        task = receipt.get("output") if isinstance(receipt.get("output"), dict) else {}
+        task_id = str(task.get("taskId") or "")
+        plan = planned.get("plan") if isinstance(planned.get("plan"), dict) else {}
+        parameters = plan.get("parameters") if isinstance(plan.get("parameters"), dict) else {}
+        provider = str(task.get("provider") or parameters.get("agent") or "Agent")
+        return {
+            "ok": True,
+            "state": "accepted",
+            "provider": provider,
+            "taskId": task_id,
+            "message": f"已交给 {provider}，任务 {task_id} 正在运行，尚未完成。",
+            **base,
+        }
+    result: dict[str, Any] = {"ok": False, "state": status or "failed", **base}
+    if receipt.get("error"):
+        result["error"] = str(receipt["error"])
+    return result
+
+
 def main() -> int:
     try:
         payload = _read()
@@ -101,7 +132,7 @@ def main() -> int:
                     result = planned
                 else:
                     receipt = engine.execute(dict(planned["plan"]), confirmed=payload.get("confirmed") is True)
-                    result = {"ok": receipt.get("status") == "succeeded", "match": planned["match"], "plan": planned["plan"], "receipt": receipt}
+                    result = map_execute_result(planned, receipt)
             else:
                 raise ValueError(f"unknown operation: {operation}")
         print(json.dumps(result, ensure_ascii=False))

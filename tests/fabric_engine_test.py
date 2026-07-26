@@ -51,8 +51,8 @@ def test_local_ocr_clean_requires_confirmation_then_verifies_clipboard(tmp_path:
     assert clipboard["value"] == ""
 
     receipt = engine.execute(plan, confirmed=True)
-    assert receipt["status"] == "accepted"
-    assert receipt["verified"] is False
+    assert receipt["status"] == "succeeded"
+    assert receipt["verified"] is True
     assert clipboard["value"] == "Hello123456"
 
 
@@ -115,8 +115,8 @@ def test_raw_screen_visual_prompt_routes_image_to_available_agent(tmp_path: Path
     assert plan["parameters"]["capabilityFallback"] == "raw_screen_requires_vision_provider"
 
     receipt = engine.execute(plan, confirmed=True)
-    assert receipt["status"] == "succeeded"
-    assert receipt["verified"] is True
+    assert receipt["status"] == "accepted"
+    assert receipt["verified"] is False
     assert starts[0]["attachments"] == []
     assert str(image) not in starts[0]["prompt"]
     assert starts[0]["privacy"] == {

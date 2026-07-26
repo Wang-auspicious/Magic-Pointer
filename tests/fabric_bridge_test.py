@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import subprocess
@@ -9,6 +10,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "fabric_bridge.py"
+
+
+def _load_bridge_module():
+    spec = importlib.util.spec_from_file_location("fabric_bridge_under_test", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _call(tmp_path: Path, payload: dict) -> tuple[int, dict]:
@@ -58,6 +66,35 @@ def test_bridge_routes_plans_and_executes_safe_recipe(tmp_path: Path) -> None:
     assert code == 0
     assert executed["receipt"]["status"] == "succeeded"
     assert Path(executed["receipt"]["output"]["artifact"]).exists()
+
+
+def test_map_execute_result_reports_queued_agent_task_as_accepted_not_failure() -> None:
+    bridge = _load_bridge_module()
+    planned = {
+        "match": {"recipeId": "agent.handoff"},
+        "plan": {"recipeId": "agent.handoff", "parameters": {"agent": "pi"}},
+    }
+    receipt = {
+        "status": "accepted",
+        "verified": False,
+        "output": {"taskId": "task-9", "provider": "pi", "status": "queued"},
+    }
+    result = bridge.map_execute_result(planned, receipt)
+    assert result["ok"] is True
+    assert result["state"] == "accepted"
+    assert result["provider"] == "pi"
+    assert result["taskId"] == "task-9"
+    assert "尚未完成" in result["message"]
+    assert result["receipt"] is receipt
+
+    completed = bridge.map_execute_result(planned, {"status": "succeeded", "verified": True, "output": {}})
+    assert completed["ok"] is True
+    assert completed["state"] == "completed"
+
+    failed = bridge.map_execute_result(planned, {"status": "verification_failed", "error": "clipboard_readback_mismatch"})
+    assert failed["ok"] is False
+    assert failed["state"] == "verification_failed"
+    assert failed["error"] == "clipboard_readback_mismatch"
 
 
 def test_bridge_unknown_operation_fails_closed(tmp_path: Path) -> None:
