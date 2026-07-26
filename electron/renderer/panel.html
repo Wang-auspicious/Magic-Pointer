@@ -1,25 +1,33 @@
 <!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self';" />
-  <title>Magic Pointer Panel</title>
-  <link rel="stylesheet" href="styles.css" />
-  <link rel="stylesheet" href="panel.css" />
-</head>
-<body class="panel-body">
-  <section id="panel" class="panel-shell">
-    <div id="inline-action-rail" class="inline-action-rail" data-state="ready" data-drag-handle="true">
-      <span id="rail-state-icon" class="rail-state-icon" aria-hidden="true">✦</span>
-      <button id="primary-intent" class="primary-intent" type="button" hidden></button>
-      <div id="command-row" class="rail-command-row">
-        <input id="command" type="text" autocomplete="off" spellcheck="false" placeholder="输入短命令" aria-label="Magic Pointer 短命令" />
-        <button id="run" class="rail-run" type="button" title="执行" aria-label="执行">↑</button>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Magic Pointer</title>
+    <link rel="stylesheet" href="panel.css" />
+  </head>
+  <body>
+    <section id="panel" class="panel-shell" aria-label="Magic Pointer 命令气泡">
+      <div
+        id="inline-action-rail"
+        class="command-capsule"
+        data-state="ready"
+        data-input-mode="voice"
+      >
+        <span id="voice-glyph" class="voice-glyph" aria-hidden="true">
+          <i></i><i></i><i></i>
+        </span>
+        <input
+          id="command"
+          type="text"
+          autocomplete="off"
+          spellcheck="false"
+          aria-label="对当前对象下达命令"
+        />
+        <p id="result" class="capsule-status" aria-live="polite" hidden></p>
       </div>
-      <button id="panel-close" class="panel-close" type="button" aria-label="关闭" title="关闭">×</button>
-    </div>
-    <div id="result" class="panel-result muted" aria-live="polite" hidden></div>
-  </section>
-  <script src="panel.js"></script>
-</body>
+    </section>
+    <script src="panel.js"></script>
+  </body>
 </html>

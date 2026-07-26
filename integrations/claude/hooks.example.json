@@ -1,0 +1,23 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python",
+            "args": [
+              "D:/Desktop/Magic Pointer/scripts/agent_hook_bridge.py",
+              "--provider",
+              "claude",
+              "--root",
+              "D:/Desktop/Magic Pointer/data/runtime"
+            ],
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

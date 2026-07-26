@@ -4,6 +4,7 @@ const ALLOWED_OBJECT_FIELDS = [
   'objectId', 'snapshotId', 'selectionSessionToken', 'app', 'windowTitle',
   'label', 'kind', 'capturedAt', 'expiresAt', 'content',
 ];
+const ALLOWED_SOURCE_FIELDS = ['app', 'title', 'path', 'url', 'page', 'hwnd', 'processId'];
 
 function clone(value) {
   return value == null ? value : JSON.parse(JSON.stringify(value));
@@ -20,6 +21,26 @@ function normalizeObject(input) {
     if (typeof input[field] === 'string' && input[field].trim()) {
       normalized[field] = input[field].trim().slice(0, field === 'content' ? 12000 : 500);
     }
+  }
+  if (Array.isArray(input.bbox) && input.bbox.length === 4 && input.bbox.every(Number.isFinite)) {
+    normalized.bbox = input.bbox.slice();
+  } else if (input.bbox && typeof input.bbox === 'object') {
+    const bbox = {
+      x: Number(input.bbox.x),
+      y: Number(input.bbox.y),
+      width: Number(input.bbox.width),
+      height: Number(input.bbox.height),
+    };
+    if (Object.values(bbox).every(Number.isFinite)) normalized.bbox = bbox;
+  }
+  if (input.source && typeof input.source === 'object') {
+    const source = {};
+    for (const field of ALLOWED_SOURCE_FIELDS) {
+      const value = input.source[field];
+      if (typeof value === 'string' && value.trim()) source[field] = value.trim().slice(0, 2000);
+      else if (typeof value === 'number' && Number.isFinite(value)) source[field] = value;
+    }
+    if (Object.keys(source).length) normalized.source = source;
   }
   normalized.kind = normalized.kind || 'native_selection';
   return normalized;

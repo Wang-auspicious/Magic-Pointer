@@ -15,6 +15,15 @@ from PIL import Image, ImageDraw, ImageGrab
 from app.adapters import default_adapter_registry, format_adapter_context
 from app.actions.office import clean_replacement_text, make_word_replace_selection_proposal, wants_word_rewrite
 from app.ai_client import ask_vision_model
+from app.context_pack import (
+    ContextIntentKind,
+    ContextSessionConflict,
+    ContextSessionError,
+    ContextSessionStore,
+    compile_context_prompt,
+    parse_context_intent,
+    write_context_prompt_artifact,
+)
 from app.object_store import ObjectStore, PointerObject, new_object_id
 from app.file_context import format_local_file_context, read_local_file_context, wants_file_content
 from app.pointer_operator import MagicPointerOperator, format_grounding_for_prompt, wants_copy_path
@@ -34,6 +43,76 @@ ACTION_PROMPTS = {
     "capture": "Explain the marked on-screen item.",
     "command": "Explain the marked on-screen item.",
 }
+
+
+def _runtime_issue_mode(payload: dict[str, Any]) -> bool:
+    return str(payload.get("workflow") or "").strip() == "runtime_issue"
+
+
+def _record_runtime_issue(
+    capture: dict[str, Any],
+    statement: str,
+    *,
+    store: ContextSessionStore | None = None,
+    artifact_root: Path | str | None = None,
+) -> dict[str, Any]:
+    active_store = store or ContextSessionStore()
+    recorded = active_store.record_runtime_visual(capture, statement)
+    updated: dict[str, Any] | None = None
+    prompt = ""
+    artifact: Path | None = None
+    for attempt in range(3):
+        active = active_store.active()
+        if active is None or active.get("workflow_kind") != "runtime_issue":
+            raise ContextSessionError("runtime issue session disappeared before compilation")
+        task_instruction = str(active.get("task_instruction") or "")
+        prompt = compile_context_prompt(
+            active,
+            task_instruction=task_instruction,
+            target_profile="generic",
+        )
+        artifact = write_context_prompt_artifact(active, prompt, root=artifact_root)
+        try:
+            updated = active_store.save_compilation(
+                task_instruction=task_instruction,
+                target_profile="generic",
+                prompt=prompt,
+                prompt_artifact=str(artifact),
+                expected_session_id=str(active["session_id"]),
+                expected_revision=int(active["store_revision"]),
+                expected_items_digest=str(active["items_digest"]),
+            )
+            break
+        except ContextSessionConflict:
+            if attempt == 2:
+                raise
+    if updated is None or artifact is None:
+        raise ContextSessionError("runtime issue prompt was not compiled")
+
+    role = str(recorded["item"].get("role") or "reference")
+    role_text = "待修现场" if role == "issue" else "期望参考"
+    answer = (
+        f"已记录{role_text} · {updated['item_count']} 条现场证据\n"
+        "切到 Agent 输入框，把鼠标放进空白输入区，按 Ctrl+Alt+Enter 填入任务；不会自动发送。"
+    )
+    if str(recorded["item"].get("vision_error") or ""):
+        answer += "\n视觉转译不可用；截图、指针、窗口和结构化现场仍已保留。"
+    return {
+        "ok": True,
+        "answer": answer,
+        "intentKind": "runtime_issue_recorded",
+        "contextSession": {
+            "session_id": updated["session_id"],
+            "workflow_kind": updated.get("workflow_kind") or "runtime_issue",
+            "item_count": updated["item_count"],
+            "task_instruction": updated.get("task_instruction") or "",
+            "last_item": recorded["item"],
+        },
+        "promptArtifact": str(artifact),
+        "runtimePrompt": prompt,
+        "autoDismissMs": 2600,
+        "actionProposals": [],
+    }
 
 
 def _read_payload() -> dict[str, Any]:
@@ -170,9 +249,68 @@ def _expand_capture_bbox(selection_bbox: tuple[int, int, int, int], payload: dic
 def _prompt_for(payload: dict[str, Any]) -> str:
     command = str(payload.get("command") or "").strip()
     if command:
+        intent = parse_context_intent(command)
+        if intent is not None and intent.kind == ContextIntentKind.COLLECT:
+            return intent.instruction
         return command
     action = str(payload.get("action") or "capture").strip().lower()
     return ACTION_PROMPTS.get(action, ACTION_PROMPTS["capture"])
+
+
+def _visual_context_capture(
+    *,
+    object_id: str,
+    payload: dict[str, Any],
+    selection_point: tuple[int, int],
+    selection_bbox: tuple[int, int, int, int],
+    capture_bbox: tuple[int, int, int, int],
+    image_path: Path,
+    pointer_image_path: Path,
+    windows: list[dict[str, Any]],
+    grounding: dict[str, Any],
+    local_file_context: dict[str, Any] | None,
+    app_adapter_context: dict[str, Any] | None,
+    vision_observation: str,
+    vision_error: str,
+) -> dict[str, Any]:
+    px, py = selection_point
+    point_hits: list[dict[str, Any]] = []
+    for candidate in windows:
+        bbox = candidate.get("bbox") if isinstance(candidate, dict) else None
+        if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+            continue
+        try:
+            left, top, right, bottom = (float(value) for value in bbox)
+        except (TypeError, ValueError):
+            continue
+        if left <= px < right and top <= py < bottom:
+            point_hits.append(dict(candidate))
+    point_hits.sort(key=lambda item: int(item.get("z_order") or 1_000_000))
+    primary_window = point_hits[0] if point_hits else {}
+    source_window = ({
+        "title": str(primary_window.get("title") or ""),
+        "hwnd": int(primary_window.get("hwnd") or 0),
+        "process_id": int(primary_window.get("process_id") or primary_window.get("pid") or 0),
+        "process_name": str(primary_window.get("process_name") or payload.get("sourceApp") or ""),
+        "class_name": str(primary_window.get("class_name") or ""),
+    } if primary_window else {})
+    return {
+        "object_id": str(object_id),
+        "captured_at": datetime.now().astimezone().isoformat(timespec="microseconds"),
+        "app": str((app_adapter_context or {}).get("app") or payload.get("sourceApp") or "application"),
+        "source_window": source_window,
+        "source_confidence": "point_hit" if primary_window else "unknown",
+        "raw_image_path": str(image_path),
+        "pointer_image_path": str(pointer_image_path),
+        "point": [int(selection_point[0]), int(selection_point[1])],
+        "bbox": [int(value) for value in selection_bbox],
+        "capture_bbox": [int(value) for value in capture_bbox],
+        "grounding": dict(grounding or {}),
+        "file_context": dict(local_file_context or {}),
+        "app_context": dict(app_adapter_context or {}),
+        "vision_observation": str(vision_observation or ""),
+        "vision_error": str(vision_error or ""),
+    }
 
 
 def _make_pointer_annotated_image(raw_path: Path, out_path: Path, bbox: tuple[int, int, int, int], points: list[tuple[int, int]]) -> Path:
@@ -355,6 +493,25 @@ def main() -> int:
         print(json.dumps({"ok": False, "error": "empty payload"}, ensure_ascii=True))
         return 2
 
+    runtime_issue_mode = _runtime_issue_mode(payload)
+    runtime_statement = str(payload.get("command") or "").strip()
+    if runtime_issue_mode and not runtime_statement:
+        print(json.dumps({
+            "ok": False,
+            "error": "请描述你在运行界面中看到的问题或期望效果。",
+            "intentKind": "runtime_issue_recorded",
+            "actionProposals": [],
+        }, ensure_ascii=True))
+        return 2
+    context_intent = None if runtime_issue_mode else parse_context_intent(runtime_statement)
+    if context_intent is not None and context_intent.kind == ContextIntentKind.COLLECT and not context_intent.instruction:
+        print(json.dumps({
+            "ok": False,
+            "error": "请在“收集：”后补充一句这个对象是什么、为什么重要或希望 Agent 如何使用它。",
+            "intentKind": "context_item_recorded",
+        }, ensure_ascii=True))
+        return 2
+
     selection_bbox = _global_bbox(payload)
     if selection_bbox[2] - selection_bbox[0] < 8 or selection_bbox[3] - selection_bbox[1] < 8:
         print(json.dumps({"ok": False, "error": "bbox too small", "bbox": selection_bbox}, ensure_ascii=True))
@@ -408,6 +565,9 @@ def main() -> int:
     app_adapter_context = default_adapter_registry().read_first_context(window_dicts, selection=pointer_selection, command=prompt)
     app_adapter_text = format_adapter_context(app_adapter_context)
     word_rewrite_mode = bool(
+        not runtime_issue_mode
+        and context_intent is None
+        and
         app_adapter_context
         and app_adapter_context.app == "word"
         and wants_word_rewrite(prompt)
@@ -443,17 +603,27 @@ def main() -> int:
             "The app will show a separate confirmation preview before any write occurs."
         )
 
-    action_proposals = list(pointer_result.proposals)
+    action_proposals = [] if runtime_issue_mode or context_intent is not None else list(pointer_result.proposals)
+    vision_error = ""
 
-    if pointer_result.proposals:
+    if pointer_result.proposals and not runtime_issue_mode:
         answer = '\u5df2\u8bc6\u522b\u5230\u672c\u5730\u6587\u4ef6\u5bf9\u8c61\u3002\u70b9\u51fb\u4e0b\u65b9\u786e\u8ba4\u6309\u94ae\u540e\uff0c\u6211\u4f1a\u628a\u5b8c\u6574\u8def\u5f84\u590d\u5236\u5230\u526a\u8d34\u677f\u3002'
     else:
-        answer = ask_vision_model(
-            model_image_path,
-            prompt,
-            context_text=context,
-            labeled_extra_images=[("IMAGE RAW / raw crop without pointer stroke", image_path)],
-        )
+        try:
+            answer = ask_vision_model(
+                model_image_path,
+                prompt,
+                context_text=context,
+                labeled_extra_images=[("IMAGE RAW / raw crop without pointer stroke", image_path)],
+            )
+        except Exception as exc:
+            if (
+                not runtime_issue_mode
+                and (context_intent is None or context_intent.kind != ContextIntentKind.COLLECT)
+            ):
+                raise
+            answer = ""
+            vision_error = f"{type(exc).__name__}: {exc}"
         if word_rewrite_mode and app_adapter_context is not None:
             replacement_text = clean_replacement_text(answer)
             word_proposal = make_word_replace_selection_proposal(app_adapter_context, command=prompt, replacement_text=replacement_text)
@@ -475,6 +645,66 @@ def main() -> int:
                 '\u8fd9\u6b21\u4e0d\u4f1a\u8ba9\u4f60\u81ea\u5df1\u6309\u5feb\u6377\u952e\u5192\u5145\u5b8c\u6210\uff1b\u8bf7\u91cd\u8bd5\u5e76\u5c3d\u91cf\u5212\u4e2d\u6587\u4ef6\u540d/\u6587\u4ef6\u884c\u3002'
             )
 
+    vision_observation = answer
+    context_session = None
+    context_record_error = ""
+    runtime_issue_result: dict[str, Any] | None = None
+    if runtime_issue_mode:
+        capture = _visual_context_capture(
+            object_id=obj_id,
+            payload=payload,
+            selection_point=selection_point,
+            selection_bbox=selection_bbox,
+            capture_bbox=capture_bbox,
+            image_path=image_path.resolve(),
+            pointer_image_path=pointer_image_path.resolve(),
+            windows=window_dicts,
+            grounding=pointer_result.to_dict(),
+            local_file_context=local_file_context.to_dict() if local_file_context else None,
+            app_adapter_context=app_adapter_context.to_dict() if app_adapter_context else None,
+            vision_observation=vision_observation,
+            vision_error=vision_error,
+        )
+        try:
+            runtime_issue_result = _record_runtime_issue(capture, runtime_statement)
+            context_session = runtime_issue_result["contextSession"]
+            answer = str(runtime_issue_result["answer"])
+        except ContextSessionError as exc:
+            context_record_error = str(exc)
+            answer = f"未能记录运行现场：{exc}"
+    elif context_intent is not None and context_intent.kind == ContextIntentKind.COLLECT:
+        capture = _visual_context_capture(
+            object_id=obj_id,
+            payload=payload,
+            selection_point=selection_point,
+            selection_bbox=selection_bbox,
+            capture_bbox=capture_bbox,
+            image_path=image_path.resolve(),
+            pointer_image_path=pointer_image_path.resolve(),
+            windows=window_dicts,
+            grounding=pointer_result.to_dict(),
+            local_file_context=local_file_context.to_dict() if local_file_context else None,
+            app_adapter_context=app_adapter_context.to_dict() if app_adapter_context else None,
+            vision_observation=vision_observation,
+            vision_error=vision_error,
+        )
+        try:
+            recorded = ContextSessionStore().record_visual(capture, context_intent.instruction)
+            context_session = {
+                "session_id": recorded["session_id"],
+                "item_count": recorded["item_count"],
+                "last_item": recorded["item"],
+            }
+            verb = "已收集" if recorded["recorded"] else "这条上下文已存在"
+            answer = f"{verb} · {recorded['item_count']} 条 · 视觉对象"
+            if vision_error:
+                answer += "\n视觉转译暂时失败；截图、指向坐标和结构化来源已经保留。"
+            else:
+                answer += "\n已保留截图、指向坐标、结构化来源和视觉观察。继续指向，或到 Agent 输入框说“发送到这里：最终任务”。"
+        except ContextSessionError as exc:
+            context_record_error = str(exc)
+            answer = f"未能收集这条视觉上下文：{exc}"
+
     obj = PointerObject(
         id=obj_id,
         alias="this",
@@ -483,7 +713,7 @@ def main() -> int:
         image_path=str(image_path.relative_to(ROOT)),
         app_title=str(payload.get("sourceApp") or "Electron Overlay"),
         prompt=prompt,
-        answer=answer,
+        answer=vision_observation or answer,
         created_at=datetime.now().isoformat(timespec="seconds"),
         screen_context={
             "selection_bbox": selection_bbox,
@@ -508,10 +738,10 @@ def main() -> int:
         },
     )
     store.append(obj)
-    updated_task = tasks.add_interaction(task_id, obj.id, prompt, answer)
+    updated_task = tasks.add_interaction(task_id, obj.id, prompt, vision_observation or answer)
 
     print(json.dumps({
-        "ok": True,
+        "ok": not bool(context_record_error),
         "objectId": obj.id,
         "taskId": updated_task.get("id"),
         "imagePath": str(image_path.relative_to(ROOT)),
@@ -520,13 +750,35 @@ def main() -> int:
         "captureBbox": capture_bbox,
         "prompt": prompt,
         "answer": answer,
+        "error": context_record_error or None,
+        "intentKind": (
+            "runtime_issue_recorded"
+            if runtime_issue_result is not None
+            else ("context_item_recorded" if context_session is not None else None)
+        ),
+        "contextSession": context_session,
+        "promptArtifact": (
+            runtime_issue_result.get("promptArtifact")
+            if runtime_issue_result is not None
+            else None
+        ),
+        "runtimePrompt": (
+            runtime_issue_result.get("runtimePrompt")
+            if runtime_issue_result is not None
+            else None
+        ),
+        "autoDismissMs": (
+            runtime_issue_result.get("autoDismissMs")
+            if runtime_issue_result is not None
+            else None
+        ),
         "strokeCandidates": stroke_candidates[:5],
         "grounding": pointer_result.to_dict(),
         "localFileContext": local_file_context.to_dict() if local_file_context else None,
         "appAdapterContext": app_adapter_context.to_dict() if app_adapter_context else None,
         "actionProposals": [proposal.to_dict() for proposal in action_proposals],
     }, ensure_ascii=True))
-    return 0
+    return 1 if context_record_error else 0
 
 
 if __name__ == "__main__":

@@ -1,424 +1,480 @@
-const itemsRoot = document.getElementById('shopping-items');
-const emptyState = document.getElementById('shopping-empty');
-const remainingCount = document.getElementById('remaining-count');
-const summaryLabel = document.getElementById('summary-label');
-const listMeta = document.getElementById('list-meta');
-const notice = document.getElementById('dashboard-notice');
-const workspace = document.querySelector('.workspace');
-const viewTitle = document.getElementById('view-title');
-const calendarView = document.getElementById('calendar-view');
-const shoppingViews = Array.from(document.querySelectorAll('[data-shopping-view]'));
-const calendarForm = document.getElementById('calendar-event-form');
-const calendarTitle = document.getElementById('calendar-title');
-const calendarDate = document.getElementById('calendar-date');
-const calendarStart = document.getElementById('calendar-start');
-const calendarEnd = document.getElementById('calendar-end');
-const calendarTimezone = document.getElementById('calendar-timezone');
-const calendarLocation = document.getElementById('calendar-location');
-const calendarNotes = document.getElementById('calendar-notes');
-const calendarCreate = document.getElementById('calendar-create');
-const calendarFormStatus = document.getElementById('calendar-form-status');
-const calendarWarning = document.getElementById('calendar-warning');
-const calendarConflictsRoot = document.getElementById('calendar-conflicts');
-const calendarEventsRoot = document.getElementById('calendar-events');
-const calendarEmpty = document.getElementById('calendar-empty');
-const upcomingCount = document.getElementById('upcoming-count');
-const calendarDraftSource = document.getElementById('calendar-draft-source');
-const routeView = document.getElementById('route-view');
-const routeOrigin = document.getElementById('route-origin');
-const routeDestination = document.getElementById('route-destination');
-const routeOpen = document.getElementById('route-open');
-const routeNotice = document.getElementById('route-notice');
-const routeSource = document.getElementById('route-source');
+const api = window.magicPointerDashboard;
+const views = Array.from(document.querySelectorAll('[data-fabric-view]'));
+const navItems = Array.from(document.querySelectorAll('[data-view-target]'));
+const title = document.getElementById('view-title');
+const subtitle = document.getElementById('view-subtitle');
+const saveState = document.getElementById('save-state');
 
-let currentState = { revision: 0, items: [] };
-let highlightItemId = null;
-let highlightTimer = null;
-const pendingItems = new Set();
-let activeView = 'shopping-list';
-let calendarState = { revision: 0, events: [] };
-let calendarSource = {};
-let calendarIdempotencyKey = null;
-let calendarConflicts = [];
+const viewCopy = {
+  activation: ['唤醒与对象锁定', '默认不可见。晃动时先冻结对象，再显示动作轨。'],
+  agents: ['Agent 连接', '使用每个 Agent 的真实 RPC、JSONL、HTTP 或 CLI 协议。'],
+  recipes: ['Recipe 目录', '一个对象协议，30 个可组合的跨应用动作。'],
+  connections: ['目标连接器', '原生 API 优先，视觉和点击只做有边界的兜底。'],
+  privacy: ['隐私与权限', '读取、写入、发送、删除和付款使用不同权限层级。'],
+  activity: ['活动与回执', '只保存操作元数据；prompt、内容和截图路径默认脱敏。'],
+  diagnostics: ['运行诊断', '显示真实可用能力和未验证边界。'],
+  'shopping-list': ['本地兼容动作', '旧清单仅作为确定性动作回归夹具。'],
+  calendar: ['核对日历事件', '创建前核对字段和冲突；不会静默提交。'],
+  route: ['核对路线', '只绑定起终点，距离与时间交给地图服务计算。'],
+};
+
+let activeView = 'activation';
+let settings = null;
+let providers = [];
+let recipes = [];
+let auditEvents = [];
 let conflictConfirmationArmed = false;
-let calendarPending = false;
 let calendarPreviewTimer = null;
-let highlightEventId = null;
-
-function showNotice(message) {
-  notice.textContent = String(message || '操作未完成，请刷新后重试。');
-  notice.hidden = false;
-}
-
-function clearNotice() {
-  notice.hidden = true;
-  notice.textContent = '';
-}
-
-function sourceLabel(item) {
-  const app = String(item?.source?.app || '').trim();
-  const title = String(item?.source?.window_title || '').trim();
-  if (app && title) return `来自 ${app} · ${title}`;
-  if (app) return `来自 ${app}`;
-  return '由 Magic Pointer 添加';
-}
-
-function renderItem(item) {
-  const row = document.createElement('div');
-  row.className = 'shopping-item';
-  row.dataset.itemId = item.id;
-  if (item.checked) row.classList.add('is-checked');
-  if (item.id === highlightItemId) row.classList.add('is-highlighted');
-
-  const checkbox = document.createElement('input');
-  checkbox.type = 'checkbox';
-  checkbox.className = 'item-check';
-  checkbox.checked = item.checked === true;
-  checkbox.disabled = pendingItems.has(item.id);
-  checkbox.setAttribute('aria-label', `${checkbox.checked ? '取消完成' : '标记完成'}：${item.text}`);
-  checkbox.addEventListener('change', () => {
-    pendingItems.add(item.id);
-    checkbox.disabled = true;
-    clearNotice();
-    window.magicPointerDashboard.setChecked({
-      itemId: item.id,
-      checked: checkbox.checked,
-      expectedUpdatedAt: item.updated_at,
-    });
-  });
-
-  const copy = document.createElement('div');
-  copy.className = 'item-copy';
-  const text = document.createElement('span');
-  text.className = 'item-text';
-  text.textContent = item.text;
-  text.title = item.text;
-  const source = document.createElement('span');
-  source.className = 'item-source';
-  source.textContent = sourceLabel(item);
-  copy.append(text, source);
-
-  const undo = document.createElement('button');
-  undo.type = 'button';
-  undo.className = 'item-undo';
-  undo.textContent = '撤销添加';
-  undo.disabled = pendingItems.has(item.id);
-  undo.setAttribute('aria-label', `撤销添加：${item.text}`);
-  undo.addEventListener('click', () => {
-    pendingItems.add(item.id);
-    undo.disabled = true;
-    clearNotice();
-    window.magicPointerDashboard.undoAdd({
-      itemId: item.id,
-      receiptId: item.add_receipt_id,
-      expectedUpdatedAt: item.updated_at,
-    });
-  });
-
-  row.append(checkbox, copy, undo);
-  return row;
-}
-
-function renderState(state) {
-  currentState = state && Array.isArray(state.items) ? state : { revision: 0, items: [] };
-  itemsRoot.replaceChildren(...currentState.items.map(renderItem));
-  emptyState.hidden = currentState.items.length > 0;
-  const remaining = currentState.items.filter((item) => !item.checked).length;
-  remainingCount.textContent = String(remaining);
-  summaryLabel.textContent = currentState.items.length
-    ? `${currentState.items.length} 件商品，${remaining} 件待完成`
-    : '准备好添加第一件商品';
-  listMeta.textContent = `本地即时保存 · 版本 ${currentState.revision || 0}`;
-}
 
 function setActiveView(view) {
-  activeView = ['calendar', 'route'].includes(view) ? view : 'shopping-list';
-  workspace.dataset.view = activeView;
-  viewTitle.textContent = activeView === 'calendar' ? '日历' : activeView === 'route' ? '路线' : '购物清单';
-  calendarView.hidden = activeView !== 'calendar';
-  routeView.hidden = activeView !== 'route';
-  shoppingViews.forEach((element) => { element.hidden = activeView !== 'shopping-list'; });
-  document.querySelectorAll('[data-view-target]').forEach((button) => {
+  activeView = viewCopy[view] ? view : 'activation';
+  const copy = viewCopy[activeView];
+  title.textContent = copy[0];
+  subtitle.textContent = copy[1];
+  views.forEach((element) => { element.hidden = element.dataset.fabricView !== activeView; });
+  navItems.forEach((button) => {
     const selected = button.dataset.viewTarget === activeView;
     button.classList.toggle('is-active', selected);
     if (selected) button.setAttribute('aria-current', 'page');
     else button.removeAttribute('aria-current');
   });
-  if (activeView === 'calendar') window.magicPointerDashboard.calendarRequestState();
-  else if (activeView === 'shopping-list') window.magicPointerDashboard.requestState();
+  if (activeView === 'activity') fabricRequest('audit.tail', { limit: 120 });
+  if (activeView === 'calendar') api.calendarRequestState();
+  if (activeView === 'shopping-list') api.requestState();
 }
 
-function updateRouteState() {
-  routeOpen.disabled = !routeOrigin.value.trim() || !routeDestination.value.trim();
-  routeNotice.hidden = true;
+function fabricRequest(operation, payload = {}) {
+  api.fabricRequest(operation, payload);
+}
+
+function requestFabricState() {
+  fabricRequest('settings.get');
+  fabricRequest('catalog');
+  fabricRequest('providers');
+  fabricRequest('audit.tail', { limit: 120 });
+}
+
+function lines(value) {
+  return Array.isArray(value) ? value.join('\n') : '';
+}
+
+function valuesFromLines(value) {
+  return String(value || '').split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
+}
+
+function setValue(id, value) {
+  const element = document.getElementById(id);
+  if (!element) return;
+  if (element.type === 'checkbox') element.checked = value === true;
+  else element.value = value ?? '';
+}
+
+function applySettings(value) {
+  settings = structuredClone(value);
+  const activation = settings.activation || {};
+  const interaction = settings.interaction || {};
+  const privacy = settings.privacy || {};
+  const permissions = settings.permissions || {};
+  const agents = settings.agents || {};
+  setValue('wiggle-enabled', activation.wiggle_enabled);
+  setValue('wiggle-sensitivity', Math.round(Number(activation.sensitivity || .55) * 100));
+  setValue('default-input-mode', interaction.default_input_mode || 'voice');
+  setValue('fallback-hotkey-enabled', activation.fallback_hotkey_enabled);
+  setValue('fallback-hotkey', activation.fallback_hotkey);
+  setValue('disabled-apps', lines(activation.disabled_apps));
+  setValue('upload-screenshots', privacy.upload_screenshots);
+  setValue('retain-captures-days', privacy.retain_captures_days);
+  setValue('retain-audit-days', privacy.retain_audit_days);
+  setValue('sensitive-apps', lines(privacy.sensitive_apps));
+  setValue('permission-read', permissions.default_read);
+  setValue('permission-write', permissions.default_write);
+  setValue('permission-send', permissions.default_send);
+  setValue('permission-destructive', permissions.default_destructive);
+  setValue('permission-purchase', permissions.default_purchase);
+  setValue('preferred-agent', agents.preferred || 'pi');
+  document.getElementById('sensitivity-value').textContent = `${Math.round(Number(activation.sensitivity || .55) * 100)}%`;
+  document.getElementById('diag-wiggle').textContent = activation.wiggle_enabled ? 'ON' : 'OFF';
+}
+
+function collectSettings() {
+  if (!settings) return null;
+  const next = structuredClone(settings);
+  next.activation.wiggle_enabled = document.getElementById('wiggle-enabled').checked;
+  next.activation.sensitivity = Number(document.getElementById('wiggle-sensitivity').value) / 100;
+  next.interaction = { ...(next.interaction || {}) };
+  next.interaction.default_input_mode = document.getElementById('default-input-mode').value === 'text' ? 'text' : 'voice';
+  next.activation.fallback_hotkey_enabled = document.getElementById('fallback-hotkey-enabled').checked;
+  next.activation.fallback_hotkey = document.getElementById('fallback-hotkey').value.trim() || 'Control+Alt+M';
+  next.activation.disabled_apps = valuesFromLines(document.getElementById('disabled-apps').value);
+  next.privacy.upload_screenshots = document.getElementById('upload-screenshots').checked;
+  next.privacy.retain_captures_days = Number(document.getElementById('retain-captures-days').value);
+  next.privacy.retain_audit_days = Number(document.getElementById('retain-audit-days').value);
+  next.privacy.sensitive_apps = valuesFromLines(document.getElementById('sensitive-apps').value);
+  next.permissions.default_read = document.getElementById('permission-read').value;
+  next.permissions.default_write = document.getElementById('permission-write').value;
+  next.permissions.default_send = document.getElementById('permission-send').value;
+  next.permissions.default_destructive = document.getElementById('permission-destructive').value;
+  next.permissions.default_purchase = document.getElementById('permission-purchase').value;
+  next.agents.preferred = document.getElementById('preferred-agent').value || 'pi';
+  next.recipe_enabled = { ...(next.recipe_enabled || {}) };
+  document.querySelectorAll('[data-recipe-enabled]').forEach((toggle) => {
+    next.recipe_enabled[toggle.dataset.recipeEnabled] = toggle.checked;
+  });
+  return next;
+}
+
+function saveFabricSettings() {
+  const next = collectSettings();
+  if (!next) return;
+  saveState.textContent = '正在保存…';
+  api.saveFabricSettings(next);
+}
+
+function renderProviders(items) {
+  providers = Array.isArray(items) ? items : [];
+  const root = document.getElementById('provider-list');
+  const rows = providers.map((provider, index) => {
+    const row = document.createElement('article');
+    row.className = 'provider-row';
+    const code = document.createElement('span');
+    code.className = 'provider-code';
+    code.textContent = String(index + 1).padStart(2, '0');
+    const name = document.createElement('strong');
+    name.className = 'provider-name';
+    name.textContent = provider.name || provider.id;
+    const protocols = document.createElement('span');
+    protocols.className = 'provider-protocols';
+    protocols.textContent = `${(provider.protocols || []).join(' · ')}${provider.version ? ` / ${provider.version}` : ''}`;
+    const state = document.createElement('b');
+    state.className = `provider-state ${provider.available ? 'is-ready' : 'is-missing'}`;
+    state.textContent = provider.available ? 'AVAILABLE' : 'MISSING';
+    state.title = provider.available ? provider.executable || '' : provider.installHint || provider.reason || '';
+    row.append(code, name, protocols, state);
+    return row;
+  });
+  root.replaceChildren(...rows);
+  const preferred = document.getElementById('preferred-agent');
+  const selected = settings?.agents?.preferred || preferred.value || 'pi';
+  const options = providers.map((provider) => {
+    const option = document.createElement('option');
+    option.value = provider.id;
+    option.textContent = `${provider.name}${provider.available ? '' : '（未安装）'}`;
+    option.disabled = !provider.available;
+    return option;
+  });
+  preferred.replaceChildren(...options);
+  if (options.some((option) => option.value === selected && !option.disabled)) preferred.value = selected;
+  else {
+    const firstAvailable = providers.find((provider) => provider.available);
+    if (firstAvailable) preferred.value = firstAvailable.id;
+  }
+  document.getElementById('diag-agents').textContent = `${providers.filter((item) => item.available).length}/${providers.length}`;
+}
+
+function renderRecipes(items = recipes) {
+  recipes = Array.isArray(items) ? items : [];
+  const query = document.getElementById('recipe-filter').value.trim().toLowerCase();
+  const visible = recipes.filter((recipe) => {
+    if (!query) return true;
+    return `${recipe.id} ${recipe.title} ${recipe.description} ${(recipe.providerStrategies || []).join(' ')}`.toLowerCase().includes(query);
+  });
+  const rows = visible.map((recipe) => {
+    const row = document.createElement('article');
+    row.className = 'recipe-row';
+    const number = document.createElement('span');
+    number.className = 'recipe-number';
+    number.textContent = String(recipes.indexOf(recipe) + 1).padStart(2, '0');
+    const copy = document.createElement('div');
+    copy.className = 'recipe-copy';
+    const name = document.createElement('b');
+    name.textContent = recipe.title;
+    const description = document.createElement('p');
+    description.textContent = recipe.description;
+    const provider = document.createElement('span');
+    provider.className = 'recipe-provider';
+    provider.textContent = `${recipe.id} / ${(recipe.providerStrategies || []).join(' → ')}`;
+    copy.append(name, description, provider);
+    const controls = document.createElement('div');
+    controls.className = 'recipe-controls';
+    const risk = document.createElement('span');
+    risk.className = 'risk';
+    risk.dataset.risk = recipe.risk;
+    risk.textContent = String(recipe.risk || 'read').toUpperCase();
+    const enabled = document.createElement('input');
+    enabled.type = 'checkbox';
+    enabled.dataset.recipeEnabled = recipe.id;
+    enabled.checked = settings?.recipe_enabled?.[recipe.id] !== false;
+    enabled.title = enabled.checked ? '已启用' : '已禁用';
+    enabled.addEventListener('change', () => {
+      if (settings) settings.recipe_enabled[recipe.id] = enabled.checked;
+      enabled.title = enabled.checked ? '已启用' : '已禁用';
+    });
+    controls.append(risk, enabled);
+    row.append(number, copy, controls);
+    return row;
+  });
+  document.getElementById('recipe-list').replaceChildren(...rows);
+  document.getElementById('diag-recipes').textContent = String(recipes.length || 0);
+}
+
+function renderActivity(items) {
+  auditEvents = Array.isArray(items) ? items : [];
+  const root = document.getElementById('activity-list');
+  if (!auditEvents.length) {
+    const empty = document.createElement('p');
+    empty.className = 'empty-copy';
+    empty.textContent = '尚无本地活动。晃动并执行一个 Recipe 后，这里会显示脱敏回执。';
+    root.replaceChildren(empty);
+    return;
+  }
+  const rows = auditEvents.slice().reverse().map((event) => {
+    const row = document.createElement('article');
+    row.className = 'activity-row';
+    const time = document.createElement('span');
+    time.className = 'activity-time';
+    time.textContent = String(event.timestamp || '').replace('T', ' ').slice(0, 19);
+    const type = document.createElement('strong');
+    type.className = 'activity-type';
+    type.textContent = event.type || 'event';
+    const data = document.createElement('span');
+    data.className = 'activity-data';
+    data.textContent = JSON.stringify(event.data || {});
+    row.append(time, type, data);
+    return row;
+  });
+  root.replaceChildren(...rows);
+}
+
+function handleFabricState(payload = {}) {
+  const operation = payload.fabricOperation;
+  if (!payload.ok) {
+    if (operation === 'calibration.complete') {
+      const button = document.getElementById('wiggle-calibrate');
+      button.disabled = false;
+      button.textContent = '重新校准 10 秒';
+      document.getElementById('calibration-status').textContent = payload.error || '没有检测到完整晃动，请重试。';
+    }
+    saveState.textContent = payload.error || '操作失败';
+    return;
+  }
+  if (operation === 'settings.get' || operation === 'settings.save') {
+    applySettings(payload.settings);
+    saveState.textContent = operation === 'settings.save' ? '已保存 · 晃动设置已立即生效' : '';
+  } else if (operation === 'catalog') renderRecipes(payload.recipes);
+  else if (operation === 'providers') renderProviders(payload.providers);
+  else if (operation === 'audit.tail') renderActivity(payload.events);
+  else if (operation === 'calibration.complete') {
+    const calibrated = payload.calibration || {};
+    const percent = Math.round(Number(calibrated.sensitivity || .55) * 100);
+    const button = document.getElementById('wiggle-calibrate');
+    button.disabled = false;
+    button.textContent = '重新校准 10 秒';
+    document.getElementById('wiggle-sensitivity').value = String(percent);
+    document.getElementById('sensitivity-value').textContent = `${percent}%`;
+    document.getElementById('calibration-status').textContent =
+      `已采集 ${calibrated.samples || 0} 次完整晃动，灵敏度已保存为 ${percent}%。`;
+    if (payload.settings) applySettings(payload.settings);
+  }
+}
+
+function renderState(state = {}) {
+  const items = Array.isArray(state.items) ? state.items : [];
+  const rows = items.map((item) => {
+    const row = document.createElement('div');
+    row.className = 'shopping-item';
+    if (item.id) row.dataset.itemId = item.id;
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = item.checked === true;
+    checkbox.addEventListener('change', () => window.magicPointerDashboard.setChecked({
+      itemId: item.id,
+      checked: checkbox.checked,
+      expectedUpdatedAt: item.updated_at,
+    }));
+    const text = document.createElement('span');
+    text.textContent = item.text || '';
+    const undo = document.createElement('button');
+    undo.textContent = '撤销';
+    undo.addEventListener('click', () => window.magicPointerDashboard.undoAdd({
+      itemId: item.id,
+      receiptId: item.add_receipt_id,
+      expectedUpdatedAt: item.updated_at,
+    }));
+    row.append(checkbox, text, undo);
+    return row;
+  });
+  document.getElementById('shopping-items').replaceChildren(...rows);
+  document.getElementById('remaining-count').textContent = String(items.filter((item) => !item.checked).length);
+  document.getElementById('shopping-empty').hidden = items.length > 0;
+  document.getElementById('list-meta').textContent = `revision ${state.revision || 0}`;
+}
+
+function applyCalendarDraft(draft = {}) {
+  setValue('calendar-title', draft.title);
+  setValue('calendar-date', draft.date);
+  setValue('calendar-start', draft.start_time);
+  setValue('calendar-end', draft.end_time);
+  setValue('calendar-timezone', draft.timezone || 'Asia/Shanghai');
+  setValue('calendar-location', draft.location);
+  setValue('calendar-notes', draft.notes);
+  document.getElementById('calendar-draft-source').textContent = draft.source?.window_title || draft.source?.app || '当前选区';
+  conflictConfirmationArmed = false;
+  const calendarEvent = calendarEventFromForm();
+  if (calendarEvent) api.calendarPreview({ event: calendarEvent });
+}
+
+function renderCalendarState(state = {}) {
+  const events = Array.isArray(state.events) ? state.events : [];
+  const rows = events.map((event) => {
+    const row = document.createElement('article');
+    const text = document.createElement('span');
+    text.textContent = `${event.title || ''} · ${event.start_at || ''}`;
+    const undo = document.createElement('button');
+    undo.textContent = '撤销';
+    undo.addEventListener('click', () => api.calendarUndoCreate({
+      eventId: event.id,
+      receiptId: event.create_receipt_id,
+      expectedUpdatedAt: event.updated_at,
+    }));
+    row.append(text, undo);
+    return row;
+  });
+  document.getElementById('calendar-events').replaceChildren(...rows);
+  document.getElementById('calendar-empty').hidden = events.length > 0;
+  document.getElementById('upcoming-count').textContent = String(events.length);
 }
 
 function applyRouteDraft(draft = {}) {
-  routeOrigin.value = draft.origin || '';
-  routeDestination.value = draft.destination || '';
-  const radio = document.querySelector(`input[name="travel-mode"][value="${draft.travel_mode || 'driving'}"]`);
-  if (radio) radio.checked = true;
-  const originApp = draft.origin_source?.app || 'THAT';
-  const destinationApp = draft.destination_source?.app || 'THIS';
-  routeSource.textContent = `起点来自 ${originApp} · 终点来自 ${destinationApp}`;
-  updateRouteState();
+  setValue('route-origin', draft.origin);
+  setValue('route-destination', draft.destination);
+  document.getElementById('route-source').textContent = `${draft.origin_source?.app || 'THAT'} → ${draft.destination_source?.app || 'THIS'}`;
 }
 
 function calendarEventFromForm() {
-  const title = calendarTitle.value.trim();
-  const date = calendarDate.value;
-  const start = calendarStart.value;
-  const end = calendarEnd.value;
-  if (!title || !date || !start || !end) return null;
-  if (end <= start) return null;
+  const date = document.getElementById('calendar-date').value;
+  const start = document.getElementById('calendar-start').value;
+  const end = document.getElementById('calendar-end').value;
+  const eventTitle = document.getElementById('calendar-title').value.trim();
+  if (!date || !start || !end || !eventTitle || end <= start) return null;
   return {
-    title,
+    title: eventTitle,
     start_at: `${date}T${start}:00+08:00`,
     end_at: `${date}T${end}:00+08:00`,
-    timezone: calendarTimezone.value || 'Asia/Shanghai',
-    location: calendarLocation.value.trim(),
-    notes: calendarNotes.value.trim(),
+    timezone: document.getElementById('calendar-timezone').value || 'Asia/Shanghai',
+    location: document.getElementById('calendar-location').value.trim(),
+    notes: document.getElementById('calendar-notes').value.trim(),
     all_day: false,
   };
 }
 
-function resetConflictConfirmation() {
-  conflictConfirmationArmed = false;
-  calendarCreate.textContent = calendarConflicts.length ? '仍然创建' : '创建事件';
-}
-
-function renderCalendarConflicts(conflicts = []) {
-  calendarConflicts = Array.isArray(conflicts) ? conflicts : [];
-  calendarConflictsRoot.replaceChildren();
-  calendarConflictsRoot.hidden = calendarConflicts.length === 0;
-  if (calendarConflicts.length) {
-    const strong = document.createElement('strong');
-    strong.textContent = `与 ${calendarConflicts.length} 个事件时间重叠`;
-    const detail = document.createElement('span');
-    detail.textContent = calendarConflicts.map((event) => event.title).join('、');
-    calendarConflictsRoot.append(strong, detail);
-  }
-  resetConflictConfirmation();
-}
-
-function updateCalendarForm({ preview = true, identityChanged = false } = {}) {
-  if (identityChanged) calendarIdempotencyKey = crypto.randomUUID();
-  const event = calendarEventFromForm();
-  const complete = Boolean(event);
-  calendarCreate.disabled = !complete || calendarPending;
-  if (!complete) {
-    const filled = calendarTitle.value && calendarDate.value && calendarStart.value && calendarEnd.value;
-    calendarFormStatus.textContent = filled ? '结束时间必须晚于开始时间' : '填写完整时间后可创建';
-    renderCalendarConflicts([]);
-    return;
-  }
-  calendarFormStatus.textContent = calendarConflicts.length ? '检测到冲突，需要再次确认' : '创建前会再次核验时间冲突';
-  if (!preview) return;
-  if (calendarPreviewTimer) clearTimeout(calendarPreviewTimer);
-  calendarPreviewTimer = setTimeout(() => {
-    window.magicPointerDashboard.calendarPreview({ event });
-  }, 180);
-}
-
-function applyCalendarDraft(draft = {}) {
-  calendarTitle.value = draft.title || '';
-  calendarDate.value = draft.date || '';
-  calendarStart.value = draft.start_time || '';
-  calendarEnd.value = draft.end_time || '';
-  calendarTimezone.value = draft.timezone || 'Asia/Shanghai';
-  calendarLocation.value = draft.location || '';
-  calendarNotes.value = draft.notes || '';
-  calendarSource = draft.source && typeof draft.source === 'object' ? draft.source : {};
-  calendarIdempotencyKey = draft.idempotency_key || crypto.randomUUID();
-  const sourceApp = calendarSource.app || '选区';
-  const sourceWindow = calendarSource.window_title || '';
-  calendarDraftSource.textContent = sourceWindow ? `来自 ${sourceApp} · ${sourceWindow}` : `来自 ${sourceApp}`;
-  const warnings = Array.isArray(draft.warnings) ? draft.warnings : [];
-  const missing = Array.isArray(draft.missing_fields) ? draft.missing_fields : [];
-  calendarWarning.hidden = warnings.length === 0 && missing.length === 0;
-  calendarWarning.textContent = [...warnings, ...(missing.length ? [`请补充：${missing.join('、')}`] : [])].join(' ');
-  renderCalendarConflicts([]);
-  updateCalendarForm({ preview: true, identityChanged: false });
-}
-
-function clearCalendarDraft() {
-  calendarForm.reset();
-  calendarTimezone.value = 'Asia/Shanghai';
-  calendarSource = {};
-  calendarIdempotencyKey = crypto.randomUUID();
-  calendarDraftSource.textContent = '手动创建本地事件';
-  calendarWarning.hidden = true;
-  calendarWarning.textContent = '';
-  renderCalendarConflicts([]);
-  updateCalendarForm({ preview: false });
-}
-
-function formatEventTime(event) {
-  const start = new Date(event.start_at);
-  const end = new Date(event.end_at);
-  const day = new Intl.DateTimeFormat('zh-CN', { month: 'short', day: 'numeric', weekday: 'short' }).format(start);
-  const timeRange = `${start.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })} – ${end.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })}`;
-  return `${day} · ${timeRange}`;
-}
-
-function renderCalendarEvent(event) {
-  const card = document.createElement('article');
-  card.className = 'calendar-event';
-  card.dataset.eventId = event.id;
-  if (event.id === highlightEventId) card.classList.add('is-highlighted');
-  const title = document.createElement('span');
-  title.className = 'calendar-event-title';
-  title.textContent = event.title;
-  const time = document.createElement('span');
-  time.className = 'calendar-event-time';
-  time.textContent = formatEventTime(event);
-  const location = document.createElement('span');
-  location.className = 'calendar-event-location';
-  location.textContent = event.location || '未填写地点';
-  const undo = document.createElement('button');
-  undo.type = 'button';
-  undo.className = 'calendar-event-undo';
-  undo.textContent = '↶';
-  undo.title = '撤销这次创建';
-  undo.setAttribute('aria-label', `撤销创建：${event.title}`);
-  undo.addEventListener('click', () => {
-    undo.disabled = true;
-    window.magicPointerDashboard.calendarUndoCreate({
-      eventId: event.id,
-      receiptId: event.create_receipt_id,
-      expectedUpdatedAt: event.updated_at,
-    });
-  });
-  card.append(title, time, location, undo);
-  return card;
-}
-
-function renderCalendarState(state) {
-  calendarState = state && Array.isArray(state.events) ? state : { revision: 0, events: [] };
-  calendarEventsRoot.replaceChildren(...calendarState.events.map(renderCalendarEvent));
-  calendarEmpty.hidden = calendarState.events.length > 0;
-  upcomingCount.textContent = String(calendarState.events.length);
-}
-
-window.magicPointerDashboard.onShow((payload = {}) => {
-  clearNotice();
-  highlightItemId = payload.highlightItemId || null;
-  highlightEventId = payload.highlightEventId || null;
-  if (payload.view === 'calendar' || (!payload.view && activeView === 'calendar')) {
+api.onFabricState(handleFabricState);
+api.onShow((payload = {}) => {
+  if (payload.view === 'calendar') {
     setActiveView('calendar');
     if (payload.calendarDraft) applyCalendarDraft(payload.calendarDraft);
-  } else if (payload.view === 'route' || (!payload.view && activeView === 'route')) {
+  } else if (payload.view === 'route') {
     setActiveView('route');
     if (payload.routeDraft) applyRouteDraft(payload.routeDraft);
   } else {
-    setActiveView('shopping-list');
+    setActiveView(activeView);
   }
+  requestFabricState();
 });
-
-window.magicPointerDashboard.onState((payload = {}) => {
-  pendingItems.clear();
-  if (!payload.ok) showNotice(payload.error);
+api.onState((payload = {}) => {
   if (payload.state) renderState(payload.state);
-  if (highlightTimer) clearTimeout(highlightTimer);
-  if (highlightItemId) {
-    const highlighted = itemsRoot.querySelector(`[data-item-id="${CSS.escape(highlightItemId)}"]`);
-    highlighted?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-    highlightTimer = setTimeout(() => {
-      highlightItemId = null;
-      document.querySelectorAll('.shopping-item.is-highlighted').forEach((row) => row.classList.remove('is-highlighted'));
-    }, 1600);
-  }
+  document.getElementById('dashboard-notice').hidden = payload.ok !== false;
+  document.getElementById('dashboard-notice').textContent = payload.error || '';
 });
-
-window.magicPointerDashboard.onCalendarState((payload = {}) => {
-  calendarPending = false;
+api.onCalendarState((payload = {}) => {
   if (payload.state) renderCalendarState(payload.state);
-  if (payload.normalizedEvent) renderCalendarConflicts(payload.conflicts || []);
-  const actionType = payload.executionResult?.action_type;
-  if (payload.ok && actionType === 'calendar_event_create') {
-    highlightEventId = payload.executionResult?.output?.event?.id || null;
-    clearCalendarDraft();
-    renderCalendarState(payload.state);
-  } else if (!payload.ok) {
-    if (Array.isArray(payload.conflicts) && payload.conflicts.length) renderCalendarConflicts(payload.conflicts);
-    calendarWarning.hidden = false;
-    calendarWarning.textContent = payload.error || '日历操作未完成，请检查字段后重试。';
-  }
-  updateCalendarForm({ preview: false });
+  const conflicts = Array.isArray(payload.conflicts) ? payload.conflicts : [];
+  const warning = document.getElementById('calendar-warning');
+  const conflictList = document.getElementById('calendar-conflicts');
+  conflictConfirmationArmed = conflicts.length > 0;
+  warning.hidden = payload.ok !== false && conflicts.length === 0;
+  warning.textContent = payload.error || (conflicts.length ? '检测到日历冲突。再次提交会明确覆盖冲突。' : '');
+  conflictList.hidden = conflicts.length === 0;
+  conflictList.textContent = conflicts
+    .map((item) => `${item.title || '已有事件'} · ${item.start_at || ''}`)
+    .join('\n');
+});
+api.onRouteResult((payload = {}) => {
+  document.getElementById('route-notice').hidden = payload.ok === true;
+  document.getElementById('route-notice').textContent = payload.error || '';
 });
 
-window.magicPointerDashboard.onRouteResult((payload = {}) => {
-  routeOpen.disabled = false;
-  routeOpen.textContent = '在 Google Maps 中查看路线';
-  routeNotice.hidden = payload.ok === true;
-  routeNotice.textContent = payload.error || '';
+navItems.forEach((button) => button.addEventListener('click', () => setActiveView(button.dataset.viewTarget)));
+document.getElementById('settings-save').addEventListener('click', saveFabricSettings);
+document.getElementById('providers-refresh').addEventListener('click', () => fabricRequest('providers'));
+document.getElementById('activity-refresh').addEventListener('click', () => fabricRequest('audit.tail', { limit: 120 }));
+document.getElementById('recipe-filter').addEventListener('input', () => renderRecipes(recipes));
+document.getElementById('wiggle-sensitivity').addEventListener('input', (event) => {
+  document.getElementById('sensitivity-value').textContent = `${event.target.value}%`;
+});
+document.getElementById('wiggle-calibrate').addEventListener('click', () => {
+  const button = document.getElementById('wiggle-calibrate');
+  const status = document.getElementById('calibration-status');
+  button.disabled = true;
+  fabricRequest('calibration.start');
+  let remaining = 10;
+  status.textContent = '请自然晃动 5 次；校准期间不会捕获屏幕内容。';
+  button.textContent = `校准中 ${remaining}s`;
+  const timer = setInterval(() => {
+    remaining -= 1;
+    button.textContent = remaining > 0 ? `校准中 ${remaining}s` : '校准完成';
+    if (remaining <= 0) {
+      clearInterval(timer);
+      button.textContent = '正在计算阈值…';
+      status.textContent = '轨迹采集结束，正在根据完整晃动计算灵敏度。';
+    }
+  }, 1000);
 });
 
-document.querySelectorAll('[data-view-target]').forEach((button) => {
-  button.addEventListener('click', () => setActiveView(button.dataset.viewTarget));
-});
-
-calendarForm.querySelectorAll('input:not([readonly]), textarea').forEach((input) => {
-  input.addEventListener('input', () => {
-    calendarWarning.hidden = true;
-    renderCalendarConflicts([]);
-    updateCalendarForm({ preview: true, identityChanged: true });
-  });
-});
-
-calendarForm.addEventListener('submit', (event) => {
+document.getElementById('calendar-event-form').addEventListener('submit', (event) => {
   event.preventDefault();
   const calendarEvent = calendarEventFromForm();
-  if (!calendarEvent || calendarPending) return;
-  if (calendarConflicts.length && !conflictConfirmationArmed) {
-    conflictConfirmationArmed = true;
-    calendarCreate.textContent = '确认仍然创建';
-    calendarFormStatus.textContent = '再次点击将创建重叠事件';
-    return;
-  }
-  calendarPending = true;
-  calendarCreate.disabled = true;
-  calendarCreate.textContent = '正在创建…';
+  if (!calendarEvent) return;
   window.magicPointerDashboard.calendarCreate({
     event: calendarEvent,
-    idempotencyKey: calendarIdempotencyKey || crypto.randomUUID(),
-    source: calendarSource,
-    allowConflict: calendarConflicts.length > 0,
+    idempotencyKey: crypto.randomUUID(),
+    source: {},
+    allowConflict: conflictConfirmationArmed,
     confirmed: true,
   });
 });
-
-document.getElementById('calendar-refresh').addEventListener('click', () => window.magicPointerDashboard.calendarRequestState());
-routeOrigin.addEventListener('input', updateRouteState);
-routeDestination.addEventListener('input', updateRouteState);
-document.getElementById('route-swap').addEventListener('click', () => {
-  const origin = routeOrigin.value;
-  routeOrigin.value = routeDestination.value;
-  routeDestination.value = origin;
-  updateRouteState();
+document.getElementById('calendar-event-form').addEventListener('input', () => {
+  clearTimeout(calendarPreviewTimer);
+  conflictConfirmationArmed = false;
+  calendarPreviewTimer = setTimeout(() => {
+    const calendarEvent = calendarEventFromForm();
+    if (calendarEvent) api.calendarPreview({ event: calendarEvent });
+  }, 280);
 });
-routeOpen.addEventListener('click', () => {
-  if (routeOpen.disabled) return;
+document.getElementById('calendar-refresh').addEventListener('click', () => window.magicPointerDashboard.calendarRequestState());
+document.getElementById('route-swap').addEventListener('click', () => {
+  const origin = document.getElementById('route-origin');
+  const destination = document.getElementById('route-destination');
+  const value = origin.value;
+  origin.value = destination.value;
+  destination.value = value;
+});
+document.getElementById('route-open').addEventListener('click', () => {
   const travelMode = document.querySelector('input[name="travel-mode"]:checked')?.value || 'driving';
-  routeOpen.disabled = true;
-  routeOpen.textContent = '正在打开…';
   window.magicPointerDashboard.openRoute({
-    origin: routeOrigin.value.trim(),
-    destination: routeDestination.value.trim(),
+    origin: document.getElementById('route-origin').value.trim(),
+    destination: document.getElementById('route-destination').value.trim(),
     travelMode,
   });
 });
+document.getElementById('dashboard-refresh').addEventListener('click', () => window.magicPointerDashboard.requestState());
+document.getElementById('dashboard-close').addEventListener('click', () => api.hide());
+document.addEventListener('keydown', (event) => { if (event.key === 'Escape') api.hide(); });
 
-document.getElementById('dashboard-close').addEventListener('click', () => window.magicPointerDashboard.hide());
-document.getElementById('dashboard-refresh').addEventListener('click', () => {
-  clearNotice();
-  window.magicPointerDashboard.requestState();
-});
-
-document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape') window.magicPointerDashboard.hide();
-});
-
-renderState(currentState);
-renderCalendarState(calendarState);
-clearCalendarDraft();
+document.getElementById('diag-platform').textContent = navigator.platform || 'desktop';
+renderProviders([]);
+renderRecipes([]);
+renderActivity([]);
+renderState({ items: [] });
+renderCalendarState({ events: [] });
+setActiveView('activation');
+requestFabricState();

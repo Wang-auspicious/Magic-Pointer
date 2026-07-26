@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Codex Runtime Issue Demo</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --ink: #e8edf2;
+      --muted: #8c98a5;
+      --panel: #151a1f;
+      --panel-2: #1b2229;
+      --line: #343e48;
+      --blue: #75a7ff;
+      --acid: #d8ff68;
+      --danger: #ff826e;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      background:
+        linear-gradient(rgba(255,255,255,.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,255,255,.025) 1px, transparent 1px),
+        #0d1115;
+      background-size: 32px 32px;
+      font-family: "Bahnschrift", "Arial Narrow", sans-serif;
+    }
+    main {
+      width: min(1180px, calc(100% - 48px));
+      margin: 0 auto;
+      padding: 42px 0 64px;
+    }
+    header {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: end;
+      padding-bottom: 22px;
+      border-bottom: 1px solid var(--line);
+    }
+    .eyebrow {
+      margin: 0 0 10px;
+      color: var(--acid);
+      font: 700 12px/1 "Cascadia Mono", Consolas, monospace;
+      letter-spacing: .18em;
+      text-transform: uppercase;
+    }
+    h1 {
+      margin: 0;
+      max-width: 760px;
+      font: 500 clamp(36px, 5vw, 68px)/.96 Georgia, serif;
+      letter-spacing: -.04em;
+    }
+    .status {
+      padding: 8px 11px;
+      border: 1px solid #64443f;
+      color: var(--danger);
+      background: #251817;
+      font: 700 12px/1 "Cascadia Mono", Consolas, monospace;
+      text-transform: uppercase;
+    }
+    .instructions {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1px;
+      margin: 26px 0;
+      border: 1px solid var(--line);
+      background: var(--line);
+    }
+    .step {
+      min-height: 96px;
+      padding: 17px 18px;
+      background: #10151a;
+    }
+    .step b {
+      display: block;
+      margin-bottom: 9px;
+      color: var(--blue);
+      font: 700 12px/1 "Cascadia Mono", Consolas, monospace;
+    }
+    .step span { color: #c4ccd4; line-height: 1.45; }
+    .workspace {
+      display: grid;
+      grid-template-columns: 1.12fr .88fr;
+      gap: 18px;
+    }
+    .surface {
+      position: relative;
+      min-height: 410px;
+      padding: 24px;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      box-shadow: 0 30px 90px rgba(0,0,0,.28);
+    }
+    .surface::before {
+      content: attr(data-label);
+      position: absolute;
+      top: 0;
+      right: 0;
+      padding: 7px 10px;
+      color: #8f9ba7;
+      background: #0c1014;
+      border-left: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      font: 700 10px/1 "Cascadia Mono", Consolas, monospace;
+      letter-spacing: .12em;
+    }
+    .surface h2 {
+      margin: 0 0 8px;
+      font: 500 25px/1.05 Georgia, serif;
+    }
+    .surface > p {
+      max-width: 510px;
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+    .card-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      margin-top: 32px;
+    }
+    .card {
+      display: flex;
+      min-height: 222px;
+      flex-direction: column;
+      padding: 19px;
+      border: 1px solid #3a4550;
+      background: var(--panel-2);
+    }
+    .card small {
+      color: var(--blue);
+      font: 700 11px/1 "Cascadia Mono", Consolas, monospace;
+      text-transform: uppercase;
+    }
+    .card h3 { margin: 13px 0 7px; font-size: 19px; }
+    .card p { margin: 0; color: #99a5b1; line-height: 1.42; }
+    .actions {
+      display: flex;
+      gap: 9px;
+      margin-top: auto;
+      align-items: center;
+    }
+    .broken .actions {
+      transform: translateY(26px);
+    }
+    button {
+      padding: 10px 14px;
+      border: 1px solid #5e8ddd;
+      color: #08101a;
+      background: var(--blue);
+      font: 700 13px/1 "Bahnschrift", sans-serif;
+    }
+    button.secondary {
+      color: #aeb8c2;
+      background: transparent;
+      border-color: #46515c;
+    }
+    .bug-note {
+      position: absolute;
+      left: 42px;
+      bottom: 18px;
+      color: var(--danger);
+      font: 700 11px/1.35 "Cascadia Mono", Consolas, monospace;
+    }
+    .agent-target {
+      display: flex;
+      flex-direction: column;
+    }
+    .agent-target textarea {
+      width: 100%;
+      min-height: 240px;
+      margin-top: 30px;
+      padding: 18px;
+      resize: vertical;
+      outline: none;
+      border: 1px solid #4a5662;
+      color: #dce5ec;
+      background: #0b0f13;
+      font: 14px/1.55 "Cascadia Mono", Consolas, monospace;
+    }
+    .agent-target textarea:focus {
+      border-color: var(--blue);
+      box-shadow: 0 0 0 3px rgba(117,167,255,.12);
+    }
+    .target-note {
+      margin-top: 12px;
+      color: var(--acid);
+      font: 700 11px/1.4 "Cascadia Mono", Consolas, monospace;
+    }
+    @media (max-width: 840px) {
+      header, .workspace { grid-template-columns: 1fr; }
+      .status { justify-self: start; margin-top: 18px; }
+      .instructions { grid-template-columns: 1fr; }
+      .card-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <p class="eyebrow">Magic Pointer / Runtime Issue Lab</p>
+        <h1>Don’t find the source. Point at the failure.</h1>
+      </div>
+      <div class="status">Intentional UI defect</div>
+    </header>
+
+    <section class="instructions" aria-label="体验步骤">
+      <div class="step"><b>01 / CAPTURE</b><span>按 Ctrl+Alt+M，圈住左侧错位的 Save changes，描述它应与参考卡片对齐。</span></div>
+      <div class="step"><b>02 / REFERENCE</b><span>可选：再次按 Ctrl+Alt+M，圈住右侧正确按钮，说“参考这个位置”。</span></div>
+      <div class="step"><b>03 / HANDOFF</b><span>点击右侧空输入框，按 Ctrl+Alt+Enter，只填入 Runtime Issue，不自动发送。</span></div>
+    </section>
+
+    <section class="workspace">
+      <article class="surface" data-label="LIVE APPLICATION">
+        <h2>Billing preferences</h2>
+        <p>左侧卡片包含一个故意制造的垂直错位。用户应该只指出现场，不需要知道 CSS 或文件名。</p>
+        <div class="card-grid">
+          <section class="card broken">
+            <small>Current / issue</small>
+            <h3>Invoice delivery</h3>
+            <p>Send a monthly PDF invoice to the finance workspace.</p>
+            <div class="actions">
+              <button>Save changes</button>
+              <button class="secondary">Cancel</button>
+            </div>
+          </section>
+          <section class="card">
+            <small>Expected / reference</small>
+            <h3>Payment alerts</h3>
+            <p>Notify the finance workspace when a payment method fails.</p>
+            <div class="actions">
+              <button>Save changes</button>
+              <button class="secondary">Cancel</button>
+            </div>
+          </section>
+        </div>
+        <div class="bug-note">↑ ISSUE: left action row is 26px too low</div>
+      </article>
+
+      <article class="surface agent-target" data-label="AGENT INPUT">
+        <h2>Codex draft target</h2>
+        <p>这里模拟一个空的 Agent 输入框。Magic Pointer 应填入现场任务，但不能发送。</p>
+        <textarea aria-label="Agent draft target" placeholder="Keep this empty, point inside, then press Ctrl+Alt+Enter"></textarea>
+        <div class="target-note">NO-SUBMIT CONTRACT / YOU REVIEW BEFORE SENDING</div>
+      </article>
+    </section>
+  </main>
+</body>
+</html>

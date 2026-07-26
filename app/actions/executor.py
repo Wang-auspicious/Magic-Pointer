@@ -28,6 +28,7 @@ SUPPORTED_ACTION_TYPES = {
     "calendar_event_create",
     "calendar_event_undo_create",
     "paste_text_to_foreground",
+    "fabric_recipe_execute",
 }
 
 
@@ -69,12 +70,14 @@ class SafeActionExecutor:
         shopping_list_store: ShoppingListStore | None = None,
         calendar_event_store: CalendarEventStore | None = None,
         draft_writer: Any | None = None,
+        fabric_engine: Any | None = None,
     ) -> None:
         self.policy = policy or LocalPermissionPolicy()
         self.history_store = history_store or ActionHistoryStore()
         self.shopping_list_store = shopping_list_store or ShoppingListStore()
         self.calendar_event_store = calendar_event_store or CalendarEventStore()
         self.draft_writer = draft_writer or write_draft_to_target
+        self.fabric_engine = fabric_engine
 
     def preview(self, proposal: ActionProposal) -> JsonDict:
         decision = self.policy.decide(proposal)
@@ -140,7 +143,78 @@ class SafeActionExecutor:
             return self._calendar_event_undo_create(proposal, started, confirmed=confirmed, metadata=metadata)
         if proposal.action_type == "paste_text_to_foreground":
             return self._paste_text_to_foreground(proposal, started, confirmed=confirmed, metadata=metadata)
+        if proposal.action_type == "fabric_recipe_execute":
+            return self._fabric_recipe_execute(proposal, started, confirmed=confirmed, metadata=metadata)
         return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="unreachable action dispatch", metadata=metadata)
+
+    def _fabric_recipe_execute(
+        self,
+        proposal: ActionProposal,
+        started: str,
+        *,
+        confirmed: bool,
+        metadata: JsonDict,
+    ) -> ExecutionResult:
+        plan = proposal.parameters.get("plan")
+        if not isinstance(plan, dict):
+            return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="fabric plan is missing", metadata=metadata)
+        engine = self.fabric_engine
+        if engine is None:
+            import webbrowser
+
+            import pyperclip
+
+            from app.fabric.engine import FabricEngine
+
+            engine = FabricEngine(
+                clipboard_writer=pyperclip.copy,
+                clipboard_reader=lambda: str(pyperclip.paste() or ""),
+                url_opener=webbrowser.open,
+            )
+        receipt = engine.execute(dict(plan), confirmed=confirmed)
+        status = str(receipt.get("status") or "failed")
+        if status == "succeeded" and receipt.get("verified") is True:
+            return self._result(
+                proposal,
+                started,
+                ExecutionStatus.SUCCEEDED,
+                confirmed=confirmed,
+                output={"fabric_receipt": receipt},
+                metadata=metadata,
+            )
+        if (
+            status == "accepted"
+            and isinstance(receipt.get("output"), dict)
+            and receipt["output"].get("taskId")
+            and receipt["output"].get("status") in {"queued", "running"}
+        ):
+            return self._result(
+                proposal,
+                started,
+                ExecutionStatus.PENDING,
+                confirmed=confirmed,
+                output={"fabric_receipt": receipt},
+                metadata=metadata,
+            )
+        if status == "confirmation_required":
+            return self._result(
+                proposal,
+                started,
+                ExecutionStatus.SKIPPED,
+                confirmed=confirmed,
+                error="confirmation required",
+                output={"fabric_receipt": receipt},
+                metadata=metadata,
+            )
+        return self._result(
+            proposal,
+            started,
+            ExecutionStatus.FAILED,
+            confirmed=confirmed,
+            error=str(receipt.get("error") or status),
+            output={"fabric_receipt": receipt},
+            metadata=metadata,
+        )
 
     def _paste_text_to_foreground(
         self,
@@ -154,12 +228,20 @@ class SafeActionExecutor:
         text = str(params.get("text") or "")
         expected_hash = str(params.get("text_sha256") or "")
         expected_hwnd = _optional_int(params.get("target_hwnd"))
+        expected_process_id = _optional_int(params.get("target_process_id"))
+        expected_title = str(params.get("target_title") or "")
         if not text:
             return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="draft text is empty", metadata=metadata)
         if params.get("submit") is not False:
             return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="draft delivery submit must be false", metadata=metadata)
         if expected_hwnd is None:
             return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="draft target hwnd is missing", metadata=metadata)
+        if expected_process_id is None:
+            return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="draft target process identity is missing", metadata=metadata)
+        if not expected_title:
+            return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="draft target window title is missing", metadata=metadata)
+        if params.get("target_point_space") != "physical_screen_pixels":
+            return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="draft target coordinate space is not physical screen pixels", metadata=metadata)
         actual_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
         if not expected_hash or expected_hash != actual_hash:
             return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="draft text hash mismatch", metadata=metadata)
@@ -174,6 +256,8 @@ class SafeActionExecutor:
             return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="draft writer violated no-submit contract", metadata=metadata)
         if _optional_int(receipt.get("target_hwnd")) != expected_hwnd:
             return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="draft writer target mismatch", metadata=metadata)
+        if str(receipt.get("target_title") or "") != expected_title:
+            return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="draft writer title mismatch", metadata=metadata)
         delivery_mode = str(receipt.get("delivery_mode") or "full_prompt")
         if delivery_mode == "artifact_reference":
             artifact_contract_valid = (

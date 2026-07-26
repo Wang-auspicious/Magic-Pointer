@@ -5,6 +5,7 @@ import mimetypes
 import re
 import zipfile
 from dataclasses import dataclass, field
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
@@ -103,6 +104,46 @@ def _read_text_file(path: Path, max_chars: int) -> tuple[str, bool, str]:
     return limited, True or truncated, "text:utf-8-replace"
 
 
+class _VisibleHtmlTextParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.hidden_depth = 0
+        self.in_title = False
+        self.title_parts: list[str] = []
+        self.body_parts: list[str] = []
+
+    def handle_starttag(self, tag: str, _attrs: list[tuple[str, str | None]]) -> None:
+        normalized = tag.casefold()
+        if normalized in {"script", "style", "noscript"}:
+            self.hidden_depth += 1
+        if normalized == "title":
+            self.in_title = True
+        if normalized in {"p", "div", "section", "article", "header", "footer", "li", "br", "h1", "h2", "h3", "h4", "h5", "h6"}:
+            self.body_parts.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        normalized = tag.casefold()
+        if normalized in {"script", "style", "noscript"} and self.hidden_depth > 0:
+            self.hidden_depth -= 1
+        if normalized == "title":
+            self.in_title = False
+        if normalized in {"p", "div", "section", "article", "li", "h1", "h2", "h3", "h4", "h5", "h6"}:
+            self.body_parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        if self.hidden_depth:
+            return
+        if self.in_title:
+            self.title_parts.append(data)
+        else:
+            self.body_parts.append(data)
+
+    def visible_text(self) -> str:
+        title = _clean_text(" ".join(self.title_parts))
+        body = _clean_text("".join(self.body_parts))
+        return (f"Title: {title}\n\n" if title else "") + body
+
+
 def _read_html_file(path: Path, max_chars: int) -> tuple[str, bool, str]:
     text, truncated, method = _read_text_file(path, max_chars * 2)
     try:
@@ -116,11 +157,18 @@ def _read_html_file(path: Path, max_chars: int) -> tuple[str, bool, str]:
         limited, more = _limit_text(combined, max_chars)
         return limited, truncated or more, "html:bs4"
     except Exception:
-        text = re.sub(r"<script[\s\S]*?</script>", " ", text, flags=re.I)
-        text = re.sub(r"<style[\s\S]*?</style>", " ", text, flags=re.I)
-        text = re.sub(r"<[^>]+>", " ", text)
-        limited, more = _limit_text(text, max_chars)
-        return limited, truncated or more, method + ":html_regex"
+        try:
+            parser = _VisibleHtmlTextParser()
+            parser.feed(text)
+            parser.close()
+            limited, more = _limit_text(parser.visible_text(), max_chars)
+            return limited, truncated or more, "html:stdlib"
+        except Exception:
+            text = re.sub(r"<script[\s\S]*?</script>", " ", text, flags=re.I)
+            text = re.sub(r"<style[\s\S]*?</style>", " ", text, flags=re.I)
+            text = re.sub(r"<[^>]+>", " ", text)
+            limited, more = _limit_text(text, max_chars)
+            return limited, truncated or more, method + ":html_regex"
 
 
 def _read_pdf_file(path: Path, max_chars: int, max_pages: int = 10) -> tuple[str, bool, str, int | None]:

@@ -64,6 +64,14 @@ public static class UiaDraftWriter
         return Int32.TryParse(Convert.ToString(value), out parsed) ? parsed : fallback;
     }
 
+    private static long LongInteger(Dictionary<string, object> data, string key, long fallback)
+    {
+        object value;
+        if (!data.TryGetValue(key, out value) || value == null) return fallback;
+        long parsed;
+        return Int64.TryParse(Convert.ToString(value), out parsed) ? parsed : fallback;
+    }
+
     private static string Text(Dictionary<string, object> data, string key)
     {
         object value;
@@ -172,7 +180,9 @@ public static class UiaDraftWriter
         string text = Text(data, "text");
         string artifact = Text(data, "prompt_artifact");
         string processName = Text(data, "target_process_name");
-        int hwndValue = Integer(data, "target_hwnd", 0);
+        string expectedTitle = Text(data, "target_title");
+        string coordinateSpace = Text(data, "target_point_space");
+        long hwndValue = LongInteger(data, "target_hwnd", 0);
         int expectedProcessId = Integer(data, "target_process_id", 0);
         int[] point = Point(data);
         result.target_hwnd = hwndValue;
@@ -180,6 +190,8 @@ public static class UiaDraftWriter
         if (Boolean(data, "submit", true)) { result.error = "submit must be false"; return result; }
         if (String.IsNullOrWhiteSpace(text)) { result.error = "text is empty"; return result; }
         if (hwndValue <= 0 || point == null) { result.error = "target identity is incomplete"; return result; }
+        if (coordinateSpace != "physical_screen_pixels") { result.error = "target coordinate space is not physical screen pixels"; return result; }
+        if (String.IsNullOrWhiteSpace(expectedTitle)) { result.error = "target title is missing"; return result; }
         IntPtr hwnd = new IntPtr(hwndValue);
         if (!IsWindow(hwnd)) { result.error = "target window no longer exists"; return result; }
         uint actualProcessId;
@@ -189,6 +201,12 @@ public static class UiaDraftWriter
             result.error = "target process changed before draft delivery";
             return result;
         }
+        string actualTitle = WindowText(hwnd);
+        if (!String.Equals(actualTitle, expectedTitle, StringComparison.Ordinal))
+        {
+            result.error = "target window title changed before draft delivery";
+            return result;
+        }
         NativePoint nativePoint = new NativePoint { X = point[0], Y = point[1] };
         IntPtr pointedWindow = WindowFromPoint(nativePoint);
         if (pointedWindow == IntPtr.Zero || GetAncestor(pointedWindow, GA_ROOT) != hwnd)
@@ -196,7 +214,7 @@ public static class UiaDraftWriter
             result.error = "user-pointed input no longer belongs to the target window";
             return result;
         }
-        result.target_title = WindowText(hwnd);
+        result.target_title = actualTitle;
         ShowWindow(hwnd, SW_RESTORE);
         SetForegroundWindow(hwnd);
         Thread.Sleep(100);
@@ -246,7 +264,7 @@ public static class UiaDraftWriter
                 result.error = "terminal delivery requires a local prompt artifact";
                 return result;
             }
-            inserted = "请读取并执行本地验收任务文件：\"" + artifact + "\"。完整要求与证据均在该文件中；执行后逐项报告。";
+            inserted = "请读取并执行本地上下文任务文件：\"" + artifact + "\"。完整要求与证据均在该文件中；执行后逐项报告。";
             inserted = inserted.Replace("\r", " ").Replace("\n", " ");
             result.delivery_mode = "artifact_reference";
         }

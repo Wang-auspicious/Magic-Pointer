@@ -7,6 +7,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from app.actions.draft_delivery import make_prompt_delivery_proposal
+from app.context_pack.session import ContextSessionStore
+from scripts.action_bridge import _finish_runtime_context_after_success
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -112,6 +116,61 @@ def test_shopping_add_executes_without_second_confirmation_and_returns_undo(tmp_
     assert output["executionResult"]["output"]["item"]["text"] == "1 lb Spaghetti"
     assert output["actionProposals"][0]["action_type"] == "shopping_list_undo_add"
     assert (tmp_path / "dashboard" / "shopping_list.json").exists()
+
+
+def runtime_capture(object_id: str = "runtime-problem") -> dict[str, Any]:
+    return {
+        "object_id": object_id,
+        "point": [420, 260],
+        "bbox": [400, 240, 580, 330],
+        "raw_image_path": rf"D:\tmp\{object_id}.png",
+        "pointer_image_path": rf"D:\tmp\{object_id}.pointer.png",
+        "source_window": {"title": "Demo", "hwnd": 11, "process_id": 12},
+        "source_confidence": "point_hit",
+    }
+
+
+def runtime_delivery_proposal(context_session_id: str) -> Any:
+    return make_prompt_delivery_proposal(
+        "# Runtime UI issue",
+        target_window={"title": "Codex", "hwnd": 901, "process_id": 902},
+        target_point=[420, 860],
+        target_point_space="physical_screen_pixels",
+        context_session_id=context_session_id,
+        workflow_kind="runtime_issue",
+    )
+
+
+def test_successful_runtime_handoff_finishes_only_the_matching_session(tmp_path: Path) -> None:
+    store = ContextSessionStore(
+        root=tmp_path,
+        id_factory=iter(["context-runtime", "item-issue"]).__next__,
+    )
+    recorded = store.record_runtime_visual(runtime_capture(), "按钮位置不对")
+    action = runtime_delivery_proposal(recorded["session_id"])
+
+    finished = _finish_runtime_context_after_success(action, succeeded=True, store=store)
+
+    assert finished is True
+    assert store.active() is None
+
+
+def test_failed_or_mismatched_runtime_handoff_keeps_issue_active(tmp_path: Path) -> None:
+    ids = iter(["context-runtime", "item-issue"])
+    store = ContextSessionStore(root=tmp_path, id_factory=lambda: next(ids))
+    store.record_runtime_visual(runtime_capture(), "按钮位置不对")
+
+    assert _finish_runtime_context_after_success(
+        runtime_delivery_proposal("context-runtime"),
+        succeeded=False,
+        store=store,
+    ) is False
+    assert _finish_runtime_context_after_success(
+        runtime_delivery_proposal("context-other"),
+        succeeded=True,
+        store=store,
+    ) is False
+    assert store.active() is not None
 
 
 def main() -> None:

@@ -12,6 +12,7 @@ secrets/
 __pycache__/
 *.pyc
 .pytest_cache/
+.pytest-*/
 
 # Node/Electron dependencies
 node_modules/
@@ -37,3 +38,8 @@ external_zip/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Local browser profile / tool state / downloaded papers (not source)
+/Magic/
+/.playwright-cli/
+/2307.00583v1.pdf

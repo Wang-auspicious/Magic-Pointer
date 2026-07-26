@@ -1,0 +1,25 @@
+{
+  "hooks": {
+    "BeforeAgent": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "name": "magic-pointer-context",
+            "type": "command",
+            "command": "python",
+            "args": [
+              "D:/Desktop/Magic Pointer/scripts/agent_hook_bridge.py",
+              "--provider",
+              "gemini",
+              "--root",
+              "D:/Desktop/Magic Pointer/data/runtime"
+            ],
+            "timeout": 5000,
+            "description": "Inject a fresh frozen Magic Pointer object when the prompt refers to it."
+          }
+        ]
+      }
+    ]
+  }
+}

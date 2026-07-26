@@ -10,6 +10,20 @@ from app.system_context import list_visible_windows
 
 Rect = tuple[int, int, int, int]
 
+MAGIC_POINTER_INTERNAL_TITLES = {
+    "Magic Pointer",
+    "Magic Pointer Open",
+    "Magic Pointer Overlay",
+    "Magic Pointer Panel",
+    "Magic Pointer Reader",
+    "Magic Pointer Result",
+}
+
+
+def _is_magic_pointer_surface(title: object) -> bool:
+    value = str(title or "").strip()
+    return value in MAGIC_POINTER_INTERNAL_TITLES or value.startswith("Magic Pointer - ")
+
 
 @dataclass
 class WindowObject:
@@ -104,6 +118,8 @@ def build_screen_context(selection_bbox: Rect, image_path: Path) -> ScreenContex
     raw = list_visible_windows()
     intersecting: list[dict[str, object]] = []
     for item in raw:
+        if _is_magic_pointer_surface(item.get("title")):
+            continue
         bbox = item.get("bbox")
         if not (isinstance(bbox, tuple) and len(bbox) == 4):
             continue

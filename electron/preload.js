@@ -4,10 +4,12 @@ contextBridge.exposeInMainWorld('magicPointer', {
   hide: () => ipcRenderer.send('overlay:hide'),
   done: (payload) => ipcRenderer.send('overlay:done', payload),
   executeAction: (payload) => ipcRenderer.send('overlay:execute-action', payload),
+  startDictation: () => ipcRenderer.send('dictation:start', { surface: 'overlay' }),
   onShow: (callback) => ipcRenderer.on('overlay:show', (_event, payload) => callback(payload)),
   onHide: (callback) => ipcRenderer.on('overlay:hide', () => callback()),
   onCursor: (callback) => ipcRenderer.on('overlay:cursor', (_event, payload) => callback(payload)),
   onResult: (callback) => ipcRenderer.on('overlay:result', (_event, payload) => callback(payload)),
+  onDictationResult: (callback) => ipcRenderer.on('dictation:result', (_event, payload) => callback(payload)),
 });
 
 contextBridge.exposeInMainWorld('magicPointerPanel', {
@@ -16,9 +18,11 @@ contextBridge.exposeInMainWorld('magicPointerPanel', {
   submitSelectionCommand: (payload) => ipcRenderer.send('panel:submit-selection-command', payload),
   executeAction: (payload) => ipcRenderer.send('panel:execute-action', payload),
   showContextualResult: (payload) => ipcRenderer.send('panel:show-contextual-result', payload),
+  startDictation: () => ipcRenderer.send('dictation:start', { surface: 'panel' }),
   onShow: (callback) => ipcRenderer.on('panel:show', (_event, payload) => callback(payload)),
   onHide: (callback) => ipcRenderer.on('panel:hide', callback),
   onResult: (callback) => ipcRenderer.on('panel:result', (_event, payload) => callback(payload)),
+  onDictationResult: (callback) => ipcRenderer.on('dictation:result', (_event, payload) => callback(payload)),
 });
 
 contextBridge.exposeInMainWorld('magicPointerResult', {
@@ -43,6 +47,8 @@ contextBridge.exposeInMainWorld('magicPointerReader', {
 
 contextBridge.exposeInMainWorld('magicPointerDashboard', {
   hide: () => ipcRenderer.send('dashboard:hide'),
+  fabricRequest: (operation, payload = {}) => ipcRenderer.send('dashboard:fabric-request', { operation, ...payload }),
+  saveFabricSettings: (settings) => ipcRenderer.send('dashboard:fabric-request', { operation: 'settings.save', settings }),
   requestState: () => ipcRenderer.send('dashboard:request-state'),
   setChecked: (payload) => ipcRenderer.send('dashboard:set-checked', payload),
   undoAdd: (payload) => ipcRenderer.send('dashboard:undo-add', payload),
@@ -52,6 +58,7 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
   calendarUndoCreate: (payload) => ipcRenderer.send('dashboard:calendar-undo-create', payload),
   openRoute: (payload) => ipcRenderer.send('dashboard:route-open', payload),
   onShow: (callback) => ipcRenderer.on('dashboard:show', (_event, payload) => callback(payload)),
+  onFabricState: (callback) => ipcRenderer.on('dashboard:fabric-state', (_event, payload) => callback(payload)),
   onState: (callback) => ipcRenderer.on('dashboard:state', (_event, payload) => callback(payload)),
   onCalendarState: (callback) => ipcRenderer.on('dashboard:calendar-state', (_event, payload) => callback(payload)),
   onRouteResult: (callback) => ipcRenderer.on('dashboard:route-result', (_event, payload) => callback(payload)),

@@ -56,14 +56,13 @@ html, body {
   min-height: 44px;
   height: auto;
   padding: 7px 10px;
-  border-radius: 24px;
-  background: rgba(239, 246, 255, 0.88);
-  border: 2px solid rgba(37, 99, 235, 0.92);
+  border-radius: 15px;
+  background: rgba(18, 21, 27, 0.94);
+  border: 1px solid rgba(142, 163, 202, 0.48);
   box-shadow:
-    0 16px 42px rgba(37, 99, 235, 0.20),
-    0 0 0 6px rgba(96, 165, 250, 0.08),
-    inset 0 1px 0 rgba(255, 255, 255, 0.95);
-  backdrop-filter: blur(18px) saturate(1.35);
+    0 18px 46px rgba(0, 0, 0, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(20px) saturate(0.92);
   transform-origin: 24px 50%;
   animation: pillIn 170ms cubic-bezier(.2, .9, .2, 1.08) both;
   z-index: 2147483646;
@@ -77,7 +76,7 @@ html, body {
   border: 0;
   outline: 0;
   background: transparent;
-  color: #1d4ed8;
+  color: #eef1f6;
   font-size: 17px;
   line-height: 20px;
   min-height: 24px;
@@ -92,7 +91,7 @@ html, body {
 }
 
 .pill textarea::placeholder {
-  color: rgba(37, 99, 235, 0.50);
+  color: rgba(180, 190, 207, 0.56);
   font-weight: 560;
 }
 
@@ -102,35 +101,54 @@ html, body {
   height: 31px;
   flex: 0 0 31px;
   margin-top: 0;
-  border-radius: 999px;
-  background: rgba(37, 99, 235, 0.92);
-  color: white;
+  border-radius: 9px;
+  background: #7598d7;
+  color: #10141c;
   font-size: 18px;
   line-height: 1;
   font-weight: 760;
 }
 
-.equalizer {
+.context-mark {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
   width: 30px;
   height: 28px;
   flex: 0 0 30px;
   margin-top: 1px;
   justify-content: center;
-  opacity: 0.92;
+  border-radius: 8px;
+  color: #10141c;
+  background: #7598d7;
+  font: 800 18px/28px system-ui;
+  text-align: center;
 }
-
-.equalizer span {
-  width: 4px;
-  height: 15px;
-  border-radius: 999px;
-  background: #2563eb;
-  animation: bounce 820ms ease-in-out infinite;
+.pill .pill-dictation {
+  position: relative;
+  background: transparent;
+  color: #9ba7b8;
 }
-.equalizer span:nth-child(2) { animation-delay: 120ms; height: 23px; }
-.equalizer span:nth-child(3) { animation-delay: 240ms; height: 13px; }
+.pill .pill-dictation:hover { color: #d5ddeb; background: rgba(255, 255, 255, 0.06); }
+.pill-dictation span {
+  position: absolute;
+  left: 12px;
+  top: 7px;
+  width: 6px;
+  height: 10px;
+  border: 1.5px solid currentColor;
+  border-radius: 5px;
+}
+.pill-dictation span::after {
+  content: "";
+  position: absolute;
+  left: -4px;
+  top: 6px;
+  width: 12px;
+  height: 7px;
+  border: 1.5px solid currentColor;
+  border-top: 0;
+  border-radius: 0 0 8px 8px;
+}
 
 @keyframes pillIn {
   from { opacity: 0; transform: translateY(10px) scale(.94); filter: blur(3px); }

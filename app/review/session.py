@@ -50,9 +50,12 @@ def _safe_window(value: Any) -> JsonDict:
     if not isinstance(value, dict):
         return {}
     output: JsonDict = {}
-    for key in ("title", "hwnd", "process_id", "process_name", "class_name"):
+    for key in ("title", "hwnd", "process_name", "class_name"):
         if value.get(key) is not None:
-            output[key] = value[key] if key in {"hwnd", "process_id"} else str(value[key])[:1000]
+            output[key] = value[key] if key == "hwnd" else str(value[key])[:1000]
+    process_id = _optional_int(value.get("process_id") or value.get("pid"))
+    if process_id is not None:
+        output["process_id"] = process_id
     return output
 
 

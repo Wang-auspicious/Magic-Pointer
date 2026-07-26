@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "magic-pointer": {
+      "command": "python",
+      "args": ["MAGIC_POINTER_ROOT/scripts/magic_pointer_mcp.py"]
+    }
+  }
+}
+

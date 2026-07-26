@@ -27,7 +27,7 @@ def test_html_file_context_strips_script() -> None:
         path = Path(tmp) / "page.html"
         path.write_text("<html><head><title>Demo</title><script>evil()</script></head><body><h1>Hello</h1><p>World</p></body></html>", encoding="utf-8")
         ctx = read_local_file_context(str(path))
-        assert ctx.method == "html:bs4"
+        assert ctx.method in {"html:bs4", "html:stdlib"}
         assert "Demo" in (ctx.content or "")
         assert "Hello" in (ctx.content or "")
         assert "evil" not in (ctx.content or "")

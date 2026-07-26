@@ -3,6 +3,7 @@ const ctx = canvas.getContext('2d');
 const pill = document.getElementById('pill');
 const commandInput = document.getElementById('command');
 const runButton = document.getElementById('run');
+const dictationButton = document.getElementById('dictation');
 const hint = document.getElementById('hint');
 const result = document.getElementById('result');
 
@@ -24,6 +25,8 @@ let lastPulseFrame = 0;
 let observerMode = false;
 let hintTimer = null;
 let currentActionProposals = [];
+let currentWorkflow = 'generic';
+let autoDismissTimer = null;
 
 function resize() {
   dpr = window.devicePixelRatio || 1;
@@ -226,6 +229,9 @@ function showPill() {
   pill.style.top = `${y}px`;
   pill.classList.remove('hidden');
   commandInput.value = '';
+  commandInput.placeholder = currentWorkflow === 'runtime_issue'
+    ? '描述问题或期望，不需要找源码'
+    : '输入你希望如何处理这个对象';
   resizeCommandInput();
   commandInput.focus();
 }
@@ -250,7 +256,7 @@ function runSelectedCommand(action = 'command') {
   const seq = ++requestSeq;
   if (!selectionAnchor && lastPointer) selectionAnchor = { ...lastPointer };
   const command = commandInput.value.trim();
-  const payload = { ...selectedPayload, action, command };
+  const payload = { ...selectedPayload, action, command, workflow: currentWorkflow };
 
   // Critical: remove our own overlay before Python ImageGrab runs.
   hideVisualsForCapture();
@@ -260,7 +266,10 @@ function runSelectedCommand(action = 'command') {
     setTimeout(() => {
       if (seq === requestSeq) {
         restoreAfterCapture(seq);
-        showResult({ ok: null, status: 'Thinking...' });
+        showResult({
+          ok: null,
+          status: currentWorkflow === 'runtime_issue' ? '正在保存运行现场…' : 'Thinking...',
+        });
       }
     }, 1050);
   }, 260);
@@ -283,7 +292,13 @@ function showResult(payload) {
     result.innerHTML = `<div class="title thinking-title" data-drag-handle="true"><span class="spinner" aria-hidden="true"></span>Thinking</div><div class="content muted">${escapeHtml(payload.status || 'Processing...')}</div>`;
   } else if (payload.ok) {
     const answer = String(payload.answer || '').slice(0, 1600);
-    result.innerHTML = `<div class="title" data-drag-handle="true">${escapeHtml(payload.prompt || 'Result')}</div><div class="content">${renderSafeMarkdown(answer)}</div>${renderActionProposals(currentActionProposals)}`;
+    const runtimeReceipt = payload.intentKind === 'runtime_issue_recorded';
+    const title = runtimeReceipt ? '现场任务已准备' : (payload.prompt || 'Result');
+    result.innerHTML = `<div class="title" data-drag-handle="true">${escapeHtml(title)}</div><div class="content">${renderSafeMarkdown(answer)}</div>${renderActionProposals(currentActionProposals)}`;
+    if (runtimeReceipt && Number(payload.autoDismissMs) >= 500) {
+      if (autoDismissTimer) clearTimeout(autoDismissTimer);
+      autoDismissTimer = setTimeout(() => window.magicPointer?.hide(), Number(payload.autoDismissMs));
+    }
   } else {
     currentActionProposals = [];
     result.innerHTML = `<div class="title" data-drag-handle="true">Bridge error</div><div class="content muted">${escapeHtml(payload.error || 'Unknown error')}</div>`;
@@ -438,6 +453,8 @@ function resetOverlay() {
   captureMode = false;
   requestSeq += 1;
   submitting = false;
+  if (autoDismissTimer) clearTimeout(autoDismissTimer);
+  autoDismissTimer = null;
   if (fadeRaf) cancelAnimationFrame(fadeRaf);
   if (renderRaf) cancelAnimationFrame(renderRaf);
   fadeRaf = null;
@@ -526,6 +543,10 @@ window.addEventListener('keydown', (e) => {
 pill.addEventListener('pointerdown', (e) => e.stopPropagation());
 pill.addEventListener('click', (e) => e.stopPropagation());
 runButton.addEventListener('click', () => runSelectedCommand('command'));
+dictationButton.addEventListener('click', () => {
+  commandInput.focus();
+  window.magicPointer?.startDictation();
+});
 commandInput.addEventListener('input', resizeCommandInput);
 commandInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) {
@@ -583,8 +604,14 @@ result.addEventListener('pointercancel', stopResultDrag);
 window.magicPointer?.onShow((payload) => {
   resetOverlay();
   observerMode = payload?.observerMode === true;
+  currentWorkflow = String(payload?.workflow || 'generic');
   if (hintTimer) clearTimeout(hintTimer);
-  if (payload?.reason === 'startup') {
+  if (currentWorkflow === 'runtime_issue') {
+    hint.textContent = '圈出运行中的问题，然后说你期望什么';
+    hint.classList.remove('dim');
+    hintTimer = setTimeout(() => hint.classList.add('dim'), 1800);
+  } else if (payload?.reason === 'startup') {
+    hint.textContent = 'Magic Pointer 已就绪';
     hint.classList.remove('dim');
     hintTimer = setTimeout(() => hint.classList.add('dim'), 900);
   } else {
@@ -607,6 +634,15 @@ window.magicPointer?.onResult((payload) => {
   requestSeq += 1;
   submitting = false;
   showResult(payload);
+});
+window.magicPointer?.onDictationResult((payload = {}) => {
+  if (payload.surface !== 'overlay') return;
+  if (payload.ok === false) showResult({ ok: false, error: payload.error || '系统听写不可用' });
+  else if (typeof payload.transcript === 'string' && payload.transcript.trim()) {
+    commandInput.value = payload.transcript.trim();
+    resizeCommandInput();
+    if (payload.final === true) runSelectedCommand('command');
+  } else commandInput.focus();
 });
 
 resize();

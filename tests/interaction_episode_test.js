@@ -13,9 +13,13 @@ assert.strictEqual(episode.id, 'episode-1');
 const sourceA = store.bindPointedObject({
   snapshotId: 'snap-a', selectionSessionToken: 'session-a', app: 'browser',
   windowTitle: 'Research A', label: 'Paragraph A',
+  bbox: [10, 20, 300, 80],
+  source: { app: 'browser', url: 'https://example.com/a', page: 2 },
 }, 200);
 assert.strictEqual(sourceA.slots.this.objectId, 'selection:snap-a');
 assert.strictEqual(sourceA.slots.that, null);
+assert.deepStrictEqual(sourceA.slots.this.bbox, [10, 20, 300, 80]);
+assert.strictEqual(sourceA.slots.this.source.url, 'https://example.com/a');
 
 const sourceB = store.bindPointedObject({
   snapshotId: 'snap-b', selectionSessionToken: 'session-b', app: 'pdf',

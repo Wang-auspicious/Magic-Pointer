@@ -3,6 +3,8 @@ const fs = require('fs');
 const vm = require('vm');
 
 const source = fs.readFileSync('electron/renderer/overlay.js', 'utf8');
+const html = fs.readFileSync('electron/renderer/index.html', 'utf8');
+const css = fs.readFileSync('electron/renderer/styles.css', 'utf8');
 const proposalStart = source.indexOf('function renderActionProposals');
 const markdownStart = source.indexOf('function escapeHtml');
 const markdownEnd = source.indexOf('function resizeCommandInput');
@@ -64,3 +66,8 @@ assert(context.testResult.replace.includes('Confirm replace Word selection'));
 assert(context.testResult.replace.includes('&lt;old&gt;'));
 assert(context.testResult.undo.includes('Precise Magic Pointer restore'));
 assert(context.testResult.undo.includes('Confirm undo Word edit'));
+assert(html.includes('id="dictation"'));
+assert(html.includes('placeholder="描述问题或期望，不需要找源码"'));
+assert(source.includes("dictationButton.addEventListener('click'"));
+assert(source.includes('window.magicPointer?.startDictation()'));
+assert(css.includes('.pill-dictation'));

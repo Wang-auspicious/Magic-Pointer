@@ -1,7 +1,18 @@
 from __future__ import annotations
 
+import os
+from datetime import datetime, timezone
+from pathlib import Path
+
+from PIL import Image
+
 from app.adapters.base import AdapterCapability, AdapterReadContext
-from scripts.selection_snapshot_bridge import _suggested_commands, _summary_for, capture_snapshot
+from scripts.selection_snapshot_bridge import (
+    _prune_capture_dir,
+    _suggested_commands,
+    _summary_for,
+    capture_snapshot,
+)
 from scripts.selection_snapshot_bridge import _window_dicts
 
 
@@ -73,7 +84,11 @@ def test_snapshot_locks_only_the_foreground_window() -> None:
     assert registry.seen == [foreground]
     assert payload["captureSummary"]["label"] == "THIS · Word/WPS 选区"
     assert payload["captureSummary"]["canRewrite"] is True
-    assert [item["label"] for item in payload["suggestedCommands"]] == ["解释", "改写", "翻译"]
+    assert [item["label"] for item in payload["suggestedCommands"]] == [
+        "原位改写",
+        "翻译并写回",
+        "交给 Agent",
+    ]
 
 
 def test_unsupported_foreground_fails_closed_without_scanning_background() -> None:
@@ -85,6 +100,94 @@ def test_unsupported_foreground_fails_closed_without_scanning_background() -> No
     assert payload["selectionSnapshot"]["context"] is None
     assert payload["suggestedCommands"] == []
     assert registry.seen == [foreground]
+
+
+def test_unsupported_foreground_becomes_local_visual_object_at_pointer(tmp_path) -> None:
+    foreground = {
+        "title": "Design review - Acme",
+        "hwnd": 20,
+        "pid": 42,
+        "bbox": (100, 200, 1100, 900),
+    }
+    captured = []
+
+    def grabber(*, bbox, all_screens):
+        captured.append((bbox, all_screens))
+        return Image.new("RGB", (bbox[2] - bbox[0], bbox[3] - bbox[1]), "white")
+
+    payload = capture_snapshot(
+        [foreground],
+        registry=_FakeRegistry(supported=False),
+        target_point={"x": 600, "y": 500},
+        visual_capture=grabber,
+        capture_dir=tmp_path,
+    )
+
+    snapshot = payload["selectionSnapshot"]
+    summary = payload["captureSummary"]
+    assert snapshot["status"] == "ready"
+    assert snapshot["source_kind"] == "screen_region"
+    assert snapshot["selection_bbox"] == [280, 290, 920, 710]
+    assert Path(snapshot["capture_path"]).is_file()
+    assert summary["hasVisual"] is True
+    assert summary["hasContent"] is False
+    assert captured == [((280, 290, 920, 710), True)]
+    assert [item["label"] for item in payload["suggestedCommands"]] == [
+        "生成视觉提示",
+        "交给 Agent",
+        "识别并复制",
+    ]
+
+
+def test_sensitive_foreground_never_uses_visual_capture(tmp_path) -> None:
+    foreground = {
+        "title": "1Password - Private Vault",
+        "hwnd": 20,
+        "pid": 42,
+        "bbox": (100, 200, 1100, 900),
+    }
+    calls = []
+
+    def grabber(**kwargs):
+        calls.append(kwargs)
+        return Image.new("RGB", (10, 10), "white")
+
+    payload = capture_snapshot(
+        [foreground],
+        registry=_FakeRegistry(supported=False),
+        target_point={"x": 600, "y": 500},
+        visual_capture=grabber,
+        capture_dir=tmp_path,
+        sensitive_apps=["1password"],
+    )
+
+    assert payload["selectionSnapshot"]["status"] == "sensitive"
+    assert payload["selectionSnapshot"]["capture_path"] is None
+    assert payload["captureSummary"]["hasVisual"] is False
+    assert calls == []
+    assert payload["suggestedCommands"] == []
+
+
+def test_capture_retention_removes_only_expired_owned_pngs(tmp_path) -> None:
+    old_capture = tmp_path / "screen-old.png"
+    recent_capture = tmp_path / "screen-recent.png"
+    unrelated = tmp_path / "keep-me.png"
+    nested = tmp_path / "nested"
+    nested.mkdir()
+    nested_capture = nested / "screen-nested.png"
+    for path in (old_capture, recent_capture, unrelated, nested_capture):
+        path.write_bytes(b"test")
+    reference = datetime(2026, 7, 26, tzinfo=timezone.utc)
+    old_timestamp = reference.timestamp() - (4 * 86400)
+    os.utime(old_capture, (old_timestamp, old_timestamp))
+
+    removed = _prune_capture_dir(tmp_path, 3, now=reference)
+
+    assert removed == 1
+    assert not old_capture.exists()
+    assert recent_capture.exists()
+    assert unrelated.exists()
+    assert nested_capture.exists()
 
 
 def test_browser_selection_summary_stays_read_only() -> None:
@@ -108,9 +211,9 @@ def test_browser_selection_summary_stays_read_only() -> None:
     assert summary["label"] == "THIS \u00b7 \u6d4f\u89c8\u5668 \u9009\u533a"
     assert summary["canRewrite"] is False
     assert [item["label"] for item in _suggested_commands(summary)] == [
-        "\u89e3\u91ca",
-        "\u603b\u7ed3",
-        "\u7ffb\u8bd1",
+        "保存证据卡",
+        "交给 Agent",
+        "复制原文",
     ]
 
 
@@ -202,3 +305,63 @@ def test_probe_error_snapshot_does_not_claim_native_selection() -> None:
     assert payload["selectionSnapshot"]["status"] == "error"
     assert payload["selectionSnapshot"]["source_kind"] == "foreground_window"
     assert payload["suggestedCommands"] == []
+
+
+def test_active_review_turns_empty_foreground_into_delivery_target() -> None:
+    foreground = {"title": "Agent conversation", "hwnd": 88, "process_id": 99}
+    payload = capture_snapshot(
+        [foreground],
+        registry=_FakeRegistry(supported=False),
+        target_point={"x": 440, "y": 820},
+        active_review={"session_id": "review-1", "anchor_count": 3},
+    )
+
+    assert payload["selectionSnapshot"]["target_point"] == {"x": 440, "y": 820}
+    assert payload["selectionSnapshot"]["target_point_space"] == "physical_screen_pixels"
+    assert payload["captureSummary"]["hasActiveReview"] is True
+    assert payload["captureSummary"]["activeReviewAnchorCount"] == 3
+    assert payload["suggestedCommands"] == [{
+        "label": "填入 3 条验收意见",
+        "command": "把验收意见填到这里",
+        "autoRun": True,
+    }]
+
+
+def test_active_context_pack_takes_priority_as_agent_delivery_target() -> None:
+    foreground = {"title": "Codex", "hwnd": 188, "process_id": 199, "process_name": "Codex.exe"}
+    payload = capture_snapshot(
+        [foreground],
+        registry=_FakeRegistry(supported=False),
+        target_point={"x": 540, "y": 920},
+        active_context={"session_id": "context-1", "item_count": 4},
+        active_review={"session_id": "review-1", "anchor_count": 3},
+    )
+
+    assert payload["captureSummary"]["hasActiveContext"] is True
+    assert payload["selectionSnapshot"]["target_point_space"] == "physical_screen_pixels"
+    assert payload["captureSummary"]["activeContextItemCount"] == 4
+    assert payload["suggestedCommands"] == [{
+        "label": "发送 4 条上下文",
+        "command": "发送到这里",
+        "autoRun": True,
+    }]
+
+
+def test_runtime_issue_is_presented_as_one_agent_task_not_generic_context() -> None:
+    foreground = {"title": "Codex", "hwnd": 288, "process_id": 299, "process_name": "Codex.exe"}
+    payload = capture_snapshot(
+        [foreground],
+        registry=_FakeRegistry(supported=False),
+        active_context={
+            "session_id": "runtime-1",
+            "workflow_kind": "runtime_issue",
+            "item_count": 3,
+        },
+    )
+
+    assert payload["captureSummary"]["activeContextWorkflowKind"] == "runtime_issue"
+    assert payload["suggestedCommands"] == [{
+        "label": "填入现场任务（3 条证据）",
+        "command": "发送到这里",
+        "autoRun": True,
+    }]

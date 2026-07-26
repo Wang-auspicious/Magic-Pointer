@@ -49,6 +49,7 @@ def target_snapshot() -> dict[str, Any]:
         "status": "unsupported",
         "source_kind": "foreground_window",
         "target_point": {"x": 450, "y": 850},
+        "target_point_space": "physical_screen_pixels",
         "source_window": {
             "title": "Agent conversation",
             "hwnd": 909,
@@ -109,6 +110,7 @@ def test_bridge_records_multiple_pages_compiles_and_prepares_delivery(tmp_path: 
         "selectionSessionId": "selection-target",
         "selectionSnapshot": target_snapshot(),
         "targetPoint": {"x": 450, "y": 850},
+        "targetPointSpace": "physical_screen_pixels",
     }, tmp_path)
     assert code == 0
     assert delivery["intentKind"] == "review_draft_delivery"
@@ -129,6 +131,7 @@ def test_bridge_refuses_delivery_without_active_review(tmp_path: Path) -> None:
         "selectionSessionId": "selection-target",
         "selectionSnapshot": target_snapshot(),
         "targetPoint": {"x": 450, "y": 850},
+        "targetPointSpace": "physical_screen_pixels",
     }, tmp_path)
 
     assert code == 1

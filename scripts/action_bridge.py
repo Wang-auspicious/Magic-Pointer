@@ -12,6 +12,7 @@ if str(ROOT) not in sys.path:
 from app.actions import ActionProposal
 from app.actions.executor import SafeActionExecutor
 from app.actions.schema import ExecutionStatus
+from app.context_pack.session import ContextSessionError, ContextSessionStore
 
 
 def read_payload() -> dict[str, Any]:
@@ -26,6 +27,29 @@ def _followup_proposals(result_output: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
+def _finish_runtime_context_after_success(
+    proposal: ActionProposal,
+    *,
+    succeeded: bool,
+    store: ContextSessionStore | None = None,
+) -> bool:
+    if not succeeded or proposal.action_type != "paste_text_to_foreground":
+        return False
+    workflow_kind = str(
+        proposal.parameters.get("workflow_kind")
+        or proposal.metadata.get("workflow_kind")
+        or ""
+    )
+    session_id = str(proposal.parameters.get("context_session_id") or "")
+    if workflow_kind != "runtime_issue" or not session_id:
+        return False
+    try:
+        (store or ContextSessionStore()).finish(expected_session_id=session_id)
+        return True
+    except ContextSessionError:
+        return False
+
+
 def main() -> int:
     payload = read_payload()
     proposal_data = payload.get("proposal")
@@ -38,8 +62,18 @@ def main() -> int:
         print(json.dumps({"ok": False, "error": f"invalid proposal: {type(exc).__name__}: {exc}"}, ensure_ascii=False))
         return 2
     result = SafeActionExecutor().execute(proposal, confirmed=bool(payload.get("confirmed")))
-    ok = result.status == ExecutionStatus.SUCCEEDED
-    if ok:
+    completed = result.status == ExecutionStatus.SUCCEEDED
+    accepted = result.status == ExecutionStatus.PENDING
+    ok = completed or accepted
+    context_session_finished = _finish_runtime_context_after_success(proposal, succeeded=completed)
+    if accepted and proposal.action_type == "fabric_recipe_execute":
+        receipt = result.output.get("fabric_receipt") if isinstance(result.output, dict) else {}
+        task = (receipt or {}).get("output") if isinstance(receipt, dict) else {}
+        task = task if isinstance(task, dict) else {}
+        task_id = str(task.get("taskId") or "")
+        provider = str(task.get("provider") or (receipt or {}).get("provider") or "Agent")
+        answer = f"已交给 {provider}，任务 {task_id} 正在运行，尚未完成。"
+    elif completed:
         if proposal.action_type == "copy_text_to_clipboard":
             answer = "Copied to clipboard."
         elif proposal.action_type == "office_replace_selection":
@@ -58,6 +92,10 @@ def main() -> int:
             answer = "已撤销这次本地日历创建。"
         elif proposal.action_type == "paste_text_to_foreground":
             answer = "草稿已完整填入目标输入框，未发送；请检查后由你点击发送。"
+        elif proposal.action_type == "fabric_recipe_execute":
+            receipt = result.output.get("fabric_receipt") if isinstance(result.output, dict) else {}
+            recipe_id = str((receipt or {}).get("recipeId") or proposal.metadata.get("recipe_id") or "")
+            answer = f"Recipe 已完成并验证：{recipe_id}"
         else:
             answer = "Action completed."
     else:
@@ -68,6 +106,7 @@ def main() -> int:
         "prompt": "Action result",
         "answer": answer,
         "executionResult": output,
+        "contextSessionFinished": context_session_finished,
         "actionProposals": _followup_proposals(result.output) if ok else [],
     }, ensure_ascii=False))
     return 0 if ok else 1

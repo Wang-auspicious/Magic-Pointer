@@ -1,201 +1,130 @@
-# Magic Pointer Open MVP
+# Magic Pointer
 
-开源版全局 AI 指针助手。当前版本是 **MVP0 / v0.0.1**，目标不是一次性做完整桌面 AGI，而是先跑通最小闭环：
+Magic Pointer 是一个默认不可见的跨应用操作层。用户在任何应用里短促地左右晃动鼠标，
+系统冻结指针下的 `THIS`；随后只出现一个随语音转写或文字输入逐步生长的气泡，用户说一句包含
+`THIS / THAT / THESE / HERE` 的短命令即可。Magic Pointer 优先使用原生应用接口，缺少专用
+连接器时把完整对象现场交给用户已经安装的 Pi、Codex、Claude、Gemini 等 Agent。
+
+它不是聊天壳、截图问答器，也不要求开发者先替 Agent 找到几个源码文件。
+
+## 现在能做什么
+
+产品内有 30 个可组合 Recipe，覆盖以下高频工作：
+
+- 把网页/PDF 选区连同来源、页码、边框和文件哈希保存成证据卡；
+- Word/WPS 选区改写或翻译，预览差异后原位写回，并支持精确恢复；
+- 屏幕文字 OCR、清洗和可校验剪贴板复制；
+- 表格提取为 CSV、同结构多表合并、图表数据/公式交给专用能力或 Agent；
+- 图片对象编辑、跨图组合、风格迁移和“给无多模态模型的视觉上下文包”；
+- 海报/邮件转日历草稿并检查冲突，两地点对象生成真实地图路线；
+- 食谱缩放为结构化清单，错误现场转本地任务或外部 Agent 后台任务；
+- 多个文件、图片、表格或选区进行带来源的比较；
+- Pi/Claude/Gemini 通过原生 turn hooks 直接收到新鲜对象；Codex/Pi 通过会话协议接管任务；
+- MCP 只作为没有 hook/plugin/session API 时的通用兼容层；
+- Dashboard 管理晃动、Agent、Recipe、权限、隐私、审计与诊断。
+
+完整清单、竞品依据和验收标准见
+[`PRODUCT_BLUEPRINT_20260726.md`](PRODUCT_BLUEPRINT_20260726.md)，实际使用路径见
+[`docs/USER_WORKFLOWS.md`](docs/USER_WORKFLOWS.md)。
+
+## 交互
+
+主入口是鼠标晃动，不是快捷键。前台交互刻意只有一个气泡，不显示建议动作、麦克风键、
+关闭键、发送键或 Agent 列表：
 
 ```text
-Ctrl + Alt + M 全局唤起
-  -> 鼠标框选屏幕区域
-  -> 保存截图为对象
-  -> 输入短指令，例如“解释这个”
-  -> 调用多模态模型
-  -> 悬浮窗显示结果
-  -> 写入本地对象日志
+短促左右晃动 3 次
+  → 冻结指针下的 THIS
+  → 语音模式：小圆形声纹开始听写，转写每增加一段，气泡随文字横向长大
+  → 文字模式：显示最小输入气泡，打字时按内容横向长大
+  → 同一个气泡显示 Processing
+  → 预览高风险动作
+  → 执行、读取回执，必要时撤销
 ```
 
-## 当前功能
+检测器要求 250–600 ms 的水平往返、至少 3 次方向反转、足够回程比例，并在拖拽、
+滚动、窗口移动和禁用应用里拒绝触发。Dashboard 可以调整灵敏度、禁用应用，并将
+默认输入方式设为“语音”或“文字”；这个选择不再占用临时提示框。
 
-- 全局热键：`Ctrl + Alt + M`
-- 任意屏幕区域框选截图
-- 截图预览和指令输入
-- OpenAI 多模态模型调用
-- 无 API Key 时仍可测试截图、UI 和对象登记流程
-- 本地对象日志：`data/objects/objects.jsonl`
-- 本地截图：`data/captures/`
+语音默认走本机 OpenAI Whisper，不调用 Windows `Win+H`，因此不会弹出第二层系统听写
+界面，也不会上传录音。当前安装需要本地已有 Whisper 模型缓存；没有模型时会在同一个
+气泡内明确报错，不会静默联网下载。
 
-## 运行方式
+辅助入口：
 
-### 1. 直接运行
+- `Ctrl + Alt + M`：无障碍备用入口；
+- `Ctrl + Alt + D`：打开设置与诊断 Dashboard；
+- `Ctrl + Alt + Enter`：把已收集的运行现场填入当前 Agent 输入框，不自动发送；
+- `Ctrl + Alt + Shift + M`：旧原生文本选区兼容入口。
+
+## 安装与启动
+
+要求 Windows 10/11、Python 3.11+、Node.js 20+。macOS 原生宿主源码已经提供，但当前
+Windows 开发机无法完成实机签名与权限验证。
 
 ```powershell
-python -m app.main
+python -m pip install -r requirements.txt
+npm install
+npm run overlay
 ```
 
-或双击：
-
-```text
-run.bat
-```
-
-### 2. 配置 AI 模型
-
-PowerShell 示例：
+启动后应用安静驻留，晃动默认启用。若需要临时关闭：
 
 ```powershell
-$env:OPENAI_API_KEY="你的 OpenAI API Key"
-$env:MAGIC_POINTER_MODEL="gpt-4o-mini"
-python -m app.main
+$env:MAGIC_POINTER_ENABLE_MOUSE_SHAKE="0"
+npm run overlay
 ```
 
-如果不设置 `OPENAI_API_KEY`，程序会返回本地提示，不会真正调用模型。
+Dashboard 中会实时显示本机可用 Agent。当前连接层按 native-first 支持：
 
-## 使用方法
+- Codex `exec --json` 和 `app-server`；
+- Pi Extension hooks、JSONL RPC steer 和 JSON；
+- Claude Code `UserPromptSubmit` hook 与 `stream-json`；
+- Gemini CLI `BeforeAgent` hook、Extension 与 headless JSON；
+- Cursor CLI、OpenCode Server/CLI、Aider；
+- 只接受 argv 数组与 stdin 的通用连接器，不拼接 shell 命令。
 
-1. 启动程序。
-2. 按 `Ctrl + Alt + M`，或点击“开始框选”。
-3. 拖拽鼠标选择屏幕区域。
-4. 在弹窗中输入短指令，例如：
-   - 解释这个
-   - 总结这段
-   - 这个图表说明什么
-   - 这段代码哪里有问题
-5. 点击“发送给 AI”。
-6. 结果显示后可复制。
+详细接法见 [`docs/AGENT_INTEGRATION.md`](docs/AGENT_INTEGRATION.md)。
 
-## 隐私说明
+## 安全边界
 
-- MVP0 只会读取你主动框选的屏幕区域。
-- 截图默认保存在本机 `data/captures/`。
-- 设置 API Key 后，截图会被发送给配置的多模态模型服务。
-- 不要把 `data/captures/` 和 `data/objects/` 中的私人内容提交到公开仓库。
+- 读取、本地写入、外部发送、删除和付款是五个不同权限级别；
+- 写入/发送类动作默认要求确认，付款默认拒绝；
+- Operation Plan 使用本机 HMAC 签名，Renderer、hook、MCP 或 Agent 不能篡改 provider、
+  参数或对象后复用授权；
+- Agent handoff 使用 argv/stdin，`shell=false`，默认不提交外部消息；
+- 审计只保存 Recipe、provider、状态和校验元数据，prompt、正文和截图路径默认脱敏；
+- 专用能力缺失时显示 Agent fallback 或 `capability_unavailable`，不伪造成功；
+- 每个成功动作必须返回校验字段；可撤销动作还返回精确 undo receipt。
 
-## 当前架构
+## 跨平台状态
 
-```text
-app/main.py             Tkinter 桌面 UI、热键轮询、框选截图、结果窗
-app/ai_client.py        多模态模型调用；无 key 时 fallback
-app/object_store.py     对象日志，当前记录 screen_region 对象
-app/system_context.py   Windows 热键状态、DPI、前台窗口标题、虚拟屏幕尺寸
-```
+- Windows：Electron、UIA/Office/PDF、原生鼠标状态流、本地 Whisper 语音和动作执行主链；
+- macOS：共享 Electron/Fabric 层与
+  [`native/macos/MagicPointerHost.swift`](native/macos/MagicPointerHost.swift) 已实现；
+  仍需在 Intel/Apple Silicon 实机验证 Accessibility、Screen Recording、多屏坐标、
+  签名和公证；
+- Linux：Fabric、MCP 与 Agent 连接层可用；系统级 pointer host 尚未实现。
 
-## MVP0 的边界
-
-当前还不是完整 Magic Pointer：
-
-- 不能自动识别 DOM 元素。
-- 不能写回 Word、浏览器输入框或聊天窗口。
-- 不能稳定处理“这个/那个/这些/那里”的多对象指代。
-- 不能执行日历、地图、商品比较等动作卡片。
-- 不能做完整跨应用任务规划和执行校验。
-
-这些差距会记录在 `AGI_DISTANCE.md`，每一版迭代后更新。
-
-
-## ?? txt ????
-
-??????????????????????? `secrets/openai_key.txt`?`secrets/openai_base_url.txt`?`secrets/model.txt`?`secrets/` ?? `.gitignore` ????? 78code ?????base_url `https://www.78code.cc/v1`?model `gpt-5.4-mini`?
-
-## ??????? / ??????
-
-?????????????
-
-```text
-?? MagicPointer.vbs
-```
-
-??? `pythonw` ????????????????????????
-
-- `Ctrl + Alt + M`
-- ????????
-
-??????????????????? `MagicPointer.vbs` ????????????
-
-???????????????
-
-```text
-run_background_debug.bat
-```
-
-??????????????????
+## 开发验证
 
 ```powershell
-python -m app.main --background --no-shake
+npm test
+python -m pytest -q --basetemp .pytest-local
+python scripts/smoke_fabric.py
 ```
 
-????????? `stop_magic_pointer.bat`?
+主要架构入口：
 
-## MVP1-beta task context
+- [`app/fabric/engine.py`](app/fabric/engine.py)：规划、权限、签名和执行；
+- [`app/fabric/catalog.py`](app/fabric/catalog.py)：30 个 Recipe；
+- [`app/fabric/mcp.py`](app/fabric/mcp.py)：Agent 反向调用接口；
+- [`electron/wiggle_detector.js`](electron/wiggle_detector.js)：晃动意图检测；
+- [`electron/main.js`](electron/main.js)：Electron 生命周期、捕获和安全 IPC；
+- [`scripts/local_voice_bridge.py`](scripts/local_voice_bridge.py)：无系统浮层的本地语音转写；
+- [`electron/renderer/dashboard.html`](electron/renderer/dashboard.html)：控制台。
 
-The prompt window now uses a lightweight current-task context instead of showing historical thumbnails by default:
-
-- Full screenshot/object history is still saved locally as a log.
-- AI context is scoped to the current task/session, not global history.
-- `THIS` = the current selection.
-- `THAT` = the previous object in the current task.
-- `GROUP` = current task objects plus `THIS`, not all recent history.
-- After 30 minutes of inactivity, a new task starts automatically.
-- The previous task can be restored explicitly from the context bar.
-- The context drawer is hidden by default and can be expanded only when needed.
-
-Task state is stored locally at `data/objects/task_state.json`.
-
-## No-terminal launchers
-
-Use the `.vbs` launchers for normal use; terminal commands are only for development.
-
-- `MagicPointer.vbs`: start hidden in the background.
-- `MagicPointerPanel.vbs`: stop any existing Magic Pointer process, then open the visible control panel without a terminal.
-- `stop_magic_pointer.bat`: stop the background process.
-
-The visible panel has a `?????` button; after hiding, hotkey and mouse-shake triggers continue to work.
-
-## MVP1-gamma destination
-
-The current task context now supports a lightweight `DESTINATION` alias:
-
-- In the prompt window, click `?????` to mark the current selection as the destination.
-- Click `?????` to remove it from the current task.
-- The context bar shows `DEST=...` when a destination exists.
-- Prompts such as `????`, `????`, `target`, or `there` resolve to the explicit destination in the current task.
-- Destination is task-scoped; old task history is not used unless the user restores that task.
-
-Destination write-back is still limited. Word selected text is the first experimental typed write action with explicit confirmation, live selection verification, history, and undo.
-
-## MVP1-delta command bar
-
-After selecting a screen region, Magic Pointer now opens a compact command bar near the selection instead of a large AI chat window.
-
-Default flow:
-
-```text
-point/select -> small command bar -> short action card -> optional details
-```
-
-Quick actions:
-
-- `??`: explain the current selection.
-- `??`: compare THIS with THAT in the current task.
-- `?????`: mark the current selection as DESTINATION.
-- `?????`: clear DESTINATION.
-- `??`: run the typed short command.
-- `??`: open a larger detail view only when needed.
-- `????`: select another object in the same task.
-
-This moves the product away from a screenshot-chatbot UI and closer to a pointer-native interaction model.
-
-## MVP1-epsilon voice and suggestions
-
-The command bar now includes a low-friction voice entry path:
-
-- Click `??` to focus the command input and open Windows dictation (`Win + H`).
-- Speak a short command, then press Enter or click `??`.
-- No new microphone or speech-recognition dependency is required.
-- If Windows dictation is unavailable, typed commands and quick actions still work.
-
-The command bar also suggests a default command based on current task context:
-
-- No previous object: `????`.
-- Previous object exists: `????????`.
-- Destination exists: prepare content that can be placed there.
-
-A `???` quick action was added for destination-oriented tasks.
-
+逐帧交互依据见
+[`GOOGLE_DEMO_FRAME_ANALYSIS_20260726.md`](GOOGLE_DEMO_FRAME_ANALYSIS_20260726.md)，
+当前真实完成度与限制见
+[`IMPLEMENTATION_STATUS_20260726.md`](IMPLEMENTATION_STATUS_20260726.md)。

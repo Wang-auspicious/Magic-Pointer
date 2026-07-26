@@ -41,6 +41,15 @@ function renderSafeMarkdown(value) {
 function proposalPreview(proposal) {
   const preview = proposal?.preview || {};
   const parameters = proposal?.parameters || {};
+  if (proposal?.action_type === 'fabric_recipe_execute') {
+    const plan = parameters.plan || {};
+    return [
+      plan.preview?.description || proposal.rationale || '',
+      `执行器：${plan.provider || '本地确定性执行器'}`,
+      `风险：${plan.risk || 'read'} · ${plan.requiresConfirmation ? '需要确认' : '可直接执行'}`,
+      `校验：${plan.verification || '执行后读取回执'}`,
+    ].filter(Boolean).join('\n');
+  }
   if (preview.before || preview.after) return `${preview.before || ''}\n→\n${preview.after || ''}`.trim();
   if (preview.destination) return `目标：${preview.destination}`;
   if (preview.text) return preview.text;
@@ -53,9 +62,14 @@ function proposalPreview(proposal) {
 
 function proposalLabel(proposal) {
   if (proposal?.label) return proposal.label;
+  if (proposal?.action_type === 'fabric_recipe_execute') {
+    const plan = proposal?.parameters?.plan || {};
+    return plan.preview?.title || plan.recipeId || '执行 Magic Pointer Recipe';
+  }
   if (proposal?.action_type === 'office_replace_selection') return '替换当前选区';
   if (proposal?.action_type === 'office_undo_last_action') return '恢复上次修改';
   if (proposal?.action_type === 'copy_text_to_clipboard') return '复制路径';
+  if (proposal?.action_type === 'paste_text_to_foreground') return '填入输入框（不发送）';
   return String(proposal?.action_type || proposal?.type || '待确认操作').replaceAll('_', ' ');
 }
 

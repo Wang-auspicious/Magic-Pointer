@@ -17,9 +17,26 @@ from app.actions.calendar_draft import parse_calendar_draft, wants_calendar_draf
 from app.actions.route_draft import parse_route_draft, wants_route_draft
 from app.adapters import AdapterReadContext, default_adapter_registry, format_adapter_context
 from app.ai_client import ask_text_model
-from app.actions.draft_delivery import DraftDeliveryError, make_draft_delivery_proposal
+from app.actions.draft_delivery import (
+    DraftDeliveryError,
+    make_draft_delivery_proposal,
+    make_prompt_delivery_proposal,
+)
+from app.context_pack import (
+    ContextIntentKind,
+    ContextSessionConflict,
+    ContextSessionError,
+    ContextSessionStore,
+    compile_context_prompt,
+    detect_agent_profile,
+    parse_context_intent,
+    write_context_prompt_artifact,
+)
 from app.review import ReviewSessionError, ReviewSessionStore, compile_review_prompt, write_prompt_artifact
 from app.system_context import list_visible_windows
+from app.fabric.action import make_fabric_action_proposal
+from app.fabric.catalog import get_recipe
+from app.fabric.engine import FabricEngine
 
 MAGIC_WINDOW_MARKERS = ("Magic Pointer", "Electron Overlay")
 REVIEW_RECORD_PREFIXES = ("验收：", "验收:", "记录问题：", "记录问题:", "批注：", "批注:", "review:")
@@ -102,6 +119,13 @@ def _interaction_episode_context(payload: Any) -> str:
             f"{alias}: id={str(item.get('objectId'))!r}, app={str(item.get('app') or '')!r}, "
             f"window={str(item.get('windowTitle') or '')!r}, label={str(item.get('label') or '')!r}"
         )
+        source = item.get("source")
+        if isinstance(source, dict):
+            lines.append(
+                f"{alias}_source: path={str(source.get('path') or '')!r}, "
+                f"url={str(source.get('url') or '')!r}, page={source.get('page')!r}, "
+                f"bbox={item.get('bbox')!r}"
+            )
         content = str(item.get("content") or "").strip()
         if content:
             lines.append(f"{alias}_content:\n---\n{content[:12000]}\n---")
@@ -166,6 +190,199 @@ def _context_from_snapshot(
     return dict(target_window or {}), app_ctx, snapshot, None
 
 
+def _context_pack_response(
+    payload: dict[str, Any],
+    target_window: dict[str, Any] | None,
+    snapshot: dict[str, Any] | None,
+    *,
+    store: ContextSessionStore | None = None,
+    review_store: Any | None = None,
+    artifact_root: Path | str | None = None,
+) -> dict[str, Any] | None:
+    command = str(payload.get("command") or "").strip()
+    intent = parse_context_intent(command)
+    if intent is None:
+        return None
+    active_store = store or ContextSessionStore()
+    selection_session_id = str(payload.get("selectionSessionId") or "").strip() or None
+    selection_snapshot_id = str((snapshot or {}).get("snapshot_id") or "").strip() or None
+    intent_kind = {
+        ContextIntentKind.COLLECT: "context_item_recorded",
+        ContextIntentKind.COMPILE: "context_prompt_compiled",
+        ContextIntentKind.DELIVER: "context_prompt_delivery",
+        ContextIntentKind.CLEAR: "context_clear_confirmation",
+    }[intent.kind]
+
+    if intent.kind == ContextIntentKind.CLEAR:
+        active = active_store.active()
+        return {
+            "ok": False,
+            "prompt": command,
+            "error": (
+                f"清空会永久结束当前 {int((active or {}).get('item_count') or 0)} 条上下文会话；"
+                "需要在后续确认界面中明确确认，本命令没有删除任何内容。"
+            ),
+            "requiresConfirmation": True,
+            "actionProposals": [],
+            "intentKind": intent_kind,
+            "contextSession": active,
+            "selectionSessionId": selection_session_id,
+            "selectionSnapshotId": selection_snapshot_id,
+        }
+
+    try:
+        if intent.kind == ContextIntentKind.COLLECT:
+            if not intent.instruction:
+                return {
+                    "ok": False,
+                    "prompt": command,
+                    "error": "请在“收集：”后补充一句这个对象是什么、为什么重要或希望 Agent 如何使用它。",
+                    "actionProposals": [],
+                    "intentKind": intent_kind,
+                    "selectionSessionId": selection_session_id,
+                    "selectionSnapshotId": selection_snapshot_id,
+                }
+            recorded = active_store.record_native(snapshot, intent.instruction)
+            item = recorded["item"]
+            source = item.get("source") if isinstance(item.get("source"), dict) else {}
+            location = source.get("document_label") or (source.get("window") or {}).get("title") or "当前对象"
+            verb = "已收集" if recorded["recorded"] else "这条上下文已存在"
+            return {
+                "ok": True,
+                "prompt": command,
+                "answer": (
+                    f"{verb} · {recorded['item_count']} 条 · {location}\n"
+                    "继续选择并说“收集：…”，完成后说“生成提示词：最终任务”或在 Agent 输入框说“发送到这里：最终任务”。"
+                ),
+                "actionProposals": [],
+                "intentKind": intent_kind,
+                "contextSession": {
+                    "session_id": recorded["session_id"],
+                    "item_count": recorded["item_count"],
+                    "last_item": item,
+                },
+                "selectionSessionId": selection_session_id,
+                "selectionSnapshotId": selection_snapshot_id,
+            }
+
+        active = active_store.active()
+        if active is None or not active.get("items"):
+            if intent.kind == ContextIntentKind.DELIVER and command.casefold() == "填入这里":
+                return None
+            return {
+                "ok": False,
+                "prompt": command,
+                "error": "当前没有已收集的上下文。请先选中或指向对象，并说“收集：这个对象如何用于后续任务”。",
+                "actionProposals": [],
+                "intentKind": intent_kind,
+                "selectionSessionId": selection_session_id,
+                "selectionSnapshotId": selection_snapshot_id,
+            }
+
+        if intent.kind == ContextIntentKind.DELIVER and command.casefold() == "填入这里":
+            active_review = (review_store or ReviewSessionStore()).active()
+            if isinstance(active_review, dict) and (
+                active_review.get("anchors") or active_review.get("anchor_count")
+            ):
+                return {
+                    "ok": False,
+                    "prompt": command,
+                    "error": (
+                        "同时存在通用 Context Pack 和验收会话。请明确说“发送到这里”"
+                        "或“把验收意见填到这里”，本次没有写入任何输入框。"
+                    ),
+                    "actionProposals": [],
+                    "intentKind": intent_kind,
+                    "selectionSessionId": selection_session_id,
+                    "selectionSnapshotId": selection_snapshot_id,
+                }
+
+        target_profile = detect_agent_profile(target_window or {})
+        for attempt in range(3):
+            active = active_store.active()
+            if active is None or not active.get("items"):
+                raise ContextSessionError("there is no active context session")
+            task_instruction = intent.instruction or str(active.get("task_instruction") or "")
+            prompt = compile_context_prompt(
+                active,
+                task_instruction=task_instruction,
+                target_profile=target_profile,
+            )
+            artifact = write_context_prompt_artifact(active, prompt, root=artifact_root)
+            try:
+                updated = active_store.save_compilation(
+                    task_instruction=task_instruction,
+                    target_profile=str(target_profile["id"]),
+                    prompt=prompt,
+                    prompt_artifact=str(artifact),
+                    expected_session_id=str(active["session_id"]),
+                    expected_revision=int(active["store_revision"]),
+                    expected_items_digest=str(active["items_digest"]),
+                )
+                break
+            except ContextSessionConflict:
+                if attempt == 2:
+                    raise
+        context_summary = {
+            "session_id": updated["session_id"],
+            "item_count": updated["item_count"],
+            "task_instruction": updated.get("task_instruction") or "",
+            "target_profile": updated.get("target_profile") or "generic",
+        }
+
+        if intent.kind == ContextIntentKind.DELIVER:
+            proposal = make_prompt_delivery_proposal(
+                prompt,
+                target_window=target_window or {},
+                target_point=payload.get("targetPoint") or (snapshot or {}).get("target_point"),
+                target_point_space=(
+                    payload.get("targetPointSpace") or (snapshot or {}).get("target_point_space")
+                ),
+                context_session_id=str(active.get("session_id") or ""),
+                prompt_artifact=str(artifact),
+                target_profile=str(target_profile["id"]),
+                workflow_kind=str(active.get("workflow_kind") or "context_pack"),
+            )
+            return {
+                "ok": True,
+                "prompt": command,
+                "answer": (
+                    f"正在把 {updated['item_count']} 条上下文编译成 {target_profile['label']} prompt 并填入目标输入框；"
+                    "尚未发送。"
+                ),
+                "actionProposals": [proposal.to_dict()],
+                "autoExecuteProposalId": proposal.id,
+                "intentKind": intent_kind,
+                "contextSession": context_summary,
+                "promptArtifact": str(artifact),
+                "selectionSessionId": selection_session_id,
+                "selectionSnapshotId": selection_snapshot_id,
+            }
+
+        return {
+            "ok": True,
+            "prompt": command,
+            "answer": prompt,
+            "contextPrompt": prompt,
+            "actionProposals": [],
+            "intentKind": intent_kind,
+            "contextSession": context_summary,
+            "promptArtifact": str(artifact),
+            "selectionSessionId": selection_session_id,
+            "selectionSnapshotId": selection_snapshot_id,
+        }
+    except (ContextSessionError, DraftDeliveryError, ValueError) as exc:
+        return {
+            "ok": False,
+            "prompt": command,
+            "error": str(exc),
+            "actionProposals": [],
+            "intentKind": intent_kind,
+            "selectionSessionId": selection_session_id,
+            "selectionSnapshotId": selection_snapshot_id,
+        }
+
+
 def _review_response(
     payload: dict[str, Any],
     target_window: dict[str, Any] | None,
@@ -227,6 +444,9 @@ def _review_response(
                 prompt,
                 target_window=target_window or {},
                 target_point=payload.get("targetPoint") or (snapshot or {}).get("target_point"),
+                target_point_space=(
+                    payload.get("targetPointSpace") or (snapshot or {}).get("target_point_space")
+                ),
                 review_session_id=str(active.get("session_id") or ""),
                 prompt_artifact=str(artifact),
             )
@@ -393,6 +613,176 @@ def _route_response(payload: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+_FABRIC_SYSTEM_RECIPES = {
+    "activate.wiggle",
+    "ground.this",
+    "ground.references",
+    "voice.short_command",
+    "integration.mcp",
+    "governance.dashboard",
+}
+
+
+def _fabric_objects(
+    payload: dict[str, Any],
+    target_window: dict[str, Any] | None,
+    app_ctx: AdapterReadContext | None,
+    snapshot: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    objects: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def append(value: dict[str, Any]) -> None:
+        object_id = str(value.get("id") or "").strip()
+        if not object_id or object_id in seen:
+            return
+        seen.add(object_id)
+        objects.append(value)
+
+    snapshot_id = str((snapshot or {}).get("snapshot_id") or "").strip()
+    if app_ctx is not None and app_ctx.has_content:
+        artifacts = dict(app_ctx.artifacts or {})
+        rectangles = artifacts.get("rectangles") or artifacts.get("selection_rectangles") or []
+        append({
+            "id": snapshot_id or f"selection-{len(objects) + 1}",
+            "kind": str((snapshot or {}).get("source_kind") or "native_selection"),
+            "label": app_ctx.label or "THIS",
+            "content": app_ctx.content or "",
+            "bbox": rectangles[0] if isinstance(rectangles, list) and rectangles else None,
+            "source": {
+                "app": app_ctx.app,
+                "title": str((target_window or {}).get("title") or ""),
+                "hwnd": (target_window or {}).get("hwnd"),
+                "processId": (target_window or {}).get("process_id"),
+                "path": artifacts.get("document_path") or artifacts.get("path"),
+                "url": artifacts.get("url"),
+                "page": artifacts.get("page"),
+                "bbox": rectangles[0] if isinstance(rectangles, list) and rectangles else None,
+                "fileSha256": artifacts.get("file_sha256"),
+            },
+        })
+    elif snapshot_id:
+        append({
+            "id": snapshot_id,
+            "kind": str((snapshot or {}).get("source_kind") or "screen_region"),
+            "label": "THIS",
+            "content": "",
+            "bbox": (snapshot or {}).get("selection_bbox"),
+            "source": {
+                "app": str((target_window or {}).get("process_name") or ""),
+                "title": str((target_window or {}).get("title") or ""),
+                "hwnd": (target_window or {}).get("hwnd"),
+                "processId": (target_window or {}).get("process_id") or (target_window or {}).get("pid"),
+                "path": (snapshot or {}).get("capture_path"),
+                "screenshotPath": (snapshot or {}).get("capture_path"),
+            },
+        })
+
+    episode = payload.get("interactionEpisode")
+    slots = episode.get("slots") if isinstance(episode, dict) else None
+    if isinstance(slots, dict):
+        candidates: list[Any] = [slots.get("that"), slots.get("here")]
+        if isinstance(slots.get("these"), list):
+            candidates.extend(slots["these"])
+        for item in candidates:
+            if not isinstance(item, dict):
+                continue
+            object_id = str(item.get("objectId") or "").strip()
+            if not object_id:
+                continue
+            append({
+                "id": object_id,
+                "kind": str(item.get("kind") or "episode_object"),
+                "label": str(item.get("label") or "THAT"),
+                "content": str(item.get("content") or ""),
+                "bbox": item.get("bbox"),
+                "source": {
+                    **dict(item.get("source") or {}),
+                    "app": str(item.get("app") or ""),
+                    "title": str(item.get("windowTitle") or ""),
+                    "capturedAt": item.get("capturedAt"),
+                },
+            })
+    return objects
+
+
+def _fabric_response(
+    payload: dict[str, Any],
+    target_window: dict[str, Any] | None,
+    app_ctx: AdapterReadContext | None,
+    snapshot: dict[str, Any] | None,
+    *,
+    engine: FabricEngine | None = None,
+) -> dict[str, Any] | None:
+    command = str(payload.get("command") or "").strip()
+    if not command:
+        return None
+    if app_ctx and app_ctx.app == "word" and wants_word_rewrite(command):
+        return None
+    objects = _fabric_objects(payload, target_window, app_ctx, snapshot)
+    active_engine = engine or FabricEngine()
+    planned = active_engine.plan(
+        command,
+        objects=objects,
+        parameters={
+            "cwd": str(payload.get("workspaceRoot") or ROOT),
+            "attachments": [
+                str(value)
+                for value in (
+                    (snapshot or {}).get("capture_path"),
+                    (snapshot or {}).get("annotated_path"),
+                )
+                if value
+            ],
+        },
+    )
+    if planned.get("ok") is not True:
+        return None
+    plan = dict(planned["plan"])
+    recipe_id = str(plan.get("recipeId") or "")
+    if recipe_id in _FABRIC_SYSTEM_RECIPES:
+        return None
+    recipe = get_recipe(recipe_id)
+    provider = str(plan.get("provider") or "")
+    if provider.startswith("unavailable:"):
+        missing = provider.split(":", 1)[1]
+        return {
+            "ok": False,
+            "prompt": command,
+            "answer": f"{recipe.title_zh} 已进入统一 Recipe，但当前机器缺少真实 provider：{missing}。没有执行，也没有伪造结果。",
+            "error": missing,
+            "intentKind": "fabric_recipe_unavailable",
+            "recipe": recipe.to_public_dict(),
+            "plan": plan,
+            "actionProposals": [],
+            "selectionSessionId": str(payload.get("selectionSessionId") or "") or None,
+            "selectionSnapshotId": str((snapshot or {}).get("snapshot_id") or "") or None,
+        }
+    proposal = make_fabric_action_proposal(plan)
+    proposal_dict = proposal.to_dict()
+    auto_execute = (
+        plan.get("requiresConfirmation") is not True
+        and (
+            provider == "internal"
+            or provider.startswith("artifact.")
+            or provider.startswith("local.")
+        )
+    )
+    return {
+        "ok": True,
+        "prompt": command,
+        "answer": f"{recipe.title_zh}：已锁定 {len(objects)} 个对象，provider={provider}。"
+        + (" 将直接执行并验证。" if auto_execute else " 请核对动作后确认。"),
+        "intentKind": "fabric_recipe",
+        "recipe": recipe.to_public_dict(),
+        "plan": plan,
+        "actionProposals": [proposal_dict],
+        "autoExecuteProposalId": proposal.id if auto_execute else None,
+        "selectionSessionId": str(payload.get("selectionSessionId") or "") or None,
+        "selectionSnapshotId": str((snapshot or {}).get("snapshot_id") or "") or None,
+    }
+
+
 def main() -> int:
     payload = read_payload()
     command = str(payload.get("command") or "").strip()
@@ -438,6 +828,11 @@ def main() -> int:
         }, ensure_ascii=False))
         return 1
 
+    context_response = _context_pack_response(payload, target_window, snapshot)
+    if context_response is not None:
+        print(json.dumps(context_response, ensure_ascii=False))
+        return 0 if context_response.get("ok") is True else 1
+
     review_response = _review_response(payload, target_window, snapshot)
     if review_response is not None:
         print(json.dumps(review_response, ensure_ascii=False))
@@ -457,6 +852,11 @@ def main() -> int:
     if route_response is not None:
         print(json.dumps(route_response, ensure_ascii=False))
         return 0 if route_response.get("ok") is True else 1
+
+    fabric_response = _fabric_response(payload, target_window, app_ctx, snapshot)
+    if fabric_response is not None:
+        print(json.dumps(fabric_response, ensure_ascii=False))
+        return 0 if fabric_response.get("ok") is True else 1
 
     episode_context = _interaction_episode_context(payload.get("interactionEpisode"))
     context_text = _selection_context_text(app_ctx, target_window)

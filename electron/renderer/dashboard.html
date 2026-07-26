@@ -3,201 +3,227 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Magic Pointer</title>
+  <title>Magic Pointer Control Plane</title>
   <link rel="stylesheet" href="dashboard.css" />
 </head>
 <body>
   <div class="app-shell">
-    <aside class="sidebar" aria-label="Magic Pointer 导航">
+    <aside class="sidebar">
       <div class="brand">
-        <span class="brand-mark" aria-hidden="true">✦</span>
-        <span>Magic Pointer</span>
+        <span class="brand-glyph" aria-hidden="true"></span>
+        <span><b>MAGIC</b> POINTER</span>
       </div>
-      <nav>
-        <button class="nav-item is-active" type="button" data-view-target="shopping-list" aria-current="page">
-          <span class="nav-icon" aria-hidden="true">✓</span>
-          <span>购物清单</span>
-        </button>
-        <button class="nav-item" type="button" data-view-target="calendar">
-          <span class="nav-icon nav-icon-calendar" aria-hidden="true">▦</span>
-          <span>日历</span>
-        </button>
-        <button class="nav-item" type="button" data-view-target="route">
-          <span class="nav-icon nav-icon-route" aria-hidden="true">↗</span>
-          <span>路线</span>
-        </button>
+      <p class="nav-label">CONTROL PLANE</p>
+      <nav aria-label="Magic Pointer 设置">
+        <button class="nav-item is-active" type="button" data-view-target="activation"><span>01</span>唤醒</button>
+        <button class="nav-item" type="button" data-view-target="agents"><span>02</span>Agents</button>
+        <button class="nav-item" type="button" data-view-target="recipes"><span>03</span>Recipes</button>
+        <button class="nav-item" type="button" data-view-target="connections"><span>04</span>连接器</button>
+        <button class="nav-item" type="button" data-view-target="privacy"><span>05</span>隐私与权限</button>
+        <button class="nav-item" type="button" data-view-target="activity"><span>06</span>活动</button>
+        <button class="nav-item" type="button" data-view-target="diagnostics"><span>07</span>诊断</button>
       </nav>
+      <div class="legacy-nav" hidden>
+        <button data-view-target="shopping-list">购物清单</button>
+        <button data-view-target="calendar">日历</button>
+        <button data-view-target="route">路线</button>
+      </div>
       <div class="sidebar-foot">
-        <span class="status-dot" aria-hidden="true"></span>
-        <span>本地动作已连接</span>
+        <span id="runtime-dot" class="status-dot"></span>
+        <span id="runtime-label">LOCAL FABRIC</span>
       </div>
     </aside>
 
-    <main class="workspace" data-view="shopping-list">
+    <main class="workspace">
       <header class="topbar">
         <div>
-          <p class="eyebrow">ACTION SPACE</p>
-          <h1 id="view-title">购物清单</h1>
+          <p class="eyebrow">SYSTEM INPUT LAYER / V2</p>
+          <h1 id="view-title">唤醒与对象锁定</h1>
+          <p id="view-subtitle">默认不可见。晃动时先冻结对象，再显示动作轨。</p>
         </div>
-        <button id="dashboard-close" class="icon-button" type="button" aria-label="关闭 Dashboard" title="关闭">×</button>
+        <div class="topbar-actions">
+          <span id="save-state" class="save-state" role="status"></span>
+          <button id="settings-save" class="primary-button" type="button">保存设置</button>
+          <button id="dashboard-close" class="icon-button" type="button" aria-label="关闭 Dashboard">×</button>
+        </div>
       </header>
 
-      <section class="summary dashboard-view" data-shopping-view aria-label="清单概览">
-        <div class="summary-copy">
-          <p id="summary-label">准备好添加第一件商品</p>
-          <span>在任意应用选中文字，然后告诉 Magic Pointer“添加这个”。</span>
+      <section class="fabric-view" data-fabric-view="activation">
+        <div class="signal-strip">
+          <div><span class="pulse"></span><strong>WIGGLE FIRST</strong></div>
+          <span>250–600 ms · 方向反转 ≥ 3 · 拖拽/滚动/禁用应用拒绝</span>
         </div>
-        <div class="summary-count" aria-live="polite">
-          <strong id="remaining-count">0</strong>
-          <span>待完成</span>
+        <div class="two-column">
+          <article class="module">
+            <div class="module-head"><span>01.A</span><h2>主要入口</h2></div>
+            <label class="switch-row">
+              <span><b>晃动鼠标唤醒</b><small>Googlebook 式入口；触发后直接建立 SelectionSession</small></span>
+              <input id="wiggle-enabled" type="checkbox" checked />
+            </label>
+            <label class="range-row">
+              <span><b>灵敏度</b><small id="sensitivity-value">55%</small></span>
+              <input id="wiggle-sensitivity" type="range" min="0" max="100" value="55" />
+            </label>
+            <label class="select-row">
+              <span><b>默认输入方式</b><small>唤醒后只显示一个随命令内容增长的气泡</small></span>
+              <select id="default-input-mode">
+                <option value="voice">语音 · 自动听写</option>
+                <option value="text">文字 · 直接输入</option>
+              </select>
+            </label>
+            <label class="switch-row">
+              <span><b>备用快捷键</b><small>只用于无障碍和故障恢复，不是主体验</small></span>
+              <input id="fallback-hotkey-enabled" type="checkbox" checked />
+            </label>
+            <label class="field-row">
+              <span>备用快捷键</span>
+              <input id="fallback-hotkey" type="text" value="Control+Alt+M" />
+            </label>
+          </article>
+          <article class="module">
+            <div class="module-head"><span>01.B</span><h2>误触控制</h2></div>
+            <label class="field-block">
+              <span>禁用或提高阈值的应用</span>
+              <textarea id="disabled-apps" rows="7" spellcheck="false"></textarea>
+              <small>每行一个进程名或标题片段。绘图、游戏、剪辑工具默认禁用。</small>
+            </label>
+            <button id="wiggle-calibrate" class="secondary-button" type="button">开始 10 秒校准</button>
+            <p id="calibration-status" class="inline-status">校准只保留轨迹特征，不保存屏幕内容。</p>
+          </article>
         </div>
       </section>
 
-      <section id="calendar-view" class="dashboard-view" hidden>
-        <div class="calendar-summary">
-          <div>
-            <p class="calendar-summary-title">本地日历</p>
-            <span>事件保存在这台电脑；创建前始终由你确认。</span>
-          </div>
-          <div class="summary-count">
-            <strong id="upcoming-count">0</strong>
-            <span>未来事件</span>
-          </div>
+      <section class="fabric-view" data-fabric-view="agents" hidden>
+        <div class="section-lead">
+          <div><p class="eyebrow">DISCOVERED LOCALLY</p><h2>把现场直接交给现有 Agent</h2></div>
+          <button id="providers-refresh" class="secondary-button" type="button">重新检测</button>
         </div>
+        <div id="provider-list" class="provider-list" aria-live="polite"></div>
+        <article class="module preferred-agent-module">
+          <div class="module-head"><span>DEFAULT</span><h2>默认后台 Agent</h2></div>
+          <label class="select-row">
+            <span>未点名 Agent 时使用</span>
+            <select id="preferred-agent"></select>
+          </label>
+          <p class="inline-status">短命令里明确说 Codex、Pi、Claude 等名称时，以命令为准。</p>
+        </article>
+        <article class="module protocol-note">
+          <div class="module-head"><span>NATIVE FIRST</span><h2>连接优先级</h2></div>
+          <p>Pi Extension hooks / RPC steer · Claude UserPromptSubmit hook · Gemini BeforeAgent hook · Codex app-server · OpenCode plugin · 各 Agent 结构化 CLI。</p>
+          <p>ACP 用于可互换的会话客户端；MCP 只保留为工具兼容层，不再承担主链。</p>
+          <p>Magic Pointer 不模拟按回车发送。每次任务产生 task id、状态、日志和终态回执。</p>
+        </article>
+      </section>
 
-        <div class="calendar-layout">
-          <form id="calendar-event-form" class="calendar-card" novalidate>
-            <div class="calendar-card-head">
-              <div>
-                <p class="eyebrow">EVENT DRAFT</p>
-                <h2>核对事件</h2>
-              </div>
-              <span class="local-badge">LOCAL</span>
-            </div>
-            <div id="calendar-draft-source" class="draft-source">手动创建本地事件</div>
-            <label class="field field-wide">
-              <span>标题</span>
-              <input id="calendar-title" name="title" type="text" maxlength="160" autocomplete="off" required />
-            </label>
-            <div class="field-row">
-              <label class="field">
-                <span>日期</span>
-                <input id="calendar-date" name="date" type="date" required />
-              </label>
-              <label class="field">
-                <span>时区</span>
-                <input id="calendar-timezone" name="timezone" type="text" value="Asia/Shanghai" readonly />
-              </label>
-            </div>
-            <div class="field-row">
-              <label class="field">
-                <span>开始</span>
-                <input id="calendar-start" name="start" type="time" required />
-              </label>
-              <label class="field">
-                <span>结束</span>
-                <input id="calendar-end" name="end" type="time" required />
-              </label>
-            </div>
-            <label class="field field-wide">
-              <span>地点</span>
-              <input id="calendar-location" name="location" type="text" maxlength="240" autocomplete="off" />
-            </label>
-            <label class="field field-wide">
-              <span>备注</span>
-              <textarea id="calendar-notes" name="notes" maxlength="4000" rows="3"></textarea>
-            </label>
-            <div id="calendar-warning" class="calendar-warning" role="status" aria-live="polite" hidden></div>
-            <div id="calendar-conflicts" class="calendar-conflicts" hidden></div>
-            <div class="calendar-actions">
-              <span id="calendar-form-status">填写完整时间后可创建</span>
-              <button id="calendar-create" class="primary-button" type="submit" disabled>创建事件</button>
-            </div>
-          </form>
+      <section class="fabric-view" data-fabric-view="recipes" hidden>
+        <div class="section-lead">
+          <div><p class="eyebrow">OBJECT → PLAN → VERIFY</p><h2>30 个可组合动作</h2></div>
+          <label class="search-field"><span class="sr-only">筛选 Recipe</span><input id="recipe-filter" type="search" placeholder="筛选：OCR / 表格 / Agent / 日历…" /></label>
+        </div>
+        <div id="recipe-list" class="recipe-list" aria-live="polite"></div>
+      </section>
 
-          <section class="calendar-card agenda-card" aria-labelledby="agenda-title">
-            <div class="calendar-card-head">
-              <div>
-                <p class="eyebrow">UPCOMING</p>
-                <h2 id="agenda-title">近期日程</h2>
-              </div>
-              <button id="calendar-refresh" class="quiet-button" type="button">刷新</button>
-            </div>
-            <div id="calendar-events" class="calendar-events" aria-live="polite"></div>
-            <div id="calendar-empty" class="calendar-empty">
-              <span aria-hidden="true">▦</span>
-              <p>还没有本地事件</p>
-              <small>从活动海报或明确的日期时间文本创建一条。</small>
-            </div>
-          </section>
+      <section class="fabric-view" data-fabric-view="connections" hidden>
+        <div class="section-lead"><div><p class="eyebrow">DESTINATION ADAPTERS</p><h2>写入用户已经在用的工具</h2></div></div>
+        <div class="connection-grid">
+          <article class="connection"><span>HOOK</span><h3>Agent loop 原生注入</h3><p>Pi、Claude、Gemini 在 prompt/turn 生命周期直接接收新鲜 THIS，不等模型主动拉工具。</p><b class="state state-ready">PRIMARY</b></article>
+          <article class="connection"><span>SESSION</span><h3>会话与后台 loop</h3><p>Pi RPC steer、Codex app-server、结构化 CLI task id、日志、暂停和终态回执。</p><b class="state state-ready">READY</b></article>
+          <article class="connection"><span>LOCAL</span><h3>文件 / CSV / 证据卡</h3><p>确定性本地 artifact，带哈希、来源对象和撤销合同。</p><b class="state state-ready">READY</b></article>
+          <article class="connection"><span>WIN</span><h3>UIA / Office / PDF</h3><p>优先结构化对象、目标回读与原文哈希，不用盲点坐标。</p><b class="state state-ready">READY</b></article>
+          <article class="connection"><span>MCP</span><h3>通用兼容层</h3><p>只给没有 hook、plugin、RPC 或 ACP 的 Agent 提供 current_object 与安全 Recipe。</p><b class="state state-muted">FALLBACK</b></article>
+          <article class="connection"><span>EXT</span><h3>日历 / Figma / 图片模型</h3><p>未连接时返回 capability_unavailable，不显示虚假完成。</p><b class="state state-warn">CONNECT</b></article>
         </div>
       </section>
 
-      <section class="list-card dashboard-view" data-shopping-view aria-labelledby="list-title">
-        <div class="list-card-head">
-          <div>
-            <h2 id="list-title">我的清单</h2>
-            <p id="list-meta">所有更改都会在本机即时保存</p>
-          </div>
-          <button id="dashboard-refresh" class="quiet-button" type="button">刷新</button>
-        </div>
-
-        <div id="dashboard-notice" class="notice" role="status" aria-live="polite" hidden></div>
-        <div id="shopping-items" class="shopping-items" aria-live="polite"></div>
-        <div id="shopping-empty" class="empty-state">
-          <div class="empty-illustration" aria-hidden="true">
-            <span>✓</span>
-          </div>
-          <h3>清单还是空的</h3>
-          <p>选中“牛奶”“咖啡豆”或任何短文本，唤起 Magic Pointer 后说“添加这个”。</p>
-          <div class="shortcut-hint" aria-label="快捷键 Ctrl Alt M">
-            <kbd>Ctrl</kbd><span>+</span><kbd>Alt</kbd><span>+</span><kbd>M</kbd>
-          </div>
+      <section class="fabric-view" data-fabric-view="privacy" hidden>
+        <div class="two-column">
+          <article class="module">
+            <div class="module-head"><span>05.A</span><h2>数据边界</h2></div>
+            <label class="switch-row">
+              <span><b>允许上传截图</b><small>默认关闭；只有 Recipe 明确需要视觉模型时才使用</small></span>
+              <input id="upload-screenshots" type="checkbox" />
+            </label>
+            <label class="field-row"><span>本地捕获保留天数</span><input id="retain-captures-days" type="number" min="0" max="30" value="3" /></label>
+            <label class="field-row"><span>审计事件保留天数</span><input id="retain-audit-days" type="number" min="1" max="365" value="30" /></label>
+            <label class="field-block"><span>敏感应用</span><textarea id="sensitive-apps" rows="6" spellcheck="false"></textarea></label>
+          </article>
+          <article class="module">
+            <div class="module-head"><span>05.B</span><h2>默认权限</h2></div>
+            <label class="select-row"><span>读取</span><select id="permission-read"><option value="allow">允许</option><option value="confirm">确认</option><option value="deny">拒绝</option></select></label>
+            <label class="select-row"><span>本地写入</span><select id="permission-write"><option value="allow">允许</option><option value="confirm">确认</option><option value="deny">拒绝</option></select></label>
+            <label class="select-row"><span>发送到外部</span><select id="permission-send"><option value="allow">允许</option><option value="confirm">确认</option><option value="deny">拒绝</option></select></label>
+            <label class="select-row"><span>删除/破坏性动作</span><select id="permission-destructive"><option value="confirm">确认</option><option value="deny">拒绝</option></select></label>
+            <label class="select-row"><span>购买/付款</span><select id="permission-purchase"><option value="deny">拒绝</option><option value="confirm">确认</option></select></label>
+          </article>
         </div>
       </section>
 
-      <section id="route-view" class="dashboard-view" hidden>
-        <div class="route-shell">
-          <div class="route-card">
-            <div class="calendar-card-head">
-              <div>
-                <p class="eyebrow">ROUTE DRAFT</p>
-                <h2>核对路线</h2>
-              </div>
-              <span class="local-badge">MAPS URL</span>
-            </div>
-            <p class="route-explainer">Magic Pointer 只绑定起点和终点；距离、时长与道路详情将在 Google Maps 中计算。</p>
-            <label class="field field-wide route-point">
-              <span>起点</span>
-              <input id="route-origin" type="text" maxlength="240" autocomplete="off" />
-            </label>
-            <button id="route-swap" class="route-swap" type="button" aria-label="交换起点和终点">⇅</button>
-            <label class="field field-wide route-point">
-              <span>终点</span>
-              <input id="route-destination" type="text" maxlength="240" autocomplete="off" />
-            </label>
-            <fieldset class="travel-modes">
-              <legend>交通方式</legend>
-              <label><input type="radio" name="travel-mode" value="driving" checked /><span>驾车</span></label>
-              <label><input type="radio" name="travel-mode" value="transit" /><span>公交</span></label>
-              <label><input type="radio" name="travel-mode" value="walking" /><span>步行</span></label>
-              <label><input type="radio" name="travel-mode" value="bicycling" /><span>骑行</span></label>
-            </fieldset>
-            <div id="route-source" class="draft-source">需要两个已绑定地点</div>
-            <div id="route-notice" class="calendar-warning" role="status" aria-live="polite" hidden></div>
-            <button id="route-open" class="primary-button route-open" type="button" disabled>在 Google Maps 中查看路线</button>
-          </div>
-          <div class="route-preview" aria-hidden="true">
-            <div class="route-map-grid"></div>
-            <span class="route-pin route-pin-a">A</span>
-            <span class="route-path"></span>
-            <span class="route-pin route-pin-b">B</span>
-            <div class="route-preview-copy">
-              <strong>路线将在外部地图打开</strong>
-              <span>不会在本地伪造距离或预计时间</span>
-            </div>
-          </div>
+      <section class="fabric-view" data-fabric-view="activity" hidden>
+        <div class="section-lead">
+          <div><p class="eyebrow">LOCAL / CONTENT REDACTED</p><h2>最近活动与失败原因</h2></div>
+          <button id="activity-refresh" class="secondary-button" type="button">刷新</button>
         </div>
+        <div id="activity-list" class="activity-list" aria-live="polite"></div>
+      </section>
+
+      <section class="fabric-view" data-fabric-view="diagnostics" hidden>
+        <div class="metric-grid">
+          <article><span>PLATFORM</span><strong id="diag-platform">—</strong><small>当前宿主</small></article>
+          <article><span>RECIPES</span><strong id="diag-recipes">—</strong><small>统一动作合同</small></article>
+          <article><span>AGENTS</span><strong id="diag-agents">—</strong><small>本地已发现</small></article>
+          <article><span>WIGGLE</span><strong id="diag-wiggle">—</strong><small>主要入口</small></article>
+        </div>
+        <article class="module diagnostic-log">
+          <div class="module-head"><span>BOUNDARY</span><h2>验证边界</h2></div>
+          <ul>
+            <li>Windows：UIA/Office/PDF、晃动状态流、Agent CLI 可在本机验证。</li>
+            <li>macOS：共享 Recipe/hooks/Agent 层；原生 Accessibility 宿主必须在 Mac 上构建验证。</li>
+            <li>图像、Figma、外部日历未连接时只报告缺失 provider。</li>
+          </ul>
+        </article>
+      </section>
+
+      <section id="legacy-lab" class="fabric-view legacy-lab" data-fabric-view="shopping-list" data-view="shopping-list" hidden>
+        <h2>本地兼容动作</h2>
+        <p id="summary-label"></p><strong id="remaining-count">0</strong><span id="list-meta"></span>
+        <button id="dashboard-refresh" type="button">刷新</button>
+        <div id="dashboard-notice" hidden></div>
+        <div id="shopping-items"></div>
+        <div id="shopping-empty"></div>
+      </section>
+
+      <section id="calendar-view" class="fabric-view legacy-lab" data-fabric-view="calendar" hidden>
+        <form id="calendar-event-form">
+          <h2>核对日历事件</h2>
+          <p id="calendar-draft-source"></p>
+          <input id="calendar-title" required placeholder="标题" />
+          <input id="calendar-date" type="date" required />
+          <input id="calendar-start" type="time" required />
+          <input id="calendar-end" type="time" required />
+          <input id="calendar-timezone" value="Asia/Shanghai" readonly />
+          <input id="calendar-location" placeholder="地点" />
+          <textarea id="calendar-notes" placeholder="备注"></textarea>
+          <p id="calendar-form-status"></p>
+          <div id="calendar-warning" hidden></div>
+          <div id="calendar-conflicts" hidden></div>
+          <button id="calendar-create" type="submit">创建事件</button>
+        </form>
+        <button id="calendar-refresh" type="button">刷新</button>
+        <strong id="upcoming-count">0</strong>
+        <div id="calendar-events"></div>
+        <div id="calendar-empty"></div>
+      </section>
+
+      <section id="route-view" class="fabric-view legacy-lab" data-fabric-view="route" hidden>
+        <h2>核对路线</h2>
+        <input id="route-origin" placeholder="起点" />
+        <button id="route-swap" type="button">交换</button>
+        <input id="route-destination" placeholder="终点" />
+        <label><input type="radio" name="travel-mode" value="driving" checked />驾车</label>
+        <label><input type="radio" name="travel-mode" value="transit" />公交</label>
+        <label><input type="radio" name="travel-mode" value="walking" />步行</label>
+        <p id="route-source"></p><p id="route-notice" hidden></p>
+        <button id="route-open" type="button">在 Google Maps 查看</button>
       </section>
     </main>
   </div>

@@ -27,6 +27,7 @@ INTERNAL_DASHBOARD_ACTIONS = {
 SHOPPING_LIST_TARGET_URI = "magic-pointer://dashboard/shopping-list/default"
 CALENDAR_TARGET_URI = "magic-pointer://dashboard/calendar/local"
 CALENDAR_ACTIONS = {"calendar_event_create", "calendar_event_undo_create"}
+FABRIC_TARGET_PREFIX = "magic-pointer://fabric/recipe/"
 
 
 @dataclass(frozen=True)
@@ -88,6 +89,23 @@ class LocalPermissionPolicy:
             if action_type == "calendar_event_create":
                 return PermissionDecision(True, True, "calendar creation requires explicit review and confirmation", SafetyLevel.MEDIUM)
             return PermissionDecision(True, False, "receipt-bound local calendar undo", SafetyLevel.LOW)
+        if action_type == "fabric_recipe_execute":
+            target_uri = proposal.target.object_id if proposal.target is not None else None
+            trusted = (
+                isinstance(target_uri, str)
+                and target_uri.startswith(FABRIC_TARGET_PREFIX)
+                and proposal.metadata.get("trusted_local_intent") is True
+                and proposal.metadata.get("fabric_plan_signed") is True
+                and isinstance(proposal.parameters.get("plan"), dict)
+            )
+            if not trusted:
+                return PermissionDecision(False, True, "fabric action is not a signed local plan", SafetyLevel.DESTRUCTIVE)
+            return PermissionDecision(
+                True,
+                proposal.needs_confirmation(),
+                "signed Magic Pointer Recipe plan; executor verifies HMAC and provider capability",
+                proposal.safety_level,
+            )
         if action_type.startswith(READ_ONLY_PREFIXES) or proposal.safety_level == SafetyLevel.READ_ONLY:
             return PermissionDecision(True, False, "read-only adapter action", SafetyLevel.READ_ONLY)
         return PermissionDecision(True, proposal.needs_confirmation(), "default confirmation policy", proposal.safety_level)
