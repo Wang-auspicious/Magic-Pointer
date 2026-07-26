@@ -26,10 +26,46 @@
         <p id="transcript" class="capsule-transcript" aria-live="polite"></p>
         <span id="processing-shimmer" class="processing-shimmer" aria-hidden="true" hidden></span>
       </div>
+      <div id="stage-chips" class="stage-chips" role="group" aria-label="建议操作" hidden></div>
       <div id="stage-result" class="stage-result" hidden></div>
       <div id="stage-error" class="stage-error" role="alert" hidden></div>
+      <div id="delivery-progress" class="delivery-progress" hidden>
+        <span id="delivery-label" class="delivery-label"></span>
+        <span class="delivery-track" aria-hidden="true"><i id="delivery-bar" class="delivery-bar"></i></span>
+        <span id="delivery-count" class="delivery-count"></span>
+      </div>
     </main>
+
+    <!-- Structured result card skeletons (inert templates, cloned by stage.js). -->
+    <template id="tpl-calendar-draft">
+      <div class="result-card card-calendar">
+        <p class="card-title"></p>
+        <p class="card-row card-time"></p>
+        <p class="card-row card-location"></p>
+        <p class="card-row card-conflict" hidden></p>
+        <p class="card-status" data-status="draft"></p>
+      </div>
+    </template>
+    <template id="tpl-table-compare">
+      <div class="result-card card-table">
+        <p class="card-title card-sources"></p>
+        <p class="card-row compare-counts">
+          <span class="count-added"></span>
+          <span class="count-removed"></span>
+          <span class="count-changed"></span>
+        </p>
+        <table class="compare-table"><tbody></tbody></table>
+      </div>
+    </template>
+    <template id="tpl-text-draft">
+      <div class="result-card card-text">
+        <p class="card-title"></p>
+        <p class="card-diff"></p>
+      </div>
+    </template>
+
     <script src="../stage_state.js"></script>
+    <script src="../stage_chips_policy.js"></script>
     <script src="stage.js"></script>
   </body>
 </html>

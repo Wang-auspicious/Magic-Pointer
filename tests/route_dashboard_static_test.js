@@ -18,7 +18,10 @@ assert(js.includes('applyRouteDraft'));
 assert(js.includes("setActiveView('route')"));
 assert(js.includes('window.magicPointerDashboard.openRoute'));
 assert(preload.includes("ipcRenderer.send('dashboard:route-open'"));
-assert(main.includes("parsed?.intentKind === 'route_draft'"));
+// Route drafts render as a stage result; the dashboard opens on the result's
+// context action instead of a direct intentKind branch in the submit path.
+assert(main.includes("id === 'open-route-draft' && parsed.routeDraft"));
+assert(main.includes("showDashboard({ view: 'route', routeDraft"));
 assert(main.includes('buildGoogleMapsDirectionsUrl(payload)'));
 assert(main.includes("ipcMain.on('dashboard:route-open'"));
 assert(!js.includes('innerHTML'));

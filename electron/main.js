@@ -9,22 +9,18 @@ const { InteractionEpisodeStore, inferReferenceMode } = require('./interaction_e
 const { ActivationGate } = require('./activation_gate');
 const { WiggleDetector } = require('./wiggle_detector');
 const { ElectronSettingsStore, defaultSettings } = require('./settings_store');
-const { captureEligibility, classifyResult, normalizeResultPreference } = require('./result_surface_policy');
+const { captureEligibility } = require('./result_surface_policy');
+const { inferObjectKind, selectionSourceForReason, stageEventFromBridge } = require('./stage_contract');
 const { canAutoExecuteInternalProposal } = require('./internal_action_policy');
 const { physicalScreenPoint } = require('./coordinate_space');
 const { isSurfaceSender } = require('./ipc_surface_policy');
 const { buildGoogleMapsDirectionsUrl, isAllowedGoogleMapsDirectionsUrl } = require('./route_policy');
 const {
   chooseAnchorRect,
-  computeInlineRailWidth,
-  computePanelPlacement,
   normalizeNativeSelectionRectangles,
 } = require('./panel_position');
 
 let overlayWindow = null;
-let panelWindow = null;
-let resultWindow = null;
-let readerWindow = null;
 let dashboardWindow = null;
 let stageWindow = null;
 let mousePollTimer = null;
@@ -43,11 +39,6 @@ const LOG_PATH = path.join(RUNTIME_DIR, 'electron.log');
 const PID_PATH = path.join(RUNTIME_DIR, 'electron.pid');
 const ACTION_PROPOSAL_TTL_MS = 2 * 60 * 1000;
 const SELECTION_SESSION_TTL_MS = 2 * 60 * 1000;
-const PANEL_RAIL_HEIGHT = 72;
-const PANEL_RAIL_MIN_WIDTH = 72;
-const PANEL_RAIL_MAX_WIDTH = 560;
-const PANEL_MAX_HEIGHT = 380;
-const RESULT_SURFACE_MODE = normalizeResultPreference(process.env.MAGIC_POINTER_RESULT_MODE);
 const SHOW_STARTUP_OVERLAY = process.env.MAGIC_POINTER_SHOW_STARTUP === '1';
 const ALLOWED_ACTION_TYPES = new Set([
   'copy_text_to_clipboard',
@@ -69,13 +60,9 @@ const activationGate = new ActivationGate({ debounceMs: 600 });
 const activeSessionChildren = new Map();
 const dictationChildren = new Map();
 let activeSelectionSessionToken = null;
-let currentResultPayload = null;
-let currentResultSessionToken = null;
-let resultHasFocused = false;
-let resultShownAt = 0;
-let resultFarSince = 0;
-let readerPinned = false;
-let readerHasFocused = false;
+// Last bridge result delivered to the stage; context actions (open calendar /
+// route draft in the dashboard) resolve against it.
+let lastStageResult = null;
 let dashboardRequestSerial = 0;
 let dashboardOperationQueue = Promise.resolve();
 
@@ -377,104 +364,34 @@ function hideStage() {
   if (stageWindow && !stageWindow.isDestroyed() && stageWindow.isVisible()) stageWindow.hide();
 }
 
-function createPanelWindow() {
-  if (panelWindow) return panelWindow;
-  panelWindow = new BrowserWindow({
-    width: PANEL_RAIL_MIN_WIDTH,
-    height: PANEL_RAIL_HEIGHT,
-    frame: false,
-    transparent: true,
-    backgroundColor: '#00000000',
-    fullscreenable: false,
-    resizable: false,
-    movable: true,
-    skipTaskbar: true,
-    show: false,
-    alwaysOnTop: true,
-    hasShadow: false,
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
-  });
-  panelWindow.setAlwaysOnTop(true, 'screen-saver');
-  panelWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  panelWindow.loadFile(path.join(__dirname, 'renderer', 'panel.html'));
-  panelWindow.on('closed', () => { panelWindow = null; });
-  return panelWindow;
+// The stage window is click-through by default; the renderer asks for real
+// mouse capture only while an interactive surface (text capsule, result card,
+// chips) is on screen.
+function setStageMouseCapture(enabled) {
+  if (!stageWindow || stageWindow.isDestroyed()) return;
+  if (enabled) {
+    stageWindow.setIgnoreMouseEvents(false);
+    stageWindow.focus();
+  } else {
+    stageWindow.setIgnoreMouseEvents(true, { forward: true });
+  }
 }
 
-function createResultWindow() {
-  if (resultWindow && !resultWindow.isDestroyed()) return resultWindow;
-  resultWindow = new BrowserWindow({
-    width: 360,
-    height: 160,
-    frame: false,
-    transparent: true,
-    backgroundColor: '#00000000',
-    fullscreenable: false,
-    resizable: false,
-    movable: true,
-    skipTaskbar: true,
-    show: false,
-    alwaysOnTop: true,
-    hasShadow: false,
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
+// Render-safe delivery: the stage receives only the contract projection of a
+// bridge payload (no prompts, no raw parameters, no screenshots).
+function deliverStageBridgeResult(selectionSessionToken, parsed) {
+  lastStageResult = { token: selectionSessionToken || null, parsed: safeClone(parsed) };
+  updateStage({
+    selectionSessionToken: selectionSessionToken || null,
+    event: stageEventFromBridge(parsed),
   });
-  resultWindow.setAlwaysOnTop(true, 'floating');
-  resultWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  resultWindow.loadFile(path.join(__dirname, 'renderer', 'result.html'));
-  resultWindow.on('focus', () => { resultHasFocused = true; });
-  resultWindow.on('blur', () => {
-    setTimeout(() => {
-      if (resultHasFocused && resultWindow?.isVisible() && !readerWindow?.isVisible()) {
-        dismissTemporarySurfaces({ invalidateSession: true, hideObserver: true });
-      }
-    }, 0);
-  });
-  resultWindow.on('closed', () => { resultWindow = null; });
-  return resultWindow;
 }
 
-function createReaderWindow() {
-  if (readerWindow && !readerWindow.isDestroyed()) return readerWindow;
-  readerWindow = new BrowserWindow({
-    width: 420,
-    height: 520,
-    frame: false,
-    transparent: true,
-    backgroundColor: '#00000000',
-    fullscreenable: false,
-    resizable: true,
-    movable: true,
-    skipTaskbar: true,
-    show: false,
-    alwaysOnTop: true,
-    hasShadow: false,
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
+function deliverStageError(selectionSessionToken, message) {
+  updateStage({
+    selectionSessionToken: selectionSessionToken || null,
+    event: { type: 'ERROR', error: { message } },
   });
-  readerWindow.setAlwaysOnTop(true, 'floating');
-  readerWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-  readerWindow.loadFile(path.join(__dirname, 'renderer', 'reader.html'));
-  readerWindow.on('focus', () => { readerHasFocused = true; });
-  readerWindow.on('blur', () => {
-    setTimeout(() => {
-      if (readerHasFocused && !readerPinned && readerWindow?.isVisible()) {
-        dismissTemporarySurfaces({ invalidateSession: true, hideObserver: true });
-      }
-    }, 0);
-  });
-  readerWindow.on('closed', () => { readerWindow = null; });
-  return readerWindow;
 }
 
 function createDashboardWindow() {
@@ -529,36 +446,6 @@ function showDashboard(payload = {}, options = {}) {
   else reveal();
 }
 
-function showReader(payload = {}) {
-  const win = createReaderWindow();
-  const cursor = screen.getCursorScreenPoint();
-  const display = screen.getDisplayNearestPoint(cursor);
-  const workArea = display.workArea || display.bounds;
-  const width = Math.min(420, Math.max(320, workArea.width - 32));
-  const maxHeight = Math.max(240, Math.floor(workArea.height * 0.72));
-  const answerLength = String(payload?.answer || payload?.error || '').length;
-  const proposalCount = Array.isArray(payload?.actionProposals) ? payload.actionProposals.length : 0;
-  const estimatedHeight = 190 + Math.min(260, Math.ceil(answerLength / 48) * 22) + Math.min(160, proposalCount * 96);
-  const height = Math.min(maxHeight, Math.max(240, estimatedHeight));
-  const bounds = {
-    x: workArea.x + workArea.width - width - 16,
-    y: workArea.y + 16,
-    width,
-    height,
-  };
-  const reveal = () => {
-    if (!readerWindow || readerWindow.isDestroyed()) return;
-    readerWindow.setBounds(bounds);
-    readerPinned = false;
-    readerHasFocused = false;
-    readerWindow.showInactive();
-    readerWindow.webContents.send('reader:show', payload);
-    log(`showReader token=${payload?.selectionSessionToken || 'none'}`);
-  };
-  if (win.webContents.isLoadingMainFrame()) win.webContents.once('did-finish-load', reveal);
-  else reveal();
-}
-
 function panelGeometryForSession(entry) {
   const context = entry?.snapshot?.context || {};
   const artifacts = context.artifacts || {};
@@ -603,139 +490,33 @@ function displayForPanelGeometry(geometry) {
   return screen.getDisplayNearestPoint(cursor);
 }
 
-function positionPanelForSession(entry, size = {}) {
-  if (!panelWindow || panelWindow.isDestroyed()) return null;
+// Selection anchor projected into stage-window coordinates (the stage covers
+// the primary display; UIA rectangles arrive in physical pixels and are DIP-
+// normalized by panelGeometryForSession).
+function stageTargetForSession(entry) {
   const geometry = entry?.panelGeometry || panelGeometryForSession(entry);
-  const display = displayForPanelGeometry(geometry);
-  const workArea = display.workArea || display.bounds;
-  const current = panelWindow.getBounds();
-  const requestedHeight = Math.round(Number(size?.height) || PANEL_RAIL_HEIGHT);
-  const desiredHeight = Math.max(
-    PANEL_RAIL_HEIGHT,
-    Math.min(PANEL_MAX_HEIGHT, requestedHeight),
-  );
-  const maxWidth = desiredHeight === PANEL_RAIL_HEIGHT ? PANEL_RAIL_MAX_WIDTH : 420;
-  const desiredWidth = Math.max(
-    PANEL_RAIL_MIN_WIDTH,
-    Math.min(maxWidth, Math.round(Number(size?.width) || current.width || PANEL_RAIL_MIN_WIDTH)),
-  );
-  const placement = computePanelPlacement({
-    workArea,
-    panelSize: { width: desiredWidth, height: desiredHeight },
-    cursor: geometry.anchorCursor,
-    selectionRects: geometry.selectionRects,
-    preferredMode: entry?.panelPlacement?.mode || null,
-  });
-  panelWindow.setBounds(placement.bounds);
-  if (entry?.token) selectionSessions.setPanelPlacement(entry.token, placement);
-  log(
-    `panel positioned token=${entry?.token || 'none'} mode=${placement.mode}`
-    + ` rects=${geometry.selectionRects.length} overlap=${Math.round(placement.overlapArea)}`
-    + ` bounds=${placement.bounds.x},${placement.bounds.y},${placement.bounds.width},${placement.bounds.height}`,
-  );
-  return placement;
-}
-
-function resizePanel(payload = {}) {
-  if (!panelWindow || panelWindow.isDestroyed()) return;
-  const selectionSessionToken = payload?.selectionSessionToken;
-  const entry = selectionSessions.get(selectionSessionToken);
-  if (
-    !entry
-    || selectionSessionToken !== activeSelectionSessionToken
-    || payload?.layoutNonce !== entry.panelLayoutNonce
-  ) {
-    log(`panel resize ignored stale token=${selectionSessionToken || 'none'}`);
-    return;
+  const win = createStageWindow();
+  const bounds = win.getBounds();
+  const anchor = chooseAnchorRect(geometry.selectionRects || [], geometry.anchorCursor);
+  if (anchor) {
+    return {
+      x: Math.round(anchor.x - bounds.x),
+      y: Math.round(anchor.y - bounds.y),
+      width: Math.max(0, Math.round(anchor.width)),
+      height: Math.max(0, Math.round(anchor.height)),
+    };
   }
-  positionPanelForSession(entry, { width: payload?.width, height: payload?.height });
-}
-
-function positionResultForSession(entry, size = {}) {
-  if (!resultWindow || resultWindow.isDestroyed()) return null;
-  const geometry = entry?.panelGeometry || panelGeometryForSession(entry);
-  const display = displayForPanelGeometry(geometry);
-  const workArea = display.workArea || display.bounds;
-  const width = Math.max(280, Math.min(440, Math.round(Number(size.width) || 360)));
-  const height = Math.max(92, Math.min(360, Math.round(Number(size.height) || 160)));
-  const placement = computePanelPlacement({
-    workArea,
-    panelSize: { width, height },
-    cursor: geometry.anchorCursor,
-    selectionRects: geometry.selectionRects,
-  });
-  resultWindow.setBounds(placement.bounds);
-  log(`result positioned token=${entry?.token || 'none'} mode=${placement.mode} bounds=${placement.bounds.x},${placement.bounds.y},${width},${height}`);
-  return placement;
-}
-
-function hidePanelWindowOnly() {
-  if (!panelWindow || panelWindow.isDestroyed()) return;
-  stopDictation('panel');
-  panelWindow.webContents.send('panel:hide');
-  panelWindow.hide();
-}
-
-function showContextualResult(payload = {}) {
-  const selectionSessionToken = payload?.selectionSessionToken || null;
-  const entry = selectionSessions.get(selectionSessionToken);
-  if (!entry || selectionSessionToken !== activeSelectionSessionToken) {
-    log('showContextualResult rejected stale session');
-    return;
-  }
-  const resultMode = classifyResult(payload, RESULT_SURFACE_MODE);
-  const enriched = { ...payload, resultMode };
-  if (resultMode === 'reader') {
-    hidePanelWindowOnly();
-    showReader(enriched);
-    return;
-  }
-  currentResultPayload = safeClone(enriched);
-  currentResultSessionToken = selectionSessionToken;
-  resultHasFocused = false;
-  resultFarSince = 0;
-  readerPinned = false;
-  readerHasFocused = false;
-  hidePanelWindowOnly();
-  const win = createResultWindow();
-  const deliver = () => {
-    if (!resultWindow || resultWindow.isDestroyed()) return;
-    positionResultForSession(entry, { width: 360, height: 160 });
-    resultWindow.webContents.send('result:show', enriched);
+  const cursor = geometry.anchorCursor || screen.getCursorScreenPoint();
+  return {
+    x: Math.round(cursor.x - bounds.x - 8),
+    y: Math.round(cursor.y - bounds.y - 8),
+    width: 16,
+    height: 16,
   };
-  if (win.webContents.isLoadingMainFrame()) win.webContents.once('did-finish-load', deliver);
-  else deliver();
-}
-
-function showPanel(reason = 'manual', payload = {}, { focusInput = true, sessionEntry = null } = {}) {
-  const win = createPanelWindow();
-  const reveal = () => {
-    if (!panelWindow || panelWindow.isDestroyed()) return;
-    const currentEntry = sessionEntry?.token ? selectionSessions.get(sessionEntry.token) : null;
-    if (sessionEntry?.token && (!currentEntry || currentEntry.token !== activeSelectionSessionToken)) return;
-    positionPanelForSession(currentEntry || sessionEntry, {
-      width: payload.defaultInputMode === 'voice' ? PANEL_RAIL_MIN_WIDTH : 176,
-      height: PANEL_RAIL_HEIGHT,
-    });
-    if (focusInput) {
-      win.show();
-      win.focus();
-    } else {
-      win.showInactive();
-    }
-    win.webContents.send('panel:show', { reason, focusInput, ...payload });
-    log(`showPanel reason=${reason} focus=${focusInput}`);
-  };
-  if (win.webContents.isLoadingMainFrame()) win.webContents.once('did-finish-load', reveal);
-  else reveal();
 }
 
 function hasVisibleTemporarySurface() {
-  return Boolean(
-    (panelWindow && panelWindow.isVisible())
-    || (resultWindow && resultWindow.isVisible())
-    || (readerWindow && readerWindow.isVisible())
-  );
+  return Boolean(stageWindow && !stageWindow.isDestroyed() && stageWindow.isVisible());
 }
 
 function hasActiveSelectionCapture() {
@@ -745,34 +526,16 @@ function hasActiveSelectionCapture() {
 
 function dismissTemporarySurfaces({ invalidateSession = true, hideObserver = false } = {}) {
   const sessionToken = activeSelectionSessionToken;
-  if (readerWindow && !readerWindow.isDestroyed()) {
-    readerWindow.webContents.send('reader:hide');
-    readerWindow.hide();
-  }
-  if (resultWindow && !resultWindow.isDestroyed()) {
-    resultWindow.webContents.send('result:hide');
-    resultWindow.hide();
-  }
+  stopDictation('stage');
+  setStageMouseCapture(false);
   if (stageWindow && !stageWindow.isDestroyed() && stageWindow.isVisible()) {
-    // Ask the stage to play its dismiss fade; it answers with stage:hide.
+    // Ask the stage to play its dismiss fade; it answers with stage:hidden.
     stageWindow.webContents.send('stage:hide');
   }
-  hidePanelWindowOnly();
   if (invalidateSession) invalidateSelectionSession(sessionToken);
-  currentResultPayload = null;
-  currentResultSessionToken = null;
-  resultHasFocused = false;
-  resultShownAt = 0;
-  resultFarSince = 0;
-  readerPinned = false;
-  readerHasFocused = false;
+  lastStageResult = null;
   if (hideObserver) hideOverlay();
   log('dismissTemporarySurfaces');
-}
-
-function hidePanel({ hideObserver = false } = {}) {
-  dismissTemporarySurfaces({ invalidateSession: true, hideObserver });
-  log('hidePanel');
 }
 
 function stopDictation(surface) {
@@ -843,30 +606,6 @@ function showRuntimeIssueOverlay(reason = 'runtime-issue') {
   log(`showRuntimeIssueOverlay reason=${reason} cursor=${cursor.x},${cursor.y}`);
 }
 
-function distanceFromPointToRect(point, rect) {
-  const dx = Math.max(rect.x - point.x, 0, point.x - (rect.x + rect.width));
-  const dy = Math.max(rect.y - point.y, 0, point.y - (rect.y + rect.height));
-  return Math.hypot(dx, dy);
-}
-
-function maybeDismissResultForCursor(pos, now) {
-  if (!resultWindow?.isVisible() || now - resultShownAt < 500) return;
-  const entry = selectionSessions.get(currentResultSessionToken);
-  if (!entry) {
-    dismissTemporarySurfaces({ invalidateSession: true, hideObserver: true });
-    return;
-  }
-  const resultDistance = distanceFromPointToRect(pos, resultWindow.getBounds());
-  const selectionDistances = (entry.panelGeometry?.selectionRects || []).map((rect) => distanceFromPointToRect(pos, rect));
-  const nearest = Math.min(resultDistance, ...selectionDistances, Number.POSITIVE_INFINITY);
-  if (nearest <= 220) {
-    resultFarSince = 0;
-    return;
-  }
-  if (!resultFarSince) resultFarSince = now;
-  if (now - resultFarSince >= 450) dismissTemporarySurfaces({ invalidateSession: true, hideObserver: true });
-}
-
 function hideOverlay() {
   if (overlayHideTimer) clearTimeout(overlayHideTimer);
   overlayHideTimer = null;
@@ -882,9 +621,9 @@ function startMouseShakePolling() {
   mousePollTimer = setInterval(() => {
     const now = Date.now();
     const pos = screen.getCursorScreenPoint();
-    maybeDismissResultForCursor(pos, now);
     if (overlayWindow && overlayWindow.isVisible()) sendCursorToOverlay(pos);
-    if (panelWindow && panelWindow.isVisible()) return;
+    // An active stage session owns the pointer; no re-triggering underneath it.
+    if (hasVisibleTemporarySurface()) return;
     if (!overlayWindow || overlayWindow.isVisible()) return;
     const scrollDelta = pointerInputState.scrollDelta;
     pointerInputState.scrollDelta = 0;
@@ -905,17 +644,13 @@ function startMouseShakePolling() {
   log('wiggle polling started');
 }
 
-function panelPayloadForSession(entry) {
+function stageSessionPayload(entry) {
   return {
     selectionSessionToken: entry.token,
     selectionSnapshotId: entry.snapshot?.snapshot_id || null,
-    panelLayoutNonce: entry.panelLayoutNonce,
-    captureSummary: entry.summary,
-    suggestedCommands: entry.suggestedCommands,
     captureEligibility: entry.captureEligibility,
     defaultInputMode: fabricSettings.interaction.default_input_mode,
     voiceAutoSubmit: fabricSettings.interaction.voice_auto_submit,
-    voiceSilenceMs: fabricSettings.interaction.voice_silence_ms,
     sessionExpiresAt: entry.expiresAt,
   };
 }
@@ -963,23 +698,29 @@ function bindEpisodeForCommand(session, command) {
 
 function beginSelectionSession(reason = 'manual') {
   if (activeSelectionSessionToken) invalidateSelectionSession(activeSelectionSessionToken);
-  if (readerWindow && !readerWindow.isDestroyed()) readerWindow.hide();
-  readerPinned = false;
-  readerHasFocused = false;
+  lastStageResult = null;
 
   const cursor = screen.getCursorScreenPoint();
   const physicalCursor = physicalScreenPoint(screen, cursor);
   const display = screen.getDisplayNearestPoint(cursor);
   const entry = selectionSessions.create({ reason, cursor });
   activeSelectionSessionToken = entry.token;
-  createPanelWindow();
   showOverlay(`${reason}-capturing`, 0);
-  // Additive PointerStage wiring: the stage wakes alongside the legacy panel
-  // flow (a later task retires the panel from this hot path).
+  // The stage is the single ephemeral surface: it wakes in targeting mode at
+  // the cursor and freezes onto the captured selection once the snapshot lands.
+  const stageBounds = createStageWindow().getBounds();
   showStage({
     reason,
     selectionSessionToken: entry.token,
-    target: { x: cursor.x, y: cursor.y, width: 0, height: 0 },
+    selectionSource: selectionSourceForReason(reason),
+    defaultInputMode: fabricSettings.interaction.default_input_mode,
+    voiceAutoSubmit: fabricSettings.interaction.voice_auto_submit,
+    target: {
+      x: cursor.x - stageBounds.x - 8,
+      y: cursor.y - stageBounds.y - 8,
+      width: 16,
+      height: 16,
+    },
   });
   log(`selection session capture start reason=${reason} token=${entry.token}`);
 
@@ -1017,15 +758,22 @@ function beginSelectionSession(reason = 'manual') {
         });
         if (!laidOut) return;
         log(`selection session capture done token=${entry.token} status=${attached.snapshot?.status || 'missing'} app=${attached.summary?.app || 'none'}`);
-        const stageBbox = attached.snapshot?.selection_bbox || attached.snapshot?.selection_rect;
-        const stageTarget = Array.isArray(stageBbox) && stageBbox.length === 4
-          ? { x: Number(stageBbox[0]), y: Number(stageBbox[1]), width: Number(stageBbox[2]), height: Number(stageBbox[3]) }
-          : stageBbox && typeof stageBbox === 'object' ? stageBbox : null;
+        updateStage({
+          ...stageSessionPayload(laidOut),
+          selectionSource: selectionSourceForReason(current.reason),
+          objectKind: inferObjectKind(attached.snapshot),
+          event: { type: 'FREEZE', target: stageTargetForSession(laidOut) },
+        });
+        if (!attached.captureEligibility?.commandReady) {
+          // Honest failure: the capsule never opens over an unusable selection.
+          deliverStageError(entry.token, attached.captureEligibility?.message || '当前选区不可用，请重新选择。');
+          return;
+        }
+        const mode = fabricSettings.interaction.default_input_mode === 'text' ? 'text' : 'voice';
         updateStage({
           selectionSessionToken: entry.token,
-          event: { type: 'FREEZE', target: stageTarget },
+          event: { type: 'OPEN_CAPSULE', mode },
         });
-        showPanel(reason, panelPayloadForSession(laidOut), { focusInput: true, sessionEntry: laidOut });
       },
     },
   );
@@ -1124,9 +872,6 @@ app.on('will-quit', () => {
   }
   dictationChildren.clear();
   try { stageWindow?.close(); } catch (_) {}
-  try { panelWindow?.close(); } catch (_) {}
-  try { resultWindow?.close(); } catch (_) {}
-  try { readerWindow?.close(); } catch (_) {}
   try { dashboardWindow?.close(); } catch (_) {}
   log('app will quit');
 });
@@ -1134,29 +879,37 @@ app.on('will-quit', () => {
 ipcMain.on('overlay:hide', (event) => {
   if (isSurfaceSender(event, 'overlay', resultTargetWindow)) hideOverlay();
 });
-ipcMain.on('panel:hide', (event) => {
-  if (isSurfaceSender(event, 'panel', resultTargetWindow)) hidePanel({ hideObserver: true });
-});
-ipcMain.on('panel:resize', (event, payload) => {
-  if (isSurfaceSender(event, 'panel', resultTargetWindow)) resizePanel(payload);
-});
-ipcMain.on('panel:show-contextual-result', (event, payload) => {
-  if (isSurfaceSender(event, 'panel', resultTargetWindow)) showContextualResult(payload);
-});
 ipcMain.on('stage:show', (event) => {
   // Renderer re-asserts visibility once it has content to paint.
   if (!isSurfaceSender(event, 'stage', resultTargetWindow)) return;
   if (stageWindow && !stageWindow.isDestroyed() && !stageWindow.isVisible()) stageWindow.showInactive();
 });
-ipcMain.on('stage:update', (event, payload) => {
+ipcMain.on('stage:state', (event, payload) => {
   if (!isSurfaceSender(event, 'stage', resultTargetWindow)) return;
   log(`stage renderer state=${String(payload?.state || 'unknown')}`);
 });
-ipcMain.on('stage:hide', (event) => {
-  if (isSurfaceSender(event, 'stage', resultTargetWindow)) hideStage();
+ipcMain.on('stage:hidden', (event) => {
+  // Renderer finished its dismiss fade; the window can actually hide now.
+  if (!isSurfaceSender(event, 'stage', resultTargetWindow)) return;
+  setStageMouseCapture(false);
+  hideStage();
+});
+ipcMain.on('stage:dismiss', (event) => {
+  // User-initiated dismissal (Escape / outside click) tears the session down.
+  if (!isSurfaceSender(event, 'stage', resultTargetWindow)) return;
+  dismissTemporarySurfaces({ invalidateSession: true, hideObserver: true });
+});
+ipcMain.on('stage:set-mouse-capture', (event, payload) => {
+  if (!isSurfaceSender(event, 'stage', resultTargetWindow)) return;
+  setStageMouseCapture(payload?.enabled === true);
+});
+ipcMain.on('dictation:stop', (event, payload) => {
+  const surface = payload?.surface === 'overlay' ? 'overlay' : payload?.surface === 'stage' ? 'stage' : null;
+  if (!surface || !isSurfaceSender(event, surface, resultTargetWindow)) return;
+  stopDictation(surface);
 });
 ipcMain.on('dictation:start', (event, payload) => {
-  const surface = payload?.surface === 'overlay' ? 'overlay' : payload?.surface === 'panel' ? 'panel' : null;
+  const surface = payload?.surface === 'overlay' ? 'overlay' : payload?.surface === 'stage' ? 'stage' : null;
   if (!surface || !isSurfaceSender(event, surface, resultTargetWindow)) {
     log('dictation:start rejected untrusted sender or surface');
     return;
@@ -1264,37 +1017,10 @@ ipcMain.on('dictation:start', (event, payload) => {
     log(`local dictation closed surface=${surface} code=${code}`);
   });
 });
-ipcMain.on('result:ready', (event, payload) => {
-  if (!isSurfaceSender(event, 'result', resultTargetWindow)) return;
-  const selectionSessionToken = payload?.selectionSessionToken || null;
-  const entry = selectionSessions.get(selectionSessionToken);
-  if (!entry || selectionSessionToken !== currentResultSessionToken || selectionSessionToken !== activeSelectionSessionToken) return;
-  positionResultForSession(entry, payload);
-  resultWindow?.showInactive();
-  resultShownAt = Date.now();
-  hidePanelWindowOnly();
-  log(`result ready token=${selectionSessionToken}`);
-});
-ipcMain.on('result:hide', (event) => {
-  if (isSurfaceSender(event, 'result', resultTargetWindow)) {
-    dismissTemporarySurfaces({ invalidateSession: true, hideObserver: true });
-  }
-});
-ipcMain.on('result:expand', (event, payload) => {
-  if (!isSurfaceSender(event, 'result', resultTargetWindow)) return;
-  const selectionSessionToken = payload?.selectionSessionToken || null;
-  if (!selectionSessions.get(selectionSessionToken) || selectionSessionToken !== currentResultSessionToken) return;
-  if (resultWindow && !resultWindow.isDestroyed()) resultWindow.hide();
-  showReader({ ...currentResultPayload, ...payload, resultMode: 'reader' });
-  log(`result expanded token=${selectionSessionToken}`);
-});
-
 function resultTargetWindow(target) {
   if (target === 'dashboard' || target === 'calendar-dashboard' || target === 'fabric-dashboard') return dashboardWindow;
   if (target === 'stage') return stageWindow;
-  if (target === 'reader') return readerWindow;
-  if (target === 'result') return resultWindow;
-  return target === 'panel' ? panelWindow : overlayWindow;
+  return overlayWindow;
 }
 
 function safeSurfaceSend(surface, channel, payload) {
@@ -1305,18 +1031,17 @@ function safeSurfaceSend(surface, channel, payload) {
 }
 
 function sendBridgeResult(target, parsed) {
-  const win = resultTargetWindow(target);
+  if (target === 'stage') {
+    deliverStageBridgeResult(parsed?.selectionSessionToken || null, parsed);
+    return;
+  }
   const channel = target === 'calendar-dashboard'
     ? 'dashboard:calendar-state'
     : target === 'fabric-dashboard'
       ? 'dashboard:fabric-state'
     : target === 'dashboard'
       ? 'dashboard:state'
-    : target === 'reader'
-    ? 'reader:result'
-    : target === 'result'
-      ? 'result:result'
-      : target === 'panel' ? 'panel:result' : 'overlay:result';
+      : 'overlay:result';
   safeSurfaceSend(target, channel, parsed);
 }
 
@@ -1390,32 +1115,38 @@ ipcMain.on('overlay:done', (event, payload) => {
     capturePad: 54,
   };
   log(`overlay:done action=${enriched.action || 'capture'} points=${enriched.points?.length || 0} scale=${enriched.scaleFactor} bounds=${display.bounds.x},${display.bounds.y},${display.bounds.width},${display.bounds.height}`);
-  runPythonBridge(enriched);
+  // Runtime-issue capture results render on the stage (the overlay no longer
+  // hosts result surfaces).
+  createStageWindow();
+  runPythonBridge(enriched, 'scripts/electron_bridge.py', 'stage', {
+    onComplete: (parsed) => {
+      hideOverlay();
+      registerActionProposals(parsed, null, 'stage');
+      lastStageResult = { token: null, parsed: safeClone(parsed) };
+      showStage({
+        reason: 'runtime-issue',
+        selectionSessionToken: null,
+        event: stageEventFromBridge(parsed),
+      });
+    },
+  });
 });
 
 
 
 
-ipcMain.on('panel:submit-selection-command', (event, payload) => {
-  if (!isSurfaceSender(event, 'panel', resultTargetWindow)) return;
+ipcMain.on('stage:submit-selection-command', (event, payload) => {
+  if (!isSurfaceSender(event, 'stage', resultTargetWindow)) return;
   const selectionSessionToken = payload?.selectionSessionToken;
   const session = selectionSessions.get(selectionSessionToken);
   if (!session || !session.snapshot) {
-    log('panel:submit-selection-command rejected missing-or-expired session');
-    sendBridgeResult('panel', {
-      ok: false,
-      error: '当前 THIS 已过期，请重新激活 Magic Pointer。',
-      selectionSessionToken: selectionSessionToken || null,
-    });
+    log('stage:submit-selection-command rejected missing-or-expired session');
+    deliverStageError(selectionSessionToken || null, '当前 THIS 已过期，请重新激活 Magic Pointer。');
     return;
   }
   if (!session.captureEligibility?.commandReady) {
-    log('panel:submit-selection-command rejected ineligible capture');
-    sendBridgeResult('panel', {
-      ok: false,
-      error: session.captureEligibility?.message || '当前选区不可用，请重新选择。',
-      selectionSessionToken: selectionSessionToken || null,
-    });
+    log('stage:submit-selection-command rejected ineligible capture');
+    deliverStageError(selectionSessionToken || null, session.captureEligibility?.message || '当前选区不可用，请重新选择。');
     return;
   }
 
@@ -1425,41 +1156,32 @@ ipcMain.on('panel:submit-selection-command', (event, payload) => {
   const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
   const interactionEpisode = bindEpisodeForCommand(session, payload?.command);
   const enriched = {
-    ...payload,
+    command: payload?.command,
+    inputMode: payload?.inputMode || null,
     selectionSessionId: selectionSessionToken,
     selectionSnapshot: safeClone(session.snapshot),
     requestId,
     screenBounds: display.bounds,
     scaleFactor: display.scaleFactor || 1,
-    source: 'observer_selection_panel',
+    source: 'pointer_stage',
     interactionEpisode,
     targetPoint: safeClone(session.snapshot?.target_point || null),
     targetPointSpace: session.snapshot?.target_point_space || null,
   };
-  log(`panel:submit-selection-command token=${selectionSessionToken} request=${requestId} command_len=${String(enriched.command || '').length}`);
+  log(`stage:submit-selection-command token=${selectionSessionToken} request=${requestId} command_len=${String(enriched.command || '').length}`);
   let child = null;
-  child = runPythonBridge(enriched, 'scripts/selection_bridge.py', 'panel', {
+  child = runPythonBridge(enriched, 'scripts/selection_bridge.py', 'stage', {
     onComplete: (parsed) => {
       if (activeSessionChildren.get(selectionSessionToken) === child) activeSessionChildren.delete(selectionSessionToken);
       if (!selectionSessions.isCurrentRequest(selectionSessionToken, requestId)) {
-        log(`panel result ignored stale token=${selectionSessionToken} request=${requestId}`);
+        log(`stage result ignored stale token=${selectionSessionToken} request=${requestId}`);
         return;
       }
       selectionSessions.finishRequest(selectionSessionToken, requestId);
       parsed.selectionSessionToken = selectionSessionToken;
       parsed.selectionSnapshotId = session.snapshot?.snapshot_id || null;
       parsed.requestId = requestId;
-      registerActionProposals(parsed, selectionSessionToken, 'panel');
-      if (parsed?.intentKind === 'calendar_event_draft' && parsed?.calendarDraft) {
-        showDashboard({ view: 'calendar', calendarDraft: parsed.calendarDraft }, { activate: false });
-        sendBridgeResult('panel', parsed);
-        return;
-      }
-      if (parsed?.intentKind === 'route_draft' && parsed?.routeDraft) {
-        showDashboard({ view: 'route', routeDraft: parsed.routeDraft }, { activate: false });
-        sendBridgeResult('panel', parsed);
-        return;
-      }
+      registerActionProposals(parsed, selectionSessionToken, 'stage');
       const autoProposal = parsed.actionProposals?.find((proposal) => proposal.id === parsed.autoExecuteProposalId);
       if (canAutoExecuteInternalProposal(parsed, autoProposal)) {
         if (
@@ -1467,6 +1189,8 @@ ipcMain.on('panel:submit-selection-command', (event, payload) => {
           || parsed?.intentKind === 'context_prompt_delivery'
         ) {
           log(`trusted grounded prompt delivery kind=${parsed.intentKind} proposal=${autoProposal.id}`);
+          // Hide our surfaces so the delivery lands in the target app, then
+          // bring the stage back with the honest receipt.
           dismissTemporarySurfaces({ invalidateSession: false, hideObserver: true });
           setTimeout(() => {
             executeActionForTarget({
@@ -1474,60 +1198,73 @@ ipcMain.on('panel:submit-selection-command', (event, payload) => {
               proposalId: autoProposal.id,
               confirmed: false,
               selectionSessionToken,
-            }, 'panel', {
+            }, 'stage', {
               onComplete: (actionResult) => {
-                showContextualResult({
-                  ...actionResult,
+                lastStageResult = { token: selectionSessionToken, parsed: safeClone(actionResult) };
+                showStage({
+                  reason: 'delivery-result',
                   selectionSessionToken,
-                  intentKind: `${parsed.intentKind}_result`,
+                  event: stageEventFromBridge(actionResult),
                 });
               },
             });
           }, 80);
           return;
         }
+        // Stage stays in processing (shimmer) while the trusted internal
+        // action runs; the result event lands when it truly finishes.
         log(`trusted internal auto-execute type=${autoProposal.action_type} proposal=${autoProposal.id}`);
-        sendBridgeResult('panel', {
-          ok: null,
-          status: '正在加入购物清单…',
-          selectionSessionToken,
-          requestId,
-        });
         executeActionForTarget({
           actionToken: autoProposal.action_token,
           proposalId: autoProposal.id,
           confirmed: false,
           selectionSessionToken,
-        }, 'panel', {
+        }, 'stage', {
           onComplete: (actionResult) => {
             const output = actionResult?.executionResult?.output || {};
             const highlightItemId = output?.verified === true ? output?.item?.id : null;
             if (actionResult?.ok === true && highlightItemId) {
               showDashboard({ highlightItemId }, { activate: false });
             }
-            sendBridgeResult('panel', actionResult);
+            deliverStageBridgeResult(selectionSessionToken, actionResult);
           },
         });
         return;
       }
-      sendBridgeResult('panel', parsed);
+      deliverStageBridgeResult(selectionSessionToken, parsed);
     },
   });
   if (child) activeSessionChildren.set(selectionSessionToken, child);
 });
 
+// Context actions open the reviewed draft in the dashboard; they never write.
+ipcMain.on('stage:context-action', (event, payload) => {
+  if (!isSurfaceSender(event, 'stage', resultTargetWindow)) return;
+  const id = String(payload?.id || '');
+  const token = payload?.selectionSessionToken || null;
+  if (!lastStageResult || (lastStageResult.token || null) !== token) {
+    log('stage:context-action rejected stale result');
+    return;
+  }
+  const parsed = lastStageResult.parsed || {};
+  if (id === 'open-calendar-draft' && parsed.calendarDraft) {
+    showDashboard({ view: 'calendar', calendarDraft: safeClone(parsed.calendarDraft) }, { activate: true });
+  } else if (id === 'open-route-draft' && parsed.routeDraft) {
+    showDashboard({ view: 'route', routeDraft: safeClone(parsed.routeDraft) }, { activate: true });
+  } else {
+    log(`stage:context-action unknown id=${id}`);
+  }
+});
+
 function executeActionForTarget(payload, target, options = {}) {
   const token = payload?.actionToken || payload?.action_token;
   const selectionSessionToken = payload?.selectionSessionToken || null;
-  const isSelectionSurface = target === 'panel' || target === 'result' || target === 'reader';
-  if (isSelectionSurface && !selectionSessions.get(selectionSessionToken)) {
+  // Runtime-issue results carry no selection session (token null); a stale
+  // provided token is still rejected.
+  const isSelectionSurface = target === 'stage';
+  if (isSelectionSurface && selectionSessionToken && !selectionSessions.get(selectionSessionToken)) {
     log(`${target}:execute-action rejected expired selection session`);
-    sendBridgeResult(target, {
-      ok: false,
-      prompt: 'Action result',
-      error: '当前 THIS 已过期，请重新激活 Magic Pointer。',
-      selectionSessionToken,
-    });
+    deliverStageError(selectionSessionToken, '当前 THIS 已过期，请重新激活 Magic Pointer。');
     return;
   }
   const proposal = takePendingActionProposal(token, selectionSessionToken, target);
@@ -1549,7 +1286,7 @@ function executeActionForTarget(payload, target, options = {}) {
   log(`${target}:execute-action type=${proposal.action_type || 'unknown'} confirmed=${enriched.confirmed}`);
   runPythonBridge(enriched, 'scripts/action_bridge.py', target, {
     onComplete: (parsed) => {
-      if (isSelectionSurface && !selectionSessions.get(selectionSessionToken)) {
+      if (isSelectionSurface && selectionSessionToken && !selectionSessions.get(selectionSessionToken)) {
         log(`${target}:action result ignored expired selection session`);
         return;
       }
@@ -1561,39 +1298,8 @@ function executeActionForTarget(payload, target, options = {}) {
   });
 }
 
-ipcMain.on('overlay:execute-action', (event, payload) => {
-  if (isSurfaceSender(event, 'overlay', resultTargetWindow)) executeActionForTarget(payload, 'overlay');
-});
-ipcMain.on('panel:execute-action', (event, payload) => {
-  if (isSurfaceSender(event, 'panel', resultTargetWindow)) executeActionForTarget(payload, 'panel');
-});
-ipcMain.on('result:execute-action', (event, payload) => {
-  if (isSurfaceSender(event, 'result', resultTargetWindow)) executeActionForTarget(payload, 'result');
-});
-ipcMain.on('reader:execute-action', (event, payload) => {
-  if (isSurfaceSender(event, 'reader', resultTargetWindow)) executeActionForTarget(payload, 'reader');
-});
-ipcMain.on('reader:hide', (event) => {
-  if (isSurfaceSender(event, 'reader', resultTargetWindow)) {
-    dismissTemporarySurfaces({ invalidateSession: true, hideObserver: true });
-  }
-});
-ipcMain.on('reader:set-pinned', (event, payload) => {
-  if (!isSurfaceSender(event, 'reader', resultTargetWindow)) return;
-  readerPinned = payload?.pinned === true;
-  log(`reader pinned=${readerPinned}`);
-});
-ipcMain.on('reader:resize', (event, payload) => {
-  if (!isSurfaceSender(event, 'reader', resultTargetWindow)) return;
-  const selectionSessionToken = payload?.selectionSessionToken || null;
-  if (!readerWindow || readerWindow.isDestroyed() || !selectionSessions.get(selectionSessionToken)) return;
-  const cursor = screen.getCursorScreenPoint();
-  const display = screen.getDisplayNearestPoint(cursor);
-  const workArea = display.workArea || display.bounds;
-  const current = readerWindow.getBounds();
-  const maxHeight = Math.max(240, Math.floor(workArea.height * 0.72));
-  const height = Math.min(maxHeight, Math.max(240, Math.ceil(Number(payload?.height) || current.height)));
-  readerWindow.setBounds({ ...current, y: Math.max(workArea.y + 16, Math.min(current.y, workArea.y + workArea.height - height - 16)), height });
+ipcMain.on('stage:execute-action', (event, payload) => {
+  if (isSurfaceSender(event, 'stage', resultTargetWindow)) executeActionForTarget(payload, 'stage');
 });
 
 function isDashboardSender(event) {

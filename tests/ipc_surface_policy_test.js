@@ -17,9 +17,11 @@ assert.strictEqual(isSurfaceSender(null, 'overlay', resolveWindow), false);
 const main = fs.readFileSync('electron/main.js', 'utf8');
 assert(main.includes("const { isSurfaceSender } = require('./ipc_surface_policy');"));
 assert(main.includes("isSurfaceSender(event, 'overlay', resultTargetWindow)"));
-assert(main.includes("isSurfaceSender(event, 'panel', resultTargetWindow)"));
-assert(main.includes("isSurfaceSender(event, 'result', resultTargetWindow)"));
-assert(main.includes("isSurfaceSender(event, 'reader', resultTargetWindow)"));
+assert(main.includes("isSurfaceSender(event, 'stage', resultTargetWindow)"));
+// Legacy panel/result/reader surfaces are retired from the main process.
+assert(!main.includes("isSurfaceSender(event, 'panel', resultTargetWindow)"));
+assert(!main.includes("isSurfaceSender(event, 'result', resultTargetWindow)"));
+assert(!main.includes("isSurfaceSender(event, 'reader', resultTargetWindow)"));
 assert(main.includes('webContentsId'));
 assert(main.includes('entry.surface !== surface'));
 

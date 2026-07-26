@@ -253,6 +253,199 @@ body {
   }
 }
 
+/* --- Suggestion chips: <=3, click-select flow only, gone on first input ----- */
+.stage-chips {
+  position: absolute;
+  display: flex;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+.stage-chip {
+  appearance: none;
+  border: 1px solid rgba(233, 238, 244, 0.14);
+  border-radius: 16px;
+  background: var(--stage-graphite);
+  color: var(--stage-cold-white);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1;
+  padding: 7px 12px;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  animation: stage-fade-in 160ms ease-out;
+}
+
+.stage-chip:hover,
+.stage-chip:focus-visible {
+  border-color: var(--stage-electric-blue);
+  color: var(--stage-electric-blue);
+  outline: none;
+}
+
+/* --- Structured result cards (calendar draft / table compare / text draft) -- */
+.result-card {
+  display: grid;
+  gap: 6px;
+  animation: stage-card-expand 220ms cubic-bezier(0.22, 1, 0.36, 1);
+  transform-origin: top left;
+}
+
+@keyframes stage-card-expand {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.card-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--stage-cold-white);
+}
+
+.card-row {
+  color: var(--stage-cold-white-dim);
+}
+
+.card-conflict {
+  color: var(--stage-cold-white);
+}
+
+/* Status line mirrors the true receipt state; only real success earns the
+ * electric-blue accent. */
+.card-status {
+  font-size: 12px;
+  color: var(--stage-cold-white-dim);
+}
+
+.card-status[data-status='succeeded'] {
+  color: var(--stage-electric-blue);
+}
+
+.compare-counts {
+  display: flex;
+  gap: 12px;
+}
+
+.compare-counts .count-added {
+  color: var(--stage-electric-blue);
+}
+
+.compare-table {
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.compare-table td {
+  padding: 3px 8px;
+  border-top: 1px solid rgba(233, 238, 244, 0.08);
+  color: var(--stage-cold-white);
+}
+
+.compare-table .row-added td {
+  color: var(--stage-electric-blue);
+}
+
+.compare-table .row-removed td {
+  color: var(--stage-cold-white-dim);
+  text-decoration: line-through;
+}
+
+/* --- Result actions: opaque proposal/context buttons ----------------------- */
+.stage-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.stage-action {
+  appearance: none;
+  border: 1px solid var(--stage-electric-blue);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--stage-electric-blue);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1;
+  padding: 7px 12px;
+  cursor: pointer;
+}
+
+.stage-action:hover,
+.stage-action:focus-visible {
+  background: var(--stage-electric-blue-soft);
+  outline: none;
+}
+
+.stage-action.is-context {
+  border-color: rgba(233, 238, 244, 0.2);
+  color: var(--stage-cold-white);
+}
+
+/* Receipt line on inline/text-draft results: mirrors the true bridge status. */
+.result-status {
+  font-size: 12px;
+  color: var(--stage-cold-white-dim);
+}
+
+.result-status[data-status='succeeded'] {
+  color: var(--stage-electric-blue);
+}
+
+/* Word-level diff: insertions blue, deletions struck. */
+.card-diff {
+  color: var(--stage-cold-white);
+  white-space: pre-wrap;
+}
+
+.diff-ins {
+  color: var(--stage-electric-blue);
+}
+
+.diff-del {
+  color: var(--stage-cold-white-dim);
+  text-decoration: line-through;
+}
+
+/* --- Delivery progress: real UIA draft-write steps only -------------------- */
+/* The bar width changes exclusively when a genuine deliveryProgress event
+ * arrives; there is no idle/looping animation here by design (§2.2). */
+.delivery-progress {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 10px;
+  background: var(--stage-graphite);
+  border: 1px solid rgba(233, 238, 244, 0.08);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+  font-size: 12px;
+  color: var(--stage-cold-white-dim);
+}
+
+.delivery-track {
+  display: block;
+  width: 120px;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(233, 238, 244, 0.12);
+  overflow: hidden;
+}
+
+.delivery-bar {
+  display: block;
+  height: 100%;
+  width: 0%;
+  background: var(--stage-electric-blue);
+  transition: width 160ms ease-out;
+}
+
 /* --- Reduced motion: no fly-in/breathing/wave, keep opacity fades ---------- */
 @media (prefers-reduced-motion: reduce) {
   .frozen-glow,

@@ -1,7 +1,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const { captureEligibility, classifyResult, normalizeResultPreference } = require('../electron/result_surface_policy');
+const { captureEligibility, classifyResult } = require('../electron/result_surface_policy');
 
 for (const state of ['unsupported', 'error', 'empty']) {
   const result = captureEligibility({
@@ -113,18 +113,51 @@ const missingPidTarget = captureEligibility({
 });
 assert.strictEqual(missingPidTarget.commandReady, false);
 
-assert.strictEqual(normalizeResultPreference(), 'inline');
-assert.strictEqual(normalizeResultPreference('reader'), 'reader');
-assert.strictEqual(normalizeResultPreference('anything-else'), 'inline');
-assert.strictEqual(classifyResult({ ok: false, error: 'x' }), 'inline-error');
-assert.strictEqual(classifyResult({ ok: true, answer: '短译文', actionProposals: [] }), 'inline');
-assert.strictEqual(classifyResult({ ok: true, answer: 'x'.repeat(500), actionProposals: [] }), 'expandable');
+// classifyResult: PointerStage surface modes ('inline' | 'card' | 'error').
+
+// Failure with no action proposals renders the stage error surface.
+assert.strictEqual(classifyResult({ ok: false, error: 'x' }), 'error');
+assert.strictEqual(classifyResult({ ok: false, error: 'x', actionProposals: [] }), 'error');
+assert.strictEqual(classifyResult(null), 'error');
+
+// Failure WITH action proposals still surfaces the proposals, not an error.
+const failedWithProposal = classifyResult({
+  ok: false,
+  error: 'partial failure',
+  actionProposals: [{ action_type: 'copy_text_to_clipboard' }],
+});
+assert.notStrictEqual(failedWithProposal, 'error');
+assert.strictEqual(failedWithProposal, 'inline');
+
+// Structured payloads map to stage cards.
+assert.strictEqual(classifyResult({
+  ok: true,
+  intentKind: 'calendar_event_draft',
+  calendarDraft: { event: { title: '周会', start_at: '2026-07-27 10:00' } },
+}), 'card');
+assert.strictEqual(classifyResult({
+  ok: true,
+  intentKind: 'route_draft',
+  routeDraft: { origin: '公司', destination: '机场' },
+}), 'card');
 assert.strictEqual(classifyResult({
   ok: true,
   answer: '改写已准备',
   actionProposals: [{ action_type: 'office_replace_selection' }],
-}), 'expandable');
-assert.strictEqual(classifyResult({ ok: true, answer: '短译文' }, 'reader'), 'reader');
+}), 'card');
+
+// Declared intent without its draft body falls back to inline.
+assert.strictEqual(classifyResult({ ok: true, intentKind: 'calendar_event_draft' }), 'inline');
+assert.strictEqual(classifyResult({ ok: true, intentKind: 'route_draft' }), 'inline');
+
+// Plain answers stay inline regardless of length or generic proposals.
+assert.strictEqual(classifyResult({ ok: true, answer: '短译文', actionProposals: [] }), 'inline');
+assert.strictEqual(classifyResult({ ok: true, answer: 'x'.repeat(500), actionProposals: [] }), 'inline');
+assert.strictEqual(classifyResult({
+  ok: true,
+  answer: '已复制',
+  actionProposals: [{ action_type: 'copy_text_to_clipboard' }],
+}), 'inline');
 
 const mainSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
 assert(mainSource.includes('reason: current.reason'));

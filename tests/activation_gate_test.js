@@ -25,6 +25,8 @@ assert(mainSource.includes('function dismissTemporarySurfaces('));
 assert(mainSource.includes("decision === 'ignore'"));
 assert(mainSource.includes("decision === 'dismiss'"));
 assert(mainSource.includes('isActivationBusy: hasActiveSelectionCapture()'));
-assert(mainSource.includes('resultWindow && resultWindow.isVisible()'));
+// The stage is the only temporary surface left after Task 5.
+assert(mainSource.includes('stageWindow.isVisible()'));
+assert(!mainSource.includes('resultWindow'));
 
 console.log('activation gate test ok');

@@ -160,10 +160,11 @@
 
       <section class="fabric-view" data-fabric-view="activity" hidden>
         <div class="section-lead">
-          <div><p class="eyebrow">LOCAL / CONTENT REDACTED</p><h2>最近活动与失败原因</h2></div>
+          <div><p class="eyebrow">LOCAL / CONTENT REDACTED</p><h2>每个动作的真实时间线</h2></div>
           <button id="activity-refresh" class="secondary-button" type="button">刷新</button>
         </div>
-        <div id="activity-list" class="activity-list" aria-live="polite"></div>
+        <p class="timeline-note">状态逐字来自本地审计回执：accepted 表示已排队、尚未完成；只有回读验证通过才显示已验证。</p>
+        <div id="activity-list" class="activity-list activity-timeline" aria-live="polite"></div>
       </section>
 
       <section class="fabric-view" data-fabric-view="diagnostics" hidden>

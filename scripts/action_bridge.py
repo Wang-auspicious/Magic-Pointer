@@ -15,6 +15,13 @@ from app.actions.schema import ExecutionStatus
 from app.context_pack.session import ContextSessionError, ContextSessionStore
 
 
+def _configure_stdio() -> None:
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8", errors="strict")
+
+
 def read_payload() -> dict[str, Any]:
     raw = sys.stdin.read().lstrip("\ufeff").strip()
     return json.loads(raw) if raw else {}
@@ -51,6 +58,7 @@ def _finish_runtime_context_after_success(
 
 
 def main() -> int:
+    _configure_stdio()
     payload = read_payload()
     proposal_data = payload.get("proposal")
     if not isinstance(proposal_data, dict):

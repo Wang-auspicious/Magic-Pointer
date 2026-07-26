@@ -22,7 +22,9 @@ assert(js.includes('voiceAutoSubmit'));
 assert(js.includes('measureText'));
 assert(main.includes("defaultInputMode: fabricSettings.interaction.default_input_mode"));
 assert(main.includes("voiceAutoSubmit: fabricSettings.interaction.voice_auto_submit"));
-assert(main.includes('const PANEL_RAIL_HEIGHT = 72'));
-assert(main.includes('const PANEL_RAIL_MIN_WIDTH = 72'));
+// The panel rail left the hot path with Task 5 (stage capsule replaces it);
+// main.js no longer creates or positions the panel window.
+assert(!main.includes('PANEL_RAIL_HEIGHT'));
+assert(!main.includes('createPanelWindow'));
 
 console.log('fabric panel static test ok');

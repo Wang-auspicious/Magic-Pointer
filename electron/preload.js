@@ -27,31 +27,19 @@ contextBridge.exposeInMainWorld('magicPointerPanel', {
 
 contextBridge.exposeInMainWorld('magicPointerStage', {
   show: () => ipcRenderer.send('stage:show'),
-  update: (payload) => ipcRenderer.send('stage:update', payload),
-  hide: () => ipcRenderer.send('stage:hide'),
+  reportState: (payload) => ipcRenderer.send('stage:state', payload),
+  hidden: () => ipcRenderer.send('stage:hidden'),
+  dismiss: () => ipcRenderer.send('stage:dismiss'),
+  submitSelectionCommand: (payload) => ipcRenderer.send('stage:submit-selection-command', payload),
+  executeAction: (payload) => ipcRenderer.send('stage:execute-action', payload),
+  contextAction: (payload) => ipcRenderer.send('stage:context-action', payload),
+  startDictation: () => ipcRenderer.send('dictation:start', { surface: 'stage' }),
+  stopDictation: () => ipcRenderer.send('dictation:stop', { surface: 'stage' }),
+  setMouseCapture: (enabled) => ipcRenderer.send('stage:set-mouse-capture', { enabled: enabled === true }),
   onShow: (callback) => ipcRenderer.on('stage:show', (_event, payload) => callback(payload)),
   onUpdate: (callback) => ipcRenderer.on('stage:update', (_event, payload) => callback(payload)),
   onHide: (callback) => ipcRenderer.on('stage:hide', () => callback()),
-});
-
-contextBridge.exposeInMainWorld('magicPointerResult', {
-  hide: () => ipcRenderer.send('result:hide'),
-  ready: (payload) => ipcRenderer.send('result:ready', payload),
-  expand: (payload) => ipcRenderer.send('result:expand', payload),
-  executeAction: (payload) => ipcRenderer.send('result:execute-action', payload),
-  onShow: (callback) => ipcRenderer.on('result:show', (_event, payload) => callback(payload)),
-  onHide: (callback) => ipcRenderer.on('result:hide', () => callback()),
-  onResult: (callback) => ipcRenderer.on('result:result', (_event, payload) => callback(payload)),
-});
-
-contextBridge.exposeInMainWorld('magicPointerReader', {
-  hide: () => ipcRenderer.send('reader:hide'),
-  resize: (payload) => ipcRenderer.send('reader:resize', payload),
-  setPinned: (pinned) => ipcRenderer.send('reader:set-pinned', { pinned }),
-  executeAction: (payload) => ipcRenderer.send('reader:execute-action', payload),
-  onShow: (callback) => ipcRenderer.on('reader:show', (_event, payload) => callback(payload)),
-  onHide: (callback) => ipcRenderer.on('reader:hide', () => callback()),
-  onResult: (callback) => ipcRenderer.on('reader:result', (_event, payload) => callback(payload)),
+  onDictationResult: (callback) => ipcRenderer.on('dictation:result', (_event, payload) => callback(payload)),
 });
 
 contextBridge.exposeInMainWorld('magicPointerDashboard', {

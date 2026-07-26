@@ -4,70 +4,69 @@ const vm = require('vm');
 
 const source = fs.readFileSync('electron/renderer/overlay.js', 'utf8');
 const html = fs.readFileSync('electron/renderer/index.html', 'utf8');
-const css = fs.readFileSync('electron/renderer/styles.css', 'utf8');
-const proposalStart = source.indexOf('function renderActionProposals');
-const markdownStart = source.indexOf('function escapeHtml');
-const markdownEnd = source.indexOf('function resizeCommandInput');
-assert(proposalStart >= 0, 'renderActionProposals not found');
-assert(markdownStart >= 0, 'escapeHtml not found');
-assert(markdownEnd > markdownStart, 'markdown block end not found');
 
-const markdownInput = '<script>alert(1)</script> **ok** `x<y`';
-const harness = [
-  "currentActionProposals = [{",
-  "  id: 'p1',",
-  "  action_type: 'copy_text_to_clipboard',",
-  "  confirmation_required: true,",
-  "  action_token: 'tok-1',",
-  "}];",
-  "const replaceProposal = {",
-  "  id: 'p3',",
-  "  action_type: 'office_replace_selection',",
-  "  confirmation_required: true,",
-  "  action_token: 'tok-3',",
-  "  parameters: { document: 'C:/demo/doc.docx', expected_text_excerpt: '<old>', replacement_text_excerpt: 'new text' },",
-  "};",
-  "const undoProposal = {",
-  "  id: 'p4',",
-  "  action_type: 'office_undo_last_action',",
-  "  confirmation_required: true,",
-  "  action_token: 'tok-4',",
-  "  parameters: { document: 'C:/demo/doc.docx' },",
-  "};",
-  "globalThis.testResult = {",
-  `  markdown: renderSafeMarkdown(${JSON.stringify(markdownInput)}),`,
-  "  chips: renderActionProposals(currentActionProposals),",
-  "  replace: renderActionProposals([replaceProposal]),",
-  "  undo: renderActionProposals([undoProposal]),",
-  "  noTokenChips: renderActionProposals([{ id: 'p2', action_type: 'copy_text_to_clipboard' }]),",
-  "};",
-].join('\n');
+// Kept contract: observer aura follows the main-process cursor feed.
+assert(source.includes('function drawObserverAura'));
+assert(source.includes('window.magicPointer?.onCursor('));
+assert(source.includes('observerMode = payload?.observerMode === true'));
+assert(source.includes('if (observerMode) drawObserverAura(lastPointer);'));
 
-const extracted = [
-  'let currentActionProposals = [];',
-  source.slice(proposalStart, markdownStart),
-  source.slice(markdownStart, markdownEnd),
-  harness,
-].join('\n');
+// Kept contract: runtime-issue circle capture submits the drawn region via done().
+assert(source.includes("let currentWorkflow = 'generic';"));
+assert(source.includes("currentWorkflow = String(payload?.workflow || 'generic')"));
+assert(source.includes('workflow: currentWorkflow'));
+assert(source.includes('window.magicPointer?.done(payload)'));
+assert(source.includes('圈出运行中的问题，然后说你期望什么'));
+assert(source.includes('function hideVisualsForCapture'));
+assert(source.includes('window.magicPointer?.onShow('));
+assert(source.includes('window.magicPointer?.onHide('));
+assert(source.includes('window.magicPointer?.hide()'));
+assert(html.includes('id="trail"'));
+assert(html.includes('id="hint"'));
 
-const context = {};
-vm.runInNewContext(extracted, context, { filename: 'overlay_static_test.vm.js' });
+// The circle payload keeps points + bbox + viewport for the capture bridge.
+const payloadStart = source.indexOf('function computeSelectionPayload');
+const payloadEnd = source.indexOf('function hideVisualsForCapture');
+assert(payloadStart >= 0, 'computeSelectionPayload not found');
+assert(payloadEnd > payloadStart, 'computeSelectionPayload block end not found');
 
-assert(context.testResult.markdown.includes('&lt;script&gt;alert(1)&lt;/script&gt;'));
-assert(context.testResult.markdown.includes('<strong>ok</strong>'));
-assert(context.testResult.markdown.includes('<code>x&lt;y</code>'));
-assert(context.testResult.chips.includes('data-action-index="0"'));
-assert(context.testResult.chips.includes('Confirm copy path'));
-assert.strictEqual(context.testResult.noTokenChips, '');
+const context = { window: { innerWidth: 1280, innerHeight: 800, devicePixelRatio: 2 } };
+vm.runInNewContext([
+  'let points = [{ x: 10, y: 20 }, { x: 40, y: 5 }, { x: 25, y: 60 }];',
+  source.slice(payloadStart, payloadEnd),
+  'globalThis.testPayload = computeSelectionPayload();',
+].join('\n'), context, { filename: 'overlay_static_test.vm.js' });
+
+assert.strictEqual(context.testPayload.bbox.x1, 10);
+assert.strictEqual(context.testPayload.bbox.y1, 5);
+assert.strictEqual(context.testPayload.bbox.x2, 40);
+assert.strictEqual(context.testPayload.bbox.y2, 60);
+assert.strictEqual(context.testPayload.viewport.width, 1280);
+assert.strictEqual(context.testPayload.viewport.height, 800);
+assert.strictEqual(context.testPayload.viewport.dpr, 2);
+assert.strictEqual(context.testPayload.points.length, 3);
+
+// Legacy retirement: the overlay no longer renders results or actions.
+// Everything below now lives on the PointerStage surface.
+assert(!source.includes('pill'));
+assert(!source.includes('showPill'));
+assert(!source.includes('showResult'));
+assert(!source.includes('onResult'));
+assert(!source.includes('executeAction'));
+assert(!source.includes('renderActionProposals'));
+assert(!source.includes('renderSafeMarkdown'));
+assert(!source.includes('innerHTML'));
+assert(!source.includes('actionProposals'));
+assert(!source.includes('intentKind'));
+assert(!source.includes('autoDismiss'));
+assert(!source.includes('startDictation'));
+assert(!source.includes('onDictationResult'));
+assert(!source.includes('runSelectedCommand'));
+assert(!source.includes('commandInput'));
+assert(!html.includes('id="pill"'));
+assert(!html.includes('id="result"'));
+assert(!html.includes('id="command"'));
+assert(!html.includes('id="run"'));
+assert(!html.includes('id="dictation"'));
+
 console.log('overlay static test ok');
-
-assert(context.testResult.replace.includes('Word write preview'));
-assert(context.testResult.replace.includes('Confirm replace Word selection'));
-assert(context.testResult.replace.includes('&lt;old&gt;'));
-assert(context.testResult.undo.includes('Precise Magic Pointer restore'));
-assert(context.testResult.undo.includes('Confirm undo Word edit'));
-assert(html.includes('id="dictation"'));
-assert(html.includes('placeholder="描述问题或期望，不需要找源码"'));
-assert(source.includes("dictationButton.addEventListener('click'"));
-assert(source.includes('window.magicPointer?.startDictation()'));
-assert(css.includes('.pill-dictation'));

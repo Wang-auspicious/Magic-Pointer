@@ -40,6 +40,14 @@ from app.fabric.catalog import get_recipe
 from app.fabric.engine import FabricEngine
 from app.fabric.settings import SettingsStore
 
+
+def _configure_stdio() -> None:
+    for stream in (sys.stdin, sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8", errors="strict")
+
+
 MAGIC_WINDOW_MARKERS = ("Magic Pointer", "Electron Overlay")
 REVIEW_RECORD_PREFIXES = ("验收：", "验收:", "记录问题：", "记录问题:", "批注：", "批注:", "review:")
 REVIEW_COMPILE_COMMANDS = ("整理验收意见", "生成改进提示词", "compile review")
@@ -805,6 +813,7 @@ def _fabric_response(
 
 
 def main() -> int:
+    _configure_stdio()
     payload = read_payload()
     command = str(payload.get("command") or "").strip()
     selection_session_id = str(payload.get("selectionSessionId") or "").strip()

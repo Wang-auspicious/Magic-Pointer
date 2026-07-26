@@ -23,7 +23,10 @@ assert(js.includes('conflictConfirmationArmed'));
 assert(preload.includes('calendarRequestState'));
 assert(preload.includes("'dashboard:calendar-create'"));
 assert(main.includes("'scripts/calendar_bridge.py'"));
-assert(main.includes("parsed?.intentKind === 'calendar_event_draft'"));
+// Calendar drafts render as a stage card; the dashboard opens on the card's
+// context action instead of a direct intentKind branch in the submit path.
+assert(main.includes("id === 'open-calendar-draft' && parsed.calendarDraft"));
+assert(main.includes("showDashboard({ view: 'calendar', calendarDraft"));
 assert(css.includes('[hidden] { display: none !important; }'));
 assert(!js.includes('innerHTML'));
 

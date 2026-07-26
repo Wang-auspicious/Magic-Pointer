@@ -1,32 +1,22 @@
 const canvas = document.getElementById('trail');
 const ctx = canvas.getContext('2d');
-const pill = document.getElementById('pill');
-const commandInput = document.getElementById('command');
-const runButton = document.getElementById('run');
-const dictationButton = document.getElementById('dictation');
 const hint = document.getElementById('hint');
-const result = document.getElementById('result');
 
 let dpr = window.devicePixelRatio || 1;
 let drawing = false;
 let points = [];
-let selectedPayload = null;
 let lastPointer = null;
-let selectionAnchor = null;
 let trailAlpha = 1;
 let fadeRaf = null;
 let captureMode = false;
 let requestSeq = 0;
 let submitting = false;
 let renderRaf = null;
-let resultDrag = null;
 let pulseRaf = null;
 let lastPulseFrame = 0;
 let observerMode = false;
 let hintTimer = null;
-let currentActionProposals = [];
 let currentWorkflow = 'generic';
-let autoDismissTimer = null;
 
 function resize() {
   dpr = window.devicePixelRatio || 1;
@@ -220,26 +210,8 @@ function computeSelectionPayload() {
   };
 }
 
-function showPill() {
-  const anchor = selectionAnchor || lastPointer;
-  if (!anchor) return;
-  const x = Math.min(window.innerWidth - 330, Math.max(18, anchor.x + 30));
-  const y = Math.min(window.innerHeight - 120, Math.max(18, anchor.y - 18));
-  pill.style.left = `${x}px`;
-  pill.style.top = `${y}px`;
-  pill.classList.remove('hidden');
-  commandInput.value = '';
-  commandInput.placeholder = currentWorkflow === 'runtime_issue'
-    ? '描述问题或期望，不需要找源码'
-    : '输入你希望如何处理这个对象';
-  resizeCommandInput();
-  commandInput.focus();
-}
-
 function hideVisualsForCapture() {
   captureMode = true;
-  pill.classList.add('hidden');
-  result.classList.add('hidden');
   hint.classList.add('dim');
   clear();
 }
@@ -250,221 +222,32 @@ function restoreAfterCapture(seq) {
   render();
 }
 
-function runSelectedCommand(action = 'command') {
-  if (!selectedPayload || submitting) return;
+function submitCircle() {
+  if (submitting || points.length < 2) return;
   submitting = true;
   const seq = ++requestSeq;
-  if (!selectionAnchor && lastPointer) selectionAnchor = { ...lastPointer };
-  const command = commandInput.value.trim();
-  const payload = { ...selectedPayload, action, command, workflow: currentWorkflow };
+  const payload = { ...computeSelectionPayload(), workflow: currentWorkflow };
 
   // Critical: remove our own overlay before Python ImageGrab runs.
   hideVisualsForCapture();
   setTimeout(() => {
     window.magicPointer?.done(payload);
-    // Show thinking only after the clean capture should have happened.
-    setTimeout(() => {
-      if (seq === requestSeq) {
-        restoreAfterCapture(seq);
-        showResult({
-          ok: null,
-          status: currentWorkflow === 'runtime_issue' ? '正在保存运行现场…' : 'Thinking...',
-        });
-      }
-    }, 1050);
+    // Results render on the PointerStage; the overlay only restores its aura.
+    setTimeout(() => restoreAfterCapture(seq), 1050);
   }, 260);
-}
-
-function showResult(payload) {
-  if (!payload) return;
-  captureMode = false;
-  const alreadyVisible = !result.classList.contains('hidden');
-  if (!alreadyVisible) {
-    const anchor = selectionAnchor || lastPointer || { x: window.innerWidth / 2, y: window.innerHeight / 2 };
-    const x = Math.min(window.innerWidth - 590, Math.max(18, anchor.x + 40));
-    const y = Math.min(window.innerHeight - 180, Math.max(18, anchor.y + 48));
-    result.style.left = `${x}px`;
-    result.style.top = `${y}px`;
-  }
-  currentActionProposals = Array.isArray(payload.actionProposals) ? payload.actionProposals.slice(0, 3) : [];
-  if (payload.ok === null) {
-    currentActionProposals = [];
-    result.innerHTML = `<div class="title thinking-title" data-drag-handle="true"><span class="spinner" aria-hidden="true"></span>Thinking</div><div class="content muted">${escapeHtml(payload.status || 'Processing...')}</div>`;
-  } else if (payload.ok) {
-    const answer = String(payload.answer || '').slice(0, 1600);
-    const runtimeReceipt = payload.intentKind === 'runtime_issue_recorded';
-    const title = runtimeReceipt ? '现场任务已准备' : (payload.prompt || 'Result');
-    result.innerHTML = `<div class="title" data-drag-handle="true">${escapeHtml(title)}</div><div class="content">${renderSafeMarkdown(answer)}</div>${renderActionProposals(currentActionProposals)}`;
-    if (runtimeReceipt && Number(payload.autoDismissMs) >= 500) {
-      if (autoDismissTimer) clearTimeout(autoDismissTimer);
-      autoDismissTimer = setTimeout(() => window.magicPointer?.hide(), Number(payload.autoDismissMs));
-    }
-  } else {
-    currentActionProposals = [];
-    result.innerHTML = `<div class="title" data-drag-handle="true">Bridge error</div><div class="content muted">${escapeHtml(payload.error || 'Unknown error')}</div>`;
-  }
-  result.classList.remove('hidden');
-}
-
-
-function renderActionProposals(proposals) {
-  const executable = proposals.filter((proposal) => typeof proposal?.action_token === 'string' && proposal.action_token.length > 0);
-  if (!executable.length) return '';
-  const previews = executable.map((proposal) => renderActionPreview(proposal)).join('');
-  const buttons = executable.map((proposal, index) => {
-    const originalIndex = currentActionProposals.indexOf(proposal);
-    const label = actionProposalLabel(proposal);
-    const confirm = proposal.confirmation_required === true ? 'Confirm ' : '';
-    return `<button class="action-chip" type="button" data-action-index="${originalIndex >= 0 ? originalIndex : index}">${escapeHtml(confirm + label)}</button>`;
-  }).join('');
-  return `<div class="action-previews">${previews}</div><div class="actions">${buttons}</div>`;
-}
-
-function renderActionPreview(proposal) {
-  const params = proposal?.parameters || {};
-  if (proposal?.action_type === 'office_replace_selection') {
-    const document = params.document || proposal?.target?.description || 'Word document';
-    const before = params.expected_text_excerpt || '';
-    const after = params.replacement_text_excerpt || '';
-    return [
-      '<div class="action-preview danger">',
-      '<div class="action-preview-title">Word write preview</div>',
-      `<div><strong>Document:</strong> ${escapeHtml(document)}</div>`,
-      `<div><strong>Before:</strong><pre>${escapeHtml(before)}</pre></div>`,
-      `<div><strong>After:</strong><pre>${escapeHtml(after)}</pre></div>`,
-      '<div class="muted">Will re-check the active Word document and selection before writing.</div>',
-      '</div>',
-    ].join('');
-  }
-  if (proposal?.action_type === 'office_undo_last_action') {
-    const document = params.document || proposal?.target?.description || 'Word document';
-    return [
-      '<div class="action-preview warning">',
-      '<div class="action-preview-title">Precise Magic Pointer restore</div>',
-      `<div><strong>Document:</strong> ${escapeHtml(document)}</div>`,
-      '<div class="muted">Restores this Magic Pointer edit from local history; it does not press Ctrl+Z.</div>',
-      '</div>',
-    ].join('');
-  }
-  return '';
-}
-
-function actionProposalLabel(proposal) {
-  switch (proposal?.action_type) {
-    case 'copy_text_to_clipboard':
-      return 'copy path';
-    case 'office_replace_selection':
-      return 'replace Word selection';
-    case 'office_undo_last_action':
-      return 'undo Word edit';
-    default:
-      return String(proposal?.action_type || 'run action').replaceAll('_', ' ');
-  }
-}
-
-function executeActionProposal(index) {
-  const proposal = currentActionProposals[index];
-  if (!proposal || typeof proposal.action_token !== 'string') return;
-  const actionToken = proposal.action_token;
-  currentActionProposals = [];
-  showResult({ ok: null, status: 'Executing action...' });
-  window.magicPointer?.executeAction({ actionToken, proposalId: proposal.id, confirmed: true });
-}
-
-function escapeHtml(value) {
-  return String(value)
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#039;');
-}
-
-function renderSafeMarkdown(value) {
-  const lines = String(value).replace(/\r\n?/g, '\n').split('\n');
-  let html = '';
-  let inList = false;
-
-  lines.forEach((line, index) => {
-    const listMatch = line.match(/^\s*-\s+(.*)$/);
-    if (listMatch) {
-      if (!inList) {
-        html += '<ul>';
-        inList = true;
-      }
-      html += `<li>${renderSafeMarkdownInline(listMatch[1])}</li>`;
-      return;
-    }
-
-    if (inList) {
-      html += '</ul>';
-      inList = false;
-    }
-
-    if (line.length > 0) html += renderSafeMarkdownInline(line);
-    if (index < lines.length - 1) html += '<br>';
-  });
-
-  if (inList) html += '</ul>';
-  return html;
-}
-
-function renderSafeMarkdownInline(text, options = {}) {
-  const allowBold = options.allowBold !== false;
-  let html = '';
-  let i = 0;
-
-  while (i < text.length) {
-    if (text[i] === '`') {
-      const end = text.indexOf('`', i + 1);
-      if (end !== -1) {
-        html += `<code>${escapeHtml(text.slice(i + 1, end))}</code>`;
-        i = end + 1;
-        continue;
-      }
-    }
-
-    if (allowBold && text.startsWith('**', i)) {
-      const end = text.indexOf('**', i + 2);
-      if (end !== -1 && end > i + 2) {
-        html += `<strong>${renderSafeMarkdownInline(text.slice(i + 2, end), { allowBold: false })}</strong>`;
-        i = end + 2;
-        continue;
-      }
-    }
-
-    html += escapeHtml(text[i]);
-    i += 1;
-  }
-
-  return html;
-}
-function resizeCommandInput() {
-  commandInput.style.height = '24px';
-  commandInput.style.height = `${Math.min(commandInput.scrollHeight, 76)}px`;
 }
 
 function resetOverlay() {
   points = [];
-  selectedPayload = null;
   lastPointer = null;
-  selectionAnchor = null;
   trailAlpha = 1;
   captureMode = false;
   requestSeq += 1;
   submitting = false;
-  if (autoDismissTimer) clearTimeout(autoDismissTimer);
-  autoDismissTimer = null;
   if (fadeRaf) cancelAnimationFrame(fadeRaf);
   if (renderRaf) cancelAnimationFrame(renderRaf);
   fadeRaf = null;
   renderRaf = null;
-  resultDrag = null;
-  pill.classList.add('hidden');
-  result.classList.add('hidden');
-  result.textContent = '';
-  commandInput.value = '';
-  resizeCommandInput();
   hint.classList.remove('dim');
   clear();
 }
@@ -494,16 +277,11 @@ window.addEventListener('contextmenu', (e) => { e.preventDefault(); window.magic
 window.addEventListener('pointerdown', (e) => {
   if (e.button === 2) { window.magicPointer?.hide(); return; }
   if (e.button !== 0) return;
-  if (e.target.closest('#pill') || e.target.closest('#result')) return;
+  if (observerMode || captureMode || submitting) return;
   if (fadeRaf) cancelAnimationFrame(fadeRaf);
-  captureMode = false;
   drawing = true;
   points = [];
-  selectedPayload = null;
-  selectionAnchor = null;
   trailAlpha = 1;
-  pill.classList.add('hidden');
-  result.classList.add('hidden');
   hint.classList.add('dim');
   addPoint(e);
   scheduleRender();
@@ -525,81 +303,15 @@ window.addEventListener('pointerup', (e) => {
   drawing = false;
   addPoint(e);
   render();
-  if (points.length >= 2) {
-    selectedPayload = computeSelectionPayload();
-    selectionAnchor = lastPointer ? { ...lastPointer } : null;
-    showPill();
-    fadeTrail(900);
-  }
+  // Circle capture: hand the drawn region to the main process, which routes
+  // the outcome to the PointerStage surface.
+  if (points.length >= 2) submitCircle();
 });
 
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') window.magicPointer?.hide();
-  if (e.key.toLowerCase() === 'r' && e.target !== commandInput) resetOverlay();
-  // Enter inside the input is handled by commandInput below. Do not bubble-submit twice.
-  if (e.key === 'Enter' && e.target !== commandInput && !pill.classList.contains('hidden')) runSelectedCommand('command');
+  if (e.key.toLowerCase() === 'r') resetOverlay();
 });
-
-pill.addEventListener('pointerdown', (e) => e.stopPropagation());
-pill.addEventListener('click', (e) => e.stopPropagation());
-runButton.addEventListener('click', () => runSelectedCommand('command'));
-dictationButton.addEventListener('click', () => {
-  commandInput.focus();
-  window.magicPointer?.startDictation();
-});
-commandInput.addEventListener('input', resizeCommandInput);
-commandInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault();
-    runSelectedCommand('command');
-  } else {
-    requestAnimationFrame(resizeCommandInput);
-  }
-});
-
-
-result.addEventListener('click', (e) => {
-  const actionButton = e.target.closest('[data-action-index]');
-  if (!actionButton) return;
-  e.preventDefault();
-  e.stopPropagation();
-  executeActionProposal(Number(actionButton.dataset.actionIndex));
-});
-
-result.addEventListener('pointerdown', (e) => {
-  const handle = e.target.closest('[data-drag-handle="true"]');
-  if (e.button !== 0 || !handle) return;
-  e.preventDefault();
-  const rect = result.getBoundingClientRect();
-  resultDrag = {
-    pointerId: e.pointerId,
-    offsetX: e.clientX - rect.left,
-    offsetY: e.clientY - rect.top,
-  };
-  result.setPointerCapture(e.pointerId);
-  result.classList.add('dragging');
-});
-
-result.addEventListener('pointermove', (e) => {
-  if (!resultDrag || resultDrag.pointerId !== e.pointerId) return;
-  const maxX = Math.max(18, window.innerWidth - result.offsetWidth - 18);
-  const maxY = Math.max(18, window.innerHeight - result.offsetHeight - 18);
-  const x = Math.min(maxX, Math.max(18, e.clientX - resultDrag.offsetX));
-  const y = Math.min(maxY, Math.max(18, e.clientY - resultDrag.offsetY));
-  result.style.left = `${x}px`;
-  result.style.top = `${y}px`;
-  lastPointer = { x: e.clientX, y: e.clientY, t: performance.now() };
-  scheduleRender();
-});
-
-function stopResultDrag(e) {
-  if (!resultDrag || resultDrag.pointerId !== e.pointerId) return;
-  try { result.releasePointerCapture(e.pointerId); } catch (_) {}
-  resultDrag = null;
-  result.classList.remove('dragging');
-}
-result.addEventListener('pointerup', stopResultDrag);
-result.addEventListener('pointercancel', stopResultDrag);
 
 window.magicPointer?.onShow((payload) => {
   resetOverlay();
@@ -629,20 +341,6 @@ window.magicPointer?.onHide(() => {
   hintTimer = null;
   stopPulseLoop();
   resetOverlay();
-});
-window.magicPointer?.onResult((payload) => {
-  requestSeq += 1;
-  submitting = false;
-  showResult(payload);
-});
-window.magicPointer?.onDictationResult((payload = {}) => {
-  if (payload.surface !== 'overlay') return;
-  if (payload.ok === false) showResult({ ok: false, error: payload.error || '系统听写不可用' });
-  else if (typeof payload.transcript === 'string' && payload.transcript.trim()) {
-    commandInput.value = payload.transcript.trim();
-    resizeCommandInput();
-    if (payload.final === true) runSelectedCommand('command');
-  } else commandInput.focus();
 });
 
 resize();

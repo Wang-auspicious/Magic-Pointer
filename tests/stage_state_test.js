@@ -51,6 +51,14 @@ state = transition(state, { type: 'RESULT', result: { kind: 'text', answer: 'don
 assert.strictEqual(state.name, 'result');
 assert.deepStrictEqual(state.result, { kind: 'text', answer: 'done' });
 
+state = transition(state, { type: 'ACTION_START', command: 'confirm result action' });
+assert.strictEqual(state.name, 'processing');
+assert.strictEqual(state.command, 'confirm result action');
+assert.strictEqual(state.result, null);
+
+state = transition(state, { type: 'RESULT', result: { kind: 'text', answer: 'confirmed' } });
+assert.strictEqual(state.name, 'result');
+
 state = transition(state, { type: 'DISMISS' });
 assert.strictEqual(state.name, 'dismissing');
 
@@ -103,8 +111,22 @@ assert.strictEqual(transition(hidden, null), hidden);
 assert.strictEqual(transition(hidden, {}), hidden);
 
 const targeting = transition(initialState(), { type: 'WAKE' });
-assert.strictEqual(transition(targeting, { type: 'RESULT', result: {} }), targeting);
 assert.strictEqual(transition(targeting, { type: 'OPEN_CAPSULE', mode: 'voice' }), targeting, 'capsule requires frozen target first');
+
+// --- direct RESULT/ERROR shortcuts (runtime-issue capture, early failures) ---
+// A runtime-issue circle capture delivers a result with no capsule round-trip.
+const directResult = transition(targeting, { type: 'RESULT', result: { kind: 'inline', answer: 'ok' } });
+assert.strictEqual(directResult.name, 'result');
+assert.deepStrictEqual(directResult.result, { kind: 'inline', answer: 'ok' });
+// An ineligible selection errors straight from frozen.
+const frozenEarly = transition(targeting, { type: 'FREEZE', target: { x: 0, y: 0, width: 5, height: 5 } });
+const earlyError = transition(frozenEarly, { type: 'ERROR', error: { message: '选区不可用' } });
+assert.strictEqual(earlyError.name, 'error');
+assert.deepStrictEqual(earlyError.error, { message: '选区不可用' });
+// Dictation failure surfaces from the open capsule without a SUBMIT.
+const capsuleEarly = transition(frozenEarly, { type: 'OPEN_CAPSULE', mode: 'voice' });
+const capsuleError = transition(capsuleEarly, { type: 'ERROR', error: { message: 'whisper missing' } });
+assert.strictEqual(capsuleError.name, 'error');
 
 const resultState = transition(text, { type: 'RESULT', result: { kind: 'text' } });
 assert.strictEqual(transition(resultState, { type: 'FREEZE', target: { x: 0, y: 0, width: 1, height: 1 } }), resultState);

@@ -22,9 +22,13 @@ assert(main.includes('overlayWindow.focus()'));
 assert(overlay.includes("let currentWorkflow = 'generic';"));
 assert(overlay.includes('workflow: currentWorkflow'));
 assert(overlay.includes("currentWorkflow = String(payload?.workflow || 'generic')"));
-assert(overlay.includes("payload.intentKind === 'runtime_issue_recorded'"));
-assert(overlay.includes('现场任务已准备'));
-assert(overlay.includes('payload.autoDismissMs'));
-assert(html.includes('描述问题或期望，不需要找源码'));
+
+// Runtime-issue capture results route to the PointerStage, never back into
+// the overlay (legacy in-overlay receipt retired with Task 5).
+assert(main.includes("reason: 'runtime-issue'"));
+assert(main.includes('stageEventFromBridge(parsed)'));
+assert(!overlay.includes('runtime_issue_recorded'));
+assert(!overlay.includes('autoDismissMs'));
+assert(!html.includes('描述问题或期望，不需要找源码'));
 
 console.log('runtime issue hotkeys test ok');

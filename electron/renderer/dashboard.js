@@ -217,6 +217,137 @@ function renderRecipes(items = recipes) {
   document.getElementById('diag-recipes').textContent = String(recipes.length || 0);
 }
 
+// Receipt statuses arrive verbatim from the fabric audit log and are rendered
+// verbatim. 'accepted' means the agent task is queued and NOT finished; it is
+// never re-mapped to a terminal state, and no synthetic progress is shown.
+const RECEIPT_STATUS_COPY = {
+  accepted: '已受理 · 排队中 · 尚未完成',
+  succeeded: '执行成功',
+  failed: '执行失败',
+  denied: '权限拒绝',
+  capability_unavailable: '能力缺失',
+  verification_failed: '验证未通过',
+  confirmation_required: '等待用户确认',
+};
+
+function buildActivityTimeline(events) {
+  const entries = [];
+  const open = [];
+  events.forEach((event) => {
+    const data = event.data || {};
+    if (event.type === 'recipe.planned') {
+      const entry = { planned: event, executed: null };
+      entries.push(entry);
+      open.push(entry);
+    } else if (event.type === 'recipe.executed') {
+      const index = open.findLastIndex((item) => {
+        const planned = item.planned.data || {};
+        return planned.recipeId === data.recipeId && planned.provider === data.provider;
+      });
+      if (index >= 0) {
+        open[index].executed = event;
+        open.splice(index, 1);
+      } else entries.push({ planned: null, executed: event });
+    } else entries.push({ raw: event });
+  });
+  return entries;
+}
+
+function activityTimestamp(event) {
+  return String(event?.timestamp || '').replace('T', ' ').slice(0, 19);
+}
+
+function timelineStage(name, stateClass, text) {
+  const stage = document.createElement('li');
+  stage.className = `timeline-stage ${stateClass}`;
+  stage.dataset.stage = name;
+  const label = document.createElement('span');
+  label.className = 'stage-label';
+  label.textContent = name;
+  const body = document.createElement('span');
+  body.className = 'stage-text';
+  body.textContent = text;
+  stage.append(label, body);
+  return stage;
+}
+
+function renderTimelineEntry(entry) {
+  if (entry.raw) {
+    const row = document.createElement('article');
+    row.className = 'activity-row';
+    const time = document.createElement('span');
+    time.className = 'activity-time';
+    time.textContent = activityTimestamp(entry.raw);
+    const type = document.createElement('strong');
+    type.className = 'activity-type';
+    type.textContent = entry.raw.type || 'event';
+    const data = document.createElement('span');
+    data.className = 'activity-data';
+    data.textContent = JSON.stringify(entry.raw.data || {});
+    row.append(time, type, data);
+    return row;
+  }
+  const planned = entry.planned ? (entry.planned.data || {}) : null;
+  const executed = entry.executed ? (entry.executed.data || {}) : null;
+  const rawStatus = executed ? String(executed.status || 'unknown') : null;
+  const article = document.createElement('article');
+  article.className = 'timeline-entry';
+  if (rawStatus) article.dataset.status = rawStatus;
+
+  const head = document.createElement('header');
+  head.className = 'timeline-head';
+  const time = document.createElement('span');
+  time.className = 'activity-time';
+  time.textContent = activityTimestamp(entry.executed || entry.planned);
+  const recipe = document.createElement('strong');
+  recipe.className = 'timeline-recipe';
+  recipe.textContent = String((planned || executed || {}).recipeId || 'recipe');
+  const risk = document.createElement('span');
+  risk.className = 'timeline-risk';
+  risk.textContent = planned ? String(planned.risk || '').toUpperCase() : '';
+  const statusCode = document.createElement('b');
+  statusCode.className = 'timeline-status';
+  if (rawStatus) statusCode.dataset.status = rawStatus;
+  // Verbatim status token from the audit event — no re-mapping, no percentages.
+  statusCode.textContent = rawStatus || 'planned';
+  head.append(time, recipe, risk, statusCode);
+
+  const stages = document.createElement('ol');
+  stages.className = 'timeline-stages';
+
+  const intentText = planned
+    ? `${planned.recipeId || ''} · ${planned.objectCount ?? 0} 个对象 · 风险 ${planned.risk || 'read'}`
+    : '本地审计中缺少计划事件';
+  stages.append(timelineStage('意图', planned ? 'is-done' : 'is-missing', intentText));
+
+  const planText = planned
+    ? `provider ${planned.provider || '-'}${planned.requiresConfirmation ? ' · 需要用户确认' : ' · 无需确认'}`
+    : `provider ${executed?.provider || '-'}`;
+  stages.append(timelineStage('计划', planned ? 'is-done' : 'is-missing', planText));
+
+  if (!executed) {
+    stages.append(timelineStage('状态', 'is-pending', '已生成计划，尚未执行'));
+  } else if (rawStatus === 'accepted') {
+    // Honest queued position: accepted is NOT completion.
+    stages.append(timelineStage('状态', 'is-accepted', `${rawStatus} · ${RECEIPT_STATUS_COPY.accepted}`));
+  } else {
+    const copy = RECEIPT_STATUS_COPY[rawStatus] || '未知状态';
+    const stateClass = rawStatus === 'succeeded' ? 'is-done' : 'is-failed';
+    stages.append(timelineStage('状态', stateClass, `${rawStatus} · ${copy}${executed.error ? ` · ${executed.error}` : ''}`));
+  }
+
+  if (!executed) stages.append(timelineStage('验证', 'is-pending', '未执行，无验证结果'));
+  else if (executed.verified === true) stages.append(timelineStage('验证', 'is-done', '已在目标表面回读验证'));
+  else if (rawStatus === 'accepted') stages.append(timelineStage('验证', 'is-pending', '终态未验证 · 等待任务完成'));
+  else stages.append(timelineStage('验证', 'is-failed', '未通过验证或未验证'));
+
+  if (executed && executed.undoAvailable === true) stages.append(timelineStage('撤销', 'is-done', '回执声明可撤销'));
+  else stages.append(timelineStage('撤销', 'is-pending', '回执未包含撤销信息'));
+
+  article.append(head, stages);
+  return article;
+}
+
 function renderActivity(items) {
   auditEvents = Array.isArray(items) ? items : [];
   const root = document.getElementById('activity-list');
@@ -227,21 +358,7 @@ function renderActivity(items) {
     root.replaceChildren(empty);
     return;
   }
-  const rows = auditEvents.slice().reverse().map((event) => {
-    const row = document.createElement('article');
-    row.className = 'activity-row';
-    const time = document.createElement('span');
-    time.className = 'activity-time';
-    time.textContent = String(event.timestamp || '').replace('T', ' ').slice(0, 19);
-    const type = document.createElement('strong');
-    type.className = 'activity-type';
-    type.textContent = event.type || 'event';
-    const data = document.createElement('span');
-    data.className = 'activity-data';
-    data.textContent = JSON.stringify(event.data || {});
-    row.append(time, type, data);
-    return row;
-  });
+  const rows = buildActivityTimeline(auditEvents).reverse().map(renderTimelineEntry);
   root.replaceChildren(...rows);
 }
 
