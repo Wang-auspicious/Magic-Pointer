@@ -25,6 +25,15 @@ contextBridge.exposeInMainWorld('magicPointerPanel', {
   onDictationResult: (callback) => ipcRenderer.on('dictation:result', (_event, payload) => callback(payload)),
 });
 
+contextBridge.exposeInMainWorld('magicPointerStage', {
+  show: () => ipcRenderer.send('stage:show'),
+  update: (payload) => ipcRenderer.send('stage:update', payload),
+  hide: () => ipcRenderer.send('stage:hide'),
+  onShow: (callback) => ipcRenderer.on('stage:show', (_event, payload) => callback(payload)),
+  onUpdate: (callback) => ipcRenderer.on('stage:update', (_event, payload) => callback(payload)),
+  onHide: (callback) => ipcRenderer.on('stage:hide', () => callback()),
+});
+
 contextBridge.exposeInMainWorld('magicPointerResult', {
   hide: () => ipcRenderer.send('result:hide'),
   ready: (payload) => ipcRenderer.send('result:ready', payload),

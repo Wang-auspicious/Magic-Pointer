@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Magic Pointer Stage</title>
+    <link rel="stylesheet" href="stage.css" />
+  </head>
+  <body>
+    <main id="stage" class="stage-root" data-state="hidden" hidden aria-label="Magic Pointer 舞台">
+      <div id="targeting-outline" class="targeting-outline" hidden></div>
+      <div id="frozen-glow" class="frozen-glow" hidden></div>
+      <div id="capsule" class="stage-capsule" data-mode="voice" data-phase="input" hidden>
+        <span id="voice-waveform" class="voice-waveform" aria-hidden="true">
+          <i></i><i></i><i></i>
+        </span>
+        <input
+          id="capsule-input"
+          class="capsule-input"
+          type="text"
+          autocomplete="off"
+          spellcheck="false"
+          aria-label="对锁定对象下达命令"
+        />
+        <p id="transcript" class="capsule-transcript" aria-live="polite"></p>
+        <span id="processing-shimmer" class="processing-shimmer" aria-hidden="true" hidden></span>
+      </div>
+      <div id="stage-result" class="stage-result" hidden></div>
+      <div id="stage-error" class="stage-error" role="alert" hidden></div>
+    </main>
+    <script src="../stage_state.js"></script>
+    <script src="stage.js"></script>
+  </body>
+</html>

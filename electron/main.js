@@ -26,6 +26,7 @@ let panelWindow = null;
 let resultWindow = null;
 let readerWindow = null;
 let dashboardWindow = null;
+let stageWindow = null;
 let mousePollTimer = null;
 let overlayHideTimer = null;
 let wiggleDetector = null;
@@ -322,6 +323,58 @@ function createOverlayWindow() {
   overlayWindow.on('closed', () => {
     overlayWindow = null;
   });
+}
+
+function createStageWindow() {
+  if (stageWindow && !stageWindow.isDestroyed()) return stageWindow;
+  const display = screen.getPrimaryDisplay();
+  const bounds = display.bounds;
+  stageWindow = new BrowserWindow({
+    x: bounds.x,
+    y: bounds.y,
+    width: bounds.width,
+    height: bounds.height,
+    frame: false,
+    transparent: true,
+    backgroundColor: '#00000000',
+    fullscreenable: true,
+    resizable: false,
+    movable: false,
+    skipTaskbar: true,
+    show: false,
+    alwaysOnTop: true,
+    hasShadow: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  stageWindow.setAlwaysOnTop(true, 'screen-saver');
+  stageWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  stageWindow.loadFile(path.join(__dirname, 'renderer', 'stage.html'));
+  stageWindow.setIgnoreMouseEvents(true, { forward: true });
+  stageWindow.on('closed', () => { stageWindow = null; });
+  return stageWindow;
+}
+
+function showStage(payload = {}) {
+  const win = createStageWindow();
+  const send = () => {
+    if (!win || win.isDestroyed()) return;
+    win.webContents.send('stage:show', payload);
+    if (!win.isVisible()) win.showInactive();
+  };
+  if (win.webContents.isLoading()) win.webContents.once('did-finish-load', send);
+  else send();
+}
+
+function updateStage(payload = {}) {
+  safeSurfaceSend('stage', 'stage:update', payload);
+}
+
+function hideStage() {
+  if (stageWindow && !stageWindow.isDestroyed() && stageWindow.isVisible()) stageWindow.hide();
 }
 
 function createPanelWindow() {
@@ -700,6 +753,10 @@ function dismissTemporarySurfaces({ invalidateSession = true, hideObserver = fal
     resultWindow.webContents.send('result:hide');
     resultWindow.hide();
   }
+  if (stageWindow && !stageWindow.isDestroyed() && stageWindow.isVisible()) {
+    // Ask the stage to play its dismiss fade; it answers with stage:hide.
+    stageWindow.webContents.send('stage:hide');
+  }
   hidePanelWindowOnly();
   if (invalidateSession) invalidateSelectionSession(sessionToken);
   currentResultPayload = null;
@@ -917,6 +974,13 @@ function beginSelectionSession(reason = 'manual') {
   activeSelectionSessionToken = entry.token;
   createPanelWindow();
   showOverlay(`${reason}-capturing`, 0);
+  // Additive PointerStage wiring: the stage wakes alongside the legacy panel
+  // flow (a later task retires the panel from this hot path).
+  showStage({
+    reason,
+    selectionSessionToken: entry.token,
+    target: { x: cursor.x, y: cursor.y, width: 0, height: 0 },
+  });
   log(`selection session capture start reason=${reason} token=${entry.token}`);
 
   let child = null;
@@ -953,6 +1017,14 @@ function beginSelectionSession(reason = 'manual') {
         });
         if (!laidOut) return;
         log(`selection session capture done token=${entry.token} status=${attached.snapshot?.status || 'missing'} app=${attached.summary?.app || 'none'}`);
+        const stageBbox = attached.snapshot?.selection_bbox || attached.snapshot?.selection_rect;
+        const stageTarget = Array.isArray(stageBbox) && stageBbox.length === 4
+          ? { x: Number(stageBbox[0]), y: Number(stageBbox[1]), width: Number(stageBbox[2]), height: Number(stageBbox[3]) }
+          : stageBbox && typeof stageBbox === 'object' ? stageBbox : null;
+        updateStage({
+          selectionSessionToken: entry.token,
+          event: { type: 'FREEZE', target: stageTarget },
+        });
         showPanel(reason, panelPayloadForSession(laidOut), { focusInput: true, sessionEntry: laidOut });
       },
     },
@@ -1051,6 +1123,7 @@ app.on('will-quit', () => {
     try { if (child && !child.killed) child.kill(); } catch (_) {}
   }
   dictationChildren.clear();
+  try { stageWindow?.close(); } catch (_) {}
   try { panelWindow?.close(); } catch (_) {}
   try { resultWindow?.close(); } catch (_) {}
   try { readerWindow?.close(); } catch (_) {}
@@ -1069,6 +1142,18 @@ ipcMain.on('panel:resize', (event, payload) => {
 });
 ipcMain.on('panel:show-contextual-result', (event, payload) => {
   if (isSurfaceSender(event, 'panel', resultTargetWindow)) showContextualResult(payload);
+});
+ipcMain.on('stage:show', (event) => {
+  // Renderer re-asserts visibility once it has content to paint.
+  if (!isSurfaceSender(event, 'stage', resultTargetWindow)) return;
+  if (stageWindow && !stageWindow.isDestroyed() && !stageWindow.isVisible()) stageWindow.showInactive();
+});
+ipcMain.on('stage:update', (event, payload) => {
+  if (!isSurfaceSender(event, 'stage', resultTargetWindow)) return;
+  log(`stage renderer state=${String(payload?.state || 'unknown')}`);
+});
+ipcMain.on('stage:hide', (event) => {
+  if (isSurfaceSender(event, 'stage', resultTargetWindow)) hideStage();
 });
 ipcMain.on('dictation:start', (event, payload) => {
   const surface = payload?.surface === 'overlay' ? 'overlay' : payload?.surface === 'panel' ? 'panel' : null;
@@ -1206,6 +1291,7 @@ ipcMain.on('result:expand', (event, payload) => {
 
 function resultTargetWindow(target) {
   if (target === 'dashboard' || target === 'calendar-dashboard' || target === 'fabric-dashboard') return dashboardWindow;
+  if (target === 'stage') return stageWindow;
   if (target === 'reader') return readerWindow;
   if (target === 'result') return resultWindow;
   return target === 'panel' ? panelWindow : overlayWindow;
