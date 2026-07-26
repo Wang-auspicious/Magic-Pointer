@@ -67,6 +67,7 @@ def run_bridge(payload: dict[str, Any], user_data_dir: Path) -> tuple[int, dict[
         [sys.executable, "scripts/selection_bridge.py"],
         input=json.dumps(payload, ensure_ascii=False),
         text=True,
+        encoding="utf-8",
         capture_output=True,
         cwd=ROOT,
         env=env,

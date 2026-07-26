@@ -22,6 +22,7 @@ def run_bridge(payload: dict[str, Any], *, user_data_dir: Path | None = None) ->
         [sys.executable, "scripts/action_bridge.py"],
         input=json.dumps(payload, ensure_ascii=False),
         text=True,
+        encoding="utf-8",
         capture_output=True,
         cwd=ROOT,
         timeout=15,
