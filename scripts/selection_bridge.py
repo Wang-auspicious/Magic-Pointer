@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,11 +38,24 @@ from app.system_context import list_visible_windows
 from app.fabric.action import make_fabric_action_proposal
 from app.fabric.catalog import get_recipe
 from app.fabric.engine import FabricEngine
+from app.fabric.settings import SettingsStore
 
 MAGIC_WINDOW_MARKERS = ("Magic Pointer", "Electron Overlay")
 REVIEW_RECORD_PREFIXES = ("验收：", "验收:", "记录问题：", "记录问题:", "批注：", "批注:", "review:")
 REVIEW_COMPILE_COMMANDS = ("整理验收意见", "生成改进提示词", "compile review")
 REVIEW_DELIVERY_COMMANDS = ("把验收意见填到这里", "填入这里", "写到这个输入框", "deliver review here")
+
+
+def _screenshot_upload_allowed() -> bool:
+    """Read privacy.upload_screenshots; fail closed if settings are unreadable."""
+    settings_path = (
+        Path(os.environ.get("MAGIC_POINTER_USER_DATA_DIR") or ROOT / "data" / "runtime")
+        / "fabric-settings.json"
+    )
+    try:
+        return SettingsStore(settings_path).load().privacy.upload_screenshots is True
+    except Exception:
+        return False
 
 
 def read_payload() -> dict[str, Any]:
@@ -198,6 +212,7 @@ def _context_pack_response(
     store: ContextSessionStore | None = None,
     review_store: Any | None = None,
     artifact_root: Path | str | None = None,
+    allow_screenshot_upload: bool | None = None,
 ) -> dict[str, Any] | None:
     command = str(payload.get("command") or "").strip()
     intent = parse_context_intent(command)
@@ -298,6 +313,11 @@ def _context_pack_response(
                 }
 
         target_profile = detect_agent_profile(target_window or {})
+        screenshot_upload = (
+            allow_screenshot_upload
+            if allow_screenshot_upload is not None
+            else _screenshot_upload_allowed()
+        )
         for attempt in range(3):
             active = active_store.active()
             if active is None or not active.get("items"):
@@ -307,6 +327,7 @@ def _context_pack_response(
                 active,
                 task_instruction=task_instruction,
                 target_profile=target_profile,
+                allow_screenshot_upload=screenshot_upload,
             )
             artifact = write_context_prompt_artifact(active, prompt, root=artifact_root)
             try:

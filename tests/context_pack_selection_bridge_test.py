@@ -2,8 +2,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from app.context_pack.session import ContextSessionStore
+from app.fabric.settings import FabricSettings, SettingsStore
 from scripts.selection_bridge import _context_pack_response
+
+PRIVACY_NOTICE = (
+    "Privacy boundary: Magic Pointer withheld screen/image attachments because "
+    "Dashboard screenshot upload is disabled."
+)
 
 
 def snapshot(*, snapshot_id: str = "snap-1", context: dict | None = None) -> dict:
@@ -28,6 +36,93 @@ def snapshot(*, snapshot_id: str = "snap-1", context: dict | None = None) -> dic
             "artifacts": {"document": r"D:\repo\app.py", "selection_context": "function context"},
         },
     }
+
+
+def visual_capture() -> dict:
+    return {
+        "object_id": "obj-visual-1",
+        "captured_at": "2026-07-26T10:00:00+08:00",
+        "app": "browser",
+        "source_window": {
+            "title": "Broken checkout - Chrome",
+            "hwnd": 301,
+            "process_id": 302,
+            "process_name": "chrome.exe",
+        },
+        "source_confidence": "point_hit",
+        "raw_image_path": r"D:\tmp\obj-visual-1.png",
+        "pointer_image_path": r"D:\tmp\obj-visual-1.pointer.png",
+        "point": [420, 260],
+        "bbox": [400, 240, 580, 330],
+        "capture_bbox": [100, 120, 900, 620],
+        "grounding": {"label": "red error card", "confidence": 0.84},
+        "file_context": {},
+        "app_context": {"url": "https://example.test/checkout"},
+        "vision_observation": "A red Payment failed card appears below the form.",
+        "vision_error": "",
+    }
+
+
+def test_delivered_prompt_withholds_screenshots_when_upload_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MAGIC_POINTER_USER_DATA_DIR", str(tmp_path))
+    ids = iter(["context-1", "item-1"])
+    store = ContextSessionStore(root=tmp_path, id_factory=lambda: next(ids))
+    store.record_visual(visual_capture(), "这是用户看到的错误状态")
+
+    compiled = _context_pack_response(
+        {"command": "生成提示词：修复结账错误"},
+        snapshot()["source_window"],
+        snapshot(context=None),
+        store=store,
+        artifact_root=tmp_path,
+    )
+    delivered = _context_pack_response(
+        {
+            "command": "发送到这里",
+            "targetPoint": {"x": 420, "y": 860},
+            "targetPointSpace": "physical_screen_pixels",
+        },
+        {"title": "Codex", "hwnd": 901, "process_id": 902, "process_name": "Codex.exe"},
+        snapshot(context=None),
+        store=store,
+        artifact_root=tmp_path,
+    )
+
+    assert compiled is not None and compiled["ok"] is True
+    assert ".png" not in compiled["contextPrompt"]
+    assert PRIVACY_NOTICE in compiled["contextPrompt"]
+    assert "A red Payment failed card" in compiled["contextPrompt"]
+    assert ".png" not in Path(compiled["promptArtifact"]).read_text(encoding="utf-8")
+    assert delivered is not None and delivered["ok"] is True
+    delivered_text = delivered["actionProposals"][0]["parameters"]["text"]
+    assert ".png" not in delivered_text
+    assert PRIVACY_NOTICE in delivered_text
+
+
+def test_delivered_prompt_includes_screenshots_when_setting_enabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MAGIC_POINTER_USER_DATA_DIR", str(tmp_path))
+    settings = FabricSettings.defaults()
+    settings.privacy.upload_screenshots = True
+    SettingsStore(tmp_path / "fabric-settings.json").save(settings)
+    ids = iter(["context-1", "item-1"])
+    store = ContextSessionStore(root=tmp_path, id_factory=lambda: next(ids))
+    store.record_visual(visual_capture(), "这是用户看到的错误状态")
+
+    compiled = _context_pack_response(
+        {"command": "生成提示词：修复结账错误"},
+        snapshot()["source_window"],
+        snapshot(context=None),
+        store=store,
+        artifact_root=tmp_path,
+    )
+
+    assert compiled is not None and compiled["ok"] is True
+    assert r"D:\tmp\obj-visual-1.pointer.png" in compiled["contextPrompt"]
+    assert "Privacy boundary" not in compiled["contextPrompt"]
 
 
 def test_native_collect_records_context_item(tmp_path: Path) -> None:

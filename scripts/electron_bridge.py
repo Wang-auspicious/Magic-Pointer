@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -24,6 +25,7 @@ from app.context_pack import (
     parse_context_intent,
     write_context_prompt_artifact,
 )
+from app.fabric.settings import SettingsStore
 from app.object_store import ObjectStore, PointerObject, new_object_id
 from app.file_context import format_local_file_context, read_local_file_context, wants_file_content
 from app.pointer_operator import MagicPointerOperator, format_grounding_for_prompt, wants_copy_path
@@ -49,14 +51,32 @@ def _runtime_issue_mode(payload: dict[str, Any]) -> bool:
     return str(payload.get("workflow") or "").strip() == "runtime_issue"
 
 
+def _screenshot_upload_allowed() -> bool:
+    """Read privacy.upload_screenshots; fail closed if settings are unreadable."""
+    settings_path = (
+        Path(os.environ.get("MAGIC_POINTER_USER_DATA_DIR") or RUNTIME_DIR)
+        / "fabric-settings.json"
+    )
+    try:
+        return SettingsStore(settings_path).load().privacy.upload_screenshots is True
+    except Exception:
+        return False
+
+
 def _record_runtime_issue(
     capture: dict[str, Any],
     statement: str,
     *,
     store: ContextSessionStore | None = None,
     artifact_root: Path | str | None = None,
+    allow_screenshot_upload: bool | None = None,
 ) -> dict[str, Any]:
     active_store = store or ContextSessionStore()
+    screenshot_upload = (
+        allow_screenshot_upload
+        if allow_screenshot_upload is not None
+        else _screenshot_upload_allowed()
+    )
     recorded = active_store.record_runtime_visual(capture, statement)
     updated: dict[str, Any] | None = None
     prompt = ""
@@ -70,6 +90,7 @@ def _record_runtime_issue(
             active,
             task_instruction=task_instruction,
             target_profile="generic",
+            allow_screenshot_upload=screenshot_upload,
         )
         artifact = write_context_prompt_artifact(active, prompt, root=artifact_root)
         try:

@@ -71,11 +71,18 @@ def test_detect_agent_profile_from_process_or_window(window: dict, profile_id: s
     assert detect_agent_profile(window)["id"] == profile_id
 
 
+PRIVACY_NOTICE = (
+    "Privacy boundary: Magic Pointer withheld screen/image attachments because "
+    "Dashboard screenshot upload is disabled."
+)
+
+
 def test_compiler_preserves_user_words_sources_geometry_and_uncertainty() -> None:
     prompt = compile_context_prompt(
         context_session(),
         task_instruction="修复结账错误并运行相关测试",
         target_profile="codex",
+        allow_screenshot_upload=True,
     )
 
     assert "修复结账错误并运行相关测试" in prompt
@@ -89,6 +96,46 @@ def test_compiler_preserves_user_words_sources_geometry_and_uncertainty() -> Non
     assert "0.84" in prompt
     assert "不要把视觉观察或模型推断改写成用户事实" in prompt
     assert "Codex" in prompt
+
+
+@pytest.mark.parametrize("kwargs", [{}, {"allow_screenshot_upload": False}])
+def test_compiler_withholds_screenshot_paths_by_default(kwargs: dict) -> None:
+    prompt = compile_context_prompt(
+        context_session(),
+        task_instruction="修复结账错误并运行相关测试",
+        target_profile="codex",
+        **kwargs,
+    )
+
+    assert "原始截图" not in prompt
+    assert "指向标注图" not in prompt
+    assert ".png" not in prompt
+    assert PRIVACY_NOTICE in prompt
+    # Visual context degrades to textual observation already carried by the pack.
+    assert "A red Payment failed card" in prompt
+    assert "[420, 260]" in prompt
+
+
+def test_compiler_includes_screenshot_paths_when_upload_allowed() -> None:
+    prompt = compile_context_prompt(
+        context_session(),
+        task_instruction="修复结账错误并运行相关测试",
+        allow_screenshot_upload=True,
+    )
+
+    assert r"D:\tmp\screen.png" in prompt
+    assert r"D:\tmp\pointer.png" in prompt
+    assert "Privacy boundary" not in prompt
+
+
+def test_compiler_skips_privacy_notice_when_pack_has_no_screenshots() -> None:
+    session = context_session()
+    session["items"][1]["images"] = {}
+
+    prompt = compile_context_prompt(session, task_instruction="分析这个界面")
+
+    assert ".png" not in prompt
+    assert "Privacy boundary" not in prompt
 
 
 def test_compiler_exposes_visual_failure_instead_of_hiding_missing_observation() -> None:
@@ -160,7 +207,7 @@ def test_runtime_issue_prompt_makes_agent_locate_source_from_live_evidence() -> 
     session["items"][1]["role"] = "reference"
     session["items"][1]["instruction"] = "参考这个卡片的间距和按钮位置"
 
-    prompt = compile_context_prompt(session, target_profile="codex")
+    prompt = compile_context_prompt(session, target_profile="codex", allow_screenshot_upload=True)
 
     assert prompt.startswith("# Runtime UI issue")
     assert "这个保存按钮太靠下，应该和右侧卡片顶部对齐" in prompt
@@ -171,3 +218,18 @@ def test_runtime_issue_prompt_makes_agent_locate_source_from_live_evidence() -> 
     assert r"D:\tmp\pointer.png" in prompt
     assert "修改后运行与目标相匹配的测试、构建或视觉检查" in prompt
     assert len(prompt) <= 60000
+
+
+def test_runtime_issue_prompt_withholds_screenshots_by_default() -> None:
+    session = context_session()
+    session["workflow_kind"] = "runtime_issue"
+    session["task_instruction"] = "这个保存按钮太靠下，应该和右侧卡片顶部对齐"
+    session["items"][0]["role"] = "issue"
+    session["items"][1]["role"] = "reference"
+
+    prompt = compile_context_prompt(session, target_profile="codex")
+
+    assert prompt.startswith("# Runtime UI issue")
+    assert ".png" not in prompt
+    assert "截图路径" not in prompt
+    assert PRIVACY_NOTICE in prompt

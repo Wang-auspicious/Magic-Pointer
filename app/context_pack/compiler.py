@@ -10,6 +10,14 @@ JsonDict = dict[str, Any]
 MAX_PROMPT_CHARS = 60_000
 DETAIL_BUDGET_CHARS = 18_000
 
+# Keep this wording aligned with the fabric agent path
+# (app/fabric/executors.py AgentHandoffExecutor) so every delivery surface
+# announces the same privacy boundary when screenshot upload is disabled.
+PRIVACY_BOUNDARY_NOTICE = (
+    "Privacy boundary: Magic Pointer withheld screen/image attachments because "
+    "Dashboard screenshot upload is disabled. Work only from the textual and structured context."
+)
+
 AGENT_PROFILES: dict[str, JsonDict] = {
     "generic": {
         "id": "generic",
@@ -101,6 +109,7 @@ def compile_context_prompt(
     *,
     task_instruction: str = "",
     target_profile: str | JsonDict | None = None,
+    allow_screenshot_upload: bool = False,
 ) -> str:
     session_id = _clean(session.get("session_id"), limit=200)
     if not session_id:
@@ -133,7 +142,11 @@ def compile_context_prompt(
                 "- 这是用户在运行界面中指出的真实现场，不是用户提供的源码定位。",
                 "- 自行检查当前工作区并定位负责源码；不要要求用户寻找文件、组件或函数。",
                 "- role=issue 是待修现场；role=reference 只是期望参考，不得把参考界面描述成当前产品事实。",
-                "- 优先利用可见文字、URL、窗口、截图路径、指针标注和结构化上下文建立从现场到源码的线索。",
+                (
+                    "- 优先利用可见文字、URL、窗口、截图路径、指针标注和结构化上下文建立从现场到源码的线索。"
+                    if allow_screenshot_upload
+                    else "- 优先利用可见文字、URL、窗口和结构化上下文建立从现场到源码的线索。"
+                ),
             ]
         )
     if not task:
@@ -161,6 +174,7 @@ def compile_context_prompt(
     lines.extend(["", "## Context Pack 详细证据", ""])
     detail_chars = 0
     omitted_details = 0
+    withheld_screenshots = 0
     for index, item in enumerate(items, 1):
         source = item.get("source") if isinstance(item.get("source"), dict) else {}
         window = source.get("window") if isinstance(source.get("window"), dict) else {}
@@ -207,10 +221,13 @@ def compile_context_prompt(
             block.append(f"- Grounding：{_clean(_json_line(grounding), limit=2000)}")
         raw_image = _clean(images.get("raw"), limit=4000)
         pointer_image = _clean(images.get("pointer"), limit=4000)
-        if raw_image:
-            block.append(f"- 原始截图：{raw_image}")
-        if pointer_image:
-            block.append(f"- 指向标注图：{pointer_image}")
+        if allow_screenshot_upload:
+            if raw_image:
+                block.append(f"- 原始截图：{raw_image}")
+            if pointer_image:
+                block.append(f"- 指向标注图：{pointer_image}")
+        else:
+            withheld_screenshots += sum(1 for value in (raw_image, pointer_image) if value)
         if file_context:
             block.append(
                 "- 文件上下文元数据："
@@ -233,6 +250,17 @@ def compile_context_prompt(
             [
                 f"详细证据预算已用尽；其余 {omitted_details} 条仅保留在上方索引。",
                 "完整字段请读取原始 Context Pack 会话或 artifact；不要据此补造被截断的证据。",
+                "",
+            ]
+        )
+
+    if withheld_screenshots:
+        lines.extend(
+            [
+                "## 隐私边界",
+                "",
+                PRIVACY_BOUNDARY_NOTICE,
+                f"本次共有 {withheld_screenshots} 个截图证据仅保留在用户本机；请依赖上文的视觉观察文字、坐标和结构化来源。",
                 "",
             ]
         )
