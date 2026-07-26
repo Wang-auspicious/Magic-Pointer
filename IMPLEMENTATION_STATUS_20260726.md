@@ -1,6 +1,25 @@
 # Magic Pointer 当前实现状态
 
-日期：2026-07-26
+日期：2026-07-26（晚间更新：PointerStage 端到端接通，旧临时界面退役）
+
+## PointerStage 单舞台（本轮完成）
+
+- 舞台成为唯一临时表面：targeting 描边 → frozen 呼吸光 → 胶囊（语音/文字）→
+  shimmer 处理 → 结果卡/错误卡 → 淡出，全部在一个透明点击穿透窗口上。
+- 端到端已接通：胶囊内 Enter/语音 final 通过 `stage:submit-selection-command`
+  直达 selection_bridge；partial/final 转写逐字飞入；动作按钮走
+  `stage:execute-action`（携带一次性 action token）；日历/路线草稿卡的
+  "审核并创建"通过 `stage:context-action` 打开 Dashboard 对应视图。
+- 交互窗口默认点击穿透；仅在文字胶囊、结果卡、错误卡或 chips 可见时由
+  渲染器申请 `stage:set-mouse-capture` 获取真实鼠标/键盘；Escape 或点击
+  空白处即撤下并作废会话。
+- 回执诚实性延续到舞台：`accepted` 渲染为"已受理(尚未完成)"，只有
+  `succeeded`+verified 才显示"已写入成功"；进度条只响应真实 UIA 写入事件。
+- 旧界面退役：`main.js` 不再创建 Panel/Result/Reader 窗口，
+  `result.html|js|css`、`reader.html|js|css` 与对应测试已删除；overlay 仅保留
+  观察者光环与运行时问题圈选，圈选结果也路由到舞台。panel 渲染器文件保留
+  在仓库中但已脱离热路径。
+- 不合格选区不再打开胶囊：冻结后立即在舞台上给出明确错误。
 
 ## 先说结论
 
@@ -66,6 +85,8 @@
 
 ## 已知未完成边界
 
+- 本轮自动化已全绿（`npm test` 25 套、`pytest` 294 passed、Electron 冒烟启动
+  无错误），但真实"晃动→语音→写回"的实机走查在本轮尚未重跑。
 - macOS 原生宿主源码已存在，但没有在 Mac 实机完成 Accessibility、麦克风、Screen
   Recording、多屏坐标、签名和公证验收。
 - 日历、Figma、GitHub/Linear、图像生成、图表 digitizer 和数学视觉没有在本机连接真实

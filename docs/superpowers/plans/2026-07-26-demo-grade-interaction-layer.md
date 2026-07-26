@@ -23,12 +23,12 @@ Design ruling (do not deviate): status strings must reflect truth. A **verified 
 - Verify: `tests/fabric_bridge_test.py::test_bridge_lists_catalog_and_real_provider_state` passes without timeout.
 
 **Steps:**
-- [ ] Run `python -m pytest tests/fabric_engine_test.py tests/fabric_bridge_test.py -q` to reproduce the 3 failures
-- [ ] Fix `fabric_bridge.py` accepted-mapping; add regression test asserting queued agent receipt → `ok:true,state:"accepted"` and message contains "尚未完成"
-- [ ] Fix provider probe timeout (systematic-debugging: find the blocking call first)
-- [ ] Align the two engine tests with honest semantics
-- [ ] Run full `python -m pytest -q` → 0 failures; `npm test` → green
-- [ ] Commit only the files above: `fix: honest accepted/succeeded receipt semantics across bridges`
+- [x] Run `python -m pytest tests/fabric_engine_test.py tests/fabric_bridge_test.py -q` to reproduce the 3 failures
+- [x] Fix `fabric_bridge.py` accepted-mapping; add regression test asserting queued agent receipt → `ok:true,state:"accepted"` and message contains "尚未完成"
+- [x] Fix provider probe timeout (systematic-debugging: find the blocking call first)
+- [x] Align the two engine tests with honest semantics
+- [x] Run full `python -m pytest -q` → 0 failures; `npm test` → green
+- [x] Commit only the files above: `fix: honest accepted/succeeded receipt semantics across bridges`
 
 ### Task 2 (M1-privacy): Context-pack privacy choke point
 
@@ -40,10 +40,10 @@ Gap (confirmed): `app/context_pack/compiler.py:99-104` takes no privacy setting 
 - Test: `tests/context_pack_compiler_test.py` — new tests: (a) switch off → compiled prompt contains no `.png`/screenshot path substrings and contains the privacy notice; (b) switch on → paths present. Add a bridge-level test in `tests/context_pack_selection_bridge_test.py` asserting the delivered prompt honors the setting.
 
 **Steps:**
-- [ ] Write failing tests (a)+(b); run to confirm (a) fails
-- [ ] Implement compiler param + bridge wiring
-- [ ] Full `python -m pytest -q` green
-- [ ] Commit: `fix: screenshot privacy switch constrains context-pack prompt delivery`
+- [x] Write failing tests (a)+(b); run to confirm (a) fails
+- [x] Implement compiler param + bridge wiring
+- [x] Full `python -m pytest -q` green
+- [x] Commit: `fix: screenshot privacy switch constrains context-pack prompt delivery`
 
 ### Task 3 (M2): PointerStage core renderer
 
@@ -56,31 +56,31 @@ Gap (confirmed): `app/context_pack/compiler.py:99-104` takes no privacy setting 
 
 **Visual contract (from design §2):** graphite `#0E1116`, single electric-blue accent, targeting outline 1.5px/120ms fade, frozen glow 2px breathing 2.4s, capsule 72px voice / 176px text growing ≤560px, letters fly in ~30ms stagger via GSAP (vendored local file, no CDN), shimmer processing, zero DOM when hidden. Honor `prefers-reduced-motion`.
 
-- [ ] Write stage_state tests → fail → implement → pass
-- [ ] Build renderer + static test; wire main.js window + IPC
-- [ ] `npm test` green; manual smoke via `npm start`
-- [ ] Commit: `feat: PointerStage single-surface renderer core`
+- [x] Write stage_state tests → fail → implement → pass
+- [x] Build renderer + static test; wire main.js window + IPC
+- [x] `npm test` green; manual smoke via `npm start`
+- [x] Commit: `feat: PointerStage single-surface renderer core`
 
 ### Task 4 (M3): Chips + result cards + write-back progress
 
 - Create: `electron/stage_chips_policy.js` — chips only when (click-selected object) ∧ (capsule empty) ∧ (input mode not voice); ≤3 derived from object type (image→对比/整理; text→改写/翻译/摘要; date→加入日历); hide on first keystroke/speech.
 - Extend `stage.js`: three result card types (calendar draft / table compare / text draft with diff) expanding from capsule anchor; delivery progress state shows true UIA draft-write progress (no fake foreign-app animation — design §2.2).
 - Test: `tests/stage_chips_policy_test.js`, extend `tests/stage_static_test.js`.
-- [ ] TDD as above; commit `feat: contextual chips and structured result cards on PointerStage`
+- [x] TDD as above; commit `feat: contextual chips and structured result cards on PointerStage`
 
 ### Task 5 (M4): Legacy retirement + honest Activity timeline
 
 - Modify: `electron/main.js` — route all results to stage; delete `createResultWindow`/`createReaderWindow` paths (`main.js:355-424,633-654`), `RESULT_SURFACE_MODE` env toggle (`main.js:49`); remove legacy lasso/pill/in-overlay result from `electron/renderer/overlay.js` + `index.html` (keep observer aura + runtime-issue circle capture).
 - Delete: `electron/renderer/result.html|js|css`, `reader.html|js|css`; update `electron/result_surface_policy.js` `classifyResult` to stage modes (`inline|card|error`); rewrite `tests/result_surface_policy_test.js`, `tests/reader_static_test.js` (delete), `tests/overlay_static_test.js`, `tests/panel_static_test.js` accordingly.
 - Modify: `electron/renderer/dashboard.js` — Activity view becomes timeline (intent → plan → true state incl. `accepted`/queued position → verify result), reading fabric task_store statuses verbatim.
-- [ ] TDD; full `npm test` + pytest green; commit `feat: retire legacy result surfaces; honest activity timeline`
+- [x] TDD; full `npm test` + pytest green; commit `feat: retire legacy result surfaces; honest activity timeline`
 
 ### Task 6: Evidence + regression gate
 
-- [ ] `python -m pytest -q` 0 failed; `npm test` green
+- [x] `python -m pytest -q` 0 failed; `npm test` green
 - [ ] Screenshot each stage state (wake/targeting/frozen/voice/grow/processing/card/dismiss) into `docs/evidence/2026-07-26-stage/`
 - [ ] Real-machine smoke: wiggle → voice → draft write-back
-- [ ] Update `IMPLEMENTATION_STATUS_20260726.md` honestly; push branch, update PR #1
+- [x] Update `IMPLEMENTATION_STATUS_20260726.md` honestly; push branch, update PR #1
 
 ---
 
