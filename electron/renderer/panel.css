@@ -15,7 +15,7 @@ body {
   overflow: hidden;
   background: transparent;
   color: var(--google-blue);
-  font-family: "Google Sans", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  font-family: var(--mp-font-ui);
 }
 
 * { box-sizing: border-box; }

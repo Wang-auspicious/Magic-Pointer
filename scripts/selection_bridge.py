@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -28,6 +29,7 @@ from app.context_pack import (
     ContextSessionConflict,
     ContextSessionError,
     ContextSessionStore,
+    build_context_capture_policy,
     compile_context_prompt,
     detect_agent_profile,
     parse_context_intent,
@@ -36,6 +38,7 @@ from app.context_pack import (
 from app.review import ReviewSessionError, ReviewSessionStore, compile_review_prompt, write_prompt_artifact
 from app.system_context import list_visible_windows
 from app.fabric.action import make_fabric_action_proposal
+from app.fabric.workflow_task_store import WorkflowTaskStore
 from app.fabric.catalog import get_recipe
 from app.fabric.engine import FabricEngine
 from app.fabric.settings import SettingsStore
@@ -54,16 +57,18 @@ REVIEW_COMPILE_COMMANDS = ("整理验收意见", "生成改进提示词", "compi
 REVIEW_DELIVERY_COMMANDS = ("把验收意见填到这里", "填入这里", "写到这个输入框", "deliver review here")
 
 
-def _screenshot_upload_allowed() -> bool:
-    """Read privacy.upload_screenshots; fail closed if settings are unreadable."""
+def _capture_settings():
+    """Read the complete capture policy; fail closed if settings are unreadable."""
     settings_path = (
         Path(os.environ.get("MAGIC_POINTER_USER_DATA_DIR") or ROOT / "data" / "runtime")
         / "fabric-settings.json"
     )
     try:
-        return SettingsStore(settings_path).load().privacy.upload_screenshots is True
+        return SettingsStore(settings_path).load()
     except Exception:
-        return False
+        from app.fabric.settings import FabricSettings
+
+        return FabricSettings.defaults()
 
 
 def read_payload() -> dict[str, Any]:
@@ -84,6 +89,56 @@ def _window_dicts() -> list[dict[str, Any]]:
 def _wants_undo(command: str) -> bool:
     normalized = str(command or "").lower()
     return any(token in normalized for token in ("undo", "restore", "revert", "\u64a4\u56de", "\u64a4\u9500", "\u8fd8\u539f"))
+
+
+def _reference_label_response(payload: dict[str, Any]) -> dict[str, Any] | None:
+    command = str(payload.get("command") or "").strip()
+    match = re.search(
+        r"(?:这是|这个是|标记为|标为|叫做)\s*([A-Z])(?:\b|$)|"
+        r"\b(?:label|mark(?:\s+this)?\s+as|this\s+is)\s+([A-Z])\b",
+        command,
+        re.IGNORECASE,
+    )
+    if match is None:
+        return None
+    reference_label = str(match.group(1) or match.group(2) or "").upper()
+    episode = payload.get("interactionEpisode")
+    episode = dict(episode) if isinstance(episode, dict) else {}
+    slots = episode.get("slots")
+    slots = dict(slots) if isinstance(slots, dict) else {}
+    current = slots.get("this")
+    current = dict(current) if isinstance(current, dict) else {}
+    object_id = str(current.get("objectId") or "").strip()
+    bound_label = str(current.get("referenceLabel") or "").strip().upper()
+    labels = episode.get("labels")
+    labels = dict(labels) if isinstance(labels, dict) else {}
+    if not object_id or bound_label != reference_label or str(labels.get(reference_label) or "") != object_id:
+        return {
+            "ok": False,
+            "prompt": command,
+            "error": "reference_label_binding_failed",
+            "intentKind": "reference_label_failed",
+            "actionProposals": [],
+            "selectionSessionId": str(payload.get("selectionSessionId") or "") or None,
+        }
+    bound_labels = sorted(
+        str(label).upper()
+        for label, value in labels.items()
+        if re.fullmatch(r"[A-Z]", str(label).upper()) and str(value or "").strip()
+    )
+    return {
+        "ok": True,
+        "prompt": command,
+        "answer": f"已将当前冻结对象标记为 {reference_label}。现有标签：{'、'.join(bound_labels)}。",
+        "intentKind": "reference_label_bound",
+        "referenceLabel": reference_label,
+        "objectId": object_id,
+        "boundLabels": bound_labels,
+        "actionProposals": [],
+        "selectionSessionId": str(payload.get("selectionSessionId") or "") or None,
+        "selectionSnapshotId": str(current.get("snapshotId") or "") or None,
+        "interactionEpisodeId": str(episode.get("episodeId") or "") or None,
+    }
 
 
 def _review_instruction(command: str) -> str | None:
@@ -321,11 +376,7 @@ def _context_pack_response(
                 }
 
         target_profile = detect_agent_profile(target_window or {})
-        screenshot_upload = (
-            allow_screenshot_upload
-            if allow_screenshot_upload is not None
-            else _screenshot_upload_allowed()
-        )
+        capture_settings = _capture_settings() if allow_screenshot_upload is None else None
         for attempt in range(3):
             active = active_store.active()
             if active is None or not active.get("items"):
@@ -335,7 +386,12 @@ def _context_pack_response(
                 active,
                 task_instruction=task_instruction,
                 target_profile=target_profile,
-                allow_screenshot_upload=screenshot_upload,
+                allow_screenshot_upload=bool(allow_screenshot_upload),
+                capture_policy=(
+                    build_context_capture_policy(capture_settings)
+                    if capture_settings is not None
+                    else None
+                ),
             )
             artifact = write_context_prompt_artifact(active, prompt, root=artifact_root)
             try:
@@ -669,6 +725,51 @@ def _fabric_objects(
         objects.append(value)
 
     snapshot_id = str((snapshot or {}).get("snapshot_id") or "").strip()
+    episode = payload.get("interactionEpisode")
+    slots = episode.get("slots") if isinstance(episode, dict) else None
+
+    def from_episode(item: Any) -> dict[str, Any] | None:
+        if not isinstance(item, dict):
+            return None
+        object_id = str(item.get("objectId") or "").strip()
+        if not object_id:
+            return None
+        source = dict(item.get("source") or {})
+        return {
+            "id": object_id,
+            "referenceLabel": str(item.get("referenceLabel") or "").strip().upper(),
+            "kind": str(item.get("kind") or "episode_object"),
+            "label": str(item.get("label") or "THAT"),
+            "content": str(item.get("content") or ""),
+            "bbox": item.get("bbox"),
+            "source": {
+                **source,
+                "app": str(item.get("app") or source.get("app") or ""),
+                "title": str(item.get("windowTitle") or source.get("title") or ""),
+                "capturedAt": item.get("capturedAt"),
+            },
+        }
+
+    these = slots.get("these") if isinstance(slots, dict) else None
+    command = str(payload.get("command") or "")
+    if isinstance(these, list) and len(these) >= 2:
+        labels = [
+            str(item.get("referenceLabel") or "").strip().upper()
+            for item in these
+            if isinstance(item, dict) and str(item.get("referenceLabel") or "").strip()
+        ]
+        mentioned = [
+            label for label in labels
+            if re.search(rf"(?<![A-Za-z]){re.escape(label)}(?![A-Za-z])", command, re.IGNORECASE)
+        ]
+        collection_requested = any(token in command.casefold() for token in ("这些", "those", "these", "them", "both")) or len(set(mentioned)) >= 2
+        if collection_requested:
+            for item in these[:12]:
+                value = from_episode(item)
+                if value is not None:
+                    append(value)
+            return objects
+
     if app_ctx is not None and app_ctx.has_content:
         artifacts = dict(app_ctx.artifacts or {})
         rectangles = artifacts.get("rectangles") or artifacts.get("selection_rectangles") or []
@@ -688,6 +789,9 @@ def _fabric_objects(
                 "page": artifacts.get("page"),
                 "bbox": rectangles[0] if isinstance(rectangles, list) and rectangles else None,
                 "fileSha256": artifacts.get("file_sha256"),
+                "perceptionTrace": (snapshot or {}).get("perception_trace"),
+                "terminalEvidence": artifacts.get("terminal_evidence"),
+                "browserContext": artifacts.get("browser_context"),
             },
         })
     elif snapshot_id:
@@ -704,11 +808,12 @@ def _fabric_objects(
                 "processId": (target_window or {}).get("process_id") or (target_window or {}).get("pid"),
                 "path": (snapshot or {}).get("capture_path"),
                 "screenshotPath": (snapshot or {}).get("capture_path"),
+                "annotatedPath": (snapshot or {}).get("annotated_path"),
+                "captureAttestation": (snapshot or {}).get("capture_attestation"),
+                "perceptionTrace": (snapshot or {}).get("perception_trace"),
             },
         })
 
-    episode = payload.get("interactionEpisode")
-    slots = episode.get("slots") if isinstance(episode, dict) else None
     if isinstance(slots, dict):
         candidates: list[Any] = [slots.get("that"), slots.get("here")]
         if isinstance(slots.get("these"), list):
@@ -716,22 +821,9 @@ def _fabric_objects(
         for item in candidates:
             if not isinstance(item, dict):
                 continue
-            object_id = str(item.get("objectId") or "").strip()
-            if not object_id:
-                continue
-            append({
-                "id": object_id,
-                "kind": str(item.get("kind") or "episode_object"),
-                "label": str(item.get("label") or "THAT"),
-                "content": str(item.get("content") or ""),
-                "bbox": item.get("bbox"),
-                "source": {
-                    **dict(item.get("source") or {}),
-                    "app": str(item.get("app") or ""),
-                    "title": str(item.get("windowTitle") or ""),
-                    "capturedAt": item.get("capturedAt"),
-                },
-            })
+            value = from_episode(item)
+            if value is not None:
+                append(value)
     return objects
 
 
@@ -755,6 +847,9 @@ def _fabric_response(
         objects=objects,
         parameters={
             "cwd": str(payload.get("workspaceRoot") or ROOT),
+            "selectionSessionId": str(payload.get("selectionSessionId") or ""),
+            "sessionId": str(payload.get("agentSessionId") or payload.get("targetAgentSessionId") or ""),
+            "terminalExcerpt": str(payload.get("terminalExcerpt") or ""),
             "attachments": [
                 str(value)
                 for value in (
@@ -787,7 +882,14 @@ def _fabric_response(
             "selectionSessionId": str(payload.get("selectionSessionId") or "") or None,
             "selectionSnapshotId": str((snapshot or {}).get("snapshot_id") or "") or None,
         }
-    proposal = make_fabric_action_proposal(plan)
+    workflow_task = WorkflowTaskStore(active_engine.root / "workflow-tasks").create(
+        plan,
+        surface="gui",
+    )
+    proposal = make_fabric_action_proposal(
+        plan,
+        workflow_task_id=workflow_task["taskId"],
+    )
     proposal_dict = proposal.to_dict()
     auto_execute = (
         plan.get("requiresConfirmation") is not True
@@ -805,6 +907,7 @@ def _fabric_response(
         "intentKind": "fabric_recipe",
         "recipe": recipe.to_public_dict(),
         "plan": plan,
+        "workflowTask": workflow_task,
         "actionProposals": [proposal_dict],
         "autoExecuteProposalId": proposal.id if auto_execute else None,
         "selectionSessionId": str(payload.get("selectionSessionId") or "") or None,
@@ -857,6 +960,11 @@ def main() -> int:
             "selectionSessionId": selection_session_id or None,
         }, ensure_ascii=False))
         return 1
+
+    reference_response = _reference_label_response(payload)
+    if reference_response is not None:
+        print(json.dumps(reference_response, ensure_ascii=False))
+        return 0 if reference_response.get("ok") is True else 1
 
     context_response = _context_pack_response(payload, target_window, snapshot)
     if context_response is not None:

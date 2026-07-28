@@ -13,6 +13,7 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .pytest-*/
+.tmp/
 
 # Node/Electron dependencies
 node_modules/

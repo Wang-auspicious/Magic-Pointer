@@ -27,7 +27,7 @@ assert(main.includes("'scripts/calendar_bridge.py'"));
 // context action instead of a direct intentKind branch in the submit path.
 assert(main.includes("id === 'open-calendar-draft' && parsed.calendarDraft"));
 assert(main.includes("showDashboard({ view: 'calendar', calendarDraft"));
-assert(css.includes('[hidden] { display: none !important; }'));
+assert(/\[hidden\]\s*\{\s*display:\s*none\s*!important;\s*\}/.test(css));
 assert(!js.includes('innerHTML'));
 
 console.log('calendar dashboard static test ok');

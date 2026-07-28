@@ -72,6 +72,68 @@ class _ErrorRegistry:
         return _ErrorAdapter()
 
 
+class _TerminalAdapter:
+    def read_context(self, window, **_kwargs):
+        return AdapterReadContext(
+            adapter="uia_text_selection",
+            app="terminal",
+            window=window,
+            content="Error: broken\nProcess exited with code 7",
+            method="uia:terminal-text-pattern",
+            artifacts={
+                "terminal_evidence": {
+                    "schemaVersion": 1,
+                    "state": "resolved",
+                    "method": "uia:terminal-text-pattern",
+                    "exitCode": 7,
+                    "window": {"lineCount": 2, "text": "private log"},
+                    "pixelFallbackUsed": False,
+                },
+            },
+        )
+
+
+class _TerminalRegistry:
+    def matching_adapter(self, _window):
+        return _TerminalAdapter()
+
+
+class _BrowserAdapter:
+    def read_context(self, window, **_kwargs):
+        return AdapterReadContext(
+            adapter="browser_devtools",
+            app="browser",
+            window=window,
+            content="Retry",
+            method="cdp:dom-point",
+            artifacts={
+                "browser_context": {
+                    "schemaVersion": 1,
+                    "state": "resolved",
+                    "method": "cdp:dom-point",
+                    "selector": "#retry-payment",
+                    "node": {"accessibleName": "Retry payment"},
+                    "coordinates": {"pointerScreenPhysical": {"x": 640, "y": 520}},
+                    "networkFailures": [{"errorText": "private network error"}],
+                },
+            },
+        )
+
+
+class _BrowserRegistry:
+    def matching_adapter(self, _window):
+        return _BrowserAdapter()
+
+
+class _Audit:
+    def __init__(self):
+        self.events = []
+
+    def append(self, event_type, data):
+        self.events.append((event_type, data))
+        return {"type": event_type, "data": data}
+
+
 def test_snapshot_locks_only_the_foreground_window() -> None:
     foreground = {"title": "doc.docx - Word", "hwnd": 10, "supported": True}
     background = {"title": "other.docx - Word", "hwnd": 11, "supported": True}
@@ -89,6 +151,77 @@ def test_snapshot_locks_only_the_foreground_window() -> None:
         "翻译并写回",
         "交给 Agent",
     ]
+
+
+def test_structured_context_prevents_visual_capture_and_records_layer(tmp_path) -> None:
+    foreground = {
+        "title": "doc.docx - Word",
+        "hwnd": 10,
+        "pid": 42,
+        "bbox": (100, 200, 1100, 900),
+    }
+    visual_calls = []
+    audit = _Audit()
+
+    payload = capture_snapshot(
+        [foreground],
+        registry=_FakeRegistry(),
+        target_point={"x": 600, "y": 500},
+        visual_capture=lambda **kwargs: visual_calls.append(kwargs),
+        capture_dir=tmp_path,
+        default_capture_mode="local_screenshot",
+        audit_store=audit,
+    )
+
+    trace = payload["selectionSnapshot"]["perception_trace"]
+    assert trace["selectedLayer"] == "native_app"
+    assert trace["pixelFallbackUsed"] is False
+    assert visual_calls == []
+    assert audit.events[0][0] == "perception.resolved"
+    assert audit.events[0][1]["selectedLayer"] == "native_app"
+    assert "doc.docx" not in str(audit.events[0][1])
+
+
+def test_terminal_snapshot_audit_records_only_safe_evidence_summary(tmp_path) -> None:
+    audit = _Audit()
+    capture_snapshot(
+        [{"title": "PowerShell", "hwnd": 10, "pid": 42}],
+        registry=_TerminalRegistry(),
+        target_point={"x": 600, "y": 500},
+        capture_dir=tmp_path,
+        default_capture_mode="structured_only",
+        audit_store=audit,
+    )
+
+    assert [event[0] for event in audit.events] == ["perception.resolved", "terminal.evidence"]
+    terminal = audit.events[1][1]
+    assert terminal["state"] == "resolved"
+    assert terminal["exitCode"] == 7
+    assert terminal["windowLineCount"] == 2
+    assert terminal["pixelFallbackUsed"] is False
+    assert "private log" not in str(terminal)
+
+
+def test_browser_snapshot_audit_records_only_safe_devtools_summary(tmp_path) -> None:
+    audit = _Audit()
+    capture_snapshot(
+        [{"title": "Checkout - Google Chrome", "hwnd": 10, "pid": 42}],
+        registry=_BrowserRegistry(),
+        target_point={"x": 640, "y": 520},
+        capture_dir=tmp_path,
+        default_capture_mode="structured_only",
+        audit_store=audit,
+    )
+
+    assert [event[0] for event in audit.events] == ["perception.resolved", "browser.evidence"]
+    browser = audit.events[1][1]
+    assert browser["state"] == "resolved"
+    assert browser["selectorObserved"] is True
+    assert browser["accessibleNameObserved"] is True
+    assert browser["networkFailureCount"] == 1
+    assert browser["coordinatesObserved"] is True
+    assert browser["pixelFallbackUsed"] is False
+    assert "private network error" not in str(browser)
 
 
 def test_unsupported_foreground_fails_closed_without_scanning_background() -> None:
@@ -129,6 +262,11 @@ def test_unsupported_foreground_becomes_local_visual_object_at_pointer(tmp_path)
     assert snapshot["source_kind"] == "screen_region"
     assert snapshot["selection_bbox"] == [280, 290, 920, 710]
     assert Path(snapshot["capture_path"]).is_file()
+    annotated = Path(snapshot["annotated_path"])
+    assert annotated.is_file()
+    with Image.open(annotated).convert("RGB") as image:
+        pointer_area = image.crop((300, 190, 360, 250))
+        assert any(pixel != (255, 255, 255) for pixel in pointer_area.getdata())
     assert summary["hasVisual"] is True
     assert summary["hasContent"] is False
     assert captured == [((280, 290, 920, 710), True)]
@@ -137,6 +275,11 @@ def test_unsupported_foreground_becomes_local_visual_object_at_pointer(tmp_path)
         "交给 Agent",
         "识别并复制",
     ]
+    trace = snapshot["perception_trace"]
+    assert trace["selectedLayer"] == "screen_region"
+    assert trace["pixelFallbackUsed"] is True
+    assert trace["fallbackReason"] == "structured_context_unavailable"
+    assert trace["attempts"][-1]["status"] == "succeeded"
 
 
 def test_sensitive_foreground_never_uses_visual_capture(tmp_path) -> None:
@@ -163,9 +306,167 @@ def test_sensitive_foreground_never_uses_visual_capture(tmp_path) -> None:
 
     assert payload["selectionSnapshot"]["status"] == "sensitive"
     assert payload["selectionSnapshot"]["capture_path"] is None
+    assert payload["selectionSnapshot"].get("annotated_path") is None
     assert payload["captureSummary"]["hasVisual"] is False
     assert calls == []
     assert payload["suggestedCommands"] == []
+
+
+def test_per_app_deny_skips_native_adapter_and_visual_capture(tmp_path) -> None:
+    foreground = {
+        "title": "Private Vault - 1Password",
+        "hwnd": 20,
+        "pid": 42,
+        "process_name": "1Password.exe",
+        "bbox": (100, 200, 1100, 900),
+    }
+    registry = _FakeRegistry()
+    visual_calls = []
+
+    payload = capture_snapshot(
+        [foreground],
+        registry=registry,
+        target_point={"x": 600, "y": 500},
+        visual_capture=lambda **kwargs: visual_calls.append(kwargs),
+        capture_dir=tmp_path,
+        upload_screenshots=True,
+        default_capture_mode="upload_screenshot",
+        app_capture_modes={"1password": "deny"},
+    )
+
+    assert payload["selectionSnapshot"]["status"] == "denied"
+    assert payload["selectionSnapshot"]["context"] is None
+    assert payload["selectionSnapshot"]["capture_path"] is None
+    assert payload["suggestedCommands"] == []
+    assert registry.seen == []
+    assert visual_calls == []
+
+
+def test_structured_only_rule_reads_native_but_never_uses_visual_fallback(tmp_path) -> None:
+    foreground = {
+        "title": "Checkout - Edge",
+        "hwnd": 20,
+        "pid": 42,
+        "process_name": "msedge.exe",
+        "bbox": (100, 200, 1100, 900),
+    }
+    registry = _FakeRegistry(supported=False)
+    visual_calls = []
+
+    payload = capture_snapshot(
+        [foreground],
+        registry=registry,
+        target_point={"x": 600, "y": 500},
+        visual_capture=lambda **kwargs: visual_calls.append(kwargs),
+        capture_dir=tmp_path,
+        upload_screenshots=True,
+        default_capture_mode="upload_screenshot",
+        app_capture_modes={"edge": "structured_only"},
+    )
+
+    assert payload["selectionSnapshot"]["status"] == "structured_only"
+    assert payload["selectionSnapshot"]["capture_path"] is None
+    assert registry.seen == [foreground]
+    assert visual_calls == []
+    trace = payload["selectionSnapshot"]["perception_trace"]
+    assert trace["selectedLayer"] is None
+    assert trace["pixelFallbackUsed"] is False
+    assert trace["attempts"][-1]["layer"] == "screen_region"
+    assert trace["attempts"][-1]["status"] == "blocked"
+    assert trace["attempts"][-1]["reason"] == "capture_policy_structured_only"
+
+
+def test_visual_capture_rejects_target_change_before_grab_with_zero_files(tmp_path) -> None:
+    expected = {
+        "title": "Design A",
+        "hwnd": 20,
+        "pid": 42,
+        "process_name": "design.exe",
+        "desktop_id": "desktop-1",
+        "bbox": (100, 200, 1100, 900),
+    }
+    calls = []
+
+    def grabber(**kwargs):
+        calls.append(kwargs)
+        return Image.new("RGB", (640, 420), "white")
+
+    payload = capture_snapshot(
+        [expected],
+        registry=_FakeRegistry(supported=False),
+        target_point={"x": 600, "y": 500},
+        visual_capture=grabber,
+        capture_dir=tmp_path,
+        identity_probe=lambda: {**expected, "hwnd": 99, "title": "Design B"},
+    )
+
+    snapshot = payload["selectionSnapshot"]
+    assert snapshot["status"] == "target_mismatch"
+    assert snapshot["capture_path"] is None
+    assert snapshot["annotated_path"] is None
+    assert snapshot["capture_attestation"]["status"] == "target_mismatch"
+    assert calls == []
+    assert list(tmp_path.glob("*.png")) == []
+    assert payload["suggestedCommands"] == []
+
+
+def test_visual_capture_rejects_target_change_after_grab_before_writing_files(tmp_path) -> None:
+    expected = {
+        "title": "Design A",
+        "hwnd": 20,
+        "pid": 42,
+        "process_name": "design.exe",
+        "desktop_id": "desktop-1",
+        "bbox": (100, 200, 1100, 900),
+    }
+    probes = iter([expected, {**expected, "desktop_id": "desktop-2"}])
+    calls = []
+
+    def grabber(*, bbox, all_screens):
+        calls.append((bbox, all_screens))
+        return Image.new("RGB", (bbox[2] - bbox[0], bbox[3] - bbox[1]), "white")
+
+    payload = capture_snapshot(
+        [expected],
+        registry=_FakeRegistry(supported=False),
+        target_point={"x": 600, "y": 500},
+        visual_capture=grabber,
+        capture_dir=tmp_path,
+        identity_probe=lambda: next(probes),
+    )
+
+    snapshot = payload["selectionSnapshot"]
+    assert snapshot["status"] == "target_mismatch"
+    assert snapshot["capture_attestation"]["phase"] == "after_capture"
+    assert calls == [((280, 290, 920, 710), True)]
+    assert list(tmp_path.glob("*.png")) == []
+
+
+def test_visual_capture_records_verified_target_attestation(tmp_path) -> None:
+    expected = {
+        "title": "Design A",
+        "hwnd": 20,
+        "pid": 42,
+        "process_name": "design.exe",
+        "desktop_id": "desktop-1",
+        "bbox": (100, 200, 1100, 900),
+    }
+
+    payload = capture_snapshot(
+        [expected],
+        registry=_FakeRegistry(supported=False),
+        target_point={"x": 600, "y": 500},
+        visual_capture=lambda *, bbox, all_screens: Image.new(
+            "RGB", (bbox[2] - bbox[0], bbox[3] - bbox[1]), "white"
+        ),
+        capture_dir=tmp_path,
+        identity_probe=lambda: dict(expected),
+    )
+
+    attestation = payload["selectionSnapshot"]["capture_attestation"]
+    assert attestation["status"] == "verified"
+    assert attestation["expected"]["desktopId"] == "desktop-1"
+    assert attestation["before"] == attestation["after"]
 
 
 def test_capture_retention_removes_only_expired_owned_pngs(tmp_path) -> None:

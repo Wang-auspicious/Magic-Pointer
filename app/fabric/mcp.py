@@ -5,9 +5,12 @@ import os
 from pathlib import Path
 from typing import Any, Callable
 
+from app.fabric.capabilities import CapabilityRegistry
+from app.fabric.agent_gateway import AgentGateway
 from app.fabric.catalog import public_recipe_catalog
 from app.fabric.engine import FabricEngine
 from app.fabric.task_store import AgentTaskStore
+from app.system_context import list_visible_windows
 
 
 class CurrentObjectStore:
@@ -47,6 +50,23 @@ _TOOLS = (
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
     },
     {
+        "name": "search_capabilities",
+        "description": "Return only 3-8 Magic Pointer capabilities relevant to the current intent and objects.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["command"],
+            "properties": {
+                "command": {"type": "string"},
+                "objects": {"type": "array", "items": {"type": "object"}},
+                "selectedRecipeId": {"type": "string"},
+                "platform": {"type": "string"},
+                "providerAvailability": {"type": "object"},
+                "limit": {"type": "integer", "minimum": 3, "maximum": 8},
+            },
+            "additionalProperties": False,
+        },
+    },
+    {
         "name": "plan_recipe",
         "description": "Create a permission-bound action plan from a short command and grounded objects.",
         "inputSchema": {
@@ -70,6 +90,15 @@ _TOOLS = (
                 "plan": {"type": "object"},
                 "confirmed": {"type": "boolean"},
             },
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "agent_task_list",
+        "description": "List durable Agent tasks and their real persisted states without synthetic progress.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"limit": {"type": "integer", "minimum": 0, "maximum": 500}},
             "additionalProperties": False,
         },
     },
@@ -106,6 +135,29 @@ _TOOLS = (
             "additionalProperties": False,
         },
     },
+    {
+        "name": "agent_task_resume",
+        "description": "Resume a persisted interrupted or failed Agent task as a new recorded attempt.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["taskId"],
+            "properties": {"taskId": {"type": "string"}},
+            "additionalProperties": False,
+        },
+    },
+    {
+        "name": "agent_task_reconfirm_target",
+        "description": "Explicitly reconfirm a paused task target on the current desktop and restart it with a renewed lease.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["taskId", "confirmed"],
+            "properties": {
+                "taskId": {"type": "string"},
+                "confirmed": {"type": "boolean"},
+            },
+            "additionalProperties": False,
+        },
+    },
 )
 
 
@@ -119,12 +171,19 @@ class MagicPointerMcpServer:
     ) -> None:
         self.root = Path(root) if root is not None else Path(os.environ.get("MAGIC_POINTER_USER_DATA_DIR") or Path.cwd() / "data" / "runtime")
         self.current_objects = CurrentObjectStore(self.root / "current-object.json")
+        self.capabilities = CapabilityRegistry()
         self.engine = FabricEngine(
             root=self.root,
             clipboard_writer=clipboard_writer,
             clipboard_reader=clipboard_reader,
+            target_probe=lambda _lease: list_visible_windows(),
         )
         self.tasks = AgentTaskStore(self.root / "agent-tasks")
+        self.gateway = AgentGateway(
+            root=self.root,
+            task_store=self.tasks,
+            target_probe=lambda _lease: list_visible_windows(),
+        )
 
     def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         if name == "current_object":
@@ -132,6 +191,26 @@ class MagicPointerMcpServer:
             return {"ok": False, "error": "no_frozen_object"} if episode is None else {"ok": True, "episode": episode}
         if name == "list_recipes":
             return {"ok": True, "recipes": public_recipe_catalog()}
+        if name == "search_capabilities":
+            return {
+                "ok": True,
+                "capabilities": self.capabilities.search(
+                    str(arguments.get("command") or ""),
+                    objects=[
+                        dict(item)
+                        for item in arguments.get("objects") or []
+                        if isinstance(item, dict)
+                    ],
+                    selected_recipe_id=str(arguments.get("selectedRecipeId") or "") or None,
+                    platform=str(arguments.get("platform") or "") or None,
+                    provider_availability=(
+                        dict(arguments.get("providerAvailability") or {})
+                        if arguments.get("providerAvailability") is not None
+                        else None
+                    ),
+                    limit=int(arguments.get("limit") or 6),
+                ),
+            }
         if name == "plan_recipe":
             return self.engine.plan(
                 str(arguments.get("command") or ""),
@@ -144,7 +223,12 @@ class MagicPointerMcpServer:
                 confirmed=arguments.get("confirmed") is True,
             )
         if name == "agent_task_status":
-            return {"ok": True, "task": self.tasks.status(str(arguments.get("taskId") or ""))}
+            return {"ok": True, "task": self.gateway.status(str(arguments.get("taskId") or ""))}
+        if name == "agent_task_list":
+            return {
+                "ok": True,
+                "tasks": self.gateway.list(limit=int(arguments.get("limit") or 100)),
+            }
         if name == "agent_task_cancel":
             return {"ok": True, "task": self.tasks.cancel(str(arguments.get("taskId") or ""))}
         if name == "agent_task_steer":
@@ -153,6 +237,29 @@ class MagicPointerMcpServer:
                 "task": self.tasks.steer(
                     str(arguments.get("taskId") or ""),
                     str(arguments.get("message") or ""),
+                ),
+            }
+        if name == "agent_task_resume":
+            return {
+                "ok": True,
+                "task": self.tasks.resume(str(arguments.get("taskId") or "")),
+            }
+        if name == "agent_task_reconfirm_target":
+            task_id = str(arguments.get("taskId") or "")
+            if arguments.get("confirmed") is not True:
+                return {
+                    "ok": True,
+                    "task": {
+                        "taskId": task_id,
+                        "status": "confirmation_required",
+                        "reconfirmationRequired": True,
+                    },
+                }
+            return {
+                "ok": True,
+                "task": self.gateway.reconfirm_target(
+                    task_id,
+                    confirmed_windows=list_visible_windows(),
                 ),
             }
         raise ValueError(f"unknown tool: {name}")

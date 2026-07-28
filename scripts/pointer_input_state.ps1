@@ -141,6 +141,8 @@ while ($true) {
         if ([MagicPointerInputState]::IsDown(1)) { $buttons = $buttons -bor 1 }
         if ([MagicPointerInputState]::IsDown(2)) { $buttons = $buttons -bor 2 }
         if ([MagicPointerInputState]::IsDown(4)) { $buttons = $buttons -bor 4 }
+        if ([MagicPointerInputState]::IsDown(5)) { $buttons = $buttons -bor 8 }
+        if ([MagicPointerInputState]::IsDown(6)) { $buttons = $buttons -bor 16 }
         [ordered]@{
             buttons = $buttons
             foregroundApp = [string]$processName

@@ -55,6 +55,37 @@ def test_pi_and_codex_expose_rich_protocol_commands(tmp_path: Path) -> None:
     assert codex.protocol == "jsonl-app-server"
 
 
+def test_existing_sessions_use_provider_resume_contracts(tmp_path: Path) -> None:
+    registry = AgentConnectorRegistry()
+    codex = registry.build(
+        AgentRequest(provider="codex", prompt="inspect", cwd=str(tmp_path), permission="write", session_id="codex-session"),
+        executable="codex",
+    )
+    assert codex.argv[:3] == ("codex", "exec", "resume")
+    assert "codex-session" in codex.argv
+    assert codex.stdin == "inspect"
+
+    pi = registry.build(
+        AgentRequest(provider="pi", prompt="inspect", cwd=str(tmp_path), session_id="pi-session"),
+        executable="pi",
+    )
+    assert "--session" in pi.argv
+    assert "--session-id" not in pi.argv
+
+    gemini = registry.build(
+        AgentRequest(provider="gemini", prompt="inspect", cwd=str(tmp_path), session_id="4"),
+        executable="gemini",
+    )
+    assert ("--resume", "4") == gemini.argv[-2:]
+
+    claude = registry.build(
+        AgentRequest(provider="claude", prompt="inspect", cwd=str(tmp_path), session_id="claude-session"),
+        executable="claude",
+    )
+    assert "--verbose" in claude.argv
+    assert ("--resume", "claude-session") == claude.argv[-4:-2]
+
+
 def test_write_permission_is_explicit_and_never_implies_submission(tmp_path: Path) -> None:
     registry = AgentConnectorRegistry()
     read_cursor = registry.build(
@@ -90,4 +121,3 @@ def test_unknown_provider_fails_closed(tmp_path: Path) -> None:
             AgentRequest(provider="mystery", prompt="do it", cwd=str(tmp_path)),
             executable="mystery",
         )
-

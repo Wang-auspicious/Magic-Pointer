@@ -4,8 +4,12 @@ import json
 from pathlib import Path
 
 from app.fabric.catalog import RECIPE_CATALOG
+from app.fabric.agents import AgentInvocation, AgentRequest
+from app.fabric.artifacts import ArtifactRegistry
 from app.fabric.engine import FabricEngine
 from app.fabric.settings import FabricSettings
+from app.models.profiles import ModelProfile, ModelProfileStore
+from app.fabric.task_store import AgentTaskStore
 
 
 def _object(object_id: str = "obj-1", content: str = "Hello  123  456") -> dict:
@@ -73,7 +77,11 @@ def test_screen_region_ocr_uses_local_reader_and_copies_verified_text(tmp_path: 
         "label": "THIS",
         "content": "",
         "bbox": [20, 30, 400, 260],
-        "source": {"app": "screen", "path": str(image)},
+        "source": {
+            "app": "screen",
+            "path": str(image),
+            "captureAttestation": {"status": "verified", "phase": "complete"},
+        },
     }
     plan = engine.plan("识别这个屏幕对象中的文字并复制", objects=[obj])["plan"]
     assert plan["provider"] == "native.ocr"
@@ -146,7 +154,11 @@ def test_visual_agent_attachment_requires_enabled_privacy_setting_and_confirmati
         "id": "screen-1",
         "kind": "screen_region",
         "label": "THIS",
-        "source": {"app": "screen", "path": str(image)},
+        "source": {
+            "app": "screen",
+            "path": str(image),
+            "captureAttestation": {"status": "verified", "phase": "complete"},
+        },
     }
     plan = engine.plan(
         "为这个屏幕对象生成给非多模态模型使用的详细视觉提示",
@@ -161,6 +173,228 @@ def test_visual_agent_attachment_requires_enabled_privacy_setting_and_confirmati
     assert receipt["status"] == "accepted"
     assert starts[0]["attachments"] == [str(image)]
     assert starts[0]["privacy"]["screenshotUploadAllowed"] is True
+
+
+def test_text_only_default_model_gets_visual_relay_and_zero_image_attachments(tmp_path: Path) -> None:
+    image = tmp_path / "pointer-region.png"
+    image.write_bytes(b"fixture")
+    starts: list[dict] = []
+    settings = FabricSettings.defaults()
+    settings.privacy.upload_screenshots = True
+    settings.permissions.recipe_overrides["vision.prompt_bridge"] = "allow"
+    settings.permissions.recipe_overrides["agent.handoff"] = "allow"
+    profile = ModelProfile.from_dict({
+        "schemaVersion": 1,
+        "id": "text-only",
+        "displayName": "Local text model",
+        "provider": "local",
+        "baseUrl": "http://127.0.0.1:11434/v1",
+        "model": "text-model",
+        "apiMode": "local",
+        "credentialRef": "",
+        "enabled": True,
+        "overrides": {"visionInput": "no", "audioInput": "auto", "toolCalls": "auto"},
+    })
+    settings.models = ModelProfileStore(profiles=(profile,), default_profile_id="text-only")
+    engine = FabricEngine(
+        root=tmp_path,
+        settings=settings,
+        agent_availability={"pi": True},
+        agent_starter=lambda payload: starts.append(payload) or {"taskId": "relay-task", "status": "queued"},
+    )
+    obj = {
+        "id": "save-button",
+        "kind": "screen_region",
+        "label": "Save",
+        "content": "Save",
+        "bbox": [812, 124, 884, 158],
+        "elements": [{"role": "button", "name": "Save"}],
+        "hierarchy": ["Settings", "Actions"],
+        "appearance": {"foreground": "#1266D4", "background": "#FFFFFF", "shape": "rounded-rectangle"},
+        "neighbors": ["Cancel is 12px left"],
+        "source": {
+            "app": "code.exe",
+            "title": "Settings",
+            "path": str(image),
+            "captureAttestation": {"status": "verified", "phase": "complete"},
+        },
+    }
+
+    plan = engine.plan(
+        "recipe: agent.handoff",
+        objects=[obj],
+        parameters={"cwd": str(tmp_path), "attachments": [str(image)], "agent": "pi"},
+    )["plan"]
+
+    assert plan["parameters"]["visualRelays"][0]["mode"] == "structured_text"
+    assert plan["parameters"]["capturePolicy"]["uploadAllowedPaths"] == []
+    assert str(image) not in json.dumps(plan["parameters"]["contextPacket"])
+    receipt = engine.execute(plan, confirmed=True)
+    assert receipt["status"] == "accepted"
+    assert starts[0]["attachments"] == []
+    assert "Visual relay for text-only models" in starts[0]["prompt"]
+    assert "rounded-rectangle" in starts[0]["prompt"]
+
+
+def test_visual_default_model_gets_allowed_crop_and_concise_locator(tmp_path: Path) -> None:
+    image = tmp_path / "save.png"
+    image.write_bytes(b"fixture")
+    starts: list[dict] = []
+    settings = FabricSettings.defaults()
+    settings.privacy.upload_screenshots = True
+    settings.permissions.recipe_overrides["agent.handoff"] = "allow"
+    profile = ModelProfile.from_dict({
+        "schemaVersion": 1,
+        "id": "visual",
+        "displayName": "Visual model",
+        "provider": "openai",
+        "baseUrl": "https://api.openai.com/v1",
+        "model": "gpt-4.1-mini",
+        "apiMode": "responses",
+        "credentialRef": "credential:model:visual",
+        "enabled": True,
+        "overrides": {"visionInput": "yes", "audioInput": "auto", "toolCalls": "auto"},
+    })
+    settings.models = ModelProfileStore(profiles=(profile,), default_profile_id="visual")
+    engine = FabricEngine(
+        root=tmp_path,
+        settings=settings,
+        agent_availability={"pi": True},
+        agent_starter=lambda payload: starts.append(payload) or {"taskId": "visual-task", "status": "queued"},
+    )
+    obj = {
+        "id": "save-button",
+        "kind": "screen_region",
+        "label": "Save",
+        "content": "Save",
+        "bbox": [812, 124, 884, 158],
+        "elements": [{"role": "button", "name": "Save"}],
+        "source": {
+            "app": "code.exe",
+            "title": "Settings",
+            "path": str(image),
+            "captureAttestation": {"status": "verified", "phase": "complete"},
+        },
+    }
+
+    plan = engine.plan(
+        "recipe: agent.handoff",
+        objects=[obj],
+        parameters={"cwd": str(tmp_path), "attachments": [str(image)], "agent": "pi"},
+    )["plan"]
+    relay = plan["parameters"]["visualRelays"][0]
+
+    assert relay["mode"] == "direct_visual"
+    assert relay["attachments"] == [str(image)]
+    assert len(relay["locatorText"].splitlines()) == 4
+    assert "local summary=" not in relay["locatorText"]
+    receipt = engine.execute(plan, confirmed=True)
+    assert receipt["status"] == "accepted"
+    assert starts[0]["attachments"] == [str(image)]
+
+
+def test_target_mismatch_visual_path_never_reaches_agent_payload(tmp_path: Path) -> None:
+    image = tmp_path / "stale-target.png"
+    image.write_bytes(b"fixture")
+    starts: list[dict] = []
+    settings = FabricSettings.defaults()
+    settings.privacy.upload_screenshots = True
+    settings.permissions.recipe_overrides["vision.prompt_bridge"] = "allow"
+    engine = FabricEngine(
+        root=tmp_path,
+        settings=settings,
+        agent_availability={"pi": True},
+        agent_starter=lambda payload: starts.append(payload) or {
+            "taskId": "vision-task",
+            "status": "queued",
+        },
+    )
+    obj = {
+        "id": "screen-stale",
+        "kind": "screen_region",
+        "label": "THIS",
+        "source": {
+            "app": "screen",
+            "path": str(image),
+            "captureAttestation": {
+                "status": "target_mismatch",
+                "phase": "after_capture",
+            },
+        },
+    }
+
+    plan = engine.plan(
+        "为这个屏幕对象生成详细视觉提示",
+        objects=[obj],
+        parameters={"cwd": str(tmp_path), "attachments": [str(image)]},
+    )["plan"]
+    assert plan["parameters"]["capturePolicy"]["uploadAllowedPaths"] == []
+    assert plan["parameters"]["capturePolicy"]["withheldVisualPaths"] == [str(image)]
+    assert plan["parameters"]["capturePolicy"]["decisions"][0]["reason"] == "target_mismatch"
+
+    receipt = engine.execute(plan, confirmed=True)
+    assert receipt["status"] == "accepted"
+    assert starts[0]["attachments"] == []
+    assert str(image) not in starts[0]["prompt"]
+    assert starts[0]["privacy"] == {
+        "screenshotUploadAllowed": False,
+        "withheldVisualAttachmentCount": 1,
+    }
+
+
+def test_background_agent_task_persists_target_lease_guard(tmp_path: Path) -> None:
+    task_store = AgentTaskStore(
+        tmp_path / "agent-tasks",
+        spawn_worker=lambda _path: 991,
+        process_alive=lambda pid: pid == 991,
+    )
+
+    def start_agent(payload: dict) -> dict:
+        request = AgentRequest(
+            provider="pi",
+            prompt=str(payload["prompt"]),
+            cwd=str(payload["cwd"]),
+        )
+        invocation = AgentInvocation(
+            argv=("pi", "--mode", "rpc"),
+            stdin=None,
+            cwd=str(payload["cwd"]),
+            protocol="jsonl-rpc",
+        )
+        return task_store.start(request, invocation)
+
+    engine = FabricEngine(
+        root=tmp_path,
+        agent_availability={"pi": True},
+        agent_starter=start_agent,
+        target_probe=lambda _lease: [{
+            "hwnd": 42,
+            "pid": 314,
+            "title": "Design review",
+        }],
+    )
+    planned = engine.plan(
+        "让 Pi 在后台处理这个，完成后提醒",
+        objects=[{
+            "id": "screen-1",
+            "kind": "screen_region",
+            "label": "THIS",
+            "source": {
+                "app": "design.exe",
+                "title": "Design review",
+                "hwnd": 42,
+                "processId": 314,
+            },
+        }],
+        parameters={"cwd": str(tmp_path), "agent": "pi"},
+    )["plan"]
+
+    receipt = engine.execute(planned, confirmed=True)
+    raw = task_store._read(receipt["output"]["taskId"])
+    assert receipt["status"] == "accepted"
+    assert raw["targetLease"]["state"] == "active"
+    assert raw["targetLease"]["lease"]["leaseId"] == planned["parameters"]["targetLease"]["leaseId"]
+    assert raw["targetLease"]["lease"]["objectIds"] == ["screen-1"]
 
 
 def test_table_to_csv_writes_source_mapped_artifact(tmp_path: Path) -> None:
@@ -254,6 +488,31 @@ def test_agent_handoff_starts_real_task_adapter_and_keeps_submit_false(tmp_path:
     assert receipt["output"]["taskId"] == "task-1"
 
 
+def test_agent_handoff_seals_provider_neutral_context_for_later_switch(tmp_path: Path) -> None:
+    starts: list[dict] = []
+    settings = FabricSettings.defaults()
+    settings.permissions.recipe_overrides["agent.handoff"] = "allow"
+    engine = FabricEngine(
+        root=tmp_path,
+        settings=settings,
+        agent_availability={"codex": True},
+        agent_starter=lambda payload: starts.append(payload) or {"taskId": "task-codex", "status": "queued"},
+    )
+    plan = engine.plan(
+        "recipe: agent.handoff",
+        objects=[{"id": "button-1", "kind": "button", "label": "Save", "content": "Save"}],
+        parameters={"cwd": str(tmp_path), "agent": "codex"},
+    )["plan"]
+
+    receipt = engine.execute(plan, confirmed=True)
+
+    assert receipt["status"] == "accepted"
+    assert receipt["output"]["contextHandoffId"]
+    assert receipt["output"]["contextPacketDigest"] == starts[0]["contextPacketDigest"]
+    assert starts[0]["contextPacket"] == plan["parameters"]["contextPacket"]
+    assert starts[0]["provider"] == "codex"
+
+
 def test_safe_local_task_route_is_idempotent(tmp_path: Path) -> None:
     settings = FabricSettings.defaults()
     settings.permissions.recipe_overrides["task.route"] = "allow"
@@ -324,7 +583,8 @@ def test_pi_background_recipe_requests_rpc_capable_worker(tmp_path: Path) -> Non
     assert receipt["status"] == "accepted"
     assert receipt["verified"] is False
     assert starts[0]["background"] is True
-    assert starts[0]["sessionId"] == plan["id"]
+    assert starts[0]["sessionId"] == ""
+    assert starts[0]["sessionId"] != plan["id"]
 
 
 def test_agent_name_is_inferred_from_command_and_default_falls_back_to_available_provider(tmp_path: Path) -> None:
@@ -357,3 +617,357 @@ def test_disabled_recipe_fails_closed_before_plan_creation(tmp_path: Path) -> No
     assert result["ok"] is False
     assert result["error"] == "recipe_disabled"
     assert result["match"]["recipeId"] == "research.evidence_card"
+
+
+def test_plan_composes_target_lease_capture_policy_packet_and_bounded_capabilities(tmp_path: Path) -> None:
+    image = tmp_path / "screen.png"
+    image.write_bytes(b"pixels")
+    engine = FabricEngine(
+        root=tmp_path,
+        agent_availability={"pi": True},
+        agent_starter=lambda payload: {"taskId": "task-1", "status": "queued"},
+    )
+    obj = {
+        "id": "screen-1",
+        "kind": "screen_region",
+        "label": "THIS",
+        "content": "Save button overlaps the card",
+        "bbox": [10, 20, 300, 240],
+        "source": {
+            "app": "code.exe",
+            "title": "app.py - Visual Studio Code",
+            "hwnd": 42,
+            "processId": 314,
+            "screenshotPath": str(image),
+            "path": str(image),
+        },
+    }
+    plan = engine.plan(
+        "让 Pi 修这个",
+        objects=[obj],
+        parameters={
+            "cwd": str(tmp_path),
+            "selectionSessionId": "selection-1",
+            "attachments": [str(image)],
+        },
+    )["plan"]
+
+    params = plan["parameters"]
+    assert params["targetLease"]["selectionSessionId"] == "selection-1"
+    assert params["targetLease"]["requiresLiveValidation"] is True
+    assert params["targetLease"]["window"]["hwnd"] == 42
+    assert params["capturePolicy"]["uploadAllowedPaths"] == []
+    assert params["capturePolicy"]["withheldVisualCount"] == 1
+    assert 3 <= len(params["capabilitySelection"]) <= 8
+    assert params["capabilitySelection"][0]["id"] == "agent.handoff"
+    assert params["contextPacket"]["schemaVersion"] == 2
+    assert params["contextPacket"]["workspace"]["cwd"] == str(tmp_path.resolve())
+    assert "screen.png" not in json.dumps(params["contextPacket"], ensure_ascii=False)
+
+
+def test_stale_target_window_blocks_signed_external_action_before_agent_start(tmp_path: Path) -> None:
+    starts: list[dict] = []
+    engine = FabricEngine(
+        root=tmp_path,
+        agent_availability={"pi": True},
+        agent_starter=lambda payload: starts.append(payload) or {
+            "taskId": "task-1",
+            "status": "queued",
+        },
+        target_probe=lambda _lease: [],
+    )
+    obj = _object(content="Fix this")
+    obj["source"].update({"hwnd": 42, "processId": 314})
+    plan = engine.plan(
+        "让 Pi 修这个",
+        objects=[obj],
+        parameters={"cwd": str(tmp_path)},
+    )["plan"]
+    receipt = engine.execute(plan, confirmed=True)
+    assert receipt["status"] == "failed"
+    assert receipt["verified"] is False
+    assert receipt["error"] == "stale_target_window"
+    assert receipt["verification"]["targetLease"]["valid"] is False
+    assert starts == []
+
+
+def test_matching_target_handoff_persists_context_packet_artifact(tmp_path: Path) -> None:
+    starts: list[dict] = []
+    engine = FabricEngine(
+        root=tmp_path,
+        agent_availability={"pi": True},
+        agent_starter=lambda payload: starts.append(payload) or {
+            "taskId": "task-1",
+            "status": "queued",
+        },
+        target_probe=lambda _lease: [{"hwnd": 42, "pid": 314}],
+    )
+    obj = _object(content="Fix the overlapping Save button")
+    obj["source"].update({"hwnd": 42, "processId": 314})
+    plan = engine.plan(
+        "让 Pi 修这个",
+        objects=[obj],
+        parameters={"cwd": str(tmp_path), "sessionId": "existing-pi-session"},
+    )["plan"]
+    receipt = engine.execute(plan, confirmed=True)
+
+    assert receipt["status"] == "accepted"
+    packet_artifact = Path(starts[0]["contextPacketArtifact"])
+    assert packet_artifact.exists()
+    assert json.loads(packet_artifact.read_text(encoding="utf-8"))["schemaVersion"] == 2
+    assert str(packet_artifact) in starts[0]["prompt"]
+    assert "Fix the overlapping Save button" in starts[0]["prompt"]
+    assert starts[0]["sessionId"] == "existing-pi-session"
+    assert receipt["verification"]["targetLease"]["valid"] is True
+
+
+def test_capture_policy_deny_refuses_plan_before_provider_selection(tmp_path: Path) -> None:
+    settings = FabricSettings.defaults()
+    settings.privacy.app_capture_modes = {"password": "deny"}
+    engine = FabricEngine(root=tmp_path, settings=settings)
+    result = engine.plan(
+        "让 Pi 修这个",
+        objects=[{
+            "id": "secret",
+            "kind": "screen_region",
+            "content": "secret",
+            "source": {"app": "Password Manager"},
+        }],
+        parameters={"cwd": str(tmp_path)},
+    )
+    assert result["ok"] is False
+    assert result["error"] == "capture_policy_denied"
+    assert result["deniedObjectIds"] == ["secret"]
+
+
+def test_project_and_app_scoped_permission_is_visible_in_signed_plan(tmp_path: Path) -> None:
+    settings = FabricSettings.defaults()
+    settings.permissions.scoped_grants = [{
+        "decision": "allow",
+        "recipe": "agent.handoff",
+        "app": "code.exe",
+        "project": str(tmp_path),
+        "risk": "external_send",
+    }]
+    settings.permissions.validate()
+    engine = FabricEngine(
+        root=tmp_path,
+        settings=settings,
+        agent_availability={"pi": True},
+        agent_starter=lambda payload: {"taskId": "task-1", "status": "queued"},
+    )
+    obj = _object(content="Fix the selected issue")
+    obj["source"]["app"] = "code.exe"
+    plan = engine.plan(
+        "让 Pi 修这个",
+        objects=[obj],
+        parameters={"cwd": str(tmp_path)},
+    )["plan"]
+
+    assert plan["requiresConfirmation"] is False
+    assert plan["parameters"]["permissionDecision"]["decision"] == "allow"
+    assert plan["parameters"]["permissionDecision"]["source"] == "scoped_grant"
+    assert plan["preview"]["permissionScope"]["project"] == str(tmp_path)
+
+
+def test_audit_correlates_plan_receipt_task_lease_and_target_without_user_content(tmp_path: Path) -> None:
+    private_content = "Customer 4815162342 contract clause"
+    private_title = "Customer contract.pdf"
+    engine = FabricEngine(
+        root=tmp_path,
+        agent_availability={"pi": True},
+        agent_starter=lambda payload: {"taskId": "task-42", "status": "queued"},
+        target_probe=lambda _lease: [{"hwnd": 42, "pid": 314}],
+    )
+    obj = _object(content=private_content)
+    obj["source"].update({
+        "app": "code.exe",
+        "title": private_title,
+        "hwnd": 42,
+        "processId": 314,
+    })
+    plan = engine.plan(
+        "recipe: agent.handoff",
+        objects=[obj],
+        parameters={"cwd": str(tmp_path)},
+    )["plan"]
+    receipt = engine.execute(plan, confirmed=True)
+
+    planned = next(event for event in engine.audit.tail() if event["type"] == "recipe.planned")
+    executed = next(event for event in engine.audit.tail() if event["type"] == "recipe.executed")
+    assert planned["data"]["planId"] == plan["id"]
+    assert planned["data"]["leaseId"] == plan["parameters"]["targetLease"]["leaseId"]
+    assert planned["data"]["targetApps"] == ["code.exe"]
+    assert planned["data"]["projectId"]
+    assert planned["data"]["permissionSource"] == "risk_default"
+    assert executed["data"]["planId"] == plan["id"]
+    assert executed["data"]["receiptId"] == receipt["id"]
+    assert executed["data"]["taskId"] == "task-42"
+    assert executed["data"]["leaseId"] == plan["parameters"]["targetLease"]["leaseId"]
+    assert executed["data"]["targetLeaseValid"] is True
+    encoded = json.dumps(engine.audit.tail(), ensure_ascii=False)
+    assert private_content not in encoded
+    assert private_title not in encoded
+    assert str(tmp_path) not in encoded
+
+
+def test_terminal_audit_keeps_only_state_exit_presence_and_bounded_line_count(tmp_path: Path) -> None:
+    engine = FabricEngine(root=tmp_path, agent_availability={"pi": True})
+    obj = _object(content="Error: private-customer-log")
+    obj["source"].update({
+        "app": "terminal",
+        "terminalEvidence": {
+            "schemaVersion": 1,
+            "state": "resolved",
+            "method": "uia:terminal-text-pattern",
+            "command": "python private-command.py",
+            "exitCode": 7,
+            "anchor": {"line": 2, "text": "Error: private-customer-log"},
+            "window": {
+                "startLine": 1,
+                "endLine": 3,
+                "lineCount": 3,
+                "text": "Error: private-customer-log\nProcess exited with code 7",
+            },
+            "pixelFallbackUsed": False,
+        },
+    })
+    engine.plan(
+        "recipe: agent.handoff",
+        objects=[obj],
+        parameters={"cwd": str(tmp_path)},
+    )
+
+    planned = next(event for event in engine.audit.tail() if event["type"] == "recipe.planned")
+    assert planned["data"]["terminalEvidenceState"] == "resolved"
+    assert planned["data"]["terminalEvidenceMethod"] == "uia:terminal-text-pattern"
+    assert planned["data"]["terminalExitCodeObserved"] is True
+    assert planned["data"]["terminalExitCode"] == 7
+    assert planned["data"]["terminalWindowLineCount"] == 3
+    encoded = json.dumps(engine.audit.tail(), ensure_ascii=False)
+    assert "private-customer-log" not in encoded
+    assert "private-command.py" not in encoded
+
+
+def test_browser_audit_keeps_only_devtools_presence_summary(tmp_path: Path) -> None:
+    engine = FabricEngine(root=tmp_path, agent_availability={"pi": True})
+    obj = _object(content="Retry private checkout")
+    obj["source"].update({
+        "app": "browser",
+        "browserContext": {
+            "schemaVersion": 1,
+            "state": "resolved",
+            "method": "cdp:dom-point",
+            "page": {"title": "Private checkout", "url": "https://example.test/private"},
+            "node": {"tag": "button", "accessibleName": "Private retry", "text": "Retry"},
+            "selector": "#private-retry",
+            "coordinates": {"pointerScreenPhysical": {"x": 640, "y": 520}},
+            "networkFailures": [{"url": "https://api.example.test/private", "errorText": "net::ERR_FAILED", "source": "devtools_log"}],
+            "provenance": {"structural": True},
+        },
+    })
+    engine.plan("recipe: agent.handoff", objects=[obj], parameters={"cwd": str(tmp_path)})
+
+    planned = next(event for event in engine.audit.tail() if event["type"] == "recipe.planned")
+    assert planned["data"]["browserEvidenceState"] == "resolved"
+    assert planned["data"]["browserEvidenceMethod"] == "cdp:dom-point"
+    assert planned["data"]["browserSelectorObserved"] is True
+    assert planned["data"]["browserAccessibleNameObserved"] is True
+    assert planned["data"]["browserNetworkFailureCount"] == 1
+    assert planned["data"]["browserCoordinatesObserved"] is True
+    encoded = json.dumps(engine.audit.tail(), ensure_ascii=False)
+    assert "Private checkout" not in encoded
+    assert "#private-retry" not in encoded
+    assert "api.example.test/private" not in encoded
+
+
+def test_component_source_audit_keeps_confidence_gate_but_not_private_paths(tmp_path: Path) -> None:
+    component = tmp_path / "src" / "PrivateRetry.tsx"
+    component.parent.mkdir()
+    component.write_text("export function PrivateRetry() { return <button>Retry</button>; }\n", encoding="utf-8")
+    engine = FabricEngine(root=tmp_path, agent_availability={"pi": True})
+    obj = _object(content="Retry")
+    obj["source"].update({
+        "app": "browser",
+        "browserContext": {
+            "schemaVersion": 1,
+            "state": "resolved",
+            "method": "cdp:dom-point",
+            "page": {"title": "Private", "url": "http://127.0.0.1:5173/private"},
+            "node": {"tag": "button", "accessibleName": "Retry", "text": "Retry", "attributes": {}},
+            "selector": "button",
+            "componentHints": {"framework": "react", "owners": [{
+                "name": "PrivateRetry",
+                "source": {"file": component.as_uri(), "line": 1},
+            }]},
+        },
+    })
+
+    engine.plan("recipe: agent.handoff", objects=[obj], parameters={"cwd": str(tmp_path)})
+
+    planned = next(event for event in engine.audit.tail() if event["type"] == "recipe.planned")
+    assert planned["data"]["componentLinkState"] == "resolved"
+    assert planned["data"]["componentCandidateCount"] == 1
+    assert planned["data"]["componentTopConfidence"] >= 0.95
+    assert planned["data"]["componentAutoModificationAllowed"] is True
+    assert "PrivateRetry.tsx" not in json.dumps(engine.audit.tail())
+
+
+def test_verified_artifact_receipt_is_registered_with_plan_and_source_provenance(tmp_path: Path) -> None:
+    engine = FabricEngine(root=tmp_path)
+    plan = engine.plan(
+        "recipe: research.evidence_card",
+        objects=[_object(content="A bounded source claim.")],
+        parameters={"cwd": str(tmp_path)},
+    )["plan"]
+    receipt = engine.execute(plan, confirmed=True)
+
+    assert receipt["status"] == "succeeded"
+    assert receipt["verified"] is True
+    assert len(receipt["output"]["artifactIds"]) == 1
+    indexed = ArtifactRegistry(tmp_path).get(receipt["output"]["artifactIds"][0])
+    assert indexed["planId"] == plan["id"]
+    assert indexed["receiptId"] == receipt["id"]
+    assert indexed["recipeId"] == "research.evidence_card"
+    assert indexed["sourceObjectIds"] == ["obj-1"]
+
+
+def test_engine_observes_real_execution_for_skill_candidate_learning(tmp_path: Path) -> None:
+    observed: list[tuple[str, str]] = []
+
+    class Recorder:
+        def observe_execution(self, plan, receipt):
+            observed.append((plan.id, receipt["id"]))
+            return {"eligible": False, "candidate": None}
+
+    engine = FabricEngine(root=tmp_path)
+    engine.skill_candidates = Recorder()
+    plan = engine.plan(
+        "recipe: research.evidence_card",
+        objects=[_object(content="A bounded source claim.")],
+        parameters={"cwd": str(tmp_path)},
+    )["plan"]
+
+    receipt = engine.execute(plan, confirmed=True)
+
+    assert receipt["status"] == "succeeded"
+    assert observed == [(plan["id"], receipt["id"])]
+
+
+def test_skill_candidate_learning_failure_never_breaks_primary_execution(tmp_path: Path) -> None:
+    class BrokenRecorder:
+        def observe_execution(self, _plan, _receipt):
+            raise RuntimeError("learning store unavailable")
+
+    engine = FabricEngine(root=tmp_path)
+    engine.skill_candidates = BrokenRecorder()
+    plan = engine.plan(
+        "recipe: research.evidence_card",
+        objects=[_object(content="A bounded source claim.")],
+        parameters={"cwd": str(tmp_path)},
+    )["plan"]
+
+    receipt = engine.execute(plan, confirmed=True)
+
+    assert receipt["status"] == "succeeded"
+    assert any(item["type"] == "skill.candidate_observation_failed" for item in engine.audit.tail())

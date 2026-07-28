@@ -112,6 +112,8 @@ def _run_word_selection_vbs(prog_id: str, *, timeout: int = 3) -> OfficeProbeRes
 
 class OfficeAdapter(AppAdapter):
     name = "office"
+    perception_layer = "native_app"
+    perception_priority = 10
 
     def match_window(self, window: JsonDict) -> bool:
         return office_app_from_window(window) is not None

@@ -85,14 +85,31 @@
 
 ## 已知未完成边界
 
-- 本轮自动化已全绿（`npm test` 25 套、`pytest` 294 passed、Electron 冒烟启动
-  无错误），但真实"晃动→语音→写回"的实机走查在本轮尚未重跑。
+- 2026-07-27 最终自动化已全绿（`npm test` 全部 Node/渲染合同、`pytest`
+  `345 passed in 115.91s`）；Fabric、目标窗口租约、Electron 启动与 Dashboard
+  视觉烟测通过，但真实麦克风下完整"晃动→语音→外部写回"仍需单独实机走查。
 - macOS 原生宿主源码已存在，但没有在 Mac 实机完成 Accessibility、麦克风、Screen
   Recording、多屏坐标、签名和公证验收。
 - 日历、Figma、GitHub/Linear、图像生成、图表 digitizer 和数学视觉没有在本机连接真实
   外部账户或专用 provider；会走 Agent 或明确不可用。
 - Whisper 首次使用前需要已有本地模型；当前实现不会为了“看起来成功”而静默下载。
 - Windows 当前验证不等于普通用户安装包、自动更新、签名和崩溃遥测已经交付。
+
+## 2026-07-27 新增可信底座
+
+- Target Lease 在执行前重新核对 `HWND + PID`；真机匹配为 `live_target_match`，
+  空探针为 `stale_target_window`，错误目标不会启动 Agent。
+- Capture Policy 支持按应用配置结构化读取、本地 OCR、本地截图、允许上传或拒绝；
+  Claude/Gemini hook 与 Agent handoff 均走同一策略，敏感应用不会泄漏截图路径。
+- Context Packet v2 绑定冻结对象、repo/cwd/branch/diff、终端摘录、目标租约、能力集与
+  隐私决策；Capability Search 只交付当前意图相关的 3–8 项能力。
+- 权限可按 Recipe、风险、应用、项目和到期时间记忆；相同具体度下 deny 优先。
+- 审计使用 `planId → receiptId → taskId → leaseId → artifactId` 关联，并递归脱敏正文、
+  窗口标题、文件路径、cwd、URL、附件与产物路径。
+- 本地语音新增语言、逐字/空格清理策略、静音幻觉门和项目术语词典；词典仅在匹配
+  当前对象路径时注入本机 Whisper。
+- 本地产物有来源索引、哈希、留存期限、两阶段回收与恢复；Agent 工作区文件只作为
+  外部引用登记，永不被 Magic Pointer 自动清理。
 
 ## 验证证据
 

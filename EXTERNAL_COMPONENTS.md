@@ -160,6 +160,23 @@ This is the first real stitching point. It keeps Electron responsible for feel/v
 
 ## 2026-07-26 integration and license update
 
+### Hermes Desktop design contract and Tabler icons
+
+- Local reference: `D:\AI_Agents\HermesAgent\apps\desktop`
+- Upstream: https://github.com/NousResearch/hermes-agent
+- Hermes license: MIT, Copyright (c) 2025 Nous Research.
+- Reused design contracts: hidden native title bar, flat list rows, master-detail settings layout,
+  tokens over literals, immediate direct-manipulation feedback, and one-layer Escape cancellation.
+- No Hermes React component or business logic is copied into Magic Pointer.
+- Icon source: Tabler Icons outline SVG paths from Hermes' pinned `@tabler/icons` dependency.
+- Tabler upstream: https://github.com/tabler/tabler-icons
+- Tabler license: MIT.
+- Magic Pointer integration: the curated inline symbol sprite in
+  `electron/renderer/dashboard.html`.
+
+The icons keep the same outline vocabulary as Hermes while the desktop shell, information architecture,
+copy, state handling, and Electron/DOM implementation remain Magic Pointer-owned.
+
 ### Pi coding agent
 
 - Local: `external/pi`

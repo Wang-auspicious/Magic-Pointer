@@ -1,6 +1,12 @@
 """Persistent, agent-neutral context packs built from desktop evidence."""
 
 from .compiler import compile_context_prompt, detect_agent_profile, write_context_prompt_artifact
+from .capture_policy import (
+    build_context_capture_policy,
+    build_stored_object_capture_policy,
+    context_item_object,
+    stored_pointer_object,
+)
 from .intent import ContextIntent, ContextIntentKind, parse_context_intent
 from .session import ContextSessionConflict, ContextSessionError, ContextSessionStore
 
@@ -10,7 +16,11 @@ __all__ = [
     "ContextSessionError",
     "ContextSessionConflict",
     "ContextSessionStore",
+    "build_context_capture_policy",
+    "build_stored_object_capture_policy",
     "compile_context_prompt",
+    "context_item_object",
+    "stored_pointer_object",
     "detect_agent_profile",
     "parse_context_intent",
     "write_context_prompt_artifact",

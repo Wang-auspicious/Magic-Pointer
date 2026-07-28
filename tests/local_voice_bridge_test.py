@@ -5,7 +5,14 @@ from pathlib import Path
 
 import numpy as np
 
-from scripts.local_voice_bridge import SAMPLE_RATE, VoiceActivity, load_pcm_wav, normalized_rms
+from scripts.local_voice_bridge import (
+    SAMPLE_RATE,
+    VoiceActivity,
+    load_pcm_wav,
+    load_voice_profile,
+    normalized_rms,
+    transcribe,
+)
 
 
 def test_voice_activity_waits_for_speech_then_finishes_after_silence() -> None:
@@ -49,3 +56,68 @@ def test_pcm_wav_is_normalized_mono_and_resampled(tmp_path: Path) -> None:
     assert audio.dtype == np.float32
     assert abs(audio.size - SAMPLE_RATE) <= 1
     assert 0.1 < normalized_rms(audio) < 0.5
+
+
+def test_voice_profile_combines_global_and_matching_project_terms(tmp_path: Path) -> None:
+    import json
+
+    settings_path = tmp_path / "fabric-settings.json"
+    project = tmp_path / "repo"
+    context_file = project / "app.py"
+    project.mkdir()
+    context_file.write_text("pass\n", encoding="utf-8")
+    settings_path.write_text(
+        json.dumps({
+            "interaction": {
+                "voice_language": "zh",
+                "voice_output_mode": "clean_spacing",
+                "voice_hallucination_guard": True,
+                "voice_glossaries": {
+                    "*": ["Magic Pointer"],
+                    str(project): ["Context Packet", "TargetLease"],
+                    str(tmp_path / "other"): ["WrongProject"],
+                },
+            },
+        }),
+        encoding="utf-8",
+    )
+    profile = load_voice_profile(settings_path=settings_path, context_path=context_file)
+    assert profile.language == "zh"
+    assert profile.output_mode == "clean_spacing"
+    assert profile.glossary == ("Magic Pointer", "Context Packet", "TargetLease")
+
+
+def test_transcribe_passes_glossary_and_rejects_high_no_speech_hallucination() -> None:
+    class FakeModel:
+        def __init__(self, result: dict) -> None:
+            self.result = result
+            self.kwargs: dict = {}
+
+        def transcribe(self, _audio, **kwargs):
+            self.kwargs = kwargs
+            return self.result
+
+    audio = np.full(SAMPLE_RATE, 0.03, dtype=np.float32)
+    recognized = FakeModel({
+        "text": " Magic Pointer   修这个 ",
+        "segments": [{"no_speech_prob": 0.02, "avg_logprob": -0.1}],
+    })
+    assert transcribe(
+        recognized,
+        audio,
+        language="zh",
+        glossary=("Magic Pointer", "Context Packet"),
+        output_mode="clean_spacing",
+    ) == "Magic Pointer 修这个"
+    assert recognized.kwargs["initial_prompt"] == "Magic Pointer, Context Packet"
+
+    hallucination = FakeModel({
+        "text": "谢谢观看",
+        "segments": [{"no_speech_prob": 0.96, "avg_logprob": -1.4}],
+    })
+    assert transcribe(
+        hallucination,
+        audio,
+        language="zh",
+        hallucination_guard=True,
+    ) == ""

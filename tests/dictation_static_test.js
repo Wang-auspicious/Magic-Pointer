@@ -25,7 +25,8 @@ assert(script.includes('whisper'));
 assert(script.includes('cached_model_path'));
 
 assert(main.includes('const wiggleEnv = process.env.MAGIC_POINTER_ENABLE_MOUSE_SHAKE'));
-assert(main.includes(': fabricSettings.activation.wiggle_enabled'));
+assert(main.includes('applyConfiguredWakeState'));
+assert(main.includes('fabricSettings?.activation?.wiggle_enabled'));
 assert(main.includes("process.env.MAGIC_POINTER_SHOW_STARTUP === '1'"));
 assert(!main.includes('MAGIC_POINTER_ENABLE_LAB'));
 assert(!main.includes('该旧版演示工作流默认关闭'));

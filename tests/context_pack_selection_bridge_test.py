@@ -60,6 +60,7 @@ def visual_capture() -> dict:
         "app_context": {"url": "https://example.test/checkout"},
         "vision_observation": "A red Payment failed card appears below the form.",
         "vision_error": "",
+        "capture_attestation": {"status": "verified"},
     }
 
 

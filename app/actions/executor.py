@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import uuid
 from datetime import datetime
 from typing import Any
 
@@ -165,13 +166,90 @@ class SafeActionExecutor:
             import pyperclip
 
             from app.fabric.engine import FabricEngine
+            from app.system_context import list_visible_windows
 
             engine = FabricEngine(
                 clipboard_writer=pyperclip.copy,
                 clipboard_reader=lambda: str(pyperclip.paste() or ""),
                 url_opener=webbrowser.open,
+                target_probe=lambda _lease: list_visible_windows(),
             )
-        receipt = engine.execute(dict(plan), confirmed=confirmed)
+        workflow_task_id = str(proposal.parameters.get("workflow_task_id") or "").strip()
+        workflow_store = None
+        workflow_claim = None
+        if workflow_task_id:
+            from app.fabric.workflow_task_store import WorkflowTaskStore
+
+            workflow_store = WorkflowTaskStore(engine.root / "workflow-tasks")
+            workflow_task = workflow_store.get(workflow_task_id, surface="gui")
+            if confirmed and workflow_task.get("approvalState") == "pending":
+                workflow_store.approve(workflow_task_id, surface="gui")
+            workflow_claim = workflow_store.claim_execution(workflow_task_id, surface="gui")
+            if workflow_claim.get("reused") is True:
+                receipt = dict(workflow_claim.get("receipt") or {})
+                metadata = {**metadata, "workflow_task_id": workflow_task_id, "workflow_reused": True}
+                return self._fabric_receipt_result(
+                    proposal,
+                    started,
+                    confirmed=confirmed,
+                    receipt=receipt,
+                    metadata=metadata,
+                )
+            if workflow_claim.get("claimed") is not True:
+                reason = str(workflow_claim.get("reason") or "workflow_execution_not_claimed")
+                status = ExecutionStatus.SKIPPED if reason == "approval_required" else ExecutionStatus.PENDING
+                return self._result(
+                    proposal,
+                    started,
+                    status,
+                    confirmed=confirmed,
+                    error="confirmation required" if reason == "approval_required" else None,
+                    metadata={**metadata, "workflow_task_id": workflow_task_id, "workflow_reused": False, "workflow_reason": reason},
+                )
+            plan = workflow_store.plan_for_claim(
+                workflow_task_id,
+                claim_id=str(workflow_claim["claimId"]),
+            )
+        try:
+            receipt = engine.execute(dict(plan), confirmed=confirmed)
+        except Exception as exc:
+            receipt = {
+                "id": str(uuid.uuid4()),
+                "planId": str(plan.get("id") or ""),
+                "recipeId": str(plan.get("recipeId") or ""),
+                "status": "failed",
+                "provider": str(plan.get("provider") or ""),
+                "output": {},
+                "verified": False,
+                "verification": {},
+                "undo": None,
+                "error": f"execution_exception:{type(exc).__name__}",
+            }
+        if workflow_store is not None and workflow_claim is not None:
+            workflow_store.complete_execution(
+                workflow_task_id,
+                claim_id=str(workflow_claim["claimId"]),
+                receipt=receipt,
+                surface="gui",
+            )
+            metadata = {**metadata, "workflow_task_id": workflow_task_id, "workflow_reused": False}
+        return self._fabric_receipt_result(
+            proposal,
+            started,
+            confirmed=confirmed,
+            receipt=receipt,
+            metadata=metadata,
+        )
+
+    def _fabric_receipt_result(
+        self,
+        proposal: ActionProposal,
+        started: str,
+        *,
+        confirmed: bool,
+        receipt: JsonDict,
+        metadata: JsonDict,
+    ) -> ExecutionResult:
         status = str(receipt.get("status") or "failed")
         if status == "succeeded" and receipt.get("verified") is True:
             return self._result(

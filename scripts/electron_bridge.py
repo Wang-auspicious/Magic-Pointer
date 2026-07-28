@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from PIL import Image, ImageDraw, ImageGrab
+from PIL import Image, ImageGrab
 
 from app.adapters import default_adapter_registry, format_adapter_context
 from app.actions.office import clean_replacement_text, make_word_replace_selection_proposal, wants_word_rewrite
@@ -21,17 +21,23 @@ from app.context_pack import (
     ContextSessionConflict,
     ContextSessionError,
     ContextSessionStore,
+    build_context_capture_policy,
+    build_stored_object_capture_policy,
     compile_context_prompt,
     parse_context_intent,
     write_context_prompt_artifact,
 )
 from app.fabric.settings import SettingsStore
+from app.fabric.capture_policy import CaptureDecision, CapturePolicyEngine
+from app.fabric.executors import FabricExecutors
 from app.object_store import ObjectStore, PointerObject, new_object_id
 from app.file_context import format_local_file_context, read_local_file_context, wants_file_content
 from app.pointer_operator import MagicPointerOperator, format_grounding_for_prompt, wants_copy_path
 from app.screen_context import build_screen_context
 from app.task_context import TaskContextStore
 from app.grounding.schema import PointerSelection
+from app.visual_annotation import make_pointer_annotated_image
+from app.system_context import list_visible_windows
 
 CAPTURE_DIR = ROOT / "data" / "captures"
 OBJECT_DIR = ROOT / "data" / "objects"
@@ -51,16 +57,77 @@ def _runtime_issue_mode(payload: dict[str, Any]) -> bool:
     return str(payload.get("workflow") or "").strip() == "runtime_issue"
 
 
-def _screenshot_upload_allowed() -> bool:
-    """Read privacy.upload_screenshots; fail closed if settings are unreadable."""
+def _capture_settings():
+    """Read the complete capture policy; fail closed if settings are unreadable."""
     settings_path = (
         Path(os.environ.get("MAGIC_POINTER_USER_DATA_DIR") or RUNTIME_DIR)
         / "fabric-settings.json"
     )
     try:
-        return SettingsStore(settings_path).load().privacy.upload_screenshots is True
+        return SettingsStore(settings_path).load()
     except Exception:
+        from app.fabric.settings import FabricSettings
+
+        return FabricSettings.defaults()
+
+
+def _window_at_point(
+    windows: list[dict[str, Any]],
+    point: tuple[int, int],
+) -> dict[str, Any]:
+    px, py = point
+    matches: list[dict[str, Any]] = []
+    for candidate in windows:
+        title = str(candidate.get("title") or "") if isinstance(candidate, dict) else ""
+        if title.startswith("Magic Pointer"):
+            continue
+        bbox = candidate.get("bbox") if isinstance(candidate, dict) else None
+        if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+            continue
+        try:
+            left, top, right, bottom = (float(value) for value in bbox)
+        except (TypeError, ValueError):
+            continue
+        if left <= px < right and top <= py < bottom:
+            matches.append(dict(candidate))
+    matches.sort(key=lambda item: int(item.get("z_order") or 1_000_000))
+    return matches[0] if matches else {}
+
+
+def _same_capture_target(expected: dict[str, Any], actual: dict[str, Any]) -> bool:
+    if not expected or not actual:
         return False
+    expected_pid = int(expected.get("process_id") or expected.get("pid") or 0)
+    actual_pid = int(actual.get("process_id") or actual.get("pid") or 0)
+    return (
+        int(expected.get("hwnd") or 0) == int(actual.get("hwnd") or 0)
+        and expected_pid == actual_pid
+        and str(expected.get("title") or "") == str(actual.get("title") or "")
+    )
+
+
+def _capture_decision_for_target(
+    settings: Any,
+    payload: dict[str, Any],
+    windows: list[dict[str, Any]],
+    point: tuple[int, int],
+) -> tuple[dict[str, Any], CaptureDecision]:
+    target = _window_at_point(windows, point)
+    decision = CapturePolicyEngine(
+        settings.privacy.upload_screenshots,
+        settings.privacy.default_capture_mode,
+        settings.privacy.sensitive_apps,
+        settings.privacy.app_capture_modes,
+    ).decide({
+        "id": "electron-pointer-target",
+        "kind": "foreground_window",
+        "source": {
+            "app": str(payload.get("sourceApp") or ""),
+            "processName": str(target.get("process_name") or ""),
+            "title": str(target.get("title") or ""),
+        },
+    })
+    return target, decision
 
 
 def _record_runtime_issue(
@@ -72,11 +139,7 @@ def _record_runtime_issue(
     allow_screenshot_upload: bool | None = None,
 ) -> dict[str, Any]:
     active_store = store or ContextSessionStore()
-    screenshot_upload = (
-        allow_screenshot_upload
-        if allow_screenshot_upload is not None
-        else _screenshot_upload_allowed()
-    )
+    capture_settings = _capture_settings() if allow_screenshot_upload is None else None
     recorded = active_store.record_runtime_visual(capture, statement)
     updated: dict[str, Any] | None = None
     prompt = ""
@@ -90,7 +153,12 @@ def _record_runtime_issue(
             active,
             task_instruction=task_instruction,
             target_profile="generic",
-            allow_screenshot_upload=screenshot_upload,
+            allow_screenshot_upload=bool(allow_screenshot_upload),
+            capture_policy=(
+                build_context_capture_policy(capture_settings)
+                if capture_settings is not None
+                else None
+            ),
         )
         artifact = write_context_prompt_artifact(active, prompt, root=artifact_root)
         try:
@@ -293,6 +361,7 @@ def _visual_context_capture(
     app_adapter_context: dict[str, Any] | None,
     vision_observation: str,
     vision_error: str,
+    capture_attestation: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     px, py = selection_point
     point_hits: list[dict[str, Any]] = []
@@ -331,36 +400,8 @@ def _visual_context_capture(
         "app_context": dict(app_adapter_context or {}),
         "vision_observation": str(vision_observation or ""),
         "vision_error": str(vision_error or ""),
+        "capture_attestation": dict(capture_attestation or {}),
     }
-
-
-def _make_pointer_annotated_image(raw_path: Path, out_path: Path, bbox: tuple[int, int, int, int], points: list[tuple[int, int]]) -> Path:
-    """Create a model-facing image that shows the user's actual pointer stroke.
-
-    The raw bbox is only a transport/capture rectangle. The blue stroke is the
-    semantic selection signal. Giving the model this image avoids the previous
-    failure mode where it described unrelated UI inside the outer rectangle.
-    """
-
-    with Image.open(raw_path).convert("RGBA") as base:
-        if len(points) >= 2:
-            local = [(x - bbox[0], y - bbox[1]) for x, y in points]
-            overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
-            draw = ImageDraw.Draw(overlay)
-            # Soft approximation: broad transparent blue, medium body, bright core.
-            draw.line(local, fill=(96, 165, 250, 70), width=44, joint="curve")
-            draw.line(local, fill=(59, 130, 246, 115), width=24, joint="curve")
-            draw.line(local, fill=(37, 99, 235, 210), width=10, joint="curve")
-            draw.line(local, fill=(220, 238, 255, 240), width=3, joint="curve")
-            # Mark the final cursor tip subtly so the model can infer direction.
-            ex, ey = local[-1]
-            arrow = [(ex, ey), (ex + 22, ey + 10), (ex + 11, ey + 15), (ex + 16, ey + 30), (ex + 8, ey + 33), (ex + 2, ey + 17)]
-            draw.polygon(arrow, fill=(255, 255, 255, 245), outline=(37, 99, 235, 255))
-            base = Image.alpha_composite(base, overlay)
-        base.convert("RGB").save(out_path, quality=92)
-    return out_path
-
-
 
 
 def _point_in_polygon(point: tuple[float, float], polygon: list[tuple[int, int]]) -> bool:
@@ -540,14 +581,88 @@ def main() -> int:
 
     stroke_points = _global_points(payload)
     capture_bbox = _expand_capture_bbox(selection_bbox, payload)
-
     obj_id = new_object_id()
+    selection_point = stroke_points[-1] if stroke_points else (
+        (selection_bbox[0] + selection_bbox[2]) // 2,
+        (selection_bbox[1] + selection_bbox[3]) // 2,
+    )
+    capture_settings = _capture_settings()
+    before_windows = [dict(item) for item in list_visible_windows()]
+    policy_target, capture_decision = _capture_decision_for_target(
+        capture_settings,
+        payload,
+        before_windows,
+        selection_point,
+    )
+    if capture_decision.mode == "deny":
+        print(json.dumps({
+            "ok": False,
+            "error": "当前应用已设为永不捕获；未读取结构、未执行 OCR、未创建截图。",
+            "capturePolicy": capture_decision.to_dict(),
+            "imagePath": None,
+            "pointerImagePath": None,
+            "actionProposals": [],
+        }, ensure_ascii=True))
+        return 0
+    if not capture_decision.allow_local_pixels:
+        structured_selection = PointerSelection(
+            id=obj_id,
+            point=selection_point,
+            bbox=selection_bbox,
+            selected_at=datetime.now().isoformat(timespec="seconds"),
+            source="electron_overlay",
+            metadata={"capture_bbox": capture_bbox},
+        )
+        structured_context = default_adapter_registry().read_first_context(
+            before_windows,
+            selection=structured_selection,
+            command=_prompt_for(payload),
+        )
+        print(json.dumps({
+            "ok": True,
+            "answer": (
+                format_adapter_context(structured_context)
+                if structured_context is not None
+                else "当前应用仅允许 UIA / AX / DOM；未读取到可用结构，未执行 OCR 或截图。"
+            ),
+            "capturePolicy": capture_decision.to_dict(),
+            "imagePath": None,
+            "pointerImagePath": None,
+            "actionProposals": [],
+        }, ensure_ascii=True))
+        return 0
+
     image_path = CAPTURE_DIR / f"{obj_id}.png"
     pointer_image_path = CAPTURE_DIR / f"{obj_id}.pointer.png"
     image = ImageGrab.grab(bbox=capture_bbox, all_screens=True)
+    after_windows = [dict(item) for item in list_visible_windows()]
+    after_target = next(
+        (
+            item for item in after_windows
+            if int(item.get("hwnd") or 0) == int(policy_target.get("hwnd") or 0)
+        ),
+        {},
+    )
+    capture_attestation = {
+        "status": "verified" if _same_capture_target(policy_target, after_target) else "target_mismatch",
+        "phase": "complete" if _same_capture_target(policy_target, after_target) else "after_capture",
+        "expected": policy_target,
+        "before": policy_target,
+        "after": after_target,
+    }
+    if capture_attestation["status"] != "verified":
+        print(json.dumps({
+            "ok": False,
+            "error": "目标窗口在截图前后发生变化；未保存或外发任何图像。",
+            "captureAttestation": capture_attestation,
+            "imagePath": None,
+            "pointerImagePath": None,
+            "actionProposals": [],
+        }, ensure_ascii=True))
+        return 0
     image.save(image_path)
 
-    model_image_path = _make_pointer_annotated_image(image_path, pointer_image_path, capture_bbox, stroke_points)
+    model_image_path = make_pointer_annotated_image(image_path, pointer_image_path, capture_bbox, stroke_points)
     row_candidates = _estimate_row_candidates(image_path, capture_bbox)
     stroke_candidates = _score_stroke_candidates(stroke_points, capture_bbox, row_candidates)
     candidate_text = _candidate_context(stroke_candidates)
@@ -555,7 +670,6 @@ def main() -> int:
     prompt = _prompt_for(payload)
     screen_ctx = build_screen_context(capture_bbox, image_path)
     window_dicts = [w.__dict__ for w in screen_ctx.windows]
-    selection_point = stroke_points[-1] if stroke_points else ((selection_bbox[0] + selection_bbox[2]) // 2, (selection_bbox[1] + selection_bbox[3]) // 2)
     pointer_selection = PointerSelection(
         id=obj_id,
         point=selection_point,
@@ -612,7 +726,13 @@ def main() -> int:
         + ("\n\n" + app_adapter_text if app_adapter_text else "")
         + ("\n\n" + candidate_text if candidate_text else "")
         + "\n\n"
-        + tasks.build_reference_context(store, task_id, obj_id, selection_bbox)
+        + tasks.build_reference_context(
+            store,
+            task_id,
+            obj_id,
+            selection_bbox,
+            object_policy=build_stored_object_capture_policy(capture_settings),
+        )
     )
 
     if word_rewrite_mode:
@@ -629,6 +749,18 @@ def main() -> int:
 
     if pointer_result.proposals and not runtime_issue_mode:
         answer = '\u5df2\u8bc6\u522b\u5230\u672c\u5730\u6587\u4ef6\u5bf9\u8c61\u3002\u70b9\u51fb\u4e0b\u65b9\u786e\u8ba4\u6309\u94ae\u540e\uff0c\u6211\u4f1a\u628a\u5b8c\u6574\u8def\u5f84\u590d\u5236\u5230\u526a\u8d34\u677f\u3002'
+    elif not capture_decision.allow_upload:
+        if capture_decision.mode == "local_ocr":
+            local_ocr = FabricExecutors(root=RUNTIME_DIR)
+            try:
+                answer = str(local_ocr.ocr_reader(image_path) or "").strip()
+                vision_error = "" if answer else "local_ocr_returned_empty"
+            except Exception as exc:
+                answer = ""
+                vision_error = f"local_ocr_failed:{type(exc).__name__}:{exc}"
+        else:
+            answer = app_adapter_text or "截图已按逐应用策略仅保留在本机，未发送到模型。"
+            vision_error = f"vision_withheld_by_capture_policy:{capture_decision.mode}"
     else:
         try:
             answer = ask_vision_model(
@@ -685,6 +817,7 @@ def main() -> int:
             app_adapter_context=app_adapter_context.to_dict() if app_adapter_context else None,
             vision_observation=vision_observation,
             vision_error=vision_error,
+            capture_attestation=capture_attestation,
         )
         try:
             runtime_issue_result = _record_runtime_issue(capture, runtime_statement)
@@ -708,6 +841,7 @@ def main() -> int:
             app_adapter_context=app_adapter_context.to_dict() if app_adapter_context else None,
             vision_observation=vision_observation,
             vision_error=vision_error,
+            capture_attestation=capture_attestation,
         )
         try:
             recorded = ContextSessionStore().record_visual(capture, context_intent.instruction)
@@ -745,6 +879,8 @@ def main() -> int:
             "grounding": pointer_result.to_dict(),
             "local_file_context": local_file_context.to_dict() if local_file_context else None,
             "app_adapter_context": app_adapter_context.to_dict() if app_adapter_context else None,
+            "capture_policy": capture_decision.to_dict(),
+            "capture_attestation": capture_attestation,
             "electron_payload": {
                 "action": payload.get("action"),
                 "bbox": payload.get("bbox"),
@@ -769,6 +905,8 @@ def main() -> int:
         "pointerImagePath": str(pointer_image_path.relative_to(ROOT)),
         "bbox": selection_bbox,
         "captureBbox": capture_bbox,
+        "capturePolicy": capture_decision.to_dict(),
+        "captureAttestation": capture_attestation,
         "prompt": prompt,
         "answer": answer,
         "error": context_record_error or None,

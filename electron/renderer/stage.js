@@ -8,7 +8,8 @@
 // later (no CDN, no npm) and swap the timeline code behind these helpers.
 (() => {
   const machine = globalThis.StageState;
-  if (!machine) return;
+  const anchor = globalThis.StageAnchor;
+  if (!machine || !anchor) return;
   const { initialState, transition } = machine;
   const api = window.magicPointerStage;
 
@@ -30,10 +31,9 @@
   const tplTableCompare = document.getElementById('tpl-table-compare');
   const tplTextDraft = document.getElementById('tpl-text-draft');
 
-  const LETTER_STAGGER_MS = 30;
-  const CAPSULE_VOICE_WIDTH = 72;
-  const CAPSULE_TEXT_WIDTH = 176;
-  const CAPSULE_MAX_WIDTH = 560;
+  const CAPSULE_VOICE_WIDTH = 40;
+  const CAPSULE_TEXT_WIDTH = 144;
+  const CAPSULE_MAX_WIDTH = 440;
   const DISMISS_FADE_MS = 160;
 
   const reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -46,7 +46,9 @@
   const meta = { selectionSource: null, objectKind: null };
   let renderedChipIds = '';
   // Live wiring context from main (stage:show / stage:update payloads).
-  const session = { token: null, voiceAutoSubmit: true };
+  const session = { token: null, voiceAutoSubmit: true, pointer: null };
+  const textCanvas = document.createElement('canvas');
+  const textMeasure = textCanvas.getContext('2d');
   let dictationActive = false;
   let mouseCaptureOn = false;
   let reportedState = '';
@@ -141,25 +143,14 @@
 
   function clearTranscript() {
     renderedTranscript = '';
-    transcriptBox.replaceChildren();
+    transcriptBox.textContent = '';
   }
 
   function renderTranscript() {
     const text = state.transcript || '';
     if (text === renderedTranscript) return;
-    if (!text.startsWith(renderedTranscript)) clearTranscript();
-    const fresh = Array.from(text).slice(Array.from(renderedTranscript).length);
-    fresh.forEach((letter, index) => {
-      const span = document.createElement('span');
-      span.className = 'fly-letter';
-      span.textContent = letter;
-      // Reduced motion: fly-in is disabled in CSS; skip the stagger so the
-      // text appears immediately as a plain opacity change.
-      if (!state.config.reducedMotion) {
-        span.style.animationDelay = `${index * LETTER_STAGGER_MS}ms`;
-      }
-      transcriptBox.appendChild(span);
-    });
+    // A single text node avoids thousands of spans during streaming dictation.
+    transcriptBox.textContent = text;
     renderedTranscript = text;
   }
 
@@ -167,8 +158,26 @@
     const mode = state.inputMode === 'text' ? 'text' : 'voice';
     const base = mode === 'text' ? CAPSULE_TEXT_WIDTH : CAPSULE_VOICE_WIDTH;
     const content = state.transcript || capsuleInput.value || '';
-    const grown = base + Array.from(content).length * 9;
+    const style = window.getComputedStyle(transcriptBox);
+    if (textMeasure) textMeasure.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+    const measured = textMeasure ? textMeasure.measureText(content).width : content.length * 8;
+    const grown = content ? measured + 58 : base;
     capsule.style.width = `${Math.min(CAPSULE_MAX_WIDTH, Math.max(base, grown))}px`;
+  }
+
+  function anchorNearPointer(element, fallbackWidth = 200, fallbackHeight = 44) {
+    const rect = element.getBoundingClientRect();
+    const point = session.pointer || (state.target
+      ? { x: state.target.x + state.target.width / 2, y: state.target.y + state.target.height / 2 }
+      : { x: window.innerWidth / 2, y: window.innerHeight / 2 });
+    const placement = anchor.choosePointerAnchor(
+      point,
+      { width: rect.width || fallbackWidth, height: rect.height || fallbackHeight },
+      { width: window.innerWidth, height: window.innerHeight },
+    );
+    element.style.left = `${placement.x}px`;
+    element.style.top = `${placement.y}px`;
+    element.dataset.quadrant = placement.quadrant;
   }
 
   function renderInline(container, payload) {
@@ -467,9 +476,9 @@
     if (capsuleOpen) {
       capsule.dataset.mode = state.inputMode === 'text' ? 'text' : 'voice';
       capsule.dataset.phase = name === 'processing' ? 'processing' : 'input';
-      anchorBelowTarget(capsule);
       renderTranscript();
       syncCapsuleWidth();
+      anchorNearPointer(capsule, CAPSULE_TEXT_WIDTH, 44);
       if (name === 'capsule-text') capsuleInput.focus();
     } else {
       clearTranscript();
@@ -481,7 +490,7 @@
 
     if (name === 'result') {
       renderStructured(resultCard, state.result);
-      anchorBelowTarget(resultCard);
+      anchorNearPointer(resultCard, 300, 44);
       resultCard.hidden = false;
     } else {
       resultCard.hidden = true;
@@ -491,7 +500,7 @@
       // Error payloads always take the inline path (no card kinds).
       errorCard.replaceChildren();
       renderInline(errorCard, state.error);
-      anchorBelowTarget(errorCard);
+      anchorNearPointer(errorCard, 300, 44);
       errorCard.hidden = false;
     } else {
       errorCard.hidden = true;
@@ -558,6 +567,9 @@
     if ('voiceAutoSubmit' in payload) {
       session.voiceAutoSubmit = payload.voiceAutoSubmit !== false;
     }
+    if (payload.pointer && Number.isFinite(Number(payload.pointer.x)) && Number.isFinite(Number(payload.pointer.y))) {
+      session.pointer = { x: Number(payload.pointer.x), y: Number(payload.pointer.y) };
+    }
   }
 
   if (api) {
@@ -567,6 +579,7 @@
       reportedState = '';
       session.token = null;
       session.voiceAutoSubmit = true;
+      session.pointer = null;
       meta.selectionSource = null;
       meta.objectKind = null;
       applySession(payload);

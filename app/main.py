@@ -9,6 +9,7 @@ import time
 from collections import deque
 from datetime import datetime
 from pathlib import Path
+from typing import Any, Callable
 
 
 def configure_tcl_tk_for_scoop_python() -> None:
@@ -43,6 +44,10 @@ except Exception:  # pragma: no cover - optional runtime convenience
     pyperclip = None
 
 from app.ai_client import ask_vision_model
+from app.context_pack import build_stored_object_capture_policy
+from app.fabric.capture_policy import CaptureDecision, CapturePolicyEngine
+from app.fabric.executors import FabricExecutors
+from app.fabric.settings import FabricSettings, SettingsStore
 from app.object_store import ObjectStore, PointerObject, new_object_id
 from app.task_context import TaskContextStore
 from app.screen_context import build_screen_context
@@ -52,9 +57,11 @@ from app.system_context import (
     get_foreground_window_title,
     get_virtual_screen_bbox,
     get_cursor_position,
+    get_foreground_window_handle,
     is_hotkey_down,
     apply_modern_window_backdrop,
     trigger_windows_dictation,
+    list_visible_windows,
 )
 
 
@@ -90,6 +97,7 @@ class MagicPointerApp:
         self._hotkey_was_down = False
         self._selection_window: tk.Toplevel | None = None
         self._source_app_title = ""
+        self._source_window: dict[str, object] = {}
         self._status = tk.StringVar(value="\u6309 Ctrl + Alt + M \u6846\u9009\u4efb\u610f\u5c4f\u5e55\u533a\u57df\u3002")
 
         self._build_home()
@@ -259,6 +267,14 @@ class MagicPointerApp:
         if self._selection_window is not None:
             return
         self._source_app_title = get_foreground_window_title()
+        source_hwnd = get_foreground_window_handle()
+        self._source_window = next(
+            (
+                dict(item) for item in list_visible_windows()
+                if int(item.get("hwnd") or 0) == int(source_hwnd or 0)
+            ),
+            {},
+        )
         self._status.set("拖拽鼠标框选区域；按 Esc 取消。")
         self.root.withdraw()
 
@@ -362,16 +378,96 @@ class MagicPointerApp:
         obj_id = new_object_id()
         image_path = CAPTURE_DIR / f"{obj_id}.png"
         try:
+            settings = SettingsStore().load()
+        except Exception:
+            settings = FabricSettings.defaults()
+        capture_engine = CapturePolicyEngine(
+            settings.privacy.upload_screenshots,
+            settings.privacy.default_capture_mode,
+            settings.privacy.sensitive_apps,
+            settings.privacy.app_capture_modes,
+        )
+        capture_decision = capture_engine.decide({
+            "id": obj_id,
+            "kind": "foreground_window",
+            "source": {
+                "app": self._source_app_title,
+                "processName": str(self._source_window.get("process_name") or ""),
+                "title": str(self._source_window.get("title") or self._source_app_title),
+            },
+        })
+        if capture_decision.mode == "deny":
+            self._show_home_if_needed()
+            self._status.set("当前应用已设为永不捕获；未读取结构、未执行 OCR、未创建截图。")
+            return
+        if not capture_decision.allow_local_pixels:
+            self._show_home_if_needed()
+            self._status.set("当前应用仅允许 UIA / AX / DOM；旧版回退界面未创建截图。")
+            return
+        try:
             image = ImageGrab.grab(bbox=bbox, all_screens=True)
+            after_window = next(
+                (
+                    dict(item) for item in list_visible_windows()
+                    if int(item.get("hwnd") or 0) == int(self._source_window.get("hwnd") or 0)
+                ),
+                {},
+            )
+            before_pid = int(self._source_window.get("process_id") or self._source_window.get("pid") or 0)
+            after_pid = int(after_window.get("process_id") or after_window.get("pid") or 0)
+            target_verified = bool(
+                self._source_window
+                and after_window
+                and int(self._source_window.get("hwnd") or 0) == int(after_window.get("hwnd") or 0)
+                and before_pid == after_pid
+                and str(self._source_window.get("title") or "") == str(after_window.get("title") or "")
+            )
+            capture_attestation = {
+                "status": "verified" if target_verified else "target_mismatch",
+                "phase": "complete" if target_verified else "after_capture",
+                "expected": self._source_window,
+                "before": self._source_window,
+                "after": after_window,
+            }
+            if not target_verified:
+                self._show_home_if_needed()
+                self._status.set("目标窗口在截图前后发生变化；未保存或外发任何图像。")
+                return
             image.save(image_path)
         except Exception as exc:
             self._show_home_if_needed()
             messagebox.showerror("截图失败", f"{type(exc).__name__}: {exc}")
             return
 
-        self.show_prompt_window(bbox, image_path, stroke_points=stroke_points)
+        capture_decision = capture_engine.decide({
+            "id": obj_id,
+            "kind": "screen_region",
+            "source": {
+                "app": self._source_app_title,
+                "processName": str(self._source_window.get("process_name") or ""),
+                "title": str(self._source_window.get("title") or self._source_app_title),
+                "imagePath": str(image_path),
+                "captureAttestation": capture_attestation,
+            },
+        })
+        self.show_prompt_window(
+            bbox,
+            image_path,
+            stroke_points=stroke_points,
+            capture_decision=capture_decision,
+            capture_attestation=capture_attestation,
+            object_policy=build_stored_object_capture_policy(settings),
+        )
 
-    def show_prompt_window(self, bbox: tuple[int, int, int, int], image_path: Path, stroke_points: list[tuple[int, int]] | None = None) -> None:
+    def show_prompt_window(
+        self,
+        bbox: tuple[int, int, int, int],
+        image_path: Path,
+        stroke_points: list[tuple[int, int]] | None = None,
+        capture_decision: CaptureDecision | None = None,
+        capture_attestation: dict[str, object] | None = None,
+        object_policy: Callable[[dict[str, Any]], dict[str, Any]] | None = None,
+    ) -> None:
         """Show a lightweight pointer command bar instead of a chat window."""
 
         screen_ctx = build_screen_context(bbox, image_path)
@@ -626,6 +722,8 @@ class MagicPointerApp:
                     "selection_bbox": screen_ctx.selection_bbox,
                     "annotated_image_path": str(screen_ctx.annotated_image_path.relative_to(ROOT)) if screen_ctx.annotated_image_path else None,
                     "windows": [w.__dict__ for w in screen_ctx.windows],
+                    "capture_policy": capture_decision.to_dict() if capture_decision else None,
+                    "capture_attestation": dict(capture_attestation or {}),
                 },
             )
             self.store.append(obj)
@@ -650,6 +748,12 @@ class MagicPointerApp:
             return any(k in lowered or k in user_prompt for k in keywords)
 
         def add_object_reference(refs: list[tuple[str, Path]], label: str, obj: dict) -> None:
+            if object_policy is not None:
+                try:
+                    if object_policy(dict(obj)).get("allowUpload") is not True:
+                        return
+                except Exception:
+                    return
             raw = obj.get("image_path")
             if isinstance(raw, str):
                 path = ROOT / raw
@@ -682,7 +786,13 @@ class MagicPointerApp:
                 "DESTINATION/there/Chinese '\u90a3\u91cc/\u76ee\u6807\u4f4d\u7f6e' means the explicit destination object in this current task. "
                 "Reply as a concise action card first. Do not behave like a long chat unless asked for details."
             )
-            registry_context = self.tasks.build_reference_context(self.store, current_task_id(), image_path.stem, bbox)
+            registry_context = self.tasks.build_reference_context(
+                self.store,
+                current_task_id(),
+                image_path.stem,
+                bbox,
+                object_policy=object_policy,
+            )
             return guard + "\n\n" + screen_ctx.to_prompt_context() + "\n\n" + registry_context
 
         def set_busy(is_busy: bool) -> None:
@@ -700,12 +810,18 @@ class MagicPointerApp:
             set_busy(True)
 
             def worker() -> None:
-                answer = ask_vision_model(
-                    image_path,
-                    prompt_text,
-                    context_text=make_context(),
-                    labeled_extra_images=reference_image_labels(prompt_text),
-                )
+                if capture_decision is not None and capture_decision.mode == "local_ocr":
+                    local_ocr = FabricExecutors(root=RUNTIME_DIR)
+                    answer = str(local_ocr.ocr_reader(image_path) or "").strip() or "本机 OCR 未识别到文字。"
+                elif capture_decision is not None and not capture_decision.allow_upload:
+                    answer = "截图已按逐应用策略仅保留在本机，未发送到模型。"
+                else:
+                    answer = ask_vision_model(
+                        image_path,
+                        prompt_text,
+                        context_text=make_context(),
+                        labeled_extra_images=reference_image_labels(prompt_text),
+                    )
                 obj = save_current_object(prompt_text, answer, alias="this")
                 updated_task = self.tasks.add_interaction(task_id_for_answer, obj.id, prompt_text, answer)
                 self.root.after(0, lambda: finish(answer, updated_task))

@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "catalogVersion": "2026-07-27",
+  "entries": [
+    {
+      "provider": "openai",
+      "modelPrefix": "gpt-4.1",
+      "baseUrlHosts": ["api.openai.com"],
+      "capabilities": {"visionInput": "yes", "audioInput": "no", "toolCalls": "yes"},
+      "evidence": "Dated first-party provider capability catalog entry",
+      "checkedAt": "2026-07-27T00:00:00Z"
+    }
+  ]
+}

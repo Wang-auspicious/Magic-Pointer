@@ -4,7 +4,51 @@ from pathlib import Path
 
 from app.context_pack.intent import ContextIntentKind, parse_context_intent
 from app.context_pack.session import ContextSessionStore
-from scripts.electron_bridge import _prompt_for, _visual_context_capture
+from app.fabric.settings import FabricSettings
+from scripts.electron_bridge import _capture_decision_for_target, _prompt_for, _visual_context_capture
+
+
+def test_electron_capture_target_uses_longest_per_app_rule() -> None:
+    settings = FabricSettings.defaults()
+    settings.privacy.upload_screenshots = True
+    settings.privacy.default_capture_mode = "upload_screenshot"
+    settings.privacy.app_capture_modes = {
+        "password": "local_screenshot",
+        "1password": "deny",
+    }
+    windows = [{
+        "title": "Private Vault - 1Password",
+        "process_name": "1Password.exe",
+        "hwnd": 10,
+        "pid": 11,
+        "bbox": [0, 0, 800, 600],
+    }]
+
+    target, decision = _capture_decision_for_target(settings, {}, windows, (200, 200))
+
+    assert target["hwnd"] == 10
+    assert decision.mode == "deny"
+    assert decision.matched_rule == "1password"
+
+
+def test_electron_capture_policy_uses_target_under_pointer_not_payload_label() -> None:
+    settings = FabricSettings.defaults()
+    settings.privacy.upload_screenshots = True
+    settings.privacy.app_capture_modes = {"1password": "deny", "edge": "upload_screenshot"}
+    windows = [
+        {"title": "Edge", "process_name": "msedge.exe", "hwnd": 1, "pid": 2, "bbox": [0, 0, 500, 500]},
+        {"title": "1Password", "process_name": "1Password.exe", "hwnd": 3, "pid": 4, "bbox": [500, 0, 1000, 500]},
+    ]
+
+    target, decision = _capture_decision_for_target(
+        settings,
+        {"sourceApp": "Trusted Editor"},
+        windows,
+        (700, 200),
+    )
+
+    assert target["hwnd"] == 3
+    assert decision.mode == "deny"
 
 
 def test_visual_collect_command_sends_only_the_explanation_to_vision_model() -> None:

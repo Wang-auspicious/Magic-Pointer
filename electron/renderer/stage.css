@@ -24,7 +24,7 @@ body {
   height: 100%;
   background: transparent;
   overflow: hidden;
-  font-family: 'Segoe UI', 'Microsoft YaHei UI', system-ui, sans-serif;
+  font-family: var(--mp-font-ui);
   color: var(--stage-cold-white);
   user-select: none;
 }
@@ -469,3 +469,31 @@ body {
     transition: opacity 120ms ease-out;
   }
 }
+
+/* Product capsule contract: pointer-anchored, compact, and readable above
+ * any host app. The earlier graphite rules remain only as a fallback. */
+.stage-capsule {
+  min-height: 40px;
+  max-width: 440px;
+  padding: 8px 13px;
+  border: 1px solid rgba(38, 115, 235, .30);
+  border-radius: 22px;
+  background: rgba(252, 253, 255, .94);
+  box-shadow: 0 8px 22px rgba(30, 40, 55, .18), 0 0 18px rgba(18, 102, 212, .08);
+}
+.stage-capsule[data-mode='voice'] { width: 40px; min-height: 40px; padding: 8px 12px; }
+.stage-capsule[data-mode='text'] { width: 144px; }
+.capsule-input, .capsule-transcript { color: #1266D4; font-size: 13px; font-weight: 500; }
+.voice-waveform i { background: #1266D4; }
+.stage-result, .stage-error {
+  max-width: 440px;
+  min-height: 40px;
+  padding: 10px 13px;
+  border-radius: 20px;
+  background: rgba(252, 253, 255, .96);
+  border-color: rgba(38, 115, 235, .30);
+  box-shadow: 0 8px 22px rgba(30, 40, 55, .18), 0 0 18px rgba(18, 102, 212, .08);
+  color: #1266D4;
+}
+.stage-error { color: #b42318; border-color: rgba(180, 35, 24, .28); background: rgba(255, 248, 247, .96); }
+.stage-result .result-secondary, .stage-error .result-secondary { color: inherit; opacity: .78; }

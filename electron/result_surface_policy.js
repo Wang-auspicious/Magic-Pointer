@@ -71,7 +71,8 @@ function captureEligibility({ snapshot = null, summary = null, reason = '' } = {
 
   const title = String(safeSnapshot?.source_window?.title || safeSummary.label || '当前应用').trim();
   let message = `未能从「${title}」读取可靠选中内容`;
-  if (/obsidian/i.test(title)) message = 'Obsidian PDF 暂不支持读取选中文字';
+  if (state === 'target_mismatch') message = '截图目标已变化，未保存或外发图像；请重新指向后重试';
+  else if (/obsidian/i.test(title)) message = 'Obsidian PDF 暂不支持读取选中文字';
   else if (state === 'empty') message = `「${title}」中未检测到选中内容`;
 
   return { commandReady: false, state, message, autoDismissMs: 1800 };

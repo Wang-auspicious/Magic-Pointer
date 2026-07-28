@@ -29,6 +29,15 @@ def _pdf_window() -> dict[str, object]:
     }
 
 
+def _terminal_window() -> dict[str, object]:
+    return {
+        "hwnd": 1234,
+        "pid": 5678,
+        "class_name": "CASCADIA_HOSTING_WINDOW_CLASS",
+        "title": "Administrator: PowerShell",
+    }
+
+
 def test_uia_window_matching_and_app_classification() -> None:
     adapter = UiaTextSelectionAdapter()
     assert adapter.match_window(_browser_window()) is True
@@ -58,6 +67,44 @@ def test_uia_window_matching_and_app_classification() -> None:
         "class_name": "Chrome_WidgetWin_1",
         "title": "How to read .pdf files - Microsoft Edge",
     }) == "browser"
+    assert UiaTextSelectionAdapter().match_window(_terminal_window()) is True
+    assert uia_app_from_window(_terminal_window()) == "terminal"
+
+
+def test_uia_terminal_buffer_becomes_bounded_structural_evidence(monkeypatch) -> None:
+    def probe(hwnd, *, target_point=None):
+        assert target_point == {"x": 640, "y": 480}
+        return UiaProbeResult(True, {
+            "ok": True,
+            "result_kind": "terminal_buffer",
+            "hwnd": 1234,
+            "process_id": 5678,
+            "root_hwnd": 1234,
+            "text": (
+                "PS D:\\repo> python verify.py --token secret\n"
+                "working\nError: broken\nProcess exited with code 7\nPS D:\\repo>"
+            ),
+            "terminal_anchor_text": "Error: broken",
+            "element_name": "Terminal",
+            "control_type": "ControlType.Document",
+            "element_rect": [0, 0, 1280, 720],
+            "elapsed_ms": 12,
+        })
+
+    monkeypatch.setattr(uia_module, "_run_uia_selection_probe", probe)
+    ctx = UiaTextSelectionAdapter().read_context(
+        _terminal_window(),
+        target_point={"x": 640, "y": 480},
+    )
+
+    evidence = ctx.artifacts["terminal_evidence"]
+    assert ctx.app == "terminal"
+    assert ctx.method == "uia:terminal-text-pattern"
+    assert ctx.content == evidence["window"]["text"]
+    assert evidence["command"] == "python verify.py --token [redacted]"
+    assert evidence["exitCode"] == 7
+    assert evidence["anchor"]["text"] == "Error: broken"
+    assert "secret" not in str(ctx.to_dict())
 
 
 def test_uia_context_exposes_read_only_native_selection(monkeypatch) -> None:
@@ -95,6 +142,54 @@ def test_uia_context_exposes_read_only_native_selection(monkeypatch) -> None:
         b"Selected browser text"
     ).hexdigest()
     assert [cap.name for cap in ctx.capabilities] == ["read_selection"]
+
+
+def test_uia_context_reads_meaningful_element_under_pointer_before_pixels(monkeypatch) -> None:
+    calls = []
+
+    def probe(hwnd, *, target_point=None):
+        calls.append((hwnd, target_point))
+        return UiaProbeResult(True, {
+            "ok": True,
+            "result_kind": "point_element",
+            "hwnd": 1234,
+            "process_id": 5678,
+            "root_hwnd": 1234,
+            "text": "Save",
+            "element_name": "Save",
+            "element_value": "",
+            "automation_id": "save-button",
+            "control_type": "ControlType.Button",
+            "localized_control_type": "button",
+            "class_name": "Button",
+            "element_rect": [100, 200, 84, 32],
+            "elapsed_ms": 9,
+        })
+
+    monkeypatch.setattr(uia_module, "_run_uia_selection_probe", probe)
+    ctx = UiaTextSelectionAdapter().read_context(
+        _browser_window(),
+        target_point={"x": 120, "y": 216},
+    )
+
+    assert calls == [(1234, {"x": 120, "y": 216})]
+    assert ctx.content == "Save"
+    assert ctx.method == "uia:element-from-point"
+    assert ctx.artifacts["element_name"] == "Save"
+    assert ctx.artifacts["automation_id"] == "save-button"
+    assert ctx.artifacts["selection_rectangles"] == [[100, 200, 84, 32]]
+    assert ctx.artifacts["perception_result_kind"] == "point_element"
+
+
+def test_uia_probe_source_supports_bounded_element_from_point() -> None:
+    source = uia_module.UIA_PROBE_SOURCE.read_text(encoding="utf-8")
+    assert "AutomationElement.FromPoint" in source
+    assert 'result.ResultKind = "point_element"' in source
+    assert "result_kind" in source
+    assert "TryTerminalBufferAtPoint" in source
+    assert 'result.ResultKind = "terminal_buffer"' in source
+    assert "DocumentRange.GetText(MaxTextChars)" in source
+    assert "RangeFromPoint(point)" in source
 
 
 def test_uia_context_rejects_foreground_identity_mismatch(monkeypatch) -> None:

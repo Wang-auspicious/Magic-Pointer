@@ -1,0 +1,9 @@
+:root {
+  --mp-font-ui: "Times New Roman", "KaiTi", "楷体", "Kaiti SC", "STKaiti", serif;
+}
+
+html,
+body,
+html * {
+  font-family: var(--mp-font-ui) !important;
+}

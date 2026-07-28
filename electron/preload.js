@@ -44,6 +44,7 @@ contextBridge.exposeInMainWorld('magicPointerStage', {
 
 contextBridge.exposeInMainWorld('magicPointerDashboard', {
   hide: () => ipcRenderer.send('dashboard:hide'),
+  setTheme: (theme) => ipcRenderer.send('dashboard:theme', { theme }),
   fabricRequest: (operation, payload = {}) => ipcRenderer.send('dashboard:fabric-request', { operation, ...payload }),
   saveFabricSettings: (settings) => ipcRenderer.send('dashboard:fabric-request', { operation: 'settings.save', settings }),
   requestState: () => ipcRenderer.send('dashboard:request-state'),

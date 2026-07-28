@@ -16,7 +16,11 @@ _SAFETY = {
 }
 
 
-def make_fabric_action_proposal(plan: dict[str, Any]) -> ActionProposal:
+def make_fabric_action_proposal(
+    plan: dict[str, Any],
+    *,
+    workflow_task_id: str = "",
+) -> ActionProposal:
     recipe_id = str(plan.get("recipeId") or "")
     plan_id = str(plan.get("id") or "")
     integrity_token = str(plan.get("integrityToken") or "")
@@ -31,7 +35,10 @@ def make_fabric_action_proposal(plan: dict[str, Any]) -> ActionProposal:
             description=str((plan.get("preview") or {}).get("title") or recipe_id),
             metadata={"recipe_id": recipe_id, "plan_id": plan_id},
         ),
-        parameters={"plan": plan},
+        parameters={
+            "plan": plan,
+            **({"workflow_task_id": workflow_task_id} if workflow_task_id else {}),
+        },
         safety_level=_SAFETY[risk],
         confirmation_required=plan.get("requiresConfirmation") is True,
         rationale=str((plan.get("preview") or {}).get("description") or ""),
@@ -40,6 +47,7 @@ def make_fabric_action_proposal(plan: dict[str, Any]) -> ActionProposal:
             "fabric_plan_signed": True,
             "recipe_id": recipe_id,
             "plan_id": plan_id,
+            "workflow_task_id": workflow_task_id or None,
             "auto_execute": plan.get("requiresConfirmation") is not True,
         },
     )

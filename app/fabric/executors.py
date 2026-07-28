@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlencode
 
+from app.fabric.context_packet import build_agent_prompt, write_context_packet_artifact
+from app.fabric.agent_context_handoff import AgentContextHandoffError, AgentContextHandoffStore
 from app.fabric.schema import ExecutionReceipt, OperationPlan
 
 _VISUAL_SUFFIXES = {
@@ -488,15 +490,16 @@ class FabricExecutors:
         if self.agent_starter is None:
             return _receipt(plan, status="capability_unavailable", error="agent_provider_not_configured")
         objects = _objects(plan)
-        context = "\n\n".join(
-            f"[{obj.get('id') or index}] {_content(obj)}"
-            for index, obj in enumerate(objects, 1)
-            if _content(obj)
-        )
         discovered_attachments: list[str] = []
         for obj in objects:
             source = dict(obj.get("source") or {})
-            for candidate in (obj.get("path"), source.get("path"), source.get("imagePath"), source.get("screenshotPath")):
+            for candidate in (
+                obj.get("path"),
+                source.get("path"),
+                source.get("imagePath"),
+                source.get("screenshotPath"),
+                source.get("annotatedPath"),
+            ):
                 value = str(candidate or "").strip()
                 if value and value not in discovered_attachments:
                     discovered_attachments.append(value)
@@ -504,57 +507,133 @@ class FabricExecutors:
             *[str(item) for item in plan.parameters.get("attachments") or []],
             *discovered_attachments,
         ]))
+        capture_policy = dict(plan.parameters.get("capturePolicy") or {})
+        allowed_visual_paths = {
+            str(Path(item).expanduser().resolve()).casefold()
+            for item in capture_policy.get("uploadAllowedPaths") or []
+            if str(item or "").strip()
+        }
         withheld_visual_attachments = [
-            item for item in attachments
-            if _is_visual_attachment(item) and not self.allow_screenshot_upload
+            item
+            for item in attachments
+            if _is_visual_attachment(item)
+            and (
+                not self.allow_screenshot_upload
+                or str(Path(item).expanduser().resolve()).casefold() not in allowed_visual_paths
+            )
         ]
-        if not self.allow_screenshot_upload:
-            attachments = [item for item in attachments if not _is_visual_attachment(item)]
+        attachments = [
+            item
+            for item in attachments
+            if not _is_visual_attachment(item)
+            or (
+                self.allow_screenshot_upload
+                and str(Path(item).expanduser().resolve()).casefold() in allowed_visual_paths
+            )
+        ]
         capability_fallback = str(plan.parameters.get("capabilityFallback") or "")
-        prompt_parts = [
-            "Magic Pointer grounded task",
-            f"User intent: {plan.command}",
-            f"Recipe: {plan.recipe_id}",
-            f"Source object IDs: {', '.join(plan.object_ids)}",
-            context,
-        ]
+        packet = plan.parameters.get("contextPacket")
+        context_packet_artifact: Path | None = None
+        if isinstance(packet, dict) and packet.get("schemaVersion") == 2:
+            try:
+                context_packet_artifact = write_context_packet_artifact(packet, root=self.root)
+                prompt = build_agent_prompt(packet, artifact_path=context_packet_artifact)
+            except Exception as exc:
+                return _receipt(
+                    plan,
+                    status="failed",
+                    error=f"context_packet_failed:{type(exc).__name__}:{exc}",
+                )
+        else:
+            context = "\n\n".join(
+                f"[{obj.get('id') or index}] {_content(obj)}"
+                for index, obj in enumerate(objects, 1)
+                if _content(obj)
+            )
+            prompt = "\n\n".join([
+                "Magic Pointer grounded task",
+                f"User intent: {plan.command}",
+                f"Recipe: {plan.recipe_id}",
+                f"Source object IDs: {', '.join(plan.object_ids)}",
+                context,
+                "Inspect the current workspace yourself before changing files. "
+                "Verify the outcome on the relevant surface. "
+                "Do not submit, send, purchase, or delete external data.",
+            ])
         if capability_fallback:
-            prompt_parts.append(f"Specialist capability fallback: {capability_fallback}")
-        if attachments:
-            prompt_parts.append(
-                "Grounded local attachments:\n" + "\n".join(f"- {item}" for item in attachments)
+            prompt += f"\n\nSpecialist capability fallback: {capability_fallback}"
+        if withheld_visual_attachments and "withheld visual" not in prompt.casefold():
+            prompt += (
+                "\n\nPrivacy boundary: Magic Pointer withheld screen/image attachments. "
+                "Work only from textual and structured context."
             )
-        if withheld_visual_attachments:
-            prompt_parts.append(
-                "Privacy boundary: Magic Pointer withheld screen/image attachments because "
-                "Dashboard screenshot upload is disabled. Work only from the textual and structured context."
-            )
-        prompt_parts.append(
-            "Inspect the current workspace yourself before changing files. "
-            "Complete the named recipe, save concrete artifacts when the destination cannot be written natively, "
-            "and report the exact artifact or target changed. Verify the outcome on the relevant surface. "
-            "Do not submit, send, purchase, or delete external data."
-        )
-        prompt = "\n\n".join(item for item in prompt_parts if item)
+        workspace = dict(packet.get("workspace") or {}) if isinstance(packet, dict) else {}
+        privacy = {
+            "screenshotUploadAllowed": bool(
+                self.allow_screenshot_upload and allowed_visual_paths
+            ),
+            "withheldVisualAttachmentCount": len(withheld_visual_attachments),
+        }
         payload = {
             "provider": str(plan.parameters.get("agent") or ""),
             "prompt": prompt,
-            "cwd": str(plan.parameters.get("cwd") or ""),
+            "cwd": str(workspace.get("cwd") or plan.parameters.get("cwd") or ""),
             "attachments": attachments,
             "permission": str(plan.parameters.get("agentPermission") or "write"),
             "submit": False,
             "background": plan.recipe_id == "agent.background_task",
-            "sessionId": plan.id,
-            "privacy": {
-                "screenshotUploadAllowed": self.allow_screenshot_upload,
-                "withheldVisualAttachmentCount": len(withheld_visual_attachments),
-            },
+            "sessionId": str(plan.parameters.get("sessionId") or ""),
+            "contextPacketArtifact": (
+                str(context_packet_artifact)
+                if context_packet_artifact is not None
+                else ""
+            ),
+            "privacy": privacy,
         }
-        try:
-            task = dict(self.agent_starter(payload))
-        except Exception as exc:
-            return _receipt(plan, status="failed", error=f"agent_start_failed:{type(exc).__name__}:{exc}")
+        context_handoff: dict[str, Any] | None = None
+        if isinstance(packet, dict) and packet.get("schemaVersion") == 2:
+            contexts = AgentContextHandoffStore(self.root / "agent-contexts")
+            try:
+                context_handoff = contexts.seal(
+                    packet,
+                    prompt=prompt,
+                    attachments=attachments,
+                    permission=payload["permission"],
+                    privacy=privacy,
+                )
+
+                def start_sealed_context(context_payload: dict[str, Any]) -> dict[str, Any]:
+                    return dict(self.agent_starter({
+                        **context_payload,
+                        "background": payload["background"],
+                        "contextPacketArtifact": payload["contextPacketArtifact"],
+                    }))
+
+                dispatch = contexts.dispatch(
+                    context_handoff["contextId"],
+                    provider=payload["provider"],
+                    starter=start_sealed_context,
+                    session_id=payload["sessionId"],
+                )
+                task = dict(dispatch.get("task") or {})
+            except AgentContextHandoffError as exc:
+                return _receipt(
+                    plan,
+                    status="failed",
+                    error=f"agent_context_handoff_failed:{type(exc.__cause__).__name__ if exc.__cause__ else type(exc).__name__}",
+                )
+        else:
+            try:
+                task = dict(self.agent_starter(payload))
+            except Exception as exc:
+                return _receipt(plan, status="failed", error=f"agent_start_failed:{type(exc).__name__}:{exc}")
         accepted = bool(task.get("taskId")) and task.get("status") in {"queued", "running"}
+        if context_packet_artifact is not None:
+            task["contextPacketArtifact"] = str(context_packet_artifact)
+        if context_handoff is not None:
+            task["contextHandoffId"] = context_handoff["contextId"]
+            task["contextPacketId"] = context_handoff["contextPacketId"]
+            task["contextPacketDigest"] = context_handoff["contextPacketDigest"]
         task["privacy"] = dict(payload["privacy"])
         return _receipt(
             plan,

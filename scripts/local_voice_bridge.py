@@ -5,6 +5,7 @@ import json
 import math
 import os
 import queue
+import re
 import sys
 import wave
 from dataclasses import dataclass
@@ -83,6 +84,88 @@ class VoiceActivity:
         return "silence"
 
 
+@dataclass(frozen=True)
+class VoiceProfile:
+    language: str | None = None
+    output_mode: str = "verbatim"
+    hallucination_guard: bool = True
+    glossary: tuple[str, ...] = ()
+
+
+def _normalized_scope_path(value: Path | str | None) -> str:
+    return str(value or "").strip().replace("/", "\\").rstrip("\\").casefold()
+
+
+def _scope_matches(scope: str, context_path: Path | str | None) -> bool:
+    if scope == "*":
+        return True
+    expected = _normalized_scope_path(scope)
+    current = _normalized_scope_path(context_path)
+    return bool(
+        expected
+        and current
+        and (current == expected or current.startswith(expected + "\\"))
+    )
+
+
+def load_voice_profile(
+    *,
+    settings_path: Path | str | None = None,
+    context_path: Path | str | None = None,
+) -> VoiceProfile:
+    raw_settings_path = settings_path or os.environ.get("MAGIC_POINTER_VOICE_SETTINGS_FILE")
+    raw_context_path = context_path or os.environ.get("MAGIC_POINTER_VOICE_CONTEXT_PATH")
+    if not raw_settings_path:
+        return VoiceProfile()
+    try:
+        value = json.loads(Path(raw_settings_path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return VoiceProfile()
+    interaction = value.get("interaction")
+    interaction = dict(interaction) if isinstance(interaction, dict) else {}
+    language_value = str(interaction.get("voice_language") or "auto").strip().casefold()
+    language = (
+        None
+        if language_value == "auto"
+        else language_value
+        if language_value in {"zh", "en", "ja", "ko", "fr", "de", "es", "ru"}
+        else None
+    )
+    output_mode = str(interaction.get("voice_output_mode") or "verbatim").strip().casefold()
+    if output_mode not in {"verbatim", "clean_spacing"}:
+        output_mode = "verbatim"
+    glossaries = interaction.get("voice_glossaries")
+    glossaries = dict(glossaries) if isinstance(glossaries, dict) else {}
+    matching_scopes = sorted(
+        (
+            (0 if str(scope) == "*" else len(_normalized_scope_path(scope)), str(scope), terms)
+            for scope, terms in glossaries.items()
+            if _scope_matches(str(scope), raw_context_path) and isinstance(terms, list)
+        ),
+        key=lambda item: item[0],
+    )
+    glossary: list[str] = []
+    seen: set[str] = set()
+    for _specificity, _scope, terms in matching_scopes:
+        for raw_term in terms:
+            term = str(raw_term or "").strip()
+            folded = term.casefold()
+            if not term or folded in seen:
+                continue
+            seen.add(folded)
+            glossary.append(term[:120])
+            if len(glossary) >= 64:
+                break
+        if len(glossary) >= 64:
+            break
+    return VoiceProfile(
+        language=language,
+        output_mode=output_mode,
+        hallucination_guard=interaction.get("voice_hallucination_guard") is not False,
+        glossary=tuple(glossary),
+    )
+
+
 def load_pcm_wav(path: Path, *, target_rate: int = SAMPLE_RATE) -> np.ndarray:
     with wave.open(str(path), "rb") as handle:
         channels = handle.getnchannels()
@@ -122,27 +205,76 @@ def load_model(model_name: str):
     return whisper.load_model(str(model_path), device="cpu")
 
 
-def transcribe(model, audio: np.ndarray, *, language: str | None) -> str:
+def _normalize_transcript(text: str, output_mode: str) -> str:
+    value = str(text or "").strip()
+    if output_mode == "clean_spacing":
+        return re.sub(r"\s+", " ", value)
+    return value
+
+
+def _high_no_speech_probability(result: dict[str, Any]) -> bool:
+    segments = [
+        dict(item)
+        for item in result.get("segments") or []
+        if isinstance(item, dict)
+    ]
+    if not segments:
+        return False
+    probabilities: list[float] = []
+    for segment in segments:
+        try:
+            probabilities.append(float(segment.get("no_speech_prob")))
+        except (TypeError, ValueError):
+            return False
+    return bool(probabilities) and all(value >= 0.75 for value in probabilities)
+
+
+def transcribe(
+    model,
+    audio: np.ndarray,
+    *,
+    language: str | None,
+    glossary: tuple[str, ...] = (),
+    output_mode: str = "verbatim",
+    hallucination_guard: bool = True,
+) -> str:
     if audio.size < SAMPLE_RATE // 3:
         return ""
+    options: dict[str, Any] = {
+        "language": language,
+        "fp16": False,
+        "temperature": 0,
+        "condition_on_previous_text": False,
+        "no_speech_threshold": 0.6,
+        "logprob_threshold": -1.0,
+    }
+    if glossary:
+        options["initial_prompt"] = ", ".join(glossary[:64])[:4000]
     result = model.transcribe(
         audio.astype(np.float32, copy=False),
-        language=language,
-        fp16=False,
-        temperature=0,
-        condition_on_previous_text=False,
-        no_speech_threshold=0.6,
-        logprob_threshold=-1.0,
+        **options,
     )
-    return str(result.get("text") or "").strip()
+    if hallucination_guard and _high_no_speech_probability(dict(result or {})):
+        return ""
+    return _normalize_transcript(
+        str((result or {}).get("text") or ""),
+        output_mode,
+    )
 
 
-def run_wav(path: Path, *, model_name: str, language: str | None) -> int:
+def run_wav(path: Path, *, model_name: str, profile: VoiceProfile) -> int:
     emit("loading", engine=f"whisper-{model_name}-local")
     model = load_model(model_name)
     audio = load_pcm_wav(path)
     emit("ready", engine=f"whisper-{model_name}-local")
-    text = transcribe(model, audio, language=language)
+    text = transcribe(
+        model,
+        audio,
+        language=profile.language,
+        glossary=profile.glossary,
+        output_mode=profile.output_mode,
+        hallucination_guard=profile.hallucination_guard,
+    )
     if not text:
         emit("error", error="No speech was recognized.", engine=f"whisper-{model_name}-local")
         return 2
@@ -150,7 +282,7 @@ def run_wav(path: Path, *, model_name: str, language: str | None) -> int:
     return 0
 
 
-def run_microphone(*, model_name: str, language: str | None, silence_ms: int) -> int:
+def run_microphone(*, model_name: str, profile: VoiceProfile, silence_ms: int) -> int:
     import sounddevice as sd
 
     emit("loading", engine=f"whisper-{model_name}-local")
@@ -200,7 +332,14 @@ def run_microphone(*, model_name: str, language: str | None, silence_ms: int) ->
                 and state == "speech"
                 and sample_count - last_partial_samples >= partial_every_samples
             ):
-                text = transcribe(model, np.concatenate(audio_parts), language=language)
+                text = transcribe(
+                    model,
+                    np.concatenate(audio_parts),
+                    language=profile.language,
+                    glossary=profile.glossary,
+                    output_mode=profile.output_mode,
+                    hallucination_guard=profile.hallucination_guard,
+                )
                 last_partial_samples = sample_count
                 if text and text != last_text:
                     last_text = text
@@ -209,7 +348,14 @@ def run_microphone(*, model_name: str, language: str | None, silence_ms: int) ->
                 break
 
     audio = np.concatenate(audio_parts) if audio_parts else np.empty((0,), dtype=np.float32)
-    final_text = transcribe(model, audio, language=language)
+    final_text = transcribe(
+        model,
+        audio,
+        language=profile.language,
+        glossary=profile.glossary,
+        output_mode=profile.output_mode,
+        hallucination_guard=profile.hallucination_guard,
+    )
     if not final_text:
         emit("error", error="No speech was recognized.", engine=f"whisper-{model_name}-local")
         return 2
@@ -221,17 +367,24 @@ def main() -> int:
     _configure_stdio()
     parser = argparse.ArgumentParser(description="Local, UI-free Whisper bridge for Magic Pointer.")
     parser.add_argument("--model", default=os.environ.get("MAGIC_POINTER_WHISPER_MODEL") or "tiny")
-    parser.add_argument("--language", default=os.environ.get("MAGIC_POINTER_VOICE_LANGUAGE") or "auto")
+    parser.add_argument("--language", default=os.environ.get("MAGIC_POINTER_VOICE_LANGUAGE") or "")
     parser.add_argument("--silence-ms", type=int, default=1250)
     parser.add_argument("--input-wav", type=Path)
     args = parser.parse_args()
-    language = None if args.language == "auto" else args.language
+    profile = load_voice_profile()
+    if args.language:
+        profile = VoiceProfile(
+            language=None if args.language == "auto" else args.language,
+            output_mode=profile.output_mode,
+            hallucination_guard=profile.hallucination_guard,
+            glossary=profile.glossary,
+        )
     try:
         if args.input_wav:
-            return run_wav(args.input_wav, model_name=args.model, language=language)
+            return run_wav(args.input_wav, model_name=args.model, profile=profile)
         return run_microphone(
             model_name=args.model,
-            language=language,
+            profile=profile,
             silence_ms=max(600, min(5000, args.silence_ms)),
         )
     except KeyboardInterrupt:

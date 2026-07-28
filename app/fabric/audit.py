@@ -19,6 +19,18 @@ _SENSITIVE_KEYS = {
     "api_key",
     "token",
     "secret",
+    "path",
+    "paths",
+    "cwd",
+    "project",
+    "title",
+    "url",
+    "uri",
+    "document",
+    "artifact",
+    "artifacts",
+    "attachment",
+    "attachments",
 }
 
 
@@ -64,4 +76,3 @@ class AuditStore:
                 if isinstance(value, dict):
                     items.append(value)
         return items[-max(0, min(int(limit), 500)):]
-

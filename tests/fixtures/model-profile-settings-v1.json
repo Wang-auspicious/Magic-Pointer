@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "models": {
+    "schemaVersion": 1,
+    "defaultProfileId": "primary",
+    "profiles": [
+      {
+        "schemaVersion": 1,
+        "id": "primary",
+        "displayName": "工作模型",
+        "provider": "openai-compatible",
+        "baseUrl": "https://example.invalid/v1",
+        "model": "local-model",
+        "apiMode": "chat-completions",
+        "credentialRef": "credential:model:primary",
+        "enabled": true,
+        "overrides": {
+          "visionInput": "auto",
+          "audioInput": "auto",
+          "toolCalls": "auto"
+        },
+        "resolved": {
+          "visionInput": "unknown",
+          "audioInput": "unknown",
+          "toolCalls": "unknown",
+          "source": "unknown",
+          "evidence": "",
+          "checkedAt": ""
+        }
+      }
+    ]
+  }
+}

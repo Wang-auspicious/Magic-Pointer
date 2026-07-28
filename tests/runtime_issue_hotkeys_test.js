@@ -5,12 +5,20 @@ const main = fs.readFileSync('electron/main.js', 'utf8');
 const overlay = fs.readFileSync('electron/renderer/overlay.js', 'utf8');
 const html = fs.readFileSync('electron/renderer/index.html', 'utf8');
 
-assert(main.includes("globalShortcut.register('Control+Alt+M'"));
+assert(main.includes('function registerConfigurableHotkeys('));
+assert(main.includes('fabricSettings.shortcuts?.wake'));
+assert(main.includes("requestActivation('shortcut-wake')"));
+assert(main.includes("requestActivation('shortcut-text')"));
+assert(main.includes("requestActivation('shortcut-voice')"));
 assert(main.includes("globalShortcut.register('Control+Alt+Enter'"));
 assert(main.includes("globalShortcut.register('Control+Alt+Shift+M'"));
-assert(main.includes("showRuntimeIssueOverlay('hotkey')"));
-assert(main.includes("beginSelectionSession('runtime-delivery')"));
-assert(main.includes("beginSelectionSession('legacy-native-selection')"));
+assert(main.includes("requestActivation('runtime-delivery')"));
+assert(main.includes("requestActivation('legacy-native-selection')"));
+assert(main.includes('const previousSettings = fabricSettings;'));
+assert(main.includes('const failedHotkeys = Object.entries(parsed.hotkeys)'));
+assert(main.includes('fabricSettingsStore.save(previousSettings)'));
+assert(main.includes('parsed.ok = false'));
+assert(main.includes('快捷键注册失败'));
 
 assert(main.includes('function showRuntimeIssueOverlay('));
 assert(main.includes('overlayWindow.setIgnoreMouseEvents(false)'));

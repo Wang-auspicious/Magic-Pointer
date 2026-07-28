@@ -4,7 +4,7 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 JsonDict = dict[str, Any]
 MAX_PROMPT_CHARS = 60_000
@@ -16,6 +16,10 @@ DETAIL_BUDGET_CHARS = 18_000
 PRIVACY_BOUNDARY_NOTICE = (
     "Privacy boundary: Magic Pointer withheld screen/image attachments because "
     "Dashboard screenshot upload is disabled. Work only from the textual and structured context."
+)
+PER_APP_PRIVACY_BOUNDARY_NOTICE = (
+    "Privacy boundary: Magic Pointer withheld evidence according to the per-app capture policy. "
+    "Work only from the evidence explicitly included below."
 )
 
 AGENT_PROFILES: dict[str, JsonDict] = {
@@ -110,13 +114,45 @@ def compile_context_prompt(
     task_instruction: str = "",
     target_profile: str | JsonDict | None = None,
     allow_screenshot_upload: bool = False,
+    capture_policy: Callable[[JsonDict], Any] | None = None,
 ) -> str:
     session_id = _clean(session.get("session_id"), limit=200)
     if not session_id:
         raise ValueError("context session id is required")
-    items = _ordered_items(session)
-    if not items:
+    ordered_items = _ordered_items(session)
+    if not ordered_items:
         raise ValueError("context session has no items")
+    policy_items: list[tuple[JsonDict, JsonDict]] = []
+    denied_items = 0
+    for item in ordered_items:
+        if capture_policy is None:
+            decision: JsonDict = {
+                "mode": "upload_screenshot" if allow_screenshot_upload else "local_screenshot",
+                "allowStructure": True,
+                "allowLocalPixels": True,
+                "allowUpload": allow_screenshot_upload,
+            }
+        else:
+            try:
+                raw_decision = capture_policy(dict(item))
+                if hasattr(raw_decision, "to_dict"):
+                    raw_decision = raw_decision.to_dict()
+                decision = dict(raw_decision) if isinstance(raw_decision, dict) else {}
+            except Exception:
+                decision = {}
+            decision = {
+                "mode": str(decision.get("mode") or "deny"),
+                "allowStructure": decision.get("allowStructure") is True,
+                "allowLocalPixels": decision.get("allowLocalPixels") is True,
+                "allowUpload": decision.get("allowUpload") is True,
+                "reason": str(decision.get("reason") or "policy_error"),
+            }
+        if not decision["allowStructure"]:
+            denied_items += 1
+            continue
+        policy_items.append((item, decision))
+    items = [item for item, _decision in policy_items]
+    any_upload_allowed = any(decision["allowUpload"] for _item, decision in policy_items)
     profile = _resolve_profile(target_profile or session.get("target_profile") or "generic")
     task = _clean(task_instruction or session.get("task_instruction"), limit=6000)
     runtime_issue = session.get("workflow_kind") == "runtime_issue"
@@ -144,7 +180,7 @@ def compile_context_prompt(
                 "- role=issue 是待修现场；role=reference 只是期望参考，不得把参考界面描述成当前产品事实。",
                 (
                     "- 优先利用可见文字、URL、窗口、截图路径、指针标注和结构化上下文建立从现场到源码的线索。"
-                    if allow_screenshot_upload
+                    if any_upload_allowed
                     else "- 优先利用可见文字、URL、窗口和结构化上下文建立从现场到源码的线索。"
                 ),
             ]
@@ -153,7 +189,7 @@ def compile_context_prompt(
         lines.append("- 当前没有最终任务：先向用户确认最终任务，不要仅凭上下文条目擅自执行写操作。")
 
     lines.extend(["", "## Context Pack 索引（全部条目）", ""])
-    for index, item in enumerate(items, 1):
+    for index, (item, _decision) in enumerate(policy_items, 1):
         source = item.get("source") if isinstance(item.get("source"), dict) else {}
         window = source.get("window") if isinstance(source.get("window"), dict) else {}
         source_hint = (
@@ -175,7 +211,8 @@ def compile_context_prompt(
     detail_chars = 0
     omitted_details = 0
     withheld_screenshots = 0
-    for index, item in enumerate(items, 1):
+    withheld_reasons: set[str] = set()
+    for index, (item, decision) in enumerate(policy_items, 1):
         source = item.get("source") if isinstance(item.get("source"), dict) else {}
         window = source.get("window") if isinstance(source.get("window"), dict) else {}
         geometry = item.get("geometry") if isinstance(item.get("geometry"), dict) else {}
@@ -186,8 +223,10 @@ def compile_context_prompt(
         instruction = _clean(item.get("instruction"), limit=8000)
         selected = _clean(item.get("selected_text"), limit=3000)
         surrounding = _clean(item.get("surrounding_context"), limit=3000)
-        observation = _clean(item.get("vision_observation"), limit=3000)
-        vision_error = _clean(item.get("vision_error"), limit=2000)
+        pixel_content_allowed = decision["allowLocalPixels"] is True
+        visual_item = item.get("modality") == "visual_pointer" or bool(images)
+        observation = _clean(item.get("vision_observation"), limit=3000) if pixel_content_allowed else ""
+        vision_error = _clean(item.get("vision_error"), limit=2000) if pixel_content_allowed else ""
         file_text = _clean(file_context.get("text"), limit=3000)
         role = _clean(item.get("role"), limit=20)
         role_label = (
@@ -217,17 +256,20 @@ def compile_context_prompt(
             block.extend(["- 视觉模型观察（非用户事实）：", "", observation])
         elif vision_error:
             block.append(f"- 视觉转译失败：{vision_error}；仅使用截图、坐标和其他结构化来源，不得猜测图像内容。")
-        if grounding:
+        if grounding and (pixel_content_allowed or not visual_item):
             block.append(f"- Grounding：{_clean(_json_line(grounding), limit=2000)}")
         raw_image = _clean(images.get("raw"), limit=4000)
         pointer_image = _clean(images.get("pointer"), limit=4000)
-        if allow_screenshot_upload:
+        if decision["allowUpload"]:
             if raw_image:
                 block.append(f"- 原始截图：{raw_image}")
             if pointer_image:
                 block.append(f"- 指向标注图：{pointer_image}")
         else:
-            withheld_screenshots += sum(1 for value in (raw_image, pointer_image) if value)
+            withheld_count = sum(1 for value in (raw_image, pointer_image) if value)
+            withheld_screenshots += withheld_count
+            if withheld_count:
+                withheld_reasons.add(str(decision.get("reason") or "policy"))
         if file_context:
             block.append(
                 "- 文件上下文元数据："
@@ -254,13 +296,23 @@ def compile_context_prompt(
             ]
         )
 
-    if withheld_screenshots:
+    if withheld_screenshots or denied_items:
         lines.extend(
             [
                 "## 隐私边界",
                 "",
-                PRIVACY_BOUNDARY_NOTICE,
-                f"本次共有 {withheld_screenshots} 个截图证据仅保留在用户本机；请依赖上文的视觉观察文字、坐标和结构化来源。",
+                (
+                    PRIVACY_BOUNDARY_NOTICE
+                    if capture_policy is None
+                    or (not denied_items and withheld_reasons == {"global_upload_disabled"})
+                    else PER_APP_PRIVACY_BOUNDARY_NOTICE
+                ),
+                (
+                    f"本次共有 {withheld_screenshots} 个截图证据未出站、{denied_items} 个条目被完整剔除；"
+                    "请仅依赖上文明确包含的来源。"
+                    if capture_policy is not None
+                    else f"本次共有 {withheld_screenshots} 个截图证据仅保留在用户本机；请依赖上文的视觉观察文字、坐标和结构化来源。"
+                ),
                 "",
             ]
         )

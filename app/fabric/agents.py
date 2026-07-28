@@ -17,6 +17,7 @@ class AgentRequest:
     attachments: tuple[str, ...] = ()
     permission: str = "read"
     session_id: str | None = None
+    resume_token: str | None = None
     metadata: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -33,6 +34,7 @@ class AgentRequest:
             attachments=tuple(str(item) for item in value.get("attachments") or []),
             permission=str(value.get("permission") or "read"),
             session_id=str(value.get("session_id") or "") or None,
+            resume_token=str(value.get("resume_token") or "") or None,
             metadata=dict(value.get("metadata") or {}),
         )
 
@@ -97,19 +99,26 @@ class AgentConnectorRegistry:
             raise AgentConnectorError("agent permission must be read or write")
 
         if provider == "codex":
-            argv = [executable, "exec", "--json", "--skip-git-repo-check"]
+            argv = [executable, "exec"]
             if request.permission == "read":
                 argv.extend(["--sandbox", "read-only"])
+            if request.session_id:
+                argv.extend(["resume", "--json", "--skip-git-repo-check"])
+            else:
+                argv.extend(["--json", "--skip-git-repo-check"])
             for attachment in request.attachments:
                 if Path(attachment).is_file():
                     argv.extend(["--image", str(Path(attachment).resolve())])
-            argv.append("-")
+            if request.session_id:
+                argv.extend([request.resume_token or request.session_id, "-"])
+            else:
+                argv.append("-")
             return AgentInvocation(tuple(argv), request.prompt, cwd, "jsonl")
 
         if provider == "pi":
             argv = [executable, "--mode", "json", "--print"]
             if request.session_id:
-                argv.extend(["--session-id", request.session_id])
+                argv.extend(["--session", request.resume_token or request.session_id])
             else:
                 argv.append("--no-session")
             if request.permission == "read":
@@ -117,7 +126,7 @@ class AgentConnectorRegistry:
             return AgentInvocation(tuple(argv), request.prompt, cwd, "json")
 
         if provider == "claude":
-            argv = [executable, "-p", "--output-format", "stream-json", "--input-format", "text"]
+            argv = [executable, "-p", "--verbose", "--output-format", "stream-json", "--input-format", "text"]
             if request.session_id:
                 argv.extend(["--resume", request.session_id])
             if request.permission == "read":
@@ -128,6 +137,8 @@ class AgentConnectorRegistry:
             argv = [executable, "-p", "", "--output-format", "json"]
             if request.permission == "read":
                 argv.extend(["--approval-mode", "plan"])
+            if request.session_id:
+                argv.extend(["--resume", request.resume_token or request.session_id])
             return AgentInvocation(tuple(argv), request.prompt, cwd, "json")
 
         if provider == "cursor":
@@ -180,7 +191,7 @@ class AgentConnectorRegistry:
         cwd = _valid_cwd(request.cwd)
         argv = [executable, "--mode", "rpc"]
         if request.session_id:
-            argv.extend(["--session-id", request.session_id])
+            argv.extend(["--session", request.resume_token or request.session_id])
         else:
             argv.append("--no-session")
         return AgentInvocation(tuple(argv), None, cwd, "jsonl-rpc")
@@ -189,4 +200,3 @@ class AgentConnectorRegistry:
         if request.provider.casefold() != "codex":
             raise AgentConnectorError("app-server command is only defined for Codex")
         return AgentInvocation((executable, "app-server"), None, _valid_cwd(request.cwd), "jsonl-app-server")
-

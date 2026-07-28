@@ -54,7 +54,11 @@ def main() -> int:
         )
         fallback_receipt = engine.execute(fallback["plan"], confirmed=True)
         assert fallback["plan"]["provider"] == "agent.task"
-        assert fallback_receipt["verified"] is True
+        assert fallback_receipt["status"] == "accepted"
+        assert fallback_receipt["verified"] is False
+        assert fallback_receipt["verification"]["taskAccepted"] is True
+        assert fallback_receipt["verification"]["terminalOutcomeVerified"] is False
+        assert fallback_receipt["output"]["taskId"] == "smoke-agent-task"
 
         server = MagicPointerMcpServer(root=runtime)
         initialized = server.handle({
@@ -79,7 +83,8 @@ def main() -> int:
             "providersAvailable": [item.id for item in providers if item.available],
             "clipboardVerified": clean_receipt["verified"],
             "evidenceVerified": evidence_receipt["verified"],
-            "agentFallbackVerified": fallback_receipt["verified"],
+            "agentFallbackAccepted": fallback_receipt["status"] == "accepted",
+            "agentFallbackTerminalVerified": fallback_receipt["verified"],
             "mcpTools": len(tools["result"]["tools"]),
         }
         print(json.dumps(result, ensure_ascii=False, indent=2))

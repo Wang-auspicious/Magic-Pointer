@@ -1,14 +1,19 @@
-﻿const { app, BrowserWindow, globalShortcut, ipcMain, screen } = require('electron');
+﻿const { app, BrowserWindow, globalShortcut, ipcMain, screen, safeStorage, systemPreferences } = require('electron');
 const path = require('path');
+const { nativeTheme } = require('electron');
 const { shell } = require('electron');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const crypto = require('crypto');
 const { SelectionSessionStore } = require('./selection_session');
-const { InteractionEpisodeStore, inferReferenceMode } = require('./interaction_episode');
+const { InteractionEpisodeStore, inferReferenceLabel, inferReferenceMode } = require('./interaction_episode');
 const { ActivationGate } = require('./activation_gate');
 const { WiggleDetector } = require('./wiggle_detector');
+const { MouseActivationDetector } = require('./mouse_activation');
 const { ElectronSettingsStore, defaultSettings } = require('./settings_store');
+const { CredentialStore } = require('./credential_store');
+const { PreflightRunner } = require('./bootstrap_runner');
+const { buildPreflightChecks } = require('./preflight_checks');
 const { captureEligibility } = require('./result_surface_policy');
 const { inferObjectKind, selectionSourceForReason, stageEventFromBridge } = require('./stage_contract');
 const { canAutoExecuteInternalProposal } = require('./internal_action_policy');
@@ -26,11 +31,16 @@ let stageWindow = null;
 let mousePollTimer = null;
 let overlayHideTimer = null;
 let wiggleDetector = null;
+const mouseActivationDetector = new MouseActivationDetector();
 let fabricSettings = null;
 let fabricSettingsStore = null;
+let credentialStore = null;
 let pointerStateChild = null;
 let pointerInputState = { buttons: 0, foregroundApp: '', isWindowMoving: false, scrollDelta: 0 };
 let wiggleCalibrationTimer = null;
+let inputPaused = false;
+let isQuitting = false;
+const registeredConfigurableHotkeys = new Set();
 
 const ROOT = path.resolve(__dirname, '..');
 const RUNTIME_DIR = path.join(ROOT, 'data', 'runtime');
@@ -88,8 +98,11 @@ function persistCurrentObjectEpisode(session) {
     capturedAt: new Date(episode.recentEvents.at(-1)?.at || Date.now()).toISOString(),
     expiresAt: new Date(episode.expiresAt).toISOString(),
     slots: episode.slots,
+    labels: episode.labels,
+    spatialRelations: episode.spatialRelations,
     objects: episode.objects.map((item) => ({
       id: item.objectId,
+      referenceLabel: item.referenceLabel || null,
       kind: item.kind || 'native_selection',
       label: item.label || item.objectId,
       content: item.content || '',
@@ -105,6 +118,8 @@ function persistCurrentObjectEpisode(session) {
     capturedAt: snapshot.captured_at || new Date().toISOString(),
     expiresAt: snapshot.expires_at || new Date(Date.now() + SELECTION_SESSION_TTL_MS).toISOString(),
     slots: { this: snapshot.snapshot_id || session.token, that: null, these: [], here: null },
+    labels: {},
+    spatialRelations: [],
     objects: [{
       id: snapshot.snapshot_id || session.token,
       kind: snapshot.source_kind || 'native_selection',
@@ -115,6 +130,9 @@ function persistCurrentObjectEpisode(session) {
         app: context.app || session.summary?.app || '',
         title: sourceWindow.title || '',
         path: context.document_path || context.path || null,
+        annotatedPath: snapshot.annotated_path || null,
+        captureAttestation: snapshot.capture_attestation || null,
+        perceptionTrace: snapshot.perception_trace || null,
         url: context.url || null,
         page: context.page ?? null,
         hwnd: sourceWindow.hwnd ?? null,
@@ -271,8 +289,8 @@ if (!gotLock) {
   app.quit();
 } else {
   app.on('second-instance', () => {
-    log('second-instance -> beginSelectionSession');
-    beginSelectionSession('second-instance');
+    log('second-instance -> requestActivation');
+    requestActivation('second-instance');
   });
 }
 
@@ -394,16 +412,41 @@ function deliverStageError(selectionSessionToken, message) {
   });
 }
 
+function dashboardMaterial(settings = fabricSettings) {
+  if (settings?.accessibility?.reduce_transparency === true) return 'none';
+  return settings?.appearance?.material === 'solid' ? 'none' : 'mica';
+}
+
+function applyDashboardMaterial(settings = fabricSettings) {
+  if (process.platform !== 'win32' || !dashboardWindow || dashboardWindow.isDestroyed()) return;
+  try {
+    dashboardWindow.setBackgroundMaterial(dashboardMaterial(settings));
+  } catch (error) {
+    log(`dashboard material unavailable ${error.name}`);
+  }
+}
+
 function createDashboardWindow() {
   if (dashboardWindow && !dashboardWindow.isDestroyed()) return dashboardWindow;
   dashboardWindow = new BrowserWindow({
-    width: 1120,
-    height: 720,
-    minWidth: 860,
-    minHeight: 620,
-    frame: false,
+    width: 1240,
+    height: 820,
+    minWidth: 960,
+    minHeight: 680,
+    title: 'Magic Pointer',
+    titleBarStyle: 'hidden',
+    titleBarOverlay: process.platform === 'darwin' ? { height: 46 } : {
+      color: 'rgba(1, 0, 0, 0)',
+      symbolColor: nativeTheme.shouldUseDarkColors ? '#f5f5f7' : '#1d1d1f',
+      height: 46,
+    },
+    trafficLightPosition: process.platform === 'darwin' ? { x: 16, y: 16 } : undefined,
+    vibrancy: process.platform === 'darwin' ? 'sidebar' : undefined,
+    backgroundMaterial: process.platform === 'win32' ? dashboardMaterial() : undefined,
     transparent: false,
-    backgroundColor: '#f7f8fb',
+    backgroundColor: process.platform === 'win32'
+      ? '#00000000'
+      : (nativeTheme.shouldUseDarkColors ? '#161719' : '#f5f5f7'),
     fullscreenable: true,
     resizable: true,
     movable: true,
@@ -417,6 +460,14 @@ function createDashboardWindow() {
     },
   });
   dashboardWindow.loadFile(path.join(__dirname, 'renderer', 'dashboard.html'));
+  dashboardWindow.on('close', (event) => {
+    if (!isQuitting && fabricSettings?.general?.keep_running !== false) {
+      event.preventDefault();
+      dashboardWindow.hide();
+    } else if (!isQuitting) {
+      setImmediate(() => app.quit());
+    }
+  });
   dashboardWindow.on('closed', () => { dashboardWindow = null; });
   return dashboardWindow;
 }
@@ -426,11 +477,11 @@ function showDashboard(payload = {}, options = {}) {
   const cursor = screen.getCursorScreenPoint();
   const display = screen.getDisplayNearestPoint(cursor);
   const workArea = display.workArea || display.bounds;
-  const width = Math.min(1120, Math.max(860, workArea.width - 48));
-  const height = Math.min(720, Math.max(620, workArea.height - 48));
+  const width = Math.min(1240, Math.max(960, workArea.width - 72));
+  const height = Math.min(820, Math.max(680, workArea.height - 72));
   const bounds = {
-    x: workArea.x + workArea.width - width - 24,
-    y: workArea.y + Math.max(24, Math.floor((workArea.height - height) / 2)),
+    x: workArea.x + Math.floor((workArea.width - width) / 2),
+    y: workArea.y + Math.floor((workArea.height - height) / 2),
     width,
     height,
   };
@@ -538,6 +589,24 @@ function dismissTemporarySurfaces({ invalidateSession = true, hideObserver = fal
   log('dismissTemporarySurfaces');
 }
 
+function requestActivation(reason) {
+  if (inputPaused) {
+    log(`activation ignored paused reason=${reason}`);
+    return 'paused';
+  }
+  const decision = activationGate.decide({
+    hasVisibleSurface: hasVisibleTemporarySurface() || Boolean(overlayWindow?.isVisible()),
+    isActivationBusy: hasActiveSelectionCapture(),
+  });
+  log(`activation request reason=${reason} decision=${decision}`);
+  if (decision === 'dismiss') {
+    dismissTemporarySurfaces({ invalidateSession: true, hideObserver: true });
+  } else if (decision === 'activate') {
+    beginSelectionSession(reason);
+  }
+  return decision;
+}
+
 function stopDictation(surface) {
   const child = dictationChildren.get(surface);
   if (!child) return;
@@ -622,6 +691,19 @@ function startMouseShakePolling() {
     const now = Date.now();
     const pos = screen.getCursorScreenPoint();
     if (overlayWindow && overlayWindow.isVisible()) sendCursorToOverlay(pos);
+    const mouseButtonMode = fabricSettings?.activation?.wake_mode === 'mouse_button'
+      ? (fabricSettings?.activation?.mouse_side_button || 'none')
+      : 'none';
+    const mouseActivationReason = mouseActivationDetector.push({
+      t: now,
+      buttons: pointerInputState.buttons,
+      mode: mouseButtonMode,
+    });
+    if (mouseActivationReason) {
+      requestActivation(mouseActivationReason);
+      return;
+    }
+    if (fabricSettings?.activation?.wake_mode === 'mouse_button') return;
     // An active stage session owns the pointer; no re-triggering underneath it.
     if (hasVisibleTemporarySurface()) return;
     if (!overlayWindow || overlayWindow.isVisible()) return;
@@ -638,10 +720,74 @@ function startMouseShakePolling() {
     });
     if (decision.triggered) {
       log(`wiggle accepted metrics=${JSON.stringify(decision.metrics)}`);
-      beginSelectionSession('wiggle');
+      requestActivation('wiggle');
     }
   }, 35);
   log('wiggle polling started');
+}
+
+function stopMouseShakePolling() {
+  if (mousePollTimer) clearInterval(mousePollTimer);
+  mousePollTimer = null;
+  try { if (pointerStateChild && !pointerStateChild.killed) pointerStateChild.kill(); } catch (_) {}
+  pointerStateChild = null;
+}
+
+function applyConfiguredWakeState() {
+  const wiggleEnv = process.env.MAGIC_POINTER_ENABLE_MOUSE_SHAKE;
+  const wiggleConfigured = ['wiggle', 'wiggle_hotkey'].includes(fabricSettings?.activation?.wake_mode)
+    && fabricSettings?.activation?.wiggle_enabled !== false;
+  const configured = wiggleConfigured || fabricSettings?.activation?.wake_mode === 'mouse_button';
+  const enabled = !inputPaused && (wiggleEnv === '1' ? true : wiggleEnv === '0' ? false : configured);
+  mouseActivationDetector.reset(pointerInputState.buttons);
+  if (enabled) {
+    startPointerInputStateStream();
+    startMouseShakePolling();
+  } else {
+    stopMouseShakePolling();
+  }
+  log(`pointer activation polling=${enabled} wakeMode=${fabricSettings?.activation?.wake_mode} paused=${inputPaused} sensitivity=${fabricSettings?.activation?.sensitivity}`);
+  return enabled;
+}
+
+function inputModeForReason(reason) {
+  if (reason === 'shortcut-text') return 'text';
+  if (reason === 'shortcut-voice') return 'voice';
+  return fabricSettings?.interaction?.default_input_mode === 'text' ? 'text' : 'voice';
+}
+
+function registerConfigurableHotkeys() {
+  for (const accelerator of registeredConfigurableHotkeys) {
+    try { globalShortcut.unregister(accelerator); } catch (_) {}
+  }
+  registeredConfigurableHotkeys.clear();
+  const results = {};
+  const register = (name, accelerator, handler, enabled = true) => {
+    if (!enabled) {
+      results[name] = { accelerator, registered: false, disabled: true };
+      return;
+    }
+    let registered = false;
+    try { registered = Boolean(accelerator && globalShortcut.register(accelerator, handler)); } catch (_) {}
+    if (registered) registeredConfigurableHotkeys.add(accelerator);
+    results[name] = { accelerator, registered };
+    log(`register configurable hotkey name=${name} accelerator=${accelerator || '<empty>'} ok=${registered}`);
+  };
+  register('wake', fabricSettings.shortcuts?.wake || 'Control+Alt+M', () => {
+    requestActivation('shortcut-wake');
+  }, fabricSettings.activation?.fallback_hotkey_enabled !== false);
+  register('text_mode', fabricSettings.shortcuts?.text_mode || 'Control+Alt+T', () => {
+    requestActivation('shortcut-text');
+  });
+  register('voice_mode', fabricSettings.shortcuts?.voice_mode || 'Control+Alt+V', () => {
+    requestActivation('shortcut-voice');
+  });
+  register('pause', fabricSettings.shortcuts?.pause || 'Control+Alt+P', () => {
+    inputPaused = !inputPaused;
+    if (inputPaused) dismissTemporarySurfaces({ invalidateSession: true, hideObserver: true });
+    applyConfiguredWakeState();
+  });
+  return results;
 }
 
 function stageSessionPayload(entry) {
@@ -649,7 +795,7 @@ function stageSessionPayload(entry) {
     selectionSessionToken: entry.token,
     selectionSnapshotId: entry.snapshot?.snapshot_id || null,
     captureEligibility: entry.captureEligibility,
-    defaultInputMode: fabricSettings.interaction.default_input_mode,
+    defaultInputMode: inputModeForReason(entry.reason),
     voiceAutoSubmit: fabricSettings.interaction.voice_auto_submit,
     sessionExpiresAt: entry.expiresAt,
   };
@@ -674,6 +820,9 @@ function episodeObjectForSession(entry) {
       app: String(context.app || entry?.summary?.app || ''),
       title: String(sourceWindow.title || context?.window?.title || ''),
       path: String(context.document_path || context.path || snapshot.capture_path || ''),
+      annotatedPath: String(snapshot.annotated_path || ''),
+      captureAttestation: snapshot.capture_attestation || null,
+      perceptionTrace: snapshot.perception_trace || null,
       url: String(context.url || ''),
       page: Number(context.page),
       hwnd: Number(sourceWindow.hwnd),
@@ -684,11 +833,13 @@ function episodeObjectForSession(entry) {
 
 function bindEpisodeForCommand(session, command) {
   const mode = inferReferenceMode(command);
+  const referenceLabel = inferReferenceLabel(command);
   const object = episodeObjectForSession(session);
   if (mode === 'here') interactionEpisodes.bindHere(object);
   else {
     interactionEpisodes.bindPointedObject(object);
-    if (mode === 'these') interactionEpisodes.bindThese();
+    if (referenceLabel) interactionEpisodes.labelCurrent(referenceLabel);
+    if (mode === 'these' || referenceLabel) interactionEpisodes.bindThese();
   }
   const episode = interactionEpisodes.contextPayload();
   persistCurrentObjectEpisode(session);
@@ -713,8 +864,12 @@ function beginSelectionSession(reason = 'manual') {
     reason,
     selectionSessionToken: entry.token,
     selectionSource: selectionSourceForReason(reason),
-    defaultInputMode: fabricSettings.interaction.default_input_mode,
+    defaultInputMode: inputModeForReason(reason),
     voiceAutoSubmit: fabricSettings.interaction.voice_auto_submit,
+    pointer: {
+      x: cursor.x - stageBounds.x,
+      y: cursor.y - stageBounds.y,
+    },
     target: {
       x: cursor.x - stageBounds.x - 8,
       y: cursor.y - stageBounds.y - 8,
@@ -769,7 +924,11 @@ function beginSelectionSession(reason = 'manual') {
           deliverStageError(entry.token, attached.captureEligibility?.message || '当前选区不可用，请重新选择。');
           return;
         }
-        const mode = fabricSettings.interaction.default_input_mode === 'text' ? 'text' : 'voice';
+        const mode = current.reason === 'shortcut-text'
+          ? 'text'
+          : current.reason === 'shortcut-voice'
+            ? 'voice'
+            : (fabricSettings.interaction.default_input_mode === 'text' ? 'text' : 'voice');
         updateStage({
           selectionSessionToken: entry.token,
           event: { type: 'OPEN_CAPSULE', mode },
@@ -787,11 +946,17 @@ app.whenReady().then(() => {
   } catch (_) {}
   log(`app ready pid=${process.pid}`);
   fabricSettingsStore = new ElectronSettingsStore(path.join(FABRIC_DATA_DIR, 'fabric-settings.json'));
+  credentialStore = new CredentialStore(path.join(FABRIC_DATA_DIR, 'credentials.v1.json'), safeStorage);
   try {
     fabricSettings = fabricSettingsStore.load();
   } catch (error) {
     fabricSettings = defaultSettings();
     log(`settings load failed closed ${error.name}: ${error.message}`);
+  }
+  try {
+    app.setLoginItemSettings({ openAtLogin: fabricSettings.general?.launch_at_login === true });
+  } catch (error) {
+    log(`login item settings failed ${error.name}`);
   }
   wiggleDetector = new WiggleDetector({
     sensitivity: fabricSettings.activation.sensitivity,
@@ -799,46 +964,13 @@ app.whenReady().then(() => {
     cooldownMs: fabricSettings.activation.cooldown_ms,
   });
   createOverlayWindow();
-  const ok = fabricSettings.activation.fallback_hotkey_enabled && globalShortcut.register('Control+Alt+M', () => {
-    const decision = activationGate.decide({
-      hasVisibleSurface: hasVisibleTemporarySurface() || Boolean(overlayWindow?.isVisible()),
-      isActivationBusy: hasActiveSelectionCapture(),
-    });
-    log(`runtime issue hotkey decision=${decision}`);
-    if (decision === 'ignore') return;
-    if (decision === 'dismiss') {
-      dismissTemporarySurfaces({ invalidateSession: true, hideObserver: true });
-      return;
-    }
-    showRuntimeIssueOverlay('hotkey');
-  });
-  log(`register hotkey Control+Alt+M runtime-issue ok=${ok}`);
+  registerConfigurableHotkeys();
   const deliveryHotkeyOk = globalShortcut.register('Control+Alt+Enter', () => {
-    const decision = activationGate.decide({
-      hasVisibleSurface: hasVisibleTemporarySurface() || Boolean(overlayWindow?.isVisible()),
-      isActivationBusy: hasActiveSelectionCapture(),
-    });
-    log(`runtime delivery hotkey decision=${decision}`);
-    if (decision === 'ignore') return;
-    if (decision === 'dismiss') {
-      dismissTemporarySurfaces({ invalidateSession: true, hideObserver: true });
-      return;
-    }
-    beginSelectionSession('runtime-delivery');
+    requestActivation('runtime-delivery');
   });
   log(`register hotkey Control+Alt+Enter runtime-delivery ok=${deliveryHotkeyOk}`);
   const legacySelectionHotkeyOk = globalShortcut.register('Control+Alt+Shift+M', () => {
-    const decision = activationGate.decide({
-      hasVisibleSurface: hasVisibleTemporarySurface() || Boolean(overlayWindow?.isVisible()),
-      isActivationBusy: hasActiveSelectionCapture(),
-    });
-    log(`legacy selection hotkey decision=${decision}`);
-    if (decision === 'ignore') return;
-    if (decision === 'dismiss') {
-      dismissTemporarySurfaces({ invalidateSession: true, hideObserver: true });
-      return;
-    }
-    beginSelectionSession('legacy-native-selection');
+    requestActivation('legacy-native-selection');
   });
   log(`register hotkey Control+Alt+Shift+M legacy-selection ok=${legacySelectionHotkeyOk}`);
   const dashboardHotkeyOk = globalShortcut.register('Control+Alt+D', () => {
@@ -846,18 +978,58 @@ app.whenReady().then(() => {
     else showDashboard({}, { activate: true });
   });
   log(`register hotkey Control+Alt+D dashboard ok=${dashboardHotkeyOk}`);
-  const wiggleEnv = process.env.MAGIC_POINTER_ENABLE_MOUSE_SHAKE;
-  const wiggleEnabled = wiggleEnv === '1'
-    ? true
-    : wiggleEnv === '0'
-      ? false
-      : fabricSettings.activation.wiggle_enabled;
-  if (wiggleEnabled) {
-    startPointerInputStateStream();
-    startMouseShakePolling();
-  }
-  log(`wiggle enabled=${wiggleEnabled} sensitivity=${fabricSettings.activation.sensitivity}`);
+  applyConfiguredWakeState();
   if (SHOW_STARTUP_OVERLAY) setTimeout(() => showOverlay('startup', 1400), 650);
+  const dashboardCapturePath = String(process.env.MAGIC_POINTER_DASHBOARD_CAPTURE || '').trim();
+  if (dashboardCapturePath) {
+    const captureView = String(process.env.MAGIC_POINTER_DASHBOARD_VIEW || 'activity');
+    const captureAnchor = String(process.env.MAGIC_POINTER_DASHBOARD_CAPTURE_ANCHOR || '').trim();
+    const captureProvenanceObjectId = String(
+      process.env.MAGIC_POINTER_DASHBOARD_PROVENANCE_OBJECT_ID || '',
+    ).trim();
+    const captureSkillCandidateId = String(
+      process.env.MAGIC_POINTER_DASHBOARD_SKILL_CANDIDATE_ID || '',
+    ).trim();
+    const captureDelay = Math.max(1000, Math.min(
+      Number(process.env.MAGIC_POINTER_DASHBOARD_CAPTURE_DELAY_MS || 4500),
+      15000,
+    ));
+    showDashboard({ view: captureView }, { activate: false });
+    setTimeout(async () => {
+      try {
+        if (captureProvenanceObjectId) {
+          await dashboardWindow.webContents.executeJavaScript(
+            `fabricRequest('provenance.trace', { objectId: ${JSON.stringify(captureProvenanceObjectId)} })`,
+          );
+          await new Promise((resolve) => setTimeout(resolve, 800));
+        }
+        if (captureSkillCandidateId) {
+          await dashboardWindow.webContents.executeJavaScript(
+            `fabricRequest('skills.candidates.draft', { candidateId: ${JSON.stringify(captureSkillCandidateId)} })`,
+          );
+          await new Promise((resolve) => setTimeout(resolve, 800));
+        }
+        if (captureAnchor) {
+          await dashboardWindow.webContents.executeJavaScript(`(() => {
+            const target = document.getElementById(${JSON.stringify(captureAnchor)});
+            if (!target) return false;
+            target.scrollIntoView({ block: 'center', inline: 'nearest' });
+            return true;
+          })()`);
+          await new Promise((resolve) => setTimeout(resolve, 300));
+        }
+        const image = await dashboardWindow.capturePage();
+        fs.mkdirSync(path.dirname(path.resolve(dashboardCapturePath)), { recursive: true });
+        fs.writeFileSync(path.resolve(dashboardCapturePath), image.toPNG());
+        process.stdout.write(`${path.resolve(dashboardCapturePath)}\nview=${captureView}\n`);
+      } catch (error) {
+        process.stderr.write(`dashboard_capture_failed:${error.name}:${error.message}\n`);
+        process.exitCode = 1;
+      } finally {
+        app.quit();
+      }
+    }, captureDelay);
+  }
 });
 
 app.on('will-quit', () => {
@@ -875,6 +1047,7 @@ app.on('will-quit', () => {
   try { dashboardWindow?.close(); } catch (_) {}
   log('app will quit');
 });
+app.on('before-quit', () => { isQuitting = true; });
 
 ipcMain.on('overlay:hide', (event) => {
   if (isSurfaceSender(event, 'overlay', resultTargetWindow)) hideOverlay();
@@ -935,6 +1108,17 @@ ipcMain.on('dictation:start', (event, payload) => {
   if (process.env.MAGIC_POINTER_VOICE_INPUT_WAV) {
     voiceArgs.push('--input-wav', path.resolve(process.env.MAGIC_POINTER_VOICE_INPUT_WAV));
   }
+  const voiceSession = activeSelectionSessionToken
+    ? selectionSessions.get(activeSelectionSessionToken)
+    : null;
+  const voiceSnapshot = voiceSession?.snapshot || {};
+  const voiceContext = voiceSnapshot.context || {};
+  const voiceContextPath = String(
+    voiceContext.document_path
+    || voiceContext.path
+    || voiceSnapshot.capture_path
+    || '',
+  );
   const child = spawn(pythonExecutable, voiceArgs, {
     cwd: ROOT,
     windowsHide: true,
@@ -943,6 +1127,8 @@ ipcMain.on('dictation:start', (event, payload) => {
       ...process.env,
       PYTHONUTF8: '1',
       PYTHONIOENCODING: 'utf-8',
+      MAGIC_POINTER_VOICE_SETTINGS_FILE: fabricSettingsStore?.path || '',
+      MAGIC_POINTER_VOICE_CONTEXT_PATH: voiceContextPath,
     },
   });
   dictationChildren.set(surface, child);
@@ -1103,6 +1289,58 @@ function runPythonBridge(payload, scriptPath = 'scripts/electron_bridge.py', tar
   child.stdin.write(JSON.stringify(payload));
   child.stdin.end();
   return child;
+}
+
+function modelCredentialRef(profileId) {
+  const id = String(profileId || '').trim().toLowerCase();
+  const profiles = Array.isArray(fabricSettings?.models?.profiles) ? fabricSettings.models.profiles : [];
+  const profile = profiles.find((item) => String(item?.id || '').trim().toLowerCase() === id);
+  const ref = String(profile?.credentialRef || '').trim();
+  if (!profile || !ref) throw new Error('model_credential_ref_missing');
+  return ref;
+}
+
+function withoutRawCredential(payload) {
+  const clean = { ...(payload || {}) };
+  for (const key of ['credential', 'credentialValue', 'apiKey', 'token', 'secret', 'authorization']) delete clean[key];
+  return clean;
+}
+
+function handleModelCredentialOperation(operation, payload) {
+  if (!credentialStore) throw new Error('credential_store_unavailable');
+  const ref = modelCredentialRef(payload?.profileId);
+  if (operation === 'models.credentials.status') return credentialStore.status(ref);
+  if (operation === 'models.credentials.set') return credentialStore.set(ref, payload?.credentialValue);
+  if (operation === 'models.credentials.delete') return credentialStore.delete(ref);
+  throw new Error('credential_operation_unknown');
+}
+
+function microphonePermissionStatus() {
+  try {
+    return systemPreferences.getMediaAccessStatus('microphone');
+  } catch (_) {
+    return 'unknown';
+  }
+}
+
+function runPreflight(payload = {}) {
+  const manifestPath = path.join(ROOT, 'data', 'preflight_manifest.v1.json');
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  const runner = new PreflightRunner({
+    manifest,
+    markerPath: path.join(FABRIC_DATA_DIR, 'onboarding.json'),
+    checks: buildPreflightChecks({
+      root: FABRIC_DATA_DIR,
+      projectRoot: ROOT,
+      settings: fabricSettings || defaultSettings(),
+      credentialStore,
+      wiggleDetector,
+      microphoneStatus: microphonePermissionStatus,
+    }),
+  });
+  const stageIds = Array.isArray(payload.stageIds) ? payload.stageIds : null;
+  const userSkips = Array.isArray(payload.userSkips) ? payload.userSkips : [];
+  return runner.run({ stageIds, userSkips });
 }
 
 ipcMain.on('overlay:done', (event, payload) => {
@@ -1353,6 +1591,20 @@ function queueCalendarOperation(operation, payload = {}) {
 ipcMain.on('dashboard:hide', (event) => {
   if (isDashboardSender(event)) dashboardWindow.hide();
 });
+ipcMain.on('dashboard:theme', (event, payload = {}) => {
+  if (!isDashboardSender(event) || process.platform === 'darwin') return;
+  const theme = ['light', 'dark'].includes(payload.theme) ? payload.theme : 'system';
+  const dark = theme === 'dark' || (theme === 'system' && nativeTheme.shouldUseDarkColors);
+  try {
+    dashboardWindow.setTitleBarOverlay({
+      color: 'rgba(1, 0, 0, 0)',
+      symbolColor: dark ? '#f5f5f7' : '#1d1d1f',
+      height: 46,
+    });
+  } catch (_) {
+    // Window Controls Overlay is optional; renderer chrome remains usable.
+  }
+});
 ipcMain.on('dashboard:fabric-request', (event, payload) => {
   if (!isDashboardSender(event)) return;
   const operation = typeof payload?.operation === 'string' ? payload.operation : '';
@@ -1389,15 +1641,78 @@ ipcMain.on('dashboard:fabric-request', (event, payload) => {
     }, 10000);
     return;
   }
+  if (operation.startsWith('models.credentials.')) {
+    try {
+      const credential = handleModelCredentialOperation(operation, payload);
+      sendBridgeResult('fabric-dashboard', {
+        ok: true,
+        state: 'completed',
+        fabricOperation: operation,
+        credential,
+      });
+    } catch (error) {
+      sendBridgeResult('fabric-dashboard', {
+        ok: false,
+        state: 'failed',
+        fabricOperation: operation,
+        error: error.message,
+      });
+    }
+    return;
+  }
+  if (operation === 'preflight.run') {
+    try {
+      const preflight = runPreflight(payload);
+      sendBridgeResult('fabric-dashboard', {
+        ok: true,
+        state: preflight.ready ? 'completed' : 'blocked',
+        fabricOperation: operation,
+        preflight,
+      });
+    } catch (error) {
+      sendBridgeResult('fabric-dashboard', {
+        ok: false,
+        state: 'failed',
+        fabricOperation: operation,
+        error: `preflight_failed:${error.name}`,
+      });
+    }
+    return;
+  }
   const allowedOperations = new Set([
     'catalog',
     'providers',
+    'agent.sessions',
+    'agent.contexts.list',
+    'agent.context.dispatch',
     'settings.get',
     'settings.save',
+    'browser.status',
+    'models.list',
+    'models.inspect',
+    'models.save',
+    'models.delete',
+    'models.set_default',
+    'models.test',
+    'visual_relay.plan',
     'audit.tail',
+    'artifacts.list',
+    'artifacts.cleanup',
+    'artifacts.restore',
+    'skills.candidates.list',
+    'skills.candidates.draft',
+    'skills.candidates.install',
+    'provenance.objects',
+    'provenance.trace',
     'task.status',
+    'task.list',
     'task.cancel',
     'task.steer',
+    'task.reconfirm_target',
+    'workflow.list',
+    'workflow.get',
+    'workflow.approve',
+    'workflow.execute',
   ]);
   if (!allowedOperations.has(operation)) {
     sendBridgeResult('fabric-dashboard', {
@@ -1407,12 +1722,33 @@ ipcMain.on('dashboard:fabric-request', (event, payload) => {
     });
     return;
   }
+  const bridgePayload = withoutRawCredential(payload);
+  if (operation === 'models.test') {
+    try {
+      const ref = modelCredentialRef(bridgePayload.profileId);
+      const credential = credentialStore ? credentialStore.get(ref) : null;
+      if (credential) bridgePayload.credential = credential;
+    } catch (_) {
+      // The Python bridge returns credential_missing without exposing a secret.
+    }
+  }
   runPythonBridge({
-    ...payload,
+    ...bridgePayload,
     operation,
   }, 'scripts/fabric_bridge.py', 'fabric-dashboard', {
     onComplete: (parsed) => {
+      if (
+        parsed?.ok === true
+        && ['models.save', 'models.delete', 'models.set_default', 'models.test'].includes(operation)
+      ) {
+        try {
+          fabricSettings = fabricSettingsStore.load();
+        } catch (error) {
+          log(`model settings reload failed ${error.name}: ${error.message}`);
+        }
+      }
       if (operation === 'settings.save' && parsed?.ok === true && parsed?.settings) {
+        const previousSettings = fabricSettings;
         fabricSettings = parsed.settings;
         if (wiggleDetector) {
           wiggleDetector.updateSettings({
@@ -1421,14 +1757,42 @@ ipcMain.on('dashboard:fabric-request', (event, payload) => {
             cooldownMs: parsed.settings.activation?.cooldown_ms,
           });
         }
-        if (fabricSettings.activation?.wiggle_enabled && !mousePollTimer) {
-          startPointerInputStateStream();
-          startMouseShakePolling();
-        } else if (!fabricSettings.activation?.wiggle_enabled && mousePollTimer) {
-          clearInterval(mousePollTimer);
-          mousePollTimer = null;
-          try { if (pointerStateChild && !pointerStateChild.killed) pointerStateChild.kill(); } catch (_) {}
-          pointerStateChild = null;
+        parsed.hotkeys = registerConfigurableHotkeys();
+        const failedHotkeys = Object.entries(parsed.hotkeys)
+          .filter(([, result]) => result && result.registered === false && result.disabled !== true)
+          .map(([name]) => name);
+        if (failedHotkeys.length) {
+          fabricSettings = previousSettings;
+          try {
+            fabricSettingsStore.save(previousSettings);
+          } catch (error) {
+            log(`settings hotkey rollback persistence failed ${error.name}`);
+          }
+          if (wiggleDetector) {
+            wiggleDetector.updateSettings({
+              sensitivity: previousSettings.activation?.sensitivity,
+              disabledApps: previousSettings.activation?.disabled_apps || [],
+              cooldownMs: previousSettings.activation?.cooldown_ms,
+            });
+          }
+          parsed.hotkeys = registerConfigurableHotkeys();
+          parsed.ok = false;
+          parsed.settings = previousSettings;
+          parsed.error = `快捷键注册失败：${failedHotkeys.join('、')}；设置已回滚。`;
+        }
+        applyConfiguredWakeState();
+        applyDashboardMaterial(fabricSettings);
+        try {
+          app.setLoginItemSettings({ openAtLogin: fabricSettings.general?.launch_at_login === true });
+        } catch (error) {
+          log(`login item settings save failed ${error.name}`);
+        }
+      }
+      if (operation.startsWith('models.') && parsed?.ok === true && fabricSettingsStore) {
+        try {
+          fabricSettings = fabricSettingsStore.load();
+        } catch (error) {
+          log(`model settings refresh failed ${error.name}`);
         }
       }
       sendBridgeResult('fabric-dashboard', { ...parsed, fabricOperation: operation });

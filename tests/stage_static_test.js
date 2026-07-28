@@ -11,7 +11,9 @@ assert(source.includes('transition(state, event)'));
 assert(source.includes("dispatch({ type: 'WAKE'"));
 assert(source.includes('prefers-reduced-motion'));
 assert(source.includes('replaceChildren'));
-assert(source.includes('animationDelay'));
+assert(source.includes('textMeasure.measureText'));
+assert(source.includes('anchor.choosePointerAnchor'));
+assert(!source.includes('animationDelay'));
 assert(source.includes('GSAP'), 'must document the no-GSAP / vendor-later decision');
 assert(!source.includes('innerHTML'));
 assert(!source.includes("require("), 'renderer must not use node require');
@@ -33,6 +35,7 @@ assert(html.includes('id="processing-shimmer"'));
 assert(html.includes('id="stage-result"'));
 assert(html.includes('id="stage-error"'));
 assert(html.includes('src="../stage_state.js"'));
+assert(html.includes('src="../stage_anchor.js"'));
 assert(html.includes('Content-Security-Policy'));
 
 // No legacy pill / lasso / reader / panel-rail markup on the stage
@@ -49,7 +52,7 @@ assert(css.includes('1.5px solid var(--stage-electric-blue)'));
 assert(css.includes('opacity 120ms'));
 assert(css.includes('2px solid var(--stage-electric-blue)'));
 assert(css.includes('2.4s'));
-assert(css.includes('width: 72px'));
+assert(css.includes('width: 40px'));
 assert(css.includes('width: 176px'));
 assert(css.includes('max-width: 560px'));
 assert(css.includes('.fly-letter'));

@@ -22,8 +22,12 @@ const mainSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.
 assert(mainSource.includes("const { ActivationGate } = require('./activation_gate');"));
 assert(mainSource.includes('function hasVisibleTemporarySurface()'));
 assert(mainSource.includes('function dismissTemporarySurfaces('));
-assert(mainSource.includes("decision === 'ignore'"));
+assert(mainSource.includes('function requestActivation(reason)'));
+for (const reason of ['wiggle', 'shortcut-wake', 'shortcut-text', 'shortcut-voice', 'runtime-delivery', 'legacy-native-selection']) {
+  assert(mainSource.includes(`requestActivation('${reason}')`), reason);
+}
 assert(mainSource.includes("decision === 'dismiss'"));
+assert(mainSource.includes("decision === 'activate'"));
 assert(mainSource.includes('isActivationBusy: hasActiveSelectionCapture()'));
 // The stage is the only temporary surface left after Task 5.
 assert(mainSource.includes('stageWindow.isVisible()'));

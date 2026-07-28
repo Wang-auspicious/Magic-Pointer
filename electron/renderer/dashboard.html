@@ -3,231 +3,506 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Magic Pointer Control Plane</title>
+  <title>Magic Pointer</title>
+  <link rel="stylesheet" href="tokens.css" />
+  <link rel="stylesheet" href="ui_primitives.css" />
   <link rel="stylesheet" href="dashboard.css" />
+  <link rel="stylesheet" href="typography.css" />
 </head>
 <body>
-  <div class="app-shell">
-    <aside class="sidebar">
-      <div class="brand">
-        <span class="brand-glyph" aria-hidden="true"></span>
-        <span><b>MAGIC</b> POINTER</span>
+  <svg class="icon-sprite" aria-hidden="true">
+    <symbol id="icon-home" viewBox="0 0 24 24">
+      <path d="M5 12l-2 0l9 -9l9 9l-2 0M5 12v7a2 2 0 0 0 2 2h10a2 2 0 0 0 2 -2v-7M9 21v-6a2 2 0 0 1 2 -2h2a2 2 0 0 1 2 2v6" />
+    </symbol>
+    <symbol id="icon-pointer" viewBox="0 0 24 24">
+      <path d="M7.904 17.563a1.2 1.2 0 0 0 2.228 .308l2.09 -3.093l4.907 4.907a1.067 1.067 0 0 0 1.509 0l1.047 -1.047a1.067 1.067 0 0 0 0 -1.509l-4.907 -4.907l3.113 -2.09a1.2 1.2 0 0 0 -.309 -2.228l-13.582 -3.904l3.904 13.563" />
+    </symbol>
+    <symbol id="icon-brain" viewBox="0 0 24 24">
+      <path d="M15.5 13a3.5 3.5 0 0 0 -3.5 3.5v1a3.5 3.5 0 0 0 7 0v-1.8M8.5 13a3.5 3.5 0 0 1 3.5 3.5v1a3.5 3.5 0 0 1 -7 0v-1.8M17.5 16a3.5 3.5 0 0 0 0 -7h-.5M19 9.3v-2.8a3.5 3.5 0 0 0 -7 0M6.5 16a3.5 3.5 0 0 1 0 -7h.5M5 9.3v-2.8a3.5 3.5 0 0 1 7 0v10" />
+    </symbol>
+    <symbol id="icon-sparkles" viewBox="0 0 24 24">
+      <path d="M16 18a2 2 0 0 1 2 2a2 2 0 0 1 2 -2a2 2 0 0 1 -2 -2a2 2 0 0 1 -2 2m0 -12a2 2 0 0 1 2 2a2 2 0 0 1 2 -2a2 2 0 0 1 -2 -2a2 2 0 0 1 -2 2m-7 12a6 6 0 0 1 6 -6a6 6 0 0 1 -6 -6a6 6 0 0 1 -6 6a6 6 0 0 1 6 6" />
+    </symbol>
+    <symbol id="icon-shield" viewBox="0 0 24 24">
+      <path d="M12 3a12 12 0 0 0 8.5 3a12 12 0 0 1 -8.5 15a12 12 0 0 1 -8.5 -15a12 12 0 0 0 8.5 -3M11 11a1 1 0 1 0 2 0a1 1 0 1 0 -2 0M12 12l0 2.5" />
+    </symbol>
+    <symbol id="icon-activity" viewBox="0 0 24 24">
+      <path d="M3 12h4l3 8l4 -16l3 8h4" />
+    </symbol>
+    <symbol id="icon-diagnostics" viewBox="0 0 24 24">
+      <path d="M6 4h-1a2 2 0 0 0 -2 2v3.5a5.5 5.5 0 0 0 11 0v-3.5a2 2 0 0 0 -2 -2h-1M8 15a6 6 0 1 0 12 0v-3M11 3v2M6 3v2M18 10a2 2 0 1 0 4 0a2 2 0 1 0 -4 0" />
+    </symbol>
+    <symbol id="icon-search" viewBox="0 0 24 24">
+      <path d="M3 10a7 7 0 1 0 14 0a7 7 0 1 0 -14 0M21 21l-6 -6" />
+    </symbol>
+    <symbol id="icon-close" viewBox="0 0 24 24">
+      <path d="M18 6l-12 12M6 6l12 12" />
+    </symbol>
+    <symbol id="icon-refresh" viewBox="0 0 24 24">
+      <path d="M20 11a8.1 8.1 0 0 0 -15.5 -2m-.5 -4v4h4M4 13a8.1 8.1 0 0 0 15.5 2m.5 4v-4h-4" />
+    </symbol>
+    <symbol id="icon-chevron" viewBox="0 0 24 24">
+      <path d="M9 6l6 6l-6 6" />
+    </symbol>
+    <symbol id="icon-check" viewBox="0 0 24 24">
+      <path d="M3 12a9 9 0 1 0 18 0a9 9 0 1 0 -18 0M9 12l2 2l4 -4" />
+    </symbol>
+    <symbol id="icon-command" viewBox="0 0 24 24">
+      <path d="M7 9a2 2 0 1 1 2 -2v10a2 2 0 1 1 -2 -2h10a2 2 0 1 1 -2 2v-10a2 2 0 1 1 2 2h-10" />
+    </symbol>
+    <symbol id="icon-general" viewBox="0 0 24 24"><path d="M4 7h16M7 12h10M9 17h6" /></symbol>
+    <symbol id="icon-voice" viewBox="0 0 24 24"><rect x="8.5" y="3" width="7" height="12" rx="3.5" /><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M8.5 21h7" /></symbol>
+    <symbol id="icon-keyboard" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="3" /><path d="M7 9h.01M11 9h.01M15 9h.01M7 13h.01M11 13h6M7 16h10" /></symbol>
+    <symbol id="icon-agent" viewBox="0 0 24 24"><rect x="4" y="6" width="16" height="13" rx="4" /><path d="M9 12h.01M15 12h.01M9 16h6M12 3v3" /></symbol>
+    <symbol id="icon-apps" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="2" /><rect x="14" y="3" width="7" height="7" rx="2" /><rect x="3" y="14" width="7" height="7" rx="2" /><rect x="14" y="14" width="7" height="7" rx="2" /></symbol>
+    <symbol id="icon-link" viewBox="0 0 24 24"><path d="M8.5 15.5l-2 2a3 3 0 0 1-4.2-4.2l3.3-3.3a3 3 0 0 1 4.2 0M15.5 8.5l2-2a3 3 0 0 1 4.2 4.2L18.4 14a3 3 0 0 1-4.2 0M8 16l8-8" /></symbol>
+    <symbol id="icon-storage" viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="8" ry="3" /><path d="M4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6" /></symbol>
+    <symbol id="icon-appearance" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" /><circle cx="12" cy="12" r="3" /><path d="M12 4v2M20 12h-2M12 20v-2M4 12h2" /></symbol>
+    <symbol id="icon-accessibility" viewBox="0 0 24 24"><circle cx="12" cy="4" r="2" /><path d="M5 8h14M12 8v5M8 21l4-8 4 8M7 12l5-4 5 4" /></symbol>
+  </svg>
+
+  <div class="window-frame" data-app-shell>
+    <header class="app-titlebar">
+      <div class="titlebar-brand">
+        <span class="brand-mark" aria-hidden="true">
+          <svg><use href="#icon-pointer"></use></svg>
+        </span>
+        <span>Magic Pointer</span>
       </div>
-      <p class="nav-label">CONTROL PLANE</p>
-      <nav aria-label="Magic Pointer 设置">
-        <button class="nav-item is-active" type="button" data-view-target="activation"><span>01</span>唤醒</button>
-        <button class="nav-item" type="button" data-view-target="agents"><span>02</span>Agents</button>
-        <button class="nav-item" type="button" data-view-target="recipes"><span>03</span>Recipes</button>
-        <button class="nav-item" type="button" data-view-target="connections"><span>04</span>连接器</button>
-        <button class="nav-item" type="button" data-view-target="privacy"><span>05</span>隐私与权限</button>
-        <button class="nav-item" type="button" data-view-target="activity"><span>06</span>活动</button>
-        <button class="nav-item" type="button" data-view-target="diagnostics"><span>07</span>诊断</button>
-      </nav>
-      <div class="legacy-nav" hidden>
-        <button data-view-target="shopping-list">购物清单</button>
-        <button data-view-target="calendar">日历</button>
-        <button data-view-target="route">路线</button>
+      <button id="command-palette-trigger" class="command-trigger no-drag" type="button" aria-label="搜索设置">
+        <svg><use href="#icon-search"></use></svg>
+        <span>搜索设置</span>
+        <kbd>Ctrl K</kbd>
+      </button>
+      <div class="titlebar-actions no-drag">
+        <span id="save-state" class="save-state" role="status"></span>
+        <button id="dashboard-close" class="icon-button" type="button" aria-label="隐藏 Magic Pointer" hidden>
+          <svg><use href="#icon-close"></use></svg>
+        </button>
       </div>
-      <div class="sidebar-foot">
-        <span id="runtime-dot" class="status-dot"></span>
-        <span id="runtime-label">LOCAL FABRIC</span>
-      </div>
-    </aside>
+    </header>
 
-    <main class="workspace">
-      <header class="topbar">
-        <div>
-          <p class="eyebrow">SYSTEM INPUT LAYER / V2</p>
-          <h1 id="view-title">唤醒与对象锁定</h1>
-          <p id="view-subtitle">默认不可见。晃动时先冻结对象，再显示动作轨。</p>
+    <div class="app-body">
+      <aside class="sidebar">
+        <div class="sidebar-search-wrap">
+          <svg aria-hidden="true"><use href="#icon-search"></use></svg>
+          <input id="sidebar-search" type="search" placeholder="搜索设置…" autocomplete="off" />
+          <kbd>⌘K</kbd>
         </div>
-        <div class="topbar-actions">
-          <span id="save-state" class="save-state" role="status"></span>
-          <button id="settings-save" class="primary-button" type="button">保存设置</button>
-          <button id="dashboard-close" class="icon-button" type="button" aria-label="关闭 Dashboard">×</button>
+
+        <nav class="primary-nav" aria-label="Magic Pointer 设置">
+          <div class="nav-section-label">核心输入</div>
+          <button class="nav-item" type="button" data-view-target="general"><svg><use href="#icon-general"></use></svg><span>通用</span></button>
+          <button class="nav-item is-active" type="button" data-view-target="activation" aria-current="page"><svg><use href="#icon-pointer"></use></svg><span>唤醒与指向</span></button>
+          <button class="nav-item" type="button" data-view-target="voice"><svg><use href="#icon-voice"></use></svg><span>语音与输入</span></button>
+          <button class="nav-item" type="button" data-view-target="shortcuts"><svg><use href="#icon-keyboard"></use></svg><span>键盘快捷键</span></button>
+          <div class="nav-section-label">智能路由</div>
+          <button class="nav-item" type="button" data-view-target="models"><svg><use href="#icon-brain"></use></svg><span>模型</span></button>
+          <button class="nav-item" type="button" data-view-target="agents"><svg><use href="#icon-agent"></use></svg><span>Agents</span></button>
+          <button class="nav-item" type="button" data-view-target="capabilities"><svg><use href="#icon-sparkles"></use></svg><span>能力与模板</span></button>
+          <div class="nav-section-label">应用上下文</div>
+          <button class="nav-item" type="button" data-view-target="apps"><svg><use href="#icon-apps"></use></svg><span>应用与捕获</span></button>
+          <button class="nav-item" type="button" data-view-target="permissions"><svg><use href="#icon-shield"></use></svg><span>动作与权限</span></button>
+          <button class="nav-item" type="button" data-view-target="connections"><svg><use href="#icon-link"></use></svg><span>连接</span></button>
+          <div class="nav-section-label">数据</div>
+          <button class="nav-item" type="button" data-view-target="storage"><svg><use href="#icon-storage"></use></svg><span>存储</span></button>
+          <button class="nav-item" type="button" data-view-target="activity"><svg><use href="#icon-activity"></use></svg><span>活动与审计</span></button>
+          <button class="nav-item" type="button" data-view-target="privacy"><svg><use href="#icon-shield"></use></svg><span>隐私</span></button>
+          <div class="nav-section-label">系统</div>
+          <button class="nav-item" type="button" data-view-target="appearance"><svg><use href="#icon-appearance"></use></svg><span>外观</span></button>
+          <button class="nav-item" type="button" data-view-target="accessibility"><svg><use href="#icon-accessibility"></use></svg><span>辅助功能</span></button>
+          <button class="nav-item" type="button" data-view-target="diagnostics"><svg><use href="#icon-diagnostics"></use></svg><span>诊断</span></button>
+        </nav>
+
+        <div class="legacy-nav" hidden>
+          <button type="button" data-view-target="shopping-list">购物清单</button>
+          <button type="button" data-view-target="calendar">日历</button>
+          <button type="button" data-view-target="route">路线</button>
         </div>
-      </header>
 
-      <section class="fabric-view" data-fabric-view="activation">
-        <div class="signal-strip">
-          <div><span class="pulse"></span><strong>WIGGLE FIRST</strong></div>
-          <span>250–600 ms · 方向反转 ≥ 3 · 拖拽/滚动/禁用应用拒绝</span>
+        <div class="sidebar-spacer"></div>
+        <div class="runtime-summary">
+          <span id="runtime-dot" class="status-dot"></span>
+          <span>
+            <b id="runtime-label">正在连接</b>
+            <small>本机运行，不离开当前应用</small>
+          </span>
         </div>
-        <div class="two-column">
-          <article class="module">
-            <div class="module-head"><span>01.A</span><h2>主要入口</h2></div>
-            <label class="switch-row">
-              <span><b>晃动鼠标唤醒</b><small>Googlebook 式入口；触发后直接建立 SelectionSession</small></span>
-              <input id="wiggle-enabled" type="checkbox" checked />
-            </label>
-            <label class="range-row">
-              <span><b>灵敏度</b><small id="sensitivity-value">55%</small></span>
-              <input id="wiggle-sensitivity" type="range" min="0" max="100" value="55" />
-            </label>
-            <label class="select-row">
-              <span><b>默认输入方式</b><small>唤醒后只显示一个随命令内容增长的气泡</small></span>
-              <select id="default-input-mode">
-                <option value="voice">语音 · 自动听写</option>
-                <option value="text">文字 · 直接输入</option>
-              </select>
-            </label>
-            <label class="switch-row">
-              <span><b>备用快捷键</b><small>只用于无障碍和故障恢复，不是主体验</small></span>
-              <input id="fallback-hotkey-enabled" type="checkbox" checked />
-            </label>
-            <label class="field-row">
-              <span>备用快捷键</span>
-              <input id="fallback-hotkey" type="text" value="Control+Alt+M" />
-            </label>
-          </article>
-          <article class="module">
-            <div class="module-head"><span>01.B</span><h2>误触控制</h2></div>
-            <label class="field-block">
-              <span>禁用或提高阈值的应用</span>
-              <textarea id="disabled-apps" rows="7" spellcheck="false"></textarea>
-              <small>每行一个进程名或标题片段。绘图、游戏、剪辑工具默认禁用。</small>
-            </label>
-            <button id="wiggle-calibrate" class="secondary-button" type="button">开始 10 秒校准</button>
-            <p id="calibration-status" class="inline-status">校准只保留轨迹特征，不保存屏幕内容。</p>
-          </article>
+      </aside>
+
+      <main class="workspace">
+        <header class="page-header">
+          <div>
+            <h1 id="view-title">唤醒与指向</h1>
+            <p id="view-subtitle">定义 Magic Pointer 如何出现、冻结目标，以及何时退出。</p>
+          </div>
+          <div class="page-header-actions">
+            <button id="dashboard-refresh" class="button button-quiet" type="button">
+              <svg><use href="#icon-refresh"></use></svg><span>刷新</span>
+            </button>
+            <button id="settings-save" class="button button-primary" type="button">保存更改</button>
+          </div>
+        </header>
+
+        <div class="page-scroll">
+          <section class="fabric-view page-content" data-fabric-view="general" hidden>
+            <div class="settings-page">
+              <section class="settings-section">
+                <div class="section-heading"><div><h2>启动与后台</h2></div></div>
+                <div class="settings-list">
+                  <label class="settings-row"><span><b>登录时启动</b><small>系统登录后静默启动，不打开设置窗口。</small></span><input id="launch-at-login" class="switch-input" type="checkbox" /></label>
+                  <label class="settings-row"><span><b>关闭窗口后继续运行</b><small>Dashboard 关闭后，指针唤醒与任务交付仍保持可用。</small></span><input id="keep-running" class="switch-input" type="checkbox" checked /></label>
+                  <label class="settings-row"><span><b>后台任务完成时通知</b><small>系统通知运行时尚未接入；当前不发送。</small></span><input id="completion-notifications" class="switch-input" type="checkbox" disabled /></label>
+                  <label class="settings-row"><span><b>失败与阻塞通知</b><small>系统通知运行时尚未接入；当前不发送。</small></span><input id="failure-notifications" class="switch-input" type="checkbox" disabled /></label>
+                </div>
+              </section>
+              <section class="settings-section">
+                <div class="section-heading"><div><h2>更新</h2></div></div>
+                <div class="settings-list">
+                  <label class="settings-row"><span><b>更新渠道</b><small>更新服务接入前固定为稳定版。</small></span><select id="update-channel" disabled><option value="stable">稳定版</option></select></label>
+                  <div class="settings-row"><span><b>当前版本</b><small>Magic Pointer 1.0.0</small></span><button id="check-updates" class="button button-secondary" type="button" disabled>尚未接入更新服务</button></div>
+                </div>
+              </section>
+            </div>
+          </section>
+
+          <section class="fabric-view page-content" data-fabric-view="activation" hidden>
+            <div class="settings-page">
+              <section class="settings-section">
+                <div class="section-heading"><div><h2>主要入口</h2><p>平时保持不可见，需要时在指针旁出现。</p></div></div>
+                <div class="settings-list">
+                  <label class="settings-row"><span><b>唤醒方式</b><small>鼠标晃动为默认入口；快捷键与侧键用于辅助或无障碍场景。</small></span><select id="wake-mode"><option value="wiggle">仅鼠标晃动</option><option value="wiggle_hotkey">晃动 + 快捷键备用</option><option value="hotkey">仅快捷键</option><option value="mouse_button">鼠标侧键</option></select></label>
+                  <label class="settings-row"><span><b>晃动鼠标唤醒</b><small>拖拽、滚动和禁用应用会被拒绝。</small></span><input id="wiggle-enabled" class="switch-input" type="checkbox" checked /></label>
+                  <label class="settings-row range-row"><span><b>灵敏度</b><small>越高越容易触发；校准会使用你的真实动作更新阈值。</small></span><span class="inline-control"><input id="wiggle-sensitivity" type="range" min="0" max="100" value="55" /><output id="sensitivity-value">55%</output></span></label>
+                  <label class="settings-row"><span><b>默认输入方式</b><small>临时气泡不显示模式切换。</small></span><select id="default-input-mode"><option value="voice">语音</option><option value="text">文字</option></select></label>
+                  <label class="settings-row"><span><b>备用快捷键</b><small>用于无障碍访问和故障恢复。</small></span><input id="fallback-hotkey-enabled" class="switch-input" type="checkbox" checked /></label>
+                  <label class="settings-row"><span><b>快捷键组合</b><small>在键盘快捷键页统一修改。</small></span><input id="fallback-hotkey" class="compact-input hotkey-recorder" type="text" value="Control+Alt+M" readonly /></label>
+                  <label class="settings-row"><span><b>鼠标侧键</b><small>仅在对应唤醒方式下使用。</small></span><select id="mouse-side-button"><option value="none">未绑定</option><option value="xbutton1">侧键 1</option><option value="xbutton2">侧键 2</option><option value="middle_hold">中键长按</option></select></label>
+                </div>
+                <div class="section-actions"><button id="wiggle-calibrate" class="button button-secondary" type="button">开始十秒校准</button><p id="calibration-status" class="inline-status">校准只保留轨迹特征，不保存屏幕内容。</p></div>
+              </section>
+              <section class="settings-section">
+                <div class="section-heading"><div><h2>唤醒后的行为</h2></div></div>
+                <div class="settings-list">
+                  <label class="settings-row"><span><b>保持原应用焦点</b><small>唤醒、转写与提交不激活 Magic Pointer 窗口。</small></span><input id="keep-current-app-focus" class="switch-input" type="checkbox" checked /></label>
+                  <label class="settings-row"><span><b>动作后打开 Dashboard</b><small>当前固定关闭；结果留在当前应用和指针附近。</small></span><input id="dashboard-focus-after-action" class="switch-input" type="checkbox" disabled /></label>
+                  <label class="settings-row"><span><b>Escape 逐层取消</b><small>先取消确认，再取消输入，最后隐藏气泡。</small></span><input id="escape-layered-cancel" class="switch-input" type="checkbox" checked disabled /></label>
+                </div>
+              </section>
+              <details class="advanced-disclosure"><summary><span><b>应用例外</b><small>禁用或提高唤醒阈值的应用。</small></span><svg><use href="#icon-chevron"></use></svg></summary><div class="advanced-content"><label class="field-block"><span>禁用或提高阈值的应用</span><textarea id="disabled-apps" rows="6" spellcheck="false"></textarea><small>每行一个进程名或标题片段。</small></label></div></details>
+            </div>
+          </section>
+
+          <section class="fabric-view page-content" data-fabric-view="voice" hidden>
+            <div class="settings-page">
+              <section class="settings-section">
+                <div class="section-heading"><div><h2>本地语音</h2><p>转写在本机完成；提交仍遵循应用和隐私边界。</p></div></div>
+                <div class="settings-list">
+                  <label class="settings-row"><span><b>开始策略</b><small>按住说话与驻留模式接入前固定自动监听。</small></span><select id="voice-start-strategy" disabled><option value="auto">自动开始监听</option></select></label>
+                  <label class="settings-row"><span><b>停顿后自动提交</b><small>关闭时先完成转写，再由你确认发送。</small></span><input id="voice-auto-submit" class="switch-input" type="checkbox" checked /></label>
+                  <label class="settings-row"><span><b>识别语言</b><small>自动模式根据当前语音判断。</small></span><select id="voice-language"><option value="auto">自动识别</option><option value="zh">中文</option><option value="en">English</option><option value="ja">日本語</option><option value="ko">한국어</option><option value="fr">Français</option><option value="de">Deutsch</option><option value="es">Español</option><option value="ru">Русский</option></select></label>
+                  <label class="settings-row"><span><b>转写策略</b><small>默认保留原话，不擅自改写用户意图。</small></span><select id="voice-output-mode"><option value="verbatim">逐字保留</option><option value="clean_spacing">清理重复空格</option></select></label>
+                  <label class="settings-row"><span><b>静音幻觉拦截</b><small>没有可靠语音时不生成命令。</small></span><input id="voice-hallucination-guard" class="switch-input" type="checkbox" checked /></label>
+                  <label class="settings-row"><span><b>停顿提交时间</b><small>600–5000 毫秒。</small></span><span class="unit-input"><input id="voice-silence-ms" type="number" min="600" max="5000" value="1600" /><em>ms</em></span></label>
+                </div>
+              </section>
+              <section class="settings-section"><div class="section-heading"><div><h2>项目术语</h2></div></div><div class="settings-list field-list"><label class="field-block"><span>作用域词典</span><textarea id="voice-glossaries" rows="7" spellcheck="false" placeholder="* | Magic Pointer&#10;D:\work\repo | Context Packet"></textarea><small>每行 scope | term；* 为全局。</small></label></div></section>
+            </div>
+          </section>
+
+          <section class="fabric-view page-content" data-fabric-view="shortcuts" hidden>
+            <div class="settings-page">
+              <section class="settings-section">
+                <div class="section-heading"><div><h2>全局快捷键</h2><p>点击后录制组合键；保存时检查空值与冲突。</p></div></div>
+                <div class="settings-list">
+                  <label class="settings-row"><span><b>唤醒 Magic Pointer</b><small>备用入口。</small></span><input id="shortcut-wake" class="compact-input hotkey-recorder" value="Control+Alt+M" readonly /></label>
+                  <label class="settings-row"><span><b>直接进入文字模式</b><small>不改变保存的默认输入模式。</small></span><input id="shortcut-text-mode" class="compact-input hotkey-recorder" value="Control+Alt+T" readonly /></label>
+                  <label class="settings-row"><span><b>直接进入语音模式</b><small>直接开始本地监听。</small></span><input id="shortcut-voice-mode" class="compact-input hotkey-recorder" value="Control+Alt+V" readonly /></label>
+                  <label class="settings-row"><span><b>暂停 / 恢复</b><small>临时禁用所有唤醒入口。</small></span><input id="shortcut-pause" class="compact-input hotkey-recorder" value="Control+Alt+P" readonly /></label>
+                </div>
+              </section>
+              <p id="shortcut-status" class="inline-status">未检测快捷键冲突。</p>
+            </div>
+          </section>
+
+          <section class="fabric-view page-content page-content-wide" data-fabric-view="models" hidden>
+            <div class="master-detail">
+              <aside class="master-column">
+                <div class="master-header">
+                  <div><h2>模型</h2><p>选择一个 Profile 进行配置。</p></div>
+                  <button id="models-refresh" class="icon-button" type="button" aria-label="刷新模型">
+                    <svg><use href="#icon-refresh"></use></svg>
+                  </button>
+                </div>
+                <div id="models-master-list">
+                  <div id="model-list" class="model-list" aria-live="polite"></div>
+                </div>
+                <button id="model-new" class="button button-secondary full-width" type="button">新建模型 Profile</button>
+              </aside>
+
+              <section class="detail-column">
+                <div class="detail-header">
+                  <div><h2>模型 Profile</h2><p>连接描述与密钥分开保存；密钥不会读回界面。</p></div>
+                  <span id="model-default-badge" class="soft-badge">未选择</span>
+                </div>
+                <div class="settings-list model-form-grid">
+                  <label class="settings-row"><span><b>Profile ID</b><small>稳定标识，保存后用于能力与凭据引用。</small></span><input id="model-id" class="compact-input" type="text" placeholder="primary" /></label>
+                  <label class="settings-row"><span><b>显示名称</b><small>只用于界面显示。</small></span><input id="model-display-name" class="compact-input" type="text" placeholder="Primary model" /></label>
+                  <label class="settings-row"><span><b>Provider</b><small>OpenAI compatible、Anthropic 或本地运行时。</small></span><input id="model-provider" class="compact-input" type="text" placeholder="openai-compatible" /></label>
+                  <label class="settings-row"><span><b>Endpoint</b><small>只允许受信任的 HTTPS 或本机地址。</small></span><input id="model-base-url" class="compact-input wide-input" type="url" placeholder="https://api.example.com/v1" /></label>
+                  <label class="settings-row"><span><b>Model ID</b><small>Provider 接受的实际模型名。</small></span><input id="model-name" class="compact-input" type="text" placeholder="model-name" /></label>
+                  <label class="settings-row"><span><b>API 模式</b><small>决定请求与流式事件格式。</small></span><select id="model-api-mode"><option value="chat-completions">Chat Completions</option><option value="responses">Responses</option><option value="messages">Messages</option><option value="local">Local</option></select></label>
+                  <label class="settings-row"><span><b>视觉能力</b><small>未知时按仅文本处理，避免错误上传截图。</small></span><select id="model-vision-override"><option value="auto">自动判断</option><option value="yes">允许视觉输入</option><option value="no">仅结构化文本</option></select></label>
+                  <label class="settings-row"><span><b>API key</b><small>仅写入系统凭据库，留空不会覆盖。</small></span><input id="model-credential-value" class="compact-input" type="password" autocomplete="off" placeholder="留空则不变" /></label>
+                </div>
+                <div class="detail-actionbar model-actions">
+                  <button id="model-save" class="button button-primary" type="button">保存 Profile</button>
+                  <button id="model-credential-save" class="button button-secondary" type="button">保存凭据</button>
+                  <button id="model-test" class="button button-secondary" type="button">测试连接与视觉</button>
+                  <button id="model-set-default" class="button button-quiet" type="button">设为默认</button>
+                  <button id="model-delete" class="button button-danger-quiet" type="button">删除</button>
+                </div>
+                <p id="model-status" class="inline-status" aria-live="polite">尚未选择模型。</p>
+              </section>
+            </div>
+
+          </section>
+
+          <section class="fabric-view page-content" data-fabric-view="agents" hidden>
+            <div class="settings-page">
+              <section class="settings-section agents-section">
+                <div class="section-heading"><div><h2>本机 Agents</h2><p>使用真实协议发现已安装客户端和活动会话。</p></div><button id="providers-refresh" class="button button-secondary" type="button"><svg><use href="#icon-refresh"></use></svg><span>重新检测</span></button></div>
+                <div id="provider-list" class="provider-list settings-list" aria-live="polite"></div>
+              </section>
+              <section class="settings-section agent-session-section">
+                <div class="section-heading"><div><h2>当前项目的已有会话</h2><p id="agent-session-status">只读取会话 ID、cwd 与更新时间，不读取或展示对话内容。</p></div><button id="sessions-refresh" class="button button-secondary" type="button"><svg><use href="#icon-refresh"></use></svg><span>扫描会话</span></button></div>
+                <div id="agent-session-list" class="agent-session-list settings-list" aria-live="polite"></div>
+              </section>
+              <section class="settings-section agent-context-section">
+                <div class="section-heading"><div><h2>可复用现场</h2><p>同一个密封 Context Pack 可切换执行者，不必重新描述窗口、对象和仓库。</p></div></div>
+                <p id="agent-context-status" class="inline-status">切换会再次触发外发确认；已投递的包不会被改写。</p>
+                <div id="agent-context-list" class="agent-context-list settings-list" aria-live="polite"></div>
+              </section>
+              <section class="settings-section">
+                <div class="section-heading"><div><h2>交付策略</h2></div></div>
+                <div class="settings-list preferred-agent-list">
+                  <label class="settings-row"><span><b>默认 Agent</b><small>命令中明确点名时，以命令为准。</small></span><select id="preferred-agent"></select></label>
+                  <label class="settings-row"><span><b>绑定已有会话</b><small>只允许选择扫描到、且 cwd 符合策略的真实会话。</small></span><select id="agent-session-binding"><option value="">未绑定</option></select></label>
+                  <label class="settings-row"><span><b>交付方式</b><small>“已有会话”不会创建新聊天；托管会话才允许新建。</small></span><select id="agent-delivery-mode"><option value="active_session">只追加到已有会话</option><option value="managed_session">允许 Magic Pointer 托管新会话</option><option value="clipboard">只复制到剪贴板</option></select></label>
+                  <label class="settings-row"><span><b>cwd 匹配</b><small>跨项目会话需要明确确认，默认严格匹配根目录。</small></span><select id="agent-cwd-match"><option value="strict">严格匹配仓库根目录</option><option value="subtree">允许仓库子目录</option><option value="confirm">跨目录时再次确认</option></select></label>
+                  <label class="settings-row"><span><b>唯一匹配时自动附着</b><small>有多个候选时保持未选，绝不猜测。</small></span><input id="agent-auto-attach" class="switch-input" type="checkbox" checked /></label>
+                  <label class="settings-row"><span><b>图片附件</b><small>仍同时受模型视觉能力和应用截图权限约束。</small></span><select id="agent-image-policy"><option value="vision_only">仅视觉 Agent</option><option value="confirm">每次确认</option><option value="never">从不附加图片</option></select></label>
+                </div>
+              </section>
+              <details class="advanced-disclosure compact-disclosure"><summary><span><b>协议详情</b><small>普通设置隐藏 resume、RPC 与 hook 参数。</small></span><svg><use href="#icon-chevron"></use></svg></summary><div class="advanced-copy"><p>Codex 使用 exec resume JSONL，Claude 使用 print resume stream-json，Pi 使用现有 session / RPC，Gemini 使用项目会话索引恢复。绑定前均验证本地会话身份与 cwd。</p></div></details>
+            </div>
+          </section>
+
+          <section class="fabric-view page-content" data-fabric-view="capabilities" hidden>
+            <div class="section-heading page-section-heading">
+              <div><h2>可用能力</h2><p>只显示当前环境可以实际执行的动作。</p></div>
+              <label class="search-field">
+                <svg aria-hidden="true"><use href="#icon-search"></use></svg>
+                <input id="recipe-filter" type="search" placeholder="筛选能力" />
+              </label>
+            </div>
+            <div id="recipe-list" class="recipe-list settings-list" aria-live="polite"></div>
+            <section class="skill-candidates-section" aria-labelledby="skill-candidates-title">
+              <div class="section-heading skill-candidates-heading">
+                <div><h2 id="skill-candidates-title">候选 Skills</h2><p>同一已验证工作流累计三次后生成草稿；安装后保持禁用，需另行人工接入。</p></div>
+              </div>
+              <div id="skill-candidate-list" class="skill-candidate-list settings-list" aria-live="polite"></div>
+              <article id="skill-draft-panel" class="skill-draft-panel" aria-live="polite" hidden></article>
+            </section>
+            <details class="advanced-disclosure">
+              <summary><span><b>连接器与高级信息</b><small>协议、回退路径与目标适配器。</small></span><svg><use href="#icon-chevron"></use></svg></summary>
+              <div class="connection-list">
+                <div class="connection-row"><span><b>Agent 原生连接</b><small>优先注入现有会话和后台 loop。</small></span><em class="state state-ready">首选</em></div>
+                <div class="connection-row"><span><b>本地文件与 Office</b><small>使用结构化对象、来源哈希和回读。</small></span><em class="state state-ready">可用</em></div>
+                <div class="connection-row"><span><b>MCP 兼容层</b><small>仅在没有原生协议时使用。</small></span><em class="state state-muted">回退</em></div>
+                <div class="connection-row"><span><b>外部服务</b><small>未连接时明确返回不可用。</small></span><em class="state state-warn">按需连接</em></div>
+              </div>
+            </details>
+          </section>
+
+          <section class="fabric-view page-content" data-fabric-view="apps" hidden>
+            <div class="settings-page">
+              <section class="settings-section"><div class="section-heading"><div><h2>默认捕获层</h2><p>UIA / AX / DOM、OCR、截图和上传分别受控。</p></div></div><div class="settings-list">
+                <label class="settings-row"><span><b>默认捕获方式</b><small>敏感应用仍可覆盖为拒绝或仅结构。</small></span><select id="default-capture-mode"><option value="follow_global">跟随截图总开关</option><option value="structured_only">仅 UIA / AX / DOM 结构</option><option value="local_ocr">只在本机 OCR</option><option value="local_screenshot">截图仅留本机</option><option value="upload_screenshot">允许作为 Agent 附件</option><option value="deny">拒绝捕获</option></select></label>
+                <label class="settings-row"><span><b>允许上传截图</b><small>默认关闭；本地截图不等于允许外发。</small></span><input id="upload-screenshots" class="switch-input" type="checkbox" /></label>
+                <label class="settings-row"><span><b>执行前重新校验目标</b><small>检查窗口、对象哈希与 capture id，防止焦点漂移。</small></span><input id="target-revalidate" class="switch-input" type="checkbox" checked disabled /></label>
+                <label class="settings-row"><span><b>跨桌面后暂停</b><small>目标不可见时不使用当前焦点代替。</small></span><input id="pause-cross-desktop" class="switch-input" type="checkbox" checked disabled /></label>
+              </div></section>
+              <section class="settings-section app-policy-section">
+                <div class="section-heading app-policy-heading">
+                  <div><h2>逐应用捕获</h2><p>按进程名或窗口标题匹配；更具体的规则优先。</p></div>
+                  <button id="app-policy-add" class="secondary-button compact-button" type="button">添加应用</button>
+                </div>
+                <div class="settings-list app-policy-editor">
+                  <div class="app-policy-columns" aria-hidden="true"><span>应用匹配</span><span>允许的捕获层级</span><span></span></div>
+                  <div id="app-policy-list" class="app-policy-list" aria-live="polite"></div>
+                  <textarea id="app-capture-modes" hidden aria-hidden="true" tabindex="-1"></textarea>
+                  <div class="app-policy-footnote">
+                    <svg aria-hidden="true"><use href="#icon-shield"></use></svg>
+                    <span>“永不捕获”会在入口阻止结构读取、OCR 与截图；截图外发还需同时打开上方总开关。</span>
+                  </div>
+                </div>
+              </section>
+            </div>
+          </section>
+
+          <section class="fabric-view page-content" data-fabric-view="permissions" hidden>
+            <div class="settings-page">
+              <section class="settings-section"><div class="section-heading"><div><h2>默认动作策略</h2><p>读取、写入、发送和不可逆操作分开控制。</p></div></div><div class="settings-list">
+                <label class="settings-row"><span><b>读取当前对象</b><small>用于理解你正在指的内容。</small></span><select id="permission-read"><option value="allow">允许</option><option value="confirm">每次确认</option><option value="deny">拒绝</option></select></label>
+                <label class="settings-row"><span><b>本地写入</b><small>写入文件或已打开的本机应用。</small></span><select id="permission-write"><option value="allow">允许</option><option value="confirm">每次确认</option><option value="deny">拒绝</option></select></label>
+                <label class="settings-row"><span><b>发送到外部</b><small>包括消息、表单提交和云端 Agent。</small></span><select id="permission-send"><option value="allow">允许</option><option value="confirm">每次确认</option><option value="deny">拒绝</option></select></label>
+                <label class="settings-row"><span><b>删除或破坏性动作</b><small>不允许静默执行。</small></span><select id="permission-destructive"><option value="confirm">每次确认</option><option value="deny">拒绝</option></select></label>
+                <label class="settings-row"><span><b>购买或付款</b><small>默认拒绝。</small></span><select id="permission-purchase"><option value="deny">拒绝</option><option value="confirm">每次确认</option></select></label>
+              </div></section>
+              <section class="settings-section"><div class="section-heading"><div><h2>作用域授权</h2><p>授权不跨越能力、应用、项目和到期时间。</p></div></div><div class="settings-list field-list"><label class="field-block"><span>授权规则</span><textarea id="permission-scopes" rows="9" spellcheck="false" placeholder="allow | agent.handoff | code.exe | D:\work\repo | external_send |"></textarea><small>decision | recipe | app | project | risk | expires_at</small></label></div></section>
+            </div>
+          </section>
+
+          <section class="fabric-view page-content" data-fabric-view="connections" hidden>
+            <div class="settings-page">
+              <section class="settings-section">
+                <div class="section-heading"><div><h2>浏览器开发工具</h2><p>只连接明确配置的本机回环端点；页面内容与地址不会出现在状态摘要中。</p></div><button id="browser-status-refresh" class="button button-quiet" type="button"><svg><use href="#icon-refresh"></use></svg><span>重新检测</span></button></div>
+                <div class="settings-list">
+                  <div class="connection-row"><span><b>Browser Bridge</b><small id="browser-bridge-detail">尚未检测本机 DevTools 端点</small></span><em id="browser-bridge-state" class="state state-muted">检测中</em></div>
+                  <label class="settings-row"><span><b>允许浏览器结构读取</b><small>在指针命中位置读取 DOM、CSS selector、可访问名称、网络失败和坐标映射。</small></span><input id="browser-devtools-enabled" class="switch-input" type="checkbox" checked /></label>
+                </div>
+              </section>
+              <section class="settings-section">
+                <div class="section-heading"><div><h2>本机端点</h2><p>每行一个 HTTP(S) origin；只接受 localhost、127.0.0.1 或 ::1 的显式端口。</p></div></div>
+                <div class="settings-list field-list"><label class="field-block"><span>Chrome DevTools Protocol</span><textarea id="browser-cdp-endpoints" rows="4" spellcheck="false" placeholder="http://127.0.0.1:9222"></textarea><small>浏览器需自行以 remote-debugging-port 启动。未连通时继续回退到 UIA，不伪造 DOM 结果。</small></label></div>
+              </section>
+              <section class="settings-section"><div class="section-heading"><div><h2>其他服务</h2><p>仅展示当前真实授权与执行边界。</p></div></div><div class="connection-list settings-list"><div class="connection-row"><span><b>GitHub</b><small>当前尚无已授权连接</small></span><em class="state state-muted">未连接</em></div><div class="connection-row"><span><b>邮件与团队消息</b><small>当前尚无已授权连接；发送必须单独确认</small></span><em class="state state-muted">未连接</em></div><div class="connection-row"><span><b>日历</b><small>本地草稿执行器；写入前检查冲突和时区</small></span><em class="state state-ready">本地可用</em></div></div></section>
+            </div>
+          </section>
+
+          <section class="fabric-view page-content" data-fabric-view="storage" hidden>
+            <div class="settings-page"><section class="settings-section"><div class="section-heading"><div><h2>保留期限</h2></div></div><div class="settings-list">
+              <label class="settings-row"><span><b>本地捕获</b><small>到期进入可恢复回收区。</small></span><span class="unit-input"><input id="retain-captures-days" type="number" min="0" max="30" value="3" /><em>天</em></span></label>
+              <label class="settings-row"><span><b>任务产物</b><small>包含计划、diff、回执和来源链。</small></span><span class="unit-input"><input id="retain-artifacts-days" type="number" min="0" max="3650" value="30" /><em>天</em></span></label>
+              <label class="settings-row"><span><b>审计事件</b><small>正文默认脱敏。</small></span><span class="unit-input"><input id="retain-audit-days" type="number" min="1" max="3650" value="30" /><em>天</em></span></label>
+              <label class="settings-row"><span><b>应用重启后恢复任务</b><small>运行、审批和结果保持同一 task id。</small></span><input id="restore-tasks" class="switch-input" type="checkbox" checked disabled /></label>
+            </div></section></div>
+          </section>
+
+          <section class="fabric-view page-content" data-fabric-view="privacy" hidden>
+            <div class="settings-page"><section class="settings-section"><div class="section-heading"><div><h2>敏感内容</h2></div></div><div class="settings-list">
+              <label class="settings-row"><span><b>隐藏密码和敏感字段</b><small>发送给任何模型或 Agent 前本地遮盖。</small></span><input id="redact-sensitive-fields" class="switch-input" type="checkbox" checked disabled /></label>
+              <label class="settings-row"><span><b>匿名使用统计</b><small>当前没有遥测服务，不采集或发送使用统计。</small></span><input id="anonymous-usage" class="switch-input" type="checkbox" disabled /></label>
+            </div></section><section class="settings-section"><div class="section-heading"><div><h2>敏感应用</h2></div></div><div class="settings-list field-list"><label class="field-block"><span>始终使用最严格捕获策略</span><textarea id="sensitive-apps" rows="8" spellcheck="false"></textarea><small>每行一个进程名或标题片段。</small></label></div></section></div>
+          </section>
+
+          <section class="fabric-view page-content" data-fabric-view="appearance" hidden>
+            <div class="settings-page"><section class="settings-section"><div class="section-heading"><div><h2>主题与材质</h2></div></div><div class="settings-list">
+              <label class="settings-row"><span><b>外观</b><small>跟随系统或固定明暗主题。</small></span><select id="theme-select" aria-label="界面外观"><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></label>
+              <label class="settings-row"><span><b>窗口材质</b><small>支持时使用 Mica / vibrancy，否则回退为纯色。</small></span><select id="appearance-material"><option value="auto">自动</option><option value="translucent">柔和材质</option><option value="solid">纯色</option></select></label>
+              <label class="settings-row"><span><b>强调色</b><small>只用于选中、焦点、进度和操作链接。</small></span><select id="appearance-accent" disabled><option>系统蓝</option></select></label>
+            </div></section></div>
+          </section>
+
+          <section class="fabric-view page-content" data-fabric-view="accessibility" hidden>
+            <div class="settings-page"><section class="settings-section"><div class="section-heading"><div><h2>视觉与动态</h2></div></div><div class="settings-list">
+              <label class="settings-row"><span><b>减少动态效果</b><small>使用短淡入替代位移和弹性动画。</small></span><input id="reduce-motion" class="switch-input" type="checkbox" /></label>
+              <label class="settings-row"><span><b>减少透明效果</b><small>使用不透明层级替代 Mica / vibrancy。</small></span><input id="reduce-transparency" class="switch-input" type="checkbox" /></label>
+              <label class="settings-row"><span><b>高对比度控制</b><small>增强边界、焦点环和状态区分。</small></span><input id="high-contrast-controls" class="switch-input" type="checkbox" /></label>
+              <label class="settings-row"><span><b>键盘焦点始终可见</b><small>Tab 导航显示高对比焦点环。</small></span><input id="always-show-focus" class="switch-input" type="checkbox" checked disabled /></label>
+            </div></section></div>
+          </section>
+
+          <section class="fabric-view page-content" data-fabric-view="activity" hidden>
+            <div class="section-heading page-section-heading">
+              <div><h2>来源对象</h2><p>从最初指向的屏幕对象反查计划、Agent task、补丁、页面与本地产物。</p></div>
+            </div>
+            <div id="provenance-object-list" class="provenance-object-list" aria-live="polite"></div>
+            <div id="provenance-trace-panel" class="provenance-trace-panel" aria-live="polite" hidden></div>
+            <div class="section-heading page-section-heading">
+              <div><h2>跨入口任务</h2><p>CLI / GUI 共用同一个任务编号、审批状态与终态回执；重复继续不会重复执行。</p></div>
+            </div>
+            <div id="workflow-task-list" class="workflow-task-list" aria-live="polite"></div>
+            <div class="section-heading page-section-heading">
+              <div><h2>目标租约任务</h2><p>长任务绑定冻结窗口；目标漂移会暂停，绝不改投当前焦点。</p></div>
+            </div>
+            <p id="agent-task-status" class="inline-status">重新确认只会匹配当前桌面中唯一的原目标窗口，并以新租约恢复。</p>
+            <div id="agent-task-list" class="agent-task-list" aria-live="polite"></div>
+            <div class="section-heading page-section-heading">
+              <div><h2>任务时间线</h2><p>“已受理”只表示排队，尚未完成；终态必须来自真实回读。</p></div>
+              <button id="activity-refresh" class="button button-secondary" type="button"><svg><use href="#icon-refresh"></use></svg><span>刷新</span></button>
+            </div>
+            <div id="activity-list" class="activity-list activity-timeline" aria-live="polite"></div>
+            <div class="section-heading artifact-head">
+              <div><h2>本地产物</h2><p>计划、回执和来源链集中保存在这里。</p></div>
+              <button id="artifact-cleanup" class="button button-secondary" type="button">预览过期清理</button>
+            </div>
+            <p id="artifact-cleanup-status" class="inline-status">过期产物只会移入本地回收区，可恢复；不会直接删除用户文件。</p>
+            <div id="artifact-list" class="artifact-list" aria-live="polite"></div>
+          </section>
+
+          <section class="fabric-view page-content" data-fabric-view="diagnostics" hidden>
+            <div class="section-heading page-section-heading">
+              <div><h2>启动检查</h2><p>初始化与诊断共用同一组真实检查，不用假进度。</p></div>
+              <button id="preflight-run" class="button button-primary" type="button">运行全部检查</button>
+            </div>
+            <p id="preflight-status" class="inline-status">只有所有阻塞项通过，或明确跳过允许跳过的项目，才会标记为就绪。</p>
+            <div id="preflight-list" class="preflight-list settings-list" aria-live="polite"></div>
+            <div class="diagnostic-summary settings-list">
+              <div class="diagnostic-row"><span>当前平台</span><strong id="diag-platform">—</strong></div>
+              <div class="diagnostic-row"><span>可用能力</span><strong id="diag-recipes">—</strong></div>
+              <div class="diagnostic-row"><span>本机 Agent</span><strong id="diag-agents">—</strong></div>
+              <div class="diagnostic-row"><span>晃动唤醒</span><strong id="diag-wiggle">—</strong></div>
+            </div>
+            <details class="advanced-disclosure">
+              <summary><span><b>高级诊断信息</b><small>协议、平台边界和当前验证范围。</small></span><svg><use href="#icon-chevron"></use></svg></summary>
+              <div class="advanced-copy">
+                <p>Windows 使用 UIA；macOS 使用 AXUIElement。视觉捕获遵循当前应用规则；无法验证的能力保持不可用，不以 mock 计数。</p>
+              </div>
+            </details>
+          </section>
+
+          <section id="legacy-lab" class="fabric-view legacy-lab" data-fabric-view="shopping-list" data-view="shopping-list" hidden>
+            <p id="dashboard-notice" hidden></p>
+            <span id="list-meta"></span><span id="remaining-count"></span>
+            <div id="shopping-items"></div><div id="shopping-empty"></div>
+          </section>
+
+          <section id="calendar-view" class="fabric-view legacy-lab" data-fabric-view="calendar" hidden>
+            <form id="calendar-event-form">
+              <p id="calendar-draft-source"></p><p id="calendar-warning" hidden></p><div id="calendar-conflicts"></div><span id="upcoming-count"></span>
+              <input id="calendar-title" /><input id="calendar-date" type="date" /><input id="calendar-start" type="time" /><input id="calendar-end" type="time" />
+              <input id="calendar-timezone" value="Asia/Shanghai" /><input id="calendar-location" /><textarea id="calendar-notes"></textarea>
+              <button id="calendar-create" type="submit">创建</button>
+            </form>
+            <button id="calendar-refresh" type="button">刷新</button><div id="calendar-events"></div><div id="calendar-empty"></div>
+          </section>
+
+          <section id="route-view" class="fabric-view legacy-lab" data-fabric-view="route" hidden>
+            <input id="route-origin" /><button id="route-swap" type="button">交换</button><input id="route-destination" />
+            <label><input type="radio" name="travel-mode" value="driving" checked />驾车</label>
+            <label><input type="radio" name="travel-mode" value="transit" />公交</label>
+            <label><input type="radio" name="travel-mode" value="walking" />步行</label>
+            <p id="route-source"></p><p id="route-notice" hidden></p><button id="route-open" type="button">在 Google Maps 查看</button>
+          </section>
         </div>
-      </section>
-
-      <section class="fabric-view" data-fabric-view="agents" hidden>
-        <div class="section-lead">
-          <div><p class="eyebrow">DISCOVERED LOCALLY</p><h2>把现场直接交给现有 Agent</h2></div>
-          <button id="providers-refresh" class="secondary-button" type="button">重新检测</button>
-        </div>
-        <div id="provider-list" class="provider-list" aria-live="polite"></div>
-        <article class="module preferred-agent-module">
-          <div class="module-head"><span>DEFAULT</span><h2>默认后台 Agent</h2></div>
-          <label class="select-row">
-            <span>未点名 Agent 时使用</span>
-            <select id="preferred-agent"></select>
-          </label>
-          <p class="inline-status">短命令里明确说 Codex、Pi、Claude 等名称时，以命令为准。</p>
-        </article>
-        <article class="module protocol-note">
-          <div class="module-head"><span>NATIVE FIRST</span><h2>连接优先级</h2></div>
-          <p>Pi Extension hooks / RPC steer · Claude UserPromptSubmit hook · Gemini BeforeAgent hook · Codex app-server · OpenCode plugin · 各 Agent 结构化 CLI。</p>
-          <p>ACP 用于可互换的会话客户端；MCP 只保留为工具兼容层，不再承担主链。</p>
-          <p>Magic Pointer 不模拟按回车发送。每次任务产生 task id、状态、日志和终态回执。</p>
-        </article>
-      </section>
-
-      <section class="fabric-view" data-fabric-view="recipes" hidden>
-        <div class="section-lead">
-          <div><p class="eyebrow">OBJECT → PLAN → VERIFY</p><h2>30 个可组合动作</h2></div>
-          <label class="search-field"><span class="sr-only">筛选 Recipe</span><input id="recipe-filter" type="search" placeholder="筛选：OCR / 表格 / Agent / 日历…" /></label>
-        </div>
-        <div id="recipe-list" class="recipe-list" aria-live="polite"></div>
-      </section>
-
-      <section class="fabric-view" data-fabric-view="connections" hidden>
-        <div class="section-lead"><div><p class="eyebrow">DESTINATION ADAPTERS</p><h2>写入用户已经在用的工具</h2></div></div>
-        <div class="connection-grid">
-          <article class="connection"><span>HOOK</span><h3>Agent loop 原生注入</h3><p>Pi、Claude、Gemini 在 prompt/turn 生命周期直接接收新鲜 THIS，不等模型主动拉工具。</p><b class="state state-ready">PRIMARY</b></article>
-          <article class="connection"><span>SESSION</span><h3>会话与后台 loop</h3><p>Pi RPC steer、Codex app-server、结构化 CLI task id、日志、暂停和终态回执。</p><b class="state state-ready">READY</b></article>
-          <article class="connection"><span>LOCAL</span><h3>文件 / CSV / 证据卡</h3><p>确定性本地 artifact，带哈希、来源对象和撤销合同。</p><b class="state state-ready">READY</b></article>
-          <article class="connection"><span>WIN</span><h3>UIA / Office / PDF</h3><p>优先结构化对象、目标回读与原文哈希，不用盲点坐标。</p><b class="state state-ready">READY</b></article>
-          <article class="connection"><span>MCP</span><h3>通用兼容层</h3><p>只给没有 hook、plugin、RPC 或 ACP 的 Agent 提供 current_object 与安全 Recipe。</p><b class="state state-muted">FALLBACK</b></article>
-          <article class="connection"><span>EXT</span><h3>日历 / Figma / 图片模型</h3><p>未连接时返回 capability_unavailable，不显示虚假完成。</p><b class="state state-warn">CONNECT</b></article>
-        </div>
-      </section>
-
-      <section class="fabric-view" data-fabric-view="privacy" hidden>
-        <div class="two-column">
-          <article class="module">
-            <div class="module-head"><span>05.A</span><h2>数据边界</h2></div>
-            <label class="switch-row">
-              <span><b>允许上传截图</b><small>默认关闭；只有 Recipe 明确需要视觉模型时才使用</small></span>
-              <input id="upload-screenshots" type="checkbox" />
-            </label>
-            <label class="field-row"><span>本地捕获保留天数</span><input id="retain-captures-days" type="number" min="0" max="30" value="3" /></label>
-            <label class="field-row"><span>审计事件保留天数</span><input id="retain-audit-days" type="number" min="1" max="365" value="30" /></label>
-            <label class="field-block"><span>敏感应用</span><textarea id="sensitive-apps" rows="6" spellcheck="false"></textarea></label>
-          </article>
-          <article class="module">
-            <div class="module-head"><span>05.B</span><h2>默认权限</h2></div>
-            <label class="select-row"><span>读取</span><select id="permission-read"><option value="allow">允许</option><option value="confirm">确认</option><option value="deny">拒绝</option></select></label>
-            <label class="select-row"><span>本地写入</span><select id="permission-write"><option value="allow">允许</option><option value="confirm">确认</option><option value="deny">拒绝</option></select></label>
-            <label class="select-row"><span>发送到外部</span><select id="permission-send"><option value="allow">允许</option><option value="confirm">确认</option><option value="deny">拒绝</option></select></label>
-            <label class="select-row"><span>删除/破坏性动作</span><select id="permission-destructive"><option value="confirm">确认</option><option value="deny">拒绝</option></select></label>
-            <label class="select-row"><span>购买/付款</span><select id="permission-purchase"><option value="deny">拒绝</option><option value="confirm">确认</option></select></label>
-          </article>
-        </div>
-      </section>
-
-      <section class="fabric-view" data-fabric-view="activity" hidden>
-        <div class="section-lead">
-          <div><p class="eyebrow">LOCAL / CONTENT REDACTED</p><h2>每个动作的真实时间线</h2></div>
-          <button id="activity-refresh" class="secondary-button" type="button">刷新</button>
-        </div>
-        <p class="timeline-note">状态逐字来自本地审计回执：accepted 表示已排队、尚未完成；只有回读验证通过才显示已验证。</p>
-        <div id="activity-list" class="activity-list activity-timeline" aria-live="polite"></div>
-      </section>
-
-      <section class="fabric-view" data-fabric-view="diagnostics" hidden>
-        <div class="metric-grid">
-          <article><span>PLATFORM</span><strong id="diag-platform">—</strong><small>当前宿主</small></article>
-          <article><span>RECIPES</span><strong id="diag-recipes">—</strong><small>统一动作合同</small></article>
-          <article><span>AGENTS</span><strong id="diag-agents">—</strong><small>本地已发现</small></article>
-          <article><span>WIGGLE</span><strong id="diag-wiggle">—</strong><small>主要入口</small></article>
-        </div>
-        <article class="module diagnostic-log">
-          <div class="module-head"><span>BOUNDARY</span><h2>验证边界</h2></div>
-          <ul>
-            <li>Windows：UIA/Office/PDF、晃动状态流、Agent CLI 可在本机验证。</li>
-            <li>macOS：共享 Recipe/hooks/Agent 层；原生 Accessibility 宿主必须在 Mac 上构建验证。</li>
-            <li>图像、Figma、外部日历未连接时只报告缺失 provider。</li>
-          </ul>
-        </article>
-      </section>
-
-      <section id="legacy-lab" class="fabric-view legacy-lab" data-fabric-view="shopping-list" data-view="shopping-list" hidden>
-        <h2>本地兼容动作</h2>
-        <p id="summary-label"></p><strong id="remaining-count">0</strong><span id="list-meta"></span>
-        <button id="dashboard-refresh" type="button">刷新</button>
-        <div id="dashboard-notice" hidden></div>
-        <div id="shopping-items"></div>
-        <div id="shopping-empty"></div>
-      </section>
-
-      <section id="calendar-view" class="fabric-view legacy-lab" data-fabric-view="calendar" hidden>
-        <form id="calendar-event-form">
-          <h2>核对日历事件</h2>
-          <p id="calendar-draft-source"></p>
-          <input id="calendar-title" required placeholder="标题" />
-          <input id="calendar-date" type="date" required />
-          <input id="calendar-start" type="time" required />
-          <input id="calendar-end" type="time" required />
-          <input id="calendar-timezone" value="Asia/Shanghai" readonly />
-          <input id="calendar-location" placeholder="地点" />
-          <textarea id="calendar-notes" placeholder="备注"></textarea>
-          <p id="calendar-form-status"></p>
-          <div id="calendar-warning" hidden></div>
-          <div id="calendar-conflicts" hidden></div>
-          <button id="calendar-create" type="submit">创建事件</button>
-        </form>
-        <button id="calendar-refresh" type="button">刷新</button>
-        <strong id="upcoming-count">0</strong>
-        <div id="calendar-events"></div>
-        <div id="calendar-empty"></div>
-      </section>
-
-      <section id="route-view" class="fabric-view legacy-lab" data-fabric-view="route" hidden>
-        <h2>核对路线</h2>
-        <input id="route-origin" placeholder="起点" />
-        <button id="route-swap" type="button">交换</button>
-        <input id="route-destination" placeholder="终点" />
-        <label><input type="radio" name="travel-mode" value="driving" checked />驾车</label>
-        <label><input type="radio" name="travel-mode" value="transit" />公交</label>
-        <label><input type="radio" name="travel-mode" value="walking" />步行</label>
-        <p id="route-source"></p><p id="route-notice" hidden></p>
-        <button id="route-open" type="button">在 Google Maps 查看</button>
-      </section>
-    </main>
+      </main>
+    </div>
   </div>
+
+  <div id="command-palette" class="command-palette" hidden>
+    <button class="palette-backdrop" type="button" aria-label="关闭搜索"></button>
+    <section class="palette-panel" role="dialog" aria-modal="true" aria-label="搜索设置">
+      <div class="palette-input">
+        <svg><use href="#icon-search"></use></svg>
+        <input id="command-search" type="search" placeholder="前往页面…" autocomplete="off" />
+        <kbd>Esc</kbd>
+      </div>
+      <div id="command-results" class="command-results"></div>
+    </section>
+  </div>
+
   <script src="dashboard.js"></script>
 </body>
 </html>

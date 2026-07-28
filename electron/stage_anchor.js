@@ -1,0 +1,39 @@
+function finite(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function choosePointerAnchor(pointer, surface, viewport, { edge = 12, offset = 18 } = {}) {
+  const x = finite(pointer?.x);
+  const y = finite(pointer?.y);
+  const width = Math.max(0, finite(surface?.width));
+  const height = Math.max(0, finite(surface?.height));
+  const viewWidth = Math.max(0, finite(viewport?.width));
+  const viewHeight = Math.max(0, finite(viewport?.height));
+  const candidates = [
+    { x: x + offset, y: y - offset - height, quadrant: 'top-right' },
+    { x: x + offset, y: y + offset, quadrant: 'bottom-right' },
+    { x: x - offset - width, y: y - offset - height, quadrant: 'top-left' },
+    { x: x - offset - width, y: y + offset, quadrant: 'bottom-left' },
+  ];
+  const overflow = (candidate) => (
+    Math.max(0, edge - candidate.x)
+    + Math.max(0, candidate.x + width - (viewWidth - edge))
+    + Math.max(0, edge - candidate.y)
+    + Math.max(0, candidate.y + height - (viewHeight - edge))
+  );
+  const selected = candidates.reduce((best, candidate) => (
+    overflow(candidate) < overflow(best) ? candidate : best
+  ));
+  const maxX = Math.max(edge, viewWidth - edge - width);
+  const maxY = Math.max(edge, viewHeight - edge - height);
+  return {
+    x: Math.round(Math.min(maxX, Math.max(edge, selected.x))),
+    y: Math.round(Math.min(maxY, Math.max(edge, selected.y))),
+    quadrant: selected.quadrant,
+  };
+}
+
+const StageAnchor = { choosePointerAnchor };
+if (typeof module !== 'undefined' && module.exports) module.exports = StageAnchor;
+if (typeof globalThis !== 'undefined') globalThis.StageAnchor = StageAnchor;

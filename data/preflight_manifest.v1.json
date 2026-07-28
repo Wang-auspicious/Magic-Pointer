@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "stages": [
+    { "id": "runtime", "title": "Runtime", "blocking": true, "retryable": true, "skippable": false },
+    { "id": "os_permissions", "title": "OS Permissions", "blocking": true, "retryable": true, "skippable": false },
+    { "id": "pointer_host", "title": "Pointer Host", "blocking": true, "retryable": true, "skippable": false },
+    { "id": "voice", "title": "Voice", "blocking": false, "retryable": true, "skippable": true },
+    { "id": "grounding", "title": "Grounding", "blocking": true, "retryable": true, "skippable": false },
+    { "id": "agents", "title": "Agents", "blocking": false, "retryable": true, "skippable": true },
+    { "id": "model_profile", "title": "Model Profile", "blocking": false, "retryable": true, "skippable": true },
+    { "id": "privacy", "title": "Privacy", "blocking": true, "retryable": true, "skippable": false },
+    { "id": "e2e_smoke", "title": "End-to-end smoke", "blocking": true, "retryable": true, "skippable": false }
+  ]
+}

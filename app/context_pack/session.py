@@ -348,6 +348,7 @@ class ContextSessionStore:
         vision_error = _clean_text(capture.get("vision_error"), limit=4000)
         file_context = _safe_mapping(capture.get("file_context"), text_limit=20000)
         app_context = _safe_mapping(capture.get("app_context"), text_limit=12000)
+        capture_attestation = _safe_mapping(capture.get("capture_attestation"), text_limit=4000)
         if not any((point, bbox, raw_image, pointer_image, grounding, observation, file_context, app_context)):
             raise ContextSessionError("context requires a grounded visual capture")
         object_id = _clean_text(capture.get("object_id"), limit=200)
@@ -380,6 +381,7 @@ class ContextSessionStore:
                     if capture.get("source_confidence") in {"point_hit", "unknown"}
                     else "unknown"
                 ),
+                "capture_attestation": capture_attestation,
             },
             "selected_text": _clean_text(capture.get("selected_text"), limit=20000),
             "surrounding_context": _clean_text(capture.get("surrounding_context"), limit=28000),

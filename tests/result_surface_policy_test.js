@@ -35,6 +35,22 @@ assert.strictEqual(visualReady.commandReady, true);
 assert.strictEqual(visualReady.state, 'visual-ready');
 assert.strictEqual(visualReady.autoDismissMs, null);
 
+const targetMismatch = captureEligibility({
+  snapshot: {
+    status: 'target_mismatch',
+    source_kind: 'foreground_window',
+    capture_path: null,
+    source_window: { title: 'Design B', hwnd: 44, pid: 55 },
+    capture_attestation: { status: 'target_mismatch', phase: 'after_capture' },
+    target_point: { x: 600, y: 500 },
+  },
+  summary: { state: 'target_mismatch', app: 'screen', hasContent: false, hasVisual: false },
+});
+assert.strictEqual(targetMismatch.commandReady, false);
+assert.strictEqual(targetMismatch.state, 'target_mismatch');
+assert.match(targetMismatch.message, /目标.*变化|未截图|重试/);
+assert.strictEqual(targetMismatch.autoDismissMs, 1800);
+
 const reviewTarget = captureEligibility({
   snapshot: {
     status: 'unsupported',

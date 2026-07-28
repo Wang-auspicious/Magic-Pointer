@@ -14,11 +14,17 @@ internal static class UiaSelectionProbe
     private sealed class SelectionResult
     {
         public bool Ok;
+        public string ResultKind = "";
         public string Text = "";
         public bool Truncated;
         public string ElementName = "";
         public string AutomationId = "";
         public string ControlType = "";
+        public string LocalizedControlType = "";
+        public string ClassName = "";
+        public string ElementValue = "";
+        public string HelpText = "";
+        public Rect ElementRectangle = Rect.Empty;
         public int ProcessId;
         public int RootHwnd;
         public int RangeCount;
@@ -32,6 +38,7 @@ internal static class UiaSelectionProbe
         public Rect PageRectangle = Rect.Empty;
         public string SelectionContainerText = "";
         public Rect SelectionContainerRectangle = Rect.Empty;
+        public string TerminalAnchorText = "";
         public string Error = "";
     }
 
@@ -42,12 +49,26 @@ internal static class UiaSelectionProbe
         Stopwatch stopwatch = Stopwatch.StartNew();
         SelectionResult result = new SelectionResult();
         long hwndValue = 0;
+        Point? targetPoint = null;
 
         if (args.Length < 1 || !long.TryParse(args[0], out hwndValue) || hwndValue == 0)
         {
             result.Error = "A valid target window handle is required.";
             WriteResult(result, hwndValue, stopwatch.ElapsedMilliseconds);
             return 2;
+        }
+
+        if (args.Length >= 3)
+        {
+            double pointX;
+            double pointY;
+            if (
+                double.TryParse(args[1], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out pointX)
+                && double.TryParse(args[2], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out pointY)
+            )
+            {
+                targetPoint = new Point(pointX, pointY);
+            }
         }
 
         try
@@ -61,6 +82,10 @@ internal static class UiaSelectionProbe
             {
                 result.ProcessId = SafeProcessId(root);
                 result.RootHwnd = SafeInt(root, AutomationElement.NativeWindowHandleProperty);
+                if (targetPoint.HasValue && IsTerminalWindow(root))
+                {
+                    TryTerminalBufferAtPoint(root, targetPoint.Value, result);
+                }
                 AutomationElement focused = null;
                 try
                 {
@@ -86,6 +111,11 @@ internal static class UiaSelectionProbe
                 if (!result.Ok)
                 {
                     FindDocumentSelection(root, result);
+                }
+
+                if (!result.Ok && targetPoint.HasValue)
+                {
+                    TryPointElement(root, targetPoint.Value, result);
                 }
 
                 if (!result.Ok && string.IsNullOrEmpty(result.Error))
@@ -298,6 +328,7 @@ internal static class UiaSelectionProbe
         }
 
         result.Ok = true;
+        result.ResultKind = "text_selection";
         result.Text = text.ToString();
         result.Truncated = truncated;
         result.ElementName = SafeString(element, AutomationElement.NameProperty);
@@ -309,6 +340,268 @@ internal static class UiaSelectionProbe
         result.RectanglesTruncated = rectanglesTruncated;
         result.Rectangles.AddRange(rectangles);
         result.Error = "";
+    }
+
+    private static bool IsTerminalWindow(AutomationElement root)
+    {
+        string className = SafeString(root, AutomationElement.ClassNameProperty);
+        if (
+            string.Equals(className, "CASCADIA_HOSTING_WINDOW_CLASS", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(className, "ConsoleWindowClass", StringComparison.OrdinalIgnoreCase)
+        )
+        {
+            return true;
+        }
+        string name = SafeString(root, AutomationElement.NameProperty);
+        string lowered = name.ToLowerInvariant();
+        if (
+            lowered.Contains("windows terminal")
+            || lowered.Contains("powershell")
+            || lowered.Contains("command prompt")
+        )
+        {
+            return true;
+        }
+        try
+        {
+            string processName = Process.GetProcessById(SafeProcessId(root)).ProcessName.ToLowerInvariant();
+            return processName == "windowsterminal"
+                || processName == "openconsole"
+                || processName == "conhost"
+                || processName == "pwsh"
+                || processName == "powershell"
+                || processName == "cmd";
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static void TryTerminalBufferAtPoint(
+        AutomationElement root,
+        Point point,
+        SelectionResult result)
+    {
+        AutomationElement element = null;
+        try
+        {
+            element = AutomationElement.FromPoint(point);
+        }
+        catch
+        {
+            return;
+        }
+        if (
+            element == null
+            || SafeProcessId(element) != result.ProcessId
+            || !IsDescendantOrSelf(element, root)
+        )
+        {
+            return;
+        }
+
+        AutomationElement current = element;
+        TreeWalker walker = TreeWalker.ControlViewWalker;
+        for (int depth = 0; current != null && depth < 20; depth++)
+        {
+            if (TryReadTerminalElement(current, point, result))
+            {
+                return;
+            }
+            if (SameElement(current, root))
+            {
+                break;
+            }
+            try
+            {
+                current = walker.GetParent(current);
+            }
+            catch
+            {
+                break;
+            }
+        }
+        TryTerminalDescendantBuffers(root, point, result);
+    }
+
+    private static void TryTerminalDescendantBuffers(
+        AutomationElement root,
+        Point point,
+        SelectionResult result)
+    {
+        try
+        {
+            Condition condition = new PropertyCondition(
+                AutomationElement.IsTextPatternAvailableProperty,
+                true);
+            AutomationElementCollection elements = root.FindAll(TreeScope.Descendants, condition);
+            int limit = Math.Min(elements.Count, 64);
+            for (int pass = 0; pass < 2 && !result.Ok; pass++)
+            {
+                for (int index = 0; index < limit && !result.Ok; index++)
+                {
+                    AutomationElement candidate = elements[index];
+                    Rect rectangle = SafeBoundingRectangle(candidate);
+                    bool containsPoint = !rectangle.IsEmpty && rectangle.Contains(point);
+                    if ((pass == 0 && !containsPoint) || (pass == 1 && containsPoint))
+                    {
+                        continue;
+                    }
+                    TryReadTerminalElement(candidate, point, result);
+                }
+            }
+        }
+        catch
+        {
+        }
+    }
+
+    private static bool TryReadTerminalElement(
+        AutomationElement element,
+        Point point,
+        SelectionResult result)
+    {
+        try
+        {
+            object patternObject;
+            if (!element.TryGetCurrentPattern(TextPattern.Pattern, out patternObject))
+            {
+                return false;
+            }
+            TextPattern pattern = patternObject as TextPattern;
+            if (pattern == null)
+            {
+                return false;
+            }
+            string documentText = pattern.DocumentRange.GetText(MaxTextChars) ?? "";
+            if (string.IsNullOrWhiteSpace(documentText))
+            {
+                return false;
+            }
+            string anchorText = "";
+            try
+            {
+                TextPatternRange anchor = pattern.RangeFromPoint(point);
+                if (anchor != null)
+                {
+                    anchor.ExpandToEnclosingUnit(TextUnit.Line);
+                    anchorText = (anchor.GetText(2048) ?? "").Trim();
+                }
+            }
+            catch
+            {
+            }
+            Rect rectangle = SafeBoundingRectangle(element);
+            result.Ok = true;
+            result.ResultKind = "terminal_buffer";
+            result.Text = documentText;
+            result.Truncated = documentText.Length >= MaxTextChars;
+            result.TerminalAnchorText = anchorText;
+            result.ElementName = SafeString(element, AutomationElement.NameProperty);
+            result.AutomationId = SafeString(element, AutomationElement.AutomationIdProperty);
+            result.ControlType = SafeControlType(element);
+            result.LocalizedControlType = SafeString(element, AutomationElement.LocalizedControlTypeProperty);
+            result.ClassName = SafeString(element, AutomationElement.ClassNameProperty);
+            result.ElementRectangle = rectangle;
+            if (!rectangle.IsEmpty)
+            {
+                result.Rectangles.Add(rectangle);
+                result.RectangleCountTotal = 1;
+            }
+            result.Error = "";
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static void TryPointElement(
+        AutomationElement root,
+        Point point,
+        SelectionResult result)
+    {
+        AutomationElement element = null;
+        try
+        {
+            element = AutomationElement.FromPoint(point);
+        }
+        catch
+        {
+            return;
+        }
+        if (
+            element == null
+            || SafeProcessId(element) != result.ProcessId
+            || !IsDescendantOrSelf(element, root)
+        )
+        {
+            return;
+        }
+
+        AutomationElement current = element;
+        TreeWalker walker = TreeWalker.ControlViewWalker;
+        for (int depth = 0; current != null && depth < 16; depth++)
+        {
+            Rect rectangle = SafeBoundingRectangle(current);
+            string name = SafeString(current, AutomationElement.NameProperty);
+            string automationId = SafeString(current, AutomationElement.AutomationIdProperty);
+            string value = SafeValue(current);
+            string helpText = SafeString(current, AutomationElement.HelpTextProperty);
+            string controlType = SafeControlType(current);
+            bool meaningful = (
+                !string.IsNullOrWhiteSpace(name)
+                || !string.IsNullOrWhiteSpace(automationId)
+                || !string.IsNullOrWhiteSpace(value)
+                || !string.IsNullOrWhiteSpace(helpText)
+            );
+            if (
+                meaningful
+                && !rectangle.IsEmpty
+                && rectangle.Width > 0
+                && rectangle.Height > 0
+                && rectangle.Contains(point)
+            )
+            {
+                result.Ok = true;
+                result.ResultKind = "point_element";
+                result.ElementName = name;
+                result.AutomationId = automationId;
+                result.ControlType = controlType;
+                result.LocalizedControlType = SafeString(
+                    current,
+                    AutomationElement.LocalizedControlTypeProperty);
+                result.ClassName = SafeString(
+                    current,
+                    AutomationElement.ClassNameProperty);
+                result.ElementValue = value;
+                result.HelpText = helpText;
+                result.ElementRectangle = rectangle;
+                result.Rectangles.Add(rectangle);
+                result.RectangleCountTotal = 1;
+                result.Text = !string.IsNullOrWhiteSpace(value)
+                    ? value
+                    : !string.IsNullOrWhiteSpace(name)
+                        ? name
+                        : helpText;
+                result.Error = "";
+                return;
+            }
+            if (SameElement(current, root))
+            {
+                break;
+            }
+            try
+            {
+                current = walker.GetParent(current);
+            }
+            catch
+            {
+                break;
+            }
+        }
     }
 
     private static void PopulateSelectionMetadata(AutomationElement root, SelectionResult result)
@@ -736,6 +1029,8 @@ internal static class UiaSelectionProbe
         StringBuilder json = new StringBuilder();
         json.Append("{\"ok\":");
         json.Append(result.Ok ? "true" : "false");
+        json.Append(",\"result_kind\":");
+        json.Append(JsonString(result.ResultKind));
         json.Append(",\"hwnd\":");
         json.Append(hwnd);
         json.Append(",\"process_id\":");
@@ -766,12 +1061,24 @@ internal static class UiaSelectionProbe
         json.Append(JsonString(result.SelectionContainerText));
         json.Append(",\"selection_container_rect\":");
         AppendJsonRect(json, result.SelectionContainerRectangle);
+        json.Append(",\"terminal_anchor_text\":");
+        json.Append(JsonString(result.TerminalAnchorText));
         json.Append(",\"element_name\":");
         json.Append(JsonString(result.ElementName));
         json.Append(",\"automation_id\":");
         json.Append(JsonString(result.AutomationId));
         json.Append(",\"control_type\":");
         json.Append(JsonString(result.ControlType));
+        json.Append(",\"localized_control_type\":");
+        json.Append(JsonString(result.LocalizedControlType));
+        json.Append(",\"class_name\":");
+        json.Append(JsonString(result.ClassName));
+        json.Append(",\"element_value\":");
+        json.Append(JsonString(result.ElementValue));
+        json.Append(",\"help_text\":");
+        json.Append(JsonString(result.HelpText));
+        json.Append(",\"element_rect\":");
+        AppendJsonRect(json, result.ElementRectangle);
         json.Append(",\"rectangles\":[");
         for (int index = 0; index < result.Rectangles.Count; index++)
         {

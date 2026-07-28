@@ -16,14 +16,50 @@ if str(ROOT) not in sys.path:
 
 from app.adapters import default_adapter_registry
 from app.context_pack import ContextSessionError, ContextSessionStore
+from app.fabric.audit import AuditStore
+from app.fabric.capture_policy import CapturePolicyEngine
+from app.grounding.perception_cascade import (
+    append_perception_attempt,
+    resolve_structured_perception,
+)
 from app.review import ReviewSessionError, ReviewSessionStore
 from app.fabric.settings import FabricSettings, SettingsError, SettingsStore
 from app.system_context import get_foreground_window_handle, list_visible_windows
+from app.visual_annotation import make_pointer_annotated_image
 
 MAGIC_WINDOW_TITLES = {"Magic Pointer Overlay", "Magic Pointer Panel"}
 SNAPSHOT_TTL_SECONDS = 120
 VISUAL_REGION_WIDTH = 640
 VISUAL_REGION_HEIGHT = 420
+
+
+class TargetMismatchError(RuntimeError):
+    def __init__(self, attestation: dict[str, Any]) -> None:
+        super().__init__("target_mismatch")
+        self.attestation = attestation
+
+
+def _window_identity(window: dict[str, Any] | None) -> dict[str, Any]:
+    value = dict(window or {})
+    pid = value.get("process_id") or value.get("processId") or value.get("pid") or 0
+    desktop_id = value.get("desktop_id") or value.get("desktopId") or value.get("space_id") or value.get("spaceId")
+    bbox = value.get("bbox")
+    return {
+        "hwnd": int(value.get("hwnd") or 0),
+        "processId": int(pid or 0),
+        "processName": str(value.get("process_name") or value.get("processName") or ""),
+        "title": str(value.get("title") or ""),
+        "desktopId": str(desktop_id or ""),
+        "bbox": list(bbox) if isinstance(bbox, (list, tuple)) and len(bbox) == 4 else None,
+    }
+
+
+def _same_window_identity(expected: dict[str, Any], actual: dict[str, Any]) -> bool:
+    for field in ("hwnd", "processId", "processName", "title", "desktopId", "bbox"):
+        expected_value = expected.get(field)
+        if expected_value not in (None, "", 0) and actual.get(field) != expected_value:
+            return False
+    return bool(expected.get("hwnd") and expected.get("processId"))
 
 
 def read_payload() -> dict[str, Any]:
@@ -52,15 +88,34 @@ def _read_target_context(
     windows: list[dict[str, Any]],
     *,
     registry: Any | None = None,
-) -> tuple[dict[str, Any] | None, Any]:
+    target_point: dict[str, int] | None = None,
+) -> tuple[dict[str, Any] | None, Any, dict[str, Any]]:
     target_window = windows[0] if windows else None
     if target_window is None:
-        return None, None
+        return None, None, {
+            "schemaVersion": 1,
+            "selectedLayer": None,
+            "selectedAdapter": None,
+            "selectedMethod": None,
+            "pixelFallbackUsed": False,
+            "fallbackReason": "foreground_window_unavailable",
+            "policyMode": None,
+            "attempts": [{
+                "layer": "structured",
+                "adapter": "registry",
+                "method": "none",
+                "status": "unavailable",
+                "reason": "foreground_window_unavailable",
+            }],
+        }
     active_registry = registry or default_adapter_registry()
-    adapter = active_registry.matching_adapter(target_window)
-    if adapter is None:
-        return target_window, None
-    return target_window, adapter.read_context(target_window, command="")
+    resolution = resolve_structured_perception(
+        target_window,
+        active_registry,
+        command="",
+        target_point=target_point,
+    )
+    return target_window, resolution.context, resolution.trace
 
 
 def _has_capability(app_ctx: Any, name: str) -> bool:
@@ -274,12 +329,32 @@ def _capture_visual_region(
     visual_capture: Any | None = None,
     capture_dir: Path | str | None = None,
     retain_days: int = 3,
+    identity_probe: Any | None = None,
 ) -> dict[str, Any] | None:
     bbox = _visual_bbox(target_window, target_point)
     if bbox is None:
         return None
+    expected_identity = _window_identity(target_window)
+    before_identity = _window_identity(identity_probe()) if callable(identity_probe) else expected_identity
+    if callable(identity_probe) and not _same_window_identity(expected_identity, before_identity):
+        raise TargetMismatchError({
+            "status": "target_mismatch",
+            "phase": "before_capture",
+            "expected": expected_identity,
+            "before": before_identity,
+            "after": None,
+        })
     grabber = visual_capture or ImageGrab.grab
     image = grabber(bbox=bbox, all_screens=True)
+    after_identity = _window_identity(identity_probe()) if callable(identity_probe) else before_identity
+    if callable(identity_probe) and not _same_window_identity(expected_identity, after_identity):
+        raise TargetMismatchError({
+            "status": "target_mismatch",
+            "phase": "after_capture",
+            "expected": expected_identity,
+            "before": before_identity,
+            "after": after_identity,
+        })
     output_dir = Path(capture_dir) if capture_dir is not None else (
         Path(os.environ.get("MAGIC_POINTER_USER_DATA_DIR") or ROOT / "data" / "runtime")
         / "selection-captures"
@@ -290,11 +365,28 @@ def _capture_visual_region(
     temp = output.with_suffix(".png.tmp")
     image.convert("RGB").save(temp, format="PNG")
     os.replace(temp, output)
+    point = target_point or {"x": (bbox[0] + bbox[2]) // 2, "y": (bbox[1] + bbox[3]) // 2}
+    tip = (int(point["x"]), int(point["y"]))
+    annotated = output.with_name(f"{output.stem}.pointer.png")
+    make_pointer_annotated_image(
+        output,
+        annotated,
+        bbox,
+        [(tip[0] - 24, tip[1] - 24), tip],
+    )
     return {
         "path": str(output.resolve()),
+        "annotated_path": str(annotated.resolve()),
         "bbox": list(bbox),
         "width": bbox[2] - bbox[0],
         "height": bbox[3] - bbox[1],
+        "capture_attestation": {
+            "status": "verified" if callable(identity_probe) else "unverified",
+            "phase": "complete",
+            "expected": expected_identity,
+            "before": before_identity,
+            "after": after_identity,
+        },
     }
 
 
@@ -312,12 +404,65 @@ def capture_snapshot(
     sensitive_apps: list[str] | tuple[str, ...] | None = None,
     foreground_app: str = "",
     retain_captures_days: int = 3,
+    identity_probe: Any | None = None,
+    upload_screenshots: bool | None = None,
+    default_capture_mode: str | None = None,
+    app_capture_modes: dict[str, str] | None = None,
+    audit_store: Any | None = None,
 ) -> dict[str, Any]:
     captured = datetime.now(timezone.utc)
-    target_window, app_ctx = _read_target_context(
-        _window_dicts() if windows is None else windows,
-        registry=registry,
-    )
+    live_window_source = windows is None
+    available_windows = _window_dicts() if windows is None else windows
+    target_window = available_windows[0] if available_windows else None
+    normalized_target_point = _normalized_point(target_point)
+    capture_decision = None
+    if default_capture_mode is not None:
+        capture_decision = CapturePolicyEngine(
+            upload_screenshots is True,
+            default_capture_mode,
+            sensitive_apps or (),
+            app_capture_modes or {},
+        ).decide({
+            "id": "foreground-target",
+            "kind": "foreground_window",
+            "source": {
+                "app": foreground_app,
+                "processName": str((target_window or {}).get("process_name") or ""),
+                "title": str((target_window or {}).get("title") or ""),
+            },
+        })
+    if capture_decision is not None and capture_decision.mode == "deny":
+        app_ctx = None
+        perception_trace = {
+            "schemaVersion": 1,
+            "selectedLayer": None,
+            "selectedAdapter": None,
+            "selectedMethod": None,
+            "pixelFallbackUsed": False,
+            "fallbackReason": "capture_policy_deny",
+            "policyMode": "deny",
+            "attempts": [{
+                "layer": "structured",
+                "adapter": "policy",
+                "method": "none",
+                "status": "blocked",
+                "reason": "capture_policy_deny",
+            }],
+        }
+    else:
+        target_window, app_ctx, perception_trace = _read_target_context(
+            available_windows,
+            registry=registry,
+            target_point=normalized_target_point,
+        )
+        perception_trace["policyMode"] = (
+            capture_decision.mode if capture_decision is not None else "unconfigured"
+        )
+    active_identity_probe = identity_probe
+    if active_identity_probe is None and live_window_source:
+        def active_identity_probe() -> dict[str, Any]:
+            current = _window_dicts()
+            return dict(current[0]) if current else {}
     summary = _summary_for(target_window, app_ctx)
     context_session = active_context if isinstance(active_context, dict) else None
     summary["hasActiveContext"] = bool(context_session and context_session.get("item_count"))
@@ -328,16 +473,20 @@ def capture_snapshot(
     review = active_review if isinstance(active_review, dict) else None
     summary["hasActiveReview"] = bool(review and review.get("anchor_count"))
     summary["activeReviewAnchorCount"] = int((review or {}).get("anchor_count") or 0)
-    normalized_target_point = _normalized_point(target_point)
     sensitive_target = _is_sensitive_target(
         target_window,
         sensitive_apps=sensitive_apps,
         foreground_app=foreground_app,
     )
     visual = None
+    capture_attestation = None
+    target_mismatch = False
+    visual_attempt_recorded = False
     should_capture_visual = bool(
         allow_visual_fallback
         and not sensitive_target
+        and (capture_decision is None or capture_decision.allow_local_pixels)
+        and not perception_trace.get("selectedLayer")
         and not summary.get("hasContent")
         and not summary["hasActiveContext"]
         and not summary["hasActiveReview"]
@@ -350,10 +499,109 @@ def capture_snapshot(
                 visual_capture=visual_capture,
                 capture_dir=capture_dir,
                 retain_days=retain_captures_days,
+                identity_probe=active_identity_probe,
             )
+            capture_attestation = visual.get("capture_attestation") if visual is not None else None
+            if visual is not None:
+                perception_trace = append_perception_attempt(
+                    perception_trace,
+                    layer="screen_region",
+                    adapter="screen-capture",
+                    method="pointer:bounded-screen-region",
+                    status="succeeded",
+                    reason=str(perception_trace.get("fallbackReason") or "structured_context_unavailable"),
+                    select=True,
+                    policy_mode=capture_decision.mode if capture_decision is not None else "unconfigured",
+                )
+            else:
+                perception_trace = append_perception_attempt(
+                    perception_trace,
+                    layer="screen_region",
+                    adapter="screen-capture",
+                    method="pointer:bounded-screen-region",
+                    status="unavailable",
+                    reason="capture_geometry_unavailable",
+                    policy_mode=capture_decision.mode if capture_decision is not None else "unconfigured",
+                )
+            visual_attempt_recorded = True
+        except TargetMismatchError as exc:
+            target_mismatch = True
+            capture_attestation = exc.attestation
+            visual = None
+            perception_trace = append_perception_attempt(
+                perception_trace,
+                layer="screen_region",
+                adapter="screen-capture",
+                method="pointer:bounded-screen-region",
+                status="error",
+                reason="target_mismatch",
+                policy_mode=capture_decision.mode if capture_decision is not None else "unconfigured",
+            )
+            visual_attempt_recorded = True
         except (OSError, ValueError, RuntimeError):
             visual = None
-    if sensitive_target and not summary.get("hasContent"):
+            perception_trace = append_perception_attempt(
+                perception_trace,
+                layer="screen_region",
+                adapter="screen-capture",
+                method="pointer:bounded-screen-region",
+                status="error",
+                reason="local_capture_failed",
+                policy_mode=capture_decision.mode if capture_decision is not None else "unconfigured",
+            )
+            visual_attempt_recorded = True
+    if not visual_attempt_recorded:
+        if perception_trace.get("selectedLayer"):
+            visual_status, visual_reason = "skipped", "structured_context_succeeded"
+        elif capture_decision is not None and capture_decision.mode == "deny":
+            visual_status, visual_reason = "blocked", "capture_policy_deny"
+        elif capture_decision is not None and not capture_decision.allow_local_pixels:
+            visual_status, visual_reason = "blocked", f"capture_policy_{capture_decision.mode}"
+        elif sensitive_target:
+            visual_status, visual_reason = "blocked", "sensitive_app"
+        elif not allow_visual_fallback:
+            visual_status, visual_reason = "blocked", "visual_fallback_disabled"
+        elif summary["hasActiveContext"] or summary["hasActiveReview"]:
+            visual_status, visual_reason = "skipped", "existing_context_delivery_target"
+        else:
+            visual_status, visual_reason = "unavailable", "capture_preconditions_unmet"
+        perception_trace = append_perception_attempt(
+            perception_trace,
+            layer="screen_region",
+            adapter="screen-capture",
+            method="pointer:bounded-screen-region",
+            status=visual_status,
+            reason=visual_reason,
+            policy_mode=capture_decision.mode if capture_decision is not None else "unconfigured",
+        )
+    if capture_decision is not None and capture_decision.mode == "deny":
+        summary.update({
+            "state": "denied",
+            "label": "永不捕获",
+            "detail": "当前应用的逐应用隐私策略已阻止结构读取、OCR 与截图",
+            "hasContent": False,
+            "hasVisual": False,
+            "canRewrite": False,
+        })
+    elif target_mismatch:
+        summary.update({
+            "state": "target_mismatch",
+            "label": "目标已变化",
+            "detail": "截图前后台窗口、标题或桌面发生变化；未保存或上传任何图像。",
+            "hasVisual": False,
+        })
+    elif (
+        capture_decision is not None
+        and capture_decision.mode == "structured_only"
+        and not summary.get("hasContent")
+    ):
+        summary.update({
+            "state": "structured_only",
+            "label": "只读结构",
+            "detail": "当前应用仅允许 UIA / AX / DOM；未读取到可用结构，未启用 OCR 或截图",
+            "hasVisual": False,
+        })
+    elif sensitive_target and not summary.get("hasContent"):
         summary.update({
             "state": "sensitive",
             "label": "敏感应用 · 未截取屏幕",
@@ -377,7 +625,7 @@ def capture_snapshot(
         "screen_region"
         if visual is not None
         else "native_selection"
-        if app_ctx is not None and summary["state"] in {"ready", "empty"}
+        if app_ctx is not None and perception_trace.get("selectedLayer")
         else "foreground_window"
     )
     visual_context = None
@@ -392,6 +640,7 @@ def capture_snapshot(
             "path": visual["path"],
             "artifacts": {
                 "capture_path": visual["path"],
+                "annotated_path": visual["annotated_path"],
                 "selection_rectangles": [visual["bbox"]],
             },
             "capabilities": [],
@@ -414,8 +663,62 @@ def capture_snapshot(
             None if app_ctx is None else app_ctx.to_dict()
         ),
         "capture_path": visual["path"] if visual is not None else None,
+        "annotated_path": visual["annotated_path"] if visual is not None else None,
+        "capture_attestation": capture_attestation,
+        "capture_policy": capture_decision.to_dict() if capture_decision is not None else None,
+        "perception_trace": perception_trace,
         "selection_bbox": visual["bbox"] if visual is not None else None,
     }
+    if audit_store is not None:
+        try:
+            audit_store.append("perception.resolved", {
+                "snapshotId": snapshot["snapshot_id"],
+                "status": snapshot["status"],
+                "sourceKind": snapshot["source_kind"],
+                "selectedLayer": perception_trace.get("selectedLayer"),
+                "selectedAdapter": perception_trace.get("selectedAdapter"),
+                "selectedMethod": perception_trace.get("selectedMethod"),
+                "pixelFallbackUsed": perception_trace.get("pixelFallbackUsed") is True,
+                "fallbackReason": perception_trace.get("fallbackReason"),
+                "policyMode": perception_trace.get("policyMode"),
+                "attempts": perception_trace.get("attempts") or [],
+            })
+            terminal_evidence = (
+                (app_ctx.artifacts or {}).get("terminal_evidence")
+                if app_ctx is not None
+                else None
+            )
+            if isinstance(terminal_evidence, dict):
+                terminal_window = dict(terminal_evidence.get("window") or {})
+                audit_store.append("terminal.evidence", {
+                    "snapshotId": snapshot["snapshot_id"],
+                    "state": str(terminal_evidence.get("state") or ""),
+                    "method": str(terminal_evidence.get("method") or "")[:120],
+                    "exitCodeObserved": terminal_evidence.get("exitCode") is not None,
+                    "exitCode": terminal_evidence.get("exitCode"),
+                    "windowLineCount": int(terminal_window.get("lineCount") or 0),
+                    "pixelFallbackUsed": False,
+                })
+            browser_context = (
+                (app_ctx.artifacts or {}).get("browser_context")
+                if app_ctx is not None
+                else None
+            )
+            if isinstance(browser_context, dict):
+                browser_node = dict(browser_context.get("node") or {})
+                browser_coordinates = dict(browser_context.get("coordinates") or {})
+                audit_store.append("browser.evidence", {
+                    "snapshotId": snapshot["snapshot_id"],
+                    "state": str(browser_context.get("state") or ""),
+                    "method": str(browser_context.get("method") or "")[:120],
+                    "selectorObserved": bool(browser_context.get("selector")),
+                    "accessibleNameObserved": bool(browser_node.get("accessibleName")),
+                    "networkFailureCount": len(browser_context.get("networkFailures") or []),
+                    "coordinatesObserved": bool(browser_coordinates.get("pointerScreenPhysical")),
+                    "pixelFallbackUsed": False,
+                })
+        except Exception:
+            pass
     return {
         "ok": True,
         "selectionSnapshot": snapshot,
@@ -445,8 +748,16 @@ def main() -> int:
         active_review=active_review,
         allow_visual_fallback=payload.get("allowVisualFallback") is not False,
         sensitive_apps=settings.privacy.sensitive_apps,
+        upload_screenshots=settings.privacy.upload_screenshots,
+        default_capture_mode=settings.privacy.default_capture_mode,
+        app_capture_modes=settings.privacy.app_capture_modes,
         retain_captures_days=settings.privacy.retain_captures_days,
         foreground_app=str(payload.get("foregroundApp") or ""),
+        registry=default_adapter_registry(
+            browser_devtools_enabled=settings.connections.browser_devtools_enabled,
+            browser_devtools_endpoints=settings.connections.browser_devtools_endpoints,
+        ),
+        audit_store=AuditStore(),
     ), ensure_ascii=False))
     return 0
 

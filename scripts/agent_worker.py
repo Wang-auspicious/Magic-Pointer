@@ -15,6 +15,7 @@ if str(ROOT) not in sys.path:
 
 from app.fabric.agents import AgentInvocation, AgentRequest
 from app.fabric.task_store import AgentTaskStore
+from app.system_context import list_visible_windows
 
 
 def _tail(path: Path, limit: int = 120_000) -> str:
@@ -40,12 +41,33 @@ def _extract_result(stdout: str, protocol: str) -> dict[str, Any]:
         except json.JSONDecodeError:
             pass
     terminal = values[-1] if values else None
-    result: dict[str, Any] = {"eventCount": len(values), "outputExcerpt": stdout[-8000:]}
+    result: dict[str, Any] = {"eventCount": len(values)}
+    output_text = ""
+    session_id = ""
+    for event in values:
+        if not isinstance(event, dict):
+            continue
+        session_id = str(
+            event.get("session_id") or event.get("sessionId") or event.get("thread_id") or session_id
+        )
+        if isinstance(event.get("result"), str):
+            output_text = str(event["result"])
+        item = event.get("item")
+        if isinstance(item, dict) and item.get("type") == "agent_message":
+            output_text = str(item.get("text") or output_text)
+    if output_text:
+        result["outputText"] = output_text[-8000:]
+    if session_id:
+        result["sessionId"] = session_id
     if isinstance(terminal, dict):
-        result["terminalEvent"] = terminal
-        session_id = terminal.get("session_id") or terminal.get("sessionId")
-        if session_id:
-            result["sessionId"] = str(session_id)
+        result["terminalEvent"] = {
+            key: terminal[key]
+            for key in (
+                "type", "subtype", "is_error", "api_error_status", "stop_reason",
+                "session_id", "sessionId", "thread_id", "terminal_reason",
+            )
+            if key in terminal
+        }
     return result
 
 
@@ -65,6 +87,26 @@ def _queued_events(path: Path, offset: int) -> tuple[list[dict[str, Any]], int]:
         if isinstance(value, dict):
             values.append(value)
     return values, next_offset
+
+
+def _target_lease_allows_progress(
+    store: AgentTaskStore,
+    task_id: str,
+    *,
+    live_windows: list[dict[str, Any]] | None = None,
+) -> bool:
+    raw = store._read(task_id)
+    guard = raw.get("targetLease")
+    guard = dict(guard) if isinstance(guard, dict) else {}
+    if guard.get("state") != "active" or not isinstance(guard.get("lease"), dict):
+        return raw.get("status") not in {"pausing_target_mismatch", "paused_target_mismatch"}
+    windows = list_visible_windows() if live_windows is None else live_windows
+    guarded = store.enforce_target_lease(
+        task_id,
+        live_windows=windows,
+        terminate=False,
+    )
+    return guarded.get("status") not in {"pausing_target_mismatch", "paused_target_mismatch"}
 
 
 def _run_pi_rpc(
@@ -128,6 +170,9 @@ def _run_pi_rpc(
         offset = 0
         settled_at: float | None = None
         while child.poll() is None:
+            if not _target_lease_allows_progress(store, task_id):
+                child.terminate()
+                break
             queued, offset = _queued_events(events_path, offset)
             if queued:
                 settled.clear()
@@ -159,7 +204,7 @@ def _run_pi_rpc(
         reader.join(timeout=2)
 
     current = json.loads((stdout_path.parent / "task.json").read_text(encoding="utf-8"))
-    if current.get("status") == "cancelled":
+    if current.get("status") in {"cancelled", "paused_target_mismatch"}:
         return 0
     stdout = _tail(stdout_path)
     stderr = _tail(stderr_path)
@@ -229,6 +274,7 @@ def main() -> int:
             )
             return 1
     try:
+        paused_for_target = False
         with stdout_path.open("wb") as stdout_handle, stderr_path.open("wb") as stderr_handle:
             child = subprocess.Popen(
                 argv,
@@ -241,18 +287,37 @@ def main() -> int:
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
             store.mark_running(task_id, agent_pid=child.pid)
-            child.communicate(
-                None if invocation.stdin is None else invocation.stdin.encode("utf-8"),
-            )
+            if child.stdin is not None and invocation.stdin is not None:
+                child.stdin.write(invocation.stdin.encode("utf-8"))
+                child.stdin.close()
+            while child.poll() is None:
+                if not _target_lease_allows_progress(store, task_id):
+                    paused_for_target = True
+                    child.terminate()
+                    try:
+                        child.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        child.kill()
+                        child.wait(timeout=5)
+                    break
+                time.sleep(0.1)
+        if paused_for_target:
+            return 0
         stdout = _tail(stdout_path)
         stderr = _tail(stderr_path)
         result = _extract_result(stdout, invocation.protocol)
         if stderr:
             result["stderrExcerpt"] = stderr[-8000:]
+        completion_summary = str(
+            result.get("outputText")
+            or result.get("terminalEvent")
+            or stderr
+            or f"{request.provider} finished"
+        )[-4000:]
         store.complete(
             task_id,
             exit_code=int(child.returncode or 0),
-            summary=(stdout or stderr or f"{request.provider} finished")[-4000:],
+            summary=completion_summary,
             output=result,
             error=None if child.returncode == 0 else f"agent_exit_{child.returncode}",
         )

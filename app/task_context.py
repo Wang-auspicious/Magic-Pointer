@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 @dataclass
@@ -246,11 +246,40 @@ class TaskContextStore:
             return None
         return object_store.object_by_id(destination_id)
 
-    def build_reference_context(self, object_store: Any, task_id: str, current_id: str, current_bbox: tuple[int, int, int, int]) -> str:
+    def build_reference_context(
+        self,
+        object_store: Any,
+        task_id: str,
+        current_id: str,
+        current_bbox: tuple[int, int, int, int],
+        *,
+        object_policy: Callable[[dict[str, Any]], Any] | None = None,
+    ) -> str:
         task = self.get_task(task_id) or {"id": task_id, "object_ids": [], "messages": []}
-        task_objects = self.task_objects(object_store, task_id)
+        raw_task_objects = self.task_objects(object_store, task_id)
+
+        def filtered(obj: dict[str, Any] | None) -> dict[str, Any] | None:
+            if not isinstance(obj, dict):
+                return None
+            if object_policy is None:
+                return dict(obj)
+            try:
+                decision = object_policy(dict(obj))
+                if hasattr(decision, "to_dict"):
+                    decision = decision.to_dict()
+                decision = dict(decision) if isinstance(decision, dict) else {}
+            except Exception:
+                return None
+            if decision.get("allowStructure") is not True:
+                return None
+            clean = dict(obj)
+            if decision.get("allowUpload") is not True:
+                clean["image_path"] = "<withheld>"
+            return clean
+
+        task_objects = [clean for obj in raw_task_objects if (clean := filtered(obj)) is not None]
         previous = task_objects[-1] if task_objects else None
-        destination = self.destination_object(object_store, task_id)
+        destination = filtered(self.destination_object(object_store, task_id))
         lines = [
             "Task context v1:",
             f"current_task_id={task_id!r}",

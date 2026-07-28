@@ -9,6 +9,7 @@ from typing import Any
 
 from app.adapters.base import AdapterCapability, AdapterReadContext, AppAdapter
 from app.adapters.pdf_selection_recovery import recover_local_pdf_selection
+from app.grounding.terminal_evidence import TerminalEvidenceExtractor
 
 JsonDict = dict[str, Any]
 
@@ -21,6 +22,8 @@ UIA_WINDOW_CLASSES = {
     "AcrobatSDIWindow",
     "Chrome_WidgetWin_1",
     "MozillaWindowClass",
+    "CASCADIA_HOSTING_WINDOW_CLASS",
+    "ConsoleWindowClass",
 }
 MAGIC_WINDOW_TITLES = {"Magic Pointer Overlay", "Magic Pointer Panel"}
 
@@ -48,6 +51,11 @@ class UiaProbeResult:
 def uia_app_from_window(window: JsonDict) -> str:
     title = str(window.get("title") or "").lower()
     class_name = str(window.get("class_name") or "")
+    if (
+        class_name in {"CASCADIA_HOSTING_WINDOW_CLASS", "ConsoleWindowClass"}
+        or any(token in title for token in ("windows terminal", "powershell", "command prompt"))
+    ):
+        return "terminal"
     if (
         class_name in {"AcrobatMDIFrame", "AcrobatSDIWindow"}
         or any(part.strip().endswith(".pdf") for part in title.split(" - "))
@@ -130,13 +138,27 @@ def _ensure_uia_probe() -> UiaProbeResult:
     return _compile_uia_probe()
 
 
-def _run_uia_selection_probe(hwnd: int, *, timeout: float = 2.5) -> UiaProbeResult:
+def _run_uia_selection_probe(
+    hwnd: int,
+    *,
+    target_point: dict[str, int] | None = None,
+    timeout: float = 2.5,
+) -> UiaProbeResult:
     prepared = _ensure_uia_probe()
     if not prepared.ok:
         return prepared
     try:
+        argv = [str(UIA_PROBE_EXE), str(int(hwnd))]
+        if isinstance(target_point, dict):
+            try:
+                argv.extend([
+                    str(int(target_point.get("x"))),
+                    str(int(target_point.get("y"))),
+                ])
+            except (TypeError, ValueError):
+                pass
         proc = subprocess.run(
-            [str(UIA_PROBE_EXE), str(int(hwnd))],
+            argv,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -161,6 +183,8 @@ def _run_uia_selection_probe(hwnd: int, *, timeout: float = 2.5) -> UiaProbeResu
 
 class UiaTextSelectionAdapter(AppAdapter):
     name = "uia_text_selection"
+    perception_layer = "uia"
+    perception_priority = 30
 
     def match_window(self, window: JsonDict) -> bool:
         title = str(window.get("title") or "")
@@ -188,7 +212,21 @@ class UiaTextSelectionAdapter(AppAdapter):
                 error="The foreground window does not have a valid native handle.",
             )
 
-        probe = _run_uia_selection_probe(hwnd)
+        raw_target_point = kwargs.get("target_point")
+        target_point = None
+        if isinstance(raw_target_point, dict):
+            try:
+                target_point = {
+                    "x": int(raw_target_point.get("x")),
+                    "y": int(raw_target_point.get("y")),
+                }
+            except (TypeError, ValueError):
+                target_point = None
+        probe = (
+            _run_uia_selection_probe(hwnd, target_point=target_point)
+            if target_point is not None
+            else _run_uia_selection_probe(hwnd)
+        )
         if not probe.data:
             return AdapterReadContext(
                 adapter=self.name,
@@ -277,8 +315,19 @@ class UiaTextSelectionAdapter(AppAdapter):
                 },
             )
 
-        method = "uia:text-pattern.selection"
+        result_kind = str(data.get("result_kind") or "text_selection")
+        method = (
+            "uia:terminal-text-pattern"
+            if result_kind == "terminal_buffer"
+            else "uia:element-from-point"
+            if result_kind == "point_element"
+            else "uia:text-pattern.selection"
+        )
         selection_rectangles = list(data.get("rectangles") or [])[:32]
+        if result_kind in {"point_element", "terminal_buffer"} and not selection_rectangles:
+            element_rect = data.get("element_rect")
+            if isinstance(element_rect, list) and len(element_rect) == 4:
+                selection_rectangles = [element_rect]
         rectangle_count_total = int(
             data.get("rectangle_count_total")
             or len(data.get("rectangles") or [])
@@ -286,7 +335,25 @@ class UiaTextSelectionAdapter(AppAdapter):
         rectangles_truncated = bool(data.get("rectangles_truncated"))
         raw_text = text
         recovery_artifacts: JsonDict = {}
+        if result_kind == "terminal_buffer":
+            terminal_evidence = TerminalEvidenceExtractor().extract(
+                raw_text,
+                method=method,
+                anchor_text=str(data.get("terminal_anchor_text") or ""),
+            )
+            text = str((terminal_evidence.get("window") or {}).get("text") or "")
+            recovery_artifacts = {
+                "terminal_evidence": terminal_evidence,
+                "terminal_buffer_chars": len(raw_text),
+                "terminal_buffer_sha256": hashlib.sha256(
+                    raw_text.encode("utf-8", errors="surrogatepass")
+                ).hexdigest(),
+                "terminal_anchor_available": bool(data.get("terminal_anchor_text")),
+            }
         if (
+            result_kind != "point_element"
+            and result_kind != "terminal_buffer"
+            and
             app == "pdf"
             and str(window.get("class_name") or "") == "Chrome_WidgetWin_1"
         ):
@@ -370,6 +437,11 @@ class UiaTextSelectionAdapter(AppAdapter):
             "element_name": data.get("element_name"),
             "automation_id": data.get("automation_id"),
             "control_type": data.get("control_type"),
+            "localized_control_type": data.get("localized_control_type"),
+            "class_name": data.get("class_name"),
+            "element_value": data.get("element_value"),
+            "help_text": data.get("help_text"),
+            "perception_result_kind": result_kind,
             "range_count": data.get("range_count"),
             "selection_rectangles": selection_rectangles,
             "selection_rectangles_coordinate_space": "physical_screen_pixels",
