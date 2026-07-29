@@ -33,6 +33,7 @@ const { shouldDismissFromGlobalPointer } = require('./pointer_dismiss_policy');
 const { RendererReadiness } = require('./renderer_readiness');
 const { gestureRuntimeContract, gestureRuntimeSettingsChanged } = require('./gesture_runtime_settings');
 const { createUpdateManager } = require('./update_manager');
+const { pointerPollingPolicy } = require('./pointer_polling_policy');
 
 let overlayWindow = null;
 let dashboardWindow = null;
@@ -1375,7 +1376,8 @@ function startMouseShakePolling() {
       dismissTemporarySurfaces({ invalidateSession: true, hideObserver: true });
       return;
     }
-    const mouseButtonMode = fabricSettings?.activation?.wake_mode === 'mouse_button'
+    const pointerPolicy = currentPointerPollingPolicy();
+    const mouseButtonMode = pointerPolicy.detectMouseButton
       ? (fabricSettings?.activation?.mouse_side_button || 'none')
       : 'none';
     const mouseActivationReason = mouseActivationDetector.push({
@@ -1387,7 +1389,7 @@ function startMouseShakePolling() {
       requestActivation(mouseActivationReason);
       return;
     }
-    if (fabricSettings?.activation?.wake_mode === 'mouse_button') return;
+    if (!pointerPolicy.detectWiggle) return;
     // An active stage session owns the pointer; no re-triggering underneath it.
     if (hasVisibleTemporarySurface()) return;
     if (!overlayWindow || overlayWindow.isVisible()) return;
@@ -1429,22 +1431,29 @@ function stopMouseShakePolling() {
 }
 
 function applyConfiguredWakeState() {
-  const wiggleEnv = process.env.MAGIC_POINTER_ENABLE_MOUSE_SHAKE;
-  const wiggleConfigured = ['wiggle', 'wiggle_hotkey'].includes(fabricSettings?.activation?.wake_mode)
-    && fabricSettings?.activation?.wiggle_enabled !== false;
-  const configured = wiggleConfigured || fabricSettings?.activation?.wake_mode === 'mouse_button';
-  const enabled = !onboardingRequired
-    && !inputPaused
-    && (wiggleEnv === '1' ? true : wiggleEnv === '0' ? false : configured);
+  const policy = currentPointerPollingPolicy();
   mouseActivationDetector.reset(pointerInputState.buttons);
-  if (enabled) {
+  if (policy.shouldPoll) {
     startPointerInputStateStream();
     startMouseShakePolling();
   } else {
     stopMouseShakePolling();
   }
-  log(`pointer activation polling=${enabled} wakeMode=${fabricSettings?.activation?.wake_mode} paused=${inputPaused} sensitivity=${fabricSettings?.activation?.sensitivity}`);
-  return enabled;
+  log(`pointer activation polling=${policy.shouldPoll} wiggle=${policy.detectWiggle} mouseButton=${policy.detectMouseButton} wakeMode=${fabricSettings?.activation?.wake_mode} paused=${inputPaused} sensitivity=${fabricSettings?.activation?.sensitivity}`);
+  return policy.shouldPoll;
+}
+
+function currentPointerPollingPolicy() {
+  const voiceStartStrategy = String(fabricSettings?.interaction?.voice_start_strategy || 'auto');
+  return pointerPollingPolicy({
+    wakeMode: fabricSettings?.activation?.wake_mode,
+    wiggleEnabled: fabricSettings?.activation?.wiggle_enabled,
+    mouseShakeOverride: process.env.MAGIC_POINTER_ENABLE_MOUSE_SHAKE,
+    voicePointerConfigured: ['push_to_talk', 'hover'].includes(voiceStartStrategy),
+    voiceStartStrategy,
+    onboardingRequired,
+    inputPaused,
+  });
 }
 
 function inputModeForReason(reason) {

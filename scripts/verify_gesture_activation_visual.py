@@ -248,7 +248,7 @@ def main() -> int:
             stderr=subprocess.STDOUT,
         )
         startup_pattern = (
-            "pointer activation polling=true wakeMode=wiggle"
+            "pointer activation polling=true wiggle=true"
             if ACTIVATION_MODE == "wiggle"
             else "accelerator=Control+Alt+Shift+F11 ok=true"
         )

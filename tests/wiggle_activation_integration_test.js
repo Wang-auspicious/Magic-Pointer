@@ -12,7 +12,8 @@ assert(main.includes("requestActivation('wiggle')"));
 assert(main.includes('mouseActivationDetector.push({'));
 assert(main.includes("fabricSettings?.activation?.mouse_side_button || 'none'"));
 assert(main.includes('requestActivation(mouseActivationReason)'));
-assert(main.includes("fabricSettings?.activation?.wake_mode === 'mouse_button'"));
+assert(main.includes('pointerPolicy.detectMouseButton'),
+  'mouse-button wake remains explicitly enabled by the shared polling policy');
 assert(pointerState.includes('IsDown(5)'));
 assert(pointerState.includes('$buttons -bor 8'));
 assert(pointerState.includes('IsDown(6)'));

@@ -35,6 +35,14 @@ assert(stage.includes('api.onPointerInput((payload) => handleVoicePointerInput(p
 
 assert(main.includes("stageWindow.webContents.send('stage:pointer-input'"));
 assert(main.includes('voiceStartStrategy: fabricSettings.interaction.voice_start_strategy'));
+assert(main.includes("require('./pointer_polling_policy')"),
+  'voice mouse strategies must share an explicit polling policy with wake detection');
+assert(/voicePointerConfigured:\s*\['push_to_talk',\s*'hover'\]\.includes\(/.test(main),
+  'configuring either mouse voice strategy must keep the native pointer stream resident');
+assert(/if\s*\(!pointerPolicy\.detectWiggle\)\s*return;[\s\S]*?wiggleDetector\.push/.test(main),
+  'voice-only pointer polling must not silently re-enable wiggle activation');
+assert(/pointerPolicy\.detectMouseButton[\s\S]*?mouseActivationDetector\.push/.test(main),
+  'mouse-button wake detection must remain independently gated');
 assert(main.includes("voiceArgs.push('--stop-file', stopFile)"));
 assert(main.includes("fs.writeFileSync(stopFile, 'stop\\n', { encoding: 'utf8', flag: 'wx' })"));
 assert(main.includes("stopDictation(surface, { graceful: payload?.graceful === true })"));

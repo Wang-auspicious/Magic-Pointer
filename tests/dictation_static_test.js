@@ -26,7 +26,8 @@ assert(script.includes('sounddevice'));
 assert(script.includes('whisper'));
 assert(script.includes('cached_model_path'));
 
-assert(main.includes('const wiggleEnv = process.env.MAGIC_POINTER_ENABLE_MOUSE_SHAKE'));
+assert(main.includes('mouseShakeOverride: process.env.MAGIC_POINTER_ENABLE_MOUSE_SHAKE'),
+  'the explicit shake override must flow through the shared pointer polling policy');
 assert(main.includes('applyConfiguredWakeState'));
 assert(main.includes('fabricSettings?.activation?.wiggle_enabled'));
 assert(!main.includes('MAGIC_POINTER_SHOW_STARTUP'),
