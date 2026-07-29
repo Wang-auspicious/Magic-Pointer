@@ -5,12 +5,6 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
-    inputs:
-      publish:
-        description: Publish the package to GitHub Releases
-        required: false
-        default: false
-        type: boolean
 
 permissions:
   contents: write
@@ -56,14 +50,28 @@ jobs:
           python -m pytest -q --basetemp "${{ runner.temp }}\magic-pointer-pytest"
 
       - name: Build unsigned installer
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') && inputs.publish != true }}
         run: npm run dist:win
 
-      - name: Build and publish update
-        if: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.publish == true }}
+      - name: Verify packaged and installed products
+        run: |
+          npm run verify:package
+          npm run verify:installer
+
+      - name: Publish verified update
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run dist:win -- --publish always
+        run: |
+          $assets = @(
+            (Get-ChildItem 'release/*.exe').FullName
+            (Resolve-Path 'release/latest.yml').Path
+            (Get-ChildItem 'release/*.blockmap').FullName
+          )
+          gh release create $env:GITHUB_REF_NAME $assets `
+            --verify-tag `
+            --generate-notes `
+            --title "Magic Pointer $env:GITHUB_REF_NAME"
 
       - uses: actions/upload-artifact@v4
         with:

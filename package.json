@@ -8,6 +8,7 @@
     "pack:win": "node scripts/run-electron-builder.js --config electron-builder.yml --win --dir",
     "dist:win": "node scripts/run-electron-builder.js --config electron-builder.yml --win nsis",
     "verify:package": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify_windows_package.ps1",
+    "verify:installer": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify_windows_installer.ps1",
     "test": "node scripts/run-node-tests.js"
   },
   "keywords": [

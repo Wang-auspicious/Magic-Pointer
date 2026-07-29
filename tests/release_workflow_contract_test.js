@@ -18,11 +18,17 @@ assert.match(workflow, /actions\/setup-node@v4[\s\S]*?node-version:\s*['"]24['"]
 assert.match(workflow, /npm ci --ignore-scripts/);
 assert.match(workflow, /npm test/);
 assert.match(workflow, /python -m pytest -q/);
-assert.match(workflow, /npm run dist:win -- --publish always/,
-  'tag builds must publish electron-updater metadata and installer');
+assert.match(workflow, /run:\s*npm run dist:win/,
+  'Windows artifacts must be built exactly once before verification');
+assert.match(workflow, /npm run dist:win[\s\S]*?npm run verify:package[\s\S]*?npm run verify:installer[\s\S]*?gh release create/,
+  'tag builds must verify the exact installer before publishing it');
+assert.doesNotMatch(workflow, /--publish always/,
+  'electron-builder must not publish an unverified installer during its build');
+assert.match(workflow, /gh release create[\s\S]*?release\/\*\.exe[\s\S]*?release\/latest\.yml[\s\S]*?release\/\*\.blockmap/,
+  'the verified installer and electron-updater metadata must be published together');
 assert.match(workflow, /release\/\*\.exe[\s\S]*?release\/latest\.yml[\s\S]*?release\/\*\.blockmap/,
   'workflow artifacts must contain installer and updater metadata');
 assert.match(workflow, /GH_TOKEN:\s*\$\{\{\s*secrets\.GITHUB_TOKEN\s*\}\}/,
-  'electron-builder must publish with the workflow-scoped token');
+  'GitHub CLI must publish with the workflow-scoped token');
 
 console.log('release workflow contract test ok');

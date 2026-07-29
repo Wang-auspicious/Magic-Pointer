@@ -58,6 +58,11 @@
 4. 启动日志未出现 capsule show；
 5. 静默卸载后 EXE、卸载注册项、桌面/开始菜单快捷方式均消失。
 
+上述闭环已固化为 `npm run verify:installer`，使用隔离用户数据目录，且检测到
+已有用户安装时会拒绝覆盖。CI 的发布顺序为：构建一次 → 验证解包产物 →
+真实安装/启动/卸载验证 → 仅在 `v*` 标签上发布同一批已验证的 EXE、
+`latest.yml` 与 blockmap；不再由 electron-builder 边构建边提前发布。
+
 ### Agent
 
 通过 Magic Pointer 自己的 `agent_bridge.py` 发送只读最小探针：
