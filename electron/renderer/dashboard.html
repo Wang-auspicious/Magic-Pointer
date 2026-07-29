@@ -174,6 +174,10 @@
                   <label class="settings-row"><span><b>唤醒方式</b><small>鼠标晃动为默认入口；快捷键与侧键用于辅助或无障碍场景。</small></span><select id="wake-mode"><option value="wiggle">仅鼠标晃动</option><option value="wiggle_hotkey">晃动 + 快捷键备用</option><option value="hotkey">仅快捷键</option><option value="mouse_button">鼠标侧键</option></select></label>
                   <label class="settings-row"><span><b>晃动鼠标唤醒</b><small>拖拽、滚动和禁用应用会被拒绝。</small></span><input id="wiggle-enabled" class="switch-input" type="checkbox" checked /></label>
                   <label class="settings-row range-row"><span><b>灵敏度</b><small>越高越容易触发；校准会使用你的真实动作更新阈值。</small></span><span class="inline-control"><input id="wiggle-sensitivity" type="range" min="0" max="100" value="55" /><output id="sensitivity-value">55%</output></span></label>
+                  <label class="settings-row"><span><b>落笔缓冲</b><small>晃动识别后，等待多久再接管下一次左键绘制。</small></span><input id="gesture-arm-delay" class="compact-input" type="number" min="60" max="600" step="10" value="180" /></label>
+                  <label class="settings-row"><span><b>绘制等待</b><small>进入待画状态后，超时未落笔则自动取消。</small></span><input id="gesture-timeout" class="compact-input" type="number" min="1000" max="15000" step="250" value="5000" /></label>
+                  <label class="settings-row"><span><b>划线样式</b><small>默认使用演示 6 的整行柔和宽带；细线保留为可选格式。</small></span><select id="gesture-line-style"><option value="demo6_band">演示 6 宽带（默认）</option><option value="thin">细线</option></select></label>
+                  <label class="settings-row"><span><b>划线宽度</b><small>默认 22 DIP，约等于常见一行文字高度并上下各留 1 px。</small></span><input id="gesture-line-width" class="compact-input" type="number" min="3" max="40" step="1" value="22" /></label>
                   <label class="settings-row"><span><b>默认输入方式</b><small>临时气泡不显示模式切换。</small></span><select id="default-input-mode"><option value="voice">语音</option><option value="text">文字</option></select></label>
                   <label class="settings-row"><span><b>备用快捷键</b><small>用于无障碍访问和故障恢复。</small></span><input id="fallback-hotkey-enabled" class="switch-input" type="checkbox" checked /></label>
                   <label class="settings-row"><span><b>快捷键组合</b><small>在键盘快捷键页统一修改。</small></span><input id="fallback-hotkey" class="compact-input hotkey-recorder" type="text" value="Control+Alt+M" readonly /></label>
@@ -198,12 +202,19 @@
               <section class="settings-section">
                 <div class="section-heading"><div><h2>本地语音</h2><p>转写在本机完成；提交仍遵循应用和隐私边界。</p></div></div>
                 <div class="settings-list">
-                  <label class="settings-row"><span><b>开始策略</b><small>按住说话与驻留模式接入前固定自动监听。</small></span><select id="voice-start-strategy" disabled><option value="auto">自动开始监听</option></select></label>
+                  <label class="settings-row"><span><b>开始策略</b><small>可自动监听、按住鼠标左键说话，或将指针驻留在语音胶囊上开始。</small></span><select id="voice-start-strategy"><option value="auto">自动开始监听</option><option value="push_to_talk">按住左键说话</option><option value="hover">驻留语音胶囊</option></select></label>
                   <label class="settings-row"><span><b>停顿后自动提交</b><small>关闭时先完成转写，再由你确认发送。</small></span><input id="voice-auto-submit" class="switch-input" type="checkbox" checked /></label>
                   <label class="settings-row"><span><b>识别语言</b><small>自动模式根据当前语音判断。</small></span><select id="voice-language"><option value="auto">自动识别</option><option value="zh">中文</option><option value="en">English</option><option value="ja">日本語</option><option value="ko">한국어</option><option value="fr">Français</option><option value="de">Deutsch</option><option value="es">Español</option><option value="ru">Русский</option></select></label>
                   <label class="settings-row"><span><b>转写策略</b><small>默认保留原话，不擅自改写用户意图。</small></span><select id="voice-output-mode"><option value="verbatim">逐字保留</option><option value="clean_spacing">清理重复空格</option></select></label>
+                  <label class="settings-row"><span><b>中文口述标点</b><small>只转换“逗号、句号、问号、换行”等明确口令。</small></span><select id="voice-punctuation"><option value="verbatim">保留原话</option><option value="smart_zh">转换常用标点口令</option></select></label>
+                  <label class="settings-row"><span><b>简繁输出</b><small>使用本地 OpenCC；运行库缺失时明确降级到有限字符表。</small></span><select id="voice-script"><option value="unchanged">不转换</option><option value="simplified">简体</option><option value="traditional">繁体</option></select></label>
+                  <label class="settings-row"><span><b>中英混排空格</b><small>可保留原空格，或仅压缩中英文边界空格。</small></span><select id="voice-mixed-spacing"><option value="preserve">保留</option><option value="compact_cjk">压缩边界空格</option></select></label>
                   <label class="settings-row"><span><b>静音幻觉拦截</b><small>没有可靠语音时不生成命令。</small></span><input id="voice-hallucination-guard" class="switch-input" type="checkbox" checked /></label>
                   <label class="settings-row"><span><b>停顿提交时间</b><small>600–5000 毫秒。</small></span><span class="unit-input"><input id="voice-silence-ms" type="number" min="600" max="5000" value="1600" /><em>ms</em></span></label>
+                  <label class="settings-row"><span><b>常驻语音模型</b><small>开启后复用同一受限本地 worker；关闭时按次启动兼容路径。</small></span><input id="voice-resident-enabled" class="switch-input" type="checkbox" checked /></label>
+                  <label class="settings-row"><span><b>语音内存上限</b><small>加载前估算、加载后以 worker 工作集实测，任一超限即释放。</small></span><span class="unit-input"><input id="voice-memory-limit-mb" type="number" min="128" max="16384" step="128" value="1024" /><em>MB</em></span></label>
+                  <label class="settings-row"><span><b>空闲释放时间</b><small>没有进行中的录音时，到期由 worker 主动卸载。</small></span><span class="unit-input"><input id="voice-idle-unload-seconds" type="number" min="10" max="3600" value="300" /><em>秒</em></span></label>
+                  <p id="voice-resident-status" class="settings-note">状态由本地运行时回传：未加载。</p>
                 </div>
               </section>
               <section class="settings-section"><div class="section-heading"><div><h2>项目术语</h2></div></div><div class="settings-list field-list"><label class="field-block"><span>作用域词典</span><textarea id="voice-glossaries" rows="7" spellcheck="false" placeholder="* | Magic Pointer&#10;D:\work\repo | Context Packet"></textarea><small>每行 scope | term；* 为全局。</small></label></div></section>
@@ -401,7 +412,23 @@
             <div class="settings-page"><section class="settings-section"><div class="section-heading"><div><h2>主题与材质</h2></div></div><div class="settings-list">
               <label class="settings-row"><span><b>外观</b><small>跟随系统或固定明暗主题。</small></span><select id="theme-select" aria-label="界面外观"><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></label>
               <label class="settings-row"><span><b>窗口材质</b><small>支持时使用 Mica / vibrancy，否则回退为纯色。</small></span><select id="appearance-material"><option value="auto">自动</option><option value="translucent">柔和材质</option><option value="solid">纯色</option></select></label>
+              <label class="settings-row"><span><b>目标指示方式</b><small>默认使用整行渐变扫光；也可切换为柔光或轻描边。</small></span><select id="selection-visual" aria-label="目标指示方式"><option value="sweep_band">整行渐变扫光（默认）</option><option value="soft_glow">柔和对象光晕</option><option value="outline">轻描边</option></select></label>
               <label class="settings-row"><span><b>强调色</b><small>只用于选中、焦点、进度和操作链接。</small></span><select id="appearance-accent" disabled><option>系统蓝</option></select></label>
+            </div></section>
+            <section class="settings-section"><div class="section-heading"><div><h2>扫线</h2><p>默认值逐帧对齐演示 7；均可调整并立即用于下一次选择。</p></div></div><div class="settings-list">
+              <label class="settings-row"><span><b>相对厚度</b><small>目标行高乘数；默认 0.52。</small></span><input id="sweep-height-ratio" class="compact-input" type="number" min="0.15" max="1.5" step="0.01" /></label>
+              <label class="settings-row"><span><b>最小厚度</b><small>紧凑行的下限，单位 DIP。</small></span><input id="sweep-min-height" class="compact-input" type="number" min="4" max="48" step="1" /></label>
+              <label class="settings-row"><span><b>最大厚度</b><small>防止覆盖相邻行；默认 24 DIP。</small></span><input id="sweep-max-height" class="compact-input" type="number" min="6" max="96" step="1" /></label>
+              <label class="settings-row"><span><b>扫过时长</b><small>从起点到目标末端，单位毫秒。</small></span><input id="sweep-duration" class="compact-input" type="number" min="60" max="1500" step="1" /></label>
+              <label class="settings-row"><span><b>消退时长</b><small>扫线自然离场，单位毫秒。</small></span><input id="sweep-fade" class="compact-input" type="number" min="60" max="1500" step="1" /></label>
+            </div></section>
+            <section class="settings-section"><div class="section-heading"><div><h2>语音胶囊</h2><p>圆形出现后再横向展开；不使用矩形阴影层。</p></div></div><div class="settings-list">
+              <label class="settings-row"><span><b>圆形出现时长</b><small>对应演示 7 的圆形弹出阶段，单位毫秒。</small></span><input id="capsule-spawn" class="compact-input" type="number" min="60" max="1500" step="1" /></label>
+              <label class="settings-row"><span><b>横向展开时长</b><small>圆形变为胶囊，单位毫秒。</small></span><input id="capsule-expand" class="compact-input" type="number" min="60" max="1500" step="1" /></label>
+              <label class="settings-row"><span><b>语音宽度</b><small>无文字时保持圆形，单位 DIP。</small></span><input id="capsule-voice-width" class="compact-input" type="number" min="28" max="180" step="1" /></label>
+              <label class="settings-row"><span><b>文字初始宽度</b><small>文字入口默认宽度，单位 DIP。</small></span><input id="capsule-text-width" class="compact-input" type="number" min="40" max="560" step="1" /></label>
+              <label class="settings-row"><span><b>最大宽度</b><small>转写增长上限，单位 DIP。</small></span><input id="capsule-max-width" class="compact-input" type="number" min="80" max="900" step="1" /></label>
+              <label class="settings-row"><span><b>与目标间距</b><small>优先同行放置，空间不足自动翻转，单位 DIP。</small></span><input id="capsule-inline-gap" class="compact-input" type="number" min="4" max="96" step="1" /></label>
             </div></section></div>
           </section>
 
@@ -443,6 +470,15 @@
           </section>
 
           <section class="fabric-view page-content" data-fabric-view="diagnostics" hidden>
+            <aside id="first-run-notice" class="first-run-notice" role="status" aria-live="polite" hidden>
+              <span class="first-run-notice__signal" aria-hidden="true"></span>
+              <div class="first-run-notice__copy">
+                <p class="first-run-notice__eyebrow">首次设置</p>
+                <h2>先完成安全检查</h2>
+                <p><strong id="first-run-wake-state">尚未启用全局唤醒。</strong> <span id="first-run-next-step">运行全部检查后启用。</span></p>
+                <p class="first-run-notice__exit">可从托盘退出 Magic Pointer。</p>
+              </div>
+            </aside>
             <div class="section-heading page-section-heading">
               <div><h2>启动检查</h2><p>初始化与诊断共用同一组真实检查，不用假进度。</p></div>
               <button id="preflight-run" class="button button-primary" type="button">运行全部检查</button>

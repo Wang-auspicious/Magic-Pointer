@@ -222,6 +222,16 @@ The bridge never downloads a model silently. It only uses a model already presen
 Whisper cache and emits a visible local error otherwise. The old system-dictation script remains a
 manual compatibility artifact, not the default path.
 
+### OpenCC
+
+- Upstream: https://github.com/BYVoid/OpenCC
+- Runtime dependency: `opencc>=1.4.1,<2.0.0`.
+- License: Apache-2.0.
+- Role: local phrase-aware simplified/traditional Chinese conversion for fixed voice-output preferences.
+- Magic Pointer integration: `app/voice/text_normalization.py`; `t2s.json` and `s2t.json` are selected
+  explicitly. If the packaged dependency is missing, the UI/runtime reports limited coverage and uses
+  only the small audited fallback map rather than claiming complete conversion.
+
 ### License boundaries
 
 - Do not describe every folder under `external/` as freely vendorable.

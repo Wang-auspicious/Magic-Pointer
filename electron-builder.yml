@@ -1,0 +1,76 @@
+appId: com.magicpointer.desktop
+productName: Magic Pointer
+executableName: Magic Pointer
+artifactName: Magic-Pointer-${version}-setup.${ext}
+
+publish:
+  provider: github
+  owner: Wang-auspicious
+  repo: Magic-Pointer
+
+directories:
+  output: release
+
+# The Python bridge is launched as a separate process and therefore cannot read
+# files inside app.asar. Keep the application tree unpacked until the bridge is
+# changed to resolve resources outside the archive.
+asar: false
+
+# The only Node production runtime is pure JavaScript (electron-updater).
+# Skipping native rebuild avoids an unnecessary and occasionally stalled pass.
+npmRebuild: false
+
+files:
+  - electron/**
+  - app/**
+  - scripts/__init__.py
+  - scripts/action_bridge.py
+  - scripts/agent_bridge.py
+  - scripts/agent_hook_bridge.py
+  - scripts/agent_worker.py
+  - scripts/calendar_bridge.py
+  - scripts/electron_bridge.py
+  - scripts/fabric_bridge.py
+  - scripts/install_agent_hooks.py
+  - scripts/list_models.py
+  - scripts/local_voice_bridge.py
+  - scripts/local_voice_worker.py
+  - scripts/magic_pointer_mcp.py
+  - scripts/office_selection_probe.vbs
+  - scripts/pointer_input_state.ps1
+  - scripts/selection_bridge.py
+  - scripts/selection_snapshot_bridge.py
+  - scripts/shopping_list_bridge.py
+  - scripts/smoke_fabric.py
+  - scripts/start_windows_dictation.ps1
+  - scripts/uia_draft_writer.cs
+  - scripts/uia_selection_probe.cs
+  - assets/app/icon.ico
+  - data/model_capabilities.v1.json
+  - data/preflight_manifest.v1.json
+  - data/README.md
+  - requirements.txt
+  - package.json
+
+extraResources:
+  - from: build/python-runtime
+    to: python-runtime
+    filter:
+      - '**/*'
+
+win:
+  icon: assets/app/icon.ico
+  target:
+    - nsis
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Magic Pointer
+  uninstallDisplayName: Magic Pointer
+  installerIcon: assets/app/icon.ico
+  uninstallerIcon: assets/app/icon.ico
+  warningsAsErrors: false

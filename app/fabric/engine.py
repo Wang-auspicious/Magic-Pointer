@@ -33,7 +33,7 @@ from app.models.capability_resolver import ModelCapabilityResolver
 from app.models.visual_relay import VisualRelayPlanner
 
 
-_PROVIDER_BY_RECIPE = {
+PROVIDER_BY_RECIPE = {
     "activate.wiggle": "internal",
     "ground.this": "internal",
     "ground.references": "internal",
@@ -398,7 +398,7 @@ class FabricEngine:
         override = str(parameters.get("provider") or "")
         if override and configured.get(override) is True:
             return override
-        provider = _PROVIDER_BY_RECIPE[recipe_id]
+        provider = PROVIDER_BY_RECIPE[recipe_id]
         needs_agent_fallback = provider.startswith("unavailable:")
         if provider == "model.text" and not self.model_transform_available:
             needs_agent_fallback = True

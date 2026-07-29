@@ -3,13 +3,16 @@ class WiggleDetector {
     sensitivity = 0.55,
     disabledApps = [],
     cooldownMs = 900,
-    windowMs = 600,
+    windowMs = 700,
   } = {}) {
     this.sensitivity = Math.max(0, Math.min(1, Number(sensitivity) || 0.55));
     this.disabledApps = disabledApps.map((value) => String(value).toLowerCase()).filter(Boolean);
     this.cooldownMs = Math.max(500, Number(cooldownMs) || 900);
-    this.windowMs = Math.max(350, Math.min(700, Number(windowMs) || 600));
+    this.windowMs = Math.max(280, Math.min(900, Number(windowMs) || 700));
     this.points = [];
+    this.lastSample = null;
+    this.lastMotionAt = null;
+    this.idleResetMs = 140;
     this.lastTriggeredAt = Number.NEGATIVE_INFINITY;
     this.thresholdScale = 1 + (0.5 - this.sensitivity) * 0.8;
     this.immediateCancels = 0;
@@ -18,6 +21,8 @@ class WiggleDetector {
 
   reset() {
     this.points = [];
+    this.lastSample = null;
+    this.lastMotionAt = null;
   }
 
   updateSettings({
@@ -31,7 +36,7 @@ class WiggleDetector {
       .map((value) => String(value).toLowerCase())
       .filter(Boolean);
     this.cooldownMs = Math.max(500, Number(cooldownMs) || 900);
-    this.windowMs = Math.max(350, Math.min(700, Number(windowMs) || 600));
+    this.windowMs = Math.max(280, Math.min(900, Number(windowMs) || 700));
     this.thresholdScale = 1 + (0.5 - this.sensitivity) * 0.8;
     this.reset();
   }
@@ -86,20 +91,22 @@ class WiggleDetector {
   }
 
   _metrics(recent) {
-    if (recent.length < 5) return { ready: false, reason: 'insufficient_samples' };
+    if (recent.length < 4) return { ready: false, reason: 'insufficient_samples' };
     const first = recent[0];
     const last = recent[recent.length - 1];
     const durationMs = last.t - first.t;
-    if (durationMs < 250) return { ready: false, reason: 'too_fast', durationMs };
+    if (durationMs < 65) return { ready: false, reason: 'too_fast', durationMs };
     if (durationMs > this.windowMs) return { ready: false, reason: 'too_slow', durationMs };
 
     const xs = recent.map((point) => point.x);
     const ys = recent.map((point) => point.y);
     const xRange = Math.max(...xs) - Math.min(...xs);
     const yRange = Math.max(...ys) - Math.min(...ys);
-    const minRange = 38 * this.thresholdScale;
+    const minRange = 28 * this.thresholdScale;
     if (xRange < minRange) return { ready: false, reason: 'horizontal_range', durationMs, xRange, yRange };
-    if (yRange > Math.max(16, xRange * 0.36)) {
+    // User intent is three alternating horizontal-ish strokes. Permit a
+    // generous diagonal axis; reject only motion that is predominantly vertical.
+    if (yRange > Math.max(48, xRange * 0.90)) {
       return { ready: false, reason: 'vertical_drift', durationMs, xRange, yRange };
     }
 
@@ -117,12 +124,12 @@ class WiggleDetector {
         direction = nextDirection;
         distance += Math.abs(dx);
       } else {
-        if (distance >= 14 * this.thresholdScale) segments.push({ direction, distance });
+        if (distance >= 10 * this.thresholdScale) segments.push({ direction, distance });
         direction = nextDirection;
         distance = Math.abs(dx);
       }
     }
-    if (distance >= 14 * this.thresholdScale) segments.push({ direction, distance });
+    if (distance >= 10 * this.thresholdScale) segments.push({ direction, distance });
     const reversals = Math.max(0, segments.length - 1);
     const horizontalTravel = segments.reduce((sum, segment) => sum + segment.distance, 0);
     const net = Math.hypot(last.x - first.x, last.y - first.y);
@@ -141,10 +148,10 @@ class WiggleDetector {
       returnRatio,
       velocity,
     };
-    if (reversals < 3) return { ...metrics, ready: false, reason: 'insufficient_reversals' };
-    if (horizontalTravel < 105 * this.thresholdScale) return { ...metrics, ready: false, reason: 'travel_too_short' };
-    if (returnRatio < 0.25) return { ...metrics, ready: false, reason: 'did_not_return' };
-    if (velocity < 210 * this.thresholdScale) return { ...metrics, ready: false, reason: 'velocity_too_low' };
+    if (reversals < 2) return { ...metrics, ready: false, reason: 'insufficient_reversals' };
+    if (horizontalTravel < 68 * this.thresholdScale) return { ...metrics, ready: false, reason: 'travel_too_short' };
+    if (returnRatio < 0.12) return { ...metrics, ready: false, reason: 'did_not_return' };
+    if (velocity < 90 * this.thresholdScale) return { ...metrics, ready: false, reason: 'velocity_too_low' };
     return metrics;
   }
 
@@ -161,11 +168,38 @@ class WiggleDetector {
     if (!Number.isFinite(point.t) || !Number.isFinite(point.x) || !Number.isFinite(point.y)) {
       return { triggered: false, reason: 'invalid_sample', metrics: {} };
     }
+    const previousSample = this.lastSample;
+    this.lastSample = point;
+    const blocked = this._blocked(point, [...this.points, point]);
+    if (blocked) {
+      this.points = [];
+      this.lastMotionAt = null;
+      return { triggered: false, reason: blocked, metrics: {} };
+    }
+
+    if (!previousSample) {
+      this.points = [point];
+      return { triggered: false, reason: 'insufficient_samples', metrics: {} };
+    }
+
+    const movement = Math.hypot(point.x - previousSample.x, point.y - previousSample.y);
+    if (movement < 1.5 * this.thresholdScale) {
+      if (this.lastMotionAt === null || point.t - this.lastMotionAt >= this.idleResetMs) {
+        this.points = [point];
+        this.lastMotionAt = null;
+      }
+      return { triggered: false, reason: 'idle', metrics: {} };
+    }
+
+    // A wiggle is one continuous movement burst. Old ordinary mouse travel
+    // must never make the next deliberate left-right-left gesture harder.
+    if (this.lastMotionAt === null || point.t - this.lastMotionAt >= this.idleResetMs) {
+      this.points = [previousSample];
+    }
+    this.lastMotionAt = point.t;
     this.points.push(point);
     const cutoff = point.t - this.windowMs;
     this.points = this.points.filter((item) => item.t >= cutoff);
-    const blocked = this._blocked(point, this.points);
-    if (blocked) return { triggered: false, reason: blocked, metrics: {} };
 
     const metrics = this._metrics(this.points);
     if (!metrics.ready) return { triggered: false, reason: metrics.reason, metrics };
@@ -175,6 +209,7 @@ class WiggleDetector {
       return { triggered: false, reason: 'calibrating', metrics };
     }
     if (point.t - this.lastTriggeredAt < this.cooldownMs) {
+      this.reset();
       return { triggered: false, reason: 'cooldown', metrics };
     }
     this.lastTriggeredAt = point.t;

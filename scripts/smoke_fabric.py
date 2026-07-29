@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -17,7 +18,14 @@ from app.fabric.providers import AgentProviderDiscovery
 
 def main() -> int:
     clipboard = {"value": ""}
-    with tempfile.TemporaryDirectory(prefix="magic-pointer-smoke-", dir=ROOT) as temp:
+    configured_runtime = str(os.environ.get("MAGIC_POINTER_USER_DATA_DIR", "")).strip()
+    temp_parent = Path(configured_runtime).expanduser().resolve() if configured_runtime else None
+    if temp_parent is not None:
+        temp_parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix="magic-pointer-smoke-",
+        dir=str(temp_parent) if temp_parent is not None else None,
+    ) as temp:
         runtime = Path(temp)
         engine = FabricEngine(
             root=runtime,

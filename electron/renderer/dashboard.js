@@ -61,8 +61,92 @@ let reconfirmArmedTaskId = '';
 let armedAgentContextId = '';
 let armedSkillCandidateId = '';
 const reviewedSkillDraftTokens = new Map();
-let taskPollTimer = null;
 let calendarPreviewTimer = null;
+let firstRunRequired = false;
+let runtimeSnapshotLoaded = false;
+let runtimeSnapshotRequest = null;
+let runtimeSnapshotForcePending = false;
+
+const PREFLIGHT_STATE_LABELS = Object.freeze({
+  pending: '等待检查',
+  running: '正在检查',
+  pass: '已通过',
+  warn: '需要留意',
+  fail: '未通过',
+  skipped: '已跳过',
+  needs_user: '需要设置',
+  unknown: '状态未知',
+});
+
+const PREFLIGHT_ACTIONS = Object.freeze({
+  install_python: {
+    message: '安装 Python 3.11 或更高版本后重试。',
+  },
+  repair_runtime: {
+    message: '重新安装 Magic Pointer，或修复本机运行环境后重试。',
+  },
+  request_permission: {
+    message: '在系统设置中允许辅助功能与屏幕录制，然后重试。',
+  },
+  restart_pointer_host: {
+    message: '检查唤醒方式后重新启动 Magic Pointer。',
+    label: '检查唤醒设置',
+    targetView: 'activation',
+  },
+  enable_activation: {
+    message: '选择一种唤醒方式，然后重新检查。',
+    label: '设置唤醒方式',
+    targetView: 'activation',
+  },
+  request_microphone_permission: {
+    message: '允许麦克风访问，或改用文字输入。',
+    label: '检查语音设置',
+    targetView: 'voice',
+  },
+  repair_grounding_runtime: {
+    message: '重新安装 Magic Pointer 后重试；指向组件缺失。',
+  },
+  retry_agent_discovery: {
+    message: '确认至少一个 Agent 可用，然后重试。',
+    label: '检查 Agent',
+    targetView: 'agents',
+  },
+  save_credential: {
+    message: '保存模型凭据，或使用已连接的 Agent。',
+    label: '配置模型',
+    targetView: 'models',
+  },
+  review_privacy: {
+    message: '确认捕获模式与敏感应用规则。',
+    label: '检查隐私设置',
+    targetView: 'privacy',
+  },
+  run_desktop_smoke: {
+    message: '完成一次不产生外部副作用的真实指向测试。',
+  },
+  inspect_diagnostics: {
+    message: '查看下方技术详情，修复失败项后重试。',
+  },
+});
+
+function setFirstRunState(required, ready = false) {
+  const notice = document.getElementById('first-run-notice');
+  if (!notice) return;
+  if (required === true) firstRunRequired = true;
+  if (required === false || ready === true) firstRunRequired = false;
+
+  const shouldShow = required === true || ready === true;
+  notice.hidden = !shouldShow;
+  notice.dataset.state = ready ? 'ready' : 'blocked';
+  document.documentElement.dataset.onboardingRequired = String(firstRunRequired);
+
+  document.getElementById('first-run-wake-state').textContent = ready
+    ? '检查通过，已启用全局唤醒。'
+    : '尚未启用全局唤醒。';
+  document.getElementById('first-run-next-step').textContent = ready
+    ? 'Magic Pointer 已就绪。'
+    : '运行全部检查后启用。';
+}
 
 function setActiveView(view) {
   const normalizedView = viewAliases[view] || view;
@@ -82,23 +166,12 @@ function setActiveView(view) {
     if (selected) button.setAttribute('aria-current', 'page');
     else button.removeAttribute('aria-current');
   });
-  if (taskPollTimer) {
-    clearInterval(taskPollTimer);
-    taskPollTimer = null;
-  }
   if (activeView === 'activity') {
     fabricRequest('audit.tail', { limit: 120 });
     fabricRequest('artifacts.list', { limit: 120 });
     fabricRequest('task.list', { limit: 100 });
     fabricRequest('workflow.list', { surface: 'gui', limit: 100 });
     fabricRequest('provenance.objects', { limit: 200 });
-    taskPollTimer = setInterval(() => {
-      if (activeView === 'activity') {
-        fabricRequest('task.list', { limit: 100 });
-        fabricRequest('workflow.list', { surface: 'gui', limit: 100 });
-        fabricRequest('provenance.objects', { limit: 200 });
-      }
-    }, 2500);
   }
   if (activeView === 'models') fabricRequest('models.list');
   if (activeView === 'capabilities') fabricRequest('skills.candidates.list', { limit: 100 });
@@ -116,20 +189,45 @@ function fabricRequest(operation, payload = {}) {
   api.fabricRequest(operation, payload);
 }
 
-function requestFabricState() {
-  fabricRequest('settings.get');
-  fabricRequest('catalog');
-  fabricRequest('skills.candidates.list', { limit: 100 });
-  fabricRequest('providers');
-  fabricRequest('agent.sessions', { cwdMatch: settings?.agents?.cwd_match || 'strict' });
-  fabricRequest('agent.contexts.list', { limit: 100 });
-  fabricRequest('models.list');
-  fabricRequest('audit.tail', { limit: 120 });
-  fabricRequest('artifacts.list', { limit: 120 });
-  fabricRequest('task.list', { limit: 100 });
-  fabricRequest('workflow.list', { surface: 'gui', limit: 100 });
-  fabricRequest('provenance.objects', { limit: 200 });
-  fabricRequest('browser.status');
+function applyRuntimeSnapshot(snapshot = {}) {
+  if (snapshot.settings) applySettings(snapshot.settings);
+  const statusById = new Map(
+    (Array.isArray(snapshot.capabilities) ? snapshot.capabilities : [])
+      .map((item) => [item.id, item]),
+  );
+  renderRecipes((Array.isArray(snapshot.recipes) ? snapshot.recipes : []).map((recipe) => ({
+    ...recipe,
+    runtimeCapability: statusById.get(recipe.id) || null,
+  })));
+  const runtimeModels = snapshot.models && typeof snapshot.models === 'object' ? snapshot.models : {};
+  renderModels(runtimeModels.items, runtimeModels.defaultProfileId);
+  runtimeSnapshotLoaded = true;
+}
+
+function requestFabricState({ force = false } = {}) {
+  if (!force && runtimeSnapshotLoaded) return Promise.resolve();
+  if (runtimeSnapshotRequest) {
+    if (force) runtimeSnapshotForcePending = true;
+    return runtimeSnapshotRequest;
+  }
+  runtimeSnapshotRequest = api.runtimeSnapshot.get({ force })
+    .then((snapshot) => {
+      applyRuntimeSnapshot(snapshot);
+      document.getElementById('dashboard-notice').hidden = true;
+    })
+    .catch((error) => {
+      const notice = document.getElementById('dashboard-notice');
+      notice.hidden = false;
+      notice.textContent = `运行状态读取失败：${String(error?.message || error)}`;
+    })
+    .finally(() => {
+      runtimeSnapshotRequest = null;
+      if (runtimeSnapshotForcePending) {
+        runtimeSnapshotForcePending = false;
+        queueMicrotask(() => requestFabricState({ force: true }));
+      }
+    });
+  return runtimeSnapshotRequest;
 }
 
 function applyTheme(theme, { persist = true } = {}) {
@@ -395,13 +493,23 @@ function applySettings(value) {
   setValue('wake-mode', activation.wake_mode || 'wiggle_hotkey');
   setValue('wiggle-enabled', activation.wiggle_enabled);
   setValue('wiggle-sensitivity', Math.round(Number(activation.sensitivity || .55) * 100));
+  setValue('gesture-arm-delay', activation.gesture_arm_delay_ms ?? 180);
+  setValue('gesture-timeout', activation.gesture_timeout_ms ?? 5000);
+  setValue('gesture-line-style', appearance.gesture_line_style || 'demo6_band');
+  setValue('gesture-line-width', appearance.gesture_line_width_dip ?? 22);
   setValue('default-input-mode', interaction.default_input_mode || 'voice');
-  setValue('voice-start-strategy', 'auto');
+  setValue('voice-start-strategy', interaction.voice_start_strategy || 'auto');
   setValue('voice-auto-submit', interaction.voice_auto_submit !== false);
   setValue('voice-language', interaction.voice_language || 'auto');
   setValue('voice-output-mode', interaction.voice_output_mode || 'verbatim');
+  setValue('voice-punctuation', interaction.voice_punctuation || 'verbatim');
+  setValue('voice-script', interaction.voice_script || 'unchanged');
+  setValue('voice-mixed-spacing', interaction.voice_mixed_spacing || 'preserve');
   setValue('voice-hallucination-guard', interaction.voice_hallucination_guard !== false);
   setValue('voice-silence-ms', interaction.voice_silence_ms || 1600);
+  setValue('voice-resident-enabled', interaction.voice_resident_enabled !== false);
+  setValue('voice-memory-limit-mb', interaction.voice_memory_limit_mb || 1024);
+  setValue('voice-idle-unload-seconds', Math.round((interaction.voice_idle_unload_ms || 300000) / 1000));
   setValue('voice-glossaries', formatVoiceGlossaries(interaction.voice_glossaries));
   setValue('fallback-hotkey-enabled', activation.fallback_hotkey_enabled);
   setValue('fallback-hotkey', shortcuts.wake || activation.fallback_hotkey);
@@ -436,6 +544,18 @@ function applySettings(value) {
   renderAgentSessions(agentSessions);
   setValue('theme-select', appearance.theme || 'system');
   setValue('appearance-material', appearance.material || 'auto');
+  setValue('selection-visual', appearance.selection_visual || 'sweep_band');
+  setValue('sweep-height-ratio', appearance.sweep_height_ratio ?? 0.52);
+  setValue('sweep-min-height', appearance.sweep_min_height_dip ?? 10);
+  setValue('sweep-max-height', appearance.sweep_max_height_dip ?? 24);
+  setValue('sweep-duration', appearance.sweep_duration_ms ?? 292);
+  setValue('sweep-fade', appearance.sweep_fade_ms ?? 96);
+  setValue('capsule-spawn', appearance.capsule_spawn_ms ?? 417);
+  setValue('capsule-expand', appearance.capsule_expand_ms ?? 292);
+  setValue('capsule-voice-width', appearance.capsule_voice_width_dip ?? 40);
+  setValue('capsule-text-width', appearance.capsule_text_width_dip ?? 144);
+  setValue('capsule-max-width', appearance.capsule_max_width_dip ?? 440);
+  setValue('capsule-inline-gap', appearance.capsule_inline_gap_dip ?? 18);
   setValue('reduce-motion', accessibility.reduce_motion === true);
   setValue('reduce-transparency', accessibility.reduce_transparency === true);
   setValue('high-contrast-controls', accessibility.high_contrast_controls === true);
@@ -463,17 +583,25 @@ function collectSettings() {
   next.activation.wake_mode = document.getElementById('wake-mode').value || 'wiggle_hotkey';
   next.activation.wiggle_enabled = ['wiggle', 'wiggle_hotkey'].includes(next.activation.wake_mode);
   next.activation.sensitivity = Number(document.getElementById('wiggle-sensitivity').value) / 100;
+  next.activation.gesture_arm_delay_ms = Number(document.getElementById('gesture-arm-delay').value);
+  next.activation.gesture_timeout_ms = Number(document.getElementById('gesture-timeout').value);
   next.activation.keep_current_app_focus = document.getElementById('keep-current-app-focus').checked;
   next.activation.dashboard_focus_after_action = false;
   next.activation.mouse_side_button = document.getElementById('mouse-side-button').value || 'none';
   next.interaction = { ...(next.interaction || {}) };
   next.interaction.default_input_mode = document.getElementById('default-input-mode').value === 'text' ? 'text' : 'voice';
-  next.interaction.voice_start_strategy = 'auto';
+  next.interaction.voice_start_strategy = document.getElementById('voice-start-strategy').value || 'auto';
   next.interaction.voice_auto_submit = document.getElementById('voice-auto-submit').checked;
   next.interaction.voice_language = document.getElementById('voice-language').value || 'auto';
   next.interaction.voice_output_mode = document.getElementById('voice-output-mode').value || 'verbatim';
+  next.interaction.voice_punctuation = document.getElementById('voice-punctuation').value || 'verbatim';
+  next.interaction.voice_script = document.getElementById('voice-script').value || 'unchanged';
+  next.interaction.voice_mixed_spacing = document.getElementById('voice-mixed-spacing').value || 'preserve';
   next.interaction.voice_hallucination_guard = document.getElementById('voice-hallucination-guard').checked;
   next.interaction.voice_silence_ms = Number(document.getElementById('voice-silence-ms').value);
+  next.interaction.voice_resident_enabled = document.getElementById('voice-resident-enabled').checked;
+  next.interaction.voice_memory_limit_mb = Number(document.getElementById('voice-memory-limit-mb').value);
+  next.interaction.voice_idle_unload_ms = Number(document.getElementById('voice-idle-unload-seconds').value) * 1000;
   next.interaction.voice_glossaries = parseVoiceGlossaries(document.getElementById('voice-glossaries').value);
   next.activation.fallback_hotkey_enabled = ['wiggle_hotkey', 'hotkey'].includes(next.activation.wake_mode);
   next.activation.disabled_apps = valuesFromLines(document.getElementById('disabled-apps').value);
@@ -509,6 +637,20 @@ function collectSettings() {
   next.appearance = { ...(next.appearance || {}) };
   next.appearance.theme = document.getElementById('theme-select').value || 'system';
   next.appearance.material = document.getElementById('appearance-material').value || 'auto';
+  next.appearance.selection_visual = document.getElementById('selection-visual').value || 'sweep_band';
+  next.appearance.sweep_height_ratio = Number(document.getElementById('sweep-height-ratio').value);
+  next.appearance.sweep_min_height_dip = Number(document.getElementById('sweep-min-height').value);
+  next.appearance.sweep_max_height_dip = Number(document.getElementById('sweep-max-height').value);
+  next.appearance.sweep_duration_ms = Number(document.getElementById('sweep-duration').value);
+  next.appearance.sweep_fade_ms = Number(document.getElementById('sweep-fade').value);
+  next.appearance.capsule_spawn_ms = Number(document.getElementById('capsule-spawn').value);
+  next.appearance.capsule_expand_ms = Number(document.getElementById('capsule-expand').value);
+  next.appearance.capsule_voice_width_dip = Number(document.getElementById('capsule-voice-width').value);
+  next.appearance.capsule_text_width_dip = Number(document.getElementById('capsule-text-width').value);
+  next.appearance.capsule_max_width_dip = Number(document.getElementById('capsule-max-width').value);
+  next.appearance.capsule_inline_gap_dip = Number(document.getElementById('capsule-inline-gap').value);
+  next.appearance.gesture_line_style = document.getElementById('gesture-line-style').value || 'demo6_band';
+  next.appearance.gesture_line_width_dip = Number(document.getElementById('gesture-line-width').value);
   next.accessibility = { ...(next.accessibility || {}) };
   next.accessibility.reduce_motion = document.getElementById('reduce-motion').checked;
   next.accessibility.reduce_transparency = document.getElementById('reduce-transparency').checked;
@@ -857,12 +999,26 @@ function renderRecipes(items = recipes) {
     copy.append(name, description, provider);
     const controls = document.createElement('div');
     controls.className = 'recipe-controls';
+    const capability = recipe.runtimeCapability || {};
+    const capabilityState = String(capability.state || 'unknown');
+    const availability = document.createElement('span');
+    availability.className = `state ${capabilityState === 'ready' ? 'state-ready' : capabilityState === 'unknown' ? 'state-muted' : 'state-warn'}`;
+    availability.textContent = {
+      ready: '可执行',
+      needs_setup: '需设置',
+      needs_agent: '需 Agent',
+      experimental: '实验性',
+      blocked: '已阻止',
+      unavailable: '不可用',
+      unknown: '未验证',
+    }[capabilityState] || '未验证';
+    availability.title = `${capability.reason || 'runtime_snapshot_missing'} · ${capability.evidence?.engineProvider || 'provider_unknown'}`;
     const risk = document.createElement('span');
     risk.className = 'risk';
     risk.dataset.risk = recipe.risk;
     risk.textContent = {
       read: '读取',
-      write: '写入',
+      local_write: '写入',
       external_send: '外发',
       destructive: '破坏性',
       purchase: '付款',
@@ -876,7 +1032,7 @@ function renderRecipes(items = recipes) {
       if (settings) settings.recipe_enabled[recipe.id] = enabled.checked;
       enabled.title = enabled.checked ? '已启用' : '已禁用';
     });
-    controls.append(risk, enabled);
+    controls.append(availability, risk, enabled);
     row.append(copy, controls);
     return row;
   });
@@ -1529,26 +1685,65 @@ function renderArtifacts(items) {
   root.replaceChildren(...rows);
 }
 
+function getPreflightGuidance(stage, state) {
+  const action = PREFLIGHT_ACTIONS[String(stage.fixAction || '')];
+  if (action) return action;
+  if (state === 'pass') return { message: '此项已通过，无需操作。' };
+  if (state === 'skipped') return { message: '此项已跳过；相关能力会保持不可用。' };
+  if (state === 'pending' || state === 'running') return { message: '检查完成后会在这里显示结果。' };
+  if (state === 'warn') return { message: '请查看技术详情，确认是否需要处理。' };
+  return { message: '查看技术详情，处理后再次运行全部检查。' };
+}
+
 function renderPreflight(preflight) {
   const root = document.getElementById('preflight-list');
   const status = document.getElementById('preflight-status');
   const stages = Array.isArray(preflight?.stages) ? preflight.stages : [];
-  status.textContent = preflight?.ready
-    ? '所有必要检查已通过，已在本机标记为就绪。'
-    : '尚未就绪：请处理失败或需要你操作的检查；无法验证的桌面能力不会伪装通过。';
+  const ready = preflight?.ready === true;
+  status.textContent = ready
+    ? '所有必要检查已通过。全局唤醒现在可以使用。'
+    : '尚未就绪。请按每一项的说明处理后，再次运行全部检查。';
+  const firstRunNotice = document.getElementById('first-run-notice');
+  if (firstRunRequired || !firstRunNotice.hidden) setFirstRunState(firstRunRequired, ready);
+
   const rows = stages.map((stage) => {
+    const machineState = String(stage.state || 'unknown');
+    const action = getPreflightGuidance(stage, machineState);
     const row = document.createElement('article');
     row.className = 'preflight-row';
-    row.dataset.state = String(stage.state || 'unknown');
+    row.dataset.state = machineState;
+
+    const head = document.createElement('div');
+    head.className = 'preflight-row__head';
     const name = document.createElement('strong');
-    name.textContent = stage.title || stage.id;
-    const evidence = document.createElement('span');
-    evidence.textContent = stage.evidence || '无附加证据';
+    name.textContent = stage.title || stage.id || '未命名检查';
     const state = document.createElement('b');
-    state.textContent = stage.state || 'unknown';
-    const duration = document.createElement('small');
-    duration.textContent = `${Number(stage.durationMs || 0)} ms`;
-    row.append(name, evidence, state, duration);
+    state.className = 'preflight-state';
+    state.textContent = PREFLIGHT_STATE_LABELS[machineState] || PREFLIGHT_STATE_LABELS.unknown;
+    head.append(name, state);
+
+    const guidance = document.createElement('p');
+    guidance.className = 'preflight-guidance';
+    guidance.textContent = action.message;
+    row.append(head, guidance);
+
+    if (action.targetView) {
+      const actionButton = document.createElement('button');
+      actionButton.className = 'button button-secondary preflight-action';
+      actionButton.type = 'button';
+      actionButton.textContent = action.label;
+      actionButton.addEventListener('click', () => setActiveView(action.targetView));
+      row.append(actionButton);
+    }
+
+    const evidence = document.createElement('details');
+    evidence.className = 'preflight-evidence';
+    const evidenceSummary = document.createElement('summary');
+    evidenceSummary.textContent = `技术详情 · ${Number(stage.durationMs || 0)} ms`;
+    const evidenceCopy = document.createElement('code');
+    evidenceCopy.textContent = stage.evidence || '无附加证据';
+    evidence.append(evidenceSummary, evidenceCopy);
+    row.append(evidence);
     return row;
   });
   root.replaceChildren(...rows);
@@ -1856,9 +2051,21 @@ function calendarEventFromForm() {
   };
 }
 
+setActiveView('activation');
 api.onFabricState(handleFabricState);
+api.runtimeSnapshot.onChanged(() => requestFabricState({ force: true }));
+api.onVoiceResidencyStatus((payload = {}) => {
+  const node = document.getElementById('voice-resident-status');
+  if (!node) return;
+  const labels = { unloaded: '未加载', warming: '预热中', ready: '就绪', recording: '录音中', releasing: '释放中', error: '错误', disabled: '已关闭' };
+  node.textContent = `状态由本地运行时回传：${labels[payload.state] || '未加载'}${payload.errorCode ? `（${payload.errorCode}）` : ''}`;
+});
 api.onShow((payload = {}) => {
-  if (payload.view === 'calendar') {
+  const onboardingRequired = payload.onboardingRequired === true;
+  if ('onboardingRequired' in payload) setFirstRunState(onboardingRequired);
+  if (onboardingRequired) {
+    setActiveView('diagnostics');
+  } else if (payload.view === 'calendar') {
     setActiveView('calendar');
     if (payload.calendarDraft) applyCalendarDraft(payload.calendarDraft);
   } else if (payload.view === 'route') {
@@ -2046,7 +2253,7 @@ document.getElementById('route-open').addEventListener('click', () => {
   });
 });
 document.getElementById('dashboard-refresh').addEventListener('click', () => {
-  requestFabricState();
+  requestFabricState({ force: true });
   window.magicPointerDashboard.requestState();
 });
 document.getElementById('dashboard-close').addEventListener('click', () => api.hide());
@@ -2155,5 +2362,4 @@ renderActivity([]);
 renderArtifacts([]);
 renderState({ items: [] });
 renderCalendarState({ events: [] });
-setActiveView('activation');
 requestFabricState();

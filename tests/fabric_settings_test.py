@@ -103,7 +103,11 @@ def test_configuration_center_fields_round_trip_without_loss(tmp_path: Path) -> 
         "voice_mode": "Control+Alt+V",
         "pause": "Control+Alt+P",
     }
-    payload["appearance"] = {"theme": "dark", "material": "solid"}
+    payload["appearance"] = {
+        "theme": "dark",
+        "material": "solid",
+        "selection_visual": "soft_glow",
+    }
     payload["accessibility"] = {
         "reduce_motion": True,
         "reduce_transparency": True,
@@ -125,7 +129,24 @@ def test_configuration_center_fields_round_trip_without_loss(tmp_path: Path) -> 
     assert saved["activation"]["wake_mode"] == "hotkey"
     assert saved["interaction"]["voice_start_strategy"] == "push_to_talk"
     assert saved["shortcuts"]["text_mode"] == "Control+Alt+T"
-    assert saved["appearance"] == {"theme": "dark", "material": "solid"}
+    assert saved["appearance"] == {
+        "theme": "dark",
+        "material": "solid",
+        "selection_visual": "soft_glow",
+        "sweep_height_ratio": 0.52,
+        "sweep_min_height_dip": 10.0,
+        "sweep_max_height_dip": 24.0,
+        "sweep_duration_ms": 292.0,
+        "sweep_fade_ms": 96.0,
+        "capsule_spawn_ms": 417.0,
+        "capsule_expand_ms": 292.0,
+        "capsule_voice_width_dip": 40.0,
+        "capsule_text_width_dip": 144.0,
+        "capsule_max_width_dip": 440.0,
+        "capsule_inline_gap_dip": 18.0,
+        "gesture_line_style": "demo6_band",
+        "gesture_line_width_dip": 22.0,
+    }
     assert saved["accessibility"]["reduce_motion"] is True
     assert saved["agents"]["cwd_match"] == "strict"
 
@@ -309,4 +330,13 @@ def test_invalid_scoped_permission_fails_closed(tmp_path: Path) -> None:
     }]
     path.write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(SettingsError, match="scoped permission"):
+        SettingsStore(path).load()
+
+
+def test_invalid_selection_visual_fails_closed(tmp_path: Path) -> None:
+    path = tmp_path / "settings.json"
+    payload = FabricSettings.defaults().to_dict()
+    payload["appearance"]["selection_visual"] = "neon_box"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(SettingsError, match="selection_visual"):
         SettingsStore(path).load()

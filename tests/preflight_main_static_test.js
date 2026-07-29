@@ -3,13 +3,23 @@ const fs = require('fs');
 
 const main = fs.readFileSync('electron/main.js', 'utf8');
 const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+const runner = fs.readFileSync('scripts/run-node-tests.js', 'utf8');
 
 assert(main.includes("require('./bootstrap_runner')"));
 assert(main.includes("require('./preflight_checks')"));
+assert(main.includes("require('./python_runtime')"));
+assert(main.includes('const PYTHON_RUNTIME = resolvePythonRuntime({'));
+assert(main.includes('const PYTHON_EXECUTABLE = PYTHON_RUNTIME.executable;'));
+assert(main.includes('pythonRuntime: PYTHON_RUNTIME'));
+assert(main.includes('const pythonExecutable = PYTHON_EXECUTABLE;'));
+assert(main.includes('const py = PYTHON_EXECUTABLE;'));
+assert(!main.includes("process.env.MAGIC_POINTER_PYTHON || 'python'"),
+  'main process must not bypass packaged bundled runtime with a PATH fallback');
 assert(main.includes("path.join(ROOT, 'data', 'preflight_manifest.v1.json')"));
 assert(main.includes("markerPath: path.join(FABRIC_DATA_DIR, 'onboarding.json')"));
 assert(main.includes("if (operation === 'preflight.run')"));
 assert(main.includes('microphonePermissionStatus'));
-assert(pkg.scripts.test.includes('preflight_checks_test.js'));
+assert(pkg.scripts.test.includes('scripts/run-node-tests.js'));
+assert(runner.includes("entry.name.endsWith('_test.js')"));
 
 console.log('preflight main static test ok');

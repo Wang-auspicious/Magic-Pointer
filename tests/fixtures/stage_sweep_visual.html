@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Magic Pointer Sweep Visual Fixture</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 56px 72px;
+      color: #9b332a;
+      background: #f1f3f8;
+      font: 24px/1.35 "Times New Roman", serif;
+    }
+    main {
+      width: 760px;
+      padding: 34px 42px 42px;
+      background: #fffdf0;
+      border-radius: 24px;
+      box-shadow: 0 18px 54px rgba(35, 42, 55, .13);
+    }
+    h1 { margin: 0 0 10px; font-size: 38px; font-weight: 600; }
+    p { margin: 0 0 28px; color: #b87369; }
+    .row {
+      display: flex;
+      align-items: center;
+      width: 650px;
+      min-height: 50px;
+      margin: 2px 0;
+      padding: 4px 12px;
+      border-radius: 10px;
+    }
+    .box {
+      width: 20px;
+      height: 20px;
+      margin-right: 18px;
+      border: 1.5px solid #9b332a;
+      border-radius: 3px;
+      flex: none;
+    }
+    .row-content {
+      display: inline-flex;
+      align-items: center;
+      min-height: 42px;
+      padding-right: 10px;
+    }
+    #outside-target {
+      position: fixed;
+      right: 42px;
+      bottom: 42px;
+      min-width: 168px;
+      min-height: 48px;
+      border: 1px solid #bbbcc4;
+      border-radius: 12px;
+      color: #343640;
+      background: #ffffff;
+      font: 18px/1 "Times New Roman", serif;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Spaghetti al Limone</h1>
+    <p>Serves 2 · 25 mins</p>
+    <div class="row"><span class="box"></span>1 lb Spaghetti</div>
+    <div class="row"><span class="box"></span>3 Garlic Cloves</div>
+    <div class="row"><span class="box"></span>Lemon Zest from 2 Lemons</div>
+    <div class="row"><span class="row-content" id="target"><span class="box"></span>2 oz of Parmigiano Reggiano</span></div>
+    <div class="row"><span class="box"></span>2 Tablespoons Olive Oil</div>
+  </main>
+  <button id="outside-target" type="button">Outside click: 0</button>
+  <script>
+    window.__outsideClicks = 0;
+    window.__sweepClicks = 0;
+    document.getElementById('target').addEventListener('click', () => {
+      window.__sweepClicks += 1;
+    });
+    document.getElementById('outside-target').addEventListener('click', (event) => {
+      window.__outsideClicks += 1;
+      event.currentTarget.textContent = `Outside click: ${window.__outsideClicks}`;
+    });
+  </script>
+</body>
+</html>

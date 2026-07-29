@@ -33,6 +33,7 @@ assert(payloadEnd > payloadStart, 'computeSelectionPayload block end not found')
 const context = { window: { innerWidth: 1280, innerHeight: 800, devicePixelRatio: 2 } };
 vm.runInNewContext([
   'let points = [{ x: 10, y: 20 }, { x: 40, y: 5 }, { x: 25, y: 60 }];',
+  'let gestureToken = null;',
   source.slice(payloadStart, payloadEnd),
   'globalThis.testPayload = computeSelectionPayload();',
 ].join('\n'), context, { filename: 'overlay_static_test.vm.js' });

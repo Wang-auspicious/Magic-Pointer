@@ -445,6 +445,7 @@ class UiaTextSelectionAdapter(AppAdapter):
             "range_count": data.get("range_count"),
             "selection_rectangles": selection_rectangles,
             "selection_rectangles_coordinate_space": "physical_screen_pixels",
+            "selection_rectangles_format": "xywh",
             "selection_rectangle_count_total": rectangle_count_total,
             "selection_rectangles_truncated": rectangles_truncated,
             "selection_text_chars": len(text),

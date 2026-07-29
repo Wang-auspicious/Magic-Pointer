@@ -29,7 +29,7 @@ function measuredWidth(text = '', state = capsule.dataset.state) {
   if (state === 'error') return 320;
   const value = String(text || '').trim();
   if (!value) return defaultInputMode === 'voice' ? 72 : 176;
-  measureContext.font = '750 18px "Segoe UI Variable", "Segoe UI", sans-serif';
+  measureContext.font = '750 18px "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif';
   const glyphWidth = defaultInputMode === 'voice' ? 58 : 44;
   return Math.max(118, Math.min(560, Math.ceil(measureContext.measureText(value).width + glyphWidth + 42)));
 }

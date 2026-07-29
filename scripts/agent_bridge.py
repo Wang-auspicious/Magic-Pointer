@@ -22,7 +22,7 @@ if hasattr(sys.stdout, "reconfigure"):
 
 
 def _read() -> dict[str, Any]:
-    value = json.loads(sys.stdin.read() or "{}")
+    value = json.loads(sys.stdin.read().lstrip("\ufeff") or "{}")
     if not isinstance(value, dict):
         raise ValueError("payload must be an object")
     return value

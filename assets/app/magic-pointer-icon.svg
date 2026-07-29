@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Magic Pointer">
+  <defs>
+    <linearGradient id="pointer" x1="62" y1="54" x2="190" y2="188" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#39B8FF"/>
+      <stop offset=".52" stop-color="#6366F1"/>
+      <stop offset="1" stop-color="#B144F4"/>
+    </linearGradient>
+    <linearGradient id="trail" x1="36" y1="190" x2="116" y2="109" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2ED7FF" stop-opacity=".18"/>
+      <stop offset="1" stop-color="#8B5CF6" stop-opacity=".92"/>
+    </linearGradient>
+  </defs>
+  <!-- One pointer with a three-point magical motion trail; transparent canvas. -->
+  <path d="M37 190C56 159 78 136 109 116" fill="none" stroke="url(#trail)" stroke-width="15" stroke-linecap="round"/>
+  <circle cx="36" cy="191" r="8" fill="#2ED7FF" fill-opacity=".48"/>
+  <circle cx="63" cy="157" r="7" fill="#55A6FF" fill-opacity=".72"/>
+  <circle cx="91" cy="132" r="6" fill="#7B6DF4" fill-opacity=".92"/>
+  <path d="M76 44L195 98L139 120L117 188L76 44Z" fill="url(#pointer)" stroke="#EEF7FF" stroke-width="8" stroke-linejoin="round"/>
+  <path d="M119 111L144 137" fill="none" stroke="#EEF7FF" stroke-opacity=".85" stroke-width="7" stroke-linecap="round"/>
+</svg>

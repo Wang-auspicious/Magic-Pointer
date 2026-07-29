@@ -52,6 +52,8 @@ function defaultSettings() {
       mouse_side_button: 'none',
       disabled_apps: ['blender', 'krita', 'photoshop', 'premiere', 'davinci resolve', 'unity', 'unreal'],
       cooldown_ms: 900,
+      gesture_arm_delay_ms: 180,
+      gesture_timeout_ms: 5000,
     },
     interaction: {
       default_input_mode: 'voice',
@@ -60,7 +62,13 @@ function defaultSettings() {
       voice_silence_ms: 1600,
       voice_language: 'auto',
       voice_output_mode: 'verbatim',
+      voice_punctuation: 'verbatim',
+      voice_script: 'unchanged',
+      voice_mixed_spacing: 'preserve',
       voice_hallucination_guard: true,
+      voice_resident_enabled: true,
+      voice_memory_limit_mb: 1024,
+      voice_idle_unload_ms: 300000,
       voice_glossaries: {},
     },
     agents: {
@@ -101,6 +109,20 @@ function defaultSettings() {
     appearance: {
       theme: 'system',
       material: 'auto',
+      selection_visual: 'sweep_band',
+      sweep_height_ratio: 0.52,
+      sweep_min_height_dip: 10,
+      sweep_max_height_dip: 24,
+      sweep_duration_ms: 292,
+      sweep_fade_ms: 96,
+      capsule_spawn_ms: 417,
+      capsule_expand_ms: 292,
+      capsule_voice_width_dip: 40,
+      capsule_text_width_dip: 144,
+      capsule_max_width_dip: 440,
+      capsule_inline_gap_dip: 18,
+      gesture_line_style: 'demo6_band',
+      gesture_line_width_dip: 22,
     },
     accessibility: {
       reduce_motion: false,
@@ -221,6 +243,16 @@ function validate(settings) {
   activation.fallback_hotkey_enabled = ['wiggle_hotkey', 'hotkey'].includes(activation.wake_mode);
   activation.keep_current_app_focus = activation.keep_current_app_focus !== false;
   activation.dashboard_focus_after_action = activation.dashboard_focus_after_action === true;
+  for (const [name, minimum, maximum] of [
+    ['gesture_arm_delay_ms', 60, 600],
+    ['gesture_timeout_ms', 1000, 15000],
+  ]) {
+    const value = Number(activation[name]);
+    if (!Number.isFinite(value) || value < minimum || value > maximum) {
+      throw new Error(`activation.${name} must be between ${minimum} and ${maximum}`);
+    }
+    activation[name] = value;
+  }
   const interaction = { ...defaults.interaction, ...(settings.interaction || {}) };
   if (!['voice', 'text'].includes(interaction.default_input_mode)) {
     throw new Error('interaction.default_input_mode must be voice or text');
@@ -240,6 +272,29 @@ function validate(settings) {
   interaction.voice_output_mode = String(interaction.voice_output_mode || '').trim().toLowerCase();
   if (!['verbatim', 'clean_spacing'].includes(interaction.voice_output_mode)) {
     throw new Error('interaction.voice_output_mode must be verbatim or clean_spacing');
+  }
+  interaction.voice_punctuation = String(interaction.voice_punctuation || '').trim().toLowerCase();
+  if (!['verbatim', 'smart_zh'].includes(interaction.voice_punctuation)) {
+    throw new Error('interaction.voice_punctuation is unsupported');
+  }
+  interaction.voice_script = String(interaction.voice_script || '').trim().toLowerCase();
+  if (!['unchanged', 'simplified', 'traditional'].includes(interaction.voice_script)) {
+    throw new Error('interaction.voice_script is unsupported');
+  }
+  interaction.voice_mixed_spacing = String(interaction.voice_mixed_spacing || '').trim().toLowerCase();
+  if (!['preserve', 'compact_cjk'].includes(interaction.voice_mixed_spacing)) {
+    throw new Error('interaction.voice_mixed_spacing is unsupported');
+  }
+  interaction.voice_resident_enabled = interaction.voice_resident_enabled !== false;
+  if (!Number.isInteger(interaction.voice_memory_limit_mb)
+      || interaction.voice_memory_limit_mb < 128
+      || interaction.voice_memory_limit_mb > 16384) {
+    throw new Error('interaction.voice_memory_limit_mb must be between 128 and 16384');
+  }
+  if (!Number.isInteger(interaction.voice_idle_unload_ms)
+      || interaction.voice_idle_unload_ms < 10000
+      || interaction.voice_idle_unload_ms > 3600000) {
+    throw new Error('interaction.voice_idle_unload_ms must be between 10000 and 3600000');
   }
   if (
     !interaction.voice_glossaries
@@ -354,14 +409,61 @@ function validate(settings) {
     normalizedShortcuts.set(normalized, name);
   }
   activation.fallback_hotkey = shortcuts.wake;
-  const appearance = { ...defaults.appearance, ...(settings.appearance || {}) };
+  const rawAppearance = settings.appearance && typeof settings.appearance === 'object'
+    ? settings.appearance
+    : {};
+  const appearance = { ...defaults.appearance, ...rawAppearance };
+  // v1 drew only an 8-DIP thin stroke. Absence of a style marker means the
+  // width still has those old semantics, so migrate it to the new Demo 6 band.
+  if (!Object.prototype.hasOwnProperty.call(rawAppearance, 'gesture_line_style')) {
+    appearance.gesture_line_style = defaults.appearance.gesture_line_style;
+    appearance.gesture_line_width_dip = defaults.appearance.gesture_line_width_dip;
+  }
   appearance.theme = String(appearance.theme || '').trim().toLowerCase();
   appearance.material = String(appearance.material || '').trim().toLowerCase();
+  appearance.selection_visual = String(appearance.selection_visual || '').trim().toLowerCase();
+  appearance.gesture_line_style = String(appearance.gesture_line_style || '').trim().toLowerCase();
   if (!['system', 'light', 'dark'].includes(appearance.theme)) {
     throw new Error('appearance.theme is unsupported');
   }
   if (!['auto', 'translucent', 'solid'].includes(appearance.material)) {
     throw new Error('appearance.material is unsupported');
+  }
+  if (!['sweep_band', 'soft_glow', 'outline'].includes(appearance.selection_visual)) {
+    throw new Error('appearance.selection_visual is unsupported');
+  }
+  if (!['demo6_band', 'thin'].includes(appearance.gesture_line_style)) {
+    throw new Error('appearance.gesture_line_style is unsupported');
+  }
+  const appearanceRanges = {
+    sweep_height_ratio: [0.15, 1.5],
+    sweep_min_height_dip: [4, 48],
+    sweep_max_height_dip: [6, 96],
+    sweep_duration_ms: [60, 1500],
+    sweep_fade_ms: [60, 1500],
+    capsule_spawn_ms: [60, 1500],
+    capsule_expand_ms: [60, 1500],
+    capsule_voice_width_dip: [28, 180],
+    capsule_text_width_dip: [40, 560],
+    capsule_max_width_dip: [80, 900],
+    capsule_inline_gap_dip: [4, 96],
+    gesture_line_width_dip: [3, 40],
+  };
+  for (const [name, [minimum, maximum]] of Object.entries(appearanceRanges)) {
+    const value = Number(appearance[name]);
+    if (!Number.isFinite(value) || value < minimum || value > maximum) {
+      throw new Error(`appearance.${name} must be between ${minimum} and ${maximum}`);
+    }
+    appearance[name] = value;
+  }
+  if (appearance.sweep_min_height_dip > appearance.sweep_max_height_dip) {
+    throw new Error('appearance sweep minimum must not exceed maximum');
+  }
+  if (
+    appearance.capsule_max_width_dip < appearance.capsule_voice_width_dip
+    || appearance.capsule_max_width_dip < appearance.capsule_text_width_dip
+  ) {
+    throw new Error('appearance capsule maximum width is too small');
   }
   const accessibility = { ...defaults.accessibility, ...(settings.accessibility || {}) };
   accessibility.reduce_motion = accessibility.reduce_motion === true;
@@ -441,6 +543,14 @@ class ElectronSettingsStore {
     this.path = path.resolve(settingsPath);
   }
 
+  writeValidated(validated) {
+    fs.mkdirSync(path.dirname(this.path), { recursive: true });
+    const tempPath = `${this.path}.tmp`;
+    fs.writeFileSync(tempPath, `${JSON.stringify(validated, null, 2)}\n`, 'utf8');
+    fs.renameSync(tempPath, this.path);
+    return this.path;
+  }
+
   load() {
     if (!fs.existsSync(this.path)) return defaultSettings();
     let parsed = null;
@@ -449,16 +559,14 @@ class ElectronSettingsStore {
     } catch (error) {
       throw new Error(`settings JSON is invalid: ${error.message}`);
     }
-    return validate(parsed);
+    const validated = validate(parsed);
+    if (JSON.stringify(parsed) !== JSON.stringify(validated)) this.writeValidated(validated);
+    return validated;
   }
 
   save(settings) {
     const validated = validate(settings);
-    fs.mkdirSync(path.dirname(this.path), { recursive: true });
-    const tempPath = `${this.path}.tmp`;
-    fs.writeFileSync(tempPath, `${JSON.stringify(validated, null, 2)}\n`, 'utf8');
-    fs.renameSync(tempPath, this.path);
-    return this.path;
+    return this.writeValidated(validated);
   }
 }
 

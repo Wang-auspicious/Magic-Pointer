@@ -9,10 +9,9 @@ function feed(detector, points, extra = {}) {
 
 const intentional = [
   [0, 500, 400],
-  [70, 526, 402],
-  [140, 478, 399],
-  [220, 528, 401],
-  [310, 493, 400],
+  [55, 468, 386],
+  [125, 526, 412],
+  [205, 474, 389],
 ];
 
 {
@@ -20,8 +19,32 @@ const intentional = [
   const result = feed(detector, intentional);
   assert.strictEqual(result.triggered, true);
   assert.strictEqual(result.reason, 'intentional_wiggle');
-  assert(result.metrics.reversals >= 3);
-  assert(result.metrics.durationMs >= 250 && result.metrics.durationMs <= 600);
+  assert(result.metrics.reversals >= 2);
+  assert(result.metrics.durationMs >= 120 && result.metrics.durationMs <= 700);
+}
+
+{
+  const detector = new WiggleDetector();
+  const fast = [
+    [0, 500, 400],
+    [28, 468, 388],
+    [58, 526, 412],
+    [92, 474, 390],
+  ];
+  assert.strictEqual(feed(detector, fast).triggered, true,
+    'a crisp three-stroke wiggle must not require extra frantic motion');
+}
+
+{
+  const detector = new WiggleDetector();
+  const idleThenWiggle = [
+    [0, 500, 400], [80, 500, 400], [160, 500, 400], [240, 500, 400],
+    ...intentional.map(([t, x, y]) => [t + 500, x, y]),
+  ];
+  const result = feed(detector, idleThenWiggle);
+  assert.strictEqual(result.triggered, true);
+  assert(result.metrics.durationMs <= 220,
+    'idle history must not be counted as part of the wiggle burst');
 }
 
 {
@@ -32,10 +55,14 @@ const intentional = [
 
 {
   const detector = new WiggleDetector();
-  const diagonal = intentional.map(([t, x], i) => [t, x, 200 + i * 22]);
+  const diagonal = [
+    [0, 500, 400],
+    [60, 466, 370],
+    [130, 530, 426],
+    [215, 472, 375],
+  ];
   const result = feed(detector, diagonal);
-  assert.strictEqual(result.triggered, false);
-  assert.strictEqual(result.reason, 'vertical_drift');
+  assert.strictEqual(result.triggered, true, 'three diagonal left-right-left strokes must trigger');
 }
 
 {
@@ -78,7 +105,7 @@ const intentional = [
 
 {
   const detector = new WiggleDetector();
-  const tooSlow = intentional.map(([t, x, y]) => [Math.round(t * 2.2), x, y]);
+  const tooSlow = intentional.map(([t, x, y]) => [Math.round(t * 4.2), x, y]);
   assert.strictEqual(feed(detector, tooSlow).triggered, false);
 }
 

@@ -136,6 +136,7 @@ def test_uia_context_exposes_read_only_native_selection(monkeypatch) -> None:
     assert ctx.artifacts["source_pid"] == 5678
     assert ctx.artifacts["selection_rectangles"] == [[10, 20, 300, 40]]
     assert ctx.artifacts["selection_rectangles_coordinate_space"] == "physical_screen_pixels"
+    assert ctx.artifacts["selection_rectangles_format"] == "xywh"
     assert ctx.artifacts["selection_rectangle_count_total"] == 1
     assert ctx.artifacts["selection_rectangles_truncated"] is False
     assert ctx.artifacts["selection_text_sha256"] == hashlib.sha256(

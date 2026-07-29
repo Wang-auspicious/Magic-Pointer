@@ -78,6 +78,8 @@ assert.strictEqual(defaults.activation.wake_mode, 'wiggle_hotkey');
 assert.strictEqual(defaults.activation.keep_current_app_focus, true);
 assert.strictEqual(defaults.activation.dashboard_focus_after_action, false);
 assert.strictEqual(defaults.activation.mouse_side_button, 'none');
+assert.strictEqual(defaults.activation.gesture_arm_delay_ms, 180);
+assert.strictEqual(defaults.activation.gesture_timeout_ms, 5000);
 assert.strictEqual(defaults.interaction.voice_start_strategy, 'auto');
 assert.deepStrictEqual(defaults.shortcuts, {
   wake: 'Control+Alt+M',
@@ -88,6 +90,20 @@ assert.deepStrictEqual(defaults.shortcuts, {
 assert.deepStrictEqual(defaults.appearance, {
   theme: 'system',
   material: 'auto',
+  selection_visual: 'sweep_band',
+  sweep_height_ratio: 0.52,
+  sweep_min_height_dip: 10,
+  sweep_max_height_dip: 24,
+  sweep_duration_ms: 292,
+  sweep_fade_ms: 96,
+  capsule_spawn_ms: 417,
+  capsule_expand_ms: 292,
+  capsule_voice_width_dip: 40,
+  capsule_text_width_dip: 144,
+  capsule_max_width_dip: 440,
+  capsule_inline_gap_dip: 18,
+  gesture_line_style: 'demo6_band',
+  gesture_line_width_dip: 22,
 });
 assert.deepStrictEqual(defaults.accessibility, {
   reduce_motion: false,

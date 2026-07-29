@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import sys
 import uuid
@@ -24,13 +25,16 @@ from app.grounding.perception_cascade import (
 )
 from app.review import ReviewSessionError, ReviewSessionStore
 from app.fabric.settings import FabricSettings, SettingsError, SettingsStore
-from app.system_context import get_foreground_window_handle, list_visible_windows
+from app.system_context import enable_dpi_awareness, get_foreground_window_handle, list_visible_windows
 from app.visual_annotation import make_pointer_annotated_image
 
-MAGIC_WINDOW_TITLES = {"Magic Pointer Overlay", "Magic Pointer Panel"}
+enable_dpi_awareness()
+
+MAGIC_WINDOW_TITLES = {"Magic Pointer Overlay", "Magic Pointer Panel", "Magic Pointer Stage"}
 SNAPSHOT_TTL_SECONDS = 120
 VISUAL_REGION_WIDTH = 640
 VISUAL_REGION_HEIGHT = 420
+POINTER_ANCHOR_SIZE = 16
 
 
 class TargetMismatchError(RuntimeError):
@@ -67,13 +71,35 @@ def read_payload() -> dict[str, Any]:
     return json.loads(raw) if raw else {}
 
 
-def _window_dicts() -> list[dict[str, Any]]:
+def _window_dicts(
+    preferred_hwnd: int = 0,
+    target_point: dict[str, int] | None = None,
+) -> list[dict[str, Any]]:
     windows: list[dict[str, Any]] = []
     for item in list_visible_windows():
         title = str(item.get("title") or "")
         if title in MAGIC_WINDOW_TITLES:
             continue
         windows.append(dict(item))
+    if target_point is not None:
+        x, y = int(target_point["x"]), int(target_point["y"])
+        pointed = next((
+            item for item in windows
+            if isinstance(item.get("bbox"), (list, tuple))
+            and len(item["bbox"]) == 4
+            and int(item["bbox"][0]) <= x < int(item["bbox"][2])
+            and int(item["bbox"][1]) <= y < int(item["bbox"][3])
+        ), None)
+        if pointed is not None:
+            return [pointed]
+    requested_hwnd = int(preferred_hwnd or 0)
+    if requested_hwnd:
+        requested = next(
+            (item for item in windows if int(item.get("hwnd") or 0) == requested_hwnd),
+            None,
+        )
+        if requested is not None:
+            return [requested]
     foreground_hwnd = get_foreground_window_handle()
     if foreground_hwnd:
         foreground = next(
@@ -258,6 +284,62 @@ def _normalized_point(target_point: Any | None) -> dict[str, int] | None:
     return None
 
 
+def _normalized_gesture(value: Any | None) -> dict[str, Any] | None:
+    if not isinstance(value, dict):
+        return None
+
+    def point(raw: Any) -> dict[str, int] | None:
+        if not isinstance(raw, dict):
+            return None
+        try:
+            x = float(raw.get("x"))
+            y = float(raw.get("y"))
+            t = float(raw.get("t", 0))
+        except (TypeError, ValueError):
+            return None
+        if not all(math.isfinite(item) for item in (x, y, t)):
+            return None
+        return {"x": round(x), "y": round(y), "t": round(t)}
+
+    points = [item for item in (point(raw) for raw in list(value.get("points") or [])[:512]) if item]
+    if len(points) < 2:
+        return None
+    release = point(value.get("releasePoint"))
+    semantic = point(value.get("semanticPoint"))
+    raw_bbox = value.get("bbox") if isinstance(value.get("bbox"), dict) else {}
+    try:
+        bbox = {
+            "x": round(float(raw_bbox.get("x"))),
+            "y": round(float(raw_bbox.get("y"))),
+            "width": max(0, round(float(raw_bbox.get("width")))),
+            "height": max(0, round(float(raw_bbox.get("height")))),
+        }
+    except (TypeError, ValueError):
+        bbox = None
+    if release is None or semantic is None or bbox is None:
+        return None
+    release.pop("t", None)
+    semantic.pop("t", None)
+    return {
+        "kind": str(value.get("kind") or "freeform")[:32],
+        "coordinateSpace": str(value.get("coordinateSpace") or "electron_dip_screen")[:64],
+        "releasePoint": release,
+        "semanticPoint": semantic,
+        "bbox": bbox,
+        "points": points,
+    }
+
+
+def _pointer_anchor_ltrb(target_point: dict[str, int]) -> list[int]:
+    half = POINTER_ANCHOR_SIZE // 2
+    return [
+        target_point["x"] - half,
+        target_point["y"] - half,
+        target_point["x"] + half,
+        target_point["y"] + half,
+    ]
+
+
 def _visual_bbox(
     target_window: dict[str, Any] | None,
     target_point: dict[str, int] | None,
@@ -344,8 +426,31 @@ def _capture_visual_region(
             "before": before_identity,
             "after": None,
         })
-    grabber = visual_capture or ImageGrab.grab
-    image = grabber(bbox=bbox, all_screens=True)
+    if visual_capture is not None:
+        image = visual_capture(bbox=bbox, all_screens=True)
+    else:
+        hwnd = int(target_window.get("hwnd") or 0)
+        window_bbox = target_window.get("bbox")
+        if hwnd and isinstance(window_bbox, (list, tuple)) and len(window_bbox) == 4:
+            # Capture the committed source HWND directly. The conversation
+            # capsule may already be visible above it, but never contaminates
+            # this backing-window image.
+            window_image = ImageGrab.grab(window=hwnd)
+            win_left, win_top, win_right, win_bottom = (int(value) for value in window_bbox)
+            scale_x = window_image.width / max(1, win_right - win_left)
+            scale_y = window_image.height / max(1, win_bottom - win_top)
+            local_bbox = (
+                round((bbox[0] - win_left) * scale_x),
+                round((bbox[1] - win_top) * scale_y),
+                round((bbox[2] - win_left) * scale_x),
+                round((bbox[3] - win_top) * scale_y),
+            )
+            image = window_image.crop(local_bbox)
+            expected_size = (bbox[2] - bbox[0], bbox[3] - bbox[1])
+            if image.size != expected_size:
+                image = image.resize(expected_size)
+        else:
+            image = ImageGrab.grab(bbox=bbox, all_screens=True)
     after_identity = _window_identity(identity_probe()) if callable(identity_probe) else before_identity
     if callable(identity_probe) and not _same_window_identity(expected_identity, after_identity):
         raise TargetMismatchError({
@@ -396,6 +501,8 @@ def capture_snapshot(
     registry: Any | None = None,
     target_point: Any | None = None,
     target_point_space: str | None = "physical_screen_pixels",
+    gesture: dict[str, Any] | None = None,
+    target_hwnd: int = 0,
     active_context: dict[str, Any] | None = None,
     active_review: dict[str, Any] | None = None,
     visual_capture: Any | None = None,
@@ -412,9 +519,21 @@ def capture_snapshot(
 ) -> dict[str, Any]:
     captured = datetime.now(timezone.utc)
     live_window_source = windows is None
-    available_windows = _window_dicts() if windows is None else windows
-    target_window = available_windows[0] if available_windows else None
     normalized_target_point = _normalized_point(target_point)
+    requested_hwnd = int(target_hwnd or 0)
+    available_windows = (
+        _window_dicts(requested_hwnd, normalized_target_point)
+        if windows is None
+        else list(windows)
+    )
+    if requested_hwnd and windows is not None:
+        preferred = next(
+            (item for item in available_windows if int(item.get("hwnd") or 0) == requested_hwnd),
+            None,
+        )
+        available_windows = [preferred] if preferred is not None else []
+    target_window = available_windows[0] if available_windows else None
+    normalized_gesture = _normalized_gesture(gesture)
     capture_decision = None
     if default_capture_mode is not None:
         capture_decision = CapturePolicyEngine(
@@ -461,8 +580,41 @@ def capture_snapshot(
     active_identity_probe = identity_probe
     if active_identity_probe is None and live_window_source:
         def active_identity_probe() -> dict[str, Any]:
-            current = _window_dicts()
+            current = _window_dicts(requested_hwnd, normalized_target_point)
             return dict(current[0]) if current else {}
+    structured_target_mismatch = False
+    structured_attestation = None
+    if app_ctx is not None and target_window is not None and callable(active_identity_probe):
+        expected_identity = _window_identity(target_window)
+        observed_identity = _window_identity(active_identity_probe())
+        if not _same_window_identity(expected_identity, observed_identity):
+            structured_target_mismatch = True
+            structured_attestation = {
+                "status": "target_mismatch",
+                "phase": "after_structured_read",
+                "expected": expected_identity,
+                "before": expected_identity,
+                "after": observed_identity,
+            }
+            app_ctx = None
+            perception_trace = {
+                **perception_trace,
+                "selectedLayer": None,
+                "selectedAdapter": None,
+                "selectedMethod": None,
+                "pixelFallbackUsed": False,
+                "fallbackReason": "target_mismatch",
+                "attempts": [
+                    *(perception_trace.get("attempts") or []),
+                    {
+                        "layer": "structured",
+                        "adapter": "foreground-identity",
+                        "method": "foreground:post-read-attestation",
+                        "status": "error",
+                        "reason": "target_mismatch",
+                    },
+                ],
+            }
     summary = _summary_for(target_window, app_ctx)
     context_session = active_context if isinstance(active_context, dict) else None
     summary["hasActiveContext"] = bool(context_session and context_session.get("item_count"))
@@ -479,11 +631,12 @@ def capture_snapshot(
         foreground_app=foreground_app,
     )
     visual = None
-    capture_attestation = None
-    target_mismatch = False
+    capture_attestation = structured_attestation
+    target_mismatch = structured_target_mismatch
     visual_attempt_recorded = False
     should_capture_visual = bool(
         allow_visual_fallback
+        and not target_mismatch
         and not sensitive_target
         and (capture_decision is None or capture_decision.allow_local_pixels)
         and not perception_trace.get("selectedLayer")
@@ -559,6 +712,8 @@ def capture_snapshot(
             visual_status, visual_reason = "blocked", f"capture_policy_{capture_decision.mode}"
         elif sensitive_target:
             visual_status, visual_reason = "blocked", "sensitive_app"
+        elif target_mismatch:
+            visual_status, visual_reason = "blocked", "target_mismatch"
         elif not allow_visual_fallback:
             visual_status, visual_reason = "blocked", "visual_fallback_disabled"
         elif summary["hasActiveContext"] or summary["hasActiveReview"]:
@@ -629,7 +784,9 @@ def capture_snapshot(
         else "foreground_window"
     )
     visual_context = None
+    pointer_anchor = None
     if visual is not None:
+        pointer_anchor = _pointer_anchor_ltrb(normalized_target_point)
         visual_context = {
             "adapter": "screen_region",
             "app": "screen",
@@ -641,7 +798,13 @@ def capture_snapshot(
             "artifacts": {
                 "capture_path": visual["path"],
                 "annotated_path": visual["annotated_path"],
-                "selection_rectangles": [visual["bbox"]],
+                "capture_bbox": visual["bbox"],
+                "capture_bbox_coordinate_space": "physical_screen_pixels",
+                "capture_bbox_format": "ltrb",
+                "selection_rectangles": [],
+                "selection_rectangles_coordinate_space": "physical_screen_pixels",
+                "selection_rectangles_format": "xywh",
+                "selection_geometry_kind": "pointer_anchor",
             },
             "capabilities": [],
             "error": None,
@@ -664,10 +827,13 @@ def capture_snapshot(
         ),
         "capture_path": visual["path"] if visual is not None else None,
         "annotated_path": visual["annotated_path"] if visual is not None else None,
+        "capture_bbox": visual["bbox"] if visual is not None else None,
         "capture_attestation": capture_attestation,
         "capture_policy": capture_decision.to_dict() if capture_decision is not None else None,
         "perception_trace": perception_trace,
-        "selection_bbox": visual["bbox"] if visual is not None else None,
+        "selection_bbox": None,
+        "pointer_anchor_bbox": pointer_anchor,
+        "selection_gesture": normalized_gesture,
     }
     if audit_store is not None:
         try:
@@ -744,6 +910,8 @@ def main() -> int:
     print(json.dumps(capture_snapshot(
         target_point=payload.get("cursor"),
         target_point_space=payload.get("cursorSpace"),
+        gesture=payload.get("gesture"),
+        target_hwnd=int(payload.get("foregroundHwnd") or 0),
         active_context=active_context,
         active_review=active_review,
         allow_visual_fallback=payload.get("allowVisualFallback") is not False,

@@ -4,6 +4,7 @@ const hint = document.getElementById('hint');
 
 let dpr = window.devicePixelRatio || 1;
 let drawing = false;
+let activePointerId = null;
 let points = [];
 let lastPointer = null;
 let trailAlpha = 1;
@@ -15,7 +16,13 @@ let renderRaf = null;
 let pulseRaf = null;
 let lastPulseFrame = 0;
 let observerMode = false;
+let gestureMode = false;
+let gestureToken = null;
+let gestureAcceptAt = 0;
+let gestureLineStyle = 'demo6_band';
+let gestureLineWidth = 22;
 let hintTimer = null;
+let gestureGraceTimer = null;
 let currentWorkflow = 'generic';
 
 function resize() {
@@ -59,7 +66,7 @@ function drawSmoothPath(path, alpha = 1) {
   ctx.save();
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
-  ctx.globalCompositeOperation = 'lighter';
+  ctx.globalCompositeOperation = 'source-over';
 
   function trace(width, color, blur = 0, a = alpha) {
     ctx.beginPath();
@@ -74,27 +81,35 @@ function drawSmoothPath(path, alpha = 1) {
     ctx.globalAlpha = a;
     ctx.strokeStyle = color;
     ctx.lineWidth = width;
-    ctx.shadowColor = color;
-    ctx.shadowBlur = blur;
+    ctx.shadowColor = 'transparent';
+    ctx.shadowBlur = 0;
     ctx.stroke();
   }
 
-  // Gemini-like feel: one broad blurred ribbon with a very gentle inner energy.
-  // Keep alpha close between layers so it reads as one soft band, not stacked stripes.
-  trace(18, 'rgba(77, 144, 255, 0.20)', 14, alpha * 0.86);
-  trace(9, 'rgba(49, 119, 255, 0.30)', 7, alpha * 0.62);
-  trace(2, 'rgba(232, 246, 255, 0.38)', 1.5, alpha * 0.34);
+  // Demo 6 default: one text-row-high translucent band with round ends.
+  // No canvas shadow: Windows transparent surfaces can retain rectangular
+  // backing-store ghosts around blurred strokes.
+  if (gestureLineStyle === 'thin') {
+    trace(gestureLineWidth, 'rgba(49, 119, 255, 0.34)', 0, alpha);
+    trace(Math.max(1.15, gestureLineWidth * 0.22), 'rgba(226, 241, 255, 0.64)', 0, alpha);
+  } else {
+    trace(gestureLineWidth, 'rgba(92, 160, 255, 0.18)', 0, alpha);
+    trace(gestureLineWidth * 0.72, 'rgba(73, 145, 255, 0.17)', 0, alpha);
+    trace(Math.max(1.2, gestureLineWidth * 0.075), 'rgba(225, 241, 255, 0.38)', 0, alpha);
+  }
   ctx.globalCompositeOperation = 'source-over';
   ctx.restore();
 }
 
 function drawPointer(p) {
   if (!p || captureMode) return;
+  // Native Windows cursor mode: do not override system cursor.
+  // Preloaded blue-white pointer used only for visual feedback if needed.
+  // Full-screen Overlay ensures visual/delay effect matches native.
+  // Right-click exit restores normal mouse.
   const now = performance.now();
   const pulse = 0.5 + 0.5 * Math.sin(now / 430);
   ctx.save();
-  // Google-style concave quadrilateral cursor: white fill, blue outline, soft breathing glow.
-  // Hot spot is the upper-left tip. Narrower wings than the previous version.
   ctx.translate(p.x, p.y);
   ctx.rotate(-0.045);
   ctx.scale(0.74, 0.92);
@@ -102,18 +117,17 @@ function drawPointer(p) {
   ctx.lineCap = 'round';
 
   const path = new Path2D();
-  path.moveTo(0.0, 0.0);                    // upper-left tip / hot spot
+  path.moveTo(0.0, 0.0);
   path.quadraticCurveTo(0.8, -0.7, 2.2, 0.0);
-  path.lineTo(22.4, 18.8);                  // upper-right vertex pulled DOWN to the marked symmetric position
+  path.lineTo(22.4, 18.8);
   path.quadraticCurveTo(24.8, 20.5, 21.6, 21.2);
-  path.lineTo(10.9, 20.4);                  // inward notch / center pinch
-  path.lineTo(5.6, 30.0);                   // lower wing balanced against the lowered upper vertex
+  path.lineTo(10.9, 20.4);
+  path.lineTo(5.6, 30.0);
   path.quadraticCurveTo(4.5, 32.7, 3.4, 29.8);
   path.lineTo(-1.0, 3.5);
   path.quadraticCurveTo(-1.9, 1.1, 0.0, 0.0);
   path.closePath();
 
-  // Visible breathing glow: blurred blue aura that clearly brightens/dims.
   ctx.save();
   ctx.globalCompositeOperation = 'lighter';
   ctx.globalAlpha = 0.46 + pulse * 0.46;
@@ -168,6 +182,11 @@ function drawObserverAura(p) {
 
 function render() {
   clear();
+  if (gestureMode) {
+    if (Date.now() < gestureAcceptAt) return;
+    if (points.length) drawSmoothPath(points, trailAlpha);
+    return;
+  }
   if (!captureMode && points.length) drawSmoothPath(points, trailAlpha);
   if (observerMode) drawObserverAura(lastPointer);
   else drawPointer(lastPointer);
@@ -194,7 +213,9 @@ function fadeTrail(duration = 760) {
 function computeSelectionPayload() {
   const xs = points.map((p) => p.x);
   const ys = points.map((p) => p.y);
+  const geometry = globalThis.GestureCapture?.summarizeGesture(points) || {};
   return {
+    ...geometry,
     points: [...points],
     bbox: {
       x1: Math.min(...xs),
@@ -207,6 +228,7 @@ function computeSelectionPayload() {
       height: window.innerHeight,
       dpr: window.devicePixelRatio || 1,
     },
+    selectionGestureToken: gestureToken,
   };
 }
 
@@ -222,22 +244,26 @@ function restoreAfterCapture(seq) {
   render();
 }
 
-function submitCircle() {
-  if (submitting || points.length < 2) return;
+function submitGesture() {
+  if (submitting || points.length < 1) return;
   submitting = true;
   const seq = ++requestSeq;
   const payload = { ...computeSelectionPayload(), workflow: currentWorkflow };
 
   // Critical: remove our own overlay before Python ImageGrab runs.
   hideVisualsForCapture();
-  setTimeout(() => {
+  requestAnimationFrame(() => {
     window.magicPointer?.done(payload);
-    // Results render on the PointerStage; the overlay only restores its aura.
-    setTimeout(() => restoreAfterCapture(seq), 1050);
-  }, 260);
+    if (!gestureMode) {
+      // Runtime-issue capture may remain open while its bridge runs.
+      setTimeout(() => restoreAfterCapture(seq), 1050);
+    }
+  });
 }
 
 function resetOverlay() {
+  drawing = false;
+  activePointerId = null;
   points = [];
   lastPointer = null;
   trailAlpha = 1;
@@ -246,9 +272,12 @@ function resetOverlay() {
   submitting = false;
   if (fadeRaf) cancelAnimationFrame(fadeRaf);
   if (renderRaf) cancelAnimationFrame(renderRaf);
+  if (gestureGraceTimer) clearTimeout(gestureGraceTimer);
   fadeRaf = null;
   renderRaf = null;
-  hint.classList.remove('dim');
+  gestureGraceTimer = null;
+  hint.classList.add('dim');
+  document.body.dataset.mode = 'idle';
   clear();
 }
 
@@ -278,13 +307,28 @@ window.addEventListener('pointerdown', (e) => {
   if (e.button === 2) { window.magicPointer?.hide(); return; }
   if (e.button !== 0) return;
   if (observerMode || captureMode || submitting) return;
+  if (drawing) return;
   if (fadeRaf) cancelAnimationFrame(fadeRaf);
   drawing = true;
+  activePointerId = e.pointerId;
+  try { canvas.setPointerCapture(e.pointerId); } catch (_error) { /* best effort */ }
+  if (gestureMode) window.magicPointer?.gestureStarted(gestureToken);
   points = [];
   trailAlpha = 1;
   hint.classList.add('dim');
   addPoint(e);
-  scheduleRender();
+  const graceRemaining = gestureAcceptAt - Date.now();
+  if (gestureMode && graceRemaining > 0) {
+    if (gestureGraceTimer) clearTimeout(gestureGraceTimer);
+    gestureGraceTimer = setTimeout(() => {
+      gestureGraceTimer = null;
+      if (drawing) scheduleRender();
+    }, graceRemaining);
+  } else {
+    scheduleRender();
+  }
+  e.stopPropagation();
+  e.preventDefault();
 });
 
 window.addEventListener('pointermove', (e) => {
@@ -294,18 +338,52 @@ window.addEventListener('pointermove', (e) => {
     scheduleRender();
     return;
   }
+  if (activePointerId !== null && e.pointerId !== activePointerId) return;
   addPoint(e);
   scheduleRender();
+  e.stopPropagation();
+  e.preventDefault();
 });
 
 window.addEventListener('pointerup', (e) => {
   if (!drawing) return;
+  if (activePointerId !== null && e.pointerId !== activePointerId) return;
   drawing = false;
+  activePointerId = null;
+  try { canvas.releasePointerCapture(e.pointerId); } catch (_error) { /* best effort */ }
   addPoint(e);
   render();
+  // Restore mouse capture after release to prevent revert to normal mouse
+  if (window.magicPointer && typeof window.magicPointer.syncHitRegions === 'function') {
+    window.magicPointer.syncHitRegions();
+  }
   // Circle capture: hand the drawn region to the main process, which routes
   // the outcome to the PointerStage surface.
-  if (points.length >= 2) submitCircle();
+  if (points.length >= 1) {
+    const graceRemaining = gestureAcceptAt - Date.now();
+    if (gestureMode && graceRemaining > 0) {
+      if (gestureGraceTimer) clearTimeout(gestureGraceTimer);
+      gestureGraceTimer = setTimeout(() => {
+        gestureGraceTimer = null;
+        render();
+        submitGesture();
+      }, graceRemaining);
+    } else {
+      submitGesture();
+    }
+  }
+  e.stopPropagation();
+  e.preventDefault();
+});
+
+window.addEventListener('pointercancel', (e) => {
+  if (!drawing || (activePointerId !== null && e.pointerId !== activePointerId)) return;
+  drawing = false;
+  activePointerId = null;
+  points = [];
+  clear();
+  e.stopPropagation();
+  e.preventDefault();
 });
 
 window.addEventListener('keydown', (e) => {
@@ -316,23 +394,26 @@ window.addEventListener('keydown', (e) => {
 window.magicPointer?.onShow((payload) => {
   resetOverlay();
   observerMode = payload?.observerMode === true;
+  gestureMode = payload?.gestureMode === true;
+  gestureToken = payload?.selectionGestureToken ? String(payload.selectionGestureToken) : null;
+  gestureAcceptAt = Number(payload?.gestureAcceptAt) || 0;
+  gestureLineStyle = payload?.gestureLineStyle === 'thin' ? 'thin' : 'demo6_band';
+  gestureLineWidth = Math.max(3, Math.min(40, Number(payload?.gestureLineWidth) || 22));
   currentWorkflow = String(payload?.workflow || 'generic');
+  document.body.dataset.mode = gestureMode ? 'gesture' : observerMode ? 'observer' : 'capture';
   if (hintTimer) clearTimeout(hintTimer);
   if (currentWorkflow === 'runtime_issue') {
     hint.textContent = '圈出运行中的问题，然后说你期望什么';
     hint.classList.remove('dim');
     hintTimer = setTimeout(() => hint.classList.add('dim'), 1800);
-  } else if (payload?.reason === 'startup') {
-    hint.textContent = 'Magic Pointer 已就绪';
-    hint.classList.remove('dim');
-    hintTimer = setTimeout(() => hint.classList.add('dim'), 900);
   } else {
     hint.classList.add('dim');
   }
-  startPulseLoop();
+  if (!gestureMode) startPulseLoop();
 });
 window.magicPointer?.onCursor((payload) => {
   if (!payload) return;
+  if (gestureMode) return;
   lastPointer = { x: Number(payload.x) || 0, y: Number(payload.y) || 0, t: performance.now() };
   scheduleRender();
 });
@@ -341,6 +422,11 @@ window.magicPointer?.onHide(() => {
   hintTimer = null;
   stopPulseLoop();
   resetOverlay();
+  gestureMode = false;
+  gestureToken = null;
+  gestureAcceptAt = 0;
+  gestureLineStyle = 'demo6_band';
 });
 
 resize();
+window.magicPointer?.ready?.();

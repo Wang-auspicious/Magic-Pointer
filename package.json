@@ -3,12 +3,12 @@
   "version": "1.0.0",
   "description": "Magic Pointer Open - cross-platform AI pointer overlay",
   "main": "electron/main.js",
-  "directories": {
-    "test": "tests"
-  },
   "scripts": {
     "overlay": "electron electron/main.js",
-    "test": "node --check electron/main.js && node --check electron/coordinate_space.js && node --check electron/ipc_surface_policy.js && node --check electron/panel_position.js && node --check electron/selection_session.js && node --check electron/interaction_episode.js && node --check electron/activation_gate.js && node --check electron/wiggle_detector.js && node --check electron/mouse_activation.js && node --check electron/settings_store.js && node --check electron/credential_store.js && node --check electron/bootstrap_runner.js && node --check electron/preflight_checks.js && node --check electron/stage_anchor.js && node --check electron/result_surface_policy.js && node --check electron/stage_state.js && node --check electron/stage_contract.js && node --check electron/stage_chips_policy.js && node --check electron/internal_action_policy.js && node --check electron/route_policy.js && node --check electron/preload.js && node --check electron/renderer/overlay.js && node --check electron/renderer/panel.js && node --check electron/renderer/stage.js && node --check electron/renderer/dashboard.js && node tests/coordinate_space_test.js && node tests/ipc_surface_policy_test.js && node tests/panel_position_test.js && node tests/selection_session_test.js && node tests/interaction_episode_test.js && node tests/activation_gate_test.js && node tests/wiggle_detector_test.js && node tests/mouse_activation_test.js && node tests/settings_store_test.js && node tests/credential_store_test.js && node tests/credential_main_static_test.js && node tests/bootstrap_runner_test.js && node tests/preflight_checks_test.js && node tests/preflight_main_static_test.js && node tests/wiggle_activation_integration_test.js && node tests/result_surface_policy_test.js && node tests/stage_state_test.js && node tests/stage_anchor_test.js && node tests/stage_static_test.js && node tests/stage_contract_test.js && node tests/stage_chips_policy_test.js && node tests/internal_action_policy_test.js && node tests/route_policy_test.js && node tests/overlay_static_test.js && node tests/runtime_issue_hotkeys_test.js && node tests/panel_static_test.js && node tests/fabric_panel_static_test.js && node tests/dictation_static_test.js && node tests/dashboard_shell_static_test.js && node tests/dashboard_settings_center_static_test.js && node tests/dashboard_runtime_settings_static_test.js && node tests/dashboard_static_test.js && node tests/fabric_dashboard_static_test.js && node tests/dashboard_app_capture_static_test.js && node tests/dashboard_model_profiles_static_test.js && node tests/dashboard_preflight_static_test.js && node tests/dashboard_target_lease_static_test.js && node tests/dashboard_perception_static_test.js && node tests/dashboard_runtime_workspace_static_test.js && node tests/dashboard_terminal_evidence_static_test.js && node tests/dashboard_browser_evidence_static_test.js && node tests/dashboard_component_source_static_test.js && node tests/dashboard_workflow_continuation_static_test.js && node tests/calendar_dashboard_static_test.js && node tests/route_dashboard_static_test.js"
+    "pack:win": "node scripts/run-electron-builder.js --config electron-builder.yml --win --dir",
+    "dist:win": "node scripts/run-electron-builder.js --config electron-builder.yml --win nsis",
+    "verify:package": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify_windows_package.ps1",
+    "test": "node scripts/run-node-tests.js"
   },
   "keywords": [
     "ai-pointer",
@@ -18,7 +18,15 @@
   "author": "",
   "license": "MIT",
   "type": "commonjs",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Wang-auspicious/Magic-Pointer.git"
+  },
+  "dependencies": {
+    "electron-updater": "^6.6.2"
+  },
   "devDependencies": {
-    "electron": "^43.0.0"
+    "electron": "^43.0.0",
+    "electron-builder": "^26.15.3"
   }
 }

@@ -153,6 +153,50 @@ def test_snapshot_locks_only_the_foreground_window() -> None:
     ]
 
 
+def test_snapshot_can_lock_the_pre_release_window_by_hwnd() -> None:
+    foreground_after_release = {"title": "Magic Pointer Stage", "hwnd": 99, "supported": True}
+    source_before_release = {"title": "doc.docx - Word", "hwnd": 10, "supported": True}
+    registry = _FakeRegistry()
+
+    payload = capture_snapshot(
+        [foreground_after_release, source_before_release],
+        registry=registry,
+        target_hwnd=10,
+    )
+
+    assert payload["selectionSnapshot"]["source_window"] == source_before_release
+    assert registry.seen == [source_before_release]
+
+
+def test_structured_selection_is_rejected_if_foreground_changes_during_probe() -> None:
+    foreground = {
+        "title": "doc.docx - Word",
+        "hwnd": 10,
+        "pid": 42,
+        "bbox": (100, 200, 1100, 900),
+    }
+    changed = {
+        "title": "other.exe",
+        "hwnd": 11,
+        "pid": 99,
+        "bbox": (0, 0, 800, 600),
+    }
+
+    payload = capture_snapshot(
+        [foreground],
+        registry=_FakeRegistry(),
+        target_point={"x": 600, "y": 500},
+        identity_probe=lambda: changed,
+        allow_visual_fallback=False,
+    )
+
+    snapshot = payload["selectionSnapshot"]
+    assert snapshot["status"] == "target_mismatch"
+    assert snapshot["context"] is None
+    assert snapshot["capture_attestation"]["phase"] == "after_structured_read"
+    assert snapshot["perception_trace"]["selectedLayer"] is None
+
+
 def test_structured_context_prevents_visual_capture_and_records_layer(tmp_path) -> None:
     foreground = {
         "title": "doc.docx - Word",
@@ -260,7 +304,17 @@ def test_unsupported_foreground_becomes_local_visual_object_at_pointer(tmp_path)
     summary = payload["captureSummary"]
     assert snapshot["status"] == "ready"
     assert snapshot["source_kind"] == "screen_region"
-    assert snapshot["selection_bbox"] == [280, 290, 920, 710]
+    assert snapshot["capture_bbox"] == [280, 290, 920, 710]
+    assert snapshot["selection_bbox"] is None
+    assert snapshot["pointer_anchor_bbox"] == [592, 492, 608, 508]
+    artifacts = snapshot["context"]["artifacts"]
+    assert artifacts["capture_bbox"] == [280, 290, 920, 710]
+    assert artifacts["capture_bbox_coordinate_space"] == "physical_screen_pixels"
+    assert artifacts["capture_bbox_format"] == "ltrb"
+    assert artifacts["selection_rectangles"] == []
+    assert artifacts["selection_rectangles_coordinate_space"] == "physical_screen_pixels"
+    assert artifacts["selection_rectangles_format"] == "xywh"
+    assert artifacts["selection_geometry_kind"] == "pointer_anchor"
     assert Path(snapshot["capture_path"]).is_file()
     annotated = Path(snapshot["annotated_path"])
     assert annotated.is_file()
@@ -646,6 +700,29 @@ def test_active_context_pack_takes_priority_as_agent_delivery_target() -> None:
         "command": "发送到这里",
         "autoRun": True,
     }]
+
+
+def test_completed_pointer_gesture_is_preserved_with_snapshot() -> None:
+    gesture = {
+        "kind": "line",
+        "coordinateSpace": "electron_dip_screen",
+        "releasePoint": {"x": 620, "y": 440},
+        "semanticPoint": {"x": 510, "y": 438},
+        "bbox": {"x": 400, "y": 430, "width": 220, "height": 16},
+        "points": [
+            {"x": 400, "y": 432, "t": 0},
+            {"x": 510, "y": 438, "t": 60},
+            {"x": 620, "y": 440, "t": 120},
+        ],
+    }
+    payload = capture_snapshot(
+        [{"title": "Gesture target", "hwnd": 901, "process_id": 902}],
+        registry=_FakeRegistry(supported=False),
+        target_point={"x": 510, "y": 438},
+        gesture=gesture,
+    )
+
+    assert payload["selectionSnapshot"]["selection_gesture"] == gesture
 
 
 def test_runtime_issue_is_presented_as_one_agent_task_not_generic_context() -> None:

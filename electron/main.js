@@ -1,5 +1,7 @@
 ﻿const { app, BrowserWindow, globalShortcut, ipcMain, screen, safeStorage, systemPreferences } = require('electron');
 const path = require('path');
+const { dialog } = require('electron');
+const { Menu, nativeImage, Tray } = require('electron');
 const { nativeTheme } = require('electron');
 const { shell } = require('electron');
 const { spawn } = require('child_process');
@@ -9,47 +11,102 @@ const { SelectionSessionStore } = require('./selection_session');
 const { InteractionEpisodeStore, inferReferenceLabel, inferReferenceMode } = require('./interaction_episode');
 const { ActivationGate } = require('./activation_gate');
 const { WiggleDetector } = require('./wiggle_detector');
+const { runDeterministicWiggleEvidence } = require('./wiggle_reliability');
 const { MouseActivationDetector } = require('./mouse_activation');
 const { ElectronSettingsStore, defaultSettings } = require('./settings_store');
 const { CredentialStore } = require('./credential_store');
 const { PreflightRunner } = require('./bootstrap_runner');
 const { buildPreflightChecks } = require('./preflight_checks');
+const { resolvePythonRuntime, pythonInvocationArgs, pythonSpawnEnvironment } = require('./python_runtime');
+const { VoiceResidentRuntime } = require('./voice_resident_runtime');
 const { captureEligibility } = require('./result_surface_policy');
 const { inferObjectKind, selectionSourceForReason, stageEventFromBridge } = require('./stage_contract');
 const { canAutoExecuteInternalProposal } = require('./internal_action_policy');
-const { physicalScreenPoint } = require('./coordinate_space');
+const { physicalScreenPoint, normalizeGroundingGeometry } = require('./coordinate_space');
 const { isSurfaceSender } = require('./ipc_surface_policy');
 const { buildGoogleMapsDirectionsUrl, isAllowedGoogleMapsDirectionsUrl } = require('./route_policy');
-const {
-  chooseAnchorRect,
-  normalizeNativeSelectionRectangles,
-} = require('./panel_position');
+const { VoiceFocusGuard } = require('./voice_focus_guard');
+const { onboardingIsReady, shouldStartHidden } = require('./app_lifecycle');
+const { RuntimeSnapshot } = require('./runtime_snapshot');
+const { summarizeGesture } = require('./gesture_capture');
+const { shouldDismissFromGlobalPointer } = require('./pointer_dismiss_policy');
+const { RendererReadiness } = require('./renderer_readiness');
+const { gestureRuntimeContract, gestureRuntimeSettingsChanged } = require('./gesture_runtime_settings');
+const { createUpdateManager } = require('./update_manager');
 
 let overlayWindow = null;
 let dashboardWindow = null;
 let stageWindow = null;
+const overlayReadiness = new RendererReadiness();
+const stageReadiness = new RendererReadiness();
+let tray = null;
+let updateManager = null;
 let mousePollTimer = null;
 let overlayHideTimer = null;
+let selectionGestureArm = null;
+let selectionGestureArmTimer = null;
+let selectionGestureExpiryTimer = null;
 let wiggleDetector = null;
 const mouseActivationDetector = new MouseActivationDetector();
 let fabricSettings = null;
 let fabricSettingsStore = null;
 let credentialStore = null;
 let pointerStateChild = null;
-let pointerInputState = { buttons: 0, foregroundApp: '', isWindowMoving: false, scrollDelta: 0 };
+let pointerStateRestartTimer = null;
+let pointerInputState = {
+  buttons: 0,
+  foregroundApp: '',
+  foregroundHwnd: 0,
+  foregroundProcessId: 0,
+  isWindowMoving: false,
+  scrollDelta: 0,
+};
 let wiggleCalibrationTimer = null;
+let lastWiggleTraceAt = 0;
 let inputPaused = false;
 let isQuitting = false;
+let onboardingRequired = false;
+let backgroundHintShown = false;
+let temporaryDismissShortcutRegistered = false;
+let temporarySurfaceButtons = 0;
+let overlayOwnsPointerInput = false;
+let stageHitRegions = [];
+let stageShapeSettleTimer = null;
+let pendingSurfaceActivation = null;
+let surfaceReadinessWaitArmed = false;
 const registeredConfigurableHotkeys = new Set();
 
 const ROOT = path.resolve(__dirname, '..');
-const RUNTIME_DIR = path.join(ROOT, 'data', 'runtime');
-const FABRIC_DATA_DIR = path.resolve(process.env.MAGIC_POINTER_USER_DATA_DIR || RUNTIME_DIR);
+const PYTHON_RUNTIME = resolvePythonRuntime({
+  isPackaged: app.isPackaged,
+  platform: process.platform,
+  resourcesPath: process.resourcesPath,
+  env: process.env,
+});
+const PYTHON_EXECUTABLE = PYTHON_RUNTIME.executable;
+const PYTHON_ISOLATED = PYTHON_RUNTIME.required === true;
+const DEVELOPMENT_RUNTIME_DIR = path.join(ROOT, 'data', 'runtime');
+const EXPLICIT_USER_DATA_DIR = process.env.MAGIC_POINTER_USER_DATA_DIR
+  ? path.resolve(process.env.MAGIC_POINTER_USER_DATA_DIR)
+  : null;
+const PACKAGED_WINDOWS_USER_DATA_DIR = process.platform === 'win32' && process.env.LOCALAPPDATA
+  ? path.join(process.env.LOCALAPPDATA, 'Magic Pointer')
+  : null;
+const ELECTRON_USER_DATA_DIR = EXPLICIT_USER_DATA_DIR
+  || (app.isPackaged ? PACKAGED_WINDOWS_USER_DATA_DIR : null);
+if (ELECTRON_USER_DATA_DIR) {
+  app.setPath('userData', ELECTRON_USER_DATA_DIR);
+}
+const DEFAULT_USER_DATA_DIR = app.isPackaged ? app.getPath('userData') : DEVELOPMENT_RUNTIME_DIR;
+const FABRIC_DATA_DIR = path.resolve(EXPLICIT_USER_DATA_DIR || DEFAULT_USER_DATA_DIR);
+const RUNTIME_DIR = FABRIC_DATA_DIR;
 const LOG_PATH = path.join(RUNTIME_DIR, 'electron.log');
 const PID_PATH = path.join(RUNTIME_DIR, 'electron.pid');
+const ONBOARDING_MARKER_PATH = path.join(FABRIC_DATA_DIR, 'onboarding.json');
 const ACTION_PROPOSAL_TTL_MS = 2 * 60 * 1000;
 const SELECTION_SESSION_TTL_MS = 2 * 60 * 1000;
-const SHOW_STARTUP_OVERLAY = process.env.MAGIC_POINTER_SHOW_STARTUP === '1';
+const SELECTION_GESTURE_ARM_DELAY_MS = 180;
+const SELECTION_GESTURE_TIMEOUT_MS = 5000;
 const ALLOWED_ACTION_TYPES = new Set([
   'copy_text_to_clipboard',
   'office_replace_selection',
@@ -69,6 +126,20 @@ const interactionEpisodes = new InteractionEpisodeStore({ ttlMs: 30 * 60 * 1000 
 const activationGate = new ActivationGate({ debounceMs: 600 });
 const activeSessionChildren = new Map();
 const dictationChildren = new Map();
+const dictationStopFiles = new Map();
+let voiceRuntime = null;
+const voiceFocusGuards = new Map();
+let latestVoiceFocusEvidence = null;
+let latestVoiceRuntimeStatus = {
+  state: 'unloaded',
+  errorCode: null,
+  residentEnabled: true,
+  workerEvent: null,
+};
+const runtimeSnapshot = new RuntimeSnapshot({
+  probe: probeRuntimeState,
+  ttlMs: 5000,
+});
 let activeSelectionSessionToken = null;
 // Last bridge result delivered to the stage; context actions (open calendar /
 // route draft in the dashboard) resolve against it.
@@ -83,6 +154,69 @@ function log(message) {
   } catch (_) {
     // Logging must never break the overlay.
   }
+}
+
+function persistVoiceFocusEvidence(evidence) {
+  if (!evidence || typeof evidence !== 'object') return;
+  latestVoiceFocusEvidence = safeClone(evidence);
+  try {
+    fs.mkdirSync(FABRIC_DATA_DIR, { recursive: true });
+    fs.appendFileSync(
+      path.join(FABRIC_DATA_DIR, 'voice-focus-evidence.jsonl'),
+      `${JSON.stringify(evidence)}\n`,
+      'utf8',
+    );
+  } catch (error) {
+    log(`voice focus evidence persist failed ${error.name}`);
+  }
+}
+
+function beginVoiceFocusGuard(selectionSessionToken) {
+  if (fabricSettings?.activation?.keep_current_app_focus === false) return null;
+  const expectedHwnd = Number(pointerInputState.foregroundHwnd || 0);
+  if (!Number.isSafeInteger(expectedHwnd) || expectedHwnd <= 0) {
+    persistVoiceFocusEvidence({
+      sessionId: String(selectionSessionToken || ''),
+      expectedHwnd: 0,
+      contract: 'foreground-hwnd-stable',
+      invariant: false,
+      violationCount: 1,
+      violations: [{
+        phase: 'wake', expectedHwnd: 0, observedHwnd: 0, timestamp: Date.now(),
+      }],
+      phases: [],
+      startedAt: Date.now(),
+      finishedAt: Date.now(),
+      failure: 'foreground_hwnd_unavailable',
+    });
+    return null;
+  }
+  const guard = new VoiceFocusGuard({
+    expectedHwnd,
+    sessionId: String(selectionSessionToken || crypto.randomUUID()),
+  });
+  voiceFocusGuards.set(selectionSessionToken, guard);
+  observeVoiceFocusPhase('wake', selectionSessionToken);
+  return guard;
+}
+
+function observeVoiceFocusPhase(phase, selectionSessionToken = activeSelectionSessionToken) {
+  const guard = voiceFocusGuards.get(selectionSessionToken);
+  if (!guard) return false;
+  const stable = guard.observe(phase, Number(pointerInputState.foregroundHwnd || 0));
+  if (!stable) log(`voice focus invariant failed phase=${phase}`);
+  return stable;
+}
+
+function finishVoiceFocusGuard(phase = null, selectionSessionToken = activeSelectionSessionToken) {
+  const guard = voiceFocusGuards.get(selectionSessionToken);
+  if (!guard) return null;
+  if (phase) observeVoiceFocusPhase(phase, selectionSessionToken);
+  const evidence = guard.finish();
+  voiceFocusGuards.delete(selectionSessionToken);
+  persistVoiceFocusEvidence(evidence);
+  log(`voice focus complete invariant=${evidence.invariant} violations=${evidence.violationCount}`);
+  return evidence;
 }
 
 function persistCurrentObjectEpisode(session) {
@@ -196,6 +330,8 @@ function startPointerInputStateStream() {
         pointerInputState = {
           buttons: Number(parsed.buttons || 0),
           foregroundApp: String(parsed.foregroundApp || ''),
+          foregroundHwnd: Number(parsed.foregroundHwnd || 0),
+          foregroundProcessId: Number(parsed.foregroundProcessId || 0),
           isWindowMoving: parsed.isWindowMoving === true,
           scrollDelta: Number(parsed.scrollDelta || 0),
         };
@@ -204,7 +340,20 @@ function startPointerInputStateStream() {
   });
   pointerStateChild.on('close', () => {
     pointerStateChild = null;
-    pointerInputState = { buttons: 0, foregroundApp: '', isWindowMoving: false, scrollDelta: 0 };
+    pointerInputState = {
+      buttons: 0,
+      foregroundApp: '',
+      foregroundHwnd: 0,
+      foregroundProcessId: 0,
+      isWindowMoving: false,
+      scrollDelta: 0,
+    };
+    if (!isQuitting && mousePollTimer && !pointerStateRestartTimer) {
+      pointerStateRestartTimer = setTimeout(() => {
+        pointerStateRestartTimer = null;
+        startPointerInputStateStream();
+      }, 300);
+    }
   });
   pointerStateChild.on('error', (error) => {
     log(`pointer state stream error ${error.name}: ${error.message}`);
@@ -278,6 +427,16 @@ function cancelSessionChild(selectionSessionToken) {
 
 function invalidateSelectionSession(selectionSessionToken) {
   if (!selectionSessionToken) return;
+  if (voiceRuntime?.active && activeSelectionSessionToken === selectionSessionToken) {
+    appendVoiceAudit({
+      eventType: 'voice.cancel', sessionToken: selectionSessionToken, surface: voiceRuntime.active.surface,
+      outcome: 'cancelled', cancellationReason: 'selection_session_invalidated',
+    });
+    voiceRuntime.stop(voiceRuntime.active.requestId, { cancel: true });
+  }
+  if (voiceFocusGuards.has(selectionSessionToken)) {
+    finishVoiceFocusGuard('dismissed', selectionSessionToken);
+  }
   cancelSessionChild(selectionSessionToken);
   invalidateActionProposalsForSession(selectionSessionToken);
   selectionSessions.cancel(selectionSessionToken);
@@ -289,15 +448,108 @@ if (!gotLock) {
   app.quit();
 } else {
   app.on('second-instance', () => {
-    log('second-instance -> requestActivation');
-    requestActivation('second-instance');
+    log('second-instance -> showDashboard');
+    showDashboard({ view: onboardingRequired ? 'diagnostics' : 'general' }, { activate: true });
   });
+}
+
+function trayNativeImage() {
+  const iconPath = path.join(ROOT, 'assets', 'app', 'icon.ico');
+  if (fs.existsSync(iconPath)) return iconPath;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+    <defs><linearGradient id="g" x1="4" y1="3" x2="28" y2="29" gradientUnits="userSpaceOnUse"><stop stop-color="#48A8FF"/><stop offset=".52" stop-color="#7475FF"/><stop offset="1" stop-color="#995FDF"/></linearGradient></defs>
+    <rect x="2" y="2" width="28" height="28" rx="9" fill="url(#g)"/>
+    <path d="M10 7.5v16.8l4.25-4.15 2.55 6.15 3.25-1.35-2.55-6.05h5.85L10 7.5Z" fill="white" stroke="white" stroke-width="1.35" stroke-linejoin="round"/>
+  </svg>`;
+  return nativeImage.createFromDataURL(`data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`)
+    .resize({ width: 20, height: 20 });
+}
+
+function refreshTrayMenu() {
+  if (!tray || tray.isDestroyed()) return;
+  const statusLabel = onboardingRequired ? '首次检查尚未完成' : inputPaused ? '已暂停' : '正在运行';
+  tray.setToolTip(`Magic Pointer · ${statusLabel}`);
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: statusLabel, enabled: false },
+    { type: 'separator' },
+    {
+      label: '打开设置',
+      click: () => showDashboard({ view: onboardingRequired ? 'diagnostics' : 'general' }, { activate: true }),
+    },
+    {
+      label: inputPaused ? '恢复唤醒' : '暂停唤醒',
+      enabled: !onboardingRequired,
+      click: () => {
+        inputPaused = !inputPaused;
+        if (inputPaused) dismissTemporarySurfaces({ invalidateSession: true, hideObserver: true });
+        applyConfiguredWakeState();
+        refreshTrayMenu();
+      },
+    },
+    {
+      label: updateManager?.status()?.state === 'checking'
+        ? '正在检查更新…'
+        : updateManager?.status()?.state === 'downloading'
+          ? `正在下载更新 ${Math.round(updateManager.status().progress || 0)}%`
+          : updateManager?.status()?.state === 'downloaded'
+            ? '更新已下载，等待重启'
+            : '检查更新…',
+      enabled: !['checking', 'downloading'].includes(updateManager?.status()?.state),
+      click: () => {
+        initializeUpdateManager({ automatic: false });
+        updateManager?.check({ manual: true });
+      },
+    },
+    { type: 'separator' },
+    {
+      label: '退出 Magic Pointer',
+      click: () => {
+        isQuitting = true;
+        app.quit();
+      },
+    },
+  ]));
+}
+
+function createTray() {
+  if (tray && !tray.isDestroyed()) return tray;
+  tray = new Tray(trayNativeImage());
+  tray.on('click', () => {
+    showDashboard({ view: onboardingRequired ? 'diagnostics' : 'general' }, { activate: true });
+  });
+  refreshTrayMenu();
+  return tray;
+}
+
+function initializeUpdateManager({ automatic = true } = {}) {
+  if (updateManager) return updateManager;
+  let updater = null;
+  try {
+    ({ autoUpdater: updater } = require('electron-updater'));
+  } catch (error) {
+    log(`update runtime unavailable ${error.name}: ${error.message}`);
+    return null;
+  }
+  updateManager = createUpdateManager({
+    app,
+    updater,
+    dialog,
+    log,
+    onStatus: () => refreshTrayMenu(),
+  });
+  updateManager.start({
+    channel: fabricSettings?.general?.update_channel || 'stable',
+    automatic,
+  });
+  refreshTrayMenu();
+  return updateManager;
 }
 
 function createOverlayWindow() {
   const display = screen.getPrimaryDisplay();
   const bounds = display.bounds;
 
+  overlayReadiness.reset();
   overlayWindow = new BrowserWindow({
     x: bounds.x,
     y: bounds.y,
@@ -313,10 +565,12 @@ function createOverlayWindow() {
     show: false,
     alwaysOnTop: true,
     hasShadow: false,
+    focusable: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      backgroundThrottling: false,
     },
   });
 
@@ -324,9 +578,13 @@ function createOverlayWindow() {
   overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   overlayWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   overlayWindow.setIgnoreMouseEvents(true, { forward: true });
+  overlayOwnsPointerInput = false;
+  overlayWindow.webContents.on('did-start-loading', () => overlayReadiness.reset());
 
   overlayWindow.on('closed', () => {
     overlayWindow = null;
+    overlayOwnsPointerInput = false;
+    overlayReadiness.reset();
   });
 }
 
@@ -334,6 +592,7 @@ function createStageWindow() {
   if (stageWindow && !stageWindow.isDestroyed()) return stageWindow;
   const display = screen.getPrimaryDisplay();
   const bounds = display.bounds;
+  stageReadiness.reset();
   stageWindow = new BrowserWindow({
     x: bounds.x,
     y: bounds.y,
@@ -353,25 +612,73 @@ function createStageWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      backgroundThrottling: false,
     },
   });
   stageWindow.setAlwaysOnTop(true, 'screen-saver');
   stageWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   stageWindow.loadFile(path.join(__dirname, 'renderer', 'stage.html'));
   stageWindow.setIgnoreMouseEvents(true, { forward: true });
-  stageWindow.on('closed', () => { stageWindow = null; });
+  stageWindow.webContents.on('did-start-loading', () => stageReadiness.reset());
+  stageWindow.on('closed', () => {
+    stageWindow = null;
+    stageReadiness.reset();
+  });
   return stageWindow;
+}
+
+function placeStageOnDisplay(display) {
+  const win = createStageWindow();
+  const desired = display?.bounds;
+  if (!desired) return win;
+  const current = win.getBounds();
+  if (
+    current.x !== desired.x
+    || current.y !== desired.y
+    || current.width !== desired.width
+    || current.height !== desired.height
+  ) {
+    win.setBounds(desired);
+  }
+  return win;
+}
+
+function selectionVisualForStage() {
+  const visual = String(fabricSettings?.appearance?.selection_visual || 'sweep_band');
+  return ['sweep_band', 'soft_glow', 'outline'].includes(visual) ? visual : 'sweep_band';
+}
+
+function stageVisualTuningForStage() {
+  const appearance = fabricSettings?.appearance || {};
+  return {
+    sweepHeightRatio: Number(appearance.sweep_height_ratio ?? 0.52),
+    sweepMinHeightDip: Number(appearance.sweep_min_height_dip ?? 10),
+    sweepMaxHeightDip: Number(appearance.sweep_max_height_dip ?? 24),
+    sweepDurationMs: Number(appearance.sweep_duration_ms ?? 292),
+    sweepFadeMs: Number(appearance.sweep_fade_ms ?? 96),
+    capsuleSpawnMs: Number(appearance.capsule_spawn_ms ?? 417),
+    capsuleExpandMs: Number(appearance.capsule_expand_ms ?? 292),
+    capsuleVoiceWidthDip: Number(appearance.capsule_voice_width_dip ?? 40),
+    capsuleTextWidthDip: Number(appearance.capsule_text_width_dip ?? 144),
+    capsuleMaxWidthDip: Number(appearance.capsule_max_width_dip ?? 440),
+    capsuleInlineGapDip: Number(appearance.capsule_inline_gap_dip ?? 18),
+  };
 }
 
 function showStage(payload = {}) {
   const win = createStageWindow();
+  armTemporaryDismissShortcut();
+  const trustedPayload = {
+    ...payload,
+    selectionVisual: selectionVisualForStage(),
+    visualTuning: stageVisualTuningForStage(),
+  };
   const send = () => {
     if (!win || win.isDestroyed()) return;
-    win.webContents.send('stage:show', payload);
+    win.webContents.send('stage:show', trustedPayload);
     if (!win.isVisible()) win.showInactive();
   };
-  if (win.webContents.isLoading()) win.webContents.once('did-finish-load', send);
-  else send();
+  stageReadiness.whenReady(send);
 }
 
 function updateStage(payload = {}) {
@@ -385,11 +692,56 @@ function hideStage() {
 // The stage window is click-through by default; the renderer asks for real
 // mouse capture only while an interactive surface (text capsule, result card,
 // chips) is on screen.
-function setStageMouseCapture(enabled) {
+function sanitizeStageHitRegions(rawRegions) {
+  if (!stageWindow || stageWindow.isDestroyed() || !Array.isArray(rawRegions)) return [];
+  const bounds = stageWindow.getBounds();
+  const regions = [];
+  for (const raw of rawRegions.slice(0, 16)) {
+    const x = Math.max(0, Math.floor(Number(raw?.x)));
+    const y = Math.max(0, Math.floor(Number(raw?.y)));
+    const right = Math.min(bounds.width, Math.ceil(Number(raw?.x) + Number(raw?.width)));
+    const bottom = Math.min(bounds.height, Math.ceil(Number(raw?.y) + Number(raw?.height)));
+    if (![x, y, right, bottom].every(Number.isFinite) || right <= x || bottom <= y) continue;
+    regions.push({ x, y, width: right - x, height: bottom - y });
+  }
+  return regions;
+}
+
+function mergeStageHitRegions(previous, current) {
+  const seen = new Set();
+  return [...previous, ...current].filter((region) => {
+    const key = `${region.x}:${region.y}:${region.width}:${region.height}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  }).slice(0, 32);
+}
+
+function applyStageShape(regions) {
   if (!stageWindow || stageWindow.isDestroyed()) return;
-  if (enabled) {
+  stageWindow.setShape(regions);
+}
+
+function setStageMouseCapture(enabled, requestFocus = false, rawRegions = undefined) {
+  if (!stageWindow || stageWindow.isDestroyed()) return;
+  const previousRegions = stageHitRegions;
+  if (Array.isArray(rawRegions)) stageHitRegions = sanitizeStageHitRegions(rawRegions);
+  const regions = stageHitRegions;
+  if (typeof stageWindow.setShape === 'function' && ['win32', 'linux'].includes(process.platform)) {
+    const transitionRegions = previousRegions.length && regions.length
+      ? mergeStageHitRegions(previousRegions, regions)
+      : regions;
+    applyStageShape(transitionRegions);
+    if (stageShapeSettleTimer) clearTimeout(stageShapeSettleTimer);
+    stageShapeSettleTimer = setTimeout(() => {
+      stageShapeSettleTimer = null;
+      if (!stageWindow || stageWindow.isDestroyed()) return;
+      applyStageShape(stageHitRegions);
+    }, 34);
+  }
+  if (requestFocus) stageWindow.focus();
+  if (enabled && regions.length) {
     stageWindow.setIgnoreMouseEvents(false);
-    stageWindow.focus();
   } else {
     stageWindow.setIgnoreMouseEvents(true, { forward: true });
   }
@@ -464,6 +816,16 @@ function createDashboardWindow() {
     if (!isQuitting && fabricSettings?.general?.keep_running !== false) {
       event.preventDefault();
       dashboardWindow.hide();
+      if (!backgroundHintShown && tray && !tray.isDestroyed() && process.platform === 'win32') {
+        backgroundHintShown = true;
+        try {
+          tray.displayBalloon({
+            title: 'Magic Pointer 仍在后台运行',
+            content: '从系统托盘可以暂停唤醒、重新打开设置或完全退出。',
+            noSound: true,
+          });
+        } catch (_) {}
+      }
     } else if (!isQuitting) {
       setImmediate(() => app.quit());
     }
@@ -491,6 +853,7 @@ function showDashboard(payload = {}, options = {}) {
     if (options.activate === false) dashboardWindow.showInactive();
     else dashboardWindow.show();
     dashboardWindow.webContents.send('dashboard:show', payload);
+    dashboardWindow.webContents.send('dashboard:voice-residency-status', latestVoiceRuntimeStatus);
     log(`showDashboard highlight=${payload.highlightItemId || 'none'}`);
   };
   if (win.webContents.isLoadingMainFrame()) win.webContents.once('did-finish-load', reveal);
@@ -498,71 +861,42 @@ function showDashboard(payload = {}, options = {}) {
 }
 
 function panelGeometryForSession(entry) {
-  const context = entry?.snapshot?.context || {};
+  const snapshot = entry?.snapshot || {};
+  const context = snapshot.context || {};
   const artifacts = context.artifacts || {};
-  const rawRectangles = artifacts.selection_rectangles;
-  const coordinateSpace = String(
-    artifacts.selection_rectangles_coordinate_space
-    || (context.adapter === 'uia_text_selection' ? 'physical_screen_pixels' : 'electron_dip'),
-  );
-  const shouldConvertPhysicalPixels = (
-    coordinateSpace === 'physical_screen_pixels'
-    && process.platform === 'win32'
-    && typeof screen.screenToDipRect === 'function'
-  );
-  const selectionRects = normalizeNativeSelectionRectangles(rawRectangles, (rect) => {
-    if (!shouldConvertPhysicalPixels) return rect;
-    return screen.screenToDipRect(null, {
-      x: Math.floor(rect.x),
-      y: Math.floor(rect.y),
-      width: Math.ceil(rect.width),
-      height: Math.ceil(rect.height),
-    });
+  const cursor = entry?.cursor || screen.getCursorScreenPoint();
+  const display = screen.getDisplayNearestPoint(cursor);
+  const stageBounds = placeStageOnDisplay(display).getBounds();
+  const grounding = normalizeGroundingGeometry({
+    pointer: snapshot.target_point,
+    pointerSpace: snapshot.target_point_space,
+    targetRects: artifacts.selection_rectangles || [],
+    targetSpace: artifacts.selection_rectangles_coordinate_space || null,
+    targetFormat: artifacts.selection_rectangles_format || null,
+    targetKind: artifacts.selection_geometry_kind || null,
+    captureRect: artifacts.capture_bbox || null,
+    captureSpace: artifacts.capture_bbox_coordinate_space || null,
+    captureFormat: artifacts.capture_bbox_format || null,
+    stageBounds,
+    screenApi: screen,
   });
   return {
     coordinateSpace: 'electron_dip',
-    sourceCoordinateSpace: coordinateSpace,
-    anchorCursor: entry?.cursor || screen.getCursorScreenPoint(),
-    selectionRects,
+    sourceCoordinateSpace: snapshot.target_point_space || null,
+    anchorCursor: grounding.pointerDip || cursor,
+    selectionRects: grounding.targetDipRects || [],
+    stageBounds,
+    stageTarget: grounding.stageTarget || null,
+    targetGeometryKind: grounding.state,
+    groundingReason: grounding.reason || null,
   };
 }
 
-function displayForPanelGeometry(geometry) {
-  const cursor = geometry?.anchorCursor || screen.getCursorScreenPoint();
-  const anchorRect = chooseAnchorRect(geometry?.selectionRects || [], cursor);
-  if (anchorRect && typeof screen.getDisplayMatching === 'function') {
-    return screen.getDisplayMatching({
-      x: Math.round(anchorRect.x),
-      y: Math.round(anchorRect.y),
-      width: Math.max(1, Math.round(anchorRect.width)),
-      height: Math.max(1, Math.round(anchorRect.height)),
-    });
-  }
-  return screen.getDisplayNearestPoint(cursor);
-}
-
-// Selection anchor projected into stage-window coordinates (the stage covers
-// the primary display; UIA rectangles arrive in physical pixels and are DIP-
-// normalized by panelGeometryForSession).
 function stageTargetForSession(entry) {
   const geometry = entry?.panelGeometry || panelGeometryForSession(entry);
-  const win = createStageWindow();
-  const bounds = win.getBounds();
-  const anchor = chooseAnchorRect(geometry.selectionRects || [], geometry.anchorCursor);
-  if (anchor) {
-    return {
-      x: Math.round(anchor.x - bounds.x),
-      y: Math.round(anchor.y - bounds.y),
-      width: Math.max(0, Math.round(anchor.width)),
-      height: Math.max(0, Math.round(anchor.height)),
-    };
-  }
-  const cursor = geometry.anchorCursor || screen.getCursorScreenPoint();
   return {
-    x: Math.round(cursor.x - bounds.x - 8),
-    y: Math.round(cursor.y - bounds.y - 8),
-    width: 16,
-    height: 16,
+    target: geometry.stageTarget || null,
+    targetGeometryKind: geometry.targetGeometryKind || 'invalid',
   };
 }
 
@@ -577,6 +911,7 @@ function hasActiveSelectionCapture() {
 
 function dismissTemporarySurfaces({ invalidateSession = true, hideObserver = false } = {}) {
   const sessionToken = activeSelectionSessionToken;
+  cancelSelectionGesture('dismissed', { hideSurface: false });
   stopDictation('stage');
   setStageMouseCapture(false);
   if (stageWindow && !stageWindow.isDestroyed() && stageWindow.isVisible()) {
@@ -584,34 +919,247 @@ function dismissTemporarySurfaces({ invalidateSession = true, hideObserver = fal
     stageWindow.webContents.send('stage:hide');
   }
   if (invalidateSession) invalidateSelectionSession(sessionToken);
+  disarmTemporaryDismissShortcut();
   lastStageResult = null;
   if (hideObserver) hideOverlay();
   log('dismissTemporarySurfaces');
 }
 
+function armTemporaryDismissShortcut() {
+  temporarySurfaceButtons = Number(pointerInputState.buttons || 0);
+  if (temporaryDismissShortcutRegistered) return true;
+  try {
+    temporaryDismissShortcutRegistered = globalShortcut.register('Escape', () => {
+      dismissTemporarySurfaces({ invalidateSession: true, hideObserver: true });
+    });
+  } catch (_) {
+    temporaryDismissShortcutRegistered = false;
+  }
+  log(`temporary Escape dismiss registered=${temporaryDismissShortcutRegistered}`);
+  return temporaryDismissShortcutRegistered;
+}
+
+function disarmTemporaryDismissShortcut() {
+  if (!temporaryDismissShortcutRegistered) return;
+  try { globalShortcut.unregister('Escape'); } catch (_) {}
+  temporaryDismissShortcutRegistered = false;
+}
+
+function queueActivationUntilSurfacesReady(reason) {
+  createOverlayWindow();
+  createStageWindow();
+  pendingSurfaceActivation = {
+    reason,
+    requestedAt: Date.now(),
+  };
+  if (!surfaceReadinessWaitArmed) {
+    surfaceReadinessWaitArmed = true;
+    const replay = () => {
+      if (!pendingSurfaceActivation || isQuitting) {
+        surfaceReadinessWaitArmed = false;
+        return;
+      }
+      if (!stageReadiness.isReady || !overlayReadiness.isReady) {
+        surfaceReadinessWaitArmed = false;
+        queueActivationUntilSurfacesReady(pendingSurfaceActivation.reason);
+        return;
+      }
+      const pending = pendingSurfaceActivation;
+      pendingSurfaceActivation = null;
+      surfaceReadinessWaitArmed = false;
+      log(`activation renderer warmup complete reason=${pending.reason} delay_ms=${Date.now() - pending.requestedAt}`);
+      setImmediate(() => requestActivation(pending.reason));
+    };
+    stageReadiness.whenReady(() => overlayReadiness.whenReady(replay));
+  }
+  log(`activation queued renderer_warming reason=${reason}`);
+  return 'renderer_warming';
+}
+
 function requestActivation(reason) {
+  if (onboardingRequired) {
+    log(`activation blocked onboarding_required reason=${reason}`);
+    showDashboard({ view: 'diagnostics', onboardingRequired: true }, { activate: true });
+    return 'onboarding_required';
+  }
   if (inputPaused) {
     log(`activation ignored paused reason=${reason}`);
     return 'paused';
   }
+  if (!stageReadiness.isReady || !overlayReadiness.isReady) {
+    return queueActivationUntilSurfacesReady(reason);
+  }
   const decision = activationGate.decide({
     hasVisibleSurface: hasVisibleTemporarySurface() || Boolean(overlayWindow?.isVisible()),
-    isActivationBusy: hasActiveSelectionCapture(),
+    isActivationBusy: hasActiveSelectionCapture() || Boolean(selectionGestureArm),
   });
   log(`activation request reason=${reason} decision=${decision}`);
   if (decision === 'dismiss') {
     dismissTemporarySurfaces({ invalidateSession: true, hideObserver: true });
   } else if (decision === 'activate') {
-    beginSelectionSession(reason);
+    if (reason === 'wiggle' || reason === 'shortcut-wake') armSelectionGesture(reason);
+    else beginSelectionSession(reason);
   }
   return decision;
 }
 
-function stopDictation(surface) {
+function cleanupDictationStopFile(surface) {
+  const stopFile = dictationStopFiles.get(surface);
+  dictationStopFiles.delete(surface);
+  if (!stopFile) return;
+  try { fs.unlinkSync(stopFile); } catch (_) {}
+}
+
+function localWhisperModelName() {
+  const value = String(process.env.MAGIC_POINTER_WHISPER_MODEL || 'tiny').trim();
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value) && !value.includes('..')
+    ? value
+    : 'tiny';
+}
+
+function voiceRuntimeConfig(settings = fabricSettings) {
+  const interaction = settings?.interaction || {};
+  return {
+    enabled: interaction.voice_resident_enabled !== false,
+    memoryLimitMb: Number(interaction.voice_memory_limit_mb) || 1024,
+    idleUnloadMs: Number(interaction.voice_idle_unload_ms) || 300000,
+    root: ROOT,
+    pythonExecutable: PYTHON_EXECUTABLE,
+    pythonIsolated: PYTHON_ISOLATED,
+    modelName: localWhisperModelName(),
+    settingsPath: fabricSettingsStore?.path || '',
+  };
+}
+
+function sessionIdHash(value) {
+  return crypto.createHash('sha256').update(String(value || '')).digest('hex').slice(0, 24);
+}
+
+function appendVoiceAudit({ eventType, sessionToken, surface, engine, reused, measuredMemoryMb, latencyMs, outcome, errorCode, cancellationReason }) {
+  const data = {
+    eventType: String(eventType || 'voice.unknown').slice(0, 120),
+    timestamp: new Date().toISOString(),
+    sessionIdHash: sessionIdHash(sessionToken),
+    surface: surface === 'stage' ? 'stage' : 'overlay',
+    engine: String(engine || 'whisper-local').slice(0, 120),
+    modelId: localWhisperModelName(),
+    residentEnabled: fabricSettings?.interaction?.voice_resident_enabled !== false,
+    reused: reused === true,
+    memoryLimitMb: Number(fabricSettings?.interaction?.voice_memory_limit_mb) || 1024,
+    measuredMemoryMb: Number.isFinite(measuredMemoryMb) ? measuredMemoryMb : null,
+    latencyMs: Number.isFinite(latencyMs) ? latencyMs : null,
+    idleUnloadMs: Number(fabricSettings?.interaction?.voice_idle_unload_ms) || 300000,
+    outcome: String(outcome || 'unknown').slice(0, 80),
+    errorCode: errorCode ? String(errorCode).slice(0, 120) : null,
+    cancellationReason: cancellationReason ? String(cancellationReason).slice(0, 120) : null,
+  };
+  try {
+    const auditPath = path.join(FABRIC_DATA_DIR, 'fabric-audit.jsonl');
+    fs.mkdirSync(path.dirname(auditPath), { recursive: true });
+    fs.appendFileSync(auditPath, `${JSON.stringify({
+      eventId: crypto.randomUUID(), timestamp: data.timestamp, type: 'voice.residency', data,
+    })}\n`, 'utf8');
+    return true;
+  } catch (error) {
+    log(`voice audit persist failed ${error.name}`);
+    return false;
+  }
+}
+
+function sendVoiceRuntimeStatus(status = {}) {
+  if (status.workerEvent && !appendVoiceAudit({
+    eventType: `voice.${status.workerEvent.reason || status.workerEvent.type || 'status'}`,
+    surface: 'stage', engine: status.workerEvent.engine, measuredMemoryMb: Number(status.workerEvent.memory_mb),
+    outcome: status.state === 'error' ? 'failed' : 'completed', errorCode: status.errorCode,
+  })) {
+    status = { ...status, state: 'error', errorCode: 'voice_audit_failed' };
+  }
+  const previousRuntimeState = JSON.stringify({
+    state: latestVoiceRuntimeStatus?.state,
+    errorCode: latestVoiceRuntimeStatus?.errorCode,
+    residentEnabled: latestVoiceRuntimeStatus?.residentEnabled,
+  });
+  latestVoiceRuntimeStatus = safeClone(status);
+  const nextRuntimeState = JSON.stringify({
+    state: latestVoiceRuntimeStatus?.state,
+    errorCode: latestVoiceRuntimeStatus?.errorCode,
+    residentEnabled: latestVoiceRuntimeStatus?.residentEnabled,
+  });
+  if (previousRuntimeState !== nextRuntimeState) invalidateRuntimeState('voice_worker_changed');
+  safeSurfaceSend('dashboard', 'dashboard:voice-residency-status', status);
+}
+
+function forwardResidentVoiceEvent(event = {}) {
+  const active = voiceRuntime?.active;
+  if (!active || event.requestId !== active.requestId) return;
+  const sessionToken = activeSelectionSessionToken;
+  const startedAt = active.startedAt || Date.now();
+  const common = {
+    eventType: `voice.${event.type || 'unknown'}`,
+    sessionToken,
+    surface: active.surface,
+    engine: event.engine,
+    reused: event.reused === true,
+    measuredMemoryMb: Number(event.memory_mb),
+    latencyMs: Date.now() - startedAt,
+    outcome: event.type === 'error' ? 'failed' : event.type === 'microphone_stopped' ? 'stopped' : 'accepted',
+    errorCode: event.code,
+  };
+  if (!appendVoiceAudit(common)) {
+    safeSurfaceSend(active.surface, 'dictation:result', { ok: false, surface: active.surface, error: '本地语音审计写入失败，已停止本次会话。' });
+    voiceRuntime.shutdown();
+    return;
+  }
+  if (event.type === 'loading' || event.type === 'ready') {
+    observeVoiceFocusPhase(event.type);
+    safeSurfaceSend(active.surface, 'dictation:result', { ok: true, surface: active.surface, status: event.type, engine: event.engine || 'whisper-local', reused: event.reused === true });
+  } else if (event.type === 'partial' || event.type === 'final') {
+    observeVoiceFocusPhase(event.type);
+    safeSurfaceSend(active.surface, 'dictation:result', { ok: true, surface: active.surface, transcript: String(event.transcript || ''), final: event.type === 'final', engine: event.engine || 'whisper-local' });
+  } else if (event.type === 'error') {
+    observeVoiceFocusPhase('error');
+    safeSurfaceSend(active.surface, 'dictation:result', { ok: false, surface: active.surface, error: String(event.error || '本地语音识别失败。'), engine: event.engine || 'whisper-local' });
+  }
+}
+
+function configureVoiceRuntime(settings, { preload = false } = {}) {
+  if (!voiceRuntime) return { ok: false, error: 'voice_runtime_unavailable' };
+  const result = voiceRuntime.configure(voiceRuntimeConfig(settings));
+  if (
+    result.ok
+    && preload
+    && result.changed
+    && settings?.interaction?.voice_resident_enabled !== false
+  ) voiceRuntime.warmUp();
+  return result;
+}
+
+function stopLegacyDictation({ surface, graceful = false } = {}) {
   const child = dictationChildren.get(surface);
-  if (!child) return;
+  if (!child) return false;
+  if (graceful) {
+    const stopFile = dictationStopFiles.get(surface);
+    if (!stopFile) return false;
+    try {
+      fs.mkdirSync(path.dirname(stopFile), { recursive: true });
+      fs.writeFileSync(stopFile, 'stop\n', { encoding: 'utf8', flag: 'wx' });
+      observeVoiceFocusPhase('stop_requested');
+    } catch (error) {
+      if (error?.code !== 'EEXIST') log(`dictation stop request failed ${error.name}`);
+    }
+    return true;
+  }
   dictationChildren.delete(surface);
+  cleanupDictationStopFile(surface);
   try { if (!child.killed) child.kill(); } catch (_) {}
+  return true;
+}
+
+function stopDictation(surface, { graceful = false } = {}) {
+  if (voiceRuntime?.active?.surface === surface) {
+    return voiceRuntime.stop(voiceRuntime.active.requestId, { graceful, cancel: !graceful });
+  }
+  return stopLegacyDictation({ surface, graceful, cancel: !graceful });
 }
 
 function sendCursorToOverlay(pos = screen.getCursorScreenPoint()) {
@@ -645,6 +1193,7 @@ function showOverlay(reason = 'manual', durationMs = 0) {
   const display = screen.getDisplayNearestPoint(cursor);
   overlayWindow.setBounds(display.bounds);
   overlayWindow.setIgnoreMouseEvents(true, { forward: true });
+  overlayOwnsPointerInput = false;
   overlayWindow.showInactive();
   overlayWindow.webContents.send('overlay:show', { reason, observerMode: true });
   sendCursorToOverlay(cursor);
@@ -662,8 +1211,10 @@ function showRuntimeIssueOverlay(reason = 'runtime-issue') {
   overlayHideTimer = null;
   const cursor = screen.getCursorScreenPoint();
   const display = screen.getDisplayNearestPoint(cursor);
+  if (typeof overlayWindow.setFocusable === 'function') overlayWindow.setFocusable(true);
   overlayWindow.setBounds(display.bounds);
   overlayWindow.setIgnoreMouseEvents(false);
+  overlayOwnsPointerInput = true;
   overlayWindow.show();
   overlayWindow.focus();
   overlayWindow.webContents.send('overlay:show', {
@@ -681,7 +1232,100 @@ function hideOverlay() {
   if (!overlayWindow) return;
   overlayWindow.webContents.send('overlay:hide');
   overlayWindow.hide();
+  overlayWindow.setIgnoreMouseEvents(true, { forward: true });
+  overlayOwnsPointerInput = false;
+  if (typeof overlayWindow.setFocusable === 'function') overlayWindow.setFocusable(false);
   log('hideOverlay');
+}
+
+function cancelSelectionGesture(reason = 'cancelled', { hideSurface = true } = {}) {
+  const active = selectionGestureArm;
+  if (selectionGestureArmTimer) clearTimeout(selectionGestureArmTimer);
+  if (selectionGestureExpiryTimer) clearTimeout(selectionGestureExpiryTimer);
+  selectionGestureArmTimer = null;
+  selectionGestureExpiryTimer = null;
+  selectionGestureArm = null;
+  if (hideSurface) hideOverlay();
+  if (!stageWindow || stageWindow.isDestroyed() || !stageWindow.isVisible()) {
+    disarmTemporaryDismissShortcut();
+  }
+  if (active) log(`selection gesture ${reason} token=${active.token}`);
+  return active;
+}
+
+function armSelectionGesture(reason = 'wiggle') {
+  cancelSelectionGesture('replaced');
+  const cursor = screen.getCursorScreenPoint();
+  const display = screen.getDisplayNearestPoint(cursor);
+  const now = Date.now();
+  const token = crypto.randomUUID();
+  const runtime = gestureRuntimeContract(fabricSettings);
+  const armDelayMs = runtime.armDelayMs;
+  const timeoutMs = runtime.timeoutMs;
+  selectionGestureArm = {
+    token,
+    reason,
+    runtime,
+    armedAt: now,
+    readyAt: now + armDelayMs,
+    expiresAt: now + timeoutMs,
+    armDelayMs,
+    timeoutMs,
+    displayBounds: { ...display.bounds },
+    source: {
+      foregroundApp: String(pointerInputState.foregroundApp || ''),
+      foregroundHwnd: Number(pointerInputState.foregroundHwnd || 0),
+      foregroundProcessId: Number(pointerInputState.foregroundProcessId || 0),
+    },
+  };
+  // Warm the hidden capsule renderer during the arm grace period. By the time
+  // the user releases a stroke it can paint immediately without startup jank.
+  const residentStage = createStageWindow();
+  armTemporaryDismissShortcut();
+
+  const reveal = () => {
+    const arm = selectionGestureArm;
+    if (!arm || arm.token !== token) return;
+    if (Date.now() >= arm.expiresAt) {
+      cancelSelectionGesture('expired');
+      return;
+    }
+    if (!overlayWindow || overlayWindow.isDestroyed()) createOverlayWindow();
+    const win = overlayWindow;
+    if (!win || win.isDestroyed()) return;
+    const show = () => {
+      if (!selectionGestureArm || selectionGestureArm.token !== token) return;
+      win.setBounds(arm.displayBounds);
+      if (typeof win.setFocusable === 'function') win.setFocusable(false);
+      win.setIgnoreMouseEvents(false);
+      overlayOwnsPointerInput = true;
+      win.showInactive();
+      win.webContents.send('overlay:show', {
+        reason,
+        workflow: 'selection_gesture',
+        gestureMode: true,
+        observerMode: false,
+        selectionGestureToken: token,
+        gestureAcceptAt: arm.readyAt,
+        gestureLineStyle: arm.runtime.lineStyle,
+        gestureLineWidth: arm.runtime.lineWidthDip,
+      });
+      log(
+        `selection gesture ready token=${token} delay_ms=${Date.now() - arm.armedAt}`
+        + ` style=${arm.runtime.lineStyle} width_dip=${arm.runtime.lineWidthDip}`,
+      );
+    };
+    stageReadiness.whenReady(() => overlayReadiness.whenReady(show));
+  };
+
+  // Capture the next pointerdown immediately. The renderer honors readyAt for
+  // visual grace, but an early press-and-hold is retained instead of lost.
+  log(`selection gesture armed reason=${reason} token=${token}`);
+  reveal();
+  selectionGestureExpiryTimer = setTimeout(() => {
+    if (selectionGestureArm?.token === token) cancelSelectionGesture('expired');
+  }, timeoutMs);
+  return token;
 }
 
 function startMouseShakePolling() {
@@ -691,6 +1335,28 @@ function startMouseShakePolling() {
     const now = Date.now();
     const pos = screen.getCursorScreenPoint();
     if (overlayWindow && overlayWindow.isVisible()) sendCursorToOverlay(pos);
+    if (stageWindow && !stageWindow.isDestroyed() && stageWindow.isVisible()) {
+      const stageBounds = stageWindow.getBounds();
+      stageWindow.webContents.send('stage:pointer-input', {
+        t: now,
+        x: pos.x - stageBounds.x,
+        y: pos.y - stageBounds.y,
+        buttons: Number(pointerInputState.buttons || 0),
+      });
+    }
+    const temporarySurfaceVisible = hasVisibleTemporarySurface() || Boolean(overlayWindow?.isVisible());
+    const currentButtons = Number(pointerInputState.buttons || 0);
+    const dismissFromGlobalPointer = shouldDismissFromGlobalPointer({
+      currentButtons,
+      previousButtons: temporarySurfaceButtons,
+      hasVisibleTemporarySurface: temporarySurfaceVisible,
+      interactiveOverlayOwnsPointer: overlayOwnsPointerInput && Boolean(overlayWindow?.isVisible()),
+    });
+    temporarySurfaceButtons = currentButtons;
+    if (dismissFromGlobalPointer) {
+      dismissTemporarySurfaces({ invalidateSession: true, hideObserver: true });
+      return;
+    }
     const mouseButtonMode = fabricSettings?.activation?.wake_mode === 'mouse_button'
       ? (fabricSettings?.activation?.mouse_side_button || 'none')
       : 'none';
@@ -718,16 +1384,27 @@ function startMouseShakePolling() {
       isWindowMoving: pointerInputState.isWindowMoving,
       scrollDelta,
     });
+    if (
+      process.env.MAGIC_POINTER_WIGGLE_TRACE === '1'
+      && decision.reason !== 'idle'
+      && decision.reason !== 'insufficient_samples'
+      && now - lastWiggleTraceAt >= 80
+    ) {
+      lastWiggleTraceAt = now;
+      log(`wiggle trace reason=${decision.reason} metrics=${JSON.stringify(decision.metrics || {})}`);
+    }
     if (decision.triggered) {
       log(`wiggle accepted metrics=${JSON.stringify(decision.metrics)}`);
       requestActivation('wiggle');
     }
-  }, 35);
+  }, 20);
   log('wiggle polling started');
 }
 
 function stopMouseShakePolling() {
   if (mousePollTimer) clearInterval(mousePollTimer);
+  if (pointerStateRestartTimer) clearTimeout(pointerStateRestartTimer);
+  pointerStateRestartTimer = null;
   mousePollTimer = null;
   try { if (pointerStateChild && !pointerStateChild.killed) pointerStateChild.kill(); } catch (_) {}
   pointerStateChild = null;
@@ -738,7 +1415,9 @@ function applyConfiguredWakeState() {
   const wiggleConfigured = ['wiggle', 'wiggle_hotkey'].includes(fabricSettings?.activation?.wake_mode)
     && fabricSettings?.activation?.wiggle_enabled !== false;
   const configured = wiggleConfigured || fabricSettings?.activation?.wake_mode === 'mouse_button';
-  const enabled = !inputPaused && (wiggleEnv === '1' ? true : wiggleEnv === '0' ? false : configured);
+  const enabled = !onboardingRequired
+    && !inputPaused
+    && (wiggleEnv === '1' ? true : wiggleEnv === '0' ? false : configured);
   mouseActivationDetector.reset(pointerInputState.buttons);
   if (enabled) {
     startPointerInputStateStream();
@@ -786,6 +1465,7 @@ function registerConfigurableHotkeys() {
     inputPaused = !inputPaused;
     if (inputPaused) dismissTemporarySurfaces({ invalidateSession: true, hideObserver: true });
     applyConfiguredWakeState();
+    refreshTrayMenu();
   });
   return results;
 }
@@ -797,6 +1477,8 @@ function stageSessionPayload(entry) {
     captureEligibility: entry.captureEligibility,
     defaultInputMode: inputModeForReason(entry.reason),
     voiceAutoSubmit: fabricSettings.interaction.voice_auto_submit,
+    voiceStartStrategy: fabricSettings.interaction.voice_start_strategy,
+    groundingReady: Boolean(entry?.snapshot),
     sessionExpiresAt: entry.expiresAt,
   };
 }
@@ -847,36 +1529,67 @@ function bindEpisodeForCommand(session, command) {
   return episode;
 }
 
-function beginSelectionSession(reason = 'manual') {
+function beginSelectionSession(reason = 'manual', gesture = null) {
   if (activeSelectionSessionToken) invalidateSelectionSession(activeSelectionSessionToken);
   lastStageResult = null;
 
-  const cursor = screen.getCursorScreenPoint();
-  const physicalCursor = physicalScreenPoint(screen, cursor);
-  const display = screen.getDisplayNearestPoint(cursor);
-  const entry = selectionSessions.create({ reason, cursor });
+  const liveCursor = screen.getCursorScreenPoint();
+  const releasePoint = gesture?.releasePoint || liveCursor;
+  const targetPoint = gesture?.semanticPoint || releasePoint;
+  const physicalCursor = physicalScreenPoint(screen, targetPoint);
+  const display = screen.getDisplayNearestPoint(releasePoint);
+  const entry = selectionSessions.create({ reason, cursor: releasePoint });
+  entry.gesture = gesture ? safeClone(gesture) : null;
   activeSelectionSessionToken = entry.token;
-  showOverlay(`${reason}-capturing`, 0);
-  // The stage is the single ephemeral surface: it wakes in targeting mode at
-  // the cursor and freezes onto the captured selection once the snapshot lands.
-  const stageBounds = createStageWindow().getBounds();
-  showStage({
-    reason,
-    selectionSessionToken: entry.token,
-    selectionSource: selectionSourceForReason(reason),
-    defaultInputMode: inputModeForReason(reason),
-    voiceAutoSubmit: fabricSettings.interaction.voice_auto_submit,
-    pointer: {
-      x: cursor.x - stageBounds.x,
-      y: cursor.y - stageBounds.y,
-    },
-    target: {
-      x: cursor.x - stageBounds.x - 8,
-      y: cursor.y - stageBounds.y - 8,
-      width: 16,
-      height: 16,
-    },
-  });
+  const initialInputMode = inputModeForReason(reason);
+  if (initialInputMode === 'voice') beginVoiceFocusGuard(entry.token);
+  // Normal target capture is intentionally invisible. The old observer aura
+  // repainted a full-display canvas at 30 FPS while grounding ran, producing
+  // startup jank and stale compositor artifacts on high-DPI displays.
+  hideOverlay();
+  let stageBounds = display.bounds;
+  if (gesture) {
+    // Release commits the gesture. Open the capsule immediately; grounding is
+    // asynchronous and later enriches this already-visible session.
+    stageBounds = placeStageOnDisplay(display).getBounds();
+    showStage({
+      ...stageSessionPayload(entry),
+      groundingReady: false,
+      reason,
+      selectionSource: selectionSourceForReason(reason),
+      targetGeometryKind: 'pointer_only',
+      target: null,
+      capsuleAnchor: 'pointer',
+      capsuleDelayMs: 0,
+      pointer: {
+        x: releasePoint.x - stageBounds.x,
+        y: releasePoint.y - stageBounds.y,
+      },
+      eventSequence: [
+        { type: 'FREEZE', target: null },
+        { type: 'OPEN_CAPSULE', mode: initialInputMode },
+      ],
+    });
+    armTemporaryDismissShortcut();
+  } else {
+    // Shortcut/native-selection paths retain immediate targeting.
+    stageBounds = placeStageOnDisplay(display).getBounds();
+    showStage({
+      reason,
+      selectionSessionToken: entry.token,
+      selectionSource: selectionSourceForReason(reason),
+      defaultInputMode: initialInputMode,
+      voiceAutoSubmit: fabricSettings.interaction.voice_auto_submit,
+      voiceStartStrategy: fabricSettings.interaction.voice_start_strategy,
+      targetGeometryKind: 'pointer_only',
+      pointer: {
+        x: releasePoint.x - stageBounds.x,
+        y: releasePoint.y - stageBounds.y,
+      },
+      target: null,
+    });
+    armTemporaryDismissShortcut();
+  }
   log(`selection session capture start reason=${reason} token=${entry.token}`);
 
   let child = null;
@@ -886,9 +1599,11 @@ function beginSelectionSession(reason = 'manual') {
       reason,
       cursor: physicalCursor,
       cursorSpace: physicalCursor ? 'physical_screen_pixels' : null,
+      gesture: gesture ? safeClone(gesture) : null,
       screenBounds: display.bounds,
       scaleFactor: display.scaleFactor || 1,
-      foregroundApp: pointerInputState.foregroundApp,
+      foregroundApp: gesture?.source?.foregroundApp || pointerInputState.foregroundApp,
+      foregroundHwnd: gesture?.source?.foregroundHwnd || pointerInputState.foregroundHwnd,
       allowVisualFallback: true,
     },
     'scripts/selection_snapshot_bridge.py',
@@ -913,22 +1628,39 @@ function beginSelectionSession(reason = 'manual') {
         });
         if (!laidOut) return;
         log(`selection session capture done token=${entry.token} status=${attached.snapshot?.status || 'missing'} app=${attached.summary?.app || 'none'}`);
-        updateStage({
-          ...stageSessionPayload(laidOut),
-          selectionSource: selectionSourceForReason(current.reason),
-          objectKind: inferObjectKind(attached.snapshot),
-          event: { type: 'FREEZE', target: stageTargetForSession(laidOut) },
-        });
-        if (!attached.captureEligibility?.commandReady) {
-          // Honest failure: the capsule never opens over an unusable selection.
-          deliverStageError(entry.token, attached.captureEligibility?.message || '当前选区不可用，请重新选择。');
-          return;
-        }
+        const frozenTarget = stageTargetForSession(laidOut);
         const mode = current.reason === 'shortcut-text'
           ? 'text'
           : current.reason === 'shortcut-voice'
             ? 'voice'
             : (fabricSettings.interaction.default_input_mode === 'text' ? 'text' : 'voice');
+        if (gesture) {
+          updateStage({
+            ...stageSessionPayload(laidOut),
+            groundingReady: true,
+            selectionSource: selectionSourceForReason(current.reason),
+            objectKind: inferObjectKind(attached.snapshot),
+            targetGeometryKind: 'pointer_only',
+            target: null,
+          });
+          return;
+        }
+        updateStage({
+          ...stageSessionPayload(laidOut),
+          selectionSource: selectionSourceForReason(current.reason),
+          objectKind: inferObjectKind(attached.snapshot),
+          targetGeometryKind: frozenTarget.targetGeometryKind,
+          event: { type: 'FREEZE', target: frozenTarget.target },
+        });
+        if (frozenTarget.targetGeometryKind === 'invalid') {
+          deliverStageError(entry.token, '目标坐标无法验证，请重新选择。');
+          return;
+        }
+        if (!attached.captureEligibility?.commandReady) {
+          // Honest failure: the capsule never opens over an unusable selection.
+          deliverStageError(entry.token, attached.captureEligibility?.message || '当前选区不可用，请重新选择。');
+          return;
+        }
         updateStage({
           selectionSessionToken: entry.token,
           event: { type: 'OPEN_CAPSULE', mode },
@@ -945,6 +1677,10 @@ app.whenReady().then(() => {
     fs.writeFileSync(PID_PATH, String(process.pid), 'utf8');
   } catch (_) {}
   log(`app ready pid=${process.pid}`);
+  for (const eventName of ['display-added', 'display-removed', 'display-metrics-changed']) {
+    screen.on(eventName, () => invalidateRuntimeState('display_configuration_changed'));
+  }
+  if (process.platform === 'win32') app.setAppUserModelId('com.magicpointer.desktop');
   fabricSettingsStore = new ElectronSettingsStore(path.join(FABRIC_DATA_DIR, 'fabric-settings.json'));
   credentialStore = new CredentialStore(path.join(FABRIC_DATA_DIR, 'credentials.v1.json'), safeStorage);
   try {
@@ -953,6 +1689,15 @@ app.whenReady().then(() => {
     fabricSettings = defaultSettings();
     log(`settings load failed closed ${error.name}: ${error.message}`);
   }
+  voiceRuntime = new VoiceResidentRuntime({
+    startLegacy: startLegacyDictation,
+    stopLegacy: stopLegacyDictation,
+    onDeliver: forwardResidentVoiceEvent,
+    onStatus: sendVoiceRuntimeStatus,
+  });
+  const voiceRuntimeStart = configureVoiceRuntime(fabricSettings, { preload: true });
+  if (!voiceRuntimeStart.ok) log(`voice runtime startup rejected ${voiceRuntimeStart.error}`);
+  onboardingRequired = !onboardingIsReady(ONBOARDING_MARKER_PATH);
   try {
     app.setLoginItemSettings({ openAtLogin: fabricSettings.general?.launch_at_login === true });
   } catch (error) {
@@ -963,7 +1708,33 @@ app.whenReady().then(() => {
     disabledApps: fabricSettings.activation.disabled_apps,
     cooldownMs: fabricSettings.activation.cooldown_ms,
   });
+  const wiggleEvidencePath = String(process.env.MAGIC_POINTER_N18_WIGGLE_EVIDENCE_PATH || '').trim();
+  if (wiggleEvidencePath) {
+    try {
+      const evidence = runDeterministicWiggleEvidence({
+        runId: 'n18-detector-regression',
+        expectedTrials: 100,
+        detectorOptions: {
+          sensitivity: fabricSettings.activation.sensitivity,
+          disabledApps: [],
+          cooldownMs: fabricSettings.activation.cooldown_ms,
+        },
+      });
+      const resolvedEvidencePath = path.resolve(wiggleEvidencePath);
+      fs.mkdirSync(path.dirname(resolvedEvidencePath), { recursive: true });
+      fs.writeFileSync(resolvedEvidencePath, `${JSON.stringify(evidence, null, 2)}\n`, 'utf8');
+      process.stdout.write(`${resolvedEvidencePath}\nalgorithmPass=${evidence.pass}\nphysicalInputValidated=false\n`);
+    } catch (error) {
+      process.stderr.write(`n18_wiggle_evidence_failed:${error.name}:${error.message}\n`);
+      process.exitCode = 1;
+    } finally {
+      setImmediate(() => app.quit());
+    }
+    return;
+  }
   createOverlayWindow();
+  createStageWindow();
+  createTray();
   registerConfigurableHotkeys();
   const deliveryHotkeyOk = globalShortcut.register('Control+Alt+Enter', () => {
     requestActivation('runtime-delivery');
@@ -979,7 +1750,76 @@ app.whenReady().then(() => {
   });
   log(`register hotkey Control+Alt+D dashboard ok=${dashboardHotkeyOk}`);
   applyConfiguredWakeState();
-  if (SHOW_STARTUP_OVERLAY) setTimeout(() => showOverlay('startup', 1400), 650);
+  refreshTrayMenu();
+  const captureMode = Boolean(
+    process.env.MAGIC_POINTER_DASHBOARD_CAPTURE
+    || process.env.MAGIC_POINTER_N17_FOCUS_EVIDENCE_PATH
+    || process.env.MAGIC_POINTER_N18_WIGGLE_EVIDENCE_PATH
+  );
+  if (!captureMode) initializeUpdateManager({ automatic: true });
+  let wasOpenedAtLogin = false;
+  try { wasOpenedAtLogin = app.getLoginItemSettings().wasOpenedAtLogin === true; } catch (_) {}
+  if (!shouldStartHidden({ argv: process.argv.slice(1), wasOpenedAtLogin, captureMode })) {
+    showDashboard({ view: onboardingRequired ? 'diagnostics' : 'general', onboardingRequired }, { activate: true });
+  }
+  let focusEvidencePath = String(process.env.MAGIC_POINTER_N17_FOCUS_EVIDENCE_PATH || '').trim();
+  if (focusEvidencePath) {
+    focusEvidencePath = path.resolve(focusEvidencePath);
+    const focusEvidenceStartDelay = Math.max(800, Math.min(
+      Number(process.env.MAGIC_POINTER_N17_FOCUS_START_DELAY_MS || 1500),
+      10000,
+    ));
+    const focusEvidenceDuration = Math.max(4000, Math.min(
+      Number(process.env.MAGIC_POINTER_N17_FOCUS_DURATION_MS || 12000),
+      30000,
+    ));
+    setTimeout(async () => {
+      const foregroundDeadline = Date.now() + 10000;
+      while (Number(pointerInputState.foregroundHwnd || 0) <= 0 && Date.now() < foregroundDeadline) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      const decision = requestActivation('shortcut-voice');
+      const evidenceSessionToken = activeSelectionSessionToken;
+      log(`N17 focus evidence activation decision=${decision}`);
+      setTimeout(() => {
+        try {
+          if (voiceFocusGuards.has(evidenceSessionToken)) {
+            finishVoiceFocusGuard('evidence_timeout', evidenceSessionToken);
+          }
+          const evidence = latestVoiceFocusEvidence || {
+            sessionId: String(evidenceSessionToken || ''),
+            expectedHwnd: 0,
+            contract: 'foreground-hwnd-stable',
+            invariant: false,
+            violationCount: 1,
+            violations: [{
+              phase: 'evidence', expectedHwnd: 0, observedHwnd: 0, timestamp: Date.now(),
+            }],
+            phases: [],
+            startedAt: Date.now(),
+            finishedAt: Date.now(),
+            failure: 'voice_focus_evidence_unavailable',
+          };
+          const envelope = {
+            schemaVersion: 1,
+            platform: process.platform,
+            activationDecision: decision,
+            observedForegroundHwnd: Number(pointerInputState.foregroundHwnd || 0),
+            evidence,
+          };
+          fs.mkdirSync(path.dirname(focusEvidencePath), { recursive: true });
+          fs.writeFileSync(focusEvidencePath, `${JSON.stringify(envelope, null, 2)}\n`, 'utf8');
+          process.stdout.write(`${focusEvidencePath}\ninvariant=${evidence.invariant}\n`);
+          if (evidence.invariant !== true) process.exitCode = 1;
+        } catch (error) {
+          process.stderr.write(`n17_focus_evidence_failed:${error.name}:${error.message}\n`);
+          process.exitCode = 1;
+        } finally {
+          app.quit();
+        }
+      }, focusEvidenceDuration);
+    }, focusEvidenceStartDelay);
+  }
   const dashboardCapturePath = String(process.env.MAGIC_POINTER_DASHBOARD_CAPTURE || '').trim();
   if (dashboardCapturePath) {
     const captureView = String(process.env.MAGIC_POINTER_DASHBOARD_VIEW || 'activity');
@@ -994,7 +1834,7 @@ app.whenReady().then(() => {
       Number(process.env.MAGIC_POINTER_DASHBOARD_CAPTURE_DELAY_MS || 4500),
       15000,
     ));
-    showDashboard({ view: captureView }, { activate: false });
+    showDashboard({ view: captureView, onboardingRequired }, { activate: false });
     setTimeout(async () => {
       try {
         if (captureProvenanceObjectId) {
@@ -1035,22 +1875,41 @@ app.whenReady().then(() => {
 app.on('will-quit', () => {
   try { fs.unlinkSync(PID_PATH); } catch (_) {}
   globalShortcut.unregisterAll();
+  temporaryDismissShortcutRegistered = false;
   if (mousePollTimer) clearInterval(mousePollTimer);
   if (wiggleCalibrationTimer) clearTimeout(wiggleCalibrationTimer);
+  voiceRuntime?.shutdown();
   try { if (pointerStateChild && !pointerStateChild.killed) pointerStateChild.kill(); } catch (_) {}
   pointerStateChild = null;
   for (const child of dictationChildren.values()) {
     try { if (child && !child.killed) child.kill(); } catch (_) {}
   }
   dictationChildren.clear();
+  for (const surface of dictationStopFiles.keys()) cleanupDictationStopFile(surface);
+  updateManager?.dispose();
   try { stageWindow?.close(); } catch (_) {}
   try { dashboardWindow?.close(); } catch (_) {}
+  try { tray?.destroy(); } catch (_) {}
+  tray = null;
   log('app will quit');
 });
 app.on('before-quit', () => { isQuitting = true; });
 
+ipcMain.on('overlay:renderer-ready', (event) => {
+  if (!isSurfaceSender(event, 'overlay', resultTargetWindow)) return;
+  overlayReadiness.markReady();
+  log('overlay renderer ready');
+});
+ipcMain.on('stage:renderer-ready', (event) => {
+  if (!isSurfaceSender(event, 'stage', resultTargetWindow)) return;
+  stageReadiness.markReady();
+  log('stage renderer ready');
+});
+
 ipcMain.on('overlay:hide', (event) => {
-  if (isSurfaceSender(event, 'overlay', resultTargetWindow)) hideOverlay();
+  if (isSurfaceSender(event, 'overlay', resultTargetWindow)) {
+    dismissTemporarySurfaces({ invalidateSession: true, hideObserver: true });
+  }
 });
 ipcMain.on('stage:show', (event) => {
   // Renderer re-asserts visibility once it has content to paint.
@@ -1059,7 +1918,15 @@ ipcMain.on('stage:show', (event) => {
 });
 ipcMain.on('stage:state', (event, payload) => {
   if (!isSurfaceSender(event, 'stage', resultTargetWindow)) return;
-  log(`stage renderer state=${String(payload?.state || 'unknown')}`);
+  const state = String(payload?.state || 'unknown');
+  log(`stage renderer state=${state}`);
+  if (state === 'result') {
+    observeVoiceFocusPhase('result');
+    finishVoiceFocusGuard();
+  } else if (state === 'error') {
+    observeVoiceFocusPhase('error');
+    finishVoiceFocusGuard();
+  }
 });
 ipcMain.on('stage:hidden', (event) => {
   // Renderer finished its dismiss fade; the window can actually hide now.
@@ -1074,71 +1941,74 @@ ipcMain.on('stage:dismiss', (event) => {
 });
 ipcMain.on('stage:set-mouse-capture', (event, payload) => {
   if (!isSurfaceSender(event, 'stage', resultTargetWindow)) return;
-  setStageMouseCapture(payload?.enabled === true);
+  setStageMouseCapture(
+    payload?.enabled === true,
+    payload?.requestFocus === true,
+    Array.isArray(payload?.regions) ? payload.regions : [],
+  );
 });
 ipcMain.on('dictation:stop', (event, payload) => {
   const surface = payload?.surface === 'overlay' ? 'overlay' : payload?.surface === 'stage' ? 'stage' : null;
   if (!surface || !isSurfaceSender(event, surface, resultTargetWindow)) return;
-  stopDictation(surface);
+  stopDictation(surface, { graceful: payload?.graceful === true });
 });
-ipcMain.on('dictation:start', (event, payload) => {
-  const surface = payload?.surface === 'overlay' ? 'overlay' : payload?.surface === 'stage' ? 'stage' : null;
-  if (!surface || !isSurfaceSender(event, surface, resultTargetWindow)) {
-    log('dictation:start rejected untrusted sender or surface');
-    return;
-  }
+function startLegacyDictation({ requestId, surface, contextPath, silenceMs }) {
   if (dictationChildren.has(surface)) {
-    safeSurfaceSend(surface, 'dictation:result', { ok: true, surface, status: 'already_starting', error: null });
-    return;
+    return { ok: false, error: 'voice_session_active' };
   }
   const scriptPath = path.join(ROOT, 'scripts', 'local_voice_bridge.py');
-  const pythonExecutable = process.env.MAGIC_POINTER_PYTHON || 'python';
-  const silenceMs = Math.max(
-    600,
-    Math.min(5000, Number(fabricSettings?.interaction?.voice_silence_ms) || 1600),
-  );
-  const voiceArgs = [
+  const pythonExecutable = PYTHON_EXECUTABLE;
+  const voiceArgs = pythonInvocationArgs([
     '-u',
     scriptPath,
     '--model',
-    process.env.MAGIC_POINTER_WHISPER_MODEL || 'tiny',
+    localWhisperModelName(),
     '--silence-ms',
     String(silenceMs),
-  ];
-  if (process.env.MAGIC_POINTER_VOICE_INPUT_WAV) {
+  ], { isolated: PYTHON_ISOLATED });
+  const stopFile = path.join(FABRIC_DATA_DIR, 'voice-control', `${crypto.randomUUID()}.stop`);
+  voiceArgs.push('--stop-file', stopFile);
+  if (!app.isPackaged && process.env.MAGIC_POINTER_VOICE_INPUT_WAV) {
     voiceArgs.push('--input-wav', path.resolve(process.env.MAGIC_POINTER_VOICE_INPUT_WAV));
   }
-  const voiceSession = activeSelectionSessionToken
-    ? selectionSessions.get(activeSelectionSessionToken)
-    : null;
-  const voiceSnapshot = voiceSession?.snapshot || {};
-  const voiceContext = voiceSnapshot.context || {};
-  const voiceContextPath = String(
-    voiceContext.document_path
-    || voiceContext.path
-    || voiceSnapshot.capture_path
-    || '',
-  );
   const child = spawn(pythonExecutable, voiceArgs, {
     cwd: ROOT,
     windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: {
+    env: pythonSpawnEnvironment({ env: {
       ...process.env,
       PYTHONUTF8: '1',
       PYTHONIOENCODING: 'utf-8',
       MAGIC_POINTER_VOICE_SETTINGS_FILE: fabricSettingsStore?.path || '',
-      MAGIC_POINTER_VOICE_CONTEXT_PATH: voiceContextPath,
-    },
+      MAGIC_POINTER_VOICE_CONTEXT_PATH: contextPath,
+    }, isolated: PYTHON_ISOLATED }),
   });
   dictationChildren.set(surface, child);
+  dictationStopFiles.set(surface, stopFile);
   let stdout = '';
   let stderr = '';
   let terminalEventSeen = false;
   const forwardEvent = (eventPayload = {}) => {
     if (dictationChildren.get(surface) !== child) return;
+    const runtimeSession = voiceRuntime?.active;
+    if (
+      !runtimeSession
+      || runtimeSession.requestId !== requestId
+      || runtimeSession.surface !== surface
+      || runtimeSession.resident !== false
+    ) return;
+    if (
+      runtimeSession.cancelled
+      && (eventPayload.type === 'partial' || eventPayload.type === 'final')
+    ) return;
+    if (eventPayload.type === 'loading') observeVoiceFocusPhase('loading');
+    else if (eventPayload.type === 'ready') observeVoiceFocusPhase('ready');
+    else if (eventPayload.type === 'partial') observeVoiceFocusPhase('partial');
+    else if (eventPayload.type === 'final') observeVoiceFocusPhase('final');
+    else if (eventPayload.type === 'error') observeVoiceFocusPhase('error');
     if (eventPayload.type === 'partial' || eventPayload.type === 'final') {
       if (eventPayload.type === 'final') terminalEventSeen = true;
+      if (eventPayload.type === 'final') voiceRuntime?.legacyFinished(requestId);
       safeSurfaceSend(surface, 'dictation:result', {
         ok: true,
         surface,
@@ -1148,6 +2018,7 @@ ipcMain.on('dictation:start', (event, payload) => {
       });
     } else if (eventPayload.type === 'error') {
       terminalEventSeen = true;
+      voiceRuntime?.legacyFinished(requestId);
       safeSurfaceSend(surface, 'dictation:result', {
         ok: false,
         surface,
@@ -1181,7 +2052,11 @@ ipcMain.on('dictation:start', (event, payload) => {
   child.stderr.on('data', (chunk) => { stderr += chunk; });
   child.on('error', (error) => {
     terminalEventSeen = true;
-    if (dictationChildren.get(surface) === child) dictationChildren.delete(surface);
+    if (dictationChildren.get(surface) === child) {
+      dictationChildren.delete(surface);
+      cleanupDictationStopFile(surface);
+    }
+    voiceRuntime?.legacyFinished(requestId);
     safeSurfaceSend(surface, 'dictation:result', {
       ok: false,
       surface,
@@ -1192,7 +2067,11 @@ ipcMain.on('dictation:start', (event, payload) => {
     if (stdout.trim()) {
       try { forwardEvent(JSON.parse(stdout)); } catch (_) {}
     }
-    if (dictationChildren.get(surface) === child) dictationChildren.delete(surface);
+    if (dictationChildren.get(surface) === child) {
+      dictationChildren.delete(surface);
+      cleanupDictationStopFile(surface);
+    }
+    voiceRuntime?.legacyFinished(requestId);
     if (!terminalEventSeen && code !== 0) {
       safeSurfaceSend(surface, 'dictation:result', {
         ok: false,
@@ -1202,7 +2081,58 @@ ipcMain.on('dictation:start', (event, payload) => {
     }
     log(`local dictation closed surface=${surface} code=${code}`);
   });
+  return { ok: true, requestId, mode: 'legacy' };
+}
+
+ipcMain.on('dictation:start', (event, payload) => {
+  const surface = payload?.surface === 'overlay' ? 'overlay' : payload?.surface === 'stage' ? 'stage' : null;
+  if (!surface || !isSurfaceSender(event, surface, resultTargetWindow)) {
+    log('dictation:start rejected untrusted sender or surface');
+    return;
+  }
+  const selectionToken = activeSelectionSessionToken;
+  const selectionSession = selectionToken ? selectionSessions.get(selectionToken) : null;
+  if (!selectionSession) {
+    safeSurfaceSend(surface, 'dictation:result', { ok: false, surface, error: '当前 THIS 已过期，请重新激活 Magic Pointer。' });
+    return;
+  }
+  if (!selectionSession.snapshot) {
+    // Gesture capsule is allowed to paint before target grounding completes.
+    // Its renderer gates auto-voice on groundingReady; this guard closes the
+    // final IPC race without turning normal capture latency into an error UI.
+    log(`dictation:start deferred while grounding token=${selectionToken}`);
+    return;
+  }
+  const snapshot = selectionSession.snapshot;
+  const context = snapshot.context || {};
+  const contextPath = String(context.document_path || context.path || snapshot.capture_path || '');
+  const requestId = crypto.randomUUID();
+  const silenceMs = Math.max(600, Math.min(5000, Number(fabricSettings?.interaction?.voice_silence_ms) || 1600));
+  const inputWav = !app.isPackaged && process.env.MAGIC_POINTER_VOICE_INPUT_WAV
+    ? path.resolve(process.env.MAGIC_POINTER_VOICE_INPUT_WAV)
+    : '';
+  if (!appendVoiceAudit({
+    eventType: 'voice.start', sessionToken: selectionToken, surface, outcome: 'requested', latencyMs: 0,
+  })) {
+    safeSurfaceSend(surface, 'dictation:result', { ok: false, surface, error: '本地语音审计写入失败，未启动录音。' });
+    return;
+  }
+  observeVoiceFocusPhase('dictation_start', selectionToken);
+  const result = voiceRuntime?.start({
+    requestId,
+    surface,
+    contextPath,
+    silenceMs,
+    inputWav,
+  }) || { ok: false, error: 'voice_runtime_unavailable' };
+  if (!result.ok) {
+    appendVoiceAudit({
+      eventType: 'voice.start_rejected', sessionToken: selectionToken, surface, outcome: 'rejected', errorCode: result.error,
+    });
+    safeSurfaceSend(surface, 'dictation:result', { ok: false, surface, error: `本地语音未启动：${result.error}` });
+  }
 });
+
 function resultTargetWindow(target) {
   if (target === 'dashboard' || target === 'calendar-dashboard' || target === 'fabric-dashboard') return dashboardWindow;
   if (target === 'stage') return stageWindow;
@@ -1233,17 +2163,17 @@ function sendBridgeResult(target, parsed) {
 
 function runPythonBridge(payload, scriptPath = 'scripts/electron_bridge.py', target = 'overlay', options = {}) {
   if (!resultTargetWindow(target)) return;
-  const py = process.env.MAGIC_POINTER_PYTHON || 'python';
-  const child = spawn(py, [scriptPath], {
+  const py = PYTHON_EXECUTABLE;
+  const child = spawn(py, pythonInvocationArgs([scriptPath], { isolated: PYTHON_ISOLATED }), {
     cwd: ROOT,
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
-    env: {
+    env: pythonSpawnEnvironment({ env: {
       ...process.env,
       PYTHONIOENCODING: 'utf-8',
       PYTHONUTF8: '1',
       MAGIC_POINTER_USER_DATA_DIR: FABRIC_DATA_DIR,
-    },
+    }, isolated: PYTHON_ISOLATED }),
   });
 
   let stdout = '';
@@ -1291,6 +2221,83 @@ function runPythonBridge(payload, scriptPath = 'scripts/electron_bridge.py', tar
   return child;
 }
 
+function runPythonBridgePromise(payload, scriptPath, { target = 'fabric-dashboard', timeoutMs = 5000 } = {}) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let timer = null;
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      callback(value);
+    };
+    const child = runPythonBridge(payload, scriptPath, target, {
+      onComplete: (parsed) => {
+        if (parsed?.ok !== true) {
+          finish(reject, new Error(String(parsed?.error || 'runtime_snapshot_probe_failed')));
+          return;
+        }
+        finish(resolve, parsed);
+      },
+    });
+    if (!child) {
+      finish(reject, new Error('runtime_snapshot_surface_unavailable'));
+      return;
+    }
+    timer = setTimeout(() => {
+      try { child.kill(); } catch (_) {}
+      finish(reject, new Error('runtime_snapshot_probe_timeout'));
+    }, Math.max(1000, Number(timeoutMs) || 5000));
+  });
+}
+
+function runtimePermissionEvidence() {
+  if (process.platform !== 'darwin') {
+    return {
+      accessibility: { state: 'not_required', source: 'platform_contract' },
+      screenCapture: { state: 'not_required', source: 'platform_contract' },
+    };
+  }
+  const accessibilityReady = typeof systemPreferences.isTrustedAccessibilityClient === 'function'
+    && systemPreferences.isTrustedAccessibilityClient(false);
+  const screenCaptureState = typeof systemPreferences.getMediaAccessStatus === 'function'
+    ? systemPreferences.getMediaAccessStatus('screen')
+    : 'unknown';
+  return {
+    accessibility: {
+      state: accessibilityReady ? 'ready' : 'blocked',
+      source: 'system_preferences',
+    },
+    screenCapture: {
+      state: screenCaptureState === 'granted' ? 'ready' : screenCaptureState,
+      source: 'system_preferences',
+    },
+  };
+}
+
+async function probeRuntimeState() {
+  const parsed = await runPythonBridgePromise({
+    operation: 'runtime.snapshot',
+    runtimeEvidence: {
+      voiceWorker: safeClone(latestVoiceRuntimeStatus),
+      permissions: runtimePermissionEvidence(),
+    },
+  }, 'scripts/fabric_bridge.py', { timeoutMs: 5000 });
+  if (!parsed.snapshot || typeof parsed.snapshot !== 'object') {
+    throw new Error('runtime_snapshot_payload_missing');
+  }
+  return parsed.snapshot;
+}
+
+function invalidateRuntimeState(reason) {
+  const generation = runtimeSnapshot.invalidate(reason);
+  safeSurfaceSend('dashboard', 'runtime-snapshot:changed', {
+    generation,
+    reason: String(reason || 'unspecified'),
+  });
+  return generation;
+}
+
 function modelCredentialRef(profileId) {
   const id = String(profileId || '').trim().toLowerCase();
   const profiles = Array.isArray(fabricSettings?.models?.profiles) ? fabricSettings.models.profiles : [];
@@ -1335,6 +2342,7 @@ function runPreflight(payload = {}) {
       settings: fabricSettings || defaultSettings(),
       credentialStore,
       wiggleDetector,
+      pythonRuntime: PYTHON_RUNTIME,
       microphoneStatus: microphonePermissionStatus,
     }),
   });
@@ -1345,6 +2353,44 @@ function runPreflight(payload = {}) {
 
 ipcMain.on('overlay:done', (event, payload) => {
   if (!isSurfaceSender(event, 'overlay', resultTargetWindow)) return;
+  if (payload?.workflow === 'selection_gesture') {
+    const arm = selectionGestureArm;
+    if (!arm || String(payload?.selectionGestureToken || '') !== arm.token) {
+      cancelSelectionGesture('stale');
+      return;
+    }
+    const summary = summarizeGesture(payload?.points);
+    if (!summary.valid) {
+      cancelSelectionGesture(summary.reason || 'invalid');
+      return;
+    }
+    const bounds = arm.displayBounds;
+    const toGlobal = (point) => ({
+      x: Number(point.x) + Number(bounds.x),
+      y: Number(point.y) + Number(bounds.y),
+    });
+    const gesture = {
+      ...summary,
+      coordinateSpace: 'electron_dip_screen',
+      points: summary.points.map((point) => ({ ...toGlobal(point), t: point.t })),
+      bbox: {
+        x: summary.bbox.x + bounds.x,
+        y: summary.bbox.y + bounds.y,
+        width: summary.bbox.width,
+        height: summary.bbox.height,
+      },
+      releasePoint: toGlobal(summary.releasePoint),
+      semanticPoint: toGlobal(summary.semanticPoint),
+      displayBounds: { ...bounds },
+      source: { ...arm.source },
+    };
+    const reason = arm.reason;
+    cancelSelectionGesture('completed');
+    // One compositor frame after hiding the drawing canvas prevents it from
+    // entering pixel fallback captures. Stage remains absent during this gap.
+    setTimeout(() => beginSelectionSession(reason, gesture), 34);
+    return;
+  }
   const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
   const enriched = {
     ...payload,
@@ -1355,7 +2401,7 @@ ipcMain.on('overlay:done', (event, payload) => {
   log(`overlay:done action=${enriched.action || 'capture'} points=${enriched.points?.length || 0} scale=${enriched.scaleFactor} bounds=${display.bounds.x},${display.bounds.y},${display.bounds.width},${display.bounds.height}`);
   // Runtime-issue capture results render on the stage (the overlay no longer
   // hosts result surfaces).
-  createStageWindow();
+  placeStageOnDisplay(display);
   runPythonBridge(enriched, 'scripts/electron_bridge.py', 'stage', {
     onComplete: (parsed) => {
       hideOverlay();
@@ -1368,6 +2414,17 @@ ipcMain.on('overlay:done', (event, payload) => {
       });
     },
   });
+});
+
+ipcMain.on('overlay:gesture-start', (event, payload) => {
+  if (!isSurfaceSender(event, 'overlay', resultTargetWindow)) return;
+  const arm = selectionGestureArm;
+  if (!arm || String(payload?.token || '') !== arm.token) return;
+  if (selectionGestureExpiryTimer) clearTimeout(selectionGestureExpiryTimer);
+  selectionGestureExpiryTimer = setTimeout(() => {
+    if (selectionGestureArm?.token === arm.token) cancelSelectionGesture('draw_timeout');
+  }, Number(arm.timeoutMs || SELECTION_GESTURE_TIMEOUT_MS));
+  log(`selection gesture drawing token=${arm.token}`);
 });
 
 
@@ -1605,6 +2662,10 @@ ipcMain.on('dashboard:theme', (event, payload = {}) => {
     // Window Controls Overlay is optional; renderer chrome remains usable.
   }
 });
+ipcMain.handle('runtime-snapshot:get', async (event, options = {}) => {
+  if (!isDashboardSender(event)) throw new Error('unauthorized_runtime_snapshot_sender');
+  return runtimeSnapshot.get({ force: options?.force === true });
+});
 ipcMain.on('dashboard:fabric-request', (event, payload) => {
   if (!isDashboardSender(event)) return;
   const operation = typeof payload?.operation === 'string' ? payload.operation : '';
@@ -1663,6 +2724,11 @@ ipcMain.on('dashboard:fabric-request', (event, payload) => {
   if (operation === 'preflight.run') {
     try {
       const preflight = runPreflight(payload);
+      if (preflight.ready) {
+        onboardingRequired = false;
+        applyConfiguredWakeState();
+        refreshTrayMenu();
+      }
       sendBridgeResult('fabric-dashboard', {
         ok: true,
         state: preflight.ready ? 'completed' : 'blocked',
@@ -1749,6 +2815,23 @@ ipcMain.on('dashboard:fabric-request', (event, payload) => {
       }
       if (operation === 'settings.save' && parsed?.ok === true && parsed?.settings) {
         const previousSettings = fabricSettings;
+        const gestureContractChanged = gestureRuntimeSettingsChanged(previousSettings, parsed.settings);
+        const voiceReconfigure = configureVoiceRuntime(parsed.settings, { preload: true });
+        if (!voiceReconfigure.ok) {
+          fabricSettings = previousSettings;
+          try {
+            fabricSettingsStore.save(previousSettings);
+          } catch (error) {
+            log(`voice settings rollback persistence failed ${error.name}`);
+          }
+          parsed.ok = false;
+          parsed.settings = previousSettings;
+          parsed.error = voiceReconfigure.error === 'voice_session_active'
+            ? '语音正在录音，不能在会话中修改常驻模型设置。'
+            : `常驻语音设置未应用：${voiceReconfigure.error}`;
+          sendBridgeResult('fabric-dashboard', { ...parsed, fabricOperation: operation });
+          return;
+        }
         fabricSettings = parsed.settings;
         if (wiggleDetector) {
           wiggleDetector.updateSettings({
@@ -1768,6 +2851,8 @@ ipcMain.on('dashboard:fabric-request', (event, payload) => {
           } catch (error) {
             log(`settings hotkey rollback persistence failed ${error.name}`);
           }
+          const voiceRollback = configureVoiceRuntime(previousSettings, { preload: true });
+          if (!voiceRollback.ok) log(`settings voice runtime rollback failed ${voiceRollback.error}`);
           if (wiggleDetector) {
             wiggleDetector.updateSettings({
               sensitivity: previousSettings.activation?.sensitivity,
@@ -1779,6 +2864,12 @@ ipcMain.on('dashboard:fabric-request', (event, payload) => {
           parsed.ok = false;
           parsed.settings = previousSettings;
           parsed.error = `快捷键注册失败：${failedHotkeys.join('、')}；设置已回滚。`;
+        }
+        if (parsed.ok === true && gestureContractChanged) {
+          cancelSelectionGesture('settings_changed');
+        }
+        if (parsed.ok === true) {
+          updateManager?.setChannel(parsed.settings.general?.update_channel || 'stable');
         }
         applyConfiguredWakeState();
         applyDashboardMaterial(fabricSettings);
@@ -1794,6 +2885,14 @@ ipcMain.on('dashboard:fabric-request', (event, payload) => {
         } catch (error) {
           log(`model settings refresh failed ${error.name}`);
         }
+      }
+      if (operation === 'settings.save' && parsed?.ok === true) {
+        invalidateRuntimeState('settings_changed');
+      } else if (
+        parsed?.ok === true
+        && ['models.save', 'models.delete', 'models.set_default', 'models.test'].includes(operation)
+      ) {
+        invalidateRuntimeState('models_changed');
       }
       sendBridgeResult('fabric-dashboard', { ...parsed, fabricOperation: operation });
     },

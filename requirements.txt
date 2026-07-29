@@ -7,3 +7,4 @@ onnxruntime>=1.20.0
 rapidocr>=3.8.1
 openai-whisper==20250625
 sounddevice>=0.5
+opencc>=1.4.1,<2.0.0

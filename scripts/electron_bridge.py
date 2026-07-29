@@ -37,7 +37,9 @@ from app.screen_context import build_screen_context
 from app.task_context import TaskContextStore
 from app.grounding.schema import PointerSelection
 from app.visual_annotation import make_pointer_annotated_image
-from app.system_context import list_visible_windows
+from app.system_context import enable_dpi_awareness, list_visible_windows
+
+enable_dpi_awareness()
 
 CAPTURE_DIR = ROOT / "data" / "captures"
 OBJECT_DIR = ROOT / "data" / "objects"

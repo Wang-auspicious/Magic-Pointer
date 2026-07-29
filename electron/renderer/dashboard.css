@@ -2443,6 +2443,171 @@ select {
   background: var(--mp-danger-soft);
 }
 
+.first-run-notice {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr);
+  gap: 16px;
+  margin-bottom: 28px;
+  padding: 18px 20px;
+  background: color-mix(in srgb, var(--mp-blue) 5%, var(--mp-surface));
+  border: 1px solid color-mix(in srgb, var(--mp-blue) 20%, var(--mp-separator));
+  border-radius: 14px;
+}
+
+.first-run-notice[hidden] {
+  display: none;
+}
+
+.first-run-notice__signal {
+  width: 8px;
+  height: 8px;
+  margin-top: 7px;
+  background: var(--mp-warning);
+  border-radius: 50%;
+}
+
+.first-run-notice__copy h2 {
+  margin: 1px 0 7px;
+  font-size: 19px;
+  font-weight: 660;
+  line-height: 1.3;
+}
+
+.first-run-notice__copy > p {
+  margin: 0;
+  color: var(--mp-secondary);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.first-run-notice__copy > p strong {
+  color: var(--mp-text);
+  font-weight: 660;
+}
+
+.first-run-notice__copy .first-run-notice__eyebrow {
+  margin-bottom: 2px;
+  color: var(--mp-warning);
+  font-size: 10px;
+  font-weight: 660;
+  letter-spacing: .08em;
+}
+
+.first-run-notice__copy .first-run-notice__exit {
+  margin-top: 5px;
+  color: var(--mp-tertiary);
+}
+
+.first-run-notice[data-state="ready"] {
+  background: color-mix(in srgb, var(--mp-positive) 5%, var(--mp-surface));
+  border-color: color-mix(in srgb, var(--mp-positive) 22%, var(--mp-separator));
+}
+
+.first-run-notice[data-state="ready"] .first-run-notice__signal {
+  background: var(--mp-positive);
+}
+
+.first-run-notice[data-state="ready"] .first-run-notice__eyebrow {
+  color: var(--mp-positive);
+}
+
+.preflight-list:empty::before {
+  content: "运行检查后，这里会逐项显示结果与处理方法。";
+}
+
+.preflight-row {
+  display: block;
+  min-height: 0;
+  padding: 14px 15px;
+}
+
+.preflight-row:not(:last-child) {
+  border-bottom: 1px solid var(--mp-separator);
+}
+
+.preflight-row__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.preflight-row__head strong {
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 660;
+}
+
+.preflight-state {
+  flex: none;
+  color: var(--mp-secondary);
+  font-size: 10px;
+  font-weight: 660;
+}
+
+.preflight-row[data-state="pass"] .preflight-state {
+  color: var(--mp-positive);
+}
+
+.preflight-row[data-state="warn"] .preflight-state,
+.preflight-row[data-state="needs_user"] .preflight-state {
+  color: var(--mp-warning);
+}
+
+.preflight-row[data-state="fail"] .preflight-state {
+  color: var(--mp-danger);
+}
+
+.preflight-guidance {
+  margin: 5px 0 0;
+  color: var(--mp-secondary);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.preflight-action {
+  min-height: 28px;
+  margin-top: 9px;
+  padding: 4px 10px;
+  font-size: 10px;
+}
+
+.preflight-evidence {
+  margin-top: 9px;
+  color: var(--mp-tertiary);
+  font-size: 10px;
+}
+
+.preflight-evidence summary {
+  width: max-content;
+  cursor: pointer;
+  user-select: none;
+}
+
+.preflight-evidence code {
+  display: block;
+  margin-top: 7px;
+  padding: 9px 10px;
+  overflow-wrap: anywhere;
+  color: var(--mp-secondary);
+  background: var(--mp-control);
+  border-radius: 8px;
+  font: inherit;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 760px) {
+  .first-run-notice {
+    grid-template-columns: 8px minmax(0, 1fr);
+    padding: 16px;
+  }
+
+  .preflight-row__head {
+    align-items: flex-start;
+  }
+}
+
 .diagnostic-summary {
   margin-top: 18px;
 }
@@ -2837,6 +3002,14 @@ select {
 .field-list .field-block { padding: 15px 16px 16px; }
 .connection-list.settings-list { overflow: hidden; }
 .save-state[data-tone="error"] { color: var(--mp-danger); }
+.settings-note {
+  margin: 0;
+  padding: 10px 16px 11px;
+  color: var(--mp-tertiary);
+  border-top: 1px solid color-mix(in srgb, var(--mp-separator) 82%, transparent);
+  font-size: 11px;
+  line-height: 1.45;
+}
 
 :root[data-reduce-motion="true"] *,
 :root[data-reduce-motion="true"] *::before,

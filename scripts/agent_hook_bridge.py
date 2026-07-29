@@ -27,7 +27,7 @@ def main() -> int:
     parser.add_argument("--root", default=os.environ.get("MAGIC_POINTER_USER_DATA_DIR") or str(ROOT / "data" / "runtime"))
     args = parser.parse_args()
     try:
-        payload = json.loads(sys.stdin.read() or "{}")
+        payload = json.loads(sys.stdin.read().lstrip("\ufeff") or "{}")
         result = build_hook_response(
             args.provider,
             dict(payload),

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Magic Pointer Selection Alignment Fixture</title>
+  <style>
+    body { margin: 0; padding: 46px 70px; color: #17181b; background: #f3f4f6; font: 22px/1.4 "Times New Roman", serif; }
+    main { width: 760px; padding: 30px; background: white; border: 1px solid #d7dae0; border-radius: 18px; }
+    button, .row { display: block; width: 100%; min-height: 54px; margin: 0 0 14px; padding: 10px 16px; box-sizing: border-box; text-align: left; font: inherit; }
+    button { color: white; background: #5e5ce6; border: 0; border-radius: 10px; }
+    #target { outline: 2px solid #16a34a; outline-offset: 2px; }
+    .row { background: #eef0f4; border-radius: 10px; }
+    #stale { color: #b42318; background: #fff0ed; }
+  </style>
+</head>
+<body>
+  <main>
+    <button id="target" type="button">TARGET COPY THIS</button>
+    <div class="row">Spacer row 1</div>
+    <div class="row">Spacer row 2</div>
+    <div class="row">Spacer row 3</div>
+    <div class="row">Spacer row 4</div>
+    <div class="row" id="stale">STALE FIVE LINES LOWER</div>
+  </main>
+</body>
+</html>

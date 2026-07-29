@@ -1,8 +1,10 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('magicPointer', {
+  ready: () => ipcRenderer.send('overlay:renderer-ready'),
   hide: () => ipcRenderer.send('overlay:hide'),
   done: (payload) => ipcRenderer.send('overlay:done', payload),
+  gestureStarted: (token) => ipcRenderer.send('overlay:gesture-start', { token }),
   executeAction: (payload) => ipcRenderer.send('overlay:execute-action', payload),
   startDictation: () => ipcRenderer.send('dictation:start', { surface: 'overlay' }),
   onShow: (callback) => ipcRenderer.on('overlay:show', (_event, payload) => callback(payload)),
@@ -26,6 +28,7 @@ contextBridge.exposeInMainWorld('magicPointerPanel', {
 });
 
 contextBridge.exposeInMainWorld('magicPointerStage', {
+  ready: () => ipcRenderer.send('stage:renderer-ready'),
   show: () => ipcRenderer.send('stage:show'),
   reportState: (payload) => ipcRenderer.send('stage:state', payload),
   hidden: () => ipcRenderer.send('stage:hidden'),
@@ -34,12 +37,20 @@ contextBridge.exposeInMainWorld('magicPointerStage', {
   executeAction: (payload) => ipcRenderer.send('stage:execute-action', payload),
   contextAction: (payload) => ipcRenderer.send('stage:context-action', payload),
   startDictation: () => ipcRenderer.send('dictation:start', { surface: 'stage' }),
-  stopDictation: () => ipcRenderer.send('dictation:stop', { surface: 'stage' }),
-  setMouseCapture: (enabled) => ipcRenderer.send('stage:set-mouse-capture', { enabled: enabled === true }),
+  stopDictation: (options = {}) => ipcRenderer.send('dictation:stop', {
+    surface: 'stage',
+    graceful: options?.graceful === true,
+  }),
+  setMouseCapture: (enabled, options = {}) => ipcRenderer.send('stage:set-mouse-capture', {
+    enabled: enabled === true,
+    requestFocus: options?.requestFocus === true,
+    regions: Array.isArray(options?.regions) ? options.regions.slice(0, 16) : [],
+  }),
   onShow: (callback) => ipcRenderer.on('stage:show', (_event, payload) => callback(payload)),
   onUpdate: (callback) => ipcRenderer.on('stage:update', (_event, payload) => callback(payload)),
   onHide: (callback) => ipcRenderer.on('stage:hide', () => callback()),
   onDictationResult: (callback) => ipcRenderer.on('dictation:result', (_event, payload) => callback(payload)),
+  onPointerInput: (callback) => ipcRenderer.on('stage:pointer-input', (_event, payload) => callback(payload)),
 });
 
 contextBridge.exposeInMainWorld('magicPointerDashboard', {
@@ -55,9 +66,16 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
   calendarCreate: (payload) => ipcRenderer.send('dashboard:calendar-create', payload),
   calendarUndoCreate: (payload) => ipcRenderer.send('dashboard:calendar-undo-create', payload),
   openRoute: (payload) => ipcRenderer.send('dashboard:route-open', payload),
+  runtimeSnapshot: {
+    get: (options = {}) => ipcRenderer.invoke('runtime-snapshot:get', {
+      force: options?.force === true,
+    }),
+    onChanged: (callback) => ipcRenderer.on('runtime-snapshot:changed', (_event, payload) => callback(payload)),
+  },
   onShow: (callback) => ipcRenderer.on('dashboard:show', (_event, payload) => callback(payload)),
   onFabricState: (callback) => ipcRenderer.on('dashboard:fabric-state', (_event, payload) => callback(payload)),
   onState: (callback) => ipcRenderer.on('dashboard:state', (_event, payload) => callback(payload)),
   onCalendarState: (callback) => ipcRenderer.on('dashboard:calendar-state', (_event, payload) => callback(payload)),
   onRouteResult: (callback) => ipcRenderer.on('dashboard:route-result', (_event, payload) => callback(payload)),
+  onVoiceResidencyStatus: (callback) => ipcRenderer.on('dashboard:voice-residency-status', (_event, payload) => callback(payload)),
 });

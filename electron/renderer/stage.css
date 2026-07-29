@@ -10,6 +10,12 @@
   --stage-electric-blue: #2F7BFF;
   --stage-electric-blue-soft: rgba(47, 123, 255, 0.35);
   --stage-error-tint: rgba(255, 92, 92, 0.16);
+  --stage-sweep-duration: 292ms;
+  --stage-sweep-fade: 96ms;
+  --stage-capsule-spawn: 417ms;
+  --stage-capsule-expand: 292ms;
+  --stage-capsule-delay: var(--stage-sweep-duration);
+  --stage-capsule-size: 40px;
 }
 
 * {
@@ -45,9 +51,16 @@ body {
   transition: opacity 160ms ease-out;
 }
 
-/* --- Targeting outline: 1.5px electric blue, 120ms fade ------------------- */
-.targeting-outline {
+/* --- Target feedback ------------------------------------------------------
+ * Default: Google demo 6 style sweep band over the semantic text line.
+ * Alternatives remain available from Dashboard: soft object glow / outline. */
+.targeting-outline,
+.frozen-glow {
   position: absolute;
+  pointer-events: none;
+}
+
+.stage-root[data-selection-visual='outline'] .targeting-outline {
   border: 1.5px solid var(--stage-electric-blue);
   border-radius: 6px;
   opacity: 0;
@@ -55,17 +68,136 @@ body {
     width 90ms ease-out, height 90ms ease-out;
 }
 
-.targeting-outline.is-visible {
+.stage-root[data-selection-visual='outline'] .targeting-outline.is-visible {
   opacity: 1;
 }
 
-/* --- Frozen glow: 2px outline breathing on a 2.4s cycle ------------------- */
-.frozen-glow {
-  position: absolute;
+.stage-root[data-selection-visual='outline'] .frozen-glow {
   border: 2px solid var(--stage-electric-blue);
   border-radius: 6px;
   box-shadow: 0 0 14px var(--stage-electric-blue-soft);
   animation: stage-breathe 2.4s ease-in-out infinite;
+}
+
+.stage-root[data-selection-visual='soft_glow'] .targeting-outline,
+.stage-root[data-selection-visual='soft_glow'] .frozen-glow {
+  border: none;
+  border-radius: 10px;
+  background: rgba(47, 123, 255, .10);
+  box-shadow:
+    0 0 0 1px rgba(74, 143, 255, .38),
+    0 0 22px rgba(47, 123, 255, .30);
+}
+
+.stage-root[data-selection-visual='soft_glow'] .targeting-outline {
+  opacity: 0;
+  transition: opacity 140ms ease-out, left 90ms ease-out, top 90ms ease-out,
+    width 90ms ease-out, height 90ms ease-out;
+}
+
+.stage-root[data-selection-visual='soft_glow'] .targeting-outline.is-visible {
+  opacity: 1;
+}
+
+.stage-root[data-selection-visual='soft_glow'] .frozen-glow {
+  animation: stage-breathe 2.4s ease-in-out infinite;
+}
+
+.stage-root[data-selection-visual='sweep_band'] .targeting-outline,
+.stage-root[data-selection-visual='sweep_band'] .frozen-glow {
+  border: none;
+  border-radius: 999px;
+  overflow: visible;
+  background:
+    radial-gradient(
+      ellipse 24% 110% at 88% 50%,
+      rgba(47, 123, 255, .34) 0%,
+      rgba(67, 139, 255, .18) 46%,
+      rgba(47, 123, 255, 0) 100%
+    ),
+    linear-gradient(
+      90deg,
+      rgba(47, 123, 255, 0) 0%,
+      rgba(92, 159, 255, .12) 10%,
+      rgba(67, 139, 255, .22) 56%,
+      rgba(47, 123, 255, .24) 82%,
+      rgba(47, 123, 255, 0) 100%
+    );
+  clip-path: inset(0 100% 0 0 round 999px);
+  transform-origin: left center;
+}
+
+.stage-root[data-selection-visual='sweep_band'] .targeting-outline::before,
+.stage-root[data-selection-visual='sweep_band'] .frozen-glow::before {
+  content: '';
+  position: absolute;
+  left: 4%;
+  right: 5%;
+  top: 50%;
+  height: 32%;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    rgba(201, 225, 255, 0) 0%,
+    rgba(173, 211, 255, .14) 42%,
+    rgba(218, 237, 255, .34) 82%,
+    rgba(218, 237, 255, 0) 100%
+  );
+  transform: translateY(-50%);
+}
+
+.stage-root[data-selection-visual='sweep_band'] .targeting-outline::after,
+.stage-root[data-selection-visual='sweep_band'] .frozen-glow::after {
+  content: '';
+  position: absolute;
+  right: -7px;
+  top: 50%;
+  width: 36px;
+  height: 220%;
+  border-radius: 50%;
+  background: radial-gradient(
+    ellipse,
+    rgba(72, 146, 255, .30) 0%,
+    rgba(47, 123, 255, .14) 42%,
+    rgba(47, 123, 255, 0) 74%
+  );
+  transform: translate(45%, -50%);
+}
+
+.stage-root[data-selection-visual='sweep_band'] .targeting-outline {
+  opacity: 0;
+}
+
+.stage-root[data-selection-visual='sweep_band'] .targeting-outline.is-visible {
+  animation:
+    selection-sweep-reveal var(--stage-sweep-duration) cubic-bezier(.22, 1, .36, 1) both,
+    selection-sweep-fade var(--stage-sweep-fade) cubic-bezier(.4, 0, .2, 1)
+      calc(var(--stage-sweep-duration) - var(--stage-sweep-fade)) both;
+}
+
+.stage-root[data-selection-visual='sweep_band'] .frozen-glow {
+  animation:
+    selection-sweep-reveal var(--stage-sweep-duration) cubic-bezier(.22, 1, .36, 1) both,
+    selection-sweep-fade var(--stage-sweep-fade) cubic-bezier(.4, 0, .2, 1)
+      calc(var(--stage-sweep-duration) - var(--stage-sweep-fade)) both;
+}
+
+@keyframes selection-sweep-reveal {
+  from {
+    clip-path: inset(0 92% 0 0 round 999px);
+  }
+  to {
+    clip-path: inset(0 0 0 0 round 999px);
+  }
+}
+
+@keyframes selection-sweep-fade {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
 }
 
 @keyframes stage-breathe {
@@ -80,7 +212,14 @@ body {
   }
 }
 
-/* --- Command capsule: 72px voice / 176px text, grows to 560px ------------- */
+.stage-root[data-target-geometry-kind='pointer_only'] .targeting-outline,
+.stage-root[data-target-geometry-kind='pointer_only'] .frozen-glow,
+.stage-root[data-target-geometry-kind='invalid'] .targeting-outline,
+.stage-root[data-target-geometry-kind='invalid'] .frozen-glow {
+  display: none;
+}
+
+/* --- Command capsule: dimensions and motion are persisted Dashboard values. */
 .stage-capsule {
   position: absolute;
   display: flex;
@@ -100,11 +239,11 @@ body {
 }
 
 .stage-capsule[data-mode='voice'] {
-  width: 72px;
+  width: var(--capsule-width, 40px);
 }
 
 .stage-capsule[data-mode='text'] {
-  width: 176px;
+  width: var(--capsule-width, 144px);
 }
 
 .stage-capsule[data-mode='voice'] .capsule-input {
@@ -463,26 +602,79 @@ body {
 
   .stage-capsule {
     transition: none;
+    animation: none;
+    opacity: 1;
+    transform: none;
+    width: var(--capsule-width, var(--stage-capsule-size));
   }
 
   .targeting-outline {
     transition: opacity 120ms ease-out;
+  }
+
+  .stage-root[data-selection-visual='sweep_band'] .targeting-outline.is-visible,
+  .stage-root[data-selection-visual='sweep_band'] .frozen-glow,
+  .stage-root[data-selection-visual='soft_glow'] .frozen-glow {
+    animation: none;
+    opacity: .92;
+    transform: none;
+    clip-path: inset(0 0 0 0 round 999px);
   }
 }
 
 /* Product capsule contract: pointer-anchored, compact, and readable above
  * any host app. The earlier graphite rules remain only as a fallback. */
 .stage-capsule {
-  min-height: 40px;
-  max-width: 440px;
+  width: var(--capsule-width, var(--stage-capsule-size));
+  min-height: var(--stage-capsule-size);
+  height: var(--stage-capsule-size);
+  max-width: none;
   padding: 8px 13px;
-  border: 1px solid rgba(38, 115, 235, .30);
-  border-radius: 22px;
-  background: rgba(252, 253, 255, .94);
-  box-shadow: 0 8px 22px rgba(30, 40, 55, .18), 0 0 18px rgba(18, 102, 212, .08);
+  border: 1.5px solid rgba(18, 102, 212, .86);
+  border-radius: calc(var(--stage-capsule-size) / 2);
+  background: rgba(226, 236, 255, .94);
+  box-shadow: none;
+  transform-origin: center center;
+  will-change: opacity, transform, width;
+  animation:
+    stage-capsule-spawn var(--stage-capsule-spawn) cubic-bezier(.22, 1, .36, 1)
+      var(--stage-capsule-delay) both,
+    stage-capsule-expand var(--stage-capsule-expand) cubic-bezier(.22, 1, .36, 1)
+      calc(var(--stage-capsule-delay) + var(--stage-capsule-spawn)) both;
+  transition: width 180ms cubic-bezier(.22, 1, .36, 1);
 }
-.stage-capsule[data-mode='voice'] { width: 40px; min-height: 40px; padding: 8px 12px; }
-.stage-capsule[data-mode='text'] { width: 144px; }
+.stage-capsule[data-mode='voice'] {
+  width: var(--capsule-width, var(--stage-capsule-size));
+  min-height: var(--stage-capsule-size);
+  padding: 8px 12px;
+}
+.stage-capsule[data-mode='text'] { width: var(--capsule-width, 144px); }
+
+@keyframes stage-capsule-spawn {
+  0% {
+    opacity: 0;
+    transform: scale(.14);
+  }
+  72% {
+    opacity: 1;
+    transform: scale(1.025);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes stage-capsule-expand {
+  from {
+    width: var(--stage-capsule-size);
+    border-radius: 50%;
+  }
+  to {
+    width: var(--capsule-width, var(--stage-capsule-size));
+    border-radius: calc(var(--stage-capsule-size) / 2);
+  }
+}
 .capsule-input, .capsule-transcript { color: #1266D4; font-size: 13px; font-weight: 500; }
 .voice-waveform i { background: #1266D4; }
 .stage-result, .stage-error {

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -19,6 +20,10 @@ _CHROMIUM_CLASS = "Chrome_WidgetWin_1"
 _MAGIC_TITLES = {"Magic Pointer Overlay", "Magic Pointer Panel", "Magic Pointer"}
 _DEFAULT_ENDPOINTS = tuple(f"http://127.0.0.1:{port}" for port in (9222, 9223, 9224, 9333, 9515))
 _NETWORK_ERROR = re.compile(r"(?i)(?:net::ERR_|failed to load resource|networkerror|http error|status (?:4|5)\d\d)")
+_SELECTION_MAX_TEXT_CHARS = 4000
+_SELECTION_MAX_RECTANGLES = 32
+_SELECTION_MAX_RECTANGLE_DIMENSION = 10_000
+_SELECTION_POINTER_TOLERANCE = 2
 
 
 BROWSER_DOM_PROBE_SCRIPT = r"""
@@ -160,6 +165,41 @@ BROWSER_DOM_PROBE_SCRIPT = r"""
     encodedBodySize: entry.encodedBodySize,
     responseStatus: Number(entry.responseStatus) || 0,
   })).filter(entry => entry.responseStatus >= 400);
+  const selectionEvidence = (() => {
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed || selection.rangeCount < 1 || selection.rangeCount > 8) return null;
+    const text = selection.toString();
+    if (text.length > 4000) return null;
+    const rectangles = [];
+    for (let index = 0; index < selection.rangeCount; index += 1) {
+      let rangeRects;
+      try { rangeRects = selection.getRangeAt(index).getClientRects(); } catch { return null; }
+      if (!rangeRects || rectangles.length + rangeRects.length > 32) return null;
+      for (let rectIndex = 0; rectIndex < rangeRects.length; rectIndex += 1) {
+        const rangeRect = rangeRects[rectIndex];
+        if (!finite(rangeRect.x) || !finite(rangeRect.y) || !finite(rangeRect.width) || !finite(rangeRect.height)
+          || rangeRect.width <= 0 || rangeRect.height <= 0
+          || rangeRect.width > 10000 || rangeRect.height > 10000) return null;
+        rectangles.push({
+          x: left + ((sideChromeCss + rangeRect.x) * scaleX),
+          y: top + ((topChromeCss + rangeRect.y) * scaleY),
+          width: rangeRect.width * scaleX,
+          height: rangeRect.height * scaleY,
+        });
+      }
+    }
+    if (!rectangles.length) return null;
+    const tolerance = 2;
+    const pointerHitsRange = rectangles.some(rect => (
+      Number(point.x) >= rect.x - tolerance
+      && Number(point.x) <= rect.x + rect.width + tolerance
+      && Number(point.y) >= rect.y - tolerance
+      && Number(point.y) <= rect.y + rect.height + tolerance
+    ));
+    return pointerHitsRange
+      ? { state: 'valid', nonCollapsed: true, text, rectangles }
+      : null;
+  })();
   return {
     state: 'resolved',
     page: { title: document.title, url: location.href },
@@ -174,6 +214,8 @@ BROWSER_DOM_PROBE_SCRIPT = r"""
     },
     selector: stableSelector(element).slice(0, 2000),
     componentHints: componentHints(element),
+    selection: selectionEvidence,
+    selection_rectangles_coordinate_space: 'physical_screen_pixels',
     coordinates: {
       pointerScreenPhysical: { x: Number(point.x), y: Number(point.y) },
       pointerViewportCss: { x: viewportX, y: viewportY },
@@ -248,6 +290,63 @@ def _safe_rect(value: Any) -> dict[str, float | int] | None:
     return result if all(item is not None for item in result.values()) else None
 
 
+def _pointer_hits_rectangle(
+    pointer: dict[str, float | int] | None,
+    rectangle: dict[str, float | int],
+) -> bool:
+    if pointer is None:
+        return False
+    return (
+        float(rectangle["x"]) - _SELECTION_POINTER_TOLERANCE <= float(pointer["x"])
+        <= float(rectangle["x"]) + float(rectangle["width"]) + _SELECTION_POINTER_TOLERANCE
+        and float(rectangle["y"]) - _SELECTION_POINTER_TOLERANCE <= float(pointer["y"])
+        <= float(rectangle["y"]) + float(rectangle["height"]) + _SELECTION_POINTER_TOLERANCE
+    )
+
+
+def _safe_browser_selection(
+    value: Any,
+    pointer: dict[str, float | int] | None,
+    coordinate_space: object,
+) -> dict[str, Any] | None:
+    if (
+        not isinstance(value, dict)
+        or value.get("state") != "valid"
+        or value.get("nonCollapsed") is not True
+        or coordinate_space != "physical_screen_pixels"
+    ):
+        return None
+    text = value.get("text")
+    rectangles = value.get("rectangles")
+    if not isinstance(text, str) or not text.strip() or len(text) > _SELECTION_MAX_TEXT_CHARS:
+        return None
+    if not isinstance(rectangles, list) or not rectangles or len(rectangles) > _SELECTION_MAX_RECTANGLES:
+        return None
+    safe_rectangles: list[dict[str, float | int]] = []
+    for raw_rectangle in rectangles:
+        rectangle = _safe_rect(raw_rectangle)
+        if rectangle is None:
+            return None
+        width, height = float(rectangle["width"]), float(rectangle["height"])
+        if (
+            width <= 0
+            or height <= 0
+            or width > _SELECTION_MAX_RECTANGLE_DIMENSION
+            or height > _SELECTION_MAX_RECTANGLE_DIMENSION
+        ):
+            return None
+        safe_rectangles.append(rectangle)
+    if not any(_pointer_hits_rectangle(pointer, rectangle) for rectangle in safe_rectangles):
+        return None
+    return {
+        "text": text,
+        "rectangles": [
+            [rectangle["x"], rectangle["y"], rectangle["width"], rectangle["height"]]
+            for rectangle in safe_rectangles
+        ],
+    }
+
+
 def _safe_source_reference(value: object) -> str:
     text = str(value or "").replace("\r", " ").replace("\n", " ").strip()[:3000]
     if not text:
@@ -297,6 +396,7 @@ def sanitize_browser_context(value: Any) -> dict[str, Any] | None:
     page = dict(value.get("page") or {})
     node = dict(value.get("node") or {})
     coordinates = dict(value.get("coordinates") or {})
+    pointer_screen_physical = _safe_point(coordinates.get("pointerScreenPhysical"))
     provenance = dict(value.get("provenance") or {})
     attributes = dict(node.get("attributes") or {})
     safe_attributes = {
@@ -345,7 +445,7 @@ def sanitize_browser_context(value: Any) -> dict[str, Any] | None:
         },
         "selector": _bounded(value.get("selector"), 2000),
         "coordinates": {
-            "pointerScreenPhysical": _safe_point(coordinates.get("pointerScreenPhysical")),
+            "pointerScreenPhysical": pointer_screen_physical,
             "pointerViewportCss": _safe_point(coordinates.get("pointerViewportCss")),
             "elementViewportCss": _safe_rect(coordinates.get("elementViewportCss")),
             "elementScreenPhysical": _safe_rect(coordinates.get("elementScreenPhysical")),
@@ -355,6 +455,11 @@ def sanitize_browser_context(value: Any) -> dict[str, Any] | None:
         },
         "networkFailures": failures,
         "componentHints": _safe_component_hints(value.get("componentHints")),
+        "selection": _safe_browser_selection(
+            value.get("selection"),
+            pointer_screen_physical,
+            value.get("selection_rectangles_coordinate_space"),
+        ),
         "provenance": {
             "endpoint": _safe_url(provenance.get("endpoint")),
             "targetId": _bounded(provenance.get("targetId"), 200),
@@ -470,7 +575,7 @@ class ChromeDevToolsProbe:
                 matches.append((endpoint, target))
         if len(matches) == 1:
             return matches[0]
-        return targets[0] if len(targets) == 1 else None
+        return None
 
     def probe(self, window: JsonDict, target_point: JsonDict) -> DevToolsProbeResult:
         targets = self._available_targets()
@@ -676,8 +781,26 @@ class BrowserDevToolsAdapter(AppAdapter):
                 error="cdp_dom_context_invalid",
             )
         node = dict(browser_context.get("node") or {})
-        content = str(node.get("text") or node.get("accessibleName") or "")
-        label = str(node.get("accessibleName") or browser_context.get("selector") or "DOM node")
+        selection = dict(browser_context.get("selection") or {})
+        selected_rectangles = list(selection.get("rectangles") or [])
+        if selection and selected_rectangles:
+            content = str(selection.get("text") or "")
+            label = "Browser selection"
+            selection_artifacts = {
+                "selection_text_chars": len(content),
+                "selection_text_sha256": hashlib.sha256(
+                    content.encode("utf-8", errors="surrogatepass")
+                ).hexdigest(),
+            }
+            selection_rectangles = selected_rectangles
+        else:
+            content = str(node.get("text") or node.get("accessibleName") or "")
+            label = str(node.get("accessibleName") or browser_context.get("selector") or "DOM node")
+            element_rect = (browser_context.get("coordinates") or {}).get("elementScreenPhysical")
+            selection_rectangles = [
+                [element_rect["x"], element_rect["y"], element_rect["width"], element_rect["height"]]
+            ] if isinstance(element_rect, dict) else []
+            selection_artifacts = {}
         return AdapterReadContext(
             adapter=self.name,
             app="browser",
@@ -692,8 +815,11 @@ class BrowserDevToolsAdapter(AppAdapter):
                 "dom_selector": str(browser_context.get("selector") or ""),
                 "accessible_name": str(node.get("accessibleName") or ""),
                 "network_failure_count": len(browser_context.get("networkFailures") or []),
-                "selection_rectangles": [
-                    browser_context["coordinates"]["elementScreenPhysical"]
-                ] if (browser_context.get("coordinates") or {}).get("elementScreenPhysical") else [],
+                "selection_rectangles": selection_rectangles,
+                "selection_rectangles_coordinate_space": "physical_screen_pixels",
+                "selection_rectangles_format": "xywh",
+                "selection_rectangle_count_total": len(selection_rectangles),
+                "selection_rectangles_truncated": False,
+                **selection_artifacts,
             },
         )

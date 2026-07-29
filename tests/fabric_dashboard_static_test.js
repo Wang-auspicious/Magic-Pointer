@@ -52,9 +52,8 @@ assert(!css.includes('Consolas'));
 assert(!css.includes('repeating-linear-gradient'));
 
 assert(js.includes('requestFabricState'));
-assert(js.includes("fabricRequest('catalog'"));
+assert(js.includes('api.runtimeSnapshot.get('));
 assert(js.includes("fabricRequest('providers'"));
-assert(js.includes("fabricRequest('settings.get'"));
 assert(js.includes("fabricRequest('audit.tail'"));
 assert(js.includes("fabricRequest('artifacts.list'"));
 assert(js.includes("fabricRequest('artifacts.cleanup'"));
@@ -77,6 +76,7 @@ assert(js.includes("fabricRequest('calibration.start')"));
 assert(!js.includes('innerHTML'));
 
 assert(preload.includes('fabricRequest'));
+assert(preload.includes('runtimeSnapshot'));
 assert(preload.includes('saveFabricSettings'));
 assert(preload.includes('onFabricState'));
 assert(main.includes("'scripts/fabric_bridge.py'"));

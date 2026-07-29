@@ -10,6 +10,7 @@ using System.Windows.Automation.Text;
 internal static class UiaSelectionProbe
 {
     private const int MaxTextChars = 65536;
+    private const double SelectionPointTolerance = 4.0;
 
     private sealed class SelectionResult
     {
@@ -39,6 +40,7 @@ internal static class UiaSelectionProbe
         public string SelectionContainerText = "";
         public Rect SelectionContainerRectangle = Rect.Empty;
         public string TerminalAnchorText = "";
+        public string RejectedSelectionReason = "";
         public string Error = "";
     }
 
@@ -97,20 +99,31 @@ internal static class UiaSelectionProbe
 
                 if (
                     focused != null
-                    && SafeProcessId(focused) == result.ProcessId
-                    && IsDescendantOrSelf(focused, root))
+                    && BelongsToWindowTree(focused, root))
                 {
                     TryElementAndAncestors(focused, root, result);
+                    if (targetPoint.HasValue)
+                    {
+                        RejectSelectionOutsideTargetPoint(result, targetPoint.Value);
+                    }
                 }
 
                 if (!result.Ok)
                 {
                     TryElement(root, result);
+                    if (targetPoint.HasValue)
+                    {
+                        RejectSelectionOutsideTargetPoint(result, targetPoint.Value);
+                    }
                 }
 
                 if (!result.Ok)
                 {
                     FindDocumentSelection(root, result);
+                    if (targetPoint.HasValue)
+                    {
+                        RejectSelectionOutsideTargetPoint(result, targetPoint.Value);
+                    }
                 }
 
                 if (!result.Ok && targetPoint.HasValue)
@@ -144,6 +157,12 @@ internal static class UiaSelectionProbe
 
     [DllImport("user32.dll")]
     private static extern bool SetProcessDPIAware();
+
+    [DllImport("user32.dll")]
+    private static extern bool IsChild(IntPtr parentHwnd, IntPtr childHwnd);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
 
     private static void EnableDpiAwareness()
     {
@@ -342,6 +361,48 @@ internal static class UiaSelectionProbe
         result.Error = "";
     }
 
+    private static bool SelectionCoversTargetPoint(SelectionResult result, Point point)
+    {
+        if (!result.Ok || result.ResultKind != "text_selection" || result.Rectangles.Count == 0)
+        {
+            return false;
+        }
+        foreach (Rect rectangle in result.Rectangles)
+        {
+            Rect hitRectangle = new Rect(
+                rectangle.X - SelectionPointTolerance,
+                rectangle.Y - SelectionPointTolerance,
+                rectangle.Width + (SelectionPointTolerance * 2.0),
+                rectangle.Height + (SelectionPointTolerance * 2.0));
+            if (hitRectangle.Contains(point))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static void RejectSelectionOutsideTargetPoint(SelectionResult result, Point point)
+    {
+        if (!result.Ok || result.ResultKind != "text_selection" || SelectionCoversTargetPoint(result, point))
+        {
+            return;
+        }
+        result.RejectedSelectionReason = "selection_outside_target_point";
+        result.Ok = false;
+        result.ResultKind = "";
+        result.Text = "";
+        result.Truncated = false;
+        result.RangeCount = 0;
+        result.RectangleCountTotal = 0;
+        result.RectanglesTruncated = false;
+        result.Rectangles.Clear();
+        result.ElementName = "";
+        result.AutomationId = "";
+        result.ControlType = "";
+        result.Error = "";
+    }
+
     private static bool IsTerminalWindow(AutomationElement root)
     {
         string className = SafeString(root, AutomationElement.ClassNameProperty);
@@ -530,14 +591,18 @@ internal static class UiaSelectionProbe
         }
         catch
         {
+            result.Error = "UI Automation ElementFromPoint failed.";
             return;
         }
-        if (
-            element == null
-            || SafeProcessId(element) != result.ProcessId
-            || !IsDescendantOrSelf(element, root)
-        )
+        if (element == null)
         {
+            result.Error = "UI Automation ElementFromPoint returned no element.";
+            return;
+        }
+        if (!BelongsToWindowTree(element, root))
+        {
+            result.Error = "UI Automation point element was outside the target window tree. "
+                + DescribeWindowBinding(element, root);
             return;
         }
 
@@ -559,6 +624,7 @@ internal static class UiaSelectionProbe
             );
             if (
                 meaningful
+                && !IsCatchAllPointElement(current, root, rectangle)
                 && !rectangle.IsEmpty
                 && rectangle.Width > 0
                 && rectangle.Height > 0
@@ -602,6 +668,23 @@ internal static class UiaSelectionProbe
                 break;
             }
         }
+        result.Error = "UI Automation point element had no bounded meaningful ancestor.";
+    }
+
+    private static bool IsCatchAllPointElement(
+        AutomationElement element,
+        AutomationElement root,
+        Rect rectangle)
+    {
+        if (SameElement(element, root))
+        {
+            return true;
+        }
+        Rect rootRectangle = SafeBoundingRectangle(root);
+        return !rectangle.IsEmpty
+            && !rootRectangle.IsEmpty
+            && rectangle.Width >= rootRectangle.Width * 0.90
+            && rectangle.Height >= rootRectangle.Height * 0.90;
     }
 
     private static void PopulateSelectionMetadata(AutomationElement root, SelectionResult result)
@@ -947,6 +1030,77 @@ internal static class UiaSelectionProbe
         return false;
     }
 
+    private static bool BelongsToWindowTree(AutomationElement element, AutomationElement root)
+    {
+        if (IsDescendantOrSelf(element, root))
+        {
+            return true;
+        }
+        IntPtr rootHwnd = new IntPtr(SafeInt(root, AutomationElement.NativeWindowHandleProperty));
+        if (rootHwnd == IntPtr.Zero)
+        {
+            return false;
+        }
+        AutomationElement current = element;
+        TreeWalker walker = TreeWalker.RawViewWalker;
+        for (int depth = 0; current != null && depth < 128; depth++)
+        {
+            IntPtr candidateHwnd = new IntPtr(SafeInt(
+                current,
+                AutomationElement.NativeWindowHandleProperty));
+            if (
+                candidateHwnd != IntPtr.Zero
+                && (
+                    candidateHwnd == rootHwnd
+                    || IsChild(rootHwnd, candidateHwnd)
+                    || GetAncestor(candidateHwnd, 2) == rootHwnd
+                )
+            )
+            {
+                return true;
+            }
+            try
+            {
+                current = walker.GetParent(current);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+        return false;
+    }
+
+    private static string DescribeWindowBinding(AutomationElement element, AutomationElement root)
+    {
+        List<string> chain = new List<string>();
+        AutomationElement current = element;
+        TreeWalker walker = TreeWalker.RawViewWalker;
+        for (int depth = 0; current != null && depth < 24; depth++)
+        {
+            int hwnd = SafeInt(current, AutomationElement.NativeWindowHandleProperty);
+            int processId = SafeInt(current, AutomationElement.ProcessIdProperty);
+            if (hwnd != 0 || depth == 0)
+            {
+                chain.Add(hwnd.ToString() + ":" + processId.ToString());
+            }
+            try
+            {
+                current = walker.GetParent(current);
+            }
+            catch
+            {
+                break;
+            }
+        }
+        return "root="
+            + SafeInt(root, AutomationElement.NativeWindowHandleProperty).ToString()
+            + ":"
+            + SafeInt(root, AutomationElement.ProcessIdProperty).ToString()
+            + " chain="
+            + string.Join(">", chain.ToArray());
+    }
+
     private static string JsonString(string value)
     {
         if (value == null)
@@ -1063,6 +1217,8 @@ internal static class UiaSelectionProbe
         AppendJsonRect(json, result.SelectionContainerRectangle);
         json.Append(",\"terminal_anchor_text\":");
         json.Append(JsonString(result.TerminalAnchorText));
+        json.Append(",\"rejected_selection_reason\":");
+        json.Append(JsonString(result.RejectedSelectionReason));
         json.Append(",\"element_name\":");
         json.Append(JsonString(result.ElementName));
         json.Append(",\"automation_id\":");

@@ -18,6 +18,8 @@ __pycache__/
 # Node/Electron dependencies
 node_modules/
 npm-debug.log*
+/release/
+/build/
 
 # External reference repos / downloaded archives
 external/

@@ -9,7 +9,9 @@
 (() => {
   const machine = globalThis.StageState;
   const anchor = globalThis.StageAnchor;
-  if (!machine || !anchor) return;
+  const voiceTrigger = globalThis.MagicPointerVoiceTrigger;
+  const hitPolicy = globalThis.MagicPointerStageHitPolicy;
+  if (!machine || !anchor || !voiceTrigger || !hitPolicy) return;
   const { initialState, transition } = machine;
   const api = window.magicPointerStage;
 
@@ -31,13 +33,24 @@
   const tplTableCompare = document.getElementById('tpl-table-compare');
   const tplTextDraft = document.getElementById('tpl-text-draft');
 
-  const CAPSULE_VOICE_WIDTH = 40;
-  const CAPSULE_TEXT_WIDTH = 144;
-  const CAPSULE_MAX_WIDTH = 440;
+  const DEFAULT_VISUAL_TUNING = Object.freeze({
+    sweepHeightRatio: 0.52,
+    sweepMinHeightDip: 10,
+    sweepMaxHeightDip: 24,
+    sweepDurationMs: 292,
+    sweepFadeMs: 96,
+    capsuleSpawnMs: 417,
+    capsuleExpandMs: 292,
+    capsuleVoiceWidthDip: 40,
+    capsuleTextWidthDip: 144,
+    capsuleMaxWidthDip: 440,
+    capsuleInlineGapDip: 18,
+  });
   const DISMISS_FADE_MS = 160;
 
   const reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
   let state = initialState({ reducedMotion: reducedMotionQuery.matches });
+  capsule.hidden = true;
   let renderedTranscript = '';
   let dismissTimer = null;
   let hasShown = false;
@@ -46,12 +59,34 @@
   const meta = { selectionSource: null, objectKind: null };
   let renderedChipIds = '';
   // Live wiring context from main (stage:show / stage:update payloads).
-  const session = { token: null, voiceAutoSubmit: true, pointer: null };
+  const session = {
+    token: null,
+    groundingReady: false,
+    voiceAutoSubmit: true,
+    voiceStartStrategy: 'auto',
+    selectionVisual: 'sweep_band',
+    targetGeometryKind: 'pointer_only',
+    submitOnFinal: false,
+    pendingFinalTranscript: '',
+    pointer: null,
+    capsuleAnchor: 'target',
+    capsuleDelayMs: null,
+    visualTuning: { ...DEFAULT_VISUAL_TUNING },
+  };
   const textCanvas = document.createElement('canvas');
   const textMeasure = textCanvas.getContext('2d');
   let dictationActive = false;
   let mouseCaptureOn = false;
+  let keyboardFocusRequested = false;
+  let hitRegionKey = '';
+  let hitRegionRefreshTimer = null;
+  let voiceTriggerPolicy = null;
+  let previousPointerButtons = 0;
+  let pointerWasOverCapsule = false;
+  let lastPointerPoint = null;
   let reportedState = '';
+  let targetSweepComplete = false;
+  let targetSweepTimer = null;
 
   // Honest receipt copy: mirrors the TRUE state verbatim — a queued/accepted
   // draft is never rendered as succeeded (design §2.2/§3.1).
@@ -73,25 +108,196 @@
     syncEffects();
   }
 
+  function applyVoiceTriggerEffects(outcome) {
+    const effects = Array.isArray(outcome?.effects) ? outcome.effects : [];
+    const wantsSubmit = effects.includes('submit');
+    const pendingTranscript = session.pendingFinalTranscript;
+    if (wantsSubmit) session.submitOnFinal = true;
+    if (effects.includes('start') && !dictationActive) {
+      dictationActive = true;
+      if (api && typeof api.startDictation === 'function') api.startDictation();
+    }
+    if (effects.includes('stop') && dictationActive) {
+      dictationActive = false;
+      if (api && typeof api.stopDictation === 'function') {
+        api.stopDictation({ graceful: wantsSubmit && !pendingTranscript });
+      }
+    }
+    if (wantsSubmit && pendingTranscript) {
+      session.pendingFinalTranscript = '';
+      submitCommand(pendingTranscript);
+    }
+  }
+
+  function dispatchVoiceTrigger(event) {
+    if (!voiceTriggerPolicy) return;
+    applyVoiceTriggerEffects(voiceTriggerPolicy.dispatch(event));
+  }
+
+  function resetVoiceTrigger() {
+    voiceTriggerPolicy = null;
+    previousPointerButtons = 0;
+    pointerWasOverCapsule = false;
+    session.submitOnFinal = false;
+    session.pendingFinalTranscript = '';
+  }
+
+  function handleVoicePointerInput(payload) {
+    const t = Number(payload?.t);
+    const x = Number(payload?.x);
+    const y = Number(payload?.y);
+    const buttons = Number(payload?.buttons || 0);
+    if (![t, x, y, buttons].every(Number.isFinite)) return;
+    lastPointerPoint = { x, y };
+    syncHitRegions();
+    if (!voiceTriggerPolicy || state.name !== 'capsule-voice') return;
+    const primaryDown = (buttons & 1) !== 0;
+    const previousPrimaryDown = (previousPointerButtons & 1) !== 0;
+    if (session.voiceStartStrategy === 'push_to_talk') {
+      if (primaryDown && !previousPrimaryDown) dispatchVoiceTrigger({ type: 'press', t });
+      else if (!primaryDown && previousPrimaryDown) dispatchVoiceTrigger({ type: 'release', t });
+    } else if (session.voiceStartStrategy === 'hover') {
+      const rect = capsule.getBoundingClientRect();
+      const overCapsule = !capsule.hidden
+        && x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+      if (overCapsule && !pointerWasOverCapsule) dispatchVoiceTrigger({ type: 'enter', t });
+      if (overCapsule) dispatchVoiceTrigger({ type: 'tick', t, overTarget: true });
+      else if (pointerWasOverCapsule) dispatchVoiceTrigger({ type: 'leave', t });
+      pointerWasOverCapsule = overCapsule;
+    }
+    previousPointerButtons = buttons;
+  }
+
+  // The transparent stage may ask main to receive mouse events only while it
+  // has a control a user can actually operate. A result/error card is usually
+  // presentation only, so its presence alone must not turn the full-screen
+  // stage into a click-blocking layer.
+  function hasInteractiveStageSurface() {
+    const name = state.name;
+    if (name === 'hidden' || name === 'dismissing') return false;
+    if (name === 'capsule-text') return !capsule.hidden && !capsuleInput.disabled;
+    const hasEnabledButton = (element) => !element.hidden
+      && Boolean(element.querySelector('button:not([disabled])'));
+    return hasEnabledButton(chipsBox)
+      || hasEnabledButton(resultCard)
+      || hasEnabledButton(errorCard);
+  }
+
+  function capsuleVisualRegion(element, rect) {
+    if (element !== capsule) return rect;
+    const desiredWidth = Number.parseFloat(
+      window.getComputedStyle(capsule).getPropertyValue('--capsule-width'),
+    );
+    if (!Number.isFinite(desiredWidth) || desiredWidth <= rect.width) return rect;
+    return {
+      left: rect.left,
+      top: rect.top,
+      right: Math.min(window.innerWidth, rect.left + desiredWidth),
+      bottom: rect.bottom,
+      width: Math.min(desiredWidth, window.innerWidth - rect.left),
+      height: rect.height,
+    };
+  }
+
+  function visibleStageRegions() {
+    return [targetingOutline, frozenGlow, capsule, resultCard, errorCard, chipsBox, deliveryBox]
+      .filter((element) => !element.hidden)
+      .map((element) => ({ element, rect: element.getBoundingClientRect() }))
+      .filter(({ rect }) => rect.width > 0 && rect.height > 0)
+      .map(({ element, rect: measuredRect }) => {
+        const rect = capsuleVisualRegion(element, measuredRect);
+        const isTargetFeedback = element === targetingOutline || element === frozenGlow;
+        const padding = isTargetFeedback && session.selectionVisual === 'sweep_band' ? 28 : 8;
+        const x = Math.max(0, Math.floor(rect.left - padding));
+        const y = Math.max(0, Math.floor(rect.top - padding));
+        const right = Math.min(window.innerWidth, Math.ceil(rect.right + padding));
+        const bottom = Math.min(window.innerHeight, Math.ceil(rect.bottom + padding));
+        return { x, y, width: right - x, height: bottom - y };
+      })
+      .filter((rect) => rect.width > 0 && rect.height > 0)
+      .slice(0, 16);
+  }
+
+  function interactiveStageRegions() {
+    const elements = [];
+    if (state.name === 'capsule-text' && !capsule.hidden && !capsuleInput.disabled) {
+      elements.push(capsule);
+    }
+    for (const container of [chipsBox, resultCard, errorCard]) {
+      if (container.hidden) continue;
+      elements.push(...container.querySelectorAll('button:not([disabled])'));
+    }
+    return elements
+      .map((element) => element.getBoundingClientRect())
+      .filter((rect) => rect.width > 0 && rect.height > 0)
+      .map((rect) => {
+        const padding = 4;
+        const x = Math.max(0, Math.floor(rect.left - padding));
+        const y = Math.max(0, Math.floor(rect.top - padding));
+        const right = Math.min(window.innerWidth, Math.ceil(rect.right + padding));
+        const bottom = Math.min(window.innerHeight, Math.ceil(rect.bottom + padding));
+        return { x, y, width: right - x, height: bottom - y };
+      })
+      .filter((rect) => rect.width > 0 && rect.height > 0)
+      .slice(0, 16);
+  }
+
+  function syncHitRegions() {
+    const name = state.name;
+    const hasInteractiveSurface = name === 'capsule-text' || name === 'result' || name === 'error'
+      ? hasInteractiveStageSurface()
+      : !chipsBox.hidden && hasInteractiveStageSurface();
+    const interactiveRegions = interactiveStageRegions();
+    const wantCapture = hitPolicy.shouldCaptureMouse({
+      hasInteractiveSurface,
+      pointer: lastPointerPoint,
+      interactiveRegions,
+    });
+    const requestFocus = name === 'capsule-text';
+    const regions = visibleStageRegions();
+    const nextHitRegionKey = JSON.stringify(regions);
+    if (
+      wantCapture !== mouseCaptureOn
+      || requestFocus !== keyboardFocusRequested
+      || nextHitRegionKey !== hitRegionKey
+    ) {
+      mouseCaptureOn = wantCapture;
+      keyboardFocusRequested = requestFocus;
+      hitRegionKey = nextHitRegionKey;
+      if (api && typeof api.setMouseCapture === 'function') {
+        api.setMouseCapture(wantCapture, { requestFocus, regions });
+      }
+    }
+  }
+
+  function scheduleHitRegionRefresh() {
+    requestAnimationFrame(syncHitRegions);
+    if (hitRegionRefreshTimer) clearTimeout(hitRegionRefreshTimer);
+    hitRegionRefreshTimer = setTimeout(syncHitRegions, 240);
+  }
+
   // Side effects that follow the machine, not the DOM: dictation lifecycle,
   // main-process mouse capture (the stage window is click-through by default),
   // and state reporting for the main-process log.
   function syncEffects() {
     const name = state.name;
-    const wantDictation = name === 'capsule-voice';
-    if (wantDictation && !dictationActive) {
-      dictationActive = true;
-      if (api && typeof api.startDictation === 'function') api.startDictation();
+    const wantDictation = name === 'capsule-voice' && session.groundingReady === true;
+    if (wantDictation && !voiceTriggerPolicy) {
+      voiceTriggerPolicy = new voiceTrigger.VoiceTriggerPolicy({
+        strategy: session.voiceStartStrategy,
+        hoverThresholdMs: 500,
+      });
+      if (session.voiceStartStrategy === 'auto') {
+        dispatchVoiceTrigger({ type: 'capsule-ready' });
+      }
     } else if (!wantDictation && dictationActive) {
       dictationActive = false;
-      if (api && typeof api.stopDictation === 'function') api.stopDictation();
+      if (api && typeof api.stopDictation === 'function') api.stopDictation({ graceful: false });
+      resetVoiceTrigger();
+    } else if (!wantDictation && voiceTriggerPolicy) {
+      resetVoiceTrigger();
     }
-    const chipsVisible = !chipsBox.hidden;
-    const wantCapture = name === 'capsule-text' || name === 'result' || name === 'error' || chipsVisible;
-    if (wantCapture !== mouseCaptureOn) {
-      mouseCaptureOn = wantCapture;
-      if (api && typeof api.setMouseCapture === 'function') api.setMouseCapture(wantCapture);
-    }
+    syncHitRegions();
     if (name !== reportedState) {
       reportedState = name;
       if (api && typeof api.reportState === 'function') {
@@ -129,8 +335,75 @@
     element.hidden = false;
     element.style.left = `${rect.x}px`;
     element.style.top = `${rect.y}px`;
-    element.style.width = `${rect.width}px`;
+    if (element === capsule) {
+      const finalWidth = Number.parseFloat(window.getComputedStyle(capsule).getPropertyValue('--capsule-width')) || rect.width;
+      const baseWidth = Number.parseFloat(window.getComputedStyle(capsule).getPropertyValue('--capsule-base-width')) || rect.width;
+      // Cold start throttle: ensure double windows ready before pen fall.
+      // Smooth cross-frame handover for shape switch, no half-ball or ghost.
+      element.style.width = `${Math.min(finalWidth, window.innerWidth - rect.left)}px`;
+      element.style.height = `${rect.height}px`;
+      // Reserve for smooth transition
+      if (element === capsule) {
+        capsule.style.width = `${Math.min(finalWidth, window.innerWidth - rect.left)}px`;
+      }
+    } else {
+      element.style.width = `${rect.width}px`;
+    }
     element.style.height = `${rect.height}px`;
+  }
+
+  function isUsableTargetRect(rect) {
+    if (!rect || typeof rect !== 'object') return false;
+    const x = Number(rect.x);
+    const y = Number(rect.y);
+    const width = Number(rect.width);
+    const height = Number(rect.height);
+    if (![x, y, width, height].every(Number.isFinite) || width <= 0 || height <= 0) return false;
+    return x < window.innerWidth && y < window.innerHeight && x + width > 0 && y + height > 0;
+  }
+
+  function sweepBandRect(rect) {
+    if (!isUsableTargetRect(rect)) return null;
+    const sourceHeight = Math.max(1, Number(rect.height));
+    const height = Math.min(
+      session.visualTuning.sweepMaxHeightDip,
+      Math.max(
+        session.visualTuning.sweepMinHeightDip,
+        Math.round(sourceHeight * session.visualTuning.sweepHeightRatio),
+      ),
+    );
+    const horizontalPadding = Math.min(10, Math.max(4, Math.round(sourceHeight * 0.12)));
+    const left = Math.max(0, Math.round(Number(rect.x) - horizontalPadding));
+    const top = Math.max(0, Math.round(Number(rect.y) - ((height - sourceHeight) / 2)));
+    const right = Math.min(
+      window.innerWidth,
+      Math.round(Number(rect.x) + Number(rect.width) + horizontalPadding),
+    );
+    const bottom = Math.min(window.innerHeight, top + height);
+    return {
+      x: left,
+      y: top,
+      width: Math.max(1, right - left),
+      height: Math.max(1, bottom - top),
+    };
+  }
+
+  function targetFeedbackRect(rect) {
+    if (!isUsableTargetRect(rect)) return null;
+    if (session.targetGeometryKind !== 'resolved') return null;
+    if (session.selectionVisual === 'sweep_band') return sweepBandRect(rect);
+    if (session.selectionVisual === 'soft_glow') {
+      const padding = 6;
+      const left = Math.max(0, Number(rect.x) - padding);
+      const top = Math.max(0, Number(rect.y) - padding);
+      return {
+        x: left,
+        y: top,
+        width: Math.max(1, Math.min(window.innerWidth - left, Number(rect.width) + (padding * 2))),
+        height: Math.max(1, Math.min(window.innerHeight - top, Number(rect.height) + (padding * 2))),
+      };
+    }
+    return rect;
   }
 
   function anchorBelowTarget(element, offsetY = 12) {
@@ -156,13 +429,21 @@
 
   function syncCapsuleWidth() {
     const mode = state.inputMode === 'text' ? 'text' : 'voice';
-    const base = mode === 'text' ? CAPSULE_TEXT_WIDTH : CAPSULE_VOICE_WIDTH;
+    const base = mode === 'text'
+      ? session.visualTuning.capsuleTextWidthDip
+      : session.visualTuning.capsuleVoiceWidthDip;
     const content = state.transcript || capsuleInput.value || '';
     const style = window.getComputedStyle(transcriptBox);
     if (textMeasure) textMeasure.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
     const measured = textMeasure ? textMeasure.measureText(content).width : content.length * 8;
     const grown = content ? measured + 58 : base;
-    capsule.style.width = `${Math.min(CAPSULE_MAX_WIDTH, Math.max(base, grown))}px`;
+    const width = Math.min(session.visualTuning.capsuleMaxWidthDip, Math.max(base, grown));
+    // Pre-reserve final capsule width for smooth shape switching across one frame.
+    // Prevents half-ball cut, ghost residual, or split during transition.
+    // High DPI auto scaling applied via CSS var.
+    capsule.style.setProperty('--capsule-width', `${width}px`);
+    capsule.style.setProperty('--capsule-base-width', `${base}px`);
+    return width;
   }
 
   function anchorNearPointer(element, fallbackWidth = 200, fallbackHeight = 44) {
@@ -178,6 +459,40 @@
     element.style.left = `${placement.x}px`;
     element.style.top = `${placement.y}px`;
     element.dataset.quadrant = placement.quadrant;
+  }
+
+  function anchorCapsuleToTarget(width) {
+    if (
+      session.capsuleAnchor === 'target'
+      &&
+      session.targetGeometryKind === 'resolved'
+      && isUsableTargetRect(state.target)
+      && typeof anchor.chooseTargetInlineAnchor === 'function'
+    ) {
+      const placement = anchor.chooseTargetInlineAnchor(
+        state.target,
+        { width, height: session.visualTuning.capsuleVoiceWidthDip },
+        { width: window.innerWidth, height: window.innerHeight },
+        { gap: session.visualTuning.capsuleInlineGapDip },
+      );
+      capsule.style.left = `${placement.x}px`;
+      capsule.style.top = `${placement.y}px`;
+      capsule.dataset.quadrant = placement.quadrant;
+      return;
+    }
+    anchorNearPointer(capsule, width, session.visualTuning.capsuleVoiceWidthDip);
+  }
+
+  function applyVisualTuning() {
+    stageRoot.style.setProperty('--stage-sweep-duration', `${session.visualTuning.sweepDurationMs}ms`);
+    stageRoot.style.setProperty('--stage-sweep-fade', `${session.visualTuning.sweepFadeMs}ms`);
+    stageRoot.style.setProperty('--stage-capsule-spawn', `${session.visualTuning.capsuleSpawnMs}ms`);
+    stageRoot.style.setProperty('--stage-capsule-expand', `${session.visualTuning.capsuleExpandMs}ms`);
+    stageRoot.style.setProperty(
+      '--stage-capsule-delay',
+      `${session.capsuleDelayMs === null ? session.visualTuning.sweepDurationMs : session.capsuleDelayMs}ms`,
+    );
+    stageRoot.style.setProperty('--stage-capsule-size', `${session.visualTuning.capsuleVoiceWidthDip}px`);
   }
 
   function renderInline(container, payload) {
@@ -434,6 +749,10 @@
     capsuleInput.value = '';
     meta.selectionSource = null;
     meta.objectKind = null;
+    if (hitRegionRefreshTimer) clearTimeout(hitRegionRefreshTimer);
+    hitRegionRefreshTimer = null;
+    if (targetSweepTimer) clearTimeout(targetSweepTimer);
+    targetSweepTimer = null;
     targetingOutline.classList.remove('is-visible');
     [targetingOutline, frozenGlow, capsule, shimmer, resultCard, errorCard,
       chipsBox, deliveryBox].forEach((el) => {
@@ -444,6 +763,8 @@
   function render() {
     const name = state.name;
     stageRoot.dataset.state = name;
+    stageRoot.dataset.selectionVisual = session.selectionVisual;
+    stageRoot.dataset.targetGeometryKind = session.targetGeometryKind;
 
     if (name === 'hidden') {
       // Empty state renders nothing: zero dynamic DOM content while hidden.
@@ -459,7 +780,7 @@
 
     const showTargeting = name === 'targeting';
     if (showTargeting && state.target) {
-      placeRect(targetingOutline, state.target);
+      placeRect(targetingOutline, targetFeedbackRect(state.target));
       requestAnimationFrame(() => targetingOutline.classList.add('is-visible'));
     } else {
       targetingOutline.classList.remove('is-visible');
@@ -468,19 +789,42 @@
 
     const showGlow = name === 'frozen' || name === 'capsule-voice'
       || name === 'capsule-text' || name === 'processing';
-    if (showGlow && state.target) placeRect(frozenGlow, state.target);
-    else frozenGlow.hidden = true;
+    const sweepCanRender = session.selectionVisual !== 'sweep_band' || !targetSweepComplete;
+    if (showGlow && sweepCanRender && state.target) {
+      const sweepWasHidden = frozenGlow.hidden;
+      placeRect(frozenGlow, targetFeedbackRect(state.target));
+      if (
+        sweepWasHidden
+        && !frozenGlow.hidden
+        && session.selectionVisual === 'sweep_band'
+        && !targetSweepTimer
+      ) {
+        // animationend can be skipped when a transparent window is hidden or
+        // moved between displays. The timer is a deterministic cleanup guard.
+        targetSweepTimer = setTimeout(() => {
+          targetSweepTimer = null;
+          targetSweepComplete = true;
+          frozenGlow.hidden = true;
+          syncHitRegions();
+        }, session.visualTuning.sweepDurationMs + 34);
+      }
+    } else frozenGlow.hidden = true;
 
     const capsuleOpen = name === 'capsule-voice' || name === 'capsule-text' || name === 'processing';
-    capsule.hidden = !capsuleOpen;
     if (capsuleOpen) {
+      const capsuleWasHidden = capsule.hidden;
       capsule.dataset.mode = state.inputMode === 'text' ? 'text' : 'voice';
       capsule.dataset.phase = name === 'processing' ? 'processing' : 'input';
       renderTranscript();
-      syncCapsuleWidth();
-      anchorNearPointer(capsule, CAPSULE_TEXT_WIDTH, 44);
+      const capsuleWidth = syncCapsuleWidth();
+      anchorCapsuleToTarget(capsuleWidth);
+      // Coordinates are committed before the element becomes paintable, so a
+      // new session can never expose the browser's default (0,0) position.
+      if (capsuleWasHidden) capsule.hidden = false;
+      scheduleHitRegionRefresh();
       if (name === 'capsule-text') capsuleInput.focus();
     } else {
+      capsule.hidden = true;
       clearTranscript();
       capsuleInput.value = '';
     }
@@ -523,6 +867,16 @@
   capsuleInput.addEventListener('input', () => {
     dispatch({ type: 'TRANSCRIPT', transcript: capsuleInput.value });
   });
+  capsule.addEventListener('transitionend', syncHitRegions);
+  capsule.addEventListener('animationend', syncHitRegions);
+  frozenGlow.addEventListener('animationend', (event) => {
+    if (event.animationName !== 'selection-sweep-fade') return;
+    if (targetSweepTimer) clearTimeout(targetSweepTimer);
+    targetSweepTimer = null;
+    targetSweepComplete = true;
+    frozenGlow.hidden = true;
+    syncHitRegions();
+  });
 
   capsuleInput.addEventListener('keydown', (event) => {
     if (event.key === 'Enter' && capsuleInput.value.trim()) {
@@ -532,17 +886,24 @@
     }
   });
 
-  // Clicking anywhere that is not an interactive surface dismisses the stage
-  // (only reachable while main has granted mouse capture; the root itself is
-  // pointer-events:none, so listen at the document level).
-  document.addEventListener('pointerdown', (event) => {
-    if (!mouseCaptureOn) return;
-    const interactive = event.target instanceof Element
-      && event.target.closest('#capsule, #stage-result, #stage-error, #stage-chips, #delivery-progress');
-    if (!interactive) requestDismiss();
-  });
   window.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') requestDismiss();
+  });
+  window.addEventListener('mousemove', (event) => {
+    lastPointerPoint = { x: event.clientX, y: event.clientY };
+    syncHitRegions();
+    if (state.name === 'capsule-voice') {
+      handleVoicePointerInput({
+        t: performance.now(),
+        x: event.clientX,
+        y: event.clientY,
+        buttons: event.buttons,
+      });
+    }
+  });
+  window.addEventListener('mouseleave', () => {
+    lastPointerPoint = null;
+    syncHitRegions();
   });
 
   function applyMeta(payload) {
@@ -567,35 +928,93 @@
     if ('voiceAutoSubmit' in payload) {
       session.voiceAutoSubmit = payload.voiceAutoSubmit !== false;
     }
+    if ('voiceStartStrategy' in payload) {
+      const strategy = String(payload.voiceStartStrategy || 'auto');
+      session.voiceStartStrategy = ['auto', 'push_to_talk', 'hover'].includes(strategy)
+        ? strategy
+        : 'auto';
+    }
+    if ('groundingReady' in payload) {
+      session.groundingReady = payload.groundingReady === true;
+    }
+    if ('selectionVisual' in payload) {
+      const visual = String(payload.selectionVisual || 'sweep_band');
+      session.selectionVisual = ['sweep_band', 'soft_glow', 'outline'].includes(visual)
+        ? visual
+        : 'sweep_band';
+    }
+    if ('targetGeometryKind' in payload) {
+      const previousKind = session.targetGeometryKind;
+      const kind = String(payload.targetGeometryKind || 'invalid');
+      session.targetGeometryKind = ['resolved', 'pointer_only', 'invalid'].includes(kind)
+        ? kind
+        : 'invalid';
+      if (session.targetGeometryKind === 'resolved' && previousKind !== 'resolved') {
+        targetSweepComplete = false;
+      }
+    }
+    if ('capsuleAnchor' in payload) {
+      session.capsuleAnchor = payload.capsuleAnchor === 'pointer' ? 'pointer' : 'target';
+    }
+    if ('capsuleDelayMs' in payload) {
+      const delay = Number(payload.capsuleDelayMs);
+      session.capsuleDelayMs = Number.isFinite(delay) ? Math.max(0, Math.min(1500, delay)) : null;
+    }
     if (payload.pointer && Number.isFinite(Number(payload.pointer.x)) && Number.isFinite(Number(payload.pointer.y))) {
       session.pointer = { x: Number(payload.pointer.x), y: Number(payload.pointer.y) };
     }
+    if (payload.visualTuning && typeof payload.visualTuning === 'object') {
+      for (const [name, fallback] of Object.entries(DEFAULT_VISUAL_TUNING)) {
+        const value = Number(payload.visualTuning[name]);
+        session.visualTuning[name] = Number.isFinite(value) ? value : fallback;
+      }
+    }
+    applyVisualTuning();
   }
 
   if (api) {
     api.onShow((payload) => {
+      if (!payload) return;
       state = initialState({ reducedMotion: reducedMotionQuery.matches });
       renderedTranscript = '';
       reportedState = '';
       session.token = null;
+      session.groundingReady = false;
       session.voiceAutoSubmit = true;
+      session.voiceStartStrategy = 'auto';
+      session.selectionVisual = 'sweep_band';
+      session.targetGeometryKind = 'pointer_only';
+      session.submitOnFinal = false;
+      session.pendingFinalTranscript = '';
       session.pointer = null;
+      session.capsuleAnchor = 'target';
+      session.capsuleDelayMs = null;
+      session.visualTuning = { ...DEFAULT_VISUAL_TUNING };
+      lastPointerPoint = null;
+      if (targetSweepTimer) clearTimeout(targetSweepTimer);
+      targetSweepTimer = null;
+      targetSweepComplete = false;
+      resetVoiceTrigger();
       meta.selectionSource = null;
       meta.objectKind = null;
       applySession(payload);
       applyMeta(payload);
       dispatch({ type: 'WAKE', target: payload?.target || null });
-      if (payload?.event) dispatch(payload.event);
+      const events = Array.isArray(payload?.eventSequence) ? payload.eventSequence : [payload?.event];
+      for (const event of events) if (event) dispatch(event);
     });
     api.onUpdate((payload) => {
+      const previousGroundingReady = session.groundingReady;
       applySession(payload);
+      const groundingChanged = previousGroundingReady !== session.groundingReady;
       const metaChanged = applyMeta(payload);
       if (payload?.deliveryProgress) {
         // Only legal in processing/result; the machine drops it elsewhere.
         dispatch({ type: 'DELIVERY_PROGRESS', progress: payload.deliveryProgress });
       }
-      if (payload?.event) dispatch(payload.event);
-      if (metaChanged && state.name !== 'hidden') {
+      const events = Array.isArray(payload?.eventSequence) ? payload.eventSequence : [payload?.event];
+      for (const event of events) if (event) dispatch(event);
+      if ((metaChanged || groundingChanged) && state.name !== 'hidden') {
         render();
         syncEffects();
       }
@@ -614,7 +1033,10 @@
       if (!transcript) return;
       dispatch({ type: 'TRANSCRIPT', transcript });
       if (payload.final === true) {
-        if (session.voiceAutoSubmit) {
+        dictationActive = false;
+        if (session.voiceStartStrategy === 'push_to_talk' && !session.submitOnFinal) {
+          session.pendingFinalTranscript = transcript;
+        } else if (session.voiceAutoSubmit || session.submitOnFinal) {
           submitCommand(transcript);
         } else {
           // No auto-submit: hand the transcript to the text capsule for review.
@@ -624,6 +1046,10 @@
         }
       }
     });
+    if (typeof api.onPointerInput === 'function') {
+      api.onPointerInput((payload) => handleVoicePointerInput(payload));
+    }
+    if (typeof api.ready === 'function') api.ready();
   }
 
   render();

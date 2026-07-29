@@ -28,6 +28,7 @@ from app.fabric.workflow_task_store import WorkflowTaskStore
 from app.fabric.provenance import ProvenanceIndex
 from app.fabric.skill_candidates import SkillCandidateStore
 from app.fabric.capture_policy import CapturePolicyEngine
+from app.fabric.runtime_snapshot import build_runtime_snapshot
 from app.adapters.browser_devtools_adapter import ChromeDevToolsProbe
 from app.models.capability_resolver import ModelCapabilityResolver
 from app.models.profiles import ModelProfile, ModelProfileStore
@@ -43,7 +44,7 @@ if hasattr(sys.stdout, "reconfigure"):
 
 
 def _read() -> dict[str, Any]:
-    value = json.loads(sys.stdin.read() or "{}")
+    value = json.loads(sys.stdin.read().lstrip("\ufeff") or "{}")
     if not isinstance(value, dict):
         raise ValueError("payload must be an object")
     return value
@@ -254,7 +255,16 @@ def main() -> int:
         operation = str(payload.get("operation") or "catalog")
         user_root = Path(os.environ.get("MAGIC_POINTER_USER_DATA_DIR") or ROOT / "data" / "runtime")
         store = SettingsStore(user_root / "fabric-settings.json")
-        if operation == "catalog":
+        if operation == "runtime.snapshot":
+            settings = store.load()
+            result = {
+                "ok": True,
+                "snapshot": build_runtime_snapshot(
+                    settings=settings,
+                    runtime_evidence=dict(payload.get("runtimeEvidence") or {}),
+                ),
+            }
+        elif operation == "catalog":
             result = {"ok": True, "recipes": public_recipe_catalog()}
         elif operation == "providers":
             result = {"ok": True, "providers": AgentGateway(root=user_root).providers()}

@@ -146,11 +146,13 @@ while ($true) {
         [ordered]@{
             buttons = $buttons
             foregroundApp = [string]$processName
+            foregroundHwnd = [int64]$hwnd
+            foregroundProcessId = [uint32]$pidValue
             isWindowMoving = [bool]($hasInfo -and $info.hwndMoveSize -ne [IntPtr]::Zero)
             scrollDelta = [MagicPointerInputState]::TakeWheelDelta()
         } | ConvertTo-Json -Compress
     } catch {
-        '{"buttons":0,"foregroundApp":"","isWindowMoving":false,"scrollDelta":0}'
+        '{"buttons":0,"foregroundApp":"","foregroundHwnd":0,"foregroundProcessId":0,"isWindowMoving":false,"scrollDelta":0}'
     }
     Start-Sleep -Milliseconds 35
 }

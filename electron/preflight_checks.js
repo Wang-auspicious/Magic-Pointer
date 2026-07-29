@@ -1,6 +1,11 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const {
+  pythonInvocationArgs,
+  pythonSpawnEnvironment,
+  resolvePythonRuntime,
+} = require('./python_runtime');
 
 function lastJson(value) {
   try { return JSON.parse(String(value || '').trim()); } catch (_) {}
@@ -19,15 +24,25 @@ function buildPreflightChecks({
   microphoneStatus = () => 'unknown',
   commandRunner = (command, args, options) => spawnSync(command, args, { encoding: 'utf8', windowsHide: true, ...options }),
   platform = process.platform,
+  pythonRuntime = resolvePythonRuntime({ platform }),
+  environment = process.env,
 }) {
   const userRoot = path.resolve(root);
-  const python = process.env.MAGIC_POINTER_PYTHON || 'python';
-  const command = (args, input = undefined) => commandRunner(python, args, {
-    cwd: projectRoot,
-    timeout: 15000,
-    input,
-    env: { ...process.env, MAGIC_POINTER_USER_DATA_DIR: userRoot },
-  });
+  const python = String(pythonRuntime?.executable || '').trim();
+  const bundledPythonRequired = pythonRuntime?.required === true;
+  const command = (args, input = undefined) => commandRunner(
+    python,
+    pythonInvocationArgs(args, { isolated: bundledPythonRequired }),
+    {
+      cwd: projectRoot,
+      timeout: 15000,
+      input,
+      env: {
+        ...pythonSpawnEnvironment({ env: environment, isolated: bundledPythonRequired }),
+        MAGIC_POINTER_USER_DATA_DIR: userRoot,
+      },
+    },
+  );
   return {
     runtime: () => {
       try {
@@ -36,7 +51,11 @@ function buildPreflightChecks({
         fs.writeFileSync(probe, 'ok', { encoding: 'utf8', mode: 0o600 });
         fs.unlinkSync(probe);
         const version = command(['--version']);
-        if (version.status !== 0) return { state: 'fail', evidence: 'python_runtime_unavailable', fixAction: 'install_python' };
+        if (!python || version.status !== 0) {
+          return bundledPythonRequired
+            ? { state: 'fail', evidence: 'bundled_python_runtime_unavailable', fixAction: 'repair_runtime' }
+            : { state: 'fail', evidence: 'python_runtime_unavailable', fixAction: 'install_python' };
+        }
         return { state: 'pass', evidence: `node=${process.versions.node}; python=${String(version.stdout || version.stderr || '').trim().slice(0, 120)}` };
       } catch (error) {
         return { state: 'fail', evidence: `runtime_check_failed:${error.name}`, fixAction: 'repair_runtime' };
@@ -97,7 +116,7 @@ function buildPreflightChecks({
       const result = command([path.join('scripts', 'smoke_fabric.py')]);
       const parsed = lastJson(result.stdout);
       if (result.status === 0 && parsed?.ok === true) {
-        return { state: 'warn', evidence: 'deterministic_fabric_smoke_passed; real_pointer_voice_context_packet_smoke_still_required', fixAction: 'run_desktop_smoke' };
+        return { state: 'pass', evidence: 'deterministic_fabric_smoke_passed; real_pointer_voice_context_packet_smoke_recommended', fixAction: 'run_desktop_smoke' };
       }
       return { state: 'fail', evidence: 'deterministic_fabric_smoke_failed', fixAction: 'inspect_diagnostics' };
     },

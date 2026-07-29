@@ -78,6 +78,8 @@ class ActivationSettings:
         "unreal",
     ])
     cooldown_ms: int = 900
+    gesture_arm_delay_ms: int = 180
+    gesture_timeout_ms: int = 5000
 
     def __post_init__(self) -> None:
         self.wake_mode = str(self.wake_mode or "").strip().casefold()
@@ -90,6 +92,12 @@ class ActivationSettings:
             raise ValueError("activation.mouse_side_button must be bound for mouse_button wake mode")
         self.wiggle_enabled = self.wake_mode in {"wiggle", "wiggle_hotkey"}
         self.fallback_hotkey_enabled = self.wake_mode in {"wiggle_hotkey", "hotkey"}
+        if not 60 <= int(self.gesture_arm_delay_ms) <= 600:
+            raise ValueError("activation.gesture_arm_delay_ms must be between 60 and 600")
+        if not 1000 <= int(self.gesture_timeout_ms) <= 15000:
+            raise ValueError("activation.gesture_timeout_ms must be between 1000 and 15000")
+        self.gesture_arm_delay_ms = int(self.gesture_arm_delay_ms)
+        self.gesture_timeout_ms = int(self.gesture_timeout_ms)
 
 
 @dataclass
@@ -100,7 +108,13 @@ class InteractionSettings:
     voice_silence_ms: int = 1600
     voice_language: str = "auto"
     voice_output_mode: str = "verbatim"
+    voice_punctuation: str = "verbatim"
+    voice_script: str = "unchanged"
+    voice_mixed_spacing: str = "preserve"
     voice_hallucination_guard: bool = True
+    voice_resident_enabled: bool = True
+    voice_memory_limit_mb: int = 1024
+    voice_idle_unload_ms: int = 300_000
     voice_glossaries: dict[str, list[str]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -120,6 +134,23 @@ class InteractionSettings:
         self.voice_output_mode = str(self.voice_output_mode or "").strip().casefold()
         if self.voice_output_mode not in {"verbatim", "clean_spacing"}:
             raise ValueError("voice_output_mode must be verbatim or clean_spacing")
+        self.voice_punctuation = str(self.voice_punctuation or "").strip().casefold()
+        if self.voice_punctuation not in {"verbatim", "smart_zh"}:
+            raise ValueError("voice_punctuation is unsupported")
+        self.voice_script = str(self.voice_script or "").strip().casefold()
+        if self.voice_script not in {"unchanged", "simplified", "traditional"}:
+            raise ValueError("voice_script is unsupported")
+        self.voice_mixed_spacing = str(self.voice_mixed_spacing or "").strip().casefold()
+        if self.voice_mixed_spacing not in {"preserve", "compact_cjk"}:
+            raise ValueError("voice_mixed_spacing is unsupported")
+        if isinstance(self.voice_memory_limit_mb, bool) or not isinstance(self.voice_memory_limit_mb, int):
+            raise ValueError("voice_memory_limit_mb must be an integer")
+        if not 128 <= self.voice_memory_limit_mb <= 16_384:
+            raise ValueError("voice_memory_limit_mb must be between 128 and 16384")
+        if isinstance(self.voice_idle_unload_ms, bool) or not isinstance(self.voice_idle_unload_ms, int):
+            raise ValueError("voice_idle_unload_ms must be an integer")
+        if not 10_000 <= self.voice_idle_unload_ms <= 3_600_000:
+            raise ValueError("voice_idle_unload_ms must be between 10000 and 3600000")
         if not isinstance(self.voice_glossaries, dict):
             raise ValueError("voice_glossaries must be an object")
         if len(self.voice_glossaries) > 64:
@@ -210,14 +241,60 @@ class ShortcutSettings:
 class AppearanceSettings:
     theme: str = "system"
     material: str = "auto"
+    selection_visual: str = "sweep_band"
+    sweep_height_ratio: float = 0.52
+    sweep_min_height_dip: float = 10
+    sweep_max_height_dip: float = 24
+    sweep_duration_ms: float = 292
+    sweep_fade_ms: float = 96
+    capsule_spawn_ms: float = 417
+    capsule_expand_ms: float = 292
+    capsule_voice_width_dip: float = 40
+    capsule_text_width_dip: float = 144
+    capsule_max_width_dip: float = 440
+    capsule_inline_gap_dip: float = 18
+    gesture_line_style: str = "demo6_band"
+    gesture_line_width_dip: float = 22
 
     def __post_init__(self) -> None:
         self.theme = str(self.theme or "").strip().casefold()
         self.material = str(self.material or "").strip().casefold()
+        self.selection_visual = str(self.selection_visual or "").strip().casefold()
+        self.gesture_line_style = str(self.gesture_line_style or "").strip().casefold()
         if self.theme not in {"system", "light", "dark"}:
             raise ValueError("appearance.theme is unsupported")
         if self.material not in {"auto", "translucent", "solid"}:
             raise ValueError("appearance.material is unsupported")
+        if self.selection_visual not in {"sweep_band", "soft_glow", "outline"}:
+            raise ValueError("appearance.selection_visual is unsupported")
+        if self.gesture_line_style not in {"demo6_band", "thin"}:
+            raise ValueError("appearance.gesture_line_style is unsupported")
+        ranges = {
+            "sweep_height_ratio": (0.15, 1.5),
+            "sweep_min_height_dip": (4, 48),
+            "sweep_max_height_dip": (6, 96),
+            "sweep_duration_ms": (60, 1500),
+            "sweep_fade_ms": (60, 1500),
+            "capsule_spawn_ms": (60, 1500),
+            "capsule_expand_ms": (60, 1500),
+            "capsule_voice_width_dip": (28, 180),
+            "capsule_text_width_dip": (40, 560),
+            "capsule_max_width_dip": (80, 900),
+            "capsule_inline_gap_dip": (4, 96),
+            "gesture_line_width_dip": (3, 40),
+        }
+        for name, (minimum, maximum) in ranges.items():
+            value = float(getattr(self, name))
+            if not minimum <= value <= maximum:
+                raise ValueError(f"appearance.{name} must be between {minimum} and {maximum}")
+            setattr(self, name, value)
+        if self.sweep_min_height_dip > self.sweep_max_height_dip:
+            raise ValueError("appearance sweep minimum must not exceed maximum")
+        if self.capsule_max_width_dip < max(
+            self.capsule_voice_width_dip,
+            self.capsule_text_width_dip,
+        ):
+            raise ValueError("appearance capsule maximum width is too small")
 
 
 @dataclass
@@ -543,6 +620,10 @@ class FabricSettings:
                 shortcut_value["wake"] = str(
                     activation_value.get("fallback_hotkey") or "Control+Alt+M"
                 )
+            appearance_value = dict(value.get("appearance") or {})
+            if "gesture_line_style" not in appearance_value:
+                appearance_value["gesture_line_style"] = "demo6_band"
+                appearance_value["gesture_line_width_dip"] = 22
             return cls(
                 schema_version=1,
                 general=GeneralSettings(**dict(value.get("general") or {})),
@@ -555,7 +636,7 @@ class FabricSettings:
                 privacy=PrivacySettings(**dict(value.get("privacy") or {})),
                 connections=ConnectionSettings(**dict(value.get("connections") or {})),
                 shortcuts=ShortcutSettings(**shortcut_value),
-                appearance=AppearanceSettings(**dict(value.get("appearance") or {})),
+                appearance=AppearanceSettings(**appearance_value),
                 accessibility=AccessibilitySettings(**dict(value.get("accessibility") or {})),
                 recipe_enabled={
                     str(key): bool(enabled)

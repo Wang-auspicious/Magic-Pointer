@@ -16,9 +16,13 @@ for (const file of surfaces) {
 }
 
 const css = fs.readFileSync('electron/renderer/typography.css', 'utf8');
-assert(css.includes('"Times New Roman"'), 'English glyphs must use Times New Roman');
-assert(css.includes('"KaiTi"'), 'Chinese glyphs must use KaiTi');
+assert(css.includes('"Segoe UI Variable Text"'), 'Latin UI glyphs must match the Windows Codex system stack');
+assert(css.includes('"Microsoft YaHei UI"'), 'Chinese UI glyphs must use the Windows UI face');
 assert(css.includes('html *'), 'all current and future UI descendants must inherit the contract');
 assert(css.includes('!important'), 'component CSS must not silently override the global contract');
+
+const panel = fs.readFileSync('electron/renderer/panel.js', 'utf8');
+assert(panel.includes('"Microsoft YaHei UI"'),
+  'canvas text measurement must use the same Chinese system font as rendered controls');
 
 console.log('typography contract test ok');
