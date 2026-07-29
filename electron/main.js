@@ -74,6 +74,7 @@ let stageHitRegions = [];
 let stageShapeSettleTimer = null;
 let pendingSurfaceActivation = null;
 let surfaceReadinessWaitArmed = false;
+let startupVoiceWarmupScheduled = false;
 const registeredConfigurableHotkeys = new Set();
 
 const ROOT = path.resolve(__dirname, '..');
@@ -1134,6 +1135,23 @@ function configureVoiceRuntime(settings, { preload = false } = {}) {
   return result;
 }
 
+function scheduleStartupVoiceWarmup(configResult) {
+  if (
+    startupVoiceWarmupScheduled
+    || !configResult?.ok
+    || fabricSettings?.interaction?.voice_resident_enabled === false
+  ) return false;
+  startupVoiceWarmupScheduled = true;
+  stageReadiness.whenReady(() => {
+    overlayReadiness.whenReady(() => {
+      if (isQuitting) return;
+      const started = voiceRuntime?.warmUp() === true;
+      log(`voice startup warmup renderers_ready=true started=${started}`);
+    });
+  });
+  return true;
+}
+
 function stopLegacyDictation({ surface, graceful = false } = {}) {
   const child = dictationChildren.get(surface);
   if (!child) return false;
@@ -1695,7 +1713,7 @@ app.whenReady().then(() => {
     onDeliver: forwardResidentVoiceEvent,
     onStatus: sendVoiceRuntimeStatus,
   });
-  const voiceRuntimeStart = configureVoiceRuntime(fabricSettings, { preload: true });
+  const voiceRuntimeStart = configureVoiceRuntime(fabricSettings, { preload: false });
   if (!voiceRuntimeStart.ok) log(`voice runtime startup rejected ${voiceRuntimeStart.error}`);
   onboardingRequired = !onboardingIsReady(ONBOARDING_MARKER_PATH);
   try {
@@ -1756,6 +1774,7 @@ app.whenReady().then(() => {
     || process.env.MAGIC_POINTER_N17_FOCUS_EVIDENCE_PATH
     || process.env.MAGIC_POINTER_N18_WIGGLE_EVIDENCE_PATH
   );
+  if (!captureMode) scheduleStartupVoiceWarmup(voiceRuntimeStart);
   if (!captureMode) initializeUpdateManager({ automatic: true });
   let wasOpenedAtLogin = false;
   try { wasOpenedAtLogin = app.getLoginItemSettings().wasOpenedAtLogin === true; } catch (_) {}

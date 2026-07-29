@@ -68,6 +68,9 @@ class FakeClient extends EventEmitter {
   runtime.warmUp();
   assert.strictEqual(clients.length, 1);
   assert.strictEqual(runtime.start({ requestId: 'active', surface: 'stage', contextPath: '' }).ok, true);
+  assert.strictEqual(runtime.warmUp(), false);
+  assert.strictEqual(clients[0].preloads, 1,
+    'a deferred startup warmup must not inject a load command into active dictation');
   assert.deepStrictEqual(runtime.configure({ enabled: true, memoryLimitMb: 2048, idleUnloadMs: 300000 }), { ok: false, error: 'voice_session_active' });
   clients[0].emit('voice-event', { type: 'microphone_stopped', requestId: 'active' });
   assert.deepStrictEqual(runtime.configure({ enabled: true, memoryLimitMb: 2048, idleUnloadMs: 300000 }),

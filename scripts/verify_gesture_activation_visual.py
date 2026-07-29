@@ -121,9 +121,15 @@ def log_time_ms(log_text: str, marker: str) -> float | None:
 
 def drag_and_capture(start, end, capture_bbox, steps=20):
     user32 = ctypes.windll.user32
+    foreground_samples = []
     user32.SetCursorPos(int(start[0]), int(start[1]))
     time.sleep(0.08)
     user32.mouse_event(0x0002, 0, 0, 0, 0)
+    time.sleep(0.04)
+    foreground_samples.append({
+        "phase": "pointer_down",
+        "hwnd": int(user32.GetForegroundWindow() or 0),
+    })
     middle = None
     for index in range(1, steps + 1):
         ratio = index / steps
@@ -136,8 +142,21 @@ def drag_and_capture(start, end, capture_bbox, steps=20):
             # next animation frame before sampling the transparent overlay.
             time.sleep(0.08)
             middle = ImageGrab.grab(bbox=capture_bbox, all_screens=True)
+            foreground_samples.append({
+                "phase": "drawing",
+                "hwnd": int(user32.GetForegroundWindow() or 0),
+            })
+    foreground_samples.append({
+        "phase": "before_release",
+        "hwnd": int(user32.GetForegroundWindow() or 0),
+    })
     user32.mouse_event(0x0004, 0, 0, 0, 0)
-    return middle
+    time.sleep(0.08)
+    foreground_samples.append({
+        "phase": "after_release",
+        "hwnd": int(user32.GetForegroundWindow() or 0),
+    })
+    return middle, foreground_samples
 
 
 def main() -> int:
@@ -234,6 +253,11 @@ def main() -> int:
             else "accelerator=Control+Alt+Shift+F11 ok=true"
         )
         wait_for_log(runtime / "electron.log", startup_pattern, 20)
+        # The native gesture is intentionally brief. Do not fire it while the
+        # disposable Electron process is still cold-loading both renderers;
+        # the production app prewarms these surfaces before user interaction.
+        wait_for_log(runtime / "electron.log", "stage renderer ready", 20)
+        wait_for_log(runtime / "electron.log", "overlay renderer ready", 20)
         force_foreground_window(int(window["hwnd"]))
         if int(ctypes.windll.user32.GetForegroundWindow() or 0) != int(window["hwnd"]):
             raise RuntimeError("fixture_foreground_lock_failed")
@@ -250,13 +274,15 @@ def main() -> int:
             # Regression: a user may press and hold immediately after the wake
             # gesture, before the configured arm grace elapses. The stroke
             # must not disappear merely because its pointerdown was early.
-            drawing = drag_and_capture(start, end, capture_bbox, steps=28)
+            armed = ImageGrab.grab(bbox=capture_bbox, all_screens=True)
+            armed.save(EVIDENCE_DIR / "armed-invisible.png")
+            drawing, foreground_samples = drag_and_capture(start, end, capture_bbox, steps=28)
         ready_log = wait_for_log(runtime / "electron.log", "selection gesture ready", 10)
-        armed = ImageGrab.grab(bbox=capture_bbox, all_screens=True)
-        armed.save(EVIDENCE_DIR / "armed-invisible.png")
 
         if not EARLY_DRAG:
-            drawing = drag_and_capture(start, end, capture_bbox)
+            armed = ImageGrab.grab(bbox=capture_bbox, all_screens=True)
+            armed.save(EVIDENCE_DIR / "armed-invisible.png")
+            drawing, foreground_samples = drag_and_capture(start, end, capture_bbox)
         if drawing is None:
             raise RuntimeError("drawing_frame_missing")
         drawing.save(EVIDENCE_DIR / "drawing.png")
@@ -297,6 +323,16 @@ def main() -> int:
         capsule_at = log_time_ms(grounding_log, capsule_state)
         release_to_capsule_ms = None if release_at is None or capsule_at is None else capsule_at - release_at
         grounding_source_passed = "selection session capture done" in grounding_log and "app=browser" in grounding_log
+        foreground_samples.extend([
+            {
+                "phase": "capsule",
+                "hwnd": int(ctypes.windll.user32.GetForegroundWindow() or 0),
+            },
+        ])
+        foreground_invariant = all(
+            sample["hwnd"] == int(window["hwnd"])
+            for sample in foreground_samples
+        )
         passed = (
             armed_change <= 0.002
             and ghost_change <= 0.002
@@ -308,6 +344,7 @@ def main() -> int:
             and release_to_capsule_ms <= 450
             and grounding_source_passed
             and expired_error_absent
+            and foreground_invariant
         )
         evidence = {
             "schemaVersion": 1,
@@ -323,6 +360,8 @@ def main() -> int:
             "releaseToCapsuleMs": round(release_to_capsule_ms, 1) if release_to_capsule_ms is not None else None,
             "groundingSourcePassed": grounding_source_passed,
             "expiredErrorAbsent": expired_error_absent,
+            "foregroundInvariant": foreground_invariant,
+            "foregroundSamples": foreground_samples,
             "releasePointPhysical": {"x": end[0], "y": end[1]},
             "targetRectPhysical": target,
             "fixtureWindow": window,

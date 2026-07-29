@@ -76,6 +76,21 @@
 
 失败项没有被映射成成功。
 
+### N17–N18 当前桌面证据
+
+- `data/runtime/n17-current-20260730-024609/focus-evidence.json`：快捷键语音从
+  `wake → dictation_start → loading → ready` 的前台 HWND 始终为 `1312752`。
+- `data/runtime/gesture-activation-wiggle-voice-20260729/evidence.json`：真实三摆
+  唤醒、按住左键划线、松开显示语音胶囊通过；绘制、释放、胶囊五个采样点
+  的前台 HWND 均为来源浏览器；释放到胶囊 `91 ms`。
+- `data/runtime/gesture-activation-wiggle-voice-early-hold-20260729/evidence.json`：
+  在 180 ms 视觉缓冲内提前按住左键也通过；无顶部幽灵条，释放到胶囊
+  `99 ms`，前台 HWND 不变。
+- 真实视觉验证器现在把前台 HWND 稳定作为失败条件，不再只验证“看起来出现了”。
+- 启动时不再让 Torch/Whisper 与 Stage/Overlay 冷加载抢资源；两个渲染器都
+  ready 后才启动常驻语音预热。延迟预热若撞上真实录音会直接跳过，不向活动
+  worker 注入 `load`。
+
 ## 对外部技术审查的核验
 
 | 建议 | 结论 | 处理 |

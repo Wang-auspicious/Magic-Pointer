@@ -9,6 +9,7 @@ const styles = fs.readFileSync('electron/renderer/styles.css', 'utf8');
 const preload = fs.readFileSync('electron/preload.js', 'utf8');
 const dashboardHtml = fs.readFileSync('electron/renderer/dashboard.html', 'utf8');
 const overlayHtml = fs.readFileSync('electron/renderer/index.html', 'utf8');
+const visualVerifier = fs.readFileSync('scripts/verify_gesture_activation_visual.py', 'utf8');
 const { defaultSettings } = require('../electron/settings_store');
 
 const defaults = defaultSettings();
@@ -136,5 +137,13 @@ const stageCss = fs.readFileSync('electron/renderer/stage.css', 'utf8');
 assert.match(stageCss, /--stage-capsule-delay/);
 assert.match(stageCss, /\.stage-root\[hidden\]\s*\{\s*display:\s*none/,
   'cold-start invisibility belongs to the DOM/CSS initial state, not the stage payload gate');
+assert.match(visualVerifier, /GetForegroundWindow/,
+  'desktop gesture verification must sample the real foreground HWND');
+assert.match(visualVerifier, /foreground_invariant\s*=\s*all\(/,
+  'wiggle, drawing, release, and capsule evidence must preserve source-app focus');
+assert.match(visualVerifier, /and foreground_invariant/,
+  'foreground stability must be a pass condition, not informational telemetry');
+assert.match(visualVerifier, /stage renderer ready[\s\S]*?overlay renderer ready/,
+  'the brief physical wiggle must run against the prewarmed production state');
 
 console.log('gesture activation integration test ok');

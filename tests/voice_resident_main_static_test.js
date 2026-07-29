@@ -24,6 +24,12 @@ assert(main.includes("configureVoiceRuntime(parsed.settings"), 'saved resident s
 assert(main.includes("voice_session_active"), 'active settings changes must fail closed');
 assert(/result\.ok\s*&&\s*preload\s*&&\s*result\.changed/.test(main),
   'saving unrelated settings must not touch the resident model idle deadline');
+assert(/configureVoiceRuntime\(fabricSettings,\s*\{\s*preload:\s*false\s*\}\)/.test(main),
+  'startup must configure voice without loading Torch before transparent renderers are ready');
+assert(/function\s+scheduleStartupVoiceWarmup[\s\S]*?stageReadiness\.whenReady\([\s\S]*?overlayReadiness\.whenReady\([\s\S]*?voiceRuntime\?\.warmUp\(\)/.test(main),
+  'startup voice warmup must begin only after both interactive surfaces are listening');
+assert(/if\s*\(!captureMode\)\s*scheduleStartupVoiceWarmup\(/.test(main),
+  'visual/evidence capture processes must not contend with an unrelated model preload');
 assert(/failedHotkeys\.length[\s\S]*?configureVoiceRuntime\(previousSettings/.test(main),
   'a later hotkey rollback must also restore the previous voice runtime configuration');
 assert(/function\s+stopLegacyDictation[\s\S]*?dictationStopFiles/.test(main),

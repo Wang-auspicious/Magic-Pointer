@@ -44,7 +44,7 @@ class VoiceResidentRuntime {
   }
 
   warmUp() {
-    if (!this.config?.enabled) return false;
+    if (!this.config?.enabled || this.active) return false;
     try {
       const client = this._ensureClient();
       this._publishStatus('warming');
