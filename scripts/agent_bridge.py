@@ -4,33 +4,25 @@ import json
 import shutil
 import sys
 from pathlib import Path
-from typing import Any
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+_scripts_dir = str(Path(__file__).resolve().parent)
+if _scripts_dir not in sys.path:
+    sys.path.insert(0, _scripts_dir)
+
+from _bridge_common import ensure_root_on_path, force_utf8_stdio, read_json_line, write_json  # noqa: E402
+
+ensure_root_on_path()
 
 from app.fabric.agents import AgentConnectorRegistry, AgentRequest
 from app.fabric.providers import AgentProviderDiscovery
 from app.fabric.task_store import AgentTaskStore
 
-
-if hasattr(sys.stdin, "reconfigure"):
-    sys.stdin.reconfigure(encoding="utf-8")
-if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8")
-
-
-def _read() -> dict[str, Any]:
-    value = json.loads(sys.stdin.read().lstrip("\ufeff") or "{}")
-    if not isinstance(value, dict):
-        raise ValueError("payload must be an object")
-    return value
+force_utf8_stdio()
 
 
 def main() -> int:
     try:
-        payload = _read()
+        payload = read_json_line()
         operation = str(payload.get("operation") or "providers")
         if operation == "providers":
             result = {"ok": True, "providers": [item.to_dict() for item in AgentProviderDiscovery().discover_all()]}
@@ -53,10 +45,10 @@ def main() -> int:
                 result = {"ok": True, "task": store.start(request, invocation)}
             else:
                 raise ValueError(f"unknown operation: {operation}")
-        print(json.dumps(result, ensure_ascii=False))
+        write_json(result)
         return 0
     except Exception as exc:
-        print(json.dumps({"ok": False, "error": f"{type(exc).__name__}: {exc}"}, ensure_ascii=False))
+        write_json({"ok": False, "error": f"{type(exc).__name__}: {exc}"})
         return 1
 
 

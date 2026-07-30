@@ -1,0 +1,13 @@
+node_modules
+release
+build
+data/captures
+data/objects
+data/runtime
+external
+external_zip
+external/**
+*.min.js
+package-lock.json
+requirements.lock.txt
+electron/renderer/assets

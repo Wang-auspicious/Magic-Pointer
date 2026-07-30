@@ -10,9 +10,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+_scripts_dir = str(Path(__file__).resolve().parent)
+if _scripts_dir not in sys.path:
+    sys.path.insert(0, _scripts_dir)
+
+from _bridge_common import ensure_root_on_path, force_utf8_stdio, read_json_line, write_json  # noqa: E402
+
+ensure_root_on_path()
 
 from app.fabric.catalog import public_recipe_catalog
 from app.fabric.capabilities import CapabilityRegistry
@@ -37,17 +41,7 @@ from app.models.visual_relay import VisualRelayPlanner
 from app.system_context import list_visible_windows
 
 
-if hasattr(sys.stdin, "reconfigure"):
-    sys.stdin.reconfigure(encoding="utf-8")
-if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8")
-
-
-def _read() -> dict[str, Any]:
-    value = json.loads(sys.stdin.read().lstrip("\ufeff") or "{}")
-    if not isinstance(value, dict):
-        raise ValueError("payload must be an object")
-    return value
+force_utf8_stdio()
 
 
 def _clipboard_writer(value: str) -> None:
@@ -251,7 +245,7 @@ def _test_model_profile(
 
 def main() -> int:
     try:
-        payload = _read()
+        payload = read_json_line()
         operation = str(payload.get("operation") or "catalog")
         user_root = Path(os.environ.get("MAGIC_POINTER_USER_DATA_DIR") or ROOT / "data" / "runtime")
         store = SettingsStore(user_root / "fabric-settings.json")
@@ -626,11 +620,11 @@ def main() -> int:
                     "ok": True,
                     "tasks": gateway.list(limit=int(payload.get("limit") or 100)),
                 }
-                print(json.dumps(result, ensure_ascii=False))
+                write_json(result)
                 return 0
             elif operation == "task.recover":
                 result = {"ok": True, "tasks": gateway.list(limit=500)}
-                print(json.dumps(result, ensure_ascii=False))
+                write_json(result)
                 return 0
             else:
                 raise ValueError(f"unknown operation: {operation}")
@@ -728,10 +722,10 @@ def main() -> int:
                         result["workflowReused"] = workflow_task.get("reused") is True or result.get("workflowReused") is True
             else:
                 raise ValueError(f"unknown operation: {operation}")
-        print(json.dumps(result, ensure_ascii=False))
+        write_json(result)
         return 0 if result.get("ok") is not False else 1
     except Exception as exc:
-        print(json.dumps({"ok": False, "error": f"{type(exc).__name__}: {exc}"}, ensure_ascii=False))
+        write_json({"ok": False, "error": f"{type(exc).__name__}: {exc}"})
         return 1
 
 

@@ -162,6 +162,10 @@ _TOOLS = (
 
 
 class MagicPointerMcpServer:
+    _SERVER_NAME = "magic-pointer"
+    _SERVER_VERSION = "1.0.0"
+    _PROTOCOL_VERSION = "2025-06-18"
+
     def __init__(
         self,
         *,
@@ -184,6 +188,51 @@ class MagicPointerMcpServer:
             task_store=self.tasks,
             target_probe=lambda _lease: list_visible_windows(),
         )
+        self._disabled_tools: set[str] = set()
+        self._load_tool_settings()
+
+    @property
+    def all_tool_names(self) -> frozenset[str]:
+        return frozenset(item["name"] for item in _TOOLS)
+
+    def _load_tool_settings(self) -> None:
+        path = self.root / "mcp-tool-settings.json"
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                for name, enabled in data.get("tools", {}).items():
+                    if name in self.all_tool_names and enabled is False:
+                        self._disabled_tools.add(name)
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    def _save_tool_settings(self) -> None:
+        path = self.root / "mcp-tool-settings.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tools_state = {name: name not in self._disabled_tools for name in self.all_tool_names}
+        temp = path.with_suffix(path.suffix + ".tmp")
+        temp.write_text(
+            json.dumps({"tools": tools_state}, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        os.replace(temp, path)
+
+    def set_tool_enabled(self, name: str, enabled: bool) -> bool:
+        if name not in self.all_tool_names:
+            raise ValueError(f"unknown tool: {name}")
+        if enabled:
+            self._disabled_tools.discard(name)
+        else:
+            self._disabled_tools.add(name)
+        self._save_tool_settings()
+        return enabled
+
+    def tool_enabled(self, name: str) -> bool:
+        return name in self.all_tool_names and name not in self._disabled_tools
+
+    def _active_tools(self) -> list[dict[str, Any]]:
+        return [dict(item) for item in _TOOLS if item["name"] not in self._disabled_tools]
 
     def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         if name == "current_object":
@@ -276,19 +325,19 @@ class MagicPointerMcpServer:
                 "jsonrpc": "2.0",
                 "id": request_id,
                 "result": {
-                    "protocolVersion": "2025-06-18",
+                    "protocolVersion": self._PROTOCOL_VERSION,
                     "capabilities": {"tools": {"listChanged": False}},
-                    "serverInfo": {"name": "magic-pointer", "version": "2.0.0"},
+                    "serverInfo": {"name": self._SERVER_NAME, "version": self._SERVER_VERSION},
                 },
             }
         if method == "ping":
             return {"jsonrpc": "2.0", "id": request_id, "result": {}}
         if method == "tools/list":
-            return {"jsonrpc": "2.0", "id": request_id, "result": {"tools": list(_TOOLS)}}
+            return {"jsonrpc": "2.0", "id": request_id, "result": {"tools": self._active_tools()}}
         if method == "tools/call":
             params = dict(message.get("params") or {})
             name = str(params.get("name") or "")
-            if name not in {item["name"] for item in _TOOLS}:
+            if name not in self.all_tool_names:
                 return {"jsonrpc": "2.0", "id": request_id, "error": {"code": -32602, "message": f"Unknown tool: {name}"}}
             try:
                 value = self.call_tool(name, dict(params.get("arguments") or {}))

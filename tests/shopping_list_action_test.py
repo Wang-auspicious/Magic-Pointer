@@ -6,6 +6,7 @@ from app.actions.executor import SafeActionExecutor
 from app.actions.schema import ActionProposal
 from app.actions.shopping_list import (
     make_shopping_list_add_proposal,
+    make_shopping_list_add_many_proposal,
     make_shopping_list_check_proposal,
     make_shopping_list_undo_proposal,
     wants_shopping_list_add,
@@ -96,3 +97,29 @@ def test_executor_adds_verifies_checks_and_precisely_undoes(tmp_path: Path) -> N
     assert undone.output["verified"] is True
     assert store.public_list()["items"] == []
 
+
+def test_episode_batch_add_is_one_verified_replay_safe_action(tmp_path: Path) -> None:
+    proposal = make_shopping_list_add_many_proposal(
+        [
+            {"objectId": "selection:source-a", "content": "1 lb Spaghetti", "app": "pdf"},
+            {"objectId": "selection:source-b", "content": "2 oz Parmesan", "app": "pdf"},
+        ],
+        command="add these here",
+        selection_session_id="session-destination",
+    )
+    assert proposal is not None
+    assert proposal.action_type == "shopping_list_add_many"
+
+    store = ShoppingListStore(tmp_path)
+    executor = SafeActionExecutor(shopping_list_store=store)
+    result = executor.execute(proposal, confirmed=False)
+    assert result.status.value == "succeeded"
+    assert result.output["verified"] is True
+    assert [item["text"] for item in result.output["items"]] == [
+        "1 lb Spaghetti", "2 oz Parmesan",
+    ]
+
+    replay = executor.execute(proposal, confirmed=False)
+    assert replay.status.value == "succeeded"
+    assert replay.output["created_count"] == 0
+    assert len(store.public_list()["items"]) == 2

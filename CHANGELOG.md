@@ -11,6 +11,51 @@
 
 ## Unreleased
 
+- Added `electron/observability.js`: structured JSONL event log
+  (`events.jsonl` under the runtime directory, rotated at 5 MB × 5 files),
+  in-process counters via `bump()`/`snapshotCounters()`, and lazy
+  `crashReporter.start()` with `uploadToServer: false`. Wired into
+  `electron/main.js` so every run records `session.start` and fatal
+  hardening events.
+- Added `scripts/collect-diagnostics.js` and the `npm run diag:collect`
+  script: bundles the runtime directory into a zip (falls back to a
+  timestamped directory if `archiver` is not installed) with secret
+  redaction (`sk-*`, `api_key=`, `token=`, `password=`) applied to text
+  logs and JSONL events, plus a `meta.json` header. Hostname is hashed.
+- Added `tests/observability_test.js` covering event write / counter
+  accumulation / secret redaction — surfaced by
+  `scripts/run-node-tests.js`.
+- Added `electron/security_hardening.js` and wired it into `electron/main.js`:
+  enables Electron sandbox, rejects `window.open` and `will-navigate` targets
+  outside `http/https/mailto/tel`, blocks webview attachment, denies
+  non-media permission prompts, and installs `uncaughtException` /
+  `unhandledRejection` handlers that log, notify the user via
+  `dialog.showErrorBox`, and `app.relaunch()`.
+- Hardened all `BrowserWindow` `webPreferences` with `sandbox: true` and
+  `webSecurity: true` for overlay, stage, dashboard and onboarding surfaces.
+- Added strict `Content-Security-Policy` meta tags to `dashboard.html` and
+  `onboarding.html`, matching the existing policy in `index.html` /
+  `panel.html` / `stage.html`.
+- Added GitHub Actions workflows for macOS release (`release-macos.yml`),
+  CodeQL security scanning (JS + Python), dependency audits (`npm audit`,
+  `pip-audit`) and CycloneDX SBOM generation attached to tagged releases.
+- Added `.github/dependabot.yml` covering npm, pip and GitHub Actions with
+  weekly grouped updates.
+- Enabled Windows differential updates (`nsis.differentialPackage: true`)
+  and cross-arch builds (`x64` + `arm64`) for both Windows and macOS in
+  `electron-builder.yml`.
+- Added macOS packaging metadata: hardened runtime entitlements
+  (`build/entitlements.mac.plist`), usage descriptions for microphone,
+  Apple Events, accessibility and screen capture, DMG + ZIP targets.
+- Extended `installer.nsh` with a `customUnInit` prompt that asks whether to
+  purge `%LOCALAPPDATA%\Magic Pointer` on uninstall (defaults to keep).
+- Added project meta and quality gates: `.editorconfig`, `.nvmrc`, `.python-version`,
+  `.prettierrc.json`, `.prettierignore`, `eslint.config.mjs`, `pyproject.toml`
+  (ruff + pytest + coverage), and `.pre-commit-config.yaml`.
+- Added community docs: `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`.
+- Added `engines` (Node 20-24, npm 10+), `bugs`, `homepage`, and dependency
+  `overrides` to `package.json`; added `lint`/`lint:fix`/`format`/`format:check`
+  scripts.
 - Added V2 native selected-text support for Chromium/Firefox-style applications
   and PDF readers through Windows UI Automation:
   - reads `TextPattern.GetSelection()` without sending keys or touching the

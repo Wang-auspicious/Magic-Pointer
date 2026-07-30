@@ -12,8 +12,8 @@
   --stage-error-tint: rgba(255, 92, 92, 0.16);
   --stage-sweep-duration: 292ms;
   --stage-sweep-fade: 96ms;
-  --stage-capsule-spawn: 417ms;
-  --stage-capsule-expand: 292ms;
+  --stage-capsule-spawn: 80ms;
+  --stage-capsule-expand: 125ms;
   --stage-capsule-delay: var(--stage-sweep-duration);
   --stage-capsule-size: 40px;
 }

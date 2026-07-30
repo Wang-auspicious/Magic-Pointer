@@ -14,6 +14,40 @@ function physicalScreenPoint(screenApi, dipPoint) {
   }
 }
 
+function physicalGestureTrace(screenApi, gesture) {
+  if (!gesture || typeof gesture !== 'object') return null;
+  const rawStrokes = Array.isArray(gesture.strokes) && gesture.strokes.length
+    ? gesture.strokes
+    : [{ points: Array.isArray(gesture.points) ? gesture.points : [] }];
+  const strokes = rawStrokes.slice(0, 8).map((stroke) => ({
+    points: (Array.isArray(stroke?.points) ? stroke.points : []).slice(0, 512).map((point) => {
+      const physical = physicalScreenPoint(screenApi, point);
+      const t = Number(point?.t);
+      return physical ? { ...physical, t: Number.isFinite(t) ? t : 0 } : null;
+    }).filter(Boolean),
+  })).filter((stroke) => stroke.points.length >= 2);
+  const points = strokes.flatMap((stroke) => stroke.points);
+  if (points.length < 2) return null;
+  const releasePoint = physicalScreenPoint(screenApi, gesture.releasePoint) || {
+    x: points.at(-1).x,
+    y: points.at(-1).y,
+  };
+  const xs = points.map((point) => point.x);
+  const ys = points.map((point) => point.y);
+  return {
+    schemaVersion: 2,
+    coordinateSpace: 'physical_screen_pixels',
+    strokes,
+    releasePoint,
+    bbox: {
+      x: Math.min(...xs),
+      y: Math.min(...ys),
+      width: Math.max(...xs) - Math.min(...xs),
+      height: Math.max(...ys) - Math.min(...ys),
+    },
+  };
+}
+
 function finitePoint(value) {
   const x = Number(value?.x);
   const y = Number(value?.y);
@@ -170,6 +204,7 @@ function normalizeGroundingGeometry({
 module.exports = {
   finiteRect,
   normalizeGroundingGeometry,
+  physicalGestureTrace,
   physicalRectToDip,
   physicalScreenPoint,
   relativeRect,

@@ -14,7 +14,11 @@ if str(ROOT) not in sys.path:
 
 from app.actions.history import ActionHistoryStore, make_word_undo_proposal
 from app.actions.office import clean_replacement_text, make_word_replace_selection_proposal, wants_word_rewrite
-from app.actions.shopping_list import make_shopping_list_add_proposal, wants_shopping_list_add
+from app.actions.shopping_list import (
+    make_shopping_list_add_many_proposal,
+    make_shopping_list_add_proposal,
+    wants_shopping_list_add,
+)
 from app.actions.calendar_draft import parse_calendar_draft, wants_calendar_draft
 from app.actions.route_draft import parse_route_draft, wants_route_draft
 from app.adapters import AdapterReadContext, default_adapter_registry, format_adapter_context
@@ -635,6 +639,42 @@ def _shopping_list_response(
     }
 
 
+def _shopping_list_episode_response(payload: dict[str, Any]) -> dict[str, Any] | None:
+    command = str(payload.get("command") or "").strip()
+    episode = payload.get("interactionEpisode")
+    if not isinstance(episode, dict) or episode.get("pendingIntent") != "add":
+        return None
+    slots = episode.get("slots") if isinstance(episode.get("slots"), dict) else {}
+    sources = slots.get("these") if isinstance(slots.get("these"), list) else []
+    if not sources or not isinstance(slots.get("here"), dict) or not wants_shopping_list_add(command):
+        return None
+    selection_session_id = str(payload.get("selectionSessionId") or "").strip() or None
+    proposal = make_shopping_list_add_many_proposal(
+        sources,
+        command=command,
+        selection_session_id=selection_session_id,
+    )
+    if proposal is None:
+        return {
+            "ok": False,
+            "prompt": command,
+            "error": "The source set did not contain any bounded shopping-list items.",
+            "actionProposals": [],
+            "intentKind": "shopping_list_add_many",
+            "selectionSessionId": selection_session_id,
+        }
+    return {
+        "ok": True,
+        "prompt": command,
+        "answer": f"Adding {len(proposal.parameters['items'])} grounded items to the shopping list.",
+        "actionProposals": [proposal.to_dict()],
+        "autoExecuteProposalId": proposal.id,
+        "intentKind": "shopping_list_add_many",
+        "interactionEpisodeId": str(episode.get("episodeId") or "") or None,
+        "selectionSessionId": selection_session_id,
+    }
+
+
 def _calendar_response(
     payload: dict[str, Any],
     target_window: dict[str, Any] | None,
@@ -976,7 +1016,9 @@ def main() -> int:
         print(json.dumps(review_response, ensure_ascii=False))
         return 0 if review_response.get("ok") is True else 1
 
-    shopping_response = _shopping_list_response(payload, target_window, app_ctx, snapshot)
+    shopping_response = _shopping_list_episode_response(payload)
+    if shopping_response is None:
+        shopping_response = _shopping_list_response(payload, target_window, app_ctx, snapshot)
     if shopping_response is not None:
         print(json.dumps(shopping_response, ensure_ascii=False))
         return 0 if shopping_response.get("ok") is True else 1

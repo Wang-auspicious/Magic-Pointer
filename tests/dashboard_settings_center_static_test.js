@@ -96,14 +96,14 @@ assert.deepStrictEqual(defaults.appearance, {
   sweep_max_height_dip: 24,
   sweep_duration_ms: 292,
   sweep_fade_ms: 96,
-  capsule_spawn_ms: 417,
-  capsule_expand_ms: 292,
+  capsule_spawn_ms: 80,
+  capsule_expand_ms: 125,
   capsule_voice_width_dip: 40,
   capsule_text_width_dip: 144,
   capsule_max_width_dip: 440,
   capsule_inline_gap_dip: 18,
   gesture_line_style: 'demo6_band',
-  gesture_line_width_dip: 22,
+  gesture_line_width_dip: 40,
 });
 assert.deepStrictEqual(defaults.accessibility, {
   reduce_motion: false,

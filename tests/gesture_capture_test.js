@@ -9,8 +9,10 @@ const line = summarizeGesture([
   { x: 215, y: 211, t: 110 },
 ]);
 assert.strictEqual(line.valid, true);
-assert.strictEqual(line.kind, 'line');
+assert.strictEqual(line.schemaVersion, 2);
+assert.strictEqual(line.kind, undefined, 'natural strokes must not be reduced to a shape class');
 assert.deepStrictEqual(line.releasePoint, { x: 215, y: 211 });
+assert.deepStrictEqual(line.strokes, [{ points: line.points }]);
 assert(line.pathLength > 110);
 
 const circle = summarizeGesture([
@@ -23,9 +25,9 @@ const circle = summarizeGesture([
   { x: 190, y: 163, t: 240 },
 ]);
 assert.strictEqual(circle.valid, true);
-assert.strictEqual(circle.kind, 'circle');
-assert(circle.semanticPoint.x >= 195 && circle.semanticPoint.x <= 205);
-assert(circle.semanticPoint.y >= 198 && circle.semanticPoint.y <= 208);
+assert.strictEqual(circle.kind, undefined);
+assert.strictEqual(circle.semanticPoint, undefined);
+assert.deepStrictEqual(circle.strokes[0].points, circle.points);
 
 const lightning = summarizeGesture([
   { x: 100, y: 100, t: 0 },
@@ -34,8 +36,26 @@ const lightning = summarizeGesture([
   { x: 230, y: 290, t: 190 },
 ]);
 assert.strictEqual(lightning.valid, true);
-assert.strictEqual(lightning.kind, 'freeform');
+assert.strictEqual(lightning.kind, undefined);
 assert.deepStrictEqual(lightning.releasePoint, { x: 230, y: 290 });
+
+const noisy = summarizeGesture([
+  { x: 100, y: 300, t: 0 },
+  { x: 125, y: 294, t: 19 },
+  { x: 118, y: 307, t: 37 },
+  { x: 170, y: 299, t: 58 },
+  { x: 158, y: 311, t: 79 },
+  { x: 230, y: 302, t: 111 },
+]);
+assert.strictEqual(noisy.valid, true);
+assert.deepStrictEqual(noisy.strokes[0].points, [
+  { x: 100, y: 300, t: 0 },
+  { x: 125, y: 294, t: 19 },
+  { x: 118, y: 307, t: 37 },
+  { x: 170, y: 299, t: 58 },
+  { x: 158, y: 311, t: 79 },
+  { x: 230, y: 302, t: 111 },
+], 'noise, reversals, ordering, and timestamps are grounding evidence');
 
 const click = summarizeGesture([
   { x: 10, y: 10, t: 0 },

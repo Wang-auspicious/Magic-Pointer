@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "revision": 3,
+  "list": {
+    "id": "default-shopping-list",
+    "name": "购物清单",
+    "items": [
+      {
+        "id": "item-08c5ce48654e475c",
+        "text": "1 lb Spaghetti",
+        "normalized_text": "1 lb spaghetti",
+        "checked": true,
+        "idempotency_key": "sha256:bf05d958bfd4bb362507a305878e842caea825b9c8e15c045642928117cddc29",
+        "source": {
+          "selection_snapshot_id": "snap-1",
+          "app": "pdf",
+          "window_title": "Recipe.pdf - Microsoft Edge",
+          "content_sha256": "f2b173e9395f2bc2b1cc576f2bb331d42b069e730fc857993290c0e66952a637"
+        },
+        "add_receipt_id": "receipt-7bb325a3b1aa412b",
+        "created_at": "2026-07-30T21:34:36.451192+08:00",
+        "updated_at": "2026-07-30T21:34:36.508779+08:00",
+        "removed_at": "2026-07-30T21:34:36.508779+08:00"
+      }
+    ],
+    "receipts": [
+      {
+        "id": "receipt-7bb325a3b1aa412b",
+        "action_type": "shopping_list_add",
+        "item_id": "item-08c5ce48654e475c",
+        "created_at": "2026-07-30T21:34:36.451192+08:00",
+        "undone_at": "2026-07-30T21:34:36.508779+08:00"
+      }
+    ]
+  }
+}

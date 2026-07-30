@@ -22,7 +22,6 @@ const viewCopy = {
   permissions: ['动作与权限', '读取、写入、发送、删除和付款使用不同权限层级。'],
   connections: ['连接', '管理 Agent、浏览器与业务服务的真实连接状态。'],
   storage: ['存储', '管理捕获、任务产物和审计事件的本地留存。'],
-  activity: ['活动与审计', '状态、来源对象、调用、写入与验证共用真实时间线。'],
   privacy: ['隐私', '管理敏感应用、本地脱敏和数据边界。'],
   appearance: ['外观', '控制主题、窗口材质和视觉层级。'],
   accessibility: ['辅助功能', '调整动态、透明度、对比度和键盘操作。'],
@@ -31,6 +30,7 @@ const viewCopy = {
   calendar: ['核对日历事件', '创建前核对字段和冲突；不会静默提交。'],
   route: ['核对路线', '只绑定起终点，距离与时间交给地图服务计算。'],
 };
+
 
 const viewAliases = {
   recipes: 'capabilities',
@@ -482,9 +482,9 @@ function applySettings(value) {
   setValue('wiggle-sensitivity', Math.round(Number(activation.sensitivity || .55) * 100));
   setValue('gesture-arm-delay', activation.gesture_arm_delay_ms ?? 180);
   setValue('gesture-timeout', activation.gesture_timeout_ms ?? 5000);
-  setValue('gesture-interaction-mode', activation.gesture_interaction_mode || 'pass_through');
+  setValue('gesture-interaction-mode', activation.gesture_interaction_mode || 'exclusive_overlay');
   setValue('gesture-line-style', appearance.gesture_line_style || 'demo6_band');
-  setValue('gesture-line-width', appearance.gesture_line_width_dip ?? 22);
+  setValue('gesture-line-width', appearance.gesture_line_width_dip ?? 40);
   setValue('default-input-mode', interaction.default_input_mode || 'voice');
   setValue('voice-start-strategy', interaction.voice_start_strategy || 'auto');
   setValue('voice-auto-submit', interaction.voice_auto_submit !== false);
@@ -607,7 +607,7 @@ function collectSettings() {
   next.privacy.retain_audit_days = Number(document.getElementById('retain-audit-days').value);
   next.privacy.sensitive_apps = valuesFromLines(document.getElementById('sensitive-apps').value);
   next.privacy.anonymous_usage = false;
-  next.activation.gesture_interaction_mode = document.getElementById('gesture-interaction-mode').value || 'pass_through';
+  next.activation.gesture_interaction_mode = document.getElementById('gesture-interaction-mode').value || 'exclusive_overlay';
   next.permissions.default_read = document.getElementById('permission-read').value;
   next.permissions.default_write = document.getElementById('permission-write').value;
   next.permissions.default_send = document.getElementById('permission-send').value;

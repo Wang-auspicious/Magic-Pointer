@@ -26,7 +26,7 @@ assert.deepStrictEqual(defaults.permissions.scoped_grants, []);
 assert.strictEqual(defaults.connections.browser_devtools_enabled, true);
 assert.deepStrictEqual(defaults.connections.browser_devtools_endpoints, ['http://127.0.0.1:9222']);
 assert.strictEqual(defaults.appearance.gesture_line_style, 'demo6_band');
-assert.strictEqual(defaults.appearance.gesture_line_width_dip, 22);
+assert.strictEqual(defaults.appearance.gesture_line_width_dip, 40);
 
 defaults.activation.sensitivity = 0.72;
 defaults.activation.disabled_apps.push('原神');
@@ -120,7 +120,7 @@ delete legacyGestureAppearance.appearance.gesture_line_style;
 legacyGestureAppearance.appearance.gesture_line_width_dip = 8;
 const migratedGestureAppearance = validate(legacyGestureAppearance);
 assert.strictEqual(migratedGestureAppearance.appearance.gesture_line_style, 'demo6_band');
-assert.strictEqual(migratedGestureAppearance.appearance.gesture_line_width_dip, 22);
+assert.strictEqual(migratedGestureAppearance.appearance.gesture_line_width_dip, 40);
 
 const legacyDiskPath = path.join(root, 'legacy-fabric-settings.json');
 fs.writeFileSync(legacyDiskPath, `${JSON.stringify({
@@ -142,11 +142,11 @@ fs.writeFileSync(legacyDiskPath, `${JSON.stringify({
 const legacyDiskStore = new ElectronSettingsStore(legacyDiskPath);
 const normalizedLegacyDisk = legacyDiskStore.load();
 assert.strictEqual(normalizedLegacyDisk.appearance.gesture_line_style, 'demo6_band');
-assert.strictEqual(normalizedLegacyDisk.appearance.gesture_line_width_dip, 22);
+assert.strictEqual(normalizedLegacyDisk.appearance.gesture_line_width_dip, 40);
 const persistedLegacyDisk = JSON.parse(fs.readFileSync(legacyDiskPath, 'utf8'));
 assert.strictEqual(persistedLegacyDisk.appearance.gesture_line_style, 'demo6_band',
   'load must persist the canonical visual contract instead of leaving stale disk truth');
-assert.strictEqual(persistedLegacyDisk.appearance.gesture_line_width_dip, 22,
+assert.strictEqual(persistedLegacyDisk.appearance.gesture_line_width_dip, 40,
   'load must persist the canonical default band width');
 assert.strictEqual(persistedLegacyDisk.activation.wake_mode, 'wiggle_hotkey',
   'load must persist migrated activation settings');

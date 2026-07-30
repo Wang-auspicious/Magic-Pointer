@@ -16,7 +16,7 @@ const defaults = defaultSettings();
 assert.strictEqual(defaults.activation.gesture_arm_delay_ms, 180);
 assert.strictEqual(defaults.activation.gesture_timeout_ms, 5000);
 assert.strictEqual(defaults.appearance.gesture_line_style, 'demo6_band');
-assert.strictEqual(defaults.appearance.gesture_line_width_dip, 22);
+assert.strictEqual(defaults.appearance.gesture_line_width_dip, 40);
 for (const id of ['gesture-arm-delay', 'gesture-timeout', 'gesture-line-style', 'gesture-line-width']) {
   assert(dashboardHtml.includes(`id="${id}"`), `Dashboard must expose ${id}`);
 }
@@ -104,6 +104,14 @@ assert.match(completeGesture, /summarizeGesture[\s\S]*?beginSelectionSession/,
 assert.match(overlay, /gestureMode\s*=\s*payload\?\.gestureMode\s*===\s*true/);
 assert.match(overlay, /if\s*\(gestureMode\)[\s\S]*?drawSmoothPath/,
   'gesture mode draws only the user stroke');
+const gestureRenderBranch = overlay.slice(
+  overlay.indexOf('if (gestureMode) {'),
+  overlay.indexOf('if (!captureMode && points.length)'),
+);
+assert.doesNotMatch(gestureRenderBranch, /drawPointer\(lastPointer\)/,
+  'armed mode must not paint a second cursor over the CSS cursor');
+assert.match(gestureRenderBranch, /drawHitTestPixel\(lastPointer\)/,
+  'the transparent input shield keeps a nearly invisible hit-test pixel');
 assert.match(overlay, /gestureLineStyle\s*===\s*'thin'/,
   'thin stroke remains an explicit selectable style');
 assert.match(overlay, /demo6_band/,

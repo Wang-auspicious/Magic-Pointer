@@ -11,7 +11,12 @@
     "verify:installer": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify_windows_installer.ps1",
     "verify:onboarding": "python scripts/verify_first_run_onboarding.py",
     "verify:n19": "python scripts/verify_n19_voice_triggers_desktop.py",
-    "test": "node scripts/run-node-tests.js"
+    "diag:collect": "node scripts/collect-diagnostics.js",
+    "test": "node scripts/run-node-tests.js",
+    "lint": "eslint . --max-warnings=0",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "keywords": [
     "ai-pointer",
@@ -21,15 +26,31 @@
   "author": "",
   "license": "MIT",
   "type": "commonjs",
+  "engines": {
+    "node": ">=20 <25",
+    "npm": ">=10"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/Wang-auspicious/Magic-Pointer.git"
   },
+  "bugs": {
+    "url": "https://github.com/Wang-auspicious/Magic-Pointer/issues"
+  },
+  "homepage": "https://github.com/Wang-auspicious/Magic-Pointer#readme",
   "dependencies": {
-    "electron-updater": "^6.6.2"
+    "electron-updater": "^6.6.2",
+    "semver": "^7.6.0"
   },
   "devDependencies": {
+    "@eslint/js": "^9.14.0",
     "electron": "^43.0.0",
-    "electron-builder": "^26.15.3"
+    "electron-builder": "^26.15.3",
+    "eslint": "^9.14.0",
+    "globals": "^15.12.0",
+    "prettier": "^3.3.3"
+  },
+  "overrides": {
+    "semver": "^7.6.0"
   }
 }

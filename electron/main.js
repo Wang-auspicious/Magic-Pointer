@@ -23,8 +23,11 @@ const { captureEligibility } = require('./result_surface_policy');
 const { inferObjectKind, selectionSourceForReason, stageEventFromBridge } = require('./stage_contract');
 const { canAutoExecuteInternalProposal } = require('./internal_action_policy');
 const { physicalScreenPoint, normalizeGroundingGeometry } = require('./coordinate_space');
+const { physicalGestureTrace } = require('./coordinate_space');
 const { isSurfaceSender } = require('./ipc_surface_policy');
 const { buildGoogleMapsDirectionsUrl, isAllowedGoogleMapsDirectionsUrl } = require('./route_policy');
+const securityHardening = require('./security_hardening');
+const observability = require('./observability');
 const { VoiceFocusGuard } = require('./voice_focus_guard');
 const { inspectOnboardingReadiness, shouldStartHidden } = require('./app_lifecycle');
 const { RuntimeSnapshot } = require('./runtime_snapshot');
@@ -35,6 +38,7 @@ const { gestureRuntimeContract, gestureRuntimeSettingsChanged } = require('./ges
 const { createUpdateManager } = require('./update_manager');
 const { pointerPollingPolicy } = require('./pointer_polling_policy');
 const { PassThroughGestureCapture } = require('./pass_through_gesture');
+const { createPythonBridgeRunner } = require('./python_bridge_runner');
 
 let overlayWindow = null;
 let dashboardWindow = null;
@@ -52,6 +56,7 @@ let selectionGestureExpiryTimer = null;
 let wiggleDetector = null;
 const mouseActivationDetector = new MouseActivationDetector();
 const passThroughGestureCapture = new PassThroughGestureCapture();
+const pythonBridgeRunner = createPythonBridgeRunner();
 let fabricSettings = null;
 let fabricSettingsStore = null;
 let credentialStore = null;
@@ -122,6 +127,7 @@ const ALLOWED_ACTION_TYPES = new Set([
   'office_replace_selection',
   'office_undo_last_action',
   'shopping_list_add',
+  'shopping_list_add_many',
   'shopping_list_set_checked',
   'shopping_list_undo_add',
   'calendar_event_create',
@@ -165,6 +171,17 @@ function log(message) {
     // Logging must never break the overlay.
   }
 }
+
+securityHardening.install({
+  logger: log,
+  onFatal: ({ kind }) => {
+    try { observability.writeEvent('main.fatal', { kind }); } catch (_) {}
+    log(`fatal handler notified kind=${kind}`);
+  },
+  electron: require('electron'),
+});
+
+observability.install({ runtimeDir: RUNTIME_DIR });
 
 function persistVoiceFocusEvidence(evidence) {
   if (!evidence || typeof evidence !== 'object') return;
@@ -666,8 +683,8 @@ function stageVisualTuningForStage() {
     sweepMaxHeightDip: Number(appearance.sweep_max_height_dip ?? 24),
     sweepDurationMs: Number(appearance.sweep_duration_ms ?? 292),
     sweepFadeMs: Number(appearance.sweep_fade_ms ?? 96),
-    capsuleSpawnMs: Number(appearance.capsule_spawn_ms ?? 417),
-    capsuleExpandMs: Number(appearance.capsule_expand_ms ?? 292),
+    capsuleSpawnMs: Number(appearance.capsule_spawn_ms ?? 80),
+    capsuleExpandMs: Number(appearance.capsule_expand_ms ?? 125),
     capsuleVoiceWidthDip: Number(appearance.capsule_voice_width_dip ?? 40),
     capsuleTextWidthDip: Number(appearance.capsule_text_width_dip ?? 144),
     capsuleMaxWidthDip: Number(appearance.capsule_max_width_dip ?? 440),
@@ -819,6 +836,8 @@ function createDashboardWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
     },
   });
   dashboardWindow.loadFile(path.join(__dirname, 'renderer', 'dashboard.html'));
@@ -894,6 +913,8 @@ function createOnboardingWindow() {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
     },
   });
   onboardingWindow.setMenuBarVisibility(false);
@@ -993,8 +1014,10 @@ function hasActiveSelectionCapture() {
 
 function dismissTemporarySurfaces({ invalidateSession = true, hideObserver = false } = {}) {
   const sessionToken = activeSelectionSessionToken;
+  log(`dismissTemporarySurfaces overlayOwnsPointerInput=${overlayOwnsPointerInput} armPresent=${Boolean(selectionGestureArm)}`);
   cancelSelectionGesture('dismissed', { hideSurface: false });
   stopDictation('stage');
+  stopDictation('overlay');
   setStageMouseCapture(false);
   if (stageWindow && !stageWindow.isDestroyed() && stageWindow.isVisible()) {
     // Ask the stage to play its dismiss fade; it answers with stage:hidden.
@@ -1077,6 +1100,12 @@ function requestActivation(reason) {
   });
   log(`activation request reason=${reason} decision=${decision}`);
   if (decision === 'dismiss') {
+    const continuingEpisode = interactionEpisodes.active();
+    if (continuingEpisode && (reason === 'wiggle' || reason === 'shortcut-wake')) {
+      dismissTemporarySurfaces({ invalidateSession: true, hideObserver: true });
+      armSelectionGesture(reason);
+      return 'continue';
+    }
     dismissTemporarySurfaces({ invalidateSession: true, hideObserver: true });
   } else if (decision === 'activate') {
     if (reason === 'wiggle' || reason === 'shortcut-wake') armSelectionGesture(reason);
@@ -1409,8 +1438,8 @@ function armSelectionGesture(reason = 'wiggle') {
         win.setIgnoreMouseEvents(true, { forward: true });
         overlayOwnsPointerInput = false;
       } else {
-        // The renderer first resets stale pointer capture, then explicitly
-        // acknowledges readiness before this window is allowed to own input.
+        // The renderer resets stale pointer capture, then acknowledges
+        // readiness via gesture-ready before this window owns input.
         win.setIgnoreMouseEvents(true, { forward: true });
         overlayOwnsPointerInput = false;
       }
@@ -1475,9 +1504,12 @@ function completeSelectionGesture(payload) {
     y: Number(point.y) + Number(bounds.y),
   });
   const gesture = {
-    ...summary,
+    schemaVersion: 2,
     coordinateSpace: 'electron_dip_screen',
     points: summary.points.map((point) => ({ ...toGlobal(point), t: point.t })),
+    strokes: summary.strokes.map((stroke) => ({
+      points: stroke.points.map((point) => ({ ...toGlobal(point), t: point.t })),
+    })),
     bbox: {
       x: summary.bbox.x + bounds.x,
       y: summary.bbox.y + bounds.y,
@@ -1485,7 +1517,6 @@ function completeSelectionGesture(payload) {
       height: summary.bbox.height,
     },
     releasePoint: toGlobal(summary.releasePoint),
-    semanticPoint: toGlobal(summary.semanticPoint),
     displayBounds: { ...bounds },
     source: { ...arm.source },
   };
@@ -1732,16 +1763,29 @@ function bindEpisodeForCommand(session, command) {
   const mode = inferReferenceMode(command);
   const referenceLabel = inferReferenceLabel(command);
   const object = episodeObjectForSession(session);
-  if (mode === 'here') interactionEpisodes.bindHere(object);
-  else {
-    interactionEpisodes.bindPointedObject(object);
-    if (referenceLabel) interactionEpisodes.labelCurrent(referenceLabel);
-    if (mode === 'these' || referenceLabel) interactionEpisodes.bindThese();
-  }
+  interactionEpisodes.bindCommandTarget(object, command);
+  if (referenceLabel) interactionEpisodes.labelCurrent(referenceLabel);
+  if (mode === 'these' || referenceLabel) interactionEpisodes.bindThese();
   const episode = interactionEpisodes.contextPayload();
   persistCurrentObjectEpisode(session);
   log(`interaction episode bind mode=${mode} episode=${episode?.episodeId || 'none'} session=${session?.token || 'none'}`);
   return episode;
+}
+
+function shouldContinueGestureEpisode(command, episode) {
+  if (!episode) return false;
+  const mode = inferReferenceMode(command);
+  if (mode === 'here') return false;
+  return mode === 'append' || ['add', 'move'].includes(episode.pendingIntent);
+}
+
+function composedEpisodeCommand(command, episode) {
+  if (!episode || inferReferenceMode(command) !== 'here') return command;
+  const sourceCount = Array.isArray(episode?.slots?.these) ? episode.slots.these.length : 0;
+  if (!episode?.slots?.here || sourceCount < 1) return command;
+  if (episode.pendingIntent === 'add') return 'add these here';
+  if (episode.pendingIntent === 'move') return 'move these here';
+  return command;
 }
 
 function beginSelectionSession(reason = 'manual', gesture = null) {
@@ -1750,8 +1794,9 @@ function beginSelectionSession(reason = 'manual', gesture = null) {
 
   const liveCursor = screen.getCursorScreenPoint();
   const releasePoint = gesture?.releasePoint || liveCursor;
-  const targetPoint = gesture?.semanticPoint || releasePoint;
+  const targetPoint = releasePoint;
   const physicalCursor = physicalScreenPoint(screen, targetPoint);
+  const physicalGesture = physicalGestureTrace(screen, gesture);
   const display = screen.getDisplayNearestPoint(releasePoint);
   const entry = selectionSessions.create({ reason, cursor: releasePoint });
   entry.gesture = gesture ? safeClone(gesture) : null;
@@ -1814,7 +1859,7 @@ function beginSelectionSession(reason = 'manual', gesture = null) {
       reason,
       cursor: physicalCursor,
       cursorSpace: physicalCursor ? 'physical_screen_pixels' : null,
-      gesture: gesture ? safeClone(gesture) : null,
+      gesture: physicalGesture ? safeClone(physicalGesture) : null,
       screenBounds: display.bounds,
       scaleFactor: display.scaleFactor || 1,
       foregroundApp: gesture?.source?.foregroundApp || pointerInputState.foregroundApp,
@@ -2129,19 +2174,40 @@ ipcMain.on('overlay:renderer-ready', (event) => {
   log('overlay renderer ready');
 });
 ipcMain.on('overlay:gesture-ready', (event, payload) => {
-  if (!isSurfaceSender(event, 'overlay', resultTargetWindow)) return;
+  if (!isSurfaceSender(event, 'overlay', resultTargetWindow)) {
+    log('gesture-ready SKIP: not surface sender');
+    return;
+  }
   const arm = selectionGestureArm;
-  if (!arm || String(payload?.token || '') !== arm.token) return;
-  if (arm.runtime.interactionMode !== 'exclusive_overlay') return;
-  if (!overlayWindow || overlayWindow.isDestroyed()) return;
+  const rxToken = String(payload?.token || '');
+  if (!arm) {
+    log(`gesture-ready SKIP: no active arm (rxToken=${rxToken})`);
+    return;
+  }
+  if (rxToken !== arm.token) {
+    log(`gesture-ready SKIP: token mismatch rx=${rxToken} arm=${arm.token}`);
+    return;
+  }
+  if (arm.runtime.interactionMode !== 'exclusive_overlay') {
+    log(`gesture-ready SKIP: mode=${arm.runtime.interactionMode}`);
+    return;
+  }
+  if (!overlayWindow || overlayWindow.isDestroyed()) {
+    log('gesture-ready SKIP: overlayWindow missing/destroyed');
+    return;
+  }
   overlayWindow.setIgnoreMouseEvents(false);
   overlayOwnsPointerInput = true;
-  overlayWindow.showInactive();
+  // Stage must stay invisible during gesture drawing — any full-screen
+  // transparent window at screen-saver level can eat pointer events.
+  if (stageWindow && !stageWindow.isDestroyed() && stageWindow.isVisible()) {
+    stageWindow.hide();
+    log('gesture-ready: hid stage to unblock overlay pointer input');
+  }
   if (typeof overlayWindow.moveTop === 'function') overlayWindow.moveTop();
   log(
-    `selection gesture ready token=${arm.token} delay_ms=${Date.now() - arm.armedAt}`
-    + ` mode=${arm.runtime.interactionMode}`
-    + ` style=${arm.runtime.lineStyle} width_dip=${arm.runtime.lineWidthDip}`,
+    `gesture-ready OK token=${arm.token} overlayOwnsPointerInput=${overlayOwnsPointerInput}`
+    + ` delay_ms=${Date.now() - arm.armedAt} mode=${arm.runtime.interactionMode}`,
   );
 });
 ipcMain.on('stage:renderer-ready', (event) => {
@@ -2408,61 +2474,43 @@ function sendBridgeResult(target, parsed) {
 function runPythonBridge(payload, scriptPath = 'scripts/electron_bridge.py', target = 'overlay', options = {}) {
   if (!resultTargetWindow(target)) return;
   const py = PYTHON_EXECUTABLE;
-  const child = spawn(py, pythonInvocationArgs([scriptPath], { isolated: PYTHON_ISOLATED }), {
-    cwd: ROOT,
-    stdio: ['pipe', 'pipe', 'pipe'],
-    windowsHide: true,
-    env: pythonSpawnEnvironment({ env: {
-      ...process.env,
-      PYTHONIOENCODING: 'utf-8',
-      PYTHONUTF8: '1',
-      MAGIC_POINTER_USER_DATA_DIR: FABRIC_DATA_DIR,
-    }, isolated: PYTHON_ISOLATED }),
+  const defaultTimeoutMs = scriptPath.includes('selection_snapshot_bridge')
+    ? 15_000
+    : scriptPath.includes('action_bridge')
+      ? 45_000
+      : scriptPath.includes('shopping_list_bridge') || scriptPath.includes('calendar_bridge')
+        ? 20_000
+        : 120_000;
+  return pythonBridgeRunner.run({
+    executable: py,
+    args: pythonInvocationArgs([scriptPath], { isolated: PYTHON_ISOLATED }),
+    spawnOptions: {
+      cwd: ROOT,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+      env: pythonSpawnEnvironment({ env: {
+        ...process.env,
+        PYTHONIOENCODING: 'utf-8',
+        PYTHONUTF8: '1',
+        MAGIC_POINTER_USER_DATA_DIR: FABRIC_DATA_DIR,
+      }, isolated: PYTHON_ISOLATED }),
+    },
+    input: payload,
+    timeoutMs: Math.max(1000, Number(options.timeoutMs) || defaultTimeoutMs),
+    maxStdoutBytes: Math.max(4096, Number(options.maxStdoutBytes) || 1024 * 1024),
+    maxStderrBytes: Math.max(4096, Number(options.maxStderrBytes) || 256 * 1024),
+    signal: options.signal || null,
+    logger: log,
+    onComplete: (parsed) => {
+      log(`bridge complete script=${scriptPath} ok=${parsed?.ok} error=${parsed?.error || 'none'}`);
+      if (typeof options.onComplete === 'function') {
+        options.onComplete(parsed);
+        return;
+      }
+      registerActionProposals(parsed, options.selectionSessionToken || null, target);
+      sendBridgeResult(target, parsed);
+    },
   });
-
-  let stdout = '';
-  let stderr = '';
-  let delivered = false;
-  const deliver = (parsed) => {
-    if (delivered) return;
-    delivered = true;
-    if (typeof options.onComplete === 'function') {
-      options.onComplete(parsed);
-      return;
-    }
-    registerActionProposals(parsed, options.selectionSessionToken || null, target);
-    sendBridgeResult(target, parsed);
-  };
-  child.stdout.setEncoding('utf8');
-  child.stderr.setEncoding('utf8');
-  child.stdout.on('data', (chunk) => { stdout += chunk; });
-  child.stderr.on('data', (chunk) => { stderr += chunk; });
-  child.on('error', (error) => {
-    log(`bridge spawn error ${error.name}: ${error.message}`);
-    deliver({
-      ok: false,
-      error: `${error.name}: ${error.message}`,
-    });
-  });
-  child.on('close', (code) => {
-    let parsed = null;
-    try {
-      const lines = stdout.trim().split(/\r?\n/).filter(Boolean);
-      parsed = JSON.parse(lines[lines.length - 1] || '{}');
-    } catch (error) {
-      parsed = { ok: false, error: `Could not parse bridge output: ${error.message}`, raw: stdout };
-    }
-    if (code !== 0 && parsed && parsed.ok !== true) {
-      parsed.code = code;
-      parsed.stderr = stderr.slice(0, 2000);
-    }
-    log(`bridge close script=${scriptPath} code=${code} ok=${parsed?.ok}`);
-    deliver(parsed);
-  });
-
-  child.stdin.write(JSON.stringify(payload));
-  child.stdin.end();
-  return child;
 }
 
 function runPythonBridgePromise(payload, scriptPath, { target = 'fabric-dashboard', timeoutMs = 5000 } = {}) {
@@ -2476,6 +2524,7 @@ function runPythonBridgePromise(payload, scriptPath, { target = 'fabric-dashboar
       callback(value);
     };
     const child = runPythonBridge(payload, scriptPath, target, {
+      timeoutMs,
       onComplete: (parsed) => {
         if (parsed?.ok !== true) {
           finish(reject, new Error(String(parsed?.error || 'runtime_snapshot_probe_failed')));
@@ -2686,13 +2735,21 @@ ipcMain.on('stage:submit-selection-command', (event, payload) => {
     return;
   }
 
+  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  const interactionEpisode = bindEpisodeForCommand(session, payload?.command);
+  if (shouldContinueGestureEpisode(payload?.command, interactionEpisode)) {
+    log(`interaction episode continue episode=${interactionEpisode?.episodeId || 'none'} mode=${inferReferenceMode(payload?.command)}`);
+    dismissTemporarySurfaces({ invalidateSession: true, hideObserver: true });
+    setTimeout(() => armSelectionGesture('episode-continue'), 90);
+    return;
+  }
   cancelSessionChild(selectionSessionToken);
   const requestId = selectionSessions.startRequest(selectionSessionToken);
   if (!requestId) return;
-  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
-  const interactionEpisode = bindEpisodeForCommand(session, payload?.command);
+  const effectiveCommand = composedEpisodeCommand(payload?.command, interactionEpisode);
   const enriched = {
-    command: payload?.command,
+    command: effectiveCommand,
+    originalCommand: payload?.command,
     inputMode: payload?.inputMode || null,
     selectionSessionId: selectionSessionToken,
     selectionSnapshot: safeClone(session.snapshot),
@@ -2758,7 +2815,9 @@ ipcMain.on('stage:submit-selection-command', (event, payload) => {
         }, 'stage', {
           onComplete: (actionResult) => {
             const output = actionResult?.executionResult?.output || {};
-            const highlightItemId = output?.verified === true ? output?.item?.id : null;
+            const highlightItemId = output?.verified === true
+              ? (output?.item?.id || output?.items?.[0]?.id || null)
+              : null;
             if (actionResult?.ok === true && highlightItemId) {
               showDashboard({ highlightItemId }, { activate: false });
             }

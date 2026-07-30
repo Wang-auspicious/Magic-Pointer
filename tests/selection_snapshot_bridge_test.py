@@ -125,6 +125,91 @@ class _BrowserRegistry:
         return _BrowserAdapter()
 
 
+class _GestureCandidateAdapter:
+    def __init__(self) -> None:
+        self.points: list[dict[str, int]] = []
+
+    def read_context(self, window, **kwargs):
+        target = dict(kwargs.get("target_point") or {})
+        self.points.append(target)
+        row = "B" if int(target.get("y") or 0) >= 150 else "A"
+        top = 150 if row == "B" else 100
+        return AdapterReadContext(
+            adapter="gesture-candidate",
+            app="word",
+            window=window,
+            content=f"Row {row}",
+            label=f"Row {row}",
+            method="synthetic:element-from-point",
+            artifacts={
+                "selection_rectangles": [[100, top, 300, 40]],
+                "selection_rectangles_format": "xywh",
+                "selection_rectangles_coordinate_space": "physical_screen_pixels",
+            },
+        )
+
+
+class _GestureCandidateRegistry:
+    def __init__(self) -> None:
+        self.adapter = _GestureCandidateAdapter()
+
+    def matching_adapter(self, _window):
+        return self.adapter
+
+
+class _FallbackOnlyAdapter:
+    def read_context(self, window, **kwargs):
+        target = dict(kwargs.get("target_point") or {})
+        if int(target.get("y") or 0) >= 150:
+            return AdapterReadContext(
+                adapter="fallback-only", app="word", window=window,
+                method="synthetic:element-from-point", artifacts={},
+            )
+        return AdapterReadContext(
+            adapter="fallback-only", app="word", window=window,
+            content="Wrong release-point row", label="Wrong row",
+            method="synthetic:element-from-point",
+            artifacts={"selection_rectangles": [[100, 100, 300, 40]]},
+        )
+
+
+class _FallbackOnlyRegistry:
+    def matching_adapter(self, _window):
+        return _FallbackOnlyAdapter()
+
+
+class _MultiRectangleAdapter:
+    def read_context(self, window, **_kwargs):
+        return AdapterReadContext(
+            adapter="multi-rectangle", app="word", window=window,
+            content="Wrapped target", label="Wrapped target",
+            method="synthetic:element-from-point",
+            artifacts={
+                "selection_rectangles": [[100, 100, 300, 40], [100, 150, 300, 40]],
+                "selection_rectangles_format": "xywh",
+            },
+        )
+
+
+class _MultiRectangleRegistry:
+    def matching_adapter(self, _window):
+        return _MultiRectangleAdapter()
+
+
+class _ContentWithoutRectangleAdapter:
+    def read_context(self, window, **_kwargs):
+        return AdapterReadContext(
+            adapter="no-rectangle", app="word", window=window,
+            content="Text with no physical evidence", label="Unbounded text",
+            method="synthetic:element-from-point", artifacts={},
+        )
+
+
+class _ContentWithoutRectangleRegistry:
+    def matching_adapter(self, _window):
+        return _ContentWithoutRectangleAdapter()
+
+
 class _Audit:
     def __init__(self):
         self.events = []
@@ -723,6 +808,105 @@ def test_completed_pointer_gesture_is_preserved_with_snapshot() -> None:
     )
 
     assert payload["selectionSnapshot"]["selection_gesture"] == gesture
+
+
+def test_full_gesture_trace_drives_structured_grounding_instead_of_fallback_point() -> None:
+    registry = _GestureCandidateRegistry()
+    gesture = {
+        "schemaVersion": 2,
+        "coordinateSpace": "physical_screen_pixels",
+        "releasePoint": {"x": 390, "y": 172},
+        "bbox": {"x": 110, "y": 154, "width": 280, "height": 27},
+        "strokes": [{
+            "points": [
+                {"x": 110, "y": 164, "t": 0},
+                {"x": 155, "y": 176, "t": 20},
+                {"x": 145, "y": 158, "t": 41},
+                {"x": 230, "y": 171, "t": 65},
+                {"x": 310, "y": 160, "t": 88},
+                {"x": 390, "y": 172, "t": 120},
+            ],
+        }],
+    }
+    payload = capture_snapshot(
+        [{"title": "Gesture target", "hwnd": 901, "process_id": 902}],
+        registry=registry,
+        target_point={"x": 150, "y": 120},  # Deliberately points at row A.
+        gesture=gesture,
+    )
+
+    assert len(registry.adapter.points) >= 3
+    assert payload["selectionSnapshot"]["context"]["content"] == "Row B"
+    assert payload["selectionSnapshot"]["selection_bbox"] == [100, 150, 300, 40]
+    assert payload["selectionSnapshot"]["gesture_grounding"]["candidate_count"] >= 1
+
+
+def test_gesture_grounding_never_falls_back_to_an_unvisited_release_point_candidate() -> None:
+    gesture = {
+        "schemaVersion": 2,
+        "coordinateSpace": "physical_screen_pixels",
+        "releasePoint": {"x": 390, "y": 172},
+        "bbox": {"x": 110, "y": 154, "width": 280, "height": 27},
+        "strokes": [{"points": [
+            {"x": 110, "y": 164, "t": 0}, {"x": 230, "y": 171, "t": 60},
+            {"x": 390, "y": 172, "t": 120},
+        ]}],
+    }
+    payload = capture_snapshot(
+        [{"title": "Gesture target", "hwnd": 901, "process_id": 902}],
+        registry=_FallbackOnlyRegistry(),
+        target_point={"x": 150, "y": 120},
+        gesture=gesture,
+        allow_visual_fallback=False,
+    )
+
+    assert payload["selectionSnapshot"]["context"] is None
+    assert payload["selectionSnapshot"]["selection_bbox"] is None
+    assert payload["selectionSnapshot"]["gesture_grounding"]["state"] == "unresolved"
+    assert payload["selectionSnapshot"]["perception_trace"]["selectedLayer"] is None
+
+
+def test_best_scoring_rectangle_is_frozen_not_first_rectangle() -> None:
+    gesture = {
+        "schemaVersion": 2,
+        "coordinateSpace": "physical_screen_pixels",
+        "releasePoint": {"x": 390, "y": 172},
+        "bbox": {"x": 110, "y": 154, "width": 280, "height": 27},
+        "strokes": [{"points": [
+            {"x": 110, "y": 164, "t": 0}, {"x": 230, "y": 171, "t": 60},
+            {"x": 390, "y": 172, "t": 120},
+        ]}],
+    }
+    payload = capture_snapshot(
+        [{"title": "Gesture target", "hwnd": 901, "process_id": 902}],
+        registry=_MultiRectangleRegistry(),
+        target_point={"x": 390, "y": 172},
+        gesture=gesture,
+    )
+
+    assert payload["selectionSnapshot"]["selection_bbox"] == [100, 150, 300, 40]
+
+
+def test_structured_text_without_a_physical_rectangle_is_not_claimed_as_gesture_target() -> None:
+    gesture = {
+        "schemaVersion": 2,
+        "coordinateSpace": "physical_screen_pixels",
+        "releasePoint": {"x": 390, "y": 172},
+        "bbox": {"x": 110, "y": 154, "width": 280, "height": 27},
+        "strokes": [{"points": [
+            {"x": 110, "y": 164, "t": 0}, {"x": 390, "y": 172, "t": 120},
+        ]}],
+    }
+    payload = capture_snapshot(
+        [{"title": "Gesture target", "hwnd": 901, "process_id": 902}],
+        registry=_ContentWithoutRectangleRegistry(),
+        target_point={"x": 390, "y": 172},
+        gesture=gesture,
+        allow_visual_fallback=False,
+    )
+
+    assert payload["selectionSnapshot"]["context"] is None
+    assert payload["selectionSnapshot"]["gesture_grounding"]["state"] == "unresolved"
 
 
 def test_runtime_issue_is_presented_as_one_agent_task_not_generic_context() -> None:

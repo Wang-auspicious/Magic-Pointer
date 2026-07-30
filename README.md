@@ -1,5 +1,12 @@
 # Magic Pointer
 
+[![Release](https://github.com/Wang-auspicious/Magic-Pointer/actions/workflows/release.yml/badge.svg)](https://github.com/Wang-auspicious/Magic-Pointer/actions/workflows/release.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)](.nvmrc)
+[![Python](https://img.shields.io/badge/python-%3E%3D3.11-blue)](.python-version)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-lightgrey)](README.md)
+[![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](CODE_OF_CONDUCT.md)
+
 Magic Pointer 是一个默认不可见的跨应用操作层。用户在任何应用里短促地左右晃动鼠标，
 系统冻结指针下的 `THIS`；随后只出现一个随语音转写或文字输入逐步生长的气泡，用户说一句包含
 `THIS / THAT / THESE / HERE` 的短命令即可。Magic Pointer 优先使用原生应用接口，缺少专用

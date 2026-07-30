@@ -7,7 +7,7 @@ const scriptPath = 'scripts/verify_windows_installer.ps1';
 assert(fs.existsSync(scriptPath), 'installer verification script must exist');
 const script = fs.readFileSync(scriptPath, 'utf8');
 const packageJson = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-const workflow = fs.readFileSync('.github/workflows/release-windows.yml', 'utf8');
+const workflow = fs.readFileSync('.github/workflows/release.yml', 'utf8');
 
 assert.strictEqual(
   packageJson.scripts?.['verify:installer'],

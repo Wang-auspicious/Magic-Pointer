@@ -1,5 +1,12 @@
 'use strict';
 
+const semver = require('semver');
+
+const UPDATE_CHANNELS = Object.freeze({
+  stable: Object.freeze({ updaterChannel: 'latest', allowPrerelease: false }),
+  preview: Object.freeze({ updaterChannel: 'beta', allowPrerelease: true }),
+});
+
 function createUpdateManager({
   app,
   updater,
@@ -19,6 +26,14 @@ function createUpdateManager({
   let lastCheckWasManual = false;
   let availablePromptOpen = false;
   let downloadedPromptOpen = false;
+
+  function acceptedUpdateVersion(info = {}) {
+    const current = semver.valid(app.getVersion());
+    const candidate = semver.valid(String(info.version || ''));
+    if (!current || !candidate) return null;
+    if (semver.prerelease(candidate) && updater.allowPrerelease !== true) return null;
+    return semver.gt(candidate, current) ? candidate : null;
+  }
 
   function publish(next) {
     state = Object.freeze({ ...next, checkedAt: Date.now() });
@@ -51,7 +66,12 @@ function createUpdateManager({
       }
     });
     updater.on('update-available', async (info = {}) => {
-      const version = String(info.version || '新版本');
+      const version = acceptedUpdateVersion(info);
+      if (!version) {
+        publish({ state: 'current', version: app.getVersion() });
+        log(`update rejected version=${String(info.version || '')}`);
+        return;
+      }
       publish({ state: 'available', version });
       if (availablePromptOpen) return;
       availablePromptOpen = true;
@@ -104,8 +124,14 @@ function createUpdateManager({
   }
 
   function setChannel(channel = 'stable') {
-    updater.allowPrerelease = channel === 'preview';
-    return updater.allowPrerelease ? 'preview' : 'stable';
+    const selected = UPDATE_CHANNELS[channel];
+    if (!selected) throw new Error('update_channel_unsupported');
+    // electron-updater intentionally enables allowDowngrade when its channel
+    // setter is used. Explicitly reset it for every supported channel.
+    updater.channel = selected.updaterChannel;
+    updater.allowPrerelease = selected.allowPrerelease;
+    updater.allowDowngrade = false;
+    return channel;
   }
 
   function check({ manual = false } = {}) {
@@ -151,7 +177,7 @@ function createUpdateManager({
   function start({ channel = 'stable', automatic = true } = {}) {
     bindEvents();
     updater.autoDownload = false;
-    updater.autoInstallOnAppQuit = true;
+    updater.autoInstallOnAppQuit = false;
     setChannel(channel);
     if (automatic && app.isPackaged && !automaticTimer) {
       automaticTimer = setTimeoutFn(() => {

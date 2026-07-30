@@ -23,6 +23,7 @@ from app.grounding.perception_cascade import (
     append_perception_attempt,
     resolve_structured_perception,
 )
+from app.grounding.explorer_adapter import score_item_against_stroke
 from app.review import ReviewSessionError, ReviewSessionStore
 from app.fabric.settings import FabricSettings, SettingsError, SettingsStore
 from app.system_context import enable_dpi_awareness, get_foreground_window_handle, list_visible_windows
@@ -301,11 +302,27 @@ def _normalized_gesture(value: Any | None) -> dict[str, Any] | None:
             return None
         return {"x": round(x), "y": round(y), "t": round(t)}
 
-    points = [item for item in (point(raw) for raw in list(value.get("points") or [])[:512]) if item]
+    raw_strokes = value.get("strokes") if isinstance(value.get("strokes"), list) else None
+    if raw_strokes:
+        strokes = []
+        remaining = 512
+        for raw_stroke in raw_strokes[:8]:
+            raw_points = raw_stroke.get("points") if isinstance(raw_stroke, dict) else None
+            stroke_points = [
+                item for item in (point(raw) for raw in list(raw_points or [])[:remaining]) if item
+            ]
+            remaining -= len(stroke_points)
+            if len(stroke_points) >= 2:
+                strokes.append({"points": stroke_points})
+            if remaining <= 0:
+                break
+        points = [item for stroke in strokes for item in stroke["points"]]
+    else:
+        points = [item for item in (point(raw) for raw in list(value.get("points") or [])[:512]) if item]
+        strokes = [{"points": points}] if len(points) >= 2 else []
     if len(points) < 2:
         return None
     release = point(value.get("releasePoint"))
-    semantic = point(value.get("semanticPoint"))
     raw_bbox = value.get("bbox") if isinstance(value.get("bbox"), dict) else {}
     try:
         bbox = {
@@ -316,9 +333,29 @@ def _normalized_gesture(value: Any | None) -> dict[str, Any] | None:
         }
     except (TypeError, ValueError):
         bbox = None
-    if release is None or semantic is None or bbox is None:
+    if release is None:
+        release = dict(points[-1])
+    if bbox is None:
+        xs = [item["x"] for item in points]
+        ys = [item["y"] for item in points]
+        bbox = {
+            "x": min(xs), "y": min(ys),
+            "width": max(xs) - min(xs), "height": max(ys) - min(ys),
+        }
+    if release is None or bbox is None:
         return None
     release.pop("t", None)
+    if raw_strokes or int(value.get("schemaVersion") or 0) == 2:
+        return {
+            "schemaVersion": 2,
+            "coordinateSpace": str(value.get("coordinateSpace") or "physical_screen_pixels")[:64],
+            "releasePoint": release,
+            "bbox": bbox,
+            "strokes": strokes,
+        }
+    semantic = point(value.get("semanticPoint"))
+    if semantic is None:
+        return None
     semantic.pop("t", None)
     return {
         "kind": str(value.get("kind") or "freeform")[:32],
@@ -328,6 +365,156 @@ def _normalized_gesture(value: Any | None) -> dict[str, Any] | None:
         "bbox": bbox,
         "points": points,
     }
+
+
+def _gesture_points(gesture: dict[str, Any] | None) -> list[tuple[int, int]]:
+    if not isinstance(gesture, dict):
+        return []
+    strokes = gesture.get("strokes") if isinstance(gesture.get("strokes"), list) else []
+    return [
+        (int(point["x"]), int(point["y"]))
+        for stroke in strokes
+        if isinstance(stroke, dict)
+        for point in list(stroke.get("points") or [])
+        if isinstance(point, dict) and "x" in point and "y" in point
+    ]
+
+
+def _sample_gesture_points(points: list[tuple[int, int]], limit: int = 9) -> list[dict[str, int]]:
+    if len(points) <= limit:
+        selected = points
+    else:
+        selected = [points[round(index * (len(points) - 1) / (limit - 1))] for index in range(limit)]
+    deduplicated: list[dict[str, int]] = []
+    for x, y in selected:
+        value = {"x": int(x), "y": int(y)}
+        if not deduplicated or deduplicated[-1] != value:
+            deduplicated.append(value)
+    return deduplicated
+
+
+def _context_rectangles(context: Any) -> list[list[int]]:
+    artifacts = dict(getattr(context, "artifacts", {}) or {})
+    raw_rectangles = artifacts.get("selection_rectangles") or artifacts.get("rectangles") or []
+    fmt = str(artifacts.get("selection_rectangles_format") or "xywh")
+    result: list[list[int]] = []
+    for raw in list(raw_rectangles)[:32]:
+        if not isinstance(raw, (list, tuple)) or len(raw) != 4:
+            continue
+        try:
+            left, top, third, fourth = (int(round(float(value))) for value in raw)
+        except (TypeError, ValueError):
+            continue
+        if fmt == "ltrb":
+            width, height = third - left, fourth - top
+        else:
+            width, height = third, fourth
+        if width > 0 and height > 0:
+            result.append([left, top, width, height])
+    return result
+
+
+def _gesture_context_key(context: Any) -> str:
+    rectangles = _context_rectangles(context)
+    artifacts = dict(getattr(context, "artifacts", {}) or {})
+    browser = artifacts.get("browser_context") if isinstance(artifacts.get("browser_context"), dict) else {}
+    return json.dumps({
+        "adapter": str(getattr(context, "adapter", "") or ""),
+        "method": str(getattr(context, "method", "") or ""),
+        "content": str(getattr(context, "content", "") or "")[:4000],
+        "label": str(getattr(context, "label", "") or "")[:1000],
+        "selector": str(browser.get("selector") or "")[:1000],
+        "rectangles": rectangles,
+    }, ensure_ascii=False, sort_keys=True)
+
+
+def _read_gesture_target_context(
+    windows: list[dict[str, Any]],
+    *,
+    registry: Any | None,
+    gesture: dict[str, Any] | None,
+    fallback_point: dict[str, int] | None,
+) -> tuple[dict[str, Any] | None, Any, dict[str, Any], dict[str, Any] | None, list[int] | None]:
+    points = _gesture_points(gesture)
+    if not points or str((gesture or {}).get("coordinateSpace") or "") != "physical_screen_pixels":
+        window, context, trace = _read_target_context(windows, registry=registry, target_point=fallback_point)
+        return window, context, trace, None, None
+
+    sampled = _sample_gesture_points(points)
+    candidates: dict[str, dict[str, Any]] = {}
+    target_window = windows[0] if windows else None
+    unresolved_trace: dict[str, Any] = {
+        "schemaVersion": 1,
+        "selectedLayer": None,
+        "selectedAdapter": None,
+        "selectedMethod": None,
+        "pixelFallbackUsed": False,
+        "fallbackReason": "gesture_no_bounded_candidate",
+        "policyMode": None,
+        "attempts": [],
+    }
+    for sample in sampled:
+        window, context, trace = _read_target_context(windows, registry=registry, target_point=sample)
+        if window is not None:
+            target_window = window
+        unresolved_trace["attempts"].extend(list(trace.get("attempts") or [])[:2])
+        rectangles = _context_rectangles(context) if context is not None else []
+        if context is None or not trace.get("selectedLayer") or not rectangles:
+            continue
+        key = _gesture_context_key(context)
+        candidate = candidates.setdefault(key, {
+            "context": context,
+            "trace": trace,
+            "rectangles": rectangles,
+            "samples": [],
+        })
+        candidate["samples"].append(sample)
+
+    if not candidates:
+        unresolved_trace["attempts"] = unresolved_trace["attempts"][:12]
+        return target_window, None, unresolved_trace, {
+            "schemaVersion": 1,
+            "state": "unresolved",
+            "candidate_count": 0,
+            "sample_count": len(sampled),
+            "reason": "gesture_no_bounded_candidate",
+        }, None
+
+    raw_bbox = dict((gesture or {}).get("bbox") or {})
+    selection_bbox = (
+        int(raw_bbox.get("x") or 0),
+        int(raw_bbox.get("y") or 0),
+        int(raw_bbox.get("x") or 0) + int(raw_bbox.get("width") or 0),
+        int(raw_bbox.get("y") or 0) + int(raw_bbox.get("height") or 0),
+    )
+    ranked: list[tuple[float, str, dict[str, Any]]] = []
+    for key, candidate in candidates.items():
+        rectangles = candidate["rectangles"]
+        rectangle_scores = [
+            (score_item_against_stroke(
+                (rect[0], rect[1], rect[0] + rect[2], rect[1] + rect[3]),
+                selection_bbox,
+                points,
+            ), rect)
+            for rect in rectangles
+        ]
+        geometric, best_rectangle = max(rectangle_scores, key=lambda item: item[0])
+        coverage = len(candidate["samples"]) / max(1, len(sampled))
+        ranked.append((geometric + 4.0 * coverage, key, {**candidate, "best_rectangle": best_rectangle}))
+    ranked.sort(key=lambda item: (-item[0], item[1]))
+    best_score, best_key, best = ranked[0]
+    second_score = ranked[1][0] if len(ranked) > 1 else 0.0
+    chosen_rect = best["best_rectangle"]
+    grounding = {
+        "schemaVersion": 1,
+        "state": "resolved",
+        "candidate_count": len(ranked),
+        "sample_count": len(sampled),
+        "selected_candidate_id": f"sha256:{__import__('hashlib').sha256(best_key.encode('utf-8')).hexdigest()}",
+        "score": round(best_score, 3),
+        "margin": round(best_score - second_score, 3),
+    }
+    return target_window, best["context"], best["trace"], grounding, chosen_rect
 
 
 def _pointer_anchor_ltrb(target_point: dict[str, int]) -> list[int]:
@@ -412,6 +599,7 @@ def _capture_visual_region(
     capture_dir: Path | str | None = None,
     retain_days: int = 3,
     identity_probe: Any | None = None,
+    gesture_points: list[tuple[int, int]] | None = None,
 ) -> dict[str, Any] | None:
     bbox = _visual_bbox(target_window, target_point)
     if bbox is None:
@@ -472,12 +660,13 @@ def _capture_visual_region(
     os.replace(temp, output)
     point = target_point or {"x": (bbox[0] + bbox[2]) // 2, "y": (bbox[1] + bbox[3]) // 2}
     tip = (int(point["x"]), int(point["y"]))
+    annotation_points = list(gesture_points or []) or [(tip[0] - 24, tip[1] - 24), tip]
     annotated = output.with_name(f"{output.stem}.pointer.png")
     make_pointer_annotated_image(
         output,
         annotated,
         bbox,
-        [(tip[0] - 24, tip[1] - 24), tip],
+        annotation_points,
     )
     return {
         "path": str(output.resolve()),
@@ -520,6 +709,7 @@ def capture_snapshot(
     captured = datetime.now(timezone.utc)
     live_window_source = windows is None
     normalized_target_point = _normalized_point(target_point)
+    normalized_gesture = _normalized_gesture(gesture)
     requested_hwnd = int(target_hwnd or 0)
     available_windows = (
         _window_dicts(requested_hwnd, normalized_target_point)
@@ -533,7 +723,8 @@ def capture_snapshot(
         )
         available_windows = [preferred] if preferred is not None else []
     target_window = available_windows[0] if available_windows else None
-    normalized_gesture = _normalized_gesture(gesture)
+    gesture_grounding = None
+    gesture_selection_bbox = None
     capture_decision = None
     if default_capture_mode is not None:
         capture_decision = CapturePolicyEngine(
@@ -569,10 +760,13 @@ def capture_snapshot(
             }],
         }
     else:
-        target_window, app_ctx, perception_trace = _read_target_context(
-            available_windows,
-            registry=registry,
-            target_point=normalized_target_point,
+        target_window, app_ctx, perception_trace, gesture_grounding, gesture_selection_bbox = (
+            _read_gesture_target_context(
+                available_windows,
+                registry=registry,
+                gesture=normalized_gesture,
+                fallback_point=normalized_target_point,
+            )
         )
         perception_trace["policyMode"] = (
             capture_decision.mode if capture_decision is not None else "unconfigured"
@@ -634,6 +828,14 @@ def capture_snapshot(
     capture_attestation = structured_attestation
     target_mismatch = structured_target_mismatch
     visual_attempt_recorded = False
+    visual_target_point = normalized_target_point
+    gesture_points = _gesture_points(normalized_gesture)
+    if gesture_points:
+        raw_gesture_bbox = dict((normalized_gesture or {}).get("bbox") or {})
+        visual_target_point = {
+            "x": int(raw_gesture_bbox.get("x") or 0) + int(raw_gesture_bbox.get("width") or 0) // 2,
+            "y": int(raw_gesture_bbox.get("y") or 0) + int(raw_gesture_bbox.get("height") or 0) // 2,
+        }
     should_capture_visual = bool(
         allow_visual_fallback
         and not target_mismatch
@@ -648,11 +850,12 @@ def capture_snapshot(
         try:
             visual = _capture_visual_region(
                 target_window,
-                normalized_target_point,
+                visual_target_point,
                 visual_capture=visual_capture,
                 capture_dir=capture_dir,
                 retain_days=retain_captures_days,
                 identity_probe=active_identity_probe,
+                gesture_points=gesture_points,
             )
             capture_attestation = visual.get("capture_attestation") if visual is not None else None
             if visual is not None:
@@ -831,9 +1034,10 @@ def capture_snapshot(
         "capture_attestation": capture_attestation,
         "capture_policy": capture_decision.to_dict() if capture_decision is not None else None,
         "perception_trace": perception_trace,
-        "selection_bbox": None,
+        "selection_bbox": gesture_selection_bbox,
         "pointer_anchor_bbox": pointer_anchor,
         "selection_gesture": normalized_gesture,
+        "gesture_grounding": gesture_grounding,
     }
     if audit_store is not None:
         try:

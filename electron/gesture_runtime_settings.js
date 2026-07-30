@@ -16,7 +16,7 @@ function gestureRuntimeContract(settings = {}) {
       ? 'exclusive_overlay'
       : 'pass_through',
     lineStyle: appearance.gesture_line_style === 'thin' ? 'thin' : 'demo6_band',
-    lineWidthDip: finiteNumber(appearance.gesture_line_width_dip, 22, 3, 40),
+    lineWidthDip: finiteNumber(appearance.gesture_line_width_dip, 40, 3, 40),
   });
 }
 

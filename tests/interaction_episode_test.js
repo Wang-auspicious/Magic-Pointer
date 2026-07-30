@@ -149,6 +149,8 @@ assert.strictEqual(inferReferenceMode('compare this with that'), 'this');
 assert.strictEqual(inferReferenceMode('merge these'), 'these');
 assert.strictEqual(inferReferenceMode('比较这些'), 'these');
 assert.strictEqual(inferReferenceMode('put these here'), 'here');
+assert.strictEqual(inferReferenceMode('and this'), 'append');
+assert.strictEqual(inferReferenceMode('also this'), 'append');
 assert.strictEqual(inferReferenceLabel('这是 A'), 'A');
 assert.strictEqual(inferReferenceLabel('mark this as C'), 'C');
 
@@ -161,5 +163,31 @@ assert(main.includes('spatialRelations: episode.spatialRelations'));
 assert(main.includes('captureAttestation: snapshot.capture_attestation || null'));
 assert(main.includes('perceptionTrace: snapshot.perception_trace || null'));
 assert.strictEqual(inferReferenceMode('把这些写到这里'), 'here');
+
+{
+  const continuous = new InteractionEpisodeStore({
+    ttlMs: 60_000,
+    idFactory: () => 'episode-continuous',
+  });
+  const first = continuous.bindCommandTarget({ snapshotId: 'source-a', label: '1 lb Spaghetti' }, 'Add this', 1_000);
+  assert.strictEqual(first.id, 'episode-continuous');
+  assert.strictEqual(first.pendingIntent, 'add');
+  assert.deepStrictEqual(first.slots.these.map((item) => item.objectId), ['selection:source-a']);
+
+  const second = continuous.bindCommandTarget({ snapshotId: 'source-b', label: '2 oz Parmesan' }, 'and this', 2_000);
+  assert.strictEqual(second.id, first.id, 'a follow-up stroke stays in the same episode');
+  assert.strictEqual(second.pendingIntent, 'add');
+  assert.deepStrictEqual(second.slots.these.map((item) => item.objectId), [
+    'selection:source-a', 'selection:source-b',
+  ]);
+
+  const destination = continuous.bindCommandTarget({ snapshotId: 'destination', label: 'Shopping list' }, 'here', 3_000);
+  assert.strictEqual(destination.id, first.id);
+  assert.strictEqual(destination.slots.here.objectId, 'selection:destination');
+  assert.deepStrictEqual(destination.slots.these.map((item) => item.objectId), [
+    'selection:source-a', 'selection:source-b',
+  ], 'binding HERE must not discard the ordered source set');
+  assert.strictEqual(destination.pendingIntent, 'add');
+}
 
 console.log('interaction episode test ok');

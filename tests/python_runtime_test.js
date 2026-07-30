@@ -77,13 +77,19 @@ const {
   );
 })();
 
-(function packagedNonWindowsKeepsDevelopmentPolicy() {
+(function packagedMacUsesRelocatableBundledRuntime() {
+  const resourcesPath = path.join('/', 'Applications', 'Magic Pointer.app', 'Contents', 'Resources');
   const runtime = resolvePythonRuntime({
     isPackaged: true,
     platform: 'darwin',
+    resourcesPath,
     env: { MAGIC_POINTER_PYTHON: '/opt/python/bin/python3' },
   });
-  assert.deepStrictEqual(runtime, { executable: '/opt/python/bin/python3', source: 'environment', required: false });
+  assert.deepStrictEqual(runtime, {
+    executable: path.join(resourcesPath, 'python-runtime', 'bin', 'python3'),
+    source: 'bundled',
+    required: true,
+  });
 })();
 
 console.log('python runtime resolver test ok');

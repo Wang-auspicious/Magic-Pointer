@@ -156,6 +156,19 @@ if ([string]::IsNullOrWhiteSpace($BuildPython)) {
 }
 if (-not (Test-Path -LiteralPath $LockPath)) { throw "requirements.lock.txt missing: $LockPath" }
 
+# Remove stale staging artifacts from prior interrupted runs.
+$stalePatterns = @('python-wheelhouse.staging-*', 'python-runtime.previous-*', 'pr-stage-*', 'python-wheelhouse.previous-*')
+foreach ($pattern in $stalePatterns) {
+  foreach ($stale in Get-ChildItem -LiteralPath $BuildRoot -Filter $pattern -Directory -ErrorAction SilentlyContinue) {
+    try {
+      Remove-Item -LiteralPath $stale.FullName -Recurse -Force -ErrorAction Stop
+      Write-Output "Cleaned stale staging: $($stale.Name)"
+    } catch {
+      Write-Warning "Could not remove stale staging $($stale.Name): $_"
+    }
+  }
+}
+
 $PythonVersion = Get-BuildPythonLastLine @('-c', 'import sys; print(sys.version)')
 $BasePrefix = Get-BuildPythonLastLine @('-c', 'import sys; print(sys.base_prefix)')
 if (-not (Test-Path -LiteralPath $BasePrefix)) { throw "Build Python base prefix missing: $BasePrefix" }

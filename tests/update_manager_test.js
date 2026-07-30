@@ -10,6 +10,8 @@ class FakeUpdater extends EventEmitter {
     this.autoDownload = true;
     this.autoInstallOnAppQuit = false;
     this.allowPrerelease = false;
+    this.allowDowngrade = false;
+    this._channel = 'latest';
     this.checkCount = 0;
     this.downloadCount = 0;
     this.quitCount = 0;
@@ -27,6 +29,17 @@ class FakeUpdater extends EventEmitter {
 
   quitAndInstall() {
     this.quitCount += 1;
+  }
+
+  get channel() {
+    return this._channel;
+  }
+
+  set channel(value) {
+    this._channel = value;
+    // electron-updater's real channel setter enables downgrade support.
+    // Keep that side effect in the fake so the contract cannot regress.
+    this.allowDowngrade = true;
   }
 }
 
@@ -63,11 +76,32 @@ const tick = () => new Promise((resolve) => setImmediate(resolve));
 
   manager.start({ channel: 'stable', automatic: false });
   assert.strictEqual(updater.autoDownload, false, 'updates download only after user consent');
-  assert.strictEqual(updater.autoInstallOnAppQuit, true);
+  assert.strictEqual(updater.autoInstallOnAppQuit, false,
+    'installation must require the explicit restart confirmation');
   assert.strictEqual(updater.allowPrerelease, false);
+  assert.strictEqual(updater.channel, 'latest');
+  assert.strictEqual(updater.allowDowngrade, false,
+    'stable channel selection must restore downgrade protection after setting channel');
   manager.setChannel('preview');
+  assert.strictEqual(updater.channel, 'beta');
   assert.strictEqual(updater.allowPrerelease, true, 'update channel changes must apply without restart');
+  assert.strictEqual(updater.allowDowngrade, false,
+    'preview channel selection must restore downgrade protection after setting channel');
   manager.setChannel('stable');
+  assert.strictEqual(updater.channel, 'latest');
+  assert.strictEqual(updater.allowDowngrade, false);
+  const channelState = {
+    channel: updater.channel,
+    allowPrerelease: updater.allowPrerelease,
+    allowDowngrade: updater.allowDowngrade,
+  };
+  assert.throws(() => manager.setChannel(' Preview '), /update_channel_unsupported/,
+    'only exact supported channel identifiers are accepted');
+  assert.deepStrictEqual({
+    channel: updater.channel,
+    allowPrerelease: updater.allowPrerelease,
+    allowDowngrade: updater.allowDowngrade,
+  }, channelState, 'invalid channel input must not mutate updater state');
 
   const first = manager.check({ manual: true });
   const coalesced = manager.check({ manual: true });
@@ -87,6 +121,36 @@ const tick = () => new Promise((resolve) => setImmediate(resolve));
   await tick();
   assert.strictEqual(updater.quitCount, 1);
   assert(dialogCalls[1].buttons.includes('立即重启更新'));
+
+  const promptsBeforeRejectedVersions = dialogCalls.length;
+  const downloadsBeforeRejectedVersions = updater.downloadCount;
+  for (const version of ['1.0.0', '0.9.9', '1.1.0-beta.1', 'not-a-version']) {
+    updater.emit('update-available', { version });
+    await tick();
+  }
+  assert.strictEqual(dialogCalls.length, promptsBeforeRejectedVersions,
+    'equal, older, prerelease, and malformed versions must never be offered on stable');
+  assert.strictEqual(updater.downloadCount, downloadsBeforeRejectedVersions,
+    'rejected versions must never start a download');
+
+  const previewUpdater = new FakeUpdater();
+  const previewDialogs = [];
+  const preview = createUpdateManager({
+    app: { isPackaged: true, getVersion: () => '1.0.0' },
+    updater: previewUpdater,
+    dialog: {
+      showMessageBox: async (options) => {
+        previewDialogs.push(options);
+        return { response: 1 };
+      },
+    },
+    log: () => {},
+  });
+  preview.start({ channel: 'preview', automatic: false });
+  previewUpdater.emit('update-available', { version: '1.1.0-beta.1' });
+  await tick();
+  assert.strictEqual(previewDialogs.length, 1,
+    'preview channel may offer a newer prerelease version');
 
   console.log('update manager test ok');
 })().catch((error) => {

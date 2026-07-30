@@ -1,43 +1,49 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+_scripts_dir = str(Path(__file__).resolve().parent)
+if _scripts_dir not in sys.path:
+    sys.path.insert(0, _scripts_dir)
+
+from _bridge_common import ensure_root_on_path, force_utf8_stdio, read_json_line, resolve_root, write_json  # noqa: E402
+
+ensure_root_on_path()
 
 from app.fabric.hooks import build_hook_response
 
-
-def _force_utf8_stdio() -> None:
-    for stream in (sys.stdin, sys.stdout, sys.stderr):
-        reconfigure = getattr(stream, "reconfigure", None)
-        if callable(reconfigure):
-            reconfigure(encoding="utf-8", errors="strict")
+_SUPPORTED_PROVIDERS = ("claude", "gemini", "cursor", "windsurf", "opencode", "aider")
 
 
 def main() -> int:
-    _force_utf8_stdio()
+    force_utf8_stdio()
     parser = argparse.ArgumentParser(description="Inject a frozen Magic Pointer object into an Agent hook.")
-    parser.add_argument("--provider", choices=("claude", "gemini"), required=True)
-    parser.add_argument("--root", default=os.environ.get("MAGIC_POINTER_USER_DATA_DIR") or str(ROOT / "data" / "runtime"))
+    parser.add_argument(
+        "--provider",
+        choices=_SUPPORTED_PROVIDERS,
+        required=True,
+    )
+    parser.add_argument(
+        "--root",
+        default=os.environ.get("MAGIC_POINTER_USER_DATA_DIR")
+        or str(resolve_root() / "data" / "runtime"),
+    )
     args = parser.parse_args()
     try:
-        payload = json.loads(sys.stdin.read().lstrip("\ufeff") or "{}")
+        payload = read_json_line()
         result = build_hook_response(
             args.provider,
             dict(payload),
             root=Path(args.root),
             auto_context=os.environ.get("MAGIC_POINTER_AUTO_CONTEXT") == "1",
         )
-        print(json.dumps(result, ensure_ascii=False))
+        write_json(result)
         return 0
     except Exception as exc:
-        print(json.dumps({"systemMessage": f"Magic Pointer hook warning: {type(exc).__name__}"}, ensure_ascii=False))
+        write_json({"systemMessage": f"Magic Pointer hook warning: {type(exc).__name__}"})
         return 0
 
 

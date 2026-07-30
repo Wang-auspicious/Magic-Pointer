@@ -21,6 +21,7 @@ WRITE_ACTIONS = {
 }
 INTERNAL_DASHBOARD_ACTIONS = {
     "shopping_list_add",
+    "shopping_list_add_many",
     "shopping_list_set_checked",
     "shopping_list_undo_add",
 }

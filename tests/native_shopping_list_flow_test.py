@@ -72,3 +72,38 @@ def test_selection_to_verified_action_to_dashboard_state(tmp_path: Path) -> None
     assert replayed["executionResult"]["output"]["created"] is False
     _, dashboard_after_replay = run_script(tmp_path, "shopping_list_bridge.py", {"operation": "list"})
     assert len(dashboard_after_replay["state"]["items"]) == 1
+
+
+def test_continuous_episode_commits_ordered_sources_when_here_is_bound(tmp_path: Path) -> None:
+    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat()
+    payload = {
+        "command": "add these here",
+        "originalCommand": "here",
+        "selectionSessionId": "session-destination",
+        "selectionSnapshot": {
+            "snapshot_id": "snapshot-destination",
+            "expires_at": expires_at,
+            "source_window": {"title": "Magic Pointer Shopping list", "hwnd": 456},
+            "context": None,
+        },
+        "interactionEpisode": {
+            "version": 2,
+            "episodeId": "episode-continuous",
+            "pendingIntent": "add",
+            "slots": {
+                "this": {"objectId": "selection:source-b", "content": "2 oz Parmesan"},
+                "that": {"objectId": "selection:source-a", "content": "1 lb Spaghetti"},
+                "these": [
+                    {"objectId": "selection:source-a", "content": "1 lb Spaghetti", "app": "pdf"},
+                    {"objectId": "selection:source-b", "content": "2 oz Parmesan", "app": "pdf"},
+                ],
+                "here": {"objectId": "selection:destination", "label": "Shopping list"},
+            },
+        },
+    }
+
+    code, selected = run_script(tmp_path, "selection_bridge.py", payload)
+    assert code == 0
+    assert selected["intentKind"] == "shopping_list_add_many"
+    assert selected["autoExecuteProposalId"] == selected["actionProposals"][0]["id"]
+    assert selected["actionProposals"][0]["action_type"] == "shopping_list_add_many"

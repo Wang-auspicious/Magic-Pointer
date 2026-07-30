@@ -1,0 +1,50 @@
+name: SBOM
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  cyclonedx:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci --ignore-scripts
+
+      - name: Generate CycloneDX (npm)
+        run: npx --yes @cyclonedx/cyclonedx-npm --output-file sbom.npm.cdx.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Generate CycloneDX (pip)
+        run: |
+          python -m pip install --disable-pip-version-check cyclonedx-bom
+          cyclonedx-py requirements -i requirements.lock.txt -o sbom.pip.cdx.json
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ github.ref_name }}
+          path: |
+            sbom.npm.cdx.json
+            sbom.pip.cdx.json
+
+      - name: Attach SBOM to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            sbom.npm.cdx.json
+            sbom.pip.cdx.json

@@ -1,7 +1,7 @@
 appId: com.magicpointer.desktop
 productName: Magic Pointer
 executableName: Magic Pointer
-artifactName: Magic-Pointer-${version}-setup.${ext}
+artifactName: Magic-Pointer-${version}-${arch}.${ext}
 
 publish:
   provider: github
@@ -10,6 +10,7 @@ publish:
 
 directories:
   output: release
+  buildResources: packaging
 
 # The Python bridge is launched as a separate process and therefore cannot read
 # files inside app.asar. Keep the application tree unpacked until the bridge is
@@ -24,6 +25,7 @@ files:
   - electron/**
   - app/**
   - scripts/__init__.py
+  - scripts/_bridge_common.py
   - scripts/action_bridge.py
   - scripts/agent_bridge.py
   - scripts/agent_hook_bridge.py
@@ -38,13 +40,17 @@ files:
   - scripts/magic_pointer_mcp.py
   - scripts/office_selection_probe.vbs
   - scripts/pointer_input_state.ps1
+  - scripts/collect-diagnostics.js
   - scripts/selection_bridge.py
   - scripts/selection_snapshot_bridge.py
+  - scripts/sense_voice_bridge.py
+  - scripts/sense_voice_setup.py
   - scripts/shopping_list_bridge.py
   - scripts/smoke_fabric.py
   - scripts/start_windows_dictation.ps1
   - scripts/uia_draft_writer.cs
   - scripts/uia_selection_probe.cs
+  - native/macos/magic-pointer-host
   - assets/app/icon.ico
   - data/model_capabilities.v1.json
   - data/preflight_manifest.v1.json
@@ -61,7 +67,9 @@ extraResources:
 win:
   icon: assets/app/icon.ico
   target:
-    - nsis
+    - target: nsis
+      arch:
+        - x64
 
 nsis:
   oneClick: false
@@ -74,3 +82,32 @@ nsis:
   installerIcon: assets/app/icon.ico
   uninstallerIcon: assets/app/icon.ico
   warningsAsErrors: false
+  # Enable delta updates. electron-updater will fall back to full download if
+  # blockmap comparison fails, so this is safe to keep on by default.
+  differentialPackage: true
+  include: packaging/installer.nsh
+
+mac:
+  category: public.app-category.productivity
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: packaging/entitlements.mac.plist
+  entitlementsInherit: packaging/entitlements.mac.plist
+  extendInfo:
+    NSMicrophoneUsageDescription: Magic Pointer 使用麦克风离线转写你的短命令，音频不会离开本机。
+    NSAppleEventsUsageDescription: Magic Pointer 通过 Apple Events 让选中的应用执行原位改写与翻译。
+    NSAccessibilityUsageDescription: Magic Pointer 通过辅助功能读取当前应用的选区与前台窗口。
+    NSScreenCaptureUsageDescription: Magic Pointer 仅在你指点屏幕对象时截图作为视觉兜底。
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+    - target: zip
+      arch:
+        - x64
+        - arm64
+
+dmg:
+  writeUpdateInfo: true
+  sign: false

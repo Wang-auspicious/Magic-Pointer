@@ -15,6 +15,11 @@ const proposal = {
 };
 
 assert.strictEqual(canAutoExecuteInternalProposal(parsed, proposal), true);
+assert.strictEqual(canAutoExecuteInternalProposal({
+  intentKind: 'shopping_list_add_many', autoExecuteProposalId: 'proposal-many',
+}, {
+  ...proposal, id: 'proposal-many', action_type: 'shopping_list_add_many',
+}), true);
 const mutations = [
   [{ ...parsed, intentKind: 'model_action' }, proposal],
   [{ ...parsed, autoExecuteProposalId: 'other' }, proposal],

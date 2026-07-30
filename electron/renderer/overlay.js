@@ -154,6 +154,15 @@ function drawPointer(p) {
   ctx.restore();
 }
 
+function drawHitTestPixel(p) {
+  if (!p || captureMode) return;
+  ctx.save();
+  ctx.globalAlpha = 0.012;
+  ctx.fillStyle = '#2f7bff';
+  ctx.fillRect(Math.round(p.x), Math.round(p.y), 1, 1);
+  ctx.restore();
+}
+
 function drawObserverAura(p) {
   if (!p) return;
   const now = performance.now();
@@ -185,7 +194,13 @@ function render() {
   clear();
   if (gestureMode) {
     if (Date.now() < gestureAcceptAt) return;
-    if (points.length) drawSmoothPath(points, trailAlpha);
+    if (points.length) {
+      drawSmoothPath(points, trailAlpha);
+    } else {
+      // Keep the transparent window hit-testable without painting a second
+      // cursor over the preloaded CSS cursor.
+      drawHitTestPixel(lastPointer);
+    }
     return;
   }
   if (!captureMode && points.length) drawSmoothPath(points, trailAlpha);

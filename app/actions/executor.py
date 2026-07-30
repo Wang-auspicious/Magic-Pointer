@@ -19,18 +19,30 @@ from app.dashboard.calendar import CalendarConflict, CalendarError, CalendarEven
 
 JsonDict = dict[str, Any]
 
-SUPPORTED_ACTION_TYPES = {
+_ACTION_DISPATCH = {}
+
+
+def _register(action_type: str):
+    """Decorator: register a private handler method for an action type."""
+    def decorate(fn):
+        _ACTION_DISPATCH[action_type] = fn
+        return fn
+    return decorate
+
+
+SUPPORTED_ACTION_TYPES = frozenset({
     "copy_text_to_clipboard",
     "office_replace_selection",
     "office_undo_last_action",
     "shopping_list_add",
+    "shopping_list_add_many",
     "shopping_list_set_checked",
     "shopping_list_undo_add",
     "calendar_event_create",
     "calendar_event_undo_create",
     "paste_text_to_foreground",
     "fabric_recipe_execute",
-}
+})
 
 
 def now_iso() -> str:
@@ -134,6 +146,8 @@ class SafeActionExecutor:
             return self._office_undo_last_action(proposal, started, confirmed=confirmed, metadata=metadata)
         if proposal.action_type == "shopping_list_add":
             return self._shopping_list_add(proposal, started, confirmed=confirmed, metadata=metadata)
+        if proposal.action_type == "shopping_list_add_many":
+            return self._shopping_list_add_many(proposal, started, confirmed=confirmed, metadata=metadata)
         if proposal.action_type == "shopping_list_set_checked":
             return self._shopping_list_set_checked(proposal, started, confirmed=confirmed, metadata=metadata)
         if proposal.action_type == "shopping_list_undo_add":
@@ -386,6 +400,39 @@ class SafeActionExecutor:
             )
         except ShoppingListError as exc:
             return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error=str(exc), metadata=metadata)
+
+    def _shopping_list_add_many(self, proposal: ActionProposal, started: str, *, confirmed: bool, metadata: JsonDict) -> ExecutionResult:
+        raw_items = proposal.parameters.get("items")
+        if not isinstance(raw_items, list) or not raw_items:
+            return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="batch items are required", metadata=metadata)
+        stored_items: list[JsonDict] = []
+        try:
+            for raw in raw_items[:24]:
+                if not isinstance(raw, dict):
+                    raise ShoppingListError("invalid batch item")
+                stored_items.append(self.shopping_list_store.add_item(
+                    str(raw.get("item_text") or ""),
+                    idempotency_key=str(raw.get("idempotency_key") or ""),
+                    source=raw.get("source") or {},
+                ))
+        except ShoppingListError as exc:
+            return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error=str(exc), metadata=metadata)
+        verified = all(item.get("verified") is True for item in stored_items)
+        return self._result(
+            proposal,
+            started,
+            ExecutionStatus.SUCCEEDED if verified else ExecutionStatus.FAILED,
+            confirmed=confirmed,
+            output={
+                "verified": verified,
+                "items": [dict(item.get("item") or {}) for item in stored_items],
+                "created_count": sum(1 for item in stored_items if item.get("created") is True),
+                "list_id": "default-shopping-list",
+                "receipts": [item.get("receipt_id") for item in stored_items],
+            },
+            error=None if verified else "shopping list batch verification failed",
+            metadata=metadata,
+        )
 
     def _shopping_list_set_checked(self, proposal: ActionProposal, started: str, *, confirmed: bool, metadata: JsonDict) -> ExecutionResult:
         params = dict(proposal.parameters)

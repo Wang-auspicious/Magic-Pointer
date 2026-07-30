@@ -66,8 +66,8 @@ assert(/shortcutName:\s*Magic Pointer/.test(builder),
   'installed shortcuts must use the product name');
 assert(/uninstallDisplayName:\s*Magic Pointer/.test(builder),
   'Windows Apps & Features must show the product name');
-assert(!builder.includes('include: build/installer.nsh'),
-  'electron-builder must own shortcut lifecycle without duplicate custom NSIS shortcuts');
+assert(/include:\s*packaging\/installer\.nsh/.test(builder),
+  'custom NSIS uninstall cleanup must be packaged from packaging/');
 assert(packageJson.dependencies?.['electron-updater'],
   'the packaged NSIS app must ship its updater runtime as a production dependency');
 assert(/publish:\s*[\s\S]*?provider:\s*github[\s\S]*?owner:\s*Wang-auspicious[\s\S]*?repo:\s*Magic-Pointer/.test(builder),

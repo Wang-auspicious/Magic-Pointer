@@ -2,10 +2,11 @@ const SHOPPING_LIST_TARGET_URI = 'magic-pointer://dashboard/shopping-list/defaul
 
 function canAutoExecuteInternalProposal(parsed, proposal) {
   const shoppingListAction = Boolean(
-    parsed?.intentKind === 'shopping_list_add'
+    ['shopping_list_add', 'shopping_list_add_many'].includes(parsed?.intentKind)
     && parsed?.autoExecuteProposalId
     && parsed.autoExecuteProposalId === proposal?.id
-    && proposal?.action_type === 'shopping_list_add'
+    && ['shopping_list_add', 'shopping_list_add_many'].includes(proposal?.action_type)
+    && parsed?.intentKind === proposal?.action_type
     && proposal?.confirmation_required === false
     && proposal?.target?.object_id === SHOPPING_LIST_TARGET_URI
     && proposal?.metadata?.trusted_local_intent === true

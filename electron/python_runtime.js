@@ -2,11 +2,14 @@
 
 const path = require('path');
 
-function bundledPythonPath(resourcesPath) {
+function bundledPythonPath(resourcesPath, platform = 'win32') {
   if (typeof resourcesPath !== 'string' || !resourcesPath.trim()) {
     throw new TypeError('resourcesPath must be a non-empty string');
   }
-  return path.join(resourcesPath, 'python-runtime', 'python.exe');
+  const executable = platform === 'darwin'
+    ? path.join('bin', 'python3')
+    : 'python.exe';
+  return path.join(resourcesPath, 'python-runtime', executable);
 }
 
 function resolvePythonRuntime({
@@ -15,9 +18,9 @@ function resolvePythonRuntime({
   resourcesPath = process.resourcesPath,
   env = process.env,
 } = {}) {
-  if (isPackaged === true && platform === 'win32') {
+  if (isPackaged === true && (platform === 'win32' || platform === 'darwin')) {
     return {
-      executable: bundledPythonPath(resourcesPath),
+      executable: bundledPythonPath(resourcesPath, platform),
       source: 'bundled',
       required: true,
     };

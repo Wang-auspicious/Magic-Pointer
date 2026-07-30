@@ -15,6 +15,7 @@ _ENGLISH_PATTERNS = (
     re.compile(r"^add\s+(?:this|it)$", re.IGNORECASE),
     re.compile(r"^add\s+(?:this|it)\s+to\s+(?:(?:my|the)\s+)?shopping\s+list$", re.IGNORECASE),
     re.compile(r"^add\s+to\s+(?:(?:my|the)\s+)?shopping\s+list$", re.IGNORECASE),
+    re.compile(r"^add\s+(?:these|them)\s+here$", re.IGNORECASE),
 )
 _CHINESE_COMMANDS = {
     "添加这个", "添加它", "加入清单", "加入购物清单", "加到购物清单",
@@ -98,6 +99,63 @@ def make_shopping_list_add_proposal(
             "trusted_local_intent": True,
             "auto_execute": True,
             "intent_kind": "shopping_list_add",
+        },
+    )
+
+
+def make_shopping_list_add_many_proposal(
+    objects: list[dict[str, Any]],
+    *,
+    command: str,
+    selection_session_id: str | None,
+) -> ActionProposal | None:
+    if not wants_shopping_list_add(command):
+        return None
+    items: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for raw in list(objects or [])[:24]:
+        if not isinstance(raw, dict):
+            continue
+        text = normalize_item_text(str(raw.get("content") or raw.get("label") or ""))
+        snapshot_id = str(raw.get("snapshotId") or raw.get("objectId") or "").strip()
+        if snapshot_id.startswith("selection:"):
+            snapshot_id = snapshot_id[len("selection:"):]
+        if not text or not snapshot_id:
+            continue
+        key = _idempotency_key(snapshot_id, text)
+        if key in seen:
+            continue
+        seen.add(key)
+        source = dict(raw.get("source") or {})
+        items.append({
+            "item_text": text,
+            "idempotency_key": key,
+            "source": {
+                "selection_snapshot_id": snapshot_id,
+                "app": str(raw.get("app") or source.get("app") or ""),
+                "window_title": str(raw.get("windowTitle") or source.get("title") or ""),
+                "content_sha256": hashlib.sha256(text.encode("utf-8", errors="surrogatepass")).hexdigest(),
+            },
+        })
+    if not items:
+        return None
+    return ActionProposal(
+        id=f"shopping-add-many-{uuid.uuid4().hex[:12]}",
+        action_type="shopping_list_add_many",
+        target=ActionTarget(
+            object_id=SHOPPING_LIST_TARGET_URI,
+            description="Magic Pointer 购物清单",
+            metadata={"provider": "magic_pointer_dashboard", "destination": "shopping_list"},
+        ),
+        parameters={"items": items, "selection_session_id": selection_session_id},
+        safety_level=SafetyLevel.LOW,
+        confirmation_required=False,
+        rationale="Add the explicitly grounded ordered source set to the local shopping list.",
+        created_at=_now_iso(),
+        metadata={
+            "trusted_local_intent": True,
+            "auto_execute": True,
+            "intent_kind": "shopping_list_add_many",
         },
     )
 

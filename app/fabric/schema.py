@@ -30,6 +30,7 @@ class RecipeDefinition:
     min_objects: int = 1
     max_objects: int = 1
     platforms: tuple[str, ...] = ("windows", "macos")
+    version: int = 1
 
     def to_public_dict(self) -> JsonDict:
         return {
@@ -44,6 +45,7 @@ class RecipeDefinition:
             "minObjects": self.min_objects,
             "maxObjects": self.max_objects,
             "platforms": list(self.platforms),
+            "version": self.version,
         }
 
 

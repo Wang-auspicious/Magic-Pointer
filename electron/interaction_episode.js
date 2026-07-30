@@ -239,6 +239,8 @@ class InteractionEpisodeStore {
       objects: new Map(),
       labels: new Map(),
       slots: { this: null, that: null, these: [], here: null },
+      pendingIntent: null,
+      utterances: [],
       events: [],
     };
     return this.current;
@@ -304,6 +306,42 @@ class InteractionEpisodeStore {
     return this.snapshot(episode);
   }
 
+  appendToThese(input, now = Date.now()) {
+    const episode = this.ensureActive(now);
+    const object = this.remember(episode, input);
+    if (!object) return null;
+    const ordered = episode.slots.these.slice();
+    if (!ordered.length && episode.slots.this) ordered.push(episode.slots.this);
+    if (!ordered.some((item) => item.objectId === object.objectId)) ordered.push(object);
+    const previous = episode.slots.this;
+    if (previous && previous.objectId !== object.objectId) episode.slots.that = previous;
+    episode.slots.this = object;
+    episode.slots.these = ordered;
+    this.recordEvent(episode, 'bind', { alias: 'these', objectIds: ordered.map((item) => item.objectId) }, now);
+    return this.snapshot(episode);
+  }
+
+  bindCommandTarget(input, command, now = Date.now()) {
+    const episode = this.ensureActive(now);
+    const mode = inferReferenceMode(command);
+    const inferredIntent = inferPendingIntent(command);
+    if (inferredIntent) episode.pendingIntent = inferredIntent;
+    const utterance = String(command || '').trim();
+    if (utterance) episode.utterances.push(utterance.slice(0, 500));
+    if (episode.utterances.length > 20) episode.utterances.splice(0, episode.utterances.length - 20);
+
+    let result;
+    if (mode === 'here') result = this.bindHere(input, now);
+    else if (mode === 'append' || episode.pendingIntent === 'add') result = this.appendToThese(input, now);
+    else result = this.bindPointedObject(input, now);
+    this.recordEvent(episode, 'utterance', {
+      mode,
+      intent: episode.pendingIntent,
+      text: utterance.slice(0, 500),
+    }, now);
+    return result ? this.snapshot(episode) : null;
+  }
+
   labelCurrent(label, now = Date.now()) {
     const episode = this.active(now);
     const normalized = String(label || '').trim().toUpperCase();
@@ -351,6 +389,8 @@ class InteractionEpisodeStore {
       updatedAt: episode.updatedAt,
       expiresAt: episode.expiresAt,
       slots: clone(episode.slots),
+      pendingIntent: episode.pendingIntent,
+      utterances: clone(episode.utterances),
       labels: Object.fromEntries(episode.labels),
       spatialRelations: spatialRelations(episode.slots.these || []),
     };
@@ -360,9 +400,11 @@ class InteractionEpisodeStore {
     const episode = this.active(now);
     if (!episode) return null;
     return {
-      version: 1,
+      version: 2,
       episodeId: episode.id,
       expiresAt: episode.expiresAt,
+      pendingIntent: episode.pendingIntent,
+      utterances: clone(episode.utterances),
       slots: clone(episode.slots),
       objects: clone(Array.from(episode.objects.values())),
       labels: Object.fromEntries(episode.labels),
@@ -375,10 +417,16 @@ class InteractionEpisodeStore {
 function inferReferenceMode(command) {
   const value = String(command || '').trim().toLowerCase();
   if (/\b(here|there)\b|这里|那里|这儿|那儿|此处|放到|写到|插入到/.test(value)) return 'here';
-  if (/\b(these|those|them|both)\b|这些|那些|它们|两个|一起|合并这些|比较这些|对比这些/.test(value)) return 'these';
-  if (/\b(here|there)\b|这里|那里|这儿|那儿|此处|放到|写到|插入到/.test(value)) return 'here';
-  if (/\b(these|those|them|both)\b|这些|那些|它们|两者|一起|合并/.test(value)) return 'these';
+  if (/\b(and|also)\s+(?:this|that|it)\b|还有这个|还有它|以及这个|再加这个|并且这个/.test(value)) return 'append';
+  if (/\b(these|those|them|both)\b|这些|那些|它们|两个|两者|一起|合并|比较|对比/.test(value)) return 'these';
   return 'this';
+}
+
+function inferPendingIntent(command) {
+  const value = String(command || '').trim().toLowerCase();
+  if (/\badd\b|添加|加入|加到|放进/.test(value)) return 'add';
+  if (/\b(?:move|put|place)\b|移动|挪到|放到/.test(value)) return 'move';
+  return null;
 }
 
 function inferReferenceLabel(command) {
@@ -394,4 +442,4 @@ function inferReferenceLabel(command) {
   return null;
 }
 
-module.exports = { InteractionEpisodeStore, inferReferenceLabel, inferReferenceMode, normalizeBrowserContext, normalizeObject, normalizeTerminalEvidence, spatialRelations };
+module.exports = { InteractionEpisodeStore, inferPendingIntent, inferReferenceLabel, inferReferenceMode, normalizeBrowserContext, normalizeObject, normalizeTerminalEvidence, spatialRelations };
