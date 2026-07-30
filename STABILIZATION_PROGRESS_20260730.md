@@ -93,6 +93,12 @@
 - N19 配置组合回归：`hotkey + push_to_talk` 现在保持指针流
   `polling=true / wiggle=false / mouseButton=false`；同一环境切回 `auto`
   后为 `polling=false`。语音触发监听与晃动唤醒不再错误地绑在同一个开关上。
+- N19 新增真实桌面验收 `scripts/verify_n19_voice_triggers_desktop.py`：
+  不伪造渲染器事件，而是物理执行“唤醒、拖线、松手、按住左键/悬停语音球”。
+  同轮结果为按住说话 438 ms、悬停说话 922 ms 发出录音请求，均得到本地语音
+  final、进入提交处理、源窗口 HWND 全程不变；`npm run verify:n19` 通过。
+  其中音频输入为确定性的合成 WAV，因此证明的是鼠标触发到产品语音运行时的闭环，
+  真实麦克风声学输入仍保留为独立硬件验收。
 
 ## 对外部技术审查的核验
 
