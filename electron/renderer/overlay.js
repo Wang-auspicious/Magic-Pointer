@@ -21,6 +21,7 @@ let gestureToken = null;
 let gestureAcceptAt = 0;
 let gestureLineStyle = 'demo6_band';
 let gestureLineWidth = 22;
+let gestureInteractionMode = 'exclusive_overlay';
 let hintTimer = null;
 let gestureGraceTimer = null;
 let currentWorkflow = 'generic';
@@ -262,6 +263,11 @@ function submitGesture() {
 }
 
 function resetOverlay() {
+  if (activePointerId !== null) {
+    try {
+      if (canvas.hasPointerCapture(activePointerId)) canvas.releasePointerCapture(activePointerId);
+    } catch (_error) { /* the window may already be hidden */ }
+  }
   drawing = false;
   activePointerId = null;
   points = [];
@@ -306,6 +312,7 @@ window.addEventListener('contextmenu', (e) => { e.preventDefault(); window.magic
 window.addEventListener('pointerdown', (e) => {
   if (e.button === 2) { window.magicPointer?.hide(); return; }
   if (e.button !== 0) return;
+  if (gestureMode && gestureInteractionMode === 'pass_through') return;
   if (observerMode || captureMode || submitting) return;
   if (drawing) return;
   if (fadeRaf) cancelAnimationFrame(fadeRaf);
@@ -399,6 +406,9 @@ window.magicPointer?.onShow((payload) => {
   gestureAcceptAt = Number(payload?.gestureAcceptAt) || 0;
   gestureLineStyle = payload?.gestureLineStyle === 'thin' ? 'thin' : 'demo6_band';
   gestureLineWidth = Math.max(3, Math.min(40, Number(payload?.gestureLineWidth) || 22));
+  gestureInteractionMode = payload?.gestureInteractionMode === 'pass_through'
+    ? 'pass_through'
+    : 'exclusive_overlay';
   currentWorkflow = String(payload?.workflow || 'generic');
   document.body.dataset.mode = gestureMode ? 'gesture' : observerMode ? 'observer' : 'capture';
   if (hintTimer) clearTimeout(hintTimer);
@@ -410,12 +420,45 @@ window.magicPointer?.onShow((payload) => {
     hint.classList.add('dim');
   }
   if (!gestureMode) startPulseLoop();
+  if (gestureMode) window.magicPointer?.gestureReady(gestureToken);
 });
 window.magicPointer?.onCursor((payload) => {
   if (!payload) return;
   if (gestureMode) return;
   lastPointer = { x: Number(payload.x) || 0, y: Number(payload.y) || 0, t: performance.now() };
   scheduleRender();
+});
+window.magicPointer?.onGestureInput((payload) => {
+  if (
+    !gestureMode
+    || gestureInteractionMode !== 'pass_through'
+    || String(payload?.token || '') !== String(gestureToken || '')
+  ) return;
+  const phase = String(payload?.phase || '');
+  if (phase === 'start') {
+    drawing = true;
+    points = [];
+    trailAlpha = 1;
+    submitting = false;
+    clear();
+    return;
+  }
+  if (phase === 'point' && payload?.point) {
+    const point = {
+      x: Number(payload.point.x) || 0,
+      y: Number(payload.point.y) || 0,
+      t: Number(payload.point.t) || performance.now(),
+    };
+    const previous = points[points.length - 1];
+    if (!previous || dist(point, previous) > 0.5) points.push(point);
+    lastPointer = point;
+    scheduleRender();
+    return;
+  }
+  if (phase === 'end') {
+    drawing = false;
+    render();
+  }
 });
 window.magicPointer?.onHide(() => {
   if (hintTimer) clearTimeout(hintTimer);
@@ -426,6 +469,7 @@ window.magicPointer?.onHide(() => {
   gestureToken = null;
   gestureAcceptAt = 0;
   gestureLineStyle = 'demo6_band';
+  gestureInteractionMode = 'exclusive_overlay';
 });
 
 resize();

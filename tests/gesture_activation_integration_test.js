@@ -57,6 +57,11 @@ assert.match(gestureArm, /stageReadiness\.whenReady\([\s\S]*?overlayReadiness\.w
   'drawing may become ready only after both resident renderers acknowledge their listeners');
 assert.match(gestureArm, /gestureAcceptAt:\s*arm\.readyAt/,
   'the renderer must receive the visual grace deadline');
+assert.match(
+  gestureArm,
+  /interactionMode\s*===\s*'pass_through'[\s\S]*?setIgnoreMouseEvents\(true,\s*\{\s*forward:\s*true\s*\}\)/,
+  'default drawing must leave the underlying desktop interactive',
+);
 assert.doesNotMatch(gestureArm, /setTimeout\(reveal,\s*armDelayMs\)/,
   'input capture must begin immediately so an early held click cannot disappear');
 assert.match(requestActivation, /reason\s*===\s*'wiggle'[\s\S]*?armSelectionGesture\(/,
@@ -87,8 +92,14 @@ const overlayDone = main.slice(
   main.indexOf("ipcMain.on('overlay:done'"),
   main.indexOf("ipcMain.on('stage:submit-selection-command'"),
 );
-assert.match(overlayDone, /selection_gesture[\s\S]*?beginSelectionSession/,
-  'only completed selection gestures may start grounding');
+assert.match(overlayDone, /selection_gesture[\s\S]*?completeSelectionGesture/,
+  'the renderer path must enter the shared completed-gesture gate');
+const completeGesture = main.slice(
+  main.indexOf('function completeSelectionGesture('),
+  main.indexOf('function processPassThroughGestureSample('),
+);
+assert.match(completeGesture, /summarizeGesture[\s\S]*?beginSelectionSession/,
+  'only a validated completed gesture may start grounding');
 
 assert.match(overlay, /gestureMode\s*=\s*payload\?\.gestureMode\s*===\s*true/);
 assert.match(overlay, /if\s*\(gestureMode\)[\s\S]*?drawSmoothPath/,
@@ -110,7 +121,19 @@ assert.match(overlay, /activePointerId/,
 assert.match(overlay, /gestureAcceptAt\s*-\s*Date\.now\(\)/,
   'an early held stroke must be retained across the visual grace period');
 assert.match(preload, /overlay:gesture-start/);
+assert.match(preload, /overlay:gesture-ready/);
+assert.match(preload, /overlay:gesture-input/);
 assert.match(main, /ipcMain\.on\('overlay:gesture-start'/);
+const exclusiveReady = main.slice(
+  main.indexOf("ipcMain.on('overlay:gesture-ready'"),
+  main.indexOf("ipcMain.on('stage:renderer-ready'"),
+);
+assert.match(exclusiveReady, /payload\?\.token[\s\S]*?setIgnoreMouseEvents\(false\)/,
+  'exclusive drawing may capture input only after the reused renderer has reset');
+assert.match(overlay, /function resetOverlay\(\)[\s\S]*?releasePointerCapture/,
+  'every dismissal must release stale DOM pointer ownership before rearming');
+assert.match(overlay, /resetOverlay\(\)[\s\S]*?gestureReady\(gestureToken\)/,
+  'the renderer readiness acknowledgement must happen after reset');
 assert.match(styles, /body\[data-mode='gesture'\][\s\S]*?cursor:\s*url\([^)]*armed-cursor\.svg[^)]*\)[\s\S]*?!important/,
   'armed drawing uses a preloaded custom cursor without painting a fake pointer');
 assert.match(overlayHtml, /rel="preload"[^>]*href="assets\/armed-cursor\.svg"[^>]*as="image"/,

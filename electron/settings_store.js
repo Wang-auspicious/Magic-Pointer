@@ -54,6 +54,7 @@ function defaultSettings() {
       cooldown_ms: 900,
       gesture_arm_delay_ms: 180,
       gesture_timeout_ms: 5000,
+      gesture_interaction_mode: 'pass_through',
     },
     interaction: {
       default_input_mode: 'voice',
@@ -238,6 +239,12 @@ function validate(settings) {
   }
   if (activation.wake_mode === 'mouse_button' && activation.mouse_side_button === 'none') {
     throw new Error('activation.mouse_side_button must be bound for mouse_button wake mode');
+  }
+  activation.gesture_interaction_mode = String(
+    activation.gesture_interaction_mode || defaults.activation.gesture_interaction_mode,
+  ).trim().toLowerCase();
+  if (!['pass_through', 'exclusive_overlay'].includes(activation.gesture_interaction_mode)) {
+    throw new Error('activation.gesture_interaction_mode is unsupported');
   }
   activation.wiggle_enabled = ['wiggle', 'wiggle_hotkey'].includes(activation.wake_mode);
   activation.fallback_hotkey_enabled = ['wiggle_hotkey', 'hotkey'].includes(activation.wake_mode);

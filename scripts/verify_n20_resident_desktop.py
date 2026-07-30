@@ -160,6 +160,32 @@ def press_hotkey() -> None:
         key_press(key, True)
 
 
+def set_cursor(point: tuple[int, int]) -> None:
+    ctypes.windll.user32.SetCursorPos(int(point[0]), int(point[1]))
+
+
+def primary_button(down: bool) -> None:
+    ctypes.windll.user32.mouse_event(0x0002 if down else 0x0004, 0, 0, 0, 0)
+
+
+def draw_selection(end: tuple[int, int]) -> None:
+    """Drive the same freehand primary-button gesture used by the product."""
+    start = (end[0] - 260, end[1] - 2)
+    set_cursor(start)
+    time.sleep(.08)
+    primary_button(True)
+    try:
+        for index in range(1, 17):
+            ratio = index / 16
+            set_cursor((
+                round(start[0] + (end[0] - start[0]) * ratio),
+                round(start[1] + (end[1] - start[1]) * ratio),
+            ))
+            time.sleep(.018)
+    finally:
+        primary_button(False)
+
+
 def press_escape() -> None:
     key_press(0x1B)
     time.sleep(.05)
@@ -202,6 +228,12 @@ def default_settings() -> dict:
 
 def write_isolated_settings(runtime: Path) -> None:
     settings = default_settings()
+    settings["activation"].update({
+        "wake_mode": "hotkey",
+        "wiggle_enabled": False,
+        "fallback_hotkey_enabled": True,
+        "fallback_hotkey": HOTKEY,
+    })
     settings["interaction"].update({
         "default_input_mode": "voice", "voice_start_strategy": "auto",
         "voice_auto_submit": False, "voice_resident_enabled": True,
@@ -242,6 +274,20 @@ def wait_log(path: Path, marker: str, after: int = 0, timeout: float = 25) -> st
 
 def wait_stage_text(log_path: Path, prior_count: int, timeout: float = 45) -> None:
     wait_log(log_path, "stage renderer state=capsule-text", prior_count, timeout)
+
+
+def start_voice_selection(log_path: Path, point: tuple[int, int]) -> None:
+    """Wake, draw and release before the auto voice strategy is expected to run."""
+    ready_count = read_text(log_path).count("selection gesture ready")
+    completed_count = read_text(log_path).count("selection gesture completed")
+    voice_count = read_text(log_path).count("stage renderer state=capsule-voice")
+    capture_count = read_text(log_path).count("selection session capture done")
+    press_hotkey()
+    wait_log(log_path, "selection gesture ready", ready_count, 15)
+    draw_selection(point)
+    wait_log(log_path, "selection gesture completed", completed_count, 15)
+    wait_log(log_path, "stage renderer state=capsule-voice", voice_count, 20)
+    wait_log(log_path, "selection session capture done", capture_count, 45)
 
 
 def take_screenshot(window: dict, target: Path) -> None:
@@ -346,7 +392,7 @@ def main() -> int:
             ctypes.windll.user32.SetCursorPos(*point)
             time.sleep(.35)
             text_count = read_text(log_path).count("stage renderer state=capsule-text")
-            press_hotkey()
+            start_voice_selection(log_path, point)
             wait_stage_text(log_path, text_count, 55)
             rows = audit_rows(audit_path)
             finals = rows_for(rows, "voice.final")
@@ -385,7 +431,7 @@ def main() -> int:
         time.sleep(.35)
         text_count = read_text(log_path).count("stage renderer state=capsule-text")
         before_reload_final = len(rows_for(audit_rows(audit_path), "voice.final"))
-        press_hotkey()
+        start_voice_selection(log_path, point)
         wait_stage_text(log_path, text_count, 55)
         wait_until("reload_final", lambda: len(rows_for(audit_rows(audit_path), "voice.final")) > before_reload_final, 8)
         press_escape()

@@ -84,6 +84,39 @@ function chooseTargetInlineAnchor(target, surface, viewport, { edge = 12, gap = 
   };
 }
 
-const StageAnchor = { choosePointerAnchor, chooseTargetInlineAnchor };
+function chooseStableCapsuleAnchor({
+  previous = null,
+  sessionToken = null,
+  mode = 'target',
+  pointer = null,
+  target = null,
+  surface = null,
+  viewport = null,
+  options = {},
+} = {}) {
+  const token = sessionToken == null ? null : String(sessionToken);
+  if (
+    mode === 'pointer'
+    && previous
+    && previous.mode === 'pointer'
+    && previous.sessionToken === token
+  ) {
+    return previous;
+  }
+  const placement = mode === 'target' && target
+    ? chooseTargetInlineAnchor(target, surface, viewport, options)
+    : choosePointerAnchor(pointer, surface, viewport, options);
+  return Object.freeze({
+    ...placement,
+    mode: mode === 'pointer' ? 'pointer' : 'target',
+    sessionToken: token,
+  });
+}
+
+const StageAnchor = {
+  choosePointerAnchor,
+  chooseTargetInlineAnchor,
+  chooseStableCapsuleAnchor,
+};
 if (typeof module !== 'undefined' && module.exports) module.exports = StageAnchor;
 if (typeof globalThis !== 'undefined') globalThis.StageAnchor = StageAnchor;

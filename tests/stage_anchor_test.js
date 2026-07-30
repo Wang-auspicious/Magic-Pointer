@@ -1,5 +1,9 @@
 const assert = require('assert');
-const { choosePointerAnchor, chooseTargetInlineAnchor } = require('../electron/stage_anchor');
+const {
+  choosePointerAnchor,
+  chooseTargetInlineAnchor,
+  chooseStableCapsuleAnchor,
+} = require('../electron/stage_anchor');
 
 assert.deepStrictEqual(
   choosePointerAnchor({ x: 500, y: 400 }, { width: 200, height: 44 }, { width: 1200, height: 800 }),
@@ -35,6 +39,39 @@ assert.deepStrictEqual(
   ),
   { x: 758, y: 207, quadrant: 'inline-left' },
   'the capsule must flip inline before it falls off the right edge',
+);
+
+const firstPointerPlacement = chooseStableCapsuleAnchor({
+  previous: null,
+  sessionToken: 'session-a',
+  mode: 'pointer',
+  pointer: { x: 500, y: 400 },
+  surface: { width: 40, height: 40 },
+  viewport: { width: 1200, height: 800 },
+});
+assert.deepStrictEqual(
+  chooseStableCapsuleAnchor({
+    previous: firstPointerPlacement,
+    sessionToken: 'session-a',
+    mode: 'pointer',
+    pointer: { x: 500, y: 400 },
+    surface: { width: 144, height: 40 },
+    viewport: { width: 1200, height: 800 },
+  }),
+  firstPointerPlacement,
+  'background grounding or capsule expansion must not move a pointer-anchored ball',
+);
+assert.notDeepStrictEqual(
+  chooseStableCapsuleAnchor({
+    previous: firstPointerPlacement,
+    sessionToken: 'session-b',
+    mode: 'pointer',
+    pointer: { x: 900, y: 600 },
+    surface: { width: 40, height: 40 },
+    viewport: { width: 1200, height: 800 },
+  }),
+  firstPointerPlacement,
+  'a new selection session receives its own anchor',
 );
 
 console.log('stage anchor test ok');

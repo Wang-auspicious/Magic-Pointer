@@ -482,6 +482,7 @@ function applySettings(value) {
   setValue('wiggle-sensitivity', Math.round(Number(activation.sensitivity || .55) * 100));
   setValue('gesture-arm-delay', activation.gesture_arm_delay_ms ?? 180);
   setValue('gesture-timeout', activation.gesture_timeout_ms ?? 5000);
+  setValue('gesture-interaction-mode', activation.gesture_interaction_mode || 'pass_through');
   setValue('gesture-line-style', appearance.gesture_line_style || 'demo6_band');
   setValue('gesture-line-width', appearance.gesture_line_width_dip ?? 22);
   setValue('default-input-mode', interaction.default_input_mode || 'voice');
@@ -606,6 +607,7 @@ function collectSettings() {
   next.privacy.retain_audit_days = Number(document.getElementById('retain-audit-days').value);
   next.privacy.sensitive_apps = valuesFromLines(document.getElementById('sensitive-apps').value);
   next.privacy.anonymous_usage = false;
+  next.activation.gesture_interaction_mode = document.getElementById('gesture-interaction-mode').value || 'pass_through';
   next.permissions.default_read = document.getElementById('permission-read').value;
   next.permissions.default_write = document.getElementById('permission-write').value;
   next.permissions.default_send = document.getElementById('permission-send').value;

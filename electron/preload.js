@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('magicPointer', {
   ready: () => ipcRenderer.send('overlay:renderer-ready'),
+  gestureReady: (token) => ipcRenderer.send('overlay:gesture-ready', { token }),
   hide: () => ipcRenderer.send('overlay:hide'),
   done: (payload) => ipcRenderer.send('overlay:done', payload),
   gestureStarted: (token) => ipcRenderer.send('overlay:gesture-start', { token }),
@@ -10,6 +11,7 @@ contextBridge.exposeInMainWorld('magicPointer', {
   onShow: (callback) => ipcRenderer.on('overlay:show', (_event, payload) => callback(payload)),
   onHide: (callback) => ipcRenderer.on('overlay:hide', () => callback()),
   onCursor: (callback) => ipcRenderer.on('overlay:cursor', (_event, payload) => callback(payload)),
+  onGestureInput: (callback) => ipcRenderer.on('overlay:gesture-input', (_event, payload) => callback(payload)),
   onResult: (callback) => ipcRenderer.on('overlay:result', (_event, payload) => callback(payload)),
   onDictationResult: (callback) => ipcRenderer.on('dictation:result', (_event, payload) => callback(payload)),
 });

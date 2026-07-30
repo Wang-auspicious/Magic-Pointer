@@ -34,6 +34,7 @@ const { RendererReadiness } = require('./renderer_readiness');
 const { gestureRuntimeContract, gestureRuntimeSettingsChanged } = require('./gesture_runtime_settings');
 const { createUpdateManager } = require('./update_manager');
 const { pointerPollingPolicy } = require('./pointer_polling_policy');
+const { PassThroughGestureCapture } = require('./pass_through_gesture');
 
 let overlayWindow = null;
 let dashboardWindow = null;
@@ -50,6 +51,7 @@ let selectionGestureArmTimer = null;
 let selectionGestureExpiryTimer = null;
 let wiggleDetector = null;
 const mouseActivationDetector = new MouseActivationDetector();
+const passThroughGestureCapture = new PassThroughGestureCapture();
 let fabricSettings = null;
 let fabricSettingsStore = null;
 let credentialStore = null;
@@ -1337,6 +1339,7 @@ function hideOverlay() {
 
 function cancelSelectionGesture(reason = 'cancelled', { hideSurface = true } = {}) {
   const active = selectionGestureArm;
+  passThroughGestureCapture.cancel();
   if (selectionGestureArmTimer) clearTimeout(selectionGestureArmTimer);
   if (selectionGestureExpiryTimer) clearTimeout(selectionGestureExpiryTimer);
   selectionGestureArmTimer = null;
@@ -1375,6 +1378,14 @@ function armSelectionGesture(reason = 'wiggle') {
       foregroundProcessId: Number(pointerInputState.foregroundProcessId || 0),
     },
   };
+  if (runtime.interactionMode === 'pass_through') {
+    passThroughGestureCapture.arm({
+      token,
+      displayBounds: display.bounds,
+      initialButtons: Number(pointerInputState.buttons || 0),
+      source: selectionGestureArm.source,
+    });
+  }
   // Warm the hidden capsule renderer during the arm grace period. By the time
   // the user releases a stroke it can paint immediately without startup jank.
   const residentStage = createStageWindow();
@@ -1394,8 +1405,15 @@ function armSelectionGesture(reason = 'wiggle') {
       if (!selectionGestureArm || selectionGestureArm.token !== token) return;
       win.setBounds(arm.displayBounds);
       if (typeof win.setFocusable === 'function') win.setFocusable(false);
-      win.setIgnoreMouseEvents(false);
-      overlayOwnsPointerInput = true;
+      if (arm.runtime.interactionMode === 'pass_through') {
+        win.setIgnoreMouseEvents(true, { forward: true });
+        overlayOwnsPointerInput = false;
+      } else {
+        // The renderer first resets stale pointer capture, then explicitly
+        // acknowledges readiness before this window is allowed to own input.
+        win.setIgnoreMouseEvents(true, { forward: true });
+        overlayOwnsPointerInput = false;
+      }
       win.showInactive();
       win.webContents.send('overlay:show', {
         reason,
@@ -1406,11 +1424,15 @@ function armSelectionGesture(reason = 'wiggle') {
         gestureAcceptAt: arm.readyAt,
         gestureLineStyle: arm.runtime.lineStyle,
         gestureLineWidth: arm.runtime.lineWidthDip,
+        gestureInteractionMode: arm.runtime.interactionMode,
       });
-      log(
-        `selection gesture ready token=${token} delay_ms=${Date.now() - arm.armedAt}`
-        + ` style=${arm.runtime.lineStyle} width_dip=${arm.runtime.lineWidthDip}`,
-      );
+      if (arm.runtime.interactionMode === 'pass_through') {
+        log(
+          `selection gesture ready token=${token} delay_ms=${Date.now() - arm.armedAt}`
+          + ` mode=${arm.runtime.interactionMode}`
+          + ` style=${arm.runtime.lineStyle} width_dip=${arm.runtime.lineWidthDip}`,
+        );
+      }
     };
     stageReadiness.whenReady(() => overlayReadiness.whenReady(show));
   };
@@ -1423,6 +1445,93 @@ function armSelectionGesture(reason = 'wiggle') {
     if (selectionGestureArm?.token === token) cancelSelectionGesture('expired');
   }, timeoutMs);
   return token;
+}
+
+function markSelectionGestureDrawing(token) {
+  const arm = selectionGestureArm;
+  if (!arm || String(token || '') !== arm.token) return false;
+  if (selectionGestureExpiryTimer) clearTimeout(selectionGestureExpiryTimer);
+  selectionGestureExpiryTimer = setTimeout(() => {
+    if (selectionGestureArm?.token === arm.token) cancelSelectionGesture('draw_timeout');
+  }, Number(arm.timeoutMs || SELECTION_GESTURE_TIMEOUT_MS));
+  log(`selection gesture drawing token=${arm.token}`);
+  return true;
+}
+
+function completeSelectionGesture(payload) {
+  const arm = selectionGestureArm;
+  if (!arm || String(payload?.selectionGestureToken || '') !== arm.token) {
+    cancelSelectionGesture('stale');
+    return false;
+  }
+  const summary = summarizeGesture(payload?.points);
+  if (!summary.valid) {
+    cancelSelectionGesture(summary.reason || 'invalid');
+    return false;
+  }
+  const bounds = arm.displayBounds;
+  const toGlobal = (point) => ({
+    x: Number(point.x) + Number(bounds.x),
+    y: Number(point.y) + Number(bounds.y),
+  });
+  const gesture = {
+    ...summary,
+    coordinateSpace: 'electron_dip_screen',
+    points: summary.points.map((point) => ({ ...toGlobal(point), t: point.t })),
+    bbox: {
+      x: summary.bbox.x + bounds.x,
+      y: summary.bbox.y + bounds.y,
+      width: summary.bbox.width,
+      height: summary.bbox.height,
+    },
+    releasePoint: toGlobal(summary.releasePoint),
+    semanticPoint: toGlobal(summary.semanticPoint),
+    displayBounds: { ...bounds },
+    source: { ...arm.source },
+  };
+  const reason = arm.reason;
+  cancelSelectionGesture('completed');
+  // One compositor frame after hiding the drawing canvas prevents it from
+  // entering pixel fallback captures. Stage remains absent during this gap.
+  setTimeout(() => beginSelectionSession(reason, gesture), 34);
+  return true;
+}
+
+function processPassThroughGestureSample(now, pos) {
+  const arm = selectionGestureArm;
+  if (!arm || arm.runtime.interactionMode !== 'pass_through') return false;
+  const events = passThroughGestureCapture.push({
+    t: now,
+    x: pos.x,
+    y: pos.y,
+    buttons: Number(pointerInputState.buttons || 0),
+  });
+  for (const event of events) {
+    if (event.type === 'started') {
+      markSelectionGestureDrawing(event.token);
+      safeSurfaceSend('overlay', 'overlay:gesture-input', {
+        token: event.token,
+        phase: 'start',
+      });
+    } else if (event.type === 'point') {
+      safeSurfaceSend('overlay', 'overlay:gesture-input', {
+        token: event.token,
+        phase: 'point',
+        point: event.point,
+      });
+    } else if (event.type === 'completed') {
+      safeSurfaceSend('overlay', 'overlay:gesture-input', {
+        token: event.token,
+        phase: 'end',
+      });
+      setTimeout(() => completeSelectionGesture({
+        workflow: 'selection_gesture',
+        selectionGestureToken: event.token,
+        points: event.points,
+      }), 17);
+    }
+  }
+  return events.length > 0;
 }
 
 function startMouseShakePolling() {
@@ -1454,6 +1563,7 @@ function startMouseShakePolling() {
       dismissTemporarySurfaces({ invalidateSession: true, hideObserver: true });
       return;
     }
+    processPassThroughGestureSample(now, pos);
     const pointerPolicy = currentPointerPollingPolicy();
     const mouseButtonMode = pointerPolicy.detectMouseButton
       ? (fabricSettings?.activation?.mouse_side_button || 'none')
@@ -2018,6 +2128,22 @@ ipcMain.on('overlay:renderer-ready', (event) => {
   overlayReadiness.markReady();
   log('overlay renderer ready');
 });
+ipcMain.on('overlay:gesture-ready', (event, payload) => {
+  if (!isSurfaceSender(event, 'overlay', resultTargetWindow)) return;
+  const arm = selectionGestureArm;
+  if (!arm || String(payload?.token || '') !== arm.token) return;
+  if (arm.runtime.interactionMode !== 'exclusive_overlay') return;
+  if (!overlayWindow || overlayWindow.isDestroyed()) return;
+  overlayWindow.setIgnoreMouseEvents(false);
+  overlayOwnsPointerInput = true;
+  overlayWindow.showInactive();
+  if (typeof overlayWindow.moveTop === 'function') overlayWindow.moveTop();
+  log(
+    `selection gesture ready token=${arm.token} delay_ms=${Date.now() - arm.armedAt}`
+    + ` mode=${arm.runtime.interactionMode}`
+    + ` style=${arm.runtime.lineStyle} width_dip=${arm.runtime.lineWidthDip}`,
+  );
+});
 ipcMain.on('stage:renderer-ready', (event) => {
   if (!isSurfaceSender(event, 'stage', resultTargetWindow)) return;
   stageReadiness.markReady();
@@ -2509,41 +2635,7 @@ function cancelPreflight() {
 ipcMain.on('overlay:done', (event, payload) => {
   if (!isSurfaceSender(event, 'overlay', resultTargetWindow)) return;
   if (payload?.workflow === 'selection_gesture') {
-    const arm = selectionGestureArm;
-    if (!arm || String(payload?.selectionGestureToken || '') !== arm.token) {
-      cancelSelectionGesture('stale');
-      return;
-    }
-    const summary = summarizeGesture(payload?.points);
-    if (!summary.valid) {
-      cancelSelectionGesture(summary.reason || 'invalid');
-      return;
-    }
-    const bounds = arm.displayBounds;
-    const toGlobal = (point) => ({
-      x: Number(point.x) + Number(bounds.x),
-      y: Number(point.y) + Number(bounds.y),
-    });
-    const gesture = {
-      ...summary,
-      coordinateSpace: 'electron_dip_screen',
-      points: summary.points.map((point) => ({ ...toGlobal(point), t: point.t })),
-      bbox: {
-        x: summary.bbox.x + bounds.x,
-        y: summary.bbox.y + bounds.y,
-        width: summary.bbox.width,
-        height: summary.bbox.height,
-      },
-      releasePoint: toGlobal(summary.releasePoint),
-      semanticPoint: toGlobal(summary.semanticPoint),
-      displayBounds: { ...bounds },
-      source: { ...arm.source },
-    };
-    const reason = arm.reason;
-    cancelSelectionGesture('completed');
-    // One compositor frame after hiding the drawing canvas prevents it from
-    // entering pixel fallback captures. Stage remains absent during this gap.
-    setTimeout(() => beginSelectionSession(reason, gesture), 34);
+    completeSelectionGesture(payload);
     return;
   }
   const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
@@ -2573,13 +2665,7 @@ ipcMain.on('overlay:done', (event, payload) => {
 
 ipcMain.on('overlay:gesture-start', (event, payload) => {
   if (!isSurfaceSender(event, 'overlay', resultTargetWindow)) return;
-  const arm = selectionGestureArm;
-  if (!arm || String(payload?.token || '') !== arm.token) return;
-  if (selectionGestureExpiryTimer) clearTimeout(selectionGestureExpiryTimer);
-  selectionGestureExpiryTimer = setTimeout(() => {
-    if (selectionGestureArm?.token === arm.token) cancelSelectionGesture('draw_timeout');
-  }, Number(arm.timeoutMs || SELECTION_GESTURE_TIMEOUT_MS));
-  log(`selection gesture drawing token=${arm.token}`);
+  markSelectionGestureDrawing(payload?.token);
 });
 
 

@@ -71,6 +71,7 @@
     pointer: null,
     capsuleAnchor: 'target',
     capsuleDelayMs: null,
+    capsulePlacement: null,
     visualTuning: { ...DEFAULT_VISUAL_TUNING },
   };
   const textCanvas = document.createElement('canvas');
@@ -462,6 +463,32 @@
   }
 
   function anchorCapsuleToTarget(width) {
+    if (typeof anchor.chooseStableCapsuleAnchor === 'function') {
+      const point = session.pointer || (state.target
+        ? { x: state.target.x + state.target.width / 2, y: state.target.y + state.target.height / 2 }
+        : { x: window.innerWidth / 2, y: window.innerHeight / 2 });
+      const targetMode = (
+        session.capsuleAnchor === 'target'
+        && session.targetGeometryKind === 'resolved'
+        && isUsableTargetRect(state.target)
+      );
+      session.capsulePlacement = anchor.chooseStableCapsuleAnchor({
+        previous: session.capsulePlacement,
+        sessionToken: session.token,
+        mode: targetMode ? 'target' : 'pointer',
+        pointer: point,
+        target: targetMode ? state.target : null,
+        surface: { width, height: session.visualTuning.capsuleVoiceWidthDip },
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+        options: targetMode
+          ? { gap: session.visualTuning.capsuleInlineGapDip }
+          : undefined,
+      });
+      capsule.style.left = `${session.capsulePlacement.x}px`;
+      capsule.style.top = `${session.capsulePlacement.y}px`;
+      capsule.dataset.quadrant = session.capsulePlacement.quadrant;
+      return;
+    }
     if (
       session.capsuleAnchor === 'target'
       &&
@@ -989,6 +1016,7 @@
       session.pointer = null;
       session.capsuleAnchor = 'target';
       session.capsuleDelayMs = null;
+      session.capsulePlacement = null;
       session.visualTuning = { ...DEFAULT_VISUAL_TUNING };
       lastPointerPoint = null;
       if (targetSweepTimer) clearTimeout(targetSweepTimer);

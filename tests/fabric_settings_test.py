@@ -14,6 +14,7 @@ def test_default_settings_are_wiggle_first_and_minimum_permission(tmp_path: Path
     settings = store.load()
     assert settings.schema_version == 1
     assert settings.activation.wiggle_enabled is True
+    assert settings.activation.gesture_interaction_mode == "pass_through"
     assert settings.activation.fallback_hotkey_enabled is True
     assert settings.interaction.default_input_mode == "voice"
     assert settings.interaction.voice_auto_submit is True
@@ -339,4 +340,13 @@ def test_invalid_selection_visual_fails_closed(tmp_path: Path) -> None:
     payload["appearance"]["selection_visual"] = "neon_box"
     path.write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(SettingsError, match="selection_visual"):
+        SettingsStore(path).load()
+
+
+def test_invalid_gesture_interaction_mode_fails_closed(tmp_path: Path) -> None:
+    path = tmp_path / "settings.json"
+    payload = FabricSettings.defaults().to_dict()
+    payload["activation"]["gesture_interaction_mode"] = "steal_everything"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(SettingsError, match="gesture_interaction_mode"):
         SettingsStore(path).load()
