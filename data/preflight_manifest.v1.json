@@ -1,14 +1,14 @@
 {
   "schemaVersion": 1,
   "stages": [
-    { "id": "runtime", "title": "Runtime", "blocking": true, "retryable": true, "skippable": false },
-    { "id": "os_permissions", "title": "OS Permissions", "blocking": true, "retryable": true, "skippable": false },
-    { "id": "pointer_host", "title": "Pointer Host", "blocking": true, "retryable": true, "skippable": false },
-    { "id": "voice", "title": "Voice", "blocking": false, "retryable": true, "skippable": true },
-    { "id": "grounding", "title": "Grounding", "blocking": true, "retryable": true, "skippable": false },
-    { "id": "agents", "title": "Agents", "blocking": false, "retryable": true, "skippable": true },
-    { "id": "model_profile", "title": "Model Profile", "blocking": false, "retryable": true, "skippable": true },
-    { "id": "privacy", "title": "Privacy", "blocking": true, "retryable": true, "skippable": false },
-    { "id": "e2e_smoke", "title": "End-to-end smoke", "blocking": true, "retryable": true, "skippable": false }
+    { "id": "runtime", "title": "本地运行环境", "blocking": true, "retryable": true, "skippable": false, "weight": 20 },
+    { "id": "os_permissions", "title": "系统权限", "blocking": true, "retryable": true, "skippable": false, "weight": 8 },
+    { "id": "pointer_host", "title": "鼠标唤醒", "blocking": true, "retryable": true, "skippable": false, "weight": 12 },
+    { "id": "voice", "title": "语音输入", "blocking": false, "retryable": true, "skippable": true, "weight": 8 },
+    { "id": "grounding", "title": "屏幕指向能力", "blocking": true, "retryable": true, "skippable": false, "weight": 8 },
+    { "id": "agents", "title": "本机 Agent", "blocking": false, "retryable": true, "skippable": true, "weight": 15 },
+    { "id": "model_profile", "title": "模型配置", "blocking": false, "retryable": true, "skippable": true, "weight": 5 },
+    { "id": "privacy", "title": "隐私保护", "blocking": true, "retryable": true, "skippable": false, "weight": 4 },
+    { "id": "e2e_smoke", "title": "完整功能自检", "blocking": true, "retryable": true, "skippable": false, "weight": 20 }
   ]
 }

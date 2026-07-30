@@ -16,7 +16,7 @@ const { MouseActivationDetector } = require('./mouse_activation');
 const { ElectronSettingsStore, defaultSettings } = require('./settings_store');
 const { CredentialStore } = require('./credential_store');
 const { PreflightRunner } = require('./bootstrap_runner');
-const { buildPreflightChecks } = require('./preflight_checks');
+const { buildAsyncPreflightChecks } = require('./preflight_checks');
 const { resolvePythonRuntime, pythonInvocationArgs, pythonSpawnEnvironment } = require('./python_runtime');
 const { VoiceResidentRuntime } = require('./voice_resident_runtime');
 const { captureEligibility } = require('./result_surface_policy');
@@ -26,7 +26,7 @@ const { physicalScreenPoint, normalizeGroundingGeometry } = require('./coordinat
 const { isSurfaceSender } = require('./ipc_surface_policy');
 const { buildGoogleMapsDirectionsUrl, isAllowedGoogleMapsDirectionsUrl } = require('./route_policy');
 const { VoiceFocusGuard } = require('./voice_focus_guard');
-const { onboardingIsReady, shouldStartHidden } = require('./app_lifecycle');
+const { inspectOnboardingReadiness, shouldStartHidden } = require('./app_lifecycle');
 const { RuntimeSnapshot } = require('./runtime_snapshot');
 const { summarizeGesture } = require('./gesture_capture');
 const { shouldDismissFromGlobalPointer } = require('./pointer_dismiss_policy');
@@ -37,6 +37,7 @@ const { pointerPollingPolicy } = require('./pointer_polling_policy');
 
 let overlayWindow = null;
 let dashboardWindow = null;
+let onboardingWindow = null;
 let stageWindow = null;
 const overlayReadiness = new RendererReadiness();
 const stageReadiness = new RendererReadiness();
@@ -67,6 +68,9 @@ let lastWiggleTraceAt = 0;
 let inputPaused = false;
 let isQuitting = false;
 let onboardingRequired = false;
+let onboardingPhase = 'welcome';
+let preflightRunPromise = null;
+let preflightAbortController = null;
 let backgroundHintShown = false;
 let temporaryDismissShortcutRegistered = false;
 let temporarySurfaceButtons = 0;
@@ -105,6 +109,8 @@ const RUNTIME_DIR = FABRIC_DATA_DIR;
 const LOG_PATH = path.join(RUNTIME_DIR, 'electron.log');
 const PID_PATH = path.join(RUNTIME_DIR, 'electron.pid');
 const ONBOARDING_MARKER_PATH = path.join(FABRIC_DATA_DIR, 'onboarding.json');
+const PREFLIGHT_MANIFEST_PATH = path.join(ROOT, 'data', 'preflight_manifest.v1.json');
+const ONBOARDING_BOOTSTRAP_VERSION = 1;
 const ACTION_PROPOSAL_TTL_MS = 2 * 60 * 1000;
 const SELECTION_SESSION_TTL_MS = 2 * 60 * 1000;
 const SELECTION_GESTURE_ARM_DELAY_MS = 180;
@@ -450,8 +456,8 @@ if (!gotLock) {
   app.quit();
 } else {
   app.on('second-instance', () => {
-    log('second-instance -> showDashboard');
-    showDashboard({ view: onboardingRequired ? 'diagnostics' : 'general' }, { activate: true });
+    log('second-instance -> showPrimarySurface');
+    showPrimarySurface({ activate: true });
   });
 }
 
@@ -475,8 +481,8 @@ function refreshTrayMenu() {
     { label: statusLabel, enabled: false },
     { type: 'separator' },
     {
-      label: '打开设置',
-      click: () => showDashboard({ view: onboardingRequired ? 'diagnostics' : 'general' }, { activate: true }),
+      label: onboardingRequired ? '继续首次设置' : '打开设置',
+      click: () => showPrimarySurface({ activate: true }),
     },
     {
       label: inputPaused ? '恢复唤醒' : '暂停唤醒',
@@ -517,7 +523,7 @@ function createTray() {
   if (tray && !tray.isDestroyed()) return tray;
   tray = new Tray(trayNativeImage());
   tray.on('click', () => {
-    showDashboard({ view: onboardingRequired ? 'diagnostics' : 'general' }, { activate: true });
+    showPrimarySurface({ activate: true });
   });
   refreshTrayMenu();
   return tray;
@@ -862,6 +868,78 @@ function showDashboard(payload = {}, options = {}) {
   else reveal();
 }
 
+function createOnboardingWindow() {
+  if (onboardingWindow && !onboardingWindow.isDestroyed()) return onboardingWindow;
+  onboardingWindow = new BrowserWindow({
+    width: 1040,
+    height: 700,
+    minWidth: 560,
+    minHeight: 460,
+    title: '设置 Magic Pointer',
+    frame: false,
+    roundedCorners: true,
+    transparent: false,
+    backgroundColor: '#f7f8fc',
+    resizable: true,
+    movable: true,
+    minimizable: true,
+    maximizable: true,
+    fullscreenable: false,
+    skipTaskbar: false,
+    show: false,
+    hasShadow: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  onboardingWindow.setMenuBarVisibility(false);
+  onboardingWindow.loadFile(path.join(__dirname, 'renderer', 'onboarding.html'));
+  onboardingWindow.on('close', () => {
+    if (onboardingRequired && !isQuitting) {
+      preflightAbortController?.abort();
+      isQuitting = true;
+      setImmediate(() => app.quit());
+    }
+  });
+  onboardingWindow.on('closed', () => { onboardingWindow = null; });
+  return onboardingWindow;
+}
+
+function showOnboarding(payload = {}, options = {}) {
+  const win = createOnboardingWindow();
+  const cursor = screen.getCursorScreenPoint();
+  const display = screen.getDisplayNearestPoint(cursor);
+  const workArea = display.workArea || display.bounds;
+  const width = Math.min(1040, Math.max(560, workArea.width - 48));
+  const height = Math.min(700, Math.max(460, workArea.height - 48));
+  const bounds = {
+    x: workArea.x + Math.floor((workArea.width - width) / 2),
+    y: workArea.y + Math.floor((workArea.height - height) / 2),
+    width,
+    height,
+  };
+  const reveal = () => {
+    if (!onboardingWindow || onboardingWindow.isDestroyed()) return;
+    onboardingWindow.setBounds(bounds);
+    if (options.activate === false) onboardingWindow.showInactive();
+    else onboardingWindow.show();
+    onboardingWindow.webContents.send('onboarding:show', {
+      screen: onboardingPhase,
+      ...payload,
+    });
+    log(`showOnboarding screen=${payload.screen || onboardingPhase}`);
+  };
+  if (win.webContents.isLoadingMainFrame()) win.webContents.once('did-finish-load', reveal);
+  else reveal();
+}
+
+function showPrimarySurface(options = {}) {
+  if (onboardingRequired) showOnboarding({}, options);
+  else showDashboard({ view: 'general' }, options);
+}
+
 function panelGeometryForSession(entry) {
   const snapshot = entry?.snapshot || {};
   const context = snapshot.context || {};
@@ -981,7 +1059,7 @@ function queueActivationUntilSurfacesReady(reason) {
 function requestActivation(reason) {
   if (onboardingRequired) {
     log(`activation blocked onboarding_required reason=${reason}`);
-    showDashboard({ view: 'diagnostics', onboardingRequired: true }, { activate: true });
+    showOnboarding({}, { activate: true });
     return 'onboarding_required';
   }
   if (inputPaused) {
@@ -1724,7 +1802,18 @@ app.whenReady().then(() => {
   });
   const voiceRuntimeStart = configureVoiceRuntime(fabricSettings, { preload: false });
   if (!voiceRuntimeStart.ok) log(`voice runtime startup rejected ${voiceRuntimeStart.error}`);
-  onboardingRequired = !onboardingIsReady(ONBOARDING_MARKER_PATH);
+  const requiredPaths = [
+    path.join(ROOT, 'scripts', 'fabric_bridge.py'),
+    path.join(ROOT, 'electron', 'renderer', 'stage.html'),
+    ...(PYTHON_RUNTIME.required === true ? [PYTHON_EXECUTABLE] : []),
+  ];
+  const onboardingReadiness = inspectOnboardingReadiness({
+    markerPath: ONBOARDING_MARKER_PATH,
+    bootstrapVersion: ONBOARDING_BOOTSTRAP_VERSION,
+    requiredPaths,
+  });
+  onboardingRequired = !onboardingReadiness.ready;
+  log(`onboarding readiness ready=${onboardingReadiness.ready} reason=${onboardingReadiness.reason}`);
   try {
     app.setLoginItemSettings({ openAtLogin: fabricSettings.general?.launch_at_login === true });
   } catch (error) {
@@ -1772,7 +1861,8 @@ app.whenReady().then(() => {
   });
   log(`register hotkey Control+Alt+Shift+M legacy-selection ok=${legacySelectionHotkeyOk}`);
   const dashboardHotkeyOk = globalShortcut.register('Control+Alt+D', () => {
-    if (dashboardWindow?.isVisible()) dashboardWindow.hide();
+    if (onboardingRequired) showOnboarding({}, { activate: true });
+    else if (dashboardWindow?.isVisible()) dashboardWindow.hide();
     else showDashboard({}, { activate: true });
   });
   log(`register hotkey Control+Alt+D dashboard ok=${dashboardHotkeyOk}`);
@@ -1783,13 +1873,13 @@ app.whenReady().then(() => {
     || process.env.MAGIC_POINTER_N17_FOCUS_EVIDENCE_PATH
     || process.env.MAGIC_POINTER_N18_WIGGLE_EVIDENCE_PATH
   );
-  if (!captureMode) scheduleStartupVoiceWarmup(voiceRuntimeStart);
+  if (!captureMode && !onboardingRequired) scheduleStartupVoiceWarmup(voiceRuntimeStart);
   if (!captureMode) initializeUpdateManager({ automatic: true });
   let wasOpenedAtLogin = false;
   try { wasOpenedAtLogin = app.getLoginItemSettings().wasOpenedAtLogin === true; } catch (_) {}
-  if (!shouldStartHidden({ argv: process.argv.slice(1), wasOpenedAtLogin, captureMode })) {
-    showDashboard({ view: onboardingRequired ? 'diagnostics' : 'general', onboardingRequired }, { activate: true });
-  }
+  const startHidden = shouldStartHidden({ argv: process.argv.slice(1), wasOpenedAtLogin, captureMode });
+  if (onboardingRequired && !captureMode) showOnboarding({}, { activate: true });
+  else if (!startHidden) showDashboard({ view: 'general' }, { activate: true });
   let focusEvidencePath = String(process.env.MAGIC_POINTER_N17_FOCUS_EVIDENCE_PATH || '').trim();
   if (focusEvidencePath) {
     focusEvidencePath = path.resolve(focusEvidencePath);
@@ -2358,13 +2448,27 @@ function microphonePermissionStatus() {
   }
 }
 
-function runPreflight(payload = {}) {
-  const manifestPath = path.join(ROOT, 'data', 'preflight_manifest.v1.json');
-  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+function sendPreflightEvent(preflightEvent) {
+  if (dashboardWindow && !dashboardWindow.isDestroyed()) {
+    dashboardWindow.webContents.send('dashboard:preflight-event', preflightEvent);
+  }
+  if (onboardingWindow && !onboardingWindow.isDestroyed()) {
+    onboardingWindow.webContents.send('onboarding:preflight-event', preflightEvent);
+  }
+}
+
+async function runPreflight(payload = {}, { signal = null } = {}) {
+  const manifestBytes = fs.readFileSync(PREFLIGHT_MANIFEST_PATH);
+  const manifest = JSON.parse(manifestBytes.toString('utf8'));
+  const manifestDigest = crypto.createHash('sha256').update(manifestBytes).digest('hex');
   const runner = new PreflightRunner({
     manifest,
     markerPath: path.join(FABRIC_DATA_DIR, 'onboarding.json'),
-    checks: buildPreflightChecks({
+    bootstrapVersion: ONBOARDING_BOOTSTRAP_VERSION,
+    productVersion: app.getVersion(),
+    manifestDigest,
+    emit: sendPreflightEvent,
+    checks: buildAsyncPreflightChecks({
       root: FABRIC_DATA_DIR,
       projectRoot: ROOT,
       settings: fabricSettings || defaultSettings(),
@@ -2376,7 +2480,30 @@ function runPreflight(payload = {}) {
   });
   const stageIds = Array.isArray(payload.stageIds) ? payload.stageIds : null;
   const userSkips = Array.isArray(payload.userSkips) ? payload.userSkips : [];
-  return runner.run({ stageIds, userSkips });
+  return runner.runAsync({ stageIds, userSkips, signal });
+}
+
+function startPreflight(payload = {}) {
+  if (preflightRunPromise) return preflightRunPromise;
+  log(`preflight start source=${String(payload?.source || 'dashboard')}`);
+  preflightAbortController = new AbortController();
+  preflightRunPromise = runPreflight(payload, { signal: preflightAbortController.signal })
+    .then((result) => {
+      log(`preflight complete ready=${result.ready}`);
+      return result;
+    })
+    .finally(() => {
+      preflightRunPromise = null;
+      preflightAbortController = null;
+    });
+  return preflightRunPromise;
+}
+
+function cancelPreflight() {
+  if (!preflightAbortController || preflightAbortController.signal.aborted) return false;
+  preflightAbortController.abort();
+  log('preflight cancel requested');
+  return true;
 }
 
 ipcMain.on('overlay:done', (event, payload) => {
@@ -2629,6 +2756,48 @@ function isDashboardSender(event) {
   return Boolean(dashboardWindow && !dashboardWindow.isDestroyed() && event.sender === dashboardWindow.webContents);
 }
 
+function isOnboardingSender(event) {
+  return Boolean(onboardingWindow && !onboardingWindow.isDestroyed() && event.sender === onboardingWindow.webContents);
+}
+
+ipcMain.on('onboarding:start', (event) => {
+  if (!isOnboardingSender(event) || !onboardingRequired) return;
+  onboardingPhase = 'progress';
+  void startPreflight({ source: 'onboarding' })
+    .then((preflight) => {
+      if (!preflight.ready) {
+        onboardingPhase = 'failure';
+        return;
+      }
+      onboardingRequired = false;
+      onboardingPhase = 'success';
+      applyConfiguredWakeState();
+      refreshTrayMenu();
+    })
+    .catch((error) => {
+      if (error?.message === 'preflight_cancelled') {
+        sendPreflightEvent({ type: 'cancelled' });
+        return;
+      }
+      onboardingPhase = 'failure';
+      log(`onboarding preflight failed ${error.name}: ${error.message}`);
+      sendPreflightEvent({ type: 'error', error: `preflight_failed:${error.name}` });
+    });
+});
+
+ipcMain.on('onboarding:continue', (event) => {
+  if (!isOnboardingSender(event) || onboardingRequired) return;
+  showDashboard({ view: 'general' }, { activate: true });
+  onboardingWindow?.close();
+});
+
+ipcMain.on('onboarding:cancel', (event) => {
+  if (!isOnboardingSender(event)) return;
+  cancelPreflight();
+  isQuitting = true;
+  app.quit();
+});
+
 function queueDashboardOperation(operation, payload = {}) {
   const requestId = `dashboard-${++dashboardRequestSerial}`;
   dashboardOperationQueue = dashboardOperationQueue
@@ -2750,27 +2919,34 @@ ipcMain.on('dashboard:fabric-request', (event, payload) => {
     return;
   }
   if (operation === 'preflight.run') {
-    try {
-      const preflight = runPreflight(payload);
-      if (preflight.ready) {
-        onboardingRequired = false;
-        applyConfiguredWakeState();
-        refreshTrayMenu();
-      }
-      sendBridgeResult('fabric-dashboard', {
-        ok: true,
-        state: preflight.ready ? 'completed' : 'blocked',
-        fabricOperation: operation,
-        preflight,
+    void startPreflight(payload)
+      .then((preflight) => {
+        if (preflight.ready) {
+          onboardingRequired = false;
+          applyConfiguredWakeState();
+          refreshTrayMenu();
+        }
+        sendBridgeResult('fabric-dashboard', {
+          ok: true,
+          state: preflight.ready ? 'completed' : 'blocked',
+          fabricOperation: operation,
+          preflight,
+        });
+      })
+      .catch((error) => {
+        if (dashboardWindow && !dashboardWindow.isDestroyed()) {
+          dashboardWindow.webContents.send('dashboard:preflight-event', {
+            type: 'error',
+            error: `preflight_failed:${error.name}`,
+          });
+        }
+        sendBridgeResult('fabric-dashboard', {
+          ok: false,
+          state: 'failed',
+          fabricOperation: operation,
+          error: `preflight_failed:${error.name}`,
+        });
       });
-    } catch (error) {
-      sendBridgeResult('fabric-dashboard', {
-        ok: false,
-        state: 'failed',
-        fabricOperation: operation,
-        error: `preflight_failed:${error.name}`,
-      });
-    }
     return;
   }
   const allowedOperations = new Set([

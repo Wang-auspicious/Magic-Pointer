@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { spawnSync } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const {
   pythonInvocationArgs,
   pythonSpawnEnvironment,
@@ -123,4 +123,170 @@ function buildPreflightChecks({
   };
 }
 
-module.exports = { buildPreflightChecks };
+function runCommandAsync(command, args, options = {}) {
+  return new Promise((resolve) => {
+    const timeoutMs = Math.max(1, Number(options.timeout || 15000));
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    let timedOut = false;
+    let timer = null;
+    const signal = options.signal || null;
+    let abortListener = null;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (signal && abortListener) signal.removeEventListener('abort', abortListener);
+      resolve(result);
+    };
+    if (signal?.aborted === true) {
+      finish({ status: null, stdout, stderr, error: new Error('preflight_cancelled') });
+      return;
+    }
+    let child;
+    try {
+      child = spawn(command, args, {
+        cwd: options.cwd,
+        env: options.env,
+        windowsHide: true,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+    } catch (error) {
+      finish({ status: null, stdout, stderr, error });
+      return;
+    }
+    timer = setTimeout(() => {
+      timedOut = true;
+      try { child.kill(); } catch (_) {}
+    }, timeoutMs);
+    abortListener = () => {
+      try { child.kill(); } catch (_) {}
+    };
+    if (signal) signal.addEventListener('abort', abortListener, { once: true });
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => { stdout = `${stdout}${chunk}`.slice(-1024 * 1024); });
+    child.stderr.on('data', (chunk) => { stderr = `${stderr}${chunk}`.slice(-1024 * 1024); });
+    child.on('error', (error) => finish({ status: null, stdout, stderr, error }));
+    child.on('close', (status) => finish({
+      status: timedOut ? null : status,
+      stdout,
+      stderr,
+      error: timedOut ? new Error('preflight_command_timeout') : null,
+    }));
+    child.stdin.on('error', (error) => {
+      if (error?.code !== 'EPIPE') finish({ status: null, stdout, stderr, error });
+    });
+    child.stdin.end(options.input == null ? undefined : String(options.input));
+  });
+}
+
+function buildAsyncPreflightChecks({
+  root,
+  projectRoot = path.resolve(__dirname, '..'),
+  settings = {},
+  credentialStore = null,
+  wiggleDetector = null,
+  microphoneStatus = () => 'unknown',
+  asyncCommandRunner = runCommandAsync,
+  platform = process.platform,
+  pythonRuntime = resolvePythonRuntime({ platform }),
+  environment = process.env,
+}) {
+  const baseChecks = buildPreflightChecks({
+    root,
+    projectRoot,
+    settings,
+    credentialStore,
+    wiggleDetector,
+    microphoneStatus,
+    platform,
+    pythonRuntime,
+    environment,
+  });
+  const userRoot = path.resolve(root);
+  const python = String(pythonRuntime?.executable || '').trim();
+  const bundledPythonRequired = pythonRuntime?.required === true;
+  const command = (args, input = undefined, signal = null) => asyncCommandRunner(
+    python,
+    pythonInvocationArgs(args, { isolated: bundledPythonRequired }),
+    {
+      cwd: projectRoot,
+      timeout: 15000,
+      input,
+      signal,
+      env: {
+        ...pythonSpawnEnvironment({ env: environment, isolated: bundledPythonRequired }),
+        MAGIC_POINTER_USER_DATA_DIR: userRoot,
+      },
+    },
+  );
+
+  return {
+    ...baseChecks,
+    runtime: async (_stage, { signal } = {}) => {
+      try {
+        fs.mkdirSync(userRoot, { recursive: true });
+        const probe = path.join(userRoot, `.preflight-${process.pid}.tmp`);
+        fs.writeFileSync(probe, 'ok', { encoding: 'utf8', mode: 0o600 });
+        fs.unlinkSync(probe);
+        const version = await command(['--version'], undefined, signal);
+        if (!python || version.status !== 0) {
+          return bundledPythonRequired
+            ? { state: 'fail', evidence: 'bundled_python_runtime_unavailable', fixAction: 'repair_runtime' }
+            : { state: 'fail', evidence: 'python_runtime_unavailable', fixAction: 'install_python' };
+        }
+        return {
+          state: 'pass',
+          evidence: `node=${process.versions.node}; python=${String(version.stdout || version.stderr || '').trim().slice(0, 120)}`,
+        };
+      } catch (error) {
+        return { state: 'fail', evidence: `runtime_check_failed:${error.name}`, fixAction: 'repair_runtime' };
+      }
+    },
+    agents: async (_stage, { signal } = {}) => {
+      const result = await command(
+        [path.join('scripts', 'fabric_bridge.py')],
+        JSON.stringify({ operation: 'providers' }),
+        signal,
+      );
+      if (result.status === 0) {
+        const parsed = lastJson(result.stdout);
+        if (parsed?.ok && Array.isArray(parsed.providers) && parsed.providers.some((item) => item.available)) {
+          return {
+            state: 'pass',
+            evidence: `available_agents=${parsed.providers.filter((item) => item.available).map((item) => item.id).join(',')}`,
+          };
+        }
+      }
+      return {
+        state: 'warn',
+        evidence: 'agent_discovery_not_completed; configure_or_retry',
+        fixAction: 'retry_agent_discovery',
+      };
+    },
+    e2e_smoke: async (_stage, { signal } = {}) => {
+      const result = await command([path.join('scripts', 'smoke_fabric.py')], undefined, signal);
+      const parsed = lastJson(result.stdout);
+      if (result.status === 0 && parsed?.ok === true) {
+        return {
+          state: 'pass',
+          evidence: 'deterministic_fabric_smoke_passed; real_pointer_voice_context_packet_smoke_recommended',
+          fixAction: 'run_desktop_smoke',
+        };
+      }
+      return {
+        state: 'fail',
+        evidence: 'deterministic_fabric_smoke_failed',
+        fixAction: 'inspect_diagnostics',
+      };
+    },
+  };
+}
+
+module.exports = {
+  buildAsyncPreflightChecks,
+  buildPreflightChecks,
+  runCommandAsync,
+};

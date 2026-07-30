@@ -11,6 +11,7 @@ from pathlib import Path
 
 from PIL import ImageChops, ImageGrab
 
+from onboarding_fixture import write_ready_onboarding_marker
 from verify_stage_selection_visual import (
     EDGE,
     ELECTRON,
@@ -170,10 +171,7 @@ def main() -> int:
     runtime = run_root / "runtime"
     profile.mkdir()
     runtime.mkdir()
-    (runtime / "onboarding.json").write_text(
-        json.dumps({"schemaVersion": 1, "status": "ready"}) + "\n",
-        encoding="utf-8",
-    )
+    write_ready_onboarding_marker(runtime)
     (runtime / "fabric-settings.json").write_text(json.dumps({
         "schema_version": 1,
         "activation": {

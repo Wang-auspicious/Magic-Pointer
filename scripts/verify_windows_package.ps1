@@ -52,7 +52,18 @@ try {
   $resourcesApp = Join-Path $appRoot 'resources\app'
   $pythonRuntime = Join-Path $appRoot 'resources\python-runtime'
   $bundledPython = Join-Path $pythonRuntime 'python.exe'
-  $requiredFiles = @('electron\main.js', 'electron\renderer\dashboard.html', 'scripts\electron_bridge.py', 'scripts\local_voice_worker.py', 'assets\app\icon.ico', 'app\fabric\context_packet.py', 'data\preflight_manifest.v1.json')
+  $requiredFiles = @(
+    'electron\main.js',
+    'electron\renderer\dashboard.html',
+    'electron\renderer\onboarding.html',
+    'electron\renderer\onboarding.css',
+    'electron\renderer\onboarding.js',
+    'scripts\electron_bridge.py',
+    'scripts\local_voice_worker.py',
+    'assets\app\icon.ico',
+    'app\fabric\context_packet.py',
+    'data\preflight_manifest.v1.json'
+  )
   foreach ($relativePath in $requiredFiles) {
     if (-not (Test-Path -LiteralPath (Join-Path $resourcesApp $relativePath))) { throw "Packaged runtime file is missing: $relativePath" }
     $result.verifiedFiles += $relativePath

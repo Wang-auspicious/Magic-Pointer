@@ -22,6 +22,7 @@ from pathlib import Path
 import websocket
 from PIL import ImageGrab
 
+from onboarding_fixture import write_ready_onboarding_marker
 from verify_stage_selection_visual import (
     EDGE,
     ELECTRON,
@@ -219,10 +220,7 @@ def write_settings(runtime: Path, strategy: str) -> None:
         check=True,
         timeout=15,
     )
-    (runtime / "onboarding.json").write_text(
-        json.dumps({"schemaVersion": 1, "status": "ready"}) + "\n",
-        encoding="utf-8",
-    )
+    write_ready_onboarding_marker(runtime)
 
 
 def synthesize_wav(path: Path) -> None:

@@ -7,6 +7,7 @@ const runner = fs.readFileSync('scripts/run-node-tests.js', 'utf8');
 
 assert(main.includes("require('./bootstrap_runner')"));
 assert(main.includes("require('./preflight_checks')"));
+assert(main.includes('buildAsyncPreflightChecks'));
 assert(main.includes("require('./python_runtime')"));
 assert(main.includes('const PYTHON_RUNTIME = resolvePythonRuntime({'));
 assert(main.includes('const PYTHON_EXECUTABLE = PYTHON_RUNTIME.executable;'));
@@ -18,6 +19,11 @@ assert(!main.includes("process.env.MAGIC_POINTER_PYTHON || 'python'"),
 assert(main.includes("path.join(ROOT, 'data', 'preflight_manifest.v1.json')"));
 assert(main.includes("markerPath: path.join(FABRIC_DATA_DIR, 'onboarding.json')"));
 assert(main.includes("if (operation === 'preflight.run')"));
+assert(main.includes('runner.runAsync'));
+assert(main.includes("'dashboard:preflight-event'"));
+assert(main.includes('preflightRunPromise'));
+assert(main.includes('manifestDigest'));
+assert(main.includes('requiredPaths'));
 assert(main.includes('microphonePermissionStatus'));
 assert(pkg.scripts.test.includes('scripts/run-node-tests.js'));
 assert(runner.includes("entry.name.endsWith('_test.js')"));

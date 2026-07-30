@@ -13,6 +13,7 @@ from pathlib import Path
 import websocket
 from PIL import ImageChops, ImageDraw, ImageGrab
 
+from onboarding_fixture import write_ready_onboarding_marker
 ROOT = Path(__file__).resolve().parents[1]
 EDGE = Path(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe")
 ELECTRON = ROOT / "node_modules" / "electron" / "dist" / "electron.exe"
@@ -226,10 +227,7 @@ def main() -> int:
     runtime = run_root / "runtime"
     profile.mkdir()
     runtime.mkdir()
-    (runtime / "onboarding.json").write_text(
-        json.dumps({"schemaVersion": 1, "status": "ready"}) + "\n",
-        encoding="utf-8",
-    )
+    write_ready_onboarding_marker(runtime)
     (runtime / "fabric-settings.json").write_text(json.dumps({
         "schema_version": 1,
         "activation": {

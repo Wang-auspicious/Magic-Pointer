@@ -62,7 +62,9 @@ let armedAgentContextId = '';
 let armedSkillCandidateId = '';
 const reviewedSkillDraftTokens = new Map();
 let calendarPreviewTimer = null;
-let firstRunRequired = false;
+let preflightRunning = false;
+let preflightStageOrder = [];
+const preflightStages = new Map();
 let runtimeSnapshotLoaded = false;
 let runtimeSnapshotRequest = null;
 let runtimeSnapshotForcePending = false;
@@ -129,23 +131,10 @@ const PREFLIGHT_ACTIONS = Object.freeze({
   },
 });
 
-function setFirstRunState(required, ready = false) {
-  const notice = document.getElementById('first-run-notice');
-  if (!notice) return;
-  if (required === true) firstRunRequired = true;
-  if (required === false || ready === true) firstRunRequired = false;
-
-  const shouldShow = required === true || ready === true;
-  notice.hidden = !shouldShow;
-  notice.dataset.state = ready ? 'ready' : 'blocked';
-  document.documentElement.dataset.onboardingRequired = String(firstRunRequired);
-
-  document.getElementById('first-run-wake-state').textContent = ready
-    ? '检查通过，已启用全局唤醒。'
-    : '尚未启用全局唤醒。';
-  document.getElementById('first-run-next-step').textContent = ready
-    ? 'Magic Pointer 已就绪。'
-    : '运行全部检查后启用。';
+function renderActiveViewHeading() {
+  const copy = viewCopy[activeView];
+  title.textContent = copy[0];
+  subtitle.textContent = copy[1];
 }
 
 function setActiveView(view) {
@@ -155,9 +144,7 @@ function setActiveView(view) {
   pageScroll.scrollLeft = 0;
   document.documentElement.scrollLeft = 0;
   document.body.scrollLeft = 0;
-  const copy = viewCopy[activeView];
-  title.textContent = copy[0];
-  subtitle.textContent = copy[1];
+  renderActiveViewHeading();
   saveButton.hidden = !persistentSettingViews.has(activeView);
   views.forEach((element) => { element.hidden = element.dataset.fabricView !== activeView; });
   navItems.forEach((button) => {
@@ -1700,12 +1687,12 @@ function renderPreflight(preflight) {
   const status = document.getElementById('preflight-status');
   const stages = Array.isArray(preflight?.stages) ? preflight.stages : [];
   const ready = preflight?.ready === true;
-  status.textContent = ready
-    ? '所有必要检查已通过。全局唤醒现在可以使用。'
-    : '尚未就绪。请按每一项的说明处理后，再次运行全部检查。';
-  const firstRunNotice = document.getElementById('first-run-notice');
-  if (firstRunRequired || !firstRunNotice.hidden) setFirstRunState(firstRunRequired, ready);
-
+  const running = preflight?.running === true;
+  status.textContent = running
+    ? '正在检查和配置本机环境，请保持此窗口打开。'
+    : ready
+      ? '所有必要检查已通过。全局唤醒现在可以使用。'
+      : '尚未就绪。请按每一项的说明处理后，再次运行全部检查。';
   const rows = stages.map((stage) => {
     const machineState = String(stage.state || 'unknown');
     const action = getPreflightGuidance(stage, machineState);
@@ -1747,6 +1734,73 @@ function renderPreflight(preflight) {
     return row;
   });
   root.replaceChildren(...rows);
+}
+
+function setPreflightProgress(percent, currentStep = '') {
+  const progress = document.getElementById('preflight-progress');
+  const fill = document.getElementById('preflight-progress-fill');
+  const value = document.getElementById('preflight-progress-value');
+  const current = document.getElementById('preflight-current-step');
+  const safePercent = Math.max(0, Math.min(100, Math.round(Number(percent) || 0)));
+  progress.hidden = false;
+  progress.setAttribute('aria-valuenow', String(safePercent));
+  fill.style.width = `${safePercent}%`;
+  value.textContent = `${safePercent}%`;
+  if (currentStep) current.textContent = currentStep;
+}
+
+function requestPreflight({ automatic = false } = {}) {
+  if (preflightRunning) return;
+  preflightRunning = true;
+  const button = document.getElementById('preflight-run');
+  button.disabled = true;
+  button.textContent = automatic ? '正在自动配置…' : '正在检查…';
+  document.getElementById('preflight-status').textContent = '正在运行本地检查…';
+  setPreflightProgress(0, '准备检查本机环境…');
+  fabricRequest('preflight.run');
+}
+
+function renderPreflightEvent(event = {}) {
+  if (event.type === 'manifest') {
+    preflightStageOrder = Array.isArray(event.stages) ? event.stages.map((stage) => stage.id) : [];
+    preflightStages.clear();
+    for (const stage of event.stages || []) preflightStages.set(stage.id, { ...stage, state: 'pending' });
+    renderPreflight({ running: true, stages: preflightStageOrder.map((id) => preflightStages.get(id)) });
+    setPreflightProgress(0, '正在读取本机配置…');
+    return;
+  }
+  if (event.type === 'stage') {
+    const previous = preflightStages.get(event.id) || {};
+    preflightStages.set(event.id, { ...previous, ...event });
+    const title = event.title || previous.title || event.id || '当前项目';
+    renderPreflight({ running: true, stages: preflightStageOrder.map((id) => preflightStages.get(id)) });
+    if (event.state === 'running') setPreflightProgress(
+      Number(document.getElementById('preflight-progress').getAttribute('aria-valuenow') || 0),
+      `正在检查：${title}`,
+    );
+    return;
+  }
+  if (event.type === 'progress') {
+    const completed = event.completedStageId ? preflightStages.get(event.completedStageId) : null;
+    setPreflightProgress(event.percent, completed ? `已完成：${completed.title}` : '正在准备…');
+    return;
+  }
+  if (event.type === 'complete') {
+    preflightRunning = false;
+    renderPreflight(event);
+    setPreflightProgress(100, event.ready ? 'Magic Pointer 已准备完成' : '部分项目需要处理');
+    const button = document.getElementById('preflight-run');
+    button.disabled = false;
+    button.textContent = '重新检查';
+    return;
+  }
+  if (event.type === 'error') {
+    preflightRunning = false;
+    const button = document.getElementById('preflight-run');
+    button.disabled = false;
+    button.textContent = '重试';
+    document.getElementById('preflight-status').textContent = '初始化没有完成，请重试或查看技术详情。';
+  }
 }
 
 function handleFabricState(payload = {}) {
@@ -2053,6 +2107,7 @@ function calendarEventFromForm() {
 
 setActiveView('activation');
 api.onFabricState(handleFabricState);
+api.onPreflightEvent(renderPreflightEvent);
 api.runtimeSnapshot.onChanged(() => requestFabricState({ force: true }));
 api.onVoiceResidencyStatus((payload = {}) => {
   const node = document.getElementById('voice-resident-status');
@@ -2061,11 +2116,7 @@ api.onVoiceResidencyStatus((payload = {}) => {
   node.textContent = `状态由本地运行时回传：${labels[payload.state] || '未加载'}${payload.errorCode ? `（${payload.errorCode}）` : ''}`;
 });
 api.onShow((payload = {}) => {
-  const onboardingRequired = payload.onboardingRequired === true;
-  if ('onboardingRequired' in payload) setFirstRunState(onboardingRequired);
-  if (onboardingRequired) {
-    setActiveView('diagnostics');
-  } else if (payload.view === 'calendar') {
+  if (payload.view === 'calendar') {
     setActiveView('calendar');
     if (payload.calendarDraft) applyCalendarDraft(payload.calendarDraft);
   } else if (payload.view === 'route') {
@@ -2135,8 +2186,7 @@ document.getElementById('agent-session-binding').addEventListener('change', (eve
   renderAgentSessions(agentSessions);
 });
 document.getElementById('preflight-run').addEventListener('click', () => {
-  document.getElementById('preflight-status').textContent = '正在运行本地检查…';
-  fabricRequest('preflight.run');
+  requestPreflight();
 });
 document.getElementById('models-refresh').addEventListener('click', () => fabricRequest('models.list'));
 document.getElementById('model-new').addEventListener('click', () => {

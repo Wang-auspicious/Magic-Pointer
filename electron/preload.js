@@ -78,4 +78,13 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
   onCalendarState: (callback) => ipcRenderer.on('dashboard:calendar-state', (_event, payload) => callback(payload)),
   onRouteResult: (callback) => ipcRenderer.on('dashboard:route-result', (_event, payload) => callback(payload)),
   onVoiceResidencyStatus: (callback) => ipcRenderer.on('dashboard:voice-residency-status', (_event, payload) => callback(payload)),
+  onPreflightEvent: (callback) => ipcRenderer.on('dashboard:preflight-event', (_event, payload) => callback(payload)),
+});
+
+contextBridge.exposeInMainWorld('magicPointerOnboarding', {
+  start: () => ipcRenderer.send('onboarding:start'),
+  cancel: () => ipcRenderer.send('onboarding:cancel'),
+  continue: () => ipcRenderer.send('onboarding:continue'),
+  onShow: (callback) => ipcRenderer.on('onboarding:show', (_event, payload) => callback(payload)),
+  onPreflightEvent: (callback) => ipcRenderer.on('onboarding:preflight-event', (_event, payload) => callback(payload)),
 });

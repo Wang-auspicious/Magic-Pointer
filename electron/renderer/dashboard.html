@@ -470,18 +470,18 @@
           </section>
 
           <section class="fabric-view page-content" data-fabric-view="diagnostics" hidden>
-            <aside id="first-run-notice" class="first-run-notice" role="status" aria-live="polite" hidden>
-              <span class="first-run-notice__signal" aria-hidden="true"></span>
-              <div class="first-run-notice__copy">
-                <p class="first-run-notice__eyebrow">首次设置</p>
-                <h2>先完成安全检查</h2>
-                <p><strong id="first-run-wake-state">尚未启用全局唤醒。</strong> <span id="first-run-next-step">运行全部检查后启用。</span></p>
-                <p class="first-run-notice__exit">可从托盘退出 Magic Pointer。</p>
-              </div>
-            </aside>
             <div class="section-heading page-section-heading">
-              <div><h2>启动检查</h2><p>初始化与诊断共用同一组真实检查，不用假进度。</p></div>
-              <button id="preflight-run" class="button button-primary" type="button">运行全部检查</button>
+              <div><h2>本机诊断</h2><p>仅在排查问题时按需重新检查；正常启动不会重复运行初始化。</p></div>
+              <button id="preflight-run" class="button button-primary" type="button">重新检查</button>
+            </div>
+            <div id="preflight-progress" class="preflight-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" hidden>
+              <div class="preflight-progress__copy">
+                <strong id="preflight-current-step">准备检查本机环境…</strong>
+                <span id="preflight-progress-value">0%</span>
+              </div>
+              <div class="preflight-progress__track" aria-hidden="true">
+                <span id="preflight-progress-fill"></span>
+              </div>
             </div>
             <p id="preflight-status" class="inline-status">只有所有阻塞项通过，或明确跳过允许跳过的项目，才会标记为就绪。</p>
             <div id="preflight-list" class="preflight-list settings-list" aria-live="polite"></div>

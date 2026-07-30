@@ -31,7 +31,11 @@ assert(js.includes("accepted: '已受理 · 排队中 · 尚未完成'"));
 assert(js.includes('statusCode.textContent = rawStatus'));
 assert(!/accepted['"]?\s*[:=]\s*['"](?:succeeded|done|完成|已完成)/.test(js), 'accepted must never be remapped to a terminal state');
 assert(!html.includes('<progress'), 'no fake progress element in the dashboard');
-assert(!/progress\s*[:=(]/.test(js), 'no fake progress computation in the activity timeline');
+const activityTimelineSource = js.slice(
+  js.indexOf('function buildActivityTimeline'),
+  js.indexOf('function renderActivity'),
+);
+assert(!/progress\s*[:=(]/.test(activityTimelineSource), 'no fake progress computation in the activity timeline');
 for (const cls of ['.timeline-entry', '.timeline-stage.is-accepted', '.timeline-status[data-status="accepted"]', '.timeline-stage.is-failed']) {
   assert(css.includes(cls), cls);
 }

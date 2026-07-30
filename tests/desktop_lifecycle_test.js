@@ -15,16 +15,20 @@ assert.strictEqual(lifecycle.shouldStartHidden({ argv: [], wasOpenedAtLogin: fal
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'magic-pointer-onboarding-'));
 const marker = path.join(root, 'onboarding.json');
 assert.strictEqual(lifecycle.onboardingIsReady(marker), false);
-fs.writeFileSync(marker, JSON.stringify({ schemaVersion: 1, status: 'ready' }), 'utf8');
+fs.writeFileSync(marker, JSON.stringify({ schemaVersion: 2, status: 'ready', bootstrapVersion: 1 }), 'utf8');
 assert.strictEqual(lifecycle.onboardingIsReady(marker), true);
-fs.writeFileSync(marker, JSON.stringify({ schemaVersion: 1, status: 'blocked' }), 'utf8');
+fs.writeFileSync(marker, JSON.stringify({ schemaVersion: 2, status: 'blocked', bootstrapVersion: 1 }), 'utf8');
 assert.strictEqual(lifecycle.onboardingIsReady(marker), false);
 
 const main = fs.readFileSync('electron/main.js', 'utf8');
 assert(main.includes('new Tray('), 'resident desktop app needs a visible tray entry');
 assert(main.includes("label: '退出 Magic Pointer'"), 'tray must expose a real quit action');
 assert(main.includes("app.on('second-instance'"), 'clicking the shortcut twice must reveal the existing app');
-assert(main.includes("showDashboard({ view: onboardingRequired ? 'diagnostics' : 'general'"),
-  'normal desktop launch must reveal the independent dashboard');
+assert(main.includes('showPrimarySurface({ activate: true })'),
+  'secondary launches must reveal onboarding or dashboard according to readiness');
+assert(main.includes('if (onboardingRequired) showOnboarding({}, options);'),
+  'unready installations must reveal the independent setup window');
+assert(main.includes("else showDashboard({ view: 'general' }, options);"),
+  'ready installations must reveal the normal dashboard');
 
 console.log('desktop_lifecycle_test: all assertions passed');

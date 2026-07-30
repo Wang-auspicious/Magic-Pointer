@@ -88,6 +88,14 @@ assert(/package-smoke/i.test(smoke) && /Remove-Item/i.test(smoke),
   'smoke script must remove only its package-smoke data directory');
 assert(smoke.includes("'scripts\\local_voice_worker.py'"),
   'packaged smoke must guard the resident voice worker resource');
+for (const onboardingResource of [
+  'electron\\renderer\\onboarding.html',
+  'electron\\renderer\\onboarding.css',
+  'electron\\renderer\\onboarding.js',
+]) {
+  assert(smoke.includes(`'${onboardingResource}'`),
+    `packaged smoke must guard first-run resource ${onboardingResource}`);
+}
 assert(smoke.includes("'scripts\\capture_dashboard.js'"),
   'packaged smoke must reject development-only capture scripts');
 assert(smoke.includes('development workspace provenance'),

@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>设置 Magic Pointer</title>
+  <link rel="stylesheet" href="onboarding.css" />
+</head>
+<body>
+  <main class="onboarding-shell">
+    <div class="window-drag-region" aria-hidden="true"></div>
+
+    <section id="onboarding-welcome" class="onboarding-screen welcome-screen is-active" data-screen="welcome" aria-hidden="false">
+      <div class="welcome-lockup">
+        <div class="brand-symbol" aria-hidden="true">
+          <svg viewBox="0 0 48 48">
+            <path d="M13 8.5v29l7.2-7 4.8 11.2 6.1-2.6-4.7-10.8h10.3L13 8.5Z" />
+          </svg>
+        </div>
+        <h1>MAGIC POINTER</h1>
+        <p>指向你想处理的内容。首次设置会在后台完成，只需几分钟。</p>
+        <button id="onboarding-start" class="primary-button" type="button">
+          <span>安装 Magic Pointer</span>
+          <span aria-hidden="true">→</span>
+        </button>
+      </div>
+    </section>
+
+    <section id="onboarding-progress" class="onboarding-screen progress-screen" data-screen="progress" aria-hidden="true">
+      <header class="progress-header">
+        <div class="current-stage">
+          <span class="spinner" aria-hidden="true"></span>
+          <strong id="onboarding-current-stage">正在准备系统环境</strong>
+        </div>
+        <span id="onboarding-step-count" class="step-count">0 / 9 项</span>
+      </header>
+
+      <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+        <span id="onboarding-progress-fill"></span>
+      </div>
+
+      <div class="stage-scroll">
+        <div id="onboarding-stage-list" class="stage-list" aria-live="polite"></div>
+      </div>
+
+      <details id="onboarding-details" class="details-panel">
+        <summary id="onboarding-details-toggle">
+          <span class="details-icon" aria-hidden="true">▤</span>
+          <span>显示详情</span>
+          <span class="details-chevron" aria-hidden="true">›</span>
+        </summary>
+        <pre id="onboarding-log" tabindex="0"></pre>
+      </details>
+
+      <footer class="progress-footer">
+        <span id="onboarding-progress-note">正在检查本机，不会上传屏幕内容。</span>
+        <button id="onboarding-cancel" class="secondary-button" type="button"><span>取消</span></button>
+      </footer>
+    </section>
+
+    <section id="onboarding-success" class="onboarding-screen result-screen" data-screen="success" aria-hidden="true">
+      <div class="result-lockup">
+        <span class="result-mark result-mark--success" aria-hidden="true">✓</span>
+        <p class="result-eyebrow">设置完成</p>
+        <h1>Magic Pointer 已准备好</h1>
+        <p>以后打开会直接在后台运行，不会重复执行这套初始化。</p>
+        <button id="onboarding-continue" class="primary-button" type="button">
+          <span>开始使用</span>
+          <span aria-hidden="true">→</span>
+        </button>
+      </div>
+    </section>
+
+    <section id="onboarding-failure" class="onboarding-screen result-screen" data-screen="failure" aria-hidden="true">
+      <div class="result-lockup">
+        <span class="result-mark result-mark--failure" aria-hidden="true">!</span>
+        <p class="result-eyebrow">设置未完成</p>
+        <h1>有一项需要重新检查</h1>
+        <p id="onboarding-failure-copy">保留当前进度。重试后只会再次检查本机环境。</p>
+        <div class="result-actions">
+          <button id="onboarding-retry" class="primary-button" type="button">重试</button>
+          <button id="onboarding-failure-close" class="text-button" type="button">退出</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="onboarding.js"></script>
+</body>
+</html>
