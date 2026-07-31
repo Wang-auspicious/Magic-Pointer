@@ -1519,6 +1519,10 @@ function completeSelectionGesture(payload) {
       width: summary.bbox.width,
       height: summary.bbox.height,
     },
+    kind: summary.kind,
+    semanticPoint: summary.semanticPoint
+      ? toGlobal(summary.semanticPoint)
+      : undefined,
     releasePoint: toGlobal(summary.releasePoint),
     displayBounds: { ...bounds },
     source: { ...arm.source },

@@ -345,18 +345,21 @@ def _normalized_gesture(value: Any | None) -> dict[str, Any] | None:
     if release is None or bbox is None:
         return None
     release.pop("t", None)
+    semantic = point(value.get("semanticPoint"))
+    if semantic is not None:
+        semantic.pop("t", None)
     if raw_strokes or int(value.get("schemaVersion") or 0) == 2:
         return {
             "schemaVersion": 2,
             "coordinateSpace": str(value.get("coordinateSpace") or "physical_screen_pixels")[:64],
+            "kind": str(value.get("kind") or "freeform")[:32],
+            "semanticPoint": semantic,
             "releasePoint": release,
             "bbox": bbox,
             "strokes": strokes,
         }
-    semantic = point(value.get("semanticPoint"))
     if semantic is None:
         return None
-    semantic.pop("t", None)
     return {
         "kind": str(value.get("kind") or "freeform")[:32],
         "coordinateSpace": str(value.get("coordinateSpace") or "electron_dip_screen")[:64],
@@ -487,6 +490,21 @@ def _read_gesture_target_context(
         int(raw_bbox.get("x") or 0) + int(raw_bbox.get("width") or 0),
         int(raw_bbox.get("y") or 0) + int(raw_bbox.get("height") or 0),
     )
+    semantic_pt = (gesture or {}).get("semanticPoint")
+    def _proximity(rect):
+        if not isinstance(semantic_pt, dict):
+            return 0.0
+        rx = rect[0] + rect[2] / 2
+        ry = rect[1] + rect[3] / 2
+        sx = semantic_pt.get("x", rx)
+        sy = semantic_pt.get("y", ry)
+        dist = math.hypot(rx - sx, ry - sy)
+        max_dist = math.hypot(
+            selection_bbox[2] - selection_bbox[0],
+            selection_bbox[3] - selection_bbox[1],
+        ) or 1.0
+        return max(0.0, 1.0 - dist / max_dist)
+
     ranked: list[tuple[float, str, dict[str, Any]]] = []
     for key, candidate in candidates.items():
         rectangles = candidate["rectangles"]
@@ -499,8 +517,9 @@ def _read_gesture_target_context(
             for rect in rectangles
         ]
         geometric, best_rectangle = max(rectangle_scores, key=lambda item: item[0])
+        proximity = _proximity(best_rectangle)
         coverage = len(candidate["samples"]) / max(1, len(sampled))
-        ranked.append((geometric + 4.0 * coverage, key, {**candidate, "best_rectangle": best_rectangle}))
+        ranked.append((geometric + 3.0 * proximity + 4.0 * coverage, key, {**candidate, "best_rectangle": best_rectangle}))
     ranked.sort(key=lambda item: (-item[0], item[1]))
     best_score, best_key, best = ranked[0]
     second_score = ranked[1][0] if len(ranked) > 1 else 0.0

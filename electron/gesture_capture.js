@@ -48,11 +48,22 @@ function summarizeGesture(rawPoints, { minDistance = 12, minDurationMs = 40 } = 
   };
   const chord = distance(points[0], points.at(-1));
   const straightness = chord / Math.max(pathLength, 1);
+  const diagonal = Math.hypot(bbox.width, bbox.height) || 1;
+  const closure = chord / diagonal;
+  const circuit = pathLength / diagonal;
+  const isCircle = points.length >= 6
+    && bbox.width >= 16 && bbox.height >= 16
+    && closure <= 0.36 && circuit >= 1.65;
+  const kind = isCircle ? 'circle' : straightness >= 0.80 ? 'line' : 'freeform';
+  const raw = kind === 'circle'
+    ? { x: bbox.x + bbox.width / 2, y: bbox.y + bbox.height / 2 }
+    : { x: (points[0].x + points.at(-1).x) / 2, y: (points[0].y + points.at(-1).y) / 2 };
 
   return {
     schemaVersion: 2,
     valid: true,
     reason: null,
+    kind,
     points,
     strokes: [{ points }],
     bbox: {
@@ -61,6 +72,9 @@ function summarizeGesture(rawPoints, { minDistance = 12, minDurationMs = 40 } = 
       width: Math.round(bbox.width),
       height: Math.round(bbox.height),
     },
+    semanticPoint: Number.isFinite(raw.x) && Number.isFinite(raw.y)
+      ? roundedPoint(raw)
+      : roundedPoint({ x: (points[0].x + points.at(-1).x) / 2, y: (points[0].y + points.at(-1).y) / 2 }),
     pathLength,
     durationMs,
     straightness,

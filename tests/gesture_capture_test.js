@@ -10,7 +10,9 @@ const line = summarizeGesture([
 ]);
 assert.strictEqual(line.valid, true);
 assert.strictEqual(line.schemaVersion, 2);
-assert.strictEqual(line.kind, undefined, 'natural strokes must not be reduced to a shape class');
+assert.strictEqual(line.kind, 'line');
+assert(line.semanticPoint && typeof line.semanticPoint.x === 'number',
+  'semanticPoint must be present for proximity scoring');
 assert.deepStrictEqual(line.releasePoint, { x: 215, y: 211 });
 assert.deepStrictEqual(line.strokes, [{ points: line.points }]);
 assert(line.pathLength > 110);
@@ -25,8 +27,9 @@ const circle = summarizeGesture([
   { x: 190, y: 163, t: 240 },
 ]);
 assert.strictEqual(circle.valid, true);
-assert.strictEqual(circle.kind, undefined);
-assert.strictEqual(circle.semanticPoint, undefined);
+assert.strictEqual(circle.kind, 'circle');
+assert(circle.semanticPoint && typeof circle.semanticPoint.x === 'number',
+  'circle center must be present for proximity scoring');
 assert.deepStrictEqual(circle.strokes[0].points, circle.points);
 
 const lightning = summarizeGesture([
@@ -36,7 +39,8 @@ const lightning = summarizeGesture([
   { x: 230, y: 290, t: 190 },
 ]);
 assert.strictEqual(lightning.valid, true);
-assert.strictEqual(lightning.kind, undefined);
+assert.strictEqual(lightning.kind, 'freeform');
+assert(lightning.semanticPoint && typeof lightning.semanticPoint.x === 'number');
 assert.deepStrictEqual(lightning.releasePoint, { x: 230, y: 290 });
 
 const noisy = summarizeGesture([

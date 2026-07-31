@@ -28,10 +28,10 @@ assert.match(
   /GestureTraceV2|schemaVersion:\s*2/,
   'main must send a lossless v2 gesture trace instead of a shape-class semantic point',
 );
-assert.doesNotMatch(
+assert.match(
   main.slice(main.indexOf('function completeSelectionGesture('), main.indexOf('function processPassThroughGestureSample(')),
-  /semanticPoint/,
-  'completed gesture grounding must not be controlled by a derived single point',
+  /schemaVersion:\s*2[\s\S]*?kind[\s\S]*?semanticPoint/,
+  'v2 gesture must carry both full strokes AND semanticPoint as proximity hint',
 );
 
 console.log('continuous gesture episode contract test ok');
