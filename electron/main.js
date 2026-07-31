@@ -1507,7 +1507,7 @@ function completeSelectionGesture(payload) {
     cancelSelectionGesture('stale');
     return false;
   }
-  const summary = summarizeGesture(payload?.points);
+  const summary = summarizeGesture(payload?.points, payload?.strokes);
   if (!summary.valid) {
     cancelSelectionGesture(summary.reason || 'invalid');
     return false;
@@ -1554,6 +1554,10 @@ function completeSelectionGesture(payload) {
       ? toPhysical(summary.semanticPoint)
       : undefined,
     releasePoint: toPhysical(summary.releasePoint),
+    // Multi-stroke sessions anchor the capsule at the FIRST stroke so it never
+    // jumps while the user keeps circling; single strokes keep the release
+    // point as the anchor.
+    anchorPoint: summary.anchorPoint ? toPhysical(summary.anchorPoint) : toPhysical(summary.releasePoint),
     // Stroke region geometry (logical DIPs): polygon ring for circles,
     // bandwidth corridor for lines/freeforms. Used by grounding to rank
     // targets by region coverage instead of a single point.
@@ -1760,9 +1764,13 @@ function registerConfigurableHotkeys() {
 }
 
 function stageSessionPayload(entry) {
+  const strokeCount = Array.isArray(entry?.gesture?.strokes) && entry.gesture.strokes.length
+    ? entry.gesture.strokes.length
+    : 1;
   return {
     selectionSessionToken: entry.token,
     selectionSnapshotId: entry.snapshot?.snapshot_id || null,
+    selectionCount: strokeCount,
     captureEligibility: entry.captureEligibility,
     defaultInputMode: inputModeForReason(entry.reason),
     voiceAutoSubmit: fabricSettings.interaction.voice_auto_submit,
@@ -1836,12 +1844,14 @@ function beginSelectionSession(reason = 'manual', gesture = null) {
   lastStageResult = null;
 
   const liveCursor = screen.getCursorScreenPoint();
-  const releasePoint = gesture?.releasePoint || liveCursor;
+  const releasePoint = gesture?.anchorPoint || gesture?.releasePoint || liveCursor;
   // completeSelectionGesture emits physical pixels; the stage window and
   // display APIs work in DIPs, so convert once before anchoring. Using a
   // physical point as DIP on scaled displays pushed the capsule past the
-  // viewport edge and clamped it into the bottom-right corner.
-  const releasePointDip = gesture?.releasePoint
+  // viewport edge and clamped it into the bottom-right corner.  For
+  // multi-stroke sessions the anchor is the FIRST stroke so the capsule
+  // appears next to the first selection and never jumps while chaining.
+  const releasePointDip = (gesture?.anchorPoint || gesture?.releasePoint)
     ? (typeof screen.screenToDipPoint === 'function'
       ? screen.screenToDipPoint({ x: releasePoint.x, y: releasePoint.y })
       : { x: Number(releasePoint.x) || 0, y: Number(releasePoint.y) || 0 })
@@ -1873,6 +1883,9 @@ function beginSelectionSession(reason = 'manual', gesture = null) {
       target: null,
       capsuleAnchor: 'pointer',
       capsuleDelayMs: 0,
+      selectionCount: Array.isArray(gesture?.strokes) && gesture.strokes.length
+        ? gesture.strokes.length
+        : 1,
       pointer: {
         x: targetPoint.x - stageBounds.x,
         y: targetPoint.y - stageBounds.y,
@@ -1894,6 +1907,7 @@ function beginSelectionSession(reason = 'manual', gesture = null) {
       voiceAutoSubmit: fabricSettings.interaction.voice_auto_submit,
       voiceStartStrategy: fabricSettings.interaction.voice_start_strategy,
       targetGeometryKind: 'pointer_only',
+      selectionCount: 1,
       pointer: {
         x: targetPoint.x - stageBounds.x,
         y: targetPoint.y - stageBounds.y,
@@ -2801,6 +2815,17 @@ ipcMain.on('overlay:done', (event, payload) => {
 ipcMain.on('overlay:gesture-start', (event, payload) => {
   if (!isSurfaceSender(event, 'overlay', resultTargetWindow)) return;
   markSelectionGestureDrawing(payload?.token);
+});
+
+// A stroke was committed but the user keeps circling (multi-stroke chain):
+// keep the arm alive so the session does not expire between strokes.
+ipcMain.on('overlay:gesture-stroke', (event, payload) => {
+  if (!isSurfaceSender(event, 'overlay', resultTargetWindow)) return;
+  const arm = selectionGestureArm;
+  if (!arm || String(payload?.token || '') !== arm.token) return;
+  const index = Number(payload?.index);
+  markSelectionGestureDrawing(arm.token);
+  log(`selection gesture stroke committed token=${arm.token} index=${Number.isFinite(index) ? index : '?'}`);
 });
 
 

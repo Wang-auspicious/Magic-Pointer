@@ -199,6 +199,9 @@ Magic Pointer = 默认不可见的跨应用操作层。鼠标晃动唤醒 → �
 | 项目 | 许可证 | 什么情况用 |
 |---|---|---|
 | `clicky/` | 自有 | 7k★ macOS AI 伴侣。Overlay 动画、ElementLocationDetector（Computer Use API）、bezel 飞行动画、push-to-talk、Cloudflare Worker API 代理。**最近在读** |
+| `openclicky/` | MIT | jasonkneen 维护的开源版 Clicky（2026-07）：Agent Mode、Computer Use runtime、58 个 bundled skills、Cursor overlay。**2026-07-31 克隆** |
+| `clacky/` | MIT | Windows 版 Clicky（Claude 脑 + Deepgram/Edge TTS）：`routing.py` 本地快路径+Haiku 路由、`tour.py` [POINT] 流式指点+UIA 吸附、Hermes 后台 agent、memory_store。**2026-07-31 克隆** |
+| `clicky-windows/` | MIT | Bitshank-2338 的 PyQt6 Windows 版 Clicky（clacky 前身）：`hybrid_pointer.py` 三层定位（UIA 5ms → OCR 300ms → Vision 1-3s）、12 个 LLM provider、4 个 STT 后端。**2026-07-31 克隆** |
 | `opensre/` | Apache 2.0 | 9.6k★ AI SRE Agent 框架（Tracer-Cloud）。ReAct 工具循环、60+ 集成、**合成评分 RCA 测试套件**、可逆标识符脱敏、上下文预算。2026-07-31 克隆（depth 1），**只借模式不搬代码** |
 | `omniparser/` | MIT (代码) | 截图→UI 元素 bbox。需要精确 screen parsing 时用 |
 | `ufo-schannel/` | MIT | Windows UIA/COM/Win32 混合 GUI agent 参考 |
@@ -214,6 +217,7 @@ Magic Pointer = 默认不可见的跨应用操作层。鼠标晃动唤醒 → �
 | `docs/planning/GAP_ANALYSIS_100_20260730.md` | 100 条漏洞清单 |
 | `docs/planning/TODO_REMAINING_20260730.md` | 62 项代办 |
 | `docs/planning/CLICKY_ANALYSIS_20260731.md` | clicky 源码深度分析（7600 行 Swift），8 个可借鉴技术点 |
+| `docs/planning/GOOGLE_ADDTHIS_ANDTHIS_ANALYSIS_20260731.md` | Google「add this/and this」底层机制 + Clicky 生态对标：referent 会话模型、三层定位、[POINT] 流式指点、落地差距与路线 |
 | `docs/planning/HANDOFF.md` | 历史 AI 对话交接 |
 | `docs/planning/GOOGLE_DEMO_FRAME_ANALYSIS_20260726.md` | Google 演示逐帧分析 |
 | `docs/planning/GOOGLE_MAGIC_POINTER_ALIGNMENT.md` | Google AI Pointer 对齐 |
@@ -290,7 +294,7 @@ SenseVoice 桥接（`sense_voice_bridge.py`）和模型（228MB）已就绪，�
 - **15:13 已启动 P0 修复**：已读取 `docs/planning/REVIEW_AUDIT_20260731.md`，本轮最高优先级保持为 #1/#2 语音管线；按根因域并行处理语音采样泵、partial 转录线程化与 bridge stdin 大小上限。
 - **工作区保护**：开始时已有 `main.js`、`overlay.js`、voice worker/client、`AGENT.md`、`CHANGELOG.md` 等未提交改动；本轮保留这些改动，只在对应 P0 范围内追加测试与实现。
 - **验证约束**：每项修复必须先有能复现风险的失败测试，再跑定向测试、JS 全量测试和 Python 全量测试；子 agent 结果需由主 agent 独立复核。
-- **15:15 基线**：`npm test` 通过（54 个源测试文件、112 项测试）；语音相关 Python 定向集合当前为 35 项。该结果仅是修复前基线，合入后必须重新验证。
+- **15:15 基线**：`npm test` 通过（54 个源测试文件、114 项测试）；语音相关 Python 定向集合当前为 35 项。该结果仅是修复前基线，合入后必须重新验证。
 - **15:24 P0 #1/#2 已进入复核**：新增 3 个确定性回归测试，红测为 `3 failed, 9 passed`，分别命中 `queue.Empty` 外泄、partial 阻塞采样泵、partial 异常终止会话；实现改为单在途后台 partial，final 前等待并丢弃过期 partial，确保同一模型最大并发为 1。子任务定向绿测为 19/19，主 agent 仍需重跑集成验证。
 - **15:34 worker 集成红绿**：扩大验证时发现 push 模式只推送 `final`、未推送 `microphone_stopped`，Electron client 会一直保留 active session。先把旧 poll 测试改成 push 契约并看到失败，再补齐 lifecycle event 推送；`tests/local_voice_worker_test.py` 现为 19/19。
 - **15:39 P0 #3 已复核**：selection/electron bridge 使用共享 64KiB UTF-8 reader；红测同时暴露提前关闭 stdin 会让 Electron 写端报 `EPIPE`，因此超限后以固定大小块排空余量再返回结构化 `payload_too_large`。bridge + BOM 定向测试为 20/20，并已用真实 Electron runner 验证两座 bridge 的退出码与错误协议。
@@ -318,7 +322,7 @@ SenseVoice 桥接（`sense_voice_bridge.py`）和模型（228MB）已就绪，�
 ## 命令
 
 ```bash
-npm test                                  # JS 测试 (54 文件/112 测)
+npm test                                  # JS 测试 (54 文件/114 测)
 python -m pytest -q                       # Python 测试
 npx --no-install electron electron/main.js # 开发启动
 npm run dist:win                          # 构建 Windows 安装包

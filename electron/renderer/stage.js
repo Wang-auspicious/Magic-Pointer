@@ -19,6 +19,7 @@
   const targetingOutline = document.getElementById('targeting-outline');
   const frozenGlow = document.getElementById('frozen-glow');
   const capsule = document.getElementById('capsule');
+  const capsuleCount = document.getElementById('capsule-count');
   const capsuleInput = document.getElementById('capsule-input');
   const transcriptBox = document.getElementById('transcript');
   const shimmer = document.getElementById('processing-shimmer');
@@ -74,6 +75,7 @@
     capsulePlacement: null,
     capsulePlaced: false,
     capsuleDragged: false,
+    selectionCount: 1,
     visualTuning: { ...DEFAULT_VISUAL_TUNING },
   };
   const textCanvas = document.createElement('canvas');
@@ -884,6 +886,12 @@
 
     const capsuleOpen = name === 'capsule-voice' || name === 'capsule-text' || name === 'processing';
     if (capsuleOpen) {
+      if (session.selectionCount > 1) {
+        capsuleCount.textContent = `${session.selectionCount} 处`;
+        capsuleCount.hidden = false;
+      } else {
+        capsuleCount.hidden = true;
+      }
       const capsuleWasHidden = capsule.hidden;
       capsule.dataset.mode = state.inputMode === 'text' ? 'text' : 'voice';
       capsule.dataset.phase = name === 'processing' ? 'processing' : 'input';
@@ -1028,6 +1036,10 @@
     if ('capsuleAnchor' in payload) {
       session.capsuleAnchor = payload.capsuleAnchor === 'pointer' ? 'pointer' : 'target';
     }
+    if ('selectionCount' in payload) {
+      const count = Number(payload.selectionCount);
+      session.selectionCount = Number.isFinite(count) ? Math.max(1, Math.min(8, Math.round(count))) : 1;
+    }
     if ('capsuleDelayMs' in payload) {
       const delay = Number(payload.capsuleDelayMs);
       session.capsuleDelayMs = Number.isFinite(delay) ? Math.max(0, Math.min(1500, delay)) : null;
@@ -1064,6 +1076,7 @@
       session.capsulePlacement = null;
       session.capsulePlaced = false;
       session.capsuleDragged = false;
+      session.selectionCount = 1;
       session.visualTuning = { ...DEFAULT_VISUAL_TUNING };
       lastPointerPoint = null;
       if (targetSweepTimer) clearTimeout(targetSweepTimer);

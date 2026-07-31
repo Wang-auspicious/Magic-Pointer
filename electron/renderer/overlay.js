@@ -12,6 +12,14 @@ let fadeRaf = null;
 let captureMode = false;
 let requestSeq = 0;
 let submitting = false;
+// Committed strokes of the current chain. The user can circle several
+// regions before the session finalizes ("circle this, and this, then run
+// the command"); the rolling CHAIN_GAP_MS window decides when the chain
+// ends and the unified gesture is submitted.
+let strokes = [];
+let chainTimer = null;
+let chainHintTimer = null;
+const CHAIN_GAP_MS = 1000;
 let renderRaf = null;
 let pulseRaf = null;
 let lastPulseFrame = 0;
@@ -259,9 +267,16 @@ function render() {
   clear();
   if (gestureMode) {
     if (Date.now() < gestureAcceptAt) return;
+    if (strokes.length) {
+      for (let index = 0; index < strokes.length; index += 1) {
+        const stroke = strokes[index];
+        drawSmoothPath(stroke.points, trailAlpha * 0.55);
+        drawStrokeMarker(index + 1, stroke.semanticPoint || stroke.points[Math.floor(stroke.points.length / 2)]);
+      }
+    }
     if (points.length) {
       drawSmoothPath(points, trailAlpha);
-    } else {
+    } else if (!strokes.length) {
       // Keep the transparent window hit-testable without painting a second
       // cursor over the preloaded CSS cursor.
       drawHitTestPixel(lastPointer);
@@ -292,12 +307,17 @@ function fadeTrail(duration = 760) {
 }
 
 function computeSelectionPayload() {
-  const xs = points.map((p) => p.x);
-  const ys = points.map((p) => p.y);
-  const geometry = globalThis.GestureCapture?.summarizeGesture(points) || {};
+  const allPoints = strokes.length ? strokes.flatMap((s) => s.points) : points;
+  const xs = allPoints.map((p) => p.x);
+  const ys = allPoints.map((p) => p.y);
+  const geometry = globalThis.GestureCapture?.summarizeGesture(
+    points,
+    strokes.map((s) => ({ points: s.points })),
+  ) || {};
   return {
     ...geometry,
-    points: [...points],
+    points: [...allPoints],
+    strokes: strokes.map((s) => ({ points: [...s.points] })),
     bbox: {
       x1: Math.min(...xs),
       y1: Math.min(...ys),
@@ -313,6 +333,46 @@ function computeSelectionPayload() {
   };
 }
 
+function showChainHint(count) {
+  if (!gestureMode) return;
+  hint.textContent = `已圈选 ${count} 处 · 继续圈选其他内容，或按 Enter 完成`;
+  hint.classList.remove('dim');
+  if (chainHintTimer) clearTimeout(chainHintTimer);
+  chainHintTimer = setTimeout(() => hint.classList.add('dim'), 1600);
+}
+
+function scheduleChainFinalize() {
+  if (chainTimer) clearTimeout(chainTimer);
+  chainTimer = setTimeout(() => {
+    chainTimer = null;
+    finalizeGesture();
+  }, CHAIN_GAP_MS);
+}
+
+function finalizeGesture() {
+  if (chainTimer) {
+    clearTimeout(chainTimer);
+    chainTimer = null;
+  }
+  if (chainHintTimer) {
+    clearTimeout(chainHintTimer);
+    chainHintTimer = null;
+    hint.classList.add('dim');
+  }
+  if (!strokes.length || submitting) return;
+  const graceRemaining = gestureAcceptAt - Date.now();
+  if (gestureMode && graceRemaining > 0) {
+    if (gestureGraceTimer) clearTimeout(gestureGraceTimer);
+    gestureGraceTimer = setTimeout(() => {
+      gestureGraceTimer = null;
+      render();
+      submitGesture();
+    }, graceRemaining);
+  } else {
+    submitGesture();
+  }
+}
+
 function hideVisualsForCapture() {
   captureMode = true;
   hint.classList.add('dim');
@@ -326,7 +386,7 @@ function restoreAfterCapture(seq) {
 }
 
 function submitGesture() {
-  if (submitting || points.length < 1) return;
+  if (submitting || !strokes.length) return;
   submitting = true;
   const seq = ++requestSeq;
   const payload = { ...computeSelectionPayload(), workflow: currentWorkflow };
@@ -347,6 +407,11 @@ function resetOverlay() {
   drawing = false;
   activePointerId = null;
   points = [];
+  strokes = [];
+  if (chainTimer) clearTimeout(chainTimer);
+  chainTimer = null;
+  if (chainHintTimer) clearTimeout(chainHintTimer);
+  chainHintTimer = null;
   lastPointer = null;
   trailAlpha = 1;
   captureMode = false;
@@ -361,6 +426,26 @@ function resetOverlay() {
   hint.classList.add('dim');
   document.body.dataset.mode = 'idle';
   clear();
+}
+
+function drawStrokeMarker(index, point) {
+  if (!point) return;
+  const radius = 14;
+  ctx.save();
+  ctx.globalAlpha = 0.95;
+  ctx.beginPath();
+  ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(37, 99, 235, 0.94)';
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.92)';
+  ctx.stroke();
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '600 13px system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(String(index), point.x, point.y + 0.5);
+  ctx.restore();
 }
 
 
@@ -391,6 +476,15 @@ window.addEventListener('pointerdown', (e) => {
   if (gestureMode && gestureInteractionMode === 'pass_through') return;
   if (observerMode || captureMode || submitting) return;
   if (drawing) return;
+  if (chainTimer) {
+    clearTimeout(chainTimer);
+    chainTimer = null;
+  }
+  if (chainHintTimer) {
+    clearTimeout(chainHintTimer);
+    chainHintTimer = null;
+    hint.classList.add('dim');
+  }
   if (fadeRaf) cancelAnimationFrame(fadeRaf);
   drawing = true;
   activePointerId = e.pointerId;
@@ -398,7 +492,6 @@ window.addEventListener('pointerdown', (e) => {
   if (gestureMode) window.magicPointer?.gestureStarted(gestureToken);
   points = [];
   trailAlpha = 1;
-  hint.classList.add('dim');
   addPoint(e);
   const graceRemaining = gestureAcceptAt - Date.now();
   if (gestureMode && graceRemaining > 0) {
@@ -440,17 +533,19 @@ window.addEventListener('pointerup', (e) => {
   if (window.magicPointer && typeof window.magicPointer.syncHitRegions === 'function') {
     window.magicPointer.syncHitRegions();
   }
-  // Circle capture: hand the drawn region to the main process, which routes
-  // the outcome to the PointerStage surface.
+  // Chain capture: commit the stroke, notify main (keeps the arm alive),
+  // and let the user keep circling.  The rolling CHAIN_GAP_MS window or the
+  // Enter key finalizes the whole chain into one unified gesture.
   if (points.length >= 1) {
-    const graceRemaining = gestureAcceptAt - Date.now();
-    if (gestureMode && graceRemaining > 0) {
-      if (gestureGraceTimer) clearTimeout(gestureGraceTimer);
-      gestureGraceTimer = setTimeout(() => {
-        gestureGraceTimer = null;
-        render();
-        submitGesture();
-      }, graceRemaining);
+    const strokeSummary = globalThis.GestureCapture?.summarizeGesture?.(points, null) || {};
+    strokes.push({
+      points: [...points],
+      semanticPoint: strokeSummary.semanticPoint || points[Math.floor(points.length / 2)],
+    });
+    if (gestureMode) {
+      window.magicPointer?.gestureStroke(gestureToken, strokes.length);
+      showChainHint(strokes.length);
+      scheduleChainFinalize();
     } else {
       submitGesture();
     }
@@ -469,7 +564,20 @@ window.addEventListener('pointercancel', (e) => {
   e.preventDefault();
 });
 
+// Finalize the chain when the window is hidden externally (right-click or
+// Escape) so the renderer never submits a half-drawn chain later.
+window.magicPointer?.onHide(() => {
+  if (chainTimer) clearTimeout(chainTimer);
+  chainTimer = null;
+  if (chainHintTimer) clearTimeout(chainHintTimer);
+  chainHintTimer = null;
+});
+
 window.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    finalizeGesture();
+    return;
+  }
   if (e.key === 'Escape') window.magicPointer?.hide();
   if (e.key.toLowerCase() === 'r') resetOverlay();
 });

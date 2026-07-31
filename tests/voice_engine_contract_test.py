@@ -140,3 +140,112 @@ def test_cli_accepts_engine_and_rejects_unknown() -> None:
     assert bad.returncode == 2
     parsed = json.loads(bad.stdout.strip().splitlines()[-1])
     assert parsed["code"] == "invalid_configuration"
+
+
+def test_sense_microphone_vad_helper_never_aborts_the_process() -> None:
+    """Regression: sherpa VoiceActivityDetector with an empty config calls
+    std::abort() (observed as worker exit 4294967295 on Windows).  The loop's
+    VAD is the energy-based one inside the audio callback, so the helper must
+    return None and never construct the sherpa detector."""
+    from scripts import sense_voice_bridge
+
+    vad = sense_voice_bridge._create_vad()
+    assert vad is None
+
+    source = (ROOT / "scripts" / "sense_voice_bridge.py").read_text(encoding="utf-8")
+    assert "VoiceActivityDetector(" not in source, (
+        "sense_voice_bridge.py must not construct sherpa_onnx.VoiceActivityDetector "
+        "without VAD model files (native abort -> exit 4294967295)"
+    )
+
+
+def test_sense_microphone_loop_reports_clean_error_without_sounddevice(monkeypatch) -> None:
+    """The microphone loop fails closed with a protocol error when the optional
+    sounddevice dependency is missing instead of crashing the process."""
+    import sys
+
+    import scripts.sense_voice_bridge as svb
+
+    monkeypatch.setitem(sys.modules, "sounddevice", None)
+
+    emitted = []
+    svb.run_microphone_with_model(
+        model=object(),
+        model_name="sense-voice-small",
+        profile=svb.VoiceProfile(),
+        silence_ms=1500,
+        stop_state=lambda _activity: None,
+        event_sink=lambda kind, payload: emitted.append((kind, payload)),
+    )
+    assert emitted and emitted[0][0] == "error"
+    assert emitted[0][1]["code"] == "sounddevice_missing"
+
+def test_sense_emit_accepts_both_call_styles(capsys) -> None:
+    """Regression: _emit used to be _emit(kind, **payload) while the microphone
+    loop calls the documented event_sink(kind, payload_dict) protocol.  A real
+    mic callback therefore raised `TypeError: _emit() takes 1 positional argument
+    but 2 were given` inside the cffi callback (user-visible crash).  _emit must
+    accept both styles and always emit one valid JSON record."""
+    import scripts.sense_voice_bridge as svb
+
+    svb._emit("ready", engine="sense-voice-small")
+    svb._emit("partial", {"transcript": ""})
+    svb._emit("final", {"transcript": "hello"}, engine="sense-voice")
+
+    lines = [ln for ln in capsys.readouterr().out.splitlines() if ln.strip()]
+    assert len(lines) == 3
+    records = [json.loads(ln) for ln in lines]
+    assert records[0] == {"type": "ready", "engine": "sense-voice-small"}
+    assert records[1] == {"type": "partial", "transcript": ""}
+    assert records[2] == {"type": "final", "transcript": "hello", "engine": "sense-voice"}
+
+
+def test_sense_microphone_loop_emits_partial_without_typeerror(monkeypatch, capsys) -> None:
+    """End-to-end regression for the cffi crash: with a fake sounddevice whose
+    InputStream fires the real callback with speech audio, the loop must emit a
+    partial (2-arg protocol through the real _emit sink) and stop cleanly
+    without raising TypeError."""
+    import types
+    import numpy as np
+
+    import scripts.sense_voice_bridge as svb
+
+    speech = (np.random.default_rng(7).standard_normal(4800) * 0.08).astype(np.float32)
+    fake = types.SimpleNamespace()
+
+    class FakeStream:
+        def __init__(self, *args, **kwargs):
+            self._callback = kwargs.get("callback")
+
+        def __enter__(self):
+            # sounddevice calls the callback with (indata, frames, time, status)
+            self._callback(speech, speech.size, None, None)
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    fake.InputStream = FakeStream
+    fake.PortAudioError = RuntimeError
+    monkeypatch.setitem(sys.modules, "sounddevice", fake)
+
+    def stop_state(activity):
+        # Stop after the first VAD speech detection so the loop ends promptly.
+        if activity.speech_detected:
+            return "test_done"
+        return None
+
+    svb.run_microphone_with_model(
+        model=object(),
+        model_name="sense-voice-small",
+        profile=svb.VoiceProfile(),
+        silence_ms=1500,
+        stop_state=stop_state,
+        event_sink=svb._emit,
+    )
+
+    out = capsys.readouterr().out
+    records = [json.loads(ln) for ln in out.splitlines() if ln.strip()]
+    assert records, "no events emitted"
+    assert any(r["type"] == "partial" for r in records), out
+    assert not any(r.get("code") == "microphone_runner_failed" for r in records), out

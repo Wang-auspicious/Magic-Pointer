@@ -33,6 +33,7 @@ assert(payloadEnd > payloadStart, 'computeSelectionPayload block end not found')
 const context = { window: { innerWidth: 1280, innerHeight: 800, devicePixelRatio: 2 } };
 vm.runInNewContext([
   'let points = [{ x: 10, y: 20 }, { x: 40, y: 5 }, { x: 25, y: 60 }];',
+  'let strokes = [];',
   'let gestureToken = null;',
   source.slice(payloadStart, payloadEnd),
   'globalThis.testPayload = computeSelectionPayload();',
@@ -46,6 +47,20 @@ assert.strictEqual(context.testPayload.viewport.width, 1280);
 assert.strictEqual(context.testPayload.viewport.height, 800);
 assert.strictEqual(context.testPayload.viewport.dpr, 2);
 assert.strictEqual(context.testPayload.points.length, 3);
+
+// Unified multi-stroke chain: the payload carries every committed stroke.
+const chainStart = source.indexOf('let strokes = [];');
+const chainEnd = source.indexOf('let renderRaf = null;');
+assert(chainStart >= 0, 'multi-stroke chain state must exist');
+assert(chainEnd > chainStart, 'chain state must live before the render loop');
+assert(source.includes('CHAIN_GAP_MS'));
+assert(source.includes('window.magicPointer?.gestureStroke(gestureToken, strokes.length)'),
+  'every committed stroke keeps the arm alive via overlay:gesture-stroke');
+assert(source.includes('scheduleChainFinalize'));
+assert(source.includes("if (e.key === 'Enter')"), 'Enter must finalize the chain');
+assert(source.includes('finalizeGesture'));
+assert(source.includes('strokes: strokes.map((s) => ({ points: [...s.points] }))'),
+  'the unified payload must include all strokes');
 
 // Legacy retirement: the overlay no longer renders results or actions.
 // Everything below now lives on the PointerStage surface.

@@ -11,7 +11,7 @@ const begin = main.slice(
 
 assert.match(
   begin,
-  /function beginSelectionSession[\s\S]{0,1800}?hideOverlay\(\);/,
+  /function beginSelectionSession[\s\S]{0,2600}?hideOverlay\(\);/,
   'normal activation must remove any stale observer canvas before capture',
 );
 assert.doesNotMatch(

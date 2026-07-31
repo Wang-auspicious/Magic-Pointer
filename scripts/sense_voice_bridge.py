@@ -170,13 +170,16 @@ class VoiceActivity:
 
 
 def _create_vad() -> Any:
-    import sherpa_onnx  # type: ignore[import-untyped]
-    vad_config = sherpa_onnx.VadModelConfig()
-    vad_config.sample_rate = SAMPLE_RATE
-    return sherpa_onnx.VoiceActivityDetector(
-        vad_config,
-        buffer_size_in_seconds=30.0,
-    )
+    """Return the VAD handle used by the SenseVoice microphone loop.
+
+    The loop performs energy-based voice-activity detection in the audio
+    callback (``_process_audio``), so no sherpa VAD model is required.  The
+    sherpa ``VoiceActivityDetector`` constructor ABORTS the whole process when
+    the config has no VAD model files (observed as exit 4294967295 on
+    Windows), so this helper intentionally returns ``None`` and must never
+    construct that object without model files.
+    """
+    return None
 
 
 def run_microphone_with_model(
@@ -197,7 +200,7 @@ def run_microphone_with_model(
         event_sink("error", {"code": "sounddevice_missing", "error": "sounddevice not installed"})
         return
 
-    vad = _create_vad()
+    vad = _create_vad()  # None: energy VAD is used in the callback below
     activity = VoiceActivity()
     buffer: list[np.ndarray] = []
     buffer_samples = 0
@@ -224,7 +227,8 @@ def run_microphone_with_model(
         if audio.ndim > 1:
             audio = audio.mean(axis=1)
 
-        # Simple energy-based VAD in addition to sherpa-onnx VAD
+        # Energy-based VAD (no external VAD model: sherpa's VoiceActivityDetector
+        # aborts the process when no VAD model files are configured)
         rms = float(np.sqrt(np.mean(audio ** 2)))
         activity.current_prob = rms
         is_speech = rms > 0.005  # adjustable threshold
@@ -304,8 +308,13 @@ def _stop_capture_state(stop_file: Path | str | None, activity: VoiceActivity) -
     return None
 
 
-def _emit(kind: str, **payload: Any) -> None:
-    record: dict[str, Any] = {"type": kind, **payload}
+def _emit(kind: str, payload: dict[str, Any] | None = None, **extra: Any) -> None:
+    # Accept both call styles: _emit("ready", engine="...") and the
+    # run_microphone_with_model protocol event_sink(kind, payload_dict).
+    record: dict[str, Any] = {"type": kind}
+    if payload:
+        record.update(payload)
+    record.update(extra)
     print(json.dumps(record, ensure_ascii=False), flush=True)
 
 
@@ -316,9 +325,9 @@ def run_microphone(
     silence_ms: int = 1600,
     stop_file: Path | str | None = None,
 ) -> int:
-    _emit("loading", engine=f"sense-voice-{model_name}")
+    _emit("loading", engine=model_name)
     model = load_model(model_name)
-    _emit("ready", engine=f"sense-voice-{model_name}")
+    _emit("ready", engine=model_name)
     run_microphone_with_model(
         model=model,
         model_name=model_name,

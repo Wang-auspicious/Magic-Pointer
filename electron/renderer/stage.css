@@ -675,6 +675,24 @@ body {
     border-radius: calc(var(--stage-capsule-size) / 2);
   }
 }
+.capsule-count {
+  position: absolute;
+  top: -15px;
+  right: -8px;
+  min-width: 26px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 11px;
+  background: rgba(18, 102, 212, .97);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 22px;
+  text-align: center;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 2px 10px rgba(18, 60, 140, .38);
+}
 .capsule-input, .capsule-transcript { color: #1266D4; font-size: 13px; font-weight: 500; }
 .voice-waveform i { background: #1266D4; }
 .stage-result, .stage-error {

@@ -64,12 +64,9 @@ function directionOf(points) {
   return { x: dx / length, y: dy / length };
 }
 
-function summarizeGesture(rawPoints, { minDistance = 12, minDurationMs = 40 } = {}) {
-  const points = Array.from(rawPoints || [])
-    .map(finitePoint)
-    .filter(Boolean);
+function summarizeStroke(points, { minDistance = 12, minDurationMs = 40 } = {}) {
   if (points.length < 2) {
-    return { valid: false, reason: 'insufficient_points', points };
+    return null;
   }
   let pathLength = 0;
   for (let index = 1; index < points.length; index += 1) {
@@ -78,14 +75,7 @@ function summarizeGesture(rawPoints, { minDistance = 12, minDurationMs = 40 } = 
   const durationMs = Math.max(0, points.at(-1).t - points[0].t);
   const releasePoint = roundedPoint(points.at(-1));
   if (pathLength < minDistance || durationMs < minDurationMs) {
-    return {
-      valid: false,
-      reason: 'gesture_too_short',
-      points,
-      pathLength,
-      durationMs,
-      releasePoint,
-    };
+    return null;
   }
 
   const xs = points.map((point) => point.x);
@@ -116,11 +106,8 @@ function summarizeGesture(rawPoints, { minDistance = 12, minDurationMs = 40 } = 
 
   return {
     schemaVersion: 2,
-    valid: true,
-    reason: null,
     kind,
     points,
-    strokes: [{ points }],
     bbox: {
       x: Math.round(bbox.x),
       y: Math.round(bbox.y),
@@ -144,6 +131,56 @@ function summarizeGesture(rawPoints, { minDistance = 12, minDurationMs = 40 } = 
     durationMs,
     straightness,
     releasePoint,
+  };
+}
+
+// One unified gesture summarizer for both single and multi stroke sessions:
+// the overlay may commit several strokes before the user finishes ("circle
+// this, and this, then run the command"), and every stroke keeps its own
+// region so grounding can rank targets per stroke.  The aggregate fields the
+// bridges rely on (bbox / semanticPoint / releasePoint) are derived from the
+// first stroke (stable capsule anchor) plus the last release point.
+function summarizeGesture(rawPoints, rawStrokes, { minDistance = 12, minDurationMs = 40 } = {}) {
+  const strokeInputs = (Array.isArray(rawStrokes) && rawStrokes.length)
+    ? rawStrokes
+      .map((stroke) => Array.from(stroke?.points || []).map(finitePoint).filter(Boolean))
+      .filter((strokePoints) => strokePoints.length >= 2)
+    : [Array.from(rawPoints || []).map(finitePoint).filter(Boolean)];
+  const strokeSummaries = strokeInputs
+    .map((strokePoints) => summarizeStroke(strokePoints, { minDistance, minDurationMs }))
+    .filter(Boolean);
+  if (!strokeSummaries.length) {
+    const reason = strokeInputs.some((strokePoints) => strokePoints.length >= 2)
+      ? 'gesture_too_short'
+      : 'insufficient_points';
+    return { valid: false, reason, points: [] };
+  }
+  const points = strokeSummaries.flatMap((stroke) => stroke.points);
+  const xs = points.map((point) => point.x);
+  const ys = points.map((point) => point.y);
+  const first = strokeSummaries[0];
+  const last = strokeSummaries[strokeSummaries.length - 1];
+  return {
+    schemaVersion: 2,
+    valid: true,
+    reason: null,
+    kind: strokeSummaries.length === 1 ? first.kind : 'multi',
+    points,
+    strokes: strokeSummaries,
+    bbox: {
+      x: Math.round(Math.min(...xs)),
+      y: Math.round(Math.min(...ys)),
+      width: Math.round(Math.max(...xs) - Math.min(...xs)),
+      height: Math.round(Math.max(...ys) - Math.min(...ys)),
+    },
+    semanticPoint: first.semanticPoint,
+    anchorPoint: first.releasePoint,
+    releasePoint: last.releasePoint,
+    geometry: strokeSummaries.map((stroke) => stroke.geometry),
+    direction: strokeSummaries.length === 1 ? first.direction : undefined,
+    pathLength: strokeSummaries.reduce((sum, stroke) => sum + stroke.pathLength, 0),
+    durationMs: strokeSummaries.reduce((sum, stroke) => sum + stroke.durationMs, 0),
+    straightness: first.straightness,
   };
 }
 
