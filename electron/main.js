@@ -1409,14 +1409,14 @@ function armSelectionGesture(reason = 'wiggle') {
       foregroundProcessId: Number(pointerInputState.foregroundProcessId || 0),
     },
   };
-  // Arm gesture capture for both modes — drawing is always tracked from
-  // the main-process polling loop, never from the overlay's DOM events.
-  passThroughGestureCapture.arm({
-    token,
-    displayBounds: display.bounds,
-    initialButtons: Number(pointerInputState.buttons || 0),
-    source: selectionGestureArm.source,
-  });
+  if (runtime.interactionMode === 'pass_through') {
+    passThroughGestureCapture.arm({
+      token,
+      displayBounds: display.bounds,
+      initialButtons: Number(pointerInputState.buttons || 0),
+      source: selectionGestureArm.source,
+    });
+  }
   // Warm the hidden capsule renderer during the arm grace period. By the time
   // the user releases a stroke it can paint immediately without startup jank.
   const residentStage = createStageWindow();
@@ -1436,9 +1436,9 @@ function armSelectionGesture(reason = 'wiggle') {
       if (!selectionGestureArm || selectionGestureArm.token !== token) return;
       win.setBounds(arm.displayBounds);
       if (typeof win.setFocusable === 'function') win.setFocusable(false);
-      // Overlay always forwards mouse events — drawing is tracked by the
-      // main-process polling loop via passThroughGestureCapture, matching
-      // clicky's architecture. The renderer is a display-only canvas.
+      // Standby: click-through so user can interact with app below.
+      // The renderer will request pointer ownership via gesture-ready after
+      // it has reset its internal state — only then do we intercept mouse.
       win.setIgnoreMouseEvents(true, { forward: true });
       overlayOwnsPointerInput = false;
       win.showInactive();
@@ -1535,7 +1535,7 @@ function completeSelectionGesture(payload) {
 
 function processPassThroughGestureSample(now, pos) {
   const arm = selectionGestureArm;
-  if (!arm) return false;
+  if (!arm || arm.runtime.interactionMode !== 'pass_through') return false;
   const events = passThroughGestureCapture.push({
     t: now,
     x: pos.x,
@@ -2201,15 +2201,15 @@ ipcMain.on('overlay:gesture-ready', (event, payload) => {
     log('gesture-ready SKIP: overlayWindow missing/destroyed');
     return;
   }
-  // Overlay stays click-through; drawing tracked by main-process polling.
-  // This matches clicky's architecture: the overlay only renders, never
-  // captures DOM pointer events. Toggling setIgnoreMouseEvents between
-  // true/false across show/hide cycles causes the renderer's DOM event
-  // system to silently stop delivering pointerdown on re-show.
-  overlayOwnsPointerInput = false;
+  // The renderer has reset its pointer state — safe to intercept mouse now.
+  // Do NOT call showInactive() here; the overlay is already visible from
+  // reveal(). A redundant show on an already-shown window was the root cause
+  // of DOM pointer events silently breaking on the second activation.
+  overlayWindow.setIgnoreMouseEvents(false);
+  overlayOwnsPointerInput = true;
   if (typeof overlayWindow.moveTop === 'function') overlayWindow.moveTop();
   log(
-    `gesture-ready OK token=${arm.token}`
+    `gesture-ready OK token=${arm.token} overlayOwnsPointerInput=true`
     + ` delay_ms=${Date.now() - arm.armedAt} mode=${arm.runtime.interactionMode}`,
   );
 });
