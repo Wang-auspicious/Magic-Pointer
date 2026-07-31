@@ -21,30 +21,51 @@ from typing import Any, Callable, Iterable, TextIO
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+# Default: Whisper bridge (used by module-level resident_microphone_runner).
 from scripts.local_voice_bridge import (
-    VoiceProfile,
-    load_model,
-    load_pcm_wav,
-    load_voice_profile,
-    requested_stop_state,
-    run_microphone_with_model,
-    transcribe,
+    VoiceProfile as _WhisperVoiceProfile,
+    load_model as _whisper_load_model,
+    load_pcm_wav as _whisper_load_pcm_wav,
+    load_voice_profile as _whisper_load_voice_profile,
+    requested_stop_state as _whisper_requested_stop_state,
+    run_microphone_with_model as _whisper_run_microphone_with_model,
+    transcribe as _whisper_transcribe,
 )
-
 
 MAX_COMMAND_BYTES = 64 * 1024
 MAX_PATH_CHARS = 4_096
 MAX_REQUEST_ID_CHARS = 160
 MAX_MICROPHONE_EVENTS = 64
-DEFAULT_ESTIMATED_MEMORY_MB = {
-    "tiny": 128,
-    "base": 256,
-    "small": 768,
-    "medium": 1_536,
-    "large": 3_072,
-}.get
+_DEFAULT_MEMORY_MB_WHISPER = {"tiny": 128, "base": 256, "small": 768, "medium": 1536, "large": 3072}.get
 
-MicrophoneRunner = Callable[[Any, VoiceProfile, str, int, Callable[[dict[str, Any]], None], Event], None]
+
+def _resolve_engine(engine: str):
+    """Return (model_loader, pcm_loader, transcriber, profile_loader, default_memory_mb)."""
+    if engine == "sense-voice":
+        from scripts.sense_voice_bridge import (
+            load_model,
+            load_voice_profile,
+            run_microphone_with_model,
+            transcribe,
+        )
+        return (
+            load_model,
+            _whisper_load_pcm_wav,  # pcm wav loader is shared
+            transcribe,
+            load_voice_profile,
+            run_microphone_with_model,
+            {"sense-voice-small": 512, "sense-voice-small-int8": 256}.get,
+        )
+    return (
+        _whisper_load_model,
+        _whisper_load_pcm_wav,
+        _whisper_transcribe,
+        _whisper_load_voice_profile,
+        _whisper_run_microphone_with_model,
+        _DEFAULT_MEMORY_MB_WHISPER,
+    )
+
+MicrophoneRunner = Callable[[Any, Any, str, int, Callable[[dict[str, Any]], None], Event], None]
 
 
 def resident_microphone_runner(
@@ -119,25 +140,24 @@ def _process_memory_bytes() -> int:
 
 
 class LocalVoiceWorker:
-    """Owns at most one in-memory local Whisper model and no request data."""
+    """Owns at most one in-memory voice model and no request data."""
 
     def __init__(
         self,
         *,
         model_name: str = "tiny",
-        profile: VoiceProfile | None = None,
-        model_loader: Callable[[str], Any] = load_model,
-        pcm_loader: Callable[[Path], Any] = load_pcm_wav,
-        transcriber: Callable[..., str] = transcribe,
+        profile: Any | None = None,
+        model_loader: Callable[[str], Any] | None = None,
+        pcm_loader: Callable[[Path], Any] | None = None,
+        transcriber: Callable[..., str] | None = None,
         memory_limit_mb: int | None = None,
         memory_probe: Callable[[], int] = _process_memory_bytes,
         idle_unload_ms: int | None = None,
         clock: Callable[[], float] = time.monotonic,
         microphone_runner: MicrophoneRunner | None = None,
-        profile_loader: Callable[..., VoiceProfile] = load_voice_profile,
+        profile_loader: Any | None = None,
     ) -> None:
         self.model_name = str(model_name or "tiny").strip() or "tiny"
-        self.profile = profile or VoiceProfile()
         self._model_loader = model_loader
         self._pcm_loader = pcm_loader
         self._transcriber = transcriber
@@ -150,6 +170,9 @@ class LocalVoiceWorker:
         self._actual_memory_bytes: int | None = None
         self._microphone_runner = microphone_runner
         self._profile_loader = profile_loader
+        self.profile = profile if profile is not None else (
+            self._profile_loader() if callable(self._profile_loader) else None
+        )
         self._microphone_lock = RLock()
         self._microphone_request_id: str | None = None
         self._microphone_state = "idle"
@@ -624,18 +647,38 @@ def serve(worker: LocalVoiceWorker, input_stream: TextIO, output_stream: TextIO)
 
 def main(argv: list[str] | None = None) -> int:
     _configure_stdio()
-    parser = argparse.ArgumentParser(description="UI-free local Whisper JSONL worker.")
+    parser = argparse.ArgumentParser(description="UI-free local voice JSONL worker (Whisper or SenseVoice).")
+    parser.add_argument("--engine", default=os.environ.get("MAGIC_POINTER_VOICE_ENGINE") or "whisper",
+                        choices=("whisper", "sense-voice"))
     parser.add_argument("--model", default=os.environ.get("MAGIC_POINTER_WHISPER_MODEL") or "tiny")
     parser.add_argument("--memory-limit-mb", type=int)
     parser.add_argument("--idle-unload-ms", type=int)
     args = parser.parse_args(argv)
+
+    model_loader, pcm_loader, transcriber, profile_loader, _mic_runner, default_memory = _resolve_engine(args.engine)
+
     try:
         worker = LocalVoiceWorker(
             model_name=args.model,
-            profile=load_voice_profile(),
+            profile=profile_loader(),
             memory_limit_mb=args.memory_limit_mb,
             idle_unload_ms=args.idle_unload_ms,
-            microphone_runner=resident_microphone_runner,
+            model_loader=model_loader,
+            pcm_loader=pcm_loader,
+            transcriber=transcriber,
+            microphone_runner=(
+                resident_microphone_runner if args.engine == "whisper" else
+                # SenseVoice uses its own microphone runner
+                lambda model, profile, request_id, silence_ms, publish, stop_event: (
+                    _mic_runner(
+                        model=model, model_name="resident", profile=profile,
+                        silence_ms=silence_ms,
+                        stop_state=lambda activity: _whisper_requested_stop_state(stop_event.is_set(), activity),
+                        event_sink=lambda kind, payload: publish({"type": kind, **payload}),
+                    )
+                )
+            ),
+            profile_loader=profile_loader,
         )
     except ValueError as exc:
         print(json.dumps(LocalVoiceWorker._error("invalid_configuration", str(exc)), ensure_ascii=False), flush=True)

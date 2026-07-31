@@ -27,12 +27,10 @@ external_zip/
 *.zip
 
 # Local reference/demo media not part of source release
-/演示*.*
-/demo1_ascii.png
-/微信图片*.*
-/magic pointer.pdf
-/Shaping the future of AI interaction by reimagining the mouse pointer — Google DeepMind.html
-/Shaping the future of AI interaction by reimagining the mouse pointer — Google DeepMind_files/
+demo/recordings/
+
+# External reference papers
+docs/reference/
 
 # Local editor/agent state
 .omx/
@@ -45,4 +43,3 @@ Thumbs.db
 # Local browser profile / tool state / downloaded papers (not source)
 /Magic/
 /.playwright-cli/
-/2307.00583v1.pdf

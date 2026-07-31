@@ -204,6 +204,7 @@
               <section class="settings-section">
                 <div class="section-heading"><div><h2>本地语音</h2><p>转写在本机完成；提交仍遵循应用和隐私边界。</p></div></div>
                 <div class="settings-list">
+                  <label class="settings-row"><span><b>语音引擎</b><small>Whisper 离线随时可用；SenseVoice 中文更准但需先下载模型（python scripts/sense_voice_setup.py）。</small></span><select id="voice-engine"><option value="whisper">Whisper (tiny)</option><option value="sense-voice">SenseVoice Small（推荐中文）</option></select></label>
                   <label class="settings-row"><span><b>开始策略</b><small>可自动监听、按住鼠标左键说话，或将指针驻留在语音胶囊上开始。</small></span><select id="voice-start-strategy"><option value="auto">自动开始监听</option><option value="push_to_talk">按住左键说话</option><option value="hover">驻留语音胶囊</option></select></label>
                   <label class="settings-row"><span><b>停顿后自动提交</b><small>关闭时先完成转写，再由你确认发送。</small></span><input id="voice-auto-submit" class="switch-input" type="checkbox" checked /></label>
                   <label class="settings-row"><span><b>识别语言</b><small>自动模式根据当前语音判断。</small></span><select id="voice-language"><option value="auto">自动识别</option><option value="zh">中文</option><option value="en">English</option><option value="ja">日本語</option><option value="ko">한국어</option><option value="fr">Français</option><option value="de">Deutsch</option><option value="es">Español</option><option value="ru">Русский</option></select></label>

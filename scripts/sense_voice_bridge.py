@@ -294,29 +294,73 @@ def run_microphone_with_model(
 
 
 # ---------------------------------------------------------------------------
-# CLI entry point (for testing)
+# CLI entry point — same protocol as local_voice_bridge.py
 # ---------------------------------------------------------------------------
+
+
+def _stop_capture_state(stop_file: Path | str | None, activity: VoiceActivity) -> str | None:
+    if stop_file is not None and Path(stop_file).exists():
+        return "stop_file"
+    return None
+
+
+def _emit(kind: str, **payload: Any) -> None:
+    record: dict[str, Any] = {"type": kind, **payload}
+    print(json.dumps(record, ensure_ascii=False), flush=True)
+
+
+def run_microphone(
+    *,
+    model_name: str = "sense-voice-small",
+    profile: VoiceProfile | None = None,
+    silence_ms: int = 1600,
+    stop_file: Path | str | None = None,
+) -> int:
+    _emit("loading", engine=f"sense-voice-{model_name}")
+    model = load_model(model_name)
+    _emit("ready", engine=f"sense-voice-{model_name}")
+    run_microphone_with_model(
+        model=model,
+        model_name=model_name,
+        profile=profile or VoiceProfile(),
+        silence_ms=silence_ms,
+        stop_state=lambda activity: _stop_capture_state(stop_file, activity),
+        event_sink=_emit,
+    )
+    return 0
 
 
 def main() -> int:
     import argparse
-    parser = argparse.ArgumentParser(description="SenseVoice Small ASR bridge")
-    parser.add_argument("--model", default="sense-voice-small")
-    parser.add_argument("--wav", help="Transcribe a WAV file and print result")
+    parser = argparse.ArgumentParser(description="SenseVoice Small ASR bridge for Magic Pointer.")
+    parser.add_argument("--model", default=os.environ.get("MAGIC_POINTER_VOICE_ENGINE_MODEL") or "sense-voice-small")
+    parser.add_argument("--language", default="zh")
+    parser.add_argument("--silence-ms", type=int, default=1600)
+    parser.add_argument("--input-wav", type=Path)
+    parser.add_argument("--stop-file", type=Path)
     args = parser.parse_args()
 
-    if args.wav:
+    profile = load_voice_profile()
+    if args.language:
+        profile.language = str(args.language)
+
+    if args.input_wav:
         import wave
-        wf = wave.open(args.wav, "rb")
+        wf = wave.open(str(args.input_wav), "rb")
         frames = wf.readframes(wf.getnframes())
         audio = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
         wf.close()
         model = load_model(args.model)
-        print(transcribe(model, audio))
+        text = transcribe(model, audio)
+        _emit("final", transcript=text, engine="sense-voice")
         return 0
 
-    print("SenseVoice bridge loaded. Use local_voice_worker.py with --engine sense-voice")
-    return 0
+    return run_microphone(
+        model_name=args.model,
+        profile=profile,
+        silence_ms=args.silence_ms,
+        stop_file=args.stop_file,
+    )
 
 
 if __name__ == "__main__":

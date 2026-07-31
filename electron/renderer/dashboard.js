@@ -486,6 +486,7 @@ function applySettings(value) {
   setValue('gesture-line-style', appearance.gesture_line_style || 'demo6_band');
   setValue('gesture-line-width', appearance.gesture_line_width_dip ?? 40);
   setValue('default-input-mode', interaction.default_input_mode || 'voice');
+  setValue('voice-engine', interaction.voice_engine || 'whisper');
   setValue('voice-start-strategy', interaction.voice_start_strategy || 'auto');
   setValue('voice-auto-submit', interaction.voice_auto_submit !== false);
   setValue('voice-language', interaction.voice_language || 'auto');
@@ -578,6 +579,7 @@ function collectSettings() {
   next.activation.mouse_side_button = document.getElementById('mouse-side-button').value || 'none';
   next.interaction = { ...(next.interaction || {}) };
   next.interaction.default_input_mode = document.getElementById('default-input-mode').value === 'text' ? 'text' : 'voice';
+  next.interaction.voice_engine = document.getElementById('voice-engine').value || 'whisper';
   next.interaction.voice_start_strategy = document.getElementById('voice-start-strategy').value || 'auto';
   next.interaction.voice_auto_submit = document.getElementById('voice-auto-submit').checked;
   next.interaction.voice_language = document.getElementById('voice-language').value || 'auto';

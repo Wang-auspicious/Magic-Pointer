@@ -14,6 +14,9 @@ html, body {
   cursor: none !important;
 }
 
+body[data-mode='gesture'] {
+  background: rgba(0, 0, 0, 0.001);  /* non-transparent hit target for exclusive overlay */
+}
 body[data-mode='gesture'],
 body[data-mode='gesture'] * {
   cursor: url('./assets/armed-cursor.svg') 3 3, crosshair !important;

@@ -1130,6 +1130,7 @@ function localWhisperModelName() {
 
 function voiceRuntimeConfig(settings = fabricSettings) {
   const interaction = settings?.interaction || {};
+  const engine = interaction.voice_engine || 'whisper';
   return {
     enabled: interaction.voice_resident_enabled !== false,
     memoryLimitMb: Number(interaction.voice_memory_limit_mb) || 1024,
@@ -1137,7 +1138,8 @@ function voiceRuntimeConfig(settings = fabricSettings) {
     root: ROOT,
     pythonExecutable: PYTHON_EXECUTABLE,
     pythonIsolated: PYTHON_ISOLATED,
-    modelName: localWhisperModelName(),
+    engine,
+    modelName: engine === 'sense-voice' ? 'sense-voice-small' : localWhisperModelName(),
     settingsPath: fabricSettingsStore?.path || '',
   };
 }
@@ -1438,10 +1440,11 @@ function armSelectionGesture(reason = 'wiggle') {
         win.setIgnoreMouseEvents(true, { forward: true });
         overlayOwnsPointerInput = false;
       } else {
-        // The renderer resets stale pointer capture, then acknowledges
-        // readiness via gesture-ready before this window owns input.
-        win.setIgnoreMouseEvents(true, { forward: true });
-        overlayOwnsPointerInput = false;
+        // Exclusive overlay: the renderer draws on its own canvas via DOM
+        // pointer events. Give it input ownership immediately so that the
+        // first pointermove creates a hit-testable cursor and clicks land.
+        win.setIgnoreMouseEvents(false);
+        overlayOwnsPointerInput = true;
       }
       win.showInactive();
       win.webContents.send('overlay:show', {
@@ -2266,13 +2269,16 @@ function startLegacyDictation({ requestId, surface, contextPath, silenceMs }) {
   if (dictationChildren.has(surface)) {
     return { ok: false, error: 'voice_session_active' };
   }
-  const scriptPath = path.join(ROOT, 'scripts', 'local_voice_bridge.py');
+  const voiceEngine = fabricSettings?.interaction?.voice_engine || 'whisper';
+  const scriptPath = voiceEngine === 'sense-voice'
+    ? path.join(ROOT, 'scripts', 'sense_voice_bridge.py')
+    : path.join(ROOT, 'scripts', 'local_voice_bridge.py');
   const pythonExecutable = PYTHON_EXECUTABLE;
   const voiceArgs = pythonInvocationArgs([
     '-u',
     scriptPath,
     '--model',
-    localWhisperModelName(),
+    voiceEngine === 'sense-voice' ? 'sense-voice-small' : localWhisperModelName(),
     '--silence-ms',
     String(silenceMs),
   ], { isolated: PYTHON_ISOLATED });
