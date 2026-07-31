@@ -9,7 +9,6 @@ class VoiceWorkerClient extends EventEmitter {
   constructor({
     root,
     pythonExecutable = 'python',
-    engine = 'whisper',
     modelName = 'tiny',
     settingsPath = '',
     memoryLimitMb = 1024,
@@ -29,7 +28,6 @@ class VoiceWorkerClient extends EventEmitter {
     }
     this.root = root;
     this.pythonExecutable = pythonExecutable;
-    this.engine = engine;
     this.modelName = modelName;
     this.settingsPath = settingsPath;
     this.memoryLimitMb = memoryLimitMb;
@@ -56,7 +54,6 @@ class VoiceWorkerClient extends EventEmitter {
     const scriptPath = path.join(this.root, 'scripts', 'local_voice_worker.py');
     const args = pythonInvocationArgs([
       '-u', scriptPath,
-      '--engine', this.engine,
       '--model', this.modelName,
       '--memory-limit-mb', String(this.memoryLimitMb),
       '--idle-unload-ms', String(this.idleUnloadMs),

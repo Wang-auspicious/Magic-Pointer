@@ -59,8 +59,8 @@ assert.match(gestureArm, /gestureAcceptAt:\s*arm\.readyAt/,
   'the renderer must receive the visual grace deadline');
 assert.match(
   gestureArm,
-  /interactionMode\s*===\s*'pass_through'[\s\S]*?setIgnoreMouseEvents\(true,\s*\{\s*forward:\s*true\s*\}\)/,
-  'default drawing must leave the underlying desktop interactive',
+  /setIgnoreMouseEvents\(true,\s*\{\s*forward:\s*true\s*\}\)[\s\S]*?overlayOwnsPointerInput\s*=\s*false/,
+  'overlay must always forward mouse events — drawing tracked by main process',
 );
 assert.doesNotMatch(gestureArm, /setTimeout\(reveal,\s*armDelayMs\)/,
   'input capture must begin immediately so an early held click cannot disappear');
@@ -136,8 +136,8 @@ const exclusiveReady = main.slice(
   main.indexOf("ipcMain.on('overlay:gesture-ready'"),
   main.indexOf("ipcMain.on('stage:renderer-ready'"),
 );
-assert.match(exclusiveReady, /payload\?\.token[\s\S]*?setIgnoreMouseEvents\(false\)/,
-  'exclusive drawing may capture input only after the reused renderer has reset');
+assert.match(exclusiveReady, /payload\?\.token[\s\S]*?moveTop\(\)/,
+  'overlay must stay click-through; z-order is the only post-reset concern');
 assert.match(overlay, /function resetOverlay\(\)[\s\S]*?releasePointerCapture/,
   'every dismissal must release stale DOM pointer ownership before rearming');
 assert.match(overlay, /resetOverlay\(\)[\s\S]*?gestureReady\(gestureToken\)/,

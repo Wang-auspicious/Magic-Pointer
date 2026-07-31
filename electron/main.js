@@ -1409,14 +1409,14 @@ function armSelectionGesture(reason = 'wiggle') {
       foregroundProcessId: Number(pointerInputState.foregroundProcessId || 0),
     },
   };
-  if (runtime.interactionMode === 'pass_through') {
-    passThroughGestureCapture.arm({
-      token,
-      displayBounds: display.bounds,
-      initialButtons: Number(pointerInputState.buttons || 0),
-      source: selectionGestureArm.source,
-    });
-  }
+  // Arm gesture capture for both modes — drawing is always tracked from
+  // the main-process polling loop, never from the overlay's DOM events.
+  passThroughGestureCapture.arm({
+    token,
+    displayBounds: display.bounds,
+    initialButtons: Number(pointerInputState.buttons || 0),
+    source: selectionGestureArm.source,
+  });
   // Warm the hidden capsule renderer during the arm grace period. By the time
   // the user releases a stroke it can paint immediately without startup jank.
   const residentStage = createStageWindow();
@@ -1436,16 +1436,11 @@ function armSelectionGesture(reason = 'wiggle') {
       if (!selectionGestureArm || selectionGestureArm.token !== token) return;
       win.setBounds(arm.displayBounds);
       if (typeof win.setFocusable === 'function') win.setFocusable(false);
-      if (arm.runtime.interactionMode === 'pass_through') {
-        win.setIgnoreMouseEvents(true, { forward: true });
-        overlayOwnsPointerInput = false;
-      } else {
-        // Exclusive overlay: the renderer draws on its own canvas via DOM
-        // pointer events. Give it input ownership immediately so that the
-        // first pointermove creates a hit-testable cursor and clicks land.
-        win.setIgnoreMouseEvents(false);
-        overlayOwnsPointerInput = true;
-      }
+      // Overlay always forwards mouse events — drawing is tracked by the
+      // main-process polling loop via passThroughGestureCapture, matching
+      // clicky's architecture. The renderer is a display-only canvas.
+      win.setIgnoreMouseEvents(true, { forward: true });
+      overlayOwnsPointerInput = false;
       win.showInactive();
       win.webContents.send('overlay:show', {
         reason,
@@ -1502,29 +1497,32 @@ function completeSelectionGesture(payload) {
     return false;
   }
   const bounds = arm.displayBounds;
-  const toGlobal = (point) => ({
-    x: Number(point.x) + Number(bounds.x),
-    y: Number(point.y) + Number(bounds.y),
+  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  const sf = display.scaleFactor || 1;
+  const toPhysical = (point) => ({
+    x: Math.round((Number(point.x) + Number(bounds.x)) * sf),
+    y: Math.round((Number(point.y) + Number(bounds.y)) * sf),
   });
   const gesture = {
     schemaVersion: 2,
-    coordinateSpace: 'electron_dip_screen',
-    points: summary.points.map((point) => ({ ...toGlobal(point), t: point.t })),
+    coordinateSpace: 'physical_screen_pixels',
+    points: summary.points.map((point) => ({ ...toPhysical(point), t: point.t })),
     strokes: summary.strokes.map((stroke) => ({
-      points: stroke.points.map((point) => ({ ...toGlobal(point), t: point.t })),
+      points: stroke.points.map((point) => ({ ...toPhysical(point), t: point.t })),
     })),
     bbox: {
-      x: summary.bbox.x + bounds.x,
-      y: summary.bbox.y + bounds.y,
-      width: summary.bbox.width,
-      height: summary.bbox.height,
+      x: Math.round((summary.bbox.x + bounds.x) * sf),
+      y: Math.round((summary.bbox.y + bounds.y) * sf),
+      width: Math.round(summary.bbox.width * sf),
+      height: Math.round(summary.bbox.height * sf),
     },
     kind: summary.kind,
     semanticPoint: summary.semanticPoint
-      ? toGlobal(summary.semanticPoint)
+      ? toPhysical(summary.semanticPoint)
       : undefined,
-    releasePoint: toGlobal(summary.releasePoint),
+    releasePoint: toPhysical(summary.releasePoint),
     displayBounds: { ...bounds },
+    scaleFactor: sf,
     source: { ...arm.source },
   };
   const reason = arm.reason;
@@ -1537,7 +1535,7 @@ function completeSelectionGesture(payload) {
 
 function processPassThroughGestureSample(now, pos) {
   const arm = selectionGestureArm;
-  if (!arm || arm.runtime.interactionMode !== 'pass_through') return false;
+  if (!arm) return false;
   const events = passThroughGestureCapture.push({
     t: now,
     x: pos.x,
@@ -2203,17 +2201,15 @@ ipcMain.on('overlay:gesture-ready', (event, payload) => {
     log('gesture-ready SKIP: overlayWindow missing/destroyed');
     return;
   }
-  overlayWindow.setIgnoreMouseEvents(false);
-  overlayOwnsPointerInput = true;
-  // Stage must stay invisible during gesture drawing — any full-screen
-  // transparent window at screen-saver level can eat pointer events.
-  if (stageWindow && !stageWindow.isDestroyed() && stageWindow.isVisible()) {
-    stageWindow.hide();
-    log('gesture-ready: hid stage to unblock overlay pointer input');
-  }
+  // Overlay stays click-through; drawing tracked by main-process polling.
+  // This matches clicky's architecture: the overlay only renders, never
+  // captures DOM pointer events. Toggling setIgnoreMouseEvents between
+  // true/false across show/hide cycles causes the renderer's DOM event
+  // system to silently stop delivering pointerdown on re-show.
+  overlayOwnsPointerInput = false;
   if (typeof overlayWindow.moveTop === 'function') overlayWindow.moveTop();
   log(
-    `gesture-ready OK token=${arm.token} overlayOwnsPointerInput=${overlayOwnsPointerInput}`
+    `gesture-ready OK token=${arm.token}`
     + ` delay_ms=${Date.now() - arm.armedAt} mode=${arm.runtime.interactionMode}`,
   );
 });

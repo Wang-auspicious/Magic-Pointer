@@ -60,7 +60,6 @@ function defaultSettings() {
       default_input_mode: 'voice',
       voice_auto_submit: true,
       voice_start_strategy: 'auto',
-      voice_engine: 'whisper',
       voice_silence_ms: 1600,
       voice_language: 'auto',
       voice_output_mode: 'verbatim',

@@ -11,7 +11,6 @@ function sameConfig(left, right) {
     && left.settingsPath === right.settingsPath
     && left.pythonExecutable === right.pythonExecutable
     && left.pythonIsolated === right.pythonIsolated
-    && left.engine === right.engine
     && left.modelName === right.modelName;
 }
 

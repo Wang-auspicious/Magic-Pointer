@@ -446,7 +446,6 @@ window.magicPointer?.onCursor((payload) => {
 window.magicPointer?.onGestureInput((payload) => {
   if (
     !gestureMode
-    || gestureInteractionMode !== 'pass_through'
     || String(payload?.token || '') !== String(gestureToken || '')
   ) return;
   const phase = String(payload?.phase || '');
