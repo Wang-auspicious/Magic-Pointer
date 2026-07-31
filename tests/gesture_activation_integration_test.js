@@ -63,7 +63,19 @@ assert.match(
   'overlay must always forward mouse events — drawing tracked by main process',
 );
 assert.doesNotMatch(gestureArm, /setTimeout\(reveal,\s*armDelayMs\)/,
+
   'input capture must begin immediately so an early held click cannot disappear');
+// Physical->DIP conversion: the stroke release point is physical pixels;
+// anchoring and display lookup must convert once so the capsule stays next
+// to the selection on scaled displays instead of clamping to a corner.
+assert(main.includes("screen.screenToDipPoint({ x: releasePoint.x, y: releasePoint.y })"),
+  'gesture release point must be converted to DIPs before stage anchoring');
+
+// Manual voice press during grounding must not be dropped silently.
+assert(main.includes('Bounded wait for grounding instead of a silent drop'),
+  'dictation:start must wait briefly for grounding');
+assert(main.includes("safeSurfaceSend(surface, 'dictation:result', { ok: false, surface, error: '目标识别还在进行，请稍候再试语音。' })"),
+  'voice must report a friendly error instead of doing nothing');
 assert.match(requestActivation, /reason\s*===\s*'wiggle'[\s\S]*?armSelectionGesture\(/,
   'wiggle must arm drawing instead of opening a selection session');
 

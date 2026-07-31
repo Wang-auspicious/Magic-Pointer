@@ -16,6 +16,43 @@ function physicalScreenPoint(screenApi, dipPoint) {
 
 function physicalGestureTrace(screenApi, gesture) {
   if (!gesture || typeof gesture !== 'object') return null;
+  if (gesture.coordinateSpace === 'physical_screen_pixels') {
+    // Already physical (completeSelectionGesture output): normalize the
+    // shape without a second DIP -> physical conversion.
+    const rawStrokes = Array.isArray(gesture.strokes) && gesture.strokes.length
+      ? gesture.strokes
+      : [{ points: Array.isArray(gesture.points) ? gesture.points : [] }];
+    const strokes = rawStrokes.slice(0, 8).map((stroke) => ({
+      points: (Array.isArray(stroke?.points) ? stroke.points : []).slice(0, 512).map((point) => {
+        const x = Number(point?.x);
+        const y = Number(point?.y);
+        const t = Number(point?.t);
+        return Number.isFinite(x) && Number.isFinite(y)
+          ? { x: Math.round(x), y: Math.round(y), t: Number.isFinite(t) ? t : 0 }
+          : null;
+      }).filter(Boolean),
+    })).filter((stroke) => stroke.points.length >= 2);
+    const points = strokes.flatMap((stroke) => stroke.points);
+    if (points.length < 2) return null;
+    const releasePoint = gesture.releasePoint || points.at(-1);
+    const xs = points.map((point) => point.x);
+    const ys = points.map((point) => point.y);
+    return {
+      schemaVersion: 2,
+      coordinateSpace: 'physical_screen_pixels',
+      strokes,
+      releasePoint: {
+        x: Math.round(Number(releasePoint?.x) || 0),
+        y: Math.round(Number(releasePoint?.y) || 0),
+      },
+      bbox: {
+        x: Math.min(...xs),
+        y: Math.min(...ys),
+        width: Math.max(...xs) - Math.min(...xs),
+        height: Math.max(...ys) - Math.min(...ys),
+      },
+    };
+  }
   const rawStrokes = Array.isArray(gesture.strokes) && gesture.strokes.length
     ? gesture.strokes
     : [{ points: Array.isArray(gesture.points) ? gesture.points : [] }];

@@ -1825,11 +1825,20 @@ function beginSelectionSession(reason = 'manual', gesture = null) {
 
   const liveCursor = screen.getCursorScreenPoint();
   const releasePoint = gesture?.releasePoint || liveCursor;
-  const targetPoint = releasePoint;
+  // completeSelectionGesture emits physical pixels; the stage window and
+  // display APIs work in DIPs, so convert once before anchoring. Using a
+  // physical point as DIP on scaled displays pushed the capsule past the
+  // viewport edge and clamped it into the bottom-right corner.
+  const releasePointDip = gesture?.releasePoint
+    ? (typeof screen.screenToDipPoint === 'function'
+      ? screen.screenToDipPoint({ x: releasePoint.x, y: releasePoint.y })
+      : { x: Number(releasePoint.x) || 0, y: Number(releasePoint.y) || 0 })
+    : liveCursor;
+  const targetPoint = releasePointDip;
   const physicalCursor = physicalScreenPoint(screen, targetPoint);
   const physicalGesture = physicalGestureTrace(screen, gesture);
-  const display = screen.getDisplayNearestPoint(releasePoint);
-  const entry = selectionSessions.create({ reason, cursor: releasePoint });
+  const display = screen.getDisplayNearestPoint(targetPoint);
+  const entry = selectionSessions.create({ reason, cursor: targetPoint });
   entry.gesture = gesture ? safeClone(gesture) : null;
   activeSelectionSessionToken = entry.token;
   const initialInputMode = inputModeForReason(reason);
@@ -1853,8 +1862,8 @@ function beginSelectionSession(reason = 'manual', gesture = null) {
       capsuleAnchor: 'pointer',
       capsuleDelayMs: 0,
       pointer: {
-        x: releasePoint.x - stageBounds.x,
-        y: releasePoint.y - stageBounds.y,
+        x: targetPoint.x - stageBounds.x,
+        y: targetPoint.y - stageBounds.y,
       },
       eventSequence: [
         { type: 'FREEZE', target: null },
@@ -1874,8 +1883,8 @@ function beginSelectionSession(reason = 'manual', gesture = null) {
       voiceStartStrategy: fabricSettings.interaction.voice_start_strategy,
       targetGeometryKind: 'pointer_only',
       pointer: {
-        x: releasePoint.x - stageBounds.x,
-        y: releasePoint.y - stageBounds.y,
+        x: targetPoint.x - stageBounds.x,
+        y: targetPoint.y - stageBounds.y,
       },
       target: null,
     });
@@ -2447,12 +2456,32 @@ ipcMain.on('dictation:start', (event, payload) => {
     return;
   }
   if (!selectionSession.snapshot) {
-    // Gesture capsule is allowed to paint before target grounding completes.
-    // Its renderer gates auto-voice on groundingReady; this guard closes the
-    // final IPC race without turning normal capture latency into an error UI.
-    log(`dictation:start deferred while grounding token=${selectionToken}`);
+    // Bounded wait for grounding instead of a silent drop: a manual voice
+    // press right after releasing the stroke must never do nothing.
+    const deadline = Date.now() + 3000;
+    const attempt = () => {
+      const current = selectionSessions.get(selectionToken);
+      if (!current || activeSelectionSessionToken !== selectionToken) {
+        safeSurfaceSend(surface, 'dictation:result', { ok: false, surface, error: '当前 THIS 已过期，请重新激活 Magic Pointer。' });
+        return;
+      }
+      if (current.snapshot) {
+        startStageDictation({ surface, selectionSession: current, selectionToken });
+        return;
+      }
+      if (Date.now() >= deadline) {
+        safeSurfaceSend(surface, 'dictation:result', { ok: false, surface, error: '目标识别还在进行，请稍候再试语音。' });
+        return;
+      }
+      setTimeout(attempt, 80);
+    };
+    attempt();
     return;
   }
+  startStageDictation({ surface, selectionSession, selectionToken });
+});
+
+function startStageDictation({ surface, selectionSession, selectionToken }) {
   const snapshot = selectionSession.snapshot;
   const context = snapshot.context || {};
   const contextPath = String(context.document_path || context.path || snapshot.capture_path || '');
@@ -2481,8 +2510,7 @@ ipcMain.on('dictation:start', (event, payload) => {
     });
     safeSurfaceSend(surface, 'dictation:result', { ok: false, surface, error: `本地语音未启动：${result.error}` });
   }
-});
-
+}
 function resultTargetWindow(target) {
   if (target === 'dashboard' || target === 'calendar-dashboard' || target === 'fabric-dashboard') return dashboardWindow;
   if (target === 'stage') return stageWindow;

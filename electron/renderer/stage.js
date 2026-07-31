@@ -72,6 +72,8 @@
     capsuleAnchor: 'target',
     capsuleDelayMs: null,
     capsulePlacement: null,
+    capsulePlaced: false,
+    capsuleDragged: false,
     visualTuning: { ...DEFAULT_VISUAL_TUNING },
   };
   const textCanvas = document.createElement('canvas');
@@ -85,6 +87,7 @@
   let previousPointerButtons = 0;
   let pointerWasOverCapsule = false;
   let lastPointerPoint = null;
+  let capsuleDrag = null; // { startX, startY, originLeft, originTop }
   let reportedState = '';
   let targetSweepComplete = false;
   let targetSweepTimer = null;
@@ -139,6 +142,7 @@
     voiceTriggerPolicy = null;
     previousPointerButtons = 0;
     pointerWasOverCapsule = false;
+    capsuleDrag = null;
     session.submitOnFinal = false;
     session.pendingFinalTranscript = '';
   }
@@ -151,9 +155,38 @@
     if (![t, x, y, buttons].every(Number.isFinite)) return;
     lastPointerPoint = { x, y };
     syncHitRegions();
-    if (!voiceTriggerPolicy || state.name !== 'capsule-voice') return;
+    const capsuleRect = capsule.getBoundingClientRect();
+    const overCapsule = !capsule.hidden
+      && x >= capsuleRect.left && x <= capsuleRect.right
+      && y >= capsuleRect.top && y <= capsuleRect.bottom;
     const primaryDown = (buttons & 1) !== 0;
     const previousPrimaryDown = (previousPointerButtons & 1) !== 0;
+    // Drag the capsule: press on its body (not inside the text input) and move.
+    if (overCapsule && primaryDown && !previousPrimaryDown && !capsuleDrag) {
+      const inputRect = capsuleInput.getBoundingClientRect();
+      const overInput = x >= inputRect.left && x <= inputRect.right && y >= inputRect.top && y <= inputRect.bottom;
+      if (!overInput) {
+        capsuleDrag = { startX: x, startY: y, originLeft: capsuleRect.left, originTop: capsuleRect.top };
+      }
+    }
+    if (capsuleDrag) {
+      const dx = x - capsuleDrag.startX;
+      const dy = y - capsuleDrag.startY;
+      const currentRect = capsule.getBoundingClientRect();
+      const left = Math.max(4, Math.min(window.innerWidth - currentRect.width - 4, capsuleDrag.originLeft + dx));
+      const top = Math.max(4, Math.min(window.innerHeight - currentRect.height - 4, capsuleDrag.originTop + dy));
+      capsule.style.left = `${left}px`;
+      capsule.style.top = `${top}px`;
+      if (session.capsulePlacement) {
+        session.capsulePlacement = { ...session.capsulePlacement, x: left, y: top };
+      }
+      syncHitRegions();
+    }
+    if (capsuleDrag && !primaryDown && previousPrimaryDown) {
+      capsuleDrag = null;
+      session.capsuleDragged = true;
+    }
+    if (!voiceTriggerPolicy || state.name !== 'capsule-voice') return;
     if (session.voiceStartStrategy === 'push_to_talk') {
       if (primaryDown && !previousPrimaryDown) dispatchVoiceTrigger({ type: 'press', t });
       else if (!primaryDown && previousPrimaryDown) dispatchVoiceTrigger({ type: 'release', t });
@@ -463,6 +496,10 @@
   }
 
   function anchorCapsuleToTarget(width) {
+    // Anchor exactly once per session: the capsule must appear next to the
+    // selection and then stay put (the user can drag it). Re-anchoring when
+    // grounding later resolves made the bubble jump across the screen.
+    if (session.capsulePlaced || session.capsuleDragged) return;
     if (typeof anchor.chooseStableCapsuleAnchor === 'function') {
       const point = session.pointer || (state.target
         ? { x: state.target.x + state.target.width / 2, y: state.target.y + state.target.height / 2 }
@@ -487,6 +524,7 @@
       capsule.style.left = `${session.capsulePlacement.x}px`;
       capsule.style.top = `${session.capsulePlacement.y}px`;
       capsule.dataset.quadrant = session.capsulePlacement.quadrant;
+      session.capsulePlaced = true;
       return;
     }
     if (
@@ -505,9 +543,11 @@
       capsule.style.left = `${placement.x}px`;
       capsule.style.top = `${placement.y}px`;
       capsule.dataset.quadrant = placement.quadrant;
+      session.capsulePlaced = true;
       return;
     }
     anchorNearPointer(capsule, width, session.visualTuning.capsuleVoiceWidthDip);
+    session.capsulePlaced = true;
   }
 
   function applyVisualTuning() {
@@ -1017,6 +1057,8 @@
       session.capsuleAnchor = 'target';
       session.capsuleDelayMs = null;
       session.capsulePlacement = null;
+      session.capsulePlaced = false;
+      session.capsuleDragged = false;
       session.visualTuning = { ...DEFAULT_VISUAL_TUNING };
       lastPointerPoint = null;
       if (targetSweepTimer) clearTimeout(targetSweepTimer);

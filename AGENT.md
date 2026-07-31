@@ -28,7 +28,10 @@ Magic Pointer = 默认不可见的跨应用操作层。鼠标晃动唤醒 → �
 - **第二次激活画线失败**：首次晃动→画线正常，右键关闭后再晃→左键画线不触发。根因：`gesture-ready` handler 里的冗余 `showInactive()` 在已可见窗口上重复调用，触发 Electron compositor 状态重置。**已修复**——移除了 `showInactive()`，保留 `setIgnoreMouseEvents(false)`。
 - **选区偏移（高 DPI）**：150%/200% 缩放屏上圈选位置与实际截屏区域有偏移。根因：overlay 坐标是逻辑像素，截屏模块需要物理像素，缺 `× scaleFactor`。**已修复**——`completeSelectionGesture` 坐标全部乘了 `display.scaleFactor`。
 - **【已修 2026-07-31 Phase2】语音识别精度差**：SenseVoice Small 已正式接入为默认引擎（sherpa-onnx，模型已下载 228MB），同一 Whisper 模型不再并发推理（`_ModelRWLock`）；`voice_engine` 设置支持 auto/whisper/sense_voice，SenseVoice 连续 2 次加载失败自动回退 Whisper 并在 status/ready 事件带 `engineFallback` 原因；`scripts/benchmark_voice_engines.py` 提供同录音双引擎对比（CER/意图准确率/延迟）。
-- **气泡定位不精确**：releasePoint 直接用于气泡锚点，无 workArea 边界 clamp。
+
+- **【已修 2026-07-31 用户反馈】气泡跑到右下角**：`completeSelectionGesture` 输出的是物理像素，但 `beginSelectionSession` 把它当 DIP 用——高分屏（150%/200%）下减去 stageBounds 后溢出视口，被钳制到右下角。修复：手势 releasePoint 先经 `screen.screenToDipPoint` 转回 DIP 再做锚定；`physicalGestureTrace` 对手势坐标空间为 `physical_screen_pixels` 的输入不再二次缩放。
+- **【已修 2026-07-31 用户反馈】气泡出现后乱动**：stage 气泡改为每个会话只锚定一次（`capsulePlaced`），grounding 后续解析不再重新定位；用户可按住气泡本体（非输入框）拖到任意位置（`capsuleDragged` 锁定，边界内钳制）。
+- **【已修 2026-07-31 用户反馈】语音点了没反应**：`dictation:start` 在目标 grounding 未完成时曾静默丢弃请求；现在有界等待 3 秒（80ms 轮询），超时给出友好提示「目标识别还在进行，请稍候再试语音」，不再无声无息。- **气泡定位不精确**：releasePoint 直接用于气泡锚点，无 workArea 边界 clamp。
 - **【P0 已修 2026-07-31】语音管线崩溃**：`local_voice_bridge.py` 已捕获暂时性的 `queue.Empty` 并继续检查协作停止；partial 转录改为单在途后台任务，final 前串行收尾，同一 Whisper 模型不会并发推理。worker 同时补齐 `microphone_stopped` push，避免 Electron 残留 active request。详见 `docs/planning/REVIEW_AUDIT_20260731.md` #1/#2。
 - **【P0 已修 2026-07-31】bridge stdin 无大小上限**：`selection_bridge.py` / `electron_bridge.py` 统一使用 64KiB UTF-8 有界读取，不在内存中驻留完整超限 payload；超限后按固定块排空 stdin 以避免写端 `EPIPE`，再返回 `payload_too_large` 失败关闭。详见 REVIEW_AUDIT #3。
 - **【P0 已修 2026-07-31】overlay 黑屏无恢复**：`overlay:done` 非 gesture 分支改为事件驱动恢复——收到完成事件立即 `hideOverlay()`，不再等 bridge `onComplete`（最长 120s）才隐藏；overlay 再也不会在截图后黑屏并拦截全屏输入。详见 REVIEW_AUDIT #5。

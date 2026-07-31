@@ -60,5 +60,13 @@ assert(css.includes('.processing-shimmer'));
 assert(css.includes('.voice-waveform'));
 assert(css.includes('@media (prefers-reduced-motion: reduce)'));
 assert(!/gsap/i.test(css));
+// Capsule placement contract: anchor once next to the selection, never
+// drift afterwards, and let the user drag the bubble to a new spot.
+assert(source.includes('if (session.capsulePlaced || session.capsuleDragged) return;'),
+  'capsule must anchor exactly once per session');
+assert(source.includes('session.capsuleDragged = true;'),
+  'dragging the capsule must lock it in place');
+assert(source.includes('capsuleDrag = { startX: x, startY: y'),
+  'pointer press on the capsule body must begin a drag');
 
 console.log('stage static test ok');
