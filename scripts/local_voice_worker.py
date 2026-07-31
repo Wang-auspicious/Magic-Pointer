@@ -35,7 +35,6 @@ from scripts.local_voice_bridge import (
 MAX_COMMAND_BYTES = 64 * 1024
 MAX_PATH_CHARS = 4_096
 MAX_REQUEST_ID_CHARS = 160
-MAX_MICROPHONE_EVENTS = 64
 DEFAULT_ESTIMATED_MEMORY_MB = {
     "tiny": 128,
     "base": 256,
@@ -118,6 +117,40 @@ def _process_memory_bytes() -> int:
     return value if sys.platform == "darwin" else value * 1024
 
 
+class _ModelRWLock:
+    """Reader-writer lock guarding the in-memory Whisper model.
+
+    Multiple concurrent transcriptions share a read lock.  ``unload()``
+    acquires the write lock, which blocks until every in-flight
+    ``model.transcribe()`` call has returned — preventing the segfault
+    that occurs when a C++ inference thread is still running after
+    ``self._model = None`` + ``gc.collect()``.
+    """
+
+    def __init__(self) -> None:
+        self._readers = 0
+        self._readers_guard = Lock()
+        self._write_gate = Lock()
+
+    def acquire_read(self) -> None:
+        with self._readers_guard:
+            self._readers += 1
+            if self._readers == 1:
+                self._write_gate.acquire()
+
+    def release_read(self) -> None:
+        with self._readers_guard:
+            self._readers -= 1
+            if self._readers == 0:
+                self._write_gate.release()
+
+    def acquire_write(self) -> None:
+        self._write_gate.acquire()
+
+    def release_write(self) -> None:
+        self._write_gate.release()
+
+
 class LocalVoiceWorker:
     """Owns at most one in-memory local Whisper model and no request data."""
 
@@ -135,6 +168,7 @@ class LocalVoiceWorker:
         clock: Callable[[], float] = time.monotonic,
         microphone_runner: MicrophoneRunner | None = None,
         profile_loader: Callable[..., VoiceProfile] = load_voice_profile,
+        event_sink: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self.model_name = str(model_name or "tiny").strip() or "tiny"
         self.profile = profile or VoiceProfile()
@@ -150,12 +184,13 @@ class LocalVoiceWorker:
         self._actual_memory_bytes: int | None = None
         self._microphone_runner = microphone_runner
         self._profile_loader = profile_loader
+        self._model_access = _ModelRWLock()
+        self._event_sink = event_sink
         self._microphone_lock = RLock()
         self._microphone_request_id: str | None = None
         self._microphone_state = "idle"
         self._microphone_stop: Event | None = None
         self._microphone_thread: Thread | None = None
-        self._microphone_events: list[dict[str, Any]] = []
         self._idle_watch_stop = Event()
         self._idle_watch_thread: Thread | None = None
         self.shutdown_requested = False
@@ -183,19 +218,23 @@ class LocalVoiceWorker:
             self._last_used = self._clock()
 
     def unload(self) -> None:
-        with self._microphone_lock:
-            self._model = None
-            self._last_used = None
-            self._actual_memory_bytes = None
-            gc.collect()
-            try:
-                torch = sys.modules.get("torch")
-                if torch is not None and torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-            except Exception:
-                # CUDA is optional; an unavailable cleanup hook must not keep the
-                # resident model alive or turn an otherwise valid unload into an error.
-                pass
+        self._model_access.acquire_write()
+        try:
+            with self._microphone_lock:
+                self._model = None
+                self._last_used = None
+                self._actual_memory_bytes = None
+                gc.collect()
+                try:
+                    torch = sys.modules.get("torch")
+                    if torch is not None and torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                except Exception:
+                    # CUDA is optional; an unavailable cleanup hook must not keep the
+                    # resident model alive or turn an otherwise valid unload into an error.
+                    pass
+        finally:
+            self._model_access.release_write()
 
     def _unload_if_idle(self) -> bool:
         with self._microphone_lock:
@@ -265,22 +304,6 @@ class LocalVoiceWorker:
             return self._error("profile_load_failed", f"{type(exc).__name__}: {exc}", engine=self.engine)
         return None
 
-    def _append_microphone_event_locked(self, event: dict[str, Any], stop_event: Event | None = None) -> None:
-        if len(self._microphone_events) >= MAX_MICROPHONE_EVENTS:
-            self._microphone_events.pop(0)
-            overflow = {
-                "type": "error",
-                "code": "microphone_event_overflow",
-                "error": "Microphone event queue overflowed; capture was stopped.",
-                "requestId": event["requestId"],
-                "engine": self.engine,
-            }
-            self._microphone_events.append(overflow)
-            if stop_event is not None:
-                stop_event.set()
-            return
-        self._microphone_events.append(event)
-
     def _publish_microphone_event(self, request_id: str, payload: dict[str, Any]) -> None:
         kind = payload.get("type")
         if kind not in {"partial", "final", "error", "warning"}:
@@ -299,15 +322,23 @@ class LocalVoiceWorker:
         else:
             event["code"] = str(payload.get("code") or "microphone_runner_failed")[:120]
             event["error"] = str(payload.get("error") or "Microphone runner failed.")[:MAX_COMMAND_BYTES]
+        sink: Callable[[dict[str, Any]], None] | None = None
         with self._microphone_lock:
             if self._microphone_request_id != request_id:
                 return
             stop_event = self._microphone_stop
             if kind == "partial" and stop_event is not None and stop_event.is_set():
                 return
-            self._append_microphone_event_locked(event, stop_event)
             if kind in {"final", "error"} and stop_event is not None:
                 stop_event.set()
+            sink = self._event_sink
+        # Pipe writes may block under backpressure. Never hold the microphone
+        # state lock while delivering a pushed event.
+        if sink is not None:
+            try:
+                sink(event)
+            except Exception:
+                pass
 
     def _run_microphone_session(
         self,
@@ -319,20 +350,26 @@ class LocalVoiceWorker:
     ) -> None:
         try:
             assert self._microphone_runner is not None
-            self._microphone_runner(
-                model,
-                profile,
-                request_id,
-                silence_ms,
-                lambda payload: self._publish_microphone_event(request_id, payload),
-                stop_event,
-            )
+            self._model_access.acquire_read()
+            try:
+                self._microphone_runner(
+                    model,
+                    profile,
+                    request_id,
+                    silence_ms,
+                    lambda payload: self._publish_microphone_event(request_id, payload),
+                    stop_event,
+                )
+            finally:
+                self._model_access.release_read()
         except Exception as exc:
             self._publish_microphone_event(
                 request_id,
                 {"type": "error", "code": "microphone_runner_failed", "error": f"{type(exc).__name__}: {exc}"},
             )
         finally:
+            sink: Callable[[dict[str, Any]], None] | None = None
+            stopped_event: dict[str, Any] | None = None
             with self._microphone_lock:
                 if self._microphone_request_id != request_id:
                     return
@@ -341,9 +378,18 @@ class LocalVoiceWorker:
                 self._microphone_state = "idle"
                 self._microphone_stop = None
                 self._microphone_thread = None
-                self._append_microphone_event_locked(
-                    {"type": "microphone_stopped", "requestId": request_id, "engine": self.engine, "state": "idle"}
-                )
+                stopped_event = {
+                    "type": "microphone_stopped",
+                    "requestId": request_id,
+                    "engine": self.engine,
+                    "state": "idle",
+                }
+                sink = self._event_sink
+            if sink is not None and stopped_event is not None:
+                try:
+                    sink(stopped_event)
+                except Exception:
+                    pass
 
     def _start_microphone(self, command: dict[str, Any]) -> list[dict[str, Any]]:
         request_id = self._request_id(command)
@@ -397,18 +443,6 @@ class LocalVoiceWorker:
             self._microphone_stop.set()
             self._microphone_state = "stopping"
         return [{"type": "microphone_stopping", "requestId": request_id, "state": "stopping", "engine": self.engine}]
-
-    def _poll_microphone(self, command: dict[str, Any]) -> list[dict[str, Any]]:
-        request_id = self._request_id(command)
-        if request_id is None:
-            return [self._error("invalid_request_id", f"requestId must be a non-empty string no longer than {MAX_REQUEST_ID_CHARS} characters")]
-        with self._microphone_lock:
-            responses = [event for event in self._microphone_events if event["requestId"] == request_id]
-            self._microphone_events = [event for event in self._microphone_events if event["requestId"] != request_id]
-            state = self._microphone_state if self._microphone_request_id == request_id else "idle"
-        if responses:
-            return responses
-        return [{"type": "microphone_status", "requestId": request_id, "state": state, "engine": self.engine}]
 
     @staticmethod
     def _error(code: str, error: str, *, engine: str | None = None) -> dict[str, Any]:
@@ -489,6 +523,12 @@ class LocalVoiceWorker:
         if profile_error is not None:
             return [profile_error]
         with self._microphone_lock:
+            if self._microphone_request_id is not None:
+                return [self._error(
+                    "microphone_active",
+                    "Stop the active microphone session before transcribing a WAV file.",
+                    engine=self.engine,
+                )]
             reused = self._model is not None
             if self._model is None:
                 responses = self._load(command)
@@ -498,17 +538,21 @@ class LocalVoiceWorker:
                 responses = []
             try:
                 audio = self._pcm_loader(path)
-                text = self._transcriber(
-                    self._model,
-                    audio,
-                    language=self.profile.language,
-                    glossary=self.profile.glossary,
-                    output_mode=self.profile.output_mode,
-                    punctuation=self.profile.punctuation,
-                    script=self.profile.script,
-                    mixed_spacing=self.profile.mixed_spacing,
-                    hallucination_guard=self.profile.hallucination_guard,
-                )
+                self._model_access.acquire_read()
+                try:
+                    text = self._transcriber(
+                        self._model,
+                        audio,
+                        language=self.profile.language,
+                        glossary=self.profile.glossary,
+                        output_mode=self.profile.output_mode,
+                        punctuation=self.profile.punctuation,
+                        script=self.profile.script,
+                        mixed_spacing=self.profile.mixed_spacing,
+                        hallucination_guard=self.profile.hallucination_guard,
+                    )
+                finally:
+                    self._model_access.release_read()
             except Exception as exc:
                 return responses + [self._error("transcribe_failed", f"{type(exc).__name__}: {exc}", engine=self.engine)]
             self._touch()
@@ -563,8 +607,6 @@ class LocalVoiceWorker:
             return self._start_microphone(command)
         if name == "stop_microphone":
             return self._stop_microphone(command)
-        if name == "poll_microphone":
-            return self._poll_microphone(command)
         if name == "unload":
             if self._microphone_is_active():
                 return [self._error("microphone_active", "Stop the active microphone session before unloading the model.", engine=self.engine)]
@@ -596,6 +638,7 @@ def serve(worker: LocalVoiceWorker, input_stream: TextIO, output_stream: TextIO)
             output_stream.write(json.dumps(response, ensure_ascii=False, separators=(",", ":")) + "\n")
             output_stream.flush()
 
+    worker._event_sink = emit
     worker.start_idle_watchdog(emit)
     try:
         while not worker.shutdown_requested:

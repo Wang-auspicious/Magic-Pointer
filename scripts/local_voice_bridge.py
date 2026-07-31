@@ -8,6 +8,7 @@ import queue
 import re
 import sys
 import wave
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -91,7 +92,15 @@ class VoiceActivity:
                 self.speech_samples += count
                 self.silent_samples = 0
                 return "speech"
-            self.noise_floor = 0.92 * self.noise_floor + 0.08 * level
+            # Asymmetric envelope follower: fast release (downward tracking
+            # when the environment genuinely quiets), slow attack (upward
+            # movement rejects transient noise like keystrokes or door slams).
+            # The symmetric 0.92/0.08 EMA poisoned the noise floor on every
+            # transient, causing missed speech or early cutoffs.
+            if level <= self.noise_floor:
+                self.noise_floor = 0.01 * self.noise_floor + 0.99 * level
+            else:
+                self.noise_floor = 0.999 * self.noise_floor + 0.001 * level
             if self.total_samples >= self.sample_rate * self.wait_ms / 1000:
                 return "timeout"
             return "waiting"
@@ -447,77 +456,117 @@ def run_microphone_with_model(
     last_partial_samples = 0
     partial_every_samples = int(SAMPLE_RATE * 1.25)
     last_text = ""
+    pending_partial: Future[str] | None = None
+    partial_enabled = True
+    partial_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="voice-partial")
 
-    with input_stream_factory(
-        samplerate=SAMPLE_RATE,
-        channels=1,
-        dtype="float32",
-        blocksize=int(SAMPLE_RATE * BLOCK_MS / 1000),
-        callback=callback,
-    ):
-        while True:
-            block = blocks.get(timeout=2.0)
-            state = activity.push(block)
-            if not activity.speech_started:
-                pre_roll.append(block)
-                pre_roll = pre_roll[-3:]
-            else:
-                if pre_roll:
-                    audio_parts.extend(pre_roll)
-                    pre_roll.clear()
-                audio_parts.append(block)
-            requested_stop = stop_state(activity) if stop_state is not None else None
-            if requested_stop == "error":
-                send(
-                    "error",
-                    error="Stop requested before minimum speech was captured.",
-                    engine=f"whisper-{model_name}-local",
-                )
-                return 2
-            if state == "timeout":
-                send("error", error="No speech detected before timeout.", engine=f"whisper-{model_name}-local")
-                return 2
-            sample_count = sum(part.size for part in audio_parts)
-            if (
-                activity.speech_started
-                and state == "speech"
-                and sample_count - last_partial_samples >= partial_every_samples
-            ):
-                text = transcribe(
-                    model,
-                    np.concatenate(audio_parts),
-                    language=profile.language,
-                    glossary=profile.glossary,
-                    output_mode=profile.output_mode,
-                    punctuation=profile.punctuation,
-                    script=profile.script,
-                    mixed_spacing=profile.mixed_spacing,
-                    hallucination_guard=profile.hallucination_guard,
-                )
-                last_partial_samples = sample_count
-                if text and text != last_text:
-                    last_text = text
-                    send("partial", transcript=text, engine=f"whisper-{model_name}-local")
-            if state == "final" or requested_stop == "final":
-                break
+    def transcribe_audio(audio: np.ndarray) -> str:
+        return transcribe(
+            model,
+            audio,
+            language=profile.language,
+            glossary=profile.glossary,
+            output_mode=profile.output_mode,
+            punctuation=profile.punctuation,
+            script=profile.script,
+            mixed_spacing=profile.mixed_spacing,
+            hallucination_guard=profile.hallucination_guard,
+        )
 
-    audio = np.concatenate(audio_parts) if audio_parts else np.empty((0,), dtype=np.float32)
-    final_text = transcribe(
-        model,
-        audio,
-        language=profile.language,
-        glossary=profile.glossary,
-        output_mode=profile.output_mode,
-        punctuation=profile.punctuation,
-        script=profile.script,
-        mixed_spacing=profile.mixed_spacing,
-        hallucination_guard=profile.hallucination_guard,
-    )
-    if not final_text:
-        send("error", error="No speech was recognized.", engine=f"whisper-{model_name}-local")
-        return 2
-    send("final", transcript=final_text, engine=f"whisper-{model_name}-local")
-    return 0
+    def collect_partial(*, wait: bool, emit_result: bool) -> None:
+        nonlocal last_text, partial_enabled, pending_partial
+        future = pending_partial
+        if future is None or (not wait and not future.done()):
+            return
+        pending_partial = None
+        try:
+            text = future.result()
+        except Exception as exc:
+            partial_enabled = False
+            send(
+                "warning",
+                warning=(
+                    f"Partial transcription failed ({type(exc).__name__}); "
+                    "continuing capture."
+                ),
+                engine=f"whisper-{model_name}-local",
+            )
+            return
+        if emit_result and text and text != last_text:
+            last_text = text
+            send("partial", transcript=text, engine=f"whisper-{model_name}-local")
+
+    terminal_error: str | None = None
+    try:
+        with input_stream_factory(
+            samplerate=SAMPLE_RATE,
+            channels=1,
+            dtype="float32",
+            blocksize=int(SAMPLE_RATE * BLOCK_MS / 1000),
+            callback=callback,
+        ):
+            while True:
+                collect_partial(wait=False, emit_result=True)
+                try:
+                    block = blocks.get(timeout=2.0)
+                except queue.Empty:
+                    collect_partial(wait=False, emit_result=True)
+                    requested_stop = stop_state(activity) if stop_state is not None else None
+                    if requested_stop == "error":
+                        terminal_error = "Stop requested before minimum speech was captured."
+                        break
+                    if requested_stop == "final":
+                        break
+                    continue
+                state = activity.push(block)
+                if not activity.speech_started:
+                    pre_roll.append(block)
+                    pre_roll = pre_roll[-3:]
+                else:
+                    if pre_roll:
+                        audio_parts.extend(pre_roll)
+                        pre_roll.clear()
+                    audio_parts.append(block)
+                requested_stop = stop_state(activity) if stop_state is not None else None
+                if requested_stop == "error":
+                    terminal_error = "Stop requested before minimum speech was captured."
+                    break
+                if state == "timeout":
+                    terminal_error = "No speech detected before timeout."
+                    break
+                sample_count = sum(part.size for part in audio_parts)
+                if (
+                    partial_enabled
+                    and pending_partial is None
+                    and activity.speech_started
+                    and state == "speech"
+                    and sample_count - last_partial_samples >= partial_every_samples
+                ):
+                    pending_partial = partial_executor.submit(
+                        transcribe_audio,
+                        np.concatenate(audio_parts),
+                    )
+                    last_partial_samples = sample_count
+                if state == "final" or requested_stop == "final":
+                    break
+
+        # A final/terminal event is the lifecycle boundary: no background
+        # partial may outlive it, and final inference must never overlap the
+        # same Whisper model with an in-flight partial.
+        collect_partial(wait=True, emit_result=False)
+        if terminal_error is not None:
+            send("error", error=terminal_error, engine=f"whisper-{model_name}-local")
+            return 2
+
+        audio = np.concatenate(audio_parts) if audio_parts else np.empty((0,), dtype=np.float32)
+        final_text = transcribe_audio(audio)
+        if not final_text:
+            send("error", error="No speech was recognized.", engine=f"whisper-{model_name}-local")
+            return 2
+        send("final", transcript=final_text, engine=f"whisper-{model_name}-local")
+        return 0
+    finally:
+        partial_executor.shutdown(wait=True)
 
 
 def run_microphone(

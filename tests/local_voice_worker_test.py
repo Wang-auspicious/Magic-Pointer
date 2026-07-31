@@ -15,7 +15,11 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.local_voice_bridge import VoiceProfile
-from scripts.local_voice_worker import MAX_COMMAND_BYTES, LocalVoiceWorker, serve
+from scripts.local_voice_worker import (
+    MAX_COMMAND_BYTES,
+    LocalVoiceWorker,
+    serve,
+)
 
 
 def write_wav(path: Path) -> None:
@@ -280,6 +284,7 @@ class LocalVoiceWorkerTests(unittest.TestCase):
 
     def test_microphone_session_is_singleton_and_scoped_to_its_request_id(self):
         runner_started = threading.Event()
+        events: list[dict[str, object]] = []
 
         def microphone_runner(_model, _profile, _request_id, _silence_ms, emit, stop_event):
             runner_started.set()
@@ -297,6 +302,7 @@ class LocalVoiceWorkerTests(unittest.TestCase):
             model_name="fake",
             model_loader=loader,
             microphone_runner=microphone_runner,
+            event_sink=events.append,
         )
 
         started = worker.handle({"command": "start_microphone", "requestId": "voice-1"})
@@ -308,9 +314,7 @@ class LocalVoiceWorkerTests(unittest.TestCase):
         self.assertEqual(worker.handle({"command": "stop_microphone", "requestId": "voice-1"})[0]["type"], "microphone_stopping")
 
         deadline = time.monotonic() + 1
-        events: list[dict[str, object]] = []
         while time.monotonic() < deadline:
-            events.extend(worker.handle({"command": "poll_microphone", "requestId": "voice-1"}))
             event_types = [item["type"] for item in events]
             if "final" in event_types and "microphone_stopped" in event_types:
                 break
@@ -320,6 +324,65 @@ class LocalVoiceWorkerTests(unittest.TestCase):
         self.assertIn("microphone_stopped", [item["type"] for item in events])
         self.assertTrue(all(item["requestId"] == "voice-1" for item in events))
         self.assertEqual(worker.handle({"command": "status"})[0]["microphone_state"], "idle")
+
+    def test_wav_transcription_fails_closed_while_microphone_owns_the_model(self):
+        runner_started = threading.Event()
+        release_runner = threading.Event()
+
+        def microphone_runner(_model, _profile, _request_id, _silence_ms, _emit, _stop_event):
+            runner_started.set()
+            release_runner.wait(1)
+
+        worker = LocalVoiceWorker(
+            model_name="fake",
+            model_loader=lambda _model_name: FakeModel(),
+            microphone_runner=microphone_runner,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            wav_path = Path(directory) / "speech.wav"
+            write_wav(wav_path)
+            worker.handle({"command": "start_microphone", "requestId": "voice-exclusive"})
+            self.assertTrue(runner_started.wait(1))
+
+            response = worker.handle({"command": "transcribe_wav", "path": str(wav_path)})
+
+        release_runner.set()
+        self.assertEqual(response[0]["code"], "microphone_active")
+
+    def test_push_mode_does_not_stop_after_the_removed_poll_buffer_limit(self):
+        # The old poll-mode path buffered at most MAX_MICROPHONE_EVENTS=64
+        # events and force-stopped the session when the buffer overflowed.
+        # Push mode removed both the buffer and the cap; emitting well past the
+        # old limit must not set the cooperative stop flag or drop any event.
+        old_poll_buffer_limit = 64
+        push_event_count = old_poll_buffer_limit + 1
+        runner_done = threading.Event()
+        forced_stop: list[bool] = []
+        events: list[dict[str, object]] = []
+
+        def microphone_runner(_model, _profile, _request_id, _silence_ms, emit, stop_event):
+            for index in range(push_event_count):
+                emit({"type": "partial", "transcript": f"partial-{index}"})
+            forced_stop.append(stop_event.is_set())
+            runner_done.set()
+
+        worker = LocalVoiceWorker(
+            model_name="fake",
+            model_loader=lambda _model_name: FakeModel(),
+            microphone_runner=microphone_runner,
+            event_sink=events.append,
+        )
+
+        worker.handle({"command": "start_microphone", "requestId": "voice-push"})
+
+        self.assertTrue(runner_done.wait(1))
+        self.assertEqual(forced_stop, [False])
+        self.assertEqual(
+            len([event for event in events if event["type"] == "partial"]),
+            push_event_count,
+        )
+
+
 
     def test_completed_microphone_sessions_reuse_the_loaded_model(self):
         completed = threading.Event()
@@ -436,3 +499,59 @@ class LocalVoiceWorkerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    def test_microphone_start_cannot_overlap_inflight_wav_transcription(self):
+        # Regression: _transcribe_wav must hold _microphone_lock across the
+        # whole model call. If it released the lock between the "microphone
+        # idle" check and the inference, a concurrent start_microphone could
+        # hand the same Whisper model to two inference callers at once.
+        transcribe_entered = threading.Event()
+        allow_transcribe = threading.Event()
+        runner_started = threading.Event()
+
+        def transcriber(_model, _audio, **_options):
+            transcribe_entered.set()
+            allow_transcribe.wait(1)
+            return "done"
+
+        def microphone_runner(_model, _profile, _request_id, _silence_ms, _emit, _stop_event):
+            runner_started.set()
+
+        worker = LocalVoiceWorker(
+            model_name="fake",
+            model_loader=lambda _model_name: FakeModel(),
+            transcriber=transcriber,
+            microphone_runner=microphone_runner,
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            wav_path = Path(directory) / "speech.wav"
+            write_wav(wav_path)
+
+            wav_results: list[list[dict[str, object]]] = []
+            wav_thread = threading.Thread(
+                target=lambda: wav_results.append(
+                    worker.handle({"command": "transcribe_wav", "path": str(wav_path)})
+                ),
+            )
+            wav_thread.start()
+            self.assertTrue(transcribe_entered.wait(1))
+
+            mic_results: list[list[dict[str, object]]] = []
+            mic_thread = threading.Thread(
+                target=lambda: mic_results.append(
+                    worker.handle({"command": "start_microphone", "requestId": "voice-race"})
+                ),
+            )
+            mic_thread.start()
+            time.sleep(0.05)
+            self.assertFalse(runner_started.is_set())
+
+            allow_transcribe.set()
+            wav_thread.join(1)
+            mic_thread.join(1)
+
+        self.assertEqual(wav_results[0][-1]["transcript"], "done")
+        self.assertTrue(runner_started.wait(1))
+        self.assertEqual(mic_results[0][-1]["type"], "microphone_started")
+

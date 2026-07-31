@@ -13,7 +13,6 @@ class VoiceWorkerClient extends EventEmitter {
     settingsPath = '',
     memoryLimitMb = 1024,
     idleUnloadMs = 300000,
-    pollIntervalMs = 80,
     pythonIsolated = false,
     spawnProcess = spawn,
     baseEnv = process.env,
@@ -32,7 +31,6 @@ class VoiceWorkerClient extends EventEmitter {
     this.settingsPath = settingsPath;
     this.memoryLimitMb = memoryLimitMb;
     this.idleUnloadMs = idleUnloadMs;
-    this.pollIntervalMs = pollIntervalMs;
     this.pythonIsolated = pythonIsolated === true;
     this.spawnProcess = spawnProcess;
     this.baseEnv = baseEnv;
@@ -40,7 +38,6 @@ class VoiceWorkerClient extends EventEmitter {
     this.active = null;
     this.stdoutBuffer = '';
     this.stderrBuffer = '';
-    this.pollTimer = null;
     this.closing = false;
   }
 
@@ -88,7 +85,6 @@ class VoiceWorkerClient extends EventEmitter {
       if (this.child !== child) return;
       const expected = this.closing;
       this.child = null;
-      this._clearPoll();
       if (!expected) this._workerFailed(`Local voice worker exited: ${this.stderrBuffer.trim().slice(0, 500) || `exit ${code}`}`);
       this.emit('worker-close', { code, expected });
     });
@@ -114,11 +110,6 @@ class VoiceWorkerClient extends EventEmitter {
       this._failTransport('Local voice worker command channel is unavailable.');
       return { ok: false, error: 'voice_worker_unavailable' };
     }
-    if (mode === 'microphone') {
-      this.pollTimer = setInterval(() => {
-        this._pollActiveMicrophone(requestId);
-      }, this.pollIntervalMs);
-    }
     return { ok: true, requestId, mode };
   }
 
@@ -140,7 +131,6 @@ class VoiceWorkerClient extends EventEmitter {
     const child = this.child;
     this.closing = true;
     this.active = null;
-    this._clearPoll();
     if (!child) return;
     if (!force && !this._write({ command: 'shutdown' })) force = true;
     try { if (force && !child.killed) child.kill(); } catch (_) {}
@@ -212,28 +202,17 @@ class VoiceWorkerClient extends EventEmitter {
     this.emit('voice-event', event);
     if (active.mode === 'wav' && ['final', 'error'].includes(event.type)) {
       this.active = null;
-      this._clearPoll();
     } else if (active.mode === 'microphone' && event.type === 'error' && !active.captureStarted) {
       this.active = null;
-      this._clearPoll();
     } else if (active.mode === 'microphone' && event.type === 'microphone_stopped') {
       this.active = null;
-      this._clearPoll();
     }
   }
 
   _workerFailed(message) {
     const requestId = this.active?.requestId || null;
     this.active = null;
-    this._clearPoll();
     this.emit('voice-event', { type: 'error', requestId, error: message, engine: 'whisper-local' });
-  }
-
-  _pollActiveMicrophone(requestId) {
-    if (this.active?.requestId !== requestId || this.active.mode !== 'microphone') return false;
-    if (this._write({ command: 'poll_microphone', requestId })) return true;
-    this._failTransport('Local voice worker command channel failed while polling capture.');
-    return false;
   }
 
   _failTransport(message) {
@@ -249,15 +228,9 @@ class VoiceWorkerClient extends EventEmitter {
     if (!child || this.child !== child) return;
     const expected = this.closing;
     this.child = null;
-    this._clearPoll();
     try { if (!child.killed) child.kill(); } catch (_) {}
     if (!expected) this._workerFailed(message);
     this.emit('worker-close', { code: null, expected, error: true });
-  }
-
-  _clearPoll() {
-    if (this.pollTimer) clearInterval(this.pollTimer);
-    this.pollTimer = null;
   }
 }
 

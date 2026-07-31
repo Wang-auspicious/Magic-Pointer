@@ -89,6 +89,10 @@ let surfaceReadinessWaitArmed = false;
 let startupVoiceWarmupScheduled = false;
 const registeredConfigurableHotkeys = new Set();
 
+// Bound what a (possibly compromised) overlay renderer can hand to the
+// capture bridge: distance-filtered real strokes stay far below this.
+const MAX_OVERLAY_CAPTURE_POINTS = 4096;
+
 const ROOT = path.resolve(__dirname, '..');
 const PYTHON_RUNTIME = resolvePythonRuntime({
   isPackaged: app.isPackaged,
@@ -1496,33 +1500,50 @@ function completeSelectionGesture(payload) {
     cancelSelectionGesture(summary.reason || 'invalid');
     return false;
   }
-  const bounds = arm.displayBounds;
-  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
-  const sf = display.scaleFactor || 1;
-  const toPhysical = (point) => ({
-    x: Math.round((Number(point.x) + Number(bounds.x)) * sf),
-    y: Math.round((Number(point.y) + Number(bounds.y)) * sf),
-  });
+  // Per-point display lookup: each point's physical coordinate is computed
+  // against the display that contains it, not a single global scale factor.
+  // Formula: X_phys = Screen_Physical_Origin + (Local_Logical_X × sf_display)
+  // This prevents nonlinear origin shift when displays have different scale
+  // factors (e.g. primary 100%, secondary 150%).
+  const toPhysical = (point) => {
+    const px = Number(point.x);
+    const py = Number(point.y);
+    const pointDisplay = screen.getDisplayNearestPoint({ x: px, y: py });
+    const pointSf = pointDisplay.scaleFactor || 1;
+    const physicalOriginX = pointDisplay.bounds.x * pointSf;
+    const physicalOriginY = pointDisplay.bounds.y * pointSf;
+    const localX = px - pointDisplay.bounds.x;
+    const localY = py - pointDisplay.bounds.y;
+    return {
+      x: Math.round(physicalOriginX + localX * pointSf),
+      y: Math.round(physicalOriginY + localY * pointSf),
+    };
+  };
+  const physicalPoints = summary.points.map((point) => ({ ...toPhysical(point), t: point.t }));
+  const physicalStrokes = summary.strokes.map((stroke) => ({
+    points: stroke.points.map((point) => ({ ...toPhysical(point), t: point.t })),
+  }));
+  const allPhysical = physicalStrokes.length
+    ? physicalStrokes.flatMap((s) => s.points)
+    : physicalPoints;
+  const xs = allPhysical.map((p) => p.x);
+  const ys = allPhysical.map((p) => p.y);
+  const armDisplay = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
   const gesture = {
     schemaVersion: 2,
     coordinateSpace: 'physical_screen_pixels',
-    points: summary.points.map((point) => ({ ...toPhysical(point), t: point.t })),
-    strokes: summary.strokes.map((stroke) => ({
-      points: stroke.points.map((point) => ({ ...toPhysical(point), t: point.t })),
-    })),
-    bbox: {
-      x: Math.round((summary.bbox.x + bounds.x) * sf),
-      y: Math.round((summary.bbox.y + bounds.y) * sf),
-      width: Math.round(summary.bbox.width * sf),
-      height: Math.round(summary.bbox.height * sf),
-    },
+    points: physicalPoints,
+    strokes: physicalStrokes,
+    bbox: allPhysical.length
+      ? { x: Math.min(...xs), y: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys) }
+      : { x: 0, y: 0, width: 0, height: 0 },
     kind: summary.kind,
     semanticPoint: summary.semanticPoint
       ? toPhysical(summary.semanticPoint)
       : undefined,
     releasePoint: toPhysical(summary.releasePoint),
-    displayBounds: { ...bounds },
-    scaleFactor: sf,
+    displayBounds: { ...armDisplay.bounds },
+    scaleFactor: armDisplay.scaleFactor || 1,
     source: { ...arm.source },
   };
   const reason = arm.reason;
@@ -1985,7 +2006,7 @@ app.whenReady().then(() => {
     cooldownMs: fabricSettings.activation.cooldown_ms,
   });
   const wiggleEvidencePath = String(process.env.MAGIC_POINTER_N18_WIGGLE_EVIDENCE_PATH || '').trim();
-  if (wiggleEvidencePath) {
+  if (!app.isPackaged && wiggleEvidencePath) {
     try {
       const evidence = runDeterministicWiggleEvidence({
         runId: 'n18-detector-regression',
@@ -2028,10 +2049,18 @@ app.whenReady().then(() => {
   log(`register hotkey Control+Alt+D dashboard ok=${dashboardHotkeyOk}`);
   applyConfiguredWakeState();
   refreshTrayMenu();
-  const captureMode = Boolean(
+  if (app.isPackaged && (
     process.env.MAGIC_POINTER_DASHBOARD_CAPTURE
     || process.env.MAGIC_POINTER_N17_FOCUS_EVIDENCE_PATH
     || process.env.MAGIC_POINTER_N18_WIGGLE_EVIDENCE_PATH
+  )) {
+    log('ignoring MAGIC_POINTER_* evidence/capture hooks: packaged builds never run test hooks');
+  }
+  const captureMode = Boolean(
+    !app.isPackaged
+    && (process.env.MAGIC_POINTER_DASHBOARD_CAPTURE
+      || process.env.MAGIC_POINTER_N17_FOCUS_EVIDENCE_PATH
+      || process.env.MAGIC_POINTER_N18_WIGGLE_EVIDENCE_PATH)
   );
   if (!captureMode && !onboardingRequired) scheduleStartupVoiceWarmup(voiceRuntimeStart);
   if (!captureMode) initializeUpdateManager({ automatic: true });
@@ -2041,7 +2070,7 @@ app.whenReady().then(() => {
   if (onboardingRequired && !captureMode) showOnboarding({}, { activate: true });
   else if (!startHidden) showDashboard({ view: 'general' }, { activate: true });
   let focusEvidencePath = String(process.env.MAGIC_POINTER_N17_FOCUS_EVIDENCE_PATH || '').trim();
-  if (focusEvidencePath) {
+  if (!app.isPackaged && focusEvidencePath) {
     focusEvidencePath = path.resolve(focusEvidencePath);
     const focusEvidenceStartDelay = Math.max(800, Math.min(
       Number(process.env.MAGIC_POINTER_N17_FOCUS_START_DELAY_MS || 1500),
@@ -2099,7 +2128,7 @@ app.whenReady().then(() => {
     }, focusEvidenceStartDelay);
   }
   const dashboardCapturePath = String(process.env.MAGIC_POINTER_DASHBOARD_CAPTURE || '').trim();
-  if (dashboardCapturePath) {
+  if (!app.isPackaged && dashboardCapturePath) {
     const captureView = String(process.env.MAGIC_POINTER_DASHBOARD_VIEW || 'activity');
     const captureAnchor = String(process.env.MAGIC_POINTER_DASHBOARD_CAPTURE_ANCHOR || '').trim();
     const captureProvenanceObjectId = String(
@@ -2694,19 +2723,25 @@ ipcMain.on('overlay:done', (event, payload) => {
     return;
   }
   const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  const rawPoints = Array.isArray(payload?.points) ? payload.points : [];
+  const points = rawPoints.slice(0, MAX_OVERLAY_CAPTURE_POINTS);
   const enriched = {
     ...payload,
+    points,
     screenBounds: display.bounds,
     scaleFactor: display.scaleFactor || payload?.viewport?.dpr || 1,
     capturePad: 54,
   };
   log(`overlay:done action=${enriched.action || 'capture'} points=${enriched.points?.length || 0} scale=${enriched.scaleFactor} bounds=${display.bounds.x},${display.bounds.y},${display.bounds.width},${display.bounds.height}`);
   // Runtime-issue capture results render on the stage (the overlay no longer
-  // hosts result surfaces).
+  // hosts result surfaces). Recovery here is event-driven off overlay:done
+  // itself, not off bridge completion: hide the overlay immediately so it can
+  // never sit black and input-blocking for the whole bridge run (up to the
+  // 120s timeout). The bridge completion then opens the stage.
   placeStageOnDisplay(display);
+  hideOverlay();
   runPythonBridge(enriched, 'scripts/electron_bridge.py', 'stage', {
     onComplete: (parsed) => {
-      hideOverlay();
       registerActionProposals(parsed, null, 'stage');
       lastStageResult = { token: null, parsed: safeClone(parsed) };
       showStage({

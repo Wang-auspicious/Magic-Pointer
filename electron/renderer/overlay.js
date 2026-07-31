@@ -26,8 +26,122 @@ let hintTimer = null;
 let gestureGraceTimer = null;
 let currentWorkflow = 'generic';
 
+// ── OffscreenCanvas pre-rendered pointer & aura frame cache ──────────
+// Avoids per-frame Path2D construction, createRadialGradient, shadowBlur,
+// and quadraticCurveTo calls — the main render loop only calls drawImage().
+const POINTER_FRAME_COUNT = 6;
+const AURA_FRAME_COUNT = 6;
+let pointerFrames = [];
+let auraFrames = [];
+let pointerFrameWidth = 0;
+let pointerFrameHeight = 0;
+let auraFrameWidth = 0;
+let auraFrameHeight = 0;
+
+function buildPointerFrames() {
+  pointerFrames = [];
+  const w = 48; const h = 68;  // enough for the rotated arrow + shadow
+  pointerFrameWidth = w;
+  pointerFrameHeight = h;
+  const originX = 6; const originY = 5;  // where (0,0) of the path maps
+  for (let i = 0; i < POINTER_FRAME_COUNT; i++) {
+    const pulse = i / (POINTER_FRAME_COUNT - 1);  // 0.0 … 1.0
+    const offscreen = new OffscreenCanvas(w, h);
+    const oc = offscreen.getContext('2d');
+    oc.translate(originX, originY);
+    oc.rotate(-0.045);
+    oc.scale(0.74, 0.92);
+    oc.lineJoin = 'round';
+    oc.lineCap = 'round';
+
+    const path = new Path2D();
+    path.moveTo(0.0, 0.0);
+    path.quadraticCurveTo(0.8, -0.7, 2.2, 0.0);
+    path.lineTo(22.4, 18.8);
+    path.quadraticCurveTo(24.8, 20.5, 21.6, 21.2);
+    path.lineTo(10.9, 20.4);
+    path.lineTo(5.6, 30.0);
+    path.quadraticCurveTo(4.5, 32.7, 3.4, 29.8);
+    path.lineTo(-1.0, 3.5);
+    path.quadraticCurveTo(-1.9, 1.1, 0.0, 0.0);
+    path.closePath();
+
+    // outer glow
+    oc.save();
+    oc.globalCompositeOperation = 'lighter';
+    oc.globalAlpha = 0.46 + pulse * 0.46;
+    oc.shadowColor = `rgba(37, 99, 235, ${0.72 + pulse * 0.24})`;
+    oc.shadowBlur = 20 + pulse * 20;
+    oc.strokeStyle = `rgba(59, 130, 246, ${0.42 + pulse * 0.30})`;
+    oc.lineWidth = 9.5;
+    oc.stroke(path);
+    oc.restore();
+
+    // main fill
+    oc.shadowColor = `rgba(37, 99, 235, ${0.52 + pulse * 0.34})`;
+    oc.shadowBlur = 12 + pulse * 12;
+    oc.fillStyle = 'rgba(255, 255, 255, .99)';
+    oc.strokeStyle = 'rgba(37, 99, 235, .96)';
+    oc.lineWidth = 2.15;
+    oc.fill(path);
+    oc.stroke(path);
+
+    // inner highlight
+    oc.shadowBlur = 0;
+    oc.strokeStyle = 'rgba(147, 197, 253, .42)';
+    oc.lineWidth = 0.75;
+    oc.stroke(path);
+
+    pointerFrames.push(offscreen);
+  }
+}
+
+function buildAuraFrames() {
+  auraFrames = [];
+  const w = 56; const h = 56;
+  auraFrameWidth = w;
+  auraFrameHeight = h;
+  const cx = w / 2; const cy = h / 2;
+  for (let i = 0; i < AURA_FRAME_COUNT; i++) {
+    const pulse = i / (AURA_FRAME_COUNT - 1);
+    const offscreen = new OffscreenCanvas(w, h);
+    const oc = offscreen.getContext('2d');
+    oc.translate(cx, cy);
+    oc.globalCompositeOperation = 'lighter';
+
+    const radius = 20 + pulse * 4;
+    if (typeof oc.createRadialGradient === 'function') {
+      const grad = oc.createRadialGradient(0, 0, 2, 0, 0, radius);
+      grad.addColorStop(0, `rgba(191, 219, 254, ${0.20 + pulse * 0.08})`);
+      grad.addColorStop(0.42, `rgba(59, 130, 246, ${0.14 + pulse * 0.08})`);
+      grad.addColorStop(1, 'rgba(37, 99, 235, 0)');
+      oc.fillStyle = grad;
+      oc.beginPath();
+      oc.arc(0, 0, radius, 0, Math.PI * 2);
+      oc.fill();
+    }
+
+    oc.strokeStyle = `rgba(96, 165, 250, ${0.24 + pulse * 0.12})`;
+    oc.lineWidth = 1.2;
+    oc.shadowColor = 'rgba(37, 99, 235, 0.32)';
+    oc.shadowBlur = 10 + pulse * 5;
+    oc.beginPath();
+    oc.arc(0, 0, 9 + pulse * 1.5, 0, Math.PI * 2);
+    oc.stroke();
+
+    auraFrames.push(offscreen);
+  }
+}
+
+function ensureFrameCache() {
+  if (pointerFrames.length === 0) buildPointerFrames();
+  if (auraFrames.length === 0) buildAuraFrames();
+}
+
 function resize() {
   dpr = window.devicePixelRatio || 1;
+  pointerFrames = [];  // invalidate — DPR may have changed
+  auraFrames = [];
   canvas.width = Math.round(window.innerWidth * dpr);
   canvas.height = Math.round(window.innerHeight * dpr);
   canvas.style.width = `${window.innerWidth}px`;
@@ -104,53 +218,18 @@ function drawSmoothPath(path, alpha = 1) {
 
 function drawPointer(p) {
   if (!p || captureMode) return;
-  // Native Windows cursor mode: do not override system cursor.
-  // Preloaded blue-white pointer used only for visual feedback if needed.
-  // Full-screen Overlay ensures visual/delay effect matches native.
-  // Right-click exit restores normal mouse.
+  ensureFrameCache();
+  if (pointerFrames.length === 0) return;
   const now = performance.now();
   const pulse = 0.5 + 0.5 * Math.sin(now / 430);
+  const idx = Math.min(pointerFrames.length - 1, Math.round(pulse * (pointerFrames.length - 1)));
   ctx.save();
   ctx.translate(p.x, p.y);
-  ctx.rotate(-0.045);
-  ctx.scale(0.74, 0.92);
-  ctx.lineJoin = 'round';
-  ctx.lineCap = 'round';
-
-  const path = new Path2D();
-  path.moveTo(0.0, 0.0);
-  path.quadraticCurveTo(0.8, -0.7, 2.2, 0.0);
-  path.lineTo(22.4, 18.8);
-  path.quadraticCurveTo(24.8, 20.5, 21.6, 21.2);
-  path.lineTo(10.9, 20.4);
-  path.lineTo(5.6, 30.0);
-  path.quadraticCurveTo(4.5, 32.7, 3.4, 29.8);
-  path.lineTo(-1.0, 3.5);
-  path.quadraticCurveTo(-1.9, 1.1, 0.0, 0.0);
-  path.closePath();
-
-  ctx.save();
-  ctx.globalCompositeOperation = 'lighter';
-  ctx.globalAlpha = 0.46 + pulse * 0.46;
-  ctx.shadowColor = `rgba(37, 99, 235, ${0.72 + pulse * 0.24})`;
-  ctx.shadowBlur = 20 + pulse * 20;
-  ctx.strokeStyle = `rgba(59, 130, 246, ${0.42 + pulse * 0.30})`;
-  ctx.lineWidth = 9.5;
-  ctx.stroke(path);
-  ctx.restore();
-
-  ctx.shadowColor = `rgba(37, 99, 235, ${0.52 + pulse * 0.34})`;
-  ctx.shadowBlur = 12 + pulse * 12;
-  ctx.fillStyle = 'rgba(255, 255, 255, .99)';
-  ctx.strokeStyle = 'rgba(37, 99, 235, .96)';
-  ctx.lineWidth = 2.15;
-  ctx.fill(path);
-  ctx.stroke(path);
-
-  ctx.shadowBlur = 0;
-  ctx.strokeStyle = 'rgba(147, 197, 253, .42)';
-  ctx.lineWidth = 0.75;
-  ctx.stroke(path);
+  ctx.drawImage(
+    pointerFrames[idx],
+    -pointerFrameWidth / 2 + 2,   // offset to align path origin with cursor hotspot
+    -pointerFrameHeight / 2 + 2,
+  );
   ctx.restore();
 }
 
@@ -165,28 +244,14 @@ function drawHitTestPixel(p) {
 
 function drawObserverAura(p) {
   if (!p) return;
+  ensureFrameCache();
+  if (auraFrames.length === 0) return;
   const now = performance.now();
   const pulse = 0.5 + 0.5 * Math.sin(now / 420);
+  const idx = Math.min(auraFrames.length - 1, Math.round(pulse * (auraFrames.length - 1)));
   ctx.save();
-  ctx.translate(p.x + 2, p.y + 2);
-  ctx.globalCompositeOperation = 'lighter';
-
-  const outer = ctx.createRadialGradient(0, 0, 2, 0, 0, 20 + pulse * 4);
-  outer.addColorStop(0, `rgba(191, 219, 254, ${0.20 + pulse * 0.08})`);
-  outer.addColorStop(0.42, `rgba(59, 130, 246, ${0.14 + pulse * 0.08})`);
-  outer.addColorStop(1, 'rgba(37, 99, 235, 0)');
-  ctx.fillStyle = outer;
-  ctx.beginPath();
-  ctx.arc(0, 0, 24 + pulse * 4, 0, Math.PI * 2);
-  ctx.fill();
-
-  ctx.strokeStyle = `rgba(96, 165, 250, ${0.24 + pulse * 0.12})`;
-  ctx.lineWidth = 1.2;
-  ctx.shadowColor = 'rgba(37, 99, 235, 0.32)';
-  ctx.shadowBlur = 10 + pulse * 5;
-  ctx.beginPath();
-  ctx.arc(0, 0, 9 + pulse * 1.5, 0, Math.PI * 2);
-  ctx.stroke();
+  ctx.translate(p.x + 2 - auraFrameWidth / 2, p.y + 2 - auraFrameHeight / 2);
+  ctx.drawImage(auraFrames[idx], 0, 0);
   ctx.restore();
 }
 
@@ -270,10 +335,6 @@ function submitGesture() {
   hideVisualsForCapture();
   requestAnimationFrame(() => {
     window.magicPointer?.done(payload);
-    if (!gestureMode) {
-      // Runtime-issue capture may remain open while its bridge runs.
-      setTimeout(() => restoreAfterCapture(seq), 1050);
-    }
   });
 }
 

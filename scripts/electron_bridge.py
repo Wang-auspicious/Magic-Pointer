@@ -38,6 +38,10 @@ from app.task_context import TaskContextStore
 from app.grounding.schema import PointerSelection
 from app.visual_annotation import make_pointer_annotated_image
 from app.system_context import enable_dpi_awareness, list_visible_windows
+from scripts._bridge_common import (
+    PayloadTooLargeError,
+    read_bounded_json_payload,
+)
 
 enable_dpi_awareness()
 
@@ -207,10 +211,7 @@ def _record_runtime_issue(
 
 
 def _read_payload() -> dict[str, Any]:
-    raw = sys.stdin.read().lstrip("\ufeff").strip()
-    if not raw:
-        return {}
-    return json.loads(raw)
+    return read_bounded_json_payload()
 
 
 def _coord_scale(payload: dict[str, Any]) -> float:
@@ -552,7 +553,15 @@ def main() -> int:
     OBJECT_DIR.mkdir(parents=True, exist_ok=True)
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
 
-    payload = _read_payload()
+    try:
+        payload = _read_payload()
+    except PayloadTooLargeError as exc:
+        print(json.dumps({
+            "ok": False,
+            "error": "payload_too_large",
+            "maxPayloadBytes": exc.max_bytes,
+        }, ensure_ascii=True))
+        return 2
     if not payload:
         print(json.dumps({"ok": False, "error": "empty payload"}, ensure_ascii=True))
         return 2

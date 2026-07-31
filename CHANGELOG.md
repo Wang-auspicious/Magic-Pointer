@@ -11,6 +11,22 @@
 
 ## Unreleased
 
+- Fixed multi-DPI physical coordinate mapping in `completeSelectionGesture` (`electron/main.js`): per-point display lookup with `X_phys = Screen_Physical_Origin + (Local_Logical × sf)` instead of a single global scale factor; bbox recomputed from physical point set.
+- Fixed model unload segfault race (`scripts/local_voice_worker.py`): added `_ModelRWLock` reader-writer lock so `unload()` waits for in-flight transcription to finish before dropping the model reference.
+- Replaced 80ms microphone polling with event-driven push (`scripts/local_voice_worker.py` + `electron/voice_worker_client.js`): worker pushes `partial`/`final`/`error` events straight to stdout via an async event sink; deleted `poll_microphone` command, `_pollActiveMicrophone`, and `pollIntervalMs` timer.
+- Optimized overlay rendering (`electron/renderer/overlay.js`): pointer and observer aura pre-rendered into OffscreenCanvas frame caches (6 frames each), main loop only calls `drawImage()`; removed blind `setTimeout(1050)` restore — recovery is driven by the main-process capture completion path.
+- Made VAD noise-floor tracking noise-immune (`scripts/local_voice_bridge.py`): asymmetric envelope follower (fast release 0.99 / slow attack 0.001) replaces the symmetric 0.92/0.08 EMA so transient noise (keystrokes, door slams) can no longer poison the threshold.
+- Fixed the P0 microphone capture failure path (`scripts/local_voice_bridge.py`): temporary audio-queue starvation no longer leaks `queue.Empty`, and partial Whisper inference now runs as a single background job so it cannot block the sampling pump or overlap final inference on the same model.
+- Completed the event-driven microphone lifecycle contract (`scripts/local_voice_worker.py`): `microphone_stopped` is now pushed to Electron after the session returns to idle, preventing the client from retaining a stale active request.
+- Added a 64 KiB UTF-8 input ceiling to the reviewed selection and Electron bridges, with bounded prefix reads and explicit `payload_too_large` fail-closed responses instead of unbounded stdin buffering.
+
+- - Fixed P0#5 overlay recovery (`electron/main.js`): the non-gesture `overlay:done` branch now hides the overlay immediately at capture handoff (event-driven), instead of waiting for the bridge `onComplete` — the overlay can no longer sit black and input-blocking for the whole bridge run (up to 120s on timeout).
+- - Fixed P0#6 unbounded capture coordinates (`electron/main.js`): non-gesture `overlay:done` points are truncated to `MAX_OVERLAY_CAPTURE_POINTS = 4096` before forwarding, so a compromised renderer cannot push an unbounded coordinate array to the bridge.
+- - Fixed P0#4 production test-hook isolation (`electron/main.js`): the N17 focus-evidence, N18 wiggle-evidence, and dashboard-capture env hooks (and `captureMode`) are now gated behind `!app.isPackaged`, so leftover `MAGIC_POINTER_*` variables can no longer make a packaged app auto-quit at startup; packaged runs log that the hooks are ignored.
+- - Closed the voice push-mode test contract (`tests/local_voice_worker_test.py`): the removed `MAX_MICROPHONE_EVENTS` constant is no longer imported; the push-mode regression test emits 65 partials (past the old 64-event poll buffer cap) and asserts no forced stop and no dropped events. Added a deterministic regression test proving `start_microphone` cannot overlap an in-flight WAV transcription on the same model.
+- - Made the PDF fixture-dependent test robust (`tests/pdf_selection_recovery_test.py`): `test_live_recovery_rejects_an_occluded_background_pdf` now skips when the local `2307.00583v1.pdf` fixture is absent, matching its sibling tests, so the suite is green without the fixture.
+- - Added `tests/test_hooks_isolation_static_test.js` and P0#5/#6 regression assertions in `tests/runtime_issue_hotkeys_test.js` locking in the event-driven overlay recovery and the capture-points cap.- Added `docs/planning/REVIEW_AUDIT_20260731.md`: P8 code review, 44 findings (P0×7 / P1×12 / P2×12 / P3×8 / P4×5) with prioritized fix order.
+- Cloned `external/opensre` (Tracer-Cloud, Apache 2.0, depth 1) and documented the borrowable patterns (synthetic scored RCA suites, reversible masking, context budgeting) in AGENT.md.
 - Added `electron/observability.js`: structured JSONL event log
   (`events.jsonl` under the runtime directory, rotated at 5 MB × 5 files),
   in-process counters via `bump()`/`snapshotCounters()`, and lazy

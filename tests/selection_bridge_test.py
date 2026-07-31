@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import io
+import json
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -35,6 +38,27 @@ class _FakeRegistry:
     def matching_adapter(self, window):
         self.seen.append(window)
         return _FakeAdapter() if window.get("supported") else None
+
+
+class _GuardedBuffer(io.BytesIO):
+    def __init__(self, payload: bytes, max_read_size: int) -> None:
+        super().__init__(payload)
+        self.max_read_size = max_read_size
+        self.read_sizes: list[int] = []
+
+    def read(self, size: int = -1) -> bytes:
+        if size < 0 or size > self.max_read_size:
+            raise AssertionError("bridge attempted an unbounded binary read")
+        self.read_sizes.append(size)
+        return super().read(size)
+
+
+class _GuardedStdin:
+    def __init__(self, payload: bytes, max_read_size: int) -> None:
+        self.buffer = _GuardedBuffer(payload, max_read_size)
+
+    def read(self, _size: int = -1) -> str:
+        raise AssertionError("bridge attempted an unbounded text read")
 
 
 def test_chinese_undo_commands() -> None:
@@ -327,3 +351,53 @@ def test_bridges_accept_utf8_bom(monkeypatch) -> None:
     assert action_bridge.read_payload()["command"] == "explain"
     monkeypatch.setattr(electron_bridge.sys, "stdin", io.StringIO(payload))
     assert electron_bridge._read_payload()["command"] == "explain"
+
+
+@pytest.mark.parametrize(
+    "reader",
+    [selection_bridge.read_payload, electron_bridge._read_payload],
+    ids=["selection", "electron"],
+)
+def test_reviewed_bridges_reject_oversized_utf8_payload_with_bounded_read(
+    monkeypatch,
+    reader,
+) -> None:
+    max_payload_bytes = 64 * 1024
+    encoded = b'{"command":"' + ("\u754c" * max_payload_bytes).encode("utf-8") + b'"}'
+
+    stdin = _GuardedStdin(encoded, max_payload_bytes + 1)
+    monkeypatch.setattr(selection_bridge.sys, "stdin", stdin)
+
+    with pytest.raises(ValueError, match="65536 UTF-8 bytes"):
+        reader()
+
+    assert stdin.buffer.tell() == len(encoded)
+    assert max(stdin.buffer.read_sizes) <= max_payload_bytes + 1
+
+
+@pytest.mark.parametrize(
+    "bridge",
+    [selection_bridge, electron_bridge],
+    ids=["selection", "electron"],
+)
+def test_reviewed_bridge_main_reports_payload_limit_without_processing(
+    monkeypatch,
+    capsys,
+    bridge,
+) -> None:
+    max_payload_bytes = 64 * 1024
+    encoded = b'{"command":"' + ("\u754c" * max_payload_bytes).encode("utf-8") + b'"}'
+
+    stdin = _GuardedStdin(encoded, max_payload_bytes + 1)
+    monkeypatch.setattr(bridge.sys, "stdin", stdin)
+    if bridge is selection_bridge:
+        monkeypatch.setattr(bridge, "_configure_stdio", lambda: None)
+
+    assert bridge.main() == 2
+    assert json.loads(capsys.readouterr().out) == {
+        "ok": False,
+        "error": "payload_too_large",
+        "maxPayloadBytes": max_payload_bytes,
+    }
+    assert stdin.buffer.tell() == len(encoded)
+    assert max(stdin.buffer.read_sizes) <= max_payload_bytes + 1

@@ -29,18 +29,25 @@ Magic Pointer = 默认不可见的跨应用操作层。鼠标晃动唤醒 → �
 - **选区偏移（高 DPI）**：150%/200% 缩放屏上圈选位置与实际截屏区域有偏移。根因：overlay 坐标是逻辑像素，截屏模块需要物理像素，缺 `× scaleFactor`。**已修复**——`completeSelectionGesture` 坐标全部乘了 `display.scaleFactor`。
 - **语音识别精度差**：whisper tiny (39M 参数) vs 微信云端 ASR (千亿参数)。SenseVoice Small 已准备就绪但未接入 voice worker——上次引擎重构引入崩溃被回退到 `ce8d125` 纯净 whisper 版本。
 - **气泡定位不精确**：releasePoint 直接用于气泡锚点，无 workArea 边界 clamp。
+- **【P0 已修 2026-07-31】语音管线崩溃**：`local_voice_bridge.py` 已捕获暂时性的 `queue.Empty` 并继续检查协作停止；partial 转录改为单在途后台任务，final 前串行收尾，同一 Whisper 模型不会并发推理。worker 同时补齐 `microphone_stopped` push，避免 Electron 残留 active request。详见 `docs/planning/REVIEW_AUDIT_20260731.md` #1/#2。
+- **【P0 已修 2026-07-31】bridge stdin 无大小上限**：`selection_bridge.py` / `electron_bridge.py` 统一使用 64KiB UTF-8 有界读取，不在内存中驻留完整超限 payload；超限后按固定块排空 stdin 以避免写端 `EPIPE`，再返回 `payload_too_large` 失败关闭。详见 REVIEW_AUDIT #3。
+- **【P0 已修 2026-07-31】overlay 黑屏无恢复**：`overlay:done` 非 gesture 分支改为事件驱动恢复——收到完成事件立即 `hideOverlay()`，不再等 bridge `onComplete`（最长 120s）才隐藏；overlay 再也不会在截图后黑屏并拦截全屏输入。详见 REVIEW_AUDIT #5。
+- **【P0 已修 2026-07-31】overlay:done 坐标无界**：非 gesture 分支的 `points` 截断至 `MAX_OVERLAY_CAPTURE_POINTS=4096`，恶意/异常渲染进程无法向 bridge 投递巨量坐标（真实笔画有 4.2px 距离过滤，远低于上限）。详见 REVIEW_AUDIT #6。
+- **【P0 已修 2026-07-31】生产环境测试钩子**：N17 语音焦点证据 / N18 wiggle 证据 / dashboard 截图三个 env 门控钩子全部隔离到 `!app.isPackaged` 之后，打包版永不执行（残留 `MAGIC_POINTER_*` 变量不会导致启动即退出），packaged 启动时会记录忽略日志。详见 REVIEW_AUDIT #4。
 
 ### 正在进行的开发
 1. 手势 grounding 精度——semanticPoint 距离权重已加，py 桥接侧 3.0× 距离分 + 4.0× 覆盖率
 2. clicky 架构学习——ElementLocationDetector（Computer Use API）、bezier 飞行动画
 3. 语音升级——SenseVoice 引擎切换（引擎路由代码已完成但有问题，临时回退到纯 whisper）
+4. **P0 修复排期**——#1/#2 语音管线、#3 bridge stdin 上限、#5 overlay 事件化恢复、#6 capture points 上限、#4 生产测试钩子隔离全部完成，全量 Python 602 + JS 113 全绿；语音收口含测试契约修复与竞态回归测试。剩余 #7 asar 打包设计（依赖 #4 的打包基线，风险较高，单独排期）
+5. OpenSRE 借鉴——合成评分测试套件（Recipe 验收）、可逆脱敏、上下文预算（见下方 OpenSRE 分析段）
 
 ## 完整文件清单（按模块）
 
 ### Electron 主进程 — `electron/`
 | 文件 | 行 | 职责 |
 |---|---|---|
-| `main.js` | 3255 | App 入口，BrowserWindow 创建，IPC 路由，overlay/stage/dashboard 生命周期 |
+| `main.js` | 3300+ | App 入口，BrowserWindow 创建，IPC 路由，overlay/stage/dashboard 生命周期 |
 | `wiggle_detector.js` | 221 | 晃动检测：速度/反转/漂移/冷却/自适应阈值 |
 | `gesture_capture.js` | 80 | 手势摘要：kind(圈/线/自由形) + semanticPoint(圈心/线中点) + bbox |
 | `gesture_runtime_settings.js` | 30 | 手势运行参数：延迟/超时/交互模式/线样式 |
@@ -64,7 +71,7 @@ Magic Pointer = 默认不可见的跨应用操作层。鼠标晃动唤醒 → �
 | `route_policy.js` | - | 地图 URL 白名单校验 |
 | `voice_focus_guard.js` | - | 语音焦点守卫：防止语音事件泄露 |
 | `voice_resident_runtime.js` | 266 | 常驻语音 runtime：预热/启动/停止/关闭 |
-| `voice_worker_client.js` | 269 | VoiceWorkerClient：spawn 管理 + JSONL IPC |
+| `voice_worker_client.js` | 230 | VoiceWorkerClient：spawn 管理 + JSONL IPC（事件推送，无轮询） |
 | `voice_trigger_policy.js` | - | 语音触发策略 |
 | `dictation_correction_policy.js` | - | 语音纠正策略 |
 | `security_hardening.js` | 185 | CSP/sandbox/致命崩溃恢复/navigation 守卫/权限拦截 |
@@ -83,7 +90,7 @@ Magic Pointer = 默认不可见的跨应用操作层。鼠标晃动唤醒 → �
 ### 渲染进程 — `electron/renderer/`
 | 文件 | 职责 |
 |---|---|
-| `index.html` + `overlay.js` | 全屏透明画线 Overlay：Canvas 渲染 + mousedown/move/up + submitGesture |
+| `index.html` + `overlay.js` | 全屏透明画线 Overlay：Canvas 渲染（OffscreenCanvas 帧缓存）+ mousedown/move/up + submitGesture |
 | `stage.html` + `stage.js` | Stage 气泡：targeting→frozen→capsule→processing→result 状态机 |
 | `dashboard.html` + `dashboard.js` | 控制面：唤醒/语音/Agent/Recipe/权限/隐私/诊断 14 个面板 |
 | `onboarding.html` + `onboarding.js` | 首次启动向导 |
@@ -188,6 +195,7 @@ Magic Pointer = 默认不可见的跨应用操作层。鼠标晃动唤醒 → �
 | 项目 | 许可证 | 什么情况用 |
 |---|---|---|
 | `clicky/` | 自有 | 7k★ macOS AI 伴侣。Overlay 动画、ElementLocationDetector（Computer Use API）、bezel 飞行动画、push-to-talk、Cloudflare Worker API 代理。**最近在读** |
+| `opensre/` | Apache 2.0 | 9.6k★ AI SRE Agent 框架（Tracer-Cloud）。ReAct 工具循环、60+ 集成、**合成评分 RCA 测试套件**、可逆标识符脱敏、上下文预算。2026-07-31 克隆（depth 1），**只借模式不搬代码** |
 | `omniparser/` | MIT (代码) | 截图→UI 元素 bbox。需要精确 screen parsing 时用 |
 | `ufo-schannel/` | MIT | Windows UIA/COM/Win32 混合 GUI agent 参考 |
 | `pi/` | MIT | Pi Agent 会话/RPC/扩展底座 |
@@ -198,6 +206,7 @@ Magic Pointer = 默认不可见的跨应用操作层。鼠标晃动唤醒 → �
 |---|---|
 | `PRODUCT_BLUEPRINT_20260726.md` | **核心文档**：竞品依据、30 Recipe、交互合同、架构蓝图、验收标准 |
 | `FEATURE_INVENTORY_20260730.md` | 完整功能清单（~130 项）+ Google/Microsoft/Claude 三方竞品差距分析 |
+| `docs/planning/REVIEW_AUDIT_20260731.md` | P8 代码审查：44 项发现（P0×7/P1×12/P2×12/P3×8/P4×5），按优先级排修 |
 | `docs/planning/GAP_ANALYSIS_100_20260730.md` | 100 条漏洞清单 |
 | `docs/planning/TODO_REMAINING_20260730.md` | 62 项代办 |
 | `docs/planning/CLICKY_ANALYSIS_20260731.md` | clicky 源码深度分析（7600 行 Swift），8 个可借鉴技术点 |
@@ -255,6 +264,33 @@ Codex 删掉了圆/线/自由形分类和语义点。没有 semanticPoint，Pyth
 引擎切换重构（`_resolve_engine` + 动态 import）引入了 `VoiceProfile` 和 `MicrophoneRunner` 类型引用错误。当前 `local_voice_worker.py`、`voice_worker_client.js`、`voice_resident_runtime.js`、`settings_store.js` 均已从 `ce8d125` commit 恢复为纯净 whisper 版本。
 
 SenseVoice 桥接（`sense_voice_bridge.py`）和模型（228MB）已就绪，但引擎路由需要**重新严谨实现**——不是简单加 `--engine` flag，而是要保证所有类型引用、module-level default、resident_microphone_runner 都正确。
+
+## OpenSRE 分析（2026-07-31，external/opensre）
+
+**它是什么**：Tracer-Cloud 开源的 AI SRE Agent 框架（9.6k★，Apache 2.0，public alpha）。事故调查（RCA）工具循环 + 60+ 观测/云/数据库/告警集成 + 合成评分测试套件（"SWE-bench for SRE"）。分层 Python：`core/`（ReAct loop + LoopHost Protocol + context budget）、`tools/`（注册表自动发现）、`integrations/<vendor>/tools/`、`platform/`（masking/guardrails/sandbox/observability）、`surfaces/`（CLI + REPL）、`gateway/`（Telegram daemon）。
+
+**对我们的帮助**（按价值排序）：
+
+1. **合成评分测试套件（tests/synthetic/rds_postgres）——最有价值**。20+ 静态场景（difficulty 1-4、red herring、forbidden categories、must-rule-out keywords），驱动生产同一管线评分。对应 Magic Pointer 缺口：Recipe 30 个只有 verify_* 冒烟脚本，无评分验收。**可照做**：为每个高风险 Recipe（OCR 复制/选区 grounding/表格提取/日历解析）建 `scenario-XXX/` 静态夹具 + `answer.yml`（required_keywords / forbidden_categories），跑分进 CI。
+2. **可逆标识符脱敏（platform/masking）**：pod/email/IP/account id 进 LLM 前脱敏、输出回填。对应我们 #38 审计脱敏未完成——截图/选区上下文交给 Agent 前应做同类脱敏。
+3. **上下文预算（core/context_budget）**：模型窗口 ceiling、响应 headroom、重复工具结果淘汰、截断标记。我们的 `compile_context_prompt`（context_pack）无 token 预算——长会话必炸上下文。
+4. **工具框架纪律**：BaseTool + `@tool` 装饰器 + 注册表自动发现 + JSON Schema draft-07 陷阱（多 tool 同时发送时 schema 必须严格）。我们 MCP 8 tools 手写，缺契约测试。
+5. **LoopHost 事件化循环**：react_loop 每步发事件（turn/tool/provider），host 回调决定工具过滤/结论接受/nudge——结论拒绝必须有 nudge 否则死循环（他们有明确 guard）。对应我们的 agent_gateway 会话推进。
+6. **CWE-209 纪律**：外部面（HTTP/聊天网关）绝不外泄异常详情，日志全量本地。我们 stage 向 Agent 交付 prompt 时同理——错误只给 `type(exc).__name__`。
+7. **AGENTS.md 反模式文档文化**：每个 footgun 配 CodeQL 规则 + 先例文件。我们的"不要做的事"段可学其格式。
+
+**不借的**：技术栈不共享（pydantic/FastAPI/async 服务端 vs Electron+JSONL bridge），代码不可复用只借模式；遥测 PostHog/Sentry 默认开，与我们的隐私立场冲突（我们 11.8 匿名遥测默认关）。
+
+## 当前修复进度（2026-07-31）
+
+- **15:13 已启动 P0 修复**：已读取 `docs/planning/REVIEW_AUDIT_20260731.md`，本轮最高优先级保持为 #1/#2 语音管线；按根因域并行处理语音采样泵、partial 转录线程化与 bridge stdin 大小上限。
+- **工作区保护**：开始时已有 `main.js`、`overlay.js`、voice worker/client、`AGENT.md`、`CHANGELOG.md` 等未提交改动；本轮保留这些改动，只在对应 P0 范围内追加测试与实现。
+- **验证约束**：每项修复必须先有能复现风险的失败测试，再跑定向测试、JS 全量测试和 Python 全量测试；子 agent 结果需由主 agent 独立复核。
+- **15:15 基线**：`npm test` 通过（54 个源测试文件、112 项测试）；语音相关 Python 定向集合当前为 35 项。该结果仅是修复前基线，合入后必须重新验证。
+- **15:24 P0 #1/#2 已进入复核**：新增 3 个确定性回归测试，红测为 `3 failed, 9 passed`，分别命中 `queue.Empty` 外泄、partial 阻塞采样泵、partial 异常终止会话；实现改为单在途后台 partial，final 前等待并丢弃过期 partial，确保同一模型最大并发为 1。子任务定向绿测为 19/19，主 agent 仍需重跑集成验证。
+- **15:34 worker 集成红绿**：扩大验证时发现 push 模式只推送 `final`、未推送 `microphone_stopped`，Electron client 会一直保留 active session。先把旧 poll 测试改成 push 契约并看到失败，再补齐 lifecycle event 推送；`tests/local_voice_worker_test.py` 现为 19/19。
+- **15:39 P0 #3 已复核**：selection/electron bridge 使用共享 64KiB UTF-8 reader；红测同时暴露提前关闭 stdin 会让 Electron 写端报 `EPIPE`，因此超限后以固定大小块排空余量再返回结构化 `payload_too_large`。bridge + BOM 定向测试为 20/20，并已用真实 Electron runner 验证两座 bridge 的退出码与错误协议。
+- **15:44 全量验证状态**：首次 Python 全量测试在 240 秒工具时限处被终止，未产生失败明细；这不是通过结论。后续将放宽执行时限并继续定位耗时项。
 
 ## 不要做的事
 

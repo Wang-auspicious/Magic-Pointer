@@ -26,7 +26,6 @@ function fakeChild() {
   const client = new VoiceWorkerClient({
     root: path.resolve('.'),
     spawnProcess: () => { const child = fakeChild(); children.push(child); return child; },
-    pollIntervalMs: 100000,
   });
   client.ensureStarted({ preload: true });
   assert.strictEqual(children.length, 1);
@@ -48,7 +47,7 @@ function fakeChild() {
 
 (function microphoneCancellationSuppressesTranscriptButWaitsForStopped() {
   const child = fakeChild();
-  const client = new VoiceWorkerClient({ root: path.resolve('.'), spawnProcess: () => child, pollIntervalMs: 100000 });
+  const client = new VoiceWorkerClient({ root: path.resolve('.'), spawnProcess: () => child });
   const events = [];
   client.on('voice-event', event => events.push(event));
   client.startDictation({ requestId: 'mic-1', silenceMs: 900 });
@@ -63,7 +62,7 @@ function fakeChild() {
 
 (function rejectsConcurrentSessionsAndSurfacesWorkerFailure() {
   const child = fakeChild();
-  const client = new VoiceWorkerClient({ root: path.resolve('.'), spawnProcess: () => child, pollIntervalMs: 100000 });
+  const client = new VoiceWorkerClient({ root: path.resolve('.'), spawnProcess: () => child });
   const events = [];
   client.on('voice-event', event => events.push(event));
   assert.strictEqual(client.startDictation({ requestId: 'a' }).ok, true);
@@ -75,7 +74,7 @@ function fakeChild() {
 
 (function dropsEventsForOldRequestIdsBeforeTheyReachTheRuntime() {
   const child = fakeChild();
-  const client = new VoiceWorkerClient({ root: path.resolve('.'), spawnProcess: () => child, pollIntervalMs: 100000 });
+  const client = new VoiceWorkerClient({ root: path.resolve('.'), spawnProcess: () => child });
   const events = [];
   client.on('voice-event', event => events.push(event));
   client.startDictation({ requestId: 'current' });
@@ -106,7 +105,6 @@ function fakeChild() {
   const client = new VoiceWorkerClient({
     root: path.resolve('.'),
     spawnProcess: () => child,
-    pollIntervalMs: 100000,
   });
   const statuses = [];
   client.on('worker-status', event => statuses.push(event));
@@ -127,7 +125,6 @@ function fakeChild() {
   const client = new VoiceWorkerClient({
     root: path.resolve('.'),
     spawnProcess: () => child,
-    pollIntervalMs: 100000,
   });
   assert.deepStrictEqual(
     client.startDictation({ requestId: 'cannot-write' }),
@@ -141,7 +138,6 @@ function fakeChild() {
   const client = new VoiceWorkerClient({
     root: path.resolve('.'),
     spawnProcess: () => child,
-    pollIntervalMs: 100000,
   });
   assert.strictEqual(client.startDictation({ requestId: 'stop-write-fails' }).ok, true);
   child.stdin.writable = false;
@@ -151,22 +147,21 @@ function fakeChild() {
   assert.strictEqual(client.child, null);
 }());
 
-(function failedPollWriteFailsClosedInsteadOfLeavingCaptureActive() {
+(function failedStopWriteDetachesClientInsteadOfLeavingCaptureActive() {
   const child = fakeChild();
   const events = [];
   const client = new VoiceWorkerClient({
     root: path.resolve('.'),
     spawnProcess: () => child,
-    pollIntervalMs: 100000,
   });
   client.on('voice-event', event => events.push(event));
-  assert.strictEqual(client.startDictation({ requestId: 'poll-write-fails' }).ok, true);
+  assert.strictEqual(client.startDictation({ requestId: 'stop-write-fails' }).ok, true);
   child.stdin.writable = false;
-  client._pollActiveMicrophone('poll-write-fails');
-  assert.strictEqual(child.killed, true);
+  const stopped = client.stopDictation('stop-write-fails');
+  assert.strictEqual(stopped, false);
   assert.strictEqual(client.active, null);
   assert.strictEqual(events.at(-1).type, 'error');
-  assert.strictEqual(events.at(-1).requestId, 'poll-write-fails');
+  assert.strictEqual(events.at(-1).requestId, 'stop-write-fails');
 }());
 
 (function childErrorWithoutCloseDetachesSoTheNextAttemptCanRespawn() {
@@ -174,7 +169,6 @@ function fakeChild() {
   const client = new VoiceWorkerClient({
     root: path.resolve('.'),
     spawnProcess: () => { const child = fakeChild(); children.push(child); return child; },
-    pollIntervalMs: 100000,
   });
   assert.strictEqual(client.startDictation({ requestId: 'spawn-error' }).ok, true);
   children[0].emit('error', new Error('spawn failed'));

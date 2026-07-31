@@ -46,6 +46,10 @@ from app.fabric.workflow_task_store import WorkflowTaskStore
 from app.fabric.catalog import get_recipe
 from app.fabric.engine import FabricEngine
 from app.fabric.settings import SettingsStore
+from scripts._bridge_common import (
+    PayloadTooLargeError,
+    read_bounded_json_payload,
+)
 
 
 def _configure_stdio() -> None:
@@ -76,8 +80,7 @@ def _capture_settings():
 
 
 def read_payload() -> dict[str, Any]:
-    raw = sys.stdin.read().lstrip("\ufeff").strip()
-    return json.loads(raw) if raw else {}
+    return read_bounded_json_payload()
 
 
 def _window_dicts() -> list[dict[str, Any]]:
@@ -957,7 +960,15 @@ def _fabric_response(
 
 def main() -> int:
     _configure_stdio()
-    payload = read_payload()
+    try:
+        payload = read_payload()
+    except PayloadTooLargeError as exc:
+        print(json.dumps({
+            "ok": False,
+            "error": "payload_too_large",
+            "maxPayloadBytes": exc.max_bytes,
+        }, ensure_ascii=False))
+        return 2
     command = str(payload.get("command") or "").strip()
     selection_session_id = str(payload.get("selectionSessionId") or "").strip()
     if not command:

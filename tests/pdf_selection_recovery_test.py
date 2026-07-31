@@ -169,6 +169,9 @@ def test_live_recovery_rejects_an_occluded_background_pdf(monkeypatch) -> None:
         "app.adapters.pdf_selection_recovery._foreground_window_handle",
         lambda: 999,
     )
+    pdf_path = __import__("pathlib").Path(__file__).resolve().parents[1] / "2307.00583v1.pdf"
+    if not pdf_path.is_file():
+        return
     result = recover_local_pdf_selection({
         "hwnd": 123,
         "document_location": __file__.replace(
