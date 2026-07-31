@@ -1134,7 +1134,7 @@ function localWhisperModelName() {
 
 function voiceRuntimeConfig(settings = fabricSettings) {
   const interaction = settings?.interaction || {};
-  const engine = interaction.voice_engine || 'whisper';
+  const engine = String(interaction.voice_engine || 'auto').trim().toLowerCase() || 'auto';
   return {
     enabled: interaction.voice_resident_enabled !== false,
     memoryLimitMb: Number(interaction.voice_memory_limit_mb) || 1024,
@@ -1143,7 +1143,7 @@ function voiceRuntimeConfig(settings = fabricSettings) {
     pythonExecutable: PYTHON_EXECUTABLE,
     pythonIsolated: PYTHON_ISOLATED,
     engine,
-    modelName: engine === 'sense-voice' ? 'sense-voice-small' : localWhisperModelName(),
+    modelName: engine === 'sense_voice' ? 'sense-voice-small' : localWhisperModelName(),
     settingsPath: fabricSettingsStore?.path || '',
   };
 }
@@ -2303,8 +2303,8 @@ function startLegacyDictation({ requestId, surface, contextPath, silenceMs }) {
   if (dictationChildren.has(surface)) {
     return { ok: false, error: 'voice_session_active' };
   }
-  const voiceEngine = fabricSettings?.interaction?.voice_engine || 'whisper';
-  const scriptPath = voiceEngine === 'sense-voice'
+  const voiceEngine = String(fabricSettings?.interaction?.voice_engine || 'auto').trim().toLowerCase() || 'auto';
+  const scriptPath = voiceEngine === 'sense_voice'
     ? path.join(ROOT, 'scripts', 'sense_voice_bridge.py')
     : path.join(ROOT, 'scripts', 'local_voice_bridge.py');
   const pythonExecutable = PYTHON_EXECUTABLE;
@@ -2312,7 +2312,7 @@ function startLegacyDictation({ requestId, surface, contextPath, silenceMs }) {
     '-u',
     scriptPath,
     '--model',
-    voiceEngine === 'sense-voice' ? 'sense-voice-small' : localWhisperModelName(),
+    voiceEngine === 'sense_voice' ? 'sense-voice-small' : localWhisperModelName(),
     '--silence-ms',
     String(silenceMs),
   ], { isolated: PYTHON_ISOLATED });

@@ -223,4 +223,17 @@ class FakeClient extends EventEmitter {
   assert.strictEqual(statuses.at(-1).errorCode, 'voice_worker_start_failed');
 }());
 
+
+(function engineConfigFlowsToClientAndIsValidated() {
+  const clientOptions = [];
+  const runtime = new VoiceResidentRuntime({
+    createClient: options => { clientOptions.push(options); return new FakeClient(); },
+  });
+  runtime.configure({ enabled: true, memoryLimitMb: 1024, idleUnloadMs: 300000, engine: 'sense_voice' });
+  assert.strictEqual(runtime.start({ requestId: 'eng', surface: 'stage', contextPath: '' }).ok, true);
+  assert.strictEqual(clientOptions[0].engine, 'sense_voice', 'client must receive the configured engine');
+
+  assert.throws(() => runtime.configure({ enabled: true, memoryLimitMb: 1024, idleUnloadMs: 300000, engine: 'bogus' }),
+    /engine must be auto, whisper, or sense_voice/);
+}());
 console.log('voice_resident_runtime_test: all assertions passed');

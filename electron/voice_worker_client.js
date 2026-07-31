@@ -13,6 +13,7 @@ class VoiceWorkerClient extends EventEmitter {
     settingsPath = '',
     memoryLimitMb = 1024,
     idleUnloadMs = 300000,
+    engine = 'auto',
     pythonIsolated = false,
     spawnProcess = spawn,
     baseEnv = process.env,
@@ -25,6 +26,10 @@ class VoiceWorkerClient extends EventEmitter {
     if (!Number.isInteger(idleUnloadMs) || idleUnloadMs < 10000 || idleUnloadMs > 3600000) {
       throw new TypeError('idleUnloadMs must be an integer from 10000 to 3600000');
     }
+    const engineName = String(engine || 'auto').trim().toLowerCase() || 'auto';
+    if (!['auto', 'whisper', 'sense_voice'].includes(engineName)) {
+      throw new TypeError('engine must be auto, whisper, or sense_voice');
+    }
     this.root = root;
     this.pythonExecutable = pythonExecutable;
     this.modelName = modelName;
@@ -32,6 +37,7 @@ class VoiceWorkerClient extends EventEmitter {
     this.memoryLimitMb = memoryLimitMb;
     this.idleUnloadMs = idleUnloadMs;
     this.pythonIsolated = pythonIsolated === true;
+    this.engine = engineName;
     this.spawnProcess = spawnProcess;
     this.baseEnv = baseEnv;
     this.child = null;
@@ -52,6 +58,7 @@ class VoiceWorkerClient extends EventEmitter {
     const args = pythonInvocationArgs([
       '-u', scriptPath,
       '--model', this.modelName,
+      '--engine', this.engine,
       '--memory-limit-mb', String(this.memoryLimitMb),
       '--idle-unload-ms', String(this.idleUnloadMs),
     ], { isolated: this.pythonIsolated });

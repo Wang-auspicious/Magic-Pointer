@@ -23,12 +23,15 @@ if __package__ in {None, ""}:
 
 from scripts.local_voice_bridge import (
     VoiceProfile,
-    load_model,
-    load_pcm_wav,
-    load_voice_profile,
     requested_stop_state,
     run_microphone_with_model,
-    transcribe,
+)
+from scripts.voice_engine import (
+    DEFAULT_ENGINE,
+    SENSE_VOICE,
+    custom_bundle,
+    resolve_engine,
+    whisper_bundle,
 )
 
 
@@ -159,22 +162,40 @@ class LocalVoiceWorker:
         *,
         model_name: str = "tiny",
         profile: VoiceProfile | None = None,
-        model_loader: Callable[[str], Any] = load_model,
-        pcm_loader: Callable[[Path], Any] = load_pcm_wav,
-        transcriber: Callable[..., str] = transcribe,
+        model_loader: Callable[[str], Any] | None = None,
+        pcm_loader: Callable[[Path], Any] | None = None,
+        transcriber: Callable[..., str] | None = None,
         memory_limit_mb: int | None = None,
         memory_probe: Callable[[], int] = _process_memory_bytes,
         idle_unload_ms: int | None = None,
         clock: Callable[[], float] = time.monotonic,
         microphone_runner: MicrophoneRunner | None = None,
-        profile_loader: Callable[..., VoiceProfile] = load_voice_profile,
+        profile_loader: Callable[..., VoiceProfile] | None = None,
         event_sink: Callable[[dict[str, Any]], None] | None = None,
+        engine: str = DEFAULT_ENGINE,
     ) -> None:
         self.model_name = str(model_name or "tiny").strip() or "tiny"
         self.profile = profile or VoiceProfile()
-        self._model_loader = model_loader
-        self._pcm_loader = pcm_loader
-        self._transcriber = transcriber
+        explicit_parts = any(part is not None for part in (
+            model_loader, pcm_loader, transcriber, microphone_runner, profile_loader,
+        ))
+        self._bundle = (
+            custom_bundle(
+                self.model_name,
+                loader=model_loader,
+                pcm_loader=pcm_loader,
+                profile_loader=profile_loader,
+                transcriber=transcriber,
+                microphone_runner=microphone_runner,
+            )
+            if explicit_parts
+            else resolve_engine(engine, self.model_name)
+        )
+        self._model_loader = self._bundle.loader
+        self._pcm_loader = self._bundle.pcm_loader
+        self._transcriber = self._bundle.transcriber
+        self._engine_failures = 0
+        self._engine_fallback_reason: str | None = None
         self._memory_limit_bytes = self._validate_limit(memory_limit_mb, "memory_limit_mb")
         self._idle_unload_ms = self._validate_limit(idle_unload_ms, "idle_unload_ms")
         self._memory_probe = memory_probe
@@ -182,8 +203,8 @@ class LocalVoiceWorker:
         self._model: Any | None = None
         self._last_used: float | None = None
         self._actual_memory_bytes: int | None = None
-        self._microphone_runner = microphone_runner
-        self._profile_loader = profile_loader
+        self._profile_loader = self._bundle.profile_loader
+        self._microphone_runner = self._bundle.microphone_runner
         self._model_access = _ModelRWLock()
         self._event_sink = event_sink
         self._microphone_lock = RLock()
@@ -205,7 +226,7 @@ class LocalVoiceWorker:
 
     @property
     def engine(self) -> str:
-        return f"whisper-{self.model_name}-local"
+        return self._bundle.engine_name
 
     @property
     def _memory_limit_in_bytes(self) -> int | None:
@@ -216,6 +237,32 @@ class LocalVoiceWorker:
     def _touch(self) -> None:
         if self._model is not None:
             self._last_used = self._clock()
+
+    def _switch_to_whisper_fallback(self) -> None:
+        """Drop SenseVoice and rebind every bridge callable to Whisper."""
+        bundle = whisper_bundle(self.model_name)
+        self._bundle = bundle
+        self._model_loader = bundle.loader
+        self._pcm_loader = bundle.pcm_loader
+        self._transcriber = bundle.transcriber
+        self._profile_loader = bundle.profile_loader
+        self._microphone_runner = bundle.microphone_runner
+
+    def _maybe_fallback_after_load_failure(self) -> bool:
+        """Return True when the worker switched from SenseVoice to Whisper.
+
+        A single flaky load (e.g. one corrupted download) must not punish the
+        default engine; two consecutive failures are treated as unavailable.
+        """
+        if self._bundle.engine != SENSE_VOICE:
+            return False
+        self._engine_failures += 1
+        if self._engine_failures < 2:
+            return False
+        self._switch_to_whisper_fallback()
+        self._engine_failures = 0
+        self._engine_fallback_reason = "sense_voice_unavailable_after_2_load_failures"
+        return True
 
     def unload(self) -> None:
         self._model_access.acquire_write()
@@ -473,13 +520,19 @@ class LocalVoiceWorker:
                 return [self._error("memory_limit_exceeded", "Estimated model memory exceeds memory_limit_mb.", engine=self.engine)]
 
             responses = [{"type": "loading", "engine": self.engine, "estimated_memory_mb": estimated_mb}]
-            try:
-                model = self._model_loader(self.model_name)
-            except FileNotFoundError as exc:
-                return responses + [self._error("model_missing", f"Local model is unavailable: {exc}", engine=self.engine)]
-            except Exception as exc:
-                return responses + [self._error("load_failed", f"{type(exc).__name__}: {exc}", engine=self.engine)]
+            model: Any | None = None
+            while True:
+                try:
+                    model = self._model_loader(self.model_name)
+                    break
+                except FileNotFoundError as exc:
+                    if not self._maybe_fallback_after_load_failure():
+                        return responses + [self._error("model_missing", f"Local model is unavailable: {exc}", engine=self.engine)]
+                except Exception as exc:
+                    if not self._maybe_fallback_after_load_failure():
+                        return responses + [self._error("load_failed", f"{type(exc).__name__}: {exc}", engine=self.engine)]
 
+            assert model is not None
             self._model = model
             if limit is not None:
                 try:
@@ -495,6 +548,8 @@ class LocalVoiceWorker:
                 self._actual_memory_bytes = actual
             self._touch()
             ready: dict[str, Any] = {"type": "ready", "engine": self.engine, "reused": False}
+            if self._engine_fallback_reason:
+                ready["fallbackReason"] = self._engine_fallback_reason
             if self._actual_memory_bytes is not None:
                 ready["memory_mb"] = round(self._actual_memory_bytes / (1024 * 1024), 2)
             return responses + [ready]
@@ -574,6 +629,8 @@ class LocalVoiceWorker:
             "engine": self.engine,
             "microphone_state": microphone_state,
         }
+        if self._engine_fallback_reason:
+            response["engineFallback"] = self._engine_fallback_reason
         if self._actual_memory_bytes is not None:
             response["memory_mb"] = round(self._actual_memory_bytes / (1024 * 1024), 2)
         return response
@@ -667,18 +724,20 @@ def serve(worker: LocalVoiceWorker, input_stream: TextIO, output_stream: TextIO)
 
 def main(argv: list[str] | None = None) -> int:
     _configure_stdio()
-    parser = argparse.ArgumentParser(description="UI-free local Whisper JSONL worker.")
+    parser = argparse.ArgumentParser(description="UI-free local voice JSONL worker (whisper / sense_voice).")
     parser.add_argument("--model", default=os.environ.get("MAGIC_POINTER_WHISPER_MODEL") or "tiny")
+    parser.add_argument("--engine", default=os.environ.get("MAGIC_POINTER_VOICE_ENGINE") or DEFAULT_ENGINE)
     parser.add_argument("--memory-limit-mb", type=int)
     parser.add_argument("--idle-unload-ms", type=int)
     args = parser.parse_args(argv)
     try:
+        bundle = resolve_engine(args.engine, args.model)
         worker = LocalVoiceWorker(
             model_name=args.model,
-            profile=load_voice_profile(),
+            profile=bundle.profile_loader(),
             memory_limit_mb=args.memory_limit_mb,
             idle_unload_ms=args.idle_unload_ms,
-            microphone_runner=resident_microphone_runner,
+            engine=args.engine,
         )
     except ValueError as exc:
         print(json.dumps(LocalVoiceWorker._error("invalid_configuration", str(exc)), ensure_ascii=False), flush=True)

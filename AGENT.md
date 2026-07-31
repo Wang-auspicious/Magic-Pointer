@@ -19,7 +19,7 @@ Magic Pointer = 默认不可见的跨应用操作层。鼠标晃动唤醒 → �
 - Dashboard 全部设置（唤醒/语音/Agent/Recipe/权限/隐私/诊断）
 - Agent 集成（Codex/Pi/Claude/Gemini/Cursor/OpenCode/Aider + Generic）
 - MCP stdio server（8 tools, 可在 Dashboard 开关）
-- 本地 Whisper 语音（tiny 模型）
+- 本地 Whisper 语音（tiny 模型）；**语音引擎双后端**：默认自动选 SenseVoice（sherpa-onnx，中文更准、实测加载 2.6s / 单句 0.14s），失败自动回退 Whisper（tiny）
 - Windows 安装包构建 + 自动更新（NSIS, electron-updater, delta package）
 - macOS 打包脚本（DMG, 双架构, entitlements, Python runtime bundling）
 - SenseVoice Small 模型已下载（228MB, 中文精度高 3-5 倍, 本地可用）
@@ -27,7 +27,7 @@ Magic Pointer = 默认不可见的跨应用操作层。鼠标晃动唤醒 → �
 ### 已知问题
 - **第二次激活画线失败**：首次晃动→画线正常，右键关闭后再晃→左键画线不触发。根因：`gesture-ready` handler 里的冗余 `showInactive()` 在已可见窗口上重复调用，触发 Electron compositor 状态重置。**已修复**——移除了 `showInactive()`，保留 `setIgnoreMouseEvents(false)`。
 - **选区偏移（高 DPI）**：150%/200% 缩放屏上圈选位置与实际截屏区域有偏移。根因：overlay 坐标是逻辑像素，截屏模块需要物理像素，缺 `× scaleFactor`。**已修复**——`completeSelectionGesture` 坐标全部乘了 `display.scaleFactor`。
-- **语音识别精度差**：whisper tiny (39M 参数) vs 微信云端 ASR (千亿参数)。SenseVoice Small 已准备就绪但未接入 voice worker——上次引擎重构引入崩溃被回退到 `ce8d125` 纯净 whisper 版本。
+- **【已修 2026-07-31 Phase2】语音识别精度差**：SenseVoice Small 已正式接入为默认引擎（sherpa-onnx，模型已下载 228MB），同一 Whisper 模型不再并发推理（`_ModelRWLock`）；`voice_engine` 设置支持 auto/whisper/sense_voice，SenseVoice 连续 2 次加载失败自动回退 Whisper 并在 status/ready 事件带 `engineFallback` 原因；`scripts/benchmark_voice_engines.py` 提供同录音双引擎对比（CER/意图准确率/延迟）。
 - **气泡定位不精确**：releasePoint 直接用于气泡锚点，无 workArea 边界 clamp。
 - **【P0 已修 2026-07-31】语音管线崩溃**：`local_voice_bridge.py` 已捕获暂时性的 `queue.Empty` 并继续检查协作停止；partial 转录改为单在途后台任务，final 前串行收尾，同一 Whisper 模型不会并发推理。worker 同时补齐 `microphone_stopped` push，避免 Electron 残留 active request。详见 `docs/planning/REVIEW_AUDIT_20260731.md` #1/#2。
 - **【P0 已修 2026-07-31】bridge stdin 无大小上限**：`selection_bridge.py` / `electron_bridge.py` 统一使用 64KiB UTF-8 有界读取，不在内存中驻留完整超限 payload；超限后按固定块排空 stdin 以避免写端 `EPIPE`，再返回 `payload_too_large` 失败关闭。详见 REVIEW_AUDIT #3。
@@ -38,7 +38,7 @@ Magic Pointer = 默认不可见的跨应用操作层。鼠标晃动唤醒 → �
 ### 正在进行的开发
 1. 手势 grounding 精度——semanticPoint 距离权重已加，py 桥接侧 3.0× 距离分 + 4.0× 覆盖率
 2. clicky 架构学习——ElementLocationDetector（Computer Use API）、bezier 飞行动画
-3. 语音升级——SenseVoice 引擎切换（引擎路由代码已完成但有问题，临时回退到纯 whisper）
+3. 语音升级——**已完成（Phase 2）**：SenseVoice 默认 + Whisper 自动回退 + 双引擎 benchmark；剩余：真实中文录音样本库、意图准确率基线、Dashboard 诊断页回退原因展示
 4. **P0 修复排期**——#1/#2 语音管线、#3 bridge stdin 上限、#5 overlay 事件化恢复、#6 capture points 上限、#4 生产测试钩子隔离全部完成，全量 Python 602 + JS 113 全绿；语音收口含测试契约修复与竞态回归测试。剩余 #7 asar 打包设计（依赖 #4 的打包基线，风险较高，单独排期）
 5. OpenSRE 借鉴——合成评分测试套件（Recipe 验收）、可逆脱敏、上下文预算（见下方 OpenSRE 分析段）
 6. **意图-执行分离改造（高级 AI 路线图 Phase 1 已完成 2026-07-31）**——a) `app/fabric/model_plan.py`：ModelPlan 契约（intent / targetObjectIds / requestedResult / toolCalls / riskLevel / needsConfirmation / expectedVerification），18 个模型工具注册表（copy_text / translate_text / replace_text / insert_text / fill_form / extract_table / create_calendar_event / open_map_route / handoff_to_agent 等），严格校验（未知工具、未实现工具、缺参数、风险降级、危险未确认、对象数越界、64KB 上限全部 fail-closed）；b) `FabricEngine.plan_from_model()`：模型规划优先，关键词 Recipe 路由保留为离线降级；模型不能绕过本地权限策略（只能升级确认）。c) 手势几何升级（`electron/gesture_capture.js`）：圈→闭合多边形区域（32 采样+闭合点）、线/自由形→带宽走廊（法向偏移闭合多边形）、自由形语义点改质心、新增 direction 单位向量；`completeSelectionGesture` 透传 geometry/direction。d) Stage 气泡边界 clamp 验证为已实现（`electron/stage_anchor.js` 溢出最小候选 + 强制钳制，已有测试覆盖贴边场景）；危险手势绑定验证为不存在（gesture kind 仅作几何语义，路由纯文本 + 权限 fail-closed）。
@@ -347,7 +347,7 @@ node scripts/collect-diagnostics.js --out diagnose.zip  # 脱敏诊断包
 ## 高级 AI 路线图（2026-07-31，尚未执行）
 
 来源：外部顾问意见（意图-执行分离）。Phase 1 已完成（见上），剩余按序执行：
-- **Phase 2 语音引擎**：SenseVoice 独立 worker（`scripts/sense_voice_worker.py`），Whisper 自动回退，同录音双引擎对比脚本（CER/意图准确率/延迟），Dashboard 显示引擎与回退原因。
+- **Phase 2 语音引擎 ✅（2026-07-31 完成）**：引擎契约 `scripts/voice_engine.py`（whisper/sense_voice/auto），worker `--engine` + 2 次失败回退 Whisper + `engineFallback` 事件字段，设置 `voice_engine` + Dashboard 选项（auto/whisper/sense_voice），`scripts/benchmark_voice_engines.py` 双引擎对比（实测 SenseVoice 加载 2.6s / 单句 0.14s vs whisper 6.2s / 0.50s）。
 - **Phase 3 手势落地**：区域覆盖+轨迹经过+中心距离综合排序（grounding）；低置信度定位走视觉模型（局部截图+候选框）；逐点逐显示器坐标（异构 DPI 跨屏，非 gesture 分支仍未修）。
 - **Phase 4 统一动作协议**：read/replace/insert/set_value/invoke/verify/undo 统一适配器；Word/浏览器/Excel 执行器迁移；写入前重确认目标、写入后重读验证（target_lease 已有基础）。
 - **Phase 5 体验**：模型输出流式展示；晃动后并行预取截图/UIA/DOM；窗口结构短缓存；设置分普通/高级两层；阶段耗时与失败回放（observability 已有事件日志基础）；一键体验回归脚本。

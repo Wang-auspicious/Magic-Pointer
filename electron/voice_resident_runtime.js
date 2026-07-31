@@ -11,6 +11,7 @@ function sameConfig(left, right) {
     && left.settingsPath === right.settingsPath
     && left.pythonExecutable === right.pythonExecutable
     && left.pythonIsolated === right.pythonIsolated
+    && left.engine === right.engine
     && left.modelName === right.modelName;
 }
 
@@ -140,6 +141,7 @@ class VoiceResidentRuntime {
       root: this.config.root,
       pythonExecutable: this.config.pythonExecutable,
       pythonIsolated: this.config.pythonIsolated,
+      engine: this.config.engine,
       modelName: this.config.modelName,
       settingsPath: this.config.settingsPath,
       memoryLimitMb: this.config.memoryLimitMb,
@@ -239,6 +241,10 @@ function normalizeConfig(value = {}) {
   if (!Number.isInteger(value.idleUnloadMs) || value.idleUnloadMs < 10000 || value.idleUnloadMs > 3600000) {
     throw new TypeError('idleUnloadMs must be an integer from 10000 to 3600000');
   }
+  const engine = String(value.engine || 'auto').trim().toLowerCase() || 'auto';
+  if (!['auto', 'whisper', 'sense_voice'].includes(engine)) {
+    throw new TypeError('engine must be auto, whisper, or sense_voice');
+  }
   return {
     enabled: value.enabled !== false,
     memoryLimitMb: value.memoryLimitMb,
@@ -247,6 +253,7 @@ function normalizeConfig(value = {}) {
     settingsPath: String(value.settingsPath || ''),
     pythonExecutable: String(value.pythonExecutable || ''),
     pythonIsolated: value.pythonIsolated === true,
+    engine,
     modelName: String(value.modelName || 'tiny'),
   };
 }

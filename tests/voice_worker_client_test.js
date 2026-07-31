@@ -7,6 +7,7 @@ const { VoiceWorkerClient } = require('../electron/voice_worker_client');
 
 function fakeChild() {
   const child = new EventEmitter();
+  child.spawnArgs = [];
   child.killed = false;
   child.stdout = new EventEmitter();
   child.stdout.setEncoding = () => {};
@@ -179,4 +180,21 @@ function fakeChild() {
   client.shutdown({ force: true });
 }());
 
+
+(function engineFlowsToSpawnArgsAndIsValidated() {
+  const capturedArgs = [];
+  const client = new VoiceWorkerClient({
+    root: path.resolve('.'),
+    engine: 'sense_voice',
+    spawnProcess: (executable, args) => { capturedArgs.push(args); return fakeChild(); },
+  });
+  client.ensureStarted({ preload: true });
+  const args = capturedArgs[0];
+  assert(args.includes('--engine'), 'spawn args must include --engine');
+  assert.strictEqual(args[args.indexOf('--engine') + 1], 'sense_voice');
+  client.shutdown({ force: true });
+
+  assert.throws(() => new VoiceWorkerClient({ root: path.resolve('.'), engine: 'bogus' }),
+    /engine must be auto, whisper, or sense_voice/);
+}());
 console.log('voice_worker_client_test: all assertions passed');

@@ -68,6 +68,7 @@ function defaultSettings() {
       voice_mixed_spacing: 'preserve',
       voice_hallucination_guard: true,
       voice_resident_enabled: true,
+      voice_engine: 'auto',
       voice_memory_limit_mb: 1024,
       voice_idle_unload_ms: 300000,
       voice_glossaries: {},
@@ -267,6 +268,10 @@ function validate(settings) {
   interaction.voice_start_strategy = String(interaction.voice_start_strategy || '').trim().toLowerCase();
   if (!['auto', 'push_to_talk', 'hover'].includes(interaction.voice_start_strategy)) {
     throw new Error('interaction.voice_start_strategy is unsupported');
+  }
+  interaction.voice_engine = String(interaction.voice_engine || 'auto').trim().toLowerCase() || 'auto';
+  if (!['auto', 'whisper', 'sense_voice'].includes(interaction.voice_engine)) {
+    throw new Error('interaction.voice_engine is unsupported');
   }
   interaction.voice_silence_ms = Math.max(
     600,
