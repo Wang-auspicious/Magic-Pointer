@@ -219,7 +219,7 @@ class VoiceWorkerClient extends EventEmitter {
   _workerFailed(message) {
     const requestId = this.active?.requestId || null;
     this.active = null;
-    this.emit('voice-event', { type: 'error', requestId, error: message, engine: 'whisper-local' });
+    this.emit('voice-event', { type: 'error', requestId, error: message, engine: this.engine });
   }
 
   _failTransport(message) {

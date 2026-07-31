@@ -210,6 +210,9 @@
     const name = state.name;
     if (name === 'hidden' || name === 'dismissing') return false;
     if (name === 'capsule-text') return !capsule.hidden && !capsuleInput.disabled;
+    // The voice capsule needs pointer events too: drag-to-move and
+    // push-to-talk / hover triggering both rely on stage mouse capture.
+    if (name === 'capsule-voice') return !capsule.hidden;
     const hasEnabledButton = (element) => !element.hidden
       && Boolean(element.querySelector('button:not([disabled])'));
     return hasEnabledButton(chipsBox)
@@ -254,8 +257,10 @@
 
   function interactiveStageRegions() {
     const elements = [];
-    if (state.name === 'capsule-text' && !capsule.hidden && !capsuleInput.disabled) {
-      elements.push(capsule);
+    if (state.name === 'capsule-text') {
+      if (!capsule.hidden && !capsuleInput.disabled) elements.push(capsule);
+    } else if (state.name === 'capsule-voice') {
+      if (!capsule.hidden) elements.push(capsule);
     }
     for (const container of [chipsBox, resultCard, errorCard]) {
       if (container.hidden) continue;

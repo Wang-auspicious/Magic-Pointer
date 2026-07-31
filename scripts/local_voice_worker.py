@@ -69,6 +69,14 @@ def resident_microphone_runner(
     )
 
 
+def _enable_crash_traceback() -> None:
+    """Dump a native stack to stderr on hard crashes (segfaults in sherpa/
+    torch/sounddevice are the prime suspects for the -1 worker exits).
+    The Electron client forwards stderr into the crash report."""
+    import faulthandler
+
+    faulthandler.enable()
+
 def _configure_stdio() -> None:
     for stream in (sys.stdin, sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
@@ -724,6 +732,7 @@ def serve(worker: LocalVoiceWorker, input_stream: TextIO, output_stream: TextIO)
 
 def main(argv: list[str] | None = None) -> int:
     _configure_stdio()
+    _enable_crash_traceback()
     parser = argparse.ArgumentParser(description="UI-free local voice JSONL worker (whisper / sense_voice).")
     parser.add_argument("--model", default=os.environ.get("MAGIC_POINTER_WHISPER_MODEL") or "tiny")
     parser.add_argument("--engine", default=os.environ.get("MAGIC_POINTER_VOICE_ENGINE") or DEFAULT_ENGINE)

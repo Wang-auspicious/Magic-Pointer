@@ -619,6 +619,17 @@ function createOverlayWindow() {
   });
 }
 
+function ensureFreshGestureOverlay() {
+  // Electron (Windows) transparent overlays can stop delivering DOM pointer
+  // events after a hide/show reuse cycle. Production logs show the second
+  // gesture session never receives pointerdown even though gesture-ready
+  // succeeded. Give every gesture session a freshly created window so the
+  // input path starts clean (readiness gating waits for the new renderer).
+  if (overlayWindow && !overlayWindow.isDestroyed()) overlayWindow.destroy();
+  overlayWindow = null;
+  createOverlayWindow();
+}
+
 function createStageWindow() {
   if (stageWindow && !stageWindow.isDestroyed()) return stageWindow;
   const display = screen.getPrimaryDisplay();
@@ -1390,6 +1401,7 @@ function cancelSelectionGesture(reason = 'cancelled', { hideSurface = true } = {
 
 function armSelectionGesture(reason = 'wiggle') {
   cancelSelectionGesture('replaced');
+  ensureFreshGestureOverlay();
   const cursor = screen.getCursorScreenPoint();
   const display = screen.getDisplayNearestPoint(cursor);
   const now = Date.now();
@@ -2245,9 +2257,9 @@ ipcMain.on('overlay:gesture-ready', (event, payload) => {
     return;
   }
   // The renderer has reset its pointer state — safe to intercept mouse now.
-  // Do NOT call showInactive() here; the overlay is already visible from
-  // reveal(). A redundant show on an already-shown window was the root cause
-  // of DOM pointer events silently breaking on the second activation.
+  // Force a full input-state refresh: toggling ignore off twice and raising
+  // the window prevents the transparent-overlay compositor from keeping a
+  // stale click-through state after a reuse cycle.
   overlayWindow.setIgnoreMouseEvents(false);
   overlayOwnsPointerInput = true;
   if (typeof overlayWindow.moveTop === 'function') overlayWindow.moveTop();
