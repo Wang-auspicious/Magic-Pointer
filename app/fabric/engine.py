@@ -19,12 +19,13 @@ from app.fabric.capture_policy import CapturePolicyEngine, build_capture_policy
 from app.fabric.catalog import get_recipe
 from app.fabric.context_packet import ContextPacketBuilder
 from app.fabric.executors import FabricExecutors
+from app.fabric.model_plan import ModelPlanError, TOOL_REGISTRY, parse_model_plan
 from app.fabric.providers import AgentProviderDiscovery
 from app.fabric.router import RecipeRouter
 from app.fabric.runtime_workspace import RuntimeWorkspaceResolver
 from app.fabric.provenance import ProvenanceIndex, ProvenanceError
 from app.fabric.skill_candidates import SkillCandidateError, SkillCandidateStore
-from app.fabric.schema import ExecutionReceipt, OperationPlan, RiskLevel
+from app.fabric.schema import ExecutionReceipt, IntentMatch, OperationPlan, RiskLevel
 from app.fabric.settings import FabricSettings, SettingsStore
 from app.fabric.task_store import AgentTaskError, AgentTaskStore
 from app.fabric.target_lease import TargetLease, validate_target_lease
@@ -433,12 +434,21 @@ class FabricEngine:
         *,
         objects: list[dict[str, Any]] | None = None,
         parameters: dict[str, Any] | None = None,
+        recipe_id: str | None = None,
+        override_confirmation: bool | None = None,
     ) -> dict[str, Any]:
         clean_objects = [dict(item) for item in objects or [] if isinstance(item, dict)]
-        match = self.router.route(command, object_count=len(clean_objects))
-        if match.recipe_id is None:
-            return {"ok": False, "error": match.reason, "match": match.to_dict()}
-        recipe = get_recipe(match.recipe_id)
+        if recipe_id is None:
+            match = self.router.route(command, object_count=len(clean_objects))
+            if match.recipe_id is None:
+                return {"ok": False, "error": match.reason, "match": match.to_dict()}
+            recipe = get_recipe(match.recipe_id)
+        else:
+            try:
+                recipe = get_recipe(recipe_id)
+            except KeyError:
+                return {"ok": False, "error": "unknown_recipe"}
+            match = IntentMatch(recipe.id, 1.0, "model_plan", "model_plan")
         if self.settings.recipe_enabled.get(recipe.id, True) is False:
             return {"ok": False, "error": "recipe_disabled", "match": match.to_dict()}
         params = dict(parameters or {})
@@ -609,7 +619,9 @@ class FabricEngine:
                 "withheldVisualCount": int(capture_policy["withheldVisualCount"]),
                 "requiresExplicitConfirmation": screenshot_upload,
             }
-        requires_confirmation = permission == "confirm" or screenshot_upload
+        requires_confirmation = (
+            permission == "confirm" or screenshot_upload or bool(override_confirmation)
+        )
         canonical = json.dumps(
             {
                 "recipe": recipe.id,
@@ -665,6 +677,51 @@ class FabricEngine:
             **self._audit_context(params, clean_objects),
         })
         return {"ok": True, "match": match.to_dict(), "plan": plan.to_dict()}
+
+    def plan_from_model(
+        self,
+        value: dict[str, Any],
+        *,
+        objects: list[dict[str, Any]] | None = None,
+        parameters: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Plan from a validated model plan; keyword routing stays the offline fallback.
+
+        The model names tools from :data:`~app.fabric.model_plan.TOOL_REGISTRY`; the
+        local layer maps the primary tool to a recipe and keeps the full validated
+        plan in ``parameters["modelPlan"]`` for executors and audit.  Invalid model
+        output fails closed with a structured error instead of being re-routed by
+        keyword guessing.
+        """
+        try:
+            model_plan = parse_model_plan(value)
+        except ModelPlanError as exc:
+            return {"ok": False, "error": "invalid_model_plan", "detail": str(exc), "modelPlan": dict(value)}
+        primary = model_plan.tool_calls[0]
+        spec = TOOL_REGISTRY[primary.tool]
+        if spec.recipe_id is None:
+            return {"ok": False, "error": "tool_not_implemented", "tool": primary.tool}
+        clean_objects = [dict(item) for item in objects or [] if isinstance(item, dict)]
+        object_ids = [self._object_id(obj, index) for index, obj in enumerate(clean_objects, 1)]
+        missing = [target for target in model_plan.target_object_ids if target not in object_ids]
+        if missing:
+            return {"ok": False, "error": "unknown_target_objects", "missing": missing}
+        targeted = [
+            obj for obj, object_id in zip(clean_objects, object_ids)
+            if object_id in model_plan.target_object_ids
+        ]
+        params = dict(parameters or {})
+        params["modelPlan"] = model_plan.to_dict()
+        params["modelToolCalls"] = [call.to_dict() for call in model_plan.tool_calls]
+        if model_plan.expected_verification:
+            params["expectedVerification"] = model_plan.expected_verification
+        return self.plan(
+            model_plan.intent,
+            objects=targeted,
+            parameters=params,
+            recipe_id=spec.recipe_id,
+            override_confirmation=model_plan.needs_confirmation,
+        )
 
     def execute(self, plan_value: dict[str, Any], *, confirmed: bool = False) -> dict[str, Any]:
         plan = OperationPlan.from_dict(plan_value)

@@ -41,6 +41,7 @@ Magic Pointer = 默认不可见的跨应用操作层。鼠标晃动唤醒 → �
 3. 语音升级——SenseVoice 引擎切换（引擎路由代码已完成但有问题，临时回退到纯 whisper）
 4. **P0 修复排期**——#1/#2 语音管线、#3 bridge stdin 上限、#5 overlay 事件化恢复、#6 capture points 上限、#4 生产测试钩子隔离全部完成，全量 Python 602 + JS 113 全绿；语音收口含测试契约修复与竞态回归测试。剩余 #7 asar 打包设计（依赖 #4 的打包基线，风险较高，单独排期）
 5. OpenSRE 借鉴——合成评分测试套件（Recipe 验收）、可逆脱敏、上下文预算（见下方 OpenSRE 分析段）
+6. **意图-执行分离改造（高级 AI 路线图 Phase 1 已完成 2026-07-31）**——a) `app/fabric/model_plan.py`：ModelPlan 契约（intent / targetObjectIds / requestedResult / toolCalls / riskLevel / needsConfirmation / expectedVerification），18 个模型工具注册表（copy_text / translate_text / replace_text / insert_text / fill_form / extract_table / create_calendar_event / open_map_route / handoff_to_agent 等），严格校验（未知工具、未实现工具、缺参数、风险降级、危险未确认、对象数越界、64KB 上限全部 fail-closed）；b) `FabricEngine.plan_from_model()`：模型规划优先，关键词 Recipe 路由保留为离线降级；模型不能绕过本地权限策略（只能升级确认）。c) 手势几何升级（`electron/gesture_capture.js`）：圈→闭合多边形区域（32 采样+闭合点）、线/自由形→带宽走廊（法向偏移闭合多边形）、自由形语义点改质心、新增 direction 单位向量；`completeSelectionGesture` 透传 geometry/direction。d) Stage 气泡边界 clamp 验证为已实现（`electron/stage_anchor.js` 溢出最小候选 + 强制钳制，已有测试覆盖贴边场景）；危险手势绑定验证为不存在（gesture kind 仅作几何语义，路由纯文本 + 权限 fail-closed）。
 
 ## 完整文件清单（按模块）
 
@@ -341,3 +342,13 @@ node scripts/collect-diagnostics.js --out diagnose.zip  # 脱敏诊断包
 - 改测试→更新上方的 `npm test` 计数
 - 发现重要外部项目→更新"外部参考"表
 - 新增文档→更新"参考文档"表
+
+
+## 高级 AI 路线图（2026-07-31，尚未执行）
+
+来源：外部顾问意见（意图-执行分离）。Phase 1 已完成（见上），剩余按序执行：
+- **Phase 2 语音引擎**：SenseVoice 独立 worker（`scripts/sense_voice_worker.py`），Whisper 自动回退，同录音双引擎对比脚本（CER/意图准确率/延迟），Dashboard 显示引擎与回退原因。
+- **Phase 3 手势落地**：区域覆盖+轨迹经过+中心距离综合排序（grounding）；低置信度定位走视觉模型（局部截图+候选框）；逐点逐显示器坐标（异构 DPI 跨屏，非 gesture 分支仍未修）。
+- **Phase 4 统一动作协议**：read/replace/insert/set_value/invoke/verify/undo 统一适配器；Word/浏览器/Excel 执行器迁移；写入前重确认目标、写入后重读验证（target_lease 已有基础）。
+- **Phase 5 体验**：模型输出流式展示；晃动后并行预取截图/UIA/DOM；窗口结构短缓存；设置分普通/高级两层；阶段耗时与失败回放（observability 已有事件日志基础）；一键体验回归脚本。
+- **Phase 6 降级**：模型 API 失败时本地降级（OCR 复制/原生选区/剪贴板）+ 自然语言错误提示。

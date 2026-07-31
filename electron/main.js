@@ -1542,6 +1542,11 @@ function completeSelectionGesture(payload) {
       ? toPhysical(summary.semanticPoint)
       : undefined,
     releasePoint: toPhysical(summary.releasePoint),
+    // Stroke region geometry (logical DIPs): polygon ring for circles,
+    // bandwidth corridor for lines/freeforms. Used by grounding to rank
+    // targets by region coverage instead of a single point.
+    geometry: summary.geometry || undefined,
+    direction: summary.direction || undefined,
     displayBounds: { ...armDisplay.bounds },
     scaleFactor: armDisplay.scaleFactor || 1,
     source: { ...arm.source },

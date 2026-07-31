@@ -16,6 +16,17 @@ assert(line.semanticPoint && typeof line.semanticPoint.x === 'number',
 assert.deepStrictEqual(line.releasePoint, { x: 215, y: 211 });
 assert.deepStrictEqual(line.strokes, [{ points: line.points }]);
 assert(line.pathLength > 110);
+assert.strictEqual(line.geometry.type, 'band_corridor', 'line must become a bandwidth corridor');
+assert.strictEqual(line.geometry.corridor.length, line.points.length * 2, 
+  'corridor is a closed polygon: left edge forward + right edge backward');
+assert(line.geometry.widthPx >= 10 && line.geometry.widthPx <= 36,
+  'corridor width must scale with the stroke length');
+assert.strictEqual(line.geometry.coordinateSpace, 'logical_dips');
+const lineDirection = line.direction;
+assert(Math.abs(Math.hypot(lineDirection.x, lineDirection.y) - 1) < 1e-9,
+  'direction must be a unit vector');
+assert(lineDirection.x > 0.99, 
+  'a left-to-right line points in the +x direction');
 
 const circle = summarizeGesture([
   { x: 200, y: 160, t: 0 },
@@ -31,6 +42,11 @@ assert.strictEqual(circle.kind, 'circle');
 assert(circle.semanticPoint && typeof circle.semanticPoint.x === 'number',
   'circle center must be present for proximity scoring');
 assert.deepStrictEqual(circle.strokes[0].points, circle.points);
+assert.strictEqual(circle.geometry.type, 'polygon_region', 'circle must become a polygon region');
+assert.strictEqual(circle.geometry.ring.length, 33, 
+  'the ring is a fixed 32-point sampling of the fitted ellipse');
+assert(Math.abs(circle.geometry.ring[0].x - circle.geometry.ring.at(-1).x) < 1e-9,
+  'ring must be closed (first and last points coincide)');
 
 const lightning = summarizeGesture([
   { x: 100, y: 100, t: 0 },
@@ -42,6 +58,8 @@ assert.strictEqual(lightning.valid, true);
 assert.strictEqual(lightning.kind, 'freeform');
 assert(lightning.semanticPoint && typeof lightning.semanticPoint.x === 'number');
 assert.deepStrictEqual(lightning.releasePoint, { x: 230, y: 290 });
+assert.strictEqual(lightning.geometry.type, 'band_corridor');
+assert.deepStrictEqual(lightning.semanticPoint, { x: 159, y: 193 }, 'freeform uses the stroke centroid');
 
 const noisy = summarizeGesture([
   { x: 100, y: 300, t: 0 },
