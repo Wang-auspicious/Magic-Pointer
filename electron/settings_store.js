@@ -71,7 +71,7 @@ function defaultSettings() {
       voice_resident_enabled: true,
       voice_engine: 'auto',
       voice_memory_limit_mb: 1024,
-      voice_idle_unload_ms: 300000,
+      voice_idle_unload_ms: 0, // 0 = keep the voice model resident
       voice_glossaries: {},
     },
     agents: {
@@ -306,9 +306,9 @@ function validate(settings) {
     throw new Error('interaction.voice_memory_limit_mb must be between 128 and 16384');
   }
   if (!Number.isInteger(interaction.voice_idle_unload_ms)
-      || interaction.voice_idle_unload_ms < 10000
+      || interaction.voice_idle_unload_ms < 0
       || interaction.voice_idle_unload_ms > 3600000) {
-    throw new Error('interaction.voice_idle_unload_ms must be between 10000 and 3600000');
+    throw new Error('interaction.voice_idle_unload_ms must be between 0 (resident) and 3600000');
   }
   if (
     !interaction.voice_glossaries

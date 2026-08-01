@@ -10,7 +10,7 @@ const defaults = defaultSettings();
 
 assert.strictEqual(defaults.interaction.voice_resident_enabled, true);
 assert.strictEqual(defaults.interaction.voice_memory_limit_mb, 1024);
-assert.strictEqual(defaults.interaction.voice_idle_unload_ms, 300000);
+assert.strictEqual(defaults.interaction.voice_idle_unload_ms, 0);
 for (const id of ['voice-resident-enabled', 'voice-memory-limit-mb', 'voice-idle-unload-seconds']) {
   assert(html.includes(`id="${id}"`), `Dashboard missing ${id}`);
   assert(dashboard.includes(`'${id}'`), `Dashboard does not bind ${id}`);
@@ -28,7 +28,7 @@ assert.strictEqual(persisted.voice_idle_unload_ms, 60000);
 for (const [field, value] of [
   ['voice_memory_limit_mb', 127],
   ['voice_memory_limit_mb', 16385],
-  ['voice_idle_unload_ms', 9999],
+  ['voice_idle_unload_ms', -1],
   ['voice_idle_unload_ms', 3600001],
 ]) {
   const invalid = defaultSettings();

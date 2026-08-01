@@ -206,6 +206,11 @@ class LocalVoiceWorker:
         self._engine_fallback_reason: str | None = None
         self._memory_limit_bytes = self._validate_limit(memory_limit_mb, "memory_limit_mb")
         self._idle_unload_ms = self._validate_limit(idle_unload_ms, "idle_unload_ms")
+        if self._idle_unload_ms == 0:
+            # 0 = keep the model resident; never idle-unload it. A cold
+            # reload costs 4-11s of user-visible wait, so the default desktop
+            # config pins the model in memory for the whole app session.
+            self._idle_unload_ms = None
         self._memory_probe = memory_probe
         self._clock = clock
         self._model: Any | None = None
@@ -312,6 +317,8 @@ class LocalVoiceWorker:
         """Unload at the real deadline even when stdin remains silent."""
         if self._idle_watch_thread is not None and self._idle_watch_thread.is_alive():
             return
+        if self._idle_unload_ms is None:
+            return  # resident mode: no deadline, no watchdog thread needed
         if not callable(event_sink) or interval_seconds <= 0:
             raise ValueError("event_sink and a positive interval_seconds are required")
         self._idle_watch_stop.clear()

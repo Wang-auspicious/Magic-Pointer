@@ -217,7 +217,7 @@
                   <label class="settings-row"><span><b>停顿提交时间</b><small>600–5000 毫秒。</small></span><span class="unit-input"><input id="voice-silence-ms" type="number" min="600" max="5000" value="1600" /><em>ms</em></span></label>
                   <label class="settings-row"><span><b>常驻语音模型</b><small>开启后复用同一受限本地 worker；关闭时按次启动兼容路径。</small></span><input id="voice-resident-enabled" class="switch-input" type="checkbox" checked /></label>
                   <label class="settings-row"><span><b>语音内存上限</b><small>加载前估算、加载后以 worker 工作集实测，任一超限即释放。</small></span><span class="unit-input"><input id="voice-memory-limit-mb" type="number" min="128" max="16384" step="128" value="1024" /><em>MB</em></span></label>
-                  <label class="settings-row"><span><b>空闲释放时间</b><small>没有进行中的录音时，到期由 worker 主动卸载。</small></span><span class="unit-input"><input id="voice-idle-unload-seconds" type="number" min="10" max="3600" value="300" /><em>秒</em></span></label>
+                  <label class="settings-row"><span><b>空闲释放时间</b><small>0 = 模型常驻不卸载（语音唤醒零等待）；设为秒数则到期由 worker 主动卸载。</small></span><span class="unit-input"><input id="voice-idle-unload-seconds" type="number" min="0" max="3600" value="0" /><em>秒</em></span></label>
                   <p id="voice-resident-status" class="settings-note">状态由本地运行时回传：未加载。</p>
                 </div>
               </section>

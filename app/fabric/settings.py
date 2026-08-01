@@ -124,7 +124,7 @@ class InteractionSettings:
     voice_hallucination_guard: bool = True
     voice_resident_enabled: bool = True
     voice_memory_limit_mb: int = 1024
-    voice_idle_unload_ms: int = 300_000
+    voice_idle_unload_ms: int = 0  # 0 = keep the voice model resident
     voice_glossaries: dict[str, list[str]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -159,8 +159,8 @@ class InteractionSettings:
             raise ValueError("voice_memory_limit_mb must be between 128 and 16384")
         if isinstance(self.voice_idle_unload_ms, bool) or not isinstance(self.voice_idle_unload_ms, int):
             raise ValueError("voice_idle_unload_ms must be an integer")
-        if not 10_000 <= self.voice_idle_unload_ms <= 3_600_000:
-            raise ValueError("voice_idle_unload_ms must be between 10000 and 3600000")
+        if not 0 <= self.voice_idle_unload_ms <= 3_600_000:
+            raise ValueError("voice_idle_unload_ms must be between 0 (resident) and 3600000")
         if not isinstance(self.voice_glossaries, dict):
             raise ValueError("voice_glossaries must be an object")
         if len(self.voice_glossaries) > 64:

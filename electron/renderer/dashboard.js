@@ -499,7 +499,7 @@ function applySettings(value) {
   setValue('voice-silence-ms', interaction.voice_silence_ms || 1600);
   setValue('voice-resident-enabled', interaction.voice_resident_enabled !== false);
   setValue('voice-memory-limit-mb', interaction.voice_memory_limit_mb || 1024);
-  setValue('voice-idle-unload-seconds', Math.round((interaction.voice_idle_unload_ms || 300000) / 1000));
+  setValue('voice-idle-unload-seconds', Number.isInteger(interaction.voice_idle_unload_ms) ? Math.round(interaction.voice_idle_unload_ms / 1000) : 0);
   setValue('voice-glossaries', formatVoiceGlossaries(interaction.voice_glossaries));
   setValue('fallback-hotkey-enabled', activation.fallback_hotkey_enabled);
   setValue('fallback-hotkey', shortcuts.wake || activation.fallback_hotkey);

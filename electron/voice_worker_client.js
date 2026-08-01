@@ -12,7 +12,7 @@ class VoiceWorkerClient extends EventEmitter {
     modelName = 'tiny',
     settingsPath = '',
     memoryLimitMb = 1024,
-    idleUnloadMs = 300000,
+    idleUnloadMs = 0,
     engine = 'auto',
     pythonIsolated = false,
     spawnProcess = spawn,
@@ -23,8 +23,8 @@ class VoiceWorkerClient extends EventEmitter {
     if (!Number.isInteger(memoryLimitMb) || memoryLimitMb < 128 || memoryLimitMb > 16384) {
       throw new TypeError('memoryLimitMb must be an integer from 128 to 16384');
     }
-    if (!Number.isInteger(idleUnloadMs) || idleUnloadMs < 10000 || idleUnloadMs > 3600000) {
-      throw new TypeError('idleUnloadMs must be an integer from 10000 to 3600000');
+    if (!Number.isInteger(idleUnloadMs) || idleUnloadMs < 0 || idleUnloadMs > 3600000) {
+      throw new TypeError('idleUnloadMs must be an integer from 0 (resident) to 3600000');
     }
     const engineName = String(engine || 'auto').trim().toLowerCase() || 'auto';
     if (!['auto', 'whisper', 'sense_voice'].includes(engineName)) {

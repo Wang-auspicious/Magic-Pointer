@@ -238,8 +238,8 @@ function normalizeConfig(value = {}) {
   if (!Number.isInteger(value.memoryLimitMb) || value.memoryLimitMb < 128 || value.memoryLimitMb > 16384) {
     throw new TypeError('memoryLimitMb must be an integer from 128 to 16384');
   }
-  if (!Number.isInteger(value.idleUnloadMs) || value.idleUnloadMs < 10000 || value.idleUnloadMs > 3600000) {
-    throw new TypeError('idleUnloadMs must be an integer from 10000 to 3600000');
+  if (!Number.isInteger(value.idleUnloadMs) || value.idleUnloadMs < 0 || value.idleUnloadMs > 3600000) {
+    throw new TypeError('idleUnloadMs must be an integer from 0 (resident) to 3600000');
   }
   const engine = String(value.engine || 'auto').trim().toLowerCase() || 'auto';
   if (!['auto', 'whisper', 'sense_voice'].includes(engine)) {

@@ -1171,7 +1171,7 @@ function voiceRuntimeConfig(settings = fabricSettings) {
   return {
     enabled: interaction.voice_resident_enabled !== false,
     memoryLimitMb: Number(interaction.voice_memory_limit_mb) || 1024,
-    idleUnloadMs: Number(interaction.voice_idle_unload_ms) || 300000,
+    idleUnloadMs: Number.isInteger(interaction.voice_idle_unload_ms) ? interaction.voice_idle_unload_ms : 0,
     root: ROOT,
     pythonExecutable: PYTHON_EXECUTABLE,
     pythonIsolated: PYTHON_ISOLATED,
@@ -1198,7 +1198,7 @@ function appendVoiceAudit({ eventType, sessionToken, surface, engine, reused, me
     memoryLimitMb: Number(fabricSettings?.interaction?.voice_memory_limit_mb) || 1024,
     measuredMemoryMb: Number.isFinite(measuredMemoryMb) ? measuredMemoryMb : null,
     latencyMs: Number.isFinite(latencyMs) ? latencyMs : null,
-    idleUnloadMs: Number(fabricSettings?.interaction?.voice_idle_unload_ms) || 300000,
+    idleUnloadMs: Number(fabricSettings?.interaction?.voice_idle_unload_ms) || 0,
     outcome: String(outcome || 'unknown').slice(0, 80),
     errorCode: errorCode ? String(errorCode).slice(0, 120) : null,
     cancellationReason: cancellationReason ? String(cancellationReason).slice(0, 120) : null,
@@ -1237,6 +1237,22 @@ function sendVoiceRuntimeStatus(status = {}) {
   });
   if (previousRuntimeState !== nextRuntimeState) invalidateRuntimeState('voice_worker_changed');
   safeSurfaceSend('dashboard', 'dashboard:voice-residency-status', status);
+  // Safety net for users with a stored/custom idle-unload value: after the
+  // worker drops the model for idle, re-warm so the next voice ball does not
+  // pay a 4-11s cold model load. The default config never idle-unloads (0),
+  // so this path only fires for legacy/non-zero settings.
+  if (
+    status.state === 'unloaded'
+    && status.errorCode === 'idle_timeout'
+    && !isQuitting
+    && fabricSettings?.interaction?.voice_resident_enabled !== false
+  ) {
+    setTimeout(() => {
+      if (isQuitting) return;
+      const started = voiceRuntime?.warmUp() === true;
+      if (started) log('voice idle-unload re-warmed');
+    }, 750);
+  }
 }
 
 function forwardResidentVoiceEvent(event = {}) {
