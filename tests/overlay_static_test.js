@@ -22,7 +22,17 @@ assert(source.includes('window.magicPointer?.onShow('));
 assert(source.includes('window.magicPointer?.onHide('));
 assert(source.includes('window.magicPointer?.hide()'));
 assert(html.includes('id="trail"'));
+assert(html.includes('id="sweep-layer"'),
+  'gesture mode must have a dedicated transparent sweep compositor');
+assert(html.includes('src="sweep_visual.js"'),
+  'the procedural sweep renderer must load before overlay.js');
 assert(html.includes('id="hint"'));
+
+// Demo 7 visual contract: gesture bands are GPU-composited and the old
+// three-stroke Canvas brush is not used for the default gesture style.
+assert(source.includes('new globalThis.MagicSweepVisual.SweepRenderer'));
+assert(source.includes("gestureLineStyle === 'demo6_band'"));
+assert(source.includes('sweepRenderer.render('));
 
 // The circle payload keeps points + bbox + viewport for the capture bridge.
 const payloadStart = source.indexOf('function computeSelectionPayload');

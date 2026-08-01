@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Magic Pointer Live Sweep Visual</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
+    body {
+      background: #f6f5ed;
+      color: #a52229;
+      font-family: Arial, Helvetica, sans-serif;
+    }
+    .sheet {
+      position: absolute;
+      inset: 52px 70px;
+      padding: 56px 72px;
+      border-radius: 28px;
+      background: #fffef7;
+      box-shadow: 0 18px 50px rgba(32, 39, 54, .08);
+    }
+    h1 { margin: 0 0 18px; color: #b82d35; font: 700 42px/1.1 Georgia, serif; }
+    p { margin: 0 0 42px; color: #c96b71; font-size: 22px; }
+    .row {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      height: 70px;
+      font-size: 34px;
+      letter-spacing: .01em;
+    }
+    .box { width: 28px; height: 28px; border: 2px solid #a52229; border-radius: 4px; }
+    #sweep-layer { position: fixed; inset: 0; width: 100vw; height: 100vh; pointer-events: none; }
+    #cursor {
+      position: fixed;
+      width: 42px;
+      height: 42px;
+      z-index: 3;
+      pointer-events: none;
+      transform: translate(-4px, -4px);
+      filter: drop-shadow(0 0 8px rgba(47, 123, 255, .35));
+    }
+  </style>
+</head>
+<body>
+  <main class="sheet">
+    <h1>Shopping list</h1>
+    <p>Drag across an item to give it to your agent.</p>
+    <div class="row"><i class="box"></i><span>1 lb Spaghetti</span></div>
+    <div class="row"><i class="box"></i><span>3 Garlic Cloves</span></div>
+    <div class="row"><i class="box"></i><span>Lemon Zest from 2 Lemons</span></div>
+    <div class="row"><i class="box"></i><span>2 Tablespoons Olive Oil</span></div>
+  </main>
+  <canvas id="sweep-layer"></canvas>
+  <img id="cursor" src="../../electron/renderer/assets/armed-cursor.svg" alt="">
+  <script src="../../electron/renderer/sweep_visual.js"></script>
+  <script>
+    const canvas = document.getElementById('sweep-layer');
+    const cursor = document.getElementById('cursor');
+    const renderer = new globalThis.MagicSweepVisual.SweepRenderer(canvas);
+    renderer.resize(window.innerWidth, window.innerHeight, window.devicePixelRatio || 1);
+
+    const paths = {
+      early: [
+        { x: 166, y: 274 }, { x: 225, y: 277 }, { x: 300, y: 272 }, { x: 380, y: 276 },
+      ],
+      active: [
+        { x: 166, y: 274 }, { x: 250, y: 277 }, { x: 340, y: 271 },
+        { x: 410, y: 278 }, { x: 470, y: 272 }, { x: 525, y: 276 },
+      ],
+      curve: [
+        { x: 166, y: 274 }, { x: 220, y: 245 }, { x: 286, y: 288 },
+        { x: 350, y: 252 }, { x: 420, y: 286 }, { x: 486, y: 266 },
+        { x: 552, y: 282 },
+      ],
+    };
+
+    window.renderSweepScenario = (scenario) => {
+      renderer.clear();
+      cursor.hidden = scenario === 'baseline' || scenario === 'clear';
+      if (scenario === 'baseline' || scenario === 'clear') return true;
+      const points = scenario === 'early'
+        ? paths.early
+        : scenario === 'curve' ? paths.curve : paths.active;
+      const opacity = scenario === 'released' ? 0.16 : 1;
+      const head = scenario !== 'released';
+      renderer.render([{ points, opacity, head }], 22);
+      const end = points[points.length - 1];
+      cursor.style.left = `${end.x}px`;
+      cursor.style.top = `${end.y}px`;
+      return true;
+    };
+  </script>
+</body>
+</html>

@@ -11,6 +11,8 @@
 
 ## Unreleased
 
+- **重做实时划线蓝带（2026-08-01）**：默认 `demo6_band` 改为本地 WebGL2 屏幕空间路径 SDF，从结构上移除急弯外扩网格与三角毛刺。光带只使用一个蓝色色值，中央为平坦主体，仅上下边缘窄幅 alpha 羽化；亮度按真实累计弧长从旧尾到光标连续增强，旧尾略软且按住期间保持可见，抬手后才在 128ms 内整体退场。保留 Canvas2D 降级路径、原始手势坐标、多笔语义与 overlay 输入协议；新增像素级夹具和无残影验证。
+
 - **调研：clicky 生态 44 个 issue 全记录 + 底层设计**：新增 `docs/planning/BOTTOM_LAYER_DESIGN_20260801.md`——① farzaa/clicky 38 issue + Bitshank-2338/clicky-windows 6 issue 反馈分类（成本/API key、Windows 空白、全链路慢、语言记忆缺失、bug 实录）；② 8 类日常功能清单→输入需求推导，收敛出底层 6 能力（元素定位/内容提取/指代解析/语音流/上下文/执行验证）；③ Referent 会话引擎架构：一次唤醒=一个会话，笔画与语音时间戳对齐（this/and this/排除绑定），增量 grounding；④ 定位差异：本地优先+语义层+用户圈定聚焦 vs clicky 全屏截图发散找。
 
 - **统一多笔划线圈选（2026-07-31 phase2，不切形态/不分启动方式）**：一次激活后连续圈选任意笔；每笔 pointerup 通过 `window.magicPointer.gestureStroke(token, count)` → 新 IPC `overlay:gesture-stroke` → `markSelectionDrawing()` 续命防超时；滚动窗口 `CHAIN_GAP_MS=1000` 后自动收尾、Enter 立即完成、Esc/右键仍可关闭。`summarizeGesture` 支持 `kind:'multi'` + `strokes[]` 保留每笔几何 + `anchorPoint`=第一笔 release（气泡锚定不跳）+ `releasePoint`=最后一笔 release + 聚合 bbox；overlay 画已提交笔迹+序号，hint 显示「已圈选 N 处 · 继续圈选其他内容，或按 Enter 完成」，stage 气泡新增「N 处」计数徽章（`#capsule-count`）。覆盖测试 `tests/multi_stroke_chain_contract_test.js`、`gesture_capture_test.js` 多笔断言。

@@ -22,6 +22,7 @@ body[data-mode='gesture'] * {
   cursor: url('./assets/armed-cursor.svg') 3 3, crosshair !important;
 }
 
+#sweep-layer,
 #trail {
   position: fixed;
   inset: 0;
@@ -29,9 +30,11 @@ body[data-mode='gesture'] * {
   height: 100vh;
   background: transparent;
   pointer-events: none;
-  z-index: 2147483647;
   will-change: contents;
 }
+
+#sweep-layer { z-index: 2147483645; }
+#trail { z-index: 2147483647; }
 
 .hint {
   position: fixed;

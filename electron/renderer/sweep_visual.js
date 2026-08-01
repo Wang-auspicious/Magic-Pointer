@@ -5,101 +5,86 @@
 }(typeof globalThis !== 'undefined' ? globalThis : this, function createSweepVisual() {
   'use strict';
 
+  const MAX_POINTS = 64;
   const SWEEP_STYLE = Object.freeze({
-    bodyColor: Object.freeze([0.184, 0.443, 0.82]),
-    coreColor: Object.freeze([0.439, 0.647, 1.0]),
-    haloColor: Object.freeze([0.58, 0.75, 1.0]),
-    bodyAlpha: 0.46,
-    coreAlpha: 0.045,
-    haloAlpha: 0.085,
-    headAlpha: 0.23,
-    bodyHalfHeightRatio: 0.5,
-    coreHalfHeightDip: 1.15,
-    haloSigmaDip: 13.5,
-    headSigmaDip: 15.5,
-    tailFloorOpacity: 0.32,
-    maxRenderSegments: 72,
+    color: Object.freeze([0.145, 0.435, 0.82]),
+    bodyOpacity: 0.72,
+    bodyHalfWidthRatio: 0.34,
+    edgeFeatherDip: 4.2,
+    tailSoftnessBoostDip: 1.6,
+    tailFloorOpacity: 0.22,
+    maxPoints: MAX_POINTS,
   });
 
-  const VERTEX_SHADER_SOURCE = `#version 300 es
-in vec2 aPosition;
-in float aCross;
-in float aProgress;
-uniform vec2 uResolution;
-out float vCross;
-out float vProgress;
-void main() {
-  vec2 clip = vec2(
-    aPosition.x / uResolution.x * 2.0 - 1.0,
-    1.0 - aPosition.y / uResolution.y * 2.0
-  );
-  gl_Position = vec4(clip, 0.0, 1.0);
-  vCross = aCross;
-  vProgress = aProgress;
-}`;
+  const VERTEX_SHADER_SOURCE = [
+    '#version 300 es',
+    'in vec2 aPosition;',
+    'uniform vec2 uResolution;',
+    'void main() {',
+    '  vec2 clip = vec2(',
+    '    aPosition.x / uResolution.x * 2.0 - 1.0,',
+    '    1.0 - aPosition.y / uResolution.y * 2.0',
+    '  );',
+    '  gl_Position = vec4(clip, 0.0, 1.0);',
+    '}',
+  ].join('\n');
 
-  const FRAGMENT_SHADER_SOURCE = `#version 300 es
-precision highp float;
-
-uniform float uBodySigma;
-uniform float uCoreSigma;
-uniform float uHaloSigma;
-uniform float uHeadSigma;
-uniform float uTailFloor;
-uniform float uOpacity;
-uniform float uRenderHead;
-uniform vec2 uHeadPosition;
-uniform vec3 uBodyColor;
-uniform vec3 uCoreColor;
-uniform vec3 uHaloColor;
-uniform float uBodyAlpha;
-uniform float uCoreAlpha;
-uniform float uHaloAlpha;
-uniform float uHeadAlpha;
-
-in float vCross;
-in float vProgress;
-out vec4 outColor;
-
-void main() {
-  vec2 point = vec2(gl_FragCoord.x, gl_FragCoord.y);
-  if (uRenderHead > 0.5) {
-    float headDistance = length(point - uHeadPosition);
-    float headGaussian = exp(-(headDistance * headDistance)
-      / (2.0 * uHeadSigma * uHeadSigma));
-    float headAlpha = uHeadAlpha * headGaussian * uOpacity;
-    outColor = vec4(uCoreColor * headAlpha, headAlpha);
-    return;
-  }
-
-  float crossDistance = abs(vCross);
-  float bodyGaussian = exp(-(crossDistance * crossDistance)
-    / (2.0 * uBodySigma * uBodySigma));
-  float coreGaussian = exp(-(crossDistance * crossDistance)
-    / (2.0 * uCoreSigma * uCoreSigma));
-  float haloGaussian = exp(-(crossDistance * crossDistance)
-    / (2.0 * uHaloSigma * uHaloSigma));
-  float pathProgress = clamp(vProgress, 0.0, 1.0);
-  float tailRamp = mix(uTailFloor, 1.0, pow(pathProgress, 0.72));
-  float startFade = smoothstep(-0.14, 0.0, vProgress);
-  float headUnderlap = uHeadSigma * 0.62;
-  float endFade = 1.0 - smoothstep(1.0,
-    1.0 + min(0.16, headUnderlap / max(uHaloSigma * 10.0, 1.0)), vProgress);
-  float longitudinalFade = startFade * endFade;
-
-  float bodyAlpha = uBodyAlpha * bodyGaussian * tailRamp * longitudinalFade;
-  float coreAlpha = uCoreAlpha * coreGaussian * tailRamp * longitudinalFade;
-  float haloAlpha = uHaloAlpha * haloGaussian * tailRamp * longitudinalFade;
-  float rawAlpha = bodyAlpha + coreAlpha + haloAlpha;
-  float energyLimit = min(1.0, 0.72 / max(rawAlpha, 0.0001));
-  float alpha = rawAlpha * energyLimit * uOpacity;
-  vec3 premultiplied = (
-    uBodyColor * bodyAlpha
-    + uCoreColor * coreAlpha
-    + uHaloColor * haloAlpha
-  ) * energyLimit * uOpacity;
-  outColor = vec4(premultiplied, alpha);
-}`;
+  const FRAGMENT_SHADER_SOURCE = [
+    '#version 300 es',
+    'precision highp float;',
+    '#define MAX_POINTS 64',
+    'uniform vec2 uPoints[MAX_POINTS];',
+    'uniform float uProgresses[MAX_POINTS];',
+    'uniform int uPointCount;',
+    'uniform float uBodyHalfWidth;',
+    'uniform float uEdgeFeather;',
+    'uniform float uTailSoftnessBoost;',
+    'uniform float uTailFloor;',
+    'uniform float uBaseOpacity;',
+    'uniform float uOpacity;',
+    'uniform vec3 uColor;',
+    'out vec4 outColor;',
+    '',
+    'vec2 distanceToSegment(vec2 point, vec2 start, vec2 end) {',
+    '  vec2 segment = end - start;',
+    '  float denominator = max(dot(segment, segment), 0.0001);',
+    '  float projection = clamp(dot(point - start, segment) / denominator, 0.0, 1.0);',
+    '  return vec2(length(point - (start + segment * projection)), projection);',
+    '}',
+    '',
+    'void main() {',
+    '  if (uPointCount < 2) {',
+    '    outColor = vec4(0.0);',
+    '    return;',
+    '  }',
+    '',
+    '  float minimumDistance = 100000.0;',
+    '  float currentProgress = 0.0;',
+    '  for (int index = 0; index < MAX_POINTS - 1; index += 1) {',
+    '    if (index >= uPointCount - 1) break;',
+    '    vec2 result = distanceToSegment(gl_FragCoord.xy, uPoints[index], uPoints[index + 1]);',
+    '    float segmentProgress = mix(uProgresses[index], uProgresses[index + 1], result.y);',
+    '    if (result.x < minimumDistance - 0.25) {',
+    '      minimumDistance = result.x;',
+    '      currentProgress = segmentProgress;',
+    '    } else if (abs(result.x - minimumDistance) <= 0.75) {',
+    '      currentProgress = max(currentProgress, segmentProgress);',
+    '    }',
+    '  }',
+    '',
+    '  float shapedProgress = pow(clamp(currentProgress, 0.0, 1.0), 0.72);',
+    '  float tailRamp = mix(uTailFloor, 1.0, shapedProgress);',
+    '  float edgeFeather = uEdgeFeather + uTailSoftnessBoost * (1.0 - shapedProgress);',
+    '  float flatTopAlpha = 1.0 - smoothstep(',
+    '    uBodyHalfWidth,',
+    '    uBodyHalfWidth + edgeFeather,',
+    '    minimumDistance',
+    '  );',
+    '  float alpha = uBaseOpacity * tailRamp * flatTopAlpha * uOpacity;',
+    '  if (alpha <= 0.001) discard;',
+    '  outColor = vec4(uColor * alpha, alpha);',
+    '}',
+  ].join('\n');
 
   function clamp(value, minimum, maximum) {
     return Math.max(minimum, Math.min(maximum, value));
@@ -114,38 +99,12 @@ void main() {
   function pathLength(points) {
     let total = 0;
     for (let index = 1; index < points.length; index += 1) {
-      total += Math.hypot(points[index].x - points[index - 1].x, points[index].y - points[index - 1].y);
+      total += Math.hypot(
+        points[index].x - points[index - 1].x,
+        points[index].y - points[index - 1].y,
+      );
     }
     return total;
-  }
-
-  function evenlySpacedPath(points, spacing) {
-    const result = [{ x: points[0].x, y: points[0].y }];
-    let distanceUntilSample = spacing;
-    let segmentStart = { x: points[0].x, y: points[0].y };
-
-    for (let index = 1; index < points.length; index += 1) {
-      const segmentEnd = { x: points[index].x, y: points[index].y };
-      let segmentLength = Math.hypot(segmentEnd.x - segmentStart.x, segmentEnd.y - segmentStart.y);
-      while (segmentLength >= distanceUntilSample && segmentLength > 0.001) {
-        const ratio = distanceUntilSample / segmentLength;
-        segmentStart = {
-          x: segmentStart.x + (segmentEnd.x - segmentStart.x) * ratio,
-          y: segmentStart.y + (segmentEnd.y - segmentStart.y) * ratio,
-        };
-        result.push(segmentStart);
-        segmentLength = Math.hypot(segmentEnd.x - segmentStart.x, segmentEnd.y - segmentStart.y);
-        distanceUntilSample = spacing;
-      }
-      distanceUntilSample -= segmentLength;
-      segmentStart = segmentEnd;
-    }
-
-    const last = points[points.length - 1];
-    if (Math.hypot(last.x - result[result.length - 1].x, last.y - result[result.length - 1].y) > 0.1) {
-      result.push({ x: last.x, y: last.y });
-    }
-    return result;
   }
 
   function catmullRomPoint(p0, p1, p2, p3, t) {
@@ -164,183 +123,136 @@ void main() {
   }
 
   function smoothPath(points) {
-    if (points.length <= 2) return points.map((point) => ({ x: point.x, y: point.y }));
+    if (points.length <= 2) {
+      return points.map((point) => ({ x: point.x, y: point.y }));
+    }
     const result = [{ x: points[0].x, y: points[0].y }];
     for (let index = 0; index < points.length - 1; index += 1) {
       const p0 = points[Math.max(0, index - 1)];
       const p1 = points[index];
       const p2 = points[index + 1];
       const p3 = points[Math.min(points.length - 1, index + 2)];
-      const steps = Math.max(1, Math.ceil(Math.hypot(p2.x - p1.x, p2.y - p1.y) / 7));
+      const steps = Math.max(1, Math.ceil(Math.hypot(p2.x - p1.x, p2.y - p1.y) / 6));
       for (let step = 1; step <= steps; step += 1) {
         const point = catmullRomPoint(p0, p1, p2, p3, step / steps);
         const previous = result[result.length - 1];
-        if (Math.hypot(point.x - previous.x, point.y - previous.y) > 0.1) result.push(point);
+        if (Math.hypot(point.x - previous.x, point.y - previous.y) > 0.1) {
+          result.push(point);
+        }
       }
     }
     return result;
   }
 
-  function softenCorners(points) {
-    if (points.length <= 2) return points.map((point) => ({ x: point.x, y: point.y }));
-    const result = [{ x: points[0].x, y: points[0].y }];
-    for (let index = 0; index < points.length - 1; index += 1) {
-      const from = points[index];
-      const to = points[index + 1];
-      if (index > 0) {
-        result.push({
-          x: from.x * 0.75 + to.x * 0.25,
-          y: from.y * 0.75 + to.y * 0.25,
-        });
-      }
-      if (index < points.length - 2) {
-        result.push({
-          x: from.x * 0.25 + to.x * 0.75,
-          y: from.y * 0.25 + to.y * 0.75,
-        });
-      }
+  function resamplePath(points, count) {
+    if (points.length <= count) {
+      return points.map((point) => ({ x: point.x, y: point.y }));
     }
-    result.push({ x: points[points.length - 1].x, y: points[points.length - 1].y });
+    const cumulative = [0];
+    for (let index = 1; index < points.length; index += 1) {
+      cumulative.push(cumulative[index - 1] + Math.hypot(
+        points[index].x - points[index - 1].x,
+        points[index].y - points[index - 1].y,
+      ));
+    }
+    const total = cumulative[cumulative.length - 1];
+    const result = [];
+    let segmentIndex = 1;
+    for (let sampleIndex = 0; sampleIndex < count; sampleIndex += 1) {
+      const target = total * sampleIndex / (count - 1);
+      while (segmentIndex < cumulative.length - 1 && cumulative[segmentIndex] < target) {
+        segmentIndex += 1;
+      }
+      const beforeDistance = cumulative[segmentIndex - 1];
+      const afterDistance = cumulative[segmentIndex];
+      const span = Math.max(afterDistance - beforeDistance, 0.0001);
+      const ratio = clamp((target - beforeDistance) / span, 0, 1);
+      const before = points[segmentIndex - 1];
+      const after = points[segmentIndex];
+      result.push({
+        x: before.x + (after.x - before.x) * ratio,
+        y: before.y + (after.y - before.y) * ratio,
+      });
+    }
     return result;
   }
 
-  function buildSweepGeometry(points, requestedWidth = 22) {
-    const usable = usablePoints(points);
-    if (usable.length < 2) return null;
-    const first = usable[0];
-    const last = usable[usable.length - 1];
-    const width = clamp(Number(requestedWidth) || 22, 8, 40);
-    const bodyHalfHeight = clamp(width * SWEEP_STYLE.bodyHalfHeightRatio, 4.5, 9);
-    const start = { x: first.x, y: first.y };
-    const end = { x: last.x, y: last.y };
-    const length = Math.max(1, Math.hypot(end.x - start.x, end.y - start.y));
-    return {
-      mode: 'freehand-sweep',
-      start,
-      end,
-      length,
-      bodyHalfHeight,
-      coreHalfHeight: SWEEP_STYLE.coreHalfHeightDip,
-      haloSigma: SWEEP_STYLE.haloSigmaDip,
-      haloExtent: bodyHalfHeight + SWEEP_STYLE.haloSigmaDip * 2.8,
-      headSigma: SWEEP_STYLE.headSigmaDip,
-      tailFeather: clamp(length * 0.16, 18, 44),
-    };
-  }
-
-  function tailOpacity(progress) {
-    return SWEEP_STYLE.tailFloorOpacity
-      + (1 - SWEEP_STYLE.tailFloorOpacity) * Math.pow(clamp(progress, 0, 1), 0.72);
-  }
-
-  function buildSweepRibbon(points, requestedWidth = 22) {
-    const usable = usablePoints(points);
-    if (usable.length < 2 || pathLength(usable) <= 0.1) return null;
-    const softened = softenCorners(usable);
-    const rawLength = pathLength(softened);
-    const baseSpacing = clamp(rawLength / 34, 8, 18);
-    let visualPath = smoothPath(evenlySpacedPath(softened, baseSpacing));
-    if (visualPath.length > SWEEP_STYLE.maxRenderSegments - 2) {
-      visualPath = evenlySpacedPath(
-        visualPath,
-        pathLength(visualPath) / (SWEEP_STYLE.maxRenderSegments - 2),
-      );
-    }
-    if (visualPath.length < 2) return null;
-
-    const geometry = buildSweepGeometry(visualPath, requestedWidth);
-    const visualLength = pathLength(visualPath);
+  function addArcProgress(points) {
+    const total = Math.max(pathLength(points), 0.0001);
     let travelled = 0;
-    const coreSamples = visualPath.map((point, index) => {
+    return points.map((point, index) => {
       if (index > 0) {
-        travelled += Math.hypot(point.x - visualPath[index - 1].x, point.y - visualPath[index - 1].y);
+        travelled += Math.hypot(
+          point.x - points[index - 1].x,
+          point.y - points[index - 1].y,
+        );
       }
       return {
         x: point.x,
         y: point.y,
-        progress: clamp(travelled / Math.max(visualLength, 0.1), 0, 1),
+        progress: index === points.length - 1 ? 1 : clamp(travelled / total, 0, 1),
       };
     });
-    const startDirection = normalizedDirection(coreSamples[0], coreSamples[1]);
-    const endDirection = normalizedDirection(coreSamples[coreSamples.length - 2], coreSamples[coreSamples.length - 1]);
-    const haloExtent = geometry.haloSigma * 2.55;
-    const headUnderlap = geometry.headSigma * 0.62;
-    const samples = [
-      {
-        x: coreSamples[0].x - startDirection.x * geometry.haloSigma,
-        y: coreSamples[0].y - startDirection.y * geometry.haloSigma,
-        progress: -0.14,
-      },
-      ...coreSamples,
-      {
-        x: coreSamples[coreSamples.length - 1].x + endDirection.x * (headUnderlap + geometry.haloSigma * 1.8),
-        y: coreSamples[coreSamples.length - 1].y + endDirection.y * (headUnderlap + geometry.haloSigma * 1.8),
-        progress: 1.16,
-      },
-    ];
-    const vertices = [];
-    const bounds = { left: Infinity, right: -Infinity, top: Infinity, bottom: -Infinity };
-    for (let index = 0; index < samples.length; index += 1) {
-      const previous = samples[Math.max(0, index - 1)];
-      const current = samples[index];
-      const next = samples[Math.min(samples.length - 1, index + 1)];
-      const previousDirection = normalizedDirection(previous, current);
-      const nextDirection = normalizedDirection(current, next);
-      const turnDot = previousDirection.x * nextDirection.x + previousDirection.y * nextDirection.y;
-      const miter = normalizedVector(
-        -previousDirection.y - nextDirection.y,
-        previousDirection.x + nextDirection.x,
-      );
-      const normal = miter.length > 0 ? miter : { x: -nextDirection.y, y: nextDirection.x };
-      const turnScale = clamp(0.58 + 0.42 * ((turnDot + 1) / 2), 0.58, 1);
-      const localExtent = Math.max(geometry.bodyHalfHeight * 2.15, haloExtent * turnScale);
-      for (const side of [-1, 1]) {
-        const x = samples[index].x + normal.x * localExtent * side;
-        const y = samples[index].y + normal.y * localExtent * side;
-        vertices.push(x, y, localExtent * side, samples[index].progress);
-        bounds.left = Math.min(bounds.left, x);
-        bounds.right = Math.max(bounds.right, x);
-        bounds.top = Math.min(bounds.top, y);
-        bounds.bottom = Math.max(bounds.bottom, y);
-      }
-    }
+  }
+
+  function sweepProfile(progress) {
+    const shaped = Math.pow(clamp(progress, 0, 1), 0.72);
     return {
-      mode: 'continuous-ribbon',
-      samples,
-      vertices,
-      bounds,
-      head: coreSamples[coreSamples.length - 1],
-      bodyHalfHeight: geometry.bodyHalfHeight,
-      coreHalfHeight: geometry.coreHalfHeight,
-      haloSigma: geometry.haloSigma,
-      headSigma: geometry.headSigma,
+      color: SWEEP_STYLE.color,
+      opacity: SWEEP_STYLE.tailFloorOpacity
+        + (1 - SWEEP_STYLE.tailFloorOpacity) * shaped,
+      edgeFeather: SWEEP_STYLE.edgeFeatherDip
+        + SWEEP_STYLE.tailSoftnessBoostDip * (1 - shaped),
     };
   }
 
-  function normalizedDirection(from, to) {
-    const dx = to.x - from.x;
-    const dy = to.y - from.y;
-    const length = Math.hypot(dx, dy);
-    return length > 0.001 ? { x: dx / length, y: dy / length } : { x: 1, y: 0 };
+  function buildSdfPath(points, requestedWidth = 22) {
+    const usable = usablePoints(points);
+    if (usable.length < 2 || pathLength(usable) <= 0.1) return null;
+    const smooth = smoothPath(usable);
+    const sampled = resamplePath(smooth, MAX_POINTS);
+    const samples = addArcProgress(sampled);
+    const width = clamp(Number(requestedWidth) || 22, 8, 40);
+    const bodyHalfWidth = clamp(width * SWEEP_STYLE.bodyHalfWidthRatio, 4.5, 8.5);
+    const maximumRadius = bodyHalfWidth
+      + SWEEP_STYLE.edgeFeatherDip
+      + SWEEP_STYLE.tailSoftnessBoostDip
+      + 2;
+    const xs = samples.map((point) => point.x);
+    const ys = samples.map((point) => point.y);
+    return {
+      mode: 'screen-space-path-sdf',
+      samples,
+      bodyHalfWidth,
+      edgeFeather: SWEEP_STYLE.edgeFeatherDip,
+      tailSoftnessBoost: SWEEP_STYLE.tailSoftnessBoostDip,
+      tailFloorOpacity: SWEEP_STYLE.tailFloorOpacity,
+      bounds: {
+        left: Math.min(...xs) - maximumRadius,
+        right: Math.max(...xs) + maximumRadius,
+        top: Math.min(...ys) - maximumRadius,
+        bottom: Math.max(...ys) + maximumRadius,
+      },
+    };
   }
 
-  function normalizedVector(x, y) {
-    const length = Math.hypot(x, y);
-    return length > 0.001 ? { x: x / length, y: y / length, length } : { x: 0, y: 0, length: 0 };
+  function buildSweepGeometry(points, requestedWidth = 22) {
+    return buildSdfPath(points, requestedWidth);
   }
 
   function buildSweepSegments(points, requestedWidth = 22) {
-    const ribbon = buildSweepRibbon(points, requestedWidth);
-    if (!ribbon) return [];
-    const samples = ribbon.samples.filter((sample) => sample.progress >= 0 && sample.progress <= 1);
-    const segments = [];
-    for (let index = 1; index < samples.length; index += 1) {
-      const geometry = buildSweepGeometry([samples[index - 1], samples[index]], requestedWidth);
-      if (!geometry) continue;
-      const progress = (samples[index - 1].progress + samples[index].progress) / 2;
-      segments.push({ ...geometry, progress, opacity: tailOpacity(progress) });
-    }
-    return segments;
+    const path = buildSdfPath(points, requestedWidth);
+    if (!path) return [];
+    return path.samples.slice(1).map((point, index) => ({
+      start: path.samples[index],
+      end: point,
+      progress: (path.samples[index].progress + point.progress) / 2,
+      opacity: sweepProfile((path.samples[index].progress + point.progress) / 2).opacity,
+    }));
+  }
+
+  function buildSweepRibbon(points, requestedWidth = 22) {
+    return buildSdfPath(points, requestedWidth);
   }
 
   function compileShader(gl, type, source) {
@@ -374,12 +286,12 @@ void main() {
       this.gl = null;
       this.ctx = null;
       this.program = null;
-      this.locations = null;
-      this.attributes = null;
       this.vertexBuffer = null;
-      this.dpr = 1;
+      this.positionAttribute = -1;
+      this.locations = null;
       this.cssWidth = 1;
       this.cssHeight = 1;
+      this.dpr = 1;
       this.contextLost = false;
       this.initialize();
     }
@@ -406,21 +318,26 @@ void main() {
       const gl = this.gl;
       this.program = createProgram(gl);
       this.vertexBuffer = gl.createBuffer();
+      this.positionAttribute = gl.getAttribLocation(this.program, 'aPosition');
       gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
-      this.attributes = {
-        position: gl.getAttribLocation(this.program, 'aPosition'),
-        cross: gl.getAttribLocation(this.program, 'aCross'),
-        progress: gl.getAttribLocation(this.program, 'aProgress'),
+      gl.enableVertexAttribArray(this.positionAttribute);
+      gl.vertexAttribPointer(this.positionAttribute, 2, gl.FLOAT, false, 0, 0);
+      this.locations = {
+        resolution: gl.getUniformLocation(this.program, 'uResolution'),
+        points: gl.getUniformLocation(this.program, 'uPoints[0]'),
+        progresses: gl.getUniformLocation(this.program, 'uProgresses[0]'),
+        pointCount: gl.getUniformLocation(this.program, 'uPointCount'),
+        bodyHalfWidth: gl.getUniformLocation(this.program, 'uBodyHalfWidth'),
+        edgeFeather: gl.getUniformLocation(this.program, 'uEdgeFeather'),
+        tailSoftnessBoost: gl.getUniformLocation(this.program, 'uTailSoftnessBoost'),
+        tailFloor: gl.getUniformLocation(this.program, 'uTailFloor'),
+        baseOpacity: gl.getUniformLocation(this.program, 'uBaseOpacity'),
+        opacity: gl.getUniformLocation(this.program, 'uOpacity'),
+        color: gl.getUniformLocation(this.program, 'uColor'),
       };
-      for (const location of Object.values(this.attributes)) gl.enableVertexAttribArray(location);
-      this.locations = {};
-      for (const name of [
-        'uResolution', 'uBodySigma', 'uCoreSigma', 'uHaloSigma', 'uHeadSigma',
-        'uTailFloor', 'uOpacity', 'uRenderHead', 'uHeadPosition', 'uBodyColor',
-        'uCoreColor', 'uHaloColor', 'uBodyAlpha', 'uCoreAlpha', 'uHaloAlpha', 'uHeadAlpha',
-      ]) this.locations[name] = gl.getUniformLocation(this.program, name);
       gl.useProgram(this.program);
       gl.enable(gl.BLEND);
+      gl.blendEquation(gl.FUNC_ADD);
       gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
       gl.enable(gl.SCISSOR_TEST);
       this.canvas.addEventListener('webglcontextlost', (event) => {
@@ -440,8 +357,8 @@ void main() {
       this.dpr = Math.max(1, Number(dpr) || 1);
       this.canvas.width = Math.round(this.cssWidth * this.dpr);
       this.canvas.height = Math.round(this.cssHeight * this.dpr);
-      this.canvas.style.width = `${this.cssWidth}px`;
-      this.canvas.style.height = `${this.cssHeight}px`;
+      this.canvas.style.width = this.cssWidth + 'px';
+      this.canvas.style.height = this.cssHeight + 'px';
       if (this.gl) this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
       if (this.ctx) this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
       this.clear();
@@ -459,26 +376,16 @@ void main() {
 
     render(entries, width = 22) {
       this.clear();
-      const ribbons = (Array.isArray(entries) ? entries : [])
+      const paths = (Array.isArray(entries) ? entries : [])
         .slice(-8)
         .map((entry) => ({
-          ribbon: buildSweepRibbon(entry?.points, width),
-          opacity: clamp(Number(entry?.opacity) || 0, 0, 1),
-          head: entry?.head !== false,
+          path: buildSdfPath(entry?.points, width),
+          opacity: clamp(entry?.opacity == null ? 1 : Number(entry.opacity), 0, 1),
         }))
-        .filter((entry) => entry.ribbon && entry.opacity > 0.01);
-      if (!ribbons.length) return;
-      if (this.gl && !this.contextLost) this.renderWebGl(ribbons);
-      else if (this.ctx) this.renderCanvas(ribbons);
-    }
-
-    uploadVertices(vertices) {
-      const gl = this.gl;
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
-      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.DYNAMIC_DRAW);
-      gl.vertexAttribPointer(this.attributes.position, 2, gl.FLOAT, false, 16, 0);
-      gl.vertexAttribPointer(this.attributes.cross, 1, gl.FLOAT, false, 16, 8);
-      gl.vertexAttribPointer(this.attributes.progress, 1, gl.FLOAT, false, 16, 12);
+        .filter((entry) => entry.path && entry.opacity > 0.01);
+      if (!paths.length) return;
+      if (this.gl && !this.contextLost) this.renderWebGl(paths);
+      else if (this.ctx) this.renderCanvas(paths);
     }
 
     setScissor(bounds) {
@@ -498,53 +405,47 @@ void main() {
       const gl = this.gl;
       const locations = this.locations;
       gl.useProgram(this.program);
-      gl.uniform2f(locations.uResolution, this.canvas.width, this.canvas.height);
-      gl.uniform3fv(locations.uBodyColor, SWEEP_STYLE.bodyColor);
-      gl.uniform3fv(locations.uCoreColor, SWEEP_STYLE.coreColor);
-      gl.uniform3fv(locations.uHaloColor, SWEEP_STYLE.haloColor);
-      gl.uniform1f(locations.uBodyAlpha, SWEEP_STYLE.bodyAlpha);
-      gl.uniform1f(locations.uCoreAlpha, SWEEP_STYLE.coreAlpha);
-      gl.uniform1f(locations.uHaloAlpha, SWEEP_STYLE.haloAlpha);
-      gl.uniform1f(locations.uHeadAlpha, SWEEP_STYLE.headAlpha);
-      gl.uniform1f(locations.uTailFloor, SWEEP_STYLE.tailFloorOpacity);
+      gl.uniform2f(locations.resolution, this.canvas.width, this.canvas.height);
+      gl.uniform3fv(locations.color, SWEEP_STYLE.color);
+      gl.uniform1f(locations.baseOpacity, SWEEP_STYLE.bodyOpacity);
+      gl.uniform1f(locations.tailFloor, SWEEP_STYLE.tailFloorOpacity);
 
       for (const entry of entries) {
-        const ribbon = entry.ribbon;
-        this.setScissor(ribbon.bounds);
-        this.uploadVertices(ribbon.vertices.map((value, index) => index % 4 === 3 ? value : value * this.dpr));
-        gl.uniform1f(locations.uBodySigma, ribbon.bodyHalfHeight * this.dpr);
-        gl.uniform1f(locations.uCoreSigma, ribbon.coreHalfHeight * this.dpr);
-        gl.uniform1f(locations.uHaloSigma, ribbon.haloSigma * this.dpr);
-        gl.uniform1f(locations.uHeadSigma, ribbon.headSigma * this.dpr);
-        gl.uniform1f(locations.uOpacity, entry.opacity);
-        gl.uniform1f(locations.uRenderHead, 0);
-        gl.drawArrays(gl.TRIANGLE_STRIP, 0, ribbon.samples.length * 2);
+        const path = entry.path;
+        const left = path.bounds.left;
+        const right = path.bounds.right;
+        const top = path.bounds.top;
+        const bottom = path.bounds.bottom;
+        const vertices = new Float32Array([
+          left * this.dpr, top * this.dpr,
+          right * this.dpr, top * this.dpr,
+          left * this.dpr, bottom * this.dpr,
+          left * this.dpr, bottom * this.dpr,
+          right * this.dpr, top * this.dpr,
+          right * this.dpr, bottom * this.dpr,
+        ]);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.DYNAMIC_DRAW);
+        gl.vertexAttribPointer(this.positionAttribute, 2, gl.FLOAT, false, 0, 0);
 
-        if (entry.head) this.drawHead(ribbon, entry.opacity);
+        const pointValues = new Float32Array(path.samples.length * 2);
+        const progressValues = new Float32Array(path.samples.length);
+        path.samples.forEach((point, index) => {
+          pointValues[index * 2] = point.x * this.dpr;
+          pointValues[index * 2 + 1] = (this.cssHeight - point.y) * this.dpr;
+          progressValues[index] = point.progress;
+        });
+
+        this.setScissor(path.bounds);
+        gl.uniform2fv(locations.points, pointValues);
+        gl.uniform1fv(locations.progresses, progressValues);
+        gl.uniform1i(locations.pointCount, path.samples.length);
+        gl.uniform1f(locations.bodyHalfWidth, path.bodyHalfWidth * this.dpr);
+        gl.uniform1f(locations.edgeFeather, path.edgeFeather * this.dpr);
+        gl.uniform1f(locations.tailSoftnessBoost, path.tailSoftnessBoost * this.dpr);
+        gl.uniform1f(locations.opacity, entry.opacity);
+        gl.drawArrays(gl.TRIANGLES, 0, 6);
       }
-    }
-
-    drawHead(ribbon, opacity) {
-      const gl = this.gl;
-      const radius = ribbon.headSigma * 3.4;
-      const left = ribbon.head.x - radius;
-      const right = ribbon.head.x + radius;
-      const top = ribbon.head.y - radius;
-      const bottom = ribbon.head.y + radius;
-      this.setScissor({ left, right, top, bottom });
-      this.uploadVertices([
-        left * this.dpr, top * this.dpr, 0, 1,
-        right * this.dpr, top * this.dpr, 0, 1,
-        left * this.dpr, bottom * this.dpr, 0, 1,
-        right * this.dpr, bottom * this.dpr, 0, 1,
-      ]);
-      const locations = this.locations;
-      gl.uniform1f(locations.uOpacity, opacity);
-      gl.uniform1f(locations.uRenderHead, 1);
-      gl.uniform2f(locations.uHeadPosition, ribbon.head.x * this.dpr,
-        (this.cssHeight - ribbon.head.y) * this.dpr);
-      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-      gl.uniform1f(locations.uRenderHead, 0);
     }
 
     renderCanvas(entries) {
@@ -553,35 +454,24 @@ void main() {
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
       for (const entry of entries) {
-        const ribbon = entry.ribbon;
-        const samples = ribbon.samples.filter((sample) => sample.progress >= 0 && sample.progress <= 1);
+        const samples = entry.path.samples;
         for (let index = 1; index < samples.length; index += 1) {
           const progress = (samples[index - 1].progress + samples[index].progress) / 2;
-          const opacity = tailOpacity(progress) * entry.opacity;
+          const profile = sweepProfile(progress);
+          const alpha = SWEEP_STYLE.bodyOpacity * profile.opacity * entry.opacity;
+          const rgb = SWEEP_STYLE.color.map((component) => Math.round(component * 255));
           ctx.beginPath();
           ctx.moveTo(samples[index - 1].x, samples[index - 1].y);
           ctx.lineTo(samples[index].x, samples[index].y);
-          ctx.lineWidth = ribbon.haloSigma * 2.8;
-          ctx.strokeStyle = `rgba(148, 192, 255, ${SWEEP_STYLE.haloAlpha * opacity})`;
+          ctx.lineWidth = entry.path.bodyHalfWidth * 2 + profile.edgeFeather * 1.2;
+          ctx.strokeStyle = 'rgba(' + rgb.join(',') + ',' + (alpha * 0.34) + ')';
           ctx.stroke();
-          ctx.lineWidth = ribbon.bodyHalfHeight * 2;
-          ctx.strokeStyle = `rgba(47, 113, 209, ${SWEEP_STYLE.bodyAlpha * opacity})`;
+          ctx.beginPath();
+          ctx.moveTo(samples[index - 1].x, samples[index - 1].y);
+          ctx.lineTo(samples[index].x, samples[index].y);
+          ctx.lineWidth = entry.path.bodyHalfWidth * 2;
+          ctx.strokeStyle = 'rgba(' + rgb.join(',') + ',' + alpha + ')';
           ctx.stroke();
-        }
-        if (entry.head) {
-          const head = ctx.createRadialGradient(
-            ribbon.head.x, ribbon.head.y, 0,
-            ribbon.head.x, ribbon.head.y, ribbon.headSigma * 3,
-          );
-          head.addColorStop(0, `rgba(112, 165, 255, ${SWEEP_STYLE.headAlpha * entry.opacity})`);
-          head.addColorStop(1, 'rgba(112, 165, 255, 0)');
-          ctx.fillStyle = head;
-          ctx.fillRect(
-            ribbon.head.x - ribbon.headSigma * 3,
-            ribbon.head.y - ribbon.headSigma * 3,
-            ribbon.headSigma * 6,
-            ribbon.headSigma * 6,
-          );
         }
       }
       ctx.restore();
@@ -592,10 +482,11 @@ void main() {
     SWEEP_STYLE,
     VERTEX_SHADER_SOURCE,
     FRAGMENT_SHADER_SOURCE,
+    buildSdfPath,
+    sweepProfile,
     buildSweepGeometry,
     buildSweepSegments,
     buildSweepRibbon,
     SweepRenderer,
   };
 }));
-

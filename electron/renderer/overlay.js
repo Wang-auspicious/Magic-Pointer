@@ -1,5 +1,7 @@
 const canvas = document.getElementById('trail');
 const ctx = canvas.getContext('2d');
+const sweepCanvas = document.getElementById('sweep-layer');
+const sweepRenderer = new globalThis.MagicSweepVisual.SweepRenderer(sweepCanvas);
 const hint = document.getElementById('hint');
 
 let dpr = window.devicePixelRatio || 1;
@@ -155,11 +157,13 @@ function resize() {
   canvas.style.width = `${window.innerWidth}px`;
   canvas.style.height = `${window.innerHeight}px`;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  sweepRenderer.resize(window.innerWidth, window.innerHeight, dpr);
   clear();
 }
 
 function clear() {
   ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+  sweepRenderer.clear();
 }
 
 function scheduleRender() {
@@ -270,12 +274,15 @@ function render() {
     if (strokes.length) {
       for (let index = 0; index < strokes.length; index += 1) {
         const stroke = strokes[index];
-        drawSmoothPath(stroke.points, trailAlpha * 0.55);
         drawStrokeMarker(index + 1, stroke.semanticPoint || stroke.points[Math.floor(stroke.points.length / 2)]);
       }
     }
     if (points.length) {
-      drawSmoothPath(points, trailAlpha);
+      if (gestureLineStyle === 'demo6_band') {
+        sweepRenderer.render([{ points, opacity: trailAlpha, head: drawing }], gestureLineWidth);
+      } else {
+        drawSmoothPath(points, trailAlpha);
+      }
     } else if (!strokes.length) {
       // Keep the transparent window hit-testable without painting a second
       // cursor over the preloaded CSS cursor.
@@ -546,6 +553,7 @@ window.addEventListener('pointerup', (e) => {
       window.magicPointer?.gestureStroke(gestureToken, strokes.length);
       showChainHint(strokes.length);
       scheduleChainFinalize();
+      fadeTrail(128);
     } else {
       submitGesture();
     }
@@ -642,6 +650,7 @@ window.magicPointer?.onGestureInput((payload) => {
   if (phase === 'end') {
     drawing = false;
     render();
+    fadeTrail(128);
   }
 });
 window.magicPointer?.onHide(() => {

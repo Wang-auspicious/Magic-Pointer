@@ -94,7 +94,7 @@ Magic Pointer = 默认不可见的跨应用操作层。鼠标晃动唤醒 → �
 ### 渲染进程 — `electron/renderer/`
 | 文件 | 职责 |
 |---|---|
-| `index.html` + `overlay.js` | 全屏透明画线 Overlay：Canvas 渲染（OffscreenCanvas 帧缓存）+ mousedown/move/up + submitGesture |
+| `index.html` + `overlay.js` + `sweep_visual.js` | 全屏透明画线 Overlay：默认蓝带由 WebGL2 屏幕空间路径 SDF 渲染（Canvas2D 降级）；单一蓝色、平坦主体、窄边缘羽化，自由路径按累计弧长从旧尾到光标连续增强，按住时尾部不消失。标记/观察光标保留 Canvas/OffscreenCanvas；mousedown/move/up + submitGesture |
 | `stage.html` + `stage.js` | Stage 气泡：targeting→frozen→capsule→processing→result 状态机 |
 | `dashboard.html` + `dashboard.js` | 控制面：唤醒/语音/Agent/Recipe/权限/隐私/诊断 14 个面板 |
 | `onboarding.html` + `onboarding.js` | 首次启动向导 |
