@@ -116,6 +116,7 @@ def _read_target_context(
     *,
     registry: Any | None = None,
     target_point: dict[str, int] | None = None,
+    target_region: dict[str, int] | None = None,
 ) -> tuple[dict[str, Any] | None, Any, dict[str, Any]]:
     target_window = windows[0] if windows else None
     if target_window is None:
@@ -141,6 +142,7 @@ def _read_target_context(
         active_registry,
         command="",
         target_point=target_point,
+        target_region=target_region,
     )
     return target_window, resolution.context, resolution.trace
 
@@ -396,6 +398,47 @@ def _sample_gesture_points(points: list[tuple[int, int]], limit: int = 9) -> lis
     return deduplicated
 
 
+def _is_enclosed_gesture(gesture: dict[str, Any] | None, points: list[tuple[int, int]]) -> bool:
+    if not isinstance(gesture, dict) or len(points) < 5:
+        return False
+    strokes = gesture.get("strokes") if isinstance(gesture.get("strokes"), list) else []
+    if len(strokes) != 1:
+        return False
+    raw_bbox = gesture.get("bbox") if isinstance(gesture.get("bbox"), dict) else {}
+    try:
+        width = float(raw_bbox.get("width") or 0)
+        height = float(raw_bbox.get("height") or 0)
+    except (TypeError, ValueError):
+        return False
+    if width < 28 or height < 28:
+        return False
+    closure_distance = math.hypot(points[-1][0] - points[0][0], points[-1][1] - points[0][1])
+    if closure_distance > max(30.0, min(width, height) * 0.42):
+        return False
+    perimeter = sum(
+        math.hypot(points[index][0] - points[index - 1][0], points[index][1] - points[index - 1][1])
+        for index in range(1, len(points))
+    )
+    if perimeter < 0.58 * 2.0 * (width + height):
+        return False
+    polygon_area = abs(sum(
+        points[index][0] * points[(index + 1) % len(points)][1]
+        - points[(index + 1) % len(points)][0] * points[index][1]
+        for index in range(len(points))
+    )) / 2.0
+    return polygon_area >= width * height * 0.24
+
+
+def _union_xywh(rectangles: list[list[int]]) -> list[int] | None:
+    if not rectangles:
+        return None
+    left = min(rect[0] for rect in rectangles)
+    top = min(rect[1] for rect in rectangles)
+    right = max(rect[0] + rect[2] for rect in rectangles)
+    bottom = max(rect[1] + rect[3] for rect in rectangles)
+    return [left, top, right - left, bottom - top]
+
+
 def _context_rectangles(context: Any) -> list[list[int]]:
     artifacts = dict(getattr(context, "artifacts", {}) or {})
     raw_rectangles = artifacts.get("selection_rectangles") or artifacts.get("rectangles") or []
@@ -443,6 +486,39 @@ def _read_gesture_target_context(
         window, context, trace = _read_target_context(windows, registry=registry, target_point=fallback_point)
         return window, context, trace, None, None
 
+    raw_bbox = dict((gesture or {}).get("bbox") or {})
+    if _is_enclosed_gesture(gesture, points):
+        target_region = {
+            "x": int(raw_bbox.get("x") or 0),
+            "y": int(raw_bbox.get("y") or 0),
+            "width": max(0, int(raw_bbox.get("width") or 0)),
+            "height": max(0, int(raw_bbox.get("height") or 0)),
+        }
+        semantic = (gesture or {}).get("semanticPoint")
+        region_window, region_context, region_trace = _read_target_context(
+            windows,
+            registry=registry,
+            target_point=semantic if isinstance(semantic, dict) else fallback_point,
+            target_region=target_region,
+        )
+        region_artifacts = dict(getattr(region_context, "artifacts", {}) or {})
+        region_rectangles = _context_rectangles(region_context) if region_context is not None else []
+        if (
+            region_context is not None
+            and region_trace.get("selectedLayer")
+            and region_artifacts.get("perception_result_kind") == "region_elements"
+            and region_rectangles
+        ):
+            return region_window, region_context, region_trace, {
+                "schemaVersion": 1,
+                "state": "resolved",
+                "mode": "enclosed_region",
+                "candidate_count": len(list(region_artifacts.get("region_elements") or [])),
+                "sample_count": 0,
+                "score": 1.0,
+                "margin": 1.0,
+            }, _union_xywh(region_rectangles)
+
     sampled = _sample_gesture_points(points)
     candidates: dict[str, dict[str, Any]] = {}
     target_window = windows[0] if windows else None
@@ -483,7 +559,6 @@ def _read_gesture_target_context(
             "reason": "gesture_no_bounded_candidate",
         }, None
 
-    raw_bbox = dict((gesture or {}).get("bbox") or {})
     selection_bbox = (
         int(raw_bbox.get("x") or 0),
         int(raw_bbox.get("y") or 0),
@@ -527,6 +602,7 @@ def _read_gesture_target_context(
     grounding = {
         "schemaVersion": 1,
         "state": "resolved",
+        "mode": "path_target",
         "candidate_count": len(ranked),
         "sample_count": len(sampled),
         "selected_candidate_id": f"sha256:{__import__('hashlib').sha256(best_key.encode('utf-8')).hexdigest()}",

@@ -182,6 +182,40 @@ def test_uia_context_reads_meaningful_element_under_pointer_before_pixels(monkey
     assert ctx.artifacts["perception_result_kind"] == "point_element"
 
 
+def test_uia_context_reads_all_bounded_elements_in_an_enclosed_region(monkeypatch) -> None:
+    calls = []
+
+    def probe(hwnd, *, target_region=None):
+        calls.append((hwnd, target_region))
+        return UiaProbeResult(True, {
+            "ok": True,
+            "result_kind": "region_elements",
+            "hwnd": 1234,
+            "process_id": 5678,
+            "root_hwnd": 1234,
+            "text": "当前版本\nMagic Pointer 1.0.0",
+            "rectangles": [[100, 200, 120, 28], [100, 236, 190, 28]],
+            "rectangle_count_total": 2,
+            "region_elements": [
+                {"text": "当前版本", "control_type": "ControlType.Text", "rect": [100, 200, 120, 28]},
+                {"text": "Magic Pointer 1.0.0", "control_type": "ControlType.Text", "rect": [100, 236, 190, 28]},
+            ],
+            "elapsed_ms": 12,
+        })
+
+    monkeypatch.setattr(uia_module, "_run_uia_selection_probe", probe)
+    region = {"x": 80, "y": 180, "width": 240, "height": 110}
+    ctx = UiaTextSelectionAdapter().read_context(_browser_window(), target_region=region)
+
+    assert calls == [(1234, region)]
+    assert ctx.content == "当前版本\nMagic Pointer 1.0.0"
+    assert ctx.method == "uia:region-elements"
+    assert ctx.artifacts["perception_result_kind"] == "region_elements"
+    assert [item["text"] for item in ctx.artifacts["region_elements"]] == [
+        "当前版本", "Magic Pointer 1.0.0",
+    ]
+
+
 def test_uia_probe_source_supports_bounded_element_from_point() -> None:
     source = uia_module.UIA_PROBE_SOURCE.read_text(encoding="utf-8")
     assert "AutomationElement.FromPoint" in source
@@ -191,6 +225,8 @@ def test_uia_probe_source_supports_bounded_element_from_point() -> None:
     assert 'result.ResultKind = "terminal_buffer"' in source
     assert "DocumentRange.GetText(MaxTextChars)" in source
     assert "RangeFromPoint(point)" in source
+    assert "TryRegionElements" in source
+    assert 'result.ResultKind = "region_elements"' in source
 
 
 def test_uia_context_rejects_foreground_identity_mismatch(monkeypatch) -> None:

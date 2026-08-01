@@ -142,6 +142,7 @@ def _run_uia_selection_probe(
     hwnd: int,
     *,
     target_point: dict[str, int] | None = None,
+    target_region: dict[str, int] | None = None,
     timeout: float = 2.5,
 ) -> UiaProbeResult:
     prepared = _ensure_uia_probe()
@@ -149,7 +150,18 @@ def _run_uia_selection_probe(
         return prepared
     try:
         argv = [str(UIA_PROBE_EXE), str(int(hwnd))]
-        if isinstance(target_point, dict):
+        if isinstance(target_region, dict):
+            try:
+                argv.extend([
+                    "--region",
+                    str(int(target_region.get("x"))),
+                    str(int(target_region.get("y"))),
+                    str(int(target_region.get("width"))),
+                    str(int(target_region.get("height"))),
+                ])
+            except (TypeError, ValueError):
+                pass
+        elif isinstance(target_point, dict):
             try:
                 argv.extend([
                     str(int(target_point.get("x"))),
@@ -213,7 +225,9 @@ class UiaTextSelectionAdapter(AppAdapter):
             )
 
         raw_target_point = kwargs.get("target_point")
+        raw_target_region = kwargs.get("target_region")
         target_point = None
+        target_region = None
         if isinstance(raw_target_point, dict):
             try:
                 target_point = {
@@ -222,8 +236,22 @@ class UiaTextSelectionAdapter(AppAdapter):
                 }
             except (TypeError, ValueError):
                 target_point = None
+        if isinstance(raw_target_region, dict):
+            try:
+                target_region = {
+                    "x": int(raw_target_region.get("x")),
+                    "y": int(raw_target_region.get("y")),
+                    "width": int(raw_target_region.get("width")),
+                    "height": int(raw_target_region.get("height")),
+                }
+                if target_region["width"] <= 0 or target_region["height"] <= 0:
+                    target_region = None
+            except (TypeError, ValueError):
+                target_region = None
         probe = (
-            _run_uia_selection_probe(hwnd, target_point=target_point)
+            _run_uia_selection_probe(hwnd, target_region=target_region)
+            if target_region is not None
+            else _run_uia_selection_probe(hwnd, target_point=target_point)
             if target_point is not None
             else _run_uia_selection_probe(hwnd)
         )
@@ -319,6 +347,8 @@ class UiaTextSelectionAdapter(AppAdapter):
         method = (
             "uia:terminal-text-pattern"
             if result_kind == "terminal_buffer"
+            else "uia:region-elements"
+            if result_kind == "region_elements"
             else "uia:element-from-point"
             if result_kind == "point_element"
             else "uia:text-pattern.selection"
@@ -450,6 +480,7 @@ class UiaTextSelectionAdapter(AppAdapter):
             "selection_rectangles_truncated": rectangles_truncated,
             "selection_text_chars": len(text),
             "selection_text_sha256": hashlib.sha256(text.encode("utf-8", errors="surrogatepass")).hexdigest(),
+            "region_elements": list(data.get("region_elements") or [])[:64],
             "truncated": bool(data.get("truncated")),
             "probe_elapsed_ms": data.get("elapsed_ms"),
             **recovery_artifacts,

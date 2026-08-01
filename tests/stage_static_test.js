@@ -68,6 +68,10 @@ assert(source.includes('session.capsuleDragged = true;'),
   'dragging the capsule must lock it in place');
 assert(source.includes('capsuleDrag = { startX: x, startY: y'),
   'pointer press on the capsule body must begin a drag');
+assert(source.includes("surfaceDrag = { element: resultCard"),
+  'pointer press on an answer bubble must begin a drag');
+assert(source.includes('session.resultDragged = true;'),
+  'a dragged answer bubble must keep its user-selected position');
 
 // Demo 7 capsule contract: voice state drives motion, text never shows the
 // waveform, and answer cards grow from the same stable capsule anchor.

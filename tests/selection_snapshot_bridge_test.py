@@ -157,6 +157,61 @@ class _GestureCandidateRegistry:
         return self.adapter
 
 
+class _ClosedRegionAdapter:
+    def __init__(self) -> None:
+        self.region_requests: list[dict[str, int]] = []
+        self.point_requests: list[dict[str, int]] = []
+
+    def read_context(self, window, **kwargs):
+        target_region = kwargs.get("target_region")
+        if isinstance(target_region, dict):
+            self.region_requests.append(dict(target_region))
+            return AdapterReadContext(
+                adapter="uia_text_selection",
+                app="application",
+                window=window,
+                content="当前版本\nMagic Pointer 1.0.0",
+                label="Circled settings block",
+                method="uia:region-elements",
+                artifacts={
+                    "perception_result_kind": "region_elements",
+                    "selection_rectangles": [
+                        [600, 430, 120, 28],
+                        [600, 468, 190, 28],
+                    ],
+                    "selection_rectangles_format": "xywh",
+                    "selection_rectangles_coordinate_space": "physical_screen_pixels",
+                    "region_elements": [
+                        {"text": "当前版本", "rect": [600, 430, 120, 28]},
+                        {"text": "Magic Pointer 1.0.0", "rect": [600, 468, 190, 28]},
+                    ],
+                },
+            )
+        target = dict(kwargs.get("target_point") or {})
+        self.point_requests.append(target)
+        return AdapterReadContext(
+            adapter="uia_text_selection",
+            app="application",
+            window=window,
+            content="更新服务接入前固定为稳定版。",
+            label="Wrong boundary row",
+            method="uia:element-from-point",
+            artifacts={
+                "selection_rectangles": [[600, 390, 260, 28]],
+                "selection_rectangles_format": "xywh",
+                "selection_rectangles_coordinate_space": "physical_screen_pixels",
+            },
+        )
+
+
+class _ClosedRegionRegistry:
+    def __init__(self) -> None:
+        self.adapter = _ClosedRegionAdapter()
+
+    def matching_adapter(self, _window):
+        return self.adapter
+
+
 class _FallbackOnlyAdapter:
     def read_context(self, window, **kwargs):
         target = dict(kwargs.get("target_point") or {})
@@ -839,6 +894,42 @@ def test_full_gesture_trace_drives_structured_grounding_instead_of_fallback_poin
     assert payload["selectionSnapshot"]["context"]["content"] == "Row B"
     assert payload["selectionSnapshot"]["selection_bbox"] == [100, 150, 300, 40]
     assert payload["selectionSnapshot"]["gesture_grounding"]["candidate_count"] >= 1
+
+
+def test_closed_gesture_reads_the_enclosed_component_set_not_the_top_boundary_row() -> None:
+    registry = _ClosedRegionRegistry()
+    gesture = {
+        "schemaVersion": 2,
+        "kind": "freeform",
+        "coordinateSpace": "physical_screen_pixels",
+        "releasePoint": {"x": 585, "y": 425},
+        "semanticPoint": {"x": 695, "y": 463},
+        "bbox": {"x": 580, "y": 410, "width": 240, "height": 110},
+        "strokes": [{"points": [
+            {"x": 585, "y": 425, "t": 0},
+            {"x": 700, "y": 410, "t": 25},
+            {"x": 815, "y": 445, "t": 50},
+            {"x": 805, "y": 510, "t": 75},
+            {"x": 690, "y": 520, "t": 100},
+            {"x": 580, "y": 485, "t": 125},
+            {"x": 585, "y": 425, "t": 150},
+        ]}],
+    }
+
+    payload = capture_snapshot(
+        [{"title": "Magic Pointer", "hwnd": 901, "process_id": 902}],
+        registry=registry,
+        target_point={"x": 585, "y": 425},
+        gesture=gesture,
+        allow_visual_fallback=False,
+    )
+
+    snapshot = payload["selectionSnapshot"]
+    assert snapshot["context"]["content"] == "当前版本\nMagic Pointer 1.0.0"
+    assert snapshot["gesture_grounding"]["mode"] == "enclosed_region"
+    assert snapshot["selection_bbox"] == [600, 430, 190, 66]
+    assert registry.adapter.region_requests == [{"x": 580, "y": 410, "width": 240, "height": 110}]
+    assert registry.adapter.point_requests == []
 
 
 def test_gesture_grounding_never_falls_back_to_an_unvisited_release_point_candidate() -> None:

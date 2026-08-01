@@ -32,6 +32,7 @@ internal static class UiaSelectionProbe
         public int RectangleCountTotal;
         public bool RectanglesTruncated;
         public readonly List<Rect> Rectangles = new List<Rect>();
+        public readonly List<RegionElement> RegionElements = new List<RegionElement>();
         public string DocumentLocation = "";
         public int PageNumber;
         public int PageSelectorNumber;
@@ -44,6 +45,14 @@ internal static class UiaSelectionProbe
         public string Error = "";
     }
 
+    private sealed class RegionElement
+    {
+        public string Text = "";
+        public string ControlType = "";
+        public string AutomationId = "";
+        public Rect Rectangle = Rect.Empty;
+    }
+
     public static int Main(string[] args)
     {
         EnableDpiAwareness();
@@ -52,6 +61,7 @@ internal static class UiaSelectionProbe
         SelectionResult result = new SelectionResult();
         long hwndValue = 0;
         Point? targetPoint = null;
+        Rect? targetRegion = null;
 
         if (args.Length < 1 || !long.TryParse(args[0], out hwndValue) || hwndValue == 0)
         {
@@ -60,7 +70,25 @@ internal static class UiaSelectionProbe
             return 2;
         }
 
-        if (args.Length >= 3)
+        if (args.Length >= 6 && string.Equals(args[1], "--region", StringComparison.Ordinal))
+        {
+            double regionX;
+            double regionY;
+            double regionWidth;
+            double regionHeight;
+            if (
+                double.TryParse(args[2], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out regionX)
+                && double.TryParse(args[3], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out regionY)
+                && double.TryParse(args[4], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out regionWidth)
+                && double.TryParse(args[5], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out regionHeight)
+                && regionWidth > 0
+                && regionHeight > 0
+            )
+            {
+                targetRegion = new Rect(regionX, regionY, regionWidth, regionHeight);
+            }
+        }
+        else if (args.Length >= 3)
         {
             double pointX;
             double pointY;
@@ -84,51 +112,58 @@ internal static class UiaSelectionProbe
             {
                 result.ProcessId = SafeProcessId(root);
                 result.RootHwnd = SafeInt(root, AutomationElement.NativeWindowHandleProperty);
-                if (targetPoint.HasValue && IsTerminalWindow(root))
+                if (targetRegion.HasValue)
                 {
-                    TryTerminalBufferAtPoint(root, targetPoint.Value, result);
+                    TryRegionElements(root, targetRegion.Value, result);
                 }
-                AutomationElement focused = null;
-                try
+                else
                 {
-                    focused = AutomationElement.FocusedElement;
-                }
-                catch
-                {
-                }
-
-                if (
-                    focused != null
-                    && BelongsToWindowTree(focused, root))
-                {
-                    TryElementAndAncestors(focused, root, result);
-                    if (targetPoint.HasValue)
+                    if (targetPoint.HasValue && IsTerminalWindow(root))
                     {
-                        RejectSelectionOutsideTargetPoint(result, targetPoint.Value);
+                        TryTerminalBufferAtPoint(root, targetPoint.Value, result);
                     }
-                }
-
-                if (!result.Ok)
-                {
-                    TryElement(root, result);
-                    if (targetPoint.HasValue)
+                    AutomationElement focused = null;
+                    try
                     {
-                        RejectSelectionOutsideTargetPoint(result, targetPoint.Value);
+                        focused = AutomationElement.FocusedElement;
                     }
-                }
-
-                if (!result.Ok)
-                {
-                    FindDocumentSelection(root, result);
-                    if (targetPoint.HasValue)
+                    catch
                     {
-                        RejectSelectionOutsideTargetPoint(result, targetPoint.Value);
                     }
-                }
 
-                if (!result.Ok && targetPoint.HasValue)
-                {
-                    TryPointElement(root, targetPoint.Value, result);
+                    if (
+                        focused != null
+                        && BelongsToWindowTree(focused, root))
+                    {
+                        TryElementAndAncestors(focused, root, result);
+                        if (targetPoint.HasValue)
+                        {
+                            RejectSelectionOutsideTargetPoint(result, targetPoint.Value);
+                        }
+                    }
+
+                    if (!result.Ok)
+                    {
+                        TryElement(root, result);
+                        if (targetPoint.HasValue)
+                        {
+                            RejectSelectionOutsideTargetPoint(result, targetPoint.Value);
+                        }
+                    }
+
+                    if (!result.Ok)
+                    {
+                        FindDocumentSelection(root, result);
+                        if (targetPoint.HasValue)
+                        {
+                            RejectSelectionOutsideTargetPoint(result, targetPoint.Value);
+                        }
+                    }
+
+                    if (!result.Ok && targetPoint.HasValue)
+                    {
+                        TryPointElement(root, targetPoint.Value, result);
+                    }
                 }
 
                 if (!result.Ok && string.IsNullOrEmpty(result.Error))
@@ -577,6 +612,144 @@ internal static class UiaSelectionProbe
         {
             return false;
         }
+    }
+
+    private static bool IsRegionControlType(string controlType)
+    {
+        switch (controlType)
+        {
+            case "ControlType.Text":
+            case "ControlType.Edit":
+            case "ControlType.Button":
+            case "ControlType.CheckBox":
+            case "ControlType.RadioButton":
+            case "ControlType.ComboBox":
+            case "ControlType.ListItem":
+            case "ControlType.DataItem":
+            case "ControlType.HeaderItem":
+            case "ControlType.Hyperlink":
+            case "ControlType.TabItem":
+            case "ControlType.MenuItem":
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    private static void TryRegionElements(
+        AutomationElement root,
+        Rect region,
+        SelectionResult result)
+    {
+        List<RegionElement> found = new List<RegionElement>();
+        HashSet<string> seen = new HashSet<string>(StringComparer.Ordinal);
+        try
+        {
+            AutomationElementCollection descendants = root.FindAll(
+                TreeScope.Descendants,
+                Condition.TrueCondition);
+            int limit = Math.Min(descendants.Count, 4096);
+            for (int index = 0; index < limit; index++)
+            {
+                AutomationElement element = descendants[index];
+                Rect rectangle = SafeBoundingRectangle(element);
+                if (rectangle.IsEmpty || rectangle.Width <= 0 || rectangle.Height <= 0)
+                {
+                    continue;
+                }
+                Point center = new Point(
+                    rectangle.Left + rectangle.Width / 2.0,
+                    rectangle.Top + rectangle.Height / 2.0);
+                if (!region.Contains(center))
+                {
+                    continue;
+                }
+                string controlType = SafeControlType(element);
+                if (!IsRegionControlType(controlType))
+                {
+                    continue;
+                }
+                string name = SafeString(element, AutomationElement.NameProperty).Trim();
+                string value = SafeValue(element).Trim();
+                string helpText = SafeString(element, AutomationElement.HelpTextProperty).Trim();
+                string text = !string.IsNullOrWhiteSpace(value)
+                    ? value
+                    : !string.IsNullOrWhiteSpace(name)
+                        ? name
+                        : helpText;
+                if (string.IsNullOrWhiteSpace(text))
+                {
+                    continue;
+                }
+                if (text.Length > 1000)
+                {
+                    text = text.Substring(0, 1000);
+                }
+                string key = string.Join("|", new string[] {
+                    text,
+                    Math.Round(rectangle.Left).ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    Math.Round(rectangle.Top).ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    Math.Round(rectangle.Width).ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    Math.Round(rectangle.Height).ToString(System.Globalization.CultureInfo.InvariantCulture),
+                });
+                if (!seen.Add(key))
+                {
+                    continue;
+                }
+                found.Add(new RegionElement {
+                    Text = text,
+                    ControlType = controlType,
+                    AutomationId = SafeString(element, AutomationElement.AutomationIdProperty),
+                    Rectangle = rectangle,
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            result.Error = "UI Automation region enumeration failed: " + ex.GetType().Name;
+            return;
+        }
+
+        found.Sort(delegate(RegionElement left, RegionElement right) {
+            int top = left.Rectangle.Top.CompareTo(right.Rectangle.Top);
+            if (top != 0)
+            {
+                return top;
+            }
+            return left.Rectangle.Left.CompareTo(right.Rectangle.Left);
+        });
+        int resultLimit = Math.Min(found.Count, 64);
+        StringBuilder textBuilder = new StringBuilder();
+        for (int index = 0; index < resultLimit; index++)
+        {
+            RegionElement item = found[index];
+            if (textBuilder.Length > 0)
+            {
+                textBuilder.Append('\n');
+            }
+            textBuilder.Append(item.Text);
+            result.RegionElements.Add(item);
+            if (result.Rectangles.Count < 32)
+            {
+                result.Rectangles.Add(item.Rectangle);
+            }
+            else
+            {
+                result.RectanglesTruncated = true;
+            }
+        }
+        result.RectangleCountTotal = found.Count;
+        result.Truncated = found.Count > resultLimit;
+        if (result.RegionElements.Count == 0)
+        {
+            result.Error = "No bounded UI Automation elements were found inside the target region.";
+            return;
+        }
+        result.Ok = true;
+        result.ResultKind = "region_elements";
+        result.Text = textBuilder.ToString();
+        result.ElementRectangle = region;
+        result.Error = "";
     }
 
     private static void TryPointElement(
@@ -1252,6 +1425,24 @@ internal static class UiaSelectionProbe
             json.Append(',');
             json.Append(rectangle.Height.ToString("R", System.Globalization.CultureInfo.InvariantCulture));
             json.Append(']');
+        }
+        json.Append("],\"region_elements\":[");
+        for (int index = 0; index < result.RegionElements.Count; index++)
+        {
+            if (index > 0)
+            {
+                json.Append(',');
+            }
+            RegionElement element = result.RegionElements[index];
+            json.Append("{\"text\":");
+            json.Append(JsonString(element.Text));
+            json.Append(",\"control_type\":");
+            json.Append(JsonString(element.ControlType));
+            json.Append(",\"automation_id\":");
+            json.Append(JsonString(element.AutomationId));
+            json.Append(",\"rect\":");
+            AppendJsonRect(json, element.Rectangle);
+            json.Append('}');
         }
         json.Append("],\"elapsed_ms\":");
         json.Append(elapsedMilliseconds);

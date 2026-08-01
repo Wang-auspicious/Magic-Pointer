@@ -75,6 +75,8 @@
     capsulePlacement: null,
     capsulePlaced: false,
     capsuleDragged: false,
+    resultPlacement: null,
+    resultDragged: false,
     selectionCount: 1,
     voiceState: 'idle',
     visualTuning: { ...DEFAULT_VISUAL_TUNING },
@@ -91,6 +93,7 @@
   let pointerWasOverCapsule = false;
   let lastPointerPoint = null;
   let capsuleDrag = null; // { startX, startY, originLeft, originTop }
+  let surfaceDrag = null; // { element, startX, startY, originLeft, originTop }
   let reportedState = '';
   let targetSweepComplete = false;
   let targetSweepTimer = null;
@@ -148,6 +151,7 @@
     previousPointerButtons = 0;
     pointerWasOverCapsule = false;
     capsuleDrag = null;
+    surfaceDrag = null;
     session.submitOnFinal = false;
     session.pendingFinalTranscript = '';
     session.voiceState = 'idle';
@@ -168,6 +172,34 @@
       && y >= capsuleRect.top && y <= capsuleRect.bottom;
     const primaryDown = (buttons & 1) !== 0;
     const previousPrimaryDown = (previousPointerButtons & 1) !== 0;
+    const resultRect = resultCard.getBoundingClientRect();
+    const overResult = state.name === 'result' && !resultCard.hidden
+      && x >= resultRect.left && x <= resultRect.right
+      && y >= resultRect.top && y <= resultRect.bottom;
+    if (overResult && primaryDown && !previousPrimaryDown && !surfaceDrag) {
+      const overAction = [...resultCard.querySelectorAll('button:not([disabled])')].some((button) => {
+        const rect = button.getBoundingClientRect();
+        return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+      });
+      if (!overAction) {
+        surfaceDrag = { element: resultCard, startX: x, startY: y, originLeft: resultRect.left, originTop: resultRect.top };
+      }
+    }
+    if (surfaceDrag) {
+      const dx = x - surfaceDrag.startX;
+      const dy = y - surfaceDrag.startY;
+      const currentRect = surfaceDrag.element.getBoundingClientRect();
+      const left = Math.max(4, Math.min(window.innerWidth - currentRect.width - 4, surfaceDrag.originLeft + dx));
+      const top = Math.max(4, Math.min(window.innerHeight - currentRect.height - 4, surfaceDrag.originTop + dy));
+      surfaceDrag.element.style.left = `${left}px`;
+      surfaceDrag.element.style.top = `${top}px`;
+      session.resultPlacement = { x: left, y: top };
+      syncHitRegions();
+    }
+    if (surfaceDrag && !primaryDown && previousPrimaryDown) {
+      surfaceDrag = null;
+      session.resultDragged = true;
+    }
     // Drag the capsule: press on its body (not inside the text input) and move.
     if (overCapsule && primaryDown && !previousPrimaryDown && !capsuleDrag) {
       const inputRect = capsuleInput.getBoundingClientRect();
@@ -193,6 +225,7 @@
       capsuleDrag = null;
       session.capsuleDragged = true;
     }
+    previousPointerButtons = buttons;
     if (!voiceTriggerPolicy || state.name !== 'capsule-voice') return;
     if (session.voiceStartStrategy === 'push_to_talk') {
       if (primaryDown && !previousPrimaryDown) dispatchVoiceTrigger({ type: 'press', t });
@@ -206,7 +239,6 @@
       else if (pointerWasOverCapsule) dispatchVoiceTrigger({ type: 'leave', t });
       pointerWasOverCapsule = overCapsule;
     }
-    previousPointerButtons = buttons;
   }
 
   // The transparent stage may ask main to receive mouse events only while it
@@ -220,6 +252,7 @@
     // The voice capsule needs pointer events too: drag-to-move and
     // push-to-talk / hover triggering both rely on stage mouse capture.
     if (name === 'capsule-voice') return !capsule.hidden;
+    if (name === 'result') return !resultCard.hidden;
     const hasEnabledButton = (element) => !element.hidden
       && Boolean(element.querySelector('button:not([disabled])'));
     return hasEnabledButton(chipsBox)
@@ -269,6 +302,7 @@
     } else if (state.name === 'capsule-voice') {
       if (!capsule.hidden) elements.push(capsule);
     }
+    if (state.name === 'result' && !resultCard.hidden) elements.push(resultCard);
     for (const container of [chipsBox, resultCard, errorCard]) {
       if (container.hidden) continue;
       elements.push(...container.querySelectorAll('button:not([disabled])'));
@@ -517,6 +551,11 @@
   }
 
   function anchorResultToCapsule(element) {
+    if (session.resultDragged && session.resultPlacement) {
+      element.style.left = `${session.resultPlacement.x}px`;
+      element.style.top = `${session.resultPlacement.y}px`;
+      return;
+    }
     const rect = element.getBoundingClientRect();
     const fallback = session.capsulePlacement || session.pointer || { x: 8, y: 8 };
     const width = rect.width || Math.min(360, window.innerWidth - 16);
@@ -1166,6 +1205,8 @@
       session.capsulePlacement = null;
       session.capsulePlaced = false;
       session.capsuleDragged = false;
+      session.resultPlacement = null;
+      session.resultDragged = false;
       session.selectionCount = 1;
       session.voiceState = 'idle';
       session.visualTuning = { ...DEFAULT_VISUAL_TUNING };
