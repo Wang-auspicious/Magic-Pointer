@@ -325,6 +325,40 @@ class LocalVoiceWorkerTests(unittest.TestCase):
         self.assertTrue(all(item["requestId"] == "voice-1" for item in events))
         self.assertEqual(worker.handle({"command": "status"})[0]["microphone_state"], "idle")
 
+    def test_empty_partial_is_a_non_terminal_voice_activity_signal(self):
+        activity_emitted = threading.Event()
+        allow_final = threading.Event()
+        events: list[dict[str, object]] = []
+
+        def microphone_runner(_model, _profile, _request_id, _silence_ms, emit, _stop_event):
+            emit({"type": "partial", "transcript": ""})
+            activity_emitted.set()
+            allow_final.wait(1)
+            emit({"type": "final", "transcript": "真实语音"})
+
+        worker = LocalVoiceWorker(
+            model_name="fake",
+            model_loader=lambda _model_name: FakeModel(),
+            microphone_runner=microphone_runner,
+            event_sink=events.append,
+        )
+
+        worker.handle({"command": "start_microphone", "requestId": "voice-activity"})
+        self.assertTrue(activity_emitted.wait(1))
+        self.assertNotIn("error", [event["type"] for event in events])
+        self.assertEqual(worker.handle({"command": "status"})[0]["microphone_state"], "recording")
+
+        allow_final.set()
+        deadline = time.monotonic() + 1
+        while time.monotonic() < deadline and "final" not in [event["type"] for event in events]:
+            time.sleep(0.01)
+
+        self.assertEqual(
+            [event["transcript"] for event in events if event["type"] == "final"],
+            ["真实语音"],
+        )
+        self.assertNotIn("error", [event["type"] for event in events])
+
     def test_wav_transcription_fails_closed_while_microphone_owns_the_model(self):
         runner_started = threading.Event()
         release_runner = threading.Event()
@@ -554,4 +588,3 @@ if __name__ == "__main__":
         self.assertEqual(wav_results[0][-1]["transcript"], "done")
         self.assertTrue(runner_started.wait(1))
         self.assertEqual(mic_results[0][-1]["type"], "microphone_started")
-

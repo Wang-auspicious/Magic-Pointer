@@ -366,6 +366,11 @@ class LocalVoiceWorker:
             payload = {"error": "Microphone runner emitted an unsupported event type.", "code": "microphone_runner_protocol"}
         if kind in {"partial", "final"}:
             transcript = payload.get("transcript")
+            # SenseVoice emits an empty partial once VAD first sees activity.
+            # It is a non-terminal lifecycle signal, not malformed text and
+            # must not stop the microphone session before speech is decoded.
+            if kind == "partial" and transcript == "":
+                return
             if not isinstance(transcript, str) or not transcript or len(transcript) > MAX_COMMAND_BYTES:
                 kind = "error"
                 payload = {"error": "Microphone runner emitted an invalid transcript.", "code": "microphone_runner_protocol"}
