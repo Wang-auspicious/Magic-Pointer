@@ -11,6 +11,8 @@
 
 ## Unreleased
 
+- **快速单点指向（2026-08-01）**：唤醒后按下至松开不超过 260ms、累计位移不超过 10 DIP 时，判定为 `kind: 'point'` / `point_target`；overlay 与 pass-through 捕获均保留松开采样，普通拖拽及多笔链逻辑不变。
+
 - **重做实时划线蓝带（2026-08-01）**：默认 `demo6_band` 改为本地 WebGL2 屏幕空间路径 SDF，从结构上移除急弯外扩网格与三角毛刺。光带只使用一个蓝色色值，中央为平坦主体，仅上下边缘窄幅 alpha 羽化；亮度按真实累计弧长从旧尾到光标连续增强，旧尾略软且按住期间保持可见，抬手后才在 128ms 内整体退场。保留 Canvas2D 降级路径、原始手势坐标、多笔语义与 overlay 输入协议；新增像素级夹具和无残影验证。
 
 - **调研：clicky 生态 44 个 issue 全记录 + 底层设计**：新增 `docs/planning/BOTTOM_LAYER_DESIGN_20260801.md`——① farzaa/clicky 38 issue + Bitshank-2338/clicky-windows 6 issue 反馈分类（成本/API key、Windows 空白、全链路慢、语言记忆缺失、bug 实录）；② 8 类日常功能清单→输入需求推导，收敛出底层 6 能力（元素定位/内容提取/指代解析/语音流/上下文/执行验证）；③ Referent 会话引擎架构：一次唤醒=一个会话，笔画与语音时间戳对齐（this/and this/排除绑定），增量 grounding；④ 定位差异：本地优先+语义层+用户圈定聚焦 vs clicky 全屏截图发散找。

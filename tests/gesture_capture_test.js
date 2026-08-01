@@ -1,7 +1,11 @@
 'use strict';
 
 const assert = require('assert');
-const { summarizeGesture } = require('../electron/gesture_capture');
+const {
+  QUICK_POINT_MAX_DISTANCE,
+  QUICK_POINT_MAX_DURATION_MS,
+  summarizeGesture,
+} = require('../electron/gesture_capture');
 
 const line = summarizeGesture([
   { x: 100, y: 200, t: 0 },
@@ -83,10 +87,21 @@ assert.deepStrictEqual(noisy.strokes[0].points, [
 
 const click = summarizeGesture([
   { x: 10, y: 10, t: 0 },
-  { x: 13, y: 12, t: 35 },
+  { x: 13, y: 12, t: QUICK_POINT_MAX_DURATION_MS },
 ]);
-assert.strictEqual(click.valid, false);
-assert.strictEqual(click.reason, 'gesture_too_short');
+assert.strictEqual(click.valid, true, 'a prompt press-release is a point target');
+assert.strictEqual(click.kind, 'point');
+assert.deepStrictEqual(click.semanticPoint, { x: 13, y: 12 });
+assert.deepStrictEqual(click.releasePoint, { x: 13, y: 12 });
+assert.strictEqual(click.geometry[0].type, 'point_target');
+assert.strictEqual(click.geometry[0].radiusPx, QUICK_POINT_MAX_DISTANCE);
+
+const slowClick = summarizeGesture([
+  { x: 10, y: 10, t: 0 },
+  { x: 13, y: 12, t: QUICK_POINT_MAX_DURATION_MS + 1 },
+]);
+assert.strictEqual(slowClick.valid, false, 'a stationary hold beyond the threshold is not a click');
+assert.strictEqual(slowClick.reason, 'gesture_too_short');
 
 // Unified multi-stroke chain: several circles committed before finalize.
 const multi = summarizeGesture(
@@ -130,7 +145,7 @@ assert.strictEqual(multi.bbox.width, 575, 'aggregate bbox covers both strokes');
 assert.strictEqual(multi.bbox.height, 225);
 assert.strictEqual(multi.geometry.length, 2, 'per-stroke geometry is preserved');
 
-// A stray click between strokes must not break the chain or become a target.
+// A deliberate quick click is now a point target and may participate in a chain.
 const chainWithJunk = summarizeGesture(
   [],
   [
@@ -146,7 +161,9 @@ const chainWithJunk = summarizeGesture(
     ] },
   ],
 );
-assert.strictEqual(chainWithJunk.valid, true, 'a too-short stroke is dropped, the valid stroke survives');
-assert.strictEqual(chainWithJunk.strokes.length, 1);
+assert.strictEqual(chainWithJunk.valid, true, 'a quick point and a drawn stroke form one valid chain');
+assert.strictEqual(chainWithJunk.kind, 'multi');
+assert.strictEqual(chainWithJunk.strokes.length, 2);
+assert.strictEqual(chainWithJunk.strokes[0].kind, 'point');
 
 console.log('gesture capture test ok');

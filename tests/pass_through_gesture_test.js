@@ -74,4 +74,18 @@ assert.deepStrictEqual(
   'the next genuine down edge remains available',
 );
 
+const quickClick = new PassThroughGestureCapture({ minimumPointDistance: 2 });
+quickClick.arm({
+  token: 'quick-click',
+  displayBounds: { x: 0, y: 0, width: 500, height: 500 },
+  initialButtons: 0,
+});
+quickClick.push(sample(100, 120, 130, 1));
+const quickCompleted = quickClick.push(sample(220, 121, 131, 0));
+assert.deepStrictEqual(quickCompleted.map((event) => event.type), ['completed']);
+assert.deepStrictEqual(quickCompleted[0].points, [
+  { x: 120, y: 130, t: 100 },
+  { x: 121, y: 131, t: 220 },
+], 'release must be retained even when it is inside the movement sampling threshold');
+
 console.log('pass_through_gesture_test: all assertions passed');

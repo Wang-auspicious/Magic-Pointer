@@ -178,12 +178,14 @@ function dist(a, b) {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
-function addPoint(e) {
-  const batch = typeof e.getCoalescedEvents === 'function' ? e.getCoalescedEvents() : [e];
-  for (const ev of batch) {
+function addPoint(e, { force = false } = {}) {
+  const coalesced = typeof e.getCoalescedEvents === 'function' ? e.getCoalescedEvents() : [];
+  const batch = coalesced.length ? coalesced : [e];
+  for (let index = 0; index < batch.length; index += 1) {
+    const ev = batch[index];
     const p = { x: ev.clientX, y: ev.clientY, t: performance.now() };
     const last = points[points.length - 1];
-    if (!last || dist(p, last) > 4.2) points.push(p);
+    if (!last || dist(p, last) > 4.2 || (force && index === batch.length - 1)) points.push(p);
     lastPointer = p;
   }
 }
@@ -534,7 +536,7 @@ window.addEventListener('pointerup', (e) => {
   drawing = false;
   activePointerId = null;
   try { canvas.releasePointerCapture(e.pointerId); } catch (_error) { /* best effort */ }
-  addPoint(e);
+  addPoint(e, { force: true });
   render();
   // Restore mouse capture after release to prevent revert to normal mouse
   if (window.magicPointer && typeof window.magicPointer.syncHitRegions === 'function') {

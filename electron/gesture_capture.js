@@ -1,3 +1,6 @@
+const QUICK_POINT_MAX_DURATION_MS = 260;
+const QUICK_POINT_MAX_DISTANCE = 10;
+
 function finitePoint(value, index = 0) {
   const x = Number(value?.x);
   const y = Number(value?.y);
@@ -64,7 +67,12 @@ function directionOf(points) {
   return { x: dx / length, y: dy / length };
 }
 
-function summarizeStroke(points, { minDistance = 12, minDurationMs = 40 } = {}) {
+function summarizeStroke(points, {
+  minDistance = 12,
+  minDurationMs = 40,
+  quickPointMaxDistance = QUICK_POINT_MAX_DISTANCE,
+  quickPointMaxDurationMs = QUICK_POINT_MAX_DURATION_MS,
+} = {}) {
   if (points.length < 2) {
     return null;
   }
@@ -74,6 +82,28 @@ function summarizeStroke(points, { minDistance = 12, minDurationMs = 40 } = {}) 
   }
   const durationMs = Math.max(0, points.at(-1).t - points[0].t);
   const releasePoint = roundedPoint(points.at(-1));
+  const isQuickPoint = durationMs <= quickPointMaxDurationMs
+    && pathLength <= quickPointMaxDistance;
+  if (isQuickPoint) {
+    return {
+      schemaVersion: 2,
+      kind: 'point',
+      points,
+      bbox: { x: releasePoint.x, y: releasePoint.y, width: 0, height: 0 },
+      semanticPoint: releasePoint,
+      geometry: {
+        type: 'point_target',
+        point: releasePoint,
+        radiusPx: quickPointMaxDistance,
+        coordinateSpace: 'logical_dips',
+      },
+      direction: undefined,
+      pathLength,
+      durationMs,
+      straightness: 1,
+      releasePoint,
+    };
+  }
   if (pathLength < minDistance || durationMs < minDurationMs) {
     return null;
   }
@@ -140,14 +170,24 @@ function summarizeStroke(points, { minDistance = 12, minDurationMs = 40 } = {}) 
 // region so grounding can rank targets per stroke.  The aggregate fields the
 // bridges rely on (bbox / semanticPoint / releasePoint) are derived from the
 // first stroke (stable capsule anchor) plus the last release point.
-function summarizeGesture(rawPoints, rawStrokes, { minDistance = 12, minDurationMs = 40 } = {}) {
+function summarizeGesture(rawPoints, rawStrokes, {
+  minDistance = 12,
+  minDurationMs = 40,
+  quickPointMaxDistance = QUICK_POINT_MAX_DISTANCE,
+  quickPointMaxDurationMs = QUICK_POINT_MAX_DURATION_MS,
+} = {}) {
   const strokeInputs = (Array.isArray(rawStrokes) && rawStrokes.length)
     ? rawStrokes
       .map((stroke) => Array.from(stroke?.points || []).map(finitePoint).filter(Boolean))
       .filter((strokePoints) => strokePoints.length >= 2)
     : [Array.from(rawPoints || []).map(finitePoint).filter(Boolean)];
   const strokeSummaries = strokeInputs
-    .map((strokePoints) => summarizeStroke(strokePoints, { minDistance, minDurationMs }))
+    .map((strokePoints) => summarizeStroke(strokePoints, {
+      minDistance,
+      minDurationMs,
+      quickPointMaxDistance,
+      quickPointMaxDurationMs,
+    }))
     .filter(Boolean);
   if (!strokeSummaries.length) {
     const reason = strokeInputs.some((strokePoints) => strokePoints.length >= 2)
@@ -184,6 +224,10 @@ function summarizeGesture(rawPoints, rawStrokes, { minDistance = 12, minDuration
   };
 }
 
-const GestureCapture = { summarizeGesture };
+const GestureCapture = {
+  QUICK_POINT_MAX_DISTANCE,
+  QUICK_POINT_MAX_DURATION_MS,
+  summarizeGesture,
+};
 if (typeof module !== 'undefined' && module.exports) module.exports = GestureCapture;
 if (typeof globalThis !== 'undefined') globalThis.GestureCapture = GestureCapture;

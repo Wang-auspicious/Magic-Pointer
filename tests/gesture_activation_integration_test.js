@@ -136,6 +136,8 @@ assert.match(overlay, /if\s*\(drawing\)\s*return/,
   'duplicate pointerdown events must not reset an active stroke');
 assert.match(overlay, /setPointerCapture\(e\.pointerId\)/,
   'the drawing surface must retain the pointer until release');
+assert.match(overlay, /addPoint\(e,\s*\{\s*force:\s*true\s*\}\)/,
+  'exclusive overlay clicks must retain a distinct release timestamp');
 assert.match(overlay, /activePointerId/,
   'pointerup must belong to the stroke that started drawing');
 assert.match(overlay, /gestureAcceptAt\s*-\s*Date\.now\(\)/,

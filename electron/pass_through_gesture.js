@@ -91,8 +91,18 @@ class PassThroughGestureCapture {
     if (point) events.push({ type: 'point', token: this.armState.token, point });
     if (!primaryDown && primaryWasDown) {
       const { token, source } = this.armState;
+      const releaseSample = this.localPoint(sample);
+      const latest = this.points.at(-1);
+      if (
+        !latest
+        || latest.x !== releaseSample.x
+        || latest.y !== releaseSample.y
+        || latest.t !== releaseSample.t
+      ) {
+        this.points.push(releaseSample);
+      }
       const points = this.points.map((entry) => ({ ...entry }));
-      const release = points.at(-1) || this.localPoint(sample);
+      const release = points.at(-1) || releaseSample;
       this.cancel();
       events.push({
         type: 'completed',
