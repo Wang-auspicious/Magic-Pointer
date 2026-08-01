@@ -72,6 +72,15 @@ assert(source.includes('finalizeGesture'));
 assert(source.includes('strokes: strokes.map((s) => ({ points: [...s.points] }))'),
   'the unified payload must include all strokes');
 
+// A committed quick click keeps its point identity so the renderer can show
+// the actual target instead of covering it with the sequence badge.
+assert(source.includes('kind: strokeSummary.kind,'),
+  'committed strokes must retain the summarized gesture kind');
+assert(source.includes("if (stroke.kind === 'point')"),
+  'point strokes must have a dedicated rendering path');
+assert(source.includes('drawPointTarget(stroke.semanticPoint)'),
+  'the dedicated point rendering path must draw the clicked coordinate');
+
 // Legacy retirement: the overlay no longer renders results or actions.
 // Everything below now lives on the PointerStage surface.
 assert(!source.includes('pill'));

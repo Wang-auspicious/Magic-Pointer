@@ -53,6 +53,7 @@ assert(overlay.includes("window.magicPointer?.gestureStroke(gestureToken, stroke
 assert(overlay.includes('scheduleChainFinalize'), 'chain must finalize after the gap window');
 assert(overlay.includes("if (e.key === 'Enter')"), 'Enter finalizes the chain');
 assert(overlay.includes('drawStrokeMarker'), 'committed strokes must be visible while chaining');
+assert(overlay.includes('drawPointTarget'), 'committed point targets must remain visibly marked');
 assert(overlay.includes('strokes: strokes.map((s) => ({ points: [...s.points] }))'),
   'the done() payload must carry every stroke');
 assert(overlay.includes('finalizeGesture'), 'finalize helper must exist');

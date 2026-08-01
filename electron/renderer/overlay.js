@@ -276,7 +276,13 @@ function render() {
     if (strokes.length) {
       for (let index = 0; index < strokes.length; index += 1) {
         const stroke = strokes[index];
-        drawStrokeMarker(index + 1, stroke.semanticPoint || stroke.points[Math.floor(stroke.points.length / 2)]);
+        const semanticPoint = stroke.semanticPoint || stroke.points[Math.floor(stroke.points.length / 2)];
+        if (stroke.kind === 'point') {
+          drawPointTarget(stroke.semanticPoint);
+          drawStrokeMarker(index + 1, pointMarkerAnchor(semanticPoint));
+        } else {
+          drawStrokeMarker(index + 1, semanticPoint);
+        }
       }
     }
     if (points.length) {
@@ -457,6 +463,30 @@ function drawStrokeMarker(index, point) {
   ctx.restore();
 }
 
+function drawPointTarget(point) {
+  if (!point) return;
+  const radius = 13;
+  const color = '47, 124, 246';
+  const feather = ctx.createRadialGradient(point.x, point.y, 0, point.x, point.y, radius);
+  feather.addColorStop(0, `rgba(${color}, 0.96)`);
+  feather.addColorStop(0.34, `rgba(${color}, 0.96)`);
+  feather.addColorStop(0.58, `rgba(${color}, 0.48)`);
+  feather.addColorStop(1, `rgba(${color}, 0)`);
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+  ctx.fillStyle = feather;
+  ctx.fill();
+  ctx.restore();
+}
+
+function pointMarkerAnchor(point) {
+  if (!point) return point;
+  const xOffset = point.x > window.innerWidth - 48 ? -24 : 24;
+  const yOffset = point.y < 48 ? 24 : -24;
+  return { x: point.x + xOffset, y: point.y + yOffset };
+}
+
 
 function startPulseLoop() {
   if (pulseRaf) return;
@@ -549,6 +579,7 @@ window.addEventListener('pointerup', (e) => {
     const strokeSummary = globalThis.GestureCapture?.summarizeGesture?.(points, null) || {};
     strokes.push({
       points: [...points],
+      kind: strokeSummary.kind,
       semanticPoint: strokeSummary.semanticPoint || points[Math.floor(points.length / 2)],
     });
     if (gestureMode) {
