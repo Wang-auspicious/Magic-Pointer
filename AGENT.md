@@ -218,6 +218,7 @@ Magic Pointer = 默认不可见的跨应用操作层。鼠标晃动唤醒 → �
 | `docs/planning/TODO_REMAINING_20260730.md` | 62 项代办 |
 | `docs/planning/CLICKY_ANALYSIS_20260731.md` | clicky 源码深度分析（7600 行 Swift），8 个可借鉴技术点 |
 | `docs/planning/GOOGLE_ADDTHIS_ANDTHIS_ANALYSIS_20260731.md` | Google「add this/and this」底层机制 + Clicky 生态对标：referent 会话模型、三层定位、[POINT] 流式指点、落地差距与路线 |
+| `docs/planning/BOTTOM_LAYER_DESIGN_20260801.md` | 底层设计：clicky 生态 44 个 issue 反馈全记录 + 8 类日常功能→输入需求推导 + Referent 会话引擎架构 + 成本/速度/聚焦定位 |
 | `docs/planning/HANDOFF.md` | 历史 AI 对话交接 |
 | `docs/planning/GOOGLE_DEMO_FRAME_ANALYSIS_20260726.md` | Google 演示逐帧分析 |
 | `docs/planning/GOOGLE_MAGIC_POINTER_ALIGNMENT.md` | Google AI Pointer 对齐 |

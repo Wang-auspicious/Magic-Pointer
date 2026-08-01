@@ -11,6 +11,8 @@
 
 ## Unreleased
 
+- **调研：clicky 生态 44 个 issue 全记录 + 底层设计**：新增 `docs/planning/BOTTOM_LAYER_DESIGN_20260801.md`——① farzaa/clicky 38 issue + Bitshank-2338/clicky-windows 6 issue 反馈分类（成本/API key、Windows 空白、全链路慢、语言记忆缺失、bug 实录）；② 8 类日常功能清单→输入需求推导，收敛出底层 6 能力（元素定位/内容提取/指代解析/语音流/上下文/执行验证）；③ Referent 会话引擎架构：一次唤醒=一个会话，笔画与语音时间戳对齐（this/and this/排除绑定），增量 grounding；④ 定位差异：本地优先+语义层+用户圈定聚焦 vs clicky 全屏截图发散找。
+
 - **统一多笔划线圈选（2026-07-31 phase2，不切形态/不分启动方式）**：一次激活后连续圈选任意笔；每笔 pointerup 通过 `window.magicPointer.gestureStroke(token, count)` → 新 IPC `overlay:gesture-stroke` → `markSelectionDrawing()` 续命防超时；滚动窗口 `CHAIN_GAP_MS=1000` 后自动收尾、Enter 立即完成、Esc/右键仍可关闭。`summarizeGesture` 支持 `kind:'multi'` + `strokes[]` 保留每笔几何 + `anchorPoint`=第一笔 release（气泡锚定不跳）+ `releasePoint`=最后一笔 release + 聚合 bbox；overlay 画已提交笔迹+序号，hint 显示「已圈选 N 处 · 继续圈选其他内容，或按 Enter 完成」，stage 气泡新增「N 处」计数徽章（`#capsule-count`）。覆盖测试 `tests/multi_stroke_chain_contract_test.js`、`gesture_capture_test.js` 多笔断言。
 - **修复本地语音崩溃（sherpa 空 VAD abort，exit 4294967295）**：`scripts/sense_voice_bridge.py` 的 `_create_vad()` 曾用空配置构造 `sherpa_onnx.VoiceActivityDetector`，sherpa 在无 VAD 模型文件时直接 `std::abort()`（实测 Windows 退出码 4294967295）。现改为返回 `None`（实际 VAD 是回调内的能量检测），文件内不再出现 `VoiceActivityDetector(`；新增回归测试 `tests/voice_engine_contract_test.py`。
 - **修复本地语音 CLI 麦克风回调崩溃（TypeError）**：`_emit(kind, **payload)` 与 `run_microphone_with_model` 的 `event_sink(kind, payload_dict)` 协议不匹配，真实麦克风回调触发 `TypeError: _emit() takes 1 positional argument but 2 were given`（cffi callback 内异常）。`_emit` 改为同时兼容两种调用风格；新增 `test_sense_emit_accepts_both_call_styles` 与 `test_sense_microphone_loop_emits_partial_without_typeerror`（假 sounddevice 复现回调路径）；顺带修正 CLI loading/ready 事件里 `sense-voice-sense-voice-small` 前缀重复。
