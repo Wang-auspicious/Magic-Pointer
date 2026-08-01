@@ -102,6 +102,34 @@ assert.strictEqual(accepted.result.verified, false);
 assert.strictEqual(accepted.result.taskId, 'task-9');
 assert.ok(!accepted.result.statusLabel.includes('完成'));
 
+const executed = stageEventFromBridge({
+  ok: true,
+  answer: '已加入购物清单。',
+  executionResult: {
+    status: 'succeeded',
+    output: { verified: true },
+  },
+  actionProposals: [{
+    id: 'undo-1',
+    action_token: 'undo-token',
+    action_type: 'shopping_list_undo_add',
+    confirmation_required: true,
+  }],
+});
+assert.deepStrictEqual(executed, {
+  type: 'COMPLETE',
+  outcome: { status: 'succeeded', verified: true },
+}, 'verified execution finishes without opening a reply card');
+
+const question = stageEventFromBridge({
+  ok: true,
+  answer: '这是一个需要展示给用户的回答。',
+  actionProposals: [],
+});
+assert.strictEqual(question.type, 'RESULT');
+assert.strictEqual(question.result.presentation, 'answer-card');
+assert.strictEqual(question.result.answer, '这是一个需要展示给用户的回答。');
+
 const failure = stageEventFromBridge({
   ok: false,
   error: '当前选区已过期。',

@@ -1,5 +1,7 @@
-const QUICK_POINT_MAX_DURATION_MS = 260;
-const QUICK_POINT_MAX_DISTANCE = 10;
+// A click is intentionally forgiving: pointer-up delivery on Windows can be
+// delayed by overlay activation even when the user performs a normal tap.
+const QUICK_POINT_MAX_DURATION_MS = 420;
+const QUICK_POINT_MAX_DISTANCE = 14;
 
 function finitePoint(value, index = 0) {
   const x = Number(value?.x);

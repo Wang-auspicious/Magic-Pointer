@@ -80,6 +80,7 @@ class ActivationSettings:
     cooldown_ms: int = 900
     gesture_arm_delay_ms: int = 180
     gesture_timeout_ms: int = 5000
+    multi_stroke_submit_ms: int = 10000
     gesture_interaction_mode: str = "pass_through"
 
     def __post_init__(self) -> None:
@@ -102,8 +103,11 @@ class ActivationSettings:
             raise ValueError("activation.gesture_arm_delay_ms must be between 60 and 600")
         if not 1000 <= int(self.gesture_timeout_ms) <= 15000:
             raise ValueError("activation.gesture_timeout_ms must be between 1000 and 15000")
+        if not 1000 <= int(self.multi_stroke_submit_ms) <= 30000:
+            raise ValueError("activation.multi_stroke_submit_ms must be between 1000 and 30000")
         self.gesture_arm_delay_ms = int(self.gesture_arm_delay_ms)
         self.gesture_timeout_ms = int(self.gesture_timeout_ms)
+        self.multi_stroke_submit_ms = int(self.multi_stroke_submit_ms)
 
 
 @dataclass

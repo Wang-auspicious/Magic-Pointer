@@ -101,6 +101,10 @@ assert.strictEqual(bad.error, null, 'hidden clears error payload');
 const cancelled = transition(text, { type: 'DISMISS' });
 assert.strictEqual(cancelled.name, 'dismissing');
 
+const completedSilently = transition(text, { type: 'COMPLETE' });
+assert.strictEqual(completedSilently.name, 'dismissing',
+  'verified execution collapses the capsule without entering result state');
+
 // --- illegal transitions are no-ops (same reference) -------------------------
 const hidden = initialState();
 assert.strictEqual(transition(hidden, { type: 'SUBMIT' }), hidden);

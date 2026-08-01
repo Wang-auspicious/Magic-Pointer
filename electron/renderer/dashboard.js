@@ -482,6 +482,7 @@ function applySettings(value) {
   setValue('wiggle-sensitivity', Math.round(Number(activation.sensitivity || .55) * 100));
   setValue('gesture-arm-delay', activation.gesture_arm_delay_ms ?? 180);
   setValue('gesture-timeout', activation.gesture_timeout_ms ?? 5000);
+  setValue('multi-stroke-submit', activation.multi_stroke_submit_ms ?? 10000);
   setValue('gesture-interaction-mode', activation.gesture_interaction_mode || 'exclusive_overlay');
   setValue('gesture-line-style', appearance.gesture_line_style || 'demo6_band');
   setValue('gesture-line-width', appearance.gesture_line_width_dip ?? 40);
@@ -574,6 +575,7 @@ function collectSettings() {
   next.activation.sensitivity = Number(document.getElementById('wiggle-sensitivity').value) / 100;
   next.activation.gesture_arm_delay_ms = Number(document.getElementById('gesture-arm-delay').value);
   next.activation.gesture_timeout_ms = Number(document.getElementById('gesture-timeout').value);
+  next.activation.multi_stroke_submit_ms = Number(document.getElementById('multi-stroke-submit').value);
   next.activation.keep_current_app_focus = document.getElementById('keep-current-app-focus').checked;
   next.activation.dashboard_focus_after_action = false;
   next.activation.mouse_side_button = document.getElementById('mouse-side-button').value || 'none';

@@ -16,12 +16,13 @@ let requestSeq = 0;
 let submitting = false;
 // Committed strokes of the current chain. The user can circle several
 // regions before the session finalizes ("circle this, and this, then run
-// the command"); the rolling CHAIN_GAP_MS window decides when the chain
+// the command"); a configurable inactivity window decides when the chain
 // ends and the unified gesture is submitted.
 let strokes = [];
 let chainTimer = null;
 let chainHintTimer = null;
-const CHAIN_GAP_MS = 1000;
+const DEFAULT_CHAIN_GAP_MS = 10000;
+let gestureChainGapMs = DEFAULT_CHAIN_GAP_MS;
 let renderRaf = null;
 let pulseRaf = null;
 let lastPulseFrame = 0;
@@ -361,7 +362,7 @@ function scheduleChainFinalize() {
   chainTimer = setTimeout(() => {
     chainTimer = null;
     finalizeGesture();
-  }, CHAIN_GAP_MS);
+  }, gestureChainGapMs);
 }
 
 function finalizeGesture() {
@@ -465,12 +466,16 @@ function drawStrokeMarker(index, point) {
 
 function drawPointTarget(point) {
   if (!point) return;
-  const radius = 13;
+  // A quick click has no stroke body, so give it an unmistakable target glow
+  // beneath the armed cursor. The former 13 DIP feather was effectively
+  // invisible on light windows and made the detached sequence badge look like
+  // the only feedback.
+  const radius = 38;
   const color = '47, 124, 246';
   const feather = ctx.createRadialGradient(point.x, point.y, 0, point.x, point.y, radius);
-  feather.addColorStop(0, `rgba(${color}, 0.96)`);
-  feather.addColorStop(0.34, `rgba(${color}, 0.96)`);
-  feather.addColorStop(0.58, `rgba(${color}, 0.48)`);
+  feather.addColorStop(0, `rgba(${color}, 0.74)`);
+  feather.addColorStop(0.18, `rgba(${color}, 0.66)`);
+  feather.addColorStop(0.52, `rgba(${color}, 0.28)`);
   feather.addColorStop(1, `rgba(${color}, 0)`);
   ctx.save();
   ctx.beginPath();
@@ -573,7 +578,7 @@ window.addEventListener('pointerup', (e) => {
     window.magicPointer.syncHitRegions();
   }
   // Chain capture: commit the stroke, notify main (keeps the arm alive),
-  // and let the user keep circling.  The rolling CHAIN_GAP_MS window or the
+  // and let the user keep circling. The rolling inactivity window or the
   // Enter key finalizes the whole chain into one unified gesture.
   if (points.length >= 1) {
     const strokeSummary = globalThis.GestureCapture?.summarizeGesture?.(points, null) || {};
@@ -614,6 +619,11 @@ window.magicPointer?.onHide(() => {
   chainHintTimer = null;
 });
 
+window.magicPointer?.onGestureSubmit((payload) => {
+  if (!gestureMode || String(payload?.token || '') !== String(gestureToken || '')) return;
+  finalizeGesture();
+});
+
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {
     finalizeGesture();
@@ -631,6 +641,8 @@ window.magicPointer?.onShow((payload) => {
   gestureAcceptAt = Number(payload?.gestureAcceptAt) || 0;
   gestureLineStyle = payload?.gestureLineStyle === 'thin' ? 'thin' : 'demo6_band';
   gestureLineWidth = Math.max(3, Math.min(40, Number(payload?.gestureLineWidth) || 22));
+  gestureChainGapMs = Math.max(1000, Math.min(30000,
+    Number(payload?.gestureChainGapMs) || DEFAULT_CHAIN_GAP_MS));
   gestureInteractionMode = payload?.gestureInteractionMode === 'pass_through'
     ? 'pass_through'
     : 'exclusive_overlay';

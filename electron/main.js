@@ -80,6 +80,7 @@ let preflightRunPromise = null;
 let preflightAbortController = null;
 let backgroundHintShown = false;
 let temporaryDismissShortcutRegistered = false;
+let temporaryGestureSubmitShortcutRegistered = false;
 let temporarySurfaceButtons = 0;
 let overlayOwnsPointerInput = false;
 let stageHitRegions = [];
@@ -1065,6 +1066,27 @@ function disarmTemporaryDismissShortcut() {
   temporaryDismissShortcutRegistered = false;
 }
 
+function armTemporaryGestureSubmitShortcut(token) {
+  if (temporaryGestureSubmitShortcutRegistered) return true;
+  try {
+    temporaryGestureSubmitShortcutRegistered = globalShortcut.register('Enter', () => {
+      const arm = selectionGestureArm;
+      if (!arm || arm.token !== String(token || '')) return;
+      safeSurfaceSend('overlay', 'overlay:gesture-submit', { token: arm.token });
+    });
+  } catch (_) {
+    temporaryGestureSubmitShortcutRegistered = false;
+  }
+  log(`temporary Enter gesture submit registered=${temporaryGestureSubmitShortcutRegistered}`);
+  return temporaryGestureSubmitShortcutRegistered;
+}
+
+function disarmTemporaryGestureSubmitShortcut() {
+  if (!temporaryGestureSubmitShortcutRegistered) return;
+  try { globalShortcut.unregister('Enter'); } catch (_) {}
+  temporaryGestureSubmitShortcutRegistered = false;
+}
+
 function queueActivationUntilSurfacesReady(reason) {
   createOverlayWindow();
   createStageWindow();
@@ -1391,6 +1413,7 @@ function cancelSelectionGesture(reason = 'cancelled', { hideSurface = true } = {
   selectionGestureArmTimer = null;
   selectionGestureExpiryTimer = null;
   selectionGestureArm = null;
+  disarmTemporaryGestureSubmitShortcut();
   if (hideSurface) hideOverlay();
   if (!stageWindow || stageWindow.isDestroyed() || !stageWindow.isVisible()) {
     disarmTemporaryDismissShortcut();
@@ -1467,6 +1490,7 @@ function armSelectionGesture(reason = 'wiggle') {
         gestureAcceptAt: arm.readyAt,
         gestureLineStyle: arm.runtime.lineStyle,
         gestureLineWidth: arm.runtime.lineWidthDip,
+        gestureChainGapMs: arm.runtime.chainGapMs,
         gestureInteractionMode: arm.runtime.interactionMode,
       });
       if (arm.runtime.interactionMode === 'pass_through') {
@@ -1490,14 +1514,15 @@ function armSelectionGesture(reason = 'wiggle') {
   return token;
 }
 
-function markSelectionGestureDrawing(token) {
+function markSelectionGestureDrawing(token, { timeoutMs = null, reason = 'draw_timeout' } = {}) {
   const arm = selectionGestureArm;
   if (!arm || String(token || '') !== arm.token) return false;
   if (selectionGestureExpiryTimer) clearTimeout(selectionGestureExpiryTimer);
+  const leaseMs = Math.max(1, Number(timeoutMs) || Number(arm.timeoutMs || SELECTION_GESTURE_TIMEOUT_MS));
   selectionGestureExpiryTimer = setTimeout(() => {
-    if (selectionGestureArm?.token === arm.token) cancelSelectionGesture('draw_timeout');
-  }, Number(arm.timeoutMs || SELECTION_GESTURE_TIMEOUT_MS));
-  log(`selection gesture drawing token=${arm.token}`);
+    if (selectionGestureArm?.token === arm.token) cancelSelectionGesture(reason);
+  }, leaseMs);
+  log(`selection gesture lease token=${arm.token} reason=${reason} timeout_ms=${leaseMs}`);
   return true;
 }
 
@@ -2223,6 +2248,7 @@ app.on('will-quit', () => {
   try { fs.unlinkSync(PID_PATH); } catch (_) {}
   globalShortcut.unregisterAll();
   temporaryDismissShortcutRegistered = false;
+  temporaryGestureSubmitShortcutRegistered = false;
   if (mousePollTimer) clearInterval(mousePollTimer);
   if (wiggleCalibrationTimer) clearTimeout(wiggleCalibrationTimer);
   voiceRuntime?.shutdown();
@@ -2308,6 +2334,10 @@ ipcMain.on('stage:state', (event, payload) => {
   } else if (state === 'error') {
     observeVoiceFocusPhase('error');
     finishVoiceFocusGuard();
+  } else if (state === 'dismissing') {
+    finishVoiceFocusGuard();
+    const token = String(payload?.selectionSessionToken || '');
+    if (token) invalidateSelectionSession(token);
   }
 });
 ipcMain.on('stage:hidden', (event) => {
@@ -2824,7 +2854,14 @@ ipcMain.on('overlay:gesture-stroke', (event, payload) => {
   const arm = selectionGestureArm;
   if (!arm || String(payload?.token || '') !== arm.token) return;
   const index = Number(payload?.index);
-  markSelectionGestureDrawing(arm.token);
+  armTemporaryGestureSubmitShortcut(arm.token);
+  // Renderer owns the rolling inactivity timer. Keep the main-process lease
+  // slightly longer so its legacy per-stroke timeout cannot cancel the chain
+  // before the renderer's configurable auto-submit event arrives.
+  markSelectionGestureDrawing(arm.token, {
+    timeoutMs: arm.runtime.chainGapMs + 1000,
+    reason: 'chain_timeout',
+  });
   log(`selection gesture stroke committed token=${arm.token} index=${Number.isFinite(index) ? index : '?'}`);
 });
 

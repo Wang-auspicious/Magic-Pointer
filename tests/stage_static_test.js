@@ -69,4 +69,15 @@ assert(source.includes('session.capsuleDragged = true;'),
 assert(source.includes('capsuleDrag = { startX: x, startY: y'),
   'pointer press on the capsule body must begin a drag');
 
+// Demo 7 capsule contract: voice state drives motion, text never shows the
+// waveform, and answer cards grow from the same stable capsule anchor.
+assert(source.includes('capsule.dataset.voiceState = session.voiceState'));
+assert(source.includes('anchorResultToCapsule(resultCard)'));
+assert(source.includes('renderMarkdownText'));
+assert(css.includes(".stage-capsule[data-mode='text'] .voice-waveform"));
+assert(css.includes('.stage-capsule.is-exiting'));
+assert(css.includes('@keyframes stage-result-expand'));
+assert.match(css, /\.stage-root \[hidden\]\s*\{\s*display:\s*none\s*!important;/,
+  'hidden stage children must never leak through component display rules');
+
 console.log('stage static test ok');

@@ -178,6 +178,12 @@ function stageEventFromBridge(parsed) {
   const replaceProposal = (Array.isArray(parsed.actionProposals) ? parsed.actionProposals : [])
     .find((proposal) => proposal?.action_type === 'office_replace_selection');
   const receipt = executionReceipt(parsed);
+  if (parsed.ok === true && receipt.status === 'succeeded' && receipt.verified) {
+    return {
+      type: 'COMPLETE',
+      outcome: { status: receipt.status, verified: true },
+    };
+  }
   if (replaceProposal) {
     return {
       type: 'RESULT',
@@ -188,6 +194,7 @@ function stageEventFromBridge(parsed) {
     type: 'RESULT',
     result: {
       kind: 'inline',
+      presentation: 'answer-card',
       answer: String(parsed.answer || parsed.status || '已处理。'),
       detail: String(parsed.detail || parsed.error || ''),
       ...receipt,

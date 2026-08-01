@@ -76,6 +76,7 @@
     capsulePlaced: false,
     capsuleDragged: false,
     selectionCount: 1,
+    voiceState: 'idle',
     visualTuning: { ...DEFAULT_VISUAL_TUNING },
   };
   const textCanvas = document.createElement('canvas');
@@ -121,6 +122,8 @@
     if (wantsSubmit) session.submitOnFinal = true;
     if (effects.includes('start') && !dictationActive) {
       dictationActive = true;
+      session.voiceState = 'warming';
+      capsule.dataset.voiceState = session.voiceState;
       if (api && typeof api.startDictation === 'function') api.startDictation();
     }
     if (effects.includes('stop') && dictationActive) {
@@ -147,6 +150,8 @@
     capsuleDrag = null;
     session.submitOnFinal = false;
     session.pendingFinalTranscript = '';
+    session.voiceState = 'idle';
+    capsule.dataset.voiceState = session.voiceState;
   }
 
   function handleVoicePointerInput(payload) {
@@ -468,12 +473,21 @@
     renderedTranscript = text;
   }
 
+  function voiceStateForStatus(status) {
+    const value = String(status || '').toLowerCase();
+    if (value === 'warming') return 'warming';
+    if (value === 'ready' || value === 'microphone_started') return 'listening';
+    if (value === 'microphone_stopped') return 'idle';
+    return null;
+  }
+
   function syncCapsuleWidth() {
     const mode = state.inputMode === 'text' ? 'text' : 'voice';
     const base = mode === 'text'
       ? session.visualTuning.capsuleTextWidthDip
       : session.visualTuning.capsuleVoiceWidthDip;
     const content = state.transcript || capsuleInput.value || '';
+    capsule.dataset.empty = mode === 'voice' && !content ? 'true' : 'false';
     const style = window.getComputedStyle(transcriptBox);
     if (textMeasure) textMeasure.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
     const measured = textMeasure ? textMeasure.measureText(content).width : content.length * 8;
@@ -500,6 +514,18 @@
     element.style.left = `${placement.x}px`;
     element.style.top = `${placement.y}px`;
     element.dataset.quadrant = placement.quadrant;
+  }
+
+  function anchorResultToCapsule(element) {
+    const rect = element.getBoundingClientRect();
+    const fallback = session.capsulePlacement || session.pointer || { x: 8, y: 8 };
+    const width = rect.width || Math.min(360, window.innerWidth - 16);
+    const height = rect.height || 80;
+    const x = Math.max(8, Math.min(fallback.x, window.innerWidth - width - 8));
+    const y = Math.max(8, Math.min(fallback.y, window.innerHeight - height - 8));
+    element.style.left = `${x}px`;
+    element.style.top = `${y}px`;
+    element.dataset.quadrant = session.capsulePlacement?.quadrant || 'bottom-right';
   }
 
   function anchorCapsuleToTarget(width) {
@@ -569,11 +595,62 @@
     stageRoot.style.setProperty('--stage-capsule-size', `${session.visualTuning.capsuleVoiceWidthDip}px`);
   }
 
+  function appendInlineMarkdown(container, text) {
+    const fragments = String(text || '').split(/(\*\*[^*]+\*\*|`[^`]+`)/g).filter(Boolean);
+    for (const fragment of fragments) {
+      if (fragment.startsWith('**') && fragment.endsWith('**')) {
+        const strong = document.createElement('strong');
+        strong.textContent = fragment.slice(2, -2);
+        container.appendChild(strong);
+      } else if (fragment.startsWith('`') && fragment.endsWith('`')) {
+        const code = document.createElement('code');
+        code.textContent = fragment.slice(1, -1);
+        container.appendChild(code);
+      } else container.appendChild(document.createTextNode(fragment));
+    }
+  }
+
+  function renderMarkdownText(container, text) {
+    const blocks = String(text || '').replace(/\r\n?/g, '\n').split(/\n\s*\n/).filter(Boolean);
+    for (const block of blocks) {
+      const lines = block.split('\n');
+      let element;
+      if (lines.every((line) => /^\s*[-*]\s+/.test(line))) {
+        element = document.createElement('ul');
+        for (const line of lines) {
+          const item = document.createElement('li');
+          appendInlineMarkdown(item, line.replace(/^\s*[-*]\s+/, ''));
+          element.appendChild(item);
+        }
+      } else if (lines.every((line) => /^\s*\d+[.)]\s+/.test(line))) {
+        element = document.createElement('ol');
+        for (const line of lines) {
+          const item = document.createElement('li');
+          appendInlineMarkdown(item, line.replace(/^\s*\d+[.)]\s+/, ''));
+          element.appendChild(item);
+        }
+      } else if (/^#{1,3}\s+/.test(block)) {
+        element = document.createElement('h3');
+        appendInlineMarkdown(element, block.replace(/^#{1,3}\s+/, ''));
+      } else if (/^```[\s\S]*```$/.test(block)) {
+        element = document.createElement('pre');
+        const code = document.createElement('code');
+        code.textContent = block.replace(/^```[^\n]*\n?/, '').replace(/```$/, '');
+        element.appendChild(code);
+      } else {
+        element = document.createElement('p');
+        appendInlineMarkdown(element, lines.join('\n'));
+      }
+      container.appendChild(element);
+    }
+  }
+
   function renderInline(container, payload) {
-    const primary = document.createElement('p');
-    primary.textContent = typeof payload === 'string'
+    const primary = document.createElement('div');
+    primary.className = 'result-answer';
+    renderMarkdownText(primary, typeof payload === 'string'
       ? payload
-      : String(payload?.answer || payload?.message || '');
+      : String(payload?.answer || payload?.message || ''));
     container.appendChild(primary);
     const secondary = typeof payload === 'object' && payload ? payload.detail : '';
     if (secondary) {
@@ -828,6 +905,7 @@
     if (targetSweepTimer) clearTimeout(targetSweepTimer);
     targetSweepTimer = null;
     targetingOutline.classList.remove('is-visible');
+    capsule.classList.remove('is-entering', 'is-exiting');
     [targetingOutline, frozenGlow, capsule, shimmer, resultCard, errorCard,
       chipsBox, deliveryBox].forEach((el) => {
       el.hidden = true;
@@ -839,6 +917,7 @@
     stageRoot.dataset.state = name;
     stageRoot.dataset.selectionVisual = session.selectionVisual;
     stageRoot.dataset.targetGeometryKind = session.targetGeometryKind;
+    capsule.dataset.voiceState = session.voiceState;
 
     if (name === 'hidden') {
       // Empty state renders nothing: zero dynamic DOM content while hidden.
@@ -884,7 +963,8 @@
       }
     } else frozenGlow.hidden = true;
 
-    const capsuleOpen = name === 'capsule-voice' || name === 'capsule-text' || name === 'processing';
+    const capsuleOpen = name === 'capsule-voice' || name === 'capsule-text' || name === 'processing'
+      || (name === 'dismissing' && !capsule.hidden);
     if (capsuleOpen) {
       if (session.selectionCount > 1) {
         capsuleCount.textContent = `${session.selectionCount} 处`;
@@ -893,6 +973,13 @@
         capsuleCount.hidden = true;
       }
       const capsuleWasHidden = capsule.hidden;
+      if (name === 'dismissing') {
+        capsule.classList.remove('is-entering');
+        capsule.classList.add('is-exiting');
+      } else if (capsuleWasHidden) {
+        capsule.classList.remove('is-exiting');
+        capsule.classList.add('is-entering');
+      }
       capsule.dataset.mode = state.inputMode === 'text' ? 'text' : 'voice';
       capsule.dataset.phase = name === 'processing' ? 'processing' : 'input';
       renderTranscript();
@@ -914,8 +1001,8 @@
 
     if (name === 'result') {
       renderStructured(resultCard, state.result);
-      anchorNearPointer(resultCard, 300, 44);
       resultCard.hidden = false;
+      anchorResultToCapsule(resultCard);
     } else {
       resultCard.hidden = true;
     }
@@ -948,7 +1035,10 @@
     dispatch({ type: 'TRANSCRIPT', transcript: capsuleInput.value });
   });
   capsule.addEventListener('transitionend', syncHitRegions);
-  capsule.addEventListener('animationend', syncHitRegions);
+  capsule.addEventListener('animationend', (event) => {
+    if (event.animationName === 'stage-capsule-expand') capsule.classList.remove('is-entering');
+    syncHitRegions();
+  });
   frozenGlow.addEventListener('animationend', (event) => {
     if (event.animationName !== 'selection-sweep-fade') return;
     if (targetSweepTimer) clearTimeout(targetSweepTimer);
@@ -1077,6 +1167,7 @@
       session.capsulePlaced = false;
       session.capsuleDragged = false;
       session.selectionCount = 1;
+      session.voiceState = 'idle';
       session.visualTuning = { ...DEFAULT_VISUAL_TUNING };
       lastPointerPoint = null;
       if (targetSweepTimer) clearTimeout(targetSweepTimer);
@@ -1117,8 +1208,14 @@
         dispatch({ type: 'ERROR', error: { message: String(payload.error || '本地语音识别失败。') } });
         return;
       }
+      const statusState = voiceStateForStatus(payload.status);
+      if (statusState) {
+        session.voiceState = statusState;
+        render();
+      }
       const transcript = typeof payload.transcript === 'string' ? payload.transcript : '';
       if (!transcript) return;
+      session.voiceState = payload.final === true ? 'settling' : 'transcribing';
       dispatch({ type: 'TRANSCRIPT', transcript });
       if (payload.final === true) {
         dictationActive = false;

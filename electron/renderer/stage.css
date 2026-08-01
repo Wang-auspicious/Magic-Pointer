@@ -46,6 +46,12 @@ body {
   display: none;
 }
 
+/* Component display declarations (for example delivery-progress:flex) must
+ * never override the semantic hidden attribute and leak stale UI. */
+.stage-root [hidden] {
+  display: none !important;
+}
+
 .stage-root[data-state='dismissing'] {
   opacity: 0;
   transition: opacity 160ms ease-out;
@@ -622,33 +628,69 @@ body {
   }
 }
 
-/* Product capsule contract: pointer-anchored, compact, and readable above
- * any host app. The earlier graphite rules remain only as a fallback. */
+/* Demo 7 capsule contract: one pale-blue object that starts as a 40 DIP ball,
+ * grows only along X as content arrives, and collapses back into the same ball.
+ * Motion classes are applied once by stage.js; streaming renders never replay
+ * the entrance animation. */
 .stage-capsule {
   width: var(--capsule-width, var(--stage-capsule-size));
+  min-width: var(--stage-capsule-size);
   min-height: var(--stage-capsule-size);
   height: var(--stage-capsule-size);
   max-width: none;
-  padding: 8px 13px;
-  border: 1.5px solid rgba(18, 102, 212, .86);
+  gap: 8px;
+  padding: 0 13px;
+  overflow: visible;
+  border: 1px solid rgba(35, 112, 222, .72);
   border-radius: calc(var(--stage-capsule-size) / 2);
-  background: rgba(226, 236, 255, .94);
+  background: rgba(239, 246, 255, .94);
+  /* Transparent Windows surfaces can turn a CSS shadow into a rectangular
+   * backing-store ghost. The one-pixel blue edge supplies enough separation. */
   box-shadow: none;
+  color: #185fae;
   transform-origin: center center;
   will-change: opacity, transform, width;
+  transition:
+    width var(--stage-capsule-expand) cubic-bezier(.22, 1, .36, 1),
+    padding var(--stage-capsule-expand) cubic-bezier(.22, 1, .36, 1),
+    border-radius var(--stage-capsule-expand) cubic-bezier(.22, 1, .36, 1);
+}
+
+.stage-capsule.is-entering {
   animation:
     stage-capsule-spawn var(--stage-capsule-spawn) cubic-bezier(.22, 1, .36, 1)
       var(--stage-capsule-delay) both,
     stage-capsule-expand var(--stage-capsule-expand) cubic-bezier(.22, 1, .36, 1)
       calc(var(--stage-capsule-delay) + var(--stage-capsule-spawn)) both;
-  transition: width 180ms cubic-bezier(.22, 1, .36, 1);
 }
+
+.stage-capsule.is-exiting {
+  pointer-events: none;
+  animation: stage-capsule-collapse 150ms cubic-bezier(.4, 0, .2, 1) forwards;
+}
+
 .stage-capsule[data-mode='voice'] {
   width: var(--capsule-width, var(--stage-capsule-size));
-  min-height: var(--stage-capsule-size);
-  padding: 8px 12px;
 }
-.stage-capsule[data-mode='text'] { width: var(--capsule-width, 144px); }
+
+.stage-capsule[data-mode='voice'][data-empty='true'] {
+  justify-content: center;
+  gap: 0;
+  padding-inline: 0;
+}
+
+.stage-capsule[data-mode='voice'][data-empty='true'] .capsule-transcript {
+  display: none;
+}
+
+.stage-capsule[data-mode='text'] {
+  width: var(--capsule-width, 144px);
+}
+
+.stage-capsule[data-mode='text'] .voice-waveform,
+.stage-capsule[data-mode='text'] .capsule-transcript {
+  display: none;
+}
 
 @keyframes stage-capsule-spawn {
   0% {
@@ -675,6 +717,24 @@ body {
     border-radius: calc(var(--stage-capsule-size) / 2);
   }
 }
+
+@keyframes stage-capsule-collapse {
+  0% {
+    width: var(--capsule-width, var(--stage-capsule-size));
+    opacity: 1;
+    transform: scale(1);
+  }
+  72% {
+    width: var(--stage-capsule-size);
+    opacity: .92;
+    transform: scale(.96);
+  }
+  100% {
+    width: var(--stage-capsule-size);
+    opacity: 0;
+    transform: scale(.72);
+  }
+}
 .capsule-count {
   position: absolute;
   top: -15px;
@@ -693,17 +753,110 @@ body {
   pointer-events: none;
   box-shadow: 0 2px 10px rgba(18, 60, 140, .38);
 }
-.capsule-input, .capsule-transcript { color: #1266D4; font-size: 13px; font-weight: 500; }
-.voice-waveform i { background: #1266D4; }
+.capsule-input,
+.capsule-transcript {
+  color: #185fae;
+  font-size: 13px;
+  font-weight: 560;
+}
+
+.voice-waveform {
+  width: 14px;
+  height: 16px;
+  justify-content: center;
+  gap: 2px;
+}
+
+.voice-waveform i {
+  width: 2px;
+  height: 9px;
+  background: #246fd0;
+  transform-origin: center;
+  animation-duration: 680ms;
+}
+
+.stage-capsule[data-voice-state='idle'] .voice-waveform i,
+.stage-capsule[data-voice-state='settling'] .voice-waveform i {
+  height: 3px;
+  opacity: .58;
+  animation: none;
+}
+
+.stage-capsule[data-voice-state='warming'] .voice-waveform i {
+  height: 3px;
+  animation: stage-voice-warm 780ms ease-in-out infinite;
+}
+
+.stage-capsule[data-voice-state='listening'] .voice-waveform i,
+.stage-capsule[data-voice-state='transcribing'] .voice-waveform i {
+  animation-duration: 620ms;
+}
+
+@keyframes stage-voice-warm {
+  0%, 100% { opacity: .34; transform: scale(.78); }
+  50% { opacity: 1; transform: scale(1.12); }
+}
+
 .stage-result, .stage-error {
+  width: min(360px, calc(100vw - 16px));
   max-width: 440px;
+  max-height: min(420px, calc(100vh - 16px));
   min-height: 40px;
-  padding: 10px 13px;
-  border-radius: 20px;
+  padding: 14px 16px;
+  overflow: auto;
+  border-radius: 16px;
   background: rgba(252, 253, 255, .96);
-  border-color: rgba(38, 115, 235, .30);
-  box-shadow: 0 8px 22px rgba(30, 40, 55, .18), 0 0 18px rgba(18, 102, 212, .08);
-  color: #1266D4;
+  border-color: rgba(38, 115, 235, .26);
+  box-shadow: 0 10px 28px rgba(30, 54, 88, .18);
+  color: #183b68;
+  transform-origin: top left;
+  animation: stage-result-expand 220ms cubic-bezier(.22, 1, .36, 1);
 }
 .stage-error { color: #b42318; border-color: rgba(180, 35, 24, .28); background: rgba(255, 248, 247, .96); }
 .stage-result .result-secondary, .stage-error .result-secondary { color: inherit; opacity: .78; }
+
+.result-answer {
+  display: grid;
+  gap: 8px;
+  user-select: text;
+}
+
+.result-answer p { white-space: pre-wrap; }
+.result-answer ul, .result-answer ol { padding-left: 20px; }
+.result-answer h3 { font-size: 14px; color: #185fae; }
+.result-answer strong { font-weight: 700; }
+.result-answer code {
+  padding: 1px 4px;
+  border-radius: 5px;
+  background: rgba(35, 112, 222, .09);
+  font-family: Consolas, 'Cascadia Mono', monospace;
+}
+.result-answer pre {
+  padding: 9px 10px;
+  overflow: auto;
+  border-radius: 9px;
+  background: rgba(20, 48, 82, .07);
+  white-space: pre-wrap;
+}
+
+@keyframes stage-result-expand {
+  from {
+    opacity: .72;
+    transform: scale(.72, .34);
+    border-radius: 20px;
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+    border-radius: 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stage-capsule.is-entering,
+  .stage-capsule.is-exiting,
+  .stage-result,
+  .stage-error {
+    animation: none;
+  }
+}

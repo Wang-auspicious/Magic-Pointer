@@ -15,9 +15,10 @@ const { defaultSettings } = require('../electron/settings_store');
 const defaults = defaultSettings();
 assert.strictEqual(defaults.activation.gesture_arm_delay_ms, 180);
 assert.strictEqual(defaults.activation.gesture_timeout_ms, 5000);
+assert.strictEqual(defaults.activation.multi_stroke_submit_ms, 10000);
 assert.strictEqual(defaults.appearance.gesture_line_style, 'demo6_band');
 assert.strictEqual(defaults.appearance.gesture_line_width_dip, 40);
-for (const id of ['gesture-arm-delay', 'gesture-timeout', 'gesture-line-style', 'gesture-line-width']) {
+for (const id of ['gesture-arm-delay', 'gesture-timeout', 'multi-stroke-submit', 'gesture-line-style', 'gesture-line-width']) {
   assert(dashboardHtml.includes(`id="${id}"`), `Dashboard must expose ${id}`);
 }
 
@@ -142,6 +143,8 @@ assert.match(overlay, /activePointerId/,
   'pointerup must belong to the stroke that started drawing');
 assert.match(overlay, /gestureAcceptAt\s*-\s*Date\.now\(\)/,
   'an early held stroke must be retained across the visual grace period');
+assert.match(overlay, /gestureChainGapMs\s*=\s*Math\.max\(1000,\s*Math\.min\(30000/,
+  'the renderer must accept a bounded configurable multi-stroke inactivity timeout');
 assert.match(preload, /overlay:gesture-start/);
 assert.match(preload, /overlay:gesture-ready/);
 assert.match(preload, /overlay:gesture-input/);

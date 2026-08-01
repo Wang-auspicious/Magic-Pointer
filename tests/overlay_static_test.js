@@ -80,6 +80,8 @@ assert(source.includes("if (stroke.kind === 'point')"),
   'point strokes must have a dedicated rendering path');
 assert(source.includes('drawPointTarget(stroke.semanticPoint)'),
   'the dedicated point rendering path must draw the clicked coordinate');
+assert.match(source, /function drawPointTarget[\s\S]*?const radius = 38;/,
+  'a quick click needs a visible cursor-sized glow, not a tiny hidden dot');
 
 // Legacy retirement: the overlay no longer renders results or actions.
 // Everything below now lives on the PointerStage surface.

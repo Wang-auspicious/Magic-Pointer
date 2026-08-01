@@ -135,6 +135,7 @@ function transition(state, event) {
     }
 
     case 'processing':
+      if (type === 'COMPLETE') return toDismissing(state);
       if (type === 'RESULT') return toResult(state, event);
       if (type === 'ERROR') return toError(state, event);
       if (type === 'DELIVERY_PROGRESS') {

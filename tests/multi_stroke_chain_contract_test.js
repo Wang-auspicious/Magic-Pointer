@@ -65,10 +65,20 @@ const strokeHandler = main.slice(
   main.indexOf("ipcMain.on('overlay:gesture-stroke'"),
   main.indexOf('ipcMain.on(\'stage:submit-selection-command\''),
 );
-assert(strokeHandler.includes('markSelectionGestureDrawing(arm.token)'),
+assert(strokeHandler.includes('markSelectionGestureDrawing(arm.token, {'),
   'a committed stroke must refresh the gesture expiry');
+assert(strokeHandler.includes('timeoutMs: arm.runtime.chainGapMs + 1000'),
+  'the refreshed lease must outlive the configurable renderer timer');
 assert(strokeHandler.includes('String(payload?.token || \'\') !== arm.token'),
   'stroke handler must validate the arm token');
+assert(main.includes("globalShortcut.register('Enter'"),
+  'Enter submission must work without focusing the transparent overlay');
+assert(main.includes("safeSurfaceSend('overlay', 'overlay:gesture-submit'"),
+  'the temporary Enter shortcut must ask the renderer to finalize its chain');
+assert(preload.includes("onGestureSubmit:"),
+  'preload must expose the trusted gesture-submit event');
+assert(overlay.includes('window.magicPointer?.onGestureSubmit'),
+  'overlay must finalize when the main-process Enter shortcut fires');
 
 // ── completeSelectionGesture consumes multi-stroke summaries ─────────────
 const complete = main.slice(

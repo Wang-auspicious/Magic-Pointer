@@ -12,6 +12,7 @@ const defaults = defaultSettings();
 assert.deepStrictEqual(gestureRuntimeContract(defaults), {
   armDelayMs: 180,
   timeoutMs: 5000,
+  chainGapMs: 10000,
   interactionMode: 'exclusive_overlay',
   lineStyle: 'demo6_band',
   lineWidthDip: 40,
@@ -39,5 +40,8 @@ assert.match(main, /cancelSelectionGesture\('settings_changed'\)/,
   'settings changes must terminate the previous input lease before the next wake');
 assert.match(main, /gestureLineStyle:\s*arm\.runtime\.lineStyle/);
 assert.match(main, /gestureLineWidth:\s*arm\.runtime\.lineWidthDip/);
+assert.match(main, /gestureChainGapMs:\s*arm\.runtime\.chainGapMs/);
+assert.match(main, /markSelectionGestureDrawing\(arm\.token,\s*\{[\s\S]*?timeoutMs:\s*arm\.runtime\.chainGapMs\s*\+\s*1000/,
+  'the main-process lease must outlive the renderer multi-stroke inactivity timer');
 
 console.log('gesture runtime settings test ok');
