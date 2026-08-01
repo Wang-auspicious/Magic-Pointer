@@ -412,21 +412,38 @@ def _is_enclosed_gesture(gesture: dict[str, Any] | None, points: list[tuple[int,
         return False
     if width < 28 or height < 28:
         return False
-    closure_distance = math.hypot(points[-1][0] - points[0][0], points[-1][1] - points[0][1])
-    if closure_distance > max(30.0, min(width, height) * 0.42):
-        return False
-    perimeter = sum(
-        math.hypot(points[index][0] - points[index - 1][0], points[index][1] - points[index - 1][1])
-        for index in range(1, len(points))
-    )
-    if perimeter < 0.58 * 2.0 * (width + height):
-        return False
-    polygon_area = abs(sum(
-        points[index][0] * points[(index + 1) % len(points)][1]
-        - points[(index + 1) % len(points)][0] * points[index][1]
-        for index in range(len(points))
-    )) / 2.0
-    return polygon_area >= width * height * 0.24
+    closure_tolerance = max(30.0, min(width, height) * 0.70)
+    required_area = width * height * 0.18
+    best_loop_area = 0.0
+    # A user often finishes a lasso with a short exit stroke. Look for the
+    # largest near-closed subpath instead of requiring the whole stroke's last
+    # point to return to its first point.
+    for start in range(0, len(points) - 4):
+        for end in range(start + 4, len(points)):
+            closure_distance = math.hypot(
+                points[end][0] - points[start][0],
+                points[end][1] - points[start][1],
+            )
+            if closure_distance > closure_tolerance:
+                continue
+            loop = points[start:end + 1]
+            loop_width = max(point[0] for point in loop) - min(point[0] for point in loop)
+            loop_height = max(point[1] for point in loop) - min(point[1] for point in loop)
+            if loop_width < 20 or loop_height < 20:
+                continue
+            perimeter = sum(
+                math.hypot(loop[index][0] - loop[index - 1][0], loop[index][1] - loop[index - 1][1])
+                for index in range(1, len(loop))
+            )
+            if perimeter < 0.42 * 2.0 * (loop_width + loop_height):
+                continue
+            polygon_area = abs(sum(
+                loop[index][0] * loop[index + 1][1]
+                - loop[index + 1][0] * loop[index][1]
+                for index in range(len(loop) - 1)
+            )) / 2.0
+            best_loop_area = max(best_loop_area, polygon_area)
+    return best_loop_area >= required_area
 
 
 def _union_xywh(rectangles: list[list[int]]) -> list[int] | None:
@@ -686,6 +703,15 @@ def _prune_capture_dir(
     return removed
 
 
+def _capture_is_blank(image: Any) -> bool:
+    """Detect compositor/GPU black frames before they become model evidence."""
+    try:
+        extrema = image.convert("RGB").getextrema()
+    except Exception:
+        return False
+    return all(int(channel[1]) <= 2 for channel in extrema)
+
+
 def _capture_visual_region(
     target_window: dict[str, Any] | None,
     target_point: dict[str, int] | None,
@@ -720,18 +746,24 @@ def _capture_visual_region(
             # this backing-window image.
             window_image = ImageGrab.grab(window=hwnd)
             win_left, win_top, win_right, win_bottom = (int(value) for value in window_bbox)
-            scale_x = window_image.width / max(1, win_right - win_left)
-            scale_y = window_image.height / max(1, win_bottom - win_top)
-            local_bbox = (
-                round((bbox[0] - win_left) * scale_x),
-                round((bbox[1] - win_top) * scale_y),
-                round((bbox[2] - win_left) * scale_x),
-                round((bbox[3] - win_top) * scale_y),
-            )
-            image = window_image.crop(local_bbox)
-            expected_size = (bbox[2] - bbox[0], bbox[3] - bbox[1])
-            if image.size != expected_size:
-                image = image.resize(expected_size)
+            if _capture_is_blank(window_image):
+                # Electron/Chromium GPU surfaces can return an all-black
+                # PrintWindow frame even while the desktop visibly contains
+                # the app. Retry through the physical desktop compositor.
+                image = ImageGrab.grab(bbox=bbox, all_screens=True)
+            else:
+                scale_x = window_image.width / max(1, win_right - win_left)
+                scale_y = window_image.height / max(1, win_bottom - win_top)
+                local_bbox = (
+                    round((bbox[0] - win_left) * scale_x),
+                    round((bbox[1] - win_top) * scale_y),
+                    round((bbox[2] - win_left) * scale_x),
+                    round((bbox[3] - win_top) * scale_y),
+                )
+                image = window_image.crop(local_bbox)
+                expected_size = (bbox[2] - bbox[0], bbox[3] - bbox[1])
+                if image.size != expected_size:
+                    image = image.resize(expected_size)
         else:
             image = ImageGrab.grab(bbox=bbox, all_screens=True)
     after_identity = _window_identity(identity_probe()) if callable(identity_probe) else before_identity

@@ -45,6 +45,7 @@ from app.fabric.action import make_fabric_action_proposal
 from app.fabric.workflow_task_store import WorkflowTaskStore
 from app.fabric.catalog import get_recipe
 from app.fabric.engine import FabricEngine
+from app.fabric.executors import FabricExecutors
 from app.fabric.settings import SettingsStore
 from scripts._bridge_common import (
     PayloadTooLargeError,
@@ -272,6 +273,55 @@ def _context_from_snapshot(
     except Exception as exc:
         return dict(target_window or {}), None, snapshot, f"invalid selection context: {type(exc).__name__}: {exc}"
     return dict(target_window or {}), app_ctx, snapshot, None
+
+
+def _read_local_ocr(capture_path: str | Path) -> tuple[str | None, str]:
+    """Read a saved screen capture locally; never uploads the image."""
+    path = Path(capture_path)
+    if not path.is_file():
+        return None, "capture_missing"
+    try:
+        executor = FabricExecutors(root=ROOT)
+        text = str(executor._default_ocr(path) or "").strip()
+        if not text:
+            return None, "ocr_empty"
+        return text, str(executor.last_ocr_engine or "local_ocr")
+    except Exception as exc:
+        return None, f"ocr_failed:{type(exc).__name__}"
+
+
+def _enrich_screen_region_context(
+    target_window: dict[str, Any] | None,
+    app_ctx: AdapterReadContext | None,
+    snapshot: dict[str, Any] | None,
+) -> AdapterReadContext | None:
+    """Attach local OCR text to a pixel fallback before any model routing."""
+    if str((snapshot or {}).get("source_kind") or "") != "screen_region":
+        return app_ctx
+    if app_ctx is not None and app_ctx.has_content:
+        return app_ctx
+    capture_path = str((snapshot or {}).get("capture_path") or "").strip()
+    if not capture_path:
+        return app_ctx
+    text, engine = _read_local_ocr(capture_path)
+    if not text:
+        return app_ctx
+    artifacts = dict(app_ctx.artifacts if app_ctx is not None else {})
+    artifacts.update({
+        "capture_path": capture_path,
+        "annotated_path": str((snapshot or {}).get("annotated_path") or ""),
+        "ocr_engine": engine,
+        "perception_trace": (snapshot or {}).get("perception_trace"),
+    })
+    return AdapterReadContext(
+        adapter="local_ocr",
+        app="screen",
+        window=dict(target_window or {}),
+        content=text,
+        label="THIS",
+        method=f"local:{engine}",
+        artifacts=artifacts,
+    )
 
 
 def _context_pack_response(
@@ -1011,6 +1061,10 @@ def main() -> int:
             "selectionSessionId": selection_session_id or None,
         }, ensure_ascii=False))
         return 1
+
+    # Screen fallback remains local-first: OCR enriches the snapshot before
+    # any recipe or text-model routing, while the saved image stays local.
+    app_ctx = _enrich_screen_region_context(target_window, app_ctx, snapshot)
 
     reference_response = _reference_label_response(payload)
     if reference_response is not None:

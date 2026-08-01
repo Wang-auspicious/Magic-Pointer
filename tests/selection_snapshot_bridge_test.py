@@ -8,9 +8,11 @@ from PIL import Image
 
 from app.adapters.base import AdapterCapability, AdapterReadContext
 from scripts.selection_snapshot_bridge import (
+    _capture_visual_region,
     _prune_capture_dir,
     _suggested_commands,
     _summary_for,
+    _is_enclosed_gesture,
     capture_snapshot,
 )
 from scripts.selection_snapshot_bridge import _window_dicts
@@ -464,16 +466,45 @@ def test_unsupported_foreground_becomes_local_visual_object_at_pointer(tmp_path)
     assert summary["hasVisual"] is True
     assert summary["hasContent"] is False
     assert captured == [((280, 290, 920, 710), True)]
-    assert [item["label"] for item in payload["suggestedCommands"]] == [
-        "生成视觉提示",
-        "交给 Agent",
-        "识别并复制",
-    ]
     trace = snapshot["perception_trace"]
     assert trace["selectedLayer"] == "screen_region"
     assert trace["pixelFallbackUsed"] is True
     assert trace["fallbackReason"] == "structured_context_unavailable"
     assert trace["attempts"][-1]["status"] == "succeeded"
+    assert [item["label"] for item in payload["suggestedCommands"]] == [
+        "生成视觉提示",
+        "交给 Agent",
+        "识别并复制",
+    ]
+
+
+def test_visual_capture_retries_full_desktop_when_window_capture_is_black(tmp_path, monkeypatch) -> None:
+    calls = []
+    window = {
+        "title": "Magic Pointer",
+        "hwnd": 20,
+        "pid": 42,
+        "bbox": (100, 200, 1100, 900),
+    }
+
+    def grab(*, window=None, bbox=None, all_screens=False):
+        calls.append({"window": window, "bbox": bbox, "all_screens": all_screens})
+        if window is not None:
+            return Image.new("RGB", (1000, 700), "black")
+        return Image.new("RGB", (bbox[2] - bbox[0], bbox[3] - bbox[1]), "white")
+
+    monkeypatch.setattr("scripts.selection_snapshot_bridge.ImageGrab.grab", grab)
+    capture = _capture_visual_region(
+        window,
+        {"x": 600, "y": 500},
+        capture_dir=tmp_path,
+    )
+
+    assert capture is not None
+    assert calls[0]["window"] == 20
+    assert calls[1]["bbox"] == (280, 290, 920, 710)
+    with Image.open(capture["path"]).convert("RGB") as image:
+        assert image.getextrema() == ((255, 255), (255, 255), (255, 255))
 
 
 def test_sensitive_foreground_never_uses_visual_capture(tmp_path) -> None:
@@ -930,6 +961,27 @@ def test_closed_gesture_reads_the_enclosed_component_set_not_the_top_boundary_ro
     assert snapshot["selection_bbox"] == [600, 430, 190, 66]
     assert registry.adapter.region_requests == [{"x": 580, "y": 410, "width": 240, "height": 110}]
     assert registry.adapter.point_requests == []
+
+
+def test_enclosed_gesture_allows_a_short_tail_after_the_loop_closes() -> None:
+    gesture = {
+        "bbox": {"x": 80, "y": 80, "width": 240, "height": 120},
+        "strokes": [{"points": [
+            {"x": 90, "y": 120},
+            {"x": 110, "y": 88},
+            {"x": 220, "y": 82},
+            {"x": 310, "y": 112},
+            {"x": 300, "y": 170},
+            {"x": 205, "y": 194},
+            {"x": 112, "y": 170},
+            {"x": 90, "y": 120},
+            {"x": 65, "y": 145},
+            {"x": 48, "y": 162},
+        ]}],
+    }
+
+    points = [(point["x"], point["y"]) for point in gesture["strokes"][0]["points"]]
+    assert _is_enclosed_gesture(gesture, points) is True
 
 
 def test_gesture_grounding_never_falls_back_to_an_unvisited_release_point_candidate() -> None:

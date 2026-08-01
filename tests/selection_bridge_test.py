@@ -18,12 +18,36 @@ from scripts.selection_bridge import (
     _calendar_response,
     _route_response,
     _context_from_snapshot,
+    _enrich_screen_region_context,
     _interaction_episode_context,
     _reference_label_response,
     _read_target_context,
     _shopping_list_response,
     _wants_undo,
 )
+
+
+def test_screen_region_snapshot_is_enriched_with_local_ocr(monkeypatch, tmp_path) -> None:
+    capture = tmp_path / "screen.png"
+    capture.write_bytes(b"not-a-real-png-for-the-injected-reader")
+    monkeypatch.setattr(
+        selection_bridge,
+        "_read_local_ocr",
+        lambda path: ("Magic Pointer 1.0.0", "test-ocr"),
+    )
+    context = _enrich_screen_region_context(
+        {"title": "Magic Pointer", "process_name": "Magic Pointer"},
+        None,
+        {
+            "source_kind": "screen_region",
+            "capture_path": str(capture),
+            "annotated_path": str(tmp_path / "screen.pointer.png"),
+        },
+    )
+    assert context is not None
+    assert context.content == "Magic Pointer 1.0.0"
+    assert context.method == "local:test-ocr"
+    assert context.artifacts["capture_path"] == str(capture)
 
 
 class _FakeAdapter:
