@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import ctypes
 import json
 from pathlib import Path
 from typing import Any
 
+from app.fabric import agent_sessions
 from app.fabric.agent_sessions import AgentSessionRegistry
 
 
@@ -273,6 +275,198 @@ def test_session_metadata_scan_stops_after_sixty_four_complete_lines(tmp_path: P
 
     assert session["title"] == "Pi · repo · pi-lines"
     assert "Must not be scanned" not in json.dumps(session)
+
+
+def test_active_only_returns_explicit_open_handle_sessions_without_history_backfill(tmp_path: Path) -> None:
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    codex = tmp_path / "codex"
+    for name in ("active-a", "history", "active-b", "more-history"):
+        _line(codex / f"{name}.jsonl", {
+            "type": "session_meta",
+            "payload": {"id": name, "cwd": str(workspace)},
+        })
+    active_paths = {codex / "active-a.jsonl", codex / "active-b.jsonl"}
+    registry = AgentSessionRegistry(
+        codex_root=codex,
+        claude_root=tmp_path / "missing-claude",
+        gemini_root=tmp_path / "missing-gemini",
+        pi_root=tmp_path / "missing-pi",
+        liveness_probe=lambda provider, path: (
+            "open_handle" if provider == "codex" and path in active_paths else None
+        ),
+    )
+
+    sessions = registry.discover(provider="codex", cwd=workspace, active_only=True, limit=5)
+
+    assert {item.session_id for item in sessions} == {"active-a", "active-b"}
+    assert len(sessions) == 2
+    assert all(item.to_dict()["live"] is True for item in sessions)
+    assert all(item.to_dict()["liveEvidence"] == "open_handle" for item in sessions)
+
+
+def test_active_only_returns_empty_when_recent_files_have_no_live_evidence(tmp_path: Path) -> None:
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    codex = tmp_path / "codex"
+    _line(codex / "recent-history.jsonl", {
+        "type": "session_meta",
+        "payload": {"id": "recent-history", "cwd": str(workspace)},
+    })
+    registry = AgentSessionRegistry(
+        codex_root=codex,
+        claude_root=tmp_path / "missing-claude",
+        gemini_root=tmp_path / "missing-gemini",
+        pi_root=tmp_path / "missing-pi",
+        liveness_probe=lambda _provider, _path: None,
+    )
+
+    assert registry.discover(provider="codex", cwd=workspace, active_only=True) == []
+
+
+def test_active_only_fails_closed_when_liveness_probe_raises(tmp_path: Path) -> None:
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    codex = tmp_path / "codex"
+    _line(codex / "session.jsonl", {
+        "type": "session_meta",
+        "payload": {"id": "session", "cwd": str(workspace)},
+    })
+
+    def broken_probe(_provider: str, _path: Path) -> str | None:
+        raise RuntimeError("probe failed")
+
+    registry = AgentSessionRegistry(
+        codex_root=codex,
+        claude_root=tmp_path / "missing-claude",
+        gemini_root=tmp_path / "missing-gemini",
+        pi_root=tmp_path / "missing-pi",
+        liveness_probe=broken_probe,
+    )
+
+    assert registry.discover(provider="codex", cwd=workspace, active_only=True) == []
+
+
+def test_normal_discover_does_not_probe_or_add_live_fields(tmp_path: Path) -> None:
+    workspace = tmp_path / "repo"
+    workspace.mkdir()
+    codex = tmp_path / "codex"
+    _line(codex / "history.jsonl", {
+        "type": "session_meta",
+        "payload": {"id": "history", "cwd": str(workspace)},
+    })
+
+    def forbidden_probe(_provider: str, _path: Path) -> str | None:
+        raise AssertionError("normal discovery must not run liveness probes")
+
+    registry = AgentSessionRegistry(
+        codex_root=codex,
+        claude_root=tmp_path / "missing-claude",
+        gemini_root=tmp_path / "missing-gemini",
+        pi_root=tmp_path / "missing-pi",
+        liveness_probe=forbidden_probe,
+    )
+
+    public = registry.discover(provider="codex", cwd=workspace)[0].to_dict()
+
+    assert "live" not in public
+    assert "liveEvidence" not in public
+    assert public["sessionId"] == "history"
+
+
+def test_win32_exclusive_read_uses_read_access_with_share_mode_zero(tmp_path: Path) -> None:
+    class _Kernel32:
+        def __init__(self) -> None:
+            self.create_args: tuple[object, ...] = ()
+            self.closed: object = None
+
+        def CreateFileW(self, *args: object) -> int:
+            self.create_args = args
+            return 123
+
+        def CloseHandle(self, handle: object) -> int:
+            self.closed = handle
+            return 1
+
+    kernel32 = _Kernel32()
+
+    opened, error = agent_sessions._win32_exclusive_read(
+        tmp_path / "session.jsonl",
+        kernel32=kernel32,
+        get_last_error=lambda: 999,
+    )
+
+    assert opened is True
+    assert error == 0
+    assert kernel32.create_args[1] == 0x80000000
+    assert kernel32.create_args[2] == 0
+    assert kernel32.create_args[4] == 3
+    assert kernel32.closed == 123
+
+
+def test_windows_probe_accepts_only_sharing_conflicts(tmp_path: Path) -> None:
+    path = tmp_path / "session.jsonl"
+
+    def readable(_path: Path) -> bool:
+        return True
+
+    assert agent_sessions._windows_open_handle_evidence(
+        path,
+        readable=readable,
+        exclusive_open=lambda _path: (False, 32),
+    ) == "open_handle"
+    assert agent_sessions._windows_open_handle_evidence(
+        path,
+        readable=readable,
+        exclusive_open=lambda _path: (False, 33),
+    ) == "open_handle"
+    for error in (2, 3, 5, 87):
+        assert agent_sessions._windows_open_handle_evidence(
+            path,
+            readable=readable,
+            exclusive_open=lambda _path, error=error: (False, error),
+        ) is None
+    assert agent_sessions._windows_open_handle_evidence(
+        path,
+        readable=readable,
+        exclusive_open=lambda _path: (True, 0),
+    ) is None
+
+
+def test_windows_probe_requires_ordinary_read_access(tmp_path: Path) -> None:
+    def forbidden_exclusive_open(_path: Path) -> tuple[bool, int]:
+        raise AssertionError("exclusive probe must not run for unreadable paths")
+
+    assert agent_sessions._windows_open_handle_evidence(
+        tmp_path / "missing.jsonl",
+        readable=lambda _path: False,
+        exclusive_open=forbidden_exclusive_open,
+    ) is None
+
+
+def test_win32_exclusive_read_reports_last_error_without_closing_invalid_handle(tmp_path: Path) -> None:
+    class _Kernel32:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def CreateFileW(self, *_args: object) -> int:
+            return ctypes.c_void_p(-1).value
+
+        def CloseHandle(self, _handle: object) -> int:
+            self.closed = True
+            return 1
+
+    kernel32 = _Kernel32()
+
+    opened, error = agent_sessions._win32_exclusive_read(
+        tmp_path / "session.jsonl",
+        kernel32=kernel32,
+        get_last_error=lambda: 32,
+    )
+
+    assert opened is False
+    assert error == 32
+    assert kernel32.closed is False
 
 
 def test_resolve_requires_exact_existing_identity_and_enforces_cwd(tmp_path: Path) -> None:
