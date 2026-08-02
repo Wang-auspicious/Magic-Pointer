@@ -1,7 +1,8 @@
 # Magic Pointer — Agent Handoff Document
 
 <!-- AGENTS.md spec: https://github.com/agentsmd/agents.md -->
-<!-- 读完这个文件 + PRODUCT_BLUEPRINT + FEATURE_INVENTORY 即可开工。 -->
+<!-- 读完这个文件 + docs/planning/PROJECT_STATE_AND_DIRECTION.md + PRODUCT_BLUEPRINT + FEATURE_INVENTORY 即可开工。 -->
+<!-- 项目状态/调研结论/会话知识的浓缩版在 PROJECT_STATE_AND_DIRECTION.md，别重读 74MB 会话历史。 -->
 
 ## 这是什么
 
@@ -11,7 +12,13 @@ Magic Pointer = 默认不可见的跨应用操作层。鼠标晃动唤醒 → �
 
 竞品：Google AI Pointer / Microsoft Click to Do / clicky (7k★ macOS app)。
 
-## 当前状态快照（2026-07-31）
+## 当前状态快照（2026-08-02）
+
+### 2026-08-02 增量（感知链路重构中，未提交）
+- 未提交 9 文件：全局截图+圈定位标签（THIS 标注、不裁图）+ 最多 24 个元件框编号标注 + 视觉 API 开关（仅授权上传才调用，中转 gpt-5.4-mini）+ 主进程改 `FREEZE→OPEN_CAPSULE`（语音球等快照启动后显示）。
+- 手势存在时：先 UIA/结构化区域读取（闭合圈=圈内元件集，横线=单元件，与 bbox 相交即算）→ 结构化命中保留为 `context.content` 真相，全局截图+标注只挂 `artifacts` 证据；只有结构化失败才用 `screen_region` 当 context（`source_kind=native_selection`）。
+- 8/2 修复的关键洞：全屏截图曾把 UIA 读到的正确文本（Row B）顶成空 content —— 已修，测试全绿：Python 655 / Node 115（56 源文件）。
+- 下一步：提交 → 真机验收（设置页版本号/微信/Excel 各划一次，确认 content 非空）。
 
 ### 能正常工作
 - 晃动唤醒 → overlay 出现 → 划线圈选 → 气泡弹出 → 语音/文字输入 → Recipe 执行
@@ -44,7 +51,9 @@ Magic Pointer = 默认不可见的跨应用操作层。鼠标晃动唤醒 → �
 3. 语音升级——**已完成（Phase 2）**：SenseVoice 默认 + Whisper 自动回退 + 双引擎 benchmark；剩余：真实中文录音样本库、意图准确率基线、Dashboard 诊断页回退原因展示
 4. **P0 修复排期**——#1/#2 语音管线、#3 bridge stdin 上限、#5 overlay 事件化恢复、#6 capture points 上限、#4 生产测试钩子隔离全部完成，全量 Python 602 + JS 113 全绿；语音收口含测试契约修复与竞态回归测试。剩余 #7 asar 打包设计（依赖 #4 的打包基线，风险较高，单独排期）
 5. OpenSRE 借鉴——合成评分测试套件（Recipe 验收）、可逆脱敏、上下文预算（见下方 OpenSRE 分析段）
-6. **意图-执行分离改造（高级 AI 路线图 Phase 1 已完成 2026-07-31）**——a) `app/fabric/model_plan.py`：ModelPlan 契约（intent / targetObjectIds / requestedResult / toolCalls / riskLevel / needsConfirmation / expectedVerification），18 个模型工具注册表（copy_text / translate_text / replace_text / insert_text / fill_form / extract_table / create_calendar_event / open_map_route / handoff_to_agent 等），严格校验（未知工具、未实现工具、缺参数、风险降级、危险未确认、对象数越界、64KB 上限全部 fail-closed）；b) `FabricEngine.plan_from_model()`：模型规划优先，关键词 Recipe 路由保留为离线降级；模型不能绕过本地权限策略（只能升级确认）。c) 手势几何升级（`electron/gesture_capture.js`）：圈→闭合多边形区域（32 采样+闭合点）、线/自由形→带宽走廊（法向偏移闭合多边形）、自由形语义点改质心、新增 direction 单位向量；`completeSelectionGesture` 透传 geometry/direction。d) Stage 气泡边界 clamp 验证为已实现（`electron/stage_anchor.js` 溢出最小候选 + 强制钳制，已有测试覆盖贴边场景）；危险手势绑定验证为不存在（gesture kind 仅作几何语义，路由纯文本 + 权限 fail-closed）。
+7. **感知链路收口（2026-08-01 晚 ~ 08-02，未提交）**——先冻结+全局截图再出语音球；圈只做定位标签（全局理解、不裁小图）；UIA 能枚举的元件全部框标注+编号；本地 OCR 兜底（RapidOCR→Tesseract）；视觉 API 仅在授权上传时调用；结构化读到的内容永远优先于截图。验收线：真实窗口端到端划一次，`selectionSnapshot.context.content` 非空且是画中的内容。
+8. 语音上云（可插拔）：默认接云端/中转流式转写，本地 whisper 兜底；兼容外部听写设备快捷键。**排在感知链路之后**。
+9. **意图-执行分离改造（高级 AI 路线图 Phase 1 已完成 2026-07-31）**——a) `app/fabric/model_plan.py`：ModelPlan 契约（intent / targetObjectIds / requestedResult / toolCalls / riskLevel / needsConfirmation / expectedVerification），18 个模型工具注册表（copy_text / translate_text / replace_text / insert_text / fill_form / extract_table / create_calendar_event / open_map_route / handoff_to_agent 等），严格校验（未知工具、未实现工具、缺参数、风险降级、危险未确认、对象数越界、64KB 上限全部 fail-closed）；b) `FabricEngine.plan_from_model()`：模型规划优先，关键词 Recipe 路由保留为离线降级；模型不能绕过本地权限策略（只能升级确认）。c) 手势几何升级（`electron/gesture_capture.js`）：圈→闭合多边形区域（32 采样+闭合点）、线/自由形→带宽走廊（法向偏移闭合多边形）、自由形语义点改质心、新增 direction 单位向量；`completeSelectionGesture` 透传 geometry/direction。d) Stage 气泡边界 clamp 验证为已实现（`electron/stage_anchor.js` 溢出最小候选 + 强制钳制，已有测试覆盖贴边场景）；危险手势绑定验证为不存在（gesture kind 仅作几何语义，路由纯文本 + 权限 fail-closed）。
 
 ## 完整文件清单（按模块）
 
@@ -309,6 +318,9 @@ SenseVoice 桥接（`sense_voice_bridge.py`）和模型（228MB）已就绪，�
 - **不要把 overlay 永久设 `setIgnoreMouseEvents(true, {forward: true})`**——应用下方会收到左键拖拽、误选文本
 - **不要引入需要付费 API 的依赖**——SenseVoice/whisper/RapidOCR/OmniParser 全部免费本地
 - **不要在未经日志确认的情况下改 overlay 鼠标处理**——这是最容易引入系统级破坏的模块
+- **不要让全屏截图的 `visual_context`（空 content）覆盖结构化读到的 `context.content`**——截图+标注只是证据，真相永远是 UIA/DOM/COM 读到的文本；结构化失败才允许 `screen_region` 当 content
+- **不要只裁圈内小图丢给模型**——要全局截图 + 圈做定位标签 + 元件框标注；裁小图会丢上下文、大图直接压缩会丢细节
+- **不要默认上传截图给模型厂商**——上传必须有显式开关（`upload_screenshots`），默认本地 OCR 兜底
 
 ## 代码规范
 
@@ -323,7 +335,7 @@ SenseVoice 桥接（`sense_voice_bridge.py`）和模型（228MB）已就绪，�
 ## 命令
 
 ```bash
-npm test                                  # JS 测试 (54 文件/114 测)
+npm test                                  # JS 测试 (56 文件/115 测)
 python -m pytest -q                       # Python 测试
 npx --no-install electron electron/main.js # 开发启动
 npm run dist:win                          # 构建 Windows 安装包
@@ -350,6 +362,8 @@ node scripts/collect-diagnostics.js --out diagnose.zip  # 脱敏诊断包
 - 改测试→更新上方的 `npm test` 计数
 - 发现重要外部项目→更新"外部参考"表
 - 新增文档→更新"参考文档"表
+- 每次会话结束→更新 `docs/planning/PROJECT_STATE_AND_DIRECTION.md`（状态/根因/决策/下一步）——它是 74MB 会话历史的浓缩版，新会话先读它
+- 不要在会话里重读超大会话历史 JSONL（路径在 PROJECT_STATE_AND_DIRECTION.md 第 8 节）
 
 
 ## 高级 AI 路线图（2026-07-31，尚未执行）

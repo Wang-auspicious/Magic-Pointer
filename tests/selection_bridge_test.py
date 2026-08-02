@@ -34,8 +34,8 @@ def test_screen_region_snapshot_is_enriched_with_local_ocr(monkeypatch, tmp_path
     capture.write_bytes(b"not-a-real-png-for-the-injected-reader")
     monkeypatch.setattr(
         selection_bridge,
-        "_read_local_ocr",
-        lambda path: ("Magic Pointer 1.0.0", "test-ocr"),
+        "_read_local_ocr_boxes",
+        lambda path, strokes_local=None, selection_local=None: ([{"text": "Magic Pointer 1.0.0", "rect": None, "conf": None}], "test-ocr"),
     )
     context = _enrich_screen_region_context(
         {"title": "Magic Pointer", "process_name": "Magic Pointer"},
@@ -50,6 +50,7 @@ def test_screen_region_snapshot_is_enriched_with_local_ocr(monkeypatch, tmp_path
     assert context.content == "Magic Pointer 1.0.0"
     assert context.method == "local:test-ocr"
     assert context.artifacts["capture_path"] == str(capture)
+    assert context.artifacts["ocr_full_screen"] is True
 
 
 def test_screen_region_with_capture_artifacts_still_runs_local_ocr(monkeypatch, tmp_path) -> None:
@@ -65,8 +66,8 @@ def test_screen_region_with_capture_artifacts_still_runs_local_ocr(monkeypatch, 
     )
     monkeypatch.setattr(
         selection_bridge,
-        "_read_local_ocr",
-        lambda path: ("Magic Pointer 1.0.0", "test-ocr"),
+        "_read_local_ocr_boxes",
+        lambda path, strokes_local=None, selection_local=None: ([{"text": "Magic Pointer 1.0.0", "rect": None, "conf": None}], "test-ocr"),
     )
 
     context = _enrich_screen_region_context(
@@ -522,16 +523,19 @@ def test_crop_roi_for_ocr_returns_none_without_geometry(tmp_path) -> None:
     assert _crop_roi_for_ocr(capture, [10, 10, 20, 20], None) is None
 
 
-def test_screen_region_enrich_uses_selection_roi_for_ocr(monkeypatch, tmp_path) -> None:
-    from PIL import Image
-
+def test_screen_region_enrich_filters_full_screen_ocr_by_selection_bbox(monkeypatch, tmp_path) -> None:
     capture = tmp_path / "screen.png"
-    Image.new("RGB", (200, 200), "white").save(capture)
+    capture.write_bytes(b"png-bytes")
     seen_paths = []
+    blocks = [
+        {"text": "side bar menu text", "rect": [10, 10, 120, 24], "conf": 0.9},
+        {"text": "marked chat line", "rect": [60, 62, 180, 26], "conf": 0.9},
+        {"text": "unrelated lower row", "rect": [10, 200, 120, 24], "conf": 0.9},
+    ]
     monkeypatch.setattr(
         selection_bridge,
-        "_read_local_ocr",
-        lambda path: seen_paths.append(Path(path)) or ("ROI TEXT", "test-ocr"),
+        "_read_local_ocr_boxes",
+        lambda path, strokes_local=None, selection_local=None: seen_paths.append(Path(path)) or (list(blocks), "test-ocr"),
     )
 
     context = _enrich_screen_region_context(
@@ -540,18 +544,17 @@ def test_screen_region_enrich_uses_selection_roi_for_ocr(monkeypatch, tmp_path) 
         {
             "source_kind": "screen_region",
             "capture_path": str(capture),
-            "selection_bbox": [50, 60, 40, 20],
-            "capture_bbox": [0, 0, 200, 200],
+            "selection_bbox": [50, 60, 200, 30],
         },
     )
 
     assert context is not None
-    assert context.content == "ROI TEXT"
-    assert context.artifacts["ocr_roi_applied"] is True
-    assert context.artifacts["ocr_roi_bbox"] == [50, 60, 40, 20]
+    assert context.content == "marked chat line"
+    assert context.artifacts["ocr_full_screen"] is True
+    assert context.artifacts["ocr_block_count_total"] == 3
+    assert context.artifacts["ocr_block_count_selected"] == 1
     assert len(seen_paths) == 1
-    assert seen_paths[0].name.startswith("screen-roi-")
-    assert seen_paths[0].parent == capture.parent
+    assert seen_paths[0] == capture
 
 
 def test_screen_region_enrich_falls_back_to_full_capture_without_selection_bbox(monkeypatch, tmp_path) -> None:
@@ -560,8 +563,8 @@ def test_screen_region_enrich_falls_back_to_full_capture_without_selection_bbox(
     seen = []
     monkeypatch.setattr(
         selection_bridge,
-        "_read_local_ocr",
-        lambda path: seen.append(Path(path)) or ("FULL TEXT", "test-ocr"),
+        "_read_local_ocr_boxes",
+        lambda path, strokes_local=None, selection_local=None: seen.append(Path(path)) or ([{"text": "FULL TEXT", "rect": None, "conf": None}], "test-ocr"),
     )
 
     context = _enrich_screen_region_context(
@@ -571,5 +574,132 @@ def test_screen_region_enrich_falls_back_to_full_capture_without_selection_bbox(
     )
 
     assert context is not None
-    assert context.artifacts.get("ocr_roi_applied") is False
+    assert context.content == "FULL TEXT"
+    assert context.artifacts.get("ocr_full_screen") is True
+    assert context.artifacts.get("ocr_block_count_selected") == 1
     assert seen == [capture]
+
+
+def test_screen_region_enrich_uses_stroke_collision_not_union_bbox(monkeypatch, tmp_path) -> None:
+    capture = tmp_path / "screen.png"
+    capture.write_bytes(b"png-bytes")
+    blocks = [
+        {"text": "李明瑄", "rect": [120, 100, 80, 26], "conf": 0.9},      # thumbnail text, not crossed
+        {"text": "first marked sentence", "rect": [100, 300, 300, 26], "conf": 0.9},
+        {"text": "unrelated middle paragraph", "rect": [100, 340, 300, 26], "conf": 0.9},
+        {"text": "second marked sentence", "rect": [100, 500, 300, 26], "conf": 0.9},
+    ]
+    monkeypatch.setattr(
+        selection_bridge,
+        "_read_local_ocr_boxes",
+        lambda path, strokes_local=None, selection_local=None: (list(blocks), "test-ocr"),
+    )
+    gesture = {
+        "schemaVersion": 2,
+        "coordinateSpace": "physical_screen_pixels",
+        "bbox": {"x": 100, "y": 300, "width": 300, "height": 226},  # union is huge
+        "strokes": [
+            {"points": [{"x": 100, "y": 308}, {"x": 300, "y": 310}, {"x": 400, "y": 308}]},
+            {"points": [{"x": 100, "y": 508}, {"x": 250, "y": 510}, {"x": 400, "y": 508}]},
+        ],
+    }
+    context = _enrich_screen_region_context(
+        {"title": "WeChat"},
+        None,
+        {
+            "source_kind": "screen_region",
+            "capture_path": str(capture),
+            "selection_bbox": [100, 300, 300, 226],
+            "selection_gesture": gesture,
+        },
+    )
+
+    assert context is not None
+    assert context.content == "[segment 1] first marked sentence\n[segment 2] second marked sentence"
+    assert "李明瑄" not in context.content
+    assert "unrelated middle paragraph" not in context.content
+    assert context.artifacts["ocr_stroke_filter"] is True
+    assert context.artifacts["ocr_segment_count"] == 2
+    assert context.artifacts["ocr_block_count_selected"] == 2
+
+
+def test_enclosed_loop_collects_all_blocks_in_region_not_just_crossed_lines(monkeypatch, tmp_path) -> None:
+    capture = tmp_path / "screen.png"
+    capture.write_bytes(b"png-bytes")
+    blocks = [
+        {"text": "first line", "rect": [100, 100, 300, 26], "conf": 0.9},
+        {"text": "middle nested line that used to vanish", "rect": [120, 140, 340, 26], "conf": 0.9},
+        {"text": "third line", "rect": [100, 180, 300, 26], "conf": 0.9},
+        {"text": "outside unrelated", "rect": [800, 800, 200, 26], "conf": 0.9},
+    ]
+    monkeypatch.setattr(
+        selection_bridge,
+        "_read_local_ocr_boxes",
+        lambda path, strokes_local=None, selection_local=None: (list(blocks), "test-ocr"),
+    )
+    # A closed loop around the first three lines (first point near last point).
+    gesture = {
+        "schemaVersion": 2,
+        "coordinateSpace": "physical_screen_pixels",
+        "bbox": {"x": 100, "y": 100, "width": 360, "height": 106},
+        "strokes": [
+            {"points": [
+                {"x": 100, "y": 100}, {"x": 460, "y": 102}, {"x": 462, "y": 206},
+                {"x": 98, "y": 204}, {"x": 100, "y": 100},
+            ]},
+        ],
+    }
+    context = _enrich_screen_region_context(
+        {"title": "X/Twitter"},
+        None,
+        {
+            "source_kind": "screen_region",
+            "capture_path": str(capture),
+            "selection_bbox": [100, 100, 360, 106],
+            "selection_gesture": gesture,
+        },
+    )
+    assert context is not None
+    assert "middle nested line that used to vanish" in context.content
+    assert "first line" in context.content
+    assert "third line" in context.content
+    assert "outside unrelated" not in context.content
+
+
+def test_open_stroke_blocks_are_sorted_in_reading_order(monkeypatch, tmp_path) -> None:
+    capture = tmp_path / "screen.png"
+    capture.write_bytes(b"png-bytes")
+    blocks = [
+        {"text": "line B bottom", "rect": [100, 500, 300, 26], "conf": 0.9},
+        {"text": "line A top", "rect": [100, 100, 300, 26], "conf": 0.9},
+        {"text": "line A right", "rect": [420, 100, 200, 26], "conf": 0.9},
+    ]
+    monkeypatch.setattr(
+        selection_bridge,
+        "_read_local_ocr_boxes",
+        lambda path, strokes_local=None, selection_local=None: (list(blocks), "test-ocr"),
+    )
+    # Two open underline strokes crossing both rows.
+    gesture = {
+        "schemaVersion": 2,
+        "coordinateSpace": "physical_screen_pixels",
+        "bbox": {"x": 100, "y": 100, "width": 520, "height": 426},
+        "strokes": [
+            {"points": [{"x": 100, "y": 108}, {"x": 620, "y": 108}]},
+            {"points": [{"x": 100, "y": 508}, {"x": 620, "y": 508}]},
+        ],
+    }
+    context = _enrich_screen_region_context(
+        {"title": "X/Twitter"},
+        None,
+        {
+            "source_kind": "screen_region",
+            "capture_path": str(capture),
+            "selection_bbox": [100, 100, 520, 426],
+            "selection_gesture": gesture,
+        },
+    )
+    assert context is not None
+    top = context.content.find("line A")
+    bottom = context.content.find("line B")
+    assert top != -1 and bottom != -1 and top < bottom

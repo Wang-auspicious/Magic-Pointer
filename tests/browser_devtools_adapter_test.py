@@ -187,3 +187,49 @@ def test_default_registry_respects_saved_browser_connection_settings() -> None:
     )
     browser = next(adapter for adapter in enabled.adapters if adapter.name == "browser_devtools")
     assert tuple(browser._probe.__self__.endpoints) == ("http://127.0.0.1:9333",)
+
+
+def _region_context() -> dict:
+    return {
+        "schemaVersion": 1,
+        "state": "resolved",
+        "method": "cdp:dom-region",
+        "page": {"title": "Tweet thread", "url": "https://x.com/home"},
+        "text": "第一行主推文\n中间引用的推文正文\n第三行",
+        "textBlocks": [
+            {"text": "第一行主推文", "selector": "article[data-testid='tweet']", "tag": "article", "rect": {"x": 120, "y": 300, "width": 500, "height": 40}},
+            {"text": "中间引用的推文正文", "selector": "div[data-testid='card']", "tag": "div", "rect": {"x": 140, "y": 360, "width": 460, "height": 80}},
+            {"text": "第三行", "selector": "article[data-testid='tweet']", "tag": "article", "rect": {"x": 120, "y": 460, "width": 500, "height": 40}},
+        ],
+        "selection_rectangles_coordinate_space": "physical_screen_pixels",
+    }
+
+
+def test_browser_adapter_region_read_returns_dom_text_and_elements() -> None:
+    calls = []
+
+    def probe_region(window, region):
+        calls.append((window, region))
+        return DevToolsProbeResult(True, _region_context())
+
+    ctx = BrowserDevToolsAdapter(probe_region=probe_region).read_context(
+        _window(),
+        target_region={"x": 120, "y": 300, "width": 500, "height": 200},
+    )
+
+    assert ctx is not None
+    assert ctx.content == "第一行主推文\n中间引用的推文正文\n第三行"
+    assert ctx.method == "cdp:dom-region"
+    assert ctx.artifacts["perception_result_kind"] == "region_elements"
+    assert len(ctx.artifacts["region_elements"]) == 3
+    assert ctx.artifacts["selection_rectangles"][0] == [120, 300, 500, 40]
+    assert calls[0][1] == {"x": 120, "y": 300, "width": 500, "height": 200}
+
+
+def test_browser_adapter_region_read_falls_back_on_probe_failure() -> None:
+    ctx = BrowserDevToolsAdapter(probe_region=lambda w, r: DevToolsProbeResult(False, {}, "cdp_endpoint_unavailable")).read_context(
+        _window(),
+        target_region={"x": 0, "y": 0, "width": 100, "height": 100},
+    )
+    assert ctx.error == "cdp_endpoint_unavailable"
+    assert ctx.artifacts.get("devtools_state") == "unavailable"

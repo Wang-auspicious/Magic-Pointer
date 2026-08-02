@@ -149,6 +149,10 @@ function transition(state, event) {
     case 'result':
     case 'error':
       if (type === 'DISMISS') return toDismissing(state);
+      if (state.name === 'result' && type === 'OPEN_CAPSULE') {
+        const mode = event.mode === 'text' ? 'text' : 'voice';
+        return { ...state, name: `capsule-${mode}`, inputMode: mode, transcript: '', result: null, error: null, deliveryProgress: null };
+      }
       if (state.name === 'result' && type === 'ACTION_START') {
         return {
           ...state,

@@ -193,6 +193,14 @@ def _run_uia_selection_probe(
     return UiaProbeResult(True, data)
 
 
+def _is_chromium_window(window: JsonDict) -> bool:
+    class_name = str(window.get("class_name") or "")
+    if class_name in {"Chrome_WidgetWin_1", "Chrome_WidgetWin_0", "Chrome_RenderWidgetHostHWND"}:
+        return True
+    title = str(window.get("title") or "").casefold()
+    return "edge" in title or "chrome" in title or "brave" in title
+
+
 class UiaTextSelectionAdapter(AppAdapter):
     name = "uia_text_selection"
     perception_layer = "uia"
@@ -255,6 +263,23 @@ class UiaTextSelectionAdapter(AppAdapter):
             if target_point is not None
             else _run_uia_selection_probe(hwnd)
         )
+        # Chromium builds its accessibility tree lazily: the first UIA touch
+        # often misses, but a quick retry after the tree has started coming up
+        # reads the page structure fine (and beats falling back to OCR).
+        if not probe.data and _is_chromium_window(window):
+            try:
+                import time as _time
+
+                _time.sleep(0.45)
+            except Exception:
+                pass
+            probe = (
+                _run_uia_selection_probe(hwnd, target_region=target_region)
+                if target_region is not None
+                else _run_uia_selection_probe(hwnd, target_point=target_point)
+                if target_point is not None
+                else _run_uia_selection_probe(hwnd)
+            )
         if not probe.data:
             return AdapterReadContext(
                 adapter=self.name,

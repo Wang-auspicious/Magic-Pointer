@@ -974,6 +974,63 @@
     container.appendChild(row);
   }
 
+  function resultPlainText(container) {
+    const clone = container.cloneNode(true);
+    clone.querySelectorAll('button, .result-toolbar').forEach((node) => node.remove());
+    return (clone.textContent || '').trim();
+  }
+
+  function copyResultText(container, button) {
+    const text = resultPlainText(container);
+    const done = () => {
+      const original = button.textContent;
+      button.textContent = '已复制';
+      setTimeout(() => { button.textContent = original; }, 1400);
+    };
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopyText(text, done));
+    } else fallbackCopyText(text, done);
+  }
+
+  function fallbackCopyText(text, done) {
+    const area = document.createElement('textarea');
+    area.value = text;
+    area.style.position = 'fixed';
+    area.style.opacity = '0';
+    document.body.appendChild(area);
+    area.select();
+    try { document.execCommand('copy'); done(); } catch (_) { /* clipboard unavailable */ }
+    document.body.removeChild(area);
+  }
+
+  function renderResultToolbar(container, payload) {
+    const toolbar = document.createElement('div');
+    toolbar.className = 'result-toolbar';
+    const copyBtn = document.createElement('button');
+    copyBtn.type = 'button';
+    copyBtn.className = 'result-tool';
+    copyBtn.textContent = '复制';
+    copyBtn.addEventListener('click', () => copyResultText(container, copyBtn));
+    const followBtn = document.createElement('button');
+    followBtn.type = 'button';
+    followBtn.className = 'result-tool';
+    followBtn.textContent = '追问';
+    followBtn.addEventListener('click', () => {
+      dispatch({ type: 'OPEN_CAPSULE', mode: 'text' });
+      requestAnimationFrame(() => {
+        capsule.hidden = false;
+        if (capsuleInput && typeof capsuleInput.focus === 'function') capsuleInput.focus();
+      });
+    });
+    const closeBtn = document.createElement('button');
+    closeBtn.type = 'button';
+    closeBtn.className = 'result-tool is-close';
+    closeBtn.textContent = '关闭';
+    closeBtn.addEventListener('click', () => dispatch({ type: 'DISMISS' }));
+    toolbar.append(copyBtn, followBtn, closeBtn);
+    container.appendChild(toolbar);
+  }
+
   // Result payloads are discriminated by `kind`; anything unknown falls back
   // to the plain inline text rendering.
   function renderStructured(container, payload) {
@@ -985,7 +1042,10 @@
     else if (kind === 'text-draft') renderTextDraft(container, payload);
     else if (kind === 'agent-prompt-draft') renderAgentPromptDraft(container, payload);
     else renderInline(container, payload);
-    if (kind !== 'agent-prompt-draft') renderActions(container, payload);
+    if (kind !== 'agent-prompt-draft') {
+      renderActions(container, payload);
+      renderResultToolbar(container, payload);
+    }
   }
 
   function clearChips() {

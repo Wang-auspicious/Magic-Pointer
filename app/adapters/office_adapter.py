@@ -62,7 +62,7 @@ class OfficeProbeResult:
     error: str | None = None
 
 
-def _run_powershell_json(script: str, *, timeout: int = 6) -> OfficeProbeResult:
+def _run_powershell_json(script: str, *, timeout: int = 2) -> OfficeProbeResult:
     encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
     try:
         proc = subprocess.run(
@@ -110,6 +110,12 @@ def _run_word_selection_vbs(prog_id: str, *, timeout: int = 3) -> OfficeProbeRes
     return OfficeProbeResult(True, data)
 
 
+_EXCEL_SELECTION_SCRIPT = '\n$ErrorActionPreference = "Stop"\n[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)\n$result = [ordered]@{ app="excel"; method="com:excel.selection"; hwnd=$null; workbook=$null; worksheet=$null; address=$null; rows=@(); row_count=0; col_count=0; messages=@() }\ntry {\n  $excel = [Runtime.InteropServices.Marshal]::GetActiveObject("Excel.Application")\n  $result.hwnd = [int64]$excel.Hwnd\n  if ($excel.ActiveWorkbook) { $result.workbook = [string]$excel.ActiveWorkbook.FullName }\n  if ($excel.ActiveSheet) { $result.worksheet = [string]$excel.ActiveSheet.Name }\n  $sel = $excel.Selection\n  if ($null -eq $sel) { throw "No Excel selection" }\n  $result.address = [string]$sel.Address($false, $false)\n  $maxRows = [Math]::Min([int]$sel.Rows.Count, 30)\n  $maxCols = [Math]::Min([int]$sel.Columns.Count, 12)\n  $result.row_count = [int]$sel.Rows.Count\n  $result.col_count = [int]$sel.Columns.Count\n  for ($r=1; $r -le $maxRows; $r++) {\n    $row = @()\n    for ($c=1; $c -le $maxCols; $c++) {\n      $cell = $sel.Cells.Item($r,$c)\n      $row += [ordered]@{ text=[string]$cell.Text; value=$cell.Value2; formula=[string]$cell.Formula }\n    }\n    $result.rows += ,$row\n  }\n} catch { $result.messages += $_.Exception.Message }\n$result | ConvertTo-Json -Depth 8 -Compress\n'
+
+
+_EXCEL_REGION_SCRIPT = '\n$ErrorActionPreference = "Stop"\nAdd-Type @"\nusing System;\nusing System.Runtime.InteropServices;\npublic class MpDpi { [DllImport("user32.dll")] public static extern bool SetProcessDPIAware(); }\n"@\n[MpDpi]::SetProcessDPIAware() | Out-Null\n[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)\n$result = [ordered]@{ app="excel"; method="com:excel.region-from-point"; hwnd=$null; workbook=$null; worksheet=$null; address=$null; rows=@(); row_count=0; col_count=0; messages=@() }\ntry {\n  $excel = [Runtime.InteropServices.Marshal]::GetActiveObject("Excel.Application")\n  $result.hwnd = [int64]$excel.Hwnd\n  if ($excel.ActiveWorkbook) { $result.workbook = [string]$excel.ActiveWorkbook.FullName }\n  if ($excel.ActiveSheet) { $result.worksheet = [string]$excel.ActiveSheet.Name }\n  $x1 = [int]{region_x}; $y1 = [int]{region_y}\n  $x2 = [int]({region_x} + {region_w}); $y2 = [int]({region_y} + {region_h})\n  $r1 = $excel.ActiveWindow.RangeFromPoint($x1, $y1)\n  $r2 = $excel.ActiveWindow.RangeFromPoint($x2, $y2)\n  $sel = $excel.Range($r1, $r2)\n  $result.address = [string]$sel.Address($false, $false)\n  $maxRows = [Math]::Min([int]$sel.Rows.Count, 50)\n  $maxCols = [Math]::Min([int]$sel.Columns.Count, 20)\n  $result.row_count = [int]$sel.Rows.Count\n  $result.col_count = [int]$sel.Columns.Count\n  for ($r=1; $r -le $maxRows; $r++) {\n    $row = @()\n    for ($c=1; $c -le $maxCols; $c++) {\n      $cell = $sel.Cells.Item($r,$c)\n      $row += [ordered]@{ text=[string]$cell.Text; value=$cell.Value2; formula=[string]$cell.Formula }\n    }\n    $result.rows += ,$row\n  }\n} catch { $result.messages += $_.Exception.Message }\n$result | ConvertTo-Json -Depth 8 -Compress\n'
+
+
 class OfficeAdapter(AppAdapter):
     name = "office"
     perception_layer = "native_app"
@@ -121,7 +127,19 @@ class OfficeAdapter(AppAdapter):
     def read_context(self, window: JsonDict, **kwargs: Any) -> AdapterReadContext:
         app = office_app_from_window(window) or "office"
         if app == "excel":
-            return self._read_excel(window)
+            # Point sampling fires once per sampled point during a fallback
+            # sweep; Excel COM Selection reads are global and useless there,
+            # and each probe spins up a PowerShell + Excel round-trip that can
+            # take seconds. Only region reads (the user's mark) use COM.
+            if kwargs.get("target_region") is None and kwargs.get("target_point") is not None:
+                return AdapterReadContext(
+                    adapter=self.name,
+                    app="excel",
+                    window=window,
+                    capabilities=self._base_caps("excel"),
+                    error="excel_com_skipped_for_point_sampling",
+                )
+            return self._read_excel(window, target_region=kwargs.get("target_region"))
         if app == "word":
             return self._read_word(window)
         if app == "powerpoint":
@@ -145,34 +163,21 @@ class OfficeAdapter(AppAdapter):
             ]
         return [AdapterCapability("read_selection", "Read selected Office object/text", "read_only")]
 
-    def _read_excel(self, window: JsonDict) -> AdapterReadContext:
-        script = '''
-$ErrorActionPreference = "Stop"
-[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
-$result = [ordered]@{ app="excel"; method="com:excel.selection"; hwnd=$null; workbook=$null; worksheet=$null; address=$null; rows=@(); row_count=0; col_count=0; messages=@() }
-try {
-  $excel = [Runtime.InteropServices.Marshal]::GetActiveObject("Excel.Application")
-  $result.hwnd = [int64]$excel.Hwnd
-  if ($excel.ActiveWorkbook) { $result.workbook = [string]$excel.ActiveWorkbook.FullName }
-  if ($excel.ActiveSheet) { $result.worksheet = [string]$excel.ActiveSheet.Name }
-  $sel = $excel.Selection
-  if ($null -eq $sel) { throw "No Excel selection" }
-  $result.address = [string]$sel.Address($false, $false)
-  $maxRows = [Math]::Min([int]$sel.Rows.Count, 30)
-  $maxCols = [Math]::Min([int]$sel.Columns.Count, 12)
-  $result.row_count = [int]$sel.Rows.Count
-  $result.col_count = [int]$sel.Columns.Count
-  for ($r=1; $r -le $maxRows; $r++) {
-    $row = @()
-    for ($c=1; $c -le $maxCols; $c++) {
-      $cell = $sel.Cells.Item($r,$c)
-      $row += [ordered]@{ text=[string]$cell.Text; value=$cell.Value2; formula=[string]$cell.Formula }
-    }
-    $result.rows += ,$row
-  }
-} catch { $result.messages += $_.Exception.Message }
-$result | ConvertTo-Json -Depth 8 -Compress
-'''
+    def _read_excel(self, window: JsonDict, *, target_region: Any = None) -> AdapterReadContext:
+        region = None
+        if isinstance(target_region, dict):
+            try:
+                region = {key: int(target_region.get(key) or 0) for key in ("x", "y", "width", "height")}
+                if region["width"] <= 0 or region["height"] <= 0:
+                    region = None
+            except (TypeError, ValueError):
+                region = None
+        if region is not None:
+            script = _EXCEL_REGION_SCRIPT
+            for key, value in region.items():
+                script = script.replace("{" + key + "}", str(value))
+        else:
+            script = _EXCEL_SELECTION_SCRIPT
         probe = _run_powershell_json(script)
         if not probe.ok:
             return AdapterReadContext(adapter=self.name, app="excel", window=window, capabilities=self._base_caps("excel"), error=probe.error)

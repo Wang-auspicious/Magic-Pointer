@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import socket
+import subprocess
 import sys
 import uuid
 from datetime import datetime, timezone
@@ -321,6 +323,421 @@ def _crop_roi_for_ocr(
         return None
 
 
+def _gesture_strokes(gesture: Any) -> list[list[tuple[int, int]]]:
+    """Independent stroke polylines in physical screen pixels."""
+    if not isinstance(gesture, dict):
+        return []
+    strokes: list[list[tuple[int, int]]] = []
+    for stroke in list(gesture.get("strokes") or [])[:8]:
+        raw_points = list(stroke.get("points") or []) if isinstance(stroke, dict) else []
+        points: list[tuple[int, int]] = []
+        for raw in raw_points[:256]:
+            if not isinstance(raw, dict):
+                continue
+            try:
+                points.append((int(round(float(raw.get("x")))), int(round(float(raw.get("y"))))))
+            except (TypeError, ValueError):
+                continue
+        if len(points) >= 2:
+            strokes.append(points)
+    return strokes
+
+
+def _segment_hits_rect(
+    ax: float,
+    ay: float,
+    bx: float,
+    by: float,
+    left: float,
+    top: float,
+    right: float,
+    bottom: float,
+) -> bool:
+    """True when segment [a,b] intersects the axis-aligned rect (Liang-Barsky)."""
+
+    def inside(x: float, y: float) -> bool:
+        return left <= x <= right and top <= y <= bottom
+
+    if inside(ax, ay) or inside(bx, by):
+        return True
+    dx, dy = bx - ax, by - ay
+    if dx == 0 and dy == 0:
+        return False
+    p = [-dx, dx, -dy, dy]
+    q = [ax - left, right - ax, ay - top, bottom - ay]
+    u1, u2 = 0.0, 1.0
+    for pi, qi in zip(p, q):
+        if pi == 0:
+            if qi < 0:
+                return False
+        else:
+            ratio = qi / pi
+            if pi < 0:
+                if ratio > u2:
+                    return False
+                if ratio > u1:
+                    u1 = ratio
+            else:
+                if ratio < u1:
+                    return False
+                if ratio < u2:
+                    u2 = ratio
+    return True
+
+
+def _polyline_hits_rect(
+    points: list[tuple[int, int]],
+    rect_xywh: list[int] | tuple[int, int, int, int],
+    tolerance: float = 8.0,
+) -> bool:
+    """True when any stroke segment crosses (or tightly covers) the rect."""
+    if not points or len(rect_xywh) != 4:
+        return False
+    try:
+        rx, ry, rw, rh = (float(value) for value in rect_xywh)
+    except (TypeError, ValueError):
+        return False
+    if rw <= 0 or rh <= 0:
+        return False
+    left, top = rx - tolerance, ry - tolerance
+    right, bottom = rx + rw + tolerance, ry + rh + tolerance
+    for index in range(len(points) - 1):
+        ax, ay = points[index]
+        bx, by = points[index + 1]
+        if _segment_hits_rect(ax, ay, bx, by, left, top, right, bottom):
+            return True
+    return False
+
+
+def _stroke_is_closed(points: list[tuple[int, int]], tolerance: float = 26.0) -> bool:
+    """A circle/freeform loop closes back near its start (short tails allowed)."""
+    if len(points) < 5:
+        return False
+    ax, ay = points[0]
+    bx, by = points[-1]
+    return ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5 <= tolerance
+
+
+def _block_center_in_region(rect: list[int], region_xywh: list[int], padding: float = 22.0) -> bool:
+    try:
+        rx, ry, rw, rh = (float(value) for value in rect)
+        gx, gy, gw, gh = (float(value) for value in region_xywh)
+    except (TypeError, ValueError):
+        return True
+    if rw <= 0 or rh <= 0 or gw <= 0 or gh <= 0:
+        return False
+    cx, cy = rx + rw / 2.0, ry + rh / 2.0
+    return (
+        gx - padding <= cx <= gx + gw + padding
+        and gy - padding <= cy <= gy + gh + padding
+    )
+
+
+def _stroke_xywh(points: list[tuple[int, int]]) -> list[int]:
+    xs = [point[0] for point in points]
+    ys = [point[1] for point in points]
+    if not xs or not ys:
+        return [0, 0, 0, 0]
+    left, top = min(xs), min(ys)
+    return [left, top, max(xs) - left, max(ys) - top]
+
+
+def _block_overlap_ratio(rect: list[int], region_xywh: list[int]) -> float:
+    """Fraction of the text block's own area covered by the mark region."""
+    try:
+        rx, ry, rw, rh = (float(value) for value in rect)
+        gx, gy, gw, gh = (float(value) for value in region_xywh)
+    except (TypeError, ValueError):
+        return 0.0
+    if rw <= 0 or rh <= 0 or gw <= 0 or gh <= 0:
+        return 0.0
+    inter_w = max(0.0, min(rx + rw, gx + gw) - max(rx, gx))
+    inter_h = max(0.0, min(ry + rh, gy + gh) - max(ry, gy))
+    return (inter_w * inter_h) / (rw * rh)
+
+
+def _sort_blocks_reading_order(blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Top-to-bottom, then left-to-right, using a row bucket so lines on the
+    same visual row keep their horizontal order instead of jumping around."""
+    return sorted(
+        blocks,
+        key=lambda block: (
+            round(int(block.get("rect")[1]) / 22.0) if isinstance(block.get("rect"), (list, tuple)) and len(block.get("rect")) == 4 else 0,
+            block.get("rect")[0] if isinstance(block.get("rect"), (list, tuple)) and len(block.get("rect")) == 4 else 0,
+        ),
+    )
+
+
+def _filter_ocr_blocks_by_strokes(
+    blocks: list[dict[str, Any]],
+    strokes: list[list[tuple[int, int]]],
+) -> tuple[list[dict[str, Any]], list[list[dict[str, Any]]]]:
+    """Keep only OCR text blocks a stroke actually crosses.
+
+    The user's mark is the stroke polyline itself (underline / strike-through
+    semantics), not the min-max bounding box of all strokes, which would pull
+    in everything between independent lines. Returns (selected, segments) where
+    each segment holds the blocks hit by one stroke.
+    """
+    if not blocks or not strokes:
+        return list(blocks), [list(blocks)]
+    selected: list[dict[str, Any]] = []
+    segments: list[list[dict[str, Any]]] = []
+    seen_keys: set[str] = set()
+    for stroke in strokes:
+        closed = _stroke_is_closed(stroke)
+        region = _stroke_xywh(stroke)
+        segment_blocks: list[dict[str, Any]] = []
+        for block in blocks:
+            rect = block.get("rect")
+            if not isinstance(rect, (list, tuple)) or len(rect) != 4:
+                continue
+            if closed:
+                # Loop/selection-box semantics: any block whose center (or the
+                # bulk of its area) falls inside the marked region counts, so
+                # nested cards / middle lines are never dropped. A 30%+ area
+                # overlap snaps the block in whole (hand-drawn loops rarely
+                # cover a card perfectly).
+                if (
+                    not _block_center_in_region(list(rect), region)
+                    and _block_overlap_ratio(list(rect), region) <= 0.30
+                ):
+                    continue
+            else:
+                # Underline/strike semantics: the line must actually cross the
+                # block, or cover a substantial part of it (edge tolerance).
+                if (
+                    not _polyline_hits_rect(stroke, list(rect))
+                    and _block_overlap_ratio(list(rect), region) <= 0.30
+                ):
+                    continue
+            key = json.dumps(block, ensure_ascii=False, sort_keys=True)
+            if key not in seen_keys:
+                seen_keys.add(key)
+                selected.append(block)
+            segment_blocks.append(block)
+        if segment_blocks:
+            segments.append(_sort_blocks_reading_order(segment_blocks))
+    if not selected:
+        return [], []
+    return _sort_blocks_reading_order(selected), segments
+
+
+def _read_local_ocr_boxes(
+    capture_path: str | Path,
+    *,
+    strokes_local: list[list[tuple[int, int]]] | None = None,
+    selection_local: list[int] | None = None,
+) -> tuple[list[dict[str, Any]], str] | None:
+    worker_result = _ocr_worker_request(
+        capture_path,
+        strokes_local=strokes_local,
+        selection_local=selection_local,
+    )
+    if worker_result is not None:
+        return worker_result
+    return _read_local_ocr_boxes_full(capture_path)
+
+
+def _read_local_ocr_boxes_full(
+    capture_path: str | Path,
+) -> tuple[list[dict[str, Any]], str] | None:
+    """Run local OCR over the FULL capture and return per-text-block boxes.
+
+    The screen is read as a whole (full-context recognition, like clicky and
+    UFO²); the caller filters blocks by the user's mark afterwards. Returns
+    None when OCR produced nothing usable.
+    """
+    path = Path(capture_path)
+    if not path.is_file():
+        return None
+    blocks: list[dict[str, Any]] = []
+    try:
+        import numpy as np
+
+        result = _get_rapid_ocr()(str(path))
+        txts = list(result.txts or ())
+        boxes_arr = np.asarray(result.boxes) if getattr(result, "boxes", None) is not None else None
+        scores = getattr(result, "scores", None)
+        score_values: list[float] = []
+        if scores is not None:
+            try:
+                score_values = [float(item) for item in list(scores)]
+            except (TypeError, ValueError):
+                score_values = []
+        for index, raw_text in enumerate(txts):
+            text = str(raw_text or "").strip()
+            if not text:
+                continue
+            block: dict[str, Any] = {"text": text, "rect": None, "conf": None}
+            if index < len(score_values):
+                block["conf"] = score_values[index]
+            if boxes_arr is not None and boxes_arr.ndim == 3 and index < boxes_arr.shape[0]:
+                box = boxes_arr[index].tolist()
+                try:
+                    xs = [float(point[0]) for point in box]
+                    ys = [float(point[1]) for point in box]
+                    if xs and ys:
+                        block["rect"] = [
+                            int(round(min(xs))),
+                            int(round(min(ys))),
+                            int(round(max(xs) - min(xs))),
+                            int(round(max(ys) - min(ys))),
+                        ]
+                except (TypeError, ValueError, IndexError):
+                    pass
+            blocks.append(block)
+        if blocks:
+            return blocks, "rapidocr-onnx"
+    except Exception:
+        pass
+    # Tesseract fallback has no per-block geometry; return the whole text as a
+    # single unfilterable block so the read still succeeds.
+    try:
+        executor = FabricExecutors(root=ROOT)
+        text = str(executor._default_ocr(path) or "").strip()
+        if text:
+            return [{"text": text, "rect": None, "conf": None}], str(
+                executor.last_ocr_engine or "tesseract"
+            )
+    except Exception:
+        pass
+    return None
+
+
+def _filter_ocr_blocks_by_bbox(
+    blocks: list[dict[str, Any]],
+    selection_bbox: Any,
+    *,
+    padding: int = 8,
+) -> list[dict[str, Any]]:
+    """Keep only OCR text blocks overlapping the user's mark.
+
+    Full-screen OCR still runs; this scopes what the model receives to the
+    marked region without cropping the image (the whole screen is recognized).
+    """
+    if not blocks or not selection_bbox:
+        return list(blocks)
+    try:
+        sx, sy, sw, sh = (float(value) for value in selection_bbox)
+    except (TypeError, ValueError):
+        return list(blocks)
+    left, top = sx - padding, sy - padding
+    right, bottom = sx + sw + padding, sy + sh + padding
+    kept: list[dict[str, Any]] = []
+    for block in blocks:
+        rect = block.get("rect")
+        if not isinstance(rect, (list, tuple)) or len(rect) != 4:
+            kept.append(block)
+            continue
+        try:
+            bx, by, bw, bh = (float(value) for value in rect)
+        except (TypeError, ValueError):
+            kept.append(block)
+            continue
+        if bw <= 0 or bh <= 0:
+            continue
+        # Axis-aligned overlap with the (inflated) mark region.
+        if bx < right and bx + bw > left and by < bottom and by + bh > top:
+            kept.append(block)
+    return kept
+
+
+OCR_WORKER_PORT_FILE = ROOT / "data" / "runtime" / "ocr_worker.port"
+OCR_WORKER_SCRIPT = ROOT / "scripts" / "ocr_resident_worker.py"
+
+
+def _ocr_worker_connect(timeout: float = 3.0) -> Any:
+    import time
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not OCR_WORKER_PORT_FILE.is_file():
+            time.sleep(0.2)
+            continue
+        try:
+            meta = json.loads(OCR_WORKER_PORT_FILE.read_text(encoding="utf-8"))
+            port = int(meta.get("port") or 0)
+            if port > 0:
+                return socket.create_connection(("127.0.0.1", port), timeout=2.0)
+        except Exception:
+            # The worker may still be writing its port file (or just starting
+            # to accept); never delete it here, just retry on the next tick.
+            time.sleep(0.2)
+    return None
+
+
+def _spawn_ocr_worker() -> None:
+    try:
+        subprocess.Popen(
+            [sys.executable, str(OCR_WORKER_SCRIPT)],
+            cwd=str(ROOT),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except Exception:
+        pass
+
+
+def _ocr_worker_request(
+    capture_path: str | Path,
+    *,
+    strokes_local: list[list[tuple[int, int]]] | None = None,
+    selection_local: list[int] | None = None,
+    timeout: float = 30.0,
+) -> tuple[list[dict[str, Any]], str] | None:
+    import time
+
+    sock = _ocr_worker_connect(timeout=2.0)
+    if sock is None:
+        _spawn_ocr_worker()
+        sock = _ocr_worker_connect(timeout=15.0)
+    if sock is None:
+        return None
+    try:
+        request = {
+            "id": 1,
+            "path": str(capture_path),
+            "strokes_local": [list(stroke) for stroke in (strokes_local or [])],
+            "selection_bbox_local": selection_local,
+        }
+        sock.sendall((json.dumps(request, ensure_ascii=False) + "\n").encode("utf-8"))
+        sock.settimeout(timeout)
+        buffer = b""
+        while b"\n" not in buffer:
+            chunk = sock.recv(65536)
+            if not chunk:
+                break
+            buffer += chunk
+        line = buffer.split(b"\n", 1)[0].strip()
+        response = json.loads(line.decode("utf-8"))
+        if response.get("ok") is True and response.get("blocks") is not None:
+            return list(response["blocks"]), str(response.get("engine") or "rapidocr-onnx")
+        return None
+    except Exception:
+        return None
+    finally:
+        try:
+            sock.close()
+        except Exception:
+            pass
+
+
+_RAPID_OCR_INSTANCE: Any = None
+
+
+def _get_rapid_ocr() -> Any:
+    """Reuse one RapidOCR engine across calls; model init costs ~9s."""
+    global _RAPID_OCR_INSTANCE
+    if _RAPID_OCR_INSTANCE is None:
+        from rapidocr import RapidOCR
+
+        _RAPID_OCR_INSTANCE = RapidOCR()
+    return _RAPID_OCR_INSTANCE
+
+
 def _read_local_ocr(capture_path: str | Path) -> tuple[str | None, str]:
     """Read a saved screen capture locally; never uploads the image."""
     path = Path(capture_path)
@@ -352,20 +769,85 @@ def _enrich_screen_region_context(
     capture_path = str((snapshot or {}).get("capture_path") or "").strip()
     if not capture_path:
         return app_ctx
-    roi_path = _crop_roi_for_ocr(
-        capture_path,
-        (snapshot or {}).get("selection_bbox"),
-        (snapshot or {}).get("capture_bbox"),
-    )
-    ocr_target = roi_path if roi_path is not None else Path(capture_path)
-    try:
-        text, engine = _read_local_ocr(ocr_target)
-    finally:
-        if roi_path is not None:
+    # Full-screen recognition (keeps global context, like clicky / UFO²), then
+    # the user's mark filters which recognized blocks reach the model. The mark
+    # is the stroke polyline (underline semantics): only blocks a line actually
+    # crosses survive, so independent strokes stay independent segments and
+    # unrelated screen text (sidebar, thumbnails) never leaks in.
+    strokes_screen = _gesture_strokes((snapshot or {}).get("selection_gesture"))
+    selection_bbox = (snapshot or {}).get("selection_bbox")
+    capture_bbox = (snapshot or {}).get("capture_bbox")
+    strokes_local = None
+    selection_local = None
+    offset_x = offset_y = 0
+    if isinstance(capture_bbox, (list, tuple)) and len(capture_bbox) == 4:
+        try:
+            offset_x, offset_y = int(capture_bbox[0]), int(capture_bbox[1])
+        except (TypeError, ValueError):
+            offset_x = offset_y = 0
+        if strokes_screen:
+            strokes_local = [
+                [(x - offset_x, y - offset_y) for (x, y) in stroke]
+                for stroke in strokes_screen
+            ]
+        if selection_bbox is not None:
             try:
-                roi_path.unlink(missing_ok=True)
-            except OSError:
-                pass
+                selection_local = [
+                    int(selection_bbox[0]) - offset_x,
+                    int(selection_bbox[1]) - offset_y,
+                    int(selection_bbox[2]),
+                    int(selection_bbox[3]),
+                ]
+            except (TypeError, ValueError, IndexError):
+                selection_local = None
+    read = _read_local_ocr_boxes(
+        capture_path,
+        strokes_local=strokes_local,
+        selection_local=selection_local,
+    )
+    if not read:
+        return app_ctx
+    blocks, engine = read
+    if offset_x or offset_y:
+        mapped_blocks = []
+        for block in blocks:
+            rect = block.get("rect")
+            if isinstance(rect, (list, tuple)) and len(rect) == 4:
+                try:
+                    block = {
+                        **block,
+                        "rect": [
+                            int(rect[0]) + offset_x,
+                            int(rect[1]) + offset_y,
+                            int(rect[2]),
+                            int(rect[3]),
+                        ],
+                    }
+                except (TypeError, ValueError):
+                    pass
+            mapped_blocks.append(block)
+        blocks = mapped_blocks
+    strokes = strokes_screen
+    if strokes:
+        selected_blocks, segments = _filter_ocr_blocks_by_strokes(blocks, strokes)
+        segment_texts = [
+            "\n".join(str(block.get("text") or "").strip() for block in segment if str(block.get("text") or "").strip())
+            for segment in segments
+            if segment
+        ]
+        segment_texts = [item for item in segment_texts if item]
+        if len(segment_texts) > 1:
+            text = "\n".join(f"[segment {index}] {item}" for index, item in enumerate(segment_texts, 1))
+        else:
+            text = "\n".join(segment_texts)
+    else:
+        selected_blocks = _filter_ocr_blocks_by_bbox(blocks, selection_bbox)
+        segments = []
+        text = "\n".join(
+            str(block.get("text") or "").strip()
+            for block in selected_blocks
+            if str(block.get("text") or "").strip()
+        ).strip()
     if not text:
         return app_ctx
     artifacts = dict(app_ctx.artifacts if app_ctx is not None else {})
@@ -373,8 +855,12 @@ def _enrich_screen_region_context(
         "capture_path": capture_path,
         "annotated_path": str((snapshot or {}).get("annotated_path") or ""),
         "ocr_engine": engine,
-        "ocr_roi_applied": roi_path is not None,
-        "ocr_roi_bbox": (snapshot or {}).get("selection_bbox"),
+        "ocr_full_screen": True,
+        "ocr_block_count_total": len(blocks),
+        "ocr_block_count_selected": len(selected_blocks),
+        "ocr_stroke_filter": bool(strokes),
+        "ocr_segment_count": len(segments),
+        "ocr_selection_bbox": selection_bbox,
         "perception_trace": (snapshot or {}).get("perception_trace"),
     })
     return AdapterReadContext(

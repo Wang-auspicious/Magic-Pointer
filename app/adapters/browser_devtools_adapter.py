@@ -26,6 +26,171 @@ _SELECTION_MAX_RECTANGLE_DIMENSION = 10_000
 _SELECTION_POINTER_TOLERANCE = 2
 
 
+
+BROWSER_DOM_REGION_PROBE_SCRIPT = r"""
+({ region, outerBBox, sampleStep }) => {
+  const finite = value => Number.isFinite(Number(value));
+  if (!region || !finite(region.x) || !finite(region.y) || !finite(region.width) || !finite(region.height)
+    || region.width <= 0 || region.height <= 0
+    || !Array.isArray(outerBBox) || outerBBox.length !== 4) {
+    return { state: 'invalid_region' };
+  }
+  const [left, top, right, bottom] = outerBBox.map(Number);
+  const physicalWidth = Math.max(1, right - left);
+  const physicalHeight = Math.max(1, bottom - top);
+  const outerWidth = Math.max(1, Number(window.outerWidth) || physicalWidth);
+  const outerHeight = Math.max(1, Number(window.outerHeight) || physicalHeight);
+  const scaleX = physicalWidth / outerWidth;
+  const scaleY = physicalHeight / outerHeight;
+  const sideChromeCss = Math.max(0, (outerWidth - window.innerWidth) / 2);
+  const topChromeCss = Math.max(0, outerHeight - window.innerHeight - sideChromeCss);
+  const toViewport = (px, py) => ({
+    x: ((Number(px) - left) / scaleX) - sideChromeCss,
+    y: ((Number(py) - top) / scaleY) - topChromeCss,
+  });
+  const regionVp = toViewport(region.x, region.y);
+  const regionW = region.width / scaleX;
+  const regionH = region.height / scaleY;
+  const step = Math.max(12, Number(sampleStep) || 48);
+
+  const esc = value => window.CSS && CSS.escape
+    ? CSS.escape(String(value))
+    : String(value).replace(/[^A-Za-z0-9_-]/g, character => '\\' + character);
+  const unique = selector => {
+    try { return document.querySelectorAll(selector).length === 1; } catch { return false; }
+  };
+  const stableSelector = node => {
+    if (node.id) {
+      const selector = '#' + esc(node.id);
+      if (unique(selector)) return selector;
+    }
+    for (const key of ['data-testid', 'data-test', 'data-qa', 'name', 'aria-label']) {
+      const value = node.getAttribute(key);
+      if (!value) continue;
+      const selector = node.tagName.toLowerCase() + '[' + key + '=' + JSON.stringify(value) + ']';
+      if (unique(selector)) return selector;
+    }
+    const parts = [];
+    let current = node;
+    for (let depth = 0; current && current.nodeType === 1 && depth < 8; depth += 1) {
+      let part = current.tagName.toLowerCase();
+      if (current.id) {
+        part = '#' + esc(current.id);
+        parts.unshift(part);
+        break;
+      }
+      const siblings = current.parentElement
+        ? Array.from(current.parentElement.children).filter(item => item.tagName === current.tagName)
+        : [];
+      if (siblings.length > 1) part += ':nth-of-type(' + (siblings.indexOf(current) + 1) + ')';
+      parts.unshift(part);
+      const selector = parts.join(' > ');
+      if (unique(selector)) return selector;
+      current = current.parentElement;
+    }
+    return parts.join(' > ');
+  };
+
+  const overlapRatio = (a, b) => {
+    const ix = Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left));
+    const iy = Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top));
+    const inter = ix * iy;
+    const area = Math.max(1, (b.right - b.left) * (b.bottom - b.top));
+    return inter / area;
+  };
+
+  // Snap upward to the nearest container that actually owns readable text
+  // (tweet card, comment, list item, paragraph). The user's hand-drawn mark
+  // only needs to overlap the container body (>= 30%) for us to adopt it whole.
+  const findTextContainer = node => {
+    let current = node;
+    const regionRect = {
+      left: regionVp.x, top: regionVp.y,
+      right: regionVp.x + regionW, bottom: regionVp.y + regionH,
+    };
+    for (let depth = 0; current && current.nodeType === 1 && depth < 8; depth += 1) {
+      const text = (current.innerText || '').trim();
+      const rect = current.getBoundingClientRect();
+      if (text.length >= 2
+        && rect.width > 0 && rect.height > 0
+        && rect.width <= 2200
+        && overlapRatio(regionRect, { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom }) >= 0.30) {
+        return current;
+      }
+      if (current === document.body) break;
+      current = current.parentElement;
+    }
+    return null;
+  };
+
+  const seen = new Map();
+  const collectPoint = (px, py) => {
+    const vp = toViewport(px, py);
+    if (vp.x < 0 || vp.y < 0 || vp.x > window.innerWidth || vp.y > window.innerHeight) return;
+    let element = null;
+    try { element = document.elementFromPoint(vp.x, vp.y); } catch { return; }
+    if (!element) return;
+    const container = findTextContainer(element);
+    if (!container) return;
+    const text = (container.innerText || '').trim();
+    if (text.length < 2) return;
+    const rect = container.getBoundingClientRect();
+    const key = text.slice(0, 120) + '|' + Math.round(rect.left) + '|' + Math.round(rect.top);
+    if (!seen.has(key)) {
+      seen.set(key, { element: container, text, rect });
+    }
+  };
+
+  const xs = Math.max(1, Math.floor(regionW / step));
+  const ys = Math.max(1, Math.floor(regionH / step));
+  for (let gy = 0; gy <= ys && gy < 10; gy += 1) {
+    for (let gx = 0; gx <= xs && gx < 12; gx += 1) {
+      const vx = regionVp.x + Math.min(regionW, gx * step + step / 2);
+      const vy = regionVp.y + Math.min(regionH, gy * step + step / 2);
+      collectPoint(left + ((sideChromeCss + vx) * scaleX), top + ((topChromeCss + vy) * scaleY));
+    }
+  }
+
+  const containers = Array.from(seen.values()).sort((a, b) => {
+    if (a.element === b.element) return 0;
+    const position = a.element.compareDocumentPosition(b.element);
+    if (position & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+    if (position & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+    return 0;
+  });
+
+  const textBlocks = [];
+  const combined = [];
+  for (const item of containers) {
+    if (combined.indexOf(item.element) !== -1) continue;
+    combined.push(item.element);
+    const rect = item.rect;
+    const normalized = {
+      text: item.text.slice(0, 4000),
+      selector: stableSelector(item.element).slice(0, 1200),
+      tag: item.element.tagName.toLowerCase(),
+      rect: {
+        x: left + ((sideChromeCss + rect.left) * scaleX),
+        y: top + ((topChromeCss + rect.top) * scaleY),
+        width: rect.width * scaleX,
+        height: rect.height * scaleY,
+      },
+    };
+    textBlocks.push(normalized);
+  }
+  const text = combined.map(item => (item.innerText || '').trim()).filter(Boolean).join('\n').slice(0, 12000);
+  return {
+    state: 'resolved',
+    page: { title: document.title, url: location.href },
+    method: 'cdp:dom-region',
+    text,
+    textBlocks,
+    selection_rectangles_coordinate_space: 'physical_screen_pixels',
+    devicePixelRatio: Number(window.devicePixelRatio) || 1,
+  };
+}
+"""
+
 BROWSER_DOM_PROBE_SCRIPT = r"""
 ({ point, outerBBox }) => {
   const finite = value => Number.isFinite(Number(value));
@@ -590,6 +755,79 @@ class ChromeDevToolsProbe:
         except Exception as exc:
             return DevToolsProbeResult(False, {}, f"cdp_probe_failed:{type(exc).__name__}:{str(exc)[:160]}")
 
+    def probe_region(self, window: JsonDict, region: dict[str, int]) -> DevToolsProbeResult:
+        targets = self._available_targets()
+        if not targets:
+            return DevToolsProbeResult(False, {}, "cdp_endpoint_unavailable")
+        selected = self._select_target(targets, str(window.get("title") or ""))
+        if selected is None:
+            return DevToolsProbeResult(False, {}, "target_page_unmatched")
+        endpoint, target = selected
+        try:
+            return self._evaluate_region(target, endpoint, window, region)
+        except Exception as exc:
+            return DevToolsProbeResult(False, {}, f"cdp_probe_failed:{type(exc).__name__}:{str(exc)[:160]}")
+
+    def _evaluate_region(
+        self,
+        target: dict[str, Any],
+        endpoint: str,
+        window: JsonDict,
+        region: dict[str, int],
+    ) -> DevToolsProbeResult:
+        try:
+            import websocket
+        except Exception as exc:
+            return DevToolsProbeResult(False, {}, f"websocket_client_unavailable:{type(exc).__name__}")
+        socket = websocket.create_connection(
+            str(target.get("webSocketDebuggerUrl") or ""),
+            timeout=self.timeout_ms / 1000,
+            suppress_origin=True,
+        )
+        request_id = 0
+
+        def call(method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+            nonlocal request_id
+            request_id += 1
+            expected_id = request_id
+            socket.send(json.dumps({"id": expected_id, "method": method, "params": dict(params or {})}))
+            while True:
+                message = json.loads(socket.recv())
+                if not isinstance(message, dict):
+                    continue
+                if message.get("id") == expected_id:
+                    if message.get("error"):
+                        raise RuntimeError(str(message["error"])[:500])
+                    return dict(message.get("result") or {})
+                if message.get("method") == "Runtime.exceptionThrown":
+                    raise RuntimeError(str((message.get("params") or {}).get("exceptionDetails") or "runtime_exception")[:300])
+
+        try:
+            argument = {
+                "region": region,
+                "outerBBox": list(window.get("bbox") or []),
+                "sampleStep": 48,
+            }
+            expression = (
+                f"({BROWSER_DOM_REGION_PROBE_SCRIPT})"
+                f"({json.dumps(argument, ensure_ascii=False)})"
+            )
+            evaluated = call("Runtime.evaluate", {
+                "expression": expression,
+                "returnByValue": True,
+                "awaitPromise": True,
+            })
+            raw = dict(evaluated.get("result") or {})
+            if not isinstance(raw, dict) or not raw.get("state"):
+                return DevToolsProbeResult(False, dict(raw or {}), "dom_region_evaluate_missing")
+            if raw.get("state") != "resolved":
+                return DevToolsProbeResult(False, dict(raw or {}), str(raw.get("state") or "dom_region_failed"))
+            return DevToolsProbeResult(True, dict(raw or {}))
+        except Exception as exc:
+            return DevToolsProbeResult(False, {}, f"cdp_region_failed:{type(exc).__name__}:{str(exc)[:160]}")
+        finally:
+            socket.close()
+
     def _probe_target(
         self,
         target: dict[str, Any],
@@ -725,12 +963,96 @@ class BrowserDevToolsAdapter(AppAdapter):
         self,
         *,
         probe: Callable[[JsonDict, JsonDict], DevToolsProbeResult | None] | None = None,
+        probe_region: Callable[[JsonDict, dict[str, int]], DevToolsProbeResult | None] | None = None,
     ) -> None:
         self._probe = probe or ChromeDevToolsProbe().probe
+        self._probe_region = probe_region or ChromeDevToolsProbe().probe_region
 
     def match_window(self, window: JsonDict) -> bool:
         title = str(window.get("title") or "").strip()
         return str(window.get("class_name") or "") == _CHROMIUM_CLASS and title not in _MAGIC_TITLES
+
+    def _read_region_context(
+        self,
+        window: JsonDict,
+        region: dict[str, int],
+        capabilities: list[AdapterCapability],
+    ) -> AdapterReadContext:
+        result = self._probe_region(dict(window), region)
+        if result is None or not result.ok:
+            return AdapterReadContext(
+                adapter=self.name,
+                app="browser",
+                window=window,
+                method="cdp:dom-region",
+                capabilities=capabilities,
+                artifacts={"devtools_state": "unavailable"},
+                error=str((result.error if result is not None else "cdp_probe_unavailable") or "cdp_probe_unavailable"),
+            )
+        data = dict(result.data or {})
+        text = str(data.get("text") or "").strip()
+        if not text:
+            return AdapterReadContext(
+                adapter=self.name,
+                app="browser",
+                window=window,
+                method="cdp:dom-region",
+                capabilities=capabilities,
+                error="dom_region_text_empty",
+            )
+        blocks: list[dict[str, Any]] = []
+        for item in list(data.get("textBlocks") or [])[:64]:
+            if not isinstance(item, dict):
+                continue
+            rect = item.get("rect")
+            if not isinstance(rect, dict):
+                continue
+            try:
+                rectangle = [
+                    int(round(float(rect.get("x") or 0))),
+                    int(round(float(rect.get("y") or 0))),
+                    int(round(float(rect.get("width") or 0))),
+                    int(round(float(rect.get("height") or 0))),
+                ]
+            except (TypeError, ValueError):
+                continue
+            if rectangle[2] <= 0 or rectangle[3] <= 0:
+                continue
+            blocks.append({
+                "text": str(item.get("text") or "").strip()[:4000],
+                "control_type": str(item.get("tag") or "text"),
+                "automation_id": str(item.get("selector") or "")[:500],
+                "rect": rectangle,
+            })
+        if not blocks:
+            return AdapterReadContext(
+                adapter=self.name,
+                app="browser",
+                window=window,
+                method="cdp:dom-region",
+                capabilities=capabilities,
+                error="dom_region_no_blocks",
+            )
+        safe_context = sanitize_browser_context(data) or {}
+        artifacts: JsonDict = {
+            "perception_result_kind": "region_elements",
+            "region_elements": blocks,
+            "selection_rectangles": [block["rect"] for block in blocks[:32]],
+            "selection_rectangles_format": "xywh",
+            "selection_rectangles_coordinate_space": "physical_screen_pixels",
+            "browser_context": safe_context,
+            "devtools_state": "available",
+        }
+        return AdapterReadContext(
+            adapter=self.name,
+            app="browser",
+            window=window,
+            content=text,
+            label=str((data.get("page") or {}).get("title") or str(window.get("title") or "网页")),
+            method="cdp:dom-region",
+            capabilities=capabilities,
+            artifacts=artifacts,
+        )
 
     def read_context(self, window: JsonDict, **kwargs: Any) -> AdapterReadContext:
         capabilities = [AdapterCapability(
@@ -738,6 +1060,14 @@ class BrowserDevToolsAdapter(AppAdapter):
             "Read the DOM node, stable selector, accessible name, network failure, and mapped coordinates through DevTools",
             "read_only",
         )]
+        raw_region = kwargs.get("target_region")
+        if isinstance(raw_region, dict):
+            try:
+                region = {key: int(raw_region.get(key) or 0) for key in ("x", "y", "width", "height")}
+                if region["width"] > 0 and region["height"] > 0:
+                    return self._read_region_context(window, region, capabilities)
+            except (TypeError, ValueError):
+                pass
         raw_point = kwargs.get("target_point")
         if not isinstance(raw_point, dict):
             return AdapterReadContext(

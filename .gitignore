@@ -13,7 +13,19 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .pytest-*/
+.tmp-pytest-*/
+.tmp-pytest-status-*/
 .tmp/
+
+# Downloaded ML / speech-model weights (progress commits never vendor models)
+/models/
+/data/models/
+*.ggml
+*.gguf
+*.safetensors
+*.ckpt
+*.pth
+*.pt
 
 # Node/Electron dependencies
 node_modules/

@@ -664,67 +664,107 @@ internal static class UiaSelectionProbe
         Rect region,
         SelectionResult result)
     {
+        // Region enumeration must never walk the whole UIA tree: Excel and
+        // other dense apps expose huge virtualized subtrees and FindAll(...,
+        // TrueCondition) is O(full tree) even for small visible tables.
+        // Use a bounded breadth-first ControlView walk with a CacheRequest so
+        // every needed property is bulk-fetched in one cross-process pass.
         List<RegionElement> found = new List<RegionElement>();
         HashSet<string> seen = new HashSet<string>(StringComparer.Ordinal);
+        const int maxVisitedNodes = 1200;
+        const int maxOutputElements = 64;
         try
         {
-            AutomationElementCollection descendants = root.FindAll(
-                TreeScope.Descendants,
-                Condition.TrueCondition);
-            int limit = Math.Min(descendants.Count, 4096);
-            for (int index = 0; index < limit; index++)
+            CacheRequest cacheRequest = new CacheRequest();
+            cacheRequest.Add(AutomationElement.BoundingRectangleProperty);
+            cacheRequest.Add(AutomationElement.ControlTypeProperty);
+            cacheRequest.Add(AutomationElement.NameProperty);
+            cacheRequest.Add(AutomationElement.AutomationIdProperty);
+            cacheRequest.Add(AutomationElement.HelpTextProperty);
+            cacheRequest.TreeFilter = Condition.TrueCondition;
+            TreeWalker walker = TreeWalker.ControlViewWalker;
+            List<AutomationElement> queue = new List<AutomationElement>();
+            bool truncated = false;
+            using (cacheRequest.Activate())
             {
-                AutomationElement element = descendants[index];
-                Rect rectangle = SafeBoundingRectangle(element);
-                if (rectangle.IsEmpty || rectangle.Width <= 0 || rectangle.Height <= 0)
+                queue.Add(root);
+                int visited = 0;
+                for (int index = 0; index < queue.Count && visited < maxVisitedNodes && found.Count < maxOutputElements; index++)
                 {
-                    continue;
+                    AutomationElement element = queue[index];
+                    visited++;
+                    Rect rectangle = SafeBoundingRectangle(element);
+                    if (rectangle.IsEmpty || rectangle.Width <= 0 || rectangle.Height <= 0)
+                    {
+                        // Still expand children; the element itself is not text.
+                    }
+                    else if (rectangle.IntersectsWith(region))
+                    {
+                        string controlType = SafeControlType(element);
+                        if (IsRegionControlType(controlType))
+                        {
+                            string name = SafeString(element, AutomationElement.NameProperty).Trim();
+                            string value = SafeValue(element).Trim();
+                            string helpText = SafeString(element, AutomationElement.HelpTextProperty).Trim();
+                            string text = !string.IsNullOrWhiteSpace(value)
+                                ? value
+                                : !string.IsNullOrWhiteSpace(name)
+                                    ? name
+                                    : helpText;
+                            if (!string.IsNullOrWhiteSpace(text))
+                            {
+                                if (text.Length > 1000)
+                                {
+                                    text = text.Substring(0, 1000);
+                                }
+                                string key = string.Join("|", new string[] {
+                                    text,
+                                    Math.Round(rectangle.Left).ToString(System.Globalization.CultureInfo.InvariantCulture),
+                                    Math.Round(rectangle.Top).ToString(System.Globalization.CultureInfo.InvariantCulture),
+                                    Math.Round(rectangle.Width).ToString(System.Globalization.CultureInfo.InvariantCulture),
+                                    Math.Round(rectangle.Height).ToString(System.Globalization.CultureInfo.InvariantCulture),
+                                });
+                                if (seen.Add(key))
+                                {
+                                    found.Add(new RegionElement {
+                                        Text = text,
+                                        ControlType = controlType,
+                                        AutomationId = SafeString(element, AutomationElement.AutomationIdProperty),
+                                        Rectangle = rectangle,
+                                    });
+                                }
+                            }
+                        }
+                    }
+
+                    if (visited >= maxVisitedNodes)
+                    {
+                        truncated = true;
+                        break;
+                    }
+                    try
+                    {
+                        AutomationElement child = walker.GetFirstChild(element);
+                        while (child != null && visited < maxVisitedNodes)
+                        {
+                            queue.Add(child);
+                            child = walker.GetNextSibling(child);
+                        }
+                    }
+                    catch (Exception)
+                    {
+                        // A subtree may be broken or in a different process; skip it.
+                    }
                 }
-                // A sweep often only crosses the lower edge of a text row.
-                // Center containment drops that row; geometric intersection
-                // preserves every component the user actually touched.
-                if (!rectangle.IntersectsWith(region))
+                if (visited >= maxVisitedNodes)
                 {
-                    continue;
+                    truncated = true;
                 }
-                string controlType = SafeControlType(element);
-                if (!IsRegionControlType(controlType))
-                {
-                    continue;
-                }
-                string name = SafeString(element, AutomationElement.NameProperty).Trim();
-                string value = SafeValue(element).Trim();
-                string helpText = SafeString(element, AutomationElement.HelpTextProperty).Trim();
-                string text = !string.IsNullOrWhiteSpace(value)
-                    ? value
-                    : !string.IsNullOrWhiteSpace(name)
-                        ? name
-                        : helpText;
-                if (string.IsNullOrWhiteSpace(text))
-                {
-                    continue;
-                }
-                if (text.Length > 1000)
-                {
-                    text = text.Substring(0, 1000);
-                }
-                string key = string.Join("|", new string[] {
-                    text,
-                    Math.Round(rectangle.Left).ToString(System.Globalization.CultureInfo.InvariantCulture),
-                    Math.Round(rectangle.Top).ToString(System.Globalization.CultureInfo.InvariantCulture),
-                    Math.Round(rectangle.Width).ToString(System.Globalization.CultureInfo.InvariantCulture),
-                    Math.Round(rectangle.Height).ToString(System.Globalization.CultureInfo.InvariantCulture),
-                });
-                if (!seen.Add(key))
-                {
-                    continue;
-                }
-                found.Add(new RegionElement {
-                    Text = text,
-                    ControlType = controlType,
-                    AutomationId = SafeString(element, AutomationElement.AutomationIdProperty),
-                    Rectangle = rectangle,
-                });
+            }
+            if (truncated)
+            {
+                result.RectanglesTruncated = true;
+                result.Truncated = true;
             }
         }
         catch (Exception ex)
@@ -741,7 +781,7 @@ internal static class UiaSelectionProbe
             }
             return left.Rectangle.Left.CompareTo(right.Rectangle.Left);
         });
-        int resultLimit = Math.Min(found.Count, 64);
+        int resultLimit = Math.Min(found.Count, maxOutputElements);
         StringBuilder textBuilder = new StringBuilder();
         for (int index = 0; index < resultLimit; index++)
         {
@@ -762,7 +802,7 @@ internal static class UiaSelectionProbe
             }
         }
         result.RectangleCountTotal = found.Count;
-        result.Truncated = found.Count > resultLimit;
+        result.Truncated = result.Truncated || found.Count > resultLimit;
         if (result.RegionElements.Count == 0)
         {
             result.Error = "No bounded UI Automation elements were found inside the target region.";
