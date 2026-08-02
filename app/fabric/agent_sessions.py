@@ -2,10 +2,18 @@ from __future__ import annotations
 
 import json
 import os
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
+
+
+_SESSION_METADATA_LINE_LIMIT = 64
+_SESSION_METADATA_BYTE_LIMIT = 128_000
+_SESSION_METADATA_PREFIX_BYTES = 96_000
+_SESSION_METADATA_TAIL_BYTES = _SESSION_METADATA_BYTE_LIMIT - _SESSION_METADATA_PREFIX_BYTES
+_SESSION_TITLE_MAX_CHARS = 80
 
 
 def _normalized_path(value: Path | str) -> Path:
@@ -37,26 +45,173 @@ def _timestamp(value: object, fallback: float) -> str:
     return datetime.fromtimestamp(fallback, timezone.utc).isoformat(timespec="seconds")
 
 
-def _metadata_lines(path: Path, *, limit: int = 32, byte_limit: int = 128_000) -> Iterable[dict[str, Any]]:
-    """Read only a bounded metadata prefix; transcript bodies never leave this module."""
-    consumed = 0
+def _metadata_lines(
+    path: Path,
+    *,
+    limit: int = _SESSION_METADATA_LINE_LIMIT,
+    byte_limit: int = _SESSION_METADATA_BYTE_LIMIT,
+    tail: bool = False,
+) -> Iterable[dict[str, Any]]:
+    """Parse complete JSONL records from one fixed-size prefix or tail read."""
     try:
-        with path.open("r", encoding="utf-8", errors="replace") as handle:
-            for _ in range(limit):
-                line = handle.readline()
-                if not line:
-                    break
-                consumed += len(line.encode("utf-8", errors="ignore"))
-                if consumed > byte_limit:
-                    break
-                try:
-                    value = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(value, dict):
-                    yield value
+        size = path.stat().st_size
+        bounded = max(0, min(int(byte_limit), _SESSION_METADATA_BYTE_LIMIT))
+        start = max(0, size - bounded) if tail else 0
+        with path.open("rb") as handle:
+            if start:
+                handle.seek(start)
+            data = handle.read(bounded)
     except OSError:
         return
+    if not data:
+        return
+    lines = data.splitlines()
+    if not tail and size > len(data) and not data.endswith((b"\n", b"\r")):
+        # Never parse a prefix record whose remainder is outside the byte budget.
+        lines = lines[:-1]
+    for raw_line in lines[: max(0, int(limit))]:
+        try:
+            value = json.loads(raw_line.decode("utf-8", errors="replace"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if isinstance(value, dict):
+            yield value
+
+
+def _session_records(path: Path) -> list[dict[str, Any]]:
+    """Read at most 128 KB and 64 complete records per session file."""
+    try:
+        size = path.stat().st_size
+    except OSError:
+        return []
+    if size <= _SESSION_METADATA_BYTE_LIMIT:
+        return list(_metadata_lines(path))
+    prefix = list(_metadata_lines(
+        path,
+        limit=48,
+        byte_limit=_SESSION_METADATA_PREFIX_BYTES,
+    ))
+    return prefix + list(_metadata_lines(
+        path,
+        limit=16,
+        byte_limit=_SESSION_METADATA_TAIL_BYTES,
+        tail=True,
+    ))
+
+
+def _string(value: object) -> str:
+    return value if isinstance(value, str) else ""
+
+
+def _message_text(value: object) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        return _message_text(value.get("content"))
+    if isinstance(value, list):
+        return " ".join(
+            text
+            for item in value
+            if isinstance(item, dict)
+            for text in [_string(item.get("text"))]
+            if text
+        )
+    return ""
+
+
+def _first_user_text(records: Iterable[dict[str, Any]], provider: str) -> str:
+    items = list(records)
+    if provider == "codex":
+        for item in items:
+            payload = item.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            if item.get("type") == "event_msg" and payload.get("type") == "user_message":
+                text = _message_text(payload.get("message"))
+                if text:
+                    return text
+        for item in items:
+            payload = item.get("payload")
+            if not isinstance(payload, dict):
+                continue
+            if (
+                item.get("type") == "response_item"
+                and payload.get("type") == "message"
+                and payload.get("role") == "user"
+            ):
+                text = _message_text(payload.get("content"))
+                if text:
+                    return text
+        return ""
+    if provider == "claude":
+        for item in items:
+            if item.get("type") != "user":
+                continue
+            text = _message_text(item.get("message"))
+            if text:
+                return text
+        return ""
+    if provider == "gemini":
+        for item in items:
+            if item.get("type") != "user":
+                continue
+            text = _message_text(item.get("content"))
+            if text:
+                return text
+        return ""
+    if provider == "pi":
+        for item in items:
+            message = item.get("message")
+            if item.get("type") != "message" or not isinstance(message, dict) or message.get("role") != "user":
+                continue
+            text = _message_text(message.get("content"))
+            if text:
+                return text
+    return ""
+
+
+def _metadata_title(records: Iterable[dict[str, Any]], provider: str) -> str:
+    title = ""
+    for item in records:
+        if provider == "claude" and item.get("type") in {"ai-title", "custom-title"}:
+            candidate = _string(item.get("customTitle") or item.get("aiTitle") or item.get("title"))
+        elif provider == "gemini":
+            update = item.get("$set")
+            candidate = _string(item.get("summary"))
+            if isinstance(update, dict):
+                candidate = _string(update.get("summary")) or candidate
+        elif provider == "pi" and item.get("type") == "session_info":
+            candidate = _string(item.get("name"))
+        else:
+            candidate = ""
+        if candidate:
+            title = candidate
+    return title
+
+
+def _clean_title(value: object) -> str:
+    text = _string(value)
+    if not text:
+        return ""
+    without_controls = "".join(
+        " " if unicodedata.category(character).startswith("C") else character
+        for character in text
+    )
+    normalized = " ".join(without_controls.split())
+    if len(normalized) <= _SESSION_TITLE_MAX_CHARS:
+        return normalized
+    return normalized[: _SESSION_TITLE_MAX_CHARS - 1].rstrip() + "…"
+
+
+def _fallback_title(provider: str, cwd: str, session_id: str) -> str:
+    provider_name = _clean_title(provider.capitalize()) or "Agent"
+    workspace = _clean_title(Path(cwd).name) or "workspace"
+    short_id = _clean_title(session_id)[:8] or "session"
+    return _clean_title(f"{provider_name} · {workspace} · {short_id}")
+
+
+def _session_title(provider: str, cwd: str, session_id: str, candidate: object = None) -> str:
+    return _clean_title(candidate) or _fallback_title(provider, cwd, session_id)
 
 
 @dataclass(frozen=True)
@@ -70,11 +225,13 @@ class AgentSession:
     source: str
     resume_token: str | None = None
     cwd_match: str = "none"
+    title: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "provider": self.provider,
             "sessionId": self.session_id,
+            "title": _session_title(self.provider, self.cwd, self.session_id, self.title),
             "cwd": self.cwd,
             "lastActiveAt": self.last_active_at,
             "state": self.state,
@@ -123,8 +280,20 @@ class AgentSessionRegistry:
         sessions: list[AgentSession] = []
         if not self.codex_root.is_dir():
             return sessions
+        titles: dict[str, str] = {}
+        for item in _metadata_lines(
+            self.codex_root.parent / "session_index.jsonl",
+            limit=2000,
+            byte_limit=_SESSION_METADATA_BYTE_LIMIT,
+            tail=True,
+        ):
+            session_id = _string(item.get("id")).strip()
+            title = _string(item.get("thread_name"))
+            if session_id and title:
+                titles[session_id] = title
         for path in self.codex_root.rglob("*.jsonl"):
-            first = next(iter(_metadata_lines(path, limit=2)), None)
+            records = _session_records(path)
+            first = records[0] if records else None
             payload = dict(first.get("payload") or {}) if isinstance(first, dict) else {}
             if first is None or first.get("type") != "session_meta":
                 continue
@@ -137,10 +306,12 @@ class AgentSessionRegistry:
             cwd = str(payload.get("cwd") or "").strip()
             if not session_id or not cwd:
                 continue
+            title = titles.get(session_id) or _first_user_text(records, "codex")
             sessions.append(AgentSession(
                 provider="codex", session_id=session_id, cwd=str(_normalized_path(cwd)),
                 last_active_at=_timestamp(path.stat().st_mtime, path.stat().st_mtime),
                 state=self._state(path), transport="exec-resume-jsonl", source="codex_session_meta",
+                title=_session_title("codex", cwd, session_id, title),
             ))
         return sessions
 
@@ -151,17 +322,20 @@ class AgentSessionRegistry:
         for path in self.claude_root.rglob("*.jsonl"):
             if "subagents" in {part.casefold() for part in path.parts}:
                 continue
-            metadata = next((item for item in _metadata_lines(path) if item.get("sessionId") and item.get("cwd")), None)
+            records = _session_records(path)
+            metadata = next((item for item in records if item.get("sessionId") and item.get("cwd")), None)
             if metadata is None:
                 continue
             session_id = str(metadata.get("sessionId") or path.stem).strip()
             cwd = str(metadata.get("cwd") or "").strip()
             if not session_id or not cwd:
                 continue
+            title = _metadata_title(records, "claude") or _first_user_text(records, "claude")
             sessions.append(AgentSession(
                 provider="claude", session_id=session_id, cwd=str(_normalized_path(cwd)),
                 last_active_at=_timestamp(None, path.stat().st_mtime),
                 state=self._state(path), transport="print-resume-stream-json", source="claude_session_meta",
+                title=_session_title("claude", cwd, session_id, title),
             ))
         return sessions
 
@@ -177,19 +351,35 @@ class AgentSessionRegistry:
                 cwd = project_root.read_text(encoding="utf-8").strip()
             except OSError:
                 continue
-            paths = sorted((project / "chats").glob("session-*.jsonl"), key=lambda item: item.stat().st_mtime, reverse=True)
+            paths = sorted(
+                [
+                    *list((project / "chats").glob("session-*.jsonl")),
+                    *list((project / "chats").glob("session-*.json")),
+                ],
+                key=lambda item: item.stat().st_mtime,
+                reverse=True,
+            )
             for index, path in enumerate(paths, 1):
-                metadata = next(iter(_metadata_lines(path, limit=2)), None)
-                if metadata is None or str(metadata.get("kind") or "main") != "main":
+                records = _session_records(path)
+                metadata: dict[str, Any] = {}
+                for item in records:
+                    update = item.get("$set")
+                    if isinstance(update, dict):
+                        metadata.update(update)
+                    if item.get("sessionId"):
+                        metadata.update(item)
+                if not metadata or str(metadata.get("kind") or "main") != "main":
                     continue
                 session_id = str(metadata.get("sessionId") or "").strip()
                 if not session_id:
                     continue
+                title = _metadata_title(records, "gemini") or _first_user_text(records, "gemini")
                 sessions.append(AgentSession(
                     provider="gemini", session_id=session_id, cwd=str(_normalized_path(cwd)),
                     last_active_at=_timestamp(None, path.stat().st_mtime),
                     state=self._state(path), transport="print-resume-json", source="gemini_session_meta",
                     resume_token=str(index),
+                    title=_session_title("gemini", cwd, session_id, title),
                 ))
         return sessions
 
@@ -198,17 +388,23 @@ class AgentSessionRegistry:
         if not self.pi_root.is_dir():
             return sessions
         for path in self.pi_root.rglob("*.jsonl"):
-            metadata = next((item for item in _metadata_lines(path) if (item.get("sessionId") or item.get("session_id")) and item.get("cwd")), None)
+            records = _session_records(path)
+            metadata = next((
+                item for item in records
+                if (item.get("sessionId") or item.get("session_id") or item.get("id")) and item.get("cwd")
+            ), None)
             if metadata is None:
                 continue
-            session_id = str(metadata.get("sessionId") or metadata.get("session_id") or "").strip()
+            session_id = str(metadata.get("sessionId") or metadata.get("session_id") or metadata.get("id") or "").strip()
             cwd = str(metadata.get("cwd") or "").strip()
             if not session_id or not cwd:
                 continue
+            title = _metadata_title(records, "pi") or _first_user_text(records, "pi")
             sessions.append(AgentSession(
                 provider="pi", session_id=session_id, cwd=str(_normalized_path(cwd)),
                 last_active_at=_timestamp(None, path.stat().st_mtime),
                 state=self._state(path), transport="pi-session-json", source="pi_session_meta",
+                title=_session_title("pi", cwd, session_id, title),
             ))
         return sessions
 

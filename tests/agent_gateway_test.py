@@ -41,6 +41,7 @@ class _Sessions:
             state="recent",
             transport="pi-session-json",
             source="pi_session_meta",
+            title="Ticket investigation",
             cwd_match="strict",
         )]
 
@@ -99,6 +100,16 @@ def test_gateway_resumes_existing_session_and_marks_background_rpc(tmp_path: Pat
         "digest": "a" * 64,
         "schemaVersion": 2,
     }
+
+
+def test_gateway_sessions_exposes_title_without_regressing_existing_fields(tmp_path: Path) -> None:
+    session = _gateway(tmp_path).sessions(provider="pi", cwd=tmp_path)[0]
+
+    assert session["title"] == "Ticket investigation"
+    assert {
+        "provider", "sessionId", "cwd", "lastActiveAt", "state", "transport",
+        "source", "resumeToken", "cwdMatch",
+    } <= set(session)
 
 
 def test_gateway_rejects_unverified_or_missing_active_session(tmp_path: Path) -> None:
