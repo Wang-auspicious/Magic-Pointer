@@ -6,6 +6,7 @@ import os
 import sys
 import uuid
 import ctypes
+from dataclasses import replace as replace_dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -16,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app.adapters import default_adapter_registry
+from app.adapters import AdapterReadContext, default_adapter_registry
 from app.context_pack import ContextSessionError, ContextSessionStore
 from app.fabric.audit import AuditStore
 from app.fabric.capture_policy import CapturePolicyEngine
@@ -478,6 +479,166 @@ def _context_rectangles(context: Any) -> list[list[int]]:
     return result
 
 
+def _gesture_strokes(gesture: dict[str, Any] | None) -> list[list[tuple[int, int]]]:
+    """Independent stroke polylines in physical screen pixels."""
+    if not isinstance(gesture, dict):
+        return []
+    strokes: list[list[tuple[int, int]]] = []
+    for stroke in list(gesture.get("strokes") or [])[:8]:
+        raw_points = list(stroke.get("points") or []) if isinstance(stroke, dict) else []
+        points: list[tuple[int, int]] = []
+        for raw in raw_points[:256]:
+            if not isinstance(raw, dict):
+                continue
+            try:
+                points.append((int(round(float(raw.get("x")))), int(round(float(raw.get("y"))))))
+            except (TypeError, ValueError):
+                continue
+        if len(points) >= 2:
+            strokes.append(points)
+    return strokes
+
+
+def _segment_hits_rect(
+    ax: float,
+    ay: float,
+    bx: float,
+    by: float,
+    left: float,
+    top: float,
+    right: float,
+    bottom: float,
+) -> bool:
+    """True when segment [a,b] intersects the axis-aligned rect (Liang-Barsky)."""
+
+    def inside(x: float, y: float) -> bool:
+        return left <= x <= right and top <= y <= bottom
+
+    if inside(ax, ay) or inside(bx, by):
+        return True
+    dx, dy = bx - ax, by - ay
+    if dx == 0 and dy == 0:
+        return False
+    p = [-dx, dx, -dy, dy]
+    q = [ax - left, right - ax, ay - top, bottom - ay]
+    u1, u2 = 0.0, 1.0
+    for pi, qi in zip(p, q):
+        if pi == 0:
+            if qi < 0:
+                return False
+        else:
+            ratio = qi / pi
+            if pi < 0:
+                if ratio > u2:
+                    return False
+                if ratio > u1:
+                    u1 = ratio
+            else:
+                if ratio < u1:
+                    return False
+                if ratio < u2:
+                    u2 = ratio
+    return True
+
+
+def _polyline_hits_rect(
+    points: list[tuple[int, int]],
+    rect_xywh: list[int] | tuple[int, int, int, int],
+    tolerance: float = 6.0,
+) -> bool:
+    """True when any stroke segment crosses (or tightly covers) the rect."""
+    if not points or len(rect_xywh) != 4:
+        return False
+    try:
+        rx, ry, rw, rh = (float(value) for value in rect_xywh)
+    except (TypeError, ValueError):
+        return False
+    if rw <= 0 or rh <= 0:
+        return False
+    left, top = rx - tolerance, ry - tolerance
+    right, bottom = rx + rw + tolerance, ry + rh + tolerance
+    for index in range(len(points) - 1):
+        ax, ay = points[index]
+        bx, by = points[index + 1]
+        if _segment_hits_rect(ax, ay, bx, by, left, top, right, bottom):
+            return True
+    return False
+
+
+def _select_region_elements_by_strokes(
+    region_elements: list[dict[str, Any]],
+    strokes: list[list[tuple[int, int]]],
+    *,
+    tolerance: float = 6.0,
+) -> tuple[list[dict[str, Any]], list[list[int]]]:
+    """Keep only elements actually crossed by a stroke.
+
+    Returns (selected_elements, segments) where each segment is the union
+    rectangle of the elements hit by one stroke. Multi-stroke selections stay
+    separate instead of collapsing into one big bounding box.
+    """
+    if not strokes:
+        return [], []
+    selected: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    segments: list[list[int]] = []
+    for stroke in strokes:
+        stroke_rects: list[list[int]] = []
+        for element in list(region_elements or [])[:64]:
+            if not isinstance(element, dict):
+                continue
+            rect = element.get("rect")
+            if not isinstance(rect, (list, tuple)) or len(rect) != 4:
+                continue
+            if not _polyline_hits_rect(stroke, list(rect), tolerance=tolerance):
+                continue
+            key = json.dumps(element, ensure_ascii=False, sort_keys=True)
+            if key not in seen:
+                seen.add(key)
+                selected.append(element)
+            stroke_rects.append([int(round(float(value))) for value in rect])
+        if stroke_rects:
+            merged = _union_xywh(stroke_rects)
+            if merged is not None and merged not in segments:
+                segments.append(merged)
+    return selected, segments
+
+
+def _region_context_selected(
+    region_context: Any,
+    selected: list[dict[str, Any]],
+    segments: list[list[int]],
+) -> Any:
+    """Rebuild a region context limited to stroke-selected elements."""
+    texts = [
+        str(element.get("text") or "").strip()
+        for element in selected
+        if str(element.get("text") or "").strip()
+    ]
+    if segments and len(segments) > 1:
+        content = "\n".join(
+            f"[segment {index}] {text}"
+            for index, text in enumerate(texts, 1)
+        )
+    else:
+        content = "\n".join(texts)
+    rects = [
+        [int(round(float(value))) for value in element["rect"]]
+        for element in selected
+        if isinstance(element.get("rect"), (list, tuple)) and len(element.get("rect")) == 4
+    ]
+    artifacts = dict(getattr(region_context, "artifacts", {}) or {})
+    region_elements = list(artifacts.get("region_elements") or [])
+    artifacts.update({
+        "selection_rectangles": rects,
+        "region_elements": selected,
+        "region_elements_total": len(region_elements),
+        "region_elements_selected": len(selected),
+        "selection_segments": segments,
+    })
+    return replace_dataclass(region_context, content=content, artifacts=artifacts)
+
+
 def _gesture_context_key(context: Any) -> str:
     rectangles = _context_rectangles(context)
     artifacts = dict(getattr(context, "artifacts", {}) or {})
@@ -527,15 +688,39 @@ def _read_gesture_target_context(
             and region_artifacts.get("perception_result_kind") == "region_elements"
             and region_rectangles
         ):
-            return region_window, region_context, region_trace, {
+            mode = "enclosed_region" if _is_enclosed_gesture(gesture, points) else "stroke_region"
+            grounding = {
                 "schemaVersion": 1,
                 "state": "resolved",
-                "mode": "enclosed_region" if _is_enclosed_gesture(gesture, points) else "stroke_region",
-                "candidate_count": len(list(region_artifacts.get("region_elements") or [])),
+                "mode": mode,
                 "sample_count": 0,
                 "score": 1.0,
                 "margin": 1.0,
-            }, _union_xywh(region_rectangles)
+            }
+            # Open strokes are underline/strike-through semantics: only the
+            # elements the line actually crosses (or tightly covers) count,
+            # and independent strokes stay independent multi-segments.
+            if mode == "stroke_region":
+                selected, segments = _select_region_elements_by_strokes(
+                    list(region_artifacts.get("region_elements") or []),
+                    _gesture_strokes(gesture),
+                )
+                if selected:
+                    resolved_context = _region_context_selected(region_context, selected, segments)
+                    grounding.update({
+                        "candidate_count": len(selected),
+                        "segment_count": len(segments),
+                        "segments": segments,
+                    })
+                    return (
+                        region_window,
+                        resolved_context,
+                        region_trace,
+                        grounding,
+                        _union_xywh(_context_rectangles(resolved_context)),
+                    )
+            grounding["candidate_count"] = len(list(region_artifacts.get("region_elements") or []))
+            return region_window, region_context, region_trace, grounding, _union_xywh(region_rectangles)
 
     sampled = _sample_gesture_points(points)
     candidates: dict[str, dict[str, Any]] = {}
@@ -1241,6 +1426,11 @@ def capture_snapshot(
         "capture_policy": capture_decision.to_dict() if capture_decision is not None else None,
         "perception_trace": perception_trace,
         "selection_bbox": gesture_selection_bbox,
+        "selection_segments": (
+            list((gesture_grounding or {}).get("segments") or [])
+            if isinstance(gesture_grounding, dict)
+            else None
+        ),
         "pointer_anchor_bbox": pointer_anchor,
         "selection_gesture": normalized_gesture,
         "gesture_grounding": gesture_grounding,

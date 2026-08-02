@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Automation;
 using System.Windows.Automation.Text;
@@ -10,6 +12,7 @@ using System.Windows.Automation.Text;
 internal static class UiaSelectionProbe
 {
     private const int MaxTextChars = 65536;
+    private const int UiaProbeHardTimeoutMs = 200;
     private const double SelectionPointTolerance = 4.0;
 
     private sealed class SelectionResult
@@ -103,6 +106,30 @@ internal static class UiaSelectionProbe
 
         try
         {
+            Task readTask = Task.Run(() => RunProbeCore(hwndValue, targetPoint, targetRegion, result));
+            if (!readTask.Wait(UiaProbeHardTimeoutMs))
+            {
+                result.Error = "uia_probe_timeout_200ms";
+            }
+        }
+        catch (Exception ex)
+        {
+            result.Error = ex.GetType().Name + ": " + ex.Message;
+        }
+
+        stopwatch.Stop();
+        WriteResult(result, hwndValue, stopwatch.ElapsedMilliseconds);
+        return result.Ok ? 0 : 1;
+    }
+
+    private static void RunProbeCore(
+        long hwndValue,
+        Point? targetPoint,
+        Rect? targetRegion,
+        SelectionResult result)
+    {
+        try
+        {
             AutomationElement root = AutomationElement.FromHandle(new IntPtr(hwndValue));
             if (root == null)
             {
@@ -181,10 +208,6 @@ internal static class UiaSelectionProbe
         {
             result.Error = ex.GetType().Name + ": " + ex.Message;
         }
-
-        stopwatch.Stop();
-        WriteResult(result, hwndValue, stopwatch.ElapsedMilliseconds);
-        return result.Ok ? 0 : 1;
     }
 
     [DllImport("Shcore.dll")]

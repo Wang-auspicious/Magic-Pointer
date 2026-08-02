@@ -16,6 +16,7 @@ import scripts.selection_bridge as selection_bridge
 from app.adapters.base import AdapterReadContext
 from scripts.selection_bridge import (
     _calendar_response,
+    _crop_roi_for_ocr,
     _route_response,
     _context_from_snapshot,
     _enrich_screen_region_context,
@@ -493,3 +494,82 @@ def test_reviewed_bridge_main_reports_payload_limit_without_processing(
     }
     assert stdin.buffer.tell() == len(encoded)
     assert max(stdin.buffer.read_sizes) <= max_payload_bytes + 1
+
+
+def test_crop_roi_for_ocr_crops_selection_bbox_with_padding(tmp_path) -> None:
+    from PIL import Image, ImageDraw
+
+    capture = tmp_path / "screen.png"
+    image = Image.new("RGB", (100, 100), "white")
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((10, 10, 30, 30), fill="black")  # outside ROI
+    draw.rectangle((40, 40, 60, 60), fill="black")  # inside ROI
+    image.save(capture)
+
+    roi = _crop_roi_for_ocr(capture, [40, 40, 20, 20], [0, 0, 100, 100], padding=4)
+    assert roi is not None
+    try:
+        with Image.open(roi) as cropped:
+            assert cropped.size == (28, 28)
+    finally:
+        roi.unlink(missing_ok=True)
+
+
+def test_crop_roi_for_ocr_returns_none_without_geometry(tmp_path) -> None:
+    capture = tmp_path / "screen.png"
+    capture.write_bytes(b"not-an-image")
+    assert _crop_roi_for_ocr(capture, None, [0, 0, 100, 100]) is None
+    assert _crop_roi_for_ocr(capture, [10, 10, 20, 20], None) is None
+
+
+def test_screen_region_enrich_uses_selection_roi_for_ocr(monkeypatch, tmp_path) -> None:
+    from PIL import Image
+
+    capture = tmp_path / "screen.png"
+    Image.new("RGB", (200, 200), "white").save(capture)
+    seen_paths = []
+    monkeypatch.setattr(
+        selection_bridge,
+        "_read_local_ocr",
+        lambda path: seen_paths.append(Path(path)) or ("ROI TEXT", "test-ocr"),
+    )
+
+    context = _enrich_screen_region_context(
+        {"title": "WeChat"},
+        None,
+        {
+            "source_kind": "screen_region",
+            "capture_path": str(capture),
+            "selection_bbox": [50, 60, 40, 20],
+            "capture_bbox": [0, 0, 200, 200],
+        },
+    )
+
+    assert context is not None
+    assert context.content == "ROI TEXT"
+    assert context.artifacts["ocr_roi_applied"] is True
+    assert context.artifacts["ocr_roi_bbox"] == [50, 60, 40, 20]
+    assert len(seen_paths) == 1
+    assert seen_paths[0].name.startswith("screen-roi-")
+    assert seen_paths[0].parent == capture.parent
+
+
+def test_screen_region_enrich_falls_back_to_full_capture_without_selection_bbox(monkeypatch, tmp_path) -> None:
+    capture = tmp_path / "screen.png"
+    capture.write_bytes(b"png-bytes")
+    seen = []
+    monkeypatch.setattr(
+        selection_bridge,
+        "_read_local_ocr",
+        lambda path: seen.append(Path(path)) or ("FULL TEXT", "test-ocr"),
+    )
+
+    context = _enrich_screen_region_context(
+        {"title": "WeChat"},
+        None,
+        {"source_kind": "screen_region", "capture_path": str(capture)},
+    )
+
+    assert context is not None
+    assert context.artifacts.get("ocr_roi_applied") is False
+    assert seen == [capture]

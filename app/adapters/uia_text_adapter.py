@@ -143,7 +143,7 @@ def _run_uia_selection_probe(
     *,
     target_point: dict[str, int] | None = None,
     target_region: dict[str, int] | None = None,
-    timeout: float = 2.5,
+    timeout: float = 1.0,
 ) -> UiaProbeResult:
     prepared = _ensure_uia_probe()
     if not prepared.ok:

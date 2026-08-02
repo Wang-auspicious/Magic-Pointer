@@ -4,6 +4,7 @@ import json
 import os
 import re
 import sys
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -275,6 +276,50 @@ def _context_from_snapshot(
     return dict(target_window or {}), app_ctx, snapshot, None
 
 
+def _crop_roi_for_ocr(
+    capture_path: str | Path,
+    selection_bbox: Any,
+    capture_bbox: Any,
+    padding: int = 12,
+) -> Path | None:
+    """Crop the gesture bbox (+padding) out of the full-screen capture.
+
+    Returns a temporary ROI PNG path, or None when geometry is unusable so the
+    caller falls back to the full capture. The full-screen image stays as the
+    evidence artifact; only the OCR read is scoped to the user's mark.
+    """
+    if not selection_bbox or not capture_bbox:
+        return None
+    try:
+        sel_x, sel_y, sel_w, sel_h = (int(round(float(value))) for value in selection_bbox)
+        cap_left, cap_top, cap_right, cap_bottom = (int(round(float(value))) for value in capture_bbox)
+    except (TypeError, ValueError):
+        return None
+    if sel_w <= 0 or sel_h <= 0 or cap_right <= cap_left or cap_bottom <= cap_top:
+        return None
+    capture = Path(capture_path)
+    if not capture.is_file():
+        return None
+    try:
+        from PIL import Image
+
+        with Image.open(capture) as image:
+            if image.width <= 0 or image.height <= 0:
+                return None
+            left = max(0, sel_x - cap_left - padding)
+            top = max(0, sel_y - cap_top - padding)
+            right = min(image.width, sel_x + sel_w - cap_left + padding)
+            bottom = min(image.height, sel_y + sel_h - cap_top + padding)
+            if right - left < 8 or bottom - top < 8:
+                return None
+            roi = image.crop((left, top, right, bottom))
+            out = capture.with_name(f"{capture.stem}-roi-{uuid.uuid4().hex[:8]}.png")
+            roi.save(out, format="PNG")
+            return out
+    except Exception:
+        return None
+
+
 def _read_local_ocr(capture_path: str | Path) -> tuple[str | None, str]:
     """Read a saved screen capture locally; never uploads the image."""
     path = Path(capture_path)
@@ -306,7 +351,20 @@ def _enrich_screen_region_context(
     capture_path = str((snapshot or {}).get("capture_path") or "").strip()
     if not capture_path:
         return app_ctx
-    text, engine = _read_local_ocr(capture_path)
+    roi_path = _crop_roi_for_ocr(
+        capture_path,
+        (snapshot or {}).get("selection_bbox"),
+        (snapshot or {}).get("capture_bbox"),
+    )
+    ocr_target = roi_path if roi_path is not None else Path(capture_path)
+    try:
+        text, engine = _read_local_ocr(ocr_target)
+    finally:
+        if roi_path is not None:
+            try:
+                roi_path.unlink(missing_ok=True)
+            except OSError:
+                pass
     if not text:
         return app_ctx
     artifacts = dict(app_ctx.artifacts if app_ctx is not None else {})
@@ -314,6 +372,8 @@ def _enrich_screen_region_context(
         "capture_path": capture_path,
         "annotated_path": str((snapshot or {}).get("annotated_path") or ""),
         "ocr_engine": engine,
+        "ocr_roi_applied": roi_path is not None,
+        "ocr_roi_bbox": (snapshot or {}).get("selection_bbox"),
         "perception_trace": (snapshot or {}).get("perception_trace"),
     })
     return AdapterReadContext(
@@ -343,16 +403,30 @@ def _screen_region_vision_answer(
     locator_images = [
         ("IMAGE A LOCATOR / user-marked target", locator_path)
     ] if locator_path.is_file() else []
+    roi_path = _crop_roi_for_ocr(
+        image_path,
+        (snapshot or {}).get("selection_bbox"),
+        (snapshot or {}).get("capture_bbox"),
+    )
+    if roi_path is not None:
+        locator_images.append(("IMAGE B SELECTED ROI / the exact user-marked region", roi_path))
     selection_bbox = (snapshot or {}).get("selection_bbox")
     context_text = _selection_context_text(app_ctx, target_window)
     if selection_bbox:
         context_text += f"\n\nUser-marked target bbox in physical screen pixels: {selection_bbox!r}"
-    return ask_vision_model(
-        image_path,
-        command,
-        context_text=context_text,
-        labeled_extra_images=locator_images,
-    )
+    try:
+        return ask_vision_model(
+            image_path,
+            command,
+            context_text=context_text,
+            labeled_extra_images=locator_images,
+        )
+    finally:
+        if roi_path is not None:
+            try:
+                roi_path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def _context_pack_response(

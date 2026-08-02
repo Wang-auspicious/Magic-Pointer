@@ -1139,3 +1139,105 @@ def test_runtime_issue_is_presented_as_one_agent_task_not_generic_context() -> N
         "command": "发送到这里",
         "autoRun": True,
     }]
+
+
+class _StrokeRegionAdapter:
+    def __init__(self) -> None:
+        self.region_requests: list[dict[str, int]] = []
+
+    def read_context(self, window, **kwargs):
+        target_region = kwargs.get("target_region")
+        if isinstance(target_region, dict):
+            self.region_requests.append(dict(target_region))
+        rows = [
+            {"text": "Formula A", "control_type": "Text", "rect": [100, 100, 300, 30]},
+            {"text": "The size of this range", "control_type": "Text", "rect": [100, 140, 300, 30]},
+            {"text": "Formula B", "control_type": "Text", "rect": [100, 180, 300, 30]},
+        ]
+        return AdapterReadContext(
+            adapter="uia_text_selection",
+            app="application",
+            window=window,
+            content="Formula A\nThe size of this range\nFormula B",
+            label="PDF rows",
+            method="uia:region-elements",
+            artifacts={
+                "perception_result_kind": "region_elements",
+                "selection_rectangles": [[100, 100, 300, 30], [100, 140, 300, 30], [100, 180, 300, 30]],
+                "selection_rectangles_format": "xywh",
+                "selection_rectangles_coordinate_space": "physical_screen_pixels",
+                "region_elements": rows,
+            },
+        )
+
+
+class _StrokeRegionRegistry:
+    def __init__(self) -> None:
+        self.adapter = _StrokeRegionAdapter()
+
+    def matching_adapter(self, _window):
+        return self.adapter
+
+
+def test_multi_stroke_selects_only_crossed_rows_as_segments() -> None:
+    registry = _StrokeRegionRegistry()
+    gesture = {
+        "schemaVersion": 2,
+        "coordinateSpace": "physical_screen_pixels",
+        "kind": "multi",
+        "releasePoint": {"x": 400, "y": 190},
+        "bbox": {"x": 100, "y": 100, "width": 300, "height": 110},
+        "strokes": [
+            {"points": [
+                {"x": 100, "y": 110}, {"x": 200, "y": 112}, {"x": 400, "y": 110},
+            ]},
+            {"points": [
+                {"x": 100, "y": 190}, {"x": 250, "y": 192}, {"x": 400, "y": 190},
+            ]},
+        ],
+    }
+
+    payload = capture_snapshot(
+        [{"title": "PDF", "hwnd": 901, "process_id": 902}],
+        registry=registry,
+        target_point={"x": 300, "y": 150},
+        gesture=gesture,
+        allow_visual_fallback=False,
+    )
+
+    snapshot = payload["selectionSnapshot"]
+    assert snapshot["context"]["content"] == "[segment 1] Formula A\n[segment 2] Formula B"
+    assert "size of this range" not in snapshot["context"]["content"]
+    assert snapshot["gesture_grounding"]["mode"] == "stroke_region"
+    assert snapshot["gesture_grounding"]["segment_count"] == 2
+    assert snapshot["selection_segments"] == [[100, 100, 300, 30], [100, 180, 300, 30]]
+    assert snapshot["selection_bbox"] == [100, 100, 300, 110]
+
+
+def test_single_open_stroke_keeps_only_crossed_element() -> None:
+    registry = _StrokeRegionRegistry()
+    gesture = {
+        "schemaVersion": 2,
+        "coordinateSpace": "physical_screen_pixels",
+        "kind": "line",
+        "releasePoint": {"x": 400, "y": 190},
+        "bbox": {"x": 100, "y": 100, "width": 300, "height": 110},
+        "strokes": [
+            {"points": [
+                {"x": 100, "y": 110}, {"x": 200, "y": 112}, {"x": 400, "y": 110},
+            ]},
+        ],
+    }
+
+    payload = capture_snapshot(
+        [{"title": "PDF", "hwnd": 901, "process_id": 902}],
+        registry=registry,
+        target_point={"x": 300, "y": 150},
+        gesture=gesture,
+        allow_visual_fallback=False,
+    )
+
+    snapshot = payload["selectionSnapshot"]
+    assert snapshot["context"]["content"] == "Formula A"
+    assert snapshot["gesture_grounding"]["segment_count"] == 1
+    assert snapshot["selection_segments"] == [[100, 100, 300, 30]]
