@@ -40,6 +40,15 @@ contextBridge.exposeInMainWorld('magicPointerStage', {
   submitSelectionCommand: (payload) => ipcRenderer.send('stage:submit-selection-command', payload),
   executeAction: (payload) => ipcRenderer.send('stage:execute-action', payload),
   contextAction: (payload) => ipcRenderer.send('stage:context-action', payload),
+  listAgentSessions: (selectionSessionToken) => ipcRenderer.invoke('stage:agent-sessions', {
+    selectionSessionToken: String(selectionSessionToken || ''),
+  }),
+  dispatchAgentPrompt: (payload) => ipcRenderer.invoke('stage:dispatch-agent-prompt', {
+    selectionSessionToken: String(payload?.selectionSessionToken || ''),
+    prompt: String(payload?.prompt || ''),
+    provider: String(payload?.provider || ''),
+    sessionId: String(payload?.sessionId || ''),
+  }),
   startDictation: () => ipcRenderer.send('dictation:start', { surface: 'stage' }),
   stopDictation: (options = {}) => ipcRenderer.send('dictation:stop', {
     surface: 'stage',

@@ -65,6 +65,17 @@
         <p class="card-diff"></p>
       </div>
     </template>
+    <template id="tpl-agent-prompt-draft">
+      <div class="agent-prompt-draft">
+        <textarea class="agent-prompt-editor" maxlength="60000" spellcheck="false" aria-label="可编辑的 Agent Prompt"></textarea>
+        <p class="agent-prompt-note" hidden></p>
+        <div class="agent-session-row" role="radiogroup" aria-label="正在运行的 Agent 会话"></div>
+        <div class="agent-prompt-actions">
+          <button type="button" class="agent-prompt-close">关闭</button>
+          <button type="button" class="agent-prompt-confirm" disabled>确认</button>
+        </div>
+      </div>
+    </template>
 
     <script src="../stage_state.js"></script>
     <script src="../stage_anchor.js"></script>

@@ -17,12 +17,14 @@ if _scripts_dir not in sys.path:
 from _bridge_common import ensure_root_on_path, force_utf8_stdio, read_json_line, write_json  # noqa: E402
 
 ensure_root_on_path()
+ROOT = Path(__file__).resolve().parents[1]
 
 from app.fabric.catalog import public_recipe_catalog
 from app.fabric.capabilities import CapabilityRegistry
 from app.fabric.artifacts import ArtifactRegistry
 from app.fabric.agent_gateway import AgentGateway
 from app.fabric.agent_context_handoff import AgentContextHandoffStore
+from app.fabric.agent_prompt_dispatch import dispatch_agent_prompt
 from app.fabric.engine import FabricEngine
 from app.fabric.mcp import CurrentObjectStore
 from app.fabric.router import RecipeRouter
@@ -273,6 +275,7 @@ def main() -> int:
                     cwd_match=str(payload.get("cwdMatch") or settings.agents.cwd_match),
                     include_mismatch=payload.get("includeMismatch") is True,
                     limit=int(payload.get("limit") or 200),
+                    active_only=payload.get("activeOnly") is True,
                 ),
                 "cwd": str(Path(payload.get("cwd") or ROOT).resolve()),
             }
@@ -329,6 +332,22 @@ def main() -> int:
                     "state": "accepted" if dispatched.get("accepted") is True else "verification_failed",
                     "dispatch": dispatched,
                 }
+        elif operation == "agent.prompt.dispatch":
+            result = dispatch_agent_prompt(
+                root=user_root,
+                packet=dict(payload.get("contextPacket") or {}),
+                prompt=str(payload.get("prompt") or ""),
+                provider=str(payload.get("provider") or ""),
+                session_id=str(payload.get("sessionId") or ""),
+                settings=store.load(),
+            )
+            result["intentKind"] = "agent_prompt_dispatched"
+            if result.get("ok") is True:
+                task = dict(result.get("task") or {})
+                result["answer"] = (
+                    f"已交给 {task.get('provider') or payload.get('provider')}，"
+                    f"任务 {task.get('taskId') or ''} 已进入{task.get('status') or '队列'}。"
+                )
         elif operation == "settings.get":
             result = {"ok": True, "settings": store.load().to_dict()}
         elif operation == "settings.save":

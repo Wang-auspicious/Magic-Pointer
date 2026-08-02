@@ -130,6 +130,20 @@ assert.strictEqual(question.type, 'RESULT');
 assert.strictEqual(question.result.presentation, 'answer-card');
 assert.strictEqual(question.result.answer, '这是一个需要展示给用户的回答。');
 
+const promptDraft = stageEventFromBridge({
+  ok: true,
+  kind: 'agent-prompt-draft',
+  contextPrompt: '请检查这个文件并修复。',
+  generatedBy: 'model',
+  contextPacket: { schemaVersion: 2, packetId: 'must-not-cross' },
+  actionProposals: [],
+});
+assert.strictEqual(promptDraft.type, 'RESULT');
+assert.strictEqual(promptDraft.result.kind, 'agent-prompt-draft');
+assert.strictEqual(promptDraft.result.prompt, '请检查这个文件并修复。');
+assert.strictEqual(promptDraft.result.generatedBy, 'model');
+assert.strictEqual(promptDraft.result.contextPacket, undefined);
+
 const failure = stageEventFromBridge({
   ok: false,
   error: '当前选区已过期。',

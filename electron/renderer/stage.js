@@ -33,6 +33,7 @@
   const tplCalendarDraft = document.getElementById('tpl-calendar-draft');
   const tplTableCompare = document.getElementById('tpl-table-compare');
   const tplTextDraft = document.getElementById('tpl-text-draft');
+  const tplAgentPromptDraft = document.getElementById('tpl-agent-prompt-draft');
 
   const DEFAULT_VISUAL_TUNING = Object.freeze({
     sweepHeightRatio: 0.52,
@@ -89,6 +90,13 @@
   let hitRegionKey = '';
   let hitRegionRefreshTimer = null;
   let voiceTriggerPolicy = null;
+  const agentPromptUi = {
+    key: '',
+    prompt: '',
+    sessions: [],
+    selectedSession: null,
+    loading: false,
+  };
   let previousPointerButtons = 0;
   let pointerWasOverCapsule = false;
   let lastPointerPoint = null;
@@ -177,8 +185,8 @@
       && x >= resultRect.left && x <= resultRect.right
       && y >= resultRect.top && y <= resultRect.bottom;
     if (overResult && primaryDown && !previousPrimaryDown && !surfaceDrag) {
-      const overAction = [...resultCard.querySelectorAll('button:not([disabled])')].some((button) => {
-        const rect = button.getBoundingClientRect();
+      const overAction = [...resultCard.querySelectorAll('button:not([disabled]), textarea, input, [contenteditable="true"]')].some((control) => {
+        const rect = control.getBoundingClientRect();
         return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
       });
       if (!overAction) {
@@ -799,6 +807,136 @@
     container.appendChild(card);
   }
 
+  function safeAgentSession(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const provider = String(raw.provider || '').toLowerCase();
+    const sessionId = String(raw.sessionId || '');
+    if (!['codex', 'claude', 'gemini', 'pi'].includes(provider) || !sessionId) return null;
+    if (raw.live !== true) return null;
+    if (raw.cwdMatch && raw.cwdMatch !== 'strict' && raw.cwdMatch !== 'subtree') return null;
+    const title = String(raw.title || '').replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim();
+    return {
+      provider,
+      sessionId,
+      title: (title || `${provider} · ${sessionId.slice(0, 8)}`).slice(0, 72),
+      state: String(raw.state || ''),
+    };
+  }
+
+  function loadAgentSessions(promptKey) {
+    if (agentPromptUi.loading || !api || typeof api.listAgentSessions !== 'function') return;
+    agentPromptUi.loading = true;
+    api.listAgentSessions(session.token).then((result) => {
+      if (agentPromptUi.key !== promptKey) return;
+      const sessions = Array.isArray(result?.sessions) ? result.sessions : [];
+      const seen = new Set();
+      agentPromptUi.sessions = sessions.flatMap((raw) => {
+        const item = safeAgentSession(raw);
+        if (!item) return [];
+        const key = `${item.provider}:${item.sessionId}`;
+        if (seen.has(key)) return [];
+        seen.add(key);
+        return [item];
+      }).slice(0, 5);
+      agentPromptUi.loading = false;
+      if (state.name === 'result' && state.result?.kind === 'agent-prompt-draft') render();
+    }).catch(() => {
+      if (agentPromptUi.key !== promptKey) return;
+      agentPromptUi.sessions = [];
+      agentPromptUi.loading = false;
+      if (state.name === 'result' && state.result?.kind === 'agent-prompt-draft') render();
+    });
+  }
+
+  function renderAgentPromptDraft(container, payload) {
+    const promptKey = `${session.token || ''}:${String(payload.prompt || '')}`;
+    if (agentPromptUi.key !== promptKey) {
+      agentPromptUi.key = promptKey;
+      agentPromptUi.prompt = String(payload.prompt || '');
+      agentPromptUi.sessions = [];
+      agentPromptUi.selectedSession = null;
+      agentPromptUi.loading = false;
+      loadAgentSessions(promptKey);
+    }
+    const draft = cloneTemplate(tplAgentPromptDraft);
+    const editor = draft.querySelector('.agent-prompt-editor');
+    const note = draft.querySelector('.agent-prompt-note');
+    const sessionsRow = draft.querySelector('.agent-session-row');
+    const close = draft.querySelector('.agent-prompt-close');
+    const confirm = draft.querySelector('.agent-prompt-confirm');
+    editor.value = agentPromptUi.prompt;
+    editor.addEventListener('input', () => {
+      agentPromptUi.prompt = editor.value.slice(0, 60000);
+      confirm.disabled = !agentPromptUi.prompt.trim() || !agentPromptUi.selectedSession;
+    });
+    if (payload.generatedBy === 'grounded_fallback') {
+      note.textContent = 'Model 暂不可用，当前为本地 grounded 草稿，可直接编辑。';
+      note.hidden = false;
+    }
+    if (agentPromptUi.loading) {
+      sessionsRow.textContent = '正在读取运行中的 Agent…';
+      sessionsRow.classList.add('is-empty');
+    } else if (!agentPromptUi.sessions.length) {
+      sessionsRow.textContent = '当前没有可验证的运行中 Agent 会话';
+      sessionsRow.classList.add('is-empty');
+    } else {
+      agentPromptUi.sessions.forEach((item) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'agent-session-chip';
+        button.dataset.provider = item.provider;
+        button.title = `${item.provider} · ${item.title}`;
+        button.setAttribute('role', 'radio');
+        const selected = agentPromptUi.selectedSession?.sessionId === item.sessionId
+          && agentPromptUi.selectedSession?.provider === item.provider;
+        button.setAttribute('aria-checked', selected ? 'true' : 'false');
+        button.classList.toggle('is-selected', selected);
+        const dot = document.createElement('i');
+        const label = document.createElement('span');
+        label.textContent = item.title;
+        button.append(dot, label);
+        button.addEventListener('click', () => {
+          agentPromptUi.selectedSession = item;
+          renderStructured(container, payload);
+          scheduleHitRegionRefresh();
+        });
+        sessionsRow.appendChild(button);
+      });
+    }
+    close.addEventListener('click', requestDismiss);
+    confirm.textContent = '确认';
+    confirm.disabled = !agentPromptUi.prompt.trim() || !agentPromptUi.selectedSession;
+    confirm.addEventListener('click', async () => {
+      const selected = agentPromptUi.selectedSession;
+      const prompt = agentPromptUi.prompt.trim();
+      if (!selected || !prompt || !api || typeof api.dispatchAgentPrompt !== 'function') return;
+      dispatch({ type: 'ACTION_START', command: `交给 ${selected.provider}` });
+      const result = await api.dispatchAgentPrompt({
+        selectionSessionToken: session.token,
+        prompt,
+        provider: selected.provider,
+        sessionId: selected.sessionId,
+      });
+      if (result?.ok === true) {
+        const task = result.task && typeof result.task === 'object' ? result.task : {};
+        dispatch({
+          type: 'RESULT',
+          result: {
+            kind: 'inline',
+            answer: String(result.answer || `已交给 ${selected.title}，任务开始执行。`),
+            status: String(result.state || 'accepted'),
+            statusLabel: '已发送，正在执行',
+            taskId: String(task.taskId || ''),
+            provider: selected.provider,
+          },
+        });
+      } else {
+        dispatch({ type: 'ERROR', error: { message: String(result?.error || '发送到 Agent 失败。') } });
+      }
+    });
+    container.appendChild(draft);
+  }
+
   // Action buttons carry only opaque tokens/ids from the stage contract; the
   // renderer never sees prompts or proposal parameters.
   function renderActions(container, payload) {
@@ -841,11 +979,13 @@
   function renderStructured(container, payload) {
     container.replaceChildren();
     const kind = payload && typeof payload === 'object' ? payload.kind : null;
+    container.dataset.kind = kind || 'inline';
     if (kind === 'calendar-draft') renderCalendarDraft(container, payload);
     else if (kind === 'table-compare') renderTableCompare(container, payload);
     else if (kind === 'text-draft') renderTextDraft(container, payload);
+    else if (kind === 'agent-prompt-draft') renderAgentPromptDraft(container, payload);
     else renderInline(container, payload);
-    renderActions(container, payload);
+    if (kind !== 'agent-prompt-draft') renderActions(container, payload);
   }
 
   function clearChips() {
@@ -939,6 +1079,11 @@
     capsuleInput.value = '';
     meta.selectionSource = null;
     meta.objectKind = null;
+    agentPromptUi.key = '';
+    agentPromptUi.prompt = '';
+    agentPromptUi.sessions = [];
+    agentPromptUi.selectedSession = null;
+    agentPromptUi.loading = false;
     if (hitRegionRefreshTimer) clearTimeout(hitRegionRefreshTimer);
     hitRegionRefreshTimer = null;
     if (targetSweepTimer) clearTimeout(targetSweepTimer);

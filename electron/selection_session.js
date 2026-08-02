@@ -29,6 +29,7 @@ class SelectionSessionStore {
       panelLayoutNonce: null,
       panelGeometry: null,
       panelPlacement: null,
+      agentPromptDraft: null,
       activeRequestId: null,
       createdAt: now,
       expiresAt: now + this.ttlMs,
@@ -69,6 +70,38 @@ class SelectionSessionStore {
     if (!entry) return null;
     entry.panelPlacement = placement || null;
     return entry;
+  }
+
+  setAgentPromptDraft(token, draft, now = Date.now()) {
+    const entry = this.get(token, now);
+    const prompt = String(draft?.prompt || '').trim();
+    const contextPacket = draft?.contextPacket;
+    if (
+      !entry
+      || !prompt
+      || prompt.length > 60000
+      || !contextPacket
+      || contextPacket.schemaVersion !== 2
+    ) return null;
+    entry.agentPromptDraft = {
+      prompt,
+      contextPacket: JSON.parse(JSON.stringify(contextPacket)),
+      contextPacketArtifact: String(draft?.contextPacketArtifact || ''),
+      generatedBy: String(draft?.generatedBy || ''),
+    };
+    return entry.agentPromptDraft;
+  }
+
+  getAgentPromptDraft(token, now = Date.now()) {
+    const entry = this.get(token, now);
+    return entry?.agentPromptDraft || null;
+  }
+
+  clearAgentPromptDraft(token, now = Date.now()) {
+    const entry = this.get(token, now);
+    if (!entry) return false;
+    entry.agentPromptDraft = null;
+    return true;
   }
 
   startRequest(token, now = Date.now()) {

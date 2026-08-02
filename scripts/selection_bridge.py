@@ -7,7 +7,7 @@ import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -47,6 +47,7 @@ from app.fabric.workflow_task_store import WorkflowTaskStore
 from app.fabric.catalog import get_recipe
 from app.fabric.engine import FabricEngine
 from app.fabric.executors import FabricExecutors
+from app.fabric.context_packet import build_agent_prompt, write_context_packet_artifact
 from app.fabric.settings import SettingsStore
 from scripts._bridge_common import (
     PayloadTooLargeError,
@@ -1113,6 +1114,100 @@ def _fabric_response(
     }
 
 
+def _compile_agent_prompt_with_model(instruction: str, grounded_prompt: str) -> str:
+    return ask_text_model(
+        instruction,
+        context_text=grounded_prompt,
+        system_prompt=(
+            "You compile a desktop task for another coding or productivity Agent. "
+            "Return only one directly executable prompt. Preserve every grounded file path, "
+            "object reference, evidence boundary, requested verification, and uncertainty. "
+            "Do not claim that work has already run and do not add permissions the user did not grant."
+        ),
+    )
+
+
+def build_agent_prompt_draft(
+    payload: dict[str, Any],
+    target_window: dict[str, Any] | None,
+    app_ctx: AdapterReadContext | None,
+    snapshot: dict[str, Any] | None,
+    *,
+    engine: FabricEngine | None = None,
+    model_compiler: Callable[[str, str], str] | None = None,
+) -> dict[str, Any]:
+    command = str(payload.get("command") or "").strip()
+    objects = _fabric_objects(payload, target_window, app_ctx, snapshot)
+    selection_session_id = str(payload.get("selectionSessionId") or "").strip() or None
+    selection_snapshot_id = str((snapshot or {}).get("snapshot_id") or "").strip() or None
+    if not command or not objects:
+        return {
+            "ok": False,
+            "error": "agent_prompt_context_missing",
+            "actionProposals": [],
+            "selectionSessionId": selection_session_id,
+            "selectionSnapshotId": selection_snapshot_id,
+        }
+
+    active_engine = engine or FabricEngine()
+    planned = active_engine.plan(
+        command,
+        objects=objects,
+        recipe_id="agent.handoff",
+        override_confirmation=True,
+        parameters={
+            "agent": "codex",
+            "cwd": str(payload.get("workspaceRoot") or ROOT),
+            "selectionSessionId": selection_session_id or "",
+            "attachments": [
+                str(value)
+                for value in (
+                    (snapshot or {}).get("capture_path"),
+                    (snapshot or {}).get("annotated_path"),
+                )
+                if value
+            ],
+        },
+    )
+    if planned.get("ok") is not True:
+        return {
+            "ok": False,
+            "error": str(planned.get("error") or "agent_prompt_plan_failed"),
+            "actionProposals": [],
+            "selectionSessionId": selection_session_id,
+            "selectionSnapshotId": selection_snapshot_id,
+        }
+
+    plan = dict(planned.get("plan") or {})
+    parameters = dict(plan.get("parameters") or {})
+    packet = dict(parameters.get("contextPacket") or {})
+    artifact = write_context_packet_artifact(packet, root=active_engine.root)
+    grounded_prompt = build_agent_prompt(packet, artifact_path=artifact)
+    compiler = model_compiler or _compile_agent_prompt_with_model
+    candidate = str(compiler(command, grounded_prompt) or "").strip()
+    model_failed = (
+        not candidate
+        or candidate.startswith("AI 调用失败")
+        or len(candidate) > 60_000
+    )
+    context_prompt = grounded_prompt if model_failed else candidate
+    return {
+        "ok": True,
+        "kind": "agent-prompt-draft",
+        "prompt": command,
+        "answer": context_prompt,
+        "contextPrompt": context_prompt,
+        "contextPacket": packet,
+        "contextPacketArtifact": str(artifact),
+        "generatedBy": "grounded_fallback" if model_failed else "model",
+        "modelError": candidate if model_failed and candidate else None,
+        "actionProposals": [],
+        "intentKind": "agent_prompt_draft",
+        "selectionSessionId": selection_session_id,
+        "selectionSnapshotId": selection_snapshot_id,
+    }
+
+
 def main() -> int:
     _configure_stdio()
     try:
@@ -1170,6 +1265,11 @@ def main() -> int:
     # Screen fallback remains local-first: OCR enriches the snapshot before
     # any recipe or text-model routing, while the saved image stays local.
     app_ctx = _enrich_screen_region_context(target_window, app_ctx, snapshot)
+
+    if payload.get("requestMode") == "agent_prompt":
+        prompt_draft = build_agent_prompt_draft(payload, target_window, app_ctx, snapshot)
+        print(json.dumps(prompt_draft, ensure_ascii=False))
+        return 0 if prompt_draft.get("ok") is True else 1
 
     reference_response = _reference_label_response(payload)
     if reference_response is not None:

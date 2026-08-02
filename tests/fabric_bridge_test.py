@@ -53,6 +53,35 @@ def test_bridge_lists_catalog_and_real_provider_state(tmp_path: Path) -> None:
     assert all("sessionSupport" in item and "backgroundSteerable" in item for item in providers["providers"])
 
 
+def test_bridge_forwards_active_only_to_agent_session_gateway(tmp_path: Path, monkeypatch) -> None:
+    bridge = _load_bridge_module()
+    calls: list[dict] = []
+    output: list[dict] = []
+
+    class _Gateway:
+        def __init__(self, **_kwargs) -> None:
+            pass
+
+        def sessions(self, **kwargs):
+            calls.append(kwargs)
+            return []
+
+    monkeypatch.setenv("MAGIC_POINTER_USER_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr(bridge, "AgentGateway", _Gateway)
+    monkeypatch.setattr(bridge, "read_json_line", lambda: {
+        "operation": "agent.sessions",
+        "cwd": str(tmp_path),
+        "activeOnly": True,
+        "limit": 5,
+    })
+    monkeypatch.setattr(bridge, "write_json", output.append)
+
+    assert bridge.main() == 0
+    assert calls[0]["active_only"] is True
+    assert calls[0]["limit"] == 5
+    assert output[0]["sessions"] == []
+
+
 def test_bridge_routes_plans_and_executes_safe_recipe(tmp_path: Path) -> None:
     obj = {"id": "one", "kind": "text", "content": "0800 22 44 88"}
     code, routed = _call(tmp_path, {"operation": "route", "command": "号码去掉空格再复制", "objects": [obj]})

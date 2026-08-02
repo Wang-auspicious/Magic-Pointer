@@ -169,6 +169,17 @@ function stageEventFromBridge(parsed) {
       error: { message: String(parsed.error || parsed.answer || '执行失败。') },
     };
   }
+  if (parsed.kind === 'agent-prompt-draft') {
+    return {
+      type: 'RESULT',
+      result: {
+        kind: 'agent-prompt-draft',
+        prompt: String(parsed.contextPrompt || parsed.answer || '').slice(0, 60000),
+        generatedBy: String(parsed.generatedBy || 'grounded_fallback'),
+        modelError: String(parsed.modelError || ''),
+      },
+    };
+  }
   if (parsed.intentKind === 'calendar_event_draft' && parsed.calendarDraft) {
     return { type: 'RESULT', result: calendarResult(parsed, actions) };
   }

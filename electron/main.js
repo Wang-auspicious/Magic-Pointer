@@ -2918,6 +2918,8 @@ ipcMain.on('stage:submit-selection-command', (event, payload) => {
     interactionEpisode,
     targetPoint: safeClone(session.snapshot?.target_point || null),
     targetPointSpace: session.snapshot?.target_point_space || null,
+    requestMode: 'agent_prompt',
+    workspaceRoot: ROOT,
   };
   log(`stage:submit-selection-command token=${selectionSessionToken} request=${requestId} command_len=${String(enriched.command || '').length}`);
   let child = null;
@@ -2929,6 +2931,19 @@ ipcMain.on('stage:submit-selection-command', (event, payload) => {
         return;
       }
       selectionSessions.finishRequest(selectionSessionToken, requestId);
+      if (parsed?.kind === 'agent-prompt-draft' && parsed?.contextPacket) {
+        const storedDraft = selectionSessions.setAgentPromptDraft(selectionSessionToken, {
+          prompt: parsed.contextPrompt || parsed.answer,
+          contextPacket: parsed.contextPacket,
+          contextPacketArtifact: parsed.contextPacketArtifact,
+          generatedBy: parsed.generatedBy,
+        });
+        delete parsed.contextPacket;
+        if (!storedDraft) {
+          deliverStageError(selectionSessionToken, 'Prompt 草稿未能绑定到当前选区，请重新选择。');
+          return;
+        }
+      }
       parsed.selectionSessionToken = selectionSessionToken;
       parsed.selectionSnapshotId = session.snapshot?.snapshot_id || null;
       parsed.requestId = requestId;
@@ -2988,6 +3003,51 @@ ipcMain.on('stage:submit-selection-command', (event, payload) => {
     },
   });
   if (child) activeSessionChildren.set(selectionSessionToken, child);
+});
+
+ipcMain.handle('stage:agent-sessions', async (event, payload) => {
+  if (!isSurfaceSender(event, 'stage', resultTargetWindow)) {
+    return { ok: false, error: 'unauthorized_stage_sender' };
+  }
+  const selectionSessionToken = String(payload?.selectionSessionToken || '');
+  const draft = selectionSessions.getAgentPromptDraft(selectionSessionToken);
+  if (!draft) return { ok: false, error: 'agent_prompt_draft_expired' };
+  const packetWorkspace = draft.contextPacket?.workspace;
+  const cwd = String(packetWorkspace?.cwd || ROOT);
+  try {
+    return await runPythonBridgePromise({
+      operation: 'agent.sessions',
+      cwd,
+      cwdMatch: 'strict',
+      includeMismatch: false,
+      activeOnly: true,
+      limit: 5,
+    }, 'scripts/fabric_bridge.py', { target: 'stage', timeoutMs: 15000 });
+  } catch (error) {
+    return { ok: false, error: String(error?.message || 'agent_sessions_unavailable') };
+  }
+});
+
+ipcMain.handle('stage:dispatch-agent-prompt', async (event, payload) => {
+  if (!isSurfaceSender(event, 'stage', resultTargetWindow)) {
+    return { ok: false, error: 'unauthorized_stage_sender' };
+  }
+  const selectionSessionToken = String(payload?.selectionSessionToken || '');
+  const draft = selectionSessions.getAgentPromptDraft(selectionSessionToken);
+  if (!draft) return { ok: false, error: 'agent_prompt_draft_expired' };
+  try {
+    const result = await runPythonBridgePromise({
+      operation: 'agent.prompt.dispatch',
+      contextPacket: draft.contextPacket,
+      prompt: String(payload?.prompt || ''),
+      provider: String(payload?.provider || ''),
+      sessionId: String(payload?.sessionId || ''),
+    }, 'scripts/fabric_bridge.py', { target: 'stage', timeoutMs: 30000 });
+    if (result?.ok === true) selectionSessions.clearAgentPromptDraft(selectionSessionToken);
+    return result;
+  } catch (error) {
+    return { ok: false, error: String(error?.message || 'agent_prompt_dispatch_failed') };
+  }
 });
 
 // Context actions open the reviewed draft in the dashboard; they never write.

@@ -30,7 +30,20 @@ class _Discovery:
 
 
 class _Sessions:
-    def discover(self, *, provider=None, cwd=None, cwd_match="strict", include_mismatch=False, limit=200):
+    def __init__(self) -> None:
+        self.last_active_only = False
+
+    def discover(
+        self,
+        *,
+        provider=None,
+        cwd=None,
+        cwd_match="strict",
+        include_mismatch=False,
+        limit=200,
+        active_only=False,
+    ):
+        self.last_active_only = active_only
         if provider not in {None, "pi"}:
             return []
         return [AgentSession(
@@ -110,6 +123,16 @@ def test_gateway_sessions_exposes_title_without_regressing_existing_fields(tmp_p
         "provider", "sessionId", "cwd", "lastActiveAt", "state", "transport",
         "source", "resumeToken", "cwdMatch",
     } <= set(session)
+
+
+def test_gateway_sessions_forwards_active_only_to_registry(tmp_path: Path) -> None:
+    registry = _Sessions()
+    gateway = _gateway(tmp_path)
+    gateway.sessions_registry = registry
+
+    gateway.sessions(provider="pi", cwd=tmp_path, active_only=True)
+
+    assert registry.last_active_only is True
 
 
 def test_gateway_rejects_unverified_or_missing_active_session(tmp_path: Path) -> None:

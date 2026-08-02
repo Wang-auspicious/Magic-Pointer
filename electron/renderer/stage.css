@@ -860,3 +860,125 @@ body {
     animation: none;
   }
 }
+
+/* Editable Agent Prompt: extends the current blue-white Stage result surface. */
+.stage-result[data-kind='agent-prompt-draft'] {
+  width: min(620px, calc(100vw - 16px));
+  max-width: 620px;
+  padding: 12px;
+  overflow: hidden;
+  border-color: rgba(38, 115, 235, .38);
+  background: rgba(248, 252, 255, .98);
+}
+
+.agent-prompt-draft {
+  display: grid;
+  gap: 9px;
+}
+
+.agent-prompt-editor {
+  width: 100%;
+  min-height: 116px;
+  max-height: 260px;
+  padding: 7px 8px 10px;
+  resize: vertical;
+  overflow: auto;
+  border: 0;
+  border-bottom: 1px solid rgba(38, 115, 235, .14);
+  outline: none;
+  background: transparent;
+  color: #163f72;
+  font: 560 13px/1.55 var(--mp-font-ui);
+  user-select: text;
+}
+
+.agent-prompt-editor:focus {
+  border-bottom-color: rgba(38, 115, 235, .38);
+}
+
+.agent-prompt-note {
+  color: #6d7f96;
+  font-size: 11px;
+}
+
+.agent-session-row {
+  display: flex;
+  min-width: 0;
+  gap: 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.agent-session-row::-webkit-scrollbar { display: none; }
+
+.agent-session-row.is-empty {
+  color: #718198;
+  font-size: 11px;
+  line-height: 30px;
+}
+
+.agent-session-chip {
+  display: inline-flex;
+  flex: 1 1 0;
+  align-items: center;
+  min-width: 0;
+  max-width: 174px;
+  gap: 6px;
+  padding: 5px 9px;
+  border: 1px solid rgba(27, 73, 128, .13);
+  border-radius: 999px;
+  background: rgba(26, 52, 84, .08);
+  color: #48627e;
+  font: 650 11px/1.2 var(--mp-font-ui);
+  cursor: pointer;
+}
+
+.agent-session-chip i {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #347fee;
+}
+
+.agent-session-chip[data-provider='claude'] i { background: #dd7a45; }
+.agent-session-chip[data-provider='gemini'] i { background: #20a77b; }
+.agent-session-chip[data-provider='pi'] i { background: #8a63df; }
+
+.agent-session-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-session-chip.is-selected {
+  border-color: rgba(38, 115, 235, .54);
+  background: rgba(38, 115, 235, .13);
+  color: #185fae;
+}
+
+.agent-prompt-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.agent-prompt-close,
+.agent-prompt-confirm {
+  border-radius: 999px;
+  padding: 5px 11px;
+  font: 700 12px/1.2 var(--mp-font-ui);
+  cursor: pointer;
+}
+
+.agent-prompt-close {
+  border: 1px solid rgba(120, 134, 156, .24);
+  background: #f6f8fb;
+  color: #7a8799;
+}
+
+.agent-prompt-confirm {
+  border: 1px solid #246fd0;
+  background: #246fd0;
+  color: #fff;

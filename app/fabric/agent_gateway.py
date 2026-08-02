@@ -68,6 +68,7 @@ class AgentGateway:
         cwd_match: str = "strict",
         include_mismatch: bool = False,
         limit: int = 200,
+        active_only: bool = False,
     ) -> list[dict[str, Any]]:
         return [item.to_dict() for item in self.sessions_registry.discover(
             provider=provider,
@@ -75,6 +76,7 @@ class AgentGateway:
             cwd_match=cwd_match,
             include_mismatch=include_mismatch,
             limit=limit,
+            active_only=active_only,
         )]
 
     def _provider(self, provider_id: object) -> dict[str, Any]:
