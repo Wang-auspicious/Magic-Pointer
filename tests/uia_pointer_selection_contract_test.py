@@ -32,3 +32,10 @@ def test_element_from_point_accepts_chromium_renderer_descendants() -> None:
     assert "SafeProcessId(focused) == result.ProcessId" not in SOURCE
     assert "GetAncestor(candidateHwnd, 2)" in SOURCE
     assert "IsChild(rootHwnd, candidateHwnd)" in SOURCE
+
+
+def test_region_enumeration_keeps_elements_touched_by_a_stroke_not_only_centered_inside_it() -> None:
+    region_block = SOURCE.split("private static void TryRegionElements", 1)[1].split(
+        "private static void TryPointElement", 1
+    )[0]
+    assert "rectangle.IntersectsWith(region)" in region_block

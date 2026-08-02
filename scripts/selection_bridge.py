@@ -22,7 +22,7 @@ from app.actions.shopping_list import (
 from app.actions.calendar_draft import parse_calendar_draft, wants_calendar_draft
 from app.actions.route_draft import parse_route_draft, wants_route_draft
 from app.adapters import AdapterReadContext, default_adapter_registry, format_adapter_context
-from app.ai_client import ask_text_model
+from app.ai_client import ask_text_model, ask_vision_model
 from app.actions.draft_delivery import (
     DraftDeliveryError,
     make_draft_delivery_proposal,
@@ -298,7 +298,10 @@ def _enrich_screen_region_context(
     """Attach local OCR text to a pixel fallback before any model routing."""
     if str((snapshot or {}).get("source_kind") or "") != "screen_region":
         return app_ctx
-    if app_ctx is not None and app_ctx.has_content:
+    # A screen fallback always carries capture paths in artifacts. Those are
+    # evidence pointers, not semantic content; OCR must still run when the
+    # actual text field is empty.
+    if app_ctx is not None and str(app_ctx.content or "").strip():
         return app_ctx
     capture_path = str((snapshot or {}).get("capture_path") or "").strip()
     if not capture_path:
@@ -321,6 +324,34 @@ def _enrich_screen_region_context(
         label="THIS",
         method=f"local:{engine}",
         artifacts=artifacts,
+    )
+
+
+def _screen_region_vision_answer(
+    command: str,
+    target_window: dict[str, Any] | None,
+    app_ctx: AdapterReadContext | None,
+    snapshot: dict[str, Any] | None,
+) -> str | None:
+    """Use the configured visual model only after an explicit upload opt-in."""
+    if _capture_settings().privacy.upload_screenshots is not True:
+        return None
+    image_path = Path(str((snapshot or {}).get("capture_path") or "").strip())
+    if not image_path.is_file():
+        return None
+    locator_path = Path(str((snapshot or {}).get("annotated_path") or "").strip())
+    locator_images = [
+        ("IMAGE A LOCATOR / user-marked target", locator_path)
+    ] if locator_path.is_file() else []
+    selection_bbox = (snapshot or {}).get("selection_bbox")
+    context_text = _selection_context_text(app_ctx, target_window)
+    if selection_bbox:
+        context_text += f"\n\nUser-marked target bbox in physical screen pixels: {selection_bbox!r}"
+    return ask_vision_model(
+        image_path,
+        command,
+        context_text=context_text,
+        labeled_extra_images=locator_images,
     )
 
 
@@ -1110,7 +1141,11 @@ def main() -> int:
     action_proposals = []
     selection_snapshot_id = str((snapshot or {}).get("snapshot_id") or "").strip() or None
 
-    if app_ctx and app_ctx.app == "word" and wants_word_rewrite(command) and (app_ctx.content or "").strip():
+    vision_answer = _screen_region_vision_answer(command, target_window, app_ctx, snapshot)
+
+    if vision_answer:
+        answer = vision_answer
+    elif app_ctx and app_ctx.app == "word" and wants_word_rewrite(command) and (app_ctx.content or "").strip():
         replacement = ask_text_model(
             command,
             context_text=(

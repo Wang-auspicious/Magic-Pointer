@@ -657,10 +657,10 @@ internal static class UiaSelectionProbe
                 {
                     continue;
                 }
-                Point center = new Point(
-                    rectangle.Left + rectangle.Width / 2.0,
-                    rectangle.Top + rectangle.Height / 2.0);
-                if (!region.Contains(center))
+                // A sweep often only crosses the lower edge of a text row.
+                // Center containment drops that row; geometric intersection
+                // preserves every component the user actually touched.
+                if (!rectangle.IntersectsWith(region))
                 {
                     continue;
                 }

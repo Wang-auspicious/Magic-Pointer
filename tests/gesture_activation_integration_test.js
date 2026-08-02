@@ -96,8 +96,10 @@ assert.doesNotMatch(gestureCompletion, /type:\s*'ERROR'/,
   'grounding weakness must not replace the release capsule with an error card');
 const captureStart = beginSelection.indexOf('runPythonBridge(');
 const immediateGestureStage = beginSelection.slice(0, captureStart);
-assert.match(immediateGestureStage, /if\s*\(gesture\)[\s\S]*?showStage\([\s\S]*?OPEN_CAPSULE/,
-  'the release capsule must open before background grounding starts');
+assert.doesNotMatch(immediateGestureStage, /if\s*\(gesture\)[\s\S]*?showStage\([\s\S]*?OPEN_CAPSULE/,
+  'the capture surface must stay hidden until the raw screen snapshot is secured');
+assert.match(beginSelection, /onComplete:[\s\S]*?if\s*\(gesture\)[\s\S]*?showStage\([\s\S]*?OPEN_CAPSULE/,
+  'the voice capsule must open only after the snapshot callback has secured the original screen');
 assert.match(beginSelection, /foregroundHwnd:\s*gesture\?\.source\?\.foregroundHwnd/,
   'background grounding must remain locked to the app active at wiggle time');
 
@@ -177,10 +179,8 @@ assert.match(stage, /session\.capsuleAnchor\s*===\s*'target'/,
   'gesture capsule must be allowed to anchor at release pointer instead of target line');
 assert.match(main, /capsuleDelayMs:\s*0/,
   'gesture capsule motion must not wait for a sweep that does not exist');
-assert.match(immediateGestureStage, /groundingReady:\s*false/,
-  'release capsule must stay visually ready while background grounding is pending');
 assert.match(beginSelection, /groundingReady:\s*true/,
-  'completed grounding must explicitly unlock voice input');
+  'the completed snapshot must explicitly unlock voice input');
 const stageCss = fs.readFileSync('electron/renderer/stage.css', 'utf8');
 assert.match(stageCss, /--stage-capsule-delay/);
 assert.match(stageCss, /\.stage-root\[hidden\]\s*\{\s*display:\s*none/,

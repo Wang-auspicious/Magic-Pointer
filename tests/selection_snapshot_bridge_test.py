@@ -478,6 +478,47 @@ def test_unsupported_foreground_becomes_local_visual_object_at_pointer(tmp_path)
     ]
 
 
+def test_gesture_snapshot_captures_full_screen_with_a_separate_target_locator(tmp_path) -> None:
+    foreground = {
+        "title": "Magic Pointer",
+        "hwnd": 20,
+        "pid": 42,
+        "bbox": (100, 200, 1100, 900),
+    }
+    calls = []
+    gesture = {
+        "schemaVersion": 2,
+        "coordinateSpace": "physical_screen_pixels",
+        "releasePoint": {"x": 650, "y": 520},
+        "bbox": {"x": 520, "y": 470, "width": 180, "height": 64},
+        "strokes": [{"points": [
+            {"x": 520, "y": 490}, {"x": 620, "y": 470},
+            {"x": 700, "y": 520}, {"x": 550, "y": 534},
+        ]}],
+    }
+
+    def grabber(*, bbox, all_screens):
+        calls.append((bbox, all_screens))
+        return Image.new("RGB", (bbox[2] - bbox[0], bbox[3] - bbox[1]), "white")
+
+    payload = capture_snapshot(
+        [foreground],
+        registry=_FakeRegistry(supported=False),
+        target_point={"x": 650, "y": 520},
+        gesture=gesture,
+        visual_capture=grabber,
+        global_capture_bbox=(0, 0, 1920, 1080),
+        capture_dir=tmp_path,
+    )
+
+    snapshot = payload["selectionSnapshot"]
+    assert calls == [((0, 0, 1920, 1080), True)]
+    assert snapshot["capture_bbox"] == [0, 0, 1920, 1080]
+    assert snapshot["selection_bbox"] == [520, 470, 180, 64]
+    assert Path(snapshot["capture_path"]).is_file()
+    assert Path(snapshot["annotated_path"]).is_file()
+
+
 def test_visual_capture_retries_full_desktop_when_window_capture_is_black(tmp_path, monkeypatch) -> None:
     calls = []
     window = {
@@ -960,6 +1001,34 @@ def test_closed_gesture_reads_the_enclosed_component_set_not_the_top_boundary_ro
     assert snapshot["gesture_grounding"]["mode"] == "enclosed_region"
     assert snapshot["selection_bbox"] == [600, 430, 190, 66]
     assert registry.adapter.region_requests == [{"x": 580, "y": 410, "width": 240, "height": 110}]
+    assert registry.adapter.point_requests == []
+
+
+def test_open_stroke_prefers_one_bounded_region_read_over_overlay_point_sampling() -> None:
+    registry = _ClosedRegionRegistry()
+    gesture = {
+        "schemaVersion": 2,
+        "kind": "line",
+        "coordinateSpace": "physical_screen_pixels",
+        "releasePoint": {"x": 790, "y": 468},
+        "bbox": {"x": 590, "y": 452, "width": 210, "height": 24},
+        "strokes": [{"points": [
+            {"x": 590, "y": 462}, {"x": 680, "y": 468}, {"x": 790, "y": 468},
+        ]}],
+    }
+
+    payload = capture_snapshot(
+        [{"title": "Magic Pointer", "hwnd": 901, "process_id": 902}],
+        registry=registry,
+        target_point={"x": 790, "y": 468},
+        gesture=gesture,
+        allow_visual_fallback=False,
+    )
+
+    snapshot = payload["selectionSnapshot"]
+    assert snapshot["context"]["content"].endswith("Magic Pointer 1.0.0")
+    assert snapshot["gesture_grounding"]["mode"] == "stroke_region"
+    assert registry.adapter.region_requests == [{"x": 590, "y": 452, "width": 210, "height": 24}]
     assert registry.adapter.point_requests == []
 
 

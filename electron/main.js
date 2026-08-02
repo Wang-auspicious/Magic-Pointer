@@ -1912,31 +1912,10 @@ function beginSelectionSession(reason = 'manual', gesture = null) {
   hideOverlay();
   let stageBounds = display.bounds;
   if (gesture) {
-    // Release commits the gesture. Open the capsule immediately; grounding is
-    // asynchronous and later enriches this already-visible session.
+    // Secure the physical screen before showing any stage surface. Otherwise
+    // the voice capsule becomes part of the screenshot and UIA point probes
+    // hit our overlay instead of the user's application.
     stageBounds = placeStageOnDisplay(display).getBounds();
-    showStage({
-      ...stageSessionPayload(entry),
-      groundingReady: false,
-      reason,
-      selectionSource: selectionSourceForReason(reason),
-      targetGeometryKind: 'pointer_only',
-      target: null,
-      capsuleAnchor: 'pointer',
-      capsuleDelayMs: 0,
-      selectionCount: Array.isArray(gesture?.strokes) && gesture.strokes.length
-        ? gesture.strokes.length
-        : 1,
-      pointer: {
-        x: targetPoint.x - stageBounds.x,
-        y: targetPoint.y - stageBounds.y,
-      },
-      eventSequence: [
-        { type: 'FREEZE', target: null },
-        { type: 'OPEN_CAPSULE', mode: initialInputMode },
-      ],
-    });
-    armTemporaryDismissShortcut();
   } else {
     // Shortcut/native-selection paths retain immediate targeting.
     stageBounds = placeStageOnDisplay(display).getBounds();
@@ -2002,14 +1981,29 @@ function beginSelectionSession(reason = 'manual', gesture = null) {
             ? 'voice'
             : (fabricSettings.interaction.default_input_mode === 'text' ? 'text' : 'voice');
         if (gesture) {
-          updateStage({
+          showStage({
             ...stageSessionPayload(laidOut),
             groundingReady: true,
+            reason: current.reason,
             selectionSource: selectionSourceForReason(current.reason),
             objectKind: inferObjectKind(attached.snapshot),
             targetGeometryKind: 'pointer_only',
             target: null,
+            capsuleAnchor: 'pointer',
+            capsuleDelayMs: 0,
+            selectionCount: Array.isArray(gesture?.strokes) && gesture.strokes.length
+              ? gesture.strokes.length
+              : 1,
+            pointer: {
+              x: targetPoint.x - stageBounds.x,
+              y: targetPoint.y - stageBounds.y,
+            },
+            eventSequence: [
+              { type: 'FREEZE', target: null },
+              { type: 'OPEN_CAPSULE', mode },
+            ],
           });
+          armTemporaryDismissShortcut();
           return;
         }
         updateStage({

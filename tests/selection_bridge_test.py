@@ -23,6 +23,7 @@ from scripts.selection_bridge import (
     _reference_label_response,
     _read_target_context,
     _shopping_list_response,
+    _screen_region_vision_answer,
     _wants_undo,
 )
 
@@ -48,6 +49,73 @@ def test_screen_region_snapshot_is_enriched_with_local_ocr(monkeypatch, tmp_path
     assert context.content == "Magic Pointer 1.0.0"
     assert context.method == "local:test-ocr"
     assert context.artifacts["capture_path"] == str(capture)
+
+
+def test_screen_region_with_capture_artifacts_still_runs_local_ocr(monkeypatch, tmp_path) -> None:
+    capture = tmp_path / "screen.png"
+    capture.write_bytes(b"capture")
+    original = AdapterReadContext(
+        adapter="screen_region",
+        app="screen",
+        window={"title": "Magic Pointer"},
+        content="",
+        method="pointer:bounded-screen-region",
+        artifacts={"capture_path": str(capture)},
+    )
+    monkeypatch.setattr(
+        selection_bridge,
+        "_read_local_ocr",
+        lambda path: ("Magic Pointer 1.0.0", "test-ocr"),
+    )
+
+    context = _enrich_screen_region_context(
+        {"title": "Magic Pointer"},
+        original,
+        {"source_kind": "screen_region", "capture_path": str(capture)},
+    )
+
+    assert context is not original
+    assert context.content == "Magic Pointer 1.0.0"
+
+
+def test_screen_region_vision_uses_original_and_locator_only_when_upload_is_enabled(monkeypatch, tmp_path) -> None:
+    raw = tmp_path / "screen.png"
+    locator = tmp_path / "screen.pointer.png"
+    raw.write_bytes(b"raw")
+    locator.write_bytes(b"locator")
+    seen = {}
+
+    class _Settings:
+        privacy = type("Privacy", (), {"upload_screenshots": True})()
+
+    monkeypatch.setattr(selection_bridge, "_capture_settings", lambda: _Settings())
+    monkeypatch.setattr(
+        selection_bridge,
+        "ask_vision_model",
+        lambda image, prompt, context_text=None, labeled_extra_images=None: seen.update({
+            "image": image,
+            "prompt": prompt,
+            "context": context_text,
+            "extras": labeled_extra_images,
+        }) or "视觉回答",
+    )
+
+    answer = _screen_region_vision_answer(
+        "这是什么版本？",
+        {"title": "Magic Pointer"},
+        AdapterReadContext(adapter="local_ocr", app="screen", content="Magic Pointer 1.0.0"),
+        {
+            "source_kind": "screen_region",
+            "capture_path": str(raw),
+            "annotated_path": str(locator),
+            "selection_bbox": [100, 200, 160, 32],
+        },
+    )
+
+    assert answer == "视觉回答"
+    assert seen["image"] == raw
+    assert seen["extras"] == [("IMAGE A LOCATOR / user-marked target", locator)]
+    assert "Magic Pointer 1.0.0" in seen["context"]
 
 
 class _FakeAdapter:

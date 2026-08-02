@@ -5,6 +5,7 @@ import math
 import os
 import sys
 import uuid
+import ctypes
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -504,13 +505,13 @@ def _read_gesture_target_context(
         return window, context, trace, None, None
 
     raw_bbox = dict((gesture or {}).get("bbox") or {})
-    if _is_enclosed_gesture(gesture, points):
-        target_region = {
-            "x": int(raw_bbox.get("x") or 0),
-            "y": int(raw_bbox.get("y") or 0),
-            "width": max(0, int(raw_bbox.get("width") or 0)),
-            "height": max(0, int(raw_bbox.get("height") or 0)),
-        }
+    target_region = {
+        "x": int(raw_bbox.get("x") or 0),
+        "y": int(raw_bbox.get("y") or 0),
+        "width": max(0, int(raw_bbox.get("width") or 0)),
+        "height": max(0, int(raw_bbox.get("height") or 0)),
+    }
+    if target_region["width"] >= 8 and target_region["height"] >= 8:
         semantic = (gesture or {}).get("semanticPoint")
         region_window, region_context, region_trace = _read_target_context(
             windows,
@@ -529,7 +530,7 @@ def _read_gesture_target_context(
             return region_window, region_context, region_trace, {
                 "schemaVersion": 1,
                 "state": "resolved",
-                "mode": "enclosed_region",
+                "mode": "enclosed_region" if _is_enclosed_gesture(gesture, points) else "stroke_region",
                 "candidate_count": len(list(region_artifacts.get("region_elements") or [])),
                 "sample_count": 0,
                 "score": 1.0,
@@ -662,6 +663,44 @@ def _visual_bbox(
     return (capture_left, capture_top, capture_left + width, capture_top + height)
 
 
+def _global_screen_bbox() -> tuple[int, int, int, int] | None:
+    """Physical virtual-desktop bounds, including negative-monitor origins."""
+    try:
+        user32 = ctypes.windll.user32
+        left = int(user32.GetSystemMetrics(76))   # SM_XVIRTUALSCREEN
+        top = int(user32.GetSystemMetrics(77))    # SM_YVIRTUALSCREEN
+        width = int(user32.GetSystemMetrics(78))  # SM_CXVIRTUALSCREEN
+        height = int(user32.GetSystemMetrics(79)) # SM_CYVIRTUALSCREEN
+        if width > 0 and height > 0:
+            return left, top, left + width, top + height
+    except Exception:
+        pass
+    return None
+
+
+def _structured_context_with_visual_evidence(
+    app_ctx: Any,
+    visual: dict[str, Any] | None,
+    structured_succeeded: bool,
+) -> dict[str, Any]:
+    """Keep the structured read as the authoritative context; attach any
+    full-screen visual record as supporting evidence instead of replacing it."""
+    if not structured_succeeded or app_ctx is None:
+        return dict(app_ctx.to_dict()) if app_ctx is not None else {}
+    structured_dict = dict(app_ctx.to_dict())
+    if visual is not None:
+        artifacts = dict(structured_dict.get("artifacts") or {})
+        artifacts.update({
+            "capture_path": visual["path"],
+            "annotated_path": visual["annotated_path"],
+            "capture_bbox": visual["bbox"],
+            "capture_bbox_coordinate_space": "physical_screen_pixels",
+            "capture_bbox_format": "ltrb",
+        })
+        structured_dict["artifacts"] = artifacts
+    return structured_dict
+
+
 def _is_sensitive_target(
     target_window: dict[str, Any] | None,
     *,
@@ -716,13 +755,14 @@ def _capture_visual_region(
     target_window: dict[str, Any] | None,
     target_point: dict[str, int] | None,
     *,
+    capture_bbox: tuple[int, int, int, int] | None = None,
     visual_capture: Any | None = None,
     capture_dir: Path | str | None = None,
     retain_days: int = 3,
     identity_probe: Any | None = None,
     gesture_points: list[tuple[int, int]] | None = None,
 ) -> dict[str, Any] | None:
-    bbox = _visual_bbox(target_window, target_point)
+    bbox = capture_bbox or _visual_bbox(target_window, target_point)
     if bbox is None:
         return None
     expected_identity = _window_identity(target_window)
@@ -738,7 +778,7 @@ def _capture_visual_region(
     if visual_capture is not None:
         image = visual_capture(bbox=bbox, all_screens=True)
     else:
-        hwnd = int(target_window.get("hwnd") or 0)
+        hwnd = int(target_window.get("hwnd") or 0) if capture_bbox is None and target_window else 0
         window_bbox = target_window.get("bbox")
         if hwnd and isinstance(window_bbox, (list, tuple)) and len(window_bbox) == 4:
             # Capture the committed source HWND directly. The conversation
@@ -822,6 +862,7 @@ def capture_snapshot(
     active_context: dict[str, Any] | None = None,
     active_review: dict[str, Any] | None = None,
     visual_capture: Any | None = None,
+    global_capture_bbox: tuple[int, int, int, int] | None = None,
     capture_dir: Path | str | None = None,
     allow_visual_fallback: bool = True,
     sensitive_apps: list[str] | tuple[str, ...] | None = None,
@@ -936,6 +977,11 @@ def capture_snapshot(
                     },
                 ],
             }
+    structured_succeeded = bool(
+        app_ctx is not None
+        and bool(perception_trace.get("selectedLayer"))
+        and bool(str(getattr(app_ctx, "content", "") or "").strip())
+    )
     summary = _summary_for(target_window, app_ctx)
     context_session = active_context if isinstance(active_context, dict) else None
     summary["hasActiveContext"] = bool(context_session and context_session.get("item_count"))
@@ -957,6 +1003,7 @@ def capture_snapshot(
     visual_attempt_recorded = False
     visual_target_point = normalized_target_point
     gesture_points = _gesture_points(normalized_gesture)
+    global_bbox = global_capture_bbox or _global_screen_bbox() if gesture_points else None
     if gesture_points:
         raw_gesture_bbox = dict((normalized_gesture or {}).get("bbox") or {})
         visual_target_point = {
@@ -968,8 +1015,11 @@ def capture_snapshot(
         and not target_mismatch
         and not sensitive_target
         and (capture_decision is None or capture_decision.allow_local_pixels)
-        and not perception_trace.get("selectedLayer")
-        and not summary.get("hasContent")
+        # A completed gesture always gets one full-screen visual record. Its
+        # raw pixels preserve the surrounding layout, while UIA/DOM may still
+        # provide the higher-confidence exact text and element geometry.
+        and (bool(gesture_points) or not perception_trace.get("selectedLayer"))
+        and (bool(gesture_points) or not summary.get("hasContent"))
         and not summary["hasActiveContext"]
         and not summary["hasActiveReview"]
     )
@@ -978,6 +1028,7 @@ def capture_snapshot(
             visual = _capture_visual_region(
                 target_window,
                 visual_target_point,
+                capture_bbox=global_bbox,
                 visual_capture=visual_capture,
                 capture_dir=capture_dir,
                 retain_days=retain_captures_days,
@@ -986,6 +1037,26 @@ def capture_snapshot(
             )
             capture_attestation = visual.get("capture_attestation") if visual is not None else None
             if visual is not None:
+                if gesture_points:
+                    make_pointer_annotated_image(
+                        Path(visual["path"]),
+                        Path(visual["annotated_path"]),
+                        tuple(visual["bbox"]),
+                        gesture_points,
+                        style="locator",
+                        element_rectangles=_context_rectangles(app_ctx)[:24],
+                    )
+                if gesture_selection_bbox is None and gesture_points:
+                    raw_bbox = dict((normalized_gesture or {}).get("bbox") or {})
+                    width = max(0, int(raw_bbox.get("width") or 0))
+                    height = max(0, int(raw_bbox.get("height") or 0))
+                    if width > 0 and height > 0:
+                        gesture_selection_bbox = [
+                            int(raw_bbox.get("x") or 0),
+                            int(raw_bbox.get("y") or 0),
+                            width,
+                            height,
+                        ]
                 perception_trace = append_perception_attempt(
                     perception_trace,
                     layer="screen_region",
@@ -1093,7 +1164,7 @@ def capture_snapshot(
             "detail": "隐私策略已阻止视觉回退",
             "hasVisual": False,
         })
-    elif visual is not None:
+    elif visual is not None and not structured_succeeded:
         title = str((target_window or {}).get("title") or "当前应用")
         summary.update({
             "state": "ready",
@@ -1106,8 +1177,12 @@ def capture_snapshot(
         })
     else:
         summary["hasVisual"] = False
+    if structured_succeeded and visual is not None:
+        summary["hasVisual"] = True
     source_kind = (
-        "screen_region"
+        "native_selection"
+        if structured_succeeded
+        else "screen_region"
         if visual is not None
         else "native_selection"
         if app_ctx is not None and perception_trace.get("selectedLayer")
@@ -1115,7 +1190,7 @@ def capture_snapshot(
     )
     visual_context = None
     pointer_anchor = None
-    if visual is not None:
+    if visual is not None and not structured_succeeded:
         pointer_anchor = _pointer_anchor_ltrb(normalized_target_point)
         visual_context = {
             "adapter": "screen_region",
@@ -1152,8 +1227,12 @@ def capture_snapshot(
             else None
         ),
         "source_window": target_window,
-        "context": visual_context if visual_context is not None else (
-            None if app_ctx is None else app_ctx.to_dict()
+        "context": _structured_context_with_visual_evidence(
+            app_ctx, visual, structured_succeeded
+        ) if structured_succeeded else (
+            visual_context if visual_context is not None else (
+                None if app_ctx is None else app_ctx.to_dict()
+            )
         ),
         "capture_path": visual["path"] if visual is not None else None,
         "annotated_path": visual["annotated_path"] if visual is not None else None,
