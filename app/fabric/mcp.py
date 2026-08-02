@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
+import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -82,13 +84,13 @@ _TOOLS = (
     },
     {
         "name": "execute_recipe",
-        "description": "Execute a previously returned plan. Confirmation cannot be bypassed.",
+        "description": "Execute a previously returned plan. Protected plans require a one-time token from the trusted desktop UI.",
         "inputSchema": {
             "type": "object",
-            "required": ["plan", "confirmed"],
+            "required": ["plan"],
             "properties": {
                 "plan": {"type": "object"},
-                "confirmed": {"type": "boolean"},
+                "confirmationToken": {"type": "string"},
             },
             "additionalProperties": False,
         },
@@ -150,10 +152,10 @@ _TOOLS = (
         "description": "Explicitly reconfirm a paused task target on the current desktop and restart it with a renewed lease.",
         "inputSchema": {
             "type": "object",
-            "required": ["taskId", "confirmed"],
+            "required": ["taskId"],
             "properties": {
                 "taskId": {"type": "string"},
-                "confirmed": {"type": "boolean"},
+                "confirmationToken": {"type": "string"},
             },
             "additionalProperties": False,
         },
@@ -189,6 +191,7 @@ class MagicPointerMcpServer:
             target_probe=lambda _lease: list_visible_windows(),
         )
         self._disabled_tools: set[str] = set()
+        self._confirmations: dict[str, tuple[str, str, float]] = {}
         self._load_tool_settings()
 
     @property
@@ -234,7 +237,42 @@ class MagicPointerMcpServer:
     def _active_tools(self) -> list[dict[str, Any]]:
         return [dict(item) for item in _TOOLS if item["name"] not in self._disabled_tools]
 
+    def _issue_confirmation(self, scope: str, subject: str, *, ttl_seconds: float = 120.0) -> str:
+        token = secrets.token_urlsafe(32)
+        self._confirmations[token] = (scope, subject, time.monotonic() + ttl_seconds)
+        return token
+
+    def _consume_confirmation(self, scope: str, subject: str, token: Any) -> bool:
+        if not isinstance(token, str) or not token:
+            return False
+        issued = self._confirmations.pop(token, None)
+        if issued is None:
+            return False
+        issued_scope, issued_subject, expires_at = issued
+        return issued_scope == scope and issued_subject == subject and time.monotonic() <= expires_at
+
+    @staticmethod
+    def _recipe_confirmation_subject(plan: dict[str, Any]) -> str:
+        plan_id = str(plan.get("id") or "")
+        integrity_token = str(plan.get("integrityToken") or "")
+        if not plan_id or not integrity_token:
+            raise ValueError("confirmation requires a signed plan")
+        return f"{plan_id}:{integrity_token}"
+
+    def issue_recipe_confirmation(self, plan: dict[str, Any]) -> str:
+        """Mint a token from the trusted desktop channel; this is not an MCP tool."""
+        return self._issue_confirmation("execute_recipe", self._recipe_confirmation_subject(plan))
+
+    def issue_task_reconfirmation(self, task_id: str) -> str:
+        """Mint a target-reconfirmation token from the trusted desktop channel."""
+        subject = str(task_id or "")
+        if not subject:
+            raise ValueError("taskId is required")
+        return self._issue_confirmation("agent_task_reconfirm_target", subject)
+
     def call_tool(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        if name in self.all_tool_names and not self.tool_enabled(name):
+            raise PermissionError(f"tool_disabled:{name}")
         if name == "current_object":
             episode = self.current_objects.read()
             return {"ok": False, "error": "no_frozen_object"} if episode is None else {"ok": True, "episode": episode}
@@ -267,9 +305,14 @@ class MagicPointerMcpServer:
                 parameters=dict(arguments.get("parameters") or {}),
             )
         if name == "execute_recipe":
+            plan = dict(arguments.get("plan") or {})
             return self.engine.execute(
-                dict(arguments.get("plan") or {}),
-                confirmed=arguments.get("confirmed") is True,
+                plan,
+                confirmed=self._consume_confirmation(
+                    "execute_recipe",
+                    self._recipe_confirmation_subject(plan),
+                    arguments.get("confirmationToken"),
+                ),
             )
         if name == "agent_task_status":
             return {"ok": True, "task": self.gateway.status(str(arguments.get("taskId") or ""))}
@@ -295,7 +338,11 @@ class MagicPointerMcpServer:
             }
         if name == "agent_task_reconfirm_target":
             task_id = str(arguments.get("taskId") or "")
-            if arguments.get("confirmed") is not True:
+            if not self._consume_confirmation(
+                "agent_task_reconfirm_target",
+                task_id,
+                arguments.get("confirmationToken"),
+            ):
                 return {
                     "ok": True,
                     "task": {

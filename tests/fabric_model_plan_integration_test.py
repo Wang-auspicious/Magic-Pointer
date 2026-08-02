@@ -110,6 +110,21 @@ def test_unimplemented_tool_is_rejected(tmp_path: Path) -> None:
     assert "not implemented yet" in result["detail"]
 
 
+def test_multi_tool_plan_fails_closed_instead_of_dropping_steps(tmp_path: Path) -> None:
+    engine = FabricEngine(root=tmp_path)
+    value = _translate_plan()
+    value["toolCalls"] = [
+        {"tool": "translate_text", "arguments": {"language": "en"}},
+        {"tool": "summarize_text", "arguments": {}},
+    ]
+
+    result = engine.plan_from_model(value, objects=[_object()])
+
+    assert result["ok"] is False
+    assert result["error"] == "multi_tool_plan_not_supported"
+    assert result["toolCount"] == 2
+
+
 def test_model_plan_copy_text_executes_end_to_end(tmp_path: Path) -> None:
     clipboard = {"value": ""}
     settings = FabricSettings()

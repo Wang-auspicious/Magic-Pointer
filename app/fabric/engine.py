@@ -697,6 +697,12 @@ class FabricEngine:
             model_plan = parse_model_plan(value)
         except ModelPlanError as exc:
             return {"ok": False, "error": "invalid_model_plan", "detail": str(exc), "modelPlan": dict(value)}
+        if len(model_plan.tool_calls) != 1:
+            return {
+                "ok": False,
+                "error": "multi_tool_plan_not_supported",
+                "toolCount": len(model_plan.tool_calls),
+            }
         primary = model_plan.tool_calls[0]
         spec = TOOL_REGISTRY[primary.tool]
         if spec.recipe_id is None:

@@ -62,7 +62,7 @@ def test_current_object_is_explicitly_missing_or_returns_frozen_snapshot(tmp_pat
     assert value["episode"]["episodeId"] == "ep-1"
 
 
-def test_plan_and_execute_cannot_bypass_confirmation(tmp_path: Path) -> None:
+def test_plan_and_execute_requires_trusted_one_time_confirmation(tmp_path: Path) -> None:
     clipboard = {"value": ""}
     server = MagicPointerMcpServer(
         root=tmp_path,
@@ -80,9 +80,41 @@ def test_plan_and_execute_cannot_bypass_confirmation(tmp_path: Path) -> None:
     assert refused["status"] == "confirmation_required"
     assert clipboard["value"] == ""
 
-    allowed = server.call_tool("execute_recipe", {"plan": planned["plan"], "confirmed": True})
+    forged = server.call_tool("execute_recipe", {"plan": planned["plan"], "confirmed": True})
+    assert forged["status"] == "confirmation_required"
+    assert clipboard["value"] == ""
+
+    token = server.issue_recipe_confirmation(planned["plan"])
+    allowed = server.call_tool("execute_recipe", {
+        "plan": planned["plan"],
+        "confirmationToken": token,
+    })
     assert allowed["status"] == "succeeded"
     assert clipboard["value"] == "hello"
+
+    replayed = server.call_tool("execute_recipe", {
+        "plan": planned["plan"],
+        "confirmationToken": token,
+    })
+    assert replayed["status"] == "confirmation_required"
+
+
+def test_disabled_tool_cannot_be_called_by_name(tmp_path: Path) -> None:
+    server = MagicPointerMcpServer(root=tmp_path)
+    server.set_tool_enabled("plan_recipe", False)
+
+    response = server.handle({
+        "jsonrpc": "2.0",
+        "id": 8,
+        "method": "tools/call",
+        "params": {
+            "name": "plan_recipe",
+            "arguments": {"command": "复制这段文字"},
+        },
+    })
+    value = json.loads(response["result"]["content"][0]["text"])
+    assert response["result"]["isError"] is True
+    assert value == {"ok": False, "error": "PermissionError: tool_disabled:plan_recipe"}
 
 
 def test_invalid_jsonrpc_or_unknown_tool_returns_protocol_error(tmp_path: Path) -> None:
