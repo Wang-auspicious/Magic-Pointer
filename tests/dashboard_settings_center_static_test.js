@@ -81,7 +81,7 @@ assert.strictEqual(defaults.activation.mouse_side_button, 'none');
 assert.strictEqual(defaults.activation.gesture_arm_delay_ms, 180);
 assert.strictEqual(defaults.activation.gesture_timeout_ms, 5000);
 assert.strictEqual(defaults.activation.multi_stroke_submit_ms, 2500);
-assert.strictEqual(defaults.activation.gesture_interaction_mode, 'pass_through');
+assert.strictEqual(defaults.activation.gesture_interaction_mode, 'exclusive_overlay');
 assert(html.includes('id="multi-stroke-submit"'));
 assert.strictEqual(defaults.interaction.voice_start_strategy, 'auto');
 assert.deepStrictEqual(defaults.shortcuts, {

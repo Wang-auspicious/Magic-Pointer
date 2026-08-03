@@ -5,21 +5,27 @@ const fs = require('fs');
 const { defaultSettings, validate } = require('../electron/settings_store');
 const { gestureRuntimeContract } = require('../electron/gesture_runtime_settings');
 
+// The default must stay on the mode that can actually draw. pass_through was
+// briefly made the default and shipped broken: the hook swallows
+// WM_LBUTTONDOWN, so GetAsyncKeyState never reports the press, so the poller
+// never starts a stroke and every gesture expired after 5s without a line.
+// Do not flip this default again without drawing a real stroke on a real
+// machine first — no unit test in this repo can catch that failure.
 const defaults = defaultSettings();
 assert.strictEqual(
   defaults.activation.gesture_interaction_mode,
-  'pass_through',
-  'cross-app continuous selection requires the click-through hook path by default',
+  'exclusive_overlay',
+  'the default mode must be the one verified to draw end to end',
 );
 assert.strictEqual(
   gestureRuntimeContract(defaults).interactionMode,
-  'pass_through',
+  'exclusive_overlay',
 );
 
-const exclusive = defaultSettings();
-exclusive.activation.gesture_interaction_mode = 'exclusive_overlay';
-assert.strictEqual(validate(exclusive).activation.gesture_interaction_mode, 'exclusive_overlay');
-assert.strictEqual(gestureRuntimeContract(exclusive).interactionMode, 'exclusive_overlay');
+const passThrough = defaultSettings();
+passThrough.activation.gesture_interaction_mode = 'pass_through';
+assert.strictEqual(validate(passThrough).activation.gesture_interaction_mode, 'pass_through');
+assert.strictEqual(gestureRuntimeContract(passThrough).interactionMode, 'pass_through');
 
 const invalid = defaultSettings();
 invalid.activation.gesture_interaction_mode = 'steal_everything';
@@ -27,10 +33,10 @@ assert.throws(() => validate(invalid), /gesture_interaction_mode is unsupported/
 
 const dashboard = fs.readFileSync('electron/renderer/dashboard.html', 'utf8');
 assert(dashboard.includes('id="gesture-interaction-mode"'));
-assert.match(dashboard, /<option value="pass_through">/,
-  'pass_through must be selectable now that the native hook path is live');
-assert.match(dashboard, /<option value="exclusive_overlay">/,
-  'the exclusive overlay must stay available as a compatibility fallback');
+assert.match(dashboard, /<option value="exclusive_overlay">[^<]*默认/,
+  'the reliable mode must be presented as the default');
+assert.match(dashboard, /<option value="pass_through">[^<]*实验/,
+  'pass_through must be labelled experimental until it is verified on hardware');
 
 const main = fs.readFileSync('electron/main.js', 'utf8');
 assert.match(main, /passThroughGestureCapture\.push/,

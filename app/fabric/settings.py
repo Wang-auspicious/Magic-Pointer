@@ -81,13 +81,13 @@ class ActivationSettings:
     gesture_arm_delay_ms: int = 180
     gesture_timeout_ms: int = 5000
     multi_stroke_submit_ms: int = 2500
-    gesture_interaction_mode: str = "pass_through"
+    gesture_interaction_mode: str = "exclusive_overlay"
 
     def __post_init__(self) -> None:
         self.wake_mode = str(self.wake_mode or "").strip().casefold()
         self.mouse_side_button = str(self.mouse_side_button or "").strip().casefold()
         self.gesture_interaction_mode = str(
-            self.gesture_interaction_mode or "pass_through"
+            self.gesture_interaction_mode or "exclusive_overlay"
         ).strip().casefold()
         if self.wake_mode not in {"wiggle", "wiggle_hotkey", "hotkey", "mouse_button"}:
             raise ValueError("activation.wake_mode is unsupported")

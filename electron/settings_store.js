@@ -55,7 +55,7 @@ function defaultSettings() {
       gesture_arm_delay_ms: 180,
       gesture_timeout_ms: 5000,
       multi_stroke_submit_ms: 2500,
-      gesture_interaction_mode: 'pass_through',
+      gesture_interaction_mode: 'exclusive_overlay',
     },
     interaction: {
       default_input_mode: 'text',

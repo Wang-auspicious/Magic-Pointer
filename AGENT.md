@@ -331,6 +331,7 @@ SenseVoice 桥接（`sense_voice_bridge.py`）和模型（228MB）已就绪，�
 
 ## 不要做的事
 
+- **不要在未经真机划线验证的情况下把 `gesture_interaction_mode` 默认值改成 `pass_through`**——2026-08-03 踩过：hook 吞掉 `WM_LBUTTONDOWN` 后 `GetAsyncKeyState` 读不到该按键，`buttons` 恒为 0，轮询永远拿不到 `started`，每次手势 5 秒后 `expired`，视觉上是蓝色光标疯狂闪烁、完全无法划线。仓库里**没有任何单元测试能抓到这个失败**（全是静态/纯函数断言，且它们当时还被改成断言错误的默认值）。已修：hook 新增 `IsSwallowingLeft()`，被吞的左键会照常进入 `buttons` 掩码；但默认值恢复为 `exclusive_overlay`，`pass_through` 标为实验，改默认前必须真机画一笔。
 - **不要切换 `setIgnoreMouseEvents` 做固定死**——必须二态（待机穿透/画线拦截）
 - **不要在 gesture-ready handler 里调 `showInactive()`**——会导致二次激活 DOM 失活
 - **不要在 `summarizeGesture` 删 `kind`/`semanticPoint`**——桥接需要圈心做距离打分

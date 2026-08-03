@@ -110,6 +110,13 @@ public static class MagicPointerInputState {
         return (GetAsyncKeyState(key) & 0x8000) != 0;
     }
 
+    // A swallowed press never reaches the async key state table, so the poller
+    // cannot see the very stroke this hook is capturing. The hook is the only
+    // thing that still knows, so it has to say so.
+    public static bool IsSwallowingLeft() {
+        return Interlocked.CompareExchange(ref swallowingLeft, 0, 0) == 1;
+    }
+
     public static void StartWheelHook() {
         if (hookThread != null) return;
         hookThread = new Thread(() => {
@@ -259,6 +266,7 @@ while ($true) {
         $hasInfo = [MagicPointerInputState]::GetGUIThreadInfo($threadId, [ref]$info)
         $buttons = 0
         if ([MagicPointerInputState]::IsDown(1)) { $buttons = $buttons -bor 1 }
+        if ([MagicPointerInputState]::IsSwallowingLeft()) { $buttons = $buttons -bor 1 }
         if ([MagicPointerInputState]::IsDown(2)) { $buttons = $buttons -bor 2 }
         if ([MagicPointerInputState]::IsDown(4)) { $buttons = $buttons -bor 4 }
         if ([MagicPointerInputState]::IsDown(5)) { $buttons = $buttons -bor 8 }

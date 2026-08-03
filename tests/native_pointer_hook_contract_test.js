@@ -14,6 +14,12 @@ assert.match(helper, /WM_LBUTTONDOWN[\s\S]*?return \(IntPtr\)1/,
 assert.match(helper, /WM_LBUTTONUP[\s\S]*?return \(IntPtr\)1/,
   'the matching release must also be swallowed');
 assert(helper.includes('CallNextHookEx'), 'navigation-state events must continue through the hook chain');
+// A swallowed press is invisible to GetAsyncKeyState, so the hook must report
+// it or the poller can never see the stroke it is capturing.
+assert(helper.includes('public static bool IsSwallowingLeft()'),
+  'the hook must expose the left button it swallowed');
+assert.match(helper, /IsSwallowingLeft\(\)\)\s*\{\s*\$buttons\s*=\s*\$buttons\s*-bor\s*1\s*\}/,
+  'a swallowed left button must still be reported in the polled button mask');
 assert(helper.includes('Console.In.ReadLine'), 'Electron must be able to change hook state without restarting the helper');
 assert(main.includes("stdio: ['pipe', 'pipe', 'pipe']"), 'the pointer helper stdin must remain connected');
 assert(main.includes('sendPointerInputCommand'), 'main must own hook-state transitions');
