@@ -143,8 +143,15 @@ def _run_uia_selection_probe(
     *,
     target_point: dict[str, int] | None = None,
     target_region: dict[str, int] | None = None,
-    timeout: float = 1.0,
+    timeout: float = 2.5,
 ) -> UiaProbeResult:
+    # 2.5s default, not 1.0s. The probe caps its own UIA work at
+    # UiaProbeHardTimeoutMs (1200ms) and then still has to serialize its result,
+    # and process startup costs ~70ms warm. Measured wall clock on live windows
+    # reached 1194ms, so the old 1.0s budget killed the probe *while it was
+    # answering correctly*, and the caller treated that as a read failure. This
+    # timeout only bounds a wedged process, so it must stay above the probe's own
+    # ceiling — callers that pass their own value are responsible for the same.
     prepared = _ensure_uia_probe()
     if not prepared.ok:
         return prepared

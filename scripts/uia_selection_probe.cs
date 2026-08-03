@@ -12,7 +12,19 @@ using System.Windows.Automation.Text;
 internal static class UiaSelectionProbe
 {
     private const int MaxTextChars = 65536;
-    private const int UiaProbeHardTimeoutMs = 200;
+    // Measured 2026-08-03 against live windows with the cap lifted to 3000ms:
+    // RunProbeCore needs 199-975ms depending on how big the target's automation
+    // tree is (Edge ~205ms, Clash ~310ms, CC Switch ~320ms, QQ ~730ms - QQ is
+    // CEF-based, so FindDocumentSelection's FindAll(TreeScope.Descendants) walks
+    // an enormous tree). At the old 200ms cap every one of those four windows
+    // came back as "uia_probe_timeout_200ms", which reports a *read failure* for
+    // what is really "nothing is selected here" - and a read failure sends the
+    // caller down the OCR fallback instead of staying silent.
+    //
+    // 1200ms clears the slowest measured window with headroom. It is a ceiling
+    // for pathological trees, not a latency budget: a window with a selection
+    // answers far sooner, and the Python caller applies its own shorter timeout.
+    private const int UiaProbeHardTimeoutMs = 1200;
     private const double SelectionPointTolerance = 4.0;
 
     private sealed class SelectionResult
@@ -109,7 +121,7 @@ internal static class UiaSelectionProbe
             Task readTask = Task.Run(() => RunProbeCore(hwndValue, targetPoint, targetRegion, result));
             if (!readTask.Wait(UiaProbeHardTimeoutMs))
             {
-                result.Error = "uia_probe_timeout_200ms";
+                result.Error = "uia_probe_timeout_" + UiaProbeHardTimeoutMs + "ms";
             }
         }
         catch (Exception ex)
