@@ -65,6 +65,17 @@ assert.deepStrictEqual(pointerPollingPolicy({
   detectMouseButton: true,
 });
 
+assert.deepStrictEqual(pointerPollingPolicy({
+  wakeMode: 'wiggle_hotkey',
+  wiggleEnabled: true,
+  episodeActive: true,
+  mouseSideButton: 'xbutton1',
+}), {
+  shouldPoll: true,
+  detectWiggle: true,
+  detectMouseButton: true,
+}, 'an active cross-app episode must keep the configured side-button continuation available');
+
 for (const blocked of [{ onboardingRequired: true }, { inputPaused: true }]) {
   assert.deepStrictEqual(pointerPollingPolicy({
     wakeMode: 'wiggle',

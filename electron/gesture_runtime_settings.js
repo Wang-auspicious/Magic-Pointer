@@ -12,7 +12,7 @@ function gestureRuntimeContract(settings = {}) {
   return Object.freeze({
     armDelayMs: finiteNumber(activation.gesture_arm_delay_ms, 180, 60, 600),
     timeoutMs: finiteNumber(activation.gesture_timeout_ms, 5000, 1000, 15000),
-    chainGapMs: finiteNumber(activation.multi_stroke_submit_ms, 10000, 1000, 30000),
+    chainGapMs: finiteNumber(activation.multi_stroke_submit_ms, 2500, 1500, 30000),
     interactionMode: activation.gesture_interaction_mode === 'exclusive_overlay'
       ? 'exclusive_overlay'
       : 'pass_through',

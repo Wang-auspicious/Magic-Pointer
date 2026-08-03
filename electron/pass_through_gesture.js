@@ -15,7 +15,7 @@ class PassThroughGestureCapture {
     return Boolean(this.armState);
   }
 
-  arm({ token, displayBounds, initialButtons = 0, source = null } = {}) {
+  arm({ token, displayBounds, initialButtons = 0, source = null, multiStroke = false } = {}) {
     const bounds = displayBounds || {};
     this.armState = {
       token: String(token || ''),
@@ -26,10 +26,12 @@ class PassThroughGestureCapture {
         height: Math.max(1, finite(bounds.height, 1)),
       },
       source,
+      multiStroke: multiStroke === true,
     };
     this.previousButtons = Number(initialButtons || 0);
     this.drawing = false;
     this.points = [];
+    this.strokes = [];
   }
 
   cancel() {
@@ -37,6 +39,7 @@ class PassThroughGestureCapture {
     this.previousButtons = 0;
     this.drawing = false;
     this.points = [];
+    this.strokes = [];
   }
 
   localPoint(sample) {
@@ -103,6 +106,20 @@ class PassThroughGestureCapture {
       }
       const points = this.points.map((entry) => ({ ...entry }));
       const release = points.at(-1) || releaseSample;
+      if (this.armState.multiStroke) {
+        this.strokes.push({ points });
+        this.drawing = false;
+        this.points = [];
+        events.push({
+          type: 'stroke-completed',
+          token,
+          source,
+          index: this.strokes.length,
+          points,
+          releasePoint: { x: release.x, y: release.y },
+        });
+        return events;
+      }
       this.cancel();
       events.push({
         type: 'completed',
@@ -113,6 +130,25 @@ class PassThroughGestureCapture {
       });
     }
     return events;
+  }
+
+  finish() {
+    if (!this.armState || !this.strokes.length) return null;
+    const { token, source } = this.armState;
+    const strokes = this.strokes.map((stroke) => ({
+      points: stroke.points.map((point) => ({ ...point })),
+    }));
+    const points = strokes.flatMap((stroke) => stroke.points);
+    const release = points.at(-1);
+    this.cancel();
+    return {
+      type: 'completed',
+      token,
+      source,
+      points,
+      strokes,
+      releasePoint: release ? { x: release.x, y: release.y } : null,
+    };
   }
 }
 

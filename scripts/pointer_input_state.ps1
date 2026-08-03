@@ -1,3 +1,5 @@
+param([switch]$SelfTest)
+
 $ErrorActionPreference = "Stop"
 
 Add-Type @"
@@ -8,11 +10,26 @@ using System.Threading;
 
 public static class MagicPointerInputState {
     private const int WH_MOUSE_LL = 14;
+    private const int WM_MOUSEMOVE = 0x0200;
+    private const int WM_LBUTTONDOWN = 0x0201;
+    private const int WM_LBUTTONUP = 0x0202;
+    private const int WM_RBUTTONDOWN = 0x0204;
+    private const int WM_MBUTTONDOWN = 0x0207;
+    private const int WM_MBUTTONUP = 0x0208;
     private const int WM_MOUSEWHEEL = 0x020A;
+    private const int WM_XBUTTONDOWN = 0x020B;
+    private const int WM_XBUTTONUP = 0x020C;
     private static int wheelDelta = 0;
     private static IntPtr wheelHook = IntPtr.Zero;
     private static LowLevelMouseProc wheelProc = HookCallback;
     private static Thread hookThread;
+    private static Thread commandThread;
+    private static int captureNextStroke = 0;
+    private static long captureDeadlineTicks = 0;
+    private static int burstGraceMs = 2500;
+    private static int swallowingLeft = 0;
+    private static int episodeChord = 0; // 0 none, 1 X1, 2 X2, 3 middle
+    private static int chordHeld = 0;
 
     private delegate IntPtr LowLevelMouseProc(int nCode, IntPtr wParam, IntPtr lParam);
 
@@ -107,15 +124,109 @@ public static class MagicPointerInputState {
         hookThread.Start();
     }
 
+    public static void StartCommandReader() {
+        if (commandThread != null) return;
+        commandThread = new Thread(() => {
+            string line;
+            while ((line = Console.In.ReadLine()) != null) {
+                try {
+                    string[] parts = line.Trim().Split(':');
+                    string command = parts.Length > 0 ? parts[0].ToLowerInvariant() : "";
+                    if (command == "capture-next") {
+                        int timeout = parts.Length > 1 ? Int32.Parse(parts[1]) : 5000;
+                        int grace = parts.Length > 2 ? Int32.Parse(parts[2]) : 2500;
+                        CaptureNextStroke(timeout, grace);
+                    } else if (command == "episode") {
+                        SetEpisodeChord(parts.Length > 1 ? parts[1] : "none");
+                    } else if (command == "navigate") {
+                        Navigate();
+                    } else if (command == "idle") {
+                        Idle();
+                    }
+                } catch { }
+            }
+            Idle();
+        });
+        commandThread.IsBackground = true;
+        commandThread.Name = "MagicPointerHookCommands";
+        commandThread.Start();
+    }
+
+    public static void CaptureNextStroke(int timeoutMs, int graceMs) {
+        burstGraceMs = Math.Max(1500, Math.Min(30000, graceMs));
+        captureDeadlineTicks = DateTime.UtcNow.AddMilliseconds(Math.Max(250, timeoutMs)).Ticks;
+        Interlocked.Exchange(ref captureNextStroke, 1);
+    }
+
+    public static void SetEpisodeChord(string chord) {
+        string value = (chord ?? "none").Trim().ToLowerInvariant();
+        int next = value == "xbutton1" ? 1 : value == "xbutton2" ? 2 : value == "middle_hold" ? 3 : 0;
+        Interlocked.Exchange(ref episodeChord, next);
+        Interlocked.Exchange(ref chordHeld, 0);
+        Navigate();
+    }
+
+    public static void Navigate() {
+        Interlocked.Exchange(ref captureNextStroke, 0);
+        Interlocked.Exchange(ref swallowingLeft, 0);
+    }
+
+    public static void Idle() {
+        Navigate();
+        Interlocked.Exchange(ref episodeChord, 0);
+        Interlocked.Exchange(ref chordHeld, 0);
+    }
+
     public static int TakeWheelDelta() {
         return Interlocked.Exchange(ref wheelDelta, 0);
     }
 
+    private static bool IsCaptureNextActive() {
+        if (Interlocked.CompareExchange(ref captureNextStroke, 0, 0) == 0) return false;
+        if (DateTime.UtcNow.Ticks <= Interlocked.Read(ref captureDeadlineTicks)) return true;
+        Navigate();
+        return false;
+    }
+
+    private static bool IsMatchingChordMessage(int message, MSLLHOOKSTRUCT value) {
+        int configured = Interlocked.CompareExchange(ref episodeChord, 0, 0);
+        if (configured == 3) return message == WM_MBUTTONDOWN || message == WM_MBUTTONUP;
+        if ((configured == 1 || configured == 2) && (message == WM_XBUTTONDOWN || message == WM_XBUTTONUP)) {
+            int button = (int)((value.mouseData >> 16) & 0xffff);
+            return button == configured;
+        }
+        return false;
+    }
+
     private static IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam) {
-        if (nCode >= 0 && wParam.ToInt32() == WM_MOUSEWHEEL) {
-            MSLLHOOKSTRUCT value = (MSLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(MSLLHOOKSTRUCT));
+        if (nCode < 0) return CallNextHookEx(wheelHook, nCode, wParam, lParam);
+        int message = wParam.ToInt32();
+        MSLLHOOKSTRUCT value = (MSLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(MSLLHOOKSTRUCT));
+        if (message == WM_MOUSEWHEEL) {
             short delta = unchecked((short)((value.mouseData >> 16) & 0xffff));
             Interlocked.Add(ref wheelDelta, delta);
+        }
+        if (IsMatchingChordMessage(message, value)) {
+            bool down = message == WM_XBUTTONDOWN || message == WM_MBUTTONDOWN;
+            Interlocked.Exchange(ref chordHeld, down ? 1 : 0);
+            return (IntPtr)1;
+        }
+        if (message == WM_RBUTTONDOWN) Navigate();
+        if (message == WM_LBUTTONDOWN) {
+            bool shouldCapture = IsCaptureNextActive()
+                || Interlocked.CompareExchange(ref chordHeld, 0, 0) == 1;
+            if (shouldCapture) {
+                Interlocked.Exchange(ref swallowingLeft, 1);
+                return (IntPtr)1;
+            }
+        }
+        if (message == WM_MOUSEMOVE && Interlocked.CompareExchange(ref swallowingLeft, 0, 0) == 1) {
+            return (IntPtr)1;
+        }
+        if (message == WM_LBUTTONUP && Interlocked.Exchange(ref swallowingLeft, 0) == 1) {
+            captureDeadlineTicks = DateTime.UtcNow.AddMilliseconds(burstGraceMs).Ticks;
+            Interlocked.Exchange(ref captureNextStroke, 1);
+            return (IntPtr)1;
         }
         return CallNextHookEx(wheelHook, nCode, wParam, lParam);
     }
@@ -123,7 +234,16 @@ public static class MagicPointerInputState {
 "@
 
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+if ($SelfTest) {
+    [MagicPointerInputState]::CaptureNextStroke(500, 2500)
+    [MagicPointerInputState]::SetEpisodeChord("xbutton1")
+    [MagicPointerInputState]::Navigate()
+    [MagicPointerInputState]::Idle()
+    '{"ok":true,"hook":"WH_MOUSE_LL","gate":"fail-open"}'
+    exit 0
+}
 [MagicPointerInputState]::StartWheelHook()
+[MagicPointerInputState]::StartCommandReader()
 
 while ($true) {
     try {

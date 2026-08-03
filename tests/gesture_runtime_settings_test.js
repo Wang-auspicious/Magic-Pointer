@@ -12,8 +12,8 @@ const defaults = defaultSettings();
 assert.deepStrictEqual(gestureRuntimeContract(defaults), {
   armDelayMs: 180,
   timeoutMs: 5000,
-  chainGapMs: 10000,
-  interactionMode: 'exclusive_overlay',
+  chainGapMs: 2500,
+  interactionMode: 'pass_through',
   lineStyle: 'demo6_band',
   lineWidthDip: 40,
 });
@@ -24,7 +24,7 @@ lineChanged.appearance.gesture_line_width_dip = 7;
 assert.strictEqual(gestureRuntimeSettingsChanged(defaults, lineChanged), true);
 
 const modeChanged = structuredClone(defaults);
-modeChanged.activation.gesture_interaction_mode = 'pass_through';
+modeChanged.activation.gesture_interaction_mode = 'exclusive_overlay';
 assert.strictEqual(gestureRuntimeSettingsChanged(defaults, modeChanged), true);
 
 const unrelated = structuredClone(defaults);

@@ -53,6 +53,7 @@ let overlayHideTimer = null;
 let selectionGestureArm = null;
 let selectionGestureArmTimer = null;
 let selectionGestureExpiryTimer = null;
+let passThroughChainTimer = null;
 let wiggleDetector = null;
 const mouseActivationDetector = new MouseActivationDetector();
 const passThroughGestureCapture = new PassThroughGestureCapture();
@@ -347,7 +348,10 @@ function startPointerInputStateStream() {
   pointerStateChild = spawn(executable, args, {
     cwd: ROOT,
     windowsHide: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  pointerStateChild.stdin.on('error', (error) => {
+    log(`pointer hook command stream error ${error.name}: ${error.message}`);
   });
   let buffer = '';
   pointerStateChild.stdout.setEncoding('utf8');
@@ -390,6 +394,33 @@ function startPointerInputStateStream() {
   pointerStateChild.on('error', (error) => {
     log(`pointer state stream error ${error.name}: ${error.message}`);
   });
+  syncPointerEpisodeChord();
+}
+
+function sendPointerInputCommand(command) {
+  if (process.platform !== 'win32') return false;
+  const line = String(command || '').trim();
+  if (!line || !pointerStateChild?.stdin || pointerStateChild.stdin.destroyed || !pointerStateChild.stdin.writable) {
+    return false;
+  }
+  try {
+    pointerStateChild.stdin.write(`${line}\n`);
+    return true;
+  } catch (error) {
+    log(`pointer hook command failed ${error.name}: ${error.message}`);
+    return false;
+  }
+}
+
+function configuredEpisodeChord() {
+  const value = String(fabricSettings?.activation?.mouse_side_button || 'none').trim().toLowerCase();
+  return ['xbutton1', 'xbutton2', 'middle_hold'].includes(value) ? value : 'none';
+}
+
+function syncPointerEpisodeChord() {
+  const episode = interactionEpisodes.active();
+  if (!episode) return sendPointerInputCommand('idle');
+  return sendPointerInputCommand(`episode:${configuredEpisodeChord()}`);
 }
 
 function prunePendingActionProposals(now = Date.now()) {
@@ -1118,6 +1149,14 @@ function queueActivationUntilSurfacesReady(reason) {
   return 'renderer_warming';
 }
 
+function isSelectionGestureActivation(reason) {
+  const value = String(reason || '');
+  return value === 'wiggle'
+    || value === 'shortcut-wake'
+    || value === 'episode-continue'
+    || value.startsWith('mouse-button-');
+}
+
 function requestActivation(reason) {
   if (onboardingRequired) {
     log(`activation blocked onboarding_required reason=${reason}`);
@@ -1138,14 +1177,14 @@ function requestActivation(reason) {
   log(`activation request reason=${reason} decision=${decision}`);
   if (decision === 'dismiss') {
     const continuingEpisode = interactionEpisodes.active();
-    if (continuingEpisode && (reason === 'wiggle' || reason === 'shortcut-wake')) {
+    if (continuingEpisode && isSelectionGestureActivation(reason)) {
       dismissTemporarySurfaces({ invalidateSession: true, hideObserver: true });
       armSelectionGesture(reason);
       return 'continue';
     }
     dismissTemporarySurfaces({ invalidateSession: true, hideObserver: true });
   } else if (decision === 'activate') {
-    if (reason === 'wiggle' || reason === 'shortcut-wake') armSelectionGesture(reason);
+    if (isSelectionGestureActivation(reason)) armSelectionGesture(reason);
     else beginSelectionSession(reason);
   }
   return decision;
@@ -1423,7 +1462,10 @@ function hideOverlay() {
 
 function cancelSelectionGesture(reason = 'cancelled', { hideSurface = true } = {}) {
   const active = selectionGestureArm;
+  if (passThroughChainTimer) clearTimeout(passThroughChainTimer);
+  passThroughChainTimer = null;
   passThroughGestureCapture.cancel();
+  sendPointerInputCommand('idle');
   if (selectionGestureArmTimer) clearTimeout(selectionGestureArmTimer);
   if (selectionGestureExpiryTimer) clearTimeout(selectionGestureExpiryTimer);
   selectionGestureArmTimer = null;
@@ -1470,7 +1512,9 @@ function armSelectionGesture(reason = 'wiggle') {
       displayBounds: display.bounds,
       initialButtons: Number(pointerInputState.buttons || 0),
       source: selectionGestureArm.source,
+      multiStroke: true,
     });
+    sendPointerInputCommand(`capture-next:${timeoutMs}:${runtime.chainGapMs}`);
   }
   // Warm the hidden capsule renderer during the arm grace period. By the time
   // the user releases a stroke it can paint immediately without startup jank.
@@ -1627,6 +1671,8 @@ function processPassThroughGestureSample(now, pos) {
   });
   for (const event of events) {
     if (event.type === 'started') {
+      if (passThroughChainTimer) clearTimeout(passThroughChainTimer);
+      passThroughChainTimer = null;
       markSelectionGestureDrawing(event.token);
       safeSurfaceSend('overlay', 'overlay:gesture-input', {
         token: event.token,
@@ -1638,16 +1684,34 @@ function processPassThroughGestureSample(now, pos) {
         phase: 'point',
         point: event.point,
       });
-    } else if (event.type === 'completed') {
+    } else if (event.type === 'stroke-completed') {
       safeSurfaceSend('overlay', 'overlay:gesture-input', {
         token: event.token,
         phase: 'end',
       });
-      setTimeout(() => completeSelectionGesture({
+      markSelectionGestureDrawing(event.token, {
+        timeoutMs: arm.runtime.chainGapMs + 1000,
+        reason: 'chain_timeout',
+      });
+      if (passThroughChainTimer) clearTimeout(passThroughChainTimer);
+      passThroughChainTimer = setTimeout(() => {
+        passThroughChainTimer = null;
+        const completed = passThroughGestureCapture.finish();
+        if (!completed || completed.token !== selectionGestureArm?.token) return;
+        completeSelectionGesture({
+          workflow: 'selection_gesture',
+          selectionGestureToken: completed.token,
+          points: completed.points,
+          strokes: completed.strokes,
+        });
+      }, arm.runtime.chainGapMs);
+    } else if (event.type === 'completed') {
+      completeSelectionGesture({
         workflow: 'selection_gesture',
         selectionGestureToken: event.token,
         points: event.points,
-      }), 17);
+        strokes: event.strokes,
+      });
     }
   }
   return events.length > 0;
@@ -1758,6 +1822,8 @@ function currentPointerPollingPolicy() {
     mouseShakeOverride: process.env.MAGIC_POINTER_ENABLE_MOUSE_SHAKE,
     voicePointerConfigured: ['push_to_talk', 'hover'].includes(voiceStartStrategy),
     voiceStartStrategy,
+    episodeActive: Boolean(interactionEpisodes.active()),
+    mouseSideButton: fabricSettings?.activation?.mouse_side_button,
     onboardingRequired,
     inputPaused,
   });
@@ -1962,6 +2028,7 @@ function beginSelectionSession(reason = 'manual', gesture = null) {
         const attached = selectionSessions.attachSnapshot(entry.token, parsed);
         if (!attached) return;
         interactionEpisodes.bindPointedObject(episodeObjectForSession(attached));
+        syncPointerEpisodeChord();
         persistCurrentObjectEpisode(attached);
         attached.captureEligibility = captureEligibility({
           snapshot: attached.snapshot,

@@ -9,6 +9,8 @@ function pointerPollingPolicy({
   mouseShakeOverride = '',
   voicePointerConfigured = false,
   voiceStartStrategy = 'auto',
+  episodeActive = false,
+  mouseSideButton = 'none',
   onboardingRequired = false,
   inputPaused = false,
 } = {}) {
@@ -25,7 +27,10 @@ function pointerPollingPolicy({
     : normalizedOverride === '0'
       ? false
       : configuredWiggle;
-  const detectMouseButton = normalizedWakeMode === 'mouse_button';
+  const normalizedSideButton = String(mouseSideButton || '').trim().toLowerCase();
+  const episodeContinuation = episodeActive === true
+    && ['xbutton1', 'xbutton2', 'middle_hold'].includes(normalizedSideButton);
+  const detectMouseButton = normalizedWakeMode === 'mouse_button' || episodeContinuation;
   const stageVoicePointer = voicePointerConfigured === true
     && POINTER_VOICE_STRATEGIES.has(String(voiceStartStrategy || '').trim().toLowerCase());
 

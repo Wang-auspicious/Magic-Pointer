@@ -15,7 +15,7 @@ const { defaultSettings } = require('../electron/settings_store');
 const defaults = defaultSettings();
 assert.strictEqual(defaults.activation.gesture_arm_delay_ms, 180);
 assert.strictEqual(defaults.activation.gesture_timeout_ms, 5000);
-assert.strictEqual(defaults.activation.multi_stroke_submit_ms, 10000);
+assert.strictEqual(defaults.activation.multi_stroke_submit_ms, 2500);
 assert.strictEqual(defaults.appearance.gesture_line_style, 'demo6_band');
 assert.strictEqual(defaults.appearance.gesture_line_width_dip, 40);
 for (const id of ['gesture-arm-delay', 'gesture-timeout', 'multi-stroke-submit', 'gesture-line-style', 'gesture-line-width']) {
@@ -77,8 +77,12 @@ assert(main.includes('Bounded wait for grounding instead of a silent drop'),
   'dictation:start must wait briefly for grounding');
 assert(main.includes("safeSurfaceSend(surface, 'dictation:result', { ok: false, surface, error: '目标识别还在进行，请稍候再试语音。' })"),
   'voice must report a friendly error instead of doing nothing');
-assert.match(requestActivation, /reason\s*===\s*'wiggle'[\s\S]*?armSelectionGesture\(/,
+assert.match(requestActivation, /isSelectionGestureActivation\(reason\)[\s\S]*?armSelectionGesture\(/,
   'wiggle must arm drawing instead of opening a selection session');
+assert.match(main, /function isSelectionGestureActivation\(reason\)[\s\S]*?'wiggle'/,
+  'the gesture activation predicate must still accept a plain wiggle');
+assert.match(main, /function isSelectionGestureActivation\(reason\)[\s\S]*?'episode-continue'/,
+  'cross-app continuation must arm drawing without a fresh wiggle');
 
 const beginSelection = main.slice(
   main.indexOf('function beginSelectionSession('),
@@ -145,7 +149,7 @@ assert.match(overlay, /activePointerId/,
   'pointerup must belong to the stroke that started drawing');
 assert.match(overlay, /gestureAcceptAt\s*-\s*Date\.now\(\)/,
   'an early held stroke must be retained across the visual grace period');
-assert.match(overlay, /gestureChainGapMs\s*=\s*Math\.max\(1000,\s*Math\.min\(30000/,
+assert.match(overlay, /gestureChainGapMs\s*=\s*Math\.max\(1500,\s*Math\.min\(30000/,
   'the renderer must accept a bounded configurable multi-stroke inactivity timeout');
 assert.match(preload, /overlay:gesture-start/);
 assert.match(preload, /overlay:gesture-ready/);

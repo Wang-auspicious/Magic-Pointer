@@ -54,8 +54,8 @@ function defaultSettings() {
       cooldown_ms: 900,
       gesture_arm_delay_ms: 180,
       gesture_timeout_ms: 5000,
-      multi_stroke_submit_ms: 10000,
-      gesture_interaction_mode: 'exclusive_overlay',
+      multi_stroke_submit_ms: 2500,
+      gesture_interaction_mode: 'pass_through',
     },
     interaction: {
       default_input_mode: 'voice',
@@ -255,7 +255,7 @@ function validate(settings) {
   for (const [name, minimum, maximum] of [
     ['gesture_arm_delay_ms', 60, 600],
     ['gesture_timeout_ms', 1000, 15000],
-    ['multi_stroke_submit_ms', 1000, 30000],
+    ['multi_stroke_submit_ms', 1500, 30000],
   ]) {
     const value = Number(activation[name]);
     if (!Number.isFinite(value) || value < minimum || value > maximum) {

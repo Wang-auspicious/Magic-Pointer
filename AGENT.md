@@ -14,11 +14,19 @@ Magic Pointer = 默认不可见的跨应用操作层。鼠标晃动唤醒 → �
 
 ## 当前状态快照（2026-08-02）
 
-### 2026-08-02 增量（感知链路重构中，未提交）
-- 未提交 9 文件：全局截图+圈定位标签（THIS 标注、不裁图）+ 最多 24 个元件框编号标注 + 视觉 API 开关（仅授权上传才调用，中转 gpt-5.4-mini）+ 主进程改 `FREEZE→OPEN_CAPSULE`（语音球等快照启动后显示）。
+### 2026-08-02 夜间交接（先读这里）
+- 当前安全基线提交：`39d86bc checkpoint: preserve perception and prompt progress`。这是本地进度快照，不包含 SenseVoice/Whisper 权重、pytest 临时目录或密钥；`.gitignore` 已补 `/models/`、`data/models/`、`*.gguf`、`*.safetensors`、`*.pt` 等模型规则。
+- 该提交包含：全局截图+圈定位标签（THIS 标注、不裁图）+ 最多 24 个元件框编号标注 + 视觉 API 开关（仅授权上传才调用，中转 gpt-5.4-mini）+ 主进程 `FREEZE→OPEN_CAPSULE`（语音球等快照启动后显示）+ 常驻 OCR worker + 多源/跨应用研究结论。
 - 手势存在时：先 UIA/结构化区域读取（闭合圈=圈内元件集，横线=单元件，与 bbox 相交即算）→ 结构化命中保留为 `context.content` 真相，全局截图+标注只挂 `artifacts` 证据；只有结构化失败才用 `screen_region` 当 context（`source_kind=native_selection`）。
-- 8/2 修复的关键洞：全屏截图曾把 UIA 读到的正确文本（Row B）顶成空 content —— 已修，测试全绿：Python 655 / Node 115（56 源文件）。
-- 下一步：提交 → 真机验收（设置页版本号/微信/Excel 各划一次，确认 content 非空）。
+- 8/2 修复的关键洞：全屏截图曾把 UIA 读到的正确文本（Row B）顶成空 content —— 已修。
+- 2026-08-02 晚 fresh 验证：Node 全量 `56 source files / 116 tests` 通过；本次感知改动相关 Python 4 文件 `48 passed`。Python 全量第一次被系统 `%TEMP%/pytest-of-zjz65` 权限错误破坏，换独立 `--basetemp` 后又被 4 分钟工具时限终止，期间无断言失败；后续交付前必须用更长时限重新跑，不能把这次终止写成全量通过。
+
+### 当前获批、正在实现的两个闭环
+1. **跨应用连续圈选 Hook**：一次晃动开启长期 `InteractionEpisode`；可视 overlay 始终 no-activate + click-through；Windows `WH_MOUSE_LL` 只在明确的 `STROKE_CAPTURE` 状态吞掉构成该笔的事件，导航态必须 `CallNextHookEx`。同屏多笔保留宽松 grace period，用户已明确否定固定 1 秒；初版不要硬编码 1 秒，采用可配置约 2.5 秒并在前台窗口变化时立即切导航。跨应用后用侧键/Space 轻量续选，不再完整晃动。禁止用 `SendInput` 回放普通点击作为默认方案。
+2. **微信图片/文件物化**：每笔立即冻结截图、前台 HWND、DPI、UIA/OCR；微信媒体按“公开 UI 下载/另存为 → 剪贴板/OLE capability probe（`CF_HDROP` / virtual file / DIB/PNG）→ 当笔截图裁剪”降级，成功内容统一落盘到 Magic Pointer 自有 capture/media 目录并把绝对路径、`acquisition`、`quality` 交给 Agent；小图/模糊/不可获取返回 `media_unresolved`，绝不猜图或伪造路径。初版不扫描/解密微信私有数据库。
+- 关键研究文档：`docs/research/2026-08-02-cross-app-continuous-selection-and-wechat-media.md`。
+- Hook 直接入口：`scripts/pointer_input_state.ps1` 已有 `WH_MOUSE_LL` 滚轮 hook；`electron/pass_through_gesture.js` 已有轨迹状态；`electron/main.js` 的 `armSelectionGesture/processPassThroughGestureSample` 负责接入；`electron/renderer/overlay.js` 当前 10 秒链式等待/独占输入需要收口。
+- 微信入口：`scripts/selection_snapshot_bridge.py` 当前主捕获链；`app/grounding/explorer_adapter.py` 已能解析 Explorer 真实路径但未完整接入；需要新增微信消息/媒体解析器并把多路径、截图和可信度完整带进 `InteractionEpisode` → `selection_bridge.py` 的 Agent Context Packet。
 
 ### 能正常工作
 - 晃动唤醒 → overlay 出现 → 划线圈选 → 气泡弹出 → 语音/文字输入 → Recipe 执行

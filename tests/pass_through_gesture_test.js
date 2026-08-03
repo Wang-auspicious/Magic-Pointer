@@ -88,4 +88,26 @@ assert.deepStrictEqual(quickCompleted[0].points, [
   { x: 121, y: 131, t: 220 },
 ], 'release must be retained even when it is inside the movement sampling threshold');
 
+const chained = new PassThroughGestureCapture({ minimumPointDistance: 2 });
+chained.arm({
+  token: 'chained',
+  displayBounds: { x: 0, y: 0, width: 800, height: 600 },
+  initialButtons: 0,
+  multiStroke: true,
+});
+chained.push(sample(300, 100, 100, 1));
+const firstStroke = chained.push(sample(340, 180, 130, 0));
+assert.deepStrictEqual(firstStroke.map((event) => event.type), ['point', 'stroke-completed']);
+assert.strictEqual(firstStroke.at(-1).index, 1);
+assert.strictEqual(chained.active, true, 'multi-stroke capture stays armed during the grace period');
+chained.push(sample(500, 400, 300, 1));
+const secondStroke = chained.push(sample(560, 480, 340, 0));
+assert.strictEqual(secondStroke.at(-1).type, 'stroke-completed');
+assert.strictEqual(secondStroke.at(-1).index, 2);
+const chainedDone = chained.finish();
+assert.strictEqual(chainedDone.type, 'completed');
+assert.strictEqual(chainedDone.strokes.length, 2);
+assert.deepStrictEqual(chainedDone.releasePoint, { x: 480, y: 340 });
+assert.strictEqual(chained.active, false);
+
 console.log('pass_through_gesture_test: all assertions passed');

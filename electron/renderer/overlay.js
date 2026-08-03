@@ -21,7 +21,7 @@ let submitting = false;
 let strokes = [];
 let chainTimer = null;
 let chainHintTimer = null;
-const DEFAULT_CHAIN_GAP_MS = 10000;
+const DEFAULT_CHAIN_GAP_MS = 2500;
 let gestureChainGapMs = DEFAULT_CHAIN_GAP_MS;
 let renderRaf = null;
 let pulseRaf = null;
@@ -641,7 +641,7 @@ window.magicPointer?.onShow((payload) => {
   gestureAcceptAt = Number(payload?.gestureAcceptAt) || 0;
   gestureLineStyle = payload?.gestureLineStyle === 'thin' ? 'thin' : 'demo6_band';
   gestureLineWidth = Math.max(3, Math.min(40, Number(payload?.gestureLineWidth) || 22));
-  gestureChainGapMs = Math.max(1000, Math.min(30000,
+  gestureChainGapMs = Math.max(1500, Math.min(30000,
     Number(payload?.gestureChainGapMs) || DEFAULT_CHAIN_GAP_MS));
   gestureInteractionMode = payload?.gestureInteractionMode === 'pass_through'
     ? 'pass_through'
