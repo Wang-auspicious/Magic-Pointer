@@ -1,8 +1,9 @@
 # Magic Pointer — Agent Handoff Document
 
 <!-- AGENTS.md spec: https://github.com/agentsmd/agents.md -->
-<!-- 读完这个文件 + docs/planning/PROJECT_STATE_AND_DIRECTION.md + PRODUCT_BLUEPRINT + FEATURE_INVENTORY 即可开工。 -->
-<!-- 项目状态/调研结论/会话知识的浓缩版在 PROJECT_STATE_AND_DIRECTION.md，别重读 74MB 会话历史。 -->
+<!-- 新会话最快入口：docs/planning/HANDOFF_20260803.md（一份就够，别全量读 docs/planning/）。 -->
+<!-- 方向与定位：docs/planning/PRODUCT_STRATEGY_20260803.md。 -->
+<!-- 不要读会话历史 JSONL（12MB+）。需要文件清单时查下方「完整文件清单」表。 -->
 
 ## 这是什么
 
@@ -14,7 +15,12 @@ Magic Pointer = 默认不可见的跨应用操作层。鼠标晃动唤醒 → �
 
 ## 当前状态快照（2026-08-02）
 
-### 2026-08-03 产品方向 + Stage v2 + 输入捕获修复（先读这里）
+### 2026-08-03 晚 — 三个待修问题（真机反馈，先读 `docs/planning/HANDOFF_20260803.md`）
+- **提交后 30 秒 `bridge_timeout`**：已排除模型端点（带代理 3.93s / 不带代理 ConnectTimeout）与代理剥离（`pythonSpawnEnvironment` 只过滤 `PYTHON*`）。最大嫌疑是 `selection_bridge.py:1760` 的 `_enrich_screen_region_context()` 在 `agent_prompt` 分支前**又跑了一遍 OCR**。下一步：加分段计时到 stderr，真机一次即可定死。**在拿到数据前不要再动超时数字。**
+- **Enter 后约 5 秒气泡才出**：气泡在等 `selection_snapshot_bridge.py` 跑完完整感知（实测 4.9s）。修法是乐观渲染——先出 `groundingReady=false` 的气泡，快照回来再 `stage:update`。
+- **蓝色光标高频闪烁（未确诊）**：不要靠猜改 overlay 鼠标处理。三处嫌疑与排查方法见交接文档 §1.3。
+
+### 2026-08-03 产品方向 + Stage v2 + 输入捕获修复
 
 **战略文档：`docs/planning/PRODUCT_STRATEGY_20260803.md`**。一手调研（HN 上 Google AI Pointer 的 1113 条讨论、腾讯 QClaw/Marvis 实测、OSWorld 数据、Every 的 AI 工作流尸检、Claude Code 元生态）得出的定位、三个母功能（取/交/改）、底层四个缺口与依赖顺序。改方向前先读它。要点：主战场是「**Ctrl+C 复制不了的东西**」；MCP 服务愿意配合的应用，我们服务不配合的应用；不进代码上下文赛道。
 
