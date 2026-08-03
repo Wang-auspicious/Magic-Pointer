@@ -2,6 +2,7 @@
 
 const crypto = require('crypto');
 const { spawn } = require('child_process');
+const { createProgressLineSplitter } = require('./bridge_progress_lines');
 
 function createPythonBridgeRunner({
   spawnImpl = spawn,
@@ -18,10 +19,16 @@ function createPythonBridgeRunner({
     maxStderrBytes = 256 * 1024,
     signal = null,
     onComplete,
+    onProgress = null,
     logger,
   } = {}) {
     const log = typeof logger === 'function' ? logger : () => {};
     const complete = typeof onComplete === 'function' ? onComplete : () => {};
+    // Progress is opt-in: without a consumer no splitter is built and stderr
+    // handling is byte-for-byte what it was before.
+    const feedProgress = typeof onProgress === 'function'
+      ? createProgressLineSplitter((record) => { if (!delivered) onProgress(record); })
+      : null;
     const child = spawnImpl(executable, args, spawnOptions);
     let stdout = '';
     let stderr = '';
@@ -59,6 +66,7 @@ function createPythonBridgeRunner({
         stdout += text;
       } else {
         stderrBytes += bytes;
+        if (feedProgress) feedProgress(text);
         if (stderrBytes > maxStderrBytes) {
           stop({ ok: false, error: 'bridge_output_limit', stream: 'stderr' });
           return;

@@ -28,6 +28,7 @@ from app.grounding.perception_cascade import (
 from app.grounding.explorer_adapter import score_item_against_stroke
 from app.review import ReviewSessionError, ReviewSessionStore
 from app.fabric.settings import FabricSettings, SettingsError, SettingsStore
+from scripts.bridge_progress import PhaseClock
 from app.system_context import enable_dpi_awareness, get_foreground_window_handle, list_visible_windows
 from app.visual_annotation import make_pointer_annotated_image
 
@@ -946,6 +947,7 @@ def _capture_visual_region(
     retain_days: int = 3,
     identity_probe: Any | None = None,
     gesture_points: list[tuple[int, int]] | None = None,
+    clock: PhaseClock | None = None,
 ) -> dict[str, Any] | None:
     bbox = capture_bbox or _visual_bbox(target_window, target_point)
     if bbox is None:
@@ -1000,6 +1002,12 @@ def _capture_visual_region(
             "before": before_identity,
             "after": after_identity,
         })
+    # The pixels are now ours and verified to be the window the user pointed at.
+    # Everything after this line — saving, annotating, OCR — happens on a frozen
+    # copy, so any surface we draw from here on cannot contaminate the capture.
+    # This is the earliest moment it is safe to show the conversation capsule.
+    if clock is not None:
+        clock.mark("pixels_frozen", w=image.width, h=image.height)
     output_dir = Path(capture_dir) if capture_dir is not None else (
         Path(os.environ.get("MAGIC_POINTER_USER_DATA_DIR") or ROOT / "data" / "runtime")
         / "selection-captures"
@@ -1058,7 +1066,12 @@ def capture_snapshot(
     default_capture_mode: str | None = None,
     app_capture_modes: dict[str, str] | None = None,
     audit_store: Any | None = None,
+    clock: PhaseClock | None = None,
 ) -> dict[str, Any]:
+    def mark(phase: str, **fields: Any) -> None:
+        if clock is not None:
+            clock.mark(phase, **fields)
+
     captured = datetime.now(timezone.utc)
     live_window_source = windows is None
     normalized_target_point = _normalized_point(target_point)
@@ -1076,6 +1089,7 @@ def capture_snapshot(
         )
         available_windows = [preferred] if preferred is not None else []
     target_window = available_windows[0] if available_windows else None
+    mark("windows_enumerated", n=len(available_windows), live=live_window_source)
     gesture_grounding = None
     gesture_selection_bbox = None
     capture_decision = None
@@ -1124,6 +1138,7 @@ def capture_snapshot(
         perception_trace["policyMode"] = (
             capture_decision.mode if capture_decision is not None else "unconfigured"
         )
+    mark("structured_read", layer=perception_trace.get("selectedLayer") or "none")
     active_identity_probe = identity_probe
     if active_identity_probe is None and live_window_source:
         def active_identity_probe() -> dict[str, Any]:
@@ -1219,7 +1234,9 @@ def capture_snapshot(
                 retain_days=retain_captures_days,
                 identity_probe=active_identity_probe,
                 gesture_points=gesture_points,
+                clock=clock,
             )
+            mark("visual_saved", got=visual is not None)
             capture_attestation = visual.get("capture_attestation") if visual is not None else None
             if visual is not None:
                 if gesture_points:
@@ -1231,6 +1248,7 @@ def capture_snapshot(
                         style="locator",
                         element_rectangles=_context_rectangles(app_ctx)[:24],
                     )
+                    mark("annotated")
                 if gesture_selection_bbox is None and gesture_points:
                     raw_bbox = dict((normalized_gesture or {}).get("bbox") or {})
                     width = max(0, int(raw_bbox.get("width") or 0))
@@ -1494,7 +1512,9 @@ def capture_snapshot(
 
 
 def main() -> int:
+    clock = PhaseClock("selection_snapshot")
     payload = read_payload()
+    clock.mark("payload_read")
     try:
         settings = SettingsStore().load()
     except SettingsError:
@@ -1507,7 +1527,8 @@ def main() -> int:
         active_review = ReviewSessionStore().active()
     except ReviewSessionError:
         active_review = None
-    print(json.dumps(capture_snapshot(
+    clock.mark("settings_loaded")
+    result = capture_snapshot(
         target_point=payload.get("cursor"),
         target_point_space=payload.get("cursorSpace"),
         gesture=payload.get("gesture"),
@@ -1526,7 +1547,10 @@ def main() -> int:
             browser_devtools_endpoints=settings.connections.browser_devtools_endpoints,
         ),
         audit_store=AuditStore(),
-    ), ensure_ascii=False))
+        clock=clock,
+    )
+    clock.total(status=str(result.get("status") or "unknown"))
+    print(json.dumps(result, ensure_ascii=False))
     return 0
 
 

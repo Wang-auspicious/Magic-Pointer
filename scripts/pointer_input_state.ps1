@@ -195,6 +195,14 @@ public static class MagicPointerInputState {
         return false;
     }
 
+    // Pure read of the same predicate. IsCaptureNextActive() calls Navigate()
+    // when the deadline has passed, so the state poller must not use it: asking
+    // the question would answer it. This one only looks.
+    public static bool IsCaptureArmed() {
+        if (Interlocked.CompareExchange(ref captureNextStroke, 0, 0) == 0) return false;
+        return DateTime.UtcNow.Ticks <= Interlocked.Read(ref captureDeadlineTicks);
+    }
+
     private static bool IsMatchingChordMessage(int message, MSLLHOOKSTRUCT value) {
         int configured = Interlocked.CompareExchange(ref episodeChord, 0, 0);
         if (configured == 3) return message == WM_MBUTTONDOWN || message == WM_MBUTTONUP;
@@ -278,9 +286,16 @@ while ($true) {
             foregroundProcessId = [uint32]$pidValue
             isWindowMoving = [bool]($hasInfo -and $info.hwndMoveSize -ne [IntPtr]::Zero)
             scrollDelta = [MagicPointerInputState]::TakeWheelDelta()
+            # Observation only. `buttons` above is computed exactly as before —
+            # these two expose *why* it holds a value, so a left button that is
+            # reported down because the hook swallowed it can be told apart from
+            # one the user is actually holding. Never branch on them without
+            # first confirming the behaviour in a log.
+            swallowingLeft = [bool][MagicPointerInputState]::IsSwallowingLeft()
+            captureArmed = [bool][MagicPointerInputState]::IsCaptureArmed()
         } | ConvertTo-Json -Compress
     } catch {
-        '{"buttons":0,"foregroundApp":"","foregroundHwnd":0,"foregroundProcessId":0,"isWindowMoving":false,"scrollDelta":0}'
+        '{"buttons":0,"foregroundApp":"","foregroundHwnd":0,"foregroundProcessId":0,"isWindowMoving":false,"scrollDelta":0,"swallowingLeft":false,"captureArmed":false}'
     }
     Start-Sleep -Milliseconds 35
 }

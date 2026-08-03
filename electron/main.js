@@ -70,7 +70,10 @@ let pointerInputState = {
   foregroundProcessId: 0,
   isWindowMoving: false,
   scrollDelta: 0,
+  swallowingLeft: false,
+  captureArmed: false,
 };
+let lastPointerTraceKey = '';
 let wiggleCalibrationTimer = null;
 let lastWiggleTraceAt = 0;
 let inputPaused = false;
@@ -370,6 +373,8 @@ function startPointerInputStateStream() {
           foregroundProcessId: Number(parsed.foregroundProcessId || 0),
           isWindowMoving: parsed.isWindowMoving === true,
           scrollDelta: Number(parsed.scrollDelta || 0),
+          swallowingLeft: parsed.swallowingLeft === true,
+          captureArmed: parsed.captureArmed === true,
         };
       } catch (_) {}
     }
@@ -383,6 +388,8 @@ function startPointerInputStateStream() {
       foregroundProcessId: 0,
       isWindowMoving: false,
       scrollDelta: 0,
+      swallowingLeft: false,
+      captureArmed: false,
     };
     if (!isQuitting && mousePollTimer && !pointerStateRestartTimer) {
       pointerStateRestartTimer = setTimeout(() => {
@@ -662,6 +669,25 @@ function ensureFreshGestureOverlay() {
   createOverlayWindow();
 }
 
+// The capsule used to wait for the whole perception pass (screenshot + UIA +
+// OCR + annotation, measured at 4.9s on a real machine) before it appeared.
+// That is fatal for the interaction we want: you cannot draw, talk, draw again
+// if every draw costs five seconds. Two gates control how early it shows.
+//
+// CAPSULE_CONTENT_PROTECTED asks Windows to exclude the stage window from
+// screen capture (SetWindowDisplayAffinity/WDA_EXCLUDEFROMCAPTURE). When that
+// holds, the capsule can never contaminate the screenshot, so it may appear
+// immediately — before Python has even started. Verify it on real hardware by
+// opening the newest data/runtime/selection-captures/*.png: the capsule must
+// not be in the image, and the capsule itself must not render black.
+//
+// If that verification fails, set this to false. The capsule then waits for the
+// CAPSULE_REVEAL_PHASE marker instead — the moment the pixels are frozen and
+// attested, which is the earliest point that is safe without content
+// protection. Falling back costs latency, never correctness.
+const CAPSULE_CONTENT_PROTECTED = true;
+const CAPSULE_REVEAL_PHASE = 'pixels_frozen';
+
 function createStageWindow() {
   if (stageWindow && !stageWindow.isDestroyed()) return stageWindow;
   const display = screen.getPrimaryDisplay();
@@ -691,6 +717,15 @@ function createStageWindow() {
   });
   stageWindow.setAlwaysOnTop(true, 'screen-saver');
   stageWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  if (CAPSULE_CONTENT_PROTECTED) {
+    // Not a DRM feature here — this is what buys the capsule the right to be on
+    // screen while we screenshot the desktop underneath it.
+    try {
+      stageWindow.setContentProtection(true);
+    } catch (error) {
+      log(`stage content protection unavailable: ${error?.message || error}`);
+    }
+  }
   stageWindow.loadFile(path.join(__dirname, 'renderer', 'stage.html'));
   stageWindow.setIgnoreMouseEvents(true, { forward: true });
   stageWindow.webContents.on('did-start-loading', () => stageReadiness.reset());
@@ -1735,6 +1770,33 @@ function startMouseShakePolling() {
     }
     const temporarySurfaceVisible = hasVisibleTemporarySurface() || Boolean(overlayWindow?.isVisible());
     const currentButtons = Number(pointerInputState.buttons || 0);
+    // Cursor flicker is a state machine oscillating, and we do not yet know
+    // which state. This prints only on change, so a 20ms loop stays readable and
+    // the transition that flips can be read straight out of electron.log.
+    // Arm with MAGIC_POINTER_POINTER_TRACE=1; it is off by default and changes
+    // nothing but the log.
+    if (process.env.MAGIC_POINTER_POINTER_TRACE === '1') {
+      const overlayVisible = Boolean(overlayWindow && !overlayWindow.isDestroyed() && overlayWindow.isVisible());
+      const stageVisible = Boolean(stageWindow && !stageWindow.isDestroyed() && stageWindow.isVisible());
+      const traceKey = [
+        currentButtons,
+        pointerInputState.swallowingLeft ? 1 : 0,
+        pointerInputState.captureArmed ? 1 : 0,
+        overlayVisible ? 1 : 0,
+        overlayOwnsPointerInput ? 1 : 0,
+        stageVisible ? 1 : 0,
+        temporarySurfaceVisible ? 1 : 0,
+      ].join('|');
+      if (traceKey !== lastPointerTraceKey) {
+        lastPointerTraceKey = traceKey;
+        log(
+          `pointer trace buttons=${currentButtons} swallowingLeft=${pointerInputState.swallowingLeft}`
+          + ` captureArmed=${pointerInputState.captureArmed} overlayVisible=${overlayVisible}`
+          + ` overlayOwnsPointer=${overlayOwnsPointerInput} stageVisible=${stageVisible}`
+          + ` tempSurface=${temporarySurfaceVisible} app=${pointerInputState.foregroundApp || 'none'}`,
+        );
+      }
+    }
     const dismissFromGlobalPointer = shouldDismissFromGlobalPointer({
       currentButtons,
       previousButtons: temporarySurfaceButtons,
@@ -2004,6 +2066,44 @@ function beginSelectionSession(reason = 'manual', gesture = null) {
   }
   log(`selection session capture start reason=${reason} token=${entry.token}`);
 
+  // Optimistic capsule. The bubble is a promise that we heard the gesture, and
+  // that promise is worth nothing four seconds later. It opens with
+  // groundingReady=false and is filled in when the snapshot lands.
+  const revealCapsule = (via) => {
+    if (!gesture) return;
+    if (entry.capsuleRevealed) return;
+    if (activeSelectionSessionToken !== entry.token) return;
+    if (!selectionSessions.get(entry.token)) return;
+    entry.capsuleRevealed = via;
+    showStage({
+      selectionSessionToken: entry.token,
+      groundingReady: false,
+      reason,
+      selectionSource: selectionSourceForReason(reason),
+      defaultInputMode: initialInputMode,
+      voiceAutoSubmit: fabricSettings.interaction.voice_auto_submit,
+      voiceStartStrategy: fabricSettings.interaction.voice_start_strategy,
+      targetGeometryKind: 'pointer_only',
+      target: null,
+      capsuleAnchor: 'pointer',
+      capsuleDelayMs: 0,
+      selectionCount: Array.isArray(gesture?.strokes) && gesture.strokes.length
+        ? gesture.strokes.length
+        : 1,
+      pointer: {
+        x: targetPoint.x - stageBounds.x,
+        y: targetPoint.y - stageBounds.y,
+      },
+      eventSequence: [
+        { type: 'FREEZE', target: null },
+        { type: 'OPEN_CAPSULE', mode: initialInputMode },
+      ],
+    });
+    armTemporaryDismissShortcut();
+    log(`capsule revealed token=${entry.token} via=${via} grounded=false`);
+  };
+  if (gesture && CAPSULE_CONTENT_PROTECTED) revealCapsule('immediate');
+
   let child = null;
   child = runPythonBridge(
     {
@@ -2021,12 +2121,31 @@ function beginSelectionSession(reason = 'manual', gesture = null) {
     'scripts/selection_snapshot_bridge.py',
     'panel',
     {
+      onProgress: (record) => {
+        // Without content protection this marker is the earliest safe reveal:
+        // the pixels are captured and attested, so nothing we draw from here on
+        // can contaminate them.
+        if (record?.phase === CAPSULE_REVEAL_PHASE) revealCapsule(CAPSULE_REVEAL_PHASE);
+      },
       onComplete: (parsed) => {
         if (activeSessionChildren.get(entry.token) === child) activeSessionChildren.delete(entry.token);
         const current = selectionSessions.get(entry.token);
         if (!current || activeSelectionSessionToken !== entry.token) return;
+        // Once the capsule is open, every failure has to be spoken into it.
+        // Returning silently would leave the user staring at a bubble that
+        // never resolves — the one outcome worse than a slow bubble.
+        const failOpenCapsule = (message) => {
+          if (!entry.capsuleRevealed) return false;
+          deliverStageError(entry.token, message);
+          return true;
+        };
         const attached = selectionSessions.attachSnapshot(entry.token, parsed);
-        if (!attached) return;
+        if (!attached) {
+          failOpenCapsule(String(parsed?.error || '') === 'bridge_timeout'
+            ? '这次读取超时了，请再选一次。'
+            : '这次没能读到选中的内容，请再选一次。');
+          return;
+        }
         interactionEpisodes.bindPointedObject(episodeObjectForSession(attached));
         syncPointerEpisodeChord();
         persistCurrentObjectEpisode(attached);
@@ -2039,7 +2158,10 @@ function beginSelectionSession(reason = 'manual', gesture = null) {
           nonce: crypto.randomUUID(),
           geometry: panelGeometryForSession(attached),
         });
-        if (!laidOut) return;
+        if (!laidOut) {
+          failOpenCapsule('这次选区没能定位好，请再选一次。');
+          return;
+        }
         log(`selection session capture done token=${entry.token} status=${attached.snapshot?.status || 'missing'} app=${attached.summary?.app || 'none'}`);
         const frozenTarget = stageTargetForSession(laidOut);
         const mode = current.reason === 'shortcut-text'
@@ -2048,7 +2170,7 @@ function beginSelectionSession(reason = 'manual', gesture = null) {
             ? 'voice'
             : (fabricSettings.interaction.default_input_mode === 'voice' ? 'voice' : 'text');
         if (gesture) {
-          showStage({
+          const groundedPayload = {
             ...stageSessionPayload(laidOut),
             groundingReady: true,
             reason: current.reason,
@@ -2065,6 +2187,19 @@ function beginSelectionSession(reason = 'manual', gesture = null) {
               x: targetPoint.x - stageBounds.x,
               y: targetPoint.y - stageBounds.y,
             },
+          };
+          if (entry.capsuleRevealed) {
+            // Backfill only. Replaying OPEN_CAPSULE here would re-anchor the
+            // bubble and replay its entrance animation on a capsule the user is
+            // already typing into — that is the "capsule jumps around" bug.
+            // No eligibility gate: the gesture path never had one, and the
+            // frozen snapshot stays valid no matter what the user switches to
+            // afterwards.
+            updateStage(groundedPayload);
+            return;
+          }
+          showStage({
+            ...groundedPayload,
             eventSequence: [
               { type: 'FREEZE', target: null },
               { type: 'OPEN_CAPSULE', mode },
@@ -2708,6 +2843,13 @@ function runPythonBridge(payload, scriptPath = 'scripts/electron_bridge.py', tar
     maxStderrBytes: Math.max(4096, Number(options.maxStderrBytes) || 256 * 1024),
     signal: options.signal || null,
     logger: log,
+    // Phase timings arrive on stderr while the bridge is still running. They
+    // are what turns "it took 30 seconds" into "which step took 30 seconds",
+    // and they are what lets the capsule appear before the work is finished.
+    onProgress: (record) => {
+      log(`bridge phase script=${scriptPath} phase=${record.phase} ms=${record.ms}`);
+      if (typeof options.onProgress === 'function') options.onProgress(record);
+    },
     onComplete: (parsed) => {
       log(`bridge complete script=${scriptPath} ok=${parsed?.ok} error=${parsed?.error || 'none'}`);
       if (typeof options.onComplete === 'function') {
@@ -2951,13 +3093,36 @@ ipcMain.on('overlay:gesture-stroke', (event, payload) => {
 
 
 
+// The capsule now opens before grounding finishes, so a fast typist can press
+// Enter while the snapshot is still being read. That submit must wait, not be
+// rejected — rejecting it was the old behaviour only because the capsule could
+// not physically exist yet.
+const SUBMIT_GROUNDING_WAIT_MS = 6000;
+const SUBMIT_GROUNDING_POLL_MS = 60;
+
 ipcMain.on('stage:submit-selection-command', (event, payload) => {
   if (!isSurfaceSender(event, 'stage', resultTargetWindow)) return;
+  submitSelectionCommandWhenGrounded(payload, Date.now() + SUBMIT_GROUNDING_WAIT_MS);
+});
+
+function submitSelectionCommandWhenGrounded(payload, deadlineAt) {
   const selectionSessionToken = payload?.selectionSessionToken;
   const session = selectionSessions.get(selectionSessionToken);
-  if (!session || !session.snapshot) {
+  if (!session) {
     log('stage:submit-selection-command rejected missing-or-expired session');
     deliverStageError(selectionSessionToken || null, '当前 THIS 已过期，请重新激活 Magic Pointer。');
+    return;
+  }
+  if (!session.snapshot) {
+    if (Date.now() < deadlineAt) {
+      setTimeout(
+        () => submitSelectionCommandWhenGrounded(payload, deadlineAt),
+        SUBMIT_GROUNDING_POLL_MS,
+      );
+      return;
+    }
+    log('stage:submit-selection-command grounding wait expired');
+    deliverStageError(selectionSessionToken || null, '目标识别没能完成，请重新选择一次。');
     return;
   }
   if (!session.captureEligibility?.commandReady) {
@@ -3076,7 +3241,7 @@ ipcMain.on('stage:submit-selection-command', (event, payload) => {
     },
   });
   if (child) activeSessionChildren.set(selectionSessionToken, child);
-});
+}
 
 ipcMain.handle('stage:agent-sessions', async (event, payload) => {
   if (!isSurfaceSender(event, 'stage', resultTargetWindow)) {

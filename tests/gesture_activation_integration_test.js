@@ -98,12 +98,46 @@ assert.match(gestureCompletion, /type:\s*'OPEN_CAPSULE'/,
   'release must always open the conversation capsule');
 assert.doesNotMatch(gestureCompletion, /type:\s*'ERROR'/,
   'grounding weakness must not replace the release capsule with an error card');
+// The capsule used to be forbidden from appearing before the snapshot callback,
+// because it would otherwise land inside our own screenshot and UIA probes. That
+// cost 4.9s of dead air on a real machine, which makes draw-talk-draw
+// impossible. The rule is now narrower but just as hard: the capsule may appear
+// early only when it physically cannot enter the capture.
 const captureStart = beginSelection.indexOf('runPythonBridge(');
 const immediateGestureStage = beginSelection.slice(0, captureStart);
-assert.doesNotMatch(immediateGestureStage, /if\s*\(gesture\)[\s\S]*?showStage\([\s\S]*?OPEN_CAPSULE/,
-  'the capture surface must stay hidden until the raw screen snapshot is secured');
+assert.match(immediateGestureStage, /const revealCapsule = \(via\) => \{[\s\S]*?groundingReady: false/,
+  'the early capsule must declare itself ungrounded so the snapshot can still backfill it');
+assert.match(immediateGestureStage, /if \(gesture && CAPSULE_CONTENT_PROTECTED\) revealCapsule\('immediate'\)/,
+  'an immediate capsule is permitted only while the stage is excluded from screen capture');
+const revealBody = immediateGestureStage.slice(
+  immediateGestureStage.indexOf('const revealCapsule = (via) => {'),
+);
+assert.match(revealBody, /if \(!gesture\) return;/,
+  'only a completed gesture opens a capsule early; the shortcut path keeps its own flow');
+assert.match(revealBody, /if \(entry\.capsuleRevealed\) return;/,
+  'reveal must be idempotent: the immediate path and the phase marker can both fire');
+assert.match(revealBody, /if \(activeSelectionSessionToken !== entry\.token\) return;/,
+  'a superseded session must not paint a capsule over the session that replaced it');
+assert.match(main, /const CAPSULE_CONTENT_PROTECTED = (true|false);/,
+  'the content-protection gate must stay a single reviewable switch');
+assert.match(main, /const CAPSULE_REVEAL_PHASE = 'pixels_frozen';/,
+  'without content protection the capsule waits for attested pixels, not for OCR');
+assert.match(main, /setContentProtection\(true\)/,
+  'the immediate capsule is only safe because the stage window is excluded from capture');
+assert.match(beginSelection, /onProgress:[\s\S]*?record\?\.phase === CAPSULE_REVEAL_PHASE\) revealCapsule/,
+  'the fallback reveal must be driven by the bridge phase marker, not by a guessed delay');
+assert.match(beginSelection, /onComplete:[\s\S]*?if \(entry\.capsuleRevealed\)[\s\S]*?updateStage\(groundedPayload\)/,
+  'an already-open capsule must be backfilled, never reopened');
+const backfillStart = beginSelection.indexOf('if (entry.capsuleRevealed) {');
+const backfillEnd = beginSelection.indexOf('showStage(', backfillStart);
+assert.ok(backfillStart > 0 && backfillEnd > backfillStart, 'backfill branch must be locatable');
+const backfillBranch = beginSelection.slice(backfillStart, backfillEnd);
+assert.doesNotMatch(backfillBranch, /type:\s*'OPEN_CAPSULE'/,
+  'replaying OPEN_CAPSULE would re-anchor a capsule the user is already typing into');
+assert.doesNotMatch(backfillBranch, /showStage\(/,
+  'the backfill path must update the open capsule, not raise a second one');
 assert.match(beginSelection, /onComplete:[\s\S]*?if\s*\(gesture\)[\s\S]*?showStage\([\s\S]*?OPEN_CAPSULE/,
-  'the voice capsule must open only after the snapshot callback has secured the original screen');
+  'a capsule that was never revealed early must still open on the snapshot callback');
 assert.match(beginSelection, /foregroundHwnd:\s*gesture\?\.source\?\.foregroundHwnd/,
   'background grounding must remain locked to the app active at wiggle time');
 

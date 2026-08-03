@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from scripts.bridge_progress import PhaseClock
 from app.actions.history import ActionHistoryStore, make_word_undo_proposal
 from app.actions.office import clean_replacement_text, make_word_replace_selection_proposal, wants_word_rewrite
 from app.actions.shopping_list import (
@@ -1629,9 +1630,15 @@ def build_agent_prompt_draft(
     *,
     engine: FabricEngine | None = None,
     model_compiler: Callable[[str, str], str] | None = None,
+    clock: PhaseClock | None = None,
 ) -> dict[str, Any]:
+    def mark(phase: str, **fields: Any) -> None:
+        if clock is not None:
+            clock.mark(phase, **fields)
+
     command = str(payload.get("command") or "").strip()
     objects = _fabric_objects(payload, target_window, app_ctx, snapshot)
+    mark("fabric_objects", n=len(objects))
     selection_session_id = str(payload.get("selectionSessionId") or "").strip() or None
     selection_snapshot_id = str((snapshot or {}).get("snapshot_id") or "").strip() or None
     if not command or not objects:
@@ -1644,6 +1651,7 @@ def build_agent_prompt_draft(
         }
 
     active_engine = engine or FabricEngine()
+    mark("engine_ready")
     planned = active_engine.plan(
         command,
         objects=objects,
@@ -1664,6 +1672,7 @@ def build_agent_prompt_draft(
         },
     )
     if planned.get("ok") is not True:
+        mark("engine_plan", ok=False, err=str(planned.get("error") or "unknown"))
         return {
             "ok": False,
             "error": str(planned.get("error") or "agent_prompt_plan_failed"),
@@ -1671,14 +1680,17 @@ def build_agent_prompt_draft(
             "selectionSessionId": selection_session_id,
             "selectionSnapshotId": selection_snapshot_id,
         }
+    mark("engine_plan", ok=True)
 
     plan = dict(planned.get("plan") or {})
     parameters = dict(plan.get("parameters") or {})
     packet = dict(parameters.get("contextPacket") or {})
     artifact = write_context_packet_artifact(packet, root=active_engine.root)
     grounded_prompt = build_agent_prompt(packet, artifact_path=artifact)
+    mark("grounded_prompt", chars=len(grounded_prompt))
     compiler = model_compiler or _compile_agent_prompt_with_model
     candidate = str(compiler(command, grounded_prompt) or "").strip()
+    mark("model_compile", chars=len(candidate))
     model_failed = (
         not candidate
         or candidate.startswith("AI 调用失败")
@@ -1704,6 +1716,7 @@ def build_agent_prompt_draft(
 
 def main() -> int:
     _configure_stdio()
+    clock = PhaseClock("selection_bridge")
     try:
         payload = read_payload()
     except PayloadTooLargeError as exc:
@@ -1715,6 +1728,7 @@ def main() -> int:
         return 2
     command = str(payload.get("command") or "").strip()
     selection_session_id = str(payload.get("selectionSessionId") or "").strip()
+    clock.mark("payload_read", mode=payload.get("requestMode") or "default", cmd_len=len(command))
     if not command:
         print(json.dumps({"ok": False, "error": "missing command"}, ensure_ascii=False))
         return 2
@@ -1746,6 +1760,7 @@ def main() -> int:
         return 0
 
     target_window, app_ctx, snapshot, snapshot_error = _context_from_snapshot(payload)
+    clock.mark("context_from_snapshot", err=snapshot_error or "none")
     if snapshot_error:
         print(json.dumps({
             "ok": False,
@@ -1759,9 +1774,11 @@ def main() -> int:
     # Screen fallback remains local-first: OCR enriches the snapshot before
     # any recipe or text-model routing, while the saved image stays local.
     app_ctx = _enrich_screen_region_context(target_window, app_ctx, snapshot)
+    clock.mark("enrich_screen_region")
 
     if payload.get("requestMode") == "agent_prompt":
-        prompt_draft = build_agent_prompt_draft(payload, target_window, app_ctx, snapshot)
+        prompt_draft = build_agent_prompt_draft(payload, target_window, app_ctx, snapshot, clock=clock)
+        clock.total(ok=prompt_draft.get("ok") is True)
         print(json.dumps(prompt_draft, ensure_ascii=False))
         return 0 if prompt_draft.get("ok") is True else 1
 
