@@ -58,7 +58,7 @@ function defaultSettings() {
       gesture_interaction_mode: 'pass_through',
     },
     interaction: {
-      default_input_mode: 'voice',
+      default_input_mode: 'text',
       voice_auto_submit: true,
       voice_start_strategy: 'auto',
       voice_silence_ms: 1600,

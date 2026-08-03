@@ -33,6 +33,12 @@ assert(html.includes('id="capsule-input"'));
 assert(html.includes('id="transcript"'));
 assert(html.includes('id="processing-shimmer"'));
 assert(html.includes('id="stage-result"'));
+assert(html.includes('id="stage-thread"'),
+  'results live inside a thread panel that keeps earlier turns on screen');
+assert(html.includes('id="tpl-thread-turn"'),
+  'each turn renders from one template: the ask above, its answer below');
+assert(html.includes('id="thread-close"') && html.includes('id="thread-copy"'),
+  'copy and close belong to the thread, not to every answer card');
 assert(html.includes('id="stage-error"'));
 assert(html.includes('src="../stage_state.js"'));
 assert(html.includes('src="../stage_anchor.js"'));
@@ -68,15 +74,20 @@ assert(source.includes('session.capsuleDragged = true;'),
   'dragging the capsule must lock it in place');
 assert(source.includes('capsuleDrag = { startX: x, startY: y'),
   'pointer press on the capsule body must begin a drag');
-assert(source.includes("surfaceDrag = { element: resultCard"),
-  'pointer press on an answer bubble must begin a drag');
+assert(source.includes("surfaceDrag = { element: threadPanel"),
+  'pointer press on the thread panel must begin a drag');
 assert(source.includes('session.resultDragged = true;'),
   'a dragged answer bubble must keep its user-selected position');
 
 // Demo 7 capsule contract: voice state drives motion, text never shows the
 // waveform, and answer cards grow from the same stable capsule anchor.
 assert(source.includes('capsule.dataset.voiceState = session.voiceState'));
-assert(source.includes('anchorResultToCapsule(resultCard)'));
+assert(source.includes('anchorThreadToCapsule()'),
+  'the thread must hang off the composer rather than take its place');
+assert(source.includes("if (name === 'processing' || name === 'result' || name === 'error') capsuleInput.value = '';"),
+  'a submitted question moves into the thread, leaving an empty composer');
+assert(!source.includes('renderResultToolbar'),
+  'the per-answer toolbar is replaced by the thread bar');
 assert(source.includes('renderMarkdownText'));
 assert(css.includes(".stage-capsule[data-mode='text'] .voice-waveform"));
 assert(css.includes('.stage-capsule.is-exiting'));

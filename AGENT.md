@@ -14,7 +14,18 @@ Magic Pointer = 默认不可见的跨应用操作层。鼠标晃动唤醒 → �
 
 ## 当前状态快照（2026-08-02）
 
-### 2026-08-02 夜间交接（先读这里）
+### 2026-08-03 产品方向与 Stage v2（先读这里）
+- **战略文档：`docs/planning/PRODUCT_STRATEGY_20260803.md`**。一手调研（HN 1113 条 AI Pointer 讨论、腾讯 QClaw/Marvis 实测、OSWorld 数据、Every 工作流尸检、Claude Code 元生态）得出的定位、三个母功能（取/交/改）、底层四个缺口与依赖顺序。改方向前先读它。
+- 主战场定为「**Ctrl+C 复制不了的东西**」；MCP 服务愿意配合的应用，我们服务不配合的应用。不进代码上下文赛道（Claude Code 已赢）。
+- **语音不再是主路径**：`default_input_mode` 默认改为 `text`（HN 上语音是重复出现的最大反对意见：开放办公室/公共场合无法使用）。语音降级为加速方式，气泡必须全程零语音可用。main.js 的兜底同步改为「显式 voice 才用语音」。
+- **PointerStage v2 — 结果不再顶掉问题**：`stage_state.js` 新增 `turns[]`（`{ id, ask, status, result, error }`）。`SUBMIT` 立即开一个 turn 记录问题，`RESULT`/`ERROR` 结算同一个 turn。`OPEN_CAPSULE` 与追问**不再清空线程**——这是之前"回答把问题框遮住""追问后历史没法看"的根因（旧实现里 result 与 capsule 是互斥状态，且 OPEN_CAPSULE 会 `result: null`）。
+- 渲染层：气泡在 result/error 期间**继续存在**并变成 composer（提交后自动清空，问题搬进线程卡片）；线程面板 `#stage-thread` 挂在气泡上方，空间不足时翻到下方；`#stage-result` 保留为线程滚动区（`max-height: min(46vh, 420px)`）。每答案的 `复制/追问/关闭` 工具条并入线程头部（追问按钮已无必要——直接打字即可）。
+- 焦点纪律（借 Hermes DESIGN.md）：只有用户打开 composer 时取焦点；结果到达时**仅当用户本来就在输入**才保持焦点，不因为产出了东西就抢焦点。
+- 动效：`stage-thread-in` / `stage-turn-in` / `stage-thinking` 三条，均 ≤220ms 且 `prefers-reduced-motion` 下关闭。**刻意不用 `backdrop-filter`**——透明 click-through overlay 上不稳定且昂贵，纵深改用分层阴影。
+- 验证：Node 全量 `56 source files / 117 tests` 通过；`fabric_settings_test.py` 17 passed；eslint 与改动前持平（4 条既有告警，无新增）。
+- 回退点：`a6c7135`（全绿，Stage v2 之前）、`1feffb1`（微信 RED 测试，单独一条）。
+
+### 2026-08-02 夜间交接
 - 当前安全基线提交：`39d86bc checkpoint: preserve perception and prompt progress`。这是本地进度快照，不包含 SenseVoice/Whisper 权重、pytest 临时目录或密钥；`.gitignore` 已补 `/models/`、`data/models/`、`*.gguf`、`*.safetensors`、`*.pt` 等模型规则。
 - 该提交包含：全局截图+圈定位标签（THIS 标注、不裁图）+ 最多 24 个元件框编号标注 + 视觉 API 开关（仅授权上传才调用，中转 gpt-5.4-mini）+ 主进程 `FREEZE→OPEN_CAPSULE`（语音球等快照启动后显示）+ 常驻 OCR worker + 多源/跨应用研究结论。
 - 手势存在时：先 UIA/结构化区域读取（闭合圈=圈内元件集，横线=单元件，与 bbox 相交即算）→ 结构化命中保留为 `context.content` 真相，全局截图+标注只挂 `artifacts` 证据；只有结构化失败才用 `screen_region` 当 context（`source_kind=native_selection`）。

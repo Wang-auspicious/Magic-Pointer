@@ -17,7 +17,7 @@ def test_default_settings_are_wiggle_first_and_minimum_permission(tmp_path: Path
     assert settings.activation.gesture_interaction_mode == "pass_through"
     assert settings.activation.multi_stroke_submit_ms == 2500
     assert settings.activation.fallback_hotkey_enabled is True
-    assert settings.interaction.default_input_mode == "voice"
+    assert settings.interaction.default_input_mode == "text"
     assert settings.interaction.voice_auto_submit is True
     assert settings.interaction.voice_language == "auto"
     assert settings.interaction.voice_output_mode == "verbatim"

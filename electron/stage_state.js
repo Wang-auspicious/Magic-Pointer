@@ -3,6 +3,11 @@
 // Lifecycle: hidden -> targeting -> frozen -> capsule-voice | capsule-text
 //            -> processing -> result | error -> dismissing -> hidden
 //
+// A session accumulates `turns`: one entry per thing the user asked for, in
+// order, each carrying the ask and its outcome. The capsule is a composer that
+// stays put; a result never replaces the question that produced it, and a
+// follow-up appends instead of wiping the thread.
+//
 // `transition(state, event)` is a pure function: illegal transitions return the
 // incoming state object unchanged (same reference), so callers can cheaply
 // detect no-ops. Loaded both from node tests (CommonJS) and from the stage
@@ -29,6 +34,12 @@ function initialState(config = {}) {
     command: '',
     result: null,
     error: null,
+    // The conversation so far, oldest first. Each turn is
+    // { id, ask, status: 'pending' | 'done' | 'failed', result, error }.
+    // Kept for the whole session: a follow-up appends a turn rather than
+    // discarding the one before it, so the user can still read what they asked.
+    turns: [],
+    nextTurnId: 1,
     // Real UIA draft-write progress ({ step, totalSteps, label }) or null.
     // Only ever set from genuine DELIVERY_PROGRESS events — never synthesized.
     deliveryProgress: null,
@@ -67,12 +78,47 @@ function toDismissing(state) {
   return { ...state, name: 'dismissing' };
 }
 
+// Open a turn for something the user just asked for. The ask is recorded up
+// front so the question is on screen while the answer is still being produced.
+function openTurn(state, ask) {
+  const turn = {
+    id: state.nextTurnId,
+    ask: ask == null ? '' : String(ask),
+    status: 'pending',
+    result: null,
+    error: null,
+  };
+  return { turns: [...state.turns, turn], nextTurnId: state.nextTurnId + 1 };
+}
+
+// Settle the newest pending turn. Results can also arrive without a preceding
+// ask (a runtime-issue capture, an ineligible selection), in which case the
+// outcome opens and closes a turn of its own so the thread stays complete.
+function closeTurn(state, { result = null, error = null }) {
+  const status = error == null ? 'done' : 'failed';
+  const turns = state.turns.slice();
+  let index = -1;
+  for (let i = turns.length - 1; i >= 0; i -= 1) {
+    if (turns[i].status === 'pending') { index = i; break; }
+  }
+  if (index === -1) {
+    return {
+      turns: [...turns, { id: state.nextTurnId, ask: '', status, result, error }],
+      nextTurnId: state.nextTurnId + 1,
+    };
+  }
+  turns[index] = { ...turns[index], status, result, error };
+  return { turns, nextTurnId: state.nextTurnId };
+}
+
 function toResult(state, event) {
-  return { ...state, name: 'result', result: event.result == null ? null : event.result };
+  const result = event.result == null ? null : event.result;
+  return { ...state, name: 'result', result, error: null, ...closeTurn(state, { result }) };
 }
 
 function toError(state, event) {
-  return { ...state, name: 'error', error: event.error == null ? { message: 'unknown error' } : event.error };
+  const error = event.error == null ? { message: 'unknown error' } : event.error;
+  return { ...state, name: 'error', error, ...closeTurn(state, { error }) };
 }
 
 function transition(state, event) {
@@ -125,7 +171,7 @@ function transition(state, event) {
       }
       if (type === 'SUBMIT') {
         const command = event.command == null ? state.transcript : String(event.command);
-        return { ...state, name: 'processing', command };
+        return { ...state, name: 'processing', command, ...openTurn(state, command) };
       }
       // Dictation failures surface immediately from the capsule.
       if (type === 'RESULT') return toResult(state, event);
@@ -149,18 +195,44 @@ function transition(state, event) {
     case 'result':
     case 'error':
       if (type === 'DISMISS') return toDismissing(state);
-      if (state.name === 'result' && type === 'OPEN_CAPSULE') {
+      // A follow-up reopens the composer over the same thread. `turns` is
+      // deliberately preserved: the earlier question and its answer stay on
+      // screen instead of being replaced by whatever comes next.
+      if (type === 'OPEN_CAPSULE') {
         const mode = event.mode === 'text' ? 'text' : 'voice';
-        return { ...state, name: `capsule-${mode}`, inputMode: mode, transcript: '', result: null, error: null, deliveryProgress: null };
-      }
-      if (state.name === 'result' && type === 'ACTION_START') {
         return {
           ...state,
-          name: 'processing',
-          command: String(event.command || ''),
+          name: `capsule-${mode}`,
+          inputMode: mode,
+          transcript: '',
           result: null,
           error: null,
           deliveryProgress: null,
+        };
+      }
+      // The composer stays live under a finished thread, so a follow-up can be
+      // typed and sent without first reopening the capsule.
+      if (type === 'SUBMIT') {
+        const command = event.command == null ? state.transcript : String(event.command);
+        return {
+          ...state,
+          name: 'processing',
+          command,
+          result: null,
+          error: null,
+          deliveryProgress: null,
+          ...openTurn(state, command),
+        };
+      }
+      if (state.name === 'result' && type === 'ACTION_START') {        const command = String(event.command || '');
+        return {
+          ...state,
+          name: 'processing',
+          command,
+          result: null,
+          error: null,
+          deliveryProgress: null,
+          ...openTurn(state, command),
         };
       }
       if (state.name === 'result' && type === 'DELIVERY_PROGRESS') {

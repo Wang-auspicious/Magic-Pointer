@@ -112,7 +112,7 @@ class ActivationSettings:
 
 @dataclass
 class InteractionSettings:
-    default_input_mode: str = "voice"
+    default_input_mode: str = "text"
     voice_auto_submit: bool = True
     voice_start_strategy: str = "auto"
     voice_silence_ms: int = 1600

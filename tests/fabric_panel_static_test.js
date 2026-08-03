@@ -21,7 +21,8 @@ assert(js.includes('defaultInputMode'));
 assert(js.includes('voiceAutoSubmit'));
 assert(js.includes('measureText'));
 assert(main.includes('defaultInputMode: inputModeForReason('));
-assert(main.includes("fabricSettings?.interaction?.default_input_mode === 'text'"));
+assert(main.includes("fabricSettings?.interaction?.default_input_mode === 'voice'"),
+  'typing is the default; voice is the explicit opt-in');
 assert(main.includes("voiceAutoSubmit: fabricSettings.interaction.voice_auto_submit"));
 // The panel rail left the hot path with Task 5 (stage capsule replaces it);
 // main.js no longer creates or positions the panel window.

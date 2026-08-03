@@ -29,7 +29,14 @@
         <span id="processing-shimmer" class="processing-shimmer" aria-hidden="true" hidden></span>
       </div>
       <div id="stage-chips" class="stage-chips" role="group" aria-label="建议操作" hidden></div>
-      <div id="stage-result" class="stage-result" hidden></div>
+      <section id="stage-thread" class="stage-thread" aria-label="本次会话" hidden>
+        <header class="thread-bar">
+          <span id="thread-count" class="thread-count"></span>
+          <button type="button" id="thread-copy" class="thread-tool">复制</button>
+          <button type="button" id="thread-close" class="thread-tool is-close">关闭</button>
+        </header>
+        <div id="stage-result" class="stage-result" role="log" aria-live="polite"></div>
+      </section>
       <div id="stage-error" class="stage-error" role="alert" hidden></div>
       <div id="delivery-progress" class="delivery-progress" hidden>
         <span id="delivery-label" class="delivery-label"></span>
@@ -39,6 +46,12 @@
     </main>
 
     <!-- Structured result card skeletons (inert templates, cloned by stage.js). -->
+    <template id="tpl-thread-turn">
+      <article class="thread-turn" data-status="pending">
+        <p class="turn-ask"></p>
+        <div class="turn-answer"></div>
+      </article>
+    </template>
     <template id="tpl-calendar-draft">
       <div class="result-card card-calendar">
         <p class="card-title"></p>

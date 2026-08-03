@@ -1832,7 +1832,7 @@ function currentPointerPollingPolicy() {
 function inputModeForReason(reason) {
   if (reason === 'shortcut-text') return 'text';
   if (reason === 'shortcut-voice') return 'voice';
-  return fabricSettings?.interaction?.default_input_mode === 'text' ? 'text' : 'voice';
+  return fabricSettings?.interaction?.default_input_mode === 'voice' ? 'voice' : 'text';
 }
 
 function registerConfigurableHotkeys() {
@@ -2046,7 +2046,7 @@ function beginSelectionSession(reason = 'manual', gesture = null) {
           ? 'text'
           : current.reason === 'shortcut-voice'
             ? 'voice'
-            : (fabricSettings.interaction.default_input_mode === 'text' ? 'text' : 'voice');
+            : (fabricSettings.interaction.default_input_mode === 'voice' ? 'voice' : 'text');
         if (gesture) {
           showStage({
             ...stageSessionPayload(laidOut),

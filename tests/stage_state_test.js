@@ -155,4 +155,73 @@ const toggledHidden = transition(initialState(), { type: 'SET_REDUCED_MOTION', v
 assert.strictEqual(toggledHidden.name, 'hidden');
 assert.strictEqual(toggledHidden.config.reducedMotion, true);
 
+// --- Conversation thread -----------------------------------------------------
+// A follow-up must never cost the user the question they already asked. These
+// assertions pin the thread: the ask is recorded when it is submitted (so it is
+// on screen while the answer is still coming), the answer settles that same
+// turn, and reopening the composer leaves the finished turns alone.
+
+function threadAtCapsule() {
+  let s = transition(initialState(), { type: 'WAKE', target: { x: 0, y: 0, width: 10, height: 10 } });
+  s = transition(s, { type: 'FREEZE', target: { x: 0, y: 0, width: 10, height: 10 } });
+  return transition(s, { type: 'OPEN_CAPSULE', mode: 'text' });
+}
+
+let thread = threadAtCapsule();
+assert.deepStrictEqual(thread.turns, [], 'a fresh session starts with no turns');
+
+thread = transition(thread, { type: 'SUBMIT', command: '翻译这段' });
+assert.strictEqual(thread.turns.length, 1, 'submitting opens a turn immediately');
+assert.strictEqual(thread.turns[0].ask, '翻译这段', 'the question is recorded before the answer exists');
+assert.strictEqual(thread.turns[0].status, 'pending');
+
+thread = transition(thread, { type: 'RESULT', result: { text: 'translate this' } });
+assert.strictEqual(thread.turns.length, 1, 'the answer settles the open turn instead of adding one');
+assert.strictEqual(thread.turns[0].status, 'done');
+assert.deepStrictEqual(thread.turns[0].result, { text: 'translate this' });
+assert.strictEqual(thread.turns[0].ask, '翻译这段', 'settling must not erase the ask');
+
+// The follow-up: this is the regression that mattered — reopening the composer
+// used to null the result, so the previous exchange vanished from the screen.
+thread = transition(thread, { type: 'OPEN_CAPSULE', mode: 'text' });
+assert.strictEqual(thread.name, 'capsule-text');
+assert.strictEqual(thread.turns.length, 1, 'a follow-up must not discard the finished turn');
+assert.strictEqual(thread.turns[0].ask, '翻译这段');
+assert.deepStrictEqual(thread.turns[0].result, { text: 'translate this' });
+
+thread = transition(thread, { type: 'SUBMIT', command: '第二句什么意思' });
+assert.strictEqual(thread.turns.length, 2, 'the follow-up appends');
+assert.strictEqual(thread.turns[1].ask, '第二句什么意思');
+assert.notStrictEqual(thread.turns[0].id, thread.turns[1].id, 'turn ids must be distinct');
+
+thread = transition(thread, { type: 'ERROR', error: { message: 'nope' } });
+assert.strictEqual(thread.turns.length, 2);
+assert.strictEqual(thread.turns[1].status, 'failed', 'a failed follow-up settles as failed');
+assert.deepStrictEqual(thread.turns[1].error, { message: 'nope' });
+assert.strictEqual(thread.turns[0].status, 'done', 'an earlier success is untouched by a later failure');
+
+// Chip actions run against the same thread.
+let chipThread = threadAtCapsule();
+chipThread = transition(chipThread, { type: 'SUBMIT', command: '总结' });
+chipThread = transition(chipThread, { type: 'RESULT', result: { text: 'a' } });
+chipThread = transition(chipThread, { type: 'ACTION_START', command: '发到日历' });
+assert.strictEqual(chipThread.name, 'processing');
+assert.strictEqual(chipThread.turns.length, 2, 'a suggested action opens its own turn');
+assert.strictEqual(chipThread.turns[1].ask, '发到日历');
+assert.strictEqual(chipThread.turns[1].status, 'pending');
+
+// A result with no preceding ask still lands in the thread (runtime-issue
+// capture, ineligible selection) so the surface never renders an orphan card.
+let direct = transition(initialState(), { type: 'WAKE', target: { x: 0, y: 0, width: 4, height: 4 } });
+direct = transition(direct, { type: 'RESULT', result: { text: 'captured' } });
+assert.strictEqual(direct.turns.length, 1, 'an unsolicited result opens and closes its own turn');
+assert.strictEqual(direct.turns[0].ask, '');
+assert.strictEqual(direct.turns[0].status, 'done');
+
+// Dismissing ends the session; the next wake starts an empty thread.
+let ended = transition(thread, { type: 'DISMISS' });
+ended = transition(ended, { type: 'HIDDEN' });
+assert.deepStrictEqual(ended.turns, [], 'a new session must not inherit the previous thread');
+assert.strictEqual(ended.nextTurnId, 1);
+
 console.log('stage state test ok');

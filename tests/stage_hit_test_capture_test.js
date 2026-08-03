@@ -16,10 +16,10 @@ assert(/name === 'capsule-text'.*!capsule\.hidden && !capsuleInput\.disabled/.te
   'the text capsule must keep its input-focus capture contract');
 assert(source.includes("querySelector('button:not([disabled])')"),
   'visible result actions must remain mouse-capturable');
-assert(source.includes("if (name === 'result') return !resultCard.hidden;"),
-  'a visible answer bubble must expose its body as a draggable surface');
-assert(source.includes('elements.push(resultCard);'),
-  'the native shaped window must include the draggable answer bubble body');
+assert(source.includes("if (name === 'result') return !threadPanel.hidden || !capsule.hidden;"),
+  'a live thread or its composer must expose a body to capture the mouse');
+assert(source.includes('elements.push(threadPanel);'),
+  'the native shaped window must include the draggable thread panel body');
 assert(source.includes("if (name === 'hidden' || name === 'dismissing') return false;"),
   'hidden or clearing stage states must release mouse capture before any fade completes');
 assert(!source.includes("name === 'capsule-text' || name === 'result' || name === 'error' || chipsVisible"),

@@ -12,7 +12,7 @@ const defaults = store.load();
 assert.strictEqual(defaults.schema_version, 1);
 assert.strictEqual(defaults.activation.wiggle_enabled, true);
 assert.strictEqual(defaults.activation.fallback_hotkey_enabled, true);
-assert.strictEqual(defaults.interaction.default_input_mode, 'voice');
+assert.strictEqual(defaults.interaction.default_input_mode, 'text');
 assert.strictEqual(defaults.interaction.voice_auto_submit, true);
 assert.strictEqual(defaults.interaction.voice_language, 'auto');
 assert.strictEqual(defaults.interaction.voice_output_mode, 'verbatim');

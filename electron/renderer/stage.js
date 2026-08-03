@@ -24,12 +24,17 @@
   const transcriptBox = document.getElementById('transcript');
   const shimmer = document.getElementById('processing-shimmer');
   const resultCard = document.getElementById('stage-result');
+  const threadPanel = document.getElementById('stage-thread');
+  const threadCount = document.getElementById('thread-count');
+  const threadCopy = document.getElementById('thread-copy');
+  const threadClose = document.getElementById('thread-close');
   const errorCard = document.getElementById('stage-error');
   const chipsBox = document.getElementById('stage-chips');
   const deliveryBox = document.getElementById('delivery-progress');
   const deliveryLabel = document.getElementById('delivery-label');
   const deliveryBar = document.getElementById('delivery-bar');
   const deliveryCount = document.getElementById('delivery-count');
+  const tplThreadTurn = document.getElementById('tpl-thread-turn');
   const tplCalendarDraft = document.getElementById('tpl-calendar-draft');
   const tplTableCompare = document.getElementById('tpl-table-compare');
   const tplTextDraft = document.getElementById('tpl-text-draft');
@@ -60,6 +65,9 @@
   // machine): the chips policy needs it, the lifecycle does not.
   const meta = { selectionSource: null, objectKind: null };
   let renderedChipIds = '';
+  // Signature of the turns currently in the DOM, so an unchanged thread is
+  // never rebuilt (see renderThread).
+  let renderedTurnSignature = '';
   // Live wiring context from main (stage:show / stage:update payloads).
   const session = {
     token: null,
@@ -180,17 +188,17 @@
       && y >= capsuleRect.top && y <= capsuleRect.bottom;
     const primaryDown = (buttons & 1) !== 0;
     const previousPrimaryDown = (previousPointerButtons & 1) !== 0;
-    const resultRect = resultCard.getBoundingClientRect();
-    const overResult = state.name === 'result' && !resultCard.hidden
+    const resultRect = threadPanel.getBoundingClientRect();
+    const overResult = !threadPanel.hidden
       && x >= resultRect.left && x <= resultRect.right
       && y >= resultRect.top && y <= resultRect.bottom;
     if (overResult && primaryDown && !previousPrimaryDown && !surfaceDrag) {
-      const overAction = [...resultCard.querySelectorAll('button:not([disabled]), textarea, input, [contenteditable="true"]')].some((control) => {
+      const overAction = [...threadPanel.querySelectorAll('button:not([disabled]), textarea, input, [contenteditable="true"]')].some((control) => {
         const rect = control.getBoundingClientRect();
         return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
       });
       if (!overAction) {
-        surfaceDrag = { element: resultCard, startX: x, startY: y, originLeft: resultRect.left, originTop: resultRect.top };
+        surfaceDrag = { element: threadPanel, startX: x, startY: y, originLeft: resultRect.left, originTop: resultRect.top };
       }
     }
     if (surfaceDrag) {
@@ -260,11 +268,11 @@
     // The voice capsule needs pointer events too: drag-to-move and
     // push-to-talk / hover triggering both rely on stage mouse capture.
     if (name === 'capsule-voice') return !capsule.hidden;
-    if (name === 'result') return !resultCard.hidden;
+    if (name === 'result') return !threadPanel.hidden || !capsule.hidden;
     const hasEnabledButton = (element) => !element.hidden
       && Boolean(element.querySelector('button:not([disabled])'));
     return hasEnabledButton(chipsBox)
-      || hasEnabledButton(resultCard)
+      || hasEnabledButton(threadPanel)
       || hasEnabledButton(errorCard);
   }
 
@@ -285,7 +293,7 @@
   }
 
   function visibleStageRegions() {
-    return [targetingOutline, frozenGlow, capsule, resultCard, errorCard, chipsBox, deliveryBox]
+    return [targetingOutline, frozenGlow, capsule, threadPanel, errorCard, chipsBox, deliveryBox]
       .filter((element) => !element.hidden)
       .map((element) => ({ element, rect: element.getBoundingClientRect() }))
       .filter(({ rect }) => rect.width > 0 && rect.height > 0)
@@ -310,8 +318,8 @@
     } else if (state.name === 'capsule-voice') {
       if (!capsule.hidden) elements.push(capsule);
     }
-    if (state.name === 'result' && !resultCard.hidden) elements.push(resultCard);
-    for (const container of [chipsBox, resultCard, errorCard]) {
+    if (!threadPanel.hidden) elements.push(threadPanel);
+    for (const container of [chipsBox, threadPanel, errorCard]) {
       if (container.hidden) continue;
       elements.push(...container.querySelectorAll('button:not([disabled])'));
     }
@@ -558,21 +566,36 @@
     element.dataset.quadrant = placement.quadrant;
   }
 
-  function anchorResultToCapsule(element) {
+  // The thread hangs off the composer rather than replacing it: it grows
+  // upward from the capsule's top edge and flips below only when the capsule
+  // is too close to the top of the screen to fit above it.
+  function anchorThreadToCapsule() {
     if (session.resultDragged && session.resultPlacement) {
-      element.style.left = `${session.resultPlacement.x}px`;
-      element.style.top = `${session.resultPlacement.y}px`;
+      threadPanel.style.left = `${session.resultPlacement.x}px`;
+      threadPanel.style.top = `${session.resultPlacement.y}px`;
       return;
     }
-    const rect = element.getBoundingClientRect();
+    const rect = threadPanel.getBoundingClientRect();
+    const capsuleRect = capsule.hidden ? null : capsule.getBoundingClientRect();
     const fallback = session.capsulePlacement || session.pointer || { x: 8, y: 8 };
-    const width = rect.width || Math.min(360, window.innerWidth - 16);
-    const height = rect.height || 80;
-    const x = Math.max(8, Math.min(fallback.x, window.innerWidth - width - 8));
-    const y = Math.max(8, Math.min(fallback.y, window.innerHeight - height - 8));
-    element.style.left = `${x}px`;
-    element.style.top = `${y}px`;
-    element.dataset.quadrant = session.capsulePlacement?.quadrant || 'bottom-right';
+    const width = rect.width || Math.min(380, window.innerWidth - 16);
+    const height = rect.height || 96;
+    const gap = 10;
+    const anchorLeft = capsuleRect && capsuleRect.width ? capsuleRect.left : fallback.x;
+    const anchorTop = capsuleRect && capsuleRect.height ? capsuleRect.top : fallback.y;
+    const anchorBottom = capsuleRect && capsuleRect.height ? capsuleRect.bottom : fallback.y;
+    const x = Math.max(8, Math.min(anchorLeft, window.innerWidth - width - 8));
+    let y = anchorTop - gap - height;
+    let side = 'above';
+    if (y < 8) {
+      y = anchorBottom + gap;
+      side = 'below';
+    }
+    y = Math.max(8, Math.min(y, window.innerHeight - height - 8));
+    threadPanel.style.left = `${x}px`;
+    threadPanel.style.top = `${y}px`;
+    threadPanel.dataset.side = side;
+    threadPanel.dataset.quadrant = session.capsulePlacement?.quadrant || 'bottom-right';
   }
 
   function anchorCapsuleToTarget(width) {
@@ -1003,33 +1026,10 @@
     document.body.removeChild(area);
   }
 
-  function renderResultToolbar(container, payload) {
-    const toolbar = document.createElement('div');
-    toolbar.className = 'result-toolbar';
-    const copyBtn = document.createElement('button');
-    copyBtn.type = 'button';
-    copyBtn.className = 'result-tool';
-    copyBtn.textContent = '复制';
-    copyBtn.addEventListener('click', () => copyResultText(container, copyBtn));
-    const followBtn = document.createElement('button');
-    followBtn.type = 'button';
-    followBtn.className = 'result-tool';
-    followBtn.textContent = '追问';
-    followBtn.addEventListener('click', () => {
-      dispatch({ type: 'OPEN_CAPSULE', mode: 'text' });
-      requestAnimationFrame(() => {
-        capsule.hidden = false;
-        if (capsuleInput && typeof capsuleInput.focus === 'function') capsuleInput.focus();
-      });
-    });
-    const closeBtn = document.createElement('button');
-    closeBtn.type = 'button';
-    closeBtn.className = 'result-tool is-close';
-    closeBtn.textContent = '关闭';
-    closeBtn.addEventListener('click', () => dispatch({ type: 'DISMISS' }));
-    toolbar.append(copyBtn, followBtn, closeBtn);
-    container.appendChild(toolbar);
-  }
+  // The thread bar replaces the per-answer toolbar: with the composer always
+  // live underneath, a "追问" button is redundant — you just type.
+  threadCopy.addEventListener('click', () => copyResultText(resultCard, threadCopy));
+  threadClose.addEventListener('click', () => dispatch({ type: 'DISMISS' }));
 
   // Result payloads are discriminated by `kind`; anything unknown falls back
   // to the plain inline text rendering.
@@ -1042,10 +1042,49 @@
     else if (kind === 'text-draft') renderTextDraft(container, payload);
     else if (kind === 'agent-prompt-draft') renderAgentPromptDraft(container, payload);
     else renderInline(container, payload);
-    if (kind !== 'agent-prompt-draft') {
-      renderActions(container, payload);
-      renderResultToolbar(container, payload);
+    if (kind !== 'agent-prompt-draft') renderActions(container, payload);
+  }
+
+  function buildTurn(turn) {
+    const node = tplThreadTurn.content.firstElementChild.cloneNode(true);
+    node.dataset.turnId = String(turn.id);
+    node.dataset.status = turn.status;
+    const ask = node.querySelector('.turn-ask');
+    const answer = node.querySelector('.turn-answer');
+    if (turn.ask) ask.textContent = turn.ask;
+    else ask.hidden = true;
+    if (turn.status === 'pending') {
+      answer.classList.add('is-thinking');
+      answer.setAttribute('aria-label', '正在处理');
+      for (let i = 0; i < 3; i += 1) answer.appendChild(document.createElement('i'));
+    } else if (turn.status === 'failed') {
+      answer.dataset.kind = 'error';
+      renderInline(answer, turn.error);
+    } else {
+      renderStructured(answer, turn.result);
     }
+    return node;
+  }
+
+  // Turns are rebuilt only when one is added or settles. Skipping the no-op
+  // re-render keeps the scroll position and, more importantly, does not wipe
+  // the agent-prompt textarea while the user is editing it.
+  function renderThread(turns) {
+    const signature = turns.map((turn) => `${turn.id}:${turn.status}`).join(',');
+    if (signature !== renderedTurnSignature) {
+      renderedTurnSignature = signature;
+      const existing = new Map();
+      for (const node of resultCard.children) existing.set(node.dataset.turnId, node);
+      const nodes = turns.map((turn) => {
+        const found = existing.get(String(turn.id));
+        return found && found.dataset.status === turn.status ? found : buildTurn(turn);
+      });
+      resultCard.replaceChildren(...nodes);
+      const newest = nodes[nodes.length - 1];
+      if (newest) newest.scrollIntoView({ block: 'end' });
+    }
+    threadCount.textContent = turns.length > 1 ? `${turns.length} 轮` : '';
+    threadCount.hidden = turns.length <= 1;
   }
 
   function clearChips() {
@@ -1115,7 +1154,7 @@
   // (design §2.2: no fake foreign-app animation).
   function renderDelivery(name) {
     const progress = state.deliveryProgress;
-    const anchorEl = name === 'processing' ? capsule : name === 'result' ? resultCard : null;
+    const anchorEl = name === 'processing' ? capsule : name === 'result' ? threadPanel : null;
     if (!progress || !anchorEl || anchorEl.hidden) {
       resetDeliveryBox();
       return;
@@ -1150,10 +1189,12 @@
     targetSweepTimer = null;
     targetingOutline.classList.remove('is-visible');
     capsule.classList.remove('is-entering', 'is-exiting');
-    [targetingOutline, frozenGlow, capsule, shimmer, resultCard, errorCard,
+    [targetingOutline, frozenGlow, capsule, shimmer, threadPanel, errorCard,
       chipsBox, deliveryBox].forEach((el) => {
       el.hidden = true;
     });
+    resultCard.replaceChildren();
+    renderedTurnSignature = '';
   }
 
   function render() {
@@ -1208,6 +1249,7 @@
     } else frozenGlow.hidden = true;
 
     const capsuleOpen = name === 'capsule-voice' || name === 'capsule-text' || name === 'processing'
+      || name === 'result' || name === 'error'
       || (name === 'dismissing' && !capsule.hidden);
     if (capsuleOpen) {
       if (session.selectionCount > 1) {
@@ -1217,6 +1259,7 @@
         capsuleCount.hidden = true;
       }
       const capsuleWasHidden = capsule.hidden;
+      const capsuleHadFocus = document.activeElement === capsuleInput;
       if (name === 'dismissing') {
         capsule.classList.remove('is-entering');
         capsule.classList.add('is-exiting');
@@ -1224,8 +1267,17 @@
         capsule.classList.remove('is-exiting');
         capsule.classList.add('is-entering');
       }
-      capsule.dataset.mode = state.inputMode === 'text' ? 'text' : 'voice';
+      // An unsolicited result (no capsule was ever opened) still gets a
+      // typeable composer, so a follow-up costs one keystroke rather than a
+      // hunt for the right button.
+      const composerMode = state.inputMode
+        || (name === 'result' || name === 'error' ? 'text' : 'voice');
+      capsule.dataset.mode = composerMode === 'text' ? 'text' : 'voice';
       capsule.dataset.phase = name === 'processing' ? 'processing' : 'input';
+      // Once submitted, the question lives in the thread. Emptying the field
+      // here is what makes the composer feel like a composer instead of a box
+      // still holding the thing you already sent.
+      if (name === 'processing' || name === 'result' || name === 'error') capsuleInput.value = '';
       renderTranscript();
       const capsuleWidth = syncCapsuleWidth();
       anchorCapsuleToTarget(capsuleWidth);
@@ -1233,7 +1285,10 @@
       // new session can never expose the browser's default (0,0) position.
       if (capsuleWasHidden) capsule.hidden = false;
       scheduleHitRegionRefresh();
+      // Focus follows the user, never the machine: it is taken when they open
+      // the composer, and kept if they were already typing when a turn landed.
       if (name === 'capsule-text') capsuleInput.focus();
+      else if (capsuleHadFocus && composerMode === 'text' && !capsuleInput.disabled) capsuleInput.focus();
     } else {
       capsule.hidden = true;
       clearTranscript();
@@ -1243,16 +1298,21 @@
     // Chips only while the capsule is awaiting input (never during processing).
     renderChips(name === 'capsule-voice' || name === 'capsule-text');
 
-    if (name === 'result') {
-      renderStructured(resultCard, state.result);
-      resultCard.hidden = false;
-      anchorResultToCapsule(resultCard);
+    // The thread is driven by `turns`, not by the latest result, so a question
+    // and its answer stay on screen once a follow-up is under way.
+    if (state.turns.length && name !== 'hidden') {
+      renderThread(state.turns);
+      threadPanel.hidden = false;
+      anchorThreadToCapsule();
     } else {
-      resultCard.hidden = true;
+      threadPanel.hidden = true;
+      renderedTurnSignature = '';
+      resultCard.replaceChildren();
     }
 
-    if (name === 'error') {
-      // Error payloads always take the inline path (no card kinds).
+    // Errors that belong to a turn already render inside the thread. The
+    // standalone card is only for failures with no thread to attach to.
+    if (name === 'error' && !state.turns.length) {
       errorCard.replaceChildren();
       renderInline(errorCard, state.error);
       anchorNearPointer(errorCard, 300, 44);
