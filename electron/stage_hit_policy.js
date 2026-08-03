@@ -23,7 +23,18 @@
     });
   }
 
-  function shouldCaptureMouse({ hasInteractiveSurface, pointer, interactiveRegions } = {}) {
+  // `dragging` is pointer capture: between press and release the surface must
+  // hold the mouse no matter where the pointer has travelled. Without it a
+  // drag that leaves the tracked region for even one frame hands the events to
+  // whatever is underneath, which shows up as the cursor flickering between
+  // the two shapes and as text getting selected in the app below.
+  function shouldCaptureMouse({
+    hasInteractiveSurface,
+    pointer,
+    interactiveRegions,
+    dragging = false,
+  } = {}) {
+    if (dragging === true) return true;
     return hasInteractiveSurface === true && pointInRegions(pointer, interactiveRegions);
   }
 

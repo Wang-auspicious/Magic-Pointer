@@ -363,82 +363,48 @@ body {
 /* --- Conversation thread ----------------------------------------------------
  * The thread hangs off the composer instead of replacing it. A question is
  * never overwritten by its own answer: asking moves the text into a turn card
- * here, and the capsule below stays an empty composer ready for the next one.
- * Depth comes from layered shadow, not backdrop-filter — a blur on a
- * transparent click-through overlay is both fragile and expensive. */
+ * here, and the capsule stays an empty composer ready for the next one.
+ *
+ * It is blue-white on purpose — the same surface language as the capsule.
+ * A dark panel butted against the light capsule read as two unrelated windows
+ * stacked on each other. Depth is layered shadow, never backdrop-filter: a
+ * blur on a transparent click-through overlay is fragile and expensive. */
 .stage-thread {
   position: absolute;
   display: flex;
   flex-direction: column;
   width: max-content;
-  min-width: 232px;
-  max-width: 420px;
-  border-radius: 16px;
-  background: linear-gradient(180deg, rgba(22, 27, 34, 0.985), rgba(14, 17, 22, 0.985));
-  border: 1px solid rgba(233, 238, 244, 0.09);
+  min-width: 248px;
+  max-width: 430px;
+  border-radius: 18px;
+  background: rgba(252, 253, 255, 0.985);
+  border: 1px solid rgba(38, 115, 235, 0.26);
   box-shadow:
-    inset 0 1px 0 rgba(233, 238, 244, 0.07),
-    0 2px 8px -2px rgba(0, 0, 0, 0.55),
-    0 20px 52px -14px rgba(0, 0, 0, 0.75);
-  color: var(--stage-cold-white);
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 1px 3px rgba(23, 54, 99, 0.10),
+    0 14px 38px -12px rgba(23, 54, 99, 0.30);
+  color: #183b68;
   pointer-events: auto;
   overflow: hidden;
-  transform-origin: bottom left;
-  animation: stage-thread-in 220ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-.stage-thread[data-side='below'] {
+  /* Grows away from the capsule, so the scale-in reads as unfolding out of it. */
   transform-origin: top left;
+  animation: stage-thread-in 300ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform, opacity;
 }
 
-.thread-bar {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 7px 8px 5px 13px;
-  /* Grab handle for the whole panel; the buttons opt back in below. */
-  cursor: grab;
-}
-
-.thread-count {
-  margin-right: auto;
-  font-size: 11px;
-  letter-spacing: 0.02em;
-  color: var(--stage-cold-white-dim);
-}
-
-.thread-tool {
-  appearance: none;
-  border: 0;
-  border-radius: 7px;
-  padding: 3px 9px;
-  background: transparent;
-  color: var(--stage-cold-white-dim);
-  font: inherit;
-  font-size: 11px;
-  cursor: pointer;
-  transition: background 120ms ease, color 120ms ease;
-}
-
-.thread-tool:hover {
-  background: rgba(233, 238, 244, 0.08);
-  color: var(--stage-cold-white);
-}
-
-.thread-tool.is-close:hover {
-  background: rgba(255, 92, 92, 0.16);
-  color: #ffd4d4;
+.stage-thread[data-side='above'] {
+  transform-origin: bottom left;
 }
 
 .stage-result {
   display: flex;
   flex-direction: column;
-  padding: 0 13px 13px;
+  padding: 12px 14px 4px;
   max-height: min(46vh, 420px);
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
-  scrollbar-color: rgba(233, 238, 244, 0.18) transparent;
+  scrollbar-color: rgba(38, 115, 235, 0.24) transparent;
   font-size: 13px;
   line-height: 1.55;
 }
@@ -446,71 +412,163 @@ body {
 .thread-turn {
   display: flex;
   flex-direction: column;
-  gap: 7px;
-  padding-top: 13px;
-  animation: stage-turn-in 200ms cubic-bezier(0.22, 1, 0.36, 1);
+  gap: 6px;
+  animation: stage-turn-in 220ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /* One hairline between turns — never a box inside a box. */
 .thread-turn + .thread-turn {
-  margin-top: 13px;
-  border-top: 1px solid rgba(233, 238, 244, 0.07);
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(38, 115, 235, 0.12);
 }
 
-.thread-turn:first-child {
-  padding-top: 2px;
-}
-
+/* The ask is a quiet label, not a chat bubble: it is there so you can see
+ * what this answer belongs to, not to look like a message you sent again. */
 .turn-ask {
-  align-self: flex-start;
-  max-width: 94%;
-  padding: 5px 10px;
-  border-radius: 11px 11px 11px 4px;
-  background: rgba(47, 123, 255, 0.14);
-  border: 1px solid rgba(47, 123, 255, 0.24);
-  font-size: 12px;
-  line-height: 1.5;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  color: #6d86a6;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
+.turn-ask::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 3px;
+  height: 11px;
+  border-radius: 2px;
+  background: rgba(38, 115, 235, 0.42);
+  transform: translateY(1px);
+}
+
 .turn-answer {
   overflow-wrap: anywhere;
+  user-select: text;
 }
 
 .turn-answer[data-kind='error'] {
-  color: #ffbcbc;
+  color: #b42318;
 }
 
-/* "Working" is three dots, not a fake progress bar: we do not know how long
- * the model will take and must not pretend otherwise. */
-.turn-answer.is-thinking {
-  display: inline-flex;
+/* Working state: three dots plus the elapsed seconds. We do not know how long
+ * the model will take, so we show the one honest number we have instead of a
+ * progress bar that would be invented. */
+.turn-wait {
+  display: flex;
   align-items: center;
-  gap: 5px;
-  padding: 5px 2px;
+  gap: 9px;
+  padding: 3px 0 1px;
 }
 
-.turn-answer.is-thinking i {
+.turn-wait i {
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: var(--stage-cold-white-dim);
+  background: rgba(38, 115, 235, 0.55);
   animation: stage-thinking 1.05s ease-in-out infinite;
 }
 
-.turn-answer.is-thinking i:nth-child(2) {
-  animation-delay: 145ms;
+.turn-wait i:nth-child(2) { animation-delay: 145ms; }
+.turn-wait i:nth-child(3) { animation-delay: 290ms; }
+
+.turn-elapsed {
+  margin-left: 2px;
+  color: #93a5bd;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
 }
 
-.turn-answer.is-thinking i:nth-child(3) {
-  animation-delay: 290ms;
+.turn-elapsed[data-slow='true'] {
+  color: #b4791f;
 }
 
+.thread-bar {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 6px 8px 8px 14px;
+  cursor: grab;
+}
+
+.thread-count {
+  margin-right: auto;
+  color: #93a5bd;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+
+.thread-tool {
+  appearance: none;
+  border: 0;
+  border-radius: 8px;
+  padding: 4px 9px;
+  background: transparent;
+  color: #6d86a6;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 650;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.thread-tool:hover {
+  background: rgba(38, 115, 235, 0.10);
+  color: #185fae;
+}
+
+.thread-tool.is-close:hover {
+  background: rgba(180, 35, 24, 0.10);
+  color: #b42318;
+}
+
+/* Motion follows the existing spec: ease-out-quint, 120-350ms. The panel
+ * unfolds out of the capsule edge it is attached to rather than fading in
+ * place, so it reads as growing from the bubble instead of appearing over it.
+ * Only transform and opacity are animated — both composite on the GPU, so
+ * none of this touches layout or costs response time. */
 @keyframes stage-thread-in {
   from {
     opacity: 0;
-    transform: translateY(6px) scale(0.985);
+    transform: translateY(-10px) scaleY(0.86) scaleX(0.965);
+  }
+  60% {
+    opacity: 1;
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scaleY(1) scaleX(1);
+  }
+}
+
+.stage-thread[data-side='above'] {
+  animation-name: stage-thread-in-above;
+}
+
+@keyframes stage-thread-in-above {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scaleY(0.86) scaleX(0.965);
+  }
+  60% {
+    opacity: 1;
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scaleY(1) scaleX(1);
+  }
+}
+
+/* A settling turn: rises, overshoots by a hair, lands. */
+@keyframes stage-turn-in {
+  from {
+    opacity: 0;
+    transform: translateY(9px) scale(0.985);
   }
   to {
     opacity: 1;
@@ -518,35 +576,36 @@ body {
   }
 }
 
-@keyframes stage-turn-in {
-  from {
-    opacity: 0;
-    transform: translateY(5px);
+@keyframes stage-thinking {
+  0%, 70%, 100% {
+    opacity: 0.26;
+    transform: translateY(0) scale(1);
   }
-  to {
+  35% {
     opacity: 1;
-    transform: translateY(0);
+    transform: translateY(-3.5px) scale(1.12);
   }
 }
 
-@keyframes stage-thinking {
-  0%, 70%, 100% {
-    opacity: 0.28;
-    transform: translateY(0);
-  }
-  35% {
-    opacity: 0.95;
-    transform: translateY(-3px);
+.stage-root[data-state='dismissing'] .stage-thread {
+  animation: stage-thread-out 150ms cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+@keyframes stage-thread-out {
+  to {
+    opacity: 0;
+    transform: translateY(-6px) scaleY(0.94);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .stage-thread,
-  .thread-turn {
+  .thread-turn,
+  .stage-root[data-state='dismissing'] .stage-thread {
     animation: none;
   }
 
-  .turn-answer.is-thinking i {
+  .turn-wait i {
     animation: none;
     opacity: 0.6;
   }
@@ -987,7 +1046,10 @@ body {
   50% { opacity: 1; transform: scale(1.12); }
 }
 
-.stage-result, .stage-error {
+/* Standalone error card only. `.stage-result` used to share this rule and got
+ * a white card body inside the dark thread panel — the black-bar-on-white
+ * look. It is now the thread's scroll area and owns no card chrome. */
+.stage-error {
   width: min(360px, calc(100vw - 16px));
   max-width: 440px;
   max-height: min(420px, calc(100vh - 16px));
@@ -995,15 +1057,13 @@ body {
   padding: 14px 16px;
   overflow: auto;
   border-radius: 16px;
-  background: #ffffff;
   border: 1px solid rgba(38, 115, 235, .30);
   box-shadow: 0 2px 10px rgba(30, 54, 88, .14);
-  color: #183b68;
   transform-origin: top left;
   animation: stage-result-expand 220ms cubic-bezier(.22, 1, .36, 1);
 }
-.stage-error { color: #b42318; border-color: rgba(180, 35, 24, .28); background: rgba(255, 248, 247, .96); }
-.stage-result .result-secondary, .stage-error .result-secondary { color: inherit; opacity: .78; }
+.stage-error { color: #ffbcbc; border-color: rgba(255, 92, 92, .38); background: rgba(30, 18, 20, .97); }
+.stage-error .result-secondary { color: inherit; opacity: .78; }
 
 .result-answer {
   display: grid;
@@ -1051,44 +1111,9 @@ body {
   }
 }
 
-/* --- Result toolbar: copy / follow-up / close --------------------------- */
-.result-toolbar {
-  display: flex;
-  gap: 6px;
-  margin-top: 12px;
-  padding-top: 10px;
-  border-top: 1px solid rgba(38, 115, 235, .12);
-  user-select: none;
-}
-.result-toolbar .result-tool {
-  border: 1px solid rgba(38, 115, 235, .22);
-  border-radius: 999px;
-  padding: 5px 11px;
-  background: #f2f7ff;
-  color: #185fae;
-  font: inherit;
-  font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
-}
-.result-toolbar .result-tool:active {
-  transform: translateY(1px) scale(.99);
-}
-.result-toolbar .result-tool.is-close {
-  margin-left: auto;
-  color: #8a94a6;
-  border-color: rgba(120, 134, 156, .25);
-  background: #f6f8fb;
-}
-
 /* Editable Agent Prompt: extends the current blue-white Stage result surface. */
-.stage-result[data-kind='agent-prompt-draft'] {
-  width: min(620px, calc(100vw - 16px));
-  max-width: 620px;
-  padding: 12px;
-  overflow: hidden;
-  border-color: rgba(38, 115, 235, .38);
-  background: rgba(248, 252, 255, .98);
+.turn-answer[data-kind='agent-prompt-draft'] {
+  width: min(560px, calc(100vw - 60px));
 }
 
 .agent-prompt-draft {

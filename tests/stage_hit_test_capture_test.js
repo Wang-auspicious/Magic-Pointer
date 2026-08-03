@@ -16,8 +16,14 @@ assert(/name === 'capsule-text'.*!capsule\.hidden && !capsuleInput\.disabled/.te
   'the text capsule must keep its input-focus capture contract');
 assert(source.includes("querySelector('button:not([disabled])')"),
   'visible result actions must remain mouse-capturable');
-assert(source.includes("if (name === 'result') return !threadPanel.hidden || !capsule.hidden;"),
-  'a live thread or its composer must expose a body to capture the mouse');
+assert(source.includes('if (!capsule.hidden || !threadPanel.hidden) return true;'),
+  'a live thread or its composer must expose a body to capture the mouse, in every state');
+assert(!/hasInteractiveSurface = name === 'capsule-text'/.test(source),
+  'capture must not be gated on chips being visible — that disabled it during processing');
+assert(/shouldCaptureMouse\(\{[\s\S]*?dragging: Boolean\(capsuleDrag \|\| surfaceDrag\)/.test(source),
+  'a drag must hold the mouse until release, wherever the pointer travels');
+assert(source.includes('[{ x: 0, y: 0, width: window.innerWidth, height: window.innerHeight }]'),
+  'the shaped window must not clip a drag that outruns the panel');
 assert(source.includes('elements.push(threadPanel);'),
   'the native shaped window must include the draggable thread panel body');
 assert(source.includes("if (name === 'hidden' || name === 'dismissing') return false;"),

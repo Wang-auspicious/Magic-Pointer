@@ -14,16 +14,55 @@ Magic Pointer = 默认不可见的跨应用操作层。鼠标晃动唤醒 → �
 
 ## 当前状态快照（2026-08-02）
 
-### 2026-08-03 产品方向与 Stage v2（先读这里）
-- **战略文档：`docs/planning/PRODUCT_STRATEGY_20260803.md`**。一手调研（HN 1113 条 AI Pointer 讨论、腾讯 QClaw/Marvis 实测、OSWorld 数据、Every 工作流尸检、Claude Code 元生态）得出的定位、三个母功能（取/交/改）、底层四个缺口与依赖顺序。改方向前先读它。
-- 主战场定为「**Ctrl+C 复制不了的东西**」；MCP 服务愿意配合的应用，我们服务不配合的应用。不进代码上下文赛道（Claude Code 已赢）。
-- **语音不再是主路径**：`default_input_mode` 默认改为 `text`（HN 上语音是重复出现的最大反对意见：开放办公室/公共场合无法使用）。语音降级为加速方式，气泡必须全程零语音可用。main.js 的兜底同步改为「显式 voice 才用语音」。
-- **PointerStage v2 — 结果不再顶掉问题**：`stage_state.js` 新增 `turns[]`（`{ id, ask, status, result, error }`）。`SUBMIT` 立即开一个 turn 记录问题，`RESULT`/`ERROR` 结算同一个 turn。`OPEN_CAPSULE` 与追问**不再清空线程**——这是之前"回答把问题框遮住""追问后历史没法看"的根因（旧实现里 result 与 capsule 是互斥状态，且 OPEN_CAPSULE 会 `result: null`）。
-- 渲染层：气泡在 result/error 期间**继续存在**并变成 composer（提交后自动清空，问题搬进线程卡片）；线程面板 `#stage-thread` 挂在气泡上方，空间不足时翻到下方；`#stage-result` 保留为线程滚动区（`max-height: min(46vh, 420px)`）。每答案的 `复制/追问/关闭` 工具条并入线程头部（追问按钮已无必要——直接打字即可）。
-- 焦点纪律（借 Hermes DESIGN.md）：只有用户打开 composer 时取焦点；结果到达时**仅当用户本来就在输入**才保持焦点，不因为产出了东西就抢焦点。
-- 动效：`stage-thread-in` / `stage-turn-in` / `stage-thinking` 三条，均 ≤220ms 且 `prefers-reduced-motion` 下关闭。**刻意不用 `backdrop-filter`**——透明 click-through overlay 上不稳定且昂贵，纵深改用分层阴影。
-- 验证：Node 全量 `56 source files / 117 tests` 通过；`fabric_settings_test.py` 17 passed；eslint 与改动前持平（4 条既有告警，无新增）。
-- 回退点：`a6c7135`（全绿，Stage v2 之前）、`1feffb1`（微信 RED 测试，单独一条）。
+### 2026-08-03 产品方向 + Stage v2 + 输入捕获修复（先读这里）
+
+**战略文档：`docs/planning/PRODUCT_STRATEGY_20260803.md`**。一手调研（HN 上 Google AI Pointer 的 1113 条讨论、腾讯 QClaw/Marvis 实测、OSWorld 数据、Every 的 AI 工作流尸检、Claude Code 元生态）得出的定位、三个母功能（取/交/改）、底层四个缺口与依赖顺序。改方向前先读它。要点：主战场是「**Ctrl+C 复制不了的东西**」；MCP 服务愿意配合的应用，我们服务不配合的应用；不进代码上下文赛道。
+
+#### 已落地
+- **语音不再是主路径**：`default_input_mode` 默认 `text`，`main.js` 的兜底同步改成「显式 voice 才用语音」。理由是 HN 上语音是重复出现的最大反对意见（开放办公室/公共场合不可用）。语音降级为加速方式。
+- **PointerStage v2 — 结果不再顶掉问题**：`stage_state.js` 新增 `turns[]`（`{ id, ask, status, result, error }`）。`SUBMIT` 立即开 turn 记录问题，`RESULT`/`ERROR` 结算同一个 turn，`OPEN_CAPSULE`/追问**不清空线程**。旧实现里 result 与 capsule 是互斥状态且 `OPEN_CAPSULE` 会 `result: null` —— 这就是「回答把问题框遮住」「追问后历史没法看」的根因。
+- **线程面板**：`#stage-thread` 默认挂在气泡**下方**（阅读顺序=先问后答），空间不足才翻到上方；`#stage-result` 是它的滚动区（`max-height: min(46vh, 420px)`）。工具条（轮数/复制/关闭）在面板**底部**。「追问」按钮已删除——底下就是输入框，直接打字。
+- **配色**：面板是**浅蓝白**，与气泡（`rgba(239,246,255,.94)` + `#185fae`）同一套语言。⚠️ 注意 `stage.css` 顶部注释和 `docs/superpowers/specs/2026-07-26-*` 写的是「石墨黑 #0E1116」，**规范与实现早已分叉**，实际发布的气泡是浅色。改配色前先决定以哪个为准，不要只改一半（我踩过：加了个深色面板扣在白卡上，就是「白色的上面一块黑的」）。
+- **动效**：`stage-thread-in` / `-above` / `-out` / `stage-turn-in` / `stage-thinking`，遵循既有规范 ease-out-quint 120–350ms，只动 transform/opacity（GPU 合成，不碰布局），`prefers-reduced-motion` 下全关。**不用 `backdrop-filter`**——透明 click-through overlay 上不稳且昂贵。
+
+#### 修掉的三个 P0（都是真机才暴露的）
+
+1. **蓝色光标疯狂闪烁、完全无法划线**（`a6c7135` 引入）
+   `pass_through` 模式下 hook 吞掉 `WM_LBUTTONDOWN` 返回 1 → 事件不进系统 → `GetAsyncKeyState` 读不到 → `buttons` 恒 0 → 从不产生 `started` → 每次手势 5 秒 `expired`。钩子把轮询赖以发现笔画的事件本身吃掉了。
+   已修：hook 新增 `IsSwallowingLeft()`，被吞的左键仍进 `buttons` 掩码；默认值恢复 `exclusive_overlay`，`pass_through` 标为实验。
+
+2. **拖气泡会框选下面应用的文字 + 光标在两套之间跳**
+   同一个根因：`shouldCaptureMouse` 只按「指针是否在交互区域内」决定捕获，拖拽时指针一出区域捕获就掉，事件穿到下面。已修：`stage_hit_policy.js` 新增 `dragging` 参数（按下到抬起之间无条件持有鼠标），且拖拽期间 hit region 扩到整屏（形状窗口否则会把指针裁掉）。
+   同时修了两个连带 bug：`processing` 状态下 `hasInteractiveSurface` 被 `!chipsBox.hidden` 门控成 false（chips 在 processing 时是隐藏的），所以转圈时拖面板必然穿透；以及 result 状态下气泡可见却没进 `interactiveStageRegions`。
+
+3. **提交后转圈一分多钟没有响应**
+   `app/ai_client.py` 的 `ask_text_model` 默认 `timeout=120` **且重试一次**（最坏 240 秒），`selection_bridge.py` 编译 prompt 时没有单独预算，Electron 侧 `selection_bridge` 又落在 120 秒默认兜底里。`grounded_fallback` 兜底本来就在，但要等模型**返回**才触发，对挂起无效。
+   已修：`ask_text_model(timeout_s=, attempts=)`；`AGENT_PROMPT_MODEL_TIMEOUT_S = 12.0` + `attempts=1`；Electron 侧 `selection_bridge` 收到 30 秒。UI 侧 pending turn 现在显示**已耗时秒数**（≥8s 变琥珀色）——转圈不说等了多久，两分钟和两秒看起来是一样的。
+
+#### 验证状态
+- Node 全量 `56 source files / 117 tests` 通过
+- `tests/fabric_settings_test.py` + 新增 `tests/interactive_model_budget_test.py` 共 20 passed
+- eslint 与改动前持平（4 条既有告警，无新增）
+- **未做真机走查**：动效手感、面板锚定在高 DPI 上的表现、划线是否恢复正常，都需要人跑一次
+
+#### 回退点
+```
+a6c7135  Hook + 契约修复（全绿）    ← Stage v2 之前
+1feffb1  微信 RED 测试（单独）
+b1534f4  Stage v2 线程化
+3231ccd  恢复 exclusive_overlay 默认
+```
+
+#### 下一步（按依赖顺序，来自战略文档 §6）
+```
+0. 收掉微信媒体断点（tests/wechat_media_resolver_test.py 是 RED，实现未写）
+1. 零模型快路径（"取"）—— 圈选→结构化读取/OCR→剪贴板，目标 <200ms、0 次模型调用
+2. Recipe 数据化 + 插件加载器（catalog.py 现在是硬编码 Python 元组，生态被物理封死）
+3. 记忆层
+4. 摩擦触发层
+5. 收编 clacky 的 [POINT] 指点教学
+```
+用户还想要：气泡「置顶」常驻（读论文场景）、配置页/主页重设计、捏合式的输出详略控制（拖答案卡下边缘 = 更详细/更精简，参考 shapeof.ai 的 Expand 模式）。
 
 ### 2026-08-02 夜间交接
 - 当前安全基线提交：`39d86bc checkpoint: preserve perception and prompt progress`。这是本地进度快照，不包含 SenseVoice/Whisper 权重、pytest 临时目录或密钥；`.gitignore` 已补 `/models/`、`data/models/`、`*.gguf`、`*.safetensors`、`*.pt` 等模型规则。
@@ -331,6 +370,9 @@ SenseVoice 桥接（`sense_voice_bridge.py`）和模型（228MB）已就绪，�
 
 ## 不要做的事
 
+- **不要让拖拽依赖「指针是否在交互区域内」**——`shouldCaptureMouse` 必须在 `dragging` 时无条件返回 true，且拖拽期间 hit region 要扩到整屏。否则指针一出面板，事件就穿到下面的应用：光标在两套之间闪、并且会在别人的窗口里框选文字。2026-08-03 踩过。
+- **不要把 `hasInteractiveSurface` 门控在 `!chipsBox.hidden` 上**——chips 在 `processing` 时是隐藏的，那正是转圈、用户最可能去拖面板的时刻。用「气泡或线程可见」当判据。
+- **不要在交互路径上用批处理超时**——`ask_text_model` 默认 120 秒且重试一次（最坏 240 秒）。用户盯着气泡的任何调用都必须传 `timeout_s` + `attempts=1`，并且要有不依赖模型返回的兜底（`grounded_fallback` 那种「等模型失败才触发」的兜底对挂起无效）。
 - **不要在未经真机划线验证的情况下把 `gesture_interaction_mode` 默认值改成 `pass_through`**——2026-08-03 踩过：hook 吞掉 `WM_LBUTTONDOWN` 后 `GetAsyncKeyState` 读不到该按键，`buttons` 恒为 0，轮询永远拿不到 `started`，每次手势 5 秒后 `expired`，视觉上是蓝色光标疯狂闪烁、完全无法划线。仓库里**没有任何单元测试能抓到这个失败**（全是静态/纯函数断言，且它们当时还被改成断言错误的默认值）。已修：hook 新增 `IsSwallowingLeft()`，被吞的左键会照常进入 `buttons` 掩码；但默认值恢复为 `exclusive_overlay`，`pass_through` 标为实验，改默认前必须真机画一笔。
 - **不要切换 `setIgnoreMouseEvents` 做固定死**——必须二态（待机穿透/画线拦截）
 - **不要在 gesture-ready handler 里调 `showInactive()`**——会导致二次激活 DOM 失活

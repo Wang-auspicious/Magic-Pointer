@@ -30,12 +30,12 @@
       </div>
       <div id="stage-chips" class="stage-chips" role="group" aria-label="建议操作" hidden></div>
       <section id="stage-thread" class="stage-thread" aria-label="本次会话" hidden>
-        <header class="thread-bar">
+        <div id="stage-result" class="stage-result" role="log" aria-live="polite"></div>
+        <footer class="thread-bar">
           <span id="thread-count" class="thread-count"></span>
           <button type="button" id="thread-copy" class="thread-tool">复制</button>
           <button type="button" id="thread-close" class="thread-tool is-close">关闭</button>
-        </header>
-        <div id="stage-result" class="stage-result" role="log" aria-live="polite"></div>
+        </footer>
       </section>
       <div id="stage-error" class="stage-error" role="alert" hidden></div>
       <div id="delivery-progress" class="delivery-progress" hidden>
@@ -51,6 +51,12 @@
         <p class="turn-ask"></p>
         <div class="turn-answer"></div>
       </article>
+    </template>
+    <template id="tpl-turn-wait">
+      <div class="turn-wait" aria-label="正在处理">
+        <i></i><i></i><i></i>
+        <span class="turn-elapsed"></span>
+      </div>
     </template>
     <template id="tpl-calendar-draft">
       <div class="result-card card-calendar">

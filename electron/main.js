@@ -2677,11 +2677,17 @@ function runPythonBridge(payload, scriptPath = 'scripts/electron_bridge.py', tar
   const py = PYTHON_EXECUTABLE;
   const defaultTimeoutMs = scriptPath.includes('selection_snapshot_bridge')
     ? 15_000
-    : scriptPath.includes('action_bridge')
-      ? 45_000
-      : scriptPath.includes('shopping_list_bridge') || scriptPath.includes('calendar_bridge')
-        ? 20_000
-        : 120_000;
+    // The stage bubble is on screen while selection_bridge runs, so it gets an
+    // interactive deadline. Its model call is bounded well under this and
+    // always has a grounded fallback; anything past this is a hang, and a hang
+    // must fail visibly rather than spin for two minutes.
+    : scriptPath.includes('selection_bridge')
+      ? 30_000
+      : scriptPath.includes('action_bridge')
+        ? 45_000
+        : scriptPath.includes('shopping_list_bridge') || scriptPath.includes('calendar_bridge')
+          ? 20_000
+          : 120_000;
   return pythonBridgeRunner.run({
     executable: py,
     args: pythonInvocationArgs([scriptPath], { isolated: PYTHON_ISOLATED }),

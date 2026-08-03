@@ -85,9 +85,21 @@ def _image_data_url(image_path: Path, max_edge: int = 1600, jpeg_quality: int = 
         return f"data:image/png;base64,{encoded}"
 
 
-def ask_text_model(user_prompt: str, context_text: str | None = None, system_prompt: str | None = None) -> str:
-    """Ask the configured OpenAI-compatible model with text-only context."""
+def ask_text_model(
+    user_prompt: str,
+    context_text: str | None = None,
+    system_prompt: str | None = None,
+    *,
+    timeout_s: float = 120.0,
+    attempts: int = 2,
+) -> str:
+    """Ask the configured OpenAI-compatible model with text-only context.
 
+    `timeout_s` is the budget for a single attempt and `attempts` caps the
+    retries. Interactive callers must pass a short budget: a surface the user
+    is staring at cannot afford the batch default, and every caller of this
+    function already has a non-model fallback to fall back to.
+    """
     api_key, base_url, model = get_ai_config()
     if not api_key:
         excerpt = (context_text or user_prompt or "").strip()[:900]
@@ -118,11 +130,13 @@ def ask_text_model(user_prompt: str, context_text: str | None = None, system_pro
         }
         last_exc: Exception | None = None
         last_http_error: tuple[int, str] | None = None
-        for delay in (0.0, 0.8):
+        budget = max(1.0, float(timeout_s))
+        delays = (0.0, 0.8)[: max(1, int(attempts))]
+        for delay in delays:
             if delay:
                 time.sleep(delay)
             try:
-                with _httpx_client(httpx, timeout=120) as client:
+                with _httpx_client(httpx, timeout=budget) as client:
                     response = client.post(f"{base_url}/chat/completions", headers=headers, json=payload)
                 if response.status_code >= 500:
                     last_http_error = (response.status_code, _plain_error_excerpt(response.text))

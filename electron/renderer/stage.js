@@ -35,6 +35,7 @@
   const deliveryBar = document.getElementById('delivery-bar');
   const deliveryCount = document.getElementById('delivery-count');
   const tplThreadTurn = document.getElementById('tpl-thread-turn');
+  const tplTurnWait = document.getElementById('tpl-turn-wait');
   const tplCalendarDraft = document.getElementById('tpl-calendar-draft');
   const tplTableCompare = document.getElementById('tpl-table-compare');
   const tplTextDraft = document.getElementById('tpl-text-draft');
@@ -68,6 +69,9 @@
   // Signature of the turns currently in the DOM, so an unchanged thread is
   // never rebuilt (see renderThread).
   let renderedTurnSignature = '';
+  // Wall clock for the pending turn's elapsed label.
+  let waitTimer = null;
+  let waitStartedAt = 0;
   // Live wiring context from main (stage:show / stage:update payloads).
   const session = {
     token: null,
@@ -215,6 +219,8 @@
     if (surfaceDrag && !primaryDown && previousPrimaryDown) {
       surfaceDrag = null;
       session.resultDragged = true;
+      // Release pointer capture in the same tick the button came up.
+      syncHitRegions();
     }
     // Drag the capsule: press on its body (not inside the text input) and move.
     if (overCapsule && primaryDown && !previousPrimaryDown && !capsuleDrag) {
@@ -240,6 +246,7 @@
     if (capsuleDrag && !primaryDown && previousPrimaryDown) {
       capsuleDrag = null;
       session.capsuleDragged = true;
+      syncHitRegions();
     }
     previousPointerButtons = buttons;
     if (!voiceTriggerPolicy || state.name !== 'capsule-voice') return;
@@ -268,11 +275,14 @@
     // The voice capsule needs pointer events too: drag-to-move and
     // push-to-talk / hover triggering both rely on stage mouse capture.
     if (name === 'capsule-voice') return !capsule.hidden;
-    if (name === 'result') return !threadPanel.hidden || !capsule.hidden;
+    // Anything the user can grab or press counts, in every remaining state.
+    // `processing` in particular: the thread and its composer are both on
+    // screen while a turn runs, and dragging them there used to fall straight
+    // through and select text in the app underneath.
+    if (!capsule.hidden || !threadPanel.hidden) return true;
     const hasEnabledButton = (element) => !element.hidden
       && Boolean(element.querySelector('button:not([disabled])'));
     return hasEnabledButton(chipsBox)
-      || hasEnabledButton(threadPanel)
       || hasEnabledButton(errorCard);
   }
 
@@ -313,10 +323,11 @@
 
   function interactiveStageRegions() {
     const elements = [];
-    if (state.name === 'capsule-text') {
-      if (!capsule.hidden && !capsuleInput.disabled) elements.push(capsule);
-    } else if (state.name === 'capsule-voice') {
-      if (!capsule.hidden) elements.push(capsule);
+    // The capsule is operable in every state where it is on screen — including
+    // under a finished thread, where it is the composer for the follow-up.
+    // Leaving it out here made clicking it fall through to the app below.
+    if (!capsule.hidden && !(state.name === 'capsule-text' && capsuleInput.disabled)) {
+      elements.push(capsule);
     }
     if (!threadPanel.hidden) elements.push(threadPanel);
     for (const container of [chipsBox, threadPanel, errorCard]) {
@@ -340,17 +351,25 @@
 
   function syncHitRegions() {
     const name = state.name;
-    const hasInteractiveSurface = name === 'capsule-text' || name === 'result' || name === 'error'
-      ? hasInteractiveStageSurface()
-      : !chipsBox.hidden && hasInteractiveStageSurface();
+    // One source of truth. The old form gated every state other than
+    // capsule-text/result/error behind `!chipsBox.hidden`, which silently
+    // disabled capture during `processing` — exactly when the thread and the
+    // composer are both on screen and grabbable.
+    const hasInteractiveSurface = hasInteractiveStageSurface();
     const interactiveRegions = interactiveStageRegions();
     const wantCapture = hitPolicy.shouldCaptureMouse({
       hasInteractiveSurface,
       pointer: lastPointerPoint,
       interactiveRegions,
+      dragging: Boolean(capsuleDrag || surfaceDrag),
     });
     const requestFocus = name === 'capsule-text';
-    const regions = visibleStageRegions();
+    // A shaped window clips the pointer to its regions. During a drag that
+    // would hand the mouse back to the app underneath the moment the cursor
+    // outruns the panel, so the stage claims the whole viewport until release.
+    const regions = (capsuleDrag || surfaceDrag)
+      ? [{ x: 0, y: 0, width: window.innerWidth, height: window.innerHeight }]
+      : visibleStageRegions();
     const nextHitRegionKey = JSON.stringify(regions);
     if (
       wantCapture !== mouseCaptureOn
@@ -566,9 +585,9 @@
     element.dataset.quadrant = placement.quadrant;
   }
 
-  // The thread hangs off the composer rather than replacing it: it grows
-  // upward from the capsule's top edge and flips below only when the capsule
-  // is too close to the top of the screen to fit above it.
+  // The thread hangs off the composer rather than replacing it. It grows
+  // downward from the capsule's bottom edge — reading order is question then
+  // answer — and flips above only when the capsule sits too low to fit below.
   function anchorThreadToCapsule() {
     if (session.resultDragged && session.resultPlacement) {
       threadPanel.style.left = `${session.resultPlacement.x}px`;
@@ -585,11 +604,14 @@
     const anchorTop = capsuleRect && capsuleRect.height ? capsuleRect.top : fallback.y;
     const anchorBottom = capsuleRect && capsuleRect.height ? capsuleRect.bottom : fallback.y;
     const x = Math.max(8, Math.min(anchorLeft, window.innerWidth - width - 8));
-    let y = anchorTop - gap - height;
-    let side = 'above';
-    if (y < 8) {
-      y = anchorBottom + gap;
-      side = 'below';
+    let y = anchorBottom + gap;
+    let side = 'below';
+    if (y + height > window.innerHeight - 8) {
+      const above = anchorTop - gap - height;
+      if (above >= 8) {
+        y = above;
+        side = 'above';
+      }
     }
     y = Math.max(8, Math.min(y, window.innerHeight - height - 8));
     threadPanel.style.left = `${x}px`;
@@ -997,10 +1019,16 @@
     container.appendChild(row);
   }
 
+  // Copy the answers, not the scaffolding: the ask labels are there to orient
+  // the reader on screen, and the wait dots are not content at all.
   function resultPlainText(container) {
     const clone = container.cloneNode(true);
-    clone.querySelectorAll('button, .result-toolbar').forEach((node) => node.remove());
-    return (clone.textContent || '').trim();
+    clone.querySelectorAll('button, .turn-ask, .turn-wait').forEach((node) => node.remove());
+    return (clone.textContent || '')
+      .split('\n')
+      .map((line) => line.trimEnd())
+      .join('\n')
+      .trim();
   }
 
   function copyResultText(container, button) {
@@ -1054,9 +1082,7 @@
     if (turn.ask) ask.textContent = turn.ask;
     else ask.hidden = true;
     if (turn.status === 'pending') {
-      answer.classList.add('is-thinking');
-      answer.setAttribute('aria-label', '正在处理');
-      for (let i = 0; i < 3; i += 1) answer.appendChild(document.createElement('i'));
+      answer.appendChild(tplTurnWait.content.firstElementChild.cloneNode(true));
     } else if (turn.status === 'failed') {
       answer.dataset.kind = 'error';
       renderInline(answer, turn.error);
@@ -1064,6 +1090,29 @@
       renderStructured(answer, turn.result);
     }
     return node;
+  }
+
+  // A spinner that never says how long it has been spinning is how a two
+  // minute stall reads as identical to a two second one. The elapsed seconds
+  // are the only honest progress signal we have.
+  function syncWaitClock(hasPending) {
+    if (!hasPending) {
+      if (waitTimer) clearInterval(waitTimer);
+      waitTimer = null;
+      waitStartedAt = 0;
+      return;
+    }
+    if (!waitStartedAt) waitStartedAt = Date.now();
+    const paint = () => {
+      const label = resultCard.querySelector('.thread-turn[data-status="pending"] .turn-elapsed');
+      if (!label) return;
+      const seconds = Math.max(0, Math.round((Date.now() - waitStartedAt) / 1000));
+      label.textContent = seconds >= 1 ? `${seconds}s` : '';
+      label.dataset.slow = seconds >= 8 ? 'true' : 'false';
+    };
+    paint();
+    if (waitTimer) return;
+    waitTimer = setInterval(paint, 500);
   }
 
   // Turns are rebuilt only when one is added or settles. Skipping the no-op
@@ -1085,6 +1134,7 @@
     }
     threadCount.textContent = turns.length > 1 ? `${turns.length} 轮` : '';
     threadCount.hidden = turns.length <= 1;
+    syncWaitClock(turns.some((turn) => turn.status === 'pending'));
   }
 
   function clearChips() {
@@ -1195,6 +1245,7 @@
     });
     resultCard.replaceChildren();
     renderedTurnSignature = '';
+    syncWaitClock(false);
   }
 
   function render() {
@@ -1308,6 +1359,7 @@
       threadPanel.hidden = true;
       renderedTurnSignature = '';
       resultCard.replaceChildren();
+      syncWaitClock(false);
     }
 
     // Errors that belong to a turn already render inside the thread. The

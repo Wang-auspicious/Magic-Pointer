@@ -28,4 +28,26 @@ assert.strictEqual(shouldCaptureMouse({
   interactiveRegions: [capsule],
 }), false);
 
+// Pointer capture: a drag owns the mouse from press to release. Without this
+// the cursor flickered between the stage and the app below, and dragging the
+// bubble selected text in whatever was underneath it.
+assert.strictEqual(shouldCaptureMouse({
+  hasInteractiveSurface: true,
+  pointer: { x: 4000, y: 4000 },
+  interactiveRegions: [capsule],
+  dragging: true,
+}), true, 'a drag keeps the mouse even when the pointer has left every region');
+assert.strictEqual(shouldCaptureMouse({
+  hasInteractiveSurface: false,
+  pointer: null,
+  interactiveRegions: [],
+  dragging: true,
+}), true, 'a drag outranks the surface and region checks entirely');
+assert.strictEqual(shouldCaptureMouse({
+  hasInteractiveSurface: true,
+  pointer: { x: 4000, y: 4000 },
+  interactiveRegions: [capsule],
+  dragging: false,
+}), false, 'releasing the drag restores normal region-based capture');
+
 console.log('stage_hit_policy_test: all assertions passed');

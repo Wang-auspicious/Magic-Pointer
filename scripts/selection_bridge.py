@@ -1600,10 +1600,18 @@ def _fabric_response(
     }
 
 
+# The user is watching a bubble while this runs, so the model gets a short
+# budget and one attempt. On expiry build_agent_prompt_draft ships the grounded
+# prompt instead, which is already complete — the model only rephrases it.
+AGENT_PROMPT_MODEL_TIMEOUT_S = 12.0
+
+
 def _compile_agent_prompt_with_model(instruction: str, grounded_prompt: str) -> str:
     return ask_text_model(
         instruction,
         context_text=grounded_prompt,
+        timeout_s=AGENT_PROMPT_MODEL_TIMEOUT_S,
+        attempts=1,
         system_prompt=(
             "You compile a desktop task for another coding or productivity Agent. "
             "Return only one directly executable prompt. Preserve every grounded file path, "
