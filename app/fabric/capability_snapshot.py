@@ -219,6 +219,12 @@ def _engine_provider_for_recipe(
             if agent_available
             else ("unavailable:agent_not_available", "agent_not_available")
         )
+    if provider == "inplace.text":
+        # No agent fallback, for the same reason engine.py refuses one: an agent
+        # asked to "rewrite this in place" writes somewhere else, leaving the
+        # user's own text untouched. Reporting it as agent-executable would
+        # advertise a capability that cannot be delivered.
+        return provider, "engine_provider_contract"
     if provider == "model.text" or provider.startswith("unavailable:"):
         if agent_available:
             return "agent.task", "agent_fallback_available"

@@ -40,8 +40,8 @@ PROVIDER_BY_RECIPE = {
     "ground.references": "internal",
     "text.ocr_copy": "clipboard",
     "text.ocr_clean": "clipboard",
-    "text.rewrite_in_place": "model.text",
-    "text.translate_in_place": "model.text",
+    "text.rewrite_in_place": "inplace.text",
+    "text.translate_in_place": "inplace.text",
     "text.summarize_route": "model.text",
     "entity.quick_action": "unavailable:entity_destination_not_configured",
     "table.to_spreadsheet": "artifact.table",
@@ -403,6 +403,14 @@ class FabricEngine:
         needs_agent_fallback = provider.startswith("unavailable:")
         if provider == "model.text" and not self.model_transform_available:
             needs_agent_fallback = True
+            parameters["capabilityFallback"] = "direct_text_model_not_configured"
+        elif provider == "inplace.text" and not self.model_transform_available:
+            # Deliberately not an agent fallback. The in-place recipes promise a
+            # change to the text the user selected, in the app they selected it
+            # in. Handing that to Codex or Claude satisfies the recipe's words
+            # and not its meaning: the agent writes somewhere else entirely, and
+            # the user's document stays untouched while the run reports progress.
+            # Better to say the text model is missing.
             parameters["capabilityFallback"] = "direct_text_model_not_configured"
         elif provider.startswith("unavailable:"):
             parameters["capabilityFallback"] = provider.split(":", 1)[1]

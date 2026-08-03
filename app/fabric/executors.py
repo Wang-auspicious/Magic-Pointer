@@ -145,6 +145,8 @@ class FabricExecutors:
             return self._map(plan)
         if plan.provider == "model.text":
             return self._model_text(plan)
+        if plan.provider == "inplace.text":
+            return self._inplace_text(plan)
         if plan.provider == "agent.task":
             return self._agent(plan)
         if plan.provider in self.provider_handlers:
@@ -485,6 +487,49 @@ class FabricExecutors:
         artifact = self.root / "artifacts" / f"{plan.idempotency_key[:16]}-text.md"
         _atomic_text(artifact, transformed + "\n")
         return _receipt(plan, status="succeeded", output={"artifact": str(artifact), "text": transformed}, verified=artifact.exists(), verification={"characters": len(transformed), "mode": "artifact_only"})
+
+    def _inplace_text(self, plan: OperationPlan) -> ExecutionReceipt:
+        """Rewrite/translate text that is supposed to land back in the source app.
+
+        This provider exists to keep "in place" honest. It used to share
+        `model.text` with `text.summarize_route`, whose contract genuinely is
+        "produce an artifact" -- so writing a .md file and returning succeeded was
+        correct there and a lie here: the recipes promise the user's own document
+        changes, and outside Word nothing was ever written back.
+
+        Writing back is a privileged act (it needs the target's identity checked,
+        a confirmation, and an undo path), so it belongs to the action layer, not
+        to this executor. What this provider does is produce the replacement text
+        and then refuse to claim the write happened. The transformed text is kept
+        in an artifact so a caller that can write back has something to write, and
+        so the user's work is not lost when nobody can.
+        """
+        if self.model_transform is None:
+            return _receipt(plan, status="capability_unavailable", error="text_model_not_configured")
+        source = "\n\n".join(_content(obj) for obj in _objects(plan) if _content(obj))
+        if not source:
+            return _receipt(plan, status="failed", error="selected_text_is_empty")
+        try:
+            transformed = str(self.model_transform(plan.command, source, plan.recipe_id) or "").strip()
+        except Exception as exc:
+            return _receipt(plan, status="failed", error=f"text_model_failed:{type(exc).__name__}:{exc}")
+        if not transformed:
+            return _receipt(plan, status="verification_failed", error="text_model_returned_empty")
+        artifact = self.root / "artifacts" / f"{plan.idempotency_key[:16]}-inplace.md"
+        _atomic_text(artifact, transformed + "\n")
+        return _receipt(
+            plan,
+            status="capability_unavailable",
+            output={
+                "artifact": str(artifact),
+                "text": transformed,
+                "proposalRequired": True,
+                "originalCharacters": len(source),
+            },
+            verified=False,
+            verification={"characters": len(transformed), "mode": "requires_write_back_proposal"},
+            error="inplace_write_back_requires_action_proposal",
+        )
 
     def _agent(self, plan: OperationPlan) -> ExecutionReceipt:
         if self.agent_starter is None:
