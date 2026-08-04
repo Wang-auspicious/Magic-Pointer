@@ -3,6 +3,26 @@
  * a single electric-blue accent. No purple gradients, no card stacks. */
 
 :root {
+  /* One accent, expressed as channels, so every alpha below is derived from the
+   * same hue instead of being re-typed. The appearance settings page changes
+   * these three numbers and the whole stage retints — which is only possible
+   * while nothing hardcodes rgba(var(--stage-accent-rgb), ...) again.
+   *
+   * Kept separate from tokens.css on purpose: the stage floats over other
+   * people's windows and needs its own contrast rules, while tokens.css governs
+   * our own chrome. They share the hue, not the palette. */
+  --stage-accent-rgb: 38, 115, 235;
+  --stage-accent: rgb(var(--stage-accent-rgb));
+  --stage-accent-line: rgba(var(--stage-accent-rgb), 0.26);
+  --stage-accent-line-strong: rgba(var(--stage-accent-rgb), 0.42);
+  --stage-accent-wash: rgba(var(--stage-accent-rgb), 0.12);
+  --stage-accent-grip: rgba(var(--stage-accent-rgb), 0.22);
+  --stage-accent-grip-hover: rgba(var(--stage-accent-rgb), 0.34);
+  --stage-accent-grip-active: rgba(var(--stage-accent-rgb), 0.58);
+  --stage-ink: #183b68;
+  --stage-ink-soft: var(--stage-ink-soft);
+  --stage-ink-faint: var(--stage-ink-faint);
+
   --stage-graphite: #0E1116;
   --stage-graphite-raised: #161B22;
   --stage-cold-white: #E9EEF4;
@@ -378,7 +398,7 @@ body {
   max-width: 430px;
   border-radius: 18px;
   background: rgba(252, 253, 255, 0.985);
-  border: 1px solid rgba(38, 115, 235, 0.26);
+  border: 1px solid var(--stage-accent-line);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.9),
     0 1px 3px rgba(23, 54, 99, 0.10),
@@ -407,7 +427,7 @@ body {
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
-  scrollbar-color: rgba(38, 115, 235, 0.24) transparent;
+  scrollbar-color: rgba(var(--stage-accent-rgb), 0.24) transparent;
   font-size: 13px;
   line-height: 1.55;
 }
@@ -423,7 +443,7 @@ body {
 .thread-turn + .thread-turn {
   margin-top: 12px;
   padding-top: 12px;
-  border-top: 1px solid rgba(38, 115, 235, 0.12);
+  border-top: 1px solid rgba(var(--stage-accent-rgb), 0.12);
 }
 
 /* The ask is a quiet label, not a chat bubble: it is there so you can see
@@ -432,7 +452,7 @@ body {
   display: flex;
   align-items: baseline;
   gap: 6px;
-  color: #6d86a6;
+  color: var(--stage-ink-soft);
   font-size: 11px;
   font-weight: 650;
   letter-spacing: 0.01em;
@@ -446,7 +466,7 @@ body {
   width: 3px;
   height: 11px;
   border-radius: 2px;
-  background: rgba(38, 115, 235, 0.42);
+  background: var(--stage-accent-line-strong);
   transform: translateY(1px);
 }
 
@@ -473,7 +493,7 @@ body {
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: rgba(38, 115, 235, 0.55);
+  background: rgba(var(--stage-accent-rgb), 0.55);
   animation: stage-thinking 1.05s ease-in-out infinite;
 }
 
@@ -482,7 +502,7 @@ body {
 
 .turn-elapsed {
   margin-left: 2px;
-  color: #93a5bd;
+  color: var(--stage-ink-faint);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
@@ -507,13 +527,13 @@ body {
   width: 34px;
   height: 3px;
   border-radius: 2px;
-  background: rgba(38, 115, 235, 0.20);
+  background: rgba(var(--stage-accent-rgb), 0.20);
   transition: background 140ms ease-out, width 140ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.stage-thread:hover .thread-grip i { background: rgba(38, 115, 235, 0.34); }
+.stage-thread:hover .thread-grip i { background: var(--stage-accent-grip-hover); }
 .stage-thread.is-dragging .thread-grip { cursor: grabbing; }
-.stage-thread.is-dragging .thread-grip i { width: 46px; background: rgba(38, 115, 235, 0.52); }
+.stage-thread.is-dragging .thread-grip i { width: 46px; background: rgba(var(--stage-accent-rgb), 0.52); }
 
 .thread-bar {
   display: flex;
@@ -525,7 +545,7 @@ body {
 
 .thread-count {
   margin-right: auto;
-  color: #93a5bd;
+  color: var(--stage-ink-faint);
   font-size: 11px;
   letter-spacing: 0.02em;
 }
@@ -536,7 +556,7 @@ body {
   border-radius: 8px;
   padding: 4px 9px;
   background: transparent;
-  color: #6d86a6;
+  color: var(--stage-ink-soft);
   font: inherit;
   font-size: 11px;
   font-weight: 650;
@@ -545,7 +565,7 @@ body {
 }
 
 .thread-tool:hover {
-  background: rgba(38, 115, 235, 0.10);
+  background: rgba(var(--stage-accent-rgb), 0.10);
   color: #185fae;
 }
 
@@ -1085,7 +1105,7 @@ body {
   overflow-x: hidden;
   overflow-y: auto;
   border-radius: 16px;
-  border: 1px solid rgba(38, 115, 235, .30);
+  border: 1px solid rgba(var(--stage-accent-rgb), .30);
   box-shadow: 0 2px 10px rgba(30, 54, 88, .14);
   transform-origin: top left;
   animation: stage-result-expand 220ms cubic-bezier(.22, 1, .36, 1);
@@ -1179,7 +1199,7 @@ body {
   overflow-x: hidden;
   overflow-y: auto;
   border: 0;
-  border-bottom: 1px solid rgba(38, 115, 235, .14);
+  border-bottom: 1px solid rgba(var(--stage-accent-rgb), .14);
   outline: none;
   background: transparent;
   color: #163f72;
@@ -1188,7 +1208,7 @@ body {
 }
 
 .agent-prompt-editor:focus {
-  border-bottom-color: rgba(38, 115, 235, .38);
+  border-bottom-color: rgba(var(--stage-accent-rgb), .38);
 }
 
 .agent-prompt-note {
@@ -1248,8 +1268,8 @@ body {
 }
 
 .agent-session-chip.is-selected {
-  border-color: rgba(38, 115, 235, .54);
-  background: rgba(38, 115, 235, .13);
+  border-color: rgba(var(--stage-accent-rgb), .54);
+  background: rgba(var(--stage-accent-rgb), .13);
   color: #185fae;
 }
 
@@ -1314,7 +1334,7 @@ body {
 /* Progress variant of the notice line: this one means "still working", so it
  * uses the accent rather than the warning tint — nothing is wrong yet. */
 .stage-notice[data-kind='progress'] {
-  border-color: rgba(38, 115, 235, 0.26);
+  border-color: var(--stage-accent-line);
   background: rgba(247, 250, 255, 0.98);
   box-shadow: 0 6px 20px -10px rgba(23, 54, 99, 0.34);
   color: #2c5a99;
@@ -1344,15 +1364,15 @@ body {
   width: 26px;
   height: 3px;
   border-radius: 2px;
-  background: rgba(38, 115, 235, 0.22);
+  background: var(--stage-accent-grip);
   transition: width 160ms cubic-bezier(0.22, 1, 0.36, 1), background 140ms ease-out;
 }
 
-.stage-thread:hover .thread-stretch-grip { background: rgba(38, 115, 235, 0.34); }
+.stage-thread:hover .thread-stretch-grip { background: var(--stage-accent-grip-hover); }
 
 .thread-stretch.is-dragging .thread-stretch-grip {
   width: 44px;
-  background: rgba(38, 115, 235, 0.58);
+  background: var(--stage-accent-grip-active);
 }
 
 /* Direction is shown by which way the grip stretches, so the gesture reads
@@ -1361,7 +1381,7 @@ body {
 .thread-stretch[data-direction='condense'] .thread-stretch-grip { width: 18px; }
 
 .thread-stretch-hint {
-  color: #6d86a6;
+  color: var(--stage-ink-soft);
   font-size: 10.5px;
   font-weight: 650;
   letter-spacing: 0.01em;

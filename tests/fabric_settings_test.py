@@ -148,6 +148,7 @@ def test_configuration_center_fields_round_trip_without_loss(tmp_path: Path) -> 
         "capsule_inline_gap_dip": 18.0,
         "gesture_line_style": "demo6_band",
         "gesture_line_width_dip": 22.0,
+        "accent_rgb": "38, 115, 235",
     }
     assert saved["accessibility"]["reduce_motion"] is True
     assert saved["agents"]["cwd_match"] == "strict"

@@ -786,6 +786,9 @@ function showStage(payload = {}) {
     ...payload,
     selectionVisual: selectionVisualForStage(),
     visualTuning: stageVisualTuningForStage(),
+    // Already validated by the settings store, so the renderer receives a
+    // known-good "r, g, b" and never has to trust a settings file.
+    accentRgb: String(fabricSettings.appearance?.accent_rgb || ''),
   };
   const send = () => {
     if (!win || win.isDestroyed()) return;

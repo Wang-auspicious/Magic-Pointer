@@ -247,6 +247,40 @@ class ShortcutSettings:
             setattr(self, name, value)
 
 
+def _normalized_accent_rgb(value: object) -> str:
+    """Accept "r, g, b" or "#rrggbb"; reject anything that is not a colour.
+
+    Fails closed to the default rather than raising: an unreadable accent is a
+    cosmetic problem, and refusing to start over it would turn a typo in a
+    settings file into an app that will not open.
+    """
+    text = str(value or "").strip()
+    if text.startswith("#"):
+        digits = text[1:]
+        if len(digits) == 3:
+            digits = "".join(char * 2 for char in digits)
+        if len(digits) == 6:
+            try:
+                channels = [int(digits[index:index + 2], 16) for index in (0, 2, 4)]
+            except ValueError:
+                return AppearanceSettings.accent_rgb
+            return ", ".join(str(channel) for channel in channels)
+        return AppearanceSettings.accent_rgb
+    parts = [part.strip() for part in text.split(",")]
+    if len(parts) != 3:
+        return AppearanceSettings.accent_rgb
+    channels = []
+    for part in parts:
+        try:
+            channel = int(part)
+        except ValueError:
+            return AppearanceSettings.accent_rgb
+        if not 0 <= channel <= 255:
+            return AppearanceSettings.accent_rgb
+        channels.append(channel)
+    return ", ".join(str(channel) for channel in channels)
+
+
 @dataclass
 class AppearanceSettings:
     theme: str = "system"
@@ -265,12 +299,17 @@ class AppearanceSettings:
     capsule_inline_gap_dip: float = 18
     gesture_line_style: str = "demo6_band"
     gesture_line_width_dip: float = 22
+    # The accent every stage surface derives from, as "r, g, b". Stored as
+    # channels rather than a hex string because the stage composes a dozen
+    # alphas from it, and a hue change has to reach all of them at once.
+    accent_rgb: str = "38, 115, 235"
 
     def __post_init__(self) -> None:
         self.theme = str(self.theme or "").strip().casefold()
         self.material = str(self.material or "").strip().casefold()
         self.selection_visual = str(self.selection_visual or "").strip().casefold()
         self.gesture_line_style = str(self.gesture_line_style or "").strip().casefold()
+        self.accent_rgb = _normalized_accent_rgb(self.accent_rgb)
         if self.theme not in {"system", "light", "dark"}:
             raise ValueError("appearance.theme is unsupported")
         if self.material not in {"auto", "translucent", "solid"}:

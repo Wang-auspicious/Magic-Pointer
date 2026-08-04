@@ -29,6 +29,27 @@ function normalizedShortcut(value) {
   return [...modifiers, key].join('+');
 }
 
+// Accept "r, g, b" or "#rrggbb"; fall back to the default rather than throwing.
+// An unreadable accent is cosmetic, and refusing to load settings over it would
+// turn a typo into an app that will not start.
+function normalizeAccentRgb(value, fallback) {
+  const text = String(value == null ? '' : value).trim();
+  if (text.startsWith('#')) {
+    const digits = text.slice(1).length === 3
+      ? text.slice(1).split('').map((char) => char + char).join('')
+      : text.slice(1);
+    if (!/^[0-9a-fA-F]{6}$/.test(digits)) return fallback;
+    return [0, 2, 4].map((index) => Number.parseInt(digits.slice(index, index + 2), 16)).join(', ');
+  }
+  const parts = text.split(',').map((part) => part.trim());
+  if (parts.length !== 3) return fallback;
+  const channels = parts.map((part) => Number(part));
+  if (channels.some((channel) => !Number.isInteger(channel) || channel < 0 || channel > 255)) {
+    return fallback;
+  }
+  return channels.join(', ');
+}
+
 function defaultSettings() {
   return {
     schema_version: 1,
@@ -126,6 +147,10 @@ function defaultSettings() {
       capsule_inline_gap_dip: 18,
       gesture_line_style: 'demo6_band',
       gesture_line_width_dip: 40,
+      // "r, g, b". The stage derives every accent alpha from this, so changing
+      // it retints the whole surface. Channels rather than hex because that is
+      // what CSS needs to compose the alphas.
+      accent_rgb: '38, 115, 235',
     },
     accessibility: {
       reduce_motion: false,
@@ -437,6 +462,7 @@ function validate(settings) {
   appearance.material = String(appearance.material || '').trim().toLowerCase();
   appearance.selection_visual = String(appearance.selection_visual || '').trim().toLowerCase();
   appearance.gesture_line_style = String(appearance.gesture_line_style || '').trim().toLowerCase();
+  appearance.accent_rgb = normalizeAccentRgb(appearance.accent_rgb, defaults.appearance.accent_rgb);
   if (!['system', 'light', 'dark'].includes(appearance.theme)) {
     throw new Error('appearance.theme is unsupported');
   }

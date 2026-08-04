@@ -115,6 +115,8 @@
     resultDragged: false,
     selectionCount: 1,
     voiceState: 'idle',
+    // "r, g, b" from appearance settings; empty means keep the stylesheet default.
+    accentRgb: '',
     visualTuning: { ...DEFAULT_VISUAL_TUNING },
   };
   const textCanvas = document.createElement('canvas');
@@ -873,6 +875,11 @@
       `${session.capsuleDelayMs === null ? session.visualTuning.sweepDurationMs : session.capsuleDelayMs}ms`,
     );
     stageRoot.style.setProperty('--stage-capsule-size', `${session.visualTuning.capsuleVoiceWidthDip}px`);
+    // One assignment retints every accent in the stage, because stage.css
+    // composes all of them from these channels rather than repeating literals.
+    if (session.accentRgb) {
+      stageRoot.style.setProperty('--stage-accent-rgb', session.accentRgb);
+    }
   }
 
   function appendInlineMarkdown(container, text) {
@@ -1753,6 +1760,13 @@
     }
     if (payload.pointer && Number.isFinite(Number(payload.pointer.x)) && Number.isFinite(Number(payload.pointer.y))) {
       session.pointer = { x: Number(payload.pointer.x), y: Number(payload.pointer.y) };
+    }
+    if (typeof payload.accentRgb === 'string') {
+      // Validated in the main process; the renderer only checks the shape so a
+      // malformed value cannot inject arbitrary CSS.
+      session.accentRgb = /^\s*\d{1,3}\s*,\s*\d{1,3}\s*,\s*\d{1,3}\s*$/.test(payload.accentRgb)
+        ? payload.accentRgb.trim()
+        : '';
     }
     if (payload.visualTuning && typeof payload.visualTuning === 'object') {
       for (const [name, fallback] of Object.entries(DEFAULT_VISUAL_TUNING)) {

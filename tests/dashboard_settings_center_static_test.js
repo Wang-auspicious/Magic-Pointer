@@ -107,6 +107,7 @@ assert.deepStrictEqual(defaults.appearance, {
   capsule_inline_gap_dip: 18,
   gesture_line_style: 'demo6_band',
   gesture_line_width_dip: 40,
+  accent_rgb: '38, 115, 235',
 });
 assert.deepStrictEqual(defaults.accessibility, {
   reduce_motion: false,
