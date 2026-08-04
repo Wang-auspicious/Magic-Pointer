@@ -1865,7 +1865,23 @@ def main() -> int:
     elif app_ctx and app_ctx.app == "word" and wants_word_rewrite(command):
         answer = "没有检测到真实文本选区。请先在 Word 或 WPS 中选中文字，再激活 Magic Pointer。"
     elif app_ctx and (app_ctx.content or "").strip():
-        answer = ask_text_model(command, context_text=context_text)
+        if wants_word_rewrite(command):
+            # A rewrite answer is meant to replace text, and 填入 carries exactly
+            # what is on screen. "好的，改写如下：" on the front of it would be
+            # pasted into the user's input box along with the rewrite, so ask for
+            # the bare replacement and strip the usual slip-ups. Word has its own
+            # branch above; this is every other app.
+            answer = clean_replacement_text(ask_text_model(
+                command,
+                context_text=(
+                    context_text
+                    + "\n\nIn-place rewrite mode:\n"
+                    + "Return ONLY the rewritten text. No preamble, headings, labels, quotes, markdown, or explanation."
+                ),
+                system_prompt="You rewrite the selected text. Return only the rewritten text; no explanation.",
+            ))
+        else:
+            answer = ask_text_model(command, context_text=context_text)
     else:
         target_title = str((target_window or {}).get("title") or "当前应用")
         answer = f"暂时无法从“{target_title}”读取可靠对象，因此没有把屏幕内容交给模型，也没有修改任何内容。"
