@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +18,12 @@ ROOT = Path(__file__).resolve().parents[2]
 UIA_PROBE_SOURCE = ROOT / "scripts" / "uia_selection_probe.cs"
 UIA_PROBE_EXE = ROOT / "data" / "runtime" / "uia_selection_probe.exe"
 
+# These classes get app-specific treatment further down (PDF text-layer
+# verification, terminal buffer extraction, Chromium's lazy tree). The set is a
+# routing hint, NOT an admission list: it used to gate match_window, which meant
+# Notepad, Explorer, WeChat and every ordinary Win32 input box were refused
+# before the probe ever ran -- not because UIA could not read them, but because
+# they were not enumerated here. A new app was unsupported by default.
 UIA_WINDOW_CLASSES = {
     "AcrobatMDIFrame",
     "AcrobatSDIWindow",
@@ -24,6 +31,22 @@ UIA_WINDOW_CLASSES = {
     "MozillaWindowClass",
     "CASCADIA_HOSTING_WINDOW_CLASS",
     "ConsoleWindowClass",
+}
+
+# Surfaces with no user text to read. Asking UIA about them costs a probe and can
+# only answer "nothing selected", so they stay excluded even though the default
+# is now to admit.
+UIA_EXCLUDED_WINDOW_CLASSES = {
+    "Progman",                      # desktop
+    "WorkerW",                      # desktop wallpaper host
+    "Shell_TrayWnd",                # taskbar
+    "TrayNotifyWnd",
+    "NotifyIconOverflowWindow",
+    "Shell_SecondaryTrayWnd",
+    "#32768",                       # menus
+    "tooltips_class32",
+    "Windows.UI.Core.CoreWindow",   # shell overlays (Start, Search)
+    "XamlExplorerHostIslandWindow",
 }
 MAGIC_WINDOW_TITLES = {"Magic Pointer Overlay", "Magic Pointer Panel"}
 
@@ -72,6 +95,35 @@ def uia_app_from_window(window: JsonDict) -> str:
     ):
         return "browser"
     return "application"
+
+
+def _window_scope_mode() -> str:
+    """'open' (default) admits any window; 'whitelist' restores the old gate.
+
+    Read per call rather than cached at import: this is a stop-the-bleeding switch,
+    and needing to restart the app to use it would defeat the point.
+    """
+    value = str(os.environ.get("MAGIC_POINTER_UIA_WINDOW_SCOPE") or "").strip().casefold()
+    return "whitelist" if value == "whitelist" else "open"
+
+
+def clipboard_fallback_forbidden(window: JsonDict) -> tuple[bool, str]:
+    """Whether synthesizing Ctrl+C to read this window is unsafe.
+
+    Nothing sends Ctrl+C today; UIA is a pure query. This exists because opening
+    match_window to every app makes such a fallback tempting for the windows UIA
+    cannot read, and in a terminal Ctrl+C is not "copy" -- it is SIGINT to
+    whatever is running. A fallback added later without this check would kill the
+    user's build to read their selection.
+
+    Returns (forbidden, reason). Callers that synthesize keys must consult this
+    and treat a forbidden window as unreadable rather than working around it.
+    """
+    if uia_app_from_window(window) == "terminal":
+        return True, "ctrl_c_is_sigint_in_terminals"
+    if str(window.get("title") or "") in MAGIC_WINDOW_TITLES:
+        return True, "magic_pointer_own_surface"
+    return False, ""
 
 
 def _find_csc() -> Path | None:
@@ -214,10 +266,29 @@ class UiaTextSelectionAdapter(AppAdapter):
     perception_priority = 30
 
     def match_window(self, window: JsonDict) -> bool:
+        """Admit any real window unless we know there is nothing to read there.
+
+        Inverted from a whitelist deliberately. Gating on UIA_WINDOW_CLASSES meant
+        an app was unsupported until someone added its class name, so Notepad,
+        Explorer and WeChat fell through to OCR while UIA could have read them.
+        Admitting by default costs a probe on windows with no selection; refusing
+        by default costs every app nobody has enumerated yet.
+
+        Set MAGIC_POINTER_UIA_WINDOW_SCOPE=whitelist to restore the old gate.
+        """
         title = str(window.get("title") or "")
         if title in MAGIC_WINDOW_TITLES:
             return False
-        return str(window.get("class_name") or "") in UIA_WINDOW_CLASSES
+        class_name = str(window.get("class_name") or "")
+        if _window_scope_mode() == "whitelist":
+            return class_name in UIA_WINDOW_CLASSES
+        if class_name in UIA_EXCLUDED_WINDOW_CLASSES:
+            return False
+        if not class_name:
+            # No class name means the enumeration itself is suspect; the probe
+            # needs a real HWND anyway and read_context checks that separately.
+            return False
+        return True
 
     def read_context(self, window: JsonDict, **kwargs: Any) -> AdapterReadContext:
         app = uia_app_from_window(window)

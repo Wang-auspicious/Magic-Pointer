@@ -49,7 +49,12 @@ def test_uia_window_matching_and_app_classification() -> None:
         "class_name": "Chrome_WidgetWin_1",
         "title": "Magic Pointer Panel",
     }) is False
-    assert adapter.match_window({"class_name": "OpusApp", "title": "Document - Word"}) is False
+    # Word is admitted now. match_window used to gate on UIA_WINDOW_CLASSES, so
+    # OpusApp was refused along with Notepad, Explorer and WeChat. Admission is
+    # not routing: OfficeAdapter has perception_priority 10 against this
+    # adapter's 30, so Word still reads through Office COM first and UIA is only
+    # a fallback behind it.
+    assert adapter.match_window({"class_name": "OpusApp", "title": "Document - Word"}) is True
     assert uia_app_from_window(_browser_window()) == "browser"
     assert uia_app_from_window({
         "class_name": "Chrome_WidgetWin_1",
