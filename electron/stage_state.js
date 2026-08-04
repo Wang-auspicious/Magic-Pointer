@@ -43,6 +43,9 @@ function initialState(config = {}) {
     // Real UIA draft-write progress ({ step, totalSteps, label }) or null.
     // Only ever set from genuine DELIVERY_PROGRESS events — never synthesized.
     deliveryProgress: null,
+    // A transient status line ({ message }) or null. Cleared the moment a real
+    // outcome arrives, so "正在读取…" can never sit under a finished answer.
+    notice: null,
     config: { reducedMotion: Boolean(config && config.reducedMotion) },
   };
 }
@@ -113,12 +116,12 @@ function closeTurn(state, { result = null, error = null }) {
 
 function toResult(state, event) {
   const result = event.result == null ? null : event.result;
-  return { ...state, name: 'result', result, error: null, ...closeTurn(state, { result }) };
+  return { ...state, name: 'result', result, error: null, notice: null, ...closeTurn(state, { result }) };
 }
 
 function toError(state, event) {
   const error = event.error == null ? { message: 'unknown error' } : event.error;
-  return { ...state, name: 'error', error, ...closeTurn(state, { error }) };
+  return { ...state, name: 'error', error, notice: null, ...closeTurn(state, { error }) };
 }
 
 function transition(state, event) {
@@ -130,6 +133,15 @@ function transition(state, event) {
   // disturbing the interaction state.
   if (type === 'SET_REDUCED_MOTION') {
     return { ...state, config: { ...state.config, reducedMotion: Boolean(event.value) } };
+  }
+
+  // A transient line of status ("正在读取选中的内容…"), shown while something
+  // slow is genuinely still running. It is not an interaction state: a waiting
+  // read must not move the machine, or a slow first-run read would look like a
+  // different phase than a fast one.
+  if (type === 'NOTICE') {
+    const message = String(event.notice?.message || '');
+    return { ...state, notice: message ? { message } : null };
   }
 
   switch (state.name) {

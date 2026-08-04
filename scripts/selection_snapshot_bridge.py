@@ -4,6 +4,7 @@ import json
 import math
 import os
 import sys
+import time
 import uuid
 import ctypes
 from dataclasses import replace as replace_dataclass
@@ -388,6 +389,14 @@ def _gesture_points(gesture: dict[str, Any] | None) -> list[tuple[int, int]]:
     ]
 
 
+# Wall-clock ceiling for the per-sample fallback cascade. Measured 2026-08-04:
+# one cascade costs 0.3-3.7s depending on the window (Chromium's devtools
+# adapter alone is ~2.1s), so nine in series can reach 13s. 3.5s buys the first
+# two or three samples on a slow window and all nine on a fast one, and the
+# capsule stays usable either way. Always attempts at least one sample.
+GESTURE_SAMPLE_BUDGET_S = 3.5
+
+
 def _sample_gesture_points(points: list[tuple[int, int]], limit: int = 9) -> list[dict[str, int]]:
     if len(points) <= limit:
         selected = points
@@ -726,6 +735,17 @@ def _read_gesture_target_context(
     sampled = _sample_gesture_points(points)
     candidates: dict[str, dict[str, Any]] = {}
     target_window = windows[0] if windows else None
+    # Each sample is a full adapter cascade, and a cascade against a slow
+    # automation provider costs 0.3-3s. Nine of them in series is how a
+    # first-run read reached 12.9 seconds on 2026-08-04 — long enough that the
+    # user was told their selection had failed while it was still working.
+    #
+    # The budget is the honest fix: sample until we have enough agreeing
+    # candidates or the clock runs out, and report how far we got. Stopping
+    # early costs precision on the hardest windows; spending 13s costs the
+    # user the feature.
+    deadline = time.monotonic() + GESTURE_SAMPLE_BUDGET_S
+    samples_attempted = 0
     unresolved_trace: dict[str, Any] = {
         "schemaVersion": 1,
         "selectedLayer": None,
@@ -737,6 +757,10 @@ def _read_gesture_target_context(
         "attempts": [],
     }
     for sample in sampled:
+        if samples_attempted and time.monotonic() >= deadline:
+            unresolved_trace["sampleBudgetExhausted"] = True
+            break
+        samples_attempted += 1
         window, context, trace = _read_target_context(windows, registry=registry, target_point=sample)
         if window is not None:
             target_window = window
@@ -755,11 +779,16 @@ def _read_gesture_target_context(
 
     if not candidates:
         unresolved_trace["attempts"] = unresolved_trace["attempts"][:12]
+        # Report the samples actually tried, not the samples planned. Claiming
+        # nine when the budget stopped us at two would hide the reason a hard
+        # window failed.
         return target_window, None, unresolved_trace, {
             "schemaVersion": 1,
             "state": "unresolved",
             "candidate_count": 0,
-            "sample_count": len(sampled),
+            "sample_count": samples_attempted,
+            "sample_count_planned": len(sampled),
+            "budget_exhausted": bool(unresolved_trace.get("sampleBudgetExhausted")),
             "reason": "gesture_no_bounded_candidate",
         }, None
 
@@ -797,7 +826,11 @@ def _read_gesture_target_context(
         ]
         geometric, best_rectangle = max(rectangle_scores, key=lambda item: item[0])
         proximity = _proximity(best_rectangle)
-        coverage = len(candidate["samples"]) / max(1, len(sampled))
+        # Coverage is over the samples we actually ran, not the samples planned.
+        # Dividing by the plan would make every candidate look weak whenever the
+        # budget cut sampling short — penalising exactly the slow windows the
+        # budget exists to rescue.
+        coverage = len(candidate["samples"]) / max(1, samples_attempted)
         ranked.append((geometric + 3.0 * proximity + 4.0 * coverage, key, {**candidate, "best_rectangle": best_rectangle}))
     ranked.sort(key=lambda item: (-item[0], item[1]))
     best_score, best_key, best = ranked[0]
@@ -808,7 +841,9 @@ def _read_gesture_target_context(
         "state": "resolved",
         "mode": "path_target",
         "candidate_count": len(ranked),
-        "sample_count": len(sampled),
+        "sample_count": samples_attempted,
+        "sample_count_planned": len(sampled),
+        "budget_exhausted": bool(unresolved_trace.get("sampleBudgetExhausted")),
         "selected_candidate_id": f"sha256:{__import__('hashlib').sha256(best_key.encode('utf-8')).hexdigest()}",
         "score": round(best_score, 3),
         "margin": round(best_score - second_score, 3),

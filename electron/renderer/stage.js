@@ -1423,18 +1423,24 @@
     }
   }
 
-  // Told once, quietly, at the moment it matters: when the composer is open and
-  // the gateway we would call is refusing. Better than four slow failures.
+  // One notice line, two sources. A transient status from the main process
+  // ("正在读取选中的内容…") wins over the standing gateway warning: it is about
+  // what is happening right now, and it clears itself when the outcome lands.
   function renderModelNotice(name) {
     if (!noticeBox) return;
-    const show = modelHealth.circuitOpen === true
-      && Boolean(modelHealth.message)
-      && (name === 'capsule-text' || name === 'capsule-voice' || name === 'processing');
-    if (!show) {
+    const transient = String(state.notice?.message || '');
+    const composerOpen = name === 'capsule-text' || name === 'capsule-voice' || name === 'processing';
+    const gatewayWarning = modelHealth.circuitOpen === true && Boolean(modelHealth.message) && composerOpen
+      ? modelHealth.message
+      : '';
+    const message = transient || gatewayWarning;
+    if (!message) {
       noticeBox.hidden = true;
       return;
     }
-    noticeText.textContent = modelHealth.message;
+    noticeText.textContent = message;
+    noticeBox.dataset.kind = transient ? 'progress' : 'warning';
+    noticeBox.hidden = false;
     noticeBox.hidden = false;
     const rect = capsule.getBoundingClientRect();
     const top = Math.min(window.innerHeight - 40, rect.bottom + 8);

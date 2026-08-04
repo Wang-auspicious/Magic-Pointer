@@ -1310,3 +1310,12 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .stage-notice { animation: none; }
 }
+
+/* Progress variant of the notice line: this one means "still working", so it
+ * uses the accent rather than the warning tint — nothing is wrong yet. */
+.stage-notice[data-kind='progress'] {
+  border-color: rgba(38, 115, 235, 0.26);
+  background: rgba(247, 250, 255, 0.98);
+  box-shadow: 0 6px 20px -10px rgba(23, 54, 99, 0.34);
+  color: #2c5a99;
+}

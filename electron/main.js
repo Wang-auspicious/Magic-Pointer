@@ -21,6 +21,11 @@ const { resolvePythonRuntime, pythonInvocationArgs, pythonSpawnEnvironment } = r
 const { VoiceResidentRuntime } = require('./voice_resident_runtime');
 const { captureEligibility } = require('./result_surface_policy');
 const { humanErrorMessage, inferObjectKind, selectionSourceForReason, stageEventFromBridge } = require('./stage_contract');
+const {
+  DECISION_FAIL: SUBMIT_FAIL,
+  DECISION_WAIT: SUBMIT_WAIT,
+  decideSubmitGate,
+} = require('./submit_gating_policy');
 const { canAutoExecuteInternalProposal } = require('./internal_action_policy');
 const { physicalScreenPoint, normalizeGroundingGeometry } = require('./coordinate_space');
 const { physicalGestureTrace } = require('./coordinate_space');
@@ -3179,38 +3184,47 @@ ipcMain.on('overlay:gesture-stroke', (event, payload) => {
 
 
 
-// The capsule now opens before grounding finishes, so a fast typist can press
-// Enter while the snapshot is still being read. That submit must wait, not be
-// rejected — rejecting it was the old behaviour only because the capsule could
-// not physically exist yet.
-const SUBMIT_GROUNDING_WAIT_MS = 6000;
+// The capsule opens before grounding finishes, so a fast typist can press Enter
+// while the snapshot is still being read. That submit waits for perception —
+// bounded by whether the bridge is still working, not by a fixed deadline. A 6s
+// deadline used to fire 0.8s before a 13.6s first-run read succeeded, telling
+// the user their selection failed when it had not. See submit_gating_policy.js.
 const SUBMIT_GROUNDING_POLL_MS = 60;
 
 ipcMain.on('stage:submit-selection-command', (event, payload) => {
   if (!isSurfaceSender(event, 'stage', resultTargetWindow)) return;
-  submitSelectionCommandWhenGrounded(payload, Date.now() + SUBMIT_GROUNDING_WAIT_MS);
+  submitSelectionCommandWhenGrounded(payload, Date.now());
 });
 
-function submitSelectionCommandWhenGrounded(payload, deadlineAt) {
+function submitSelectionCommandWhenGrounded(payload, startedAt, noticeShown = false) {
   const selectionSessionToken = payload?.selectionSessionToken;
   const session = selectionSessions.get(selectionSessionToken);
-  if (!session) {
-    log('stage:submit-selection-command rejected missing-or-expired session');
-    deliverStageError(selectionSessionToken || null, '当前 THIS 已过期，请重新激活 Magic Pointer。');
-    return;
-  }
-  if (!session.snapshot) {
-    if (Date.now() < deadlineAt) {
-      setTimeout(
-        () => submitSelectionCommandWhenGrounded(payload, deadlineAt),
-        SUBMIT_GROUNDING_POLL_MS,
-      );
-      return;
+  const gate = decideSubmitGate({
+    sessionAlive: Boolean(session),
+    hasSnapshot: Boolean(session?.snapshot),
+    captureInFlight: activeSessionChildren.has(selectionSessionToken),
+    elapsedMs: Date.now() - startedAt,
+  });
+  if (gate.decision === SUBMIT_WAIT) {
+    if (gate.notice && !noticeShown) {
+      // Waiting silently and failing look the same from outside. Say which.
+      updateStage({
+        selectionSessionToken: selectionSessionToken || null,
+        event: { type: 'NOTICE', notice: { message: gate.notice } },
+      });
     }
-    log('stage:submit-selection-command grounding wait expired');
-    deliverStageError(selectionSessionToken || null, '目标识别没能完成，请重新选择一次。');
+    setTimeout(
+      () => submitSelectionCommandWhenGrounded(payload, startedAt, noticeShown || Boolean(gate.notice)),
+      SUBMIT_GROUNDING_POLL_MS,
+    );
     return;
   }
+  if (gate.decision === SUBMIT_FAIL) {
+    log(`stage:submit-selection-command stopped reason=${gate.reason} elapsed_ms=${Date.now() - startedAt}`);
+    deliverStageError(selectionSessionToken || null, gate.message);
+    return;
+  }
+  if (!session) return;
   if (!session.captureEligibility?.commandReady) {
     log('stage:submit-selection-command rejected ineligible capture');
     deliverStageError(selectionSessionToken || null, session.captureEligibility?.message || '当前选区不可用，请重新选择。');

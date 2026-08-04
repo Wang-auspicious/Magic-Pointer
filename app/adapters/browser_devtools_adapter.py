@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import socket
 import time
 import urllib.error
 import urllib.request
@@ -19,6 +20,12 @@ JsonDict = dict[str, Any]
 _CHROMIUM_CLASS = "Chrome_WidgetWin_1"
 _MAGIC_TITLES = {"Magic Pointer Overlay", "Magic Pointer Panel", "Magic Pointer"}
 _DEFAULT_ENDPOINTS = tuple(f"http://127.0.0.1:{port}" for port in (9222, 9223, 9224, 9333, 9515))
+# How long to trust "no browser is listening for DevTools". Measured 2026-08-04:
+# walking five dead endpoints costs 2.1s, and it was paid per Chromium window
+# and again per gesture sample — the largest single slice of perception latency
+# on a machine where nobody runs a debug port. A browser started with debugging
+# on becomes visible within this window.
+NO_ENDPOINT_COOLDOWN_S = 30.0
 _NETWORK_ERROR = re.compile(r"(?i)(?:net::ERR_|failed to load resource|networkerror|http error|status (?:4|5)\d\d)")
 _SELECTION_MAX_TEXT_CHARS = 4000
 _SELECTION_MAX_RECTANGLES = 32
@@ -657,6 +664,11 @@ def _timestamp(value: object) -> str:
 
 
 class ChromeDevToolsProbe:
+    # Shared across instances: whether any CDP endpoint answered is a property
+    # of the machine, not of one adapter object, and the adapter is rebuilt per
+    # read.
+    _no_endpoint_until: float = 0.0
+
     def __init__(
         self,
         *,
@@ -679,11 +691,40 @@ class ChromeDevToolsProbe:
         with urllib.request.urlopen(f"{endpoint.rstrip('/')}{path}", timeout=0.4) as response:
             return json.loads(response.read(500_000).decode("utf-8", errors="replace"))
 
+    @staticmethod
+    def _port_is_open(endpoint: str, timeout_s: float = 0.04) -> bool:
+        """Is anything listening at all? A closed local port answers instantly.
+
+        Without this, five unreachable endpoints cost five HTTP timeouts —
+        measured at 2.1s total on 2026-08-04, paid on every Chromium window and
+        again at every gesture sample. Almost nobody runs a browser with a
+        remote-debugging port open, so that was the common case, not the rare
+        one.
+        """
+        match = re.search(r"://([^:/]+):(\d+)", str(endpoint or ""))
+        if match is None:
+            return True  # Not a host:port we can pre-check; let HTTP decide.
+        host, port = match.group(1), int(match.group(2))
+        try:
+            with socket.create_connection((host, port), timeout=timeout_s):
+                return True
+        except OSError:
+            return False
+
     def _inventory(self) -> tuple[list[str], list[tuple[str, dict[str, Any]]]]:
+        # When nothing was listening a moment ago, nothing is listening now.
+        # Re-probing on every read turned "no browser debugging" into the single
+        # largest slice of perception latency.
+        now = time.monotonic()
+        if now < ChromeDevToolsProbe._no_endpoint_until:
+            return [], []
+
         reachable: list[str] = []
         results: list[tuple[str, dict[str, Any]]] = []
         for endpoint in self.endpoints:
             base = endpoint.rstrip("/")
+            if not self._port_is_open(base):
+                continue
             try:
                 version = self._json(base, "/json/version")
                 targets = self._json(base, "/json/list")
@@ -699,6 +740,13 @@ class ChromeDevToolsProbe:
                 and target.get("type") == "page"
                 and str(target.get("webSocketDebuggerUrl") or "").startswith("ws")
             )
+        # Remember a completely dead inventory so the next read skips the walk
+        # entirely. A browser that starts with debugging on becomes visible
+        # within the cooldown, which is the right trade against paying for the
+        # discovery on every single perception.
+        ChromeDevToolsProbe._no_endpoint_until = (
+            0.0 if reachable else time.monotonic() + NO_ENDPOINT_COOLDOWN_S
+        )
         return reachable, results
 
     def _available_targets(self) -> list[tuple[str, dict[str, Any]]]:
