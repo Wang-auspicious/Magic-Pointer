@@ -25,6 +25,11 @@ class RecipeDefinition:
     provider_strategies: tuple[str, ...]
     risk: RiskLevel
     verification: str
+    # Which executor actually does the work, or "unavailable:<reason>" when this
+    # machine cannot. It lives on the recipe rather than in a second table keyed
+    # by id, because two tables that must agree eventually do not: adding a
+    # recipe to one and forgetting the other used to be a KeyError at run time.
+    provider: str = "internal"
     keywords_zh: tuple[str, ...] = ()
     keywords_en: tuple[str, ...] = ()
     min_objects: int = 1
@@ -42,6 +47,7 @@ class RecipeDefinition:
             "providerStrategies": list(self.provider_strategies),
             "risk": self.risk.value,
             "verification": self.verification,
+            "provider": self.provider,
             "minObjects": self.min_objects,
             "maxObjects": self.max_objects,
             "platforms": list(self.platforms),

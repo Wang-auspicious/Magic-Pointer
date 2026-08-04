@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 import re
 import time
@@ -187,6 +188,124 @@ def ask_text_model(
         raise RuntimeError("unknown API failure")
     except Exception as exc:
         return f"AI 调用失败：{type(exc).__name__}: {exc}"
+
+
+def ask_text_model_with_tools(
+    user_prompt: str,
+    *,
+    tools: list[dict] | None = None,
+    context_text: str | None = None,
+    system_prompt: str | None = None,
+    timeout_s: float = 20.0,
+    attempts: int = 1,
+) -> dict:
+    """Ask the model, offering it tools it may call instead of answering in prose.
+
+    This is the L2 tier of the intent router: every enabled recipe is offered as
+    a tool, so a command nobody wrote a rule for can still resolve to real work.
+    When the model would rather just answer, that is a valid outcome too — the
+    contract is that the user always gets something.
+
+    Returns {"text": str, "toolCalls": [{"name": str, "arguments": dict}],
+    "error": str}. Never raises: a failure comes back as `error` with empty
+    text so the caller can fall back to its local path.
+    """
+    api_key, base_url, model = get_ai_config()
+    if not api_key:
+        record_unconfigured()
+        return {"text": "", "toolCalls": [], "error": "credential_missing"}
+
+    blocked = short_circuit_message()
+    if blocked:
+        return {"text": "", "toolCalls": [], "error": blocked}
+
+    try:
+        import httpx
+
+        endpoint = (base_url or "https://api.openai.com/v1").rstrip("/")
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "User-Agent": "curl/8.0",
+        }
+        content = (user_prompt or "").strip() or "解释当前选中的内容"
+        if context_text:
+            content += "\n\n" + context_text
+        payload: dict = {
+            "model": model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": system_prompt or (
+                        "你是 Magic Pointer 的屏幕助手。用户指着屏幕上的一个对象并下达了指令。"
+                        "如果有工具能更好地完成它，就调用工具；否则基于提供的真实上下文直接回答。"
+                        "不要编造上下文里没有的内容，不要声称已经执行了你没有执行的动作。"
+                    ),
+                },
+                {"role": "user", "content": content},
+            ],
+            "max_tokens": 1200,
+        }
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
+
+        last_error = ""
+        for attempt in range(max(1, int(attempts))):
+            if attempt:
+                time.sleep(0.8)
+            try:
+                with _httpx_client(httpx, timeout=max(1.0, float(timeout_s))) as client:
+                    response = client.post(f"{endpoint}/chat/completions", headers=headers, json=payload)
+            except (httpx.ConnectError, httpx.ReadError, httpx.RemoteProtocolError, httpx.TimeoutException) as exc:
+                health = record_failure(
+                    status=None,
+                    exception_name=type(exc).__name__,
+                    detail=str(exc)[:300],
+                    model=model,
+                    base_url=endpoint,
+                )
+                last_error = health.message
+                continue
+            if response.status_code >= 400:
+                health = record_failure(
+                    status=response.status_code,
+                    detail=response.text[:300],
+                    model=model,
+                    base_url=endpoint,
+                )
+                if response.status_code >= 500:
+                    last_error = health.message
+                    continue
+                return {"text": "", "toolCalls": [], "error": health.message}
+
+            record_success(model=model, base_url=endpoint)
+            try:
+                message = response.json()["choices"][0]["message"]
+            except (KeyError, IndexError, ValueError):
+                return {"text": "", "toolCalls": [], "error": "runtime_empty_response"}
+            calls = []
+            for raw_call in message.get("tool_calls") or []:
+                function = (raw_call or {}).get("function") or {}
+                name = str(function.get("name") or "")
+                if not name:
+                    continue
+                try:
+                    arguments = json.loads(function.get("arguments") or "{}")
+                except ValueError:
+                    arguments = {}
+                calls.append({
+                    "name": name,
+                    "arguments": arguments if isinstance(arguments, dict) else {},
+                })
+            return {
+                "text": str(message.get("content") or ""),
+                "toolCalls": calls,
+                "error": "",
+            }
+        return {"text": "", "toolCalls": [], "error": last_error or "model_gateway_unreachable"}
+    except Exception as exc:  # noqa: BLE001 - the caller must always get a dict
+        return {"text": "", "toolCalls": [], "error": f"{type(exc).__name__}: {exc}"}
 
 
 def ask_vision_model(

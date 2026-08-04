@@ -47,7 +47,10 @@ def test_runtime_snapshot_is_one_bounded_local_truth_response(tmp_path: Path) ->
     assert result["ok"] is True
     snapshot = result["snapshot"]
     assert snapshot["settings"]["schema_version"] == 1
-    assert len(snapshot["recipes"]) == 30
+    # Not pinned to a count: recipes are manifest data now, so adding a
+    # capability adds a JSON entry. What matters is the snapshot carries the
+    # whole catalog and each entry is renderable.
+    assert len(snapshot["recipes"]) >= 30
     assert snapshot["models"]["items"] == []
     assert snapshot["workers"]["voice"]["state"] == "ready"
     assert snapshot["permissions"]["accessibility"]["state"] == "ready"

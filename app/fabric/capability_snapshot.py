@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, Mapping, Sequence
 
 from app.fabric.catalog import RECIPE_CATALOG
-from app.fabric.engine import PROVIDER_BY_RECIPE
+from app.fabric.engine import provider_for_recipe
 from app.fabric.schema import RecipeDefinition
 
 
@@ -198,7 +198,7 @@ def _engine_provider_for_recipe(
     ocr_available: bool,
     voice_available: bool,
 ) -> tuple[str, str]:
-    provider = PROVIDER_BY_RECIPE[recipe_id]
+    provider = provider_for_recipe(recipe_id)
     if recipe_id in {"text.ocr_copy", "text.ocr_clean"}:
         if ocr_available:
             return "native.ocr", "local_ocr_available"

@@ -34,38 +34,15 @@ from app.models.capability_resolver import ModelCapabilityResolver
 from app.models.visual_relay import VisualRelayPlanner
 
 
-PROVIDER_BY_RECIPE = {
-    "activate.wiggle": "internal",
-    "ground.this": "internal",
-    "ground.references": "internal",
-    "text.ocr_copy": "clipboard",
-    "text.ocr_clean": "clipboard",
-    "text.rewrite_in_place": "inplace.text",
-    "text.translate_in_place": "inplace.text",
-    "text.summarize_route": "model.text",
-    "entity.quick_action": "unavailable:entity_destination_not_configured",
-    "table.to_spreadsheet": "artifact.table",
-    "table.merge": "artifact.table",
-    "chart.extract_data": "unavailable:chart_digitizer_not_configured",
-    "formula.to_latex": "unavailable:math_vision_provider_not_configured",
-    "image.edit_object": "unavailable:image_provider_not_configured",
-    "image.compose": "unavailable:image_provider_not_configured",
-    "image.style_transfer": "unavailable:image_provider_not_configured",
-    "canvas.transform": "unavailable:canvas_adapter_not_configured",
-    "calendar.create_from_screen": "unavailable:calendar_adapter_not_configured",
-    "map.route": "maps.deep_link",
-    "video.place_action": "unavailable:place_provider_not_configured",
-    "recipe.scale_and_route": "artifact.list",
-    "task.route": "local.task",
-    "research.evidence_card": "artifact.evidence",
-    "agent.handoff": "agent.task",
-    "vision.prompt_bridge": "artifact.visual_context",
-    "objects.compare": "artifact.compare",
-    "voice.short_command": "unavailable:speech_provider_not_configured",
-    "agent.background_task": "agent.task",
-    "integration.mcp": "internal",
-    "governance.dashboard": "internal",
-}
+# Which executor runs a recipe now lives on the recipe itself, in
+# data/recipes/builtin.recipes.json. It used to be this second table keyed by
+# recipe id, and two tables that must agree eventually do not: adding
+# image.to_prompt to the catalog without adding it here was a KeyError the
+# moment a user asked for it.
+def provider_for_recipe(recipe_id: str) -> str:
+    return get_recipe(recipe_id).provider
+
+
 
 
 class FabricEngine:
@@ -399,7 +376,7 @@ class FabricEngine:
         override = str(parameters.get("provider") or "")
         if override and configured.get(override) is True:
             return override
-        provider = PROVIDER_BY_RECIPE[recipe_id]
+        provider = provider_for_recipe(recipe_id)
         needs_agent_fallback = provider.startswith("unavailable:")
         if provider == "model.text" and not self.model_transform_available:
             needs_agent_fallback = True

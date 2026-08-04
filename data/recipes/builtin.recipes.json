@@ -1,0 +1,1397 @@
+{
+  "schemaVersion": 1,
+  "recipes": [
+    {
+      "id": "activate.wiggle",
+      "title": "晃动唤醒",
+      "description": "用短水平往返动作冻结指针对象并唤起单一命令气泡。",
+      "inputKinds": [
+        "pointer_trace"
+      ],
+      "outputKind": "activation_intent",
+      "providerStrategies": [
+        "native_pointer_host"
+      ],
+      "risk": "read",
+      "verification": "detector_reason_and_frozen_foreground",
+      "keywords": {
+        "zh": [
+          "晃动",
+          "唤醒"
+        ],
+        "en": [
+          "wiggle",
+          "wake"
+        ]
+      },
+      "minObjects": 0,
+      "maxObjects": 1,
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "version": 1,
+      "provider": "internal"
+    },
+    {
+      "id": "ground.this",
+      "title": "锁定 THIS",
+      "description": "从 DOM、Office、UIA/AX、文件、OCR 和视觉层锁定当前对象。",
+      "inputKinds": [
+        "pointer",
+        "foreground_window"
+      ],
+      "outputKind": "grounded_object",
+      "providerStrategies": [
+        "structured_grounder",
+        "vision_fallback"
+      ],
+      "risk": "read",
+      "verification": "object_fingerprint_and_geometry",
+      "keywords": {
+        "zh": [
+          "这个",
+          "这段",
+          "这张",
+          "this"
+        ],
+        "en": [
+          "this",
+          "point at"
+        ]
+      },
+      "minObjects": 1,
+      "maxObjects": 1,
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "version": 1,
+      "provider": "internal"
+    },
+    {
+      "id": "ground.references",
+      "title": "绑定 THAT/THESE/HERE",
+      "description": "把多个时间或空间对象绑定成可复用 Episode。",
+      "inputKinds": [
+        "grounded_object"
+      ],
+      "outputKind": "interaction_episode",
+      "providerStrategies": [
+        "episode_store"
+      ],
+      "risk": "read",
+      "verification": "object_ids_and_expiry",
+      "keywords": {
+        "zh": [
+          "刚才那个",
+          "这些",
+          "这里",
+          "那个"
+        ],
+        "en": [
+          "that",
+          "these",
+          "here"
+        ]
+      },
+      "minObjects": 1,
+      "maxObjects": 12,
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "version": 1,
+      "provider": "internal"
+    },
+    {
+      "id": "text.ocr_copy",
+      "title": "一步 OCR 复制",
+      "description": "从不可复制的屏幕区域识别文字并直接复制。",
+      "inputKinds": [
+        "image",
+        "screen_region"
+      ],
+      "outputKind": "clipboard_text",
+      "providerStrategies": [
+        "native_ocr",
+        "vision_ocr"
+      ],
+      "risk": "local_write",
+      "verification": "clipboard_hash",
+      "keywords": {
+        "zh": [
+          "复制这段文字",
+          "识别文字",
+          "提取文字",
+          "复制这段"
+        ],
+        "en": [
+          "copy text",
+          "ocr"
+        ]
+      },
+      "minObjects": 1,
+      "maxObjects": 1,
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "version": 1,
+      "provider": "clipboard"
+    },
+    {
+      "id": "text.ocr_clean",
+      "title": "OCR 清洗",
+      "description": "识别并按号码、空白或行列规则清洗文字。",
+      "inputKinds": [
+        "image",
+        "screen_region",
+        "text"
+      ],
+      "outputKind": "clipboard_text",
+      "providerStrategies": [
+        "native_ocr",
+        "deterministic_text"
+      ],
+      "risk": "local_write",
+      "verification": "normalized_text_hash",
+      "keywords": {
+        "zh": [
+          "去掉空格",
+          "清洗文字",
+          "号码空格",
+          "整理后复制"
+        ],
+        "en": [
+          "remove spaces",
+          "clean ocr"
+        ]
+      },
+      "minObjects": 1,
+      "maxObjects": 1,
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "version": 1,
+      "provider": "clipboard"
+    },
+    {
+      "id": "text.rewrite_in_place",
+      "title": "原位改写",
+      "description": "预览差异后在原应用替换选中文字。",
+      "inputKinds": [
+        "text_selection"
+      ],
+      "outputKind": "in_place_text",
+      "providerStrategies": [
+        "office_adapter",
+        "uia_ax_writer",
+        "model_provider"
+      ],
+      "risk": "local_write",
+      "verification": "target_identity_and_readback_hash",
+      "keywords": {
+        "zh": [
+          "改得更正式",
+          "改写",
+          "润色",
+          "更简洁",
+          "重写"
+        ],
+        "en": [
+          "rewrite",
+          "make formal"
+        ]
+      },
+      "minObjects": 1,
+      "maxObjects": 1,
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "version": 1,
+      "provider": "inplace.text"
+    },
+    {
+      "id": "text.translate_in_place",
+      "title": "原位翻译",
+      "description": "保留段落结构翻译并写回当前应用。",
+      "inputKinds": [
+        "text_selection"
+      ],
+      "outputKind": "in_place_text",
+      "providerStrategies": [
+        "office_adapter",
+        "uia_ax_writer",
+        "model_provider"
+      ],
+      "risk": "local_write",
+      "verification": "target_identity_and_readback_hash",
+      "keywords": {
+        "zh": [
+          "翻成英文",
+          "翻译成",
+          "译成",
+          "放回这里"
+        ],
+        "en": [
+          "translate"
+        ]
+      },
+      "minObjects": 1,
+      "maxObjects": 1,
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "version": 1,
+      "provider": "inplace.text"
+    },
+    {
+      "id": "text.summarize_route",
+      "title": "摘要并路由",
+      "description": "把选区摘要或要点写入用户指定的草稿或笔记。",
+      "inputKinds": [
+        "text_selection",
+        "document_region"
+      ],
+      "outputKind": "routed_summary",
+      "providerStrategies": [
+        "model_provider",
+        "destination_adapter"
+      ],
+      "risk": "local_write",
+      "verification": "source_links_and_destination_readback",
+      "keywords": {
+        "zh": [
+          "总结",
+          "三点",
+          "要点",
+          "放到邮件"
+        ],
+        "en": [
+          "summarize",
+          "bullet points"
+        ]
+      },
+      "minObjects": 1,
+      "maxObjects": 1,
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "version": 1,
+      "provider": "model.text"
+    },
+    {
+      "id": "entity.quick_action",
+      "title": "实体快捷动作",
+      "description": "把日期、邮箱、电话和 URL 转为可执行实体动作。",
+      "inputKinds": [
+        "text",
+        "entity"
+      ],
+      "outputKind": "entity_action",
+      "providerStrategies": [
+        "entity_parser",
+        "deep_link"
+      ],
+      "risk": "external_send",
+      "verification": "normalized_entity_and_target",
+      "keywords": {
+        "zh": [
+          "发邮件",
+          "打电话",
+          "打开链接",
+          "这个日期"
+        ],
+        "en": [
+          "email this",
+          "call",
+          "open url"
+        ]
+      },
+      "minObjects": 1,
+      "maxObjects": 1,
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "version": 1,
+      "provider": "unavailable:entity_destination_not_configured"
+    },
+    {
+      "id": "table.to_spreadsheet",
+      "title": "表格转 Excel/CSV",
+      "description": "提取屏幕表格并保留单元格来源和置信度。",
+      "inputKinds": [
+        "table_region",
+        "image",
+        "document_region"
+      ],
+      "outputKind": "spreadsheet_artifact",
+      "providerStrategies": [
+        "native_table",
+        "ocr_table",
+        "vision_table"
+      ],
+      "risk": "local_write",
+      "verification": "row_column_counts_and_source_map",
+      "keywords": {
+        "zh": [
+          "放进 excel",
+          "转成 excel",
+          "导出 csv",
+          "这张表"
+        ],
+        "en": [
+          "to excel",
+          "to csv"
+        ]
+      },
+      "minObjects": 1,
+      "maxObjects": 1,
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "version": 1,
+      "provider": "artifact.table"
+    },
+    {
+      "id": "table.merge",
+      "title": "多表合并",
+      "description": "对齐字段、预览冲突后合并多个表格对象。",
+      "inputKinds": [
+        "table"
+      ],
+      "outputKind": "spreadsheet_artifact",
+      "providerStrategies": [
+        "deterministic_table_merge"
+      ],
+      "risk": "local_write",
+      "verification": "schema_and_row_digest",
+      "keywords": {
+        "zh": [
+          "两个表合并",
+          "合并这些表",
+          "接起来"
+        ],
+        "en": [
+          "merge tables"
+        ]
+      },
+      "minObjects": 2,
+      "maxObjects": 12,
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "version": 1,
+      "provider": "artifact.table"
+    },
+    {
+      "id": "chart.extract_data",
+      "title": "图表数据提取",
+      "description": "从图表曲线、柱形或点位导出数据和估计误差。",
+      "inputKinds": [
+        "chart_image",
+        "chart_object"
+      ],
+      "outputKind": "csv_artifact",
+      "providerStrategies": [
+        "native_chart",
+        "vision_digitizer"
+      ],
+      "risk": "local_write",
+      "verification": "series_count_and_source_geometry",
+      "keywords": {
+        "zh": [
+          "曲线的数据",
+          "图表数据",
+          "导出数据"
+        ],
+        "en": [
+          "extract chart data",
+          "digitize chart"
+        ]
+      },
+      "minObjects": 1,
+      "maxObjects": 1,
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "version": 1,
+      "provider": "unavailable:chart_digitizer_not_configured"
+    },
+    {
+      "id": "formula.to_latex",
+      "title": "公式转 LaTeX",
+      "description": "把屏幕公式转为 LaTeX 或 MathML。",
+      "inputKinds": [
+        "formula_image",
+        "text"
+      ],
+      "outputKind": "latex_text",
+      "providerStrategies": [
+        "native_math",
+        "vision_math"
+      ],
+      "risk": "local_write",
+      "verification": "render_roundtrip_or_confidence",
+      "keywords": {
+        "zh": [
+          "公式",
+          "latex",
+          "数学式"
+        ],
+        "en": [
+          "formula to latex"
+        ]
+      },
+      "minObjects": 1,
+      "maxObjects": 1,
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "version": 1,
+      "provider": "unavailable:math_vision_provider_not_configured"
+    },
+    {
+      "id": "image.edit_object",
+      "title": "图片对象处理",
+      "description": "去背景、擦除或模糊选中对象并产生新文件。",
+      "inputKinds": [
+        "image",
+        "image_object"
+      ],
+      "outputKind": "image_artifact",
+      "providerStrategies": [
+        "native_image_editor",
+        "image_model"
+      ],
+      "risk": "local_write",
+      "verification": "output_image_hash_and_dimensions",
+      "keywords": {
+        "zh": [
+          "去背景",
+          "擦掉",
+          "模糊这个",
+          "移除这个"
+        ],
+        "en": [
+          "remove background",
+          "erase object",
+          "blur"
+        ]
+      },
+      "minObjects": 1,
+      "maxObjects": 1,
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "version": 1,
+      "provider": "unavailable:image_provider_not_configured"
+    },
+    {
+      "id": "image.compose",
+      "title": "跨图组合",
+      "description": "把一个图像对象放入另一个目标场景。",
+      "inputKinds": [
+        "image",
+        "image_object"
+      ],
+      "outputKind": "image_artifact",
+      "providerStrategies": [
+        "image_model",
+        "canvas_adapter"
+      ],
+      "risk": "local_write",
+      "verification": "source_ids_and_output_hash",
+      "keywords": {
+        "zh": [
+          "放进这个房间",
+          "组合这两张",
+          "放到这张图"
+        ],
+        "en": [
+          "put this in",
+          "compose"
+        ]
+      },
+      "minObjects": 2,
+      "maxObjects": 6,
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "version": 1,
+      "provider": "unavailable:image_provider_not_configured"
+    },
+    {
+      "id": "image.style_transfer",
+      "title": "视觉样式迁移",
+      "description": "用一个对象的视觉风格变换另一个对象。",
+      "inputKinds": [
+        "image",
+        "image_object"
+      ],
+      "outputKind": "image_artifact",
+      "providerStrategies": [
+        "image_model"
+      ],
+      "risk": "local_write",
+      "verification": "source_target_ids_and_output_hash",
+      "keywords": {
+        "zh": [
+          "用那张图的风格",
+          "风格迁移",
+          "变成这种风格"
+        ],
+        "en": [
+          "use this style",
+          "style transfer"
+        ]
+      },
+      "minObjects": 2,
+      "maxObjects": 4,
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "version": 1,
+      "provider": "unavailable:image_provider_not_configured"
+    },
+    {
+      "id": "canvas.transform",
+      "title": "画布对象变换",
+      "description": "移动、变色、缩放或替换画布中的选中对象。",
+      "inputKinds": [
+        "canvas_object",
+        "spatial_target"
+      ],
+      "outputKind": "canvas_mutation",
+      "providerStrategies": [
+        "figma_plugin",
+        "office_adapter",
+        "canvas_agent"
+      ],
+      "risk": "local_write",
+      "verification": "native_object_readback",
+      "keywords": {
+        "zh": [
+          "移动到这里",
+          "变成橙色",
+          "换颜色",
+          "挪到这里"
+        ],
+        "en": [
+          "move this here",
+          "make this orange"
+        ]
+      },
+      "minObjects": 1,
+      "maxObjects": 4,
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "version": 1,
+      "provider": "unavailable:canvas_adapter_not_configured"
+    },
+    {
+      "id": "calendar.create_from_screen",
+      "title": "屏幕内容转日历",
+      "description": "从海报、邮件或文字生成事件草稿并检查冲突。",
+      "inputKinds": [
+        "image",
+        "text",
+        "document_region"
+      ],
+      "outputKind": "calendar_event",
+      "providerStrategies": [
+        "calendar_adapter",
+        "deep_link"
+      ],
+      "risk": "external_send",
+      "verification": "event_identity_and_calendar_readback",
+      "keywords": {
+        "zh": [
+          "加到日历",
+          "创建日程",
+          "安排会议",
+          "活动日历"
+        ],
+        "en": [
+          "add to calendar",
+          "create event"
+        ]
+      },
+      "minObjects": 1,
+      "maxObjects": 1,
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "version": 1,
+      "provider": "unavailable:calendar_adapter_not_configured"
+    },
+    {
+      "id": "map.route",
+      "title": "两地点路线",
+      "description": "用两个地点对象生成地图路线，不伪造距离。",
+      "inputKinds": [
+        "location",
+        "text",
+        "image"
+      ],
+      "outputKind": "map_route",
+      "providerStrategies": [
+        "maps_deep_link"
+      ],
+      "risk": "external_send",
+      "verification": "allowlisted_url_and_endpoints",
+      "keywords": {
+        "zh": [
+          "怎么走",
+          "路线",
+          "从这里到",
+          "导航"
+        ],
+        "en": [
+          "directions",
+          "route"
+        ]
+      },
+      "minObjects": 2,
+      "maxObjects": 2,
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "version": 1,
+      "provider": "maps.deep_link"
+    },
+    {
+      "id": "video.place_action",
+      "title": "视频帧地点行动",
+      "description": "识别视频帧中的地点并生成地图或订位草稿。",
+      "inputKinds": [
+        "video_frame",
+        "image"
+      ],
+      "outputKind": "place_action",
+      "providerStrategies": [
+        "vision_place",
+        "maps_deep_link",
+        "booking_deep_link"
+      ],
+      "risk": "external_send",
+      "verification": "place_evidence_and_user_confirmation",
+      "keywords": {
+        "zh": [
+          "哪家店",
+          "帮我订位",
+          "这个餐厅",
+          "视频里的地方"
+        ],
+        "en": [
+          "what restaurant",
+          "book a table"
+        ]
+      },
+      "minObjects": 1,
+      "maxObjects": 1,
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "version": 1,
+      "provider": "unavailable:place_provider_not_configured"
+    },
+    {
+      "id": "recipe.scale_and_route",
+      "title": "食谱缩放并路由",
+      "description": "识别配料、缩放数量并写入用户清单。",
+      "inputKinds": [
+        "recipe_text",
+        "image",
+        "document_region"
+      ],
+      "outputKind": "structured_list",
+      "providerStrategies": [
+        "recipe_parser",
+        "list_adapter"
+      ],
+      "risk": "local_write",
+      "verification": "item_count_units_and_destination_readback",
+      "keywords": {
+        "zh": [
+          "配料",
+          "做两倍",
+          "加到清单",
+          "购物清单"
+        ],
+        "en": [
+          "double recipe",
+          "ingredients"
+        ]
+      },
+      "minObjects": 1,
+      "maxObjects": 1,
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "version": 1,
+      "provider": "artifact.list"
+    },
+    {
+      "id": "task.route",
+      "title": "任务/工单路由",
+      "description": "把屏幕问题路由到 GitHub、任务系统或本地待办。",
+      "inputKinds": [
+        "grounded_object",
+        "text",
+        "image"
+      ],
+      "outputKind": "task_record",
+      "providerStrategies": [
+        "github_adapter",
+        "task_adapter",
+        "local_task_store"
+      ],
+      "risk": "external_send",
+      "verification": "task_id_and_source_backlink",
+      "keywords": {
+        "zh": [
+          "建成任务",
+          "建工单",
+          "提 issue",
+          "加入待办"
+        ],
+        "en": [
+          "create task",
+          "file issue"
+        ]
+      },
+      "minObjects": 1,
+      "maxObjects": 1,
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "version": 1,
+      "provider": "local.task"
+    },
+    {
+      "id": "research.evidence_card",
+      "title": "研究证据卡",
+      "description": "保存原文、页码、边框、截图、文件哈希和引用键。",
+      "inputKinds": [
+        "document_region",
+        "image",
+        "text"
+      ],
+      "outputKind": "evidence_card",
+      "providerStrategies": [
+        "local_note_adapter",
+        "zotero_adapter"
+      ],
+      "risk": "local_write",
+      "verification": "artifact_hash_and_source_anchor",
+      "keywords": {
+        "zh": [
+          "保存到项目笔记",
+          "证据卡",
+          "保存这段和图",
+          "研究笔记"
+        ],
+        "en": [
+          "save evidence",
+          "research note"
+        ]
+      },
+      "minObjects": 1,
+      "maxObjects": 8,
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "version": 1,
+      "provider": "artifact.evidence"
+    },
+    {
+      "id": "agent.handoff",
+      "title": "Agent 现场交付",
+      "description": "把窗口、终端、仓库、截图和对象锚点直接送入现有 Agent 会话。",
+      "inputKinds": [
+        "grounded_object",
+        "runtime_context"
+      ],
+      "outputKind": "agent_task",
+      "providerStrategies": [
+        "codex",
+        "pi",
+        "claude",
+        "gemini",
+        "cursor",
+        "opencode",
+        "aider",
+        "generic"
+      ],
+      "risk": "external_send",
+      "verification": "agent_task_receipt_and_session_id",
+      "keywords": {
+        "zh": [
+          "让 codex",
+          "让 pi",
+          "让 claude",
+          "让 gemini",
+          "agent 修",
+          "修这个"
+        ],
+        "en": [
+          "send to codex",
+          "agent fix"
+        ]
+      },
+      "minObjects": 1,
+      "maxObjects": 1,
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "version": 1,
+      "provider": "agent.task"
+    },
+    {
+      "id": "vision.prompt_bridge",
+      "title": "无多模态模型视觉桥",
+      "description": "把图片转成带对象位置和布局的可验证视觉提示。",
+      "inputKinds": [
+        "image",
+        "screen_region"
+      ],
+      "outputKind": "visual_context_artifact",
+      "providerStrategies": [
+        "native_ocr",
+        "vision_model",
+        "omniparser"
+      ],
+      "risk": "local_write",
+      "verification": "object_map_and_image_hash",
+      "keywords": {
+        "zh": [
+          "解释给本地模型",
+          "图片提示词",
+          "视觉提示",
+          "framecue"
+        ],
+        "en": [
+          "visual prompt",
+          "describe for local model"
+        ]
+      },
+      "minObjects": 1,
+      "maxObjects": 1,
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "version": 1,
+      "provider": "artifact.visual_context"
+    },
+    {
+      "id": "objects.compare",
+      "title": "多对象比较",
+      "description": "比较多个文件、图片、表格或选区并保留来源。",
+      "inputKinds": [
+        "grounded_object"
+      ],
+      "outputKind": "comparison_artifact",
+      "providerStrategies": [
+        "deterministic_diff",
+        "model_provider"
+      ],
+      "risk": "local_write",
+      "verification": "source_ids_and_comparison_hash",
+      "keywords": {
+        "zh": [
+          "比较这些",
+          "比较这个和",
+          "对比这些",
+          "刚才那个"
+        ],
+        "en": [
+          "compare these"
+        ]
+      },
+      "minObjects": 2,
+      "maxObjects": 12,
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "version": 1,
+      "provider": "artifact.compare"
+    },
+    {
+      "id": "voice.short_command",
+      "title": "语音短命令",
+      "description": "本地转写并绑定当前对象 Episode。",
+      "inputKinds": [
+        "audio",
+        "interaction_episode"
+      ],
+      "outputKind": "command_text",
+      "providerStrategies": [
+        "openai_whisper",
+        "whisper_cpp"
+      ],
+      "risk": "read",
+      "verification": "transcript_and_episode_id",
+      "keywords": {
+        "zh": [
+          "语音",
+          "听写",
+          "我说"
+        ],
+        "en": [
+          "voice command",
+          "dictate"
+        ]
+      },
+      "minObjects": 0,
+      "maxObjects": 12,
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "version": 1,
+      "provider": "unavailable:speech_provider_not_configured"
+    },
+    {
+      "id": "agent.background_task",
+      "title": "后台 Agent 任务",
+      "description": "用 Pi 或用户 Agent 在后台执行并提供进度、暂停和接管。",
+      "inputKinds": [
+        "grounded_object",
+        "runtime_context"
+      ],
+      "outputKind": "background_agent_task",
+      "providerStrategies": [
+        "pi",
+        "codex",
+        "claude",
+        "gemini",
+        "generic"
+      ],
+      "risk": "external_send",
+      "verification": "task_status_log_and_terminal_receipt",
+      "keywords": {
+        "zh": [
+          "在后台",
+          "交给 pi 处理",
+          "完成后提醒",
+          "后台处理"
+        ],
+        "en": [
+          "run in background",
+          "notify when done"
+        ]
+      },
+      "minObjects": 0,
+      "maxObjects": 12,
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "version": 1,
+      "provider": "agent.task"
+    },
+    {
+      "id": "integration.mcp",
+      "title": "Agent 接入兼容层",
+      "description": "原生 hook、plugin 和会话协议优先；MCP 仅供缺少这些接口的 Agent 查询对象与调用授权 Recipe。",
+      "inputKinds": [
+        "agent_request"
+      ],
+      "outputKind": "agent_integration",
+      "providerStrategies": [
+        "native_hook",
+        "agent_plugin",
+        "session_protocol",
+        "mcp_fallback"
+      ],
+      "risk": "read",
+      "verification": "event_or_request_id_and_policy_decision",
+      "keywords": {
+        "zh": [
+          "hook",
+          "插件",
+          "mcp",
+          "接入 agent",
+          "工具接口"
+        ],
+        "en": [
+          "agent hook",
+          "plugin",
+          "mcp fallback",
+          "agent integration"
+        ]
+      },
+      "minObjects": 0,
+      "maxObjects": 12,
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "version": 1,
+      "provider": "internal"
+    },
+    {
+      "id": "governance.dashboard",
+      "title": "设置与审计 Dashboard",
+      "description": "管理唤醒、Agent、Recipe、连接器、隐私、活动和诊断。",
+      "inputKinds": [
+        "settings_request"
+      ],
+      "outputKind": "settings_state",
+      "providerStrategies": [
+        "electron_dashboard"
+      ],
+      "risk": "local_write",
+      "verification": "settings_revision_and_audit_event",
+      "keywords": {
+        "zh": [
+          "设置",
+          "仪表盘",
+          "为什么触发",
+          "连接器"
+        ],
+        "en": [
+          "settings",
+          "dashboard",
+          "diagnostics"
+        ]
+      },
+      "minObjects": 0,
+      "maxObjects": 1,
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "version": 1,
+      "provider": "internal"
+    },
+    {
+      "id": "image.to_prompt",
+      "title": "图转提示词",
+      "description": "把屏幕上任何图片变成结构化描述或提示词，可一键填入任何 Agent 的输入框——给没有视觉能力的模型装上眼睛。",
+      "inputKinds": [
+        "image",
+        "screen_region",
+        "image_object"
+      ],
+      "outputKind": "prompt_text",
+      "providerStrategies": [
+        "native_ocr",
+        "omniparser",
+        "vision_model"
+      ],
+      "risk": "local_write",
+      "verification": "layer_sources_and_image_hash",
+      "keywords": {
+        "zh": [
+          "图转提示词",
+          "这张图的提示词",
+          "图片提示词",
+          "描述这张图",
+          "描述这幅图"
+        ],
+        "en": [
+          "image to prompt",
+          "describe this image",
+          "prompt from image"
+        ]
+      },
+      "minObjects": 1,
+      "maxObjects": 4,
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "version": 1,
+      "provider": "artifact.visual_context"
+    },
+    {
+      "id": "selection.expand",
+      "title": "扩写到目标长度",
+      "description": "按拉伸把手给出的目标行数或字数扩写选中文字，原位替换，不带任何前言。",
+      "inputKinds": [
+        "text_selection"
+      ],
+      "outputKind": "in_place_text",
+      "providerStrategies": [
+        "office_adapter",
+        "uia_ax_writer",
+        "model_provider"
+      ],
+      "risk": "local_write",
+      "verification": "target_identity_and_readback_hash",
+      "keywords": {
+        "zh": [
+          "扩写",
+          "写长一点",
+          "详细一点",
+          "展开这段",
+          "扩充"
+        ],
+        "en": [
+          "expand this",
+          "make it longer",
+          "elaborate"
+        ]
+      },
+      "minObjects": 1,
+      "maxObjects": 1,
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "version": 1,
+      "provider": "inplace.text"
+    },
+    {
+      "id": "selection.condense",
+      "title": "压缩到目标长度",
+      "description": "按拉伸把手给出的目标行数或字数压缩选中文字，原位替换，保留原意与关键数字。",
+      "inputKinds": [
+        "text_selection"
+      ],
+      "outputKind": "in_place_text",
+      "providerStrategies": [
+        "office_adapter",
+        "uia_ax_writer",
+        "model_provider"
+      ],
+      "risk": "local_write",
+      "verification": "target_identity_and_readback_hash",
+      "keywords": {
+        "zh": [
+          "压缩",
+          "精简",
+          "短一点",
+          "缩写这段",
+          "简洁一点"
+        ],
+        "en": [
+          "condense",
+          "make it shorter",
+          "tighten this"
+        ]
+      },
+      "minObjects": 1,
+      "maxObjects": 1,
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "version": 1,
+      "provider": "inplace.text"
+    },
+    {
+      "id": "element.pick",
+      "title": "点选元素追问",
+      "description": "点一下就整块高亮某个界面元素，把它的上下文预填进气泡继续追问。零元件窗口用视觉框选兜底。",
+      "inputKinds": [
+        "pointer",
+        "foreground_window"
+      ],
+      "outputKind": "grounded_object",
+      "providerStrategies": [
+        "structured_grounder",
+        "omniparser"
+      ],
+      "risk": "read",
+      "verification": "element_rect_and_source_window",
+      "keywords": {
+        "zh": [
+          "点选",
+          "框起来",
+          "这一块",
+          "这个卡片",
+          "整块选中"
+        ],
+        "en": [
+          "pick this element",
+          "highlight this",
+          "select this block"
+        ]
+      },
+      "minObjects": 1,
+      "maxObjects": 1,
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "version": 1,
+      "provider": "internal"
+    },
+    {
+      "id": "screen.translate",
+      "title": "悬浮翻译",
+      "description": "圈住一块屏幕，在原位置浮层显示译文，按识别块逐块对位，不打断原界面。",
+      "inputKinds": [
+        "screen_region",
+        "image"
+      ],
+      "outputKind": "overlay_translation",
+      "providerStrategies": [
+        "native_ocr",
+        "model_provider"
+      ],
+      "risk": "read",
+      "verification": "block_geometry_and_source_hash",
+      "keywords": {
+        "zh": [
+          "悬浮翻译",
+          "原位翻译",
+          "这块翻译",
+          "屏幕翻译",
+          "翻译这块"
+        ],
+        "en": [
+          "translate on screen",
+          "overlay translation",
+          "translate this area"
+        ]
+      },
+      "minObjects": 1,
+      "maxObjects": 1,
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "version": 1,
+      "provider": "unavailable:overlay_translation_not_wired"
+    },
+    {
+      "id": "clipboard.history",
+      "title": "剪贴板历史",
+      "description": "保留多格式剪贴板历史，可搜索、可恢复，逐 format 深拷贝不丢失富文本与图片。",
+      "inputKinds": [
+        "clipboard"
+      ],
+      "outputKind": "clipboard_text",
+      "providerStrategies": [
+        "native_clipboard"
+      ],
+      "risk": "local_write",
+      "verification": "clipboard_hash_and_format_list",
+      "keywords": {
+        "zh": [
+          "剪贴板历史",
+          "刚才复制的",
+          "复制记录",
+          "上一次复制"
+        ],
+        "en": [
+          "clipboard history",
+          "what did i copy"
+        ]
+      },
+      "minObjects": 0,
+      "maxObjects": 1,
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "version": 1,
+      "provider": "unavailable:clipboard_history_not_wired"
+    },
+    {
+      "id": "screen.recall",
+      "title": "屏幕回溯问答",
+      "description": "在本地保留最近的屏幕历史，回答“我上午看的那篇文章叫什么”这类回溯问题，可随时关闭与清除。",
+      "inputKinds": [
+        "screen_history"
+      ],
+      "outputKind": "recall_answer",
+      "providerStrategies": [
+        "local_history_store",
+        "model_provider"
+      ],
+      "risk": "read",
+      "verification": "history_entry_ids_and_timestamps",
+      "keywords": {
+        "zh": [
+          "刚才看的",
+          "上午看的",
+          "之前那个页面",
+          "回溯",
+          "我看过的"
+        ],
+        "en": [
+          "what was i looking at",
+          "recall",
+          "earlier today"
+        ]
+      },
+      "minObjects": 0,
+      "maxObjects": 1,
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "version": 1,
+      "provider": "unavailable:screen_history_not_wired"
+    },
+    {
+      "id": "pointer.coach",
+      "title": "指针陪伴教学",
+      "description": "住在光标旁边的教练：问屏幕上任何东西，它指着具体元件一步一步教你操作。",
+      "inputKinds": [
+        "foreground_window",
+        "screen_region"
+      ],
+      "outputKind": "coach_steps",
+      "providerStrategies": [
+        "structured_grounder",
+        "omniparser",
+        "model_provider"
+      ],
+      "risk": "read",
+      "verification": "step_targets_and_source_window",
+      "keywords": {
+        "zh": [
+          "教我",
+          "怎么操作",
+          "下一步点哪",
+          "带我做",
+          "指给我"
+        ],
+        "en": [
+          "teach me",
+          "walk me through",
+          "show me how",
+          "where do i click"
+        ]
+      },
+      "minObjects": 0,
+      "maxObjects": 1,
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "version": 1,
+      "provider": "unavailable:pointer_coach_not_wired"
+    }
+  ]
+}

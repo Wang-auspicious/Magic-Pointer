@@ -26,7 +26,17 @@ from app.actions.shopping_list import (
 from app.actions.calendar_draft import parse_calendar_draft, wants_calendar_draft
 from app.actions.route_draft import parse_route_draft, wants_route_draft
 from app.adapters import AdapterReadContext, default_adapter_registry, format_adapter_context
-from app.ai_client import ask_text_model, ask_vision_model
+from app.ai_client import ask_text_model, ask_text_model_with_tools, ask_vision_model
+from app.fabric.intent_router import (
+    ACT_LOCAL,
+    ACT_RECIPE,
+    ACT_TOOLS,
+    IntentRouter,
+    TIER_DETERMINISTIC,
+    recipe_id_from_tool_name,
+    recipe_tool_schemas,
+)
+from app.model_health import read_health
 from app.actions.draft_delivery import (
     DraftDeliveryError,
     make_draft_delivery_proposal,
@@ -1520,31 +1530,45 @@ def _fabric_response(
     snapshot: dict[str, Any] | None,
     *,
     engine: FabricEngine | None = None,
+    forced_recipe_id: str | None = None,
+    forced_parameters: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
+    """Plan and stage one recipe.
+
+    `forced_recipe_id` is how the L0 and L2 tiers reach this path: the tier has
+    already decided which capability applies, so the engine's own keyword
+    routing is bypassed while everything after it — plan, provider check,
+    preview, confirmation, receipt — is identical. A capability the router picked
+    gets no shortcuts a keyword-matched one would not get.
+    """
     command = str(payload.get("command") or "").strip()
     if not command:
         return None
-    if app_ctx and app_ctx.app == "word" and wants_word_rewrite(command):
+    if forced_recipe_id is None and app_ctx and app_ctx.app == "word" and wants_word_rewrite(command):
         return None
     objects = _fabric_objects(payload, target_window, app_ctx, snapshot)
     active_engine = engine or FabricEngine()
+    plan_parameters: dict[str, Any] = {
+        "cwd": str(payload.get("workspaceRoot") or ROOT),
+        "selectionSessionId": str(payload.get("selectionSessionId") or ""),
+        "sessionId": str(payload.get("agentSessionId") or payload.get("targetAgentSessionId") or ""),
+        "terminalExcerpt": str(payload.get("terminalExcerpt") or ""),
+        "attachments": [
+            str(value)
+            for value in (
+                (snapshot or {}).get("capture_path"),
+                (snapshot or {}).get("annotated_path"),
+            )
+            if value
+        ],
+    }
+    if forced_parameters:
+        plan_parameters.update(forced_parameters)
     planned = active_engine.plan(
         command,
         objects=objects,
-        parameters={
-            "cwd": str(payload.get("workspaceRoot") or ROOT),
-            "selectionSessionId": str(payload.get("selectionSessionId") or ""),
-            "sessionId": str(payload.get("agentSessionId") or payload.get("targetAgentSessionId") or ""),
-            "terminalExcerpt": str(payload.get("terminalExcerpt") or ""),
-            "attachments": [
-                str(value)
-                for value in (
-                    (snapshot or {}).get("capture_path"),
-                    (snapshot or {}).get("annotated_path"),
-                )
-                if value
-            ],
-        },
+        parameters=plan_parameters,
+        recipe_id=forced_recipe_id,
     )
     if planned.get("ok") is not True:
         return None
@@ -1601,6 +1625,117 @@ def _fabric_response(
     }
 
 
+# --- Three-tier routing -----------------------------------------------------
+# The old shape was a ladder of `_xxx_response` handlers, each returning None to
+# pass. That worked for the phrases somebody had written a handler for and died
+# on everything else. The ladder is still here — those handlers are good, and
+# they are the L1 tier — but it is now bracketed: L0 in front of it for
+# unmistakable intents that need no model at all, and L2 behind it so a command
+# nobody anticipated still produces a real answer instead of
+# "暂时无法从…读取可靠对象".
+
+
+def _classify_with_model(command: str, object_summary: str, tools: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """L1: one cheap call that picks a capability and its parameters."""
+    if not tools:
+        return None
+    result = ask_text_model_with_tools(
+        command,
+        tools=tools,
+        context_text=(
+            f"用户指着的对象：{object_summary[:1500]}\n\n"
+            "只做一件事：判断这条指令应该用哪个能力完成。"
+            "如果有合适的工具就调用它，并把用户这次真正要做的事写进 instruction 参数。"
+            "如果没有明显合适的工具，就不要调用任何工具。"
+        ),
+        system_prompt=(
+            "你是意图分类器。只负责选能力，不负责执行，也不要回答用户的问题。"
+            "不确定时不要硬选。"
+        ),
+        timeout_s=CLASSIFY_TIMEOUT_S,
+        attempts=1,
+    )
+    calls = result.get("toolCalls") or []
+    if not calls:
+        return None
+    call = calls[0]
+    arguments = call.get("arguments") or {}
+    return {
+        "name": str(call.get("name") or ""),
+        # A tool call the model made on its own is a confident answer; the
+        # router still checks the recipe is enabled and has enough objects.
+        "confidence": 0.8,
+        "parameters": {
+            key: value
+            for key, value in arguments.items()
+            if key != "instruction" and isinstance(value, (str, int, float, bool))
+        },
+    }
+
+
+CLASSIFY_TIMEOUT_S = 8.0
+GENERAL_TIMEOUT_S = 25.0
+
+
+def _object_summary_for_routing(
+    app_ctx: AdapterReadContext | None,
+    target_window: dict[str, Any] | None,
+) -> str:
+    parts: list[str] = []
+    title = str((target_window or {}).get("title") or "").strip()
+    if title:
+        parts.append(f"窗口：{title}")
+    if app_ctx is not None:
+        if app_ctx.app:
+            parts.append(f"应用类型：{app_ctx.app}")
+        content = str(app_ctx.content or "").strip()
+        if content:
+            parts.append(f"内容：{content[:800]}")
+        elif app_ctx.artifacts.get("capture_path"):
+            parts.append("内容：只有屏幕像素，没有可读文本层")
+    return "\n".join(parts) or "没有读到可用的对象内容"
+
+
+def _general_fallback_answer(
+    command: str,
+    context_text: str,
+    *,
+    allow_tools: bool,
+    recipe_enabled: dict[str, bool] | None = None,
+) -> tuple[str, str | None]:
+    """L2: the tier that guarantees an answer.
+
+    Returns (answer, suggested_recipe_id). The recipe id is a hint the caller may
+    act on; the answer is always something a person can read. A refusing gateway
+    produces an honest sentence about the endpoint, never a silent failure and
+    never a claim that work happened.
+    """
+    if not allow_tools:
+        answer = ask_text_model(command, context_text=context_text, timeout_s=GENERAL_TIMEOUT_S, attempts=1)
+        return str(answer or "").strip() or "这次没有拿到可用的回答，也没有改动任何东西。", None
+
+    result = ask_text_model_with_tools(
+        command,
+        tools=recipe_tool_schemas(enabled=recipe_enabled),
+        context_text=context_text,
+        timeout_s=GENERAL_TIMEOUT_S,
+        attempts=1,
+    )
+    calls = result.get("toolCalls") or []
+    text = str(result.get("text") or "").strip()
+    if calls:
+        suggested = recipe_id_from_tool_name(str(calls[0].get("name") or ""))
+        if suggested is not None:
+            return text, suggested
+    if text:
+        return text, None
+    error = str(result.get("error") or "").strip()
+    if error:
+        return f"这次没能给出回答：{error}", None
+    return "这次没有拿到可用的回答，也没有改动任何东西。", None
+
+
+# --- Agent handoff ----------------------------------------------------------
 # The user is watching a bubble while this runs, so the model gets a short
 # budget and one attempt. On expiry build_agent_prompt_draft ships the grounded
 # prompt instead, which is already complete — the model only rephrases it.
@@ -1823,6 +1958,40 @@ def main() -> int:
         print(json.dumps(review_response, ensure_ascii=False))
         return 0 if review_response.get("ok") is True else 1
 
+    # L0. Unmistakable intents that need no model at all: "OCR一下" runs the
+    # recipe without waiting on a classification call. It sits after the
+    # explicit-prefix handlers above (收集：/验收：/生成提示词：) because those own
+    # command shapes that read like ordinary phrases, and they cost nothing —
+    # they are string checks — so ordering after them buys correctness for free.
+    routing_settings = _capture_settings()
+    routing_enabled = dict(getattr(routing_settings, "recipe_enabled", None) or {})
+    intent_router = IntentRouter(
+        recipe_enabled=routing_enabled,
+        classifier=_classify_with_model,
+    )
+    model_available = not read_health().circuit_open
+    fast = intent_router.route(
+        command,
+        object_summary=_object_summary_for_routing(app_ctx, target_window),
+        object_count=1,
+        allow_model=model_available,
+    )
+    if fast.tier == TIER_DETERMINISTIC and fast.action == ACT_RECIPE and fast.recipe_id:
+        clock.mark("route_l0", recipe=fast.recipe_id, reason=fast.reason)
+        fast_response = _fabric_response(
+            payload,
+            target_window,
+            app_ctx,
+            snapshot,
+            forced_recipe_id=fast.recipe_id,
+            forced_parameters=fast.parameters,
+        )
+        if fast_response is not None:
+            fast_response["route"] = fast.to_dict()
+            clock.total(ok=fast_response.get("ok") is True)
+            print(json.dumps(fast_response, ensure_ascii=False))
+            return 0 if fast_response.get("ok") is True else 1
+
     shopping_response = _shopping_list_episode_response(payload)
     if shopping_response is None:
         shopping_response = _shopping_list_response(payload, target_window, app_ctx, snapshot)
@@ -1851,6 +2020,9 @@ def main() -> int:
         context_text += "\n\n" + episode_context
     action_proposals = []
     selection_snapshot_id = str((snapshot or {}).get("snapshot_id") or "").strip() or None
+    # Set by whichever tier answers, so the diagnostics page can show which tier
+    # handled a command instead of guessing from the log.
+    route_info: dict[str, object] = {"tier": "L1", "reason": "handler_chain"}
 
     vision_answer = _screen_region_vision_answer(command, target_window, app_ctx, snapshot)
 
@@ -1909,13 +2081,55 @@ def main() -> int:
         else:
             answer = ask_text_model(command, context_text=context_text)
     else:
+        # L2. This used to be the dead end that said
+        # "暂时无法从“X”读取可靠对象" and stopped — the shape the user called
+        # 死板. There is always something to say: what we do have about the
+        # object goes to the model, every enabled recipe is offered as a tool it
+        # may call, and a refusing gateway produces an honest sentence about the
+        # endpoint rather than silence.
         target_title = str((target_window or {}).get("title") or "当前应用")
-        answer = f"暂时无法从“{target_title}”读取可靠对象，因此没有把屏幕内容交给模型，也没有修改任何内容。"
+        health = read_health()
+        allow_tools = not health.circuit_open
+        if app_ctx is None or not str(app_ctx.content or "").strip():
+            context_text += (
+                f"\n\n没有从“{target_title}”读到文本层内容。"
+                "只依据上面已有的窗口与来源信息回答，缺什么就说缺什么，不要编造屏幕上的文字。"
+            )
+        answer, suggested_recipe = _general_fallback_answer(
+            command,
+            context_text,
+            allow_tools=allow_tools,
+            recipe_enabled=routing_enabled,
+        )
+        general_route = {
+            "tier": "L2",
+            "suggestedRecipeId": suggested_recipe,
+            "modelAvailable": allow_tools,
+        }
+        if suggested_recipe:
+            # The model chose a capability for a phrasing no rule covered. Run it
+            # through the normal fabric path so it gets the same plan, preview,
+            # confirmation and receipt as any other recipe — never a shortcut.
+            fabric_response = _fabric_response(
+                payload,
+                target_window,
+                app_ctx,
+                snapshot,
+                forced_recipe_id=suggested_recipe,
+            )
+            if fabric_response is not None:
+                fabric_response["route"] = general_route
+                if answer:
+                    fabric_response["answer"] = f"{answer}\n\n{fabric_response.get('answer') or ''}".strip()
+                print(json.dumps(fabric_response, ensure_ascii=False))
+                return 0 if fabric_response.get("ok") is True else 1
+        route_info = {**fast.to_dict(), **general_route}
 
     print(json.dumps({
         "ok": True,
         "prompt": command,
         "answer": answer,
+        "route": route_info,
         "selectionContext": None if app_ctx is None else app_ctx.to_dict(),
         "sourceWindow": target_window,
         "actionProposals": action_proposals,

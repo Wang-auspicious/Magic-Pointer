@@ -44,7 +44,7 @@ def test_bridge_lists_catalog_and_real_provider_state(tmp_path: Path) -> None:
     code, catalog = _call(tmp_path, {"operation": "catalog"})
     assert code == 0
     assert catalog["ok"] is True
-    assert len(catalog["recipes"]) == 30
+    assert len(catalog["recipes"]) >= 30
 
     code, providers = _call(tmp_path, {"operation": "providers"})
     assert code == 0

@@ -16,7 +16,7 @@ written it back.
 import json
 from pathlib import Path
 
-from app.fabric.engine import PROVIDER_BY_RECIPE, FabricEngine
+from app.fabric.engine import FabricEngine, provider_for_recipe
 from app.fabric.executors import FabricExecutors
 from app.fabric.schema import OperationPlan, RiskLevel
 
@@ -46,14 +46,14 @@ def _executors(tmp_path: Path, *, transform=None) -> FabricExecutors:
 
 def test_in_place_recipes_do_not_share_the_artifact_only_provider() -> None:
     for recipe_id in IN_PLACE_RECIPES:
-        assert PROVIDER_BY_RECIPE[recipe_id] == "inplace.text"
+        assert provider_for_recipe(recipe_id) == "inplace.text"
 
 
 def test_summarize_route_keeps_the_artifact_only_provider() -> None:
     # text.summarize_route's contract genuinely is "produce an artifact", so
     # model.text is correct for it. Guards against fixing the lie by changing
     # _model_text and breaking the recipe that legitimately depends on it.
-    assert PROVIDER_BY_RECIPE["text.summarize_route"] == "model.text"
+    assert provider_for_recipe("text.summarize_route") == "model.text"
 
 
 def test_in_place_write_back_is_never_reported_as_succeeded(tmp_path: Path) -> None:
@@ -69,10 +69,10 @@ def test_in_place_success_claim_is_impossible_through_the_real_routing(tmp_path:
     # The tests above pass an explicit provider, so they exercise the executor
     # while bypassing the routing table -- and the original bug lived in the
     # routing. This drives the provider the way the engine does, so reverting
-    # PROVIDER_BY_RECIPE back to model.text fails here.
+    # the manifest's provider back to model.text fails here.
     executors = _executors(tmp_path)
     for recipe_id in IN_PLACE_RECIPES:
-        routed = PROVIDER_BY_RECIPE[recipe_id]
+        routed = provider_for_recipe(recipe_id)
         receipt = executors.execute(_plan(recipe_id, provider=routed))
         assert not (receipt.status == "succeeded" and receipt.verified is True), (
             f"{recipe_id} routed to {routed!r} and reported a write-back it did not perform"
