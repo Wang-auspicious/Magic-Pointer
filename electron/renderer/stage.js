@@ -18,6 +18,7 @@
   const stageRoot = document.getElementById('stage');
   const targetingOutline = document.getElementById('targeting-outline');
   const captureProofLayer = document.getElementById('capture-proof');
+  const screenPointLayer = document.getElementById('screen-points');
   const frozenGlow = document.getElementById('frozen-glow');
   const capsule = document.getElementById('capsule');
   const capsuleCount = document.getElementById('capsule-count');
@@ -163,6 +164,9 @@
     if (event && Object.prototype.hasOwnProperty.call(event, 'captureProof')) {
       renderCaptureProof(event.captureProof);
     }
+    if (event && Object.prototype.hasOwnProperty.call(event, 'screenPoints')) {
+      renderScreenPoints(event.screenPoints);
+    }
     const next = transition(state, event);
     if (next === state) return;
     state = next;
@@ -206,6 +210,40 @@
       index += 1;
     }
     captureProofLayer.hidden = index === 0;
+  }
+
+  // An arrow per [POINT] the answer carried, numbered the way the sentence is:
+  // first this, then that. Screen coordinates use the same transform as the
+  // proof bands and the pick highlight.
+  function renderScreenPoints(points) {
+    if (!screenPointLayer) return;
+    screenPointLayer.replaceChildren();
+    const list = Array.isArray(points) ? points : [];
+    let drawn = 0;
+    for (const point of list) {
+      const x = Math.round(Number(point.x) - stageOriginX);
+      const y = Math.round(Number(point.y) - stageOriginY);
+      if (![x, y].every(Number.isFinite)) continue;
+      if (x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight) continue;
+      const element = document.createElement('div');
+      element.className = 'screen-point';
+      element.style.left = `${x}px`;
+      element.style.top = `${y}px`;
+      element.style.setProperty('--point-delay', `${drawn * 220}ms`);
+      const badge = document.createElement('span');
+      badge.className = 'screen-point-order';
+      badge.textContent = String(Number(point.order) || drawn + 1);
+      element.appendChild(badge);
+      screenPointLayer.appendChild(element);
+      drawn += 1;
+    }
+    screenPointLayer.hidden = drawn === 0;
+  }
+
+  function clearScreenPoints() {
+    if (!screenPointLayer) return;
+    screenPointLayer.replaceChildren();
+    screenPointLayer.hidden = true;
   }
 
   function clearCaptureProof() {
@@ -1859,6 +1897,7 @@
       targetSweepComplete = false;
       resetVoiceTrigger();
       clearCaptureProof();
+      clearScreenPoints();
       meta.selectionSource = null;
       meta.objectKind = null;
       applySession(payload);
@@ -1885,6 +1924,7 @@
     });
     api.onHide(() => {
       clearCaptureProof();
+      clearScreenPoints();
       if (state.name === 'hidden') return;
       dispatch({ type: 'DISMISS' });
     });

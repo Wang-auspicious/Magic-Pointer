@@ -281,9 +281,20 @@ function stageEventFromBridge(parsed) {
     .find((proposal) => proposal?.action_type === 'office_replace_selection');
   const receipt = executionReceipt(parsed);
   const proof = captureProofFromBridge(parsed);
-  const proofFields = proof.length
-    ? { captureProof: proof, captureProofSummary: proofSummary(proof) }
-    : {};
+  // Where the answer points while it explains. Coordinates only; the sentence
+  // itself already had the markers removed on the Python side.
+  const screenPoints = (Array.isArray(parsed.screenPoints) ? parsed.screenPoints : [])
+    .filter((point) => point && Number.isFinite(Number(point.x)) && Number.isFinite(Number(point.y)))
+    .slice(0, 6)
+    .map((point, index) => ({
+      x: Math.round(Number(point.x)),
+      y: Math.round(Number(point.y)),
+      order: Number(point.order) || index + 1,
+    }));
+  const proofFields = {
+    ...(proof.length ? { captureProof: proof, captureProofSummary: proofSummary(proof) } : {}),
+    ...(screenPoints.length ? { screenPoints } : {}),
+  };
   if (parsed.ok === true && receipt.status === 'succeeded' && receipt.verified) {
     return {
       type: 'COMPLETE',

@@ -1545,3 +1545,83 @@ body {
   }
   .capture-proof-band::after { display: none; }
 }
+
+/* --- [POINT] arrows ------------------------------------------------------
+ *
+ * The answer points at the screen while it explains. "The button is in the top
+ * right" is a worse answer than an arrow landing on the button.
+ *
+ * Numbered, because guidance is usually a sequence: first this, then that. The
+ * markers never survive into the text itself (see app/text_actions/point_markers.py),
+ * so what the user copies is a sentence, not a sentence with coordinates in it.
+ */
+.screen-points {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 6;
+}
+
+.screen-point {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  animation: screen-point-in 260ms cubic-bezier(.22, 1, .36, 1) var(--point-delay, 0ms) both;
+}
+
+/* The ring that lands on the target. */
+.screen-point::before {
+  content: '';
+  position: absolute;
+  left: -18px;
+  top: -18px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 2px solid rgba(67, 139, 255, .9);
+  box-shadow: 0 0 0 4px rgba(47, 123, 255, .16);
+}
+
+/* A single pulse outward, so the eye is drawn to it once rather than nagged. */
+.screen-point::after {
+  content: '';
+  position: absolute;
+  left: -18px;
+  top: -18px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 2px solid rgba(67, 139, 255, .5);
+  animation: screen-point-pulse 1200ms cubic-bezier(.4, 0, .2, 1) calc(var(--point-delay, 0ms) + 200ms) 2 both;
+}
+
+.screen-point-order {
+  position: absolute;
+  left: 14px;
+  top: -30px;
+  min-width: 18px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(47, 123, 255, .92);
+  color: #fff;
+  font-size: 12px;
+  line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes screen-point-in {
+  from { opacity: 0; transform: scale(.6); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes screen-point-pulse {
+  from { opacity: .55; transform: scale(1); }
+  to { opacity: 0; transform: scale(2.1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .screen-point { animation: screen-point-in 1ms linear both; }
+  .screen-point::after { display: none; }
+}

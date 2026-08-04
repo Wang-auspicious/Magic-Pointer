@@ -37,6 +37,7 @@ from app.fabric.intent_router import (
     recipe_tool_schemas,
 )
 from app.model_health import read_health
+from app.text_actions.point_markers import parse_points
 from app.text_actions.length_target import (
     build_instruction,
     hit_target,
@@ -2262,10 +2263,19 @@ def main() -> int:
                 return 0 if fabric_response.get("ok") is True else 1
         route_info = {**fast.to_dict(), **general_route}
 
+    # An answer may point at the screen while it explains. The markers come out
+    # of the text here, at the last moment before it is handed over, so nothing
+    # downstream — copy, 填入, the thread log — ever carries "[POINT 100,200]"
+    # into a document.
+    answer, screen_points = parse_points(
+        answer,
+        bounds=(target_window or {}).get("bbox"),
+    )
     print(json.dumps({
         "ok": True,
         "prompt": command,
         "answer": answer,
+        "screenPoints": [point.to_dict() for point in screen_points],
         "route": route_info,
         "selectionContext": None if app_ctx is None else app_ctx.to_dict(),
         "sourceWindow": target_window,
