@@ -1456,3 +1456,92 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .capsule-ref { animation: none; }
 }
+
+/* --- Capture proof -------------------------------------------------------
+ *
+ * A band around every rectangle we actually laid hands on. The user asked for
+ * this in as many words on 2026-08-05: "在他外部搞个那种跑一圈的亮色带，证明
+ * 拿到了". A sentence claiming we read something is cheap; an outline around
+ * the words is not, and when the wrong thing lights up it is visible instead
+ * of buried in a log.
+ *
+ * Colour carries meaning and must not be decorative. Blue is the product's own
+ * accent and marks text the app handed us character for character. Amber marks
+ * text recognised from pixels, which can be wrong. Painting both blue would make
+ * "I know" and "I think that says" look identical — the exact dishonesty the
+ * perception work this week was about.
+ */
+.capture-proof {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 4;
+}
+
+.capture-proof-band {
+  position: absolute;
+  border-radius: 8px;
+  opacity: 0;
+  border: 1.5px solid var(--proof-edge);
+  box-shadow: 0 0 0 3px var(--proof-halo), inset 0 0 12px var(--proof-halo);
+  animation:
+    capture-proof-in 220ms cubic-bezier(.22, 1, .36, 1) var(--proof-delay, 0ms) both,
+    capture-proof-run 1500ms cubic-bezier(.4, 0, .2, 1) calc(var(--proof-delay, 0ms) + 160ms) 1 both;
+}
+
+/* Read exactly: the app told us these characters. */
+.capture-proof-band[data-source='structured'],
+.capture-proof-band[data-source='text_range'] {
+  --proof-edge: rgba(67, 139, 255, .85);
+  --proof-halo: rgba(47, 123, 255, .18);
+}
+
+/* Recognised from pixels: this is our reading of a picture, not the app's text. */
+.capture-proof-band[data-source='pixel'] {
+  --proof-edge: rgba(232, 160, 38, .85);
+  --proof-halo: rgba(232, 160, 38, .16);
+}
+
+/* The band that runs once around the rectangle — the "跑一圈" the user asked
+ * for. A conic sweep rotated through a full turn reads as a light travelling
+ * the perimeter without needing four separate edge animations. */
+.capture-proof-band::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: 10px;
+  padding: 2px;
+  background: conic-gradient(
+    from var(--proof-angle, 0turn),
+    transparent 0deg,
+    transparent 250deg,
+    var(--proof-edge) 330deg,
+    transparent 360deg
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+@keyframes capture-proof-in {
+  from { opacity: 0; transform: scale(.985); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes capture-proof-run {
+  from { --proof-angle: 0turn; }
+  to { --proof-angle: 1turn; }
+}
+
+@property --proof-angle {
+  syntax: '<angle>';
+  initial-value: 0turn;
+  inherits: false;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .capture-proof-band {
+    animation: capture-proof-in 1ms linear both;
+  }
+  .capture-proof-band::after { display: none; }
+}

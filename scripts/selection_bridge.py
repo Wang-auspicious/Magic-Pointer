@@ -913,6 +913,16 @@ def _enrich_screen_region_context(
         "ocr_stroke_filter": bool(strokes),
         "ocr_segment_count": len(segments),
         "ocr_selection_bbox": selection_bbox,
+        # The rectangles of the blocks that actually made it into the answer, in
+        # physical screen pixels. These are what the stage outlines to show the
+        # user what was picked up — a claim that we read something is worth much
+        # less than a band drawn around the words we read.
+        "captured_rects": [
+            list(block["rect"])
+            for block in selected_blocks
+            if isinstance(block.get("rect"), (list, tuple)) and len(block["rect"]) == 4
+        ][:24],
+        "captured_rects_source": "pixel",
         "perception_trace": (snapshot or {}).get("perception_trace"),
     })
     return AdapterReadContext(
@@ -1771,7 +1781,17 @@ def _classify_with_model(command: str, object_summary: str, tools: list[dict[str
 
 
 CLASSIFY_TIMEOUT_S = 8.0
-GENERAL_TIMEOUT_S = 25.0
+# Measured against the configured gateway on 2026-08-04: the same one-line
+# question took 20.6-26.1s through the user's proxy and 27.3-33.5s without it,
+# because the relay writes to whatever max_tokens ceiling it is handed. A 25s
+# budget therefore reported a working endpoint as unreachable. The ceiling is
+# now the lever (see INTERACTIVE_ANSWER_TOKENS) and the budget has room for the
+# gateway's own slow days.
+GENERAL_TIMEOUT_S = 40.0
+# Bubble answers are meant to be read at a glance. Capping generation halved the
+# measured wait (26.9s at 1200 tokens vs 12.1s at 120) — on this gateway the cap
+# is the latency.
+INTERACTIVE_ANSWER_TOKENS = 700
 
 
 def _object_summary_for_routing(
@@ -2184,10 +2204,17 @@ def main() -> int:
                     + "Return ONLY the rewritten text. No preamble, headings, labels, quotes, markdown, or explanation."
                 ),
                 system_prompt="You rewrite the selected text. Return only the rewritten text; no explanation.",
+                timeout_s=GENERAL_TIMEOUT_S,
+                attempts=1,
             ))
         else:
             answer = answer_with_read_text_on_model_failure(
-                ask_text_model(command, context_text=context_text),
+                ask_text_model(
+                    command,
+                    context_text=context_text,
+                    timeout_s=GENERAL_TIMEOUT_S,
+                    max_tokens=INTERACTIVE_ANSWER_TOKENS,
+                ),
                 str(app_ctx.content or ""),
             )
     else:

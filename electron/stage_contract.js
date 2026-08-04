@@ -3,6 +3,8 @@
 // tokens; raw screenshots, native handles, prompts, and proposal parameters do
 // not cross into the renderer.
 
+const { captureProof, proofSummary } = require('./capture_proof_policy');
+
 const CHIP_COMMANDS = Object.freeze({
   rewrite: '改写这段文字',
   translate: '把这段文字翻译成中文',
@@ -224,6 +226,27 @@ function humanErrorMessage(raw, fallback = '这次没能完成，也没有改动
   return value;
 }
 
+// What the perception layers actually laid hands on, as rectangles the stage can
+// outline. A sentence claiming we read something is worth much less than a band
+// drawn around the words we read — and when the wrong thing lights up, the user
+// can see that too, which is the point.
+function captureProofFromBridge(parsed) {
+  const artifacts = (parsed && parsed.selectionContext && parsed.selectionContext.artifacts) || {};
+  const geometryKind = String(artifacts.selection_geometry_kind || '');
+  // A pointer anchor is where the user's finger was, not what we read. Outlining
+  // it would prove nothing.
+  const structured = geometryKind === 'pointer_anchor'
+    ? []
+    : (Array.isArray(artifacts.selection_rectangles) ? artifacts.selection_rectangles : []);
+  const captured = Array.isArray(artifacts.captured_rects) ? artifacts.captured_rects : [];
+  const source = String(artifacts.captured_rects_source || 'pixel');
+  return captureProof({
+    structured,
+    textRange: source === 'text_range' ? captured : [],
+    pixel: source === 'pixel' ? captured : [],
+  });
+}
+
 function stageEventFromBridge(parsed) {
   if (!parsed || typeof parsed !== 'object') {
     return { type: 'ERROR', error: { message: '未收到可用结果。' } };
@@ -257,16 +280,22 @@ function stageEventFromBridge(parsed) {
   const replaceProposal = (Array.isArray(parsed.actionProposals) ? parsed.actionProposals : [])
     .find((proposal) => proposal?.action_type === 'office_replace_selection');
   const receipt = executionReceipt(parsed);
+  const proof = captureProofFromBridge(parsed);
+  const proofFields = proof.length
+    ? { captureProof: proof, captureProofSummary: proofSummary(proof) }
+    : {};
   if (parsed.ok === true && receipt.status === 'succeeded' && receipt.verified) {
     return {
       type: 'COMPLETE',
       outcome: { status: receipt.status, verified: true },
+      ...proofFields,
     };
   }
   if (replaceProposal) {
     return {
       type: 'RESULT',
       result: textDraftResult(parsed, replaceProposal, actions, receipt),
+      ...proofFields,
     };
   }
   return {
@@ -279,10 +308,12 @@ function stageEventFromBridge(parsed) {
       ...receipt,
       actions,
     },
+    ...proofFields,
   };
 }
 
 module.exports = {
+  captureProofFromBridge,
   commandForChip,
   humanErrorMessage,
   inferObjectKind,

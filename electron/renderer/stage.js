@@ -17,6 +17,7 @@
 
   const stageRoot = document.getElementById('stage');
   const targetingOutline = document.getElementById('targeting-outline');
+  const captureProofLayer = document.getElementById('capture-proof');
   const frozenGlow = document.getElementById('frozen-glow');
   const capsule = document.getElementById('capsule');
   const capsuleCount = document.getElementById('capsule-count');
@@ -156,11 +157,61 @@
   });
 
   function dispatch(event) {
+    // Proof bands are evidence about a finished read, not a state of the
+    // machine. They ride along on whatever event carried the result so the
+    // rectangles and the answer appear together.
+    if (event && Object.prototype.hasOwnProperty.call(event, 'captureProof')) {
+      renderCaptureProof(event.captureProof);
+    }
     const next = transition(state, event);
     if (next === state) return;
     state = next;
     render();
     syncEffects();
+  }
+
+  // Outline every rectangle we actually laid hands on, one band per rectangle,
+  // staggered so they light up in reading order. Blue means the app handed us
+  // those characters; amber means we recognised them from pixels. The colours
+  // are load-bearing — see stage.css.
+  function renderCaptureProof(bands) {
+    if (!captureProofLayer) return;
+    captureProofLayer.replaceChildren();
+    const policy = globalThis.CaptureProofPolicy;
+    const list = Array.isArray(bands) ? bands : [];
+    if (!policy || list.length === 0) {
+      captureProofLayer.hidden = true;
+      return;
+    }
+    // The same screen -> stage-window transform showPickHighlight uses, so a
+    // proof band and a pick highlight always land in the same place. If that
+    // transform is wrong on a scaled display it is wrong for both, and there is
+    // one place to fix it.
+    const mapped = policy.toStageRects(list, {
+      origin: { x: stageOriginX, y: stageOriginY },
+    });
+    let index = 0;
+    for (const band of mapped) {
+      const rect = band.rect;
+      if (!isUsableTargetRect(rect)) continue;
+      const element = document.createElement('div');
+      element.className = 'capture-proof-band';
+      element.dataset.source = band.source;
+      element.style.left = `${rect.x}px`;
+      element.style.top = `${rect.y}px`;
+      element.style.width = `${rect.width}px`;
+      element.style.height = `${rect.height}px`;
+      element.style.setProperty('--proof-delay', `${index * 45}ms`);
+      captureProofLayer.appendChild(element);
+      index += 1;
+    }
+    captureProofLayer.hidden = index === 0;
+  }
+
+  function clearCaptureProof() {
+    if (!captureProofLayer) return;
+    captureProofLayer.replaceChildren();
+    captureProofLayer.hidden = true;
   }
 
   function applyVoiceTriggerEffects(outcome) {
@@ -1807,6 +1858,7 @@
       targetSweepTimer = null;
       targetSweepComplete = false;
       resetVoiceTrigger();
+      clearCaptureProof();
       meta.selectionSource = null;
       meta.objectKind = null;
       applySession(payload);
@@ -1832,6 +1884,7 @@
       }
     });
     api.onHide(() => {
+      clearCaptureProof();
       if (state.name === 'hidden') return;
       dispatch({ type: 'DISMISS' });
     });
