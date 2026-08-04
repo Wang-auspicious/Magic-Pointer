@@ -7,6 +7,13 @@ import time
 from io import BytesIO
 from pathlib import Path
 
+from app.model_health import (
+    record_failure,
+    record_success,
+    record_unconfigured,
+    short_circuit_message,
+)
+
 ROOT = Path(__file__).resolve().parents[1]
 SECRETS_DIR = ROOT / "secrets"
 
@@ -102,11 +109,20 @@ def ask_text_model(
     """
     api_key, base_url, model = get_ai_config()
     if not api_key:
+        record_unconfigured()
         excerpt = (context_text or user_prompt or "").strip()[:900]
         return (
             "未检测到 OPENAI_API_KEY 或 secrets/openai_key.txt，因此没有调用文本模型。\n\n"
             f"当前读取到的上下文：{excerpt}"
         )
+
+    # A gateway we already know is refusing (402 balance, 401 key, 404 model)
+    # gets skipped instead of waited on. Every caller has a local fallback, and
+    # burning a full timeout per command is what made the acceptance run feel
+    # broken rather than merely unconfigured.
+    blocked = short_circuit_message()
+    if blocked:
+        return f"AI 调用失败：{blocked}"
 
     try:
         import httpx
@@ -140,13 +156,28 @@ def ask_text_model(
                     response = client.post(f"{base_url}/chat/completions", headers=headers, json=payload)
                 if response.status_code >= 500:
                     last_http_error = (response.status_code, _plain_error_excerpt(response.text))
+                    record_failure(status=response.status_code, detail=response.text[:300], model=model, base_url=base_url)
                     continue
                 if response.status_code >= 400:
-                    return f"AI 调用失败：HTTP {response.status_code}。\n{_plain_error_excerpt(response.text)}"
+                    health = record_failure(
+                        status=response.status_code,
+                        detail=response.text[:300],
+                        model=model,
+                        base_url=base_url,
+                    )
+                    return f"AI 调用失败：{health.message}"
                 data = response.json()
+                record_success(model=model, base_url=base_url)
                 return data["choices"][0]["message"].get("content") or ""
             except (httpx.ConnectError, httpx.ReadError, httpx.RemoteProtocolError, httpx.TimeoutException) as exc:
                 last_exc = exc
+                record_failure(
+                    status=None,
+                    exception_name=type(exc).__name__,
+                    detail=str(exc)[:300],
+                    model=model,
+                    base_url=base_url,
+                )
                 continue
         if last_http_error:
             code, detail = last_http_error
@@ -169,10 +200,18 @@ def ask_vision_model(
 
     api_key, base_url, model = get_ai_config()
     if not api_key:
+        record_unconfigured()
         return (
             "\u5df2\u5b8c\u6210\u622a\u56fe\u4e0e\u5bf9\u8c61\u767b\u8bb0\uff0c\u4f46\u672a\u68c0\u6d4b\u5230 OPENAI_API_KEY \u6216 secrets/openai_key.txt\uff0c\u6240\u4ee5\u6ca1\u6709\u8c03\u7528\u591a\u6a21\u6001\u6a21\u578b\u3002\n\n"
             f"\u622a\u56fe\u5df2\u4fdd\u5b58\uff1a{image_path}\n\n"
             "\u53ef\u901a\u8fc7\u73af\u5883\u53d8\u91cf\u6216 secrets/openai_key.txt \u914d\u7f6e key\u3002"
+        )
+
+    blocked = short_circuit_message()
+    if blocked:
+        return (
+            f"AI 调用失败：{blocked}\n\n"
+            f"截图已保存在本地：{image_path}\n端点恢复后可以直接重试。"
         )
 
     try:
@@ -240,17 +279,31 @@ def ask_vision_model(
                     response = client.post(f"{base_url}/chat/completions", headers=headers, json=payload)
                 if response.status_code >= 500:
                     last_http_error = (response.status_code, _plain_error_excerpt(response.text))
+                    record_failure(status=response.status_code, detail=response.text[:300], model=model, base_url=base_url)
                     continue
                 if response.status_code >= 400:
-                    detail = _plain_error_excerpt(response.text)
-                    return f"AI \u8c03\u7528\u5931\u8d25\uff1aHTTP {response.status_code}\u3002\n{detail}\n\n\u622a\u56fe\u548c\u5bf9\u8c61\u5df2\u4fdd\u5b58\uff0c\u53ef\u4ee5\u7a0d\u540e\u91cd\u8bd5\u3002"
+                    health = record_failure(
+                        status=response.status_code,
+                        detail=response.text[:300],
+                        model=model,
+                        base_url=base_url,
+                    )
+                    return f"AI \u8c03\u7528\u5931\u8d25\uff1a{health.message}\n\n\u622a\u56fe\u548c\u5bf9\u8c61\u5df2\u4fdd\u5b58\u5728\u672c\u5730\u3002"
                 data = response.json()
+                record_success(model=model, base_url=base_url)
                 answer = data["choices"][0]["message"].get("content") or ""
                 if not include_extras and (extra_image_paths or labeled_extra_images):
                     answer += "\n\n\uff08\u7f51\u5173\u4e0d\u7a33\u5b9a\uff0c\u672c\u6b21\u5df2\u964d\u7ea7\u4e3a\u4e3b\u622a\u56fe + \u7ed3\u6784\u5316\u4e0a\u4e0b\u6587\u3002\uff09"
                 return answer
             except (httpx.ConnectError, httpx.ReadError, httpx.RemoteProtocolError, httpx.TimeoutException) as exc:
                 last_exc = exc
+                record_failure(
+                    status=None,
+                    exception_name=type(exc).__name__,
+                    detail=str(exc)[:300],
+                    model=model,
+                    base_url=base_url,
+                )
                 continue
         if last_http_error:
             code, detail = last_http_error

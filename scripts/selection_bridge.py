@@ -1607,6 +1607,32 @@ def _fabric_response(
 AGENT_PROMPT_MODEL_TIMEOUT_S = 12.0
 
 
+# Handing the screen to codex/claude/pi is one capability among many, not the
+# destination of every command. It runs when the user asks for it — by phrase or
+# by pressing the explicit handoff affordance — and never as a silent default.
+_AGENT_HANDOFF_PHRASES = (
+    "让 codex", "让codex", "让 claude", "让claude", "让 gemini", "让gemini",
+    "让 pi ", "让pi ", "让 cursor", "让cursor", "让 aider", "让aider",
+    "交给 agent", "交给agent", "交给 codex", "交给codex", "交给 claude", "交给claude",
+    "丢给 agent", "丢给agent", "发给 agent", "发给agent",
+    "agent 修", "agent修", "让 agent", "让agent",
+    "send to codex", "send to claude", "hand off to", "handoff to",
+    "ask codex", "ask claude", "agent fix",
+)
+
+
+def _agent_handoff_requested(payload: dict[str, Any]) -> bool:
+    mode = str(payload.get("requestMode") or "").strip()
+    if mode == "agent_prompt":
+        return True
+    if mode not in ("", "auto", "default"):
+        return False
+    command = str(payload.get("command") or payload.get("originalCommand") or "").casefold()
+    if not command:
+        return False
+    return any(phrase in command for phrase in _AGENT_HANDOFF_PHRASES)
+
+
 def _compile_agent_prompt_with_model(instruction: str, grounded_prompt: str) -> str:
     return ask_text_model(
         instruction,
@@ -1776,7 +1802,7 @@ def main() -> int:
     app_ctx = _enrich_screen_region_context(target_window, app_ctx, snapshot)
     clock.mark("enrich_screen_region")
 
-    if payload.get("requestMode") == "agent_prompt":
+    if _agent_handoff_requested(payload):
         prompt_draft = build_agent_prompt_draft(payload, target_window, app_ctx, snapshot, clock=clock)
         clock.total(ok=prompt_draft.get("ok") is True)
         print(json.dumps(prompt_draft, ensure_ascii=False))

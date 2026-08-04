@@ -155,3 +155,31 @@ assert.deepStrictEqual(failure, {
 });
 
 console.log('stage_contract_test: all assertions passed');
+
+// --- Human error messages -------------------------------------------------
+// The acceptance run put `bridge_timeout` on screen. A bridge code is for the
+// log; the bubble gets a sentence, and an unmapped code gets the honest
+// fallback rather than the identifier.
+{
+  const { humanErrorMessage } = require('../electron/stage_contract');
+  assert.strictEqual(
+    stageEventFromBridge({ ok: false, error: 'bridge_timeout' }).error.message,
+    '这次处理超时了，没有改动任何东西。请再试一次，或换一个更小的选区。',
+  );
+  assert.strictEqual(
+    stageEventFromBridge({ ok: false, error: 'some_unmapped_future_code' }).error.message,
+    '这次没能完成，也没有改动任何东西。',
+  );
+  assert.strictEqual(humanErrorMessage('已经写好的一句话。'), '已经写好的一句话。');
+  assert.strictEqual(humanErrorMessage(''), '这次没能完成，也没有改动任何东西。');
+  assert.strictEqual(humanErrorMessage('structured_context_unavailable').includes('没能从这个窗口读到可靠的文字'), true);
+  for (const event of [
+    stageEventFromBridge({ ok: false, error: 'bridge_timeout' }),
+    stageEventFromBridge({ ok: false, error: 'payload_too_large' }),
+    stageEventFromBridge({ ok: true, answer: '好了', error: 'capture_missing' }),
+  ]) {
+    const text = JSON.stringify(event);
+    assert(!/[a-z]+_[a-z]+_?[a-z]*"/.test(text.replace(/"[a-zA-Z]+":/g, '')), `leaked a code: ${text}`);
+  }
+}
+console.log('stage contract human error test ok');

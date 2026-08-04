@@ -13,7 +13,10 @@ assert(preload.includes("listAgentSessions: (selectionSessionToken) => ipcRender
 assert(preload.includes("dispatchAgentPrompt: (payload) => ipcRenderer.invoke('stage:dispatch-agent-prompt'"));
 assert(main.includes("ipcMain.handle('stage:agent-sessions'"));
 assert(main.includes("ipcMain.handle('stage:dispatch-agent-prompt'"));
-assert(main.includes("requestMode: 'agent_prompt'"));
+// The stage must NOT force the handoff mode; it forwards what the surface asked
+// for and lets the Python router decide. See tests/agent_handoff_routing_test.py.
+assert(main.includes("payload?.requestMode === 'agent_prompt' ? 'agent_prompt' : 'auto'"));
+assert(!main.includes("requestMode: 'agent_prompt',"));
 assert(main.includes('activeOnly: true'));
 assert(main.includes('setAgentPromptDraft('));
 assert(main.includes('getAgentPromptDraft('));
@@ -29,7 +32,15 @@ assert(js.includes('api.listAgentSessions(session.token)'));
 assert(js.includes('api.dispatchAgentPrompt({'));
 assert(js.includes("confirm.textContent = '确认'"));
 assert(!js.includes("confirm.textContent = '发送'"));
-assert(js.includes("button:not([disabled]), textarea, input, [contenteditable=\"true\"]"));
+// Dragging is positive-handle only, so a native scrollbar can never move the panel.
+assert(js.includes('function isDragHandleAt('));
+assert(!js.includes('button:not([disabled]), textarea, input, [contenteditable='));
+assert(html.includes('class="thread-grip" data-drag-handle="1"'));
+assert(html.includes('data-no-drag="1"'));
+assert(css.includes('.thread-grip'));
+// No horizontal scrollbar anywhere on the stage.
+assert(css.includes('overflow-x: hidden;'));
+assert(!/\.stage-result\s*\{[^}]*overflow:\s*auto/.test(css));
 assert(css.includes('.agent-session-chip'));
 assert(css.includes('.agent-prompt-confirm'));
 assert(css.includes('overflow-x: auto'));

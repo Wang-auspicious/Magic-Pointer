@@ -31,6 +31,9 @@
   const threadClose = document.getElementById('thread-close');
   const errorCard = document.getElementById('stage-error');
   const chipsBox = document.getElementById('stage-chips');
+  const noticeBox = document.getElementById('stage-notice');
+  const noticeText = document.getElementById('stage-notice-text');
+  let modelHealth = { circuitOpen: false, message: '', state: 'unknown' };
   const deliveryBox = document.getElementById('delivery-progress');
   const deliveryLabel = document.getElementById('delivery-label');
   const deliveryBar = document.getElementById('delivery-bar');
@@ -179,6 +182,24 @@
     capsule.dataset.voiceState = session.voiceState;
   }
 
+  // Dragging used to start anywhere inside a surface that was not a button,
+  // textarea or input. That negative list could never enumerate everything —
+  // native scrollbars are not elements, so pulling one dragged the whole
+  // bubble across the screen. Dragging is now positive: it starts only on an
+  // element that declares itself a handle, and never inside [data-no-drag].
+  function isDragHandleAt(x, y, rootEl) {
+    if (!rootEl || rootEl.hidden) return false;
+    let node = document.elementFromPoint(x, y);
+    if (!node || !rootEl.contains(node)) return false;
+    while (node && node !== document.body) {
+      if (node.dataset && node.dataset.noDrag) return false;
+      if (node.dataset && node.dataset.dragHandle) return true;
+      if (node === rootEl) return false;
+      node = node.parentElement;
+    }
+    return false;
+  }
+
   function handleVoicePointerInput(payload) {
     const t = Number(payload?.t);
     const x = Number(payload?.x);
@@ -198,12 +219,9 @@
       && x >= resultRect.left && x <= resultRect.right
       && y >= resultRect.top && y <= resultRect.bottom;
     if (overResult && primaryDown && !previousPrimaryDown && !surfaceDrag) {
-      const overAction = [...threadPanel.querySelectorAll('button:not([disabled]), textarea, input, [contenteditable="true"]')].some((control) => {
-        const rect = control.getBoundingClientRect();
-        return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
-      });
-      if (!overAction) {
+      if (isDragHandleAt(x, y, threadPanel)) {
         surfaceDrag = { element: threadPanel, startX: x, startY: y, originLeft: resultRect.left, originTop: resultRect.top };
+        threadPanel.classList.add('is-dragging');
       }
     }
     if (surfaceDrag) {
@@ -218,6 +236,7 @@
       syncHitRegions();
     }
     if (surfaceDrag && !primaryDown && previousPrimaryDown) {
+      surfaceDrag.element.classList.remove('is-dragging');
       surfaceDrag = null;
       session.resultDragged = true;
       // Release pointer capture in the same tick the button came up.
@@ -225,9 +244,7 @@
     }
     // Drag the capsule: press on its body (not inside the text input) and move.
     if (overCapsule && primaryDown && !previousPrimaryDown && !capsuleDrag) {
-      const inputRect = capsuleInput.getBoundingClientRect();
-      const overInput = x >= inputRect.left && x <= inputRect.right && y >= inputRect.top && y <= inputRect.bottom;
-      if (!overInput) {
+      if (isDragHandleAt(x, y, capsule)) {
         capsuleDrag = { startX: x, startY: y, originLeft: capsuleRect.left, originTop: capsuleRect.top };
       }
     }
@@ -1394,6 +1411,7 @@
     // After the result/error surfaces have been placed, so the progress row
     // can anchor below whichever surface is live.
     renderDelivery(name);
+    renderModelNotice(name);
 
     if (name === 'dismissing') {
       if (dismissTimer) clearTimeout(dismissTimer);
@@ -1403,6 +1421,26 @@
         dispatch({ type: 'HIDDEN' });
       }, fadeMs);
     }
+  }
+
+  // Told once, quietly, at the moment it matters: when the composer is open and
+  // the gateway we would call is refusing. Better than four slow failures.
+  function renderModelNotice(name) {
+    if (!noticeBox) return;
+    const show = modelHealth.circuitOpen === true
+      && Boolean(modelHealth.message)
+      && (name === 'capsule-text' || name === 'capsule-voice' || name === 'processing');
+    if (!show) {
+      noticeBox.hidden = true;
+      return;
+    }
+    noticeText.textContent = modelHealth.message;
+    noticeBox.hidden = false;
+    const rect = capsule.getBoundingClientRect();
+    const top = Math.min(window.innerHeight - 40, rect.bottom + 8);
+    const left = Math.max(6, Math.min(window.innerWidth - noticeBox.offsetWidth - 6, rect.left));
+    noticeBox.style.left = `${left}px`;
+    noticeBox.style.top = `${top}px`;
   }
 
   capsuleInput.addEventListener('input', () => {
@@ -1609,6 +1647,16 @@
     });
     if (typeof api.onPointerInput === 'function') {
       api.onPointerInput((payload) => handleVoicePointerInput(payload));
+    }
+    if (typeof api.onModelHealth === 'function') {
+      api.onModelHealth((payload) => {
+        modelHealth = {
+          circuitOpen: payload?.circuitOpen === true,
+          message: String(payload?.message || ''),
+          state: String(payload?.state || 'unknown'),
+        };
+        render();
+      });
     }
     if (typeof api.ready === 'function') api.ready();
   }

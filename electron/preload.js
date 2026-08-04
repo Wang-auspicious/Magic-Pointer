@@ -70,6 +70,7 @@ contextBridge.exposeInMainWorld('magicPointerStage', {
   onHide: (callback) => ipcRenderer.on('stage:hide', () => callback()),
   onDictationResult: (callback) => ipcRenderer.on('dictation:result', (_event, payload) => callback(payload)),
   onPointerInput: (callback) => ipcRenderer.on('stage:pointer-input', (_event, payload) => callback(payload)),
+  onModelHealth: (callback) => ipcRenderer.on('stage:model-health', (_event, payload) => callback(payload)),
 });
 
 contextBridge.exposeInMainWorld('magicPointerDashboard', {
@@ -98,6 +99,8 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
   onRouteResult: (callback) => ipcRenderer.on('dashboard:route-result', (_event, payload) => callback(payload)),
   onVoiceResidencyStatus: (callback) => ipcRenderer.on('dashboard:voice-residency-status', (_event, payload) => callback(payload)),
   onPreflightEvent: (callback) => ipcRenderer.on('dashboard:preflight-event', (_event, payload) => callback(payload)),
+  onModelHealth: (callback) => ipcRenderer.on('dashboard:model-health', (_event, payload) => callback(payload)),
+  refreshModelHealth: () => ipcRenderer.invoke('dashboard:model-health-refresh'),
 });
 
 contextBridge.exposeInMainWorld('magicPointerOnboarding', {

@@ -56,3 +56,5 @@ Thumbs.db
 # Local browser profile / tool state / downloaded papers (not source)
 /Magic/
 /.playwright-cli/
+data/runtime/pytest-tmp/
+data/runtime/uia-smoke.txt

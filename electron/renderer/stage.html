@@ -12,7 +12,7 @@
     <main id="stage" class="stage-root" data-state="hidden" hidden aria-label="Magic Pointer 舞台">
       <div id="targeting-outline" class="targeting-outline" hidden></div>
       <div id="frozen-glow" class="frozen-glow" hidden></div>
-      <div id="capsule" class="stage-capsule" data-mode="voice" data-phase="input" hidden>
+      <div id="capsule" class="stage-capsule" data-mode="voice" data-phase="input" data-drag-handle="1" hidden>
         <span id="capsule-count" class="capsule-count" hidden></span>
         <span id="voice-waveform" class="voice-waveform" aria-hidden="true">
           <i></i><i></i><i></i>
@@ -23,19 +23,22 @@
           type="text"
           autocomplete="off"
           spellcheck="false"
+          data-no-drag="1"
           aria-label="对锁定对象下达命令"
         />
         <p id="transcript" class="capsule-transcript" aria-live="polite"></p>
         <span id="processing-shimmer" class="processing-shimmer" aria-hidden="true" hidden></span>
       </div>
       <div id="stage-chips" class="stage-chips" role="group" aria-label="建议操作" hidden></div>
+      <div id="stage-notice" class="stage-notice" role="status" hidden><span id="stage-notice-text"></span></div>
       <section id="stage-thread" class="stage-thread" aria-label="本次会话" hidden>
+        <div class="thread-grip" data-drag-handle="1" role="presentation" title="拖动移动面板"><i></i></div>
         <div id="stage-result" class="stage-result" role="log" aria-live="polite"></div>
-        <footer class="thread-bar">
+        <footer class="thread-bar" data-drag-handle="1">
           <span id="thread-count" class="thread-count"></span>
-          <button type="button" id="thread-copy" class="thread-tool">复制</button>
-          <button type="button" id="thread-insert" class="thread-tool">填入</button>
-          <button type="button" id="thread-close" class="thread-tool is-close">关闭</button>
+          <button type="button" id="thread-copy" class="thread-tool" data-no-drag="1">复制</button>
+          <button type="button" id="thread-insert" class="thread-tool" data-no-drag="1">填入</button>
+          <button type="button" id="thread-close" class="thread-tool is-close" data-no-drag="1">关闭</button>
         </footer>
       </section>
       <div id="stage-error" class="stage-error" role="alert" hidden></div>

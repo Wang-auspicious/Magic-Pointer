@@ -20,7 +20,7 @@ const { buildAsyncPreflightChecks } = require('./preflight_checks');
 const { resolvePythonRuntime, pythonInvocationArgs, pythonSpawnEnvironment } = require('./python_runtime');
 const { VoiceResidentRuntime } = require('./voice_resident_runtime');
 const { captureEligibility } = require('./result_surface_policy');
-const { inferObjectKind, selectionSourceForReason, stageEventFromBridge } = require('./stage_contract');
+const { humanErrorMessage, inferObjectKind, selectionSourceForReason, stageEventFromBridge } = require('./stage_contract');
 const { canAutoExecuteInternalProposal } = require('./internal_action_policy');
 const { physicalScreenPoint, normalizeGroundingGeometry } = require('./coordinate_space');
 const { physicalGestureTrace } = require('./coordinate_space');
@@ -866,10 +866,12 @@ function deliverStageBridgeResult(selectionSessionToken, parsed) {
   });
 }
 
+// Last gate before a failure reaches the bubble. Callers may pass a written
+// sentence or a bridge code; only sentences get through.
 function deliverStageError(selectionSessionToken, message) {
   updateStage({
     selectionSessionToken: selectionSessionToken || null,
-    event: { type: 'ERROR', error: { message } },
+    event: { type: 'ERROR', error: { message: humanErrorMessage(message) } },
   });
 }
 
@@ -2271,6 +2273,7 @@ app.whenReady().then(() => {
     requiredPaths,
   });
   onboardingRequired = !onboardingReadiness.ready;
+  startModelHealthWatch();
   log(`onboarding readiness ready=${onboardingReadiness.ready} reason=${onboardingReadiness.reason}`);
   try {
     app.setLoginItemSettings({ openAtLogin: fabricSettings.general?.launch_at_login === true });
@@ -2893,6 +2896,63 @@ function runPythonBridgePromise(payload, scriptPath, { target = 'fabric-dashboar
   });
 }
 
+// --- Model gateway health -------------------------------------------------
+// Knowing the gateway is refusing (402 balance, 401 key) before a command runs
+// is the difference between "this app is broken" and "your endpoint is out of
+// credit". Python owns the verdict; this keeps a copy for the surfaces.
+let modelHealth = {
+  state: 'unknown',
+  healthy: true,
+  circuitOpen: false,
+  message: '',
+  errorCode: '',
+  model: '',
+  baseUrl: '',
+  checkedAt: 0,
+};
+let modelHealthTimer = null;
+
+function broadcastModelHealth() {
+  const payload = { ...modelHealth };
+  if (dashboardWindow && !dashboardWindow.isDestroyed()) {
+    dashboardWindow.webContents.send('dashboard:model-health', payload);
+  }
+  if (stageWindow && !stageWindow.isDestroyed()) {
+    stageWindow.webContents.send('stage:model-health', payload);
+  }
+}
+
+async function refreshModelHealth({ probe = false } = {}) {
+  try {
+    const parsed = await runPythonBridgePromise(
+      { operation: 'model.health', probe, timeoutS: 6 },
+      'scripts/fabric_bridge.py',
+      { target: 'fabric-dashboard', timeoutMs: probe ? 12000 : 6000 },
+    );
+    if (parsed?.health && typeof parsed.health === 'object') {
+      modelHealth = { ...modelHealth, ...parsed.health };
+      log(`model health state=${modelHealth.state} circuitOpen=${modelHealth.circuitOpen === true}`);
+      broadcastModelHealth();
+    }
+  } catch (error) {
+    // A failed health probe is not itself a gateway verdict; say unknown.
+    log(`model health probe failed ${error.name}: ${error.message}`);
+  }
+  return modelHealth;
+}
+
+function startModelHealthWatch() {
+  if (modelHealthTimer) return;
+  setTimeout(() => { refreshModelHealth({ probe: true }); }, 1500);
+  modelHealthTimer = setInterval(() => { refreshModelHealth({ probe: false }); }, 60_000);
+  modelHealthTimer.unref?.();
+}
+
+ipcMain.handle('dashboard:model-health-refresh', async () => {
+  const health = await refreshModelHealth({ probe: true });
+  return { ok: true, health };
+});
+
 function runtimePermissionEvidence() {
   if (process.platform !== 'darwin') {
     return {
@@ -3156,7 +3216,10 @@ function submitSelectionCommandWhenGrounded(payload, deadlineAt) {
     interactionEpisode,
     targetPoint: safeClone(session.snapshot?.target_point || null),
     targetPointSpace: session.snapshot?.target_point_space || null,
-    requestMode: 'agent_prompt',
+    // 'auto' lets the Python router decide. Hardcoding 'agent_prompt' here (as
+    // d9f92b1 did) turned every bubble command into a codex handoff draft and
+    // made the whole normal routing chain unreachable from the stage.
+    requestMode: payload?.requestMode === 'agent_prompt' ? 'agent_prompt' : 'auto',
     workspaceRoot: ROOT,
   };
   log(`stage:submit-selection-command token=${selectionSessionToken} request=${requestId} command_len=${String(enriched.command || '').length}`);

@@ -268,6 +268,9 @@ internal static class UiaSelectionProbe
     [DllImport("Shcore.dll")]
     private static extern int SetProcessDpiAwareness(int awareness);
 
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool SetProcessDpiAwarenessContext(IntPtr value);
+
     [DllImport("user32.dll")]
     private static extern bool SetProcessDPIAware();
 
@@ -277,19 +280,53 @@ internal static class UiaSelectionProbe
     [DllImport("user32.dll")]
     private static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
 
+    // DPI awareness decides which coordinate space UI Automation answers in.
+    // A DPI-unaware probe gets Windows' virtualized (logical) rectangles, while
+    // the caller hands it physical screen pixels — on a 200% display that is a
+    // 2x mismatch, every point lands outside every element, and the whole
+    // structured read reports "unavailable". That is what sent the acceptance
+    // run down the full-screen OCR fallback on every window.
+    //
+    // The old code called SetProcessDpiAwareness and returned unconditionally,
+    // so a failed call silently left the process unaware. Each step is now
+    // checked, newest API first.
+    private static readonly IntPtr DpiAwarenessContextPerMonitorAwareV2 = new IntPtr(-4);
+
+    private static string dpiAwarenessMode = "none";
+
     private static void EnableDpiAwareness()
     {
         try
         {
-            SetProcessDpiAwareness(2);
-            return;
+            if (SetProcessDpiAwarenessContext(DpiAwarenessContextPerMonitorAwareV2))
+            {
+                dpiAwarenessMode = "per_monitor_v2";
+                return;
+            }
         }
         catch
         {
         }
         try
         {
-            SetProcessDPIAware();
+            // S_OK (0) or E_ACCESSDENIED (already set by an earlier call/manifest)
+            // both mean the process ends up aware; anything else does not.
+            int hr = SetProcessDpiAwareness(2);
+            if (hr == 0 || (uint)hr == 0x80070005u)
+            {
+                dpiAwarenessMode = "per_monitor";
+                return;
+            }
+        }
+        catch
+        {
+        }
+        try
+        {
+            if (SetProcessDPIAware())
+            {
+                dpiAwarenessMode = "system";
+            }
         }
         catch
         {
@@ -913,23 +950,61 @@ internal static class UiaSelectionProbe
         }
         catch
         {
-            result.Error = "UI Automation ElementFromPoint failed.";
+            element = null;
+        }
+
+        // ElementFromPoint asks the desktop what is painted on top at this
+        // pixel, and what is on top is us: Magic Pointer's own full-screen
+        // transparent overlay. On the 2026-08-04 acceptance machine that made
+        // every structured read fail with "outside the target window tree",
+        // which pushed every command down the full-screen OCR fallback -- the
+        // reason a Notepad selection came back holding the text of a CMD window
+        // behind it. The target hwnd is known and trusted, so when the top-most
+        // answer is not usable, descend the target's own tree instead. This also
+        // covers other apps' overlays, IME candidate windows and tooltips.
+        bool insideTree = element != null && BelongsToWindowTree(element, root);
+        if (insideTree && TryAcceptPointChain(element, root, point, result))
+        {
             return;
         }
+
+        AutomationElement descended = FindDeepestElementAtPoint(root, point);
+        if (descended != null && !SameElement(descended, element) && TryAcceptPointChain(descended, root, point, result))
+        {
+            return;
+        }
+
         if (element == null)
         {
             result.Error = "UI Automation ElementFromPoint returned no element.";
             return;
         }
-        if (!BelongsToWindowTree(element, root))
+        if (!insideTree)
         {
             result.Error = "UI Automation point element was outside the target window tree. "
                 + DescribeWindowBinding(element, root);
             return;
         }
+        result.Error = "UI Automation point element had no bounded meaningful ancestor.";
+    }
 
-        AutomationElement current = element;
+    // Walk from `start` up to the window root and take the first element that is
+    // both meaningful and bounded. Failing that, take the tightest bounded box
+    // that is not simply the whole window: geometry alone is worth reporting,
+    // because it clips the pixel fallback to the thing the user pointed at
+    // instead of letting a full-screen OCR read the window behind it.
+    private static bool TryAcceptPointChain(
+        AutomationElement start,
+        AutomationElement root,
+        Point point,
+        SelectionResult result)
+    {
+        AutomationElement current = start;
         TreeWalker walker = TreeWalker.ControlViewWalker;
+        AutomationElement boundedFallback = null;
+        Rect boundedFallbackRectangle = Rect.Empty;
+        string boundedFallbackControlType = "";
+
         for (int depth = 0; current != null && depth < 16; depth++)
         {
             Rect rectangle = SafeBoundingRectangle(current);
@@ -938,20 +1013,19 @@ internal static class UiaSelectionProbe
             string value = SafeValue(current);
             string helpText = SafeString(current, AutomationElement.HelpTextProperty);
             string controlType = SafeControlType(current);
+            bool bounded = (
+                !rectangle.IsEmpty
+                && rectangle.Width > 0
+                && rectangle.Height > 0
+                && rectangle.Contains(point)
+            );
             bool meaningful = (
                 !string.IsNullOrWhiteSpace(name)
                 || !string.IsNullOrWhiteSpace(automationId)
                 || !string.IsNullOrWhiteSpace(value)
                 || !string.IsNullOrWhiteSpace(helpText)
             );
-            if (
-                meaningful
-                && !IsCatchAllPointElement(current, root, rectangle)
-                && !rectangle.IsEmpty
-                && rectangle.Width > 0
-                && rectangle.Height > 0
-                && rectangle.Contains(point)
-            )
+            if (meaningful && bounded && !IsCatchAllPointElement(current, root, rectangle))
             {
                 result.Ok = true;
                 result.ResultKind = "point_element";
@@ -975,7 +1049,18 @@ internal static class UiaSelectionProbe
                         ? name
                         : helpText;
                 result.Error = "";
-                return;
+                return true;
+            }
+            if (
+                boundedFallback == null
+                && bounded
+                && !SameElement(current, root)
+                && !IsCatchAllPointElement(current, root, rectangle)
+            )
+            {
+                boundedFallback = current;
+                boundedFallbackRectangle = rectangle;
+                boundedFallbackControlType = controlType;
             }
             if (SameElement(current, root))
             {
@@ -990,7 +1075,104 @@ internal static class UiaSelectionProbe
                 break;
             }
         }
-        result.Error = "UI Automation point element had no bounded meaningful ancestor.";
+
+        if (boundedFallback == null)
+        {
+            return false;
+        }
+
+        result.Ok = true;
+        result.ResultKind = "point_region";
+        result.ElementName = "";
+        result.AutomationId = SafeString(boundedFallback, AutomationElement.AutomationIdProperty);
+        result.ControlType = boundedFallbackControlType;
+        result.LocalizedControlType = SafeString(
+            boundedFallback,
+            AutomationElement.LocalizedControlTypeProperty);
+        result.ClassName = SafeString(boundedFallback, AutomationElement.ClassNameProperty);
+        result.ElementRectangle = boundedFallbackRectangle;
+        result.Rectangles.Add(boundedFallbackRectangle);
+        result.RectangleCountTotal = 1;
+        result.Text = "";
+        result.Error = "";
+        return true;
+    }
+
+    // Walk the target window's own tree down to the smallest element that still
+    // contains the point. Bounded in both depth and breadth: a deep Electron or
+    // Chromium tree must not turn a 200ms probe into a walk of ten thousand
+    // nodes, so each level scans at most a fixed number of siblings and the
+    // whole descent is capped. Returning the best partial match beats returning
+    // nothing — the caller only needs a bounded, meaningful element.
+    private const int PointDescentMaxDepth = 24;
+    private const int PointDescentMaxSiblings = 256;
+
+    private static AutomationElement FindDeepestElementAtPoint(AutomationElement root, Point point)
+    {
+        if (root == null)
+        {
+            return null;
+        }
+        Rect rootRectangle = SafeBoundingRectangle(root);
+        if (!rootRectangle.IsEmpty && !rootRectangle.Contains(point))
+        {
+            return null;
+        }
+
+        AutomationElement best = root;
+        AutomationElement current = root;
+        TreeWalker walker = TreeWalker.ControlViewWalker;
+
+        for (int depth = 0; depth < PointDescentMaxDepth; depth++)
+        {
+            AutomationElement child;
+            try
+            {
+                child = walker.GetFirstChild(current);
+            }
+            catch
+            {
+                break;
+            }
+
+            AutomationElement chosen = null;
+            double chosenArea = double.MaxValue;
+            for (int seen = 0; child != null && seen < PointDescentMaxSiblings; seen++)
+            {
+                Rect rectangle = SafeBoundingRectangle(child);
+                if (
+                    !rectangle.IsEmpty
+                    && rectangle.Width > 0
+                    && rectangle.Height > 0
+                    && rectangle.Contains(point)
+                )
+                {
+                    double area = rectangle.Width * rectangle.Height;
+                    if (area < chosenArea)
+                    {
+                        chosen = child;
+                        chosenArea = area;
+                    }
+                }
+                try
+                {
+                    child = walker.GetNextSibling(child);
+                }
+                catch
+                {
+                    break;
+                }
+            }
+
+            if (chosen == null)
+            {
+                break;
+            }
+            best = chosen;
+            current = chosen;
+        }
+
+        return best;
     }
 
     private static bool IsCatchAllPointElement(
@@ -1513,6 +1695,8 @@ internal static class UiaSelectionProbe
         json.Append(result.ProcessId);
         json.Append(",\"root_hwnd\":");
         json.Append(result.RootHwnd);
+        json.Append(",\"dpi_awareness\":");
+        json.Append(JsonString(dpiAwarenessMode));
         json.Append(",\"text\":");
         json.Append(JsonString(result.Text));
         json.Append(",\"truncated\":");

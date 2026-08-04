@@ -401,6 +401,9 @@ body {
   flex-direction: column;
   padding: 12px 14px 4px;
   max-height: min(46vh, 420px);
+  /* Never a horizontal scrollbar: content wraps instead. Pulling one used to
+   * drag the whole bubble across the screen. */
+  overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
@@ -487,6 +490,30 @@ body {
 .turn-elapsed[data-slow='true'] {
   color: #b4791f;
 }
+
+/* The grip is the one place the panel can be picked up from. Everything else —
+ * text, scrollbars, cards, buttons — belongs to the content. */
+.thread-grip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  height: 14px;
+  padding-top: 5px;
+  cursor: grab;
+}
+
+.thread-grip i {
+  width: 34px;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(38, 115, 235, 0.20);
+  transition: background 140ms ease-out, width 140ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.stage-thread:hover .thread-grip i { background: rgba(38, 115, 235, 0.34); }
+.stage-thread.is-dragging .thread-grip { cursor: grabbing; }
+.stage-thread.is-dragging .thread-grip i { width: 46px; background: rgba(38, 115, 235, 0.52); }
 
 .thread-bar {
   display: flex;
@@ -1055,7 +1082,8 @@ body {
   max-height: min(420px, calc(100vh - 16px));
   min-height: 40px;
   padding: 14px 16px;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   border-radius: 16px;
   border: 1px solid rgba(38, 115, 235, .30);
   box-shadow: 0 2px 10px rgba(30, 54, 88, .14);
@@ -1069,7 +1097,25 @@ body {
   display: grid;
   gap: 8px;
   user-select: text;
+  /* Nothing inside an answer may be wider than the bubble. A single long URL,
+   * a wide OCR table or a code line used to open a horizontal scrollbar. */
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
+
+.result-answer > *,
+.result-answer table,
+.result-answer img { max-width: 100%; }
+
+.result-answer table {
+  table-layout: fixed;
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.result-answer td,
+.result-answer th { overflow-wrap: anywhere; }
 
 .result-answer p { white-space: pre-wrap; }
 .result-answer ul, .result-answer ol { padding-left: 20px; }
@@ -1083,7 +1129,10 @@ body {
 }
 .result-answer pre {
   padding: 9px 10px;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   border-radius: 9px;
   background: rgba(20, 48, 82, .07);
   white-space: pre-wrap;
@@ -1127,7 +1176,8 @@ body {
   max-height: 260px;
   padding: 7px 8px 10px;
   resize: vertical;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   border: 0;
   border-bottom: 1px solid rgba(38, 115, 235, .14);
   outline: none;
@@ -1232,4 +1282,31 @@ body {
 .agent-prompt-confirm:disabled {
   cursor: default;
   opacity: .38;
+}
+
+/* Model gateway notice: shown only while the composer is open and we already
+ * know the endpoint is refusing. It is a fact, not an alarm — no red, no icon
+ * soup, and it never blocks the pointer. */
+.stage-notice {
+  position: fixed;
+  z-index: 3;
+  max-width: min(420px, calc(100vw - 24px));
+  padding: 7px 11px;
+  border-radius: 10px;
+  border: 1px solid rgba(199, 138, 26, 0.30);
+  background: rgba(255, 249, 235, 0.98);
+  box-shadow: 0 6px 20px -10px rgba(90, 62, 10, 0.42);
+  color: #7a5610;
+  font: 560 11.5px/1.5 var(--mp-font-ui);
+  pointer-events: none;
+  animation: stage-notice-in 200ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes stage-notice-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stage-notice { animation: none; }
 }
