@@ -82,3 +82,34 @@ const {
 }
 
 console.log('stage_stretch_policy_test: all assertions passed');
+
+// --- 选区侧把手 -------------------------------------------------------------
+// §4.3 用户点名的功能：选中 8 句里的第 3–4 句，唤出上下两个把手，往下拖三行。
+// 答案卡和选区共用同一套策略，正是为了让"拖这么远"在两处含义一致。
+{
+  const { stretchCommand, stretchIntent } = require('../electron/stage_stretch_policy');
+  const intent = stretchIntent({ dragPx: 60, currentLines: 2 });
+  assert.strictEqual(intent.direction, 'expand');
+
+  // 措辞必须不同：拉答案是改气泡，拉选区是改用户自己的文档。
+  const answer = stretchCommand(intent, 'answer');
+  const selection = stretchCommand(intent, 'selection');
+  assert.ok(answer.includes('这个回答'), answer);
+  assert.ok(selection.includes('选中的这段'), selection);
+  assert.notStrictEqual(answer, selection);
+
+  // 行数是同一个数——同样的手势不能在两处得到不同的目标。
+  const lines = /到 (\d+) 行/;
+  assert.strictEqual(lines.exec(answer)[1], lines.exec(selection)[1]);
+
+  // 默认仍是答案侧，老调用点不受影响。
+  assert.strictEqual(stretchCommand(intent), answer);
+
+  // 压缩方向同样成立。
+  const shrink = stretchIntent({ dragPx: -60, currentLines: 8 });
+  assert.ok(stretchCommand(shrink, 'selection').includes('压缩'));
+
+  // 没有意图就没有命令，两侧一致。
+  assert.strictEqual(stretchCommand(null, 'selection'), '');
+}
+console.log('stage_stretch_policy_test: selection-side assertions passed');

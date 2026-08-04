@@ -13,6 +13,14 @@
       <div id="targeting-outline" class="targeting-outline" hidden></div>
       <div id="capture-proof" class="capture-proof" aria-hidden="true" hidden></div>
       <div id="screen-points" class="screen-points" aria-hidden="true" hidden></div>
+      <!-- §4.3: two handles above and below the selection. Pull apart for more
+           text, push together for less. Same policy as the answer card's edge,
+           so a given drag distance means the same thing in both places. -->
+      <div id="selection-stretch" class="selection-stretch" hidden>
+        <div class="selection-stretch-handle" data-edge="top" data-no-drag="1"></div>
+        <div class="selection-stretch-handle" data-edge="bottom" data-no-drag="1"></div>
+        <span id="selection-stretch-hint" class="selection-stretch-hint" aria-live="polite"></span>
+      </div>
       <div id="frozen-glow" class="frozen-glow" hidden></div>
       <div id="capsule" class="stage-capsule" data-mode="voice" data-phase="input" data-drag-handle="1" hidden>
         <span id="capsule-count" class="capsule-count" hidden></span>

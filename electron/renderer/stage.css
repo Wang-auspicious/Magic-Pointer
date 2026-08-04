@@ -1633,3 +1633,67 @@ body {
 .capsule-ref.is-picked[data-source='pixel'] {
   border-color: rgba(232, 160, 38, .55);
 }
+
+/* --- Selection stretch handles ------------------------------------------
+ *
+ * §4.3, named by the user: select sentences 3-4 of 8, pull the lower handle
+ * down three lines, release, and the model rewrites to that length. The upper
+ * handle does the same upward. The hint says the number the command will ask
+ * for, so the gesture promises exactly what it delivers.
+ */
+.selection-stretch {
+  position: fixed;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.selection-stretch-handle {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  height: 14px;
+  pointer-events: auto;
+  cursor: ns-resize;
+}
+
+.selection-stretch-handle::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 44px;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(67, 139, 255, .78);
+  box-shadow: 0 0 0 3px rgba(47, 123, 255, .14);
+  transform: translate(-50%, -50%);
+  transition: width 120ms cubic-bezier(.22, 1, .36, 1);
+}
+
+.selection-stretch-handle[data-edge='top'] { top: -14px; }
+.selection-stretch-handle[data-edge='bottom'] { bottom: -14px; }
+
+.selection-stretch.is-dragging .selection-stretch-handle::before { width: 68px; }
+
+.selection-stretch-hint {
+  position: absolute;
+  left: 50%;
+  bottom: -38px;
+  transform: translateX(-50%);
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(47, 123, 255, .92);
+  color: #fff;
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 120ms linear;
+}
+
+.selection-stretch.is-dragging .selection-stretch-hint { opacity: 1; }
+
+@media (prefers-reduced-motion: reduce) {
+  .selection-stretch-handle::before,
+  .selection-stretch-hint { transition: none; }
+}

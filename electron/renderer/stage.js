@@ -19,6 +19,11 @@
   const targetingOutline = document.getElementById('targeting-outline');
   const captureProofLayer = document.getElementById('capture-proof');
   const screenPointLayer = document.getElementById('screen-points');
+  const selectionStretch = document.getElementById('selection-stretch');
+  const selectionStretchHint = document.getElementById('selection-stretch-hint');
+  // Live drag on a selection handle, or null. Mirrors stretchDrag on the answer
+  // card and shares its policy, so the same pull means the same thing.
+  let selectionStretchDrag = null;
   const frozenGlow = document.getElementById('frozen-glow');
   const capsule = document.getElementById('capsule');
   const capsuleCount = document.getElementById('capsule-count');
@@ -240,6 +245,61 @@
       drawn += 1;
     }
     screenPointLayer.hidden = drawn === 0;
+  }
+
+  // Place the pair of handles around whatever the user has selected. Hidden
+  // whenever there is no resolved region to stretch — handles floating over
+  // nothing would invite a gesture that cannot be honoured.
+  function renderSelectionStretch() {
+    if (!selectionStretch) return;
+    const rect = state.target;
+    const composerOpen = state.name === 'capsule-text' || state.name === 'capsule-voice';
+    if (!composerOpen || session.targetGeometryKind !== 'resolved' || !isUsableTargetRect(rect)) {
+      selectionStretch.hidden = true;
+      return;
+    }
+    selectionStretch.style.left = `${Math.round(rect.x)}px`;
+    selectionStretch.style.top = `${Math.round(rect.y)}px`;
+    selectionStretch.style.width = `${Math.round(rect.width)}px`;
+    selectionStretch.style.height = `${Math.round(rect.height)}px`;
+    selectionStretch.hidden = false;
+  }
+
+  function selectionLineCount() {
+    const rect = state.target;
+    if (!isUsableTargetRect(rect)) return 1;
+    // The selection's own height in lines, at the same scale the policy uses.
+    return Math.max(1, Math.round(Number(rect.height) / 20));
+  }
+
+  function beginSelectionStretch(edge, y) {
+    selectionStretchDrag = { edge, startY: y, currentLines: selectionLineCount(), intent: null };
+    selectionStretch.classList.add('is-dragging');
+  }
+
+  function updateSelectionStretch(y) {
+    if (!selectionStretchDrag || !stretchPolicy) return;
+    // The top handle moves the opposite way: dragging it up makes the region
+    // taller, which is the same "more" as dragging the bottom one down.
+    const raw = y - selectionStretchDrag.startY;
+    const dragPx = selectionStretchDrag.edge === 'top' ? -raw : raw;
+    selectionStretchDrag.intent = stretchPolicy.stretchIntent({
+      dragPx,
+      currentLines: selectionStretchDrag.currentLines,
+    });
+    if (selectionStretchHint) selectionStretchHint.textContent = selectionStretchDrag.intent.hint;
+  }
+
+  function endSelectionStretch() {
+    const drag = selectionStretchDrag;
+    selectionStretchDrag = null;
+    selectionStretch.classList.remove('is-dragging');
+    if (selectionStretchHint) selectionStretchHint.textContent = '';
+    if (!drag || !drag.intent || !stretchPolicy) return;
+    const command = stretchPolicy.stretchCommand(drag.intent, 'selection');
+    // Submitted through the ordinary composer path, so the gesture shows up in
+    // the thread as an ask like any other and can be undone by asking again.
+    if (command) submitCommand(command);
   }
 
   function clearScreenPoints() {
@@ -471,6 +531,20 @@
       if (composerOpen && Number.isFinite(payload?.screenX) && Number.isFinite(payload?.screenY)) {
         pickElementAt(Number(payload.screenX), Number(payload.screenY));
       }
+    }
+    // Selection handles first: they sit outside our panels, on the user's own
+    // content, so a press there is unambiguous.
+    if (primaryDown && !previousPrimaryDown && !selectionStretchDrag && selectionStretch && !selectionStretch.hidden) {
+      for (const handle of selectionStretch.querySelectorAll('.selection-stretch-handle')) {
+        if (isPointInside(x, y, handle)) {
+          beginSelectionStretch(handle.dataset.edge, y);
+          break;
+        }
+      }
+    }
+    if (selectionStretchDrag) {
+      updateSelectionStretch(y);
+      if (!primaryDown && previousPrimaryDown) endSelectionStretch();
     }
     // The stretch handle is checked before the panel-drag handle: it lives
     // inside the panel, and a drag that starts on it changes the answer's
@@ -1597,6 +1671,7 @@
     const name = state.name;
     stageRoot.dataset.state = name;
     stageRoot.dataset.selectionVisual = session.selectionVisual;
+    renderSelectionStretch();
     stageRoot.dataset.targetGeometryKind = session.targetGeometryKind;
     capsule.dataset.voiceState = session.voiceState;
 

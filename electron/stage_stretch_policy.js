@@ -1,11 +1,12 @@
 'use strict';
 
-// Dragging the bottom edge of an answer changes how long it is.
+// Dragging an edge changes how long the text is.
 //
-// This is the answer-card half of the selection stretch handle: the same
-// gesture, the same mental model — pull down for more, push up for less — so
-// the two must agree about what a given drag distance means. The engine side
-// lives in app/text_actions/length_target.py; this decides what to ask for.
+// Two surfaces, one gesture: the bottom of an answer card, and a pair of handles
+// above and below a selection. Pull apart for more, push together for less. They
+// share this module precisely so a given drag distance cannot come to mean two
+// different things depending on what you grabbed. The engine side lives in
+// app/text_actions/length_target.py; this decides what to ask for.
 //
 // Pure: a drag in pixels and the answer's current size go in, a command and a
 // live hint come out. No DOM, no state, no model.
@@ -65,10 +66,14 @@ function stretchIntent(input) {
 // it is visible in the thread as an ask like any other — the user can see what
 // their gesture asked for, and the router handles it as a normal length target
 // (target_from_command parses these exact shapes).
-function stretchCommand(intent) {
+// `target` names what is being stretched. The wording has to differ because the
+// consequences do: stretching an answer rewrites a bubble, stretching a
+// selection rewrites the user's own document.
+function stretchCommand(intent, target = 'answer') {
   if (!intent || intent.direction === 'none') return '';
   const verb = intent.direction === 'expand' ? '扩写' : '压缩';
-  return `把这个回答${verb}到 ${intent.targetLines} 行`;
+  const subject = target === 'selection' ? '选中的这段' : '这个回答';
+  return `把${subject}${verb}到 ${intent.targetLines} 行`;
 }
 
 const StageStretchPolicy = {
