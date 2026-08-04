@@ -177,6 +177,8 @@ class FabricExecutors:
             return self._visual_context(plan)
         if plan.provider == "artifact.list":
             return self._list(plan)
+        if plan.provider == "local.memory":
+            return self._memory_recall(plan)
         if plan.provider == "local.task":
             return self._task(plan)
         if plan.provider == "maps.deep_link":
@@ -336,6 +338,35 @@ class FabricExecutors:
                 "sourceImageSha256": _sha256(image_path.read_bytes()),
             },
             error=None if verified else "clipboard_readback_mismatch",
+        )
+
+    def _memory_recall(self, plan: OperationPlan) -> ExecutionReceipt:
+        """Answer "what was I reading this morning" from the local screen memory.
+
+        Read-only, and empty is a real answer rather than a failure: the memory
+        may be switched off, or the thing simply was not seen. Saying "I have
+        nothing from that time" is useful; failing is not.
+        """
+        from app.context_pack.screen_memory import ScreenMemory
+
+        memory = ScreenMemory(enabled=plan.parameters.get("enabled") is not False)
+        entries = memory.recall(
+            str(plan.parameters.get("query") or plan.command or ""),
+            since=plan.parameters.get("since"),
+            until=plan.parameters.get("until"),
+        )
+        return _receipt(
+            plan,
+            status="succeeded",
+            output={
+                "entries": [entry.to_dict() for entry in entries],
+                "coverage": (
+                    "最近 24 小时里没有找到相关记录。" if not entries
+                    else f"找到 {len(entries)} 条相关记录。"
+                ),
+            },
+            verified=True,
+            verification={"mode": "read_only", "count": str(len(entries))},
         )
 
     def _clipboard_history(self, plan: OperationPlan) -> ExecutionReceipt:

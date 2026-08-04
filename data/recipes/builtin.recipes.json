@@ -1392,6 +1392,43 @@
       ],
       "version": 1,
       "provider": "unavailable:pointer_coach_not_wired"
+    },
+    {
+      "id": "memory.recall",
+      "title": "回想刚才看过的",
+      "description": "回溯最近 24 小时在屏幕上读到过的东西：哪个窗口、大致什么时候、读到了什么。不保存截图，可在设置里关闭与清空。",
+      "inputKinds": [
+        "none"
+      ],
+      "outputKind": "recall_answer",
+      "providerStrategies": [
+        "local_memory"
+      ],
+      "risk": "read",
+      "verification": "entry_count_and_time_window",
+      "keywords": {
+        "zh": [
+          "刚才看的",
+          "上午看的",
+          "我看过的",
+          "回想一下",
+          "之前那篇",
+          "刚看的那个"
+        ],
+        "en": [
+          "what was i reading",
+          "recall what i saw",
+          "earlier today"
+        ]
+      },
+      "minObjects": 0,
+      "maxObjects": 0,
+      "platforms": [
+        "windows",
+        "macos"
+      ],
+      "version": 1,
+      "provider": "local.memory"
     }
   ]
 }
