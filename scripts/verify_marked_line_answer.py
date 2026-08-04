@@ -63,9 +63,18 @@ def main() -> int:
     x0 = left + int((right - left) * 0.10)
     x1 = left + int((right - left) * 0.60)
     hwnd = int(target.get("hwnd") or 0)
-    ctypes.windll.user32.ShowWindow(hwnd, 9)
-    ctypes.windll.user32.SetForegroundWindow(hwnd)
-    time.sleep(0.6)
+    # Windows only grants foreground to a process it believes the user just
+    # touched, so nudge ALT first. Without this the harness silently captures
+    # whatever window is already on top and the run proves nothing.
+    user32 = ctypes.windll.user32
+    user32.keybd_event(0x12, 0, 0, 0)
+    time.sleep(0.05)
+    user32.ShowWindow(hwnd, 9)
+    user32.SetForegroundWindow(hwnd)
+    user32.BringWindowToTop(hwnd)
+    time.sleep(0.05)
+    user32.keybd_event(0x12, 0, 2, 0)
+    time.sleep(0.9)
     print("target             :", repr(target.get("title")), target["bbox"])
     print("foregrounded       :", ctypes.windll.user32.GetForegroundWindow() == hwnd)
     print("mark               :", [x0, y - row_height // 2, x1 - x0, row_height])

@@ -64,12 +64,38 @@ def _window_identity(window: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
+# What makes a window *that* window. A handle plus the process behind it, and the
+# virtual desktop it lives on, because the same hwnd on another desktop is not
+# something the user is looking at.
+#
+# Title and bbox are deliberately absent. They are state, not identity: WeChat
+# retitles on an incoming message, a terminal retitles on every command, a window
+# animates when it is restored. Treating those as identity changes aborted the
+# capture — and for apps that expose nothing to UI Automation, the capture is the
+# only way to read anything at all, so a retitle was taking the feature down. Every
+# test written for this guard changes hwnd or desktop_id, which is its real intent.
+IDENTITY_FIELDS = ("hwnd", "processId", "processName", "desktopId")
+
+
 def _same_window_identity(expected: dict[str, Any], actual: dict[str, Any]) -> bool:
-    for field in ("hwnd", "processId", "processName", "title", "desktopId", "bbox"):
+    for field in IDENTITY_FIELDS:
         expected_value = expected.get(field)
         if expected_value not in (None, "", 0) and actual.get(field) != expected_value:
             return False
     return bool(expected.get("hwnd") and expected.get("processId"))
+
+
+def _same_window_geometry(expected: dict[str, Any], actual: dict[str, Any]) -> bool:
+    """Are the window's pixels still where we thought they were?
+
+    Separate from identity because the answer calls for something different: a
+    window that moved is still the right window, it just needs grabbing again at
+    its new position. Adapters that report no geometry are not "moved".
+    """
+    before, after = expected.get("bbox"), actual.get("bbox")
+    if not before or not after:
+        return True
+    return list(before) == list(after)
 
 
 def read_payload() -> dict[str, Any]:
@@ -911,6 +937,59 @@ def _pointer_anchor_ltrb(target_point: dict[str, int]) -> list[int]:
     ]
 
 
+def _grab_capture_image(
+    bbox: tuple[int, int, int, int],
+    *,
+    target_window: dict[str, Any] | None,
+    visual_capture: Any | None,
+) -> Any:
+    """Produce the pixels for one region, preferring the target's own content.
+
+    Capture the committed source HWND directly whenever we have one. A desktop
+    grab returns whatever is painted at those pixels, which is how a Notepad
+    selection came back holding the text of a CMD window sitting behind it: the
+    gesture path asks for a screen-sized bbox, so an earlier `capture_bbox is
+    None` guard turned the window capture off exactly when the region was largest
+    and the bleed worst.
+
+    PrintWindow gives us the target's own content even where another window covers
+    it, and anything in the requested region that is not the target stays blank
+    rather than being read as if it belonged to the object.
+    """
+    if visual_capture is not None:
+        return visual_capture(bbox=bbox, all_screens=True)
+    hwnd = int(target_window.get("hwnd") or 0) if target_window else 0
+    window_bbox = target_window.get("bbox") if target_window else None
+    image = None
+    if hwnd and isinstance(window_bbox, (list, tuple)) and len(window_bbox) == 4:
+        try:
+            window_image = ImageGrab.grab(window=hwnd)
+        except (OSError, ValueError, TypeError):
+            window_image = None
+        if window_image is not None and not _capture_is_blank(window_image):
+            win_left, win_top, win_right, win_bottom = (int(value) for value in window_bbox)
+            scale_x = window_image.width / max(1, win_right - win_left)
+            scale_y = window_image.height / max(1, win_bottom - win_top)
+            local_bbox = (
+                round((bbox[0] - win_left) * scale_x),
+                round((bbox[1] - win_top) * scale_y),
+                round((bbox[2] - win_left) * scale_x),
+                round((bbox[3] - win_top) * scale_y),
+            )
+            expected_size = (bbox[2] - bbox[0], bbox[3] - bbox[1])
+            if _rect_within(local_bbox, window_image.size):
+                image = window_image.crop(local_bbox)
+                if image.size != expected_size:
+                    image = image.resize(expected_size)
+            else:
+                # The requested region reaches past the window. Keep the window's
+                # pixels where they exist and leave the rest blank.
+                image = _paste_window_into_region(window_image, local_bbox, expected_size)
+    if image is None:
+        image = ImageGrab.grab(bbox=bbox, all_screens=True)
+    return image
+
+
 def _visual_bbox(
     target_window: dict[str, Any] | None,
     target_point: dict[str, int] | None,
@@ -1013,13 +1092,31 @@ def _prune_capture_dir(
     return removed
 
 
+# A whole-window capture with this little variation in every channel carries no
+# content. Two or three points of jitter survive rounding in a genuinely dead
+# frame, so the threshold is not zero.
+BLANK_CAPTURE_SPREAD = 4
+
+
 def _capture_is_blank(image: Any) -> bool:
-    """Detect compositor/GPU black frames before they become model evidence."""
+    """Is this capture featureless — and therefore a failed capture?
+
+    Not "is it black". PrintWindow returns a flat surface for hardware-composited
+    windows, and the colour it returns is whatever that window's background is:
+    WeChat 4.x came back a uniform grey of 42, sailed past a `max <= 2` black
+    check, and produced an image OCR found nothing in and a user who got no
+    result. What marks a failed grab is the absence of *variation*; a real window
+    is never one flat colour. Callers fall back to the compositing desktop grab,
+    which is cheap and correct even in the rare case a real region is uniform.
+    """
     try:
         extrema = image.convert("RGB").getextrema()
     except Exception:
         return False
-    return all(int(channel[1]) <= 2 for channel in extrema)
+    try:
+        return all(int(high) - int(low) <= BLANK_CAPTURE_SPREAD for low, high in extrema)
+    except (TypeError, ValueError):
+        return False
 
 
 def _rect_within(rect: tuple[int, int, int, int], size: tuple[int, int]) -> bool:
@@ -1069,7 +1166,8 @@ def _capture_visual_region(
     if bbox is None:
         return None
     expected_identity = _window_identity(target_window)
-    before_identity = _window_identity(identity_probe()) if callable(identity_probe) else expected_identity
+    before_window = identity_probe() if callable(identity_probe) else dict(target_window or {})
+    before_identity = _window_identity(before_window)
     if callable(identity_probe) and not _same_window_identity(expected_identity, before_identity):
         raise TargetMismatchError({
             "status": "target_mismatch",
@@ -1078,62 +1176,51 @@ def _capture_visual_region(
             "before": before_identity,
             "after": None,
         })
-    if visual_capture is not None:
-        image = visual_capture(bbox=bbox, all_screens=True)
+
+    # Grab, then check. Identity changing means the wrong window and we refuse.
+    # Geometry changing means the *right* window somewhere else, so grab again
+    # where it now is — a window that animated into place is not a reason to make
+    # the user re-point. Only a window that will not hold still gets a caveat, and
+    # even then it gets a capture: an unstable target is worth reporting, not worth
+    # withholding. An explicit capture_bbox (the gesture path's full-screen frame)
+    # does not depend on where the window sits, so it never re-grabs.
+    geometry_matters = capture_bbox is None and callable(identity_probe)
+    max_attempts = 3 if geometry_matters else 1
+    # The reference is the window whose position produced `bbox`, which on the
+    # first pass is the committed target — not what the probe just reported.
+    reference_window = dict(target_window or {})
+    recaptured = False
+    unstable = False
+    image = None
+    after_identity = before_identity
+    for attempt in range(max_attempts):
+        if attempt:
+            retry_bbox = _visual_bbox(reference_window, target_point)
+            if retry_bbox is None:
+                unstable = True
+                break
+            bbox = retry_bbox
+            recaptured = True
+        image = _grab_capture_image(
+            bbox,
+            target_window=target_window,
+            visual_capture=visual_capture,
+        )
+        after_window = identity_probe() if callable(identity_probe) else before_window
+        after_identity = _window_identity(after_window)
+        if callable(identity_probe) and not _same_window_identity(expected_identity, after_identity):
+            raise TargetMismatchError({
+                "status": "target_mismatch",
+                "phase": "after_capture",
+                "expected": expected_identity,
+                "before": before_identity,
+                "after": after_identity,
+            })
+        if not geometry_matters or _same_window_geometry(_window_identity(reference_window), after_identity):
+            break
+        reference_window = after_window
     else:
-        # Capture the committed source HWND directly whenever we have one. A
-        # desktop grab returns whatever is painted at those pixels, which is how
-        # a Notepad selection came back holding the text of a CMD window sitting
-        # behind it: the gesture path asks for a screen-sized bbox, so the old
-        # `capture_bbox is None` guard turned the window capture off exactly when
-        # the region was largest and the bleed worst.
-        #
-        # PrintWindow gives us the target's own content even where another
-        # window covers it, and anything in the requested region that is not the
-        # target stays blank rather than being read as if it belonged to the
-        # object.
-        hwnd = int(target_window.get("hwnd") or 0) if target_window else 0
-        window_bbox = target_window.get("bbox") if target_window else None
-        image = None
-        if hwnd and isinstance(window_bbox, (list, tuple)) and len(window_bbox) == 4:
-            try:
-                window_image = ImageGrab.grab(window=hwnd)
-            except (OSError, ValueError, TypeError):
-                window_image = None
-            if window_image is not None and not _capture_is_blank(window_image):
-                win_left, win_top, win_right, win_bottom = (int(value) for value in window_bbox)
-                scale_x = window_image.width / max(1, win_right - win_left)
-                scale_y = window_image.height / max(1, win_bottom - win_top)
-                local_bbox = (
-                    round((bbox[0] - win_left) * scale_x),
-                    round((bbox[1] - win_top) * scale_y),
-                    round((bbox[2] - win_left) * scale_x),
-                    round((bbox[3] - win_top) * scale_y),
-                )
-                expected_size = (bbox[2] - bbox[0], bbox[3] - bbox[1])
-                if _rect_within(local_bbox, window_image.size):
-                    image = window_image.crop(local_bbox)
-                    if image.size != expected_size:
-                        image = image.resize(expected_size)
-                else:
-                    # The requested region reaches past the window. Keep the
-                    # window's pixels where they exist and leave the rest blank.
-                    image = _paste_window_into_region(
-                        window_image,
-                        local_bbox,
-                        expected_size,
-                    )
-        if image is None:
-            image = ImageGrab.grab(bbox=bbox, all_screens=True)
-    after_identity = _window_identity(identity_probe()) if callable(identity_probe) else before_identity
-    if callable(identity_probe) and not _same_window_identity(expected_identity, after_identity):
-        raise TargetMismatchError({
-            "status": "target_mismatch",
-            "phase": "after_capture",
-            "expected": expected_identity,
-            "before": before_identity,
-            "after": after_identity,
-        })
+        unstable = True
     # The pixels are now ours and verified to be the window the user pointed at.
     # Everything after this line — saving, annotating, OCR — happens on a frozen
     # copy, so any surface we draw from here on cannot contaminate the capture.
@@ -1167,11 +1254,16 @@ def _capture_visual_region(
         "width": bbox[2] - bbox[0],
         "height": bbox[3] - bbox[1],
         "capture_attestation": {
-            "status": "verified" if callable(identity_probe) else "unverified",
+            "status": (
+                "geometry_unstable" if unstable
+                else "verified" if callable(identity_probe)
+                else "unverified"
+            ),
             "phase": "complete",
             "expected": expected_identity,
             "before": before_identity,
             "after": after_identity,
+            "recaptured": recaptured,
         },
     }
 
