@@ -1280,7 +1280,7 @@
         "macos"
       ],
       "version": 1,
-      "provider": "unavailable:overlay_translation_not_wired"
+      "provider": "overlay.translation"
     },
     {
       "id": "clipboard.history",

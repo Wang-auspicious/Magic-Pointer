@@ -87,6 +87,37 @@ def _parse_table(text: str) -> list[list[str]]:
     return [[cell.strip() for cell in next(csv.reader([line], delimiter=delimiter))] for line in lines]
 
 
+def _numbered_lines(reply: str, expected: int) -> list[str]:
+    """Read a "1. text" reply back into positional slots.
+
+    Models drop lines, merge them, add a preamble, or renumber from scratch. Any
+    of those, taken as a plain list, shifts every later translation onto the
+    wrong sentence — which on an overlay means a confident mistranslation sitting
+    on top of the real text. So the numbers are honoured where present: a line
+    that says which slot it belongs to goes in that slot, and slots nobody claimed
+    stay empty and simply do not get covered.
+    """
+    slots = [""] * max(0, int(expected))
+    unnumbered: list[str] = []
+    for raw in str(reply or "").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        match = re.match(r"^(\d{1,3})\s*[.、．)]\s*(.*)$", line)
+        if match:
+            index = int(match.group(1)) - 1
+            value = match.group(2).strip()
+            if 0 <= index < len(slots) and value and not slots[index]:
+                slots[index] = value
+            continue
+        unnumbered.append(line)
+    # A reply with no numbering at all is still usable if it has exactly as many
+    # lines as we asked about; anything else is too ambiguous to place.
+    if not any(slots) and len(unnumbered) == len(slots):
+        return unnumbered
+    return slots
+
+
 class FabricExecutors:
     def __init__(
         self,
@@ -148,6 +179,8 @@ class FabricExecutors:
             return self._task(plan)
         if plan.provider == "maps.deep_link":
             return self._map(plan)
+        if plan.provider == "overlay.translation":
+            return self._overlay_translation(plan)
         if plan.provider == "model.text":
             return self._model_text(plan)
         if plan.provider == "inplace.text":
@@ -568,6 +601,75 @@ class FabricExecutors:
         if self.url_opener is None:
             return _receipt(plan, status="capability_unavailable", output={"url": url}, error="url_opener_not_configured")
         return _receipt(plan, status="succeeded" if opened else "verification_failed", output={"url": url}, verified=opened, verification={"allowlisted": True, "opened": opened}, error=None if opened else "url_open_not_verified")
+
+    def _overlay_translation(self, plan: OperationPlan) -> ExecutionReceipt:
+        """Translate a screen region block by block, to be drawn where it was read.
+
+        The value of overlay translation is that the user keeps reading the
+        interface they were reading, so the output is not prose — it is a list of
+        rectangles with text that fits inside them. Pairing is positional and one
+        line per block, because a model that merges or reorders lines would put
+        each translation on the wrong sentence, and a wrong sentence rendered
+        confidently over the real one is worse than no translation at all.
+        """
+        from app.vision.overlay_translation import coverage_summary, plan_overlay
+
+        if self.model_transform is None:
+            return _receipt(plan, status="capability_unavailable", error="text_model_not_configured")
+
+        blocks: list[dict[str, Any]] = []
+        for obj in _objects(plan):
+            for block in list(obj.get("blocks") or []):
+                if isinstance(block, dict) and str(block.get("text") or "").strip():
+                    blocks.append(block)
+        if not blocks:
+            return _receipt(
+                plan,
+                status="capability_unavailable",
+                error="region_has_no_readable_text",
+                output={"coverage": coverage_summary([], [])},
+            )
+
+        target = str(plan.parameters.get("targetLanguage") or "中文")
+        numbered = "\n".join(f"{index + 1}. {str(block.get('text') or '').strip()}" for index, block in enumerate(blocks))
+        instruction = (
+            f"把下面每一行翻译成{target}。严格逐行对应：输出的行数必须和输入相同，"
+            "每行只输出译文本身，保留行号前缀。已经是目标语言的行，原样输出该行。"
+        )
+        try:
+            reply = str(self.model_transform(instruction, numbered, plan.recipe_id) or "")
+        except Exception as exc:
+            return _receipt(plan, status="failed", error=f"text_model_failed:{type(exc).__name__}:{exc}")
+
+        translations = _numbered_lines(reply, len(blocks))
+        planned = plan_overlay(blocks, translations)
+        coverage = coverage_summary(blocks, planned)
+        if not planned:
+            # Nothing to draw is a real outcome — usually the region is already in
+            # the target language. Reporting success with an empty overlay would
+            # leave the user waiting for something that is never coming.
+            return _receipt(
+                plan,
+                status="succeeded",
+                output={"overlay": [], "coverage": coverage},
+                verified=True,
+                verification={"blocks": str(len(blocks)), "covered": "0"},
+            )
+        return _receipt(
+            plan,
+            status="succeeded",
+            output={
+                "overlay": [item.to_dict() for item in planned],
+                "coverage": coverage,
+                "targetLanguage": target,
+            },
+            verified=True,
+            verification={
+                "blocks": str(len(blocks)),
+                "covered": str(len(planned)),
+                "truncated": str(sum(1 for item in planned if item.truncated)),
+            },
+        )
 
     def _model_text(self, plan: OperationPlan) -> ExecutionReceipt:
         if self.model_transform is None:
