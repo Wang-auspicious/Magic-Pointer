@@ -3100,3 +3100,44 @@ select {
   background: transparent;
   cursor: pointer;
 }
+
+/* Usage: relative bars rather than a chart with axes — the question is "which do
+ * I actually use", not "exactly how many". */
+.usage-summary { display: grid; gap: var(--mp-space-2); padding: var(--mp-space-3) 0; }
+
+.usage-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 200px) 1fr auto;
+  align-items: center;
+  gap: var(--mp-space-3);
+}
+
+.usage-label {
+  color: var(--mp-text);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.usage-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--mp-control);
+  overflow: hidden;
+}
+
+.usage-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--mp-blue);
+}
+
+.usage-count {
+  min-width: 2.5ch;
+  text-align: right;
+  color: var(--mp-secondary);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}

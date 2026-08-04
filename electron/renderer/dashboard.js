@@ -1622,6 +1622,7 @@ function renderTimelineEntry(entry) {
 
 function renderActivity(items) {
   auditEvents = Array.isArray(items) ? items : [];
+  renderUsageSummary(auditEvents);
   const root = document.getElementById('activity-list');
   if (!auditEvents.length) {
     const empty = document.createElement('p');
@@ -2553,4 +2554,52 @@ if (accentReset) {
     // Same path a manual change takes, so the reset is saved like any edit.
     input.dispatchEvent(new Event('change', { bubbles: true }));
   });
+}
+
+// --- Usage ----------------------------------------------------------------
+// Which capabilities the user actually reaches for, counted from the local audit
+// log. Deliberately NOT a token chart: nothing in the audit log records token
+// counts today (verified 2026-08-04 — 376 events, zero token fields), and drawing
+// a chart from numbers that do not exist would be worse than not having one.
+// Recorded as a TODO in AGENT.md instead.
+function renderUsageSummary(events) {
+  const root = document.getElementById('usage-summary');
+  if (!root) return;
+  const counts = new Map();
+  for (const event of Array.isArray(events) ? events : []) {
+    const recipeId = String(event?.data?.recipeId || '');
+    if (!recipeId) continue;
+    counts.set(recipeId, (counts.get(recipeId) || 0) + 1);
+  }
+  if (counts.size === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'empty-copy';
+    empty.textContent = '还没有可统计的活动。用几次之后这里会显示各能力的使用次数。';
+    root.replaceChildren(empty);
+    return;
+  }
+  const ranked = [...counts.entries()].sort((left, right) => right[1] - left[1]).slice(0, 12);
+  const busiest = ranked[0][1];
+  const titleById = new Map((recipes || []).map((recipe) => [recipe.id, recipe.title]));
+  const rows = ranked.map(([recipeId, count]) => {
+    const row = document.createElement('div');
+    row.className = 'usage-row';
+    const label = document.createElement('span');
+    label.className = 'usage-label';
+    // The human name when we know it, the id when we do not — never a blank row.
+    label.textContent = titleById.get(recipeId) || recipeId;
+    label.title = recipeId;
+    const bar = document.createElement('span');
+    bar.className = 'usage-bar';
+    const fill = document.createElement('i');
+    // Relative to the busiest capability, so the shape is readable without axes.
+    fill.style.width = `${Math.max(4, Math.round((count / busiest) * 100))}%`;
+    bar.appendChild(fill);
+    const value = document.createElement('strong');
+    value.className = 'usage-count';
+    value.textContent = String(count);
+    row.append(label, bar, value);
+    return row;
+  });
+  root.replaceChildren(...rows);
 }
