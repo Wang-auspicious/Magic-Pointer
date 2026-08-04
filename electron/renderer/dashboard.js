@@ -534,6 +534,9 @@ function applySettings(value) {
   renderAgentSessions(agentSessions);
   setValue('theme-select', appearance.theme || 'system');
   setValue('appearance-material', appearance.material || 'auto');
+  // Stored as channels because the stage composes a dozen alphas from them; the
+  // colour input needs hex. Converted here rather than storing both.
+  setValue('appearance-accent', accentRgbToHex(appearance.accent_rgb));
   setValue('selection-visual', appearance.selection_visual || 'sweep_band');
   setValue('sweep-height-ratio', appearance.sweep_height_ratio ?? 0.52);
   setValue('sweep-min-height', appearance.sweep_min_height_dip ?? 10);
@@ -630,6 +633,7 @@ function collectSettings() {
   next.appearance = { ...(next.appearance || {}) };
   next.appearance.theme = document.getElementById('theme-select').value || 'system';
   next.appearance.material = document.getElementById('appearance-material').value || 'auto';
+  next.appearance.accent_rgb = hexToAccentRgb(document.getElementById('appearance-accent').value);
   next.appearance.selection_visual = document.getElementById('selection-visual').value || 'sweep_band';
   next.appearance.sweep_height_ratio = Number(document.getElementById('sweep-height-ratio').value);
   next.appearance.sweep_min_height_dip = Number(document.getElementById('sweep-min-height').value);
@@ -2419,3 +2423,134 @@ renderArtifacts([]);
 renderState({ items: [] });
 renderCalendarState({ events: [] });
 requestFabricState();
+
+// --- Session timeline ------------------------------------------------------
+// Diagnosing the 2026-08-04 failures meant reading electron.log by hand and
+// correlating timestamps by eye. Every number was already being emitted; this is
+// what puts it where somebody would look.
+const timelineBox = document.getElementById('session-timeline');
+const timelineRefresh = document.getElementById('timeline-refresh');
+
+function formatMs(ms) {
+  if (!Number.isFinite(ms)) return '—';
+  return ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`;
+}
+
+// Anything at or above this is worth pointing at: it is the range where the user
+// starts wondering whether the app is broken.
+const SLOW_PHASE_MS = 3000;
+
+function renderSessionTimeline(sessions) {
+  if (!timelineBox) return;
+  timelineBox.replaceChildren();
+  if (!Array.isArray(sessions) || sessions.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'timeline-empty';
+    empty.textContent = '还没有会话。用一次 Magic Pointer 再回来看。';
+    timelineBox.appendChild(empty);
+    return;
+  }
+  for (const session of sessions.slice(0, 20)) {
+    const row = document.createElement('div');
+    row.className = 'timeline-row';
+    row.dataset.outcome = session.outcome || 'pending';
+
+    const head = document.createElement('div');
+    head.className = 'timeline-head';
+    const when = document.createElement('span');
+    when.className = 'timeline-when';
+    when.textContent = new Date(Number(session.startedAt) || Date.now()).toLocaleTimeString();
+    const total = document.createElement('strong');
+    total.className = 'timeline-total';
+    total.textContent = session.totalMs === null ? '进行中…' : formatMs(session.totalMs);
+    if (Number.isFinite(session.totalMs) && session.totalMs >= SLOW_PHASE_MS) {
+      total.dataset.slow = '1';
+    }
+    const badge = document.createElement('span');
+    badge.className = 'timeline-badge';
+    badge.textContent = session.outcome === 'error' ? '失败' : session.totalMs === null ? '运行中' : '完成';
+    head.append(when, total, badge);
+    if (session.tier) {
+      const tier = document.createElement('span');
+      tier.className = 'timeline-tier';
+      tier.textContent = session.tier;
+      tier.title = 'L0 = 不需要模型的快路径，L1 = 命中能力，L2 = 通用兜底';
+      head.appendChild(tier);
+    }
+    row.appendChild(head);
+
+    if (Array.isArray(session.headline) && session.headline.length) {
+      const phases = document.createElement('div');
+      phases.className = 'timeline-phases';
+      for (const item of session.headline) {
+        const chip = document.createElement('span');
+        chip.className = 'timeline-phase';
+        chip.textContent = `${item.label} ${formatMs(item.ms)}`;
+        // The slow step is the answer to "why did that take so long", so it is
+        // marked rather than left for the reader to compare numbers.
+        if (Number(item.ms) >= SLOW_PHASE_MS) chip.dataset.slow = '1';
+        phases.appendChild(chip);
+      }
+      row.appendChild(phases);
+    }
+
+    if (session.error) {
+      const error = document.createElement('p');
+      error.className = 'timeline-error';
+      error.textContent = session.error;
+      row.appendChild(error);
+    }
+    timelineBox.appendChild(row);
+  }
+}
+
+async function requestSessionTimeline() {
+  if (!api || typeof api.sessionTimeline !== 'function') return;
+  try {
+    const response = await api.sessionTimeline();
+    renderSessionTimeline(response?.sessions || []);
+  } catch (_) {
+    // A diagnostics page that cannot read its own diagnostics says so rather
+    // than showing a stale list.
+    renderSessionTimeline([]);
+  }
+}
+
+if (timelineRefresh) timelineRefresh.addEventListener('click', requestSessionTimeline);
+requestSessionTimeline();
+
+// --- Accent colour ---------------------------------------------------------
+// Stored as "r, g, b" because the stage composes every accent alpha from those
+// channels; <input type="color"> speaks hex. Both directions are lossless for
+// any colour the picker can produce, and both fall back to the default rather
+// than to black, because a settings file with a typo should not repaint the app
+// black.
+const DEFAULT_ACCENT_RGB = '38, 115, 235';
+const DEFAULT_ACCENT_HEX = '#2673eb';
+
+function accentRgbToHex(value) {
+  const parts = String(value == null ? '' : value).split(',').map((part) => Number(part.trim()));
+  if (parts.length !== 3 || parts.some((channel) => !Number.isInteger(channel) || channel < 0 || channel > 255)) {
+    return DEFAULT_ACCENT_HEX;
+  }
+  return `#${parts.map((channel) => channel.toString(16).padStart(2, '0')).join('')}`;
+}
+
+function hexToAccentRgb(value) {
+  const text = String(value == null ? '' : value).trim();
+  const digits = /^#?([0-9a-fA-F]{6})$/.exec(text);
+  if (!digits) return DEFAULT_ACCENT_RGB;
+  const hex = digits[1];
+  return [0, 2, 4].map((index) => Number.parseInt(hex.slice(index, index + 2), 16)).join(', ');
+}
+
+const accentReset = document.getElementById('appearance-accent-reset');
+if (accentReset) {
+  accentReset.addEventListener('click', () => {
+    const input = document.getElementById('appearance-accent');
+    if (!input) return;
+    input.value = DEFAULT_ACCENT_HEX;
+    // Same path a manual change takes, so the reset is saved like any edit.
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+}

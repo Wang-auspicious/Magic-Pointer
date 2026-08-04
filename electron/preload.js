@@ -115,6 +115,7 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
   onPreflightEvent: (callback) => ipcRenderer.on('dashboard:preflight-event', (_event, payload) => callback(payload)),
   onModelHealth: (callback) => ipcRenderer.on('dashboard:model-health', (_event, payload) => callback(payload)),
   refreshModelHealth: () => ipcRenderer.invoke('dashboard:model-health-refresh'),
+  sessionTimeline: () => ipcRenderer.invoke('dashboard:session-timeline'),
 });
 
 contextBridge.exposeInMainWorld('magicPointerOnboarding', {

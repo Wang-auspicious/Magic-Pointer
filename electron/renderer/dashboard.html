@@ -417,7 +417,7 @@
               <label class="settings-row"><span><b>外观</b><small>跟随系统或固定明暗主题。</small></span><select id="theme-select" aria-label="界面外观"><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></label>
               <label class="settings-row"><span><b>窗口材质</b><small>支持时使用 Mica / vibrancy，否则回退为纯色。</small></span><select id="appearance-material"><option value="auto">自动</option><option value="translucent">柔和材质</option><option value="solid">纯色</option></select></label>
               <label class="settings-row"><span><b>目标指示方式</b><small>默认使用整行渐变扫光；也可切换为柔光或轻描边。</small></span><select id="selection-visual" aria-label="目标指示方式"><option value="sweep_band">整行渐变扫光（默认）</option><option value="soft_glow">柔和对象光晕</option><option value="outline">轻描边</option></select></label>
-              <label class="settings-row"><span><b>强调色</b><small>只用于选中、焦点、进度和操作链接。</small></span><select id="appearance-accent" disabled><option>系统蓝</option></select></label>
+              <label class="settings-row"><span><b>强调色</b><small>选中、焦点、扫光和气泡的高亮都用它。改一次全部跟着变。</small></span><span class="accent-picker"><input id="appearance-accent" type="color" aria-label="强调色" /><button id="appearance-accent-reset" class="button button-quiet" type="button">恢复默认</button></span></label>
             </div></section>
             <section class="settings-section"><div class="section-heading"><div><h2>扫线</h2><p>默认值逐帧对齐演示 7；均可调整并立即用于下一次选择。</p></div></div><div class="settings-list">
               <label class="settings-row"><span><b>相对厚度</b><small>目标行高乘数；默认 0.52。</small></span><input id="sweep-height-ratio" class="compact-input" type="number" min="0.15" max="1.5" step="0.01" /></label>
@@ -489,6 +489,17 @@
             </div>
             <p id="preflight-status" class="inline-status">只有所有阻塞项通过，或明确跳过允许跳过的项目，才会标记为就绪。</p>
             <div id="preflight-list" class="preflight-list settings-list" aria-live="polite"></div>
+            <div class="section-heading page-section-heading">
+              <div>
+                <h2>最近的会话</h2>
+                <p>每次划线到出结果各花了多久。只有时长，没有你屏幕上的内容。</p>
+              </div>
+              <button id="timeline-refresh" class="button" type="button">刷新</button>
+            </div>
+            <div id="session-timeline" class="session-timeline settings-list" aria-live="polite">
+              <p class="timeline-empty">还没有会话。用一次 Magic Pointer 再回来看。</p>
+            </div>
+
             <div class="diagnostic-summary settings-list">
               <div class="diagnostic-row"><span>当前平台</span><strong id="diag-platform">—</strong></div>
               <div class="diagnostic-row"><span>可用能力</span><strong id="diag-recipes">—</strong></div>

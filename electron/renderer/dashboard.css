@@ -3011,3 +3011,92 @@ select {
 :root[data-high-contrast="true"] input,
 :root[data-high-contrast="true"] select,
 :root[data-high-contrast="true"] button:focus-visible { border-color: var(--mp-text) !important; }
+
+/* --- Session timeline -----------------------------------------------------
+ * Durations only. Reading this should replace reading electron.log by hand. */
+.session-timeline { display: grid; gap: var(--mp-space-1); }
+
+.timeline-empty {
+  padding: var(--mp-space-3);
+  color: var(--mp-tertiary);
+  font-size: 13px;
+}
+
+.timeline-row {
+  display: grid;
+  gap: var(--mp-space-2);
+  padding: var(--mp-space-3);
+  border-bottom: 1px solid var(--mp-separator);
+}
+
+.timeline-row:last-child { border-bottom: 0; }
+.timeline-row[data-outcome="error"] { background: var(--mp-danger-soft); }
+
+.timeline-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--mp-space-2);
+}
+
+.timeline-when { color: var(--mp-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
+.timeline-total { font-size: 14px; font-variant-numeric: tabular-nums; }
+.timeline-total[data-slow] { color: var(--mp-warning); }
+
+.timeline-badge {
+  margin-left: auto;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--mp-control);
+  color: var(--mp-secondary);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.timeline-row[data-outcome="error"] .timeline-badge {
+  background: var(--mp-danger-soft);
+  color: var(--mp-danger);
+}
+
+.timeline-tier {
+  padding: 1px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--mp-separator);
+  color: var(--mp-tertiary);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.timeline-phases { display: flex; flex-wrap: wrap; gap: var(--mp-space-1); }
+
+.timeline-phase {
+  padding: 2px 8px;
+  border-radius: 7px;
+  background: var(--mp-control);
+  color: var(--mp-secondary);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The slow step is the answer to "why did that take so long". */
+.timeline-phase[data-slow] {
+  background: var(--mp-warning-soft);
+  color: var(--mp-warning);
+  font-weight: 650;
+}
+
+.timeline-error { color: var(--mp-danger); font-size: 12.5px; }
+
+/* Accent picker: the swatch and its reset sit together, because "what is it now"
+ * and "put it back" are one decision. */
+.accent-picker { display: inline-flex; align-items: center; gap: var(--mp-space-2); }
+
+.accent-picker input[type="color"] {
+  width: 44px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--mp-separator-strong);
+  border-radius: var(--mp-radius-control);
+  background: transparent;
+  cursor: pointer;
+}

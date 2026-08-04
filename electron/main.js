@@ -21,6 +21,7 @@ const { resolvePythonRuntime, pythonInvocationArgs, pythonSpawnEnvironment } = r
 const { VoiceResidentRuntime } = require('./voice_resident_runtime');
 const { captureEligibility } = require('./result_surface_policy');
 const { humanErrorMessage, inferObjectKind, selectionSourceForReason, stageEventFromBridge } = require('./stage_contract');
+const { SessionTimeline } = require('./session_timeline');
 const {
   DECISION_FAIL: SUBMIT_FAIL,
   DECISION_WAIT: SUBMIT_WAIT,
@@ -155,6 +156,10 @@ const selectionSessions = new SelectionSessionStore({ ttlMs: SELECTION_SESSION_T
 const interactionEpisodes = new InteractionEpisodeStore({ ttlMs: 30 * 60 * 1000 });
 const activationGate = new ActivationGate({ debounceMs: 600 });
 const activeSessionChildren = new Map();
+// Recent sessions, as durations a person can read. Every number here was
+// already being emitted to the log; this is what puts it somewhere anybody
+// would look. See session_timeline.js for why it is memory-only.
+const sessionTimeline = new SessionTimeline();
 const dictationChildren = new Map();
 const dictationStopFiles = new Map();
 let voiceRuntime = null;
@@ -799,6 +804,18 @@ function showStage(payload = {}) {
 }
 
 function updateStage(payload = {}) {
+  // Every outcome the user sees passes through here, which makes it the one
+  // place that knows how a session actually ended.
+  const type = payload?.event?.type;
+  if (payload?.selectionSessionToken && (type === 'RESULT' || type === 'ERROR' || type === 'COMPLETE')) {
+    sessionTimeline.finish(payload.selectionSessionToken, {
+      outcome: type === 'ERROR' ? 'error' : 'result',
+      // Already a written sentence by the time it reaches the stage; error codes
+      // are stopped at stage_contract.
+      error: type === 'ERROR' ? String(payload.event?.error?.message || '') : '',
+      tier: String(payload.event?.result?.route?.tier || ''),
+    });
+  }
   safeSurfaceSend('stage', 'stage:update', payload);
 }
 
@@ -2103,6 +2120,9 @@ function beginSelectionSession(reason = 'manual', gesture = null) {
     armTemporaryDismissShortcut();
   }
   log(`selection session capture start reason=${reason} token=${entry.token}`);
+  // The clock starts at activation, not at the first bridge: what a person wants
+  // to know is how long from gesture to answer.
+  sessionTimeline.begin(entry.token, { reason: String(reason || '') });
 
   // Optimistic capsule. The bubble is a promise that we heard the gesture, and
   // that promise is worth nothing four seconds later. It opens with
@@ -2159,6 +2179,7 @@ function beginSelectionSession(reason = 'manual', gesture = null) {
     'scripts/selection_snapshot_bridge.py',
     'panel',
     {
+      timelineToken: entry.token,
       onProgress: (record) => {
         // Without content protection this marker is the earliest safe reveal:
         // the pixels are captured and attested, so nothing we draw from here on
@@ -2888,6 +2909,14 @@ function runPythonBridge(payload, scriptPath = 'scripts/electron_bridge.py', tar
     // and they are what lets the capsule appear before the work is finished.
     onProgress: (record) => {
       log(`bridge phase script=${scriptPath} phase=${record.phase} ms=${record.ms}`);
+      if (options.timelineToken) {
+        sessionTimeline.phase(options.timelineToken, {
+          script: scriptPath,
+          phase: record.phase,
+          ms: record.ms,
+          detail: record.detail || '',
+        });
+      }
       if (typeof options.onProgress === 'function') options.onProgress(record);
     },
     onComplete: (parsed) => {
@@ -2984,6 +3013,11 @@ function startModelHealthWatch() {
   modelHealthTimer = setInterval(() => { refreshModelHealth({ probe: false }); }, 60_000);
   modelHealthTimer.unref?.();
 }
+
+ipcMain.handle('dashboard:session-timeline', async () => ({
+  ok: true,
+  sessions: sessionTimeline.snapshot(),
+}));
 
 ipcMain.handle('dashboard:model-health-refresh', async () => {
   const health = await refreshModelHealth({ probe: true });
@@ -3300,6 +3334,7 @@ function submitSelectionCommandWhenGrounded(payload, startedAt, noticeShown = fa
   log(`stage:submit-selection-command token=${selectionSessionToken} request=${requestId} command_len=${String(enriched.command || '').length}`);
   let child = null;
   child = runPythonBridge(enriched, 'scripts/selection_bridge.py', 'stage', {
+    timelineToken: selectionSessionToken,
     onComplete: (parsed) => {
       if (activeSessionChildren.get(selectionSessionToken) === child) activeSessionChildren.delete(selectionSessionToken);
       if (!selectionSessions.isCurrentRequest(selectionSessionToken, requestId)) {
