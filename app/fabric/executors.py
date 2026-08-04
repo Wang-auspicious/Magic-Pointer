@@ -136,6 +136,11 @@ class FabricExecutors:
         if plan.provider == "artifact.compare":
             return self._compare(plan)
         if plan.provider == "artifact.visual_context":
+            # image.to_prompt wants words a text-only model can act on; the older
+            # vision.prompt_bridge wants the structured packet. Same provider,
+            # different output shape, so the recipe decides.
+            if plan.recipe_id == "image.to_prompt":
+                return self._image_prompt(plan)
             return self._visual_context(plan)
         if plan.provider == "artifact.list":
             return self._list(plan)
@@ -419,6 +424,98 @@ class FabricExecutors:
         artifact = self.root / "artifacts" / f"{plan.idempotency_key[:16]}-visual-context.json"
         _atomic_json(artifact, value)
         return _receipt(plan, status="succeeded", output={"artifact": str(artifact)}, verified=artifact.exists(), verification={"objects": len(objects)})
+
+    def _image_prompt(self, plan: OperationPlan) -> ExecutionReceipt:
+        """Compose a paste-ready description of an image for a blind model.
+
+        Reads whichever layers are available from the grounded object and names
+        the ones that are not. Never claims a visual layer it does not have: a
+        description that silently omits appearance would let the user believe
+        DeepSeek was told what the picture looks like.
+        """
+        from app.vision.image_prompt import ImagePromptLayers, compose_prompt, describe_coverage
+
+        objects = _objects(plan)
+        if not objects:
+            return _receipt(plan, status="failed", error="no_visual_objects")
+
+        primary = objects[0]
+        source = dict(primary.get("source") or {})
+        artifacts = dict(primary.get("artifacts") or {})
+        bbox = primary.get("bbox")
+        width = height = 0
+        if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
+            try:
+                width = max(0, int(round(float(bbox[2]))))
+                height = max(0, int(round(float(bbox[3]))))
+            except (TypeError, ValueError):
+                width = height = 0
+
+        missing: dict[str, str] = {}
+        text = "\n".join(_content(obj) for obj in objects if _content(obj)).strip()
+        if not text:
+            missing["text"] = "这块区域没有识别出文字"
+
+        elements = [
+            element
+            for element in (primary.get("elements") or [])
+            if isinstance(element, dict)
+        ]
+        if not elements:
+            missing["elements"] = "这个窗口没有向系统汇报界面元件"
+
+        # The caption needs a vision model AND permission for the image to leave
+        # the machine. Absent either, the layer is missing and says which.
+        caption = str(artifacts.get("vision_caption") or "").strip()
+        caption_model = str(artifacts.get("vision_caption_model") or "")
+        if not caption:
+            missing["caption"] = str(
+                artifacts.get("vision_caption_unavailable_reason")
+                or "没有配置可用的视觉模型，或未授权把这张图交给模型"
+            )
+
+        layers = ImagePromptLayers(
+            text=text,
+            text_engine=str(artifacts.get("ocr_engine") or source.get("method") or ""),
+            elements=elements,
+            element_engine=str(artifacts.get("perception_result_kind") or source.get("adapter") or ""),
+            caption=caption,
+            caption_model=caption_model,
+            width=width,
+            height=height,
+            missing=missing,
+        )
+        prompt = compose_prompt(layers, question=str(plan.parameters.get("question") or ""))
+        if not prompt:
+            # Nothing readable at all. An empty shell that says "this is an image"
+            # would be worse than saying so.
+            return _receipt(
+                plan,
+                status="capability_unavailable",
+                error="image_has_no_readable_layer",
+                output={"coverage": describe_coverage(layers)},
+                verified=False,
+            )
+
+        artifact = self.root / "artifacts" / f"{plan.idempotency_key[:16]}-image-prompt.md"
+        _atomic_text(artifact, prompt + "\n")
+        return _receipt(
+            plan,
+            status="succeeded",
+            output={
+                "artifact": str(artifact),
+                "text": prompt,
+                "coverage": describe_coverage(layers),
+                "layers": layers.available_layers,
+            },
+            verified=artifact.exists(),
+            verification={
+                "layers": ",".join(layers.available_layers),
+                "characters": len(prompt),
+                # What is missing is part of the receipt, not a footnote.
+                "missing": ",".join(sorted(missing)),
+            },
+        )
 
     def _list(self, plan: OperationPlan) -> ExecutionReceipt:
         items: list[dict[str, str]] = []
