@@ -19,6 +19,38 @@ Magic Pointer = 默认不可见的跨应用操作层。鼠标晃动唤醒 → �
 
 ## 当前状态快照（2026-08-02）
 
+### 2026-08-04 — 用外部实现重审代码库：四个提交，两个假报成功的 bug 被修掉
+
+**背景**：上一轮两个 agent 产出了竞品报告（Everywhere）和同类项目扫描（23 个项目，11 个 clone 到 `external/`）。本轮任务是用这些外部实现重审我们自己的代码。我没照抄报告结论，而是自己读源码 + 真机实测独立验证 —— 结果是报告方向大体对，但**有一条硬错误**，而且**漏掉了两个比报告里所有条目都严重的问题**。
+
+**四个提交（Python 730 passed / Node 118 tests，微信 RED 是故意的）**：
+
+1. **`ca538ed` 探针把「没选中」谎报成「读取失败」**。`uia_selection_probe.cs` 的 `UiaProbeHardTimeoutMs = 200`，但实测 `RunProbeCore` 真实耗时 199–975ms（因窗口而异）。**实测四个真实窗口（Edge/QQ/CC Switch/Clash）100% 返回 `uia_probe_timeout_200ms`** —— 而真实答案是「这里没选中东西」。两者会让下游走完全不同的路：读失败会去做 OCR，没选中该安静待着。改成 1200ms 后四个窗口全部返回真实答案。Python 侧默认 timeout 也从 1.0s 提到 2.5s（它原来低于探针自己的上限，会在探针正确作答时把它杀掉）。`tests/uia_probe_timeout_budget_test.py` 钉住两边预算，反向验证过能抓回归。
+
+2. **`a6a6d08` 原位改写在 Word 之外全是假的**。`text.rewrite_in_place` / `text.translate_in_place` 都路由到 `model.text`，而 `executors.py:_model_text` 只把模型输出写进一个 `.md` 文件就返回 `status="succeeded"` + `verified=True`（`verification` 里自己写着 `"mode": "artifact_only"`）。**在记事本/浏览器/微信里点它，用户文字一个字没变，UI 报成功。** 唯一真能写回的是 `selection_bridge.py:1527` 那条绕过 fabric 的 Word COM 分支。新增 `inplace.text` provider：产出替换文本但拒绝声称写回成功（`capability_unavailable` + `verified=False`，过不了 `_fabric_receipt_result` 的成功门），文本仍存 artifact 不丢。**`_model_text` 一字未动** —— `text.summarize_route` 也用它，那里「只出 artifact」是正确契约。另有两处必须拒绝 agent 兜底（`engine.py:_provider` 和 `capability_snapshot.py`）：让 codex 去「原位改写」会满足字面而背离含义 —— 它写到别处去，用户的文档没动。**这条路径此前 709 个测试零覆盖，这就是它能一直骗人的原因。**
+
+3. **`ca4c457` UIA 读取被 6 条白名单锁死**。`match_window` 只放行 6 个类名，其余**在探针跑之前就 return False**。记事本、Explorer、微信、所有原生 Win32 输入框都落到 OCR —— 而探针本身有 `FocusedElement`/`ElementFromPoint`/`RangeFromPoint`/`FindAll`，从来不是它读不到。改成默认放行 + 排除列表（桌面/任务栏/菜单/工具提示/shell 覆盖层）。`UIA_WINDOW_CLASSES` 保留，因为 `uia_app_from_window` 仍靠它路由 PDF 文本层校验、终端 evidence、Chromium 重试 —— 它现在是**路由提示，不是准入名单**。真机验证（fixture 看不出这个）：cc-switch / clash-verge（类名 `Tauri Window`）从被拒变成能走完整读取；TextInputHost 被正确排除；终端仍被正确识别。新增 `clipboard_fallback_forbidden()`：**现在没有任何代码发 Ctrl+C**（UIA 是纯查询），但放开准入后给读不到的窗口加剪贴板兜底会很有诱惑力，而终端里 Ctrl+C 是 SIGINT —— 将来加兜底不查这个会为了读选区杀掉用户正在跑的构建。退路 `MAGIC_POINTER_UIA_WINDOW_SCOPE=whitelist`，逐调用读取，不用重启。
+
+4. **`ee681b0` 分段计时 + 一个被证伪的优化**。`MAGIC_POINTER_UIA_PROBE_TRACE=1` 输出各阶段耗时到 stderr（stdout 的 JSON 契约不动，关闭时只是一次 bool 检查）。它立刻定位到：`FindDocumentSelection` 占 115–227ms，之前所有阶段合计只有 50–78ms。**然后我把它换成有界 TreeWalker（照 `TryRegionElements` 已有的正确做法），交替 A/B 测量后发现更慢，退回了**：
+
+   | 窗口 | `FindAll` | TreeWalker |
+   |---|---|---|
+   | cc-switch | **329ms** | 372ms |
+   | clash-verge | 318ms | **316ms** |
+   | msedge | **291ms** | 302ms |
+
+   遍历只访问了 24–94 个节点就那么慢，约 8ms/节点。**成本在往返次数不在树大小**：`FindAll` 是一次跨进程调用由 provider 内部解析，逐节点 `GetFirstChild/GetNextSibling` 是几十次，对 Tauri/CEF provider 每次都慢到吃掉全部收益。剩下那 ~200ms 是 provider 的响应时间，不是我们的算法。**结论和数字都写进了那个函数的注释**，因为下一个人会出于同样正当的理由产生同样的想法。这个阶段的杠杆是**少调用它**，不是换遍历方式。
+
+**⚠️ 一条方法论教训，比上面任何一条都值钱**：这台机器上绝对耗时**在会话之间漂移 200ms**。我先"改完再测"，数字显示遍历版赢了；换成**交替 A/B**（每次运行切换实现，各 6 次取中位数）才看出它其实输。**顺序测量前后对比在这里是无效的**，它告诉你的是机器当时在干什么。
+
+**另一条**：我曾把探针的 213–220ms 归因为「每次进程启动重新初始化 UIA COM 的固定成本」，据此推出「常驻化能省 440ms」。**这是错的** —— 依据是「QQ 和 Edge 的数字完全一样」，但那是因为两者都撞同一个 200ms 天花板，不是同源成本。`error` 字段里早写着 `uia_probe_timeout_200ms`，我第一次没读。**看性能数据必须同时看 ok/error**。常驻化真实收益只有 62–131ms（进程启动），性价比远低于预期，所以我没做。
+
+**更正调研报告一条硬错误**：`ADJACENT_PROJECTS_SCAN_20260803.md` :18 和 :116 称 `WritingTools`（2385★）把「系统级原位改写 + 不污染剪贴板 + Ctrl+Z 可撤销」这块硬骨头啃下来了，是头号参考。实读 `WritingToolApp.py:814-828`：就是最朴素的剪贴板劫持，而且比 nemo 更糙 —— `pyperclip.paste()` 只备份纯文本（用户剪贴板里的图片/文件会被毁），`time.sleep(0.2)` 阻塞主线程。README 那句 "Does not mess with your clipboard" 与代码不符。**这条参考价值为负，照它做是退步。** 真正该抄的是 `external/nemo-assistant`（MIT，可直接用代码）：逐 format 深拷贝 `QMimeData`、劫持前释放修饰键、轮询等剪贴板而非固定 sleep、回填前二次校验选区（且「取到空」不算「选区已变」，否则误杀）、回填后延迟 300ms 还原。
+
+**新增的工具**（都不是测试，需要真窗口，手动跑）：
+- `scripts/measure_uia_probe.py <label:hwnd> ...` —— 实测探针延迟
+- `scripts/check_uia_admission.py <label:class:hwnd> ...` —— 看某个类名现在是否被放行、是否标记为终端
+
 ### 2026-08-03 深夜 — 速度改造已落地（`943b0ca`），GUI 重设计未开始
 
 **已提交 `943b0ca`（Node 118 全绿 / Python 709 passed，唯一失败是故意的微信 RED）**：
@@ -142,7 +174,37 @@ b1534f4  Stage v2 线程化
 
 ## 下一步（新会话从这里开始）
 
-**先真机跑一次，拿三份数据。** 三件事都改完了，但这个仓库的测试**结构上抓不住**鼠标穿透/光标闪烁/请求超时/CSS 覆盖——"测试全绿"不等于能用。
+### 最要紧的一件：原位改写现在诚实了，但仍然只有 Word 能写回
+
+`a6a6d08` 只让缺口**可见**，没有填上它。非 Word 应用现在会明说「改写结果生成了，无法写回这个应用」，改写文本存在 artifact 里。**要真的写回，方案已经调研完并有用户决策，不要重新设计**：
+
+- **用户决定：一次做全，含微信/自绘控件。**
+- **复用已有通道，不要新造**：`app/actions/executor.py:311 _paste_text_to_foreground()` 已经把最难的部分做完了 —— hwnd/pid/title 三重身份校验、坐标空间校验、`text_sha256` 内容校验、`submit must be false` 硬约束。它目前只服务于「把 prompt 投递给 Agent 输入框」。权限门禁 `app/actions/policy.py:57-78` 是干净的 fail-closed，接过来默认就要求确认，不用开新口子。
+- **🔴 `ValuePattern.SetValue` 绝不能作为优先路径**。它替换控件的**全部内容**，不是选区 —— 用户在 2000 字文档里选 20 字改写，`SetValue` 会把整篇文档变成那 20 个字。而托管 `System.Windows.Automation` 的 `TextPatternRange` **没有 SetText**（只有原生 COM 的 TextPattern2 有）。所以**剪贴板 Ctrl+V 是唯一主路径**，`SetValue` 只在一个窄条件下可用：控件全部内容恰好等于选中原文（全选了一个搜索框）。`uia_draft_writer.cs` 现有的 ValuePattern 分支是为「投递到空输入框」写的，:240-244 那条「目标必须为空」的检查与原位改写的前提正相反 —— **不要试图加参数复用它，语义要重写**。
+- **🔴 三级写回结果，绝不假报成功**。这是这件事的验收底线，否则就是把 `a6a6d08` 修掉的 bug 换个位置重演：
+
+  | 级别 | 手段 | 适用 | 能读回校验？ |
+  |---|---|---|---|
+  | 1 | `ValuePattern.SetValue`（仅上述窄条件） | 标准输入框全选 | ✅ |
+  | 2 | 剪贴板 + Ctrl+V + `TextPattern` 读回 | 浏览器 input/textarea、Office | ✅ |
+  | 3 | 剪贴板 + Ctrl+V，**无读回** | 微信、Canvas、自绘控件 | ❌ |
+
+  级别 3 物理上无法确认，必须返回 `written_unverified`（「已尝试替换，请确认」+ 保留原文 + 提示 Ctrl+Z），**不得计入成功、不得标 `is_undoable`**。落点：`ExecutionStatus`（`app/actions/schema.py:185`，现有 5 个值）加一个；`ExecutionReceipt.verified`（`app/fabric/schema.py:126`）的 bool 配一个 `verification_available`。**影响面已量化：Python 侧 44 处消费 `succeeded`，前端 8 处** —— 先加枚举但不产出该状态（行为零变化，测试应全绿），逐一审完 44+8 处再让级别 3 真的产出它。
+- **从 nemo 抄这四条**（MIT，可直接用代码，见 `external/nemo-assistant/app/core/`）：剪贴板逐 format 深拷贝备份（否则毁掉用户的图片/文件）、劫持前释放修饰键（热键残留会把 `ctrl+v` 污染成 `ctrl+alt+v`）、回填后**延迟 300ms** 还原剪贴板（立即还原会让目标粘到旧内容）、回填前二次校验选区且**「取到空」不算「选区已变」**（自绘控件经常读到空，误杀会表现为「无法替换」）。
+- **撤销要诚实**：Word 的撤销靠 COM 字符偏移 + 前后文哈希锚点重新定位（`_office_undo_last_action`），通用应用**没有对等物**，只能依赖目标应用自带的 Ctrl+Z。不要宣称同等强度。`history.py:73-81` 的 `is_undoable` 硬编码了 `action_type == "office_replace_selection" and app == "word"`。
+- 开关：`INPLACE_WRITEBACK_LEVEL = 0|1|2|3`，建议默认先 2，真机验过级别 3 再放开到 3。
+
+### 还没做但已实证可行的：「选中即感知」入口
+
+全仓没有任何选中触发入口（grep `selection_monitor|selectionChanged|drag_select` 零命中），用户拖选好文字我们毫无反应。`selection-hook`（MIT, 104★）**已实测可用**：`npm install` 7 秒不触发 node-gyp，`prebuilds/` 带 6 平台预编译 `.node`，**在我们自己的 Electron 43.0.0 里 `require` + `new` + `start()` 返回 true + `isRunning()` 为 true**，无需 rebuild。用户决定：**接通代码 + 隐私硬约束 + 设置项默认 false**，真机验过不与划线手势冲突后再开。
+
+风险与约束（不要跳过）：它会装**第三个** `WH_MOUSE_LL`（我们已有 `pointer_input_state.ps1` 的吞键 hook 和 `pass_through_gesture.js`），上一轮刚踩过「钩子吃掉笔画事件」的坑 —— 用互斥状态机（划线时 `stop()`，结束后延迟 ~400ms 再 `start()`），不要试图让两者同时活。隐私必须是硬约束不是文档：不启用它的 `enableClipboard`（那会自动劫持剪贴板）、**拒绝 `method=99`（CLIPBOARD）**、选中文本不落盘不进日志不进遥测、只在内存活到用户明确发起指令、沿用 `MAGIC_WINDOW_TITLES` 自我排除。另外这是我们首次引入原生 `.node` 模块，Windows 上要检测缺 VC++ 运行库并引导（参考 `external/esearch/src/renderer/screenShot/screenShot.ts:42-53`）。
+
+### 白捡的（成本极低）
+
+`app/voice/text_normalization.py:148-149` 的 `_CJK_TO_LATIN_SPACE` / `_LATIN_TO_CJK_SPACE` 已存在且已测试，但**只接在语音链路上，OCR 链路完全没有后处理**（`scripts/ocr_resident_worker.py` 的 OCR 输出直接进 `content`）。normcap 指出 Tesseract 会给无空格语言误插空格（tesseract issue #2702），中文必踩。接一下就好。
+
+### 仍然待你真机验收的历史遗留（`943b0ca` 留下的，仍未验）
 
 ```powershell
 $env:MAGIC_POINTER_POINTER_TRACE='1'; npx --no-install electron electron/main.js
@@ -150,13 +212,34 @@ $env:MAGIC_POINTER_POINTER_TRACE='1'; npx --no-install electron electron/main.js
 晃动 → 划线 → 打字 → 回车，然后 `Get-Content data/runtime/electron.log -Tail 80`：
 
 1. **气泡是否即时**：找 `capsule revealed ... via=immediate`。`via=pixels_frozen` 说明内容保护没生效但降级正常；完全没这行 = 两档都没触发，回到 `onComplete` 老路。
-2. **⚠️ 内容保护必须人眼验收**（自动测试测不了）：打开最新的 `data/runtime/selection-captures/*.png`——**气泡不能出现在图里**；同时**气泡本身不能发黑**（透明 click-through 窗口上开 display affinity 在某些 GPU 上会整窗变黑）。任一条失败 → `CAPSULE_CONTENT_PROTECTED = false`，自动退回 `pixels_frozen` 档。
+2. **⚠️ 内容保护必须人眼验收**（自动测试测不了）：打开最新的 `data/runtime/selection-captures/*.png`——**气泡不能出现在图里**；同时**气泡本身不能发黑**（透明 click-through 窗口上开 display affinity 在某些 GPU 上会整窗变黑）。任一条失败 → `CAPSULE_CONTENT_PROTECTED = false`，自动退回 `pixels_frozen` 档。**注意**：主捕获路径是 `ImageGrab.grab(window=hwnd)` 直接抓目标窗口 HWND（`selection_snapshot_bridge.py:974`，注释已写明气泡不会污染这张图），所以气泡进截图只可能发生在两条降级路径（:980 空白重试、:995 无有效 hwnd 的全屏抓取）—— 内容保护解决的是只在降级路径存在的问题，而「整窗变黑」风险是全时段的，风险收益比值得重估。
 3. **30 秒超时定位**：找 `bridge phase script=scripts/selection_bridge.py`，看哪一段的 `d=` 最大。`model_compile` 大 = 中转慢；`enrich_screen_region` 大 = OCR 真的跑了两遍（那时才允许动它的位置）。
 4. **闪烁**：闪的时候看 `pointer trace` 哪个字段在翻转。`swallowingLeft=true` 持续不落 = hook 卡在 capture 态，`buttons` 恒报左键按下。**拿到数据再改，别猜。**
+5. **本轮新增的必验项**：记事本 / Explorer / 微信各划一次，确认 `selectionSnapshot.context.content` 非空且是画中内容（这是 `ca4c457` 放开准入的全部意义，fixture 测不出来）。
 
-**然后是 GUI 重设计**（本轮未开始，方向已定见上）。第一步做「落笔即 chip」——它是把"多次划线→Enter→一次指令"变成"边划边写"的分水岭，且**不需要语音**。
+### 不要做
 
-**不要做**：视觉重做之前不要动纸飞机/配置页/记忆层/对话历史；不要在没有真机数据前调超时数字或改 overlay 鼠标处理。
+- **不要照抄 `WritingTools`**（它没解决任何难题，见上面的更正）。
+- **不要做 UIA 探针常驻化**：实测收益只有 62–131ms（进程启动），不是先前误算的 440ms。而且有个隐藏陷阱 —— 调用方 `uia_text_adapter.py` 跑在**每次感知 spawn 一次就退出**的 Python 桥进程里，常驻子进程由它持有会随它一起死，常驻化完全无效且症状是「功能正常只是没变快」。真要做必须用 `ocr_resident_worker.py` 那套 socket + PORT_FILE（跨进程共享），不是 JSONL。
+- **不要再试有界 TreeWalker 优化 `FindDocumentSelection`**：已经做过并 A/B 证伪，数字在那个函数的注释里。
+- 视觉重做之前不要动纸飞机/配置页/记忆层/对话历史；不要在没有真机数据前调超时数字或改 overlay 鼠标处理。
+
+### 测量纪律（本轮吃过亏，务必遵守）
+
+- **这台机器上绝对耗时在会话之间漂移 200ms**。顺序的「改前测一次、改后测一次」在这里是无效的 —— 我第一次就是这样得出「遍历版更快」的错误结论。必须**交替 A/B**（每次运行切换实现，各 6 次取中位数）。
+- **看性能数据必须同时看 `ok`/`error`**。我曾把 213–220ms 当成固定成本，实际是撞了 200ms 硬超时，`error` 字段里早写着答案。两个数字巧合相等就推断同源是典型误归因。
+- 现成工具：`MAGIC_POINTER_UIA_PROBE_TRACE=1` 看探针各阶段；`scripts/measure_uia_probe.py <label:hwnd>` 测延迟；`scripts/check_uia_admission.py <label:class:hwnd>` 看准入。
+
+### 回退点
+
+```
+ee681b0  分段计时 + TreeWalker 证伪（本轮最后）
+ca4c457  放开窗口准入
+a6a6d08  原位改写停止假报成功
+ca538ed  探针超时修正
+5238d7b  上一轮交接文档
+943b0ca  速度改造（气泡内容保护）
+```
 
 ## 完整文件清单（按模块）
 
