@@ -755,6 +755,31 @@ def _get_rapid_ocr() -> Any:
     return _RAPID_OCR_INSTANCE
 
 
+# How much of the read text to show when the model could not be reached. Enough
+# to recognise the line that was marked; not so much that the bubble becomes a
+# transcript of the screen.
+MODEL_FAILURE_EXCERPT_CHARS = 800
+
+
+def answer_with_read_text_on_model_failure(answer: str, read_text: str) -> str:
+    """When the gateway is down, still hand back what was actually read.
+
+    A bubble that says only "AI 调用失败" is indistinguishable from the failure the
+    user has been reporting all along — "it knows which window, not which line" —
+    even in the case where the line *was* read and is sitting in memory. The model
+    being unreachable is not a reason to withhold it.
+    """
+    text = str(answer or "")
+    excerpt = str(read_text or "").strip()
+    if not text.startswith("AI 调用失败") or not excerpt:
+        return text
+    truncated = ""
+    if len(excerpt) > MODEL_FAILURE_EXCERPT_CHARS:
+        excerpt = excerpt[:MODEL_FAILURE_EXCERPT_CHARS]
+        truncated = "\n（内容过长，已截断）"
+    return f"{text}\n\n不过你划中的内容已经读到了：\n{excerpt}{truncated}"
+
+
 def _read_local_ocr(capture_path: str | Path) -> tuple[str | None, str]:
     """Read a saved screen capture locally; never uploads the image."""
     path = Path(capture_path)
@@ -776,14 +801,24 @@ def _enrich_screen_region_context(
     snapshot: dict[str, Any] | None,
 ) -> AdapterReadContext | None:
     """Attach local OCR text to a pixel fallback before any model routing."""
-    if str((snapshot or {}).get("source_kind") or "") != "screen_region":
+    snapshot = snapshot or {}
+    # Two ways the marked text can still be missing. The obvious one is a pure
+    # pixel fallback, where there is no structured content at all. The one that
+    # cost a whole afternoon on 2026-08-04 is subtler: the structured layer
+    # returned a non-empty string that was not the marked content — the console
+    # container's accessible name, `...\\powershell.exe` — and every gate
+    # downstream read "non-empty" as "read it". The snapshot now says outright
+    # whether the mark was covered, so honour that first.
+    covers_mark = snapshot.get("structured_covers_mark")
+    if covers_mark is None:
+        # Snapshots written before that field existed: fall back to the old rule.
+        if str(snapshot.get("source_kind") or "") != "screen_region":
+            return app_ctx
+        if app_ctx is not None and str(app_ctx.content or "").strip():
+            return app_ctx
+    elif covers_mark:
         return app_ctx
-    # A screen fallback always carries capture paths in artifacts. Those are
-    # evidence pointers, not semantic content; OCR must still run when the
-    # actual text field is empty.
-    if app_ctx is not None and str(app_ctx.content or "").strip():
-        return app_ctx
-    capture_path = str((snapshot or {}).get("capture_path") or "").strip()
+    capture_path = str(snapshot.get("capture_path") or "").strip()
     if not capture_path:
         return app_ctx
     # Full-screen recognition (keeps global context, like clicky / UFO²), then
@@ -2151,7 +2186,10 @@ def main() -> int:
                 system_prompt="You rewrite the selected text. Return only the rewritten text; no explanation.",
             ))
         else:
-            answer = ask_text_model(command, context_text=context_text)
+            answer = answer_with_read_text_on_model_failure(
+                ask_text_model(command, context_text=context_text),
+                str(app_ctx.content or ""),
+            )
     else:
         # L2. This used to be the dead end that said
         # "暂时无法从“X”读取可靠对象" and stopped — the shape the user called

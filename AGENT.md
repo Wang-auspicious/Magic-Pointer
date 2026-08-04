@@ -170,6 +170,14 @@ b1534f4  Stage v2 线程化
 - SenseVoice Small 模型已下载（228MB, 中文精度高 3-5 倍, 本地可用）
 
 ### 已知问题
+- **【P0 已修 2026-08-04 用户实机】只知道是哪个窗口，读不到划的那一行**（微信 / PowerShell 都复现）。三个缺陷叠在同一次失败里，实机复现脚本 `scripts/verify_marked_line_answer.py`：
+  1. **非空 ≠ 读到了**。UIA 的 `uia:region-elements` 对控制台/聊天窗返回的是**容器的可访问名**——实测就是字符串 `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`。它非空，于是 `structured_succeeded` 判成功。
+  2. 因此 `source_kind` 成了 `native_selection`。
+  3. `_enrich_screen_region_context` 的两道门（`source_kind` 必须是 `screen_region`、`content` 必须为空）双双关死，**OCR 从不运行**——而同一张截图事后单跑 OCR，53 个块里精确命中划线那一块，把内容一字不差读了出来。像素一直都在。
+  修法：新增纯策略模块 `app/grounding/marked_read.py`（`structured_read_covers_mark` / `rect_is_container`），判据是"这段文字是不是**你划的那一块**"，而不是"字符串是否非空"。三种未命中各有名字并写进 perception trace 和快照（`structured_covers_mark` / `structured_gap_reason`）：`identity_only`（读回的是应用自己的名字/exe 路径）、`mark_crossed_no_element`（笔画落在元素之间的空隙）、`container_not_selection`（命中的元素比半个窗口还高）。命令桥改为按这个判断决定 OCR 是否仍欠用户一个答案。
+- **【同一次修掉】划线选区被悄悄扩成整窗**：笔画穿过的是覆盖整窗的容器元素，代码把"穿过了"当成"选中了"，并返回所有元素的并集——实测 1175×30 的下划线变成 2346×1142。现在容器不再算命中，选区退回用户实际画的那一笔；笔画一个元素都没穿过时也不再宣称 `resolved`。
+- **【同一次修掉】模型挂了就什么都不给**：网关 5xx/429 时气泡只显示"AI 调用失败…用本地能力尽力回答"，然后什么也没回答——**而那一行明明已经读出来了**，形态和"读不到内容"完全一样。现在 `answer_with_read_text_on_model_failure` 会把已读到的内容附在失败原因后面。
+
 - **第二次激活画线失败**：首次晃动→画线正常，右键关闭后再晃→左键画线不触发。根因：`gesture-ready` handler 里的冗余 `showInactive()` 在已可见窗口上重复调用，触发 Electron compositor 状态重置。**已修复**——移除了 `showInactive()`，保留 `setIgnoreMouseEvents(false)`。
 - **选区偏移（高 DPI）**：150%/200% 缩放屏上圈选位置与实际截屏区域有偏移。根因：overlay 坐标是逻辑像素，截屏模块需要物理像素，缺 `× scaleFactor`。**已修复**——`completeSelectionGesture` 坐标全部乘了 `display.scaleFactor`。
 - **【已修 2026-07-31 Phase2】语音识别精度差**：SenseVoice Small 已正式接入为默认引擎（sherpa-onnx，模型已下载 228MB），同一 Whisper 模型不再并发推理（`_ModelRWLock`）；`voice_engine` 设置支持 auto/whisper/sense_voice，SenseVoice 连续 2 次加载失败自动回退 Whisper 并在 status/ready 事件带 `engineFallback` 原因；`scripts/benchmark_voice_engines.py` 提供同录音双引擎对比（CER/意图准确率/延迟）。

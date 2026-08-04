@@ -27,6 +27,7 @@ from app.grounding.perception_cascade import (
     resolve_structured_perception,
 )
 from app.grounding.explorer_adapter import score_item_against_stroke
+from app.grounding.marked_read import rect_is_container, structured_read_covers_mark
 from app.review import ReviewSessionError, ReviewSessionStore
 from app.fabric.settings import FabricSettings, SettingsError, SettingsStore
 from scripts.bridge_progress import PhaseClock
@@ -489,6 +490,24 @@ def _context_rectangles(context: Any) -> list[list[int]]:
     return result
 
 
+def _gesture_mark_bbox(gesture: dict[str, Any] | None) -> list[int] | None:
+    """The bounding box of the mark the user actually drew, in screen pixels.
+
+    Deliberately the gesture's *own* box rather than whatever the grounding step
+    settled on: this is the yardstick a structured read is measured against, and
+    measuring it against a box the same read produced would prove nothing.
+    """
+    raw = dict((gesture or {}).get("bbox") or {}) if isinstance(gesture, dict) else {}
+    try:
+        width = max(0, int(raw.get("width") or 0))
+        height = max(0, int(raw.get("height") or 0))
+        if width <= 0 or height <= 0:
+            return None
+        return [int(raw.get("x") or 0), int(raw.get("y") or 0), width, height]
+    except (TypeError, ValueError):
+        return None
+
+
 def _gesture_strokes(gesture: dict[str, Any] | None) -> list[list[tuple[int, int]]]:
     """Independent stroke polylines in physical screen pixels."""
     if not isinstance(gesture, dict):
@@ -722,13 +741,44 @@ def _read_gesture_target_context(
                         "segment_count": len(segments),
                         "segments": segments,
                     })
+                    resolved_bbox = _union_xywh(_context_rectangles(resolved_context))
+                    mark_bbox = _gesture_mark_bbox(gesture)
+                    # A container element is crossed by every stroke drawn inside
+                    # it, so "crossed" alone does not mean "chosen". Reporting the
+                    # whole console as the selection is how a 1175×30 underline
+                    # became a 2346×1142 selection on 2026-08-04.
+                    if rect_is_container(resolved_bbox, window=region_window, mark_bbox=mark_bbox):
+                        grounding.update({
+                            "state": "unresolved",
+                            "reason": "only_container_elements_crossed",
+                        })
+                        resolved_bbox = mark_bbox
                     return (
                         region_window,
                         resolved_context,
                         region_trace,
                         grounding,
-                        _union_xywh(_context_rectangles(resolved_context)),
+                        resolved_bbox,
                     )
+                # The line crossed nothing the structured layer knows about. That
+                # is a real outcome, not a reason to hand back everything in the
+                # region: widening a 1175×30 underline to the whole 2346×1142
+                # console both loses the user's intent and makes a failed read
+                # look like a resolved one. Keep the mark as drawn and let the
+                # pixel layer answer for it.
+                grounding.update({
+                    "state": "unresolved",
+                    "candidate_count": 0,
+                    "segment_count": 0,
+                    "reason": "stroke_crossed_no_element",
+                })
+                return (
+                    region_window,
+                    region_context,
+                    region_trace,
+                    grounding,
+                    _gesture_mark_bbox(gesture),
+                )
             grounding["candidate_count"] = len(list(region_artifacts.get("region_elements") or []))
             return region_window, region_context, region_trace, grounding, _union_xywh(region_rectangles)
 
@@ -1259,12 +1309,38 @@ def capture_snapshot(
                     },
                 ],
             }
+    # A non-empty string is not the same thing as an answer. A UIA read of a
+    # console or a chat window happily returns the container's accessible name —
+    # on 2026-08-04 that was the literal path to powershell.exe — and treating it
+    # as content is what switched the pixel fallback off and left the user with
+    # "I can see which window you mean but not what you underlined".
+    mark_coverage = structured_read_covers_mark(
+        content=str(getattr(app_ctx, "content", "") or ""),
+        window=target_window,
+        element_rects=_context_rectangles(app_ctx) if app_ctx is not None else [],
+        mark_bbox=_gesture_mark_bbox(normalized_gesture),
+    )
     structured_succeeded = bool(
         app_ctx is not None
         and bool(perception_trace.get("selectedLayer"))
-        and bool(str(getattr(app_ctx, "content", "") or "").strip())
+        and mark_coverage.covers
     )
+    if app_ctx is not None and not mark_coverage.covers:
+        # Say it in the trace rather than only in the outcome: the diagnostics
+        # page has to be able to show *why* pixels were needed.
+        perception_trace = append_perception_attempt(
+            perception_trace,
+            layer=str(perception_trace.get("selectedLayer") or "uia"),
+            adapter=str(perception_trace.get("selectedAdapter") or "unknown"),
+            method=str(perception_trace.get("selectedMethod") or "unknown"),
+            status="empty",
+            reason=mark_coverage.reason,
+        )
     summary = _summary_for(target_window, app_ctx)
+    if not mark_coverage.covers:
+        summary["hasContent"] = False
+        summary["excerpt"] = ""
+        summary["canRewrite"] = False
     context_session = active_context if isinstance(active_context, dict) else None
     summary["hasActiveContext"] = bool(context_session and context_session.get("item_count"))
     summary["activeContextItemCount"] = int((context_session or {}).get("item_count") or 0)
@@ -1505,6 +1581,12 @@ def capture_snapshot(
         "expires_at": (captured + timedelta(seconds=SNAPSHOT_TTL_SECONDS)).isoformat(),
         "status": summary["state"],
         "source_kind": source_kind,
+        # Whether the structured layer read the marked content, and when it did
+        # not, which way it failed. The command bridge uses this to decide that
+        # OCR still owes the user an answer; without it, a read that returned
+        # only the app's own name looks identical to a real one.
+        "structured_covers_mark": bool(mark_coverage.covers),
+        "structured_gap_reason": "" if mark_coverage.covers else mark_coverage.reason,
         "target_point": normalized_target_point,
         "target_point_space": (
             "physical_screen_pixels"
