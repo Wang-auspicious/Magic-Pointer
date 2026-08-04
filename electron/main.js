@@ -873,6 +873,30 @@ function deliverStageBridgeResult(selectionSessionToken, parsed) {
 
 // Last gate before a failure reaches the bubble. Callers may pass a written
 // sentence or a bridge code; only sentences get through.
+// Narrow a snapshot to the strokes the user kept in the composer.
+//
+// An empty or absent list means "everything", because that is what a session
+// with no chip edits looks like. A list that would remove every stroke is
+// ignored: submitting a gesture with nothing selected would make the perception
+// work meaningless, and the user removing the last chip means they want to redraw.
+function withKeptStrokes(snapshot, keptStrokeIndexes) {
+  if (!snapshot || !Array.isArray(keptStrokeIndexes) || keptStrokeIndexes.length === 0) return snapshot;
+  const strokes = snapshot?.selection_gesture?.strokes;
+  if (!Array.isArray(strokes) || strokes.length <= 1) return snapshot;
+  const keep = new Set(keptStrokeIndexes.map((value) => Number(value)));
+  const kept = strokes.filter((_stroke, index) => keep.has(index));
+  if (kept.length === 0 || kept.length === strokes.length) return snapshot;
+  log(`stage submit dropped strokes kept=${kept.length}/${strokes.length}`);
+  return {
+    ...snapshot,
+    selection_gesture: { ...snapshot.selection_gesture, strokes: kept },
+    // The recorded bbox described all the strokes, so it no longer describes
+    // this selection. Better absent than wrong: the bridge recomputes from the
+    // strokes it is given.
+    selection_bbox: null,
+  };
+}
+
 function deliverStageError(selectionSessionToken, message) {
   updateStage({
     selectionSessionToken: selectionSessionToken || null,
@@ -3247,12 +3271,16 @@ function submitSelectionCommandWhenGrounded(payload, startedAt, noticeShown = fa
   const requestId = selectionSessions.startRequest(selectionSessionToken);
   if (!requestId) return;
   const effectiveCommand = composedEpisodeCommand(payload?.command, interactionEpisode);
+  // A chip the user removed must actually leave the request. Dropping it only
+  // from the display would make the chip a decoration that lies about what was
+  // sent — the one thing worse than not having chips at all.
+  const snapshotForRequest = withKeptStrokes(session.snapshot, payload?.keptStrokeIndexes);
   const enriched = {
     command: effectiveCommand,
     originalCommand: payload?.command,
     inputMode: payload?.inputMode || null,
     selectionSessionId: selectionSessionToken,
-    selectionSnapshot: safeClone(session.snapshot),
+    selectionSnapshot: safeClone(snapshotForRequest),
     requestId,
     screenBounds: display.bounds,
     scaleFactor: display.scaleFactor || 1,

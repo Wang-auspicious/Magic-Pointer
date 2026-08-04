@@ -37,7 +37,16 @@ contextBridge.exposeInMainWorld('magicPointerStage', {
   reportState: (payload) => ipcRenderer.send('stage:state', payload),
   hidden: () => ipcRenderer.send('stage:hidden'),
   dismiss: () => ipcRenderer.send('stage:dismiss'),
-  submitSelectionCommand: (payload) => ipcRenderer.send('stage:submit-selection-command', payload),
+  submitSelectionCommand: (payload) => ipcRenderer.send('stage:submit-selection-command', {
+    selectionSessionToken: payload?.selectionSessionToken || null,
+    command: String(payload?.command || ''),
+    inputMode: payload?.inputMode || null,
+    // Which strokes survived the user's edits in the composer. Bounded here so a
+    // renderer cannot send an unbounded list into the main process.
+    keptStrokeIndexes: Array.isArray(payload?.keptStrokeIndexes)
+      ? payload.keptStrokeIndexes.slice(0, 12).map((value) => Number(value) || 0)
+      : [],
+  }),
   executeAction: (payload) => ipcRenderer.send('stage:execute-action', payload),
   contextAction: (payload) => ipcRenderer.send('stage:context-action', payload),
   // The renderer sends the text it is showing; the target window and point stay

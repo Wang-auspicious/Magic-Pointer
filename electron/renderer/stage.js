@@ -20,6 +20,12 @@
   const frozenGlow = document.getElementById('frozen-glow');
   const capsule = document.getElementById('capsule');
   const capsuleCount = document.getElementById('capsule-count');
+  const capsuleRefs = document.getElementById('capsule-refs');
+  // One entry per stroke the user drew, in draw order. Dropping one here drops
+  // it from the command, so a mis-drawn stroke costs one click rather than a
+  // whole redraw.
+  let strokeRefs = [];
+  let renderedRefSignature = '';
   const capsuleInput = document.getElementById('capsule-input');
   const transcriptBox = document.getElementById('transcript');
   const shimmer = document.getElementById('processing-shimmer');
@@ -244,6 +250,43 @@
     // Force a reflow so the animation restarts for a genuinely new target.
     void frozenGlow.offsetWidth;
     frozenGlow.classList.add('is-picked');
+  }
+
+  // One chip per stroke, numbered the way the composed command numbers them, so
+  // the ① on screen is the ① the model is told about.
+  function renderStrokeRefs() {
+    if (!capsuleRefs) return;
+    const stream = globalThis.StageTurnStream;
+    const marks = stream?.ORDINAL_MARKS || [];
+    const signature = strokeRefs.map((ref) => `${ref.strokeIndex}:${ref.label}`).join('|');
+    if (signature === renderedRefSignature) {
+      capsuleRefs.hidden = strokeRefs.length === 0;
+      return;
+    }
+    renderedRefSignature = signature;
+    capsuleRefs.replaceChildren();
+    if (strokeRefs.length === 0) {
+      capsuleRefs.hidden = true;
+      return;
+    }
+    strokeRefs.forEach((ref, index) => {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'capsule-ref';
+      chip.dataset.noDrag = '1';
+      chip.setAttribute('role', 'listitem');
+      const mark = marks[index] || String(index + 1);
+      chip.textContent = ref.label ? `${mark} ${ref.label}` : mark;
+      chip.title = '点击移除这一处';
+      chip.setAttribute('aria-label', `移除第 ${index + 1} 处选中`);
+      chip.addEventListener('click', () => {
+        strokeRefs = strokeRefs.filter((item) => item !== ref);
+        renderStrokeRefs();
+        syncHitRegions();
+      });
+      capsuleRefs.appendChild(chip);
+    });
+    capsuleRefs.hidden = false;
   }
 
   function isPointInside(x, y, element) {
@@ -566,6 +609,9 @@
     const trimmed = String(command == null ? '' : command).trim();
     if (!trimmed) return;
     const inputMode = state.inputMode;
+    // Chips the user removed are removed from the request too, or the chip is a
+    // decoration that lies about what was sent.
+    const keptStrokeIndexes = strokeRefs.map((ref) => ref.strokeIndex);
     dispatch({ type: 'SUBMIT', command: trimmed });
     if (state.name !== 'processing') return;
     if (api && typeof api.submitSelectionCommand === 'function') {
@@ -573,6 +619,7 @@
         selectionSessionToken: session.token,
         command: trimmed,
         inputMode,
+        keptStrokeIndexes,
       });
     }
   }
@@ -1473,7 +1520,11 @@
       || name === 'result' || name === 'error'
       || (name === 'dismissing' && !capsule.hidden);
     if (capsuleOpen) {
-      if (session.selectionCount > 1) {
+      renderStrokeRefs();
+      // The bare "2 处" badge is redundant once each stroke has its own chip:
+      // the chips say how many, and which.
+      const showCount = session.selectionCount > 1 && strokeRefs.length === 0;
+      if (showCount) {
         capsuleCount.textContent = `${session.selectionCount} 处`;
         capsuleCount.hidden = false;
       } else {
@@ -1682,6 +1733,19 @@
     if ('selectionCount' in payload) {
       const count = Number(payload.selectionCount);
       session.selectionCount = Number.isFinite(count) ? Math.max(1, Math.min(8, Math.round(count))) : 1;
+      // Multi-stroke gestures become one chip per stroke. Rebuilt only when the
+      // count actually changes, so a re-render never resurrects a chip the user
+      // just removed.
+      if (session.selectionCount !== strokeRefs.length && session.selectionCount > 1) {
+        strokeRefs = Array.from({ length: session.selectionCount }, (_unused, index) => ({
+          strokeIndex: index,
+          label: '',
+        }));
+        renderedRefSignature = '';
+      } else if (session.selectionCount <= 1 && strokeRefs.length) {
+        strokeRefs = [];
+        renderedRefSignature = '';
+      }
     }
     if ('capsuleDelayMs' in payload) {
       const delay = Number(payload.capsuleDelayMs);
