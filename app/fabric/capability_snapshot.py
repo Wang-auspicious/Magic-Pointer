@@ -4,7 +4,7 @@ import sys
 from dataclasses import dataclass
 from typing import Any, Literal, Mapping, Sequence
 
-from app.fabric.catalog import RECIPE_CATALOG
+from app.fabric.catalog import CATALOG_WARNINGS, RECIPE_CATALOG
 from app.fabric.engine import provider_for_recipe
 from app.fabric.schema import RecipeDefinition
 
@@ -50,6 +50,10 @@ class CapabilityStatus:
 class CapabilitySnapshot:
     platform: str
     capabilities: tuple[CapabilityStatus, ...]
+    # Plugin manifests that failed to load. A folder of recipes that silently
+    # does nothing is the worst outcome for "drop a folder in and it works":
+    # the user has no way to tell a broken plugin from one they installed wrong.
+    plugin_warnings: tuple[str, ...] = ()
 
     def by_id(self, capability_id: str) -> CapabilityStatus:
         for status in self.capabilities:
@@ -62,6 +66,7 @@ class CapabilitySnapshot:
             "schemaVersion": 1,
             "platform": self.platform,
             "capabilities": [status.to_dict() for status in self.capabilities],
+            "pluginWarnings": list(self.plugin_warnings),
         }
 
 
@@ -346,4 +351,8 @@ def build_engine_capability_snapshot(
                 _repair("connections", "executor_not_wired"),
             )
         statuses.append(status)
-    return CapabilitySnapshot(platform=current_platform, capabilities=tuple(statuses))
+    return CapabilitySnapshot(
+        platform=current_platform,
+        capabilities=tuple(statuses),
+        plugin_warnings=tuple(CATALOG_WARNINGS),
+    )
