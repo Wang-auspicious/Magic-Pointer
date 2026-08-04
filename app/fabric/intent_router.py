@@ -110,6 +110,30 @@ NON_DESTINATION_RECIPES = frozenset({
     "voice.short_command",
 })
 
+# The same judgement, taken from what a recipe says it produces rather than from
+# a list someone has to remember to extend. `element.pick` was missing from the
+# names above, so on 2026-08-05 the question "这是什么" over a WeChat message came
+# back as "点选元素追问：已锁定 1 个对象，provider=internal" — a notice about our
+# own bookkeeping in place of an answer. Its outputKind is `grounded_object`,
+# exactly like `ground.this`, which had been excluded for the same reason years
+# of one at a time.
+NON_DESTINATION_OUTPUT_KINDS = frozenset({
+    "grounded_object",
+    "activation_intent",
+    "interaction_episode",
+})
+
+
+def is_non_destination_recipe(recipe: Any) -> bool:
+    """Is this recipe plumbing rather than somewhere a command can end up?"""
+    if str(getattr(recipe, "id", "") or "") in NON_DESTINATION_RECIPES:
+        return True
+    return str(getattr(recipe, "output_kind", "") or "") in NON_DESTINATION_OUTPUT_KINDS
+
+
+def tool_name_for_recipe(recipe_id: str) -> str:
+    return str(recipe_id or "").replace(".", "__")
+
 
 @dataclass
 class RouteDecision:
@@ -279,12 +303,12 @@ def recipe_tool_schemas(*, enabled: dict[str, bool] | None = None, limit: int = 
             continue
         # System plumbing is not something a model should invoke on a user's
         # behalf mid-command.
-        if recipe.id in NON_DESTINATION_RECIPES:
+        if is_non_destination_recipe(recipe):
             continue
         tools.append({
             "type": "function",
             "function": {
-                "name": recipe.id.replace(".", "__"),
+                "name": tool_name_for_recipe(recipe.id),
                 "description": f"{recipe.title_zh}：{recipe.description_zh}",
                 "parameters": {
                     "type": "object",
@@ -390,7 +414,7 @@ class IntentRouter:
 
     def _keyword_confident(self, command: str, *, object_count: int) -> IntentMatch | None:
         match = self._keyword_router.route(command, object_count=object_count or None)
-        if match.recipe_id is None or match.recipe_id in NON_DESTINATION_RECIPES:
+        if match.recipe_id is None or is_non_destination_recipe(get_recipe(match.recipe_id)):
             return None
         if self.recipe_enabled.get(match.recipe_id, True) is False:
             return None
@@ -409,7 +433,7 @@ class IntentRouter:
         if not isinstance(raw, dict):
             return None
         recipe_id = recipe_id_from_tool_name(str(raw.get("recipeId") or raw.get("name") or ""))
-        if recipe_id is None or recipe_id in NON_DESTINATION_RECIPES:
+        if recipe_id is None or is_non_destination_recipe(get_recipe(recipe_id)):
             return None
         if self.recipe_enabled.get(recipe_id, True) is False:
             return None
