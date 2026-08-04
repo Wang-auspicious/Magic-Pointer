@@ -34,6 +34,15 @@
       <section id="stage-thread" class="stage-thread" aria-label="本次会话" hidden>
         <div class="thread-grip" data-drag-handle="1" role="presentation" title="拖动移动面板"><i></i></div>
         <div id="stage-result" class="stage-result" role="log" aria-live="polite"></div>
+        <!-- Drag the bottom edge to change how long the answer is. The same
+             gesture as the selection stretch handle, on the result side: down
+             for more detail, up for tighter. Never a drag surface for the panel
+             itself, so it carries data-no-drag. -->
+        <div id="thread-stretch" class="thread-stretch" data-no-drag="1" role="separator"
+             aria-label="拖动改变回答长度" title="向下拖=更详细，向上拖=更简洁" hidden>
+          <span class="thread-stretch-grip" aria-hidden="true"></span>
+          <span id="thread-stretch-hint" class="thread-stretch-hint" aria-live="polite"></span>
+        </div>
         <footer class="thread-bar" data-drag-handle="1">
           <span id="thread-count" class="thread-count"></span>
           <button type="button" id="thread-copy" class="thread-tool" data-no-drag="1">复制</button>
@@ -103,6 +112,7 @@
     <script src="../stage_state.js"></script>
     <script src="../stage_anchor.js"></script>
     <script src="../stage_chips_policy.js"></script>
+    <script src="../stage_stretch_policy.js"></script>
     <script src="../stage_hit_policy.js"></script>
     <script src="../voice_trigger_policy.js"></script>
     <script src="stage.js"></script>

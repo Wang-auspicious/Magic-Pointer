@@ -37,6 +37,12 @@ from app.fabric.intent_router import (
     recipe_tool_schemas,
 )
 from app.model_health import read_health
+from app.text_actions.length_target import (
+    build_instruction,
+    hit_target,
+    target_from_command,
+    warning_for,
+)
 from app.actions.draft_delivery import (
     DraftDeliveryError,
     make_draft_delivery_proposal,
@@ -1635,6 +1641,62 @@ def _fabric_response(
 # "暂时无法从…读取可靠对象".
 
 
+def _length_target_response(
+    payload: dict[str, Any],
+    target_window: dict[str, Any] | None,
+    app_ctx: AdapterReadContext | None,
+    snapshot: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Answer "扩写/压缩到 N 行" against the length engine, honestly.
+
+    Returns None when the command is not a length target, so the normal chain
+    continues. When it is, the answer is the replacement text and nothing else —
+    it is meant to be pasted, so a preamble would be pasted with it.
+    """
+    command = str(payload.get("command") or "").strip()
+    source = str(getattr(app_ctx, "content", "") or "").strip()
+    if not command or not source:
+        return None
+    target = target_from_command(command, source)
+    if target is None:
+        return None
+
+    selection_session_id = str(payload.get("selectionSessionId") or "") or None
+    selection_snapshot_id = str((snapshot or {}).get("snapshot_id") or "") or None
+    base = {
+        "prompt": command,
+        "intentKind": "length_target",
+        "lengthTarget": target.to_dict(),
+        "route": {"tier": "L0", "reason": "length_target", "recipeId": target.recipe_id},
+        "selectionContext": None if app_ctx is None else app_ctx.to_dict(),
+        "sourceWindow": target_window,
+        "selectionSessionId": selection_session_id,
+        "selectionSnapshotId": selection_snapshot_id,
+        "actionProposals": [],
+    }
+
+    warning = warning_for(target, source)
+    if warning is not None:
+        # Named before a model call is spent, not after.
+        return {**base, "ok": False, "error": warning}
+
+    result = clean_replacement_text(ask_text_model(
+        build_instruction(target),
+        context_text=f"原文：\n{source}",
+        system_prompt="你按指定长度改写文字。只输出改写后的文字本身，不要任何解释。",
+        timeout_s=GENERAL_TIMEOUT_S,
+        attempts=1,
+    ))
+    if not result or result.startswith("AI 调用失败"):
+        return {**base, "ok": False, "error": result or "模型没有返回内容，没有改动任何东西。"}
+
+    hit, measurement = hit_target(result, target)
+    # Say whether it landed. Reporting a miss as a success is the failure mode
+    # this feature is most prone to, because the text still looks fine either way.
+    detail = measurement if hit else f"{measurement}（没有正好命中，可以再拉一次）"
+    return {**base, "ok": True, "answer": result, "detail": detail, "lengthHit": hit}
+
+
 def _classify_with_model(command: str, object_summary: str, tools: list[dict[str, Any]]) -> dict[str, Any] | None:
     """L1: one cheap call that picks a capability and its parameters."""
     if not tools:
@@ -2013,6 +2075,16 @@ def main() -> int:
     if fabric_response is not None:
         print(json.dumps(fabric_response, ensure_ascii=False))
         return 0 if fabric_response.get("ok") is True else 1
+
+    # A length target ("扩写到 5 行") is measurable, so it is answered by the
+    # length engine rather than by generic prose: the instruction forbids
+    # inventing facts, and the result is checked against the number the user's
+    # hand asked for. Both the stretch handle and a typed command land here.
+    length_response = _length_target_response(payload, target_window, app_ctx, snapshot)
+    if length_response is not None:
+        clock.total(ok=length_response.get("ok") is True)
+        print(json.dumps(length_response, ensure_ascii=False))
+        return 0 if length_response.get("ok") is True else 1
 
     episode_context = _interaction_episode_context(payload.get("interactionEpisode"))
     context_text = _selection_context_text(app_ctx, target_window)

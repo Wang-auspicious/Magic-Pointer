@@ -31,6 +31,11 @@
   const threadClose = document.getElementById('thread-close');
   const errorCard = document.getElementById('stage-error');
   const chipsBox = document.getElementById('stage-chips');
+  const stretchBar = document.getElementById('thread-stretch');
+  const stretchHint = document.getElementById('thread-stretch-hint');
+  const stretchPolicy = globalThis.StageStretchPolicy || null;
+  // Live drag state for the answer-length handle, or null.
+  let stretchDrag = null;
   const noticeBox = document.getElementById('stage-notice');
   const noticeText = document.getElementById('stage-notice-text');
   let modelHealth = { circuitOpen: false, message: '', state: 'unknown' };
@@ -187,6 +192,23 @@
   // native scrollbars are not elements, so pulling one dragged the whole
   // bubble across the screen. Dragging is now positive: it starts only on an
   // element that declares itself a handle, and never inside [data-no-drag].
+  function isPointInside(x, y, element) {
+    if (!element || element.hidden) return false;
+    const rect = element.getBoundingClientRect();
+    return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+  }
+
+  // How many lines the newest answer occupies on screen. Measured rather than
+  // counted from the text, because wrapping is what the user actually sees.
+  function answerLineCount() {
+    const answers = resultCard.querySelectorAll('.turn-answer');
+    const last = answers[answers.length - 1];
+    if (!last) return 1;
+    const height = last.getBoundingClientRect().height;
+    const lineHeight = stretchPolicy?.LINE_HEIGHT_PX || 20;
+    return Math.max(1, Math.round(height / lineHeight));
+  }
+
   function isDragHandleAt(x, y, rootEl) {
     if (!rootEl || rootEl.hidden) return false;
     let node = document.elementFromPoint(x, y);
@@ -218,6 +240,40 @@
     const overResult = !threadPanel.hidden
       && x >= resultRect.left && x <= resultRect.right
       && y >= resultRect.top && y <= resultRect.bottom;
+    // The stretch handle is checked before the panel-drag handle: it lives
+    // inside the panel, and a drag that starts on it changes the answer's
+    // length rather than moving the surface.
+    if (overResult && primaryDown && !previousPrimaryDown && !surfaceDrag && !stretchDrag) {
+      if (stretchPolicy && stretchBar && !stretchBar.hidden && isPointInside(x, y, stretchBar)) {
+        stretchDrag = { startY: y, currentLines: answerLineCount(), intent: null };
+        stretchBar.classList.add('is-dragging');
+      }
+    }
+    if (stretchDrag) {
+      stretchDrag.intent = stretchPolicy.stretchIntent({
+        dragPx: y - stretchDrag.startY,
+        currentLines: stretchDrag.currentLines,
+      });
+      // Live preview while the finger is down: the number the hint promises is
+      // the number the command will ask for.
+      if (stretchHint) stretchHint.textContent = stretchDrag.intent.hint;
+      stretchBar.dataset.direction = stretchDrag.intent.direction;
+      if (!primaryDown && previousPrimaryDown) {
+        const command = stretchPolicy.stretchCommand(stretchDrag.intent);
+        stretchBar.classList.remove('is-dragging');
+        delete stretchBar.dataset.direction;
+        if (stretchHint) stretchHint.textContent = '';
+        stretchDrag = null;
+        // Submitted through the ordinary composer path, so the gesture appears
+        // in the thread as an ask like any other — the user can see what their
+        // hand asked for, and it is undoable by asking again.
+        if (command) submitCommand(command);
+        syncHitRegions();
+        return;
+      }
+      previousPointerButtons = buttons;
+      return;
+    }
     if (overResult && primaryDown && !previousPrimaryDown && !surfaceDrag) {
       if (isDragHandleAt(x, y, threadPanel)) {
         surfaceDrag = { element: threadPanel, startX: x, startY: y, originLeft: resultRect.left, originTop: resultRect.top };
@@ -1169,7 +1225,19 @@
     }
     threadCount.textContent = turns.length > 1 ? `${turns.length} 轮` : '';
     threadCount.hidden = turns.length <= 1;
-    syncWaitClock(turns.some((turn) => turn.status === 'pending'));
+    const pending = turns.some((turn) => turn.status === 'pending');
+    syncWaitClock(pending);
+    // The handle only means something over a finished text answer: there is
+    // nothing to lengthen while a turn is still running, and a card result
+    // (calendar draft, table diff) is not prose to stretch.
+    if (stretchBar) {
+      const newest = turns[turns.length - 1];
+      const kind = newest?.result?.kind;
+      const isProse = kind === undefined || kind === null || kind === 'inline';
+      const stretchable = Boolean(stretchPolicy) && !pending && newest?.status === 'done' && isProse;
+      stretchBar.hidden = !stretchable;
+      if (!stretchable && stretchHint) stretchHint.textContent = '';
+    }
   }
 
   function clearChips() {

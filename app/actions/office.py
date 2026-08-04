@@ -47,6 +47,29 @@ def clean_replacement_text(answer: str) -> str:
     for prefix in ("Replacement:", "Rewritten:", "\u6539\u5199\u5982\u4e0b\uff1a", "\u6539\u5199\u5982\u4e0b:", "\u66ff\u6362\u6587\u672c\uff1a", "\u66ff\u6362\u6587\u672c:"):
         if text.startswith(prefix):
             text = text[len(prefix):].strip()
+    # A whole opening line that only announces the answer. This text gets pasted
+    # into the user's document or input box, so "\u597d\u7684\uff0c\u4ee5\u4e0b\u662f\u6539\u5199\u540e\u7684\u5185\u5bb9\uff1a" would
+    # be pasted along with it. Only ever the FIRST line, only when it ends in a
+    # colon, and only when real content follows \u2014 a first line that IS the answer
+    # must survive untouched.
+    lines = text.split("\n", 1)
+    if len(lines) == 2:
+        head, rest = lines[0].strip(), lines[1].strip()
+        lowered = head.casefold()
+        announces = (
+            head.endswith(("\uff1a", ":"))
+            and len(head) <= 40
+            and rest
+            and any(
+                token in lowered
+                for token in (
+                    "\u597d\u7684", "\u4ee5\u4e0b\u662f", "\u5982\u4e0b", "\u8fd9\u662f", "\u6539\u5199\u540e", "\u538b\u7f29\u540e", "\u6269\u5199\u540e",
+                    "\u7ffb\u8bd1\u540e", "\u7ed3\u679c", "here is", "here's", "sure", "rewritten",
+                )
+            )
+        )
+        if announces:
+            text = rest
     return text
 
 

@@ -101,3 +101,25 @@ def test_typing_the_command_and_dragging_the_handle_reach_the_same_target() -> N
     assert by_chars.direction == "expand"
 
     assert target_from_command("改得更正式", TWO_LINES) is None
+
+
+def test_an_announcing_first_line_is_stripped_but_a_real_one_survives() -> None:
+    """替换文本会被「填入」粘进用户的文档或输入框。
+
+    所以"好的，以下是改写后的内容："这种开场白必须去掉——它会跟着一起被粘进去。
+    但第一行本身就是答案（哪怕带冒号）的情况必须原样保留，否则会吃掉真正的内容。
+    """
+    from app.actions.office import clean_replacement_text
+
+    assert clean_replacement_text("好的，以下是改写后的内容：\n真正的正文。") == "真正的正文。"
+    assert clean_replacement_text("压缩后如下：\n短一点的版本") == "短一点的版本"
+    assert clean_replacement_text("Here is the rewrite:\nthe actual text") == "the actual text"
+
+    # 第一行就是正文的情况：一个字都不能动。
+    assert clean_replacement_text("会议时间：\n下午三点") == "会议时间：\n下午三点"
+    assert clean_replacement_text("第一行就是答案：这句话本身带冒号\n第二行") == (
+        "第一行就是答案：这句话本身带冒号\n第二行"
+    )
+    assert clean_replacement_text("只有一行的答案") == "只有一行的答案"
+    # 只有开场白、后面没内容 → 保留原样，不要交出空字符串。
+    assert clean_replacement_text("以下是：") == "以下是："
