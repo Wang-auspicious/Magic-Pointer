@@ -1772,6 +1772,10 @@ function startMouseShakePolling() {
         t: now,
         x: pos.x - stageBounds.x,
         y: pos.y - stageBounds.y,
+        // Pick mode asks the target app's automation tree about a point, and
+        // that tree speaks screen coordinates, not ours.
+        screenX: pos.x,
+        screenY: pos.y,
         buttons: Number(pointerInputState.buttons || 0),
       });
     }
@@ -3345,6 +3349,37 @@ function submitSelectionCommandWhenGrounded(payload, startedAt, noticeShown = fa
   });
   if (child) activeSessionChildren.set(selectionSessionToken, child);
 }
+
+// Pick mode: the stage asks what element is under a point so it can outline the
+// whole thing. Geometry only — no screenshot, no OCR, no content.
+//
+// TODO(perf): this spawns Python per pick (~1.2s, of which ~300ms is interpreter
+// startup and the rest is the UIA probe process). That is tolerable on click and
+// far too slow for hover. Make it resident the way the OCR worker is, then hover
+// highlighting becomes possible. Recorded rather than fixed now: click-rate is
+// the interaction the feature was asked for.
+ipcMain.handle('stage:pick-element', async (event, payload) => {
+  if (!isSurfaceSender(event, 'stage', resultTargetWindow)) {
+    return { ok: false, error: 'unauthorized_stage_sender' };
+  }
+  const x = Number(payload?.x);
+  const y = Number(payload?.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    return { ok: false, error: 'invalid_point' };
+  }
+  const session = selectionSessions.get(String(payload?.selectionSessionToken || ''));
+  const hwnd = Number(session?.snapshot?.source_window?.hwnd || 0);
+  try {
+    return await runPythonBridgePromise(
+      { x: Math.round(x), y: Math.round(y), hwnd: Number.isFinite(hwnd) ? hwnd : 0 },
+      'scripts/element_probe_bridge.py',
+      { target: 'stage', timeoutMs: 3000 },
+    );
+  } catch (error) {
+    log(`stage:pick-element failed ${error.name}: ${error.message}`);
+    return { ok: false, error: 'element_probe_unavailable' };
+  }
+});
 
 ipcMain.handle('stage:agent-sessions', async (event, payload) => {
   if (!isSurfaceSender(event, 'stage', resultTargetWindow)) {

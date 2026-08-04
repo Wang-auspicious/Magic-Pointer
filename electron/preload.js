@@ -46,6 +46,11 @@ contextBridge.exposeInMainWorld('magicPointerStage', {
     text: String(payload?.text || ''),
     selectionSessionToken: payload?.selectionSessionToken || null,
   }),
+  pickElement: (payload) => ipcRenderer.invoke('stage:pick-element', {
+    x: Number(payload?.x) || 0,
+    y: Number(payload?.y) || 0,
+    selectionSessionToken: String(payload?.selectionSessionToken || ''),
+  }),
   listAgentSessions: (selectionSessionToken) => ipcRenderer.invoke('stage:agent-sessions', {
     selectionSessionToken: String(selectionSessionToken || ''),
   }),

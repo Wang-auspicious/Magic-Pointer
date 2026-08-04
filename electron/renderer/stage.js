@@ -36,6 +36,14 @@
   const stretchPolicy = globalThis.StageStretchPolicy || null;
   // Live drag state for the answer-length handle, or null.
   let stretchDrag = null;
+  // Pick mode: the element the user last picked, so an unchanged pick does not
+  // restart the highlight animation (that reads as flicker).
+  let pickTargetShown = null;
+  let pickInFlight = false;
+  // Where this window sits on the virtual desktop, learned from the pointer
+  // stream (which carries both spaces) rather than assumed to be zero.
+  let stageOriginX = 0;
+  let stageOriginY = 0;
   const noticeBox = document.getElementById('stage-notice');
   const noticeText = document.getElementById('stage-notice-text');
   let modelHealth = { circuitOpen: false, message: '', state: 'unknown' };
@@ -192,6 +200,52 @@
   // native scrollbars are not elements, so pulling one dragged the whole
   // bubble across the screen. Dragging is now positive: it starts only on an
   // element that declares itself a handle, and never inside [data-no-drag].
+  // Pick mode: ask what element is under this screen point and outline the whole
+  // thing. Screen coordinates, because the answer comes from the target app's
+  // automation tree, not from our window.
+  async function pickElementAt(screenX, screenY) {
+    if (pickInFlight || !api || typeof api.pickElement !== 'function') return;
+    pickInFlight = true;
+    try {
+      const response = await api.pickElement({
+        x: screenX,
+        y: screenY,
+        selectionSessionToken: session.token,
+      });
+      if (response?.ok !== true || !response.rect) return;
+      const picked = { rect: response.rect, label: String(response.label || '') };
+      const pickPolicy = globalThis.StagePickPolicy;
+      // Repainting the same rectangle restarts its animation; skip it.
+      if (pickPolicy && pickPolicy.isSameTarget(pickTargetShown, picked)) return;
+      pickTargetShown = picked;
+      showPickHighlight(picked);
+    } catch (_) {
+      // A failed pick is a no-op: the user sees nothing light up, which is the
+      // honest outcome, and nothing else about the session changes.
+    } finally {
+      pickInFlight = false;
+    }
+  }
+
+  // Reuses the frozen-glow surface and its sweep-band styling, so a picked
+  // element looks like a drawn selection rather than a second visual language.
+  function showPickHighlight(picked) {
+    const rect = picked.rect;
+    // Screen -> stage-window coordinates. The stage window's own origin is the
+    // offset, and it is tracked from the pointer stream (screenX minus x).
+    placeRect(frozenGlow, {
+      x: rect.x - stageOriginX,
+      y: rect.y - stageOriginY,
+      width: rect.width,
+      height: rect.height,
+    });
+    frozenGlow.hidden = false;
+    frozenGlow.classList.remove('is-picked');
+    // Force a reflow so the animation restarts for a genuinely new target.
+    void frozenGlow.offsetWidth;
+    frozenGlow.classList.add('is-picked');
+  }
+
   function isPointInside(x, y, element) {
     if (!element || element.hidden) return false;
     const rect = element.getBoundingClientRect();
@@ -229,6 +283,10 @@
     const buttons = Number(payload?.buttons || 0);
     if (![t, x, y, buttons].every(Number.isFinite)) return;
     lastPointerPoint = { x, y };
+    if (Number.isFinite(payload?.screenX) && Number.isFinite(payload?.screenY)) {
+      stageOriginX = Number(payload.screenX) - x;
+      stageOriginY = Number(payload.screenY) - y;
+    }
     syncHitRegions();
     const capsuleRect = capsule.getBoundingClientRect();
     const overCapsule = !capsule.hidden
@@ -240,6 +298,15 @@
     const overResult = !threadPanel.hidden
       && x >= resultRect.left && x <= resultRect.right
       && y >= resultRect.top && y <= resultRect.bottom;
+    // Pick mode: a click that lands outside our own surfaces, while the composer
+    // is open, means "tell me about that thing" — the element under the cursor
+    // lights up whole. Inside our surfaces the click belongs to the UI.
+    if (primaryDown && !previousPrimaryDown && !overCapsule && !overResult && !surfaceDrag && !stretchDrag) {
+      const composerOpen = state.name === 'capsule-text' || state.name === 'capsule-voice';
+      if (composerOpen && Number.isFinite(payload?.screenX) && Number.isFinite(payload?.screenY)) {
+        pickElementAt(Number(payload.screenX), Number(payload.screenY));
+      }
+    }
     // The stretch handle is checked before the panel-drag handle: it lives
     // inside the panel, and a drag that starts on it changes the answer's
     // length rather than moving the surface.

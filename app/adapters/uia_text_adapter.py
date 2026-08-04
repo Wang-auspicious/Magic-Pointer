@@ -454,10 +454,15 @@ class UiaTextSelectionAdapter(AppAdapter):
             if result_kind == "region_elements"
             else "uia:element-from-point"
             if result_kind == "point_element"
+            # Geometry with no readable name: the probe found the box the user
+            # pointed at but nothing to read from it. Worth reporting, because it
+            # clips the pixel fallback to that box instead of the whole screen.
+            else "uia:element-region-from-point"
+            if result_kind == "point_region"
             else "uia:text-pattern.selection"
         )
         selection_rectangles = list(data.get("rectangles") or [])[:32]
-        if result_kind in {"point_element", "terminal_buffer"} and not selection_rectangles:
+        if result_kind in {"point_element", "point_region", "terminal_buffer"} and not selection_rectangles:
             element_rect = data.get("element_rect")
             if isinstance(element_rect, list) and len(element_rect) == 4:
                 selection_rectangles = [element_rect]
@@ -484,8 +489,7 @@ class UiaTextSelectionAdapter(AppAdapter):
                 "terminal_anchor_available": bool(data.get("terminal_anchor_text")),
             }
         if (
-            result_kind != "point_element"
-            and result_kind != "terminal_buffer"
+            result_kind not in {"point_element", "point_region", "terminal_buffer"}
             and
             app == "pdf"
             and str(window.get("class_name") or "") == "Chrome_WidgetWin_1"
