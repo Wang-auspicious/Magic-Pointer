@@ -1293,7 +1293,7 @@
       "providerStrategies": [
         "native_clipboard"
       ],
-      "risk": "local_write",
+      "risk": "read",
       "verification": "clipboard_hash_and_format_list",
       "keywords": {
         "zh": [
@@ -1314,7 +1314,7 @@
         "macos"
       ],
       "version": 1,
-      "provider": "unavailable:clipboard_history_not_wired"
+      "provider": "clipboard.history"
     },
     {
       "id": "screen.recall",

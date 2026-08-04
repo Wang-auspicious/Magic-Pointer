@@ -156,6 +156,8 @@ class FabricExecutors:
                 verified=True,
                 verification={"mode": "internal_contract"},
             )
+        if plan.provider == "clipboard.history":
+            return self._clipboard_history(plan)
         if plan.provider == "clipboard":
             return self._clipboard(plan)
         if plan.provider == "native.ocr":
@@ -308,6 +310,16 @@ class FabricExecutors:
         self.clipboard_writer(value)
         actual = self.clipboard_reader() if self.clipboard_reader is not None else value
         verified = actual == value
+        if verified:
+            # One place records history: the moment a copy is known to have
+            # landed. Recording before the readback would remember copies that
+            # never happened.
+            try:
+                from app.actions.clipboard_history import ClipboardHistory
+
+                ClipboardHistory().record(value, app=str(plan.parameters.get("sourceApp") or ""))
+            except Exception:
+                pass
         return _receipt(
             plan,
             status="succeeded" if verified else "verification_failed",
@@ -324,6 +336,60 @@ class FabricExecutors:
                 "sourceImageSha256": _sha256(image_path.read_bytes()),
             },
             error=None if verified else "clipboard_readback_mismatch",
+        )
+
+    def _clipboard_history(self, plan: OperationPlan) -> ExecutionReceipt:
+        """Look back at what was copied, and put one of them back.
+
+        Read-only by default. Restoring is a write, so it only happens when the
+        user names an entry — recalling history must never silently change what
+        is on the clipboard right now.
+        """
+        from app.actions.clipboard_history import ClipboardHistory
+
+        history = ClipboardHistory()
+        digest = str(plan.parameters.get("digest") or "").strip()
+        if digest:
+            entry = history.get(digest)
+            if entry is None:
+                return _receipt(plan, status="failed", error="clipboard_entry_expired")
+            if self.clipboard_writer is None:
+                return _receipt(plan, status="capability_unavailable", error="clipboard_writer_not_configured")
+            self.clipboard_writer(entry.text)
+            actual = self.clipboard_reader() if self.clipboard_reader is not None else entry.text
+            verified = actual == entry.text
+            return _receipt(
+                plan,
+                status="succeeded" if verified else "verification_failed",
+                output={"text": entry.text, "restored": True},
+                verified=verified,
+                verification={"clipboardSha256": _sha256(actual)},
+                error=None if verified else "clipboard_readback_mismatch",
+            )
+
+        query = str(plan.parameters.get("query") or plan.command or "").strip()
+        matches = history.search(query) if query else history.recent()
+        return _receipt(
+            plan,
+            status="succeeded",
+            output={
+                "entries": [
+                    {
+                        "digest": entry.digest,
+                        "excerpt": entry.text[:200],
+                        "at": entry.at,
+                        "app": entry.app,
+                        "truncated": entry.truncated,
+                    }
+                    for entry in matches
+                ],
+                "coverage": (
+                    "还没有记录到复制内容。" if not matches
+                    else f"找到 {len(matches)} 条复制记录。"
+                ),
+            },
+            verified=True,
+            verification={"mode": "read_only", "count": str(len(matches))},
         )
 
     def _clipboard(self, plan: OperationPlan) -> ExecutionReceipt:
@@ -343,6 +409,16 @@ class FabricExecutors:
         self.clipboard_writer(value)
         actual = self.clipboard_reader() if self.clipboard_reader is not None else value
         verified = actual == value
+        if verified:
+            # One place records history: the moment a copy is known to have
+            # landed. Recording before the readback would remember copies that
+            # never happened.
+            try:
+                from app.actions.clipboard_history import ClipboardHistory
+
+                ClipboardHistory().record(value, app=str(plan.parameters.get("sourceApp") or ""))
+            except Exception:
+                pass
         return _receipt(
             plan,
             status="succeeded" if verified else "verification_failed",
