@@ -27,6 +27,7 @@
   const threadPanel = document.getElementById('stage-thread');
   const threadCount = document.getElementById('thread-count');
   const threadCopy = document.getElementById('thread-copy');
+  const threadInsert = document.getElementById('thread-insert');
   const threadClose = document.getElementById('thread-close');
   const errorCard = document.getElementById('stage-error');
   const chipsBox = document.getElementById('stage-chips');
@@ -1057,6 +1058,23 @@
   // The thread bar replaces the per-answer toolbar: with the composer always
   // live underneath, a "追问" button is redundant — you just type.
   threadCopy.addEventListener('click', () => copyResultText(resultCard, threadCopy));
+  // 填入 sends exactly what is on screen, so an answer the user edited or
+  // re-asked is what travels. Whether it can actually be written -- and whether
+  // the write can be confirmed -- is decided in the main process and Python; the
+  // reply arrives as a normal turn saying what really happened.
+  threadInsert.addEventListener('click', () => {
+    const text = resultPlainText(resultCard);
+    if (!text) return;
+    if (!api || typeof api.insertResultText !== 'function') return;
+    const original = threadInsert.textContent;
+    threadInsert.disabled = true;
+    threadInsert.textContent = '填入中';
+    setTimeout(() => {
+      threadInsert.disabled = false;
+      threadInsert.textContent = original;
+    }, 1600);
+    api.insertResultText({ text, selectionSessionToken: session.token });
+  });
   threadClose.addEventListener('click', () => dispatch({ type: 'DISMISS' }));
 
   // Result payloads are discriminated by `kind`; anything unknown falls back

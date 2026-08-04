@@ -3353,6 +3353,45 @@ ipcMain.on('stage:execute-action', (event, payload) => {
   if (isSurfaceSender(event, 'stage', resultTargetWindow)) executeActionForTarget(payload, 'stage');
 });
 
+// "填入" carries the answer the user is looking at back into the app they were
+// working in. The renderer supplies only the text; the target window, pid, title
+// and point come from the frozen selection session, so the write can never be
+// aimed somewhere the user did not point. Python decides whether the write is
+// possible and verifiable, and falls back to the clipboard when it is not.
+ipcMain.on('stage:insert-result-text', (event, payload) => {
+  if (!isSurfaceSender(event, 'stage', resultTargetWindow)) return;
+  const selectionSessionToken = payload?.selectionSessionToken || null;
+  const session = selectionSessionToken ? selectionSessions.get(selectionSessionToken) : null;
+  if (!session) {
+    log('stage:insert-result-text rejected expired selection session');
+    deliverStageError(selectionSessionToken, '当前 THIS 已过期，请重新激活 Magic Pointer。');
+    return;
+  }
+  const text = String(payload?.text || '');
+  if (!text.trim()) {
+    deliverStageError(selectionSessionToken, '没有可填入的文字。');
+    return;
+  }
+  const snapshot = session.snapshot || {};
+  log(`stage:insert-result-text token=${selectionSessionToken} chars=${text.length}`);
+  runPythonBridge({
+    text,
+    targetWindow: safeClone(snapshot.source_window || {}),
+    targetPoint: safeClone(snapshot.target_point || null),
+    targetPointSpace: snapshot.target_point_space || null,
+  }, 'scripts/deliver_text_bridge.py', 'stage', {
+    onComplete: (parsed) => {
+      if (!selectionSessions.get(selectionSessionToken)) {
+        log('stage:insert-result-text result ignored expired selection session');
+        return;
+      }
+      parsed.selectionSessionToken = selectionSessionToken;
+      log(`stage:insert-result-text outcome=${parsed?.delivery?.reasonCode || parsed?.error || 'unknown'}`);
+      sendBridgeResult('stage', parsed);
+    },
+  });
+});
+
 function isDashboardSender(event) {
   return Boolean(dashboardWindow && !dashboardWindow.isDestroyed() && event.sender === dashboardWindow.webContents);
 }

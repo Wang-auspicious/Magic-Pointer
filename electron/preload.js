@@ -40,6 +40,12 @@ contextBridge.exposeInMainWorld('magicPointerStage', {
   submitSelectionCommand: (payload) => ipcRenderer.send('stage:submit-selection-command', payload),
   executeAction: (payload) => ipcRenderer.send('stage:execute-action', payload),
   contextAction: (payload) => ipcRenderer.send('stage:context-action', payload),
+  // The renderer sends the text it is showing; the target window and point stay
+  // in main, bound to the selection session, so a renderer cannot aim a write.
+  insertResultText: (payload) => ipcRenderer.send('stage:insert-result-text', {
+    text: String(payload?.text || ''),
+    selectionSessionToken: payload?.selectionSessionToken || null,
+  }),
   listAgentSessions: (selectionSessionToken) => ipcRenderer.invoke('stage:agent-sessions', {
     selectionSessionToken: String(selectionSessionToken || ''),
   }),
