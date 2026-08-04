@@ -13,13 +13,13 @@ internal static class UiaSelectionProbe
 {
     private const int MaxTextChars = 65536;
     // Measured 2026-08-03 against live windows with the cap lifted to 3000ms:
-    // RunProbeCore needs 199-975ms depending on how big the target's automation
-    // tree is (Edge ~205ms, Clash ~310ms, CC Switch ~320ms, QQ ~730ms - QQ is
-    // CEF-based, so FindDocumentSelection's FindAll(TreeScope.Descendants) walks
-    // an enormous tree). At the old 200ms cap every one of those four windows
-    // came back as "uia_probe_timeout_200ms", which reports a *read failure* for
-    // what is really "nothing is selected here" - and a read failure sends the
-    // caller down the OCR fallback instead of staying silent.
+    // RunProbeCore needs 199-975ms depending on the target. Most of it is the
+    // FindDocumentSelection phase waiting on the app's automation provider
+    // (115-227ms of a ~300ms probe; see the comment there for what that cost is
+    // and is not). At the old 200ms cap every window tested came back as
+    // "uia_probe_timeout_200ms", which reports a *read failure* for what is
+    // really "nothing is selected here" - and a read failure sends the caller
+    // down the OCR fallback instead of staying silent.
     //
     // 1200ms clears the slowest measured window with headroom. It is a ceiling
     // for pathological trees, not a latency budget: a window with a selection
@@ -134,6 +134,43 @@ internal static class UiaSelectionProbe
         return result.Ok ? 0 : 1;
     }
 
+    private static readonly bool TraceEnabled =
+        !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("MAGIC_POINTER_UIA_PROBE_TRACE"));
+    private static Stopwatch TraceClock;
+    private static long TraceLastMs;
+
+    /// <summary>
+    /// Emits per-phase timings to stderr when MAGIC_POINTER_UIA_PROBE_TRACE is set.
+    ///
+    /// stderr, never stdout: callers parse the last stdout line as the result JSON,
+    /// so anything written there would corrupt the contract. Off by default and a
+    /// single bool check when off, because this runs on every probe.
+    /// </summary>
+    private static void TracePhase(string phase)
+    {
+        if (!TraceEnabled)
+        {
+            return;
+        }
+        try
+        {
+            if (TraceClock == null)
+            {
+                TraceClock = Stopwatch.StartNew();
+                TraceLastMs = 0;
+            }
+            long now = TraceClock.ElapsedMilliseconds;
+            Console.Error.WriteLine(
+                "@@uia phase=" + phase
+                + " at=" + now.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                + " d=" + (now - TraceLastMs).ToString(System.Globalization.CultureInfo.InvariantCulture));
+            TraceLastMs = now;
+        }
+        catch
+        {
+        }
+    }
+
     private static void RunProbeCore(
         long hwndValue,
         Point? targetPoint,
@@ -161,6 +198,7 @@ internal static class UiaSelectionProbe
                     {
                         TryTerminalBufferAtPoint(root, targetPoint.Value, result);
                     }
+                    TracePhase("terminal_buffer");
                     AutomationElement focused = null;
                     try
                     {
@@ -169,6 +207,7 @@ internal static class UiaSelectionProbe
                     catch
                     {
                     }
+                    TracePhase("focused_element");
 
                     if (
                         focused != null
@@ -180,6 +219,7 @@ internal static class UiaSelectionProbe
                             RejectSelectionOutsideTargetPoint(result, targetPoint.Value);
                         }
                     }
+                    TracePhase("focused_ancestors");
 
                     if (!result.Ok)
                     {
@@ -189,6 +229,7 @@ internal static class UiaSelectionProbe
                             RejectSelectionOutsideTargetPoint(result, targetPoint.Value);
                         }
                     }
+                    TracePhase("root_element");
 
                     if (!result.Ok)
                     {
@@ -198,11 +239,13 @@ internal static class UiaSelectionProbe
                             RejectSelectionOutsideTargetPoint(result, targetPoint.Value);
                         }
                     }
+                    TracePhase("document_scan");
 
                     if (!result.Ok && targetPoint.HasValue)
                     {
                         TryPointElement(root, targetPoint.Value, result);
                     }
+                    TracePhase("point_element");
                 }
 
                 if (!result.Ok && string.IsNullOrEmpty(result.Error))
@@ -282,12 +325,43 @@ internal static class UiaSelectionProbe
 
     private static void FindDocumentSelection(AutomationElement root, SelectionResult result)
     {
+        // FindAll stays, despite being O(full tree) in principle.
+        //
+        // This scan is the most expensive phase of a probe that finds nothing:
+        // 115-227ms of a ~300ms probe, against 50-78ms for everything before it.
+        // The obvious fix -- a depth- and node-bounded TreeWalker like the one in
+        // TryRegionElements -- was built and measured. It lost.
+        //
+        // A/B with the variant alternating on every run (6 runs each, medians, so
+        // machine load hit both equally; absolute numbers drift by 200ms between
+        // sessions and cannot be compared across time):
+        //
+        //     window         FindAll    TreeWalker
+        //     cc-switch        329ms       372ms
+        //     clash-verge      318ms       316ms
+        //     msedge           291ms       302ms
+        //
+        // The walk visited only 24-94 nodes to be that slow, which is ~8ms per
+        // node. The cost here is round trips, not tree size: FindAll is a single
+        // cross-process call the provider resolves internally, while
+        // GetFirstChild/GetNextSibling per node is dozens of calls, and against a
+        // Tauri or CEF provider each is slow enough to swamp the savings. The
+        // remaining ~200ms is that provider's response time, not our algorithm.
+        //
+        // If you want this faster, the lever is calling it less often, not walking
+        // differently. Set MAGIC_POINTER_UIA_PROBE_TRACE=1 for the phase split
+        // before changing anything, and A/B interleaved -- measuring before and
+        // after in sequence will tell you whatever the machine was doing instead.
         try
         {
             Condition condition = new PropertyCondition(
                 AutomationElement.ControlTypeProperty,
                 ControlType.Document);
             AutomationElementCollection documents = root.FindAll(TreeScope.Descendants, condition);
+            TracePhase(
+                "document_scan.findall["
+                + documents.Count.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                + "]");
             int limit = Math.Min(documents.Count, 12);
             for (int index = 0; index < limit && !result.Ok; index++)
             {
