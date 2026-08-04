@@ -1625,3 +1625,11 @@ body {
   .screen-point { animation: screen-point-in 1ms linear both; }
   .screen-point::after { display: none; }
 }
+
+/* The element the user clicked on, shown next to the stroke chips. Its colour
+ * follows the same rule as the proof bands: read exactly, or recognised from
+ * pixels. A chip that looks equally certain either way would undo the honesty
+ * the bands are there to provide. */
+.capsule-ref.is-picked[data-source='pixel'] {
+  border-color: rgba(232, 160, 38, .55);
+}

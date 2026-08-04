@@ -46,6 +46,17 @@ contextBridge.exposeInMainWorld('magicPointerStage', {
     keptStrokeIndexes: Array.isArray(payload?.keptStrokeIndexes)
       ? payload.keptStrokeIndexes.slice(0, 12).map((value) => Number(value) || 0)
       : [],
+    // The element the user clicked on, if any. Geometry only — the renderer
+    // never gets to name a window or an app, so it cannot aim a read at one.
+    pickedElement: payload?.pickedElement && payload.pickedElement.rect ? {
+      rect: {
+        x: Number(payload.pickedElement.rect.x) || 0,
+        y: Number(payload.pickedElement.rect.y) || 0,
+        width: Number(payload.pickedElement.rect.width) || 0,
+        height: Number(payload.pickedElement.rect.height) || 0,
+      },
+      source: String(payload.pickedElement.source || 'structured').slice(0, 20),
+    } : null,
   }),
   executeAction: (payload) => ipcRenderer.send('stage:execute-action', payload),
   contextAction: (payload) => ipcRenderer.send('stage:context-action', payload),

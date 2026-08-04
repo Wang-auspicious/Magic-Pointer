@@ -917,6 +917,29 @@ function withKeptStrokes(snapshot, keptStrokeIndexes) {
   };
 }
 
+// Narrow a snapshot to the element the user clicked on.
+//
+// A pick lights the element up, so the command has to act on that element and
+// nothing else. Without this the highlight is a promise the request does not
+// keep: the box glows and the answer is about whatever was selected before.
+//
+// The strokes go with it. They described a different region, and keeping both
+// would ask the perception layer to reconcile two claims about what "this" is.
+function withPickedElement(snapshot, picked) {
+  const rect = picked && picked.rect;
+  if (!snapshot || !rect) return snapshot;
+  const width = Number(rect.width);
+  const height = Number(rect.height);
+  if (!(width > 0 && height > 0)) return snapshot;
+  return {
+    ...snapshot,
+    selection_bbox: [Number(rect.x) || 0, Number(rect.y) || 0, width, height],
+    selection_gesture: null,
+    selection_segments: null,
+    picked_element_source: String(picked.source || 'structured'),
+  };
+}
+
 function deliverStageError(selectionSessionToken, message) {
   updateStage({
     selectionSessionToken: selectionSessionToken || null,
@@ -2877,8 +2900,14 @@ function runPythonBridge(payload, scriptPath = 'scripts/electron_bridge.py', tar
     // interactive deadline. Its model call is bounded well under this and
     // always has a grounded fallback; anything past this is a hang, and a hang
     // must fail visibly rather than spin for two minutes.
+    //
+    // 60s, not 30s: the Python side budgets 40s for one model attempt because
+    // the configured gateway measured 20-33s for a one-line question on
+    // 2026-08-04. A deadline under the budget it is supposed to contain would
+    // kill working answers and report them as a hang — which is exactly what
+    // the user saw as "连不上模型端点".
     : scriptPath.includes('selection_bridge')
-      ? 30_000
+      ? 60_000
       : scriptPath.includes('action_bridge')
         ? 45_000
         : scriptPath.includes('shopping_list_bridge') || scriptPath.includes('calendar_bridge')
@@ -3311,7 +3340,10 @@ function submitSelectionCommandWhenGrounded(payload, startedAt, noticeShown = fa
   // A chip the user removed must actually leave the request. Dropping it only
   // from the display would make the chip a decoration that lies about what was
   // sent — the one thing worse than not having chips at all.
-  const snapshotForRequest = withKeptStrokes(session.snapshot, payload?.keptStrokeIndexes);
+  const snapshotForRequest = withPickedElement(
+    withKeptStrokes(session.snapshot, payload?.keptStrokeIndexes),
+    payload?.pickedElement,
+  );
   const enriched = {
     command: effectiveCommand,
     originalCommand: payload?.command,

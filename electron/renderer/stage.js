@@ -47,6 +47,8 @@
   // Pick mode: the element the user last picked, so an unchanged pick does not
   // restart the highlight animation (that reads as flicker).
   let pickTargetShown = null;
+  // The element the user last clicked on, and therefore what a question is about.
+  let pickedElement = null;
   let pickInFlight = false;
   // Where this window sits on the virtual desktop, learned from the pointer
   // stream (which carries both spaces) rather than assumed to be zero.
@@ -315,6 +317,15 @@
       // Repainting the same rectangle restarts its animation; skip it.
       if (pickPolicy && pickPolicy.isSameTarget(pickTargetShown, picked)) return;
       pickTargetShown = picked;
+      // A pick is not just a highlight: it becomes what the next question is
+      // about. Without this the element lights up and the command still goes to
+      // whatever was selected before, which is the worst kind of near-miss.
+      pickedElement = {
+        rect: picked.rect,
+        label: String(picked.label || '').slice(0, 40),
+        source: String(response.source || 'structured'),
+      };
+      renderStrokeRefs();
       showPickHighlight(picked);
     } catch (_) {
       // A failed pick is a no-op: the user sees nothing light up, which is the
@@ -349,14 +360,15 @@
     if (!capsuleRefs) return;
     const stream = globalThis.StageTurnStream;
     const marks = stream?.ORDINAL_MARKS || [];
-    const signature = strokeRefs.map((ref) => `${ref.strokeIndex}:${ref.label}`).join('|');
+    const pickSignature = pickedElement ? `pick:${pickedElement.label}:${pickedElement.rect?.x},${pickedElement.rect?.y}` : '';
+    const signature = [...strokeRefs.map((ref) => `${ref.strokeIndex}:${ref.label}`), pickSignature].join('|');
     if (signature === renderedRefSignature) {
-      capsuleRefs.hidden = strokeRefs.length === 0;
+      capsuleRefs.hidden = strokeRefs.length === 0 && !pickedElement;
       return;
     }
     renderedRefSignature = signature;
     capsuleRefs.replaceChildren();
-    if (strokeRefs.length === 0) {
+    if (strokeRefs.length === 0 && !pickedElement) {
       capsuleRefs.hidden = true;
       return;
     }
@@ -377,6 +389,25 @@
       });
       capsuleRefs.appendChild(chip);
     });
+    if (pickedElement) {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'capsule-ref is-picked';
+      chip.dataset.noDrag = '1';
+      chip.dataset.source = pickedElement.source;
+      chip.setAttribute('role', 'listitem');
+      chip.textContent = pickedElement.label || '指定的这一块';
+      chip.title = '点击取消这一块';
+      chip.setAttribute('aria-label', '取消选中的元件');
+      chip.addEventListener('click', () => {
+        pickedElement = null;
+        frozenGlow.hidden = true;
+        pickTargetShown = null;
+        renderStrokeRefs();
+        syncHitRegions();
+      });
+      capsuleRefs.appendChild(chip);
+    }
     capsuleRefs.hidden = false;
   }
 
@@ -711,6 +742,7 @@
         command: trimmed,
         inputMode,
         keptStrokeIndexes,
+        pickedElement: pickedElement ? { rect: pickedElement.rect, source: pickedElement.source } : null,
       });
     }
   }
@@ -1898,6 +1930,7 @@
       resetVoiceTrigger();
       clearCaptureProof();
       clearScreenPoints();
+      pickedElement = null;
       meta.selectionSource = null;
       meta.objectKind = null;
       applySession(payload);
