@@ -937,6 +937,37 @@ def _capture_is_blank(image: Any) -> bool:
     return all(int(channel[1]) <= 2 for channel in extrema)
 
 
+def _rect_within(rect: tuple[int, int, int, int], size: tuple[int, int]) -> bool:
+    left, top, right, bottom = rect
+    return left >= 0 and top >= 0 and right <= size[0] and bottom <= size[1]
+
+
+def _paste_window_into_region(
+    window_image: Any,
+    local_bbox: tuple[int, int, int, int],
+    expected_size: tuple[int, int],
+) -> Any:
+    """Place the window's pixels inside a region larger than the window itself.
+
+    Everything the window does not cover stays a flat neutral field. That is the
+    honest rendering: those pixels belong to some other window, and letting OCR
+    read them would attribute another app's text to this object.
+    """
+    from PIL import Image
+
+    canvas = Image.new("RGB", expected_size, (255, 255, 255))
+    left, top, right, bottom = local_bbox
+    src_left = max(0, left)
+    src_top = max(0, top)
+    src_right = min(window_image.width, right)
+    src_bottom = min(window_image.height, bottom)
+    if src_right <= src_left or src_bottom <= src_top:
+        return canvas
+    patch = window_image.convert("RGB").crop((src_left, src_top, src_right, src_bottom))
+    canvas.paste(patch, (src_left - left, src_top - top))
+    return canvas
+
+
 def _capture_visual_region(
     target_window: dict[str, Any] | None,
     target_point: dict[str, int] | None,
@@ -965,20 +996,27 @@ def _capture_visual_region(
     if visual_capture is not None:
         image = visual_capture(bbox=bbox, all_screens=True)
     else:
-        hwnd = int(target_window.get("hwnd") or 0) if capture_bbox is None and target_window else 0
-        window_bbox = target_window.get("bbox")
+        # Capture the committed source HWND directly whenever we have one. A
+        # desktop grab returns whatever is painted at those pixels, which is how
+        # a Notepad selection came back holding the text of a CMD window sitting
+        # behind it: the gesture path asks for a screen-sized bbox, so the old
+        # `capture_bbox is None` guard turned the window capture off exactly when
+        # the region was largest and the bleed worst.
+        #
+        # PrintWindow gives us the target's own content even where another
+        # window covers it, and anything in the requested region that is not the
+        # target stays blank rather than being read as if it belonged to the
+        # object.
+        hwnd = int(target_window.get("hwnd") or 0) if target_window else 0
+        window_bbox = target_window.get("bbox") if target_window else None
+        image = None
         if hwnd and isinstance(window_bbox, (list, tuple)) and len(window_bbox) == 4:
-            # Capture the committed source HWND directly. The conversation
-            # capsule may already be visible above it, but never contaminates
-            # this backing-window image.
-            window_image = ImageGrab.grab(window=hwnd)
-            win_left, win_top, win_right, win_bottom = (int(value) for value in window_bbox)
-            if _capture_is_blank(window_image):
-                # Electron/Chromium GPU surfaces can return an all-black
-                # PrintWindow frame even while the desktop visibly contains
-                # the app. Retry through the physical desktop compositor.
-                image = ImageGrab.grab(bbox=bbox, all_screens=True)
-            else:
+            try:
+                window_image = ImageGrab.grab(window=hwnd)
+            except (OSError, ValueError, TypeError):
+                window_image = None
+            if window_image is not None and not _capture_is_blank(window_image):
+                win_left, win_top, win_right, win_bottom = (int(value) for value in window_bbox)
                 scale_x = window_image.width / max(1, win_right - win_left)
                 scale_y = window_image.height / max(1, win_bottom - win_top)
                 local_bbox = (
@@ -987,11 +1025,20 @@ def _capture_visual_region(
                     round((bbox[2] - win_left) * scale_x),
                     round((bbox[3] - win_top) * scale_y),
                 )
-                image = window_image.crop(local_bbox)
                 expected_size = (bbox[2] - bbox[0], bbox[3] - bbox[1])
-                if image.size != expected_size:
-                    image = image.resize(expected_size)
-        else:
+                if _rect_within(local_bbox, window_image.size):
+                    image = window_image.crop(local_bbox)
+                    if image.size != expected_size:
+                        image = image.resize(expected_size)
+                else:
+                    # The requested region reaches past the window. Keep the
+                    # window's pixels where they exist and leave the rest blank.
+                    image = _paste_window_into_region(
+                        window_image,
+                        local_bbox,
+                        expected_size,
+                    )
+        if image is None:
             image = ImageGrab.grab(bbox=bbox, all_screens=True)
     after_identity = _window_identity(identity_probe()) if callable(identity_probe) else before_identity
     if callable(identity_probe) and not _same_window_identity(expected_identity, after_identity):

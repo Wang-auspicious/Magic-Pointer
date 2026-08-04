@@ -2274,6 +2274,7 @@ app.whenReady().then(() => {
   });
   onboardingRequired = !onboardingReadiness.ready;
   startModelHealthWatch();
+  setTimeout(warmUpOcrWorker, 2500);
   log(`onboarding readiness ready=${onboardingReadiness.ready} reason=${onboardingReadiness.reason}`);
   try {
     app.setLoginItemSettings({ openAtLogin: fabricSettings.general?.launch_at_login === true });
@@ -2952,6 +2953,31 @@ ipcMain.handle('dashboard:model-health-refresh', async () => {
   const health = await refreshModelHealth({ probe: true });
   return { ok: true, health };
 });
+
+// Loading the OCR models is seconds; serving a request is milliseconds. Paying
+// that on the user's first command is the single largest avoidable chunk of
+// perceived latency, so the worker warms up while the app is still settling.
+let ocrWarmupStarted = false;
+
+function warmUpOcrWorker() {
+  if (ocrWarmupStarted) return;
+  ocrWarmupStarted = true;
+  const script = path.join(ROOT, 'scripts', 'ocr_resident_worker.py');
+  if (!fs.existsSync(script)) return;
+  try {
+    const child = spawn(PYTHON_EXECUTABLE, [script], {
+      cwd: ROOT,
+      detached: false,
+      windowsHide: true,
+      stdio: 'ignore',
+    });
+    child.on('error', (error) => log(`ocr warmup failed ${error.name}: ${error.message}`));
+    child.unref?.();
+    log('ocr worker warmup started');
+  } catch (error) {
+    log(`ocr warmup spawn failed ${error.name}`);
+  }
+}
 
 function runtimePermissionEvidence() {
   if (process.platform !== 'darwin') {

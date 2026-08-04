@@ -21,6 +21,7 @@ import os
 import socket
 import sys
 import threading
+from collections import OrderedDict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -29,7 +30,15 @@ if str(ROOT) not in sys.path:
 
 RUNTIME_DIR = ROOT / "data" / "runtime"
 PORT_FILE = RUNTIME_DIR / "ocr_worker.port"
-IDLE_TIMEOUT_S = 300.0
+# Loading the RapidOCR models costs seconds; serving a request costs
+# milliseconds. A five-minute idle timeout meant a user who came back after
+# lunch paid the cold load again, which is most of the p50 latency we measured.
+# Half an hour keeps a working session warm; MAGIC_POINTER_OCR_IDLE_TIMEOUT_S
+# lets a memory-constrained machine shorten it.
+try:
+    IDLE_TIMEOUT_S = max(60.0, float(os.environ.get("MAGIC_POINTER_OCR_IDLE_TIMEOUT_S") or 1800.0))
+except ValueError:
+    IDLE_TIMEOUT_S = 1800.0
 DET_SCALE = 0.5
 
 
@@ -182,6 +191,52 @@ def _split_wide_box(box: list[list[float]], max_width: float = 520.0, overlap: f
     return parts
 
 
+# Detection runs over the whole frozen capture and is the expensive half of a
+# read; recognition only touches the boxes the user's mark selects. A capture
+# never changes once written, so a second command about the same object (the
+# common case in a multi-turn conversation) can reuse the boxes outright.
+_DETECTION_CACHE: "OrderedDict[tuple[str, int, int], list]" = OrderedDict()
+_DETECTION_CACHE_MAX = 8
+
+
+def _detect_boxes(engine, image_path: Path) -> list:
+    from PIL import Image
+
+    import numpy as np
+
+    try:
+        stat = image_path.stat()
+        key = (str(image_path.resolve()), stat.st_size, stat.st_mtime_ns)
+    except OSError:
+        key = None
+    if key is not None and key in _DETECTION_CACHE:
+        _DETECTION_CACHE.move_to_end(key)
+        return _DETECTION_CACHE[key]
+
+    with Image.open(image_path).convert("RGB") as source:
+        width, height = source.size
+        small = source.resize(
+            (max(1, int(width * DET_SCALE)), max(1, int(height * DET_SCALE))),
+            Image.BILINEAR,
+        )
+        small_array = np.asarray(small)
+    det = engine(small_array, use_cls=False, use_rec=False)
+    raw_boxes = det.boxes
+    full_boxes = (
+        []
+        if raw_boxes is None or len(raw_boxes) == 0
+        else [
+            [[float(point[0]) / DET_SCALE, float(point[1]) / DET_SCALE] for point in box]
+            for box in raw_boxes.tolist()
+        ]
+    )
+    if key is not None:
+        _DETECTION_CACHE[key] = full_boxes
+        while len(_DETECTION_CACHE) > _DETECTION_CACHE_MAX:
+            _DETECTION_CACHE.popitem(last=False)
+    return full_boxes
+
+
 def process(engine, payload: dict) -> dict:
     image_path = Path(str(payload.get("path") or ""))
     if not image_path.is_file():
@@ -193,18 +248,9 @@ def process(engine, payload: dict) -> dict:
 
         import numpy as np
 
-        with Image.open(image_path).convert("RGB") as source:
-            width, height = source.size
-            small = source.resize((max(1, int(width * DET_SCALE)), max(1, int(height * DET_SCALE))), Image.BILINEAR)
-            small_array = np.asarray(small)
-        det = engine(small_array, use_cls=False, use_rec=False)
-        raw_boxes = det.boxes
-        if raw_boxes is None or len(raw_boxes) == 0:
+        full_boxes = _detect_boxes(engine, image_path)
+        if not full_boxes:
             return {"ok": True, "blocks": [], "engine": "rapidocr-onnx"}
-        full_boxes = [
-            [[float(point[0]) / DET_SCALE, float(point[1]) / DET_SCALE] for point in box]
-            for box in raw_boxes.tolist()
-        ]
         candidates = _select_boxes(full_boxes, strokes_local, selection_local)
         if not candidates:
             return {"ok": True, "blocks": [], "engine": "rapidocr-onnx"}
