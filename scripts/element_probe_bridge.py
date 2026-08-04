@@ -126,6 +126,99 @@ def _rect_from(value: Any) -> dict[str, int] | None:
     return {"x": x, "y": y, "width": width, "height": height}
 
 
+def _visual_element_at(window: dict[str, Any], x: int, y: int) -> dict[str, Any] | None:
+    """Rebuild a pointable rectangle from pixels, once per window then cached.
+
+    Only reached when the structured layer had nothing, which is the permanent
+    state for self-drawing apps. OCR costs about a second and pick mode asks at
+    hover rate, so the window's layout is computed once and reused for a few
+    seconds; the pointer then moves over it instantly.
+    """
+    from app.vision.visual_element_cache import read_cached, write_cached
+    from app.vision.visual_elements import VisualElement, element_at_point, group_blocks_into_elements
+
+    hwnd = int(window.get("hwnd") or 0)
+    bbox = window.get("bbox")
+    cached = read_cached(hwnd, bbox)
+    if cached is None:
+        blocks = _ocr_window_blocks(window)
+        if blocks is None:
+            return None
+        elements = group_blocks_into_elements(blocks, window_bbox=bbox)
+        cached = [
+            {"rect": element.rect, "text": element.text[:200], "lineCount": element.line_count}
+            for element in elements
+        ]
+        write_cached(hwnd, bbox, cached)
+    restored = [
+        VisualElement(
+            rect=list(item.get("rect") or []),
+            text=str(item.get("text") or ""),
+            line_count=int(item.get("lineCount") or 1),
+        )
+        for item in cached
+        if isinstance(item, dict) and isinstance(item.get("rect"), list) and len(item["rect"]) == 4
+    ]
+    hit = element_at_point(restored, {"x": x, "y": y})
+    if hit is None:
+        return None
+    return {
+        "rect": {"x": hit.rect[0], "y": hit.rect[1], "width": hit.rect[2], "height": hit.rect[3]},
+        # First line only: enough to confirm what got picked without turning a
+        # geometry bridge into a content channel.
+        "label": hit.text.splitlines()[0][:120] if hit.text else "",
+    }
+
+
+def _ocr_window_blocks(window: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """Capture this window and read its text blocks. Never raises."""
+    import tempfile
+
+    from scripts.selection_snapshot_bridge import _grab_capture_image
+
+    bbox = window.get("bbox")
+    if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+        return None
+    region = (int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3]))
+    path = None
+    try:
+        image = _grab_capture_image(region, target_window=window, visual_capture=None)
+        if image is None:
+            return None
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as handle:
+            path = Path(handle.name)
+        image.convert("RGB").save(path, format="PNG")
+        from scripts.selection_bridge import _read_local_ocr_boxes
+
+        read = _read_local_ocr_boxes(path, strokes_local=None, selection_local=None)
+        if not read:
+            return None
+        blocks, _engine = read
+        # OCR ran on a window-local crop; the rest of the pipeline speaks screen
+        # pixels, so put them back where they are on screen.
+        return [
+            {
+                "text": block.get("text"),
+                "rect": [
+                    int(block["rect"][0]) + region[0],
+                    int(block["rect"][1]) + region[1],
+                    int(block["rect"][2]),
+                    int(block["rect"][3]),
+                ],
+            }
+            for block in blocks
+            if isinstance(block.get("rect"), (list, tuple)) and len(block["rect"]) == 4
+        ]
+    except Exception:
+        return None
+    finally:
+        if path is not None:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
 def main() -> int:
     started = time.monotonic()
     try:
@@ -159,6 +252,16 @@ def main() -> int:
     # The tightest box that is not the whole window: nesting is the norm, and the
     # smallest one is what the user is pointing at.
     rect = min(candidates, key=lambda item: item["width"] * item["height"]) if candidates else None
+    source = "structured"
+    label = str(data.get("element_name") or "")[:120]
+    if rect is None:
+        # Nothing structured to outline. That is the normal answer for WeChat,
+        # Qt, Flutter and every self-drawing app — eight UIA nodes for a whole
+        # window, none of them the message you are pointing at. Rebuild something
+        # pointable from the pixels instead.
+        visual = _visual_element_at(window, x, y)
+        if visual is not None:
+            rect, label, source = visual["rect"], visual["label"], "pixel"
     if rect is None:
         print(json.dumps({
             "ok": False,
@@ -171,9 +274,13 @@ def main() -> int:
     print(json.dumps({
         "ok": True,
         "rect": rect,
+        # Where the rectangle came from. The stage colours its band by this:
+        # "the app told us" and "we recognised it in a picture" are different
+        # claims and must not look the same.
+        "source": source,
         # A label helps the user confirm what got picked, but it is a name, never
         # the element's content: this bridge is geometry only.
-        "label": str(data.get("element_name") or "")[:120],
+        "label": label,
         "controlType": str(data.get("control_type") or "")[:80],
         "resultKind": str(data.get("result_kind") or ""),
         "window": {
