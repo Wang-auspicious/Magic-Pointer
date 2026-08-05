@@ -170,6 +170,8 @@ b1534f4  Stage v2 线程化
 - SenseVoice Small 模型已下载（228MB, 中文精度高 3-5 倍, 本地可用）
 
 ### 已知问题
+- **【P0 已修 2026-08-04 用户实机】气泡报"连不上模型端点"，其实是网关慢 + 我们的预算太短**。用户以为是本机代理（梯子）没走通——**不是**：同一请求走代理 20.6–26.1 秒，直连反而更慢 27.3–33.5 秒（`127.0.0.1:7897` 在听，httpx 默认 `trust_env` 就走它）。真根因是**生成量**：`max_tokens=1200` 时这个网关真的写满 1198 token 要 26.9 秒，降到 120 只要 12.1 秒。而交互预算是 25 秒、Electron 侧 30 秒就杀进程，于是一个能用的端点被报成不可达。修法：`ask_text_model` 增加 `max_tokens` 参数（气泡问答用 `INTERACTIVE_ANSWER_TOKENS = 700`），`GENERAL_TIMEOUT_S` 25→40，Electron 侧 selection_bridge 截止 30s→60s（截止时间不能短于它要容纳的预算），原位改写那条也补上了有界超时（原先用的是 120 秒批量默认值，能直接撑爆 Electron 截止）。
+- **网关会往每次请求塞约 2.6k token 的自有系统提示**（2 token 的输入被算成 2580）。实测模型会在回答里主动指出"上下文夹带了与选区无关的助手身份/产品说明文本"——既白烧钱也可能污染回答，换端点时要留意。
 - **【P0 已修 2026-08-04 用户实机】只知道是哪个窗口，读不到划的那一行**（微信 / PowerShell 都复现）。三个缺陷叠在同一次失败里，实机复现脚本 `scripts/verify_marked_line_answer.py`：
   1. **非空 ≠ 读到了**。UIA 的 `uia:region-elements` 对控制台/聊天窗返回的是**容器的可访问名**——实测就是字符串 `C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe`。它非空，于是 `structured_succeeded` 判成功。
   2. 因此 `source_kind` 成了 `native_selection`。

@@ -100,6 +100,7 @@ def ask_text_model(
     *,
     timeout_s: float = 120.0,
     attempts: int = 2,
+    max_tokens: int = 1200,
 ) -> str:
     """Ask the configured OpenAI-compatible model with text-only context.
 
@@ -107,6 +108,12 @@ def ask_text_model(
     retries. Interactive callers must pass a short budget: a surface the user
     is staring at cannot afford the batch default, and every caller of this
     function already has a non-model fallback to fall back to.
+
+    `max_tokens` is a latency control as much as a size one. Measured against
+    the nghimmo gateway on 2026-08-04: a cap of 1200 produced 1198 tokens and
+    took 26.9s for a one-line question, while a cap of 120 answered the same
+    question in 12.1s. A relay that writes to whatever ceiling it is given makes
+    the ceiling the wait, so interactive callers should set one they can afford.
     """
     api_key, base_url, model = get_ai_config()
     if not api_key:
@@ -143,7 +150,7 @@ def ask_text_model(
                 {"role": "system", "content": system_prompt or "你是 Magic Pointer 的本地选区助手。只基于提供的真实应用上下文回答，不要编造。"},
                 {"role": "user", "content": content},
             ],
-            "max_tokens": 1200,
+            "max_tokens": max(1, int(max_tokens)),
         }
         last_exc: Exception | None = None
         last_http_error: tuple[int, str] | None = None
