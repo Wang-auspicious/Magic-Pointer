@@ -161,3 +161,26 @@ assert.ok(metric.includes('is-terracotta'));
 assert.ok(metric.includes('记事本'));
 
 console.log('card render test ok');
+
+// ---------------------------------------------------------------------------
+// 全局作用域：渲染层是一串共用同一个全局的 classic script。
+// studio.js 和 settings.js 各有一个返回 HTML 字符串的 icon()，后加载的会把
+// card_render 里那个造节点的顶掉——卡片的眉毛行里就会出现
+// `<SVG CLASS="">…</SVG>` 的字面文本（真的发生过，截图里看见的）。
+// 所以这两份共享模块必须各自只暴露一个名字。
+// ---------------------------------------------------------------------------
+const fs = require('node:fs');
+for (const [file, allowed] of [
+  ['electron/renderer/card_render.js', ['CardRender', 'renderCard', 'cardElapsedText']],
+  ['electron/cards.js', ['CardModel']],
+  ['electron/renderer/live_cards.js', ['LiveCards']],
+]) {
+  const source = fs.readFileSync(file, 'utf8');
+  const leaked = [...source.matchAll(/^(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/gm)]
+    .map((m) => m[1])
+    .filter((name) => !allowed.includes(name));
+  assert.deepStrictEqual(leaked, [],
+    `${file} 的顶层只能有 ${allowed.join(' / ')}；泄出去的名字会和别的渲染脚本互相顶`);
+}
+
+console.log('card render scope test ok');
