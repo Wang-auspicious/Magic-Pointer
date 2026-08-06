@@ -1,0 +1,396 @@
+/* exported renderCard, cardElapsedText */
+/* ============================================================================
+   卡片渲染：一张卡 → 一个 DOM 节点
+   ----------------------------------------------------------------------------
+   舞台胶囊、随行窗、工作室共用这一个函数。它们的差别只是外层的 density，
+   不是三份各写一遍的模板——上一版就是三份，于是同一次问答在三个界面上长得
+   不一样，用户说「他们俩应该是完全同步的才对」。
+
+   **不拼 HTML 字符串。** 舞台是一个浮在别人窗口上、渲染模型输出的界面，
+   tests/stage_static_test.js 因此钉死了「stage.js 里不许出现 innerHTML」。
+   拼串意味着每一处插值都得记得转义，而漏掉一处就是一个洞。这里改成用 h()
+   造节点：文本一律走 createTextNode，转义是结构性的，不靠记性。
+
+   h() 在浏览器里造真节点，在 Node 里造一个能序列化成 outerHTML 的轻量对象，
+   所以整份渲染层不用 DOM 也能测。
+
+   事件不在这里绑。外层用一次事件委托监听 [data-act]，卡片本身是纯的。
+   ============================================================================ */
+
+const CARD_DOC = typeof document !== 'undefined' ? document : null;
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const CARD_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+const VOID_TAGS = new Set(['img', 'br', 'hr', 'input', 'use']);
+
+function esc(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (c) => CARD_ESCAPES[c]);
+}
+
+/* ---- Node 侧的最小节点。只为可测，不追求像 DOM。 ---- */
+function shimNode(tag, ns) {
+  const node = {
+    tagName: tag, ns, attrs: {}, children: [],
+    setAttribute(k, v) { this.attrs[k] = String(v); },
+    appendChild(child) { this.children.push(child); return child; },
+    get textContent() {
+      return this.children.map((c) => (typeof c === 'string' ? c : c.textContent)).join('');
+    },
+    get outerHTML() {
+      const attrs = Object.entries(this.attrs)
+        .map(([k, v]) => ` ${k}="${esc(v)}"`).join('');
+      if (VOID_TAGS.has(tag)) return `<${tag}${attrs}>`;
+      const inner = this.children
+        .map((c) => (typeof c === 'string' ? esc(c) : c.outerHTML)).join('');
+      return `<${tag}${attrs}>${inner}</${tag}>`;
+    },
+  };
+  return node;
+}
+
+function h(tag, attrs, children) {
+  const ns = tag === 'svg' || tag === 'use' ? SVG_NS : null;
+  const node = CARD_DOC
+    ? (ns ? CARD_DOC.createElementNS(ns, tag) : CARD_DOC.createElement(tag))
+    : shimNode(tag, ns);
+  for (const [key, value] of Object.entries(attrs || {})) {
+    if (value === null || value === undefined || value === false) continue;
+    node.setAttribute(key, String(value));
+  }
+  for (const child of flatten(children)) {
+    if (child === null || child === undefined || child === false || child === '') continue;
+    node.appendChild(typeof child === 'object' ? child : text(String(child)));
+  }
+  return node;
+}
+
+function text(value) {
+  return CARD_DOC ? CARD_DOC.createTextNode(value) : value;
+}
+
+function flatten(value) {
+  if (!Array.isArray(value)) return value === undefined ? [] : [value];
+  return value.flatMap(flatten);
+}
+
+function icon(id, cls) {
+  return h('svg', cls ? { class: cls } : {}, [h('use', { href: `#${id}` }, [])]);
+}
+
+// 只允许我们自己写得出来的图片来源。模型给一个 javascript: 或
+// data:text/html 就能在渲染进程里执行脚本，所以这道闸在设 src 之前。
+function safeSrc(value) {
+  const raw = String(value || '').trim();
+  if (/^(file:\/\/|https:\/\/|data:image\/(png|jpeg|gif|webp);base64,)/i.test(raw)) return raw;
+  return '';
+}
+
+/* ---------------------------------------------------------------------------
+   markdown 的极小子集：**粗**、`码`、无序/有序列表、三级标题、围栏代码。
+   和 stage.js 里原来那份是同一套规则，只是产出节点。
+   --------------------------------------------------------------------------- */
+function inlineMd(value) {
+  return String(value ?? '')
+    .split(/(\*\*[^*]+\*\*|`[^`]+`)/g)
+    .filter(Boolean)
+    .map((frag) => {
+      if (frag.startsWith('**') && frag.endsWith('**')) return h('strong', {}, [frag.slice(2, -2)]);
+      if (frag.startsWith('`') && frag.endsWith('`')) return h('code', {}, [frag.slice(1, -1)]);
+      return text(frag);
+    });
+}
+
+function markdown(value) {
+  const blocks = String(value ?? '').replace(/\r\n?/g, '\n').split(/\n\s*\n/).filter(Boolean);
+  return blocks.map((block) => {
+    const lines = block.split('\n');
+    if (/^```[\s\S]*```$/.test(block)) {
+      return h('pre', {}, [h('code', {}, [block.replace(/^```[^\n]*\n?/, '').replace(/```$/, '')])]);
+    }
+    if (lines.every((l) => /^\s*[-*]\s+/.test(l))) {
+      return h('ul', {}, lines.map((l) => h('li', {}, inlineMd(l.replace(/^\s*[-*]\s+/, '')))));
+    }
+    if (lines.every((l) => /^\s*\d+[.)]\s+/.test(l))) {
+      return h('ol', {}, lines.map((l) => h('li', {}, inlineMd(l.replace(/^\s*\d+[.)]\s+/, '')))));
+    }
+    if (/^#{1,3}\s+/.test(block)) return h('h3', {}, inlineMd(block.replace(/^#{1,3}\s+/, '')));
+    return h('p', {}, inlineMd(lines.join('\n')));
+  });
+}
+
+/* ---- 每种卡的身份：一个图标 + 一句名字。运行中也显示，
+       所以你从第一帧就知道等来的会是什么。 ---- */
+const KIND_FACE = {
+  prose:    ['ic-spark',   '回答'],
+  facts:    ['ic-check',   '已确认'],
+  metric:   ['ic-pulse',   '数据'],
+  image:    ['ic-img',     '图'],
+  proposal: ['ic-shield',  '待你点头'],
+  diff:     ['ic-pen',     '改动'],
+  table:    ['ic-window',  '对比'],
+  calendar: ['ic-hist',    '日程'],
+  prompt:   ['ic-handoff', '提示词'],
+  steps:    ['ic-target',  '过程'],
+};
+
+function cardElapsedText(card, now) {
+  if (!card || !card.startedAt) return '';
+  const seconds = Math.max(0, (now - card.startedAt) / 1000);
+  if (seconds < 1) return '';
+  return seconds < 10 ? `${seconds.toFixed(1)}s` : `${Math.round(seconds)}s`;
+}
+
+/* ============================================================
+   头部
+   ============================================================ */
+function renderTop(card) {
+  const [ico, name] = KIND_FACE[card.kind] || KIND_FACE.prose;
+  const eyebrow = card.state === 'failed' ? '没能完成'
+    : card.state === 'running' ? name
+      : (card.eyebrow || name);
+  const origin = card.source && (card.source.app || card.source.label)
+    ? h('button', { class: 'mcard-origin', type: 'button', 'data-act': 'origin' }, [
+      icon('ic-target'),
+      [card.source.app, card.source.label].filter(Boolean).join(' · '),
+    ])
+    : null;
+  if (!card.title && !origin && card.kind === 'prose') return null;
+  return h('header', { class: 'mcard-top' }, [
+    h('span', { class: 'mcard-eyebrow' }, [icon(ico), eyebrow]),
+    card.title ? h('b', { class: 'mcard-title' }, [card.title]) : null,
+    card.subtitle ? h('span', { class: 'mcard-sub' }, [card.subtitle]) : null,
+    origin,
+  ]);
+}
+
+/* ============================================================
+   进度
+   ----------------------------------------------------------------------------
+   有已知进度 → 一条从左长出来的实条。
+   没有       → 一条来回扫的不定量条 + 真实秒数。
+   绝不把没有的进度编成一个数字。
+   ============================================================ */
+function renderRail(card) {
+  if (card.state !== 'running') return null;
+  const determinate = Number.isFinite(card.progress);
+  const pct = determinate ? Math.round(card.progress * 100) : 0;
+  return h('div', { class: 'mcard-rail' }, [
+    h('div', {
+      class: 'mbar',
+      'data-mode': determinate ? 'determinate' : 'indeterminate',
+      role: 'progressbar',
+      'aria-valuenow': determinate ? String(pct) : null,
+      'aria-valuemin': '0',
+      'aria-valuemax': '100',
+    }, [h('i', { style: `--p:${determinate ? card.progress.toFixed(3) : 0}` }, [])]),
+    h('div', { class: 'mcard-stage' }, [
+      h('span', { class: 'mcard-now' }, [card.runningLabel || '正在处理']),
+      determinate ? h('em', { class: 'mcard-pct' }, [`${pct}%`]) : null,
+      h('em', { class: 'mcard-elapsed', 'data-elapsed': '' }, []),
+    ]),
+  ]);
+}
+
+/* 走过的步骤。Vida 那条「勾是动作，跟着的是从这个动作里读到的事实」直接抄
+   过来——等待的十几秒因此在建立信任，而不是在耗人。 */
+function renderSteps(card) {
+  const steps = card.steps || [];
+  if (!steps.length) return null;
+  return h('ol', { class: 'mcard-steps' }, steps.map((s) => h('li', {
+    'data-state': s.state || 'done',
+  }, [
+    icon(s.state === 'done' ? 'ic-check' : 'ic-circle', 'mstep-dot'),
+    h('span', { class: 'mstep-label' }, [s.label || '']),
+    s.note ? h('span', { class: 'mstep-note' }, [s.note]) : null,
+    Number.isFinite(s.ms) ? h('span', { class: 'mstep-ms' }, [`${s.ms}ms`]) : null,
+  ])));
+}
+
+/* ============================================================
+   各种卡的身子
+   ============================================================ */
+const BODY = {
+  prose(card) {
+    const main = String(card.answer || card.message || '');
+    const detail = String(card.detail || '');
+    if (!main && !detail) return null;
+    return h('div', { class: 'mcard-prose' }, [
+      markdown(main),
+      detail ? h('p', { class: 'mcard-detail' }, [detail]) : null,
+      // 状态行照抄桥给的原话：accepted 就是 accepted，不许升级成看起来完成了
+      card.statusLabel
+        ? h('p', { class: 'mcard-receipt', 'data-status': card.status || 'unknown' }, [card.statusLabel])
+        : null,
+    ]);
+  },
+
+  facts(card) {
+    const rows = Array.isArray(card.rows) ? card.rows : [];
+    if (!rows.length) return null;
+    return h('div', { class: 'mcard-facts' }, rows.map((r) => h('div', { class: 'mfact' }, [
+      h('span', { class: 'mfact-label' }, [r.label || '']),
+      h('span', { class: `mfact-value${r.tone ? ` is-${r.tone}` : ''}` }, [String(r.value ?? '')]),
+    ])));
+  },
+
+  // 数据卡：一个大数字压住整张卡，单位和变化贴着它，细分在底下一排。
+  metric(card) {
+    const foot = Array.isArray(card.foot) ? card.foot : [];
+    return h('div', { class: 'mcard-metric' }, [
+      h('div', { class: 'mmetric-head' }, [
+        h('span', { class: 'mmetric-value' }, [
+          String(card.value ?? '—'),
+          card.unit ? h('em', { class: 'mmetric-unit' }, [card.unit]) : null,
+        ]),
+        card.delta
+          ? h('span', { class: `mmetric-delta${card.deltaTone ? ` is-${card.deltaTone}` : ''}` }, [
+            icon('ic-chev', 'mdelta-arrow'), String(card.delta),
+          ])
+          : null,
+      ]),
+      card.caption ? h('p', { class: 'mmetric-caption' }, [card.caption]) : null,
+      foot.length
+        ? h('div', { class: 'mmetric-foot' }, foot.map((f) => h('span', { class: 'mfoot' }, [
+          h('b', {}, [String(f.value ?? '')]),
+          h('small', {}, [f.label || '']),
+        ])))
+        : null,
+    ]);
+  },
+
+  // 图。运行中先占好位——比例是已知的，所以图落下来时卡不会跳一下。
+  image(card) {
+    const src = safeSrc(card.src);
+    const ratio = Number.isFinite(card.w) && Number.isFinite(card.h) && card.h > 0
+      ? (card.w / card.h) : 1.5;
+    const style = `--ratio:${ratio.toFixed(4)}`;
+    if (card.state === 'running' || !src) {
+      return h('div', { class: 'mcard-image is-waiting', style }, [
+        h('div', { class: 'mimg-skeleton' }, [icon('ic-img')]),
+      ]);
+    }
+    const before = safeSrc(card.before);
+    return [
+      h('div', { class: 'mcard-image', style }, [
+        before ? h('img', { class: 'mimg-before', src: before, alt: '改之前' }, []) : null,
+        h('img', { class: 'mimg', src, alt: card.caption || '结果图' }, []),
+        before ? h('span', { class: 'mimg-flip', 'data-act': 'flip' }, ['按住看改之前']) : null,
+      ]),
+      card.caption ? h('p', { class: 'mimg-caption' }, [card.caption]) : null,
+    ];
+  },
+
+  // 提案。要点头的那张卡上，预览必须长得像结果本身——用户要能在 0.3 秒里
+  // 判断该不该批准，而不是去读一段命令回显。
+  proposal(card) {
+    return h('div', { class: 'mcard-proposal' }, [
+      card.summary ? h('p', { class: 'mprop-summary' }, [card.summary]) : null,
+      renderPreview(card.preview),
+      card.irreversible
+        ? h('p', { class: 'mprop-warn' }, [icon('ic-warn'), '这一步做完撤不回来。'])
+        : null,
+    ]);
+  },
+
+  diff(card) {
+    if (!card.original && !card.proposed) return null;
+    return h('div', { class: 'mcard-diff' }, [h('pre', {}, [
+      card.original ? h('del', {}, [card.original]) : null,
+      card.proposed ? h('ins', {}, [card.proposed]) : null,
+    ])]);
+  },
+
+  table(card) {
+    const head = Array.isArray(card.columns) ? card.columns : [];
+    const rows = Array.isArray(card.rows) ? card.rows : [];
+    if (!rows.length) return null;
+    return h('div', { class: 'mcard-table' }, [h('table', {}, [
+      head.length ? h('thead', {}, [h('tr', {}, head.map((c) => h('th', {}, [String(c)])))]) : null,
+      h('tbody', {}, rows.map((r) => h('tr', {}, (Array.isArray(r) ? r : [r]).map(
+        (c) => h('td', {}, [String(c)]),
+      )))),
+    ])]);
+  },
+
+  calendar(card) {
+    return h('div', { class: 'mcard-cal' }, [
+      h('b', { class: 'mcal-title' }, [card.title || '未命名日程']),
+      h('div', { class: 'mcal-row' }, [
+        icon('ic-hist'), [card.start, card.end].filter(Boolean).join(' — '),
+      ]),
+      card.location ? h('div', { class: 'mcal-row' }, [icon('ic-target'), card.location]) : null,
+      card.conflict
+        ? h('div', { class: 'mcal-row is-warn' }, [icon('ic-warn'), card.conflict])
+        : null,
+    ]);
+  },
+
+  prompt(card) {
+    return h('div', { class: 'mcard-prompt' }, [
+      h('textarea', { class: 'mprompt-text', 'data-act': 'prompt-edit', rows: '6' }, [card.prompt || '']),
+    ]);
+  },
+
+  steps() {
+    return null;   // 过程卡的身子就是上面那串步骤，不用再画一遍
+  },
+};
+
+/* 提案的预览按它将产生什么来画，而不是按它将执行什么命令来画。 */
+function renderPreview(preview) {
+  if (!preview || typeof preview !== 'object') return null;
+  const items = Array.isArray(preview.items) ? preview.items : [];
+  if (preview.kind === 'folders' || preview.kind === 'files') {
+    const isFolder = preview.kind === 'folders';
+    return h('div', { class: `mprev mprev-${preview.kind}` }, items.map((it) => h('span', {
+      class: isFolder ? 'mfolder' : 'mfile',
+    }, [icon(isFolder ? 'ic-folder' : 'ic-file'), h('small', {}, [it.name || String(it)])])));
+  }
+  if (preview.kind === 'text') {
+    return h('div', { class: 'mprev mprev-text' }, [h('pre', {}, [preview.text || ''])]);
+  }
+  return null;
+}
+
+/* ============================================================
+   动作
+   ============================================================ */
+function renderActions(card) {
+  const actions = Array.isArray(card.actions) ? card.actions : [];
+  if (!actions.length) return null;
+  return h('footer', { class: 'mcard-acts' }, actions.map((a, i) => h('button', {
+    type: 'button',
+    class: `btn btn-${a.tone || (i === actions.length - 1 ? 'solid' : 'quiet')}`,
+    'data-act': 'action',
+    'data-action-id': a.id || '',
+    'data-token': a.token || null,
+  }, [a.label || '执行'])));
+}
+
+/* ============================================================
+   入口
+   ============================================================ */
+function renderCard(card, options = {}) {
+  if (!card || typeof card !== 'object') return null;
+  const kind = BODY[card.kind] ? card.kind : 'prose';
+  const density = options.density || 'full';   // capsule | companion | full
+  return h('article', {
+    class: 'mcard',
+    'data-kind': kind,
+    'data-state': card.state || 'done',
+    'data-density': density,
+    'data-card-id': card.id || '',
+  }, [
+    renderTop(card),
+    renderRail(card),
+    density === 'capsule' && card.state === 'running' ? null : renderSteps(card),
+    card.state === 'failed'
+      ? h('p', { class: 'mcard-fail' }, [icon('ic-warn'), card.error || '这次没能完成。'])
+      : null,
+    BODY[kind](card),
+    renderActions(card),
+  ]);
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { renderCard, cardElapsedText, esc, safeSrc, markdown, inlineMd, h, KIND_FACE };
+}

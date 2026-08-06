@@ -68,9 +68,6 @@
   const deliveryCount = document.getElementById('delivery-count');
   const tplThreadTurn = document.getElementById('tpl-thread-turn');
   const tplTurnWait = document.getElementById('tpl-turn-wait');
-  const tplCalendarDraft = document.getElementById('tpl-calendar-draft');
-  const tplTableCompare = document.getElementById('tpl-table-compare');
-  const tplTextDraft = document.getElementById('tpl-text-draft');
   const tplAgentPromptDraft = document.getElementById('tpl-agent-prompt-draft');
 
   const DEFAULT_VISUAL_TUNING = Object.freeze({
@@ -151,14 +148,6 @@
   let reportedState = '';
   let targetSweepComplete = false;
   let targetSweepTimer = null;
-
-  // Honest receipt copy: mirrors the TRUE state verbatim — a queued/accepted
-  // draft is never rendered as succeeded (design §2.2/§3.1).
-  const RECEIPT_STATUS_LABELS = Object.freeze({
-    draft: '草稿(未提交)',
-    accepted: '已受理(尚未完成)',
-    succeeded: '已写入成功',
-  });
 
   reducedMotionQuery.addEventListener('change', (event) => {
     dispatch({ type: 'SET_REDUCED_MOTION', value: event.matches });
@@ -1068,170 +1057,30 @@
     }
   }
 
-  function appendInlineMarkdown(container, text) {
-    const fragments = String(text || '').split(/(\*\*[^*]+\*\*|`[^`]+`)/g).filter(Boolean);
-    for (const fragment of fragments) {
-      if (fragment.startsWith('**') && fragment.endsWith('**')) {
-        const strong = document.createElement('strong');
-        strong.textContent = fragment.slice(2, -2);
-        container.appendChild(strong);
-      } else if (fragment.startsWith('`') && fragment.endsWith('`')) {
-        const code = document.createElement('code');
-        code.textContent = fragment.slice(1, -1);
-        container.appendChild(code);
-      } else container.appendChild(document.createTextNode(fragment));
-    }
-  }
 
-  function renderMarkdownText(container, text) {
-    const blocks = String(text || '').replace(/\r\n?/g, '\n').split(/\n\s*\n/).filter(Boolean);
-    for (const block of blocks) {
-      const lines = block.split('\n');
-      let element;
-      if (lines.every((line) => /^\s*[-*]\s+/.test(line))) {
-        element = document.createElement('ul');
-        for (const line of lines) {
-          const item = document.createElement('li');
-          appendInlineMarkdown(item, line.replace(/^\s*[-*]\s+/, ''));
-          element.appendChild(item);
-        }
-      } else if (lines.every((line) => /^\s*\d+[.)]\s+/.test(line))) {
-        element = document.createElement('ol');
-        for (const line of lines) {
-          const item = document.createElement('li');
-          appendInlineMarkdown(item, line.replace(/^\s*\d+[.)]\s+/, ''));
-          element.appendChild(item);
-        }
-      } else if (/^#{1,3}\s+/.test(block)) {
-        element = document.createElement('h3');
-        appendInlineMarkdown(element, block.replace(/^#{1,3}\s+/, ''));
-      } else if (/^```[\s\S]*```$/.test(block)) {
-        element = document.createElement('pre');
-        const code = document.createElement('code');
-        code.textContent = block.replace(/^```[^\n]*\n?/, '').replace(/```$/, '');
-        element.appendChild(code);
-      } else {
-        element = document.createElement('p');
-        appendInlineMarkdown(element, lines.join('\n'));
-      }
-      container.appendChild(element);
-    }
-  }
 
-  function renderInline(container, payload) {
-    const primary = document.createElement('div');
-    primary.className = 'result-answer';
-    renderMarkdownText(primary, typeof payload === 'string'
-      ? payload
-      : String(payload?.answer || payload?.message || ''));
-    container.appendChild(primary);
-    const secondary = typeof payload === 'object' && payload ? payload.detail : '';
-    if (secondary) {
-      const detail = document.createElement('p');
-      detail.className = 'result-secondary';
-      detail.textContent = String(secondary);
-      container.appendChild(detail);
-    }
-    appendReceiptStatus(container, payload);
-  }
-
-  // The receipt line mirrors the TRUE bridge status verbatim (accepted stays
-  // accepted; nothing is upgraded to look finished).
-  function appendReceiptStatus(container, payload) {
-    if (!payload || typeof payload !== 'object' || !payload.statusLabel) return;
-    const status = document.createElement('p');
-    status.className = 'result-status';
-    status.dataset.status = String(payload.status || 'unknown');
-    status.textContent = String(payload.statusLabel);
-    container.appendChild(status);
+  // 失败也是一张卡——同一套版式，只是 state 是 failed。原来它走的是另一条
+  // 渲染路径，于是「成功长这样、失败长那样」，用户看到的是两个产品。
+  function renderFailure(container, error) {
+    const message = typeof error === 'string'
+      ? error
+      : String(error?.message || error?.answer || '这次没能完成。');
+    container.replaceChildren(renderCard(
+      CardModel.normalizeCard({ kind: 'prose', state: 'failed', error: message }),
+      { density: 'capsule' },
+    ));
   }
 
   function cloneTemplate(template) {
     return template.content.firstElementChild.cloneNode(true);
   }
 
-  function fillRow(row, text) {
-    if (text) {
-      row.textContent = text;
-      row.hidden = false;
-    } else {
-      row.textContent = '';
-      row.hidden = true;
-    }
-  }
 
-  function calendarTimeRange(payload) {
-    if (payload.timeRange) return String(payload.timeRange);
-    const start = payload.start ? String(payload.start) : '';
-    const end = payload.end ? String(payload.end) : '';
-    if (start && end) return `${start} – ${end}`;
-    return start || end || '';
-  }
 
-  function renderCalendarDraft(container, payload) {
-    const card = cloneTemplate(tplCalendarDraft);
-    card.querySelector('.card-title').textContent = String(payload.title || '(未命名日程)');
-    fillRow(card.querySelector('.card-time'), calendarTimeRange(payload));
-    fillRow(card.querySelector('.card-location'), payload.location ? `地点:${payload.location}` : '');
-    fillRow(card.querySelector('.card-conflict'), payload.conflict ? `冲突:${payload.conflict}` : '');
-    const statusLine = card.querySelector('.card-status');
-    const rawStatus = typeof payload.status === 'string' && payload.status ? payload.status : 'draft';
-    // Unknown statuses render verbatim rather than being upgraded to a
-    // friendlier label — the status line mirrors the true receipt state.
-    statusLine.textContent = RECEIPT_STATUS_LABELS[rawStatus] || rawStatus;
-    statusLine.dataset.status = RECEIPT_STATUS_LABELS[rawStatus] ? rawStatus : 'unknown';
-    container.appendChild(card);
-  }
+  // renderCalendarDraft / renderTableCompare / renderTextDraft 三个渲染器已经
+  // 并进 renderer/card_render.js（对应 calendar / table / diff 三种卡）。
+  // 舞台、随行窗、工作室从此共用同一份实现——不再是三份各写一遍。
 
-  function renderTableCompare(container, payload) {
-    const card = cloneTemplate(tplTableCompare);
-    const sources = Array.isArray(payload.sources) ? payload.sources.slice(0, 2).map(String) : [];
-    card.querySelector('.card-sources').textContent = sources.length === 2
-      ? `${sources[0]} ↔ ${sources[1]}`
-      : sources[0] || '两个来源对比';
-    const count = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0);
-    card.querySelector('.count-added').textContent = `新增 ${count(payload.added)}`;
-    card.querySelector('.count-removed').textContent = `删除 ${count(payload.removed)}`;
-    card.querySelector('.count-changed').textContent = `变更 ${count(payload.changed)}`;
-    const body = card.querySelector('tbody');
-    const samples = Array.isArray(payload.samples) ? payload.samples.slice(0, 3) : [];
-    samples.forEach((sample) => {
-      const cells = Array.isArray(sample?.cells) ? sample.cells.slice(0, 4) : [];
-      if (!cells.length) return;
-      const row = document.createElement('tr');
-      const type = sample.type === 'added' || sample.type === 'removed' ? sample.type : 'changed';
-      row.className = `row-${type}`;
-      cells.forEach((cell) => {
-        const td = document.createElement('td');
-        td.textContent = String(cell);
-        row.appendChild(td);
-      });
-      body.appendChild(row);
-    });
-    if (!body.children.length) card.querySelector('.compare-table').hidden = true;
-    container.appendChild(card);
-  }
-
-  function renderTextDraft(container, payload) {
-    const card = cloneTemplate(tplTextDraft);
-    card.querySelector('.card-title').textContent = String(payload.title || '文本草稿');
-    const diffBox = card.querySelector('.card-diff');
-    const original = String(payload.original || '');
-    const proposed = String(payload.proposed || '');
-    if (typeof machine.wordDiff === 'function') {
-      machine.wordDiff(original, proposed).forEach((segment) => {
-        const span = document.createElement('span');
-        span.className = segment.type === 'ins' ? 'diff-ins'
-          : segment.type === 'del' ? 'diff-del' : 'diff-eq';
-        span.textContent = segment.text;
-        diffBox.appendChild(span);
-      });
-    } else {
-      diffBox.textContent = proposed;
-    }
-    appendReceiptStatus(card, payload);
-    container.appendChild(card);
-  }
 
   function safeAgentSession(raw) {
     if (!raw || typeof raw !== 'object') return null;
@@ -1365,41 +1214,6 @@
 
   // Action buttons carry only opaque tokens/ids from the stage contract; the
   // renderer never sees prompts or proposal parameters.
-  function renderActions(container, payload) {
-    const actions = payload && typeof payload === 'object' && Array.isArray(payload.actions)
-      ? payload.actions.slice(0, 3)
-      : [];
-    if (!actions.length) return;
-    const row = document.createElement('div');
-    row.className = 'stage-actions';
-    actions.forEach((action) => {
-      if (!action || typeof action !== 'object') return;
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = action.kind === 'context' ? 'stage-action is-context' : 'stage-action';
-      button.textContent = String(action.label || '执行');
-      button.addEventListener('click', () => {
-        if (action.kind === 'proposal' && action.actionToken) {
-          dispatch({ type: 'ACTION_START', command: String(action.label || '') });
-          if (api && typeof api.executeAction === 'function') {
-            api.executeAction({
-              actionToken: action.actionToken,
-              proposalId: action.id,
-              confirmed: true,
-              selectionSessionToken: session.token,
-            });
-          }
-        } else if (action.kind === 'context') {
-          if (api && typeof api.contextAction === 'function') {
-            api.contextAction({ id: action.id, selectionSessionToken: session.token });
-          }
-        }
-      });
-      row.appendChild(button);
-    });
-    container.appendChild(row);
-  }
-
   // Copy the answers, not the scaffolding: the ask labels are there to orient
   // the reader on screen, and the wait dots are not content at all.
   function resultPlainText(container) {
@@ -1459,16 +1273,54 @@
 
   // Result payloads are discriminated by `kind`; anything unknown falls back
   // to the plain inline text rendering.
+  // 结果按 kind 分派。
+  //
+  // 除了 agent-prompt-draft，全部走共享的 renderCard——舞台、随行窗、工作室
+  // 因此渲染的是同一张卡，同一次问答在三个界面上长得一模一样。上一版是三份
+  // 各写一遍的模板，于是它们各长各的。
+  //
+  // agent-prompt-draft 留在原地：它不是一张卡，是一个带会话选择器和自己那套
+  // IPC 的控件。硬塞进卡片契约只会两头不讨好。
   function renderStructured(container, payload) {
     container.replaceChildren();
     const kind = payload && typeof payload === 'object' ? payload.kind : null;
     container.dataset.kind = kind || 'inline';
-    if (kind === 'calendar-draft') renderCalendarDraft(container, payload);
-    else if (kind === 'table-compare') renderTableCompare(container, payload);
-    else if (kind === 'text-draft') renderTextDraft(container, payload);
-    else if (kind === 'agent-prompt-draft') renderAgentPromptDraft(container, payload);
-    else renderInline(container, payload);
-    if (kind !== 'agent-prompt-draft') renderActions(container, payload);
+    if (kind === 'agent-prompt-draft') {
+      renderAgentPromptDraft(container, payload);
+      return;
+    }
+    const card = CardModel.normalizeCard(payload && typeof payload === 'object'
+      ? payload
+      : { kind: 'prose', answer: String(payload || '') });
+    card.runningLabel = CardModel.runningLabel(card);
+    container.replaceChildren(renderCard(card, { density: 'capsule' }));
+    bindCardActions(container, payload);
+  }
+
+  // 卡片本身是纯 HTML，动作用一次事件委托挂上来。按钮做什么由 payload.actions
+  // 决定——和原来逐个 addEventListener 时的行为一致，只是绑定点变成了一个。
+  function bindCardActions(container, payload) {
+    const actions = payload && Array.isArray(payload.actions) ? payload.actions : [];
+    if (!actions.length) return;
+    container.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-act="action"]');
+      if (!button || !container.contains(button)) return;
+      const action = actions.find((a) => a && String(a.id || '') === button.dataset.actionId);
+      if (!action) return;
+      if (action.kind === 'proposal' && action.actionToken) {
+        dispatch({ type: 'ACTION_START', command: String(action.label || '') });
+        if (api && typeof api.executeAction === 'function') {
+          api.executeAction({
+            actionToken: action.actionToken,
+            proposalId: action.id,
+            confirmed: true,
+            selectionSessionToken: session.token,
+          });
+        }
+      } else if (action.kind === 'context' && api && typeof api.contextAction === 'function') {
+        api.contextAction({ id: action.id, selectionSessionToken: session.token });
+      }
+    });
   }
 
   function buildTurn(turn) {
@@ -1483,7 +1335,7 @@
       answer.appendChild(tplTurnWait.content.firstElementChild.cloneNode(true));
     } else if (turn.status === 'failed') {
       answer.dataset.kind = 'error';
-      renderInline(answer, turn.error);
+      renderFailure(answer, turn.error);
     } else {
       renderStructured(answer, turn.result);
     }
@@ -1781,7 +1633,7 @@
     // standalone card is only for failures with no thread to attach to.
     if (name === 'error' && !state.turns.length) {
       errorCard.replaceChildren();
-      renderInline(errorCard, state.error);
+      renderFailure(errorCard, state.error);
       anchorNearPointer(errorCard, 300, 44);
       errorCard.hidden = false;
     } else {

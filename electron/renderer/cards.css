@@ -1,0 +1,309 @@
+/* ============================================================
+   .mcard — 卡片
+   ------------------------------------------------------------
+   划完线得到的东西是一张卡。三个界面共用这一份样式，差别只在
+   [data-density]：胶囊窄、随行窗中、工作室宽。不是三份各写一遍——
+   上一版就是三份，于是同一次问答在三个界面上长得不一样。
+
+   形来自 Vida 那张提案卡（眉毛行 → 标题 → 一句人话 → 渲染式预览
+   → 动作），质感和配色来自 Oreo 暖。令牌全部来自 oreo.css。
+   ============================================================ */
+
+.mcard {
+  position: relative;
+  display: flex; flex-direction: column; gap: 12px;
+  padding: 16px 18px;
+  border-radius: var(--r-card);
+  background: var(--card);
+  box-shadow: var(--shadow-card);
+  color: var(--ink);
+}
+.mcard[data-density="capsule"] { padding: 13px 14px; gap: 9px; border-radius: 15px; }
+.mcard[data-density="companion"] { padding: 14px 15px; gap: 10px; }
+
+/* 运行中的卡自己会呼吸：一层极淡的暖色底在下面缓慢起伏。
+   不是转圈，也不是骨架屏闪烁——是「它还在」。 */
+.mcard[data-state="running"]::before {
+  content: ''; position: absolute; inset: 0;
+  border-radius: inherit; pointer-events: none;
+  background: radial-gradient(120% 80% at 50% 0%, rgba(180, 105, 14, .07), transparent 70%);
+  animation: mcard-breathe 3.4s var(--ease-in-out) infinite;
+}
+@keyframes mcard-breathe { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }
+
+.mcard[data-state="failed"] {
+  box-shadow: var(--shadow-card), inset 0 0 0 1px var(--terracotta-bg);
+}
+
+/* ---- 眉毛行 ---- */
+.mcard-top { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; }
+.mcard-eyebrow {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 10.5px; font-weight: 600; letter-spacing: .09em;
+  text-transform: uppercase; color: var(--ink-3);
+}
+.mcard-eyebrow svg { width: 12px; height: 12px; stroke: currentColor; fill: none; stroke-width: 1.7; }
+.mcard[data-state="failed"] .mcard-eyebrow { color: var(--terracotta); }
+.mcard-title { flex: 1 1 100%; font-size: 15.5px; font-weight: 600; line-height: 1.35; }
+.mcard[data-density="capsule"] .mcard-title { font-size: 14px; }
+.mcard-sub { font-size: 12px; color: var(--ink-3); }
+
+.mcard-origin {
+  display: inline-flex; align-items: center; gap: 5px;
+  margin-left: auto; padding: 3px 9px 3px 7px;
+  border: 0; border-radius: var(--r-pill);
+  background: var(--card-sunk); color: var(--ink-2);
+  font: inherit; font-size: 11.5px; cursor: pointer;
+  transition: background .16s var(--ease-out), color .16s var(--ease-out);
+}
+.mcard-origin svg { width: 11px; height: 11px; stroke: currentColor; fill: none; stroke-width: 1.7; }
+@media (hover: hover) and (pointer: fine) {
+  .mcard-origin:hover { background: var(--paper-2); color: var(--ink); }
+}
+.mcard-origin:active { transform: scale(.97); }
+
+/* ---- 进度 ----
+   有已知进度 → 从左长出来的实条。没有 → 一条来回扫的带。
+   两者视觉上必须不一样，用户才分得清「走到 40%」和「不知道还要多久」。 */
+.mcard-rail { display: flex; flex-direction: column; gap: 7px; }
+.mbar {
+  position: relative; height: 4px; overflow: hidden;
+  border-radius: 999px; background: var(--paper-2);
+}
+.mbar > i {
+  position: absolute; inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--amber), var(--terracotta));
+  transform-origin: left center;
+}
+.mbar[data-mode="determinate"] > i {
+  transform: scaleX(var(--p, 0));
+  transition: transform .42s var(--ease-out);
+}
+.mbar[data-mode="indeterminate"] > i {
+  width: 38%; inset: 0 auto 0 0;
+  animation: mbar-sweep 1.35s var(--ease-in-out) infinite;
+}
+@keyframes mbar-sweep {
+  0%   { transform: translateX(-105%); }
+  100% { transform: translateX(305%); }
+}
+
+.mcard-stage {
+  display: flex; align-items: baseline; gap: 8px;
+  font-size: 12.5px; color: var(--ink-2);
+}
+.mcard-now { flex: 1; }
+.mcard-pct, .mcard-elapsed {
+  font-family: var(--font-mono); font-size: 11px; font-style: normal;
+  font-variant-numeric: tabular-nums; color: var(--ink-3);
+}
+
+/* ---- 步骤：勾是动作，后面跟着的是从这个动作里读到的事实 ---- */
+.mcard-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
+.mcard-steps li {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 12.5px; color: var(--ink-2);
+  animation: mstep-in .3s var(--ease-out) both;
+}
+@keyframes mstep-in { from { opacity: 0; transform: translateY(-3px); } }
+.mstep-dot { width: 13px; height: 13px; flex: none; stroke: var(--green); fill: none; stroke-width: 2; }
+.mcard-steps li[data-state="pending"] .mstep-dot { stroke: var(--ink-4); }
+.mstep-label { flex: none; }
+.mstep-note {
+  padding: 1px 6px; border-radius: 6px;
+  background: var(--card-sunk); color: var(--ink-3);
+  font-family: var(--font-mono); font-size: 11px;
+}
+.mstep-ms { margin-left: auto; font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-4); }
+
+/* ---- 正文 ---- */
+.mcard-prose { display: grid; gap: 9px; font-size: 14px; line-height: 1.62; }
+.mcard-prose p { margin: 0; }
+.mcard[data-density="capsule"] .mcard-prose { font-size: 13.5px; line-height: 1.58; }
+
+.mcard-fail {
+  display: flex; align-items: flex-start; gap: 7px; margin: 0;
+  font-size: 13px; line-height: 1.55; color: var(--terracotta);
+}
+.mcard-fail svg {
+  width: 15px; height: 15px; flex: none; margin-top: 1px;
+  stroke: currentColor; fill: none; stroke-width: 1.7;
+}
+
+/* ---- 事实行 ---- */
+.mcard-facts {
+  display: grid; gap: 1px; overflow: hidden;
+  border-radius: var(--r-tile); background: var(--hairline);
+}
+.mfact {
+  display: flex; align-items: center; gap: 12px;
+  padding: 9px 11px; background: var(--card-sunk);
+  font-size: 13px;
+}
+.mfact-label { color: var(--ink-3); }
+.mfact-value { margin-left: auto; font-weight: 550; font-variant-numeric: tabular-nums; text-align: right; }
+.mfact-value.is-terracotta { color: var(--terracotta); }
+.mfact-value.is-green { color: var(--green); }
+.mfact-value.is-amber { color: var(--amber); }
+
+/* ---- 数据卡：一个大数字压住整张卡 ---- */
+.mcard-metric { display: grid; gap: 8px; }
+.mmetric-head { display: flex; align-items: baseline; gap: 10px; }
+.mmetric-value {
+  font-size: 40px; font-weight: 600; line-height: 1;
+  letter-spacing: -.02em; font-variant-numeric: tabular-nums;
+}
+.mcard[data-density="capsule"] .mmetric-value { font-size: 30px; }
+.mmetric-unit {
+  margin-left: 3px; font-size: 15px; font-weight: 500;
+  font-style: normal; color: var(--ink-3);
+}
+.mmetric-delta {
+  display: inline-flex; align-items: center; gap: 2px;
+  padding: 2px 8px; border-radius: var(--r-pill);
+  background: var(--green-bg); color: var(--green);
+  font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums;
+}
+.mmetric-delta.is-terracotta { background: var(--terracotta-bg); color: var(--terracotta); }
+.mmetric-delta.is-amber { background: var(--amber-bg); color: var(--amber); }
+.mdelta-arrow {
+  width: 11px; height: 11px; stroke: currentColor; fill: none;
+  stroke-width: 2.2; transform: rotate(180deg);
+}
+.mmetric-delta.is-terracotta .mdelta-arrow { transform: none; }
+.mmetric-caption { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--ink-2); }
+.mmetric-foot {
+  display: flex; gap: 1px; margin-top: 2px; overflow: hidden;
+  border-radius: var(--r-tile); background: var(--hairline);
+}
+.mfoot { flex: 1; padding: 8px 10px; background: var(--card-sunk); text-align: center; }
+.mfoot b { display: block; font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.mfoot small { font-size: 11px; color: var(--ink-3); }
+
+/* ---- 图：等待时先占好位，图落下来时卡不会跳一下 ---- */
+.mcard-image {
+  position: relative; overflow: hidden;
+  aspect-ratio: var(--ratio, 1.5);
+  border-radius: var(--r-tile);
+  background: var(--card-sunk);
+}
+.mcard-image .mimg,
+.mcard-image .mimg-before {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%; object-fit: cover;
+}
+.mcard-image .mimg { animation: mimg-in .5s var(--ease-out) both; }
+@keyframes mimg-in { from { opacity: 0; transform: scale(1.012); } }
+.mimg-skeleton {
+  position: absolute; inset: 0;
+  display: grid; place-items: center;
+  background: linear-gradient(100deg, var(--card-sunk) 30%, var(--paper-2) 48%, var(--card-sunk) 66%);
+  background-size: 260% 100%;
+  animation: mimg-shimmer 1.6s linear infinite;
+}
+.mimg-skeleton svg { width: 26px; height: 26px; stroke: var(--ink-4); fill: none; stroke-width: 1.4; }
+@keyframes mimg-shimmer { to { background-position: -160% 0; } }
+.mimg-flip {
+  position: absolute; left: 10px; bottom: 10px;
+  padding: 4px 10px; border-radius: var(--r-pill);
+  background: rgba(23, 23, 15, .62); color: #fff;
+  font-size: 11.5px; cursor: pointer; user-select: none;
+  backdrop-filter: blur(8px);
+}
+.mcard-image:has(.mimg-flip:active) .mimg { opacity: 0; }
+.mimg-caption { margin: 0; font-size: 12.5px; color: var(--ink-2); }
+
+/* ---- 提案：预览长得像结果，不像一条命令 ---- */
+.mcard-proposal { display: grid; gap: 11px; }
+.mprop-summary { margin: 0; font-size: 13.5px; line-height: 1.6; }
+.mprev { padding: 13px; border-radius: var(--r-tile); background: var(--card-sunk); }
+.mprev-folders, .mprev-files { display: flex; flex-wrap: wrap; gap: 14px; justify-content: center; }
+.mfolder, .mfile {
+  display: grid; justify-items: center; gap: 5px;
+  width: 78px; text-align: center;
+  animation: mprev-in .34s var(--ease-out) both;
+}
+.mfolder:nth-child(2), .mfile:nth-child(2) { animation-delay: .05s; }
+.mfolder:nth-child(3), .mfile:nth-child(3) { animation-delay: .1s; }
+.mfolder:nth-child(4), .mfile:nth-child(4) { animation-delay: .15s; }
+@keyframes mprev-in { from { opacity: 0; transform: translateY(6px) scale(.96); } }
+.mfolder svg { width: 34px; height: 28px; stroke: var(--amber); fill: var(--amber-bg); stroke-width: 1.5; }
+.mfile svg { width: 26px; height: 30px; stroke: var(--ink-3); fill: var(--card); stroke-width: 1.5; }
+.mfolder small, .mfile small {
+  font-size: 11px; color: var(--ink-2); line-height: 1.3;
+  overflow: hidden; display: -webkit-box;
+  -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+}
+.mprev-text pre {
+  margin: 0; font-family: var(--font-mono); font-size: 11.5px;
+  line-height: 1.6; white-space: pre-wrap;
+}
+.mprop-warn {
+  display: flex; align-items: center; gap: 6px; margin: 0;
+  font-size: 12px; color: var(--terracotta);
+}
+.mprop-warn svg { width: 14px; height: 14px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.7; }
+
+/* ---- 写回预览 ---- */
+.mcard-diff { border-radius: var(--r-tile); background: var(--card-sunk); overflow: hidden; }
+.mcard-diff pre {
+  margin: 0; padding: 12px 13px;
+  font-family: var(--font-mono); font-size: 12px; line-height: 1.65; white-space: pre-wrap;
+}
+.mcard-diff del {
+  display: block; text-decoration: none; margin: 0 -13px; padding: 0 13px;
+  color: var(--terracotta); background: var(--terracotta-bg);
+}
+.mcard-diff ins {
+  display: block; text-decoration: none; margin: 0 -13px; padding: 0 13px;
+  color: var(--green); background: var(--green-bg);
+}
+
+/* ---- 对比表 ---- */
+.mcard-table { border-radius: var(--r-tile); overflow: hidden; background: var(--card-sunk); }
+.mcard-table table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.mcard-table th {
+  padding: 8px 11px; text-align: left; font-weight: 600; font-size: 11px;
+  letter-spacing: .05em; text-transform: uppercase; color: var(--ink-3);
+  box-shadow: inset 0 -1px 0 var(--hairline);
+}
+.mcard-table td {
+  padding: 8px 11px; box-shadow: inset 0 -1px 0 var(--hairline);
+  font-variant-numeric: tabular-nums;
+}
+.mcard-table tr:last-child td { box-shadow: none; }
+
+/* ---- 日程 ---- */
+.mcard-cal {
+  display: grid; gap: 7px; padding: 12px 13px;
+  border-radius: var(--r-tile); background: var(--card-sunk);
+}
+.mcal-title { font-size: 14px; font-weight: 600; }
+.mcal-row { display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--ink-2); }
+.mcal-row svg { width: 13px; height: 13px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.7; }
+.mcal-row.is-warn { color: var(--amber); }
+
+/* ---- 提示词草稿 ---- */
+.mprompt-text {
+  width: 100%; padding: 11px 12px; resize: vertical;
+  border: 0; border-radius: var(--r-tile);
+  background: var(--card-sunk); color: var(--ink);
+  font-family: var(--font-mono); font-size: 12px; line-height: 1.6;
+  box-shadow: inset 0 0 0 1px var(--hairline);
+}
+.mprompt-text:focus { outline: none; box-shadow: inset 0 0 0 1.5px var(--indigo); }
+
+/* ---- 动作 ---- */
+.mcard-acts { display: flex; align-items: center; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.mcard-acts .btn { font-size: 12.5px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .mcard[data-state="running"]::before,
+  .mbar[data-mode="indeterminate"] > i,
+  .mimg-skeleton,
+  .mcard-steps li,
+  .mfolder, .mfile,
+  .mcard-image .mimg { animation: none; }
+  .mbar[data-mode="indeterminate"] > i { width: 100%; opacity: .4; }
+}

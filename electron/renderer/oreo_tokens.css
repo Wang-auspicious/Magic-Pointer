@@ -1,0 +1,97 @@
+/* ============================================================
+   令牌
+   ------------------------------------------------------------
+   舞台胶囊、随行窗、工作室各有各的骨架样式，但颜色、圆角、阴影、
+   曲线、字体必须是同一套——否则同一张卡在三个界面上会长得不一样。
+   所以令牌单独成一份，三个界面都引它。
+   ============================================================ */
+
+:root {
+  /* ---- 色：浅（默认） ---- */
+  --paper:        #F2F1ED;
+  --paper-2:      #EAE8E2;
+  --card:         #FFFFFF;
+  --card-sunk:    #FAF9F6;
+  --card-hover:   #FCFBF9;
+
+  --ink:          #17170F;
+  --ink-2:        #6B6A62;
+  --ink-3:        #A3A199;
+  --ink-4:        #C9C6BE;
+
+  --glass:        rgba(255, 255, 255, .70);
+  --glass-lip:    rgba(255, 255, 255, .92);
+  --glass-ring:   rgba(23, 23, 15, .055);
+  --hairline:     rgba(23, 23, 15, .08);
+  --hairline-2:   rgba(23, 23, 15, .14);
+
+  /* ---- 语义色：只以「浅底深字药丸」出现 ---- */
+  --indigo:       #5B5BD6;  --indigo-bg:   rgba(91, 91, 214, .10);
+  --amber:        #B4690E;  --amber-bg:    rgba(180, 105, 14, .11);
+  --teal:         #0E7C86;  --teal-bg:     rgba(14, 124, 134, .11);
+  --green:        #3D8B5F;  --green-bg:    rgba(61, 139, 95, .11);
+  --terracotta:   #B44A24;  --terracotta-bg: rgba(180, 74, 36, .10);
+  --solid:        #1A1A18;  /* 主操作实心 */
+
+  /* ---- 形 ---- */
+  --r-card:   18px;
+  --r-input:  22px;
+  --r-pill:   999px;
+  --r-chip:   10px;
+  --r-tile:   12px;
+
+  /* ---- 影：两层，极淡，色相往暖偏，没有边框 ---- */
+  --shadow-card:
+    0 1px 2px rgba(23, 23, 15, .04),
+    0 8px 24px -6px rgba(23, 23, 15, .08);
+  --shadow-lift:
+    0 2px 4px rgba(23, 23, 15, .05),
+    0 16px 40px -10px rgba(23, 23, 15, .12);
+  --shadow-pop:
+    0 4px 8px rgba(23, 23, 15, .06),
+    0 24px 56px -12px rgba(23, 23, 15, .18);
+
+  /* ---- 曲线：只有这三条，不许手搓 ---- */
+  --ease-out:    cubic-bezier(.23, 1, .32, 1);
+  --ease-in-out: cubic-bezier(.77, 0, .175, 1);
+  --ease-drawer: cubic-bezier(.32, .72, 0, 1);
+
+  /* ---- 字 ---- */
+  --font-ui: "Inter", "Inter var", -apple-system, "Segoe UI Variable Text",
+             "Segoe UI", "Source Han Sans SC", "Noto Sans SC",
+             "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-serif: "Instrument Serif", "Noto Serif SC", "Source Han Serif SC",
+                Georgia, "Songti SC", serif;
+  --font-mono: "Cascadia Code", "SF Mono", ui-monospace, Consolas, monospace;
+}
+
+/* ---- 深色：同一套语义，只换明度 ---- */
+:root[data-theme="dark"] {
+  --paper:      #191815;
+  --paper-2:    #131210;
+  --card:       #232220;
+  --card-sunk:  #1D1C1A;
+  --card-hover: #2A2825;
+
+  --ink:        #F2F1ED;
+  --ink-2:      #A5A29A;
+  --ink-3:      #75726B;
+  --ink-4:      #4A4844;
+
+  --glass:      rgba(42, 40, 37, .62);
+  --glass-lip:  rgba(255, 255, 255, .10);
+  --glass-ring: rgba(255, 255, 255, .07);
+  --hairline:   rgba(242, 241, 237, .09);
+  --hairline-2: rgba(242, 241, 237, .16);
+
+  --indigo: #A5A4F5; --indigo-bg: rgba(122, 122, 232, .18);
+  --amber:  #E0A44E; --amber-bg:  rgba(210, 140, 50, .18);
+  --teal:   #52BFC7; --teal-bg:   rgba(30, 160, 172, .18);
+  --green:  #74C295; --green-bg:  rgba(70, 165, 112, .18);
+  --terracotta: #E08055; --terracotta-bg: rgba(200, 95, 50, .18);
+  --solid:  #F2F1ED;
+
+  --shadow-card: 0 1px 2px rgba(0,0,0,.30), 0 8px 24px -6px rgba(0,0,0,.44);
+  --shadow-lift: 0 2px 4px rgba(0,0,0,.34), 0 16px 40px -10px rgba(0,0,0,.52);
+  --shadow-pop:  0 4px 8px rgba(0,0,0,.38), 0 24px 56px -12px rgba(0,0,0,.60);
+}

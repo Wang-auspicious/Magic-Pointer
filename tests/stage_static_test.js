@@ -88,7 +88,20 @@ assert(source.includes("if (name === 'processing' || name === 'result' || name =
   'a submitted question moves into the thread, leaving an empty composer');
 assert(!source.includes('renderResultToolbar'),
   'the per-answer toolbar is replaced by the thread bar');
-assert(source.includes('renderMarkdownText'));
+
+// 答案的版式（含 markdown 子集）现在由共享的 renderer/card_render.js 出，
+// 舞台只负责把卡片挂上去。守卫跟着能力一起搬家，不是取消：
+// - 舞台必须走共享渲染器，不许自己再长一套模板
+// - 那份渲染器必须仍然渲 markdown，并且同样不许碰 innerHTML
+const cardRender = fs.readFileSync('electron/renderer/card_render.js', 'utf8');
+assert(source.includes("renderCard(card, { density: 'capsule' })"),
+  'the capsule must render the shared card, not a capsule-only template');
+assert(cardRender.includes('function markdown('),
+  'answers still render the markdown subset, just from the shared renderer now');
+assert(!/\.innerHTML\s*=/.test(cardRender),
+  'the shared renderer builds nodes; escaping must stay structural');
+assert(html.includes('card_render.js') && html.includes('../cards.js'),
+  'the capsule has to actually load the shared card contract and renderer');
 assert(css.includes(".stage-capsule[data-mode='text'] .voice-waveform"));
 assert(css.includes('.stage-capsule.is-exiting'));
 assert(css.includes('@keyframes stage-result-expand'));
