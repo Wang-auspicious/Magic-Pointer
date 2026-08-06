@@ -105,6 +105,7 @@ async function renderConversation(id) {
     return;
   }
   showEmpty(false);
+  LiveCards.reset();
   stream.replaceChildren(...turns.flatMap((t) => {
     const nodes = [];
     if (t.question) {
@@ -116,7 +117,7 @@ async function renderConversation(id) {
     const wrap = document.createElement('div');
     wrap.className = 'turn enter';
     for (const card of turnCards(t, target)) {
-      wrap.appendChild(renderCard(card, { density: 'companion' }));
+      wrap.appendChild(renderCard(LiveCards.track(card), { density: 'companion' }));
     }
     nodes.push(wrap);
     return nodes;
@@ -147,4 +148,12 @@ if (new URLSearchParams(location.search).has('empty')) {
   setTitle('未命名对话', 'mp');
 } else {
   renderConversation(null);
+}
+
+/* 后台任务的进度，和工作室收的是同一份补丁 */
+const cpBridge = window.magicPointerCompanion || window.magicPointerDashboard;
+if (cpBridge?.onCardPatch) {
+  cpBridge.onCardPatch((payload) => {
+    if (payload?.cardId) LiveCards.patch(payload.cardId, payload.patch || {});
+  });
 }

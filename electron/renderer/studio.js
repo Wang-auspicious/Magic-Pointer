@@ -320,6 +320,7 @@ async function openConversation(id) {
 
   const stream = document.getElementById('stream');
   if (!stream) return;
+  LiveCards.reset();   // 换了一条对话，旧卡的计时器不该继续陪着跑
   const turns = c.turns || [];
   if (!turns.length) {
     stream.innerHTML = '<div class="view-empty">这条还没有内容。</div>';
@@ -335,7 +336,11 @@ async function openConversation(id) {
 
     const wrap = document.createElement('div');
     wrap.className = 'turn enter';
-    for (const card of turnCards(t, c)) wrap.appendChild(renderCard(card, { density: 'full' }));
+    for (const card of turnCards(t, c)) {
+      // 登记之后这张卡才接得住补丁——后台任务跑完时它会就地变成结果，
+      // 而不是等用户重新打开界面
+      wrap.appendChild(renderCard(LiveCards.track(card), { density: 'full' }));
+    }
     return t.question ? [ask, wrap] : [wrap];
   }));
   stream.scrollTop = stream.scrollHeight;
@@ -530,3 +535,11 @@ if (q) show(q);
 window.magicPointerDashboard?.onShow?.((payload) => {
   if (payload?.view) show(payload.view);
 });
+
+/* 后台任务的进度。三个界面收到的是同一份补丁，所以同一次出图
+   在哪个窗口看都是同一个进度。 */
+if (window.magicPointerDashboard?.onCardPatch) {
+  window.magicPointerDashboard.onCardPatch((payload) => {
+    if (payload?.cardId) LiveCards.patch(payload.cardId, payload.patch || {});
+  });
+}

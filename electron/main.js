@@ -55,6 +55,7 @@ const { pointerPollingPolicy } = require('./pointer_polling_policy');
 const { PassThroughGestureCapture } = require('./pass_through_gesture');
 const { createPythonBridgeRunner } = require('./python_bridge_runner');
 const CardModel = require('./cards');
+const { createTaskWatcher } = require('./task_watcher');
 const { createStashRuntime } = require('./stash_runtime');
 const { isTransientShell } = require('./stash_store');
 const { createConversationStore } = require('./conversation_store');
@@ -850,7 +851,52 @@ function updateStage(payload = {}) {
     });
   }
   if (type === 'RESULT' || type === 'COMPLETE' || type === 'ERROR') recordConversationTurn(payload, type);
+  // 「已受理」不是「已完成」。后台任务这时候才刚起来，卡上要继续动——
+  // 底层早就能查状态了，缺的一直是这边没人在看。
+  watchTaskFromEvent(payload);
   safeSurfaceSend('stage', 'stage:update', payload);
+}
+
+// 结果里带了 taskId 且状态是「已受理」，就开始盯着它，把状态变成卡片补丁。
+function watchTaskFromEvent(payload = {}) {
+  const result = payload?.event?.result;
+  if (!result || typeof result !== 'object') return;
+  const taskId = String(result.taskId || '');
+  if (!taskId || result.status === 'succeeded' || result.status === 'failed') return;
+  taskWatcher().watch({
+    taskId,
+    cardId: String(result.cardId || `t-${taskId}`),
+    selectionSessionToken: payload.selectionSessionToken || '',
+  });
+}
+
+let taskWatcherInstance = null;
+
+function taskWatcher() {
+  if (taskWatcherInstance) return taskWatcherInstance;
+  taskWatcherInstance = createTaskWatcher({
+    log,
+    CardModel,
+    probe: async (taskId) => {
+      const parsed = await runPythonBridgePromise(
+        { operation: 'status', taskId },
+        'scripts/agent_bridge.py',
+        { target: 'stage', timeoutMs: 8000 },
+      );
+      return parsed?.task || null;
+    },
+    onPatch: ({ cardId, selectionSessionToken, patch }) => {
+      safeSurfaceSend('stage', 'stage:card-patch', { cardId, selectionSessionToken, patch });
+      // 随行窗和工作室看的是同一次会话，所以它们也要收到——
+      // 「他们俩应该是完全同步的才对」。
+      for (const window of [companionWindow, dashboardWindow]) {
+        if (window && !window.isDestroyed()) {
+          window.webContents.send('stage:card-patch', { cardId, selectionSessionToken, patch });
+        }
+      }
+    },
+  });
+  return taskWatcherInstance;
 }
 
 // ---------------------------------------------------------------------------

@@ -141,6 +141,9 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
     artifacts: () => ipcRenderer.invoke('conversations:artifacts'),
     onTurn: (callback) => ipcRenderer.on('conversations:turn', (_event, payload) => callback(payload)),
   },
+  // 后台任务的进度。走的是和胶囊同一条通道——三个界面收到的是同一份补丁，
+  // 所以同一次出图在哪个窗口看都是同一个进度。
+  onCardPatch: (callback) => ipcRenderer.on('stage:card-patch', (_event, payload) => callback(payload)),
 });
 
 contextBridge.exposeInMainWorld('magicPointerCompanion', {
@@ -149,6 +152,7 @@ contextBridge.exposeInMainWorld('magicPointerCompanion', {
   expand: () => ipcRenderer.send('companion:expand'),
   onShow: (callback) => ipcRenderer.on('companion:show', (_event, payload) => callback(payload)),
   onTurn: (callback) => ipcRenderer.on('stage:turn', (_event, payload) => callback(payload)),
+  onCardPatch: (callback) => ipcRenderer.on('stage:card-patch', (_event, payload) => callback(payload)),
 });
 
 contextBridge.exposeInMainWorld('magicPointerOnboarding', {
