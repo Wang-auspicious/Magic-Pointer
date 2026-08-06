@@ -92,6 +92,8 @@ contextBridge.exposeInMainWorld('magicPointerStage', {
   }),
   onShow: (callback) => ipcRenderer.on('stage:show', (_event, payload) => callback(payload)),
   onUpdate: (callback) => ipcRenderer.on('stage:update', (_event, payload) => callback(payload)),
+  // 桥跑到哪一步了。结果还没出来之前，这是界面上唯一有信息量的东西。
+  onCardPatch: (callback) => ipcRenderer.on('stage:card-patch', (_event, payload) => callback(payload)),
   onHide: (callback) => ipcRenderer.on('stage:hide', () => callback()),
   onDictationResult: (callback) => ipcRenderer.on('dictation:result', (_event, payload) => callback(payload)),
   onPointerInput: (callback) => ipcRenderer.on('stage:pointer-input', (_event, payload) => callback(payload)),

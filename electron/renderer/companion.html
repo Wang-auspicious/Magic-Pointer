@@ -38,50 +38,9 @@
   </button>
 </div>
 
-<!-- ── 工作态 ── -->
-<div class="cp-stream" id="cp-stream">
-  <div class="msg-user enter">这段代码在干嘛？为什么要有 200ms 这个数？</div>
-
-  <div class="turn enter">
-    <div class="trace">
-      <details class="trace-step">
-        <summary><svg><use href="#ic-loading"/></svg>想了 <span class="n">6s</span><svg class="caret"><use href="#ic-chev"/></svg></summary>
-        <div class="trace-detail">
-          <p>指向的是 UIA 适配器的超时分支，在 <code>_probe_with_deadline</code> 里。</p>
-        </div>
-      </details>
-      <details class="trace-step" open>
-        <summary><svg><use href="#ic-target"/></svg>凑齐上下文 <span class="n">7/9</span><svg class="caret"><use href="#ic-chev"/></svg></summary>
-        <div class="trace-detail">
-          <div class="trace-src"><svg><use href="#ic-window"/></svg>焦点窗口 · VS Code<span class="tag tag-indigo">UIA</span></div>
-          <div class="trace-src"><svg><use href="#ic-stroke"/></svg>划线选区 · 42 字<span class="tag tag-indigo">UIA</span></div>
-          <div class="trace-src"><svg><use href="#ic-term"/></svg>终端输出 · 12 行<span class="tag tag-amber">像素</span></div>
-          <div class="trace-src"><svg><use href="#ic-clip"/></svg>剪贴板 · 文本<span class="tag tag-indigo">系统</span></div>
-          <div class="trace-src is-miss"><svg><use href="#ic-mcp"/></svg>MCP 工具<span class="tag">未连</span></div>
-        </div>
-      </details>
-      <div class="trace-line"><svg><use href="#ic-check"/></svg>交替 A/B 复测 <span class="n">20 轮</span></div>
-    </div>
-
-    <div class="msg-ai">
-      <p>这是 UIA 探针的<b>硬超时兜底</b>：每次跨进程读取给 200ms，超过就放弃结构层、退到像素层。</p>
-      <p>200 不是拍的——探针冷启动本身就要 175ms，留给实际读取只剩 25ms。<b>它撞的是自己的启动开销。</b></p>
-    </div>
-
-    <div class="card plan">
-      <div class="plan-step is-done"><span class="dot"><svg><use href="#ic-check"/></svg></span><span class="time">12:32</span><span class="label">读取选区与所在函数</span></div>
-      <div class="plan-step is-now"><span class="dot"><svg class="spin"><use href="#ic-loading"/></svg></span><span class="time">12:33</span><span class="label">交替 A/B 复测</span></div>
-      <div class="plan-step is-todo"><span class="dot"><svg><use href="#ic-circle"/></svg></span><span class="time">—</span><span class="label">写回注释</span></div>
-    </div>
-
-    <div class="card">
-      <div class="seg-bar"><span class="seg is-on"></span><span class="seg is-on"></span><span class="seg is-on"></span><span class="seg"></span><span class="seg"></span></div>
-      <div class="run-title"><svg class="spin"><use href="#ic-loading"/></svg>正在交替复测</div>
-      <p class="run-sub">已完成 12 / 20 轮</p>
-      <div class="run-actions"><button class="btn btn-quiet">取消</button></div>
-    </div>
-  </div>
-</div>
+<!-- ── 工作态：内容由 companion.js 从真实记录渲染，和工作室是同一份数据、
+         同一个 renderCard。这里写死一份样例，就是上一版两个窗口对不上的原因。 ── -->
+<div class="cp-stream" id="cp-stream"></div>
 
 <div class="cp-foot">
   <div class="quick-chips">
@@ -105,6 +64,7 @@
 <script src="icons.js?v=20"></script>
 <script src="../cards.js?v=20"></script>
 <script src="card_render.js?v=20"></script>
-<script src="companion.js?v=13"></script>
+<script src="data.js?v=20"></script>
+<script src="companion.js?v=20"></script>
 </body>
 </html>

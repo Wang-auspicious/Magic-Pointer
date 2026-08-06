@@ -269,6 +269,38 @@ async function renderSidebar() {
     </button>`).join('');
 }
 
+/* 一轮问答摊成若干张卡。答案永远有一张；事实、产物、图各自成卡。
+   这份映射只此一处——舞台、随行窗、工作室都从这里拿。 */
+function turnCards(turn, conversation) {
+  const source = conversation?.object
+    ? { app: conversation.object.app, label: conversation.object.label || conversation.object.windowTitle }
+    : null;
+  const out = [];
+  out.push(CardModel.normalizeCard({
+    id: `${turn.at || 0}-a`,
+    kind: 'prose',
+    state: turn.failed ? 'failed' : 'done',
+    answer: turn.answer || '',
+    error: turn.failed ? (turn.answer || '这次没能完成。') : '',
+    steps: (turn.trace || []).map((x) => (typeof x === 'string'
+      ? { label: x, state: 'done' }
+      : { label: x.label, note: x.note || '', state: 'done' })),
+    source,
+  }));
+  if ((turn.facts || []).length) {
+    out.push(CardModel.normalizeCard({
+      id: `${turn.at || 0}-f`, kind: 'facts', rows: turn.facts,
+    }));
+  }
+  for (const [i, art] of (turn.artifacts || []).entries()) {
+    out.push(CardModel.normalizeCard(art.kind === 'image'
+      ? { id: `${turn.at || 0}-i${i}`, kind: 'image', src: art.src, caption: art.name, w: art.w, h: art.h }
+      : { id: `${turn.at || 0}-r${i}`, kind: 'prose', eyebrow: '产物', title: art.name,
+        answer: art.summary || '', actions: [{ id: `open:${art.name}`, label: '打开' }] }));
+  }
+  return out;
+}
+
 /* ---- 打开一条对话 ---- */
 async function openConversation(id) {
   const c = await Data.conversation(id);
@@ -293,22 +325,19 @@ async function openConversation(id) {
     stream.innerHTML = '<div class="view-empty">这条还没有内容。</div>';
     return;
   }
-  stream.innerHTML = turns.map((t) => `
-    <div class="msg-user enter">${esc(t.question)}</div>
-    <div class="turn enter">
-      ${(t.trace || []).length ? `<div class="trace">${t.trace.map((x) =>
-        `<div class="trace-line">${icon('ic-check')}${esc(x.label || x)}</div>`).join('')}</div>` : ''}
-      <div class="msg-ai">${esc(t.answer).split('\n').map((x) => `<p>${x}</p>`).join('')}</div>
-      ${(t.facts || []).length ? `<div class="card facts">
-        <div class="facts-head">${icon('ic-check')}已确认<span class="count">${t.facts.length} 项</span></div>
-        ${t.facts.map((f) => `<div class="fact-row">${icon('ic-file')}<span class="label">${esc(f.label)}</span>
-          <span class="value">${esc(f.value)}</span></div>`).join('')}
-      </div>` : ''}
-      ${(t.artifacts || []).map((art) => `<button class="card artifact" data-open-artifact>
-        <span class="tile">${icon('ic-code')}</span>
-        <span class="side-text"><span class="name">${esc(art.name)}</span>
-        <span class="meta">${formatTime(t.at)}</span></span></button>`).join('')}
-    </div>`).join('');
+  // 工作室里的一轮问答，渲染的就是舞台上那张卡——同一个 renderCard，
+  // 只是 density 不同。上一版这里是另写一遍的模板，于是同一次问答在小窗
+  // 和主窗里长得不一样。
+  stream.replaceChildren(...turns.flatMap((t) => {
+    const ask = document.createElement('div');
+    ask.className = 'msg-user enter';
+    ask.textContent = t.question || '';
+
+    const wrap = document.createElement('div');
+    wrap.className = 'turn enter';
+    for (const card of turnCards(t, c)) wrap.appendChild(renderCard(card, { density: 'full' }));
+    return t.question ? [ask, wrap] : [wrap];
+  }));
   stream.scrollTop = stream.scrollHeight;
 }
 

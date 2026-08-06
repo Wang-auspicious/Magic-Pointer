@@ -202,6 +202,10 @@ function pickForward(current, proposed) {
 // ---------------------------------------------------------------------------
 // 运行中该说什么。这句话是这张卡在等待期间唯一有信息量的东西，
 // 所以宁可具体到「读窗口里的文字」，也不要「正在处理」。
+//
+// 一条容易搞错的地方：已完成的那些步骤已经在下面的列表里逐条列着了，
+// 这里再重复最后一条，屏幕上就会出现同一句话两遍——一遍写着「正在」，
+// 一遍打着勾。所以这里说的必须是**还没做的那一步**。
 // ---------------------------------------------------------------------------
 const RUNNING_HINT = Object.freeze({
   image: '正在出图',
@@ -218,9 +222,15 @@ const RUNNING_HINT = Object.freeze({
 
 function runningLabel(card = {}) {
   if (card.stage) return card.stage;
-  const last = [...(card.steps || [])].reverse().find((s) => s && s.label);
-  if (last) return last.label;
-  return RUNNING_HINT[normalizeKind(card.kind)] || '正在处理';
+  const steps = card.steps || [];
+  // 有一条明确标成「在做」的，就用它
+  const active = steps.find((s) => s && s.state === 'pending' && s.label);
+  if (active) return active.label;
+  const generic = RUNNING_HINT[normalizeKind(card.kind)] || '正在处理';
+  if (!steps.length) return generic;
+  // 全都做完了但结果还没到——通常是在等模型。这时候说清在等什么，
+  // 比把最后一步再念一遍有用。
+  return card.kind === 'image' ? RUNNING_HINT.image : '在等模型回话';
 }
 
 // 一张卡还能不能接补丁。渲染层用它决定要不要继续跑计时器。

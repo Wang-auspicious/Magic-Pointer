@@ -54,6 +54,7 @@ const { createUpdateManager } = require('./update_manager');
 const { pointerPollingPolicy } = require('./pointer_polling_policy');
 const { PassThroughGestureCapture } = require('./pass_through_gesture');
 const { createPythonBridgeRunner } = require('./python_bridge_runner');
+const CardModel = require('./cards');
 const { createStashRuntime } = require('./stash_runtime');
 const { isTransientShell } = require('./stash_store');
 const { createConversationStore } = require('./conversation_store');
@@ -3647,6 +3648,19 @@ function submitSelectionCommandWhenGrounded(payload, startedAt, noticeShown = fa
   let child = null;
   child = runPythonBridge(enriched, 'scripts/selection_bridge.py', 'stage', {
     timelineToken: selectionSessionToken,
+    // 桥在跑的时候就在报它走到哪一步了。这些阶段一直存在，只是从来没有送到
+    // 界面上——于是用户看到的是一个跳动的秒数，跟一个卡死的进程分不出来。
+    // 现在每一步都变成正在等的那张卡上的一行。
+    onProgress: (record) => {
+      if (!selectionSessions.isCurrentRequest(selectionSessionToken, requestId)) return;
+      const step = CardModel.phaseStep(record);
+      if (!step) return;
+      safeSurfaceSend('stage', 'stage:card-patch', {
+        selectionSessionToken,
+        requestId,
+        patch: { steps: [step] },
+      });
+    },
     onComplete: (parsed) => {
       if (activeSessionChildren.get(selectionSessionToken) === child) activeSessionChildren.delete(selectionSessionToken);
       if (!selectionSessions.isCurrentRequest(selectionSessionToken, requestId)) {

@@ -42,26 +42,109 @@ function makeOrb(seed, size = 64) {
   </svg>`;
 }
 
-const orb = document.getElementById('cp-orb');
-if (orb) orb.innerHTML = makeOrb(document.getElementById('cp-title')?.textContent || 'mp', 64);
+/* ============================================================
+   内容
+   ------------------------------------------------------------
+   随行窗和工作室是同一次会话的两个视图，所以它们读同一份 Data、
+   渲染同一批 renderCard。上一版随行窗是一屏写死的样例，于是用户在
+   小窗看到的和主窗看到的对不上——「他们俩应该是完全同步的才对」。
+   ============================================================ */
+
+let currentId = null;
+
+function setTitle(text, seed) {
+  const title = document.getElementById('cp-title');
+  if (title) title.textContent = text;
+  const orb = document.getElementById('cp-orb');
+  if (orb) orb.replaceChildren();
+  if (orb) orb.insertAdjacentHTML('afterbegin', makeOrb(seed || text || 'mp', 64));
+}
+
+function showEmpty(on) {
+  const empty = document.getElementById('cp-empty');
+  const stream = document.getElementById('cp-stream');
+  if (empty) empty.hidden = !on;
+  if (stream) stream.hidden = on;
+}
+
+/* 一轮问答摊成若干张卡。与 studio.js 的 turnCards 是同一套映射。 */
+function turnCards(turn, conversation) {
+  const object = conversation && conversation.object ? conversation.object : null;
+  const cards = [CardModel.normalizeCard({
+    id: `${turn.at || 0}-a`,
+    kind: 'prose',
+    state: turn.failed ? 'failed' : 'done',
+    answer: turn.answer || '',
+    error: turn.failed ? (turn.answer || '这次没能完成。') : '',
+    steps: (turn.trace || []).map((x) => (typeof x === 'string'
+      ? { label: x, state: 'done' }
+      : { label: x.label, note: x.note || '', state: 'done' })),
+    source: object ? { app: object.app, label: object.label || object.windowTitle } : null,
+  })];
+  if ((turn.facts || []).length) {
+    cards.push(CardModel.normalizeCard({ id: `${turn.at || 0}-f`, kind: 'facts', rows: turn.facts }));
+  }
+  return cards;
+}
+
+async function renderConversation(id) {
+  const stream = document.getElementById('cp-stream');
+  if (!stream) return;
+  const list = await Data.conversations();
+  const target = id ? await Data.conversation(id) : list[0];
+  if (!target) {
+    showEmpty(true);
+    setTitle('未命名对话', 'mp');
+    return;
+  }
+  currentId = target.id;
+  setTitle(target.title || '未命名对话', target.objectKey || target.id);
+  const turns = target.turns || [];
+  if (!turns.length) {
+    showEmpty(true);
+    return;
+  }
+  showEmpty(false);
+  stream.replaceChildren(...turns.flatMap((t) => {
+    const nodes = [];
+    if (t.question) {
+      const ask = document.createElement('div');
+      ask.className = 'msg-user enter';
+      ask.textContent = t.question;
+      nodes.push(ask);
+    }
+    const wrap = document.createElement('div');
+    wrap.className = 'turn enter';
+    for (const card of turnCards(t, target)) {
+      wrap.appendChild(renderCard(card, { density: 'companion' }));
+    }
+    nodes.push(wrap);
+    return nodes;
+  }));
+  stream.scrollTop = stream.scrollHeight;
+}
 
 /* 输入框随内容长高 */
-document.addEventListener('input', e => {
+document.addEventListener('input', (e) => {
   const ta = e.target.closest('textarea');
   if (!ta) return;
   ta.style.height = 'auto';
-  ta.style.height = Math.min(ta.scrollHeight, 160) + 'px';
+  ta.style.height = `${Math.min(ta.scrollHeight, 160)}px`;
 });
 
 /* pin 切换 */
-document.addEventListener('click', e => {
+document.addEventListener('click', (e) => {
   const pin = e.target.closest('[title="固定"]');
   if (pin) pin.classList.toggle('is-on');
 });
 
+/* 有新一轮就重画。桥推的是「哪条对话动了」，不是整份数据。 */
+Data.onChange(() => renderConversation(currentId));
+
 /* ?empty=1 看空态 */
 if (new URLSearchParams(location.search).has('empty')) {
-  document.getElementById('cp-empty').hidden = false;
-  document.getElementById('cp-stream').hidden = true;
-  document.getElementById('cp-title').textContent = '未命名对话';
+  showEmpty(true);
+  setTitle('未命名对话', 'mp');
+} else {
+  renderConversation(null);
 }

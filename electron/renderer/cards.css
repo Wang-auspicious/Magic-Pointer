@@ -185,9 +185,13 @@
 .mcard-image {
   position: relative; overflow: hidden;
   aspect-ratio: var(--ratio, 1.5);
+  /* 比例照原图，但不让一张 3:1 的长图把整张卡撑到半屏高。
+     超过就裁——object-fit: cover 已经在做这件事。 */
+  max-height: 320px;
   border-radius: var(--r-tile);
   background: var(--card-sunk);
 }
+.mcard[data-density="capsule"] .mcard-image { max-height: 200px; }
 .mcard-image .mimg,
 .mcard-image .mimg-before {
   position: absolute; inset: 0;
@@ -195,14 +199,33 @@
 }
 .mcard-image .mimg { animation: mimg-in .5s var(--ease-out) both; }
 @keyframes mimg-in { from { opacity: 0; transform: scale(1.012); } }
+/* 出图时的占位。不是一块灰底加一个小图标——那看起来像加载失败。
+   两层：底下一团暖色的光在缓慢游走（像素正在成形），上面一道扫光掠过。
+   参考图里那些卡的质感都来自这个：光在动，不是形状在闪。 */
 .mimg-skeleton {
-  position: absolute; inset: 0;
+  position: absolute; inset: 0; overflow: hidden;
   display: grid; place-items: center;
-  background: linear-gradient(100deg, var(--card-sunk) 30%, var(--paper-2) 48%, var(--card-sunk) 66%);
-  background-size: 260% 100%;
-  animation: mimg-shimmer 1.6s linear infinite;
+  background:
+    radial-gradient(60% 70% at 30% 35%, rgba(180, 105, 14, .14), transparent 70%),
+    radial-gradient(55% 65% at 72% 68%, rgba(14, 124, 134, .11), transparent 72%),
+    var(--card-sunk);
+  background-size: 180% 180%, 170% 170%, 100% 100%;
+  animation: mimg-drift 7s var(--ease-in-out) infinite alternate;
 }
-.mimg-skeleton svg { width: 26px; height: 26px; stroke: var(--ink-4); fill: none; stroke-width: 1.4; }
+.mimg-skeleton::after {
+  content: ''; position: absolute; inset: 0;
+  background: linear-gradient(100deg, transparent 34%, rgba(255, 255, 255, .55) 50%, transparent 66%);
+  background-size: 260% 100%;
+  animation: mimg-shimmer 1.9s linear infinite;
+}
+.mimg-skeleton svg {
+  position: relative; width: 26px; height: 26px;
+  stroke: var(--ink-4); fill: none; stroke-width: 1.4;
+}
+@keyframes mimg-drift {
+  from { background-position: 0% 0%, 100% 100%, 0 0; }
+  to   { background-position: 100% 100%, 0% 0%, 0 0; }
+}
 @keyframes mimg-shimmer { to { background-position: -160% 0; } }
 .mimg-flip {
   position: absolute; left: 10px; bottom: 10px;
@@ -221,15 +244,15 @@
 .mprev-folders, .mprev-files { display: flex; flex-wrap: wrap; gap: 14px; justify-content: center; }
 .mfolder, .mfile {
   display: grid; justify-items: center; gap: 5px;
-  width: 78px; text-align: center;
+  width: 86px; text-align: center;
   animation: mprev-in .34s var(--ease-out) both;
 }
 .mfolder:nth-child(2), .mfile:nth-child(2) { animation-delay: .05s; }
 .mfolder:nth-child(3), .mfile:nth-child(3) { animation-delay: .1s; }
 .mfolder:nth-child(4), .mfile:nth-child(4) { animation-delay: .15s; }
 @keyframes mprev-in { from { opacity: 0; transform: translateY(6px) scale(.96); } }
-.mfolder svg { width: 34px; height: 28px; stroke: var(--amber); fill: var(--amber-bg); stroke-width: 1.5; }
-.mfile svg { width: 26px; height: 30px; stroke: var(--ink-3); fill: var(--card); stroke-width: 1.5; }
+.mfolder svg { width: 42px; height: 34px; stroke: var(--amber); fill: var(--amber-bg); stroke-width: 1.5; }
+.mfile svg { width: 30px; height: 34px; stroke: var(--ink-3); fill: var(--card); stroke-width: 1.5; }
 .mfolder small, .mfile small {
   font-size: 11px; color: var(--ink-2); line-height: 1.3;
   overflow: hidden; display: -webkit-box;
@@ -302,6 +325,7 @@
   .mcard[data-state="running"]::before,
   .mbar[data-mode="indeterminate"] > i,
   .mimg-skeleton,
+  .mimg-skeleton::after,
   .mcard-steps li,
   .mfolder, .mfile,
   .mcard-image .mimg { animation: none; }

@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<title>卡片画廊</title>
+<link rel="stylesheet" href="oreo_tokens.css">
+<link rel="stylesheet" href="oreo.css">
+<link rel="stylesheet" href="cards.css">
+<style>
+  /* 只为看清卡片本身，不属于产品样式 */
+  body { margin: 0; padding: 40px; background: var(--paper); font-family: var(--font-ui); color: var(--ink); }
+  h1 { font-family: var(--font-serif); font-size: 30px; font-weight: 400; margin: 0 0 6px; }
+  .lede { margin: 0 0 34px; font-size: 13.5px; color: var(--ink-2); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 26px; align-items: start; }
+  .cell { display: grid; gap: 8px; }
+  .cap { font-size: 11px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--ink-3); }
+  .narrow { max-width: 300px; }
+</style>
+</head>
+<body>
+
+<h1>卡片</h1>
+<p class="lede">十种形状 × 三种状态。这一页只用来核对视觉，不进产品。</p>
+<div class="grid" id="grid"></div>
+
+<script src="icons.js"></script>
+<script src="../cards.js"></script>
+<script src="card_render.js"></script>
+<script src="gallery.js"></script>
+</body>
+</html>

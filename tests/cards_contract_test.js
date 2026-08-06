@@ -79,10 +79,25 @@ assert.strictEqual(cards.applyPatch(broken, { state: 'done' }).state, 'failed');
 // ---- 等待时说什么：宁可具体，也不要「正在处理」 ----
 assert.strictEqual(cards.runningLabel({ kind: 'image' }), '正在出图');
 assert.strictEqual(cards.runningLabel({ kind: 'proposal' }), '正在想该怎么改');
+// 已完成的步骤在下面逐条列着，这里不能把最后一条再念一遍——
+// 屏幕上会出现同一句话两遍，一遍写「正在」一遍打勾
 assert.strictEqual(
-  cards.runningLabel({ kind: 'image', steps: [{ label: '读窗口里的文字' }] }),
+  cards.runningLabel({ kind: 'prose', steps: [{ label: '挑了能用的能力', state: 'done' }] }),
+  '在等模型回话',
+  '所有步骤都走完了就说清在等什么，别重复最后一步',
+);
+assert.strictEqual(
+  cards.runningLabel({ kind: 'image', steps: [{ label: '读窗口里的文字', state: 'done' }] }),
+  '正在出图',
+);
+// 明确标成「在做」的那一步才是现在的状态
+assert.strictEqual(
+  cards.runningLabel({
+    kind: 'prose',
+    steps: [{ label: '冻住了这块画面', state: 'done' }, { label: '读窗口里的文字', state: 'pending' }],
+  }),
   '读窗口里的文字',
-  '有真实阶段可说就说阶段，别退回泛泛的一句',
+  '有一步明确在做，就说它',
 );
 assert.strictEqual(cards.runningLabel({ kind: 'image', stage: '第 3 帧 / 共 5 帧' }), '第 3 帧 / 共 5 帧');
 assert.strictEqual(cards.runningLabel({}), '正在想');

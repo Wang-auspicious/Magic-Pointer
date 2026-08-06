@@ -67,7 +67,6 @@
   const deliveryBar = document.getElementById('delivery-bar');
   const deliveryCount = document.getElementById('delivery-count');
   const tplThreadTurn = document.getElementById('tpl-thread-turn');
-  const tplTurnWait = document.getElementById('tpl-turn-wait');
   const tplAgentPromptDraft = document.getElementById('tpl-agent-prompt-draft');
 
   const DEFAULT_VISUAL_TUNING = Object.freeze({
@@ -1323,6 +1322,43 @@
     });
   }
 
+  // 等待中的那张卡。它和最终那张是同一张——同一个 id、同一种 kind、同一套
+  // 版式，只是 state 还是 running。所以结果到了不是「换一张卡」，是这张卡
+  // 自己长出身子来。上一版这里是一个通用的转圈加一个秒数，那是在告诉用户
+  // 「我不打算让你知道我在干什么」。
+  const runningCards = new Map();   // turnId -> card
+
+  function runningCardFor(turn) {
+    const id = `t${turn.id}`;
+    if (!runningCards.has(id)) {
+      runningCards.set(id, CardModel.normalizeCard({
+        id,
+        kind: turn.expectKind || 'prose',
+        state: 'running',
+        startedAt: Date.now(),
+      }, { id }));
+    }
+    return runningCards.get(id);
+  }
+
+  function paintRunningCard(container, turn) {
+    const card = runningCardFor(turn);
+    card.runningLabel = CardModel.runningLabel(card);
+    container.replaceChildren(renderCard(card, { density: 'capsule' }));
+  }
+
+  // 桥报上来一步，就给正在等的那张卡打一个补丁并重画。
+  function patchRunningCard(patch) {
+    const turn = [...state.turns].reverse().find((t) => t.status === 'pending');
+    if (!turn) return;
+    const id = `t${turn.id}`;
+    const current = runningCards.get(id);
+    if (!current) return;
+    runningCards.set(id, CardModel.applyPatch(current, patch));
+    const node = resultCard.querySelector(`.thread-turn[data-turn-id="${turn.id}"] .turn-answer`);
+    if (node) paintRunningCard(node, turn);
+  }
+
   function buildTurn(turn) {
     const node = tplThreadTurn.content.firstElementChild.cloneNode(true);
     node.dataset.turnId = String(turn.id);
@@ -1332,19 +1368,20 @@
     if (turn.ask) ask.textContent = turn.ask;
     else ask.hidden = true;
     if (turn.status === 'pending') {
-      answer.appendChild(tplTurnWait.content.firstElementChild.cloneNode(true));
+      paintRunningCard(answer, turn);
     } else if (turn.status === 'failed') {
+      runningCards.delete(`t${turn.id}`);
       answer.dataset.kind = 'error';
       renderFailure(answer, turn.error);
     } else {
+      runningCards.delete(`t${turn.id}`);
       renderStructured(answer, turn.result);
     }
     return node;
   }
 
-  // A spinner that never says how long it has been spinning is how a two
-  // minute stall reads as identical to a two second one. The elapsed seconds
-  // are the only honest progress signal we have.
+  // 秒数仍然要走——一个两分钟的卡死和一个两秒的等待，只靠步骤行是分不出来的。
+  // 但它现在只是卡上的一个附注，不再是唯一的信息。
   function syncWaitClock(hasPending) {
     if (!hasPending) {
       if (waitTimer) clearInterval(waitTimer);
@@ -1354,7 +1391,7 @@
     }
     if (!waitStartedAt) waitStartedAt = Date.now();
     const paint = () => {
-      const label = resultCard.querySelector('.thread-turn[data-status="pending"] .turn-elapsed');
+      const label = resultCard.querySelector('.thread-turn[data-status="pending"] [data-elapsed]');
       if (!label) return;
       const seconds = Math.max(0, Math.round((Date.now() - waitStartedAt) / 1000));
       label.textContent = seconds >= 1 ? `${seconds}s` : '';
@@ -1879,6 +1916,15 @@
       if (state.name === 'hidden') return;
       dispatch({ type: 'DISMISS' });
     });
+    // 阶段补丁不走状态机：它不改变舞台处在哪个状态，只是给正在等的那张卡
+    // 添一行。过状态机会引起整轮重建，把用户正在读的东西闪掉。
+    if (typeof api.onCardPatch === 'function') {
+      api.onCardPatch((payload) => {
+        if (!payload || state.name === 'hidden') return;
+        if (payload.selectionSessionToken && payload.selectionSessionToken !== session.token) return;
+        patchRunningCard(payload.patch || {});
+      });
+    }
     api.onDictationResult((payload) => {
       if (!payload || state.name === 'hidden' || state.name === 'dismissing') return;
       if (payload.ok === false) {

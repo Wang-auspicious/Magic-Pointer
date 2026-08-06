@@ -153,10 +153,13 @@ function renderTop(card) {
       [card.source.app, card.source.label].filter(Boolean).join(' · '),
     ])
     : null;
-  if (!card.title && !origin && card.kind === 'prose') return null;
+  // 标题和眉毛说的是同一件事时，只留眉毛。一张写回卡上「改动」写两遍，
+  // 第二遍不提供任何信息，只是把卡撑高。
+  const title = card.title && String(card.title).trim() !== eyebrow ? String(card.title) : '';
+  if (!title && !origin && card.kind === 'prose') return null;
   return h('header', { class: 'mcard-top' }, [
     h('span', { class: 'mcard-eyebrow' }, [icon(ico), eyebrow]),
-    card.title ? h('b', { class: 'mcard-title' }, [card.title]) : null,
+    title ? h('b', { class: 'mcard-title' }, [title]) : null,
     card.subtitle ? h('span', { class: 'mcard-sub' }, [card.subtitle]) : null,
     origin,
   ]);
@@ -258,8 +261,11 @@ const BODY = {
   },
 
   // 图。运行中先占好位——比例是已知的，所以图落下来时卡不会跳一下。
+  // 但失败之后不能还挂着那块在闪的骨架屏：它等于在说「还在出图」，
+  // 而这张卡上面已经写了「没能完成」，两句话是矛盾的。
   image(card) {
     const src = safeSrc(card.src);
+    if (card.state === 'failed' && !src) return null;
     const ratio = Number.isFinite(card.w) && Number.isFinite(card.h) && card.h > 0
       ? (card.w / card.h) : 1.5;
     const style = `--ratio:${ratio.toFixed(4)}`;
@@ -313,7 +319,8 @@ const BODY = {
 
   calendar(card) {
     return h('div', { class: 'mcard-cal' }, [
-      h('b', { class: 'mcal-title' }, [card.title || '未命名日程']),
+      // 标题已经在头部画过了，这里不再来一遍——上一版两处都画，
+      // 于是每张日程卡上「和设计过一遍卡片」出现两次。
       h('div', { class: 'mcal-row' }, [
         icon('ic-hist'), [card.start, card.end].filter(Boolean).join(' — '),
       ]),
