@@ -57,6 +57,86 @@ assert.match(
   /\.gif$/,
   '片段落成 gif',
 );
+// 文本发 .png 会得到一个打不开的文件
+assert.match(
+  stash.relativePath({ capturedAt: t0, fingerprint: 't12-abc', kind: 'text' }),
+  /\.txt$/,
+  '文本必须落成 txt',
+);
+assert.match(
+  stash.relativePath({ capturedAt: t0, fingerprint: 't12-abc', media: 'text' }),
+  /\.txt$/,
+  'media 与 kind 两种写法都要认',
+);
+
+// ---- 文本指纹 ----
+assert.strictEqual(stash.textFingerprint('同一段话'), stash.textFingerprint('同一段话'));
+assert.notStrictEqual(stash.textFingerprint('同一段话'), stash.textFingerprint('同一段化'));
+assert.strictEqual(stash.textFingerprint(''), null);
+assert.match(stash.textFingerprint('abcd'), /^t4-/, '指纹前缀带长度，不同长度永不相撞');
+
+// ---- 来源应用：外壳进程不算来源 ----
+// 按下 Win+Shift+S 的那一瞬间前台是截图工具，照抄就会把每张截图都记成它
+assert.ok(stash.isTransientShell('ScreenClippingHost'));
+assert.ok(stash.isTransientShell('SnippingTool.exe'));
+assert.ok(stash.isTransientShell('Magic Pointer'));
+assert.ok(stash.isTransientShell(''), '拿不到就是拿不到，不能当成一个来源');
+assert.ok(!stash.isTransientShell('Weixin'));
+assert.ok(!stash.isTransientShell('WindowsTerminal'));
+
+// ---- 归类要认得住不带 .exe 的进程名 ----
+// 前台探针给的是进程名。原来写 `code\.exe`，真实输入永远匹配不上
+assert.strictEqual(stash.classify({ app: 'Code', text: '普通的一段说明文字在这里' }), '交接');
+assert.strictEqual(stash.classify({ app: 'WindowsTerminal', text: '普通的一段说明文字在这里' }), '交接');
+assert.strictEqual(stash.classify({ app: 'Weixin', text: '这一段讲的是怎么把渐变做出方向感' }), '灵感');
+
+// ---- 文本准入：不是每一次 Ctrl+C 都该被收进来 ----
+assert.ok(stash.shouldStashText('这一段讲的是怎么把渐变做出方向感').ok);
+assert.strictEqual(stash.shouldStashText('').reason, 'empty');
+assert.strictEqual(stash.shouldStashText('短短几个字').reason, 'too_short');
+// 密码管理器里复制出来的那一次，绝不能落盘
+assert.strictEqual(stash.shouldStashText('password: hunter2hunter2').reason, 'secret');
+assert.strictEqual(stash.shouldStashText('sk-abcdefghijklmnopqrstuvwxyz012345').reason, 'secret');
+assert.strictEqual(stash.shouldStashText('ghp_abcdefghijklmnopqrstuvwxyz0123').reason, 'secret');
+assert.strictEqual(stash.shouldStashText('验证码：884211').reason, 'secret');
+assert.strictEqual(
+  stash.shouldStashText('-----BEGIN RSA PRIVATE KEY-----\nMIIEow==').reason,
+  'secret',
+);
+// 一次性 token：复制它是为了立刻粘贴，不是为了收藏
+assert.strictEqual(stash.shouldStashText('a1b2c3d4e5f6g7h8').reason, 'one_shot_token');
+// 我们自己回写的那条路径，不能再当成新采集收一遍
+assert.strictEqual(
+  stash.shouldStashText('C:\\stash\\2026-08\\x.png', { ownPaths: ['C:\\stash\\2026-08\\x.png'] }).reason,
+  'own_writeback',
+);
+assert.strictEqual(
+  stash.shouldStashText('"C:\\Magic Pointer\\x.png"', { ownPaths: ['C:\\Magic Pointer\\x.png'] }).reason,
+  'own_writeback',
+  '带引号的回写形式也要认出来',
+);
+
+// ---- 回写只对位图成立 ----
+assert.ok(stash.writeBackAllowed('image'));
+assert.ok(stash.writeBackAllowed('clip'));
+assert.ok(!stash.writeBackAllowed('text'), '对文本回写会毁掉用户刚复制的内容');
+
+// ---- 端到端：一条文本采集 ----
+const note = stash.buildEntry(
+  { capturedAt: t0, kind: 'text', app: 'Chrome', text: '这一段讲的是怎么把渐变做出方向感' },
+  null,
+);
+assert.strictEqual(note.skipped, false);
+assert.strictEqual(note.entry.media, 'text');
+assert.strictEqual(note.entry.kind, '灵感');
+assert.match(note.entry.relPath, /\.txt$/);
+assert.strictEqual(note.entry.width, 0, '文本没有尺寸，别编一个出来');
+// 同一段文字紧接着再复制一次 → 跳过
+const noteDup = stash.buildEntry(
+  { capturedAt: t0 + 1200, kind: 'text', app: 'Chrome', text: '这一段讲的是怎么把渐变做出方向感' },
+  note.entry,
+);
+assert.strictEqual(noteDup.skipped, true);
 
 // ---- 端到端：一条采集 ----
 const first = stash.buildEntry(

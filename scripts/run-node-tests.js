@@ -35,6 +35,24 @@ const testFiles = fs.readdirSync(path.join(root, 'tests'), { withFileTypes: true
   .sort();
 
 const failures = [];
+
+// `node --check` 只解析语法，不解析作用域。main.js 里 `createStashRuntime`
+// 和 `createConversationStore` 被用了却从来没有 require，两个都通过了 --check，
+// 然后在运行时抛 ReferenceError——被外层 try/catch 吞掉，表现成「收藏箱一直是空的」
+// 和「最近对话里什么都没有」。要挡住这一类，只能靠 no-undef。
+function runLint() {
+  const cli = path.join(root, 'node_modules', 'eslint', 'bin', 'eslint.js');
+  if (!fs.existsSync(cli)) {
+    console.warn('eslint not installed, skipping scope check');
+    return 0;
+  }
+  // 直接跑 eslint 的入口脚本，不经过 .cmd 包装：省掉一层 shell，
+  // Windows 上的参数转义问题也跟着没了。
+  return run([cli, 'electron', 'scripts', 'tests', '--max-warnings=0']);
+}
+
+if (runLint() !== 0) failures.push('lint');
+
 for (const file of sourceFiles) {
   if (run(['--check', file]) !== 0) failures.push(`syntax:${file}`);
 }

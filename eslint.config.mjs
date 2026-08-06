@@ -47,7 +47,20 @@ export default [
     languageOptions: {
       ecmaVersion: 2023,
       sourceType: 'script',
-      globals: { ...globals.browser },
+      // 渲染层是一串 classic script，前一个文件的顶层声明对后一个是可见的。
+      // 不在这里声明出来，no-undef 就会对每一次跨文件调用报错——噪音一多，
+      // 真正的「用了但没 require」就被埋掉了，main.js 里那两个正是这么漏的。
+      globals: {
+        ...globals.browser,
+        Data: 'readonly',
+        formatTime: 'readonly',
+        dayLabel: 'readonly',
+        renderSettings: 'readonly',
+        bindSettings: 'readonly',
+        renderCard: 'readonly',
+        CardModel: 'readonly',
+        StageChipsPolicy: 'readonly',
+      },
     },
     rules: {
       // Renderer files are deliberately loaded as classic scripts. Their
@@ -55,6 +68,9 @@ export default [
       // generic no-implicit-globals rule otherwise reports every function in
       // these files as an error without finding an actual leak.
       'no-implicit-globals': 'off',
+      // 上面把跨文件可见的名字声明成了 global，定义它们的那个文件因此会被
+      // 判成「重复声明」。那正是我们要的写法，所以只关掉这一项检查。
+      'no-redeclare': ['error', { builtinGlobals: false }],
       'no-unused-vars': ['warn', {
         argsIgnorePattern: '^_',
         varsIgnorePattern: '^_',

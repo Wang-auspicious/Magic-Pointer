@@ -36,7 +36,7 @@ function subtitleFrom(object = {}) {
   return bits.join(' · ');
 }
 
-function createConversationStore({ baseDir, log = () => {}, now = () => Date.now() } = {}) {
+function createConversationStore({ baseDir, now = () => Date.now() } = {}) {
   const file = path.join(baseDir, 'conversations.json');
   let items = null;
 

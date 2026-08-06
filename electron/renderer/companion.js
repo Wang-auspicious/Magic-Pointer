@@ -3,8 +3,6 @@
 /* 头像/球：与 studio.js 同一套；装了 @oreo-design/avatar 后统一换掉 */
 function hash(s){let h=2166136261;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619);}return h>>>0;}
 function rng(seed){let s=hash(String(seed))||1;return()=>{s^=s<<13;s>>>=0;s^=s>>17;s^=s<<5;s>>>=0;return s/4294967296;};}
-const PALETTES=[['#F6C9B0','#E8A0A8','#B98BC9'],['#F3D9A8','#EFB183','#D98A6A'],['#CFE0CE','#A8CBB4','#7FB6A6'],
-                ['#D9DCF2','#B6BEEA','#8E9BDD'],['#F5DCC2','#DFC0A6','#B99C86'],['#E7D3EE','#C9AEDD','#A487C6']];
 function makeOrb(seed, size = 64) {
   const r = rng(seed);
   // 色相对：黄绿 ↔ 青蓝 那一段最耐看；由种子在这个区间里取一对，

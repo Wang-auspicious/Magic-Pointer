@@ -5,6 +5,8 @@
    页面只跟这一层打交道，不直接碰 IPC——所以换数据源不用改渲染。
    ============================================================ */
 
+/* exported Data, formatTime, dayLabel */
+
 const bridge = () => window.magicPointerDashboard || null;
 const hasBridge = () => Boolean(bridge()?.conversations);
 

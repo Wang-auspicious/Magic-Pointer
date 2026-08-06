@@ -54,6 +54,9 @@ const { createUpdateManager } = require('./update_manager');
 const { pointerPollingPolicy } = require('./pointer_polling_policy');
 const { PassThroughGestureCapture } = require('./pass_through_gesture');
 const { createPythonBridgeRunner } = require('./python_bridge_runner');
+const { createStashRuntime } = require('./stash_runtime');
+const { isTransientShell } = require('./stash_store');
+const { createConversationStore } = require('./conversation_store');
 
 let overlayWindow = null;
 let dashboardWindow = null;
@@ -91,6 +94,9 @@ let pointerInputState = {
   captureArmed: false,
 };
 let lastPointerTraceKey = '';
+// 采集发生在剪贴板变化之后 700ms 内，那时前台可能已经被截图工具之类的外壳
+// 抢走。记住「最后一个真正的应用」，收藏箱才能说清这张图是从哪来的。
+let lastStableForegroundApp = '';
 let wiggleCalibrationTimer = null;
 let lastWiggleTraceAt = 0;
 let inputPaused = false;
@@ -396,6 +402,12 @@ function startPointerInputStateStream() {
           swallowingLeft: parsed.swallowingLeft === true,
           captureArmed: parsed.captureArmed === true,
         };
+        // 收藏箱要知道「这张图是从哪个应用来的」，但按下 Win+Shift+S 的那一瞬间
+        // 前台是截图工具，我们自己的浮层也会抢前台。所以只记住真正的应用，
+        // 外壳进程一律跳过——采集发生在 700ms 之后，那时这个值仍然是对的。
+        if (!isTransientShell(pointerInputState.foregroundApp)) {
+          lastStableForegroundApp = pointerInputState.foregroundApp;
+        }
       } catch (_) {}
     }
   });
@@ -1175,28 +1187,37 @@ function initializeStashRuntime() {
   if (stashRuntime) return stashRuntime;
   stashRuntime = createStashRuntime({
     clipboard,
-    nativeImage,
     baseDir: stashBaseDir(),
     log,
     settings: () => fabricSettings || {},
     // 落盘时顺手记下「你截的是哪个窗口的哪个元素」——这是 OCR 拿不到的。
-    // 有活动选区会话时能拿到元素名和选中文本；没有时只留空，绝不猜。
+    //
+    // 有活动选区会话时能拿到元素名和选中文本，那是最强的证据。但用户在微信里
+    // 截图、在终端里复制的时候根本没有选区会话——那才是主场景。只认会话的话，
+    // app 永远是空，于是所有东西都归成「素材」、挤进同一簇，整条归类和成簇的
+    // 证据链在最常见的路径上是空转的。
+    //
+    // 退一步用常驻指针流里的前台进程名（已经在内存里，零成本），再退一步留空。
+    // 绝不猜。
     focusProbe: async () => {
+      const fallback = () => (
+        lastStableForegroundApp ? { app: lastStableForegroundApp } : {}
+      );
       try {
         const entry = activeSelectionSessionToken
           ? selectionSessions.get(activeSelectionSessionToken)
           : null;
-        if (!entry) return {};
+        if (!entry) return fallback();
         const object = episodeObjectForSession(entry);
         return {
-          app: object.app || '',
+          app: object.app || lastStableForegroundApp || '',
           windowTitle: object.windowTitle || '',
           elementName: object.label || '',
           elementPath: object.snapshotId || '',
           selectionText: object.content || '',
         };
       } catch (_) {
-        return {};
+        return fallback();
       }
     },
     onEntry: (entry) => {
@@ -2600,6 +2621,16 @@ app.whenReady().then(() => {
   onboardingRequired = !onboardingReadiness.ready;
   startModelHealthWatch();
   setTimeout(warmUpOcrWorker, 2500);
+  // 收藏箱要在应用就绪时就开始收，而不是等用户打开工作室。
+  // 挂在 `stash:list` 上等于说「你不来看，我就不收」——而用户在微信里截图的
+  // 那一刻，界面本来就不该开着。
+  setTimeout(() => {
+    try {
+      initializeStashRuntime();
+    } catch (error) {
+      log(`stash runtime startup failed ${error.name}: ${error.message}`);
+    }
+  }, 1200);
   log(`onboarding readiness ready=${onboardingReadiness.ready} reason=${onboardingReadiness.reason}`);
   try {
     app.setLoginItemSettings({ openAtLogin: fabricSettings.general?.launch_at_login === true });

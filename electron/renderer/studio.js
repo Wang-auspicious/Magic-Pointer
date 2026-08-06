@@ -28,16 +28,6 @@ function rng(seed) {
   };
 }
 
-/* ---- 六个形族 × 暖调配色 ---- */
-const PALETTES = [
-  ['#F6C9B0', '#E8A0A8', '#B98BC9'],  // rose milk
-  ['#F3D9A8', '#EFB183', '#D98A6A'],  // peach cream
-  ['#CFE0CE', '#A8CBB4', '#7FB6A6'],  // jade cream
-  ['#D9DCF2', '#B6BEEA', '#8E9BDD'],  // periwinkle
-  ['#F5DCC2', '#DFC0A6', '#B99C86'],  // sand
-  ['#E7D3EE', '#C9AEDD', '#A487C6'],  // lilac
-];
-
 function makeOrb(seed, size = 64) {
   const r = rng(seed);
   // 色相对：黄绿 ↔ 青蓝 那一段最耐看；由种子在这个区间里取一对，
@@ -92,14 +82,6 @@ function makeShot(seed) {
 /* ============================================================
    数据
    ============================================================ */
-
-const KIND = {
-  灵感: ['pill-indigo', 'ic-spark'],
-  交接: ['pill-teal', 'ic-handoff'],
-  凭证: ['pill-amber', 'ic-file'],
-  素材: ['pill-green', 'ic-img'],
-  片段: ['pill-terracotta', 'ic-play'],
-};
 
 /* ============================================================
    渲染

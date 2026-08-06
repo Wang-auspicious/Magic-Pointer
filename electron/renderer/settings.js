@@ -1,3 +1,4 @@
+/* exported renderSettings */
 /* ============================================================
    设置
    ------------------------------------------------------------
@@ -585,6 +586,9 @@ function renderSettings() {
       </section>`;
     }).join('')}
   </div>`).join('');
+  // 滑杆的刻度要在 DOM 写完之后才能量宽度。放在这里而不是包一层函数，
+  // 是因为改写一个函数声明本身在严格模式下就是错的。
+  initTicks();
 }
 
 /* ============================================================
@@ -718,5 +722,5 @@ function initTicks() {
   });
 }
 
-const _renderSettingsBase = renderSettings;
-renderSettings = function () { _renderSettingsBase(); initTicks(); };
+
+
