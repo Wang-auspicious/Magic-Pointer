@@ -77,8 +77,8 @@ def test_uia_window_matching_and_app_classification() -> None:
 
 
 def test_uia_terminal_buffer_becomes_bounded_structural_evidence(monkeypatch) -> None:
-    def probe(hwnd, *, target_point=None):
-        assert target_point == {"x": 640, "y": 480}
+    def probe(hwnd, *, target_region=None):
+        assert target_region == {"x": 560, "y": 468, "width": 160, "height": 24}
         return UiaProbeResult(True, {
             "ok": True,
             "result_kind": "terminal_buffer",
@@ -93,19 +93,21 @@ def test_uia_terminal_buffer_becomes_bounded_structural_evidence(monkeypatch) ->
             "element_name": "Terminal",
             "control_type": "ControlType.Document",
             "element_rect": [0, 0, 1280, 720],
+            "rectangles": [[552, 466, 176, 28]],
             "elapsed_ms": 12,
         })
 
     monkeypatch.setattr(uia_module, "_run_uia_selection_probe", probe)
     ctx = UiaTextSelectionAdapter().read_context(
         _terminal_window(),
-        target_point={"x": 640, "y": 480},
+        target_region={"x": 560, "y": 468, "width": 160, "height": 24},
     )
 
     evidence = ctx.artifacts["terminal_evidence"]
     assert ctx.app == "terminal"
     assert ctx.method == "uia:terminal-text-pattern"
-    assert ctx.content == evidence["window"]["text"]
+    assert ctx.content == "Error: broken"
+    assert ctx.artifacts["selection_rectangles"] == [[552, 466, 176, 28]]
     assert evidence["command"] == "python verify.py --token [redacted]"
     assert evidence["exitCode"] == 7
     assert evidence["anchor"]["text"] == "Error: broken"
@@ -227,9 +229,11 @@ def test_uia_probe_source_supports_bounded_element_from_point() -> None:
     assert 'result.ResultKind = "point_element"' in source
     assert "result_kind" in source
     assert "TryTerminalBufferAtPoint" in source
+    assert "RegionCenter(targetRegion.Value)" in source
     assert 'result.ResultKind = "terminal_buffer"' in source
     assert "DocumentRange.GetText(MaxTextChars)" in source
     assert "RangeFromPoint(point)" in source
+    assert "anchor.GetBoundingRectangles()" in source
     assert "TryRegionElements" in source
     assert 'result.ResultKind = "region_elements"' in source
 

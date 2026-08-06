@@ -39,3 +39,12 @@ def test_region_enumeration_keeps_elements_touched_by_a_stroke_not_only_centered
         "private static void TryPointElement", 1
     )[0]
     assert "rectangle.IntersectsWith(region)" in region_block
+
+
+def test_region_enumeration_uses_a_document_only_as_a_last_resort_container_signal() -> None:
+    region_block = SOURCE.split("private static bool IsRegionControlType", 1)[1].split(
+        "private static void TryPointElement", 1
+    )[0]
+    assert 'case "ControlType.Document":' in region_block
+    assert 'item.ControlType != "ControlType.Document"' in region_block
+    assert 'item.ControlType == "ControlType.Document"' in region_block

@@ -7,10 +7,12 @@ const path = require('path');
 
 const lifecycle = require('../electron/app_lifecycle');
 
-assert.strictEqual(lifecycle.shouldStartHidden({ argv: [], wasOpenedAtLogin: false, captureMode: false }), false);
+assert.strictEqual(lifecycle.shouldStartHidden({ argv: [], wasOpenedAtLogin: false, captureMode: false }), true);
 assert.strictEqual(lifecycle.shouldStartHidden({ argv: ['--background'], wasOpenedAtLogin: false, captureMode: false }), true);
 assert.strictEqual(lifecycle.shouldStartHidden({ argv: [], wasOpenedAtLogin: true, captureMode: false }), true);
 assert.strictEqual(lifecycle.shouldStartHidden({ argv: [], wasOpenedAtLogin: false, captureMode: true }), true);
+assert.strictEqual(lifecycle.shouldStartHidden({ argv: ['--show'], wasOpenedAtLogin: false, captureMode: false }), false);
+assert.strictEqual(lifecycle.shouldStartHidden({ argv: ['--dashboard'], wasOpenedAtLogin: false, captureMode: false }), false);
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'magic-pointer-onboarding-'));
 const marker = path.join(root, 'onboarding.json');
@@ -28,7 +30,9 @@ assert(main.includes('showPrimarySurface({ activate: true })'),
   'secondary launches must reveal onboarding or dashboard according to readiness');
 assert(main.includes('if (onboardingRequired) showOnboarding({}, options);'),
   'unready installations must reveal the independent setup window');
-assert(main.includes("else showDashboard({ view: 'general' }, options);"),
-  'ready installations must reveal the normal dashboard');
+assert(main.includes("else showDashboard({ view: options.view || 'chat' }, options);"),
+  'ready installations must reveal the main surface (studio), defaulting to the chat view');
+assert(main.includes("renderer', 'studio.html'"),
+  'the primary window must load the studio, not the legacy dashboard page');
 
 console.log('desktop_lifecycle_test: all assertions passed');

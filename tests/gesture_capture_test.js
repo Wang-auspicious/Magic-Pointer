@@ -2,10 +2,25 @@
 
 const assert = require('assert');
 const {
+  CHAIN_IDLE_FINALIZE_MS,
   QUICK_POINT_MAX_DISTANCE,
   QUICK_POINT_MAX_DURATION_MS,
+  chainFinalizeDelay,
+  pointerContinuesGestureChain,
   summarizeGesture,
 } = require('../electron/gesture_capture');
+
+assert.strictEqual(CHAIN_IDLE_FINALIZE_MS, 520);
+assert.strictEqual(chainFinalizeDelay({ now: 1000, deadlineAt: 3500 }), 520,
+  'an idle pointer finalizes quickly instead of paying the full multi-stroke gap');
+assert.strictEqual(chainFinalizeDelay({ now: 3400, deadlineAt: 3500 }), 100,
+  'active movement may extend only to the bounded chain deadline');
+assert.strictEqual(pointerContinuesGestureChain(
+  { x: 100, y: 100 }, { x: 104, y: 103 },
+), true, 'deliberate travel toward another target keeps the chain open');
+assert.strictEqual(pointerContinuesGestureChain(
+  { x: 100, y: 100 }, { x: 101, y: 101 },
+), false, 'sub-pixel pointer jitter must not postpone completion');
 
 const line = summarizeGesture([
   { x: 100, y: 200, t: 0 },

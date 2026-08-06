@@ -2,6 +2,8 @@
 // delayed by overlay activation even when the user performs a normal tap.
 const QUICK_POINT_MAX_DURATION_MS = 420;
 const QUICK_POINT_MAX_DISTANCE = 14;
+const CHAIN_IDLE_FINALIZE_MS = 520;
+const CHAIN_CONTINUE_DISTANCE = 4;
 
 function finitePoint(value, index = 0) {
   const x = Number(value?.x);
@@ -13,6 +15,21 @@ function finitePoint(value, index = 0) {
 
 function distance(left, right) {
   return Math.hypot(right.x - left.x, right.y - left.y);
+}
+
+function chainFinalizeDelay({ now, deadlineAt, idleMs = CHAIN_IDLE_FINALIZE_MS } = {}) {
+  const current = Number(now);
+  const deadline = Number(deadlineAt);
+  const idle = Math.max(1, Number(idleMs) || CHAIN_IDLE_FINALIZE_MS);
+  if (!Number.isFinite(current) || !Number.isFinite(deadline)) return idle;
+  return Math.max(0, Math.min(idle, deadline - current));
+}
+
+function pointerContinuesGestureChain(previous, next, minimumDistance = CHAIN_CONTINUE_DISTANCE) {
+  const left = finitePoint(previous);
+  const right = finitePoint(next);
+  if (!left || !right) return false;
+  return distance(left, right) >= Math.max(0, Number(minimumDistance) || CHAIN_CONTINUE_DISTANCE);
 }
 
 function roundedPoint(point) {
@@ -227,8 +244,11 @@ function summarizeGesture(rawPoints, rawStrokes, {
 }
 
 const GestureCapture = {
+  CHAIN_IDLE_FINALIZE_MS,
   QUICK_POINT_MAX_DISTANCE,
   QUICK_POINT_MAX_DURATION_MS,
+  chainFinalizeDelay,
+  pointerContinuesGestureChain,
   summarizeGesture,
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = GestureCapture;

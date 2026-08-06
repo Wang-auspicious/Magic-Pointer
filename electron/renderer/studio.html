@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<title>Magic Pointer</title>
+<link rel="stylesheet" href="oreo.css?v=19">
+<link rel="stylesheet" href="studio.css?v=19">
+</head>
+<body class="studio">
+
+
+<!-- ══════════════════ 首屏 Hero ══════════════════ -->
+<div class="hero" id="hero">
+  <!-- 背景：换成用户的图或视频即可，其余不动 -->
+  <div class="hero-bg" id="hero-bg">
+    <video src="assets/media/hero.mp4" autoplay muted loop playsinline></video>
+  </div>
+  <div class="hero-scrim"></div>
+
+  <header class="hero-top">
+    <div class="brand"><span class="brand-mark"></span></div>
+    <nav class="hero-nav">
+      <button class="is-on">今天</button>
+      <button data-goto="stash">收藏箱</button>
+      <button data-goto="timeline">时间线</button>
+    </nav>
+    <div class="hero-top-right">
+      <button class="icon-btn is-plain" title="设置"><svg><use href="#ic-gear"/></svg></button>
+      <span class="avatar" id="hero-avatar"></span>
+    </div>
+  </header>
+
+  <main class="hero-center">
+    <h1 class="hero-title">你指过的每一处，<br>都还 <em>记得</em>。</h1>
+    <p class="hero-sub">想让它做点什么？</p>
+
+    <form class="hero-composer" id="hero-composer">
+      <textarea rows="1" placeholder="说点什么，或按 / 用命令" id="hero-input"></textarea>
+      <div class="composer-bar">
+        <button type="button" class="icon-btn is-plain" title="附件"><svg><use href="#ic-clip"/></svg></button>
+        <button type="button" class="icon-btn is-plain" title="引用对象"><svg><use href="#ic-at"/></svg></button>
+        <span class="spacer"></span>
+        <button type="button" class="model-select">
+          <svg class="spark"><use href="#ic-spark"/></svg>Opus 5<svg><use href="#ic-chev"/></svg>
+        </button>
+        <button type="submit" class="send-btn" title="发送"><svg><use href="#ic-send"/></svg></button>
+      </div>
+    </form>
+
+    <div class="hero-chips">
+      <button class="hero-chip"><svg><use href="#ic-eye"/></svg>读这个窗口</button>
+      <button class="hero-chip"><svg><use href="#ic-hist"/></svg>找回上次那个</button>
+      <button class="hero-chip" data-goto="stash"><svg><use href="#ic-stash"/></svg>整理收藏箱</button>
+    </div>
+  </main>
+</div>
+
+<!-- ══════════════════ 工作态 ══════════════════ -->
+<div class="shell" id="shell" hidden>
+
+  <!-- ---------- 侧栏 ---------- -->
+  <aside class="side">
+    <button class="side-brand" data-goto="hero">
+      <span class="brand-mark"></span>
+      <span>Magic Pointer</span>
+    </button>
+
+    <button class="side-new" id="new-chat"><span class="flux"><span class="flux-inner"><i></i><i></i><i></i></span></span><svg><use href="#ic-plus"/></svg><b>新对话</b></button>
+
+    <div class="side-group">
+      <div class="side-label">最近</div>
+      <div id="side-convos"></div>
+    </div>
+
+    <div class="side-group">
+      <div class="side-label">库</div>
+      <button class="side-item side-nav" data-goto="stash"><svg><use href="#ic-stash"/></svg>收藏箱</button>
+      <button class="side-item side-nav" data-goto="timeline"><svg><use href="#ic-timeline"/></svg>时间线</button>
+      <button class="side-item side-nav" data-goto="memory"><svg><use href="#ic-memory"/></svg>记忆</button>
+      <button class="side-item side-nav" data-goto="artifacts"><svg><use href="#ic-docs"/></svg>产物</button>
+    </div>
+
+    <div class="side-foot">
+      <button class="side-item side-nav" data-goto="settings"><svg><use href="#ic-sliders"/></svg>设置</button>
+      <button class="side-item side-nav"><span class="avatar sm" id="side-avatar"></span>zjz65</button>
+    </div>
+  </aside>
+
+  <!-- ---------- 中栏：对话 ---------- -->
+  <section class="main" id="view-chat">
+    <header class="main-top">
+      <div class="main-title">
+        <b id="chat-title">这段代码在干嘛？</b>
+        <span class="origin-wrap">
+          <button class="origin" id="chat-origin"><svg><use href="#ic-code"/></svg>VS Code<i>·</i>uia_text_adapter.py<i>:</i>118</button>
+          <span class="peek" role="tooltip">
+            <span class="peek-top"><svg><use href="#ic-code"/></svg>uia_text_adapter.py<em>113–123</em></span>
+            <pre class="peek-code"><span class="ln">113</span>    def _probe_with_deadline(self, hwnd, point):
+<span class="ln">114</span>        started = time.perf_counter()
+<span class="ln">115</span>        probe = self._ensure_probe()
+<span class="ln">116</span>        if probe is None:
+<span class="ln">117</span>            return None
+<span class="ln hit">118</span><span class="hit-line">        deadline = started + PROBE_DEADLINE_MS / 1000</span>
+<span class="ln">119</span>        while time.perf_counter() &lt; deadline:
+<span class="ln">120</span>            node = probe.poll(hwnd, point)
+<span class="ln">121</span>            if node is not None:
+<span class="ln">122</span>                return node
+<span class="ln">123</span>        return None</pre>
+          </span>
+        </span>
+      </div>
+      <div class="main-top-right">
+        <button class="icon-btn is-plain" title="历史"><svg><use href="#ic-hist"/></svg></button>
+        <button class="icon-btn is-plain" title="在随行窗打开"><svg><use href="#ic-open"/></svg></button>
+      </div>
+    </header>
+
+    <div class="stream" id="stream">
+      <div class="msg-user enter">这段代码在干嘛？为什么要有 200ms 这个数？</div>
+
+      <div class="turn enter">
+        <div class="trace">
+          <details class="trace-step">
+            <summary><svg><use href="#ic-loading"/></svg>想了 <span class="n">6s</span><svg class="caret"><use href="#ic-chev"/></svg></summary>
+            <div class="trace-detail">
+              <p>指向的是 UIA 适配器的超时分支，在 <code>_probe_with_deadline</code> 里。</p>
+              <p>200 这个数仓库里有两处，要区分是探针启动开销还是硬超时。</p>
+            </div>
+          </details>
+          <details class="trace-step" open>
+            <summary><svg><use href="#ic-target"/></svg>凑齐上下文 <span class="n">7/9</span><svg class="caret"><use href="#ic-chev"/></svg></summary>
+            <div class="trace-detail">
+              <div class="trace-src"><svg><use href="#ic-window"/></svg>焦点窗口 · VS Code<span class="tag tag-indigo">UIA</span></div>
+              <div class="trace-src"><svg><use href="#ic-cursor"/></svg>光标位置 · 行 118<span class="tag tag-indigo">UIA</span></div>
+              <div class="trace-src"><svg><use href="#ic-stroke"/></svg>划线选区 · 42 字<span class="tag tag-indigo">UIA</span></div>
+              <div class="trace-src"><svg><use href="#ic-file"/></svg>最近文件 3 个<span class="tag tag-indigo">DOM</span></div>
+              <div class="trace-src"><svg><use href="#ic-term"/></svg>终端输出 · 12 行<span class="tag tag-amber">像素</span></div>
+              <div class="trace-src"><svg><use href="#ic-clip"/></svg>剪贴板 · 文本<span class="tag tag-indigo">系统</span></div>
+              <div class="trace-src"><svg><use href="#ic-code"/></svg>Git 状态 · 干净<span class="tag tag-indigo">CLI</span></div>
+              <div class="trace-src is-miss"><svg><use href="#ic-img"/></svg>页面截图<span class="tag">未取</span></div>
+              <div class="trace-src is-miss"><svg><use href="#ic-mcp"/></svg>MCP 工具<span class="tag">未连</span></div>
+            </div>
+          </details>
+          <details class="trace-step">
+            <summary><svg><use href="#ic-search"/></svg>回溯 200 的两处来源<span class="caret"></span><svg class="caret"><use href="#ic-chev"/></svg></summary>
+            <div class="trace-detail">
+              <p><code>uia_text_adapter.py:118</code> — 硬超时</p>
+              <p><code>uia_probe.py:44</code> — 启动等待，两者不是一回事</p>
+            </div>
+          </details>
+          <div class="trace-line"><svg><use href="#ic-check"/></svg>交替 A/B 复测 <span class="n">20 轮</span></div>
+        </div>
+
+        <div class="msg-ai">
+          <p>这是 UIA 探针的<b>硬超时兜底</b>。<code>_probe_with_deadline</code> 给每次跨进程读取 200ms，超过就放弃结构层、退到像素层。</p>
+          <p>200 这个数不是拍的——探针本身冷启动就要 175ms，所以留给实际读取的只有 25ms。这就是为什么四个普通窗口全部超时失败：<b>它撞的是自己的启动开销，不是目标窗口慢。</b></p>
+        </div>
+
+        <div class="card facts">
+          <div class="facts-head"><svg><use href="#ic-check"/></svg>已确认<span class="count">4 项</span></div>
+          <div class="fact-row"><svg><use href="#ic-file"/></svg><span class="label">定义位置</span><span class="value">uia_text_adapter.py:118</span></div>
+          <div class="fact-row"><svg><use href="#ic-hist"/></svg><span class="label">最后修改</span><span class="value">7 天前 · d9f92b1</span></div>
+          <div class="fact-row"><svg><use href="#ic-pulse"/></svg><span class="label">实测冷启动</span><span class="value">175 ms</span></div>
+          <div class="fact-row"><svg><use href="#ic-warn"/></svg><span class="label">当前状态</span><span class="value is-pill pill-terracotta">四窗全部超时</span></div>
+        </div>
+
+        <div class="card plan">
+          <div class="plan-step is-done"><span class="dot"><svg><use href="#ic-check"/></svg></span><span class="time">12:32</span><span class="label">读取选区与所在函数</span></div>
+          <div class="plan-step is-done"><span class="dot"><svg><use href="#ic-check"/></svg></span><span class="time">12:32</span><span class="label">在仓库里回溯 200 的两处来源</span></div>
+          <div class="plan-step is-now"><span class="dot"><svg class="spin"><use href="#ic-loading"/></svg></span><span class="time">12:33</span><span class="label">交替 A/B 复测冷启动开销</span></div>
+          <div class="plan-step is-todo"><span class="dot"><svg><use href="#ic-circle"/></svg></span><span class="time">—</span><span class="label">给出建议值并写回注释</span></div>
+        </div>
+
+        <div class="card run" id="demo-run">
+          <div class="seg-bar">
+            <span class="seg is-on"></span><span class="seg is-on"></span><span class="seg is-on"></span><span class="seg"></span><span class="seg"></span>
+          </div>
+          <div class="run-title"><svg class="spin"><use href="#ic-loading"/></svg>正在交替复测</div>
+          <p class="run-sub">记事本 · 资源管理器 · VS Code · 终端 — 已完成 12 / 20 轮</p>
+          <div class="run-actions"><button class="btn btn-quiet">取消</button></div>
+        </div>
+
+        <div class="card">
+          <div class="seg-bar">
+            <span class="seg is-on"></span><span class="seg is-on"></span><span class="seg is-on"></span><span class="seg is-on"></span><span class="seg is-on"></span>
+          </div>
+          <div class="run-title"><svg><use href="#ic-check"/></svg>可以改了</div>
+          <p class="run-sub">3 种改法 · 预计影响 2 个文件 · 代价已列出</p>
+          <div class="run-actions">
+            <button class="btn btn-quiet">稍后决定</button>
+            <button class="btn btn-solid">批准</button>
+          </div>
+        </div>
+
+        <div class="card writeback">
+          <pre class="writeback-preview"><del>PROBE_DEADLINE_MS = 200</del>
+<ins>PROBE_DEADLINE_MS = 600  # 175ms 是探针自身冷启动，留 425ms 给实际读取</ins></pre>
+          <div class="writeback-foot">
+            <span class="pill pill-terracotta"><svg><use href="#ic-pen"/></svg>直接写回</span>
+            <span class="spacer"></span>
+            <button class="btn btn-quiet">改成复制到剪贴板</button>
+            <button class="btn btn-solid">写回并二次确认</button>
+          </div>
+        </div>
+
+        <button class="card artifact" data-open-artifact>
+          <span class="tile"><svg><use href="#ic-code"/></svg></span>
+          <span class="side-text"><span class="name">超时预算复测报告</span><span class="meta">8月6日 12:33 · 本地</span></span>
+        </button>
+
+        <div class="nexts">
+          <button class="nextq">那 600ms 会不会太保守？</button>
+          <button class="nextq">终端为什么还是 2/5</button>
+          <button class="nextq">把这条写进 ARCHITECTURE</button>
+        </div>
+
+        <div class="card notice">
+          <svg><use href="#ic-warn"/></svg>
+          <div class="body">
+            <strong>直接写回是不可逆的</strong>
+            它会绕过剪贴板改动目标窗口。第一次使用需要单独授权，授权只对这个应用、这个项目生效。
+            <div style="margin-top:11px"><button class="btn btn-solid">了解更多</button></div>
+          </div>
+          <span class="art"><svg><use href="#ic-shield"/></svg></span>
+          <button class="close"><svg><use href="#ic-x"/></svg></button>
+        </div>
+      </div>
+    </div>
+
+    <div class="composer-wrap">
+      <form class="composer">
+        <textarea rows="1" placeholder="继续问…"></textarea>
+        <div class="composer-bar">
+          <button type="button" class="mode-select" title="这一轮允许它做到哪一步">
+            <span class="dot-mode"></span>只读<svg><use href="#ic-chev"/></svg>
+          </button>
+          <button type="button" class="icon-btn is-plain" title="附件"><svg><use href="#ic-clip"/></svg></button>
+          <button type="button" class="icon-btn is-plain" title="引用对象"><svg><use href="#ic-at"/></svg></button>
+          <button type="button" class="icon-btn is-plain" title="说话"><svg><use href="#ic-mic"/></svg></button>
+          <span class="spacer"></span>
+          <button type="button" class="model-select"><svg class="spark"><use href="#ic-spark"/></svg>Opus 5<svg><use href="#ic-chev"/></svg></button>
+          <button type="button" class="effort-select">标准<svg><use href="#ic-chev"/></svg></button>
+          <button type="submit" class="send-btn"><svg><use href="#ic-send"/></svg></button>
+        </div>
+      </form>
+    </div>
+  </section>
+
+  <!-- ---------- 中栏：收藏箱 ---------- -->
+  <section class="main" id="view-stash" hidden>
+    <header class="main-top wide">
+      <div class="main-title"><b>收藏箱</b><span class="pill" id="stash-count">44 项</span></div>
+      <div class="main-top-right">
+        <div class="seg-toggle" id="stash-mode">
+          <button class="is-on" data-mode="canvas">画布</button>
+          <button data-mode="list">列表</button>
+        </div>
+        <button class="btn btn-quiet"><svg><use href="#ic-folder"/></svg>打开文件夹</button>
+      </div>
+    </header>
+
+    <div class="stash-filters">
+      <button class="tab is-on" data-kind="">全部 <em>44</em></button>
+      <button class="tab" data-kind="灵感">灵感 <em>12</em></button>
+      <button class="tab" data-kind="交接">交接 <em>3</em></button>
+      <button class="tab" data-kind="凭证">凭证 <em>8</em></button>
+      <button class="tab" data-kind="素材">素材 <em>21</em></button>
+      <button class="tab" data-kind="片段">片段 <em>0</em></button>
+    </div>
+
+    <!-- 无限画布 -->
+    <div class="canvas" id="canvas">
+      <div class="canvas-rail">
+        <button class="crail-btn is-on" title="选择"><svg><use href="#ic-cursor"/></svg></button>
+        <button class="crail-btn" title="框选"><svg><use href="#ic-window"/></svg></button>
+        <button class="crail-btn" title="标注"><svg><use href="#ic-pen"/></svg></button>
+        <button class="crail-btn" title="连线"><svg><use href="#ic-plug"/></svg></button>
+        <span class="crail-sep"></span>
+        <button class="crail-btn" title="回到全部" id="canvas-fit"><svg><use href="#ic-target"/></svg></button>
+      </div>
+      <div class="canvas-world" id="canvas-world"></div>
+      <div class="canvas-zoom"><button id="zoom-out">−</button><span id="zoom-val">100%</span><button id="zoom-in">＋</button></div>
+    </div>
+
+    <!-- 列表 -->
+    <div class="stash-list" id="stash-list" hidden></div>
+  </section>
+
+  <!-- ---------- 中栏：时间线 ---------- -->
+  <section class="main" id="view-timeline" hidden>
+    <header class="main-top wide">
+      <div class="main-title"><b>时间线</b><span class="pill">按你指过的对象</span></div>
+    </header>
+    <div class="tl" id="tl"></div>
+  </section>
+
+  <!-- ---------- 中栏：记忆 ---------- -->
+  <section class="main" id="view-memory" hidden>
+    <header class="main-top wide">
+      <div class="main-title"><b>记忆</b><span class="pill">被反复指到的东西</span></div>
+    </header>
+    <div class="view-body" id="mem-list"></div>
+  </section>
+
+  <!-- ---------- 中栏：产物 ---------- -->
+  <section class="main" id="view-artifacts" hidden>
+    <header class="main-top wide">
+      <div class="main-title"><b>产物</b><span class="pill">它写出来的东西</span></div>
+    </header>
+    <div class="view-body" id="art-list"></div>
+  </section>
+
+  <!-- ---------- 中栏：设置 ---------- -->
+  <section class="main set" id="view-settings" hidden>
+    <nav class="set-nav" id="set-nav"></nav>
+    <div class="set-body" id="set-body"></div>
+  </section>
+
+  <!-- ---------- 右栏：产物 ---------- -->
+  <aside class="aux" id="aux" hidden>
+    <header class="aux-top">
+      <b>超时预算复测报告</b>
+      <div class="seg-toggle">
+        <button>代码</button><button class="is-on">预览</button>
+      </div>
+      <button class="icon-btn is-plain" id="aux-close"><svg><use href="#ic-x"/></svg></button>
+    </header>
+    <div class="aux-body">
+      <div class="doc">
+        <h2>超时预算复测</h2>
+        <p class="doc-meta">2026-08-06 12:33 · 交替 A/B · 20 轮</p>
+        <table>
+          <thead><tr><th>窗口</th><th>A 200ms</th><th>B 600ms</th><th>结论</th></tr></thead>
+          <tbody>
+            <tr><td>记事本</td><td>0/5 成功</td><td>5/5</td><td>受限于自身开销</td></tr>
+            <tr><td>资源管理器</td><td>0/5</td><td>5/5</td><td>同上</td></tr>
+            <tr><td>VS&nbsp;Code</td><td>1/5</td><td>5/5</td><td>同上</td></tr>
+            <tr><td>Windows 终端</td><td>0/5</td><td>2/5</td><td>另需 RangeFromPoint</td></tr>
+          </tbody>
+        </table>
+        <p>探针冷启动实测 175&nbsp;ms（n=20，p50）。在 200&nbsp;ms 预算下留给实际读取的窗口只有 25&nbsp;ms，四个普通窗口全部撞在这条线上。这不是目标窗口慢，是我们自己的开销吃掉了预算。</p>
+      </div>
+    </div>
+  </aside>
+</div>
+
+<script src="icons.js?v=19"></script>
+<script src="data.js?v=19"></script>
+<script src="settings.js?v=19"></script>
+<script src="studio.js?v=19"></script>
+</body>
+</html>

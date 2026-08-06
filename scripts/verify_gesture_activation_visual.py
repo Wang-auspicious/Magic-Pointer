@@ -275,7 +275,7 @@ def main() -> int:
             armed = ImageGrab.grab(bbox=capture_bbox, all_screens=True)
             armed.save(EVIDENCE_DIR / "armed-invisible.png")
             drawing, foreground_samples = drag_and_capture(start, end, capture_bbox, steps=28)
-        ready_log = wait_for_log(runtime / "electron.log", "selection gesture ready", 10)
+        ready_log = wait_for_log(runtime / "electron.log", "gesture-ready OK", 10)
 
         if not EARLY_DRAG:
             armed = ImageGrab.grab(bbox=capture_bbox, all_screens=True)
@@ -310,7 +310,7 @@ def main() -> int:
         capsule_blue = blue_ratio(capsule, capsule_near)
         before_capsule_state = "stage renderer state=" in ready_log
         ordered = [
-            grounding_log.find("selection gesture ready"),
+            grounding_log.find("gesture-ready OK"),
             grounding_log.find("selection gesture drawing"),
             grounding_log.find("selection gesture completed"),
             grounding_log.find("selection session capture start"),

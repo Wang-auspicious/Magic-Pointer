@@ -242,7 +242,12 @@ def probe_gateway(*, timeout_s: float = 6.0) -> GatewayHealth:
     Called at startup and from the settings page. It uses /models rather than a
     completion so it costs nothing and still surfaces 401/402/404.
     """
-    from app.ai_client import get_ai_config
+    from app.ai_client import (
+        _completion_endpoint,
+        _completion_headers,
+        get_ai_api_mode,
+        get_ai_config,
+    )
 
     api_key, base_url, model = get_ai_config()
     if not api_key:
@@ -251,11 +256,27 @@ def probe_gateway(*, timeout_s: float = 6.0) -> GatewayHealth:
     try:
         import httpx
 
+        api_mode = get_ai_api_mode(endpoint)
         with httpx.Client(timeout=timeout_s, follow_redirects=True) as client:
-            response = client.get(
-                f"{endpoint}/models",
-                headers={"Authorization": f"Bearer {api_key}", "User-Agent": "curl/8.0"},
-            )
+            if api_mode == "messages":
+                # Anthropic-compatible relays commonly have no /models route.
+                # A one-token message verifies auth, model routing and actual
+                # completion availability instead of declaring a healthy GET
+                # endpoint while every user question times out.
+                response = client.post(
+                    _completion_endpoint(endpoint, api_mode),
+                    headers=_completion_headers(str(api_key), api_mode),
+                    json={
+                        "model": model,
+                        "max_tokens": 1,
+                        "messages": [{"role": "user", "content": "Reply OK"}],
+                    },
+                )
+            else:
+                response = client.get(
+                    f"{endpoint}/models",
+                    headers={"Authorization": f"Bearer {api_key}", "User-Agent": "curl/8.0"},
+                )
         if response.status_code < 400:
             return record_success(model=model, base_url=endpoint)
         return record_failure(

@@ -57,11 +57,6 @@ def main() -> int:
         print(f"only {len(matches)} window(s) matched")
         return 2
     target = matches[args.index]
-    left, top, right, bottom = target["bbox"]
-    row_height = max(1, (bottom - top) // max(1, args.rows))
-    y = args.y if args.y else top + row_height * args.line + row_height // 2
-    x0 = left + int((right - left) * 0.10)
-    x1 = left + int((right - left) * 0.60)
     hwnd = int(target.get("hwnd") or 0)
     # Windows only grants foreground to a process it believes the user just
     # touched, so nudge ALT first. Without this the harness silently captures
@@ -69,12 +64,27 @@ def main() -> int:
     user32 = ctypes.windll.user32
     user32.keybd_event(0x12, 0, 0, 0)
     time.sleep(0.05)
-    user32.ShowWindow(hwnd, 9)
+    # A minimized window lives at sentinel coordinates around -32000. Restore
+    # only in that state; otherwise SW_SHOW preserves maximized/normal bounds.
+    # Bounds are refreshed below in either case before the mark is calculated.
+    user32.ShowWindow(hwnd, 9 if user32.IsIconic(hwnd) else 5)
     user32.SetForegroundWindow(hwnd)
     user32.BringWindowToTop(hwnd)
     time.sleep(0.05)
     user32.keybd_event(0x12, 0, 2, 0)
     time.sleep(0.9)
+    refreshed = next(
+        (item for item in list_visible_windows() if int(item.get("hwnd") or 0) == hwnd),
+        None,
+    )
+    if refreshed is None:
+        raise SystemExit("target window disappeared while foregrounding")
+    target = refreshed
+    left, top, right, bottom = target["bbox"]
+    row_height = max(1, (bottom - top) // max(1, args.rows))
+    y = args.y if args.y else top + row_height * args.line + row_height // 2
+    x0 = left + int((right - left) * 0.10)
+    x1 = left + int((right - left) * 0.60)
     print("target             :", repr(target.get("title")), target["bbox"])
     print("foregrounded       :", ctypes.windll.user32.GetForegroundWindow() == hwnd)
     print("mark               :", [x0, y - row_height // 2, x1 - x0, row_height])

@@ -58,6 +58,169 @@ def get_ai_config() -> tuple[str | None, str | None, str]:
     return api_key, base_url, model
 
 
+def get_ai_api_mode(base_url: str | None = None) -> str:
+    """Protocol for the configured gateway; legacy installs stay OpenAI-compatible."""
+    explicit = os.getenv("MAGIC_POINTER_API_MODE") or read_local_secret("model_api_mode.txt")
+    mode = str(explicit or "").strip().casefold()
+    if mode in {"messages", "anthropic"}:
+        return "messages"
+    if mode in {"chat-completions", "openai"}:
+        return "chat-completions"
+    return "messages" if "/anthropic" in str(base_url or "").casefold() else "chat-completions"
+
+
+def _completion_endpoint(base_url: str | None, api_mode: str) -> str:
+    base = (base_url or "https://api.openai.com/v1").rstrip("/")
+    if api_mode == "messages":
+        return f"{base}/messages" if base.endswith("/v1") else f"{base}/v1/messages"
+    return f"{base}/chat/completions"
+
+
+def _completion_headers(api_key: str, api_mode: str) -> dict[str, str]:
+    headers = {"Content-Type": "application/json", "User-Agent": "curl/8.0"}
+    if api_mode == "messages":
+        headers.update({"x-api-key": api_key, "anthropic-version": "2023-06-01"})
+    else:
+        headers["Authorization"] = f"Bearer {api_key}"
+    return headers
+
+
+def _text_completion_payload(
+    *,
+    model: str,
+    content: str,
+    system_prompt: str,
+    max_tokens: int,
+    api_mode: str,
+) -> dict:
+    if api_mode == "messages":
+        return {
+            "model": model,
+            "system": system_prompt,
+            "messages": [{"role": "user", "content": content}],
+            "max_tokens": max(1, int(max_tokens)),
+            "thinking": {"type": "disabled"},
+        }
+    return {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": content},
+        ],
+        "max_tokens": max(1, int(max_tokens)),
+    }
+
+
+def _text_completion_response(data: dict, api_mode: str) -> str:
+    if api_mode == "messages":
+        return "\n".join(
+            str(block.get("text") or "")
+            for block in list(data.get("content") or [])
+            if isinstance(block, dict) and block.get("type") == "text"
+        ).strip()
+    return str(data["choices"][0]["message"].get("content") or "")
+
+
+def _anthropic_tools(tools: list[dict] | None) -> list[dict]:
+    converted: list[dict] = []
+    for raw in tools or []:
+        function = raw.get("function") if isinstance(raw, dict) else None
+        if not isinstance(function, dict) or not function.get("name"):
+            continue
+        converted.append({
+            "name": str(function["name"]),
+            "description": str(function.get("description") or ""),
+            "input_schema": function.get("parameters") or {"type": "object", "properties": {}},
+        })
+    return converted
+
+
+def _tool_completion_payload(
+    *,
+    model: str,
+    content: str,
+    system_prompt: str,
+    tools: list[dict] | None,
+    max_tokens: int,
+    api_mode: str,
+) -> dict:
+    if api_mode == "messages":
+        payload: dict = {
+            "model": model,
+            "system": system_prompt,
+            "messages": [{"role": "user", "content": content}],
+            "max_tokens": max(1, int(max_tokens)),
+            "thinking": {"type": "disabled"},
+        }
+        converted = _anthropic_tools(tools)
+        if converted:
+            payload["tools"] = converted
+        return payload
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": content},
+        ],
+        "max_tokens": max(1, int(max_tokens)),
+    }
+    if tools:
+        payload["tools"] = tools
+        payload["tool_choice"] = "auto"
+    return payload
+
+
+def _tool_completion_response(data: dict, api_mode: str) -> dict:
+    if api_mode == "messages":
+        blocks = [block for block in list(data.get("content") or []) if isinstance(block, dict)]
+        text = "\n".join(
+            str(block.get("text") or "") for block in blocks if block.get("type") == "text"
+        ).strip()
+        calls = []
+        for block in blocks:
+            if block.get("type") != "tool_use" or not block.get("name"):
+                continue
+            arguments = block.get("input")
+            calls.append({
+                "name": str(block["name"]),
+                "arguments": arguments if isinstance(arguments, dict) else {},
+            })
+        return {"text": text, "toolCalls": calls}
+
+    message = data["choices"][0]["message"]
+    calls = []
+    for raw_call in message.get("tool_calls") or []:
+        function = (raw_call or {}).get("function") or {}
+        name = str(function.get("name") or "")
+        if not name:
+            continue
+        try:
+            arguments = json.loads(function.get("arguments") or "{}")
+        except ValueError:
+            arguments = {}
+        calls.append({
+            "name": name,
+            "arguments": arguments if isinstance(arguments, dict) else {},
+        })
+    return {"text": str(message.get("content") or ""), "toolCalls": calls}
+
+
+def _vision_content_block(data_url: str, api_mode: str) -> dict:
+    if api_mode != "messages":
+        return {"type": "image_url", "image_url": {"url": data_url}}
+    match = re.fullmatch(r"data:([^;,]+);base64,(.+)", data_url, flags=re.DOTALL)
+    if not match:
+        raise ValueError("vision input must be a base64 data URL")
+    return {
+        "type": "image",
+        "source": {
+            "type": "base64",
+            "media_type": match.group(1),
+            "data": match.group(2),
+        },
+    }
+
+
 def _httpx_client(httpx_module, *, timeout: int = 120):
     """Use environment proxies when valid, but survive malformed proxy variables."""
 
@@ -136,23 +299,21 @@ def ask_text_model(
         import httpx
 
         base_url = (base_url or "https://api.openai.com/v1").rstrip("/")
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "User-Agent": "curl/8.0",
-        }
+        api_mode = get_ai_api_mode(base_url)
+        endpoint = _completion_endpoint(base_url, api_mode)
+        headers = _completion_headers(api_key, api_mode)
         content = user_prompt.strip() or "解释当前选中的内容"
         if context_text:
             content += "\n\n" + context_text
-        payload = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system_prompt or "你是 Magic Pointer 的本地选区助手。只基于提供的真实应用上下文回答，不要编造。"},
-                {"role": "user", "content": content},
-            ],
-            "max_tokens": max(1, int(max_tokens)),
-        }
+        payload = _text_completion_payload(
+            model=model,
+            content=content,
+            system_prompt=system_prompt or "你是 Magic Pointer 的本地选区助手。只基于提供的真实应用上下文回答，不要编造。",
+            max_tokens=max_tokens,
+            api_mode=api_mode,
+        )
         last_exc: Exception | None = None
+        request_timed_out = False
         last_http_error: tuple[int, str] | None = None
         budget = max(1.0, float(timeout_s))
         delays = (0.0, 0.8)[: max(1, int(attempts))]
@@ -161,7 +322,7 @@ def ask_text_model(
                 time.sleep(delay)
             try:
                 with _httpx_client(httpx, timeout=budget) as client:
-                    response = client.post(f"{base_url}/chat/completions", headers=headers, json=payload)
+                    response = client.post(endpoint, headers=headers, json=payload)
                 if response.status_code >= 500:
                     last_http_error = (response.status_code, _plain_error_excerpt(response.text))
                     record_failure(status=response.status_code, detail=response.text[:300], model=model, base_url=base_url)
@@ -176,8 +337,29 @@ def ask_text_model(
                     return f"AI 调用失败：{health.message}"
                 data = response.json()
                 record_success(model=model, base_url=base_url)
-                return data["choices"][0]["message"].get("content") or ""
-            except (httpx.ConnectError, httpx.ReadError, httpx.RemoteProtocolError, httpx.TimeoutException) as exc:
+                answer = _text_completion_response(data, api_mode)
+                if not answer:
+                    return "AI 调用失败：模型在本次预算内没有返回可见答案。"
+                return answer
+            except httpx.ConnectTimeout as exc:
+                last_exc = exc
+                record_failure(
+                    status=None,
+                    exception_name=type(exc).__name__,
+                    detail=str(exc)[:300],
+                    model=model,
+                    base_url=base_url,
+                )
+                continue
+            except httpx.TimeoutException:
+                # A read/write/pool timeout means this individual request used
+                # up the caller's latency budget. It does not prove that the
+                # endpoint is offline. Marking it globally unreachable opens
+                # the circuit and causes the *next* answer to be skipped even
+                # while the cheap health probe succeeds.
+                request_timed_out = True
+                continue
+            except (httpx.ConnectError, httpx.ReadError, httpx.RemoteProtocolError) as exc:
                 last_exc = exc
                 record_failure(
                     status=None,
@@ -190,6 +372,9 @@ def ask_text_model(
         if last_http_error:
             code, detail = last_http_error
             return f"AI 调用失败：HTTP {code}。\n{detail}"
+        if request_timed_out:
+            seconds = f"{budget:g}"
+            return f"AI 调用失败：模型回答超过 {seconds} 秒，本次已停止等待；端点没有因此被判为离线。"
         if last_exc:
             raise last_exc
         raise RuntimeError("unknown API failure")
@@ -205,6 +390,7 @@ def ask_text_model_with_tools(
     system_prompt: str | None = None,
     timeout_s: float = 20.0,
     attempts: int = 1,
+    max_tokens: int = 240,
 ) -> dict:
     """Ask the model, offering it tools it may call instead of answering in prose.
 
@@ -230,41 +416,48 @@ def ask_text_model_with_tools(
         import httpx
 
         endpoint = (base_url or "https://api.openai.com/v1").rstrip("/")
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "User-Agent": "curl/8.0",
-        }
+        api_mode = get_ai_api_mode(endpoint)
+        completion_endpoint = _completion_endpoint(endpoint, api_mode)
+        headers = _completion_headers(api_key, api_mode)
         content = (user_prompt or "").strip() or "解释当前选中的内容"
         if context_text:
             content += "\n\n" + context_text
-        payload: dict = {
-            "model": model,
-            "messages": [
-                {
-                    "role": "system",
-                    "content": system_prompt or (
-                        "你是 Magic Pointer 的屏幕助手。用户指着屏幕上的一个对象并下达了指令。"
-                        "如果有工具能更好地完成它，就调用工具；否则基于提供的真实上下文直接回答。"
-                        "不要编造上下文里没有的内容，不要声称已经执行了你没有执行的动作。"
-                    ),
-                },
-                {"role": "user", "content": content},
-            ],
-            "max_tokens": 1200,
-        }
-        if tools:
-            payload["tools"] = tools
-            payload["tool_choice"] = "auto"
+        payload = _tool_completion_payload(
+            model=model,
+            content=content,
+            system_prompt=system_prompt or (
+                "你是 Magic Pointer 的屏幕助手。用户指着屏幕上的一个对象并下达了指令。"
+                "如果有工具能更好地完成它，就调用工具；否则基于提供的真实上下文直接回答。"
+                "不要编造上下文里没有的内容，不要声称已经执行了你没有执行的动作。"
+            ),
+            tools=tools,
+            max_tokens=max_tokens,
+            api_mode=api_mode,
+        )
 
         last_error = ""
+        request_timed_out = False
         for attempt in range(max(1, int(attempts))):
             if attempt:
                 time.sleep(0.8)
             try:
                 with _httpx_client(httpx, timeout=max(1.0, float(timeout_s))) as client:
-                    response = client.post(f"{endpoint}/chat/completions", headers=headers, json=payload)
-            except (httpx.ConnectError, httpx.ReadError, httpx.RemoteProtocolError, httpx.TimeoutException) as exc:
+                    response = client.post(completion_endpoint, headers=headers, json=payload)
+            except httpx.ConnectTimeout as exc:
+                health = record_failure(
+                    status=None,
+                    exception_name=type(exc).__name__,
+                    detail=str(exc)[:300],
+                    model=model,
+                    base_url=endpoint,
+                )
+                last_error = health.message
+                continue
+            except httpx.TimeoutException:
+                request_timed_out = True
+                last_error = "model_request_timeout"
+                continue
+            except (httpx.ConnectError, httpx.ReadError, httpx.RemoteProtocolError) as exc:
                 health = record_failure(
                     status=None,
                     exception_name=type(exc).__name__,
@@ -288,28 +481,18 @@ def ask_text_model_with_tools(
 
             record_success(model=model, base_url=endpoint)
             try:
-                message = response.json()["choices"][0]["message"]
-            except (KeyError, IndexError, ValueError):
+                parsed = _tool_completion_response(response.json(), api_mode)
+            except (KeyError, IndexError, TypeError, ValueError):
                 return {"text": "", "toolCalls": [], "error": "runtime_empty_response"}
-            calls = []
-            for raw_call in message.get("tool_calls") or []:
-                function = (raw_call or {}).get("function") or {}
-                name = str(function.get("name") or "")
-                if not name:
-                    continue
-                try:
-                    arguments = json.loads(function.get("arguments") or "{}")
-                except ValueError:
-                    arguments = {}
-                calls.append({
-                    "name": name,
-                    "arguments": arguments if isinstance(arguments, dict) else {},
-                })
+            if not parsed["text"] and not parsed["toolCalls"]:
+                return {"text": "", "toolCalls": [], "error": "model_empty_response"}
             return {
-                "text": str(message.get("content") or ""),
-                "toolCalls": calls,
+                "text": parsed["text"],
+                "toolCalls": parsed["toolCalls"],
                 "error": "",
             }
+        if request_timed_out and last_error == "model_request_timeout":
+            return {"text": "", "toolCalls": [], "error": "model_request_timeout"}
         return {"text": "", "toolCalls": [], "error": last_error or "model_gateway_unreachable"}
     except Exception as exc:  # noqa: BLE001 - the caller must always get a dict
         return {"text": "", "toolCalls": [], "error": f"{type(exc).__name__}: {exc}"}
@@ -344,11 +527,9 @@ def ask_vision_model(
         import httpx
 
         base_url = (base_url or "https://api.openai.com/v1").rstrip("/")
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "User-Agent": "curl/8.0",
-        }
+        api_mode = get_ai_api_mode(base_url)
+        endpoint = _completion_endpoint(base_url, api_mode)
+        headers = _completion_headers(api_key, api_mode)
         def normalize_labeled_extras() -> list[LabeledImage]:
             labeled: list[LabeledImage] = []
             for item in labeled_extra_images or []:
@@ -373,21 +554,24 @@ def ask_vision_model(
             )
             user_content = [
                 {"type": "text", "text": base_text + "\n\n[IMAGE A / THIS / current object / original screenshot]"},
-                {"type": "image_url", "image_url": {"url": _image_data_url(image_path)}},
+                _vision_content_block(_image_data_url(image_path), api_mode),
             ]
             if include_extras:
                 for label, extra_path in normalize_labeled_extras()[:3]:
                     if extra_path.exists():
                         user_content.append({"type": "text", "text": f"[{label}]"})
-                        user_content.append({"type": "image_url", "image_url": {"url": _image_data_url(extra_path)}})
-            return {
+                        user_content.append(_vision_content_block(_image_data_url(extra_path), api_mode))
+            payload = {
                 "model": model,
-                "messages": [
-                    {"role": "system", "content": DEFAULT_SYSTEM_PROMPT},
-                    {"role": "user", "content": user_content},
-                ],
+                "messages": [{"role": "user", "content": user_content}],
                 "max_tokens": 1200,
             }
+            if api_mode == "messages":
+                payload["system"] = DEFAULT_SYSTEM_PROMPT
+                payload["thinking"] = {"type": "disabled"}
+            else:
+                payload["messages"].insert(0, {"role": "system", "content": DEFAULT_SYSTEM_PROMPT})
+            return payload
 
 
         last_exc: Exception | None = None
@@ -402,7 +586,7 @@ def ask_vision_model(
             try:
                 payload = build_payload(include_extras=include_extras)
                 with _httpx_client(httpx, timeout=120) as client:
-                    response = client.post(f"{base_url}/chat/completions", headers=headers, json=payload)
+                    response = client.post(endpoint, headers=headers, json=payload)
                 if response.status_code >= 500:
                     last_http_error = (response.status_code, _plain_error_excerpt(response.text))
                     record_failure(status=response.status_code, detail=response.text[:300], model=model, base_url=base_url)
@@ -417,7 +601,7 @@ def ask_vision_model(
                     return f"AI \u8c03\u7528\u5931\u8d25\uff1a{health.message}\n\n\u622a\u56fe\u548c\u5bf9\u8c61\u5df2\u4fdd\u5b58\u5728\u672c\u5730\u3002"
                 data = response.json()
                 record_success(model=model, base_url=base_url)
-                answer = data["choices"][0]["message"].get("content") or ""
+                answer = _text_completion_response(data, api_mode)
                 if not include_extras and (extra_image_paths or labeled_extra_images):
                     answer += "\n\n\uff08\u7f51\u5173\u4e0d\u7a33\u5b9a\uff0c\u672c\u6b21\u5df2\u964d\u7ea7\u4e3a\u4e3b\u622a\u56fe + \u7ed3\u6784\u5316\u4e0a\u4e0b\u6587\u3002\uff09"
                 return answer

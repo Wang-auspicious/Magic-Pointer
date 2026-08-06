@@ -14,9 +14,11 @@ _SOURCE_SUFFIXES = {
 _COMPONENT_SUFFIXES = {".tsx", ".jsx", ".vue", ".svelte", ".html", ".htm", ".ts", ".js", ".mjs", ".cjs"}
 _IGNORED_DIRECTORIES = {
     ".git", ".hg", ".svn", ".idea", ".vscode", ".tmp", "node_modules",
+    ".agents", ".claude", ".codex", ".omx", ".playwright-cli", ".superpowers",
     "dist", "build", "out", "coverage", ".next", ".nuxt", ".svelte-kit",
-    "vendor", "__pycache__", "data", "artifacts",
+    "vendor", "external", "external_zip", "release", "__pycache__", "data", "artifacts",
 }
+_IGNORED_DIRECTORY_PREFIXES = (".tmp-", ".tmp_", ".pytest-", ".pytest_")
 _VISUAL_KINDS = {"screen_region", "ui-control", "image", "canvas", "design_component", "browser_dom"}
 _VISUAL_APPS = {"browser", "figma", "sketch", "photoshop", "edge", "chrome", "chromium"}
 
@@ -67,6 +69,25 @@ def _line_for(text: str, needle: str) -> int:
     return text.count("\n", 0, index) + 1 if index >= 0 else 0
 
 
+def _ignored_directory(name: str) -> bool:
+    folded = str(name or "").casefold()
+    return folded in _IGNORED_DIRECTORIES or folded.startswith(_IGNORED_DIRECTORY_PREFIXES)
+
+
+def _looks_like_browser_profile(path: Path) -> bool:
+    """Reject Chromium user-data trees accidentally created inside a repo.
+
+    Their caches can contain thousands of generated ``.js`` files and are not
+    source candidates. A profile root has both ``Local State`` and ``Default``;
+    requiring the pair avoids excluding an ordinary project directory called
+    Default or a source file that happens to be named Local State.
+    """
+    try:
+        return (path / "Local State").is_file() and (path / "Default").is_dir()
+    except OSError:
+        return False
+
+
 class ComponentSourceResolver:
     def __init__(self, *, max_files: int = 2500, max_file_bytes: int = 512_000, max_candidates: int = 8) -> None:
         self.max_files = max(100, min(int(max_files), 10_000))
@@ -93,7 +114,13 @@ class ComponentSourceResolver:
     def _files(self, root: Path) -> Iterable[Path]:
         count = 0
         for directory, names, files in os.walk(root):
-            names[:] = sorted(name for name in names if name.casefold() not in _IGNORED_DIRECTORIES)
+            parent = Path(directory)
+            names[:] = sorted(
+                name
+                for name in names
+                if not _ignored_directory(name)
+                and not _looks_like_browser_profile(parent / name)
+            )
             for name in sorted(files):
                 path = Path(directory) / name
                 if path.suffix.casefold() not in _SOURCE_SUFFIXES:

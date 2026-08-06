@@ -127,6 +127,26 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
   onModelHealth: (callback) => ipcRenderer.on('dashboard:model-health', (_event, payload) => callback(payload)),
   refreshModelHealth: () => ipcRenderer.invoke('dashboard:model-health-refresh'),
   sessionTimeline: () => ipcRenderer.invoke('dashboard:session-timeline'),
+  stash: {
+    list: () => ipcRenderer.invoke('stash:list'),
+    onEntry: (callback) => ipcRenderer.on('stash:entry', (_event, payload) => callback(payload)),
+  },
+  conversations: {
+    list: () => ipcRenderer.invoke('conversations:list'),
+    get: (id) => ipcRenderer.invoke('conversations:get', id),
+    timeline: () => ipcRenderer.invoke('conversations:timeline'),
+    memories: () => ipcRenderer.invoke('conversations:memories'),
+    artifacts: () => ipcRenderer.invoke('conversations:artifacts'),
+    onTurn: (callback) => ipcRenderer.on('conversations:turn', (_event, payload) => callback(payload)),
+  },
+});
+
+contextBridge.exposeInMainWorld('magicPointerCompanion', {
+  hide: () => ipcRenderer.send('companion:hide'),
+  pin: (pinned) => ipcRenderer.send('companion:pin', { pinned }),
+  expand: () => ipcRenderer.send('companion:expand'),
+  onShow: (callback) => ipcRenderer.on('companion:show', (_event, payload) => callback(payload)),
+  onTurn: (callback) => ipcRenderer.on('stage:turn', (_event, payload) => callback(payload)),
 });
 
 contextBridge.exposeInMainWorld('magicPointerOnboarding', {

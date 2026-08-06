@@ -1,4 +1,4 @@
-﻿const { app, BrowserWindow, globalShortcut, ipcMain, screen, safeStorage, systemPreferences } = require('electron');
+﻿const { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen, safeStorage, systemPreferences } = require('electron');
 const path = require('path');
 const { dialog } = require('electron');
 const { Menu, nativeImage, Tray } = require('electron');
@@ -28,8 +28,13 @@ const {
   decideSubmitGate,
 } = require('./submit_gating_policy');
 const { canAutoExecuteInternalProposal } = require('./internal_action_policy');
-const { physicalScreenPoint, normalizeGroundingGeometry } = require('./coordinate_space');
-const { physicalGestureTrace } = require('./coordinate_space');
+const {
+  normalizeGroundingGeometry,
+  physicalGestureBoundingBox,
+  physicalGestureTrace,
+  physicalScreenPoint,
+} = require('./coordinate_space');
+const { nativeShapeRegions } = require('./stage_hit_regions');
 const { isSurfaceSender } = require('./ipc_surface_policy');
 const { buildGoogleMapsDirectionsUrl, isAllowedGoogleMapsDirectionsUrl } = require('./route_policy');
 const securityHardening = require('./security_hardening');
@@ -37,7 +42,11 @@ const observability = require('./observability');
 const { VoiceFocusGuard } = require('./voice_focus_guard');
 const { inspectOnboardingReadiness, shouldStartHidden } = require('./app_lifecycle');
 const { RuntimeSnapshot } = require('./runtime_snapshot');
-const { summarizeGesture } = require('./gesture_capture');
+const {
+  chainFinalizeDelay,
+  pointerContinuesGestureChain,
+  summarizeGesture,
+} = require('./gesture_capture');
 const { shouldDismissFromGlobalPointer } = require('./pointer_dismiss_policy');
 const { RendererReadiness } = require('./renderer_readiness');
 const { gestureRuntimeContract, gestureRuntimeSettingsChanged } = require('./gesture_runtime_settings');
@@ -60,6 +69,8 @@ let selectionGestureArm = null;
 let selectionGestureArmTimer = null;
 let selectionGestureExpiryTimer = null;
 let passThroughChainTimer = null;
+let passThroughChainDeadlineAt = 0;
+let passThroughChainLastPoint = null;
 let wiggleDetector = null;
 const mouseActivationDetector = new MouseActivationDetector();
 const passThroughGestureCapture = new PassThroughGestureCapture();
@@ -135,7 +146,6 @@ const PREFLIGHT_MANIFEST_PATH = path.join(ROOT, 'data', 'preflight_manifest.v1.j
 const ONBOARDING_BOOTSTRAP_VERSION = 1;
 const ACTION_PROPOSAL_TTL_MS = 2 * 60 * 1000;
 const SELECTION_SESSION_TTL_MS = 2 * 60 * 1000;
-const SELECTION_GESTURE_ARM_DELAY_MS = 180;
 const SELECTION_GESTURE_TIMEOUT_MS = 5000;
 const ALLOWED_ACTION_TYPES = new Set([
   'copy_text_to_clipboard',
@@ -553,8 +563,18 @@ function refreshTrayMenu() {
     { label: statusLabel, enabled: false },
     { type: 'separator' },
     {
-      label: onboardingRequired ? '继续首次设置' : '打开设置',
+      label: onboardingRequired ? '继续首次设置' : '打开工作室',
       click: () => showPrimarySurface({ activate: true }),
+    },
+    {
+      label: '打开随行窗',
+      enabled: !onboardingRequired,
+      click: () => showCompanion({}, { activate: true }),
+    },
+    {
+      label: '设置…',
+      enabled: !onboardingRequired,
+      click: () => showPrimarySurface({ activate: true, view: 'settings' }),
     },
     {
       label: inputPaused ? '恢复唤醒' : '暂停唤醒',
@@ -816,8 +836,90 @@ function updateStage(payload = {}) {
       tier: String(payload.event?.result?.route?.tier || ''),
     });
   }
+  if (type === 'RESULT' || type === 'COMPLETE' || type === 'ERROR') recordConversationTurn(payload, type);
   safeSurfaceSend('stage', 'stage:update', payload);
 }
+
+// ---------------------------------------------------------------------------
+// 对话记录
+// ---------------------------------------------------------------------------
+let conversationStore = null;
+
+function conversations() {
+  if (!conversationStore) {
+    conversationStore = createConversationStore({
+      baseDir: path.join(app.getPath('userData'), 'history'),
+      log,
+    });
+  }
+  return conversationStore;
+}
+
+const pendingQuestions = new Map();
+
+// stage_contract 给出的三种终态，各自把正文放在不同字段里。
+// 这里必须全部覆盖——只认 result.answer 的话，写回成功（COMPLETE 没有 result）
+// 和交接草稿（正文在 result.prompt）都会被静默丢掉。
+function answerTextFrom(event = {}) {
+  const r = event.result || {};
+  if (event.type === 'ERROR') return String(event.error?.message || '这次没能完成。');
+  if (event.type === 'COMPLETE') {
+    return event.outcome?.verified ? '已完成，并回读确认过。' : '已完成。';
+  }
+  return String(r.answer || r.prompt || r.text || r.detail || '').trim();
+}
+
+// updateStage 是所有结果的必经之路，所以记录也挂在这里——
+// 别的地方再加一处，迟早会漏掉一条。
+function recordConversationTurn(payload = {}, type = '') {
+  try {
+    const token = payload.selectionSessionToken || '';
+    const question = (pendingQuestions.get(token) || '').trim();
+    const answer = answerTextFrom(payload.event || {});
+    if (token) pendingQuestions.delete(token);
+    if (!question && !answer) {
+      log(`conversation skip token=${token || 'none'} type=${type} reason=empty`);
+      return;
+    }
+
+    const entry = payload.selectionSessionToken
+      ? selectionSessions.get(payload.selectionSessionToken)
+      : null;
+    const object = entry ? episodeObjectForSession(entry) : {};
+
+    const result = payload?.event?.result || {};
+    const conversation = conversations().appendTurn({
+      question,
+      answer,
+      outcome: type === 'ERROR' ? '失败' : (type === 'COMPLETE' ? '已完成' : String(result.route?.tier || '')),
+      artifacts: Array.isArray(result.actions)
+        ? result.actions.filter((a) => a?.artifact).map((a) => ({ name: a.label || a.artifact, kind: 'file' }))
+        : [],
+      object: {
+        app: object.app || '',
+        windowTitle: object.windowTitle || '',
+        elementPath: object.snapshotId || '',
+        label: object.label || '',
+      },
+    });
+
+    log(`conversation + ${conversation.id} type=${type} q_len=${question.length} a_len=${answer.length}`);
+    if (dashboardWindow && !dashboardWindow.isDestroyed()) {
+      dashboardWindow.webContents.send('conversations:turn', { id: conversation.id });
+    }
+    if (companionWindow && !companionWindow.isDestroyed()) {
+      companionWindow.webContents.send('conversations:turn', { id: conversation.id });
+    }
+  } catch (error) {
+    log(`conversation record failed ${error.name}`);
+  }
+}
+
+ipcMain.handle('conversations:list', () => { try { return conversations().list(); } catch (_) { return []; } });
+ipcMain.handle('conversations:get', (_e, id) => { try { return conversations().get(id); } catch (_) { return null; } });
+ipcMain.handle('conversations:timeline', () => { try { return conversations().timeline(); } catch (_) { return []; } });
+ipcMain.handle('conversations:memories', () => { try { return conversations().memories(); } catch (_) { return []; } });
+ipcMain.handle('conversations:artifacts', () => { try { return conversations().artifacts(); } catch (_) { return []; } });
 
 function hideStage() {
   if (stageWindow && !stageWindow.isDestroyed() && stageWindow.isVisible()) stageWindow.hide();
@@ -851,8 +953,14 @@ function mergeStageHitRegions(previous, current) {
   }).slice(0, 32);
 }
 
-function applyStageShape(regions) {
+function applyStageShape(dipRegions) {
   if (!stageWindow || stageWindow.isDestroyed()) return;
+  const regions = nativeShapeRegions({
+    platform: process.platform,
+    screenApi: screen,
+    stageBounds: stageWindow.getBounds(),
+    regions: dipRegions,
+  });
   stageWindow.setShape(regions);
 }
 
@@ -952,6 +1060,39 @@ function dashboardMaterial(settings = fabricSettings) {
   return settings?.appearance?.material === 'solid' ? 'none' : 'mica';
 }
 
+// 系统按钮画在我们自己的底色上，所以必须跟「应用的主题」走，不是跟系统。
+// 系统深色 + 应用浅色时跟系统走，右上角就会出现一条突兀的黑条。
+function appIsDark() {
+  const theme = fabricSettings?.appearance?.theme || 'light';
+  if (theme === 'dark') return true;
+  if (theme === 'light') return false;
+  return nativeTheme.shouldUseDarkColors;      // 只有「跟随系统」时才问系统
+}
+
+// 底色留全透明——页面自己的底透上来就行。只换符号的颜色去对比它。
+// 给 overlay 涂实色会在右上角糊出一块和页面对不上的方块。
+function titleBarColors() {
+  return {
+    color: '#00000000',
+    symbolColor: appIsDark() ? '#F2F1ED' : '#17170F',
+    height: 44,
+  };
+}
+
+function applyTitleBarTheme() {
+  if (process.platform !== 'win32' || !dashboardWindow || dashboardWindow.isDestroyed()) return;
+  try {
+    dashboardWindow.setTitleBarOverlay(titleBarColors());
+  } catch (error) {
+    log(`title bar overlay unavailable ${error.name}`);
+  }
+}
+
+nativeTheme.on('updated', applyTitleBarTheme);
+
+// 渲染层切主题时同步过来，否则按钮颜色会滞后一个来回
+ipcMain.on('dashboard:theme', () => setImmediate(applyTitleBarTheme));
+
 function applyDashboardMaterial(settings = fabricSettings) {
   if (process.platform !== 'win32' || !dashboardWindow || dashboardWindow.isDestroyed()) return;
   try {
@@ -964,17 +1105,14 @@ function applyDashboardMaterial(settings = fabricSettings) {
 function createDashboardWindow() {
   if (dashboardWindow && !dashboardWindow.isDestroyed()) return dashboardWindow;
   dashboardWindow = new BrowserWindow({
-    width: 1240,
-    height: 820,
-    minWidth: 960,
-    minHeight: 680,
+    width: 1320,
+    height: 860,
+    minWidth: 1020,
+    minHeight: 700,
     title: 'Magic Pointer',
     titleBarStyle: 'hidden',
-    titleBarOverlay: process.platform === 'darwin' ? { height: 46 } : {
-      color: 'rgba(1, 0, 0, 0)',
-      symbolColor: nativeTheme.shouldUseDarkColors ? '#f5f5f7' : '#1d1d1f',
-      height: 46,
-    },
+    // 系统按钮画在我们的暖底上：底色必须给实色，否则 Windows 会用默认灰，看不见。
+    titleBarOverlay: process.platform === 'darwin' ? { height: 44 } : titleBarColors(),
     trafficLightPosition: process.platform === 'darwin' ? { x: 16, y: 16 } : undefined,
     vibrancy: process.platform === 'darwin' ? 'sidebar' : undefined,
     backgroundMaterial: process.platform === 'win32' ? dashboardMaterial() : undefined,
@@ -996,7 +1134,9 @@ function createDashboardWindow() {
       webSecurity: true,
     },
   });
-  dashboardWindow.loadFile(path.join(__dirname, 'renderer', 'dashboard.html'));
+  // 主窗口 = 工作室（对话 / 收藏箱 / 时间线 / 产物 / 设置）。
+  // 旧的 dashboard.html 仍在磁盘上，未删除，只是不再是主界面。
+  dashboardWindow.loadFile(path.join(__dirname, 'renderer', 'studio.html'));
   dashboardWindow.on('close', (event) => {
     if (!isQuitting && fabricSettings?.general?.keep_running !== false) {
       event.preventDefault();
@@ -1017,6 +1157,133 @@ function createDashboardWindow() {
   });
   dashboardWindow.on('closed', () => { dashboardWindow = null; });
   return dashboardWindow;
+}
+
+// ---------------------------------------------------------------------------
+// 收藏箱：剪贴板里出现位图就落盘，并把本地路径写回剪贴板。
+// 「一起进来的」按 2 分钟窗口 + 同来源成簇（见 stash_store.js）。
+// ---------------------------------------------------------------------------
+let stashRuntime = null;
+
+function stashBaseDir() {
+  const configured = fabricSettings?.stash?.dir;
+  if (configured) return configured;
+  return path.join(app.getPath('userData'), 'stash');
+}
+
+function initializeStashRuntime() {
+  if (stashRuntime) return stashRuntime;
+  stashRuntime = createStashRuntime({
+    clipboard,
+    nativeImage,
+    baseDir: stashBaseDir(),
+    log,
+    settings: () => fabricSettings || {},
+    // 落盘时顺手记下「你截的是哪个窗口的哪个元素」——这是 OCR 拿不到的。
+    // 有活动选区会话时能拿到元素名和选中文本；没有时只留空，绝不猜。
+    focusProbe: async () => {
+      try {
+        const entry = activeSelectionSessionToken
+          ? selectionSessions.get(activeSelectionSessionToken)
+          : null;
+        if (!entry) return {};
+        const object = episodeObjectForSession(entry);
+        return {
+          app: object.app || '',
+          windowTitle: object.windowTitle || '',
+          elementName: object.label || '',
+          elementPath: object.snapshotId || '',
+          selectionText: object.content || '',
+        };
+      } catch (_) {
+        return {};
+      }
+    },
+    onEntry: (entry) => {
+      if (dashboardWindow && !dashboardWindow.isDestroyed()) {
+        dashboardWindow.webContents.send('stash:entry', entry);
+      }
+    },
+  });
+  if (fabricSettings?.stash?.clipboard !== false) stashRuntime.start();
+  return stashRuntime;
+}
+
+ipcMain.handle('stash:list', () => {
+  try {
+    return initializeStashRuntime().list();
+  } catch (error) {
+    log(`stash list failed ${error.name}`);
+    return [];
+  }
+});
+
+let companionWindow = null;
+
+function createCompanionWindow() {
+  if (companionWindow && !companionWindow.isDestroyed()) return companionWindow;
+  companionWindow = new BrowserWindow({
+    width: 420,
+    height: 640,
+    minWidth: 360,
+    minHeight: 420,
+    title: 'Magic Pointer',
+    frame: false,
+    titleBarStyle: 'hidden',
+    transparent: false,
+    backgroundColor: nativeTheme.shouldUseDarkColors ? '#191815' : '#F2F1ED',
+    backgroundMaterial: process.platform === 'win32' ? 'mica' : undefined,
+    vibrancy: process.platform === 'darwin' ? 'sidebar' : undefined,
+    resizable: true,
+    movable: true,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    show: false,
+    hasShadow: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
+    },
+  });
+  companionWindow.loadFile(path.join(__dirname, 'renderer', 'companion.html'));
+  companionWindow.on('blur', () => {
+    if (!companionWindow || companionWindow.isDestroyed()) return;
+    if (companionPinned) return;
+    companionWindow.hide();
+  });
+  companionWindow.on('closed', () => { companionWindow = null; });
+  return companionWindow;
+}
+
+let companionPinned = true;
+
+// 随行窗贴到光标所在屏幕的右侧，和舞台共用同一个会话。
+function showCompanion(payload = {}, options = {}) {
+  const win = createCompanionWindow();
+  const cursor = screen.getCursorScreenPoint();
+  const display = screen.getDisplayNearestPoint(cursor);
+  const area = display.workArea || display.bounds;
+  const width = 420;
+  const height = Math.min(720, Math.max(420, area.height - 120));
+  const bounds = {
+    x: area.x + area.width - width - 24,
+    y: area.y + Math.floor((area.height - height) / 2),
+    width,
+    height,
+  };
+  const reveal = () => {
+    if (!companionWindow || companionWindow.isDestroyed()) return;
+    companionWindow.setBounds(bounds);
+    if (options.activate === false) companionWindow.showInactive();
+    else companionWindow.show();
+    companionWindow.webContents.send('companion:show', payload);
+    log('showCompanion');
+  };
+  if (win.webContents.isLoadingMainFrame()) win.webContents.once('did-finish-load', reveal);
+  else reveal();
 }
 
 function showDashboard(payload = {}, options = {}) {
@@ -1116,7 +1383,7 @@ function showOnboarding(payload = {}, options = {}) {
 
 function showPrimarySurface(options = {}) {
   if (onboardingRequired) showOnboarding({}, options);
-  else showDashboard({ view: 'general' }, options);
+  else showDashboard({ view: options.view || 'chat' }, options);
 }
 
 function panelGeometryForSession(entry) {
@@ -1514,49 +1781,6 @@ function sendCursorToOverlay(pos = screen.getCursorScreenPoint()) {
     globalY: pos.y,
   });
 }
-
-
-function showOverlay(reason = 'manual', durationMs = 0) {
-  if (!overlayWindow) return;
-  if (overlayHideTimer) clearTimeout(overlayHideTimer);
-  overlayHideTimer = null;
-  const cursor = screen.getCursorScreenPoint();
-  const display = screen.getDisplayNearestPoint(cursor);
-  overlayWindow.setBounds(display.bounds);
-  overlayWindow.setIgnoreMouseEvents(true, { forward: true });
-  overlayOwnsPointerInput = false;
-  overlayWindow.showInactive();
-  overlayWindow.webContents.send('overlay:show', { reason, observerMode: true });
-  sendCursorToOverlay(cursor);
-  log(`showOverlay observer reason=${reason} cursor=${cursor.x},${cursor.y}`);
-  if (durationMs > 0) {
-    overlayHideTimer = setTimeout(() => hideOverlay(), durationMs);
-  }
-}
-
-function showRuntimeIssueOverlay(reason = 'runtime-issue') {
-  if (!overlayWindow || overlayWindow.isDestroyed()) return;
-  if (activeSelectionSessionToken) invalidateSelectionSession(activeSelectionSessionToken);
-  dismissTemporarySurfaces({ invalidateSession: false, hideObserver: false });
-  if (overlayHideTimer) clearTimeout(overlayHideTimer);
-  overlayHideTimer = null;
-  const cursor = screen.getCursorScreenPoint();
-  const display = screen.getDisplayNearestPoint(cursor);
-  if (typeof overlayWindow.setFocusable === 'function') overlayWindow.setFocusable(true);
-  overlayWindow.setBounds(display.bounds);
-  overlayWindow.setIgnoreMouseEvents(false);
-  overlayOwnsPointerInput = true;
-  overlayWindow.show();
-  overlayWindow.focus();
-  overlayWindow.webContents.send('overlay:show', {
-    reason,
-    observerMode: false,
-    workflow: 'runtime_issue',
-  });
-  sendCursorToOverlay(cursor);
-  log(`showRuntimeIssueOverlay reason=${reason} cursor=${cursor.x},${cursor.y}`);
-}
-
 function hideOverlay() {
   if (overlayHideTimer) clearTimeout(overlayHideTimer);
   overlayHideTimer = null;
@@ -1573,6 +1797,8 @@ function cancelSelectionGesture(reason = 'cancelled', { hideSurface = true } = {
   const active = selectionGestureArm;
   if (passThroughChainTimer) clearTimeout(passThroughChainTimer);
   passThroughChainTimer = null;
+  passThroughChainDeadlineAt = 0;
+  passThroughChainLastPoint = null;
   passThroughGestureCapture.cancel();
   sendPointerInputCommand('idle');
   if (selectionGestureArmTimer) clearTimeout(selectionGestureArmTimer);
@@ -1627,7 +1853,7 @@ function armSelectionGesture(reason = 'wiggle') {
   }
   // Warm the hidden capsule renderer during the arm grace period. By the time
   // the user releases a stroke it can paint immediately without startup jank.
-  const residentStage = createStageWindow();
+  createStageWindow();
   armTemporaryDismissShortcut();
 
   const reveal = () => {
@@ -1732,17 +1958,14 @@ function completeSelectionGesture(payload) {
   const allPhysical = physicalStrokes.length
     ? physicalStrokes.flatMap((s) => s.points)
     : physicalPoints;
-  const xs = allPhysical.map((p) => p.x);
-  const ys = allPhysical.map((p) => p.y);
   const armDisplay = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  const scaleFactor = armDisplay.scaleFactor || 1;
   const gesture = {
     schemaVersion: 2,
     coordinateSpace: 'physical_screen_pixels',
     points: physicalPoints,
     strokes: physicalStrokes,
-    bbox: allPhysical.length
-      ? { x: Math.min(...xs), y: Math.min(...ys), width: Math.max(...xs) - Math.min(...xs), height: Math.max(...ys) - Math.min(...ys) }
-      : { x: 0, y: 0, width: 0, height: 0 },
+    bbox: physicalGestureBoundingBox(allPhysical, 8 * scaleFactor),
     kind: summary.kind,
     semanticPoint: summary.semanticPoint
       ? toPhysical(summary.semanticPoint)
@@ -1758,7 +1981,7 @@ function completeSelectionGesture(payload) {
     geometry: summary.geometry || undefined,
     direction: summary.direction || undefined,
     displayBounds: { ...armDisplay.bounds },
-    scaleFactor: armDisplay.scaleFactor || 1,
+    scaleFactor,
     source: { ...arm.source },
   };
   const reason = arm.reason;
@@ -1767,6 +1990,25 @@ function completeSelectionGesture(payload) {
   // entering pixel fallback captures. Stage remains absent during this gap.
   setTimeout(() => beginSelectionSession(reason, gesture), 34);
   return true;
+}
+
+function schedulePassThroughChainFinalize() {
+  if (passThroughChainTimer) clearTimeout(passThroughChainTimer);
+  const delay = chainFinalizeDelay({
+    now: performance.now(),
+    deadlineAt: passThroughChainDeadlineAt,
+  });
+  passThroughChainTimer = setTimeout(() => {
+    passThroughChainTimer = null;
+    const completed = passThroughGestureCapture.finish();
+    if (!completed || completed.token !== selectionGestureArm?.token) return;
+    completeSelectionGesture({
+      workflow: 'selection_gesture',
+      selectionGestureToken: completed.token,
+      points: completed.points,
+      strokes: completed.strokes,
+    });
+  }, delay);
 }
 
 function processPassThroughGestureSample(now, pos) {
@@ -1802,18 +2044,9 @@ function processPassThroughGestureSample(now, pos) {
         timeoutMs: arm.runtime.chainGapMs + 1000,
         reason: 'chain_timeout',
       });
-      if (passThroughChainTimer) clearTimeout(passThroughChainTimer);
-      passThroughChainTimer = setTimeout(() => {
-        passThroughChainTimer = null;
-        const completed = passThroughGestureCapture.finish();
-        if (!completed || completed.token !== selectionGestureArm?.token) return;
-        completeSelectionGesture({
-          workflow: 'selection_gesture',
-          selectionGestureToken: completed.token,
-          points: completed.points,
-          strokes: completed.strokes,
-        });
-      }, arm.runtime.chainGapMs);
+      passThroughChainDeadlineAt = performance.now() + arm.runtime.chainGapMs;
+      passThroughChainLastPoint = event.releasePoint || null;
+      schedulePassThroughChainFinalize();
     } else if (event.type === 'completed') {
       completeSelectionGesture({
         workflow: 'selection_gesture',
@@ -1821,6 +2054,18 @@ function processPassThroughGestureSample(now, pos) {
         points: event.points,
         strokes: event.strokes,
       });
+    }
+  }
+  if (
+    passThroughChainTimer
+    && passThroughGestureCapture.active
+    && !passThroughGestureCapture.drawing
+    && passThroughGestureCapture.strokes.length > 0
+  ) {
+    const localPoint = passThroughGestureCapture.localPoint({ x: pos.x, y: pos.y, t: now });
+    if (pointerContinuesGestureChain(passThroughChainLastPoint, localPoint)) {
+      passThroughChainLastPoint = localPoint;
+      schedulePassThroughChainFinalize();
     }
   }
   return events.length > 0;
@@ -2892,7 +3137,7 @@ function sendBridgeResult(target, parsed) {
 }
 
 function runPythonBridge(payload, scriptPath = 'scripts/electron_bridge.py', target = 'overlay', options = {}) {
-  if (!resultTargetWindow(target)) return;
+  if (!options.allowWithoutSurface && !resultTargetWindow(target)) return;
   const py = PYTHON_EXECUTABLE;
   const defaultTimeoutMs = scriptPath.includes('selection_snapshot_bridge')
     ? 15_000
@@ -2972,6 +3217,7 @@ function runPythonBridgePromise(payload, scriptPath, { target = 'fabric-dashboar
     };
     const child = runPythonBridge(payload, scriptPath, target, {
       timeoutMs,
+      allowWithoutSurface: true,
       onComplete: (parsed) => {
         if (parsed?.ok !== true) {
           finish(reject, new Error(String(parsed?.error || 'runtime_snapshot_probe_failed')));
@@ -3363,6 +3609,9 @@ function submitSelectionCommandWhenGrounded(payload, startedAt, noticeShown = fa
     requestMode: payload?.requestMode === 'agent_prompt' ? 'agent_prompt' : 'auto',
     workspaceRoot: ROOT,
   };
+  // 用户问的那句话只在这一刻存在：stage 事件流里不带它。
+  // 不在这里记下来，工作室永远只能显示答案、没有问题。
+  pendingQuestions.set(selectionSessionToken, String(payload?.command || '').trim());
   log(`stage:submit-selection-command token=${selectionSessionToken} request=${requestId} command_len=${String(enriched.command || '').length}`);
   let child = null;
   child = runPythonBridge(enriched, 'scripts/selection_bridge.py', 'stage', {
@@ -3717,6 +3966,17 @@ function queueCalendarOperation(operation, payload = {}) {
       });
     }));
 }
+
+ipcMain.on('companion:hide', () => {
+  if (companionWindow && !companionWindow.isDestroyed()) companionWindow.hide();
+});
+ipcMain.on('companion:pin', (_event, payload) => {
+  companionPinned = payload?.pinned !== false;
+  if (companionWindow && !companionWindow.isDestroyed()) {
+    companionWindow.setAlwaysOnTop(companionPinned);
+  }
+});
+ipcMain.on('companion:expand', () => showPrimarySurface({ activate: true }));
 
 ipcMain.on('dashboard:hide', (event) => {
   if (isDashboardSender(event)) dashboardWindow.hide();

@@ -837,7 +837,6 @@
     element.style.top = `${rect.y}px`;
     if (element === capsule) {
       const finalWidth = Number.parseFloat(window.getComputedStyle(capsule).getPropertyValue('--capsule-width')) || rect.width;
-      const baseWidth = Number.parseFloat(window.getComputedStyle(capsule).getPropertyValue('--capsule-base-width')) || rect.width;
       // Cold start throttle: ensure double windows ready before pen fall.
       // Smooth cross-frame handover for shape switch, no half-ball or ghost.
       element.style.width = `${Math.min(finalWidth, window.innerWidth - rect.left)}px`;
@@ -904,14 +903,6 @@
       };
     }
     return rect;
-  }
-
-  function anchorBelowTarget(element, offsetY = 12) {
-    const rect = state.target;
-    const x = rect ? rect.x : Math.round(window.innerWidth / 2 - 100);
-    const y = rect ? rect.y + rect.height + offsetY : Math.round(window.innerHeight / 2);
-    element.style.left = `${Math.max(8, Math.min(x, window.innerWidth - 200))}px`;
-    element.style.top = `${Math.max(8, Math.min(y, window.innerHeight - 60))}px`;
   }
 
   function clearTranscript() {

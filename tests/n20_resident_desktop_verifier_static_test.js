@@ -21,7 +21,7 @@ assert.match(
 );
 assert.match(
   source,
-  /press_hotkey\(\)[\s\S]*wait_log\([^)]*"selection gesture ready"[\s\S]*draw_selection\(point\)[\s\S]*wait_log\([^)]*"selection gesture completed"/,
+  /press_hotkey\(\)[\s\S]*wait_log\([^)]*"gesture-ready OK"[\s\S]*draw_selection\(point\)[\s\S]*wait_log\([^)]*"selection gesture completed"/,
   'each N20 voice round must wake, draw, and release before waiting for voice output',
 );
 assert.match(

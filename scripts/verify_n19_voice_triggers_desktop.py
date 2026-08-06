@@ -372,7 +372,7 @@ def run_strategy(
         set_cursor(fixture_point)
         time.sleep(0.28)
         press_activation_hotkey()
-        wait_log(log_path, "selection gesture ready", 15)
+        wait_log(log_path, "gesture-ready OK", 15)
         draw_selection(fixture_point)
         wait_log(log_path, "selection gesture completed", 15)
         wait_log(log_path, "stage renderer state=capsule-voice", 20)

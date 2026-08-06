@@ -278,12 +278,12 @@ def wait_stage_text(log_path: Path, prior_count: int, timeout: float = 45) -> No
 
 def start_voice_selection(log_path: Path, point: tuple[int, int]) -> None:
     """Wake, draw and release before the auto voice strategy is expected to run."""
-    ready_count = read_text(log_path).count("selection gesture ready")
+    ready_count = read_text(log_path).count("gesture-ready OK")
     completed_count = read_text(log_path).count("selection gesture completed")
     voice_count = read_text(log_path).count("stage renderer state=capsule-voice")
     capture_count = read_text(log_path).count("selection session capture done")
     press_hotkey()
-    wait_log(log_path, "selection gesture ready", ready_count, 15)
+    wait_log(log_path, "gesture-ready OK", ready_count, 15)
     draw_selection(point)
     wait_log(log_path, "selection gesture completed", completed_count, 15)
     wait_log(log_path, "stage renderer state=capsule-voice", voice_count, 20)

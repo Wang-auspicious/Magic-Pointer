@@ -74,6 +74,23 @@ class _ErrorRegistry:
         return _ErrorAdapter()
 
 
+class _CountingErrorAdapter(_ErrorAdapter):
+    def __init__(self) -> None:
+        self.requests = []
+
+    def read_context(self, window, **kwargs):
+        self.requests.append(dict(kwargs))
+        return super().read_context(window, **kwargs)
+
+
+class _CountingErrorRegistry:
+    def __init__(self) -> None:
+        self.adapter = _CountingErrorAdapter()
+
+    def matching_adapter(self, _window):
+        return self.adapter
+
+
 class _TerminalAdapter:
     def read_context(self, window, **_kwargs):
         return AdapterReadContext(
@@ -98,6 +115,39 @@ class _TerminalAdapter:
 class _TerminalRegistry:
     def matching_adapter(self, _window):
         return _TerminalAdapter()
+
+
+class _TerminalRegionAdapter:
+    def __init__(self) -> None:
+        self.region_requests = []
+        self.point_requests = []
+
+    def read_context(self, window, **kwargs):
+        if kwargs.get("target_region") is not None:
+            self.region_requests.append(dict(kwargs["target_region"]))
+        elif kwargs.get("target_point") is not None:
+            self.point_requests.append(dict(kwargs["target_point"]))
+        return AdapterReadContext(
+            adapter="uia_text_selection",
+            app="terminal",
+            window=window,
+            content="terminal alpha exact line",
+            method="uia:terminal-text-pattern",
+            artifacts={
+                "perception_result_kind": "terminal_buffer",
+                "selection_rectangles": [[163, 281, 2280, 37]],
+                "selection_rectangles_format": "xywh",
+                "selection_rectangles_coordinate_space": "physical_screen_pixels",
+            },
+        )
+
+
+class _TerminalRegionRegistry:
+    def __init__(self) -> None:
+        self.adapter = _TerminalRegionAdapter()
+
+    def matching_adapter(self, _window):
+        return self.adapter
 
 
 class _BrowserAdapter:
@@ -478,7 +528,7 @@ def test_unsupported_foreground_becomes_local_visual_object_at_pointer(tmp_path)
     ]
 
 
-def test_gesture_snapshot_captures_full_screen_with_a_separate_target_locator(tmp_path) -> None:
+def test_gesture_snapshot_captures_only_bounded_evidence_around_the_mark(tmp_path) -> None:
     foreground = {
         "title": "Magic Pointer",
         "hwnd": 20,
@@ -512,11 +562,84 @@ def test_gesture_snapshot_captures_full_screen_with_a_separate_target_locator(tm
     )
 
     snapshot = payload["selectionSnapshot"]
-    assert calls == [((0, 0, 1920, 1080), True)]
-    assert snapshot["capture_bbox"] == [0, 0, 1920, 1080]
+    assert calls == [((424, 406, 796, 598), True)]
+    assert snapshot["capture_bbox"] == [424, 406, 796, 598]
     assert snapshot["selection_bbox"] == [520, 470, 180, 64]
+    artifacts = snapshot["context"]["artifacts"]
+    assert artifacts["selection_rectangles"] == [[520, 470, 180, 64]]
+    assert artifacts["selection_geometry_kind"] == "gesture_region"
     assert Path(snapshot["capture_path"]).is_file()
     assert Path(snapshot["annotated_path"]).is_file()
+
+
+class _WholeWindowContainerAdapter:
+    def __init__(self):
+        self.calls = 0
+
+    def read_context(self, window, **_kwargs):
+        self.calls += 1
+        left, top, right, bottom = window["bbox"]
+        return AdapterReadContext(
+            adapter="uia_text_selection",
+            app="application",
+            window=window,
+            content="every line in the document",
+            label="document",
+            method="uia:element-from-point",
+            capabilities=[],
+            artifacts={
+                "selection_rectangles": [[left, top, right - left, bottom - top]],
+                "selection_rectangles_format": "xywh",
+                "selection_rectangles_coordinate_space": "physical_screen_pixels",
+            },
+        )
+
+
+class _WholeWindowContainerRegistry:
+    def __init__(self):
+        self.adapter = _WholeWindowContainerAdapter()
+
+    def matching_adapter(self, _window):
+        return self.adapter
+
+
+def test_rejected_structured_container_falls_back_to_the_user_mark_bbox(tmp_path) -> None:
+    foreground = {
+        "title": "notes.txt - Notepad",
+        "hwnd": 20,
+        "pid": 42,
+        "bbox": (0, 100, 1600, 1000),
+    }
+    gesture = {
+        "schemaVersion": 2,
+        "coordinateSpace": "physical_screen_pixels",
+        "releasePoint": {"x": 900, "y": 330},
+        "bbox": {"x": 300, "y": 330, "width": 600, "height": 0},
+        "strokes": [{"points": [
+            {"x": 300, "y": 330}, {"x": 600, "y": 330}, {"x": 900, "y": 330},
+        ]}],
+    }
+
+    registry = _WholeWindowContainerRegistry()
+    payload = capture_snapshot(
+        [foreground],
+        registry=registry,
+        target_point={"x": 900, "y": 330},
+        gesture=gesture,
+        visual_capture=lambda *, bbox, all_screens: Image.new(
+            "RGB", (bbox[2] - bbox[0], bbox[3] - bbox[1]), "white"
+        ),
+        global_capture_bbox=(0, 0, 1920, 1080),
+        capture_dir=tmp_path,
+    )
+
+    snapshot = payload["selectionSnapshot"]
+    assert snapshot["structured_covers_mark"] is False
+    assert snapshot["structured_gap_reason"] == "container_not_selection"
+    assert snapshot["selection_bbox"] == [300, 326, 600, 8]
+    assert snapshot["capture_bbox"] == [204, 240, 996, 420]
+    assert snapshot["context"]["content"] == ""
+    assert registry.adapter.calls == 1
 
 
 def test_visual_capture_retries_full_desktop_when_window_capture_is_black(tmp_path, monkeypatch) -> None:
@@ -544,6 +667,42 @@ def test_visual_capture_retries_full_desktop_when_window_capture_is_black(tmp_pa
     assert capture is not None
     assert calls[0]["window"] == 20
     assert calls[1]["bbox"] == (280, 290, 920, 710)
+    with Image.open(capture["path"]).convert("RGB") as image:
+        assert image.getextrema() == ((255, 255), (255, 255), (255, 255))
+
+
+def test_visual_capture_retries_desktop_when_only_the_requested_window_crop_is_blank(tmp_path, monkeypatch) -> None:
+    calls = []
+    window = {
+        "title": "notes.txt - Notepad",
+        "hwnd": 20,
+        "pid": 42,
+        "bbox": (0, 0, 1000, 700),
+    }
+
+    def grab(*, window=None, bbox=None, all_screens=False):
+        calls.append({"window": window, "bbox": bbox, "all_screens": all_screens})
+        if window is not None:
+            image = Image.new("RGB", (1000, 700), "black")
+            # PrintWindow returned a title-bar icon, so the whole frame is not
+            # blank, but the requested content crop still is.
+            image.putpixel((10, 10), (255, 255, 255))
+            return image
+        return Image.new("RGB", (bbox[2] - bbox[0], bbox[3] - bbox[1]), "white")
+
+    monkeypatch.setattr("scripts.selection_snapshot_bridge.ImageGrab.grab", grab)
+    capture = _capture_visual_region(
+        window,
+        {"x": 600, "y": 500},
+        capture_bbox=(300, 300, 900, 600),
+        capture_dir=tmp_path,
+    )
+
+    assert capture is not None
+    assert calls == [
+        {"window": 20, "bbox": None, "all_screens": False},
+        {"window": None, "bbox": (300, 300, 900, 600), "all_screens": True},
+    ]
     with Image.open(capture["path"]).convert("RGB") as image:
         assert image.getextrema() == ((255, 255), (255, 255), (255, 255))
 
@@ -832,6 +991,24 @@ def test_window_filter_uses_exact_foreground_handle(monkeypatch) -> None:
     ]
 
 
+def test_committed_window_handle_wins_over_overlapping_point_geometry(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "scripts.selection_snapshot_bridge.list_visible_windows",
+        lambda: [
+            {"title": "Background full-screen browser", "hwnd": 11, "bbox": [0, 0, 1920, 1080]},
+            {"title": "Committed Notepad", "hwnd": 22, "bbox": [0, 100, 1600, 900]},
+        ],
+    )
+    monkeypatch.setattr(
+        "scripts.selection_snapshot_bridge.get_foreground_window_handle",
+        lambda: 11,
+    )
+
+    assert _window_dicts(22, {"x": 600, "y": 300}) == [
+        {"title": "Committed Notepad", "hwnd": 22, "bbox": [0, 100, 1600, 900]}
+    ]
+
+
 def test_window_filter_does_not_fall_back_behind_magic_pointer(monkeypatch) -> None:
     monkeypatch.setattr(
         "scripts.selection_snapshot_bridge.get_foreground_window_handle",
@@ -1032,6 +1209,65 @@ def test_open_stroke_prefers_one_bounded_region_read_over_overlay_point_sampling
     assert registry.adapter.point_requests == []
 
 
+def test_terminal_line_region_does_not_repeat_the_same_textpattern_probe_at_sample_points() -> None:
+    registry = _TerminalRegionRegistry()
+    gesture = {
+        "schemaVersion": 2,
+        "kind": "line",
+        "coordinateSpace": "physical_screen_pixels",
+        "releasePoint": {"x": 680, "y": 288},
+        "bbox": {"x": 160, "y": 280, "width": 520, "height": 16},
+        "strokes": [{"points": [
+            {"x": 160, "y": 288}, {"x": 420, "y": 288}, {"x": 680, "y": 288},
+        ]}],
+    }
+
+    payload = capture_snapshot(
+        [{"title": "Terminal fixture", "hwnd": 901, "process_id": 902, "bbox": [0, 0, 2500, 1400]}],
+        registry=registry,
+        target_point={"x": 680, "y": 288},
+        gesture=gesture,
+        allow_visual_fallback=False,
+    )
+
+    snapshot = payload["selectionSnapshot"]
+    assert snapshot["context"]["content"] == "terminal alpha exact line"
+    assert snapshot["gesture_grounding"]["mode"] == "terminal_line"
+    assert snapshot["selection_bbox"] == [160, 280, 520, 16]
+    assert registry.adapter.region_requests == [{"x": 160, "y": 280, "width": 520, "height": 16}]
+    assert registry.adapter.point_requests == []
+
+
+def test_hard_region_adapter_failure_is_not_retried_at_every_stroke_sample() -> None:
+    registry = _CountingErrorRegistry()
+    gesture = {
+        "schemaVersion": 2,
+        "kind": "line",
+        "coordinateSpace": "physical_screen_pixels",
+        "releasePoint": {"x": 680, "y": 288},
+        "bbox": {"x": 160, "y": 280, "width": 520, "height": 16},
+        "strokes": [{"points": [
+            {"x": 160, "y": 288}, {"x": 420, "y": 288}, {"x": 680, "y": 288},
+        ]}],
+    }
+
+    payload = capture_snapshot(
+        [{"title": "Slow UIA fixture", "hwnd": 901, "process_id": 902}],
+        registry=registry,
+        target_point={"x": 680, "y": 288},
+        gesture=gesture,
+        allow_visual_fallback=False,
+    )
+
+    snapshot = payload["selectionSnapshot"]
+    assert len(registry.adapter.requests) == 1
+    assert registry.adapter.requests[0]["target_region"] == {
+        "x": 160, "y": 280, "width": 520, "height": 16,
+    }
+    assert snapshot["gesture_grounding"]["reason"] == "structured_region_hard_failure"
+    assert snapshot["perception_trace"]["attempts"][0]["status"] == "error"
+
+
 def test_enclosed_gesture_allows_a_short_tail_after_the_loop_closes() -> None:
     gesture = {
         "bbox": {"x": 80, "y": 80, "width": 240, "height": 120},
@@ -1073,7 +1309,7 @@ def test_gesture_grounding_never_falls_back_to_an_unvisited_release_point_candid
     )
 
     assert payload["selectionSnapshot"]["context"] is None
-    assert payload["selectionSnapshot"]["selection_bbox"] is None
+    assert payload["selectionSnapshot"]["selection_bbox"] == [110, 154, 280, 27]
     assert payload["selectionSnapshot"]["gesture_grounding"]["state"] == "unresolved"
     assert payload["selectionSnapshot"]["perception_trace"]["selectedLayer"] is None
 
@@ -1142,6 +1378,9 @@ def test_runtime_issue_is_presented_as_one_agent_task_not_generic_context() -> N
 
 
 class _StrokeRegionAdapter:
+    name = "uia_text_selection"
+    perception_layer = "uia"
+
     def __init__(self) -> None:
         self.region_requests: list[dict[str, int]] = []
 
@@ -1241,3 +1480,37 @@ def test_single_open_stroke_keeps_only_crossed_element() -> None:
     assert snapshot["context"]["content"] == "Formula A"
     assert snapshot["gesture_grounding"]["segment_count"] == 1
     assert snapshot["selection_segments"] == [[100, 100, 300, 30]]
+
+
+def test_bounded_visual_evidence_does_not_relabel_a_structured_gesture_as_pixel_fallback(tmp_path) -> None:
+    gesture = {
+        "schemaVersion": 2,
+        "coordinateSpace": "physical_screen_pixels",
+        "kind": "line",
+        "releasePoint": {"x": 400, "y": 110},
+        "bbox": {"x": 100, "y": 100, "width": 300, "height": 20},
+        "strokes": [{"points": [
+            {"x": 100, "y": 110}, {"x": 250, "y": 112}, {"x": 400, "y": 110},
+        ]}],
+    }
+
+    payload = capture_snapshot(
+        [{"title": "PDF", "hwnd": 901, "process_id": 902, "bbox": [0, 0, 800, 600]}],
+        registry=_StrokeRegionRegistry(),
+        target_point={"x": 300, "y": 110},
+        gesture=gesture,
+        visual_capture=lambda *, bbox, all_screens: Image.new(
+            "RGB", (bbox[2] - bbox[0], bbox[3] - bbox[1]), "white"
+        ),
+        capture_dir=tmp_path,
+    )
+
+    snapshot = payload["selectionSnapshot"]
+    trace = snapshot["perception_trace"]
+    assert snapshot["source_kind"] == "native_selection"
+    assert snapshot["context"]["content"] == "Formula A"
+    assert snapshot["capture_path"]
+    assert trace["selectedLayer"] == "uia"
+    assert trace["selectedAdapter"] == "uia_text_selection"
+    assert trace["pixelFallbackUsed"] is False
+    assert trace["attempts"][-1]["reason"] == "bounded_visual_evidence"

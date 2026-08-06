@@ -9,6 +9,8 @@ const stage = fs.readFileSync('electron/renderer/stage.js', 'utf8');
 
 assert(main.includes('stageWindow.setShape(regions)'),
   'the native full-display stage must be shaped to visible surface regions');
+assert(main.includes('nativeShapeRegions'),
+  'native shapes must preserve the renderer/window pixel contract');
 assert(main.includes('sanitizeStageHitRegions'),
   'renderer hit regions must be validated and clamped in the trusted main process');
 assert(main.includes('function mergeStageHitRegions('),

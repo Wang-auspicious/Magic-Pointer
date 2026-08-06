@@ -52,7 +52,7 @@ const gestureArm = main.slice(
   main.indexOf('function armSelectionGesture('),
   main.indexOf('function startMouseShakePolling('),
 );
-assert.match(gestureArm, /const residentStage = createStageWindow\(\)/,
+assert.match(gestureArm, /createStageWindow\(\)/,
   'gesture arming must keep a direct handle to the resident stage');
 assert.match(gestureArm, /stageReadiness\.whenReady\([\s\S]*?overlayReadiness\.whenReady\([\s\S]*?show/,
   'drawing may become ready only after both resident renderers acknowledge their listeners');

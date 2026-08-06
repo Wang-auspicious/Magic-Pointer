@@ -29,6 +29,7 @@ from app.adapters import AdapterReadContext, default_adapter_registry, format_ad
 from app.ai_client import ask_text_model, ask_text_model_with_tools, ask_vision_model
 from app.fabric.intent_router import (
     ACT_LOCAL,
+    ACT_MODEL,
     ACT_RECIPE,
     ACT_TOOLS,
     IntentRouter,
@@ -66,9 +67,11 @@ from app.fabric.action import make_fabric_action_proposal
 from app.fabric.workflow_task_store import WorkflowTaskStore
 from app.fabric.catalog import get_recipe
 from app.fabric.engine import FabricEngine
+from app.fabric.router import RecipeRouter
 from app.fabric.executors import FabricExecutors
 from app.fabric.context_packet import build_agent_prompt, write_context_packet_artifact
 from app.fabric.settings import SettingsStore
+from app.grounding.ocr_mark_selection import select_open_stroke_rect_indexes
 from scripts._bridge_common import (
     PayloadTooLargeError,
     read_bounded_json_payload,
@@ -207,7 +210,7 @@ def _selection_context_text(app_ctx: Any, target_window: dict[str, Any] | None) 
 
 
 def _interaction_episode_context(payload: Any) -> str:
-    if not isinstance(payload, dict) or payload.get("version") != 1:
+    if not isinstance(payload, dict) or int(payload.get("schemaVersion") or payload.get("version") or 0) != 1:
         return ""
     slots = payload.get("slots")
     if not isinstance(slots, dict):
@@ -235,6 +238,11 @@ def _interaction_episode_context(payload: Any) -> str:
             )
         content = str(item.get("content") or "").strip()
         if content:
+            if item.get("contentClipped") is True:
+                lines.append(
+                    f"{alias}_completeness: clipped_at_bounded_capture_edge; "
+                    "do not reconstruct or infer missing characters"
+                )
             lines.append(f"{alias}_content:\n---\n{content[:12000]}\n---")
 
     append_object("THIS", slots.get("this"))
@@ -247,6 +255,131 @@ def _interaction_episode_context(payload: Any) -> str:
         lines.append("THESE: []")
     append_object("HERE", slots.get("here"))
     return "\n".join(lines)
+
+
+def _ocr_capture_edge_state(
+    capture_path: str | Path,
+    blocks: list[dict[str, Any]],
+    *,
+    offset_x: int = 0,
+    offset_y: int = 0,
+    margin: int = 14,
+) -> tuple[bool, list[int] | None]:
+    """Whether recognised text reaches the edge of a bounded evidence crop."""
+    try:
+        from PIL import Image
+
+        with Image.open(capture_path) as image:
+            width, height = image.size
+    except Exception:
+        return False, None
+    for block in blocks:
+        rect = block.get("rect")
+        if not isinstance(rect, (list, tuple)) or len(rect) != 4:
+            continue
+        try:
+            x = float(rect[0]) - offset_x
+            y = float(rect[1]) - offset_y
+            block_width = float(rect[2])
+            block_height = float(rect[3])
+        except (TypeError, ValueError):
+            continue
+        if (
+            x <= margin or y <= margin
+            or x + block_width >= width - margin
+            or y + block_height >= height - margin
+        ):
+            return True, [int(width), int(height)]
+    return False, [int(width), int(height)]
+
+
+def _enrich_interaction_episode_ocr(
+    payload: dict[str, Any],
+    app_ctx: AdapterReadContext | None,
+) -> None:
+    """Give multi-object questions locally grounded text for every screen crop.
+
+    THIS already went through the gesture-aware OCR path, so reuse that exact
+    result. Older episode objects no longer carry their original stroke, but
+    their saved evidence is already a bounded crop rather than a full screen;
+    reading that crop is preferable to sending a text model two empty objects.
+    """
+    episode = payload.get("interactionEpisode")
+    slots = episode.get("slots") if isinstance(episode, dict) else None
+    if not isinstance(slots, dict):
+        return
+    current_text = str(getattr(app_ctx, "content", "") or "").strip()
+    cache: dict[str, tuple[str, str, bool]] = {}
+
+    def enrich(item: Any, *, current: bool = False) -> None:
+        if not isinstance(item, dict) or str(item.get("content") or "").strip():
+            return
+        if current:
+            if current_text:
+                item["content"] = current_text
+                item["contentMethod"] = str(getattr(app_ctx, "method", "") or "local:gesture_ocr")
+                item["contentClipped"] = bool(
+                    dict(getattr(app_ctx, "artifacts", {}) or {}).get("ocr_edge_clipped")
+                )
+            return
+        if str(item.get("kind") or "") != "screen_region":
+            return
+        source = item.get("source")
+        path = str(source.get("path") or "") if isinstance(source, dict) else ""
+        if not path or not Path(path).is_file():
+            return
+        if path not in cache:
+            read = _read_local_ocr_boxes(path, strokes_local=None, selection_local=None)
+            if not read:
+                cache[path] = ("", "", False)
+            else:
+                blocks, engine = read
+                clipped, _size = _ocr_capture_edge_state(path, list(blocks))
+                cache[path] = (
+                    _ocr_blocks_to_text(list(blocks)).strip(),
+                    str(engine or "local_ocr"),
+                    clipped,
+                )
+        text, engine, clipped = cache[path]
+        if text:
+            item["content"] = text
+            item["contentMethod"] = f"local:{engine}"
+            item["contentClipped"] = clipped
+
+    enrich(slots.get("this"), current=True)
+    enrich(slots.get("that"))
+    enrich(slots.get("here"))
+    for item in list(slots.get("these") or [])[:12]:
+        enrich(item)
+
+
+def _clipped_multi_object_answer(payload: dict[str, Any]) -> str | None:
+    command = str(payload.get("command") or "").casefold()
+    if not any(token in command for token in ("对比", "比较", "区别", "哪个好", "both", "compare")):
+        return None
+    episode = payload.get("interactionEpisode")
+    slots = episode.get("slots") if isinstance(episode, dict) else None
+    if not isinstance(slots, dict):
+        return None
+    items = [slots.get("this"), slots.get("that")]
+    if isinstance(slots.get("these"), list) and len(slots["these"]) >= 2:
+        items = list(slots["these"])
+    grounded = [
+        item for item in items
+        if isinstance(item, dict) and str(item.get("objectId") or "").strip()
+    ]
+    if len(grounded) < 2 or not any(item.get("contentClipped") is True for item in grounded):
+        return None
+    labels = ["THIS", "THAT", *[f"THESE[{index}]" for index in range(1, 11)]]
+    fragments = []
+    for label, item in zip(labels, grounded):
+        text = str(item.get("content") or "").strip()
+        fragments.append(f"- {label}：{text if text else '没有读到可用文字'}")
+    return (
+        "这两处目前包含被截图边缘截断的 OCR 片段，不能可靠比较：\n"
+        + "\n".join(fragments)
+        + "\n\n请把每段文字划完整，或在输入气泡打开后点击整段，让元素框吸附到完整对象；我不会用残句补猜。"
+    )
 
 
 def _read_target_context(windows: list[dict[str, Any]], command: str) -> tuple[dict[str, Any] | None, Any]:
@@ -486,6 +619,39 @@ def _sort_blocks_reading_order(blocks: list[dict[str, Any]]) -> list[dict[str, A
     )
 
 
+def _ocr_blocks_to_text(blocks: list[dict[str, Any]]) -> str:
+    """Join horizontally split detection boxes as one visual text row."""
+    rows: list[dict[str, Any]] = []
+    for block in _sort_blocks_reading_order(blocks):
+        text = str(block.get("text") or "").strip()
+        if not text:
+            continue
+        rect = block.get("rect")
+        if not isinstance(rect, (list, tuple)) or len(rect) != 4:
+            rows.append({"center": None, "height": 0.0, "parts": [text]})
+            continue
+        try:
+            center = float(rect[1]) + float(rect[3]) / 2.0
+            height = float(rect[3])
+        except (TypeError, ValueError):
+            rows.append({"center": None, "height": 0.0, "parts": [text]})
+            continue
+        row = next((
+            candidate for candidate in reversed(rows)
+            if candidate["center"] is not None
+            and abs(float(candidate["center"]) - center)
+            <= max(8.0, min(float(candidate["height"]), height) * 0.5)
+        ), None)
+        if row is None:
+            rows.append({"center": center, "height": height, "parts": [text]})
+        else:
+            row["parts"].append(text)
+            count = len(row["parts"])
+            row["center"] = (float(row["center"]) * (count - 1) + center) / count
+            row["height"] = max(float(row["height"]), height)
+    return "\n".join(" ".join(row["parts"]) for row in rows if row["parts"])
+
+
 def _filter_ocr_blocks_by_strokes(
     blocks: list[dict[str, Any]],
     strokes: list[list[tuple[int, int]]],
@@ -505,8 +671,14 @@ def _filter_ocr_blocks_by_strokes(
     for stroke in strokes:
         closed = _stroke_is_closed(stroke)
         region = _stroke_xywh(stroke)
+        open_indexes = set()
+        if not closed:
+            open_indexes = set(select_open_stroke_rect_indexes(
+                [block.get("rect") for block in blocks],
+                stroke,
+            ))
         segment_blocks: list[dict[str, Any]] = []
-        for block in blocks:
+        for block_index, block in enumerate(blocks):
             rect = block.get("rect")
             if not isinstance(rect, (list, tuple)) or len(rect) != 4:
                 continue
@@ -522,12 +694,10 @@ def _filter_ocr_blocks_by_strokes(
                 ):
                     continue
             else:
-                # Underline/strike semantics: the line must actually cross the
-                # block, or cover a substantial part of it (edge tolerance).
-                if (
-                    not _polyline_hits_rect(stroke, list(rect))
-                    and _block_overlap_ratio(list(rect), region) <= 0.30
-                ):
+                # Open marks belong to one OCR row. Symmetric inflation around
+                # an underline selects both the row above and the row below;
+                # the shared row-ranking policy keeps only the intended row.
+                if block_index not in open_indexes:
                     continue
             key = json.dumps(block, ensure_ascii=False, sort_keys=True)
             if key not in seen_keys:
@@ -704,7 +874,7 @@ def _ocr_worker_request(
     *,
     strokes_local: list[list[tuple[int, int]]] | None = None,
     selection_local: list[int] | None = None,
-    timeout: float = 30.0,
+    timeout: float = 10.0,
 ) -> tuple[list[dict[str, Any]], str] | None:
     import time
 
@@ -733,9 +903,14 @@ def _ocr_worker_request(
         response = json.loads(line.decode("utf-8"))
         if response.get("ok") is True and response.get("blocks") is not None:
             return list(response["blocks"]), str(response.get("engine") or "rapidocr-onnx")
+        if response.get("error") == "worker_busy":
+            return [], "rapidocr-worker-busy"
         return None
     except Exception:
-        return None
+        # A connected resident that missed its budget must not trigger a second
+        # cold RapidOCR instance in this short-lived bridge process. That doubled
+        # CPU/memory and turned one slow request into a minute-long queue.
+        return [], "rapidocr-worker-unavailable"
     finally:
         try:
             sock.close()
@@ -762,6 +937,87 @@ def _get_rapid_ocr() -> Any:
 MODEL_FAILURE_EXCERPT_CHARS = 800
 
 
+def _safe_failure_url(value: Any) -> str:
+    """Keep useful endpoint evidence without echoing credentials or queries."""
+    from urllib.parse import urlsplit, urlunsplit
+
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    try:
+        parsed = urlsplit(raw)
+        hostname = parsed.hostname or ""
+        if not hostname:
+            return raw[:240]
+        netloc = hostname
+        if parsed.port is not None:
+            netloc += f":{parsed.port}"
+        return urlunsplit((parsed.scheme, netloc, parsed.path, "", ""))[:240]
+    except (TypeError, ValueError):
+        return raw.split("?", 1)[0][:240]
+
+
+def grounded_browser_failure_answer(
+    command: str,
+    app_ctx: AdapterReadContext | None,
+) -> str | None:
+    """Answer browser failure questions from DevTools evidence, without a model.
+
+    A failed completion used to throw away the most valuable part of the
+    capture: the browser's own network error.  Showing only the visible
+    ``TypeError`` after waiting for a model is worse than the browser console.
+    These verdicts are deliberately narrow and evidence-backed; unknown errors
+    still go through the ordinary reasoning path.
+    """
+    if app_ctx is None or str(app_ctx.app or "").casefold() != "browser":
+        return None
+    question = str(command or "").casefold()
+    if not any(marker in question for marker in (
+        "why", "fail", "error", "broken", "fix", "check",
+        "为什么", "失败", "报错", "错误", "怎么修", "检查", "后端", "前端",
+    )):
+        return None
+    artifacts = dict(app_ctx.artifacts or {})
+    browser = artifacts.get("browser_context")
+    if not isinstance(browser, dict):
+        return None
+    failures = [item for item in list(browser.get("networkFailures") or []) if isinstance(item, dict)]
+    if not failures:
+        return None
+    failure = failures[0]
+    error = str(failure.get("errorText") or "").strip()
+    endpoint = _safe_failure_url(failure.get("url"))
+    if "ERR_UNSAFE_PORT" in error:
+        evidence = f"浏览器返回 `{error}`"
+        if endpoint:
+            evidence += f"，目标是 `{endpoint}`"
+        return (
+            "结论：这次请求没有到达后端；浏览器在发出请求前就把目标端口拦截了。\n\n"
+            f"证据：{evidence}。\n\n"
+            "先检查前端的 API base URL／代理配置，把端口改成后端真实监听且浏览器允许的端口；"
+            "端口修正后，再看是否出现连接拒绝、CORS 或服务端状态码。"
+        )
+    if "ERR_CONNECTION_REFUSED" in error:
+        evidence = f"`{error}`" + (f"，目标 `{endpoint}`" if endpoint else "")
+        return (
+            f"结论：浏览器能定位到目标地址，但该端口没有服务接受连接。证据：{evidence}。\n\n"
+            "先核对服务是否启动、监听地址与端口是否一致，再检查容器端口映射或本机防火墙。"
+        )
+    if "ERR_NAME_NOT_RESOLVED" in error:
+        evidence = f"`{error}`" + (f"，目标 `{endpoint}`" if endpoint else "")
+        return (
+            f"结论：失败发生在域名解析阶段，请求尚未到达后端。证据：{evidence}。\n\n"
+            "先检查 API 域名拼写、DNS／代理配置和当前网络的域名解析结果。"
+        )
+    if "ERR_TIMED_OUT" in error or "TIMED_OUT" in error:
+        evidence = f"`{error}`" + (f"，目标 `{endpoint}`" if endpoint else "")
+        return (
+            f"结论：请求在网络阶段超时，仅凭这条证据还不能断定是前端还是后端。证据：{evidence}。\n\n"
+            "先用同一地址做独立连通性检查，再对照服务端访问日志判断请求是否到达。"
+        )
+    return None
+
+
 def answer_with_read_text_on_model_failure(answer: str, read_text: str) -> str:
     """When the gateway is down, still hand back what was actually read.
 
@@ -779,6 +1035,50 @@ def answer_with_read_text_on_model_failure(answer: str, read_text: str) -> str:
         excerpt = excerpt[:MODEL_FAILURE_EXCERPT_CHARS]
         truncated = "\n（内容过长，已截断）"
     return f"{text}\n\n不过你划中的内容已经读到了：\n{excerpt}{truncated}"
+
+
+_EXACT_READBACK_PATTERNS = (
+    re.compile(r"\bwhat (?:exact )?(?:line|text|words?|sentence) did i (?:mark|select|underline|circle)\b", re.I),
+    re.compile(r"\b(?:read|show|give) (?:me )?(?:only )?(?:the )?(?:marked|selected|underlined) (?:line|text|words?|sentence)\b", re.I),
+    re.compile(r"我.*(?:圈|划|画|选).*(?:哪一行|什么字|什么内容|是什么)"),
+    re.compile(r"(?:读出|返回|回答).*(?:圈|划|画|选|这一行|这段文字)"),
+)
+
+
+def _public_readback_text(content: str) -> str:
+    """Remove OCR bookkeeping labels when every line is a marked segment."""
+    lines = str(content or "").splitlines()
+    nonempty = [line for line in lines if line.strip()]
+    if not nonempty or not all(re.match(r"^\[segment \d+\]\s+", line) for line in nonempty):
+        return str(content or "").strip()
+    return "\n".join(
+        re.sub(r"^\[segment \d+\]\s+", "", line).strip()
+        for line in nonempty
+    ).strip()
+
+
+def _exact_readback_response(
+    payload: dict[str, Any],
+    app_ctx: AdapterReadContext | None,
+    snapshot: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Return literal grounded text when that is exactly what was asked for."""
+    command = str(payload.get("command") or "").strip()
+    content = _public_readback_text(str(getattr(app_ctx, "content", "") or ""))
+    if not command or not content:
+        return None
+    if not any(pattern.search(command) for pattern in _EXACT_READBACK_PATTERNS):
+        return None
+    return {
+        "ok": True,
+        "prompt": command,
+        "answer": content,
+        "route": {"tier": "L0", "reason": "exact_grounded_readback"},
+        "selectionContext": app_ctx.to_dict() if app_ctx is not None else None,
+        "actionProposals": [],
+        "selectionSessionId": str(payload.get("selectionSessionId") or "") or None,
+        "selectionSnapshotId": str((snapshot or {}).get("snapshot_id") or "") or None,
+    }
 
 
 def _read_local_ocr(capture_path: str | Path) -> tuple[str | None, str]:
@@ -833,7 +1133,8 @@ def _enrich_screen_region_context(
     strokes_local = None
     selection_local = None
     offset_x = offset_y = 0
-    if isinstance(capture_bbox, (list, tuple)) and len(capture_bbox) == 4:
+    has_capture_mapping = isinstance(capture_bbox, (list, tuple)) and len(capture_bbox) == 4
+    if has_capture_mapping:
         try:
             offset_x, offset_y = int(capture_bbox[0]), int(capture_bbox[1])
         except (TypeError, ValueError):
@@ -884,7 +1185,7 @@ def _enrich_screen_region_context(
     if strokes:
         selected_blocks, segments = _filter_ocr_blocks_by_strokes(blocks, strokes)
         segment_texts = [
-            "\n".join(str(block.get("text") or "").strip() for block in segment if str(block.get("text") or "").strip())
+            _ocr_blocks_to_text(segment)
             for segment in segments
             if segment
         ]
@@ -894,7 +1195,15 @@ def _enrich_screen_region_context(
         else:
             text = "\n".join(segment_texts)
     else:
-        selected_blocks = _filter_ocr_blocks_by_bbox(blocks, selection_bbox)
+        # OCR rectangles are capture-local. A selection bbox is screen-global.
+        # Without capture_bbox there is no honest transform between them; using
+        # the raw screen coordinates against a 320x180 crop silently selects
+        # nothing. The capture itself is already bounded evidence, so legacy
+        # snapshots without the mapping use that whole crop.
+        selected_blocks = _filter_ocr_blocks_by_bbox(
+            blocks,
+            selection_bbox if has_capture_mapping else None,
+        )
         segments = []
         text = "\n".join(
             str(block.get("text") or "").strip()
@@ -903,6 +1212,12 @@ def _enrich_screen_region_context(
         ).strip()
     if not text:
         return app_ctx
+    edge_clipped, capture_size = _ocr_capture_edge_state(
+        capture_path,
+        selected_blocks,
+        offset_x=offset_x,
+        offset_y=offset_y,
+    )
     artifacts = dict(app_ctx.artifacts if app_ctx is not None else {})
     artifacts.update({
         "capture_path": capture_path,
@@ -914,6 +1229,8 @@ def _enrich_screen_region_context(
         "ocr_stroke_filter": bool(strokes),
         "ocr_segment_count": len(segments),
         "ocr_selection_bbox": selection_bbox,
+        "ocr_edge_clipped": edge_clipped,
+        "ocr_capture_size": capture_size,
         # The rectangles of the blocks that actually made it into the answer, in
         # physical screen pixels. These are what the stage outlines to show the
         # user what was picked up — a claim that we read something is worth much
@@ -1599,6 +1916,15 @@ def _fabric_response(
     if forced_recipe_id is None and app_ctx and app_ctx.app == "word" and wants_word_rewrite(command):
         return None
     objects = _fabric_objects(payload, target_window, app_ctx, snapshot)
+    if forced_recipe_id is None:
+        # Generic questions belong to the answer path below this handler. Do a
+        # pure keyword route before constructing FabricEngine: the engine also
+        # probes providers, settings and workspace context, which used to scan
+        # an entire repository just to discover that "解释这个" was not a Recipe.
+        quick_router = engine.router if engine is not None else RecipeRouter()
+        quick_match = quick_router.route(command, object_count=len(objects))
+        if quick_match.recipe_id is None or quick_match.recipe_id in _FABRIC_SYSTEM_RECIPES:
+            return None
     active_engine = engine or FabricEngine()
     plan_parameters: dict[str, Any] = {
         "cwd": str(payload.get("workspaceRoot") or ROOT),
@@ -1762,6 +2088,7 @@ def _classify_with_model(command: str, object_summary: str, tools: list[dict[str
         ),
         timeout_s=CLASSIFY_TIMEOUT_S,
         attempts=1,
+        max_tokens=96,
     )
     calls = result.get("toolCalls") or []
     if not calls:
@@ -1781,18 +2108,18 @@ def _classify_with_model(command: str, object_summary: str, tools: list[dict[str
     }
 
 
-CLASSIFY_TIMEOUT_S = 8.0
+CLASSIFY_TIMEOUT_S = 6.0
 # Measured against the configured gateway on 2026-08-04: the same one-line
 # question took 20.6-26.1s through the user's proxy and 27.3-33.5s without it,
 # because the relay writes to whatever max_tokens ceiling it is handed. A 25s
 # budget therefore reported a working endpoint as unreachable. The ceiling is
 # now the lever (see INTERACTIVE_ANSWER_TOKENS) and the budget has room for the
 # gateway's own slow days.
-GENERAL_TIMEOUT_S = 40.0
+GENERAL_TIMEOUT_S = 18.0
 # Bubble answers are meant to be read at a glance. Capping generation halved the
 # measured wait (26.9s at 1200 tokens vs 12.1s at 120) — on this gateway the cap
 # is the latency.
-INTERACTIVE_ANSWER_TOKENS = 700
+INTERACTIVE_ANSWER_TOKENS = 220
 
 
 def _object_summary_for_routing(
@@ -2053,7 +2380,14 @@ def main() -> int:
     # Screen fallback remains local-first: OCR enriches the snapshot before
     # any recipe or text-model routing, while the saved image stays local.
     app_ctx = _enrich_screen_region_context(target_window, app_ctx, snapshot)
+    _enrich_interaction_episode_ocr(payload, app_ctx)
     clock.mark("enrich_screen_region")
+
+    exact_readback = _exact_readback_response(payload, app_ctx, snapshot)
+    if exact_readback is not None:
+        clock.total(ok=True, route="exact_grounded_readback")
+        print(json.dumps(exact_readback, ensure_ascii=False))
+        return 0
 
     if _agent_handoff_requested(payload):
         prompt_draft = build_agent_prompt_draft(payload, target_window, app_ctx, snapshot, clock=clock)
@@ -2076,40 +2410,10 @@ def main() -> int:
         print(json.dumps(review_response, ensure_ascii=False))
         return 0 if review_response.get("ok") is True else 1
 
-    # L0. Unmistakable intents that need no model at all: "OCR一下" runs the
-    # recipe without waiting on a classification call. It sits after the
-    # explicit-prefix handlers above (收集：/验收：/生成提示词：) because those own
-    # command shapes that read like ordinary phrases, and they cost nothing —
-    # they are string checks — so ordering after them buys correctness for free.
-    routing_settings = _capture_settings()
-    routing_enabled = dict(getattr(routing_settings, "recipe_enabled", None) or {})
-    intent_router = IntentRouter(
-        recipe_enabled=routing_enabled,
-        classifier=_classify_with_model,
-    )
-    model_available = not read_health().circuit_open
-    fast = intent_router.route(
-        command,
-        object_summary=_object_summary_for_routing(app_ctx, target_window),
-        object_count=1,
-        allow_model=model_available,
-    )
-    if fast.tier == TIER_DETERMINISTIC and fast.action == ACT_RECIPE and fast.recipe_id:
-        clock.mark("route_l0", recipe=fast.recipe_id, reason=fast.reason)
-        fast_response = _fabric_response(
-            payload,
-            target_window,
-            app_ctx,
-            snapshot,
-            forced_recipe_id=fast.recipe_id,
-            forced_parameters=fast.parameters,
-        )
-        if fast_response is not None:
-            fast_response["route"] = fast.to_dict()
-            clock.total(ok=fast_response.get("ok") is True)
-            print(json.dumps(fast_response, ensure_ascii=False))
-            return 0 if fast_response.get("ok") is True else 1
-
+    # Product-owned deterministic workflows outrank the generic recipe router.
+    # They create typed drafts/proposals with dedicated verification and undo
+    # contracts; routing "add this" to a broad recipe first discards those
+    # guarantees and changes the public response shape.
     shopping_response = _shopping_list_episode_response(payload)
     if shopping_response is None:
         shopping_response = _shopping_list_response(payload, target_window, app_ctx, snapshot)
@@ -2127,21 +2431,102 @@ def main() -> int:
         print(json.dumps(route_response, ensure_ascii=False))
         return 0 if route_response.get("ok") is True else 1
 
-    fabric_response = _fabric_response(payload, target_window, app_ctx, snapshot)
-    if fabric_response is not None:
-        print(json.dumps(fabric_response, ensure_ascii=False))
-        return 0 if fabric_response.get("ok") is True else 1
-
-    # A length target ("扩写到 5 行") is measurable, so it is answered by the
-    # length engine rather than by generic prose: the instruction forbids
-    # inventing facts, and the result is checked against the number the user's
-    # hand asked for. Both the stretch handle and a typed command land here.
     length_response = _length_target_response(payload, target_window, app_ctx, snapshot)
     if length_response is not None:
         clock.total(ok=length_response.get("ok") is True)
         print(json.dumps(length_response, ensure_ascii=False))
         return 0 if length_response.get("ok") is True else 1
 
+    clipped_comparison = _clipped_multi_object_answer(payload)
+    if clipped_comparison is not None:
+        response = {
+            "ok": True,
+            "prompt": command,
+            "answer": clipped_comparison,
+            "route": {"tier": "L0", "reason": "clipped_multi_object_guard"},
+            "selectionContext": app_ctx.to_dict() if app_ctx is not None else None,
+            "actionProposals": [],
+            "selectionSessionId": selection_session_id or None,
+            "selectionSnapshotId": str((snapshot or {}).get("snapshot_id") or "") or None,
+        }
+        clock.total(ok=True, route="clipped_multi_object_guard")
+        print(json.dumps(response, ensure_ascii=False))
+        return 0
+
+    # L0. Unmistakable intents that need no model at all: "OCR一下" runs the
+    # recipe without waiting on a classification call. It sits after the
+    # explicit-prefix handlers above (收集：/验收：/生成提示词：) because those own
+    # command shapes that read like ordinary phrases, and they cost nothing —
+    # they are string checks — so ordering after them buys correctness for free.
+    routing_settings = _capture_settings()
+    routing_enabled = dict(getattr(routing_settings, "recipe_enabled", None) or {})
+    intent_router = IntentRouter(
+        recipe_enabled=routing_enabled,
+        classifier=_classify_with_model,
+    )
+    model_available = not read_health().circuit_open
+    routing_objects = _fabric_objects(payload, target_window, app_ctx, snapshot)
+    fast = intent_router.route(
+        command,
+        object_summary=_object_summary_for_routing(app_ctx, target_window),
+        object_count=max(1, len(routing_objects)),
+        allow_model=model_available,
+    )
+    if fast.action == ACT_RECIPE and fast.recipe_id:
+        clock.mark("route_recipe", recipe=fast.recipe_id, reason=fast.reason, tier=fast.tier)
+        fast_response = _fabric_response(
+            payload,
+            target_window,
+            app_ctx,
+            snapshot,
+            forced_recipe_id=fast.recipe_id,
+            forced_parameters=fast.parameters,
+        )
+        if fast_response is not None:
+            fast_response["route"] = fast.to_dict()
+            clock.total(ok=fast_response.get("ok") is True)
+            print(json.dumps(fast_response, ensure_ascii=False))
+            return 0 if fast_response.get("ok") is True else 1
+    elif fast.action == ACT_LOCAL:
+        if fast.local_action == "copy_object_text":
+            fast_response = _fabric_response(
+                payload,
+                target_window,
+                app_ctx,
+                snapshot,
+                forced_recipe_id="text.ocr_copy",
+            )
+        elif fast.local_action == "save_screenshot":
+            capture_path = str((snapshot or {}).get("capture_path") or "").strip()
+            fast_response = {
+                "ok": bool(capture_path),
+                "prompt": command,
+                "answer": f"已保存选区截图：{capture_path}" if capture_path else "当前选区没有可保存的截图。",
+                "actionProposals": [],
+                "selectionSessionId": selection_session_id or None,
+                "selectionSnapshotId": str((snapshot or {}).get("snapshot_id") or "") or None,
+            }
+        else:
+            title = str((target_window or {}).get("title") or "当前窗口")
+            process_name = str((target_window or {}).get("process_name") or "").strip()
+            fast_response = {
+                "ok": True,
+                "prompt": command,
+                "answer": f"来源：{title}" + (f"（{process_name}）" if process_name else ""),
+                "actionProposals": [],
+                "selectionSessionId": selection_session_id or None,
+                "selectionSnapshotId": str((snapshot or {}).get("snapshot_id") or "") or None,
+            }
+        if fast_response is not None:
+            fast_response["route"] = fast.to_dict()
+            clock.total(ok=fast_response.get("ok") is True)
+            print(json.dumps(fast_response, ensure_ascii=False))
+            return 0 if fast_response.get("ok") is True else 1
+
+    # A length target ("扩写到 5 行") is measurable, so it is answered by the
+    # length engine rather than by generic prose: the instruction forbids
+    # inventing facts, and the result is checked against the number the user's
+    # hand asked for. Both the stretch handle and a typed command land here.
     episode_context = _interaction_episode_context(payload.get("interactionEpisode"))
     context_text = _selection_context_text(app_ctx, target_window)
     if episode_context:
@@ -2150,11 +2535,17 @@ def main() -> int:
     selection_snapshot_id = str((snapshot or {}).get("snapshot_id") or "").strip() or None
     # Set by whichever tier answers, so the diagnostics page can show which tier
     # handled a command instead of guessing from the log.
-    route_info: dict[str, object] = {"tier": "L1", "reason": "handler_chain"}
+    route_info: dict[str, object] = fast.to_dict() if fast.action in {ACT_MODEL, ACT_TOOLS} else {
+        "tier": "L1", "reason": "handler_chain"
+    }
 
+    browser_failure_answer = grounded_browser_failure_answer(command, app_ctx)
     vision_answer = _screen_region_vision_answer(command, target_window, app_ctx, snapshot)
 
-    if vision_answer:
+    if browser_failure_answer:
+        answer = browser_failure_answer
+        route_info = {"tier": "L0", "reason": "grounded_browser_failure"}
+    elif vision_answer:
         answer = vision_answer
     elif app_ctx and app_ctx.app == "word" and wants_word_rewrite(command) and (app_ctx.content or "").strip():
         replacement = ask_text_model(
@@ -2227,7 +2618,12 @@ def main() -> int:
         # endpoint rather than silence.
         target_title = str((target_window or {}).get("title") or "当前应用")
         health = read_health()
-        allow_tools = not health.circuit_open
+        # An information/analysis request has already been classified as an
+        # answer destination. Offering every Recipe again here lets the model
+        # turn "对比下" into a local-write comparison artifact with a confirm
+        # dialog instead of answering the person. Tools belong only to the
+        # router's true long-tail ACT_TOOLS fallback.
+        allow_tools = not health.circuit_open and fast.action == ACT_TOOLS
         if app_ctx is None or not str(app_ctx.content or "").strip():
             context_text += (
                 f"\n\n没有从“{target_title}”读到文本层内容。"

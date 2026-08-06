@@ -8,6 +8,7 @@ from app.fabric.engine import FabricEngine
 from app.fabric.settings import FabricSettings
 from app.adapters.base import AdapterReadContext
 from scripts.selection_bridge import _fabric_response
+import scripts.selection_bridge as selection_bridge_module
 from app.fabric.workflow_task_store import WorkflowTaskStore
 
 
@@ -141,14 +142,18 @@ def test_selection_bridge_returns_real_fabric_proposal_for_supported_recipe(tmp_
     assert response["autoExecuteProposalId"] == response["actionProposals"][0]["id"]
 
 
-def test_selection_bridge_leaves_generic_explanation_to_existing_answer_path(tmp_path: Path) -> None:
+def test_selection_bridge_leaves_generic_explanation_to_existing_answer_path(tmp_path: Path, monkeypatch) -> None:
     app_ctx = AdapterReadContext(adapter="uia", app="browser", content="hello")
+    monkeypatch.setattr(
+        selection_bridge_module,
+        "FabricEngine",
+        lambda: (_ for _ in ()).throw(AssertionError("generic explanation must not initialize FabricEngine")),
+    )
     response = _fabric_response(
         {"command": "解释这个", "selectionSessionId": "s"},
         {"title": "Browser"},
         app_ctx,
         {"snapshot_id": "snap"},
-        engine=FabricEngine(root=tmp_path),
     )
     assert response is None
 

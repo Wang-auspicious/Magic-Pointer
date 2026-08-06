@@ -1,13 +1,65 @@
 from __future__ import annotations
 
+import json
+import subprocess
+
 from app.adapters.browser_devtools_adapter import (
+    BROWSER_DOM_REGION_PROBE_SCRIPT,
     BROWSER_DOM_PROBE_SCRIPT,
     BrowserDevToolsAdapter,
     ChromeDevToolsProbe,
     DevToolsProbeResult,
+    _runtime_evaluate_value,
     sanitize_browser_context,
 )
 from app.adapters.registry import default_adapter_registry
+
+
+def test_runtime_evaluate_value_unwraps_the_cdp_remote_object_envelope() -> None:
+    resolved = {"state": "resolved", "text": "TARGET COPY THIS"}
+
+    assert _runtime_evaluate_value({
+        "result": {"type": "object", "value": resolved},
+    }) == resolved
+
+
+def test_dom_region_probe_accepts_a_thin_horizontal_mark_across_a_text_element() -> None:
+    source = f"""
+const button = {{
+  id: 'target', innerText: 'TARGET COPY THIS', nodeType: 1, tagName: 'BUTTON',
+  parentElement: null,
+  getAttribute() {{ return null; }},
+  getBoundingClientRect() {{ return {{left:100,top:100,right:600,bottom:160,width:500,height:60}}; }},
+  compareDocumentPosition() {{ return 0; }},
+}};
+const body = {{
+  id: '', innerText: 'TARGET COPY THIS and unrelated page text', nodeType: 1, tagName: 'BODY',
+  parentElement: null,
+  getAttribute() {{ return null; }},
+  getBoundingClientRect() {{ return {{left:0,top:0,right:1000,bottom:800,width:1000,height:800}}; }},
+}};
+button.parentElement = body;
+global.Node = {{DOCUMENT_POSITION_FOLLOWING:4,DOCUMENT_POSITION_PRECEDING:2}};
+global.CSS = {{escape(value) {{ return value; }}}};
+global.location = {{href: 'file:///fixture.html'}};
+global.window = {{outerWidth:1000,outerHeight:800,innerWidth:1000,innerHeight:800,CSS}};
+global.document = {{
+  body, title: 'Fixture',
+  querySelectorAll(selector) {{ return selector === '#target' ? [button] : []; }},
+  elementFromPoint(x,y) {{ return x >= 100 && x <= 600 && y >= 100 && y <= 160 ? button : body; }},
+}};
+const probe = ({BROWSER_DOM_REGION_PROBE_SCRIPT});
+process.stdout.write(JSON.stringify(probe({{
+  // The mark overlaps only the bottom of the element. Sampling the region's
+  // bottom edge lands outside it; the probe must sample cell centres.
+  region: {{x:120,y:150,width:360,height:18}}, outerBBox: [0,0,1000,800], sampleStep: 48,
+}})));
+"""
+    completed = subprocess.run(
+        ["node", "-e", source], capture_output=True, text=True, check=True, timeout=10,
+    )
+
+    assert json.loads(completed.stdout)["text"] == "TARGET COPY THIS"
 
 
 def _window() -> dict[str, object]:
@@ -202,6 +254,11 @@ def _region_context() -> dict:
             {"text": "第三行", "selector": "article[data-testid='tweet']", "tag": "article", "rect": {"x": 120, "y": 460, "width": 500, "height": 40}},
         ],
         "selection_rectangles_coordinate_space": "physical_screen_pixels",
+        "networkFailures": [{
+            "url": "http://127.0.0.1:9/api/payment",
+            "errorText": "net::ERR_UNSAFE_PORT",
+            "source": "devtools_log",
+        }],
     }
 
 
@@ -223,6 +280,7 @@ def test_browser_adapter_region_read_returns_dom_text_and_elements() -> None:
     assert ctx.artifacts["perception_result_kind"] == "region_elements"
     assert len(ctx.artifacts["region_elements"]) == 3
     assert ctx.artifacts["selection_rectangles"][0] == [120, 300, 500, 40]
+    assert ctx.artifacts["browser_context"]["networkFailures"][0]["errorText"] == "net::ERR_UNSAFE_PORT"
     assert calls[0][1] == {"x": 120, "y": 300, "width": 500, "height": 200}
 
 

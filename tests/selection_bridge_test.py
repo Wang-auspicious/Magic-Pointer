@@ -21,6 +21,7 @@ from scripts.selection_bridge import (
     _context_from_snapshot,
     _enrich_screen_region_context,
     _interaction_episode_context,
+    _exact_readback_response,
     _reference_label_response,
     _read_target_context,
     _shopping_list_response,
@@ -78,6 +79,97 @@ def test_screen_region_with_capture_artifacts_still_runs_local_ocr(monkeypatch, 
 
     assert context is not original
     assert context.content == "Magic Pointer 1.0.0"
+
+
+def test_episode_screen_objects_are_locally_read_before_a_two_object_question(monkeypatch, tmp_path) -> None:
+    previous = tmp_path / "previous.png"
+    current = tmp_path / "current.png"
+    previous.write_bytes(b"previous")
+    current.write_bytes(b"current")
+    payload = {
+        "interactionEpisode": {
+            "schemaVersion": 1,
+            "episodeId": "episode-1",
+            "slots": {
+                "this": {"objectId": "current", "kind": "screen_region", "content": "", "source": {"path": str(current)}},
+                "that": {"objectId": "previous", "kind": "screen_region", "content": "", "source": {"path": str(previous)}},
+                "these": [],
+                "here": None,
+            },
+        },
+    }
+    monkeypatch.setattr(
+        selection_bridge,
+        "_read_local_ocr_boxes",
+        lambda path, strokes_local=None, selection_local=None: (
+            [{"text": "上一处的真实文字", "rect": [1, 1, 100, 20], "conf": 0.9}],
+            "test-ocr",
+        ),
+    )
+
+    selection_bridge._enrich_interaction_episode_ocr(
+        payload,
+        AdapterReadContext(adapter="local_ocr", app="screen", content="当前处的真实文字"),
+    )
+
+    slots = payload["interactionEpisode"]["slots"]
+    assert slots["this"]["content"] == "当前处的真实文字"
+    assert slots["that"]["content"] == "上一处的真实文字"
+    assert slots["that"]["contentMethod"] == "local:test-ocr"
+    context_text = selection_bridge._interaction_episode_context(payload["interactionEpisode"])
+    assert "THIS_content" in context_text and "当前处的真实文字" in context_text
+    assert "THAT_content" in context_text and "上一处的真实文字" in context_text
+
+
+def test_exact_readback_question_returns_grounded_text_without_a_model_call() -> None:
+    context = AdapterReadContext(
+        adapter="local_ocr",
+        app="screen",
+        content="alpha line: structural grounding should stay on this exact line",
+        method="local:rapidocr-onnx",
+    )
+
+    response = _exact_readback_response(
+        {"command": "What exact line did I mark? Answer only that line."},
+        context,
+        {"snapshot_id": "selection-1"},
+    )
+
+    assert response is not None
+    assert response["answer"] == context.content
+    assert response["route"] == {"tier": "L0", "reason": "exact_grounded_readback"}
+    assert response["actionProposals"] == []
+
+
+def test_exact_readback_hides_internal_multi_segment_labels() -> None:
+    context = AdapterReadContext(
+        adapter="local_ocr",
+        app="screen",
+        content=(
+            "[segment 1] alpha line: structural grounding should stay exact\n"
+            "[segment 2] delta line: waiting feedback must remain cancellable"
+        ),
+        method="local:rapidocr-onnx",
+    )
+
+    response = _exact_readback_response(
+        {"command": "Read only the marked text"},
+        context,
+        {"snapshot_id": "selection-multi"},
+    )
+
+    assert response is not None
+    assert response["answer"] == (
+        "alpha line: structural grounding should stay exact\n"
+        "delta line: waiting feedback must remain cancellable"
+    )
+
+
+def test_exact_readback_does_not_hijack_questions_that_need_reasoning() -> None:
+    context = AdapterReadContext(adapter="local_ocr", app="screen", content="Error 0x80070005")
+    assert _exact_readback_response(
+        {"command": "Why did this error happen?"}, context, {"snapshot_id": "selection-1"}
+    ) is None
 
 
 def test_screen_region_vision_uses_original_and_locator_only_when_upload_is_enabled(monkeypatch, tmp_path) -> None:
@@ -544,6 +636,7 @@ def test_screen_region_enrich_filters_full_screen_ocr_by_selection_bbox(monkeypa
         {
             "source_kind": "screen_region",
             "capture_path": str(capture),
+            "capture_bbox": [0, 0, 320, 240],
             "selection_bbox": [50, 60, 200, 30],
         },
     )
@@ -555,6 +648,82 @@ def test_screen_region_enrich_filters_full_screen_ocr_by_selection_bbox(monkeypa
     assert context.artifacts["ocr_block_count_selected"] == 1
     assert len(seen_paths) == 1
     assert seen_paths[0] == capture
+
+
+def test_legacy_bounded_crop_without_coordinate_mapping_is_not_filtered_by_screen_bbox(monkeypatch, tmp_path) -> None:
+    capture = tmp_path / "screen.png"
+    capture.write_bytes(b"png-bytes")
+    monkeypatch.setattr(
+        selection_bridge,
+        "_read_local_ocr_boxes",
+        lambda path, strokes_local=None, selection_local=None: (
+            [{"text": "有界截图里的真实文字", "rect": [10, 20, 180, 24], "conf": 0.9}],
+            "test-ocr",
+        ),
+    )
+
+    context = _enrich_screen_region_context(
+        {"title": "Self-drawn app"},
+        None,
+        {
+            "source_kind": "screen_region",
+            "capture_path": str(capture),
+            "selection_bbox": [872, 489, 16, 16],
+            # Old/public episode objects did not retain capture_bbox. The OCR
+            # box above is crop-local, so comparing it to screen coordinates
+            # would incorrectly erase the only grounded text.
+        },
+    )
+
+    assert context is not None
+    assert context.content == "有界截图里的真实文字"
+
+
+def test_ocr_touching_bounded_crop_edge_is_marked_incomplete(monkeypatch, tmp_path) -> None:
+    from PIL import Image
+
+    capture = tmp_path / "screen.png"
+    Image.new("RGB", (320, 180), "white").save(capture)
+    monkeypatch.setattr(
+        selection_bridge,
+        "_read_local_ocr_boxes",
+        lambda path, strokes_local=None, selection_local=None: (
+            [{"text": "包进文件夹了，所", "rect": [6, 136, 302, 32], "conf": 0.9}],
+            "test-ocr",
+        ),
+    )
+
+    context = _enrich_screen_region_context(
+        {"title": "Self-drawn app"}, None,
+        {"source_kind": "screen_region", "capture_path": str(capture)},
+    )
+
+    assert context is not None
+    assert context.artifacts["ocr_edge_clipped"] is True
+    assert context.artifacts["ocr_capture_size"] == [320, 180]
+
+
+def test_clipped_two_object_comparison_refuses_to_invent_missing_text() -> None:
+    payload = {
+        "command": "对比下",
+        "interactionEpisode": {
+            "schemaVersion": 1,
+            "slots": {
+                "this": {"objectId": "a", "content": "包进文件夹了，所", "contentClipped": True},
+                "that": {"objectId": "b", "content": "两个地方仍需外网", "contentClipped": True},
+                "these": [],
+                "here": None,
+            },
+        },
+    }
+
+    answer = selection_bridge._clipped_multi_object_answer(payload)
+
+    assert answer is not None
+    assert "不能可靠比较" in answer
+    assert "包进文件夹了，所" in answer
+    assert "两个地方仍需外网" in answer
+    assert "不会用残句补猜" in answer
 
 
 def test_screen_region_enrich_falls_back_to_full_capture_without_selection_bbox(monkeypatch, tmp_path) -> None:
@@ -620,6 +789,42 @@ def test_screen_region_enrich_uses_stroke_collision_not_union_bbox(monkeypatch, 
     assert "unrelated middle paragraph" not in context.content
     assert context.artifacts["ocr_stroke_filter"] is True
     assert context.artifacts["ocr_segment_count"] == 2
+    assert context.artifacts["ocr_block_count_selected"] == 2
+
+
+def test_underline_between_rows_belongs_only_to_the_row_above(monkeypatch, tmp_path) -> None:
+    capture = tmp_path / "screen.png"
+    capture.write_bytes(b"png-bytes")
+    blocks = [
+        {"text": "alpha line: structural", "rect": [32, 58, 290, 30], "conf": 0.9},
+        {"text": "grounding should stay exact", "rect": [316, 58, 516, 32], "conf": 0.9},
+        {"text": "beta line", "rect": [32, 98, 810, 30], "conf": 0.9},
+    ]
+    monkeypatch.setattr(
+        selection_bridge,
+        "_read_local_ocr_boxes",
+        lambda path, strokes_local=None, selection_local=None: (list(blocks), "test-ocr"),
+    )
+    gesture = {
+        "schemaVersion": 2,
+        "coordinateSpace": "physical_screen_pixels",
+        "bbox": {"x": 32, "y": 82, "width": 800, "height": 16},
+        "strokes": [{"points": [{"x": 32, "y": 90}, {"x": 832, "y": 90}]}],
+    }
+
+    context = _enrich_screen_region_context(
+        {"title": "Notepad"},
+        None,
+        {
+            "source_kind": "screen_region",
+            "capture_path": str(capture),
+            "selection_bbox": [32, 82, 800, 16],
+            "selection_gesture": gesture,
+        },
+    )
+
+    assert context is not None
+    assert context.content == "alpha line: structural grounding should stay exact"
     assert context.artifacts["ocr_block_count_selected"] == 2
 
 

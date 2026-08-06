@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>Magic Pointer 设计实验室</title>
+<style>
+/* ───────────────────────────────────────────────────────────────────────────
+   设计实验室 — 不是产品代码。改这里不影响 electron/renderer/。
+   三个变体共用一套 token，只换 --v-* 组。切换看顶部按钮。
+   ─────────────────────────────────────────────────────────────────────────── */
+:root{
+  --font-ui:"Segoe UI Variable Text","Segoe UI","Microsoft YaHei UI","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+  --font-display:"Segoe UI Variable Display","Segoe UI Variable Text","Segoe UI",sans-serif;
+  --accent-rgb:38,115,235;
+  --accent:rgb(var(--accent-rgb));
+  --lab-bg:#0d0e11; --lab-fg:#e9eef4; --lab-dim:#8b93a1; --lab-line:rgba(255,255,255,.10);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font-ui);font-weight:450;background:var(--lab-bg);color:var(--lab-fg);
+     -webkit-font-smoothing:antialiased;padding:28px 32px 80px}
+
+/* ── 实验室外壳 ─────────────────────────────────────────────────────────── */
+h1.lab{font-family:var(--font-display);font-size:19px;font-weight:600;letter-spacing:-.015em;margin-bottom:4px}
+p.lab{color:var(--lab-dim);font-size:13px;margin-bottom:22px;max-width:70ch;line-height:1.6}
+.switch{display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap}
+.switch button{font:inherit;font-size:12.5px;font-weight:500;color:var(--lab-fg);background:rgba(255,255,255,.06);
+  border:1px solid var(--lab-line);border-radius:8px;padding:7px 13px;cursor:pointer;transition:opacity .12s}
+.switch button:hover{opacity:.75}
+.switch button[aria-pressed=true]{background:var(--accent);border-color:transparent;color:#fff}
+.note{font-size:12px;color:var(--lab-dim);margin:0 0 24px;line-height:1.6;max-width:78ch}
+.note b{color:var(--lab-fg);font-weight:600}
+h2.lab{font-family:var(--font-display);font-size:14px;font-weight:600;letter-spacing:.02em;text-transform:uppercase;
+  color:var(--lab-dim);margin:38px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--lab-line)}
+
+/* ── 背景试验台：气泡必须在别人的窗口上可读 ──────────────────────────── */
+.beds{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.bed{position:relative;height:210px;border-radius:12px;overflow:hidden;border:1px solid var(--lab-line);
+     display:flex;align-items:center;justify-content:center}
+.bed::after{content:attr(data-label);position:absolute;left:10px;top:9px;font-size:10.5px;letter-spacing:.06em;
+  text-transform:uppercase;font-weight:600;color:rgba(255,255,255,.75);background:rgba(0,0,0,.45);
+  padding:3px 7px;border-radius:5px;backdrop-filter:blur(6px)}
+.bed-doc{background:#fff}
+.bed-doc .txt{color:#1a1a1c;font-size:12.5px;line-height:1.85;padding:34px 18px 0;opacity:.55}
+.bed-term{background:#0c0c0e}
+.bed-term .txt{color:#7ee787;font-family:ui-monospace,Consolas,monospace;font-size:11.5px;line-height:1.8;padding:34px 18px 0;opacity:.8}
+.bed-photo{background:
+   radial-gradient(120% 90% at 18% 12%,#ff9a6b 0%,transparent 55%),
+   radial-gradient(110% 80% at 82% 78%,#5b7cff 0%,transparent 58%),
+   linear-gradient(140deg,#3a2a4d,#123a4a 55%,#4a3320)}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   变体 token
+   ═══════════════════════════════════════════════════════════════════════════ */
+/* A 克制：近不透明浅色，一条 hairline 蓝边，无投影 */
+body[data-v="a"]{
+  --cap-bg:rgba(247,250,254,.97); --cap-fg:#12263f; --cap-dim:#5b6c82;
+  --cap-border:1px solid rgba(var(--accent-rgb),.55); --cap-shadow:none;
+  --cap-radius:999px; --panel-bg:rgba(252,253,255,.985); --panel-fg:#152741;
+  --panel-radius:12px; --panel-border:1px solid rgba(21,39,65,.10);
+  --panel-shadow:0 1px 2px rgba(21,39,65,.09),0 12px 32px -14px rgba(21,39,65,.30);
+}
+/* B 玻璃：半透明 + 背景模糊 */
+body[data-v="b"]{
+  --cap-bg:rgba(250,252,255,.62); --cap-fg:#0f2238; --cap-dim:#4d5f76;
+  --cap-border:1px solid rgba(255,255,255,.55); --cap-shadow:0 6px 24px rgba(0,0,0,.22);
+  --cap-blur:saturate(180%) blur(22px);
+  --cap-radius:999px; --panel-bg:rgba(250,252,255,.66); --panel-fg:#132339;
+  --panel-radius:14px; --panel-border:1px solid rgba(255,255,255,.5);
+  --panel-shadow:0 10px 40px rgba(0,0,0,.24); --panel-blur:saturate(180%) blur(24px);
+}
+/* C 石墨：旧规格 #0E1116 */
+body[data-v="c"]{
+  --cap-bg:#0E1116; --cap-fg:#E9EEF4; --cap-dim:#9AA6B4;
+  --cap-border:1px solid rgba(233,238,244,.10); --cap-shadow:0 8px 28px rgba(0,0,0,.45);
+  --cap-radius:999px; --panel-bg:#0E1116; --panel-fg:#E9EEF4;
+  --panel-radius:12px; --panel-border:1px solid rgba(233,238,244,.10);
+  --panel-shadow:0 10px 34px rgba(0,0,0,.5);
+}
+
+/* ── 气泡 ───────────────────────────────────────────────────────────────── */
+.capsule{display:flex;align-items:center;gap:9px;height:40px;padding:0 14px;
+  background:var(--cap-bg);color:var(--cap-fg);border:var(--cap-border);border-radius:var(--cap-radius);
+  box-shadow:var(--cap-shadow);backdrop-filter:var(--cap-blur,none);-webkit-backdrop-filter:var(--cap-blur,none);
+  font-size:13.5px;font-weight:500;letter-spacing:-.003em;white-space:nowrap}
+.capsule .wave{display:inline-flex;gap:2.5px;align-items:center}
+.capsule .wave i{width:2.5px;height:11px;border-radius:2px;background:var(--accent);opacity:.9;
+  animation:w 1s ease-in-out infinite}
+.capsule .wave i:nth-child(2){height:16px;animation-delay:.12s}
+.capsule .wave i:nth-child(3){height:8px;animation-delay:.24s}
+@keyframes w{0%,100%{transform:scaleY(.55)}50%{transform:scaleY(1)}}
+.chip{display:inline-flex;align-items:center;gap:5px;height:23px;padding:0 8px;border-radius:6px;
+  background:rgba(var(--accent-rgb),.13);color:var(--accent);font-size:12px;font-weight:600;letter-spacing:.005em}
+body[data-v="c"] .chip{background:rgba(var(--accent-rgb),.24);color:#8fbaff}
+.chip em{font-style:normal;opacity:.6;font-weight:500}
+.caret{width:1.5px;height:15px;background:var(--accent);animation:blink 1.1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+
+/* ── 线程面板 ───────────────────────────────────────────────────────────── */
+.panel{width:376px;background:var(--panel-bg);color:var(--panel-fg);border:var(--panel-border);
+  border-radius:var(--panel-radius);box-shadow:var(--panel-shadow);overflow:hidden;
+  backdrop-filter:var(--panel-blur,none);-webkit-backdrop-filter:var(--panel-blur,none)}
+.panel .turn{padding:13px 15px 14px}
+.panel .turn+.turn{border-top:1px solid rgba(128,140,160,.16)}
+.panel .ask{font-size:12px;font-weight:600;letter-spacing:.01em;opacity:.5;margin-bottom:6px}
+.panel .ans{font-size:13.5px;line-height:1.62;font-weight:450}
+.panel .bar{display:flex;align-items:center;gap:4px;padding:8px 10px;
+  border-top:1px solid rgba(128,140,160,.16);background:rgba(128,140,160,.05)}
+.panel .bar .count{font-size:11.5px;opacity:.45;margin-right:auto;font-variant-numeric:tabular-nums;letter-spacing:.02em}
+.panel .bar button{font:inherit;font-size:12px;font-weight:500;color:inherit;background:transparent;border:0;
+  padding:5px 9px;border-radius:6px;cursor:pointer;transition:opacity .12s,background .12s}
+.panel .bar button:hover{background:rgba(128,140,160,.14)}
+.proof{position:absolute;border-radius:5px;pointer-events:none}
+.proof.s{border:1.5px solid rgba(var(--accent-rgb),.9);box-shadow:0 0 0 3px rgba(var(--accent-rgb),.14)}
+.proof.p{border:1.5px solid rgba(232,150,42,.95);box-shadow:0 0 0 3px rgba(232,150,42,.16)}
+
+/* ═══ 设置页 ═══════════════════════════════════════════════════════════════ */
+.win{border-radius:12px;overflow:hidden;border:1px solid rgba(0,0,0,.5);
+     box-shadow:0 30px 80px rgba(0,0,0,.55);display:flex;height:560px;font-size:13.5px}
+/* 设置页始终用「安静材质」——持久 chrome 不做实时透明（Mica 而非 Acrylic） */
+.win.light{--w-canvas:#f6f6f8;--w-side:#eeeff2;--w-surface:#fff;--w-fg:#1a1a1c;--w-dim:#6a6a71;
+  --w-line:rgba(60,60,67,.13);--w-ctrl:rgba(118,118,128,.10);--w-hover:rgba(118,118,128,.09)}
+.win.dark{--w-canvas:#141519;--w-side:#1b1c20;--w-surface:#1f2024;--w-fg:#f2f3f5;--w-dim:#9a9aa2;
+  --w-line:rgba(235,235,245,.12);--w-ctrl:rgba(235,235,245,.09);--w-hover:rgba(235,235,245,.07)}
+.win{background:var(--w-canvas);color:var(--w-fg)}
+.side{width:216px;flex:0 0 216px;background:var(--w-side);border-right:1px solid var(--w-line);
+      display:flex;flex-direction:column;padding:10px 8px}
+.search{display:flex;align-items:center;gap:7px;height:30px;padding:0 9px;margin-bottom:12px;
+  background:var(--w-ctrl);border-radius:7px;font-size:12.5px;color:var(--w-dim)}
+.search kbd{margin-left:auto;font:inherit;font-size:10.5px;opacity:.7;background:rgba(128,128,140,.18);
+  padding:1.5px 4px;border-radius:4px}
+.grp{font-size:10.5px;font-weight:650;letter-spacing:.07em;text-transform:uppercase;color:var(--w-dim);
+  padding:12px 9px 5px;opacity:.85}
+.nav{display:flex;align-items:center;gap:9px;height:29px;padding:0 9px;border-radius:7px;
+  font-size:13px;font-weight:450;cursor:pointer;transition:background .1s}
+.nav:hover{background:var(--w-hover)}
+.nav.on{background:var(--accent);color:#fff;font-weight:500}
+.nav .d{width:15px;text-align:center;opacity:.72;font-size:12px}
+.nav.on .d{opacity:1}
+.foot{margin-top:auto;display:flex;align-items:center;gap:8px;padding:9px;font-size:11.5px;color:var(--w-dim)}
+.dot{width:6px;height:6px;border-radius:50%;background:#30b866;box-shadow:0 0 0 3px rgba(48,184,102,.18)}
+.main{flex:1;display:flex;flex-direction:column;min-width:0}
+.hdr{display:flex;align-items:flex-end;gap:14px;padding:20px 26px 16px;border-bottom:1px solid var(--w-line)}
+.hdr h3{font-family:var(--font-display);font-size:20px;font-weight:600;letter-spacing:-.02em;line-height:1.2}
+.hdr p{font-size:12.5px;color:var(--w-dim);margin-top:3px;line-height:1.5}
+.hdr .acts{margin-left:auto;display:flex;gap:7px;flex:0 0 auto}
+.btn{font:inherit;font-size:12.5px;font-weight:500;padding:6px 13px;border-radius:7px;cursor:pointer;
+  border:1px solid var(--w-line);background:var(--w-surface);color:var(--w-fg);transition:opacity .12s}
+.btn:hover{opacity:.72}
+.btn.pri{background:var(--accent);border-color:transparent;color:#fff}
+.body{flex:1;overflow:auto;padding:20px 26px 30px}
+.sec{margin-bottom:22px}
+.sec>h4{font-size:11px;font-weight:650;letter-spacing:.06em;text-transform:uppercase;color:var(--w-dim);
+  margin-bottom:8px;padding-left:2px}
+.card{background:var(--w-surface);border:1px solid var(--w-line);border-radius:10px;overflow:hidden}
+.row{display:flex;align-items:center;gap:14px;padding:11px 14px}
+.row+.row{border-top:1px solid var(--w-line)}
+.row .t{min-width:0;flex:1}
+.row .t b{display:block;font-size:13px;font-weight:500;line-height:1.35}
+.row .t small{display:block;font-size:11.5px;color:var(--w-dim);line-height:1.45;margin-top:1px}
+.row .v{flex:0 0 auto;display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--w-dim)}
+.sel{border:1px solid var(--w-line);background:var(--w-ctrl);border-radius:6px;padding:4px 9px;
+  font-size:12.5px;color:var(--w-fg)}
+.tog{width:36px;height:21px;border-radius:11px;background:var(--w-ctrl);position:relative;flex:0 0 auto}
+.tog::after{content:"";position:absolute;top:2px;left:2px;width:17px;height:17px;border-radius:50%;
+  background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.28);transition:left .16s}
+.tog.on{background:var(--accent)} .tog.on::after{left:17px}
+.badge{font-size:10.5px;font-weight:600;letter-spacing:.03em;padding:2px 6px;border-radius:5px;
+  background:rgba(var(--accent-rgb),.13);color:var(--accent)}
+.badge.warn{background:rgba(200,120,0,.15);color:#b06f00}
+.win.dark .badge.warn{color:#f0b35d}
+.dflt{font-size:10.5px;color:var(--w-dim);opacity:.7}
+.spark{display:flex;align-items:flex-end;gap:2px;height:26px}
+.spark i{width:7px;background:rgba(var(--accent-rgb),.30);border-radius:2px 2px 0 0}
+.spark i.hi{background:var(--accent)}
+</style>
+</head>
+<body data-v="a">
+
+<h1 class="lab">Magic Pointer 设计实验室</h1>
+<p class="lab">三个变体切换看效果。<b>关键判据不是"哪个好看"，是气泡放在别人的窗口上还读不读得清</b>——它会浮在白底文档、黑底终端和照片上，我们无法选择背景。</p>
+
+<div class="switch">
+  <button data-set="a" aria-pressed="true">A 克制（近不透明浅色）</button>
+  <button data-set="b" aria-pressed="false">B 玻璃（半透明 + 模糊）</button>
+  <button data-set="c" aria-pressed="false">C 石墨（旧规格 #0E1116）</button>
+</div>
+<p class="note" id="vnote"></p>
+
+<h2 class="lab">一 · 气泡在三种背景上（真正的判据）</h2>
+<div class="beds">
+  <div class="bed bed-doc" data-label="白底文档">
+    <div class="txt" style="position:absolute;inset:0">选区冻结后，系统在同一帧里寻找更完整的语义候选。<br>高置信时静默吸附，歧义时让人选，<br>证据残缺时拒绝补猜。<br>模型只接收问题所需的最小证据包。</div>
+    <div class="proof s" style="left:18px;top:56px;right:18px;height:22px"></div>
+    <div class="capsule" style="position:relative;z-index:2">
+      <span class="wave"><i></i><i></i><i></i></span>
+      <span>把</span><span class="chip"><em>①</em>这段</span><span>翻成英文</span><span class="caret"></span>
+    </div>
+  </div>
+  <div class="bed bed-term" data-label="黑底终端">
+    <div class="txt" style="position:absolute;inset:0">$ npm test<br>&nbsp;&nbsp;node suite passed: 132 tests<br>$ pytest -q<br>&nbsp;&nbsp;1026 passed in 220.89s</div>
+    <div class="proof p" style="left:18px;top:52px;right:18px;height:20px"></div>
+    <div class="capsule" style="position:relative;z-index:2">
+      <span class="wave"><i></i><i></i><i></i></span>
+      <span class="chip"><em>①</em>这行报错</span><span>是什么意思</span><span class="caret"></span>
+    </div>
+  </div>
+  <div class="bed bed-photo" data-label="照片 / 彩色界面">
+    <div class="capsule" style="position:relative;z-index:2">
+      <span class="wave"><i></i><i></i><i></i></span>
+      <span class="chip"><em>①</em>这张图</span><span class="chip"><em>②</em>那段字</span><span>对比一下</span><span class="caret"></span>
+    </div>
+  </div>
+</div>
+
+<h2 class="lab">二 · 气泡的四个状态</h2>
+<div class="beds">
+  <div class="bed bed-doc" data-label="① 冻结：只有一个点">
+    <div class="capsule" style="width:40px;padding:0;justify-content:center">
+      <span class="wave"><i></i><i></i><i></i></span>
+    </div>
+  </div>
+  <div class="bed bed-doc" data-label="② 输入：chip 随笔画长出来">
+    <div class="capsule"><span class="wave"><i></i><i></i><i></i></span><span>把</span><span class="chip"><em>①</em>1 lb Spaghetti</span><span class="caret"></span></div>
+  </div>
+  <div class="bed bed-doc" data-label="③ 处理：说出等了多久">
+    <div class="capsule"><span class="wave"><i></i><i></i><i></i></span><span style="opacity:.55">正在读取…</span><span style="font-variant-numeric:tabular-nums;opacity:.4;font-size:12px">2.4s</span></div>
+  </div>
+  <div class="bed bed-doc" data-label="④ 回答：面板从气泡下方展开" style="height:250px;align-items:flex-start;padding-top:18px">
+    <div class="panel">
+      <div class="turn">
+        <p class="ask">这行报错是什么意思</p>
+        <p class="ans">端口 6800 被占用。不是代码问题——另一个进程已经在监听。先 <code>netstat -ano | findstr :6800</code> 找到 PID 再决定关掉还是换端口。</p>
+      </div>
+      <div class="bar"><span class="count">第 1 轮 · 0.9s</span><button>复制</button><button>填入</button><button>关闭</button></div>
+    </div>
+  </div>
+</div>
+<p class="note">证据带按来源分色：<b style="color:#4a8fff">蓝＝应用把这些字交给了我们</b>（结构层）／<b style="color:#e8962a">琥珀＝我们从画面上认出来的</b>（像素）。两种可信度不能长一样。</p>
+
+<h2 class="lab">三 · 设置页：内容与布局</h2>
+<p class="note">左侧 <b>3 组 12 项</b>（现在是 5 组 16 项）。合并依据：<b>入口按"用户想改什么"分，不按"我们代码怎么分层"分</b>。持久 chrome 用安静材质，不做实时透明——Windows 把真模糊只留给临时浮层，Apple 也在 Golden Gate 把侧栏从悬浮改回贴边。</p>
+<div class="win light" id="win">
+  <aside class="side">
+    <div class="search">🔍 搜索设置… <kbd>Ctrl K</kbd></div>
+    <div class="grp">个人</div>
+    <div class="nav on"><span class="d">◈</span>通用</div>
+    <div class="nav"><span class="d">◎</span>外观</div>
+    <div class="nav"><span class="d">⌘</span>快捷键</div>
+    <div class="nav"><span class="d">☷</span>使用情况</div>
+    <div class="grp">能力</div>
+    <div class="nav"><span class="d">✦</span>能力库</div>
+    <div class="nav"><span class="d">✎</span>自定义指令</div>
+    <div class="nav"><span class="d">⊞</span>插件</div>
+    <div class="nav"><span class="d">◐</span>记忆与剪贴板</div>
+    <div class="grp">系统</div>
+    <div class="nav"><span class="d">◇</span>模型与网络</div>
+    <div class="nav"><span class="d">⊙</span>触发与感知</div>
+    <div class="nav"><span class="d">⛨</span>隐私与权限</div>
+    <div class="nav"><span class="d">◔</span>诊断</div>
+    <div class="foot"><span class="dot"></span><span>本机运行，不离开当前应用</span></div>
+  </aside>
+  <main class="main">
+    <header class="hdr">
+      <div><h3>模型与网络</h3><p>端点、预算与本地兜底。健康状态常显。</p></div>
+      <div class="acts"><button class="btn">重新检测</button><button class="btn pri">保存更改</button></div>
+    </header>
+    <div class="body">
+      <div class="sec">
+        <h4>端点</h4>
+        <div class="card">
+          <div class="row"><div class="t"><b>后端</b><small>Anthropic Messages 协议 · api.deepseek.com</small></div>
+            <div class="v"><span class="badge">HTTP 200 · ok</span></div></div>
+          <div class="row"><div class="t"><b>模型</b><small>deepseek-v4-flash[1M]</small></div>
+            <div class="v"><span class="badge warn">无视觉输入</span><span class="sel">更换…</span></div></div>
+          <div class="row"><div class="t"><b>密钥</b><small>存在 secrets/，不会读回界面</small></div>
+            <div class="v"><span class="sel">已设置 ····</span></div></div>
+        </div>
+      </div>
+      <div class="sec">
+        <h4>预算</h4>
+        <div class="card">
+          <div class="row"><div class="t"><b>交互回答上限</b><small>上限就是延迟：1200 token 要 27s，120 只要 12s</small></div>
+            <div class="v"><span class="dflt">默认 700</span><span class="sel">700 token</span></div></div>
+          <div class="row"><div class="t"><b>整次交互超时</b><small>截止时间不能短于它要容纳的预算</small></div>
+            <div class="v"><span class="dflt">默认 40s</span><span class="sel">40 秒</span></div></div>
+          <div class="row"><div class="t"><b>流式显示首 token</b><small>拿到第一个字就开始画，不等整段</small></div>
+            <div class="v"><span class="tog on"></span></div></div>
+        </div>
+      </div>
+      <div class="sec">
+        <h4>模型不可用时</h4>
+        <div class="card">
+          <div class="row"><div class="t"><b>本地兜底</b><small>已经读到的内容照常给出，不是只报一句"调用失败"</small></div>
+            <div class="v"><span class="tog on"></span></div></div>
+          <div class="row"><div class="t"><b>近 7 天调用</b><small>成功 214 · 降级 9 · 失败 2</small></div>
+            <div class="v"><span class="spark"><i style="height:40%"></i><i style="height:65%"></i><i style="height:52%"></i><i class="hi" style="height:88%"></i><i style="height:71%"></i><i style="height:46%"></i><i style="height:60%"></i></span></div></div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+<div class="switch" style="margin-top:12px">
+  <button data-theme="light" aria-pressed="true">浅色</button>
+  <button data-theme="dark" aria-pressed="false">深色</button>
+</div>
+
+<h2 class="lab">四 · 每条设置都长这样（这是"高级感"真正的来源）</h2>
+<p class="note">名称 + <b>一句人话</b> + 当前值 + <b>默认值角标</b>。人话那一行解释的是<b>后果</b>，不是复述控件名——"上限就是延迟"是实测出来的因果，"设置最大 token 数"是废话。写不出后果的设置项，说明它不该暴露给用户。</p>
+
+<script>
+const notes={
+ a:"<b>A 克制</b>——近不透明浅色，一条 1px 蓝边做分离，不用投影。透明 Windows 窗口上 CSS 投影会变成矩形残影，这是仓库里已经踩过并记下的坑。三种背景上都稳。",
+ b:"<b>B 玻璃</b>——好看，但看白底文档那格：正文透上来和气泡自己的字叠在一起。Apple 在 Golden Gate 给 Liquid Glass 加了不透明度滑块并把侧栏改回贴边，就是因为这个；微软干脆只把真模糊留给临时浮层。",
+ c:"<b>C 石墨</b>——旧规格 #0E1116。看黑底终端那格：气泡和背景糊成一片，边界没了。它在深色截图里最上镜，在真实使用里最差——而我们无法选择用户的背景。"};
+document.querySelectorAll('[data-set]').forEach(b=>b.onclick=()=>{
+  document.body.dataset.v=b.dataset.set;
+  document.querySelectorAll('[data-set]').forEach(x=>x.setAttribute('aria-pressed',x===b));
+  document.getElementById('vnote').innerHTML=notes[b.dataset.set];});
+document.querySelectorAll('[data-theme]').forEach(b=>b.onclick=()=>{
+  document.getElementById('win').className='win '+b.dataset.theme;
+  document.querySelectorAll('[data-theme]').forEach(x=>x.setAttribute('aria-pressed',x===b));});
+document.getElementById('vnote').innerHTML=notes.a;
+</script>
+</body>
+</html>

@@ -1,0 +1,453 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<title>Magic Pointer — 完整界面设计 v3</title>
+<style>
+/* ═════════════════════════════════════════════════════════════════════════════
+   规范（圣经，不许违反）：emilkowalski/skills · vercel-labs/web-interface-guidelines
+   视觉参考（真实产品截图）：Linear 三栏与低对比深色 · Highlight 悬浮双行胶囊与
+   奶油底+饱和黄 · Raycast 渐变上叠颗粒
+   ═════════════════════════════════════════════════════════════════════════════ */
+:root{
+  --ease-out:cubic-bezier(.23,1,.32,1);
+  --ease-in-out:cubic-bezier(.77,0,.175,1);
+  --ease-drawer:cubic-bezier(.32,.72,0,1);
+  --d-press:140ms;--d-pop:200ms;--d-panel:260ms;
+
+  --f-ui:"Segoe UI Variable Text","Segoe UI","Microsoft YaHei UI","Noto Sans CJK SC",sans-serif;
+  --f-dis:"Segoe UI Variable Display","Segoe UI Variable Text","Segoe UI",sans-serif;
+  --f-mono:ui-monospace,"Cascadia Code",Consolas,monospace;
+
+  /* 不是纯黑：靛蓝偏冷的墨色，一路带色相。中性灰是"廉价感"的主要来源之一 */
+  --ink-900:#0B0D12; --ink-850:#0F1218; --ink-800:#13161D; --ink-750:#181C24;
+  --ink-700:#1E222B; --ink-600:#2A2F3A;
+  --paper:#FBFAF7;            /* 奶油纸白，不是 #fff */
+  --paper-2:#F4F2ED;
+  /* 冷主色 + 暖辅色。语义色只在状态点上出现 */
+  --blue:#3B82F6; --blue-rgb:59,130,246;
+  --amber:#E8962A; --amber-rgb:232,150,42;
+  --mint:#34D399; --violet:#A78BFA;
+  --t-hi:#EEF1F6; --t-mid:#9BA3B4; --t-lo:#6B7383;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--f-ui);font-weight:450;font-size:14px;color:var(--t-hi);
+  -webkit-font-smoothing:antialiased;padding:26px 30px 90px;
+  background:
+    radial-gradient(90% 60% at 15% -10%,rgba(59,130,246,.16),transparent 60%),
+    radial-gradient(70% 50% at 95% 8%,rgba(167,139,250,.12),transparent 60%),
+    radial-gradient(60% 40% at 60% 100%,rgba(232,150,42,.07),transparent 60%),
+    var(--ink-900);
+  background-attachment:fixed;min-height:100vh;position:relative}
+/* 颗粒：Raycast 的那层。没有它，渐变就是塑料感 */
+body::before{content:"";position:fixed;inset:0;pointer-events:none;z-index:9999;opacity:.055;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3'/></filter><rect width='140' height='140' filter='url(%23n)'/></svg>")}
+
+h1.l{font-family:var(--f-dis);font-size:21px;font-weight:600;letter-spacing:-.022em}
+p.l{color:var(--t-mid);font-size:13px;margin:7px 0 22px;max-width:76ch;line-height:1.7}
+h2.l{font-family:var(--f-dis);font-size:11px;font-weight:700;letter-spacing:.11em;text-transform:uppercase;
+  color:var(--t-lo);margin:44px 0 8px;display:flex;align-items:center;gap:11px}
+h2.l::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,rgba(155,163,180,.22),transparent)}
+.hint{font-size:12.5px;color:var(--t-mid);line-height:1.7;margin:12px 0 0;max-width:82ch}
+.hint b{color:var(--t-hi);font-weight:600}
+.hint code,code.i{font-family:var(--f-mono);font-size:11.5px;background:rgba(155,163,180,.12);
+  padding:1.5px 5px;border-radius:5px;color:#c9d3e4}
+.bl{font:inherit;font-size:12.5px;font-weight:500;color:var(--t-hi);background:rgba(255,255,255,.055);
+  border:1px solid rgba(255,255,255,.10);border-radius:9px;padding:8px 15px;cursor:pointer;touch-action:manipulation;
+  transition:opacity var(--d-press) var(--ease-out),transform var(--d-press) var(--ease-out)}
+@media (hover:hover) and (pointer:fine){.bl:hover{opacity:.72}}
+.bl:active{transform:scale(.97)}
+.rl{display:flex;gap:9px;flex-wrap:wrap;align-items:center;margin:14px 0}
+
+/* ══ 试验台 ══ */
+.beds{display:grid;grid-template-columns:repeat(3,1fr);gap:15px}
+.bed{position:relative;height:230px;border-radius:16px;overflow:hidden;
+  border:1px solid rgba(255,255,255,.08);display:flex;align-items:center;justify-content:center;
+  box-shadow:0 1px 2px rgba(0,0,0,.4),0 20px 50px -20px rgba(0,0,0,.7)}
+.bed::after{content:attr(data-label);position:absolute;left:11px;top:10px;font-size:10px;letter-spacing:.08em;
+  text-transform:uppercase;font-weight:700;color:rgba(255,255,255,.82);background:rgba(0,0,0,.42);
+  padding:4px 8px;border-radius:6px;backdrop-filter:blur(8px)}
+.b-doc{background:var(--paper)}
+.b-doc .t{position:absolute;inset:0;color:#25262b;font-size:12.5px;line-height:1.95;padding:38px 20px 0;opacity:.5}
+.b-term{background:#0A0A0C}
+.b-term .t{position:absolute;inset:0;color:#6ee7a0;font-family:var(--f-mono);font-size:11.5px;
+  line-height:1.9;padding:38px 20px 0;opacity:.82}
+.b-pic{background:radial-gradient(120% 90% at 18% 10%,#FF8A5B 0,transparent 55%),
+  radial-gradient(110% 80% at 85% 80%,#5B7CFF 0,transparent 58%),
+  linear-gradient(140deg,#42295B,#0F3A4C 52%,#5A3A16)}
+
+/* ══ 玻璃：两层。模糊层给质感，墨板给可读 ══ */
+.glass{position:relative;color:#101828;
+  background:linear-gradient(180deg,rgba(255,255,255,.90),rgba(250,251,253,.82));
+  backdrop-filter:blur(30px) saturate(200%);-webkit-backdrop-filter:blur(30px) saturate(200%);
+  border:1px solid rgba(255,255,255,.7);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.98),inset 0 -1px 0 rgba(16,24,40,.05),
+    0 1px 2px rgba(16,24,40,.10),0 14px 36px -12px rgba(16,24,40,.30)}
+.b-term .glass,.b-pic .glass{
+  background:linear-gradient(180deg,rgba(255,255,255,.95),rgba(250,251,253,.90));
+  box-shadow:inset 0 1px 0 #fff,0 2px 8px rgba(0,0,0,.32),0 20px 46px -14px rgba(0,0,0,.55)}
+
+/* ── 气泡：Highlight 那种双行结构，主行 + 它正在干什么 ── */
+.cap{display:flex;align-items:center;gap:10px;min-height:46px;padding:0 8px 0 14px;border-radius:15px;
+  font-size:13.5px;font-weight:500;letter-spacing:-.004em;position:relative;z-index:3;max-width:calc(100% - 34px);
+  transition:width var(--d-pop) var(--ease-out)}
+.cap.seed{width:46px;min-height:46px;padding:0;justify-content:center;border-radius:23px}
+.cap.seed>*:not(.orb){display:none}
+/* 呼吸球：不是三根柱子，是一颗有内部渐变的球 */
+.orb{width:22px;height:22px;border-radius:50%;flex:0 0 auto;position:relative;
+  background:radial-gradient(circle at 32% 30%,#7EB0FF,var(--blue) 55%,#1D5FD4);
+  box-shadow:0 0 0 3px rgba(var(--blue-rgb),.14),0 2px 6px rgba(var(--blue-rgb),.4)}
+.orb::after{content:"";position:absolute;inset:-5px;border-radius:50%;
+  border:1.5px solid rgba(var(--blue-rgb),.35);animation:pulse 2.4s var(--ease-in-out) infinite}
+@keyframes pulse{0%,100%{transform:scale(.9);opacity:.75}50%{transform:scale(1.12);opacity:.15}}
+.cap .lines{display:flex;flex-direction:column;gap:1px;min-width:0}
+.cap .l1{display:flex;align-items:center;gap:7px;white-space:nowrap}
+.cap .l2{font-size:11px;color:#5A6577;font-weight:450;letter-spacing:.005em;white-space:nowrap}
+.chip{display:inline-flex;align-items:center;gap:5px;height:23px;padding:0 3px 0 8px;border-radius:7px;
+  font-size:11.5px;font-weight:650;flex:0 0 auto;animation:chipIn 220ms var(--ease-out) backwards;
+  background:linear-gradient(180deg,rgba(var(--blue-rgb),.16),rgba(var(--blue-rgb),.10));
+  color:#1D4FD0;border:1px solid rgba(var(--blue-rgb),.22);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.6)}
+.chip.px{background:linear-gradient(180deg,rgba(var(--amber-rgb),.18),rgba(var(--amber-rgb),.11));
+  color:#9A5A05;border-color:rgba(var(--amber-rgb),.26)}
+.chip:nth-of-type(2){animation-delay:45ms}
+@keyframes chipIn{from{opacity:0;transform:scale(.96) translateY(2px)}}
+.chip em{font-style:normal;opacity:.5;font-weight:600}
+.chip .x{width:15px;height:15px;border-radius:4px;display:grid;place-items:center;font-size:11px;opacity:.42;
+  cursor:pointer;transition:opacity var(--d-press) var(--ease-out),background var(--d-press) var(--ease-out)}
+@media (hover:hover) and (pointer:fine){.chip .x:hover{opacity:1;background:rgba(0,0,0,.09)}}
+.caret{width:1.5px;height:14px;background:var(--blue);flex:0 0 auto;animation:bl 1.1s steps(1) infinite}
+@keyframes bl{50%{opacity:0}}
+.num{font-variant-numeric:tabular-nums;font-size:11.5px;color:#7A8496;letter-spacing:.01em}
+/* 证据带：结构层蓝 / 像素琥珀 */
+.proof{position:absolute;border-radius:7px;pointer-events:none;animation:pIn 260ms var(--ease-out) backwards}
+@keyframes pIn{from{opacity:0;transform:scale(1.03)}}
+.proof.s{border:1.5px solid rgba(var(--blue-rgb),.95);box-shadow:0 0 0 3px rgba(var(--blue-rgb),.15),0 0 16px rgba(var(--blue-rgb),.3)}
+.proof.p{border:1.5px solid rgba(var(--amber-rgb),1);box-shadow:0 0 0 3px rgba(var(--amber-rgb),.16),0 0 16px rgba(var(--amber-rgb),.28)}
+
+/* ── 回答面板 ── */
+.panel{width:400px;border-radius:17px;overflow:hidden;position:relative;z-index:2;
+  transform-origin:top left;animation:pnl var(--d-panel) var(--ease-out)}
+@keyframes pnl{from{opacity:0;transform:scale(.97) translateY(-7px)}}
+.turn{padding:15px 17px 16px}
+.turn+.turn{border-top:1px solid rgba(16,24,40,.08)}
+.ask{font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#8B94A6;margin-bottom:8px}
+.ans{font-size:13.5px;line-height:1.68;color:#101828;text-wrap:pretty}
+.ans code{font-family:var(--f-mono);font-size:12.5px;background:rgba(16,24,40,.06);padding:1.5px 5px;
+  border-radius:5px;color:#334}
+.bar{display:flex;align-items:center;gap:3px;padding:9px 10px;border-top:1px solid rgba(16,24,40,.08);
+  background:linear-gradient(180deg,rgba(16,24,40,.015),rgba(16,24,40,.04))}
+.bar .n{font-size:11px;color:#8B94A6;margin-right:auto;padding-left:7px;font-variant-numeric:tabular-nums}
+.tool{font:inherit;font-size:12px;font-weight:550;color:#33405A;background:transparent;border:0;padding:6px 11px;
+  border-radius:8px;cursor:pointer;position:relative;overflow:hidden;touch-action:manipulation;
+  transition:background var(--d-press) var(--ease-out),transform var(--d-press) var(--ease-out)}
+@media (hover:hover) and (pointer:fine){.tool:hover{background:rgba(16,24,40,.07)}}
+.tool:active{transform:scale(.96)}
+.tool:focus-visible{outline:2px solid var(--blue);outline-offset:1px}
+.tool .fill{position:absolute;inset:0;background:rgba(214,60,45,.15);clip-path:inset(0 100% 0 0);
+  transition:clip-path 200ms var(--ease-out)}
+.tool.danger:active .fill{clip-path:inset(0 0 0 0);transition:clip-path 1.6s linear}
+
+/* ══════════ 应用窗口（Library / 设置共用外壳） ══════════ */
+.win{border-radius:15px;overflow:hidden;display:flex;height:600px;position:relative;
+  border:1px solid rgba(255,255,255,.09);
+  box-shadow:0 2px 10px rgba(0,0,0,.4),0 50px 100px -30px rgba(0,0,0,.75);
+  background:var(--ink-850)}
+.sb{width:225px;flex:0 0 auto;display:flex;flex-direction:column;padding:12px 10px;
+  background:linear-gradient(180deg,var(--ink-800),var(--ink-850));
+  border-right:1px solid rgba(255,255,255,.055)}
+.brand{display:flex;align-items:center;gap:9px;padding:4px 8px 12px;font-weight:600;font-size:13.5px;
+  letter-spacing:-.01em}
+.brand .m{width:19px;height:19px;border-radius:6px;flex:0 0 auto;
+  background:radial-gradient(circle at 32% 28%,#8FBBFF,var(--blue) 58%,#1B57C9);
+  box-shadow:0 1px 4px rgba(var(--blue-rgb),.5)}
+.sch{display:flex;align-items:center;gap:8px;height:31px;padding:0 10px;margin-bottom:11px;
+  background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.06);border-radius:9px;
+  font-size:12.5px;color:var(--t-lo)}
+.sch kbd{margin-left:auto;font:inherit;font-size:10px;color:var(--t-lo);background:rgba(255,255,255,.07);
+  padding:2px 5px;border-radius:4px}
+.grp{font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--t-lo);
+  padding:14px 10px 6px;opacity:.72}
+.nw{position:relative}
+.pill{position:absolute;left:0;right:0;height:31px;border-radius:9px;pointer-events:none;
+  background:linear-gradient(180deg,rgba(var(--blue-rgb),.9),rgba(var(--blue-rgb),.75));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.28),0 2px 8px -1px rgba(var(--blue-rgb),.5);
+  transition:transform var(--d-pop) var(--ease-out)}
+.nv{position:relative;display:flex;align-items:center;gap:10px;height:31px;padding:0 10px;border-radius:9px;
+  font-size:13px;font-weight:450;cursor:pointer;z-index:1;color:var(--t-mid);touch-action:manipulation;
+  transition:color var(--d-press) var(--ease-out),background var(--d-press) var(--ease-out)}
+@media (hover:hover) and (pointer:fine){.nv:not(.on):hover{background:rgba(255,255,255,.05);color:var(--t-hi)}}
+.nv.on{color:#fff;font-weight:550}
+.nv .d{width:16px;text-align:center;font-size:12px;opacity:.75}
+.nv.on .d{opacity:1}
+.nv .cnt{margin-left:auto;font-size:10.5px;color:var(--t-lo);font-variant-numeric:tabular-nums}
+.nv.on .cnt{color:rgba(255,255,255,.8)}
+.sbf{margin-top:auto;display:flex;align-items:center;gap:9px;padding:10px 9px;font-size:11.5px;color:var(--t-lo);
+  border-top:1px solid rgba(255,255,255,.055)}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--mint);box-shadow:0 0 0 3px rgba(52,211,153,.16)}
+.mn{flex:1;display:flex;flex-direction:column;min-width:0;background:var(--ink-850)}
+.hd{display:flex;align-items:flex-end;gap:14px;padding:20px 26px 15px;border-bottom:1px solid rgba(255,255,255,.06)}
+.hd h3{font-family:var(--f-dis);font-size:20px;font-weight:600;letter-spacing:-.022em}
+.hd p{font-size:12.5px;color:var(--t-lo);margin-top:4px}
+.hd .a{margin-left:auto;display:flex;gap:8px;flex:0 0 auto}
+.bt{font:inherit;font-size:12.5px;font-weight:500;padding:7px 14px;border-radius:9px;cursor:pointer;
+  border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.05);color:var(--t-hi);
+  touch-action:manipulation;transition:opacity var(--d-press) var(--ease-out),transform var(--d-press) var(--ease-out)}
+@media (hover:hover) and (pointer:fine){.bt:hover{opacity:.75}}
+.bt:active{transform:scale(.97)}
+.bt.pri{background:linear-gradient(180deg,#4F8DF7,#2E6FE0);border-color:transparent;color:#fff;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.25),0 2px 8px -2px rgba(var(--blue-rgb),.6)}
+.bd{flex:1;overflow:auto;padding:20px 26px 32px}
+
+/* ── 时间线：我们的原子是「你指过的那个东西」，不是「一条消息」 ── */
+.day{font-size:10.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--t-lo);
+  margin:4px 0 11px;display:flex;align-items:center;gap:10px}
+.day::after{content:"";flex:1;height:1px;background:rgba(255,255,255,.07)}
+.ev{display:flex;gap:13px;padding:11px;border-radius:12px;cursor:pointer;position:relative;
+  animation:evIn 280ms var(--ease-out) backwards;
+  transition:background var(--d-press) var(--ease-out)}
+.ev:nth-child(2){animation-delay:40ms}.ev:nth-child(3){animation-delay:80ms}
+.ev:nth-child(4){animation-delay:120ms}.ev:nth-child(5){animation-delay:160ms}
+@keyframes evIn{from{opacity:0;transform:translateY(8px)}}
+@media (hover:hover) and (pointer:fine){.ev:hover{background:rgba(255,255,255,.045)}}
+/* 缩略图 = 当时那一笔的证据裁片。这是"回看"能成立的关键：认图比认字快 */
+.th{width:76px;height:52px;border-radius:9px;flex:0 0 auto;overflow:hidden;position:relative;
+  border:1px solid rgba(255,255,255,.10);background:var(--ink-700)}
+.th.doc{background:linear-gradient(160deg,#F7F6F2,#E8E6E0)}
+.th.term{background:linear-gradient(160deg,#101216,#0A0B0D)}
+.th.pic{background:radial-gradient(90% 80% at 25% 20%,#FF8A5B,transparent 60%),
+  radial-gradient(80% 70% at 80% 85%,#5B7CFF,transparent 62%),linear-gradient(140deg,#42295B,#0F3A4C)}
+.th i{position:absolute;left:8px;right:8px;height:8px;border-radius:3px}
+.th.doc i{background:rgba(37,38,43,.14)}.th.term i{background:rgba(110,231,160,.30)}
+.th .mk{position:absolute;left:7px;right:7px;height:11px;border-radius:4px}
+.th.doc .mk{border:1.5px solid rgba(var(--blue-rgb),.95);box-shadow:0 0 8px rgba(var(--blue-rgb),.5)}
+.th.term .mk,.th.pic .mk{border:1.5px solid rgba(var(--amber-rgb),1);box-shadow:0 0 8px rgba(var(--amber-rgb),.5)}
+.ev .c{min-width:0;flex:1}
+.ev .q{font-size:13px;font-weight:500;line-height:1.4;margin-bottom:3px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ev .m{font-size:11.5px;color:var(--t-lo);display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.src{display:inline-flex;align-items:center;gap:4px;font-size:10.5px;font-weight:650;padding:2px 6px;
+  border-radius:5px;letter-spacing:.01em}
+.src::before{content:"";width:5px;height:5px;border-radius:1.5px}
+.src.st{background:rgba(var(--blue-rgb),.14);color:#8FB8FF}.src.st::before{background:var(--blue)}
+.src.px{background:rgba(var(--amber-rgb),.14);color:#F0B267}.src.px::before{background:var(--amber)}
+.ev .tm{margin-left:auto;font-size:11px;color:var(--t-lo);font-variant-numeric:tabular-nums;flex:0 0 auto}
+
+/* ── 设置行 ── */
+.sec{margin-bottom:24px;animation:secIn 270ms var(--ease-out) backwards}
+.sec:nth-child(2){animation-delay:45ms}.sec:nth-child(3){animation-delay:90ms}
+@keyframes secIn{from{opacity:0;transform:translateY(7px)}}
+.sec>h4{font-size:10.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--t-lo);
+  margin-bottom:9px;padding-left:3px}
+.card{background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.022));
+  border:1px solid rgba(255,255,255,.075);border-radius:12px;overflow:hidden;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 1px 2px rgba(0,0,0,.3)}
+.r{display:flex;align-items:center;gap:15px;padding:12px 15px;transition:background var(--d-press) var(--ease-out)}
+.r+.r{border-top:1px solid rgba(255,255,255,.06)}
+@media (hover:hover) and (pointer:fine){.r:hover{background:rgba(255,255,255,.03)}}
+.r .t{min-width:0;flex:1}
+.r .t b{display:block;font-size:13px;font-weight:500;line-height:1.4}
+.r .t small{display:block;font-size:11.5px;color:var(--t-lo);line-height:1.5;margin-top:2px}
+.r .v{flex:0 0 auto;display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--t-mid)}
+.sel{border:1px solid rgba(255,255,255,.10);background:rgba(255,255,255,.05);border-radius:8px;
+  padding:5px 11px;font-size:12.5px;color:var(--t-hi);cursor:pointer;
+  transition:opacity var(--d-press) var(--ease-out),transform var(--d-press) var(--ease-out)}
+@media (hover:hover) and (pointer:fine){.sel:hover{opacity:.75}}
+.sel:active{transform:scale(.97)}
+.tog{width:38px;height:22px;border-radius:11px;background:rgba(255,255,255,.10);position:relative;
+  flex:0 0 auto;cursor:pointer;transition:background var(--d-pop) var(--ease-out)}
+.tog::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;
+  background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.4);transition:transform var(--d-pop) var(--ease-out)}
+.tog.on{background:linear-gradient(180deg,#4F8DF7,#2E6FE0)}.tog.on::after{transform:translateX(16px)}
+.bdg{font-size:10.5px;font-weight:650;padding:3px 8px;border-radius:6px;display:inline-flex;align-items:center;gap:5px}
+.bdg::before{content:"";width:5px;height:5px;border-radius:50%;background:currentColor}
+.bdg.ok{background:rgba(52,211,153,.13);color:#5BDCA8}
+.bdg.w{background:rgba(232,150,42,.14);color:#F0B267}
+.dflt{font-size:10.5px;color:var(--t-lo);opacity:.75}
+.spark{display:flex;align-items:flex-end;gap:2.5px;height:28px}
+.spark i{width:7px;border-radius:2px 2px 0 0;transform-origin:bottom;animation:sp 460ms var(--ease-out) backwards;
+  background:linear-gradient(180deg,rgba(var(--blue-rgb),.55),rgba(var(--blue-rgb),.2))}
+.spark i.hi{background:linear-gradient(180deg,#7EB0FF,var(--blue))}
+@keyframes sp{from{transform:scaleY(.04)}}
+
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;
+    transition-duration:120ms!important}
+  .ev,.sec,.chip,.panel,.spark i{animation:none}}
+</style>
+</head>
+<body>
+
+<h1 class="l">Magic Pointer — 完整界面设计 v3</h1>
+<p class="l">三个表面，按<b>时间尺度</b>分工：<b>此刻</b>用舞台（浮在别人窗口上），<b>之后</b>用回看库（一个真窗口），<b>配置</b>是回看库里的一个区。铁律不破：<b>永远不需要先打开我们才能用</b>——回看库是目的地，不是入口。</p>
+
+<h2 class="l">一 · 此刻 — 舞台</h2>
+<div class="rl">
+  <button class="bl" id="replay">▸ 重播</button>
+  <button class="bl" id="slow">🐢 5× 慢放</button>
+</div>
+<div class="beds" id="beds">
+  <div class="bed b-doc" data-label="白底文档">
+    <div class="t">选区冻结后，系统在同一帧里寻找更完整的语义候选。<br>高置信时静默吸附，歧义时让人选。</div>
+    <div class="proof s" style="left:20px;top:60px;right:20px;height:24px"></div>
+    <div class="cap glass"><span class="orb"></span><span class="lines">
+      <span class="l1">把<span class="chip"><em>①</em>这段<span class="x">×</span></span>翻成英文<span class="caret"></span></span>
+      <span class="l2">已读到 1 个对象 · 结构层</span></span><span style="width:6px"></span></div>
+  </div>
+  <div class="bed b-term" data-label="黑底终端">
+    <div class="t">$ npm test<br>&nbsp;&nbsp;node suite passed: 132 tests<br>$ pytest -q<br>&nbsp;&nbsp;1026 passed</div>
+    <div class="proof p" style="left:20px;top:56px;right:20px;height:22px"></div>
+    <div class="cap glass"><span class="orb"></span><span class="lines">
+      <span class="l1"><span class="chip px"><em>①</em>这行<span class="x">×</span></span>什么意思<span class="caret"></span></span>
+      <span class="l2">正在读取 <span class="num">2.4s</span> · 像素</span></span><span style="width:6px"></span></div>
+  </div>
+  <div class="bed b-pic" data-label="照片 / 彩色界面">
+    <div class="cap glass"><span class="orb"></span><span class="lines">
+      <span class="l1"><span class="chip px"><em>①</em>这图<span class="x">×</span></span><span class="chip"><em>②</em>那段<span class="x">×</span></span>对比<span class="caret"></span></span>
+      <span class="l2">2 个对象 · 混合来源</span></span><span style="width:6px"></span></div>
+  </div>
+</div>
+<p class="hint">比 v2 多了三样：<b>呼吸球</b>（内部径向渐变 + 外圈脉冲，替掉三根柱子）、<b>第二行状态</b>（读到几个对象、来源、耗时——学 Highlight 的双行胶囊）、<b>chip 按来源分色</b>（蓝＝结构层，琥珀＝像素）。按住工具条的「关闭」看按住确认。</p>
+
+<div class="beds" style="margin-top:15px;grid-template-columns:1fr">
+  <div class="bed b-doc" data-label="回答 — 面板从气泡左上角展开" style="height:262px;align-items:flex-start;justify-content:flex-start;padding:46px 0 0 26px">
+    <div class="panel glass">
+      <div class="turn"><p class="ask">这行报错是什么意思</p>
+        <p class="ans">端口 6800 被占用。不是代码问题——另一个进程已经在监听。先 <code>netstat -ano | findstr :6800</code> 找到 PID，再决定关掉还是换端口。</p></div>
+      <div class="bar"><span class="n">第 1 轮 · 0.9s</span>
+        <button class="tool">复制</button><button class="tool">填入</button>
+        <button class="tool danger"><span class="fill"></span>关闭</button></div>
+    </div>
+  </div>
+</div>
+
+<h2 class="l">二 · 之后 — 回看库（这是"主界面"，但它不是入口）</h2>
+<p class="hint"><b>为什么需要它</b>：记忆层、剪贴板历史、产物、审计现在都没有落脚的地方，「我上午看的那篇论文叫什么」无处可问。<br>
+<b>为什么它不能是入口</b>：产品唯一的结构性优势是"在摩擦发生的那一秒出现在你手边"。任何要求先打开主界面的功能，都是在扔掉这个优势。<br>
+<b>和 ChatGPT 的根本差别</b>：它按<b>对话</b>组织，我们按<b>你指过的那个东西</b>组织。所以每条记录的主视觉是<b>当时那一笔的证据裁片</b>——认图比认字快得多。</p>
+<div class="win" id="win">
+  <aside class="sb">
+    <div class="brand"><span class="m"></span>Magic Pointer</div>
+    <div class="sch">🔍 搜索你圈过的东西… <kbd>Ctrl K</kbd></div>
+    <div class="grp">回看</div>
+    <div class="nw" id="nw1"><div class="pill" id="p1"></div>
+      <div class="nv on"><span class="d">◷</span>时间线<span class="cnt">142</span></div>
+      <div class="nv"><span class="d">◐</span>记忆<span class="cnt">38</span></div>
+      <div class="nv"><span class="d">⎘</span>剪贴板<span class="cnt">96</span></div>
+      <div class="nv"><span class="d">⛁</span>产物<span class="cnt">11</span></div></div>
+    <div class="grp">能力</div>
+    <div class="nw" id="nw2"><div class="pill" id="p2" style="opacity:0"></div>
+      <div class="nv"><span class="d">✦</span>能力库<span class="cnt">39</span></div>
+      <div class="nv"><span class="d">✎</span>自定义指令<span class="cnt">4</span></div>
+      <div class="nv"><span class="d">⊞</span>插件<span class="cnt">1</span></div></div>
+    <div class="grp">设置</div>
+    <div class="nw" id="nw3"><div class="pill" id="p3" style="opacity:0"></div>
+      <div class="nv"><span class="d">◈</span>通用</div>
+      <div class="nv"><span class="d">◎</span>外观</div>
+      <div class="nv"><span class="d">◇</span>模型与网络</div>
+      <div class="nv"><span class="d">⊙</span>触发与感知</div>
+      <div class="nv"><span class="d">⛨</span>隐私与权限</div>
+      <div class="nv"><span class="d">◔</span>诊断</div></div>
+    <div class="sbf"><span class="dot"></span><span>本机运行，不离开当前应用</span></div>
+  </aside>
+  <main class="mn">
+    <header class="hd"><div><h3 id="vt">时间线</h3><p id="vs">你今天指过的东西。点一条可以接着问。</p></div>
+      <div class="a"><button class="bt">筛选…</button><button class="bt pri">导出</button></div></header>
+    <div class="bd" id="bd">
+      <div class="day">今天</div>
+      <div class="ev"><div class="th term"><i style="top:9px"></i><i style="top:31px;right:26px"></i><div class="mk" style="top:19px"></div></div>
+        <div class="c"><div class="q">这行报错是什么意思</div>
+          <div class="m"><span class="src px">像素</span>Windows Terminal · 端口占用<span class="tm">14:22</span></div></div></div>
+      <div class="ev"><div class="th doc"><i style="top:10px"></i><i style="top:24px"></i><i style="top:38px;right:30px"></i><div class="mk" style="top:21px"></div></div>
+        <div class="c"><div class="q">把这段翻成英文</div>
+          <div class="m"><span class="src st">结构层</span>Edge · 感知级联那一节<span class="tm">11:07</span></div></div></div>
+      <div class="ev"><div class="th pic"><div class="mk" style="top:17px"></div></div>
+        <div class="c"><div class="q">这两个哪个更快</div>
+          <div class="m"><span class="src px">像素</span><span class="src st">结构层</span>微信 · 两条会话对比<span class="tm">10:48</span></div></div></div>
+      <div class="day">昨天</div>
+      <div class="ev"><div class="th doc"><i style="top:12px"></i><i style="top:28px;right:34px"></i><div class="mk" style="top:23px"></div></div>
+        <div class="c"><div class="q">这篇论文的结论是什么</div>
+          <div class="m"><span class="src st">结构层</span>Edge · arXiv 2307.00583<span class="tm">昨天 16:31</span></div></div></div>
+      <div class="ev"><div class="th term"><i style="top:14px;right:22px"></i><i style="top:34px"></i><div class="mk" style="top:24px"></div></div>
+        <div class="c"><div class="q">交给 codex 排查</div>
+          <div class="m"><span class="src px">像素</span>PowerShell · 已投递到会话 #3<span class="tm">昨天 15:02</span></div></div></div>
+    </div>
+  </main>
+</div>
+<p class="hint">左侧计数（142 / 38 / 96）不是装饰——<b>它替代了"我到底有没有在攒东西"这个问题</b>。缩略图上那道发光的框就是当时读到的位置，颜色仍然区分结构层和像素，和舞台上是同一套语言。</p>
+
+<h2 class="l">三 · 设置（同一个窗口的一个区，不再是独立 Dashboard）</h2>
+<div class="win" style="height:470px">
+  <aside class="sb" style="width:225px">
+    <div class="brand"><span class="m"></span>Magic Pointer</div>
+    <div class="sch">🔍 搜索设置… <kbd>Ctrl K</kbd></div>
+    <div class="grp">设置</div>
+    <div class="nw" id="nw4"><div class="pill" id="p4"></div>
+      <div class="nv"><span class="d">◈</span>通用</div>
+      <div class="nv"><span class="d">◎</span>外观</div>
+      <div class="nv on"><span class="d">◇</span>模型与网络</div>
+      <div class="nv"><span class="d">⊙</span>触发与感知</div>
+      <div class="nv"><span class="d">⛨</span>隐私与权限</div>
+      <div class="nv"><span class="d">◔</span>诊断</div></div>
+    <div class="sbf"><span class="dot"></span><span>本机运行</span></div>
+  </aside>
+  <main class="mn">
+    <header class="hd"><div><h3>模型与网络</h3><p>端点、预算与本地兜底。健康状态常显。</p></div>
+      <div class="a"><button class="bt">重新检测</button><button class="bt pri">保存更改</button></div></header>
+    <div class="bd">
+      <div class="sec"><h4>端点</h4><div class="card">
+        <div class="r"><div class="t"><b>后端</b><small>Anthropic Messages 协议 · api.deepseek.com</small></div>
+          <div class="v"><span class="bdg ok">HTTP 200</span></div></div>
+        <div class="r"><div class="t"><b>模型</b><small>deepseek-v4-flash[1M]</small></div>
+          <div class="v"><span class="bdg w">无视觉输入</span><span class="sel">更换…</span></div></div>
+      </div></div>
+      <div class="sec"><h4>预算</h4><div class="card">
+        <div class="r"><div class="t"><b>交互回答上限</b><small>上限就是延迟：1200 token 要 27 秒，120 只要 12 秒</small></div>
+          <div class="v"><span class="dflt">默认 700</span><span class="sel">700 token</span></div></div>
+        <div class="r"><div class="t"><b>流式显示首 token</b><small>拿到第一个字就开始画，不等整段</small></div>
+          <div class="v"><span class="tog on" data-t></span></div></div>
+        <div class="r"><div class="t"><b>近 7 天调用</b><small>成功 214 · 降级 9 · 失败 2</small></div>
+          <div class="v"><span class="spark"><i style="height:40%"></i><i style="height:66%"></i><i style="height:52%"></i><i class="hi" style="height:88%"></i><i style="height:71%"></i><i style="height:45%"></i><i style="height:61%"></i></span></div></div>
+      </div></div>
+    </div>
+  </main>
+</div>
+
+<h2 class="l">四 · 这一版在"高级感"上具体做了什么</h2>
+<p class="hint">
+<b>色相一路带着走</b>——底色不是 <code class="i">#000</code> 是靛蓝偏冷的 <code class="i">#0B0D12</code>，纸白不是 <code class="i">#fff</code> 是奶油 <code class="i">#FBFAF7</code>；边框、阴影、次要文字全部往背景色相偏，没有一处中性灰。<br>
+<b>颗粒层</b>——整页叠了一层 5.5% 的 fractal noise。渐变不叠颗粒就是塑料感，这是 Raycast 那种质感的来源。<br>
+<b>光从上面来</b>——每个面都有 <code class="i">inset 0 1px 0</code> 的上缘高光配底部暗边，按钮和卡片是"有厚度的物体"不是"有颜色的矩形"。<br>
+<b>分层阴影</b>——近处小而实 + 远处大而淡，两条一起写。<br>
+<b>语义色只在状态点上出现</b>——绿＝健康、琥珀＝有保留、蓝＝结构层。学 Linear：大面积克制，颜色一出现就有意义。<br>
+<b>动效全部走规范</b>——强曲线、&lt;300ms、按压 <code class="i">scale(.97)</code>、hover 门控、错峰 40ms、减弱动效同时发。
+</p>
+
+<script>
+const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
+$('#replay').onclick=()=>$$('#beds .cap,#beds .chip,#beds .proof,.panel').forEach(e=>{
+  const a=e.style.animation;e.style.animation='none';void e.offsetHeight;e.style.animation=a;});
+let sl=false;
+$('#slow').onclick=e=>{sl=!sl;const r=document.documentElement.style;
+  r.setProperty('--d-pop',sl?'1000ms':'200ms');r.setProperty('--d-panel',sl?'1300ms':'260ms');
+  r.setProperty('--d-press',sl?'700ms':'140ms');
+  e.target.textContent=sl?'⏩ 恢复速度':'🐢 5× 慢放';};
+const T={'时间线':'你今天指过的东西。点一条可以接着问。','记忆':'最近 24 小时的屏幕历史，可关可清。',
+ '剪贴板':'多格式历史，查是只读的。','产物':'计划、回执和来源链。','能力库':'只显示当前环境能真正执行的。',
+ '自定义指令':'长尾模式存下来，下次走快路径。','插件':'本地文件夹即插件，不需要构建。',
+ '通用':'启动、语言与默认输入方式。','外观':'主题、强调色与动效开关。','模型与网络':'端点、预算与本地兜底。',
+ '触发与感知':'晃动灵敏度、划线租约、选中即感知。','隐私与权限':'截图上传总开关与审计日志。','诊断':'最近 20 次会话的时间线。'};
+function place(root){$$((root||'')+' .nw').forEach(w=>{const on=w.querySelector('.nv.on'),p=w.querySelector('.pill');
+  if(!on){p.style.opacity=0;return}p.style.opacity=1;p.style.transform=`translateY(${on.offsetTop}px)`;});}
+$$('.win').forEach(win=>{
+  win.querySelectorAll('.nv').forEach(n=>n.onclick=()=>{
+    win.querySelectorAll('.nv').forEach(x=>x.classList.remove('on'));n.classList.add('on');place();
+    const name=n.textContent.replace(/\d+$/,'').trim();
+    const vt=win.querySelector('.hd h3'),vs=win.querySelector('.hd p');
+    if(vt){vt.textContent=name;vs.textContent=T[name]||'';}
+    win.querySelectorAll('.ev,.sec').forEach(s=>{s.style.animation='none';void s.offsetHeight;s.style.animation='';});});});
+$$('[data-t]').forEach(t=>t.onclick=()=>t.classList.toggle('on'));
+place();addEventListener('resize',()=>place());
+</script>
+</body>
+</html>

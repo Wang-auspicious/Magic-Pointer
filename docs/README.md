@@ -1,41 +1,26 @@
-# Magic Pointer 文档导航
+# 文档
 
-## 根目录（必读）
+五份文档，各管一件事。**不要新建带日期的文档**——改现有的。
 
-| 文件 | 内容 |
+| 文件 | 回答 |
 |---|---|
-| `README.md` | 项目介绍 + 安装 + 启动 |
-| `PRODUCT_BLUEPRINT_20260726.md` | 产品蓝图：竞品、30 Recipe、交互合同、系统架构 |
-| `FEATURE_INVENTORY_20260730.md` | 完整功能清单 + 竞品差距分析 |
-| `CHANGELOG.md` | 版本变更记录 |
-| `CONTRIBUTING.md` | 贡献指南 |
-| `CODE_OF_CONDUCT.md` | 行为准则 |
-| `SECURITY.md` | 安全策略 |
+| [`STATUS.md`](STATUS.md) | 现在什么能用、什么不能用、已知未修、怎么验收 |
+| [`PRODUCT.md`](PRODUCT.md) | 我们是干什么的、边界在哪、竞品、可能怎么死 |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md) | 代码怎么组织的、实测数字、关键决策、能抄谁 |
+| [`DESIGN.md`](DESIGN.md) | 视觉与动效标准：曲线、时长、按压、玻璃材质、当前欠账 |
+| [`design/GUI.md`](design/GUI.md) | 界面长什么样：三个取景、卡片清单、色/型/影、收藏箱与实况片段 |
+| [`ROADMAP.md`](ROADMAP.md) | 接下来做什么，按依赖顺序 |
+| [`AGENT_INTEGRATION.md`](AGENT_INTEGRATION.md) | 怎么把用户已装的 Agent 接进来 |
 
-## `docs/planning/` — 规划、分析、交接
+根目录另有 [`../AGENT.md`](../AGENT.md)（给 AI 的指令：红线、不要做的事、已证伪的想法、命令）、[`../README.md`](../README.md)（项目介绍与安装）、[`../CHANGELOG.md`](../CHANGELOG.md)。
 
-产品方向研究、竞品逐帧分析、实现进度记录、AI 对话交接备忘录。
+[`archive/`](archive/INDEX.md) 是 2026-07-06 ~ 08-05 的 72 份历史文档，**默认不要读**，需要考古时按索引定位。
 
-## `docs/reference/` — 外部参考
-
-- `magic pointer.pdf` — 原始参考论文
-- `2307.00583v1.pdf` — 相关学术文献
-- `Shaping the future...` — Google DeepMind 官方博文存档
-
-## `demo/recordings/` — 演示截图与录屏
-
-Google AI Pointer 公开演示的逐帧截图（演示 1-20）和 WebM 录屏（演示 7-10）。
-
-## 项目代码
+## 其他目录
 
 | 目录 | 内容 |
 |---|---|
-| `electron/` | Electron 主进程 + 渲染进程（Overlay / Stage / Dashboard / Onboarding） |
-| `app/` | Python 后端：fabric 引擎 / 适配器 / 动作 / 模型 |
-| `scripts/` | Python 桥接 / 语音 / MCP / 配置脚本 / `.bat` `.ps1` 启动脚本 |
-| `native/` | macOS 原生宿主（Swift） |
-| `integrations/` | Agent 集成配置（Pi / Claude / Gemini / Codex / Cursor） |
-| `tests/` | Node + Python 测试 |
-| `packaging/` | electron-builder 资源：entitlements、NSIS 脚本 |
-| `build/` | 构建产物：Python runtime、wheelhouse |
-| `external/` | 外部参考代码（pi, ufo-schannel, nut.js, omniparser 等） |
+| `reference/` | 外部参考 PDF/HTML（Google DeepMind 博文存档等） |
+| `../demo/recordings/` | Google AI Pointer 公开演示截图与录屏 |
+| `../data/recipes/` | Recipe manifest（39 条内置，插件目录可加载） |
+| `../external/` | 克隆的参考项目，见 [ARCHITECTURE.md](ARCHITECTURE.md#可以照抄的外部实现) |

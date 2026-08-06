@@ -4,10 +4,13 @@ const fs = require('fs');
 
 function shouldStartHidden({ argv = [], wasOpenedAtLogin = false, captureMode = false } = {}) {
   const switches = new Set((Array.isArray(argv) ? argv : []).map((value) => String(value).toLowerCase()));
-  return captureMode === true
-    || wasOpenedAtLogin === true
-    || switches.has('--background')
-    || switches.has('--hidden');
+  if (captureMode === true || wasOpenedAtLogin === true) return true;
+  if (switches.has('--show') || switches.has('--dashboard')) return false;
+  // This is a resident pointer utility, not a dashboard application. Once
+  // onboarding is complete, launching it must not steal focus or cover the
+  // thing the person was about to point at. The tray, Ctrl+Alt+D, a second
+  // launch, --show and --dashboard remain explicit ways to open settings.
+  return true;
 }
 
 function onboardingIsReady(markerPath, options = {}) {

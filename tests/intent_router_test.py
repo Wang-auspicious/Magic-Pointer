@@ -12,6 +12,7 @@ from pathlib import Path
 
 from app.fabric.intent_router import (
     ACT_LOCAL,
+    ACT_MODEL,
     ACT_RECIPE,
     ACT_TOOLS,
     TIER_CLASSIFIED,
@@ -52,6 +53,51 @@ def test_local_actions_resolve_without_any_recipe(tmp_path: Path) -> None:
     assert decision.tier == TIER_DETERMINISTIC
     assert decision.action == ACT_LOCAL
     assert decision.local_action == "save_screenshot"
+
+
+def test_information_questions_never_become_ocr_or_clipboard_actions(tmp_path: Path) -> None:
+    classifier_calls = []
+
+    def classifier(*args):
+        classifier_calls.append(args)
+        return {"recipeId": "text__ocr_copy", "confidence": 0.9}
+
+    router = _router(tmp_path, classifier=classifier)
+    for command in (
+        "What exact line did I mark? Answer only that line.",
+        "What is OCR?",
+        "我刚才圈的是哪一行？",
+        "这个内容是什么意思？",
+    ):
+        decision = router.route(command, object_count=1)
+        assert decision.tier == TIER_DETERMINISTIC
+        assert decision.action == ACT_MODEL
+        assert decision.recipe_id is None
+    assert classifier_calls == []
+
+
+def test_short_human_analysis_commands_skip_capability_classification(tmp_path: Path) -> None:
+    classifier_calls = []
+
+    def classifier(*args):
+        classifier_calls.append(args)
+        return {"recipeId": "text__ocr_copy", "confidence": 0.9}
+
+    router = _router(tmp_path, classifier=classifier)
+    for command in ("对比下", "解释下", "哪个好", "有啥区别"):
+        decision = router.route(command, object_count=2)
+        assert decision.tier == TIER_DETERMINISTIC, (command, decision)
+        assert decision.action == ACT_MODEL, (command, decision)
+    summary = router.route("总结下", object_count=2)
+    assert summary.action == ACT_RECIPE
+    assert summary.recipe_id == "text.summarize_route"
+    assert classifier_calls == []
+
+
+def test_polite_action_questions_still_run_the_requested_action(tmp_path: Path) -> None:
+    decision = _router(tmp_path).route("Can you copy this text?", object_count=1)
+    assert decision.action == ACT_LOCAL
+    assert decision.local_action == "copy_object_text"
 
 
 def test_keyword_confident_commands_route_without_the_classifier(tmp_path: Path) -> None:

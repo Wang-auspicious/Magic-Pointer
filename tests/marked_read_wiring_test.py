@@ -154,6 +154,28 @@ def test_an_identity_only_read_reports_the_gap_and_hands_over_to_pixels() -> Non
     assert coverage.reason == "identity_only"
 
 
+def test_zero_height_line_keeps_a_real_gesture_region() -> None:
+    """A perfectly horizontal underline must not collapse into a 16px pointer."""
+    from scripts.selection_snapshot_bridge import _bounded_gesture_capture_bbox, _gesture_mark_bbox
+
+    gesture = {
+        "schemaVersion": 2,
+        "coordinateSpace": "physical_screen_pixels",
+        "bbox": {"x": 474, "y": 723, "width": 220, "height": 0},
+        "geometry": {"type": "band_corridor", "widthPx": 16},
+        "strokes": [{"points": [{"x": 474, "y": 723}, {"x": 694, "y": 723}]}],
+    }
+
+    mark = _gesture_mark_bbox(gesture)
+
+    assert mark == [474, 715, 220, 16]
+    assert _bounded_gesture_capture_bbox(
+        gesture,
+        {"bbox": [0, 0, 1920, 1080]},
+        (0, 0, 1920, 1080),
+    ) is not None
+
+
 def test_a_stroke_through_a_full_window_element_does_not_select_the_whole_window() -> None:
     """穿过 ≠ 选中。覆盖整窗的容器被每一条画在它里面的线穿过。"""
     from app.grounding.marked_read import rect_is_container

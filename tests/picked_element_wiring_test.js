@@ -20,7 +20,6 @@ const body = mainSource.slice(
   mainSource.indexOf('function withPickedElement('),
   mainSource.indexOf('function deliverStageError('),
 );
-// eslint-disable-next-line no-new-func
 const withPickedElement = new Function(`${body}; return withPickedElement;`)();
 
 const SNAPSHOT = Object.freeze({

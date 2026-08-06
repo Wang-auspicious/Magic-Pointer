@@ -1,0 +1,116 @@
+/* ============================================================
+   随行窗 Companion — 布局
+   420×640，可停靠屏幕边缘，可 pin。组件在 oreo.css。
+   ============================================================ */
+
+.companion {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--paper);
+  overflow: hidden;
+}
+
+/* ---------- 头 ---------- */
+
+.cp-top {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 12px 10px 14px;
+  flex: none;
+  -webkit-app-region: drag;
+}
+.cp-top .orb { width: 26px; height: 26px; border-radius: 999px; overflow: hidden; flex: none; background: var(--paper-2); }
+.cp-top .orb svg { width: 100%; height: 100%; display: block; }
+.cp-top b {
+  font-size: 14.5px; font-weight: 600;
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cp-actions {
+  margin-left: auto;
+  display: flex; gap: 2px;
+  flex: none;
+  -webkit-app-region: no-drag;
+}
+.cp-actions .icon-btn { width: 30px; height: 30px; }
+.cp-actions .icon-btn svg { width: 16px; height: 16px; }
+
+/* ---------- 流 ---------- */
+
+.cp-stream {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 14px 16px;
+  display: flex; flex-direction: column;
+  gap: 14px;
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 12px);
+          mask-image: linear-gradient(180deg, transparent 0, #000 12px);
+}
+.cp-stream .turn { display: flex; flex-direction: column; gap: 12px; }
+.cp-stream .msg-user { max-width: 88%; font-size: 14.5px; }
+.cp-stream .msg-ai { font-size: 14.5px; }
+.cp-stream .card { padding: 14px 15px; }
+.cp-stream .ctx, .cp-stream .facts, .cp-stream .writeback { padding: 0; }
+.cp-stream .plan { padding: 2px 0; }
+
+/* 空态：三张提示卡 */
+.cp-suggest {
+  display: flex; align-items: center; gap: 12px;
+  width: 100%; text-align: left;
+  padding: 13px 14px;
+  transition: box-shadow 160ms var(--ease-out), transform 160ms var(--ease-out);
+}
+.cp-suggest .tile {
+  width: 34px; height: 34px; flex: none;
+  border-radius: var(--r-tile);
+  display: grid; place-items: center;
+}
+.cp-suggest .tile svg { width: 18px; height: 18px; }
+.cp-suggest .side-text { display: flex; flex-direction: column; min-width: 0; }
+.cp-suggest .side-text b { font-size: 14.5px; font-weight: 600; }
+.cp-suggest .side-text small { font-size: 12.5px; color: var(--ink-3); }
+.cp-suggest:active { transform: scale(.99); }
+@media (hover: hover) and (pointer: fine) {
+  .cp-suggest:hover { box-shadow: var(--shadow-lift); }
+}
+
+/* ---------- 底 ---------- */
+
+.cp-foot {
+  flex: none;
+  position: relative;
+  padding: 10px 14px 14px;
+  background: var(--paper);
+}
+.cp-foot::before {
+  content: "";
+  position: absolute; left: 0; right: 0; top: -24px; height: 24px;
+  background: linear-gradient(180deg, transparent, var(--paper));
+  pointer-events: none;
+}
+.quick-chips { display: flex; gap: 7px; margin-bottom: 10px; overflow-x: auto; scrollbar-width: none; }
+.quick-chips::-webkit-scrollbar { display: none; }
+
+.chip-sm {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 30px; padding: 0 12px;
+  flex: none;
+  border-radius: var(--r-pill);
+  font-size: 13.5px; font-weight: 600;
+  color: var(--ink-2);
+  background: var(--card);
+  box-shadow: var(--shadow-card);
+  transition: box-shadow 140ms var(--ease-out), color 140ms var(--ease-out), transform 140ms var(--ease-out);
+}
+.chip-sm svg { width: 15px; height: 15px; }
+.chip-sm:active { transform: scale(.97); }
+@media (hover: hover) and (pointer: fine) {
+  .chip-sm:hover { box-shadow: var(--shadow-lift); color: var(--ink); }
+}
+
+.companion .composer { padding: 12px 12px 8px; }
+.companion .composer textarea { min-height: 38px; font-size: 14.5px; }
+.companion .icon-btn { width: 32px; height: 32px; }
+.companion .icon-btn svg { width: 16px; height: 16px; }
+.companion .send-btn { width: 32px; height: 32px; }
+.companion .send-btn svg { width: 16px; height: 16px; }
+.companion .model-select { height: 30px; font-size: 13.5px; }

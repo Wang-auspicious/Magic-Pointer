@@ -41,6 +41,12 @@ SNAPSHOT_TTL_SECONDS = 120
 VISUAL_REGION_WIDTH = 640
 VISUAL_REGION_HEIGHT = 420
 POINTER_ANCHOR_SIZE = 16
+GESTURE_CAPTURE_PADDING_X = 96
+GESTURE_CAPTURE_PADDING_Y = 64
+GESTURE_CAPTURE_MIN_WIDTH = 320
+GESTURE_CAPTURE_MIN_HEIGHT = 180
+GESTURE_CAPTURE_MAX_WIDTH = 1280
+GESTURE_CAPTURE_MAX_HEIGHT = 800
 
 
 class TargetMismatchError(RuntimeError):
@@ -113,6 +119,18 @@ def _window_dicts(
         if title in MAGIC_WINDOW_TITLES:
             continue
         windows.append(dict(item))
+    # A foreground HWND captured at gesture start is a committed identity.  It
+    # must outrank point containment: every maximized window contains the same
+    # coordinates, and enumeration order is not z-order.  Point geometry is only
+    # a fallback for callers that could not lock a window.
+    requested_hwnd = int(preferred_hwnd or 0)
+    if requested_hwnd:
+        requested = next(
+            (item for item in windows if int(item.get("hwnd") or 0) == requested_hwnd),
+            None,
+        )
+        if requested is not None:
+            return [requested]
     if target_point is not None:
         x, y = int(target_point["x"]), int(target_point["y"])
         pointed = next((
@@ -124,14 +142,6 @@ def _window_dicts(
         ), None)
         if pointed is not None:
             return [pointed]
-    requested_hwnd = int(preferred_hwnd or 0)
-    if requested_hwnd:
-        requested = next(
-            (item for item in windows if int(item.get("hwnd") or 0) == requested_hwnd),
-            None,
-        )
-        if requested is not None:
-            return [requested]
     foreground_hwnd = get_foreground_window_handle()
     if foreground_hwnd:
         foreground = next(
@@ -375,6 +385,19 @@ def _normalized_gesture(value: Any | None) -> dict[str, Any] | None:
             "x": min(xs), "y": min(ys),
             "width": max(xs) - min(xs), "height": max(ys) - min(ys),
         }
+    # A line is a physical stroke corridor, not a zero-area mathematical
+    # segment. External callers and perfectly steady automation can still send
+    # a 0px axis even though Electron normally expands by 8 DIPs × display DPI.
+    # Keep the corridor centered so grounding, capture and OCR share one scope.
+    minimum_thickness = 8
+    if bbox["width"] < minimum_thickness:
+        center_x = bbox["x"] + bbox["width"] / 2
+        bbox["x"] = round(center_x - minimum_thickness / 2)
+        bbox["width"] = minimum_thickness
+    if bbox["height"] < minimum_thickness:
+        center_y = bbox["y"] + bbox["height"] / 2
+        bbox["y"] = round(center_y - minimum_thickness / 2)
+        bbox["height"] = minimum_thickness
     if release is None or bbox is None:
         return None
     release.pop("t", None)
@@ -525,13 +548,81 @@ def _gesture_mark_bbox(gesture: dict[str, Any] | None) -> list[int] | None:
     """
     raw = dict((gesture or {}).get("bbox") or {}) if isinstance(gesture, dict) else {}
     try:
+        x = int(raw.get("x") or 0)
+        y = int(raw.get("y") or 0)
         width = max(0, int(raw.get("width") or 0))
         height = max(0, int(raw.get("height") or 0))
-        if width <= 0 or height <= 0:
+        if width <= 0 and height <= 0:
             return None
-        return [int(raw.get("x") or 0), int(raw.get("y") or 0), width, height]
+        geometry = dict((gesture or {}).get("geometry") or {})
+        corridor = max(8, min(64, int(round(float(geometry.get("widthPx") or 16)))))
+        # A mouse can produce a perfectly horizontal/vertical line. Its raw
+        # min/max box then has one zero dimension, but it is still a real mark,
+        # not a point click. Preserve the line's visual corridor so capture,
+        # OCR and the stage all keep gesture-region semantics.
+        if width <= 0:
+            x -= corridor // 2
+            width = corridor
+        if height <= 0:
+            y -= corridor // 2
+            height = corridor
+        return [x, y, width, height]
     except (TypeError, ValueError):
         return None
+
+
+def _bounded_gesture_capture_bbox(
+    gesture: dict[str, Any] | None,
+    target_window: dict[str, Any] | None,
+    screen_bbox: tuple[int, int, int, int] | None,
+) -> tuple[int, int, int, int] | None:
+    """Build a small evidence frame around the mark, never the whole desktop.
+
+    The gesture is the user's scope contract.  A little surrounding context is
+    useful for labels and line height, but unrelated windows and distant rows
+    are neither useful nor safe to send to OCR or a model.
+    """
+    mark = _gesture_mark_bbox(gesture)
+    if mark is None:
+        return None
+    x, y, width, height = mark
+    bounds = screen_bbox
+    raw_window = (target_window or {}).get("bbox")
+    if isinstance(raw_window, (list, tuple)) and len(raw_window) == 4:
+        try:
+            window_bounds = tuple(int(value) for value in raw_window)
+        except (TypeError, ValueError):
+            window_bounds = None
+        if window_bounds is not None:
+            if bounds is None:
+                bounds = window_bounds
+            else:
+                bounds = (
+                    max(bounds[0], window_bounds[0]),
+                    max(bounds[1], window_bounds[1]),
+                    min(bounds[2], window_bounds[2]),
+                    min(bounds[3], window_bounds[3]),
+                )
+    if bounds is None or bounds[2] <= bounds[0] or bounds[3] <= bounds[1]:
+        return None
+
+    desired_width = min(
+        GESTURE_CAPTURE_MAX_WIDTH,
+        max(GESTURE_CAPTURE_MIN_WIDTH, width + 2 * GESTURE_CAPTURE_PADDING_X),
+        bounds[2] - bounds[0],
+    )
+    desired_height = min(
+        GESTURE_CAPTURE_MAX_HEIGHT,
+        max(GESTURE_CAPTURE_MIN_HEIGHT, height + 2 * GESTURE_CAPTURE_PADDING_Y),
+        bounds[3] - bounds[1],
+    )
+    center_x = x + width / 2
+    center_y = y + height / 2
+    left = round(center_x - desired_width / 2)
+    top = round(center_y - desired_height / 2)
+    left = max(bounds[0], min(left, bounds[2] - desired_width))
+    top = max(bounds[1], min(top, bounds[3] - desired_height))
+    return left, top, left + desired_width, top + desired_height
 
 
 def _gesture_strokes(gesture: dict[str, Any] | None) -> list[list[tuple[int, int]]]:
@@ -737,6 +828,77 @@ def _read_gesture_target_context(
         )
         region_artifacts = dict(getattr(region_context, "artifacts", {}) or {})
         region_rectangles = _context_rectangles(region_context) if region_context is not None else []
+        region_bbox = _union_xywh(region_rectangles)
+        mark_bbox = _gesture_mark_bbox(gesture)
+        region_attempts = [
+            item for item in list(region_trace.get("attempts") or [])
+            if isinstance(item, dict)
+        ]
+        if (
+            not region_trace.get("selectedLayer")
+            and region_attempts
+            and all(str(item.get("status") or "") == "error" for item in region_attempts)
+        ):
+            # A bounded read already exercised the complete adapter cascade and
+            # every provider failed. Repeating that same expensive failure at
+            # each point on the stroke cannot reveal a semantic candidate; it
+            # only multiplies a 1-3s provider timeout. Preserve the real error
+            # trace once and hand the literal stroke to the pixel fallback.
+            return region_window, region_context, region_trace, {
+                "schemaVersion": 1,
+                "state": "unresolved",
+                "mode": "stroke_region",
+                "candidate_count": 0,
+                "sample_count": 0,
+                "reason": "structured_region_hard_failure",
+            }, mark_bbox
+        if (
+            region_context is not None
+            and region_trace.get("selectedLayer")
+            and region_artifacts.get("perception_result_kind") == "terminal_buffer"
+            and region_rectangles
+        ):
+            coverage = structured_read_covers_mark(
+                content=str(getattr(region_context, "content", "") or ""),
+                window=region_window,
+                element_rects=region_rectangles,
+                mark_bbox=mark_bbox,
+            )
+            if coverage.covers:
+                # Windows Terminal's TextPattern gives us the exact anchored
+                # line in one bounded region probe. Sampling the same line at
+                # several more points only repeats an expensive COM/UIA round
+                # trip. Keep the user's literal stroke as the public geometry:
+                # the terminal provider commonly reports the entire 2000px row
+                # even when the person underlined a short phrase.
+                return region_window, region_context, region_trace, {
+                    "schemaVersion": 1,
+                    "state": "resolved",
+                    "mode": "terminal_line",
+                    "candidate_count": 1,
+                    "sample_count": 0,
+                    "score": 1.0,
+                    "margin": 1.0,
+                    "reason": coverage.reason,
+                }, mark_bbox
+        if (
+            region_context is not None
+            and region_trace.get("selectedLayer")
+            and region_rectangles
+            and rect_is_container(region_bbox, window=region_window, mark_bbox=mark_bbox)
+        ):
+            # Point-sampling the same document-sized UIA container four more
+            # times cannot discover line geometry that the provider does not
+            # expose. Stop after the bounded region probe and let pixels read
+            # the literal mark instead of spending the whole gesture budget.
+            return region_window, region_context, region_trace, {
+                "schemaVersion": 1,
+                "state": "unresolved",
+                "mode": "stroke_region",
+                "candidate_count": 1,
+                "sample_count": 0,
+                "reason": "structured_container_only",
+            }, mark_bbox
         if (
             region_context is not None
             and region_trace.get("selectedLayer")
@@ -985,7 +1147,10 @@ def _grab_capture_image(
                 # The requested region reaches past the window. Keep the window's
                 # pixels where they exist and leave the rest blank.
                 image = _paste_window_into_region(window_image, local_bbox, expected_size)
-    if image is None:
+    # A hardware-composited window can return a plausible title bar while its
+    # client-area crop is a flat black/grey surface. Validate the evidence ROI,
+    # not merely the full PrintWindow frame, before trusting it.
+    if image is None or _capture_is_blank(image):
         image = ImageGrab.grab(bbox=bbox, all_screens=True)
     return image
 
@@ -1412,6 +1577,11 @@ def capture_snapshot(
         element_rects=_context_rectangles(app_ctx) if app_ctx is not None else [],
         mark_bbox=_gesture_mark_bbox(normalized_gesture),
     )
+    if normalized_gesture is not None and not mark_coverage.covers:
+        # The structured candidate can be useful as a clue and still be too
+        # broad to represent the selection.  Once it fails the mark-coverage
+        # gate, the user's own gesture becomes authoritative again.
+        gesture_selection_bbox = _gesture_mark_bbox(normalized_gesture) or gesture_selection_bbox
     structured_succeeded = bool(
         app_ctx is not None
         and bool(perception_trace.get("selectedLayer"))
@@ -1453,7 +1623,12 @@ def capture_snapshot(
     visual_attempt_recorded = False
     visual_target_point = normalized_target_point
     gesture_points = _gesture_points(normalized_gesture)
-    global_bbox = global_capture_bbox or _global_screen_bbox() if gesture_points else None
+    screen_bbox = global_capture_bbox or _global_screen_bbox() if gesture_points else None
+    gesture_capture_bbox = _bounded_gesture_capture_bbox(
+        normalized_gesture,
+        target_window,
+        screen_bbox,
+    ) if gesture_points else None
     if gesture_points:
         raw_gesture_bbox = dict((normalized_gesture or {}).get("bbox") or {})
         visual_target_point = {
@@ -1465,9 +1640,10 @@ def capture_snapshot(
         and not target_mismatch
         and not sensitive_target
         and (capture_decision is None or capture_decision.allow_local_pixels)
-        # A completed gesture always gets one full-screen visual record. Its
-        # raw pixels preserve the surrounding layout, while UIA/DOM may still
-        # provide the higher-confidence exact text and element geometry.
+        # A completed gesture gets a bounded visual record around the mark.
+        # UIA/DOM can still provide exact text and geometry, but neither a
+        # failed structured read nor a model call may silently widen the user's
+        # selection to the whole desktop.
         and (bool(gesture_points) or not perception_trace.get("selectedLayer"))
         and (bool(gesture_points) or not summary.get("hasContent"))
         and not summary["hasActiveContext"]
@@ -1478,7 +1654,7 @@ def capture_snapshot(
             visual = _capture_visual_region(
                 target_window,
                 visual_target_point,
-                capture_bbox=global_bbox,
+                capture_bbox=gesture_capture_bbox,
                 visual_capture=visual_capture,
                 capture_dir=capture_dir,
                 retain_days=retain_captures_days,
@@ -1516,8 +1692,15 @@ def capture_snapshot(
                     adapter="screen-capture",
                     method="pointer:bounded-screen-region",
                     status="succeeded",
-                    reason=str(perception_trace.get("fallbackReason") or "structured_context_unavailable"),
-                    select=True,
+                    reason=(
+                        "bounded_visual_evidence"
+                        if structured_succeeded
+                        else str(perception_trace.get("fallbackReason") or "structured_context_unavailable")
+                    ),
+                    # A local evidence crop is not a pixel fallback when DOM/UIA
+                    # already grounded the user's mark. Keep the structured
+                    # layer authoritative and record pixels as corroboration.
+                    select=not structured_succeeded,
                     policy_mode=capture_decision.mode if capture_decision is not None else "unconfigured",
                 )
             else:
@@ -1645,6 +1828,9 @@ def capture_snapshot(
     pointer_anchor = None
     if visual is not None and not structured_succeeded:
         pointer_anchor = _pointer_anchor_ltrb(normalized_target_point)
+        visual_selection_rectangles = (
+            [list(gesture_selection_bbox)] if gesture_selection_bbox is not None else []
+        )
         visual_context = {
             "adapter": "screen_region",
             "app": "screen",
@@ -1659,10 +1845,12 @@ def capture_snapshot(
                 "capture_bbox": visual["bbox"],
                 "capture_bbox_coordinate_space": "physical_screen_pixels",
                 "capture_bbox_format": "ltrb",
-                "selection_rectangles": [],
+                "selection_rectangles": visual_selection_rectangles,
                 "selection_rectangles_coordinate_space": "physical_screen_pixels",
                 "selection_rectangles_format": "xywh",
-                "selection_geometry_kind": "pointer_anchor",
+                "selection_geometry_kind": (
+                    "gesture_region" if visual_selection_rectangles else "pointer_anchor"
+                ),
             },
             "capabilities": [],
             "error": None,

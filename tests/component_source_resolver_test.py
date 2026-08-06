@@ -131,3 +131,26 @@ def test_runtime_source_outside_workspace_is_rejected(tmp_path: Path) -> None:
     assert result["candidates"] == []
     assert result["autoModificationAllowed"] is False
     assert "Secret.tsx" not in str(result)
+
+
+def test_repository_index_skips_prefixed_test_and_tool_runtime_trees(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    wanted = repo / "src" / "RetryButton.tsx"
+    wanted.parent.mkdir(parents=True)
+    wanted.write_text("export const RetryButton = () => <button>Retry</button>\n", encoding="utf-8")
+    generated = [
+        repo / ".tmp-pytest-full" / "copied" / "RetryButton.tsx",
+        repo / ".pytest-audit-run" / "copied" / "RetryButton.tsx",
+        repo / ".codex" / "cache" / "RetryButton.tsx",
+        repo / "browser-profile" / "Default" / "Cache" / "RetryButton.tsx",
+        repo / "external" / "vendored-package" / "RetryButton.tsx",
+        repo / "release" / "unpacked" / "RetryButton.js",
+    ]
+    for path in generated:
+        path.parent.mkdir(parents=True)
+        path.write_text("generated RetryButton\n", encoding="utf-8")
+    (repo / "browser-profile" / "Local State").write_text("{}", encoding="utf-8")
+
+    files = list(ComponentSourceResolver()._files(repo))
+
+    assert files == [wanted]

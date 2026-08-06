@@ -13,8 +13,8 @@
     "verify:n19": "python scripts/verify_n19_voice_triggers_desktop.py",
     "diag:collect": "node scripts/collect-diagnostics.js",
     "test": "node scripts/run-node-tests.js",
-    "lint": "eslint . --max-warnings=0",
-    "lint:fix": "eslint . --fix",
+    "lint": "eslint electron scripts tests eslint.config.mjs --max-warnings=0",
+    "lint:fix": "eslint electron scripts tests eslint.config.mjs --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },

@@ -1,0 +1,748 @@
+/* ============================================================
+   Oreo 暖 — 令牌与组件
+   依据 docs/design/GUI.md。对照参考图：D:\Desktop\参考
+   这一份是生产用，不是 demo。
+   ============================================================ */
+
+:root {
+  /* ---- 色：浅（默认） ---- */
+  --paper:        #F2F1ED;
+  --paper-2:      #EAE8E2;
+  --card:         #FFFFFF;
+  --card-sunk:    #FAF9F6;
+  --card-hover:   #FCFBF9;
+
+  --ink:          #17170F;
+  --ink-2:        #6B6A62;
+  --ink-3:        #A3A199;
+  --ink-4:        #C9C6BE;
+
+  --glass:        rgba(255, 255, 255, .70);
+  --glass-lip:    rgba(255, 255, 255, .92);
+  --glass-ring:   rgba(23, 23, 15, .055);
+  --hairline:     rgba(23, 23, 15, .08);
+  --hairline-2:   rgba(23, 23, 15, .14);
+
+  /* ---- 语义色：只以「浅底深字药丸」出现 ---- */
+  --indigo:       #5B5BD6;  --indigo-bg:   rgba(91, 91, 214, .10);
+  --amber:        #B4690E;  --amber-bg:    rgba(180, 105, 14, .11);
+  --teal:         #0E7C86;  --teal-bg:     rgba(14, 124, 134, .11);
+  --green:        #3D8B5F;  --green-bg:    rgba(61, 139, 95, .11);
+  --terracotta:   #B44A24;  --terracotta-bg: rgba(180, 74, 36, .10);
+  --solid:        #1A1A18;  /* 主操作实心 */
+
+  /* ---- 形 ---- */
+  --r-card:   18px;
+  --r-input:  22px;
+  --r-pill:   999px;
+  --r-chip:   10px;
+  --r-tile:   12px;
+
+  /* ---- 影：两层，极淡，色相往暖偏，没有边框 ---- */
+  --shadow-card:
+    0 1px 2px rgba(23, 23, 15, .04),
+    0 8px 24px -6px rgba(23, 23, 15, .08);
+  --shadow-lift:
+    0 2px 4px rgba(23, 23, 15, .05),
+    0 16px 40px -10px rgba(23, 23, 15, .12);
+  --shadow-pop:
+    0 4px 8px rgba(23, 23, 15, .06),
+    0 24px 56px -12px rgba(23, 23, 15, .18);
+
+  /* ---- 曲线：只有这三条，不许手搓 ---- */
+  --ease-out:    cubic-bezier(.23, 1, .32, 1);
+  --ease-in-out: cubic-bezier(.77, 0, .175, 1);
+  --ease-drawer: cubic-bezier(.32, .72, 0, 1);
+
+  /* ---- 字 ---- */
+  --font-ui: "Inter", "Inter var", -apple-system, "Segoe UI Variable Text",
+             "Segoe UI", "Source Han Sans SC", "Noto Sans SC",
+             "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-serif: "Instrument Serif", "Noto Serif SC", "Source Han Serif SC",
+                Georgia, "Songti SC", serif;
+  --font-mono: "Cascadia Code", "SF Mono", ui-monospace, Consolas, monospace;
+}
+
+/* ---- 深色：同一套语义，只换明度 ---- */
+:root[data-theme="dark"] {
+  --paper:      #191815;
+  --paper-2:    #131210;
+  --card:       #232220;
+  --card-sunk:  #1D1C1A;
+  --card-hover: #2A2825;
+
+  --ink:        #F2F1ED;
+  --ink-2:      #A5A29A;
+  --ink-3:      #75726B;
+  --ink-4:      #4A4844;
+
+  --glass:      rgba(42, 40, 37, .62);
+  --glass-lip:  rgba(255, 255, 255, .10);
+  --glass-ring: rgba(255, 255, 255, .07);
+  --hairline:   rgba(242, 241, 237, .09);
+  --hairline-2: rgba(242, 241, 237, .16);
+
+  --indigo: #A5A4F5; --indigo-bg: rgba(122, 122, 232, .18);
+  --amber:  #E0A44E; --amber-bg:  rgba(210, 140, 50, .18);
+  --teal:   #52BFC7; --teal-bg:   rgba(30, 160, 172, .18);
+  --green:  #74C295; --green-bg:  rgba(70, 165, 112, .18);
+  --terracotta: #E08055; --terracotta-bg: rgba(200, 95, 50, .18);
+  --solid:  #F2F1ED;
+
+  --shadow-card: 0 1px 2px rgba(0,0,0,.30), 0 8px 24px -6px rgba(0,0,0,.44);
+  --shadow-lift: 0 2px 4px rgba(0,0,0,.34), 0 16px 40px -10px rgba(0,0,0,.52);
+  --shadow-pop:  0 4px 8px rgba(0,0,0,.38), 0 24px 56px -12px rgba(0,0,0,.60);
+}
+:root[data-theme="dark"] .btn-solid { color: #17170F; }
+:root[data-theme="dark"] body {
+  background-image:
+    radial-gradient(58% 44% at 12% 6%,  rgba(96, 84, 62, .34) 0%, transparent 62%),
+    radial-gradient(48% 40% at 92% 22%, rgba(58, 84, 82, .32) 0%, transparent 60%),
+    radial-gradient(64% 48% at 74% 96%, rgba(84, 66, 60, .30) 0%, transparent 64%);
+}
+
+/* ============================================================
+   基础
+   ============================================================ */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--paper);
+  background-image:
+    radial-gradient(58% 44% at 12% 6%,  rgba(226, 208, 176, .34) 0%, transparent 62%),
+    radial-gradient(48% 40% at 92% 22%, rgba(186, 210, 206, .30) 0%, transparent 60%),
+    radial-gradient(64% 48% at 74% 96%, rgba(220, 202, 196, .28) 0%, transparent 64%);
+  background-attachment: fixed;
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: 15px;
+  font-weight: 450;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-variant-numeric: tabular-nums;
+}
+
+button, input, textarea { font: inherit; color: inherit; }
+button { background: none; border: 0; padding: 0; cursor: pointer; }
+
+/* 必须在组件的 display 之后仍然生效 */
+[hidden] { display: none !important; }
+
+:focus-visible {
+  outline: 2px solid var(--indigo);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb {
+  background: var(--hairline-2);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--ink-4); background-clip: content-box; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* ============================================================
+   卡片：白，圆角 18，两层暖影，无边框
+   ============================================================ */
+
+/* 玻璃板：模糊层给质感，上缘一道内高光给厚度，发丝环给边。
+   底下那层暖色场是它折射的对象——没有那层，玻璃就是一块白。 */
+.card {
+  background: var(--glass);
+  backdrop-filter: blur(22px) saturate(1.7);
+  -webkit-backdrop-filter: blur(22px) saturate(1.7);
+  border-radius: var(--r-card);
+  box-shadow:
+    inset 0 1px 0 var(--glass-lip),
+    inset 0 0 0 1px var(--glass-ring),
+    var(--shadow-card);
+  padding: 16px 18px;
+}
+.card-lift { box-shadow: var(--shadow-lift); }
+
+/* 卡片进场：translateY(8) + opacity，200ms，错峰 40ms。绝不 scale(0) */
+@keyframes card-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: none; }
+}
+.enter { animation: card-in 200ms var(--ease-out) both; }
+.enter:nth-child(2) { animation-delay: 40ms; }
+.enter:nth-child(3) { animation-delay: 80ms; }
+.enter:nth-child(4) { animation-delay: 120ms; }
+.enter:nth-child(5) { animation-delay: 160ms; }
+
+/* ============================================================
+   药丸 / chip
+   ============================================================ */
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  border-radius: var(--r-pill);
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  background: var(--paper-2);
+  color: var(--ink-2);
+}
+.pill svg { width: 15px; height: 15px; flex: none; }
+
+.pill-indigo     { background: var(--indigo-bg);     color: var(--indigo); }
+.pill-amber      { background: var(--amber-bg);      color: var(--amber); }
+.pill-teal       { background: var(--teal-bg);       color: var(--teal); }
+.pill-green      { background: var(--green-bg);      color: var(--green); }
+.pill-terracotta { background: var(--terracotta-bg); color: var(--terracotta); }
+
+/* 文件 chip：缩略图 + 文件名 */
+.chip-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  height: 44px;
+  padding: 0 16px 0 6px;
+  border-radius: 14px;
+  background: var(--card);
+  box-shadow: var(--shadow-card);
+  font-size: 15px;
+  font-weight: 600;
+  transition: transform 140ms var(--ease-out), box-shadow 140ms var(--ease-out);
+}
+.chip-file .thumb {
+  width: 32px; height: 32px;
+  border-radius: 8px;
+  background: var(--paper-2) center/cover;
+  flex: none;
+  display: grid; place-items: center;
+  color: var(--ink-3);
+}
+.chip-file .thumb svg { width: 17px; height: 17px; }
+.chip-file:active { transform: scale(.97); }
+
+/* ============================================================
+   按钮
+   ============================================================ */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 36px;
+  padding: 0 16px;
+  border-radius: var(--r-pill);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-2);
+  transition:
+    background-color 140ms var(--ease-out),
+    color 140ms var(--ease-out),
+    transform 140ms var(--ease-out);
+}
+.btn svg { width: 16px; height: 16px; }
+.btn:active { transform: scale(.97); }
+
+.btn-solid { background: var(--solid); color: var(--card); }
+.btn-quiet { background: var(--paper-2); }
+.btn-ghost { box-shadow: inset 0 0 0 1px var(--hairline); }
+.btn-danger { color: var(--terracotta); background: var(--terracotta-bg); }
+
+/* 圆形幽灵图标按钮（Oreo 那种 📎 @ ⚙） */
+.icon-btn {
+  width: 36px; height: 36px;
+  border-radius: var(--r-pill);
+  display: grid; place-items: center;
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  transition:
+    background-color 140ms var(--ease-out),
+    box-shadow 140ms var(--ease-out),
+    transform 140ms var(--ease-out);
+}
+.icon-btn svg { width: 17px; height: 17px; }
+.icon-btn:active { transform: scale(.94); }
+.icon-btn.is-plain { box-shadow: none; color: var(--ink-2); }
+.icon-btn.is-on { background: var(--indigo-bg); color: var(--indigo); box-shadow: none; }
+
+/* 发送：实心圆 */
+.send-btn {
+  width: 36px; height: 36px;
+  border-radius: var(--r-pill);
+  background: var(--solid);
+  color: var(--card);
+  display: grid; place-items: center;
+  transition: transform 140ms var(--ease-out), opacity 140ms var(--ease-out);
+}
+.send-btn svg { width: 17px; height: 17px; }
+.send-btn:active { transform: scale(.94); }
+.send-btn[disabled] { opacity: .3; cursor: default; }
+
+@media (hover: hover) and (pointer: fine) {
+  .btn:hover        { color: var(--ink); background: var(--paper-2); }
+  .btn-solid:hover  { background: #000; color: var(--card); }
+  .btn-danger:hover { background: rgba(180, 74, 36, .17); }
+  .icon-btn:hover   { background: var(--paper-2); box-shadow: inset 0 0 0 1px var(--hairline-2); }
+  .icon-btn.is-plain:hover { color: var(--ink); }
+  .send-btn:hover   { background: #000; }
+  .chip-file:hover  { box-shadow: var(--shadow-lift); }
+}
+
+/* ============================================================
+   Composer：输入框 + 底排
+   ============================================================ */
+
+.composer {
+  background: var(--card);
+  border-radius: var(--r-input);
+  box-shadow: var(--shadow-card);
+  padding: 14px 14px 10px;
+  transition: box-shadow 180ms var(--ease-out);
+}
+.composer:focus-within { box-shadow: var(--shadow-lift); }
+
+.composer textarea {
+  display: block;
+  width: 100%;
+  min-height: 46px;
+  max-height: 200px;
+  border: 0;
+  outline: 0;
+  resize: none;
+  background: none;
+  font-size: 15px;
+  line-height: 1.55;
+  padding: 2px 4px 8px;
+}
+.composer textarea::placeholder { color: var(--ink-3); }
+
+.composer-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.composer-bar .spacer { flex: 1; }
+
+/* 模型选择器 */
+.model-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: var(--r-pill);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink-2);
+  transition: background-color 140ms var(--ease-out), transform 140ms var(--ease-out);
+}
+.model-select .spark { color: var(--terracotta); }
+.model-select svg { width: 15px; height: 15px; }
+.model-select:active { transform: scale(.97); }
+@media (hover: hover) and (pointer: fine) {
+  .model-select:hover { background: var(--paper-2); color: var(--ink); }
+}
+
+/* ============================================================
+   事实卡：标题 + 计数 + 若干行
+   ============================================================ */
+
+.facts { padding: 0; overflow: hidden; }
+.facts-head {
+  display: flex; align-items: center;
+  padding: 13px 18px;
+  font-size: 14px; font-weight: 600;
+  color: var(--ink-2);
+}
+.facts-head .count { margin-left: auto; color: var(--ink-3); font-weight: 450; }
+.fact-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 11px 18px;
+  border-top: 1px solid var(--hairline);
+  font-size: 15px;
+}
+.fact-row > svg { width: 17px; height: 17px; color: var(--ink-3); flex: none; }
+.fact-row .label { font-weight: 500; }
+.fact-row .value { margin-left: auto; color: var(--ink-2); font-size: 14px; }
+.fact-row .value.is-pill {
+  height: 24px; padding: 0 10px; border-radius: var(--r-pill);
+  display: inline-flex; align-items: center; font-weight: 600; font-size: 13px;
+}
+
+/* ============================================================
+   过程轨迹 trace —— 不是卡片
+   ------------------------------------------------------------
+   每一步都露出来（不是黑盒），但每一步都很轻：13px 灰字 + 左侧发丝轨。
+   卡片留给「结果」，过程只用文字。参考 d1ee3f49 的 Thought for 6s。
+   ============================================================ */
+
+.trace {
+  display: flex; flex-direction: column;
+  gap: 1px;
+  padding-left: 2px;
+  border-left: 1.5px solid var(--hairline);
+  margin-left: 6px;
+}
+.trace-step { display: block; }
+.trace-step > summary,
+.trace-line {
+  display: flex; align-items: center; gap: 8px;
+  height: 26px; padding: 0 8px 0 10px;
+  margin-left: -1.5px;
+  font-size: 13px;
+  color: var(--ink-3);
+  border-radius: 7px;
+  list-style: none;
+  transition: color 140ms var(--ease-out), background-color 140ms var(--ease-out);
+}
+.trace-step > summary { cursor: pointer; }
+.trace-step > summary::-webkit-details-marker { display: none; }
+.trace-line > svg:first-child,
+.trace-step > summary > svg:first-child { width: 14px; height: 14px; flex: none; }
+.trace-line .n,
+.trace-step > summary .n { color: var(--ink-4); }
+.trace-step > summary .caret {
+  width: 13px; height: 13px; margin-left: 2px;
+  transition: transform 180ms var(--ease-out);
+}
+.trace-step[open] > summary .caret { transform: rotate(180deg); }
+.trace-step[open] > summary { color: var(--ink-2); }
+
+.trace-detail {
+  padding: 4px 8px 10px 32px;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--ink-3);
+}
+.trace-detail p { margin: 0 0 5px; }
+.trace-detail p:last-child { margin: 0; }
+
+.trace-src { display: flex; align-items: center; gap: 8px; padding: 3px 0; max-width: 380px; }
+.trace-src svg { width: 13px; height: 13px; flex: none; color: var(--ink-4); }
+.trace-src .tag { margin-left: auto; font-size: 11.5px; font-weight: 600; }
+.tag-indigo { color: var(--indigo); }
+.tag-amber  { color: var(--amber); }
+.tag-teal   { color: var(--teal); }
+.trace-src.is-miss, .trace-src.is-miss svg, .trace-src.is-miss .tag { color: var(--ink-4); }
+
+@media (hover: hover) and (pointer: fine) {
+  .trace-step > summary:hover { color: var(--ink-2); background: var(--paper-2); }
+}
+
+/* ============================================================
+   计划卡：竖排步骤，进行中那行抬起
+   ============================================================ */
+
+/* 计划卡不是卡：它就贴在页底色上，只有「正在做」那一行浮成白卡 */
+.plan { padding: 2px 0; background: transparent; box-shadow: none; }
+.plan-step {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 12px;
+  border-radius: 13px;
+  font-size: 15px;
+  transition: background-color 180ms var(--ease-out), box-shadow 180ms var(--ease-out);
+}
+.plan-step .dot {
+  width: 20px; height: 20px; flex: none;
+  display: grid; place-items: center;
+  color: var(--ink-4);
+}
+.plan-step .dot svg { width: 19px; height: 19px; }
+.plan-step .time {
+  font-size: 13px; color: var(--ink-3); min-width: 42px;
+  font-variant-numeric: tabular-nums;
+}
+.plan-step.is-done .dot { color: var(--green); }
+.plan-step.is-done .label { color: var(--ink-2); }
+.plan-step.is-now {
+  background: var(--card);
+  box-shadow: var(--shadow-lift);
+  font-weight: 600;
+}
+.plan-step.is-now .dot { color: var(--indigo); }
+.plan-step.is-todo .label,
+.plan-step.is-todo .time { color: var(--ink-4); }
+
+/* 旋转小点 */
+.spin { animation: spin 900ms linear infinite; transform-origin: 50% 50%; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ============================================================
+   进行中卡 / 决策卡：顶部 5 段进度
+   ============================================================ */
+
+.seg-bar { display: flex; gap: 6px; margin-bottom: 14px; }
+.seg {
+  height: 3px; width: 46px; flex: none;
+  border-radius: 999px;
+  background: var(--paper-2);
+  overflow: hidden;
+}
+.seg::after {
+  content: "";
+  display: block; height: 100%;
+  background: var(--ink);
+  border-radius: inherit;
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 180ms var(--ease-out);
+}
+.seg.is-on::after { transform: scaleX(1); }
+.seg:nth-child(2).is-on::after { transition-delay: 60ms; }
+.seg:nth-child(3).is-on::after { transition-delay: 120ms; }
+.seg:nth-child(4).is-on::after { transition-delay: 180ms; }
+.seg:nth-child(5).is-on::after { transition-delay: 240ms; }
+
+.run-title {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 15px; font-weight: 600;
+}
+.run-title svg { width: 16px; height: 16px; color: var(--ink-2); }
+.run-sub {
+  margin: 5px 0 0;
+  font-size: 14px; color: var(--ink-3);
+}
+.run-actions {
+  display: flex; justify-content: flex-end; gap: 8px;
+  margin-top: 14px;
+}
+
+/* ============================================================
+   写回卡：三档
+   ============================================================ */
+
+.writeback { padding: 0; overflow: hidden; }
+.writeback-preview {
+  margin: 0;
+  padding: 14px 18px;
+  background: var(--card-sunk);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  color: var(--ink-2);
+}
+.writeback-preview ins { background: var(--green-bg); color: var(--green); text-decoration: none; }
+.writeback-preview del { background: var(--terracotta-bg); color: var(--terracotta); }
+.writeback-foot {
+  display: flex; align-items: center; gap: 8px;
+  padding: 12px 16px;
+}
+.writeback-foot .spacer { flex: 1; }
+
+/* ============================================================
+   产物卡
+   ============================================================ */
+
+.artifact {
+  display: flex; align-items: center; gap: 13px;
+  padding: 13px 16px;
+  width: 100%;
+  text-align: left;
+  transition: box-shadow 160ms var(--ease-out), transform 160ms var(--ease-out);
+}
+.artifact .tile {
+  width: 38px; height: 38px; flex: none;
+  border-radius: var(--r-tile);
+  display: grid; place-items: center;
+  background: var(--indigo-bg); color: var(--indigo);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+}
+.artifact .tile svg { width: 19px; height: 19px; }
+.artifact .name { font-size: 15px; font-weight: 600; }
+.artifact .meta { font-size: 13px; color: var(--ink-3); }
+.artifact:active { transform: scale(.99); }
+@media (hover: hover) and (pointer: fine) {
+  .artifact:hover { box-shadow: var(--shadow-lift); }
+}
+
+/* ============================================================
+   提示卡
+   ============================================================ */
+
+.notice {
+  display: flex; align-items: flex-start; gap: 12px;
+  padding: 15px 16px;
+  position: relative;
+}
+.notice > svg:first-child { width: 17px; height: 17px; color: var(--ink-3); flex: none; margin-top: 2px; }
+.notice .body { flex: 1; font-size: 14px; color: var(--ink-2); line-height: 1.55; }
+.notice .body strong { display: block; color: var(--ink); font-size: 15px; margin-bottom: 3px; }
+.notice .art {
+  width: 74px; height: 62px; flex: none;
+  border-radius: var(--r-tile);
+  background: var(--indigo-bg);
+  display: grid; place-items: center;
+  color: var(--indigo);
+}
+.notice .art svg { width: 28px; height: 28px; }
+.notice .close { position: absolute; top: 10px; right: 10px; color: var(--ink-3); }
+.notice .close svg { width: 15px; height: 15px; }
+
+/* ============================================================
+   消息
+   ============================================================ */
+
+.msg-user {
+  align-self: flex-end;
+  max-width: 78%;
+  padding: 10px 16px;
+  border-radius: var(--r-input);
+  background: var(--paper-2);
+  font-size: 15px;
+}
+.msg-ai { font-size: 15px; line-height: 1.68; }
+.msg-ai p { margin: 0 0 12px; }
+.msg-ai p:last-child { margin-bottom: 0; }
+
+/* ============================================================
+   对象球：反对角线为轴的流动渐变
+   ------------------------------------------------------------
+   动的是渐变本身（SVG animateTransform），不是元素在转——
+   小到 24px 也看得出来在流。减弱动效下由下面的全局规则停住。
+   ============================================================ */
+
+.orb svg { display: block; width: 100%; height: 100%; }
+
+/* ============================================================
+   减弱动效：更少更轻，不是全关
+   ============================================================ */
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 120ms !important;
+  }
+  .enter { animation: none; }
+  .seg::after { transition-delay: 0ms !important; }
+  .btn:active, .icon-btn:active, .send-btn:active, .chip-file:active { transform: none; }
+  .spin { animation-duration: 1.6s !important; animation-iteration-count: infinite !important; }
+}
+
+/* ============================================================
+   刻度滑杆 —— 一排竖条，抓着走
+   ------------------------------------------------------------
+   条的高度和深浅按离手柄的距离衰减：越近越矮越淡，越远越高越实。
+   所以你一眼就知道自己抓在哪，不用去看数字。数值气泡浮在手柄上。
+   ============================================================ */
+
+.tick {
+  position: relative;
+  height: 56px;
+  padding: 0 14px;
+  border-radius: 16px;
+  background: var(--card-sunk);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+  display: flex; align-items: center; gap: 3px;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.tick.is-grab { cursor: grabbing; }
+.tick i {
+  display: block;
+  flex: 1;
+  min-width: 2px;
+  border-radius: 999px;
+  background: var(--ink);
+  /* 高度和透明度由 JS 按距离写在元素上；这里只管过渡 */
+  transition: height 260ms var(--ease-out), opacity 260ms var(--ease-out);
+}
+.tick-knob {
+  position: absolute;
+  top: -30px;
+  transform: translateX(-50%);
+  min-width: 44px;
+  padding: 5px 9px 3px;
+  border-radius: 12px;
+  background: var(--card);
+  box-shadow:
+    inset 0 1px 0 var(--glass-lip),
+    0 2px 5px rgba(23,23,15,.08),
+    0 12px 26px -8px rgba(23,23,15,.20);
+  text-align: center;
+  font-size: 17px; font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  transition: left 90ms linear;
+}
+.tick-knob::after {
+  content: "";
+  position: absolute; left: 50%; bottom: -5px;
+  width: 10px; height: 10px;
+  transform: translateX(-50%) rotate(45deg);
+  background: var(--card);
+  border-radius: 2px;
+}
+.tick-knob em { display: block; font-style: normal; font-size: 10.5px; font-weight: 500; color: var(--ink-3); }
+
+/* ============================================================
+   数据卡片 —— 给后面那些功能用
+   ------------------------------------------------------------
+   照「强质感」那组：分段进度条 + 一个饱和强调色 + 辉光，
+   大字用 tabular-nums 且小数位调淡，底下一排三个小指标。
+   ============================================================ */
+
+.metric { padding: 16px 18px 14px; }
+.metric-top { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-2); }
+.metric-top svg { width: 15px; height: 15px; color: var(--ink-3); }
+.metric-top .when { margin-left: auto; color: var(--ink-3); font-size: 12.5px; }
+
+.metric-big {
+  display: flex; align-items: baseline; gap: 6px;
+  margin: 10px 0 2px;
+  font-size: 34px; font-weight: 600; letter-spacing: -.02em;
+  font-variant-numeric: tabular-nums;
+}
+.metric-big .frac { color: var(--ink-4); }
+.metric-big .unit { font-size: 13px; font-weight: 500; color: var(--ink-3); letter-spacing: 0; }
+.metric-delta {
+  display: inline-flex; align-items: center; gap: 4px;
+  height: 22px; padding: 0 8px; border-radius: var(--r-pill);
+  font-size: 12.5px; font-weight: 600;
+}
+
+/* 分段条：一格一格填，最后一格带辉光 */
+.notch { display: flex; gap: 3px; height: 26px; margin: 12px 0 10px; }
+.notch i {
+  flex: 1;
+  border-radius: 5px;
+  background: var(--paper-2);
+  transition: background-color 220ms var(--ease-out), box-shadow 220ms var(--ease-out);
+}
+.notch i.on { background: var(--accent, var(--indigo)); }
+.notch i.on:last-of-type,
+.notch i.on + i:not(.on) { }
+.notch i.tip {
+  box-shadow: 0 0 0 1px var(--card), 0 0 16px 2px color-mix(in srgb, var(--accent, var(--indigo)) 55%, transparent);
+}
+
+.metric-foot {
+  display: flex; gap: 2px;
+  margin: 0 -6px -4px;
+}
+.metric-foot > span {
+  flex: 1;
+  padding: 8px 10px;
+  border-radius: 11px;
+  text-align: center;
+}
+.metric-foot > span + span { box-shadow: inset 1px 0 0 var(--hairline); }
+.metric-foot b { display: block; font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.metric-foot small { font-size: 11.5px; color: var(--ink-3); }
+
+/* 强调色可换；产品里已有语义的两个来源色也能直接用 */
+.accent-indigo { --accent: var(--indigo); }
+.accent-amber  { --accent: var(--amber); }
+.accent-teal   { --accent: var(--teal); }
+.accent-green  { --accent: var(--green); }
+.accent-terra  { --accent: var(--terracotta); }

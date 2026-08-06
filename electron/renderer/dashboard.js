@@ -462,7 +462,6 @@ function setValue(id, value) {
 function applySettings(value) {
   settings = structuredClone(value);
   const general = settings.general || {};
-  const notifications = settings.notifications || {};
   const activation = settings.activation || {};
   const interaction = settings.interaction || {};
   const privacy = settings.privacy || {};

@@ -178,6 +178,37 @@ def _normalize(command: str) -> str:
     return re.sub(r"\s+", " ", value)
 
 
+_QUESTION_PREFIXES = (
+    "what ", "which ", "who ", "where ", "when ", "why ", "how ",
+    "is this ", "are these ", "does this ", "did i ", "tell me ",
+    "什么", "哪个", "哪一", "为什么", "怎么", "是否", "这是什么", "这段是什么",
+)
+_QUESTION_ACTION_MARKERS = (
+    "copy", "extract", "save", "translate", "rewrite", "summarize", "create",
+    "add to", "send to", "open ", "run ", "ocr this", "ocr it",
+    "复制", "提取", "保存", "翻译", "改写", "重写", "总结", "创建", "添加", "发送", "打开", "运行", "识别",
+)
+
+
+def _is_information_question(command: str) -> bool:
+    value = _normalize(command)
+    looks_like_question = (
+        "?" in value
+        or "？" in value
+        or value.startswith(_QUESTION_PREFIXES)
+        or any(token in value for token in (
+            "是什么意思", "是哪一", "是什么内容", "吗",
+            # Short spoken commands are how this product is actually used.
+            # They are requests for an answer about the grounded objects, not
+            # requests to pick a capability from the entire Recipe catalog.
+            "对比", "比较", "区别", "解释", "分析", "评价", "评估", "哪个好",
+        ))
+    )
+    if not looks_like_question:
+        return False
+    return not any(marker in value for marker in _QUESTION_ACTION_MARKERS)
+
+
 # ---------------------------------------------------------------------------
 # Saved instructions (the long-tail learning store)
 # ---------------------------------------------------------------------------
@@ -389,6 +420,19 @@ class IntentRouter:
                     reason="deterministic_local_action",
                     reference_mode=self._keyword_router.reference_mode(value),
                 )
+
+        # Questions about the grounded object are destinations in their own
+        # right. Sending "What is OCR?" through the OCR-copy recipe creates a
+        # clipboard confirmation instead of an answer and can spend two model
+        # timeouts getting there.
+        if _is_information_question(command):
+            return RouteDecision(
+                tier=TIER_DETERMINISTIC,
+                action=ACT_MODEL,
+                confidence=0.98,
+                reason="information_question",
+                reference_mode=self._keyword_router.reference_mode(value),
+            )
 
         for recipe_id, phrases in DETERMINISTIC_RULES:
             if not any(phrase in value for phrase in phrases):

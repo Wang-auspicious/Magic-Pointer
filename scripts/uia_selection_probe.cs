@@ -190,7 +190,14 @@ internal static class UiaSelectionProbe
                 result.RootHwnd = SafeInt(root, AutomationElement.NativeWindowHandleProperty);
                 if (targetRegion.HasValue)
                 {
-                    TryRegionElements(root, targetRegion.Value, result);
+                    if (IsTerminalWindow(root))
+                    {
+                        TryTerminalBufferAtPoint(root, RegionCenter(targetRegion.Value), result);
+                    }
+                    if (!result.Ok)
+                    {
+                        TryRegionElements(root, targetRegion.Value, result);
+                    }
                 }
                 else
                 {
@@ -722,6 +729,7 @@ internal static class UiaSelectionProbe
                 return false;
             }
             string anchorText = "";
+            List<Rect> anchorRectangles = new List<Rect>();
             try
             {
                 TextPatternRange anchor = pattern.RangeFromPoint(point);
@@ -729,6 +737,18 @@ internal static class UiaSelectionProbe
                 {
                     anchor.ExpandToEnclosingUnit(TextUnit.Line);
                     anchorText = (anchor.GetText(2048) ?? "").Trim();
+                    Rect[] lineRectangles = anchor.GetBoundingRectangles();
+                    if (lineRectangles != null)
+                    {
+                        for (int index = 0; index < lineRectangles.Length && anchorRectangles.Count < 32; index++)
+                        {
+                            Rect lineRectangle = lineRectangles[index];
+                            if (!lineRectangle.IsEmpty && lineRectangle.Width > 0 && lineRectangle.Height > 0)
+                            {
+                                anchorRectangles.Add(lineRectangle);
+                            }
+                        }
+                    }
                 }
             }
             catch
@@ -746,7 +766,12 @@ internal static class UiaSelectionProbe
             result.LocalizedControlType = SafeString(element, AutomationElement.LocalizedControlTypeProperty);
             result.ClassName = SafeString(element, AutomationElement.ClassNameProperty);
             result.ElementRectangle = rectangle;
-            if (!rectangle.IsEmpty)
+            if (anchorRectangles.Count > 0)
+            {
+                result.Rectangles.AddRange(anchorRectangles);
+                result.RectangleCountTotal = anchorRectangles.Count;
+            }
+            else if (!rectangle.IsEmpty)
             {
                 result.Rectangles.Add(rectangle);
                 result.RectangleCountTotal = 1;
@@ -758,6 +783,11 @@ internal static class UiaSelectionProbe
         {
             return false;
         }
+    }
+
+    private static Point RegionCenter(Rect region)
+    {
+        return new Point(region.Left + (region.Width / 2.0), region.Top + (region.Height / 2.0));
     }
 
     private static bool IsRegionControlType(string controlType)
@@ -776,6 +806,12 @@ internal static class UiaSelectionProbe
             case "ControlType.Hyperlink":
             case "ControlType.TabItem":
             case "ControlType.MenuItem":
+            // RichEdit-based apps such as Windows 11 Notepad expose the whole
+            // editor as one Document and no row-level children. Keeping it as
+            // a last-resort result lets the caller identify a container after
+            // one region probe instead of repeating ElementFromPoint across
+            // the stroke. It is removed below whenever tighter elements exist.
+            case "ControlType.Document":
                 return true;
             default:
                 return false;
@@ -894,6 +930,16 @@ internal static class UiaSelectionProbe
         {
             result.Error = "UI Automation region enumeration failed: " + ex.GetType().Name;
             return;
+        }
+
+        bool hasNonDocumentElement = found.Exists(delegate(RegionElement item) {
+            return item.ControlType != "ControlType.Document";
+        });
+        if (hasNonDocumentElement)
+        {
+            found.RemoveAll(delegate(RegionElement item) {
+                return item.ControlType == "ControlType.Document";
+            });
         }
 
         found.Sort(delegate(RegionElement left, RegionElement right) {

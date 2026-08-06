@@ -16,7 +16,7 @@ Magic Pointer 是一个默认不可见的跨应用操作层。用户在任何应
 
 ## 现在能做什么
 
-产品内有 30 个可组合 Recipe，覆盖以下高频工作：
+产品内有 39 个可组合 Recipe（定义在 `data/recipes/`，插件目录可加载），覆盖以下高频工作：
 
 - 把网页/PDF 选区连同来源、页码、边框和文件哈希保存成证据卡；
 - Word/WPS 选区改写或翻译，预览差异后原位写回，并支持精确恢复；
@@ -30,9 +30,8 @@ Magic Pointer 是一个默认不可见的跨应用操作层。用户在任何应
 - MCP 只作为没有 hook/plugin/session API 时的通用兼容层；
 - Dashboard 管理晃动、Agent、Recipe、权限、隐私、审计与诊断。
 
-完整清单、竞品依据和验收标准见
-[`PRODUCT_BLUEPRINT_20260726.md`](PRODUCT_BLUEPRINT_20260726.md)，实际使用路径见
-[`docs/USER_WORKFLOWS.md`](docs/USER_WORKFLOWS.md)。
+定位与竞品依据见 [`docs/PRODUCT.md`](docs/PRODUCT.md)，当前真实完成度与限制见
+[`docs/STATUS.md`](docs/STATUS.md)。
 
 ## 交互
 
@@ -53,9 +52,9 @@ Magic Pointer 是一个默认不可见的跨应用操作层。用户在任何应
 滚动、窗口移动和禁用应用里拒绝触发。Dashboard 可以调整灵敏度、禁用应用，并将
 默认输入方式设为“语音”或“文字”；这个选择不再占用临时提示框。
 
-语音默认走本机 OpenAI Whisper，不调用 Windows `Win+H`，因此不会弹出第二层系统听写
-界面，也不会上传录音。当前安装需要本地已有 Whisper 模型缓存；没有模型时会在同一个
-气泡内明确报错，不会静默联网下载。
+默认输入方式是**打字**，语音是加速方式而非主路径（开放办公室里说话不可用）。语音走本机
+SenseVoice，失败自动回退 Whisper，都不调用 Windows `Win+H`，因此不会弹出第二层系统听写
+界面，也不会上传录音。没有本地模型时会在同一个气泡内明确报错，不会静默联网下载。
 
 辅助入口：
 
@@ -124,14 +123,11 @@ python scripts/smoke_fabric.py
 主要架构入口：
 
 - [`app/fabric/engine.py`](app/fabric/engine.py)：规划、权限、签名和执行；
-- [`app/fabric/catalog.py`](app/fabric/catalog.py)：30 个 Recipe；
+- [`app/fabric/catalog.py`](app/fabric/catalog.py)：Recipe manifest 加载器；
 - [`app/fabric/mcp.py`](app/fabric/mcp.py)：Agent 反向调用接口；
 - [`electron/wiggle_detector.js`](electron/wiggle_detector.js)：晃动意图检测；
 - [`electron/main.js`](electron/main.js)：Electron 生命周期、捕获和安全 IPC；
 - [`scripts/local_voice_bridge.py`](scripts/local_voice_bridge.py)：无系统浮层的本地语音转写；
 - [`electron/renderer/dashboard.html`](electron/renderer/dashboard.html)：控制台。
 
-逐帧交互依据见
-[`GOOGLE_DEMO_FRAME_ANALYSIS_20260726.md`](GOOGLE_DEMO_FRAME_ANALYSIS_20260726.md)，
-当前真实完成度与限制见
-[`IMPLEMENTATION_STATUS_20260726.md`](IMPLEMENTATION_STATUS_20260726.md)。
+模块地图、实测数字和关键架构决策见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。

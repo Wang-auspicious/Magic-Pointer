@@ -12,7 +12,6 @@ let lastPointer = null;
 let trailAlpha = 1;
 let fadeRaf = null;
 let captureMode = false;
-let requestSeq = 0;
 let submitting = false;
 // Committed strokes of the current chain. The user can circle several
 // regions before the session finalizes ("circle this, and this, then run
@@ -21,6 +20,7 @@ let submitting = false;
 let strokes = [];
 let chainTimer = null;
 let chainHintTimer = null;
+let chainDeadlineAt = 0;
 const DEFAULT_CHAIN_GAP_MS = 2500;
 let gestureChainGapMs = DEFAULT_CHAIN_GAP_MS;
 let renderRaf = null;
@@ -198,7 +198,7 @@ function drawSmoothPath(path, alpha = 1) {
   ctx.lineJoin = 'round';
   ctx.globalCompositeOperation = 'source-over';
 
-  function trace(width, color, blur = 0, a = alpha) {
+  function trace(width, color, a = alpha) {
     ctx.beginPath();
     ctx.moveTo(path[0].x, path[0].y);
     for (let i = 1; i < path.length - 1; i++) {
@@ -220,12 +220,12 @@ function drawSmoothPath(path, alpha = 1) {
   // No canvas shadow: Windows transparent surfaces can retain rectangular
   // backing-store ghosts around blurred strokes.
   if (gestureLineStyle === 'thin') {
-    trace(gestureLineWidth, 'rgba(49, 119, 255, 0.34)', 0, alpha);
-    trace(Math.max(1.15, gestureLineWidth * 0.22), 'rgba(226, 241, 255, 0.64)', 0, alpha);
+    trace(gestureLineWidth, 'rgba(49, 119, 255, 0.34)', alpha);
+    trace(Math.max(1.15, gestureLineWidth * 0.22), 'rgba(226, 241, 255, 0.64)', alpha);
   } else {
-    trace(gestureLineWidth, 'rgba(92, 160, 255, 0.18)', 0, alpha);
-    trace(gestureLineWidth * 0.72, 'rgba(73, 145, 255, 0.17)', 0, alpha);
-    trace(Math.max(1.2, gestureLineWidth * 0.075), 'rgba(225, 241, 255, 0.38)', 0, alpha);
+    trace(gestureLineWidth, 'rgba(92, 160, 255, 0.18)', alpha);
+    trace(gestureLineWidth * 0.72, 'rgba(73, 145, 255, 0.17)', alpha);
+    trace(Math.max(1.2, gestureLineWidth * 0.075), 'rgba(225, 241, 255, 0.38)', alpha);
   }
   ctx.globalCompositeOperation = 'source-over';
   ctx.restore();
@@ -359,10 +359,14 @@ function showChainHint(count) {
 
 function scheduleChainFinalize() {
   if (chainTimer) clearTimeout(chainTimer);
+  const delay = globalThis.GestureCapture.chainFinalizeDelay({
+    now: performance.now(),
+    deadlineAt: chainDeadlineAt,
+  });
   chainTimer = setTimeout(() => {
     chainTimer = null;
     finalizeGesture();
-  }, gestureChainGapMs);
+  }, delay);
 }
 
 function finalizeGesture() {
@@ -376,6 +380,7 @@ function finalizeGesture() {
     hint.classList.add('dim');
   }
   if (!strokes.length || submitting) return;
+  chainDeadlineAt = 0;
   const graceRemaining = gestureAcceptAt - Date.now();
   if (gestureMode && graceRemaining > 0) {
     if (gestureGraceTimer) clearTimeout(gestureGraceTimer);
@@ -395,16 +400,9 @@ function hideVisualsForCapture() {
   clear();
 }
 
-function restoreAfterCapture(seq) {
-  if (seq !== requestSeq) return;
-  captureMode = false;
-  render();
-}
-
 function submitGesture() {
   if (submitting || !strokes.length) return;
   submitting = true;
-  const seq = ++requestSeq;
   const payload = { ...computeSelectionPayload(), workflow: currentWorkflow };
 
   // Critical: remove our own overlay before Python ImageGrab runs.
@@ -426,12 +424,12 @@ function resetOverlay() {
   strokes = [];
   if (chainTimer) clearTimeout(chainTimer);
   chainTimer = null;
+  chainDeadlineAt = 0;
   if (chainHintTimer) clearTimeout(chainHintTimer);
   chainHintTimer = null;
   lastPointer = null;
   trailAlpha = 1;
   captureMode = false;
-  requestSeq += 1;
   submitting = false;
   if (fadeRaf) cancelAnimationFrame(fadeRaf);
   if (renderRaf) cancelAnimationFrame(renderRaf);
@@ -554,7 +552,13 @@ window.addEventListener('pointerdown', (e) => {
 window.addEventListener('pointermove', (e) => {
   if (captureMode) return;
   if (!drawing) {
-    lastPointer = { x: e.clientX, y: e.clientY, t: performance.now() };
+    const nextPointer = { x: e.clientX, y: e.clientY, t: performance.now() };
+    const continuesChain = strokes.length > 0 && chainTimer && globalThis.GestureCapture
+      .pointerContinuesGestureChain(lastPointer, nextPointer);
+    lastPointer = nextPointer;
+    // Deliberate travel toward another target is activity, while tiny pointer
+    // jitter is not. The hard deadline still bounds the total inter-stroke gap.
+    if (continuesChain) scheduleChainFinalize();
     scheduleRender();
     return;
   }
@@ -590,6 +594,7 @@ window.addEventListener('pointerup', (e) => {
     if (gestureMode) {
       window.magicPointer?.gestureStroke(gestureToken, strokes.length);
       showChainHint(strokes.length);
+      chainDeadlineAt = performance.now() + gestureChainGapMs;
       scheduleChainFinalize();
       fadeTrail(128);
     } else {
@@ -615,6 +620,7 @@ window.addEventListener('pointercancel', (e) => {
 window.magicPointer?.onHide(() => {
   if (chainTimer) clearTimeout(chainTimer);
   chainTimer = null;
+  chainDeadlineAt = 0;
   if (chainHintTimer) clearTimeout(chainHintTimer);
   chainHintTimer = null;
 });

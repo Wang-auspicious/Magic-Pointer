@@ -479,7 +479,12 @@ class UiaTextSelectionAdapter(AppAdapter):
                 method=method,
                 anchor_text=str(data.get("terminal_anchor_text") or ""),
             )
-            text = str((terminal_evidence.get("window") or {}).get("text") or "")
+            sanitized_anchor = str(
+                (terminal_evidence.get("anchor") or {}).get("text") or ""
+            ).strip()
+            text = sanitized_anchor or str(
+                (terminal_evidence.get("window") or {}).get("text") or ""
+            )
             recovery_artifacts = {
                 "terminal_evidence": terminal_evidence,
                 "terminal_buffer_chars": len(raw_text),

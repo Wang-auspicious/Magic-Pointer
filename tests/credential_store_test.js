@@ -24,7 +24,7 @@ assert.strictEqual(store.get('credential:model:primary'), 'sk-never-in-settings-
 assert.strictEqual(store.status('credential:model:primary').present, true);
 const raw = fs.readFileSync(credentialsPath, 'utf8');
 assert(!raw.includes('sk-never-in-settings-or-log'));
-assert(!raw.includes('credential:model:primary\":\"sk-'));
+assert(!raw.includes('credential:model:primary":"sk-'));
 assert.deepStrictEqual(store.delete('credential:model:primary'), {
   ref: 'credential:model:primary',
   deleted: true,

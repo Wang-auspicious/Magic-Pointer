@@ -6,7 +6,9 @@ const fs = require('fs');
 const main = fs.readFileSync('electron/main.js', 'utf8');
 
 assert(main.includes('function placeStageOnDisplay(display)'), 'stage needs an explicit display placement helper');
-assert(main.includes("const { physicalScreenPoint, normalizeGroundingGeometry } = require('./coordinate_space');"),
+assert(main.includes("} = require('./coordinate_space');")
+  && main.includes('physicalScreenPoint,')
+  && main.includes('normalizeGroundingGeometry,'),
   'main must use the shared GroundingGeometry module');
 assert(main.includes('const grounding = normalizeGroundingGeometry({'),
   'frozen targets must pass through GroundingGeometry');

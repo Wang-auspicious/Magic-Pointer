@@ -1,0 +1,408 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>Magic Pointer 设计实验室 v2 — 玻璃 + 动效</title>
+<style>
+/* ═══════════════════════════════════════════════════════════════════════════
+   来源：emilkowalski/skills（Linear 设计工程师，/animate + /review-animations）
+        vercel-labs/web-interface-guidelines
+   本文件是设计实验室，不是产品代码。
+   ═══════════════════════════════════════════════════════════════════════════ */
+:root{
+  /* ── 动效 token：曲线不许手搓，全部来自标准表 ───────────────────────── */
+  --ease-out:cubic-bezier(.23,1,.32,1);        /* 进/出。内置 ease-out 太软 */
+  --ease-in-out:cubic-bezier(.77,0,.175,1);    /* 屏幕内移动/变形 */
+  --ease-drawer:cubic-bezier(.32,.72,0,1);     /* iOS 抽屉曲线 */
+  /* 时长：UI 一律 <300ms */
+  --d-press:140ms; --d-tip:160ms; --d-pop:200ms; --d-panel:260ms;
+
+  --font-ui:"Segoe UI Variable Text","Segoe UI","Microsoft YaHei UI","Noto Sans CJK SC",sans-serif;
+  --font-dis:"Segoe UI Variable Display","Segoe UI Variable Text","Segoe UI",sans-serif;
+  --accent-rgb:36,110,231; --accent:rgb(var(--accent-rgb));
+  --lab-bg:#0b0c0f; --lab-fg:#e8edf4; --lab-dim:#858d9b; --lab-line:rgba(255,255,255,.09);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font-ui);font-weight:450;background:var(--lab-bg);color:var(--lab-fg);
+  -webkit-font-smoothing:antialiased;padding:26px 30px 90px;font-size:14px}
+
+/* ── 实验室外壳 ─────────────────────────────────────────────────────────── */
+h1.l{font-family:var(--font-dis);font-size:20px;font-weight:600;letter-spacing:-.02em}
+p.l{color:var(--lab-dim);font-size:13px;margin:6px 0 20px;max-width:74ch;line-height:1.65}
+h2.l{font-family:var(--font-dis);font-size:11.5px;font-weight:650;letter-spacing:.09em;text-transform:uppercase;
+  color:var(--lab-dim);margin:40px 0 14px;padding-bottom:9px;border-bottom:1px solid var(--lab-line)}
+.hint{font-size:12px;color:var(--lab-dim);line-height:1.65;margin:10px 0 0;max-width:80ch}
+.hint b{color:var(--lab-fg);font-weight:600}
+.btn-l{font:inherit;font-size:12.5px;font-weight:500;color:var(--lab-fg);background:rgba(255,255,255,.06);
+  border:1px solid var(--lab-line);border-radius:8px;padding:7px 14px;cursor:pointer;
+  transition:opacity var(--d-press) var(--ease-out),transform var(--d-press) var(--ease-out);
+  touch-action:manipulation}
+@media (hover:hover) and (pointer:fine){.btn-l:hover{opacity:.72}}
+.btn-l:active{transform:scale(.97)}
+.row-l{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px}
+
+/* ═══ 背景试验台 ═══════════════════════════════════════════════════════════ */
+.beds{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.bed{position:relative;height:220px;border-radius:14px;overflow:hidden;border:1px solid var(--lab-line);
+  display:flex;align-items:center;justify-content:center}
+.bed::after{content:attr(data-label);position:absolute;left:10px;top:9px;font-size:10px;letter-spacing:.07em;
+  text-transform:uppercase;font-weight:650;color:rgba(255,255,255,.8);background:rgba(0,0,0,.5);
+  padding:3px 7px;border-radius:5px}
+.b-doc{background:#fff}
+.b-doc .t{position:absolute;inset:0;color:#1a1a1c;font-size:12.5px;line-height:1.9;padding:36px 18px 0;opacity:.5}
+.b-term{background:#0b0b0d}
+.b-term .t{position:absolute;inset:0;color:#7ee787;font-family:ui-monospace,Consolas,monospace;
+  font-size:11.5px;line-height:1.85;padding:36px 18px 0;opacity:.85}
+.b-pic{background:radial-gradient(120% 90% at 18% 12%,#ff9a6b 0,transparent 55%),
+  radial-gradient(110% 80% at 82% 78%,#5b7cff 0,transparent 58%),linear-gradient(140deg,#3a2a4d,#123a4a 55%,#4a3320)}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   玻璃，做对的版本
+   B 的问题不是"玻璃"，是玻璃只有一层：背景直接透到文字底下。
+   真机做法是两层——模糊层负责质感，文字底下另铺一块不透明"墨板"负责可读。
+   Apple 后来加的不透明度滑块就是在补这一层。
+   ═══════════════════════════════════════════════════════════════════════════ */
+.glass{
+  position:relative;
+  background:linear-gradient(180deg,rgba(255,255,255,.86),rgba(255,255,255,.78));
+  backdrop-filter:blur(28px) saturate(190%);-webkit-backdrop-filter:blur(28px) saturate(190%);
+  border:1px solid rgba(255,255,255,.62);
+  /* 分层阴影：环境光 + 直接光（Vercel: layered shadows） */
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.95),          /* 玻璃上缘高光 */
+    inset 0 -1px 0 rgba(15,35,65,.05),
+    0 1px 2px rgba(15,35,65,.10),                  /* 直接光，近 */
+    0 12px 32px -10px rgba(15,35,65,.28);          /* 环境光，远 */
+  color:#0f2340;
+}
+/* 深色背景上自动加厚，保证反差（不是换配色，是加不透明度） */
+.b-term .glass,.b-pic .glass{
+  background:linear-gradient(180deg,rgba(255,255,255,.93),rgba(252,253,255,.88));
+  box-shadow:inset 0 1px 0 rgba(255,255,255,1),0 2px 6px rgba(0,0,0,.28),0 16px 40px -12px rgba(0,0,0,.5);
+}
+
+/* ── 气泡 ───────────────────────────────────────────────────────────────── */
+.cap{display:flex;align-items:center;gap:9px;height:42px;padding:0 6px 0 14px;border-radius:21px;
+  font-size:13.5px;font-weight:500;letter-spacing:-.004em;white-space:nowrap;position:relative;z-index:3;
+  /* 只动 transform / opacity / width。width 是胶囊唯一的例外，且用 transition 可打断 */
+  transition:width var(--d-pop) var(--ease-out),padding var(--d-pop) var(--ease-out);
+  will-change:width}
+.cap.seed{width:42px;padding:0;justify-content:center;gap:0}
+.cap.seed>*:not(.wave){display:none}
+.wave{display:inline-flex;gap:2.5px;align-items:center;flex:0 0 auto}
+.wave i{width:2.5px;height:11px;border-radius:2px;background:var(--accent);
+  animation:wv 1.05s var(--ease-in-out) infinite}
+.wave i:nth-child(2){height:17px;animation-delay:.13s}
+.wave i:nth-child(3){height:8px;animation-delay:.26s}
+@keyframes wv{0%,100%{transform:scaleY(.5)}50%{transform:scaleY(1)}}
+
+/* chip：从 .96 起，绝不从 scale(0)。逐个 40ms 错峰 */
+.chip{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 4px 0 8px;border-radius:7px;
+  background:rgba(var(--accent-rgb),.12);color:var(--accent);font-size:12px;font-weight:600;
+  border:1px solid rgba(var(--accent-rgb),.16);flex:0 0 auto;
+  animation:chipIn 200ms var(--ease-out) backwards}
+.chip:nth-of-type(2){animation-delay:40ms}
+.chip:nth-of-type(3){animation-delay:80ms}
+@keyframes chipIn{from{opacity:0;transform:scale(.96) translateY(2px)}}
+.chip em{font-style:normal;opacity:.55;font-weight:500}
+.chip .x{width:15px;height:15px;border-radius:4px;display:grid;place-items:center;font-size:11px;
+  opacity:.4;cursor:pointer;transition:opacity var(--d-press) var(--ease-out),background var(--d-press) var(--ease-out)}
+@media (hover:hover) and (pointer:fine){.chip .x:hover{opacity:.95;background:rgba(var(--accent-rgb),.16)}}
+.caret{width:1.5px;height:15px;background:var(--accent);flex:0 0 auto;animation:bl 1.1s steps(1) infinite}
+@keyframes bl{50%{opacity:0}}
+.elapsed{font-variant-numeric:tabular-nums;font-size:12px;opacity:.42;letter-spacing:.01em}
+
+/* ── 线程面板：从气泡展开，transform-origin 在触发点 ───────────────────── */
+.panel{width:390px;border-radius:16px;overflow:hidden;position:relative;z-index:2;
+  transform-origin:top left;animation:panelIn var(--d-panel) var(--ease-out)}
+@keyframes panelIn{from{opacity:0;transform:scale(.97) translateY(-6px)}}
+.turn{padding:14px 16px 15px}
+.turn+.turn{border-top:1px solid rgba(15,35,65,.09)}
+.ask{font-size:11.5px;font-weight:650;letter-spacing:.02em;opacity:.42;margin-bottom:7px}
+.ans{font-size:13.5px;line-height:1.65;font-weight:450;text-wrap:pretty}
+.ans code{font-family:ui-monospace,Consolas,monospace;font-size:12.5px;background:rgba(15,35,65,.07);
+  padding:1px 5px;border-radius:5px}
+/* 骨架屏必须和最终内容同形，否则会有布局跳动（Vercel: skeletons mirror final content） */
+.skel i{display:block;height:11px;border-radius:6px;margin-bottom:7px;
+  background:linear-gradient(90deg,rgba(15,35,65,.07) 25%,rgba(15,35,65,.13) 37%,rgba(15,35,65,.07) 63%);
+  background-size:400% 100%;animation:sh 1.3s linear infinite}
+.skel i:nth-child(2){width:92%}.skel i:nth-child(3){width:74%;margin-bottom:0}
+@keyframes sh{from{background-position:100% 0}to{background-position:0 0}}
+.bar{display:flex;align-items:center;gap:3px;padding:8px 9px;border-top:1px solid rgba(15,35,65,.09);
+  background:rgba(15,35,65,.025)}
+.bar .n{font-size:11.5px;opacity:.4;margin-right:auto;padding-left:6px;font-variant-numeric:tabular-nums}
+.tool{font:inherit;font-size:12px;font-weight:500;color:inherit;background:transparent;border:0;
+  padding:6px 10px;border-radius:7px;cursor:pointer;touch-action:manipulation;
+  transition:background var(--d-press) var(--ease-out),transform var(--d-press) var(--ease-out),opacity var(--d-press) var(--ease-out)}
+@media (hover:hover) and (pointer:fine){.tool:hover{background:rgba(15,35,65,.07)}}
+.tool:active{transform:scale(.96)}          /* 按下去有反应——现在 stage.css 里 0 处 */
+.tool:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+/* 危险动作：按住确认。慢在用户决策段，快在系统响应段 */
+.tool.danger{position:relative;overflow:hidden}
+.tool.danger .fill{position:absolute;inset:0;background:rgba(210,50,40,.16);
+  clip-path:inset(0 100% 0 0);transition:clip-path 200ms var(--ease-out)}
+.tool.danger:active .fill{clip-path:inset(0 0 0 0);transition:clip-path 1.6s linear}
+
+.proof{position:absolute;border-radius:6px;pointer-events:none;animation:proofIn 240ms var(--ease-out) backwards}
+@keyframes proofIn{from{opacity:0;transform:scale(1.04)}}
+.proof.s{border:1.5px solid rgba(var(--accent-rgb),.9);box-shadow:0 0 0 3px rgba(var(--accent-rgb),.13)}
+.proof.p{border:1.5px solid rgba(232,150,42,.95);box-shadow:0 0 0 3px rgba(232,150,42,.15)}
+
+/* ═══ 设置页 ═══════════════════════════════════════════════════════════════ */
+.win{border-radius:14px;overflow:hidden;border:1px solid rgba(0,0,0,.55);
+  box-shadow:0 2px 8px rgba(0,0,0,.3),0 40px 90px -20px rgba(0,0,0,.65);display:flex;height:580px}
+.win.dark{--c:#131418;--sd:#191a1f;--sf:#1e1f24;--fg:#f3f4f6;--dm:#989aa3;
+  --ln:rgba(235,235,245,.11);--ct:rgba(235,235,245,.08);--hv:rgba(235,235,245,.06)}
+.win.light{--c:#f7f7f9;--sd:#efeff2;--sf:#fff;--fg:#18181b;--dm:#68686f;
+  --ln:rgba(60,60,67,.12);--ct:rgba(118,118,128,.09);--hv:rgba(118,118,128,.08)}
+.win{background:var(--c);color:var(--fg)}
+.side{width:218px;flex:0 0 218px;background:var(--sd);border-right:1px solid var(--ln);
+  display:flex;flex-direction:column;padding:11px 9px}
+.sch{display:flex;align-items:center;gap:8px;height:31px;padding:0 10px;margin-bottom:10px;
+  background:var(--ct);border-radius:8px;font-size:12.5px;color:var(--dm)}
+.sch kbd{margin-left:auto;font:inherit;font-size:10px;opacity:.65;background:rgba(128,128,140,.2);
+  padding:2px 5px;border-radius:4px}
+.grp{font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--dm);
+  padding:13px 10px 5px;opacity:.75}
+/* 导航高亮块用 transform 位移，不是给每一项改背景——一块滑过去 */
+.navwrap{position:relative}
+.pill{position:absolute;left:0;right:0;height:30px;border-radius:8px;background:var(--accent);
+  transition:transform var(--d-pop) var(--ease-out);pointer-events:none}
+.nav{position:relative;display:flex;align-items:center;gap:10px;height:30px;padding:0 10px;border-radius:8px;
+  font-size:13px;font-weight:450;cursor:pointer;z-index:1;touch-action:manipulation;
+  transition:color var(--d-press) var(--ease-out),background var(--d-press) var(--ease-out)}
+@media (hover:hover) and (pointer:fine){.nav:not(.on):hover{background:var(--hv)}}
+.nav.on{color:#fff;font-weight:500}
+.nav .d{width:15px;text-align:center;opacity:.7;font-size:12px}
+.nav.on .d{opacity:1}
+.foot{margin-top:auto;display:flex;align-items:center;gap:9px;padding:10px;font-size:11.5px;color:var(--dm)}
+.dot{width:6px;height:6px;border-radius:50%;background:#2fb865;box-shadow:0 0 0 3px rgba(47,184,101,.2)}
+.main{flex:1;display:flex;flex-direction:column;min-width:0}
+.hdr{display:flex;align-items:flex-end;gap:14px;padding:22px 28px 17px;border-bottom:1px solid var(--ln)}
+.hdr h3{font-family:var(--font-dis);font-size:21px;font-weight:600;letter-spacing:-.022em;line-height:1.2}
+.hdr p{font-size:12.5px;color:var(--dm);margin-top:4px;line-height:1.5}
+.acts{margin-left:auto;display:flex;gap:8px;flex:0 0 auto}
+.b{font:inherit;font-size:12.5px;font-weight:500;padding:7px 14px;border-radius:8px;cursor:pointer;
+  border:1px solid var(--ln);background:var(--sf);color:var(--fg);touch-action:manipulation;
+  transition:opacity var(--d-press) var(--ease-out),transform var(--d-press) var(--ease-out)}
+@media (hover:hover) and (pointer:fine){.b:hover{opacity:.75}}
+.b:active{transform:scale(.97)}
+.b.pri{background:var(--accent);border-color:transparent;color:#fff;
+  box-shadow:0 1px 2px rgba(var(--accent-rgb),.3),0 4px 12px -3px rgba(var(--accent-rgb),.45)}
+.body{flex:1;overflow:auto;padding:22px 28px 34px;scroll-behavior:smooth}
+/* 换页时内容错峰进场，30–80ms 一档。装饰性的，不阻塞交互 */
+.sec{margin-bottom:24px;animation:secIn 260ms var(--ease-out) backwards}
+.sec:nth-child(2){animation-delay:45ms}.sec:nth-child(3){animation-delay:90ms}
+@keyframes secIn{from{opacity:0;transform:translateY(7px)}}
+.sec>h4{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--dm);
+  margin-bottom:9px;padding-left:3px;opacity:.8}
+/* 嵌套圆角：子 ≤ 父，同心（Vercel: nested radii concentric） */
+.card{background:var(--sf);border:1px solid var(--ln);border-radius:11px;overflow:hidden;
+  box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.r{display:flex;align-items:center;gap:15px;padding:12px 15px;
+  transition:background var(--d-press) var(--ease-out)}
+.r+.r{border-top:1px solid var(--ln)}
+@media (hover:hover) and (pointer:fine){.r:hover{background:var(--hv)}}
+.r .t{min-width:0;flex:1}                     /* min-w-0 才能截断 */
+.r .t b{display:block;font-size:13px;font-weight:500;line-height:1.4}
+.r .t small{display:block;font-size:11.5px;color:var(--dm);line-height:1.5;margin-top:2px}
+.r .v{flex:0 0 auto;display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--dm)}
+.sel{border:1px solid var(--ln);background:var(--ct);border-radius:7px;padding:5px 10px;
+  font-size:12.5px;color:var(--fg);cursor:pointer;
+  transition:opacity var(--d-press) var(--ease-out),transform var(--d-press) var(--ease-out)}
+@media (hover:hover) and (pointer:fine){.sel:hover{opacity:.75}}
+.sel:active{transform:scale(.97)}
+.tog{width:38px;height:22px;border-radius:11px;background:var(--ct);position:relative;flex:0 0 auto;
+  cursor:pointer;transition:background var(--d-pop) var(--ease-out)}
+.tog::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;
+  background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);
+  transition:transform var(--d-pop) var(--ease-out)}   /* 动 transform 不动 left */
+.tog.on{background:var(--accent)}.tog.on::after{transform:translateX(16px)}
+.bdg{font-size:10.5px;font-weight:650;letter-spacing:.02em;padding:3px 7px;border-radius:6px;
+  background:rgba(var(--accent-rgb),.12);color:var(--accent);display:inline-flex;align-items:center;gap:5px}
+.bdg::before{content:"";width:5px;height:5px;border-radius:50%;background:currentColor}
+.bdg.w{background:rgba(196,120,0,.15);color:#a86a00}.win.dark .bdg.w{color:#efb45f}
+.dflt{font-size:10.5px;color:var(--dm);opacity:.6}
+.spark{display:flex;align-items:flex-end;gap:2.5px;height:28px}
+.spark i{width:7px;background:rgba(var(--accent-rgb),.28);border-radius:2px 2px 0 0;
+  transform-origin:bottom;animation:sp 420ms var(--ease-out) backwards}
+.spark i.hi{background:var(--accent)}
+@keyframes sp{from{transform:scaleY(0.05)}}
+
+/* 减弱动效：更少更轻，不是全关（保留不透明度，去掉位移） */
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;
+    transition-duration:120ms!important}
+  .chip,.panel,.sec,.spark i{animation:none}
+}
+table.aud{border-collapse:collapse;font-size:12.5px;width:100%;max-width:900px}
+table.aud th,table.aud td{border:1px solid var(--lab-line);padding:8px 11px;text-align:left;vertical-align:top}
+table.aud th{background:rgba(255,255,255,.04);font-weight:650;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--lab-dim)}
+table.aud code{font-family:ui-monospace,Consolas,monospace;font-size:11.5px;color:#ffb4a8}
+table.aud td:nth-child(2) code{color:#8ee7a6}
+</style>
+</head>
+<body>
+
+<h1 class="l">Magic Pointer 设计实验室 v2</h1>
+<p class="l">玻璃方向，但补上 B 缺的那一层。动效按 <b>emilkowalski/skills</b>（Linear 设计工程师把动画经验写成的规则）和 <b>vercel-labs/web-interface-guidelines</b> 重做——曲线、时长、按压反馈、错峰、减弱动效全部来自标准表，不手搓。</p>
+
+<h2 class="l">一 · 玻璃，做对的版本</h2>
+<p class="hint"><b>B 的问题不是"玻璃"，是玻璃只有一层</b>：背景直接透到文字底下。真机做法是两层——模糊层负责质感，文字底下另铺一块高不透明度的板负责可读，深背景上再自动加厚。Apple 后来给 Liquid Glass 加的不透明度滑块补的就是这一层。</p>
+<div class="row-l" style="margin-top:14px">
+  <button class="btn-l" id="replay">▸ 重播进场动画</button>
+  <button class="btn-l" id="slow">🐢 5× 慢放（检查曲线用）</button>
+</div>
+<div class="beds" id="beds">
+  <div class="bed b-doc" data-label="白底文档">
+    <div class="t">选区冻结后，系统在同一帧里寻找更完整的语义候选。<br>高置信时静默吸附，歧义时让人选，<br>证据残缺时拒绝补猜。</div>
+    <div class="proof s" style="left:18px;top:58px;right:18px;height:23px"></div>
+    <div class="cap glass"><span class="wave"><i></i><i></i><i></i></span>
+      <span>把</span><span class="chip"><em>①</em>这段<span class="x">×</span></span><span>翻成英文</span><span class="caret"></span>
+      <span style="width:8px"></span></div>
+  </div>
+  <div class="bed b-term" data-label="黑底终端">
+    <div class="t">$ npm test<br>&nbsp;&nbsp;node suite passed: 132 tests<br>$ pytest -q<br>&nbsp;&nbsp;1026 passed in 220.89s</div>
+    <div class="proof p" style="left:18px;top:54px;right:18px;height:21px"></div>
+    <div class="cap glass"><span class="wave"><i></i><i></i><i></i></span>
+      <span class="chip"><em>①</em>这行<span class="x">×</span></span><span>什么意思</span><span class="caret"></span>
+      <span style="width:8px"></span></div>
+  </div>
+  <div class="bed b-pic" data-label="照片 / 彩色界面">
+    <div class="cap glass"><span class="wave"><i></i><i></i><i></i></span>
+      <span class="chip"><em>①</em>这图<span class="x">×</span></span><span class="chip"><em>②</em>那段<span class="x">×</span></span><span>对比</span><span class="caret"></span>
+      <span style="width:8px"></span></div>
+  </div>
+</div>
+
+<h2 class="l">二 · 四个状态与它们之间的动作</h2>
+<div class="beds">
+  <div class="bed b-doc" data-label="① 冻结 — 只有一个点">
+    <div class="cap glass seed"><span class="wave"><i></i><i></i><i></i></span></div>
+  </div>
+  <div class="bed b-doc" data-label="② 处理 — 说出等了多久">
+    <div class="cap glass"><span class="wave"><i></i><i></i><i></i></span>
+      <span style="opacity:.5">正在读取</span><span class="elapsed">2.4s</span><span style="width:8px"></span></div>
+  </div>
+  <div class="bed b-doc" data-label="③ 骨架屏 — 和答案同形" style="height:220px;align-items:flex-start;padding-top:20px">
+    <div class="panel glass"><div class="turn"><p class="ask">这行报错是什么意思</p>
+      <div class="skel"><i></i><i></i><i></i></div></div></div>
+  </div>
+</div>
+<div class="beds" style="margin-top:14px;grid-template-columns:1fr">
+  <div class="bed b-doc" data-label="④ 回答 — 面板从气泡左上角展开" style="height:250px;align-items:flex-start;justify-content:flex-start;padding:44px 0 0 24px">
+    <div class="panel glass">
+      <div class="turn"><p class="ask">这行报错是什么意思</p>
+        <p class="ans">端口 6800 被占用。不是代码问题——另一个进程已经在监听。先 <code>netstat -ano | findstr :6800</code> 找到 PID，再决定关掉还是换端口。</p></div>
+      <div class="bar"><span class="n">第 1 轮 · 0.9s</span>
+        <button class="tool">复制</button><button class="tool">填入</button>
+        <button class="tool danger"><span class="fill"></span>关闭</button></div>
+    </div>
+  </div>
+</div>
+<p class="hint">按一下工具条按钮感受 <code>scale(.96)</code> 的按压反馈——<b>现在 stage.css 里这类反馈是 0 处</b>。「关闭」是<b>按住确认</b>：慢在你决策的那段（1.6s linear），松手瞬间回弹（200ms 强 ease-out）。面板的 <code>transform-origin</code> 在左上角，也就是气泡所在处，所以它是"从气泡里展开"而不是"凭空放大"。</p>
+
+<h2 class="l">三 · 设置页</h2>
+<p class="hint">左侧高亮是<b>一块滑过去的</b>（transform 位移），不是每项各自改背景色。点击换页看内容<b>错峰进场</b>（45ms 一档）。开关动的是 <code>transform</code> 不是 <code>left</code>。</p>
+<div class="row-l" style="margin-top:12px">
+  <button class="btn-l" data-th="dark" aria-pressed="true">深色</button>
+  <button class="btn-l" data-th="light" aria-pressed="false">浅色</button>
+</div>
+<div class="win dark" id="win">
+  <aside class="side">
+    <div class="sch">🔍 搜索设置… <kbd>Ctrl&nbsp;K</kbd></div>
+    <div class="grp">个人</div>
+    <div class="navwrap" id="nw1"><div class="pill" id="pill1"></div>
+      <div class="nav"><span class="d">◈</span>通用</div>
+      <div class="nav"><span class="d">◎</span>外观</div>
+      <div class="nav"><span class="d">⌘</span>快捷键</div>
+      <div class="nav"><span class="d">☷</span>使用情况</div></div>
+    <div class="grp">能力</div>
+    <div class="navwrap" id="nw2"><div class="pill" id="pill2" style="opacity:0"></div>
+      <div class="nav"><span class="d">✦</span>能力库</div>
+      <div class="nav"><span class="d">✎</span>自定义指令</div>
+      <div class="nav"><span class="d">⊞</span>插件</div>
+      <div class="nav"><span class="d">◐</span>记忆与剪贴板</div></div>
+    <div class="grp">系统</div>
+    <div class="navwrap" id="nw3"><div class="pill" id="pill3" style="opacity:0"></div>
+      <div class="nav on"><span class="d">◇</span>模型与网络</div>
+      <div class="nav"><span class="d">⊙</span>触发与感知</div>
+      <div class="nav"><span class="d">⛨</span>隐私与权限</div>
+      <div class="nav"><span class="d">◔</span>诊断</div></div>
+    <div class="foot"><span class="dot"></span><span>本机运行，不离开当前应用</span></div>
+  </aside>
+  <main class="main">
+    <header class="hdr">
+      <div><h3 id="vt">模型与网络</h3><p id="vs">端点、预算与本地兜底。健康状态常显。</p></div>
+      <div class="acts"><button class="b">重新检测</button><button class="b pri">保存更改</button></div>
+    </header>
+    <div class="body" id="pbody">
+      <div class="sec"><h4>端点</h4><div class="card">
+        <div class="r"><div class="t"><b>后端</b><small>Anthropic Messages 协议 · api.deepseek.com</small></div>
+          <div class="v"><span class="bdg">HTTP 200 · ok</span></div></div>
+        <div class="r"><div class="t"><b>模型</b><small>deepseek-v4-flash[1M]</small></div>
+          <div class="v"><span class="bdg w">无视觉输入</span><span class="sel">更换…</span></div></div>
+        <div class="r"><div class="t"><b>密钥</b><small>存在 secrets/，不会读回界面</small></div>
+          <div class="v"><span class="sel">已设置 ····</span></div></div>
+      </div></div>
+      <div class="sec"><h4>预算</h4><div class="card">
+        <div class="r"><div class="t"><b>交互回答上限</b><small>上限就是延迟：1200 token 要 27 秒，120 只要 12 秒</small></div>
+          <div class="v"><span class="dflt">默认 700</span><span class="sel">700 token</span></div></div>
+        <div class="r"><div class="t"><b>整次交互超时</b><small>截止时间不能短于它要容纳的预算</small></div>
+          <div class="v"><span class="dflt">默认 40s</span><span class="sel">40 秒</span></div></div>
+        <div class="r"><div class="t"><b>流式显示首 token</b><small>拿到第一个字就开始画，不等整段</small></div>
+          <div class="v"><span class="tog on" data-tog></span></div></div>
+      </div></div>
+      <div class="sec"><h4>模型不可用时</h4><div class="card">
+        <div class="r"><div class="t"><b>本地兜底</b><small>已经读到的内容照常给出，不是只报一句"调用失败"</small></div>
+          <div class="v"><span class="tog on" data-tog></span></div></div>
+        <div class="r"><div class="t"><b>近 7 天调用</b><small>成功 214 · 降级 9 · 失败 2</small></div>
+          <div class="v"><span class="spark"><i style="height:40%"></i><i style="height:66%"></i><i style="height:52%"></i><i class="hi" style="height:88%"></i><i style="height:71%"></i><i style="height:45%"></i><i style="height:61%"></i></span></div></div>
+      </div></div>
+    </div>
+  </main>
+</div>
+
+<h2 class="l">四 · 和现在的代码差在哪（实测计数）</h2>
+<table class="aud">
+<tr><th>现在</th><th>标准</th><th>为什么</th></tr>
+<tr><td>stage.css 里 <code>:active</code> 按压反馈 <b>0 处</b></td><td><code>transform:scale(.97)</code></td><td>按下去没反应＝界面没在听。这是"廉价感"最大的单一来源</td></tr>
+<tr><td><code>ease-out</code> 内置曲线 <b>21 处</b></td><td><code>cubic-bezier(.23,1,.32,1)</code></td><td>内置曲线太软，缺少"这是故意做的"那种力度</td></tr>
+<tr><td>手搓曲线 <b>8 种</b>，含 <code>cubic-bezier(.4,0,.2,1)</code> ×5</td><td>只用标准表里的 3 条</td><td>规则里点名：不要因为眼熟就发明这条</td></tr>
+<tr><td><code>@media (hover:hover)</code> <b>0 处</b></td><td>所有 hover 动效都要门控</td><td>触屏点一下会触发假 hover</td></tr>
+<tr><td>stage.css 有 <b>7 处</b>动 width/height/top/left</td><td>只动 <code>transform</code>/<code>opacity</code></td><td>布局属性会触发 layout+paint，掉帧</td></tr>
+<tr><td>stage.css <b>25 个</b> @keyframes</td><td>可快速重复触发的用 transition</td><td>keyframes 被打断会从头开始，transition 会从当前值接上</td></tr>
+<tr><td>dashboard.css 只有 <b>2 个</b> keyframes、<b>1 处</b>减弱动效</td><td>错峰进场 + 高亮块位移</td><td>配置页现在几乎没有动效，这就是"基本不变"的原因</td></tr>
+<tr><td>stage.css <code>font-weight:500</code> 仅 <b>1 处</b></td><td>正文基线 500</td><td>半透明浮层上 400 字重发虚</td></tr>
+</table>
+<p class="hint" style="margin-top:14px">另外两个真 bug：<code>--stage-ink-soft</code> 和 <code>--stage-ink-faint</code> 是<b>自引用</b>（<code>--x:var(--x)</code>），CSS 里等于无效值，5 处文字颜色实际继承了父级；<code>.stage-capsule</code> 有<b>两个冲突的规则块</b>，前一个石墨黑被后一个浅色整个覆盖，是死代码。</p>
+
+<script>
+const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
+// 重播：把动画元素摘下再挂回，强制重跑
+$('#replay').onclick=()=>{$$('#beds .cap, #beds .chip, #beds .proof').forEach(e=>{
+  const a=e.style.animation;e.style.animation='none';void e.offsetHeight;e.style.animation=a;});};
+let slow=false;
+$('#slow').onclick=e=>{slow=!slow;document.documentElement.style.setProperty('--d-pop',slow?'1000ms':'200ms');
+  document.documentElement.style.setProperty('--d-panel',slow?'1300ms':'260ms');
+  document.documentElement.style.setProperty('--d-press',slow?'700ms':'140ms');
+  e.target.textContent=slow?'⏩ 恢复正常速度':'🐢 5× 慢放（检查曲线用）';};
+// 主题
+$$('[data-th]').forEach(b=>b.onclick=()=>{$('#win').className='win '+b.dataset.th;
+  $$('[data-th]').forEach(x=>x.setAttribute('aria-pressed',x===b));});
+// 导航：高亮块滑动 + 换页错峰
+const titles={'通用':'启动、语言与默认输入方式','外观':'主题、强调色与动效开关','快捷键':'全部动作可重绑，保存时检查冲突',
+ '使用情况':'各能力调用次数与 token 活动','能力库':'每条能力一行，可开关、可试一试','自定义指令':'长尾模式存下来，下次走快路径',
+ '插件':'本地文件夹即插件，不需要构建','记忆与剪贴板':'保留时长与立即清除','模型与网络':'端点、预算与本地兜底。健康状态常显。',
+ '触发与感知':'晃动灵敏度、划线租约、选中即感知','隐私与权限':'截图上传总开关与审计日志','诊断':'最近 20 次会话的时间线'};
+function place(){$$('.navwrap').forEach(w=>{const on=w.querySelector('.nav.on'),p=w.querySelector('.pill');
+  if(!on){p.style.opacity=0;return}p.style.opacity=1;p.style.transform=`translateY(${on.offsetTop}px)`;});}
+$$('.nav').forEach(n=>n.onclick=()=>{
+  $$('.nav').forEach(x=>x.classList.remove('on'));n.classList.add('on');place();
+  const name=n.textContent.trim();$('#vt').textContent=name;$('#vs').textContent=titles[name]||'';
+  $$('#pbody .sec').forEach(s=>{s.style.animation='none';void s.offsetHeight;s.style.animation='';});});
+$$('[data-tog]').forEach(t=>t.onclick=()=>t.classList.toggle('on'));
+place();addEventListener('resize',place);
+</script>
+</body>
+</html>

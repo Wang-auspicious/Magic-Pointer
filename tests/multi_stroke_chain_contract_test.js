@@ -16,8 +16,11 @@ const stage = fs.readFileSync('electron/renderer/stage.js', 'utf8');
 const stageHtml = fs.readFileSync('electron/renderer/stage.html', 'utf8');
 const stageCss = fs.readFileSync('electron/renderer/stage.css', 'utf8');
 const preload = fs.readFileSync('electron/preload.js', 'utf8');
-const capture = fs.readFileSync('electron/gesture_capture.js', 'utf8');
-const { summarizeGesture } = require('../electron/gesture_capture');
+const {
+  chainFinalizeDelay,
+  pointerContinuesGestureChain,
+  summarizeGesture,
+} = require('../electron/gesture_capture');
 
 // ── summarizeGesture contract ────────────────────────────────────────────
 const multi = summarizeGesture(
@@ -51,6 +54,12 @@ assert(overlay.includes('points: [...points],'), 'the committed stroke keeps its
 assert(overlay.includes("window.magicPointer?.gestureStroke(gestureToken, strokes.length)"),
   'committed stroke must refresh the arm timeout');
 assert(overlay.includes('scheduleChainFinalize'), 'chain must finalize after the gap window');
+assert(overlay.includes('pointerContinuesGestureChain'),
+  'moving toward another target must roll the short idle timer forward');
+assert(main.includes('schedulePassThroughChainFinalize'),
+  'click-through capture must use the same adaptive completion policy');
+assert.strictEqual(chainFinalizeDelay({ now: 0, deadlineAt: 2500 }), 520);
+assert.strictEqual(pointerContinuesGestureChain({ x: 0, y: 0 }, { x: 5, y: 0 }), true);
 assert(overlay.includes("if (e.key === 'Enter')"), 'Enter finalizes the chain');
 assert(overlay.includes('drawStrokeMarker'), 'committed strokes must be visible while chaining');
 assert(overlay.includes('drawPointTarget'), 'committed point targets must remain visibly marked');

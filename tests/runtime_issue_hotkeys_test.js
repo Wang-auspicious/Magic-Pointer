@@ -20,12 +20,8 @@ assert(main.includes('fabricSettingsStore.save(previousSettings)'));
 assert(main.includes('parsed.ok = false'));
 assert(main.includes('快捷键注册失败'));
 
-assert(main.includes('function showRuntimeIssueOverlay('));
-assert(main.includes('overlayWindow.setIgnoreMouseEvents(false)'));
-assert(main.includes("workflow: 'runtime_issue'"));
-assert(main.includes('observerMode: false'));
-assert(main.includes('overlayWindow.show()'));
-assert(main.includes('overlayWindow.focus()'));
+assert(!main.includes('function showRuntimeIssueOverlay('),
+  'the uncallable legacy runtime-issue overlay must not remain as a fake feature');
 
 assert(overlay.includes("let currentWorkflow = 'generic';"));
 assert(overlay.includes('workflow: currentWorkflow'));

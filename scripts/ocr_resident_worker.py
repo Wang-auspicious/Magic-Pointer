@@ -22,14 +22,19 @@ import socket
 import sys
 import threading
 from collections import OrderedDict
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from app.grounding.ocr_mark_selection import select_open_stroke_rect_indexes
+
 RUNTIME_DIR = ROOT / "data" / "runtime"
 PORT_FILE = RUNTIME_DIR / "ocr_worker.port"
+STARTUP_LOCK_FILE = RUNTIME_DIR / "ocr_worker.start.lock"
 # Loading the RapidOCR models costs seconds; serving a request costs
 # milliseconds. A five-minute idle timeout meant a user who came back after
 # lunch paid the cold load again, which is most of the p50 latency we measured.
@@ -39,7 +44,106 @@ try:
     IDLE_TIMEOUT_S = max(60.0, float(os.environ.get("MAGIC_POINTER_OCR_IDLE_TIMEOUT_S") or 1800.0))
 except ValueError:
     IDLE_TIMEOUT_S = 1800.0
-DET_SCALE = 0.5
+DETECTION_WIDE_SIZE = (640, 192)
+DETECTION_STANDARD_SIZE = (640, 512)
+
+
+def _published_worker_port(port_file: Path = PORT_FILE) -> int | None:
+    """Return a published OCR port only when a worker is actually accepting."""
+    try:
+        meta = json.loads(port_file.read_text(encoding="utf-8"))
+        port = int(meta.get("port") or 0)
+        if port <= 0:
+            return None
+        with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+            return port
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def _remove_owned_port_file(port_file: Path, *, pid: int, port: int) -> bool:
+    """Remove discovery metadata only if this exact worker still owns it."""
+    try:
+        meta = json.loads(port_file.read_text(encoding="utf-8"))
+        if int(meta.get("pid") or 0) != int(pid) or int(meta.get("port") or 0) != int(port):
+            return False
+        port_file.unlink(missing_ok=True)
+        return True
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        return False
+
+
+@contextmanager
+def _worker_startup_lock(lock_file: Path = STARTUP_LOCK_FILE) -> Iterator[bool]:
+    """Serialize model loading across bridge processes; OS locks vanish on crash."""
+    lock_file.parent.mkdir(parents=True, exist_ok=True)
+    handle = lock_file.open("a+b")
+    acquired = False
+    try:
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write(b"0")
+            handle.flush()
+        handle.seek(0)
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:  # pragma: no cover - exercised on Windows in desktop acceptance
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            acquired = True
+        except (OSError, BlockingIOError):
+            acquired = False
+        yield acquired
+    finally:
+        if acquired:
+            try:
+                handle.seek(0)
+                if os.name == "nt":
+                    import msvcrt
+
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                else:  # pragma: no cover
+                    import fcntl
+
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                pass
+        handle.close()
+
+
+def _detection_canvas(source) -> tuple[object, float]:
+    """Letterbox every capture into one of two reusable detector shapes."""
+    from PIL import Image
+
+    import numpy as np
+
+    width, height = source.size
+    canvas_width, canvas_height = (
+        DETECTION_WIDE_SIZE
+        if width / max(1, height) >= 3.0
+        else DETECTION_STANDARD_SIZE
+    )
+    scale = min(canvas_width / max(1, width), canvas_height / max(1, height))
+    resized_width = max(1, min(canvas_width, int(round(width * scale))))
+    resized_height = max(1, min(canvas_height, int(round(height * scale))))
+    resampling = getattr(Image, "Resampling", Image).BILINEAR
+    resized = source.resize((resized_width, resized_height), resampling)
+    fill = source.getpixel((0, 0)) if width and height else (0, 0, 0)
+    canvas = Image.new("RGB", (canvas_width, canvas_height), fill)
+    canvas.paste(resized, (0, 0))
+    return np.asarray(canvas), scale
+
+
+def _warm_detection_shapes(engine) -> None:
+    """Pay ONNX shape initialization while the resident starts in background."""
+    import numpy as np
+
+    for width, height in (DETECTION_WIDE_SIZE, DETECTION_STANDARD_SIZE):
+        engine(np.zeros((height, width, 3), dtype=np.uint8), use_cls=False, use_rec=False)
 
 
 def boxes_to_xywh(box: list[list[float]]) -> list[int]:
@@ -147,26 +251,23 @@ def _block_center_in_region(rect: list[int], region: list[int], padding: float =
 
 def _select_boxes(boxes: list[list[list[float]]], strokes_local: list[list[list[float]]], selection_local: list[int] | None) -> list[list[list[float]]]:
     if strokes_local:
-        kept = []
-        for box in boxes:
-            rect = boxes_to_xywh(box)
-            for stroke in strokes_local:
+        kept_indexes: set[int] = set()
+        rectangles = [boxes_to_xywh(box) for box in boxes]
+        for stroke in strokes_local:
+            if _stroke_is_closed(stroke):
                 region = _stroke_xywh(stroke)
-                if _stroke_is_closed(stroke):
+                for index, rect in enumerate(rectangles):
                     if _block_center_in_region(rect, region) or _block_overlap_ratio(rect, region) > 0.30:
-                        kept.append(box)
-                        break
-                else:
-                    if _polyline_hits_rect(stroke, rect) or _block_overlap_ratio(rect, region) > 0.30:
-                        kept.append(box)
-                        break
-        return kept
+                        kept_indexes.add(index)
+            else:
+                kept_indexes.update(select_open_stroke_rect_indexes(rectangles, stroke))
+        return [box for index, box in enumerate(boxes) if index in kept_indexes]
     if selection_local:
         return [box for box in boxes if _rect_overlaps(boxes_to_xywh(box), selection_local)]
     return list(boxes)
 
 
-def _split_wide_box(box: list[list[float]], max_width: float = 520.0, overlap: float = 40.0) -> list[list[list[float]]]:
+def _split_wide_box(box: list[list[float]], max_width: float = 900.0, overlap: float = 80.0) -> list[list[list[float]]]:
     """Split a very wide text box into overlapping vertical slices.
 
     RapidOCR's recognition model resizes long lines into a fixed-width input,
@@ -191,6 +292,24 @@ def _split_wide_box(box: list[list[float]], max_width: float = 520.0, overlap: f
     return parts
 
 
+def _merge_recognized_pieces(parts: list[str]) -> str:
+    """Join overlapping OCR crops without repeating their shared characters."""
+    clean = [str(part or "").strip() for part in parts if str(part or "").strip()]
+    if not clean:
+        return ""
+    merged = clean[0]
+    for part in clean[1:]:
+        folded_merged = merged.casefold()
+        folded_part = part.casefold()
+        overlap = 0
+        for size in range(min(len(merged), len(part), 24), 1, -1):
+            if folded_merged[-size:] == folded_part[:size]:
+                overlap = size
+                break
+        merged = merged + part[overlap:] if overlap else f"{merged} {part}"
+    return merged
+
+
 # Detection runs over the whole frozen capture and is the expensive half of a
 # read; recognition only touches the boxes the user's mark selects. A capture
 # never changes once written, so a second command about the same object (the
@@ -202,8 +321,6 @@ _DETECTION_CACHE_MAX = 8
 def _detect_boxes(engine, image_path: Path) -> list:
     from PIL import Image
 
-    import numpy as np
-
     try:
         stat = image_path.stat()
         key = (str(image_path.resolve()), stat.st_size, stat.st_mtime_ns)
@@ -214,19 +331,14 @@ def _detect_boxes(engine, image_path: Path) -> list:
         return _DETECTION_CACHE[key]
 
     with Image.open(image_path).convert("RGB") as source:
-        width, height = source.size
-        small = source.resize(
-            (max(1, int(width * DET_SCALE)), max(1, int(height * DET_SCALE))),
-            Image.BILINEAR,
-        )
-        small_array = np.asarray(small)
-    det = engine(small_array, use_cls=False, use_rec=False)
+        detection_array, detection_scale = _detection_canvas(source)
+    det = engine(detection_array, use_cls=False, use_rec=False)
     raw_boxes = det.boxes
     full_boxes = (
         []
         if raw_boxes is None or len(raw_boxes) == 0
         else [
-            [[float(point[0]) / DET_SCALE, float(point[1]) / DET_SCALE] for point in box]
+            [[float(point[0]) / detection_scale, float(point[1]) / detection_scale] for point in box]
             for box in raw_boxes.tolist()
         ]
     )
@@ -279,7 +391,7 @@ def process(engine, payload: dict) -> dict:
             if not parts:
                 continue
             blocks.append({
-                "text": " ".join(parts),
+                "text": _merge_recognized_pieces(parts),
                 "rect": boxes_to_xywh(candidate),
                 "conf": None,
             })
@@ -288,34 +400,61 @@ def process(engine, payload: dict) -> dict:
         return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
 
+def _process_if_idle(engine, payload: dict, process_lock: threading.Lock) -> dict:
+    """Run one inference at a time; RapidOCR's shared session is not thread-safe."""
+    if not process_lock.acquire(blocking=False):
+        return {"ok": False, "error": "worker_busy"}
+    try:
+        return process(engine, payload)
+    finally:
+        process_lock.release()
+
+
 def main() -> int:
-    from rapidocr import RapidOCR
-
     import time as _time
-
-    # Model files may still be held by a previous worker process being torn
-    # down; retry the engine load so a kill/restart race does not kill us.
-    engine = None
-    for attempt in range(6):
-        try:
-            engine = RapidOCR()
-            break
-        except Exception as exc:
-            if attempt >= 5:
-                print(json.dumps({"ok": False, "error": f"engine_load_failed:{type(exc).__name__}"}))
-                return 2
-            _time.sleep(2.0)
-    assert engine is not None
 
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server.bind(("127.0.0.1", 0))
-    port = server.getsockname()[1]
-    server.listen(4)
-    server.settimeout(1.0)
-    PORT_FILE.write_text(json.dumps({"pid": os.getpid(), "port": port}), encoding="utf-8")
-    import time as _time
+    with _worker_startup_lock() as owns_startup:
+        if not owns_startup:
+            # Another bridge won the cold-start race. Wait for its discovery
+            # record instead of loading a second multi-hundred-MB OCR engine.
+            deadline = _time.monotonic() + 30.0
+            while _time.monotonic() < deadline:
+                if _published_worker_port() is not None:
+                    return 0
+                _time.sleep(0.2)
+            return 3
+
+        # A request may have spawned us after a resident had already published.
+        if _published_worker_port() is not None:
+            return 0
+
+        from rapidocr import RapidOCR
+
+        # Model files may still be held by a previous worker process being torn
+        # down; retry the engine load so a kill/restart race does not kill us.
+        engine = None
+        for attempt in range(6):
+            try:
+                engine = RapidOCR()
+                break
+            except Exception as exc:
+                if attempt >= 5:
+                    print(json.dumps({"ok": False, "error": f"engine_load_failed:{type(exc).__name__}"}))
+                    return 2
+                _time.sleep(2.0)
+        assert engine is not None
+        _warm_detection_shapes(engine)
+
+        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        server.bind(("127.0.0.1", 0))
+        port = server.getsockname()[1]
+        server.listen(4)
+        server.settimeout(1.0)
+        PORT_FILE.write_text(json.dumps({"pid": os.getpid(), "port": port}), encoding="utf-8")
+
+    process_lock = threading.Lock()
     last_active = [_time.time()]
 
     def touch() -> None:
@@ -341,7 +480,7 @@ def main() -> int:
                     request = None
                     try:
                         request = json.loads(line.decode("utf-8"))
-                        response = process(engine, request)
+                        response = _process_if_idle(engine, request, process_lock)
                         response["id"] = request.get("id")
                     except Exception as exc:  # pragma: no cover
                         response = {"id": request.get("id") if request else None, "ok": False, "error": f"{type(exc).__name__}: {exc}"}
@@ -368,10 +507,7 @@ def main() -> int:
             server.close()
         except Exception:
             pass
-        try:
-            PORT_FILE.unlink(missing_ok=True)
-        except Exception:
-            pass
+        _remove_owned_port_file(PORT_FILE, pid=os.getpid(), port=port)
     return 0
 
 

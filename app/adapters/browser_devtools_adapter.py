@@ -106,6 +106,18 @@ BROWSER_DOM_REGION_PROBE_SCRIPT = r"""
     return inter / area;
   };
 
+  const strokeOverlapRatio = (a, b) => {
+    const width = Math.max(1, b.right - b.left);
+    const height = Math.max(1, b.bottom - b.top);
+    const ix = Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left));
+    const iy = Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top));
+    const horizontal = regionW >= Math.max(48, regionH * 3) && regionH <= 24;
+    const vertical = regionH >= Math.max(48, regionW * 3) && regionW <= 24;
+    if (horizontal && height <= Math.max(180, regionH * 12)) return ix / width;
+    if (vertical && width <= Math.max(180, regionW * 12)) return iy / height;
+    return 0;
+  };
+
   // Snap upward to the nearest container that actually owns readable text
   // (tweet card, comment, list item, paragraph). The user's hand-drawn mark
   // only needs to overlap the container body (>= 30%) for us to adopt it whole.
@@ -118,10 +130,13 @@ BROWSER_DOM_REGION_PROBE_SCRIPT = r"""
     for (let depth = 0; current && current.nodeType === 1 && depth < 8; depth += 1) {
       const text = (current.innerText || '').trim();
       const rect = current.getBoundingClientRect();
+      const candidateRect = { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
+      const areaOverlap = overlapRatio(regionRect, candidateRect);
+      const strokeOverlap = current === document.body ? 0 : strokeOverlapRatio(regionRect, candidateRect);
       if (text.length >= 2
         && rect.width > 0 && rect.height > 0
         && rect.width <= 2200
-        && overlapRatio(regionRect, { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom }) >= 0.30) {
+        && (areaOverlap >= 0.30 || strokeOverlap >= 0.25)) {
         return current;
       }
       if (current === document.body) break;
@@ -148,12 +163,17 @@ BROWSER_DOM_REGION_PROBE_SCRIPT = r"""
     }
   };
 
-  const xs = Math.max(1, Math.floor(regionW / step));
-  const ys = Math.max(1, Math.floor(regionH / step));
-  for (let gy = 0; gy <= ys && gy < 10; gy += 1) {
-    for (let gx = 0; gx <= xs && gx < 12; gx += 1) {
-      const vx = regionVp.x + Math.min(regionW, gx * step + step / 2);
-      const vy = regionVp.y + Math.min(regionH, gy * step + step / 2);
+  // Sample the centres of evenly divided cells.  The previous ``<=`` loop
+  // clamped a thin region's only sample to its bottom/right edge.  An underline
+  // that overlapped the last few pixels of a paragraph therefore sampled just
+  // outside the paragraph and returned an empty DOM result, even though the
+  // overlap scorer below would have accepted it.
+  const xs = Math.min(12, Math.max(1, Math.ceil(regionW / step)));
+  const ys = Math.min(10, Math.max(1, Math.ceil(regionH / step)));
+  for (let gy = 0; gy < ys; gy += 1) {
+    for (let gx = 0; gx < xs; gx += 1) {
+      const vx = regionVp.x + regionW * ((gx + 0.5) / xs);
+      const vy = regionVp.y + regionH * ((gy + 0.5) / ys);
       collectPoint(left + ((sideChromeCss + vx) * scaleX), top + ((topChromeCss + vy) * scaleY));
     }
   }
@@ -663,6 +683,15 @@ def _timestamp(value: object) -> str:
         return ""
 
 
+def _runtime_evaluate_value(evaluated: dict[str, Any]) -> dict[str, Any] | None:
+    """Unwrap Runtime.evaluate's RemoteObject without mistaking its metadata for the value."""
+    remote = evaluated.get("result")
+    if not isinstance(remote, dict):
+        return None
+    value = remote.get("value")
+    return dict(value) if isinstance(value, dict) else None
+
+
 class ChromeDevToolsProbe:
     # Shared across instances: whether any CDP endpoint answered is a property
     # of the machine, not of one adapter object, and the adapter is rebuilt per
@@ -832,7 +861,37 @@ class ChromeDevToolsProbe:
             timeout=self.timeout_ms / 1000,
             suppress_origin=True,
         )
+        failures: list[dict[str, Any]] = []
+        request_urls: dict[str, str] = {}
         request_id = 0
+
+        def collect(message: dict[str, Any]) -> None:
+            method = str(message.get("method") or "")
+            payload = dict(message.get("params") or {})
+            if method == "Network.requestWillBeSent":
+                request = dict(payload.get("request") or {})
+                key = str(payload.get("requestId") or "")
+                if key:
+                    request_urls[key] = str(request.get("url") or "")
+            elif method == "Network.loadingFailed":
+                key = str(payload.get("requestId") or "")
+                failures.append({
+                    "url": request_urls.get(key, ""),
+                    "errorText": str(payload.get("errorText") or ""),
+                    "source": "network.loadingFailed",
+                    "timestamp": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+                    "requestId": key,
+                })
+            elif method == "Log.entryAdded":
+                entry = dict(payload.get("entry") or {})
+                text = str(entry.get("text") or "")
+                if str(entry.get("source") or "").casefold() == "network" or _NETWORK_ERROR.search(text):
+                    failures.append({
+                        "url": str(entry.get("url") or ""),
+                        "errorText": text,
+                        "source": "devtools_log",
+                        "timestamp": _timestamp(entry.get("timestamp")),
+                    })
 
         def call(method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
             nonlocal request_id
@@ -847,10 +906,27 @@ class ChromeDevToolsProbe:
                     if message.get("error"):
                         raise RuntimeError(str(message["error"])[:500])
                     return dict(message.get("result") or {})
+                collect(message)
                 if message.get("method") == "Runtime.exceptionThrown":
                     raise RuntimeError(str((message.get("params") or {}).get("exceptionDetails") or "runtime_exception")[:300])
 
         try:
+            # A region is not merely text geometry.  The useful answer to
+            # "why did this fail?" often lives in the browser's network/log
+            # evidence, so collect the same bounded diagnostic context as the
+            # point probe instead of throwing it away on the region path.
+            call("Network.enable")
+            call("Log.enable")
+            deadline = time.monotonic() + (self.event_drain_ms / 1000)
+            socket.settimeout(0.05)
+            while time.monotonic() < deadline:
+                try:
+                    message = json.loads(socket.recv())
+                except websocket.WebSocketTimeoutException:
+                    continue
+                if isinstance(message, dict):
+                    collect(message)
+            socket.settimeout(self.timeout_ms / 1000)
             argument = {
                 "region": region,
                 "outerBBox": list(window.get("bbox") or []),
@@ -865,11 +941,38 @@ class ChromeDevToolsProbe:
                 "returnByValue": True,
                 "awaitPromise": True,
             })
-            raw = dict(evaluated.get("result") or {})
+            raw = _runtime_evaluate_value(evaluated)
             if not isinstance(raw, dict) or not raw.get("state"):
                 return DevToolsProbeResult(False, dict(raw or {}), "dom_region_evaluate_missing")
             if raw.get("state") != "resolved":
                 return DevToolsProbeResult(False, dict(raw or {}), str(raw.get("state") or "dom_region_failed"))
+            deduped: list[dict[str, Any]] = []
+            seen: set[tuple[str, str, str]] = set()
+            for failure in failures[-40:]:
+                key = (
+                    str(failure.get("url") or ""),
+                    str(failure.get("errorText") or ""),
+                    str(failure.get("source") or ""),
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                deduped.append(failure)
+            raw.update({
+                "schemaVersion": 1,
+                "networkFailures": deduped[-20:],
+                "provenance": {
+                    "endpoint": endpoint,
+                    "targetId": str(target.get("id") or ""),
+                    "structural": True,
+                    "networkSources": sorted({
+                        str(item.get("source") or "") for item in deduped if item.get("source")
+                    }),
+                },
+                "uncertainty": [] if deduped else [
+                    "no_network_failure_observed_in_devtools_log"
+                ],
+            })
             return DevToolsProbeResult(True, dict(raw or {}))
         except Exception as exc:
             return DevToolsProbeResult(False, {}, f"cdp_region_failed:{type(exc).__name__}:{str(exc)[:160]}")
@@ -963,7 +1066,7 @@ class ChromeDevToolsProbe:
                 "awaitPromise": True,
             })
             remote = dict(evaluated.get("result") or {})
-            raw = remote.get("value")
+            raw = _runtime_evaluate_value(evaluated)
             if not isinstance(raw, dict) or raw.get("state") != "resolved":
                 return DevToolsProbeResult(False, dict(raw or {}), str((raw or {}).get("state") or remote.get("description") or "dom_hit_test_failed"))
             for resource in list(raw.pop("resourceFailures", []) or [])[:20]:

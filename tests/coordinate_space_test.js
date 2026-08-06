@@ -1,9 +1,27 @@
 const assert = require('assert');
 const fs = require('fs');
 const {
+  physicalGestureBoundingBox,
   physicalScreenPoint,
   normalizeGroundingGeometry,
 } = require('../electron/coordinate_space');
+
+assert.deepStrictEqual(
+  physicalGestureBoundingBox([
+    { x: 625, y: 846 },
+    { x: 1370, y: 846 },
+  ], 16),
+  { x: 625, y: 838, width: 745, height: 16 },
+  'a perfectly horizontal stroke is a physical corridor, not a zero-area box',
+);
+assert.deepStrictEqual(
+  physicalGestureBoundingBox([
+    { x: 900, y: 200 },
+    { x: 900, y: 500 },
+  ], 16),
+  { x: 892, y: 200, width: 16, height: 300 },
+  'a perfectly vertical stroke receives the same centered thickness',
+);
 
 const mixedDpiScreen = {
   dipToScreenPoint(point) {
@@ -92,7 +110,9 @@ assert.strictEqual(pointerOnly.state, 'pointer_only');
 assert.deepStrictEqual(pointerOnly.stageTarget, { x: 272, y: 92, width: 16, height: 16 });
 
 const main = fs.readFileSync('electron/main.js', 'utf8');
-assert(main.includes("const { physicalScreenPoint, normalizeGroundingGeometry } = require('./coordinate_space');"));
+assert(main.includes('physicalGestureBoundingBox,'));
+assert(main.includes('physicalScreenPoint,'));
+assert(main.includes("} = require('./coordinate_space');"));
 assert(main.includes('const physicalCursor = physicalScreenPoint(screen, targetPoint);'));
 assert(main.includes("cursorSpace: physicalCursor ? 'physical_screen_pixels' : null"));
 assert(main.includes('targetPoint: safeClone(session.snapshot?.target_point || null)'));

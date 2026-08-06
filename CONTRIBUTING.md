@@ -46,7 +46,8 @@ npm run dist:win       # 构建 Windows 安装包
 - [ ] `npm test` 通过
 - [ ] `python -m pytest -q` 通过
 - [ ] 修改了用户可见行为时，同步更新 `CHANGELOG.md`
-- [ ] 修改了 Recipe / MCP 契约时，更新 `PRODUCT_BLUEPRINT_20260726.md`
+- [ ] 修改了 Recipe / MCP 契约时，更新 `docs/ARCHITECTURE.md`
+- [ ] 功能能用了 / 坏了 / 测试数变了，更新 `docs/STATUS.md`
 - [ ] 与安全相关时，遵守 `SECURITY.md`
 
 ## 报告 Bug
