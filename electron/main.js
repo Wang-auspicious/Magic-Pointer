@@ -2442,8 +2442,30 @@ function registerConfigurableHotkeys() {
   return results;
 }
 
+// 目标窗口的几何和显示名：渲染层只能画，不能读/写（不给句柄/pid）。
+function stageWindowRect(sourceWindow) {
+  const raw = sourceWindow && Array.isArray(sourceWindow.bbox) && sourceWindow.bbox.length === 4
+    ? sourceWindow.bbox
+    : null;
+  if (!raw) return null;
+  const values = raw.map((v) => Number(v));
+  if (values.some((v) => !Number.isFinite(v))) return null;
+  const [left, top, right, bottom] = values;
+  if (right <= left || bottom <= top) return null;
+  return { left, top, right, bottom };
+}
+
+function stageAppLabel(snapshot) {
+  const context = (snapshot && snapshot.context) || {};
+  const window = (snapshot && snapshot.source_window) || {};
+  const app = String(context.app || '');
+  const title = String(window.title || context.window?.title || '');
+  const bits = [app, title].filter(Boolean);
+  return bits.length ? bits.join(' · ') : '';
+}
+
 function stageSessionPayload(entry) {
-  const strokeCount = Array.isArray(entry?.gesture?.strokes) && entry.gesture.strokes.length
+  const strokeCount = entry?.gesture && Array.isArray(entry.gesture.strokes) && entry.gesture.strokes.length > 0
     ? entry.gesture.strokes.length
     : 1;
   return {
@@ -2459,6 +2481,13 @@ function stageSessionPayload(entry) {
     // 拉伸手势量到的是屏幕上的折行，而引擎认的是字数；没有这个数，两边就得各自
     // 猜对方说的「行」是什么意思，而它们猜的从来不一样。
     selectionChars: String(entry?.snapshot?.context?.content || '').trim().length,
+    // 目标窗口的矩形和名字。「要送出去」的那一路回答框贴在这个窗口右侧外沿，
+    // 而不是挂在选区旁边——那样会压住你要参照的上文。
+    //
+    // 只给几何和一个显示用的名字。渲染层拿不到句柄、进程 id 或任何能用来瞄准
+    // 一次读写的东西：它能画在哪儿，不等于它能读哪儿或写哪儿。
+    targetWindowRect: stageWindowRect(entry?.snapshot?.source_window),
+    targetAppLabel: stageAppLabel(entry?.snapshot),
     sessionExpiresAt: entry.expiresAt,
   };
 }
