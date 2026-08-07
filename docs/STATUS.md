@@ -1,8 +1,8 @@
 # 当前状态
 
-> 最后核实：2026-08-05。改了行为就回来改这里，别新建一份日期文件。
+> 最后核实：2026-08-07。改了行为就回来改这里，别新建一份日期文件。
 
-分支 `codex/multi-stroke-and-voice-fix`，未推送。全量测试：**Python 1026 项、Node 132 项（64 个源文件）**，ESLint 0 error 0 warning。
+分支 `codex/multi-stroke-and-voice-fix`，未推送。全量测试：**Python 1026 项、Node 144 项（86 个源文件）**，ESLint 0 error 0 warning。
 
 ## 一句话
 
@@ -19,6 +19,8 @@
 | 像素读取：常驻 OCR worker + 视觉元件框 | 可用 |
 | 证据高亮带（蓝＝结构层，琥珀＝像素） | 可用 |
 | 「填入」把气泡答案写进别的应用输入框 | 可用，写入后读回校验 |
+| 回答框两种形态（要送出去 / 自己看） | 判定与界面可用，**未实机验证**，见下 |
+| 在回答里划中一段就地展开 | 渲染层 + 桥可用，**未实机验证** |
 | Dashboard 设置 / 权限 / 审计 / 诊断 | 可用 |
 | Agent 集成（Codex/Pi/Claude/Gemini/Cursor/OpenCode/Aider） | 可用 |
 | MCP 双向（我们既是 server 也是 client） | 可用 |
@@ -48,13 +50,19 @@ Go 视觉能力实测（2026-08-07，探针 `data/runtime/probe_go_vision.py`）
 
 ## 已知未修
 
-1. **舞台的屏幕→窗口坐标换算在高 DPI 下存疑**：`stageOriginX/Y` 把物理像素的 `screenX` 减去 DIP 的 `x`。证据高亮带**刻意沿用了同一套换算**以保持一致——要改就两处一起改。
-2. 微信首次点选 4.4 秒里，明知读不到的 UIA 探针仍白跑约 0.3 秒。已知零元件的窗口应该直接跳过探针。
-3. 终端能用 `TextPattern.RangeFromPoint` 拿精确文本 + 行矩形（已验证），但生产探针的 region 模式走 `TryRegionElements` 就返回了。修完终端不需要 OCR。
-4. token 热力图**没有数据**：审计事件里零个 token 字段。要做得先让 `ask_text_model` 把 usage 写进审计日志。
-5. OCR worker 忙时可能返回空。忙碌不等于"屏幕上没有文字"，应该排队或明确报 `worker_busy`。
-6. 真实麦克风、中文口音、噪声环境还没做人工验收。自动化通过不能替代真人语音体验。
-7. 诊断页还得靠人翻 `data/runtime/electron.log`。打点数据（`bridge_progress.py`）已经在记，画出来就是页。
+1. **回答框两种形态只做到界面这一层，链路还是断的**（2026-08-07 新增，四条一起看）：
+   - **Python 侧的系统提示词还没禁 markdown。** 渲染层对 `deliver` 已经不解析了，但模型照样吐 `**`，用户看到的是字面量星号——比渲染成粗体更难看。这条不补，"纯文本"就只是半句话。
+   - **桥还不回 `answerShape` 字段。** 现在完全靠 `answer_shape_policy.js` 猜命令动词。桥知道自己走的是哪条 recipe，该它说了算；策略里那条 `result.answerShape` 分支是为它留的，只是没人填。
+   - **回答区还不能直接手改。** 需求里明写了「可以自己修改」，现在只能靠追问让模型改。
+   - **贴目标窗口右侧的坐标换算没在真机上验过。** `stageWindowRect` 走的是和选区矩形同一对函数（`physicalRectToDip` + `relativeRect`），但这台机器 200% 缩放，只有实机能确认框没飞到屏幕外。
+2. **MCP 嵌入界面只有渲染层。** `card_render.js` 的 `slot` 卡（沙盒 iframe）和 `cards.css` 的样式都在了，但**桥不会产出这种卡**——地图、播放器这类目前出不来。
+3. **舞台的屏幕→窗口坐标换算在高 DPI 下存疑**：`stageOriginX/Y` 把物理像素的 `screenX` 减去 DIP 的 `x`。证据高亮带**刻意沿用了同一套换算**以保持一致——要改就两处一起改。
+4. 微信首次点选 4.4 秒里，明知读不到的 UIA 探针仍白跑约 0.3 秒。已知零元件的窗口应该直接跳过探针。
+5. 终端能用 `TextPattern.RangeFromPoint` 拿精确文本 + 行矩形（已验证），但生产探针的 region 模式走 `TryRegionElements` 就返回了。修完终端不需要 OCR。
+6. token 热力图**没有数据**：审计事件里零个 token 字段。要做得先让 `ask_text_model` 把 usage 写进审计日志。
+7. OCR worker 忙时可能返回空。忙碌不等于"屏幕上没有文字"，应该排队或明确报 `worker_busy`。
+8. 真实麦克风、中文口音、噪声环境还没做人工验收。自动化通过不能替代真人语音体验。
+9. 诊断页还得靠人翻 `data/runtime/electron.log`。打点数据（`bridge_progress.py`）已经在记，画出来就是页。
 
 ## 真机验收怎么跑
 
@@ -70,3 +78,12 @@ python scripts/verify_marked_line_answer.py --title-contains "微信" --y <某�
 划线端到端看四个字段：`source_kind`、`covers_mark`、`gap_reason`、`selection_bbox`。微信上应当是 `screen_region` / `False` / `no_structured_text`，且 `selection_bbox` **等于你画的那一笔**，不是整窗。
 
 人眼必看两条：读到的每一块外围有跑动的亮带且**按来源分色**；气泡**不能出现在** `data/runtime/selection-captures/*.png` 里，同时气泡本身**不能发黑**（透明窗口开 display affinity 在某些 GPU 上会整窗变黑，任一条失败就把 `CAPSULE_CONTENT_PROTECTED` 翻成 false）。
+
+### 两种回答框怎么验（2026-08-07 新增，全部未跑过）
+
+界面版式可以用 `npx electron scripts/capture_stage.js <out.png>` 离线看——但那是**用 DOM 摆出来的**，不经过桥、不经过锚定，**不能当验收**。真机四条：
+
+1. 微信里划中一条消息 → 说「帮我回复一下」。框应当贴在**微信窗口右侧外沿**（右边放不下换左边），正文**没有任何 markdown 标记**，问题框下面出现「拒绝 / 同意」且写着写回哪个应用。
+2. 按「同意」→ 那段话进微信输入框；按「拒绝」→ 什么都不发生，框留着还能继续改。
+3. 随便划一段问「这是什么」。框挂在选区旁边，**没有**「拒绝 / 同意」，markdown 正常渲染。
+4. 在回答里划中一句 → 冒出「展开讲讲」→ 点它。那一句被换成更长的、黄一下再褪掉，**底栏轮次数字不变**（它不是第二轮）。

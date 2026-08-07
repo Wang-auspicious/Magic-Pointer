@@ -52,6 +52,27 @@ UIA / Chrome DevTools DOM / Office COM     ← 真相
 
 级别 3 物理上无法确认，必须返回 `written_unverified`（"已尝试替换，请确认" + 保留原文 + 提示 Ctrl+Z），**不得计入成功、不得标 `is_undoable`**。
 
+**回答框有两种，分界线是「这段产物要不要送出去」。**（2026-08-07）
+
+| | `deliver` | `inspect` |
+|---|---|---|
+| 例 | 回微信、回邮件、填回输入框 | 生图、MCP 地图/播放器、论文翻译、解释一段话 |
+| 位置 | 贴目标应用**右侧外沿**（右边放不下换左边，都放不下才退回挂胶囊下） | 挂在选区旁的胶囊下面 |
+| 正文 | **纯文本**，渲染层不解析 markdown | markdown / 图片 / 沙盒 iframe 全放开 |
+| 点头 | 「拒绝 / 同意」长在**问题框**下面 | 没有 |
+
+三条理由，都不是审美：
+
+1. **位置。** `deliver` 是在打磨一段要发给别人的话，你得一边看着聊天窗里的上文一边改。挂在选区旁边的框正好压住你要参照的那几行。
+2. **纯文本。** 对面读到的是字面量的 `**` 和 `-`。渲染成粗体会让人以为发过去也是那样——所以**渲染层和系统提示词必须说同一件事**，只做一半比不做更糟（现状就是只做了渲染层那一半，见 [ROADMAP P1](ROADMAP.md#p1)）。
+3. **点头的位置。** 定稿那段话此刻已经复制回问题框了，你正在看的就是即将被写出去的东西。把「同意」放在回答框左下角，是在让人对着另一个框做决定。
+
+判定在纯函数 `electron/answer_shape_policy.js`，优先级：**卡的形态 > 桥明说（`result.answerShape`）> 写回类提案 > 命令动词 > 默认**。默认永远是 `inspect`——判错成 inspect 用户只是少一个按钮，判错成 deliver 我们会剥掉格式并准备往别人窗口里塞字，**两个方向的代价不对等**。
+
+**「扩写」的单位必须是字符，不能是行。**（2026-08-07）手势量到的是**屏幕上折行后的视觉行**，`length_target.count_lines` 数的是**文本里的换行符**。一段没有换行的中文回答，前者 4 后者 1，比值凭空翻四倍，于是「扩写到 6 行」必定撞上 `ratio > 4.0` 那条「只能靠编造」的护栏——护栏是对的，它只是被喂了两个不同单位的数。所以：拖手柄的一律换算成字数再提交（`stage_stretch_policy.stretchCommand`），点「展开讲讲」的走 `auto_expand_target`（倍数 2.4 由我们定，因此没有任何东西需要被警告）。
+
+**「就地展开」不是第二轮对话。** `stage:expand-passage` 是 invoke 不是 send：它不动 `selectionSessions` 的 request 计数、不动 `pendingQuestions`、不动 `conversation_store`，回来的字直接换掉那个 `Range` 的内容。用户只是在第一轮的答案上做了一处修改，轮次因此不变。它也不碰屏幕上下文——源就是选中的那一段字，上一版让它走正常提交路径，结果 `selection_bridge` 拿屏幕上划的那块当源，扩的根本不是回答。
+
 ## 实测事实（不是推断，每条都能复现）
 
 ### UIA 到底能读到什么
@@ -107,7 +128,8 @@ UIA / Chrome DevTools DOM / Office COM     ← 真相
 | `pass_through_gesture.js` | 穿透模式画线追踪 |
 | `coordinate_space.js` | DIP ↔ 物理像素 |
 | `selection_session.js` / `interaction_episode.js` | 选区会话生命周期 / THIS·THAT·THESE·HERE 多对象绑定 |
-| `stage_contract.js` / `stage_state.js` / `stage_anchor.js` / `stage_hit_policy.js` / `stage_stretch_policy.js` / `stage_hit_regions.js` | Stage 状态机、锚点、命中区、拉伸把手 |
+| `stage_contract.js` / `stage_state.js` / `stage_anchor.js` / `stage_hit_policy.js` / `stage_stretch_policy.js` / `stage_hit_regions.js` | Stage 状态机、锚点、命中区、拉伸把手（把手说字数不说行，见上） |
+| `answer_shape_policy.js` | 这次回答是「要送出去」还是「自己看」。纯函数，钉子 `tests/answer_shape_policy_test.js` |
 | `capture_proof_policy.js` | 证据高亮带按来源分色 |
 | `bridge_progress_lines.js` | bridge 分段计时（stderr，stdout JSON 契约不动） |
 | `security_hardening.js` | CSP / sandbox / 崩溃恢复 / navigation 守卫 / 权限拦截 |
@@ -139,11 +161,12 @@ UIA / Chrome DevTools DOM / Office COM     ← 真相
 | `vision/` | `image_prompt` / `overlay_translation` / `visual_elements` / `visual_element_cache` |
 | `context_pack/screen_memory.py` | 记忆层。**不存截图**，有测试在出现 `capture_path`/`.png` 时失败 |
 | `text_actions/point_markers.py` | `[POINT]` 指点 |
+| `text_actions/length_target.py` | 扩写/压缩的长度目标。**单位是字符**（见上）；`auto_expand_target` 是「展开讲讲」用的、比值恒 2.4 因此不会误触护栏 |
 | `ai_client.py` | 模型调用。交互路径必须传 `timeout_s` + `attempts=1` + `max_tokens` |
 
 ### `scripts/` 桥接
 
-`selection_bridge.py`（选区命令主桥）｜`selection_snapshot_bridge.py`（快照 + 多点 grounding）｜`electron_bridge.py` / `fabric_bridge.py` / `action_bridge.py` / `agent_bridge.py`｜`ocr_resident_worker.py`（socket + PORT_FILE 常驻）｜`local_voice_*.py` / `sense_voice_*.py`｜`uia_selection_probe.cs` / `uia_draft_writer.cs` / `uia_tree_dump.cs` / `native_element_picker_demo.cs`｜`pointer_input_state.ps1`（`WH_MOUSE_LL` 轮询）｜`verify_*.py`（需要真窗口，手动跑）
+`selection_bridge.py`（选区命令主桥）｜`selection_snapshot_bridge.py`（快照 + 多点 grounding）｜`expand_passage_bridge.py`（把回答里的一段就地展开；**不碰选区会话、不产生动作提案、不开新的一轮**）｜`electron_bridge.py` / `fabric_bridge.py` / `action_bridge.py` / `agent_bridge.py`｜`ocr_resident_worker.py`（socket + PORT_FILE 常驻）｜`local_voice_*.py` / `sense_voice_*.py`｜`uia_selection_probe.cs` / `uia_draft_writer.cs` / `uia_tree_dump.cs` / `native_element_picker_demo.cs`｜`pointer_input_state.ps1`（`WH_MOUSE_LL` 轮询）｜`verify_*.py`（需要真窗口，手动跑）｜`capture_stage.js` / `extract_frames.js`（离线看版式 / 参考视频拆帧，**都只是眼睛，不是验收**）
 
 所有 bridge 共用 `_bridge_common.py`：`force_utf8_stdio` / `read_json_line`（64KiB 有界）/ `write_json`。
 

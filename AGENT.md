@@ -11,6 +11,9 @@
 | 代码怎么组织的、实测数字、关键决策 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
 | 接下来做什么 | [`docs/ROADMAP.md`](docs/ROADMAP.md) |
 | 怎么接 Agent | [`docs/AGENT_INTEGRATION.md`](docs/AGENT_INTEGRATION.md) |
+| 竞品 Vida 逐帧拆解 + 交接单 | [`Vida.md`](Vida.md) |
+
+**正在做到一半的（2026-08-07）：回答框两种形态。** 界面和判定已落地并提交，但链路还差四条——系统提示词还没禁 markdown、桥还不回 `answerShape`、回答区还不能手改、贴窗口右侧的坐标换算没实机验过。清单在 [`docs/ROADMAP.md` P1 第一项](docs/ROADMAP.md#p1)，判据和理由在 [`docs/ARCHITECTURE.md` 关键架构决策](docs/ARCHITECTURE.md#关键架构决策)，怎么验在 [`docs/STATUS.md` 两种回答框怎么验](docs/STATUS.md#两种回答框怎么验2026-08-07-新增全部未跑过)。**接手先读这三处，别从代码倒推。**
 
 历史文档在 [`docs/archive/`](docs/archive/INDEX.md)，**默认不要读**，需要考古时按索引定位。不要读会话历史 JSONL（12MB+）。
 
@@ -60,12 +63,22 @@ Magic Pointer = 默认不可见的跨应用操作层。晃动鼠标唤醒 → �
 - 不要为了"提前显示气泡"去赌时序。正确做法是让气泡对截图物理不可见（`setContentProtection`），降级必须绑在 bridge 发出的真实阶段标记上，不能用定时器。
 - 不要在气泡已经打开后静默 `return`。气泡是"我收到了"的承诺，静默返回会留下一个永不结算的气泡，比慢更糟。所有失败分支都必须说进已打开的气泡。
 
+**舞台 / 卡片**
+
+- **不要在 `//` 注释里写含 `/*` 的东西**（`selection-captures/*.png` 这种 glob 就够了）。静态测试用 `/\/\*[\s\S]*?\*\//g` 剥块注释，那个 `/*` 会从注释里**吃掉后面整段代码**直到下一个 `*/`——症状是 `voice_focus_invariance_static_test` 报某个函数"签名不对"，而那个函数明明就在那儿、正则也明明匹配。写成「`.png` under `data/runtime/selection-captures`」。
+- **胶囊永远不能有 `box-shadow`。** 这是透明、可穿透的窗口，Windows 会把 CSS 阴影渲染成一块矩形的后备缓冲残影，于是圆胶囊外面挂着一个灰方块。分离靠那一像素的边。`tests/selection_visual_contract_test.js` 钉着这条。（面板可以有——它已经在跑，实测没问题。）
+- **舞台的 CSP 是 `style-src 'self'`，行内 `style` 属性会被整条拦掉。** `icons.js` 曾用 `insertAdjacentHTML` 注入 `<svg style="position:absolute">`，属性被拦，精灵于是在文档流里占位置。定位要走 class（`.icon-sprite` 在 `oreo_tokens.css`）。CSSOM 赋值（`el.style.left = …`）不受影响，只有当成字符串写进 HTML 的那种会。
+- **不要用「行」当扩写/压缩的单位。** 手势量到的是屏幕上折行后的视觉行，`count_lines` 数的是换行符；一段没换行的中文回答两者差四倍，于是「扩写到 6 行」必定撞上「四倍以上只能靠编造」那条护栏。护栏是对的，别去放宽它——换成字数。
+- **不要在面板里再套一张卡。** `.mcard` 自带白底、圆角、投影，那在工作室里是对的，但在舞台面板里面板本身已经是那张卡了，套上去就是框里一个框。`density=capsule` 时把外壳脱掉。
+- **`deliver` 那一路改了渲染层就必须同时改系统提示词。** 渲染层不解析 markdown、模型照样吐 `**`，用户看到的是字面量星号——**比渲染成粗体更难看**。半个功能比没有更糟。
+
 **其他**
 
 - 不要引入需要付费 API 的依赖。SenseVoice / whisper / RapidOCR / OmniParser 全部免费本地。
 - 不要为了"收口"去改 `buttons` 掩码的算法——闪烁根因未确诊前改它会把唯一能观测的信号抹掉。
 - 不要把 Google 的 demo 当可运行实现对标（无声矢量动画，见 [PRODUCT.md](docs/PRODUCT.md#竞品)）。
 - 视觉重做之前不要动纸飞机 / 配置页 / 记忆层 / 对话历史。
+- **`npx electron scripts/capture_stage.js` 截出来的图不是验收。** 它是用 DOM 摆出来的，不过桥、不过锚定、不过真实数据。版式可以这么看，"能用"不行。
 
 ## 已证伪的想法（别再试）
 

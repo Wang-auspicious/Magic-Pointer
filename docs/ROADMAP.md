@@ -26,6 +26,12 @@
 
 ## P1
 
+- **把两种回答框的链路接完**（2026-08-07 起，界面已落地，四条一起才算完；细节见 [STATUS.md 已知未修 1](STATUS.md#已知未修)）：
+  1. **`deliver` 那一路的系统提示词禁 markdown。** 渲染层已经不解析了，但模型照样吐 `**`，用户看到的是字面量星号——**比渲染成粗体更难看**。渲染层和提示词必须说同一件事，缺一半就是半个功能。落点在 `selection_bridge.py` 的模型调用处。
+  2. **桥回一个 `answerShape` 字段。** 现在全靠 `electron/answer_shape_policy.js` 猜命令动词；桥知道自己走的是哪条 recipe，该它说了算。策略里 `result.answerShape` 那条分支就是为它留的（优先级仅次于卡的形态），填上即可，不用改渲染层。
+  3. **回答区可以直接手改。** 需求原话是「可以继续追问反复打磨**或自己修改**或拓展」，现在只有前后两样。`deliver` 的正文本来就是纯文本，做成 contenteditable 的代价最小；改过的内容要成为「同意」真正写出去的那份。
+  4. **贴目标窗口右侧的坐标换算真机验一次。** `stageWindowRect` 走的是和选区矩形同一对函数（`physicalRectToDip` + `relativeRect`），但这台机器 200% 缩放，[STATUS.md 已知未修 3](STATUS.md#已知未修) 那条老坑还在——只有实机能确认框没飞到屏幕外。
+- **让桥能产出 `slot` 卡（MCP 嵌入界面）。** 渲染层和样式都在了（`card_render.js` 的沙盒 iframe + `cards.css` 的 `.mcard-slot`），但没有任何一条路径会产出这种卡，所以地图、播放器这类**目前出不来**。MCP client 已经可用，缺的是把 MCP Apps（2026-07-28 起 server 可返回交互式 UI）的返回值映射成 `{kind:'slot', server, html|url, height}`。两条硬约束写在 `card_render.js` 的注释里：**沙盒绝不能有 `allow-same-origin`**，且必须框起来写清是哪个 server。
 - **模型调用改流式。** 现在非流式、约 3–6 秒。应流式显示首 token，整个交互给 8–12 秒 wall-clock，超时立即显示本地证据。
 - **OCR worker 忙时不能返回空。** 排队一个有界请求，或明确返回 `worker_busy` 并在 UI 显示"正在读取"。**忙碌不等于屏幕上没有文字。**
 - **诊断页。** 直接展示每次会话的 HWND、候选层、OCR 框数/截断、路由 tier、模型首 token/总耗时、降级原因。打点数据已经在记（`bridge_progress.py`），画出来就是页。不能继续靠人翻 `electron.log`。
