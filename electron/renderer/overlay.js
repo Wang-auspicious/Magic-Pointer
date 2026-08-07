@@ -48,6 +48,10 @@ const GUIDE_FLIGHT_MS = 620;
 
 function onGuidePoint(payload) {
   if (!payload || !Number.isFinite(Number(payload.x)) || !Number.isFinite(Number(payload.y))) return;
+  // 上一枚三角的停留定时器还挂着：不清掉的话，新的一枚刚到就会被
+  // 旧定时器在旧时刻抹掉——连续两枚 [POINT] 时第二枚几乎看不见。
+  if (guideHideTimer) clearTimeout(guideHideTimer);
+  guideHideTimer = null;
   const bounds = overlayBounds();
   const tx = Number(payload.x) - bounds.x;
   const ty = Number(payload.y) - bounds.y;
@@ -721,17 +725,9 @@ window.addEventListener('pointercancel', (e) => {
 
 // Finalize the chain when the window is hidden externally (right-click or
 // Escape) so the renderer never submits a half-drawn chain later.
-window.magicPointer?.onHide(() => {
-  if (chainTimer) clearTimeout(chainTimer);
-  chainTimer = null;
-  chainDeadlineAt = 0;
-  if (chainHintTimer) clearTimeout(chainHintTimer);
-  chainHintTimer = null;
-  guideTarget = null;
-  guideFlight = null;
-  if (guideHideTimer) clearTimeout(guideHideTimer);
-  guideHideTimer = null;
-});
+// 这里曾另挂了一份 onHide 做链/三角清理——和下方 onHide 里的 resetOverlay
+// 完全重复（resetOverlay 已经清 chainTimer/chainHintTimer/guideTarget/
+// guideFlight/guideHideTimer/chainDeadlineAt），已合并，只留一份。
 
 window.magicPointer?.onGestureSubmit((payload) => {
   if (!gestureMode || String(payload?.token || '') !== String(gestureToken || '')) return;

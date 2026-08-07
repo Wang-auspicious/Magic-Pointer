@@ -141,10 +141,10 @@ async function renderStash(force = false) {
   world.innerHTML = laid.map(b => {
     const nodes = b.nodes.map(n => {
       const body = n.t === 'shot'
-        ? `<span class="node-shot" style="width:${n.w}px;height:${n.h - 34}px;${n.src ? `background-image:url('file:///${String(n.src).replace(/\\/g, '/')}');background-size:cover;background-position:center` : `background-image:${makeShot(n.desc)}`}"></span>
-           <span class="node-desc">${n.desc}</span>
+        ? `<span class="node-shot" style="width:${n.w}px;height:${n.h - 34}px;${n.src ? `background-image:url('file:///${cssUrl(n.src)}');background-size:cover;background-position:center` : `background-image:${makeShot(n.desc)}`}"></span>
+           <span class="node-desc">${esc(n.desc)}</span>
            ${n.summary ? `<span class="node-summary">${esc(n.summary)}</span>` : ''}`
-        : `<span class="node-note">${n.text}</span>`;
+        : `<span class="node-note">${esc(n.text)}</span>`;
       return `<span class="node" data-src="${esc(n.src || '')}" data-text="${esc(n.text || '')}" data-summary="${esc(n.summary || '')}" style="left:${b.cx + n.x}px;top:${b.cy + n.y}px">
         <span class="node-cap">${icon(b.icon)}${b.time}<span class="kind ${KIND_TAG[b.kind]}">${b.kind}</span></span>
         ${body}
@@ -169,8 +169,8 @@ function renderStashList(laid, force = false) {
   list.innerHTML = Object.entries(byTime).map(([day, bs]) =>
     `<div class="stash-day">${day}<em>· ${bs.reduce((n, b) => n + b.items.length, 0)} 项</em></div>` +
     bs.map(b => b.items.map(it => `<button class="stash-row" data-src="${esc(it.src || '')}" data-text="${esc(it.text || '')}">
-        <span class="sq" style="${it.src && /\.(png|jpe?g|gif|webp|bmp)$/i.test(it.src) ? `background-image:url('file:///${String(it.src).replace(/\\/g, '/')}');background-size:cover;background-position:center` : `background-image:${it.t === 'shot' ? makeShot(it.desc) : 'none'}`}"></span>
-        <span class="txt">${it.desc || it.text}</span>
+        <span class="sq" style="${it.src && /\.(png|jpe?g|gif|webp|bmp)$/i.test(it.src) ? `background-image:url('file:///${cssUrl(it.src)}');background-size:cover;background-position:center` : `background-image:${it.t === 'shot' ? makeShot(it.desc) : 'none'}`}"></span>
+        <span class="txt">${esc(it.desc || it.text)}</span>
         <span class="src">${b.app}</span>
         <span class="kind ${KIND_TAG[b.kind]}">${b.kind}</span>
         <span class="t">${b.time}</span>
@@ -406,6 +406,12 @@ async function renderArtifacts(force) {
 function esc(v) {
   return String(v == null ? '' : v)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// 本地路径进 CSS url('...')：反斜杠换正斜杠，再转义掉能截断字符串的引号。
+// 文件名是用户剪贴板/收藏目录来的，不能假设它干净。
+function cssUrl(v) {
+  return String(v == null ? '' : v).replace(/\\/g, '/').replace(/'/g, '%27').replace(/"/g, '%22');
 }
 
 /* ============================================================

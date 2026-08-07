@@ -75,6 +75,10 @@ let overlayHideTimer = null;
 let selectionGestureArm = null;
 let selectionGestureArmTimer = null;
 let selectionGestureExpiryTimer = null;
+// 划线完成 → 会话开始之间隔一帧合成器。这个定时器必须跟着手势取消走，
+// 否则用户在 34ms 内按 Escape/重新划线的操作会被一个迟到的 beginSelectionSession
+// 静默覆盖（又开一个新会话、又 spawn 一个探针）。
+let selectionGestureCommitTimer = null;
 let passThroughChainTimer = null;
 let passThroughChainDeadlineAt = 0;
 let passThroughChainLastPoint = null;
@@ -868,42 +872,49 @@ function updateStage(payload = {}) {
     if (Number.isFinite(x) && Number.isFinite(y)) {
       // 回答阶段 overlay 通常已隐藏（划线提交后 hideOverlay）——指向需要
       // 一个可见的透明层来画三角。没有就临时拉起：穿透、不抢焦点、不拦截。
+      // 必须先等渲染器就绪再 show+send：对一个还在加载的窗口 showInactive()
+      // 只会留下一层永远可见的透明窗（wiggle 检测因此被关掉），overlay:show
+      // 和 overlay:guide-point 也会因为无人订阅而丢掉。
       if (!overlayWindow || overlayWindow.isDestroyed()) createOverlayWindow();
-      if (overlayWindow && !overlayWindow.isDestroyed()) {
-        const win = overlayWindow;
-        const display = screen.getDisplayNearestPoint({ x, y });
-        const bounds = win.getBounds();
-        const desired = display.bounds;
-        if (Math.abs(bounds.x - desired.x) > 1 || Math.abs(bounds.y - desired.y) > 1
-          || Math.abs(bounds.width - desired.width) > 1 || Math.abs(bounds.height - desired.height) > 1) {
-          win.setBounds(desired);
-        }
-        if (!win.isVisible()) {
-          win.setIgnoreMouseEvents(true, { forward: true });
-          overlayOwnsPointerInput = false;
-          win.showInactive();
-          if (typeof win.setFocusable === 'function') win.setFocusable(false);
-          win.webContents.send('overlay:show', {
-            reason: 'guide-point',
-            workflow: 'generic',
-            gestureMode: false,
-            observerMode: false,
-            selectionGestureToken: null,
-            gestureAcceptAt: 0,
-            gestureLineStyle: 'demo6_band',
-            gestureLineWidth: 22,
-            gestureChainGapMs: 1500,
-            gestureInteractionMode: 'exclusive_overlay',
+      const win = overlayWindow;
+      if (win && !win.isDestroyed()) {
+        const revealGuide = () => {
+          if (!win || win.isDestroyed()) return;
+          const display = screen.getDisplayNearestPoint({ x, y });
+          const bounds = win.getBounds();
+          const desired = display.bounds;
+          if (Math.abs(bounds.x - desired.x) > 1 || Math.abs(bounds.y - desired.y) > 1
+            || Math.abs(bounds.width - desired.width) > 1 || Math.abs(bounds.height - desired.height) > 1) {
+            win.setBounds(desired);
+          }
+          if (!win.isVisible()) {
+            win.setIgnoreMouseEvents(true, { forward: true });
+            overlayOwnsPointerInput = false;
+            win.showInactive();
+            if (typeof win.setFocusable === 'function') win.setFocusable(false);
+            win.webContents.send('overlay:show', {
+              reason: 'guide-point',
+              workflow: 'generic',
+              gestureMode: false,
+              observerMode: false,
+              selectionGestureToken: null,
+              gestureAcceptAt: 0,
+              gestureLineStyle: 'demo6_band',
+              gestureLineWidth: 22,
+              gestureChainGapMs: 1500,
+              gestureInteractionMode: 'exclusive_overlay',
+            });
+          }
+          // [POINT] 坐标是物理屏幕像素（视觉模型看全屏截图给出），overlay
+          // canvas 是 DIP——先除缩放，overlay 里直接当窗口坐标用。
+          const scale = (display && display.scaleFactor) || 1;
+          win.webContents.send('overlay:guide-point', {
+            x: x / scale,
+            y: y / scale,
+            count: points.length,
           });
-        }
-        // [POINT] 坐标是物理屏幕像素（视觉模型看全屏截图给出），overlay
-        // canvas 是 DIP——先除缩放，overlay 里直接当窗口坐标用。
-        const scale = (display && display.scaleFactor) || 1;
-        win.webContents.send('overlay:guide-point', {
-          x: x / scale,
-          y: y / scale,
-          count: points.length,
-        });
+        };
+        overlayReadiness.whenReady(revealGuide);
       }
     }
   }
@@ -1766,7 +1777,8 @@ function requestActivation(reason) {
     return queueActivationUntilSurfacesReady(reason);
   }
   const decision = activationGate.decide({
-    hasVisibleSurface: hasVisibleTemporarySurface() || Boolean(overlayWindow?.isVisible()),
+    hasVisibleSurface: hasVisibleTemporarySurface()
+      || Boolean(overlayWindow && !overlayWindow.isDestroyed() && overlayWindow.isVisible()),
     isActivationBusy: hasActiveSelectionCapture() || Boolean(selectionGestureArm),
   });
   log(`activation request reason=${reason} decision=${decision}`);
@@ -1983,7 +1995,7 @@ function stopDictation(surface, { graceful = false } = {}) {
 let overlayBoundDisplayId = null;
 
 function sendCursorToOverlay(pos = screen.getCursorScreenPoint()) {
-  if (!overlayWindow || !overlayWindow.isVisible()) return;
+  if (!overlayWindow || overlayWindow.isDestroyed() || !overlayWindow.isVisible()) return;
   const display = screen.getDisplayNearestPoint(pos);
   const desired = display.bounds;
   const current = overlayWindow.getBounds();
@@ -2029,8 +2041,10 @@ function cancelSelectionGesture(reason = 'cancelled', { hideSurface = true } = {
   sendPointerInputCommand('idle');
   if (selectionGestureArmTimer) clearTimeout(selectionGestureArmTimer);
   if (selectionGestureExpiryTimer) clearTimeout(selectionGestureExpiryTimer);
+  if (selectionGestureCommitTimer) clearTimeout(selectionGestureCommitTimer);
   selectionGestureArmTimer = null;
   selectionGestureExpiryTimer = null;
+  selectionGestureCommitTimer = null;
   selectionGestureArm = null;
   disarmTemporaryGestureSubmitShortcut();
   if (hideSurface) hideOverlay();
@@ -2165,9 +2179,18 @@ function completeSelectionGesture(payload) {
   // Formula: X_phys = Screen_Physical_Origin + (Local_Logical_X × sf_display)
   // This prevents nonlinear origin shift when displays have different scale
   // factors (e.g. primary 100%, secondary 150%).
+  //
+  // The renderer's points are LOCAL to the overlay window, which covers one
+  // display. Feed screen coordinates to getDisplayNearestPoint: without the
+  // window offset, points drawn on a secondary display (bounds.x/y ≠ 0) are
+  // looked up against the primary display and the whole selection shifts by
+  // the display origin.
+  const gestureFrame = (overlayWindow && !overlayWindow.isDestroyed())
+    ? overlayWindow.getBounds()
+    : arm.displayBounds;
   const toPhysical = (point) => {
-    const px = Number(point.x);
-    const py = Number(point.y);
+    const px = Number(point.x) + gestureFrame.x;
+    const py = Number(point.y) + gestureFrame.y;
     const pointDisplay = screen.getDisplayNearestPoint({ x: px, y: py });
     const pointSf = pointDisplay.scaleFactor || 1;
     const physicalOriginX = pointDisplay.bounds.x * pointSf;
@@ -2216,7 +2239,12 @@ function completeSelectionGesture(payload) {
   cancelSelectionGesture('completed');
   // One compositor frame after hiding the drawing canvas prevents it from
   // entering pixel fallback captures. Stage remains absent during this gap.
-  setTimeout(() => beginSelectionSession(reason, gesture), 34);
+  // The timer is owned by cancelSelectionGesture: a dismiss/re-arm inside the
+  // gap cancels it instead of opening a stale session.
+  selectionGestureCommitTimer = setTimeout(() => {
+    selectionGestureCommitTimer = null;
+    beginSelectionSession(reason, gesture);
+  }, 34);
   return true;
 }
 
@@ -2305,7 +2333,12 @@ function startMouseShakePolling() {
   mousePollTimer = setInterval(() => {
     const now = Date.now();
     const pos = screen.getCursorScreenPoint();
-    if (overlayWindow && overlayWindow.isVisible()) sendCursorToOverlay(pos);
+    // 滚动量只在 wiggle 判定那里读一次，但必须在 tick 开头就清零——
+    // 中段的 early return（临时表面可见、overlay 可见）会跳过读取，
+    // 不清零的话整段手势期间的滚动会攒成一笔，表面消失后误触一次唤醒。
+    const scrollDelta = pointerInputState.scrollDelta;
+    pointerInputState.scrollDelta = 0;
+    if (overlayWindow && !overlayWindow.isDestroyed() && overlayWindow.isVisible()) sendCursorToOverlay(pos);
     if (stageWindow && !stageWindow.isDestroyed() && stageWindow.isVisible()) {
       const stageBounds = stageWindow.getBounds();
       stageWindow.webContents.send('stage:pointer-input', {
@@ -2319,7 +2352,8 @@ function startMouseShakePolling() {
         buttons: Number(pointerInputState.buttons || 0),
       });
     }
-    const temporarySurfaceVisible = hasVisibleTemporarySurface() || Boolean(overlayWindow?.isVisible());
+    const temporarySurfaceVisible = hasVisibleTemporarySurface()
+      || Boolean(overlayWindow && !overlayWindow.isDestroyed() && overlayWindow.isVisible());
     const currentButtons = Number(pointerInputState.buttons || 0);
     // Cursor flicker is a state machine oscillating, and we do not yet know
     // which state. This prints only on change, so a 20ms loop stays readable and
@@ -2376,9 +2410,7 @@ function startMouseShakePolling() {
     if (!pointerPolicy.detectWiggle) return;
     // An active stage session owns the pointer; no re-triggering underneath it.
     if (hasVisibleTemporarySurface()) return;
-    if (!overlayWindow || overlayWindow.isVisible()) return;
-    const scrollDelta = pointerInputState.scrollDelta;
-    pointerInputState.scrollDelta = 0;
+    if (!overlayWindow || overlayWindow.isDestroyed() || overlayWindow.isVisible()) return;
     const decision = wiggleDetector.push({
       t: now,
       x: pos.x,
@@ -2417,6 +2449,10 @@ function stopMouseShakePolling() {
 function applyConfiguredWakeState() {
   const policy = currentPointerPollingPolicy();
   mouseActivationDetector.reset(pointerInputState.buttons);
+  // 暂停/恢复唤醒会停掉轮询再重启，期间 buttons 基线会过期——
+  // 否则恢复后第一次右键（取消临时表面那条判定）会把很久之前的按键
+  // 当成「上一帧」，错过一次本应触发的取消。
+  temporarySurfaceButtons = Number(pointerInputState.buttons || 0);
   if (policy.shouldPoll) {
     startPointerInputStateStream();
     startMouseShakePolling();
@@ -2936,7 +2972,10 @@ app.whenReady().then(() => {
   log(`register hotkey Control+Alt+Shift+M legacy-selection ok=${legacySelectionHotkeyOk}`);
   const dashboardHotkeyOk = globalShortcut.register('Control+Alt+D', () => {
     if (onboardingRequired) showOnboarding({}, { activate: true });
-    else if (dashboardWindow?.isVisible()) dashboardWindow.hide();
+    else if (dashboardWindow?.isVisible()) {
+      dashboardWindow.hide();
+      stopTitleBarSampling();
+    }
     else showDashboard({}, { activate: true });
   });
   log(`register hotkey Control+Alt+D dashboard ok=${dashboardHotkeyOk}`);
@@ -3577,12 +3616,16 @@ function startModelHealthWatch() {
   modelHealthTimer.unref?.();
 }
 
-ipcMain.handle('dashboard:session-timeline', async () => ({
-  ok: true,
-  sessions: sessionTimeline.snapshot(),
-}));
+ipcMain.handle('dashboard:session-timeline', async (event) => {
+  if (!isDashboardSender(event)) throw new Error('unauthorized_dashboard_sender');
+  return {
+    ok: true,
+    sessions: sessionTimeline.snapshot(),
+  };
+});
 
-ipcMain.handle('dashboard:model-health-refresh', async () => {
+ipcMain.handle('dashboard:model-health-refresh', async (event) => {
+  if (!isDashboardSender(event)) throw new Error('unauthorized_dashboard_sender');
   const health = await refreshModelHealth({ probe: true });
   return { ok: true, health };
 });
@@ -4153,7 +4196,9 @@ ipcMain.on('stage:insert-result-text', (event, payload) => {
     deliverStageError(selectionSessionToken, '当前 THIS 已过期，请重新激活 Magic Pointer。');
     return;
   }
-  const text = String(payload?.text || '');
+  // 渲染层只送它正在显示的文字，但也得有个上限：preload 不截断这条路，
+  // 一个失控/被攻破的渲染进程不能往桥里灌无界字符串。
+  const text = String(payload?.text || '').slice(0, 200000);
   if (!text.trim()) {
     deliverStageError(selectionSessionToken, '没有可填入的文字。');
     return;
@@ -4316,19 +4361,26 @@ function queueCalendarOperation(operation, payload = {}) {
     }));
 }
 
-ipcMain.on('companion:hide', () => {
+ipcMain.on('companion:hide', (event) => {
+  if (!isCompanionSender(event)) return;
   if (companionWindow && !companionWindow.isDestroyed()) companionWindow.hide();
 });
-ipcMain.on('companion:pin', (_event, payload) => {
+ipcMain.on('companion:pin', (event, payload) => {
+  if (!isCompanionSender(event)) return;
   companionPinned = payload?.pinned !== false;
   if (companionWindow && !companionWindow.isDestroyed()) {
     companionWindow.setAlwaysOnTop(companionPinned);
   }
 });
-ipcMain.on('companion:expand', () => showPrimarySurface({ activate: true }));
+ipcMain.on('companion:expand', (event) => {
+  if (!isCompanionSender(event)) return;
+  showPrimarySurface({ activate: true });
+});
 
 ipcMain.on('dashboard:hide', (event) => {
-  if (isDashboardSender(event)) dashboardWindow.hide();
+  if (!isDashboardSender(event)) return;
+  dashboardWindow.hide();
+  stopTitleBarSampling();
 });
 ipcMain.on('dashboard:theme', (event, payload = {}) => {
   if (!isDashboardSender(event) || process.platform === 'darwin') return;

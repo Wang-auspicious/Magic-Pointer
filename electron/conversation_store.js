@@ -127,6 +127,7 @@ function createConversationStore({ baseDir, now = () => Date.now() } = {}) {
     };
 
     if (target) {
+      if (!Array.isArray(target.turns)) target.turns = [];
       target.turns.push(entry);
       if (target.turns.length > MAX_TURNS) target.turns.splice(0, target.turns.length - MAX_TURNS);
       target.updatedAt = at;
@@ -163,8 +164,10 @@ function createConversationStore({ baseDir, now = () => Date.now() } = {}) {
       subtitle: c.subtitle,
       object: c.object,
       updatedAt: c.updatedAt,
-      turns: c.turns.length,
-      outcomes: [...new Set(c.turns.map((t) => t.outcome).filter(Boolean))],
+      // 磁盘上的旧文件可能没有 turns 字段（早期版本/手改），逐条判空，
+      // 否则一条坏记录会把整个列表、时间线、记忆、产物五个 handler 一起打挂。
+      turns: (c.turns || []).length,
+      outcomes: [...new Set((c.turns || []).map((t) => t.outcome).filter(Boolean))],
     }));
   }
 
@@ -198,7 +201,7 @@ function createConversationStore({ baseDir, now = () => Date.now() } = {}) {
         lastAt: 0,
         questions: [],
       };
-      m.touches += c.turns.length;
+      m.touches += (c.turns || []).length;
       m.lastAt = Math.max(m.lastAt, c.updatedAt);
       m.questions.push(c.title);
       byObject.set(c.objectKey, m);
@@ -214,7 +217,7 @@ function createConversationStore({ baseDir, now = () => Date.now() } = {}) {
     load();
     const out = [];
     for (const c of items) {
-      for (const t of c.turns) {
+      for (const t of (c.turns || [])) {
         for (const a of t.artifacts || []) {
           out.push({ ...a, at: t.at, conversationId: c.id, from: c.title });
         }

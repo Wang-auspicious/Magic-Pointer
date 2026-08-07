@@ -121,6 +121,10 @@ function createStashRuntime(options = {}) {
         stdio: ['pipe', 'pipe', 'pipe'],
       });
       let out = '';
+      // 摘要走 stdout JSON。之前只挂了 stderr 的消费、没挂 stdout 的——
+      // `out` 永远是空串，JSON.parse 必然抛错，自动简介因此从未生效过。
+      child.stdout.setEncoding('utf8');
+      child.stdout.on('data', (chunk) => { out += chunk; });
       child.stderr.on('data', () => {});
       child.on('error', () => resolve(null));
       child.on('close', () => {
@@ -131,6 +135,8 @@ function createStashRuntime(options = {}) {
           resolve(null);
         }
       });
+      // 进程没起来时 stdin 会被销毁，end() 会异步抛 'error'；不挂监听就是未捕获异常。
+      child.stdin.on('error', () => {});
       child.stdin.end(JSON.stringify({ imagePath: absPath }));
     });
   }
