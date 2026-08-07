@@ -119,9 +119,9 @@ function layoutBurst(b) {
   return { ...b, nodes: placed, w, h: y + rowH + PAD };
 }
 
-async function renderStash() {
+async function renderStash(force = false) {
   const world = document.getElementById('canvas-world');
-  if (!world || world.childElementCount) return;
+  if (!world || (world.childElementCount && !force)) return;
 
   const bursts = await Data.stash();
   document.getElementById('stash-count').textContent =
@@ -157,13 +157,13 @@ async function renderStash() {
 
   world.dataset.width = maxW + 60;
   world.dataset.height = cy + colH + 60;
-  renderStashList(laid);
+  renderStashList(laid, force);
   fitCanvas();
 }
 
-function renderStashList(laid) {
+function renderStashList(laid, force = false) {
   const list = document.getElementById('stash-list');
-  if (!list || list.childElementCount) return;
+  if (!list || (list.childElementCount && !force)) return;
   const byTime = {};
   laid.forEach(b => { (byTime[/[今昨前]|月/.test(b.time) ? b.time : '今天'] ||= []).push(b); });
   list.innerHTML = Object.entries(byTime).map(([day, bs]) =>
@@ -429,7 +429,7 @@ function show(view) {
   Object.entries(VIEWS).forEach(([k, id]) => {
     document.getElementById(id).hidden = (k !== view);
   });
-  if (view === 'stash') { renderStash(); bindCanvas(); }
+  if (view === 'stash') { renderStash(true); bindCanvas(); }
   if (view === 'timeline') renderTimeline();
   if (view === 'memory') renderMemory();
   if (view === 'artifacts') renderArtifacts();
