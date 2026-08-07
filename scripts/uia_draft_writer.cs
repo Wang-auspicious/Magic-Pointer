@@ -192,30 +192,47 @@ public static class UiaDraftWriter
         result.source_chars = text.Length;
         if (Boolean(data, "submit", true)) { result.error = "submit must be false"; return result; }
         if (String.IsNullOrWhiteSpace(text)) { result.error = "text is empty"; return result; }
-        if (hwndValue <= 0 || point == null) { result.error = "target identity is incomplete"; return result; }
         if (coordinateSpace != "physical_screen_pixels") { result.error = "target coordinate space is not physical screen pixels"; return result; }
-        if (String.IsNullOrWhiteSpace(expectedTitle)) { result.error = "target title is missing"; return result; }
+        // prefer_foreground：用户划线问完后切到了微信/AI 输入框，填入要写进
+        // 「现在的前台」，而不是拉回划线时锁定的窗口。此模式下不校验锁定
+        // hwnd（目标就是当前前台），但 point 仍是锁定时的点——用它定位前台
+        // 窗口里的输入框；前台不可编辑则回退锁定窗口。
+        bool preferForeground = Boolean(data, "prefer_foreground", false);
         IntPtr hwnd = new IntPtr(hwndValue);
+        if (preferForeground)
+        {
+            IntPtr fg = GetForegroundWindow();
+            if (fg != IntPtr.Zero && fg != hwnd)
+            {
+                hwnd = fg;
+                result.target_hwnd = hwnd.ToInt64();
+            }
+        }
         if (!IsWindow(hwnd)) { result.error = "target window no longer exists"; return result; }
         uint actualProcessId;
         GetWindowThreadProcessId(hwnd, out actualProcessId);
-        if (expectedProcessId > 0 && actualProcessId != (uint)expectedProcessId)
+        if (!preferForeground && expectedProcessId > 0 && actualProcessId != (uint)expectedProcessId)
         {
             result.error = "target process changed before draft delivery";
             return result;
         }
         string actualTitle = WindowText(hwnd);
-        if (!String.Equals(actualTitle, expectedTitle, StringComparison.Ordinal))
+        if (!preferForeground && !String.Equals(actualTitle, expectedTitle, StringComparison.Ordinal))
         {
             result.error = "target window title changed before draft delivery";
             return result;
         }
         NativePoint nativePoint = new NativePoint { X = point[0], Y = point[1] };
-        IntPtr pointedWindow = WindowFromPoint(nativePoint);
-        if (pointedWindow == IntPtr.Zero || GetAncestor(pointedWindow, GA_ROOT) != hwnd)
+        // prefer_foreground 时 point 属于划线时的旧窗口——不校验它属于新
+        // 前台（用户主动切过去了），改用前台窗口中心的点定位输入框。
+        if (!preferForeground)
         {
-            result.error = "user-pointed input no longer belongs to the target window";
-            return result;
+            IntPtr pointedWindow = WindowFromPoint(nativePoint);
+            if (pointedWindow == IntPtr.Zero || GetAncestor(pointedWindow, GA_ROOT) != hwnd)
+            {
+                result.error = "user-pointed input no longer belongs to the target window";
+                return result;
+            }
         }
         result.target_title = actualTitle;
         ShowWindow(hwnd, SW_RESTORE);
@@ -255,7 +272,23 @@ public static class UiaDraftWriter
         }
 
         bool hasValuePattern;
-        AutomationElement editable = EditableAtPoint(point[0], point[1], out hasValuePattern);
+        AutomationElement editable;
+        if (preferForeground)
+        {
+            // 用户切到前台输入框后键盘焦点就在它上面：用 FocusedElement
+            // 定位，比旧坐标点可靠（旧 point 属于划线时的窗口）。
+            editable = AutomationElement.FocusedElement;
+            hasValuePattern = false;
+            if (editable != null)
+            {
+                try { editable.GetCurrentPattern(ValuePattern.Pattern); hasValuePattern = true; }
+                catch (Exception) { hasValuePattern = false; }
+            }
+        }
+        else
+        {
+            editable = EditableAtPoint(point[0], point[1], out hasValuePattern);
+        }
         if (editable == null) { result.error = "the pointed element is not an editable input surface"; return result; }
         if (!editable.Current.IsEnabled) { result.error = "the pointed input surface is disabled"; return result; }
         if (IsPassword(editable)) { result.error = "password inputs are never eligible for draft delivery"; return result; }

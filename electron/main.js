@@ -4263,6 +4263,11 @@ ipcMain.on('stage:insert-result-text', (event, payload) => {
   log(`stage:insert-result-text token=${selectionSessionToken} chars=${text.length}`);
   runPythonBridge({
     text,
+    // 填入优先写「当前前台」：用户划线问完往往已切到微信/AI 输入框，
+    // 该写的是现在聚焦的那个框，而不是拉回划线时锁定的窗口。
+    // C# writer 的 prefer_foreground 模式用键盘焦点元素定位输入框；
+    // 前台不可用时 fallback 到锁定窗口（deliver_text_bridge 内判定）。
+    preferForeground: true,
     targetWindow: safeClone(snapshot.source_window || {}),
     targetPoint: safeClone(snapshot.target_point || null),
     targetPointSpace: snapshot.target_point_space || null,

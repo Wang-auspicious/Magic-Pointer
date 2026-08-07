@@ -49,6 +49,7 @@ def make_prompt_delivery_proposal(
     target_profile: str | None = None,
     delivery_kind: str = "context_prompt_delivery",
     workflow_kind: str = "context_pack",
+    prefer_foreground: bool = False,
 ) -> ActionProposal:
     exact_text = str(text or "")
     if not exact_text.strip():
@@ -92,6 +93,7 @@ def make_prompt_delivery_proposal(
             "target_process_name": process_name,
             "target_point": [point[0], point[1]],
             "target_point_space": target_point_space,
+            "prefer_foreground": prefer_foreground is True,
             "context_session_id": str(context_session_id or ""),
             "review_session_id": str(review_session_id or ""),
             "prompt_artifact": str(prompt_artifact or ""),
