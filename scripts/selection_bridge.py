@@ -2381,6 +2381,7 @@ def _general_fallback_answer(
         command,
         tools=recipe_tool_schemas(enabled=recipe_enabled),
         context_text=context_text,
+        system_prompt=DELIVER_SYSTEM_PROMPT if deliver else None,
         timeout_s=GENERAL_TIMEOUT_S,
         attempts=1,
     )
@@ -2884,6 +2885,8 @@ def main() -> int:
             )
             if fabric_response is not None:
                 fabric_response["route"] = general_route
+                # recipe 没自己声明形态时，用我们的预判（deliver 禁 markdown）
+                fabric_response.setdefault("answerShape", answer_shape)
                 if answer:
                     fabric_response["answer"] = f"{answer}\n\n{fabric_response.get('answer') or ''}".strip()
                 print(json.dumps(fabric_response, ensure_ascii=False))
