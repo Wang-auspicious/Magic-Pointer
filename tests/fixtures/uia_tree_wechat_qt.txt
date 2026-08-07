@@ -1,0 +1,15 @@
+window: '微信' hwnd=67890 bbox=(1572, 16, 3066, 1912) class=Qt51514QWindowIcon
+root  :  Window                 [1561,16 1516x1907]        cls=Qt51514QWindowIcon     "微信"
+----------------------------------------------------------------------------------------------------
+ Window                 [1561,16 1516x1907]        cls=Qt51514QWindowIcon     "微信"
+   Pane                   [3062,1908 2x2]            cls=Qt51514QWindowIcon     "Weixin"
+   Pane                   [1574,16 1490x1894]        cls=MMUIRenderSubWindowHW  "MMUIRenderSubWindowHW"
+   TitleBar               [empty]                    cls=                       "微信"
+     Button                 [empty]                    cls=                       "最小化"
+     Button                 [empty]                    cls=                       "最大化"
+     Button                 [empty]                    cls=                       "上下文帮助"
+     Button                 [empty]                    cls=                       "关闭"
+----------------------------------------------------------------------------------------------------
+visited=8 printed=8 with_text=8
+types : Button=4  Pane=2  TitleBar=1  Window=1
+

@@ -2,7 +2,7 @@
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data: file: https:; frame-src 'self' https:; media-src 'self' data: file: https:" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Magic Pointer Stage</title>
     <link rel="stylesheet" href="oreo_tokens.css" />
@@ -44,27 +44,51 @@
              things, and drop one, without redrawing everything. -->
         <span id="capsule-refs" class="capsule-refs" role="list" aria-label="已选中的对象" hidden></span>
         <p id="transcript" class="capsule-transcript" aria-live="polite"></p>
+        <!-- 提交键。Vida 那条输入条右端永远有一个实心黑圆：没跑时是箭头，
+             跑起来变成方块（＝可以叫停）。以前这里什么都没有，只能按回车，
+             于是「按了没有」这件事在界面上没有任何回执。 -->
+        <button type="button" id="capsule-send" class="capsule-send" data-no-drag="1" aria-label="提交">
+          <svg class="capsule-send-icon" aria-hidden="true"><use href="#ic-arrow-up" /></svg>
+          <svg class="capsule-stop-icon" aria-hidden="true"><use href="#ic-stop" /></svg>
+        </button>
         <span id="processing-shimmer" class="processing-shimmer" aria-hidden="true" hidden></span>
       </div>
       <div id="stage-chips" class="stage-chips" role="group" aria-label="建议操作" hidden></div>
       <div id="stage-notice" class="stage-notice" role="status" hidden><span id="stage-notice-text"></span></div>
       <section id="stage-thread" class="stage-thread" aria-label="本次会话" hidden>
-        <div class="thread-grip" data-drag-handle="1" role="presentation" title="拖动移动面板"><i></i></div>
+        <!-- 眉毛行就是抓手。Vida 那张卡顶上没有一条灰色小横杠，只有「这张卡
+             讲的是什么」和右边一排细描边图标；整条头就是可以拖的地方。 -->
+        <header class="thread-head" data-drag-handle="1">
+          <span id="thread-eyebrow" class="thread-eyebrow" aria-hidden="true"></span>
+          <b id="thread-title" class="thread-title"></b>
+          <button type="button" id="thread-close" class="thread-icon is-close" data-no-drag="1"
+                  aria-label="关闭" title="关闭">
+            <svg aria-hidden="true"><use href="#ic-x" /></svg>
+          </button>
+        </header>
         <div id="stage-result" class="stage-result" role="log" aria-live="polite"></div>
-        <!-- Drag the bottom edge to change how long the answer is. The same
-             gesture as the selection stretch handle, on the result side: down
-             for more detail, up for tighter. Never a drag surface for the panel
-             itself, so it carries data-no-drag. -->
-        <div id="thread-stretch" class="thread-stretch" data-no-drag="1" role="separator"
-             aria-label="拖动改变回答长度" title="向下拖=更详细，向上拖=更简洁" hidden>
-          <span class="thread-stretch-grip" aria-hidden="true"></span>
-          <span id="thread-stretch-hint" class="thread-stretch-hint" aria-live="polite"></span>
-        </div>
+        <!-- 在回答里选中一段话，这个按钮就贴着选区冒出来：点一下把那一段就地
+             展开。它不是第二轮对话——第一轮的那段字被换掉而已，所以轮次不变。 -->
+        <button type="button" id="passage-expand" class="passage-expand" data-no-drag="1" hidden
+                aria-label="把选中的这段展开讲">
+          <svg aria-hidden="true"><use href="#ic-expand" /></svg><span>展开讲讲</span>
+        </button>
+        <!-- 答案底边那条「往下拖=更详细」的把手已经撤掉了。它和上面那个按钮
+             是同一件事的两个做法，但行为不一样——它会开新的一轮，而且它说的
+             「行」是折行后的视觉行，跟引擎数的换行符不是一回事，于是「扩写到
+             6 行」在一段没有换行的中文回答上必定被判成「四倍以上只能靠编造」。
+             一件事只留一个做法。 -->
+        <!-- 底栏照 Vida 的提案卡排：左下角一个重跑图标，右下角两个大按钮，
+             次要的描边、主要的实心黑。「填入」是这张卡真正要你做的事——
+             产物写进你原来那个输入框，不是「已复制到剪贴板」。 -->
         <footer class="thread-bar" data-drag-handle="1">
+          <button type="button" id="thread-retry" class="thread-icon" data-no-drag="1"
+                  aria-label="重问一次" title="重问一次">
+            <svg aria-hidden="true"><use href="#ic-redo" /></svg>
+          </button>
           <span id="thread-count" class="thread-count"></span>
-          <button type="button" id="thread-copy" class="thread-tool" data-no-drag="1">复制</button>
-          <button type="button" id="thread-insert" class="thread-tool" data-no-drag="1">填入</button>
-          <button type="button" id="thread-close" class="thread-tool is-close" data-no-drag="1">关闭</button>
+          <button type="button" id="thread-copy" class="thread-btn" data-no-drag="1">复制</button>
+          <button type="button" id="thread-insert" class="thread-btn is-solid" data-no-drag="1">填入</button>
         </footer>
       </section>
       <div id="stage-error" class="stage-error" role="alert" hidden></div>
@@ -126,6 +150,10 @@
       </div>
     </template>
 
+    <!-- 图标精灵。舞台以前不加载它，于是卡片里每一个 <use href="#ic-…"> 都指向
+         一个不存在的 symbol——眉毛行的图标、步骤行的勾、警告的感叹号全都是空的。
+         和工作室/随行窗共用同一份，三个界面的图标才可能长一样。 -->
+    <script src="icons.js"></script>
     <script src="../stage_state.js"></script>
     <script src="../stage_anchor.js"></script>
     <script src="../stage_chips_policy.js"></script>

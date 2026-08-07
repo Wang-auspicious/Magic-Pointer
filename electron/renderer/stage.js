@@ -34,21 +34,25 @@
   let strokeRefs = [];
   let renderedRefSignature = '';
   const capsuleInput = document.getElementById('capsule-input');
+  const capsuleSend = document.getElementById('capsule-send');
   const transcriptBox = document.getElementById('transcript');
   const shimmer = document.getElementById('processing-shimmer');
   const resultCard = document.getElementById('stage-result');
   const threadPanel = document.getElementById('stage-thread');
+  const threadTitle = document.getElementById('thread-title');
   const threadCount = document.getElementById('thread-count');
   const threadCopy = document.getElementById('thread-copy');
   const threadInsert = document.getElementById('thread-insert');
+  const threadRetry = document.getElementById('thread-retry');
   const threadClose = document.getElementById('thread-close');
+  const passageExpand = document.getElementById('passage-expand');
+  // 就地展开：用户在回答里选中的那一段，以及它属于哪个文本节点。展开回来的
+  // 字直接换掉这一段，所以这里记的是节点+偏移，不是「第几个字」。
+  let passagePick = null;
+  let passageBusy = false;
   const errorCard = document.getElementById('stage-error');
   const chipsBox = document.getElementById('stage-chips');
-  const stretchBar = document.getElementById('thread-stretch');
-  const stretchHint = document.getElementById('thread-stretch-hint');
   const stretchPolicy = globalThis.StageStretchPolicy || null;
-  // Live drag state for the answer-length handle, or null.
-  let stretchDrag = null;
   // Pick mode: the element the user last picked, so an unchanged pick does not
   // restart the highlight animation (that reads as flicker).
   let pickTargetShown = null;
@@ -119,6 +123,9 @@
     resultPlacement: null,
     resultDragged: false,
     selectionCount: 1,
+    // 选中内容的字数（不是内容）。拉伸手势要把「屏幕上几行」换算成「多少字」，
+    // 因为引擎只认后者。
+    selectionChars: 0,
     voiceState: 'idle',
     // "r, g, b" from appearance settings; empty means keep the stylesheet default.
     accentRgb: '',
@@ -261,7 +268,13 @@
   }
 
   function beginSelectionStretch(edge, y) {
-    selectionStretchDrag = { edge, startY: y, currentLines: selectionLineCount(), intent: null };
+    selectionStretchDrag = {
+      edge,
+      startY: y,
+      currentLines: selectionLineCount(),
+      currentChars: session.selectionChars,
+      intent: null,
+    };
     selectionStretch.classList.add('is-dragging');
   }
 
@@ -274,6 +287,7 @@
     selectionStretchDrag.intent = stretchPolicy.stretchIntent({
       dragPx,
       currentLines: selectionStretchDrag.currentLines,
+      currentChars: selectionStretchDrag.currentChars,
     });
     if (selectionStretchHint) selectionStretchHint.textContent = selectionStretchDrag.intent.hint;
   }
@@ -465,17 +479,6 @@
     return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
   }
 
-  // How many lines the newest answer occupies on screen. Measured rather than
-  // counted from the text, because wrapping is what the user actually sees.
-  function answerLineCount() {
-    const answers = resultCard.querySelectorAll('.turn-answer');
-    const last = answers[answers.length - 1];
-    if (!last) return 1;
-    const height = last.getBoundingClientRect().height;
-    const lineHeight = stretchPolicy?.LINE_HEIGHT_PX || 20;
-    return Math.max(1, Math.round(height / lineHeight));
-  }
-
   function isDragHandleAt(x, y, rootEl) {
     if (!rootEl || rootEl.hidden) return false;
     let node = document.elementFromPoint(x, y);
@@ -514,7 +517,7 @@
     // Pick mode: a click that lands outside our own surfaces, while the composer
     // is open, means "tell me about that thing" — the element under the cursor
     // lights up whole. Inside our surfaces the click belongs to the UI.
-    if (primaryDown && !previousPrimaryDown && !overCapsule && !overResult && !surfaceDrag && !stretchDrag) {
+    if (primaryDown && !previousPrimaryDown && !overCapsule && !overResult && !surfaceDrag) {
       const composerOpen = state.name === 'capsule-text' || state.name === 'capsule-voice';
       if (composerOpen && Number.isFinite(payload?.screenX) && Number.isFinite(payload?.screenY)) {
         pickElementAt(Number(payload.screenX), Number(payload.screenY));
@@ -534,40 +537,9 @@
       updateSelectionStretch(y);
       if (!primaryDown && previousPrimaryDown) endSelectionStretch();
     }
-    // The stretch handle is checked before the panel-drag handle: it lives
-    // inside the panel, and a drag that starts on it changes the answer's
-    // length rather than moving the surface.
-    if (overResult && primaryDown && !previousPrimaryDown && !surfaceDrag && !stretchDrag) {
-      if (stretchPolicy && stretchBar && !stretchBar.hidden && isPointInside(x, y, stretchBar)) {
-        stretchDrag = { startY: y, currentLines: answerLineCount(), intent: null };
-        stretchBar.classList.add('is-dragging');
-      }
-    }
-    if (stretchDrag) {
-      stretchDrag.intent = stretchPolicy.stretchIntent({
-        dragPx: y - stretchDrag.startY,
-        currentLines: stretchDrag.currentLines,
-      });
-      // Live preview while the finger is down: the number the hint promises is
-      // the number the command will ask for.
-      if (stretchHint) stretchHint.textContent = stretchDrag.intent.hint;
-      stretchBar.dataset.direction = stretchDrag.intent.direction;
-      if (!primaryDown && previousPrimaryDown) {
-        const command = stretchPolicy.stretchCommand(stretchDrag.intent);
-        stretchBar.classList.remove('is-dragging');
-        delete stretchBar.dataset.direction;
-        if (stretchHint) stretchHint.textContent = '';
-        stretchDrag = null;
-        // Submitted through the ordinary composer path, so the gesture appears
-        // in the thread as an ask like any other — the user can see what their
-        // hand asked for, and it is undoable by asking again.
-        if (command) submitCommand(command);
-        syncHitRegions();
-        return;
-      }
-      previousPointerButtons = buttons;
-      return;
-    }
+    // 答案底边那条拉伸把手已经撤掉了：现在改答案长度的做法是在答案里划中一段
+    // 再点「展开讲讲」（见 expandPickedPassage）。那条把手会开新的一轮，而这里
+    // 用户只是想把第一轮的一段话讲细一点。
     if (overResult && primaryDown && !previousPrimaryDown && !surfaceDrag) {
       if (isDragHandleAt(x, y, threadPanel)) {
         surfaceDrag = { element: threadPanel, startX: x, startY: y, originLeft: resultRect.left, originTop: resultRect.top };
@@ -671,7 +643,7 @@
   }
 
   function visibleStageRegions() {
-    return [targetingOutline, frozenGlow, capsule, threadPanel, errorCard, chipsBox, deliveryBox]
+    return [targetingOutline, frozenGlow, capsule, threadPanel, errorCard, chipsBox, deliveryBox, passageExpand]
       .filter((element) => !element.hidden)
       .map((element) => ({ element, rect: element.getBoundingClientRect() }))
       .filter(({ rect }) => rect.width > 0 && rect.height > 0)
@@ -698,6 +670,7 @@
       elements.push(capsule);
     }
     if (!threadPanel.hidden) elements.push(threadPanel);
+    if (!passageExpand.hidden) elements.push(passageExpand);
     for (const container of [chipsBox, threadPanel, errorCard]) {
       if (container.hidden) continue;
       elements.push(...container.querySelectorAll('button:not([disabled])'));
@@ -920,11 +893,15 @@
       ? session.visualTuning.capsuleTextWidthDip
       : session.visualTuning.capsuleVoiceWidthDip;
     const content = state.transcript || capsuleInput.value || '';
-    capsule.dataset.empty = mode === 'voice' && !content ? 'true' : 'false';
+    // 两种模式都要如实报空。上一版只在语音模式下写 'true'，于是文字模式的
+    // 输入条永远是「非空」——那个只在有内容时才该出现的提交键，空着也挂在那儿。
+    capsule.dataset.empty = content ? 'false' : 'true';
     const style = window.getComputedStyle(transcriptBox);
     if (textMeasure) textMeasure.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
     const measured = textMeasure ? textMeasure.measureText(content).width : content.length * 8;
-    const grown = content ? measured + 58 : base;
+    // 58 → 92：右端多了一个 30px 的实心提交圆和它的间距。宁可宽一点也不能
+    // 窄——窄了就是把用户正在打的字裁掉。
+    const grown = content ? measured + 92 : base;
     const width = Math.min(session.visualTuning.capsuleMaxWidthDip, Math.max(base, grown));
     // Pre-reserve final capsule width for smooth shape switching across one frame.
     // Prevents half-ball cut, ghost residual, or split during transition.
@@ -1248,6 +1225,141 @@
     document.body.removeChild(area);
   }
 
+  // --- 就地展开 ---------------------------------------------------------------
+  //
+  // 在回答里划中一段字，贴着选区冒出一个小按钮；点它，那一段被展开后的字换掉。
+  //
+  // 三条它必须守住的规矩：
+  // 1. **不是第二轮。** 不走 submitCommand，不 dispatch，不动 state.turns。
+  //    轮次计数因此不变——用户只是在第一轮的答案上做了一处修改。
+  // 2. **换掉的是那一段，不是整张卡。** 记的是 Range（节点+偏移），不是「第几
+  //    个字」，所以卡里有加粗、代码、图片时位置也不会错。
+  // 3. **换回去的字要能看出来。** 新的那一段自己黄一下再褪掉，用户不用去比对。
+  const PASSAGE_MIN_CHARS = 8;
+
+  function hidePassageExpand() {
+    if (passageExpand.hidden) return;
+    passageExpand.hidden = true;
+    passagePick = null;
+    scheduleHitRegionRefresh();
+  }
+
+  // 选区必须整个落在一条已经出完的回答里。落在提问行上、跨了两轮、或者那一轮
+  // 还在跑，都不给按钮——展开一段还在变的字没有意义。
+  function passageRangeFrom(selection) {
+    if (!selection || selection.isCollapsed || selection.rangeCount === 0) return null;
+    const range = selection.getRangeAt(0);
+    if (!resultCard.contains(range.commonAncestorContainer)) return null;
+    const start = range.startContainer.nodeType === 1
+      ? range.startContainer
+      : range.startContainer.parentElement;
+    const end = range.endContainer.nodeType === 1
+      ? range.endContainer
+      : range.endContainer.parentElement;
+    if (!start || !end) return null;
+    const answer = start.closest('.turn-answer');
+    if (!answer || answer !== end.closest('.turn-answer')) return null;
+    if (answer.dataset.kind === 'error') return null;
+    const turn = answer.closest('.thread-turn');
+    if (!turn || turn.dataset.status !== 'done') return null;
+    const text = range.toString().trim();
+    if (text.length < PASSAGE_MIN_CHARS) return null;
+    return { range: range.cloneRange(), text, answer };
+  }
+
+  function syncPassageExpand() {
+    if (passageBusy) return;
+    const pick = passageRangeFrom(document.getSelection());
+    if (!pick) {
+      hidePassageExpand();
+      return;
+    }
+    passagePick = pick;
+    passageExpand.hidden = false;
+    // 贴在选区下缘的左端；下面放不下就翻到上缘。和胶囊的锚定同一套规矩：
+    // 一次算好，不跟着鼠标漂。
+    const rect = pick.range.getBoundingClientRect();
+    const size = passageExpand.getBoundingClientRect();
+    const width = size.width || 108;
+    const height = size.height || 30;
+    const below = rect.bottom + 6;
+    const top = below + height > window.innerHeight - 4 ? rect.top - height - 6 : below;
+    passageExpand.style.left = `${Math.max(4, Math.min(window.innerWidth - width - 4, rect.left))}px`;
+    passageExpand.style.top = `${Math.max(4, top)}px`;
+    scheduleHitRegionRefresh();
+  }
+
+  // 桥回来的是纯文本。它可能有换行，所以按行拆成 <br> 分隔的文本节点——
+  // 这里一律 createTextNode：这是一块渲染模型输出的界面，转义必须是结构性的，
+  // 不能靠记得转义（stage.js 因此被钉死不许出现那个赋值 HTML 字符串的属性）。
+  function passageNodes(value) {
+    const span = document.createElement('span');
+    span.className = 'passage-fresh';
+    const lines = String(value || '').split('\n');
+    lines.forEach((line, index) => {
+      if (index > 0) span.appendChild(document.createElement('br'));
+      span.appendChild(document.createTextNode(line));
+    });
+    return span;
+  }
+
+  async function expandPickedPassage() {
+    if (passageBusy || !passagePick) return;
+    if (!api || typeof api.expandPassage !== 'function') return;
+    const pick = passagePick;
+    passageBusy = true;
+    passageExpand.dataset.busy = 'true';
+    const label = passageExpand.querySelector('span');
+    const originalLabel = label ? label.textContent : '';
+    if (label) label.textContent = '正在展开…';
+    let reply = null;
+    try {
+      reply = await api.expandPassage({
+        selectionSessionToken: session.token,
+        passage: pick.text,
+        // 整段回答只作参考，让展开出来的话接得上前后文。
+        context: (pick.answer.textContent || '').trim(),
+      });
+    } catch (error) {
+      reply = { ok: false, error: String(error?.message || error || '展开失败。') };
+    }
+    passageBusy = false;
+    passageExpand.dataset.busy = 'false';
+    if (label) label.textContent = originalLabel;
+    if (!reply || reply.ok !== true || !String(reply.text || '').trim()) {
+      // 说清楚哪一段没被改动，而不是静默地什么都不发生。
+      // 说清楚哪一段没被改动，而不是静默地什么都不发生。走已有的那一行提示，
+      // 不另开一个只有这里用得上的红字条。
+      dispatch({ type: 'NOTICE', notice: { message: String(reply?.error || '这次没能展开，那一段保持原样。') } });
+      setTimeout(() => {
+        if (state.notice) dispatch({ type: 'NOTICE', notice: { message: '' } });
+      }, 4500);
+      hidePassageExpand();
+      return;
+    }
+    // 等模型的这几秒里用户可能已经问了下一个问题，那一轮重画会把这些节点
+    // 摘掉。往一堆孤儿节点里塞字是看不见的，所以先确认它还挂在树上。
+    if (!resultCard.contains(pick.range.commonAncestorContainer)) {
+      hidePassageExpand();
+      return;
+    }
+    pick.range.deleteContents();
+    pick.range.insertNode(passageNodes(reply.text));
+    const selection = document.getSelection();
+    if (selection) selection.removeAllRanges();
+    hidePassageExpand();
+    anchorThreadToCapsule();
+  }
+
+  // mousedown 上就阻止默认行为，否则按钮一拿到焦点选区就塌了，
+  // 等 click 到达时已经没有可展开的东西。
+  passageExpand.addEventListener('mousedown', (event) => event.preventDefault());
+  passageExpand.addEventListener('click', () => { void expandPickedPassage(); });
+  document.addEventListener('selectionchange', syncPassageExpand);
+  resultCard.addEventListener('scroll', () => {
+    if (!passageExpand.hidden) syncPassageExpand();
+  });
+
   // The thread bar replaces the per-answer toolbar: with the composer always
   // live underneath, a "追问" button is redundant — you just type.
   threadCopy.addEventListener('click', () => copyResultText(resultCard, threadCopy));
@@ -1269,6 +1381,14 @@
     api.insertResultText({ text, selectionSessionToken: session.token });
   });
   threadClose.addEventListener('click', () => dispatch({ type: 'DISMISS' }));
+  // 重问一次：把上一轮问过的那句话原样再提交一遍。参考图里那张提案卡左下角
+  // 那个重跑图标就是这件事——不满意的时候，最省事的动作是「再来一次」，
+  // 而不是把问题重新打一遍。
+  threadRetry.addEventListener('click', () => {
+    const last = [...state.turns].reverse().find((turn) => turn.status !== 'pending');
+    const ask = String(last?.ask || '').trim();
+    if (ask) submitCommand(ask);
+  });
 
   // Result payloads are discriminated by `kind`; anything unknown falls back
   // to the plain inline text rendering.
@@ -1423,17 +1543,24 @@
     threadCount.hidden = turns.length <= 1;
     const pending = turns.some((turn) => turn.status === 'pending');
     syncWaitClock(pending);
-    // The handle only means something over a finished text answer: there is
-    // nothing to lengthen while a turn is still running, and a card result
-    // (calendar draft, table diff) is not prose to stretch.
-    if (stretchBar) {
-      const newest = turns[turns.length - 1];
-      const kind = newest?.result?.kind;
-      const isProse = kind === undefined || kind === null || kind === 'inline';
-      const stretchable = Boolean(stretchPolicy) && !pending && newest?.status === 'done' && isProse;
-      stretchBar.hidden = !stretchable;
-      if (!stretchable && stretchHint) stretchHint.textContent = '';
-    }
+    // 眉毛行写的是你问的那句话。参考里那张卡的标题就是这次任务本身
+    // （"DietControl landing page update"），不是一个产品名。
+    //
+    // 写上去之后第一轮那行 .turn-ask 就得收起来——同一句话在一张卡上出现两次，
+    // 第二次不提供任何信息，只是把卡撑高。第二轮起照常显示：那时候标题说的是
+    // 整场对话，行内那句说的是这一轮。
+    const firstAsk = String(turns[0]?.ask || '').trim();
+    threadTitle.textContent = firstAsk || '选中的内容';
+    threadTitle.title = firstAsk;
+    const firstAskRow = resultCard.firstElementChild?.querySelector('.turn-ask');
+    if (firstAskRow) firstAskRow.hidden = Boolean(firstAsk);
+    // 还在跑的时候没有可复制、可填入的东西。一个点了没反应的按钮比一个
+    // 明显不能点的按钮更让人以为是坏了。
+    const settled = !pending && turns.some((turn) => turn.status === 'done');
+    threadCopy.disabled = !settled;
+    threadInsert.disabled = !settled;
+    // 卡重画过，之前记住的那段选区已经指向摘掉的节点了。
+    hidePassageExpand();
   }
 
   function clearChips() {
@@ -1522,6 +1649,7 @@
     clearTranscript();
     clearChips();
     resetDeliveryBox();
+    hidePassageExpand();
     resultCard.replaceChildren();
     errorCard.replaceChildren();
     capsuleInput.value = '';
@@ -1539,7 +1667,7 @@
     targetingOutline.classList.remove('is-visible');
     capsule.classList.remove('is-entering', 'is-exiting');
     [targetingOutline, frozenGlow, capsule, shimmer, threadPanel, errorCard,
-      chipsBox, deliveryBox].forEach((el) => {
+      chipsBox, deliveryBox, passageExpand].forEach((el) => {
       el.hidden = true;
     });
     resultCard.replaceChildren();
@@ -1743,6 +1871,18 @@
     }
   });
 
+  // 提交键。跑起来之后同一个按钮是「停」——按下去等于放弃这一轮，界面立刻
+  // 回到可以再问的状态，而不是让用户对着一个转不停的圈干等。
+  capsuleSend.addEventListener('mousedown', (event) => event.preventDefault());
+  capsuleSend.addEventListener('click', () => {
+    if (state.name === 'processing') {
+      requestDismiss();
+      return;
+    }
+    const text = capsuleInput.value.trim() || String(state.transcript || '').trim();
+    if (text) submitCommand(text);
+  });
+
   window.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') requestDismiss();
   });
@@ -1793,6 +1933,10 @@
     }
     if ('groundingReady' in payload) {
       session.groundingReady = payload.groundingReady === true;
+    }
+    if ('selectionChars' in payload) {
+      const chars = Number(payload.selectionChars);
+      session.selectionChars = Number.isFinite(chars) && chars > 0 ? Math.round(chars) : 0;
     }
     if ('selectionVisual' in payload) {
       const visual = String(payload.selectionVisual || 'sweep_band');

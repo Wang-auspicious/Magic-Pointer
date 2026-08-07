@@ -2337,6 +2337,10 @@ function stageSessionPayload(entry) {
     voiceAutoSubmit: fabricSettings.interaction.voice_auto_submit,
     voiceStartStrategy: fabricSettings.interaction.voice_start_strategy,
     groundingReady: Boolean(entry?.snapshot),
+    // 选中内容有多少字——只有这个数字过去，内容本身不过去。渲染层需要它是因为
+    // 拉伸手势量到的是屏幕上的折行，而引擎认的是字数；没有这个数，两边就得各自
+    // 猜对方说的「行」是什么意思，而它们猜的从来不一样。
+    selectionChars: String(entry?.snapshot?.context?.content || '').trim().length,
     sessionExpiresAt: entry.expiresAt,
   };
 }
@@ -3966,6 +3970,50 @@ ipcMain.on('stage:insert-result-text', (event, payload) => {
       log(`stage:insert-result-text outcome=${parsed?.delivery?.reasonCode || parsed?.error || 'unknown'}`);
       sendBridgeResult('stage', parsed);
     },
+  });
+});
+
+// 就地展开回答里的一段。
+//
+// 和上面那条写回不同，这条**不动任何外部世界**：不写别人的窗口、不碰剪贴板、
+// 不产生动作提案。它把一段字送去变长，再把变长的字送回来，界面自己换掉那一段。
+// 所以它是 invoke 不是 send——调用方要等一个返回值，而不是等一条新的舞台事件。
+//
+// 它也因此不开新的一轮：selectionSessions 的 request 计数不动，pendingQuestions
+// 不动，conversation_store 不动。用户看到的是同一张卡上那一段字长长了。
+ipcMain.handle('stage:expand-passage', async (event, payload) => {
+  if (!isSurfaceSender(event, 'stage', resultTargetWindow)) {
+    return { ok: false, error: '这个请求不是从舞台发来的。' };
+  }
+  const selectionSessionToken = payload?.selectionSessionToken || null;
+  if (selectionSessionToken && !selectionSessions.get(selectionSessionToken)) {
+    return { ok: false, error: '当前 THIS 已过期，请重新激活 Magic Pointer。' };
+  }
+  const passage = String(payload?.passage || '');
+  if (!passage.trim()) return { ok: false, error: '没有选中任何文字。' };
+  log(`stage:expand-passage token=${selectionSessionToken} chars=${passage.length}`);
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    const child = runPythonBridge({
+      passage,
+      context: String(payload?.context || ''),
+    }, 'scripts/expand_passage_bridge.py', 'stage', {
+      timeoutMs: 60_000,
+      onComplete: (parsed) => {
+        log(`stage:expand-passage outcome=${parsed?.ok === true ? 'ok' : (parsed?.error || 'unknown')}`);
+        finish(parsed && typeof parsed === 'object'
+          ? parsed
+          : { ok: false, error: '展开没有返回内容。' });
+      },
+    });
+    if (!child) finish({ ok: false, error: '舞台不在，没有展开。' });
+    // 桥自己有超时会走 onComplete；这条只兜住「进程根本没起来也没报错」。
+    setTimeout(() => finish({ ok: false, error: '展开超时，那一段保持原样。' }), 62_000);
   });
 });
 

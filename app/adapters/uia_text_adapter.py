@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import subprocess
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,21 @@ from app.adapters.pdf_selection_recovery import recover_local_pdf_selection
 from app.grounding.terminal_evidence import TerminalEvidenceExtractor
 
 JsonDict = dict[str, Any]
+
+
+def _as_int(value: Any, default: int = -1) -> int:
+    """Parse an int that may be None / '' / non-numeric, returning `default`.
+
+    `default` must be the caller's sentinel: the cold-tree judgement needs
+    -1 (unknown) to stay distinct from 0 (measured zero documents), so this
+    helper must never be written as `value or -1` — 0 is a legal answer.
+    """
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
 
 ROOT = Path(__file__).resolve().parents[2]
 UIA_PROBE_SOURCE = ROOT / "scripts" / "uia_selection_probe.cs"
@@ -260,6 +276,70 @@ def _is_chromium_window(window: JsonDict) -> bool:
     return "edge" in title or "chrome" in title or "brave" in title
 
 
+# 已知的 web 宿主外壳类名。判冷的第一个必要条件：这个窗口里**本来该有**一份
+# 网页文档，只是还没挂上来。不在这张表里的窗口没有「正文迟到」这回事。
+COLD_TREE_WEB_HOST_CLASSES = (
+    "WRY_WEBVIEW",              # Tauri
+    "Chrome_WidgetWin_",        # Chromium / Electron / Edge，带 _0 _1 后缀
+    "Chrome_RenderWidgetHostHWND",
+    "Intermediate D3D Window",  # Chromium 合成层，冷热都在
+    "Tauri Window",
+    "WebView2",
+    "Microsoft.UI.Content.DesktopChildSiteBridge",
+)
+
+# 自绘 / 非 UIA 承载的窗口。这些窗口的树**永远**长成冷树的样子，等多久都不会变。
+# 少了这张表，每次点微信都白等 60ms，换来的还是那 8 个节点。
+COLD_TREE_DENY_CLASSES = (
+    "MMUIRenderSubWindowHW",           # 微信主窗
+    "Qt5",                             # Qt 自绘，含 Qt51514QWindowIcon 等
+    "Qt6",
+    "CASCADIA_HOSTING_WINDOW_CLASS",   # Windows Terminal
+    "ConsoleWindowClass",
+    "SunAwtFrame",                     # JetBrains / Swing 自绘
+    "GLFW30",
+)
+
+
+def is_cold_tree(
+    class_chain: Sequence[str] | None,
+    document_count: int,
+    *,
+    max_depth: int | None = None,
+    named_count: int | None = None,
+) -> bool:
+    """这棵树是「壳起来了但正文还没挂上」吗？是的话值得隔 60ms 再读一次。
+
+    判据只有三步，按顺序：排除表 → 宿主表 → 有没有 Document。
+
+    `document_count` 是探针里 `FindAll(TreeScope.Descendants, ControlType.Document)`
+    的结果，`-1` 表示那一趟没跑（探针提前读到了选区，那按定义就不冷）。
+    不知道就不算冷 —— 拿不到就留空绝不猜。
+
+    **`max_depth` 和 `named_count` 是可选的，而且不是阈值**，只用来确认传进来的
+    确实是一棵树；没量过就别传，不要拿假数字填。
+    Vida.md §7.3 原方案拿它们当判据（`max_depth <= 8` 且 `named_count < 30`），
+    真实 dump 把两条都证伪了，数字见 tests/uia_cold_tree_test.py 的模块注释：
+    冷树实测 11 层（浏览器外壳自己就有十来层，冷的不是层数少是层里没东西），
+    而冷 21 / 热 27 个有名字的节点只差 6 个，落在噪声里。
+
+    误判的代价是不对称的，所以判据往「宁可多读一次」偏：
+    判热了其实是冷 → 用户第一次划线静默读不到，这正是要修的 bug；
+    判冷了其实是热 → 多 60ms 一次，只重试一次不递归。
+    """
+    classes = [str(item) for item in (class_chain or []) if str(item).strip()]
+    if any(name.startswith(deny) for name in classes for deny in COLD_TREE_DENY_CLASSES):
+        return False
+    if not any(name.startswith(host) for name in classes for host in COLD_TREE_WEB_HOST_CLASSES):
+        return False
+    if document_count != 0:
+        return False
+    # 连根节点都没有：这不是一棵冷树，是一次失败的读取，交给上面的错误分支。
+    if max_depth is not None and max_depth <= 0:
+        return False
+    return named_count is None or named_count >= 0
+
+
 class UiaTextSelectionAdapter(AppAdapter):
     name = "uia_text_selection"
     perception_layer = "uia"
@@ -341,9 +421,19 @@ class UiaTextSelectionAdapter(AppAdapter):
             if target_point is not None
             else _run_uia_selection_probe(hwnd)
         )
-        # Chromium builds its accessibility tree lazily: the first UIA touch
-        # often misses, but a quick retry after the tree has started coming up
-        # reads the page structure fine (and beats falling back to OCR).
+
+        def _reprobe() -> UiaProbeResult:
+            if target_region is not None:
+                return _run_uia_selection_probe(hwnd, target_region=target_region)
+            if target_point is not None:
+                return _run_uia_selection_probe(hwnd, target_point=target_point)
+            return _run_uia_selection_probe(hwnd)
+
+        # 两种重试，原因不同，等的时间也不同。别再把它们并成一条。
+        #
+        # 一、探针一个字都没吐出来：超时、崩了、或者编译没成。这条从前就有
+        #    （`if not probe.data`），只是注释挂的是「懒建树」的名头——它其实
+        #    从来只在这种情况下触发。450ms 这个值没有实测支撑，先原样留着。
         if not probe.data and _is_chromium_window(window):
             try:
                 import time as _time
@@ -351,13 +441,28 @@ class UiaTextSelectionAdapter(AppAdapter):
                 _time.sleep(0.45)
             except Exception:
                 pass
-            probe = (
-                _run_uia_selection_probe(hwnd, target_region=target_region)
-                if target_region is not None
-                else _run_uia_selection_probe(hwnd, target_point=target_point)
-                if target_point is not None
-                else _run_uia_selection_probe(hwnd)
-            )
+            probe = _reprobe()
+
+        # 二、冷树：Chromium/WebView2/Tauri 懒建无障碍树，第一次 UIA 触碰摸到的
+        #    是一具外壳。这条以前**从来没有触发过**——冷树恰恰是有 data 的
+        #    （实测冷启动 Edge 返回 48 个节点、21 个有名字的，只是里面一个
+        #    Document 都没有），所以它一直被上面那条的 `not probe.data` 挡在外面，
+        #    用户第一次划线还是静默读不到。非空不等于读到了。
+        #    判据见 is_cold_tree；60ms 来自 E4 受控实验（0ms 时 0 个 Document，
+        #    50ms 时 2 个，此后稳定），留 20% 余量。只重试一次，不递归。
+        if not probe.ok and is_cold_tree(
+            [str(window.get("class_name") or ""), str(probe.data.get("class_name") or "")],
+            # 不能写 `x or -1`：冷树的 document_count 正好是 0，会被当成假值
+            # 换成 -1（未知），判据直接翻面，重试又一次都不触发。
+            _as_int(probe.data.get("document_count"), -1),
+        ):
+            try:
+                import time as _time
+
+                _time.sleep(0.06)
+            except Exception:
+                pass
+            probe = _reprobe()
         if not probe.data:
             return AdapterReadContext(
                 adapter=self.name,

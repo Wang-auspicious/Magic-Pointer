@@ -23,6 +23,13 @@
   --stage-ink-soft: var(--stage-ink-soft);
   --stage-ink-faint: var(--stage-ink-faint);
 
+  /* 中性墨色。上一版面板上的正文是蓝白（#183b68），整段回答看起来像一个链接。
+   * 参考的两份（Vida 的结果面板、Oreo 的组件卡）正文都是近黑 + 灰，蓝色只留给
+   * 真正是「我们」的那几个像素——那根竖杠、光标、波形。 */
+  --stage-neutral-ink: #16181d;
+  --stage-neutral-ink-soft: #5c6270;
+  --stage-neutral-ink-faint: #8b91a0;
+
   --stage-graphite: #0E1116;
   --stage-graphite-raised: #161B22;
   --stage-cold-white: #E9EEF4;
@@ -350,27 +357,37 @@ body {
   }
 }
 
-/* --- Processing shimmer ---------------------------------------------------- */
+/* --- Processing sweep -------------------------------------------------------
+ * Vida.md §3 第 6 条：「进度用色带扫过，不用百分比不用转圈。廉价且不撒谎。」
+ * 一条极淡的彩色带从左扫到右，一秒四分之三一趟。它不声称任何进度——它只说
+ * 「还在跑」，而这正好是我们唯一知道的事。上一版是一条蓝色斜光，和整条输入条
+ * 同色，扫过去几乎看不见。 */
 .processing-shimmer {
   position: absolute;
   inset: 0;
   border-radius: inherit;
+  overflow: hidden;
   background: linear-gradient(
-    105deg,
-    transparent 30%,
-    rgba(47, 123, 255, 0.18) 50%,
-    transparent 70%
+    90deg,
+    transparent 0%,
+    rgba(134, 239, 172, 0.34) 18%,
+    rgba(253, 186, 116, 0.30) 38%,
+    rgba(249, 168, 212, 0.36) 56%,
+    rgba(147, 197, 253, 0.30) 74%,
+    transparent 100%
   );
-  background-size: 220% 100%;
-  animation: stage-shimmer 1.4s linear infinite;
+  background-size: 62% 100%;
+  background-repeat: no-repeat;
+  filter: blur(6px);
+  animation: stage-shimmer 1.35s cubic-bezier(0.45, 0, 0.55, 1) infinite;
 }
 
 @keyframes stage-shimmer {
   from {
-    background-position: 180% 0;
+    background-position: -70% 0;
   }
   to {
-    background-position: -80% 0;
+    background-position: 170% 0;
   }
 }
 
@@ -385,25 +402,33 @@ body {
  * never overwritten by its own answer: asking moves the text into a turn card
  * here, and the capsule stays an empty composer ready for the next one.
  *
- * It is blue-white on purpose — the same surface language as the capsule.
- * A dark panel butted against the light capsule read as two unrelated windows
- * stacked on each other. Depth is layered shadow, never backdrop-filter: a
- * blur on a transparent click-through overlay is fragile and expensive. */
+ * 形照 Vida 那两张卡（PromptRescue 25s 的结果面板 / 22s 的提案卡）：一张几乎
+ * 纯白的卡，上面一条眉毛行（这张卡讲的是什么 + 一个关掉它的叉），中间是内容，
+ * 底下一条分隔线压着两个大按钮——次要的描边、主要的实心黑。
+ *
+ * 三件事跟上一版不一样，都是「框太小、太死板」的直接原因：
+ * 1. 宽度 430 → 540，正文 13px → 14.5px。原来一行塞不下一句中文的主谓宾。
+ * 2. 墨色从蓝白（#183b68）改成中性近黑。蓝色正文让整张卡看起来像一个链接。
+ * 3. 底栏三个一样大的灰色文字按钮 → 一实一描边。「填入」是这张卡真正要你做
+ *    的事，它必须看起来就是那件事。
+ *
+ * Depth is layered shadow, never backdrop-filter: a blur on a transparent
+ * click-through overlay is fragile and expensive. */
 .stage-thread {
   position: absolute;
   display: flex;
   flex-direction: column;
   width: max-content;
-  min-width: 248px;
-  max-width: 430px;
-  border-radius: 18px;
-  background: rgba(252, 253, 255, 0.985);
-  border: 1px solid var(--stage-accent-line);
+  min-width: 320px;
+  max-width: 540px;
+  border-radius: 22px;
+  background: #fff;
+  border: 1px solid rgba(19, 22, 27, 0.07);
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.9),
-    0 1px 3px rgba(23, 54, 99, 0.10),
-    0 14px 38px -12px rgba(23, 54, 99, 0.30);
-  color: #183b68;
+    0 1px 2px rgba(19, 22, 27, 0.05),
+    0 8px 20px -6px rgba(19, 22, 27, 0.10),
+    0 28px 60px -18px rgba(19, 22, 27, 0.26);
+  color: var(--stage-neutral-ink);
   pointer-events: auto;
   overflow: hidden;
   /* Grows away from the capsule, so the scale-in reads as unfolding out of it. */
@@ -416,34 +441,104 @@ body {
   transform-origin: bottom left;
 }
 
+/* --- 眉毛行 ---------------------------------------------------------------
+ * 整条头就是抓手。上一版是一条 34×3 的灰色小横杠飘在卡顶——它占掉一整行，
+ * 却只说了「我可以被拖」，没说这张卡在讲什么。 */
+.thread-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex: 0 0 auto;
+  padding: 14px 12px 10px 18px;
+  cursor: grab;
+}
+
+.stage-thread.is-dragging .thread-head { cursor: grabbing; }
+
+/* 一小节竖杠代替图标：它跟 .turn-ask 前面那根是同一根，所以「这张卡」和
+ * 「卡里的那一问」在视觉上是同一族。 */
+.thread-eyebrow {
+  flex: 0 0 auto;
+  width: 3px;
+  height: 14px;
+  border-radius: 2px;
+  background: var(--stage-accent-line-strong);
+}
+
+.thread-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 14.5px;
+  font-weight: 680;
+  letter-spacing: -0.005em;
+  color: var(--stage-neutral-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 细描边图标按钮：1.5px 描边、24 网格、点击区 30px。参考图里那一排
+ * （文件夹+ / 历史 / 叉）全是这个规格。 */
+.thread-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  appearance: none;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--stage-neutral-ink-soft);
+  cursor: pointer;
+  transition: background 130ms ease, color 130ms ease;
+}
+
+.thread-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.thread-icon:hover {
+  background: rgba(19, 22, 27, 0.055);
+  color: var(--stage-neutral-ink);
+}
+
+.thread-icon.is-close:hover {
+  background: rgba(180, 35, 24, 0.09);
+  color: #b42318;
+}
+
 .stage-result {
   display: flex;
   flex-direction: column;
-  padding: 12px 14px 4px;
-  max-height: min(46vh, 420px);
+  padding: 0 18px 4px;
+  max-height: min(52vh, 460px);
   /* Never a horizontal scrollbar: content wraps instead. Pulling one used to
    * drag the whole bubble across the screen. */
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
-  scrollbar-color: rgba(var(--stage-accent-rgb), 0.24) transparent;
-  font-size: 13px;
-  line-height: 1.55;
+  scrollbar-color: rgba(19, 22, 27, 0.18) transparent;
+  font-size: 14.5px;
+  line-height: 1.62;
 }
 
 .thread-turn {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 7px;
   animation: stage-turn-in 220ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /* One hairline between turns — never a box inside a box. */
 .thread-turn + .thread-turn {
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid rgba(var(--stage-accent-rgb), 0.12);
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(19, 22, 27, 0.08);
 }
 
 /* The ask is a quiet label, not a chat bubble: it is there so you can see
@@ -451,9 +546,9 @@ body {
 .turn-ask {
   display: flex;
   align-items: baseline;
-  gap: 6px;
-  color: var(--stage-ink-soft);
-  font-size: 11px;
+  gap: 7px;
+  color: var(--stage-neutral-ink-soft);
+  font-size: 12px;
   font-weight: 650;
   letter-spacing: 0.01em;
   white-space: pre-wrap;
@@ -464,7 +559,7 @@ body {
   content: '';
   flex: 0 0 auto;
   width: 3px;
-  height: 11px;
+  height: 12px;
   border-radius: 2px;
   background: var(--stage-accent-line-strong);
   transform: translateY(1px);
@@ -477,6 +572,57 @@ body {
 
 .turn-answer[data-kind='error'] {
   color: #b42318;
+}
+
+/* 就地展开出来的那一段。Vida 把改动过的短语用黄色荧光笔标出来——这里同理：
+ * 换掉的那一段自己亮一下再褪回去，用户不用去猜哪儿变了。 */
+.passage-fresh {
+  animation: passage-settle 1500ms ease-out both;
+  border-radius: 4px;
+}
+
+@keyframes passage-settle {
+  0% { background: rgba(250, 204, 21, 0.42); }
+  40% { background: rgba(250, 204, 21, 0.30); }
+  100% { background: rgba(250, 204, 21, 0); }
+}
+
+/* 贴着选区冒出来的那个小按钮。位置由 stage.js 按选区的矩形算，这里只管长相：
+ * 深色实心、小、圆角够方——参考图里那一排工具条就是这个质感。 */
+.passage-expand {
+  position: fixed;
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 11px 0 9px;
+  appearance: none;
+  border: 0;
+  border-radius: 10px;
+  background: #16181d;
+  color: #fff;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(19, 22, 27, 0.22), 0 10px 24px -8px rgba(19, 22, 27, 0.45);
+  animation: passage-expand-in 140ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.passage-expand svg {
+  width: 15px;
+  height: 15px;
+}
+
+.passage-expand:hover { background: #2a2e36; }
+.passage-expand[data-busy='true'] { opacity: 0.62; cursor: default; }
+
+@keyframes passage-expand-in {
+  from { opacity: 0; transform: translateY(4px) scale(0.9); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 /* Working state: three dots plus the elapsed seconds. We do not know how long
@@ -502,7 +648,7 @@ body {
 
 .turn-elapsed {
   margin-left: 2px;
-  color: var(--stage-ink-faint);
+  color: var(--stage-neutral-ink-faint);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
@@ -511,67 +657,71 @@ body {
   color: #b4791f;
 }
 
-/* The grip is the one place the panel can be picked up from. Everything else —
- * text, scrollbars, cards, buttons — belongs to the content. */
-.thread-grip {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex: 0 0 auto;
-  height: 14px;
-  padding-top: 5px;
-  cursor: grab;
-}
-
-.thread-grip i {
-  width: 34px;
-  height: 3px;
-  border-radius: 2px;
-  background: rgba(var(--stage-accent-rgb), 0.20);
-  transition: background 140ms ease-out, width 140ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-
-.stage-thread:hover .thread-grip i { background: var(--stage-accent-grip-hover); }
-.stage-thread.is-dragging .thread-grip { cursor: grabbing; }
-.stage-thread.is-dragging .thread-grip i { width: 46px; background: rgba(var(--stage-accent-rgb), 0.52); }
-
+/* --- 底栏 -----------------------------------------------------------------
+ * 一条分隔线把动作和内容切开，左下角重跑，右下角两个真按钮。 */
 .thread-bar {
   display: flex;
   align-items: center;
-  gap: 3px;
-  padding: 6px 8px 8px 14px;
+  gap: 8px;
+  flex: 0 0 auto;
+  margin-top: 4px;
+  padding: 11px 14px 12px;
+  border-top: 1px solid rgba(19, 22, 27, 0.075);
   cursor: grab;
 }
 
+.stage-thread.is-dragging .thread-bar { cursor: grabbing; }
+
 .thread-count {
   margin-right: auto;
-  color: var(--stage-ink-faint);
-  font-size: 11px;
+  color: var(--stage-neutral-ink-faint);
+  font-size: 11.5px;
   letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
 }
 
-.thread-tool {
+/* 参考图里的 Reject / Approve：同一个尺寸、同一个圆角，只有填充不同。
+ * 按钮做到 34px 高不是为了好看，是因为上一版 4px 内边距的文字按钮在一块
+ * 浮在别人窗口上的面板里根本点不准。 */
+.thread-btn {
   appearance: none;
-  border: 0;
-  border-radius: 8px;
-  padding: 4px 9px;
-  background: transparent;
-  color: var(--stage-ink-soft);
+  flex: 0 0 auto;
+  height: 34px;
+  padding: 0 15px;
+  border: 1px solid rgba(19, 22, 27, 0.14);
+  border-radius: 11px;
+  background: #fff;
+  color: var(--stage-neutral-ink);
   font: inherit;
-  font-size: 11px;
-  font-weight: 650;
+  font-size: 13px;
+  font-weight: 640;
+  letter-spacing: 0.01em;
   cursor: pointer;
-  transition: background 120ms ease, color 120ms ease;
+  transition: background 130ms ease, border-color 130ms ease, transform 130ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.thread-tool:hover {
-  background: rgba(var(--stage-accent-rgb), 0.10);
-  color: #185fae;
+.thread-btn:hover {
+  background: rgba(19, 22, 27, 0.045);
+  border-color: rgba(19, 22, 27, 0.22);
 }
 
-.thread-tool.is-close:hover {
-  background: rgba(180, 35, 24, 0.10);
-  color: #b42318;
+.thread-btn:active { transform: scale(0.975); }
+
+.thread-btn.is-solid {
+  border-color: #16181d;
+  background: #16181d;
+  color: #fff;
+}
+
+.thread-btn.is-solid:hover {
+  background: #2a2e36;
+  border-color: #2a2e36;
+}
+
+.thread-btn[disabled] {
+  opacity: 0.5;
+  cursor: default;
+  transform: none;
 }
 
 /* Motion follows the existing spec: ease-out-quint, 120-350ms. The panel
@@ -935,21 +1085,61 @@ body {
   height: var(--stage-capsule-size);
   max-width: none;
   gap: 8px;
-  padding: 0 13px;
+  padding: 0 5px 0 13px;
   overflow: visible;
-  border: 1px solid rgba(35, 112, 222, .72);
+  border: 1px solid rgba(19, 22, 27, 0.14);
   border-radius: calc(var(--stage-capsule-size) / 2);
-  background: rgba(239, 246, 255, .94);
-  /* Transparent Windows surfaces can turn a CSS shadow into a rectangular
-   * backing-store ghost. The one-pixel blue edge supplies enough separation. */
+  background: #fff;
+  /* 参考里那条输入条底下有一大团柔光，但那是在一张不透明的网页上。我们这层是
+   * 透明、可穿透的窗口——Windows 会把 CSS 阴影渲染成一块矩形的后备缓冲残影，
+   * 于是圆胶囊外面挂着一个灰方块。所以这里永远是 none，靠那一像素的边分离。
+   * tests/selection_visual_contract_test.js 钉着这一条。 */
   box-shadow: none;
-  color: #185fae;
+  color: var(--stage-neutral-ink);
   transform-origin: center center;
   will-change: opacity, transform, width;
   transition:
     width var(--stage-capsule-expand) cubic-bezier(.22, 1, .36, 1),
     padding var(--stage-capsule-expand) cubic-bezier(.22, 1, .36, 1),
     border-radius var(--stage-capsule-expand) cubic-bezier(.22, 1, .36, 1);
+}
+
+/* 提交键：一个实心黑圆。没跑时是箭头，跑起来变方块。这两个状态之间不换
+ * 元素，只换里面哪个 svg 显示——换元素会让按钮在最需要被点到的那一刻消失
+ * 一帧。 */
+.capsule-send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  appearance: none;
+  border: 0;
+  border-radius: 50%;
+  background: #16181d;
+  color: #fff;
+  cursor: pointer;
+  transition: background 130ms ease, opacity 130ms ease, transform 130ms cubic-bezier(.22, 1, .36, 1);
+}
+
+.capsule-send svg {
+  width: 16px;
+  height: 16px;
+}
+
+.capsule-send:hover { background: #2a2e36; }
+.capsule-send:active { transform: scale(0.92); }
+
+.capsule-send .capsule-stop-icon { display: none; }
+.stage-capsule[data-phase='processing'] .capsule-send .capsule-send-icon { display: none; }
+.stage-capsule[data-phase='processing'] .capsule-send .capsule-stop-icon { display: block; }
+
+/* 空的时候不显示提交键：一个禁用的按钮比没有按钮更吵。 */
+.stage-capsule[data-empty='true']:not([data-phase='processing']) .capsule-send,
+.stage-capsule[data-mode='voice'][data-empty='true']:not([data-phase='processing']) .capsule-send {
+  display: none;
 }
 
 .stage-capsule.is-entering {
@@ -1051,9 +1241,15 @@ body {
 }
 .capsule-input,
 .capsule-transcript {
-  color: #185fae;
-  font-size: 13px;
-  font-weight: 560;
+  color: var(--stage-neutral-ink);
+  font-size: 14px;
+  font-weight: 520;
+  letter-spacing: -0.003em;
+}
+
+.capsule-input::placeholder {
+  color: var(--stage-neutral-ink-faint);
+  font-weight: 480;
 }
 
 .voice-waveform {
@@ -1340,58 +1536,8 @@ body {
   color: #2c5a99;
 }
 
-/* --- Answer length handle -------------------------------------------------
- * Drag the bottom edge to make the answer longer or shorter. It reads as an
- * affordance only on hover: an always-visible bar under every answer would be
- * furniture. */
-.thread-stretch {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  flex: 0 0 auto;
-  height: 16px;
-  margin: 2px 14px 0;
-  cursor: ns-resize;
-  opacity: 0.55;
-  transition: opacity 140ms ease-out;
-}
-
-.stage-thread:hover .thread-stretch,
-.thread-stretch.is-dragging { opacity: 1; }
-
-.thread-stretch-grip {
-  width: 26px;
-  height: 3px;
-  border-radius: 2px;
-  background: var(--stage-accent-grip);
-  transition: width 160ms cubic-bezier(0.22, 1, 0.36, 1), background 140ms ease-out;
-}
-
-.stage-thread:hover .thread-stretch-grip { background: var(--stage-accent-grip-hover); }
-
-.thread-stretch.is-dragging .thread-stretch-grip {
-  width: 44px;
-  background: var(--stage-accent-grip-active);
-}
-
-/* Direction is shown by which way the grip stretches, so the gesture reads
- * without needing the text. */
-.thread-stretch[data-direction='expand'] .thread-stretch-grip { width: 52px; }
-.thread-stretch[data-direction='condense'] .thread-stretch-grip { width: 18px; }
-
-.thread-stretch-hint {
-  color: var(--stage-ink-soft);
-  font-size: 10.5px;
-  font-weight: 650;
-  letter-spacing: 0.01em;
-  white-space: nowrap;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .thread-stretch,
-  .thread-stretch-grip { transition: none; }
-}
+/* 答案底边那条拉伸把手已经撤掉——见 stage.html 里那段注释。改答案长度现在
+ * 走「在答案里划中一段 → 点展开讲讲」，样式在上面的 .passage-expand。 */
 
 /* Picked element: the whole thing lights up at once, then settles into a quiet
  * outline. Distinct from the drawn-selection sweep only in timing — same visual

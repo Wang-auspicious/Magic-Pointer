@@ -1,0 +1,62 @@
+window: 'VIDAPROBECOLD - 用户配置 1 - Microsoft\u200b Edge' hwnd=265854 bbox=(31, 20, 2109, 1953) class=Chrome_WidgetWin_1
+root  :  Window                 [20,20 2100x1944]          cls=Chrome_WidgetWin_1     "VIDAPROBECOLD - 用户配置 1 - Microsoft​ Edge"
+----------------------------------------------------------------------------------------------------
+ Window                 [20,20 2100x1944]          cls=Chrome_WidgetWin_1     "VIDAPROBECOLD - 用户配置 1 - Microsoft​ Edge"
+   Pane                   [33,20 2074x1931]          cls=Intermediate D3D Window 
+   Pane                   [34,20 2074x1932]          cls=BrowserRootView        "VIDAPROBECOLD - Microsoft Edge"
+     Pane                   [34,20 2074x1932]          cls=NonClientView          
+       Pane                   [34,20 2074x1932]          cls=EdgeBrowserFrameViewWin 
+       Pane                   [34,20 2074x1932]          cls=TopContainerOverlayView 
+         Pane                   [1832,22 276x78]           cls=BrowserCaptionButtonContainer 
+         Pane                   [34,20 2074x1932]          cls=BrowserView            
+           Button                 [1832,22 92x78]            cls=EdgeWindowsCaptionButton "最小化"
+           Button                 [1924,22 92x78]            cls=EdgeWindowsCaptionButton "最大化"
+           Button                 [2016,22 92x78]            cls=EdgeWindowsCaptionButton "关闭"
+           Pane                   [34,20 2074x160]           cls=TopContainerView       
+           Pane                   [34,180 2074x1772]         cls=SidebarContentsSplitView 
+           Tab                    [38,20 1794x82]            cls=EdgeTabStripRegionView "标签页栏"
+             ToolBar                [34,100 2074x80]           cls=EdgeToolbarView        "应用栏"
+             Text                   [378,152 728x56]           cls=Label                  "若要进行快速访问，请将你的网址收藏放在此收藏夹栏上。"
+             Hyperlink              [1114,152 168x56]          cls=Link                   "立即管理收藏夹"
+             Pane                   [34,180 2074x1772]         cls=SidebarContentsSplitView 
+             Button                 [42,20 64x72]              cls=EdgeTabActionsMenuButton "搜索标签页"
+             Pane                   [98,20 512x82]             cls=EdgeTabStrip           
+             Button                 [602,20 64x82]             cls=EdgeNewTabButton       "新建标签页"
+             Pane                   [666,20 1166x82]           cls=FrameGrabHandle        
+               Button                 [42,108 64x64]             cls=BackForwardButton      "返回"
+               Button                 [114,108 64x64]            cls=ReloadButton           "刷新"
+               Group                  [186,108 1698x64]          cls=LocationBarView        
+               Pane                   [1892,100 64x80]           cls=ToolbarHubIconContainerView 
+               Button                 [1964,108 64x64]           cls=EdgeAvatarToolbarButton "个人 个人资料"
+               Button                 [2036,108 64x64]           cls=BrowserAppMenuButton   "设置及其他 (Alt+F)"
+               Pane                   [34,180 2074x1772]         cls=SidebarContentsSplitView 
+               Tab                    [98,20 512x82]             cls=EdgeTabContainerImpl   
+               Pane                   [98,20 512x82]             cls=TabStrip::EdgeTabDragContextImpl 
+                 Button                 [194,116 112x48]           cls=LocationIconView       "文件"
+                 Edit                   [306,116 1514x48]          cls=OmniboxViewViews       "C:/Users/zjz65/AppData/Local/Temp/vida_verify/cold.html"
+                 Pane                   [empty]                    cls=PageActionContainerView 
+                 Pane                   [1828,116 48x48]           cls=PageActionIconContainerView 
+                 Button                 [1892,108 64x64]           cls=HubToggleToolbarButton "收藏夹"
+                 Pane                   [34,180 2074x1772]         cls=View                   
+                 Edit                   [empty]                    cls=Textfield              
+                 TabItem                [98,20 512x82]             cls=EdgeTab                "VIDAPROBECOLD"
+                 Pane                   [empty]                    cls=ScrollView             
+                   Button                 [1828,116 48x48]           cls=StarView               "将此页面添加到收藏夹(Ctrl+D)"
+                   Pane                   [34,180 2074x1772]         cls=MultiContentsView      
+                   Button                 [546,44 32x32]             cls=EdgeTabCloseButton     "关闭标签页"
+                   Pane                   [empty]                    cls=ScrollView::Viewport   
+                   Pane                   [empty]                    cls=ScrollView::Viewport   
+                     Pane                   [34,180 2074x1772]         cls=View                   
+                     Pane                   [empty]                    cls=View                   
+                       Pane                   [empty]                    cls=View                   
+                       Document               [42,180 2058x1764]         cls=                       "file:///C:/Users/zjz65/AppData/Local/Temp/vida_verify/cold.html"
+                         Text                   [58,222 2026x93]           cls=                       "COLDMARKER_H1"
+                         Text                   [58,357 603x47]            cls=                       "COLDMARKER_P body text for the probe."
+                         Button                 [58,442 289x44]            cls=                       "COLDMARKER_BTN"
+                         List                   [58,517 2026x93]           cls=                       
+                           ListItem               [138,517 1946x47]          cls=                       "COLDMARKER_LI_ONE"
+                           ListItem               [138,563 1946x47]          cls=                       "COLDMARKER_LI_TWO"
+----------------------------------------------------------------------------------------------------
+visited=55 printed=55 with_text=27
+types : Button=14  Document=1  Edit=2  Group=1  Hyperlink=1  List=1  ListItem=2  Pane=25  Tab=2  TabItem=1  Text=3  ToolBar=1  Window=1
+

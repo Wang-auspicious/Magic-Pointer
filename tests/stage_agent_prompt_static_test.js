@@ -35,9 +35,15 @@ assert(!js.includes("confirm.textContent = '发送'"));
 // Dragging is positive-handle only, so a native scrollbar can never move the panel.
 assert(js.includes('function isDragHandleAt('));
 assert(!js.includes('button:not([disabled]), textarea, input, [contenteditable='));
-assert(html.includes('class="thread-grip" data-drag-handle="1"'));
+// 抓手从「卡顶一条灰色小横杠」换成了整条眉毛行 + 底栏（它们说的是这张卡在讲
+// 什么、你能对它做什么，顺便可以拖）。钉的仍然是同一条约束：面板上必须存在
+// 正向的 data-drag-handle，而滚动区 #stage-result 绝不能是其中之一。
+assert(html.includes('class="thread-head" data-drag-handle="1"'));
+assert(html.includes('class="thread-bar" data-drag-handle="1"'));
+assert(!/id="stage-result"[^>]*data-drag-handle/.test(html),
+  'the scrollable result area must never be a drag surface');
 assert(html.includes('data-no-drag="1"'));
-assert(css.includes('.thread-grip'));
+assert(css.includes('.thread-head'));
 // No horizontal scrollbar anywhere on the stage.
 assert(css.includes('overflow-x: hidden;'));
 assert(!/\.stage-result\s*\{[^}]*overflow:\s*auto/.test(css));

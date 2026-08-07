@@ -31,16 +31,20 @@ function clamp(value, low, high) {
 /**
  * @param {object} input
  * @param {number} input.dragPx        vertical drag; positive is downward
- * @param {number} input.currentLines  lines the answer occupies now
+ * @param {number} input.currentLines  lines the selection occupies on screen
+ * @param {number} [input.currentChars] characters in the selected text
  */
 function stretchIntent(input) {
   const dragPx = Number(input?.dragPx);
   const currentLines = Number(input?.currentLines);
+  const currentChars = Number(input?.currentChars);
   if (!Number.isFinite(dragPx) || !Number.isFinite(currentLines) || currentLines < 1) {
-    return { direction: 'none', deltaLines: 0, targetLines: 0, hint: '' };
+    return { direction: 'none', deltaLines: 0, targetLines: 0, targetChars: 0, hint: '' };
   }
   if (Math.abs(dragPx) < MIN_DRAG_PX) {
-    return { direction: 'none', deltaLines: 0, targetLines: Math.round(currentLines), hint: '' };
+    return {
+      direction: 'none', deltaLines: 0, targetLines: Math.round(currentLines), targetChars: 0, hint: '',
+    };
   }
 
   const rawDelta = Math.round(dragPx / LINE_HEIGHT_PX);
@@ -50,14 +54,24 @@ function stretchIntent(input) {
   const targetLines = Math.max(1, lines + deltaLines);
 
   if (targetLines === lines) {
-    return { direction: 'none', deltaLines: 0, targetLines, hint: '' };
+    return { direction: 'none', deltaLines: 0, targetLines, targetChars: 0, hint: '' };
   }
   const direction = targetLines > lines ? 'expand' : 'condense';
   const verb = direction === 'expand' ? '更详细' : '更简洁';
+  // 手势量到的是**屏幕上的行**——一段没有换行的中文，在选区里占 4 行，在文本
+  // 里是 1 行。引擎数的是后者。同一个数字在两边指两件事，比值因此凭空翻几倍，
+  // 于是「扩写到 6 行」在一句话上必定被判成「四倍以上只能靠编造」。
+  //
+  // 字数是两边唯一同意的单位。手势按行拉，落地按字说，换算就用这段自己的
+  // 每行字数——它是精确的，不是估的。
+  const targetChars = Number.isFinite(currentChars) && currentChars > 0
+    ? Math.max(1, Math.round((currentChars * targetLines) / lines))
+    : 0;
   return {
     direction,
     deltaLines: targetLines - lines,
     targetLines,
+    targetChars,
     hint: `${verb} · 目标 ${targetLines} 行（现在 ${lines} 行）`,
   };
 }
@@ -73,7 +87,9 @@ function stretchCommand(intent, target = 'answer') {
   if (!intent || intent.direction === 'none') return '';
   const verb = intent.direction === 'expand' ? '扩写' : '压缩';
   const subject = target === 'selection' ? '选中的这段' : '这个回答';
-  return `把${subject}${verb}到 ${intent.targetLines} 行`;
+  // 知道字数就说字数：那是引擎能如实核对的单位。拿不到才退回说行。
+  const size = intent.targetChars > 0 ? `${intent.targetChars} 字` : `${intent.targetLines} 行`;
+  return `把${subject}${verb}到 ${size}`;
 }
 
 const StageStretchPolicy = {

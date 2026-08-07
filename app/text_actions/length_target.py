@@ -126,6 +126,44 @@ def target_from_handle(
     return LengthTarget(direction="keep", source_lines=source_lines, source_chars=source_chars)
 
 
+# 「就地展开这一段」用的目标。
+#
+# 它和 target_from_handle 的区别不是参数，是**谁说了算**。拖手柄的人指着一个
+# 数字说「我要 6 行」，那个数字可能不可能达成，warning_for 因此必须拦。而点
+# 「展开讲讲」的人没有说任何数字——他说的是「这儿我没看懂，多讲点」。这时候
+# 由我们挑一个一定安全的倍数，于是没有任何东西需要被警告。
+#
+# 上一版这条路是不存在的：界面把手势翻译成「把这个回答扩写到 6 行」这句中文，
+# 再让 target_from_command 去解析它。两个后果：
+#   1. 那句话里的「6 行」是**渲染出来的行**（540px 面板里折行后的视觉行数），
+#      而 count_lines 数的是文本里的换行符。一段没有换行的中文回答，前者是 4，
+#      后者是 1，比值凭空翻四倍，于是必定撞上 ratio > 4.0 那条护栏。
+#   2. 那句话走的是正常提交路径，源文本是**用户在屏幕上划的那块**，不是回答
+#      本身。所以就算没撞护栏，扩写的也是错的东西。
+# 现在这两件事都不会发生：源就是那一段字，单位是字符，倍数由我们定。
+AUTO_EXPAND_RATIO = 2.4
+
+# 一次展开最多写出这么多字。没有上限的话，选中一整段两千字的回答点一下，
+# 等来的是一堵墙。
+AUTO_EXPAND_MAX_CHARS = 1600
+
+
+def auto_expand_target(source_text: str) -> LengthTarget:
+    """「大体估计着拉伸」——不问用户要几行，挑一个够明显又不用编的倍数。"""
+    source_lines, source_chars = measure(source_text)
+    wanted = min(AUTO_EXPAND_MAX_CHARS, max(1, round(source_chars * AUTO_EXPAND_RATIO)))
+    # 已经很长的段落，2.4 倍会被上限压回到比原文还短——那就成了压缩，
+    # 和按钮上写的字相反。这种情况下少加一点，但方向必须还是「更长」。
+    if wanted <= source_chars:
+        wanted = source_chars + max(60, source_chars // 5)
+    return LengthTarget(
+        direction="expand",
+        target_chars=wanted,
+        source_lines=source_lines,
+        source_chars=source_chars,
+    )
+
+
 def describe_target(target: LengthTarget) -> str:
     """The line under the handle while the user is dragging."""
     if target.direction == "keep":

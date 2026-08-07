@@ -57,6 +57,11 @@ internal static class UiaSelectionProbe
         public Rect SelectionContainerRectangle = Rect.Empty;
         public string TerminalAnchorText = "";
         public string RejectedSelectionReason = "";
+        // FindDocumentSelection 数出来的 Document 节点个数。-1 = 那一趟没跑
+        // （提前读到选区了，按定义就不是冷树）。Python 侧的 is_cold_tree 靠它
+        // 区分「壳起来了但正文没挂上」和「这窗口本来就没有正文」——
+        // 之前这个数只 TracePhase 到 stderr，判据拿不到，冷树重试从没触发过。
+        public int DocumentCount = -1;
         public string Error = "";
     }
 
@@ -402,6 +407,7 @@ internal static class UiaSelectionProbe
                 AutomationElement.ControlTypeProperty,
                 ControlType.Document);
             AutomationElementCollection documents = root.FindAll(TreeScope.Descendants, condition);
+            result.DocumentCount = documents.Count;
             TracePhase(
                 "document_scan.findall["
                 + documents.Count.ToString(System.Globalization.CultureInfo.InvariantCulture)
@@ -1771,6 +1777,8 @@ internal static class UiaSelectionProbe
         json.Append(JsonString(result.TerminalAnchorText));
         json.Append(",\"rejected_selection_reason\":");
         json.Append(JsonString(result.RejectedSelectionReason));
+        json.Append(",\"document_count\":");
+        json.Append(result.DocumentCount);
         json.Append(",\"element_name\":");
         json.Append(JsonString(result.ElementName));
         json.Append(",\"automation_id\":");

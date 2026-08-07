@@ -66,6 +66,13 @@ contextBridge.exposeInMainWorld('magicPointerStage', {
     text: String(payload?.text || ''),
     selectionSessionToken: payload?.selectionSessionToken || null,
   }),
+  // 就地展开回答里的一段。invoke 而不是 send：调用方要等展开后的那段字回来
+  // 换掉原来那段，而不是等一条新的舞台事件——它不是新的一轮。
+  expandPassage: (payload) => ipcRenderer.invoke('stage:expand-passage', {
+    selectionSessionToken: payload?.selectionSessionToken || null,
+    passage: String(payload?.passage || '').slice(0, 8000),
+    context: String(payload?.context || '').slice(0, 8000),
+  }),
   pickElement: (payload) => ipcRenderer.invoke('stage:pick-element', {
     x: Number(payload?.x) || 0,
     y: Number(payload?.y) || 0,
