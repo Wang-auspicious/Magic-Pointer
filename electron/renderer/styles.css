@@ -17,13 +17,9 @@ html, body {
 body[data-mode='gesture'] {
   background: rgba(0, 0, 0, 0.001);  /* non-transparent hit target for exclusive overlay */
 }
-/* Armed drawing uses a preloaded custom cursor. Must be a PNG bitmap, not
-   SVG: Chromium decodes SVG cursor images per-frame in the GPU process and
-   drops them between frames on transparent windows — the blue/native
-   flicker the user saw. PNG cursors are cached as static resources. */
 body[data-mode='gesture'],
 body[data-mode='gesture'] * {
-  cursor: url('./assets/armed-cursor.png') 3 3, crosshair !important;
+  cursor: url('./assets/armed-cursor.svg') 3 3, crosshair !important;
 }
 
 #sweep-layer,

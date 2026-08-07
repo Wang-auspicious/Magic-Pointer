@@ -199,12 +199,12 @@ assert.match(overlay, /function resetOverlay\(\)[\s\S]*?releasePointerCapture/,
   'every dismissal must release stale DOM pointer ownership before rearming');
 assert.match(overlay, /resetOverlay\(\)[\s\S]*?gestureReady\(gestureToken\)/,
   'the renderer readiness acknowledgement must happen after reset');
-assert.match(styles, /body\[data-mode='gesture'\][\s\S]*?cursor:\s*url\([^)]*armed-cursor\.png[^)]*\)[\s\S]*?!important/,
-  'armed drawing uses a preloaded PNG custom cursor (SVG cursors flicker on transparent windows; PNG is the Chromium-safe bitmap format)');
-assert.doesNotMatch(styles, /cursor:\s*url\([^)]*\.svg[^)]*\)/,
-  'CSS cursors must never be SVG — Chromium decodes them per-frame in the GPU process and drops them between frames');
-assert.match(overlayHtml, /rel="preload"[^>]*href="assets\/armed-cursor\.(png|svg)"[^>]*as="image"/,
+assert.match(styles, /body\[data-mode='gesture'\][\s\S]*?cursor:\s*url\([^)]*armed-cursor\.svg[^)]*\)[\s\S]*?!important/,
+  'armed drawing uses a preloaded custom cursor without painting a fake pointer');
+assert.match(overlayHtml, /rel="preload"[^>]*href="assets\/armed-cursor\.svg"[^>]*as="image"/,
   'overlay startup must warm the custom cursor asset before wiggle activation');
+assert.match(main, /overlayBoundDisplayId[\s\S]*?setBounds\(desired\)/,
+  'overlay must only setBounds when the cursor crosses displays — repeated setBounds flickers the cursor');
 
 const stage = fs.readFileSync('electron/renderer/stage.js', 'utf8');
 const stageShowHandler = stage.slice(

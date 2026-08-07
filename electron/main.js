@@ -1947,18 +1947,24 @@ function stopDictation(surface, { graceful = false } = {}) {
   return stopLegacyDictation({ surface, graceful, cancel: !graceful });
 }
 
+// overlay 当前覆盖的屏幕 index（避免高频轮询反复 setBounds）。
+let overlayBoundDisplayId = null;
+
 function sendCursorToOverlay(pos = screen.getCursorScreenPoint()) {
   if (!overlayWindow || !overlayWindow.isVisible()) return;
   const display = screen.getDisplayNearestPoint(pos);
   const desired = display.bounds;
   const current = overlayWindow.getBounds();
-  if (
-    current.x !== desired.x
-    || current.y !== desired.y
-    || current.width !== desired.width
-    || current.height !== desired.height
-  ) {
+  // 只有光标跨屏（overlay 要换屏覆盖）才 setBounds。高频轮询下反复
+  // setBounds 会让 Windows 每次重设光标区域——光标在 CSS 光标和原生
+  // 光标之间闪的根源（与光标格式无关，之前误判为 SVG 问题）。
+  const moved = Math.abs(current.x - desired.x) > 1
+    || Math.abs(current.y - desired.y) > 1
+    || Math.abs(current.width - desired.width) > 1
+    || Math.abs(current.height - desired.height) > 1;
+  if (moved && overlayBoundDisplayId !== display.id) {
     overlayWindow.setBounds(desired);
+    overlayBoundDisplayId = display.id;
   }
   const bounds = overlayWindow.getBounds();
   overlayWindow.webContents.send('overlay:cursor', {
@@ -1976,6 +1982,7 @@ function hideOverlay() {
   overlayWindow.hide();
   overlayWindow.setIgnoreMouseEvents(true, { forward: true });
   overlayOwnsPointerInput = false;
+  overlayBoundDisplayId = null;
   if (typeof overlayWindow.setFocusable === 'function') overlayWindow.setFocusable(false);
   log('hideOverlay');
 }
@@ -2056,6 +2063,8 @@ function armSelectionGesture(reason = 'wiggle') {
     const show = () => {
       if (!selectionGestureArm || selectionGestureArm.token !== token) return;
       win.setBounds(arm.displayBounds);
+      // 本屏首次轮询会重新对齐一次，之后不再 setBounds（避免光标闪）
+      overlayBoundDisplayId = null;
       if (typeof win.setFocusable === 'function') win.setFocusable(false);
       // Standby: click-through so user can interact with app below.
       // The renderer will request pointer ownership via gesture-ready after
