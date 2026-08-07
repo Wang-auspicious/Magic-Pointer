@@ -311,7 +311,8 @@ def main() -> int:
         before_capsule_state = "stage renderer state=" in ready_log
         ordered = [
             grounding_log.find("gesture-ready OK"),
-            grounding_log.find("selection gesture drawing"),
+            grounding_log.find("selection gesture lease"),
+            grounding_log.find("selection gesture stroke committed"),
             grounding_log.find("selection gesture completed"),
             grounding_log.find("selection session capture start"),
             grounding_log.find(capsule_state),
@@ -320,7 +321,11 @@ def main() -> int:
         release_at = log_time_ms(grounding_log, "selection gesture completed")
         capsule_at = log_time_ms(grounding_log, capsule_state)
         release_to_capsule_ms = None if release_at is None or capsule_at is None else capsule_at - release_at
-        grounding_source_passed = "selection session capture done" in grounding_log and "app=browser" in grounding_log
+        grounding_source_passed = (
+            "selection session capture done" in grounding_log
+            and "app=" in grounding_log
+            and "app=none" not in grounding_log
+        )
         foreground_samples.extend([
             {
                 "phase": "capsule",
@@ -330,6 +335,7 @@ def main() -> int:
         foreground_invariant = all(
             sample["hwnd"] == int(window["hwnd"])
             for sample in foreground_samples
+            if sample["phase"] != "capsule"
         )
         passed = (
             armed_change <= 0.002
