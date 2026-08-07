@@ -78,6 +78,59 @@ def get_vision_model(text_model: str) -> str:
     return os.getenv("MAGIC_POINTER_VISION_MODEL") or read_local_secret("vision_model.txt") or text_model
 
 
+def get_vision_base_url(text_base_url: str | None) -> str | None:
+    """Vision may live on a different gateway than the text model.
+
+    Configured via MAGIC_POINTER_VISION_BASE_URL or secrets/vision_base_url.txt;
+    falls back to the text-path gateway.
+    """
+    return os.getenv("MAGIC_POINTER_VISION_BASE_URL") or read_local_secret("vision_base_url.txt") or text_base_url
+
+
+# ── vision capability classification ─────────────────────────────────
+# Adapted from external/claude-code-vision-skill/vision/vision.py
+# (TEXT_ONLY_MODEL_PATTERNS). A text-only model that receives an image
+# usually returns HTTP 200 with empty content: one wasted request plus a
+# confusing empty answer. Classifying upfront lets the vision path refuse
+# honestly instead of guessing. Unknown models are never refused.
+# Measured on OpenCode Go 2026-08-07 (data/runtime/probe_go_vision.py):
+#   vision OK: kimi-k3, qwen3.7-plus   |   text-only: deepseek-*, glm-5.1/5.2,
+#   hy3, mimo-v2-omni (unserved)       |   glm-5v / glm-4.6v are the vision lines.
+_TEXT_ONLY_MODEL_PATTERNS = (
+    re.compile(r"deepseek"),
+    re.compile(r"glm-4\.[56](?!v)"),
+    re.compile(r"glm-5(?!v)"),
+    re.compile(r"kimi-k2-"),
+    re.compile(r"qwen3-coder"),
+    re.compile(r"devstral"),
+    re.compile(r"hy3"),
+)
+
+_VISION_MODEL_PATTERNS = (
+    re.compile(r"kimi-k3"),
+    re.compile(r"kimi-k2\.[5-9]"),
+    re.compile(r"qwen3\.[5-9]-plus"),
+    re.compile(r"qwen3\.8-max"),
+)
+
+
+def classify_vision_capability(model: str) -> bool | None:
+    """True = known vision model; False = known text-only; None = unknown.
+
+    Only an explicit False refuses the call; None and True both proceed
+    (unknown may still see images — a mislabeled model is cheaper than a
+    blocked call).
+    """
+    m = str(model or "").casefold()
+    for pattern in _TEXT_ONLY_MODEL_PATTERNS:
+        if pattern.search(m):
+            return False
+    for pattern in _VISION_MODEL_PATTERNS:
+        if pattern.search(m):
+            return True
+    return None
+
+
 def get_vision_api_mode(base_url: str | None = None) -> str:
     """Protocol for the vision model; falls back to the text-path detection."""
     explicit = os.getenv("MAGIC_POINTER_VISION_API_MODE") or read_local_secret("vision_api_mode.txt")
@@ -128,6 +181,11 @@ def _text_completion_payload(
             {"role": "user", "content": content},
         ],
         "max_tokens": max(1, int(max_tokens)),
+        # Reasoning models (deepseek-v4-flash on Go etc.) would spend the whole
+        # max_tokens budget on thinking and return empty content. Same
+        # contract as the messages branch: thinking off by default. Gateways
+        # that reject the param get a stripped retry (see ask_text_model).
+        "thinking": {"type": "disabled"},
     }
 
 
@@ -139,6 +197,29 @@ def _text_completion_response(data: dict, api_mode: str) -> str:
             if isinstance(block, dict) and block.get("type") == "text"
         ).strip()
     return str(data["choices"][0]["message"].get("content") or "")
+
+
+def _empty_answer_evidence(data: dict, api_mode: str) -> str:
+    """Diagnostics for an HTTP-200-but-empty-answer response.
+
+    The common failure is a reasoning model spending its whole max_tokens
+    budget on thinking (deepseek-v4-flash measured on Go 2026-08-07:
+    finish=length, content='', reasoning_content=4960 chars). Surfacing
+    finish_reason and the reasoning-token split makes the next fix obvious.
+    """
+    if api_mode == "messages":
+        return f"finish={data.get('stop_reason') or 'unknown'}"
+    choice = (data.get("choices") or [{}])[0]
+    finish = choice.get("finish_reason") or "unknown"
+    usage = data.get("usage") or {}
+    details = usage.get("completion_tokens_details") or {}
+    reasoning_tokens = details.get("reasoning_tokens")
+    parts = [f"finish={finish}"]
+    if reasoning_tokens is not None:
+        parts.append(f"reasoning_tokens={reasoning_tokens}")
+    if usage.get("completion_tokens") is not None:
+        parts.append(f"completion_tokens={usage['completion_tokens']}")
+    return ", ".join(parts)
 
 
 def _anthropic_tools(tools: list[dict] | None) -> list[dict]:
@@ -348,18 +429,42 @@ def ask_text_model(
                     record_failure(status=response.status_code, detail=response.text[:300], model=model, base_url=base_url)
                     continue
                 if response.status_code >= 400:
-                    health = record_failure(
-                        status=response.status_code,
-                        detail=response.text[:300],
-                        model=model,
-                        base_url=base_url,
-                    )
-                    return f"AI 调用失败：{health.message}"
+                    # A gateway that rejects the thinking param must still
+                    # work: strip it and retry once before giving up.
+                    if "thinking" in payload:
+                        stripped = dict(payload)
+                        del stripped["thinking"]
+                        try:
+                            with _httpx_client(httpx, timeout=budget) as client:
+                                response = client.post(endpoint, headers=headers, json=stripped)
+                        except httpx.TimeoutException:
+                            request_timed_out = True
+                            continue
+                    if response.status_code >= 400:
+                        health = record_failure(
+                            status=response.status_code,
+                            detail=response.text[:300],
+                            model=model,
+                            base_url=base_url,
+                        )
+                        return f"AI 调用失败：{health.message}"
                 data = response.json()
                 record_success(model=model, base_url=base_url)
                 answer = _text_completion_response(data, api_mode)
                 if not answer:
-                    return "AI 调用失败：模型在本次预算内没有返回可见答案。"
+                    detail = _empty_answer_evidence(data, api_mode)
+                    record_failure(
+                        status=None,
+                        exception_name="empty_answer",
+                        detail=detail,
+                        model=model,
+                        base_url=base_url,
+                    )
+                    return (
+                        "AI 调用失败：模型在本次预算内没有返回可见答案"
+                        + (f"（{detail}）。" if detail else "。")
+                        + "\n\n截图和对象已保存在本地，稍后可以直接重试。"
+                    )
                 return answer
             except httpx.ConnectTimeout as exc:
                 last_exc = exc
@@ -529,6 +634,21 @@ def ask_vision_model(
 
     api_key, base_url, model = get_ai_config()
     model = get_vision_model(model)
+    if classify_vision_capability(model) is False:
+        record_failure(
+            status=None,
+            exception_name="vision_model_text_only",
+            detail=f"model {model} is classified text-only; refusing image call",
+            model=model,
+            base_url=base_url or "",
+        )
+        return (
+            f"AI 视觉调用失败：当前模型 {model} 是纯文本模型，无法读图。\n\n"
+            f"截图已保存在本地：{image_path}\n\n"
+            "配置视觉模型：secrets/vision_model.txt（如 qwen3.7-plus）+ "
+            "secrets/vision_api_mode.txt（messages），或用环境变量 "
+            "MAGIC_POINTER_VISION_MODEL / MAGIC_POINTER_VISION_API_MODE。"
+        )
     if not api_key:
         record_unconfigured()
         return (
@@ -547,6 +667,7 @@ def ask_vision_model(
     try:
         import httpx
 
+        base_url = get_vision_base_url(base_url)
         base_url = (base_url or "https://api.openai.com/v1").rstrip("/")
         api_mode = get_vision_api_mode(base_url)
         endpoint = _completion_endpoint(base_url, api_mode)

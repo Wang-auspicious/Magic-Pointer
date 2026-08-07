@@ -1296,6 +1296,85 @@ def _screen_region_vision_answer(
                 pass
 
 
+# 本地图片文件：用户划线指向的是一张图（资源管理器里选中、桌面上的一张
+# 图片等），结构化读到的是它的文件名或路径。这张图在本地、是用户明确指
+# 向的对象——把这张图本身给视觉模型，而不是把"文件名"当上下文给文本模
+# 型。这不属于「截屏上传」：截屏上传是隐私开关（upload_screenshots），
+# 而这里读的是用户划中那个文件的内容，等同读用户划中的文字。
+_IMAGE_FILE_SUFFIXES = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff", ".avif")
+
+
+def _user_desktop_dir() -> Path:
+    """The real Desktop folder, honouring user-folder redirection.
+
+    Path.home()/Desktop is wrong on machines whose Desktop is redirected
+    (OneDrive, or a D:-drive home like this one: real desktop is D:\\Desktop).
+    """
+    try:
+        import ctypes
+
+        buf = ctypes.create_unicode_buffer(512)
+        if ctypes.windll.shell32.SHGetFolderPathW(None, 0x0010, None, 0, buf) == 0 and buf.value:
+            return Path(buf.value)
+    except Exception:
+        pass
+    return Path.home() / "Desktop"
+
+
+def _local_image_file_answer(
+    command: str,
+    app_ctx: AdapterReadContext | None,
+    snapshot: dict[str, Any] | None,
+) -> str | None:
+    """If the marked content is a local image file, ask the visual model about it."""
+    candidates: list[str] = []
+    if app_ctx is not None:
+        content = str(app_ctx.content or "").strip()
+        if content:
+            candidates.append(content)
+    context = (snapshot or {}).get("context") or {}
+    for key in ("document_path", "path"):
+        value = str(context.get(key) or "").strip()
+        if value:
+            candidates.append(value)
+    candidates.append(str((snapshot or {}).get("capture_path") or "").strip())
+
+    image_file: Path | None = None
+    desktop_dir = _user_desktop_dir()
+    for candidate in candidates:
+        if not candidate:
+            continue
+        # 内容可能是 "名字.jpg"（无目录）或全路径；先当全路径试，再当
+        # 文件名在桌面/当前工作目录试。宁可多试一次，不可把本地文件
+        # 错过之后掉进"只有文件名"的文本回答。
+        cand_path = Path(candidate)
+        trials = [cand_path]
+        if not cand_path.is_absolute():
+            trials.extend([desktop_dir / cand_path, Path.cwd() / cand_path])
+        for trial in trials:
+            try:
+                if trial.is_file() and trial.suffix.lower() in _IMAGE_FILE_SUFFIXES:
+                    image_file = trial
+                    break
+            except OSError:
+                continue
+        if image_file is not None:
+            break
+    if image_file is None:
+        return None
+
+    context_text = _selection_context_text(app_ctx, None)
+    context_text += f"\n\nThe user pointed at this image file: {image_file}"
+    try:
+        return ask_vision_model(
+            image_file,
+            command,
+            context_text=context_text,
+        )
+    except Exception:
+        return None
+
+
 def _context_pack_response(
     payload: dict[str, Any],
     target_window: dict[str, Any] | None,
@@ -2541,10 +2620,15 @@ def main() -> int:
 
     browser_failure_answer = grounded_browser_failure_answer(command, app_ctx)
     vision_answer = _screen_region_vision_answer(command, target_window, app_ctx, snapshot)
+    local_image_answer = _local_image_file_answer(command, app_ctx, snapshot)
 
     if browser_failure_answer:
         answer = browser_failure_answer
         route_info = {"tier": "L0", "reason": "grounded_browser_failure"}
+    elif local_image_answer:
+        # 划中一张本地图片：视觉模型读的是那个文件本身，不是截屏。
+        answer = local_image_answer
+        route_info = {"tier": "L0", "reason": "local_image_file"}
     elif vision_answer:
         answer = vision_answer
     elif app_ctx and app_ctx.app == "word" and wants_word_rewrite(command) and (app_ctx.content or "").strip():

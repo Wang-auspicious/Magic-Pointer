@@ -1,0 +1,63 @@
+from __future__ import annotations
+
+from app.ai_client import (
+    classify_vision_capability,
+    get_vision_base_url,
+    get_vision_model,
+)
+
+
+def test_deepseek_family_is_text_only() -> None:
+    assert classify_vision_capability("deepseek-v4-flash") is False
+    assert classify_vision_capability("deepseek-v4-pro") is False
+    assert classify_vision_capability("deepseek-chat") is False
+
+
+def test_glm5_non_v_is_text_only_but_glm5v_is_not() -> None:
+    assert classify_vision_capability("glm-5.1") is False
+    assert classify_vision_capability("glm-5.2") is False
+    assert classify_vision_capability("glm-5") is False
+    assert classify_vision_capability("glm-5v-turbo") is not False
+    assert classify_vision_capability("glm-4.6v") is not False
+
+
+def test_kimi_k2_hyphen_text_only_k3_vision() -> None:
+    assert classify_vision_capability("kimi-k2-turbo-preview") is False
+    assert classify_vision_capability("kimi-k3") is True
+    assert classify_vision_capability("kimi-k2.7-code") is True
+
+
+def test_qwen_plus_line_is_vision() -> None:
+    assert classify_vision_capability("qwen3.7-plus") is True
+    assert classify_vision_capability("qwen3.8-max") is True
+    assert classify_vision_capability("qwen3-coder") is False
+
+
+def test_unknown_models_are_never_refused() -> None:
+    assert classify_vision_capability("gpt-4o") is None
+    assert classify_vision_capability("grok-4.5") is None
+    assert classify_vision_capability("") is None
+    assert classify_vision_capability("some-custom-vlm") is None
+
+
+def test_hy3_is_text_only() -> None:
+    assert classify_vision_capability("hy3") is False
+
+
+def test_case_insensitive() -> None:
+    assert classify_vision_capability("DeepSeek-V4-Flash") is False
+    assert classify_vision_capability("QWEN3.7-PLUS") is True
+
+
+def test_vision_model_override_precedence(monkeypatch) -> None:
+    monkeypatch.setenv("MAGIC_POINTER_DISABLE_LOCAL_SECRETS", "1")
+    assert get_vision_model("deepseek-v4-flash") == "deepseek-v4-flash"
+    monkeypatch.setenv("MAGIC_POINTER_VISION_MODEL", "qwen3.7-plus")
+    assert get_vision_model("deepseek-v4-flash") == "qwen3.7-plus"
+
+
+def test_vision_base_url_override_precedence(monkeypatch) -> None:
+    monkeypatch.setenv("MAGIC_POINTER_DISABLE_LOCAL_SECRETS", "1")
+    assert get_vision_base_url("https://opencode.ai/zen/go/v1") == "https://opencode.ai/zen/go/v1"
+    monkeypatch.setenv("MAGIC_POINTER_VISION_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+    assert get_vision_base_url("https://opencode.ai/zen/go/v1") == "https://dashscope.aliyuncs.com/compatible-mode/v1"
