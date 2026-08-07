@@ -32,7 +32,9 @@ const {
   normalizeGroundingGeometry,
   physicalGestureBoundingBox,
   physicalGestureTrace,
+  physicalRectToDip,
   physicalScreenPoint,
+  relativeRect,
 } = require('./coordinate_space');
 const { nativeShapeRegions } = require('./stage_hit_regions');
 const { isSurfaceSender } = require('./ipc_surface_policy');
@@ -2452,16 +2454,29 @@ function registerConfigurableHotkeys() {
 }
 
 // 目标窗口的几何和显示名：渲染层只能画，不能读/写（不给句柄/pid）。
-function stageWindowRect(sourceWindow) {
+// 目标窗口在**舞台窗口自己的坐标系**里是哪一块。
+//
+// 快照给的 bbox 是物理屏幕像素的 [left, top, right, bottom]；渲染层用的是舞台
+// 窗口左上角为原点的 DIP。中间隔着两次换算（缩放、以及舞台落在哪个显示器上），
+// 少做一次，在 200% 缩放的机器上框就会飞到屏幕外——所以这里走和选区矩形完全
+// 同一对函数，不自己乘除。
+function stageWindowRect(sourceWindow, stageBounds) {
   const raw = sourceWindow && Array.isArray(sourceWindow.bbox) && sourceWindow.bbox.length === 4
     ? sourceWindow.bbox
     : null;
-  if (!raw) return null;
+  if (!raw || !stageBounds) return null;
   const values = raw.map((v) => Number(v));
   if (values.some((v) => !Number.isFinite(v))) return null;
   const [left, top, right, bottom] = values;
   if (right <= left || bottom <= top) return null;
-  return { left, top, right, bottom };
+  const dip = physicalRectToDip(screen, {
+    x: Math.round(left),
+    y: Math.round(top),
+    width: Math.round(right - left),
+    height: Math.round(bottom - top),
+  });
+  if (!dip) return null;
+  return relativeRect(dip, stageBounds);
 }
 
 function stageAppLabel(snapshot) {
@@ -2495,7 +2510,10 @@ function stageSessionPayload(entry) {
     //
     // 只给几何和一个显示用的名字。渲染层拿不到句柄、进程 id 或任何能用来瞄准
     // 一次读写的东西：它能画在哪儿，不等于它能读哪儿或写哪儿。
-    targetWindowRect: stageWindowRect(entry?.snapshot?.source_window),
+    targetWindowRect: stageWindowRect(
+      entry?.snapshot?.source_window,
+      (entry?.panelGeometry || panelGeometryForSession(entry))?.stageBounds,
+    ),
     targetAppLabel: stageAppLabel(entry?.snapshot),
     sessionExpiresAt: entry.expiresAt,
   };

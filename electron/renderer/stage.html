@@ -54,17 +54,31 @@
         <span id="processing-shimmer" class="processing-shimmer" aria-hidden="true" hidden></span>
       </div>
       <div id="stage-chips" class="stage-chips" role="group" aria-label="建议操作" hidden></div>
+      <!-- 定稿之后要点头的那一下，长在**问题框**下面，不在回答框里。
+           理由：那段定稿的话此刻已经被复制回问题框了——你正在看的就是即将被
+           写出去的东西，点头必须发生在你视线已经在的地方。上一版把它做成回答
+           框左下角的一个叫「填入」的灰字，那是在让人对着另一个框做决定。 -->
+      <div id="capsule-consent" class="capsule-consent" role="group" aria-label="要不要写出去" hidden>
+        <span id="consent-target" class="consent-target"></span>
+        <button type="button" id="consent-reject" class="thread-btn" data-no-drag="1">拒绝</button>
+        <button type="button" id="consent-approve" class="thread-btn is-solid" data-no-drag="1">同意</button>
+      </div>
       <div id="stage-notice" class="stage-notice" role="status" hidden><span id="stage-notice-text"></span></div>
       <section id="stage-thread" class="stage-thread" aria-label="本次会话" hidden>
         <!-- 眉毛行就是抓手。Vida 那张卡顶上没有一条灰色小横杠，只有「这张卡
              讲的是什么」和右边一排细描边图标；整条头就是可以拖的地方。 -->
         <header class="thread-head" data-drag-handle="1">
-          <span id="thread-eyebrow" class="thread-eyebrow" aria-hidden="true"></span>
+          <div class="thread-head-row">
+            <span id="thread-eyebrow" class="thread-eyebrow" data-state="done">
+              <svg aria-hidden="true"><use href="#ic-check" /></svg><em id="thread-eyebrow-text">已完成</em>
+            </span>
+            <span class="thread-head-spacer"></span>
+            <button type="button" id="thread-close" class="thread-icon is-close" data-no-drag="1"
+                    aria-label="关闭" title="关闭">
+              <svg aria-hidden="true"><use href="#ic-x" /></svg>
+            </button>
+          </div>
           <b id="thread-title" class="thread-title"></b>
-          <button type="button" id="thread-close" class="thread-icon is-close" data-no-drag="1"
-                  aria-label="关闭" title="关闭">
-            <svg aria-hidden="true"><use href="#ic-x" /></svg>
-          </button>
         </header>
         <div id="stage-result" class="stage-result" role="log" aria-live="polite"></div>
         <!-- 在回答里选中一段话，这个按钮就贴着选区冒出来：点一下把那一段就地
@@ -78,17 +92,24 @@
              「行」是折行后的视觉行，跟引擎数的换行符不是一回事，于是「扩写到
              6 行」在一段没有换行的中文回答上必定被判成「四倍以上只能靠编造」。
              一件事只留一个做法。 -->
-        <!-- 底栏照 Vida 的提案卡排：左下角一个重跑图标，右下角两个大按钮，
-             次要的描边、主要的实心黑。「填入」是这张卡真正要你做的事——
-             产物写进你原来那个输入框，不是「已复制到剪贴板」。 -->
+        <!-- 底栏是一条追问条，不是一排动作。参考里这块永远是「继续问点什么」——
+             因为这张卡还没结束：你可以再问、可以自己改、可以让它换个说法。
+             真正要你点头的那一下不在这儿（见胶囊上的 #capsule-consent）。 -->
         <footer class="thread-bar" data-drag-handle="1">
           <button type="button" id="thread-retry" class="thread-icon" data-no-drag="1"
                   aria-label="重问一次" title="重问一次">
             <svg aria-hidden="true"><use href="#ic-redo" /></svg>
           </button>
+          <input type="text" id="thread-followup" class="thread-followup" data-no-drag="1"
+                 autocomplete="off" spellcheck="false" aria-label="继续追问" />
           <span id="thread-count" class="thread-count"></span>
-          <button type="button" id="thread-copy" class="thread-btn" data-no-drag="1">复制</button>
-          <button type="button" id="thread-insert" class="thread-btn is-solid" data-no-drag="1">填入</button>
+          <button type="button" id="thread-copy" class="thread-icon" data-no-drag="1"
+                  aria-label="复制" title="复制">
+            <svg aria-hidden="true"><use href="#ic-copy" /></svg>
+          </button>
+          <button type="button" id="thread-send" class="thread-send" data-no-drag="1" aria-label="发送追问">
+            <svg aria-hidden="true"><use href="#ic-arrow-up" /></svg>
+          </button>
         </footer>
       </section>
       <div id="stage-error" class="stage-error" role="alert" hidden></div>
@@ -154,6 +175,7 @@
          一个不存在的 symbol——眉毛行的图标、步骤行的勾、警告的感叹号全都是空的。
          和工作室/随行窗共用同一份，三个界面的图标才可能长一样。 -->
     <script src="icons.js"></script>
+    <script src="../answer_shape_policy.js"></script>
     <script src="../stage_state.js"></script>
     <script src="../stage_anchor.js"></script>
     <script src="../stage_chips_policy.js"></script>

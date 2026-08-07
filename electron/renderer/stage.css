@@ -365,6 +365,7 @@ body {
 .processing-shimmer {
   position: absolute;
   inset: 0;
+  z-index: 0;
   border-radius: inherit;
   overflow: hidden;
   background: linear-gradient(
@@ -419,21 +420,21 @@ body {
   display: flex;
   flex-direction: column;
   width: max-content;
-  min-width: 320px;
-  max-width: 540px;
-  border-radius: 22px;
-  background: #fff;
-  border: 1px solid rgba(19, 22, 27, 0.07);
+  min-width: 360px;
+  max-width: 560px;
+  border-radius: 26px;
+  background: #fbfbfa;
+  border: 1px solid rgba(19, 22, 27, 0.055);
   box-shadow:
-    0 1px 2px rgba(19, 22, 27, 0.05),
-    0 8px 20px -6px rgba(19, 22, 27, 0.10),
-    0 28px 60px -18px rgba(19, 22, 27, 0.26);
+    0 1px 2px rgba(19, 22, 27, 0.04),
+    0 10px 24px -8px rgba(19, 22, 27, 0.10),
+    0 34px 68px -22px rgba(19, 22, 27, 0.28);
   color: var(--stage-neutral-ink);
   pointer-events: auto;
   overflow: hidden;
   /* Grows away from the capsule, so the scale-in reads as unfolding out of it. */
   transform-origin: top left;
-  animation: stage-thread-in 300ms cubic-bezier(0.22, 1, 0.36, 1);
+  animation: stage-thread-in 320ms cubic-bezier(0.16, 1, 0.3, 1);
   will-change: transform, opacity;
 }
 
@@ -446,86 +447,137 @@ body {
  * 却只说了「我可以被拖」，没说这张卡在讲什么。 */
 .thread-head {
   display: flex;
-  align-items: center;
-  gap: 9px;
+  flex-direction: column;
+  gap: 7px;
   flex: 0 0 auto;
-  padding: 14px 12px 10px 18px;
+  padding: 16px 14px 14px 24px;
   cursor: grab;
 }
 
+.thread-head-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.thread-head-spacer { flex: 1 1 auto; }
+
 .stage-thread.is-dragging .thread-head { cursor: grabbing; }
 
-/* 一小节竖杠代替图标：它跟 .turn-ask 前面那根是同一根，所以「这张卡」和
- * 「卡里的那一问」在视觉上是同一族。 */
+/* 参考里那个 `▽ TASK FINISHED`：一枚标记 + 一行等宽全大写、字距拉得很开的
+ * 小字。它不是装饰——它是这张卡的状态，而状态用等宽写，是因为等宽在这套版式
+ * 里始终代表「机器说的事实」（Vida.md §3 第 2 条：证据与判断用版式分离）。
+ * 中文没有大写，所以靠字距和字号把它和标题分开。 */
 .thread-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   flex: 0 0 auto;
-  width: 3px;
-  height: 14px;
-  border-radius: 2px;
-  background: var(--stage-accent-line-strong);
+  color: var(--stage-neutral-ink);
+  font-family: var(--mp-font-mono, ui-monospace, Consolas, monospace);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  white-space: nowrap;
 }
+
+.thread-eyebrow svg {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+}
+
+.thread-eyebrow em {
+  font-style: normal;
+}
+
+.thread-eyebrow[data-state='running'] { color: var(--stage-neutral-ink-soft); }
+.thread-eyebrow[data-state='failed'] { color: #b42318; }
 
 .thread-title {
   flex: 1 1 auto;
   min-width: 0;
-  font-size: 14.5px;
-  font-weight: 680;
-  letter-spacing: -0.005em;
+  padding-right: 10px;
+  font-size: 17px;
+  font-weight: 660;
+  line-height: 1.35;
+  letter-spacing: -0.012em;
   color: var(--stage-neutral-ink);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-/* 细描边图标按钮：1.5px 描边、24 网格、点击区 30px。参考图里那一排
- * （文件夹+ / 历史 / 叉）全是这个规格。 */
+/* 细描边图标按钮：1.5px 描边、24 网格、点击区 32px。参考图里那一排
+ * （文件夹+ / 历史 / 叉）全是这个规格，而且彼此隔得很开。 */
 .thread-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   padding: 0;
   appearance: none;
   border: 0;
-  border-radius: 9px;
+  border-radius: 10px;
   background: transparent;
   color: var(--stage-neutral-ink-soft);
   cursor: pointer;
-  transition: background 130ms ease, color 130ms ease;
+  transition: background 150ms ease, color 150ms ease;
 }
 
 .thread-icon svg {
-  width: 18px;
-  height: 18px;
+  width: 19px;
+  height: 19px;
 }
 
 .thread-icon:hover {
-  background: rgba(19, 22, 27, 0.055);
+  background: rgba(19, 22, 27, 0.05);
   color: var(--stage-neutral-ink);
 }
 
 .thread-icon.is-close:hover {
-  background: rgba(180, 35, 24, 0.09);
+  background: rgba(180, 35, 24, 0.08);
   color: #b42318;
 }
 
 .stage-result {
   display: flex;
   flex-direction: column;
-  padding: 0 18px 4px;
-  max-height: min(52vh, 460px);
+  padding: 0 24px 10px;
+  max-height: min(54vh, 480px);
   /* Never a horizontal scrollbar: content wraps instead. Pulling one used to
    * drag the whole bubble across the screen. */
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
-  scrollbar-color: rgba(19, 22, 27, 0.18) transparent;
-  font-size: 14.5px;
-  line-height: 1.62;
+  scrollbar-color: rgba(19, 22, 27, 0.16) transparent;
+  font-size: 15px;
+  line-height: 1.66;
 }
+
+/* 卡片区光标统一：鼠标在卡片里移动不应当在手套/箭头之间高频切换
+   （用户体感「反复卡顿闪现」）。文本区一律默认箭头，只有真正可点的
+   操作（复制/填入/关闭/展开）才显示手套。 */
+.stage-result,
+.stage-result .mcard,
+.stage-result .thread-turn,
+.stage-result .card,
+.stage-result p,
+.stage-result .result-text {
+  cursor: default;
+}
+.stage-result button:not(:disabled),
+.stage-result .thread-tool,
+.stage-result .mcard-origin,
+.stage-result .mimg-flip,
+.stage-result a {
+  cursor: pointer;
+}
+
 
 .thread-turn {
   display: flex;
@@ -569,6 +621,32 @@ body {
   overflow-wrap: anywhere;
   user-select: text;
 }
+
+/* 舞台上的卡不再是一张「卡」。
+ *
+ * .mcard 自带白底、圆角和投影——那在工作室里是对的（一屏里并排好几张，需要
+ * 边界），但在这块面板里，面板本身已经是那张卡了。再套一层的结果就是参考里
+ * 从来不会出现的东西：框里一个框。代码里那句「一条发丝线——绝不是框里套框」
+ * 说的就是这件事，只是没管到卡自己。
+ *
+ * 所以密度是 capsule 时把外壳整个脱掉，只留版式。图卡和工具界面卡自己的框
+ * 还在（它们的边界是内容的一部分，不是装饰）。 */
+.stage-result .mcard[data-density='capsule'] {
+  padding: 0;
+  gap: 10px;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.stage-result .mcard[data-density='capsule'][data-state='failed'] {
+  box-shadow: none;
+}
+
+/* 卡自己的眉毛行（「回答」「已确认」…）在这里是多余的：面板顶上那行状态已经
+ * 说过一遍了。留着就是同一件事说两遍，还把每一轮都撑高一行。 */
+.stage-result .mcard[data-density='capsule'] > .mcard-top:only-child { display: none; }
+.stage-result .mcard[data-density='capsule'] .mcard-eyebrow { display: none; }
 
 .turn-answer[data-kind='error'] {
   color: #b42318;
@@ -657,55 +735,141 @@ body {
   color: #b4791f;
 }
 
-/* --- 底栏 -----------------------------------------------------------------
- * 一条分隔线把动作和内容切开，左下角重跑，右下角两个真按钮。 */
+/* --- 底栏：一条追问条 -------------------------------------------------------
+ * 参考里这块永远是「Ask Vida anything about …」——因为这张卡还没结束。
+ * 一条极淡的分隔线，一个 placeholder，右边一个提交箭头。没有一排动作按钮：
+ * 要点头的那一下长在问题框那边。 */
 .thread-bar {
   display: flex;
   align-items: center;
   gap: 8px;
   flex: 0 0 auto;
-  margin-top: 4px;
-  padding: 11px 14px 12px;
-  border-top: 1px solid rgba(19, 22, 27, 0.075);
+  margin-top: 6px;
+  padding: 10px 12px 12px 14px;
+  border-top: 1px solid rgba(19, 22, 27, 0.06);
   cursor: grab;
 }
 
 .stage-thread.is-dragging .thread-bar { cursor: grabbing; }
 
+/* placeholder 绑当前这张卡在讲什么（Vida.md §3 第 5 条：追问框绑当前对象，
+ * 用户因此不用交代背景）。文本由 stage.js 按标题填。 */
+.thread-followup {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 34px;
+  padding: 0 4px;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--stage-neutral-ink);
+  font: inherit;
+  font-size: 14.5px;
+  caret-color: var(--stage-accent);
+}
+
+.thread-followup::placeholder {
+  color: var(--stage-neutral-ink-faint);
+}
+
 .thread-count {
-  margin-right: auto;
+  flex: 0 0 auto;
   color: var(--stage-neutral-ink-faint);
   font-size: 11.5px;
   letter-spacing: 0.02em;
   font-variant-numeric: tabular-nums;
 }
 
-/* 参考图里的 Reject / Approve：同一个尺寸、同一个圆角，只有填充不同。
- * 按钮做到 34px 高不是为了好看，是因为上一版 4px 内边距的文字按钮在一块
- * 浮在别人窗口上的面板里根本点不准。 */
+/* 追问的提交键。和输入条右端那颗是同一颗——同一个动作在两个地方必须长一样。 */
+.thread-send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  appearance: none;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(19, 22, 27, 0.06);
+  color: var(--stage-neutral-ink-faint);
+  cursor: pointer;
+  transition: background 160ms ease, color 160ms ease, transform 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.thread-send svg { width: 16px; height: 16px; }
+.thread-send[data-ready='true'] { background: #16181d; color: #fff; }
+.thread-send[data-ready='true']:hover { background: #33373f; }
+.thread-send:active { transform: scale(0.92); }
+
+/* --- 要点头的那一下 ---------------------------------------------------------
+ * 长在问题框下面，因为定稿的那段话此刻就在问题框里。 */
+.capsule-consent {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 16px;
+  background: #fff;
+  border: 1px solid rgba(19, 22, 27, 0.10);
+  pointer-events: auto;
+  animation: consent-in 200ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes consent-in {
+  from { opacity: 0; transform: translateY(-6px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* 写到哪儿去，写出来。不写清楚目标就问「同意吗」，等于问「同意什么」。 */
+.consent-target {
+  margin-right: 2px;
+  max-width: 190px;
+  color: var(--stage-neutral-ink-soft);
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.capsule-consent .thread-btn {
+  height: 34px;
+  padding: 0 16px;
+  font-size: 13.5px;
+  border-radius: 11px;
+}
+
+/* 参考里的 Reject / Approve：同一个尺寸、同一个圆角，只有填充不同。
+ * 42px 高不是为了好看——上一版 4px 内边距的文字按钮，在一块浮在别人窗口上
+ * 的面板里根本点不准。 */
 .thread-btn {
   appearance: none;
   flex: 0 0 auto;
-  height: 34px;
-  padding: 0 15px;
-  border: 1px solid rgba(19, 22, 27, 0.14);
-  border-radius: 11px;
+  height: 42px;
+  padding: 0 22px;
+  border: 1.5px solid rgba(19, 22, 27, 0.16);
+  border-radius: 13px;
   background: #fff;
   color: var(--stage-neutral-ink);
   font: inherit;
-  font-size: 13px;
-  font-weight: 640;
+  font-size: 14.5px;
+  font-weight: 560;
   letter-spacing: 0.01em;
   cursor: pointer;
-  transition: background 130ms ease, border-color 130ms ease, transform 130ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition:
+    background 160ms cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 160ms cubic-bezier(0.16, 1, 0.3, 1),
+    transform 160ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 .thread-btn:hover {
-  background: rgba(19, 22, 27, 0.045);
-  border-color: rgba(19, 22, 27, 0.22);
+  background: rgba(19, 22, 27, 0.035);
+  border-color: rgba(19, 22, 27, 0.3);
 }
 
-.thread-btn:active { transform: scale(0.975); }
+.thread-btn:active { transform: scale(0.972); }
 
 .thread-btn.is-solid {
   border-color: #16181d;
@@ -714,12 +878,12 @@ body {
 }
 
 .thread-btn.is-solid:hover {
-  background: #2a2e36;
-  border-color: #2a2e36;
+  background: #33373f;
+  border-color: #33373f;
 }
 
 .thread-btn[disabled] {
-  opacity: 0.5;
+  opacity: 0.42;
   cursor: default;
   transform: none;
 }
@@ -1108,6 +1272,8 @@ body {
  * 元素，只换里面哪个 svg 显示——换元素会让按钮在最需要被点到的那一刻消失
  * 一帧。 */
 .capsule-send {
+  position: relative;
+  z-index: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1241,6 +1407,8 @@ body {
 }
 .capsule-input,
 .capsule-transcript {
+  position: relative;
+  z-index: 1;
   color: var(--stage-neutral-ink);
   font-size: 14px;
   font-weight: 520;

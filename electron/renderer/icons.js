@@ -1,5 +1,5 @@
 /* 图标精灵：1.5px 细描边、圆头、24×24 网格。studio 与 companion 共用。 */
-document.body.insertAdjacentHTML("afterbegin", `<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+document.body.insertAdjacentHTML("afterbegin", `<svg width="0" height="0" class="icon-sprite" aria-hidden="true"><defs>
 <g id="i-base" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></g>
 </defs>
 <symbol id="ic-shake" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4.5 14.5 19l2-6 6-2z"/><path d="M4 8.5c-.9 1.9-.9 4.1 0 6M1.6 6.4c-1.5 3.2-1.5 7 0 10.2"/></symbol>
@@ -55,7 +55,7 @@ document.body.insertAdjacentHTML("afterbegin", `<svg width="0" height="0" style=
 /* 烟雾滤镜：静态湍流 + 位移贴图。
    噪声本身不动（动它每帧都要重算，很贵），动的是底下那几层渐变——
    它们被湍流场推着走，看起来就是内部在翻滚，而不是一团色块在平移。 */
-document.body.insertAdjacentHTML("afterbegin", `<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+document.body.insertAdjacentHTML("afterbegin", `<svg width="0" height="0" class="icon-sprite" aria-hidden="true"><defs>
   <filter id="smoke-lg" x="-25%" y="-25%" width="150%" height="150%" color-interpolation-filters="sRGB">
     <feTurbulence type="fractalNoise" baseFrequency="0.014 0.022" numOctaves="3" seed="7" result="n"/>
     <feDisplacementMap in="SourceGraphic" in2="n" scale="34" xChannelSelector="R" yChannelSelector="G" result="d"/>

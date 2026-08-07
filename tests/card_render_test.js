@@ -31,6 +31,24 @@ assert.ok(!markdown('**<script>alert(1)</script>**').includes('<script>'));
 assert.ok(!markdown('- <img src=x onerror=y>').includes('<img src=x'));
 assert.ok(markdown('```\n<script>x</script>\n```').includes('&lt;script&gt;'));
 
+// 正文里的图。一次问答的结果本来就可能是一张图，而上一版的子集里没有它——
+// 那行 markdown 被当成普通文字原样印出来，用户看到的是 `![图](https://…)`
+// 这几个字符。
+assert.ok(markdown('看这个 ![截图](https://example.com/a.png)').includes('<img'),
+  'markdown 子集必须认得图，否则图会以源码形式印在回答里');
+assert.ok(markdown('![截图](https://example.com/a.png)').includes('src="https://example.com/a.png"'));
+assert.ok(markdown('![截图](https://example.com/a.png)').includes('alt="截图"'));
+assert.ok(markdown('![本地](file:///C:/tmp/a.png)').includes('<img'), '本地文件也要能渲染');
+assert.ok(markdown('![内嵌](data:image/png;base64,iVBOR)').includes('<img'));
+// 地址一律过 safeSrc：模型给一个 javascript: 就能在渲染进程里执行脚本。
+// 挡下来之后必须说出来，不能静默变成一段空白。
+const blocked = markdown('![坏](javascript:alert(1))');
+assert.ok(!blocked.includes('<img'), 'javascript: 地址绝不能变成一个 img');
+assert.ok(blocked.includes('没有加载'), '挡下来的图必须说出来，不能静默留白');
+assert.ok(!markdown('![x](vbscript:msgbox)').includes('<img'));
+assert.ok(!markdown('![x](data:text/html,<script>1</script>)').includes('<img'),
+  'data:text/html 不是图，它是一段能执行的文档');
+
 // ---------------------------------------------------------------------------
 // 转义：模型的输出和窗口标题都会走进这段 HTML
 // ---------------------------------------------------------------------------

@@ -44,9 +44,18 @@
   const threadEyebrowText = document.getElementById('thread-eyebrow-text');
   const threadCount = document.getElementById('thread-count');
   const threadCopy = document.getElementById('thread-copy');
-  const threadInsert = document.getElementById('thread-insert');
+  const threadFollowup = document.getElementById('thread-followup');
+  const threadSend = document.getElementById('thread-send');
   const threadRetry = document.getElementById('thread-retry');
   const threadClose = document.getElementById('thread-close');
+  const consentBox = document.getElementById('capsule-consent');
+  const consentTarget = document.getElementById('consent-target');
+  const consentReject = document.getElementById('consent-reject');
+  const consentApprove = document.getElementById('consent-approve');
+  const shapePolicy = globalThis.AnswerShapePolicy || null;
+  // 这次回答是「要送出去的」还是「自己看的」。它决定三件事：面板贴哪儿、
+  // 正文解不解析 markdown、要不要出现那一下点头。
+  let answerShape = { shape: 'inspect', allowMarkdown: true, needsConsent: false, reason: 'init' };
   const passageExpand = document.getElementById('passage-expand');
   // 就地展开：用户在回答里选中的那一段，以及它属于哪个文本节点。展开回来的
   // 字直接换掉这一段，所以这里记的是节点+偏移，不是「第几个字」。
@@ -128,6 +137,10 @@
     // 选中内容的字数（不是内容）。拉伸手势要把「屏幕上几行」换算成「多少字」，
     // 因为引擎只认后者。
     selectionChars: 0,
+    // 目标窗口在舞台坐标系里的矩形，和一个显示用的名字。只有几何和名字，
+    // 没有句柄也没有进程 id——渲染层能画在哪儿，不等于它能读哪儿或写哪儿。
+    targetWindowRect: null,
+    targetAppLabel: '',
     voiceState: 'idle',
     // "r, g, b" from appearance settings; empty means keep the stylesheet default.
     accentRgb: '',
@@ -942,10 +955,33 @@
       return;
     }
     const rect = threadPanel.getBoundingClientRect();
-    const capsuleRect = capsule.hidden ? null : capsule.getBoundingClientRect();
-    const fallback = session.capsulePlacement || session.pointer || { x: 8, y: 8 };
     const width = rect.width || Math.min(380, window.innerWidth - 16);
     const height = rect.height || 96;
+    // 「要送出去」的那一路贴在目标应用的**右侧外沿**，不挂在胶囊底下。
+    //
+    // 因为这一路是在打磨一段要发给别人的话：你要一边看着聊天窗里的上文，
+    // 一边改这段草稿。挂在选区旁边的框会正好压住你要参照的那几行。贴在窗口
+    // 右边，两样东西同时看得见——这也是参考里那块面板的位置。
+    // 右边放不下就换左边；两边都放不下才退回挂在胶囊下面。
+    if (answerShape.shape === 'deliver' && isUsableTargetRect(session.targetWindowRect)) {
+      const win = session.targetWindowRect;
+      const gapOut = 12;
+      const right = win.x + win.width + gapOut;
+      const left = win.x - gapOut - width;
+      const x = right + width <= window.innerWidth - 8
+        ? right
+        : (left >= 8 ? left : null);
+      if (x !== null) {
+        const y = Math.max(8, Math.min(win.y + 12, window.innerHeight - height - 8));
+        threadPanel.style.left = `${x}px`;
+        threadPanel.style.top = `${y}px`;
+        threadPanel.dataset.side = 'beside';
+        threadPanel.dataset.quadrant = x === right ? 'right' : 'left';
+        return;
+      }
+    }
+    const capsuleRect = capsule.hidden ? null : capsule.getBoundingClientRect();
+    const fallback = session.capsulePlacement || session.pointer || { x: 8, y: 8 };
     const gap = 10;
     const anchorLeft = capsuleRect && capsuleRect.width ? capsuleRect.left : fallback.x;
     const anchorTop = capsuleRect && capsuleRect.height ? capsuleRect.top : fallback.y;
@@ -1369,20 +1405,74 @@
   // The thread bar replaces the per-answer toolbar: with the composer always
   // live underneath, a "追问" button is redundant — you just type.
   threadCopy.addEventListener('click', () => copyResultText(resultCard, threadCopy));
-  // 填入 sends exactly what is on screen, so an answer the user edited or
-  // re-asked is what travels. Whether it can actually be written -- and whether
-  // the write can be confirmed -- is decided in the main process and Python; the
-  // reply arrives as a normal turn saying what really happened.
-  threadInsert.addEventListener('click', () => {
-    const text = resultPlainText(resultCard);
+
+  // --- 追问条 -----------------------------------------------------------------
+  // 底栏那条输入不是第二个输入框：它和胶囊走同一条提交路径，只是手更近——
+  // 你刚读完这段回答，光标就在这儿。
+  function syncFollowupReady() {
+    threadSend.dataset.ready = threadFollowup.value.trim() ? 'true' : 'false';
+  }
+
+  function submitFollowup() {
+    const text = threadFollowup.value.trim();
     if (!text) return;
-    if (!api || typeof api.insertResultText !== 'function') return;
-    const original = threadInsert.textContent;
-    threadInsert.disabled = true;
-    threadInsert.textContent = '填入中';
+    threadFollowup.value = '';
+    syncFollowupReady();
+    submitCommand(text);
+  }
+
+  threadFollowup.addEventListener('input', syncFollowupReady);
+  threadFollowup.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') submitFollowup();
+    else if (event.key === 'Escape') requestDismiss();
+  });
+  threadSend.addEventListener('mousedown', (event) => event.preventDefault());
+  threadSend.addEventListener('click', submitFollowup);
+
+  // --- 点头的那一下 -------------------------------------------------------------
+  // 只有「要送出去」的那一类才有。定稿的那段话先回到问题框里，你看着它按同意，
+  // 才真的往别人的窗口里写。拒绝＝什么都不做，框留着，可以继续改。
+  function syncConsent() {
+    const want = answerShape.needsConsent
+      && state.name === 'result'
+      && !threadPanel.hidden
+      && Boolean(resultPlainText(resultCard));
+    if (!want) {
+      if (!consentBox.hidden) {
+        consentBox.hidden = true;
+        scheduleHitRegionRefresh();
+      }
+      return;
+    }
+    // 那段话复制一份回问题框：你正在看的，就是即将被写出去的东西。
+    const text = resultPlainText(resultCard);
+    if (capsuleInput.value.trim() !== text) capsuleInput.value = text;
+    consentTarget.textContent = session.targetAppLabel
+      ? `写回 ${session.targetAppLabel}`
+      : '写回你刚才那个窗口';
+    if (consentBox.hidden) {
+      consentBox.hidden = false;
+      const rect = capsule.getBoundingClientRect();
+      const width = consentBox.offsetWidth || 260;
+      consentBox.style.left = `${Math.max(4, Math.min(window.innerWidth - width - 4, rect.left))}px`;
+      consentBox.style.top = `${rect.bottom + 8}px`;
+      scheduleHitRegionRefresh();
+    }
+  }
+
+  consentReject.addEventListener('click', () => {
+    consentBox.hidden = true;
+    capsuleInput.value = '';
+    scheduleHitRegionRefresh();
+  });
+  consentApprove.addEventListener('click', () => {
+    const text = capsuleInput.value.trim() || resultPlainText(resultCard);
+    if (!text || !api || typeof api.insertResultText !== 'function') return;
+    consentApprove.disabled = true;
+    consentApprove.textContent = '写入中';
     setTimeout(() => {
-      threadInsert.disabled = false;
-      threadInsert.textContent = original;
+      consentApprove.disabled = false;
+      consentApprove.textContent = '同意';
     }, 1600);
     api.insertResultText({ text, selectionSessionToken: session.token });
   });
@@ -1418,6 +1508,14 @@
       ? payload
       : { kind: 'prose', answer: String(payload || '') });
     card.runningLabel = CardModel.runningLabel(card);
+    // 要送出去的那一路不解析 markdown。对面读到的是字面量的 `**` 和 `-`，
+    // 所以在我们这儿就不能把它渲染成粗体和列表——渲染出来的样子会让人以为
+    // 发过去也是那样。渲染层和系统提示词说的必须是同一件事。
+    const shape = shapePolicy
+      ? shapePolicy.answerShape({ result: payload, command: String(state.turns.at(-1)?.ask || '') })
+      : { allowMarkdown: true };
+    card.plainText = shape.allowMarkdown === false;
+    container.dataset.shape = shape.allowMarkdown === false ? 'deliver' : 'inspect';
     container.replaceChildren(renderCard(card, { density: 'capsule' }));
     bindCardActions(container, payload);
   }
@@ -1566,11 +1664,24 @@
     threadEyebrowText.textContent = pending ? '正在处理' : failed ? '没能完成' : '已完成';
     const firstAskRow = resultCard.firstElementChild?.querySelector('.turn-ask');
     if (firstAskRow) firstAskRow.hidden = Boolean(firstAsk);
-    // 还在跑的时候没有可复制、可填入的东西。一个点了没反应的按钮比一个
-    // 明显不能点的按钮更让人以为是坏了。
+    // 还在跑的时候没有可复制的东西。一个点了没反应的按钮比一个明显不能点的
+    // 按钮更让人以为是坏了。
     const settled = !pending && turns.some((turn) => turn.status === 'done');
     threadCopy.disabled = !settled;
-    threadInsert.disabled = !settled;
+    // 追问框绑当前这张卡在讲什么，用户因此不用交代背景（Vida.md §3 第 5 条）。
+    threadFollowup.placeholder = firstAsk
+      ? `继续问关于「${firstAsk.slice(0, 12)}${firstAsk.length > 12 ? '…' : ''}」的`
+      : '继续问点什么…';
+    // 这一轮定下来之后，形态才算数：桥可能在结果里明说，也可能要靠命令猜。
+    const newest = turns[turns.length - 1];
+    if (shapePolicy && settled) {
+      answerShape = shapePolicy.answerShape({
+        result: newest?.result,
+        command: String(newest?.ask || firstAsk || ''),
+      });
+    }
+    threadPanel.dataset.shape = answerShape.shape;
+    syncConsent();
     // 卡重画过，之前记住的那段选区已经指向摘掉的节点了。
     hidePassageExpand();
   }
@@ -1949,6 +2060,22 @@
     if ('selectionChars' in payload) {
       const chars = Number(payload.selectionChars);
       session.selectionChars = Number.isFinite(chars) && chars > 0 ? Math.round(chars) : 0;
+    }
+    // 目标窗口在舞台坐标系里的那一块，以及一个显示用的名字。「要送出去」的
+    // 回答框贴在它右侧外沿，「同意」那一行也用这个名字说清写到哪儿去。
+    if ('targetWindowRect' in payload) {
+      const rect = payload.targetWindowRect;
+      session.targetWindowRect = rect && Number.isFinite(Number(rect.width)) && Number(rect.width) > 0
+        ? {
+          x: Number(rect.x) || 0,
+          y: Number(rect.y) || 0,
+          width: Number(rect.width) || 0,
+          height: Number(rect.height) || 0,
+        }
+        : null;
+    }
+    if ('targetAppLabel' in payload) {
+      session.targetAppLabel = String(payload.targetAppLabel || '').slice(0, 60);
     }
     if ('selectionVisual' in payload) {
       const visual = String(payload.selectionVisual || 'sweep_band');

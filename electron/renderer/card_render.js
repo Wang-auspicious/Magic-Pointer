@@ -98,14 +98,26 @@ const CardRender = (() => {
      --------------------------------------------------------------------------- */
   // `==这样==` 是荧光笔。Vida 把草稿落进 Slack 时，被改动的关键短语用黄色
   // 标出来——这是「我改了哪里」最省事的说法，不用写一段解释也不用做 diff。
+  //
+  // `![说明](地址)` 是图。一次问答的结果可以本来就是一张图（模型出的、工具
+  // 返回的、我们截的），而上一版的子集里没有它，于是那行 markdown 被当成
+  // 一串普通文字原样印出来——用户看到的是 `![图](https://…)` 这七个字符。
+  // 地址一律过 safeSrc：模型给一个 javascript: 就能在渲染进程里执行脚本。
   function inlineMd(value) {
     return String(value ?? '')
-      .split(/(\*\*[^*]+\*\*|`[^`]+`|==[^=]+==)/g)
+      .split(/(!\[[^\]]*\]\([^)\s]+\)|\*\*[^*]+\*\*|`[^`]+`|==[^=]+==)/g)
       .filter(Boolean)
       .map((frag) => {
         if (frag.startsWith('**') && frag.endsWith('**')) return h('strong', {}, [frag.slice(2, -2)]);
         if (frag.startsWith('`') && frag.endsWith('`')) return h('code', {}, [frag.slice(1, -1)]);
         if (frag.startsWith('==') && frag.endsWith('==')) return h('mark', { class: 'mhi' }, [frag.slice(2, -2)]);
+        if (frag.startsWith('![')) {
+          const match = /^!\[([^\]]*)\]\(([^)\s]+)\)$/.exec(frag);
+          const src = match ? safeSrc(match[2]) : '';
+          // 挡下来的地址不能静默变成空白：说清楚有一张图没敢加载。
+          if (!src) return h('span', { class: 'mmd-img-blocked' }, ['[一张图的地址不安全，没有加载]']);
+          return h('img', { class: 'mmd-img', src, alt: match[1] || '图', loading: 'lazy' }, []);
+        }
         return text(frag);
       });
   }
@@ -231,7 +243,14 @@ const CardRender = (() => {
       const detail = String(card.detail || '');
       if (!main && !detail) return null;
       return h('div', { class: 'mcard-prose' }, [
-        markdown(main),
+        // card.plainText：这段字是要发出去的（回微信、回邮件、填回输入框）。
+        // 对面读到的是字面量的 `**` 和 `-`，所以我们这儿也不能把它渲染成粗体
+        // 和列表——渲染成那样会让人以为发过去也是那样。段落还是要分的：
+        // 空行是纯文本里本来就有的东西，不是 markdown 语法。
+        ...(card.plainText
+          ? String(main).replace(/\r\n?/g, '\n').split(/\n\s*\n/).filter(Boolean)
+            .map((block) => h('p', { class: 'mplain' }, [block]))
+          : markdown(main)),
         detail ? h('p', { class: 'mcard-detail' }, [detail]) : null,
         // 状态行照抄桥给的原话：accepted 就是 accepted，不许升级成看起来完成了
         card.statusLabel
