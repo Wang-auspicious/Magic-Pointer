@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **视觉契约：毛玻璃退位，白卡为准（2026-08-07）**：裁定 lab.html 判据 A（近不透明浅色）为产品基线，与 52dbd316 白卡设计系统 1:1 对齐。`stage.css` 石墨黑 #0E1116 → 近透明白卡 `rgba(252,253,255,.985)` + 深字 #152741；`oreo.css .card` 玻璃板（--glass+blur）→ 纯白卡 + hairline 边；`studio.css` hero-chip 毛玻璃 → 白底深字、删除死代码 `.hero-composer` 毛玻璃条。测试钉子 `tests/stage_static_test.js` 断言新契约并防 #0E1116 回归。ROADMAP P2 视觉基线项标记完成。
+- **修复：chat-completions 模式思考吃掉全部预算返回空答案（2026-08-07）**：切 OpenCode Go 后 `deepseek-v4-flash` 的 reasoning 吃掉整个 max_tokens（实测 1199/1199），HTTP 200 但 content 空，用户看到"模型在本次预算内没有返回可见答案"。根因：messages 模式有 `thinking:{type:disabled}`，chat-completions 模式迁移后丢了。修复：chat-completions payload 补 thinking 关闭；拒收该参数的网关剥离后重试一次；空答案报错带诊断（finish_reason + reasoning_tokens）。测试 `tests/ai_client_thinking_test.py`（5 用例）。同问题真机从 26.9s 空答 → 6.4s 实答。
+- **修复：`uia_text_adapter.py` 冷树重试 NameError（2026-08-07）**：上一会话写注释"不能写 `x or -1`"但 `_as_int` 从未定义。补定义（0 是合法值，不被 `or -1` 吞掉），30 个 uia 测试全绿。
+- **模型网关切到 OpenCode Go（2026-08-07）**：`secrets/` 配置 `https://opencode.ai/zen/go/v1` + `deepseek-v4-flash`（chat-completions），删除 `model_api_mode.txt` 改 base_url 自动识别。视觉独立三件套：`vision_model.txt` / `vision_api_mode.txt` / `vision_base_url.txt`（+ 同名环境变量覆盖），`ask_vision_model` 读覆盖——文本/视觉/网关各自可配，代码同一套逻辑。真图验收通过（1079×809 仪表盘截图，区域追问 6.8s 精确返回基金代码）。
+- **纯文本模型黑名单分类器（2026-08-07）**：`app/ai_client.py:classify_vision_capability`（移植 `external/claude-code-vision-skill`，MIT）：deepseek / glm-4.x / glm-5.x 非 v 线 / kimi-k2- / hy3 / qwen3-coder 判定纯文本，`ask_vision_model` 诚实拒绝（不发请求、提示如何配视觉模型）；未知模型不拦截。测试钉子 `tests/vision_capability_test.py`（16 项全绿）。clone 参考仓库：`external/claude-code-vision-skill`、`external/ds-vision-skill`（均 MIT）。
+
 ## v0.0.1 - MVP0
 
 - Added Windows desktop prototype using Tkinter.

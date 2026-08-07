@@ -38,9 +38,11 @@ P3 十二项能力做完十项：图转提示词、选区拉伸把手、点选�
 
 ## 模型后端
 
-网关已切到 **OpenCode Go**：`secrets/openai_base_url.txt` = `https://opencode.ai/zen/go/v1`、`openai_key.txt` = Go key、`model.txt` = `deepseek-v4-flash`（chat-completions，协议按 base_url 自动识别，不要再建 `model_api_mode.txt`）。视觉独立配置：`vision_model.txt` = `qwen3.7-plus` + `vision_api_mode.txt` = `messages`（`ask_vision_model` 读这两个覆盖，也可用 `MAGIC_POINTER_VISION_MODEL` / `MAGIC_POINTER_VISION_API_MODE` 环境变量）。
+网关已切到 **OpenCode Go**（套餐额度，推理仍在本产品内）：`secrets/openai_base_url.txt` = `https://opencode.ai/zen/go/v1`、`openai_key.txt` = Go key、`model.txt` = `deepseek-v4-flash`（chat-completions，协议按 base_url 自动识别，不要再建 `model_api_mode.txt`）。视觉独立配置：`vision_model.txt` = `qwen3.7-plus` + `vision_api_mode.txt` = `messages` + 可选 `vision_base_url.txt`（独立网关，如切回国内直连）。环境变量同名覆盖：`MAGIC_POINTER_VISION_MODEL` / `MAGIC_POINTER_VISION_API_MODE` / `MAGIC_POINTER_VISION_BASE_URL`。**文本/视觉/网关三者可各自独立配置，代码同一套逻辑**——海外或国内模型只是改配置，不改代码。
 
-Go 视觉能力实测（2026-08-07，探针 `data/runtime/probe_go_vision.py`）：**kimi-k3、qwen3.7-plus 有视觉；glm-5.1/5.2、hy3、deepseek-v4-flash、mimo-v2-omni 无视觉或不可用；grok-4.5 端点 503**。qwen3.7-plus 走 `/messages` 且必须 `x-api-key` 头（`_completion_headers` 的 messages 分支已兼容）。
+纯文本模型黑名单分类器 `app/ai_client.py:classify_vision_capability`（移植自 `external/claude-code-vision-skill`）：已知纯文本模型（deepseek / glm-4.x / glm-5.x 非 v 线 / kimi-k2- / hy3 / qwen3-coder）在 `ask_vision_model` 中**诚实拒绝**（不发请求、气泡明示如何配视觉模型）；未知模型不拦截。测试钉子 `tests/vision_capability_test.py`。
+
+Go 视觉能力实测（2026-08-07，探针 `data/runtime/probe_go_vision.py`）：**kimi-k3、qwen3.7-plus 有视觉；glm-5.1/5.2、hy3、deepseek-v4-flash、mimo-v2-omni 无视觉或不可用；grok-4.5 端点 503**。qwen3.7-plus 走 `/messages` 且必须 `x-api-key` 头（`_completion_headers` 的 messages 分支已兼容）。真实图验收（`D:\Desktop\参考\1d9473e9adbf41e3bbbf0b59ef4dc480.jpg`，1079×809）：完整读出仪表盘结构与基金代码，区域追问 6.8s 返回。
 
 文本实测约 3–6 秒。**不是流式**。
 

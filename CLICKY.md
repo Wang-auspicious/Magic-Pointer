@@ -210,6 +210,8 @@ clicky 的分辨率参数是按模型特化的，不能全家共用：CU 三档�
 
 定位器按画像取参，禁止硬编码。未知模型按最保守档（6×4 网格 + 强制裁剪放大）。落在 ROADMAP P0-3"模型能力持久化"既有决策上。
 
+**第一块已落地（2026-08-07）**：`app/ai_client.py:classify_vision_capability`（移植 `external/claude-code-vision-skill`）——纯文本模型黑名单（deepseek/glm-5 非 v 线/kimi-k2-/hy3/qwen3-coder）在视觉调用前诚实拒绝，未知模型不拦截；配套 `tests/vision_capability_test.py`。这是视觉画像的最小版本：**会拒绝的已知纯文本 + 放行的未知**。完整画像（分辨率/网格密度/坐标能力）仍按上文扩展。
+
 ### 5.5.4 弱国产多模态模型：会崩什么、不崩什么
 
 会崩（必须按模型画像调参）：
