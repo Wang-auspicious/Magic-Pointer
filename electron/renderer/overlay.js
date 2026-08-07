@@ -42,6 +42,7 @@ let currentWorkflow = 'generic';
 // 从蓝边光标旁沿贝塞尔弧线飞向目标，然后停留到下一轮。
 let guideTarget = null;        // { x, y } 指点目标（overlay 局部坐标）
 let guideFlight = null;        // { t, from, to, ctrl, startedAt, duration }
+let guideHideTimer = null;     // 到达后停留定时器
 const GUIDE_TRIANGLE_SIZE = 15;
 const GUIDE_FLIGHT_MS = 620;
 
@@ -94,6 +95,14 @@ function drawGuideTriangle() {
     guideFlight = null;
     px = guideTarget.x;
     py = guideTarget.y;
+    // 到达后停留 2.5 秒再消失：用户要看清「它指的是哪」。
+    if (!guideHideTimer) {
+      guideHideTimer = setTimeout(() => {
+        guideHideTimer = null;
+        guideTarget = null;
+        render();
+      }, 2500);
+    }
   }
   // 蓝边光标旁的小三角：默认在光标右下方 35/25px（clicky 的落位），
   // 飞行时画在轨迹上
@@ -513,6 +522,10 @@ function resetOverlay() {
   activePointerId = null;
   points = [];
   strokes = [];
+  guideTarget = null;
+  guideFlight = null;
+  if (guideHideTimer) clearTimeout(guideHideTimer);
+  guideHideTimer = null;
   if (chainTimer) clearTimeout(chainTimer);
   chainTimer = null;
   chainDeadlineAt = 0;
@@ -716,6 +729,8 @@ window.magicPointer?.onHide(() => {
   chainHintTimer = null;
   guideTarget = null;
   guideFlight = null;
+  if (guideHideTimer) clearTimeout(guideHideTimer);
+  guideHideTimer = null;
 });
 
 window.magicPointer?.onGestureSubmit((payload) => {
@@ -766,7 +781,14 @@ window.magicPointer?.onCursor((payload) => {
 });
 window.magicPointer?.onGuidePoint?.((payload) => {
   onGuidePoint(payload);
-  scheduleRender();
+  // 飞行是持续动画（620ms），不是一帧——持续 rAF 直到到达/超时，
+  // 否则三角只在起点闪一帧就消失。
+  function guideTick() {
+    render();
+    const stillFlying = guideFlight && performance.now() < guideFlight.startedAt + guideFlight.duration;
+    if (stillFlying) requestAnimationFrame(guideTick);
+  }
+  requestAnimationFrame(guideTick);
 });
 window.magicPointer?.onGestureInput((payload) => {
   if (

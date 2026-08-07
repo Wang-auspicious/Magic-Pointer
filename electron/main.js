@@ -857,24 +857,54 @@ function updateStage(payload = {}) {
   // 底层早就能查状态了，缺的一直是这边没人在看。
   watchTaskFromEvent(payload);
   safeSurfaceSend('stage', 'stage:update', payload);
-  // Clicky 式引导：回答里带了 [POINT] 指点，就把目标点也给蓝边光标所在的
+  // Clicky 式引导：回答里带了 [POINT] 指点，就把目标点给蓝边光标所在的
   // overlay——小三角默认不出现，只有回答要「指给你看」时才飞过去。
   const event = payload?.event || {};
   const points = Array.isArray(event.screenPoints) ? event.screenPoints : [];
-  if (points.length && overlayWindow && !overlayWindow.isDestroyed() && overlayWindow.isVisible()) {
+  if (points.length) {
     const p = points[0];
     const x = Number(p.x);
     const y = Number(p.y);
     if (Number.isFinite(x) && Number.isFinite(y)) {
-      // [POINT] 坐标是物理屏幕像素（视觉模型看全屏截图给出），overlay
-      // canvas 是 DIP——先除缩放，overlay 里直接当窗口坐标用。
-      const display = screen.getDisplayNearestPoint({ x, y });
-      const scale = (display && display.scaleFactor) || 1;
-      overlayWindow.webContents.send('overlay:guide-point', {
-        x: x / scale,
-        y: y / scale,
-        count: points.length,
-      });
+      // 回答阶段 overlay 通常已隐藏（划线提交后 hideOverlay）——指向需要
+      // 一个可见的透明层来画三角。没有就临时拉起：穿透、不抢焦点、不拦截。
+      if (!overlayWindow || overlayWindow.isDestroyed()) createOverlayWindow();
+      if (overlayWindow && !overlayWindow.isDestroyed()) {
+        const win = overlayWindow;
+        const display = screen.getDisplayNearestPoint({ x, y });
+        const bounds = win.getBounds();
+        const desired = display.bounds;
+        if (Math.abs(bounds.x - desired.x) > 1 || Math.abs(bounds.y - desired.y) > 1
+          || Math.abs(bounds.width - desired.width) > 1 || Math.abs(bounds.height - desired.height) > 1) {
+          win.setBounds(desired);
+        }
+        if (!win.isVisible()) {
+          win.setIgnoreMouseEvents(true, { forward: true });
+          overlayOwnsPointerInput = false;
+          win.showInactive();
+          if (typeof win.setFocusable === 'function') win.setFocusable(false);
+          win.webContents.send('overlay:show', {
+            reason: 'guide-point',
+            workflow: 'generic',
+            gestureMode: false,
+            observerMode: false,
+            selectionGestureToken: null,
+            gestureAcceptAt: 0,
+            gestureLineStyle: 'demo6_band',
+            gestureLineWidth: 22,
+            gestureChainGapMs: 1500,
+            gestureInteractionMode: 'exclusive_overlay',
+          });
+        }
+        // [POINT] 坐标是物理屏幕像素（视觉模型看全屏截图给出），overlay
+        // canvas 是 DIP——先除缩放，overlay 里直接当窗口坐标用。
+        const scale = (display && display.scaleFactor) || 1;
+        win.webContents.send('overlay:guide-point', {
+          x: x / scale,
+          y: y / scale,
+          count: points.length,
+        });
+      }
     }
   }
 }
