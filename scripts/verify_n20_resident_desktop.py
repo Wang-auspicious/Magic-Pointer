@@ -10,7 +10,6 @@ configured global hotkey and is observed through the app's own audit/log files.
 import argparse
 import ctypes
 from ctypes import wintypes
-import hashlib
 import json
 import os
 import shutil
