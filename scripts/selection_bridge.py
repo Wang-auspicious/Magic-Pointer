@@ -2355,6 +2355,41 @@ def _is_deliver_request(command: str) -> bool:
     return bool(_DELIVER_REQUEST_RE.search(str(command or "")))
 
 
+# ── 自动记忆（Vida 式主动层的第一块）──────────────────────────────
+# 问答完成即记一条「对象 + 问题」，不依赖用户手动指令。失败绝不影响
+# 主路径。记忆由 executors 的 memory recipe 提供读取端（fabric 层）。
+def _record_auto_memory(
+    command: str,
+    app_ctx: Any,
+    target_window: dict[str, Any] | None,
+    answer: str,
+) -> None:
+    from app.context_pack.screen_memory import MAX_EXCERPT_CHARS, ScreenMemory
+
+    text = str(command or "").strip()[:MAX_EXCERPT_CHARS]
+    title = str((target_window or {}).get("title") or "").strip()
+    if app_ctx is not None:
+        title = title or str(getattr(app_ctx, "window", {}).get("title") or "")
+    if not text and not title:
+        return
+    # 只记「用户对什么做了什么」。命令涉及密码/密钥/验证码/账号时不记
+    # 内容（record 的 sensitive 门控会拒绝写入）。
+    sensitive = bool(re.search(
+        r"密码|口令|验证码|密钥|secret|password|token|sk-[A-Za-z0-9]",
+        f"{text}\n{answer}",
+        re.IGNORECASE,
+    ))
+    # 只记「用户对什么做了什么」，不记敏感内容（密码/密钥等由 record 的
+    # sensitive 门控挡掉——这里默认 False，由调用方显式标记）。
+    memory = ScreenMemory()
+    memory.record(
+        app=str(getattr(app_ctx, "app", "") or "") if app_ctx is not None else "",
+        window_title=title,
+        excerpt=text,
+        sensitive=sensitive,
+    )
+
+
 def _general_fallback_answer(
     command: str,
     context_text: str,
@@ -2908,6 +2943,13 @@ def main() -> int:
         answer,
         bounds=(target_window or {}).get("bbox"),
     )
+    # 自动记忆（Vida 式「提前干活」第一步）：问答完成即记一条
+    # 「对象 + 问题」——不依赖用户手动指令，积累上下文供未来主动提议。
+    # 失败绝不影响本次回答（记忆是副作用，不是主路径）。
+    try:
+        _record_auto_memory(command, app_ctx, target_window, answer)
+    except Exception:
+        pass
     print(json.dumps({
         "ok": True,
         "prompt": command,

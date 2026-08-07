@@ -925,3 +925,22 @@ def test_deliver_system_prompt_forbids_markdown() -> None:
 
     assert 'markdown' in DELIVER_SYSTEM_PROMPT
     assert '纯文字' in DELIVER_SYSTEM_PROMPT
+
+
+# ── 自动记忆（Vida 式主动层）：敏感挡、去重、非敏感记 ──────────────
+def test_record_auto_memory_sensitive_and_dedupe(tmp_path) -> None:
+    import json
+    import os
+
+    from app.adapters.base import AdapterReadContext
+    from scripts.selection_bridge import _record_auto_memory
+
+    os.environ['MAGIC_POINTER_USER_DATA_DIR'] = str(tmp_path)
+    ctx = AdapterReadContext(adapter='uia', app='Weixin.exe', method='selection', content='x', window={'title': '微信'})
+    _record_auto_memory('这段代码在干嘛', ctx, {'title': '微信'}, '这是超时逻辑。')
+    _record_auto_memory('这段代码在干嘛', ctx, {'title': '微信'}, '这是超时逻辑。')  # 去重
+    _record_auto_memory('帮我查一下密码是什么', ctx, {'title': '微信'}, '密码是 abc')  # 敏感挡
+    data = json.loads((tmp_path / 'screen-memory.json').read_text(encoding='utf-8'))
+    entries = data['entries']
+    assert len(entries) == 1, f'期望 1 条（去重+敏感挡），实际 {len(entries)}'
+    assert entries[0]['excerpt'] == '这段代码在干嘛'
