@@ -1260,8 +1260,14 @@ def _screen_region_vision_answer(
     app_ctx: AdapterReadContext | None,
     snapshot: dict[str, Any] | None,
 ) -> str | None:
-    """Use the configured visual model only after an explicit upload opt-in."""
-    if _capture_settings().privacy.upload_screenshots is not True:
+    """Use the configured visual model only after an explicit upload opt-in.
+
+    指向请求（wants_pointing）例外：用户明确问「哪里/在哪」，等于显式要求
+    看屏幕指东西——这次截图只用于本次指点，与「截图上传」的默认禁语义不同。
+    除此之外（一般问答）仍受 upload_screenshots 门控。
+    """
+    pointing = wants_pointing(command)
+    if not pointing and _capture_settings().privacy.upload_screenshots is not True:
         return None
     image_path = Path(str((snapshot or {}).get("capture_path") or "").strip())
     if not image_path.is_file():
@@ -1281,6 +1287,16 @@ def _screen_region_vision_answer(
     context_text = _selection_context_text(app_ctx, target_window)
     if selection_bbox:
         context_text += f"\n\nUser-marked target bbox in physical screen pixels: {selection_bbox!r}"
+    # 指向请求：让视觉模型看全屏截图，回答里带 [POINT x,y] 标记，光标飞过去。
+    # 坐标是截图像素坐标；本函数返回的文本里的标记会被链路尾部 parse_points
+    # 转成 screenPoints 给 stage/overlay 指点。
+    if pointing:
+        context_text += (
+            "\n\nThis screenshot is the user's full screen. If the user asks where "
+            "something is, answer briefly and mark each mentioned element with "
+            "[POINT x,y] using physical pixel coordinates from THIS screenshot. "
+            "Coordinates must match the screenshot size. Use at most 3 points."
+        )
     try:
         return ask_vision_model(
             image_path,
@@ -1294,6 +1310,17 @@ def _screen_region_vision_answer(
                 roi_path.unlink(missing_ok=True)
             except OSError:
                 pass
+
+
+# 用户是不是在问「哪里/怎么找到」——是的话回答要能指点（[POINT]）。
+_POINTING_RE = re.compile(
+    r"指|在哪|哪里|哪儿|位置|点在|点一下|怎么找到|哪个|何处|where|point to|show me",
+    re.IGNORECASE,
+)
+
+
+def wants_pointing(command: str) -> bool:
+    return bool(_POINTING_RE.search(str(command or "")))
 
 
 # 本地图片文件：用户划线指向的是一张图（资源管理器里选中、桌面上的一张
@@ -1337,7 +1364,10 @@ def _local_image_file_answer(
         value = str(context.get(key) or "").strip()
         if value:
             candidates.append(value)
-    candidates.append(str((snapshot or {}).get("capture_path") or "").strip())
+    # 注意：capture_path 是全屏截图——绝不能当「用户指向的那张图」。
+    # 用户划的是画布/资源管理器里的某张图，全屏截图里可能同时有好几张图，
+    # 传全屏会让模型回答「另一张图」的内容（点斑马答眼睛就是这么来的）。
+    # 兜底只用选区 ROI（用户划中的那块），ROI 不可用就放弃视觉，走文本。
 
     image_file: Path | None = None
     desktop_dir = _user_desktop_dir()
@@ -1360,19 +1390,41 @@ def _local_image_file_answer(
                 continue
         if image_file is not None:
             break
-    if image_file is None:
-        return None
+    if image_file is not None:
+        context_text = _selection_context_text(app_ctx, None)
+        context_text += f"\n\nThe user pointed at this image file: {image_file}"
+        try:
+            return ask_vision_model(
+                image_file,
+                command,
+                context_text=context_text,
+            )
+        except Exception:
+            return None
 
-    context_text = _selection_context_text(app_ctx, None)
-    context_text += f"\n\nThe user pointed at this image file: {image_file}"
+    # 定位不到本地文件：用选区 ROI（用户划中的那块），而不是全屏截图。
+    # ROI 是「用户明确指向的区域」，全屏是「整个屏幕」——只有前者配得上
+    # 「用户要的是这个图」这个语义。
+    roi_path = _crop_roi_for_ocr(
+        str((snapshot or {}).get("capture_path") or ""),
+        (snapshot or {}).get("selection_bbox"),
+        (snapshot or {}).get("capture_bbox"),
+    )
+    if roi_path is None:
+        return None
     try:
         return ask_vision_model(
-            image_file,
+            roi_path,
             command,
-            context_text=context_text,
+            context_text=_selection_context_text(app_ctx, None),
         )
     except Exception:
         return None
+    finally:
+        try:
+            roi_path.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def _context_pack_response(
