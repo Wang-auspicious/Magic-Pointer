@@ -28,6 +28,9 @@ public static class UiaDraftWriter
     private static extern IntPtr GetForegroundWindow();
 
     [DllImport("user32.dll")]
+    private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
+
+    [DllImport("user32.dll")]
     private static extern IntPtr WindowFromPoint(NativePoint point);
 
     [DllImport("user32.dll")]
@@ -216,8 +219,35 @@ public static class UiaDraftWriter
         }
         result.target_title = actualTitle;
         ShowWindow(hwnd, SW_RESTORE);
-        SetForegroundWindow(hwnd);
-        Thread.Sleep(100);
+        // Windows 前台锁：SetForegroundWindow 在目标进程非活动时经常失败
+        // （返回 true 但前台没变）。标准绕过：把前台线程的输入队列 attach
+        // 到目标窗口线程，再 SetForegroundWindow——微信/Claude/浏览器输入框
+        // 填入失败的根因就在这里。
+        IntPtr foreground = GetForegroundWindow();
+        uint targetThread;
+        GetWindowThreadProcessId(hwnd, out targetThread);
+        uint foregroundThread = 0;
+        if (foreground != IntPtr.Zero)
+        {
+            GetWindowThreadProcessId(foreground, out foregroundThread);
+        }
+        bool attached = false;
+        if (foregroundThread != 0 && foregroundThread != targetThread)
+        {
+            attached = AttachThreadInput(foregroundThread, targetThread, true);
+        }
+        try
+        {
+            SetForegroundWindow(hwnd);
+            Thread.Sleep(100);
+        }
+        finally
+        {
+            if (attached)
+            {
+                AttachThreadInput(foregroundThread, targetThread, false);
+            }
+        }
         if (GetForegroundWindow() != hwnd)
         {
             result.error = "target window could not be restored to foreground";
