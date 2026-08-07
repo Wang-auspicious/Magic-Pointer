@@ -995,11 +995,26 @@ function recordConversationTurn(payload = {}, type = '') {
   }
 }
 
-ipcMain.handle('conversations:list', () => { try { return conversations().list(); } catch (_) { return []; } });
-ipcMain.handle('conversations:get', (_e, id) => { try { return conversations().get(id); } catch (_) { return null; } });
-ipcMain.handle('conversations:timeline', () => { try { return conversations().timeline(); } catch (_) { return []; } });
-ipcMain.handle('conversations:memories', () => { try { return conversations().memories(); } catch (_) { return []; } });
-ipcMain.handle('conversations:artifacts', () => { try { return conversations().artifacts(); } catch (_) { return []; } });
+ipcMain.handle('conversations:list', (event) => {
+  if (!isDashboardSender(event) && !isCompanionSender(event)) return [];
+  try { return conversations().list(); } catch (_) { return []; }
+});
+ipcMain.handle('conversations:get', (event, id) => {
+  if (!isDashboardSender(event) && !isCompanionSender(event)) return null;
+  try { return conversations().get(id); } catch (_) { return null; }
+});
+ipcMain.handle('conversations:timeline', (event) => {
+  if (!isDashboardSender(event) && !isCompanionSender(event)) return [];
+  try { return conversations().timeline(); } catch (_) { return []; }
+});
+ipcMain.handle('conversations:memories', (event) => {
+  if (!isDashboardSender(event) && !isCompanionSender(event)) return [];
+  try { return conversations().memories(); } catch (_) { return []; }
+});
+ipcMain.handle('conversations:artifacts', (event) => {
+  if (!isDashboardSender(event) && !isCompanionSender(event)) return [];
+  try { return conversations().artifacts(); } catch (_) { return []; }
+});
 
 function hideStage() {
   if (stageWindow && !stageWindow.isDestroyed() && stageWindow.isVisible()) stageWindow.hide();
@@ -1356,10 +1371,21 @@ ipcMain.handle('stash:list', () => {
 
 // 悬停收藏图片 1 秒后调用：本地文件 + 视觉模型 → 3-4 句简介。
 // 输入是用户自己收藏的本地文件，不是截屏上传，不走隐私开关。
-ipcMain.handle('stash:describe', async (_event, imagePath) => {
+ipcMain.handle('stash:describe', async (event, imagePath) => {
+  // 只允许主界面（dashboard）窗口调用，且路径必须落在 stash 目录里——
+  // 否则任意渲染进程都能让模型读任意本地文件（信息泄漏）。
+  if (!event.sender || event.sender !== dashboardWindow?.webContents) {
+    return { ok: false, error: 'forbidden_sender' };
+  }
+  const root = path.resolve(stashBaseDir());
+  const target = path.resolve(String(imagePath || ''));
+  if (target !== root && !target.startsWith(root + path.sep)) {
+    log(`stash describe blocked: path outside stash dir ${target}`);
+    return { ok: false, error: 'forbidden_path' };
+  }
   try {
     const parsed = await runPythonBridgePromise(
-      { operation: 'describe', imagePath },
+      { operation: 'describe', imagePath: target },
       'scripts/stash_describe_bridge.py',
       { target: 'fabric-dashboard', timeoutMs: 30000 },
     );
@@ -4105,6 +4131,10 @@ ipcMain.handle('stage:expand-passage', async (event, payload) => {
 
 function isDashboardSender(event) {
   return Boolean(dashboardWindow && !dashboardWindow.isDestroyed() && event.sender === dashboardWindow.webContents);
+}
+
+function isCompanionSender(event) {
+  return Boolean(companionWindow && !companionWindow.isDestroyed() && event.sender === companionWindow.webContents);
 }
 
 function isOnboardingSender(event) {
