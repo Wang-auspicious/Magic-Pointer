@@ -23,6 +23,15 @@ def _as_list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else [value]
 
 
+def _coverage_float(value: Any) -> float:
+    """Safe parse of a window coverage field; a garbage value must not take
+    the whole grounding chain down (observe() has no per-grounder guard)."""
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _match_key(value: str) -> str:
     # UIA/PowerShell can mangle Unicode punctuation (for example em dash -> replacement chars).
     # Compare a punctuation-insensitive key so visible Explorer names still resolve to files.
@@ -237,7 +246,7 @@ class ExplorerFileGrounder(BaseGrounder):
             return GroundingBundle(selection=selection, traces=[GroundingTrace(self.name, ["no explorer window intersected selection"])])
 
         # Prefer the topmost/highest coverage Explorer window from screen_context.
-        explorer_windows.sort(key=lambda w: (int(w.get("z_order", 999) or 999), -float(w.get("selection_coverage", 0) or 0)))
+        explorer_windows.sort(key=lambda w: (int(w.get("z_order", 999) or 999), -_coverage_float(w.get("selection_coverage"))))
         window = explorer_windows[0]
         hwnd = int(window.get("hwnd") or 0)
         folder_path, selected_paths, com_messages = self._read_shell_window(hwnd)

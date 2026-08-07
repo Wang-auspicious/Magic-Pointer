@@ -33,6 +33,7 @@ from app.fabric.settings import FabricSettings, SettingsError, SettingsStore
 from scripts.bridge_progress import PhaseClock
 from app.system_context import enable_dpi_awareness, get_foreground_window_handle, list_visible_windows
 from app.visual_annotation import make_pointer_annotated_image
+from scripts._bridge_common import PayloadTooLargeError, read_bounded_json_payload
 
 enable_dpi_awareness()
 
@@ -105,8 +106,9 @@ def _same_window_geometry(expected: dict[str, Any], actual: dict[str, Any]) -> b
 
 
 def read_payload() -> dict[str, Any]:
-    raw = sys.stdin.read().lstrip("\ufeff").strip()
-    return json.loads(raw) if raw else {}
+    # Bounded like every other bridge: an oversized payload (a corrupt gesture,
+    # a malicious caller) must be rejected, not buffered without limit.
+    return read_bounded_json_payload()
 
 
 def _window_dicts(
@@ -1827,7 +1829,14 @@ def capture_snapshot(
     visual_context = None
     pointer_anchor = None
     if visual is not None and not structured_succeeded:
-        pointer_anchor = _pointer_anchor_ltrb(normalized_target_point)
+        # The cursor may be absent for gesture-only captures; the gesture bbox
+        # center was already chosen as the capture anchor above (visual_target_point).
+        anchor_point = normalized_target_point or visual_target_point
+        pointer_anchor = (
+            _pointer_anchor_ltrb(anchor_point)
+            if anchor_point is not None
+            else None
+        )
         visual_selection_rectangles = (
             [list(gesture_selection_bbox)] if gesture_selection_bbox is not None else []
         )
@@ -1957,7 +1966,15 @@ def capture_snapshot(
 
 def main() -> int:
     clock = PhaseClock("selection_snapshot")
-    payload = read_payload()
+    try:
+        payload = read_payload()
+    except PayloadTooLargeError as exc:
+        print(json.dumps({
+            "ok": False,
+            "error": "payload_too_large",
+            "maxPayloadBytes": exc.max_bytes,
+        }, ensure_ascii=False))
+        return 2
     clock.mark("payload_read")
     try:
         settings = SettingsStore().load()

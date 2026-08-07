@@ -13,6 +13,7 @@ from app.actions import ActionProposal
 from app.actions.executor import SafeActionExecutor
 from app.actions.schema import ExecutionStatus
 from app.context_pack.session import ContextSessionError, ContextSessionStore
+from scripts._bridge_common import PayloadTooLargeError, read_bounded_json_payload
 
 
 def _configure_stdio() -> None:
@@ -23,8 +24,7 @@ def _configure_stdio() -> None:
 
 
 def read_payload() -> dict[str, Any]:
-    raw = sys.stdin.read().lstrip("\ufeff").strip()
-    return json.loads(raw) if raw else {}
+    return read_bounded_json_payload()
 
 
 def _followup_proposals(result_output: dict[str, Any]) -> list[dict[str, Any]]:
@@ -59,7 +59,15 @@ def _finish_runtime_context_after_success(
 
 def main() -> int:
     _configure_stdio()
-    payload = read_payload()
+    try:
+        payload = read_payload()
+    except PayloadTooLargeError as exc:
+        print(json.dumps({
+            "ok": False,
+            "error": "payload_too_large",
+            "maxPayloadBytes": exc.max_bytes,
+        }, ensure_ascii=False))
+        return 2
     proposal_data = payload.get("proposal")
     if not isinstance(proposal_data, dict):
         print(json.dumps({"ok": False, "error": "missing proposal"}, ensure_ascii=False))

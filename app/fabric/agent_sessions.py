@@ -30,6 +30,18 @@ def _same_path(left: Path | str, right: Path | str) -> bool:
     return os.path.normcase(str(_normalized_path(left))) == os.path.normcase(str(_normalized_path(right)))
 
 
+def _mtime(path: Path) -> float:
+    """File mtime, 0.0 when the file vanished between enumeration and stat.
+
+    Agent CLIs rewrite/delete their own session files while we enumerate;
+    an unguarded stat() raised and took down the whole provider list.
+    """
+    try:
+        return float(path.stat().st_mtime)
+    except OSError:
+        return 0.0
+
+
 def _is_below(path: Path | str, root: Path | str) -> bool:
     try:
         _normalized_path(path).relative_to(_normalized_path(root))
@@ -360,7 +372,7 @@ class AgentSessionRegistry:
 
     @staticmethod
     def _state(path: Path) -> str:
-        age_seconds = max(0.0, datetime.now(timezone.utc).timestamp() - path.stat().st_mtime)
+        age_seconds = max(0.0, datetime.now(timezone.utc).timestamp() - _mtime(path))
         return "recent" if age_seconds <= 15 * 60 else "resumable"
 
     def _live_evidence(self, provider: str, path: Path, active_only: bool) -> str | None:
@@ -406,9 +418,12 @@ class AgentSessionRegistry:
             if active_only and live_evidence is None:
                 continue
             title = titles.get(session_id) or _first_user_text(records, "codex")
+            mtime = _mtime(path)
+            if mtime <= 0:
+                continue
             sessions.append(AgentSession(
                 provider="codex", session_id=session_id, cwd=str(_normalized_path(cwd)),
-                last_active_at=_timestamp(path.stat().st_mtime, path.stat().st_mtime),
+                last_active_at=_timestamp(mtime, mtime),
                 state=self._state(path), transport="exec-resume-jsonl", source="codex_session_meta",
                 title=_session_title("codex", cwd, session_id, title),
                 live=live_evidence is not None, live_evidence=live_evidence,
@@ -434,9 +449,12 @@ class AgentSessionRegistry:
             if active_only and live_evidence is None:
                 continue
             title = _metadata_title(records, "claude") or _first_user_text(records, "claude")
+            mtime = _mtime(path)
+            if mtime <= 0:
+                continue
             sessions.append(AgentSession(
                 provider="claude", session_id=session_id, cwd=str(_normalized_path(cwd)),
-                last_active_at=_timestamp(None, path.stat().st_mtime),
+                last_active_at=_timestamp(None, mtime),
                 state=self._state(path), transport="print-resume-stream-json", source="claude_session_meta",
                 title=_session_title("claude", cwd, session_id, title),
                 live=live_evidence is not None, live_evidence=live_evidence,
@@ -460,7 +478,7 @@ class AgentSessionRegistry:
                     *list((project / "chats").glob("session-*.jsonl")),
                     *list((project / "chats").glob("session-*.json")),
                 ],
-                key=lambda item: item.stat().st_mtime,
+                key=_mtime,
                 reverse=True,
             )
             for index, path in enumerate(paths, 1):
@@ -481,9 +499,12 @@ class AgentSessionRegistry:
                 if active_only and live_evidence is None:
                     continue
                 title = _metadata_title(records, "gemini") or _first_user_text(records, "gemini")
+                mtime = _mtime(path)
+                if mtime <= 0:
+                    continue
                 sessions.append(AgentSession(
                     provider="gemini", session_id=session_id, cwd=str(_normalized_path(cwd)),
-                    last_active_at=_timestamp(None, path.stat().st_mtime),
+                    last_active_at=_timestamp(None, mtime),
                     state=self._state(path), transport="print-resume-json", source="gemini_session_meta",
                     resume_token=str(index),
                     title=_session_title("gemini", cwd, session_id, title),
@@ -511,9 +532,12 @@ class AgentSessionRegistry:
             if active_only and live_evidence is None:
                 continue
             title = _metadata_title(records, "pi") or _first_user_text(records, "pi")
+            mtime = _mtime(path)
+            if mtime <= 0:
+                continue
             sessions.append(AgentSession(
                 provider="pi", session_id=session_id, cwd=str(_normalized_path(cwd)),
-                last_active_at=_timestamp(None, path.stat().st_mtime),
+                last_active_at=_timestamp(None, mtime),
                 state=self._state(path), transport="pi-session-json", source="pi_session_meta",
                 title=_session_title("pi", cwd, session_id, title),
                 live=live_evidence is not None, live_evidence=live_evidence,

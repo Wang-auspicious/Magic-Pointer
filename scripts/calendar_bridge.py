@@ -18,11 +18,11 @@ from app.dashboard.calendar import (
     CalendarEventStore,
     normalize_event,
 )
+from scripts._bridge_common import PayloadTooLargeError, read_bounded_json_payload
 
 
 def read_payload() -> dict[str, Any]:
-    raw = sys.stdin.read().lstrip("\ufeff").strip()
-    return json.loads(raw) if raw else {}
+    return read_bounded_json_payload()
 
 
 def emit(payload: dict[str, Any]) -> None:
@@ -30,7 +30,11 @@ def emit(payload: dict[str, Any]) -> None:
 
 
 def main() -> int:
-    request = read_payload()
+    try:
+        request = read_payload()
+    except PayloadTooLargeError as exc:
+        emit({"ok": False, "error": "payload_too_large", "maxPayloadBytes": exc.max_bytes})
+        return 2
     operation = str(request.get("operation") or "")
     request_id = str(request.get("requestId") or "") or None
     store = CalendarEventStore()

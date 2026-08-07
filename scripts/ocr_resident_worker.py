@@ -46,6 +46,9 @@ except ValueError:
     IDLE_TIMEOUT_S = 1800.0
 DETECTION_WIDE_SIZE = (640, 192)
 DETECTION_STANDARD_SIZE = (640, 512)
+# A single request line larger than this is a broken or hostile caller; never
+# buffer it (the bridge caps its own payload at 64 KB).
+MAX_REQUEST_LINE_BYTES = 512 * 1024
 
 
 def _published_worker_port(port_file: Path = PORT_FILE) -> int | None:
@@ -480,6 +483,14 @@ def main() -> int:
                 if not chunk:
                     break
                 buffer += chunk
+                if len(buffer) > MAX_REQUEST_LINE_BYTES:
+                    try:
+                        connection.sendall((
+                            json.dumps({"ok": False, "error": "request_too_large"}, ensure_ascii=False) + "\n"
+                        ).encode("utf-8"))
+                    except Exception:
+                        pass
+                    break
                 while b"\n" in buffer:
                     line, buffer = buffer.split(b"\n", 1)
                     line = line.strip()

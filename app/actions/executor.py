@@ -192,13 +192,25 @@ class SafeActionExecutor:
         workflow_store = None
         workflow_claim = None
         if workflow_task_id:
-            from app.fabric.workflow_task_store import WorkflowTaskStore
+            from app.fabric.workflow_task_store import WorkflowTaskError, WorkflowTaskStore
 
             workflow_store = WorkflowTaskStore(engine.root / "workflow-tasks")
-            workflow_task = workflow_store.get(workflow_task_id, surface="gui")
-            if confirmed and workflow_task.get("approvalState") == "pending":
-                workflow_store.approve(workflow_task_id, surface="gui")
-            workflow_claim = workflow_store.claim_execution(workflow_task_id, surface="gui")
+            try:
+                workflow_task = workflow_store.get(workflow_task_id, surface="gui")
+                if confirmed and workflow_task.get("approvalState") == "pending":
+                    workflow_store.approve(workflow_task_id, surface="gui")
+                workflow_claim = workflow_store.claim_execution(workflow_task_id, surface="gui")
+            except WorkflowTaskError as exc:
+                # A stale or deleted workflow task must not escape execute() as
+                # an exception; every other failure path returns a result.
+                return self._result(
+                    proposal,
+                    started,
+                    ExecutionStatus.FAILED,
+                    confirmed=confirmed,
+                    error=f"workflow_task_unavailable:{exc}",
+                    metadata={**metadata, "workflow_task_id": workflow_task_id},
+                )
             if workflow_claim.get("reused") is True:
                 receipt = dict(workflow_claim.get("receipt") or {})
                 metadata = {**metadata, "workflow_task_id": workflow_task_id, "workflow_reused": True}
@@ -351,16 +363,20 @@ class SafeActionExecutor:
         if str(receipt.get("target_title") or "") != expected_title:
             return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="draft writer title mismatch", metadata=metadata)
         delivery_mode = str(receipt.get("delivery_mode") or "full_prompt")
+        # The receipt is JSON from a child process; parse defensively instead of
+        # letting a malformed field raise out of execute().
+        source_chars = _optional_int(receipt.get("source_chars"))
+        written_chars = _optional_int(receipt.get("written_chars"))
         if delivery_mode == "artifact_reference":
             artifact_contract_valid = (
                 bool(str(params.get("prompt_artifact") or "").strip())
-                and int(receipt.get("source_chars") or -1) == len(text)
-                and int(receipt.get("written_chars") or 0) > 0
+                and source_chars == len(text)
+                and (written_chars or 0) > 0
                 and str(receipt.get("method") or "").startswith("keyboard:terminal-")
             )
             if not artifact_contract_valid:
                 return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="terminal artifact-reference verification failed", metadata=metadata)
-        elif int(receipt.get("written_chars") or -1) != len(text):
+        elif written_chars != len(text):
             return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="draft writer character-count verification failed", metadata=metadata)
         if receipt.get("verified") is not True:
             return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="draft writer did not verify the write", metadata=metadata)

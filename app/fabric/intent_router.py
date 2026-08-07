@@ -30,6 +30,7 @@ gateway or a model.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -297,7 +298,10 @@ class InstructionLibrary:
 
     def save(self, command: str, *, recipe_id: str | None, parameters: JsonDict | None = None, title: str = "") -> str:
         key = self.signature(command)
-        instruction_id = f"saved.{abs(hash(key)) % (10 ** 10):010d}"
+        # builtin hash() is salted per process (PYTHONHASHSEED), so the same
+        # instruction got a different id every time a fresh bridge saved it;
+        # use a deterministic digest instead.
+        instruction_id = "saved." + hashlib.sha256(key.encode("utf-8")).hexdigest()[:10]
         self._data["saved"][key] = {
             "id": instruction_id,
             "title": title or str(command)[:60],

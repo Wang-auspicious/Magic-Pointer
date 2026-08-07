@@ -16,11 +16,11 @@ from app.actions.shopping_list import (
     make_shopping_list_undo_proposal,
 )
 from app.dashboard.shopping_list import ShoppingListError, ShoppingListStore
+from scripts._bridge_common import PayloadTooLargeError, read_bounded_json_payload
 
 
 def read_payload() -> dict[str, Any]:
-    raw = sys.stdin.read().lstrip("\ufeff").strip()
-    return json.loads(raw) if raw else {}
+    return read_bounded_json_payload()
 
 
 def emit(payload: dict[str, Any]) -> None:
@@ -35,7 +35,11 @@ def _find_current_item(store: ShoppingListStore, item_id: str) -> dict[str, Any]
 
 
 def main() -> int:
-    request = read_payload()
+    try:
+        request = read_payload()
+    except PayloadTooLargeError as exc:
+        emit({"ok": False, "error": "payload_too_large", "maxPayloadBytes": exc.max_bytes})
+        return 2
     request_id = str(request.get("requestId") or "") or None
     operation = str(request.get("operation") or "")
     store = ShoppingListStore()

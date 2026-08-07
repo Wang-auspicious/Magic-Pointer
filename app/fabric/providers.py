@@ -62,6 +62,10 @@ def _default_version_probe(path: str, args: tuple[str, ...]) -> str:
         stdout, stderr = process.communicate(timeout=PROBE_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
         process.kill()
+        try:
+            process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            pass
         raise
     return (stdout or stderr or "").strip()
 

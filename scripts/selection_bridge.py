@@ -918,6 +918,10 @@ def _ocr_worker_request(
             if not chunk:
                 break
             buffer += chunk
+            if len(buffer) > 4 * 1024 * 1024:
+                # A misbehaving worker must not OOM this bridge; treat the
+                # oversized reply as an unavailable worker.
+                raise RuntimeError("ocr worker response too large")
         line = buffer.split(b"\n", 1)[0].strip()
         response = json.loads(line.decode("utf-8"))
         if response.get("ok") is True and response.get("blocks") is not None:
@@ -2787,6 +2791,8 @@ def main() -> int:
                 + "Return ONLY the replacement text for the selected Word text. No headings, labels, markdown, or explanation."
             ),
             system_prompt="You rewrite selected Word text. Return only the replacement text; no explanation.",
+            timeout_s=GENERAL_TIMEOUT_S,
+            attempts=1,
         )
         replacement = clean_replacement_text(replacement)
         proposal = make_word_replace_selection_proposal(
@@ -2836,6 +2842,7 @@ def main() -> int:
                     command,
                     context_text=context_text,
                     timeout_s=GENERAL_TIMEOUT_S,
+                    attempts=1,
                     max_tokens=INTERACTIVE_ANSWER_TOKENS,
                 ),
                 str(app_ctx.content or ""),

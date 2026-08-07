@@ -1055,6 +1055,10 @@ class ChromeDevToolsProbe:
                     continue
                 if isinstance(message, dict):
                     collect(message)
+            # The drain above left a 50ms socket timeout in place; the awaited
+            # Runtime.evaluate below needs the real budget (mirror of
+            # _evaluate_region, which restores it before its evaluate).
+            socket.settimeout(self.timeout_ms / 1000)
             argument = {
                 "point": {"x": int(target_point["x"]), "y": int(target_point["y"])},
                 "outerBBox": list(window.get("bbox") or []),
