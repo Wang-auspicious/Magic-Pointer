@@ -40,9 +40,14 @@ let currentWorkflow = 'generic';
 // ── Clicky 式引导小三角 ──────────────────────────────────────────────
 // 默认不出现。回答带了 [POINT] 指点（overlay:guide-point）时才浮现，
 // 从蓝边光标旁沿贝塞尔弧线飞向目标，然后停留到下一轮。
+//
+// 常驻跟随模式（guideFollow）：唤醒后三角一直跟在蓝边光标旁——像
+// clicky 的伴侣一样住在光标旁边。右键一次本次会话关闭，下次唤醒
+// 又出现。有 [POINT] 时优先飞行指向，飞完回到跟随。
 let guideTarget = null;        // { x, y } 指点目标（overlay 局部坐标）
 let guideFlight = null;        // { t, from, to, ctrl, startedAt, duration }
 let guideHideTimer = null;     // 到达后停留定时器
+let guideFollow = true;        // 常驻跟随（右键关闭，唤醒重置）
 const GUIDE_TRIANGLE_SIZE = 15;
 const GUIDE_FLIGHT_MS = 620;
 
@@ -83,11 +88,12 @@ function guideFlightPoint(from, ctrl, to, t) {
 }
 
 function drawGuideTriangle() {
-  if (!guideTarget) return;
+  // 跟随模式：唤醒后常驻（右键关闭）。无跟随且无目标时不画。
+  if (!guideFollow && !guideTarget) return;
   const now = performance.now();
   let px;
   let py;
-  if (guideFlight && now < guideFlight.startedAt + guideFlight.duration) {
+  if (guideTarget && guideFlight && now < guideFlight.startedAt + guideFlight.duration) {
     // 飞行中：贝塞尔插值
     const t = Math.min(1, (now - guideFlight.startedAt) / guideFlight.duration);
     const eased = 1 - Math.pow(1 - t, 3);
@@ -95,11 +101,11 @@ function drawGuideTriangle() {
     const pos = guideFlightPoint(from, ctrl, to, eased);
     px = pos.x;
     py = pos.y;
-  } else {
+  } else if (guideTarget) {
+    // 到达目标点：停留 2.5 秒后回到跟随
     guideFlight = null;
     px = guideTarget.x;
     py = guideTarget.y;
-    // 到达后停留 2.5 秒再消失：用户要看清「它指的是哪」。
     if (!guideHideTimer) {
       guideHideTimer = setTimeout(() => {
         guideHideTimer = null;
@@ -107,13 +113,12 @@ function drawGuideTriangle() {
         render();
       }, 2500);
     }
-  }
-  // 蓝边光标旁的小三角：默认在光标右下方 35/25px（clicky 的落位），
-  // 飞行时画在轨迹上
-  if (!guideFlight) {
-    const base = lastPointer || { x: px, y: py };
-    px = base.x + 35;
-    py = base.y + 25;
+  } else if (guideFollow && lastPointer) {
+    // 常驻跟随：蓝边光标右下方 35/25px（clicky 的落位）
+    px = lastPointer.x + 35;
+    py = lastPointer.y + 25;
+  } else {
+    return;
   }
   ctx.save();
   ctx.translate(px, py);
@@ -399,6 +404,8 @@ function render() {
       // cursor over the preloaded CSS cursor (armed-cursor.png).
       drawHitTestPixel(lastPointer);
     }
+    // 唤醒后常驻跟随的三角（gesture 模式下也画——划线时伴侣不消失）
+    drawGuideTriangle();
     return;
   }
   if (!captureMode && points.length) drawSmoothPath(points, trailAlpha);
@@ -530,6 +537,8 @@ function resetOverlay() {
   guideFlight = null;
   if (guideHideTimer) clearTimeout(guideHideTimer);
   guideHideTimer = null;
+  // 每次唤醒（onShow→resetOverlay）常驻跟随重新开启；右键可关。
+  guideFollow = true;
   if (chainTimer) clearTimeout(chainTimer);
   chainTimer = null;
   chainDeadlineAt = 0;
@@ -621,7 +630,14 @@ window.addEventListener('resize', resize);
 window.addEventListener('contextmenu', (e) => { e.preventDefault(); window.magicPointer?.hide(); });
 
 window.addEventListener('pointerdown', (e) => {
-  if (e.button === 2) { window.magicPointer?.hide(); return; }
+  if (e.button === 2) {
+    // 右键一次：本次会话关闭常驻跟随三角（下次唤醒又出现）
+    guideFollow = false;
+    guideTarget = null;
+    guideFlight = null;
+    window.magicPointer?.hide();
+    return;
+  }
   if (e.button !== 0) return;
   if (gestureMode && gestureInteractionMode === 'pass_through') return;
   if (observerMode || captureMode || submitting) return;
