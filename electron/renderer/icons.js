@@ -3,6 +3,7 @@ document.body.insertAdjacentHTML("afterbegin", `<svg width="0" height="0" style=
 <g id="i-base" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></g>
 </defs>
 <symbol id="ic-shake" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4.5 14.5 19l2-6 6-2z"/><path d="M4 8.5c-.9 1.9-.9 4.1 0 6M1.6 6.4c-1.5 3.2-1.5 7 0 10.2"/></symbol>
+<symbol id="ic-crop" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6.5 2.5v12a2 2 0 0 0 2 2h12"/><path d="M2.5 6.5h12a2 2 0 0 1 2 2v12"/></symbol>
 <symbol id="ic-stroke" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h13M4 12h9"/><path d="M3 17.5c2.5-2.2 5-2.2 7.5 0s5 2.2 7.5 0 3.5-1.6 5-.6"/></symbol>
 <symbol id="ic-target" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="6.5" y="6.5" width="11" height="11" rx="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></symbol>
 <symbol id="ic-timeline" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4v16"/><circle cx="7" cy="7" r="2"/><circle cx="7" cy="17" r="2"/><path d="M12 7h8M12 17h6"/></symbol>

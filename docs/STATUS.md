@@ -30,7 +30,7 @@ P3 十二项能力做完十项：图转提示词、选区拉伸把手、点选�
 ## 不能用 / 有条件
 
 - **微信 4.x、Qt、Flutter、GPU 合成的 Electron**：UIA 只给容器，`PrintWindow` 抓不到帧，两条读取路同时断。目前靠合成截图 + OCR + 视觉分组兜过去，但**首笔手势拿不到候选框**，只能事后点选。
-- **模型没有视觉**。当前后端 DeepSeek 明确说读不了图。图片请求能到端点，但**"请求成功"不等于"视觉可用"**。要视觉必须另配模型。
+- **视觉已配独立模型**。文本默认 `deepseek-v4-flash`（无视觉），视觉走 `secrets/vision_model.txt` = `qwen3.7-plus`（messages 协议，`secrets/vision_api_mode.txt`），已实测读图正确。仍要遵守：**"请求成功"不等于"视觉可用"**，能力以实测为准。
 - **浏览器结构化读取依赖 `--remote-debugging-port`**。端口不可用时目前不回落 UIA（证据显示 UIA 树完全够用）。
 - **P3 剩两项**：选中动作条、clicky 指针陪伴。两件都要一个**常驻文本选中监听**——没有会话时也在后台观察，是新的常驻组件，不是现有链路的延伸。仓库里还没有 selection-hook 集成。
 - **macOS**：代码在（`native/macos/MagicPointerHost.swift`），没有实机验过权限、多屏坐标、签名公证。
@@ -38,7 +38,9 @@ P3 十二项能力做完十项：图转提示词、选区拉伸把手、点选�
 
 ## 模型后端
 
-`secrets/`（gitignored）里三个文件：`openai_base_url.txt` = `https://api.deepseek.com/anthropic/v1`、`model.txt` = `deepseek-v4-flash[1M]`、`openai_key.txt`。Anthropic Messages 协议，已显式关闭 thinking——否则短输出预算会全被 thinking 吃掉，返回 HTTP 200 但没有正文。
+网关已切到 **OpenCode Go**：`secrets/openai_base_url.txt` = `https://opencode.ai/zen/go/v1`、`openai_key.txt` = Go key、`model.txt` = `deepseek-v4-flash`（chat-completions，协议按 base_url 自动识别，不要再建 `model_api_mode.txt`）。视觉独立配置：`vision_model.txt` = `qwen3.7-plus` + `vision_api_mode.txt` = `messages`（`ask_vision_model` 读这两个覆盖，也可用 `MAGIC_POINTER_VISION_MODEL` / `MAGIC_POINTER_VISION_API_MODE` 环境变量）。
+
+Go 视觉能力实测（2026-08-07，探针 `data/runtime/probe_go_vision.py`）：**kimi-k3、qwen3.7-plus 有视觉；glm-5.1/5.2、hy3、deepseek-v4-flash、mimo-v2-omni 无视觉或不可用；grok-4.5 端点 503**。qwen3.7-plus 走 `/messages` 且必须 `x-api-key` 头（`_completion_headers` 的 messages 分支已兼容）。
 
 文本实测约 3–6 秒。**不是流式**。
 

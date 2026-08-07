@@ -184,3 +184,39 @@ for (const [file, allowed] of [
 }
 
 console.log('card render scope test ok');
+
+// ---------------------------------------------------------------------------
+// MCP 挂进来的界面：那是别人的代码，安全边界不能靠记性
+// ---------------------------------------------------------------------------
+const slotHtml = renderCard(cards.normalizeCard({
+  kind: 'slot', server: 'github-mcp', html: '<h1>PR #482</h1>', height: 240,
+}));
+assert.ok(slotHtml.includes('mcard-slot'));
+assert.ok(slotHtml.includes('github-mcp'), '必须写清是哪个 server 提供的');
+assert.ok(slotHtml.includes('工具界面'), '眉毛行要说明这是一块工具界面，不是我们的回答');
+assert.ok(slotHtml.includes('工具提供的界面'), '用户要能分清「它说的」和「我们说的」');
+assert.ok(/sandbox="allow-scripts allow-forms"/.test(slotHtml));
+assert.ok(!/allow-same-origin/.test(slotHtml),
+  'allow-same-origin 会让那块界面拿到我们的 DOM 和 preload 桥——等于把渲染进程交出去');
+
+// 非 https 的外链一律挡下，并且要说出来，不能静默留白
+const slotHttp = renderCard(cards.normalizeCard({ kind: 'slot', server: 'x', url: 'http://evil/x' }));
+assert.ok(!slotHttp.includes('<iframe'), 'http 不能加载');
+assert.ok(slotHttp.includes('已挡下'));
+const slotEmpty = renderCard(cards.normalizeCard({ kind: 'slot', server: 'x' }));
+assert.ok(slotEmpty.includes('没有返回可渲染的界面'), '拿不到内容要说清楚，不留白');
+
+// iframe 高度要有上限：一块工具界面不能把整条流顶穿
+const slotTall = renderCard(cards.normalizeCard({
+  kind: 'slot', server: 'x', html: '<p>a</p>', height: 99999,
+}));
+assert.ok(/height:520px/.test(slotTall));
+
+console.log('card render slot test ok');
+
+// ---- 荧光笔：改了哪里就标哪里，不用写一段解释 ----
+assert.strictEqual(markdown('==3 additional onboarding== steps'),
+  '<p><mark class="mhi">3 additional onboarding</mark> steps</p>');
+assert.ok(!markdown('==<script>x</script>==').includes('<script>'), '荧光笔里的内容也要转义');
+
+console.log('card render highlight test ok');

@@ -99,6 +99,7 @@ async function renderConversation(id) {
   }
   currentId = target.id;
   setTitle(target.title || '未命名对话', target.objectKey || target.id);
+  bindComposerToObject(target.object);
   const turns = target.turns || [];
   if (!turns.length) {
     showEmpty(true);
@@ -125,13 +126,35 @@ async function renderConversation(id) {
   stream.scrollTop = stream.scrollHeight;
 }
 
-/* 输入框随内容长高 */
-document.addEventListener('input', (e) => {
-  const ta = e.target.closest('textarea');
-  if (!ta) return;
-  ta.style.height = 'auto';
-  ta.style.height = `${Math.min(ta.scrollHeight, 160)}px`;
-});
+/* ============================================================
+   输入条
+   ------------------------------------------------------------
+   和工作室同一个组件（composer.js），只是密度不同。上一版这里是一段
+   手写的 <form>，跟工作室那段各写各的——同一个产品里两根条两个样。
+
+   placeholder 跟着当前对象走（Vida 的 `Ask Vida anything about this page…`）：
+   小窗是贴着屏幕上那个东西的，问的就是它，写死「继续问…」等于把这层
+   上下文藏起来。
+   ============================================================ */
+let cpComposer = null;
+
+function mountCompanionComposer() {
+  const host = document.getElementById('cp-composer');
+  if (!host || typeof Composer === 'undefined') return;
+  cpComposer = Composer.create({
+    placeholder: '继续问…',
+    density: 'capsule',
+    onSubmit: () => {},
+  });
+  host.replaceChildren(cpComposer.el);
+}
+mountCompanionComposer();
+
+function bindComposerToObject(object) {
+  if (!cpComposer) return;
+  const name = object && (object.label || object.windowTitle || object.app);
+  cpComposer.setPlaceholder(name ? `关于「${String(name).slice(0, 22)}」再问…` : '继续问…');
+}
 
 /* pin 切换 */
 document.addEventListener('click', (e) => {

@@ -69,6 +69,26 @@ def get_ai_api_mode(base_url: str | None = None) -> str:
     return "messages" if "/anthropic" in str(base_url or "").casefold() else "chat-completions"
 
 
+def get_vision_model(text_model: str) -> str:
+    """Vision calls may use a different model than the text path.
+
+    The default text model is often text-only; a separate vision model is
+    configured via MAGIC_POINTER_VISION_MODEL or secrets/vision_model.txt.
+    """
+    return os.getenv("MAGIC_POINTER_VISION_MODEL") or read_local_secret("vision_model.txt") or text_model
+
+
+def get_vision_api_mode(base_url: str | None = None) -> str:
+    """Protocol for the vision model; falls back to the text-path detection."""
+    explicit = os.getenv("MAGIC_POINTER_VISION_API_MODE") or read_local_secret("vision_api_mode.txt")
+    mode = str(explicit or "").strip().casefold()
+    if mode in {"messages", "anthropic"}:
+        return "messages"
+    if mode in {"chat-completions", "openai"}:
+        return "chat-completions"
+    return get_ai_api_mode(base_url)
+
+
 def _completion_endpoint(base_url: str | None, api_mode: str) -> str:
     base = (base_url or "https://api.openai.com/v1").rstrip("/")
     if api_mode == "messages":
@@ -508,12 +528,13 @@ def ask_vision_model(
     """Ask an OpenAI-compatible multimodal model about the screenshot."""
 
     api_key, base_url, model = get_ai_config()
+    model = get_vision_model(model)
     if not api_key:
         record_unconfigured()
         return (
-            "\u5df2\u5b8c\u6210\u622a\u56fe\u4e0e\u5bf9\u8c61\u767b\u8bb0\uff0c\u4f46\u672a\u68c0\u6d4b\u5230 OPENAI_API_KEY \u6216 secrets/openai_key.txt\uff0c\u6240\u4ee5\u6ca1\u6709\u8c03\u7528\u591a\u6a21\u6001\u6a21\u578b\u3002\n\n"
-            f"\u622a\u56fe\u5df2\u4fdd\u5b58\uff1a{image_path}\n\n"
-            "\u53ef\u901a\u8fc7\u73af\u5883\u53d8\u91cf\u6216 secrets/openai_key.txt \u914d\u7f6e key\u3002"
+            "已完成截图与对象登记，但未检测到 OPENAI_API_KEY 或 secrets/openai_key.txt，所以没有调用多模态模型。\n\n"
+            f"截图已保存：{image_path}\n\n"
+            "可通过环境变量或 secrets/openai_key.txt 配置 key。"
         )
 
     blocked = short_circuit_message()
@@ -527,7 +548,7 @@ def ask_vision_model(
         import httpx
 
         base_url = (base_url or "https://api.openai.com/v1").rstrip("/")
-        api_mode = get_ai_api_mode(base_url)
+        api_mode = get_vision_api_mode(base_url)
         endpoint = _completion_endpoint(base_url, api_mode)
         headers = _completion_headers(api_key, api_mode)
         def normalize_labeled_extras() -> list[LabeledImage]:

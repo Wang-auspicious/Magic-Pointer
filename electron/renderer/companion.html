@@ -6,7 +6,9 @@
 <link rel="stylesheet" href="oreo_tokens.css?v=20">
 <link rel="stylesheet" href="oreo.css?v=20">
 <link rel="stylesheet" href="cards.css?v=20">
-<link rel="stylesheet" href="companion.css?v=13">
+<link rel="stylesheet" href="beam.css?v=20">
+<link rel="stylesheet" href="composer.css?v=20">
+<link rel="stylesheet" href="companion.css?v=14">
 </head>
 <body class="companion">
 
@@ -48,22 +50,13 @@
     <button class="chip-sm"><svg><use href="#ic-docs"/></svg>总结</button>
     <button class="chip-sm"><svg><use href="#ic-search"/></svg>找出处</button>
   </div>
-  <form class="composer">
-    <textarea rows="1" placeholder="继续问…"></textarea>
-    <div class="composer-bar">
-      <button type="button" class="icon-btn is-plain"><svg><use href="#ic-clip"/></svg></button>
-      <button type="button" class="icon-btn is-plain"><svg><use href="#ic-at"/></svg></button>
-      <button type="button" class="icon-btn is-plain"><svg><use href="#ic-mic"/></svg></button>
-      <span class="spacer"></span>
-      <button type="button" class="model-select"><svg class="spark"><use href="#ic-spark"/></svg>Opus 5<svg><use href="#ic-chev"/></svg></button>
-      <button type="submit" class="send-btn"><svg><use href="#ic-send"/></svg></button>
-    </div>
-  </form>
+  <div id="cp-composer"></div>
 </div>
 
 <script src="icons.js?v=20"></script>
 <script src="../cards.js?v=20"></script>
 <script src="card_render.js?v=20"></script>
+<script src="composer.js?v=20"></script>
 <script src="live_cards.js?v=20"></script>
 <script src="data.js?v=20"></script>
 <script src="companion.js?v=20"></script>

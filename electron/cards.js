@@ -34,6 +34,7 @@ const CardModel = (() => {
     'calendar',   // 日程草稿
     'prompt',     // 交给别的 agent 的提示词草稿
     'steps',      // 只有过程没有产物（整理了三个文件夹这类）
+    'slot',       // MCP server 自己渲染的一块界面（沙盒 iframe）
   ]);
 
   const STATES = Object.freeze(['running', 'done', 'failed']);
@@ -221,6 +222,7 @@ const CardModel = (() => {
     metric: '正在算',
     facts: '正在核对',
     steps: '正在做',
+    slot: '正在连工具',
     prose: '正在想',
   });
 

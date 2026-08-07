@@ -31,6 +31,8 @@
   --teal:         #0E7C86;  --teal-bg:     rgba(14, 124, 134, .11);
   --green:        #3D8B5F;  --green-bg:    rgba(61, 139, 95, .11);
   --terracotta:   #B44A24;  --terracotta-bg: rgba(180, 74, 36, .10);
+  /* 荧光笔比药丸底重一档：它要在正文里被一眼扫到，不是一个静静的标签 */
+  --pen:          rgba(232, 178, 26, .38);
   --solid:        #1A1A18;  /* 主操作实心 */
 
   /* ---- 形 ---- */
@@ -89,6 +91,7 @@
   --teal:   #52BFC7; --teal-bg:   rgba(30, 160, 172, .18);
   --green:  #74C295; --green-bg:  rgba(70, 165, 112, .18);
   --terracotta: #E08055; --terracotta-bg: rgba(200, 95, 50, .18);
+  --pen:    rgba(224, 176, 74, .30);
   --solid:  #F2F1ED;
 
   --shadow-card: 0 1px 2px rgba(0,0,0,.30), 0 8px 24px -6px rgba(0,0,0,.44);

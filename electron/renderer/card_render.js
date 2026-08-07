@@ -96,13 +96,16 @@ const CardRender = (() => {
      markdown 的极小子集：**粗**、`码`、无序/有序列表、三级标题、围栏代码。
      和 stage.js 里原来那份是同一套规则，只是产出节点。
      --------------------------------------------------------------------------- */
+  // `==这样==` 是荧光笔。Vida 把草稿落进 Slack 时，被改动的关键短语用黄色
+  // 标出来——这是「我改了哪里」最省事的说法，不用写一段解释也不用做 diff。
   function inlineMd(value) {
     return String(value ?? '')
-      .split(/(\*\*[^*]+\*\*|`[^`]+`)/g)
+      .split(/(\*\*[^*]+\*\*|`[^`]+`|==[^=]+==)/g)
       .filter(Boolean)
       .map((frag) => {
         if (frag.startsWith('**') && frag.endsWith('**')) return h('strong', {}, [frag.slice(2, -2)]);
         if (frag.startsWith('`') && frag.endsWith('`')) return h('code', {}, [frag.slice(1, -1)]);
+        if (frag.startsWith('==') && frag.endsWith('==')) return h('mark', { class: 'mhi' }, [frag.slice(2, -2)]);
         return text(frag);
       });
   }
@@ -138,6 +141,7 @@ const CardRender = (() => {
     calendar: ['ic-hist',    '日程'],
     prompt:   ['ic-handoff', '提示词'],
     steps:    ['ic-target',  '过程'],
+    slot:     ['ic-mcp',     '工具界面'],
   };
 
   function cardElapsedText(card, now) {
@@ -166,10 +170,12 @@ const CardRender = (() => {
     const title = card.title && String(card.title).trim() !== eyebrow ? String(card.title) : '';
     if (!title && !origin && card.kind === 'prose') return null;
     return h('header', { class: 'mcard-top' }, [
+      // 来源跟眉毛同一行：它俩说的是同一件事（这是什么 / 从哪儿来的）。
+      // 放在标题后面会被 .mcard-title 的整行占位挤到第三行去，孤零零飘在右边。
       h('span', { class: 'mcard-eyebrow' }, [icon(ico), eyebrow]),
+      origin,
       title ? h('b', { class: 'mcard-title' }, [title]) : null,
       card.subtitle ? h('span', { class: 'mcard-sub' }, [card.subtitle]) : null,
-      origin,
     ]);
   }
 
@@ -347,6 +353,58 @@ const CardRender = (() => {
 
     steps() {
       return null;   // 过程卡的身子就是上面那串步骤，不用再画一遍
+    },
+
+    // MCP server 自己渲染的一块界面。
+    //
+    // MCP 2026-07-28 的 MCP Apps 允许 server 在对话里渲染交互式 UI，所以一次
+    // 问答的结果可以是别人家的一块界面，而不只是我们画的一张卡。
+    //
+    // 两条不是样式的规矩：
+    // 1. 沙盒里**绝不能有 allow-same-origin**。加上它，那块界面就能拿到我们的
+    //    DOM 和 preload 桥——渲染别人的 UI 不等于把渲染进程交出去。
+    // 2. 必须框起来并写清是哪个 server。用户任何时候都要能分清「它说的」
+    //    和「我们说的」。
+    slot(card) {
+      const server = String(card.server || card.source?.app || '未知工具');
+      const html = String(card.html || '');
+      const url = String(card.url || '');
+      const height = Number.isFinite(card.height)
+        ? Math.max(96, Math.min(520, card.height))
+        : 260;
+      let frame;
+      if (html) {
+        frame = h('iframe', {
+          class: 'mslot-frame',
+          sandbox: 'allow-scripts allow-forms',
+          csp: "default-src 'none'; style-src 'unsafe-inline'; img-src data:",
+          srcdoc: html,
+          style: `height:${height}px`,
+          title: `${server} 提供的界面`,
+        }, []);
+      } else if (/^https:\/\//i.test(url)) {
+        frame = h('iframe', {
+          class: 'mslot-frame',
+          sandbox: 'allow-scripts allow-forms',
+          src: url,
+          style: `height:${height}px`,
+          title: `${server} 提供的界面`,
+        }, []);
+      } else {
+        // 拿不到能安全渲染的内容就说清楚，绝不静默留白
+        frame = h('p', { class: 'mslot-blocked' }, [
+          url ? '这个工具想加载一个非 https 的界面，已挡下。' : '这个工具没有返回可渲染的界面。',
+        ]);
+      }
+      return h('div', { class: 'mcard-slot' }, [
+        h('div', { class: 'mslot-top' }, [
+          icon('ic-mcp'),
+          h('b', {}, [server]),
+          h('span', { class: 'spacer' }, []),
+          h('span', { class: 'mslot-badge' }, ['工具提供的界面']),
+        ]),
+        frame,
+      ]);
     },
   };
 

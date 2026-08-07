@@ -1,0 +1,138 @@
+/* ============================================================
+   .mcomp — 输入条
+   ------------------------------------------------------------
+   Vida 的形：底部居中、超大圆角、字号偏大、右侧一个圆钮。提交之后
+   **同一根条**换成生成态——圆钮变停止方块，底下一团模糊的暖色在游走。
+   不是换一个组件：换组件会让人觉得刚才那句话被吃掉了。
+   ============================================================ */
+
+.mcomp {
+  position: relative;
+  display: flex; flex-direction: column; gap: 9px;
+  padding: 12px 12px 12px 18px;
+  border-radius: 26px;
+  background: var(--card);
+  box-shadow: var(--shadow-lift);
+  transition: box-shadow .22s var(--ease-out), transform .22s var(--ease-out);
+}
+.mcomp:focus-within { box-shadow: var(--shadow-pop); }
+.mcomp[data-density="capsule"] { padding: 9px 9px 9px 14px; border-radius: 20px; }
+
+/* 生成态：条本身安静下来，让底下那团光成为唯一在动的东西 */
+.mcomp[data-state="running"] { box-shadow: var(--shadow-card); }
+.mcomp[data-state="running"] .mcomp-input { color: var(--ink-3); }
+
+.mcomp-line { display: flex; align-items: flex-end; gap: 10px; }
+
+.mcomp-input {
+  flex: 1; min-height: 30px; max-height: 168px;
+  padding: 4px 0 5px; border: 0; outline: none; resize: none;
+  background: transparent; color: var(--ink);
+  font: inherit; font-size: 15.5px; line-height: 1.5;
+}
+.mcomp[data-density="capsule"] .mcomp-input { font-size: 14px; }
+.mcomp-input::placeholder { color: var(--ink-3); }
+.mcomp-input:disabled { -webkit-text-fill-color: var(--ink-3); }
+
+.mcomp-tools { display: flex; align-items: center; gap: 4px; }
+.mcomp-tool {
+  display: grid; place-items: center;
+  width: 32px; height: 32px; padding: 0;
+  border: 0; border-radius: 50%;
+  background: transparent; color: var(--ink-3);
+  cursor: pointer;
+  transition: background .16s var(--ease-out), color .16s var(--ease-out);
+}
+.mcomp-tool svg { width: 17px; height: 17px; stroke: currentColor; fill: none; stroke-width: 1.6; }
+@media (hover: hover) and (pointer: fine) {
+  .mcomp-tool:hover { background: var(--paper-2); color: var(--ink); }
+}
+.mcomp-tool:active { transform: scale(.94); }
+
+/* 提交 / 停止：同一个钮，图形对调 */
+.mcomp-go {
+  position: relative;
+  display: grid; place-items: center;
+  width: 38px; height: 38px; margin-left: 2px; padding: 0;
+  border: 0; border-radius: 50%;
+  background: var(--solid); color: var(--paper);
+  cursor: pointer;
+  transition: transform .18s var(--ease-out), background .18s var(--ease-out);
+}
+.mcomp[data-density="capsule"] .mcomp-go { width: 33px; height: 33px; }
+.mcomp-go:active { transform: scale(.93); }
+.mgo-send {
+  width: 17px; height: 17px; stroke: currentColor; fill: none; stroke-width: 1.9;
+  transition: opacity .18s var(--ease-out), transform .18s var(--ease-out);
+}
+.mgo-stop {
+  position: absolute;
+  width: 12px; height: 12px; border-radius: 3px;
+  background: currentColor;
+  opacity: 0; transform: scale(.6);
+  transition: opacity .18s var(--ease-out), transform .18s var(--ease-out);
+}
+.mcomp[data-state="running"] .mgo-send { opacity: 0; transform: scale(.6); }
+.mcomp[data-state="running"] .mgo-stop { opacity: 1; transform: scale(1); }
+
+/* ---- 口径行：这一轮用哪个模型、能做到哪一步 ----
+   不是主操作，所以不进工具栏。淡、小、贴着条的上沿，需要时点得到。 */
+.mcomp-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-bottom: -2px; }
+.mmeta {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 7px 3px 8px;
+  border: 0; border-radius: var(--r-pill);
+  background: transparent; color: var(--ink-3);
+  font: inherit; font-size: 11.5px; cursor: pointer;
+  transition: background .16s var(--ease-out), color .16s var(--ease-out);
+}
+.mmeta svg { width: 12px; height: 12px; stroke: currentColor; fill: none; stroke-width: 1.7; }
+.mmeta-chev { width: 10px; height: 10px; opacity: .55; }
+.mmeta-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--dot, var(--green));
+}
+@media (hover: hover) and (pointer: fine) {
+  .mmeta:hover { background: var(--card-sunk); color: var(--ink-2); }
+}
+.mmeta:active { transform: scale(.97); }
+
+/* 文件选择器只是 clip 钮的后端，永远不出现在版面上 */
+.mcomp-file { display: none; }
+
+/* ---- 附件：图片直接预览 ----
+   用户要能看见「它待会儿看的是这张」，而不是一个文件名。 */
+.mcomp-strip { display: flex; flex-wrap: wrap; gap: 7px; padding-right: 4px; }
+.mchip {
+  position: relative;
+  display: inline-flex; align-items: center; gap: 6px;
+  max-width: 190px; padding: 4px 8px 4px 6px;
+  border-radius: 11px;
+  background: var(--card-sunk);
+  font-size: 11.5px; color: var(--ink-2);
+  animation: mchip-in .26s var(--ease-out) both;
+}
+@keyframes mchip-in { from { opacity: 0; transform: translateY(4px) scale(.96); } }
+.mchip svg { width: 14px; height: 14px; flex: none; stroke: var(--ink-3); fill: none; stroke-width: 1.6; }
+.mchip img {
+  width: 34px; height: 26px; flex: none;
+  border-radius: 6px; object-fit: cover;
+  background: var(--paper-2);
+}
+.mchip.is-img { padding-left: 4px; }
+.mchip small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mchip-x {
+  display: grid; place-items: center;
+  width: 17px; height: 17px; flex: none; padding: 0;
+  border: 0; border-radius: 50%;
+  background: transparent; color: var(--ink-3); cursor: pointer;
+}
+.mchip-x svg { width: 11px; height: 11px; stroke-width: 2; }
+@media (hover: hover) and (pointer: fine) {
+  .mchip-x:hover { background: var(--paper-2); color: var(--ink); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mchip { animation: none; }
+  .mcomp, .mcomp-go, .mgo-send, .mgo-stop { transition: none; }
+}

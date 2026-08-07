@@ -6,6 +6,8 @@
 <link rel="stylesheet" href="oreo_tokens.css?v=20">
 <link rel="stylesheet" href="oreo.css?v=20">
 <link rel="stylesheet" href="cards.css?v=20">
+<link rel="stylesheet" href="beam.css?v=20">
+<link rel="stylesheet" href="composer.css?v=20">
 <link rel="stylesheet" href="studio.css?v=20">
 </head>
 <body class="studio">
@@ -36,18 +38,8 @@
     <h1 class="hero-title">你指过的每一处，<br>都还 <em>记得</em>。</h1>
     <p class="hero-sub">想让它做点什么？</p>
 
-    <form class="hero-composer" id="hero-composer">
-      <textarea rows="1" placeholder="说点什么，或按 / 用命令" id="hero-input"></textarea>
-      <div class="composer-bar">
-        <button type="button" class="icon-btn is-plain" title="附件"><svg><use href="#ic-clip"/></svg></button>
-        <button type="button" class="icon-btn is-plain" title="引用对象"><svg><use href="#ic-at"/></svg></button>
-        <span class="spacer"></span>
-        <button type="button" class="model-select">
-          <svg class="spark"><use href="#ic-spark"/></svg>Opus 5<svg><use href="#ic-chev"/></svg>
-        </button>
-        <button type="submit" class="send-btn" title="发送"><svg><use href="#ic-send"/></svg></button>
-      </div>
-    </form>
+    <!-- 输入条由 composer.js 造：三个界面同一根条，同一套状态 -->
+    <div class="hero-composer-host" id="hero-composer"></div>
 
     <div class="hero-chips">
       <button class="hero-chip"><svg><use href="#ic-eye"/></svg>读这个窗口</button>
@@ -229,22 +221,8 @@
       </div>
     </div>
 
-    <div class="composer-wrap">
-      <form class="composer">
-        <textarea rows="1" placeholder="继续问…"></textarea>
-        <div class="composer-bar">
-          <button type="button" class="mode-select" title="这一轮允许它做到哪一步">
-            <span class="dot-mode"></span>只读<svg><use href="#ic-chev"/></svg>
-          </button>
-          <button type="button" class="icon-btn is-plain" title="附件"><svg><use href="#ic-clip"/></svg></button>
-          <button type="button" class="icon-btn is-plain" title="引用对象"><svg><use href="#ic-at"/></svg></button>
-          <button type="button" class="icon-btn is-plain" title="说话"><svg><use href="#ic-mic"/></svg></button>
-          <span class="spacer"></span>
-          <button type="button" class="model-select"><svg class="spark"><use href="#ic-spark"/></svg>Opus 5<svg><use href="#ic-chev"/></svg></button>
-          <button type="button" class="effort-select">标准<svg><use href="#ic-chev"/></svg></button>
-          <button type="submit" class="send-btn"><svg><use href="#ic-send"/></svg></button>
-        </div>
-      </form>
+    <div class="composer-wrap" id="chat-composer">
+      <!-- 同上：同一根条 -->
     </div>
   </section>
 
@@ -349,6 +327,7 @@
 <script src="icons.js?v=20"></script>
 <script src="../cards.js?v=20"></script>
 <script src="card_render.js?v=20"></script>
+<script src="composer.js?v=20"></script>
 <script src="live_cards.js?v=20"></script>
 <script src="data.js?v=20"></script>
 <script src="settings.js?v=20"></script>

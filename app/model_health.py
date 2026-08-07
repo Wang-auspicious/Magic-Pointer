@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from dataclasses import dataclass, asdict
 from pathlib import Path
@@ -58,6 +59,45 @@ STATE_MESSAGES = {
     "unconfigured": "还没有配置模型密钥，所以没有调用模型。可在设置的「模型与网络」里填写。",
 }
 
+# 限流有两种，对用户是完全不同的两件事：
+#
+#   短时突发限流 —— 等几十秒就好，「稍后自动重试」是对的。
+#   套餐额度用完 —— 要等几个小时，或者去充值。这时候还说「稍后自动重试」，
+#                   用户会以为是配置坏了，然后去改本来是对的配置。
+#
+# 网关自己在响应体里说清了恢复时间和解决办法（OpenCode Go 的 GoUsageLimitError
+# 就带着「Resets in 3hr 45min」）。那句话原样带出来，比我们复述一遍准确。
+_QUOTA_HINTS = re.compile(
+    r"(usage limit|quota|insufficient|额度|配额|超出限制|resets? in)",
+    re.IGNORECASE,
+)
+_RESET_HINT = re.compile(r"resets? in\s+([0-9]+\s*hr[^.,\"}]*|[0-9]+\s*min[^.,\"}]*)", re.IGNORECASE)
+
+
+def _quota_detail(detail: str) -> str:
+    """从网关的原始报错里摘出「什么时候恢复」这一句。
+
+    只在确实是额度类报错时才摘——普通的突发限流没有恢复时间可说，
+    硬编一个出来就是在撒谎。
+    """
+    text = str(detail or "")
+    if not text or not _QUOTA_HINTS.search(text):
+        return ""
+    try:
+        payload = json.loads(text)
+        message = str(payload.get("error", {}).get("message") or "")
+    except (ValueError, AttributeError):
+        message = ""
+    if not message:
+        found = re.search(r'"message"\s*:\s*"([^"]{4,300})"', text)
+        message = found.group(1) if found else ""
+    if not message:
+        return ""
+    reset = _RESET_HINT.search(message)
+    tail = f"（约 {reset.group(1).strip()} 后恢复）" if reset else ""
+    return f"端点原话：{message.strip()[:200]}{tail}"
+
+
 
 def _runtime_dir() -> Path:
     return Path(os.environ.get("MAGIC_POINTER_USER_DATA_DIR") or (ROOT / "data" / "runtime"))
@@ -92,7 +132,9 @@ class GatewayHealth:
 
     @property
     def message(self) -> str:
-        return STATE_MESSAGES.get(self.state, "模型端点当前不可用，已跳过模型调用。")
+        base = STATE_MESSAGES.get(self.state, "模型端点当前不可用，已跳过模型调用。")
+        detail = _quota_detail(self.detail)
+        return f"{base} {detail}" if detail else base
 
     def to_public_dict(self) -> dict[str, Any]:
         return {

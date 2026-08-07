@@ -1,0 +1,144 @@
+/* ============================================================
+   .mbeam — 生成态的光带
+   ------------------------------------------------------------
+   Vida 那根条在生成时底下有一团模糊的彩色在游走。看清楚了它不是
+   一条锐利的渐变线扫过去——是几团低饱和的色斑在白底下面漂，边缘
+   完全糊掉，只透出很淡的一层。
+
+   为什么值得抄：它同时说了两件事——「在动」和「还要一会儿」——
+   却没有假装知道进度。一条从 0 爬到 90% 再卡住的进度条是在撒谎，
+   一个转圈是在说「我不打算告诉你任何事」。
+
+   我们换成 Oreo 暖的色相：琥珀 / 陶土 / 青。
+   ============================================================ */
+
+.mbeam {
+  position: absolute; inset: 0;
+  border-radius: inherit; overflow: hidden;
+  pointer-events: none; opacity: 0;
+  transition: opacity .32s var(--ease-out);
+}
+.mbeam[data-on="true"] { opacity: 1; }
+
+.mbeam i {
+  position: absolute; top: 50%; left: 0;
+  width: 42%; height: 300%;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  filter: blur(22px);
+  /* multiply 而不是默认叠加：三团色如果只是半透明地压在一起，
+     互补的部分会抵消成中性灰——上一版就是这样，看起来像脏了一块。
+     multiply 让它们像颜料一样混，红的地方还是红的。 */
+  mix-blend-mode: multiply;
+  will-change: transform;
+}
+.mbeam i:nth-child(1) {
+  background: radial-gradient(circle, rgba(214, 88, 74, .55), transparent 64%);
+  animation: mbeam-a 3.6s var(--ease-in-out) infinite;
+}
+.mbeam i:nth-child(2) {
+  background: radial-gradient(circle, rgba(232, 160, 88, .50), transparent 64%);
+  animation: mbeam-b 4.4s var(--ease-in-out) infinite;
+}
+.mbeam i:nth-child(3) {
+  background: radial-gradient(circle, rgba(120, 160, 205, .42), transparent 66%);
+  animation: mbeam-c 5.2s var(--ease-in-out) infinite;
+}
+/* 三团各走各的：同相位会看起来像一整块在平移，那就又变回一条扫光了 */
+@keyframes mbeam-a {
+  0%, 100% { transform: translate(-40%, -50%) scale(1); }
+  50%      { transform: translate(150%, -50%) scale(1.25); }
+}
+@keyframes mbeam-b {
+  0%, 100% { transform: translate(190%, -50%) scale(1.15); }
+  50%      { transform: translate(10%, -50%) scale(.9); }
+}
+@keyframes mbeam-c {
+  0%, 100% { transform: translate(60%, -50%) scale(.95); }
+  50%      { transform: translate(230%, -50%) scale(1.3); }
+}
+
+/* ============================================================
+   .mhi — 荧光笔
+   ------------------------------------------------------------
+   Vida 把草稿落进 Slack 时，被改动的关键短语用黄色荧光笔标出来。
+   这是「我改了哪里」最省事的说法——不用写一段解释，也不用做 diff。
+   落笔从左往右扫出来，像真的用笔划过去。
+   ============================================================ */
+.mhi {
+  position: relative;
+  padding: 0 2px;
+  border-radius: 3px;
+  /* <mark> 自带 UA 的 background-color: mark（刺眼的纯黄）和 color: marktext。
+     不清掉这两条，下面这支笔画的颜色一辈子看不见——第一版屏幕上那块荧光
+     其实是浏览器默认色，跟暖色盘无关；深色模式下还会强制黑字。 */
+  background-color: transparent;
+  color: inherit;
+  background-image: linear-gradient(var(--pen), var(--pen));
+  background-repeat: no-repeat;
+  background-size: 0% 100%;
+  animation: mhi-sweep .42s var(--ease-out) forwards;
+}
+.mhi:nth-of-type(2) { animation-delay: .12s; }
+.mhi:nth-of-type(3) { animation-delay: .24s; }
+.mhi:nth-of-type(4) { animation-delay: .36s; }
+@keyframes mhi-sweep { to { background-size: 100% 100%; } }
+
+/* ============================================================
+   .mslot — MCP 挂进来的界面
+   ------------------------------------------------------------
+   MCP 2026-07-28 把「扩展」提成一等公民，MCP Apps 允许 server 在
+   对话里渲染自己的交互式 UI（沙盒 iframe）。对我们的意义：一次问答
+   的结果可以是别人家的一块界面，而不只是我们画的一张卡。
+
+   两条硬规矩，都是安全边界，不是样式：
+
+   1. **沙盒 iframe，没有 allow-same-origin。** 它拿不到我们的 DOM、
+      cookie、preload 桥。渲染别人的 UI 不等于把渲染进程交出去。
+   2. **框住它。** 一块挂进来的界面必须看得出是「别人的」——所以有
+      一条来源行写清是哪个 server，边框比我们自己的卡更实。
+      用户任何时候都要能分清「它说的」和「我们说的」。
+   ============================================================ */
+.mcard-slot {
+  display: grid; gap: 0;
+  border-radius: var(--r-tile); overflow: hidden;
+  background: var(--card-sunk);
+  /* 这一圈必须是真 border，不能用 inset box-shadow：inset 阴影画在自己的
+     背景层上，而 iframe 是不透明的替换元素，会整片盖住它——第一版就是这样，
+     只剩四个角上两道小刺，工具界面看上去跟我们自己的卡糊成一片。
+     border 占布局，孩子盖不掉。 */
+  border: 1px solid var(--hairline-2);
+  isolation: isolate;
+}
+.mslot-top {
+  display: flex; align-items: center; gap: 7px;
+  padding: 7px 11px;
+  font-size: 11.5px; color: var(--ink-3);
+  box-shadow: inset 0 -1px 0 var(--hairline);
+}
+.mslot-top svg { width: 12px; height: 12px; stroke: currentColor; fill: none; stroke-width: 1.7; }
+.mslot-top b { font-weight: 600; color: var(--ink-2); }
+.mslot-top .spacer { flex: 1; }
+.mslot-badge {
+  padding: 1px 7px; border-radius: var(--r-pill);
+  background: var(--paper-2); color: var(--ink-3);
+  font-size: 10.5px; letter-spacing: .04em;
+}
+.mslot-frame {
+  display: block; width: 100%; border: 0;
+  background: var(--card);
+  min-height: 96px;
+  /* 高度由 server 声明，但上限归我们——一块工具界面不能把整条流顶穿。
+     内容比这更高时在 iframe 内部滚动，而不是溢出到卡片外面。 */
+  max-height: 520px;
+}
+.mslot-blocked {
+  padding: 18px 14px; text-align: center;
+  font-size: 12.5px; color: var(--ink-3);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mbeam i { animation: none; }
+  .mbeam[data-on="true"] i:nth-child(1) { transform: translate(50%, -50%) scale(1.4); }
+  .mhi { animation: none; background-size: 100% 100%; }
+}

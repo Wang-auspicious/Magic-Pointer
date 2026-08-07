@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<title>交互实验</title>
+<link rel="stylesheet" href="oreo_tokens.css">
+<link rel="stylesheet" href="oreo.css">
+<link rel="stylesheet" href="cards.css">
+<link rel="stylesheet" href="beam.css">
+<link rel="stylesheet" href="composer.css">
+<style>
+  /* 只为看清交互本身，不属于产品 */
+  body {
+    margin: 0; min-height: 100vh; padding: 0 0 60px;
+    background: var(--paper); font-family: var(--font-ui); color: var(--ink);
+  }
+  .lab-head { padding: 34px 40px 6px; }
+  .lab-head h1 { font-family: var(--font-serif); font-size: 28px; font-weight: 400; margin: 0 0 5px; }
+  .lab-head p { margin: 0; font-size: 13px; color: var(--ink-2); }
+  .lab-sec { padding: 28px 40px 0; }
+  .lab-cap {
+    margin-bottom: 12px; font-size: 11px; font-weight: 600;
+    letter-spacing: .07em; text-transform: uppercase; color: var(--ink-3);
+  }
+  .lab-row { display: flex; flex-wrap: wrap; gap: 22px; align-items: flex-start; }
+  .lab-stage {
+    position: relative; width: 100%; max-width: 880px;
+    padding: 26px; border-radius: 20px;
+    background:
+      radial-gradient(70% 90% at 22% 12%, rgba(180,105,14,.07), transparent 70%),
+      radial-gradient(60% 80% at 84% 78%, rgba(14,124,134,.06), transparent 70%),
+      var(--paper-2);
+  }
+  .lab-note { margin: 10px 0 0; font-size: 12px; color: var(--ink-3); }
+  .card-slot { max-width: 420px; }
+</style>
+</head>
+<body>
+
+<div class="lab-head">
+  <h1>交互</h1>
+  <p>唤起 → 生成 → 结果。每一段都是真的组件，不是示意图。</p>
+</div>
+
+<!-- 1. 胶囊：三态 -->
+<section class="lab-sec">
+  <div class="lab-cap">胶囊 · 空闲 / 生成中 / 有附件</div>
+  <div class="lab-stage">
+    <div id="capsules"></div>
+  </div>
+</section>
+
+<!-- 2. 荧光笔 -->
+<section class="lab-sec">
+  <div class="lab-cap">落笔：改了哪里就标哪里</div>
+  <div class="lab-stage" id="hi-stage"></div>
+</section>
+
+<!-- 3. MCP 挂进来的界面 -->
+<section class="lab-sec">
+  <div class="lab-cap">工具自己渲染的一块界面</div>
+  <div class="lab-row" id="slots"></div>
+</section>
+
+<script src="icons.js"></script>
+<script src="../cards.js"></script>
+<script src="card_render.js"></script>
+<script src="composer.js"></script>
+<script src="lab.js"></script>
+</body>
+</html>

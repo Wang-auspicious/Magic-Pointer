@@ -59,6 +59,7 @@ export default [
         bindSettings: 'readonly',
         renderCard: 'readonly',
         CardModel: 'readonly',
+        Composer: 'readonly',
         LiveCards: 'readonly',
         cardElapsedText: 'readonly',
         makeOrb: 'readonly',

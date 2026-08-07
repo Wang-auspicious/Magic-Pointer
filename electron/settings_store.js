@@ -161,6 +161,22 @@ function defaultSettings() {
       browser_devtools_enabled: true,
       browser_devtools_endpoints: ['http://127.0.0.1:9222'],
     },
+    // 收藏箱。剪贴板里出现位图就落盘，并把本地路径写回剪贴板——
+    // 这样终端里 Ctrl+V 拿到的是路径，图片编辑器里粘贴仍然是图。
+    //
+    // 少了这一段，`fabricSettings.stash` 永远是 undefined：采集虽然靠
+    // `!== false` 侥幸跑起来了，但设置页里看不到、关不掉，dir / text
+    // 这些也全都读不到。
+    stash: {
+      clipboard: true,
+      // 文本默认关。图片是用户明确截下来的，文本不是——每一次 Ctrl+C 都会
+      // 经过这里，包括密码管理器里的那一次。
+      text: false,
+      text_min_chars: 12,
+      dir: '',
+      burst_window_ms: 120000,
+      dedupe_window_ms: 5000,
+    },
     recipe_enabled: {},
   };
 }
@@ -574,6 +590,7 @@ function validate(settings) {
     appearance,
     accessibility,
     connections,
+    stash: { ...defaults.stash, ...(settings.stash || {}) },
     recipe_enabled: { ...(settings.recipe_enabled || {}) },
   };
 }
