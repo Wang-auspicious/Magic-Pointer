@@ -859,8 +859,11 @@ function updateStage(payload = {}) {
     });
   }
   if (type === 'RESULT' || type === 'COMPLETE' || type === 'ERROR') recordConversationTurn(payload, type);
+  // 图相关结果（图转提示词/生图/截屏分析）→ 输入图自动进收藏箱：
+  // 用户要的结果图不该只活在对话里，收藏箱随时能翻回来。
+  autoStashResultImage(payload);
   // 「已受理」不是「已完成」。后台任务这时候才刚起来，卡上要继续动——
-  // 底层早就能查状态了，缺的一直是这边没人在看。
+  // 底层早就能查状态了，缺的一直是这边没在看。
   watchTaskFromEvent(payload);
   safeSurfaceSend('stage', 'stage:update', payload);
   // Clicky 式引导：回答里带了 [POINT] 指点，就把目标点给蓝边光标所在的
@@ -1442,6 +1445,31 @@ function proactiveStore() {
     },
   });
   return proactiveOnceStore;
+}
+
+// 图相关结果（图转提示词/生图/截屏分析）→ 输入图自动进收藏箱。
+// 用户要的结果图不该只活在对话里，收藏箱随时能翻回来。失败静默
+// （收藏是副作用，不是主路径）。
+function autoStashResultImage(payload) {
+  try {
+    if (fabricSettings?.stash?.clipboard === false) return;
+    const token = payload?.selectionSessionToken;
+    const entry = token ? selectionSessions.get(token) : null;
+    if (!entry) return;
+    // 图相关 = 用户划的是图片/屏幕区域（image / screen_region），
+    // 不是文本选区。图转提示词/生图/截屏分析都落在这两类上。
+    const sourceKind = String(entry?.snapshot?.source_kind || '');
+    if (!/image|screen_region/.test(sourceKind)) return;
+    const object = episodeObjectForSession(entry);
+    const candidates = [object.source?.annotatedPath, object.source?.path].filter(Boolean);
+    const file = candidates.find((p) => {
+      try { return fs.statSync(p).isFile() && /\.(png|jpe?g|webp|bmp)$/i.test(p); } catch (_) { return false; }
+    });
+    if (!file) return;
+    const image = nativeImage.createFromPath(file);
+    if (image.isEmpty()) return;
+    initializeStashRuntime().ingest(image, 'shot').catch(() => {});
+  } catch (_) { /* 收藏失败不影响结果 */ }
 }
 
 function feedProactiveEvent(event) {
