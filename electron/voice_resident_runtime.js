@@ -31,6 +31,8 @@ class VoiceResidentRuntime {
     this.config = null;
     this.client = null;
     this.active = null;
+    this._restartTimer = null;
+    this._restartAttempts = 0;
   }
 
   configure(next) {
@@ -38,6 +40,7 @@ class VoiceResidentRuntime {
     if (sameConfig(this.config, config)) return { ok: true, rebuilt: false, changed: false };
     if (this.active) return { ok: false, error: 'voice_session_active' };
     const hadClient = Boolean(this.client);
+    this._clearRestart();
     this._disposeClient();
     this.config = config;
     this._publishStatus(config.enabled ? 'unloaded' : 'disabled');
@@ -131,8 +134,17 @@ class VoiceResidentRuntime {
 
   shutdown() {
     this.active = null;
+    this._clearRestart();
     this._disposeClient();
     this._publishStatus('unloaded');
+  }
+
+  _clearRestart() {
+    if (this._restartTimer) {
+      clearTimeout(this._restartTimer);
+      this._restartTimer = null;
+    }
+    this._restartAttempts = 0;
   }
 
   _ensureClient() {
@@ -159,9 +171,40 @@ class VoiceResidentRuntime {
       if (!details.expected) {
         this.active = null;
         this._publishStatus('error', 'voice_worker_crashed');
+        // 非预期崩溃自动重启：退避 1s/2s/4s/8s/16s，上限 5 次后停手
+        // （避免崩溃循环烧 CPU）。有活跃会话时不重启（会话自己会失败
+        // 返回，用户可重试）。
+        this._scheduleRestart();
       }
     });
     return this.client;
+  }
+
+  _scheduleRestart() {
+    if (this._restartTimer) return;
+    if (!this.config?.enabled) return;
+    if (this.active) return;
+    const attempts = this._restartAttempts;
+    if (attempts >= 5) {
+      this._publishStatus('error', 'voice_worker_crash_loop');
+      return;
+    }
+    const delay = Math.min(16_000, 1000 * (2 ** attempts));
+    this._restartAttempts += 1;
+    this._publishStatus('error', 'voice_worker_restarting');
+    this._restartTimer = setTimeout(() => {
+      this._restartTimer = null;
+      if (!this.config?.enabled || this.active) return;
+      try {
+        const client = this._ensureClient();
+        client.ensureStarted({ preload: true });
+        this._publishStatus('warming');
+      } catch (_) {
+        this._disposeClient();
+        this._publishStatus('error', 'voice_worker_restart_failed');
+        this._scheduleRestart();
+      }
+    }, delay);
   }
 
   _disposeClient() {
