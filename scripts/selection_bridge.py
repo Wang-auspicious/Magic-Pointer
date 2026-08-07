@@ -331,6 +331,9 @@ def _enrich_interaction_episode_ocr(
             read = _read_local_ocr_boxes(path, strokes_local=None, selection_local=None)
             if not read:
                 cache[path] = ("", "", False)
+            elif isinstance(read, tuple) and read[1] == "worker-busy":
+                # 忙 ≠ 没文字：不缓存，本次不 enrich，下次 tick 再读
+                return
             else:
                 blocks, engine = read
                 clipped, _size = _ocr_capture_edge_state(path, list(blocks))
@@ -724,6 +727,12 @@ def _read_local_ocr_boxes(
         strokes_local=strokes_local,
         selection_local=selection_local,
     )
+    if worker_result == _OCR_BUSY:
+        # 忙 ≠ 没文字，也不该触发第二个冷实例（会双份 CPU/内存）。
+        # 返回空 + busy 引擎标记；缓存路径据此不缓存（下次重读）。
+        return [], "worker-busy"
+    if worker_result == _OCR_UNAVAILABLE:
+        return None
     if worker_result is not None:
         return worker_result
     return _read_local_ocr_boxes_full(capture_path)
@@ -836,6 +845,10 @@ def _filter_ocr_blocks_by_bbox(
 OCR_WORKER_PORT_FILE = ROOT / "data" / "runtime" / "ocr_worker.port"
 OCR_WORKER_SCRIPT = ROOT / "scripts" / "ocr_resident_worker.py"
 
+# OCR worker 请求的三态哨兵：忙（≠没文字）/ 不可用（连接失败）
+_OCR_BUSY = "__ocr_busy__"
+_OCR_UNAVAILABLE = "__ocr_unavailable__"
+
 
 def _ocr_worker_connect(timeout: float = 3.0) -> Any:
     import time
@@ -877,8 +890,13 @@ def _ocr_worker_request(
     strokes_local: list[list[tuple[int, int]]] | None = None,
     selection_local: list[int] | None = None,
     timeout: float = 10.0,
-) -> tuple[list[dict[str, Any]], str] | None:
-
+) -> tuple[list[dict[str, Any]], str] | None | str:
+    """OCR 常驻 worker 请求。返回三态：
+      (blocks, engine) — 成功
+      _OCR_BUSY        — worker 忙（不等于没文字，不缓存空结果）
+      _OCR_UNAVAILABLE — 连接失败/超时（可触发冷实例兜底）
+      None             — 无可用结果
+    """
     sock = _ocr_worker_connect(timeout=2.0)
     if sock is None:
         _spawn_ocr_worker()
@@ -905,13 +923,15 @@ def _ocr_worker_request(
         if response.get("ok") is True and response.get("blocks") is not None:
             return list(response["blocks"]), str(response.get("engine") or "rapidocr-onnx")
         if response.get("error") == "worker_busy":
-            return [], "rapidocr-worker-busy"
+            # 忙 ≠ 没文字。返回 busy 标记，调用方明确知道是「正在读」，
+            # 绝不把空 blocks 当「屏幕上没有文字」缓存下来。
+            return _OCR_BUSY
         return None
     except Exception:
         # A connected resident that missed its budget must not trigger a second
         # cold RapidOCR instance in this short-lived bridge process. That doubled
         # CPU/memory and turned one slow request into a minute-long queue.
-        return [], "rapidocr-worker-unavailable"
+        return _OCR_UNAVAILABLE
     finally:
         try:
             sock.close()
