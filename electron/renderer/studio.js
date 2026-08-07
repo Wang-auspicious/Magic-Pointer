@@ -669,7 +669,36 @@ Data.onChange(() => {
   renderTimeline(true);
   renderMemory(true);
   renderArtifacts(true);
+  refreshStashSummaries();
 });
+
+// 收藏箱条目更新（新采集、自动简介生成）时：只更新简介文本，
+// 不重绘画布（保住用户的平移/缩放状态）。
+function refreshStashSummaries() {
+  const world = document.getElementById('canvas-world');
+  if (!world) return;
+  Data.stash().then((bursts) => {
+    const bySrc = new Map();
+    for (const b of bursts) {
+      for (const it of b.items) {
+        if (it.src && it.summary) bySrc.set(it.src, it.summary);
+      }
+    }
+    world.querySelectorAll('.node[data-src]').forEach((node) => {
+      const summary = bySrc.get(node.dataset.src);
+      if (!summary) return;
+      if (node.dataset.summary === summary) return;
+      node.dataset.summary = summary;
+      let el = node.querySelector('.node-summary');
+      if (!el) {
+        el = document.createElement('span');
+        el.className = 'node-summary';
+        node.appendChild(el);
+      }
+      el.textContent = summary;
+    });
+  }).catch(() => {});
+}
 
 /* 调试用：?view=stash / ?view=timeline / ?view=chat / ?view=settings */
 const q = new URLSearchParams(location.search).get('view');

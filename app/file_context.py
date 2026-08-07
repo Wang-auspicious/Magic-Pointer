@@ -101,7 +101,8 @@ def _read_text_file(path: Path, max_chars: int) -> tuple[str, bool, str]:
             continue
     text = raw.decode("utf-8", errors="replace")
     limited, truncated = _limit_text(text, max_chars)
-    return limited, True or truncated, "text:utf-8-replace"
+    # 与其他 encoding 分支一致：文件比读取上限大也算截断（没读全）
+    return limited, truncated or len(raw) < file_size, "text:utf-8-replace"
 
 
 class _VisibleHtmlTextParser(HTMLParser):
