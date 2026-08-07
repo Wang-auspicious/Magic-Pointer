@@ -40,6 +40,8 @@
   const resultCard = document.getElementById('stage-result');
   const threadPanel = document.getElementById('stage-thread');
   const threadTitle = document.getElementById('thread-title');
+  const threadEyebrow = document.getElementById('thread-eyebrow');
+  const threadEyebrowText = document.getElementById('thread-eyebrow-text');
   const threadCount = document.getElementById('thread-count');
   const threadCopy = document.getElementById('thread-copy');
   const threadInsert = document.getElementById('thread-insert');
@@ -221,10 +223,14 @@
     if (!screenPointLayer) return;
     screenPointLayer.replaceChildren();
     const list = Array.isArray(points) ? points : [];
+    // [POINT] 坐标是物理屏幕像素（视觉模型看全屏截图给出）。stage 窗口
+    // 坐标是 DIP——先减窗口原点、再除缩放（和 captureProof 同一套换算，
+    // 否则 200% 缩放屏上箭头落在二分之一处）。
+    const scale = window.devicePixelRatio > 0 ? window.devicePixelRatio : 1;
     let drawn = 0;
     for (const point of list) {
-      const x = Math.round(Number(point.x) - stageOriginX);
-      const y = Math.round(Number(point.y) - stageOriginY);
+      const x = Math.round((Number(point.x) - stageOriginX) / scale);
+      const y = Math.round((Number(point.y) - stageOriginY) / scale);
       if (![x, y].every(Number.isFinite)) continue;
       if (x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight) continue;
       const element = document.createElement('div');
@@ -1552,6 +1558,12 @@
     const firstAsk = String(turns[0]?.ask || '').trim();
     threadTitle.textContent = firstAsk || '选中的内容';
     threadTitle.title = firstAsk;
+    // 眉毛照抄参考里那行 `▽ TASK FINISHED`：它说的是这张卡此刻的状态，
+    // 用等宽 + 拉开的字距，因为在这套版式里等宽始终代表「机器说的事实」。
+    const failed = turns[turns.length - 1]?.status === 'failed';
+    const eyebrowState = pending ? 'running' : failed ? 'failed' : 'done';
+    threadEyebrow.dataset.state = eyebrowState;
+    threadEyebrowText.textContent = pending ? '正在处理' : failed ? '没能完成' : '已完成';
     const firstAskRow = resultCard.firstElementChild?.querySelector('.turn-ask');
     if (firstAskRow) firstAskRow.hidden = Boolean(firstAsk);
     // 还在跑的时候没有可复制、可填入的东西。一个点了没反应的按钮比一个

@@ -722,8 +722,8 @@ function ensureFreshGestureOverlay() {
 // screen capture (SetWindowDisplayAffinity/WDA_EXCLUDEFROMCAPTURE). When that
 // holds, the capsule can never contaminate the screenshot, so it may appear
 // immediately — before Python has even started. Verify it on real hardware by
-// opening the newest data/runtime/selection-captures/*.png: the capsule must
-// not be in the image, and the capsule itself must not render black.
+// opening the newest .png under data/runtime/selection-captures: the capsule
+// must not be in the image, and the capsule itself must not render black.
 //
 // If that verification fails, set this to false. The capsule then waits for the
 // CAPSULE_REVEAL_PHASE marker instead — the moment the pixels are frozen and
@@ -864,7 +864,15 @@ function updateStage(payload = {}) {
     const x = Number(p.x);
     const y = Number(p.y);
     if (Number.isFinite(x) && Number.isFinite(y)) {
-      overlayWindow.webContents.send('overlay:guide-point', { x, y, count: points.length });
+      // [POINT] 坐标是物理屏幕像素（视觉模型看全屏截图给出），overlay
+      // canvas 是 DIP——先除缩放，overlay 里直接当窗口坐标用。
+      const display = screen.getDisplayNearestPoint({ x, y });
+      const scale = (display && display.scaleFactor) || 1;
+      overlayWindow.webContents.send('overlay:guide-point', {
+        x: x / scale,
+        y: y / scale,
+        count: points.length,
+      });
     }
   }
 }
@@ -2951,6 +2959,7 @@ app.on('will-quit', () => {
   temporaryDismissShortcutRegistered = false;
   temporaryGestureSubmitShortcutRegistered = false;
   if (mousePollTimer) clearInterval(mousePollTimer);
+  stopTitleBarSampling();
   if (wiggleCalibrationTimer) clearTimeout(wiggleCalibrationTimer);
   voiceRuntime?.shutdown();
   try { if (pointerStateChild && !pointerStateChild.killed) pointerStateChild.kill(); } catch (_) {}
