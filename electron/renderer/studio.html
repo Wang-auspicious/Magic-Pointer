@@ -6,8 +6,6 @@
 <link rel="stylesheet" href="oreo_tokens.css?v=20">
 <link rel="stylesheet" href="oreo.css?v=20">
 <link rel="stylesheet" href="cards.css?v=20">
-<link rel="stylesheet" href="beam.css?v=20">
-<link rel="stylesheet" href="composer.css?v=20">
 <link rel="stylesheet" href="studio.css?v=20">
 </head>
 <body class="studio">
@@ -38,8 +36,18 @@
     <h1 class="hero-title">你指过的每一处，<br>都还 <em>记得</em>。</h1>
     <p class="hero-sub">想让它做点什么？</p>
 
-    <!-- 输入条由 composer.js 造：三个界面同一根条，同一套状态 -->
-    <div class="hero-composer-host" id="hero-composer"></div>
+    <form class="hero-composer" id="hero-composer">
+      <textarea rows="1" placeholder="说点什么，或按 / 用命令" id="hero-input"></textarea>
+      <div class="composer-bar">
+        <button type="button" class="icon-btn is-plain" title="附件"><svg><use href="#ic-clip"/></svg></button>
+        <button type="button" class="icon-btn is-plain" title="引用对象"><svg><use href="#ic-at"/></svg></button>
+        <span class="spacer"></span>
+        <button type="button" class="model-select">
+          <svg class="spark"><use href="#ic-spark"/></svg>Opus 5<svg><use href="#ic-chev"/></svg>
+        </button>
+        <button type="submit" class="send-btn" title="发送"><svg><use href="#ic-send"/></svg></button>
+      </div>
+    </form>
 
     <div class="hero-chips">
       <button class="hero-chip"><svg><use href="#ic-eye"/></svg>读这个窗口</button>
@@ -86,20 +94,10 @@
       <div class="main-title">
         <b id="chat-title">这段代码在干嘛？</b>
         <span class="origin-wrap">
-          <button class="origin" id="chat-origin"><svg><use href="#ic-code"/></svg>VS Code<i>·</i>uia_text_adapter.py<i>:</i>118</button>
-          <span class="peek" role="tooltip">
-            <span class="peek-top"><svg><use href="#ic-code"/></svg>uia_text_adapter.py<em>113–123</em></span>
-            <pre class="peek-code"><span class="ln">113</span>    def _probe_with_deadline(self, hwnd, point):
-<span class="ln">114</span>        started = time.perf_counter()
-<span class="ln">115</span>        probe = self._ensure_probe()
-<span class="ln">116</span>        if probe is None:
-<span class="ln">117</span>            return None
-<span class="ln hit">118</span><span class="hit-line">        deadline = started + PROBE_DEADLINE_MS / 1000</span>
-<span class="ln">119</span>        while time.perf_counter() &lt; deadline:
-<span class="ln">120</span>            node = probe.poll(hwnd, point)
-<span class="ln">121</span>            if node is not None:
-<span class="ln">122</span>                return node
-<span class="ln">123</span>        return None</pre>
+          <button class="origin" id="chat-origin" title="悬停查看你划中的那块"><svg><use href="#ic-eye"/></svg><span id="chat-origin-text">当前选区</span></button>
+          <span class="peek" role="tooltip" id="chat-peek" hidden>
+            <span class="peek-top"><svg><use href="#ic-eye"/></svg>你划中的这块<em id="peek-label">选区预览</em></span>
+            <img id="peek-image" class="peek-img" alt="划线选区预览" />
           </span>
         </span>
       </div>
@@ -221,8 +219,22 @@
       </div>
     </div>
 
-    <div class="composer-wrap" id="chat-composer">
-      <!-- 同上：同一根条 -->
+    <div class="composer-wrap">
+      <form class="composer">
+        <textarea rows="1" placeholder="继续问…"></textarea>
+        <div class="composer-bar">
+          <button type="button" class="mode-select" title="这一轮允许它做到哪一步">
+            <span class="dot-mode"></span>只读<svg><use href="#ic-chev"/></svg>
+          </button>
+          <button type="button" class="icon-btn is-plain" title="附件"><svg><use href="#ic-clip"/></svg></button>
+          <button type="button" class="icon-btn is-plain" title="引用对象"><svg><use href="#ic-at"/></svg></button>
+          <button type="button" class="icon-btn is-plain" title="说话"><svg><use href="#ic-mic"/></svg></button>
+          <span class="spacer"></span>
+          <button type="button" class="model-select"><svg class="spark"><use href="#ic-spark"/></svg>Opus 5<svg><use href="#ic-chev"/></svg></button>
+          <button type="button" class="effort-select">标准<svg><use href="#ic-chev"/></svg></button>
+          <button type="submit" class="send-btn"><svg><use href="#ic-send"/></svg></button>
+        </div>
+      </form>
     </div>
   </section>
 
@@ -327,7 +339,6 @@
 <script src="icons.js?v=20"></script>
 <script src="../cards.js?v=20"></script>
 <script src="card_render.js?v=20"></script>
-<script src="composer.js?v=20"></script>
 <script src="live_cards.js?v=20"></script>
 <script src="data.js?v=20"></script>
 <script src="settings.js?v=20"></script>

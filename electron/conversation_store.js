@@ -24,10 +24,33 @@ function objectKey(object = {}) {
   return filled.length ? filled.join('|') : 'unknown';
 }
 
+// 标题不是用户问题的截断——把问题压成一句「对象 + 动作」的小结。
+// 纯规则、零延迟、不调模型：句子短、疑问词与语气词剥掉、保留名词。
+// 规则做不好（句子太怪）才退回截断，绝不显示「你问的那句原话」。
 function titleFrom(question = '') {
   const clean = String(question).replace(/\s+/g, ' ').trim();
   if (!clean) return '未命名';
-  return clean.length > TITLE_MAX ? `${clean.slice(0, TITLE_MAX - 1)}…` : clean;
+
+  let t = clean;
+  // 剥问句尾巴：这些词结尾时截掉，问句变陈述
+  t = t.replace(/([？?])$/, '');
+  for (const tail of ['是什么意思', '是干什么的', '是怎么回事', '在干嘛', '在做什么', '怎么用', '怎么做', '为什么']) {
+    if (t.endsWith(tail)) { t = t.slice(0, -tail.length).trim(); break; }
+  }
+  // 剥开头语气词
+  t = t.replace(/^(请|帮我|麻烦|能不能|可以|怎么|如何|为什么)/, '');
+  t = t.replace(/^(请问|我想问|问一下)/, '');
+  t = t.replace(/^(这个|这段|这行|这里|那边)/, '');
+  t = t.trim();
+  if (!t) t = clean;
+
+  // 太长就按标点断第一句；还长就截断
+  if (t.length > TITLE_MAX) {
+    const cut = t.search(/[，。；,;:：]/);
+    if (cut > 0 && cut < TITLE_MAX) t = t.slice(0, cut).trim();
+  }
+  if (t.length > TITLE_MAX) t = `${t.slice(0, TITLE_MAX - 1)}…`;
+  return t;
 }
 
 // 侧栏那一行副标题：应用 + 你指的那个东西。

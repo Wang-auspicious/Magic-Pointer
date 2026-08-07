@@ -19,15 +19,17 @@ assert.strictEqual(objectKey({ app: 'a', windowTitle: 'b' }), 'a|b');
 assert.strictEqual(objectKey({}), 'unknown');
 assert.strictEqual(objectKey({ app: 'a' }), objectKey({ app: 'a' }), '同一输入必须得到同一个键');
 
-// ---- 标题截断 ----
-assert.strictEqual(titleFrom('  这段代码  在干嘛？ '), '这段代码 在干嘛？');
+// ---- 标题：规则化小结，不是问题原文截断 ----
+assert.strictEqual(titleFrom('  这段代码  在干嘛？ '), '代码');
+assert.strictEqual(titleFrom('帮我总结这个表格是什么意思'), '总结这个表格');
+assert.strictEqual(titleFrom('为什么这段代码会崩溃'), '代码会崩溃');
 assert.strictEqual(titleFrom(''), '未命名');
 assert.ok(titleFrom('x'.repeat(60)).endsWith('…'));
 
 // ---- 第一次指某个对象 → 新建 ----
 const c1 = store.appendTurn({ question: '这段代码在干嘛？', answer: 'UIA 硬超时兜底。', object: code });
 assert.strictEqual(c1.turns.length, 1);
-assert.strictEqual(c1.title, '这段代码在干嘛？');
+assert.strictEqual(c1.title, '代码');
 assert.strictEqual(c1.subtitle, 'Code.exe · 第 118 行');
 
 // ---- 追问同一个对象 → 接在同一条上，不新开 ----

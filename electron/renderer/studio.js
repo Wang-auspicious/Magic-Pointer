@@ -67,32 +67,7 @@ function makeOrb(seed, size = 64) {
   </svg>`;
 }
 
-/* ---- 缩略图 ----
-   有真图就显示真图。上一版这里永远画的是「按描述文字生成的暖调渐变」，
-   于是用户在微信里截的图明明已经在盘上了，画布里看到的还是一块假色块——
-   看起来就像「截图没进来」。makeShot 只在拿不到文件时兜底。 */
-function thumbStyle(item) {
-  const src = safeStashSrc(item && item.src);
-  return src
-    ? `background-image:url("${src.split('"').join('%22')}");background-size:cover;background-position:center`
-    : `background-image:${makeShot((item && item.desc) || '')}`;
-}
-
-// 只放行本地文件和我们自己写出来的 data:image。
-// 收藏箱的路径来自磁盘，但拼进 style 之前仍然要挡住 javascript: 之类的东西。
-function safeStashSrc(raw) {
-  const value = String(raw || '').trim();
-  if (!value) return '';
-  if (/^data:image\//i.test(value)) return value;
-  if (/^file:\/\//i.test(value)) return value;
-  // 绝对路径 → file:// URL。注意 `C:\` 的盘符长得像 scheme，不能当 URL 放过。
-  if (/^([a-zA-Z]:[\\/]|\/)/.test(value)) {
-    const slashed = value.replace(/\\/g, '/');
-    return slashed.startsWith('/') ? `file://${slashed}` : `file:///${slashed}`;
-  }
-  return '';
-}
-
+/* ---- 缩略图占位：暖调抽象，不是灰块 ---- */
 function makeShot(seed) {
   const r = rng('shot' + seed);
   const h = Math.floor(r() * 360);
@@ -166,7 +141,7 @@ async function renderStash() {
   world.innerHTML = laid.map(b => {
     const nodes = b.nodes.map(n => {
       const body = n.t === 'shot'
-        ? `<span class="node-shot" style="width:${n.w}px;height:${n.h - 34}px;${thumbStyle(n)}"></span>
+        ? `<span class="node-shot" style="width:${n.w}px;height:${n.h - 34}px;background-image:${makeShot(n.desc)}"></span>
            <span class="node-desc">${n.desc}</span>`
         : `<span class="node-note">${n.text}</span>`;
       return `<span class="node" style="left:${b.cx + n.x}px;top:${b.cy + n.y}px">
@@ -193,7 +168,7 @@ function renderStashList(laid) {
   list.innerHTML = Object.entries(byTime).map(([day, bs]) =>
     `<div class="stash-day">${day}<em>· ${bs.reduce((n, b) => n + b.items.length, 0)} 项</em></div>` +
     bs.map(b => b.items.map(it => `<button class="stash-row">
-        <span class="sq" style="${it.t === 'shot' ? thumbStyle(it) : 'background-image:none'}"></span>
+        <span class="sq" style="background-image:${it.t === 'shot' ? makeShot(it.desc) : 'none'}"></span>
         <span class="txt">${it.desc || it.text}</span>
         <span class="src">${b.app}</span>
         <span class="kind ${KIND_TAG[b.kind]}">${b.kind}</span>
@@ -337,10 +312,28 @@ async function openConversation(id) {
   const head = document.getElementById('chat-title');
   if (head) head.textContent = c.title;
   const org = document.getElementById('chat-origin');
-  if (org) {
+  const orgText = document.getElementById('chat-origin-text');
+  const peek = document.getElementById('chat-peek');
+  const peekImage = document.getElementById('peek-image');
+  const peekLabel = document.getElementById('peek-label');
+  if (org && orgText) {
     org.hidden = false;
-    org.innerHTML = `${icon('ic-code')}${esc(c.object?.app || '')}<i>·</i>${esc(c.object?.windowTitle || '')}`
-      + (c.object?.label ? `<i>·</i>${esc(c.object.label)}` : '');
+    orgText.textContent = [c.object?.app, c.object?.windowTitle, c.object?.label]
+      .filter(Boolean).join(' · ') || '当前选区';
+  }
+  if (peek && peekImage) {
+    const imgPath = c.object?.annotatedPath || '';
+    if (imgPath) {
+      // 划线时标注过的区域截图：主进程把本地路径经 IPC 给出来，渲染层转成
+      // file:// 预览。没有这张图就整个藏掉，绝不放一张裂图。
+      peekImage.onerror = () => { peek.hidden = true; };
+      peekImage.src = 'file:///' + String(imgPath).replace(/\\/g, '/');
+      peek.hidden = false;
+      if (peekLabel) peekLabel.textContent = c.object?.label || '选区预览';
+    } else {
+      peek.hidden = true;
+      peekImage.removeAttribute('src');
+    }
   }
 
   const stream = document.getElementById('stream');
@@ -428,12 +421,10 @@ function show(view) {
   if (view === 'hero') {
     hero.hidden = false;
     shell.hidden = true;
-    heroComposer?.focus();
     return;
   }
   hero.hidden = true;
   shell.hidden = false;
-  if (view === 'chat') chatComposer?.focus();
   Object.entries(VIEWS).forEach(([k, id]) => {
     document.getElementById(id).hidden = (k !== view);
   });
@@ -487,67 +478,16 @@ document.addEventListener('click', e => {
 /* 输入框随内容长高 */
 document.addEventListener('input', e => {
   const ta = e.target.closest('textarea');
-  if (!ta || ta.classList.contains('mcomp-input')) return;   // 共用条自己管高度
+  if (!ta) return;
   ta.style.height = 'auto';
   ta.style.height = Math.min(ta.scrollHeight, 200) + 'px';
 });
 
-/* ============================================================
-   两根输入条
-   ------------------------------------------------------------
-   首屏一根、工作态一根，都是 composer.js 那一个组件——随行窗也是同一个。
-   上一版这里是两段手写的 <form>，跟随行窗那段各写各的，于是同一个产品里
-   三根条三个样，而且工作态那根**根本没绑提交**：打完字按发送什么也不会发生。
-   ============================================================ */
-const CHAT_META = [
-  { id: 'mode', label: '只读', dot: 'var(--green)', title: '这一轮允许它做到哪一步' },
-  { id: 'model', label: 'Opus 5', icon: 'ic-spark', title: '这一轮用哪个模型' },
-  { id: 'effort', label: '标准', title: '想多久' },
-];
-
-function mountComposer(hostId, options) {
-  const host = document.getElementById(hostId);
-  if (!host || typeof Composer === 'undefined') return null;
-  const comp = Composer.create(options);
-  host.replaceChildren(comp.el);
-  return comp;
-}
-
-const heroComposer = mountComposer('hero-composer', {
-  placeholder: '说点什么，或按 / 用命令',
-  onSubmit: ({ text, attachments }) => {
-    show('chat');
-    // 首屏那句话不能在切屏时被吃掉：原样交给工作态那根条，用户看得见它还在
-    if (chatComposer) {
-      chatComposer.setAttachments(attachments);
-      chatComposer.el.querySelector('.mcomp-input').value = text;
-      chatComposer.focus();
-    }
-  },
+/* Hero 提交 → 进工作态 */
+document.getElementById('hero-composer')?.addEventListener('submit', e => {
+  e.preventDefault();
+  show('chat');
 });
-
-const chatComposer = mountComposer('chat-composer', {
-  placeholder: '继续问…',
-  meta: CHAT_META,
-  onSubmit: () => {
-    // 目前只有划线那条路能真的把问题送进桥（它带着选区快照）。这里还没有
-    // 那条路，就明说，不做一个假装在想的动画——「不假报成功」。
-    say('这根条还没接上——现在请在屏幕上划一道，问题会从指针旁边进来。');
-  },
-});
-
-/* 说一句实话给用户看。做不到的事就说做不到，绝不放一个假装在想的动画。 */
-function say(text) {
-  const stream = document.getElementById('stream');
-  if (!stream) return;
-  const box = document.createElement('div');
-  box.className = 'notice';
-  box.innerHTML = '<svg><use href="#ic-warn"/></svg><div class="body"></div>'
-    + '<button class="close"><svg><use href="#ic-x"/></svg></button>';
-  box.querySelector('.body').textContent = text;
-  stream.appendChild(box);
-  box.scrollIntoView({ block: 'end', behavior: 'smooth' });
-}
 
 /* 进行中卡：演示分段推进 */
 (function tickRun() {
@@ -579,6 +519,8 @@ function startNewChat() {
   if (title) title.textContent = '新对话';
   const org = document.getElementById('chat-origin');
   if (org) { org.hidden = true; }
+  const peek = document.getElementById('chat-peek');
+  if (peek) { peek.hidden = true; }
   const stream = document.getElementById('stream');
   if (stream) {
     stream.innerHTML = Data.isLive()
@@ -589,7 +531,7 @@ function startNewChat() {
       : `<div class="chat-blank"><p>还没有对话。</p>
            <p class="sub">在 Electron 里运行时，这里显示的是真实记录。</p></div>`;
   }
-  chatComposer?.focus();
+  document.querySelector('.composer textarea')?.focus();
 }
 
 document.getElementById('new-chat')?.addEventListener('click', startNewChat);

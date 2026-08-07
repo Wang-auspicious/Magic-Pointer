@@ -959,6 +959,7 @@ function recordConversationTurn(payload = {}, type = '') {
         windowTitle: object.windowTitle || '',
         elementPath: object.snapshotId || '',
         label: object.label || '',
+        annotatedPath: object.source?.annotatedPath || '',
       },
     });
 

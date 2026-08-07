@@ -28,10 +28,12 @@ assert.strictEqual(Composer.safeThumb('http://evil.example/a.png'), '');
 assert.strictEqual(Composer.safeThumb('data:text/html,<script>'), '');
 
 // --- 三个界面确实把该 link 的都 link 了 ---
+// 工作室（studio）2026-08-07 按用户要求回退到上一版手写形态：hero 毛玻璃条
+// + 工作态 Opus 右下条。它不再 link composer.js——共用条只服务随行窗。
+// 舞台不用输入条（它有自己的气泡），但卡片样式在 beam.css 里。
 for (const [page, needs] of Object.entries({
-  'studio.html': ['composer.js', 'composer.css', 'beam.css', 'card_render.js'],
+  'studio.html': ['cards.css', 'card_render.js', 'cards.js', 'live_cards.js'],
   'companion.html': ['composer.js', 'composer.css', 'beam.css', 'card_render.js'],
-  // 舞台不用输入条（它有自己的气泡），但卡片样式在 beam.css 里
   'stage.html': ['beam.css', 'card_render.js'],
 })) {
   const html = read(page);
@@ -40,18 +42,22 @@ for (const [page, needs] of Object.entries({
   }
 }
 
-// --- 手写的那两段没有留下来跟共用条并存 ---
-for (const page of ['studio.html', 'companion.html']) {
-  const html = read(page);
-  assert.ok(
-    !/<form class="composer"/.test(html) && !/<form class="hero-composer"/.test(html),
-    `${page} 里还留着手写的输入条`,
-  );
+// --- 工作室是手写形态：hero 毛玻璃条 + 工作态 Opus 右下条 ---
+{
+  const html = read('studio.html');
+  assert.ok(/<form class="hero-composer"/.test(html), 'studio 首屏必须是手写 hero-composer（毛玻璃偏下那版）');
+  assert.ok(/<form class="composer"/.test(html), 'studio 工作态必须有手写 composer 条');
+  assert.ok(/Opus 5/.test(html), 'studio 问答条右下要显示模型选择（Opus）');
+  assert.ok(/model-select/.test(html), 'studio 问答条要有 model-select');
+  assert.ok(!html.includes('composer.js'), 'studio 不该再 link 共用 composer.js');
 }
+// 随行窗没有手写条残留（它走共用 composer.js）
+assert.ok(
+  !/<form class="composer"/.test(read('companion.html')) && !/<form class="hero-composer"/.test(read('companion.html')),
+  'companion 里还留着手写的输入条',
+);
 
 // 挂载点必须在，否则 mountComposer 静默什么也不做
-assert.ok(read('studio.html').includes('id="hero-composer"'));
-assert.ok(read('studio.html').includes('id="chat-composer"'));
 assert.ok(read('companion.html').includes('id="cp-composer"'));
 
 // --- 荧光笔不能靠 <mark> 的 UA 底色 ---
