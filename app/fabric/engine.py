@@ -20,12 +20,11 @@ from app.fabric.catalog import get_recipe
 from app.fabric.context_packet import ContextPacketBuilder
 from app.fabric.executors import FabricExecutors
 from app.fabric.model_plan import ModelPlanError, TOOL_REGISTRY, parse_model_plan
-from app.fabric.providers import AgentProviderDiscovery
 from app.fabric.router import RecipeRouter
 from app.fabric.runtime_workspace import RuntimeWorkspaceResolver
 from app.fabric.provenance import ProvenanceIndex, ProvenanceError
 from app.fabric.skill_candidates import SkillCandidateError, SkillCandidateStore
-from app.fabric.schema import ExecutionReceipt, IntentMatch, OperationPlan, RiskLevel
+from app.fabric.schema import ExecutionReceipt, IntentMatch, OperationPlan
 from app.fabric.settings import FabricSettings, SettingsStore
 from app.fabric.task_store import AgentTaskError, AgentTaskStore
 from app.fabric.target_lease import TargetLease, validate_target_lease

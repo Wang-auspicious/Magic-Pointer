@@ -33,7 +33,6 @@ from app.fabric.intent_router import (
     ACT_RECIPE,
     ACT_TOOLS,
     IntentRouter,
-    TIER_DETERMINISTIC,
     recipe_id_from_tool_name,
     recipe_tool_schemas,
 )
@@ -372,9 +371,12 @@ def _clipped_multi_object_answer(payload: dict[str, Any]) -> str | None:
         return None
     labels = ["THIS", "THAT", *[f"THESE[{index}]" for index in range(1, 11)]]
     fragments = []
-    for label, item in zip(labels, grounded):
+    # labels 只有 12 个：grounded 超出部分截断会静默丢内容，显式限制并说清
+    for label, item in zip(labels, grounded[: len(labels)], strict=False):
         text = str(item.get("content") or "").strip()
         fragments.append(f"- {label}：{text if text else '没有读到可用文字'}")
+    if len(grounded) > len(labels):
+        fragments.append(f"- …另有 {len(grounded) - len(labels)} 处被截断，无法逐一展开")
     return (
         "这两处目前包含被截图边缘截断的 OCR 片段，不能可靠比较：\n"
         + "\n".join(fragments)
@@ -876,7 +878,6 @@ def _ocr_worker_request(
     selection_local: list[int] | None = None,
     timeout: float = 10.0,
 ) -> tuple[list[dict[str, Any]], str] | None:
-    import time
 
     sock = _ocr_worker_connect(timeout=2.0)
     if sock is None:
@@ -1269,6 +1270,38 @@ def _screen_region_vision_answer(
     pointing = wants_pointing(command)
     if not pointing and _capture_settings().privacy.upload_screenshots is not True:
         return None
+    # 指向请求：视觉模型必须看到全屏，才能给出「绝对屏幕坐标」——
+    # 局部 ROI 截图会让模型输出区域坐标，stage 按屏幕坐标画就错位。
+    # 指向模式下直接全屏截图，坐标即绝对屏幕像素。
+    if pointing:
+        try:
+            from PIL import ImageGrab
+
+            image_path = Path(str((snapshot or {}).get("capture_path") or "").strip())
+            if not image_path.is_file():
+                return None
+            image = ImageGrab.grab(all_screens=True)
+            full = image_path.with_name(f"full-{image_path.stem}.png")
+            image.save(full)
+            try:
+                return ask_vision_model(
+                    full,
+                    command,
+                    context_text=(
+                        _selection_context_text(app_ctx, target_window)
+                        + "\n\nThis is a FULL-SCREEN screenshot. If the user asks where "
+                        "something is, answer briefly and mark each mentioned element with "
+                        "[POINT x,y] using physical pixel coordinates from THIS screenshot. "
+                        "Coordinates must match the screenshot size. Use at most 3 points."
+                    ),
+                )
+            finally:
+                try:
+                    full.unlink(missing_ok=True)
+                except OSError:
+                    pass
+        except Exception:
+            return None
     image_path = Path(str((snapshot or {}).get("capture_path") or "").strip())
     if not image_path.is_file():
         return None

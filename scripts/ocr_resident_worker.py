@@ -383,6 +383,15 @@ def process(engine, payload: dict) -> dict:
             label = str(text or "").strip()
             if not label:
                 continue
+            # 低置信度识别（OCR 噪声）不参与合并：宁可少一条，不可把
+            # 误识别的字符当成「屏幕上的真相」进上下文。
+            if piece_index < len(scores):
+                try:
+                    score = float(scores[piece_index])
+                except (TypeError, ValueError):
+                    score = 1.0
+                if score < 0.5:
+                    continue
             owner = piece_owner[piece_index] if piece_index < len(piece_owner) else 0
             merged.setdefault(owner, []).append(label)
         blocks = []

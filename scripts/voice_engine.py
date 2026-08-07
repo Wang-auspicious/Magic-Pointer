@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import Any, Callable
 
 from scripts.local_voice_bridge import (
-    VoiceProfile as WhisperVoiceProfile,
     load_model as whisper_load_model,
     load_pcm_wav,
     load_voice_profile as whisper_load_voice_profile,

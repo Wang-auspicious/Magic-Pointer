@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app.adapters import AdapterReadContext, default_adapter_registry
+from app.adapters import default_adapter_registry
 from app.context_pack import ContextSessionError, ContextSessionStore
 from app.fabric.audit import AuditStore
 from app.fabric.capture_policy import CapturePolicyEngine

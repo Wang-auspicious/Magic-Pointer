@@ -60,7 +60,6 @@ from app.system_context import (
     get_foreground_window_handle,
     is_hotkey_down,
     apply_modern_window_backdrop,
-    trigger_windows_dictation,
     list_visible_windows,
 )
 

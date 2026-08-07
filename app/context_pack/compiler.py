@@ -151,7 +151,6 @@ def compile_context_prompt(
             denied_items += 1
             continue
         policy_items.append((item, decision))
-    items = [item for item, _decision in policy_items]
     any_upload_allowed = any(decision["allowUpload"] for _item, decision in policy_items)
     profile = _resolve_profile(target_profile or session.get("target_profile") or "generic")
     task = _clean(task_instruction or session.get("task_instruction"), limit=6000)
