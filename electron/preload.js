@@ -7,7 +7,6 @@ contextBridge.exposeInMainWorld('magicPointer', {
   done: (payload) => ipcRenderer.send('overlay:done', payload),
   gestureStarted: (token) => ipcRenderer.send('overlay:gesture-start', { token }),
   gestureStroke: (token, index) => ipcRenderer.send('overlay:gesture-stroke', { token, index }),
-  executeAction: (payload) => ipcRenderer.send('overlay:execute-action', payload),
   startDictation: () => ipcRenderer.send('dictation:start', { surface: 'overlay' }),
   onShow: (callback) => ipcRenderer.on('overlay:show', (_event, payload) => callback(payload)),
   onHide: (callback) => ipcRenderer.on('overlay:hide', () => callback()),
