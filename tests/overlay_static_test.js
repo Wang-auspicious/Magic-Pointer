@@ -11,6 +11,16 @@ assert(source.includes('window.magicPointer?.onCursor('));
 assert(source.includes('observerMode = payload?.observerMode === true'));
 assert(source.includes('if (observerMode) drawObserverAura(lastPointer);'));
 
+// Clicky 式引导小三角：默认不出现，收到 [POINT] 指点才浮现并贝塞尔飞行
+assert(source.includes('window.magicPointer?.onGuidePoint?.('),
+  'overlay 必须监听主进程的 overlay:guide-point');
+assert(source.includes('function drawGuideTriangle'),
+  'overlay 必须有引导三角绘制');
+assert(source.includes('function guideFlightPoint'),
+  '贝塞尔飞行必须是纯函数，可单测');
+assert(source.includes('guideTarget = null;'),
+  'overlay 隐藏时必须清理引导状态');
+
 // Kept contract: runtime-issue circle capture submits the drawn region via done().
 assert(source.includes("let currentWorkflow = 'generic';"));
 assert(source.includes("currentWorkflow = String(payload?.workflow || 'generic')"));

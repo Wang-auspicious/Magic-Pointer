@@ -37,6 +37,95 @@ let hintTimer = null;
 let gestureGraceTimer = null;
 let currentWorkflow = 'generic';
 
+// ── Clicky 式引导小三角 ──────────────────────────────────────────────
+// 默认不出现。回答带了 [POINT] 指点（overlay:guide-point）时才浮现，
+// 从蓝边光标旁沿贝塞尔弧线飞向目标，然后停留到下一轮。
+let guideTarget = null;        // { x, y } 指点目标（overlay 局部坐标）
+let guideFlight = null;        // { t, from, to, ctrl, startedAt, duration }
+const GUIDE_TRIANGLE_SIZE = 15;
+const GUIDE_FLIGHT_MS = 620;
+
+function onGuidePoint(payload) {
+  if (!payload || !Number.isFinite(Number(payload.x)) || !Number.isFinite(Number(payload.y))) return;
+  const bounds = overlayBounds();
+  const tx = Number(payload.x) - bounds.x;
+  const ty = Number(payload.y) - bounds.y;
+  const from = lastPointer || { x: tx, y: ty };
+  // 二次贝塞尔：控制点在起点终点连线中点上方，画出一条弧线（clicky 同款）
+  const ctrl = {
+    x: (from.x + tx) / 2,
+    y: (from.y + ty) / 2 - Math.max(90, Math.abs(tx - from.x) * 0.35),
+  };
+  guideTarget = { x: tx, y: ty };
+  guideFlight = {
+    t: 0, from: { ...from }, to: { x: tx, y: ty }, ctrl,
+    startedAt: performance.now(), duration: GUIDE_FLIGHT_MS,
+  };
+}
+
+function overlayBounds() {
+  const canvasRect = ctx.canvas.getBoundingClientRect();
+  return { x: canvasRect.left, y: canvasRect.top, width: canvasRect.width, height: canvasRect.height };
+}
+
+// 二次贝塞尔插值（纯函数，可单测）：B(t) = (1-t)²P0 + 2(1-t)t·P1 + t²·P2
+function guideFlightPoint(from, ctrl, to, t) {
+  const u = 1 - t;
+  return {
+    x: u * u * from.x + 2 * u * t * ctrl.x + t * t * to.x,
+    y: u * u * from.y + 2 * u * t * ctrl.y + t * t * to.y,
+  };
+}
+
+function drawGuideTriangle() {
+  if (!guideTarget) return;
+  const now = performance.now();
+  let px;
+  let py;
+  if (guideFlight && now < guideFlight.startedAt + guideFlight.duration) {
+    // 飞行中：贝塞尔插值
+    const t = Math.min(1, (now - guideFlight.startedAt) / guideFlight.duration);
+    const eased = 1 - Math.pow(1 - t, 3);
+    const { from, to, ctrl } = guideFlight;
+    const pos = guideFlightPoint(from, ctrl, to, eased);
+    px = pos.x;
+    py = pos.y;
+  } else {
+    guideFlight = null;
+    px = guideTarget.x;
+    py = guideTarget.y;
+  }
+  // 蓝边光标旁的小三角：默认在光标右下方 35/25px（clicky 的落位），
+  // 飞行时画在轨迹上
+  if (!guideFlight) {
+    const base = lastPointer || { x: px, y: py };
+    px = base.x + 35;
+    py = base.y + 25;
+  }
+  ctx.save();
+  ctx.translate(px, py);
+  // 发光层
+  ctx.shadowColor = 'rgba(92, 160, 255, 0.65)';
+  ctx.shadowBlur = 12;
+  ctx.fillStyle = 'rgba(92, 160, 255, 0.9)';
+  ctx.beginPath();
+  ctx.moveTo(0, -GUIDE_TRIANGLE_SIZE / 2);
+  ctx.lineTo(GUIDE_TRIANGLE_SIZE, 0);
+  ctx.lineTo(0, GUIDE_TRIANGLE_SIZE / 2);
+  ctx.closePath();
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  // 白色内芯，让它在深色背景上也分明
+  ctx.fillStyle = '#fff';
+  ctx.beginPath();
+  ctx.moveTo(0, -GUIDE_TRIANGLE_SIZE / 4);
+  ctx.lineTo(GUIDE_TRIANGLE_SIZE / 2, 0);
+  ctx.lineTo(0, GUIDE_TRIANGLE_SIZE / 4);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
 // ── OffscreenCanvas pre-rendered pointer & aura frame cache ──────────
 // Avoids per-frame Path2D construction, createRadialGradient, shadowBlur,
 // and quadraticCurveTo calls — the main render loop only calls drawImage().
@@ -302,6 +391,8 @@ function render() {
   if (!captureMode && points.length) drawSmoothPath(points, trailAlpha);
   if (observerMode) drawObserverAura(lastPointer);
   else drawPointer(lastPointer);
+  // 引导小三角画在光标之上（默认不出现，有 [POINT] 指点才浮现）
+  drawGuideTriangle();
 }
 
 function fadeTrail(duration = 760) {
@@ -623,6 +714,8 @@ window.magicPointer?.onHide(() => {
   chainDeadlineAt = 0;
   if (chainHintTimer) clearTimeout(chainHintTimer);
   chainHintTimer = null;
+  guideTarget = null;
+  guideFlight = null;
 });
 
 window.magicPointer?.onGestureSubmit((payload) => {
@@ -669,6 +762,10 @@ window.magicPointer?.onCursor((payload) => {
   if (!payload) return;
   if (gestureMode) return;
   lastPointer = { x: Number(payload.x) || 0, y: Number(payload.y) || 0, t: performance.now() };
+  scheduleRender();
+});
+window.magicPointer?.onGuidePoint?.((payload) => {
+  onGuidePoint(payload);
   scheduleRender();
 });
 window.magicPointer?.onGestureInput((payload) => {
