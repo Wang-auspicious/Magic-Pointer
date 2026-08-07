@@ -855,6 +855,18 @@ function updateStage(payload = {}) {
   // 底层早就能查状态了，缺的一直是这边没人在看。
   watchTaskFromEvent(payload);
   safeSurfaceSend('stage', 'stage:update', payload);
+  // Clicky 式引导：回答里带了 [POINT] 指点，就把目标点也给蓝边光标所在的
+  // overlay——小三角默认不出现，只有回答要「指给你看」时才飞过去。
+  const event = payload?.event || {};
+  const points = Array.isArray(event.screenPoints) ? event.screenPoints : [];
+  if (points.length && overlayWindow && !overlayWindow.isDestroyed() && overlayWindow.isVisible()) {
+    const p = points[0];
+    const x = Number(p.x);
+    const y = Number(p.y);
+    if (Number.isFinite(x) && Number.isFinite(y)) {
+      overlayWindow.webContents.send('overlay:guide-point', { x, y, count: points.length });
+    }
+  }
 }
 
 // 结果里带了 taskId 且状态是「已受理」，就开始盯着它，把状态变成卡片补丁。
@@ -1131,18 +1143,64 @@ function appIsDark() {
 
 // 底色留全透明——页面自己的底透上来就行。只换符号的颜色去对比它。
 // 给 overlay 涂实色会在右上角糊出一块和页面对不上的方块。
-function titleBarColors() {
+function titleBarColors(symbol = null) {
   return {
     color: '#00000000',
-    symbolColor: appIsDark() ? '#F2F1ED' : '#17170F',
+    symbolColor: symbol || (appIsDark() ? '#F2F1ED' : '#17170F'),
     height: 44,
   };
+}
+
+// ── 标题栏符号颜色：采样按钮底下的真实像素，不是猜主题 ─────────────
+// 主屏背景是用户自定义的视频/图片，明暗不定；主题只能给个初始值。
+// 每个采样周期截右上角按钮区域，算平均亮度：底亮 → 深色符号，底暗 →
+// 浅色符号。周期 500ms，仅采样 138×44 的小区域，开销可忽略。
+const { averageBrightness, symbolColorForBrightness } = require('./titlebar_contrast');
+const TITLEBAR_SAMPLE_REGION = { width: 138, height: 44 };
+let titleBarSampleTimer = null;
+let titleBarLastSymbol = null;
+
+function sampleTitleBarSymbolColor() {
+  if (process.platform !== 'win32' || !dashboardWindow || dashboardWindow.isDestroyed()) return;
+  if (!dashboardWindow.isVisible()) return;
+  const bounds = dashboardWindow.getBounds();
+  const rect = {
+    x: Math.max(0, bounds.width - TITLEBAR_SAMPLE_REGION.width),
+    y: 0,
+    width: TITLEBAR_SAMPLE_REGION.width,
+    height: TITLEBAR_SAMPLE_REGION.height,
+  };
+  dashboardWindow.webContents.capturePage(rect).then((image) => {
+    if (image.isEmpty()) return;
+    const symbol = symbolColorForBrightness(averageBrightness(image.toBitmap()));
+    if (symbol !== titleBarLastSymbol) {
+      titleBarLastSymbol = symbol;
+      try {
+        dashboardWindow.setTitleBarOverlay(titleBarColors(symbol));
+      } catch (error) {
+        log(`title bar overlay unavailable ${error.name}`);
+      }
+    }
+  }).catch(() => { /* 采样失败保持上一次的颜色 */ });
+}
+
+function startTitleBarSampling() {
+  stopTitleBarSampling();
+  sampleTitleBarSymbolColor();
+  titleBarSampleTimer = setInterval(sampleTitleBarSymbolColor, 500);
+}
+
+function stopTitleBarSampling() {
+  if (titleBarSampleTimer) {
+    clearInterval(titleBarSampleTimer);
+    titleBarSampleTimer = null;
+  }
 }
 
 function applyTitleBarTheme() {
   if (process.platform !== 'win32' || !dashboardWindow || dashboardWindow.isDestroyed()) return;
   try {
-    dashboardWindow.setTitleBarOverlay(titleBarColors());
+    dashboardWindow.setTitleBarOverlay(titleBarColors(titleBarLastSymbol));
   } catch (error) {
     log(`title bar overlay unavailable ${error.name}`);
   }
@@ -1201,6 +1259,7 @@ function createDashboardWindow() {
     if (!isQuitting && fabricSettings?.general?.keep_running !== false) {
       event.preventDefault();
       dashboardWindow.hide();
+      stopTitleBarSampling();
       if (!backgroundHintShown && tray && !tray.isDestroyed() && process.platform === 'win32') {
         backgroundHintShown = true;
         try {
@@ -1215,7 +1274,7 @@ function createDashboardWindow() {
       setImmediate(() => app.quit());
     }
   });
-  dashboardWindow.on('closed', () => { dashboardWindow = null; });
+  dashboardWindow.on('closed', () => { dashboardWindow = null; stopTitleBarSampling(); });
   return dashboardWindow;
 }
 
@@ -1284,6 +1343,23 @@ ipcMain.handle('stash:list', () => {
   } catch (error) {
     log(`stash list failed ${error.name}`);
     return [];
+  }
+});
+
+// 悬停收藏图片 1 秒后调用：本地文件 + 视觉模型 → 3-4 句简介。
+// 输入是用户自己收藏的本地文件，不是截屏上传，不走隐私开关。
+ipcMain.handle('stash:describe', async (_event, imagePath) => {
+  try {
+    const parsed = await runPythonBridgePromise(
+      { operation: 'describe', imagePath },
+      'scripts/stash_describe_bridge.py',
+      { target: 'fabric-dashboard', timeoutMs: 30000 },
+    );
+    if (parsed?.ok && parsed.summary) return { ok: true, summary: String(parsed.summary) };
+    return { ok: false, error: parsed?.error || 'vision_unavailable' };
+  } catch (error) {
+    log(`stash describe failed ${error.name}`);
+    return { ok: false, error: 'bridge_failed' };
   }
 });
 
@@ -1376,6 +1452,7 @@ function showDashboard(payload = {}, options = {}) {
     dashboardWindow.webContents.send('dashboard:show', payload);
     dashboardWindow.webContents.send('dashboard:voice-residency-status', latestVoiceRuntimeStatus);
     log(`showDashboard highlight=${payload.highlightItemId || 'none'}`);
+    startTitleBarSampling();
   };
   if (win.webContents.isLoadingMainFrame()) win.webContents.once('did-finish-load', reveal);
   else reveal();

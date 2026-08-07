@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('magicPointer', {
   onShow: (callback) => ipcRenderer.on('overlay:show', (_event, payload) => callback(payload)),
   onHide: (callback) => ipcRenderer.on('overlay:hide', () => callback()),
   onCursor: (callback) => ipcRenderer.on('overlay:cursor', (_event, payload) => callback(payload)),
+  onGuidePoint: (callback) => ipcRenderer.on('overlay:guide-point', (_event, payload) => callback(payload)),
   onGestureInput: (callback) => ipcRenderer.on('overlay:gesture-input', (_event, payload) => callback(payload)),
   onGestureSubmit: (callback) => ipcRenderer.on('overlay:gesture-submit', (_event, payload) => callback(payload)),
   onResult: (callback) => ipcRenderer.on('overlay:result', (_event, payload) => callback(payload)),
@@ -138,6 +139,7 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
   sessionTimeline: () => ipcRenderer.invoke('dashboard:session-timeline'),
   stash: {
     list: () => ipcRenderer.invoke('stash:list'),
+    describe: (imagePath) => ipcRenderer.invoke('stash:describe', imagePath),
     onEntry: (callback) => ipcRenderer.on('stash:entry', (_event, payload) => callback(payload)),
   },
   conversations: {
