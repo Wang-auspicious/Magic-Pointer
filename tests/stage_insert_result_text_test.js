@@ -42,12 +42,13 @@ assert(handlerBody.includes("'scripts/deliver_text_bridge.py'"));
 // A stale session must not receive a write result either.
 assert(handlerBody.includes('if (!selectionSessions.get(selectionSessionToken))'));
 
-// The button exists and sends what is actually on screen, so an edited or
-// re-asked answer is what travels.
-assert(stageHtml.includes('id="thread-insert"'));
-assert(stageJs.includes("const threadInsert = document.getElementById('thread-insert');"));
-assert(stageJs.includes('threadInsert.addEventListener'));
-assert(stageJs.includes('const text = resultPlainText(resultCard);'));
+// The 填入 action exists and sends what is actually on screen, so an edited or
+// re-asked answer is what travels. The entry point moved from a thread-bar
+// button to the capsule's consent approve (2026-08-07 Vida card redesign);
+// the renderer still may not name a window or point.
+assert(stageHtml.includes('id="thread-copy"'));
+assert(stageJs.includes('consentApprove.addEventListener'));
+assert(stageJs.includes('const text = capsuleInput.value.trim() || resultPlainText(resultCard);'));
 assert(stageJs.includes('api.insertResultText({ text, selectionSessionToken: session.token })'));
 
 // The bridge decides the verdict; the renderer has no success wording of its own
