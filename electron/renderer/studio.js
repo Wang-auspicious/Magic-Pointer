@@ -106,11 +106,18 @@ const KIND_TAG = { 灵感:'tag-indigo', 交接:'tag-teal', 凭证:'tag-amber', �
 /* ---- 布局：簇内按行打包，簇之间在世界坐标里松散排布 ---- */
 const PAD = 24, GAP = 16, CLUSTER_GAP = 48, ROW_MAX = 420;
 
+// 收藏箱顶部的分类 tab。上一版点击只切 is-on 样式，内容一动没动——filter
+// 永远为空，等于按钮是假的。这里记下选中的分类，renderStash 按它过滤。
+let stashKindFilter = '';
+
 function layoutBurst(b) {
   let x = PAD, y = PAD + 8, rowH = 0, w = 0;
   const placed = b.items.map(it => {
     const iw = it.t === 'shot' ? it.w : 210;
-    const ih = (it.t === 'shot' ? it.h : 62) + (it.desc || it.t === 'shot' ? 34 : 20);
+    // 只有截图有说明行（+34）。文字节点不渲染 desc，给它 +34 只是把行高凭空
+    // 撑高 14px，簇之间因此出现来路不明的空隙。上一版写成
+    // `it.desc || it.t === 'shot' ? 34 : 20`，|| 把三元整体绑错。
+    const ih = (it.t === 'shot' ? it.h : 62) + (it.t === 'shot' ? 34 : 20);
     if (x > PAD && x + iw > ROW_MAX) { x = PAD; y += rowH + GAP; rowH = 0; }
     const node = { ...it, x, y, w: iw, h: ih };
     x += iw + GAP; rowH = Math.max(rowH, ih); w = Math.max(w, x - GAP + PAD);
@@ -123,11 +130,15 @@ async function renderStash(force = false) {
   const world = document.getElementById('canvas-world');
   if (!world || (world.childElementCount && !force)) return;
 
-  const bursts = await Data.stash();
+  const all = await Data.stash();
+  const bursts = stashKindFilter ? all.filter(b => b.kind === stashKindFilter) : all;
   document.getElementById('stash-count').textContent =
     bursts.reduce((n, b) => n + b.items.length, 0) + ' 项';
   if (!bursts.length) {
-    world.innerHTML = '<span class="canvas-empty">收藏箱还是空的。截个图，或者复制一张图片，它就会落到这里。</span>';
+    world.innerHTML = stashKindFilter
+      ? `<span class="canvas-empty">这个分类里还没有收藏。</span>`
+      : '<span class="canvas-empty">收藏箱还是空的。截个图，或者复制一张图片，它就会落到这里。</span>';
+    renderStashList([], force);
     return;
   }
   const laid = bursts.map(layoutBurst);
@@ -476,6 +487,9 @@ document.addEventListener('click', e => {
   if (tab) {
     tab.parentElement.querySelectorAll('.tab').forEach(t => t.classList.remove('is-on'));
     tab.classList.add('is-on');
+    // 分类 tab 不只是高亮自己：收藏箱真的按这个分类过滤。
+    stashKindFilter = tab.dataset.kind || '';
+    renderStash(true);
     return;
   }
   const mode = e.target.closest('#stash-mode button');
@@ -510,6 +524,16 @@ document.addEventListener('input', e => {
 document.getElementById('hero-composer')?.addEventListener('submit', e => {
   e.preventDefault();
   show('chat');
+});
+
+/* 主窗输入条还没有发送通道，但也不能放任表单默认提交——没有 action 的 form
+   提交会整页重载，把当前对话和正在打的字一起冲掉。 */
+document.querySelectorAll('form.composer').forEach(form => {
+  form.addEventListener('submit', e => {
+    e.preventDefault();
+    const ta = form.querySelector('textarea');
+    if (ta) ta.focus();
+  });
 });
 
 /* 进行中卡：演示分段推进 */

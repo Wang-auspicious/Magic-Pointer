@@ -498,6 +498,14 @@
     return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
   }
 
+  // A press on our own floating surfaces (chips, selection handles, error card,
+  // consent bar, notice, delivery row) belongs to the UI, not to pick mode.
+  // Without this, clicking a chip also picked the element behind it in the
+  // target app and hijacked the next question's target.
+  function isInsideStageSurface(x, y, element) {
+    return Boolean(element && !element.hidden && isPointInside(x, y, element));
+  }
+
   function isDragHandleAt(x, y, rootEl) {
     if (!rootEl || rootEl.hidden) return false;
     let node = document.elementFromPoint(x, y);
@@ -536,7 +544,14 @@
     // Pick mode: a click that lands outside our own surfaces, while the composer
     // is open, means "tell me about that thing" — the element under the cursor
     // lights up whole. Inside our surfaces the click belongs to the UI.
-    if (primaryDown && !previousPrimaryDown && !overCapsule && !overResult && !surfaceDrag) {
+    const overOwnSurface = isInsideStageSurface(x, y, chipsBox)
+      || isInsideStageSurface(x, y, selectionStretch)
+      || isInsideStageSurface(x, y, errorCard)
+      || isInsideStageSurface(x, y, consentBox)
+      || isInsideStageSurface(x, y, deliveryBox)
+      || isInsideStageSurface(x, y, noticeBox)
+      || isInsideStageSurface(x, y, passageExpand);
+    if (primaryDown && !previousPrimaryDown && !overCapsule && !overResult && !overOwnSurface && !surfaceDrag) {
       const composerOpen = state.name === 'capsule-text' || state.name === 'capsule-voice';
       if (composerOpen && Number.isFinite(payload?.screenX) && Number.isFinite(payload?.screenY)) {
         pickElementAt(Number(payload.screenX), Number(payload.screenY));
@@ -662,7 +677,9 @@
   }
 
   function visibleStageRegions() {
-    return [targetingOutline, frozenGlow, capsule, threadPanel, errorCard, chipsBox, deliveryBox, passageExpand]
+    // consentBox 是「要送出去」那一路的点头按钮：它悬在胶囊下方，若不在
+    // shape 区域内，点击会穿透到下层应用，整个同意流程点不响。
+    return [targetingOutline, frozenGlow, capsule, threadPanel, errorCard, chipsBox, consentBox, deliveryBox, passageExpand]
       .filter((element) => !element.hidden)
       .map((element) => ({ element, rect: element.getBoundingClientRect() }))
       .filter(({ rect }) => rect.width > 0 && rect.height > 0)
@@ -690,6 +707,7 @@
     }
     if (!threadPanel.hidden) elements.push(threadPanel);
     if (!passageExpand.hidden) elements.push(passageExpand);
+    if (!consentBox.hidden) elements.push(consentBox);
     for (const container of [chipsBox, threadPanel, errorCard]) {
       if (container.hidden) continue;
       elements.push(...container.querySelectorAll('button:not([disabled])'));
@@ -784,6 +802,10 @@
   function submitCommand(command) {
     const trimmed = String(command == null ? '' : command).trim();
     if (!trimmed) return;
+    // A turn is already running: SUBMIT is a machine no-op in `processing`, so
+    // the old guard below used to pass and fire a SECOND request on top of the
+    // first (Enter in the follow-up bar / capsule while the bridge is busy).
+    if (state.name === 'processing') return;
     const inputMode = state.inputMode;
     // Chips the user removed are removed from the request too, or the chip is a
     // decoration that lies about what was sent.
@@ -1442,15 +1464,19 @@
         consentBox.hidden = true;
         scheduleHitRegionRefresh();
       }
+      // 新的一轮重新点亮同意按钮：上一轮的写入早已结束或失败。
+      resetConsentButton();
       return;
     }
-    // 那段话复制一份回问题框：你正在看的，就是即将被写出去的东西。
-    const text = resultPlainText(resultCard);
-    if (capsuleInput.value.trim() !== text) capsuleInput.value = text;
+    // 那段话只在框刚出现的那一下复制回去一次。之后用户改了框里的字，
+    // 任何一次重画（NOTICE、模型健康、语音状态）都不能把它改回原样。
     consentTarget.textContent = session.targetAppLabel
       ? `写回 ${session.targetAppLabel}`
       : '写回你刚才那个窗口';
     if (consentBox.hidden) {
+      resetConsentButton();
+      const text = resultPlainText(resultCard);
+      if (capsuleInput.value.trim() !== text) capsuleInput.value = text;
       consentBox.hidden = false;
       const rect = capsule.getBoundingClientRect();
       const width = consentBox.offsetWidth || 260;
@@ -1463,17 +1489,25 @@
   consentReject.addEventListener('click', () => {
     consentBox.hidden = true;
     capsuleInput.value = '';
+    resetConsentButton();
     scheduleHitRegionRefresh();
   });
+
+  // 写入是异步的（桥可能跑好几秒）。上一版用 setTimeout 1.6s 重新点亮按钮，
+  // 用户在此期间再点一次就是往同一个窗口里写两遍同一段话。
+  let consentBusy = false;
+  function resetConsentButton() {
+    consentBusy = false;
+    consentApprove.disabled = false;
+    consentApprove.textContent = '同意';
+  }
   consentApprove.addEventListener('click', () => {
+    if (consentBusy) return;
     const text = capsuleInput.value.trim() || resultPlainText(resultCard);
     if (!text || !api || typeof api.insertResultText !== 'function') return;
+    consentBusy = true;
     consentApprove.disabled = true;
     consentApprove.textContent = '写入中';
-    setTimeout(() => {
-      consentApprove.disabled = false;
-      consentApprove.textContent = '同意';
-    }, 1600);
     api.insertResultText({ text, selectionSessionToken: session.token });
   });
   threadClose.addEventListener('click', () => dispatch({ type: 'DISMISS' }));
@@ -1790,7 +1824,7 @@
     targetingOutline.classList.remove('is-visible');
     capsule.classList.remove('is-entering', 'is-exiting');
     [targetingOutline, frozenGlow, capsule, shimmer, threadPanel, errorCard,
-      chipsBox, deliveryBox, passageExpand].forEach((el) => {
+      chipsBox, consentBox, deliveryBox, passageExpand].forEach((el) => {
       el.hidden = true;
     });
     resultCard.replaceChildren();
@@ -1884,6 +1918,14 @@
       // here is what makes the composer feel like a composer instead of a box
       // still holding the thing you already sent.
       if (name === 'processing' || name === 'result' || name === 'error') capsuleInput.value = '';
+      // The machine keeps `transcript` after SUBMIT (it is the source of
+      // `command`), so it has to be cleared here too: a stale transcript keeps
+      // data-empty="false" (the send button stays lit over an empty input),
+      // leaves ghost text in #transcript, and makes the next send-button click
+      // re-submit the previous question.
+      if ((name === 'processing' || name === 'result' || name === 'error') && state.transcript) {
+        state = { ...state, transcript: '' };
+      }
       renderTranscript();
       const capsuleWidth = syncCapsuleWidth();
       anchorCapsuleToTarget(capsuleWidth);
@@ -2169,6 +2211,7 @@
       clearCaptureProof();
       clearScreenPoints();
       pickedElement = null;
+      pickTargetShown = null;
       meta.selectionSource = null;
       meta.objectKind = null;
       applySession(payload);

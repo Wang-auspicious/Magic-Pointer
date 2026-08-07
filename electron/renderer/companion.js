@@ -84,6 +84,14 @@ function turnCards(turn, conversation) {
   if ((turn.facts || []).length) {
     cards.push(CardModel.normalizeCard({ id: `${turn.at || 0}-f`, kind: 'facts', rows: turn.facts }));
   }
+  // 产物卡。上一版这里只有 回答+事实 两张，工作室那套却把 artifact 也摊开——
+  // 同一次对话在小窗和主窗里长得不一样，说是「同一套映射」其实不是。
+  for (const [i, art] of (turn.artifacts || []).entries()) {
+    cards.push(CardModel.normalizeCard(art.kind === 'image'
+      ? { id: `${turn.at || 0}-i${i}`, kind: 'image', src: art.src, caption: art.name, w: art.w, h: art.h }
+      : { id: `${turn.at || 0}-r${i}`, kind: 'prose', eyebrow: '产物', title: art.name,
+        answer: art.summary || '', actions: [{ id: `open:${art.name}`, label: '打开' }] }));
+  }
   return cards;
 }
 
@@ -156,10 +164,24 @@ function bindComposerToObject(object) {
   cpComposer.setPlaceholder(name ? `关于「${String(name).slice(0, 22)}」再问…` : '继续问…');
 }
 
-/* pin 切换 */
+/* 顶栏动作。桥提供了 pin / expand / hide 三个通道，但上一版只在这里切换
+   is-on 一个 class——「固定」钉不住窗口，「展开到工作室」「关闭」点了没反应。 */
 document.addEventListener('click', (e) => {
   const pin = e.target.closest('[title="固定"]');
-  if (pin) pin.classList.toggle('is-on');
+  if (pin) {
+    const pinned = !pin.classList.contains('is-on');
+    pin.classList.toggle('is-on', pinned);
+    window.magicPointerCompanion?.pin?.(pinned);
+    return;
+  }
+  if (e.target.closest('[title="展开到工作室"]')) {
+    window.magicPointerCompanion?.expand?.();
+    return;
+  }
+  if (e.target.closest('[title="关闭"]')) {
+    window.magicPointerCompanion?.hide?.();
+    return;
+  }
 });
 
 /* 有新一轮就重画。桥推的是「哪条对话动了」，不是整份数据。 */
