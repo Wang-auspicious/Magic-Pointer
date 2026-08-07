@@ -337,15 +337,6 @@ function drawPointer(p) {
   ctx.restore();
 }
 
-function drawHitTestPixel(p) {
-  if (!p || captureMode) return;
-  ctx.save();
-  ctx.globalAlpha = 0.012;
-  ctx.fillStyle = '#2f7bff';
-  ctx.fillRect(Math.round(p.x), Math.round(p.y), 1, 1);
-  ctx.restore();
-}
-
 function drawObserverAura(p) {
   if (!p) return;
   ensureFrameCache();
@@ -382,9 +373,10 @@ function render() {
         drawSmoothPath(points, trailAlpha);
       }
     } else if (!strokes.length) {
-      // Keep the transparent window hit-testable without painting a second
-      // cursor over the preloaded CSS cursor.
-      drawHitTestPixel(lastPointer);
+      // 蓝圈光标由 canvas 画（cursor: none，不用 CSS url 光标——
+      // CSS 光标在 GPU 合成下帧间丢失会闪回原生，用户体感「蓝/原生
+      // 高频切换」）。画在轨迹层之上，保证可命中的同时可见。
+      drawPointer(lastPointer);
     }
     return;
   }

@@ -17,9 +17,12 @@ html, body {
 body[data-mode='gesture'] {
   background: rgba(0, 0, 0, 0.001);  /* non-transparent hit target for exclusive overlay */
 }
+/* 蓝光标由 canvas drawPointer 画，CSS 光标必须 none——
+   cursor: url(svg) 在 GPU 合成下会帧间丢失、闪回原生光标（唤醒后
+   蓝/原生高频切换的根源）。原生光标彻底隐藏，只留 canvas 画的那个。 */
 body[data-mode='gesture'],
 body[data-mode='gesture'] * {
-  cursor: url('./assets/armed-cursor.svg') 3 3, crosshair !important;
+  cursor: none !important;
 }
 
 #sweep-layer,

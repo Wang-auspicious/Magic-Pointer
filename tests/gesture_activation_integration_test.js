@@ -161,10 +161,10 @@ const gestureRenderBranch = overlay.slice(
   overlay.indexOf('if (gestureMode) {'),
   overlay.indexOf('if (!captureMode && points.length)'),
 );
-assert.doesNotMatch(gestureRenderBranch, /drawPointer\(lastPointer\)/,
-  'armed mode must not paint a second cursor over the CSS cursor');
-assert.match(gestureRenderBranch, /drawHitTestPixel\(lastPointer\)/,
-  'the transparent input shield keeps a nearly invisible hit-test pixel');
+assert.match(gestureRenderBranch, /drawPointer\(lastPointer\)/,
+  'gesture mode paints the blue pointer on canvas (CSS url cursors flicker to native on GPU compositing)');
+assert.doesNotMatch(gestureRenderBranch, /drawHitTestPixel\(lastPointer\)/,
+  'the hit-test pixel hack is retired; the painted pointer keeps the shield hit-testable');
 assert.match(overlay, /gestureLineStyle\s*===\s*'thin'/,
   'thin stroke remains an explicit selectable style');
 assert.match(overlay, /demo6_band/,
@@ -199,8 +199,10 @@ assert.match(overlay, /function resetOverlay\(\)[\s\S]*?releasePointerCapture/,
   'every dismissal must release stale DOM pointer ownership before rearming');
 assert.match(overlay, /resetOverlay\(\)[\s\S]*?gestureReady\(gestureToken\)/,
   'the renderer readiness acknowledgement must happen after reset');
-assert.match(styles, /body\[data-mode='gesture'\][\s\S]*?cursor:\s*url\([^)]*armed-cursor\.svg[^)]*\)[\s\S]*?!important/,
-  'armed drawing uses a preloaded custom cursor without painting a fake pointer');
+assert.match(styles, /body\[data-mode='gesture'\][\s\S]*?cursor:\s*none[\s\S]*?!important/,
+  'armed drawing hides the native cursor; the blue pointer is painted on canvas (CSS url cursors flicker back to native on GPU compositing)');
+assert.match(overlay, /drawPointer\(lastPointer\)[\s\S]*?gestureAcceptAt/,
+  'the blue pointer must be painted on canvas in gesture mode');
 assert.match(overlayHtml, /rel="preload"[^>]*href="assets\/armed-cursor\.svg"[^>]*as="image"/,
   'overlay startup must warm the custom cursor asset before wiggle activation');
 
