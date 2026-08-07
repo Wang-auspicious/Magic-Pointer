@@ -1626,6 +1626,13 @@ function dismissTemporarySurfaces({ invalidateSession = true, hideObserver = fal
     // Ask the stage to play its dismiss fade; it answers with stage:hidden.
     stageWindow.webContents.send('stage:hide');
   }
+  // 无论 hideObserver 与否，overlay 必须释放鼠标拦截——否则划线被取消后
+  // overlay 仍吞鼠标，用户点不到下面的应用（cancelSelectionGesture 的
+  // hideSurface:false 路径不释放 overlay 输入）。
+  if (overlayOwnsPointerInput && overlayWindow && !overlayWindow.isDestroyed()) {
+    overlayWindow.setIgnoreMouseEvents(true, { forward: true });
+    overlayOwnsPointerInput = false;
+  }
   if (invalidateSession) invalidateSelectionSession(sessionToken);
   disarmTemporaryDismissShortcut();
   lastStageResult = null;
