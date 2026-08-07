@@ -130,7 +130,7 @@ const Data = {
       kind: b.kind || '素材',
       items: b.items.map((e) => ({
         t: 'shot', w: 180, h: 120, desc: e.desc, src: e.absPath,
-        text: e.text || '', media: e.media || 'image',
+        text: e.text || '', media: e.media || 'image', summary: e.summary || '',
       })),
     }));
   },

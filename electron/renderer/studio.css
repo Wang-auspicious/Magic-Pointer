@@ -487,6 +487,12 @@
   font-size: 12.5px; line-height: 1.45; color: var(--ink-2);
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
+.node-summary {
+  margin: 3px 0 0 2px;
+  max-width: 200px;
+  font-size: 11.5px; line-height: 1.45; color: var(--ink-3);
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
 /* 悬停图片 1 秒后的视觉模型摘要浮层 */
 .stash-summary {
   position: fixed;
@@ -504,6 +510,44 @@
   transition: opacity 160ms var(--ease-out), transform 160ms var(--ease-out);
 }
 .stash-summary.is-visible { opacity: 1; transform: none; }
+
+/* 收藏图片大图查看窗 */
+.stash-viewer {
+  position: fixed; inset: 0;
+  z-index: 200;
+  display: grid; place-items: center;
+  background: rgba(16, 14, 11, .46);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms var(--ease-out);
+}
+.stash-viewer.is-visible { opacity: 1; pointer-events: auto; }
+.stash-viewer-card {
+  width: min(86vw, 980px);
+  max-height: 86vh;
+  display: flex; flex-direction: column;
+  border-radius: 18px;
+  background: var(--card);
+  box-shadow: var(--shadow-pop);
+  overflow: hidden;
+}
+.stash-viewer-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--hairline);
+}
+.stash-viewer-title {
+  flex: 1; min-width: 0;
+  font-size: 13.5px; color: var(--ink-2);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.stash-viewer-actions { display: flex; gap: 4px; }
+.stash-viewer-img {
+  display: block; width: 100%;
+  max-height: calc(86vh - 52px);
+  object-fit: contain;
+  background: var(--paper-2);
+}
 @media (hover: hover) and (pointer: fine) {
   .node:hover .node-shot, .node:hover .node-note {
     box-shadow: 0 2px 4px rgba(23,23,15,.06), 0 20px 44px -12px rgba(23,23,15,.24);

@@ -142,9 +142,10 @@ async function renderStash() {
     const nodes = b.nodes.map(n => {
       const body = n.t === 'shot'
         ? `<span class="node-shot" style="width:${n.w}px;height:${n.h - 34}px;${n.src ? `background-image:url('file:///${String(n.src).replace(/\\/g, '/')}');background-size:cover;background-position:center` : `background-image:${makeShot(n.desc)}`}"></span>
-           <span class="node-desc">${n.desc}</span>`
+           <span class="node-desc">${n.desc}</span>
+           ${n.summary ? `<span class="node-summary">${esc(n.summary)}</span>` : ''}`
         : `<span class="node-note">${n.text}</span>`;
-      return `<span class="node" data-src="${esc(n.src || '')}" data-text="${esc(n.text || '')}" style="left:${b.cx + n.x}px;top:${b.cy + n.y}px">
+      return `<span class="node" data-src="${esc(n.src || '')}" data-text="${esc(n.text || '')}" data-summary="${esc(n.summary || '')}" style="left:${b.cx + n.x}px;top:${b.cy + n.y}px">
         <span class="node-cap">${icon(b.icon)}${b.time}<span class="kind ${KIND_TAG[b.kind]}">${b.kind}</span></span>
         ${body}
       </span>`;
@@ -443,6 +444,14 @@ document.addEventListener('click', e => {
   const open = e.target.closest('[data-open]');
   if (open && open.dataset.open) { openConversation(open.dataset.open); return; }
 
+  // 收藏箱图片节点：左键 → 放大查看；查看窗里可复制图片
+  const imgNode = e.target.closest('.node[data-src], .stash-row[data-src]');
+  if (imgNode && imgNode.dataset.src && /\.(png|jpe?g|gif|webp|bmp)$/i.test(imgNode.dataset.src)) {
+    openStashViewer(imgNode.dataset.src, imgNode.dataset.text || '');
+    e.stopPropagation();
+    return;
+  }
+
   // 收藏箱文字节点：点击在「一行摘要」和「全文展开」之间切换
   const note = e.target.closest('.node[data-text] .node-note, .stash-row .txt');
   if (note) {
@@ -565,6 +574,50 @@ function stashSummaryEl() {
   return el;
 }
 
+/* ---- 收藏图片大图查看窗：左键放大 + 复制图片 ---- */
+function openStashViewer(src, desc) {
+  let viewer = document.getElementById('stash-viewer');
+  if (!viewer) {
+    viewer = document.createElement('div');
+    viewer.id = 'stash-viewer';
+    viewer.className = 'stash-viewer';
+    viewer.innerHTML = `
+      <div class="stash-viewer-card">
+        <div class="stash-viewer-head">
+          <b class="stash-viewer-title"></b>
+          <span class="stash-viewer-actions">
+            <button type="button" class="icon-btn is-plain" id="stash-viewer-copy" title="复制图片"><svg><use href="#ic-clip"/></svg></button>
+            <button type="button" class="icon-btn is-plain" id="stash-viewer-close" title="关闭"><svg><use href="#ic-x"/></svg></button>
+          </span>
+        </div>
+        <img class="stash-viewer-img" alt="" />
+      </div>`;
+    document.body.appendChild(viewer);
+    viewer.addEventListener('click', (ev) => {
+      if (ev.target === viewer) closeStashViewer();
+    });
+    viewer.querySelector('#stash-viewer-close').addEventListener('click', closeStashViewer);
+    viewer.querySelector('#stash-viewer-copy').addEventListener('click', () => {
+      const img = viewer.querySelector('.stash-viewer-img');
+      if (!img || !img.src) return;
+      // 把本地图片复制进剪贴板（保留位图，图片编辑器可直接粘贴）
+      fetch(img.src).then((r) => r.blob()).then((blob) => {
+        navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+      }).catch(() => { /* 剪贴板不可用时静默 */ });
+    });
+  }
+  const img = viewer.querySelector('.stash-viewer-img');
+  img.src = 'file:///' + String(src).replace(/\\/g, '/');
+  img.alt = desc || '';
+  viewer.querySelector('.stash-viewer-title').textContent = desc || '收藏图片';
+  viewer.classList.add('is-visible');
+}
+
+function closeStashViewer() {
+  const viewer = document.getElementById('stash-viewer');
+  if (viewer) viewer.classList.remove('is-visible');
+}
+
 document.addEventListener('mouseover', (e) => {
   const node = e.target.closest('.node[data-src], .stash-row[data-src]');
   if (!node || node === stashHoverTarget) return;
@@ -579,6 +632,11 @@ document.addEventListener('mouseover', (e) => {
     el.style.top = `${rect.bottom + 10}px`;
     el.textContent = '正在看这张图…';
     el.classList.add('is-visible');
+    // 入库时已自动生成过简介就直接用，不用再等模型
+    if (node.dataset.summary) {
+      el.textContent = node.dataset.summary;
+      return;
+    }
     if (stashSummaryCache.has(src)) {
       el.textContent = stashSummaryCache.get(src);
       return;

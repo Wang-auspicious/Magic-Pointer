@@ -2,7 +2,10 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { spawn } = require('node:child_process');
 const store = require('./stash_store');
+
+const ROOT = path.resolve(__dirname, '..');
 
 // 收藏箱的 IO 层：轮询剪贴板、落盘、把路径写回剪贴板、维护索引。
 // 纯逻辑全在 stash_store.js，这里只做外部世界打交道的部分。
@@ -99,7 +102,46 @@ function createStashRuntime(options = {}) {
 
     log(`stash + ${result.entry.media} ${result.entry.kind} ${result.entry.relPath} app=${result.entry.app || '—'}`);
     onEntry(result.entry);
+
+    // 截图入库即自动出简介（不等待 hover）：后台调视觉模型给 3-4 句，
+    // 写回条目并通知界面。失败不影响入库——条目没有简介也能看缩略图。
+    if (result.entry.media === 'image') {
+      autoDescribeEntry(result.entry, abs);
+    }
+
     return { entry: result.entry, abs };
+  }
+
+  // 入库后异步生成图片简介，写回条目并推送界面更新。
+  // 队列串行：一次收十几张图时不会同时打十几个模型请求。
+  let describeQueue = Promise.resolve();
+  function describeImage(absPath) {
+    return new Promise((resolve) => {
+      const child = spawn(process.execPath, [path.join(ROOT, 'scripts', 'stash_describe_bridge.py')], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      let out = '';
+      child.stderr.on('data', () => {});
+      child.on('error', () => resolve(null));
+      child.on('close', () => {
+        try {
+          const parsed = JSON.parse(out);
+          resolve(parsed?.ok ? parsed.summary : null);
+        } catch (_) {
+          resolve(null);
+        }
+      });
+      child.stdin.end(JSON.stringify({ imagePath: absPath }));
+    });
+  }
+  function autoDescribeEntry(entry, abs) {
+    const run = () => describeImage(abs).then((summary) => {
+      if (!summary) return;
+      entry.summary = summary;
+      persist();
+      onEntry({ ...entry });
+    }).catch(() => { /* 简介失败不影响收藏 */ });
+    describeQueue = describeQueue.then(run);
   }
 
   async function ingest(image, kind = 'shot') {
