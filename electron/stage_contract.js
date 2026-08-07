@@ -316,6 +316,9 @@ function stageEventFromBridge(parsed) {
       presentation: 'answer-card',
       answer: String(parsed.answer || parsed.status || '已处理。'),
       detail: humanErrorMessage(parsed.detail || parsed.error, ''),
+      // 桥在调用模型前判定的回答形态：deliver（要发出去，禁 markdown）
+      // / inspect（自己看）。answer_shape_policy 优先信它，再退到猜命令。
+      answerShape: String(parsed.answerShape || parsed.route?.answerShape || ''),
       ...receipt,
       actions,
     },

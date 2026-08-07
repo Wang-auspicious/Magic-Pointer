@@ -29,9 +29,10 @@ const WRITE_BACK_ACTIONS = Object.freeze([
 ]);
 
 // 卡的形态本身就说明它是给人看的：一张图、一块工具界面、一张日程、一个对比表
-// 没有「把它发给对方」这回事。
+// 没有「把它发给对方」这回事。注意不含 proposal——提案是「同意后执行动作」，
+// 默认必须能确认，不能当成纯查看。
 const INSPECT_KINDS = Object.freeze([
-  'image', 'slot', 'table', 'calendar', 'metric', 'steps', 'prompt', 'proposal',
+  'image', 'slot', 'table', 'calendar', 'metric', 'steps', 'prompt',
 ]);
 
 // 「替我说一句话」类的动词。命中就是 deliver——这些词的宾语是别人要读到的东西。
@@ -73,6 +74,9 @@ function answerShape(input = {}) {
 
   const kind = String(result.kind || '');
   if (INSPECT_KINDS.includes(kind)) return shape('inspect', `kind=${kind}`);
+  // 提案是要点头才做的事：需要确认，按 deliver 处理（哪怕它不写进窗口，
+  // needsConsent 让同意按钮出现）。
+  if (kind === 'proposal') return shape('deliver', 'kind=proposal');
 
   // 桥说了算：它知道自己走的是哪条 recipe，比我们猜命令准。
   const explicit = String(result.answerShape || result.deliverKind || '');

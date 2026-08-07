@@ -908,3 +908,20 @@ def test_open_stroke_blocks_are_sorted_in_reading_order(monkeypatch, tmp_path) -
     top = context.content.find("line A")
     bottom = context.content.find("line B")
     assert top != -1 and bottom != -1 and top < bottom
+
+
+# ── 回答形态判定：deliver（要发出去）────────────────────────────────
+def test_deliver_request_detection() -> None:
+    from scripts.selection_bridge import _is_deliver_request
+
+    for command in ('帮我回复一下', '这段话润色一下', '改写得客气点', '语气委婉一点', '扩写这段', '帮我写一段回信'):
+        assert _is_deliver_request(command), f'{command} 应判 deliver'
+    for command in ('这是什么', '解释一下', '为什么会这样', '帮我画一张图', '总结这段'):
+        assert not _is_deliver_request(command), f'{command} 不应判 deliver'
+
+
+def test_deliver_system_prompt_forbids_markdown() -> None:
+    from scripts.selection_bridge import DELIVER_SYSTEM_PROMPT
+
+    assert 'markdown' in DELIVER_SYSTEM_PROMPT
+    assert '纯文字' in DELIVER_SYSTEM_PROMPT

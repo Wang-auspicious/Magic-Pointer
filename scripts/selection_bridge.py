@@ -2325,23 +2325,57 @@ def _object_summary_for_routing(
     return "\n".join(parts) or "没有读到可用的对象内容"
 
 
+# ── 回答形态：要送出去（deliver）还是自己看（inspect）─────────────
+# 分界只有一条：这段产物要不要写进别人的窗口。deliver 时模型输出必须
+# 是纯文本（禁 markdown）——对面读到的是字面量的 `**` 和 `-`，渲染层
+# 也不解析；inspect 保持默认（可带 markdown）。
+# 与渲染层 electron/answer_shape_policy.js 的 DELIVER_VERBS 保持同源；
+# 桥在调用模型前判定，回答后把 answerShape 带回结果。
+_DELIVER_REQUEST_RE = re.compile(
+    r"回复|回他|回她|回它|回个|答复|回信|回邮件|回消息|回微信|回短信|"
+    r"润色|改写|重写|改得|改成|帮我写|写一段|写一句|写个|写封|"
+    r"客气点|委婉|正式点|口语化|别太硬|语气|"
+    r"扩写|压缩|精简|缩短",
+    re.IGNORECASE,
+)
+
+DELIVER_SYSTEM_PROMPT = (
+    "你要写的是要直接发给别人的文字（回消息、回邮件、改写一段话）。\n"
+    "禁止使用任何 markdown 标记：不要用 **、*、#、-、1. 这类符号，"
+    "不要加引号包裹，不要输出标题或列表符号。\n"
+    "只输出对方能直接读到、直接发送的纯文字；段落用空行分隔。"
+)
+
+
+def _is_deliver_request(command: str) -> bool:
+    return bool(_DELIVER_REQUEST_RE.search(str(command or "")))
+
+
 def _general_fallback_answer(
     command: str,
     context_text: str,
     *,
     allow_tools: bool,
     recipe_enabled: dict[str, bool] | None = None,
-) -> tuple[str, str | None]:
+) -> tuple[str, str | None, str]:
     """L2: the tier that guarantees an answer.
 
-    Returns (answer, suggested_recipe_id). The recipe id is a hint the caller may
-    act on; the answer is always something a person can read. A refusing gateway
-    produces an honest sentence about the endpoint, never a silent failure and
-    never a claim that work happened.
+    Returns (answer, suggested_recipe_id, answer_shape). The recipe id is a
+    hint the caller may act on; the answer is always something a person can
+    read. A refusing gateway produces an honest sentence about the endpoint,
+    never a silent failure and never a claim that work happened.
     """
+    deliver = _is_deliver_request(command)
     if not allow_tools:
-        answer = ask_text_model(command, context_text=context_text, timeout_s=GENERAL_TIMEOUT_S, attempts=1)
-        return str(answer or "").strip() or "这次没有拿到可用的回答，也没有改动任何东西。", None
+        answer = ask_text_model(
+            command,
+            context_text=context_text,
+            timeout_s=GENERAL_TIMEOUT_S,
+            attempts=1,
+            system_prompt=DELIVER_SYSTEM_PROMPT if deliver else None,
+        )
+        text = str(answer or "").strip() or "这次没有拿到可用的回答，也没有改动任何东西。"
+        return text, None, "deliver" if deliver else "inspect"
 
     result = ask_text_model_with_tools(
         command,
@@ -2355,13 +2389,13 @@ def _general_fallback_answer(
     if calls:
         suggested = recipe_id_from_tool_name(str(calls[0].get("name") or ""))
         if suggested is not None:
-            return text, suggested
+            return text, suggested, "deliver" if deliver else "inspect"
     if text:
-        return text, None
+        return text, None, "deliver" if deliver else "inspect"
     error = str(result.get("error") or "").strip()
     if error:
-        return f"这次没能给出回答：{error}", None
-    return "这次没有拿到可用的回答，也没有改动任何东西。", None
+        return f"这次没能给出回答：{error}", None, "inspect"
+    return "这次没有拿到可用的回答，也没有改动任何东西。", None, "inspect"
 
 
 # --- Agent handoff ----------------------------------------------------------
@@ -2717,11 +2751,18 @@ def main() -> int:
         context_text += "\n\n" + episode_context
     action_proposals = []
     selection_snapshot_id = str((snapshot or {}).get("snapshot_id") or "").strip() or None
+    # 回答形态：默认 inspect（自己看）。L2 通用问答会按命令预判 deliver；
+    # 写回类动作（office_replace_selection 等）天然是 deliver。
+    answer_shape = "deliver" if any(
+        str(p.get("action_type") or "") in {"office_replace_selection", "capsule_delivery", "draft_delivery", "text_replace"}
+        for p in (payload.get("actionProposals") or []) if isinstance(p, dict)
+    ) else "inspect"
     # Set by whichever tier answers, so the diagnostics page can show which tier
     # handled a command instead of guessing from the log.
     route_info: dict[str, object] = fast.to_dict() if fast.action in {ACT_MODEL, ACT_TOOLS} else {
         "tier": "L1", "reason": "handler_chain"
     }
+    route_info["answerShape"] = answer_shape
 
     browser_failure_answer = grounded_browser_failure_answer(command, app_ctx)
     vision_answer = _screen_region_vision_answer(command, target_window, app_ctx, snapshot)
@@ -2818,7 +2859,7 @@ def main() -> int:
                 f"\n\n没有从“{target_title}”读到文本层内容。"
                 "只依据上面已有的窗口与来源信息回答，缺什么就说缺什么，不要编造屏幕上的文字。"
             )
-        answer, suggested_recipe = _general_fallback_answer(
+        answer, suggested_recipe, answer_shape = _general_fallback_answer(
             command,
             context_text,
             allow_tools=allow_tools,
@@ -2828,6 +2869,7 @@ def main() -> int:
             "tier": "L2",
             "suggestedRecipeId": suggested_recipe,
             "modelAvailable": allow_tools,
+            "answerShape": answer_shape,
         }
         if suggested_recipe:
             # The model chose a capability for a phrasing no rule covered. Run it
@@ -2860,6 +2902,7 @@ def main() -> int:
         "ok": True,
         "prompt": command,
         "answer": answer,
+        "answerShape": answer_shape,
         "screenPoints": [point.to_dict() for point in screen_points],
         "route": route_info,
         "selectionContext": None if app_ctx is None else app_ctx.to_dict(),

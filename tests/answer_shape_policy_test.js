@@ -26,12 +26,18 @@ assert.strictEqual(answerShape({ result: { intentKind: 'length_target' } }).shap
 
 // --- 自己看的 ---------------------------------------------------------------
 // 生图、工具界面、日程、对比表：没有「把它发给对方」这回事。
-for (const kind of ['image', 'slot', 'table', 'calendar', 'metric', 'prompt', 'proposal', 'steps']) {
+for (const kind of ['image', 'slot', 'table', 'calendar', 'metric', 'prompt', 'steps']) {
   const shape = answerShape({ kind, result: { kind }, command: '帮我回复一下' });
   assert.strictEqual(shape.shape, 'inspect', `${kind} 卡是给人看的`);
   assert.strictEqual(shape.allowMarkdown, true, '自己看的东西要能渲染 markdown 和图');
   assert.strictEqual(shape.needsConsent, false, '不往外写就没有什么需要点头');
 }
+
+// 提案不是「给人看」——它是「同意后执行动作」，默认必须能确认。
+// 判成无确认的 inspect 会让人没法批准，比多一个按钮严重。
+const proposalShape = answerShape({ result: { kind: 'proposal' }, command: '随便' });
+assert.strictEqual(proposalShape.shape, 'deliver', '提案要点头，不能当纯查看');
+assert.strictEqual(proposalShape.needsConsent, true, '提案必须能确认');
 
 for (const command of ['这是什么', '解释一下这段', '为什么会这样', '帮我画一张图', '这个是干嘛的']) {
   assert.strictEqual(answerShape({ command }).shape, 'inspect', `「${command}」是讲给我听的`);
