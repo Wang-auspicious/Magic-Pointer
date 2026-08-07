@@ -60,6 +60,8 @@ const CardModel = require('./cards');
 const { createTaskWatcher } = require('./task_watcher');
 const { createStashRuntime } = require('./stash_runtime');
 const { isTransientShell } = require('./stash_store');
+const { evaluateRule } = require('./proactive_rules');
+const { createProactiveOnceStore } = require('./proactive_once_store');
 const { createConversationStore } = require('./conversation_store');
 
 let overlayWindow = null;
@@ -1397,10 +1399,64 @@ function initializeStashRuntime() {
       if (dashboardWindow && !dashboardWindow.isDestroyed()) {
         dashboardWindow.webContents.send('stash:entry', entry);
       }
+      // 主动提议：截图/文本入库事件喂给规则引擎（Vida 主动层）。
+      // 规则触发只记日志——提案 UI 待 proactive_runtime 完整接线后接上。
+      feedProactiveEvent({
+        kind: entry?.media === 'image' ? 'shot' : 'clip',
+        app: entry?.app || '',
+        t: entry?.capturedAt || Date.now(),
+      });
     },
   });
   if (fabricSettings?.stash?.clipboard !== false) stashRuntime.start();
   return stashRuntime;
+}
+
+// ── 主动提议（Vida 主动层触发判断）───────────────────────────────
+// 事件进规则引擎（proactive_rules.js 纯函数），触发时查 once_store
+// （一生一次），通过则记日志并暂存待 UI 提案。零模型调用。
+let proactiveRuleState = null;
+let proactiveOnceStore = null;
+
+function proactiveStore() {
+  if (proactiveOnceStore) return proactiveOnceStore;
+  proactiveOnceStore = createProactiveOnceStore({
+    load: () => {
+      try {
+        const raw = JSON.parse(
+          fs.readFileSync(path.join(app.getPath('userData'), 'proactive-once.json'), 'utf8'),
+        );
+        return raw && typeof raw === 'object' ? raw : {};
+      } catch (_) {
+        return {};
+      }
+    },
+    persist: () => {
+      try {
+        fs.writeFileSync(
+          path.join(app.getPath('userData'), 'proactive-once.json'),
+          JSON.stringify(proactiveOnceStore._items()),
+          'utf8',
+        );
+      } catch (_) { /* 存储失败不影响主功能 */ }
+    },
+  });
+  return proactiveOnceStore;
+}
+
+function feedProactiveEvent(event) {
+  if (fabricSettings?.interaction?.proactive === false) return;
+  const rule = proactiveRuleState
+    ? evaluateRule('burst_screenshots', event, proactiveRuleState)
+    : evaluateRule('burst_screenshots', event, null);
+  proactiveRuleState = rule.state;
+  if (!rule.trigger) return;
+  const store = proactiveStore();
+  const triggerId = 'burst_screenshots';
+  if (!store.shouldShow(triggerId)) return;
+  store.markShown(triggerId);
+  log(`proactive trigger rule=burst_screenshots once=${triggerId}`);
+  // 提案 UI 落点：后续 proactive_runtime 在这里弹非焦点提案卡。
 }
 
 ipcMain.handle('stash:list', () => {

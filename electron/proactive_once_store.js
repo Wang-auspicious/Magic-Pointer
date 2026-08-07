@@ -32,7 +32,11 @@ function createProactiveOnceStore({ load = () => ({}), persist = () => {} } = {}
     persist();
   }
 
-  return { shouldShow, markShown, blockForever, clear };
+  function _items() {
+    return items;
+  }
+
+  return { shouldShow, markShown, blockForever, clear, _items };
 }
 
 module.exports = { createProactiveOnceStore };
