@@ -49,14 +49,22 @@ const HANDOFF_RE = /Traceback|Error:|error\[|at .+\(.+:\d+\)|交接|handoff|\$ |
 
 function classify(input = {}) {
   const app = String(input.app || '');
+  // 图片没有 text 字段（text 是剪贴板文本专用）；截图带的是 elementName /
+  // windowTitle。证据从这些字段里找，不能因为 text 为空就把所有图判成「素材」。
   const text = String(input.text || '');
+  const label = String(input.elementName || input.windowTitle || '');
+  const combined = `${text}\n${label}`;
   const hasText = text.trim().length > 0;
 
-  if (RECEIPT_RE.test(text)) return '凭证';
-  if (HANDOFF_APPS.test(app) || HANDOFF_RE.test(text)) return '交接';
+  if (RECEIPT_RE.test(combined)) return '凭证';
+  if (HANDOFF_APPS.test(app) || HANDOFF_RE.test(combined)) return '交接';
   if (input.kind === 'clip') return '片段';
+  // 图片：有明确的来源/描述就算「灵感」（用户主动截下来的），
+  // 只有连来源都没有的才退回「素材」。
+  if (!hasText && !label.trim()) return '素材';
+  if (!hasText) return '灵感';
   // 阈值按中文定：一个汉字的信息量抵好几个字母，12 太高会把「看这个卡的做法」误判成素材。
-  if (!hasText || text.trim().length < 6) return '素材';
+  if (text.trim().length < 6) return '素材';
   return '灵感';
 }
 
@@ -137,15 +145,66 @@ function describe(input = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// 成簇：与上一条时间差在窗口内、且来源应用相同，就归进同一簇。
-// 「一起进来的放一起」= 一次连拍、一次连续复制。
+// 成簇。三层判据，按证据强度排：
+//   1. 同来源 + 时间窗内   → 同簇（一次连拍 / 一次连续复制）
+//   2. 同来源 + 内容相似   → 同簇（跨窗口也合并：同一次任务的不同步骤截图，
+//      或同一主题的连续复制，中间隔了几分钟仍是同一件事）
+//   3. 其余                → 新簇
+// 内容相似度：图片比亮度指纹（16×16 采样逐格差），文本比关键词重叠。
 // ---------------------------------------------------------------------------
-function assignBurst(previous, entry, windowMs = BURST_WINDOW_MS) {
+function assignBurst(previous, entry, windowMs = BURST_WINDOW_MS, _similarity = 0.72) {
   if (!previous) return { burstId: `b${entry.capturedAt}`, isNew: true };
   const sameSource = (previous.app || '') === (entry.app || '');
+  if (!sameSource) return { burstId: `b${entry.capturedAt}`, isNew: true };
+
   const withinWindow = entry.capturedAt - previous.capturedAt <= windowMs;
-  if (sameSource && withinWindow) return { burstId: previous.burstId, isNew: false };
+  if (withinWindow) return { burstId: previous.burstId, isNew: false };
+
+  // 超窗口了，但内容还像同一件事 → 并入。时间越久越难证明是同一件，
+  // 所以相似度门槛随时间线性抬高（基准门槛 + 每分钟 0.02）。
+  // 文本的关键词重叠天然低于图片的像素相似：文本用 0.5 基准，图片 0.72。
+  const gapMinutes = (entry.capturedAt - previous.capturedAt) / 60000;
+  const base = (previous.media || mediaOf(previous.kind || '')) === 'text' ? 0.5 : 0.72;
+  const threshold = Math.min(0.95, base + gapMinutes * 0.02);
+  if (contentSimilarity(previous, entry) >= threshold) {
+    return { burstId: previous.burstId, isNew: false };
+  }
   return { burstId: `b${entry.capturedAt}`, isNew: true };
+}
+
+// 内容相似度 0-1。图片走亮度指纹逐格差；文本走关键词重叠；
+// 混合形态（图 vs 文本）判 0——不同载体不算同一件事。
+function contentSimilarity(a, b) {
+  if (!a || !b) return 0;
+  const mediaA = a.media || mediaOf(a.kind || '');
+  const mediaB = b.media || mediaOf(b.kind || '');
+  if (mediaA !== mediaB) return 0;
+
+  if (mediaA === 'text') {
+    const ta = String(a.text || '');
+    const tb = String(b.text || '');
+    if (!ta || !tb) return 0;
+    const wa = new Set(ta.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean));
+    const wb = new Set(tb.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean));
+    if (!wa.size || !wb.size) return 0;
+    let overlap = 0;
+    for (const w of wa) if (wb.has(w)) overlap += 1;
+    return overlap / Math.min(wa.size, wb.size);
+  }
+
+  // 图片：亮度指纹逐格差异。a.bitmap 只在构建时存在，落盘后只有
+  // fingerprint（哈希串）。逐格差需要原始采样，所以相似度判据只对
+  // 「构建时」的相邻条目有效——这恰好覆盖跨窗口合并的主要场景。
+  const sa = a.samples;
+  const sb = b.samples;
+  if (!sa || !sb || !sa.length || !sb.length) return 0;
+  if (sa.length !== sb.length) return 0;
+  let diff = 0;
+  for (let i = 0; i < sa.length; i += 1) {
+    diff += Math.abs(sa[i] - sb[i]);
+  }
+  const avgDiff = diff / sa.length / 255;
+  return Math.max(0, 1 - avgDiff);
 }
 
 function shouldDedupe(previous, entry, windowMs = DEDUPE_WINDOW_MS) {
@@ -212,6 +271,8 @@ function buildEntry(input, previous, options = {}) {
       text: input.text || '',
       width: input.bitmap?.width || 0,
       height: input.bitmap?.height || 0,
+      // 亮度采样随条目存：跨窗口的内容相似聚类需要它（哈希串不能比相似度）。
+      samples: Array.isArray(input.samples) ? input.samples.slice(0, 512) : [],
       relPath: relativePath({ capturedAt, fingerprint: fp, media }),
     },
   };
@@ -252,6 +313,7 @@ module.exports = {
   classify,
   describe,
   assignBurst,
+  contentSimilarity,
   shouldDedupe,
   relativePath,
   mediaOf,

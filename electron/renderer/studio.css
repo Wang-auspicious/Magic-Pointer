@@ -471,6 +471,15 @@
   box-shadow: 0 1px 2px rgba(23,23,15,.05), 0 10px 26px -10px rgba(23,23,15,.16);
   font-size: 13px; line-height: 1.5;
   transition: box-shadow 180ms var(--ease-out), transform 180ms var(--ease-out);
+  /* 默认一行，点击展开全文。overflow hidden 保证截断，光标提示可点 */
+  display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical;
+  overflow: hidden;
+  cursor: pointer;
+}
+.node-note.is-open {
+  -webkit-line-clamp: unset;
+  max-width: 420px;
+  white-space: pre-wrap;
 }
 .node-desc {
   margin: 6px 0 0 2px;
@@ -478,6 +487,23 @@
   font-size: 12.5px; line-height: 1.45; color: var(--ink-2);
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
+/* 悬停图片 1 秒后的视觉模型摘要浮层 */
+.stash-summary {
+  position: fixed;
+  z-index: 90;
+  width: 320px;
+  max-height: 180px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: var(--card);
+  box-shadow: var(--shadow-pop);
+  font-size: 13px; line-height: 1.6; color: var(--ink);
+  opacity: 0;
+  transform: translateY(4px);
+  pointer-events: none;
+  transition: opacity 160ms var(--ease-out), transform 160ms var(--ease-out);
+}
+.stash-summary.is-visible { opacity: 1; transform: none; }
 @media (hover: hover) and (pointer: fine) {
   .node:hover .node-shot, .node:hover .node-note {
     box-shadow: 0 2px 4px rgba(23,23,15,.06), 0 20px 44px -12px rgba(23,23,15,.24);
@@ -510,7 +536,8 @@
   background: var(--paper-2) center/cover;
   box-shadow: inset 0 0 0 1px var(--hairline);
 }
-.stash-row .txt { flex: 1; min-width: 0; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stash-row .txt { flex: 1; min-width: 0; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.stash-row .txt.is-open { white-space: pre-wrap; overflow: visible; }
 .stash-row .src { font-size: 12.5px; color: var(--ink-3); white-space: nowrap; }
 .stash-row .kind { font-size: 11.5px; font-weight: 600; width: 30px; text-align: right; }
 .stash-row .t { font-size: 12px; color: var(--ink-4); width: 46px; text-align: right; }

@@ -20,6 +20,11 @@ assert.strictEqual(stash.classify({ app: 'chrome.exe', text: '' }), '素材');
 assert.strictEqual(stash.classify({ app: 'chrome.exe', text: '短' }), '素材');
 assert.strictEqual(stash.classify({ app: 'chrome.exe', text: '这一段讲的是怎么把渐变做出方向感' }), '灵感');
 assert.strictEqual(stash.classify({ app: 'chrome.exe', kind: 'clip' }), '片段');
+// 图片没有 text 字段（text 是剪贴板文本专用），但截图带 elementName——
+// 有明确来源的截图不该全判成「素材」
+assert.strictEqual(stash.classify({ app: 'Alipay', elementName: '付款成功 ¥348' }), '凭证');
+assert.strictEqual(stash.classify({ app: 'chrome.exe', elementName: 'TODO 列表设计稿' }), '灵感');
+assert.strictEqual(stash.classify({ app: 'chrome.exe', elementName: '' }), '素材');
 // 凭证判据必须压过终端来源，否则终端里贴的收据会被误归交接
 assert.strictEqual(stash.classify({ app: 'WindowsTerminal.exe', text: '发票 ¥1,240' }), '凭证');
 
@@ -39,6 +44,34 @@ assert.strictEqual(stash.assignBurst(prev, { app: 'chrome.exe', capturedAt: t0 +
 assert.strictEqual(stash.assignBurst(prev, { app: 'Excel.exe', capturedAt: t0 + 1_000 }).isNew, true);
 // 超出窗口也断簇
 assert.strictEqual(stash.assignBurst(prev, { app: 'chrome.exe', capturedAt: t0 + 200_000 }).isNew, true);
+// 跨窗口但内容相似（同一来源、亮度采样相近）→ 并入同簇
+const similarShot = {
+  app: 'chrome.exe', capturedAt: t0 + 200_000,
+  media: 'image', samples: [100, 110, 120, 130, 100, 110, 120, 130, 100, 110, 120, 130, 100, 110, 120, 130],
+};
+const prevShot = {
+  burstId: 'b1', app: 'chrome.exe', capturedAt: t0,
+  media: 'image', samples: [104, 114, 124, 134, 104, 114, 124, 134, 104, 114, 124, 134, 104, 114, 124, 134],
+};
+assert.strictEqual(
+  stash.assignBurst(prevShot, similarShot).burstId, 'b1',
+  '同一来源、内容相似的截图跨窗口应并入同簇',
+);
+// 内容差太远（采样差异大）→ 断簇
+const differentShot = {
+  app: 'chrome.exe', capturedAt: t0 + 200_000,
+  media: 'image', samples: [0, 0, 0, 0, 255, 255, 255, 255, 0, 0, 0, 0, 255, 255, 255, 255],
+};
+assert.strictEqual(stash.assignBurst(prevShot, differentShot).isNew, true, '内容差异大应断簇');
+// 不同载体（图 vs 文本）永不合并
+assert.strictEqual(stash.assignBurst(
+  { burstId: 'b1', app: 'chrome.exe', capturedAt: t0, media: 'text', text: 'hello world' },
+  { app: 'chrome.exe', capturedAt: t0 + 200_000, media: 'image', samples: [100] },
+).isNew, true);
+// 文本关键词重叠 → 跨窗口并入
+const prevText = { burstId: 'b1', app: 'chrome.exe', capturedAt: t0, media: 'text', text: 'magic pointer 选区 读取 结构' };
+const similarText = { app: 'chrome.exe', capturedAt: t0 + 200_000, media: 'text', text: 'magic pointer 选区 冻结 像素' };
+assert.strictEqual(stash.assignBurst(prevText, similarText).burstId, 'b1', '关键词重叠的文本跨窗口并入');
 // 第一条永远起新簇
 assert.strictEqual(stash.assignBurst(null, { app: 'x', capturedAt: t0 }).isNew, true);
 

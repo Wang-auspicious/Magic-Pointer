@@ -18,10 +18,34 @@ const TITLE_MAX = 28;
 
 // 同一个对象的稳定标识：进程 + 窗口标题 + 元素路径。
 // 拿不到元素路径就退到标题；都拿不到就用进程名——宁可粗一点，也不要每次都算成新对象。
+// elementPath 形如 `selection-<uuid>`（每次划线都是新的）时不算稳定标识，
+// 否则同一个对象会被 UUID 拆成无数条碎片记忆。UUID 段降级丢弃。
+const TRANSIENT_ELEMENT_RE = /^(selection|snapshot|obj)-[a-f0-9]{8,}$/i;
+
+function stableElementPath(elementPath) {
+  const raw = String(elementPath || '').trim();
+  if (!raw) return '';
+  if (TRANSIENT_ELEMENT_RE.test(raw)) return '';
+  return raw;
+}
+
 function objectKey(object = {}) {
-  const parts = [object.app || '', object.windowTitle || '', object.elementPath || ''];
+  const parts = [object.app || '', object.windowTitle || '', stableElementPath(object.elementPath)];
   const filled = parts.filter(Boolean);
   return filled.length ? filled.join('|') : 'unknown';
+}
+
+// 这条提问有信息量吗？问候/泛问（你好、在吗、这是什么、这啥）不构成
+// 记忆——记下的是「用户对某个对象做过什么」，不是「用户说过什么」。
+const VAPID_QUESTION_RE = /^(你好|您好|嗨|在吗|在不在|你是谁|你叫什么|hello|hi|hey|这是什么|这是啥|这啥|那是什么|这啥意思|这啥字|啥意思|什么意思)$/i;
+
+function isSubstantiveQuestion(title = '') {
+  const t = String(title).trim();
+  if (!t) return false;
+  if (VAPID_QUESTION_RE.test(t)) return false;
+  // 泛问的规则化结果（如「这是什么」剥成「这」）也挡掉
+  if (t.length <= 2 && /^[这那它啥谁]/.test(t)) return false;
+  return true;
 }
 
 // 标题不是用户问题的截断——把问题压成一句「对象 + 动作」的小结。
@@ -181,6 +205,8 @@ function createConversationStore({ baseDir, now = () => Date.now() } = {}) {
     }
     return [...byObject.values()]
       .filter((m) => m.touches >= minTouches)
+      // 记忆得有内容：纯问候/无信息量提问（你好、这是啥、这是什么）不构成记忆
+      .filter((m) => m.questions.some((q) => isSubstantiveQuestion(q)))
       .sort((a, b) => b.lastAt - a.lastAt);
   }
 
@@ -205,4 +231,4 @@ function createConversationStore({ baseDir, now = () => Date.now() } = {}) {
   return { appendTurn, list, get, timeline, memories, artifacts, clear, objectKey };
 }
 
-module.exports = { createConversationStore, objectKey, titleFrom, subtitleFrom, MAX_CONVERSATIONS };
+module.exports = { createConversationStore, objectKey, titleFrom, subtitleFrom, isSubstantiveQuestion, MAX_CONVERSATIONS };

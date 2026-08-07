@@ -141,10 +141,10 @@ async function renderStash() {
   world.innerHTML = laid.map(b => {
     const nodes = b.nodes.map(n => {
       const body = n.t === 'shot'
-        ? `<span class="node-shot" style="width:${n.w}px;height:${n.h - 34}px;background-image:${makeShot(n.desc)}"></span>
+        ? `<span class="node-shot" style="width:${n.w}px;height:${n.h - 34}px;${n.src ? `background-image:url('file:///${String(n.src).replace(/\\/g, '/')}');background-size:cover;background-position:center` : `background-image:${makeShot(n.desc)}`}"></span>
            <span class="node-desc">${n.desc}</span>`
         : `<span class="node-note">${n.text}</span>`;
-      return `<span class="node" style="left:${b.cx + n.x}px;top:${b.cy + n.y}px">
+      return `<span class="node" data-src="${esc(n.src || '')}" data-text="${esc(n.text || '')}" style="left:${b.cx + n.x}px;top:${b.cy + n.y}px">
         <span class="node-cap">${icon(b.icon)}${b.time}<span class="kind ${KIND_TAG[b.kind]}">${b.kind}</span></span>
         ${body}
       </span>`;
@@ -167,8 +167,8 @@ function renderStashList(laid) {
   laid.forEach(b => { (byTime[/[今昨前]|月/.test(b.time) ? b.time : '今天'] ||= []).push(b); });
   list.innerHTML = Object.entries(byTime).map(([day, bs]) =>
     `<div class="stash-day">${day}<em>· ${bs.reduce((n, b) => n + b.items.length, 0)} 项</em></div>` +
-    bs.map(b => b.items.map(it => `<button class="stash-row">
-        <span class="sq" style="background-image:${it.t === 'shot' ? makeShot(it.desc) : 'none'}"></span>
+    bs.map(b => b.items.map(it => `<button class="stash-row" data-src="${esc(it.src || '')}" data-text="${esc(it.text || '')}">
+        <span class="sq" style="${it.src && /\.(png|jpe?g|gif|webp|bmp)$/i.test(it.src) ? `background-image:url('file:///${String(it.src).replace(/\\/g, '/')}');background-size:cover;background-position:center` : `background-image:${it.t === 'shot' ? makeShot(it.desc) : 'none'}`}"></span>
         <span class="txt">${it.desc || it.text}</span>
         <span class="src">${b.app}</span>
         <span class="kind ${KIND_TAG[b.kind]}">${b.kind}</span>
@@ -443,6 +443,14 @@ document.addEventListener('click', e => {
   const open = e.target.closest('[data-open]');
   if (open && open.dataset.open) { openConversation(open.dataset.open); return; }
 
+  // 收藏箱文字节点：点击在「一行摘要」和「全文展开」之间切换
+  const note = e.target.closest('.node[data-text] .node-note, .stash-row .txt');
+  if (note) {
+    note.classList.toggle('is-open');
+    e.stopPropagation();
+    return;
+  }
+
   const goto = e.target.closest('[data-goto]');
   if (goto) { show(goto.dataset.goto); return; }
 
@@ -535,6 +543,64 @@ function startNewChat() {
 }
 
 document.getElementById('new-chat')?.addEventListener('click', startNewChat);
+
+/* ============================================================
+   收藏箱：悬停图片 1 秒 → 视觉模型摘要浮层
+   ------------------------------------------------------------
+   一次性传很多图时，光看缩略图没法找。停一秒，本地视觉模型给
+   三到四句话，知道它是什么。摘要按条目缓存，不重复调模型。
+   ============================================================ */
+const stashSummaryCache = new Map();
+let stashHoverTimer = null;
+let stashHoverTarget = null;
+
+function stashSummaryEl() {
+  let el = document.getElementById('stash-summary');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'stash-summary';
+    el.className = 'stash-summary';
+    document.body.appendChild(el);
+  }
+  return el;
+}
+
+document.addEventListener('mouseover', (e) => {
+  const node = e.target.closest('.node[data-src], .stash-row[data-src]');
+  if (!node || node === stashHoverTarget) return;
+  clearTimeout(stashHoverTimer);
+  stashHoverTarget = node;
+  const src = node.dataset.src || '';
+  if (!src || !/\.(png|jpe?g|gif|webp|bmp)$/i.test(src)) return;
+  stashHoverTimer = setTimeout(async () => {
+    const el = stashSummaryEl();
+    const rect = node.getBoundingClientRect();
+    el.style.left = `${Math.min(rect.left, window.innerWidth - 340)}px`;
+    el.style.top = `${rect.bottom + 10}px`;
+    el.textContent = '正在看这张图…';
+    el.classList.add('is-visible');
+    if (stashSummaryCache.has(src)) {
+      el.textContent = stashSummaryCache.get(src);
+      return;
+    }
+    const summary = await Data.describeStashImage(src);
+    if (!summary) {
+      el.textContent = '';
+      el.classList.remove('is-visible');
+      return;
+    }
+    stashSummaryCache.set(src, summary);
+    if (stashHoverTarget === node) el.textContent = summary;
+  }, 1000);
+});
+
+document.addEventListener('mouseout', (e) => {
+  if (!e.target.closest('.node[data-src], .stash-row[data-src]')) return;
+  clearTimeout(stashHoverTimer);
+  stashHoverTarget = null;
+  const el = document.getElementById('stash-summary');
+  if (el) el.classList.remove('is-visible');
+});
 
 boot();
 

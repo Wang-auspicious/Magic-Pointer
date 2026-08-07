@@ -4,7 +4,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { createConversationStore, objectKey, titleFrom } = require('../electron/conversation_store');
+const { createConversationStore, objectKey, titleFrom, isSubstantiveQuestion } = require('../electron/conversation_store');
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-conv-'));
 let clock = 1_770_000_000_000;
@@ -18,6 +18,17 @@ assert.strictEqual(objectKey(excel), 'EXCEL.EXE|2026Q3.xlsx|sheet1/C1:E9');
 assert.strictEqual(objectKey({ app: 'a', windowTitle: 'b' }), 'a|b');
 assert.strictEqual(objectKey({}), 'unknown');
 assert.strictEqual(objectKey({ app: 'a' }), objectKey({ app: 'a' }), '同一输入必须得到同一个键');
+// 瞬态 elementPath（每次划线都新的 UUID）不得拆散记忆：同窗口的两次划线必须同键
+assert.strictEqual(
+  objectKey({ app: 'explorer', windowTitle: '参考 - 文件资源管理器', elementPath: 'selection-bba81fadfb354707' }),
+  objectKey({ app: 'explorer', windowTitle: '参考 - 文件资源管理器', elementPath: 'selection-cf0b1fdbe6ce4d0a' }),
+  'selection-UUID 必须降级，否则记忆全是碎片',
+);
+assert.strictEqual(
+  objectKey({ app: 'a', windowTitle: 'b', elementPath: 'selection-deadbeef' }),
+  'a|b',
+  'UUID 元素路径应丢弃',
+);
 
 // ---- 标题：规则化小结，不是问题原文截断 ----
 assert.strictEqual(titleFrom('  这段代码  在干嘛？ '), '代码');
@@ -25,6 +36,14 @@ assert.strictEqual(titleFrom('帮我总结这个表格是什么意思'), '总结
 assert.strictEqual(titleFrom('为什么这段代码会崩溃'), '代码会崩溃');
 assert.strictEqual(titleFrom(''), '未命名');
 assert.ok(titleFrom('x'.repeat(60)).endsWith('…'));
+
+// ---- 记忆准入：问候/泛问不算记忆 ----
+assert.ok(isSubstantiveQuestion('为什么这段代码会崩溃'));
+assert.ok(isSubstantiveQuestion('描述这个图'));
+assert.ok(!isSubstantiveQuestion('你好'));
+assert.ok(!isSubstantiveQuestion('这是什么'));
+assert.ok(!isSubstantiveQuestion('这啥'));
+assert.ok(!isSubstantiveQuestion(''));
 
 // ---- 第一次指某个对象 → 新建 ----
 const c1 = store.appendTurn({ question: '这段代码在干嘛？', answer: 'UIA 硬超时兜底。', object: code });

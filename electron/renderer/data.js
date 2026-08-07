@@ -130,8 +130,20 @@ const Data = {
       kind: b.kind || '素材',
       items: b.items.map((e) => ({
         t: 'shot', w: 180, h: 120, desc: e.desc, src: e.absPath,
+        text: e.text || '', media: e.media || 'image',
       })),
     }));
+  },
+
+  // 悬停收藏图片 1 秒后调本地视觉模型出 3-4 句简介
+  async describeStashImage(src) {
+    if (!bridge()?.stash?.describe) return null;
+    try {
+      const result = await bridge().stash.describe(src);
+      return result?.ok ? result.summary : null;
+    } catch (_error) {
+      return null;
+    }
   },
 
   onChange(callback) {
