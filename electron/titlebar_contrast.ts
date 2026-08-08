@@ -6,7 +6,7 @@
 // 真实像素相反：底亮 → 深符号，底暗 → 浅符号。不猜主题，不涂底纹。
 
 // BGRA 位图（nativeImage.toBitmap() 的格式）→ 平均亮度 0-255。
-function averageBrightness(bgraBitmap) {
+function averageBrightness(bgraBitmap: Uint8Array): number {
   let total = 0;
   const count = Math.floor(bgraBitmap.length / 4);
   for (let i = 0; i + 3 < bgraBitmap.length; i += 4) {
@@ -20,7 +20,7 @@ function averageBrightness(bgraBitmap) {
 
 // 亮度 → 符号颜色。140 是亮度中点偏下：宁可在中间地带把符号调深
 // （深符号在中等亮度底上比浅符号可读），也不要让按钮隐形。
-function symbolColorForBrightness(avgBrightness) {
+function symbolColorForBrightness(avgBrightness: number): '#F2F1ED' | '#17170F' {
   return avgBrightness < 140 ? '#F2F1ED' : '#17170F';
 }
 

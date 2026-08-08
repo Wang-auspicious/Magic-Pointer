@@ -4,7 +4,7 @@
 
 ```
 1. 用户在任何应用里短促左右晃动鼠标（250–600ms，2+ 次反转）
-   wiggle_detector.js 检测 → activation_gate.js 决策
+   wiggle_detector.js 检测 → activation_gate.ts 决策
 2. 冻结指针下的对象，显示全屏透明 Overlay
    armSelectionGesture() → reveal() → renderer gestureReady() → setIgnoreMouseEvents(false)
 3. 用户左键划线圈选
@@ -133,10 +133,10 @@ Electron 源码经 `tsconfig.electron.json` 编译到 `build/electron`，开发�
 | `pass_through_gesture.js` | 穿透模式画线追踪 |
 | `coordinate_space.js` | DIP ↔ 物理像素 |
 | `selection_session.js` / `interaction_episode.js` | 选区会话生命周期 / THIS·THAT·THESE·HERE 多对象绑定 |
-| `stage_contract.js` / `stage_state.js` / `stage_anchor.js` / `stage_hit_policy.js` / `stage_stretch_policy.js` / `stage_hit_regions.js` | Stage 状态机、锚点、命中区、拉伸把手（把手说字数不说行，见上） |
+| `stage_contract.js` / `stage_state.js` / `stage_anchor.js` / `stage_hit_policy.js` / `stage_stretch_policy.js` / `stage_hit_regions.ts` | Stage 状态机、锚点、命中区、拉伸把手（把手说字数不说行，见上） |
 | `answer_shape_policy.js` | 这次回答是「要送出去」还是「自己看」。纯函数，钉子 `tests/answer_shape_policy_test.js` |
 | `capture_proof_policy.js` | 证据高亮带按来源分色 |
-| `bridge_progress_lines.js` | bridge 分段计时（stderr，stdout JSON 契约不动） |
+| `bridge_progress_lines.ts` | bridge 分段计时（stderr，stdout JSON 契约不动） |
 | `security_hardening.js` | CSP / sandbox / 崩溃恢复 / navigation 守卫 / 权限拦截 |
 | `settings_store.js` / `credential_store.js` | 设置 schema + 校验 + 持久化 / safeStorage 加密 |
 | `observability.js` / `update_manager.js` | JSONL 事件日志（5MB 滚动）/ 自动更新 |

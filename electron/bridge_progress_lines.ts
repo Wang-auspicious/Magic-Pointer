@@ -14,12 +14,18 @@
 const PROGRESS_PREFIX = '@@mp ';
 const MAX_PENDING_BYTES = 8192;
 
-function parseProgressLine(line) {
+type ProgressRecord = {
+  phase: string;
+  ms: number | null;
+  fields: Record<string, string>;
+};
+
+function parseProgressLine(line: unknown): ProgressRecord | null {
   const text = String(line == null ? '' : line).trim();
   if (!text.startsWith(PROGRESS_PREFIX)) return null;
   const tokens = text.slice(PROGRESS_PREFIX.length).trim().split(/\s+/).filter(Boolean);
   if (!tokens.length) return null;
-  const fields = {};
+  const fields: Record<string, string> = {};
   for (const token of tokens) {
     const eq = token.indexOf('=');
     if (eq <= 0) continue;
@@ -33,8 +39,9 @@ function parseProgressLine(line) {
 
 // Returns a chunk consumer that tolerates progress records split across stream
 // chunks. The trailing partial line is held until its newline arrives.
-function createProgressLineSplitter(onProgress) {
-  const emit = typeof onProgress === 'function' ? onProgress : () => {};
+function createProgressLineSplitter(onProgress: unknown): (chunk: unknown) => void {
+  const emit: (record: ProgressRecord) => void =
+    typeof onProgress === 'function' ? (onProgress as (record: ProgressRecord) => void) : () => {};
   let pending = '';
   return (chunk) => {
     pending += String(chunk == null ? '' : chunk);

@@ -5,7 +5,7 @@ const fs = require('fs');
 
 const main = fs.readFileSync('electron/main.js', 'utf8');
 const overlay = fs.readFileSync('electron/renderer/overlay.js', 'utf8');
-const pointerDismissPolicy = fs.readFileSync('electron/pointer_dismiss_policy.js', 'utf8');
+const pointerDismissPolicy = fs.readFileSync('electron/pointer_dismiss_policy.ts', 'utf8');
 
 assert(main.includes("globalShortcut.register('Escape'"), 'active surfaces need a global Escape exit');
 assert(main.includes("globalShortcut.unregister('Escape')"), 'Escape capture must be released after dismissal');

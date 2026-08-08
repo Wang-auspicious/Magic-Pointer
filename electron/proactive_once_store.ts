@@ -5,34 +5,49 @@
 // 铁律落点：同一提示一生只出现一次（shown）、可永久关闭（blockedForever）。
 // IO 分离：本文件纯逻辑，读写由 proactive_runtime.js 负责。
 
-function createProactiveOnceStore({ load = () => ({}), persist = () => {} } = {}) {
+type OnceEntry = {
+  shown?: boolean;
+  shownAt?: number;
+  blockedForever?: boolean;
+  blockedAt?: number;
+};
+
+type OnceItems = Record<string, OnceEntry>;
+
+function createProactiveOnceStore({
+  load = () => ({}),
+  persist = () => {},
+}: {
+  load?: () => OnceItems;
+  persist?: () => void;
+} = {}) {
   let items = load();
 
   // triggerId = ruleId + 参数指纹（如窗口名），同名规则带不同参数各自计一次。
-  function shouldShow(triggerId) {
+  function shouldShow(triggerId: string): boolean {
     const entry = items[triggerId];
     if (!entry) return true;
     if (entry.blockedForever) return false;
     return !entry.shown;
   }
 
-  function markShown(triggerId, now = Date.now()) {
+  function markShown(triggerId: string, now = Date.now()): void {
     items[triggerId] = { ...(items[triggerId] || {}), shown: true, shownAt: now };
     persist();
   }
 
   // 永久关闭：用户拒绝时调用，这辈子不再提。
-  function blockForever(triggerId, now = Date.now()) {
+  function blockForever(triggerId: string, now = Date.now()): void {
     items[triggerId] = { ...(items[triggerId] || {}), blockedForever: true, blockedAt: now };
     persist();
   }
 
-  function clear() {
+  function clear(): void {
     items = {};
     persist();
   }
 
-  function _items() {
+  function _items(): OnceItems {
     return items;
   }
 

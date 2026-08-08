@@ -1,26 +1,30 @@
 'use strict';
 
 class RendererReadiness {
+  isReady: boolean;
+  waiters: Set<() => void>;
+
   constructor() {
     this.isReady = false;
     this.waiters = new Set();
   }
 
-  reset() {
+  reset(): void {
     this.isReady = false;
   }
 
-  whenReady(callback) {
+  whenReady(callback: unknown): () => boolean | void {
     if (typeof callback !== 'function') return () => {};
     if (this.isReady) {
       callback();
       return () => {};
     }
-    this.waiters.add(callback);
-    return () => this.waiters.delete(callback);
+    const readyCallback = callback as () => void;
+    this.waiters.add(readyCallback);
+    return () => this.waiters.delete(readyCallback);
   }
 
-  markReady() {
+  markReady(): void {
     if (this.isReady) return;
     this.isReady = true;
     const pending = [...this.waiters];
