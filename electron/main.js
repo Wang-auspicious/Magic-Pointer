@@ -185,7 +185,7 @@ const activationGate = new ActivationGate({ debounceMs: 600 });
 const activeSessionChildren = new Map();
 // Recent sessions, as durations a person can read. Every number here was
 // already being emitted to the log; this is what puts it somewhere anybody
-// would look. See session_timeline.js for why it is memory-only.
+// would look. See session_timeline.ts for why it is memory-only.
 const sessionTimeline = new SessionTimeline();
 const dictationChildren = new Map();
 const dictationStopFiles = new Map();
@@ -3945,7 +3945,7 @@ ipcMain.on('overlay:gesture-stroke', (event, payload) => {
 // while the snapshot is still being read. That submit waits for perception —
 // bounded by whether the bridge is still working, not by a fixed deadline. A 6s
 // deadline used to fire 0.8s before a 13.6s first-run read succeeded, telling
-// the user their selection failed when it had not. See submit_gating_policy.js.
+// the user their selection failed when it had not. See submit_gating_policy.ts.
 const SUBMIT_GROUNDING_POLL_MS = 60;
 
 ipcMain.on('stage:submit-selection-command', (event, payload) => {

@@ -2,13 +2,25 @@
 
 const path = require('path');
 
-function bundledPythonPath(resourcesPath, platform = 'win32') {
+type RuntimeEnvironment = Record<string, string | undefined>;
+type RuntimeResolution = {
+  executable: string;
+  source: 'bundled' | 'environment' | 'path';
+  required: boolean;
+};
+
+type RuntimeOptions = {
+  isPackaged?: boolean;
+  platform?: NodeJS.Platform;
+  resourcesPath?: string;
+  env?: RuntimeEnvironment;
+};
+
+function bundledPythonPath(resourcesPath: string, platform: NodeJS.Platform = 'win32'): string {
   if (typeof resourcesPath !== 'string' || !resourcesPath.trim()) {
     throw new TypeError('resourcesPath must be a non-empty string');
   }
-  const executable = platform === 'darwin'
-    ? path.join('bin', 'python3')
-    : 'python.exe';
+  const executable = platform === 'darwin' ? path.join('bin', 'python3') : 'python.exe';
   return path.join(resourcesPath, 'python-runtime', executable);
 }
 
@@ -17,7 +29,7 @@ function resolvePythonRuntime({
   platform = process.platform,
   resourcesPath = process.resourcesPath,
   env = process.env,
-} = {}) {
+}: RuntimeOptions = {}): RuntimeResolution {
   if (isPackaged === true && (platform === 'win32' || platform === 'darwin')) {
     return {
       executable: bundledPythonPath(resourcesPath, platform),
@@ -33,9 +45,15 @@ function resolvePythonRuntime({
   };
 }
 
-function pythonSpawnEnvironment({ env = process.env, isolated = false } = {}) {
+function pythonSpawnEnvironment({
+  env = process.env,
+  isolated = false,
+}: {
+  env?: RuntimeEnvironment;
+  isolated?: boolean;
+} = {}): RuntimeEnvironment {
   if (!isolated) return { ...env };
-  const next = {};
+  const next: RuntimeEnvironment = {};
   const blocked = new Set([
     'VIRTUAL_ENV',
     'CONDA_PREFIX',
@@ -53,12 +71,15 @@ function pythonSpawnEnvironment({ env = process.env, isolated = false } = {}) {
   return next;
 }
 
-function pythonInvocationArgs(args = [], { isolated = false } = {}) {
+function pythonInvocationArgs(
+  args: string[] = [],
+  { isolated = false }: { isolated?: boolean } = {},
+): string[] {
   const normalized = Array.isArray(args) ? [...args] : [];
   return isolated ? ['-I', '-X', 'utf8', ...normalized] : normalized;
 }
 
-function resolvePythonExecutable(options) {
+function resolvePythonExecutable(options?: RuntimeOptions): string {
   return resolvePythonRuntime(options).executable;
 }
 

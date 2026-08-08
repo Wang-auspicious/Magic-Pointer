@@ -138,7 +138,7 @@ Electron 源码经 `tsconfig.electron.json` 编译到 `build/electron`，开发�
 | `capture_proof_policy.js` | 证据高亮带按来源分色 |
 | `bridge_progress_lines.ts` | bridge 分段计时（stderr，stdout JSON 契约不动） |
 | `security_hardening.js` | CSP / sandbox / 崩溃恢复 / navigation 守卫 / 权限拦截 |
-| `settings_store.js` / `credential_store.js` | 设置 schema + 校验 + 持久化 / safeStorage 加密 |
+| `settings_store.js` / `credential_store.ts` | 设置 schema + 校验 + 持久化 / safeStorage 加密 |
 | `observability.js` / `update_manager.js` | JSONL 事件日志（5MB 滚动）/ 自动更新 |
 | `voice_resident_runtime.js` / `voice_worker_client.js` | 常驻语音 runtime / JSONL IPC 事件推送 |
 | `*_policy.js` | 纯函数策略模块（ipc / route / result / internal_action / dismiss / polling / voice_trigger…） |

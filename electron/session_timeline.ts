@@ -31,9 +31,34 @@ const HEADLINE_PHASES = Object.freeze({
   route_l0: '快路径',
   total: '合计',
 });
+type PhaseName = keyof typeof HEADLINE_PHASES;
+type TimelinePhase = {
+  script: string;
+  phase: string;
+  ms: number;
+  detail: string;
+  at: number;
+};
+type TimelineSession = {
+  id: string;
+  reason: string;
+  startedAt: number;
+  endedAt: number | null;
+  phases: TimelinePhase[];
+  outcome: string;
+  error: string;
+  tier: string;
+};
 
 class SessionTimeline {
-  constructor({ maxSessions = MAX_SESSIONS, now = () => Date.now() } = {}) {
+  maxSessions: number;
+  now: () => number;
+  sessions: TimelineSession[];
+
+  constructor({
+    maxSessions = MAX_SESSIONS,
+    now = () => Date.now(),
+  }: { maxSessions?: number; now?: () => number } = {}) {
     this.maxSessions = Math.max(1, Number(maxSessions) || MAX_SESSIONS);
     this.now = now;
     this.sessions = [];
@@ -41,7 +66,7 @@ class SessionTimeline {
 
   // A session begins when the user activates, not when a bridge starts: the
   // interesting question is how long from gesture to answer.
-  begin(token, { reason = '' } = {}) {
+  begin(token: unknown, { reason = '' }: { reason?: unknown } = {}): TimelineSession | null {
     const id = String(token || '');
     if (!id) return null;
     const existing = this.sessions.find((session) => session.id === id);
@@ -61,7 +86,15 @@ class SessionTimeline {
     return session;
   }
 
-  phase(token, { script = '', phase = '', ms = 0, detail = '' } = {}) {
+  phase(
+    token: unknown,
+    {
+      script = '',
+      phase = '',
+      ms = 0,
+      detail = '',
+    }: { script?: unknown; phase?: unknown; ms?: unknown; detail?: unknown } = {},
+  ): void {
     const session = this.sessions.find((item) => item.id === String(token || ''));
     if (!session) return;
     if (session.phases.length >= MAX_PHASES_PER_SESSION) return;
@@ -77,7 +110,14 @@ class SessionTimeline {
 
   // How the session ended, in the user's terms. `error` is a written sentence,
   // never a bridge code: this feeds a page a person reads.
-  finish(token, { outcome = '', error = '', tier = '' } = {}) {
+  finish(
+    token: unknown,
+    {
+      outcome = '',
+      error = '',
+      tier = '',
+    }: { outcome?: unknown; error?: unknown; tier?: unknown } = {},
+  ): void {
     const session = this.sessions.find((item) => item.id === String(token || ''));
     if (!session) return;
     session.endedAt = this.now();
@@ -92,7 +132,7 @@ class SessionTimeline {
   snapshot() {
     return this.sessions.map((session) => {
       const headline = [];
-      for (const [phase, label] of Object.entries(HEADLINE_PHASES)) {
+      for (const [phase, label] of Object.entries(HEADLINE_PHASES) as Array<[PhaseName, string]>) {
         const match = session.phases.filter((item) => item.phase === phase).pop();
         if (match) headline.push({ label, phase, ms: match.ms });
       }
@@ -116,7 +156,7 @@ class SessionTimeline {
     });
   }
 
-  clear() {
+  clear(): void {
     this.sessions = [];
   }
 }

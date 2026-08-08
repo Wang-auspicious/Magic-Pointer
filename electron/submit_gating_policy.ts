@@ -35,14 +35,21 @@ const DECISION_SUBMIT = 'submit';
 const DECISION_WAIT = 'wait';
 const DECISION_FAIL = 'fail';
 
-/**
- * @param {object} input
- * @param {boolean} input.hasSnapshot     perception finished and attached
- * @param {boolean} input.captureInFlight the snapshot bridge is still running
- * @param {number}  input.elapsedMs       since the submit was received
- * @param {boolean} [input.sessionAlive]  the selection session still exists
- */
-function decideSubmitGate(input) {
+type SubmitGateInput = {
+  hasSnapshot?: boolean;
+  captureInFlight?: boolean;
+  elapsedMs?: number;
+  sessionAlive?: boolean;
+};
+
+type SubmitGateDecision = {
+  decision: typeof DECISION_SUBMIT | typeof DECISION_WAIT | typeof DECISION_FAIL;
+  reason: string;
+  message?: string;
+  notice?: string;
+};
+
+function decideSubmitGate(input?: SubmitGateInput): SubmitGateDecision {
   const hasSnapshot = input?.hasSnapshot === true;
   const captureInFlight = input?.captureInFlight === true;
   const elapsedMs = Number(input?.elapsedMs);
