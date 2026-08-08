@@ -19,7 +19,7 @@
 
 // 退避梯度：头 10 秒每秒看一次（这时候最可能出错），之后逐步放慢。
 // 上限 8 秒——再慢用户就会觉得界面卡住了。
-function pollDelayMs(elapsedMs) {
+function pollDelayMs(elapsedMs: number): number {
   if (elapsedMs < 10_000) return 1000;
   if (elapsedMs < 60_000) return 2000;
   if (elapsedMs < 5 * 60_000) return 4000;
@@ -27,10 +27,14 @@ function pollDelayMs(elapsedMs) {
 }
 
 const TERMINAL = new Set([
-  'succeeded', 'failed', 'cancelled', 'interrupted', 'paused_target_mismatch',
+  'succeeded',
+  'failed',
+  'cancelled',
+  'interrupted',
+  'paused_target_mismatch',
 ]);
 
-function isTerminal(status) {
+function isTerminal(status: unknown): boolean {
   return TERMINAL.has(String(status || ''));
 }
 
@@ -39,7 +43,14 @@ function isTerminal(status) {
 // 这里是唯一把「后台任务说了什么」翻成「卡上显示什么」的地方。翻译要诚实：
 // paused_target_mismatch 是「停下来等你确认」，不是失败，也不是还在跑——
 // 把它归到任何一头都会让用户误判。
-const STATUS_CARD = Object.freeze({
+interface StatusShape {
+  state: 'running' | 'done' | 'failed';
+  stage?: string;
+  error?: string;
+  needsConfirm?: boolean;
+}
+
+const STATUS_CARD: Readonly<Record<string, StatusShape>> = Object.freeze({
   queued: { state: 'running', stage: '排队中' },
   running: { state: 'running', stage: '' },
   cancelling: { state: 'running', stage: '正在停下来' },
@@ -60,7 +71,7 @@ const STATUS_CARD = Object.freeze({
 // 注意不能用 /^[a-z]+:/ 判断「已经是 URL 了」：`C:\Users\…` 的盘符正好长得
 // 像一个 scheme，于是 Windows 上每一张出好的图都会原样交给 <img> 而加载不出来。
 // 真正的 scheme 后面跟着 `//`（或者是 data:）。
-function toDisplaySrc(rawPath) {
+function toDisplaySrc(rawPath: unknown): string {
   const value = String(rawPath || '').trim();
   if (!value) return '';
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(value) || /^data:/i.test(value)) return value;
@@ -68,23 +79,84 @@ function toDisplaySrc(rawPath) {
   return slashed.startsWith('/') ? `file://${slashed}` : `file:///${slashed}`;
 }
 
-function cardPatchFromTask(task = {}, CardModel) {
+interface TaskStepInput {
+  phase?: unknown;
+  label?: unknown;
+  note?: unknown;
+  ms?: unknown;
+  state?: unknown;
+}
+
+interface TaskResult {
+  steps?: unknown;
+  progress?: unknown;
+  imagePath?: unknown;
+  image?: unknown;
+  width?: unknown;
+  height?: unknown;
+  caption?: unknown;
+  artifact?: unknown;
+}
+
+interface WatchedTask {
+  status?: unknown;
+  result?: TaskResult | null;
+  error?: unknown;
+  summary?: unknown;
+}
+
+interface CardStep {
+  phase?: unknown;
+  label: unknown;
+  note?: unknown;
+  ms?: unknown;
+  state: unknown;
+}
+
+interface CardPatch {
+  state: StatusShape['state'];
+  stage?: string;
+  needsConfirm?: boolean;
+  steps?: CardStep[];
+  progress?: number;
+  error?: string;
+  kind?: 'image';
+  src?: string;
+  w?: number;
+  h?: number;
+  caption?: string;
+  answer?: string;
+  actions?: Array<{ id: string; label: string }>;
+}
+
+function cardPatchFromTask(task: WatchedTask = {}, CardModel?: unknown): CardPatch {
   const status = String(task.status || '');
   const shape = STATUS_CARD[status] || { state: 'running', stage: '' };
-  const patch = { state: shape.state };
+  const patch: CardPatch = { state: shape.state };
   if (shape.stage) patch.stage = shape.stage;
   if (shape.needsConfirm) patch.needsConfirm = true;
 
   // 任务自己报的阶段。有就用，没有就让卡片显示不定量条——不编一个数字。
-  const result = task.result && typeof task.result === 'object' ? task.result : {};
+  const result: TaskResult = task.result && typeof task.result === 'object' ? task.result : {};
   const steps = Array.isArray(result.steps)
-    ? result.steps.map((s) => (typeof s === 'string'
-      ? { label: s, state: 'done' }
-      : { phase: s.phase, label: s.label || s.phase, note: s.note || '', ms: s.ms, state: s.state || 'done' }))
-      .filter((s) => s.label)
+    ? (result.steps as Array<string | TaskStepInput>)
+        .map((step): CardStep =>
+          typeof step === 'string'
+            ? { label: step, state: 'done' }
+            : {
+                phase: step.phase,
+                label: step.label || step.phase,
+                note: step.note || '',
+                ms: step.ms,
+                state: step.state || 'done',
+              },
+        )
+        .filter((step) => Boolean(step.label))
     : [];
   if (steps.length) patch.steps = steps;
-  if (Number.isFinite(result.progress)) patch.progress = result.progress;
+  if (typeof result.progress === 'number' && Number.isFinite(result.progress)) {
+    patch.progress = result.progress;
+  }
 
   if (shape.state === 'failed' && !patch.error) {
     patch.error = String(task.error || shape.error || '这次没能完成。');
@@ -96,8 +168,12 @@ function cardPatchFromTask(task = {}, CardModel) {
     if (image) {
       patch.kind = 'image';
       patch.src = toDisplaySrc(image);
-      if (Number.isFinite(result.width)) patch.w = result.width;
-      if (Number.isFinite(result.height)) patch.h = result.height;
+      if (typeof result.width === 'number' && Number.isFinite(result.width)) {
+        patch.w = result.width;
+      }
+      if (typeof result.height === 'number' && Number.isFinite(result.height)) {
+        patch.h = result.height;
+      }
       patch.caption = String(task.summary || result.caption || '');
     } else if (task.summary) {
       patch.answer = String(task.summary);
@@ -113,35 +189,81 @@ function cardPatchFromTask(task = {}, CardModel) {
 // 观察器本体。probe 由主进程给（跑 agent_bridge.py status），
 // 这里不碰子进程，所以它可测。
 // ---------------------------------------------------------------------------
+interface PatchEvent {
+  taskId: string;
+  cardId: string;
+  selectionSessionToken: string;
+  patch: CardPatch;
+}
+
+interface ScheduleHandle {
+  unref?(): void;
+}
+
+interface WatcherDependencies {
+  probe?: (taskId: string) => WatchedTask | null | Promise<WatchedTask | null>;
+  onPatch?: (event: PatchEvent) => void;
+  log?: (message: string) => void;
+  now?: () => number;
+  schedule?: (callback: () => void, delayMs: number) => ScheduleHandle;
+  cancelSchedule?: (handle: ScheduleHandle) => void;
+  CardModel?: unknown;
+}
+
+interface WatchEntry {
+  cardId: string;
+  sessionToken: string;
+  startedAt: number;
+  handle: ScheduleHandle | null;
+  lastSignature: string;
+}
+
+interface WatchInput {
+  taskId?: unknown;
+  cardId?: unknown;
+  selectionSessionToken?: unknown;
+}
+
+interface TaskWatcher {
+  watch(input: WatchInput): boolean;
+  stop(taskId: string): void;
+  stopAll(): void;
+  watching(): string[];
+}
+
+function errorDetails(error: unknown): string {
+  return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+}
+
 function createTaskWatcher({
   probe,
   onPatch = () => {},
   log = () => {},
   now = () => Date.now(),
-  schedule = (fn, ms) => setTimeout(fn, ms),
-  cancelSchedule = (handle) => clearTimeout(handle),
+  schedule = (callback, ms) => setTimeout(callback, ms),
+  cancelSchedule = (handle) => clearTimeout(handle as NodeJS.Timeout),
   CardModel = null,
-} = {}) {
-  const watching = new Map();   // taskId -> { cardId, sessionToken, startedAt, handle, lastStatus }
+}: WatcherDependencies = {}): TaskWatcher {
+  const watching = new Map<string, WatchEntry>();
 
-  function stop(taskId) {
+  function stop(taskId: string): void {
     const entry = watching.get(taskId);
     if (!entry) return;
     if (entry.handle) cancelSchedule(entry.handle);
     watching.delete(taskId);
   }
 
-  async function tick(taskId) {
+  async function tick(taskId: string): Promise<void> {
     const entry = watching.get(taskId);
     if (!entry) return;
     entry.handle = null;
 
     let task = null;
     try {
-      task = await probe(taskId);
+      task = (await probe?.(taskId)) || null;
     } catch (error) {
       // 一次查询失败不算任务失败——可能只是解释器启动慢了。接着看。
-      log(`task watch probe failed task=${taskId} ${error.name}: ${error.message}`);
+      log(`task watch probe failed task=${taskId} ${errorDetails(error)}`);
     }
 
     if (task) {
@@ -166,12 +288,14 @@ function createTaskWatcher({
     }
 
     const elapsed = now() - entry.startedAt;
-    entry.handle = schedule(() => { tick(taskId); }, pollDelayMs(elapsed));
-    if (entry.handle && entry.handle.unref) entry.handle.unref();
+    entry.handle = schedule(() => {
+      void tick(taskId);
+    }, pollDelayMs(elapsed));
+    entry.handle?.unref?.();
   }
 
   return {
-    watch({ taskId, cardId, selectionSessionToken }) {
+    watch({ taskId, cardId, selectionSessionToken }: WatchInput): boolean {
       const id = String(taskId || '');
       if (!id || watching.has(id)) return false;
       watching.set(id, {
@@ -183,24 +307,17 @@ function createTaskWatcher({
       });
       log(`task watch + ${id} card=${cardId || '—'}`);
       // 立刻看一次：任务可能已经在我们开始看之前就跑完了
-      tick(id);
+      void tick(id);
       return true;
     },
     stop,
-    stopAll() {
+    stopAll(): void {
       for (const id of [...watching.keys()]) stop(id);
     },
-    watching() {
+    watching(): string[] {
       return [...watching.keys()];
     },
   };
 }
 
-module.exports = {
-  createTaskWatcher,
-  cardPatchFromTask,
-  toDisplaySrc,
-  pollDelayMs,
-  isTerminal,
-  STATUS_CARD,
-};
+export { createTaskWatcher, cardPatchFromTask, toDisplaySrc, pollDelayMs, isTerminal, STATUS_CARD };

@@ -222,7 +222,7 @@ Windows 11、200% 缩放。E4/E5/E6 用自拉的隔离 Edge（独立 `--user-dat
 | `electron/renderer/studio.{html,css,js}` `companion.{html,css,js}` `oreo.css` `icons.js` `data.js` `settings.js` | 主界面 Studio + 小窗 Companion + Oreo 风格系统。`data.js` 有桥走桥、没桥用样例 |
 | `electron/stash_store.js`（160 行，纯逻辑无 IO） | `fingerprint`（16×16 亮度采样，不做全图哈希）/ `classify`（凭证>交接>片段>素材>灵感，中文阈值 6 字）/ `describe` / `assignBurst`（2 分钟 + 同来源成簇）/ `shouldDedupe`（5 秒）/ `relativePath`（按月分目录）/ `clipboardPayload` / `groupIntoBursts` |
 | `electron/stash_runtime.js`（162 行，IO 层） | 700ms 轮询剪贴板、落盘、**把本地路径写回剪贴板同时保留位图**（终端 Ctrl+V 拿路径、图片编辑器拿图——这是真正省事的地方）、`index.json` 先写 `.tmp` 再改名 |
-| `electron/conversation_store.js` | 对话按**对象身份**归类（进程+窗口标题+元素路径，逐级降级），挂在 `updateStage` 上（"每个用户看得见的结果都过这里"），同对象累计问 ≥2 次进记忆 |
+| `electron/conversation_store.ts` | 对话按**对象身份**归类（进程+窗口标题+元素路径，逐级降级），挂在 `updateStage` 上（"每个用户看得见的结果都过这里"），同对象累计问 ≥2 次进记忆 |
 | `electron/main.js` / `preload.js` | IPC：`stash:list` `stash:entry` `conversations:list/get/timeline/memories/artifacts` `conversations:turn` |
 
 **它自己承认还没在真机验过的**：`payload.command` 改成在提交那一刻存下（原来去 `payload.prompt` 找，永远是空）；`RESULT/COMPLETE/ERROR` 三终态全覆盖（原来只认 `result.answer`，写回成功的那类根本没有 `result` 对象，被静默丢掉）；开机读记录而不是显示写死那屏；新对话按钮绑事件。
