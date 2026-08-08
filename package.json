@@ -2,11 +2,13 @@
   "name": "magic-pointer",
   "version": "1.0.0",
   "description": "Magic Pointer Open - cross-platform AI pointer overlay",
-  "main": "electron/main.js",
+  "main": "build/electron/main.js",
   "scripts": {
-    "overlay": "electron electron/main.js",
-    "pack:win": "node scripts/run-electron-builder.js --config electron-builder.yml --win --dir",
-    "dist:win": "node scripts/run-electron-builder.js --config electron-builder.yml --win nsis",
+    "build:electron": "tsx scripts/build-electron.ts",
+    "typecheck": "tsc -p tsconfig.electron.json --noEmit && tsc -p tsconfig.tools.json --noEmit",
+    "overlay": "npm run build:electron && electron .",
+    "pack:win": "npm run build:electron && node scripts/run-electron-builder.js --config electron-builder.yml --win --dir",
+    "dist:win": "npm run build:electron && node scripts/run-electron-builder.js --config electron-builder.yml --win nsis",
     "verify:package": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify_windows_package.ps1",
     "verify:installer": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify_windows_installer.ps1",
     "verify:onboarding": "python scripts/verify_first_run_onboarding.py",
@@ -44,13 +46,19 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.14.0",
+    "@types/node": "^24.13.3",
+    "@types/semver": "^7.8.0",
     "electron": "^43.0.0",
     "electron-builder": "^26.15.3",
     "eslint": "^9.14.0",
     "globals": "^15.12.0",
-    "prettier": "^3.3.3"
+    "prettier": "^3.3.3",
+    "tsx": "^4.23.11",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.66.0"
   },
   "overrides": {
+    "js-yaml": "4.3.1",
     "semver": "^7.6.0"
   }
 }

@@ -2,7 +2,7 @@
 
 > 最后核实：2026-08-09。改了行为就回来改这里，别新建一份日期文件。
 
-分支 `codex/multi-stroke-and-voice-fix`，未推送。当前全量测试：**Python 1073 项、Node 146 项（88 个 JS 源文件）**，ESLint 0 error 0 warning；重构前 Node 基线为 145 项。
+分支 `codex/multi-stroke-and-voice-fix`，未推送。当前全量测试：**Python 1073 项、Node 148 项（90 个 JS/TS 源文件）**，ESLint 与 TypeScript strict typecheck 通过；重构前 Node 基线为 145 项。
 
 ## 一句话
 
@@ -28,6 +28,10 @@
 | Windows 安装包 + 自动更新 | 可用 |
 
 桌面运行时已经收敛为 **Electron 单壳**。旧 `app/main.py` Tkinter 应用、它的三个直接启动批处理和 Python 摇鼠标测试已删除；`start_electron_overlay.bat` 不再静默回退旧 UI，缺 Electron 依赖时明确失败并提示先安装依赖。
+
+TypeScript 迁移基础设施可用：`npm run build:electron` 生成 `build/electron`，`npm run typecheck` 执行 strict 检查，`npm test` 能在独立进程直接加载迁移中的 `.ts`；开发启动与打包都先构建再运行编译产物。当前已迁移 `runtime_paths.ts`，其余 Electron/Node 源码继续分批迁移。
+
+2026-08-09 用编译入口完成真实 first-run onboarding：取消不写 marker、9 项 preflight、success、进入 `studio.html`、后台二次启动不重复 preflight 均通过；证据在 `data/runtime/first-run-onboarding-20260730/evidence.json`。构建器会校验所有未迁移 `.js` 在源码与产物间字节一致，classic renderer 不经过 CommonJS 转换。
 
 P3 十二项能力做完十项：图转提示词、选区拉伸把手、点选追问、悬浮翻译、[POINT] 指点、记忆层、剪贴板历史、插件加载器、MCP client、零元件窗口视觉框选。
 

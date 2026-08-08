@@ -31,6 +31,7 @@ __pycache__/
 # Node/Electron dependencies
 node_modules/
 npm-debug.log*
+*.tsbuildinfo
 /release/
 /build/
 
@@ -46,6 +47,7 @@ demo/recordings/
 docs/reference/
 
 # Local editor/agent state
+.learnings/
 .omx/
 .superpowers/
 .vscode/

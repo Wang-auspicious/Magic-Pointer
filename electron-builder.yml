@@ -22,7 +22,7 @@ asar: false
 npmRebuild: false
 
 files:
-  - electron/**
+  - build/electron/**
   - app/**
   - scripts/__init__.py
   - scripts/_bridge_common.py

@@ -7,6 +7,7 @@ const { shell } = require('electron');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const crypto = require('crypto');
+const { projectRoot } = require('./runtime_paths');
 const { SelectionSessionStore } = require('./selection_session');
 const { InteractionEpisodeStore, inferReferenceLabel, inferReferenceMode } = require('./interaction_episode');
 const { ActivationGate } = require('./activation_gate');
@@ -131,7 +132,7 @@ const registeredConfigurableHotkeys = new Set();
 // capture bridge: distance-filtered real strokes stay far below this.
 const MAX_OVERLAY_CAPTURE_POINTS = 4096;
 
-const ROOT = path.resolve(__dirname, '..');
+const ROOT = projectRoot(__dirname);
 const PYTHON_RUNTIME = resolvePythonRuntime({
   isPackaged: app.isPackaged,
   platform: process.platform,

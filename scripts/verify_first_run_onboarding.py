@@ -1,20 +1,19 @@
-from __future__ import annotations
-
 """Real Electron acceptance for first-run initialization and cheap relaunch."""
+
+from __future__ import annotations
 
 import argparse
 import base64
-from datetime import datetime, timezone
 import json
 import os
-from pathlib import Path
 import shutil
 import subprocess
 import time
 import urllib.request
+from datetime import UTC, datetime
+from pathlib import Path
 
 import websocket
-
 
 ROOT = Path(__file__).resolve().parents[1]
 ELECTRON = ROOT / "node_modules" / "electron" / "dist" / "electron.exe"
@@ -110,11 +109,6 @@ def wait_for_screen(ws: websocket.WebSocket, screen_name: str, timeout: float = 
 
 
 def capture_screenshot(ws: websocket.WebSocket, serial: int, target: Path) -> None:
-    evaluate(
-        ws,
-        serial,
-        "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
-    )
     capture = cdp_call(ws, serial + 1000, "Page.captureScreenshot", {"format": "png", "fromSurface": True})
     target.write_bytes(base64.b64decode(capture["data"]))
 
@@ -233,7 +227,7 @@ def verify(output_root: Path) -> Path:
             evaluate(ws, 5, "document.getElementById('onboarding-continue').click()")
         finally:
             ws.close()
-        wait_for_page(PORT, "dashboard.html")
+        wait_for_page(PORT, "studio.html")
         first_log = wait_for_log(log_path, "preflight complete ready=true")
         if welcome_state["screen"] != "welcome" or progress_state["rows"] != 9:
             raise RuntimeError(f"first_run_surface_incomplete:{welcome_state}:{progress_state}")
@@ -262,7 +256,7 @@ def verify(output_root: Path) -> Path:
 
     evidence = {
         "schemaVersion": 1,
-        "capturedAt": datetime.now(timezone.utc).isoformat(),
+        "capturedAt": datetime.now(UTC).isoformat(),
         "cancellation": {
             "processExited": cancel_process.poll() is not None,
             "readyMarkerWritten": False,

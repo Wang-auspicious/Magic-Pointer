@@ -120,11 +120,14 @@ UIA / Chrome DevTools DOM / Office COM     ← 真相
 
 桌面壳只有一套：**Electron 负责窗口、手势和界面，Python 只作为桥接/感知/Agent 编排后端**。2026-08-09 已删除旧 Tkinter `app/main.py` 及其启动回退；以后不得再引入第二套桌面窗口生命周期。启动器缺 Electron 运行时时直接失败，不得回退到另一个 UI。
 
+Electron 源码经 `tsconfig.electron.json` 编译到 `build/electron`，开发启动与 electron-builder 都只运行该目录；HTML/CSS/图片由 `scripts/build-electron.ts` 原样复制。`electron/runtime_paths.ts` 隐藏源码目录与编译目录的层级差，业务模块不得自行用 `__dirname/..` 猜项目根。Node 测试在隔离子进程中预加载 `tsx/cjs`，所以迁移中的 `.js` 与 `.ts` 可以并存；TypeScript 源码必须通过 `strict` + `noEmitOnError`。
+
 ### `electron/` 主进程
 
 | 文件 | 职责 |
 |---|---|
-| `main.js`（3300+ 行） | 入口、BrowserWindow、IPC 路由、overlay/stage/dashboard 生命周期 |
+| `main.js`（3300+ 行，待迁移） | 入口、BrowserWindow、IPC 路由、overlay/stage/dashboard 生命周期；运行的是编译镜像 |
+| `runtime_paths.ts` | 统一源码态/`build/electron` 编译态的项目根目录解析 |
 | `wiggle_detector.js` | 晃动检测：速度/反转/漂移/冷却/自适应阈值 |
 | `gesture_capture.js` | 手势摘要：kind（圈/线/自由形）+ semanticPoint + bbox |
 | `pass_through_gesture.js` | 穿透模式画线追踪 |

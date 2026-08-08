@@ -10,7 +10,7 @@ for (const token of [
   'onboarding-progress',
   'onboarding-cancel',
   'onboarding-continue',
-  'dashboard.html',
+  'studio.html',
   'onboarding readiness ready=true reason=ready',
   'preflight_repeated_on_second_launch',
   'onboarding_marker_rewritten_on_second_launch',
@@ -18,5 +18,6 @@ for (const token of [
 ]) assert(source.includes(token), token);
 assert(!source.includes('ipcRenderer'));
 assert(!source.includes('webContents.send'));
+assert(!source.includes('requestAnimationFrame'));
 
 console.log('first-run onboarding desktop verifier static test ok');

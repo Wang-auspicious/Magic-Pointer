@@ -6,6 +6,7 @@ const {
   pythonSpawnEnvironment,
   resolvePythonRuntime,
 } = require('./python_runtime');
+const { projectRoot: resolveProjectRoot } = require('./runtime_paths');
 
 function lastJson(value) {
   try { return JSON.parse(String(value || '').trim()); } catch (_) {}
@@ -17,7 +18,7 @@ function lastJson(value) {
 
 function buildPreflightChecks({
   root,
-  projectRoot = path.resolve(__dirname, '..'),
+  projectRoot = resolveProjectRoot(__dirname),
   settings = {},
   credentialStore = null,
   wiggleDetector = null,
@@ -184,7 +185,7 @@ function runCommandAsync(command, args, options = {}) {
 
 function buildAsyncPreflightChecks({
   root,
-  projectRoot = path.resolve(__dirname, '..'),
+  projectRoot = resolveProjectRoot(__dirname),
   settings = {},
   credentialStore = null,
   wiggleDetector = null,

@@ -20,6 +20,8 @@ try {
         (
             $_.CommandLine -like '*electron/main.js*' -or
             $_.CommandLine -like '*electron\main.js*' -or
+            $_.CommandLine -like '*build/electron/main.js*' -or
+            $_.CommandLine -like '*build\electron\main.js*' -or
             $_.CommandLine -like '*npm.cmd run overlay*'
         )
     } | ForEach-Object { [PSCustomObject]@{ Id=$_.ProcessId; Label=$_.CommandLine } }

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- **TypeScript 迁移底座（2026-08-09）**：新增 strict `tsconfig`、`tsx` 隔离测试加载器和 `build-electron.ts`，Electron 开发启动与打包统一运行 `build/electron` 编译镜像，不再直接执行源码。首个迁移模块 `runtime_paths.ts` 统一源码态/编译态根目录，避免编译后 Python bridge、数据目录和 renderer 路径偏移；未迁移的 JS 在构建时逐文件校验字节一致，防止 classic renderer 被注入 CommonJS `exports`。新增 build/package/runtime-path 契约测试，真实 onboarding 冒烟通过；验收脚本同步主窗口 `studio.html`，删除隐藏窗口会停摆的双 rAF 截图等待。依赖锁同时将间接 `js-yaml` 固定到修复 DoS 公告的 4.3.1。
 - **桌面运行时收敛为 Electron 单壳（2026-08-09）**：删除已停用的 Tkinter `app/main.py`（961 行）、三个 Python UI 启动批处理、旧 UI 专属系统函数和摇鼠标测试；`start_electron_overlay.bat` 修正为从仓库根目录启动，并在 Electron 依赖缺失时明确失败，不再静默拉起另一套界面。新增 `electron_only_runtime_test` 防止旧入口和回退复活。
 
 - **回答框分成两种：要送出去的 / 自己看的（2026-08-07）**：分界线只有一条——**这段产物要不要送出去**。`deliver`（回微信、回邮件、填回输入框）贴目标应用**右侧外沿**（要一边看上文一边改草稿，挂在选区旁会压住要参照的那几行）、**纯文本不解析 markdown**（对面读到的是字面量 `**` 和 `-`，渲染成粗体会让人以为发过去也是那样）、要点头的那一下长在**问题框**下面而不是回答框里（定稿的话此刻已复制回问题框，你正看着的就是即将写出去的东西）。`inspect`（生图、MCP 地图/播放器、论文翻译、解释）放开 markdown / 图片 / 工具界面，没有「拒绝 / 同意」。判定在纯函数 `electron/answer_shape_policy.js`：桥明说 > 卡的形态 > 写回类提案 > 命令动词，**拿不准一律 inspect**（判错成 inspect 只是少一个按钮，判错成 deliver 会剥掉格式并准备往别人窗口里塞字）。钉子 `tests/answer_shape_policy_test.js`。

@@ -4,8 +4,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 const store = require('./stash_store');
+const { projectRoot } = require('./runtime_paths');
 
-const ROOT = path.resolve(__dirname, '..');
+const ROOT = projectRoot(__dirname);
 
 // 收藏箱的 IO 层：轮询剪贴板、落盘、把路径写回剪贴板、维护索引。
 // 纯逻辑全在 stash_store.js，这里只做外部世界打交道的部分。

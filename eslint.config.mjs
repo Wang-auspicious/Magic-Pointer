@@ -1,5 +1,6 @@
 import globals from 'globals';
 import js from '@eslint/js';
+import tseslint from 'typescript-eslint';
 
 export default [
   {
@@ -19,6 +20,37 @@ export default [
     ],
   },
   {
+    files: ['electron/**/*.ts', 'scripts/**/*.ts', 'tests/**/*.ts'],
+    languageOptions: {
+      parser: tseslint.parser,
+      parserOptions: {
+        ecmaVersion: 2023,
+        sourceType: 'module',
+      },
+      globals: { ...globals.node },
+    },
+    plugins: {
+      '@typescript-eslint': tseslint.plugin,
+    },
+    rules: {
+      ...js.configs.recommended.rules,
+      ...tseslint.configs.recommended.rules,
+      'no-undef': 'off',
+      'no-unused-vars': 'off',
+      '@typescript-eslint/no-require-imports': 'off',
+      '@typescript-eslint/no-unused-vars': [
+        'warn',
+        {
+          argsIgnorePattern: '^_',
+          varsIgnorePattern: '^_',
+          caughtErrors: 'all',
+          caughtErrorsIgnorePattern: '^_',
+        },
+      ],
+      'no-console': 'off',
+    },
+  },
+  {
     ...js.configs.recommended,
     files: ['electron/**/*.js', 'scripts/**/*.js', 'tests/**/*.js'],
     languageOptions: {
@@ -28,12 +60,15 @@ export default [
     },
     rules: {
       ...js.configs.recommended.rules,
-      'no-unused-vars': ['warn', {
-        argsIgnorePattern: '^_',
-        varsIgnorePattern: '^_',
-        caughtErrors: 'all',
-        caughtErrorsIgnorePattern: '^_',
-      }],
+      'no-unused-vars': [
+        'warn',
+        {
+          argsIgnorePattern: '^_',
+          varsIgnorePattern: '^_',
+          caughtErrors: 'all',
+          caughtErrorsIgnorePattern: '^_',
+        },
+      ],
       'no-console': 'off',
       'no-empty': ['warn', { allowEmptyCatch: true }],
       'no-prototype-builtins': 'off',
@@ -77,12 +112,15 @@ export default [
       // 上面把跨文件可见的名字声明成了 global，定义它们的那个文件因此会被
       // 判成「重复声明」。那正是我们要的写法，所以只关掉这一项检查。
       'no-redeclare': ['error', { builtinGlobals: false }],
-      'no-unused-vars': ['warn', {
-        argsIgnorePattern: '^_',
-        varsIgnorePattern: '^_',
-        caughtErrors: 'all',
-        caughtErrorsIgnorePattern: '^_',
-      }],
+      'no-unused-vars': [
+        'warn',
+        {
+          argsIgnorePattern: '^_',
+          varsIgnorePattern: '^_',
+          caughtErrors: 'all',
+          caughtErrorsIgnorePattern: '^_',
+        },
+      ],
     },
   },
   {
