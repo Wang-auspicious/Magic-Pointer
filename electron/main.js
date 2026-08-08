@@ -1418,7 +1418,7 @@ function initializeStashRuntime() {
 }
 
 // ── 主动提议（Vida 主动层触发判断）───────────────────────────────
-// 事件进规则引擎（proactive_rules.js 纯函数），触发时查 once_store
+// 事件进规则引擎（proactive_rules.ts 纯函数），触发时查 once_store
 // （一生一次），通过则记日志并暂存待 UI 提案。零模型调用。
 let proactiveRuleState = null;
 let proactiveOnceStore = null;

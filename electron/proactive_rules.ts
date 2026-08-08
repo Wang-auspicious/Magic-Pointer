@@ -14,15 +14,44 @@
 
 // 一条规则收到一次事件，返回是否触发 + 提案内容。
 // `state` 是规则自己的滚动状态（由调用方持久化/清零）。
-function evaluateRule(ruleId, event, state) {
+type RuleEvent = {
+  t?: number;
+  kind?: string;
+  app?: string;
+  fingerprint?: string;
+  foregroundChanged?: boolean;
+};
+type RuleState = {
+  currentBurst?: { app: string; count: number; lastAt: number };
+  fingerprint?: string;
+  stickyCount?: number;
+  foregroundStable?: number;
+  app?: string;
+  flips?: number;
+};
+type RuleVerdict = {
+  trigger: boolean;
+  ruleId?: string;
+  previewText?: string;
+  objects?: Array<Record<string, string>>;
+  resetState?: null;
+  state?: RuleState;
+};
+
+function evaluateRule(
+  ruleId: string,
+  event: RuleEvent = {},
+  state?: RuleState | null,
+): RuleVerdict {
   switch (ruleId) {
     case 'burst_screenshots': {
       // 连续两次截图（同来源簇）且距上次提议 > 10 分钟
       const burst = state && state.currentBurst;
       const now = event.t || Date.now();
+      const app = String(event.app || '');
       const gap = (burst && now - burst.lastAt) || 0;
       if (event.kind === 'shot') {
-        const sameApp = burst && event.app === burst.app;
+        const sameApp = burst && app === burst.app;
         if (sameApp && gap <= 10 * 60 * 1000) {
           burst.count += 1;
           burst.lastAt = now;
@@ -31,7 +60,7 @@ function evaluateRule(ruleId, event, state) {
               trigger: true,
               ruleId,
               previewText: '刚才连续截了两张图，要直接把里面的文字取出来吗？',
-              objects: [{ app: event.app, kind: 'screenshots' }],
+              objects: [{ app, kind: 'screenshots' }],
               resetState: null,
             };
           }
@@ -39,7 +68,7 @@ function evaluateRule(ruleId, event, state) {
         }
         return {
           trigger: false,
-          state: { currentBurst: { app: event.app, count: 1, lastAt: now } },
+          state: { currentBurst: { app, count: 1, lastAt: now } },
         };
       }
       // 非截图事件：保留 burst 但刷新窗口
@@ -60,8 +89,8 @@ function evaluateRule(ruleId, event, state) {
         };
       }
       const same = state && state.fingerprint === fpr;
-      const sticky = same ? (state.stickyCount + 1) : 1;
-      const foregroundStable = same ? (state.foregroundStable + 1) : 1;
+      const sticky = same ? (state?.stickyCount || 0) + 1 : 1;
+      const foregroundStable = same ? (state?.foregroundStable || 0) + 1 : 1;
       if (sticky >= 3 && foregroundStable >= 3 && fpr) {
         return {
           trigger: true,
@@ -82,7 +111,7 @@ function evaluateRule(ruleId, event, state) {
       // 同一 app 连续出现清零。
       const app = String(event.app || '');
       const sameApp = state && state.app === app;
-      const flips = state && !sameApp ? state.flips + 1 : 0;
+      const flips = state && !sameApp ? (state.flips || 0) + 1 : 0;
       const state2 = { app, flips };
       if (flips >= 3) {
         return {

@@ -16,9 +16,30 @@ const STRATEGIES = Object.freeze({
 });
 
 const CAPSULE_SEMANTIC = 'dictation-final';
+type State = (typeof STATES)[keyof typeof STATES];
+type Strategy = (typeof STRATEGIES)[keyof typeof STRATEGIES];
+type SubmitEffect = { type: 'submit'; strategy: Strategy; text: string };
+type Effect = string | SubmitEffect;
+type DictationEvent = { type?: string; text?: unknown };
+type PolicyResult = {
+  state: State;
+  capsule: { id: string; semantic: typeof CAPSULE_SEMANTIC } | null;
+  text: string;
+  strategy: Strategy;
+  effects: Effect[];
+};
+const ACTIVE_STATES: readonly State[] = [STATES.FINAL_PENDING, STATES.CORRECTING, STATES.REPEATING];
 
 class DictationCorrectionPolicy {
-  constructor({ capsuleId, strategy = STRATEGIES.VERBATIM } = {}) {
+  capsuleId: string;
+  strategy: Strategy;
+  state: State;
+  _text: string;
+
+  constructor({
+    capsuleId,
+    strategy = STRATEGIES.VERBATIM,
+  }: { capsuleId?: string; strategy?: Strategy } = {}) {
     if (typeof capsuleId !== 'string' || capsuleId.length === 0 || capsuleId.length > 128) {
       throw new TypeError('capsuleId must be a non-empty string of at most 128 characters');
     }
@@ -32,7 +53,7 @@ class DictationCorrectionPolicy {
     this._text = '';
   }
 
-  dispatch(event = {}) {
+  dispatch(event: DictationEvent = {}): PolicyResult {
     const type = event && typeof event.type === 'string' ? event.type : '';
 
     if (this.state === STATES.SUBMITTED || this.state === STATES.CANCELLED) {
@@ -64,7 +85,7 @@ class DictationCorrectionPolicy {
     return this._result();
   }
 
-  _acceptFinal(text) {
+  _acceptFinal(text: unknown): PolicyResult {
     if (this.state !== STATES.IDLE && this.state !== STATES.REPEATING) {
       return this._result();
     }
@@ -74,20 +95,19 @@ class DictationCorrectionPolicy {
     return this._result([wasRepeating ? 'update-capsule' : 'show-capsule']);
   }
 
-  _cancel() {
-    if (![STATES.FINAL_PENDING, STATES.CORRECTING, STATES.REPEATING].includes(this.state)) {
+  _cancel(): PolicyResult {
+    if (!ACTIVE_STATES.includes(this.state)) {
       return this._result();
     }
 
-    const effects = this.state === STATES.REPEATING
-      ? ['stop-dictation', 'dismiss-capsule']
-      : ['dismiss-capsule'];
+    const effects =
+      this.state === STATES.REPEATING ? ['stop-dictation', 'dismiss-capsule'] : ['dismiss-capsule'];
     this.state = STATES.CANCELLED;
     return this._result(effects);
   }
 
-  _result(effects = []) {
-    const capsuleIsActive = [STATES.FINAL_PENDING, STATES.CORRECTING, STATES.REPEATING].includes(this.state);
+  _result(effects: Effect[] = []): PolicyResult {
+    const capsuleIsActive = ACTIVE_STATES.includes(this.state);
     return {
       state: this.state,
       capsule: capsuleIsActive ? { id: this.capsuleId, semantic: CAPSULE_SEMANTIC } : null,
@@ -98,7 +118,7 @@ class DictationCorrectionPolicy {
   }
 }
 
-function validateText(text) {
+function validateText(text: unknown): string {
   if (typeof text !== 'string' || text.length === 0 || text.length > 10000) {
     throw new TypeError('final text must be a non-empty string of at most 10000 characters');
   }

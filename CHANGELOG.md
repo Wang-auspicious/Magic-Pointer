@@ -4,6 +4,7 @@
 
 - **首批 Electron 策略模块迁到 strict TypeScript（2026-08-09）**：激活门、鼠标按键、指针轮询、临时面板关闭、renderer readiness、手势运行配置、地图 route、Stage 原生命中区、标题栏对比度、主动提议 once store、bridge progress、IPC surface 共 12 个 `.js` 改为带真实输入/返回类型的 `.ts`；无 `any`、无 `@ts-nocheck`，测试继续通过无扩展 CommonJS 接口加载。
 - **第二批 Electron 生命周期模块迁到 strict TypeScript（2026-08-09）**：`app_lifecycle`、`python_runtime`、`submit_gating_policy`、`credential_store`、`session_timeline` 五个 Node-only 模块完成 `.ts` 迁移，补齐 marker/readiness、进程环境、提交决策、safeStorage 与诊断时间线的数据类型。
+- **第三批 Electron 状态机迁到 strict TypeScript（2026-08-09）**：`proactive_rules`、`runtime_snapshot`、`dictation_correction_policy`、`voice_focus_guard` 完成 `.ts` 迁移，规则滚动状态、不可变运行快照、听写效果与 HWND 焦点证据都有显式类型。
 - **TypeScript 迁移底座（2026-08-09）**：新增 strict `tsconfig`、`tsx` 隔离测试加载器和 `build-electron.ts`，Electron 开发启动与打包统一运行 `build/electron` 编译镜像，不再直接执行源码。首个迁移模块 `runtime_paths.ts` 统一源码态/编译态根目录，避免编译后 Python bridge、数据目录和 renderer 路径偏移；未迁移的 JS 在构建时逐文件校验字节一致，防止 classic renderer 被注入 CommonJS `exports`。新增 build/package/runtime-path 契约测试，真实 onboarding 冒烟通过；验收脚本同步主窗口 `studio.html`，删除隐藏窗口会停摆的双 rAF 截图等待。依赖锁同时将间接 `js-yaml` 固定到修复 DoS 公告的 4.3.1。
 - **桌面运行时收敛为 Electron 单壳（2026-08-09）**：删除已停用的 Tkinter `app/main.py`（961 行）、三个 Python UI 启动批处理、旧 UI 专属系统函数和摇鼠标测试；`start_electron_overlay.bat` 修正为从仓库根目录启动，并在 Electron 依赖缺失时明确失败，不再静默拉起另一套界面。新增 `electron_only_runtime_test` 防止旧入口和回退复活。
 
