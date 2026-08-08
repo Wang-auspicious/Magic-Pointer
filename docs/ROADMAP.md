@@ -14,7 +14,7 @@
 - [x] 建立重构基线：Python 1073 项、Node 145 项、ESLint 全绿。
 - [x] 删除 Tkinter 双壳：移除 `app/main.py`、三个旧 Python 启动器、仅服务旧 UI 的系统函数与测试；启动链只认 Electron。
 - [x] 引入 TypeScript 构建、严格类型检查、测试加载器和打包链；dev/安装包只运行 `build/electron` 编译产物。
-- [ ] 迁移 Electron 主进程和 CommonJS 策略模块；已完成路径解析 + 29 个主进程/纯策略模块，另删除未被生产引用的旧语音驻留状态机及孤立测试（当前 56 JS / 33 TS），下一批继续现役 worker、较大存储与主进程。
+- [ ] 迁移 Electron 主进程和 CommonJS 策略模块；已完成路径解析 + 30 个主进程/纯策略模块，另删除未被生产引用的旧语音驻留状态机及孤立测试（当前 55 JS / 34 TS），下一批继续现役 worker、较大存储与主进程。
 - [ ] 迁移 Node 工具脚本；严格类型覆盖构建器、测试编排器和 electron-builder 包装器，剩余工具逐批迁移。经典脚本渲染层单独评估共享全局与 CSP 约束，能安全迁移的迁移，不能安全迁移的留下明确理由和最小 JS 面。
 - [ ] 每批跑 Node/Python/lint/build，更新这里与 `STATUS.md`，独立提交。
 

@@ -15,7 +15,7 @@
 
 **正在做到一半的（2026-08-07）：回答框两种形态。** 界面和判定已落地并提交，但链路还差四条——系统提示词还没禁 markdown、桥还不回 `answerShape`、回答区还不能手改、贴窗口右侧的坐标换算没实机验过。清单在 [`docs/ROADMAP.md` P1 第一项](docs/ROADMAP.md#p1)，判据和理由在 [`docs/ARCHITECTURE.md` 关键架构决策](docs/ARCHITECTURE.md#关键架构决策)，怎么验在 [`docs/STATUS.md` 两种回答框怎么验](docs/STATUS.md#两种回答框怎么验2026-08-07-新增全部未跑过)。**接手先读这三处，别从代码倒推。**
 
-**正在做的代码库治理（2026-08-09）：** 已删除停用的 Tkinter 双壳和未接入生产的旧语音驻留状态机；TypeScript strict 构建/测试/打包底座已接通，运行时只执行 `build/electron`；29 个主进程/纯策略模块与 3 个核心 Node 工具已迁移（当前 56 JS / 33 TS）。每批必须保持可启动、全量测试后独立提交，进度清单在 [`docs/ROADMAP.md`](docs/ROADMAP.md#代码库收口--typescript-迁移2026-08-09-进行中)。
+**正在做的代码库治理（2026-08-09）：** 已删除停用的 Tkinter 双壳和未接入生产的旧语音驻留状态机；TypeScript strict 构建/测试/打包底座已接通，运行时只执行 `build/electron`；30 个主进程/纯策略模块与 3 个核心 Node 工具已迁移（当前 55 JS / 34 TS）。每批必须保持可启动、全量测试后独立提交，进度清单在 [`docs/ROADMAP.md`](docs/ROADMAP.md#代码库收口--typescript-迁移2026-08-09-进行中)。
 
 历史文档在 [`docs/archive/`](docs/archive/INDEX.md)，**默认不要读**，需要考古时按索引定位。不要读会话历史 JSONL（12MB+）。
 

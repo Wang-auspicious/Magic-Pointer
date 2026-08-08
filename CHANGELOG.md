@@ -10,6 +10,7 @@
 - Migrated the Python bridge process runner to strict TypeScript, including injectable child-process, stream, cancellation, timeout, progress, and bounded-result contracts.
 - Migrated background-task watching and object-grouped conversation persistence to strict TypeScript, preserving backoff, terminal-state, bounded-history, memory, and artifact behavior.
 - Removed the unused legacy `VoiceResidencyController` and its isolated test; production voice residency remains owned by `VoiceResidentRuntime` and `VoiceWorkerClient`.
+- Migrated manifest validation and synchronous/asynchronous preflight execution to strict TypeScript, including cancellation, weighted progress, marker, and event contracts.
 
 - **首批 Electron 策略模块迁到 strict TypeScript（2026-08-09）**：激活门、鼠标按键、指针轮询、临时面板关闭、renderer readiness、手势运行配置、地图 route、Stage 原生命中区、标题栏对比度、主动提议 once store、bridge progress、IPC surface 共 12 个 `.js` 改为带真实输入/返回类型的 `.ts`；无 `any`、无 `@ts-nocheck`，测试继续通过无扩展 CommonJS 接口加载。
 - **第二批 Electron 生命周期模块迁到 strict TypeScript（2026-08-09）**：`app_lifecycle`、`python_runtime`、`submit_gating_policy`、`credential_store`、`session_timeline` 五个 Node-only 模块完成 `.ts` 迁移，补齐 marker/readiness、进程环境、提交决策、safeStorage 与诊断时间线的数据类型。
