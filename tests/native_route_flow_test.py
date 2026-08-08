@@ -66,7 +66,7 @@ def test_episode_locations_to_allowlisted_google_maps_url(tmp_path: Path) -> Non
         "process.stdout.write(JSON.stringify({url:u,allowed:p.isAllowedGoogleMapsDirectionsUrl(u)}));"
     )
     built = subprocess.run(
-        ["node", "-e", node_script, json.dumps({
+        ["node", "--require", "tsx/cjs", "-e", node_script, json.dumps({
             "origin": draft["origin"],
             "destination": draft["destination"],
             "travelMode": "transit",
