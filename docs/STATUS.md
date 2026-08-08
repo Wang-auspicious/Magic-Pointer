@@ -1,8 +1,8 @@
 # 当前状态
 
-> 最后核实：2026-08-07。改了行为就回来改这里，别新建一份日期文件。
+> 最后核实：2026-08-09。改了行为就回来改这里，别新建一份日期文件。
 
-分支 `codex/multi-stroke-and-voice-fix`，未推送。全量测试：**Python 1026 项、Node 144 项（86 个源文件）**，ESLint 0 error 0 warning。
+分支 `codex/multi-stroke-and-voice-fix`，未推送。当前全量测试：**Python 1073 项、Node 146 项（88 个 JS 源文件）**，ESLint 0 error 0 warning；重构前 Node 基线为 145 项。
 
 ## 一句话
 
@@ -26,6 +26,8 @@
 | MCP 双向（我们既是 server 也是 client） | 可用 |
 | 语音（SenseVoice 默认，Whisper 兜底） | 可用，但默认输入是**打字** |
 | Windows 安装包 + 自动更新 | 可用 |
+
+桌面运行时已经收敛为 **Electron 单壳**。旧 `app/main.py` Tkinter 应用、它的三个直接启动批处理和 Python 摇鼠标测试已删除；`start_electron_overlay.bat` 不再静默回退旧 UI，缺 Electron 依赖时明确失败并提示先安装依赖。
 
 P3 十二项能力做完十项：图转提示词、选区拉伸把手、点选追问、悬浮翻译、[POINT] 指点、记忆层、剪贴板历史、插件加载器、MCP client、零元件窗口视觉框选。
 

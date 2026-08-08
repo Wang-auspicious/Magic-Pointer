@@ -8,13 +8,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.ai_client import ask_vision_model
-from app.main import normalize_bbox
 from app.object_store import ObjectStore, PointerObject
 
 
 def main() -> None:
-    assert normalize_bbox((10, 20, 1, 2)) == (1, 2, 10, 20)
-
     tmp = Path("data/.smoke_objects")
     if tmp.exists():
         shutil.rmtree(tmp)

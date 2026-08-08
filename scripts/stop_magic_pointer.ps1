@@ -1,4 +1,4 @@
-﻿$ProjectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$ProjectDir = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $PidPath = Join-Path $ProjectDir 'data\runtime\electron.pid'
 if (Test-Path $PidPath) {
     try {
@@ -16,9 +16,8 @@ if (Test-Path $PidPath) {
 $matches = @()
 try {
     $matches = Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
-        ($_.Name -in @('pythonw.exe','python.exe','electron.exe','node.exe','cmd.exe')) -and
+        ($_.Name -in @('electron.exe','node.exe','cmd.exe')) -and
         (
-            $_.CommandLine -like '*app.main*' -or
             $_.CommandLine -like '*electron/main.js*' -or
             $_.CommandLine -like '*electron\main.js*' -or
             $_.CommandLine -like '*npm.cmd run overlay*'
@@ -27,7 +26,7 @@ try {
 } catch {
     Write-Host "Command-line process query unavailable, using path fallback: $($_.Exception.Message)"
     $matches = Get-Process -ErrorAction SilentlyContinue | Where-Object {
-        ($_.ProcessName -in @('electron','node','python','pythonw','cmd')) -and
+        ($_.ProcessName -in @('electron','node','cmd')) -and
         ($_.Path -like "$ProjectDir*" -or $_.Path -like "*\node_modules\electron\*")
     } | ForEach-Object { [PSCustomObject]@{ Id=$_.Id; Label=$_.Path } }
 }

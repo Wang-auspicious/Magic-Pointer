@@ -118,6 +118,8 @@ UIA / Chrome DevTools DOM / Office COM     ← 真相
 
 ## 模块地图
 
+桌面壳只有一套：**Electron 负责窗口、手势和界面，Python 只作为桥接/感知/Agent 编排后端**。2026-08-09 已删除旧 Tkinter `app/main.py` 及其启动回退；以后不得再引入第二套桌面窗口生命周期。启动器缺 Electron 运行时时直接失败，不得回退到另一个 UI。
+
 ### `electron/` 主进程
 
 | 文件 | 职责 |

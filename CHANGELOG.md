@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **桌面运行时收敛为 Electron 单壳（2026-08-09）**：删除已停用的 Tkinter `app/main.py`（961 行）、三个 Python UI 启动批处理、旧 UI 专属系统函数和摇鼠标测试；`start_electron_overlay.bat` 修正为从仓库根目录启动，并在 Electron 依赖缺失时明确失败，不再静默拉起另一套界面。新增 `electron_only_runtime_test` 防止旧入口和回退复活。
+
 - **回答框分成两种：要送出去的 / 自己看的（2026-08-07）**：分界线只有一条——**这段产物要不要送出去**。`deliver`（回微信、回邮件、填回输入框）贴目标应用**右侧外沿**（要一边看上文一边改草稿，挂在选区旁会压住要参照的那几行）、**纯文本不解析 markdown**（对面读到的是字面量 `**` 和 `-`，渲染成粗体会让人以为发过去也是那样）、要点头的那一下长在**问题框**下面而不是回答框里（定稿的话此刻已复制回问题框，你正看着的就是即将写出去的东西）。`inspect`（生图、MCP 地图/播放器、论文翻译、解释）放开 markdown / 图片 / 工具界面，没有「拒绝 / 同意」。判定在纯函数 `electron/answer_shape_policy.js`：桥明说 > 卡的形态 > 写回类提案 > 命令动词，**拿不准一律 inspect**（判错成 inspect 只是少一个按钮，判错成 deliver 会剥掉格式并准备往别人窗口里塞字）。钉子 `tests/answer_shape_policy_test.js`。
 - **扩写改成「划中一段就地展开」，不再开新的一轮（2026-08-07）**：截图里那句「目标长度是原文的四倍以上，多出来的部分只能靠编造」是两个错叠在一起——① 手势说的「6 行」是 540px 面板里**折行后的视觉行**，而 `count_lines` 数的是**换行符**，一句 47 字、零换行的中文回答分母是 1，6/1=6>4 必触发；② 那条命令走正常提交路径，`selection_bridge` 拿**屏幕上划的那块**当源，扩的根本不是回答。现在：在回答里划中一段 → 贴着选区冒出「展开讲讲」→ 新的字**就地换掉那一段**（黄一下再褪），源就是那一段字、单位是字符、倍数 2.4 由我们定，所以没有任何东西需要被警告。新增 `scripts/expand_passage_bridge.py` + `stage:expand-passage`（invoke，不动 selectionSessions / pendingQuestions，轮次不变）。撤掉答案底边的拉伸把手（一件事只留一个做法）；选区侧的把手保留但改说字数。钉子 `tests/passage_expand_target_test.py`。
 - **结果卡与输入条照 Vida 重做（2026-08-07）**：面板 430→560 宽、正文 13→15px、圆角 26px，墨色从蓝白 `#183b68` 改中性近黑（蓝色正文让整段回答看起来像一个链接）；卡顶那条灰色小横杠换成「等宽状态 + 标题 + 叉」，整条头是抓手，第一轮的 `.turn-ask` 因此收起来；底栏从一排动作按钮改成参考里那条**追问条**（placeholder 绑当前这张卡在讲什么）。输入条右端补实心黑圆提交键（跑起来变方块可叫停，以前只能按回车、「按了没有」没有任何回执），处理中的蓝色斜光换成从左扫到右的彩带。**卡中卡拆掉**：`density=capsule` 时脱掉 `.mcard` 的白底/圆角/投影——面板本身已经是那张卡了。
@@ -236,4 +238,3 @@
 - Added MVP1-epsilon low-friction command capture: a `??` button focuses the command field and opens Windows dictation with Win+H, without adding microphone dependencies.
 - Added context-aware suggested default prompts in the command bar: explain first object, compare when THAT exists, or prepare content for DESTINATION when available.
 - Added a `???` quick action that uses current-task DESTINATION semantics.
-
