@@ -1,24 +1,68 @@
-function captureEligibility({ snapshot = null, summary = null, reason = '' } = {}) {
-  const safeSnapshot = snapshot && typeof snapshot === 'object' ? snapshot : {};
-  const safeSummary = summary && typeof summary === 'object' ? summary : {};
+interface SourceWindow {
+  hwnd?: unknown;
+  process_id?: unknown;
+  pid?: unknown;
+  title?: unknown;
+}
+
+interface CaptureSnapshot {
+  status?: unknown;
+  target_point?: { x?: unknown; y?: unknown } | null;
+  source_window?: SourceWindow | null;
+  source_kind?: unknown;
+  capture_path?: unknown;
+}
+
+interface CaptureSummary {
+  state?: unknown;
+  hasActiveContext?: unknown;
+  hasActiveReview?: unknown;
+  activeContextWorkflowKind?: unknown;
+  hasContent?: unknown;
+  hasVisual?: unknown;
+  label?: unknown;
+}
+
+interface CaptureEligibilityInput {
+  snapshot?: CaptureSnapshot | null;
+  summary?: CaptureSummary | null;
+  reason?: string;
+}
+
+interface CaptureEligibility {
+  commandReady: boolean;
+  state: string;
+  message: string;
+  autoDismissMs: number | null;
+}
+
+function captureEligibility({
+  snapshot = null,
+  summary = null,
+  reason = '',
+}: CaptureEligibilityInput = {}): CaptureEligibility {
+  const safeSnapshot: CaptureSnapshot = snapshot && typeof snapshot === 'object' ? snapshot : {};
+  const safeSummary: CaptureSummary = summary && typeof summary === 'object' ? summary : {};
   const state = String(safeSummary.state || safeSnapshot.status || 'unsupported');
   const targetPoint = safeSnapshot.target_point;
   const targetHwnd = Number(safeSnapshot?.source_window?.hwnd);
-  const targetPid = Number(safeSnapshot?.source_window?.process_id || safeSnapshot?.source_window?.pid);
+  const targetPid = Number(
+    safeSnapshot?.source_window?.process_id || safeSnapshot?.source_window?.pid,
+  );
   const contextTarget = safeSummary.hasActiveContext === true;
   const reviewTarget = safeSummary.hasActiveReview === true;
   const targetCoordinatesReady = Boolean(
-    Number.isInteger(targetHwnd)
-    && targetHwnd > 0
-    && Number.isInteger(targetPid)
-    && targetPid > 0
-    && targetPoint
-    && Number.isFinite(Number(targetPoint.x))
-    && Number.isFinite(Number(targetPoint.y))
+    Number.isInteger(targetHwnd) &&
+    targetHwnd > 0 &&
+    Number.isInteger(targetPid) &&
+    targetPid > 0 &&
+    targetPoint &&
+    Number.isFinite(Number(targetPoint.x)) &&
+    Number.isFinite(Number(targetPoint.y)),
   );
   const runtimeDelivery = reason === 'runtime-delivery';
   const runtimeIssueTarget = Boolean(
-    contextTarget && safeSummary.activeContextWorkflowKind === 'runtime_issue'
+    contextTarget && safeSummary.activeContextWorkflowKind === 'runtime_issue',
   );
   if (runtimeDelivery) {
     if (!runtimeIssueTarget) {
@@ -44,22 +88,23 @@ function captureEligibility({ snapshot = null, summary = null, reason = '' } = {
       autoDismissMs: 1800,
     };
   }
-  const deliveryTargetReady = Boolean(
-    (contextTarget || reviewTarget) && targetCoordinatesReady
-  );
+  const deliveryTargetReady = Boolean((contextTarget || reviewTarget) && targetCoordinatesReady);
   if (deliveryTargetReady) {
-    return { commandReady: true, state: contextTarget ? 'context-target' : 'review-target', message: '', autoDismissMs: null };
+    return {
+      commandReady: true,
+      state: contextTarget ? 'context-target' : 'review-target',
+      message: '',
+      autoDismissMs: null,
+    };
   }
-  const commandReady = (
-    state === 'ready'
-    && safeSnapshot.status === 'ready'
-    && (safeSummary.hasContent === true || (
-      safeSummary.hasVisual === true
-      && safeSnapshot.source_kind === 'screen_region'
-      && typeof safeSnapshot.capture_path === 'string'
-      && safeSnapshot.capture_path.length > 0
-    ))
-  );
+  const commandReady =
+    state === 'ready' &&
+    safeSnapshot.status === 'ready' &&
+    (safeSummary.hasContent === true ||
+      (safeSummary.hasVisual === true &&
+        safeSnapshot.source_kind === 'screen_region' &&
+        typeof safeSnapshot.capture_path === 'string' &&
+        safeSnapshot.capture_path.length > 0));
   if (commandReady) {
     return {
       commandReady: true,
@@ -69,7 +114,9 @@ function captureEligibility({ snapshot = null, summary = null, reason = '' } = {
     };
   }
 
-  const title = String(safeSnapshot?.source_window?.title || safeSummary.label || '当前应用').trim();
+  const title = String(
+    safeSnapshot?.source_window?.title || safeSummary.label || '当前应用',
+  ).trim();
   let message = `未能从「${title}」读取可靠选中内容`;
   if (state === 'target_mismatch') message = '截图目标已变化，未保存或外发图像；请重新指向后重试';
   else if (/obsidian/i.test(title)) message = 'Obsidian PDF 暂不支持读取选中文字';
@@ -84,14 +131,31 @@ function captureEligibility({ snapshot = null, summary = null, reason = '' } = {
 //   'error'  -> failed payload with no action proposals to act on
 //   'card'   -> structured stage card (calendar draft, route draft, text-draft diff)
 //   'inline' -> everything else renders as a plain inline answer
-function classifyResult(parsed = {}) {
+interface ActionProposal {
+  action_type?: unknown;
+}
+
+interface BridgeResult {
+  ok?: unknown;
+  intentKind?: unknown;
+  calendarDraft?: unknown;
+  routeDraft?: unknown;
+  actionProposals?: unknown;
+}
+
+type ResultSurface = 'error' | 'card' | 'inline';
+
+function classifyResult(parsed: BridgeResult | null = {}): ResultSurface {
   if (!parsed || typeof parsed !== 'object') return 'error';
-  const proposals = Array.isArray(parsed.actionProposals) ? parsed.actionProposals : [];
+  const proposals: ActionProposal[] = Array.isArray(parsed.actionProposals)
+    ? (parsed.actionProposals as ActionProposal[])
+    : [];
   if (parsed.ok === false && proposals.length === 0) return 'error';
   if (parsed.intentKind === 'calendar_event_draft' && parsed.calendarDraft) return 'card';
   if (parsed.intentKind === 'route_draft' && parsed.routeDraft) return 'card';
-  if (proposals.some((proposal) => proposal?.action_type === 'office_replace_selection')) return 'card';
+  if (proposals.some((proposal) => proposal?.action_type === 'office_replace_selection'))
+    return 'card';
   return 'inline';
 }
 
-module.exports = { captureEligibility, classifyResult };
+export { captureEligibility, classifyResult };

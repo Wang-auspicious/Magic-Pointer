@@ -6,6 +6,7 @@
 - Migrated selection-session state and observability logging to strict TypeScript, with explicit session, prompt-packet, log-rotation, counter, and lazy crash-reporter contracts.
 - Migrated deterministic wiggle reliability evidence to strict TypeScript and moved its detector dependency to a conventional eager import boundary.
 - Kept Python-to-Node integration tests compatible with migrated TypeScript source by preloading the same `tsx/cjs` loader used by the Node suite.
+- Migrated internal auto-execution authorization and result-surface classification to strict TypeScript without widening their fail-closed behavior.
 
 - **首批 Electron 策略模块迁到 strict TypeScript（2026-08-09）**：激活门、鼠标按键、指针轮询、临时面板关闭、renderer readiness、手势运行配置、地图 route、Stage 原生命中区、标题栏对比度、主动提议 once store、bridge progress、IPC surface 共 12 个 `.js` 改为带真实输入/返回类型的 `.ts`；无 `any`、无 `@ts-nocheck`，测试继续通过无扩展 CommonJS 接口加载。
 - **第二批 Electron 生命周期模块迁到 strict TypeScript（2026-08-09）**：`app_lifecycle`、`python_runtime`、`submit_gating_policy`、`credential_store`、`session_timeline` 五个 Node-only 模块完成 `.ts` 迁移，补齐 marker/readiness、进程环境、提交决策、safeStorage 与诊断时间线的数据类型。
