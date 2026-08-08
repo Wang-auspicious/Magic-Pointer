@@ -1,6 +1,92 @@
 'use strict';
 
-const semver = require('semver');
+import semver from 'semver';
+
+interface UpdateApp {
+  isPackaged: boolean;
+  getVersion(): string;
+}
+
+interface UpdateInfo {
+  version?: unknown;
+}
+
+interface DownloadProgress {
+  percent?: unknown;
+}
+
+interface UpdateUpdater {
+  autoDownload: boolean;
+  autoInstallOnAppQuit: boolean;
+  allowPrerelease: boolean;
+  allowDowngrade: boolean;
+  channel: string;
+  on(event: string, listener: (payload?: unknown) => unknown): unknown;
+  checkForUpdates(): unknown | Promise<unknown>;
+  downloadUpdate(): unknown | Promise<unknown>;
+  quitAndInstall(isSilent: boolean, isForceRunAfter: boolean): void;
+}
+
+interface DialogResult {
+  response: number;
+}
+
+interface UpdateDialog {
+  showMessageBox(options: Record<string, unknown>): DialogResult | Promise<DialogResult>;
+}
+
+interface UpdateState {
+  state: string;
+  checkedAt?: number;
+  version?: string;
+  progress?: number;
+  message?: string;
+}
+
+interface TimerHandle {
+  unref?(): void;
+}
+
+interface UpdateManagerOptions {
+  app?: UpdateApp;
+  updater?: UpdateUpdater;
+  dialog?: UpdateDialog;
+  log?: (message: string) => void;
+  onStatus?: (state: Readonly<UpdateState>) => void;
+  setTimeoutFn?: (callback: () => void, delayMs: number) => TimerHandle;
+  clearTimeoutFn?: (handle: TimerHandle) => void;
+  automaticDelayMs?: number;
+}
+
+interface CheckResult {
+  ok: boolean;
+  reason?: string;
+  result?: unknown;
+}
+
+interface UpdateManager {
+  start(options?: { channel?: string; automatic?: boolean }): Readonly<UpdateState>;
+  check(options?: { manual?: boolean }): Promise<CheckResult>;
+  setChannel(channel?: string): string;
+  dispose(): void;
+  status(): Readonly<UpdateState>;
+}
+
+function infoFrom(value: unknown): UpdateInfo {
+  return value && typeof value === 'object' ? (value as UpdateInfo) : {};
+}
+
+function progressFrom(value: unknown): DownloadProgress {
+  return value && typeof value === 'object' ? (value as DownloadProgress) : {};
+}
+
+function errorName(error: unknown): string {
+  return error instanceof Error ? error.name : 'Error';
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 
 const UPDATE_CHANNELS = Object.freeze({
   stable: Object.freeze({ updaterChannel: 'latest', allowPrerelease: false }),
@@ -8,26 +94,34 @@ const UPDATE_CHANNELS = Object.freeze({
 });
 
 function createUpdateManager({
-  app,
-  updater,
-  dialog,
+  app: appDependency,
+  updater: updaterDependency,
+  dialog: dialogDependency,
   log = () => {},
   onStatus = () => {},
   setTimeoutFn = setTimeout,
-  clearTimeoutFn = clearTimeout,
+  clearTimeoutFn = (handle) => clearTimeout(handle as NodeJS.Timeout),
   automaticDelayMs = 20_000,
-} = {}) {
-  if (!app || !updater || !dialog) throw new Error('update_manager_dependencies_missing');
+}: UpdateManagerOptions = {}): UpdateManager {
+  if (!appDependency || !updaterDependency || !dialogDependency) {
+    throw new Error('update_manager_dependencies_missing');
+  }
+  const app = appDependency;
+  const updater = updaterDependency;
+  const dialog = dialogDependency;
 
-  let state = Object.freeze({ state: app.isPackaged ? 'idle' : 'unsupported' });
+  let state: Readonly<UpdateState> = Object.freeze({
+    state: app.isPackaged ? 'idle' : 'unsupported',
+  });
   let started = false;
-  let inFlight = null;
-  let automaticTimer = null;
+  let inFlight: Promise<CheckResult> | null = null;
+  let automaticTimer: TimerHandle | null = null;
   let lastCheckWasManual = false;
   let availablePromptOpen = false;
   let downloadedPromptOpen = false;
 
-  function acceptedUpdateVersion(info = {}) {
+  function acceptedUpdateVersion(value: unknown = {}): string | null {
+    const info = infoFrom(value);
     const current = semver.valid(app.getVersion());
     const candidate = semver.valid(String(info.version || ''));
     if (!current || !candidate) return null;
@@ -35,25 +129,26 @@ function createUpdateManager({
     return semver.gt(candidate, current) ? candidate : null;
   }
 
-  function publish(next) {
+  function publish(next: UpdateState): Readonly<UpdateState> {
     state = Object.freeze({ ...next, checkedAt: Date.now() });
     onStatus(state);
     log(`update state=${state.state}${state.version ? ` version=${state.version}` : ''}`);
     return state;
   }
 
-  function show(options) {
+  function show(options: Record<string, unknown>): Promise<DialogResult> {
     return Promise.resolve(dialog.showMessageBox(options)).catch((error) => {
-      log(`update dialog failed ${error.name}: ${error.message}`);
+      log(`update dialog failed ${errorName(error)}: ${errorMessage(error)}`);
       return { response: 1 };
     });
   }
 
-  function bindEvents() {
+  function bindEvents(): void {
     if (started) return;
     started = true;
     updater.on('checking-for-update', () => publish({ state: 'checking' }));
-    updater.on('update-not-available', (info = {}) => {
+    updater.on('update-not-available', (value = {}) => {
+      const info = infoFrom(value);
       publish({ state: 'current', version: String(info.version || app.getVersion()) });
       if (lastCheckWasManual) {
         show({
@@ -65,7 +160,8 @@ function createUpdateManager({
         });
       }
     });
-    updater.on('update-available', async (info = {}) => {
+    updater.on('update-available', async (value = {}) => {
+      const info = infoFrom(value);
       const version = acceptedUpdateVersion(info);
       if (!version) {
         publish({ state: 'current', version: app.getVersion() });
@@ -91,15 +187,17 @@ function createUpdateManager({
       try {
         await updater.downloadUpdate();
       } catch (error) {
-        publish({ state: 'error', message: String(error.message || error) });
-        log(`update download failed ${error.name}: ${error.message}`);
+        publish({ state: 'error', message: errorMessage(error) });
+        log(`update download failed ${errorName(error)}: ${errorMessage(error)}`);
       }
     });
-    updater.on('download-progress', (progress = {}) => {
+    updater.on('download-progress', (value = {}) => {
+      const progress = progressFrom(value);
       const percent = Math.max(0, Math.min(100, Number(progress.percent) || 0));
       publish({ state: 'downloading', progress: percent });
     });
-    updater.on('update-downloaded', async (info = {}) => {
+    updater.on('update-downloaded', async (value = {}) => {
+      const info = infoFrom(value);
       const version = String(info.version || '新版本');
       publish({ state: 'downloaded', version, progress: 100 });
       if (downloadedPromptOpen) return;
@@ -118,13 +216,17 @@ function createUpdateManager({
       if (answer.response === 0) updater.quitAndInstall(false, true);
     });
     updater.on('error', (error) => {
-      publish({ state: 'error', message: String(error?.message || error || 'update_failed') });
-      log(`update failed ${error?.name || 'Error'}: ${error?.message || error}`);
+      publish({ state: 'error', message: errorMessage(error || 'update_failed') });
+      log(`update failed ${errorName(error)}: ${errorMessage(error)}`);
     });
   }
 
-  function setChannel(channel = 'stable') {
-    const selected = UPDATE_CHANNELS[channel];
+  function setChannel(channel = 'stable'): string {
+    const selected = (
+      UPDATE_CHANNELS as Readonly<
+        Record<string, { updaterChannel: string; allowPrerelease: boolean }>
+      >
+    )[channel];
     if (!selected) throw new Error('update_channel_unsupported');
     // electron-updater intentionally enables allowDowngrade when its channel
     // setter is used. Explicitly reset it for every supported channel.
@@ -134,7 +236,7 @@ function createUpdateManager({
     return channel;
   }
 
-  function check({ manual = false } = {}) {
+  function check({ manual = false }: { manual?: boolean } = {}): Promise<CheckResult> {
     if (!app.isPackaged) {
       const result = { ok: false, reason: 'packaged_only' };
       if (!manual) return Promise.resolve(result);
@@ -154,8 +256,8 @@ function createUpdateManager({
       .then(() => updater.checkForUpdates())
       .then((result) => ({ ok: true, result }))
       .catch((error) => {
-        publish({ state: 'error', message: String(error.message || error) });
-        log(`update check failed ${error.name}: ${error.message}`);
+        publish({ state: 'error', message: errorMessage(error) });
+        log(`update check failed ${errorName(error)}: ${errorMessage(error)}`);
         if (manual) {
           return show({
             type: 'warning',
@@ -174,7 +276,10 @@ function createUpdateManager({
     return inFlight;
   }
 
-  function start({ channel = 'stable', automatic = true } = {}) {
+  function start({
+    channel = 'stable',
+    automatic = true,
+  }: { channel?: string; automatic?: boolean } = {}): Readonly<UpdateState> {
     bindEvents();
     updater.autoDownload = false;
     updater.autoInstallOnAppQuit = false;
@@ -182,14 +287,14 @@ function createUpdateManager({
     if (automatic && app.isPackaged && !automaticTimer) {
       automaticTimer = setTimeoutFn(() => {
         automaticTimer = null;
-        check({ manual: false });
+        void check({ manual: false });
       }, automaticDelayMs);
-      if (typeof automaticTimer?.unref === 'function') automaticTimer.unref();
+      automaticTimer.unref?.();
     }
     return state;
   }
 
-  function dispose() {
+  function dispose(): void {
     if (automaticTimer) clearTimeoutFn(automaticTimer);
     automaticTimer = null;
   }
@@ -203,4 +308,4 @@ function createUpdateManager({
   };
 }
 
-module.exports = { createUpdateManager };
+export { createUpdateManager };

@@ -114,7 +114,7 @@ assert(
   'the packaged app must carry a public GitHub release feed for update metadata',
 );
 assert(
-  exists('electron/update_manager.js'),
+  exists('electron/update_manager.ts'),
   'auto-update behavior must live behind a testable main-process module',
 );
 assert(smoke.includes('ConvertTo-Json'), 'smoke script must emit structured JSON');
