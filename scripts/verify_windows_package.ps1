@@ -73,7 +73,7 @@ try {
     'scripts\verify_stage_selection_visual.py',
     'scripts\verify_browser_selection_alignment.py',
     'scripts\prepare_python_runtime.ps1',
-    'scripts\run-electron-builder.js'
+    'scripts\run-electron-builder.ts'
   )
   foreach ($relativePath in $forbiddenDevelopmentFiles) {
     if (Test-Path -LiteralPath (Join-Path $resourcesApp $relativePath)) {

@@ -2,7 +2,7 @@
 
 > 最后核实：2026-08-09。改了行为就回来改这里，别新建一份日期文件。
 
-分支 `codex/multi-stroke-and-voice-fix`，未推送。当前全量测试：**Python 1073 项、Node 148 项（90 个 JS/TS 源文件）**，ESLint 与 TypeScript strict typecheck 通过；Electron/Node 源码现为 **67 JS / 23 TS**，重构前 Node 基线为 145 项。
+分支 `codex/multi-stroke-and-voice-fix`，未推送。当前全量测试：**Python 1073 项、Node 148 项（90 个 JS/TS 源文件）**，ESLint 与 TypeScript strict typecheck 通过；Electron/Node 源码现为 **65 JS / 25 TS**，重构前 Node 基线为 145 项。
 
 ## 一句话
 
@@ -29,7 +29,7 @@
 
 桌面运行时已经收敛为 **Electron 单壳**。旧 `app/main.py` Tkinter 应用、它的三个直接启动批处理和 Python 摇鼠标测试已删除；`start_electron_overlay.bat` 不再静默回退旧 UI，缺 Electron 依赖时明确失败并提示先安装依赖。
 
-TypeScript 迁移基础设施可用：`npm run build:electron` 生成 `build/electron`，`npm run typecheck` 执行 strict 检查，`npm test` 能在独立进程直接加载迁移中的 `.ts`；开发启动与打包都先构建再运行编译产物。当前已迁移路径解析，以及激活、鼠标/指针策略、renderer readiness、手势配置、route、命中区、标题栏、主动提议规则/once store、bridge progress、IPC surface、应用生命周期、Python runtime、提交门、凭据存储、会话时间线、运行快照、听写纠错、语音焦点守卫共 22 个 Electron 模块。
+TypeScript 迁移基础设施可用：`npm run build:electron` 生成 `build/electron`，`npm run typecheck` 执行 strict 检查，`npm test` 能在独立进程直接加载迁移中的 `.ts`；开发启动与打包都先构建再运行编译产物。当前已迁移路径解析，以及激活、鼠标/指针策略、renderer readiness、手势配置、route、命中区、标题栏、主动提议规则/once store、bridge progress、IPC surface、应用生命周期、Python runtime、提交门、凭据存储、会话时间线、运行快照、听写纠错、语音焦点守卫共 22 个 Electron 模块；构建器、测试编排器和 electron-builder 包装器 3 个核心 Node 工具也已进入 strict 检查。
 
 2026-08-09 用编译入口完成真实 first-run onboarding：取消不写 marker、9 项 preflight、success、进入 `studio.html`、后台二次启动不重复 preflight 均通过；证据在 `data/runtime/first-run-onboarding-20260730/evidence.json`。构建器会校验所有未迁移 `.js` 在源码与产物间字节一致，classic renderer 不经过 CommonJS 转换。
 
@@ -74,7 +74,7 @@ Go 视觉能力实测（2026-08-07，探针 `data/runtime/probe_go_vision.py`）
 
 ```bash
 python -m pytest tests/ -q --basetemp=data/runtime/pytest-tmp-verify   # 不指定 basetemp 会因系统 temp 权限报 PermissionError，是环境问题
-node scripts/run-node-tests.js
+tsx scripts/run-node-tests.ts
 git grep -n "sk-"                                                     # 期望无输出
 
 python scripts/uia_tree_dump.py --title-contains "Notepad" --all      # UIA 真相复验（只读）

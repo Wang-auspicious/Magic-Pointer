@@ -1,12 +1,10 @@
-'use strict';
-
-const fs = require('fs');
-const path = require('path');
-const { spawnSync } = require('child_process');
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 
 const root = path.resolve(__dirname, '..');
 
-function walkCode(directory) {
+function walkCode(directory: string): string[] {
   const absolute = path.join(root, directory);
   if (!fs.existsSync(absolute)) return [];
   return fs.readdirSync(absolute, { withFileTypes: true }).flatMap((entry) => {
@@ -16,7 +14,7 @@ function walkCode(directory) {
   });
 }
 
-function run(args) {
+function run(args: string[]): number {
   const result = spawnSync(process.execPath, args, {
     cwd: root,
     env: process.env,
@@ -32,24 +30,21 @@ const testFiles = fs
   .map((entry) => path.join('tests', entry.name))
   .sort();
 
-const failures = [];
+const failures: string[] = [];
 
-// `node --check` 只解析语法，不解析作用域。main.js 里 `createStashRuntime`
-// 和 `createConversationStore` 被用了却从来没有 require，两个都通过了 --check，
-// 然后在运行时抛 ReferenceError——被外层 try/catch 吞掉，表现成「收藏箱一直是空的」
-// 和「最近对话里什么都没有」。要挡住这一类，只能靠 no-undef。
-function runLint() {
+// `node --check` only parses syntax. ESLint's no-undef check also catches missing
+// imports that would otherwise surface as delayed runtime failures.
+function runLint(): number {
   const cli = path.join(root, 'node_modules', 'eslint', 'bin', 'eslint.js');
   if (!fs.existsSync(cli)) {
     console.warn('eslint not installed, skipping scope check');
     return 0;
   }
-  // 直接跑 eslint 的入口脚本，不经过 .cmd 包装：省掉一层 shell，
-  // Windows 上的参数转义问题也跟着没了。
+  // Invoke ESLint through Node directly to avoid shell quoting differences on Windows.
   return run([cli, 'electron', 'scripts', 'tests', '--max-warnings=0']);
 }
 
-function runTypecheck() {
+function runTypecheck(): number {
   const cli = path.join(path.dirname(require.resolve('typescript')), 'tsc.js');
   const electronStatus = run([
     cli,
@@ -67,11 +62,15 @@ if (runLint() !== 0) failures.push('lint');
 if (runTypecheck() !== 0) failures.push('typecheck');
 
 for (const file of sourceFiles) {
-  if (file.endsWith('.js') && run(['--check', file]) !== 0) failures.push(`syntax:${file}`);
+  if (file.endsWith('.js') && run(['--check', file]) !== 0) {
+    failures.push(`syntax:${file}`);
+  }
 }
 const tsxRegister = require.resolve('tsx/cjs');
 for (const file of testFiles) {
-  if (run(['--require', tsxRegister, file]) !== 0) failures.push(`test:${file}`);
+  if (run(['--require', tsxRegister, file]) !== 0) {
+    failures.push(`test:${file}`);
+  }
 }
 
 if (failures.length) {

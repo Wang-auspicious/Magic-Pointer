@@ -3,7 +3,7 @@ const fs = require('fs');
 
 const main = fs.readFileSync('electron/main.js', 'utf8');
 const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-const runner = fs.readFileSync('scripts/run-node-tests.js', 'utf8');
+const runner = fs.readFileSync('scripts/run-node-tests.ts', 'utf8');
 
 assert(main.includes('safeStorage'));
 assert(
@@ -26,7 +26,7 @@ assert(
   ),
 );
 assert(!main.includes('console.log(payload)'));
-assert(pkg.scripts.test.includes('scripts/run-node-tests.js'));
+assert(pkg.scripts.test.includes('scripts/run-node-tests.ts'));
 assert(runner.includes("walkCode('electron')"));
 assert(runner.includes("require.resolve('tsx/cjs')"));
 assert(runner.includes("entry.name.endsWith('_test.js')"));
