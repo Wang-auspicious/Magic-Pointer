@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Migrated the Node test orchestrator and electron-builder wrapper to strict TypeScript; package/test commands now execute them through `tsx`, and the package verifier still rejects leaked development tooling.
+- Migrated selection-session state and observability logging to strict TypeScript, with explicit session, prompt-packet, log-rotation, counter, and lazy crash-reporter contracts.
 
 - **首批 Electron 策略模块迁到 strict TypeScript（2026-08-09）**：激活门、鼠标按键、指针轮询、临时面板关闭、renderer readiness、手势运行配置、地图 route、Stage 原生命中区、标题栏对比度、主动提议 once store、bridge progress、IPC surface 共 12 个 `.js` 改为带真实输入/返回类型的 `.ts`；无 `any`、无 `@ts-nocheck`，测试继续通过无扩展 CommonJS 接口加载。
 - **第二批 Electron 生命周期模块迁到 strict TypeScript（2026-08-09）**：`app_lifecycle`、`python_runtime`、`submit_gating_policy`、`credential_store`、`session_timeline` 五个 Node-only 模块完成 `.ts` 迁移，补齐 marker/readiness、进程环境、提交决策、safeStorage 与诊断时间线的数据类型。
