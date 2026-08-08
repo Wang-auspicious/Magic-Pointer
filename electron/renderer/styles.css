@@ -18,7 +18,14 @@ body[data-mode='gesture'] {
   background: rgba(0, 0, 0, 0.001);  /* non-transparent hit target for exclusive overlay */
 }
 body[data-mode='gesture'],
-body[data-mode='gesture'] * {
+body[data-mode='gesture'] *,
+body[data-mode='capture'],
+body[data-mode='capture'] *,
+body[data-mode='observer'],
+body[data-mode='observer'] * {
+  /* 统一 CSS 光标（armed-cursor.svg，用户满意版原样）。不画 canvas 鼠标：
+     Chromium 对 url 光标的解码性能问题是 setBounds 高频重置造成的，
+     根因已在主进程修掉（只在跨屏时 setBounds）。 */
   cursor: url('./assets/armed-cursor.svg') 3 3, crosshair !important;
 }
 

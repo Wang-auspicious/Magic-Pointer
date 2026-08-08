@@ -21,6 +21,7 @@ function createStashRuntime(options = {}) {
     onEntry = () => {},
     focusProbe = async () => ({}),   // 由主进程给：当前前台窗口的进程名/标题/UIA 元素
     settings = () => ({}),
+    pythonExecutable = '',           // 主进程给：跑 describe bridge 用的 Python 解释器
   } = options;
 
   const indexPath = path.join(baseDir, 'index.json');
@@ -117,7 +118,7 @@ function createStashRuntime(options = {}) {
   let describeQueue = Promise.resolve();
   function describeImage(absPath) {
     return new Promise((resolve) => {
-      const child = spawn(process.execPath, [path.join(ROOT, 'scripts', 'stash_describe_bridge.py')], {
+      const child = spawn(pythonExecutable || process.execPath, [path.join(ROOT, 'scripts', 'stash_describe_bridge.py')], {
         stdio: ['pipe', 'pipe', 'pipe'],
       });
       let out = '';

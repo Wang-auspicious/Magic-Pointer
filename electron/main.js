@@ -1367,6 +1367,7 @@ function initializeStashRuntime() {
     clipboard,
     baseDir: stashBaseDir(),
     log,
+    pythonExecutable: PYTHON_EXECUTABLE,
     settings: () => fabricSettings || {},
     // 落盘时顺手记下「你截的是哪个窗口的哪个元素」——这是 OCR 拿不到的。
     //

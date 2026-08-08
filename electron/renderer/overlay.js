@@ -48,8 +48,18 @@ let guideTarget = null;        // { x, y } 指点目标（overlay 局部坐标�
 let guideFlight = null;        // { t, from, to, ctrl, startedAt, duration }
 let guideHideTimer = null;     // 到达后停留定时器
 let guideFollow = true;        // 常驻跟随（右键关闭，唤醒重置）
-const GUIDE_TRIANGLE_SIZE = 15;
 const GUIDE_FLIGHT_MS = 620;
+
+// 跟随弹簧：源码 clicky 用 SwiftUI .spring(response:0.2, dampingFraction:0.6)
+// 追光标，我们等价的临界阻尼弹簧——ω = 2π/0.2 ≈ 31.4，k = ω²，c = 2·0.6·ω。
+// 硬跟（每帧直接贴目标）会「跳」，弹簧才有 clicky 那种粘着光标又滑过去的
+// 质感。鼠标停住后弹簧收敛（位移+速度都小），循环自己停，不空转。
+const GUIDE_SPRING_K = 986;
+const GUIDE_SPRING_C = 38;
+const GUIDE_SPRING_EPS = 0.6;  // 收敛阈值（px / px·s⁻¹）
+let guideSpring = { x: 0, y: 0, vx: 0, vy: 0, has: false };
+let guideLoopRaf = null;
+let lastGuideTick = 0;
 
 function onGuidePoint(payload) {
   if (!payload || !Number.isFinite(Number(payload.x)) || !Number.isFinite(Number(payload.y))) return;
@@ -102,164 +112,131 @@ function drawGuideTriangle() {
     px = pos.x;
     py = pos.y;
   } else if (guideTarget) {
-    // 到达目标点：停留 2.5 秒后回到跟随
+    // 到达目标点：停留 2.5 秒后回到跟随。停留期间弹簧同步到目标点，
+    // 这样结束时从「当前位置」平滑回跟光标，不会从老位置飞回来。
     guideFlight = null;
     px = guideTarget.x;
     py = guideTarget.y;
+    guideSpring.x = px;
+    guideSpring.y = py;
+    guideSpring.vx = 0;
+    guideSpring.vy = 0;
+    guideSpring.has = true;
     if (!guideHideTimer) {
       guideHideTimer = setTimeout(() => {
         guideHideTimer = null;
         guideTarget = null;
+        ensureGuideFollowLoop();
         render();
       }, 2500);
     }
   } else if (guideFollow && lastPointer) {
-    // 常驻跟随：蓝边光标右下方 35/25px（clicky 的落位）
-    px = lastPointer.x + 35;
-    py = lastPointer.y + 25;
+    // 常驻跟随：蓝边光标右下方 35/25px（clicky 的落位），弹簧逼近——
+    // 首帧直接落位，之后每帧向目标弹簧插值（见 ensureGuideFollowLoop）。
+    const tx = lastPointer.x + 35;
+    const ty = lastPointer.y + 25;
+    if (!guideSpring.has) {
+      guideSpring = { x: tx, y: ty, vx: 0, vy: 0, has: true };
+    }
+    px = guideSpring.x;
+    py = guideSpring.y;
+    ensureGuideFollowLoop();
   } else {
     return;
   }
   ctx.save();
   ctx.translate(px, py);
-  // 发光层
-  ctx.shadowColor = 'rgba(92, 160, 255, 0.65)';
-  ctx.shadowBlur = 12;
-  ctx.fillStyle = 'rgba(92, 160, 255, 0.9)';
-  ctx.beginPath();
-  ctx.moveTo(0, -GUIDE_TRIANGLE_SIZE / 2);
-  ctx.lineTo(GUIDE_TRIANGLE_SIZE, 0);
-  ctx.lineTo(0, GUIDE_TRIANGLE_SIZE / 2);
-  ctx.closePath();
-  ctx.fill();
-  ctx.shadowBlur = 0;
-  // 白色内芯，让它在深色背景上也分明
-  ctx.fillStyle = '#fff';
-  ctx.beginPath();
-  ctx.moveTo(0, -GUIDE_TRIANGLE_SIZE / 4);
-  ctx.lineTo(GUIDE_TRIANGLE_SIZE / 2, 0);
-  ctx.lineTo(0, GUIDE_TRIANGLE_SIZE / 4);
-  ctx.closePath();
-  ctx.fill();
+  // clicky 源码的 BlueCursorView 三角：等边三角形，边长 16，旋转 -35°
+  // （像光标一样朝左上方），纯蓝填充 + 同色外发光。源码注释说得很清楚：
+  // 三角常驻视图树、opacity 交叉淡入（绝不 remove/re-insert，否则闪现）。
+  // 我们没有 SwiftUI 的常驻视图，用预渲染离屏 canvas 缓存三角位图
+  // （旋转在预渲染时做掉），每帧 drawImage——避免每帧重算 path + shadow。
+  ensureGuideFrames();
+  ctx.drawImage(guideFrames[0], -guideFrameSize / 2, -guideFrameSize / 2);
   ctx.restore();
 }
 
-// ── OffscreenCanvas pre-rendered pointer & aura frame cache ──────────
-// Avoids per-frame Path2D construction, createRadialGradient, shadowBlur,
-// and quadraticCurveTo calls — the main render loop only calls drawImage().
-const POINTER_FRAME_COUNT = 6;
-const AURA_FRAME_COUNT = 6;
-let pointerFrames = [];
-let auraFrames = [];
-let pointerFrameWidth = 0;
-let pointerFrameHeight = 0;
-let auraFrameWidth = 0;
-let auraFrameHeight = 0;
+// ── 预渲染三角位图（等边三角形，源码同款）─────────────────────────
+let guideFrames = [];
+let guideFrameSize = 0;
 
-function buildPointerFrames() {
-  pointerFrames = [];
-  const w = 48; const h = 68;  // enough for the rotated arrow + shadow
-  pointerFrameWidth = w;
-  pointerFrameHeight = h;
-  const originX = 6; const originY = 5;  // where (0,0) of the path maps
-  for (let i = 0; i < POINTER_FRAME_COUNT; i++) {
-    const pulse = i / (POINTER_FRAME_COUNT - 1);  // 0.0 … 1.0
-    const offscreen = new OffscreenCanvas(w, h);
-    const oc = offscreen.getContext('2d');
-    oc.translate(originX, originY);
-    oc.rotate(-0.045);
-    oc.scale(0.74, 0.92);
-    oc.lineJoin = 'round';
-    oc.lineCap = 'round';
-
-    const path = new Path2D();
-    path.moveTo(0.0, 0.0);
-    path.quadraticCurveTo(0.8, -0.7, 2.2, 0.0);
-    path.lineTo(22.4, 18.8);
-    path.quadraticCurveTo(24.8, 20.5, 21.6, 21.2);
-    path.lineTo(10.9, 20.4);
-    path.lineTo(5.6, 30.0);
-    path.quadraticCurveTo(4.5, 32.7, 3.4, 29.8);
-    path.lineTo(-1.0, 3.5);
-    path.quadraticCurveTo(-1.9, 1.1, 0.0, 0.0);
-    path.closePath();
-
-    // outer glow
-    oc.save();
-    oc.globalCompositeOperation = 'lighter';
-    oc.globalAlpha = 0.46 + pulse * 0.46;
-    oc.shadowColor = `rgba(37, 99, 235, ${0.72 + pulse * 0.24})`;
-    oc.shadowBlur = 20 + pulse * 20;
-    oc.strokeStyle = `rgba(59, 130, 246, ${0.42 + pulse * 0.30})`;
-    oc.lineWidth = 9.5;
-    oc.stroke(path);
-    oc.restore();
-
-    // main fill
-    oc.shadowColor = `rgba(37, 99, 235, ${0.52 + pulse * 0.34})`;
-    oc.shadowBlur = 12 + pulse * 12;
-    oc.fillStyle = 'rgba(255, 255, 255, .99)';
-    oc.strokeStyle = 'rgba(37, 99, 235, .96)';
-    oc.lineWidth = 2.15;
-    oc.fill(path);
-    oc.stroke(path);
-
-    // inner highlight
-    oc.shadowBlur = 0;
-    oc.strokeStyle = 'rgba(147, 197, 253, .42)';
-    oc.lineWidth = 0.75;
-    oc.stroke(path);
-
-    pointerFrames.push(offscreen);
-  }
-}
-
-function buildAuraFrames() {
-  auraFrames = [];
-  const w = 56; const h = 56;
-  auraFrameWidth = w;
-  auraFrameHeight = h;
-  const cx = w / 2; const cy = h / 2;
-  for (let i = 0; i < AURA_FRAME_COUNT; i++) {
-    const pulse = i / (AURA_FRAME_COUNT - 1);
-    const offscreen = new OffscreenCanvas(w, h);
-    const oc = offscreen.getContext('2d');
-    oc.translate(cx, cy);
-    oc.globalCompositeOperation = 'lighter';
-
-    const radius = 20 + pulse * 4;
-    if (typeof oc.createRadialGradient === 'function') {
-      const grad = oc.createRadialGradient(0, 0, 2, 0, 0, radius);
-      grad.addColorStop(0, `rgba(191, 219, 254, ${0.20 + pulse * 0.08})`);
-      grad.addColorStop(0.42, `rgba(59, 130, 246, ${0.14 + pulse * 0.08})`);
-      grad.addColorStop(1, 'rgba(37, 99, 235, 0)');
-      oc.fillStyle = grad;
-      oc.beginPath();
-      oc.arc(0, 0, radius, 0, Math.PI * 2);
-      oc.fill();
+// 跟随弹簧循环：每帧向 (光标+35/25) 弹簧插值并重绘；收敛或失去跟随
+// 条件（目标消失/右键关闭）时自停。onCursor 每次移动都会重启它。
+function ensureGuideFollowLoop() {
+  if (guideLoopRaf || !guideFollow || guideTarget) return;
+  const step = (now) => {
+    guideLoopRaf = null;
+    if (!guideFollow || guideTarget || !guideSpring.has || !lastPointer) {
+      guideSpring.has = false;
+      return;
     }
-
-    oc.strokeStyle = `rgba(96, 165, 250, ${0.24 + pulse * 0.12})`;
-    oc.lineWidth = 1.2;
-    oc.shadowColor = 'rgba(37, 99, 235, 0.32)';
-    oc.shadowBlur = 10 + pulse * 5;
-    oc.beginPath();
-    oc.arc(0, 0, 9 + pulse * 1.5, 0, Math.PI * 2);
-    oc.stroke();
-
-    auraFrames.push(offscreen);
-  }
+    const dt = lastGuideTick ? Math.min(0.05, (now - lastGuideTick) / 1000) : 1 / 60;
+    lastGuideTick = now;
+    const tx = lastPointer.x + 35;
+    const ty = lastPointer.y + 25;
+    // 半隐式欧拉：先速度后位移，阻尼稳定
+    guideSpring.vx += (GUIDE_SPRING_K * (tx - guideSpring.x) - GUIDE_SPRING_C * guideSpring.vx) * dt;
+    guideSpring.vy += (GUIDE_SPRING_K * (ty - guideSpring.y) - GUIDE_SPRING_C * guideSpring.vy) * dt;
+    guideSpring.x += guideSpring.vx * dt;
+    guideSpring.y += guideSpring.vy * dt;
+    const dx = tx - guideSpring.x;
+    const dy = ty - guideSpring.y;
+    render();
+    if (Math.abs(dx) > GUIDE_SPRING_EPS || Math.abs(dy) > GUIDE_SPRING_EPS
+      || Math.abs(guideSpring.vx) > GUIDE_SPRING_EPS || Math.abs(guideSpring.vy) > GUIDE_SPRING_EPS) {
+      guideLoopRaf = requestAnimationFrame(step);
+    } else {
+      // 收敛：位置落定，循环自停（画布保留最终帧，不闪）
+      guideSpring.vx = 0;
+      guideSpring.vy = 0;
+    }
+  };
+  guideLoopRaf = requestAnimationFrame(step);
 }
 
-function ensureFrameCache() {
-  if (pointerFrames.length === 0) buildPointerFrames();
-  if (auraFrames.length === 0) buildAuraFrames();
+function ensureGuideFrames() {
+  if (guideFrames.length) return;
+  // 离屏 4x 渲染（64px 画布，16px 三角 + 光晕余量），再缩到 48px 位图。
+  // 等边三角形：边长 16，高 = 16 × √3/2 ≈ 13.86（源码 Triangle shape 同款）。
+  const size = 64;
+  guideFrameSize = size;
+  const off = document.createElement('canvas');
+  off.width = size;
+  off.height = size;
+  const g = off.getContext('2d');
+  g.save();
+  g.translate(size / 2, size / 2);
+  // 旋转 -35°：像光标一样朝左上方（源码 triangleRotationDegrees = -35）
+  g.rotate((-35 * Math.PI) / 180);
+  // 等边三角，边长 16px——源码 BlueCursorView 的原尺寸
+  const edge = 16;
+  const height = edge * Math.sqrt(3) / 2;
+  // 顶点朝上：顶 y = -高×2/3，底 y = +高×1/3（源码比例）
+  g.fillStyle = '#2477e8';
+  g.shadowColor = '#2477e8';
+  // 光晕克制：源码 16px 三角配 radius 8；22px 三角该配 ~11，但大光晕
+  // 会把小三角糊成一团（之前 12 就糊成胶囊了），收到 5 保留锐利边缘
+  g.shadowBlur = 5;
+  g.beginPath();
+  g.moveTo(0, -height * (2 / 3));
+  g.lineTo(-edge / 2, height / 3);
+  g.lineTo(edge / 2, height / 3);
+  g.closePath();
+  g.fill();
+  g.restore();
+  // 缩到 48px（三角 16px + 光晕 32px 余量）
+  const final = document.createElement('canvas');
+  final.width = 48;
+  final.height = 48;
+  const fg = final.getContext('2d');
+  fg.drawImage(off, 0, 0, 48, 48);
+  guideFrames = [final];
+  // 绘制偏移用最终位图尺寸，不是大画布尺寸
+  guideFrameSize = 48;
 }
 
 function resize() {
   dpr = window.devicePixelRatio || 1;
-  pointerFrames = [];  // invalidate — DPR may have changed
-  auraFrames = [];
   canvas.width = Math.round(window.innerWidth * dpr);
   canvas.height = Math.round(window.innerHeight * dpr);
   canvas.style.width = `${window.innerWidth}px`;
@@ -338,23 +315,6 @@ function drawSmoothPath(path, alpha = 1) {
   ctx.restore();
 }
 
-function drawPointer(p) {
-  if (!p || captureMode) return;
-  ensureFrameCache();
-  if (pointerFrames.length === 0) return;
-  const now = performance.now();
-  const pulse = 0.5 + 0.5 * Math.sin(now / 430);
-  const idx = Math.min(pointerFrames.length - 1, Math.round(pulse * (pointerFrames.length - 1)));
-  ctx.save();
-  ctx.translate(p.x, p.y);
-  ctx.drawImage(
-    pointerFrames[idx],
-    -pointerFrameWidth / 2 + 2,   // offset to align path origin with cursor hotspot
-    -pointerFrameHeight / 2 + 2,
-  );
-  ctx.restore();
-}
-
 function drawHitTestPixel(p) {
   if (!p || captureMode) return;
   ctx.save();
@@ -364,23 +324,12 @@ function drawHitTestPixel(p) {
   ctx.restore();
 }
 
-function drawObserverAura(p) {
-  if (!p) return;
-  ensureFrameCache();
-  if (auraFrames.length === 0) return;
-  const now = performance.now();
-  const pulse = 0.5 + 0.5 * Math.sin(now / 420);
-  const idx = Math.min(auraFrames.length - 1, Math.round(pulse * (auraFrames.length - 1)));
-  ctx.save();
-  ctx.translate(p.x + 2 - auraFrameWidth / 2, p.y + 2 - auraFrameHeight / 2);
-  ctx.drawImage(auraFrames[idx], 0, 0);
-  ctx.restore();
-}
-
 function render() {
-  clear();
   if (gestureMode) {
+    // 唤醒瞬间（gestureAcceptAt 之前）不可画：不清屏直接返回——
+    // 清了又不画就是黑屏闪一帧，三角在唤醒时「闪现」的根源。
     if (Date.now() < gestureAcceptAt) return;
+    clear();
     if (strokes.length) {
       for (let index = 0; index < strokes.length; index += 1) {
         const stroke = strokes[index];
@@ -409,8 +358,7 @@ function render() {
     return;
   }
   if (!captureMode && points.length) drawSmoothPath(points, trailAlpha);
-  if (observerMode) drawObserverAura(lastPointer);
-  else drawPointer(lastPointer);
+  // 不画 canvas 鼠标——光标由 CSS armed-cursor（用户满意版原样）。
   // 引导小三角画在光标之上（默认不出现，有 [POINT] 指点才浮现）
   drawGuideTriangle();
 }
@@ -535,6 +483,9 @@ function resetOverlay() {
   strokes = [];
   guideTarget = null;
   guideFlight = null;
+  guideSpring.has = false;
+  guideSpring.vx = 0;
+  guideSpring.vy = 0;
   if (guideHideTimer) clearTimeout(guideHideTimer);
   guideHideTimer = null;
   // 每次唤醒（onShow→resetOverlay）常驻跟随重新开启；右键可关。
@@ -635,6 +586,7 @@ window.addEventListener('pointerdown', (e) => {
     guideFollow = false;
     guideTarget = null;
     guideFlight = null;
+    guideSpring.has = false;
     window.magicPointer?.hide();
     return;
   }
@@ -789,6 +741,8 @@ window.magicPointer?.onCursor((payload) => {
   if (!payload) return;
   if (gestureMode) return;
   lastPointer = { x: Number(payload.x) || 0, y: Number(payload.y) || 0, t: performance.now() };
+  // 鼠标一动，跟随弹簧立刻重新跑起来（循环收敛自停）
+  if (guideFollow && !guideTarget) ensureGuideFollowLoop();
   scheduleRender();
 });
 window.magicPointer?.onGuidePoint?.((payload) => {

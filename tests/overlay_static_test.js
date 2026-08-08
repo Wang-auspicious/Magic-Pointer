@@ -5,11 +5,15 @@ const vm = require('vm');
 const source = fs.readFileSync('electron/renderer/overlay.js', 'utf8');
 const html = fs.readFileSync('electron/renderer/index.html', 'utf8');
 
-// Kept contract: observer aura follows the main-process cursor feed.
-assert(source.includes('function drawObserverAura'));
+// Kept contract: 光标是 CSS armed-cursor，不在 canvas 画鼠标。
+// 之前 canvas 画蓝圈（drawPointer/drawObserverAura）是用户点名不要的。
+assert(!source.includes('function drawObserverAura'),
+  'observer 模式必须用 CSS 光标，不画 canvas aura');
+assert(!source.includes('function drawPointer'),
+  'capture 模式必须用 CSS 光标，不画 canvas 鼠标');
 assert(source.includes('window.magicPointer?.onCursor('));
 assert(source.includes('observerMode = payload?.observerMode === true'));
-assert(source.includes('if (observerMode) drawObserverAura(lastPointer);'));
+assert(!source.includes('if (observerMode) drawObserverAura(lastPointer);'));
 
 // Clicky 式引导小三角：默认不出现，收到 [POINT] 指点才浮现并贝塞尔飞行
 assert(source.includes('window.magicPointer?.onGuidePoint?.('),
