@@ -30,6 +30,65 @@ from scripts.selection_bridge import (
 )
 
 
+def test_explorer_file_question_reads_the_actual_file_body(tmp_path) -> None:
+    selected_file = tmp_path / "CHANGELOG.md"
+    sentinel = "SENTINEL: release 9 removes the retired preview pipeline."
+    selected_file.write_text(f"# Changes\n\n{sentinel}\n", encoding="utf-8")
+    app_ctx = AdapterReadContext(
+        adapter="explorer_file",
+        app="explorer",
+        content="",
+        label=selected_file.name,
+        method="explorer:test",
+        artifacts={
+            "local_file": {"path": str(selected_file), "kind": "file"},
+        },
+    )
+    snapshot = {"context": app_ctx.to_dict()}
+    enrich = getattr(
+        selection_bridge,
+        "_enrich_local_file_context",
+        lambda _command, context, _snapshot: context,
+    )
+
+    enriched = enrich("这个文件是干嘛的", app_ctx, snapshot)
+
+    assert sentinel in str(enriched.content or "")
+    assert enriched.artifacts["local_file_context"]["path"] == str(selected_file)
+
+
+def test_explorer_image_question_sends_the_original_file_to_vision(monkeypatch, tmp_path) -> None:
+    image_file = tmp_path / "reference.png"
+    image_file.write_bytes(b"original-image-file")
+    app_ctx = AdapterReadContext(
+        adapter="explorer_file",
+        app="explorer",
+        content="",
+        label=image_file.name,
+        method="explorer:test",
+        artifacts={
+            "local_file": {"path": str(image_file), "kind": "file"},
+        },
+    )
+    seen = {}
+    monkeypatch.setattr(
+        selection_bridge,
+        "ask_vision_model",
+        lambda image, prompt, context_text=None, **_kwargs: seen.update({
+            "image": Path(image), "prompt": prompt, "context": context_text,
+        }) or "vision answer",
+    )
+
+    answer = selection_bridge._local_image_file_answer(
+        "看懂这张图",
+        app_ctx,
+        {"context": app_ctx.to_dict()},
+    )
+
+    assert answer == "vision answer"
+    assert seen["image"] == image_file
+
+
 def test_screen_region_snapshot_is_enriched_with_local_ocr(monkeypatch, tmp_path) -> None:
     capture = tmp_path / "screen.png"
     capture.write_bytes(b"not-a-real-png-for-the-injected-reader")

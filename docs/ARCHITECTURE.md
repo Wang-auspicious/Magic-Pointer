@@ -159,6 +159,7 @@ Electron 源码经 `tsconfig.electron.json` 编译到 `build/electron`，开发�
 | `fabric/agent_*.py` | Agent 发现 / 会话 / 上下文交接 / 连接器注册表 |
 | `fabric/capture_policy.py` / `target_lease.py` / `provenance.py` / `audit.py` | 截屏隐私策略 / HWND 租约 / 溯源 / 审计 |
 | `grounding/marked_read.py` | 纯策略：读到的是不是你划的那一块 |
+| `grounding/explorer_adapter.py` + `file_context.py` | Explorer 文件对象 grounding / 真实本地内容读取；Stage 只保存结构化绝对路径，回答与 Agent 共用同一份有界内容，不从文件名反推 |
 | `grounding/ocr_mark_selection.py` | OCR 块 → 划线命中 |
 | `adapters/` | `uia_text_adapter` / `browser_devtools_adapter` / `office_adapter` / `pdf_selection_recovery` |
 | `actions/executor.py` | 动作执行：policy + precondition + history。`_paste_text_to_foreground` 是跨应用写入通道（hwnd/pid/title 三重身份校验 + `text_sha256` + `submit must be false` 硬约束） |

@@ -7,6 +7,9 @@ from pathlib import Path
 from PIL import Image
 
 from app.adapters.base import AdapterCapability, AdapterReadContext
+from app.grounding.base import GroundingBundle
+from app.grounding.schema import GroundedObject
+import app.grounding.explorer_context as explorer_context
 from scripts.selection_snapshot_bridge import (
     _capture_visual_region,
     _prune_capture_dir,
@@ -16,6 +19,27 @@ from scripts.selection_snapshot_bridge import (
     capture_snapshot,
 )
 from scripts.selection_snapshot_bridge import _window_dicts
+
+
+class _ExplorerGrounder:
+    def __init__(self, path: Path) -> None:
+        self.path = path
+
+    def ground(self, selection, **_kwargs):
+        obj = GroundedObject.from_selection(
+            id="explorer-file-1",
+            kind="file",
+            selection=selection,
+            bbox=(100, 100, 500, 138),
+            label=self.path.name,
+            confidence=0.99,
+            metadata={"path": str(self.path), "source": "test:explorer"},
+        )
+        return GroundingBundle(
+            selection=selection,
+            objects=[obj],
+            primary_object_id=obj.id,
+        )
 
 
 class _FakeAdapter:
@@ -1514,3 +1538,46 @@ def test_bounded_visual_evidence_does_not_relabel_a_structured_gesture_as_pixel_
     assert trace["selectedAdapter"] == "uia_text_selection"
     assert trace["pixelFallbackUsed"] is False
     assert trace["attempts"][-1]["reason"] == "bounded_visual_evidence"
+
+
+def test_explorer_gesture_freezes_the_real_local_file_path(monkeypatch, tmp_path) -> None:
+    selected_file = tmp_path / "CHANGELOG.md"
+    selected_file.write_text("REAL FILE SENTINEL", encoding="utf-8")
+    monkeypatch.setattr(
+        explorer_context,
+        "ExplorerFileGrounder",
+        lambda: _ExplorerGrounder(selected_file),
+        raising=False,
+    )
+    gesture = {
+        "schemaVersion": 2,
+        "coordinateSpace": "physical_screen_pixels",
+        "kind": "line",
+        "releasePoint": {"x": 500, "y": 140},
+        "bbox": {"x": 100, "y": 132, "width": 400, "height": 8},
+        "strokes": [{"points": [
+            {"x": 100, "y": 136}, {"x": 300, "y": 138}, {"x": 500, "y": 136},
+        ]}],
+    }
+    explorer = {
+        "title": "参考 - 文件资源管理器",
+        "class_name": "CabinetWClass",
+        "hwnd": 701,
+        "process_id": 702,
+        "bbox": [0, 0, 1200, 900],
+    }
+
+    payload = capture_snapshot(
+        [explorer],
+        registry=_FakeRegistry(supported=False),
+        target_point={"x": 500, "y": 136},
+        gesture=gesture,
+        allow_visual_fallback=False,
+    )
+
+    context = payload["selectionSnapshot"]["context"]
+    assert context["adapter"] == "explorer_file"
+    assert context["content"] == str(selected_file)
+    assert payload["selectionSnapshot"]["structured_covers_mark"] is True
+    assert context["artifacts"]["local_file"]["path"] == str(selected_file)
+    assert context["artifacts"]["local_file"]["kind"] == "file"

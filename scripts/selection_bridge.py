@@ -70,6 +70,7 @@ from app.fabric.router import RecipeRouter
 from app.fabric.executors import FabricExecutors
 from app.fabric.context_packet import build_agent_prompt, write_context_packet_artifact
 from app.fabric.settings import SettingsStore
+from app.file_context import format_local_file_context, read_local_file_context, wants_file_content
 from app.grounding.ocr_mark_selection import select_open_stroke_rect_indexes
 from scripts._bridge_common import (
     PayloadTooLargeError,
@@ -433,6 +434,62 @@ def _context_from_snapshot(
     except Exception as exc:
         return dict(target_window or {}), None, snapshot, f"invalid selection context: {type(exc).__name__}: {exc}"
     return dict(target_window or {}), app_ctx, snapshot, None
+
+
+def _grounded_local_file_path(
+    app_ctx: AdapterReadContext | None,
+    snapshot: dict[str, Any] | None,
+) -> Path | None:
+    candidates: list[Any] = []
+    for artifacts in (
+        dict(getattr(app_ctx, "artifacts", {}) or {}),
+        dict(((snapshot or {}).get("context") or {}).get("artifacts") or {}),
+    ):
+        local_file = artifacts.get("local_file")
+        if isinstance(local_file, dict):
+            candidates.append(local_file.get("path"))
+        candidates.append(artifacts.get("path"))
+    for candidate in candidates:
+        raw = str(candidate or "").strip()
+        if not raw:
+            continue
+        path = Path(raw)
+        try:
+            if path.is_absolute() and path.exists():
+                return path
+        except OSError:
+            continue
+    return None
+
+
+def _enrich_local_file_context(
+    command: str,
+    app_ctx: AdapterReadContext | None,
+    snapshot: dict[str, Any] | None,
+) -> AdapterReadContext | None:
+    path = _grounded_local_file_path(app_ctx, snapshot)
+    if path is None or path.suffix.lower() in _IMAGE_FILE_SUFFIXES or not wants_file_content(command):
+        return app_ctx
+    local_context = read_local_file_context(str(path), max_chars=60_000)
+    artifacts = dict(getattr(app_ctx, "artifacts", {}) or {})
+    artifacts["path"] = str(path)
+    artifacts["local_file"] = {
+        **dict(artifacts.get("local_file") or {}),
+        "path": str(path),
+        "kind": local_context.kind,
+    }
+    artifacts["local_file_context"] = local_context.to_dict()
+    return AdapterReadContext(
+        adapter=str(getattr(app_ctx, "adapter", "") or "explorer_file"),
+        app=str(getattr(app_ctx, "app", "") or "explorer"),
+        window=dict(getattr(app_ctx, "window", {}) or {}),
+        content=format_local_file_context(local_context),
+        label=str(getattr(app_ctx, "label", "") or path.name),
+        method=str(local_context.method or getattr(app_ctx, "method", "") or "local_file:read"),
+        capabilities=list(getattr(app_ctx, "capabilities", []) or []),
+        artifacts=artifacts,
+        error=local_context.error,
+    )
 
 
 def _crop_roi_for_ocr(
@@ -1416,11 +1473,21 @@ def _local_image_file_answer(
         content = str(app_ctx.content or "").strip()
         if content:
             candidates.append(content)
+        artifacts = dict(app_ctx.artifacts or {})
+        local_file = artifacts.get("local_file")
+        if isinstance(local_file, dict):
+            candidates.append(str(local_file.get("path") or ""))
+        candidates.append(str(artifacts.get("path") or ""))
     context = (snapshot or {}).get("context") or {}
     for key in ("document_path", "path"):
         value = str(context.get(key) or "").strip()
         if value:
             candidates.append(value)
+    context_artifacts = dict(context.get("artifacts") or {})
+    local_file = context_artifacts.get("local_file")
+    if isinstance(local_file, dict):
+        candidates.append(str(local_file.get("path") or ""))
+    candidates.append(str(context_artifacts.get("path") or ""))
     # 注意：capture_path 是全屏截图——绝不能当「用户指向的那张图」。
     # 用户划的是画布/资源管理器里的某张图，全屏截图里可能同时有好几张图，
     # 传全屏会让模型回答「另一张图」的内容（点斑马答眼睛就是这么来的）。
@@ -2640,6 +2707,8 @@ def main() -> int:
     app_ctx = _enrich_screen_region_context(target_window, app_ctx, snapshot)
     _enrich_interaction_episode_ocr(payload, app_ctx)
     clock.mark("enrich_screen_region")
+    app_ctx = _enrich_local_file_context(command, app_ctx, snapshot)
+    clock.mark("enrich_local_file")
 
     exact_readback = _exact_readback_response(payload, app_ctx, snapshot)
     if exact_readback is not None:

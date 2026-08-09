@@ -27,6 +27,7 @@ from app.grounding.perception_cascade import (
     resolve_structured_perception,
 )
 from app.grounding.explorer_adapter import score_item_against_stroke
+from app.grounding.explorer_context import read_explorer_file_context
 from app.grounding.marked_read import rect_is_container, structured_read_covers_mark
 from app.review import ReviewSessionError, ReviewSessionStore
 from app.fabric.settings import FabricSettings, SettingsError, SettingsStore
@@ -218,6 +219,7 @@ def _summary_for(target_window: dict[str, Any] | None, app_ctx: Any) -> dict[str
         "powerpoint": "PowerPoint",
         "browser": "\u6d4f\u89c8\u5668",
         "pdf": "PDF",
+        "explorer": "文件资源管理器",
         "application": "\u5e94\u7528",
     }.get(app_name, app_name)
     if app_ctx.error and not content.strip():
@@ -1518,14 +1520,26 @@ def capture_snapshot(
             }],
         }
     else:
-        target_window, app_ctx, perception_trace, gesture_grounding, gesture_selection_bbox = (
-            _read_gesture_target_context(
-                available_windows,
-                registry=registry,
-                gesture=normalized_gesture,
-                fallback_point=normalized_target_point,
-            )
+        explorer_context, explorer_grounding, explorer_trace = read_explorer_file_context(
+            available_windows,
+            gesture=normalized_gesture,
+            fallback_point=normalized_target_point,
         )
+        if explorer_context is not None and explorer_trace is not None:
+            target_window = available_windows[0]
+            app_ctx = explorer_context
+            perception_trace = explorer_trace
+            gesture_grounding = explorer_grounding
+            gesture_selection_bbox = _gesture_mark_bbox(normalized_gesture)
+        else:
+            target_window, app_ctx, perception_trace, gesture_grounding, gesture_selection_bbox = (
+                _read_gesture_target_context(
+                    available_windows,
+                    registry=registry,
+                    gesture=normalized_gesture,
+                    fallback_point=normalized_target_point,
+                )
+            )
         perception_trace["policyMode"] = (
             capture_decision.mode if capture_decision is not None else "unconfigured"
         )

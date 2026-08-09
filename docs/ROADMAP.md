@@ -37,6 +37,7 @@
 
 ## P1
 
+- **~~恢复 Explorer 文件全文进入后台 Agent~~（2026-08-09 已完成）**：活跃 `selection_snapshot_bridge.py` 已接回 `ExplorerFileGrounder`，冻结真实绝对路径；`selection_bridge.py` 通过 `file_context.py` 读取正文/目录/归档并复用于普通回答和 Agent Prompt，图片直接传原文件。测试钉住正文哨兵和原图路径，禁止退化成文件名猜测。
 - **把两种回答框的链路接完**（2026-08-07 起，界面已落地，四条一起才算完；细节见 [STATUS.md 已知未修 1](STATUS.md#已知未修)）：
   1. **`deliver` 那一路的系统提示词禁 markdown。** 渲染层已经不解析了，但模型照样吐 `**`，用户看到的是字面量星号——**比渲染成粗体更难看**。渲染层和提示词必须说同一件事，缺一半就是半个功能。落点在 `selection_bridge.py` 的模型调用处。
   2. **桥回一个 `answerShape` 字段。** 现在全靠 `electron/answer_shape_policy.js` 猜命令动词；桥知道自己走的是哪条 recipe，该它说了算。策略里 `result.answerShape` 那条分支就是为它留的（优先级仅次于卡的形态），填上即可，不用改渲染层。
