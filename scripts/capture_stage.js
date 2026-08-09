@@ -85,6 +85,7 @@ const SCENE = `(() => { try {
     panel.dataset.side = side;
     panel.dataset.widthTier = tier;
     panel.dataset.phase = phase;
+    panel.dataset.turnCount = '1';
     document.getElementById('thread-title').textContent = title;
     const eyebrowNode = document.getElementById('thread-eyebrow');
     eyebrowNode.dataset.state = phase === 'running' ? 'running' : 'done';
@@ -119,10 +120,9 @@ const SCENE = `(() => { try {
     return 'ok ' + scene;
   }
 
-  sourceWindow({ x: 40, y: 42, width: 760, height: 690 });
-  showCapsule({ x: 70, y: 72, width: 360, processing: false, text: '把选中内容整理成摘要' });
+  sourceWindow({ x: 40, y: 42, width: 620, height: 690 });
   showPanel({
-    x: 70, y: 132, side: 'right', tier: 'normal', phase: 'finished',
+    x: 672, y: 108, side: 'right', tier: 'normal', phase: 'finished',
     title: '整理选中内容', eyebrow: 'TASK FINISHED',
   });
   result.appendChild(makeTurn({

@@ -969,10 +969,10 @@
     element.dataset.quadrant = placement.quadrant;
   }
 
-  // The thread hangs off the composer rather than replacing it. It grows
-  // downward from the capsule's bottom edge — reading order is question then
-  // answer — and flips above only when the capsule sits too low to fit below.
-  function anchorThreadToCapsule() {
+  // Process/result surfaces prefer the free gutter beside the source app and
+  // preserve that side for the whole session. The capsule is only the fallback
+  // anchor when the adaptive placement policy is unavailable.
+  function placeThreadSurface() {
     if (session.resultDragged && session.resultPlacement) {
       threadPanel.style.left = `${session.resultPlacement.x}px`;
       threadPanel.style.top = `${session.resultPlacement.y}px`;
@@ -1421,7 +1421,7 @@
     const selection = document.getSelection();
     if (selection) selection.removeAllRanges();
     hidePassageExpand();
-    anchorThreadToCapsule();
+    placeThreadSurface();
   }
 
   // mousedown 上就阻止默认行为，否则按钮一拿到焦点选区就塌了，
@@ -1690,6 +1690,7 @@
     threadCount.textContent = turns.length > 1 ? `${turns.length} 轮` : '';
     threadCount.hidden = turns.length <= 1;
     const pending = turns.some((turn) => turn.status === 'pending');
+    threadPanel.dataset.turnCount = String(turns.length);
     syncWaitClock(pending);
     // 眉毛行写的是你问的那句话。参考里那张卡的标题就是这次任务本身
     // （"DietControl landing page update"），不是一个产品名。
@@ -1906,8 +1907,10 @@
       }
     } else frozenGlow.hidden = true;
 
+    const resultOwnsComposer = (name === 'result' || name === 'error')
+      && state.turns.length > 0;
     const capsuleOpen = name === 'capsule-voice' || name === 'capsule-text' || name === 'processing'
-      || name === 'result' || name === 'error'
+      || ((name === 'result' || name === 'error') && !resultOwnsComposer)
       || (name === 'dismissing' && !capsule.hidden);
     if (capsuleOpen) {
       renderStrokeRefs();
@@ -1975,7 +1978,7 @@
     if (state.turns.length && name !== 'hidden') {
       renderThread(state.turns);
       threadPanel.hidden = false;
-      anchorThreadToCapsule();
+      placeThreadSurface();
     } else {
       threadPanel.hidden = true;
       renderedTurnSignature = '';

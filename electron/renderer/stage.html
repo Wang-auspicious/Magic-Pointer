@@ -72,8 +72,8 @@
           <b id="thread-title" class="thread-title"></b>
         </header>
         <div id="stage-result" class="stage-result" role="log" aria-live="polite"></div>
-        <!-- 需要写回原应用时，点头动作就是完成卡的决策底栏。待写文本仍同步到
-             胶囊输入框供编辑，但用户不必把视线从结果卡移到另一个浮层。 -->
+        <!-- 需要写回原应用时，点头动作就是完成卡的决策底栏。待写文本缓存到
+             同一会话的输入值，结果态不再旁挂第二个可见胶囊。 -->
         <div id="capsule-consent" class="capsule-consent" role="group" aria-label="要不要写出去" hidden>
           <span id="consent-target" class="consent-target"></span>
           <button type="button" id="consent-reject" class="thread-btn" data-no-drag="1">拒绝</button>

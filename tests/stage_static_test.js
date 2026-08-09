@@ -88,14 +88,32 @@ assert(!processCss.includes('rgba(134, 239, 172'),
   'the disliked green/orange/pink/blue sweep must not return');
 assert(!processCss.includes('filter: blur'),
   'transparent stage processing must not depend on a blurred rainbow layer');
+assert(css.includes(".stage-result .mcard[data-density='capsule'][data-state='running'] .mbar[data-mode='indeterminate']"));
+assert(css.includes('animation: stage-orbit-dot'),
+  'unknown progress inside the panel must use one neutral orbit dot, not a fake progress strip');
 assert(css.includes(".stage-thread[data-side='left']"));
 assert(css.includes(".stage-thread[data-side='right']"));
+assert(css.includes('--stage-panel-reveal-ms: 360ms'));
+assert(css.includes('scaleX(.045)'),
+  'the process panel must open from a thin edge sliver, not pop in at full width');
 assert(css.includes(".stage-thread[data-phase='finished'] .thread-head"),
   'completion content must settle after the shell instead of appearing in one frame');
+assert(css.includes(".stage-thread[data-phase='finished'] .thread-eyebrow"));
+assert(css.includes('--stage-finish-body-delay: 44ms'));
+assert(css.includes('--stage-finish-eyebrow-delay: 190ms'));
+assert(
+  css.indexOf('--stage-finish-body-delay: 44ms') < css.indexOf('--stage-finish-eyebrow-delay: 190ms'),
+  'the body must resolve before TASK FINISHED appears',
+);
+assert(css.includes('filter: blur(2.5px)'),
+  'completion body must sharpen into place instead of appearing fully resolved');
 assert(css.includes(".stage-thread[data-width-tier='context']"));
 assert(css.includes(".stage-thread[data-width-tier='wide']"));
 assert(source.includes('threadPanel.dataset.widthTier = completionWidthTier('),
   'thread width must follow the result content instead of staying at one hard-coded size');
+assert(source.includes('threadPanel.dataset.turnCount = String(turns.length)'));
+assert(css.includes(".stage-thread[data-phase='finished'][data-turn-count='1'] .thread-title"),
+  'a one-turn completion must not repeat the task title under TASK FINISHED');
 assert(source.includes("threadPanel.dataset.consent = want ? 'true' : 'false'"),
   'the card must expose whether its approval footer is active');
 assert(!source.includes('consentBox.style.left ='),
@@ -108,6 +126,8 @@ assert(source.includes("pending ? '#ic-circle' : failed ? '#ic-warn' : '#ic-chec
   'WORKING and NEEDS ATTENTION must not reuse the finished checkmark');
 assert(source.includes("capsuleInput.placeholder = name === 'processing' ? '正在处理…'"),
   'the neutral processing capsule must state what it is doing');
+assert(source.includes("const resultOwnsComposer = (name === 'result' || name === 'error')"),
+  'a settled card must own follow-up and approval instead of leaving a duplicate capsule beside it');
 assert(css.includes('@media (prefers-reduced-motion: reduce)'));
 const reducedMotionCss = css.slice(css.lastIndexOf('@media (prefers-reduced-motion: reduce)'));
 assert(reducedMotionCss.includes('.processing-shimmer::after'),
@@ -131,8 +151,10 @@ assert(source.includes('session.resultDragged = true;'),
 // Demo 7 capsule contract: voice state drives motion, text never shows the
 // waveform, and answer cards grow from the same stable capsule anchor.
 assert(source.includes('capsule.dataset.voiceState = session.voiceState'));
-assert(source.includes('anchorThreadToCapsule()'),
-  'the thread must hang off the composer rather than take its place');
+assert(source.includes('placeThreadSurface()'),
+  'processing and result must share the edge-aware surface placement');
+assert(!source.includes('anchorThreadToCapsule()'),
+  'the old composer-owned placement concept must not return');
 assert(source.includes("if (name === 'processing' || name === 'result' || name === 'error') capsuleInput.value = '';"),
   'a submitted question moves into the thread, leaving an empty composer');
 assert(!source.includes('renderResultToolbar'),
