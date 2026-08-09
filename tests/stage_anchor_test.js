@@ -1,9 +1,66 @@
 const assert = require('assert');
 const {
+  chooseAdaptivePanelAnchor,
   choosePointerAnchor,
   chooseTargetInlineAnchor,
   chooseStableCapsuleAnchor,
 } = require('../electron/stage_anchor');
+
+assert.deepStrictEqual(
+  chooseAdaptivePanelAnchor({
+    source: { x: 80, y: 70, width: 700, height: 650 },
+    focus: { x: 500, y: 300, width: 120, height: 60 },
+    surface: { width: 360, height: 500 },
+    viewport: { width: 1440, height: 900 },
+  }),
+  { x: 788, y: 78, side: 'right', mode: 'outside' },
+  'a fitting right gutter must receive the panel with an 8 DIP gap',
+);
+
+assert.deepStrictEqual(
+  chooseAdaptivePanelAnchor({
+    source: { x: 420, y: 70, width: 900, height: 650 },
+    focus: { x: 860, y: 300, width: 120, height: 60 },
+    surface: { width: 360, height: 500 },
+    viewport: { width: 1440, height: 900 },
+  }),
+  { x: 52, y: 78, side: 'left', mode: 'outside' },
+  'a fitting left gutter must receive the panel instead of covering the source',
+);
+
+assert.deepStrictEqual(
+  chooseAdaptivePanelAnchor({
+    source: { x: 360, y: 70, width: 700, height: 650 },
+    focus: { x: 600, y: 300, width: 120, height: 60 },
+    surface: { width: 300, height: 500 },
+    viewport: { width: 1440, height: 900 },
+    preferredSide: 'left',
+  }),
+  { x: 52, y: 78, side: 'left', mode: 'outside' },
+  'when both gutters fit, the current session side must remain stable',
+);
+
+assert.deepStrictEqual(
+  chooseAdaptivePanelAnchor({
+    source: { x: 0, y: 0, width: 1440, height: 900 },
+    focus: { x: 1100, y: 300, width: 140, height: 80 },
+    surface: { width: 380, height: 620 },
+    viewport: { width: 1440, height: 900 },
+  }),
+  { x: 8, y: 30, side: 'left', mode: 'screen-edge' },
+  'fullscreen surfaces must dock opposite a right-side focus rectangle',
+);
+
+assert.deepStrictEqual(
+  chooseAdaptivePanelAnchor({
+    source: { x: 0, y: 0, width: 1440, height: 900 },
+    focus: { x: 80, y: 760, width: 140, height: 80 },
+    surface: { width: 380, height: 980 },
+    viewport: { width: 1440, height: 900 },
+  }),
+  { x: 1052, y: 8, side: 'right', mode: 'screen-edge' },
+  'fullscreen fallback must clamp an oversized panel to the work-area edge',
+);
 
 assert.deepStrictEqual(
   choosePointerAnchor({ x: 500, y: 400 }, { width: 200, height: 44 }, { width: 1200, height: 800 }),
