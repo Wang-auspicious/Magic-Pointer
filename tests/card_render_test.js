@@ -215,7 +215,7 @@ console.log('card render test ok');
 // ---------------------------------------------------------------------------
 for (const [file, allowed] of [
   ['electron/renderer/card_render.js', ['CardRender', 'renderCard', 'cardElapsedText']],
-  ['electron/cards.js', ['CardModel']],
+  ['electron/cards.ts', ['CardModel']],
   ['electron/renderer/live_cards.js', ['LiveCards']],
 ]) {
   const source = fs.readFileSync(file, 'utf8');

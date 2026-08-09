@@ -8,10 +8,72 @@ const {
 } = require('./python_runtime');
 const { projectRoot: resolveProjectRoot } = require('./runtime_paths');
 
-function lastJson(value) {
-  try { return JSON.parse(String(value || '').trim()); } catch (_) {}
+type UnknownRecord = Record<string, unknown>;
+
+interface CommandResult {
+  error?: unknown;
+  status: number | null;
+  stderr: string;
+  stdout: string;
+}
+
+interface ModelProfile {
+  apiMode?: string;
+  credentialRef?: string;
+  enabled?: boolean;
+  id?: string;
+}
+
+interface PreflightSettings {
+  activation?: { fallback_hotkey_enabled?: boolean; wiggle_enabled?: boolean };
+  models?: { profiles?: ModelProfile[] };
+  privacy?: { default_capture_mode?: string; sensitive_apps?: unknown[] };
+}
+
+interface PythonRuntimeInfo {
+  executable?: string;
+  required?: boolean;
+}
+
+interface PreflightOptions {
+  commandRunner?: (
+    command: string,
+    args: string[],
+    options: import('node:child_process').SpawnSyncOptions,
+  ) => CommandResult;
+  credentialStore?: { status(reference?: string): { available?: boolean; present?: boolean } | null } | null;
+  environment?: NodeJS.ProcessEnv;
+  microphoneStatus?: () => unknown;
+  platform?: NodeJS.Platform;
+  projectRoot?: string;
+  pythonRuntime?: PythonRuntimeInfo;
+  root: string;
+  settings?: PreflightSettings;
+  wiggleDetector?: unknown;
+}
+
+interface AsyncCommandOptions {
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+  input?: unknown;
+  signal?: AbortSignal | null;
+  timeout?: number;
+}
+
+type AsyncCommandRunner = (
+  command: string,
+  args: string[],
+  options?: AsyncCommandOptions,
+) => Promise<CommandResult>;
+
+interface AsyncPreflightOptions extends Omit<PreflightOptions, 'commandRunner'> {
+  asyncCommandRunner?: AsyncCommandRunner;
+}
+
+function lastJson(value: unknown): UnknownRecord | null {
+  try { return JSON.parse(String(value || '').trim()); } catch (_) { /* try line-delimited JSON */ }
   for (const line of String(value || '').split(/\r?\n/).reverse()) {
-    try { return JSON.parse(line); } catch (_) {}
+    try { return JSON.parse(line); } catch (_) { /* keep scanning */ }
   }
   return null;
 }
@@ -23,15 +85,23 @@ function buildPreflightChecks({
   credentialStore = null,
   wiggleDetector = null,
   microphoneStatus = () => 'unknown',
-  commandRunner = (command, args, options) => spawnSync(command, args, { encoding: 'utf8', windowsHide: true, ...options }),
+  commandRunner = (command, args, options) => {
+    const result = spawnSync(command, args, { ...options, encoding: 'utf8', windowsHide: true });
+    return {
+      status: result.status,
+      stdout: String(result.stdout || ''),
+      stderr: String(result.stderr || ''),
+      error: result.error,
+    };
+  },
   platform = process.platform,
   pythonRuntime = resolvePythonRuntime({ platform }),
   environment = process.env,
-}) {
+}: PreflightOptions) {
   const userRoot = path.resolve(root);
   const python = String(pythonRuntime?.executable || '').trim();
   const bundledPythonRequired = pythonRuntime?.required === true;
-  const command = (args, input = undefined) => commandRunner(
+  const command = (args: string[], input: string | undefined = undefined): CommandResult => commandRunner(
     python,
     pythonInvocationArgs(args, { isolated: bundledPythonRequired }),
     {
@@ -59,7 +129,7 @@ function buildPreflightChecks({
         }
         return { state: 'pass', evidence: `node=${process.versions.node}; python=${String(version.stdout || version.stderr || '').trim().slice(0, 120)}` };
       } catch (error) {
-        return { state: 'fail', evidence: `runtime_check_failed:${error.name}`, fixAction: 'repair_runtime' };
+        return { state: 'fail', evidence: `runtime_check_failed:${error instanceof Error ? error.name : 'unknown'}`, fixAction: 'repair_runtime' };
       }
     },
     os_permissions: () => {
@@ -89,8 +159,8 @@ function buildPreflightChecks({
       const result = command([path.join('scripts', 'fabric_bridge.py')], JSON.stringify({ operation: 'providers' }));
       if (result.status === 0) {
         const parsed = lastJson(result.stdout);
-        if (parsed?.ok && Array.isArray(parsed.providers) && parsed.providers.some((item) => item.available)) {
-          return { state: 'pass', evidence: `available_agents=${parsed.providers.filter((item) => item.available).map((item) => item.id).join(',')}` };
+        if (parsed?.ok && Array.isArray(parsed.providers) && parsed.providers.some((item) => Boolean((item as UnknownRecord)?.available))) {
+          return { state: 'pass', evidence: `available_agents=${parsed.providers.filter((item) => Boolean((item as UnknownRecord)?.available)).map((item) => (item as UnknownRecord).id).join(',')}` };
         }
       }
       return { state: 'warn', evidence: 'agent_discovery_not_completed; configure_or_retry', fixAction: 'retry_agent_discovery' };
@@ -103,7 +173,9 @@ function buildPreflightChecks({
       try {
         const credential = credentialStore?.status(profile.credentialRef);
         if (credential?.present && credential.available) return { state: 'pass', evidence: `credential_present_for=${profile.id}` };
-      } catch (_) {}
+      } catch (_) {
+        // A locked credential store is reported as a missing credential below.
+      }
       return { state: 'needs_user', evidence: `credential_missing_for=${profile.id}`, fixAction: 'save_credential' };
     },
     privacy: () => {
@@ -124,20 +196,20 @@ function buildPreflightChecks({
   };
 }
 
-function runCommandAsync(command, args, options = {}) {
-  return new Promise((resolve) => {
+function runCommandAsync(command: string, args: string[], options: AsyncCommandOptions = {}): Promise<CommandResult> {
+  return new Promise<CommandResult>((resolve) => {
     const timeoutMs = Math.max(1, Number(options.timeout || 15000));
     let stdout = '';
     let stderr = '';
     let settled = false;
     let timedOut = false;
-    let timer = null;
+    let timer: NodeJS.Timeout | null = null;
     const signal = options.signal || null;
-    let abortListener = null;
-    const finish = (result) => {
+    let abortListener: (() => void) | null = null;
+    const finish = (result: CommandResult): void => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
       if (signal && abortListener) signal.removeEventListener('abort', abortListener);
       resolve(result);
     };
@@ -145,7 +217,7 @@ function runCommandAsync(command, args, options = {}) {
       finish({ status: null, stdout, stderr, error: new Error('preflight_cancelled') });
       return;
     }
-    let child;
+    let child: import('node:child_process').ChildProcessWithoutNullStreams;
     try {
       child = spawn(command, args, {
         cwd: options.cwd,
@@ -159,25 +231,25 @@ function runCommandAsync(command, args, options = {}) {
     }
     timer = setTimeout(() => {
       timedOut = true;
-      try { child.kill(); } catch (_) {}
+      try { child.kill(); } catch (_) { /* process already exited */ }
     }, timeoutMs);
     abortListener = () => {
-      try { child.kill(); } catch (_) {}
+      try { child.kill(); } catch (_) { /* process already exited */ }
     };
     if (signal) signal.addEventListener('abort', abortListener, { once: true });
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
-    child.stdout.on('data', (chunk) => { stdout = `${stdout}${chunk}`.slice(-1024 * 1024); });
-    child.stderr.on('data', (chunk) => { stderr = `${stderr}${chunk}`.slice(-1024 * 1024); });
-    child.on('error', (error) => finish({ status: null, stdout, stderr, error }));
-    child.on('close', (status) => finish({
+    child.stdout.on('data', (chunk: Buffer | string) => { stdout = `${stdout}${chunk}`.slice(-1024 * 1024); });
+    child.stderr.on('data', (chunk: Buffer | string) => { stderr = `${stderr}${chunk}`.slice(-1024 * 1024); });
+    child.on('error', (error: Error) => finish({ status: null, stdout, stderr, error }));
+    child.on('close', (status: number | null) => finish({
       status: timedOut ? null : status,
       stdout,
       stderr,
       error: timedOut ? new Error('preflight_command_timeout') : null,
     }));
-    child.stdin.on('error', (error) => {
-      if (error?.code !== 'EPIPE') finish({ status: null, stdout, stderr, error });
+    child.stdin.on('error', (error: Error & { code?: string }) => {
+      if (error.code !== 'EPIPE') finish({ status: null, stdout, stderr, error });
     });
     child.stdin.end(options.input == null ? undefined : String(options.input));
   });
@@ -194,7 +266,7 @@ function buildAsyncPreflightChecks({
   platform = process.platform,
   pythonRuntime = resolvePythonRuntime({ platform }),
   environment = process.env,
-}) {
+}: AsyncPreflightOptions) {
   const baseChecks = buildPreflightChecks({
     root,
     projectRoot,
@@ -209,7 +281,11 @@ function buildAsyncPreflightChecks({
   const userRoot = path.resolve(root);
   const python = String(pythonRuntime?.executable || '').trim();
   const bundledPythonRequired = pythonRuntime?.required === true;
-  const command = (args, input = undefined, signal = null) => asyncCommandRunner(
+  const command = (
+    args: string[],
+    input: string | undefined = undefined,
+    signal: AbortSignal | null = null,
+  ): Promise<CommandResult> => asyncCommandRunner(
     python,
     pythonInvocationArgs(args, { isolated: bundledPythonRequired }),
     {
@@ -226,7 +302,7 @@ function buildAsyncPreflightChecks({
 
   return {
     ...baseChecks,
-    runtime: async (_stage, { signal } = {}) => {
+    runtime: async (_stage: unknown, { signal }: { signal?: AbortSignal } = {}) => {
       try {
         fs.mkdirSync(userRoot, { recursive: true });
         const probe = path.join(userRoot, `.preflight-${process.pid}.tmp`);
@@ -243,10 +319,10 @@ function buildAsyncPreflightChecks({
           evidence: `node=${process.versions.node}; python=${String(version.stdout || version.stderr || '').trim().slice(0, 120)}`,
         };
       } catch (error) {
-        return { state: 'fail', evidence: `runtime_check_failed:${error.name}`, fixAction: 'repair_runtime' };
+        return { state: 'fail', evidence: `runtime_check_failed:${error instanceof Error ? error.name : 'unknown'}`, fixAction: 'repair_runtime' };
       }
     },
-    agents: async (_stage, { signal } = {}) => {
+    agents: async (_stage: unknown, { signal }: { signal?: AbortSignal } = {}) => {
       const result = await command(
         [path.join('scripts', 'fabric_bridge.py')],
         JSON.stringify({ operation: 'providers' }),
@@ -254,10 +330,10 @@ function buildAsyncPreflightChecks({
       );
       if (result.status === 0) {
         const parsed = lastJson(result.stdout);
-        if (parsed?.ok && Array.isArray(parsed.providers) && parsed.providers.some((item) => item.available)) {
+        if (parsed?.ok && Array.isArray(parsed.providers) && parsed.providers.some((item) => Boolean((item as UnknownRecord)?.available))) {
           return {
             state: 'pass',
-            evidence: `available_agents=${parsed.providers.filter((item) => item.available).map((item) => item.id).join(',')}`,
+            evidence: `available_agents=${parsed.providers.filter((item) => Boolean((item as UnknownRecord)?.available)).map((item) => (item as UnknownRecord).id).join(',')}`,
           };
         }
       }
@@ -267,7 +343,7 @@ function buildAsyncPreflightChecks({
         fixAction: 'retry_agent_discovery',
       };
     },
-    e2e_smoke: async (_stage, { signal } = {}) => {
+    e2e_smoke: async (_stage: unknown, { signal }: { signal?: AbortSignal } = {}) => {
       const result = await command([path.join('scripts', 'smoke_fabric.py')], undefined, signal);
       const parsed = lastJson(result.stdout);
       if (result.status === 0 && parsed?.ok === true) {

@@ -1,5 +1,27 @@
 'use strict';
 
+interface CardStep {
+  label?: string;
+  phase?: string;
+  state?: string;
+  [key: string]: unknown;
+}
+
+interface CardData {
+  actions?: unknown[];
+  id?: string;
+  kind?: string;
+  progress?: number | null;
+  source?: Record<string, unknown> | null;
+  stage?: string;
+  startedAt?: number | null;
+  state?: string;
+  steps?: CardStep[];
+  subtitle?: string;
+  title?: string;
+  [key: string]: unknown;
+}
+
 // ============================================================================
 // 卡片契约
 // ----------------------------------------------------------------------------
@@ -49,10 +71,11 @@ const CardModel = (() => {
     'agent-prompt-draft': 'prompt',
   });
 
-  function normalizeKind(raw) {
+  function normalizeKind(raw: unknown): string {
     const key = String(raw || '').trim();
     if (KINDS.includes(key)) return key;
-    if (LEGACY_KIND[key]) return LEGACY_KIND[key];
+    const legacyKinds = LEGACY_KIND as Readonly<Record<string, string>>;
+    if (legacyKinds[key]) return legacyKinds[key];
     return 'prose';   // 认不出来的一律当成一段话渲染，绝不留白屏
   }
 
@@ -84,11 +107,13 @@ const CardModel = (() => {
   // 也不允许在没到终态时显示 100%。
   const TYPICAL_PHASES = 7;
 
-  function phaseStep(record = {}) {
+  function phaseStep(record: { phase?: unknown; fields?: unknown; ms?: number } = {}) {
     const phase = String(record.phase || '').trim();
     if (!phase) return null;
-    const label = PHASE_TEXT[phase] || phase.replace(/_/g, ' ');
-    const fields = record.fields && typeof record.fields === 'object' ? record.fields : {};
+    const label = (PHASE_TEXT as Readonly<Record<string, string>>)[phase] || phase.replace(/_/g, ' ');
+    const fields = record.fields && typeof record.fields === 'object'
+      ? record.fields as Record<string, unknown>
+      : {};
     // 阶段自己带的事实比阶段名有用得多：「冻住了这块画面 2950×1200」
     // 比「冻住了这块画面」更能说明它真的看见了东西。
     let note = '';
@@ -107,7 +132,7 @@ const CardModel = (() => {
 
   // 已完成步数 → 0..1。走满了估计值也只封到 0.92：剩下那一段留给真正的终态，
   // 这样「条走到头了但还没出结果」这种画面不会出现。
-  function progressFromSteps(steps = [], typical = TYPICAL_PHASES) {
+  function progressFromSteps(steps: CardStep[] = [], typical = TYPICAL_PHASES): number | null {
     const done = steps.filter((s) => s && s.state === 'done').length;
     if (!done) return null;
     return Math.min(0.92, done / Math.max(1, typical));
@@ -118,16 +143,18 @@ const CardModel = (() => {
   // ---------------------------------------------------------------------------
   let counter = 0;
 
-  function newCardId(seed) {
+  function newCardId(seed: unknown): string {
     counter += 1;
     return `c${seed || 0}-${counter.toString(36)}`;
   }
 
-  function normalizeCard(raw = {}, options = {}) {
+  function normalizeCard(raw: CardData = {}, options: { id?: string; seed?: unknown } = {}): CardData {
     const kind = normalizeKind(raw.kind);
-    const state = STATES.includes(raw.state) ? raw.state : 'done';
+    const state = typeof raw.state === 'string' && STATES.includes(raw.state) ? raw.state : 'done';
     const steps = Array.isArray(raw.steps) ? raw.steps.filter(Boolean) : [];
-    const explicit = Number.isFinite(raw.progress) ? clamp01(raw.progress) : null;
+    const explicit = typeof raw.progress === 'number' && Number.isFinite(raw.progress)
+      ? clamp01(raw.progress)
+      : null;
     return {
       ...raw,
       id: raw.id || options.id || newCardId(options.seed),
@@ -149,7 +176,7 @@ const CardModel = (() => {
     };
   }
 
-  function clamp01(n) {
+  function clamp01(n: number): number | null {
     if (!Number.isFinite(n)) return null;
     return Math.max(0, Math.min(1, n));
   }
@@ -162,17 +189,18 @@ const CardModel = (() => {
   // - 到了终态就锁死。迟到的补丁不能把一张已经失败的卡改活。
   // - steps 按 phase 合并，同一个阶段报两次不会出现两行。
   // ---------------------------------------------------------------------------
-  function applyPatch(card, patch = {}) {
+  function applyPatch(card: CardData, patch: CardData = {}): CardData {
     const base = normalizeCard(card);
     if (base.state !== 'running') return base;
 
     const next = { ...base };
 
     if (Array.isArray(patch.steps) && patch.steps.length) {
-      const byPhase = new Map(next.steps.map((s) => [s.phase || s.label, s]));
+      const byPhase = new Map((next.steps || []).map((s) => [s.phase || s.label || '', s]));
       for (const step of patch.steps) {
         if (!step) continue;
-        byPhase.set(step.phase || step.label, { ...byPhase.get(step.phase || step.label), ...step });
+        const key = step.phase || step.label || '';
+        byPhase.set(key, { ...byPhase.get(key), ...step });
       }
       next.steps = [...byPhase.values()];
     }
@@ -183,24 +211,24 @@ const CardModel = (() => {
       next[key] = value;
     }
 
-    if (STATES.includes(patch.state)) next.state = patch.state;
+    if (typeof patch.state === 'string' && STATES.includes(patch.state)) next.state = patch.state;
     if (next.state === 'done') {
       next.progress = 1;
     } else if (next.state === 'failed') {
       next.progress = base.progress;   // 停在断掉的地方，别归零也别补满
     } else {
-      const proposed = Number.isFinite(patch.progress)
+      const proposed = typeof patch.progress === 'number' && Number.isFinite(patch.progress)
         ? clamp01(patch.progress)
-        : progressFromSteps(next.steps);
+        : progressFromSteps(next.steps || []);
       next.progress = pickForward(base.progress, proposed);
     }
 
     return normalizeCard(next, { id: next.id });
   }
 
-  function pickForward(current, proposed) {
-    if (!Number.isFinite(proposed)) return current;
-    if (!Number.isFinite(current)) return proposed;
+  function pickForward(current: number | null | undefined, proposed: number | null): number | null | undefined {
+    if (typeof proposed !== 'number' || !Number.isFinite(proposed)) return current;
+    if (typeof current !== 'number' || !Number.isFinite(current)) return proposed;
     return Math.max(current, proposed);
   }
 
@@ -226,13 +254,13 @@ const CardModel = (() => {
     prose: '正在想',
   });
 
-  function runningLabel(card = {}) {
+  function runningLabel(card: CardData = {}): string {
     if (card.stage) return card.stage;
     const steps = card.steps || [];
     // 有一条明确标成「在做」的，就用它
     const active = steps.find((s) => s && s.state === 'pending' && s.label);
-    if (active) return active.label;
-    const generic = RUNNING_HINT[normalizeKind(card.kind)] || '正在处理';
+    if (active) return active.label || '';
+    const generic = (RUNNING_HINT as Readonly<Record<string, string>>)[normalizeKind(card.kind)] || '正在处理';
     if (!steps.length) return generic;
     // 全都做完了但结果还没到——通常是在等模型。这时候说清在等什么，
     // 比把最后一步再念一遍有用。
@@ -240,7 +268,7 @@ const CardModel = (() => {
   }
 
   // 一张卡还能不能接补丁。渲染层用它决定要不要继续跑计时器。
-  function isSettled(card = {}) {
+  function isSettled(card: CardData = {}): boolean {
     return card.state === 'done' || card.state === 'failed';
   }
 

@@ -5,6 +5,12 @@
 
 const { captureProof, proofSummary } = require('./capture_proof_policy');
 
+type UnknownRecord = Record<string, unknown>;
+
+function recordOf(value: unknown): UnknownRecord {
+  return value !== null && typeof value === 'object' ? value as UnknownRecord : {};
+}
+
 const CHIP_COMMANDS = Object.freeze({
   rewrite: '改写这段文字',
   translate: '把这段文字翻译成中文',
@@ -36,20 +42,21 @@ const STATUS_LABELS = Object.freeze({
   confirmation_required: '等待确认',
 });
 
-function commandForChip(chipId) {
-  return CHIP_COMMANDS[String(chipId || '')] || null;
+function commandForChip(chipId: unknown): string | null {
+  return (CHIP_COMMANDS as Readonly<Record<string, string>>)[String(chipId || '')] || null;
 }
 
-function selectionSourceForReason(reason) {
+function selectionSourceForReason(reason: unknown): string | null {
   const value = String(reason || '').toLowerCase();
   return value.includes('click') ? 'click' : value.includes('wiggle') ? 'wiggle' : value || null;
 }
 
-function inferObjectKind(snapshot) {
+function inferObjectKind(snapshot: unknown): string | null {
   if (!snapshot || typeof snapshot !== 'object') return null;
-  const sourceKind = String(snapshot.source_kind || '').toLowerCase();
+  const snapshotRecord = recordOf(snapshot);
+  const sourceKind = String(snapshotRecord.source_kind || '').toLowerCase();
   if (/(visual|image|screenshot|region)/.test(sourceKind)) return 'image';
-  const context = snapshot.context && typeof snapshot.context === 'object' ? snapshot.context : {};
+  const context = recordOf(snapshotRecord.context);
   const content = String(context.content || '').trim();
   if (!content) return null;
   if (
@@ -59,32 +66,31 @@ function inferObjectKind(snapshot) {
   return 'text';
 }
 
-function proposalActions(parsed) {
+function proposalActions(parsed: UnknownRecord): UnknownRecord[] {
   const proposals = Array.isArray(parsed?.actionProposals) ? parsed.actionProposals : [];
-  return proposals.slice(0, 3).flatMap((proposal) => {
+  return proposals.slice(0, 3).flatMap((proposal): UnknownRecord[] => {
     if (!proposal || typeof proposal !== 'object') return [];
-    const actionToken = String(proposal.action_token || '');
-    const id = String(proposal.id || '');
+    const proposalRecord = recordOf(proposal);
+    const actionToken = String(proposalRecord.action_token || '');
+    const id = String(proposalRecord.id || '');
     if (!actionToken || !id) return [];
-    const actionType = String(proposal.action_type || '');
+    const actionType = String(proposalRecord.action_type || '');
     return [{
       kind: 'proposal',
       id,
       actionToken,
-      label: ACTION_LABELS[actionType] || (proposal.confirmation_required ? '确认执行' : '执行'),
-      confirmationRequired: proposal.confirmation_required === true,
+      label: (ACTION_LABELS as Readonly<Record<string, string>>)[actionType]
+        || (proposalRecord.confirmation_required ? '确认执行' : '执行'),
+      confirmationRequired: proposalRecord.confirmation_required === true,
     }];
   });
 }
 
-function executionReceipt(parsed) {
-  const execution = parsed?.executionResult && typeof parsed.executionResult === 'object'
-    ? parsed.executionResult : {};
-  const output = execution.output && typeof execution.output === 'object' ? execution.output : {};
-  const fabricReceipt = output.fabric_receipt && typeof output.fabric_receipt === 'object'
-    ? output.fabric_receipt : {};
-  const task = fabricReceipt.output && typeof fabricReceipt.output === 'object'
-    ? fabricReceipt.output : {};
+function executionReceipt(parsed: UnknownRecord) {
+  const execution = recordOf(parsed.executionResult);
+  const output = recordOf(execution.output);
+  const fabricReceipt = recordOf(output.fabric_receipt);
+  const task = recordOf(fabricReceipt.output);
   const executionStatus = String(execution.status || '');
   const rawStatus = String(fabricReceipt.status || (
     executionStatus === 'pending' ? 'accepted' : executionStatus
@@ -93,17 +99,16 @@ function executionReceipt(parsed) {
   const verified = fabricReceipt.verified === true || output.verified === true;
   return {
     status,
-    statusLabel: status ? (STATUS_LABELS[status] || status) : '',
+    statusLabel: status ? ((STATUS_LABELS as Readonly<Record<string, string>>)[status] || status) : '',
     verified,
     taskId: String(task.taskId || ''),
     provider: String(task.provider || fabricReceipt.provider || ''),
   };
 }
 
-function calendarResult(parsed, actions) {
-  const draft = parsed.calendarDraft && typeof parsed.calendarDraft === 'object'
-    ? parsed.calendarDraft : {};
-  const event = draft.event && typeof draft.event === 'object' ? draft.event : {};
+function calendarResult(parsed: UnknownRecord, actions: UnknownRecord[]) {
+  const draft = recordOf(parsed.calendarDraft);
+  const event = recordOf(draft.event);
   const warnings = Array.isArray(draft.warnings) ? draft.warnings.map(String).filter(Boolean) : [];
   return {
     kind: 'calendar-draft',
@@ -128,8 +133,8 @@ function calendarResult(parsed, actions) {
   };
 }
 
-function routeResult(parsed, actions) {
-  const route = parsed.routeDraft && typeof parsed.routeDraft === 'object' ? parsed.routeDraft : {};
+function routeResult(parsed: UnknownRecord, actions: UnknownRecord[]) {
+  const route = recordOf(parsed.routeDraft);
   const origin = String(route.origin || '');
   const destination = String(route.destination || '');
   return {
@@ -146,9 +151,13 @@ function routeResult(parsed, actions) {
   };
 }
 
-function textDraftResult(parsed, proposal, actions, receipt) {
-  const parameters = proposal.parameters && typeof proposal.parameters === 'object'
-    ? proposal.parameters : {};
+function textDraftResult(
+  parsed: UnknownRecord,
+  proposal: UnknownRecord,
+  actions: UnknownRecord[],
+  receipt: UnknownRecord,
+) {
+  const parameters = recordOf(proposal.parameters);
   return {
     kind: 'text-draft',
     title: '替换预览',
@@ -214,10 +223,11 @@ const ERROR_MESSAGES = Object.freeze({
 // Anything else is already a sentence somebody wrote on purpose.
 const CODE_SHAPE = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$/;
 
-function humanErrorMessage(raw, fallback = '这次没能完成，也没有改动任何东西。') {
+function humanErrorMessage(raw: unknown, fallback = '这次没能完成，也没有改动任何东西。'): string {
   const value = String(raw == null ? '' : raw).trim();
   if (!value) return fallback;
-  if (ERROR_MESSAGES[value]) return ERROR_MESSAGES[value];
+  const messages = ERROR_MESSAGES as Readonly<Record<string, string>>;
+  if (messages[value]) return messages[value];
   if (CODE_SHAPE.test(value)) {
     // An unmapped code still must not reach the bubble as-is. Say the honest
     // thing and keep the identifier for the log only.
@@ -230,8 +240,9 @@ function humanErrorMessage(raw, fallback = '这次没能完成，也没有改动
 // outline. A sentence claiming we read something is worth much less than a band
 // drawn around the words we read — and when the wrong thing lights up, the user
 // can see that too, which is the point.
-function captureProofFromBridge(parsed) {
-  const artifacts = (parsed && parsed.selectionContext && parsed.selectionContext.artifacts) || {};
+function captureProofFromBridge(parsed: UnknownRecord) {
+  const selectionContext = recordOf(parsed.selectionContext);
+  const artifacts = recordOf(selectionContext.artifacts);
   const geometryKind = String(artifacts.selection_geometry_kind || '');
   // A pointer anchor is where the user's finger was, not what we read. Outlining
   // it would prove nothing.
@@ -247,8 +258,9 @@ function captureProofFromBridge(parsed) {
   });
 }
 
-function stageEventFromBridge(parsed) {
-  if (!parsed || typeof parsed !== 'object') {
+function stageEventFromBridge(value: unknown) {
+  const parsed = recordOf(value);
+  if (!value || typeof value !== 'object') {
     return { type: 'ERROR', error: { message: '未收到可用结果。' } };
   }
   const actions = proposalActions(parsed);
@@ -277,14 +289,16 @@ function stageEventFromBridge(parsed) {
   if (parsed.intentKind === 'route_draft' && parsed.routeDraft) {
     return { type: 'RESULT', result: routeResult(parsed, actions) };
   }
-  const replaceProposal = (Array.isArray(parsed.actionProposals) ? parsed.actionProposals : [])
-    .find((proposal) => proposal?.action_type === 'office_replace_selection');
-  const receipt = executionReceipt(parsed);
+  const replaceProposalValue = (Array.isArray(parsed.actionProposals) ? parsed.actionProposals : [])
+    .find((proposal) => recordOf(proposal).action_type === 'office_replace_selection');
+  const replaceProposal = recordOf(replaceProposalValue);
+  const receipt = executionReceipt(parsed) as UnknownRecord & { status?: unknown; verified?: unknown };
   const proof = captureProofFromBridge(parsed);
   // Where the answer points while it explains. Coordinates only; the sentence
   // itself already had the markers removed on the Python side.
   const screenPoints = (Array.isArray(parsed.screenPoints) ? parsed.screenPoints : [])
-    .filter((point) => point && Number.isFinite(Number(point.x)) && Number.isFinite(Number(point.y)))
+    .map(recordOf)
+    .filter((point) => Number.isFinite(Number(point.x)) && Number.isFinite(Number(point.y)))
     .slice(0, 6)
     .map((point, index) => ({
       x: Math.round(Number(point.x)),
@@ -302,7 +316,7 @@ function stageEventFromBridge(parsed) {
       ...proofFields,
     };
   }
-  if (replaceProposal) {
+  if (replaceProposalValue) {
     return {
       type: 'RESULT',
       result: textDraftResult(parsed, replaceProposal, actions, receipt),
@@ -318,7 +332,7 @@ function stageEventFromBridge(parsed) {
       detail: humanErrorMessage(parsed.detail || parsed.error, ''),
       // 桥在调用模型前判定的回答形态：deliver（要发出去，禁 markdown）
       // / inspect（自己看）。answer_shape_policy 优先信它，再退到猜命令。
-      answerShape: String(parsed.answerShape || parsed.route?.answerShape || ''),
+      answerShape: String(parsed.answerShape || recordOf(parsed.route).answerShape || ''),
       ...receipt,
       actions,
     },
