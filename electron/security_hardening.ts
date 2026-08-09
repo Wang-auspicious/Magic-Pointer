@@ -1,7 +1,43 @@
 'use strict';
 
-const fs = require('fs');
-const path = require('path');
+import type { App, Dialog, Shell, WebContents } from 'electron';
+
+const fs: typeof import('node:fs') = require('node:fs');
+const path: typeof import('node:path') = require('node:path');
+
+type FatalKind = 'uncaughtException' | 'unhandledRejection';
+type Logger = (message: string) => void;
+type UnknownRecord = Record<string, unknown>;
+
+interface FatalGuard {
+  claim(): boolean;
+}
+
+interface RecoveryOptions {
+  app?: Pick<App, 'getPath'>;
+  fs?: typeof import('node:fs');
+  now?: () => number;
+  path?: typeof import('node:path');
+  windowMs?: number;
+}
+
+interface ProcessEvents {
+  on(event: FatalKind, listener: (error: unknown) => void): unknown;
+}
+
+interface ElectronRuntime {
+  app?: App;
+  dialog?: Dialog;
+  shell?: Shell;
+}
+
+interface InstallOptions {
+  electron?: ElectronRuntime;
+  fatalGuard?: FatalGuard;
+  logger?: unknown;
+  onFatal?: unknown;
+  processRef?: ProcessEvents;
+}
 
 const ALLOWED_EXTERNAL_SCHEMES = new Set([
   'http:',
@@ -11,10 +47,18 @@ const ALLOWED_EXTERNAL_SCHEMES = new Set([
 ]);
 const FATAL_RELAUNCH_MARKER = 'fatal-relaunch.json';
 const DEFAULT_FATAL_RELAUNCH_WINDOW_MS = 5 * 60 * 1000;
-const hardenedSessions = new WeakSet();
-const installedApps = new WeakSet();
+const hardenedSessions = new WeakSet<WebContents['session']>();
+const installedApps = new WeakSet<App>();
 
-function isAllowedExternalUrl(rawUrl) {
+function recordOf(value: unknown): UnknownRecord | null {
+  return value !== null && typeof value === 'object' ? (value as UnknownRecord) : null;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isAllowedExternalUrl(rawUrl: unknown): boolean {
   if (typeof rawUrl !== 'string' || !rawUrl) return false;
   let parsed;
   try {
@@ -25,14 +69,18 @@ function isAllowedExternalUrl(rawUrl) {
   return ALLOWED_EXTERNAL_SCHEMES.has(parsed.protocol);
 }
 
-function attachContentsHardening(contents, logger, { shell } = {}) {
-  const log = typeof logger === 'function' ? logger : () => {};
+function attachContentsHardening(
+  contents: WebContents,
+  logger: unknown,
+  { shell }: { shell?: Shell } = {},
+): void {
+  const log: Logger = typeof logger === 'function' ? (logger as Logger) : () => {};
   if (!contents || !shell) throw new Error('security_hardening_contents_dependencies_missing');
 
   contents.setWindowOpenHandler(({ url }) => {
     if (isAllowedExternalUrl(url)) {
       Promise.resolve(shell.openExternal(url)).catch((error) => {
-        log(`security: openExternal failed ${error?.message || error}`);
+        log(`security: openExternal failed ${errorMessage(error)}`);
       });
     } else {
       log(`security: blocked window.open for ${String(url).slice(0, 200)}`);
@@ -46,7 +94,7 @@ function attachContentsHardening(contents, logger, { shell } = {}) {
     event.preventDefault();
     if (isAllowedExternalUrl(url)) {
       Promise.resolve(shell.openExternal(url)).catch((error) => {
-        log(`security: will-navigate openExternal failed ${error?.message || error}`);
+        log(`security: will-navigate openExternal failed ${errorMessage(error)}`);
       });
     } else {
       log(`security: blocked navigation to ${String(url).slice(0, 200)}`);
@@ -78,26 +126,31 @@ function createFatalRecoveryGuard({
   path: pathImpl = path,
   now = Date.now,
   windowMs = DEFAULT_FATAL_RELAUNCH_WINDOW_MS,
-} = {}) {
+}: RecoveryOptions = {}): FatalGuard {
   if (!app || typeof app.getPath !== 'function') {
     throw new Error('security_hardening_recovery_dependencies_missing');
   }
+  const recoveryApp = app;
 
-  function markerPath() {
-    return pathImpl.join(app.getPath('userData'), FATAL_RELAUNCH_MARKER);
+  function markerPath(): string {
+    return pathImpl.join(recoveryApp.getPath('userData'), FATAL_RELAUNCH_MARKER);
   }
 
-  function claim() {
+  function claim(): boolean {
     const timestamp = Number(now());
     const target = markerPath();
     try {
-      let prior = null;
+      let prior: unknown = null;
       try {
         prior = JSON.parse(fsImpl.readFileSync(target, 'utf8'));
       } catch (_) {
         // No previous marker is the normal first-crash case.
       }
-      if (Number.isFinite(prior?.at) && timestamp - prior.at >= 0 && timestamp - prior.at < windowMs) {
+      const priorAt = recordOf(prior)?.at;
+      if (typeof priorAt === 'number'
+        && Number.isFinite(priorAt)
+        && timestamp - priorAt >= 0
+        && timestamp - priorAt < windowMs) {
         return false;
       }
       fsImpl.mkdirSync(pathImpl.dirname(target), { recursive: true });
@@ -114,11 +167,17 @@ function createFatalRecoveryGuard({
   return { claim };
 }
 
-function install({ logger, onFatal, electron, processRef = process, fatalGuard } = {}) {
-  const runtime = electron || require('electron');
+function install({
+  logger,
+  onFatal,
+  electron,
+  processRef = process,
+  fatalGuard,
+}: InstallOptions = {}) {
+  const runtime: ElectronRuntime = electron || require('electron');
   const { app, dialog, shell } = runtime;
   if (!app || !dialog || !shell) throw new Error('security_hardening_electron_dependencies_missing');
-  const log = typeof logger === 'function' ? logger : () => {};
+  const log: Logger = typeof logger === 'function' ? (logger as Logger) : () => {};
   const recovery = fatalGuard || createFatalRecoveryGuard({ app });
   if (installedApps.has(app)) return { recovery, installed: false };
   installedApps.add(app);
@@ -132,12 +191,12 @@ function install({ logger, onFatal, electron, processRef = process, fatalGuard }
     attachContentsHardening(contents, log, { shell });
   });
 
-  const handleFatal = (kind) => (error) => {
-    const message = error && error.stack ? error.stack : String(error);
+  const handleFatal = (kind: FatalKind) => (error: unknown): void => {
+    const message = error instanceof Error && error.stack ? error.stack : String(error);
     log(`fatal ${kind}: ${message}`);
     if (typeof onFatal === 'function') {
       try {
-        onFatal({ kind, error });
+        (onFatal as (details: { error: unknown; kind: FatalKind }) => void)({ kind, error });
       } catch (_hookError) {
         // The original fatal event was already logged.
       }
@@ -149,8 +208,8 @@ function install({ logger, onFatal, electron, processRef = process, fatalGuard }
       dialog.showErrorBox(
         'Magic Pointer 遇到内部错误',
         shouldRelaunch
-          ? `${error?.message || error}\n\n应用将尝试自动重启一次。`
-          : `${error?.message || error}\n\n为避免崩溃循环，应用不会自动重启；请修复问题后手动启动。`,
+          ? `${errorMessage(error)}\n\n应用将尝试自动重启一次。`
+          : `${errorMessage(error)}\n\n为避免崩溃循环，应用不会自动重启；请修复问题后手动启动。`,
       );
     } catch (_dialogError) {
       // Headless / early crash — the log is still available.

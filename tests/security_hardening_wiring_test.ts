@@ -4,7 +4,7 @@ const assert = require('assert');
 const fs = require('fs');
 
 const main = fs.readFileSync('electron/main.js', 'utf8');
-const security = fs.readFileSync('electron/security_hardening.js', 'utf8');
+const security = fs.readFileSync('electron/security_hardening.ts', 'utf8');
 
 const liveCalls = main.match(/securityHardening\.install\s*\(\s*\{/g) || [];
 assert.strictEqual(liveCalls.length, 1, 'production main must install security hardening exactly once');
