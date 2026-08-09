@@ -1,5 +1,29 @@
 'use strict';
 
+(() => {
+type ProofSource = 'pixel' | 'structured' | 'text_range';
+type UnknownRecord = Record<string, unknown>;
+
+interface Point {
+  x: number;
+  y: number;
+}
+
+interface ProofRect extends Point {
+  height: number;
+  width: number;
+}
+
+interface ProofBand {
+  rect: ProofRect;
+  source: ProofSource;
+}
+
+interface StageMappingOptions {
+  origin?: Point;
+  scaleFactor?: number;
+}
+
 // Prove what was picked up, by drawing a band around it.
 //
 // The user's words on 2026-08-05: "UIA一定是能读到的直接在他外部搞个那种跑一圈的
@@ -37,32 +61,41 @@ const MIN_PROOF_EDGE_PX = 6;
 // twice — the structured layer and OCR both reporting one line, typically.
 const DEDUPE_TOLERANCE_PX = 4;
 
-const SOURCE_RANK = { structured: 0, text_range: 1, pixel: 2 };
+const SOURCE_RANK: Readonly<Record<ProofSource, number>> = {
+  structured: 0,
+  text_range: 1,
+  pixel: 2,
+};
 
-function toRect(value) {
+function recordOf(value: unknown): UnknownRecord | null {
+  return value !== null && typeof value === 'object' ? (value as UnknownRecord) : null;
+}
+
+function toRect(value: unknown): ProofRect | null {
   if (Array.isArray(value) && value.length === 4) {
     const [x, y, width, height] = value.map(Number);
     return { x, y, width, height };
   }
-  if (value && typeof value === 'object') {
+  const candidate = recordOf(value);
+  if (candidate !== null) {
     return {
-      x: Number(value.x),
-      y: Number(value.y),
-      width: Number(value.width),
-      height: Number(value.height),
+      x: Number(candidate.x),
+      y: Number(candidate.y),
+      width: Number(candidate.width),
+      height: Number(candidate.height),
     };
   }
   return null;
 }
 
-function isUsable(rect) {
-  return Boolean(rect)
+function isUsable(rect: ProofRect | null): rect is ProofRect {
+  return rect !== null
     && [rect.x, rect.y, rect.width, rect.height].every(Number.isFinite)
     && rect.width >= MIN_PROOF_EDGE_PX
     && rect.height >= MIN_PROOF_EDGE_PX;
 }
 
-function isSameRect(a, b) {
+function isSameRect(a: ProofRect, b: ProofRect): boolean {
   return Math.abs(a.x - b.x) <= DEDUPE_TOLERANCE_PX
     && Math.abs(a.y - b.y) <= DEDUPE_TOLERANCE_PX
     && Math.abs(a.width - b.width) <= DEDUPE_TOLERANCE_PX
@@ -72,7 +105,7 @@ function isSameRect(a, b) {
 // Reading order, so the bands animate the way eyes move: down the page, then
 // across. Rows are banded by vertical overlap rather than exact y, because OCR
 // baselines on one line differ by a pixel or two.
-function inReadingOrder(left, right) {
+function inReadingOrder(left: ProofBand, right: ProofBand): number {
   const sameRow = Math.abs(left.rect.y - right.rect.y) < Math.max(left.rect.height, right.rect.height) * 0.6;
   if (sameRow) return left.rect.x - right.rect.x;
   return left.rect.y - right.rect.y;
@@ -84,13 +117,14 @@ function inReadingOrder(left, right) {
 // physical screen pixels. A rectangle reported by more than one layer is kept
 // once, at its most trustworthy source: being able to read something exactly
 // does not become less true because OCR also saw it.
-function captureProof(input) {
-  const groups = [
-    ['structured', (input && input.structured) || []],
-    ['text_range', (input && input.textRange) || []],
-    ['pixel', (input && input.pixel) || []],
+function captureProof(input: unknown): ProofBand[] {
+  const candidate = recordOf(input);
+  const groups: Array<readonly [ProofSource, unknown[]]> = [
+    ['structured', Array.isArray(candidate?.structured) ? candidate.structured : []],
+    ['text_range', Array.isArray(candidate?.textRange) ? candidate.textRange : []],
+    ['pixel', Array.isArray(candidate?.pixel) ? candidate.pixel : []],
   ];
-  const kept = [];
+  const kept: ProofBand[] = [];
   for (const [source, values] of groups) {
     for (const value of values) {
       const rect = toRect(value);
@@ -110,9 +144,9 @@ function captureProof(input) {
 }
 
 // One line for the bubble, in the user's terms. Not "uia:region-elements".
-function proofSummary(bands) {
+function proofSummary(bands: unknown): string {
   if (!Array.isArray(bands) || bands.length === 0) return '';
-  const exact = bands.filter((band) => band.source !== 'pixel').length;
+  const exact = bands.filter((value: unknown) => recordOf(value)?.source !== 'pixel').length;
   const seen = bands.length - exact;
   if (exact && seen) return `读到 ${exact} 处，另有 ${seen} 处是从画面上认出来的`;
   if (exact) return exact === 1 ? '读到 1 处' : `读到 ${exact} 处`;
@@ -121,7 +155,10 @@ function proofSummary(bands) {
 
 // Screen pixels to the stage window's own DIP coordinates. The bands are drawn
 // by a renderer that knows nothing about monitors or scale factors.
-function toStageRects(bands, { origin = { x: 0, y: 0 }, scaleFactor = 1 } = {}) {
+function toStageRects(
+  bands: readonly ProofBand[],
+  { origin = { x: 0, y: 0 }, scaleFactor = 1 }: StageMappingOptions = {},
+): ProofBand[] {
   const scale = Number(scaleFactor) > 0 ? Number(scaleFactor) : 1;
   return bands.map((band) => ({
     source: band.source,
@@ -147,5 +184,7 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = CaptureProofPolicy;
 }
 if (typeof globalThis !== 'undefined') {
-  globalThis.CaptureProofPolicy = CaptureProofPolicy;
+  (globalThis as typeof globalThis & { CaptureProofPolicy?: typeof CaptureProofPolicy })
+    .CaptureProofPolicy = CaptureProofPolicy;
 }
+})();

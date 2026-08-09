@@ -25,7 +25,7 @@ const { captureProofFromBridge, stageEventFromBridge } = require('../electron/st
     },
   });
   assert.strictEqual(proof.length, 2);
-  assert.ok(proof.every((band) => band.source === 'pixel'));
+  assert.ok(proof.every((band: { source: string }) => band.source === 'pixel'));
 }
 
 // 指针锚点不是"读到的东西"，不能拿它冒充证据。
@@ -107,7 +107,9 @@ const { captureProofFromBridge, stageEventFromBridge } = require('../electron/st
   );
   const pixelEdge = /--proof-edge:\s*([^;]+);/.exec(pixelBlock);
   const structuredEdge = /--proof-edge:\s*([^;]+);/.exec(structuredBlock);
-  assert(pixelEdge && structuredEdge, '两种来源都要定义边框色');
+  if (pixelEdge === null || structuredEdge === null) {
+    throw new Error('两种来源都要定义边框色');
+  }
   assert.notStrictEqual(
     pixelEdge[1].trim(),
     structuredEdge[1].trim(),

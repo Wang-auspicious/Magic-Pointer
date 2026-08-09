@@ -1,5 +1,21 @@
 'use strict';
 
+(() => {
+type AnswerShapeName = 'deliver' | 'inspect';
+type UnknownRecord = Record<string, unknown>;
+
+interface AnswerShapeInput {
+  command?: unknown;
+  result?: unknown;
+}
+
+interface AnswerShapeResult {
+  allowMarkdown: boolean;
+  needsConsent: boolean;
+  reason: string;
+  shape: AnswerShapeName;
+}
+
 // 一次回答有两种形态，分界线只有一条：**这段产物要不要送出去。**
 //
 //   deliver（要送出去）  回微信、回邮件、把改好的话填回你原来那个输入框。
@@ -51,13 +67,20 @@ const INSPECT_VERBS = Object.freeze([
   '这是', '这个是',
 ]);
 
-function hasAny(text, needles) {
+function recordOf(value: unknown): UnknownRecord | null {
+  return value !== null && typeof value === 'object' ? (value as UnknownRecord) : null;
+}
+
+function hasAny(text: string, needles: readonly string[]): boolean {
   return needles.some((needle) => text.includes(needle));
 }
 
-function proposalTypes(result) {
+function proposalTypes(result: UnknownRecord): string[] {
   const list = Array.isArray(result?.actionProposals) ? result.actionProposals : [];
-  return list.map((proposal) => String(proposal?.action_type || proposal?.actionType || ''));
+  return list.map((value: unknown) => {
+    const proposal = recordOf(value);
+    return String(proposal?.action_type || proposal?.actionType || '');
+  });
 }
 
 /**
@@ -68,8 +91,8 @@ function proposalTypes(result) {
  * @param {string} [input.command]  用户说的那句话
  * @returns {{shape: 'deliver'|'inspect', reason: string, allowMarkdown: boolean, needsConsent: boolean}}
  */
-function answerShape(input = {}) {
-  const result = input.result && typeof input.result === 'object' ? input.result : {};
+function answerShape(input: AnswerShapeInput = {}): AnswerShapeResult {
+  const result = recordOf(input.result) ?? {};
   const command = String(input.command || '').trim();
 
   const kind = String(result.kind || '');
@@ -93,7 +116,7 @@ function answerShape(input = {}) {
   return shape('inspect', 'default');
 }
 
-function shape(name, reason) {
+function shape(name: AnswerShapeName, reason: string): AnswerShapeResult {
   const deliver = name === 'deliver';
   return {
     shape: name,
@@ -117,5 +140,7 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = AnswerShapePolicy;
 }
 if (typeof globalThis !== 'undefined') {
-  globalThis.AnswerShapePolicy = AnswerShapePolicy;
+  (globalThis as typeof globalThis & { AnswerShapePolicy?: typeof AnswerShapePolicy })
+    .AnswerShapePolicy = AnswerShapePolicy;
 }
+})();

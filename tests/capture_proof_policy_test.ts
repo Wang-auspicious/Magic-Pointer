@@ -14,6 +14,11 @@ const {
   toStageRects,
 } = require('../electron/capture_proof_policy');
 
+interface TestBand {
+  rect: { height: number; width: number; x: number; y: number };
+  source: string;
+}
+
 // 三种来源都画，而且各自保留自己的来源标记。
 {
   const bands = captureProof({
@@ -22,7 +27,7 @@ const {
     pixel: [[100, 300, 200, 30]],
   });
   assert.strictEqual(bands.length, 3);
-  assert.deepStrictEqual(bands.map((b) => b.source), ['structured', 'text_range', 'pixel']);
+  assert.deepStrictEqual(bands.map((b: TestBand) => b.source), ['structured', 'text_range', 'pixel']);
 }
 
 // 同一块被两层同时报告时只画一次，并保留更可信的那个来源。
@@ -47,7 +52,7 @@ const {
     pixel: [[300, 400, 100, 20], [100, 400, 100, 20], [100, 100, 100, 20]],
   });
   assert.deepStrictEqual(
-    bands.map((b) => [b.rect.x, b.rect.y]),
+    bands.map((b: TestBand) => [b.rect.x, b.rect.y]),
     [[100, 100], [100, 400], [300, 400]],
   );
 }
@@ -55,7 +60,7 @@ const {
 // 同一行内基线差一两个像素不该被当成两行。
 {
   const bands = captureProof({ pixel: [[300, 401, 100, 20], [100, 400, 100, 20]] });
-  assert.deepStrictEqual(bands.map((b) => b.rect.x), [100, 300]);
+  assert.deepStrictEqual(bands.map((b: TestBand) => b.rect.x), [100, 300]);
 }
 
 // 碎片不画：OCR 会为标点吐出 3px 的小条，框出来像渲染 bug。
