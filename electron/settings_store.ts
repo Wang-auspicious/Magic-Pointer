@@ -16,11 +16,37 @@ const RESERVED_SHORTCUTS = new Set([
   'control+alt+d',
 ]);
 
-function normalizedShortcut(value) {
-  const aliases = { ctrl: 'control', option: 'alt', cmd: 'command', cmdorctrl: 'commandorcontrol' };
+interface ModelProfile {
+  apiMode: string;
+  baseUrl: string;
+  credentialRef: string;
+  displayName: string;
+  enabled: boolean;
+  id: string;
+  model: string;
+  overrides: Record<string, string>;
+  provider: string;
+  resolved: Record<string, string>;
+  schemaVersion: number;
+}
+
+interface ScopedGrant {
+  app: string;
+  decision: string;
+  expires_at: string;
+  expiresAt?: string;
+  id: string;
+  project: string;
+  recipe: string;
+  risk: string;
+}
+
+function normalizedShortcut(value: unknown): string {
+  const aliases: Record<string, string> = { ctrl: 'control', option: 'alt', cmd: 'command', cmdorctrl: 'commandorcontrol' };
   const parts = String(value || '').split('+').map(part => part.trim().toLowerCase()).filter(Boolean);
   if (parts.length < 2) return '';
-  const key = aliases[parts.at(-1)] || parts.at(-1);
+  const lastPart = parts.at(-1) || '';
+  const key = aliases[lastPart] || lastPart;
   const modifiers = parts.slice(0, -1).map(part => aliases[part] || part);
   if (!modifiers.length || modifiers.some(part => !SHORTCUT_MODIFIERS.has(part)) || SHORTCUT_MODIFIERS.has(key)) return '';
   if (new Set(modifiers).size !== modifiers.length) return '';
@@ -32,7 +58,7 @@ function normalizedShortcut(value) {
 // Accept "r, g, b" or "#rrggbb"; fall back to the default rather than throwing.
 // An unreadable accent is cosmetic, and refusing to load settings over it would
 // turn a typo into an app that will not start.
-function normalizeAccentRgb(value, fallback) {
+function normalizeAccentRgb(value: unknown, fallback: string): string {
   const text = String(value == null ? '' : value).trim();
   if (text.startsWith('#')) {
     const digits = text.slice(1).length === 3
@@ -104,7 +130,11 @@ function defaultSettings() {
       auto_attach: true,
       session_bindings: {},
     },
-    models: { schemaVersion: 1, defaultProfileId: null, profiles: [] },
+    models: {
+      schemaVersion: 1,
+      defaultProfileId: null as string | null,
+      profiles: [] as ModelProfile[],
+    },
     permissions: {
       default_read: 'allow',
       default_write: 'confirm',
@@ -112,7 +142,7 @@ function defaultSettings() {
       default_destructive: 'confirm',
       default_purchase: 'deny',
       recipe_overrides: {},
-      scoped_grants: [],
+      scoped_grants: [] as ScopedGrant[],
     },
     privacy: {
       upload_screenshots: false,
@@ -181,7 +211,7 @@ function defaultSettings() {
   };
 }
 
-function validateModels(value, defaults) {
+function validateModels(value: ReturnType<typeof defaultSettings>['models'], defaults: ReturnType<typeof defaultSettings>) {
   const models = { ...defaults.models, ...(value || {}) };
   if (models.schemaVersion !== 1 || !Array.isArray(models.profiles) || models.profiles.length > 32) {
     throw new Error('models schemaVersion or profiles is unsupported');
@@ -250,7 +280,7 @@ function validateModels(value, defaults) {
   return { schemaVersion: 1, defaultProfileId, profiles: normalizedProfiles };
 }
 
-function validate(settings) {
+function validate(settings: ReturnType<typeof defaultSettings>): ReturnType<typeof defaultSettings> {
   if (!settings || typeof settings !== 'object' || settings.schema_version !== 1) {
     throw new Error('settings schema_version is unsupported');
   }
@@ -297,7 +327,7 @@ function validate(settings) {
     ['gesture_arm_delay_ms', 60, 600],
     ['gesture_timeout_ms', 1000, 15000],
     ['multi_stroke_submit_ms', 1500, 30000],
-  ]) {
+  ] as const) {
     const value = Number(activation[name]);
     if (!Number.isFinite(value) || value < minimum || value > maximum) {
       throw new Error(`activation.${name} must be between ${minimum} and ${maximum}`);
@@ -450,16 +480,17 @@ function validate(settings) {
     shortcuts.wake = activation.fallback_hotkey || defaults.shortcuts.wake;
   }
   const normalizedShortcuts = new Map();
+  const mutableShortcuts = shortcuts as Record<string, string>;
   for (const [name, value] of Object.entries(shortcuts)) {
     if (typeof value !== 'string' || !value.trim() || value.length > 96) {
       throw new Error(`shortcut ${name} is invalid`);
     }
-    shortcuts[name] = value.trim();
-    const normalized = normalizedShortcut(shortcuts[name]);
+    mutableShortcuts[name] = value.trim();
+    const normalized = normalizedShortcut(mutableShortcuts[name]);
     if (!normalized) throw new Error(`shortcut ${name} is invalid`);
-    if (RESERVED_SHORTCUTS.has(normalized)) throw new Error(`reserved shortcut ${shortcuts[name]}`);
+    if (RESERVED_SHORTCUTS.has(normalized)) throw new Error(`reserved shortcut ${mutableShortcuts[name]}`);
     if (normalizedShortcuts.has(normalized)) {
-      throw new Error(`duplicate shortcut ${shortcuts[name]} for ${normalizedShortcuts.get(normalized)} and ${name}`);
+      throw new Error(`duplicate shortcut ${mutableShortcuts[name]} for ${normalizedShortcuts.get(normalized)} and ${name}`);
     }
     normalizedShortcuts.set(normalized, name);
   }
@@ -505,12 +536,13 @@ function validate(settings) {
     capsule_inline_gap_dip: [4, 96],
     gesture_line_width_dip: [3, 40],
   };
+  const mutableAppearance = appearance as unknown as Record<string, string | number>;
   for (const [name, [minimum, maximum]] of Object.entries(appearanceRanges)) {
-    const value = Number(appearance[name]);
+    const value = Number(mutableAppearance[name]);
     if (!Number.isFinite(value) || value < minimum || value > maximum) {
       throw new Error(`appearance.${name} must be between ${minimum} and ${maximum}`);
     }
-    appearance[name] = value;
+    mutableAppearance[name] = value;
   }
   if (appearance.sweep_min_height_dip > appearance.sweep_max_height_dip) {
     throw new Error('appearance sweep minimum must not exceed maximum');
@@ -549,7 +581,7 @@ function validate(settings) {
     if (seenDevToolsEndpoints.has(canonical)) return null;
     seenDevToolsEndpoints.add(canonical);
     return canonical;
-  }).filter(Boolean);
+  }).filter((value): value is string => Boolean(value));
   const agents = { ...defaults.agents, ...(settings.agents || {}) };
   agents.delivery_mode = String(agents.delivery_mode || '').trim().toLowerCase();
   agents.cwd_match = String(agents.cwd_match || '').trim().toLowerCase();
@@ -596,11 +628,13 @@ function validate(settings) {
 }
 
 class ElectronSettingsStore {
-  constructor(settingsPath) {
+  path: string;
+
+  constructor(settingsPath: string) {
     this.path = path.resolve(settingsPath);
   }
 
-  writeValidated(validated) {
+  writeValidated(validated: ReturnType<typeof defaultSettings>): string {
     fs.mkdirSync(path.dirname(this.path), { recursive: true });
     const tempPath = `${this.path}.tmp`;
     fs.writeFileSync(tempPath, `${JSON.stringify(validated, null, 2)}\n`, 'utf8');
@@ -608,20 +642,20 @@ class ElectronSettingsStore {
     return this.path;
   }
 
-  load() {
+  load(): ReturnType<typeof defaultSettings> {
     if (!fs.existsSync(this.path)) return defaultSettings();
     let parsed = null;
     try {
       parsed = JSON.parse(fs.readFileSync(this.path, 'utf8'));
     } catch (error) {
-      throw new Error(`settings JSON is invalid: ${error.message}`);
+        throw new Error(`settings JSON is invalid: ${error instanceof Error ? error.message : String(error)}`);
     }
     const validated = validate(parsed);
     if (JSON.stringify(parsed) !== JSON.stringify(validated)) this.writeValidated(validated);
     return validated;
   }
 
-  save(settings) {
+  save(settings: ReturnType<typeof defaultSettings>): string {
     const validated = validate(settings);
     return this.writeValidated(validated);
   }

@@ -2,7 +2,7 @@ const assert = require('assert');
 const fs = require('fs');
 const { defaultSettings, validate } = require('../electron/settings_store');
 
-const storeSource = fs.readFileSync('electron/settings_store.js', 'utf8');
+const storeSource = fs.readFileSync('electron/settings_store.ts', 'utf8');
 const main = fs.readFileSync('electron/main.js', 'utf8');
 const bridge = fs.readFileSync('scripts/local_voice_bridge.py', 'utf8');
 

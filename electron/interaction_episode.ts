@@ -1,29 +1,62 @@
 const crypto = require('crypto');
 
+type UnknownRecord = Record<string, unknown>;
+type SlotAlias = 'this' | 'that' | 'these' | 'here';
+
+interface NormalizedObject extends UnknownRecord {
+  bbox?: unknown;
+  kind?: string;
+  objectId: string;
+  referenceLabel?: string;
+  source?: UnknownRecord;
+}
+
+interface EpisodeSlots {
+  here: NormalizedObject | null;
+  that: NormalizedObject | null;
+  these: NormalizedObject[];
+  this: NormalizedObject | null;
+}
+
+interface InteractionEpisode {
+  createdAt: number;
+  events: UnknownRecord[];
+  expiresAt: number;
+  id: string;
+  labels: Map<string, string>;
+  objects: Map<string, NormalizedObject>;
+  pendingIntent: string | null;
+  slots: EpisodeSlots;
+  state: string;
+  updatedAt: number;
+  utterances: string[];
+}
+
 const ALLOWED_OBJECT_FIELDS = [
   'objectId', 'snapshotId', 'selectionSessionToken', 'app', 'windowTitle',
   'label', 'referenceLabel', 'kind', 'capturedAt', 'expiresAt', 'content',
 ];
 const ALLOWED_SOURCE_FIELDS = ['app', 'title', 'path', 'annotatedPath', 'url', 'page', 'hwnd', 'processId'];
 
-function clone(value) {
+function clone<T>(value: T): T {
   return value == null ? value : JSON.parse(JSON.stringify(value));
 }
 
-function normalizePerceptionTrace(input) {
+function normalizePerceptionTrace(input: UnknownRecord | null): UnknownRecord | null {
   if (!input || typeof input !== 'object' || Number(input.schemaVersion) !== 1) return null;
-  const trace = { schemaVersion: 1 };
+  const trace: UnknownRecord = { schemaVersion: 1 };
   for (const field of ['selectedLayer', 'selectedAdapter', 'selectedMethod', 'fallbackReason', 'policyMode']) {
     const value = input[field];
     if (typeof value === 'string' && value.trim()) trace[field] = value.trim().slice(0, 120);
   }
   trace.pixelFallbackUsed = input.pixelFallbackUsed === true;
   trace.attempts = (Array.isArray(input.attempts) ? input.attempts : []).slice(0, 12)
-    .filter(item => item && typeof item === 'object')
-    .map((item) => {
-      const attempt = {};
+    .filter((item: unknown) => item && typeof item === 'object')
+    .map((item: unknown) => {
+      const attemptInput = item as UnknownRecord;
+      const attempt: UnknownRecord = {};
       for (const field of ['layer', 'adapter', 'method', 'status', 'reason']) {
-        const value = item[field];
+        const value = attemptInput[field];
         if (typeof value === 'string' && value.trim()) attempt[field] = value.trim().slice(0, 120);
       }
       return attempt;
@@ -31,13 +64,15 @@ function normalizePerceptionTrace(input) {
   return trace;
 }
 
-function normalizeTerminalEvidence(input) {
+function normalizeTerminalEvidence(input: UnknownRecord | null): UnknownRecord | null {
   if (!input || typeof input !== 'object' || Number(input.schemaVersion) !== 1) return null;
-  const state = ['resolved', 'partial', 'unavailable'].includes(input.state) ? input.state : 'unavailable';
-  const bounded = (value, limit) => typeof value === 'string' ? value.slice(0, limit) : '';
-  const integer = (value, fallback = 0) => Number.isInteger(Number(value)) ? Number(value) : fallback;
-  const anchorInput = input.anchor && typeof input.anchor === 'object' ? input.anchor : {};
-  const windowInput = input.window && typeof input.window === 'object' ? input.window : {};
+  const state = typeof input.state === 'string' && ['resolved', 'partial', 'unavailable'].includes(input.state)
+    ? input.state
+    : 'unavailable';
+  const bounded = (value: unknown, limit: number) => typeof value === 'string' ? value.slice(0, limit) : '';
+  const integer = (value: unknown, fallback = 0) => Number.isInteger(Number(value)) ? Number(value) : fallback;
+  const anchorInput = input.anchor && typeof input.anchor === 'object' ? input.anchor as UnknownRecord : {};
+  const windowInput = input.window && typeof input.window === 'object' ? input.window as UnknownRecord : {};
   const result = {
     schemaVersion: 1,
     state,
@@ -58,35 +93,42 @@ function normalizeTerminalEvidence(input) {
     },
     pixelFallbackUsed: false,
     uncertainty: (Array.isArray(input.uncertainty) ? input.uncertainty : []).slice(0, 12)
-      .filter(value => typeof value === 'string' && value.trim())
-      .map(value => value.trim().slice(0, 160)),
+      .filter((value: unknown): value is string => typeof value === 'string' && Boolean(value.trim()))
+      .map((value: string) => value.trim().slice(0, 160)),
   };
   return result;
 }
 
-function normalizeBrowserContext(input) {
+function normalizeBrowserContext(input: UnknownRecord | null): UnknownRecord | null {
   if (!input || typeof input !== 'object' || Number(input.schemaVersion) !== 1) return null;
-  const bounded = (value, limit) => typeof value === 'string' ? value.slice(0, limit) : '';
-  const number = value => Number.isFinite(Number(value)) ? Number(value) : null;
-  const point = (value) => value && typeof value === 'object' && number(value.x) != null && number(value.y) != null
-    ? { x: number(value.x), y: number(value.y) }
+  const bounded = (value: unknown, limit: number) => typeof value === 'string' ? value.slice(0, limit) : '';
+  const number = (value: unknown) => Number.isFinite(Number(value)) ? Number(value) : null;
+  const point = (value: unknown) => {
+    const pointValue = value && typeof value === 'object' ? value as UnknownRecord : null;
+    return pointValue && number(pointValue.x) != null && number(pointValue.y) != null
+    ? { x: number(pointValue.x), y: number(pointValue.y) }
     : null;
-  const rect = (value) => value && typeof value === 'object'
-    && ['x', 'y', 'width', 'height'].every(key => number(value[key]) != null)
-    ? Object.fromEntries(['x', 'y', 'width', 'height'].map(key => [key, number(value[key])]))
-    : null;
-  const page = input.page && typeof input.page === 'object' ? input.page : {};
-  const node = input.node && typeof input.node === 'object' ? input.node : {};
-  const coordinates = input.coordinates && typeof input.coordinates === 'object' ? input.coordinates : {};
-  const provenance = input.provenance && typeof input.provenance === 'object' ? input.provenance : {};
+  };
+  const rect = (value: unknown) => {
+    const rectValue = value && typeof value === 'object' ? value as UnknownRecord : null;
+    return rectValue && ['x', 'y', 'width', 'height'].every(key => number(rectValue[key]) != null)
+      ? Object.fromEntries(['x', 'y', 'width', 'height'].map(key => [key, number(rectValue[key])]))
+      : null;
+  };
+  const page = input.page && typeof input.page === 'object' ? input.page as UnknownRecord : {};
+  const node = input.node && typeof input.node === 'object' ? input.node as UnknownRecord : {};
+  const coordinates = input.coordinates && typeof input.coordinates === 'object' ? input.coordinates as UnknownRecord : {};
+  const provenance = input.provenance && typeof input.provenance === 'object' ? input.provenance as UnknownRecord : {};
   const allowedAttributes = new Set(['id', 'name', 'type', 'href', 'src', 'alt', 'title', 'role', 'aria-label', 'aria-labelledby', 'data-testid', 'data-test', 'data-qa']);
-  const attributes = {};
+  const attributes: UnknownRecord = {};
   for (const [key, value] of Object.entries(node.attributes && typeof node.attributes === 'object' ? node.attributes : {}).slice(0, 20)) {
     if (allowedAttributes.has(key) && typeof value === 'string') attributes[key] = value.slice(0, 1000);
   }
   return {
     schemaVersion: 1,
-    state: ['resolved', 'partial', 'unavailable'].includes(input.state) ? input.state : 'unavailable',
+    state: typeof input.state === 'string' && ['resolved', 'partial', 'unavailable'].includes(input.state)
+      ? input.state
+      : 'unavailable',
     method: bounded(input.method, 120),
     page: { title: bounded(page.title, 1000), url: bounded(page.url, 4000) },
     node: {
@@ -106,28 +148,31 @@ function normalizeBrowserContext(input) {
       hitTestVerified: coordinates.hitTestVerified === true,
     },
     networkFailures: (Array.isArray(input.networkFailures) ? input.networkFailures : []).slice(0, 20)
-      .filter(item => item && typeof item === 'object')
-      .map(item => ({
-        url: bounded(item.url, 4000), errorText: bounded(item.errorText, 300),
-        source: bounded(item.source, 80), timestamp: bounded(item.timestamp, 80),
-        requestId: bounded(item.requestId, 160), status: number(item.status),
-      })),
+      .filter((item: unknown) => item && typeof item === 'object')
+      .map((item: unknown) => {
+        const failure = item as UnknownRecord;
+        return {
+          url: bounded(failure.url, 4000), errorText: bounded(failure.errorText, 300),
+          source: bounded(failure.source, 80), timestamp: bounded(failure.timestamp, 80),
+          requestId: bounded(failure.requestId, 160), status: number(failure.status),
+        };
+      }),
     provenance: {
       endpoint: bounded(provenance.endpoint, 1000), targetId: bounded(provenance.targetId, 200),
       structural: provenance.structural === true,
-      networkSources: (Array.isArray(provenance.networkSources) ? provenance.networkSources : []).slice(0, 8).filter(item => typeof item === 'string').map(item => item.slice(0, 80)),
+      networkSources: (Array.isArray(provenance.networkSources) ? provenance.networkSources : []).slice(0, 8).filter((item: unknown): item is string => typeof item === 'string').map((item: string) => item.slice(0, 80)),
     },
-    uncertainty: (Array.isArray(input.uncertainty) ? input.uncertainty : []).slice(0, 12).filter(item => typeof item === 'string').map(item => item.slice(0, 200)),
+    uncertainty: (Array.isArray(input.uncertainty) ? input.uncertainty : []).slice(0, 12).filter((item: unknown): item is string => typeof item === 'string').map((item: string) => item.slice(0, 200)),
   };
 }
 
-function normalizeObject(input) {
+function normalizeObject(input: UnknownRecord | null): NormalizedObject | null {
   if (!input || typeof input !== 'object') return null;
   const snapshotId = typeof input.snapshotId === 'string' ? input.snapshotId.trim() : '';
   const suppliedObjectId = typeof input.objectId === 'string' ? input.objectId.trim() : '';
   const objectId = suppliedObjectId || (snapshotId ? `selection:${snapshotId}` : '');
   if (!objectId) return null;
-  const normalized = { objectId };
+  const normalized: NormalizedObject = { objectId };
   for (const field of ALLOWED_OBJECT_FIELDS.slice(1)) {
     if (typeof input[field] === 'string' && input[field].trim()) {
       normalized[field] = input[field].trim().slice(0, field === 'content' ? 12000 : 500);
@@ -136,47 +181,50 @@ function normalizeObject(input) {
   if (Array.isArray(input.bbox) && input.bbox.length === 4 && input.bbox.every(Number.isFinite)) {
     normalized.bbox = input.bbox.slice();
   } else if (input.bbox && typeof input.bbox === 'object') {
+    const bboxInput = input.bbox as UnknownRecord;
     const bbox = {
-      x: Number(input.bbox.x),
-      y: Number(input.bbox.y),
-      width: Number(input.bbox.width),
-      height: Number(input.bbox.height),
+      x: Number(bboxInput.x),
+      y: Number(bboxInput.y),
+      width: Number(bboxInput.width),
+      height: Number(bboxInput.height),
     };
     if (Object.values(bbox).every(Number.isFinite)) normalized.bbox = bbox;
   }
   if (input.source && typeof input.source === 'object') {
-    const source = {};
+    const sourceInput = input.source as UnknownRecord;
+    const source: UnknownRecord = {};
     for (const field of ALLOWED_SOURCE_FIELDS) {
-      const value = input.source[field];
+      const value = sourceInput[field];
       if (typeof value === 'string' && value.trim()) source[field] = value.trim().slice(0, 2000);
       else if (typeof value === 'number' && Number.isFinite(value)) source[field] = value;
     }
-    const attestation = input.source.captureAttestation;
+    const attestation = sourceInput.captureAttestation;
     if (attestation && typeof attestation === 'object') {
-      const expectedInput = attestation.expected && typeof attestation.expected === 'object'
-        ? attestation.expected
+      const attestationInput = attestation as UnknownRecord;
+      const expectedInput = attestationInput.expected && typeof attestationInput.expected === 'object'
+        ? attestationInput.expected as UnknownRecord
         : {};
-      const expected = {};
+      const expected: UnknownRecord = {};
       for (const field of ['hwnd', 'processId', 'processName', 'title', 'desktopId']) {
         const value = expectedInput[field];
         if (typeof value === 'string' && value.trim()) expected[field] = value.trim().slice(0, 2000);
         else if (typeof value === 'number' && Number.isFinite(value)) expected[field] = value;
       }
-      const normalizedAttestation = {};
-      if (typeof attestation.status === 'string' && attestation.status.trim()) {
-        normalizedAttestation.status = attestation.status.trim().slice(0, 80);
+      const normalizedAttestation: UnknownRecord = {};
+      if (typeof attestationInput.status === 'string' && attestationInput.status.trim()) {
+        normalizedAttestation.status = attestationInput.status.trim().slice(0, 80);
       }
-      if (typeof attestation.phase === 'string' && attestation.phase.trim()) {
-        normalizedAttestation.phase = attestation.phase.trim().slice(0, 80);
+      if (typeof attestationInput.phase === 'string' && attestationInput.phase.trim()) {
+        normalizedAttestation.phase = attestationInput.phase.trim().slice(0, 80);
       }
       if (Object.keys(expected).length) normalizedAttestation.expected = expected;
       if (Object.keys(normalizedAttestation).length) source.captureAttestation = normalizedAttestation;
     }
-    const perceptionTrace = normalizePerceptionTrace(input.source.perceptionTrace);
+    const perceptionTrace = normalizePerceptionTrace(sourceInput.perceptionTrace as UnknownRecord | null);
     if (perceptionTrace) source.perceptionTrace = perceptionTrace;
-    const terminalEvidence = normalizeTerminalEvidence(input.source.terminalEvidence);
+    const terminalEvidence = normalizeTerminalEvidence(sourceInput.terminalEvidence as UnknownRecord | null);
     if (terminalEvidence) source.terminalEvidence = terminalEvidence;
-    const browserContext = normalizeBrowserContext(input.source.browserContext);
+    const browserContext = normalizeBrowserContext(sourceInput.browserContext as UnknownRecord | null);
     if (browserContext) source.browserContext = browserContext;
     if (Object.keys(source).length) normalized.source = source;
   }
@@ -184,23 +232,24 @@ function normalizeObject(input) {
   return normalized;
 }
 
-function bboxMetrics(value) {
+function bboxMetrics(value: unknown): { cx: number; cy: number } | null {
   if (Array.isArray(value) && value.length === 4 && value.every(Number.isFinite)) {
     const [left, top, right, bottom] = value.map(Number);
     return { cx: (left + right) / 2, cy: (top + bottom) / 2 };
   }
   if (value && typeof value === 'object') {
-    const x = Number(value.x);
-    const y = Number(value.y);
-    const width = Number(value.width);
-    const height = Number(value.height);
+    const bbox = value as UnknownRecord;
+    const x = Number(bbox.x);
+    const y = Number(bbox.y);
+    const width = Number(bbox.width);
+    const height = Number(bbox.height);
     if ([x, y, width, height].every(Number.isFinite)) return { cx: x + width / 2, cy: y + height / 2 };
   }
   return null;
 }
 
-function spatialRelations(objects) {
-  const results = [];
+function spatialRelations(objects: NormalizedObject[]): UnknownRecord[] {
+  const results: UnknownRecord[] = [];
   for (let leftIndex = 0; leftIndex < objects.length; leftIndex += 1) {
     for (let rightIndex = leftIndex + 1; rightIndex < objects.length; rightIndex += 1) {
       const left = objects[leftIndex];
@@ -223,13 +272,20 @@ function spatialRelations(objects) {
 }
 
 class InteractionEpisodeStore {
-  constructor({ ttlMs = 30 * 60 * 1000, idFactory = () => crypto.randomUUID() } = {}) {
+  ttlMs: number;
+  idFactory: () => string;
+  current: InteractionEpisode | null;
+
+  constructor({ ttlMs = 30 * 60 * 1000, idFactory = () => crypto.randomUUID() }: {
+    ttlMs?: number;
+    idFactory?: () => string;
+  } = {}) {
     this.ttlMs = ttlMs;
     this.idFactory = idFactory;
     this.current = null;
   }
 
-  start(now = Date.now()) {
+  start(now = Date.now()): InteractionEpisode {
     this.current = {
       id: this.idFactory(),
       state: 'active',
@@ -246,7 +302,7 @@ class InteractionEpisodeStore {
     return this.current;
   }
 
-  active(now = Date.now()) {
+  active(now = Date.now()): InteractionEpisode | null {
     if (!this.current || this.current.state !== 'active' || this.current.expiresAt <= now) {
       this.current = null;
       return null;
@@ -254,16 +310,16 @@ class InteractionEpisodeStore {
     return this.current;
   }
 
-  ensureActive(now = Date.now()) {
+  ensureActive(now = Date.now()): InteractionEpisode {
     return this.active(now) || this.start(now);
   }
 
-  touch(episode, now) {
+  touch(episode: InteractionEpisode, now: number): void {
     episode.updatedAt = now;
     episode.expiresAt = now + this.ttlMs;
   }
 
-  remember(episode, input) {
+  remember(episode: InteractionEpisode, input: UnknownRecord): NormalizedObject | null {
     const object = normalizeObject(input);
     if (!object) return null;
     const previous = episode.objects.get(object.objectId);
@@ -272,13 +328,13 @@ class InteractionEpisodeStore {
     return object;
   }
 
-  recordEvent(episode, type, payload, now) {
+  recordEvent(episode: InteractionEpisode, type: string, payload: UnknownRecord, now: number): void {
     episode.events.push({ type, ...payload, at: now });
     if (episode.events.length > 40) episode.events.splice(0, episode.events.length - 40);
     this.touch(episode, now);
   }
 
-  bindPointedObject(input, now = Date.now()) {
+  bindPointedObject(input: UnknownRecord, now = Date.now()) {
     const episode = this.ensureActive(now);
     const object = this.remember(episode, input);
     if (!object) return null;
@@ -289,7 +345,7 @@ class InteractionEpisodeStore {
     return this.snapshot(episode);
   }
 
-  bindThese(objectIds = null, now = Date.now()) {
+  bindThese(objectIds: string[] | null = null, now = Date.now()) {
     const episode = this.active(now);
     if (!episode) return null;
     const requested = Array.isArray(objectIds) && objectIds.length
@@ -297,16 +353,17 @@ class InteractionEpisodeStore {
       : episode.labels.size
         ? Array.from(episode.labels.values())
         : [episode.slots.that?.objectId, episode.slots.this?.objectId];
-    const seen = new Set();
+    const seen = new Set<string>();
     episode.slots.these = requested
+      .filter((objectId): objectId is string => typeof objectId === 'string')
       .map((objectId) => episode.objects.get(objectId))
-      .filter((object) => object && !seen.has(object.objectId) && seen.add(object.objectId));
+      .filter((object): object is NormalizedObject => Boolean(object && !seen.has(object.objectId) && seen.add(object.objectId)));
     if (!episode.slots.these.length) return null;
     this.recordEvent(episode, 'bind', { alias: 'these', objectIds: episode.slots.these.map((item) => item.objectId) }, now);
     return this.snapshot(episode);
   }
 
-  appendToThese(input, now = Date.now()) {
+  appendToThese(input: UnknownRecord, now = Date.now()) {
     const episode = this.ensureActive(now);
     const object = this.remember(episode, input);
     if (!object) return null;
@@ -321,7 +378,7 @@ class InteractionEpisodeStore {
     return this.snapshot(episode);
   }
 
-  bindCommandTarget(input, command, now = Date.now()) {
+  bindCommandTarget(input: UnknownRecord, command: unknown, now = Date.now()) {
     const episode = this.ensureActive(now);
     const mode = inferReferenceMode(command);
     const inferredIntent = inferPendingIntent(command);
@@ -342,7 +399,7 @@ class InteractionEpisodeStore {
     return result ? this.snapshot(episode) : null;
   }
 
-  labelCurrent(label, now = Date.now()) {
+  labelCurrent(label: unknown, now = Date.now()) {
     const episode = this.active(now);
     const normalized = String(label || '').trim().toUpperCase();
     const object = episode?.slots?.this;
@@ -360,7 +417,7 @@ class InteractionEpisodeStore {
     return this.snapshot(episode);
   }
 
-  bindHere(input, now = Date.now()) {
+  bindHere(input: UnknownRecord, now = Date.now()) {
     const episode = this.ensureActive(now);
     const object = this.remember(episode, input);
     if (!object) return null;
@@ -369,18 +426,20 @@ class InteractionEpisodeStore {
     return this.snapshot(episode);
   }
 
-  correctReference(alias, value, now = Date.now()) {
+  correctReference(alias: string, value: string | string[], now = Date.now()) {
     const episode = this.active(now);
     if (!episode || !['this', 'that', 'these', 'here'].includes(alias)) return null;
     if (alias === 'these') return this.bindThese(Array.isArray(value) ? value : [value], now);
+    const slotAlias = alias as Exclude<SlotAlias, 'these'>;
+    if (Array.isArray(value)) return null;
     const object = episode.objects.get(value);
     if (!object) return null;
-    episode.slots[alias] = object;
+    episode.slots[slotAlias] = object;
     this.recordEvent(episode, 'correct', { alias, objectIds: [object.objectId] }, now);
     return this.snapshot(episode);
   }
 
-  snapshot(episode = this.current) {
+  snapshot(episode: InteractionEpisode | null = this.current) {
     if (!episode) return null;
     return {
       id: episode.id,
@@ -414,7 +473,7 @@ class InteractionEpisodeStore {
   }
 }
 
-function inferReferenceMode(command) {
+function inferReferenceMode(command: unknown): SlotAlias | 'append' {
   const value = String(command || '').trim().toLowerCase();
   if (/\b(here|there)\b|这里|那里|这儿|那儿|此处|放到|写到|插入到/.test(value)) return 'here';
   if (/\b(and|also)\s+(?:this|that|it)\b|还有这个|还有它|以及这个|再加这个|并且这个/.test(value)) return 'append';
@@ -422,14 +481,14 @@ function inferReferenceMode(command) {
   return 'this';
 }
 
-function inferPendingIntent(command) {
+function inferPendingIntent(command: unknown): string | null {
   const value = String(command || '').trim().toLowerCase();
   if (/\badd\b|添加|加入|加到|放进/.test(value)) return 'add';
   if (/\b(?:move|put|place)\b|移动|挪到|放到/.test(value)) return 'move';
   return null;
 }
 
-function inferReferenceLabel(command) {
+function inferReferenceLabel(command: unknown): string | null {
   const value = String(command || '').trim();
   const patterns = [
     /(?:这是|这个是|标记为|标为|叫做)\s*([A-Z])(?:\b|$)/i,
@@ -437,7 +496,7 @@ function inferReferenceLabel(command) {
   ];
   for (const pattern of patterns) {
     const match = value.match(pattern);
-    if (match) return match[1].toUpperCase();
+    if (match?.[1]) return match[1].toUpperCase();
   }
   return null;
 }
