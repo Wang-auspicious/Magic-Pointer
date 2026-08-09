@@ -13,6 +13,14 @@ assert(source.includes('prefers-reduced-motion'));
 assert(source.includes('replaceChildren'));
 assert(source.includes('textMeasure.measureText'));
 assert(source.includes('anchor.choosePointerAnchor'));
+assert(source.includes('anchor.chooseAdaptivePanelAnchor'),
+  'every process/result panel must use the free-space-aware edge policy');
+assert(source.includes('session.panelPlacement?.side'),
+  'streaming updates must preserve the side chosen for this session');
+assert(source.includes('threadPanel.dataset.placementMode = placement.mode'),
+  'CSS motion must know whether the panel is outside the app or on a screen edge');
+assert(!source.includes("if (answerShape.shape === 'deliver' && isUsableTargetRect(session.targetWindowRect))"),
+  'inspect and deliver panels must not use different placement systems');
 assert(!source.includes('animationDelay'));
 assert(source.includes('GSAP'), 'must document the no-GSAP / vendor-later decision');
 assert(!source.includes('innerHTML'));

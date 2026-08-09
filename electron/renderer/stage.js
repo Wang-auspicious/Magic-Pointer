@@ -131,6 +131,7 @@
     capsulePlacement: null,
     capsulePlaced: false,
     capsuleDragged: false,
+    panelPlacement: null,
     resultPlacement: null,
     resultDragged: false,
     selectionCount: 1,
@@ -979,28 +980,24 @@
     const rect = threadPanel.getBoundingClientRect();
     const width = rect.width || Math.min(380, window.innerWidth - 16);
     const height = rect.height || 96;
-    // 「要送出去」的那一路贴在目标应用的**右侧外沿**，不挂在胶囊底下。
-    //
-    // 因为这一路是在打磨一段要发给别人的话：你要一边看着聊天窗里的上文，
-    // 一边改这段草稿。挂在选区旁边的框会正好压住你要参照的那几行。贴在窗口
-    // 右边，两样东西同时看得见——这也是参考里那块面板的位置。
-    // 右边放不下就换左边；两边都放不下才退回挂在胶囊下面。
-    if (answerShape.shape === 'deliver' && isUsableTargetRect(session.targetWindowRect)) {
-      const win = session.targetWindowRect;
-      const gapOut = 12;
-      const right = win.x + win.width + gapOut;
-      const left = win.x - gapOut - width;
-      const x = right + width <= window.innerWidth - 8
-        ? right
-        : (left >= 8 ? left : null);
-      if (x !== null) {
-        const y = Math.max(8, Math.min(win.y + 12, window.innerHeight - height - 8));
-        threadPanel.style.left = `${x}px`;
-        threadPanel.style.top = `${y}px`;
-        threadPanel.dataset.side = 'beside';
-        threadPanel.dataset.quadrant = x === right ? 'right' : 'left';
-        return;
-      }
+    if (typeof anchor.chooseAdaptivePanelAnchor === 'function') {
+      const focus = isUsableTargetRect(state.target)
+        ? state.target
+        : (session.pointer ? { ...session.pointer, width: 0, height: 0 } : null);
+      const placement = anchor.chooseAdaptivePanelAnchor({
+        source: isUsableTargetRect(session.targetWindowRect) ? session.targetWindowRect : null,
+        focus,
+        surface: { width, height },
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+        preferredSide: session.panelPlacement?.side,
+      });
+      session.panelPlacement = placement;
+      threadPanel.style.left = `${placement.x}px`;
+      threadPanel.style.top = `${placement.y}px`;
+      threadPanel.dataset.side = placement.side;
+      threadPanel.dataset.quadrant = placement.side;
+      threadPanel.dataset.placementMode = placement.mode;
+      return;
     }
     const capsuleRect = capsule.hidden ? null : capsule.getBoundingClientRect();
     const fallback = session.capsulePlacement || session.pointer || { x: 8, y: 8 };
@@ -2198,6 +2195,7 @@
       session.capsulePlacement = null;
       session.capsulePlaced = false;
       session.capsuleDragged = false;
+      session.panelPlacement = null;
       session.resultPlacement = null;
       session.resultDragged = false;
       session.selectionCount = 1;
