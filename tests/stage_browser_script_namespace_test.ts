@@ -10,7 +10,7 @@ for (const relativePath of [
   'electron/gesture_capture.ts',
   'electron/answer_shape_policy.ts',
   'electron/capture_proof_policy.ts',
-  'electron/stage_state.js',
+  'electron/stage_state.ts',
   'electron/stage_anchor.ts',
   'electron/stage_turn_stream.ts',
   'electron/stage_chips_policy.ts',

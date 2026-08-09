@@ -13,6 +13,48 @@
 // detect no-ops. Loaded both from node tests (CommonJS) and from the stage
 // renderer via a plain <script> tag (globalThis.StageState).
 
+(() => {
+type InputMode = 'text' | 'voice';
+type StageName = typeof STATES[number];
+type TurnStatus = 'done' | 'failed' | 'pending';
+type UnknownRecord = Record<string, unknown>;
+
+interface Rect {
+  height: number;
+  width: number;
+  x: number;
+  y: number;
+}
+
+interface Turn {
+  ask: string;
+  error: unknown;
+  id: number;
+  result: unknown;
+  status: TurnStatus;
+}
+
+interface DeliveryProgress {
+  label: string;
+  step: number;
+  totalSteps: number;
+}
+
+interface StageMachineState {
+  command: string;
+  config: { reducedMotion: boolean };
+  deliveryProgress: DeliveryProgress | null;
+  error: unknown;
+  inputMode: InputMode | null;
+  name: StageName;
+  nextTurnId: number;
+  notice: { message: string } | null;
+  result: unknown;
+  target: Rect | null;
+  transcript: string;
+  turns: Turn[];
+}
+
 const STATES = Object.freeze([
   'hidden',
   'targeting',
@@ -23,9 +65,14 @@ const STATES = Object.freeze([
   'result',
   'error',
   'dismissing',
-]);
+] as const);
 
-function initialState(config = {}) {
+function recordOf(value: unknown): UnknownRecord | null {
+  return value !== null && typeof value === 'object' ? (value as UnknownRecord) : null;
+}
+
+function initialState(config: unknown = {}): StageMachineState {
+  const settings = recordOf(config);
   return {
     name: 'hidden',
     target: null,
@@ -46,17 +93,18 @@ function initialState(config = {}) {
     // A transient status line ({ message }) or null. Cleared the moment a real
     // outcome arrives, so "正在读取…" can never sit under a finished answer.
     notice: null,
-    config: { reducedMotion: Boolean(config && config.reducedMotion) },
+    config: { reducedMotion: Boolean(settings?.reducedMotion) },
   };
 }
 
-function normalizeRect(value) {
-  if (!value || typeof value !== 'object') return null;
+function normalizeRect(value: unknown): Rect | null {
+  const candidate = recordOf(value);
+  if (candidate === null) return null;
   const rect = {
-    x: Number(value.x),
-    y: Number(value.y),
-    width: Number(value.width),
-    height: Number(value.height),
+    x: Number(candidate.x),
+    y: Number(candidate.y),
+    width: Number(candidate.width),
+    height: Number(candidate.height),
   };
   if (!Number.isFinite(rect.x) || !Number.isFinite(rect.y)) return null;
   if (!Number.isFinite(rect.width) || !Number.isFinite(rect.height)) return null;
@@ -65,26 +113,27 @@ function normalizeRect(value) {
 
 // Delivery progress must describe a real, bounded write ({ step, totalSteps }).
 // Malformed payloads are rejected so the UI can never render invented progress.
-function normalizeDeliveryProgress(value) {
-  if (!value || typeof value !== 'object') return null;
-  const step = Number(value.step);
-  const totalSteps = Number(value.totalSteps);
+function normalizeDeliveryProgress(value: unknown): DeliveryProgress | null {
+  const candidate = recordOf(value);
+  if (candidate === null) return null;
+  const step = Number(candidate.step);
+  const totalSteps = Number(candidate.totalSteps);
   if (!Number.isFinite(step) || !Number.isFinite(totalSteps) || totalSteps <= 0) return null;
   return {
     step: Math.min(Math.max(0, step), totalSteps),
     totalSteps,
-    label: value.label == null ? '' : String(value.label),
+    label: candidate.label == null ? '' : String(candidate.label),
   };
 }
 
-function toDismissing(state) {
+function toDismissing(state: StageMachineState): StageMachineState {
   return { ...state, name: 'dismissing' };
 }
 
 // Open a turn for something the user just asked for. The ask is recorded up
 // front so the question is on screen while the answer is still being produced.
-function openTurn(state, ask) {
-  const turn = {
+function openTurn(state: StageMachineState, ask: unknown): Pick<StageMachineState, 'nextTurnId' | 'turns'> {
+  const turn: Turn = {
     id: state.nextTurnId,
     ask: ask == null ? '' : String(ask),
     status: 'pending',
@@ -97,8 +146,11 @@ function openTurn(state, ask) {
 // Settle the newest pending turn. Results can also arrive without a preceding
 // ask (a runtime-issue capture, an ineligible selection), in which case the
 // outcome opens and closes a turn of its own so the thread stays complete.
-function closeTurn(state, { result = null, error = null }) {
-  const status = error == null ? 'done' : 'failed';
+function closeTurn(
+  state: StageMachineState,
+  { result = null, error = null }: { error?: unknown; result?: unknown },
+): Pick<StageMachineState, 'nextTurnId' | 'turns'> {
+  const status: TurnStatus = error == null ? 'done' : 'failed';
   const turns = state.turns.slice();
   let index = -1;
   for (let i = turns.length - 1; i >= 0; i -= 1) {
@@ -114,25 +166,29 @@ function closeTurn(state, { result = null, error = null }) {
   return { turns, nextTurnId: state.nextTurnId };
 }
 
-function toResult(state, event) {
+function toResult(state: StageMachineState, event: UnknownRecord): StageMachineState {
   const result = event.result == null ? null : event.result;
   return { ...state, name: 'result', result, error: null, notice: null, ...closeTurn(state, { result }) };
 }
 
-function toError(state, event) {
+function toError(state: StageMachineState, event: UnknownRecord): StageMachineState {
   const error = event.error == null ? { message: 'unknown error' } : event.error;
   return { ...state, name: 'error', error, notice: null, ...closeTurn(state, { error }) };
 }
 
-function transition(state, event) {
+function transition(
+  state: StageMachineState | null | undefined,
+  event: unknown,
+): StageMachineState | null | undefined {
   if (!state || typeof state !== 'object') return state;
-  if (!event || typeof event !== 'object' || typeof event.type !== 'string') return state;
-  const type = event.type;
+  const candidate = recordOf(event);
+  if (candidate === null || typeof candidate.type !== 'string') return state;
+  const type = candidate.type;
 
   // Reduced motion may change at any time (OS setting toggle) without
   // disturbing the interaction state.
   if (type === 'SET_REDUCED_MOTION') {
-    return { ...state, config: { ...state.config, reducedMotion: Boolean(event.value) } };
+    return { ...state, config: { ...state.config, reducedMotion: Boolean(candidate.value) } };
   }
 
   // A transient line of status ("正在读取选中的内容…"), shown while something
@@ -140,64 +196,64 @@ function transition(state, event) {
   // read must not move the machine, or a slow first-run read would look like a
   // different phase than a fast one.
   if (type === 'NOTICE') {
-    const message = String(event.notice?.message || '');
+    const message = String(recordOf(candidate.notice)?.message || '');
     return { ...state, notice: message ? { message } : null };
   }
 
   switch (state.name) {
     case 'hidden':
       if (type === 'WAKE') {
-        return { ...initialState(state.config), name: 'targeting', target: normalizeRect(event.target) };
+        return { ...initialState(state.config), name: 'targeting', target: normalizeRect(candidate.target) };
       }
       return state;
 
     case 'targeting':
-      if (type === 'TARGET_MOVE') return { ...state, target: normalizeRect(event.target) };
-      if (type === 'FREEZE') return { ...state, name: 'frozen', target: normalizeRect(event.target) || state.target };
+      if (type === 'TARGET_MOVE') return { ...state, target: normalizeRect(candidate.target) };
+      if (type === 'FREEZE') return { ...state, name: 'frozen', target: normalizeRect(candidate.target) || state.target };
       // Direct results (runtime-issue capture) and early errors (ineligible
       // selection) may land before the capsule ever opens.
-      if (type === 'RESULT') return toResult(state, event);
-      if (type === 'ERROR') return toError(state, event);
+      if (type === 'RESULT') return toResult(state, candidate);
+      if (type === 'ERROR') return toError(state, candidate);
       if (type === 'DISMISS') return toDismissing(state);
       return state;
 
     case 'frozen':
       if (type === 'OPEN_CAPSULE') {
-        const mode = event.mode === 'text' ? 'text' : 'voice';
+        const mode: InputMode = candidate.mode === 'text' ? 'text' : 'voice';
         return { ...state, name: `capsule-${mode}`, inputMode: mode, transcript: '' };
       }
-      if (type === 'RESULT') return toResult(state, event);
-      if (type === 'ERROR') return toError(state, event);
+      if (type === 'RESULT') return toResult(state, candidate);
+      if (type === 'ERROR') return toError(state, candidate);
       if (type === 'DISMISS') return toDismissing(state);
       return state;
 
     case 'capsule-voice':
     case 'capsule-text': {
       if (type === 'TRANSCRIPT') {
-        return { ...state, transcript: String(event.transcript == null ? '' : event.transcript) };
+        return { ...state, transcript: String(candidate.transcript == null ? '' : candidate.transcript) };
       }
       if (type === 'OPEN_CAPSULE') {
-        const mode = event.mode === 'text' ? 'text' : 'voice';
+        const mode: InputMode = candidate.mode === 'text' ? 'text' : 'voice';
         if (`capsule-${mode}` === state.name) return state;
         return { ...state, name: `capsule-${mode}`, inputMode: mode };
       }
       if (type === 'SUBMIT') {
-        const command = event.command == null ? state.transcript : String(event.command);
+        const command = candidate.command == null ? state.transcript : String(candidate.command);
         return { ...state, name: 'processing', command, ...openTurn(state, command) };
       }
       // Dictation failures surface immediately from the capsule.
-      if (type === 'RESULT') return toResult(state, event);
-      if (type === 'ERROR') return toError(state, event);
+      if (type === 'RESULT') return toResult(state, candidate);
+      if (type === 'ERROR') return toError(state, candidate);
       if (type === 'DISMISS') return toDismissing(state);
       return state;
     }
 
     case 'processing':
       if (type === 'COMPLETE') return toDismissing(state);
-      if (type === 'RESULT') return toResult(state, event);
-      if (type === 'ERROR') return toError(state, event);
+      if (type === 'RESULT') return toResult(state, candidate);
+      if (type === 'ERROR') return toError(state, candidate);
       if (type === 'DELIVERY_PROGRESS') {
-        const progress = normalizeDeliveryProgress(event.progress);
+        const progress = normalizeDeliveryProgress(candidate.progress);
         if (!progress) return state;
         return { ...state, deliveryProgress: progress };
       }
@@ -211,7 +267,7 @@ function transition(state, event) {
       // deliberately preserved: the earlier question and its answer stay on
       // screen instead of being replaced by whatever comes next.
       if (type === 'OPEN_CAPSULE') {
-        const mode = event.mode === 'text' ? 'text' : 'voice';
+        const mode: InputMode = candidate.mode === 'text' ? 'text' : 'voice';
         return {
           ...state,
           name: `capsule-${mode}`,
@@ -225,7 +281,7 @@ function transition(state, event) {
       // The composer stays live under a finished thread, so a follow-up can be
       // typed and sent without first reopening the capsule.
       if (type === 'SUBMIT') {
-        const command = event.command == null ? state.transcript : String(event.command);
+        const command = candidate.command == null ? state.transcript : String(candidate.command);
         return {
           ...state,
           name: 'processing',
@@ -236,7 +292,7 @@ function transition(state, event) {
           ...openTurn(state, command),
         };
       }
-      if (state.name === 'result' && type === 'ACTION_START') {        const command = String(event.command || '');
+      if (state.name === 'result' && type === 'ACTION_START') {        const command = String(candidate.command || '');
         return {
           ...state,
           name: 'processing',
@@ -248,7 +304,7 @@ function transition(state, event) {
         };
       }
       if (state.name === 'result' && type === 'DELIVERY_PROGRESS') {
-        const progress = normalizeDeliveryProgress(event.progress);
+        const progress = normalizeDeliveryProgress(candidate.progress);
         if (!progress) return state;
         return { ...state, deliveryProgress: progress };
       }
@@ -269,19 +325,19 @@ function transition(state, event) {
 // runs, and runs of everything else — so Chinese and space-delimited text both
 // diff at natural word granularity.
 
-function tokenizeWords(text) {
+function tokenizeWords(text: unknown): string[] {
   if (text == null) return [];
   return String(text).match(/[㐀-鿿]|\s+|[^\s㐀-鿿]+/g) || [];
 }
 
 // Classic LCS diff. Returns merged segments:
 // [{ type: 'equal' | 'ins' | 'del', text }].
-function wordDiff(oldText, newText) {
+function wordDiff(oldText: unknown, newText: unknown): Array<{ text: string; type: 'del' | 'equal' | 'ins' }> {
   const a = tokenizeWords(oldText);
   const b = tokenizeWords(newText);
   const n = a.length;
   const m = b.length;
-  const table = [];
+  const table: number[][] = [];
   for (let i = 0; i <= n; i += 1) table.push(new Array(m + 1).fill(0));
   for (let i = n - 1; i >= 0; i -= 1) {
     for (let j = m - 1; j >= 0; j -= 1) {
@@ -290,8 +346,8 @@ function wordDiff(oldText, newText) {
         : Math.max(table[i + 1][j], table[i][j + 1]);
     }
   }
-  const segments = [];
-  const push = (type, text) => {
+  const segments: Array<{ text: string; type: 'del' | 'equal' | 'ins' }> = [];
+  const push = (type: 'del' | 'equal' | 'ins', text: string): void => {
     if (!text) return;
     const last = segments[segments.length - 1];
     if (last && last.type === type) last.text += text;
@@ -329,5 +385,6 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = StageState;
 }
 if (typeof globalThis !== 'undefined') {
-  globalThis.StageState = StageState;
+  (globalThis as typeof globalThis & { StageState?: typeof StageState }).StageState = StageState;
 }
+})();
