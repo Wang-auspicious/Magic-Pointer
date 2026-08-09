@@ -9,14 +9,14 @@
 const assert = require('assert');
 const fs = require('fs');
 
-const preload = fs.readFileSync('electron/preload.js', 'utf8');
+const preload = fs.readFileSync('electron/preload.ts', 'utf8');
 const main = fs.readFileSync('electron/main.js', 'utf8');
 const stageJs = fs.readFileSync('electron/renderer/stage.js', 'utf8');
 const stageHtml = fs.readFileSync('electron/renderer/stage.html', 'utf8');
 
 // The preload surface forwards exactly two fields, both of them harmless on
 // their own: the visible text and the session token that scopes it.
-assert(preload.includes("insertResultText: (payload) => ipcRenderer.send('stage:insert-result-text'"));
+assert(preload.includes('insertResultText:') && preload.includes("ipcRenderer.send('stage:insert-result-text'"));
 assert(preload.includes("text: String(payload?.text || '')"));
 assert(preload.includes('selectionSessionToken: payload?.selectionSessionToken || null'));
 assert(

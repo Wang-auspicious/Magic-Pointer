@@ -7,7 +7,7 @@ const html = fs.readFileSync('electron/renderer/onboarding.html', 'utf8');
 const css = fs.readFileSync('electron/renderer/onboarding.css', 'utf8');
 const js = fs.readFileSync('electron/renderer/onboarding.js', 'utf8');
 const main = fs.readFileSync('electron/main.js', 'utf8');
-const preload = fs.readFileSync('electron/preload.js', 'utf8');
+const preload = fs.readFileSync('electron/preload.ts', 'utf8');
 
 for (const id of [
   'onboarding-welcome',

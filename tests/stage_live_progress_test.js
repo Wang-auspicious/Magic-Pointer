@@ -9,7 +9,7 @@ const fs = require('fs');
 const CardModel = require('../electron/cards');
 
 const main = fs.readFileSync('electron/main.js', 'utf8');
-const preload = fs.readFileSync('electron/preload.js', 'utf8');
+const preload = fs.readFileSync('electron/preload.ts', 'utf8');
 const stage = fs.readFileSync('electron/renderer/stage.js', 'utf8');
 
 // ---- 主进程：答案桥的阶段要发出去，不能只喂给 timeline ----
@@ -24,7 +24,7 @@ assert(/onProgress: \(record\) => \{\s*\n\s*if \(!selectionSessions\.isCurrentRe
 
 // ---- preload ----
 assert(preload.includes("onCardPatch:"), 'preload 要把这条通道暴露出来');
-assert(preload.includes("ipcRenderer.on('stage:card-patch'"));
+assert(preload.includes("onPayload('stage:card-patch'"));
 
 // ---- 胶囊 ----
 assert(stage.includes('function patchRunningCard('));

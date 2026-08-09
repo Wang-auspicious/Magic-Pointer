@@ -4,7 +4,7 @@ const assert = require('assert');
 const fs = require('fs');
 
 const main = fs.readFileSync('electron/main.js', 'utf8');
-const preload = fs.readFileSync('electron/preload.js', 'utf8');
+const preload = fs.readFileSync('electron/preload.ts', 'utf8');
 const stage = fs.readFileSync('electron/renderer/stage.js', 'utf8');
 
 assert(main.includes('stageWindow.setShape(regions)'),

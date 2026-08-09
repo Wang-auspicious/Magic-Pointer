@@ -75,7 +75,7 @@ const { stageEventFromBridge } = require('../electron/stage_contract');
 // Guide lifecycle: the overlay exists only for an explicit [POINT] request.
 {
   const main = fs.readFileSync(path.join(root, 'electron', 'main.js'), 'utf8');
-  const preload = fs.readFileSync(path.join(root, 'electron', 'preload.js'), 'utf8');
+  const preload = fs.readFileSync(path.join(root, 'electron', 'preload.ts'), 'utf8');
   const overlay = fs.readFileSync(path.join(root, 'electron', 'renderer', 'overlay.js'), 'utf8');
 
   assert(preload.includes('overlay:guide-finished'), 'preload must expose guide completion');

@@ -3,14 +3,14 @@ const fs = require('fs');
 const path = require('path');
 
 const root = path.resolve(__dirname, '..');
-const preload = fs.readFileSync(path.join(root, 'electron', 'preload.js'), 'utf8');
+const preload = fs.readFileSync(path.join(root, 'electron', 'preload.ts'), 'utf8');
 const main = fs.readFileSync(path.join(root, 'electron', 'main.js'), 'utf8');
 const html = fs.readFileSync(path.join(root, 'electron', 'renderer', 'stage.html'), 'utf8');
 const js = fs.readFileSync(path.join(root, 'electron', 'renderer', 'stage.js'), 'utf8');
 const css = fs.readFileSync(path.join(root, 'electron', 'renderer', 'stage.css'), 'utf8');
 
-assert(preload.includes("listAgentSessions: (selectionSessionToken) => ipcRenderer.invoke('stage:agent-sessions'"));
-assert(preload.includes("dispatchAgentPrompt: (payload) => ipcRenderer.invoke('stage:dispatch-agent-prompt'"));
+assert(preload.includes('listAgentSessions:') && preload.includes("ipcRenderer.invoke('stage:agent-sessions'"));
+assert(preload.includes('dispatchAgentPrompt:') && preload.includes("ipcRenderer.invoke('stage:dispatch-agent-prompt'"));
 assert(main.includes("ipcMain.handle('stage:agent-sessions'"));
 assert(main.includes("ipcMain.handle('stage:dispatch-agent-prompt'"));
 // The stage must NOT force the handoff mode; it forwards what the surface asked

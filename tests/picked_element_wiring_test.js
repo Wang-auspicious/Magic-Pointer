@@ -11,7 +11,7 @@ const path = require('path');
 
 const root = path.resolve(__dirname, '..');
 const mainSource = fs.readFileSync(path.join(root, 'electron', 'main.js'), 'utf8');
-const preloadSource = fs.readFileSync(path.join(root, 'electron', 'preload.js'), 'utf8');
+const preloadSource = fs.readFileSync(path.join(root, 'electron', 'preload.ts'), 'utf8');
 const stageSource = fs.readFileSync(path.join(root, 'electron', 'renderer', 'stage.js'), 'utf8');
 
 // --- withPickedElement 的行为 -----------------------------------------------

@@ -7,7 +7,7 @@ const path = require('path');
 const root = path.resolve(__dirname, '..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
 const main = read('electron/main.js');
-const preload = read('electron/preload.js');
+const preload = read('electron/preload.ts');
 const stage = read('electron/renderer/stage.js');
 const stageHtml = read('electron/renderer/stage.html');
 
@@ -41,6 +41,6 @@ assert(main.includes("if (!selectionSession)"),
 assert(main.includes("if (!selectionSession.snapshot)"),
   'a live session whose snapshot is pending must be handled separately');
 assert(preload.includes("graceful: options?.graceful === true"));
-assert(preload.includes("ipcRenderer.on('stage:pointer-input'"));
+assert(preload.includes("onPayload('stage:pointer-input'"));
 
 console.log('voice trigger integration static test ok');

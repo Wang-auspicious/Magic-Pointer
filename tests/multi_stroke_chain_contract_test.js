@@ -15,7 +15,7 @@ const overlay = fs.readFileSync('electron/renderer/overlay.js', 'utf8');
 const stage = fs.readFileSync('electron/renderer/stage.js', 'utf8');
 const stageHtml = fs.readFileSync('electron/renderer/stage.html', 'utf8');
 const stageCss = fs.readFileSync('electron/renderer/stage.css', 'utf8');
-const preload = fs.readFileSync('electron/preload.js', 'utf8');
+const preload = fs.readFileSync('electron/preload.ts', 'utf8');
 const {
   chainFinalizeDelay,
   pointerContinuesGestureChain,

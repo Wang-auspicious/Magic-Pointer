@@ -6,7 +6,7 @@ const path = require('path');
 
 const root = path.resolve(__dirname, '..');
 const main = readCode('electron/main.js');
-const preload = readCode('electron/preload.js');
+const preload = readCode('electron/preload.ts');
 const stage = readCode('electron/renderer/stage.js');
 const pointerState = readCode('scripts/pointer_input_state.ps1');
 
@@ -63,7 +63,7 @@ function requireCode(source, pattern, contract) {
 (function preloadPreservesTheExplicitFocusRequest() {
   requireCode(
     preload,
-    /setMouseCapture\s*:\s*\(\s*enabled\s*,\s*options\s*=\s*\{\}\s*\)\s*=>\s*ipcRenderer\.send\(\s*'stage:set-mouse-capture'\s*,\s*\{[\s\S]*?enabled\s*:\s*enabled\s*===\s*true\s*,[\s\S]*?requestFocus\s*:\s*options\?\.requestFocus\s*===\s*true\s*,[\s\S]*?regions\s*:\s*Array\.isArray\(options\?\.regions\)[\s\S]*?\}\s*\)/,
+    /setMouseCapture\s*:\s*\(\s*enabled\s*:\s*unknown\s*,\s*options\s*:\s*\{[^}]*requestFocus\?\s*:\s*boolean[^}]*regions\?\s*:\s*unknown\[\][^}]*\}\s*=\s*\{\}\s*\)\s*=>\s*ipcRenderer\.send\(\s*'stage:set-mouse-capture'\s*,\s*\{[\s\S]*?enabled\s*:\s*enabled\s*===\s*true\s*,[\s\S]*?requestFocus\s*:\s*options\?\.requestFocus\s*===\s*true\s*,[\s\S]*?regions\s*:\s*Array\.isArray\(options\?\.regions\)[\s\S]*?\}\s*\)/,
     'preload must accept focus options and bound the explicit native hit-region list',
   );
 }());

@@ -12,7 +12,7 @@ const CardModel = require('../electron/cards');
 const watcher = require('../electron/task_watcher');
 
 const main = fs.readFileSync('electron/main.js', 'utf8');
-const preload = fs.readFileSync('electron/preload.js', 'utf8');
+const preload = fs.readFileSync('electron/preload.ts', 'utf8');
 const live = fs.readFileSync('electron/renderer/live_cards.js', 'utf8');
 const studio = fs.readFileSync('electron/renderer/studio.js', 'utf8');
 const companion = fs.readFileSync('electron/renderer/companion.js', 'utf8');

@@ -130,7 +130,7 @@ console.log('session_timeline_test: all assertions passed');
   const path = require('path');
   const root = path.resolve(__dirname, '..');
   const main = fs.readFileSync(path.join(root, 'electron', 'main.js'), 'utf8');
-  const preload = fs.readFileSync(path.join(root, 'electron', 'preload.js'), 'utf8');
+  const preload = fs.readFileSync(path.join(root, 'electron', 'preload.ts'), 'utf8');
 
   // Fed: activation opens a session, bridges report phases into it, outcomes close it.
   assert(main.includes("sessionTimeline.begin(entry.token, { reason: String(reason || '') })"), 'sessions never begin');
