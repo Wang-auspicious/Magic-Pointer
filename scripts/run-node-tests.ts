@@ -26,7 +26,7 @@ function run(args: string[]): number {
 const sourceFiles = [...walkCode('electron'), ...walkCode('scripts')].sort();
 const testFiles = fs
   .readdirSync(path.join(root, 'tests'), { withFileTypes: true })
-  .filter((entry) => entry.isFile() && entry.name.endsWith('_test.js'))
+  .filter((entry) => entry.isFile() && /_test\.[jt]s$/.test(entry.name))
   .map((entry) => path.join('tests', entry.name))
   .sort();
 
@@ -55,7 +55,16 @@ function runTypecheck(): number {
     'false',
   ]);
   if (electronStatus !== 0) return electronStatus;
-  return run([cli, '--project', 'tsconfig.tools.json', '--noEmit', '--pretty', 'false']);
+  const toolsStatus = run([
+    cli,
+    '--project',
+    'tsconfig.tools.json',
+    '--noEmit',
+    '--pretty',
+    'false',
+  ]);
+  if (toolsStatus !== 0) return toolsStatus;
+  return run([cli, '--project', 'tsconfig.tests.json', '--noEmit', '--pretty', 'false']);
 }
 
 if (runLint() !== 0) failures.push('lint');

@@ -29,6 +29,6 @@ assert(!main.includes('console.log(payload)'));
 assert(pkg.scripts.test.includes('scripts/run-node-tests.ts'));
 assert(runner.includes("walkCode('electron')"));
 assert(runner.includes("require.resolve('tsx/cjs')"));
-assert(runner.includes("entry.name.endsWith('_test.js')"));
+assert(runner.includes('/_test\\.[jt]s$/'));
 
 console.log('credential main static test ok');

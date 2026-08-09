@@ -1,17 +1,34 @@
 'use strict';
 
 (() => {
-  function validPoint(point) {
-    return point
-      && Number.isFinite(Number(point.x))
-      && Number.isFinite(Number(point.y));
+  type UnknownRecord = Record<string, unknown>;
+
+  interface CaptureMouseInput {
+    dragging?: boolean;
+    hasInteractiveSurface?: boolean;
+    interactiveRegions?: unknown;
+    pointer?: unknown;
   }
 
-  function pointInRegions(point, regions = []) {
+  function recordOf(value: unknown): UnknownRecord | null {
+    return value !== null && typeof value === 'object' ? (value as UnknownRecord) : null;
+  }
+
+  function validPoint(point: unknown): boolean {
+    const candidate = recordOf(point);
+    return candidate !== null
+      && Number.isFinite(Number(candidate.x))
+      && Number.isFinite(Number(candidate.y));
+  }
+
+  function pointInRegions(point: unknown, regions: unknown = []): boolean {
     if (!validPoint(point) || !Array.isArray(regions)) return false;
-    const x = Number(point.x);
-    const y = Number(point.y);
-    return regions.some((region) => {
+    const candidate = recordOf(point);
+    if (candidate === null) return false;
+    const x = Number(candidate.x);
+    const y = Number(candidate.y);
+    return regions.some((value: unknown) => {
+      const region = recordOf(value);
       const left = Number(region?.x);
       const top = Number(region?.y);
       const width = Number(region?.width);
@@ -33,12 +50,15 @@
     pointer,
     interactiveRegions,
     dragging = false,
-  } = {}) {
+  }: CaptureMouseInput = {}): boolean {
     if (dragging === true) return true;
     return hasInteractiveSurface === true && pointInRegions(pointer, interactiveRegions);
   }
 
   const api = { pointInRegions, shouldCaptureMouse };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
-  if (typeof globalThis !== 'undefined') globalThis.MagicPointerStageHitPolicy = api;
+  if (typeof globalThis !== 'undefined') {
+    (globalThis as typeof globalThis & { MagicPointerStageHitPolicy?: typeof api })
+      .MagicPointerStageHitPolicy = api;
+  }
 })();

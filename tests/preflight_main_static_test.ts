@@ -28,6 +28,6 @@ assert(main.includes('manifestDigest'));
 assert(main.includes('requiredPaths'));
 assert(main.includes('microphonePermissionStatus'));
 assert(pkg.scripts.test.includes('scripts/run-node-tests.ts'));
-assert(runner.includes("entry.name.endsWith('_test.js')"));
+assert(runner.includes('/_test\\.[jt]s$/'));
 
 console.log('preflight main static test ok');
