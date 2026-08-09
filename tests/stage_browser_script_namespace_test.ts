@@ -10,6 +10,7 @@ for (const relativePath of [
   'electron/stage_state.js',
   'electron/stage_anchor.js',
   'electron/stage_chips_policy.ts',
+  'electron/stage_pick_policy.ts',
   'electron/stage_hit_policy.ts',
   'electron/voice_trigger_policy.ts',
 ]) {
@@ -32,6 +33,7 @@ for (const relativePath of [
 assert(context.globalThis.StageState, 'StageState browser API must exist');
 assert(context.globalThis.StageAnchor, 'StageAnchor browser API must exist');
 assert(context.globalThis.StageChipsPolicy, 'StageChipsPolicy browser API must exist');
+assert(context.globalThis.StagePickPolicy, 'StagePickPolicy browser API must exist');
 assert(context.globalThis.MagicPointerStageHitPolicy, 'Stage hit-test policy browser API must exist');
 assert(context.globalThis.MagicPointerVoiceTrigger, 'voice trigger browser API must exist');
 
