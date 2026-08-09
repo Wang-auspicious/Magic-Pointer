@@ -72,7 +72,31 @@ assert(source.includes('capsuleMaxWidthDip'));
 assert(css.includes('.fly-letter'));
 assert(css.includes('.processing-shimmer'));
 assert(css.includes('.voice-waveform'));
+const processStart = css.indexOf('.processing-shimmer {');
+const processEnd = css.indexOf(".stage-capsule[data-phase='processing']", processStart);
+const processCss = css.slice(processStart, processEnd);
+assert(processCss.includes('var(--stage-process-ink)'),
+  'unknown progress must use the neutral process ink token');
+assert(processCss.includes('.processing-shimmer::after'),
+  'unknown progress must have one quiet activity dot');
+assert(!processCss.includes('rgba(134, 239, 172'),
+  'the disliked green/orange/pink/blue sweep must not return');
+assert(!processCss.includes('filter: blur'),
+  'transparent stage processing must not depend on a blurred rainbow layer');
+assert(css.includes(".stage-thread[data-side='left']"));
+assert(css.includes(".stage-thread[data-side='right']"));
+assert(css.includes(".stage-thread[data-phase='finished'] .thread-head"),
+  'completion content must settle after the shell instead of appearing in one frame');
+assert(source.includes("threadPanel.dataset.phase = pending ? 'running' : failed ? 'failed' : 'finished'"));
+assert(source.includes("threadEyebrowText.textContent = pending ? 'WORKING' : failed ? 'NEEDS ATTENTION' : 'TASK FINISHED'"));
+assert(source.includes("capsuleInput.placeholder = name === 'processing' ? '正在处理…'"),
+  'the neutral processing capsule must state what it is doing');
 assert(css.includes('@media (prefers-reduced-motion: reduce)'));
+const reducedMotionCss = css.slice(css.lastIndexOf('@media (prefers-reduced-motion: reduce)'));
+assert(reducedMotionCss.includes('.processing-shimmer::after'),
+  'the activity dot must stop pulsing when reduced motion is requested');
+assert(reducedMotionCss.includes(".stage-thread[data-phase='finished'] .thread-head"),
+  'the staggered completion children must become immediate under reduced motion');
 assert(!/gsap/i.test(css));
 // Capsule placement contract: anchor once next to the selection, never
 // drift afterwards, and let the user drag the bubble to a new spot.

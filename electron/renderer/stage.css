@@ -29,6 +29,8 @@
   --stage-neutral-ink: #16181d;
   --stage-neutral-ink-soft: #5c6270;
   --stage-neutral-ink-faint: #8b91a0;
+  --stage-process-ink: #16181d;
+  --stage-process-wash: rgba(22, 24, 29, 0.08);
 
   --stage-graphite: #0E1116;
   --stage-graphite-raised: #161B22;
@@ -356,39 +358,47 @@ body {
   }
 }
 
-/* --- Processing sweep -------------------------------------------------------
- * Vida.md §3 第 6 条：「进度用色带扫过，不用百分比不用转圈。廉价且不撒谎。」
- * 一条极淡的彩色带从左扫到右，一秒四分之三一趟。它不声称任何进度——它只说
- * 「还在跑」，而这正好是我们唯一知道的事。上一版是一条蓝色斜光，和整条输入条
- * 同色，扫过去几乎看不见。 */
+/* --- Unknown progress ------------------------------------------------------
+ * One neutral ink wash says "still working" without inventing a percentage.
+ * The old green/orange/pink/blue strip competed with the text and looked like
+ * three unrelated tasks. Keep one material and one quiet activity dot. */
 .processing-shimmer {
   position: absolute;
   inset: 0;
   z-index: 0;
   border-radius: inherit;
   overflow: hidden;
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    rgba(134, 239, 172, 0.34) 18%,
-    rgba(253, 186, 116, 0.30) 38%,
-    rgba(249, 168, 212, 0.36) 56%,
-    rgba(147, 197, 253, 0.30) 74%,
-    transparent 100%
-  );
-  background-size: 62% 100%;
+  background: linear-gradient(90deg, transparent 0%, var(--stage-process-wash) 50%, transparent 100%);
+  background-size: 44% 100%;
   background-repeat: no-repeat;
-  filter: blur(6px);
-  animation: stage-shimmer 1.35s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  animation: stage-ink-wash 1.6s cubic-bezier(0.45, 0, 0.55, 1) infinite;
 }
 
-@keyframes stage-shimmer {
+.processing-shimmer::after {
+  content: '';
+  position: absolute;
+  right: 44px;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  margin-top: -2.5px;
+  border-radius: 50%;
+  background: var(--stage-process-ink);
+  animation: stage-ink-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes stage-ink-wash {
   from {
-    background-position: -70% 0;
+    background-position: -50% 0;
   }
   to {
-    background-position: 170% 0;
+    background-position: 150% 0;
   }
+}
+
+@keyframes stage-ink-pulse {
+  0%, 100% { opacity: .28; transform: scale(.82); }
+  50% { opacity: .82; transform: scale(1); }
 }
 
 .stage-capsule[data-phase='processing'] .voice-waveform,
@@ -439,6 +449,16 @@ body {
 
 .stage-thread[data-side='above'] {
   transform-origin: bottom left;
+}
+
+.stage-thread[data-side='right'] {
+  transform-origin: left center;
+  animation-name: stage-thread-in-right;
+}
+
+.stage-thread[data-side='left'] {
+  transform-origin: right center;
+  animation-name: stage-thread-in-left;
 }
 
 /* --- 眉毛行 ---------------------------------------------------------------
@@ -922,6 +942,40 @@ body {
     opacity: 1;
     transform: translateY(0) scaleY(1) scaleX(1);
   }
+}
+
+@keyframes stage-thread-in-right {
+  from { opacity: 0; transform: translateX(-16px) scale(.985); }
+  to { opacity: 1; transform: translateX(0) scale(1); }
+}
+
+@keyframes stage-thread-in-left {
+  from { opacity: 0; transform: translateX(16px) scale(.985); }
+  to { opacity: 1; transform: translateX(0) scale(1); }
+}
+
+.stage-thread[data-phase='finished'] {
+  animation: stage-thread-finish 260ms cubic-bezier(.22, 1, .36, 1) both;
+}
+
+.stage-thread[data-phase='finished'] .thread-head,
+.stage-thread[data-phase='finished'] .stage-result,
+.stage-thread[data-phase='finished'] .thread-bar {
+  animation: stage-finished-child-in 180ms cubic-bezier(.22, 1, .36, 1) both;
+}
+
+.stage-thread[data-phase='finished'] .thread-head { animation-delay: 40ms; }
+.stage-thread[data-phase='finished'] .stage-result { animation-delay: 70ms; }
+.stage-thread[data-phase='finished'] .thread-bar { animation-delay: 110ms; }
+
+@keyframes stage-thread-finish {
+  from { opacity: .72; transform: scale(.965, .9); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes stage-finished-child-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 /* A settling turn: rises, overshoots by a hair, lands. */
@@ -1429,7 +1483,7 @@ body {
 .voice-waveform i {
   width: 2px;
   height: 9px;
-  background: #246fd0;
+  background: var(--stage-process-ink);
   transform-origin: center;
   animation-duration: 680ms;
 }
@@ -2009,4 +2063,14 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .selection-stretch-handle::before,
   .selection-stretch-hint { transition: none; }
+
+  .processing-shimmer::after,
+  .stage-thread,
+  .stage-thread[data-phase='finished'] .thread-head,
+  .stage-thread[data-phase='finished'] .stage-result,
+  .stage-thread[data-phase='finished'] .thread-bar {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
 }

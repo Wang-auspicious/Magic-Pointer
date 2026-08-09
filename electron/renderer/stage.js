@@ -1691,8 +1691,9 @@
     // 用等宽 + 拉开的字距，因为在这套版式里等宽始终代表「机器说的事实」。
     const failed = turns[turns.length - 1]?.status === 'failed';
     const eyebrowState = pending ? 'running' : failed ? 'failed' : 'done';
+    threadPanel.dataset.phase = pending ? 'running' : failed ? 'failed' : 'finished';
     threadEyebrow.dataset.state = eyebrowState;
-    threadEyebrowText.textContent = pending ? '正在处理' : failed ? '没能完成' : '已完成';
+    threadEyebrowText.textContent = pending ? 'WORKING' : failed ? 'NEEDS ATTENTION' : 'TASK FINISHED';
     const firstAskRow = resultCard.firstElementChild?.querySelector('.turn-ask');
     if (firstAskRow) firstAskRow.hidden = Boolean(firstAsk);
     // 还在跑的时候没有可复制的东西。一个点了没反应的按钮比一个明显不能点的
@@ -1911,6 +1912,8 @@
         || (name === 'result' || name === 'error' ? 'text' : 'voice');
       capsule.dataset.mode = composerMode === 'text' ? 'text' : 'voice';
       capsule.dataset.phase = name === 'processing' ? 'processing' : 'input';
+      capsuleInput.placeholder = name === 'processing' ? '正在处理…'
+        : (composerMode === 'text' ? '问点什么…' : '');
       // Once submitted, the question lives in the thread. Emptying the field
       // here is what makes the composer feel like a composer instead of a box
       // still holding the thing you already sent.
