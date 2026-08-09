@@ -11,6 +11,18 @@
 // Pure: a drag in pixels and the answer's current size go in, a command and a
 // live hint come out. No DOM, no state, no model.
 
+(() => {
+type StretchDirection = 'condense' | 'expand' | 'none';
+type UnknownRecord = Record<string, unknown>;
+
+interface StretchIntent {
+  deltaLines: number;
+  direction: StretchDirection;
+  hint: string;
+  targetChars: number;
+  targetLines: number;
+}
+
 // One line of an answer at the stage's 13px/1.55 type scale. Rounding a drag to
 // lines rather than pixels is what makes the gesture legible: the hint can say
 // "5 行" and mean it.
@@ -24,7 +36,11 @@ const MIN_DRAG_PX = 12;
 // 600px down is not asking for thirty extra lines of invented detail.
 const MAX_DELTA_LINES = 12;
 
-function clamp(value, low, high) {
+function recordOf(value: unknown): UnknownRecord | null {
+  return value !== null && typeof value === 'object' ? (value as UnknownRecord) : null;
+}
+
+function clamp(value: number, low: number, high: number): number {
   return Math.min(high, Math.max(low, value));
 }
 
@@ -34,10 +50,11 @@ function clamp(value, low, high) {
  * @param {number} input.currentLines  lines the selection occupies on screen
  * @param {number} [input.currentChars] characters in the selected text
  */
-function stretchIntent(input) {
-  const dragPx = Number(input?.dragPx);
-  const currentLines = Number(input?.currentLines);
-  const currentChars = Number(input?.currentChars);
+function stretchIntent(input: unknown): StretchIntent {
+  const candidate = recordOf(input);
+  const dragPx = Number(candidate?.dragPx);
+  const currentLines = Number(candidate?.currentLines);
+  const currentChars = Number(candidate?.currentChars);
   if (!Number.isFinite(dragPx) || !Number.isFinite(currentLines) || currentLines < 1) {
     return { direction: 'none', deltaLines: 0, targetLines: 0, targetChars: 0, hint: '' };
   }
@@ -56,7 +73,7 @@ function stretchIntent(input) {
   if (targetLines === lines) {
     return { direction: 'none', deltaLines: 0, targetLines, targetChars: 0, hint: '' };
   }
-  const direction = targetLines > lines ? 'expand' : 'condense';
+  const direction: StretchDirection = targetLines > lines ? 'expand' : 'condense';
   const verb = direction === 'expand' ? '更详细' : '更简洁';
   // 手势量到的是**屏幕上的行**——一段没有换行的中文，在选区里占 4 行，在文本
   // 里是 1 行。引擎数的是后者。同一个数字在两边指两件事，比值因此凭空翻几倍，
@@ -83,12 +100,15 @@ function stretchIntent(input) {
 // `target` names what is being stretched. The wording has to differ because the
 // consequences do: stretching an answer rewrites a bubble, stretching a
 // selection rewrites the user's own document.
-function stretchCommand(intent, target = 'answer') {
-  if (!intent || intent.direction === 'none') return '';
-  const verb = intent.direction === 'expand' ? '扩写' : '压缩';
+function stretchCommand(intent: unknown, target: unknown = 'answer'): string {
+  const candidate = recordOf(intent);
+  if (candidate === null || candidate.direction === 'none') return '';
+  const verb = candidate.direction === 'expand' ? '扩写' : '压缩';
   const subject = target === 'selection' ? '选中的这段' : '这个回答';
   // 知道字数就说字数：那是引擎能如实核对的单位。拿不到才退回说行。
-  const size = intent.targetChars > 0 ? `${intent.targetChars} 字` : `${intent.targetLines} 行`;
+  const size = Number(candidate.targetChars) > 0
+    ? `${candidate.targetChars} 字`
+    : `${candidate.targetLines} 行`;
   return `把${subject}${verb}到 ${size}`;
 }
 
@@ -104,5 +124,7 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = StageStretchPolicy;
 }
 if (typeof globalThis !== 'undefined') {
-  globalThis.StageStretchPolicy = StageStretchPolicy;
+  (globalThis as typeof globalThis & { StageStretchPolicy?: typeof StageStretchPolicy })
+    .StageStretchPolicy = StageStretchPolicy;
 }
+})();

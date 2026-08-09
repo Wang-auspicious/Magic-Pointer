@@ -100,7 +100,12 @@ console.log('stage_stretch_policy_test: all assertions passed');
 
   // 行数是同一个数——同样的手势不能在两处得到不同的目标。
   const lines = /到 (\d+) 行/;
-  assert.strictEqual(lines.exec(answer)[1], lines.exec(selection)[1]);
+  const answerMatch = lines.exec(answer);
+  const selectionMatch = lines.exec(selection);
+  if (answerMatch === null || selectionMatch === null) {
+    throw new Error(`stretch command did not include a line target: ${answer} / ${selection}`);
+  }
+  assert.strictEqual(answerMatch[1], selectionMatch[1]);
 
   // 默认仍是答案侧，老调用点不受影响。
   assert.strictEqual(stretchCommand(intent), answer);
