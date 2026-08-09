@@ -240,7 +240,8 @@ function humanErrorMessage(raw: unknown, fallback = '这次没能完成，也没
 // outline. A sentence claiming we read something is worth much less than a band
 // drawn around the words we read — and when the wrong thing lights up, the user
 // can see that too, which is the point.
-function captureProofFromBridge(parsed: UnknownRecord) {
+function captureProofFromBridge(value: unknown) {
+  const parsed = recordOf(value);
   const selectionContext = recordOf(parsed.selectionContext);
   const artifacts = recordOf(selectionContext.artifacts);
   const geometryKind = String(artifacts.selection_geometry_kind || '');
