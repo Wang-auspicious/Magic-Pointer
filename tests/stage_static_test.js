@@ -104,6 +104,8 @@ assert(!source.includes('consentBox.style.top ='),
   'approval is part of the completion card and must not be positioned as a detached popover');
 assert(source.includes("threadPanel.dataset.phase = pending ? 'running' : failed ? 'failed' : 'finished'"));
 assert(source.includes("threadEyebrowText.textContent = pending ? 'WORKING' : failed ? 'NEEDS ATTENTION' : 'TASK FINISHED'"));
+assert(source.includes("pending ? '#ic-circle' : failed ? '#ic-warn' : '#ic-check'"),
+  'WORKING and NEEDS ATTENTION must not reuse the finished checkmark');
 assert(source.includes("capsuleInput.placeholder = name === 'processing' ? '正在处理…'"),
   'the neutral processing capsule must state what it is doing');
 assert(css.includes('@media (prefers-reduced-motion: reduce)'));

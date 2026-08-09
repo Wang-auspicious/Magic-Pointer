@@ -35,6 +35,8 @@ TypeScript 迁移基础设施可用：`npm run build:electron` 生成 `build/ele
 
 Windows 唤醒后的光标/划线回归已修复：gesture 态使用原生 `armed-cursor.cur`（非 Windows 保留 SVG fallback），不再创建 renderer DOM 假光标，也不再通过 DOM/20ms IPC 追踪鼠标，因此没有软件光标落后硬件光标的问题。源码入口真机拖动验证中，按下、移动、释放五个采样点保持同一非零 Windows cursor handle，蓝带可见，释放后 194ms 出现输入框。Clicky 三角不随唤醒常驻，只在结果含 `[POINT]` 时临时启动；飞行使用单个持久 SVG DOM 节点更新 `transform`，不向透明 Canvas 连续重画带模糊的位图，停留结束后单独关闭引导 overlay。
 
+Vida 参考下的舞台临时界面已完成第二轮收口：过程/结果面板会按目标应用两侧真实空位自适应贴左或贴右（8 DIP 间距，同一会话保持侧边稳定）；全屏/两侧不足时贴屏幕边缘并避开选区焦点。处理态删除绿橙粉蓝彩带，改为石墨色单点轨道 + 浅灰 ink wash；结果按 406/420/560/840 DIP 四档内容宽度呈现，写回审批并入 `TASK FINISHED` 底栏，预览最多 3×3 九项并逐格进入。左右停靠、全屏回退、稳定侧边和超宽钳制有纯策略测试；四种 DOM 视觉场景已截图对照参考，**截图只验证版式，不代替真机交互验收**。
+
 选区追问的 120 秒假卡死已修复：日志证实第二次请求 20.5 秒完成，但结果到达时已超过选区创建 TTL，被 `stage result ignored stale` 丢弃。现在已受理请求在执行期间不会被 TTL 清理，完成后从完成时刻重新续期；回归测试覆盖请求跨越多个 TTL 后仍可交付、空闲会话仍会正常过期。
 
 未接入生产入口的 `voice_residency.js` 旧状态机、`panel_position.js` 旧面板定位算法及其自循环单元测试已删除；现役语音生命周期唯一实现是 `voice_resident_runtime.js` + `voice_worker_client.js`，现役定位走 stage anchor/命中区/主进程 placement 链。

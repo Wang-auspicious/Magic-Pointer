@@ -1706,6 +1706,10 @@
     const eyebrowState = pending ? 'running' : failed ? 'failed' : 'done';
     threadPanel.dataset.phase = pending ? 'running' : failed ? 'failed' : 'finished';
     threadEyebrow.dataset.state = eyebrowState;
+    threadEyebrow.querySelector('use')?.setAttribute(
+      'href',
+      pending ? '#ic-circle' : failed ? '#ic-warn' : '#ic-check',
+    );
     threadEyebrowText.textContent = pending ? 'WORKING' : failed ? 'NEEDS ATTENTION' : 'TASK FINISHED';
     const firstAskRow = resultCard.firstElementChild?.querySelector('.turn-ask');
     if (firstAskRow) firstAskRow.hidden = Boolean(firstAsk);
