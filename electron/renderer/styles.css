@@ -18,7 +18,32 @@ body[data-mode='gesture'] {
   background: rgba(0, 0, 0, 0.001);  /* non-transparent hit target for exclusive overlay */
 }
 body[data-mode='gesture'],
-body[data-mode='gesture'] *,
+body[data-mode='gesture'] * {
+  /* Chromium can drop a URL cursor while a transparent window owns pointer
+     capture. Keep the OS cursor hidden; #armed-cursor renders the same asset
+     without depending on Chromium's native cursor hit-test path. */
+  cursor: none !important;
+}
+#armed-cursor {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 32px;
+  height: 32px;
+  opacity: 0;
+  pointer-events: none;
+  user-select: none;
+  transform: translate3d(-64px, -64px, 0);
+  will-change: transform;
+  z-index: 2147483647;
+}
+
+body[data-mode='gesture'] #armed-cursor[data-visible='true'] {
+  opacity: 1;
+}
+
+/* Non-gesture surfaces still use Chromium's cursor because they do not take
+   pointer capture and therefore do not enter the Windows fallback path. */
 body[data-mode='capture'],
 body[data-mode='capture'] *,
 body[data-mode='observer'],

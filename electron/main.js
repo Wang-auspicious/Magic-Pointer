@@ -920,6 +920,7 @@ function updateStage(payload = {}) {
               gestureInteractionMode: 'exclusive_overlay',
             });
           }
+          sendCursorToOverlay();
           // [POINT] 坐标是物理屏幕像素（视觉模型看全屏截图给出），overlay
           // canvas 是 DIP——先除缩放，overlay 里直接当窗口坐标用。
           const scale = (display && display.scaleFactor) || 1;
@@ -3281,6 +3282,13 @@ ipcMain.on('overlay:hide', (event) => {
   if (isSurfaceSender(event, 'overlay', resultTargetWindow)) {
     dismissTemporarySurfaces({ invalidateSession: true, hideObserver: true });
   }
+});
+ipcMain.on('overlay:guide-finished', (event) => {
+  if (!isSurfaceSender(event, 'overlay', resultTargetWindow)) return;
+  // Guidance is disposable. Do not dismiss the answer stage, and do not hide
+  // a window that has since been repurposed for an active selection gesture.
+  if (selectionGestureArm || overlayOwnsPointerInput) return;
+  hideOverlay();
 });
 ipcMain.on('stage:show', (event) => {
   // Renderer re-asserts visibility once it has content to paint.

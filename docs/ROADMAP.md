@@ -44,7 +44,7 @@
 - **模型调用改流式。** 现在非流式、约 3–6 秒。应流式显示首 token，整个交互给 8–12 秒 wall-clock，超时立即显示本地证据。
 - **OCR worker 忙时不能返回空。** 排队一个有界请求，或明确返回 `worker_busy` 并在 UI 显示"正在读取"。**忙碌不等于屏幕上没有文字。**
 - **诊断页。** 直接展示每次会话的 HWND、候选层、OCR 框数/截断、路由 tier、模型首 token/总耗时、降级原因。打点数据已经在记（`bridge_progress.py`），画出来就是页。不能继续靠人翻 `electron.log`。
-- **P3 剩两项**：选中动作条、clicky 指针陪伴。两件都要一个**常驻文本选中监听**——`selection-hook`（MIT，104★）已实测在我们自己的 Electron 43 里 `require` + `new` + `start()` 全通，`prebuilds/` 带 6 平台预编译 `.node`，不用 rebuild。约束不能跳过：它会装**第三个** `WH_MOUSE_LL`（我们已有两个），必须用互斥状态机（划线时 `stop()`，结束后延迟约 400ms 再 `start()`），不要让两者同时活；隐私是硬约束不是文档——不启用 `enableClipboard`、拒绝 `method=99`、选中文本不落盘不进日志不进遥测、默认 false。
+- **P3 剩一项：选中动作条。** 它需要一个**常驻文本选中监听**——`selection-hook`（MIT，104★）已实测在我们自己的 Electron 43 里 `require` + `new` + `start()` 全通，`prebuilds/` 带 6 平台预编译 `.node`，不用 rebuild。约束不能跳过：它会装**第三个** `WH_MOUSE_LL`（我们已有两个），必须用互斥状态机（划线时 `stop()`，结束后延迟约 400ms 再 `start()`），不要让两者同时活；隐私是硬约束不是文档——不启用 `enableClipboard`、拒绝 `method=99`、选中文本不落盘不进日志不进遥测、默认 false。Clicky 已裁定为结果含 `[POINT]` 时才启动的临时引导，不做唤醒即常驻的指针陪伴。
 - **真人语音验收**：真实麦克风、中文口音、噪声环境。自动化通过不能替代。
 - **原位改写扩到 Word 之外。** 现在非 Word 应用会诚实地说"改写结果生成了，无法写回这个应用"。要真写回：复用 `_paste_text_to_foreground`（不要新造），按 [三级写回](ARCHITECTURE.md#关键架构决策) 落地，开关 `INPLACE_WRITEBACK_LEVEL = 0|1|2|3` 默认先 2，真机验过级别 3 再放开。影响面已量化：Python 侧 44 处消费 `succeeded`、前端 8 处——**先加枚举但不产出该状态**（行为零变化、测试应全绿），逐一审完再让级别 3 真的产出它。
 

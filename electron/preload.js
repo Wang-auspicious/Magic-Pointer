@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('magicPointer', {
   onHide: (callback) => ipcRenderer.on('overlay:hide', () => callback()),
   onCursor: (callback) => ipcRenderer.on('overlay:cursor', (_event, payload) => callback(payload)),
   onGuidePoint: (callback) => ipcRenderer.on('overlay:guide-point', (_event, payload) => callback(payload)),
+  guideFinished: () => ipcRenderer.send('overlay:guide-finished'),
   onGestureInput: (callback) => ipcRenderer.on('overlay:gesture-input', (_event, payload) => callback(payload)),
   onGestureSubmit: (callback) => ipcRenderer.on('overlay:gesture-submit', (_event, payload) => callback(payload)),
   onResult: (callback) => ipcRenderer.on('overlay:result', (_event, payload) => callback(payload)),

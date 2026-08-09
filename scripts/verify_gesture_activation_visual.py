@@ -6,6 +6,7 @@ import os
 import subprocess
 import tempfile
 import time
+from ctypes import wintypes
 from datetime import datetime
 from pathlib import Path
 
@@ -34,10 +35,31 @@ INPUT_MODE = os.environ.get("MAGIC_POINTER_VERIFY_INPUT_MODE", "text").strip().l
 if INPUT_MODE not in {"text", "voice"}:
     raise RuntimeError("unsupported_input_mode")
 EARLY_DRAG = os.environ.get("MAGIC_POINTER_VERIFY_EARLY_DRAG", "0").strip() == "1"
+SOURCE_ENTRY = os.environ.get("MAGIC_POINTER_VERIFY_SOURCE_ENTRY", "0").strip() == "1"
 EARLY_SUFFIX = "-early-hold" if EARLY_DRAG else ""
 EVIDENCE_DIR = ROOT / "data" / "runtime" / (
     f"gesture-activation-{ACTIVATION_MODE}-{INPUT_MODE}{EARLY_SUFFIX}-20260729"
 )
+
+
+class CursorPoint(ctypes.Structure):
+    _fields_ = [("x", wintypes.LONG), ("y", wintypes.LONG)]
+
+
+class CursorInfo(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.DWORD),
+        ("flags", wintypes.DWORD),
+        ("hCursor", wintypes.HANDLE),
+        ("ptScreenPos", CursorPoint),
+    ]
+
+
+def cursor_handle() -> int:
+    info = CursorInfo(cbSize=ctypes.sizeof(CursorInfo))
+    if not ctypes.windll.user32.GetCursorInfo(ctypes.byref(info)):
+        raise ctypes.WinError()
+    return int(info.hCursor or 0)
 
 
 def press_activation_hotkey() -> None:
@@ -123,14 +145,17 @@ def log_time_ms(log_text: str, marker: str) -> float | None:
 def drag_and_capture(start, end, capture_bbox, steps=20):
     user32 = ctypes.windll.user32
     foreground_samples = []
+    cursor_samples = []
     user32.SetCursorPos(int(start[0]), int(start[1]))
     time.sleep(0.08)
+    cursor_samples.append({"phase": "before_pointer_down", "handle": cursor_handle()})
     user32.mouse_event(0x0002, 0, 0, 0, 0)
     time.sleep(0.04)
     foreground_samples.append({
         "phase": "pointer_down",
         "hwnd": int(user32.GetForegroundWindow() or 0),
     })
+    cursor_samples.append({"phase": "pointer_down", "handle": cursor_handle()})
     middle = None
     for index in range(1, steps + 1):
         ratio = index / steps
@@ -147,17 +172,20 @@ def drag_and_capture(start, end, capture_bbox, steps=20):
                 "phase": "drawing",
                 "hwnd": int(user32.GetForegroundWindow() or 0),
             })
+            cursor_samples.append({"phase": "drawing", "handle": cursor_handle()})
     foreground_samples.append({
         "phase": "before_release",
         "hwnd": int(user32.GetForegroundWindow() or 0),
     })
+    cursor_samples.append({"phase": "before_release", "handle": cursor_handle()})
     user32.mouse_event(0x0004, 0, 0, 0, 0)
     time.sleep(0.08)
     foreground_samples.append({
         "phase": "after_release",
         "hwnd": int(user32.GetForegroundWindow() or 0),
     })
-    return middle, foreground_samples
+    cursor_samples.append({"phase": "after_release", "handle": cursor_handle()})
+    return middle, foreground_samples, cursor_samples
 
 
 def main() -> int:
@@ -239,7 +267,11 @@ def main() -> int:
             env["MAGIC_POINTER_WIGGLE_TRACE"] = "1"
         electron_trace = (runtime / "electron-renderer.log").open("w", encoding="utf-8")
         electron = subprocess.Popen(
-            [str(ELECTRON), str(ROOT), "--background"],
+            [
+                str(ELECTRON),
+                str(ROOT / "electron" / "main.js") if SOURCE_ENTRY else str(ROOT),
+                "--background",
+            ],
             cwd=ROOT,
             env=env,
             stdout=electron_trace,
@@ -274,13 +306,15 @@ def main() -> int:
             # must not disappear merely because its pointerdown was early.
             armed = ImageGrab.grab(bbox=capture_bbox, all_screens=True)
             armed.save(EVIDENCE_DIR / "armed-invisible.png")
-            drawing, foreground_samples = drag_and_capture(start, end, capture_bbox, steps=28)
+            drawing, foreground_samples, cursor_samples = drag_and_capture(
+                start, end, capture_bbox, steps=28,
+            )
         ready_log = wait_for_log(runtime / "electron.log", "gesture-ready OK", 10)
 
         if not EARLY_DRAG:
             armed = ImageGrab.grab(bbox=capture_bbox, all_screens=True)
             armed.save(EVIDENCE_DIR / "armed-invisible.png")
-            drawing, foreground_samples = drag_and_capture(start, end, capture_bbox)
+            drawing, foreground_samples, cursor_samples = drag_and_capture(start, end, capture_bbox)
         if drawing is None:
             raise RuntimeError("drawing_frame_missing")
         drawing.save(EVIDENCE_DIR / "drawing.png")
@@ -337,6 +371,12 @@ def main() -> int:
             for sample in foreground_samples
             if sample["phase"] != "capsule"
         )
+        captured_cursor_handles = {
+            sample["handle"]
+            for sample in cursor_samples
+            if sample["phase"] != "after_release"
+        }
+        cursor_handle_invariant = captured_cursor_handles == {0}
         passed = (
             armed_change <= 0.002
             and ghost_change <= 0.002
@@ -349,11 +389,13 @@ def main() -> int:
             and grounding_source_passed
             and expired_error_absent
             and foreground_invariant
+            and cursor_handle_invariant
         )
         evidence = {
             "schemaVersion": 1,
             "activationMode": ACTIVATION_MODE,
             "inputMode": INPUT_MODE,
+            "sourceEntry": SOURCE_ENTRY,
             "passed": passed,
             "armedChangedRatio": round(armed_change, 6),
             "topLeftGhostChangedRatio": round(ghost_change, 6),
@@ -366,6 +408,8 @@ def main() -> int:
             "expiredErrorAbsent": expired_error_absent,
             "foregroundInvariant": foreground_invariant,
             "foregroundSamples": foreground_samples,
+            "cursorHandleInvariant": cursor_handle_invariant,
+            "cursorSamples": cursor_samples,
             "releasePointPhysical": {"x": end[0], "y": end[1]},
             "targetRectPhysical": target,
             "fixtureWindow": window,

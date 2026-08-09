@@ -33,6 +33,8 @@ TypeScript 迁移基础设施可用：`npm run build:electron` 生成 `build/ele
 
 源码直接启动兼容已恢复：`npx --no-install electron electron/main.js` 会在源码树按需注册 `tsx/cjs`，真实 Electron dashboard-capture smoke 已通过；`build/electron` 与安装包因不存在源码 `.ts` 不加载该 devDependency。
 
+Windows 唤醒后的光标/划线回归已修复：gesture 态不再让 Chromium 管理 SVG URL cursor，而是隐藏系统 cursor、用同一素材的 DOM 光标接收 DOM + 全局轮询双路位置；源码入口真机拖动验证中 cursor handle 从按下到释放保持为 `0`，蓝带可见，释放后 198ms 出现输入框。Clicky 三角不再随唤醒常驻，只在结果含 `[POINT]` 时临时启动，停留结束后单独关闭引导 overlay。
+
 未接入生产入口的 `voice_residency.js` 旧状态机、`panel_position.js` 旧面板定位算法及其自循环单元测试已删除；现役语音生命周期唯一实现是 `voice_resident_runtime.js` + `voice_worker_client.js`，现役定位走 stage anchor/命中区/主进程 placement 链。
 
 2026-08-09 用编译入口完成真实 first-run onboarding：取消不写 marker、9 项 preflight、success、进入 `studio.html`、后台二次启动不重复 preflight 均通过；证据在 `data/runtime/first-run-onboarding-20260730/evidence.json`。构建器会校验所有未迁移 `.js` 在源码与产物间字节一致，classic renderer 不经过 CommonJS 转换。
@@ -44,7 +46,7 @@ P3 十二项能力做完十项：图转提示词、选区拉伸把手、点选�
 - **微信 4.x、Qt、Flutter、GPU 合成的 Electron**：UIA 只给容器，`PrintWindow` 抓不到帧，两条读取路同时断。目前靠合成截图 + OCR + 视觉分组兜过去，但**首笔手势拿不到候选框**，只能事后点选。
 - **视觉已配独立模型**。文本默认 `deepseek-v4-flash`（无视觉），视觉走 `secrets/vision_model.txt` = `qwen3.7-plus`（messages 协议，`secrets/vision_api_mode.txt`），已实测读图正确。仍要遵守：**"请求成功"不等于"视觉可用"**，能力以实测为准。
 - **浏览器结构化读取依赖 `--remote-debugging-port`**。端口不可用时目前不回落 UIA（证据显示 UIA 树完全够用）。
-- **P3 剩两项**：选中动作条、clicky 指针陪伴。两件都要一个**常驻文本选中监听**——没有会话时也在后台观察，是新的常驻组件，不是现有链路的延伸。仓库里还没有 selection-hook 集成。
+- **P3 剩一项**：选中动作条。它需要一个**常驻文本选中监听**——没有会话时也在后台观察，是新的常驻组件，不是现有链路的延伸。Clicky 已按产品场景收敛为 `[POINT]` 按需引导，不做常驻指针陪伴，也不需要 selection-hook。
 - **macOS**：代码在（`native/macos/MagicPointerHost.swift`），没有实机验过权限、多屏坐标、签名公证。
 - **Linux**：Fabric / MCP / Agent 层可用，没有系统级 pointer host。
 

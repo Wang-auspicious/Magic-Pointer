@@ -12,6 +12,10 @@ assert(!source.includes('function drawObserverAura'),
 assert(!source.includes('function drawPointer'),
   'capture 模式必须用 CSS 光标，不画 canvas 鼠标');
 assert(source.includes('window.magicPointer?.onCursor('));
+assert(source.includes("document.getElementById('armed-cursor')"),
+  'gesture mode must keep a DOM cursor independent of Chromium cursor hit testing');
+assert(source.includes('function updateArmedCursor('),
+  'gesture DOM cursor must have one explicit synchronization path');
 assert(source.includes('observerMode = payload?.observerMode === true'));
 assert(!source.includes('if (observerMode) drawObserverAura(lastPointer);'));
 
@@ -24,6 +28,10 @@ assert(source.includes('function guideFlightPoint'),
   '贝塞尔飞行必须是纯函数，可单测');
 assert(source.includes('guideTarget = null;'),
   'overlay 隐藏时必须清理引导状态');
+assert(!source.includes('guideFollow'),
+  'Clicky guidance must not start or follow the pointer merely because the overlay woke');
+assert(source.includes('window.magicPointer?.guideFinished()'),
+  'the guide overlay must retire itself after the requested point has been shown');
 
 // Kept contract: runtime-issue circle capture submits the drawn region via done().
 assert(source.includes("let currentWorkflow = 'generic';"));
@@ -36,6 +44,7 @@ assert(source.includes('window.magicPointer?.onShow('));
 assert(source.includes('window.magicPointer?.onHide('));
 assert(source.includes('window.magicPointer?.hide()'));
 assert(html.includes('id="trail"'));
+assert(html.includes('id="armed-cursor"'));
 assert(html.includes('id="sweep-layer"'),
   'gesture mode must have a dedicated transparent sweep compositor');
 assert(html.includes('src="sweep_visual.js"'),

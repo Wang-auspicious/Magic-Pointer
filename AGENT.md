@@ -80,6 +80,8 @@ Magic Pointer = 默认不可见的跨应用操作层。晃动鼠标唤醒 → �
 
 - 不要引入需要付费 API 的依赖。SenseVoice / whisper / RapidOCR / OmniParser 全部免费本地。
 - 不要为了"收口"去改 `buttons` 掩码的算法——闪烁根因未确诊前改它会把唯一能观测的信号抹掉。
+- **透明 overlay 的 gesture 态不要依赖 CSS URL cursor。** Windows/Chromium 在 `setPointerCapture` 期间会把 URL 光标退回系统箭头，即使主进程从未释放 `setIgnoreMouseEvents(false)`；gesture 态必须隐藏系统 cursor，并用同一 `armed-cursor.svg` 的 DOM 元素同时接 DOM `pointermove` 与主进程 20ms 指针流。真机验证必须记录 `GetCursorInfo().hCursor`，不能只看截图。
+- **Clicky 只能由回答里的明确 `[POINT]` 启动。** 普通唤醒/划线不创建跟随三角、不启动弹簧循环；指到目标并短暂停留后，通过 `overlay:guide-finished` 只关闭引导 overlay，不能顺手关闭仍在显示答案的 stage。
 - 不要把 Google 的 demo 当可运行实现对标（无声矢量动画，见 [PRODUCT.md](docs/PRODUCT.md#竞品)）。
 - 视觉重做之前不要动纸飞机 / 配置页 / 记忆层 / 对话历史。
 - **`npx electron scripts/capture_stage.js` 截出来的图不是验收。** 它是用 DOM 摆出来的，不过桥、不过锚定、不过真实数据。版式可以这么看，"能用"不行。

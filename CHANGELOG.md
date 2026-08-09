@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Fixed Windows gesture cursor flicker by replacing the transparent overlay's gesture-time CSS URL cursor with the same approved SVG rendered as a persistent DOM cursor, driven by both DOM movement and global pointer polling. Real desktop verification against the direct `electron/main.js` entry now checks a stable Windows cursor handle, visible drawing, and capsule delivery.
+- Adapted Clicky guidance to Magic Pointer's result flow: ordinary wake/drawing no longer starts the companion triangle or its animation loop; only explicit `[POINT]` results create guidance, and the temporary guide overlay retires without dismissing the answer stage.
+
 - Restored the direct `electron electron/main.js` developer entry after TypeScript migration: source runs conditionally preload `tsx/cjs`, while compiled and packaged runtimes remain independent of the development loader.
 
 - Migrated the Node test orchestrator and electron-builder wrapper to strict TypeScript; package/test commands now execute them through `tsx`, and the package verifier still rejects leaked development tooling.
