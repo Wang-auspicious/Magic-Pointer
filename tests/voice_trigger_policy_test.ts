@@ -3,7 +3,11 @@
 const assert = require('assert');
 const { VoiceTriggerPolicy, STATES, STRATEGIES } = require('../electron/voice_trigger_policy');
 
-function transition(machine, event) {
+interface DispatchableVoiceTrigger {
+  dispatch(event: unknown): unknown;
+}
+
+function transition(machine: DispatchableVoiceTrigger, event: unknown): unknown {
   return machine.dispatch(event);
 }
 
