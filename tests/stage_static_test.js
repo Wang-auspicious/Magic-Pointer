@@ -43,6 +43,11 @@ assert(html.includes('id="processing-shimmer"'));
 assert(html.includes('id="stage-result"'));
 assert(html.includes('id="stage-thread"'),
   'results live inside a thread panel that keeps earlier turns on screen');
+const resultIndex = html.indexOf('id="stage-result"');
+const consentIndex = html.indexOf('id="capsule-consent"');
+const followupIndex = html.indexOf('class="thread-bar"');
+assert(resultIndex < consentIndex && consentIndex < followupIndex,
+  'write-back approval must be the completion-card footer, not a detached capsule popover');
 assert(html.includes('id="tpl-thread-turn"'),
   'each turn renders from one template: the ask above, its answer below');
 assert(html.includes('id="thread-close"') && html.includes('id="thread-copy"'),
@@ -87,6 +92,16 @@ assert(css.includes(".stage-thread[data-side='left']"));
 assert(css.includes(".stage-thread[data-side='right']"));
 assert(css.includes(".stage-thread[data-phase='finished'] .thread-head"),
   'completion content must settle after the shell instead of appearing in one frame');
+assert(css.includes(".stage-thread[data-width-tier='context']"));
+assert(css.includes(".stage-thread[data-width-tier='wide']"));
+assert(source.includes('threadPanel.dataset.widthTier = completionWidthTier('),
+  'thread width must follow the result content instead of staying at one hard-coded size');
+assert(source.includes("threadPanel.dataset.consent = want ? 'true' : 'false'"),
+  'the card must expose whether its approval footer is active');
+assert(!source.includes('consentBox.style.left ='),
+  'approval is part of the completion card and must not be positioned as a detached popover');
+assert(!source.includes('consentBox.style.top ='),
+  'approval is part of the completion card and must not be positioned as a detached popover');
 assert(source.includes("threadPanel.dataset.phase = pending ? 'running' : failed ? 'failed' : 'finished'"));
 assert(source.includes("threadEyebrowText.textContent = pending ? 'WORKING' : failed ? 'NEEDS ATTENTION' : 'TASK FINISHED'"));
 assert(source.includes("capsuleInput.placeholder = name === 'processing' ? '正在处理…'"),

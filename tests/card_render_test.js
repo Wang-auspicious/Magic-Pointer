@@ -4,9 +4,11 @@
 // 这份测试的头等大事就是钉住那一条：哪天有人图省事改回拼串，这里会红。
 
 const assert = require('node:assert');
+const fs = require('node:fs');
 const cards = require('../electron/cards');
 const cardRender = require('../electron/renderer/card_render');
 const { esc, safeSrc } = cardRender;
+const cardsCss = fs.readFileSync('electron/renderer/cards.css', 'utf8');
 
 // renderCard 造节点不拼串——舞台不许出现 innerHTML（tests/stage_static_test.js）。
 // 这两个薄封装只为断言方便：把节点序列化回字符串。
@@ -154,6 +156,29 @@ assert.ok(proposal.includes('地图类'));
 assert.ok(proposal.includes('撤不回来'), '不可逆的事要在点头之前说，不是做完才说');
 assert.ok(proposal.includes('data-action-id="approve"'));
 
+const nineGrid = renderCard(cards.normalizeCard({
+  kind: 'proposal',
+  preview: {
+    kind: 'files',
+    items: Array.from({ length: 12 }, (_, index) => ({ name: `文件 ${index + 1}` })),
+  },
+}));
+assert.strictEqual((nineGrid.match(/class="mfile"/g) || []).length, 9,
+  'preview cards must remain a readable 3×3 grid instead of growing without bound');
+assert.ok(nineGrid.includes('文件 9'));
+assert.ok(!nineGrid.includes('文件 10'));
+assert.ok(nineGrid.includes('data-tile-index="8"'),
+  'preview tiles expose a stable index for their restrained stagger');
+assert.ok(cardsCss.includes('grid-template-columns: repeat(3, minmax(0, 1fr))'),
+  'preview cards must use the same stable three-column rhythm');
+const progressStart = cardsCss.indexOf('.mbar {');
+const progressEnd = cardsCss.indexOf('.mcard-stage', progressStart);
+const progressCss = cardsCss.slice(progressStart, progressEnd);
+assert.ok(progressCss.includes('var(--ink)'),
+  'card processing feedback must use neutral graphite ink');
+assert.ok(!progressCss.includes('linear-gradient'),
+  'the disliked colored processing strip must not return in result cards');
+
 // ---------------------------------------------------------------------------
 // 失败：要说出哪里断了，并且停在断掉的地方
 // ---------------------------------------------------------------------------
@@ -187,7 +212,6 @@ console.log('card render test ok');
 // `<SVG CLASS="">…</SVG>` 的字面文本（真的发生过，截图里看见的）。
 // 所以这两份共享模块必须各自只暴露一个名字。
 // ---------------------------------------------------------------------------
-const fs = require('node:fs');
 for (const [file, allowed] of [
   ['electron/renderer/card_render.js', ['CardRender', 'renderCard', 'cardElapsedText']],
   ['electron/cards.js', ['CardModel']],

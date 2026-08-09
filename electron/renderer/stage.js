@@ -134,6 +134,7 @@
     panelPlacement: null,
     resultPlacement: null,
     resultDragged: false,
+    consentDismissedForTurn: null,
     selectionCount: 1,
     // 选中内容的字数（不是内容）。拉伸手势要把「屏幕上几行」换算成「多少字」，
     // 因为引擎只认后者。
@@ -1263,6 +1264,17 @@
       .trim();
   }
 
+  function completionWidthTier({ pending, failed, result, textLength, needsConsent }) {
+    if (pending) return 'context';
+    const kind = String(result?.kind || '').toLowerCase();
+    if (needsConsent || ['proposal', 'table', 'calendar', 'diff', 'image', 'agent-prompt-draft'].includes(kind)) {
+      return 'wide';
+    }
+    if (textLength > 420) return 'wide';
+    if (failed || textLength <= 180) return 'compact';
+    return 'normal';
+  }
+
   function copyResultText(container, button) {
     const text = resultPlainText(container);
     const done = () => {
@@ -1452,10 +1464,13 @@
   // 只有「要送出去」的那一类才有。定稿的那段话先回到问题框里，你看着它按同意，
   // 才真的往别人的窗口里写。拒绝＝什么都不做，框留着，可以继续改。
   function syncConsent() {
+    const currentTurnId = state.turns.at(-1)?.id ?? null;
     const want = answerShape.needsConsent
       && state.name === 'result'
       && !threadPanel.hidden
+      && session.consentDismissedForTurn !== currentTurnId
       && Boolean(resultPlainText(resultCard));
+    threadPanel.dataset.consent = want ? 'true' : 'false';
     if (!want) {
       if (!consentBox.hidden) {
         consentBox.hidden = true;
@@ -1475,16 +1490,14 @@
       const text = resultPlainText(resultCard);
       if (capsuleInput.value.trim() !== text) capsuleInput.value = text;
       consentBox.hidden = false;
-      const rect = capsule.getBoundingClientRect();
-      const width = consentBox.offsetWidth || 260;
-      consentBox.style.left = `${Math.max(4, Math.min(window.innerWidth - width - 4, rect.left))}px`;
-      consentBox.style.top = `${rect.bottom + 8}px`;
       scheduleHitRegionRefresh();
     }
   }
 
   consentReject.addEventListener('click', () => {
+    session.consentDismissedForTurn = state.turns.at(-1)?.id ?? null;
     consentBox.hidden = true;
+    threadPanel.dataset.consent = 'false';
     capsuleInput.value = '';
     resetConsentButton();
     scheduleHitRegionRefresh();
@@ -1713,6 +1726,13 @@
       });
     }
     threadPanel.dataset.shape = answerShape.shape;
+    threadPanel.dataset.widthTier = completionWidthTier({
+      pending,
+      failed,
+      result: newest?.result,
+      textLength: resultPlainText(resultCard).length,
+      needsConsent: answerShape.needsConsent,
+    });
     syncConsent();
     // 卡重画过，之前记住的那段选区已经指向摘掉的节点了。
     hidePassageExpand();
@@ -2201,6 +2221,7 @@
       session.panelPlacement = null;
       session.resultPlacement = null;
       session.resultDragged = false;
+      session.consentDismissedForTurn = null;
       session.selectionCount = 1;
       session.voiceState = 'idle';
       session.visualTuning = { ...DEFAULT_VISUAL_TUNING };
