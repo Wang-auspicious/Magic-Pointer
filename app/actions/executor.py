@@ -358,10 +358,26 @@ class SafeActionExecutor:
             return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error=str(error or "draft writer failed"), metadata=metadata)
         if receipt.get("submit_sent") is not False:
             return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="draft writer violated no-submit contract", metadata=metadata)
-        if _optional_int(receipt.get("target_hwnd")) != expected_hwnd:
-            return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="draft writer target mismatch", metadata=metadata)
-        if str(receipt.get("target_title") or "") != expected_title:
-            return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="draft writer title mismatch", metadata=metadata)
+        actual_hwnd = _optional_int(receipt.get("target_hwnd"))
+        actual_title = str(receipt.get("target_title") or "")
+        target_changed = actual_hwnd != expected_hwnd or actual_title != expected_title
+        if target_changed:
+            adaptive_resolutions = {
+                "focused_editable",
+                "cursor_window",
+                "stable_foreground",
+                "foreground_window",
+                "original_target",
+            }
+            adaptive_receipt = (
+                params.get("target_resolution") == "adaptive"
+                and receipt.get("resolved_from_trusted_native_evidence") is True
+                and str(receipt.get("target_resolution") or "") in adaptive_resolutions
+                and actual_hwnd is not None
+                and bool(actual_title)
+            )
+            if not adaptive_receipt:
+                return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="draft writer target mismatch", metadata=metadata)
         delivery_mode = str(receipt.get("delivery_mode") or "full_prompt")
         # The receipt is JSON from a child process; parse defensively instead of
         # letting a malformed field raise out of execute().

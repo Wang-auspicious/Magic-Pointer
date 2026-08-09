@@ -49,7 +49,8 @@ def make_prompt_delivery_proposal(
     target_profile: str | None = None,
     delivery_kind: str = "context_prompt_delivery",
     workflow_kind: str = "context_pack",
-    prefer_foreground: bool = False,
+    target_resolution: str = "exact",
+    current_target_window: dict[str, Any] | None = None,
 ) -> ActionProposal:
     exact_text = str(text or "")
     if not exact_text.strip():
@@ -69,6 +70,11 @@ def make_prompt_delivery_proposal(
     if process_id is None:
         raise DraftDeliveryError("target process identity is missing")
     process_name = str((target_window or {}).get("process_name") or "")[:500]
+    resolution = "adaptive" if target_resolution == "adaptive" else "exact"
+    current_window = current_target_window if isinstance(current_target_window, dict) else {}
+    current_hwnd = _positive_int(current_window.get("hwnd"))
+    current_process_id = _positive_int(current_window.get("process_id") or current_window.get("pid"))
+    current_process_name = str(current_window.get("process_name") or current_window.get("app") or "")[:500]
     text_hash = hashlib.sha256(exact_text.encode("utf-8")).hexdigest()
     return ActionProposal(
         id=f"prompt-delivery-{uuid.uuid4().hex[:12]}",
@@ -93,7 +99,10 @@ def make_prompt_delivery_proposal(
             "target_process_name": process_name,
             "target_point": [point[0], point[1]],
             "target_point_space": target_point_space,
-            "prefer_foreground": prefer_foreground is True,
+            "target_resolution": resolution,
+            "current_target_hwnd": current_hwnd or 0,
+            "current_target_process_id": current_process_id or 0,
+            "current_target_process_name": current_process_name,
             "context_session_id": str(context_session_id or ""),
             "review_session_id": str(review_session_id or ""),
             "prompt_artifact": str(prompt_artifact or ""),

@@ -138,6 +138,25 @@ def test_native_writer_uses_pointer_width_handle_and_strict_window_title() -> No
     assert "physical_screen_pixels" in source
 
 
+def test_native_writer_resolves_adaptive_target_in_one_process() -> None:
+    source = Path("scripts/uia_draft_writer.cs").read_text(encoding="utf-8")
+
+    assert "ResolveDeliveryTarget" in source
+    assert "FindBestEditableInWindow" in source
+    assert "WindowCenter" in source
+    assert "IsMagicPointerWindow" in source
+    assert "GetCursorPos" in source
+    for resolution in (
+        "focused_editable",
+        "cursor_window",
+        "stable_foreground",
+        "foreground_window",
+        "original_target",
+    ):
+        assert resolution in source
+    assert "if (preferForeground)" not in source
+
+
 def test_executor_accepts_only_verified_no_submit_receipt(tmp_path) -> None:
     action = proposal()
 
@@ -157,6 +176,54 @@ def test_executor_accepts_only_verified_no_submit_receipt(tmp_path) -> None:
     assert result.status == ExecutionStatus.SUCCEEDED
     assert result.output["verified"] is True
     assert result.output["submit_sent"] is False
+
+
+def test_executor_accepts_verified_adaptive_native_target() -> None:
+    action = make_prompt_delivery_proposal(
+        "Write this draft",
+        target_window={"title": "Source", "hwnd": 901, "process_id": 902},
+        target_point=[420, 860],
+        target_point_space="physical_screen_pixels",
+        target_resolution="adaptive",
+        current_target_window={"hwnd": 1101, "process_id": 1102, "process_name": "Cursor.exe"},
+    )
+
+    result = SafeActionExecutor(
+        draft_writer=lambda parameters: {
+            "ok": True,
+            "target_hwnd": 1101,
+            "target_title": "Cursor",
+            "target_resolution": "focused_editable",
+            "resolved_from_trusted_native_evidence": True,
+            "written_chars": len(parameters["text"]),
+            "method": "uia:value-pattern",
+            "verified": True,
+            "submit_sent": False,
+        }
+    ).execute(action, confirmed=False)
+
+    assert result.status == ExecutionStatus.SUCCEEDED
+    assert result.output["target_resolution"] == "focused_editable"
+
+
+def test_executor_rejects_changed_target_without_adaptive_native_evidence() -> None:
+    action = proposal()
+    result = SafeActionExecutor(
+        draft_writer=lambda parameters: {
+            "ok": True,
+            "target_hwnd": 1101,
+            "target_title": "Different app",
+            "target_resolution": "focused_editable",
+            "resolved_from_trusted_native_evidence": False,
+            "written_chars": len(parameters["text"]),
+            "method": "uia:value-pattern",
+            "verified": True,
+            "submit_sent": False,
+        }
+    ).execute(action, confirmed=False)
+
+    assert result.status == ExecutionStatus.FAILED
+    assert "target mismatch" in result.error.lower()
 
 
 def test_executor_rejects_delivery_without_locked_process_identity() -> None:

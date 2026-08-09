@@ -61,6 +61,28 @@ def test_delivery_proposal_keeps_every_identity_guarantee() -> None:
     assert proposal.metadata["delivery_kind"] == CAPSULE_DELIVERY_KIND
 
 
+def test_adaptive_delivery_keeps_main_owned_current_window_hint() -> None:
+    proposal = make_capsule_delivery_proposal(
+        "写入这段文字",
+        target_window=TARGET_WINDOW,
+        target_point={"x": 900, "y": 700},
+        target_point_space="physical_screen_pixels",
+        target_resolution="adaptive",
+        current_target_window={
+            "hwnd": 7001,
+            "process_id": 7002,
+            "process_name": "Cursor.exe",
+            "renderer_supplied_field": "must not cross the boundary",
+        },
+    )
+
+    assert proposal.parameters["target_resolution"] == "adaptive"
+    assert proposal.parameters["current_target_hwnd"] == 7001
+    assert proposal.parameters["current_target_process_id"] == 7002
+    assert proposal.parameters["current_target_process_name"] == "Cursor.exe"
+    assert "renderer_supplied_field" not in proposal.parameters
+
+
 def test_delivery_is_refused_without_a_trustworthy_target() -> None:
     for broken in (
         {**TARGET_WINDOW, "hwnd": 0},

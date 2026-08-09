@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
@@ -15,6 +16,9 @@ public static class UiaDraftWriter
     [StructLayout(LayoutKind.Sequential)]
     private struct NativePoint { public int X; public int Y; }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeRect { public int Left; public int Top; public int Right; public int Bottom; }
+
     [DllImport("user32.dll")]
     private static extern bool IsWindow(IntPtr hWnd);
 
@@ -26,6 +30,12 @@ public static class UiaDraftWriter
 
     [DllImport("user32.dll")]
     private static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    private static extern bool GetCursorPos(out NativePoint point);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetWindowRect(IntPtr hWnd, out NativeRect rect);
 
     [DllImport("user32.dll")]
     private static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
@@ -56,7 +66,18 @@ public static class UiaDraftWriter
         public bool verified = false;
         public bool submit_sent = false;
         public string delivery_mode = "";
+        public string target_resolution = "";
+        public bool resolved_from_trusted_native_evidence = false;
         public string error = null;
+    }
+
+    private sealed class DeliveryTarget
+    {
+        public IntPtr hwnd = IntPtr.Zero;
+        public AutomationElement editable = null;
+        public bool hasValuePattern = false;
+        public string resolution = "";
+        public string processName = "";
     }
 
     private static int Integer(Dictionary<string, object> data, string key, int fallback)
@@ -137,6 +158,278 @@ public static class UiaDraftWriter
         return value is bool && (bool)value;
     }
 
+    private static string WindowProcessName(IntPtr hwnd)
+    {
+        try
+        {
+            uint processId;
+            GetWindowThreadProcessId(hwnd, out processId);
+            return processId > 0 ? Process.GetProcessById((int)processId).ProcessName : "";
+        }
+        catch { return ""; }
+    }
+
+    private static bool IsMagicPointerWindow(IntPtr hwnd, string processName)
+    {
+        string identity = ((processName ?? "") + " " + WindowProcessName(hwnd) + " "
+            + WindowText(hwnd) + " " + WindowClass(hwnd)).ToLowerInvariant();
+        return identity.Contains("magic pointer")
+            || identity.Contains("magicpointer")
+            || identity.Contains("vida overlay");
+    }
+
+    private static bool IsUsableEditable(AutomationElement element, out bool hasValuePattern)
+    {
+        hasValuePattern = false;
+        if (element == null) return false;
+        try
+        {
+            if (!element.Current.IsEnabled || element.Current.IsOffscreen || IsPassword(element)) return false;
+            object valuePattern;
+            if (element.TryGetCurrentPattern(ValuePattern.Pattern, out valuePattern))
+            {
+                ValuePattern pattern = valuePattern as ValuePattern;
+                if (pattern != null && !pattern.Current.IsReadOnly)
+                {
+                    hasValuePattern = true;
+                    return true;
+                }
+            }
+            ControlType type = element.Current.ControlType;
+            return (type == ControlType.Edit || type == ControlType.Document)
+                && element.Current.IsKeyboardFocusable;
+        }
+        catch { return false; }
+    }
+
+    private static AutomationElement EditableFromElement(AutomationElement element, out bool hasValuePattern)
+    {
+        hasValuePattern = false;
+        AutomationElement current = element;
+        for (int depth = 0; current != null && depth < 12; depth++)
+        {
+            bool candidateHasValuePattern;
+            if (IsUsableEditable(current, out candidateHasValuePattern))
+            {
+                hasValuePattern = candidateHasValuePattern;
+                return current;
+            }
+            try { current = TreeWalker.ControlViewWalker.GetParent(current); }
+            catch { current = null; }
+        }
+        return null;
+    }
+
+    private static bool ElementBelongsToWindow(AutomationElement element, IntPtr hwnd)
+    {
+        if (element == null || hwnd == IntPtr.Zero) return false;
+        try
+        {
+            uint windowProcessId;
+            GetWindowThreadProcessId(hwnd, out windowProcessId);
+            return windowProcessId > 0 && element.Current.ProcessId == (int)windowProcessId;
+        }
+        catch { return false; }
+    }
+
+    private static AutomationElement FindBestEditableInWindow(
+        IntPtr hwnd,
+        NativePoint anchor,
+        out bool hasValuePattern)
+    {
+        hasValuePattern = false;
+        try
+        {
+            AutomationElement root = AutomationElement.FromHandle(hwnd);
+            Condition editableTypes = new OrCondition(
+                new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Edit),
+                new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Document));
+            AutomationElementCollection candidates = root.FindAll(TreeScope.Descendants, editableTypes);
+            AutomationElement best = null;
+            bool bestHasValuePattern = false;
+            double bestScore = Double.NegativeInfinity;
+            int limit = Math.Min(candidates.Count, 256);
+            for (int index = 0; index < limit; index++)
+            {
+                AutomationElement candidate = candidates[index];
+                bool candidateHasValuePattern;
+                if (!IsUsableEditable(candidate, out candidateHasValuePattern)) continue;
+                System.Windows.Rect bounds = candidate.Current.BoundingRectangle;
+                if (bounds.IsEmpty) continue;
+                double centerX = bounds.Left + bounds.Width / 2.0;
+                double centerY = bounds.Top + bounds.Height / 2.0;
+                double dx = centerX - anchor.X;
+                double dy = centerY - anchor.Y;
+                double score = -Math.Sqrt(dx * dx + dy * dy);
+                if (bounds.Contains(anchor.X, anchor.Y)) score += 1000000;
+                if (candidate.Current.HasKeyboardFocus) score += 500000;
+                if (candidateHasValuePattern) score += 1000;
+                if (score > bestScore)
+                {
+                    best = candidate;
+                    bestHasValuePattern = candidateHasValuePattern;
+                    bestScore = score;
+                }
+            }
+            hasValuePattern = bestHasValuePattern;
+            return best;
+        }
+        catch { return null; }
+    }
+
+    private static bool WindowMatches(IntPtr hwnd, int expectedProcessId, string expectedTitle)
+    {
+        if (!IsWindow(hwnd)) return false;
+        uint actualProcessId;
+        GetWindowThreadProcessId(hwnd, out actualProcessId);
+        if (expectedProcessId > 0 && actualProcessId != (uint)expectedProcessId) return false;
+        string actualTitle = WindowText(hwnd);
+        return String.IsNullOrEmpty(expectedTitle)
+            || String.Equals(actualTitle, expectedTitle, StringComparison.Ordinal);
+    }
+
+    private static NativePoint WindowCenter(IntPtr hwnd, NativePoint fallback)
+    {
+        NativeRect rect;
+        if (!GetWindowRect(hwnd, out rect) || rect.Right <= rect.Left || rect.Bottom <= rect.Top) return fallback;
+        return new NativePoint {
+            X = rect.Left + (rect.Right - rect.Left) / 2,
+            Y = rect.Top + (rect.Bottom - rect.Top) / 2,
+        };
+    }
+
+    private static DeliveryTarget Candidate(
+        IntPtr hwnd,
+        string resolution,
+        string processName,
+        int expectedProcessId,
+        string expectedTitle,
+        AutomationElement focused,
+        NativePoint cursor,
+        NativePoint originalPoint,
+        bool preferCursor,
+        bool preferOriginalPoint)
+    {
+        if (!WindowMatches(hwnd, expectedProcessId, expectedTitle)) return null;
+        if (IsMagicPointerWindow(hwnd, processName)) return null;
+        bool hasValuePattern;
+        AutomationElement editable = null;
+        if (resolution == "focused_editable" && ElementBelongsToWindow(focused, hwnd))
+        {
+            editable = EditableFromElement(focused, out hasValuePattern);
+            if (editable != null)
+            {
+                return new DeliveryTarget { hwnd = hwnd, editable = editable, hasValuePattern = hasValuePattern,
+                    resolution = resolution, processName = processName };
+            }
+        }
+        if (resolution == "focused_editable") return null;
+        if (preferCursor)
+        {
+            IntPtr pointed = GetAncestor(WindowFromPoint(cursor), GA_ROOT);
+            if (pointed == hwnd)
+            {
+                editable = EditableAtPoint(cursor.X, cursor.Y, out hasValuePattern);
+                if (editable != null && ElementBelongsToWindow(editable, hwnd))
+                {
+                    return new DeliveryTarget { hwnd = hwnd, editable = editable, hasValuePattern = hasValuePattern,
+                        resolution = resolution, processName = processName };
+                }
+            }
+        }
+        if (preferOriginalPoint)
+        {
+            IntPtr pointed = GetAncestor(WindowFromPoint(originalPoint), GA_ROOT);
+            if (pointed == hwnd)
+            {
+                editable = EditableAtPoint(originalPoint.X, originalPoint.Y, out hasValuePattern);
+                if (editable != null && ElementBelongsToWindow(editable, hwnd))
+                {
+                    return new DeliveryTarget { hwnd = hwnd, editable = editable, hasValuePattern = hasValuePattern,
+                        resolution = resolution, processName = processName };
+                }
+            }
+        }
+        if (ElementBelongsToWindow(focused, hwnd))
+        {
+            editable = EditableFromElement(focused, out hasValuePattern);
+            if (editable != null)
+            {
+                return new DeliveryTarget { hwnd = hwnd, editable = editable, hasValuePattern = hasValuePattern,
+                    resolution = resolution, processName = processName };
+            }
+        }
+        NativePoint anchor = preferCursor
+            ? cursor
+            : (preferOriginalPoint ? originalPoint : WindowCenter(hwnd, originalPoint));
+        editable = FindBestEditableInWindow(hwnd, anchor, out hasValuePattern);
+        return editable == null ? null : new DeliveryTarget {
+            hwnd = hwnd,
+            editable = editable,
+            hasValuePattern = hasValuePattern,
+            resolution = resolution,
+            processName = processName,
+        };
+    }
+
+    private static DeliveryTarget ResolveDeliveryTarget(
+        Dictionary<string, object> data,
+        IntPtr originalHwnd,
+        int originalProcessId,
+        string originalTitle,
+        string originalProcessName,
+        NativePoint originalPoint)
+    {
+        string mode = Text(data, "target_resolution");
+        AutomationElement focused = null;
+        try { focused = AutomationElement.FocusedElement; } catch { }
+        NativePoint cursor;
+        if (!GetCursorPos(out cursor)) cursor = originalPoint;
+        if (mode != "adaptive")
+        {
+            if (!WindowMatches(originalHwnd, originalProcessId, originalTitle)
+                || IsMagicPointerWindow(originalHwnd, originalProcessName)
+                || GetAncestor(WindowFromPoint(originalPoint), GA_ROOT) != originalHwnd)
+            {
+                return null;
+            }
+            bool exactHasValuePattern;
+            AutomationElement exactEditable = EditableAtPoint(
+                originalPoint.X, originalPoint.Y, out exactHasValuePattern);
+            return exactEditable == null || !ElementBelongsToWindow(exactEditable, originalHwnd)
+                ? null
+                : new DeliveryTarget {
+                    hwnd = originalHwnd,
+                    editable = exactEditable,
+                    hasValuePattern = exactHasValuePattern,
+                    resolution = "exact_target",
+                    processName = originalProcessName,
+                };
+        }
+
+        IntPtr foreground = GetForegroundWindow();
+        DeliveryTarget target = Candidate(foreground, "focused_editable", "", 0, "",
+            focused, cursor, originalPoint, false, false);
+        if (target != null) return target;
+
+        IntPtr cursorWindow = GetAncestor(WindowFromPoint(cursor), GA_ROOT);
+        target = Candidate(cursorWindow, "cursor_window", "", 0, "",
+            focused, cursor, originalPoint, true, false);
+        if (target != null) return target;
+
+        IntPtr stableWindow = new IntPtr(LongInteger(data, "current_target_hwnd", 0));
+        target = Candidate(stableWindow, "stable_foreground", Text(data, "current_target_process_name"),
+            Integer(data, "current_target_process_id", 0), "", focused, cursor, originalPoint, false, false);
+        if (target != null) return target;
+
+        target = Candidate(foreground, "foreground_window", "", 0, "",
+            focused, cursor, originalPoint, false, false);
+        if (target != null) return target;
+
+        return Candidate(originalHwnd, "original_target", originalProcessName, originalProcessId,
+            originalTitle, focused, cursor, originalPoint, false, true);
+    }
+
     private static AutomationElement EditableAtPoint(int x, int y, out bool hasValuePattern)
     {
         hasValuePattern = false;
@@ -193,76 +486,47 @@ public static class UiaDraftWriter
         if (Boolean(data, "submit", true)) { result.error = "submit must be false"; return result; }
         if (String.IsNullOrWhiteSpace(text)) { result.error = "text is empty"; return result; }
         if (coordinateSpace != "physical_screen_pixels") { result.error = "target coordinate space is not physical screen pixels"; return result; }
-        // prefer_foreground：用户划线问完后切到了微信/AI 输入框，填入要写进
-        // 「现在的前台」，而不是拉回划线时锁定的窗口。此模式下不校验锁定
-        // hwnd（目标就是当前前台），但 point 仍是锁定时的点——用它定位前台
-        // 窗口里的输入框；前台不可编辑则回退锁定窗口。
-        bool preferForeground = Boolean(data, "prefer_foreground", false);
-        IntPtr hwnd = new IntPtr(hwndValue);
-        if (preferForeground)
-        {
-            IntPtr fg = GetForegroundWindow();
-            if (fg != IntPtr.Zero && fg != hwnd)
-            {
-                hwnd = fg;
-                result.target_hwnd = hwnd.ToInt64();
-            }
-        }
-        if (!IsWindow(hwnd)) { result.error = "target window no longer exists"; return result; }
-        uint actualProcessId;
-        GetWindowThreadProcessId(hwnd, out actualProcessId);
-        if (!preferForeground && expectedProcessId > 0 && actualProcessId != (uint)expectedProcessId)
-        {
-            result.error = "target process changed before draft delivery";
-            return result;
-        }
-        string actualTitle = WindowText(hwnd);
-        if (!preferForeground && !String.Equals(actualTitle, expectedTitle, StringComparison.Ordinal))
-        {
-            result.error = "target window title changed before draft delivery";
-            return result;
-        }
+        if (point == null) { result.error = "target point is missing"; return result; }
         NativePoint nativePoint = new NativePoint { X = point[0], Y = point[1] };
-        // prefer_foreground 时 point 属于划线时的旧窗口——不校验它属于新
-        // 前台（用户主动切过去了），改用前台窗口中心的点定位输入框。
-        if (!preferForeground)
+        DeliveryTarget target = ResolveDeliveryTarget(
+            data,
+            new IntPtr(hwndValue),
+            expectedProcessId,
+            expectedTitle,
+            processName,
+            nativePoint);
+        if (target == null)
         {
-            IntPtr pointedWindow = WindowFromPoint(nativePoint);
-            if (pointedWindow == IntPtr.Zero || GetAncestor(pointedWindow, GA_ROOT) != hwnd)
-            {
-                result.error = "user-pointed input no longer belongs to the target window";
-                return result;
-            }
+            result.error = "no trusted editable input surface could be resolved";
+            return result;
         }
-        result.target_title = actualTitle;
+        IntPtr hwnd = target.hwnd;
+        AutomationElement editable = target.editable;
+        bool hasValuePattern = target.hasValuePattern;
+        processName = String.IsNullOrWhiteSpace(target.processName) ? WindowProcessName(hwnd) : target.processName;
+        result.target_hwnd = hwnd.ToInt64();
+        result.target_title = WindowText(hwnd);
+        result.target_resolution = target.resolution;
+        result.resolved_from_trusted_native_evidence = Text(data, "target_resolution") == "adaptive";
         ShowWindow(hwnd, SW_RESTORE);
-        // Windows 前台锁：SetForegroundWindow 在目标进程非活动时经常失败
-        // （返回 true 但前台没变）。标准绕过：把前台线程的输入队列 attach
-        // 到目标窗口线程，再 SetForegroundWindow——微信/Claude/浏览器输入框
-        // 填入失败的根因就在这里。
         IntPtr foreground = GetForegroundWindow();
-        uint targetThread;
-        GetWindowThreadProcessId(hwnd, out targetThread);
-        uint foregroundThread = 0;
-        if (foreground != IntPtr.Zero)
+        if (foreground != hwnd)
         {
-            GetWindowThreadProcessId(foreground, out foregroundThread);
-        }
-        bool attached = false;
-        if (foregroundThread != 0 && foregroundThread != targetThread)
-        {
-            attached = AttachThreadInput(foregroundThread, targetThread, true);
-        }
-        try
-        {
-            SetForegroundWindow(hwnd);
-            Thread.Sleep(100);
-        }
-        finally
-        {
-            if (attached)
+            uint targetThread;
+            GetWindowThreadProcessId(hwnd, out targetThread);
+            uint foregroundThread = 0;
+            if (foreground != IntPtr.Zero) GetWindowThreadProcessId(foreground, out foregroundThread);
+            bool attached = foregroundThread != 0
+                && foregroundThread != targetThread
+                && AttachThreadInput(foregroundThread, targetThread, true);
+            try
             {
-                AttachThreadInput(foregroundThread, targetThread, false);
+                SetForegroundWindow(hwnd);
+                Thread.Sleep(60);
+            }
+            finally
+            {
+                if (attached) AttachThreadInput(foregroundThread, targetThread, false);
             }
         }
         if (GetForegroundWindow() != hwnd)
@@ -270,26 +534,6 @@ public static class UiaDraftWriter
             result.error = "target window could not be restored to foreground";
             return result;
         }
-
-        bool hasValuePattern;
-        AutomationElement editable;
-        if (preferForeground)
-        {
-            // 用户切到前台输入框后键盘焦点就在它上面：用 FocusedElement
-            // 定位，比旧坐标点可靠（旧 point 属于划线时的窗口）。
-            editable = AutomationElement.FocusedElement;
-            hasValuePattern = false;
-            if (editable != null)
-            {
-                try { editable.GetCurrentPattern(ValuePattern.Pattern); hasValuePattern = true; }
-                catch (Exception) { hasValuePattern = false; }
-            }
-        }
-        else
-        {
-            editable = EditableAtPoint(point[0], point[1], out hasValuePattern);
-        }
-        if (editable == null) { result.error = "the pointed element is not an editable input surface"; return result; }
         if (!editable.Current.IsEnabled) { result.error = "the pointed input surface is disabled"; return result; }
         if (IsPassword(editable)) { result.error = "password inputs are never eligible for draft delivery"; return result; }
         editable.SetFocus();

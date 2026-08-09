@@ -82,6 +82,7 @@ Magic Pointer = 默认不可见的跨应用操作层。晃动鼠标唤醒 → �
 
 **其他**
 
+- **「填入」不能退回无条件 `preferForeground`。** renderer 只能给文本和会话 token；目标由主进程的冻结选区与稳定前台提示，加上 C# writer 同进程读取的焦点/鼠标证据共同解析。顺序固定为聚焦输入框 → 鼠标所在外部应用 → 稳定前台 → 实时前台 → 原始应用；Magic Pointer 自身窗口必须排除。实际窗口变化只能由带 `resolved_from_trusted_native_evidence` 的 adaptive receipt 放行，no-submit 与读回校验不能放宽。
 - 不要引入需要付费 API 的依赖。SenseVoice / whisper / RapidOCR / OmniParser 全部免费本地。
 - 不要为了"收口"去改 `buttons` 掩码的算法——闪烁根因未确诊前改它会把唯一能观测的信号抹掉。
 - **gesture 态禁止用 DOM 元素逐帧追鼠标。** renderer 合成和 IPC 都会落后于 Windows 硬件光标，系统箭头未完全隐藏时就会出现两套光标分离。Windows 必须优先使用真实 `.cur` 资源（当前 `armed-cursor.cur`），非 Windows 才回退 SVG；真机验证必须记录 `GetCursorInfo().hCursor`，并要求按下至释放始终是同一个非零句柄，不能只看截图。

@@ -38,6 +38,9 @@ assert(handlerBody.includes('selectionSessions.get(selectionSessionToken)'));
 assert(handlerBody.includes('targetWindow: safeClone(snapshot.source_window || {})'));
 assert(handlerBody.includes('targetPoint: safeClone(snapshot.target_point || null)'));
 assert(handlerBody.includes('targetPointSpace: snapshot.target_point_space || null'));
+assert(handlerBody.includes("targetResolution: 'adaptive'"));
+assert(handlerBody.includes('currentTargetWindow: safeClone(lastStableForegroundWindow)'));
+assert(!handlerBody.includes('preferForeground: true'));
 assert(handlerBody.includes("'scripts/deliver_text_bridge.py'"));
 // A stale session must not receive a write result either.
 assert(handlerBody.includes('if (!selectionSessions.get(selectionSessionToken))'));

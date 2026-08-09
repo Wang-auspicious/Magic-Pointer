@@ -48,7 +48,8 @@ def make_capsule_delivery_proposal(
     target_window: dict[str, Any],
     target_point: Any,
     target_point_space: str | None = None,
-    prefer_foreground: bool = False,
+    target_resolution: str = "exact",
+    current_target_window: dict[str, Any] | None = None,
 ) -> ActionProposal:
     """The write itself, reusing the existing channel's identity guarantees.
 
@@ -61,7 +62,8 @@ def make_capsule_delivery_proposal(
         target_window=target_window,
         target_point=target_point,
         target_point_space=target_point_space,
-        prefer_foreground=prefer_foreground,
+        target_resolution=target_resolution,
+        current_target_window=current_target_window,
         delivery_kind=CAPSULE_DELIVERY_KIND,
     )
     return ActionProposal(

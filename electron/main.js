@@ -117,6 +117,11 @@ let lastPointerTraceKey = '';
 // 采集发生在剪贴板变化之后 700ms 内，那时前台可能已经被截图工具之类的外壳
 // 抢走。记住「最后一个真正的应用」，收藏箱才能说清这张图是从哪来的。
 let lastStableForegroundApp = '';
+let lastStableForegroundWindow = {
+  app: '',
+  hwnd: 0,
+  process_id: 0,
+};
 let wiggleCalibrationTimer = null;
 let lastWiggleTraceAt = 0;
 let inputPaused = false;
@@ -427,6 +432,11 @@ function startPointerInputStateStream() {
         // 外壳进程一律跳过——采集发生在 700ms 之后，那时这个值仍然是对的。
         if (!isTransientShell(pointerInputState.foregroundApp)) {
           lastStableForegroundApp = pointerInputState.foregroundApp;
+          lastStableForegroundWindow = {
+            app: pointerInputState.foregroundApp,
+            hwnd: pointerInputState.foregroundHwnd,
+            process_id: pointerInputState.foregroundProcessId,
+          };
         }
       } catch (_) {}
     }
@@ -4310,11 +4320,10 @@ ipcMain.on('stage:insert-result-text', (event, payload) => {
   log(`stage:insert-result-text token=${selectionSessionToken} chars=${text.length}`);
   runPythonBridge({
     text,
-    // 填入优先写「当前前台」：用户划线问完往往已切到微信/AI 输入框，
-    // 该写的是现在聚焦的那个框，而不是拉回划线时锁定的窗口。
-    // C# writer 的 prefer_foreground 模式用键盘焦点元素定位输入框；
-    // 前台不可用时 fallback 到锁定窗口（deliver_text_bridge 内判定）。
-    preferForeground: true,
+    // 主进程提供最后一个稳定外部窗口作为提示；渲染层不能指定写入目标。
+    // 原生 writer 在同一个进程里按焦点、鼠标、稳定前台、实时前台、原目标解析。
+    targetResolution: 'adaptive',
+    currentTargetWindow: safeClone(lastStableForegroundWindow),
     targetWindow: safeClone(snapshot.source_window || {}),
     targetPoint: safeClone(snapshot.target_point || null),
     targetPointSpace: snapshot.target_point_space || null,

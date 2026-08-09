@@ -52,6 +52,8 @@ UIA / Chrome DevTools DOM / Office COM     ← 真相
 
 级别 3 物理上无法确认，必须返回 `written_unverified`（"已尝试替换，请确认" + 保留原文 + 提示 Ctrl+Z），**不得计入成功、不得标 `is_undoable`**。
 
+**“填入”目标由原生层自适应解析，renderer 不命名窗口。** Stage renderer 只能提交屏幕上可见的文本和会话 token；主进程从冻结选区提供原目标，并从常驻指针状态提供最后稳定外部窗口提示。`uia_draft_writer.cs` 在一次进程调用中按“聚焦可编辑元素 → 鼠标所在窗口 → 稳定前台提示 → 实时前台 → 原目标”解析，候选窗口无焦点时扫描至多 256 个 Edit/Document 控件并按鼠标包含、键盘焦点、可验证 ValuePattern、距离打分。窗口句柄必须仍匹配 PID；Magic Pointer 窗口、密码/禁用/离屏/只读控件均排除。只有 `target_resolution=adaptive` 且 receipt 带受信任原生解析标签时，执行器才允许实际 HWND/标题不同于冻结原目标；普通精确写回仍严格锁定原窗口和原坐标。
+
 **回答框有两种，分界线是「这段产物要不要送出去」。**（2026-08-07）
 
 | | `deliver` | `inspect` |

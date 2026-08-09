@@ -96,7 +96,12 @@ def main() -> int:
             target_window=target_window if isinstance(target_window, dict) else {},
             target_point=payload.get("targetPoint"),
             target_point_space=payload.get("targetPointSpace"),
-            prefer_foreground=payload.get("preferForeground") is True,
+            target_resolution=str(payload.get("targetResolution") or "exact"),
+            current_target_window=(
+                payload.get("currentTargetWindow")
+                if isinstance(payload.get("currentTargetWindow"), dict)
+                else None
+            ),
         )
     except DraftDeliveryError as exc:
         # No trustworthy target: we never guess a window or a coordinate space.
