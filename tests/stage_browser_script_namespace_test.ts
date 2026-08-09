@@ -7,6 +7,7 @@ const vm = require('vm');
 
 const context = vm.createContext({ globalThis: {} });
 for (const relativePath of [
+  'electron/gesture_capture.ts',
   'electron/answer_shape_policy.ts',
   'electron/capture_proof_policy.ts',
   'electron/stage_state.js',
@@ -34,6 +35,7 @@ for (const relativePath of [
     `${relativePath} must coexist with the other plain Stage scripts in one browser global scope`,
   );
 }
+assert(context.globalThis.GestureCapture, 'GestureCapture browser API must exist');
 assert(context.globalThis.AnswerShapePolicy, 'AnswerShapePolicy browser API must exist');
 assert(context.globalThis.CaptureProofPolicy, 'CaptureProofPolicy browser API must exist');
 assert(context.globalThis.StageState, 'StageState browser API must exist');
