@@ -3,8 +3,8 @@ const fs = require('fs');
 
 const html = fs.readFileSync('electron/renderer/panel.html', 'utf8');
 const css = fs.readFileSync('electron/renderer/panel.css', 'utf8');
-const js = fs.readFileSync('electron/renderer/panel.js', 'utf8');
-const main = fs.readFileSync('electron/main.js', 'utf8');
+const js = fs.readFileSync('electron/renderer/panel.ts', 'utf8');
+const main = fs.readFileSync('electron/main.ts', 'utf8');
 
 for (const id of ['inline-action-rail', 'voice-glyph', 'command', 'result']) {
   assert(html.includes(`id="${id}"`), id);

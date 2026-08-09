@@ -132,7 +132,7 @@ for (const mutation of [
   assert.strictEqual(canAutoExecuteInternalProposal(fabricParsed, mutation), false);
 }
 
-const main = fs.readFileSync('electron/main.js', 'utf8');
+const main = fs.readFileSync('electron/main.ts', 'utf8');
 assert(main.includes("const { canAutoExecuteInternalProposal } = require('./internal_action_policy');"));
 assert(main.includes('MAGIC_POINTER_USER_DATA_DIR: FABRIC_DATA_DIR'));
 assert(main.includes('canAutoExecuteInternalProposal(parsed, autoProposal)'));

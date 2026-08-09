@@ -1,3 +1,4 @@
+// @ts-nocheck -- legacy classic-script globals are preserved during the extension migration.
 const canvas = document.getElementById('trail');
 const ctx = canvas.getContext('2d');
 const sweepCanvas = document.getElementById('sweep-layer');

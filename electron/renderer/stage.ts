@@ -1,3 +1,4 @@
+// @ts-nocheck -- legacy classic-script globals are preserved during the extension migration.
 // PointerStage renderer: hosts every ephemeral visual (targeting outline,
 // frozen glow, command capsule, processing shimmer, result/error surfaces)
 // on one transparent click-through window. State lives in the pure machine

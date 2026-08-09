@@ -8,7 +8,7 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const assert = require('node:assert');
 
-const source = fs.readFileSync('electron/renderer/overlay.js', 'utf8');
+const source = fs.readFileSync('electron/renderer/overlay.ts', 'utf8');
 // 从源码里抽出纯函数（overlay.js 是浏览器脚本，顶层不导出）
 const match = source.match(/function guideFlightPoint[\s\S]*?\n}/);
 if (!match) throw new Error('guideFlightPoint not found in overlay.js');

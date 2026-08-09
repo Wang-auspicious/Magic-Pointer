@@ -1,3 +1,4 @@
+// @ts-nocheck -- legacy classic-script globals are preserved during the extension migration.
 /* 随行窗 —— 与工作室共用会话，这里只管本窗的渲染与交互 */
 
 /* 头像/球：与 studio.js 同一套；装了 @oreo-design/avatar 后统一换掉 */

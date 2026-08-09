@@ -18,7 +18,7 @@ for (const now of [1500, 1570, 1640, 1710]) {
 }
 assert.strictEqual(busyGate.decide({ now: 2050, hasVisibleSurface: false, isActivationBusy: true }), 'dismiss');
 
-const mainSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
+const mainSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.ts'), 'utf8');
 assert(mainSource.includes("const { ActivationGate } = require('./activation_gate');"));
 assert(mainSource.includes('function hasVisibleTemporarySurface()'));
 assert(mainSource.includes('function dismissTemporarySurfaces('));

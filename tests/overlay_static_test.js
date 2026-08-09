@@ -2,7 +2,7 @@ const assert = require('assert');
 const fs = require('fs');
 const vm = require('vm');
 
-const source = fs.readFileSync('electron/renderer/overlay.js', 'utf8');
+const source = fs.readFileSync('electron/renderer/overlay.ts', 'utf8');
 const html = fs.readFileSync('electron/renderer/index.html', 'utf8');
 const styles = fs.readFileSync('electron/renderer/styles.css', 'utf8');
 

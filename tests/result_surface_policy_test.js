@@ -175,7 +175,7 @@ assert.strictEqual(classifyResult({
   actionProposals: [{ action_type: 'copy_text_to_clipboard' }],
 }), 'inline');
 
-const mainSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
+const mainSource = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.ts'), 'utf8');
 assert(mainSource.includes('reason: current.reason'));
 assert(mainSource.includes('captureEligibility: entry.captureEligibility'));
 assert(mainSource.includes('if (!session.captureEligibility?.commandReady)'));

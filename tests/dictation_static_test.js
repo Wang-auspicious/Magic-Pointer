@@ -1,10 +1,10 @@
 const assert = require('assert');
 const fs = require('fs');
 
-const main = fs.readFileSync('electron/main.js', 'utf8');
+const main = fs.readFileSync('electron/main.ts', 'utf8');
 const preload = fs.readFileSync('electron/preload.ts', 'utf8');
 const script = fs.readFileSync('scripts/local_voice_bridge.py', 'utf8');
-const overlay = fs.readFileSync('electron/renderer/overlay.js', 'utf8');
+const overlay = fs.readFileSync('electron/renderer/overlay.ts', 'utf8');
 const overlayHtml = fs.readFileSync('electron/renderer/index.html', 'utf8');
 
 assert(preload.includes("startDictation: () => ipcRenderer.send('dictation:start', { surface: 'overlay' })"));

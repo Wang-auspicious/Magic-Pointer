@@ -20,7 +20,7 @@ assert(css.includes('"Microsoft YaHei UI"'), 'Chinese UI glyphs must use the Win
 assert(css.includes('html *'), 'all current and future UI descendants must inherit the contract');
 assert(css.includes('!important'), 'component CSS must not silently override the global contract');
 
-const panel = fs.readFileSync('electron/renderer/panel.js', 'utf8');
+const panel = fs.readFileSync('electron/renderer/panel.ts', 'utf8');
 assert(panel.includes('"Microsoft YaHei UI"'),
   'canvas text measurement must use the same Chinese system font as rendered controls');
 

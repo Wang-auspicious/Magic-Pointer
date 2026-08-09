@@ -4,7 +4,7 @@ const assert = require('assert');
 const fs = require('fs');
 
 const helper = fs.readFileSync('scripts/pointer_input_state.ps1', 'utf8');
-const main = fs.readFileSync('electron/main.js', 'utf8');
+const main = fs.readFileSync('electron/main.ts', 'utf8');
 
 assert(helper.includes('param([switch]$SelfTest)'), 'the native hook must have a bounded compile/self-test mode');
 assert(helper.includes('CaptureNextStroke'), 'the native helper must expose a bounded one-shot stroke gate');

@@ -1,7 +1,7 @@
 const assert = require('assert');
 const fs = require('fs');
 
-const source = fs.readFileSync('electron/renderer/stage.js', 'utf8');
+const source = fs.readFileSync('electron/renderer/stage.ts', 'utf8');
 const html = fs.readFileSync('electron/renderer/stage.html', 'utf8');
 const css = fs.readFileSync('electron/renderer/stage.css', 'utf8');
 
@@ -164,7 +164,7 @@ assert(!source.includes('renderResultToolbar'),
 // 舞台只负责把卡片挂上去。守卫跟着能力一起搬家，不是取消：
 // - 舞台必须走共享渲染器，不许自己再长一套模板
 // - 那份渲染器必须仍然渲 markdown，并且同样不许碰 innerHTML
-const cardRender = fs.readFileSync('electron/renderer/card_render.js', 'utf8');
+const cardRender = fs.readFileSync('electron/renderer/card_render.ts', 'utf8');
 assert(source.includes("renderCard(card, { density: 'capsule' })"),
   'the capsule must render the shared card, not a capsule-only template');
 assert(cardRender.includes('function markdown('),

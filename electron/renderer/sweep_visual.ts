@@ -1,3 +1,4 @@
+// @ts-nocheck -- legacy WebGL classic-script behavior is preserved during the extension migration.
 (function initSweepVisual(root, factory) {
   const api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api;

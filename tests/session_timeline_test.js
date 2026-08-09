@@ -129,7 +129,7 @@ console.log('session_timeline_test: all assertions passed');
   const fs = require('fs');
   const path = require('path');
   const root = path.resolve(__dirname, '..');
-  const main = fs.readFileSync(path.join(root, 'electron', 'main.js'), 'utf8');
+  const main = fs.readFileSync(path.join(root, 'electron', 'main.ts'), 'utf8');
   const preload = fs.readFileSync(path.join(root, 'electron', 'preload.ts'), 'utf8');
 
   // Fed: activation opens a session, bridges report phases into it, outcomes close it.

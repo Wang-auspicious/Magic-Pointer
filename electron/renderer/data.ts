@@ -1,3 +1,4 @@
+// @ts-nocheck -- legacy classic-script globals are preserved during the extension migration.
 /* ============================================================
    数据层
    ------------------------------------------------------------

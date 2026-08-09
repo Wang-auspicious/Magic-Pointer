@@ -1,3 +1,4 @@
+// @ts-nocheck -- legacy classic-script globals are preserved during the extension migration.
 /* exported LiveCards */
 /* ============================================================================
    活着的卡

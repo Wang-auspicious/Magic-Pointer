@@ -10,9 +10,9 @@
 const assert = require('assert');
 const fs = require('fs');
 
-const main = fs.readFileSync('electron/main.js', 'utf8');
-const overlay = fs.readFileSync('electron/renderer/overlay.js', 'utf8');
-const stage = fs.readFileSync('electron/renderer/stage.js', 'utf8');
+const main = fs.readFileSync('electron/main.ts', 'utf8');
+const overlay = fs.readFileSync('electron/renderer/overlay.ts', 'utf8');
+const stage = fs.readFileSync('electron/renderer/stage.ts', 'utf8');
 const stageHtml = fs.readFileSync('electron/renderer/stage.html', 'utf8');
 const stageCss = fs.readFileSync('electron/renderer/stage.css', 'utf8');
 const preload = fs.readFileSync('electron/preload.ts', 'utf8');

@@ -124,6 +124,19 @@ export default [
     },
   },
   {
+    files: ['electron/main.ts'],
+    rules: {
+      'no-empty': ['error', { allowEmptyCatch: true }],
+    },
+  },
+  {
+    files: ['electron/renderer/**/*.ts'],
+    rules: {
+      '@typescript-eslint/no-unused-vars': 'off',
+      'no-control-regex': 'off',
+    },
+  },
+  {
     files: ['electron/route_policy.js', 'electron/renderer/stage.js'],
     rules: {
       // These expressions intentionally reject C0 control characters in URLs

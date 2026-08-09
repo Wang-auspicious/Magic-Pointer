@@ -1,7 +1,7 @@
 const assert = require('assert');
 const fs = require('fs');
 
-const main = fs.readFileSync('electron/main.js', 'utf8');
+const main = fs.readFileSync('electron/main.ts', 'utf8');
 const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
 const runner = fs.readFileSync('scripts/run-node-tests.ts', 'utf8');
 

@@ -1,8 +1,8 @@
 const assert = require('assert');
 const fs = require('fs');
 
-const main = fs.readFileSync('electron/main.js', 'utf8');
-const overlay = fs.readFileSync('electron/renderer/overlay.js', 'utf8');
+const main = fs.readFileSync('electron/main.ts', 'utf8');
+const overlay = fs.readFileSync('electron/renderer/overlay.ts', 'utf8');
 const html = fs.readFileSync('electron/renderer/index.html', 'utf8');
 
 assert(main.includes('function registerConfigurableHotkeys('));

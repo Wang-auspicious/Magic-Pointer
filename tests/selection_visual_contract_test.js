@@ -35,7 +35,7 @@ const unsupported = defaultSettings();
 unsupported.appearance.selection_visual = 'neon_box';
 assert.throws(() => validate(unsupported), /selection_visual is unsupported/);
 
-const main = read('electron/main.js');
+const main = read('electron/main.ts');
 assert.match(
   main,
   /selectionVisual:\s*selectionVisualForStage\(\)/,
@@ -47,7 +47,7 @@ assert.match(
   'main must inject only validated Stage tuning values',
 );
 
-const stageJs = read('electron/renderer/stage.js');
+const stageJs = read('electron/renderer/stage.ts');
 const stageCss = read('electron/renderer/stage.css');
 assert.match(
   stageJs,

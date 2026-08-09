@@ -3,8 +3,8 @@
 const assert = require('assert');
 const fs = require('fs');
 
-const source = fs.readFileSync('electron/renderer/stage.js', 'utf8');
-const main = fs.readFileSync('electron/main.js', 'utf8');
+const source = fs.readFileSync('electron/renderer/stage.ts', 'utf8');
+const main = fs.readFileSync('electron/main.ts', 'utf8');
 
 assert(source.includes('function hasInteractiveStageSurface()'),
   'mouse capture must be derived from currently visible interactive stage controls');

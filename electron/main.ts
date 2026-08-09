@@ -1,4 +1,5 @@
-﻿const { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen, safeStorage, systemPreferences } = require('electron');
+﻿// @ts-nocheck -- the legacy main-process composition root is compiled without runtime rewrites.
+const { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen, safeStorage, systemPreferences } = require('electron');
 const path = require('path');
 const { dialog } = require('electron');
 const { Menu, nativeImage, Tray } = require('electron');

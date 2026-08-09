@@ -22,7 +22,7 @@ assert.strictEqual(lifecycle.onboardingIsReady(marker), true);
 fs.writeFileSync(marker, JSON.stringify({ schemaVersion: 2, status: 'blocked', bootstrapVersion: 1 }), 'utf8');
 assert.strictEqual(lifecycle.onboardingIsReady(marker), false);
 
-const main = fs.readFileSync('electron/main.js', 'utf8');
+const main = fs.readFileSync('electron/main.ts', 'utf8');
 assert(main.includes('new Tray('), 'resident desktop app needs a visible tray entry');
 assert(main.includes("label: '退出 Magic Pointer'"), 'tray must expose a real quit action');
 assert(main.includes("app.on('second-instance'"), 'clicking the shortcut twice must reveal the existing app');

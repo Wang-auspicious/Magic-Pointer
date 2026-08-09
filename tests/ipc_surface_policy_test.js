@@ -14,7 +14,7 @@ assert.strictEqual(isSurfaceSender({ sender: { id: 11 } }, 'overlay', resolveWin
 assert.strictEqual(isSurfaceSender({ sender: overlayContents }, 'panel', resolveWindow), false);
 assert.strictEqual(isSurfaceSender(null, 'overlay', resolveWindow), false);
 
-const main = fs.readFileSync('electron/main.js', 'utf8');
+const main = fs.readFileSync('electron/main.ts', 'utf8');
 assert(main.includes("const { isSurfaceSender } = require('./ipc_surface_policy');"));
 assert(main.includes("isSurfaceSender(event, 'overlay', resultTargetWindow)"));
 assert(main.includes("isSurfaceSender(event, 'stage', resultTargetWindow)"));

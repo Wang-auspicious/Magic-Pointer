@@ -1,3 +1,4 @@
+// @ts-nocheck -- legacy classic-script globals are preserved during the extension migration.
 /* 交互实验页。每一段都是真的组件，不是示意图——所以这一页看到什么，
    产品里就是什么。 */
 

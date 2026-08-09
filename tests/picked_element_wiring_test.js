@@ -10,9 +10,9 @@ const fs = require('fs');
 const path = require('path');
 
 const root = path.resolve(__dirname, '..');
-const mainSource = fs.readFileSync(path.join(root, 'electron', 'main.js'), 'utf8');
+const mainSource = fs.readFileSync(path.join(root, 'electron', 'main.ts'), 'utf8');
 const preloadSource = fs.readFileSync(path.join(root, 'electron', 'preload.ts'), 'utf8');
-const stageSource = fs.readFileSync(path.join(root, 'electron', 'renderer', 'stage.js'), 'utf8');
+const stageSource = fs.readFileSync(path.join(root, 'electron', 'renderer', 'stage.ts'), 'utf8');
 
 // --- withPickedElement 的行为 -----------------------------------------------
 // main.js 不能直接 require（它会拉起 electron），所以把纯函数抽出来求值。

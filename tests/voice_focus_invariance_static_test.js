@@ -5,9 +5,9 @@ const fs = require('fs');
 const path = require('path');
 
 const root = path.resolve(__dirname, '..');
-const main = readCode('electron/main.js');
+const main = readCode('electron/main.ts');
 const preload = readCode('electron/preload.ts');
-const stage = readCode('electron/renderer/stage.js');
+const stage = readCode('electron/renderer/stage.ts');
 const pointerState = readCode('scripts/pointer_input_state.ps1');
 
 function readCode(relativePath) {

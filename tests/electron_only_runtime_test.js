@@ -31,12 +31,12 @@ assert(!stopScript.includes('app.main'), 'the stop script must not retain the re
 const systemContext = read('app/system_context.py');
 assert(!systemContext.includes('tk_window'), 'Python system helpers must not retain Tk-specific code');
 
-const electronMain = read('electron/main.js');
+const electronMain = read('electron/main.ts');
 const sourceLoader = "require('tsx/cjs')";
 const firstLocalModule = "require('./runtime_paths')";
 assert(
   electronMain.includes(sourceLoader),
-  'the documented direct electron/main.js entry must register the TypeScript loader',
+  'the documented direct electron/main.ts entry must register the TypeScript loader',
 );
 assert(
   electronMain.indexOf(sourceLoader) < electronMain.indexOf(firstLocalModule),

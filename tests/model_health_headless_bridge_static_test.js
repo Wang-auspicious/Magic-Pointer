@@ -4,7 +4,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 
-const main = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.js'), 'utf8');
+const main = fs.readFileSync(path.join(__dirname, '..', 'electron', 'main.ts'), 'utf8');
 
 assert(main.includes("if (!options.allowWithoutSurface && !resultTargetWindow(target)) return;"));
 assert(main.includes('allowWithoutSurface: true,'));

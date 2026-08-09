@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 
 const root = path.resolve(__dirname, '..');
-const stageJs = fs.readFileSync(path.join(root, 'electron', 'renderer', 'stage.js'), 'utf8');
+const stageJs = fs.readFileSync(path.join(root, 'electron', 'renderer', 'stage.ts'), 'utf8');
 const stageHtml = fs.readFileSync(path.join(root, 'electron', 'renderer', 'stage.html'), 'utf8');
 const stageCss = fs.readFileSync(path.join(root, 'electron', 'renderer', 'stage.css'), 'utf8');
 const { stretchCommand, stretchIntent } = require('../electron/stage_stretch_policy');

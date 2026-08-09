@@ -3,8 +3,8 @@
 const assert = require('assert');
 const fs = require('fs');
 
-const main = fs.readFileSync('electron/main.js', 'utf8');
-const overlay = fs.readFileSync('electron/renderer/overlay.js', 'utf8');
+const main = fs.readFileSync('electron/main.ts', 'utf8');
+const overlay = fs.readFileSync('electron/renderer/overlay.ts', 'utf8');
 const styles = fs.readFileSync('electron/renderer/styles.css', 'utf8');
 const preload = fs.readFileSync('electron/preload.ts', 'utf8');
 const overlayHtml = fs.readFileSync('electron/renderer/index.html', 'utf8');
@@ -204,7 +204,7 @@ assert.doesNotMatch(overlay, /function updateArmedCursor\(/,
 assert.match(main, /overlayBoundDisplayId[\s\S]*?setBounds\(desired\)/,
   'overlay must only setBounds when the cursor crosses displays — repeated setBounds flickers the cursor');
 
-const stage = fs.readFileSync('electron/renderer/stage.js', 'utf8');
+const stage = fs.readFileSync('electron/renderer/stage.ts', 'utf8');
 const stageShowHandler = stage.slice(
   stage.indexOf('api.onShow((payload) =>'),
   stage.indexOf('api.onUpdate((payload) =>'),

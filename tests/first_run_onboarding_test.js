@@ -1,7 +1,7 @@
 const assert = require('assert');
 const fs = require('fs');
 
-const main = fs.readFileSync('electron/main.js', 'utf8');
+const main = fs.readFileSync('electron/main.ts', 'utf8');
 const onboarding = fs.readFileSync('electron/renderer/onboarding.html', 'utf8');
 
 assert(main.includes('if (onboardingRequired && !captureMode) showOnboarding({}, { activate: true });'),

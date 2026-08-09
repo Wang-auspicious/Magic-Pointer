@@ -3,7 +3,7 @@
 const assert = require('assert');
 const fs = require('fs');
 
-const source = fs.readFileSync('electron/main.js', 'utf8');
+const source = fs.readFileSync('electron/main.ts', 'utf8');
 assert(source.includes("app.isPackaged ? app.getPath('userData')"),
   'packaged settings, logs, and runtime files must live in the per-user app data directory');
 assert(source.includes("path.join(process.env.LOCALAPPDATA, 'Magic Pointer')"),

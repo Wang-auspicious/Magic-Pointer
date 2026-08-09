@@ -1,7 +1,7 @@
 const assert = require('assert');
 const fs = require('fs');
 
-const source = fs.readFileSync('electron/renderer/panel.js', 'utf8');
+const source = fs.readFileSync('electron/renderer/panel.ts', 'utf8');
 const html = fs.readFileSync('electron/renderer/panel.html', 'utf8');
 const css = fs.readFileSync('electron/renderer/panel.css', 'utf8');
 

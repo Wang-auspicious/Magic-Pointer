@@ -47,7 +47,7 @@ const { stageEventFromBridge } = require('../electron/stage_contract');
 // --- 渲染层 -----------------------------------------------------------------
 
 {
-  const stageJs = fs.readFileSync(path.join(root, 'electron', 'renderer', 'stage.js'), 'utf8');
+  const stageJs = fs.readFileSync(path.join(root, 'electron', 'renderer', 'stage.ts'), 'utf8');
   const stageHtml = fs.readFileSync(path.join(root, 'electron', 'renderer', 'stage.html'), 'utf8');
   const stageCss = fs.readFileSync(path.join(root, 'electron', 'renderer', 'stage.css'), 'utf8');
 
@@ -74,9 +74,9 @@ const { stageEventFromBridge } = require('../electron/stage_contract');
 
 // Guide lifecycle: the overlay exists only for an explicit [POINT] request.
 {
-  const main = fs.readFileSync(path.join(root, 'electron', 'main.js'), 'utf8');
+  const main = fs.readFileSync(path.join(root, 'electron', 'main.ts'), 'utf8');
   const preload = fs.readFileSync(path.join(root, 'electron', 'preload.ts'), 'utf8');
-  const overlay = fs.readFileSync(path.join(root, 'electron', 'renderer', 'overlay.js'), 'utf8');
+  const overlay = fs.readFileSync(path.join(root, 'electron', 'renderer', 'overlay.ts'), 'utf8');
 
   assert(preload.includes('overlay:guide-finished'), 'preload must expose guide completion');
   assert(main.includes("ipcMain.on('overlay:guide-finished'"),

@@ -154,7 +154,7 @@ assert.strictEqual(inferReferenceMode('also this'), 'append');
 assert.strictEqual(inferReferenceLabel('这是 A'), 'A');
 assert.strictEqual(inferReferenceLabel('mark this as C'), 'C');
 
-const main = fs.readFileSync('electron/main.js', 'utf8');
+const main = fs.readFileSync('electron/main.ts', 'utf8');
 assert(main.includes('const referenceLabel = inferReferenceLabel(command)'));
 assert(main.includes('interactionEpisodes.labelCurrent(referenceLabel)'));
 assert(main.includes('referenceLabel: item.referenceLabel || null'));

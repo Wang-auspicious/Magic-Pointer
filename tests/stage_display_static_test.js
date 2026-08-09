@@ -3,7 +3,7 @@
 const assert = require('assert');
 const fs = require('fs');
 
-const main = fs.readFileSync('electron/main.js', 'utf8');
+const main = fs.readFileSync('electron/main.ts', 'utf8');
 
 assert(main.includes('function placeStageOnDisplay(display)'), 'stage needs an explicit display placement helper');
 assert(main.includes("} = require('./coordinate_space');")

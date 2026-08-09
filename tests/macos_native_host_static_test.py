@@ -13,7 +13,7 @@ def test_macos_host_exposes_accessibility_screen_capture_and_pointer_stream() ->
     assert "--check-permissions" in source
     assert "swiftc" in readme
     assert "未在 macOS 实机验证" in readme
-    main = Path("electron/main.js").read_text(encoding="utf-8")
+    main = Path("electron/main.ts").read_text(encoding="utf-8")
     assert "process.platform === 'darwin'" in main
     assert "MAGIC_POINTER_MACOS_HOST" in main
     assert "magic-pointer-host" in main

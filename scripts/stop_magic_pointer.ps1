@@ -18,7 +18,7 @@ try {
     $matches = Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
         ($_.Name -in @('electron.exe','node.exe','cmd.exe')) -and
         (
-            $_.CommandLine -like '*electron/main.js*' -or
+            $_.CommandLine -like '*electron/main.ts*' -or
             $_.CommandLine -like '*electron\main.js*' -or
             $_.CommandLine -like '*build/electron/main.js*' -or
             $_.CommandLine -like '*build\electron\main.js*' -or

@@ -24,6 +24,7 @@ function compileProject(project: string): void {
 }
 
 compileProject('tsconfig.electron.json');
+compileProject('tsconfig.renderer.json');
 compileProject('tsconfig.scripts-build.json');
 
 cpSync(sourceRoot, outputRoot, {

@@ -11,7 +11,7 @@ const fs = require('fs');
 
 const tokens = fs.readFileSync('electron/renderer/tokens.css', 'utf8');
 const preload = fs.readFileSync('electron/preload.ts', 'utf8');
-const main = fs.readFileSync('electron/main.js', 'utf8');
+const main = fs.readFileSync('electron/main.ts', 'utf8');
 
 assert(tokens.includes('--mp-blue:'), 'shared tokens must define the accent blue');
 assert(tokens.includes('--mp-canvas:'), 'shared tokens must define the canvas surface');

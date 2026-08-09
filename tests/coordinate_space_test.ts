@@ -109,7 +109,7 @@ const pointerOnly = normalizeGroundingGeometry({
 assert.strictEqual(pointerOnly.state, 'pointer_only');
 assert.deepStrictEqual(pointerOnly.stageTarget, { x: 272, y: 92, width: 16, height: 16 });
 
-const main = fs.readFileSync('electron/main.js', 'utf8');
+const main = fs.readFileSync('electron/main.ts', 'utf8');
 assert(main.includes('physicalGestureBoundingBox,'));
 assert(main.includes('physicalScreenPoint,'));
 assert(main.includes("} = require('./coordinate_space');"));

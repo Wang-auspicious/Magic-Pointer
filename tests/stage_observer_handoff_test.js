@@ -3,7 +3,7 @@
 const assert = require('assert');
 const fs = require('fs');
 
-const main = fs.readFileSync('electron/main.js', 'utf8');
+const main = fs.readFileSync('electron/main.ts', 'utf8');
 const begin = main.slice(
   main.indexOf('function beginSelectionSession('),
   main.indexOf('app.whenReady().then('),

@@ -31,7 +31,7 @@ const invalid = defaultSettings();
 invalid.activation.gesture_interaction_mode = 'steal_everything';
 assert.throws(() => validate(invalid), /gesture_interaction_mode is unsupported/);
 
-const main = fs.readFileSync('electron/main.js', 'utf8');
+const main = fs.readFileSync('electron/main.ts', 'utf8');
 assert.match(main, /passThroughGestureCapture\.push/,
   'pass-through gesture capture entry point must remain available for the gesture path');
 

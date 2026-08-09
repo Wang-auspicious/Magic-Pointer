@@ -45,6 +45,6 @@ def test_missing_request_mode_defaults_to_routing_not_handoff() -> None:
 
 def test_stage_submit_path_does_not_hardcode_agent_prompt() -> None:
     """Guard the exact regression: main.js must not force the handoff mode."""
-    main_js = (Path(__file__).resolve().parents[1] / "electron" / "main.js").read_text(encoding="utf-8")
+    main_js = (Path(__file__).resolve().parents[1] / "electron" / "main.ts").read_text(encoding="utf-8")
     assert "requestMode: 'agent_prompt'," not in main_js
     assert "payload?.requestMode === 'agent_prompt' ? 'agent_prompt' : 'auto'" in main_js

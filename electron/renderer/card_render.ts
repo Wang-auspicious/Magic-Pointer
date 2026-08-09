@@ -1,3 +1,4 @@
+// @ts-nocheck -- legacy classic-script globals are preserved during the extension migration.
 /* exported renderCard, cardElapsedText */
 /* ============================================================================
    卡片渲染：一张卡 → 一个 DOM 节点

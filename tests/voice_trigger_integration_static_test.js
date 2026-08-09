@@ -6,9 +6,9 @@ const path = require('path');
 
 const root = path.resolve(__dirname, '..');
 const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
-const main = read('electron/main.js');
+const main = read('electron/main.ts');
 const preload = read('electron/preload.ts');
-const stage = read('electron/renderer/stage.js');
+const stage = read('electron/renderer/stage.ts');
 const stageHtml = read('electron/renderer/stage.html');
 
 assert(stageHtml.includes('<script src="../voice_trigger_policy.js"></script>'));

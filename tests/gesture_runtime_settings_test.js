@@ -31,7 +31,7 @@ const unrelated = structuredClone(defaults);
 unrelated.general.language = 'en';
 assert.strictEqual(gestureRuntimeSettingsChanged(defaults, unrelated), false);
 
-const main = fs.readFileSync('electron/main.js', 'utf8');
+const main = fs.readFileSync('electron/main.ts', 'utf8');
 assert.match(main, /gestureRuntimeContract\(fabricSettings\)/,
   'each arm must snapshot one immutable gesture runtime contract');
 assert.match(main, /gestureRuntimeSettingsChanged\(previousSettings,\s*parsed\.settings\)/,

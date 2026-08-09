@@ -1,3 +1,4 @@
+// @ts-nocheck -- legacy classic-script globals are preserved during the extension migration.
 /* 卡片画廊。只用来核对视觉——每一张都是 renderCard 的真实输出，
    不是另画一遍的样子。所以这一页看到什么，产品里就是什么。 */
 

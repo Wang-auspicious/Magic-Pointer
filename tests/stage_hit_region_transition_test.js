@@ -3,7 +3,7 @@
 const assert = require('assert');
 const fs = require('fs');
 
-const source = fs.readFileSync('electron/renderer/stage.js', 'utf8');
+const source = fs.readFileSync('electron/renderer/stage.ts', 'utf8');
 
 assert(source.includes('function syncHitRegions()'),
   'native shape updates must be isolated from dictation/state side effects');

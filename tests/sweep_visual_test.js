@@ -4,7 +4,7 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 
-const modulePath = path.resolve(__dirname, '..', 'electron', 'renderer', 'sweep_visual.js');
+const modulePath = path.resolve(__dirname, '..', 'electron', 'renderer', 'sweep_visual.ts');
 const {
   SWEEP_STYLE,
   FRAGMENT_SHADER_SOURCE,

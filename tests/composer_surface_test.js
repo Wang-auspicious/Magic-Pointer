@@ -15,7 +15,7 @@ const R = path.join(__dirname, '..', 'electron', 'renderer');
 const read = (name) => fs.readFileSync(path.join(R, name), 'utf8');
 
 // --- 组件本身导得出来，接口没被改瘦 ---
-const Composer = require('../electron/renderer/composer.js');
+const Composer = require('../electron/renderer/composer.ts');
 assert.strictEqual(typeof Composer.create, 'function');
 assert.strictEqual(typeof Composer.safeThumb, 'function');
 

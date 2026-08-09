@@ -214,9 +214,9 @@ console.log('card render test ok');
 // 所以这两份共享模块必须各自只暴露一个名字。
 // ---------------------------------------------------------------------------
 for (const [file, allowed] of [
-  ['electron/renderer/card_render.js', ['CardRender', 'renderCard', 'cardElapsedText']],
+  ['electron/renderer/card_render.ts', ['CardRender', 'renderCard', 'cardElapsedText']],
   ['electron/cards.ts', ['CardModel']],
-  ['electron/renderer/live_cards.js', ['LiveCards']],
+  ['electron/renderer/live_cards.ts', ['LiveCards']],
 ]) {
   const source = fs.readFileSync(file, 'utf8');
   const leaked = [...source.matchAll(/^(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/gm)]

@@ -8,7 +8,7 @@
 const assert = require('assert');
 const fs = require('fs');
 
-const main = fs.readFileSync('electron/main.js', 'utf8');
+const main = fs.readFileSync('electron/main.ts', 'utf8');
 
 // The dev/test hooks must still exist so unpackaged verification runs work.
 assert(main.includes('MAGIC_POINTER_N17_FOCUS_EVIDENCE_PATH'), 'N17 evidence hook must remain available in dev');

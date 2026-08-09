@@ -1,3 +1,4 @@
+// @ts-nocheck -- legacy classic-script globals are preserved during the extension migration.
 /* exported renderSettings */
 /* ============================================================
    设置
@@ -721,6 +722,5 @@ function initTicks() {
     });
   });
 }
-
 
 

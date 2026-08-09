@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM"],
+    "module": "Preserve",
+    "moduleDetection": "force",
+    "moduleResolution": "Bundler",
+    "outDir": "build/electron",
+    "rootDir": "electron",
+    "sourceMap": true,
+    "types": ["node", "electron"]
+  },
+  "include": ["electron/renderer/**/*.ts", "electron/renderer/**/*.d.ts"],
+  "exclude": ["electron/renderer/assets/**"]
+}
