@@ -6,15 +6,16 @@ const {
   commandForChip,
   MAX_CHIPS,
 } = policy;
+const stageGlobal = globalThis as typeof globalThis & { StageChipsPolicy: typeof policy };
 
 // --- dual-export shape ------------------------------------------------------
 assert.strictEqual(typeof shouldShowChips, 'function');
 assert.strictEqual(typeof deriveChips, 'function');
 assert.strictEqual(MAX_CHIPS, 3);
-assert.strictEqual(globalThis.StageChipsPolicy, policy, 'globalThis export mirrors module.exports');
-assert.strictEqual(globalThis.StageChipsPolicy.shouldShowChips, shouldShowChips);
-assert.strictEqual(globalThis.StageChipsPolicy.deriveChips, deriveChips);
-assert.strictEqual(globalThis.StageChipsPolicy.commandForChip, commandForChip);
+assert.strictEqual(stageGlobal.StageChipsPolicy, policy, 'globalThis export mirrors module.exports');
+assert.strictEqual(stageGlobal.StageChipsPolicy.shouldShowChips, shouldShowChips);
+assert.strictEqual(stageGlobal.StageChipsPolicy.deriveChips, deriveChips);
+assert.strictEqual(stageGlobal.StageChipsPolicy.commandForChip, commandForChip);
 
 assert.strictEqual(commandForChip('rewrite'), '改写这段文字');
 assert.strictEqual(commandForChip('add-to-calendar'), '添加到日历');

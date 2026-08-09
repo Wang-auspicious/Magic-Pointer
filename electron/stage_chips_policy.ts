@@ -10,8 +10,12 @@
 // Loaded both from node tests (CommonJS) and from the stage renderer via a
 // plain <script> tag (globalThis.StageChipsPolicy).
 
+(() => {
+type Chip = Readonly<{ id: string; label: string }>;
+type UnknownRecord = Record<string, unknown>;
+
 const MAX_CHIPS = 3;
-const COMMAND_BY_CHIP = Object.freeze({
+const COMMAND_BY_CHIP: Readonly<Record<string, string>> = Object.freeze({
   compare: '对比这个和上一个对象',
   tidy: '整理这个对象',
   rewrite: '改写这段文字',
@@ -20,7 +24,7 @@ const COMMAND_BY_CHIP = Object.freeze({
   'add-to-calendar': '添加到日历',
 });
 
-const CHIPS_BY_KIND = Object.freeze({
+const CHIPS_BY_KIND: Readonly<Record<string, readonly Chip[]>> = Object.freeze({
   image: Object.freeze([
     Object.freeze({ id: 'compare', label: '对比' }),
     Object.freeze({ id: 'tidy', label: '整理' }),
@@ -38,9 +42,14 @@ const CHIPS_BY_KIND = Object.freeze({
 // True ONLY when the object was click-selected, the input mode is not voice,
 // and the capsule text is empty/whitespace. Defensive: any missing or
 // malformed input yields false.
-function shouldShowChips(input) {
-  if (!input || typeof input !== 'object') return false;
-  const { selectionSource, inputMode, capsuleText } = input;
+function recordOf(value: unknown): UnknownRecord | null {
+  return value !== null && typeof value === 'object' ? (value as UnknownRecord) : null;
+}
+
+function shouldShowChips(input?: unknown): boolean {
+  const candidate = recordOf(input);
+  if (candidate === null) return false;
+  const { selectionSource, inputMode, capsuleText } = candidate;
   if (selectionSource !== 'click') return false;
   if (inputMode === 'voice') return false;
   // Absent capsule text means nothing typed yet — treat as empty. Any other
@@ -52,14 +61,16 @@ function shouldShowChips(input) {
 
 // Returns at most MAX_CHIPS chips ({ id, label }) for a known objectKind;
 // unknown kinds get [] — never guess.
-function deriveChips(input) {
-  if (!input || typeof input !== 'object') return [];
-  const chips = CHIPS_BY_KIND[input.objectKind];
+function deriveChips(input: unknown): Array<{ id: string; label: string }> {
+  const candidate = recordOf(input);
+  if (candidate === null) return [];
+  const objectKind = typeof candidate.objectKind === 'string' ? candidate.objectKind : '';
+  const chips = CHIPS_BY_KIND[objectKind];
   if (!chips) return [];
   return chips.slice(0, MAX_CHIPS).map((chip) => ({ id: chip.id, label: chip.label }));
 }
 
-function commandForChip(chipId) {
+function commandForChip(chipId: unknown): string | null {
   return COMMAND_BY_CHIP[String(chipId || '')] || null;
 }
 
@@ -74,5 +85,7 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = StageChipsPolicy;
 }
 if (typeof globalThis !== 'undefined') {
-  globalThis.StageChipsPolicy = StageChipsPolicy;
+  (globalThis as typeof globalThis & { StageChipsPolicy?: typeof StageChipsPolicy })
+    .StageChipsPolicy = StageChipsPolicy;
 }
+})();

@@ -9,7 +9,7 @@ const context = vm.createContext({ globalThis: {} });
 for (const relativePath of [
   'electron/stage_state.js',
   'electron/stage_anchor.js',
-  'electron/stage_chips_policy.js',
+  'electron/stage_chips_policy.ts',
   'electron/stage_hit_policy.ts',
   'electron/voice_trigger_policy.js',
 ]) {
