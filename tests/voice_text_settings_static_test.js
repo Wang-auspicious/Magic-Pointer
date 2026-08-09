@@ -2,8 +2,6 @@ const assert = require('assert');
 const fs = require('fs');
 const { defaultSettings, validate } = require('../electron/settings_store');
 
-const html = fs.readFileSync('electron/renderer/dashboard.html', 'utf8');
-const dashboard = fs.readFileSync('electron/renderer/dashboard.js', 'utf8');
 const storeSource = fs.readFileSync('electron/settings_store.js', 'utf8');
 const main = fs.readFileSync('electron/main.js', 'utf8');
 const bridge = fs.readFileSync('scripts/local_voice_bridge.py', 'utf8');
@@ -19,11 +17,6 @@ for (const field of fields) {
   assert.strictEqual(configured.interaction[field.key], field.defaultValue, `${field.key} default drifted`);
   configured.interaction[field.key] = field.value;
 
-  assert(html.includes(`id="${field.id}"`), `Dashboard is missing ${field.id}`);
-  assert(dashboard.includes(`setValue('${field.id}', interaction.${field.key} || '${field.defaultValue}')`),
-    `Dashboard must render saved ${field.key}`);
-  assert(dashboard.includes(`next.interaction.${field.key} = document.getElementById('${field.id}').value || '${field.defaultValue}'`),
-    `Dashboard must collect ${field.key}`);
   assert(storeSource.includes(`interaction.${field.key} = String(interaction.${field.key} || '').trim().toLowerCase()`),
     `settings store must normalize ${field.key}`);
   assert(bridge.includes(`interaction.get("${field.key}")`), `voice bridge must read ${field.key}`);

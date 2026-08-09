@@ -9,17 +9,7 @@ const read = (file) => fs.readFileSync(path.join(root, file), 'utf8');
 const main = read('electron/main.js');
 const preload = read('electron/preload.js');
 const stage = read('electron/renderer/stage.js');
-const html = read('electron/renderer/dashboard.html');
-const dashboard = read('electron/renderer/dashboard.js');
 const stageHtml = read('electron/renderer/stage.html');
-
-assert(html.includes('id="voice-start-strategy"'));
-for (const strategy of ['auto', 'push_to_talk', 'hover']) {
-  assert(html.includes(`value="${strategy}"`), `missing ${strategy} UI choice`);
-}
-assert(!/id="voice-start-strategy"[^>]*disabled/.test(html));
-assert(dashboard.includes("setValue('voice-start-strategy', interaction.voice_start_strategy || 'auto')"));
-assert(dashboard.includes("next.interaction.voice_start_strategy = document.getElementById('voice-start-strategy').value || 'auto'"));
 
 assert(stageHtml.includes('<script src="../voice_trigger_policy.js"></script>'));
 assert(stage.includes('globalThis.MagicPointerVoiceTrigger'));

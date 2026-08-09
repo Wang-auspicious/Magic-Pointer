@@ -131,8 +131,6 @@ console.log('session_timeline_test: all assertions passed');
   const root = path.resolve(__dirname, '..');
   const main = fs.readFileSync(path.join(root, 'electron', 'main.js'), 'utf8');
   const preload = fs.readFileSync(path.join(root, 'electron', 'preload.js'), 'utf8');
-  const html = fs.readFileSync(path.join(root, 'electron', 'renderer', 'dashboard.html'), 'utf8');
-  const js = fs.readFileSync(path.join(root, 'electron', 'renderer', 'dashboard.js'), 'utf8');
 
   // Fed: activation opens a session, bridges report phases into it, outcomes close it.
   assert(main.includes("sessionTimeline.begin(entry.token, { reason: String(reason || '') })"), 'sessions never begin');
@@ -140,19 +138,10 @@ console.log('session_timeline_test: all assertions passed');
   assert(main.includes('timelineToken: selectionSessionToken'), 'the command bridge does not report phases');
   assert(main.includes('sessionTimeline.finish(payload.selectionSessionToken'), 'sessions never finish');
 
-  // Shown: exposed over IPC and rendered.
+  // Shown: exposed over IPC. The renderer surface that consumed it was the
+  // legacy dashboard; the diagnostics view has not been rebuilt in the studio
+  // shell yet, so only the main-process half is pinned here.
   assert(main.includes("ipcMain.handle('dashboard:session-timeline'"), 'no IPC handler');
   assert(preload.includes("sessionTimeline: () => ipcRenderer.invoke('dashboard:session-timeline')"), 'not exposed to the renderer');
-  assert(html.includes('id="session-timeline"'), 'no container on the diagnostics page');
-  assert(js.includes('function renderSessionTimeline('), 'never rendered');
-  assert(js.includes('requestSessionTimeline()'), 'never requested');
-
-  // A slow step must be pointed at, not left for the reader to spot by comparing
-  // numbers — that is exactly the manual work this page replaces.
-  assert(js.includes('SLOW_PHASE_MS'), 'slow phases are not marked');
-  assert(js.includes("chip.dataset.slow = '1'"));
-
-  // "Still running" must not render as a duration.
-  assert(js.includes("session.totalMs === null ? '进行中…'"));
 }
 console.log('session timeline wiring test ok');

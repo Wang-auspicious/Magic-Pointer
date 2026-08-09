@@ -2,7 +2,6 @@ const assert = require('assert');
 const fs = require('fs');
 
 const surfaces = [
-  'electron/renderer/dashboard.html',
   'electron/renderer/index.html',
   'electron/renderer/panel.html',
   'electron/renderer/stage.html',

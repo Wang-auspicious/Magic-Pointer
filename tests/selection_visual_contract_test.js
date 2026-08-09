@@ -35,34 +35,6 @@ const unsupported = defaultSettings();
 unsupported.appearance.selection_visual = 'neon_box';
 assert.throws(() => validate(unsupported), /selection_visual is unsupported/);
 
-const dashboardHtml = read('electron/renderer/dashboard.html');
-const dashboardJs = read('electron/renderer/dashboard.js');
-assert.match(dashboardHtml, /id="selection-visual"/, 'Dashboard must expose a selection-visual setting');
-for (const value of ['sweep_band', 'soft_glow', 'outline']) {
-  assert(
-    dashboardHtml.includes(`value="${value}"`),
-    `Dashboard must offer the ${value} visual`,
-  );
-}
-for (const id of [
-  'sweep-height-ratio', 'sweep-min-height', 'sweep-max-height',
-  'sweep-duration', 'sweep-fade', 'capsule-spawn', 'capsule-expand',
-  'capsule-voice-width', 'capsule-text-width', 'capsule-max-width',
-  'capsule-inline-gap',
-]) {
-  assert(dashboardHtml.includes(`id="${id}"`), `Dashboard must expose ${id}`);
-}
-assert.match(
-  dashboardJs,
-  /setValue\('selection-visual',\s*appearance\.selection_visual\s*\|\|\s*'sweep_band'\)/,
-  'Dashboard must render the persisted setting',
-);
-assert.match(
-  dashboardJs,
-  /next\.appearance\.selection_visual\s*=\s*document\.getElementById\('selection-visual'\)\.value/,
-  'Dashboard must persist the selected visual',
-);
-
 const main = read('electron/main.js');
 assert.match(
   main,

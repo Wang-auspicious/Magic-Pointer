@@ -1,20 +1,13 @@
 'use strict';
 
 const assert = require('assert');
-const fs = require('fs');
 const { defaultSettings, validate } = require('../electron/settings_store');
 
-const html = fs.readFileSync('electron/renderer/dashboard.html', 'utf8');
-const dashboard = fs.readFileSync('electron/renderer/dashboard.js', 'utf8');
 const defaults = defaultSettings();
 
 assert.strictEqual(defaults.interaction.voice_resident_enabled, true);
 assert.strictEqual(defaults.interaction.voice_memory_limit_mb, 1024);
 assert.strictEqual(defaults.interaction.voice_idle_unload_ms, 0);
-for (const id of ['voice-resident-enabled', 'voice-memory-limit-mb', 'voice-idle-unload-seconds']) {
-  assert(html.includes(`id="${id}"`), `Dashboard missing ${id}`);
-  assert(dashboard.includes(`'${id}'`), `Dashboard does not bind ${id}`);
-}
 
 const configured = defaultSettings();
 configured.interaction.voice_resident_enabled = false;

@@ -31,13 +31,6 @@ const invalid = defaultSettings();
 invalid.activation.gesture_interaction_mode = 'steal_everything';
 assert.throws(() => validate(invalid), /gesture_interaction_mode is unsupported/);
 
-const dashboard = fs.readFileSync('electron/renderer/dashboard.html', 'utf8');
-assert(dashboard.includes('id="gesture-interaction-mode"'));
-assert.match(dashboard, /<option value="exclusive_overlay">[^<]*默认/,
-  'the reliable mode must be presented as the default');
-assert.match(dashboard, /<option value="pass_through">[^<]*实验/,
-  'pass_through must be labelled experimental until it is verified on hardware');
-
 const main = fs.readFileSync('electron/main.js', 'utf8');
 assert.match(main, /passThroughGestureCapture\.push/,
   'pass-through gesture capture entry point must remain available for the gesture path');

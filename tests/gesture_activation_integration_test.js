@@ -7,7 +7,6 @@ const main = fs.readFileSync('electron/main.js', 'utf8');
 const overlay = fs.readFileSync('electron/renderer/overlay.js', 'utf8');
 const styles = fs.readFileSync('electron/renderer/styles.css', 'utf8');
 const preload = fs.readFileSync('electron/preload.js', 'utf8');
-const dashboardHtml = fs.readFileSync('electron/renderer/dashboard.html', 'utf8');
 const overlayHtml = fs.readFileSync('electron/renderer/index.html', 'utf8');
 const visualVerifier = fs.readFileSync('scripts/verify_gesture_activation_visual.py', 'utf8');
 const { defaultSettings } = require('../electron/settings_store');
@@ -18,9 +17,6 @@ assert.strictEqual(defaults.activation.gesture_timeout_ms, 5000);
 assert.strictEqual(defaults.activation.multi_stroke_submit_ms, 2500);
 assert.strictEqual(defaults.appearance.gesture_line_style, 'demo6_band');
 assert.strictEqual(defaults.appearance.gesture_line_width_dip, 40);
-for (const id of ['gesture-arm-delay', 'gesture-timeout', 'multi-stroke-submit', 'gesture-line-style', 'gesture-line-width']) {
-  assert(dashboardHtml.includes(`id="${id}"`), `Dashboard must expose ${id}`);
-}
 
 const requestActivation = main.slice(
   main.indexOf('function requestActivation('),
