@@ -1,12 +1,62 @@
-function physicalScreenPoint(screenApi, dipPoint) {
+type UnknownRecord = Record<string, unknown>;
+
+interface Point {
+  x: number;
+  y: number;
+}
+
+interface TimedPoint extends Point {
+  t: number;
+}
+
+interface Rect extends Point {
+  height: number;
+  width: number;
+}
+
+interface ScreenApi {
+  dipToScreenPoint?(point: Point): unknown;
+  screenToDipPoint?(point: Point): unknown;
+  screenToDipRect?(window: null, rect: Rect): unknown;
+}
+
+interface GestureInput {
+  coordinateSpace?: unknown;
+  points?: unknown;
+  releasePoint?: unknown;
+  scaleFactor?: unknown;
+  strokes?: unknown;
+}
+
+interface GeometryInput {
+  captureFormat?: unknown;
+  captureRect?: unknown;
+  captureSpace?: unknown;
+  pointer?: unknown;
+  pointerSpace?: unknown;
+  screenApi?: ScreenApi | null;
+  stageBounds?: unknown;
+  targetFormat?: unknown;
+  targetKind?: unknown;
+  targetRects?: unknown;
+  targetSpace?: unknown;
+}
+
+function recordOf(value: unknown): UnknownRecord | null {
+  return value !== null && typeof value === 'object' ? (value as UnknownRecord) : null;
+}
+
+function physicalScreenPoint(screenApi: ScreenApi | null | undefined, dipPoint: unknown): Point | null {
   if (!screenApi || typeof screenApi.dipToScreenPoint !== 'function') return null;
-  const x = Number(dipPoint?.x);
-  const y = Number(dipPoint?.y);
+  const dip = recordOf(dipPoint);
+  const x = Number(dip?.x);
+  const y = Number(dip?.y);
   if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
   try {
     const point = screenApi.dipToScreenPoint({ x, y });
-    const px = Number(point?.x);
-    const py = Number(point?.y);
+    const converted = recordOf(point);
+    const px = Number(converted?.x);
+    const py = Number(converted?.y);
     if (!Number.isFinite(px) || !Number.isFinite(py)) return null;
     return { x: Math.round(px), y: Math.round(py) };
   } catch (_) {
@@ -14,12 +64,12 @@ function physicalScreenPoint(screenApi, dipPoint) {
   }
 }
 
-function physicalGestureBoundingBox(points, minimumThickness = 8) {
+function physicalGestureBoundingBox(points: unknown, minimumThickness: unknown = 8): Rect {
   const finitePoints = (Array.isArray(points) ? points : []).map((point) => {
     const x = Number(point?.x);
     const y = Number(point?.y);
     return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
-  }).filter(Boolean);
+  }).filter((point: Point | null): point is Point => point !== null);
   if (!finitePoints.length) return { x: 0, y: 0, width: 0, height: 0 };
 
   const thickness = Math.max(1, Math.round(Number(minimumThickness) || 8));
@@ -45,7 +95,10 @@ function physicalGestureBoundingBox(points, minimumThickness = 8) {
   };
 }
 
-function physicalGestureTrace(screenApi, gesture) {
+function physicalGestureTrace(
+  screenApi: ScreenApi | null | undefined,
+  gesture: GestureInput | null | undefined,
+) {
   if (!gesture || typeof gesture !== 'object') return null;
   if (gesture.coordinateSpace === 'physical_screen_pixels') {
     // Already physical (completeSelectionGesture output): normalize the
@@ -53,7 +106,9 @@ function physicalGestureTrace(screenApi, gesture) {
     const rawStrokes = Array.isArray(gesture.strokes) && gesture.strokes.length
       ? gesture.strokes
       : [{ points: Array.isArray(gesture.points) ? gesture.points : [] }];
-    const strokes = rawStrokes.slice(0, 8).map((stroke) => ({
+    const strokes = rawStrokes.slice(0, 8).map((value) => {
+      const stroke = recordOf(value);
+      return {
       points: (Array.isArray(stroke?.points) ? stroke.points : []).slice(0, 512).map((point) => {
         const x = Number(point?.x);
         const y = Number(point?.y);
@@ -61,11 +116,12 @@ function physicalGestureTrace(screenApi, gesture) {
         return Number.isFinite(x) && Number.isFinite(y)
           ? { x: Math.round(x), y: Math.round(y), t: Number.isFinite(t) ? t : 0 }
           : null;
-      }).filter(Boolean),
-    })).filter((stroke) => stroke.points.length >= 2);
+      }).filter((point: TimedPoint | null): point is TimedPoint => point !== null),
+    };
+    }).filter((stroke) => stroke.points.length >= 2);
     const points = strokes.flatMap((stroke) => stroke.points);
     if (points.length < 2) return null;
-    const releasePoint = gesture.releasePoint || points.at(-1);
+    const releasePoint = recordOf(gesture.releasePoint || points.at(-1));
     return {
       schemaVersion: 2,
       coordinateSpace: 'physical_screen_pixels',
@@ -83,18 +139,21 @@ function physicalGestureTrace(screenApi, gesture) {
   const rawStrokes = Array.isArray(gesture.strokes) && gesture.strokes.length
     ? gesture.strokes
     : [{ points: Array.isArray(gesture.points) ? gesture.points : [] }];
-  const strokes = rawStrokes.slice(0, 8).map((stroke) => ({
+  const strokes = rawStrokes.slice(0, 8).map((value) => {
+    const stroke = recordOf(value);
+    return {
     points: (Array.isArray(stroke?.points) ? stroke.points : []).slice(0, 512).map((point) => {
       const physical = physicalScreenPoint(screenApi, point);
       const t = Number(point?.t);
       return physical ? { ...physical, t: Number.isFinite(t) ? t : 0 } : null;
-    }).filter(Boolean),
-  })).filter((stroke) => stroke.points.length >= 2);
+    }).filter((point: TimedPoint | null): point is TimedPoint => point !== null),
+  };
+  }).filter((stroke) => stroke.points.length >= 2);
   const points = strokes.flatMap((stroke) => stroke.points);
   if (points.length < 2) return null;
   const releasePoint = physicalScreenPoint(screenApi, gesture.releasePoint) || {
-    x: points.at(-1).x,
-    y: points.at(-1).y,
+    x: points.at(-1)!.x,
+    y: points.at(-1)!.y,
   };
   return {
     schemaVersion: 2,
@@ -105,19 +164,21 @@ function physicalGestureTrace(screenApi, gesture) {
   };
 }
 
-function finitePoint(value) {
-  const x = Number(value?.x);
-  const y = Number(value?.y);
+function finitePoint(value: unknown): Point | null {
+  const candidate = recordOf(value);
+  const x = Number(candidate?.x);
+  const y = Number(candidate?.y);
   return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
 }
 
-function finiteRect(value, format = 'xywh') {
+function finiteRect(value: unknown, format: string = 'xywh'): Rect | null {
   if (!['xywh', 'ltrb'].includes(format)) return null;
+  const candidate = recordOf(value);
   const source = Array.isArray(value)
     ? value
     : format === 'ltrb'
-      ? [value?.left, value?.top, value?.right, value?.bottom]
-      : [value?.x, value?.y, value?.width, value?.height];
+      ? [candidate?.left, candidate?.top, candidate?.right, candidate?.bottom]
+      : [candidate?.x, candidate?.y, candidate?.width, candidate?.height];
   if (!Array.isArray(source) || source.length !== 4) return null;
   const numbers = source.map(Number);
   if (!numbers.every(Number.isFinite)) return null;
@@ -129,7 +190,7 @@ function finiteRect(value, format = 'xywh') {
   return rect;
 }
 
-function physicalRectToDip(screenApi, rect) {
+function physicalRectToDip(screenApi: ScreenApi | null | undefined, rect: Rect): Rect | null {
   if (!screenApi || typeof screenApi.screenToDipRect !== 'function') return null;
   try {
     return finiteRect(screenApi.screenToDipRect(null, rect));
@@ -138,7 +199,7 @@ function physicalRectToDip(screenApi, rect) {
   }
 }
 
-function physicalPointToDip(screenApi, point) {
+function physicalPointToDip(screenApi: ScreenApi | null | undefined, point: Point): Point | null {
   if (!screenApi) return null;
   try {
     if (typeof screenApi.screenToDipPoint === 'function') {
@@ -151,7 +212,7 @@ function physicalPointToDip(screenApi, point) {
   }
 }
 
-function relativeRect(rect, stageBounds) {
+function relativeRect(rect: unknown, stageBounds: unknown): Rect | null {
   const normalizedRect = finiteRect(rect);
   const normalizedStage = finiteRect(stageBounds);
   if (!normalizedRect || !normalizedStage) return null;
@@ -163,7 +224,7 @@ function relativeRect(rect, stageBounds) {
   };
 }
 
-function distancePointToRect(point, rect) {
+function distancePointToRect(point: Point, rect: Rect): number {
   const right = rect.x + rect.width;
   const bottom = rect.y + rect.height;
   const dx = Math.max(rect.x - point.x, point.x - right, 0);
@@ -171,13 +232,13 @@ function distancePointToRect(point, rect) {
   return Math.hypot(dx, dy);
 }
 
-function deepFreeze(value) {
+function deepFreeze<T>(value: T): T {
   if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
-  Object.values(value).forEach(deepFreeze);
+  Object.values(value as UnknownRecord).forEach((entry) => deepFreeze(entry));
   return Object.freeze(value);
 }
 
-function invalidGeometry(reason) {
+function invalidGeometry(reason: string) {
   return deepFreeze({ state: 'invalid', reason });
 }
 
@@ -193,14 +254,15 @@ function normalizeGroundingGeometry({
   captureFormat = null,
   stageBounds,
   screenApi,
-} = {}) {
+}: GeometryInput = {}) {
   if (pointerSpace !== 'physical_screen_pixels') return invalidGeometry('invalid_pointer_space');
   const pointerPhysical = finitePoint(pointer);
   const stageDipBounds = finiteRect(stageBounds);
   if (!pointerPhysical) return invalidGeometry('invalid_pointer');
   if (!stageDipBounds) return invalidGeometry('invalid_stage_bounds');
   if (!Array.isArray(targetRects)) return invalidGeometry('invalid_target_rectangles');
-  if (targetKind !== null && !['resolved', 'pointer_anchor'].includes(targetKind)) {
+  if (targetKind !== null
+    && (typeof targetKind !== 'string' || !['resolved', 'pointer_anchor'].includes(targetKind))) {
     return invalidGeometry('invalid_target_kind');
   }
 
@@ -209,17 +271,21 @@ function normalizeGroundingGeometry({
     return invalidGeometry('invalid_target_space');
   }
   if (hasTargets && targetFormat !== 'xywh') return invalidGeometry('invalid_target_format');
-  const targetPhysicalRects = targetRects.map((rect) => finiteRect(rect, targetFormat || 'xywh'));
+  const targetPhysicalRects = targetRects.map((rect) => finiteRect(rect, String(targetFormat || 'xywh')));
   if (targetPhysicalRects.some((rect) => rect === null)) {
     return invalidGeometry('invalid_target_rectangle');
   }
 
-  let capturePhysicalRect = null;
-  let captureDipRect = null;
+  const validTargetPhysicalRects = targetPhysicalRects as Rect[];
+
+  let capturePhysicalRect: Rect | null = null;
+  let captureDipRect: Rect | null = null;
   if (captureRect !== null && captureRect !== undefined) {
     if (captureSpace !== 'physical_screen_pixels') return invalidGeometry('invalid_capture_space');
-    if (!['xywh', 'ltrb'].includes(captureFormat)) return invalidGeometry('invalid_capture_format');
-    capturePhysicalRect = finiteRect(captureRect, captureFormat);
+    if (typeof captureFormat !== 'string' || !['xywh', 'ltrb'].includes(captureFormat)) {
+      return invalidGeometry('invalid_capture_format');
+    }
+    capturePhysicalRect = finiteRect(captureRect, String(captureFormat));
     if (!capturePhysicalRect) return invalidGeometry('invalid_capture_rectangle');
     captureDipRect = physicalRectToDip(screenApi, capturePhysicalRect);
     if (!captureDipRect) return invalidGeometry('capture_conversion_failed');
@@ -227,15 +293,16 @@ function normalizeGroundingGeometry({
 
   const pointerDip = physicalPointToDip(screenApi, pointerPhysical);
   if (!pointerDip) return invalidGeometry('pointer_conversion_failed');
-  const targetDipRects = targetPhysicalRects.map((rect) => physicalRectToDip(screenApi, rect));
+  const targetDipRects = validTargetPhysicalRects.map((rect) => physicalRectToDip(screenApi, rect));
   if (targetDipRects.some((rect) => rect === null)) {
     return invalidGeometry('target_conversion_failed');
   }
 
-  const pointerOnly = targetKind === 'pointer_anchor' || targetDipRects.length === 0;
+  const validTargetDipRects = targetDipRects as Rect[];
+  const pointerOnly = targetKind === 'pointer_anchor' || validTargetDipRects.length === 0;
   const targetDipRect = pointerOnly
     ? { x: pointerDip.x - 8, y: pointerDip.y - 8, width: 16, height: 16 }
-    : targetDipRects.reduce((nearest, rect) => (
+    : validTargetDipRects.reduce<Rect | null>((nearest, rect) => (
       !nearest || distancePointToRect(pointerDip, rect) < distancePointToRect(pointerDip, nearest)
         ? rect
         : nearest
@@ -249,8 +316,8 @@ function normalizeGroundingGeometry({
     state: pointerOnly ? 'pointer_only' : 'resolved',
     pointerPhysical,
     pointerDip,
-    targetPhysicalRects,
-    targetDipRects,
+    targetPhysicalRects: validTargetPhysicalRects,
+    targetDipRects: validTargetDipRects,
     capturePhysicalRect,
     captureDipRect,
     stageBounds: stageDipBounds,

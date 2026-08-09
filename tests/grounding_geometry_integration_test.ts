@@ -2,10 +2,10 @@ const assert = require('assert');
 const { normalizeGroundingGeometry } = require('../electron/coordinate_space');
 
 const identityScreen = {
-  screenToDipPoint(point) {
+  screenToDipPoint(point: { x: number; y: number }) {
     return { ...point };
   },
-  screenToDipRect(_window, rect) {
+  screenToDipRect(_window: null, rect: { height: number; width: number; x: number; y: number }) {
     return { ...rect };
   },
 };

@@ -24,13 +24,13 @@ assert.deepStrictEqual(
 );
 
 const mixedDpiScreen = {
-  dipToScreenPoint(point) {
+  dipToScreenPoint(point: { x: number; y: number }) {
     return { x: point.x * 1.5 - 120, y: point.y * 1.5 };
   },
-  screenToDipPoint(point) {
+  screenToDipPoint(point: { x: number; y: number }) {
     return { x: (point.x + 120) / 1.5, y: point.y / 1.5 };
   },
-  screenToDipRect(_window, rect) {
+  screenToDipRect(_window: null, rect: { height: number; width: number; x: number; y: number }) {
     return {
       x: Math.round((rect.x + 120) / 1.5),
       y: Math.round(rect.y / 1.5),
