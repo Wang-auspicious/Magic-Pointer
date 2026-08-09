@@ -1,5 +1,49 @@
 'use strict';
 
+type StashMedia = 'clip' | 'text' | 'image';
+
+interface BitmapSample {
+  width: number;
+  height: number;
+  samples?: number[];
+}
+
+interface StashInput {
+  app?: string;
+  bitmap?: BitmapSample | null;
+  capturedAt?: number;
+  elementName?: string;
+  elementPath?: string;
+  fingerprint?: string | null;
+  kind?: string;
+  media?: StashMedia;
+  samples?: number[];
+  text?: string;
+  windowTitle?: string;
+}
+
+interface StashEntry extends StashInput {
+  app: string;
+  burstId: string;
+  burstIsNew?: boolean;
+  capturedAt: number;
+  desc?: string;
+  fingerprint: string | null;
+  height?: number;
+  id?: string;
+  kind: string;
+  media: StashMedia;
+  relPath: string;
+  samples: number[];
+  text: string;
+  width?: number;
+}
+
+interface StashBuildOptions {
+  burstWindowMs?: number;
+  dedupeWindowMs?: number;
+}
+
 // 收藏箱的纯逻辑：指纹、去重、成簇、归类、落点。
 // 这里不碰 clipboard、不碰 fs——IO 在 stash_runtime.js 里，方便单测。
 
@@ -11,7 +55,7 @@ const MAX_DESC = 40;
 // 指纹：不做全图哈希（很贵）。尺寸 + 16×16 缩略图的亮度采样就够区分了。
 // 调用方给 { width, height, samples }，samples 是 0-255 的数组。
 // ---------------------------------------------------------------------------
-function fingerprint(bitmap) {
+function fingerprint(bitmap: BitmapSample | null | undefined): string | null {
   if (!bitmap || !bitmap.width || !bitmap.height) return null;
   const samples = Array.isArray(bitmap.samples) ? bitmap.samples : [];
   let h = 2166136261;
@@ -27,7 +71,7 @@ function fingerprint(bitmap) {
 // 文本指纹。图片走 sampleImage，文本没有像素可采，直接对内容做 FNV。
 // 前缀带长度，这样不同长度的文本永远不会撞（也方便一眼看出是文本条目）。
 // ---------------------------------------------------------------------------
-function textFingerprint(text) {
+function textFingerprint(text: unknown): string | null {
   const value = String(text || '');
   if (!value) return null;
   let h = 2166136261;
@@ -47,7 +91,7 @@ const RECEIPT_RE = /(¥|\$|€|￥)\s?\d|订单号|流水号|发票|收据|报�
 const HANDOFF_APPS = /terminal|conhost|\bcmd\b|powershell|pwsh|wezterm|alacritty|kitty|\bcode\b|codium|cursor|idea|pycharm|goland|webstorm|claude|codex/i;
 const HANDOFF_RE = /Traceback|Error:|error\[|at .+\(.+:\d+\)|交接|handoff|\$ |PS [A-Z]:\\/;
 
-function classify(input = {}) {
+function classify(input: StashInput = {}): string {
   const app = String(input.app || '');
   // 图片没有 text 字段（text 是剪贴板文本专用）；截图带的是 elementName /
   // windowTitle。证据从这些字段里找，不能因为 text 为空就把所有图判成「素材」。
@@ -75,7 +119,7 @@ function classify(input = {}) {
 // ---------------------------------------------------------------------------
 const TRANSIENT_SHELLS = /^(screenclippinghost|snippingtool|screensketch|magic ?pointer|electron|shellexperiencehost|searchhost|startmenuexperiencehost|textinputhost|lockapp|applicationframehost|dwm|explorer)$/i;
 
-function isTransientShell(processName) {
+function isTransientShell(processName: unknown): boolean {
   const name = String(processName || '').trim().replace(/\.exe$/i, '');
   if (!name) return true;
   return TRANSIENT_SHELLS.test(name);
@@ -96,23 +140,25 @@ const SECRET_RE = new RegExp([
   '(password|passwd|密码|口令|verification code|验证码)\\s*[:：=]',
 ].join('|'), 'i');
 
-function looksLikeSecret(text) {
+function looksLikeSecret(text: unknown): boolean {
   return SECRET_RE.test(String(text || ''));
 }
 
 // 一行 40 个字符以内、没有空格的东西大概率是一个 token 或一次性口令，
 // 用户复制它是为了立刻粘贴，不是为了收藏。路径和网址不算——它们同样没有
 // 空格，但明显是内容。
-function looksLikeOneShotToken(text) {
+function looksLikeOneShotToken(text: unknown): boolean {
   const t = String(text || '').trim();
   if (/[\\/]/.test(t)) return false;
   return t.length <= 40 && !/\s/.test(t) && /[0-9]/.test(t) && /[A-Za-z]/.test(t);
 }
 
-function shouldStashText(text, options = {}) {
+function shouldStashText(text: unknown, options: { minChars?: number; ownPaths?: string[] } = {}) {
   const value = String(text || '');
   const trimmed = value.trim();
-  const minChars = Number.isFinite(options.minChars) ? options.minChars : 12;
+  const minChars = typeof options.minChars === 'number' && Number.isFinite(options.minChars)
+    ? options.minChars
+    : 12;
   if (!trimmed) return { ok: false, reason: 'empty' };
   // 机密判据必须排在长度之前。一个六位验证码本来就很短，靠「太短」把它挡下来
   // 是运气不是规则——哪天把门槛调低，它就直接落盘了。
@@ -131,14 +177,14 @@ function shouldStashText(text, options = {}) {
 // 回写剪贴板只对位图成立。对文本回写会覆盖用户刚复制的那段字，
 // 让接下来的 Ctrl+V 粘出一个文件路径——那是在毁掉他正要做的事。
 // ---------------------------------------------------------------------------
-function writeBackAllowed(media) {
+function writeBackAllowed(media: unknown): boolean {
   return media !== 'text';
 }
 
 // ---------------------------------------------------------------------------
 // 一句话描述。有 UIA 元素名就用它——比 OCR 猜准，也比截图文件名有意义。
 // ---------------------------------------------------------------------------
-function describe(input = {}) {
+function describe(input: StashInput = {}): string {
   const raw = (input.elementName || input.text || input.windowTitle || '').replace(/\s+/g, ' ').trim();
   if (!raw) return input.app ? `来自 ${input.app} 的一张图` : '一张图';
   return raw.length > MAX_DESC ? `${raw.slice(0, MAX_DESC - 1)}…` : raw;
@@ -152,7 +198,12 @@ function describe(input = {}) {
 //   3. 其余                → 新簇
 // 内容相似度：图片比亮度指纹（16×16 采样逐格差），文本比关键词重叠。
 // ---------------------------------------------------------------------------
-function assignBurst(previous, entry, windowMs = BURST_WINDOW_MS, _similarity = 0.72) {
+function assignBurst(
+  previous: StashEntry | null,
+  entry: StashInput & { capturedAt: number },
+  windowMs = BURST_WINDOW_MS,
+  _similarity = 0.72,
+): { burstId: string; isNew: boolean } {
   if (!previous) return { burstId: `b${entry.capturedAt}`, isNew: true };
   const sameSource = (previous.app || '') === (entry.app || '');
   if (!sameSource) return { burstId: `b${entry.capturedAt}`, isNew: true };
@@ -174,7 +225,7 @@ function assignBurst(previous, entry, windowMs = BURST_WINDOW_MS, _similarity = 
 
 // 内容相似度 0-1。图片走亮度指纹逐格差；文本走关键词重叠；
 // 混合形态（图 vs 文本）判 0——不同载体不算同一件事。
-function contentSimilarity(a, b) {
+function contentSimilarity(a: StashInput | null, b: StashInput | null): number {
   if (!a || !b) return 0;
   const mediaA = a.media || mediaOf(a.kind || '');
   const mediaB = b.media || mediaOf(b.kind || '');
@@ -207,7 +258,11 @@ function contentSimilarity(a, b) {
   return Math.max(0, 1 - avgDiff);
 }
 
-function shouldDedupe(previous, entry, windowMs = DEDUPE_WINDOW_MS) {
+function shouldDedupe(
+  previous: Pick<StashEntry, 'capturedAt' | 'fingerprint'> | null,
+  entry: StashInput & { capturedAt: number },
+  windowMs = DEDUPE_WINDOW_MS,
+): boolean {
   if (!previous || !entry.fingerprint) return false;
   return previous.fingerprint === entry.fingerprint
     && entry.capturedAt - previous.capturedAt <= windowMs;
@@ -219,19 +274,19 @@ function shouldDedupe(previous, entry, windowMs = DEDUPE_WINDOW_MS) {
 // ---------------------------------------------------------------------------
 const EXT_BY_MEDIA = { clip: 'gif', text: 'txt', image: 'png' };
 
-function mediaOf(kind) {
+function mediaOf(kind: string): StashMedia {
   if (kind === 'clip') return 'clip';
   if (kind === 'text') return 'text';
   return 'image';
 }
 
-function relativePath(entry) {
+function relativePath(entry: { capturedAt: number; fingerprint?: string | null; kind?: string; media?: StashMedia }): string {
   const d = new Date(entry.capturedAt);
-  const pad = (n) => String(n).padStart(2, '0');
+  const pad = (n: number) => String(n).padStart(2, '0');
   const month = `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
   const stamp = `${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
-  const short = (entry.fingerprint || 'x').split('-').pop().slice(0, 6);
-  const ext = EXT_BY_MEDIA[entry.media || mediaOf(entry.kind)] || 'png';
+  const short = (entry.fingerprint || 'x').split('-').pop()!.slice(0, 6);
+  const ext = EXT_BY_MEDIA[entry.media || mediaOf(entry.kind || '')] || 'png';
   return `${month}/${stamp}-${short}.${ext}`;
 }
 
@@ -240,9 +295,13 @@ function relativePath(entry) {
 // input.kind 是载体（shot / clip / text），entry.kind 是归类（灵感 / 凭证 …）。
 // 两者不是一回事，别混。
 // ---------------------------------------------------------------------------
-function buildEntry(input, previous, options = {}) {
+function buildEntry(
+  input: StashInput & { capturedAt: number },
+  previous: StashEntry | null,
+  options: StashBuildOptions = {},
+): { skipped: true; reason: string } | { skipped: false; entry: StashEntry } {
   const capturedAt = input.capturedAt;
-  const media = mediaOf(input.kind);
+  const media = mediaOf(input.kind || '');
   const fp = input.fingerprint
     || (media === 'text' ? textFingerprint(input.text) : fingerprint(input.bitmap));
   const draft = { ...input, capturedAt, fingerprint: fp };
@@ -257,7 +316,7 @@ function buildEntry(input, previous, options = {}) {
   return {
     skipped: false,
     entry: {
-      id: `s${capturedAt}-${(fp || 'x').split('-').pop().slice(0, 4)}`,
+      id: `s${capturedAt}-${(fp || 'x').split('-').pop()!.slice(0, 4)}`,
       capturedAt,
       fingerprint: fp,
       burstId: burst.burstId,
@@ -283,7 +342,10 @@ function buildEntry(input, previous, options = {}) {
 // 终端里 Ctrl+V 拿到的是路径（终端不收位图），图片编辑器里粘贴仍是图。
 // 这是这个功能真正省事的地方，别漏。
 // ---------------------------------------------------------------------------
-function clipboardPayload(absolutePath, options = {}) {
+function clipboardPayload(
+  absolutePath: string,
+  options: { keepImage?: boolean; quotePaths?: boolean } = {},
+): { text: string; keepImage: boolean } {
   const quote = options.quotePaths !== false && /\s/.test(absolutePath);
   return {
     text: quote ? `"${absolutePath}"` : absolutePath,
@@ -292,17 +354,17 @@ function clipboardPayload(absolutePath, options = {}) {
 }
 
 // 把平铺的条目折成画布用的簇。
-function groupIntoBursts(entries = []) {
-  const order = [];
-  const map = new Map();
+function groupIntoBursts(entries: StashEntry[] = []) {
+  const order: string[] = [];
+  const map = new Map<string, { id: string; app: string; kind: string; capturedAt: number; items: StashEntry[] }>();
   for (const e of entries) {
     if (!map.has(e.burstId)) {
       map.set(e.burstId, { id: e.burstId, app: e.app, kind: e.kind, capturedAt: e.capturedAt, items: [] });
       order.push(e.burstId);
     }
-    map.get(e.burstId).items.push(e);
+    map.get(e.burstId)!.items.push(e);
   }
-  return order.map((id) => map.get(id));
+  return order.map((id) => map.get(id)!);
 }
 
 module.exports = {

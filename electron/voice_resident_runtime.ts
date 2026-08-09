@@ -2,7 +2,91 @@
 
 const { VoiceWorkerClient } = require('./voice_worker_client');
 
-function sameConfig(left, right) {
+type VoiceEngine = 'auto' | 'whisper' | 'sense_voice';
+type VoiceSurface = 'stage' | 'overlay';
+type VoiceMode = 'wav' | 'microphone';
+
+interface VoiceConfigInput {
+  enabled?: boolean;
+  engine?: string;
+  idleUnloadMs?: number;
+  memoryLimitMb?: number;
+  modelName?: string;
+  pythonExecutable?: string;
+  pythonIsolated?: boolean;
+  root?: string;
+  settingsPath?: string;
+}
+
+interface VoiceConfig {
+  enabled: boolean;
+  engine: VoiceEngine;
+  idleUnloadMs: number;
+  memoryLimitMb: number;
+  modelName: string;
+  pythonExecutable: string;
+  pythonIsolated: boolean;
+  root: string;
+  settingsPath: string;
+}
+
+interface VoiceEvent {
+  code?: string | null;
+  engine?: string | null;
+  memory_mb?: number;
+  reason?: string | null;
+  requestId?: string;
+  reused?: boolean;
+  state?: string | null;
+  type?: string | null;
+  [key: string]: unknown;
+}
+
+interface WorkerCloseDetails {
+  expected?: boolean;
+}
+
+interface VoiceStartResult {
+  error?: string;
+  mode?: VoiceMode;
+  ok: boolean;
+  [key: string]: unknown;
+}
+
+interface VoiceWorkerLike {
+  ensureStarted(options: { preload: boolean }): unknown;
+  on(event: string, listener: (value: VoiceEvent & WorkerCloseDetails) => void): this;
+  removeAllListeners(): this;
+  shutdown(options: { force: boolean }): void;
+  startDictation(options: {
+    contextPath: string;
+    inputWav: string;
+    requestId: string;
+    silenceMs: number;
+  }): VoiceStartResult;
+  stopDictation(requestId: string, options: { cancel: boolean }): boolean;
+}
+
+interface ActiveVoiceSession {
+  cancelled: boolean;
+  captureStarted?: boolean;
+  faulted?: boolean;
+  mode?: VoiceMode;
+  requestId: string;
+  resident: boolean;
+  startedAt: number;
+  surface: VoiceSurface;
+}
+
+interface VoiceRuntimeOptions {
+  createClient?: (options: Omit<VoiceConfig, 'enabled'>) => VoiceWorkerLike;
+  onDeliver?: ((event: VoiceEvent & { surface: VoiceSurface; reused: boolean }) => void) | null;
+  onStatus?: ((status: Record<string, unknown>) => void) | null;
+  startLegacy?: ((options: Record<string, unknown>) => VoiceStartResult) | null;
+  stopLegacy?: ((options: Record<string, unknown>) => boolean) | null;
+}
+
+function sameConfig(left: VoiceConfig | null, right: VoiceConfig | null): boolean | null {
   return left
     && right
     && left.enabled === right.enabled
@@ -16,13 +100,24 @@ function sameConfig(left, right) {
 }
 
 class VoiceResidentRuntime {
+  createClient: (options: Omit<VoiceConfig, 'enabled'>) => VoiceWorkerLike;
+  startLegacy: VoiceRuntimeOptions['startLegacy'];
+  stopLegacy: VoiceRuntimeOptions['stopLegacy'];
+  onDeliver: NonNullable<VoiceRuntimeOptions['onDeliver']>;
+  onStatus: NonNullable<VoiceRuntimeOptions['onStatus']>;
+  config: VoiceConfig | null;
+  client: VoiceWorkerLike | null;
+  active: ActiveVoiceSession | null;
+  _restartTimer: NodeJS.Timeout | null;
+  _restartAttempts: number;
+
   constructor({
-    createClient = options => new VoiceWorkerClient(options),
+    createClient = (options: Omit<VoiceConfig, 'enabled'>) => new VoiceWorkerClient(options),
     startLegacy = null,
     stopLegacy = null,
     onDeliver = null,
     onStatus = null,
-  } = {}) {
+  }: VoiceRuntimeOptions = {}) {
     this.createClient = createClient;
     this.startLegacy = startLegacy;
     this.stopLegacy = stopLegacy;
@@ -35,7 +130,7 @@ class VoiceResidentRuntime {
     this._restartAttempts = 0;
   }
 
-  configure(next) {
+  configure(next: VoiceConfigInput) {
     const config = normalizeConfig(next);
     if (sameConfig(this.config, config)) return { ok: true, rebuilt: false, changed: false };
     if (this.active) return { ok: false, error: 'voice_session_active' };
@@ -47,7 +142,7 @@ class VoiceResidentRuntime {
     return { ok: true, rebuilt: hadClient, changed: true };
   }
 
-  warmUp() {
+  warmUp(): boolean {
     if (!this.config?.enabled || this.active) return false;
     try {
       const client = this._ensureClient();
@@ -61,7 +156,19 @@ class VoiceResidentRuntime {
     }
   }
 
-  start({ requestId, surface, contextPath, silenceMs = 1600, inputWav = '' } = {}) {
+  start({
+    requestId = '',
+    surface = 'stage',
+    contextPath = '',
+    silenceMs = 1600,
+    inputWav = '',
+  }: {
+    requestId?: string;
+    surface?: VoiceSurface;
+    contextPath?: string;
+    silenceMs?: number;
+    inputWav?: string;
+  } = {}): VoiceStartResult {
     if (!this.config) return { ok: false, error: 'voice_runtime_unconfigured' };
     if (this.active) return { ok: false, error: 'voice_session_active' };
     if (
@@ -105,7 +212,7 @@ class VoiceResidentRuntime {
     return result;
   }
 
-  stop(requestId, { graceful = false, cancel = false } = {}) {
+  stop(requestId: string, { graceful = false, cancel = false }: { graceful?: boolean; cancel?: boolean } = {}): boolean {
     if (!this.active || this.active.requestId !== requestId) return false;
     this.active.cancelled = cancel || !graceful;
     if (!this.active.resident) {
@@ -128,18 +235,18 @@ class VoiceResidentRuntime {
     return Boolean(stopped);
   }
 
-  legacyFinished(requestId) {
+  legacyFinished(requestId: string): void {
     if (this.active?.resident === false && this.active.requestId === requestId) this.active = null;
   }
 
-  shutdown() {
+  shutdown(): void {
     this.active = null;
     this._clearRestart();
     this._disposeClient();
     this._publishStatus('unloaded');
   }
 
-  _clearRestart() {
+  _clearRestart(): void {
     if (this._restartTimer) {
       clearTimeout(this._restartTimer);
       this._restartTimer = null;
@@ -147,27 +254,29 @@ class VoiceResidentRuntime {
     this._restartAttempts = 0;
   }
 
-  _ensureClient() {
+  _ensureClient(): VoiceWorkerLike {
     if (this.client) return this.client;
+    const config = this.config;
+    if (!config) throw new Error('voice runtime is not configured');
     this.client = this.createClient({
-      root: this.config.root,
-      pythonExecutable: this.config.pythonExecutable,
-      pythonIsolated: this.config.pythonIsolated,
-      engine: this.config.engine,
-      modelName: this.config.modelName,
-      settingsPath: this.config.settingsPath,
-      memoryLimitMb: this.config.memoryLimitMb,
-      idleUnloadMs: this.config.idleUnloadMs,
+      root: config.root,
+      pythonExecutable: config.pythonExecutable,
+      pythonIsolated: config.pythonIsolated,
+      engine: config.engine,
+      modelName: config.modelName,
+      settingsPath: config.settingsPath,
+      memoryLimitMb: config.memoryLimitMb,
+      idleUnloadMs: config.idleUnloadMs,
     });
-    this.client.on('voice-event', event => this._handleEvent(event));
-    this.client.on('worker-status', event => {
+    this.client.on('voice-event', (event: VoiceEvent) => this._handleEvent(event));
+    this.client.on('worker-status', (event: VoiceEvent) => {
       const workerState = String(event?.state || '');
       if (workerState === 'unloaded') this._publishStatus('unloaded', event.reason || null, event);
       else if (workerState === 'warming' || workerState === 'loading') this._publishStatus('warming', null, event);
       else if (workerState === 'ready') this._publishStatus('ready', null, event);
       else if (workerState === 'error') this._publishStatus('error', event.code || 'voice_worker_preload_failed', event);
     });
-    this.client.on('worker-close', details => {
+    this.client.on('worker-close', (details: WorkerCloseDetails) => {
       if (!details.expected) {
         this.active = null;
         this._publishStatus('error', 'voice_worker_crashed');
@@ -180,7 +289,7 @@ class VoiceResidentRuntime {
     return this.client;
   }
 
-  _scheduleRestart() {
+  _scheduleRestart(): void {
     if (this._restartTimer) return;
     if (!this.config?.enabled) return;
     if (this.active) return;
@@ -207,14 +316,14 @@ class VoiceResidentRuntime {
     }, delay);
   }
 
-  _disposeClient() {
+  _disposeClient(): void {
     if (!this.client) return;
-    try { this.client.shutdown({ force: true }); } catch (_) {}
-    try { this.client.removeAllListeners(); } catch (_) {}
+    try { this.client.shutdown({ force: true }); } catch (_) { /* already stopped */ }
+    try { this.client.removeAllListeners(); } catch (_) { /* already disposed */ }
     this.client = null;
   }
 
-  _handleEvent(event) {
+  _handleEvent(event: VoiceEvent): void {
     if (!event || typeof event !== 'object') return;
     const active = this.active;
     if (!active || active.resident !== true || event.requestId !== active.requestId) return;
@@ -247,7 +356,7 @@ class VoiceResidentRuntime {
     }
   }
 
-  _publishStatus(state, errorCode = null, workerEvent = null) {
+  _publishStatus(state: string, errorCode: string | null = null, workerEvent: VoiceEvent | null = null): void {
     this.onStatus({
       state,
       errorCode: safeToken(errorCode),
@@ -257,15 +366,15 @@ class VoiceResidentRuntime {
   }
 }
 
-function safeToken(value, fallback = null) {
+function safeToken(value: unknown, fallback: string | null = null): string | null {
   if (value == null || value === '') return fallback;
   const token = String(value);
   return /^[a-z0-9._-]{1,120}$/i.test(token) ? token : fallback;
 }
 
-function projectWorkerEvent(event) {
+function projectWorkerEvent(event: VoiceEvent | null): VoiceEvent | null {
   if (!event || typeof event !== 'object') return null;
-  const projected = {
+  const projected: VoiceEvent = {
     type: safeToken(event.type),
     state: safeToken(event.state),
     reason: safeToken(event.reason),
@@ -277,14 +386,14 @@ function projectWorkerEvent(event) {
   return projected;
 }
 
-function normalizeConfig(value = {}) {
-  if (!Number.isInteger(value.memoryLimitMb) || value.memoryLimitMb < 128 || value.memoryLimitMb > 16384) {
+function normalizeConfig(value: VoiceConfigInput = {}): VoiceConfig {
+  if (typeof value.memoryLimitMb !== 'number' || !Number.isInteger(value.memoryLimitMb) || value.memoryLimitMb < 128 || value.memoryLimitMb > 16384) {
     throw new TypeError('memoryLimitMb must be an integer from 128 to 16384');
   }
-  if (!Number.isInteger(value.idleUnloadMs) || value.idleUnloadMs < 0 || value.idleUnloadMs > 3600000) {
+  if (typeof value.idleUnloadMs !== 'number' || !Number.isInteger(value.idleUnloadMs) || value.idleUnloadMs < 0 || value.idleUnloadMs > 3600000) {
     throw new TypeError('idleUnloadMs must be an integer from 0 (resident) to 3600000');
   }
-  const engine = String(value.engine || 'auto').trim().toLowerCase() || 'auto';
+  const engine = (String(value.engine || 'auto').trim().toLowerCase() || 'auto') as VoiceEngine;
   if (!['auto', 'whisper', 'sense_voice'].includes(engine)) {
     throw new TypeError('engine must be auto, whisper, or sense_voice');
   }
@@ -301,11 +410,11 @@ function normalizeConfig(value = {}) {
   };
 }
 
-function validSessionValue(value) {
+function validSessionValue(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0 && value.length <= 160 && value === value.trim();
 }
 
-function validSurface(value) {
+function validSurface(value: unknown): value is VoiceSurface {
   return value === 'stage' || value === 'overlay';
 }
 
