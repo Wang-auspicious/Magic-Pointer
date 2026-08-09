@@ -1,10 +1,76 @@
+interface WiggleDetectorOptions {
+  cooldownMs?: unknown;
+  disabledApps?: readonly unknown[];
+  sensitivity?: unknown;
+  windowMs?: unknown;
+}
+
+interface WiggleSampleInput {
+  buttons?: unknown;
+  foregroundApp?: unknown;
+  isWindowMoving?: unknown;
+  scrollDelta?: unknown;
+  t?: unknown;
+  x?: unknown;
+  y?: unknown;
+}
+
+interface WigglePoint {
+  buttons: number;
+  foregroundApp: string;
+  isWindowMoving: boolean;
+  scrollDelta: number;
+  t: number;
+  x: number;
+  y: number;
+}
+
+interface WiggleMetrics {
+  durationMs?: number;
+  horizontalTravel?: number;
+  net?: number;
+  ready: boolean;
+  reason?: string;
+  returnRatio?: number;
+  reversals?: number;
+  totalTravel?: number;
+  velocity?: number;
+  xRange?: number;
+  yRange?: number;
+}
+
+interface CalibrationState {
+  samples: WiggleMetrics[];
+  startedAt: number;
+  until: number;
+}
+
+interface WiggleResult {
+  metrics: WiggleMetrics | Record<string, never>;
+  reason: string;
+  triggered: boolean;
+}
+
 class WiggleDetector {
+  sensitivity: number;
+  disabledApps: string[];
+  cooldownMs: number;
+  windowMs: number;
+  points: WigglePoint[];
+  lastSample: WigglePoint | null;
+  lastMotionAt: number | null;
+  idleResetMs: number;
+  lastTriggeredAt: number;
+  thresholdScale: number;
+  immediateCancels: number;
+  calibration: CalibrationState | null;
+
   constructor({
     sensitivity = 0.55,
     disabledApps = [],
     cooldownMs = 900,
     windowMs = 700,
-  } = {}) {
+  }: WiggleDetectorOptions = {}) {
     this.sensitivity = Math.max(0, Math.min(1, Number(sensitivity) || 0.55));
     this.disabledApps = disabledApps.map((value) => String(value).toLowerCase()).filter(Boolean);
     this.cooldownMs = Math.max(500, Number(cooldownMs) || 900);
@@ -19,7 +85,7 @@ class WiggleDetector {
     this.calibration = null;
   }
 
-  reset() {
+  reset(): void {
     this.points = [];
     this.lastSample = null;
     this.lastMotionAt = null;
@@ -30,7 +96,7 @@ class WiggleDetector {
     disabledApps = this.disabledApps,
     cooldownMs = this.cooldownMs,
     windowMs = this.windowMs,
-  } = {}) {
+  }: WiggleDetectorOptions = {}): void {
     this.sensitivity = Math.max(0, Math.min(1, Number(sensitivity) || 0.55));
     this.disabledApps = Array.from(disabledApps || [])
       .map((value) => String(value).toLowerCase())
@@ -41,7 +107,7 @@ class WiggleDetector {
     this.reset();
   }
 
-  startCalibration(now = Date.now(), durationMs = 10000) {
+  startCalibration(now: unknown = Date.now(), durationMs: unknown = 10000): void {
     this.calibration = {
       startedAt: Number(now),
       until: Number(now) + Math.max(3000, Number(durationMs) || 10000),
@@ -50,14 +116,21 @@ class WiggleDetector {
     this.reset();
   }
 
-  finishCalibration() {
+  finishCalibration(): {
+    medianRange?: number;
+    ok: boolean;
+    samples: number;
+    sensitivity: number;
+  } {
     const calibration = this.calibration;
     this.calibration = null;
     this.reset();
     if (!calibration || calibration.samples.length === 0) {
       return { ok: false, samples: 0, sensitivity: this.sensitivity };
     }
-    const ranges = calibration.samples.map((metrics) => metrics.xRange).sort((a, b) => a - b);
+    const ranges = calibration.samples
+      .map((metrics) => metrics.xRange ?? 0)
+      .sort((a, b) => a - b);
     const medianRange = ranges[Math.floor(ranges.length / 2)];
     const targetScale = Math.max(0.68, Math.min(1.24, (medianRange * 0.58) / 38));
     const sensitivity = Math.max(0.2, Math.min(0.9, 0.5 + (1 - targetScale) / 0.8));
@@ -70,7 +143,10 @@ class WiggleDetector {
     };
   }
 
-  recordOutcome({ cancelledImmediately = false, completed = false } = {}) {
+  recordOutcome({
+    cancelledImmediately = false,
+    completed = false,
+  }: { cancelledImmediately?: boolean; completed?: boolean } = {}): void {
     if (cancelledImmediately) {
       this.immediateCancels += 1;
       this.thresholdScale = Math.min(1.45, this.thresholdScale + 0.08);
@@ -81,7 +157,7 @@ class WiggleDetector {
     }
   }
 
-  _blocked(sample, recent) {
+  _blocked(sample: WigglePoint, recent: WigglePoint[]): string | null {
     if (recent.some((point) => Number(point.buttons || 0) !== 0)) return 'button_down';
     if (recent.reduce((sum, point) => sum + Math.abs(Number(point.scrollDelta || 0)), 0) >= 80) return 'active_scroll';
     if (recent.some((point) => point.isWindowMoving === true)) return 'window_move';
@@ -90,7 +166,7 @@ class WiggleDetector {
     return null;
   }
 
-  _metrics(recent) {
+  _metrics(recent: WigglePoint[]): WiggleMetrics {
     if (recent.length < 4) return { ready: false, reason: 'insufficient_samples' };
     const first = recent[0];
     const last = recent[recent.length - 1];
@@ -110,7 +186,7 @@ class WiggleDetector {
       return { ready: false, reason: 'vertical_drift', durationMs, xRange, yRange };
     }
 
-    const segments = [];
+    const segments: Array<{ direction: number; distance: number }> = [];
     let direction = 0;
     let distance = 0;
     let total = 0;
@@ -155,7 +231,7 @@ class WiggleDetector {
     return metrics;
   }
 
-  push(sample = {}) {
+  push(sample: WiggleSampleInput = {}): WiggleResult {
     const point = {
       t: Number(sample.t),
       x: Number(sample.x),
@@ -202,7 +278,9 @@ class WiggleDetector {
     this.points = this.points.filter((item) => item.t >= cutoff);
 
     const metrics = this._metrics(this.points);
-    if (!metrics.ready) return { triggered: false, reason: metrics.reason, metrics };
+    if (!metrics.ready) {
+      return { triggered: false, reason: metrics.reason || 'not_ready', metrics };
+    }
     if (this.calibration && point.t <= this.calibration.until) {
       this.calibration.samples.push(metrics);
       this.reset();
