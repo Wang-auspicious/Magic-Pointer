@@ -71,7 +71,11 @@ class SelectionSessionStore {
 
   prune(now = Date.now()): void {
     for (const [token, entry] of this.sessions.entries()) {
-      if (entry.expiresAt <= now || entry.state === 'cancelled') {
+      // A request that was accepted while its selection was valid remains
+      // valid until the bridge completes or is explicitly cancelled. Model
+      // latency must not turn a successful response into a stale response.
+      const requestInFlight = entry.state === 'running' && Boolean(entry.activeRequestId);
+      if ((!requestInFlight && entry.expiresAt <= now) || entry.state === 'cancelled') {
         this.sessions.delete(token);
       }
     }
@@ -188,6 +192,7 @@ class SelectionSessionStore {
     const requestId = this.idFactory();
     entry.activeRequestId = requestId;
     entry.state = 'running';
+    entry.expiresAt = now + this.ttlMs;
     return requestId;
   }
 
@@ -195,6 +200,8 @@ class SelectionSessionStore {
     const entry = this.get(token, now);
     if (!entry || entry.activeRequestId !== requestId) return null;
     entry.state = 'ready';
+    entry.activeRequestId = null;
+    entry.expiresAt = now + this.ttlMs;
     return entry;
   }
 

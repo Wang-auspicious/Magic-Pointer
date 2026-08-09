@@ -33,7 +33,9 @@ TypeScript 迁移基础设施可用：`npm run build:electron` 生成 `build/ele
 
 源码直接启动兼容已恢复：`npx --no-install electron electron/main.js` 会在源码树按需注册 `tsx/cjs`，真实 Electron dashboard-capture smoke 已通过；`build/electron` 与安装包因不存在源码 `.ts` 不加载该 devDependency。
 
-Windows 唤醒后的光标/划线回归已修复：gesture 态不再让 Chromium 管理 SVG URL cursor，而是隐藏系统 cursor、用同一素材的 DOM 光标接收 DOM + 全局轮询双路位置；源码入口真机拖动验证中 cursor handle 从按下到释放保持为 `0`，蓝带可见，释放后 198ms 出现输入框。Clicky 三角不再随唤醒常驻，只在结果含 `[POINT]` 时临时启动，停留结束后单独关闭引导 overlay。
+Windows 唤醒后的光标/划线回归已修复：gesture 态不再让 Chromium 管理 SVG URL cursor，而是隐藏系统 cursor、用同一素材的 DOM 光标接收 DOM + 全局轮询双路位置；源码入口真机拖动验证中 cursor handle 从按下到释放保持为 `0`，蓝带可见，释放后 198ms 出现输入框。Clicky 三角不再随唤醒常驻，只在结果含 `[POINT]` 时临时启动；飞行改为单个持久 SVG DOM 节点更新 `transform`，不再向透明 Canvas 连续重画带模糊的位图。真实 Electron 逐帧截图中每帧只有一个非透明包围盒，停留结束后单独关闭引导 overlay。
+
+选区追问的 120 秒假卡死已修复：日志证实第二次请求 20.5 秒完成，但结果到达时已超过选区创建 TTL，被 `stage result ignored stale` 丢弃。现在已受理请求在执行期间不会被 TTL 清理，完成后从完成时刻重新续期；回归测试覆盖请求跨越多个 TTL 后仍可交付、空闲会话仍会正常过期。
 
 未接入生产入口的 `voice_residency.js` 旧状态机、`panel_position.js` 旧面板定位算法及其自循环单元测试已删除；现役语音生命周期唯一实现是 `voice_resident_runtime.js` + `voice_worker_client.js`，现役定位走 stage anchor/命中区/主进程 placement 链。
 

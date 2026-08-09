@@ -42,6 +42,26 @@ body[data-mode='gesture'] #armed-cursor[data-visible='true'] {
   opacity: 1;
 }
 
+/* One persistent compositor layer for answer guidance. Repainting a blurred
+   bitmap into the transparent trail canvas leaves backing-store ghosts on
+   Windows; moving this single DOM node produces one clean flight. */
+#guide-triangle {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 48px;
+  height: 48px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate3d(-96px, -96px, 0);
+  will-change: transform;
+  z-index: 2147483647;
+}
+
+#guide-triangle[data-visible='true'] {
+  opacity: 1;
+}
+
 /* Non-gesture surfaces still use Chromium's cursor because they do not take
    pointer capture and therefore do not enter the Windows fallback path. */
 body[data-mode='capture'],

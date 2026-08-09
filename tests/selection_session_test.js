@@ -54,5 +54,25 @@ assert.strictEqual(store.finishRequest('session-1', request2, 400).state, 'ready
 assert.strictEqual(store.clearAgentPromptDraft('session-1', 410), true);
 assert.strictEqual(store.getAgentPromptDraft('session-1', 420), null);
 
-assert.strictEqual(store.get('session-1', 1100), null);
+assert.strictEqual(store.get('session-1', 1399).state, 'ready');
+assert.strictEqual(store.get('session-1', 1400), null);
+
+// A request accepted while the session is alive owns a fresh TTL window.
+// Slow-but-successful model work must not be discarded merely because the
+// original selection was created more than one TTL ago by completion time.
+const requestIds = ['session-running', 'request-running'];
+const runningStore = new SelectionSessionStore({
+  ttlMs: 1000,
+  idFactory: () => requestIds.shift(),
+});
+runningStore.create({ reason: 'hotkey' }, 0);
+runningStore.attachSnapshot('session-running', {
+  selectionSnapshot: { snapshot_id: 'snapshot-running', status: 'ready' },
+}, 100);
+const runningRequest = runningStore.startRequest('session-running', 900);
+assert.strictEqual(runningRequest, 'request-running');
+assert.strictEqual(runningStore.isCurrentRequest('session-running', runningRequest, 2500), true);
+assert.strictEqual(runningStore.finishRequest('session-running', runningRequest, 2500).state, 'ready');
+assert.strictEqual(runningStore.get('session-running', 3499).state, 'ready');
+assert.strictEqual(runningStore.get('session-running', 3500), null);
 console.log('selection session test ok');

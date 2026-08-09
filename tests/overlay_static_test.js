@@ -4,6 +4,7 @@ const vm = require('vm');
 
 const source = fs.readFileSync('electron/renderer/overlay.js', 'utf8');
 const html = fs.readFileSync('electron/renderer/index.html', 'utf8');
+const styles = fs.readFileSync('electron/renderer/styles.css', 'utf8');
 
 // Kept contract: 光标是 CSS armed-cursor，不在 canvas 画鼠标。
 // 之前 canvas 画蓝圈（drawPointer/drawObserverAura）是用户点名不要的。
@@ -22,8 +23,20 @@ assert(!source.includes('if (observerMode) drawObserverAura(lastPointer);'));
 // Clicky 式引导小三角：默认不出现，收到 [POINT] 指点才浮现并贝塞尔飞行
 assert(source.includes('window.magicPointer?.onGuidePoint?.('),
   'overlay 必须监听主进程的 overlay:guide-point');
-assert(source.includes('function drawGuideTriangle'),
-  'overlay 必须有引导三角绘制');
+assert(html.includes('id="guide-triangle"'),
+  'guidance must move one persistent DOM triangle');
+assert(source.includes("document.getElementById('guide-triangle')"),
+  'guidance must bind the persistent DOM triangle');
+assert(source.includes('function updateGuideTriangle('),
+  'guidance must have one DOM transform synchronization path');
+assert(styles.includes('#guide-triangle'),
+  'the persistent guide triangle must have an explicit compositor style');
+assert(!source.includes('function drawGuideTriangle'),
+  'guidance must not repaint a blurred triangle into the transparent canvas');
+assert(!source.includes('guideFrames'),
+  'guidance must not retain raster frames that can ghost on Windows');
+assert(!source.includes('g.shadowBlur'),
+  'guidance must not use canvas blur on a transparent Windows surface');
 assert(source.includes('function guideFlightPoint'),
   '贝塞尔飞行必须是纯函数，可单测');
 assert(source.includes('guideTarget = null;'),

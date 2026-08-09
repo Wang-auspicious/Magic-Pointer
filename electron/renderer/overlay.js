@@ -3,6 +3,7 @@ const ctx = canvas.getContext('2d');
 const sweepCanvas = document.getElementById('sweep-layer');
 const sweepRenderer = new globalThis.MagicSweepVisual.SweepRenderer(sweepCanvas);
 const armedCursor = document.getElementById('armed-cursor');
+const guideTriangle = document.getElementById('guide-triangle');
 const hint = document.getElementById('hint');
 
 let dpr = window.devicePixelRatio || 1;
@@ -93,9 +94,12 @@ function guideFlightPoint(from, ctrl, to, t) {
   };
 }
 
-function drawGuideTriangle() {
+function updateGuideTriangle() {
   // Demand-driven only: waking the selection overlay never starts Clicky.
-  if (!guideTarget) return;
+  if (!guideTarget) {
+    guideTriangle.dataset.visible = 'false';
+    return;
+  }
   const now = performance.now();
   let px;
   let py;
@@ -116,67 +120,15 @@ function drawGuideTriangle() {
       guideHideTimer = setTimeout(() => {
         guideHideTimer = null;
         guideTarget = null;
-        render();
+        updateGuideTriangle();
         window.magicPointer?.guideFinished();
       }, 2500);
     }
   } else {
     return;
   }
-  ctx.save();
-  ctx.translate(px, py);
-  // clicky 源码的 BlueCursorView 三角：等边三角形，边长 16，旋转 -35°
-  // （像光标一样朝左上方），纯蓝填充 + 同色外发光。源码注释说得很清楚：
-  // 我们用预渲染离屏 canvas 缓存三角位图
-  // （旋转在预渲染时做掉），每帧 drawImage——避免每帧重算 path + shadow。
-  ensureGuideFrames();
-  ctx.drawImage(guideFrames[0], -guideFrameSize / 2, -guideFrameSize / 2);
-  ctx.restore();
-}
-
-// ── 预渲染三角位图（等边三角形，源码同款）─────────────────────────
-let guideFrames = [];
-let guideFrameSize = 0;
-
-function ensureGuideFrames() {
-  if (guideFrames.length) return;
-  // 离屏 4x 渲染（64px 画布，16px 三角 + 光晕余量），再缩到 48px 位图。
-  // 等边三角形：边长 16，高 = 16 × √3/2 ≈ 13.86（源码 Triangle shape 同款）。
-  const size = 64;
-  guideFrameSize = size;
-  const off = document.createElement('canvas');
-  off.width = size;
-  off.height = size;
-  const g = off.getContext('2d');
-  g.save();
-  g.translate(size / 2, size / 2);
-  // 旋转 -35°：像光标一样朝左上方（源码 triangleRotationDegrees = -35）
-  g.rotate((-35 * Math.PI) / 180);
-  // 等边三角，边长 16px——源码 BlueCursorView 的原尺寸
-  const edge = 16;
-  const height = edge * Math.sqrt(3) / 2;
-  // 顶点朝上：顶 y = -高×2/3，底 y = +高×1/3（源码比例）
-  g.fillStyle = '#2477e8';
-  g.shadowColor = '#2477e8';
-  // 光晕克制：源码 16px 三角配 radius 8；22px 三角该配 ~11，但大光晕
-  // 会把小三角糊成一团（之前 12 就糊成胶囊了），收到 5 保留锐利边缘
-  g.shadowBlur = 5;
-  g.beginPath();
-  g.moveTo(0, -height * (2 / 3));
-  g.lineTo(-edge / 2, height / 3);
-  g.lineTo(edge / 2, height / 3);
-  g.closePath();
-  g.fill();
-  g.restore();
-  // 缩到 48px（三角 16px + 光晕 32px 余量）
-  const final = document.createElement('canvas');
-  final.width = 48;
-  final.height = 48;
-  const fg = final.getContext('2d');
-  fg.drawImage(off, 0, 0, 48, 48);
-  guideFrames = [final];
-  // 绘制偏移用最终位图尺寸，不是大画布尺寸
-  guideFrameSize = 48;
+  guideTriangle.dataset.visible = 'true';
+  guideTriangle.style.transform = `translate3d(${px - 24}px, ${py - 24}px, 0)`;
 }
 
 function resize() {
@@ -298,15 +250,10 @@ function render() {
       // armed-cursor DOM element.
       drawHitTestPixel(lastPointer);
     }
-    // [POINT] guidance may temporarily coexist with a non-gesture overlay;
-    // ordinary selection wake never creates a triangle.
-    drawGuideTriangle();
     return;
   }
   if (!captureMode && points.length) drawSmoothPath(points, trailAlpha);
   // 不画 canvas 鼠标——光标由 DOM armed-cursor（用户满意版原样）。
-  // 引导小三角画在光标之上（默认不出现，有 [POINT] 指点才浮现）
-  drawGuideTriangle();
 }
 
 function fadeTrail(duration = 760) {
@@ -429,6 +376,7 @@ function resetOverlay() {
   strokes = [];
   guideTarget = null;
   guideFlight = null;
+  updateGuideTriangle();
   if (guideHideTimer) clearTimeout(guideHideTimer);
   guideHideTimer = null;
   if (chainTimer) clearTimeout(chainTimer);
@@ -689,7 +637,7 @@ window.magicPointer?.onGuidePoint?.((payload) => {
   // 飞行是持续动画（620ms），不是一帧——持续 rAF 直到到达/超时，
   // 否则三角只在起点闪一帧就消失。
   function guideTick() {
-    render();
+    updateGuideTriangle();
     const stillFlying = guideFlight && performance.now() < guideFlight.startedAt + guideFlight.duration;
     if (stillFlying) requestAnimationFrame(guideTick);
   }
