@@ -10,7 +10,8 @@ for (const relativePath of [
   'electron/answer_shape_policy.ts',
   'electron/capture_proof_policy.ts',
   'electron/stage_state.js',
-  'electron/stage_anchor.js',
+  'electron/stage_anchor.ts',
+  'electron/stage_turn_stream.ts',
   'electron/stage_chips_policy.ts',
   'electron/stage_stretch_policy.ts',
   'electron/stage_pick_policy.ts',
@@ -37,6 +38,7 @@ assert(context.globalThis.AnswerShapePolicy, 'AnswerShapePolicy browser API must
 assert(context.globalThis.CaptureProofPolicy, 'CaptureProofPolicy browser API must exist');
 assert(context.globalThis.StageState, 'StageState browser API must exist');
 assert(context.globalThis.StageAnchor, 'StageAnchor browser API must exist');
+assert(context.globalThis.StageTurnStream, 'StageTurnStream browser API must exist');
 assert(context.globalThis.StageChipsPolicy, 'StageChipsPolicy browser API must exist');
 assert(context.globalThis.StageStretchPolicy, 'StageStretchPolicy browser API must exist');
 assert(context.globalThis.StagePickPolicy, 'StagePickPolicy browser API must exist');

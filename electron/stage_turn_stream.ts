@@ -1,5 +1,35 @@
 'use strict';
 
+(() => {
+type UnknownRecord = Record<string, unknown>;
+
+interface WordEntry {
+  at: number;
+  kind: 'word';
+  text: string;
+}
+
+interface StrokeEntry {
+  at: number;
+  kind: 'stroke';
+  label: string;
+  strokeIndex: number;
+}
+
+type StreamEntry = StrokeEntry | WordEntry;
+
+interface ComposerChip {
+  at: number;
+  label: string;
+  ordinal: number;
+  strokeIndex: number;
+}
+
+interface SubmitResult {
+  ready: boolean;
+  reason: 'empty' | 'explicit_submit' | 'selection_without_instruction' | 'silence' | 'still_composing';
+}
+
 // A turn is a stream, not a form you submit.
 //
 // The old shape: draw every stroke, then press Enter, and one message goes out.
@@ -40,8 +70,13 @@ const POINTING_WORDS = ['这个', '这段', '这张', '这里', '这些', '那�
 // means the user can read what was sent and recognise it.
 const ORDINAL_MARKS = Object.freeze(['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩', '⑪', '⑫']);
 
-function normalizeEntry(entry, index) {
-  if (!entry || typeof entry !== 'object') return null;
+function recordOf(value: unknown): UnknownRecord | null {
+  return value !== null && typeof value === 'object' ? (value as UnknownRecord) : null;
+}
+
+function normalizeEntry(value: unknown, index: number): StreamEntry | null {
+  const entry = recordOf(value);
+  if (entry === null) return null;
   const at = Number(entry.at);
   if (!Number.isFinite(at)) return null;
   if (entry.kind === ENTRY_STROKE) {
@@ -63,10 +98,10 @@ function normalizeEntry(entry, index) {
 
 // Oldest first. Ties keep insertion order, so a stroke and a word stamped in the
 // same millisecond stay in the order they were recorded.
-function orderedEntries(entries) {
+function orderedEntries(entries: unknown): StreamEntry[] {
   return (Array.isArray(entries) ? entries : [])
     .map(normalizeEntry)
-    .filter(Boolean)
+    .filter((entry: StreamEntry | null): entry is StreamEntry => entry !== null)
     .map((entry, index) => ({ entry, index }))
     .sort((a, b) => (a.entry.at - b.entry.at) || (a.index - b.index))
     .map((item) => item.entry);
@@ -79,8 +114,8 @@ function orderedEntries(entries) {
  * this has over the Google demo (the others being that it works muted and that
  * what you picked stays on screen).
  */
-function composerChips(entries) {
-  const chips = [];
+function composerChips(entries: unknown): ComposerChip[] {
+  const chips: ComposerChip[] = [];
   for (const entry of orderedEntries(entries)) {
     if (entry.kind !== ENTRY_STROKE) continue;
     chips.push({
@@ -102,9 +137,9 @@ function composerChips(entries) {
  * after a pointing word attaches to it; a stroke drawn out of the blue still
  * appears where it happened rather than being appended at the end.
  */
-function composedCommand(entries) {
+function composedCommand(entries: unknown): string {
   const ordered = orderedEntries(entries);
-  const parts = [];
+  const parts: string[] = [];
   let strokeOrdinal = 0;
   for (const entry of ordered) {
     if (entry.kind === ENTRY_STROKE) {
@@ -124,10 +159,10 @@ function composedCommand(entries) {
  * thing just drawn, and a stroke drawn after the sentence finished does not
  * retroactively become its subject.
  */
-function strokeForWordAt(entries, wordAt) {
+function strokeForWordAt(entries: unknown, wordAt: unknown): StrokeEntry | null {
   const at = Number(wordAt);
   if (!Number.isFinite(at)) return null;
-  let best = null;
+  let best: StrokeEntry | null = null;
   for (const entry of orderedEntries(entries)) {
     if (entry.kind !== ENTRY_STROKE) continue;
     if (entry.at > at + SAME_MOMENT_MS) break;
@@ -138,7 +173,7 @@ function strokeForWordAt(entries, wordAt) {
 
 // Does the text contain a word that points at something? Used to decide whether
 // a lone stroke needs a pronoun supplied for it.
-function hasPointingWord(text) {
+function hasPointingWord(text: unknown): boolean {
   const value = String(text || '').toLowerCase();
   return POINTING_WORDS.some((token) => value.includes(token));
 }
@@ -150,13 +185,14 @@ function hasPointingWord(text) {
  * a request, and submitting it would produce a guess. Enter always submits;
  * silence submits only once there is something to act on.
  */
-function submitReadiness(input) {
-  const entries = orderedEntries(input?.entries);
+function submitReadiness(input: unknown): SubmitResult {
+  const candidate = recordOf(input);
+  const entries = orderedEntries(candidate?.entries);
   const words = entries.filter((entry) => entry.kind === ENTRY_WORD);
   const strokes = entries.filter((entry) => entry.kind === ENTRY_STROKE);
   const hasInstruction = words.length > 0;
-  const silenceMs = Number(input?.silenceMs);
-  const pressedEnter = input?.pressedEnter === true;
+  const silenceMs = Number(candidate?.silenceMs);
+  const pressedEnter = candidate?.pressedEnter === true;
 
   if (!hasInstruction) {
     return {
@@ -189,5 +225,7 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = StageTurnStream;
 }
 if (typeof globalThis !== 'undefined') {
-  globalThis.StageTurnStream = StageTurnStream;
+  (globalThis as typeof globalThis & { StageTurnStream?: typeof StageTurnStream })
+    .StageTurnStream = StageTurnStream;
 }
+})();

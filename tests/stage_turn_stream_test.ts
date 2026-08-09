@@ -19,8 +19,13 @@ const {
   submitReadiness,
 } = require('../electron/stage_turn_stream');
 
-const word = (text, at) => ({ kind: ENTRY_WORD, text, at });
-const stroke = (strokeIndex, at, label = '') => ({ kind: ENTRY_STROKE, strokeIndex, at, label });
+const word = (text: string, at: number) => ({ kind: ENTRY_WORD, text, at });
+const stroke = (strokeIndex: number, at: number, label = '') => ({
+  kind: ENTRY_STROKE,
+  strokeIndex,
+  at,
+  label,
+});
 
 // 说到"把"时画一笔，输入流当场变成 "把 ①"。
 {
@@ -41,7 +46,7 @@ const stroke = (strokeIndex, at, label = '') => ({ kind: ENTRY_STROKE, strokeInd
 {
   const entries = [word('改成正式的', 1500), stroke(0, 1200), word('把', 1000)];
   assert.strictEqual(composedCommand(entries), '把 ① 改成正式的');
-  const kinds = orderedEntries(entries).map((entry) => entry.kind);
+  const kinds = orderedEntries(entries).map((entry: { kind: string }) => entry.kind);
   assert.deepStrictEqual(kinds, [ENTRY_WORD, ENTRY_STROKE, ENTRY_WORD]);
 }
 
