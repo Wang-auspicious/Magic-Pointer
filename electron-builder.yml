@@ -40,7 +40,7 @@ files:
   - scripts/magic_pointer_mcp.py
   - scripts/office_selection_probe.vbs
   - scripts/pointer_input_state.ps1
-  - scripts/collect-diagnostics.js
+  - build/scripts/collect-diagnostics.js
   - scripts/selection_bridge.py
   - scripts/selection_snapshot_bridge.py
   - scripts/sense_voice_bridge.py

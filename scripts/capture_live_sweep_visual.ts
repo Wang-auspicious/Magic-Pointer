@@ -34,7 +34,7 @@ async function capture() {
 app.whenReady()
   .then(capture)
   .then(() => app.quit())
-  .catch((error) => {
+  .catch((error: unknown) => {
     console.error(error);
     app.exit(1);
   });

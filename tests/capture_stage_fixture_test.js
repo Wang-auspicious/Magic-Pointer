@@ -3,7 +3,7 @@
 const assert = require('node:assert');
 const fs = require('node:fs');
 
-const source = fs.readFileSync('scripts/capture_stage.js', 'utf8');
+const source = fs.readFileSync('scripts/capture_stage.ts', 'utf8');
 
 assert.ok(source.includes('layout evidence'),
   'the capture helper must identify itself as layout-only evidence');

@@ -1,5 +1,5 @@
 // Temporary: extract frames from a video for design reference.
-//   npx electron scripts/extract_frames.js <video.mp4> <outDir> [count]
+//   npx electron build/scripts/extract_frames.js <video.mp4> <outDir> [count]
 const { app, BrowserWindow } = require('electron');
 const fs = require('fs');
 const path = require('path');
@@ -55,8 +55,8 @@ app.whenReady().then(async () => {
     process.stdout.write(`${name}\n`);
   }
   app.quit();
-}).catch((error) => {
-  process.stderr.write(`failed: ${error.message}\n`);
+}).catch((error: unknown) => {
+  process.stderr.write(`failed: ${error instanceof Error ? error.message : String(error)}\n`);
   process.exitCode = 1;
   app.quit();
 });

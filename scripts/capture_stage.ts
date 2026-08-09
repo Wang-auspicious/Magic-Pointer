@@ -1,5 +1,5 @@
 // Render deterministic stage scenes for visual regression review.
-//   npx electron scripts/capture_stage.js <out.png> [finished|processing-right|processing-left]
+//   npx electron build/scripts/capture_stage.js <out.png> [finished|processing-right|processing-left]
 // It only touches DOM: layout evidence, not a mocked product workflow.
 const { app, BrowserWindow } = require('electron');
 const fs = require('fs');
@@ -155,7 +155,7 @@ app.whenReady().then(async () => {
     fs.writeFileSync(outArg, image.toPNG());
     process.stdout.write(`${outArg}\n`);
   } catch (error) {
-    process.stderr.write(`capture failed: ${error.message}\n`);
+    process.stderr.write(`capture failed: ${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;
   } finally {
     app.quit();

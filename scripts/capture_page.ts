@@ -2,14 +2,16 @@
 // 和产品跑在同一个 Chromium 里——所以看到的就是用户会看到的，
 // 不是另一个浏览器渲染出来的近似值。
 //
-//   npx electron scripts/capture_page.js <page.html> <out.png> [width]
+//   npx electron build/scripts/capture_page.js <page.html> <out.png> [width]
 
 const { app, BrowserWindow } = require('electron');
 const fs = require('fs');
 const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
-const args = process.argv.slice(2).filter((a) => !a.startsWith('--') && !a.endsWith('capture_page.js'));
+const args = process.argv
+  .slice(2)
+  .filter((a) => !a.startsWith('--') && !/capture_page\.[jt]s$/.test(a));
 const pageArg = args[0] || 'electron/renderer/gallery.html';
 const outArg = args[1] || path.join(ROOT, 'data', 'runtime', 'page.png');
 const width = Number(args[2]) || 1500;
@@ -24,8 +26,8 @@ app.whenReady().then(async () => {
     show: false,
     webPreferences: { contextIsolation: true, nodeIntegration: false, offscreen: true },
   });
-  const errors = [];
-  window.webContents.on('console-message', (_e, level, message) => {
+  const errors: string[] = [];
+  window.webContents.on('console-message', (_event: unknown, level: number, message: string) => {
     if (level >= 2) errors.push(message);
   });
   try {
@@ -43,7 +45,7 @@ app.whenReady().then(async () => {
     process.stdout.write(`${outArg}\nconsole_errors=${errors.length}\n`);
     for (const error of errors.slice(0, 10)) process.stdout.write(`  ${error}\n`);
   } catch (error) {
-    process.stderr.write(`capture failed: ${error.message}\n`);
+    process.stderr.write(`capture failed: ${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;
   } finally {
     app.quit();

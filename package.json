@@ -13,7 +13,7 @@
     "verify:installer": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify_windows_installer.ps1",
     "verify:onboarding": "python scripts/verify_first_run_onboarding.py",
     "verify:n19": "python scripts/verify_n19_voice_triggers_desktop.py",
-    "diag:collect": "node scripts/collect-diagnostics.js",
+    "diag:collect": "tsx scripts/collect-diagnostics.ts",
     "test": "tsx scripts/run-node-tests.ts",
     "lint": "eslint electron scripts tests eslint.config.mjs --max-warnings=0",
     "lint:fix": "eslint electron scripts tests eslint.config.mjs --fix",

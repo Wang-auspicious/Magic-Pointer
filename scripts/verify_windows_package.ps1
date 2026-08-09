@@ -69,7 +69,7 @@ try {
     $result.verifiedFiles += $relativePath
   }
   $forbiddenDevelopmentFiles = @(
-    'scripts\capture_stage.js',
+    'build\scripts\capture_stage.js',
     'scripts\verify_stage_selection_visual.py',
     'scripts\verify_browser_selection_alignment.py',
     'scripts\prepare_python_runtime.ps1',

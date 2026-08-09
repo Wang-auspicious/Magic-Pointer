@@ -9,7 +9,7 @@ from PIL import Image, ImageChops, ImageDraw
 
 ROOT = Path(__file__).resolve().parents[1]
 ELECTRON = ROOT / "node_modules" / "electron" / "dist" / "electron.exe"
-CAPTURE = ROOT / "scripts" / "capture_live_sweep_visual.js"
+CAPTURE = ROOT / "build" / "scripts" / "capture_live_sweep_visual.js"
 OUTPUT = ROOT / "data" / "runtime" / "live-sweep-20260801"
 
 

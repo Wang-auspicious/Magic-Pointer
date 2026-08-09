@@ -66,7 +66,7 @@ for (const runtimeScript of [
   );
 }
 assert(
-  !builder.includes('scripts/capture_stage.js'),
+  !builder.includes('build/scripts/capture_stage.js'),
   'package must not contain the development capture script with local workspace provenance',
 );
 assert(
@@ -154,7 +154,7 @@ for (const onboardingResource of [
   );
 }
 assert(
-  smoke.includes("'scripts\\capture_stage.js'"),
+  smoke.includes("'build\\scripts\\capture_stage.js'"),
   'packaged smoke must reject development-only capture scripts',
 );
 assert(

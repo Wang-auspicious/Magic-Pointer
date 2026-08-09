@@ -11,8 +11,13 @@ const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
 
-function parseArgs(argv) {
-  const out = { outPath: null };
+interface CollectedFile {
+  full: string;
+  rel: string;
+}
+
+function parseArgs(argv: string[]): { outPath: string | null } {
+  const out: { outPath: string | null } = { outPath: null };
   for (let i = 2; i < argv.length; i += 1) {
     const a = argv[i];
     if ((a === '--out' || a === '-o') && argv[i + 1]) {
@@ -23,7 +28,7 @@ function parseArgs(argv) {
   return out;
 }
 
-function pickRuntimeDir() {
+function pickRuntimeDir(): string | null {
   const explicit = process.env.MAGIC_POINTER_USER_DATA_DIR;
   if (explicit && fs.existsSync(explicit)) return explicit;
   const devDir = path.resolve(__dirname, '..', 'data', 'runtime');
@@ -37,7 +42,7 @@ function pickRuntimeDir() {
   return candidates.find((p) => fs.existsSync(p)) || null;
 }
 
-function redactSecrets(text) {
+function redactSecrets(text: string): string {
   if (!text) return text;
   return text
     .replace(/([A-Za-z0-9_-]{0,3})(sk-[A-Za-z0-9-_]+)/g, '$1<redacted>')
@@ -48,13 +53,13 @@ function redactSecrets(text) {
     .replace(/(password\s*[:=]\s*)([^\s"']+)/gi, '$1<redacted>');
 }
 
-function redactStructured(value, key = '') {
+function redactStructured(value: unknown, key = ''): unknown {
   if (/api[_-]?key|authorization|credential|password|secret|token/i.test(key)) {
     return '<redacted>';
   }
   if (Array.isArray(value)) return value.map((item) => redactStructured(item));
   if (value && typeof value === 'object') {
-    return Object.fromEntries(Object.entries(value).map(([childKey, childValue]) => [
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([childKey, childValue]) => [
       childKey,
       redactStructured(childValue, childKey),
     ]));
@@ -62,7 +67,7 @@ function redactStructured(value, key = '') {
   return typeof value === 'string' ? redactSecrets(value) : value;
 }
 
-function redactDiagnosticText(text) {
+function redactDiagnosticText(text: string): string {
   try {
     return `${JSON.stringify(redactStructured(JSON.parse(text)))}`;
   } catch (_) {
@@ -77,19 +82,19 @@ function redactDiagnosticText(text) {
   }
 }
 
-function copyRedacted(src, dst) {
+function copyRedacted(src: string, dst: string): void {
   const text = fs.readFileSync(src, 'utf8');
   fs.writeFileSync(dst, redactDiagnosticText(text), 'utf8');
 }
 
-function isAllowedDiagnosticFile(name) {
+function isAllowedDiagnosticFile(name: string): boolean {
   return name === 'electron.log'
     || /^events\.jsonl(?:\.\d+)?$/.test(name);
 }
 
-function collectDiagnosticFiles(runtimeDir) {
+function collectDiagnosticFiles(runtimeDir: string | null): CollectedFile[] {
   if (!runtimeDir || !fs.existsSync(runtimeDir)) return [];
-  return fs.readdirSync(runtimeDir, { withFileTypes: true }).flatMap((entry) => {
+  return fs.readdirSync(runtimeDir, { withFileTypes: true }).flatMap((entry: import('node:fs').Dirent) => {
     if (!entry.isFile() || entry.isSymbolicLink() || !isAllowedDiagnosticFile(entry.name)) return [];
     const full = path.join(runtimeDir, entry.name);
     try {
@@ -101,7 +106,7 @@ function collectDiagnosticFiles(runtimeDir) {
   });
 }
 
-function main() {
+function main(): void {
   const { outPath } = parseArgs(process.argv);
   const runtimeDir = pickRuntimeDir();
   if (!runtimeDir) {
@@ -127,7 +132,9 @@ function main() {
     fs.mkdirSync(path.dirname(outFile), { recursive: true });
     try {
       copyRedacted(f.full, outFile);
-    } catch (_) {}
+    } catch (_) {
+      // Skip files that disappear or become unreadable while diagnostics are collected.
+    }
   }
 
   const finalOut = outPath || path.join(os.tmpdir(), `magic-pointer-diagnostics-${stamp}`);
@@ -159,7 +166,7 @@ function main() {
 
 if (require.main === module) main();
 
-function collectFiles(dir, base = dir, acc = []) {
+function collectFiles(dir: string, base = dir, acc: CollectedFile[] = []): CollectedFile[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) collectFiles(full, base, acc);
