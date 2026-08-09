@@ -2,7 +2,6 @@ const canvas = document.getElementById('trail');
 const ctx = canvas.getContext('2d');
 const sweepCanvas = document.getElementById('sweep-layer');
 const sweepRenderer = new globalThis.MagicSweepVisual.SweepRenderer(sweepCanvas);
-const armedCursor = document.getElementById('armed-cursor');
 const guideTriangle = document.getElementById('guide-triangle');
 const hint = document.getElementById('hint');
 
@@ -72,17 +71,6 @@ function onGuidePoint(payload) {
 function overlayBounds() {
   const canvasRect = ctx.canvas.getBoundingClientRect();
   return { x: canvasRect.left, y: canvasRect.top, width: canvasRect.width, height: canvasRect.height };
-}
-
-function updateArmedCursor(point) {
-  const x = Number(point?.x);
-  const y = Number(point?.y);
-  const visible = gestureMode && Number.isFinite(x) && Number.isFinite(y);
-  armedCursor.dataset.visible = visible ? 'true' : 'false';
-  if (!visible) return;
-  // Match the approved CSS cursor's 3px/3px hotspot exactly. This DOM image
-  // stays stable when Chromium switches pointer-capture targets on Windows.
-  armedCursor.style.transform = `translate3d(${x - 3}px, ${y - 3}px, 0)`;
 }
 
 // 二次贝塞尔插值（纯函数，可单测）：B(t) = (1-t)²P0 + 2(1-t)t·P1 + t²·P2
@@ -168,7 +156,6 @@ function addPoint(e, { force = false } = {}) {
     const last = points[points.length - 1];
     if (!last || dist(p, last) > 4.2 || (force && index === batch.length - 1)) points.push(p);
     lastPointer = p;
-    updateArmedCursor(p);
   }
 }
 
@@ -246,14 +233,13 @@ function render() {
         drawSmoothPath(points, trailAlpha);
       }
     } else if (!strokes.length) {
-      // Keep the transparent window hit-testable underneath the persistent
-      // armed-cursor DOM element.
+      // Keep the transparent window hit-testable before the first stroke.
       drawHitTestPixel(lastPointer);
     }
     return;
   }
   if (!captureMode && points.length) drawSmoothPath(points, trailAlpha);
-  // 不画 canvas 鼠标——光标由 DOM armed-cursor（用户满意版原样）。
+  // 不画 canvas 鼠标——光标由操作系统原生 cursor 资源渲染。
 }
 
 function fadeTrail(duration = 760) {
@@ -385,7 +371,6 @@ function resetOverlay() {
   if (chainHintTimer) clearTimeout(chainHintTimer);
   chainHintTimer = null;
   lastPointer = null;
-  updateArmedCursor(null);
   trailAlpha = 1;
   captureMode = false;
   submitting = false;
@@ -516,7 +501,6 @@ window.addEventListener('pointermove', (e) => {
   if (captureMode) return;
   if (!drawing) {
     const nextPointer = { x: e.clientX, y: e.clientY, t: performance.now() };
-    updateArmedCursor(nextPointer);
     const continuesChain = strokes.length > 0 && chainTimer && globalThis.GestureCapture
       .pointerContinuesGestureChain(lastPointer, nextPointer);
     lastPointer = nextPointer;
@@ -628,7 +612,6 @@ window.magicPointer?.onShow((payload) => {
 window.magicPointer?.onCursor((payload) => {
   if (!payload) return;
   lastPointer = { x: Number(payload.x) || 0, y: Number(payload.y) || 0, t: performance.now() };
-  updateArmedCursor(lastPointer);
   if (gestureMode) return;
   scheduleRender();
 });

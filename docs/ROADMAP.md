@@ -15,6 +15,7 @@
 - [x] 删除 Tkinter 双壳：移除 `app/main.py`、三个旧 Python 启动器、仅服务旧 UI 的系统函数与测试；启动链只认 Electron。
 - [x] 引入 TypeScript 构建、严格类型检查、测试加载器和打包链；dev/安装包只运行 `build/electron` 编译产物。
 - [x] 修复迁移后两项真机回归：`[POINT]` 三角改为单 DOM/SVG 合成层，消除透明 Canvas 残影；选区请求执行中暂停 TTL 淘汰，避免成功追问被误丢为 stale。
+- [x] 消除 gesture 光标跟随延时：撤销 renderer DOM 假光标及其 DOM/IPC 双路追踪，Windows 改用原生 `.cur`；源码入口真机验证按下至释放只有一个稳定非零 cursor handle，画线和弹框链路同时通过。
 - [ ] 迁移 Electron 主进程和 CommonJS 策略模块；已完成路径解析 + 32 个主进程/纯策略模块，另删除未被生产引用的旧语音驻留状态机、旧面板定位算法及孤立测试（当前 52 JS / 36 TS），下一批继续安全加固、现役 worker、较大存储与主进程。
 - [ ] 迁移 Node 工具脚本；严格类型覆盖构建器、测试编排器和 electron-builder 包装器，剩余工具逐批迁移。经典脚本渲染层单独评估共享全局与 CSP 约束，能安全迁移的迁移，不能安全迁移的留下明确理由和最小 JS 面。
 - [ ] 每批跑 Node/Python/lint/build，更新这里与 `STATUS.md`，独立提交。

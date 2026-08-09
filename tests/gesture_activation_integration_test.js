@@ -199,18 +199,12 @@ assert.match(overlay, /function resetOverlay\(\)[\s\S]*?releasePointerCapture/,
   'every dismissal must release stale DOM pointer ownership before rearming');
 assert.match(overlay, /resetOverlay\(\)[\s\S]*?gestureReady\(gestureToken\)/,
   'the renderer readiness acknowledgement must happen after reset');
-assert.match(styles, /body\[data-mode='gesture'\][\s\S]*?cursor:\s*none\s*!important/,
-  'armed drawing must hide Chromium\'s cursor throughout pointer capture');
-assert.match(overlayHtml, /id="armed-cursor"[^>]*src="assets\/armed-cursor\.svg"/,
-  'armed drawing must keep the approved cursor as a persistent overlay element');
-assert.match(overlay, /function updateArmedCursor\(/,
-  'the overlay must update the persistent armed cursor independently of Chromium hit testing');
-assert.match(overlay, /onCursor\(\(payload\)\s*=>\s*\{[\s\S]*?updateArmedCursor\(lastPointer\)/,
-  'global pointer polling must keep the armed cursor moving during pointer capture');
-assert.match(overlay, /addEventListener\('pointermove'[\s\S]*?updateArmedCursor\(nextPointer\)/,
-  'DOM pointer movement must provide a low-latency armed cursor path');
-assert.match(overlayHtml, /rel="preload"[^>]*href="assets\/armed-cursor\.svg"[^>]*as="image"/,
-  'overlay startup must warm the custom cursor asset before wiggle activation');
+assert.match(styles, /body\[data-mode='gesture'\][\s\S]*?url\('\.\/assets\/armed-cursor\.cur'\) 3 3/,
+  'armed drawing must use a native Windows cursor with an exact hotspot');
+assert.doesNotMatch(overlayHtml, /id="armed-cursor"/,
+  'armed drawing must not render a delayed DOM copy of the OS cursor');
+assert.doesNotMatch(overlay, /function updateArmedCursor\(/,
+  'cursor movement must not cross the renderer or IPC path');
 assert.match(main, /overlayBoundDisplayId[\s\S]*?setBounds\(desired\)/,
   'overlay must only setBounds when the cursor crosses displays — repeated setBounds flickers the cursor');
 
@@ -239,8 +233,8 @@ assert.match(visualVerifier, /foreground_invariant\s*=\s*all\(/,
   'wiggle, drawing, release, and capsule evidence must preserve source-app focus');
 assert.match(visualVerifier, /and foreground_invariant/,
   'foreground stability must be a pass condition, not informational telemetry');
-assert.match(visualVerifier, /cursor_handle_invariant\s*=\s*captured_cursor_handles\s*==\s*\{0\}/,
-  'desktop verification must prove Chromium keeps the native cursor hidden during capture');
+assert.match(visualVerifier, /cursor_handle_invariant\s*=\s*len\(captured_cursor_handles\)\s*==\s*1\s*and\s*0\s*not\s*in\s*captured_cursor_handles/,
+  'desktop verification must prove one native cursor remains active throughout capture');
 assert.match(visualVerifier, /and cursor_handle_invariant/,
   'cursor stability must be a real desktop pass condition');
 assert.match(visualVerifier, /stage renderer ready[\s\S]*?overlay renderer ready/,

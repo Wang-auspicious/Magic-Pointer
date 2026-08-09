@@ -80,7 +80,7 @@ Magic Pointer = 默认不可见的跨应用操作层。晃动鼠标唤醒 → �
 
 - 不要引入需要付费 API 的依赖。SenseVoice / whisper / RapidOCR / OmniParser 全部免费本地。
 - 不要为了"收口"去改 `buttons` 掩码的算法——闪烁根因未确诊前改它会把唯一能观测的信号抹掉。
-- **透明 overlay 的 gesture 态不要依赖 CSS URL cursor。** Windows/Chromium 在 `setPointerCapture` 期间会把 URL 光标退回系统箭头，即使主进程从未释放 `setIgnoreMouseEvents(false)`；gesture 态必须隐藏系统 cursor，并用同一 `armed-cursor.svg` 的 DOM 元素同时接 DOM `pointermove` 与主进程 20ms 指针流。真机验证必须记录 `GetCursorInfo().hCursor`，不能只看截图。
+- **gesture 态禁止用 DOM 元素逐帧追鼠标。** renderer 合成和 IPC 都会落后于 Windows 硬件光标，系统箭头未完全隐藏时就会出现两套光标分离。Windows 必须优先使用真实 `.cur` 资源（当前 `armed-cursor.cur`），非 Windows 才回退 SVG；真机验证必须记录 `GetCursorInfo().hCursor`，并要求按下至释放始终是同一个非零句柄，不能只看截图。
 - **Clicky 只能由回答里的明确 `[POINT]` 启动。** 普通唤醒/划线不创建跟随三角、不启动弹簧循环；指到目标并短暂停留后，通过 `overlay:guide-finished` 只关闭引导 overlay，不能顺手关闭仍在显示答案的 stage。
 - **Clicky 引导不能画进透明 Canvas。** Windows 会保留带 blur/shadow 位图的后备缓冲，动画就变成一串三角残影；引导必须是单个持久 DOM/SVG 节点，只更新 `transform`。Canvas 只留给无阴影的实时笔迹。
 - **选区 TTL 不能杀死已受理的模型请求。** 请求开始前可以因空闲过期；一旦 `startRequest` 成功，直到完成/取消都必须保活，完成后再从完成时刻续一个 TTL。否则第二轮恰好跨过创建后 120 秒时，桥明明成功也会被 `stale` 丢弃。

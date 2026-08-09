@@ -19,27 +19,11 @@ body[data-mode='gesture'] {
 }
 body[data-mode='gesture'],
 body[data-mode='gesture'] * {
-  /* Chromium can drop a URL cursor while a transparent window owns pointer
-     capture. Keep the OS cursor hidden; #armed-cursor renders the same asset
-     without depending on Chromium's native cursor hit-test path. */
-  cursor: none !important;
-}
-#armed-cursor {
-  position: fixed;
-  left: 0;
-  top: 0;
-  width: 32px;
-  height: 32px;
-  opacity: 0;
-  pointer-events: none;
-  user-select: none;
-  transform: translate3d(-64px, -64px, 0);
-  will-change: transform;
-  z-index: 2147483647;
-}
-
-body[data-mode='gesture'] #armed-cursor[data-visible='true'] {
-  opacity: 1;
+  /* A real Windows CUR is moved by the OS cursor path. Unlike a renderer DOM
+     image, it cannot trail the hardware pointer under compositor/IPC load. */
+  cursor: url('./assets/armed-cursor.cur') 3 3,
+          url('./assets/armed-cursor.svg') 3 3,
+          crosshair !important;
 }
 
 /* One persistent compositor layer for answer guidance. Repainting a blurred
@@ -62,16 +46,13 @@ body[data-mode='gesture'] #armed-cursor[data-visible='true'] {
   opacity: 1;
 }
 
-/* Non-gesture surfaces still use Chromium's cursor because they do not take
-   pointer capture and therefore do not enter the Windows fallback path. */
 body[data-mode='capture'],
 body[data-mode='capture'] *,
 body[data-mode='observer'],
 body[data-mode='observer'] * {
-  /* 统一 CSS 光标（armed-cursor.svg，用户满意版原样）。不画 canvas 鼠标：
-     Chromium 对 url 光标的解码性能问题是 setBounds 高频重置造成的，
-     根因已在主进程修掉（只在跨屏时 setBounds）。 */
-  cursor: url('./assets/armed-cursor.svg') 3 3, crosshair !important;
+  cursor: url('./assets/armed-cursor.cur') 3 3,
+          url('./assets/armed-cursor.svg') 3 3,
+          crosshair !important;
 }
 
 #sweep-layer,

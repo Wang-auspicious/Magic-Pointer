@@ -4,14 +4,12 @@
   <meta charset="utf-8" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self';" />
   <title>Magic Pointer Overlay</title>
-  <link rel="preload" href="assets/armed-cursor.svg" as="image" />
   <link rel="stylesheet" href="styles.css" />
   <link rel="stylesheet" href="typography.css" />
 </head>
 <body>
   <canvas id="sweep-layer"></canvas>
   <canvas id="trail"></canvas>
-  <img id="armed-cursor" src="assets/armed-cursor.svg" alt="" aria-hidden="true" draggable="false" />
   <svg id="guide-triangle" viewBox="0 0 48 48" aria-hidden="true">
     <path d="M24 10 L11 34 L37 34 Z" fill="#2477e8" opacity="0.10" transform="rotate(-35 24 24)" />
     <path d="M24 13 L13 33 L35 33 Z" fill="#2477e8" opacity="0.16" transform="rotate(-35 24 24)" />

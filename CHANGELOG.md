@@ -4,7 +4,7 @@
 
 - Fixed `[POINT]` guidance leaving repeated blue-triangle ghosts on Windows: the flight now moves one persistent SVG compositor node instead of repainting a blurred bitmap into the transparent Canvas.
 - Fixed successful follow-up answers being discarded after the selection's original two-minute TTL: accepted requests remain alive in flight and receive a fresh interaction TTL when they finish.
-- Fixed Windows gesture cursor flicker by replacing the transparent overlay's gesture-time CSS URL cursor with the same approved SVG rendered as a persistent DOM cursor, driven by both DOM movement and global pointer polling. Real desktop verification against the direct `electron/main.js` entry now checks a stable Windows cursor handle, visible drawing, and capsule delivery.
+- Fixed the Windows gesture cursor without adding software-follow latency: replaced the renderer-driven DOM cursor with a native `armed-cursor.cur` resource (SVG fallback on other platforms). The OS now moves the cursor directly; real desktop verification requires one stable, nonzero Windows cursor handle from pointer-down through release while also checking visible drawing and capsule delivery.
 - Adapted Clicky guidance to Magic Pointer's result flow: ordinary wake/drawing no longer starts the companion triangle or its animation loop; only explicit `[POINT]` results create guidance, and the temporary guide overlay retires without dismissing the answer stage.
 
 - Restored the direct `electron electron/main.js` developer entry after TypeScript migration: source runs conditionally preload `tsx/cjs`, while compiled and packaged runtimes remain independent of the development loader.

@@ -376,7 +376,7 @@ def main() -> int:
             for sample in cursor_samples
             if sample["phase"] != "after_release"
         }
-        cursor_handle_invariant = captured_cursor_handles == {0}
+        cursor_handle_invariant = len(captured_cursor_handles) == 1 and 0 not in captured_cursor_handles
         passed = (
             armed_change <= 0.002
             and ghost_change <= 0.002

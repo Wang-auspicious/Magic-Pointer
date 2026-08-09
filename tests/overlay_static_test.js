@@ -13,10 +13,10 @@ assert(!source.includes('function drawObserverAura'),
 assert(!source.includes('function drawPointer'),
   'capture 模式必须用 CSS 光标，不画 canvas 鼠标');
 assert(source.includes('window.magicPointer?.onCursor('));
-assert(source.includes("document.getElementById('armed-cursor')"),
-  'gesture mode must keep a DOM cursor independent of Chromium cursor hit testing');
-assert(source.includes('function updateArmedCursor('),
-  'gesture DOM cursor must have one explicit synchronization path');
+assert(!source.includes("document.getElementById('armed-cursor')"),
+  'gesture mode must not render a lagging software cursor');
+assert(!source.includes('function updateArmedCursor('),
+  'gesture mode must let the OS move the native cursor without renderer IPC');
 assert(source.includes('observerMode = payload?.observerMode === true'));
 assert(!source.includes('if (observerMode) drawObserverAura(lastPointer);'));
 
@@ -57,7 +57,17 @@ assert(source.includes('window.magicPointer?.onShow('));
 assert(source.includes('window.magicPointer?.onHide('));
 assert(source.includes('window.magicPointer?.hide()'));
 assert(html.includes('id="trail"'));
-assert(html.includes('id="armed-cursor"'));
+assert(!html.includes('id="armed-cursor"'));
+assert(styles.includes("url('./assets/armed-cursor.cur') 3 3"),
+  'Windows must use a native cursor resource for zero-lag gesture tracking');
+const nativeCursor = fs.readFileSync('electron/renderer/assets/armed-cursor.cur');
+assert.strictEqual(nativeCursor.readUInt16LE(0), 0, 'CUR reserved field must be zero');
+assert.strictEqual(nativeCursor.readUInt16LE(2), 2, 'asset must be a Windows CUR file');
+assert.strictEqual(nativeCursor.readUInt16LE(4), 1, 'CUR asset must contain exactly one image');
+assert.strictEqual(nativeCursor.readUInt8(6), 32, 'native cursor width must match the SVG');
+assert.strictEqual(nativeCursor.readUInt8(7), 32, 'native cursor height must match the SVG');
+assert.strictEqual(nativeCursor.readUInt16LE(10), 3, 'native cursor X hotspot must match CSS');
+assert.strictEqual(nativeCursor.readUInt16LE(12), 3, 'native cursor Y hotspot must match CSS');
 assert(html.includes('id="sweep-layer"'),
   'gesture mode must have a dedicated transparent sweep compositor');
 assert(html.includes('src="sweep_visual.js"'),
