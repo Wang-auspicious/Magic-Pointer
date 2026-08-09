@@ -156,21 +156,22 @@ assert.ok(proposal.includes('地图类'));
 assert.ok(proposal.includes('撤不回来'), '不可逆的事要在点头之前说，不是做完才说');
 assert.ok(proposal.includes('data-action-id="approve"'));
 
-const nineGrid = renderCard(cards.normalizeCard({
+const filePreview = renderCard(cards.normalizeCard({
   kind: 'proposal',
   preview: {
     kind: 'files',
     items: Array.from({ length: 12 }, (_, index) => ({ name: `文件 ${index + 1}` })),
   },
 }));
-assert.strictEqual((nineGrid.match(/class="mfile"/g) || []).length, 9,
-  'preview cards must remain a readable 3×3 grid instead of growing without bound');
-assert.ok(nineGrid.includes('文件 9'));
-assert.ok(!nineGrid.includes('文件 10'));
-assert.ok(nineGrid.includes('data-tile-index="8"'),
-  'preview tiles expose a stable index for their restrained stagger');
-assert.ok(cardsCss.includes('grid-template-columns: repeat(3, minmax(0, 1fr))'),
-  'preview cards must use the same stable three-column rhythm');
+assert.strictEqual((filePreview.match(/class="mfile"/g) || []).length, 12,
+  'a visual reference collage must never truncate real proposal data');
+assert.ok(filePreview.includes('文件 12'));
+assert.ok(!filePreview.includes('data-tile-index'),
+  'reference-board tile choreography is not a product file-preview contract');
+assert.ok(cardsCss.includes('flex-wrap: wrap'),
+  'real proposal items keep their existing responsive flow layout');
+assert.ok(!cardsCss.includes('grid-template-columns: repeat(3, minmax(0, 1fr))'),
+  'the supplied 3×3 reference collage must not become a product grid');
 const progressStart = cardsCss.indexOf('.mbar {');
 const progressEnd = cardsCss.indexOf('.mcard-stage', progressStart);
 const progressCss = cardsCss.slice(progressStart, progressEnd);

@@ -262,4 +262,3 @@ Record the adaptive placement rule, neutral processing treatment, completion-car
 git add scripts/capture_stage.js tests/selection_visual_contract_test.js AGENT.md CHANGELOG.md docs/STATUS.md docs/ROADMAP.md
 git commit -m "docs: record Vida-inspired stage surfaces"
 ```
-

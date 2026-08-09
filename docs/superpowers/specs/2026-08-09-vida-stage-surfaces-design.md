@@ -74,4 +74,3 @@ Folder/file proposal previews use a responsive grid capped at three columns. Eac
 - Static tests reject the rainbow gradient and require the neutral processing indicator, adaptive placement policy, edge datasets, and reduced-motion fallback.
 - Visual fixtures capture capsule input, neutral processing, dock-left, dock-right, fullscreen fallback, compact approval, wide approval, and 3×3 preview grid.
 - Existing Node, Python, lint, strict typecheck, build, package-copy, source-entry, gesture, and focus verification remain green.
-

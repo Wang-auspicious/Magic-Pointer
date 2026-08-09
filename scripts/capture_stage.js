@@ -1,5 +1,5 @@
 // Render deterministic stage scenes for visual regression review.
-//   npx electron scripts/capture_stage.js <out.png> [finished|processing-right|processing-left|approval-grid]
+//   npx electron scripts/capture_stage.js <out.png> [finished|processing-right|processing-left]
 // It only touches DOM: layout evidence, not a mocked product workflow.
 const { app, BrowserWindow } = require('electron');
 const fs = require('fs');
@@ -119,54 +119,21 @@ const SCENE = `(() => { try {
     return 'ok ' + scene;
   }
 
-  if (scene === 'approval-grid') {
-    sourceWindow({ x: 0, y: 0, width: 1240, height: 820, fullscreen: true });
-    const focus = document.createElement('div');
-    focus.style.cssText = 'position:fixed;left:110px;top:220px;width:210px;height:150px;'
-      + 'border:2px solid #246fd0;border-radius:8px;background:rgba(36,111,208,.05);';
-    document.body.appendChild(focus);
-    showCapsule({ x: 72, y: 410, width: 310, text: '把这些文件归类' });
-    showPanel({
-      x: 392,
-      y: 76,
-      side: 'right',
-      tier: 'wide',
-      phase: 'finished',
-      title: '整理下载目录里的文件',
-      eyebrow: 'TASK FINISHED',
-    });
-    panel.dataset.consent = 'true';
-    result.appendChild(makeTurn({
-      kind: 'proposal', state: 'done',
-      summary: '已按内容分成九组。确认后才会写回原目录，你仍可以先检查每一项。',
-      preview: {
-        kind: 'folders',
-        items: ['设计稿', '合同', '截图', '表格', '演示文稿', '研究资料', '发票', '安装包', '待确认']
-          .map((name) => ({ name })),
-      },
-    }));
-    const consent = document.getElementById('capsule-consent');
-    consent.hidden = false;
-    document.getElementById('consent-target').textContent = '写回 文件资源管理器';
-    return 'ok ' + scene;
-  }
-
   sourceWindow({ x: 40, y: 42, width: 760, height: 690 });
-  showCapsule({ x: 70, y: 72, width: 360, processing: false, text: '这个文件是干嘛的' });
+  showCapsule({ x: 70, y: 72, width: 360, processing: false, text: '把选中内容整理成摘要' });
   showPanel({
     x: 70, y: 132, side: 'right', tier: 'normal', phase: 'finished',
-    title: 'CHANGELOG.md 是干嘛的', eyebrow: 'TASK FINISHED',
+    title: '整理选中内容', eyebrow: 'TASK FINISHED',
   });
   result.appendChild(makeTurn({
     kind: 'prose', state: 'done',
-    answer: 'CHANGELOG.md 是软件的变更日志。它按版本记录新增、修改、修复和移除的内容，'
-      + '让使用者快速知道这次升级会影响什么。',
+    answer: '这是只用于检查版式、间距和动效的示例文本，不代表一次真实读取或模型回答。',
     steps: [
       { label: '读窗口里的文字', note: 'UIA', ms: 212, state: 'done' },
       { label: '交给模型', note: 'L0', ms: 1840, state: 'done' },
     ],
   }));
-  document.getElementById('thread-followup').placeholder = '继续问关于「CHANGELOG.md」的内容';
+  document.getElementById('thread-followup').placeholder = '继续追问选中内容';
   return 'ok finished';
 } catch (error) { return 'ERR ' + error.stack; }
 })()`;

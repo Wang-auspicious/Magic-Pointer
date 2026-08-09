@@ -430,15 +430,11 @@ const CardRender = (() => {
   /* 提案的预览按它将产生什么来画，而不是按它将执行什么命令来画。 */
   function renderPreview(preview) {
     if (!preview || typeof preview !== 'object') return null;
-    // A preview is a glanceable sample, not another file browser. Nine items
-    // preserve the compact 3×3 rhythm and keep a long tool result from
-    // pushing the decision controls off-screen.
-    const items = Array.isArray(preview.items) ? preview.items.slice(0, 9) : [];
+    const items = Array.isArray(preview.items) ? preview.items : [];
     if (preview.kind === 'folders' || preview.kind === 'files') {
       const isFolder = preview.kind === 'folders';
-      return h('div', { class: `mprev mprev-${preview.kind}` }, items.map((it, index) => h('span', {
+      return h('div', { class: `mprev mprev-${preview.kind}` }, items.map((it) => h('span', {
         class: isFolder ? 'mfolder' : 'mfile',
-        'data-tile-index': index,
       }, [icon(isFolder ? 'ic-folder' : 'ic-file'), h('small', {}, [it.name || String(it)])])));
     }
     if (preview.kind === 'text') {

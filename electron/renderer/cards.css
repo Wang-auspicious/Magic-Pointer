@@ -312,25 +312,15 @@
 .mcard-proposal { display: grid; gap: 11px; }
 .mprop-summary { margin: 0; font-size: 13.5px; line-height: 1.6; }
 .mprev { padding: 13px; border-radius: var(--r-tile); background: var(--card-sunk); }
-.mprev-folders, .mprev-files {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 14px 10px;
-  align-items: start;
-}
+.mprev-folders, .mprev-files { display: flex; flex-wrap: wrap; gap: 14px; justify-content: center; }
 .mfolder, .mfile {
   display: grid; justify-items: center; gap: 5px;
-  min-width: 0; text-align: center;
+  width: 86px; text-align: center;
   animation: mprev-in .34s var(--ease-out) both;
 }
-.mfolder:nth-child(2), .mfile:nth-child(2) { animation-delay: 34ms; }
-.mfolder:nth-child(3), .mfile:nth-child(3) { animation-delay: 68ms; }
-.mfolder:nth-child(4), .mfile:nth-child(4) { animation-delay: 102ms; }
-.mfolder:nth-child(5), .mfile:nth-child(5) { animation-delay: 136ms; }
-.mfolder:nth-child(6), .mfile:nth-child(6) { animation-delay: 170ms; }
-.mfolder:nth-child(7), .mfile:nth-child(7) { animation-delay: 204ms; }
-.mfolder:nth-child(8), .mfile:nth-child(8) { animation-delay: 238ms; }
-.mfolder:nth-child(9), .mfile:nth-child(9) { animation-delay: 272ms; }
+.mfolder:nth-child(2), .mfile:nth-child(2) { animation-delay: .05s; }
+.mfolder:nth-child(3), .mfile:nth-child(3) { animation-delay: .1s; }
+.mfolder:nth-child(4), .mfile:nth-child(4) { animation-delay: .15s; }
 @keyframes mprev-in { from { opacity: 0; transform: translateY(6px) scale(.96); } }
 .mfolder svg { width: 42px; height: 34px; stroke: var(--amber); fill: var(--amber-bg); stroke-width: 1.5; }
 .mfile svg { width: 30px; height: 34px; stroke: var(--ink-3); fill: var(--card); stroke-width: 1.5; }
