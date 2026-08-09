@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Restored the direct `electron electron/main.js` developer entry after TypeScript migration: source runs conditionally preload `tsx/cjs`, while compiled and packaged runtimes remain independent of the development loader.
+
 - Migrated the Node test orchestrator and electron-builder wrapper to strict TypeScript; package/test commands now execute them through `tsx`, and the package verifier still rejects leaked development tooling.
 - Migrated selection-session state and observability logging to strict TypeScript, with explicit session, prompt-packet, log-rotation, counter, and lazy crash-reporter contracts.
 - Migrated deterministic wiggle reliability evidence to strict TypeScript and moved its detector dependency to a conventional eager import boundary.

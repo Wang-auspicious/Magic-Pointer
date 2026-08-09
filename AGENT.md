@@ -17,6 +17,8 @@
 
 **正在做的代码库治理（2026-08-09）：** 已删除停用的 Tkinter 双壳、未接入生产的旧语音驻留状态机和旧面板定位算法；TypeScript strict 构建/测试/打包底座已接通，运行时只执行 `build/electron`；32 个主进程/纯策略模块与 3 个核心 Node 工具已迁移（当前 52 JS / 36 TS）。每批必须保持可启动、全量测试后独立提交，进度清单在 [`docs/ROADMAP.md`](docs/ROADMAP.md#代码库收口--typescript-迁移2026-08-09-进行中)。
 
+开发入口必须同时保持可用：推荐 `npm run overlay`（编译入口），历史命令 `npx --no-install electron electron/main.js`（源码入口）也必须能启动；源码入口只在检测到同目录 `.ts` 时注册 `tsx/cjs`，编译/安装包不得依赖 dev-only loader。
+
 历史文档在 [`docs/archive/`](docs/archive/INDEX.md)，**默认不要读**，需要考古时按索引定位。不要读会话历史 JSONL（12MB+）。
 
 ## 这是什么

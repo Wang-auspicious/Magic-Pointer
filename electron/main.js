@@ -7,6 +7,15 @@ const { shell } = require('electron');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const crypto = require('crypto');
+
+// Keep the long-supported `electron electron/main.js` developer entry working
+// while local main-process modules migrate to TypeScript. Compiled/package
+// output contains runtime_paths.js but never runtime_paths.ts, so production
+// does not load or depend on the development-only tsx runtime.
+if (fs.existsSync(path.join(__dirname, 'runtime_paths.ts'))) {
+  require('tsx/cjs');
+}
+
 const { projectRoot } = require('./runtime_paths');
 const { SelectionSessionStore } = require('./selection_session');
 const { InteractionEpisodeStore, inferReferenceLabel, inferReferenceMode } = require('./interaction_episode');
