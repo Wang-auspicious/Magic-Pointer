@@ -817,6 +817,15 @@ function createStageWindow() {
   stageWindow.loadFile(path.join(__dirname, 'renderer', 'stage.html'));
   stageWindow.setIgnoreMouseEvents(true, { forward: true });
   stageWindow.webContents.on('did-start-loading', () => stageReadiness.reset());
+  stageWindow.webContents.on('console-message', (_e: Electron.Event, level: number, message: string, line: number, sourceId: string) => {
+    log(`stage console level=${level} ${sourceId}:${line} ${message}`);
+  });
+  stageWindow.webContents.on('did-fail-load', (_e: Electron.Event, code: number, desc: string, url: string) => {
+    log(`stage did-fail-load code=${code} desc=${desc} url=${url}`);
+  });
+  stageWindow.webContents.on('preload-error', (_e: Electron.Event, preloadPath: string, error: Error) => {
+    log(`stage preload-error path=${preloadPath} error=${error?.message || error}`);
+  });
   stageWindow.on('closed', () => {
     stageWindow = null;
     stageReadiness.reset();

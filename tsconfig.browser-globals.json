@@ -2,14 +2,15 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "lib": ["ES2022", "DOM"],
+    "module": "Preserve",
+    "moduleDetection": "force",
+    "moduleResolution": "Bundler",
     "outDir": "build/electron",
     "rootDir": "electron",
     "sourceMap": true,
     "types": ["node", "electron"]
   },
-  "include": ["electron/**/*.ts"],
-  "exclude": [
-    "electron/renderer/**",
+  "files": [
     "electron/answer_shape_policy.ts",
     "electron/capture_proof_policy.ts",
     "electron/cards.ts",
