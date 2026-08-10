@@ -1,5 +1,5 @@
-﻿# Python dependencies for MVP0
-openai>=2.0.0
+# Python dependencies for MVP0
+openai>=2.53.0
 Pillow>=10.0.0
 PyMuPDF>=1.24.0
 pyperclip>=1.8.0
