@@ -48,7 +48,7 @@ function requireCode(source, pattern, contract) {
     'main must construct or otherwise reference VoiceFocusGuard');
   requireCode(
     main,
-    /function\s+setStageMouseCapture\s*\(\s*enabled\s*,\s*requestFocus(?:\s*=\s*false)?\s*,\s*rawRegions(?:\s*=\s*undefined)?\s*\)/,
+    /function\s+setStageMouseCapture\s*\(\s*enabled\s*:\s*boolean\s*,\s*requestFocus(?:\s*=\s*false)?\s*,\s*rawRegions[\s\S]*?\)/,
     'setStageMouseCapture must accept explicit focus and native hit-region arguments',
   );
   requireCode(main, /if\s*\(\s*requestFocus\s*\)\s*stageWindow\.focus\(\);[\s\S]*?if\s*\(\s*enabled\s*&&\s*regions\.length\s*\)\s*\{[\s\S]*?stageWindow\.setIgnoreMouseEvents\(false\);/,

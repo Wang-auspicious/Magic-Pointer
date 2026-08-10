@@ -1,4 +1,3 @@
-// @ts-nocheck -- legacy classic-script globals are preserved during the extension migration.
 /* exported renderSettings */
 /* ============================================================
    设置
@@ -23,6 +22,36 @@ const APPS = [
   { id: 'Figma.exe',             name: 'Figma',         icon: 'ic-img' },
 ];
 
+interface SettingsRow {
+  k?: string;
+  t?: string;
+  v?: any;
+  label?: string;
+  desc?: string;
+  btn?: string;
+  action?: string;
+  danger?: boolean;
+  value?: string;
+  [key: string]: any;
+}
+interface SettingsSection {
+  title?: string;
+  action?: { label?: string };
+  rows: SettingsRow[];
+}
+interface SettingsPage {
+  id: string;
+  icon: string;
+  name: string;
+  desc: string;
+  custom?: string;
+  sections: SettingsSection[];
+}
+interface SettingsGroup {
+  group: string;
+  pages: SettingsPage[];
+}
+
 const READ_MODES = [
   ['auto',   '自动',       '先试结构层，读不到再用画面'],
   ['struct', '只用结构层', '拿不到就放弃，绝不猜'],
@@ -37,7 +66,7 @@ const RISK = [
   ['irrev', '不可逆操作'],
 ];
 
-const SETTINGS = [
+const SETTINGS: SettingsGroup[] = [
   { group: '常用', pages: [
 
     { id: 'general', icon: 'ic-window', name: '通用',
@@ -402,31 +431,31 @@ const SETTINGS = [
    控件
    ============================================================ */
 
-const TONE = { green: 'pill-green', amber: 'pill-amber', teal: 'pill-teal', muted: '' };
-const appById = (id) => APPS.find((a) => a.id === id) || { id, name: id, icon: 'ic-window' };
+const TONE: Record<string, string> = { green: 'pill-green', amber: 'pill-amber', teal: 'pill-teal', muted: '' };
+const appById = (id: string) => APPS.find((a) => a.id === id) || { id, name: id, icon: 'ic-window' };
 
-function icon(id, cls = '') { return `<svg class="${cls}"><use href="#${id}"/></svg>`; }
+function icon(id: string, cls = '') { return `<svg class="${cls}"><use href="#${id}"/></svg>`; }
 
-function pickerApp(id) {
+function pickerApp(id: string) {
   const a = appById(id);
   return `<button class="picker" data-picker="app">${icon(a.icon)}${a.name}${icon('ic-chev', 'caret')}</button>`;
 }
-function pickerFrom(list, value) {
+function pickerFrom(list: string[][], value: string) {
   const hit = list.find((o) => o[0] === value) || list[0];
   return `<button class="picker" data-picker="mode">${hit[1]}${icon('ic-chev', 'caret')}</button>`;
 }
 
-function ctrl(r) {
+function ctrl(r: SettingsRow): string {
   switch (r.t) {
     case 'toggle':
       return `<button class="sw${r.v ? ' is-on' : ''}" role="switch" aria-checked="${!!r.v}" data-k="${r.k}"><span></span></button>`;
     case 'select':
       return `<button class="sel" data-k="${r.k}">${r.v || r.opts[0]}${icon('ic-chev')}</button>`;
     case 'segment':
-      return `<span class="seg-toggle sm">${r.opts.map((o) => `<button class="${o === r.v ? 'is-on' : ''}">${o}</button>`).join('')}</span>`;
+      return `<span class="seg-toggle sm">${(r.opts as any[]).map((o) => `<button class="${o === r.v ? 'is-on' : ''}">${o}</button>`).join('')}</span>`;
     case 'hotkey':
       return r.v && r.v !== '未设置'
-        ? `<button class="hk" data-k="${r.k}">${r.v.split(' + ').map((x) => `<kbd>${x}</kbd>`).join('+')}</button>`
+        ? `<button class="hk" data-k="${r.k}">${r.v.split(' + ').map((x: string) => `<kbd>${x}</kbd>`).join('+')}</button>`
         : `<button class="hk is-off" data-k="${r.k}">未设置${icon('ic-pen')}</button>`;
     case 'slider':
       return '';   // 刻度条要占满一行，单独渲染，见 renderSettings
@@ -443,26 +472,27 @@ function ctrl(r) {
 }
 
 /* ---- 列表型：一律可增删，绝不让人手写 ---- */
-function listRows(r) {
+function listRows(r: SettingsRow): string | null {
+  const values = (r.v || []) as any[];
   switch (r.t) {
     case 'applist':
-      return (r.v || []).map((id) => `<div class="lrow">${pickerApp(id)}<span class="lgrow"></span>
+      return values.map((id) => `<div class="lrow">${pickerApp(id)}<span class="lgrow"></span>
         <button class="lx" title="移除">${icon('ic-x')}</button></div>`).join('');
     case 'applist2':
-      return (r.v || []).map(([id, mode]) => {
+      return values.map(([id, mode]) => {
         const m = READ_MODES.find((x) => x[0] === mode) || READ_MODES[0];
         return `<div class="lrow">${pickerApp(id)}<span class="lsep">用</span>${pickerFrom(READ_MODES, mode)}
           <small class="lhint">${m[2]}</small><span class="lgrow"></span>
           <button class="lx" title="移除">${icon('ic-x')}</button></div>`;
       }).join('');
     case 'termlist':
-      return (r.v || []).map(([term, scope]) => `<div class="lrow">
+      return values.map(([term, scope]) => `<div class="lrow">
         <input class="lin" value="${term}" spellcheck="false">
         <span class="lsep">用在</span>
         <button class="picker" data-picker="scope">${scope}${icon('ic-chev', 'caret')}</button>
         <span class="lgrow"></span><button class="lx">${icon('ic-x')}</button></div>`).join('');
     case 'grantlist':
-      return (r.v || []).map(([risk, app, proj, ttl]) => {
+      return values.map(([risk, app, proj, ttl]) => {
         const label = (RISK.find((x) => x[0] === risk) || RISK[0])[1];
         return `<div class="lrow">
           <button class="picker">${label}${icon('ic-chev', 'caret')}</button>
@@ -473,7 +503,7 @@ function listRows(r) {
           <button class="lx">${icon('ic-x')}</button></div>`;
       }).join('');
     case 'portlist':
-      return (r.v || []).map((port) => `<div class="lrow">
+      return values.map((port) => `<div class="lrow">
         <span class="lfix">127.0.0.1 :</span><input class="lin lin-sm" value="${port}" inputmode="numeric">
         <span class="lgrow"></span><button class="lx">${icon('ic-x')}</button></div>`).join('');
     default: return null;
@@ -482,14 +512,14 @@ function listRows(r) {
 
 
 /* 扩展页单独渲染：它不是「一行一个开关」，是一个可搜索的目录。 */
-const EXT_TABS = [
+const EXT_TABS: [string, string, number][] = [
   ['builtin', '内置动作', 39],
   ['mcp',     'MCP 服务器', 0],
   ['skills',  '技能', 51],
   ['apps',    '已接入的应用', 4],
 ];
 
-const EXT_ITEMS = {
+const EXT_ITEMS: Record<string, [string, string, string, number, string][]> = {
   builtin: [
     ['ic-pen',     '改写这段',   '按你给的方向重写选中的文字', 1, 'read'],
     ['ic-docs',    '压成三句',   '把一屏内容缩到能一眼看完', 1, 'read'],
@@ -512,13 +542,13 @@ const EXT_ITEMS = {
   ],
 };
 
-const RISK_TAG = {
+const RISK_TAG: Record<string, string[]> = {
   read:  ['pill-indigo', '读取'],
   write: ['pill-amber', '写入'],
   send:  ['pill-terracotta', '对外发送'],
 };
 
-function renderExtensions(tab = 'builtin') {
+function renderExtensions(tab = 'builtin'): string {
   const list = EXT_ITEMS[tab] || [];
   const tabs = `<div class="ext-tabs">${EXT_TABS.map(([id, name, n]) =>
       `<button class="tab${id === tab ? ' is-on' : ''}" data-ext="${id}">${name} <em>${n}</em></button>`).join('')}
@@ -546,9 +576,11 @@ function renderExtensions(tab = 'builtin') {
    渲染
    ============================================================ */
 
+// classic-script 全局 API（studio/dashboard 等文件直接调用 renderSettings）。
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function renderSettings() {
-  const nav = document.getElementById('set-nav');
-  const body = document.getElementById('set-body');
+  const nav = document.getElementById('set-nav') as HTMLElement;
+  const body = document.getElementById('set-body') as HTMLElement;
   if (!nav || nav.childElementCount) return;
 
   const pages = SETTINGS.flatMap((g) => g.pages);
@@ -597,36 +629,36 @@ function renderSettings() {
    ============================================================ */
 
 document.addEventListener('click', (e) => {
-  const nav = e.target.closest('.set-navitem');
+  const nav = (e.target as HTMLElement).closest('.set-navitem') as HTMLElement | null;
   if (nav) {
     document.querySelectorAll('.set-navitem').forEach((n) => n.classList.remove('is-on'));
     nav.classList.add('is-on');
-    document.querySelectorAll('.set-page').forEach((p) => { p.hidden = p.dataset.page !== nav.dataset.page; });
-    document.getElementById('set-body').scrollTop = 0;
+    document.querySelectorAll<HTMLElement>('.set-page').forEach((p) => { p.hidden = p.dataset.page !== nav.dataset.page; });
+    document.getElementById('set-body')!.scrollTop = 0;
     return;
   }
-  const sw = e.target.closest('.sw');
+  const sw = (e.target as HTMLElement).closest('.sw') as HTMLElement | null;
   if (sw) {
     const on = !sw.classList.contains('is-on');
     sw.classList.toggle('is-on', on);
     sw.setAttribute('aria-checked', String(on));
-    writeSetting(sw.dataset.k, on);
+    writeSetting(sw.dataset.k as string, on);
     return;
   }
-  const lx = e.target.closest('.lx');
-  if (lx) { lx.closest('.lrow').remove(); return; }
+  const lx = (e.target as HTMLElement).closest('.lx') as HTMLElement | null;
+  if (lx) { (lx.closest('.lrow') as HTMLElement).remove(); return; }
 
-  const ext = e.target.closest('[data-ext]');
+  const ext = (e.target as HTMLElement).closest('[data-ext]') as HTMLElement | null;
   if (ext) {
-    const page = ext.closest('.set-page');
-    page.querySelector('.ext-tabs').remove();
+    const page = ext.closest('.set-page') as HTMLElement;
+    page.querySelector('.ext-tabs')!.remove();
     page.querySelector('.ext-list, .ext-empty')?.remove();
-    page.querySelector('.set-head').insertAdjacentHTML('afterend', renderExtensions(ext.dataset.ext));
+    page.querySelector('.set-head')!.insertAdjacentHTML('afterend', renderExtensions(ext.dataset.ext));
     return;
   }
-  const seg = e.target.closest('.seg-toggle.sm button');
+  const seg = (e.target as HTMLElement).closest('.seg-toggle.sm button') as HTMLElement | null;
   if (seg) {
-    seg.parentElement.querySelectorAll('button').forEach((b) => b.classList.remove('is-on'));
+    (seg.parentElement as HTMLElement).querySelectorAll('button').forEach((b) => b.classList.remove('is-on'));
     seg.classList.add('is-on');
     if (seg.textContent === '深色') setTheme('dark');
     if (seg.textContent === '浅色') setTheme('light');
@@ -636,19 +668,22 @@ document.addEventListener('click', (e) => {
 
 /* 搜索：只过滤左栏，不重排右边——省得你一边打字一边页面在跳 */
 document.addEventListener('input', (e) => {
-  if (e.target.id !== 'set-q') return;
-  const q = e.target.value.trim().toLowerCase();
-  document.querySelectorAll('.set-navitem').forEach((n) => {
+  if ((e.target as HTMLElement).id !== 'set-q') return;
+  const q = (e.target as HTMLInputElement).value.trim().toLowerCase();
+  document.querySelectorAll<HTMLElement>('.set-navitem').forEach((n) => {
     n.hidden = q ? !n.textContent.toLowerCase().includes(q) : false;
   });
-  document.querySelectorAll('.set-group').forEach((g) => {
+  document.querySelectorAll<HTMLElement>('.set-group').forEach((g) => {
     let sib = g.nextElementSibling, any = false;
-    while (sib && sib.classList.contains('set-navitem')) { if (!sib.hidden) any = true; sib = sib.nextElementSibling; }
+    while (sib && sib.classList.contains('set-navitem')) {
+      if (!(sib as HTMLElement).hidden) any = true;
+      sib = sib.nextElementSibling;
+    }
     g.hidden = !any;
   });
 });
 
-function setTheme(theme) {
+function setTheme(theme: string) {
   document.documentElement.dataset.theme =
     theme === 'system'
       ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
@@ -657,11 +692,14 @@ function setTheme(theme) {
   window.magicPointerDashboard?.setTheme?.(theme);   // 主进程据此换系统按钮的颜色
 }
 
-function writeSetting(key, value) {
+function writeSetting(key: string, value: unknown) {
   const api = window.magicPointerDashboard;
   if (!api?.saveFabricSettings) return;
-  const patch = {};
-  key.split('.').reduce((o, part, i, arr) => (o[part] = i === arr.length - 1 ? value : {}), patch);
+  const patch: Record<string, unknown> = {};
+  key.split('.').reduce((o: Record<string, unknown>, part: string, i: number, arr: string[]) => {
+    o[part] = i === arr.length - 1 ? value : {};
+    return o;
+  }, patch);
   api.saveFabricSettings(patch);
 }
 
@@ -675,8 +713,8 @@ function writeSetting(key, value) {
 
 const TICKS = 40;
 
-function paintTick(el, value) {
-  const bars = el.querySelectorAll('i');
+function paintTick(el: HTMLElement, value: number) {
+  const bars = el.querySelectorAll<HTMLElement>('i');
   const at = (value / 100) * (TICKS - 1);
   bars.forEach((b, i) => {
     const d = Math.abs(i - at) / TICKS;
@@ -684,16 +722,16 @@ function paintTick(el, value) {
     b.style.height = (5 + fall * 29).toFixed(1) + 'px';
     b.style.opacity = (0.12 + fall * 0.72).toFixed(3);
   });
-  const knob = el.querySelector('.tick-knob');
+  const knob = el.querySelector('.tick-knob') as HTMLElement | null;
   if (knob) {
     knob.style.left = (14 + (el.clientWidth - 28) * (value / 100)).toFixed(1) + 'px';
-    knob.firstChild.nodeValue = String(Math.round(value));
+    knob.firstChild!.nodeValue = String(Math.round(value));
   }
   el.dataset.v = String(Math.round(value));
 }
 
 function initTicks() {
-  document.querySelectorAll('.tick').forEach((el) => {
+  document.querySelectorAll<HTMLElement>('.tick').forEach((el) => {
     if (el.dataset.ready) return;
     el.dataset.ready = '1';
     el.innerHTML = Array.from({ length: TICKS }, () => '<i></i>').join('')
@@ -703,7 +741,7 @@ function initTicks() {
     // 等真的有宽度了再重算一次。
     new ResizeObserver(() => paintTick(el, Number(el.dataset.v))).observe(el);
 
-    const toValue = (clientX) => {
+    const toValue = (clientX: number) => {
       const r = el.getBoundingClientRect();
       return Math.max(0, Math.min(100, ((clientX - r.left - 14) / (r.width - 28)) * 100));
     };
@@ -718,7 +756,7 @@ function initTicks() {
     el.addEventListener('pointerup', () => {
       dragging = false;
       el.classList.remove('is-grab');
-      writeSetting(el.dataset.k, Number(el.dataset.v));
+      writeSetting(el.dataset.k as string, Number(el.dataset.v));
     });
   });
 }

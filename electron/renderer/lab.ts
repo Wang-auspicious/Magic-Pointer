@@ -1,9 +1,8 @@
-// @ts-nocheck -- legacy classic-script globals are preserved during the extension migration.
 /* 交互实验页。每一段都是真的组件，不是示意图——所以这一页看到什么，
    产品里就是什么。 */
 
 /* ---- 1. 胶囊三态 ---- */
-const capsuleHost = document.getElementById('capsules');
+const capsuleHost = document.getElementById('capsules')!;
 
 const idle = Composer.create({
   placeholder: '这一屏里，问点什么？',
@@ -20,7 +19,7 @@ const gap = () => {
 
 capsuleHost.appendChild(gap());
 const busy = Composer.create({ placeholder: '正在想…', onScissor: () => {} });
-busy.el.querySelector('.mcomp-input').value = '把这张图的背景去掉，边缘按头发丝细化';
+busy.el.querySelector<HTMLTextAreaElement>('.mcomp-input')!.value = '把这张图的背景去掉，边缘按头发丝细化';
 busy.running(true);
 capsuleHost.appendChild(busy.el);
 
@@ -51,7 +50,7 @@ const hiCard = CardModel.normalizeCard({
     + '这两件不解决，周五的发布日期我不敢保证。',
   actions: [{ id: 'edit', label: '改一下' }, { id: 'insert', label: '填进 Slack' }],
 });
-document.getElementById('hi-stage').appendChild(renderCard(hiCard, { density: 'full' }));
+document.getElementById('hi-stage')!.appendChild(renderCard(hiCard, { density: 'full' }));
 
 /* ---- 3. MCP 挂进来的界面 ---- */
 const slotDemo = `<!DOCTYPE html><meta charset="utf-8">
@@ -70,7 +69,7 @@ const slotDemo = `<!DOCTYPE html><meta charset="utf-8">
 <div class="r"><span class="d w"></span><span class="n">后台任务观察器</span><b>+417</b></div>
 <div class="r"><span class="d"></span><span class="n">收藏箱五个缺口</span><b>+236</b></div>`;
 
-const slots = document.getElementById('slots');
+const slots = document.getElementById('slots')!;
 for (const card of [
   { kind: 'slot', server: 'github-mcp', html: slotDemo, height: 210,
     title: '仓库最近的动静' },

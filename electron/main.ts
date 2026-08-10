@@ -1,5 +1,4 @@
-﻿// @ts-nocheck -- the legacy main-process composition root is compiled without runtime rewrites.
-const { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen, safeStorage, systemPreferences } = require('electron');
+﻿const { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen, safeStorage, systemPreferences } = require('electron');
 const path = require('path');
 const { dialog } = require('electron');
 const { Menu, nativeImage, Tray } = require('electron');
@@ -75,35 +74,50 @@ const { evaluateRule } = require('./proactive_rules');
 const { createProactiveOnceStore } = require('./proactive_once_store');
 const { createConversationStore } = require('./conversation_store');
 
-let overlayWindow = null;
-let dashboardWindow = null;
-let onboardingWindow = null;
-let stageWindow = null;
+let overlayWindow: InstanceType<typeof BrowserWindow> | null = null;
+let dashboardWindow: InstanceType<typeof BrowserWindow> | null = null;
+let onboardingWindow: InstanceType<typeof BrowserWindow> | null = null;
+let stageWindow: InstanceType<typeof BrowserWindow> | null = null;
 const overlayReadiness = new RendererReadiness();
 const stageReadiness = new RendererReadiness();
-let tray = null;
-let updateManager = null;
-let mousePollTimer = null;
-let overlayHideTimer = null;
-let selectionGestureArm = null;
-let selectionGestureArmTimer = null;
-let selectionGestureExpiryTimer = null;
+let tray: InstanceType<typeof Tray> | null = null;
+let updateManager: ReturnType<typeof createUpdateManager> | null = null;
+let mousePollTimer: NodeJS.Timeout | null = null;
+let overlayHideTimer: NodeJS.Timeout | null = null;
+let selectionGestureArm: {
+  token: string;
+  reason: string;
+  runtime: ReturnType<typeof gestureRuntimeContract>;
+  armedAt: number;
+  readyAt: number;
+  expiresAt: number;
+  armDelayMs: number;
+  timeoutMs: number;
+  displayBounds: { x: number; y: number; width: number; height: number };
+  source: {
+    foregroundApp: string;
+    foregroundHwnd: number;
+    foregroundProcessId: number;
+  };
+} | null = null;
+let selectionGestureArmTimer: NodeJS.Timeout | null = null;
+let selectionGestureExpiryTimer: NodeJS.Timeout | null = null;
 // 划线完成 → 会话开始之间隔一帧合成器。这个定时器必须跟着手势取消走，
 // 否则用户在 34ms 内按 Escape/重新划线的操作会被一个迟到的 beginSelectionSession
 // 静默覆盖（又开一个新会话、又 spawn 一个探针）。
-let selectionGestureCommitTimer = null;
-let passThroughChainTimer = null;
+let selectionGestureCommitTimer: NodeJS.Timeout | null = null;
+let passThroughChainTimer: NodeJS.Timeout | null = null;
 let passThroughChainDeadlineAt = 0;
-let passThroughChainLastPoint = null;
-let wiggleDetector = null;
+let passThroughChainLastPoint: { x: number; y: number; t?: number } | null = null;
+let wiggleDetector: InstanceType<typeof WiggleDetector> | null = null;
 const mouseActivationDetector = new MouseActivationDetector();
 const passThroughGestureCapture = new PassThroughGestureCapture();
 const pythonBridgeRunner = createPythonBridgeRunner();
-let fabricSettings = null;
-let fabricSettingsStore = null;
-let credentialStore = null;
-let pointerStateChild = null;
-let pointerStateRestartTimer = null;
+let fabricSettings: any = null;
+let fabricSettingsStore: InstanceType<typeof ElectronSettingsStore> | null = null;
+let credentialStore: InstanceType<typeof CredentialStore> | null = null;
+let pointerStateChild: import('child_process').ChildProcessWithoutNullStreams | null = null;
+let pointerStateRestartTimer: NodeJS.Timeout | null = null;
 let pointerInputState = {
   buttons: 0,
   foregroundApp: '',
@@ -123,22 +137,22 @@ let lastStableForegroundWindow = {
   hwnd: 0,
   process_id: 0,
 };
-let wiggleCalibrationTimer = null;
+let wiggleCalibrationTimer: NodeJS.Timeout | null = null;
 let lastWiggleTraceAt = 0;
 let inputPaused = false;
 let isQuitting = false;
 let onboardingRequired = false;
 let onboardingPhase = 'welcome';
-let preflightRunPromise = null;
-let preflightAbortController = null;
+let preflightRunPromise: ReturnType<typeof runPreflight> | null = null;
+let preflightAbortController: AbortController | null = null;
 let backgroundHintShown = false;
 let temporaryDismissShortcutRegistered = false;
 let temporaryGestureSubmitShortcutRegistered = false;
 let temporarySurfaceButtons = 0;
 let overlayOwnsPointerInput = false;
-let stageHitRegions = [];
-let stageShapeSettleTimer = null;
-let pendingSurfaceActivation = null;
+let stageHitRegions: { x: number; y: number; width: number; height: number }[] = [];
+let stageShapeSettleTimer: NodeJS.Timeout | null = null;
+let pendingSurfaceActivation: { reason: string; requestedAt: number } | null = null;
 let surfaceReadinessWaitArmed = false;
 let startupVoiceWarmupScheduled = false;
 const registeredConfigurableHotkeys = new Set();
@@ -204,9 +218,9 @@ const activeSessionChildren = new Map();
 const sessionTimeline = new SessionTimeline();
 const dictationChildren = new Map();
 const dictationStopFiles = new Map();
-let voiceRuntime = null;
+let voiceRuntime: InstanceType<typeof VoiceResidentRuntime> | null = null;
 const voiceFocusGuards = new Map();
-let latestVoiceFocusEvidence = null;
+let latestVoiceFocusEvidence: ReturnType<InstanceType<typeof VoiceFocusGuard>['finish']> | null = null;
 let latestVoiceRuntimeStatus = {
   state: 'unloaded',
   errorCode: null,
@@ -217,14 +231,14 @@ const runtimeSnapshot = new RuntimeSnapshot({
   probe: probeRuntimeState,
   ttlMs: 5000,
 });
-let activeSelectionSessionToken = null;
+let activeSelectionSessionToken: string | null = null;
 // Last bridge result delivered to the stage; context actions (open calendar /
 // route draft in the dashboard) resolve against it.
-let lastStageResult = null;
+let lastStageResult: { token: string | null; parsed: any } | null = null;
 let dashboardRequestSerial = 0;
 let dashboardOperationQueue = Promise.resolve();
 
-function log(message) {
+function log(message: unknown) {
   try {
     fs.mkdirSync(RUNTIME_DIR, { recursive: true });
     fs.appendFileSync(LOG_PATH, `${new Date().toISOString()} ${message}\n`, 'utf8');
@@ -235,7 +249,7 @@ function log(message) {
 
 securityHardening.install({
   logger: log,
-  onFatal: ({ kind }) => {
+  onFatal: ({ kind }: { kind: string }) => {
     try { observability.writeEvent('main.fatal', { kind }); } catch (_) {}
     log(`fatal handler notified kind=${kind}`);
   },
@@ -244,7 +258,7 @@ securityHardening.install({
 
 observability.install({ runtimeDir: RUNTIME_DIR });
 
-function persistVoiceFocusEvidence(evidence) {
+function persistVoiceFocusEvidence(evidence: unknown) {
   if (!evidence || typeof evidence !== 'object') return;
   latestVoiceFocusEvidence = safeClone(evidence);
   try {
@@ -255,11 +269,11 @@ function persistVoiceFocusEvidence(evidence) {
       'utf8',
     );
   } catch (error) {
-    log(`voice focus evidence persist failed ${error.name}`);
+    log(`voice focus evidence persist failed ${error instanceof Error ? error.name : 'Error'}`);
   }
 }
 
-function beginVoiceFocusGuard(selectionSessionToken) {
+function beginVoiceFocusGuard(selectionSessionToken: string) {
   if (fabricSettings?.activation?.keep_current_app_focus === false) return null;
   const expectedHwnd = Number(pointerInputState.foregroundHwnd || 0);
   if (!Number.isSafeInteger(expectedHwnd) || expectedHwnd <= 0) {
@@ -288,7 +302,7 @@ function beginVoiceFocusGuard(selectionSessionToken) {
   return guard;
 }
 
-function observeVoiceFocusPhase(phase, selectionSessionToken = activeSelectionSessionToken) {
+function observeVoiceFocusPhase(phase: string, selectionSessionToken: string | null = activeSelectionSessionToken) {
   const guard = voiceFocusGuards.get(selectionSessionToken);
   if (!guard) return false;
   const stable = guard.observe(phase, Number(pointerInputState.foregroundHwnd || 0));
@@ -296,7 +310,7 @@ function observeVoiceFocusPhase(phase, selectionSessionToken = activeSelectionSe
   return stable;
 }
 
-function finishVoiceFocusGuard(phase = null, selectionSessionToken = activeSelectionSessionToken) {
+function finishVoiceFocusGuard(phase: string | null = null, selectionSessionToken = activeSelectionSessionToken) {
   const guard = voiceFocusGuards.get(selectionSessionToken);
   if (!guard) return null;
   if (phase) observeVoiceFocusPhase(phase, selectionSessionToken);
@@ -307,7 +321,7 @@ function finishVoiceFocusGuard(phase = null, selectionSessionToken = activeSelec
   return evidence;
 }
 
-function persistCurrentObjectEpisode(session) {
+function persistCurrentObjectEpisode(session: any) {
   if (!fabricSettingsStore || !session?.snapshot) return false;
   const snapshot = session.snapshot;
   const context = snapshot.context || {};
@@ -322,7 +336,7 @@ function persistCurrentObjectEpisode(session) {
     slots: episode.slots,
     labels: episode.labels,
     spatialRelations: episode.spatialRelations,
-    objects: episode.objects.map((item) => ({
+    objects: episode.objects.map((item: any) => ({
       id: item.objectId,
       referenceLabel: item.referenceLabel || null,
       kind: item.kind || 'native_selection',
@@ -370,7 +384,7 @@ function persistCurrentObjectEpisode(session) {
     return true;
   } catch (error) {
     try { fs.unlinkSync(tempPath); } catch (_) {}
-    log(`current object persist failed ${error.name}: ${error.message}`);
+    log(`current object persist failed ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
     return false;
   }
 }
@@ -378,7 +392,7 @@ function persistCurrentObjectEpisode(session) {
 function startPointerInputStateStream() {
   if (pointerStateChild) return;
   let executable = null;
-  let args = [];
+  let args: string[] = [];
   if (process.platform === 'win32') {
     executable = 'powershell.exe';
     args = [
@@ -400,17 +414,18 @@ function startPointerInputStateStream() {
     log(`pointer input state stream unsupported platform=${process.platform}`);
     return;
   }
-  pointerStateChild = spawn(executable, args, {
+  const child = spawn(executable, args, {
     cwd: ROOT,
     windowsHide: true,
     stdio: ['pipe', 'pipe', 'pipe'],
   });
-  pointerStateChild.stdin.on('error', (error) => {
+  pointerStateChild = child;
+  child.stdin.on('error', (error: Error) => {
     log(`pointer hook command stream error ${error.name}: ${error.message}`);
   });
   let buffer = '';
-  pointerStateChild.stdout.setEncoding('utf8');
-  pointerStateChild.stdout.on('data', (chunk) => {
+  child.stdout.setEncoding('utf8');
+  child.stdout.on('data', (chunk: string) => {
     buffer += chunk;
     const lines = buffer.split(/\r?\n/);
     buffer = lines.pop() || '';
@@ -442,7 +457,7 @@ function startPointerInputStateStream() {
       } catch (_) {}
     }
   });
-  pointerStateChild.on('close', () => {
+  child.on('close', () => {
     pointerStateChild = null;
     pointerInputState = {
       buttons: 0,
@@ -461,13 +476,13 @@ function startPointerInputStateStream() {
       }, 300);
     }
   });
-  pointerStateChild.on('error', (error) => {
+  child.on('error', (error: Error) => {
     log(`pointer state stream error ${error.name}: ${error.message}`);
   });
   syncPointerEpisodeChord();
 }
 
-function sendPointerInputCommand(command) {
+function sendPointerInputCommand(command: unknown) {
   if (process.platform !== 'win32') return false;
   const line = String(command || '').trim();
   if (!line || !pointerStateChild?.stdin || pointerStateChild.stdin.destroyed || !pointerStateChild.stdin.writable) {
@@ -477,7 +492,7 @@ function sendPointerInputCommand(command) {
     pointerStateChild.stdin.write(`${line}\n`);
     return true;
   } catch (error) {
-    log(`pointer hook command failed ${error.name}: ${error.message}`);
+    log(`pointer hook command failed ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
     return false;
   }
 }
@@ -499,11 +514,11 @@ function prunePendingActionProposals(now = Date.now()) {
   }
 }
 
-function safeClone(value) {
+function safeClone(value: unknown) {
   return JSON.parse(JSON.stringify(value));
 }
 
-function registerActionProposals(parsed, selectionSessionToken = null, surface = null) {
+function registerActionProposals(parsed: any, selectionSessionToken: string | null = null, surface: string | null = null) {
   if (!parsed || !Array.isArray(parsed.actionProposals)) return;
 
   prunePendingActionProposals();
@@ -531,7 +546,7 @@ function registerActionProposals(parsed, selectionSessionToken = null, surface =
   parsed.actionProposals = safeProposals;
 }
 
-function takePendingActionProposal(token, selectionSessionToken = null, surface = null) {
+function takePendingActionProposal(token: string, selectionSessionToken: string | null = null, surface: string | null = null) {
   prunePendingActionProposals();
   if (typeof token !== 'string' || !token) return null;
   const entry = pendingActionProposals.get(token);
@@ -544,21 +559,21 @@ function takePendingActionProposal(token, selectionSessionToken = null, surface 
   return safeClone(entry.proposal);
 }
 
-function invalidateActionProposalsForSession(selectionSessionToken) {
+function invalidateActionProposalsForSession(selectionSessionToken: string | null) {
   if (!selectionSessionToken) return;
   for (const [token, entry] of pendingActionProposals.entries()) {
     if (entry?.selectionSessionToken === selectionSessionToken) pendingActionProposals.delete(token);
   }
 }
 
-function cancelSessionChild(selectionSessionToken) {
+function cancelSessionChild(selectionSessionToken: string | null) {
   const child = activeSessionChildren.get(selectionSessionToken);
   activeSessionChildren.delete(selectionSessionToken);
   if (!child || child.killed) return;
   try { child.kill(); } catch (_) {}
 }
 
-function invalidateSelectionSession(selectionSessionToken) {
+function invalidateSelectionSession(selectionSessionToken: string | null = null) {
   if (!selectionSessionToken) return;
   if (voiceRuntime?.active && activeSelectionSessionToken === selectionSessionToken) {
     appendVoiceAudit({
@@ -670,7 +685,7 @@ function initializeUpdateManager({ automatic = true } = {}) {
   try {
     ({ autoUpdater: updater } = require('electron-updater'));
   } catch (error) {
-    log(`update runtime unavailable ${error.name}: ${error.message}`);
+    log(`update runtime unavailable ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
     return null;
   }
   updateManager = createUpdateManager({
@@ -796,7 +811,7 @@ function createStageWindow() {
     try {
       stageWindow.setContentProtection(true);
     } catch (error) {
-      log(`stage content protection unavailable: ${error?.message || error}`);
+      log(`stage content protection unavailable: ${(error as { message?: string })?.message || error}`);
     }
   }
   stageWindow.loadFile(path.join(__dirname, 'renderer', 'stage.html'));
@@ -809,7 +824,7 @@ function createStageWindow() {
   return stageWindow;
 }
 
-function placeStageOnDisplay(display) {
+function placeStageOnDisplay(display: Electron.Display) {
   const win = createStageWindow();
   const desired = display?.bounds;
   if (!desired) return win;
@@ -866,7 +881,34 @@ function showStage(payload = {}) {
   stageReadiness.whenReady(send);
 }
 
-function updateStage(payload = {}) {
+type StageUpdatePayload = {
+  selectionSessionToken?: string | null;
+  selectionSource?: unknown;
+  objectKind?: unknown;
+  targetGeometryKind?: unknown;
+  event?: {
+    type?: string;
+    target?: unknown;
+    mode?: string;
+    notice?: { message?: string };
+    error?: { message?: string };
+    outcome?: { verified?: boolean };
+    screenPoints?: Array<{ x: number; y: number }>;
+    result?: {
+      route?: { tier?: string };
+      taskId?: string;
+      status?: string;
+      cardId?: string;
+      answer?: string;
+      prompt?: string;
+      text?: string;
+      detail?: string;
+      actions?: unknown[];
+    };
+  };
+};
+
+function updateStage(payload: StageUpdatePayload = {}) {
   // Every outcome the user sees passes through here, which makes it the one
   // place that knows how a session actually ended.
   const type = payload?.event?.type;
@@ -889,7 +931,7 @@ function updateStage(payload = {}) {
   safeSurfaceSend('stage', 'stage:update', payload);
   // Clicky 式引导：回答里带了 [POINT] 指点，就把目标点给蓝边光标所在的
   // overlay——小三角默认不出现，只有回答要「指给你看」时才飞过去。
-  const event = payload?.event || {};
+  const event: { screenPoints?: Array<{ x: number; y: number }> } = payload?.event || {};
   const points = Array.isArray(event.screenPoints) ? event.screenPoints : [];
   if (points.length) {
     const p = points[0];
@@ -948,7 +990,7 @@ function updateStage(payload = {}) {
 }
 
 // 结果里带了 taskId 且状态是「已受理」，就开始盯着它，把状态变成卡片补丁。
-function watchTaskFromEvent(payload = {}) {
+function watchTaskFromEvent(payload: StageUpdatePayload = {}) {
   const result = payload?.event?.result;
   if (!result || typeof result !== 'object') return;
   const taskId = String(result.taskId || '');
@@ -960,14 +1002,14 @@ function watchTaskFromEvent(payload = {}) {
   });
 }
 
-let taskWatcherInstance = null;
+let taskWatcherInstance: ReturnType<typeof createTaskWatcher> | null = null;
 
 function taskWatcher() {
   if (taskWatcherInstance) return taskWatcherInstance;
   taskWatcherInstance = createTaskWatcher({
     log,
     CardModel,
-    probe: async (taskId) => {
+    probe: async (taskId: string) => {
       const parsed = await runPythonBridgePromise(
         { operation: 'status', taskId },
         'scripts/agent_bridge.py',
@@ -975,7 +1017,7 @@ function taskWatcher() {
       );
       return parsed?.task || null;
     },
-    onPatch: ({ cardId, selectionSessionToken, patch }) => {
+    onPatch: ({ cardId, selectionSessionToken, patch }: { cardId: string; selectionSessionToken: string; patch: unknown }) => {
       safeSurfaceSend('stage', 'stage:card-patch', { cardId, selectionSessionToken, patch });
       // 随行窗和工作室看的是同一次会话，所以它们也要收到——
       // 「他们俩应该是完全同步的才对」。
@@ -992,7 +1034,7 @@ function taskWatcher() {
 // ---------------------------------------------------------------------------
 // 对话记录
 // ---------------------------------------------------------------------------
-let conversationStore = null;
+let conversationStore: ReturnType<typeof createConversationStore> | null = null;
 
 function conversations() {
   if (!conversationStore) {
@@ -1009,8 +1051,13 @@ const pendingQuestions = new Map();
 // stage_contract 给出的三种终态，各自把正文放在不同字段里。
 // 这里必须全部覆盖——只认 result.answer 的话，写回成功（COMPLETE 没有 result）
 // 和交接草稿（正文在 result.prompt）都会被静默丢掉。
-function answerTextFrom(event = {}) {
-  const r = event.result || {};
+function answerTextFrom(event: {
+  type?: string;
+  error?: { message?: string };
+  outcome?: { verified?: boolean };
+  result?: { answer?: string; prompt?: string; text?: string; detail?: string };
+} = {}) {
+  const r: { answer?: string; prompt?: string; text?: string; detail?: string } = event.result || {};
   if (event.type === 'ERROR') return String(event.error?.message || '这次没能完成。');
   if (event.type === 'COMPLETE') {
     return event.outcome?.verified ? '已完成，并回读确认过。' : '已完成。';
@@ -1020,7 +1067,7 @@ function answerTextFrom(event = {}) {
 
 // updateStage 是所有结果的必经之路，所以记录也挂在这里——
 // 别的地方再加一处，迟早会漏掉一条。
-function recordConversationTurn(payload = {}, type = '') {
+function recordConversationTurn(payload: StageUpdatePayload = {}, type: string | undefined = '') {
   try {
     const token = payload.selectionSessionToken || '';
     const question = (pendingQuestions.get(token) || '').trim();
@@ -1034,15 +1081,15 @@ function recordConversationTurn(payload = {}, type = '') {
     const entry = payload.selectionSessionToken
       ? selectionSessions.get(payload.selectionSessionToken)
       : null;
-    const object = entry ? episodeObjectForSession(entry) : {};
+    const object: Partial<ReturnType<typeof episodeObjectForSession>> = entry ? episodeObjectForSession(entry) : {};
 
-    const result = payload?.event?.result || {};
+    const result: { route?: { tier?: string }; actions?: unknown[] } = payload?.event?.result || {};
     const conversation = conversations().appendTurn({
       question,
       answer,
       outcome: type === 'ERROR' ? '失败' : (type === 'COMPLETE' ? '已完成' : String(result.route?.tier || '')),
       artifacts: Array.isArray(result.actions)
-        ? result.actions.filter((a) => a?.artifact).map((a) => ({ name: a.label || a.artifact, kind: 'file' }))
+        ? result.actions.filter((a: any) => a?.artifact).map((a: any) => ({ name: a.label || a.artifact, kind: 'file' }))
         : [],
       object: {
         app: object.app || '',
@@ -1061,27 +1108,27 @@ function recordConversationTurn(payload = {}, type = '') {
       companionWindow.webContents.send('conversations:turn', { id: conversation.id });
     }
   } catch (error) {
-    log(`conversation record failed ${error.name}`);
+    log(`conversation record failed ${error instanceof Error ? error.name : 'Error'}`);
   }
 }
 
-ipcMain.handle('conversations:list', (event) => {
+ipcMain.handle('conversations:list', (event: Electron.IpcMainInvokeEvent) => {
   if (!isDashboardSender(event) && !isCompanionSender(event)) return [];
   try { return conversations().list(); } catch (_) { return []; }
 });
-ipcMain.handle('conversations:get', (event, id) => {
+ipcMain.handle('conversations:get', (event: Electron.IpcMainInvokeEvent, id: string) => {
   if (!isDashboardSender(event) && !isCompanionSender(event)) return null;
   try { return conversations().get(id); } catch (_) { return null; }
 });
-ipcMain.handle('conversations:timeline', (event) => {
+ipcMain.handle('conversations:timeline', (event: Electron.IpcMainInvokeEvent) => {
   if (!isDashboardSender(event) && !isCompanionSender(event)) return [];
   try { return conversations().timeline(); } catch (_) { return []; }
 });
-ipcMain.handle('conversations:memories', (event) => {
+ipcMain.handle('conversations:memories', (event: Electron.IpcMainInvokeEvent) => {
   if (!isDashboardSender(event) && !isCompanionSender(event)) return [];
   try { return conversations().memories(); } catch (_) { return []; }
 });
-ipcMain.handle('conversations:artifacts', (event) => {
+ipcMain.handle('conversations:artifacts', (event: Electron.IpcMainInvokeEvent) => {
   if (!isDashboardSender(event) && !isCompanionSender(event)) return [];
   try { return conversations().artifacts(); } catch (_) { return []; }
 });
@@ -1093,7 +1140,7 @@ function hideStage() {
 // The stage window is click-through by default; the renderer asks for real
 // mouse capture only while an interactive surface (text capsule, result card,
 // chips) is on screen.
-function sanitizeStageHitRegions(rawRegions) {
+function sanitizeStageHitRegions(rawRegions: any[]) {
   if (!stageWindow || stageWindow.isDestroyed() || !Array.isArray(rawRegions)) return [];
   const bounds = stageWindow.getBounds();
   const regions = [];
@@ -1108,7 +1155,7 @@ function sanitizeStageHitRegions(rawRegions) {
   return regions;
 }
 
-function mergeStageHitRegions(previous, current) {
+function mergeStageHitRegions(previous: Array<{ x: number; y: number; width: number; height: number }>, current: Array<{ x: number; y: number; width: number; height: number }>) {
   const seen = new Set();
   return [...previous, ...current].filter((region) => {
     const key = `${region.x}:${region.y}:${region.width}:${region.height}`;
@@ -1118,7 +1165,7 @@ function mergeStageHitRegions(previous, current) {
   }).slice(0, 32);
 }
 
-function applyStageShape(dipRegions) {
+function applyStageShape(dipRegions: Array<{ x: number; y: number; width: number; height: number }>) {
   if (!stageWindow || stageWindow.isDestroyed()) return;
   const regions = nativeShapeRegions({
     platform: process.platform,
@@ -1129,7 +1176,7 @@ function applyStageShape(dipRegions) {
   stageWindow.setShape(regions);
 }
 
-function setStageMouseCapture(enabled, requestFocus = false, rawRegions = undefined) {
+function setStageMouseCapture(enabled: boolean, requestFocus = false, rawRegions: any[] | undefined = undefined) {
   if (!stageWindow || stageWindow.isDestroyed()) return;
   const previousRegions = stageHitRegions;
   if (Array.isArray(rawRegions)) stageHitRegions = sanitizeStageHitRegions(rawRegions);
@@ -1156,7 +1203,7 @@ function setStageMouseCapture(enabled, requestFocus = false, rawRegions = undefi
 
 // Render-safe delivery: the stage receives only the contract projection of a
 // bridge payload (no prompts, no raw parameters, no screenshots).
-function deliverStageBridgeResult(selectionSessionToken, parsed) {
+function deliverStageBridgeResult(selectionSessionToken: string | null, parsed: any) {
   lastStageResult = { token: selectionSessionToken || null, parsed: safeClone(parsed) };
   updateStage({
     selectionSessionToken: selectionSessionToken || null,
@@ -1172,11 +1219,11 @@ function deliverStageBridgeResult(selectionSessionToken, parsed) {
 // with no chip edits looks like. A list that would remove every stroke is
 // ignored: submitting a gesture with nothing selected would make the perception
 // work meaningless, and the user removing the last chip means they want to redraw.
-function withKeptStrokes(snapshot, keptStrokeIndexes) {
+function withKeptStrokes(snapshot: any, keptStrokeIndexes: any[]) {
   if (!snapshot || !Array.isArray(keptStrokeIndexes) || keptStrokeIndexes.length === 0) return snapshot;
   const strokes = snapshot?.selection_gesture?.strokes;
   if (!Array.isArray(strokes) || strokes.length <= 1) return snapshot;
-  const keep = new Set(keptStrokeIndexes.map((value) => Number(value)));
+  const keep = new Set(keptStrokeIndexes.map((value: number) => Number(value)));
   const kept = strokes.filter((_stroke, index) => keep.has(index));
   if (kept.length === 0 || kept.length === strokes.length) return snapshot;
   log(`stage submit dropped strokes kept=${kept.length}/${strokes.length}`);
@@ -1198,7 +1245,7 @@ function withKeptStrokes(snapshot, keptStrokeIndexes) {
 //
 // The strokes go with it. They described a different region, and keeping both
 // would ask the perception layer to reconcile two claims about what "this" is.
-function withPickedElement(snapshot, picked) {
+function withPickedElement(snapshot: any, picked: any) {
   const rect = picked && picked.rect;
   if (!snapshot || !rect) return snapshot;
   const width = Number(rect.width);
@@ -1213,7 +1260,7 @@ function withPickedElement(snapshot, picked) {
   };
 }
 
-function deliverStageError(selectionSessionToken, message) {
+function deliverStageError(selectionSessionToken: string | null, message: unknown) {
   updateStage({
     selectionSessionToken: selectionSessionToken || null,
     event: { type: 'ERROR', error: { message: humanErrorMessage(message) } },
@@ -1236,7 +1283,7 @@ function appIsDark() {
 
 // 底色留全透明——页面自己的底透上来就行。只换符号的颜色去对比它。
 // 给 overlay 涂实色会在右上角糊出一块和页面对不上的方块。
-function titleBarColors(symbol = null) {
+function titleBarColors(symbol: string | null = null) {
   return {
     color: '#00000000',
     symbolColor: symbol || (appIsDark() ? '#F2F1ED' : '#17170F'),
@@ -1250,8 +1297,8 @@ function titleBarColors(symbol = null) {
 // 浅色符号。周期 500ms，仅采样 138×44 的小区域，开销可忽略。
 const { averageBrightness, symbolColorForBrightness } = require('./titlebar_contrast');
 const TITLEBAR_SAMPLE_REGION = { width: 138, height: 44 };
-let titleBarSampleTimer = null;
-let titleBarLastSymbol = null;
+let titleBarSampleTimer: NodeJS.Timeout | null = null;
+let titleBarLastSymbol: string | null = null;
 
 function sampleTitleBarSymbolColor() {
   if (process.platform !== 'win32' || !dashboardWindow || dashboardWindow.isDestroyed()) return;
@@ -1263,7 +1310,7 @@ function sampleTitleBarSymbolColor() {
     width: TITLEBAR_SAMPLE_REGION.width,
     height: TITLEBAR_SAMPLE_REGION.height,
   };
-  dashboardWindow.webContents.capturePage(rect).then((image) => {
+  dashboardWindow.webContents.capturePage(rect).then((image: Electron.NativeImage) => {
     if (image.isEmpty()) return;
     const symbol = symbolColorForBrightness(averageBrightness(image.toBitmap()));
     if (symbol !== titleBarLastSymbol) {
@@ -1271,7 +1318,7 @@ function sampleTitleBarSymbolColor() {
       try {
         dashboardWindow.setTitleBarOverlay(titleBarColors(symbol));
       } catch (error) {
-        log(`title bar overlay unavailable ${error.name}`);
+        log(`title bar overlay unavailable ${error instanceof Error ? error.name : 'Error'}`);
       }
     }
   }).catch(() => { /* 采样失败保持上一次的颜色 */ });
@@ -1295,7 +1342,7 @@ function applyTitleBarTheme() {
   try {
     dashboardWindow.setTitleBarOverlay(titleBarColors(titleBarLastSymbol));
   } catch (error) {
-    log(`title bar overlay unavailable ${error.name}`);
+    log(`title bar overlay unavailable ${error instanceof Error ? error.name : 'Error'}`);
   }
 }
 
@@ -1309,7 +1356,7 @@ function applyDashboardMaterial(settings = fabricSettings) {
   try {
     dashboardWindow.setBackgroundMaterial(dashboardMaterial(settings));
   } catch (error) {
-    log(`dashboard material unavailable ${error.name}`);
+    log(`dashboard material unavailable ${error instanceof Error ? error.name : 'Error'}`);
   }
 }
 
@@ -1348,7 +1395,7 @@ function createDashboardWindow() {
   // 主窗口 = 工作室（对话 / 收藏箱 / 时间线 / 产物 / 设置）。
   // 旧的 dashboard.html 仍在磁盘上，未删除，只是不再是主界面。
   dashboardWindow.loadFile(path.join(__dirname, 'renderer', 'studio.html'));
-  dashboardWindow.on('close', (event) => {
+  dashboardWindow.on('close', (event: Electron.Event) => {
     if (!isQuitting && fabricSettings?.general?.keep_running !== false) {
       event.preventDefault();
       dashboardWindow.hide();
@@ -1375,7 +1422,7 @@ function createDashboardWindow() {
 // 收藏箱：剪贴板里出现位图就落盘，并把本地路径写回剪贴板。
 // 「一起进来的」按 2 分钟窗口 + 同来源成簇（见 stash_store.js）。
 // ---------------------------------------------------------------------------
-let stashRuntime = null;
+let stashRuntime: ReturnType<typeof createStashRuntime> | null = null;
 
 function stashBaseDir() {
   const configured = fabricSettings?.stash?.dir;
@@ -1421,7 +1468,7 @@ function initializeStashRuntime() {
         return fallback();
       }
     },
-    onEntry: (entry) => {
+    onEntry: (entry: any) => {
       if (dashboardWindow && !dashboardWindow.isDestroyed()) {
         dashboardWindow.webContents.send('stash:entry', entry);
       }
@@ -1441,8 +1488,8 @@ function initializeStashRuntime() {
 // ── 主动提议（Vida 主动层触发判断）───────────────────────────────
 // 事件进规则引擎（proactive_rules.ts 纯函数），触发时查 once_store
 // （一生一次），通过则记日志并暂存待 UI 提案。零模型调用。
-let proactiveRuleState = null;
-let proactiveOnceStore = null;
+let proactiveRuleState: ReturnType<typeof evaluateRule>['state'] | null = null;
+let proactiveOnceStore: ReturnType<typeof createProactiveOnceStore> | null = null;
 
 function proactiveStore() {
   if (proactiveOnceStore) return proactiveOnceStore;
@@ -1473,7 +1520,7 @@ function proactiveStore() {
 // 图相关结果（图转提示词/生图/截屏分析）→ 输入图自动进收藏箱。
 // 用户要的结果图不该只活在对话里，收藏箱随时能翻回来。失败静默
 // （收藏是副作用，不是主路径）。
-function autoStashResultImage(payload) {
+function autoStashResultImage(payload: any) {
   try {
     if (fabricSettings?.stash?.clipboard === false) return;
     const token = payload?.selectionSessionToken;
@@ -1495,7 +1542,7 @@ function autoStashResultImage(payload) {
   } catch (_) { /* 收藏失败不影响结果 */ }
 }
 
-function feedProactiveEvent(event) {
+function feedProactiveEvent(event: any) {
   if (fabricSettings?.interaction?.proactive === false) return;
   const rule = proactiveRuleState
     ? evaluateRule('burst_screenshots', event, proactiveRuleState)
@@ -1514,14 +1561,14 @@ ipcMain.handle('stash:list', () => {
   try {
     return initializeStashRuntime().list();
   } catch (error) {
-    log(`stash list failed ${error.name}`);
+    log(`stash list failed ${error instanceof Error ? error.name : 'Error'}`);
     return [];
   }
 });
 
 // 悬停收藏图片 1 秒后调用：本地文件 + 视觉模型 → 3-4 句简介。
 // 输入是用户自己收藏的本地文件，不是截屏上传，不走隐私开关。
-ipcMain.handle('stash:describe', async (event, imagePath) => {
+ipcMain.handle('stash:describe', async (event: Electron.IpcMainInvokeEvent, imagePath: string) => {
   // 只允许主界面（dashboard）窗口调用，且路径必须落在 stash 目录里——
   // 否则任意渲染进程都能让模型读任意本地文件（信息泄漏）。
   if (!event.sender || event.sender !== dashboardWindow?.webContents) {
@@ -1542,12 +1589,12 @@ ipcMain.handle('stash:describe', async (event, imagePath) => {
     if (parsed?.ok && parsed.summary) return { ok: true, summary: String(parsed.summary) };
     return { ok: false, error: parsed?.error || 'vision_unavailable' };
   } catch (error) {
-    log(`stash describe failed ${error.name}`);
+    log(`stash describe failed ${error instanceof Error ? error.name : 'Error'}`);
     return { ok: false, error: 'bridge_failed' };
   }
 });
 
-let companionWindow = null;
+let companionWindow: InstanceType<typeof BrowserWindow> | null = null;
 
 function createCompanionWindow() {
   if (companionWindow && !companionWindow.isDestroyed()) return companionWindow;
@@ -1590,7 +1637,7 @@ function createCompanionWindow() {
 let companionPinned = true;
 
 // 随行窗贴到光标所在屏幕的右侧，和舞台共用同一个会话。
-function showCompanion(payload = {}, options = {}) {
+function showCompanion(payload = {}, options: { activate?: boolean } = {}) {
   const win = createCompanionWindow();
   const cursor = screen.getCursorScreenPoint();
   const display = screen.getDisplayNearestPoint(cursor);
@@ -1615,7 +1662,7 @@ function showCompanion(payload = {}, options = {}) {
   else reveal();
 }
 
-function showDashboard(payload = {}, options = {}) {
+function showDashboard(payload: Record<string, unknown> = {}, options: { activate?: boolean } = {}) {
   const win = createDashboardWindow();
   const cursor = screen.getCursorScreenPoint();
   const display = screen.getDisplayNearestPoint(cursor);
@@ -1683,7 +1730,7 @@ function createOnboardingWindow() {
   return onboardingWindow;
 }
 
-function showOnboarding(payload = {}, options = {}) {
+function showOnboarding(payload: { screen?: string } = {}, options: { activate?: boolean } = {}) {
   const win = createOnboardingWindow();
   const cursor = screen.getCursorScreenPoint();
   const display = screen.getDisplayNearestPoint(cursor);
@@ -1711,12 +1758,12 @@ function showOnboarding(payload = {}, options = {}) {
   else reveal();
 }
 
-function showPrimarySurface(options = {}) {
+function showPrimarySurface(options: { view?: string; activate?: boolean } = {}) {
   if (onboardingRequired) showOnboarding({}, options);
   else showDashboard({ view: options.view || 'chat' }, options);
 }
 
-function panelGeometryForSession(entry) {
+function panelGeometryForSession(entry: any) {
   const snapshot = entry?.snapshot || {};
   const context = snapshot.context || {};
   const artifacts = context.artifacts || {};
@@ -1748,7 +1795,7 @@ function panelGeometryForSession(entry) {
   };
 }
 
-function stageTargetForSession(entry) {
+function stageTargetForSession(entry: any) {
   const geometry = entry?.panelGeometry || panelGeometryForSession(entry);
   return {
     target: geometry.stageTarget || null,
@@ -1810,7 +1857,7 @@ function disarmTemporaryDismissShortcut() {
   temporaryDismissShortcutRegistered = false;
 }
 
-function armTemporaryGestureSubmitShortcut(token) {
+function armTemporaryGestureSubmitShortcut(token: string) {
   if (temporaryGestureSubmitShortcutRegistered) return true;
   try {
     temporaryGestureSubmitShortcutRegistered = globalShortcut.register('Enter', () => {
@@ -1831,7 +1878,7 @@ function disarmTemporaryGestureSubmitShortcut() {
   temporaryGestureSubmitShortcutRegistered = false;
 }
 
-function queueActivationUntilSurfacesReady(reason) {
+function queueActivationUntilSurfacesReady(reason: string) {
   createOverlayWindow();
   createStageWindow();
   pendingSurfaceActivation = {
@@ -1862,7 +1909,7 @@ function queueActivationUntilSurfacesReady(reason) {
   return 'renderer_warming';
 }
 
-function isSelectionGestureActivation(reason) {
+function isSelectionGestureActivation(reason: string) {
   const value = String(reason || '');
   return value === 'wiggle'
     || value === 'shortcut-wake'
@@ -1870,7 +1917,7 @@ function isSelectionGestureActivation(reason) {
     || value.startsWith('mouse-button-');
 }
 
-function requestActivation(reason) {
+function requestActivation(reason: string) {
   if (onboardingRequired) {
     log(`activation blocked onboarding_required reason=${reason}`);
     showOnboarding({}, { activate: true });
@@ -1904,7 +1951,7 @@ function requestActivation(reason) {
   return decision;
 }
 
-function cleanupDictationStopFile(surface) {
+function cleanupDictationStopFile(surface: string | null | undefined) {
   const stopFile = dictationStopFiles.get(surface);
   dictationStopFiles.delete(surface);
   if (!stopFile) return;
@@ -1934,11 +1981,22 @@ function voiceRuntimeConfig(settings = fabricSettings) {
   };
 }
 
-function sessionIdHash(value) {
+function sessionIdHash(value: unknown) {
   return crypto.createHash('sha256').update(String(value || '')).digest('hex').slice(0, 24);
 }
 
-function appendVoiceAudit({ eventType, sessionToken, surface, engine, reused, measuredMemoryMb, latencyMs, outcome, errorCode, cancellationReason }) {
+function appendVoiceAudit({ eventType, sessionToken, surface, engine, reused, measuredMemoryMb, latencyMs, outcome, errorCode, cancellationReason }: {
+  eventType?: unknown;
+  sessionToken?: unknown;
+  surface?: unknown;
+  engine?: unknown;
+  reused?: unknown;
+  measuredMemoryMb?: unknown;
+  latencyMs?: unknown;
+  outcome?: unknown;
+  errorCode?: unknown;
+  cancellationReason?: unknown;
+}) {
   const data = {
     eventType: String(eventType || 'voice.unknown').slice(0, 120),
     timestamp: new Date().toISOString(),
@@ -1964,15 +2022,16 @@ function appendVoiceAudit({ eventType, sessionToken, surface, engine, reused, me
     })}\n`, 'utf8');
     return true;
   } catch (error) {
-    log(`voice audit persist failed ${error.name}`);
+    log(`voice audit persist failed ${error instanceof Error ? error.name : 'Error'}`);
     return false;
   }
 }
 
-function sendVoiceRuntimeStatus(status = {}) {
-  if (status.workerEvent && !appendVoiceAudit({
-    eventType: `voice.${status.workerEvent.reason || status.workerEvent.type || 'status'}`,
-    surface: 'stage', engine: status.workerEvent.engine, measuredMemoryMb: Number(status.workerEvent.memory_mb),
+function sendVoiceRuntimeStatus(status: Record<string, unknown> = {}) {
+  const workerEvent = status.workerEvent as { reason?: string; type?: string; engine?: string; memory_mb?: number } | null;
+  if (workerEvent && !appendVoiceAudit({
+    eventType: `voice.${workerEvent.reason || workerEvent.type || 'status'}`,
+    surface: 'stage', engine: workerEvent.engine, measuredMemoryMb: Number(workerEvent.memory_mb),
     outcome: status.state === 'error' ? 'failed' : 'completed', errorCode: status.errorCode,
   })) {
     status = { ...status, state: 'error', errorCode: 'voice_audit_failed' };
@@ -2008,7 +2067,7 @@ function sendVoiceRuntimeStatus(status = {}) {
   }
 }
 
-function forwardResidentVoiceEvent(event = {}) {
+function forwardResidentVoiceEvent(event: Record<string, unknown> = {}) {
   const active = voiceRuntime?.active;
   if (!active || event.requestId !== active.requestId) return;
   const sessionToken = activeSelectionSessionToken;
@@ -2041,7 +2100,7 @@ function forwardResidentVoiceEvent(event = {}) {
   }
 }
 
-function configureVoiceRuntime(settings, { preload = false } = {}) {
+function configureVoiceRuntime(settings: any, { preload = false }: { preload?: boolean } = {}) {
   if (!voiceRuntime) return { ok: false, error: 'voice_runtime_unavailable' };
   const result = voiceRuntime.configure(voiceRuntimeConfig(settings));
   if (
@@ -2053,7 +2112,7 @@ function configureVoiceRuntime(settings, { preload = false } = {}) {
   return result;
 }
 
-function scheduleStartupVoiceWarmup(configResult) {
+function scheduleStartupVoiceWarmup(configResult: { ok?: boolean }) {
   if (
     startupVoiceWarmupScheduled
     || !configResult?.ok
@@ -2070,7 +2129,7 @@ function scheduleStartupVoiceWarmup(configResult) {
   return true;
 }
 
-function stopLegacyDictation({ surface, graceful = false } = {}) {
+function stopLegacyDictation({ surface, graceful = false }: Record<string, unknown> = {}) {
   const child = dictationChildren.get(surface);
   if (!child) return false;
   if (graceful) {
@@ -2081,17 +2140,17 @@ function stopLegacyDictation({ surface, graceful = false } = {}) {
       fs.writeFileSync(stopFile, 'stop\n', { encoding: 'utf8', flag: 'wx' });
       observeVoiceFocusPhase('stop_requested');
     } catch (error) {
-      if (error?.code !== 'EEXIST') log(`dictation stop request failed ${error.name}`);
+      if ((error as { code?: string })?.code !== 'EEXIST') log(`dictation stop request failed ${error instanceof Error ? error.name : 'Error'}`);
     }
     return true;
   }
   dictationChildren.delete(surface);
-  cleanupDictationStopFile(surface);
+  cleanupDictationStopFile(surface as string | null);
   try { if (!child.killed) child.kill(); } catch (_) {}
   return true;
 }
 
-function stopDictation(surface, { graceful = false } = {}) {
+function stopDictation(surface: string | null, { graceful = false }: { graceful?: boolean } = {}) {
   if (voiceRuntime?.active?.surface === surface) {
     return voiceRuntime.stop(voiceRuntime.active.requestId, { graceful, cancel: !graceful });
   }
@@ -2099,7 +2158,7 @@ function stopDictation(surface, { graceful = false } = {}) {
 }
 
 // overlay 当前覆盖的屏幕 index（避免高频轮询反复 setBounds）。
-let overlayBoundDisplayId = null;
+let overlayBoundDisplayId: number | null = null;
 
 function sendCursorToOverlay(pos = screen.getCursorScreenPoint()) {
   if (!overlayWindow || overlayWindow.isDestroyed() || !overlayWindow.isVisible()) return;
@@ -2258,7 +2317,7 @@ function armSelectionGesture(reason = 'wiggle') {
   return token;
 }
 
-function markSelectionGestureDrawing(token, { timeoutMs = null, reason = 'draw_timeout' } = {}) {
+function markSelectionGestureDrawing(token: string, { timeoutMs = null, reason = 'draw_timeout' }: { timeoutMs?: number | null; reason?: string } = {}) {
   const arm = selectionGestureArm;
   if (!arm || String(token || '') !== arm.token) return false;
   if (selectionGestureExpiryTimer) clearTimeout(selectionGestureExpiryTimer);
@@ -2270,7 +2329,7 @@ function markSelectionGestureDrawing(token, { timeoutMs = null, reason = 'draw_t
   return true;
 }
 
-function completeSelectionGesture(payload) {
+function completeSelectionGesture(payload: any) {
   const arm = selectionGestureArm;
   if (!arm || String(payload?.selectionGestureToken || '') !== arm.token) {
     cancelSelectionGesture('stale');
@@ -2295,7 +2354,7 @@ function completeSelectionGesture(payload) {
   const gestureFrame = (overlayWindow && !overlayWindow.isDestroyed())
     ? overlayWindow.getBounds()
     : arm.displayBounds;
-  const toPhysical = (point) => {
+  const toPhysical = (point: { x: number; y: number }) => {
     const px = Number(point.x) + gestureFrame.x;
     const py = Number(point.y) + gestureFrame.y;
     const pointDisplay = screen.getDisplayNearestPoint({ x: px, y: py });
@@ -2309,12 +2368,12 @@ function completeSelectionGesture(payload) {
       y: Math.round(physicalOriginY + localY * pointSf),
     };
   };
-  const physicalPoints = summary.points.map((point) => ({ ...toPhysical(point), t: point.t }));
-  const physicalStrokes = summary.strokes.map((stroke) => ({
-    points: stroke.points.map((point) => ({ ...toPhysical(point), t: point.t })),
+  const physicalPoints = summary.points.map((point: { x: number; y: number; t?: number }) => ({ ...toPhysical(point), t: point.t }));
+  const physicalStrokes = summary.strokes.map((stroke: { points: Array<{ x: number; y: number; t?: number }> }) => ({
+    points: stroke.points.map((point: { x: number; y: number; t?: number }) => ({ ...toPhysical(point), t: point.t })),
   }));
   const allPhysical = physicalStrokes.length
-    ? physicalStrokes.flatMap((s) => s.points)
+    ? physicalStrokes.flatMap((s: { points: Array<{ x: number; y: number; t?: number }> }) => s.points)
     : physicalPoints;
   const armDisplay = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
   const scaleFactor = armDisplay.scaleFactor || 1;
@@ -2374,7 +2433,7 @@ function schedulePassThroughChainFinalize() {
   }, delay);
 }
 
-function processPassThroughGestureSample(now, pos) {
+function processPassThroughGestureSample(now: number, pos: { x: number; y: number }) {
   const arm = selectionGestureArm;
   if (!arm || arm.runtime.interactionMode !== 'pass_through') return false;
   const events = passThroughGestureCapture.push({
@@ -2585,7 +2644,7 @@ function currentPointerPollingPolicy() {
   });
 }
 
-function inputModeForReason(reason) {
+function inputModeForReason(reason: string) {
   if (reason === 'shortcut-text') return 'text';
   if (reason === 'shortcut-voice') return 'voice';
   return fabricSettings?.interaction?.default_input_mode === 'voice' ? 'voice' : 'text';
@@ -2596,8 +2655,8 @@ function registerConfigurableHotkeys() {
     try { globalShortcut.unregister(accelerator); } catch (_) {}
   }
   registeredConfigurableHotkeys.clear();
-  const results = {};
-  const register = (name, accelerator, handler, enabled = true) => {
+  const results: Record<string, { accelerator: string; registered: boolean; disabled?: boolean }> = {};
+  const register = (name: string, accelerator: string, handler: () => void, enabled = true) => {
     if (!enabled) {
       results[name] = { accelerator, registered: false, disabled: true };
       return;
@@ -2633,13 +2692,13 @@ function registerConfigurableHotkeys() {
 // 窗口左上角为原点的 DIP。中间隔着两次换算（缩放、以及舞台落在哪个显示器上），
 // 少做一次，在 200% 缩放的机器上框就会飞到屏幕外——所以这里走和选区矩形完全
 // 同一对函数，不自己乘除。
-function stageWindowRect(sourceWindow, stageBounds) {
+function stageWindowRect(sourceWindow: any, stageBounds: { x: number; y: number; width: number; height: number }) {
   const raw = sourceWindow && Array.isArray(sourceWindow.bbox) && sourceWindow.bbox.length === 4
     ? sourceWindow.bbox
     : null;
   if (!raw || !stageBounds) return null;
-  const values = raw.map((v) => Number(v));
-  if (values.some((v) => !Number.isFinite(v))) return null;
+  const values = raw.map((v: unknown) => Number(v));
+  if (values.some((v: number) => !Number.isFinite(v))) return null;
   const [left, top, right, bottom] = values;
   if (right <= left || bottom <= top) return null;
   const dip = physicalRectToDip(screen, {
@@ -2652,7 +2711,7 @@ function stageWindowRect(sourceWindow, stageBounds) {
   return relativeRect(dip, stageBounds);
 }
 
-function stageAppLabel(snapshot) {
+function stageAppLabel(snapshot: any) {
   const context = (snapshot && snapshot.context) || {};
   const window = (snapshot && snapshot.source_window) || {};
   const app = String(context.app || '');
@@ -2661,7 +2720,7 @@ function stageAppLabel(snapshot) {
   return bits.length ? bits.join(' · ') : '';
 }
 
-function stageSessionPayload(entry) {
+function stageSessionPayload(entry: any) {
   const strokeCount = entry?.gesture && Array.isArray(entry.gesture.strokes) && entry.gesture.strokes.length > 0
     ? entry.gesture.strokes.length
     : 1;
@@ -2692,7 +2751,7 @@ function stageSessionPayload(entry) {
   };
 }
 
-function episodeObjectForSession(entry) {
+function episodeObjectForSession(entry: any) {
   const snapshot = entry?.snapshot || {};
   const context = snapshot.context || {};
   const sourceWindow = snapshot.source_window || {};
@@ -2722,7 +2781,7 @@ function episodeObjectForSession(entry) {
   };
 }
 
-function bindEpisodeForCommand(session, command) {
+function bindEpisodeForCommand(session: any, command: string) {
   const mode = inferReferenceMode(command);
   const referenceLabel = inferReferenceLabel(command);
   const object = episodeObjectForSession(session);
@@ -2735,14 +2794,14 @@ function bindEpisodeForCommand(session, command) {
   return episode;
 }
 
-function shouldContinueGestureEpisode(command, episode) {
+function shouldContinueGestureEpisode(command: string, episode: any) {
   if (!episode) return false;
   const mode = inferReferenceMode(command);
   if (mode === 'here') return false;
   return mode === 'append' || ['add', 'move'].includes(episode.pendingIntent);
 }
 
-function composedEpisodeCommand(command, episode) {
+function composedEpisodeCommand(command: string, episode: any) {
   if (!episode || inferReferenceMode(command) !== 'here') return command;
   const sourceCount = Array.isArray(episode?.slots?.these) ? episode.slots.these.length : 0;
   if (!episode?.slots?.here || sourceCount < 1) return command;
@@ -2751,7 +2810,14 @@ function composedEpisodeCommand(command, episode) {
   return command;
 }
 
-function beginSelectionSession(reason = 'manual', gesture = null) {
+type SelectionGesture = {
+  anchorPoint?: { x: number; y: number };
+  releasePoint?: { x: number; y: number };
+  strokes?: unknown[];
+  source?: { foregroundApp?: string | null; foregroundHwnd?: string | number | null };
+};
+
+function beginSelectionSession(reason = 'manual', gesture: SelectionGesture | null = null) {
   if (activeSelectionSessionToken) invalidateSelectionSession(activeSelectionSessionToken);
   lastStageResult = null;
 
@@ -2815,7 +2881,7 @@ function beginSelectionSession(reason = 'manual', gesture = null) {
   // Optimistic capsule. The bubble is a promise that we heard the gesture, and
   // that promise is worth nothing four seconds later. It opens with
   // groundingReady=false and is filled in when the snapshot lands.
-  const revealCapsule = (via) => {
+  const revealCapsule = (via: string) => {
     if (!gesture) return;
     if (entry.capsuleRevealed) return;
     if (activeSelectionSessionToken !== entry.token) return;
@@ -2850,7 +2916,7 @@ function beginSelectionSession(reason = 'manual', gesture = null) {
   };
   if (gesture && CAPSULE_CONTENT_PROTECTED) revealCapsule('immediate');
 
-  let child = null;
+  let child: ReturnType<typeof runPythonBridge> | null = null;
   child = runPythonBridge(
     {
       mode: 'capture_selection_snapshot',
@@ -2868,20 +2934,20 @@ function beginSelectionSession(reason = 'manual', gesture = null) {
     'panel',
     {
       timelineToken: entry.token,
-      onProgress: (record) => {
+      onProgress: (record: any) => {
         // Without content protection this marker is the earliest safe reveal:
         // the pixels are captured and attested, so nothing we draw from here on
         // can contaminate them.
         if (record?.phase === CAPSULE_REVEAL_PHASE) revealCapsule(CAPSULE_REVEAL_PHASE);
       },
-      onComplete: (parsed) => {
+      onComplete: (parsed: any) => {
         if (activeSessionChildren.get(entry.token) === child) activeSessionChildren.delete(entry.token);
         const current = selectionSessions.get(entry.token);
         if (!current || activeSelectionSessionToken !== entry.token) return;
         // Once the capsule is open, every failure has to be spoken into it.
         // Returning silently would leave the user staring at a bubble that
         // never resolves — the one outcome worse than a slow bubble.
-        const failOpenCapsule = (message) => {
+        const failOpenCapsule = (message: unknown) => {
           if (!entry.capsuleRevealed) return false;
           deliverStageError(entry.token, message);
           return true;
@@ -2997,7 +3063,7 @@ app.whenReady().then(() => {
     fabricSettings = fabricSettingsStore.load();
   } catch (error) {
     fabricSettings = defaultSettings();
-    log(`settings load failed closed ${error.name}: ${error.message}`);
+    log(`settings load failed closed ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
   }
   voiceRuntime = new VoiceResidentRuntime({
     startLegacy: startLegacyDictation,
@@ -3027,14 +3093,14 @@ app.whenReady().then(() => {
     try {
       initializeStashRuntime();
     } catch (error) {
-      log(`stash runtime startup failed ${error.name}: ${error.message}`);
+      log(`stash runtime startup failed ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
     }
   }, 1200);
   log(`onboarding readiness ready=${onboardingReadiness.ready} reason=${onboardingReadiness.reason}`);
   try {
     app.setLoginItemSettings({ openAtLogin: fabricSettings.general?.launch_at_login === true });
   } catch (error) {
-    log(`login item settings failed ${error.name}`);
+    log(`login item settings failed ${error instanceof Error ? error.name : 'Error'}`);
   }
   wiggleDetector = new WiggleDetector({
     sensitivity: fabricSettings.activation.sensitivity,
@@ -3058,7 +3124,7 @@ app.whenReady().then(() => {
       fs.writeFileSync(resolvedEvidencePath, `${JSON.stringify(evidence, null, 2)}\n`, 'utf8');
       process.stdout.write(`${resolvedEvidencePath}\nalgorithmPass=${evidence.pass}\nphysicalInputValidated=false\n`);
     } catch (error) {
-      process.stderr.write(`n18_wiggle_evidence_failed:${error.name}:${error.message}\n`);
+      process.stderr.write(`n18_wiggle_evidence_failed:${error instanceof Error ? `${error.name}:${error.message}` : String(error)}\n`);
       process.exitCode = 1;
     } finally {
       setImmediate(() => app.quit());
@@ -3158,7 +3224,7 @@ app.whenReady().then(() => {
           process.stdout.write(`${focusEvidencePath}\ninvariant=${evidence.invariant}\n`);
           if (evidence.invariant !== true) process.exitCode = 1;
         } catch (error) {
-          process.stderr.write(`n17_focus_evidence_failed:${error.name}:${error.message}\n`);
+          process.stderr.write(`n17_focus_evidence_failed:${error instanceof Error ? `${error.name}:${error.message}` : String(error)}\n`);
           process.exitCode = 1;
         } finally {
           app.quit();
@@ -3209,7 +3275,7 @@ app.whenReady().then(() => {
         fs.writeFileSync(path.resolve(dashboardCapturePath), image.toPNG());
         process.stdout.write(`${path.resolve(dashboardCapturePath)}\nview=${captureView}\n`);
       } catch (error) {
-        process.stderr.write(`dashboard_capture_failed:${error.name}:${error.message}\n`);
+        process.stderr.write(`dashboard_capture_failed:${error instanceof Error ? `${error.name}:${error.message}` : String(error)}\n`);
         process.exitCode = 1;
       } finally {
         app.quit();
@@ -3243,12 +3309,12 @@ app.on('will-quit', () => {
 });
 app.on('before-quit', () => { isQuitting = true; });
 
-ipcMain.on('overlay:renderer-ready', (event) => {
+ipcMain.on('overlay:renderer-ready', (event: Electron.IpcMainEvent) => {
   if (!isSurfaceSender(event, 'overlay', resultTargetWindow)) return;
   overlayReadiness.markReady();
   log('overlay renderer ready');
 });
-ipcMain.on('overlay:gesture-ready', (event, payload) => {
+ipcMain.on('overlay:gesture-ready', (event: Electron.IpcMainEvent, payload: any) => {
   if (!isSurfaceSender(event, 'overlay', resultTargetWindow)) {
     log('gesture-ready SKIP: not surface sender');
     return;
@@ -3283,30 +3349,30 @@ ipcMain.on('overlay:gesture-ready', (event, payload) => {
     + ` delay_ms=${Date.now() - arm.armedAt} mode=${arm.runtime.interactionMode}`,
   );
 });
-ipcMain.on('stage:renderer-ready', (event) => {
+ipcMain.on('stage:renderer-ready', (event: Electron.IpcMainEvent) => {
   if (!isSurfaceSender(event, 'stage', resultTargetWindow)) return;
   stageReadiness.markReady();
   log('stage renderer ready');
 });
 
-ipcMain.on('overlay:hide', (event) => {
+ipcMain.on('overlay:hide', (event: Electron.IpcMainEvent) => {
   if (isSurfaceSender(event, 'overlay', resultTargetWindow)) {
     dismissTemporarySurfaces({ invalidateSession: true, hideObserver: true });
   }
 });
-ipcMain.on('overlay:guide-finished', (event) => {
+ipcMain.on('overlay:guide-finished', (event: Electron.IpcMainEvent) => {
   if (!isSurfaceSender(event, 'overlay', resultTargetWindow)) return;
   // Guidance is disposable. Do not dismiss the answer stage, and do not hide
   // a window that has since been repurposed for an active selection gesture.
   if (selectionGestureArm || overlayOwnsPointerInput) return;
   hideOverlay();
 });
-ipcMain.on('stage:show', (event) => {
+ipcMain.on('stage:show', (event: Electron.IpcMainEvent) => {
   // Renderer re-asserts visibility once it has content to paint.
   if (!isSurfaceSender(event, 'stage', resultTargetWindow)) return;
   if (stageWindow && !stageWindow.isDestroyed() && !stageWindow.isVisible()) stageWindow.showInactive();
 });
-ipcMain.on('stage:state', (event, payload) => {
+ipcMain.on('stage:state', (event: Electron.IpcMainEvent, payload: any) => {
   if (!isSurfaceSender(event, 'stage', resultTargetWindow)) return;
   const state = String(payload?.state || 'unknown');
   log(`stage renderer state=${state}`);
@@ -3322,18 +3388,18 @@ ipcMain.on('stage:state', (event, payload) => {
     if (token) invalidateSelectionSession(token);
   }
 });
-ipcMain.on('stage:hidden', (event) => {
+ipcMain.on('stage:hidden', (event: Electron.IpcMainEvent) => {
   // Renderer finished its dismiss fade; the window can actually hide now.
   if (!isSurfaceSender(event, 'stage', resultTargetWindow)) return;
   setStageMouseCapture(false);
   hideStage();
 });
-ipcMain.on('stage:dismiss', (event) => {
+ipcMain.on('stage:dismiss', (event: Electron.IpcMainEvent) => {
   // User-initiated dismissal (Escape / outside click) tears the session down.
   if (!isSurfaceSender(event, 'stage', resultTargetWindow)) return;
   dismissTemporarySurfaces({ invalidateSession: true, hideObserver: true });
 });
-ipcMain.on('stage:set-mouse-capture', (event, payload) => {
+ipcMain.on('stage:set-mouse-capture', (event: Electron.IpcMainEvent, payload: any) => {
   if (!isSurfaceSender(event, 'stage', resultTargetWindow)) return;
   setStageMouseCapture(
     payload?.enabled === true,
@@ -3341,12 +3407,17 @@ ipcMain.on('stage:set-mouse-capture', (event, payload) => {
     Array.isArray(payload?.regions) ? payload.regions : [],
   );
 });
-ipcMain.on('dictation:stop', (event, payload) => {
+ipcMain.on('dictation:stop', (event: Electron.IpcMainEvent, payload: any) => {
   const surface = payload?.surface === 'overlay' ? 'overlay' : payload?.surface === 'stage' ? 'stage' : null;
   if (!surface || !isSurfaceSender(event, surface, resultTargetWindow)) return;
   stopDictation(surface, { graceful: payload?.graceful === true });
 });
-function startLegacyDictation({ requestId, surface, contextPath, silenceMs }) {
+function startLegacyDictation({ requestId, surface, contextPath, silenceMs }: {
+  requestId?: unknown;
+  surface?: string | null;
+  contextPath?: unknown;
+  silenceMs?: unknown;
+}) {
   if (dictationChildren.has(surface)) {
     return { ok: false, error: 'voice_session_active' };
   }
@@ -3385,7 +3456,7 @@ function startLegacyDictation({ requestId, surface, contextPath, silenceMs }) {
   let stdout = '';
   let stderr = '';
   let terminalEventSeen = false;
-  const forwardEvent = (eventPayload = {}) => {
+  const forwardEvent = (eventPayload: { type?: string; transcript?: string; engine?: string; error?: string } = {}) => {
     if (dictationChildren.get(surface) !== child) return;
     const runtimeSession = voiceRuntime?.active;
     if (
@@ -3432,7 +3503,7 @@ function startLegacyDictation({ requestId, surface, contextPath, silenceMs }) {
     }
   };
   child.stdout.setEncoding('utf8');
-  child.stdout.on('data', (chunk) => {
+  child.stdout.on('data', (chunk: string) => {
     stdout += chunk;
     const lines = stdout.split(/\r?\n/);
     stdout = lines.pop() || '';
@@ -3446,8 +3517,8 @@ function startLegacyDictation({ requestId, surface, contextPath, silenceMs }) {
     }
   });
   child.stderr.setEncoding('utf8');
-  child.stderr.on('data', (chunk) => { stderr += chunk; });
-  child.on('error', (error) => {
+  child.stderr.on('data', (chunk: string) => { stderr += chunk; });
+  child.on('error', (error: Error) => {
     terminalEventSeen = true;
     if (dictationChildren.get(surface) === child) {
       dictationChildren.delete(surface);
@@ -3460,7 +3531,7 @@ function startLegacyDictation({ requestId, surface, contextPath, silenceMs }) {
       error: `本地语音启动失败：${error.message}`,
     });
   });
-  child.on('close', (code) => {
+  child.on('close', (code: number | null) => {
     if (stdout.trim()) {
       try { forwardEvent(JSON.parse(stdout)); } catch (_) {}
     }
@@ -3481,7 +3552,7 @@ function startLegacyDictation({ requestId, surface, contextPath, silenceMs }) {
   return { ok: true, requestId, mode: 'legacy' };
 }
 
-ipcMain.on('dictation:start', (event, payload) => {
+ipcMain.on('dictation:start', (event: Electron.IpcMainEvent, payload: any) => {
   const surface = payload?.surface === 'overlay' ? 'overlay' : payload?.surface === 'stage' ? 'stage' : null;
   if (!surface || !isSurfaceSender(event, surface, resultTargetWindow)) {
     log('dictation:start rejected untrusted sender or surface');
@@ -3519,7 +3590,11 @@ ipcMain.on('dictation:start', (event, payload) => {
   startStageDictation({ surface, selectionSession, selectionToken });
 });
 
-function startStageDictation({ surface, selectionSession, selectionToken }) {
+function startStageDictation({ surface, selectionSession, selectionToken }: {
+  surface: string | null;
+  selectionSession: NonNullable<ReturnType<typeof selectionSessions.get>>;
+  selectionToken: string | null;
+}) {
   const snapshot = selectionSession.snapshot;
   const context = snapshot.context || {};
   const contextPath = String(context.document_path || context.path || snapshot.capture_path || '');
@@ -3549,20 +3624,20 @@ function startStageDictation({ surface, selectionSession, selectionToken }) {
     safeSurfaceSend(surface, 'dictation:result', { ok: false, surface, error: `本地语音未启动：${result.error}` });
   }
 }
-function resultTargetWindow(target) {
+function resultTargetWindow(target: string | null | undefined) {
   if (target === 'dashboard' || target === 'calendar-dashboard' || target === 'fabric-dashboard') return dashboardWindow;
   if (target === 'stage') return stageWindow;
   return overlayWindow;
 }
 
-function safeSurfaceSend(surface, channel, payload) {
+function safeSurfaceSend(surface: string | null | undefined, channel: string, payload: any) {
   const win = resultTargetWindow(surface);
   if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return false;
   win.webContents.send(channel, payload);
   return true;
 }
 
-function sendBridgeResult(target, parsed) {
+function sendBridgeResult(target: string | null, parsed: any) {
   if (target === 'stage') {
     deliverStageBridgeResult(parsed?.selectionSessionToken || null, parsed);
     return;
@@ -3577,7 +3652,7 @@ function sendBridgeResult(target, parsed) {
   safeSurfaceSend(target, channel, parsed);
 }
 
-function runPythonBridge(payload, scriptPath = 'scripts/electron_bridge.py', target = 'overlay', options = {}) {
+function runPythonBridge(payload: any, scriptPath = 'scripts/electron_bridge.py', target: string | null = 'overlay', options: any = {}) {
   if (!options.allowWithoutSurface && !resultTargetWindow(target)) return;
   const py = PYTHON_EXECUTABLE;
   const defaultTimeoutMs = scriptPath.includes('selection_snapshot_bridge')
@@ -3622,7 +3697,7 @@ function runPythonBridge(payload, scriptPath = 'scripts/electron_bridge.py', tar
     // Phase timings arrive on stderr while the bridge is still running. They
     // are what turns "it took 30 seconds" into "which step took 30 seconds",
     // and they are what lets the capsule appear before the work is finished.
-    onProgress: (record) => {
+    onProgress: (record: any) => {
       log(`bridge phase script=${scriptPath} phase=${record.phase} ms=${record.ms}`);
       if (options.timelineToken) {
         sessionTimeline.phase(options.timelineToken, {
@@ -3634,7 +3709,7 @@ function runPythonBridge(payload, scriptPath = 'scripts/electron_bridge.py', tar
       }
       if (typeof options.onProgress === 'function') options.onProgress(record);
     },
-    onComplete: (parsed) => {
+    onComplete: (parsed: any) => {
       log(`bridge complete script=${scriptPath} ok=${parsed?.ok} error=${parsed?.error || 'none'}`);
       if (typeof options.onComplete === 'function') {
         options.onComplete(parsed);
@@ -3646,11 +3721,11 @@ function runPythonBridge(payload, scriptPath = 'scripts/electron_bridge.py', tar
   });
 }
 
-function runPythonBridgePromise(payload, scriptPath, { target = 'fabric-dashboard', timeoutMs = 5000 } = {}) {
+function runPythonBridgePromise(payload: any, scriptPath: string, { target = 'fabric-dashboard', timeoutMs = 5000 }: { target?: string; timeoutMs?: number } = {}): Promise<any> {
   return new Promise((resolve, reject) => {
     let settled = false;
-    let timer = null;
-    const finish = (callback, value) => {
+    let timer: NodeJS.Timeout | null = null;
+    const finish = (callback: (value: unknown) => void, value: unknown) => {
       if (settled) return;
       settled = true;
       if (timer) clearTimeout(timer);
@@ -3659,7 +3734,7 @@ function runPythonBridgePromise(payload, scriptPath, { target = 'fabric-dashboar
     const child = runPythonBridge(payload, scriptPath, target, {
       timeoutMs,
       allowWithoutSurface: true,
-      onComplete: (parsed) => {
+      onComplete: (parsed: any) => {
         if (parsed?.ok !== true) {
           finish(reject, new Error(String(parsed?.error || 'runtime_snapshot_probe_failed')));
           return;
@@ -3692,7 +3767,7 @@ let modelHealth = {
   baseUrl: '',
   checkedAt: 0,
 };
-let modelHealthTimer = null;
+let modelHealthTimer: NodeJS.Timeout | null = null;
 
 function broadcastModelHealth() {
   const payload = { ...modelHealth };
@@ -3718,7 +3793,7 @@ async function refreshModelHealth({ probe = false } = {}) {
     }
   } catch (error) {
     // A failed health probe is not itself a gateway verdict; say unknown.
-    log(`model health probe failed ${error.name}: ${error.message}`);
+    log(`model health probe failed ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
   }
   return modelHealth;
 }
@@ -3730,7 +3805,7 @@ function startModelHealthWatch() {
   modelHealthTimer.unref?.();
 }
 
-ipcMain.handle('dashboard:session-timeline', async (event) => {
+ipcMain.handle('dashboard:session-timeline', async (event: Electron.IpcMainInvokeEvent) => {
   if (!isDashboardSender(event)) throw new Error('unauthorized_dashboard_sender');
   return {
     ok: true,
@@ -3738,7 +3813,7 @@ ipcMain.handle('dashboard:session-timeline', async (event) => {
   };
 });
 
-ipcMain.handle('dashboard:model-health-refresh', async (event) => {
+ipcMain.handle('dashboard:model-health-refresh', async (event: Electron.IpcMainInvokeEvent) => {
   if (!isDashboardSender(event)) throw new Error('unauthorized_dashboard_sender');
   const health = await refreshModelHealth({ probe: true });
   return { ok: true, health };
@@ -3761,11 +3836,11 @@ function warmUpOcrWorker() {
       windowsHide: true,
       stdio: 'ignore',
     });
-    child.on('error', (error) => log(`ocr warmup failed ${error.name}: ${error.message}`));
+    child.on('error', (error: Error) => log(`ocr warmup failed ${error.name}: ${error.message}`));
     child.unref?.();
     log('ocr worker warmup started');
   } catch (error) {
-    log(`ocr warmup spawn failed ${error.name}`);
+    log(`ocr warmup spawn failed ${error instanceof Error ? error.name : 'Error'}`);
   }
 }
 
@@ -3807,7 +3882,7 @@ async function probeRuntimeState() {
   return parsed.snapshot;
 }
 
-function invalidateRuntimeState(reason) {
+function invalidateRuntimeState(reason: string | null = null) {
   const generation = runtimeSnapshot.invalidate(reason);
   safeSurfaceSend('dashboard', 'runtime-snapshot:changed', {
     generation,
@@ -3816,22 +3891,22 @@ function invalidateRuntimeState(reason) {
   return generation;
 }
 
-function modelCredentialRef(profileId) {
+function modelCredentialRef(profileId: unknown) {
   const id = String(profileId || '').trim().toLowerCase();
   const profiles = Array.isArray(fabricSettings?.models?.profiles) ? fabricSettings.models.profiles : [];
-  const profile = profiles.find((item) => String(item?.id || '').trim().toLowerCase() === id);
+  const profile = profiles.find((item: any) => String(item?.id || '').trim().toLowerCase() === id);
   const ref = String(profile?.credentialRef || '').trim();
   if (!profile || !ref) throw new Error('model_credential_ref_missing');
   return ref;
 }
 
-function withoutRawCredential(payload) {
+function withoutRawCredential(payload: any) {
   const clean = { ...(payload || {}) };
   for (const key of ['credential', 'credentialValue', 'apiKey', 'token', 'secret', 'authorization']) delete clean[key];
   return clean;
 }
 
-function handleModelCredentialOperation(operation, payload) {
+function handleModelCredentialOperation(operation: string, payload: any) {
   if (!credentialStore) throw new Error('credential_store_unavailable');
   const ref = modelCredentialRef(payload?.profileId);
   if (operation === 'models.credentials.status') return credentialStore.status(ref);
@@ -3848,7 +3923,7 @@ function microphonePermissionStatus() {
   }
 }
 
-function sendPreflightEvent(preflightEvent) {
+function sendPreflightEvent(preflightEvent: unknown) {
   if (dashboardWindow && !dashboardWindow.isDestroyed()) {
     dashboardWindow.webContents.send('dashboard:preflight-event', preflightEvent);
   }
@@ -3857,7 +3932,7 @@ function sendPreflightEvent(preflightEvent) {
   }
 }
 
-async function runPreflight(payload = {}, { signal = null } = {}) {
+async function runPreflight(payload: { stageIds?: unknown[]; userSkips?: unknown[]; source?: string } = {}, { signal = null }: { signal?: AbortSignal | null } = {}) {
   const manifestBytes = fs.readFileSync(PREFLIGHT_MANIFEST_PATH);
   const manifest = JSON.parse(manifestBytes.toString('utf8'));
   const manifestDigest = crypto.createHash('sha256').update(manifestBytes).digest('hex');
@@ -3883,7 +3958,7 @@ async function runPreflight(payload = {}, { signal = null } = {}) {
   return runner.runAsync({ stageIds, userSkips, signal });
 }
 
-function startPreflight(payload = {}) {
+function startPreflight(payload: { source?: string } = {}) {
   if (preflightRunPromise) return preflightRunPromise;
   log(`preflight start source=${String(payload?.source || 'dashboard')}`);
   preflightAbortController = new AbortController();
@@ -3906,7 +3981,7 @@ function cancelPreflight() {
   return true;
 }
 
-ipcMain.on('overlay:done', (event, payload) => {
+ipcMain.on('overlay:done', (event: Electron.IpcMainEvent, payload: any) => {
   if (!isSurfaceSender(event, 'overlay', resultTargetWindow)) return;
   if (payload?.workflow === 'selection_gesture') {
     completeSelectionGesture(payload);
@@ -3931,7 +4006,7 @@ ipcMain.on('overlay:done', (event, payload) => {
   placeStageOnDisplay(display);
   hideOverlay();
   runPythonBridge(enriched, 'scripts/electron_bridge.py', 'stage', {
-    onComplete: (parsed) => {
+    onComplete: (parsed: any) => {
       registerActionProposals(parsed, null, 'stage');
       lastStageResult = { token: null, parsed: safeClone(parsed) };
       showStage({
@@ -3943,14 +4018,14 @@ ipcMain.on('overlay:done', (event, payload) => {
   });
 });
 
-ipcMain.on('overlay:gesture-start', (event, payload) => {
+ipcMain.on('overlay:gesture-start', (event: Electron.IpcMainEvent, payload: any) => {
   if (!isSurfaceSender(event, 'overlay', resultTargetWindow)) return;
   markSelectionGestureDrawing(payload?.token);
 });
 
 // A stroke was committed but the user keeps circling (multi-stroke chain):
 // keep the arm alive so the session does not expire between strokes.
-ipcMain.on('overlay:gesture-stroke', (event, payload) => {
+ipcMain.on('overlay:gesture-stroke', (event: Electron.IpcMainEvent, payload: any) => {
   if (!isSurfaceSender(event, 'overlay', resultTargetWindow)) return;
   const arm = selectionGestureArm;
   if (!arm || String(payload?.token || '') !== arm.token) return;
@@ -3976,12 +4051,12 @@ ipcMain.on('overlay:gesture-stroke', (event, payload) => {
 // the user their selection failed when it had not. See submit_gating_policy.ts.
 const SUBMIT_GROUNDING_POLL_MS = 60;
 
-ipcMain.on('stage:submit-selection-command', (event, payload) => {
+ipcMain.on('stage:submit-selection-command', (event: Electron.IpcMainEvent, payload: any) => {
   if (!isSurfaceSender(event, 'stage', resultTargetWindow)) return;
   submitSelectionCommandWhenGrounded(payload, Date.now());
 });
 
-function submitSelectionCommandWhenGrounded(payload, startedAt, noticeShown = false) {
+function submitSelectionCommandWhenGrounded(payload: any, startedAt: number, noticeShown = false) {
   const selectionSessionToken = payload?.selectionSessionToken;
   const session = selectionSessions.get(selectionSessionToken);
   const gate = decideSubmitGate({
@@ -4058,13 +4133,13 @@ function submitSelectionCommandWhenGrounded(payload, startedAt, noticeShown = fa
   // 不在这里记下来，工作室永远只能显示答案、没有问题。
   pendingQuestions.set(selectionSessionToken, String(payload?.command || '').trim());
   log(`stage:submit-selection-command token=${selectionSessionToken} request=${requestId} command_len=${String(enriched.command || '').length}`);
-  let child = null;
+  let child: ReturnType<typeof runPythonBridge> | null = null;
   child = runPythonBridge(enriched, 'scripts/selection_bridge.py', 'stage', {
     timelineToken: selectionSessionToken,
     // 桥在跑的时候就在报它走到哪一步了。这些阶段一直存在，只是从来没有送到
     // 界面上——于是用户看到的是一个跳动的秒数，跟一个卡死的进程分不出来。
     // 现在每一步都变成正在等的那张卡上的一行。
-    onProgress: (record) => {
+    onProgress: (record: any) => {
       if (!selectionSessions.isCurrentRequest(selectionSessionToken, requestId)) return;
       const step = CardModel.phaseStep(record);
       if (!step) return;
@@ -4074,7 +4149,7 @@ function submitSelectionCommandWhenGrounded(payload, startedAt, noticeShown = fa
         patch: { steps: [step] },
       });
     },
-    onComplete: (parsed) => {
+    onComplete: (parsed: any) => {
       if (activeSessionChildren.get(selectionSessionToken) === child) activeSessionChildren.delete(selectionSessionToken);
       if (!selectionSessions.isCurrentRequest(selectionSessionToken, requestId)) {
         log(`stage result ignored stale token=${selectionSessionToken} request=${requestId}`);
@@ -4098,7 +4173,7 @@ function submitSelectionCommandWhenGrounded(payload, startedAt, noticeShown = fa
       parsed.selectionSnapshotId = session.snapshot?.snapshot_id || null;
       parsed.requestId = requestId;
       registerActionProposals(parsed, selectionSessionToken, 'stage');
-      const autoProposal = parsed.actionProposals?.find((proposal) => proposal.id === parsed.autoExecuteProposalId);
+      const autoProposal = parsed.actionProposals?.find((proposal: any) => proposal.id === parsed.autoExecuteProposalId);
       if (canAutoExecuteInternalProposal(parsed, autoProposal)) {
         if (
           parsed?.intentKind === 'review_draft_delivery'
@@ -4115,7 +4190,7 @@ function submitSelectionCommandWhenGrounded(payload, startedAt, noticeShown = fa
               confirmed: false,
               selectionSessionToken,
             }, 'stage', {
-              onComplete: (actionResult) => {
+              onComplete: (actionResult: any) => {
                 lastStageResult = { token: selectionSessionToken, parsed: safeClone(actionResult) };
                 showStage({
                   reason: 'delivery-result',
@@ -4136,7 +4211,7 @@ function submitSelectionCommandWhenGrounded(payload, startedAt, noticeShown = fa
           confirmed: false,
           selectionSessionToken,
         }, 'stage', {
-          onComplete: (actionResult) => {
+          onComplete: (actionResult: any) => {
             const output = actionResult?.executionResult?.output || {};
             const highlightItemId = output?.verified === true
               ? (output?.item?.id || output?.items?.[0]?.id || null)
@@ -4163,7 +4238,7 @@ function submitSelectionCommandWhenGrounded(payload, startedAt, noticeShown = fa
 // far too slow for hover. Make it resident the way the OCR worker is, then hover
 // highlighting becomes possible. Recorded rather than fixed now: click-rate is
 // the interaction the feature was asked for.
-ipcMain.handle('stage:pick-element', async (event, payload) => {
+ipcMain.handle('stage:pick-element', async (event: Electron.IpcMainInvokeEvent, payload: any) => {
   if (!isSurfaceSender(event, 'stage', resultTargetWindow)) {
     return { ok: false, error: 'unauthorized_stage_sender' };
   }
@@ -4181,12 +4256,12 @@ ipcMain.handle('stage:pick-element', async (event, payload) => {
       { target: 'stage', timeoutMs: 3000 },
     );
   } catch (error) {
-    log(`stage:pick-element failed ${error.name}: ${error.message}`);
+    log(`stage:pick-element failed ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
     return { ok: false, error: 'element_probe_unavailable' };
   }
 });
 
-ipcMain.handle('stage:agent-sessions', async (event, payload) => {
+ipcMain.handle('stage:agent-sessions', async (event: Electron.IpcMainInvokeEvent, payload: any) => {
   if (!isSurfaceSender(event, 'stage', resultTargetWindow)) {
     return { ok: false, error: 'unauthorized_stage_sender' };
   }
@@ -4205,11 +4280,11 @@ ipcMain.handle('stage:agent-sessions', async (event, payload) => {
       limit: 5,
     }, 'scripts/fabric_bridge.py', { target: 'stage', timeoutMs: 15000 });
   } catch (error) {
-    return { ok: false, error: String(error?.message || 'agent_sessions_unavailable') };
+    return { ok: false, error: String((error as { message?: string })?.message || 'agent_sessions_unavailable') };
   }
 });
 
-ipcMain.handle('stage:dispatch-agent-prompt', async (event, payload) => {
+ipcMain.handle('stage:dispatch-agent-prompt', async (event: Electron.IpcMainInvokeEvent, payload: any) => {
   if (!isSurfaceSender(event, 'stage', resultTargetWindow)) {
     return { ok: false, error: 'unauthorized_stage_sender' };
   }
@@ -4227,12 +4302,12 @@ ipcMain.handle('stage:dispatch-agent-prompt', async (event, payload) => {
     if (result?.ok === true) selectionSessions.clearAgentPromptDraft(selectionSessionToken);
     return result;
   } catch (error) {
-    return { ok: false, error: String(error?.message || 'agent_prompt_dispatch_failed') };
+    return { ok: false, error: String((error as { message?: string })?.message || 'agent_prompt_dispatch_failed') };
   }
 });
 
 // Context actions open the reviewed draft in the dashboard; they never write.
-ipcMain.on('stage:context-action', (event, payload) => {
+ipcMain.on('stage:context-action', (event: Electron.IpcMainEvent, payload: any) => {
   if (!isSurfaceSender(event, 'stage', resultTargetWindow)) return;
   const id = String(payload?.id || '');
   const token = payload?.selectionSessionToken || null;
@@ -4250,7 +4325,7 @@ ipcMain.on('stage:context-action', (event, payload) => {
   }
 });
 
-function executeActionForTarget(payload, target, options = {}) {
+function executeActionForTarget(payload: any, target: string, options: any = {}) {
   const token = payload?.actionToken || payload?.action_token;
   const selectionSessionToken = payload?.selectionSessionToken || null;
   // Runtime-issue results carry no selection session (token null); a stale
@@ -4279,7 +4354,7 @@ function executeActionForTarget(payload, target, options = {}) {
   };
   log(`${target}:execute-action type=${proposal.action_type || 'unknown'} confirmed=${enriched.confirmed}`);
   runPythonBridge(enriched, 'scripts/action_bridge.py', target, {
-    onComplete: (parsed) => {
+    onComplete: (parsed: any) => {
       if (isSelectionSurface && selectionSessionToken && !selectionSessions.get(selectionSessionToken)) {
         log(`${target}:action result ignored expired selection session`);
         return;
@@ -4292,7 +4367,7 @@ function executeActionForTarget(payload, target, options = {}) {
   });
 }
 
-ipcMain.on('stage:execute-action', (event, payload) => {
+ipcMain.on('stage:execute-action', (event: Electron.IpcMainEvent, payload: any) => {
   if (isSurfaceSender(event, 'stage', resultTargetWindow)) executeActionForTarget(payload, 'stage');
 });
 
@@ -4301,7 +4376,7 @@ ipcMain.on('stage:execute-action', (event, payload) => {
 // and point come from the frozen selection session, so the write can never be
 // aimed somewhere the user did not point. Python decides whether the write is
 // possible and verifiable, and falls back to the clipboard when it is not.
-ipcMain.on('stage:insert-result-text', (event, payload) => {
+ipcMain.on('stage:insert-result-text', (event: Electron.IpcMainEvent, payload: any) => {
   if (!isSurfaceSender(event, 'stage', resultTargetWindow)) return;
   const selectionSessionToken = payload?.selectionSessionToken || null;
   const session = selectionSessionToken ? selectionSessions.get(selectionSessionToken) : null;
@@ -4329,7 +4404,7 @@ ipcMain.on('stage:insert-result-text', (event, payload) => {
     targetPoint: safeClone(snapshot.target_point || null),
     targetPointSpace: snapshot.target_point_space || null,
   }, 'scripts/deliver_text_bridge.py', 'stage', {
-    onComplete: (parsed) => {
+    onComplete: (parsed: any) => {
       if (!selectionSessions.get(selectionSessionToken)) {
         log('stage:insert-result-text result ignored expired selection session');
         return;
@@ -4349,7 +4424,7 @@ ipcMain.on('stage:insert-result-text', (event, payload) => {
 //
 // 它也因此不开新的一轮：selectionSessions 的 request 计数不动，pendingQuestions
 // 不动，conversation_store 不动。用户看到的是同一张卡上那一段字长长了。
-ipcMain.handle('stage:expand-passage', async (event, payload) => {
+ipcMain.handle('stage:expand-passage', async (event: Electron.IpcMainInvokeEvent, payload: any) => {
   if (!isSurfaceSender(event, 'stage', resultTargetWindow)) {
     return { ok: false, error: '这个请求不是从舞台发来的。' };
   }
@@ -4362,7 +4437,7 @@ ipcMain.handle('stage:expand-passage', async (event, payload) => {
   log(`stage:expand-passage token=${selectionSessionToken} chars=${passage.length}`);
   return new Promise((resolve) => {
     let settled = false;
-    const finish = (value) => {
+    const finish = (value: unknown) => {
       if (settled) return;
       settled = true;
       resolve(value);
@@ -4372,7 +4447,7 @@ ipcMain.handle('stage:expand-passage', async (event, payload) => {
       context: String(payload?.context || ''),
     }, 'scripts/expand_passage_bridge.py', 'stage', {
       timeoutMs: 60_000,
-      onComplete: (parsed) => {
+      onComplete: (parsed: any) => {
         log(`stage:expand-passage outcome=${parsed?.ok === true ? 'ok' : (parsed?.error || 'unknown')}`);
         finish(parsed && typeof parsed === 'object'
           ? parsed
@@ -4385,19 +4460,19 @@ ipcMain.handle('stage:expand-passage', async (event, payload) => {
   });
 });
 
-function isDashboardSender(event) {
+function isDashboardSender(event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent) {
   return Boolean(dashboardWindow && !dashboardWindow.isDestroyed() && event.sender === dashboardWindow.webContents);
 }
 
-function isCompanionSender(event) {
+function isCompanionSender(event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent) {
   return Boolean(companionWindow && !companionWindow.isDestroyed() && event.sender === companionWindow.webContents);
 }
 
-function isOnboardingSender(event) {
+function isOnboardingSender(event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent) {
   return Boolean(onboardingWindow && !onboardingWindow.isDestroyed() && event.sender === onboardingWindow.webContents);
 }
 
-ipcMain.on('onboarding:start', (event) => {
+ipcMain.on('onboarding:start', (event: Electron.IpcMainEvent) => {
   if (!isOnboardingSender(event) || !onboardingRequired) return;
   onboardingPhase = 'progress';
   void startPreflight({ source: 'onboarding' })
@@ -4422,20 +4497,20 @@ ipcMain.on('onboarding:start', (event) => {
     });
 });
 
-ipcMain.on('onboarding:continue', (event) => {
+ipcMain.on('onboarding:continue', (event: Electron.IpcMainEvent) => {
   if (!isOnboardingSender(event) || onboardingRequired) return;
   showDashboard({ view: 'general' }, { activate: true });
   onboardingWindow?.close();
 });
 
-ipcMain.on('onboarding:cancel', (event) => {
+ipcMain.on('onboarding:cancel', (event: Electron.IpcMainEvent) => {
   if (!isOnboardingSender(event)) return;
   cancelPreflight();
   isQuitting = true;
   app.quit();
 });
 
-function queueDashboardOperation(operation, payload = {}) {
+function queueDashboardOperation(operation: string, payload = {}) {
   const requestId = `dashboard-${++dashboardRequestSerial}`;
   dashboardOperationQueue = dashboardOperationQueue
     .catch(() => undefined)
@@ -4449,7 +4524,7 @@ function queueDashboardOperation(operation, payload = {}) {
         requestId,
         ...payload,
       }, 'scripts/shopping_list_bridge.py', 'dashboard', {
-        onComplete: (parsed) => {
+        onComplete: (parsed: any) => {
           sendBridgeResult('dashboard', parsed);
           resolve();
         },
@@ -4457,7 +4532,7 @@ function queueDashboardOperation(operation, payload = {}) {
     }));
 }
 
-function queueCalendarOperation(operation, payload = {}) {
+function queueCalendarOperation(operation: string, payload = {}) {
   const requestId = `calendar-${++dashboardRequestSerial}`;
   dashboardOperationQueue = dashboardOperationQueue
     .catch(() => undefined)
@@ -4471,7 +4546,7 @@ function queueCalendarOperation(operation, payload = {}) {
         requestId,
         ...payload,
       }, 'scripts/calendar_bridge.py', 'calendar-dashboard', {
-        onComplete: (parsed) => {
+        onComplete: (parsed: any) => {
           sendBridgeResult('calendar-dashboard', parsed);
           resolve();
         },
@@ -4479,28 +4554,28 @@ function queueCalendarOperation(operation, payload = {}) {
     }));
 }
 
-ipcMain.on('companion:hide', (event) => {
+ipcMain.on('companion:hide', (event: Electron.IpcMainEvent) => {
   if (!isCompanionSender(event)) return;
   if (companionWindow && !companionWindow.isDestroyed()) companionWindow.hide();
 });
-ipcMain.on('companion:pin', (event, payload) => {
+ipcMain.on('companion:pin', (event: Electron.IpcMainEvent, payload: any) => {
   if (!isCompanionSender(event)) return;
   companionPinned = payload?.pinned !== false;
   if (companionWindow && !companionWindow.isDestroyed()) {
     companionWindow.setAlwaysOnTop(companionPinned);
   }
 });
-ipcMain.on('companion:expand', (event) => {
+ipcMain.on('companion:expand', (event: Electron.IpcMainEvent) => {
   if (!isCompanionSender(event)) return;
   showPrimarySurface({ activate: true });
 });
 
-ipcMain.on('dashboard:hide', (event) => {
+ipcMain.on('dashboard:hide', (event: Electron.IpcMainEvent) => {
   if (!isDashboardSender(event)) return;
   dashboardWindow.hide();
   stopTitleBarSampling();
 });
-ipcMain.on('dashboard:theme', (event, payload = {}) => {
+ipcMain.on('dashboard:theme', (event: Electron.IpcMainEvent, payload: any = {}) => {
   if (!isDashboardSender(event) || process.platform === 'darwin') return;
   const theme = ['light', 'dark'].includes(payload.theme) ? payload.theme : 'system';
   const dark = theme === 'dark' || (theme === 'system' && nativeTheme.shouldUseDarkColors);
@@ -4514,11 +4589,11 @@ ipcMain.on('dashboard:theme', (event, payload = {}) => {
     // Window Controls Overlay is optional; renderer chrome remains usable.
   }
 });
-ipcMain.handle('runtime-snapshot:get', async (event, options = {}) => {
+ipcMain.handle('runtime-snapshot:get', async (event: Electron.IpcMainInvokeEvent, options: any = {}) => {
   if (!isDashboardSender(event)) throw new Error('unauthorized_runtime_snapshot_sender');
   return runtimeSnapshot.get({ force: options?.force === true });
 });
-ipcMain.on('dashboard:fabric-request', (event, payload) => {
+ipcMain.on('dashboard:fabric-request', (event: Electron.IpcMainEvent, payload: any) => {
   if (!isDashboardSender(event)) return;
   const operation = typeof payload?.operation === 'string' ? payload.operation : '';
   if (operation === 'calibration.start') {
@@ -4568,7 +4643,7 @@ ipcMain.on('dashboard:fabric-request', (event, payload) => {
         ok: false,
         state: 'failed',
         fabricOperation: operation,
-        error: error.message,
+        error: error instanceof Error ? error.message : String(error),
       });
     }
     return;
@@ -4661,7 +4736,7 @@ ipcMain.on('dashboard:fabric-request', (event, payload) => {
     ...bridgePayload,
     operation,
   }, 'scripts/fabric_bridge.py', 'fabric-dashboard', {
-    onComplete: (parsed) => {
+    onComplete: (parsed: any) => {
       if (
         parsed?.ok === true
         && ['models.save', 'models.delete', 'models.set_default', 'models.test'].includes(operation)
@@ -4669,7 +4744,7 @@ ipcMain.on('dashboard:fabric-request', (event, payload) => {
         try {
           fabricSettings = fabricSettingsStore.load();
         } catch (error) {
-          log(`model settings reload failed ${error.name}: ${error.message}`);
+          log(`model settings reload failed ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
         }
       }
       if (operation === 'settings.save' && parsed?.ok === true && parsed?.settings) {
@@ -4681,7 +4756,7 @@ ipcMain.on('dashboard:fabric-request', (event, payload) => {
           try {
             fabricSettingsStore.save(previousSettings);
           } catch (error) {
-            log(`voice settings rollback persistence failed ${error.name}`);
+            log(`voice settings rollback persistence failed ${error instanceof Error ? error.name : 'Error'}`);
           }
           parsed.ok = false;
           parsed.settings = previousSettings;
@@ -4700,7 +4775,7 @@ ipcMain.on('dashboard:fabric-request', (event, payload) => {
           });
         }
         parsed.hotkeys = registerConfigurableHotkeys();
-        const failedHotkeys = Object.entries(parsed.hotkeys)
+        const failedHotkeys = Object.entries(parsed.hotkeys as Record<string, { accelerator: string; registered: boolean; disabled?: boolean }>)
           .filter(([, result]) => result && result.registered === false && result.disabled !== true)
           .map(([name]) => name);
         if (failedHotkeys.length) {
@@ -4708,7 +4783,7 @@ ipcMain.on('dashboard:fabric-request', (event, payload) => {
           try {
             fabricSettingsStore.save(previousSettings);
           } catch (error) {
-            log(`settings hotkey rollback persistence failed ${error.name}`);
+            log(`settings hotkey rollback persistence failed ${error instanceof Error ? error.name : 'Error'}`);
           }
           const voiceRollback = configureVoiceRuntime(previousSettings, { preload: true });
           if (!voiceRollback.ok) log(`settings voice runtime rollback failed ${voiceRollback.error}`);
@@ -4735,14 +4810,14 @@ ipcMain.on('dashboard:fabric-request', (event, payload) => {
         try {
           app.setLoginItemSettings({ openAtLogin: fabricSettings.general?.launch_at_login === true });
         } catch (error) {
-          log(`login item settings save failed ${error.name}`);
+          log(`login item settings save failed ${error instanceof Error ? error.name : 'Error'}`);
         }
       }
       if (operation.startsWith('models.') && parsed?.ok === true && fabricSettingsStore) {
         try {
           fabricSettings = fabricSettingsStore.load();
         } catch (error) {
-          log(`model settings refresh failed ${error.name}`);
+          log(`model settings refresh failed ${error instanceof Error ? error.name : 'Error'}`);
         }
       }
       if (operation === 'settings.save' && parsed?.ok === true) {
@@ -4757,10 +4832,10 @@ ipcMain.on('dashboard:fabric-request', (event, payload) => {
     },
   });
 });
-ipcMain.on('dashboard:request-state', (event) => {
+ipcMain.on('dashboard:request-state', (event: Electron.IpcMainEvent) => {
   if (isDashboardSender(event)) queueDashboardOperation('list');
 });
-ipcMain.on('dashboard:set-checked', (event, payload) => {
+ipcMain.on('dashboard:set-checked', (event: Electron.IpcMainEvent, payload: any) => {
   if (!isDashboardSender(event)) return;
   queueDashboardOperation('set_checked', {
     itemId: payload?.itemId,
@@ -4768,7 +4843,7 @@ ipcMain.on('dashboard:set-checked', (event, payload) => {
     expectedUpdatedAt: payload?.expectedUpdatedAt,
   });
 });
-ipcMain.on('dashboard:undo-add', (event, payload) => {
+ipcMain.on('dashboard:undo-add', (event: Electron.IpcMainEvent, payload: any) => {
   if (!isDashboardSender(event)) return;
   queueDashboardOperation('undo_add', {
     itemId: payload?.itemId,
@@ -4776,14 +4851,14 @@ ipcMain.on('dashboard:undo-add', (event, payload) => {
     expectedUpdatedAt: payload?.expectedUpdatedAt,
   });
 });
-ipcMain.on('dashboard:calendar-request-state', (event) => {
+ipcMain.on('dashboard:calendar-request-state', (event: Electron.IpcMainEvent) => {
   if (isDashboardSender(event)) queueCalendarOperation('list');
 });
-ipcMain.on('dashboard:calendar-preview', (event, payload) => {
+ipcMain.on('dashboard:calendar-preview', (event: Electron.IpcMainEvent, payload: any) => {
   if (!isDashboardSender(event)) return;
   queueCalendarOperation('preview', { event: payload?.event });
 });
-ipcMain.on('dashboard:calendar-create', (event, payload) => {
+ipcMain.on('dashboard:calendar-create', (event: Electron.IpcMainEvent, payload: any) => {
   if (!isDashboardSender(event)) return;
   queueCalendarOperation('create', {
     event: payload?.event,
@@ -4793,7 +4868,7 @@ ipcMain.on('dashboard:calendar-create', (event, payload) => {
     confirmed: payload?.confirmed === true,
   });
 });
-ipcMain.on('dashboard:calendar-undo-create', (event, payload) => {
+ipcMain.on('dashboard:calendar-undo-create', (event: Electron.IpcMainEvent, payload: any) => {
   if (!isDashboardSender(event)) return;
   queueCalendarOperation('undo_create', {
     eventId: payload?.eventId,
@@ -4801,7 +4876,7 @@ ipcMain.on('dashboard:calendar-undo-create', (event, payload) => {
     expectedUpdatedAt: payload?.expectedUpdatedAt,
   });
 });
-ipcMain.on('dashboard:route-open', async (event, payload) => {
+ipcMain.on('dashboard:route-open', async (event: Electron.IpcMainEvent, payload: any) => {
   if (!isDashboardSender(event)) return;
   const url = buildGoogleMapsDirectionsUrl(payload);
   if (!url || !isAllowedGoogleMapsDirectionsUrl(url)) {
@@ -4818,7 +4893,7 @@ ipcMain.on('dashboard:route-open', async (event, payload) => {
   } catch (error) {
     dashboardWindow?.webContents.send('dashboard:route-result', {
       ok: false,
-      error: `无法打开默认浏览器：${error.message}`,
+      error: `无法打开默认浏览器：${error instanceof Error ? error.message : String(error)}`,
     });
   }
 });

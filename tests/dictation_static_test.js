@@ -10,7 +10,7 @@ const overlayHtml = fs.readFileSync('electron/renderer/index.html', 'utf8');
 assert(preload.includes("startDictation: () => ipcRenderer.send('dictation:start', { surface: 'overlay' })"));
 assert(preload.includes("startDictation: () => ipcRenderer.send('dictation:start', { surface: 'panel' })"));
 assert(preload.includes("onPayload('dictation:result'"));
-assert(main.includes("ipcMain.on('dictation:start', (event, payload) =>"));
+assert(main.includes("ipcMain.on('dictation:start', (event:"));
 assert(main.includes('isSurfaceSender(event, surface, resultTargetWindow)'));
 assert(main.includes('const dictationChildren = new Map();'));
 assert(main.includes('if (dictationChildren.has(surface))'));

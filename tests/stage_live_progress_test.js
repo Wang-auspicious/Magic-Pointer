@@ -19,7 +19,7 @@ assert(main.includes('CardModel.phaseStep(record)'),
   '阶段行要经过 cards.js 翻译成人话，不能把 phase=pixels_frozen 直接摆给用户看');
 assert(main.includes("require('./cards')"), '主进程和界面必须用同一份卡片契约');
 // 过期的那一轮不能往当前这张卡上打补丁
-assert(/onProgress: \(record\) => \{\s*\n\s*if \(!selectionSessions\.isCurrentRequest\(/.test(main),
+assert(/onProgress: \(record[^)]*\) => \{\s*\n\s*if \(!selectionSessions\.isCurrentRequest\(/.test(main),
   '只有当前这一轮的阶段才算数，迟到的那一轮不能往新卡上写');
 
 // ---- preload ----

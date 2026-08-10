@@ -1,22 +1,21 @@
-// @ts-nocheck -- legacy classic-script globals are preserved during the extension migration.
 const api = window.magicPointerPanel;
-const commandInput = document.getElementById('command');
-const statusNode = document.getElementById('result');
-const capsule = document.getElementById('inline-action-rail');
+const commandInput = document.getElementById('command') as HTMLInputElement;
+const statusNode = document.getElementById('result')!;
+const capsule = document.getElementById('inline-action-rail')!;
 
-let currentSelectionSessionToken = null;
-let currentPanelLayoutNonce = null;
-let currentCaptureSummary = null;
+let currentSelectionSessionToken: string | null = null;
+let currentPanelLayoutNonce: string | null = null;
+let currentCaptureSummary: MagicPointerCaptureSummary | null = null;
 let defaultInputMode = 'voice';
 let voiceAutoSubmit = true;
 let voiceSilenceMs = 1600;
 let submitting = false;
-let autoDismissTimer = null;
-let voiceSubmitTimer = null;
+let autoDismissTimer: number | null = null;
+let voiceSubmitTimer: number | null = null;
 let composing = false;
 
 const measureCanvas = document.createElement('canvas');
-const measureContext = measureCanvas.getContext('2d');
+const measureContext = measureCanvas.getContext('2d')!;
 
 function clearTimers() {
   if (autoDismissTimer) window.clearTimeout(autoDismissTimer);
@@ -45,7 +44,7 @@ function syncCapsuleSize(text = commandInput.value, state = capsule.dataset.stat
   });
 }
 
-function setCapsuleState(state, message = '') {
+function setCapsuleState(state: string, message = '') {
   capsule.dataset.state = state;
   statusNode.replaceChildren(document.createTextNode(message));
   statusNode.hidden = !message;
@@ -82,7 +81,7 @@ function scheduleVoiceAutoSubmit() {
   voiceSubmitTimer = window.setTimeout(() => submitCommand(), voiceSilenceMs);
 }
 
-function renderCaptureEligibility(captureEligibility) {
+function renderCaptureEligibility(captureEligibility: MagicPointerCaptureEligibility | undefined) {
   if (!captureEligibility || captureEligibility.commandReady !== false) return true;
   setCapsuleState('error', captureEligibility.message || '当前对象不可用');
   commandInput.disabled = true;
@@ -93,7 +92,7 @@ function renderCaptureEligibility(captureEligibility) {
   return false;
 }
 
-function showResult(payload = {}) {
+function showResult(payload: MagicPointerPanelResultPayload = {}) {
   submitting = false;
   if (
     payload.selectionSessionToken
@@ -141,7 +140,7 @@ window.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') api.hide();
 });
 
-api.onShow((payload = {}) => {
+api.onShow((payload: MagicPointerPanelShowPayload = {}) => {
   clearTimers();
   submitting = false;
   composing = false;
@@ -176,7 +175,7 @@ api.onHide(() => {
 });
 
 api.onResult(showResult);
-api.onDictationResult((payload = {}) => {
+api.onDictationResult((payload: MagicPointerDictationResultPayload = {}) => {
   if (payload.surface !== 'panel') return;
   if (payload.ok === false) {
     setCapsuleState('error', payload.error || '本地语音输入不可用');

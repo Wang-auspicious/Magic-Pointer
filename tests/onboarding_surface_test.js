@@ -40,7 +40,7 @@ assert(js.includes('.onboarding-screen[data-screen="${screenName}"]'),
 assert(js.includes("showScreen('success')"), 'completed setup has a distinct success screen');
 assert(js.includes("showScreen('failure')"), 'blocked setup has a distinct failure screen');
 
-assert(main.includes('let onboardingWindow = null;'));
+assert(main.includes('let onboardingWindow:'));
 assert(main.includes('function createOnboardingWindow()'));
 assert(main.includes("loadFile(path.join(__dirname, 'renderer', 'onboarding.html'))"));
 assert(main.includes('function showOnboarding('));

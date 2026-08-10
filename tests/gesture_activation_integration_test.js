@@ -75,9 +75,9 @@ assert(main.includes("safeSurfaceSend(surface, 'dictation:result', { ok: false, 
   'voice must report a friendly error instead of doing nothing');
 assert.match(requestActivation, /isSelectionGestureActivation\(reason\)[\s\S]*?armSelectionGesture\(/,
   'wiggle must arm drawing instead of opening a selection session');
-assert.match(main, /function isSelectionGestureActivation\(reason\)[\s\S]*?'wiggle'/,
+assert.match(main, /function isSelectionGestureActivation\(reason[^)]*\)[\s\S]*?'wiggle'/,
   'the gesture activation predicate must still accept a plain wiggle');
-assert.match(main, /function isSelectionGestureActivation\(reason\)[\s\S]*?'episode-continue'/,
+assert.match(main, /function isSelectionGestureActivation\(reason[^)]*\)[\s\S]*?'episode-continue'/,
   'cross-app continuation must arm drawing without a fresh wiggle');
 
 const beginSelection = main.slice(
@@ -101,12 +101,12 @@ assert.doesNotMatch(gestureCompletion, /type:\s*'ERROR'/,
 // early only when it physically cannot enter the capture.
 const captureStart = beginSelection.indexOf('runPythonBridge(');
 const immediateGestureStage = beginSelection.slice(0, captureStart);
-assert.match(immediateGestureStage, /const revealCapsule = \(via\) => \{[\s\S]*?groundingReady: false/,
+assert.match(immediateGestureStage, /const revealCapsule = \(via[^)]*\) => \{[\s\S]*?groundingReady: false/,
   'the early capsule must declare itself ungrounded so the snapshot can still backfill it');
 assert.match(immediateGestureStage, /if \(gesture && CAPSULE_CONTENT_PROTECTED\) revealCapsule\('immediate'\)/,
   'an immediate capsule is permitted only while the stage is excluded from screen capture');
 const revealBody = immediateGestureStage.slice(
-  immediateGestureStage.indexOf('const revealCapsule = (via) => {'),
+  immediateGestureStage.indexOf('const revealCapsule = (via'),
 );
 assert.match(revealBody, /if \(!gesture\) return;/,
   'only a completed gesture opens a capsule early; the shortcut path keeps its own flow');

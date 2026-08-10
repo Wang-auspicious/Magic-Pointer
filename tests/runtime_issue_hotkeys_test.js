@@ -15,7 +15,7 @@ assert(main.includes("globalShortcut.register('Control+Alt+Shift+M'"));
 assert(main.includes("requestActivation('runtime-delivery')"));
 assert(main.includes("requestActivation('legacy-native-selection')"));
 assert(main.includes('const previousSettings = fabricSettings;'));
-assert(main.includes('const failedHotkeys = Object.entries(parsed.hotkeys)'));
+assert(main.includes('const failedHotkeys = Object.entries(parsed.hotkeys as'));
 assert(main.includes('fabricSettingsStore.save(previousSettings)'));
 assert(main.includes('parsed.ok = false'));
 assert(main.includes('快捷键注册失败'));

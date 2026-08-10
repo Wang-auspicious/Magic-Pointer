@@ -1,9 +1,8 @@
-// @ts-nocheck -- legacy WebGL classic-script behavior is preserved during the extension migration.
-(function initSweepVisual(root, factory) {
+(function initSweepVisual(root: { MagicSweepVisual?: unknown } | null, factory: () => MagicPointerSweepVisualApi) {
   const api = factory();
   if (typeof module === 'object' && module.exports) module.exports = api;
   if (root) root.MagicSweepVisual = api;
-}(typeof globalThis !== 'undefined' ? globalThis : this, function createSweepVisual() {
+}(typeof globalThis !== 'undefined' ? globalThis : this as unknown as { MagicSweepVisual?: unknown } | null, function createSweepVisual(): MagicPointerSweepVisualApi {
   'use strict';
 
   const MAX_POINTS = 64;
@@ -87,17 +86,26 @@
     '}',
   ].join('\n');
 
-  function clamp(value, minimum, maximum) {
+  interface SweepPoint {
+    x: number;
+    y: number;
+  }
+  interface SweepSample extends SweepPoint {
+    progress: number;
+  }
+
+  function clamp(value: number, minimum: number, maximum: number) {
     return Math.max(minimum, Math.min(maximum, value));
   }
 
-  function usablePoints(points) {
+  function usablePoints(points: unknown): SweepPoint[] {
     return Array.isArray(points)
-      ? points.filter((point) => Number.isFinite(point?.x) && Number.isFinite(point?.y))
+      ? (points.filter((point) => Number.isFinite((point as { x?: unknown } | null)?.x as number)
+          && Number.isFinite((point as { y?: unknown } | null)?.y as number)) as SweepPoint[])
       : [];
   }
 
-  function pathLength(points) {
+  function pathLength(points: SweepPoint[]) {
     let total = 0;
     for (let index = 1; index < points.length; index += 1) {
       total += Math.hypot(
@@ -108,7 +116,7 @@
     return total;
   }
 
-  function catmullRomPoint(p0, p1, p2, p3, t) {
+  function catmullRomPoint(p0: SweepPoint, p1: SweepPoint, p2: SweepPoint, p3: SweepPoint, t: number): SweepPoint {
     const t2 = t * t;
     const t3 = t2 * t;
     return {
@@ -123,7 +131,7 @@
     };
   }
 
-  function smoothPath(points) {
+  function smoothPath(points: SweepPoint[]): SweepPoint[] {
     if (points.length <= 2) {
       return points.map((point) => ({ x: point.x, y: point.y }));
     }
@@ -145,7 +153,7 @@
     return result;
   }
 
-  function resamplePath(points, count) {
+  function resamplePath(points: SweepPoint[], count: number): SweepPoint[] {
     if (points.length <= count) {
       return points.map((point) => ({ x: point.x, y: point.y }));
     }
@@ -178,7 +186,7 @@
     return result;
   }
 
-  function addArcProgress(points) {
+  function addArcProgress(points: SweepPoint[]): SweepSample[] {
     const total = Math.max(pathLength(points), 0.0001);
     let travelled = 0;
     return points.map((point, index) => {
@@ -196,7 +204,7 @@
     });
   }
 
-  function sweepProfile(progress) {
+  function sweepProfile(progress: number): MagicPointerSweepProfile {
     const shaped = Math.pow(clamp(progress, 0, 1), 0.72);
     return {
       color: SWEEP_STYLE.color,
@@ -207,7 +215,7 @@
     };
   }
 
-  function buildSdfPath(points, requestedWidth = 22) {
+  function buildSdfPath(points: unknown, requestedWidth = 22): MagicPointerSweepPath | null {
     const usable = usablePoints(points);
     if (usable.length < 2 || pathLength(usable) <= 0.1) return null;
     const smooth = smoothPath(usable);
@@ -237,11 +245,11 @@
     };
   }
 
-  function buildSweepGeometry(points, requestedWidth = 22) {
+  function buildSweepGeometry(points: unknown, requestedWidth = 22) {
     return buildSdfPath(points, requestedWidth);
   }
 
-  function buildSweepSegments(points, requestedWidth = 22) {
+  function buildSweepSegments(points: unknown, requestedWidth = 22): unknown[] {
     const path = buildSdfPath(points, requestedWidth);
     if (!path) return [];
     return path.samples.slice(1).map((point, index) => ({
@@ -252,12 +260,12 @@
     }));
   }
 
-  function buildSweepRibbon(points, requestedWidth = 22) {
+  function buildSweepRibbon(points: unknown, requestedWidth = 22) {
     return buildSdfPath(points, requestedWidth);
   }
 
-  function compileShader(gl, type, source) {
-    const shader = gl.createShader(type);
+  function compileShader(gl: WebGL2RenderingContext, type: number, source: string) {
+    const shader = gl.createShader(type)!;
     gl.shaderSource(shader, source);
     gl.compileShader(shader);
     if (gl.getShaderParameter(shader, gl.COMPILE_STATUS)) return shader;
@@ -266,7 +274,7 @@
     throw new Error(message);
   }
 
-  function createProgram(gl) {
+  function createProgram(gl: WebGL2RenderingContext): WebGLProgram {
     const program = gl.createProgram();
     const vertex = compileShader(gl, gl.VERTEX_SHADER, VERTEX_SHADER_SOURCE);
     const fragment = compileShader(gl, gl.FRAGMENT_SHADER, FRAGMENT_SHADER_SOURCE);
@@ -281,8 +289,20 @@
     throw new Error(message);
   }
 
-  class SweepRenderer {
-    constructor(canvas) {
+  class SweepRenderer implements MagicPointerSweepRenderer {
+    declare canvas: HTMLCanvasElement;
+    declare gl: WebGL2RenderingContext | null;
+    declare ctx: CanvasRenderingContext2D | null;
+    declare program: WebGLProgram | null;
+    declare vertexBuffer: WebGLBuffer | null;
+    declare positionAttribute: number;
+    declare locations: Record<string, WebGLUniformLocation | null> | null;
+    declare cssWidth: number;
+    declare cssHeight: number;
+    declare dpr: number;
+    declare contextLost: boolean;
+
+    constructor(canvas: HTMLCanvasElement) {
       this.canvas = canvas;
       this.gl = null;
       this.ctx = null;
@@ -316,27 +336,29 @@
     }
 
     initializeWebGl() {
-      const gl = this.gl;
+      const gl = this.gl!;
       this.program = createProgram(gl);
+      const program = this.program!;
       this.vertexBuffer = gl.createBuffer();
-      this.positionAttribute = gl.getAttribLocation(this.program, 'aPosition');
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
+      const vertexBuffer = this.vertexBuffer!;
+      this.positionAttribute = gl.getAttribLocation(program, 'aPosition');
+      gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
       gl.enableVertexAttribArray(this.positionAttribute);
       gl.vertexAttribPointer(this.positionAttribute, 2, gl.FLOAT, false, 0, 0);
       this.locations = {
-        resolution: gl.getUniformLocation(this.program, 'uResolution'),
-        points: gl.getUniformLocation(this.program, 'uPoints[0]'),
-        progresses: gl.getUniformLocation(this.program, 'uProgresses[0]'),
-        pointCount: gl.getUniformLocation(this.program, 'uPointCount'),
-        bodyHalfWidth: gl.getUniformLocation(this.program, 'uBodyHalfWidth'),
-        edgeFeather: gl.getUniformLocation(this.program, 'uEdgeFeather'),
-        tailSoftnessBoost: gl.getUniformLocation(this.program, 'uTailSoftnessBoost'),
-        tailFloor: gl.getUniformLocation(this.program, 'uTailFloor'),
-        baseOpacity: gl.getUniformLocation(this.program, 'uBaseOpacity'),
-        opacity: gl.getUniformLocation(this.program, 'uOpacity'),
-        color: gl.getUniformLocation(this.program, 'uColor'),
+        resolution: gl.getUniformLocation(program, 'uResolution'),
+        points: gl.getUniformLocation(program, 'uPoints[0]'),
+        progresses: gl.getUniformLocation(program, 'uProgresses[0]'),
+        pointCount: gl.getUniformLocation(program, 'uPointCount'),
+        bodyHalfWidth: gl.getUniformLocation(program, 'uBodyHalfWidth'),
+        edgeFeather: gl.getUniformLocation(program, 'uEdgeFeather'),
+        tailSoftnessBoost: gl.getUniformLocation(program, 'uTailSoftnessBoost'),
+        tailFloor: gl.getUniformLocation(program, 'uTailFloor'),
+        baseOpacity: gl.getUniformLocation(program, 'uBaseOpacity'),
+        opacity: gl.getUniformLocation(program, 'uOpacity'),
+        color: gl.getUniformLocation(program, 'uColor'),
       };
-      gl.useProgram(this.program);
+      gl.useProgram(program);
       gl.enable(gl.BLEND);
       gl.blendEquation(gl.FUNC_ADD);
       gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
@@ -352,7 +374,7 @@
       });
     }
 
-    resize(width, height, dpr = 1) {
+    resize(width: number, height: number, dpr = 1) {
       this.cssWidth = Math.max(1, Number(width) || 1);
       this.cssHeight = Math.max(1, Number(height) || 1);
       this.dpr = Math.max(1, Number(dpr) || 1);
@@ -375,26 +397,30 @@
       }
     }
 
-    render(entries, width = 22) {
+    render(entries: unknown, width = 22) {
       this.clear();
       const paths = (Array.isArray(entries) ? entries : [])
         .slice(-8)
-        .map((entry) => ({
-          path: buildSdfPath(entry?.points, width),
-          opacity: clamp(entry?.opacity == null ? 1 : Number(entry.opacity), 0, 1),
-        }))
-        .filter((entry) => entry.path && entry.opacity > 0.01);
+        .map((entry) => {
+          const item = entry as { points?: unknown; opacity?: unknown } | null | undefined;
+          return {
+            path: buildSdfPath(item?.points, width),
+            opacity: clamp(item?.opacity == null ? 1 : Number(item.opacity), 0, 1),
+          };
+        })
+        .filter((entry): entry is { path: MagicPointerSweepPath; opacity: number } =>
+          Boolean(entry.path) && entry.opacity > 0.01);
       if (!paths.length) return;
       if (this.gl && !this.contextLost) this.renderWebGl(paths);
       else if (this.ctx) this.renderCanvas(paths);
     }
 
-    setScissor(bounds) {
+    setScissor(bounds: MagicPointerSweepBounds) {
       const left = clamp(bounds.left, 0, this.cssWidth);
       const right = clamp(bounds.right, 0, this.cssWidth);
       const top = clamp(bounds.top, 0, this.cssHeight);
       const bottom = clamp(bounds.bottom, 0, this.cssHeight);
-      this.gl.scissor(
+      this.gl!.scissor(
         Math.floor(left * this.dpr),
         Math.floor((this.cssHeight - bottom) * this.dpr),
         Math.max(1, Math.ceil((right - left) * this.dpr)),
@@ -402,12 +428,13 @@
       );
     }
 
-    renderWebGl(entries) {
-      const gl = this.gl;
-      const locations = this.locations;
-      gl.useProgram(this.program);
+    renderWebGl(entries: { path: MagicPointerSweepPath; opacity: number }[]) {
+      const gl = this.gl!;
+      const locations = this.locations!;
+      const program = this.program!;
+      gl.useProgram(program);
       gl.uniform2f(locations.resolution, this.canvas.width, this.canvas.height);
-      gl.uniform3fv(locations.color, SWEEP_STYLE.color);
+      gl.uniform3fv(locations.color, SWEEP_STYLE.color as number[]);
       gl.uniform1f(locations.baseOpacity, SWEEP_STYLE.bodyOpacity);
       gl.uniform1f(locations.tailFloor, SWEEP_STYLE.tailFloorOpacity);
 
@@ -425,7 +452,7 @@
           right * this.dpr, top * this.dpr,
           right * this.dpr, bottom * this.dpr,
         ]);
-        gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this.vertexBuffer!);
         gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.DYNAMIC_DRAW);
         gl.vertexAttribPointer(this.positionAttribute, 2, gl.FLOAT, false, 0, 0);
 
@@ -449,8 +476,8 @@
       }
     }
 
-    renderCanvas(entries) {
-      const ctx = this.ctx;
+    renderCanvas(entries: { path: MagicPointerSweepPath; opacity: number }[]) {
+      const ctx = this.ctx!;
       ctx.save();
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';

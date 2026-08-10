@@ -1,10 +1,9 @@
-// @ts-nocheck -- legacy classic-script globals are preserved during the extension migration.
 /* 随行窗 —— 与工作室共用会话，这里只管本窗的渲染与交互 */
 
 /* 头像/球：与 studio.js 同一套；装了 @oreo-design/avatar 后统一换掉 */
-function hash(s){let h=2166136261;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619);}return h>>>0;}
-function rng(seed){let s=hash(String(seed))||1;return()=>{s^=s<<13;s>>>=0;s^=s>>17;s^=s<<5;s>>>=0;return s/4294967296;};}
-function makeOrb(seed, size = 64) {
+function hash(s: string) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+function rng(seed: unknown) { let s = hash(String(seed)) || 1; return () => { s ^= s << 13; s >>>= 0; s ^= s >> 17; s ^= s << 5; s >>>= 0; return s / 4294967296; }; }
+function makeOrb(seed: unknown, size = 64) {
   const r = rng(seed);
   // 色相对：黄绿 ↔ 青蓝 那一段最耐看；由种子在这个区间里取一对，
   // 中间再插一个过渡色，所以三段之间没有硬边。
@@ -14,7 +13,7 @@ function makeOrb(seed, size = 64) {
   const A = `hsl(${h1} 62% 68%)`;
   const M = `hsl(${h2} 56% 66%)`;
   const B = `hsl(${h3} 60% 66%)`;
-  const id = 'o' + hash(seed).toString(36);
+  const id = 'o' + hash(seed as string).toString(36);
   const dur = (7 + r() * 5).toFixed(1);            // 7–12s，一屏里不齐步走
 
   // 渐变轴：从右下角指向左上角，色带因此平行于反对角线。
@@ -51,9 +50,9 @@ function makeOrb(seed, size = 64) {
    小窗看到的和主窗看到的对不上——「他们俩应该是完全同步的才对」。
    ============================================================ */
 
-let currentId = null;
+let currentId: string | null = null;
 
-function setTitle(text, seed) {
+function setTitle(text: string, seed?: unknown) {
   const title = document.getElementById('cp-title');
   if (title) title.textContent = text;
   const orb = document.getElementById('cp-orb');
@@ -61,7 +60,7 @@ function setTitle(text, seed) {
   if (orb) orb.insertAdjacentHTML('afterbegin', makeOrb(seed || text || 'mp', 64));
 }
 
-function showEmpty(on) {
+function showEmpty(on: boolean) {
   const empty = document.getElementById('cp-empty');
   const stream = document.getElementById('cp-stream');
   if (empty) empty.hidden = !on;
@@ -69,7 +68,7 @@ function showEmpty(on) {
 }
 
 /* 一轮问答摊成若干张卡。与 studio.js 的 turnCards 是同一套映射。 */
-function turnCards(turn, conversation) {
+function turnCards(turn: MagicPointerTurn, conversation: MagicPointerConversation | null) {
   const object = conversation && conversation.object ? conversation.object : null;
   const cards = [CardModel.normalizeCard({
     id: `${turn.at || 0}-a`,
@@ -96,7 +95,7 @@ function turnCards(turn, conversation) {
   return cards;
 }
 
-async function renderConversation(id) {
+async function renderConversation(id: string | null) {
   const stream = document.getElementById('cp-stream');
   if (!stream) return;
   const list = await Data.conversations();
@@ -145,7 +144,7 @@ async function renderConversation(id) {
    小窗是贴着屏幕上那个东西的，问的就是它，写死「继续问…」等于把这层
    上下文藏起来。
    ============================================================ */
-let cpComposer = null;
+let cpComposer: MagicPointerComposerInstance | null = null;
 
 function mountCompanionComposer() {
   const host = document.getElementById('cp-composer');
@@ -159,7 +158,7 @@ function mountCompanionComposer() {
 }
 mountCompanionComposer();
 
-function bindComposerToObject(object) {
+function bindComposerToObject(object: MagicPointerObject | null | undefined) {
   if (!cpComposer) return;
   const name = object && (object.label || object.windowTitle || object.app);
   cpComposer.setPlaceholder(name ? `关于「${String(name).slice(0, 22)}」再问…` : '继续问…');
@@ -168,18 +167,18 @@ function bindComposerToObject(object) {
 /* 顶栏动作。桥提供了 pin / expand / hide 三个通道，但上一版只在这里切换
    is-on 一个 class——「固定」钉不住窗口，「展开到工作室」「关闭」点了没反应。 */
 document.addEventListener('click', (e) => {
-  const pin = e.target.closest('[title="固定"]');
+  const pin = (e.target as Element).closest('[title="固定"]');
   if (pin) {
     const pinned = !pin.classList.contains('is-on');
     pin.classList.toggle('is-on', pinned);
     window.magicPointerCompanion?.pin?.(pinned);
     return;
   }
-  if (e.target.closest('[title="展开到工作室"]')) {
+  if ((e.target as Element).closest('[title="展开到工作室"]')) {
     window.magicPointerCompanion?.expand?.();
     return;
   }
-  if (e.target.closest('[title="关闭"]')) {
+  if ((e.target as Element).closest('[title="关闭"]')) {
     window.magicPointerCompanion?.hide?.();
     return;
   }
@@ -199,7 +198,7 @@ if (new URLSearchParams(location.search).has('empty')) {
 /* 后台任务的进度，和工作室收的是同一份补丁 */
 const cpBridge = window.magicPointerCompanion || window.magicPointerDashboard;
 if (cpBridge?.onCardPatch) {
-  cpBridge.onCardPatch((payload) => {
+  cpBridge.onCardPatch((payload: MagicPointerCardPatchPayload) => {
     if (payload?.cardId) LiveCards.patch(payload.cardId, payload.patch || {});
   });
 }

@@ -1,53 +1,70 @@
-// @ts-nocheck -- legacy classic-script globals are preserved during the extension migration.
-const canvas = document.getElementById('trail');
-const ctx = canvas.getContext('2d');
-const sweepCanvas = document.getElementById('sweep-layer');
+const canvas = document.getElementById('trail') as HTMLCanvasElement;
+const ctx = canvas.getContext('2d') as CanvasRenderingContext2D;
+const sweepCanvas = document.getElementById('sweep-layer') as HTMLCanvasElement;
 const sweepRenderer = new globalThis.MagicSweepVisual.SweepRenderer(sweepCanvas);
-const guideTriangle = document.getElementById('guide-triangle');
-const hint = document.getElementById('hint');
+const guideTriangle = document.getElementById('guide-triangle') as HTMLElement;
+const hint = document.getElementById('hint') as HTMLElement;
 
 let dpr = window.devicePixelRatio || 1;
 let drawing = false;
-let activePointerId = null;
-let points = [];
-let lastPointer = null;
+let activePointerId: number | null = null;
+let points: OverlayPoint[] = [];
+let lastPointer: OverlayPoint | null = null;
 let trailAlpha = 1;
-let fadeRaf = null;
+let fadeRaf: number | null = null;
 let captureMode = false;
 let submitting = false;
 // Committed strokes of the current chain. The user can circle several
 // regions before the session finalizes ("circle this, and this, then run
 // the command"); a configurable inactivity window decides when the chain
 // ends and the unified gesture is submitted.
-let strokes = [];
-let chainTimer = null;
-let chainHintTimer = null;
+let strokes: OverlayStroke[] = [];
+let chainTimer: ReturnType<typeof setTimeout> | null = null;
+let chainHintTimer: ReturnType<typeof setTimeout> | null = null;
 let chainDeadlineAt = 0;
 const DEFAULT_CHAIN_GAP_MS = 2500;
 let gestureChainGapMs = DEFAULT_CHAIN_GAP_MS;
-let renderRaf = null;
-let pulseRaf = null;
+let renderRaf: number | null = null;
+let pulseRaf: number | null = null;
 let lastPulseFrame = 0;
 let observerMode = false;
 let gestureMode = false;
-let gestureToken = null;
+let gestureToken: string | null = null;
 let gestureAcceptAt = 0;
+/** @type {string} */
 let gestureLineStyle = 'demo6_band';
 let gestureLineWidth = 22;
+/** @type {string} */
 let gestureInteractionMode = 'exclusive_overlay';
-let hintTimer = null;
-let gestureGraceTimer = null;
+let hintTimer: ReturnType<typeof setTimeout> | null = null;
+let gestureGraceTimer: ReturnType<typeof setTimeout> | null = null;
+/** @type {string} */
 let currentWorkflow = 'generic';
 
 // ── Clicky 式引导小三角 ──────────────────────────────────────────────
 // 默认不出现。回答带了 [POINT] 指点（overlay:guide-point）时才浮现，
 // 从当前光标沿贝塞尔弧线飞向目标，短暂停留后彻底退出。
-let guideTarget = null;        // { x, y } 指点目标（overlay 局部坐标）
-let guideFlight = null;        // { t, from, to, ctrl, startedAt, duration }
-let guideHideTimer = null;     // 到达后停留定时器
+let guideTarget: { x: number; y: number } | null = null;        // { x, y } 指点目标（overlay 局部坐标）
+let guideFlight: GuideFlight | null = null;        // { t, from, to, ctrl, startedAt, duration }
+let guideHideTimer: ReturnType<typeof setTimeout> | null = null;     // 到达后停留定时器
 const GUIDE_FLIGHT_MS = 620;
 
-function onGuidePoint(payload) {
+interface OverlayPoint { x: number; y: number; t: number; }
+interface OverlayStroke {
+  points: OverlayPoint[];
+  kind?: unknown;
+  semanticPoint?: OverlayPoint;
+}
+interface GuideFlight {
+  t: number;
+  from: { x: number; y: number };
+  to: { x: number; y: number };
+  ctrl: { x: number; y: number };
+  startedAt: number;
+  duration: number;
+}
+
+function onGuidePoint(payload: Record<string, unknown> | null | undefined) {
   if (!payload || !Number.isFinite(Number(payload.x)) || !Number.isFinite(Number(payload.y))) return;
   // 上一枚三角的停留定时器还挂着：不清掉的话，新的一枚刚到就会被
   // 旧定时器在旧时刻抹掉——连续两枚 [POINT] 时第二枚几乎看不见。
@@ -75,6 +92,8 @@ function overlayBounds() {
 }
 
 // 二次贝塞尔插值（纯函数，可单测）：B(t) = (1-t)²P0 + 2(1-t)t·P1 + t²·P2
+// @ts-ignore -- tests/guide_flight_test.js vm-extracts this exact function
+// text (no TS syntax allowed inside); TS 6 ignores JSDoc @param in .ts files.
 function guideFlightPoint(from, ctrl, to, t) {
   const u = 1 - t;
   return {
@@ -144,11 +163,11 @@ function scheduleRender() {
   });
 }
 
-function dist(a, b) {
+function dist(a: { x: number; y: number }, b: { x: number; y: number }) {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
-function addPoint(e, { force = false } = {}) {
+function addPoint(e: PointerEvent, { force = false }: { force?: boolean } = {}) {
   const coalesced = typeof e.getCoalescedEvents === 'function' ? e.getCoalescedEvents() : [];
   const batch = coalesced.length ? coalesced : [e];
   for (let index = 0; index < batch.length; index += 1) {
@@ -160,14 +179,14 @@ function addPoint(e, { force = false } = {}) {
   }
 }
 
-function drawSmoothPath(path, alpha = 1) {
+function drawSmoothPath(path: OverlayPoint[], alpha = 1) {
   if (path.length < 2 || alpha <= 0.02) return;
   ctx.save();
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   ctx.globalCompositeOperation = 'source-over';
 
-  function trace(width, color, a = alpha) {
+  function trace(width: number, color: string, a = alpha) {
     ctx.beginPath();
     ctx.moveTo(path[0].x, path[0].y);
     for (let i = 1; i < path.length - 1; i++) {
@@ -200,7 +219,7 @@ function drawSmoothPath(path, alpha = 1) {
   ctx.restore();
 }
 
-function drawHitTestPixel(p) {
+function drawHitTestPixel(p: OverlayPoint | null) {
   if (!p || captureMode) return;
   ctx.save();
   ctx.globalAlpha = 0.012;
@@ -247,7 +266,7 @@ function fadeTrail(duration = 760) {
   if (fadeRaf) cancelAnimationFrame(fadeRaf);
   const start = performance.now();
   const from = trailAlpha;
-  function tick(now) {
+  function tick(now: number) {
     const t = Math.min(1, (now - start) / duration);
     const eased = 1 - Math.pow(1 - t, 3);
     trailAlpha = from * (1 - eased);
@@ -288,6 +307,8 @@ function computeSelectionPayload() {
   };
 }
 
+// @ts-ignore -- same reason as guideFlightPoint: inside the vm-extracted
+// slice of tests/overlay_static_test.js, so no TS parameter syntax allowed.
 function showChainHint(count) {
   if (!gestureMode) return;
   hint.textContent = `已圈选 ${count} 处 · 继续圈选其他内容，或按 Enter 完成`;
@@ -386,7 +407,7 @@ function resetOverlay() {
   clear();
 }
 
-function drawStrokeMarker(index, point) {
+function drawStrokeMarker(index: number, point: { x: number; y: number } | null | undefined) {
   if (!point) return;
   const radius = 14;
   ctx.save();
@@ -406,7 +427,7 @@ function drawStrokeMarker(index, point) {
   ctx.restore();
 }
 
-function drawPointTarget(point) {
+function drawPointTarget(point: OverlayPoint | null | undefined) {
   if (!point) return;
   // A quick click has no stroke body, so give it an unmistakable target glow
   // beneath the armed cursor. The former 13 DIP feather was effectively
@@ -427,7 +448,7 @@ function drawPointTarget(point) {
   ctx.restore();
 }
 
-function pointMarkerAnchor(point) {
+function pointMarkerAnchor(point: OverlayPoint | null | undefined): { x: number; y: number } | null | undefined {
   if (!point) return point;
   const xOffset = point.x > window.innerWidth - 48 ? -24 : 24;
   const yOffset = point.y < 48 ? 24 : -24;
@@ -437,7 +458,7 @@ function pointMarkerAnchor(point) {
 
 function startPulseLoop() {
   if (pulseRaf) return;
-  function tick(now) {
+  function tick(now: number) {
     if (now - lastPulseFrame > 33) {
       lastPulseFrame = now;
       if (!captureMode) render();
@@ -534,11 +555,13 @@ window.addEventListener('pointerup', (e) => {
   // and let the user keep circling. The rolling inactivity window or the
   // Enter key finalizes the whole chain into one unified gesture.
   if (points.length >= 1) {
-    const strokeSummary = globalThis.GestureCapture?.summarizeGesture?.(points, null) || {};
+    // TS 6 的解析器不接受换行开头的 `as` 断言，所以这一行必须连写。
+    const strokeSummary = (globalThis.GestureCapture?.summarizeGesture?.(points, null) || {}) as Record<string, unknown>;
     strokes.push({
       points: [...points],
       kind: strokeSummary.kind,
-      semanticPoint: strokeSummary.semanticPoint || points[Math.floor(points.length / 2)],
+      semanticPoint: (strokeSummary.semanticPoint as OverlayPoint | undefined)
+        || points[Math.floor(points.length / 2)],
     });
     if (gestureMode) {
       window.magicPointer?.gestureStroke(gestureToken, strokes.length);
@@ -644,9 +667,9 @@ window.magicPointer?.onGestureInput((payload) => {
   }
   if (phase === 'point' && payload?.point) {
     const point = {
-      x: Number(payload.point.x) || 0,
-      y: Number(payload.point.y) || 0,
-      t: Number(payload.point.t) || performance.now(),
+      x: Number((payload.point as { x?: unknown }).x) || 0,
+      y: Number((payload.point as { y?: unknown }).y) || 0,
+      t: Number((payload.point as { t?: unknown }).t) || performance.now(),
     };
     const previous = points[points.length - 1];
     if (!previous || dist(point, previous) > 0.5) points.push(point);

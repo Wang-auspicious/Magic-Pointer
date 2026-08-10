@@ -8,7 +8,7 @@ const preload = fs.readFileSync('electron/preload.ts', 'utf8');
 const stage = fs.readFileSync('electron/renderer/stage.ts', 'utf8');
 const showStage = main.slice(
   main.indexOf('function showStage(payload = {})'),
-  main.indexOf('function updateStage(payload = {})'),
+  main.indexOf('function updateStage(payload'),
 );
 
 assert(showStage.includes('stageReadiness.whenReady(send)'),

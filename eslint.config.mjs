@@ -38,6 +38,7 @@ export default [
       'no-undef': 'off',
       'no-unused-vars': 'off',
       '@typescript-eslint/no-require-imports': 'off',
+      'no-empty': ['error', { allowEmptyCatch: true }],
       '@typescript-eslint/no-unused-vars': [
         'warn',
         {
@@ -124,20 +125,7 @@ export default [
     },
   },
   {
-    files: ['electron/main.ts'],
-    rules: {
-      'no-empty': ['error', { allowEmptyCatch: true }],
-    },
-  },
-  {
-    files: ['electron/renderer/**/*.ts'],
-    rules: {
-      '@typescript-eslint/no-unused-vars': 'off',
-      'no-control-regex': 'off',
-    },
-  },
-  {
-    files: ['electron/route_policy.js', 'electron/renderer/stage.js'],
+    files: ['electron/route_policy.js', 'electron/renderer/stage.ts'],
     rules: {
       // These expressions intentionally reject C0 control characters in URLs
       // and inserted text. The control range is the security check itself.

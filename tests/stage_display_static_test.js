@@ -5,7 +5,7 @@ const fs = require('fs');
 
 const main = fs.readFileSync('electron/main.ts', 'utf8');
 
-assert(main.includes('function placeStageOnDisplay(display)'), 'stage needs an explicit display placement helper');
+assert(main.includes('function placeStageOnDisplay(display:'), 'stage needs an explicit display placement helper');
 assert(main.includes("} = require('./coordinate_space');")
   && main.includes('physicalScreenPoint,')
   && main.includes('normalizeGroundingGeometry,'),

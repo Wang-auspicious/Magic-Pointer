@@ -1,4 +1,3 @@
-// @ts-nocheck -- legacy classic-script globals are preserved during the extension migration.
 /* exported Composer */
 /* ============================================================================
    输入条
@@ -17,25 +16,25 @@
 const Composer = (() => {
   const SVG_NS = 'http://www.w3.org/2000/svg';
 
-  function h(tag, attrs, children) {
+  function h(tag: string, attrs?: Record<string, unknown>, children?: unknown): HTMLElement {
     const ns = tag === 'svg' || tag === 'use' ? SVG_NS : null;
-    const node = ns ? document.createElementNS(ns, tag) : document.createElement(tag);
+    const node = (ns ? document.createElementNS(ns, tag) : document.createElement(tag)) as HTMLElement;
     for (const [k, v] of Object.entries(attrs || {})) {
       if (v === null || v === undefined || v === false) continue;
       node.setAttribute(k, String(v));
     }
     for (const child of [children || []].flat(4)) {
       if (child === null || child === undefined || child === false || child === '') continue;
-      node.appendChild(typeof child === 'object' ? child : document.createTextNode(String(child)));
+      node.appendChild(typeof child === 'object' ? child as Node : document.createTextNode(String(child)));
     }
     return node;
   }
 
-  const icon = (id, cls) => h('svg', cls ? { class: cls } : {}, [h('use', { href: `#${id}` }, [])]);
+  const icon = (id: string, cls?: string) => h('svg', cls ? { class: cls } : {}, [h('use', { href: `#${id}` }, [])]);
 
   // 附件缩略图的来源。和卡片那道闸同一条规矩：只放行本地文件和图片 data:，
   // 一个 javascript: 就能在渲染进程里执行脚本。
-  function safeThumb(value) {
+  function safeThumb(value: unknown): string {
     const raw = String(value || '').trim();
     if (/^data:image\//i.test(raw)) return raw;
     if (/^file:\/\//i.test(raw)) return raw;
@@ -46,7 +45,7 @@ const Composer = (() => {
     return '';
   }
 
-  function create(options = {}) {
+  function create(options: MagicPointerComposerOptions = {}) {
     const {
       placeholder = '说点什么',
       density = 'full',        // capsule | companion | full
@@ -57,10 +56,10 @@ const Composer = (() => {
       onMeta = () => {},
     } = options;
 
-    let attachments = [];
-    let state = 'idle';        // idle | running
+    let attachments: MagicPointerAttachment[] = [];
+    let state: 'idle' | 'running' = 'idle';        // idle | running
 
-    const input = h('textarea', { rows: '1', placeholder, class: 'mcomp-input' }, []);
+    const input = h('textarea', { rows: '1', placeholder, class: 'mcomp-input' }, []) as HTMLTextAreaElement;
     const strip = h('div', { class: 'mcomp-strip', hidden: 'hidden' }, []);
     const beam = h('div', { class: 'mbeam', 'data-on': 'false' }, [h('i', {}, []), h('i', {}, []), h('i', {}, [])]);
 
@@ -78,7 +77,7 @@ const Composer = (() => {
           h('span', { class: 'mmeta-label' }, [m.label || '']),
           icon('ic-chev', 'mmeta-chev'),
         ]);
-        btn.addEventListener('click', () => onMeta(m.id, btn));
+        btn.addEventListener('click', () => onMeta(m.id as string, btn));
         return btn;
       }))
       : null;
@@ -90,10 +89,10 @@ const Composer = (() => {
     const scissor = onScissor
       ? h('button', { type: 'button', class: 'mcomp-tool', title: '取一块屏幕' }, [icon('ic-crop')])
       : null;
-    if (scissor) scissor.addEventListener('click', () => onScissor());
+    if (scissor) scissor.addEventListener('click', () => onScissor!());
 
     const clip = h('button', { type: 'button', class: 'mcomp-tool', title: '附件' }, [icon('ic-clip')]);
-    const file = h('input', { type: 'file', accept: 'image/*', multiple: 'multiple', class: 'mcomp-file' }, []);
+    const file = h('input', { type: 'file', accept: 'image/*', multiple: 'multiple', class: 'mcomp-file' }, []) as HTMLInputElement;
     clip.addEventListener('click', () => file.click());
 
     const form = h('form', { class: 'mcomp', 'data-state': 'idle', 'data-density': density }, [
@@ -110,7 +109,7 @@ const Composer = (() => {
         ]),
       ]),
       file,
-    ]);
+    ]) as HTMLFormElement;
 
     // 挑了图就该马上看见它，而不是看见一个文件名——「回答框里可以直接预览图片」。
     // 只读进 data: URL，不碰路径：渲染层拿不到也不需要拿到用户的文件系统。
@@ -152,7 +151,7 @@ const Composer = (() => {
       strip.hidden = attachments.length === 0;
     }
 
-    function setState(next) {
+    function setState(next: 'idle' | 'running') {
       state = next;
       form.dataset.state = next;
       beam.dataset.on = String(next === 'running');
@@ -168,7 +167,7 @@ const Composer = (() => {
       }
       const text = input.value.trim();
       if (!text && !attachments.length) return;
-      onSubmit({ text, attachments: attachments.slice() });
+      (onSubmit as (payload: { text: string; attachments: MagicPointerAttachment[] }) => void)({ text, attachments: attachments.slice() });
       input.value = '';
       autoGrow();
     });
@@ -184,20 +183,20 @@ const Composer = (() => {
     return {
       el: form,
       focus: () => input.focus(),
-      setPlaceholder: (text) => { input.placeholder = String(text || ''); },
-      attach(item) {
+      setPlaceholder: (text: string) => { input.placeholder = String(text || ''); },
+      attach(item: MagicPointerAttachment) {
         attachments.push(item);
         paintStrip();
       },
-      setAttachments(list) {
+      setAttachments(list: MagicPointerAttachment[]) {
         attachments = Array.isArray(list) ? list.slice() : [];
         paintStrip();
       },
       attachments: () => attachments.slice(),
-      running: (on) => setState(on ? 'running' : 'idle'),
+      running: (on: boolean) => setState(on ? 'running' : 'idle'),
       state: () => state,
       // 口径改了要能改回条上，否则用户点完菜单看到的还是旧值
-      setMeta(id, label) {
+      setMeta(id: string, label: string) {
         const btn = metaRow && metaRow.querySelector(`[data-meta="${id}"] .mmeta-label`);
         if (btn) btn.textContent = String(label || '');
       },

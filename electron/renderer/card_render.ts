@@ -1,4 +1,3 @@
-// @ts-nocheck -- legacy classic-script globals are preserved during the extension migration.
 /* exported renderCard, cardElapsedText */
 /* ============================================================================
    卡片渲染：一张卡 → 一个 DOM 节点
@@ -25,22 +24,41 @@
 
 const CardRender = (() => {
 
+  // 卡是模型给的自由形状数据：只按运行时要用的字段取值，不做结构假设。
+  interface CardSpec {
+    [key: string]: any;
+  }
+  interface CardShimNode {
+    tagName: string;
+    ns: string | null;
+    attrs: Record<string, string>;
+    children: (string | CardShimNode)[];
+    setAttribute(k: string, v: string): void;
+    appendChild(child: unknown): unknown;
+    readonly textContent: string;
+    readonly outerHTML: string;
+  }
+  type CardNode = Element | CardShimNode;
+  type CardChild = CardNode | Text | string | null | undefined | false;
 
   const CARD_DOC = typeof document !== 'undefined' ? document : null;
   const SVG_NS = 'http://www.w3.org/2000/svg';
-  const CARD_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+  const CARD_ESCAPES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
   const VOID_TAGS = new Set(['img', 'br', 'hr', 'input', 'use']);
 
-  function esc(value) {
+  function esc(value: unknown) {
     return String(value ?? '').replace(/[&<>"']/g, (c) => CARD_ESCAPES[c]);
   }
 
   /* ---- Node 侧的最小节点。只为可测，不追求像 DOM。 ---- */
-  function shimNode(tag, ns) {
-    const node = {
+  function shimNode(tag: string, ns: string | null): CardShimNode {
+    const node: CardShimNode = {
       tagName: tag, ns, attrs: {}, children: [],
-      setAttribute(k, v) { this.attrs[k] = String(v); },
-      appendChild(child) { this.children.push(child); return child; },
+      setAttribute(k: string, v: string) { this.attrs[k] = String(v); },
+      appendChild(child: unknown): unknown {
+        this.children.push(child as string | CardShimNode);
+        return child;
+      },
       get textContent() {
         return this.children.map((c) => (typeof c === 'string' ? c : c.textContent)).join('');
       },
@@ -56,7 +74,7 @@ const CardRender = (() => {
     return node;
   }
 
-  function h(tag, attrs, children) {
+  function h(tag: string, attrs?: Record<string, unknown>, children?: CardChild | CardChild[]): CardNode {
     const ns = tag === 'svg' || tag === 'use' ? SVG_NS : null;
     const node = CARD_DOC
       ? (ns ? CARD_DOC.createElementNS(ns, tag) : CARD_DOC.createElement(tag))
@@ -67,27 +85,28 @@ const CardRender = (() => {
     }
     for (const child of flatten(children)) {
       if (child === null || child === undefined || child === false || child === '') continue;
-      node.appendChild(typeof child === 'object' ? child : text(String(child)));
+      // 两种 node 实现各收各的孩子；shim 节点在 Node 侧只收 string。
+      node.appendChild((typeof child === 'object' ? child : text(String(child))) as unknown as Node);
     }
     return node;
   }
 
-  function text(value) {
+  function text(value: string): Text | string {
     return CARD_DOC ? CARD_DOC.createTextNode(value) : value;
   }
 
-  function flatten(value) {
+  function flatten(value: CardChild | CardChild[]): CardChild[] {
     if (!Array.isArray(value)) return value === undefined ? [] : [value];
     return value.flatMap(flatten);
   }
 
-  function icon(id, cls) {
+  function icon(id: string, cls?: string): CardNode {
     return h('svg', cls ? { class: cls } : {}, [h('use', { href: `#${id}` }, [])]);
   }
 
   // 只允许我们自己写得出来的图片来源。模型给一个 javascript: 或
   // data:text/html 就能在渲染进程里执行脚本，所以这道闸在设 src 之前。
-  function safeSrc(value) {
+  function safeSrc(value: unknown): string {
     const raw = String(value || '').trim();
     if (/^(file:\/\/|https:\/\/|data:image\/(png|jpeg|gif|webp);base64,)/i.test(raw)) return raw;
     return '';
@@ -104,7 +123,7 @@ const CardRender = (() => {
   // 返回的、我们截的），而上一版的子集里没有它，于是那行 markdown 被当成
   // 一串普通文字原样印出来——用户看到的是 `![图](https://…)` 这七个字符。
   // 地址一律过 safeSrc：模型给一个 javascript: 就能在渲染进程里执行脚本。
-  function inlineMd(value) {
+  function inlineMd(value: unknown): CardChild[] {
     return String(value ?? '')
       .split(/(!\[[^\]]*\]\([^)\s]+\)|\*\*[^*]+\*\*|`[^`]+`|==[^=]+==)/g)
       .filter(Boolean)
@@ -117,13 +136,13 @@ const CardRender = (() => {
           const src = match ? safeSrc(match[2]) : '';
           // 挡下来的地址不能静默变成空白：说清楚有一张图没敢加载。
           if (!src) return h('span', { class: 'mmd-img-blocked' }, ['[一张图的地址不安全，没有加载]']);
-          return h('img', { class: 'mmd-img', src, alt: match[1] || '图', loading: 'lazy' }, []);
+          return h('img', { class: 'mmd-img', src, alt: match![1] || '图', loading: 'lazy' }, []);
         }
         return text(frag);
       });
   }
 
-  function markdown(value) {
+  function markdown(value: unknown): CardNode[] {
     const blocks = String(value ?? '').replace(/\r\n?/g, '\n').split(/\n\s*\n/).filter(Boolean);
     return blocks.map((block) => {
       const lines = block.split('\n');
@@ -143,7 +162,7 @@ const CardRender = (() => {
 
   /* ---- 每种卡的身份：一个图标 + 一句名字。运行中也显示，
          所以你从第一帧就知道等来的会是什么。 ---- */
-  const KIND_FACE = {
+  const KIND_FACE: Record<string, [string, string]> = {
     prose:    ['ic-spark',   '回答'],
     facts:    ['ic-check',   '已确认'],
     metric:   ['ic-pulse',   '数据'],
@@ -157,7 +176,7 @@ const CardRender = (() => {
     slot:     ['ic-mcp',     '工具界面'],
   };
 
-  function cardElapsedText(card, now) {
+  function cardElapsedText(card: CardSpec | null | undefined, now: number): string {
     if (!card || !card.startedAt) return '';
     const seconds = Math.max(0, (now - card.startedAt) / 1000);
     if (seconds < 1) return '';
@@ -167,7 +186,7 @@ const CardRender = (() => {
   /* ============================================================
      头部
      ============================================================ */
-  function renderTop(card) {
+  function renderTop(card: CardSpec): CardNode | null {
     const [ico, name] = KIND_FACE[card.kind] || KIND_FACE.prose;
     const eyebrow = card.state === 'failed' ? '没能完成'
       : card.state === 'running' ? name
@@ -199,7 +218,7 @@ const CardRender = (() => {
      没有       → 一条来回扫的不定量条 + 真实秒数。
      绝不把没有的进度编成一个数字。
      ============================================================ */
-  function renderRail(card) {
+  function renderRail(card: CardSpec): CardNode | null {
     if (card.state !== 'running') return null;
     const determinate = Number.isFinite(card.progress);
     const pct = determinate ? Math.round(card.progress * 100) : 0;
@@ -222,8 +241,8 @@ const CardRender = (() => {
 
   /* 走过的步骤。Vida 那条「勾是动作，跟着的是从这个动作里读到的事实」直接抄
      过来——等待的十几秒因此在建立信任，而不是在耗人。 */
-  function renderSteps(card) {
-    const steps = card.steps || [];
+  function renderSteps(card: CardSpec): CardNode | null {
+    const steps: any[] = card.steps || [];
     if (!steps.length) return null;
     return h('ol', { class: 'mcard-steps' }, steps.map((s) => h('li', {
       'data-state': s.state || 'done',
@@ -238,7 +257,7 @@ const CardRender = (() => {
   /* ============================================================
      各种卡的身子
      ============================================================ */
-  const BODY = {
+  const BODY: Record<string, (card: CardSpec) => CardChild | CardChild[]> = {
     prose(card) {
       const main = String(card.answer || card.message || '');
       const detail = String(card.detail || '');
@@ -429,17 +448,18 @@ const CardRender = (() => {
   };
 
   /* 提案的预览按它将产生什么来画，而不是按它将执行什么命令来画。 */
-  function renderPreview(preview) {
+  function renderPreview(preview: unknown): CardNode | null {
     if (!preview || typeof preview !== 'object') return null;
-    const items = Array.isArray(preview.items) ? preview.items : [];
-    if (preview.kind === 'folders' || preview.kind === 'files') {
-      const isFolder = preview.kind === 'folders';
-      return h('div', { class: `mprev mprev-${preview.kind}` }, items.map((it) => h('span', {
+    const p = preview as Record<string, any>;
+    const items = Array.isArray(p.items) ? p.items : [];
+    if (p.kind === 'folders' || p.kind === 'files') {
+      const isFolder = p.kind === 'folders';
+      return h('div', { class: `mprev mprev-${p.kind}` }, items.map((it) => h('span', {
         class: isFolder ? 'mfolder' : 'mfile',
       }, [icon(isFolder ? 'ic-folder' : 'ic-file'), h('small', {}, [it.name || String(it)])])));
     }
-    if (preview.kind === 'text') {
-      return h('div', { class: 'mprev mprev-text' }, [h('pre', {}, [preview.text || ''])]);
+    if (p.kind === 'text') {
+      return h('div', { class: 'mprev mprev-text' }, [h('pre', {}, [p.text || ''])]);
     }
     return null;
   }
@@ -447,7 +467,7 @@ const CardRender = (() => {
   /* ============================================================
      动作
      ============================================================ */
-  function renderActions(card) {
+  function renderActions(card: CardSpec): CardNode | null {
     const actions = Array.isArray(card.actions) ? card.actions : [];
     if (!actions.length) return null;
     return h('footer', { class: 'mcard-acts' }, actions.map((a, i) => h('button', {
@@ -462,7 +482,7 @@ const CardRender = (() => {
   /* ============================================================
      入口
      ============================================================ */
-  function renderCard(card, options = {}) {
+  function renderCard(card: CardSpec | null | undefined, options: { density?: string } = {}): CardNode | null {
     if (!card || typeof card !== 'object') return null;
     const kind = BODY[card.kind] ? card.kind : 'prose';
     const density = options.density || 'full';   // capsule | companion | full
@@ -479,7 +499,7 @@ const CardRender = (() => {
       card.state === 'failed'
         ? h('p', { class: 'mcard-fail' }, [icon('ic-warn'), card.error || '这次没能完成。'])
         : null,
-      BODY[kind](card),
+      BODY[kind](card) as CardChild,
       renderActions(card),
     ]);
   }
@@ -488,7 +508,10 @@ const CardRender = (() => {
 })();
 
 // 渲染层用 renderCard(...)；主进程/测试 require 这个模块。
+// 这两个名字是 classic-script 跨文件全局 API，定义文件本身不再引用。
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const renderCard = CardRender.renderCard;
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const cardElapsedText = CardRender.cardElapsedText;
 
 if (typeof module !== 'undefined' && module.exports) {

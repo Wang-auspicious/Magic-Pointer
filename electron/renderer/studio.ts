@@ -1,4 +1,3 @@
-// @ts-nocheck -- legacy classic-script globals are preserved during the extension migration.
 /* ============================================================
    工作室 Studio
    ------------------------------------------------------------
@@ -11,7 +10,7 @@
    ============================================================ */
 
 /* ---- 确定性哈希 ---- */
-function hash(str) {
+function hash(str: string) {
   let h = 2166136261;
   for (let i = 0; i < str.length; i++) {
     h ^= str.charCodeAt(i);
@@ -19,7 +18,7 @@ function hash(str) {
   }
   return h >>> 0;
 }
-function rng(seed) {
+function rng(seed: unknown) {
   let s = hash(String(seed)) || 1;
   return () => {
     s ^= s << 13; s >>>= 0;
@@ -29,7 +28,7 @@ function rng(seed) {
   };
 }
 
-function makeOrb(seed, size = 64) {
+function makeOrb(seed: unknown, size = 64) {
   const r = rng(seed);
   // 色相对：黄绿 ↔ 青蓝 那一段最耐看；由种子在这个区间里取一对，
   // 中间再插一个过渡色，所以三段之间没有硬边。
@@ -39,7 +38,7 @@ function makeOrb(seed, size = 64) {
   const A = `hsl(${h1} 62% 68%)`;
   const M = `hsl(${h2} 56% 66%)`;
   const B = `hsl(${h3} 60% 66%)`;
-  const id = 'o' + hash(seed).toString(36);
+  const id = 'o' + hash(String(seed)).toString(36);
   const dur = (7 + r() * 5).toFixed(1);            // 7–12s，一屏里不齐步走
 
   // 渐变轴：从右下角指向左上角，色带因此平行于反对角线。
@@ -69,8 +68,8 @@ function makeOrb(seed, size = 64) {
 }
 
 /* ---- 缩略图占位：暖调抽象，不是灰块 ---- */
-function makeShot(seed) {
-  const r = rng('shot' + seed);
+function makeShot(seed: unknown) {
+  const r = rng('shot' + String(seed));
   const h = Math.floor(r() * 360);
   const a = `hsl(${h} 26% 84%)`;
   const b = `hsl(${(h + 26) % 360} 20% 73%)`;
@@ -88,13 +87,14 @@ function makeShot(seed) {
    渲染
    ============================================================ */
 
-function icon(id, cls = '') {
+function icon(id: string, cls = '') {
   return `<svg class="${cls}"><use href="#${id}"/></svg>`;
 }
 
 function renderOrbs() {
-  document.querySelectorAll('.orb[data-seed]').forEach(el => {
-    if (!el.childElementCount) el.innerHTML = makeOrb(el.dataset.seed, 64);
+  document.querySelectorAll('.orb[data-seed]').forEach((el) => {
+    const node = el as HTMLElement;
+    if (!node.childElementCount) node.innerHTML = makeOrb(node.dataset.seed, 64);
   });
   ['hero-avatar', 'side-avatar'].forEach(id => {
     const el = document.getElementById(id);
@@ -102,7 +102,7 @@ function renderOrbs() {
   });
 }
 
-const KIND_TAG = { 灵感:'tag-indigo', 交接:'tag-teal', 凭证:'tag-amber', 素材:'tag-teal', 片段:'tag-amber' };
+const KIND_TAG: Record<string, string> = { 灵感:'tag-indigo', 交接:'tag-teal', 凭证:'tag-amber', 素材:'tag-teal', 片段:'tag-amber' };
 
 /* ---- 布局：簇内按行打包，簇之间在世界坐标里松散排布 ---- */
 const PAD = 24, GAP = 16, CLUSTER_GAP = 48, ROW_MAX = 420;
@@ -111,14 +111,25 @@ const PAD = 24, GAP = 16, CLUSTER_GAP = 48, ROW_MAX = 420;
 // 永远为空，等于按钮是假的。这里记下选中的分类，renderStash 按它过滤。
 let stashKindFilter = '';
 
-function layoutBurst(b) {
+// 画布上摆过的收藏节点：Data.stash() 的条目加上布局坐标。
+interface StashBurstNode {
+  t: string; w?: number; h?: number; desc?: string; src?: string; text?: string; media?: string; summary?: string;
+  x: number; y: number;
+}
+interface LaidBurst extends MagicPointerStashEntry {
+  nodes: StashBurstNode[];
+  w: number; h: number;
+  cx?: number; cy?: number;
+}
+
+function layoutBurst(b: MagicPointerStashEntry): LaidBurst {
   let x = PAD, y = PAD + 8, rowH = 0, w = 0;
-  const placed = b.items.map(it => {
-    const iw = it.t === 'shot' ? it.w : 210;
+  const placed: StashBurstNode[] = b.items.map(it => {
+    const iw = it.t === 'shot' ? (it.w as number) : 210;
     // 只有截图有说明行（+34）。文字节点不渲染 desc，给它 +34 只是把行高凭空
     // 撑高 14px，簇之间因此出现来路不明的空隙。上一版写成
     // `it.desc || it.t === 'shot' ? 34 : 20`，|| 把三元整体绑错。
-    const ih = (it.t === 'shot' ? it.h : 62) + (it.t === 'shot' ? 34 : 20);
+    const ih = (it.t === 'shot' ? (it.h as number) : 62) + (it.t === 'shot' ? 34 : 20);
     if (x > PAD && x + iw > ROW_MAX) { x = PAD; y += rowH + GAP; rowH = 0; }
     const node = { ...it, x, y, w: iw, h: ih };
     x += iw + GAP; rowH = Math.max(rowH, ih); w = Math.max(w, x - GAP + PAD);
@@ -133,7 +144,7 @@ async function renderStash(force = false) {
 
   const all = await Data.stash();
   const bursts = stashKindFilter ? all.filter(b => b.kind === stashKindFilter) : all;
-  document.getElementById('stash-count').textContent =
+  document.getElementById('stash-count')!.textContent =
     bursts.reduce((n, b) => n + b.items.length, 0) + ' 项';
   if (!bursts.length) {
     world.innerHTML = stashKindFilter
@@ -153,30 +164,30 @@ async function renderStash(force = false) {
   world.innerHTML = laid.map(b => {
     const nodes = b.nodes.map(n => {
       const body = n.t === 'shot'
-        ? `<span class="node-shot" style="width:${n.w}px;height:${n.h - 34}px;${n.src ? `background-image:url('file:///${cssUrl(n.src)}');background-size:cover;background-position:center` : `background-image:${makeShot(n.desc)}`}"></span>
+        ? `<span class="node-shot" style="width:${n.w}px;height:${(n.h as number) - 34}px;${n.src ? `background-image:url('file:///${cssUrl(n.src)}');background-size:cover;background-position:center` : `background-image:${makeShot(n.desc)}`}"></span>
            <span class="node-desc">${esc(n.desc)}</span>
            ${n.summary ? `<span class="node-summary">${esc(n.summary)}</span>` : ''}`
         : `<span class="node-note">${esc(n.text)}</span>`;
-      return `<span class="node" data-src="${esc(n.src || '')}" data-text="${esc(n.text || '')}" data-summary="${esc(n.summary || '')}" style="left:${b.cx + n.x}px;top:${b.cy + n.y}px">
+      return `<span class="node" data-src="${esc(n.src || '')}" data-text="${esc(n.text || '')}" data-summary="${esc(n.summary || '')}" style="left:${(b.cx as number) + n.x}px;top:${(b.cy as number) + n.y}px">
         <span class="node-cap">${icon(b.icon)}${b.time}<span class="kind ${KIND_TAG[b.kind]}">${b.kind}</span></span>
         ${body}
       </span>`;
     }).join('');
-    return `<span class="cluster" style="left:${b.cx - PAD}px;top:${b.cy - 6}px;width:${b.w}px;height:${b.h}px">
+    return `<span class="cluster" style="left:${(b.cx as number) - PAD}px;top:${(b.cy as number) - 6}px;width:${b.w}px;height:${b.h}px">
         <span class="cluster-label">${icon('ic-stash')}${b.title} · ${b.items.length}</span>
       </span>${nodes}`;
   }).join('');
 
-  world.dataset.width = maxW + 60;
-  world.dataset.height = cy + colH + 60;
+  world.dataset.width = String(maxW + 60);
+  world.dataset.height = String(cy + colH + 60);
   renderStashList(laid, force);
   fitCanvas();
 }
 
-function renderStashList(laid, force = false) {
+function renderStashList(laid: LaidBurst[], force = false) {
   const list = document.getElementById('stash-list');
   if (!list || (list.childElementCount && !force)) return;
-  const byTime = {};
+  const byTime: Record<string, LaidBurst[]> = {};
   laid.forEach(b => { (byTime[/[今昨前]|月/.test(b.time) ? b.time : '今天'] ||= []).push(b); });
   list.innerHTML = Object.entries(byTime).map(([day, bs]) =>
     `<div class="stash-day">${day}<em>· ${bs.reduce((n, b) => n + b.items.length, 0)} 项</em></div>` +
@@ -205,7 +216,7 @@ function applyCam() {
 function fitCanvas() {
   const cv = document.getElementById('canvas'), w = document.getElementById('canvas-world');
   if (!cv || !w) return;
-  const ww = +w.dataset.width || 1200, wh = +w.dataset.height || 800;
+  const ww = Number(w.dataset.width) || 1200, wh = Number(w.dataset.height) || 800;
   const r = cv.getBoundingClientRect();
   // 以宽度为准，别缩得太小；高度不够就靠拖动看
   cam.k = Math.max(.62, Math.min(1, (r.width - 130) / ww));
@@ -217,9 +228,10 @@ function bindCanvas() {
   const cv = document.getElementById('canvas');
   if (!cv || cv.dataset.bound) return;
   cv.dataset.bound = '1';
-  let drag = null;
+  let drag: { x: number; y: number } | null = null;
   cv.addEventListener('pointerdown', e => {
-    if (e.target.closest('.canvas-rail, .canvas-zoom, .node')) return;
+    const target = e.target as Element | null;
+    if (target && target.closest('.canvas-rail, .canvas-zoom, .node')) return;
     drag = { x: e.clientX - cam.x, y: e.clientY - cam.y };
     cv.classList.add('is-panning');
     cv.setPointerCapture(e.pointerId);
@@ -243,7 +255,7 @@ function bindCanvas() {
   document.getElementById('zoom-out')?.addEventListener('click', () => { cam.k = Math.max(.25, cam.k / 1.2); applyCam(); });
 }
 
-async function renderTimeline(force) {
+async function renderTimeline(force = false) {
   const tl = document.getElementById('tl');
   if (!tl || (tl.childElementCount && !force)) return;
   const days = await Data.timeline();
@@ -251,18 +263,30 @@ async function renderTimeline(force) {
     tl.innerHTML = '<div class="tl-inner"><div class="view-empty">还没有记录。划一笔问点什么，这里就会长出来。</div></div>';
     return;
   }
-  tl.innerHTML = '<div class="tl-inner">' + days.map((d) =>
-    `<div class="tl-day">${dayLabel(d.at || d.items[0]?.updatedAt)}</div>` + d.items.map((c, i) =>
+  tl.innerHTML = '<div class="tl-inner">' + days.map((d) => {
+    const items = (d.items || []) as TimelineConversation[];
+    return `<div class="tl-day">${dayLabel(d.at || items[0]?.updatedAt)}</div>` + items.map((c, i) =>
       `<button class="tl-row enter" data-open="${c.id}" style="animation-delay:${Math.min(i, 6) * 40}ms">
         <span class="tl-rail"><span class="orb">${makeOrb(c.objectKey || c.id, 64)}</span><span class="line"></span></span>
         <span class="tl-body">
           <span class="q">${esc(c.title)}</span>
           <span class="src">${icon('ic-window')}${esc(c.subtitle || '')}</span>
           <span class="out">${(c.outcomes || []).map((t) => `<span class="pill">${esc(t)}</span>`).join('')}
-            ${c.turns > 1 ? `<span class="pill">${c.turns} 轮</span>` : ''}</span>
+            ${Number(c.turns) > 1 ? `<span class="pill">${c.turns} 轮</span>` : ''}</span>
         </span>
         <span class="tl-time">${formatTime(c.updatedAt)}</span>
-      </button>`).join('')).join('') + '</div>';
+      </button>`).join('');
+  }).join('') + '</div>';
+}
+
+interface TimelineConversation {
+  id?: string;
+  title?: string;
+  subtitle?: string;
+  objectKey?: string;
+  outcomes?: string[];
+  turns?: number;
+  updatedAt?: number;
 }
 
 /* ---- 侧栏：今天的对话，从真实记录来 ---- */
@@ -274,7 +298,7 @@ async function renderSidebar() {
     host.innerHTML = '<div class="side-empty">还没有对话</div>';
     return;
   }
-  const active = host.querySelector('.is-on')?.dataset.open;
+  const active = host.querySelector('.is-on')?.getAttribute('data-open');
   host.innerHTML = list.slice(0, 12).map((c) => `
     <button class="side-item${c.id === active ? ' is-on' : ''}" data-open="${c.id}">
       <span class="orb">${makeOrb(c.objectKey || c.id, 64)}</span>
@@ -284,7 +308,7 @@ async function renderSidebar() {
 
 /* 一轮问答摊成若干张卡。答案永远有一张；事实、产物、图各自成卡。
    这份映射只此一处——舞台、随行窗、工作室都从这里拿。 */
-function turnCards(turn, conversation) {
+function turnCards(turn: MagicPointerTurn, conversation: MagicPointerConversation) {
   const source = conversation?.object
     ? { app: conversation.object.app, label: conversation.object.label || conversation.object.windowTitle }
     : null;
@@ -315,19 +339,19 @@ function turnCards(turn, conversation) {
 }
 
 /* ---- 打开一条对话 ---- */
-async function openConversation(id) {
+async function openConversation(id: string) {
   const c = await Data.conversation(id);
   if (!c) return;
   show('chat');
   document.querySelectorAll('#side-convos .side-item').forEach((n) =>
-    n.classList.toggle('is-on', n.dataset.open === id));
+    (n as HTMLElement).classList.toggle('is-on', (n as HTMLElement).dataset.open === id));
 
   const head = document.getElementById('chat-title');
-  if (head) head.textContent = c.title;
+  if (head) head.textContent = String(c.title);
   const org = document.getElementById('chat-origin');
   const orgText = document.getElementById('chat-origin-text');
   const peek = document.getElementById('chat-peek');
-  const peekImage = document.getElementById('peek-image');
+  const peekImage = document.getElementById('peek-image') as HTMLImageElement | null;
   const peekLabel = document.getElementById('peek-label');
   if (org && orgText) {
     org.hidden = false;
@@ -378,10 +402,18 @@ async function openConversation(id) {
 }
 
 /* ---- 记忆：反复被指到的对象 ---- */
-async function renderMemory(force) {
+interface MemoryEntry {
+  key?: string;
+  subtitle?: string;
+  touches?: number;
+  lastAt?: number;
+  questions?: string[];
+  object?: { app?: string; windowTitle?: string; label?: string };
+}
+async function renderMemory(force = false) {
   const host = document.getElementById('mem-list');
   if (!host || (host.childElementCount && !force)) return;
-  const list = await Data.memories();
+  const list = (await Data.memories()) as MemoryEntry[];
   if (!list.length) {
     host.innerHTML = '<div class="view-empty">还没有记忆。同一个东西被问过两次以上，它才会记住。</div>';
     return;
@@ -399,10 +431,16 @@ async function renderMemory(force) {
 }
 
 /* ---- 产物 ---- */
-async function renderArtifacts(force) {
+interface ArtifactEntry {
+  name?: string;
+  from?: string;
+  at?: number;
+  conversationId?: string;
+}
+async function renderArtifacts(force = false) {
   const host = document.getElementById('art-list');
   if (!host || (host.childElementCount && !force)) return;
-  const list = await Data.artifacts();
+  const list = (await Data.artifacts()) as ArtifactEntry[];
   if (!list.length) {
     host.innerHTML = '<div class="view-empty">还没有产物。它写出来的东西会存在这里。</div>';
     return;
@@ -415,14 +453,14 @@ async function renderArtifacts(force) {
   </button>`).join('');
 }
 
-function esc(v) {
+function esc(v: unknown) {
   return String(v == null ? '' : v)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 // 本地路径进 CSS url('...')：反斜杠换正斜杠，再转义掉能截断字符串的引号。
 // 文件名是用户剪贴板/收藏目录来的，不能假设它干净。
-function cssUrl(v) {
+function cssUrl(v: unknown) {
   return String(v == null ? '' : v).replace(/\\/g, '/').replace(/'/g, '%27').replace(/"/g, '%22');
 }
 
@@ -430,13 +468,13 @@ function cssUrl(v) {
    交互
    ============================================================ */
 
-const hero = document.getElementById('hero');
-const shell = document.getElementById('shell');
-const aux = document.getElementById('aux');
-const VIEWS = { chat: 'view-chat', stash: 'view-stash', timeline: 'view-timeline',
+const hero = document.getElementById('hero') as HTMLElement;
+const shell = document.getElementById('shell') as HTMLElement;
+const aux = document.getElementById('aux') as HTMLElement;
+const VIEWS: Record<string, string> = { chat: 'view-chat', stash: 'view-stash', timeline: 'view-timeline',
                 memory: 'view-memory', artifacts: 'view-artifacts', settings: 'view-settings' };
 
-function show(view) {
+function show(view: string) {
   if (view === 'hero') {
     hero.hidden = false;
     shell.hidden = true;
@@ -445,7 +483,7 @@ function show(view) {
   hero.hidden = true;
   shell.hidden = false;
   Object.entries(VIEWS).forEach(([k, id]) => {
-    document.getElementById(id).hidden = (k !== view);
+    document.getElementById(id)!.hidden = (k !== view);
   });
   if (view === 'stash') { renderStash(true); bindCanvas(); }
   if (view === 'timeline') renderTimeline();
@@ -459,11 +497,13 @@ function openAux() { aux.hidden = false; shell.classList.add('has-aux'); }
 function closeAux() { shell.classList.remove('has-aux'); setTimeout(() => { aux.hidden = true; }, 240); }
 
 document.addEventListener('click', e => {
-  const open = e.target.closest('[data-open]');
+  const target = e.target as Element | null;
+  if (!target) return;
+  const open = target.closest<HTMLElement>('[data-open]');
   if (open && open.dataset.open) { openConversation(open.dataset.open); return; }
 
   // 收藏箱图片节点：左键 → 放大查看；查看窗里可复制图片
-  const imgNode = e.target.closest('.node[data-src], .stash-row[data-src]');
+  const imgNode = target.closest<HTMLElement>('.node[data-src], .stash-row[data-src]');
   if (imgNode && imgNode.dataset.src && /\.(png|jpe?g|gif|webp|bmp)$/i.test(imgNode.dataset.src)) {
     openStashViewer(imgNode.dataset.src, imgNode.dataset.text || '');
     e.stopPropagation();
@@ -471,51 +511,51 @@ document.addEventListener('click', e => {
   }
 
   // 收藏箱文字节点：点击在「一行摘要」和「全文展开」之间切换
-  const note = e.target.closest('.node[data-text] .node-note, .stash-row .txt');
+  const note = target.closest<HTMLElement>('.node[data-text] .node-note, .stash-row .txt');
   if (note) {
     note.classList.toggle('is-open');
     e.stopPropagation();
     return;
   }
 
-  const goto = e.target.closest('[data-goto]');
-  if (goto) { show(goto.dataset.goto); return; }
+  const goto = target.closest<HTMLElement>('[data-goto]');
+  if (goto) { show(goto.dataset.goto || ''); return; }
 
-  if (e.target.closest('[data-open-artifact]')) { openAux(); return; }
-  if (e.target.closest('#aux-close')) { closeAux(); return; }
+  if (target.closest('[data-open-artifact]')) { openAux(); return; }
+  if (target.closest('#aux-close')) { closeAux(); return; }
 
-  const tab = e.target.closest('.tab');
+  const tab = target.closest<HTMLElement>('.tab');
   if (tab) {
-    tab.parentElement.querySelectorAll('.tab').forEach(t => t.classList.remove('is-on'));
+    tab.parentElement!.querySelectorAll('.tab').forEach(t => t.classList.remove('is-on'));
     tab.classList.add('is-on');
     // 分类 tab 不只是高亮自己：收藏箱真的按这个分类过滤。
     stashKindFilter = tab.dataset.kind || '';
     renderStash(true);
     return;
   }
-  const mode = e.target.closest('#stash-mode button');
+  const mode = target.closest<HTMLElement>('#stash-mode button');
   if (mode) {
-    mode.parentElement.querySelectorAll('button').forEach(b => b.classList.remove('is-on'));
+    mode.parentElement!.querySelectorAll('button').forEach(b => b.classList.remove('is-on'));
     mode.classList.add('is-on');
     const canvas = mode.dataset.mode === 'canvas';
-    document.getElementById('canvas').hidden = !canvas;
-    document.getElementById('stash-list').hidden = canvas;
+    document.getElementById('canvas')!.hidden = !canvas;
+    document.getElementById('stash-list')!.hidden = canvas;
     if (canvas) fitCanvas();
     return;
   }
-  const seg = e.target.closest('.seg-toggle button');
+  const seg = target.closest<HTMLElement>('.seg-toggle button');
   if (seg) {
-    seg.parentElement.querySelectorAll('button').forEach(b => b.classList.remove('is-on'));
+    seg.parentElement!.querySelectorAll('button').forEach(b => b.classList.remove('is-on'));
     seg.classList.add('is-on');
     return;
   }
-  const notice = e.target.closest('.notice .close');
-  if (notice) notice.closest('.notice').remove();
+  const notice = target.closest<HTMLElement>('.notice .close');
+  if (notice) notice.closest('.notice')!.remove();
 });
 
 /* 输入框随内容长高 */
 document.addEventListener('input', e => {
-  const ta = e.target.closest('textarea');
+  const ta = (e.target as Element | null)?.closest('textarea');
   if (!ta) return;
   ta.style.height = 'auto';
   ta.style.height = Math.min(ta.scrollHeight, 200) + 'px';
@@ -579,7 +619,7 @@ function startNewChat() {
       : `<div class="chat-blank"><p>还没有对话。</p>
            <p class="sub">在 Electron 里运行时，这里显示的是真实记录。</p></div>`;
   }
-  document.querySelector('.composer textarea')?.focus();
+  document.querySelector<HTMLTextAreaElement>('.composer textarea')?.focus();
 }
 
 document.getElementById('new-chat')?.addEventListener('click', startNewChat);
@@ -590,9 +630,9 @@ document.getElementById('new-chat')?.addEventListener('click', startNewChat);
    一次性传很多图时，光看缩略图没法找。停一秒，本地视觉模型给
    三到四句话，知道它是什么。摘要按条目缓存，不重复调模型。
    ============================================================ */
-const stashSummaryCache = new Map();
-let stashHoverTimer = null;
-let stashHoverTarget = null;
+const stashSummaryCache = new Map<string, string>();
+let stashHoverTimer: ReturnType<typeof setTimeout> | null = null;
+let stashHoverTarget: HTMLElement | null = null;
 
 function stashSummaryEl() {
   let el = document.getElementById('stash-summary');
@@ -606,7 +646,7 @@ function stashSummaryEl() {
 }
 
 /* ---- 收藏图片大图查看窗：左键放大 + 复制图片 ---- */
-function openStashViewer(src, desc) {
+function openStashViewer(src: string, desc: string) {
   let viewer = document.getElementById('stash-viewer');
   if (!viewer) {
     viewer = document.createElement('div');
@@ -627,9 +667,9 @@ function openStashViewer(src, desc) {
     viewer.addEventListener('click', (ev) => {
       if (ev.target === viewer) closeStashViewer();
     });
-    viewer.querySelector('#stash-viewer-close').addEventListener('click', closeStashViewer);
-    viewer.querySelector('#stash-viewer-copy').addEventListener('click', () => {
-      const img = viewer.querySelector('.stash-viewer-img');
+    viewer.querySelector('#stash-viewer-close')!.addEventListener('click', closeStashViewer);
+    viewer.querySelector('#stash-viewer-copy')!.addEventListener('click', () => {
+      const img = viewer!.querySelector('.stash-viewer-img') as HTMLImageElement | null;
       if (!img || !img.src) return;
       // 把本地图片复制进剪贴板（保留位图，图片编辑器可直接粘贴）
       fetch(img.src).then((r) => r.blob()).then((blob) => {
@@ -637,10 +677,10 @@ function openStashViewer(src, desc) {
       }).catch(() => { /* 剪贴板不可用时静默 */ });
     });
   }
-  const img = viewer.querySelector('.stash-viewer-img');
+  const img = viewer.querySelector('.stash-viewer-img') as HTMLImageElement;
   img.src = 'file:///' + String(src).replace(/\\/g, '/');
   img.alt = desc || '';
-  viewer.querySelector('.stash-viewer-title').textContent = desc || '收藏图片';
+  viewer.querySelector('.stash-viewer-title')!.textContent = desc || '收藏图片';
   viewer.classList.add('is-visible');
 }
 
@@ -650,9 +690,9 @@ function closeStashViewer() {
 }
 
 document.addEventListener('mouseover', (e) => {
-  const node = e.target.closest('.node[data-src], .stash-row[data-src]');
+  const node = (e.target as Element | null)?.closest<HTMLElement>('.node[data-src], .stash-row[data-src]');
   if (!node || node === stashHoverTarget) return;
-  clearTimeout(stashHoverTimer);
+  if (stashHoverTimer) clearTimeout(stashHoverTimer);
   stashHoverTarget = node;
   const src = node.dataset.src || '';
   if (!src || !/\.(png|jpe?g|gif|webp|bmp)$/i.test(src)) return;
@@ -669,7 +709,7 @@ document.addEventListener('mouseover', (e) => {
       return;
     }
     if (stashSummaryCache.has(src)) {
-      el.textContent = stashSummaryCache.get(src);
+      el.textContent = String(stashSummaryCache.get(src));
       return;
     }
     const summary = await Data.describeStashImage(src);
@@ -684,8 +724,8 @@ document.addEventListener('mouseover', (e) => {
 });
 
 document.addEventListener('mouseout', (e) => {
-  if (!e.target.closest('.node[data-src], .stash-row[data-src]')) return;
-  clearTimeout(stashHoverTimer);
+  if (!(e.target as Element | null)?.closest('.node[data-src], .stash-row[data-src]')) return;
+  if (stashHoverTimer) clearTimeout(stashHoverTimer);
   stashHoverTarget = null;
   const el = document.getElementById('stash-summary');
   if (el) el.classList.remove('is-visible');
@@ -716,15 +756,16 @@ function refreshStashSummaries() {
       }
     }
     world.querySelectorAll('.node[data-src]').forEach((node) => {
-      const summary = bySrc.get(node.dataset.src);
+      const nodeEl = node as HTMLElement;
+      const summary = bySrc.get(nodeEl.dataset.src!);
       if (!summary) return;
-      if (node.dataset.summary === summary) return;
-      node.dataset.summary = summary;
-      let el = node.querySelector('.node-summary');
+      if (nodeEl.dataset.summary === summary) return;
+      nodeEl.dataset.summary = summary;
+      let el = node.querySelector('.node-summary') as HTMLElement | null;
       if (!el) {
         el = document.createElement('span');
         el.className = 'node-summary';
-        node.appendChild(el);
+        nodeEl.appendChild(el);
       }
       el.textContent = summary;
     });
@@ -737,7 +778,7 @@ if (q) show(q);
 
 /* 主进程可以直接指定落到哪一屏（托盘「设置…」走这条） */
 window.magicPointerDashboard?.onShow?.((payload) => {
-  if (payload?.view) show(payload.view);
+  if (payload?.view) show(String(payload.view));
 });
 
 /* 后台任务的进度。三个界面收到的是同一份补丁，所以同一次出图

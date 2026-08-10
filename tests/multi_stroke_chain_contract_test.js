@@ -47,7 +47,7 @@ assert.deepStrictEqual(multi.anchorPoint, { x: 190, y: 163 });
 assert.deepStrictEqual(multi.releasePoint, { x: 690, y: 302 });
 
 // ── overlay chaining ─────────────────────────────────────────────────────
-assert(overlay.includes('let strokes = [];'), 'chain state must exist');
+assert(overlay.includes('let strokes: OverlayStroke[] = [];'), 'chain state must exist');
 assert(overlay.includes('CHAIN_GAP_MS'), 'rolling finalize window must exist');
 assert(overlay.includes('strokes.push({'), 'pointerup must commit the stroke to the chain');
 assert(overlay.includes('points: [...points],'), 'the committed stroke keeps its points');

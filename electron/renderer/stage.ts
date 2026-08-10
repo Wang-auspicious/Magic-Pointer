@@ -1,4 +1,3 @@
-// @ts-nocheck -- legacy classic-script globals are preserved during the extension migration.
 // PointerStage renderer: hosts every ephemeral visual (targeting outline,
 // frozen glow, command capsule, processing shimmer, result/error surfaces)
 // on one transparent click-through window. State lives in the pure machine
@@ -16,74 +15,78 @@
   const { initialState, transition } = machine;
   const api = window.magicPointerStage;
 
-  const stageRoot = document.getElementById('stage');
-  const targetingOutline = document.getElementById('targeting-outline');
-  const captureProofLayer = document.getElementById('capture-proof');
-  const screenPointLayer = document.getElementById('screen-points');
-  const selectionStretch = document.getElementById('selection-stretch');
-  const selectionStretchHint = document.getElementById('selection-stretch-hint');
+  // 静态 DOM：stage.html 里这些 id 固定存在，迁移期先按 non-null 取用
+  // （overlay.ts 同款写法），页面结构变化时再收紧。
+  const stageRoot = document.getElementById('stage') as HTMLElement;
+  const targetingOutline = document.getElementById('targeting-outline') as HTMLElement;
+  const captureProofLayer = document.getElementById('capture-proof') as HTMLElement;
+  const screenPointLayer = document.getElementById('screen-points') as HTMLElement;
+  const selectionStretch = document.getElementById('selection-stretch') as HTMLElement;
+  const selectionStretchHint = document.getElementById('selection-stretch-hint') as HTMLElement;
   // Live drag on a selection handle, or null. Mirrors stretchDrag on the answer
   // card and shares its policy, so the same pull means the same thing.
-  let selectionStretchDrag = null;
-  const frozenGlow = document.getElementById('frozen-glow');
-  const capsule = document.getElementById('capsule');
-  const capsuleCount = document.getElementById('capsule-count');
-  const capsuleRefs = document.getElementById('capsule-refs');
+  let selectionStretchDrag: {
+    edge: string | undefined; startY: number; currentLines: number; currentChars: number; intent: any;
+  } | null = null;
+  const frozenGlow = document.getElementById('frozen-glow') as HTMLElement;
+  const capsule = document.getElementById('capsule') as HTMLElement;
+  const capsuleCount = document.getElementById('capsule-count') as HTMLElement;
+  const capsuleRefs = document.getElementById('capsule-refs') as HTMLElement;
   // One entry per stroke the user drew, in draw order. Dropping one here drops
   // it from the command, so a mis-drawn stroke costs one click rather than a
   // whole redraw.
-  let strokeRefs = [];
+  let strokeRefs: { strokeIndex: number; label: string }[] = [];
   let renderedRefSignature = '';
-  const capsuleInput = document.getElementById('capsule-input');
-  const capsuleSend = document.getElementById('capsule-send');
-  const transcriptBox = document.getElementById('transcript');
-  const shimmer = document.getElementById('processing-shimmer');
-  const resultCard = document.getElementById('stage-result');
-  const threadPanel = document.getElementById('stage-thread');
-  const threadTitle = document.getElementById('thread-title');
-  const threadEyebrow = document.getElementById('thread-eyebrow');
-  const threadEyebrowText = document.getElementById('thread-eyebrow-text');
-  const threadCount = document.getElementById('thread-count');
-  const threadCopy = document.getElementById('thread-copy');
-  const threadFollowup = document.getElementById('thread-followup');
-  const threadSend = document.getElementById('thread-send');
-  const threadRetry = document.getElementById('thread-retry');
-  const threadClose = document.getElementById('thread-close');
-  const consentBox = document.getElementById('capsule-consent');
-  const consentTarget = document.getElementById('consent-target');
-  const consentReject = document.getElementById('consent-reject');
-  const consentApprove = document.getElementById('consent-approve');
+  const capsuleInput = document.getElementById('capsule-input') as HTMLInputElement;
+  const capsuleSend = document.getElementById('capsule-send') as HTMLButtonElement;
+  const transcriptBox = document.getElementById('transcript') as HTMLElement;
+  const shimmer = document.getElementById('processing-shimmer') as HTMLElement;
+  const resultCard = document.getElementById('stage-result') as HTMLElement;
+  const threadPanel = document.getElementById('stage-thread') as HTMLElement;
+  const threadTitle = document.getElementById('thread-title') as HTMLElement;
+  const threadEyebrow = document.getElementById('thread-eyebrow') as HTMLElement;
+  const threadEyebrowText = document.getElementById('thread-eyebrow-text') as HTMLElement;
+  const threadCount = document.getElementById('thread-count') as HTMLElement;
+  const threadCopy = document.getElementById('thread-copy') as HTMLButtonElement;
+  const threadFollowup = document.getElementById('thread-followup') as HTMLInputElement;
+  const threadSend = document.getElementById('thread-send') as HTMLButtonElement;
+  const threadRetry = document.getElementById('thread-retry') as HTMLButtonElement;
+  const threadClose = document.getElementById('thread-close') as HTMLButtonElement;
+  const consentBox = document.getElementById('capsule-consent') as HTMLElement;
+  const consentTarget = document.getElementById('consent-target') as HTMLElement;
+  const consentReject = document.getElementById('consent-reject') as HTMLButtonElement;
+  const consentApprove = document.getElementById('consent-approve') as HTMLButtonElement;
   const shapePolicy = globalThis.AnswerShapePolicy || null;
   // 这次回答是「要送出去的」还是「自己看的」。它决定三件事：面板贴哪儿、
   // 正文解不解析 markdown、要不要出现那一下点头。
-  let answerShape = { shape: 'inspect', allowMarkdown: true, needsConsent: false, reason: 'init' };
-  const passageExpand = document.getElementById('passage-expand');
+  let answerShape: { shape: string; allowMarkdown: boolean; needsConsent: boolean; reason: string } = { shape: 'inspect', allowMarkdown: true, needsConsent: false, reason: 'init' };
+  const passageExpand = document.getElementById('passage-expand') as HTMLElement;
   // 就地展开：用户在回答里选中的那一段，以及它属于哪个文本节点。展开回来的
   // 字直接换掉这一段，所以这里记的是节点+偏移，不是「第几个字」。
-  let passagePick = null;
+  let passagePick: { range: Range; text: string; answer: HTMLElement } | null = null;
   let passageBusy = false;
-  const errorCard = document.getElementById('stage-error');
-  const chipsBox = document.getElementById('stage-chips');
+  const errorCard = document.getElementById('stage-error') as HTMLElement;
+  const chipsBox = document.getElementById('stage-chips') as HTMLElement;
   const stretchPolicy = globalThis.StageStretchPolicy || null;
   // Pick mode: the element the user last picked, so an unchanged pick does not
   // restart the highlight animation (that reads as flicker).
-  let pickTargetShown = null;
+  let pickTargetShown: { rect: any; label: string } | null = null;
   // The element the user last clicked on, and therefore what a question is about.
-  let pickedElement = null;
+  let pickedElement: { rect: any; label: string; source: string } | null = null;
   let pickInFlight = false;
   // Where this window sits on the virtual desktop, learned from the pointer
   // stream (which carries both spaces) rather than assumed to be zero.
   let stageOriginX = 0;
   let stageOriginY = 0;
-  const noticeBox = document.getElementById('stage-notice');
-  const noticeText = document.getElementById('stage-notice-text');
-  let modelHealth = { circuitOpen: false, message: '', state: 'unknown' };
-  const deliveryBox = document.getElementById('delivery-progress');
-  const deliveryLabel = document.getElementById('delivery-label');
-  const deliveryBar = document.getElementById('delivery-bar');
-  const deliveryCount = document.getElementById('delivery-count');
-  const tplThreadTurn = document.getElementById('tpl-thread-turn');
-  const tplAgentPromptDraft = document.getElementById('tpl-agent-prompt-draft');
+  const noticeBox = document.getElementById('stage-notice') as HTMLElement;
+  const noticeText = document.getElementById('stage-notice-text') as HTMLElement;
+  let modelHealth: { circuitOpen: boolean; message: string; state: string } = { circuitOpen: false, message: '', state: 'unknown' };
+  const deliveryBox = document.getElementById('delivery-progress') as HTMLElement;
+  const deliveryLabel = document.getElementById('delivery-label') as HTMLElement;
+  const deliveryBar = document.getElementById('delivery-bar') as HTMLElement;
+  const deliveryCount = document.getElementById('delivery-count') as HTMLElement;
+  const tplThreadTurn = document.getElementById('tpl-thread-turn') as HTMLTemplateElement;
+  const tplAgentPromptDraft = document.getElementById('tpl-agent-prompt-draft') as HTMLTemplateElement;
 
   const DEFAULT_VISUAL_TUNING = Object.freeze({
     sweepHeightRatio: 0.52,
@@ -104,20 +107,51 @@
   let state = initialState({ reducedMotion: reducedMotionQuery.matches });
   capsule.hidden = true;
   let renderedTranscript = '';
-  let dismissTimer = null;
+  let dismissTimer: ReturnType<typeof setTimeout> | null = null;
   let hasShown = false;
   // Selection metadata rides on stage:show/stage:update payloads (not the
   // machine): the chips policy needs it, the lifecycle does not.
-  const meta = { selectionSource: null, objectKind: null };
+  const meta: { selectionSource: string | null; objectKind: string | null } = { selectionSource: null, objectKind: null };
   let renderedChipIds = '';
   // Signature of the turns currently in the DOM, so an unchanged thread is
   // never rebuilt (see renderThread).
   let renderedTurnSignature = '';
   // Wall clock for the pending turn's elapsed label.
-  let waitTimer = null;
+  let waitTimer: ReturnType<typeof setTimeout> | null = null;
   let waitStartedAt = 0;
   // Live wiring context from main (stage:show / stage:update payloads).
-  const session = {
+  const session: {
+    token: string | null;
+    groundingReady: boolean;
+    voiceAutoSubmit: boolean;
+    voiceStartStrategy: string;
+    selectionVisual: string;
+    targetGeometryKind: string;
+    submitOnFinal: boolean;
+    pendingFinalTranscript: string;
+    pointer: { x: number; y: number } | null;
+    capsuleAnchor: string;
+    capsuleDelayMs: number | null;
+    capsulePlacement: { x: number; y: number; quadrant?: string } | null;
+    capsulePlaced: boolean;
+    capsuleDragged: boolean;
+    panelPlacement: { side?: string } | null;
+    resultPlacement: { x: number; y: number } | null;
+    resultDragged: boolean;
+    consentDismissedForTurn: unknown;
+    selectionCount: number;
+    // 选中内容的字数（不是内容）。拉伸手势要把「屏幕上几行」换算成「多少字」，
+    // 因为引擎只认后者。
+    selectionChars: number;
+    // 目标窗口在舞台坐标系里的矩形，和一个显示用的名字。只有几何和名字，
+    // 没有句柄也没有进程 id——渲染层能画在哪儿，不等于它能读哪儿或写哪儿。
+    targetWindowRect: { x: number; y: number; width: number; height: number } | null;
+    targetAppLabel: string;
+    voiceState: string;
+    // "r, g, b" from appearance settings; empty means keep the stylesheet default.
+    accentRgb: string;
+    visualTuning: Record<keyof typeof DEFAULT_VISUAL_TUNING, number>;
+  } = {
     token: null,
     groundingReady: false,
     voiceAutoSubmit: true,
@@ -155,9 +189,15 @@
   let mouseCaptureOn = false;
   let keyboardFocusRequested = false;
   let hitRegionKey = '';
-  let hitRegionRefreshTimer = null;
-  let voiceTriggerPolicy = null;
-  const agentPromptUi = {
+  let hitRegionRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  let voiceTriggerPolicy: any = null;
+  const agentPromptUi: {
+    key: string;
+    prompt: string;
+    sessions: { provider: string; sessionId: string; title: string }[];
+    selectedSession: { provider: string; sessionId: string; title: string } | null;
+    loading: boolean;
+  } = {
     key: '',
     prompt: '',
     sessions: [],
@@ -166,18 +206,18 @@
   };
   let previousPointerButtons = 0;
   let pointerWasOverCapsule = false;
-  let lastPointerPoint = null;
-  let capsuleDrag = null; // { startX, startY, originLeft, originTop }
-  let surfaceDrag = null; // { element, startX, startY, originLeft, originTop }
+  let lastPointerPoint: { x: number; y: number } | null = null;
+  let capsuleDrag: { startX: number; startY: number; originLeft: number; originTop: number } | null = null; // { startX, startY, originLeft, originTop }
+  let surfaceDrag: { element: HTMLElement; startX: number; startY: number; originLeft: number; originTop: number } | null = null; // { element, startX, startY, originLeft, originTop }
   let reportedState = '';
   let targetSweepComplete = false;
-  let targetSweepTimer = null;
+  let targetSweepTimer: ReturnType<typeof setTimeout> | null = null;
 
   reducedMotionQuery.addEventListener('change', (event) => {
     dispatch({ type: 'SET_REDUCED_MOTION', value: event.matches });
   });
 
-  function dispatch(event) {
+  function dispatch(event: any) {
     // Proof bands are evidence about a finished read, not a state of the
     // machine. They ride along on whatever event carried the result so the
     // rectangles and the answer appear together.
@@ -198,7 +238,7 @@
   // staggered so they light up in reading order. Blue means the app handed us
   // those characters; amber means we recognised them from pixels. The colours
   // are load-bearing — see stage.css.
-  function renderCaptureProof(bands) {
+  function renderCaptureProof(bands: any) {
     if (!captureProofLayer) return;
     captureProofLayer.replaceChildren();
     const policy = globalThis.CaptureProofPolicy;
@@ -235,7 +275,7 @@
   // An arrow per [POINT] the answer carried, numbered the way the sentence is:
   // first this, then that. Screen coordinates use the same transform as the
   // proof bands and the pick highlight.
-  function renderScreenPoints(points) {
+  function renderScreenPoints(points: any) {
     if (!screenPointLayer) return;
     screenPointLayer.replaceChildren();
     const list = Array.isArray(points) ? points : [];
@@ -289,7 +329,7 @@
     return Math.max(1, Math.round(Number(rect.height) / 20));
   }
 
-  function beginSelectionStretch(edge, y) {
+  function beginSelectionStretch(edge: string | undefined, y: number) {
     selectionStretchDrag = {
       edge,
       startY: y,
@@ -300,7 +340,7 @@
     selectionStretch.classList.add('is-dragging');
   }
 
-  function updateSelectionStretch(y) {
+  function updateSelectionStretch(y: number) {
     if (!selectionStretchDrag || !stretchPolicy) return;
     // The top handle moves the opposite way: dragging it up makes the region
     // taller, which is the same "more" as dragging the bottom one down.
@@ -338,7 +378,7 @@
     captureProofLayer.hidden = true;
   }
 
-  function applyVoiceTriggerEffects(outcome) {
+  function applyVoiceTriggerEffects(outcome: any) {
     const effects = Array.isArray(outcome?.effects) ? outcome.effects : [];
     const wantsSubmit = effects.includes('submit');
     const pendingTranscript = session.pendingFinalTranscript;
@@ -361,7 +401,7 @@
     }
   }
 
-  function dispatchVoiceTrigger(event) {
+  function dispatchVoiceTrigger(event: any) {
     if (!voiceTriggerPolicy) return;
     applyVoiceTriggerEffects(voiceTriggerPolicy.dispatch(event));
   }
@@ -386,7 +426,7 @@
   // Pick mode: ask what element is under this screen point and outline the whole
   // thing. Screen coordinates, because the answer comes from the target app's
   // automation tree, not from our window.
-  async function pickElementAt(screenX, screenY) {
+  async function pickElementAt(screenX: number, screenY: number) {
     if (pickInFlight || !api || typeof api.pickElement !== 'function') return;
     pickInFlight = true;
     try {
@@ -421,7 +461,7 @@
 
   // Reuses the frozen-glow surface and its sweep-band styling, so a picked
   // element looks like a drawn selection rather than a second visual language.
-  function showPickHighlight(picked) {
+  function showPickHighlight(picked: any) {
     const rect = picked.rect;
     // Screen -> stage-window coordinates. The stage window's own origin is the
     // offset, and it is tracked from the pointer stream (screenX minus x).
@@ -495,7 +535,7 @@
     capsuleRefs.hidden = false;
   }
 
-  function isPointInside(x, y, element) {
+  function isPointInside(x: number, y: number, element: HTMLElement | null) {
     if (!element || element.hidden) return false;
     const rect = element.getBoundingClientRect();
     return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
@@ -505,13 +545,13 @@
   // consent bar, notice, delivery row) belongs to the UI, not to pick mode.
   // Without this, clicking a chip also picked the element behind it in the
   // target app and hijacked the next question's target.
-  function isInsideStageSurface(x, y, element) {
+  function isInsideStageSurface(x: number, y: number, element: HTMLElement | null) {
     return Boolean(element && !element.hidden && isPointInside(x, y, element));
   }
 
-  function isDragHandleAt(x, y, rootEl) {
+  function isDragHandleAt(x: number, y: number, rootEl: HTMLElement | null) {
     if (!rootEl || rootEl.hidden) return false;
-    let node = document.elementFromPoint(x, y);
+    let node = document.elementFromPoint(x, y) as HTMLElement | null;
     if (!node || !rootEl.contains(node)) return false;
     while (node && node !== document.body) {
       if (node.dataset && node.dataset.noDrag) return false;
@@ -522,7 +562,7 @@
     return false;
   }
 
-  function handleVoicePointerInput(payload) {
+  function handleVoicePointerInput(payload: any) {
     const t = Number(payload?.t);
     const x = Number(payload?.x);
     const y = Number(payload?.y);
@@ -563,7 +603,7 @@
     // Selection handles first: they sit outside our panels, on the user's own
     // content, so a press there is unambiguous.
     if (primaryDown && !previousPrimaryDown && !selectionStretchDrag && selectionStretch && !selectionStretch.hidden) {
-      for (const handle of selectionStretch.querySelectorAll('.selection-stretch-handle')) {
+      for (const handle of selectionStretch.querySelectorAll<HTMLElement>('.selection-stretch-handle')) {
         if (isPointInside(x, y, handle)) {
           beginSelectionStretch(handle.dataset.edge, y);
           break;
@@ -657,13 +697,13 @@
     // screen while a turn runs, and dragging them there used to fall straight
     // through and select text in the app underneath.
     if (!capsule.hidden || !threadPanel.hidden) return true;
-    const hasEnabledButton = (element) => !element.hidden
+    const hasEnabledButton = (element: HTMLElement) => !element.hidden
       && Boolean(element.querySelector('button:not([disabled])'));
     return hasEnabledButton(chipsBox)
       || hasEnabledButton(errorCard);
   }
 
-  function capsuleVisualRegion(element, rect) {
+  function capsuleVisualRegion(element: HTMLElement, rect: DOMRect) {
     if (element !== capsule) return rect;
     const desiredWidth = Number.parseFloat(
       window.getComputedStyle(capsule).getPropertyValue('--capsule-width'),
@@ -802,7 +842,7 @@
     }
   }
 
-  function submitCommand(command) {
+  function submitCommand(command: string) {
     const trimmed = String(command == null ? '' : command).trim();
     if (!trimmed) return;
     // A turn is already running: SUBMIT is a machine no-op in `processing`, so
@@ -832,7 +872,7 @@
     if (api && typeof api.dismiss === 'function') api.dismiss();
   }
 
-  function placeRect(element, rect) {
+  function placeRect(element: HTMLElement, rect: any) {
     if (!rect) {
       element.hidden = true;
       return;
@@ -856,7 +896,7 @@
     element.style.height = `${rect.height}px`;
   }
 
-  function isUsableTargetRect(rect) {
+  function isUsableTargetRect(rect: any) {
     if (!rect || typeof rect !== 'object') return false;
     const x = Number(rect.x);
     const y = Number(rect.y);
@@ -866,7 +906,7 @@
     return x < window.innerWidth && y < window.innerHeight && x + width > 0 && y + height > 0;
   }
 
-  function sweepBandRect(rect) {
+  function sweepBandRect(rect: any) {
     if (!isUsableTargetRect(rect)) return null;
     const sourceHeight = Math.max(1, Number(rect.height));
     const height = Math.min(
@@ -892,7 +932,7 @@
     };
   }
 
-  function targetFeedbackRect(rect) {
+  function targetFeedbackRect(rect: any) {
     if (!isUsableTargetRect(rect)) return null;
     if (session.targetGeometryKind !== 'resolved') return null;
     if (session.selectionVisual === 'sweep_band') return sweepBandRect(rect);
@@ -923,7 +963,7 @@
     renderedTranscript = text;
   }
 
-  function voiceStateForStatus(status) {
+  function voiceStateForStatus(status: unknown) {
     const value = String(status || '').toLowerCase();
     if (value === 'warming') return 'warming';
     if (value === 'ready' || value === 'microphone_started') return 'listening';
@@ -955,7 +995,7 @@
     return width;
   }
 
-  function anchorNearPointer(element, fallbackWidth = 200, fallbackHeight = 44) {
+  function anchorNearPointer(element: HTMLElement, fallbackWidth = 200, fallbackHeight = 44) {
     const rect = element.getBoundingClientRect();
     const point = session.pointer || (state.target
       ? { x: state.target.x + state.target.width / 2, y: state.target.y + state.target.height / 2 }
@@ -1024,7 +1064,7 @@
     threadPanel.dataset.quadrant = session.capsulePlacement?.quadrant || 'bottom-right';
   }
 
-  function anchorCapsuleToTarget(width) {
+  function anchorCapsuleToTarget(width: number) {
     // Anchor exactly once per session: the capsule must appear next to the
     // selection and then stay put (the user can drag it). Re-anchoring when
     // grounding later resolves made the bubble jump across the screen.
@@ -1038,7 +1078,7 @@
         && session.targetGeometryKind === 'resolved'
         && isUsableTargetRect(state.target)
       );
-      session.capsulePlacement = anchor.chooseStableCapsuleAnchor({
+      const placement = anchor.chooseStableCapsuleAnchor({
         previous: session.capsulePlacement,
         sessionToken: session.token,
         mode: targetMode ? 'target' : 'pointer',
@@ -1050,9 +1090,10 @@
           ? { gap: session.visualTuning.capsuleInlineGapDip }
           : undefined,
       });
-      capsule.style.left = `${session.capsulePlacement.x}px`;
-      capsule.style.top = `${session.capsulePlacement.y}px`;
-      capsule.dataset.quadrant = session.capsulePlacement.quadrant;
+      session.capsulePlacement = placement;
+      capsule.style.left = `${placement.x}px`;
+      capsule.style.top = `${placement.y}px`;
+      capsule.dataset.quadrant = placement.quadrant;
       session.capsulePlaced = true;
       return;
     }
@@ -1100,7 +1141,7 @@
 
   // 失败也是一张卡——同一套版式，只是 state 是 failed。原来它走的是另一条
   // 渲染路径，于是「成功长这样、失败长那样」，用户看到的是两个产品。
-  function renderFailure(container, error) {
+  function renderFailure(container: HTMLElement, error: any) {
     const message = typeof error === 'string'
       ? error
       : String(error?.message || error?.answer || '这次没能完成。');
@@ -1110,8 +1151,8 @@
     ));
   }
 
-  function cloneTemplate(template) {
-    return template.content.firstElementChild.cloneNode(true);
+  function cloneTemplate(template: HTMLTemplateElement) {
+    return template.content.firstElementChild!.cloneNode(true) as HTMLElement;
   }
 
 
@@ -1121,7 +1162,7 @@
   // 舞台、随行窗、工作室从此共用同一份实现——不再是三份各写一遍。
 
 
-  function safeAgentSession(raw) {
+  function safeAgentSession(raw: any) {
     if (!raw || typeof raw !== 'object') return null;
     const provider = String(raw.provider || '').toLowerCase();
     const sessionId = String(raw.sessionId || '');
@@ -1137,14 +1178,14 @@
     };
   }
 
-  function loadAgentSessions(promptKey) {
+  function loadAgentSessions(promptKey: string) {
     if (agentPromptUi.loading || !api || typeof api.listAgentSessions !== 'function') return;
     agentPromptUi.loading = true;
     api.listAgentSessions(session.token).then((result) => {
       if (agentPromptUi.key !== promptKey) return;
       const sessions = Array.isArray(result?.sessions) ? result.sessions : [];
       const seen = new Set();
-      agentPromptUi.sessions = sessions.flatMap((raw) => {
+      agentPromptUi.sessions = sessions.flatMap((raw: any) => {
         const item = safeAgentSession(raw);
         if (!item) return [];
         const key = `${item.provider}:${item.sessionId}`;
@@ -1162,7 +1203,7 @@
     });
   }
 
-  function renderAgentPromptDraft(container, payload) {
+  function renderAgentPromptDraft(container: HTMLElement, payload: any) {
     const promptKey = `${session.token || ''}:${String(payload.prompt || '')}`;
     if (agentPromptUi.key !== promptKey) {
       agentPromptUi.key = promptKey;
@@ -1173,11 +1214,11 @@
       loadAgentSessions(promptKey);
     }
     const draft = cloneTemplate(tplAgentPromptDraft);
-    const editor = draft.querySelector('.agent-prompt-editor');
-    const note = draft.querySelector('.agent-prompt-note');
-    const sessionsRow = draft.querySelector('.agent-session-row');
-    const close = draft.querySelector('.agent-prompt-close');
-    const confirm = draft.querySelector('.agent-prompt-confirm');
+    const editor = draft.querySelector('.agent-prompt-editor') as HTMLTextAreaElement;
+    const note = draft.querySelector('.agent-prompt-note') as HTMLElement;
+    const sessionsRow = draft.querySelector('.agent-session-row') as HTMLElement;
+    const close = draft.querySelector('.agent-prompt-close') as HTMLElement;
+    const confirm = draft.querySelector('.agent-prompt-confirm') as HTMLButtonElement;
     editor.value = agentPromptUi.prompt;
     editor.addEventListener('input', () => {
       agentPromptUi.prompt = editor.value.slice(0, 60000);
@@ -1255,8 +1296,8 @@
   // renderer never sees prompts or proposal parameters.
   // Copy the answers, not the scaffolding: the ask labels are there to orient
   // the reader on screen, and the wait dots are not content at all.
-  function resultPlainText(container) {
-    const clone = container.cloneNode(true);
+  function resultPlainText(container: HTMLElement) {
+    const clone = container.cloneNode(true) as HTMLElement;
     clone.querySelectorAll('button, .turn-ask, .turn-wait').forEach((node) => node.remove());
     return (clone.textContent || '')
       .split('\n')
@@ -1265,7 +1306,9 @@
       .trim();
   }
 
-  function completionWidthTier({ pending, failed, result, textLength, needsConsent }) {
+  function completionWidthTier({ pending, failed, result, textLength, needsConsent }: {
+    pending: boolean; failed: boolean; result: any; textLength: number; needsConsent: boolean;
+  }) {
     if (pending) return 'context';
     const kind = String(result?.kind || '').toLowerCase();
     if (needsConsent || ['proposal', 'table', 'calendar', 'diff', 'image', 'agent-prompt-draft'].includes(kind)) {
@@ -1276,7 +1319,7 @@
     return 'normal';
   }
 
-  function copyResultText(container, button) {
+  function copyResultText(container: HTMLElement, button: HTMLButtonElement) {
     const text = resultPlainText(container);
     const done = () => {
       const original = button.textContent;
@@ -1288,7 +1331,7 @@
     } else fallbackCopyText(text, done);
   }
 
-  function fallbackCopyText(text, done) {
+  function fallbackCopyText(text: string, done: () => void) {
     const area = document.createElement('textarea');
     area.value = text;
     area.style.position = 'fixed';
@@ -1320,7 +1363,7 @@
 
   // 选区必须整个落在一条已经出完的回答里。落在提问行上、跨了两轮、或者那一轮
   // 还在跑，都不给按钮——展开一段还在变的字没有意义。
-  function passageRangeFrom(selection) {
+  function passageRangeFrom(selection: Selection | null) {
     if (!selection || selection.isCollapsed || selection.rangeCount === 0) return null;
     const range = selection.getRangeAt(0);
     if (!resultCard.contains(range.commonAncestorContainer)) return null;
@@ -1331,10 +1374,10 @@
       ? range.endContainer
       : range.endContainer.parentElement;
     if (!start || !end) return null;
-    const answer = start.closest('.turn-answer');
-    if (!answer || answer !== end.closest('.turn-answer')) return null;
+    const answer = (start as Element).closest<HTMLElement>('.turn-answer');
+    if (!answer || answer !== (end as Element).closest<HTMLElement>('.turn-answer')) return null;
     if (answer.dataset.kind === 'error') return null;
-    const turn = answer.closest('.thread-turn');
+    const turn = answer.closest<HTMLElement>('.thread-turn');
     if (!turn || turn.dataset.status !== 'done') return null;
     const text = range.toString().trim();
     if (text.length < PASSAGE_MIN_CHARS) return null;
@@ -1366,7 +1409,7 @@
   // 桥回来的是纯文本。它可能有换行，所以按行拆成 <br> 分隔的文本节点——
   // 这里一律 createTextNode：这是一块渲染模型输出的界面，转义必须是结构性的，
   // 不能靠记得转义（stage.js 因此被钉死不许出现那个赋值 HTML 字符串的属性）。
-  function passageNodes(value) {
+  function passageNodes(value: unknown) {
     const span = document.createElement('span');
     span.className = 'passage-fresh';
     const lines = String(value || '').split('\n');
@@ -1395,7 +1438,7 @@
         context: (pick.answer.textContent || '').trim(),
       });
     } catch (error) {
-      reply = { ok: false, error: String(error?.message || error || '展开失败。') };
+      reply = { ok: false, error: String((error as { message?: unknown } | null)?.message || error || '展开失败。') };
     }
     passageBusy = false;
     passageExpand.dataset.busy = 'false';
@@ -1541,7 +1584,7 @@
   //
   // agent-prompt-draft 留在原地：它不是一张卡，是一个带会话选择器和自己那套
   // IPC 的控件。硬塞进卡片契约只会两头不讨好。
-  function renderStructured(container, payload) {
+  function renderStructured(container: HTMLElement, payload: any) {
     container.replaceChildren();
     const kind = payload && typeof payload === 'object' ? payload.kind : null;
     container.dataset.kind = kind || 'inline';
@@ -1567,11 +1610,11 @@
 
   // 卡片本身是纯 HTML，动作用一次事件委托挂上来。按钮做什么由 payload.actions
   // 决定——和原来逐个 addEventListener 时的行为一致，只是绑定点变成了一个。
-  function bindCardActions(container, payload) {
-    const actions = payload && Array.isArray(payload.actions) ? payload.actions : [];
+  function bindCardActions(container: HTMLElement, payload: any) {
+    const actions: any[] = payload && Array.isArray(payload.actions) ? payload.actions : [];
     if (!actions.length) return;
     container.addEventListener('click', (event) => {
-      const button = event.target.closest('[data-act="action"]');
+      const button = (event.target as Element | null)?.closest<HTMLElement>('[data-act="action"]');
       if (!button || !container.contains(button)) return;
       const action = actions.find((a) => a && String(a.id || '') === button.dataset.actionId);
       if (!action) return;
@@ -1597,7 +1640,7 @@
   // 「我不打算让你知道我在干什么」。
   const runningCards = new Map();   // turnId -> card
 
-  function runningCardFor(turn) {
+  function runningCardFor(turn: any) {
     const id = `t${turn.id}`;
     if (!runningCards.has(id)) {
       runningCards.set(id, CardModel.normalizeCard({
@@ -1607,33 +1650,33 @@
         startedAt: Date.now(),
       }, { id }));
     }
-    return runningCards.get(id);
+    return runningCards.get(id)!;
   }
 
-  function paintRunningCard(container, turn) {
+  function paintRunningCard(container: HTMLElement, turn: any) {
     const card = runningCardFor(turn);
     card.runningLabel = CardModel.runningLabel(card);
     container.replaceChildren(renderCard(card, { density: 'capsule' }));
   }
 
   // 桥报上来一步，就给正在等的那张卡打一个补丁并重画。
-  function patchRunningCard(patch) {
+  function patchRunningCard(patch: any) {
     const turn = [...state.turns].reverse().find((t) => t.status === 'pending');
     if (!turn) return;
     const id = `t${turn.id}`;
     const current = runningCards.get(id);
     if (!current) return;
     runningCards.set(id, CardModel.applyPatch(current, patch));
-    const node = resultCard.querySelector(`.thread-turn[data-turn-id="${turn.id}"] .turn-answer`);
+    const node = resultCard.querySelector<HTMLElement>(`.thread-turn[data-turn-id="${turn.id}"] .turn-answer`);
     if (node) paintRunningCard(node, turn);
   }
 
-  function buildTurn(turn) {
-    const node = tplThreadTurn.content.firstElementChild.cloneNode(true);
+  function buildTurn(turn: any) {
+    const node = tplThreadTurn.content.firstElementChild!.cloneNode(true) as HTMLElement;
     node.dataset.turnId = String(turn.id);
     node.dataset.status = turn.status;
-    const ask = node.querySelector('.turn-ask');
-    const answer = node.querySelector('.turn-answer');
+    const ask = node.querySelector<HTMLElement>('.turn-ask')!;
+    const answer = node.querySelector<HTMLElement>('.turn-answer')!;
     if (turn.ask) ask.textContent = turn.ask;
     else ask.hidden = true;
     if (turn.status === 'pending') {
@@ -1651,7 +1694,7 @@
 
   // 秒数仍然要走——一个两分钟的卡死和一个两秒的等待，只靠步骤行是分不出来的。
   // 但它现在只是卡上的一个附注，不再是唯一的信息。
-  function syncWaitClock(hasPending) {
+  function syncWaitClock(hasPending: boolean) {
     if (!hasPending) {
       if (waitTimer) clearInterval(waitTimer);
       waitTimer = null;
@@ -1660,7 +1703,7 @@
     }
     if (!waitStartedAt) waitStartedAt = Date.now();
     const paint = () => {
-      const label = resultCard.querySelector('.thread-turn[data-status="pending"] [data-elapsed]');
+      const label = resultCard.querySelector<HTMLElement>('.thread-turn[data-status="pending"] [data-elapsed]');
       if (!label) return;
       const seconds = Math.max(0, Math.round((Date.now() - waitStartedAt) / 1000));
       label.textContent = seconds >= 1 ? `${seconds}s` : '';
@@ -1674,12 +1717,12 @@
   // Turns are rebuilt only when one is added or settles. Skipping the no-op
   // re-render keeps the scroll position and, more importantly, does not wipe
   // the agent-prompt textarea while the user is editing it.
-  function renderThread(turns) {
+  function renderThread(turns: any[]) {
     const signature = turns.map((turn) => `${turn.id}:${turn.status}`).join(',');
     if (signature !== renderedTurnSignature) {
       renderedTurnSignature = signature;
       const existing = new Map();
-      for (const node of resultCard.children) existing.set(node.dataset.turnId, node);
+      for (const node of resultCard.children) existing.set((node as HTMLElement).dataset.turnId, node);
       const nodes = turns.map((turn) => {
         const found = existing.get(String(turn.id));
         return found && found.dataset.status === turn.status ? found : buildTurn(turn);
@@ -1713,7 +1756,7 @@
       pending ? '#ic-circle' : failed ? '#ic-warn' : '#ic-check',
     );
     threadEyebrowText.textContent = pending ? 'WORKING' : failed ? 'NEEDS ATTENTION' : 'TASK FINISHED';
-    const firstAskRow = resultCard.firstElementChild?.querySelector('.turn-ask');
+    const firstAskRow = resultCard.firstElementChild?.querySelector<HTMLElement>('.turn-ask');
     if (firstAskRow) firstAskRow.hidden = Boolean(firstAsk);
     // 还在跑的时候没有可复制的东西。一个点了没反应的按钮比一个明显不能点的
     // 按钮更让人以为是坏了。
@@ -1750,7 +1793,7 @@
     chipsBox.hidden = true;
   }
 
-  function buildChip(chip) {
+  function buildChip(chip: any) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'stage-chip';
@@ -1770,9 +1813,9 @@
   // Chips: click-selected object + idle capsule only; first keystroke or
   // voice mode hides them (policy owns the rule). Defensive: no policy
   // module loaded -> no chips, ever.
-  function renderChips(allowed) {
+  function renderChips(allowed: boolean) {
     const policy = globalThis.StageChipsPolicy;
-    let chips = [];
+    let chips: any[] = [];
     if (allowed && policy
       && typeof policy.shouldShowChips === 'function'
       && typeof policy.deriveChips === 'function'
@@ -1809,7 +1852,7 @@
   // exclusively when a genuine deliveryProgress payload arrives. No events ->
   // this stays hidden and the shimmer alone communicates "working"
   // (design §2.2: no fake foreign-app animation).
-  function renderDelivery(name) {
+  function renderDelivery(name: string) {
     const progress = state.deliveryProgress;
     const anchorEl = name === 'processing' ? capsule : name === 'result' ? threadPanel : null;
     if (!progress || !anchorEl || anchorEl.hidden) {
@@ -2016,7 +2059,7 @@
   // One notice line, two sources. A transient status from the main process
   // ("正在读取选中的内容…") wins over the standing gateway warning: it is about
   // what is happening right now, and it clears itself when the outcome lands.
-  function renderModelNotice(name) {
+  function renderModelNotice(name: string) {
     if (!noticeBox) return;
     const transient = String(state.notice?.message || '');
     const composerOpen = name === 'capsule-text' || name === 'capsule-voice' || name === 'processing';
@@ -2096,7 +2139,7 @@
     syncHitRegions();
   });
 
-  function applyMeta(payload) {
+  function applyMeta(payload: any) {
     if (!payload || typeof payload !== 'object') return false;
     let changed = false;
     if ('selectionSource' in payload && meta.selectionSource !== payload.selectionSource) {
@@ -2110,7 +2153,7 @@
     return changed;
   }
 
-  function applySession(payload) {
+  function applySession(payload: any) {
     if (!payload || typeof payload !== 'object') return;
     if ('selectionSessionToken' in payload) {
       session.token = payload.selectionSessionToken ? String(payload.selectionSessionToken) : null;
@@ -2200,7 +2243,7 @@
     if (payload.visualTuning && typeof payload.visualTuning === 'object') {
       for (const [name, fallback] of Object.entries(DEFAULT_VISUAL_TUNING)) {
         const value = Number(payload.visualTuning[name]);
-        session.visualTuning[name] = Number.isFinite(value) ? value : fallback;
+        session.visualTuning[name as keyof typeof DEFAULT_VISUAL_TUNING] = Number.isFinite(value) ? value : fallback;
       }
     }
     applyVisualTuning();

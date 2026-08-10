@@ -1,4 +1,3 @@
-// @ts-nocheck -- legacy classic-script globals are preserved during the extension migration.
 /* exported LiveCards */
 /* ============================================================================
    活着的卡
@@ -13,9 +12,11 @@
    2. **终态之后停止计时。** 卡已经结束了还在跑一个 setInterval，是在白烧电。
    ============================================================================ */
 
+// classic-script 全局 API（stage/studio 以 global 方式消费 LiveCards）。
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const LiveCards = (() => {
-  const cards = new Map();     // cardId -> card
-  let timer = null;
+  const cards = new Map<string, MagicPointerCard>();     // cardId -> card
+  let timer: ReturnType<typeof setInterval> | null = null;
 
   function anyRunning() {
     for (const card of cards.values()) if (card.state === 'running') return true;
@@ -40,10 +41,10 @@ const LiveCards = (() => {
     timer = setInterval(paintElapsed, 500);
   }
 
-  function repaint(id) {
+  function repaint(id: string) {
     const card = cards.get(id);
     if (!card) return;
-    const existing = document.querySelector(`[data-card-id="${CSS.escape(id)}"]`);
+    const existing = document.querySelector<HTMLElement>(`[data-card-id="${CSS.escape(id)}"]`);
     if (!existing) return;
     card.runningLabel = CardModel.runningLabel(card);
     const density = existing.dataset.density || 'full';
@@ -53,14 +54,14 @@ const LiveCards = (() => {
 
   return {
     // 记住一张已经在页面上的卡，从此它可以被补丁更新
-    track(card) {
+    track(card: MagicPointerCard) {
       const normalized = CardModel.normalizeCard(card, { id: card.id });
       cards.set(normalized.id, normalized);
       ensureTimer();
       return normalized;
     },
 
-    patch(cardId, patch) {
+    patch(cardId: string, patch: Record<string, unknown>) {
       const id = String(cardId || '');
       const current = cards.get(id);
       if (!current) return null;
@@ -71,7 +72,7 @@ const LiveCards = (() => {
       return next;
     },
 
-    get(cardId) {
+    get(cardId: string) {
       return cards.get(String(cardId || '')) || null;
     },
 

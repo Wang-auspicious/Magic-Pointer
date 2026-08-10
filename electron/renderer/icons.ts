@@ -1,4 +1,3 @@
-// @ts-nocheck -- legacy classic-script globals are preserved during the extension migration.
 /* 图标精灵：1.5px 细描边、圆头、24×24 网格。studio 与 companion 共用。 */
 document.body.insertAdjacentHTML("afterbegin", `<svg width="0" height="0" class="icon-sprite" aria-hidden="true"><defs>
 <g id="i-base" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></g>

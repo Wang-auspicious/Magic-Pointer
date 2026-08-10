@@ -19,8 +19,13 @@ function onPayload(channel: string, callback: PayloadCallback) {
   return ipcRenderer.on(channel, (_event: Electron.IpcRendererEvent, payload: unknown) => callback(payload));
 }
 
+// Signal channels carry no payload, so the callback is invoked with no arguments
+// at all. Forwarding ipcRenderer's own listener signature would hand the renderer
+// an IpcRendererEvent — and `event.sender` is ipcRenderer itself, which
+// contextBridge would proxy straight into the isolated world. Dropping the
+// arguments here is what keeps `SignalCallback = () => void` true at runtime.
 function onSignal(channel: string, callback: SignalCallback) {
-  return ipcRenderer.on(channel, callback);
+  return ipcRenderer.on(channel, () => callback());
 }
 
 contextBridge.exposeInMainWorld('magicPointer', {

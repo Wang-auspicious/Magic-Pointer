@@ -1,8 +1,7 @@
-// @ts-nocheck -- legacy classic-script globals are preserved during the extension migration.
 /* 卡片画廊。只用来核对视觉——每一张都是 renderCard 的真实输出，
    不是另画一遍的样子。所以这一页看到什么，产品里就是什么。 */
 
-const SAMPLES = [
+const SAMPLES: [string, string, Record<string, unknown>][] = [
   ['运行中 · 没有已知进度', 'capsule', {
     kind: 'prose', state: 'running',
     source: { app: 'VS Code', label: '第 118 行' },
@@ -142,5 +141,5 @@ for (const [caption, density, raw] of SAMPLES) {
   const card = CardModel.normalizeCard(raw);
   card.runningLabel = CardModel.runningLabel(card);
   cell.appendChild(renderCard(card, { density }));
-  grid.appendChild(cell);
+  grid!.appendChild(cell);
 }

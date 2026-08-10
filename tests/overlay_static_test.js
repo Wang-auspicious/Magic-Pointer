@@ -105,8 +105,8 @@ assert.strictEqual(context.testPayload.viewport.dpr, 2);
 assert.strictEqual(context.testPayload.points.length, 3);
 
 // Unified multi-stroke chain: the payload carries every committed stroke.
-const chainStart = source.indexOf('let strokes = [];');
-const chainEnd = source.indexOf('let renderRaf = null;');
+const chainStart = source.indexOf('let strokes: OverlayStroke[] = [];');
+const chainEnd = source.indexOf('let renderRaf: number | null = null;');
 assert(chainStart >= 0, 'multi-stroke chain state must exist');
 assert(chainEnd > chainStart, 'chain state must live before the render loop');
 assert(source.includes('CHAIN_GAP_MS'));

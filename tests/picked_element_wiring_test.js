@@ -15,12 +15,17 @@ const preloadSource = fs.readFileSync(path.join(root, 'electron', 'preload.ts'),
 const stageSource = fs.readFileSync(path.join(root, 'electron', 'renderer', 'stage.ts'), 'utf8');
 
 // --- withPickedElement 的行为 -----------------------------------------------
-// main.js 不能直接 require（它会拉起 electron），所以把纯函数抽出来求值。
+// main.ts 不能直接 require（它会拉起 electron），所以把纯函数抽出来求值。
+// 源码现在带类型注解，不能直接交给 new Function，先经 TypeScript 转译成 JS。
+const ts = require('typescript');
 const body = mainSource.slice(
   mainSource.indexOf('function withPickedElement('),
   mainSource.indexOf('function deliverStageError('),
 );
-const withPickedElement = new Function(`${body}; return withPickedElement;`)();
+const compiledBody = ts.transpileModule(body, {
+  compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS },
+}).outputText;
+const withPickedElement = new Function(`${compiledBody}; return withPickedElement;`)();
 
 const SNAPSHOT = Object.freeze({
   snapshot_id: 'snap-1',
