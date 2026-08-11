@@ -93,6 +93,15 @@ def get_vision_base_url(text_base_url: str | None) -> str | None:
     return os.getenv("MAGIC_POINTER_VISION_BASE_URL") or read_local_secret("vision_base_url.txt") or text_base_url
 
 
+def get_vision_key(text_api_key: str | None) -> str | None:
+    """Vision may use its own credential (e.g. a Google AI Studio key).
+
+    Configured via MAGIC_POINTER_VISION_KEY or secrets/vision_key.txt;
+    falls back to the text-path key.
+    """
+    return os.getenv("MAGIC_POINTER_VISION_KEY") or read_local_secret("vision_key.txt") or text_api_key
+
+
 # ── vision capability classification ─────────────────────────────────
 # Adapted from external/claude-code-vision-skill/vision/vision.py
 # (TEXT_ONLY_MODEL_PATTERNS). A text-only model that receives an image
@@ -640,6 +649,7 @@ def ask_vision_model(
 
     api_key, base_url, model = get_ai_config()
     model = get_vision_model(model)
+    api_key = get_vision_key(api_key)
     if classify_vision_capability(model) is False:
         record_failure(
             status=None,

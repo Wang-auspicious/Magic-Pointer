@@ -69,7 +69,9 @@ P3 十二项能力做完十项：图转提示词、选区拉伸把手、点选�
 
 Go 视觉能力实测（2026-08-07，探针 `data/runtime/probe_go_vision.py`）：**kimi-k3、qwen3.7-plus 有视觉；glm-5.1/5.2、hy3、deepseek-v4-flash、mimo-v2-omni 无视觉或不可用；grok-4.5 端点 503**。qwen3.7-plus 走 `/messages` 且必须 `x-api-key` 头（`_completion_headers` 的 messages 分支已兼容）。真实图验收（`D:\Desktop\参考\1d9473e9adbf41e3bbbf0b59ef4dc480.jpg`，1079×809）：完整读出仪表盘结构与基金代码，区域追问 6.8s 返回。
 
-2026-08-11 全屏三问基准（`scripts/benchmark_vision_models.py`，真实桌面 3120×2080，Edge 小字页面 + 记事本 + 红环 42 图，走产品同款 messages 协议）：**qwen3.7-plus 3/3 全过**（q1 窗口/标题 3/3、q2 8px 小字含中英文编码 3/3、q3 图片四问 4/4，约 20-33s/问）；**mimo-v2.5 2/3**（q1 3/3、q2 英文小字+编码读出但漏中文小字 2/3、q3 4/4，约 17-23s/问，更快）。结论：mimo-v2.5 读图与小字英文可用、对中文小字弱一档；按用户指示已切为默认视觉模型，原 qwen 配置备份保留。报告在 `data/runtime/vision-bench/report-qwen.json` 与 `report-mimo.json`。
+2026-08-11 全屏三问基准（`scripts/benchmark_vision_models.py`，真实桌面 3120×2080，Edge 小字页面 + 记事本 + 红环 42 图，走产品同款协议）：**qwen3.7-plus 3/3 全过**（约 20-33s/问）；**mimo-v2.5 2/3**（英文小字+编码读出但漏中文小字，约 17-23s/问）；**gemini-2.5-flash 3/3 全过**（中文小字 1 字误读「小学/小字」，约 10-13s/问，最快）。结论：mimo-v2.5 读图可用、中文小字弱一档；gemini-2.5-flash 免费且最快。报告在 `data/runtime/vision-bench/report-{qwen,mimo,gemini}.json`。
+
+Google AI Studio 免费 key 接入：`secrets/vision_key.txt`（gitignored，环境变量 `MAGIC_POINTER_VISION_KEY` 覆盖），配 `secrets/vision_base_url.txt` = `https://generativelanguage.googleapis.com/v1beta/openai` + `vision_api_mode.txt` = `chat-completions` 即可走 Gemini OpenAI 兼容端点；已按开源风格加 `get_vision_key()`（无独立 key 时回落文本 key）。当前产品默认视觉仍是 `mimo-v2.5`（Go 网关），Gemini 路由随时可切。
 
 文本实测约 3–6 秒。**不是流式**。
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 from app.ai_client import (
     classify_vision_capability,
     get_vision_base_url,
+    get_vision_key,
     get_vision_model,
 )
 
@@ -61,3 +62,23 @@ def test_vision_base_url_override_precedence(monkeypatch) -> None:
     assert get_vision_base_url("https://opencode.ai/zen/go/v1") == "https://opencode.ai/zen/go/v1"
     monkeypatch.setenv("MAGIC_POINTER_VISION_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
     assert get_vision_base_url("https://opencode.ai/zen/go/v1") == "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+
+def test_vision_key_falls_back_to_text_path_key() -> None:
+    assert get_vision_key("text-key") == "text-key"
+
+
+def test_vision_key_env_override(monkeypatch) -> None:
+    monkeypatch.setenv("MAGIC_POINTER_DISABLE_LOCAL_SECRETS", "1")
+    monkeypatch.setenv("MAGIC_POINTER_VISION_KEY", "vision-key-env")
+    assert get_vision_key("text-key") == "vision-key-env"
+
+
+def test_vision_key_reads_vision_key_file(tmp_path, monkeypatch) -> None:
+    import app.ai_client as ai_client
+
+    secrets_dir = tmp_path / "secrets"
+    secrets_dir.mkdir()
+    (secrets_dir / "vision_key.txt").write_text("vision-key-file\n", encoding="utf-8")
+    monkeypatch.setattr(ai_client, "SECRETS_DIR", secrets_dir)
+    assert get_vision_key("text-key") == "vision-key-file"
