@@ -55,7 +55,7 @@ P3 十二项能力做完十项：图转提示词、选区拉伸把手、点选�
 ## 不能用 / 有条件
 
 - **微信 4.x、Qt、Flutter、GPU 合成的 Electron**：UIA 只给容器，`PrintWindow` 抓不到帧，两条读取路同时断。目前靠合成截图 + OCR + 视觉分组兜过去，但**首笔手势拿不到候选框**，只能事后点选。
-- **视觉已配独立模型**。文本默认 `deepseek-v4-flash`（无视觉），视觉走 `secrets/vision_model.txt` = `mimo-v2.5`（messages 协议，`secrets/vision_api_mode.txt`），已实测读图正确；切换前的 `qwen3.7-plus` 备份在 `secrets/vision_model.txt.bak-qwen`。仍要遵守：**"请求成功"不等于"视觉可用"**，能力以实测为准。
+- **视觉已配独立模型**。文本默认 `deepseek-v4-flash`（无视觉），视觉走 `secrets/vision_model.txt` = `gemini-2.5-flash`（chat-completions 协议 + 独立 `vision_key.txt` Google key + `vision_base_url.txt` = Google OpenAI 兼容端点），已实测读图正确且最快（约 10-13s/问）；切换前的 `qwen3.7-plus`/`mimo-v2.5` 备份在 `secrets/vision_model.txt.bak-qwen` / `.bak-mimo`。仍要遵守：**"请求成功"不等于"视觉可用"**，能力以实测为准。
 - **浏览器结构化读取依赖 `--remote-debugging-port`**。端口不可用时目前不回落 UIA（证据显示 UIA 树完全够用）。
 - **P3 剩一项**：选中动作条。它需要一个**常驻文本选中监听**——没有会话时也在后台观察，是新的常驻组件，不是现有链路的延伸。Clicky 已按产品场景收敛为 `[POINT]` 按需引导，不做常驻指针陪伴，也不需要 selection-hook。
 - **macOS**：代码在（`native/macos/MagicPointerHost.swift`），没有实机验过权限、多屏坐标、签名公证。
@@ -63,7 +63,7 @@ P3 十二项能力做完十项：图转提示词、选区拉伸把手、点选�
 
 ## 模型后端
 
-网关已切到 **OpenCode Go**（套餐额度，推理仍在本产品内）：`secrets/openai_base_url.txt` = `https://opencode.ai/zen/go/v1`、`openai_key.txt` = Go key、`model.txt` = `deepseek-v4-flash`（chat-completions，协议按 base_url 自动识别，不要再建 `model_api_mode.txt`）。视觉独立配置：`vision_model.txt` = `mimo-v2.5` + `vision_api_mode.txt` = `messages` + 可选 `vision_base_url.txt`（独立网关，如切回国内直连）。环境变量同名覆盖：`MAGIC_POINTER_VISION_MODEL` / `MAGIC_POINTER_VISION_API_MODE` / `MAGIC_POINTER_VISION_BASE_URL`。**文本/视觉/网关三者可各自独立配置，代码同一套逻辑**——海外或国内模型只是改配置，不改代码。
+网关已切到 **OpenCode Go**（套餐额度，推理仍在本产品内）：`secrets/openai_base_url.txt` = `https://opencode.ai/zen/go/v1`、`openai_key.txt` = Go key、`model.txt` = `deepseek-v4-flash`（chat-completions，协议按 base_url 自动识别，不要再建 `model_api_mode.txt`）。视觉独立配置：`vision_model.txt` = `gemini-2.5-flash` + `vision_api_mode.txt` = `chat-completions` + `vision_base_url.txt` = `https://generativelanguage.googleapis.com/v1beta/openai` + `vision_key.txt` = Google AI Studio key（新增，`MAGIC_POINTER_VISION_KEY` 环境变量覆盖，无独立 key 时回落文本 key）。环境变量同名覆盖：`MAGIC_POINTER_VISION_MODEL` / `MAGIC_POINTER_VISION_API_MODE` / `MAGIC_POINTER_VISION_BASE_URL` / `MAGIC_POINTER_VISION_KEY`。**文本/视觉/网关三者可各自独立配置，代码同一套逻辑**——海外或国内模型只是改配置，不改代码。
 
 纯文本模型黑名单分类器 `app/ai_client.py:classify_vision_capability`（移植自 `external/claude-code-vision-skill`）：已知纯文本模型（deepseek / glm-4.x / glm-5.x 非 v 线 / kimi-k2- / hy3 / qwen3-coder）在 `ask_vision_model` 中**诚实拒绝**（不发请求、气泡明示如何配视觉模型）；未知模型不拦截。测试钉子 `tests/vision_capability_test.py`。
 
