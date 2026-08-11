@@ -55,7 +55,7 @@ P3 十二项能力做完十项：图转提示词、选区拉伸把手、点选�
 ## 不能用 / 有条件
 
 - **微信 4.x、Qt、Flutter、GPU 合成的 Electron**：UIA 只给容器，`PrintWindow` 抓不到帧，两条读取路同时断。目前靠合成截图 + OCR + 视觉分组兜过去，但**首笔手势拿不到候选框**，只能事后点选。
-- **视觉已配独立模型**。文本默认 `deepseek-v4-flash`（无视觉），视觉走 `secrets/vision_model.txt` = `qwen3.7-plus`（messages 协议，`secrets/vision_api_mode.txt`），已实测读图正确。仍要遵守：**"请求成功"不等于"视觉可用"**，能力以实测为准。
+- **视觉已配独立模型**。文本默认 `deepseek-v4-flash`（无视觉），视觉走 `secrets/vision_model.txt` = `mimo-v2.5`（messages 协议，`secrets/vision_api_mode.txt`），已实测读图正确；切换前的 `qwen3.7-plus` 备份在 `secrets/vision_model.txt.bak-qwen`。仍要遵守：**"请求成功"不等于"视觉可用"**，能力以实测为准。
 - **浏览器结构化读取依赖 `--remote-debugging-port`**。端口不可用时目前不回落 UIA（证据显示 UIA 树完全够用）。
 - **P3 剩一项**：选中动作条。它需要一个**常驻文本选中监听**——没有会话时也在后台观察，是新的常驻组件，不是现有链路的延伸。Clicky 已按产品场景收敛为 `[POINT]` 按需引导，不做常驻指针陪伴，也不需要 selection-hook。
 - **macOS**：代码在（`native/macos/MagicPointerHost.swift`），没有实机验过权限、多屏坐标、签名公证。
@@ -63,11 +63,13 @@ P3 十二项能力做完十项：图转提示词、选区拉伸把手、点选�
 
 ## 模型后端
 
-网关已切到 **OpenCode Go**（套餐额度，推理仍在本产品内）：`secrets/openai_base_url.txt` = `https://opencode.ai/zen/go/v1`、`openai_key.txt` = Go key、`model.txt` = `deepseek-v4-flash`（chat-completions，协议按 base_url 自动识别，不要再建 `model_api_mode.txt`）。视觉独立配置：`vision_model.txt` = `qwen3.7-plus` + `vision_api_mode.txt` = `messages` + 可选 `vision_base_url.txt`（独立网关，如切回国内直连）。环境变量同名覆盖：`MAGIC_POINTER_VISION_MODEL` / `MAGIC_POINTER_VISION_API_MODE` / `MAGIC_POINTER_VISION_BASE_URL`。**文本/视觉/网关三者可各自独立配置，代码同一套逻辑**——海外或国内模型只是改配置，不改代码。
+网关已切到 **OpenCode Go**（套餐额度，推理仍在本产品内）：`secrets/openai_base_url.txt` = `https://opencode.ai/zen/go/v1`、`openai_key.txt` = Go key、`model.txt` = `deepseek-v4-flash`（chat-completions，协议按 base_url 自动识别，不要再建 `model_api_mode.txt`）。视觉独立配置：`vision_model.txt` = `mimo-v2.5` + `vision_api_mode.txt` = `messages` + 可选 `vision_base_url.txt`（独立网关，如切回国内直连）。环境变量同名覆盖：`MAGIC_POINTER_VISION_MODEL` / `MAGIC_POINTER_VISION_API_MODE` / `MAGIC_POINTER_VISION_BASE_URL`。**文本/视觉/网关三者可各自独立配置，代码同一套逻辑**——海外或国内模型只是改配置，不改代码。
 
 纯文本模型黑名单分类器 `app/ai_client.py:classify_vision_capability`（移植自 `external/claude-code-vision-skill`）：已知纯文本模型（deepseek / glm-4.x / glm-5.x 非 v 线 / kimi-k2- / hy3 / qwen3-coder）在 `ask_vision_model` 中**诚实拒绝**（不发请求、气泡明示如何配视觉模型）；未知模型不拦截。测试钉子 `tests/vision_capability_test.py`。
 
 Go 视觉能力实测（2026-08-07，探针 `data/runtime/probe_go_vision.py`）：**kimi-k3、qwen3.7-plus 有视觉；glm-5.1/5.2、hy3、deepseek-v4-flash、mimo-v2-omni 无视觉或不可用；grok-4.5 端点 503**。qwen3.7-plus 走 `/messages` 且必须 `x-api-key` 头（`_completion_headers` 的 messages 分支已兼容）。真实图验收（`D:\Desktop\参考\1d9473e9adbf41e3bbbf0b59ef4dc480.jpg`，1079×809）：完整读出仪表盘结构与基金代码，区域追问 6.8s 返回。
+
+2026-08-11 全屏三问基准（`scripts/benchmark_vision_models.py`，真实桌面 3120×2080，Edge 小字页面 + 记事本 + 红环 42 图，走产品同款 messages 协议）：**qwen3.7-plus 3/3 全过**（q1 窗口/标题 3/3、q2 8px 小字含中英文编码 3/3、q3 图片四问 4/4，约 20-33s/问）；**mimo-v2.5 2/3**（q1 3/3、q2 英文小字+编码读出但漏中文小字 2/3、q3 4/4，约 17-23s/问，更快）。结论：mimo-v2.5 读图与小字英文可用、对中文小字弱一档；按用户指示已切为默认视觉模型，原 qwen 配置备份保留。报告在 `data/runtime/vision-bench/report-qwen.json` 与 `report-mimo.json`。
 
 文本实测约 3–6 秒。**不是流式**。
 
