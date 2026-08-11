@@ -52,6 +52,8 @@ def read_local_secret(name: str) -> str | None:
     path = SECRETS_DIR / name
     try:
         value = path.read_text(encoding="utf-8").strip()
+        if value.startswith("\ufeff"):
+            value = value[1:]
         return value or None
     except FileNotFoundError:
         return None

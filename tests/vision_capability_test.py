@@ -64,7 +64,8 @@ def test_vision_base_url_override_precedence(monkeypatch) -> None:
     assert get_vision_base_url("https://opencode.ai/zen/go/v1") == "https://dashscope.aliyuncs.com/compatible-mode/v1"
 
 
-def test_vision_key_falls_back_to_text_path_key() -> None:
+def test_vision_key_falls_back_to_text_path_key(monkeypatch) -> None:
+    monkeypatch.setenv("MAGIC_POINTER_DISABLE_LOCAL_SECRETS", "1")
     assert get_vision_key("text-key") == "text-key"
 
 
@@ -82,3 +83,14 @@ def test_vision_key_reads_vision_key_file(tmp_path, monkeypatch) -> None:
     (secrets_dir / "vision_key.txt").write_text("vision-key-file\n", encoding="utf-8")
     monkeypatch.setattr(ai_client, "SECRETS_DIR", secrets_dir)
     assert get_vision_key("text-key") == "vision-key-file"
+
+
+def test_read_local_secret_tolerates_utf8_bom(tmp_path, monkeypatch) -> None:
+    import app.ai_client as ai_client
+
+    secrets_dir = tmp_path / "secrets"
+    secrets_dir.mkdir()
+    # PowerShell 5.1 Set-Content -Encoding UTF8 writes a BOM; the value must survive.
+    (secrets_dir / "vision_model.txt").write_bytes(b"\xef\xbb\xbfgemini-2.5-flash")
+    monkeypatch.setattr(ai_client, "SECRETS_DIR", secrets_dir)
+    assert ai_client.read_local_secret("vision_model.txt") == "gemini-2.5-flash"
