@@ -50,6 +50,7 @@ docs/reference/
 .learnings/
 .omx/
 .superpowers/
+.worktrees/
 .vscode/
 .idea/
 .DS_Store
