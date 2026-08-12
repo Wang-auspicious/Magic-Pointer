@@ -1,10 +1,19 @@
 """Perception privacy infrastructure: app blacklist, sensitive redaction,
-and offline (no-egress) mode (harness gap review L10, task A2).
+offline (no-egress) mode, and the per-app capability matrix (review L10/L14).
 
 Pure Python, stdlib-only. No I/O, no Electron coupling, no UI automation.
 """
 
 from .app_blacklist import AppBlacklist, BlacklistDecision, BlacklistRule
+from .capability_matrix import (
+    KNOWN_CAPABILITIES,
+    Capability,
+    CapabilityEntry,
+    CapabilityMatrix,
+    CapabilityMatrixError,
+    CapabilityStatus,
+    entry_dict,
+)
 from .offline_mode import (
     FORBIDDEN_SCOPES,
     LOCAL_SCOPES,
@@ -23,6 +32,13 @@ __all__ = [
     "AppBlacklist",
     "BlacklistDecision",
     "BlacklistRule",
+    "KNOWN_CAPABILITIES",
+    "Capability",
+    "CapabilityEntry",
+    "CapabilityMatrix",
+    "CapabilityMatrixError",
+    "CapabilityStatus",
+    "entry_dict",
     "FORBIDDEN_SCOPES",
     "LOCAL_SCOPES",
     "OfflineForbiddenError",
