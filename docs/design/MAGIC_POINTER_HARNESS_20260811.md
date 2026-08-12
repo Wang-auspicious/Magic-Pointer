@@ -855,7 +855,14 @@ DOM、COM、UIA、Fabric等现有模块也不自动保留，只优先保存经�
   - executors：4 个写回动作挂 compensate 槽。
   - 验证：Python 1767 过（2 既有环境失败）；Node 131；typecheck/lint 过。
   - 诚实缺口：approval/undo/egress 接线缝在工具实现层（真实写回工具接线待动作批）；恢复提示消息 role=user+origin=data 与 validate_messages 的已知间隙（文档化）。
-- [ ] 批次 3：L9 变更流 + L10 感知权限 + L13 账本/PointerBench + L14/L15/L16。
+- [x] 批次 3：L9 变更流 + L10 感知权限 + L13 账本/Bench + L14 能力矩阵 + L15 修复对话 + L16 能力提示（2026-08-12 完成，见 `docs/superpowers/plans/2026-08-12-harness-scale-batch.md`）：
+  - `app/events/`：四类变更事件 + 按窗口订阅/节流/白名单/风暴熔断（不做真实 UIA 宿主接线）。
+  - `app/permissions/`：感知黑名单（内置 10 规则，感知前拦截）+ 敏感脱敏（Luhn 卡号/身份证/电话）+ 不出网模式 + 能力矩阵（应用×能力×状态，持久化）。
+  - `app/telemetry/`：交互账本（token 文本/视觉分开、阶段延迟、look 占比、失败 Top）+ PointerBench 基座（三方对比报告，缺组诚实"未采集"）+ doctor 报告（unknown≠failed）。
+  - `app/failure_flow/`：失败归因修复建议映射表（timeout→look+retry 等 7 类）+ 目标条件化能力提示（7 目标类型，3-8 个钳制）。
+  - 验证：Python 2026 过（2 既有环境失败）；Node 131；typecheck/lint 过。
+  - 诚实缺口：变更流/黑名单/账本均未接生产感知链（基础设施先于接线）。
+- [ ] 批次 4：L1 生产接线（fabric_bridge 切换循环）、真实多轮模型客户端、写回工具挂 guard、WGC/D3D 捕获后端、常驻 UIA 宿主（Phase B/C）。
 - [ ] WGC/D3D 捕获后端（FrameLease 生产热路径）。
 
 ### 2026-08-13：recipe 重定位对账 5 项 P1 修复（review-recipes）
