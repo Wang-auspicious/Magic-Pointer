@@ -1135,6 +1135,53 @@ def _fabric_tool_execute(
     return execute
 
 
+_COMPENSATION_FIELDS = (
+    "action_id",
+    "tool_name",
+    "target_ref",
+    "prior_content",
+    "cursor_position",
+    "was_created",
+    "captured_at_utc",
+)
+
+
+def _undo_write_back(args: dict[str, Any]) -> None:
+    """Undo wiring point for write-back tools (stub, no-op today).
+
+    接线点：写回前保存 prior_content，撤销时恢复。Real compensation logic
+    (restore prior_content into the target; delete targets that were
+    created) is wired by the ActionLease/action_guard caller batch. This
+    batch only guarantees every write-back tool carries a compensation
+    slot and that the slot is registered correctly.
+    """
+
+
+def _compensation_args(args: dict[str, Any]) -> dict[str, Any]:
+    """Normalise what a compensation slot receives into the args dict.
+
+    The slot contract is a dict (target_ref / prior_content / was_created
+    / cursor_position / captured_at_utc ...). UndoLog hands a
+    :class:`Compensation` object to ``compensate``; both shapes are
+    accepted so callers can wire ``spec.compensate`` straight into the
+    ledger entry.
+    """
+    if isinstance(args, dict):
+        return dict(args)
+    return {key: getattr(args, key, None) for key in _COMPENSATION_FIELDS}
+
+
+def _fabric_compensate(args: dict[str, Any]) -> None:
+    """Compensation slot for a write-back tool.
+
+    Receives the args dict captured before the write-back ran
+    (target_ref / prior_content / was_created / cursor_position /
+    captured_at_utc) and forwards it to the :func:`_undo_write_back`
+    wiring point. Real restore logic lives behind that stub.
+    """
+    _undo_write_back(_compensation_args(args))
+
+
 def register_fabric_tools(
     registry: ToolRegistry,
     *,
@@ -1171,6 +1218,7 @@ def register_fabric_tools(
         concurrency_safe: bool = False,
         extra_properties: dict[str, dict[str, Any]] | None = None,
         required: tuple[str, ...] = ("objects",),
+        compensate: Callable[[dict[str, Any]], None] | None = None,
     ) -> ToolSpec:
         return ToolSpec(
             name=name,
@@ -1191,6 +1239,7 @@ def register_fabric_tools(
             is_concurrency_safe=concurrency_safe,
             used_backend=backend,
             timeout_ms=timeout_ms,
+            compensate=compensate,
         )
 
     specs: list[ToolSpec] = [
@@ -1237,6 +1286,7 @@ def register_fabric_tools(
             ),
             backend="model",
             timeout_ms=60000,
+            compensate=_fabric_compensate,
         ),
         spec_of(
             name="translate_in_place",
@@ -1252,6 +1302,7 @@ def register_fabric_tools(
             ),
             backend="model",
             timeout_ms=60000,
+            compensate=_fabric_compensate,
         ),
         spec_of(
             name="summarize_route",
@@ -1280,6 +1331,7 @@ def register_fabric_tools(
             ),
             backend="model",
             timeout_ms=60000,
+            compensate=_fabric_compensate,
         ),
         spec_of(
             name="selection_condense",
@@ -1295,6 +1347,7 @@ def register_fabric_tools(
             ),
             backend="model",
             timeout_ms=60000,
+            compensate=_fabric_compensate,
         ),
         spec_of(
             name="to_spreadsheet",

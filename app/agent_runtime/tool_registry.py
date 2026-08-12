@@ -98,6 +98,7 @@ class ToolSpec:
     used_backend: str = "local"
     timeout_ms: int = 30000
     preconditions: tuple[Precondition, ...] = ()
+    compensate: Callable[[dict], None] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,6 +161,8 @@ class ToolRegistry:
                 f"tool {name!r} preconditions must be Precondition objects "
                 "with a check(context) method"
             )
+        if spec.compensate is not None and not callable(spec.compensate):
+            raise ValueError(f"tool {name!r} compensate must be callable when set")
         self._tools[name] = spec
         self._order.append(name)
         return spec
