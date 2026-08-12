@@ -76,6 +76,14 @@ Honest semantics of this batch:
   call; True terminates with ``user_interrupt``.
 - Model calls and tool execution are synchronous inside the async generator
   boundary (per task); the model ``cancel_scope`` is passed as None.
+
+Channel separation: every message carries an ``origin`` tag
+(``ORIGIN_INSTRUCTION`` | ``ORIGIN_DATA``). Only the first user message is an
+instruction; tool results, truncation feedback, recovery prompts and backend
+errors are harness-internal data. ``instruction_messages`` filters the
+instruction channel (future system prompt assembly);
+``validate_messages`` asserts the role/origin legality (data never uses the
+user role, tool results are always data).
 """
 
 from __future__ import annotations
@@ -98,6 +106,8 @@ from app.agent_runtime.model_client import (
 from app.agent_runtime.perception_tools import evidence_to_text
 from app.agent_runtime.tool_registry import Effect, ToolRegistry
 from app.agent_runtime.types import (
+    ORIGIN_DATA,
+    ORIGIN_INSTRUCTION,
     AgentMessage,
     Role,
     Terminal,
@@ -132,7 +142,9 @@ __all__ = [
     "ToolCallStarted",
     "TurnFinished",
     "TurnStarted",
+    "instruction_messages",
     "run_agent_loop",
+    "validate_messages",
 ]
 
 _FULL_ANSWER_STAGE = Stage.FULL_ANSWER
@@ -336,6 +348,7 @@ async def run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                                 tool_call_id=None,
                                 name=None,
                                 is_error=True,
+                                origin=ORIGIN_DATA,
                             )
                         )
                     last_transition = TransitionReason.TOOL_ERROR
@@ -377,6 +390,7 @@ async def run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                         content=_RECOVERY_MESSAGE,
                         tool_call_id=None,
                         name=None,
+                        origin=ORIGIN_DATA,
                     )
                 )
                 has_attempted = state.has_attempted_reactive_compact
@@ -477,6 +491,7 @@ async def run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                         tool_call_id=calls[0].id,
                         name=calls[0].name,
                         is_error=False,
+                        origin=ORIGIN_DATA,
                     )
                 )
                 if turn_number + 1 > params.max_turns:
@@ -532,6 +547,7 @@ async def run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                         tool_call_id=normalized.tool_call_id,
                         name=call.name,
                         is_error=normalized.is_error,
+                        origin=ORIGIN_DATA,
                     )
                 )
 
@@ -551,6 +567,7 @@ async def run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                         tool_call_id=normalized.tool_call_id,
                         name=call.name,
                         is_error=normalized.is_error,
+                        origin=ORIGIN_DATA,
                     )
                 )
 
@@ -677,7 +694,38 @@ def _first_message(params: LoopParams) -> AgentMessage:
         content=content,
         tool_call_id=None,
         name=None,
+        origin=ORIGIN_INSTRUCTION,
     )
+
+
+def instruction_messages(messages: Sequence[AgentMessage]) -> list[AgentMessage]:
+    """Filter to the instruction channel (``origin=ORIGIN_INSTRUCTION``).
+
+    Genuine user entries only (first user message, future voice/gesture
+    entries); tool results and harness-internal data never reach the
+    instruction channel. Intended for future system prompt assembly.
+    """
+    return [message for message in messages if message.origin == ORIGIN_INSTRUCTION]
+
+
+def validate_messages(messages: Sequence[AgentMessage]) -> None:
+    """Assert role/origin legality; raise ValueError on an illegal combo.
+
+    ``ORIGIN_DATA`` messages may only use the TOOL/ASSISTANT roles -- a data
+    message must never masquerade as a user instruction. ``ORIGIN_INSTRUCTION``
+    messages may never use the TOOL role (tool output is always data).
+    """
+    for message in messages:
+        if message.origin == ORIGIN_DATA and message.role is Role.USER:
+            raise ValueError(
+                f"origin={ORIGIN_DATA!r} message must not use role "
+                f"{message.role.value} (content={message.content!r})"
+            )
+        if message.origin == ORIGIN_INSTRUCTION and message.role is Role.TOOL:
+            raise ValueError(
+                f"origin={ORIGIN_INSTRUCTION!r} message must not use role "
+                f"{message.role.value} (content={message.content!r})"
+            )
 
 
 def _select_tool_schemas(params: LoopParams) -> list[dict[str, object]]:

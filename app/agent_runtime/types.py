@@ -20,6 +20,17 @@ class Role(enum.StrEnum):
     TOOL = "tool"
 
 
+ORIGIN_INSTRUCTION = "instruction"
+"""Origin tag: a genuine user instruction (first user message, future
+voice/gesture entries). Only these messages may drive the model as
+instructions."""
+
+ORIGIN_DATA = "data"
+"""Origin tag: tool results and harness-internal state (perception reads,
+tool results/errors, truncation feedback, recovery prompts). Never an
+instruction."""
+
+
 class TransitionReason(enum.StrEnum):
     """Why the loop continued (or why it terminated)."""
 
@@ -41,6 +52,7 @@ class AgentMessage:
     tool_call_id: str | None
     name: str | None
     is_error: bool = False
+    origin: str = ORIGIN_INSTRUCTION
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -49,18 +61,24 @@ class AgentMessage:
             "tool_call_id": self.tool_call_id,
             "name": self.name,
             "is_error": self.is_error,
+            "origin": self.origin,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> AgentMessage:
         _reject_unknown(data, cls)
+        data = {**data, "origin": data.get("origin", ORIGIN_INSTRUCTION)}
         _require_fields(data, cls)
+        origin = data["origin"]
+        if origin not in (ORIGIN_INSTRUCTION, ORIGIN_DATA):
+            raise ValueError(f"invalid origin {origin!r} for AgentMessage")
         return cls(
             role=Role(data["role"]),
             content=data["content"],
             tool_call_id=data["tool_call_id"],
             name=data["name"],
             is_error=data["is_error"],
+            origin=origin,
         )
 
 
