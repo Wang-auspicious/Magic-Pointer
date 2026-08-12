@@ -23,6 +23,7 @@ class Role(enum.StrEnum):
 class TransitionReason(enum.StrEnum):
     """Why the loop continued (or why it terminated)."""
 
+    COMPLETED = "completed"
     TOOL_RESULT = "tool_result"
     TOOL_ERROR = "tool_error"
     MAX_OUTPUT_TOKENS_RECOVERED = "max_output_tokens_recovered"

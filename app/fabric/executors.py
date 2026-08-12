@@ -1470,14 +1470,14 @@ def register_fabric_tools(
             provider="clipboard.history",
             method_name="_clipboard_history",
             risk=RiskLevel.READ,
-            effect=Effect.READ,
+            effect=Effect.REVERSIBLE_WRITE,
             description=(
                 "Search or list clipboard history; with a digest, restore "
-                "that entry to the clipboard."
+                "that entry to the clipboard (write-back restore, not a "
+                "pure read)."
             ),
             backend="local",
             timeout_ms=10000,
-            concurrency_safe=True,
             required=(),
             extra_properties={
                 "query": {"type": "string", "description": "Search term."},

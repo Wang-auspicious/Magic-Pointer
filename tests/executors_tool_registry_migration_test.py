@@ -39,7 +39,7 @@ MIGRATED_TOOLS: list[tuple[str, str, str, str, Effect, bool]] = [
     ("background_task", "agent.background_task", "agent.task", "agent", Effect.EXTERNAL_SEND, False),
     ("task_route", "task.route", "local.task", "local", Effect.EXTERNAL_SEND, False),
     ("screen_translate", "screen.translate", "overlay.translation", "model", Effect.READ, True),
-    ("clipboard_history", "clipboard.history", "clipboard.history", "local", Effect.READ, True),
+    ("clipboard_history", "clipboard.history", "clipboard.history", "local", Effect.REVERSIBLE_WRITE, False),
     ("memory_recall", "memory.recall", "local.memory", "local", Effect.READ, True),
 ]
 
@@ -261,6 +261,16 @@ def test_effect_concurrency_backend_mapping(
 def test_read_recipes_are_concurrency_safe_reads() -> None:
     for name, _recipe, _provider, _backend, effect, concurrent in MIGRATED_TOOLS:
         assert (effect == Effect.READ) == concurrent, name
+
+
+def test_clipboard_history_is_reversible_write_not_pure_read(
+    registry: ToolRegistry,
+) -> None:
+    spec = registry.get("clipboard_history")
+    assert spec.effect is Effect.REVERSIBLE_WRITE
+    assert spec.is_concurrency_safe is False
+    assert "restore" in spec.description
+    assert "read" in spec.description
 
 
 def test_write_recipes_are_reversible_or_external_sends() -> None:

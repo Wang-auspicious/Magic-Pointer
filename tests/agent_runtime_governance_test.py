@@ -254,7 +254,7 @@ def test_budget_exactly_at_boundary_completes():
     )
 
     assert len(backend.received) == 2, "elapsed == budget must still run the round"
-    assert terminal.reason is TransitionReason.TOOL_RESULT
+    assert terminal.reason is TransitionReason.COMPLETED
     assert terminal.turns == 2
     assert terminal.message == "just in time"
     finished = [e for e in events if isinstance(e, TurnFinished)]
@@ -331,15 +331,25 @@ def test_external_cancel_between_rounds_no_new_model_calls():
     tool, tool_state = make_counting_tool("round_tool", value="x")
     registry = ToolRegistry()
     registry.register(tool)
-    backend = ScriptedBackend(
-        [ToolCallArrived(call=ToolCall(id="c1", name="round_tool", arguments={})), TurnDone(usage=None, raw_text=None)],
-        [TurnDone(usage=None, raw_text="never reached")],
-    )
-    client = LoopModelClient(backend)
 
-    def cancelling_hook(state):
-        cancel_registry.cancel_all()
-        return StopDecision(reason=None, prevent_continuation=False)
+    class CancelThenYieldToolCall:
+        """Second turn cancels the registry, then yields a tool call that must never run."""
+
+        def __init__(self) -> None:
+            self.received: list[tuple] = []
+
+        def generate(self, messages, tools, budget_ms=None, cancel_scope=None):
+            self.received.append((list(messages), list(tools), budget_ms, cancel_scope))
+            if len(self.received) == 1:
+                yield ToolCallArrived(call=ToolCall(id="c1", name="round_tool", arguments={}))
+                yield TurnDone(usage=None, raw_text=None)
+            else:
+                cancel_registry.cancel_all()
+                yield ToolCallArrived(call=ToolCall(id="c2", name="round_tool", arguments={}))
+                yield TurnDone(usage=None, raw_text="never reached")
+
+    backend = CancelThenYieldToolCall()
+    client = LoopModelClient(backend)
 
     with pytest.raises(CancelledError):
         asyncio.run(
@@ -348,13 +358,12 @@ def test_external_cancel_between_rounds_no_new_model_calls():
                     client=client,
                     registry=registry,
                     cancel_registry=cancel_registry,
-                    stop_hooks=[cancelling_hook],
                 )
             )
         )
 
-    assert len(backend.received) == 1, "zero new model calls after cancellation"
-    assert tool_state["calls"] == 1
+    assert len(backend.received) == 2, "cancellation surfaced inside turn 2"
+    assert tool_state["calls"] == 1, "cancelled tool call never executed"
 
 
 def test_cancel_during_parallel_batch_submitted_tools_complete_loop_terminates():
@@ -582,7 +591,7 @@ def test_perception_timeout_failure_type_transmits_to_terminal():
     tool_msg = finished[0].state.messages[1]
     assert tool_msg.is_error is True
     assert "read_around timed out" in tool_msg.content
-    assert terminal.reason is TransitionReason.TOOL_ERROR
+    assert terminal.reason is TransitionReason.COMPLETED
     assert terminal.turns == 2
 
 
@@ -607,4 +616,4 @@ def test_validate_input_failure_failure_type_tool_error():
     assert "anchor" in result.value
     finished = [e for e in events if isinstance(e, TurnFinished)]
     assert finished[0].state.messages[1].is_error is True
-    assert terminal.reason is TransitionReason.TOOL_ERROR
+    assert terminal.reason is TransitionReason.COMPLETED

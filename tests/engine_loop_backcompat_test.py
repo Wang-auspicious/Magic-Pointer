@@ -192,7 +192,7 @@ def test_run_agent_turn_free_loop_answers_directly() -> None:
     terminal = run_agent_turn(FREE_LOOP_INPUT, registry=GLOBAL_REGISTRY, client=client)
 
     assert isinstance(terminal, Terminal)
-    assert terminal.reason is TransitionReason.TOOL_RESULT
+    assert terminal.reason is TransitionReason.COMPLETED
     assert terminal.reason not in {
         TransitionReason.MAX_TURNS,
         TransitionReason.BUDGET_EXHAUSTED,
@@ -238,7 +238,7 @@ def test_run_agent_turn_trajectory_uses_template_first_message(monkeypatch) -> N
         "执行固定模板任务", registry=GLOBAL_REGISTRY, client=client
     )
 
-    assert terminal.reason is TransitionReason.TOOL_RESULT
+    assert terminal.reason is TransitionReason.COMPLETED
     first_messages = backend.received[0][0]
     assert len(first_messages) == 1
     assert first_messages[0].role is Role.USER
@@ -271,7 +271,7 @@ def test_run_agent_turn_two_tools_then_finish() -> None:
     assert add_state["calls"] == 1
     assert mul_state["calls"] == 1
     assert terminal.turns == 2
-    assert terminal.reason is TransitionReason.TOOL_RESULT
+    assert terminal.reason is TransitionReason.COMPLETED
     assert terminal.message == "计算完成"
     assert len(terminal.results) == 2
     assert [r.tool_call_id for r in terminal.results] == ["c1", "c2"]
@@ -314,7 +314,7 @@ def test_run_agent_turn_tool_failure_is_error_fed_back() -> None:
     result = terminal.results[0]
     assert result.is_error is True
     assert result.failure_type is FailureType.TIMEOUT
-    assert terminal.reason is TransitionReason.TOOL_ERROR
+    assert terminal.reason is TransitionReason.COMPLETED
 
 
 # ---------------------------------------------------------------------------
@@ -409,6 +409,18 @@ def test_run_agent_turn_does_not_alter_legacy_behavior(tmp_path: Path) -> None:
     assert multi_tool["ok"] is False
     assert multi_tool["error"] == "multi_tool_plan_not_supported"
     assert multi_tool["toolCount"] == 2
+
+
+def test_run_agent_turn_default_registry_is_populated_with_fabric_tools() -> None:
+    terminal = run_agent_turn(FREE_LOOP_INPUT, client=answering_client())
+
+    assert terminal.turns == 1
+    assert terminal.reason is TransitionReason.COMPLETED
+    assert len(GLOBAL_REGISTRY.list()) >= 18
+    names = {spec.name for spec in GLOBAL_REGISTRY.list()}
+    assert "clipboard_history" in names
+    assert "agent_handoff" in names
+    assert "memory_recall" in names
 
 
 # ---------------------------------------------------------------------------

@@ -30,35 +30,48 @@ Port of the Claude Code ``queryLoop`` state machine
 
 Honest semantics of this batch:
 
-- **Natural completion reason**: the TransitionReason enum has no
-  ``completed`` member (CC returns ``completed``). The loop records the last
-  transition (``tool_result`` / ``tool_error`` / recovery reasons); a turn
-  answered without any prior tool round defaults to ``tool_result``.
-  Consumers must not read "natural answer" out of the reason alone;
-  T2.4b/engine work should treat ``reason not in {MAX_TURNS, BUDGET_EXHAUSTED}``
-  as completion.
+- **Natural completion reason**: the loop always terminates a natural
+  answer (model gave a final answer, no tool calls, no hook blocked it)
+  with ``TransitionReason.COMPLETED`` (CC returns ``completed``).
+  ``last_transition`` lives only on :class:`TurnState` -- it records why the
+  previous round continued (tool_result / tool_error / recovery / hook
+  reasons) and is never mixed into the Terminal reason. The other terminal
+  reasons keep their independent meanings: ``MAX_TURNS``, ``BUDGET_EXHAUSTED``,
+  ``STOP_HOOK``, ``USER_INTERRUPT`` and ``MAX_OUTPUT_TOKENS_RECOVERED``
+  (recovery limit exceeded) are terminations, not completions.
 - Concurrency-safe batches (``is_concurrency_safe``) run on a short-lived
   :class:`concurrent.futures.ThreadPoolExecutor`; unsafe tools keep input
   order on the loop thread. Tool failures keep ``execute_tool`` semantics
   (ActionFailure passthrough, anything else wrapped as TOOL_ERROR); only a
   cancelled scope raises :class:`CancelledError` out of the worker.
-- Withheld-turn recovery (CC withhold-until-recover): a round whose events
-  carry ``TurnWithheld`` increments the state recovery counter and injects a
-  recovery user message; more than ``MAX_OUTPUT_TOKENS_RECOVERY_LIMIT``
-  consecutive withheld rounds terminate with ``max_output_tokens_recovered``.
-  The optional ``compact_callback`` fires once on the first withheld round
-  (guarded by ``has_attempted_reactive_compact``).
+- Withheld-turn recovery (CC withhold-until-recover): the loop routes
+  ``TurnWithheld`` by its ``reason``. Token-class withhold reasons
+  (``max_output_tokens`` / empty) increment the state recovery counter and
+  inject the recovery user message; more than
+  ``MAX_OUTPUT_TOKENS_RECOVERY_LIMIT`` consecutive token-withheld rounds
+  terminate with ``max_output_tokens_recovered``. Any other reason
+  (``AiClientBackend`` maps real backend failures to
+  ``backend_error:...``) is fed back to the model as an is_error user
+  message and retried as a normal round -- it never consumes the recovery
+  ceiling. The optional ``compact_callback`` fires once on the first
+  token-withheld round (guarded by ``has_attempted_reactive_compact``) and
+  the continue transition is recorded as ``compact_triggered``.
 - Pi StreamFn truncation guard: ``client.last_truncated`` invalidates the
   round's tool calls (nothing executes); one ``is_error=False`` tool message
   ("输出被截断，重新生成") is fed back and the loop continues, still
   bounded by ``max_turns``.
-- Stop hooks gate the round-end settling paths (natural answer and
-  post-tool continuation; withheld/truncation recovery continues bypass
-  them, mirroring CC). A ``prevent_continuation`` decision terminates with
-  the hook's reason (``stop_hook`` fallback); a raising hook is recorded in
-  a loop-local notes list (``TurnState`` has no ``note`` field -- types.py
-  is outside this batch's file scope) and sets ``stop_hook_active`` so the
-  next round skips the hooks instead of re-entering the failing one.
+- Stop hooks gate only the natural-answer settling path, evaluated once per
+  round after the round's messages (assistant text plus any tool results
+  from earlier rounds of this turn) are merged into the state -- a hook
+  always sees what it is gating (CC evaluates only at the
+  ``!needsFollowUp`` boundary, never after a tool round). A
+  ``prevent_continuation`` decision terminates with the hook's reason
+  (``stop_hook`` fallback); a raising hook is recorded in a loop-local
+  notes list (``TurnState`` has no ``note`` field -- types.py is outside
+  this batch's file scope), the continue transition is ``stop_hook``, and
+  ``stop_hook_active`` is set so the next round skips the hooks instead of
+  re-entering the failing one (sticky until the natural completion
+  resets it, mirroring CC).
 - ``interrupt_check`` runs at the start of every round before the model
   call; True terminates with ``user_interrupt``.
 - Model calls and tool execution are synchronous inside the async generator
@@ -83,7 +96,7 @@ from app.agent_runtime.model_client import (
     TurnWithheld,
 )
 from app.agent_runtime.perception_tools import evidence_to_text
-from app.agent_runtime.tool_registry import ToolRegistry
+from app.agent_runtime.tool_registry import Effect, ToolRegistry
 from app.agent_runtime.types import (
     AgentMessage,
     Role,
@@ -162,6 +175,7 @@ class LoopParams:
     tool_limit: int = 12
     interrupt_check: Callable[[], bool] | None = None
     compact_callback: Callable[[TurnState], Any] | None = None
+    allowed_effects: tuple[Effect, ...] = (Effect.READ, Effect.REVERSIBLE_WRITE)
 
 
 @dataclass(frozen=True, slots=True)
@@ -297,6 +311,46 @@ async def run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                 yield ModelChunk(text)
 
             if any(isinstance(event, TurnWithheld) for event in events):
+                withheld_events = [
+                    event for event in events if isinstance(event, TurnWithheld)
+                ]
+                token_withheld = any(
+                    _is_token_withheld(event.reason) for event in withheld_events
+                )
+                if not token_withheld:
+                    messages = list(state.messages)
+                    if text is not None:
+                        messages.append(
+                            AgentMessage(
+                                role=Role.ASSISTANT,
+                                content=text,
+                                tool_call_id=None,
+                                name=None,
+                            )
+                        )
+                    for event in withheld_events:
+                        messages.append(
+                            AgentMessage(
+                                role=Role.USER,
+                                content=f"Backend error: {event.reason}",
+                                tool_call_id=None,
+                                name=None,
+                                is_error=True,
+                            )
+                        )
+                    last_transition = TransitionReason.TOOL_ERROR
+                    state = with_transition(
+                        state,
+                        TransitionReason.TOOL_ERROR,
+                        messages=messages,
+                        tool_calls_pending=[],
+                        turn_count=turn_number,
+                        max_output_tokens_recovery_count=0,
+                        last_result=results[-1] if results else None,
+                    )
+                    yield TurnFinished(state)
+                    turn_number += 1
+                    continue
                 recovery = state.max_output_tokens_recovery_count + 1
                 if recovery > MAX_OUTPUT_TOKENS_RECOVERY_LIMIT:
                     terminal = Terminal(
@@ -326,13 +380,15 @@ async def run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                     )
                 )
                 has_attempted = state.has_attempted_reactive_compact
+                transition_reason = TransitionReason.MAX_OUTPUT_TOKENS_RECOVERED
                 if not has_attempted and params.compact_callback is not None:
                     params.compact_callback(state)
                     has_attempted = True
-                last_transition = TransitionReason.MAX_OUTPUT_TOKENS_RECOVERED
+                    transition_reason = TransitionReason.COMPACT_TRIGGERED
+                last_transition = transition_reason
                 state = with_transition(
                     state,
-                    TransitionReason.MAX_OUTPUT_TOKENS_RECOVERED,
+                    transition_reason,
                     messages=messages,
                     tool_calls_pending=[],
                     max_output_tokens_recovery_count=recovery,
@@ -345,9 +401,26 @@ async def run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                 continue
 
             if not calls:
+                messages = list(state.messages)
+                if text is not None:
+                    messages.append(
+                        AgentMessage(
+                            role=Role.ASSISTANT,
+                            content=text,
+                            tool_call_id=None,
+                            name=None,
+                        )
+                    )
                 if stop_hooks and not state.stop_hook_active:
+                    hook_state = with_transition(
+                        state,
+                        TransitionReason.COMPLETED,
+                        messages=messages,
+                        tool_calls_pending=[],
+                        last_result=results[-1] if results else None,
+                    )
                     decision, hook_errored = _run_stop_hooks(
-                        stop_hooks, state, hook_notes
+                        stop_hooks, hook_state, hook_notes
                     )
                     if decision is not None:
                         reason = (
@@ -364,19 +437,10 @@ async def run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                         yield LoopStopped(terminal)
                         return
                     if hook_errored:
-                        messages = list(state.messages)
-                        if text is not None:
-                            messages.append(
-                                AgentMessage(
-                                    role=Role.ASSISTANT,
-                                    content=text,
-                                    tool_call_id=None,
-                                    name=None,
-                                )
-                            )
+                        last_transition = TransitionReason.STOP_HOOK
                         state = with_transition(
                             state,
-                            last_transition or TransitionReason.TOOL_RESULT,
+                            TransitionReason.STOP_HOOK,
                             messages=messages,
                             tool_calls_pending=[],
                             turn_count=turn_number,
@@ -387,26 +451,15 @@ async def run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                         yield TurnFinished(state)
                         turn_number += 1
                         continue
-                messages = list(state.messages)
-                if text is not None:
-                    messages.append(
-                        AgentMessage(
-                            role=Role.ASSISTANT,
-                            content=text,
-                            tool_call_id=None,
-                            name=None,
-                        )
-                    )
-                completion_reason = last_transition or TransitionReason.TOOL_RESULT
                 final_state = with_transition(
                     state,
-                    completion_reason,
+                    TransitionReason.COMPLETED,
                     messages=messages,
                     last_result=results[-1] if results else None,
                     stop_hook_active=False,
                 )
                 terminal = Terminal(
-                    reason=completion_reason,
+                    reason=TransitionReason.COMPLETED,
                     message=text or "",
                     turns=turn_number,
                     results=tuple(results),
@@ -465,7 +518,7 @@ async def run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
             for call in parallel_calls:
                 yield ToolCallStarted(name=call.name, id=call.id)
             parallel_results = _execute_parallel(
-                parallel_calls, registry, cancel_registry, loop_scope
+                parallel_calls, registry, cancel_registry, loop_scope, params.allowed_effects
             )
             for call, normalized in zip(parallel_calls, parallel_results, strict=True):
                 results.append(normalized)
@@ -484,7 +537,9 @@ async def run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
 
             for call in sequential_calls:
                 yield ToolCallStarted(name=call.name, id=call.id)
-                normalized = _execute_one(registry, call, cancel_registry, loop_scope)
+                normalized = _execute_one(
+                    registry, call, cancel_registry, loop_scope, params.allowed_effects
+                )
                 results.append(normalized)
                 if normalized.is_error:
                     any_error = True
@@ -509,24 +564,6 @@ async def run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                 yield LoopStopped(terminal)
                 return
 
-            hook_errored = False
-            if stop_hooks and not state.stop_hook_active:
-                decision, hook_errored = _run_stop_hooks(stop_hooks, state, hook_notes)
-                if decision is not None:
-                    reason = (
-                        decision.reason
-                        if decision.reason is not None
-                        else TransitionReason.STOP_HOOK
-                    )
-                    terminal = Terminal(
-                        reason=reason,
-                        message="stop hook prevented continuation",
-                        turns=turn_number,
-                        results=tuple(results),
-                    )
-                    yield LoopStopped(terminal)
-                    return
-
             last_transition = (
                 TransitionReason.TOOL_ERROR if any_error else TransitionReason.TOOL_RESULT
             )
@@ -548,7 +585,6 @@ async def run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                 tool_calls_pending=[],
                 turn_count=turn_number,
                 max_output_tokens_recovery_count=0,
-                stop_hook_active=hook_errored,
                 last_result=results[-1],
             )
             yield TurnFinished(state)
@@ -584,6 +620,7 @@ def _execute_parallel(
     registry: ToolRegistry,
     cancel_registry: CancellationRegistry,
     loop_scope: CancellationScope,
+    allowed_effects: tuple[Effect, ...],
 ) -> list[ToolResult]:
     """Execute a concurrency-safe batch on a short-lived thread pool.
 
@@ -608,10 +645,22 @@ def _execute_parallel(
         max_workers=workers, thread_name_prefix="mp-tool"
     ) as pool:
         futures = [
-            pool.submit(_execute_one, registry, call, cancel_registry, loop_scope)
+            pool.submit(
+                _execute_one, registry, call, cancel_registry, loop_scope, allowed_effects
+            )
             for call in calls
         ]
         return [future.result() for future in futures]
+
+
+def _is_token_withheld(reason: str) -> bool:
+    """True for the output-token withhold class (CC withhold-until-recover).
+
+    ``AiClientBackend`` maps every backend failure to
+    ``TurnWithheld(reason="backend_error:...")``; only the token-limit class
+    (``max_output_tokens`` or empty) may consume the recovery ceiling.
+    """
+    return reason in ("", "max_output_tokens")
 
 
 def _first_message(params: LoopParams) -> AgentMessage:
@@ -661,17 +710,22 @@ def _execute_one(
     call: ToolCall,
     cancel_registry: CancellationRegistry,
     loop_scope: CancellationScope,
+    allowed_effects: tuple[Effect, ...],
 ) -> ToolResult:
     """Validate, execute and normalize one tool call.
 
     validate_input failures produce an is_error ToolResult without invoking
-    ``execute`` (fail closed). Unknown tools are caught as a structured
-    TOOL_ERROR instead of a KeyError killing the loop. Execution is wrapped
-    in a CancellationScope; once cancelled, the loop raises CancelledError
-    instead of feeding the result back. The pre-execution check reads the
-    loop's outer scope, so a cancellation that landed while the model was
-    generating skips ``execute`` entirely; a cancellation that lands
-    mid-execution lets the tool run to completion and then raises.
+    ``execute`` (fail closed). A tool whose :class:`Effect` is not in
+    ``allowed_effects`` is refused without invoking ``execute`` (CC
+    canUseTool permission decision): the model gets an is_error
+    ``PERMISSION_DENIED`` result it can read and self-correct against.
+    Unknown tools are caught as a structured TOOL_ERROR instead of a
+    KeyError killing the loop. Execution is wrapped in a CancellationScope;
+    once cancelled, the loop raises CancelledError instead of feeding the
+    result back. The pre-execution check reads the loop's outer scope, so a
+    cancellation that landed while the model was generating skips
+    ``execute`` entirely; a cancellation that lands mid-execution lets the
+    tool run to completion and then raises.
     """
     try:
         spec = registry.get(call.name)
@@ -681,6 +735,19 @@ def _execute_one(
             value=f"unknown tool {call.name!r}",
             is_error=True,
             failure_type=FailureType.TOOL_ERROR,
+            used_backend=None,
+            latency_ms=None,
+        )
+    if spec.effect not in allowed_effects:
+        return ToolResult(
+            tool_call_id=call.id,
+            value=(
+                f"permission denied: tool {call.name!r} requires effect "
+                f"{spec.effect.value} which is not in allowed_effects "
+                f"({', '.join(effect.value for effect in allowed_effects)})"
+            ),
+            is_error=True,
+            failure_type=FailureType.PERMISSION_DENIED,
             used_backend=None,
             latency_ms=None,
         )

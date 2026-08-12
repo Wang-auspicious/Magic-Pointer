@@ -297,7 +297,7 @@ def test_four_step_tool_chain_feedback_and_convergence() -> None:
 
     events, terminal = asyncio.run(_collect(params))
 
-    assert terminal.reason is TransitionReason.TOOL_RESULT
+    assert terminal.reason is TransitionReason.COMPLETED
     assert terminal.turns == 4
     assert terminal.message == FINAL_TEXT
     assert len(terminal.results) == 3
@@ -331,7 +331,7 @@ def test_four_step_tool_chain_feedback_and_convergence() -> None:
         TransitionReason.TOOL_RESULT,
         TransitionReason.TOOL_RESULT,
         TransitionReason.TOOL_RESULT,
-        TransitionReason.TOOL_RESULT,
+        TransitionReason.COMPLETED,
     ]
 
 
@@ -372,7 +372,7 @@ def test_run_agent_turn_trajectory_seeds_first_round(monkeypatch) -> None:
     assert first_messages[0].content == "目标：改写并写回下面这段。对象内容：扩写第二段"
     assert schemas[0]["name"] == "selection_expand"
     assert schemas[1]["name"] == "translate_in_place"
-    assert terminal.reason is TransitionReason.TOOL_RESULT
+    assert terminal.reason is TransitionReason.COMPLETED
     assert terminal.message == "已改写"
     assert terminal.turns == 1
 
@@ -398,7 +398,7 @@ def test_failed_read_is_fed_back_and_retry_succeeds() -> None:
     terminal = run_agent_turn("读取并扩写这段", registry=registry, client=client)
 
     assert doc.calls["read_around"] == 2
-    assert terminal.reason is TransitionReason.TOOL_RESULT
+    assert terminal.reason is TransitionReason.COMPLETED
     assert terminal.turns == 3
     assert len(terminal.results) == 2
     first, second = terminal.results
@@ -439,7 +439,7 @@ def test_write_back_failure_is_not_disguised_as_success() -> None:
 
     terminal = run_agent_turn("把这段翻译成中文", registry=registry, client=client)
 
-    assert terminal.reason is TransitionReason.TOOL_ERROR
+    assert terminal.reason is TransitionReason.COMPLETED
     assert terminal.message == "翻译失败，无法写回，请重新圈选段落。"
     assert terminal.turns == 2
     assert len(terminal.results) == 1

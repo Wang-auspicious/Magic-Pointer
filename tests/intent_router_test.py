@@ -55,6 +55,15 @@ def test_local_actions_resolve_without_any_recipe(tmp_path: Path) -> None:
     assert decision.local_action == "save_screenshot"
 
 
+def test_screenshot_local_action_covers_synonyms(tmp_path: Path) -> None:
+    router = _router(tmp_path)
+    for command in ("截图", "截屏", "保存截图"):
+        decision = router.route(command, object_count=1)
+        assert decision.tier == TIER_DETERMINISTIC, (command, decision)
+        assert decision.action == ACT_LOCAL, (command, decision)
+        assert decision.local_action == "save_screenshot", (command, decision)
+
+
 def test_information_questions_never_become_ocr_or_clipboard_actions(tmp_path: Path) -> None:
     classifier_calls = []
 

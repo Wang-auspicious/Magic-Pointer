@@ -31,6 +31,39 @@ BUILTIN_RECIPES_PATH = (
 _FULL_MATCH_SCORE = 1.0
 _PARTIAL_MATCH_SCORE = 0.5
 
+
+def score_keyword_entry(keywords: Any, text: str, lang: str) -> tuple[float | None, list[str]]:
+    """Score one manifest entry's keyword sets against ``text``.
+
+    Matching is case-insensitive. The default ``lang="zh"`` covers zh+en as an
+    unordered union (the legacy router scored both languages unconditionally);
+    an explicit ``lang`` matches only that set. Per set: all keywords hit ->
+    1.0, any hit -> 0.5, none -> no match. The returned score is the best
+    across sets, with the matched keywords in their original casing.
+
+    Returns ``(None, [])`` when nothing hits.
+    """
+    folded = str(text).casefold()
+    languages = ("zh", "en") if lang == "zh" else (lang,)
+    best: float | None = None
+    hits: list[str] = []
+    if not isinstance(keywords, dict):
+        return None, []
+    for lang_name in languages:
+        kws = keywords.get(lang_name)
+        if not isinstance(kws, list) or not kws:
+            continue
+        tokens = [k for k in kws if isinstance(k, str) and k]
+        matched = [k for k in tokens if k.casefold() in folded]
+        if not matched:
+            continue
+        set_score = _FULL_MATCH_SCORE if len(matched) == len(tokens) else _PARTIAL_MATCH_SCORE
+        if best is None or set_score > best:
+            best = set_score
+        hits.extend(matched)
+    return (best, hits) if best is not None else (None, [])
+
+
 _BASE_TOOL = "describe_capabilities"
 """Every trajectory exposes the capability-discovery tool (L16)."""
 
@@ -98,13 +131,13 @@ class TrajectoryCompiler:
             self.compile_all()
         return self._compiled.get(recipe_id)
 
-    def match_keywords(
-        self, text: str, lang: str = "zh"
-    ) -> list[tuple[str, float]]:
+    def match_keywords(self, text: str, lang: str = "zh") -> list[tuple[str, float]]:
         """Rank recipes by keyword hits: full set 1.0, any hit 0.5, none [].
 
-        Results are (recipe_id, score) pairs sorted by score descending,
-        recipe id ascending as the tiebreaker.
+        Default ``lang="zh"`` scores the zh+en keyword union (legacy router
+        behaviour); ``lang="en"`` matches the en set only. Matching is
+        case-insensitive. Results are (recipe_id, score) pairs sorted by
+        score descending, recipe id ascending as the tiebreaker.
         """
         if not text:
             return []
@@ -112,16 +145,31 @@ class TrajectoryCompiler:
             self.compile_all()
         results: list[tuple[str, float]] = []
         for recipe_id, entry in self._raw_by_id.items():
-            keywords = (entry.get("keywords") or {}).get(lang)
-            if not isinstance(keywords, list) or not keywords:
+            score, _ = score_keyword_entry(entry.get("keywords"), text, lang)
+            if score is None:
                 continue
-            hits = [kw for kw in keywords if isinstance(kw, str) and kw in text]
-            if not hits:
-                continue
-            score = _FULL_MATCH_SCORE if len(hits) == len(keywords) else _PARTIAL_MATCH_SCORE
             results.append((recipe_id, score))
         results.sort(key=lambda item: (-item[1], item[0]))
         return results
+
+    def compile_extra_entry(self, recipe_id: str, entry: dict) -> Trajectory | None:
+        """Compile a plugin/instruction-library entry without registering it.
+
+        ``entry`` is a manifest-shaped dict keyed by ``recipe_id``; the id is
+        forced onto the entry so the compiled trajectory always matches the
+        key. Returns None (honest) for a missing id or missing compile-required
+        fields; never raises.
+        """
+        if not isinstance(recipe_id, str) or not recipe_id:
+            return None
+        if not isinstance(entry, dict):
+            return None
+        missing = [f for f in _REQUIRED_FIELDS if not entry.get(f)]
+        if missing:
+            return None
+        working = dict(entry)
+        working["id"] = recipe_id
+        return self._compile_entry(working)
 
     def all_ids(self) -> list[str]:
         if not self._compiled:
@@ -167,4 +215,4 @@ class TrajectoryCompiler:
         return tuple(tools)
 
 
-__all__ = ["BUILTIN_RECIPES_PATH", "TrajectoryCompiler"]
+__all__ = ["BUILTIN_RECIPES_PATH", "TrajectoryCompiler", "score_keyword_entry"]

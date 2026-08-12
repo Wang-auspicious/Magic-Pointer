@@ -29,6 +29,7 @@ class TestEnums:
 
     def test_transition_reason_has_all_contract_values(self) -> None:
         assert {t.value for t in TransitionReason} == {
+            "completed",
             "tool_result",
             "tool_error",
             "max_output_tokens_recovered",

@@ -24,8 +24,8 @@ from app.fabric.capabilities import CapabilityRegistry
 from app.fabric.capture_policy import CapturePolicyEngine, build_capture_policy
 from app.fabric.catalog import get_recipe
 from app.fabric.context_packet import ContextPacketBuilder
-from app.fabric.executors import FabricExecutors
-from app.fabric.intent_router import route_to_trajectory
+from app.fabric.executors import FabricExecutors, register_fabric_tools
+from app.fabric.intent_router import TrajectoryCandidate, route_to_trajectory
 from app.fabric.model_plan import TOOL_REGISTRY, ModelPlanError, parse_model_plan
 from app.fabric.provenance import ProvenanceError, ProvenanceIndex
 from app.fabric.router import RecipeRouter
@@ -893,12 +893,25 @@ def run_agent_turn(
       trajectory's compiled turn budget, else the :class:`LoopParams` default.
     - Clock: ``time.monotonic`` unless injected; ``asyncio.run`` drives the
       loop, so callers must not call this from inside a running event loop.
-    - The registry is injected by the caller and defaults to the global
-      registry; this module registers nothing. Cancellation during a tool
-      execution propagates as :class:`CancelledError`.
+    - Registry: defaults to the process-wide ``GLOBAL_REGISTRY``; the first
+      call with the default registry registers the fabric tool set into it
+      (``register_fabric_tools`` is idempotent, so repeated calls are no-ops).
+      Tools are only registered into ``GLOBAL_REGISTRY`` itself: when a
+      caller injects a custom registry, registering tools into it is the
+      caller's responsibility. Cancellation during a tool execution
+      propagates as :class:`CancelledError`.
     """
+    if registry is GLOBAL_REGISTRY:
+        register_fabric_tools(registry)
     candidates = route_to_trajectory(user_input, objects, lang=lang)
-    trajectory = candidates[0].trajectory if candidates else None
+    trajectory = next(
+        (
+            candidate.trajectory
+            for candidate in candidates
+            if isinstance(candidate, TrajectoryCandidate)
+        ),
+        None,
+    )
     if max_turns is None:
         max_turns = (
             trajectory.max_turns

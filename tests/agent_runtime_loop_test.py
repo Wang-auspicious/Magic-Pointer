@@ -221,7 +221,7 @@ def test_single_turn_direct_answer_terminates():
     ]
     assert events[1].turn == 1
     assert events[2].text == "hello!"
-    assert terminal.reason is TransitionReason.TOOL_RESULT
+    assert terminal.reason is TransitionReason.COMPLETED
     assert terminal.message == "hello!"
     assert terminal.turns == 1
     assert terminal.results == ()
@@ -271,7 +271,7 @@ def test_two_tools_serial_then_answer_message_order():
     final_roles = [m.role for m in finished[-1].state.messages]
     assert final_roles == [Role.USER, Role.TOOL, Role.TOOL, Role.ASSISTANT]
     assert finished[-1].state.messages[-1].content == "final answer"
-    assert terminal.reason is TransitionReason.TOOL_RESULT
+    assert terminal.reason is TransitionReason.COMPLETED
     assert terminal.turns == 2
     assert terminal.message == "final answer"
     assert len(terminal.results) == 2
@@ -310,7 +310,7 @@ def test_action_failure_timeout_is_error_fed_back():
     assert result.is_error is True
     assert result.failure_type is FailureType.TIMEOUT
     assert "Error calling tool (flaky)" in result.value
-    assert terminal.reason is TransitionReason.TOOL_ERROR
+    assert terminal.reason is TransitionReason.COMPLETED
 
 
 def test_validate_input_failure_skips_execute():
@@ -348,7 +348,7 @@ def test_validate_input_failure_skips_execute():
     tool_msg = finished[0].state.messages[1]
     assert tool_msg.is_error is True
     assert "unexpected field 'nope'" in tool_msg.content
-    assert terminal.reason is TransitionReason.TOOL_ERROR
+    assert terminal.reason is TransitionReason.COMPLETED
 
 
 def test_max_turns_ceiling_keeps_results():
@@ -458,9 +458,9 @@ def test_transition_sequence_across_turns():
     assert [e.state.transition for e in finished] == [
         TransitionReason.TOOL_RESULT,
         TransitionReason.TOOL_ERROR,
-        TransitionReason.TOOL_ERROR,
+        TransitionReason.COMPLETED,
     ]
-    assert terminal.reason is TransitionReason.TOOL_ERROR
+    assert terminal.reason is TransitionReason.COMPLETED
     assert terminal.turns == 3
 
 
@@ -496,7 +496,7 @@ def test_tool_limit_truncation_keeps_recommended():
     assert names[1] == "t01"
     assert set(("t19", "t01")).issubset(set(names))
     assert names == ["t19", "t01", "t00", "t02", "t03", "t04", "t05", "t06", "t07", "t08", "t09", "t10"]
-    assert terminal.reason is TransitionReason.TOOL_RESULT
+    assert terminal.reason is TransitionReason.COMPLETED
 
 
 def test_trajectory_first_message_template_replaces_input():
@@ -527,7 +527,7 @@ def test_trajectory_first_message_template_replaces_input():
     assert len(first_messages) == 1
     assert first_messages[0].role is Role.USER
     assert first_messages[0].content == "Read the second paragraph selection"
-    assert terminal.reason is TransitionReason.TOOL_RESULT
+    assert terminal.reason is TransitionReason.COMPLETED
 
 
 def test_parallel_safe_slow_tools_total_wall_time_below_serial():
@@ -567,7 +567,7 @@ def test_parallel_safe_slow_tools_total_wall_time_below_serial():
     finishes = [e for e in events if isinstance(e, ToolCallFinished)]
     assert [e.result.tool_call_id for e in finishes] == ["c1", "c2"]
     assert terminal.turns == 2
-    assert terminal.reason is TransitionReason.TOOL_RESULT
+    assert terminal.reason is TransitionReason.COMPLETED
 
 
 def test_sequential_unsafe_tools_preserve_order_and_serial_time():
@@ -663,6 +663,70 @@ def test_mixed_partition_runs_parallel_batch_then_sequential():
     assert terminal.turns == 2
 
 
+def test_external_send_tool_denied_by_default_permission_gate():
+    send, send_state = make_counting_tool("send_it", effect=Effect.EXTERNAL_SEND)
+    registry = ToolRegistry()
+    registry.register(send)
+    backend = ScriptedBackend(
+        [
+            ToolCallArrived(call=ToolCall(id="c1", name="send_it", arguments={})),
+            TurnDone(usage=None, raw_text=None),
+        ],
+        [TurnDone(usage=None, raw_text="cannot send, answering from here")],
+    )
+    client = LoopModelClient(backend)
+
+    events, terminal = asyncio.run(collect(make_params(client=client, registry=registry)))
+
+    assert send_state["calls"] == 0
+    assert len(terminal.results) == 1
+    result = terminal.results[0]
+    assert result.is_error is True
+    assert result.failure_type is FailureType.PERMISSION_DENIED
+    assert "permission" in result.value
+    assert "external_send" in result.value
+    finished = [e for e in events if isinstance(e, TurnFinished)]
+    tool_msg = finished[0].state.messages[1]
+    assert tool_msg.is_error is True
+    assert "permission" in tool_msg.content
+
+
+def test_allowed_effects_expansion_permits_external_send():
+    send, send_state = make_counting_tool(
+        "send_it", value="sent", effect=Effect.EXTERNAL_SEND
+    )
+    registry = ToolRegistry()
+    registry.register(send)
+    backend = ScriptedBackend(
+        [
+            ToolCallArrived(call=ToolCall(id="c1", name="send_it", arguments={})),
+            TurnDone(usage=None, raw_text=None),
+        ],
+        [TurnDone(usage=None, raw_text="sent!")],
+    )
+    client = LoopModelClient(backend)
+
+    events, terminal = asyncio.run(
+        collect(
+            make_params(
+                client=client,
+                registry=registry,
+                allowed_effects=(
+                    Effect.READ,
+                    Effect.REVERSIBLE_WRITE,
+                    Effect.EXTERNAL_SEND,
+                ),
+            )
+        )
+    )
+
+    assert send_state["calls"] == 1
+    assert len(terminal.results) == 1
+    assert terminal.results[0].is_error is False
+    assert terminal.results[0].value == "sent"
+    assert terminal.reason is TransitionReason.COMPLETED
+
+
 def test_parallel_action_failure_matches_execute_tool_semantics():
     bad, _ = make_counting_tool(
         "bad_p",
@@ -696,7 +760,7 @@ def test_parallel_action_failure_matches_execute_tool_semantics():
     finished = [e for e in events if isinstance(e, TurnFinished)]
     assert finished[0].state.transition is TransitionReason.TOOL_ERROR
     assert terminal.turns == 2
-    assert terminal.reason is TransitionReason.TOOL_ERROR
+    assert terminal.reason is TransitionReason.COMPLETED
 
 
 def test_withheld_three_rounds_then_recovers():
@@ -713,13 +777,13 @@ def test_withheld_three_rounds_then_recovers():
     assert len(backend.received) == 4
     assert terminal.turns == 4
     assert terminal.message == "recovered answer"
-    assert terminal.reason is TransitionReason.MAX_OUTPUT_TOKENS_RECOVERED
+    assert terminal.reason is TransitionReason.COMPLETED
     finished = [e for e in events if isinstance(e, TurnFinished)]
     assert [e.state.transition for e in finished] == [
         TransitionReason.MAX_OUTPUT_TOKENS_RECOVERED,
         TransitionReason.MAX_OUTPUT_TOKENS_RECOVERED,
         TransitionReason.MAX_OUTPUT_TOKENS_RECOVERED,
-        TransitionReason.MAX_OUTPUT_TOKENS_RECOVERED,
+        TransitionReason.COMPLETED,
     ]
     assert [e.state.max_output_tokens_recovery_count for e in finished] == [
         1,
@@ -748,6 +812,35 @@ def test_withheld_fourth_round_terminates():
     assert terminal.message == "max output tokens recovery limit exceeded"
     assert terminal.turns == 4
     assert isinstance(events[-1], LoopStopped)
+
+
+def test_backend_error_withheld_rounds_do_not_count_toward_recovery_limit():
+    backend = ScriptedBackend(
+        withheld_scene(reason="backend_error:model_request_timeout"),
+        withheld_scene(reason="backend_error:auth_expired"),
+        withheld_scene(reason="backend_error:network_down"),
+        withheld_scene(reason="backend_error:quota_exceeded"),
+        withheld_scene(reason="backend_error:internal"),
+        [TurnDone(usage=None, raw_text="recovered answer")],
+    )
+    client = LoopModelClient(backend)
+
+    events, terminal = asyncio.run(collect(make_params(client=client)))
+
+    assert len(backend.received) == 6
+    assert terminal.reason is TransitionReason.COMPLETED
+    assert terminal.message == "recovered answer"
+    assert terminal.turns == 6
+    finished = [e for e in events if isinstance(e, TurnFinished)]
+    assert all(
+        e.state.max_output_tokens_recovery_count == 0 for e in finished
+    ), "backend errors must not consume the token recovery ceiling"
+    assert finished[0].state.transition is TransitionReason.TOOL_ERROR
+    fed_back = backend.received[1][0][-1]
+    assert fed_back.role is Role.USER
+    assert "model_request_timeout" in fed_back.content
+    assert "Output token limit hit" not in fed_back.content
+    assert fed_back.is_error is True
 
 
 def test_truncation_invalidates_tool_calls_and_feeds_back():
@@ -779,7 +872,40 @@ def test_truncation_invalidates_tool_calls_and_feeds_back():
     assert second_messages[1].tool_call_id == "c1"
     assert terminal.turns == 2
     assert terminal.message == "final answer"
-    assert terminal.reason is TransitionReason.TOOL_RESULT
+    assert terminal.reason is TransitionReason.COMPLETED
+
+
+def test_stop_hooks_see_latest_state_with_tool_results_once_per_round():
+    tool, _ = make_counting_tool("seen_tool")
+    registry = ToolRegistry()
+    registry.register(tool)
+    seen: list[tuple] = []
+
+    def hook(state):
+        seen.append((tuple(m.role for m in state.messages), state.messages[-1].content))
+        return StopDecision(reason=None, prevent_continuation=False)
+
+    backend = ScriptedBackend(
+        [
+            ToolCallArrived(call=ToolCall(id="c1", name="seen_tool", arguments={})),
+            TurnDone(usage=None, raw_text=None),
+        ],
+        [TurnDone(usage=None, raw_text="final")],
+    )
+    client = LoopModelClient(backend)
+
+    events, terminal = asyncio.run(
+        collect(make_params(client=client, registry=registry, stop_hooks=[hook]))
+    )
+
+    assert terminal.reason is TransitionReason.COMPLETED
+    assert len(seen) == 1, "hooks must evaluate once per round, at the answer boundary"
+    assert seen[0][0] == (Role.USER, Role.TOOL, Role.ASSISTANT)
+    assert seen[0][1] == "final"
+    assert [e.state.transition for e in events if isinstance(e, TurnFinished)] == [
+        TransitionReason.TOOL_RESULT,
+        TransitionReason.COMPLETED,
+    ]
 
 
 def test_stop_hook_prevent_continuation_terminates():
@@ -821,8 +947,9 @@ def test_stop_hook_raising_keeps_loop_running():
 
     assert terminal.turns == 2
     assert terminal.message == "second"
-    assert terminal.reason is TransitionReason.TOOL_RESULT
+    assert terminal.reason is TransitionReason.COMPLETED
     finished = [e for e in events if isinstance(e, TurnFinished)]
+    assert finished[0].state.transition is TransitionReason.STOP_HOOK
     assert finished[0].state.stop_hook_active is True
     assert finished[1].state.stop_hook_active is False
 
@@ -883,7 +1010,9 @@ def test_compact_callback_called_exactly_once_on_withheld():
 
     assert calls["n"] == 1
     finished = [e for e in events if isinstance(e, TurnFinished)]
+    assert finished[0].state.transition is TransitionReason.COMPACT_TRIGGERED
     assert finished[0].state.has_attempted_reactive_compact is True
+    assert finished[1].state.transition is TransitionReason.MAX_OUTPUT_TOKENS_RECOVERED
     assert finished[1].state.has_attempted_reactive_compact is True
     assert terminal.turns == 3
     assert terminal.message == "ok"
@@ -915,4 +1044,4 @@ def test_truncation_then_tool_round_then_complete():
     assert [r.tool_call_id for r in terminal.results] == ["c2"]
     assert terminal.turns == 3
     assert terminal.message == "done"
-    assert terminal.reason is TransitionReason.TOOL_RESULT
+    assert terminal.reason is TransitionReason.COMPLETED

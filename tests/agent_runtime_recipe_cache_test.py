@@ -139,6 +139,24 @@ def test_match_keywords_english_lang():
     assert compiler.match_keywords("nothing relevant", lang="en") == []
 
 
+def test_match_keywords_default_lang_is_zh_plus_en_union():
+    """默认 zh 模式必须保留旧 L1 的 zh+en 并集打分（en 关键词不再丢失）。"""
+    compiler = TrajectoryCompiler()
+    compiler.compile_all()
+
+    assert ("text.ocr_copy", 0.5) in compiler.match_keywords("copy text")
+    assert ("text.translate_in_place", 1.0) in compiler.match_keywords("translate")
+    assert ("clipboard.history", 0.5) in compiler.match_keywords("clipboard history")
+
+
+def test_match_keywords_en_matching_is_case_insensitive():
+    compiler = TrajectoryCompiler()
+    compiler.compile_all()
+
+    assert ("text.ocr_copy", 0.5) in compiler.match_keywords("Copy Text")
+    assert ("text.translate_in_place", 1.0) in compiler.match_keywords("Translate")
+
+
 def test_corrupt_entry_missing_id_skipped_and_recorded(tmp_path):
     recipes = [
         {

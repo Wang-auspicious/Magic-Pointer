@@ -851,4 +851,15 @@ DOM、COM、UIA、Fabric等现有模块也不自动保留，只优先保存经�
 - [ ] 批次 2：L3 Anchor 重解析 + L4 前置条件 + L5 可逆性 + L7 注入隔离。
 - [ ] WGC/D3D 捕获后端（FrameLease 生产热路径）。
 
+### 2026-08-13：recipe 重定位对账 5 项 P1 修复（review-recipes）
+
+- [x] 按 `docs/harness-port-notes/2026-08-12-review-recipes.md` P1-1~P1-5 逐项 TDD（先失败测试→观察失败→修复→转绿；63/63 通过，`route_to_trajectory` 三测试文件）：
+  - P1-1 信息问题守卫：`route_to_trajectory` 前置复用 `_is_information_question`（无圈选对象时 `What is OCR?` 等 → []，不进 OCR/复制轨迹）。
+  - P1-2 en 关键词覆盖：`score_keyword_entry`（大小写不敏感，默认 zh 模式 = zh+en 并集打分，旧 L1 语义恢复），`match_keywords`/`_manifest_keywords` 同源；`copy text`/`translate` 默认命中。
+  - P1-3 L0 双命中破平：按 DETERMINISTIC_RULES 顺序恢复旧 winner（`整理后复制这段文字`→ocr_copy、`让codex识别文字`→ocr_copy），manifest-only 平手仍按 id。
+  - P1-4 本地动作：新 `LocalActionCandidate(action, score, matched_keywords)` 与轨迹候选并列返回（本地动作在前）；`save_screenshot` 短语补 `截屏`。
+  - P1-5 开关与门：`enabled_recipes: set[str] | None`、minObjects 对象数门（objects 数量不足过滤）、`extra_recipes` 插件条目接口（`TrajectoryCompiler.compile_extra_entry`，不注册不接线）。
+- [x] 修正：`engine.run_agent_turn` 是 `route_to_trajectory` 真实调用方（对账笔记称零调用点有误）——改为按候选类型取轨迹；语义不变。
+- [ ] 待办（P2 遗留，未动）：en 短词子串陷阱（`recall`）、共享关键词翻转（screen.recall→memory.recall）、L2 工具面差异、自由循环 6 turn 与轨迹 3/4 turn 上限文档化。
+
 下一步主线：批次 1（L1+L2），需先更新 Phase A 账本并编写实施计划。
