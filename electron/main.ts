@@ -40,12 +40,15 @@ const {
 const { canAutoExecuteInternalProposal } = require('./internal_action_policy');
 const {
   normalizeGroundingGeometry,
+  physicalDisplayBounds,
   physicalGestureBoundingBox,
   physicalGestureTrace,
   physicalRectToDip,
   physicalScreenPoint,
   relativeRect,
 } = require('./coordinate_space');
+const { FrameCaptureWorkerClient } = require('./frame_capture_worker_client');
+const { CaptureCommitCoordinator } = require('./capture_commit_coordinator');
 const { nativeShapeRegions } = require('./stage_hit_regions');
 const { isSurfaceSender } = require('./ipc_surface_policy');
 const { buildGoogleMapsDirectionsUrl, isAllowedGoogleMapsDirectionsUrl } = require('./route_policy');
@@ -99,13 +102,15 @@ let selectionGestureArm: {
     foregroundHwnd: number;
     foregroundProcessId: number;
   };
+  committing?: boolean;
 } | null = null;
 let selectionGestureArmTimer: NodeJS.Timeout | null = null;
 let selectionGestureExpiryTimer: NodeJS.Timeout | null = null;
-// 划线完成 → 会话开始之间隔一帧合成器。这个定时器必须跟着手势取消走，
-// 否则用户在 34ms 内按 Escape/重新划线的操作会被一个迟到的 beginSelectionSession
-// 静默覆盖（又开一个新会话、又 spawn 一个探针）。
-let selectionGestureCommitTimer: NodeJS.Timeout | null = null;
+// 划线完成 → 会话开始之间由 capture coordinator 冻结帧：commit 成功后才会
+// release overlay 并打开会话。旧的 34ms 合成器定时器已删除。
+let frameCaptureWorkerClient: InstanceType<typeof FrameCaptureWorkerClient> | null = null;
+let captureCommitCoordinator: InstanceType<typeof CaptureCommitCoordinator> | null = null;
+let pendingFrameLease: any = null;
 let passThroughChainTimer: NodeJS.Timeout | null = null;
 let passThroughChainDeadlineAt = 0;
 let passThroughChainLastPoint: { x: number; y: number; t?: number } | null = null;
@@ -734,6 +739,15 @@ function createOverlayWindow() {
 
   overlayWindow.setAlwaysOnTop(true, 'screen-saver');
   overlayWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  if (CAPSULE_CONTENT_PROTECTED) {
+    // The drawing canvas must never enter the frozen frame either. Same
+    // policy as the stage window: only excluded when capture protection is on.
+    try {
+      overlayWindow.setContentProtection(true);
+    } catch (error) {
+      log(`overlay content protection unavailable: ${(error as { message?: string })?.message || error}`);
+    }
+  }
   overlayWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   overlayWindow.setIgnoreMouseEvents(true, { forward: true });
   overlayOwnsPointerInput = false;
@@ -2216,11 +2230,17 @@ function cancelSelectionGesture(reason = 'cancelled', { hideSurface = true } = {
   sendPointerInputCommand('idle');
   if (selectionGestureArmTimer) clearTimeout(selectionGestureArmTimer);
   if (selectionGestureExpiryTimer) clearTimeout(selectionGestureExpiryTimer);
-  if (selectionGestureCommitTimer) clearTimeout(selectionGestureCommitTimer);
   selectionGestureArmTimer = null;
   selectionGestureExpiryTimer = null;
-  selectionGestureCommitTimer = null;
   selectionGestureArm = null;
+  // Dismiss/replace/expire while armed must also cancel the capture epoch so
+  // the worker stops capturing; a commit already in flight is marked cancelled
+  // and never opens a session.
+  if (captureCommitCoordinator) {
+    captureCommitCoordinator.cancel().catch((error: any) => {
+      log(`frame capture epoch cancel failed: ${error?.message || error}`);
+    });
+  }
   disarmTemporaryGestureSubmitShortcut();
   if (hideSurface) hideOverlay();
   if (!stageWindow || stageWindow.isDestroyed() || !stageWindow.isVisible()) {
@@ -2228,6 +2248,45 @@ function cancelSelectionGesture(reason = 'cancelled', { hideSurface = true } = {
   }
   if (active) log(`selection gesture ${reason} token=${active.token}`);
   return active;
+}
+
+function getFrameCaptureWorkerClient() {
+  if (!frameCaptureWorkerClient) {
+    frameCaptureWorkerClient = new FrameCaptureWorkerClient({
+      root: ROOT,
+      pythonExecutable: PYTHON_EXECUTABLE,
+      pythonIsolated: PYTHON_ISOLATED,
+    });
+  }
+  return frameCaptureWorkerClient;
+}
+
+function reportFrameCommitFailure(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  log(`frame commit failed: ${message}`);
+  deliverStageError(null, '这次没能冻结画面，请再选一次。');
+}
+
+function getCaptureCommitCoordinator() {
+  if (!captureCommitCoordinator) {
+    const worker = getFrameCaptureWorkerClient();
+    captureCommitCoordinator = new CaptureCommitCoordinator({
+      provider: {
+        arm: (request: any) => worker.start().then(() => worker.arm(request)),
+        commit: (request: any) => worker.commit(request),
+        cancel: (epochId: string) => worker.cancel(epochId),
+      },
+      releaseOverlay: () => hideOverlay(),
+      beginSession: (_gesture: unknown, lease: any) => {
+        // Staged: completeSelectionGesture consumes the lease only after the
+        // commit fully resolves, so cancel('completed') strictly precedes
+        // beginSelectionSession.
+        pendingFrameLease = safeClone(lease);
+      },
+      onCommitFailure: (error: unknown) => reportFrameCommitFailure(error),
+    });
+  }
+  return captureCommitCoordinator;
 }
 
 function armSelectionGesture(reason = 'wiggle') {
@@ -2256,6 +2315,27 @@ function armSelectionGesture(reason = 'wiggle') {
       foregroundProcessId: Number(pointerInputState.foregroundProcessId || 0),
     },
   };
+  // Ring capture starts before the drawing overlay accepts pointerdown: the
+  // worker buffers frames during the arm grace period, so pointerup can commit
+  // the latest clean frame without waiting for a fresh grab.
+  getCaptureCommitCoordinator().arm({
+    epochId: token,
+    displayId: String(display.id || 'display-1'),
+    scaleFactor: display.scaleFactor || 1,
+    surfaceBoundsPx: physicalDisplayBounds({
+      bounds: display.bounds,
+      scaleFactor: display.scaleFactor || 1,
+    }),
+    targetWindow: {
+      hwnd: selectionGestureArm.source.foregroundHwnd,
+      processId: selectionGestureArm.source.foregroundProcessId,
+      processName: selectionGestureArm.source.foregroundApp || '',
+      title: '',
+    },
+    overlayExcluded: true,
+  }).catch((error: any) => {
+    log(`frame capture arm failed: ${error?.message || error}`);
+  });
   if (runtime.interactionMode === 'pass_through') {
     passThroughGestureCapture.arm({
       token,
@@ -2344,6 +2424,12 @@ function completeSelectionGesture(payload: any) {
     cancelSelectionGesture('stale');
     return false;
   }
+  // Duplicate callbacks must not start a second session while the commit is
+  // in flight.
+  if (arm.committing) {
+    cancelSelectionGesture('stale');
+    return false;
+  }
   const summary = summarizeGesture(payload?.points, payload?.strokes);
   if (!summary.valid) {
     cancelSelectionGesture(summary.reason || 'invalid');
@@ -2411,15 +2497,20 @@ function completeSelectionGesture(payload: any) {
     source: { ...arm.source },
   };
   const reason = arm.reason;
-  cancelSelectionGesture('completed');
-  // One compositor frame after hiding the drawing canvas prevents it from
-  // entering pixel fallback captures. Stage remains absent during this gap.
-  // The timer is owned by cancelSelectionGesture: a dismiss/re-arm inside the
-  // gap cancels it instead of opening a stale session.
-  selectionGestureCommitTimer = setTimeout(() => {
-    selectionGestureCommitTimer = null;
-    beginSelectionSession(reason, gesture);
-  }, 34);
+  // pointerup freezes the frame first: the coordinator commits the latest
+  // buffered frame, releases the overlay, and only then is the session opened.
+  // The old fixed 34ms compositor gap (which let a later screen slip into the
+  // capture) is gone.
+  arm.committing = true;
+  getCaptureCommitCoordinator().complete(gesture).then(() => {
+    cancelSelectionGesture('completed');
+    const lease = pendingFrameLease;
+    pendingFrameLease = null;
+    beginSelectionSession(reason, gesture, lease);
+  }).catch((error: any) => {
+    cancelSelectionGesture('commit_failed');
+    log(`frame commit failed: ${error?.message || error}`);
+  });
   return true;
 }
 
@@ -2826,7 +2917,7 @@ type SelectionGesture = {
   source?: { foregroundApp?: string | null; foregroundHwnd?: string | number | null };
 };
 
-function beginSelectionSession(reason = 'manual', gesture: SelectionGesture | null = null) {
+function beginSelectionSession(reason = 'manual', gesture: SelectionGesture | null = null, frameLease: any = null) {
   if (activeSelectionSessionToken) invalidateSelectionSession(activeSelectionSessionToken);
   lastStageResult = null;
 
@@ -2933,6 +3024,7 @@ function beginSelectionSession(reason = 'manual', gesture: SelectionGesture | nu
       cursor: physicalCursor,
       cursorSpace: physicalCursor ? 'physical_screen_pixels' : null,
       gesture: physicalGesture ? safeClone(physicalGesture) : null,
+      frameLease: frameLease ? safeClone(frameLease) : null,
       screenBounds: display.bounds,
       scaleFactor: display.scaleFactor || 1,
       foregroundApp: gesture?.source?.foregroundApp || pointerInputState.foregroundApp,
@@ -3302,6 +3394,11 @@ app.on('will-quit', () => {
   stopTitleBarSampling();
   if (wiggleCalibrationTimer) clearTimeout(wiggleCalibrationTimer);
   voiceRuntime?.shutdown();
+  if (frameCaptureWorkerClient) {
+    frameCaptureWorkerClient.shutdown().catch((error: any) => {
+      log(`frame capture worker shutdown failed: ${error?.message || error}`);
+    });
+  }
   try { if (pointerStateChild && !pointerStateChild.killed) pointerStateChild.kill(); } catch (_) {}
   pointerStateChild = null;
   for (const child of dictationChildren.values()) {
