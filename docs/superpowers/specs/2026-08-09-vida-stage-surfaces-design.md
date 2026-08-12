@@ -1,5 +1,12 @@
 # Vida-inspired Stage surfaces
 
+> Superseded for Stream Panel geometry, streaming behavior, phase transitions,
+> and completion-card separation by
+> `docs/superpowers/specs/2026-08-13-vida-fixed-stream-shell-design.md`.
+> The newer specification records the user's correction after direct
+> PromptRescue frame review. Unaffected capsule, safety, and accessibility
+> constraints in this document still apply.
+
 ## Scope
 
 Rework only Magic Pointer's transient interaction surfaces:
