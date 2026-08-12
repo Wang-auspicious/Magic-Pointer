@@ -848,7 +848,14 @@ DOM、COM、UIA、Fabric等现有模块也不自动保留，只优先保存经�
   - recipe 降级为预编译轨迹：39/39 编译成功，L0/L1/L2 路由器退役为轨迹编译器（旧签名零改动），18 个高流量动作注册为工具，`engine.run_agent_turn` 循环入口（旧入口无感）。
   - 验证：Python 1529 过（2 个既有环境失败：local_image_vision 缺验收图）；Node 131 过；typecheck/lint 过。agent loop 基准（假模型）：20/20，p50≈0ms/p95≈75ms（假后端，不代表真实模型延迟）。
   - 未接线：fabric_bridge/selection_bridge 生产调用方仍走旧 engine 路径；真实多轮模型客户端（ai_client 单 user_prompt 限制）。
-- [ ] 批次 2：L3 Anchor 重解析 + L4 前置条件 + L5 可逆性 + L7 注入隔离。
+- [x] 批次 2：L3 Anchor 重解析 + L4 前置条件 + L5 可逆性 + L7 注入隔离（2026-08-12 完成，见 `docs/superpowers/plans/2026-08-12-harness-safety-batch.md`）：
+  - `app/anchor/`：Anchor 五字段多重身份 + AnchorResolver 降级链（exact/moved/changed/gone/ambiguous 一等返回值，lazy probe）。
+  - `app/action_guard/`：preconditions 四断言（宁可失败不猜）、ActionApproval（不可逆动作人类批准，by 黑名单防模型自触发，身份变化 EXPIRED）、UndoLog（补偿动作+幂等+失败不伪装）、EgressGate（默认全禁，data 来源需 explicit_approval，全审计）。
+  - loop 接线：ToolSpec.preconditions + precondition_context_factory（fail-closed）；AgentMessage.origin 指令/数据通道隔离（validate_messages 拒绝 data+user）。
+  - executors：4 个写回动作挂 compensate 槽。
+  - 验证：Python 1767 过（2 既有环境失败）；Node 131；typecheck/lint 过。
+  - 诚实缺口：approval/undo/egress 接线缝在工具实现层（真实写回工具接线待动作批）；恢复提示消息 role=user+origin=data 与 validate_messages 的已知间隙（文档化）。
+- [ ] 批次 3：L9 变更流 + L10 感知权限 + L13 账本/PointerBench + L14/L15/L16。
 - [ ] WGC/D3D 捕获后端（FrameLease 生产热路径）。
 
 ### 2026-08-13：recipe 重定位对账 5 项 P1 修复（review-recipes）
