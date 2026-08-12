@@ -85,7 +85,7 @@ class PerceptionTools:
 
     # -- tools -------------------------------------------------------------
 
-    def read_around(self, anchor: str, radius: int = 3) -> Evidence:
+    def read_around(self, anchor: str, radius: int = 3, scope: object = None) -> Evidence:
         radius = _clamp_int(radius, RADIUS_MIN, RADIUS_MAX)
         try:
             items = self._backend.read_around(anchor=anchor, radius=radius)
@@ -111,7 +111,7 @@ class PerceptionTools:
         evidence = ok_evidence(joined, self.source, note=note)
         return apply_container_heuristic(evidence, CONTAINER_LIKE_TEXTS)
 
-    def dump_subtree(self, anchor: str, depth: int = 4) -> Evidence:
+    def dump_subtree(self, anchor: str, depth: int = 4, scope: object = None) -> Evidence:
         depth = _clamp_int(depth, DEPTH_MIN, DEPTH_MAX)
         try:
             tree = self._backend.dump_subtree(anchor=anchor, depth=depth)
@@ -137,7 +137,7 @@ class PerceptionTools:
         evidence = ok_evidence(value, self.source, note=note)
         return apply_container_heuristic(evidence, CONTAINER_LIKE_TEXTS)
 
-    def find_in_window(self, pattern: str) -> Evidence:
+    def find_in_window(self, pattern: str, scope: object = None) -> Evidence:
         try:
             hits = self._backend.find_in_window(pattern=pattern)
         except BackendBusy as exc:
@@ -165,7 +165,7 @@ class PerceptionTools:
         )
         return apply_container_heuristic(evidence, CONTAINER_LIKE_TEXTS)
 
-    def list_windows(self) -> Evidence:
+    def list_windows(self, scope: object = None) -> Evidence:
         try:
             windows = self._backend.list_windows()
         except BackendBusy as exc:
@@ -186,7 +186,7 @@ class PerceptionTools:
         )
         return apply_container_heuristic(evidence, CONTAINER_LIKE_TEXTS)
 
-    def get_focused(self) -> Evidence:
+    def get_focused(self, scope: object = None) -> Evidence:
         try:
             focused = self._backend.get_focused()
         except BackendBusy as exc:
@@ -303,6 +303,25 @@ class PerceptionTools:
                 execute=self.get_focused,
             )
         )
+
+
+def evidence_to_text(evidence: Evidence) -> str:
+    """Serialize an Evidence into model-readable tool-message text.
+
+    The loop's message boundary calls this so the model reads
+    ``{status, confidence, value, note}`` JSON instead of a dataclass repr.
+    The Evidence object itself is untouched at the registry layer (full
+    target-surface evidence is retained for fusion/decisions).
+    """
+    return json.dumps(
+        {
+            "status": evidence.status.value,
+            "confidence": evidence.confidence,
+            "value": evidence.value,
+            "note": evidence.note,
+        },
+        ensure_ascii=False,
+    )
 
 
 def _clamp_int(value: object, lo: int, hi: int) -> int:

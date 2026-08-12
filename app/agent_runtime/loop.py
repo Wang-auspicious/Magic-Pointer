@@ -11,13 +11,22 @@ Port of the Claude Code ``queryLoop`` state machine
 - The loop is an **async generator**: events are yielded to drive a UI, the
   final :class:`~app.agent_runtime.types.Terminal` is the generator's return
   value (CC ``AsyncGenerator<StreamEvent, Terminal>`` dual channel).
-- Per-turn flow: budget check (latency_budget FULL_ANSWER, injected clock)
+- Per-turn flow: budget check (``check_budget`` on latency_budget
+  FULL_ANSWER, injected clock; only the FULL_ANSWER stage gates the loop)
   -> model turn -> collect ToolCallArrived -> sequential execution
   (validate_input gate, registry.execute_tool wrapped in a
   CancellationScope; cancellation surfaces as CancelledError) ->
   ``_normalize_result`` maps the registry's execution-layer ToolResult to
-  the types-layer ToolResult (error_message merged into value) ->
+  the types-layer ToolResult (error_message merged into value; Evidence
+  values serialized via ``evidence_to_text`` so the model reads
+  ``{status, confidence, value, note}`` instead of a repr) ->
   tool messages appended with the is_error flag -> continue or terminate.
+- The whole loop runs inside one :class:`CancellationScope` over
+  ``params.cancel_registry`` (fallback: the module singleton). Cancellation
+  is checked before every model call and before every tool execution;
+  ``cancel_all()`` from any thread raises :class:`CancelledError` out of
+  the loop. Already-started parallel tools run to completion (the pool
+  drains), but the loop terminates instead of continuing.
 
 Honest semantics of this batch:
 
@@ -73,6 +82,7 @@ from app.agent_runtime.model_client import (
     MessageDelta,
     TurnWithheld,
 )
+from app.agent_runtime.perception_tools import evidence_to_text
 from app.agent_runtime.tool_registry import ToolRegistry
 from app.agent_runtime.types import (
     AgentMessage,
@@ -85,13 +95,19 @@ from app.agent_runtime.types import (
     TurnState,
     with_transition,
 )
+from app.evidence.contract import Evidence
 from app.governance.cancellation import (
     CancellationRegistry,
     CancellationScope,
     CancelledError,
     get_registry,
 )
-from app.governance.latency_budget import DEFAULT_BUDGETS, BudgetPolicy, Stage
+from app.governance.latency_budget import (
+    DEFAULT_BUDGETS,
+    BudgetPolicy,
+    Stage,
+    check_budget,
+)
 
 __all__ = [
     "LoopParams",
@@ -229,105 +245,273 @@ async def run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
 
     yield LoopStart()
 
-    while True:
-        elapsed_ms = clock() - start_ms
-        remaining_ms = max(0.0, budget_ms - elapsed_ms)
-        if elapsed_ms > budget_ms:
-            terminal = Terminal(
-                reason=TransitionReason.BUDGET_EXHAUSTED,
-                message="full answer budget exhausted",
-                turns=turn_number - 1,
-                results=tuple(results),
-            )
-            yield LoopStopped(terminal)
-            return
-
-        state = with_transition(
-            state,
-            last_transition,  # type: ignore[arg-type]  # None on turn 1
-            turn_count=turn_number,
-            budget_remaining_ms=remaining_ms,
-        )
-        yield TurnStarted(turn=turn_number)
-
-        if params.interrupt_check is not None and params.interrupt_check():
-            terminal = Terminal(
-                reason=TransitionReason.USER_INTERRUPT,
-                message="user interrupt",
-                turns=turn_number,
-                results=tuple(results),
-            )
-            yield LoopStopped(terminal)
-            return
-
-        events = client.generate_turn(
-            state.messages,
-            tool_schemas,
-            budget_ms=remaining_ms,
-            cancel_scope=None,
-        )
-        calls, text = client.parse_tool_calls(events)
-        yielded_delta = 0
-        for event in events:
-            if isinstance(event, MessageDelta):
-                yield ModelChunk(text=event.text)
-                yielded_delta += 1
-        if yielded_delta == 0 and text is not None:
-            yield ModelChunk(text)
-
-        if any(isinstance(event, TurnWithheld) for event in events):
-            recovery = state.max_output_tokens_recovery_count + 1
-            if recovery > MAX_OUTPUT_TOKENS_RECOVERY_LIMIT:
+    with CancellationScope(cancel_registry) as loop_scope:
+        while True:
+            elapsed_ms = clock() - start_ms
+            budget_result = check_budget(_FULL_ANSWER_STAGE, elapsed_ms, params.budgets)
+            remaining_ms = max(0.0, budget_ms - elapsed_ms)
+            if not budget_result.within_budget:
                 terminal = Terminal(
-                    reason=TransitionReason.MAX_OUTPUT_TOKENS_RECOVERED,
-                    message="max output tokens recovery limit exceeded",
+                    reason=TransitionReason.BUDGET_EXHAUSTED,
+                    message="full answer budget exhausted",
+                    turns=turn_number - 1,
+                    results=tuple(results),
+                )
+                yield LoopStopped(terminal)
+                return
+
+            state = with_transition(
+                state,
+                last_transition,  # type: ignore[arg-type]  # None on turn 1
+                turn_count=turn_number,
+                budget_remaining_ms=remaining_ms,
+            )
+            yield TurnStarted(turn=turn_number)
+
+            if params.interrupt_check is not None and params.interrupt_check():
+                terminal = Terminal(
+                    reason=TransitionReason.USER_INTERRUPT,
+                    message="user interrupt",
                     turns=turn_number,
                     results=tuple(results),
                 )
                 yield LoopStopped(terminal)
                 return
-            messages = list(state.messages)
-            if text is not None:
+
+            if loop_scope.is_cancelled:
+                raise CancelledError("cancelled before model call")
+
+            events = client.generate_turn(
+                state.messages,
+                tool_schemas,
+                budget_ms=remaining_ms,
+                cancel_scope=None,
+            )
+            calls, text = client.parse_tool_calls(events)
+            yielded_delta = 0
+            for event in events:
+                if isinstance(event, MessageDelta):
+                    yield ModelChunk(text=event.text)
+                    yielded_delta += 1
+            if yielded_delta == 0 and text is not None:
+                yield ModelChunk(text)
+
+            if any(isinstance(event, TurnWithheld) for event in events):
+                recovery = state.max_output_tokens_recovery_count + 1
+                if recovery > MAX_OUTPUT_TOKENS_RECOVERY_LIMIT:
+                    terminal = Terminal(
+                        reason=TransitionReason.MAX_OUTPUT_TOKENS_RECOVERED,
+                        message="max output tokens recovery limit exceeded",
+                        turns=turn_number,
+                        results=tuple(results),
+                    )
+                    yield LoopStopped(terminal)
+                    return
+                messages = list(state.messages)
+                if text is not None:
+                    messages.append(
+                        AgentMessage(
+                            role=Role.ASSISTANT,
+                            content=text,
+                            tool_call_id=None,
+                            name=None,
+                        )
+                    )
                 messages.append(
                     AgentMessage(
-                        role=Role.ASSISTANT,
-                        content=text,
+                        role=Role.USER,
+                        content=_RECOVERY_MESSAGE,
                         tool_call_id=None,
                         name=None,
                     )
                 )
-            messages.append(
-                AgentMessage(
-                    role=Role.USER,
-                    content=_RECOVERY_MESSAGE,
-                    tool_call_id=None,
-                    name=None,
+                has_attempted = state.has_attempted_reactive_compact
+                if not has_attempted and params.compact_callback is not None:
+                    params.compact_callback(state)
+                    has_attempted = True
+                last_transition = TransitionReason.MAX_OUTPUT_TOKENS_RECOVERED
+                state = with_transition(
+                    state,
+                    TransitionReason.MAX_OUTPUT_TOKENS_RECOVERED,
+                    messages=messages,
+                    tool_calls_pending=[],
+                    max_output_tokens_recovery_count=recovery,
+                    has_attempted_reactive_compact=has_attempted,
+                    turn_count=turn_number,
+                    last_result=results[-1] if results else None,
                 )
-            )
-            has_attempted = state.has_attempted_reactive_compact
-            if not has_attempted and params.compact_callback is not None:
-                params.compact_callback(state)
-                has_attempted = True
-            last_transition = TransitionReason.MAX_OUTPUT_TOKENS_RECOVERED
-            state = with_transition(
-                state,
-                TransitionReason.MAX_OUTPUT_TOKENS_RECOVERED,
-                messages=messages,
-                tool_calls_pending=[],
-                max_output_tokens_recovery_count=recovery,
-                has_attempted_reactive_compact=has_attempted,
-                turn_count=turn_number,
-                last_result=results[-1] if results else None,
-            )
-            yield TurnFinished(state)
-            turn_number += 1
-            continue
+                yield TurnFinished(state)
+                turn_number += 1
+                continue
 
-        if not calls:
-            if stop_hooks and not state.stop_hook_active:
-                decision, hook_errored = _run_stop_hooks(
-                    stop_hooks, state, hook_notes
+            if not calls:
+                if stop_hooks and not state.stop_hook_active:
+                    decision, hook_errored = _run_stop_hooks(
+                        stop_hooks, state, hook_notes
+                    )
+                    if decision is not None:
+                        reason = (
+                            decision.reason
+                            if decision.reason is not None
+                            else TransitionReason.STOP_HOOK
+                        )
+                        terminal = Terminal(
+                            reason=reason,
+                            message="stop hook prevented continuation",
+                            turns=turn_number,
+                            results=tuple(results),
+                        )
+                        yield LoopStopped(terminal)
+                        return
+                    if hook_errored:
+                        messages = list(state.messages)
+                        if text is not None:
+                            messages.append(
+                                AgentMessage(
+                                    role=Role.ASSISTANT,
+                                    content=text,
+                                    tool_call_id=None,
+                                    name=None,
+                                )
+                            )
+                        state = with_transition(
+                            state,
+                            last_transition or TransitionReason.TOOL_RESULT,
+                            messages=messages,
+                            tool_calls_pending=[],
+                            turn_count=turn_number,
+                            max_output_tokens_recovery_count=0,
+                            stop_hook_active=True,
+                            last_result=results[-1] if results else None,
+                        )
+                        yield TurnFinished(state)
+                        turn_number += 1
+                        continue
+                messages = list(state.messages)
+                if text is not None:
+                    messages.append(
+                        AgentMessage(
+                            role=Role.ASSISTANT,
+                            content=text,
+                            tool_call_id=None,
+                            name=None,
+                        )
+                    )
+                completion_reason = last_transition or TransitionReason.TOOL_RESULT
+                final_state = with_transition(
+                    state,
+                    completion_reason,
+                    messages=messages,
+                    last_result=results[-1] if results else None,
+                    stop_hook_active=False,
                 )
+                terminal = Terminal(
+                    reason=completion_reason,
+                    message=text or "",
+                    turns=turn_number,
+                    results=tuple(results),
+                )
+                yield TurnFinished(final_state)
+                yield LoopStopped(terminal)
+                return
+
+            if client.last_truncated:
+                messages = list(state.messages)
+                messages.append(
+                    AgentMessage(
+                        role=Role.TOOL,
+                        content=_TRUNCATION_MESSAGE,
+                        tool_call_id=calls[0].id,
+                        name=calls[0].name,
+                        is_error=False,
+                    )
+                )
+                if turn_number + 1 > params.max_turns:
+                    terminal = Terminal(
+                        reason=TransitionReason.MAX_TURNS,
+                        message="max turns reached",
+                        turns=turn_number,
+                        results=tuple(results),
+                    )
+                    yield LoopStopped(terminal)
+                    return
+                state = with_transition(
+                    state,
+                    TransitionReason.TOOL_RESULT,
+                    messages=messages,
+                    tool_calls_pending=[],
+                    turn_count=turn_number,
+                    max_output_tokens_recovery_count=0,
+                    last_result=results[-1] if results else None,
+                )
+                yield TurnFinished(state)
+                turn_number += 1
+                continue
+
+            tool_messages: list[AgentMessage] = []
+            any_error = False
+            names = [call.name for call in calls]
+            try:
+                parallel_names, sequential_names = registry.concurrency_partition(names)
+            except KeyError:
+                # Unknown names fail closed as sequential; _execute_one reports
+                # them as TOOL_ERROR instead of the partition killing the loop.
+                parallel_names, sequential_names = [], list(names)
+            parallel_set = frozenset(parallel_names)
+            sequential_set = frozenset(sequential_names)
+            parallel_calls = [call for call in calls if call.name in parallel_set]
+            sequential_calls = [call for call in calls if call.name in sequential_set]
+
+            for call in parallel_calls:
+                yield ToolCallStarted(name=call.name, id=call.id)
+            parallel_results = _execute_parallel(
+                parallel_calls, registry, cancel_registry, loop_scope
+            )
+            for call, normalized in zip(parallel_calls, parallel_results, strict=True):
+                results.append(normalized)
+                if normalized.is_error:
+                    any_error = True
+                yield ToolCallFinished(result=normalized)
+                tool_messages.append(
+                    AgentMessage(
+                        role=Role.TOOL,
+                        content=normalized.value,
+                        tool_call_id=normalized.tool_call_id,
+                        name=call.name,
+                        is_error=normalized.is_error,
+                    )
+                )
+
+            for call in sequential_calls:
+                yield ToolCallStarted(name=call.name, id=call.id)
+                normalized = _execute_one(registry, call, cancel_registry, loop_scope)
+                results.append(normalized)
+                if normalized.is_error:
+                    any_error = True
+                yield ToolCallFinished(result=normalized)
+                tool_messages.append(
+                    AgentMessage(
+                        role=Role.TOOL,
+                        content=normalized.value,
+                        tool_call_id=normalized.tool_call_id,
+                        name=call.name,
+                        is_error=normalized.is_error,
+                    )
+                )
+
+            if turn_number + 1 > params.max_turns:
+                terminal = Terminal(
+                    reason=TransitionReason.MAX_TURNS,
+                    message="max turns reached",
+                    turns=turn_number,
+                    results=tuple(results),
+                )
+                yield LoopStopped(terminal)
+                return
+
+            hook_errored = False
+            if stop_hooks and not state.stop_hook_active:
+                decision, hook_errored = _run_stop_hooks(stop_hooks, state, hook_notes)
                 if decision is not None:
                     reason = (
                         decision.reason
@@ -342,30 +526,10 @@ async def run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                     )
                     yield LoopStopped(terminal)
                     return
-                if hook_errored:
-                    messages = list(state.messages)
-                    if text is not None:
-                        messages.append(
-                            AgentMessage(
-                                role=Role.ASSISTANT,
-                                content=text,
-                                tool_call_id=None,
-                                name=None,
-                            )
-                        )
-                    state = with_transition(
-                        state,
-                        last_transition or TransitionReason.TOOL_RESULT,
-                        messages=messages,
-                        tool_calls_pending=[],
-                        turn_count=turn_number,
-                        max_output_tokens_recovery_count=0,
-                        stop_hook_active=True,
-                        last_result=results[-1] if results else None,
-                    )
-                    yield TurnFinished(state)
-                    turn_number += 1
-                    continue
+
+            last_transition = (
+                TransitionReason.TOOL_ERROR if any_error else TransitionReason.TOOL_RESULT
+            )
             messages = list(state.messages)
             if text is not None:
                 messages.append(
@@ -376,160 +540,19 @@ async def run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                         name=None,
                     )
                 )
-            completion_reason = last_transition or TransitionReason.TOOL_RESULT
-            final_state = with_transition(
-                state,
-                completion_reason,
-                messages=messages,
-                last_result=results[-1] if results else None,
-                stop_hook_active=False,
-            )
-            terminal = Terminal(
-                reason=completion_reason,
-                message=text or "",
-                turns=turn_number,
-                results=tuple(results),
-            )
-            yield TurnFinished(final_state)
-            yield LoopStopped(terminal)
-            return
-
-        if client.last_truncated:
-            messages = list(state.messages)
-            messages.append(
-                AgentMessage(
-                    role=Role.TOOL,
-                    content=_TRUNCATION_MESSAGE,
-                    tool_call_id=calls[0].id,
-                    name=calls[0].name,
-                    is_error=False,
-                )
-            )
-            if turn_number + 1 > params.max_turns:
-                terminal = Terminal(
-                    reason=TransitionReason.MAX_TURNS,
-                    message="max turns reached",
-                    turns=turn_number,
-                    results=tuple(results),
-                )
-                yield LoopStopped(terminal)
-                return
+            messages.extend(tool_messages)
             state = with_transition(
                 state,
-                TransitionReason.TOOL_RESULT,
+                last_transition,
                 messages=messages,
                 tool_calls_pending=[],
                 turn_count=turn_number,
                 max_output_tokens_recovery_count=0,
-                last_result=results[-1] if results else None,
+                stop_hook_active=hook_errored,
+                last_result=results[-1],
             )
             yield TurnFinished(state)
             turn_number += 1
-            continue
-
-        tool_messages: list[AgentMessage] = []
-        any_error = False
-        names = [call.name for call in calls]
-        try:
-            parallel_names, sequential_names = registry.concurrency_partition(names)
-        except KeyError:
-            # Unknown names fail closed as sequential; _execute_one reports
-            # them as TOOL_ERROR instead of the partition killing the loop.
-            parallel_names, sequential_names = [], list(names)
-        parallel_set = frozenset(parallel_names)
-        sequential_set = frozenset(sequential_names)
-        parallel_calls = [call for call in calls if call.name in parallel_set]
-        sequential_calls = [call for call in calls if call.name in sequential_set]
-
-        for call in parallel_calls:
-            yield ToolCallStarted(name=call.name, id=call.id)
-        parallel_results = _execute_parallel(parallel_calls, registry, cancel_registry)
-        for call, normalized in zip(parallel_calls, parallel_results, strict=True):
-            results.append(normalized)
-            if normalized.is_error:
-                any_error = True
-            yield ToolCallFinished(result=normalized)
-            tool_messages.append(
-                AgentMessage(
-                    role=Role.TOOL,
-                    content=normalized.value,
-                    tool_call_id=normalized.tool_call_id,
-                    name=call.name,
-                    is_error=normalized.is_error,
-                )
-            )
-
-        for call in sequential_calls:
-            yield ToolCallStarted(name=call.name, id=call.id)
-            normalized = _execute_one(registry, call, cancel_registry)
-            results.append(normalized)
-            if normalized.is_error:
-                any_error = True
-            yield ToolCallFinished(result=normalized)
-            tool_messages.append(
-                AgentMessage(
-                    role=Role.TOOL,
-                    content=normalized.value,
-                    tool_call_id=normalized.tool_call_id,
-                    name=call.name,
-                    is_error=normalized.is_error,
-                )
-            )
-
-        if turn_number + 1 > params.max_turns:
-            terminal = Terminal(
-                reason=TransitionReason.MAX_TURNS,
-                message="max turns reached",
-                turns=turn_number,
-                results=tuple(results),
-            )
-            yield LoopStopped(terminal)
-            return
-
-        hook_errored = False
-        if stop_hooks and not state.stop_hook_active:
-            decision, hook_errored = _run_stop_hooks(stop_hooks, state, hook_notes)
-            if decision is not None:
-                reason = (
-                    decision.reason
-                    if decision.reason is not None
-                    else TransitionReason.STOP_HOOK
-                )
-                terminal = Terminal(
-                    reason=reason,
-                    message="stop hook prevented continuation",
-                    turns=turn_number,
-                    results=tuple(results),
-                )
-                yield LoopStopped(terminal)
-                return
-
-        last_transition = (
-            TransitionReason.TOOL_ERROR if any_error else TransitionReason.TOOL_RESULT
-        )
-        messages = list(state.messages)
-        if text is not None:
-            messages.append(
-                AgentMessage(
-                    role=Role.ASSISTANT,
-                    content=text,
-                    tool_call_id=None,
-                    name=None,
-                )
-            )
-        messages.extend(tool_messages)
-        state = with_transition(
-            state,
-            last_transition,
-            messages=messages,
-            tool_calls_pending=[],
-            turn_count=turn_number,
-            max_output_tokens_recovery_count=0,
-            stop_hook_active=hook_errored,
-            last_result=results[-1],
-        )
-        yield TurnFinished(state)
-        turn_number += 1
 
 
 def _run_stop_hooks(
@@ -560,6 +583,7 @@ def _execute_parallel(
     calls: Sequence[ToolCall],
     registry: ToolRegistry,
     cancel_registry: CancellationRegistry,
+    loop_scope: CancellationScope,
 ) -> list[ToolResult]:
     """Execute a concurrency-safe batch on a short-lived thread pool.
 
@@ -572,7 +596,10 @@ def _execute_parallel(
     else wrapped as TOOL_ERROR) because :func:`_execute_one` runs inside
     the worker; only a cancelled scope raises :class:`CancelledError` out
     of the worker, propagating through ``future.result()`` exactly like the
-    serial path.
+    serial path. ``loop_scope`` is the loop's outer scope: its token is
+    shared with every worker so a pre-execution cancellation check is
+    visible across threads. Already-submitted tools still run to
+    completion; the loop raises instead of continuing.
     """
     if not calls:
         return []
@@ -581,7 +608,7 @@ def _execute_parallel(
         max_workers=workers, thread_name_prefix="mp-tool"
     ) as pool:
         futures = [
-            pool.submit(_execute_one, registry, call, cancel_registry)
+            pool.submit(_execute_one, registry, call, cancel_registry, loop_scope)
             for call in calls
         ]
         return [future.result() for future in futures]
@@ -633,6 +660,7 @@ def _execute_one(
     registry: ToolRegistry,
     call: ToolCall,
     cancel_registry: CancellationRegistry,
+    loop_scope: CancellationScope,
 ) -> ToolResult:
     """Validate, execute and normalize one tool call.
 
@@ -640,7 +668,10 @@ def _execute_one(
     ``execute`` (fail closed). Unknown tools are caught as a structured
     TOOL_ERROR instead of a KeyError killing the loop. Execution is wrapped
     in a CancellationScope; once cancelled, the loop raises CancelledError
-    instead of feeding the result back.
+    instead of feeding the result back. The pre-execution check reads the
+    loop's outer scope, so a cancellation that landed while the model was
+    generating skips ``execute`` entirely; a cancellation that lands
+    mid-execution lets the tool run to completion and then raises.
     """
     try:
         spec = registry.get(call.name)
@@ -663,6 +694,8 @@ def _execute_one(
             used_backend=None,
             latency_ms=None,
         )
+    if loop_scope.is_cancelled:
+        raise CancelledError(f"cancelled before tool {call.name!r} ({call.id})")
     with CancellationScope(cancel_registry) as scope:
         executed = registry.execute_tool(call.name, call.arguments, scope=scope.token)
     if scope.is_cancelled:
@@ -674,14 +707,18 @@ def _normalize_result(executed: Any, call: ToolCall) -> ToolResult:
     """Map the registry execution-layer ToolResult to the types layer.
 
     ``error_message`` is merged into ``value`` for errors (the model only
-    sees one text channel per tool message).
+    sees one text channel per tool message). Evidence values are rendered
+    with :func:`~app.agent_runtime.perception_tools.evidence_to_text` at
+    this message boundary so the model reads ``{status, confidence, value,
+    note}`` text instead of a dataclass repr; the Evidence object itself
+    stays untouched at the registry layer.
     """
     if executed.is_error:
         value = executed.error_message
         if value is None:
-            value = "" if executed.value is None else str(executed.value)
+            value = _result_value_text(executed.value)
     else:
-        value = "" if executed.value is None else str(executed.value)
+        value = _result_value_text(executed.value)
     return ToolResult(
         tool_call_id=call.id,
         value=value,
@@ -690,3 +727,10 @@ def _normalize_result(executed: Any, call: ToolCall) -> ToolResult:
         used_backend=executed.used_backend,
         latency_ms=executed.latency_ms,
     )
+
+
+def _result_value_text(value: Any) -> str:
+    """One text channel for the model: Evidence -> readable JSON, else str."""
+    if isinstance(value, Evidence):
+        return evidence_to_text(value)
+    return "" if value is None else str(value)

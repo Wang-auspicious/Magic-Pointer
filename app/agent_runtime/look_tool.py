@@ -253,10 +253,13 @@ class LookTool:
         anchor: str,
         box: Sequence[int] | None = None,
         prompt: str | None = None,
+        scope: object = None,
     ) -> Evidence:
         """Strict registry-facing adapter: schema field ``box`` maps to the
-        public API parameter ``box_ltrb``. Unknown kwargs raise TypeError,
-        which the registry wraps as tool_error (no silent drops)."""
+        public API parameter ``box_ltrb``; ``scope`` is the loop's
+        cancellation token (accepted, not enforced by the fake backend
+        contract). Unknown kwargs raise TypeError, which the registry wraps
+        as tool_error (no silent drops)."""
         return self.look(anchor, box_ltrb=box, prompt=prompt)
 
     def register(self, registry: ToolRegistry) -> None:
