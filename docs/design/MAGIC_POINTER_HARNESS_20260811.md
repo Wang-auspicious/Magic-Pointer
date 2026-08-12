@@ -824,7 +824,25 @@ DOM、COM、UIA、Fabric等现有模块也不自动保留，只优先保存经�
 - [x] 核实迟到截图、串行感知、UIA子进程、微信解析未接线、Fabric单工具限制。
 - [x] 核实 Pi稳定 agent-loop与上游实验 AgentHarness边界。
 - [x] 完成 Phase A实施计划：`docs/superpowers/plans/2026-08-11-frame-lease-foundation.md`。
-- [ ] 建立 FrameLease第一条失败测试。
-- [ ] 完成 pointerup先冻结的端到端生产链。
+- [x] 建立 FrameLease第一条失败测试（契约测试 2026-08-12）。
+- [x] 完成 pointerup先冻结的端到端生产链（2026-08-12，GDI 后端）。
 
-下一步唯一主线：执行 `docs/superpowers/plans/2026-08-11-frame-lease-foundation.md`，完成后更新本账本，再编写 Phase B计划。
+### 2026-08-12：Phase A 完成 + 外部评审吸收
+
+- [x] 外部 harness 评审：`docs/harness-gap-review-20260812.md`（定位校正：不是"更便宜的 CUA"而是"指代输入模态"；四支柱：稳定寻址/前置条件/可逆性/廉价复读；P0 缺口 L1-L8、P1 L9-L16、P2 L17-L22；批次 0=L12+L6+L8）。
+- [x] Phase A FrameLease 全量落地（8·11 计划 Task 1-7 除真实 Electron overlay 验收）：
+  - `electron/frame_lease.ts` + `scripts/frame_lease.py`：版本化不可变 FrameLease 契约（TS/Python 双端校验一致）。
+  - `scripts/frame_capture_worker.py`：空闲常驻捕获 worker + arm/commit/cancel 状态机 + 有界环形缓冲 + JSONL stdio。
+  - `electron/frame_capture_worker_client.ts` + `electron/capture_commit_coordinator.ts`：持久单 worker 客户端与 commit 排序协调器。
+  - `electron/main.ts`：接入 coordinator、删除旧 34ms 定时器、commit 先于 overlay 释放与会话启动、overlay 内容保护。
+  - `scripts/selection_snapshot_bridge.py`：消费已冻结 FrameLease，禁止迟到重捕获，失败 fail-closed。
+  - 真实基准（gdi-fallback）：20/20 成功，p50 192ms / p95 213ms / max 233ms，单 worker 复用。
+  - 未完成：WGC/D3D 后端、overlay 排除需真实 Electron 会话验收。
+- [x] L6 证据契约：`app/evidence/contract.py`（EvidenceStatus/Source、容器启发式、merge_for_decision、is_trustworthy）。
+- [x] L8 基础设施：`app/governance/latency_budget.py`（评审预算表）+ `app/governance/cancellation.py`（代际淘汰取消注册表）。接线改造未做。
+- [x] L12 Replay 基座：`app/replay/`（DesktopTrace schema + recorder + replayer）+ `scripts/record_desktop_trace.py`。感知层离线回放未接线。
+- [ ] 批次 1：L1 Agent Loop（engine 改解释器、recipe 降级为循环缓存）+ L2 感知即工具（read_around/look 等）。
+- [ ] 批次 2：L3 Anchor 重解析 + L4 前置条件 + L5 可逆性 + L7 注入隔离。
+- [ ] WGC/D3D 捕获后端（FrameLease 生产热路径）。
+
+下一步主线：批次 1（L1+L2），需先更新 Phase A 账本并编写实施计划。

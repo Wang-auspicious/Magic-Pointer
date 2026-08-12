@@ -1,6 +1,10 @@
 # 当前状态
 
-> 最后核实：2026-08-09。改了行为就回来改这里，别新建一份日期文件。
+> 最后核实：2026-08-12。改了行为就回来改这里，别新建一份日期文件。
+
+## 一句话
+
+FrameLease 捕获地基（8·11 计划 Phase A）已全量落地并过自动化验证；外部 harness 评审（`docs/harness-gap-review-20260812.md`）已吸收，评审 P0 的 L6 证据契约、L8 预算/取消模块、L12 Replay 基座已建好独立模块；下一步是评审批次 1：L1 Agent Loop + L2 感知即工具。全量测试：**Python 1253 过 / 2 环境依赖失败（`local_image_vision_test.py` 硬编码本机验收图 `D:/Desktop/参考/1d9473e9....jpg` 缺失，与本次改动无关）；Node 89 源文件 131 测试全过**；typecheck、ESLint、ruff 通过。
 
 分支 `codex/multi-stroke-and-voice-fix`，未推送。当前全量测试：**Python 1073 项、Node 127 项（86 个 JS/TS 源文件）**，ESLint 与 TypeScript strict typecheck 通过；Electron/Node 非测试源码已全部迁移为 TypeScript（**87 个非测试 `.ts`，非测试 `.js` 为 0**），重构前 Node 基线为 145 项。
 
@@ -12,6 +16,10 @@
 
 | 能力 | 状态 |
 |---|---|
+| FrameLease 冻结先于感知（pointerup→commit→会话） | 可用（GDI 后端，p50≈192ms / p95≈213ms / max≈233ms，20/20 轮） |
+| 证据契约（ok/busy/timeout/empty_confirmed 可区分 + 反容器启发式） | 模块可用，感知链未接线 |
+| 延迟预算表 + 取消令牌（代际淘汰） | 模块可用，桥/模型未接线 |
+| Desktop Trace 录制/回放（离线感知测试基座） | 基座可用，感知层回放未接线 |
 | 晃动唤醒 → 划线圈选 → 气泡问答 | 可用 |
 | 39 个 Recipe（数据驱动，`data/recipes/builtin.recipes.json`） | 可用，插件目录可加载 |
 | 三层意图路由（L0 关键词 / L1 分类 / L2 工具调用兜底） | 可用 |
