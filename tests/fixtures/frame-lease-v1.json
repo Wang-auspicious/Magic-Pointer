@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "frameLeaseId": "frame-1",
+  "epochId": "epoch-1",
+  "capturedAtMonotonicMs": 1250.5,
+  "capturedAtUtc": "2026-08-11T00:00:00.000Z",
+  "source": "test",
+  "targetWindow": {
+    "hwnd": 42,
+    "processId": 7,
+    "processName": "demo.exe",
+    "title": "Demo"
+  },
+  "surfaceBoundsPx": [0, 0, 1920, 1080],
+  "displayId": "display-1",
+  "scaleFactor": 1,
+  "gesture": {
+    "coordinateSpace": "physical_screen_pixels",
+    "strokes": []
+  },
+  "localArtifact": {
+    "path": "D:/tmp/frame.png",
+    "mimeType": "image/png",
+    "width": 1920,
+    "height": 1080
+  },
+  "contentHash": "sha256:abc",
+  "overlayExcluded": true,
+  "captureLatencyMs": 12.5
+}
