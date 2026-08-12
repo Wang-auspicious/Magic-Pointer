@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import importlib.util
@@ -7,10 +8,15 @@ import json
 import os
 import secrets
 import shutil
+import time
 import uuid
 from pathlib import Path
 from typing import Any, Callable
 
+from app.agent_runtime.loop import LoopParams, LoopStopped, run_agent_loop
+from app.agent_runtime.model_client import LoopModelClient
+from app.agent_runtime.tool_registry import GLOBAL_REGISTRY, ToolRegistry
+from app.agent_runtime.types import Terminal
 from app.fabric.agent_gateway import AgentGateway
 from app.fabric.artifacts import ArtifactRegistry
 from app.fabric.audit import AuditStore
@@ -19,16 +25,18 @@ from app.fabric.capture_policy import CapturePolicyEngine, build_capture_policy
 from app.fabric.catalog import get_recipe
 from app.fabric.context_packet import ContextPacketBuilder
 from app.fabric.executors import FabricExecutors
-from app.fabric.model_plan import ModelPlanError, TOOL_REGISTRY, parse_model_plan
+from app.fabric.intent_router import route_to_trajectory
+from app.fabric.model_plan import TOOL_REGISTRY, ModelPlanError, parse_model_plan
+from app.fabric.provenance import ProvenanceError, ProvenanceIndex
 from app.fabric.router import RecipeRouter
 from app.fabric.runtime_workspace import RuntimeWorkspaceResolver
-from app.fabric.provenance import ProvenanceIndex, ProvenanceError
-from app.fabric.skill_candidates import SkillCandidateError, SkillCandidateStore
 from app.fabric.schema import ExecutionReceipt, IntentMatch, OperationPlan
 from app.fabric.settings import FabricSettings, SettingsStore
-from app.fabric.task_store import AgentTaskError, AgentTaskStore
+from app.fabric.skill_candidates import SkillCandidateError, SkillCandidateStore
 from app.fabric.target_lease import TargetLease, validate_target_lease
+from app.fabric.task_store import AgentTaskError, AgentTaskStore
 from app.fabric.workflow import operation_graph
+from app.governance.latency_budget import DEFAULT_BUDGETS
 from app.models.capability_resolver import ModelCapabilityResolver
 from app.models.visual_relay import VisualRelayPlanner
 
@@ -835,3 +843,75 @@ class FabricEngine:
             })
         self._append_execution_audit(plan, receipt_value, lease_validation)
         return receipt_value
+
+
+# ---------------------------------------------------------------------------
+# Agent-loop entry (harness batch 1, L1): recipe is a cache, the loop is the
+# interpreter. Independent of the legacy plan/execute path above; the old
+# functions and their return shapes are untouched.
+# ---------------------------------------------------------------------------
+
+
+async def _consume_agent_loop(params: LoopParams) -> Terminal:
+    """Collect loop events until :class:`LoopStopped`; return its Terminal.
+
+    Every exit path of :func:`run_agent_loop` yields LoopStopped as the final
+    event (PEP 525 forbids an async-generator return value), so a generator
+    that ends without one is a loop-contract violation and fails loudly.
+    Cancellation surfaces as :class:`~app.governance.cancellation.CancelledError`
+    from the generator and propagates unchanged.
+    """
+    async for event in run_agent_loop(params):
+        if isinstance(event, LoopStopped):
+            return event.terminal
+    raise RuntimeError("agent loop ended without LoopStopped")
+
+
+_LOOP_DEFAULT_MAX_TURNS = 6
+"""Free-loop turn ceiling; mirrors :class:`LoopParams` ``max_turns`` default."""
+
+
+def run_agent_turn(
+    user_input: str,
+    objects: list | None = None,
+    registry: ToolRegistry = GLOBAL_REGISTRY,
+    *,
+    client: LoopModelClient,
+    clock: Callable[[], float] | None = None,
+    max_turns: int | None = None,
+    lang: str = "zh",
+) -> Terminal:
+    """Run one agentic loop turn to its Terminal (synchronous entry).
+
+    - Routing: ``route_to_trajectory`` ranks keyword matches; the top
+      candidate's compiled trajectory (recipe as cache) is handed to
+      :class:`LoopParams`, which uses its first-message template and
+      recommended-tool order. No match means ``trajectory=None`` and the free
+      loop runs (the old forced-recipe fallback is deliberately absent here).
+    - Budgets: ``DEFAULT_BUDGETS`` (FULL_ANSWER full-answer stage); the
+      per-turn ceiling is the explicit ``max_turns`` override, else the
+      trajectory's compiled turn budget, else the :class:`LoopParams` default.
+    - Clock: ``time.monotonic`` unless injected; ``asyncio.run`` drives the
+      loop, so callers must not call this from inside a running event loop.
+    - The registry is injected by the caller and defaults to the global
+      registry; this module registers nothing. Cancellation during a tool
+      execution propagates as :class:`CancelledError`.
+    """
+    candidates = route_to_trajectory(user_input, objects, lang=lang)
+    trajectory = candidates[0].trajectory if candidates else None
+    if max_turns is None:
+        max_turns = (
+            trajectory.max_turns
+            if trajectory is not None
+            else _LOOP_DEFAULT_MAX_TURNS
+        )
+    params = LoopParams(
+        user_input=user_input,
+        registry=registry,
+        client=client,
+        trajectory=trajectory,
+        budgets=DEFAULT_BUDGETS,
+        clock=clock if clock is not None else time.monotonic,
+        max_turns=max_turns,
+    )
+    return asyncio.run(_consume_agent_loop(params))

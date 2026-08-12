@@ -15,7 +15,7 @@ from urllib.parse import urlencode
 
 from app.fabric.context_packet import build_agent_prompt, write_context_packet_artifact
 from app.fabric.agent_context_handoff import AgentContextHandoffError, AgentContextHandoffStore
-from app.fabric.schema import ExecutionReceipt, OperationPlan
+from app.fabric.schema import ExecutionReceipt, OperationPlan, RiskLevel
 
 _VISUAL_SUFFIXES = {
     ".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tif", ".tiff", ".webp", ".heic", ".avif",
@@ -998,3 +998,519 @@ class FabricExecutors:
             },
             error=None if accepted else "agent_task_receipt_invalid",
         )
+
+
+# ---------------------------------------------------------------------------
+# Tool registry migration: high-traffic actions as registered tools.
+#
+# This block only ADDS tool envelopes around the existing executor methods.
+# Nothing above is modified: the engine's provider dispatch keeps working
+# exactly as before, and every registered tool routes through the very same
+# methods. Envelopes serialise tool arguments into an OperationPlan, call the
+# existing method, and return the receipt serialised as a JSON string.
+# ---------------------------------------------------------------------------
+
+
+def _fabric_input_schema(
+    *,
+    extra: dict[str, dict[str, Any]] | None = None,
+    required: list[str] | None = None,
+) -> dict[str, Any]:
+    """Input schema shared by all fabric tools, plus action-specific fields."""
+    properties: dict[str, Any] = {
+        "command": {
+            "type": "string",
+            "description": "The user intent text that routed to this recipe.",
+        },
+        "objects": {
+            "type": "array",
+            "items": {"type": "object"},
+            "description": (
+                "Grounded source objects (text/image/table/region) the action "
+                "operates on; each carries id/kind/content/source as grounded."
+            ),
+        },
+        "attachments": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Absolute file paths to attach (images, documents).",
+        },
+        "sourceApp": {
+            "type": "string",
+            "description": "Foreground app that produced the selection.",
+        },
+        "idempotencyKey": {
+            "type": "string",
+            "description": "Deduplication and artifact-naming key.",
+        },
+    }
+    if extra:
+        properties.update(extra)
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": list(required or []),
+    }
+
+
+def _fabric_tool_plan(
+    recipe_id: str,
+    provider: str,
+    risk: RiskLevel,
+    *,
+    command: str = "",
+    objects: list[dict[str, Any]] | None = None,
+    attachments: list[str] | None = None,
+    source_app: str = "",
+    idempotency_key: str = "",
+    extra: dict[str, Any] | None = None,
+) -> OperationPlan:
+    """Compose the OperationPlan a tool envelope hands to an executor method."""
+    parameters: dict[str, Any] = dict(extra or {})
+    if objects is not None:
+        parameters["objects"] = [
+            dict(item) for item in objects if isinstance(item, dict)
+        ]
+    if attachments is not None:
+        parameters["attachments"] = [str(item) for item in attachments]
+    if source_app:
+        parameters["sourceApp"] = source_app
+    return OperationPlan(
+        id=str(uuid.uuid4()),
+        recipe_id=recipe_id,
+        command=command,
+        risk=risk,
+        provider=provider,
+        object_ids=tuple(
+            str(item.get("id") or "")
+            for item in (objects or [])
+            if isinstance(item, dict)
+        ),
+        parameters=parameters,
+        idempotency_key=idempotency_key,
+    )
+
+
+def _fabric_tool_execute(
+    runner: FabricExecutors,
+    *,
+    recipe_id: str,
+    provider: str,
+    risk: RiskLevel,
+    method_name: str,
+) -> Callable[..., str]:
+    """Build the ToolSpec.execute envelope for one executor method.
+
+    The envelope never reimplements logic: it serialises tool arguments into
+    an OperationPlan and calls the existing method at call time (so a
+    monkeypatched or injected method is honoured). ``scope`` is accepted
+    because the harness forwards its cancellation token; it is not threaded
+    into the executor methods, which have no cancellation support today.
+    """
+
+    def execute(
+        *,
+        scope: object = None,
+        command: str = "",
+        objects: list[dict[str, Any]] | None = None,
+        attachments: list[str] | None = None,
+        sourceApp: str = "",
+        idempotencyKey: str = "",
+        **extra: Any,
+    ) -> str:
+        plan = _fabric_tool_plan(
+            recipe_id,
+            provider,
+            risk,
+            command=command,
+            objects=objects,
+            attachments=attachments,
+            source_app=sourceApp,
+            idempotency_key=idempotencyKey,
+            extra=extra,
+        )
+        receipt = getattr(runner, method_name)(plan)
+        return json.dumps(receipt.to_dict(), ensure_ascii=False, sort_keys=True)
+
+    return execute
+
+
+def register_fabric_tools(
+    registry: ToolRegistry,
+    *,
+    executors: FabricExecutors | None = None,
+) -> None:
+    """Register the high-traffic fabric actions as ToolSpec entries.
+
+    One tool per recipe. The tool name is the short recipe-style id (registry
+    names must match ``[a-z0-9_]+``, so the dotted recipe id lives in the
+    description). Every envelope calls the existing executor method and
+    returns the receipt serialised as a JSON string. Re-registering the same
+    registry is a no-op: names already present are skipped, so both a fresh
+    registry and a process-wide singleton stay safe.
+
+    ``executors`` is the runner the envelopes call; when omitted a default
+    instance (``root=Path.cwd()``) is constructed — registration performs no
+    I/O either way.
+    """
+    from app.agent_runtime.tool_registry import Effect, ToolRegistry, ToolSpec
+
+    runner = executors if executors is not None else FabricExecutors(root=Path.cwd())
+
+    def spec_of(
+        *,
+        name: str,
+        recipe_id: str,
+        provider: str,
+        method_name: str,
+        risk: RiskLevel,
+        effect: Effect,
+        description: str,
+        backend: str,
+        timeout_ms: int = 30000,
+        concurrency_safe: bool = False,
+        extra_properties: dict[str, dict[str, Any]] | None = None,
+        required: tuple[str, ...] = ("objects",),
+    ) -> ToolSpec:
+        return ToolSpec(
+            name=name,
+            description=(
+                f"{description} Recipe: {recipe_id} (provider {provider})."
+            ),
+            input_schema=_fabric_input_schema(
+                extra=extra_properties, required=list(required)
+            ),
+            execute=_fabric_tool_execute(
+                runner,
+                recipe_id=recipe_id,
+                provider=provider,
+                risk=risk,
+                method_name=method_name,
+            ),
+            effect=effect,
+            is_concurrency_safe=concurrency_safe,
+            used_backend=backend,
+            timeout_ms=timeout_ms,
+        )
+
+    specs: list[ToolSpec] = [
+        spec_of(
+            name="ocr_copy",
+            recipe_id="text.ocr_copy",
+            provider="native.ocr",
+            method_name="_ocr",
+            risk=RiskLevel.LOCAL_WRITE,
+            effect=Effect.REVERSIBLE_WRITE,
+            description=(
+                "Recognise text from a non-selectable screen region or image "
+                "and copy it to the clipboard (verified by readback)."
+            ),
+            backend="ocr",
+            timeout_ms=45000,
+        ),
+        spec_of(
+            name="ocr_clean",
+            recipe_id="text.ocr_clean",
+            provider="clipboard",
+            method_name="_clipboard",
+            risk=RiskLevel.LOCAL_WRITE,
+            effect=Effect.REVERSIBLE_WRITE,
+            description=(
+                "Clean OCR text (collapse spaces, normalise blank lines, or "
+                "strip all whitespace per the command tokens) and copy it to "
+                "the clipboard (verified by readback)."
+            ),
+            backend="ocr",
+            timeout_ms=45000,
+        ),
+        spec_of(
+            name="rewrite_in_place",
+            recipe_id="text.rewrite_in_place",
+            provider="inplace.text",
+            method_name="_inplace_text",
+            risk=RiskLevel.LOCAL_WRITE,
+            effect=Effect.REVERSIBLE_WRITE,
+            description=(
+                "Rewrite the selected text and produce the replacement "
+                "artifact; the actual write-back needs an action proposal and "
+                "is never claimed by this step."
+            ),
+            backend="model",
+            timeout_ms=60000,
+        ),
+        spec_of(
+            name="translate_in_place",
+            recipe_id="text.translate_in_place",
+            provider="inplace.text",
+            method_name="_inplace_text",
+            risk=RiskLevel.LOCAL_WRITE,
+            effect=Effect.REVERSIBLE_WRITE,
+            description=(
+                "Translate the selected text and produce the replacement "
+                "artifact; the actual write-back needs an action proposal and "
+                "is never claimed by this step."
+            ),
+            backend="model",
+            timeout_ms=60000,
+        ),
+        spec_of(
+            name="summarize_route",
+            recipe_id="text.summarize_route",
+            provider="model.text",
+            method_name="_model_text",
+            risk=RiskLevel.LOCAL_WRITE,
+            effect=Effect.REVERSIBLE_WRITE,
+            description=(
+                "Summarise or bullet the selected text into a routed draft "
+                "artifact on disk."
+            ),
+            backend="model",
+            timeout_ms=60000,
+        ),
+        spec_of(
+            name="selection_expand",
+            recipe_id="selection.expand",
+            provider="inplace.text",
+            method_name="_inplace_text",
+            risk=RiskLevel.LOCAL_WRITE,
+            effect=Effect.REVERSIBLE_WRITE,
+            description=(
+                "Expand the selected text to a target length and produce the "
+                "replacement artifact; write-back needs an action proposal."
+            ),
+            backend="model",
+            timeout_ms=60000,
+        ),
+        spec_of(
+            name="selection_condense",
+            recipe_id="selection.condense",
+            provider="inplace.text",
+            method_name="_inplace_text",
+            risk=RiskLevel.LOCAL_WRITE,
+            effect=Effect.REVERSIBLE_WRITE,
+            description=(
+                "Condense the selected text to a target length and produce "
+                "the replacement artifact; write-back needs an action "
+                "proposal."
+            ),
+            backend="model",
+            timeout_ms=60000,
+        ),
+        spec_of(
+            name="to_spreadsheet",
+            recipe_id="table.to_spreadsheet",
+            provider="artifact.table",
+            method_name="_table",
+            risk=RiskLevel.LOCAL_WRITE,
+            effect=Effect.REVERSIBLE_WRITE,
+            description=(
+                "Extract a table from the screen/selection and write it as a "
+                "CSV artifact on disk (verified by readback)."
+            ),
+            backend="local",
+        ),
+        spec_of(
+            name="merge_tables",
+            recipe_id="table.merge",
+            provider="artifact.table",
+            method_name="_table",
+            risk=RiskLevel.LOCAL_WRITE,
+            effect=Effect.REVERSIBLE_WRITE,
+            description=(
+                "Merge multiple table objects with a shared header into one "
+                "CSV artifact on disk (verified by readback)."
+            ),
+            backend="local",
+        ),
+        spec_of(
+            name="evidence_card",
+            recipe_id="research.evidence_card",
+            provider="artifact.evidence",
+            method_name="_evidence",
+            risk=RiskLevel.LOCAL_WRITE,
+            effect=Effect.REVERSIBLE_WRITE,
+            description=(
+                "Save the grounded objects with source anchors (app, path, "
+                "page, bbox, sha256) as a local evidence-card artifact."
+            ),
+            backend="local",
+        ),
+        spec_of(
+            name="image_to_prompt",
+            recipe_id="image.to_prompt",
+            provider="artifact.visual_context",
+            method_name="_image_prompt",
+            risk=RiskLevel.LOCAL_WRITE,
+            effect=Effect.REVERSIBLE_WRITE,
+            description=(
+                "Compose a paste-ready, coverage-honest description of an "
+                "image for a text-only model, written as a prompt artifact."
+            ),
+            backend="local",
+            extra_properties={
+                "question": {
+                    "type": "string",
+                    "description": "Optional question the prompt should answer.",
+                },
+            },
+        ),
+        spec_of(
+            name="map_route",
+            recipe_id="map.route",
+            provider="maps.deep_link",
+            method_name="_map",
+            risk=RiskLevel.EXTERNAL_SEND,
+            effect=Effect.EXTERNAL_SEND,
+            description=(
+                "Open an allowlisted Google Maps directions deep link between "
+                "two locations in the default browser."
+            ),
+            backend="local",
+            timeout_ms=15000,
+            extra_properties={
+                "travelMode": {
+                    "type": "string",
+                    "description": "driving/walking/bicycling/transit (default driving).",
+                },
+            },
+        ),
+        spec_of(
+            name="agent_handoff",
+            recipe_id="agent.handoff",
+            provider="agent.task",
+            method_name="_agent",
+            risk=RiskLevel.EXTERNAL_SEND,
+            effect=Effect.EXTERNAL_SEND,
+            description=(
+                "Hand the grounded context (window, repo, screenshots, object "
+                "anchors) to an external agent session and return the task "
+                "receipt."
+            ),
+            backend="agent",
+            timeout_ms=120000,
+            extra_properties={
+                "agent": {
+                    "type": "string",
+                    "description": "Target agent provider (codex/pi/claude/gemini/...).",
+                },
+                "agentPermission": {"type": "string"},
+                "sessionId": {"type": "string"},
+                "cwd": {"type": "string"},
+                "capabilityFallback": {"type": "string"},
+                "capturePolicy": {"type": "object"},
+                "contextPacket": {"type": "object"},
+            },
+        ),
+        spec_of(
+            name="background_task",
+            recipe_id="agent.background_task",
+            provider="agent.task",
+            method_name="_agent",
+            risk=RiskLevel.EXTERNAL_SEND,
+            effect=Effect.EXTERNAL_SEND,
+            description=(
+                "Start a background external agent task with progress, pause "
+                "and takeover support."
+            ),
+            backend="agent",
+            timeout_ms=120000,
+            required=(),
+            extra_properties={
+                "agent": {
+                    "type": "string",
+                    "description": "Target agent provider (codex/pi/claude/gemini/...).",
+                },
+                "agentPermission": {"type": "string"},
+                "sessionId": {"type": "string"},
+                "cwd": {"type": "string"},
+                "capabilityFallback": {"type": "string"},
+                "capturePolicy": {"type": "object"},
+                "contextPacket": {"type": "object"},
+            },
+        ),
+        spec_of(
+            name="task_route",
+            recipe_id="task.route",
+            provider="local.task",
+            method_name="_task",
+            risk=RiskLevel.EXTERNAL_SEND,
+            effect=Effect.EXTERNAL_SEND,
+            description=(
+                "Route the grounded problem into the local task store and "
+                "return the task id."
+            ),
+            backend="local",
+            timeout_ms=15000,
+        ),
+        spec_of(
+            name="screen_translate",
+            recipe_id="screen.translate",
+            provider="overlay.translation",
+            method_name="_overlay_translation",
+            risk=RiskLevel.READ,
+            effect=Effect.READ,
+            description=(
+                "Translate a screen region block by block and return an "
+                "overlay of rectangles with in-place translations (does not "
+                "modify the underlying app)."
+            ),
+            backend="model",
+            timeout_ms=60000,
+            concurrency_safe=True,
+            extra_properties={
+                "targetLanguage": {
+                    "type": "string",
+                    "description": "Target language for the overlay (default 中文).",
+                },
+            },
+        ),
+        spec_of(
+            name="clipboard_history",
+            recipe_id="clipboard.history",
+            provider="clipboard.history",
+            method_name="_clipboard_history",
+            risk=RiskLevel.READ,
+            effect=Effect.READ,
+            description=(
+                "Search or list clipboard history; with a digest, restore "
+                "that entry to the clipboard."
+            ),
+            backend="local",
+            timeout_ms=10000,
+            concurrency_safe=True,
+            required=(),
+            extra_properties={
+                "query": {"type": "string", "description": "Search term."},
+                "digest": {"type": "string", "description": "Entry digest to restore."},
+            },
+        ),
+        spec_of(
+            name="memory_recall",
+            recipe_id="memory.recall",
+            provider="local.memory",
+            method_name="_memory_recall",
+            risk=RiskLevel.READ,
+            effect=Effect.READ,
+            description=(
+                "Recall what was on screen in the last 24 hours from the "
+                "local screen memory (read-only; empty is a real answer)."
+            ),
+            backend="local",
+            timeout_ms=10000,
+            concurrency_safe=True,
+            required=(),
+            extra_properties={
+                "query": {"type": "string", "description": "What to look back for."},
+                "since": {"type": "string", "description": "ISO start bound."},
+                "until": {"type": "string", "description": "ISO end bound."},
+                "enabled": {"type": "boolean"},
+            },
+        ),
+    ]
+
+    for spec in specs:
+        try:
+            registry.get(spec.name)
+        except KeyError:
+            registry.register(spec)
+
