@@ -164,6 +164,33 @@ function physicalGestureTrace(
   };
 }
 
+function physicalDisplayBounds({
+  bounds,
+  scaleFactor,
+}: {
+  bounds: Rect;
+  scaleFactor: number;
+}): [number, number, number, number] {
+  // Round origin and size separately. A DIP width is never a physical width:
+  // on a 150% display a 1707 DIP-wide monitor is 2561 physical pixels wide.
+  const scale = Number(scaleFactor);
+  if (!Number.isFinite(scale) || scale <= 0) {
+    throw new TypeError('scaleFactor must be a finite positive number');
+  }
+  const x = Number(bounds?.x);
+  const y = Number(bounds?.y);
+  const width = Number(bounds?.width);
+  const height = Number(bounds?.height);
+  if (![x, y, width, height].every(Number.isFinite)) {
+    throw new TypeError('bounds must contain finite numbers');
+  }
+  const left = Math.round(x * scale);
+  const top = Math.round(y * scale);
+  const physicalWidth = Math.round(width * scale);
+  const physicalHeight = Math.round(height * scale);
+  return [left, top, left + physicalWidth, top + physicalHeight];
+}
+
 function finitePoint(value: unknown): Point | null {
   const candidate = recordOf(value);
   const x = Number(candidate?.x);
@@ -328,6 +355,7 @@ function normalizeGroundingGeometry({
 module.exports = {
   finiteRect,
   normalizeGroundingGeometry,
+  physicalDisplayBounds,
   physicalGestureBoundingBox,
   physicalGestureTrace,
   physicalRectToDip,

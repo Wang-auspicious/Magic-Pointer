@@ -1,6 +1,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const {
+  physicalDisplayBounds,
   physicalGestureBoundingBox,
   physicalScreenPoint,
   normalizeGroundingGeometry,
@@ -108,6 +109,44 @@ const pointerOnly = normalizeGroundingGeometry({
 });
 assert.strictEqual(pointerOnly.state, 'pointer_only');
 assert.deepStrictEqual(pointerOnly.stageTarget, { x: 272, y: 92, width: 16, height: 16 });
+
+// Physical display bounds are capture coordinates: origin and size round
+// separately so a DIP width is never treated as a physical width.
+{
+  assert.deepStrictEqual(
+    physicalDisplayBounds({ bounds: { x: 0, y: 0, width: 1920, height: 1080 }, scaleFactor: 1 }),
+    [0, 0, 1920, 1080],
+    'a 100% display keeps its own bounds',
+  );
+  assert.deepStrictEqual(
+    physicalDisplayBounds({ bounds: { x: 1920, y: 0, width: 1707, height: 960 }, scaleFactor: 1.5 }),
+    [2880, 0, 5441, 1440],
+    'a secondary 150% display maps origin and size separately',
+  );
+  assert.deepStrictEqual(
+    physicalDisplayBounds({ bounds: { x: -1920, y: 0, width: 1707, height: 960 }, scaleFactor: 1.5 }),
+    [-2880, 0, -319, 1440],
+    'negative-origin displays map below zero on the physical virtual screen',
+  );
+  assert.strictEqual(
+    physicalDisplayBounds({ bounds: { x: 0, y: 0, width: 100, height: 100 }, scaleFactor: 1.25 })[2]
+      - physicalDisplayBounds({ bounds: { x: 0, y: 0, width: 100, height: 100 }, scaleFactor: 1.25 })[0],
+    125,
+    'physical width is DIP width scaled, never the DIP width itself',
+  );
+  assert.throws(
+    () => physicalDisplayBounds({ bounds: { x: 0, y: 0, width: 100, height: 100 }, scaleFactor: 0 }),
+    /scaleFactor/,
+  );
+  assert.throws(
+    () => physicalDisplayBounds({ bounds: { x: 0, y: 0, width: 100, height: 100 }, scaleFactor: NaN }),
+    /scaleFactor/,
+  );
+  assert.throws(
+    () => physicalDisplayBounds({ bounds: { x: 0, y: 0, width: Infinity, height: 100 }, scaleFactor: 1 }),
+    /bounds/,
+  );
+}
 
 const main = fs.readFileSync('electron/main.ts', 'utf8');
 assert(main.includes('physicalGestureBoundingBox,'));
