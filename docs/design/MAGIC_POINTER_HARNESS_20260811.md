@@ -840,8 +840,14 @@ DOM、COM、UIA、Fabric等现有模块也不自动保留，只优先保存经�
   - 未完成：WGC/D3D 后端、overlay 排除需真实 Electron 会话验收。
 - [x] L6 证据契约：`app/evidence/contract.py`（EvidenceStatus/Source、容器启发式、merge_for_decision、is_trustworthy）。
 - [x] L8 基础设施：`app/governance/latency_budget.py`（评审预算表）+ `app/governance/cancellation.py`（代际淘汰取消注册表）。接线改造未做。
+  - 2026-08-12 循环/工具接线（T5.1）：`run_agent_loop` 每轮经 `check_budget(FULL_ANSWER)` 门控（注入 budgets 生效，DEFAULT_BUDGETS 为默认）；整循环挂在 `CancellationScope(cancel_registry)` 上，模型调用前与工具执行前检查取消，外部 `cancel_all()` 抛 `CancelledError`，已启动并行工具跑完即终止；感知工具 Evidence 在消息边界经 `evidence_to_text` 序列化为 `{status, confidence, value, note}`（registry 层仍保留 Evidence 对象）；validate_input/execute_tool 的 failure_type 透传到 Terminal.results。桥/引擎外部调用方仍未接线（仅 agent loop 内部）。
 - [x] L12 Replay 基座：`app/replay/`（DesktopTrace schema + recorder + replayer）+ `scripts/record_desktop_trace.py`。感知层离线回放未接线。
-- [ ] 批次 1：L1 Agent Loop（engine 改解释器、recipe 降级为循环缓存）+ L2 感知即工具（read_around/look 等）。
+- [x] 批次 1：L1 Agent Loop + L2 感知即工具 + recipe 重定位（2026-08-12 完成，见 `docs/superpowers/plans/2026-08-12-harness-loop-batch.md`）：
+  - `app/agent_runtime/` 新建：types/errors/tool_registry/model_client/loop/perception_tools/look_tool/recipe_cache。
+  - 循环移植 CC queryLoop：State 整体重建 + transition、withhold 防死循环、截断作废、stop hooks 网关、并发分区、代际取消、FULL_ANSWER 预算门控。
+  - recipe 降级为预编译轨迹：39/39 编译成功，L0/L1/L2 路由器退役为轨迹编译器（旧签名零改动），18 个高流量动作注册为工具，`engine.run_agent_turn` 循环入口（旧入口无感）。
+  - 验证：Python 1529 过（2 个既有环境失败：local_image_vision 缺验收图）；Node 131 过；typecheck/lint 过。agent loop 基准（假模型）：20/20，p50≈0ms/p95≈75ms（假后端，不代表真实模型延迟）。
+  - 未接线：fabric_bridge/selection_bridge 生产调用方仍走旧 engine 路径；真实多轮模型客户端（ai_client 单 user_prompt 限制）。
 - [ ] 批次 2：L3 Anchor 重解析 + L4 前置条件 + L5 可逆性 + L7 注入隔离。
 - [ ] WGC/D3D 捕获后端（FrameLease 生产热路径）。
 

@@ -18,7 +18,7 @@ FrameLease 捕获地基（8·11 计划 Phase A）已全量落地并过自动化�
 |---|---|
 | FrameLease 冻结先于感知（pointerup→commit→会话） | 可用（GDI 后端，p50≈192ms / p95≈213ms / max≈233ms，20/20 轮） |
 | 证据契约（ok/busy/timeout/empty_confirmed 可区分 + 反容器启发式） | 模块可用，感知链未接线 |
-| 延迟预算表 + 取消令牌（代际淘汰） | 模块可用，桥/模型未接线 |
+| 延迟预算表 + 取消令牌（代际淘汰） | 模块可用；agent loop 已接线（每轮 FULL_ANSWER 预算门控 + 循环级取消作用域），桥/其他外部调用方未接线 |
 | Desktop Trace 录制/回放（离线感知测试基座） | 基座可用，感知层回放未接线 |
 | 晃动唤醒 → 划线圈选 → 气泡问答 | 可用 |
 | 39 个 Recipe（数据驱动，`data/recipes/builtin.recipes.json`） | 可用，插件目录可加载 |
