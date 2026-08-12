@@ -38,6 +38,8 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
 
+from app.action_guard.preconditions import Precondition
+
 try:
     from app.agent_runtime.errors import ActionFailure, FailureType  # plan T2.1
 except ImportError:  # B2.1 parallel agent has not landed yet; see module docstring
@@ -95,6 +97,7 @@ class ToolSpec:
     is_concurrency_safe: bool = False
     used_backend: str = "local"
     timeout_ms: int = 30000
+    preconditions: tuple[Precondition, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,6 +155,11 @@ class ToolRegistry:
             raise ValueError(f"tool {name!r} execute must be callable")
         if not isinstance(spec.timeout_ms, int) or spec.timeout_ms <= 0:
             raise ValueError(f"tool {name!r} timeout_ms must be a positive int")
+        if not all(callable(getattr(p, "check", None)) for p in spec.preconditions):
+            raise ValueError(
+                f"tool {name!r} preconditions must be Precondition objects "
+                "with a check(context) method"
+            )
         self._tools[name] = spec
         self._order.append(name)
         return spec

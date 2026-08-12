@@ -94,8 +94,10 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.action_guard.preconditions import PreconditionContext, check_all
 from app.agent_runtime.errors import (
     MAX_OUTPUT_TOKENS_RECOVERY_LIMIT,
+    ActionFailure,
     FailureType,
 )
 from app.agent_runtime.model_client import (
@@ -188,6 +190,9 @@ class LoopParams:
     interrupt_check: Callable[[], bool] | None = None
     compact_callback: Callable[[TurnState], Any] | None = None
     allowed_effects: tuple[Effect, ...] = (Effect.READ, Effect.REVERSIBLE_WRITE)
+    precondition_context_factory: (
+        Callable[[ToolCall], PreconditionContext] | None
+    ) = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -533,7 +538,12 @@ async def run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
             for call in parallel_calls:
                 yield ToolCallStarted(name=call.name, id=call.id)
             parallel_results = _execute_parallel(
-                parallel_calls, registry, cancel_registry, loop_scope, params.allowed_effects
+                parallel_calls,
+                registry,
+                cancel_registry,
+                loop_scope,
+                params.allowed_effects,
+                params.precondition_context_factory,
             )
             for call, normalized in zip(parallel_calls, parallel_results, strict=True):
                 results.append(normalized)
@@ -554,7 +564,12 @@ async def run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
             for call in sequential_calls:
                 yield ToolCallStarted(name=call.name, id=call.id)
                 normalized = _execute_one(
-                    registry, call, cancel_registry, loop_scope, params.allowed_effects
+                    registry,
+                    call,
+                    cancel_registry,
+                    loop_scope,
+                    params.allowed_effects,
+                    params.precondition_context_factory,
                 )
                 results.append(normalized)
                 if normalized.is_error:
@@ -638,6 +653,7 @@ def _execute_parallel(
     cancel_registry: CancellationRegistry,
     loop_scope: CancellationScope,
     allowed_effects: tuple[Effect, ...],
+    precondition_context_factory: Callable[[ToolCall], PreconditionContext] | None,
 ) -> list[ToolResult]:
     """Execute a concurrency-safe batch on a short-lived thread pool.
 
@@ -663,7 +679,13 @@ def _execute_parallel(
     ) as pool:
         futures = [
             pool.submit(
-                _execute_one, registry, call, cancel_registry, loop_scope, allowed_effects
+                _execute_one,
+                registry,
+                call,
+                cancel_registry,
+                loop_scope,
+                allowed_effects,
+                precondition_context_factory,
             )
             for call in calls
         ]
@@ -759,21 +781,30 @@ def _execute_one(
     cancel_registry: CancellationRegistry,
     loop_scope: CancellationScope,
     allowed_effects: tuple[Effect, ...],
+    precondition_context_factory: Callable[[ToolCall], PreconditionContext] | None,
 ) -> ToolResult:
-    """Validate, execute and normalize one tool call.
+    """Validate, gate, execute and normalize one tool call.
 
     validate_input failures produce an is_error ToolResult without invoking
     ``execute`` (fail closed). A tool whose :class:`Effect` is not in
     ``allowed_effects`` is refused without invoking ``execute`` (CC
     canUseTool permission decision): the model gets an is_error
     ``PERMISSION_DENIED`` result it can read and self-correct against.
-    Unknown tools are caught as a structured TOOL_ERROR instead of a
-    KeyError killing the loop. Execution is wrapped in a CancellationScope;
-    once cancelled, the loop raises CancelledError instead of feeding the
-    result back. The pre-execution check reads the loop's outer scope, so a
-    cancellation that landed while the model was generating skips
-    ``execute`` entirely; a cancellation that lands mid-execution lets the
-    tool run to completion and then raises.
+    Declared preconditions (``spec.preconditions``) are evaluated after
+    input validation against a :class:`PreconditionContext` from the
+    injected ``precondition_context_factory``: an unconfigured factory
+    (None) skips evaluation (batch-1 compatibility); a factory that
+    returns None means "cannot evaluate" and is refused fail-closed as
+    ``PERMISSION_DENIED``; a failing precondition blocks ``execute`` and
+    feeds the model an is_error result with the failure_type passthrough
+    and the recovery hint. Unknown tools are caught as a structured
+    TOOL_ERROR instead of a KeyError killing the loop. Execution is
+    wrapped in a CancellationScope; once cancelled, the loop raises
+    CancelledError instead of feeding the result back. The pre-execution
+    check reads the loop's outer scope, so a cancellation that landed
+    while the model was generating skips ``execute`` entirely; a
+    cancellation that lands mid-execution lets the tool run to completion
+    and then raises.
     """
     try:
         spec = registry.get(call.name)
@@ -809,6 +840,39 @@ def _execute_one(
             used_backend=None,
             latency_ms=None,
         )
+    if spec.preconditions:
+        if precondition_context_factory is None:
+            # Batch-1 compatibility: without an evaluator, preconditions
+            # declared on the spec are not enforced.
+            pass
+        else:
+            context = precondition_context_factory(call)
+            if context is None:
+                return ToolResult(
+                    tool_call_id=call.id,
+                    value=(
+                        "preconditions not evaluable: context factory returned "
+                        "None (fail closed)"
+                    ),
+                    is_error=True,
+                    failure_type=FailureType.PERMISSION_DENIED,
+                    used_backend=None,
+                    latency_ms=None,
+                )
+            try:
+                check_all(spec.preconditions, context)
+            except ActionFailure as exc:
+                value = exc.message
+                if exc.recovery_hint:
+                    value = f"{value} recovery_hint={exc.recovery_hint}"
+                return ToolResult(
+                    tool_call_id=call.id,
+                    value=value,
+                    is_error=True,
+                    failure_type=exc.failure_type,
+                    used_backend=None,
+                    latency_ms=None,
+                )
     if loop_scope.is_cancelled:
         raise CancelledError(f"cancelled before tool {call.name!r} ({call.id})")
     with CancellationScope(cancel_registry) as scope:
