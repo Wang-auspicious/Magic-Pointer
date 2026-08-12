@@ -39,6 +39,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from app.agent_runtime.recipe_cache import TrajectoryCompiler
+from app.agent_runtime.types import Trajectory
 from app.fabric.catalog import RECIPE_CATALOG, get_recipe, has_recipe
 from app.fabric.router import RecipeRouter
 from app.fabric.schema import IntentMatch, JsonDict
@@ -96,6 +98,13 @@ ACT_RECIPE = "recipe"          # run this recipe with these parameters
 ACT_LOCAL = "local_action"     # perform this local action, no model
 ACT_MODEL = "model_answer"     # answer with the text model, given the object
 ACT_TOOLS = "model_tools"      # let the model compose recipes as tools
+
+# Trajectory-path fallback semantic (harness-gap review L1): a recipe is a
+# cache, not a destination. When no keyword matches, `route_to_trajectory`
+# returns an empty candidate list so the caller runs the free loop — there is
+# no forced-recipe default in the new path. The legacy `route()` keeps its own
+# old L2 fallback untouched.
+L2_FALLBACK = None
 
 # Plumbing, not destinations. `ground.this` keywords are the bare pronouns
 # ("这个", "这段"), so the legacy keyword router scores it above zero for nearly
@@ -365,6 +374,105 @@ def recipe_tool_schemas(*, enabled: dict[str, bool] | None = None, limit: int = 
 def recipe_id_from_tool_name(name: str) -> str | None:
     candidate = str(name or "").replace("__", ".")
     return candidate if has_recipe(candidate) else None
+
+
+# ---------------------------------------------------------------------------
+# Trajectory-compiler routing (recipe is a cache, not a destination)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class TrajectoryCandidate:
+    """One ranked keyword match: the compiled loop trajectory plus its score."""
+
+    trajectory: Trajectory
+    score: float
+    matched_keywords: list[str]
+
+
+_trajectory_compiler: list[TrajectoryCompiler] = []
+
+
+def get_trajectory_compiler() -> TrajectoryCompiler:
+    """Module singleton for the trajectory compiler, built on first use."""
+    if not _trajectory_compiler:
+        _trajectory_compiler.append(TrajectoryCompiler())
+    return _trajectory_compiler[0]
+
+
+def _manifest_keywords(compiler: TrajectoryCompiler, recipe_id: str, lang: str) -> tuple[str, ...]:
+    """The manifest keyword list the compiler scored on (guarded access).
+
+    ``match_keywords`` does not expose which keywords hit, and the compiler is
+    a read-only sibling module, so this reads the same in-memory raw entries
+    that produced the score. Falls back to () if the shape ever changes.
+    """
+    try:
+        entry = compiler._raw_by_id.get(recipe_id)  # type: ignore[attr-defined]
+    except AttributeError:
+        return ()
+    if not isinstance(entry, dict):
+        return ()
+    keywords = (entry.get("keywords") or {}).get(lang)
+    if not isinstance(keywords, list):
+        return ()
+    return tuple(str(k) for k in keywords if isinstance(k, str))
+
+
+def route_to_trajectory(text: str, objects: list | None = None, lang: str = "zh") -> list[TrajectoryCandidate]:
+    """Keyword-match ``text`` to compiled recipe trajectories.
+
+    Two keyword sources are merged per recipe id (score takes the max):
+    the L0 ``DETERMINISTIC_RULES`` phrase set and the trajectory compiler's
+    manifest keywords for ``lang``. ``objects`` is trajectory context, never a
+    match condition — it cannot change keyword scores.
+
+    Returns 0..n candidates sorted by score descending (recipe id ascending as
+    the tiebreaker). No match at all returns [] — the ``L2_FALLBACK`` free-loop
+    semantic; only the legacy ``route()`` still carries the old forced-recipe
+    fallback. The caller (engine layer) picks a candidate or runs the loop.
+    """
+    value = _normalize(text)
+    if not value:
+        return []
+    compiler = get_trajectory_compiler()
+
+    best_score: dict[str, float] = {}
+    matched: dict[str, list[str]] = {}
+
+    for recipe_id, phrases in DETERMINISTIC_RULES:
+        hits = [phrase for phrase in phrases if phrase in value]
+        if not hits:
+            continue
+        best_score[recipe_id] = max(best_score.get(recipe_id, 0.0), 1.0)
+        for phrase in hits:
+            if phrase not in matched.setdefault(recipe_id, []):
+                matched[recipe_id].append(phrase)
+
+    for recipe_id, score in compiler.match_keywords(value, lang=lang):
+        best_score[recipe_id] = max(best_score.get(recipe_id, 0.0), float(score))
+        for keyword in _manifest_keywords(compiler, recipe_id, lang):
+            if keyword in value and keyword not in matched.setdefault(recipe_id, []):
+                matched[recipe_id].append(keyword)
+
+    candidates: list[TrajectoryCandidate] = []
+    for recipe_id, score in best_score.items():
+        if not has_recipe(recipe_id):
+            continue
+        if is_non_destination_recipe(get_recipe(recipe_id)):
+            continue
+        trajectory = compiler.compile_trajectory(recipe_id)
+        if trajectory is None:
+            continue
+        candidates.append(
+            TrajectoryCandidate(
+                trajectory=trajectory,
+                score=score,
+                matched_keywords=matched.get(recipe_id, []),
+            )
+        )
+    candidates.sort(key=lambda c: (-c.score, c.trajectory.recipe_id or ""))
+    return candidates
 
 
 # ---------------------------------------------------------------------------
