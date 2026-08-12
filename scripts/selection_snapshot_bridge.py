@@ -7,12 +7,13 @@ import sys
 import time
 import uuid
 import ctypes
+import hashlib
 from dataclasses import replace as replace_dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from PIL import ImageGrab
+from PIL import Image, ImageGrab
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -32,6 +33,7 @@ from app.grounding.marked_read import rect_is_container, structured_read_covers_
 from app.review import ReviewSessionError, ReviewSessionStore
 from app.fabric.settings import FabricSettings, SettingsError, SettingsStore
 from scripts.bridge_progress import PhaseClock
+from scripts.frame_lease import FrameLeaseError, normalize_frame_lease
 from app.system_context import enable_dpi_awareness, get_foreground_window_handle, list_visible_windows
 from app.visual_annotation import make_pointer_annotated_image
 from scripts._bridge_common import PayloadTooLargeError, read_bounded_json_payload
@@ -1437,6 +1439,92 @@ def _capture_visual_region(
     }
 
 
+def _verify_frozen_lease_artifact(frozen_lease: dict[str, Any]) -> str | None:
+    """Verify the committed artifact is still exactly what the lease promises.
+
+    Returns a fail-closed reason code, or None when the artifact matches. A
+    mismatch never triggers a recapture: the current screen may have changed.
+    """
+    artifact = frozen_lease.get("localArtifact")
+    if not isinstance(artifact, dict):
+        return "artifact_missing"
+    artifact_path = Path(str(artifact.get("path") or ""))
+    if not artifact_path.exists():
+        return "artifact_missing"
+    try:
+        with Image.open(artifact_path) as probe:
+            width, height = probe.size
+    except (OSError, ValueError, TypeError):
+        return "artifact_unreadable"
+    if width != int(artifact.get("width") or 0) or height != int(artifact.get("height") or 0):
+        return "artifact_dimension_mismatch"
+    expected_hash = str(frozen_lease.get("contentHash") or "")
+    if expected_hash.startswith("sha256:"):
+        actual_hash = "sha256:" + hashlib.sha256(artifact_path.read_bytes()).hexdigest()
+        if actual_hash != expected_hash:
+            return "artifact_hash_mismatch"
+    return None
+
+
+def _frame_lease_failure_snapshot(captured: datetime, reason: str) -> dict[str, Any]:
+    """Fail closed: an invalid/missing frozen frame never recaptures the screen."""
+    summary = {
+        "state": "invalid_frame_lease",
+        "label": "画面未冻结",
+        "detail": f"冻结帧校验失败（{reason}），未重新截取当前屏幕。",
+        "app": None,
+        "hasContent": False,
+        "hasVisual": False,
+        "canRewrite": False,
+    }
+    snapshot = {
+        "snapshot_id": f"selection-{uuid.uuid4().hex[:16]}",
+        "captured_at": captured.isoformat(),
+        "expires_at": (captured + timedelta(seconds=SNAPSHOT_TTL_SECONDS)).isoformat(),
+        "status": "invalid_frame_lease",
+        "source_kind": "none",
+        "structured_covers_mark": False,
+        "structured_gap_reason": f"invalid_frame_lease:{reason}",
+        "target_point": None,
+        "target_point_space": None,
+        "source_window": None,
+        "context": None,
+        "capture_path": None,
+        "annotated_path": None,
+        "capture_bbox": None,
+        "capture_attestation": None,
+        "capture_policy": None,
+        "perception_trace": {
+            "schemaVersion": 1,
+            "selectedLayer": None,
+            "selectedAdapter": None,
+            "selectedMethod": None,
+            "pixelFallbackUsed": False,
+            "fallbackReason": reason,
+            "attempts": [{
+                "layer": "screen_region",
+                "adapter": "frame-lease",
+                "method": "verify",
+                "status": "error",
+                "reason": reason,
+            }],
+        },
+        "selection_bbox": None,
+        "selection_segments": None,
+        "pointer_anchor_bbox": None,
+        "selection_gesture": None,
+        "gesture_grounding": None,
+        "frame_lease": None,
+    }
+    return {
+        "ok": False,
+        "error": "invalid_frame_lease",
+        "selectionSnapshot": snapshot,
+        "captureSummary": summary,
+        "suggestedCommands": [],
+    }
+
+
 def capture_snapshot(
     windows: list[dict[str, Any]] | None = None,
     *,
@@ -1460,12 +1548,46 @@ def capture_snapshot(
     app_capture_modes: dict[str, str] | None = None,
     audit_store: Any | None = None,
     clock: PhaseClock | None = None,
+    frame_lease: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     def mark(phase: str, **fields: Any) -> None:
         if clock is not None:
             clock.mark(phase, **fields)
 
     captured = datetime.now(timezone.utc)
+    # A FrameLease is the authoritative frozen surface. Validate it before any
+    # structured read and never fall back to recapturing the current screen.
+    frozen_lease: dict[str, Any] | None = None
+    frozen_visual: dict[str, Any] | None = None
+    if frame_lease is not None:
+        invalid_reason: str | None = None
+        try:
+            frozen_lease = normalize_frame_lease(frame_lease)
+        except FrameLeaseError:
+            invalid_reason = "invalid_frame_lease"
+        if invalid_reason is None and frozen_lease is not None:
+            invalid_reason = _verify_frozen_lease_artifact(frozen_lease)
+        if invalid_reason is not None:
+            return _frame_lease_failure_snapshot(captured, invalid_reason)
+        mark(
+            "pixels_frozen",
+            w=frozen_lease["localArtifact"]["width"],
+            h=frozen_lease["localArtifact"]["height"],
+        )
+        frozen_visual = {
+            "path": str(Path(frozen_lease["localArtifact"]["path"]).resolve()),
+            "annotated_path": None,
+            "bbox": list(frozen_lease["surfaceBoundsPx"]),
+            "width": int(frozen_lease["localArtifact"]["width"]),
+            "height": int(frozen_lease["localArtifact"]["height"]),
+            "capture_attestation": {
+                "status": "frame_lease",
+                "backend": frozen_lease["source"],
+                "content_hash": frozen_lease["contentHash"],
+                "overlay_excluded": frozen_lease["overlayExcluded"],
+                "phase": "complete",
+            },
+        }
     live_window_source = windows is None
     normalized_target_point = _normalized_point(target_point)
     normalized_gesture = _normalized_gesture(gesture)
@@ -1665,7 +1787,35 @@ def capture_snapshot(
         and not summary["hasActiveContext"]
         and not summary["hasActiveReview"]
     )
-    if should_capture_visual:
+    if frozen_lease is not None and frozen_visual is not None:
+        # The committed artifact is the only visual evidence; the current
+        # screen is never grabbed for this snapshot.
+        visual = dict(frozen_visual)
+        visual_attempt_recorded = True
+        capture_attestation = visual["capture_attestation"]
+        mark("visual_saved", got=True)
+        if gesture_selection_bbox is None and gesture_points:
+            raw_bbox = dict((normalized_gesture or {}).get("bbox") or {})
+            width = max(0, int(raw_bbox.get("width") or 0))
+            height = max(0, int(raw_bbox.get("height") or 0))
+            if width > 0 and height > 0:
+                gesture_selection_bbox = [
+                    int(raw_bbox.get("x") or 0),
+                    int(raw_bbox.get("y") or 0),
+                    width,
+                    height,
+                ]
+        perception_trace = append_perception_attempt(
+            perception_trace,
+            layer="screen_region",
+            adapter="screen-capture",
+            method="frame-lease:frozen-surface",
+            status="succeeded",
+            reason="frame_lease_consumed",
+            select=not structured_succeeded,
+            policy_mode=capture_decision.mode if capture_decision is not None else "unconfigured",
+        )
+    elif should_capture_visual:
         try:
             visual = _capture_visual_region(
                 target_window,
@@ -1919,6 +2069,7 @@ def capture_snapshot(
         "pointer_anchor_bbox": pointer_anchor,
         "selection_gesture": normalized_gesture,
         "gesture_grounding": gesture_grounding,
+        "frame_lease": frozen_lease,
     }
     if audit_store is not None:
         try:
@@ -2007,6 +2158,7 @@ def main() -> int:
         target_point=payload.get("cursor"),
         target_point_space=payload.get("cursorSpace"),
         gesture=payload.get("gesture"),
+        frame_lease=payload.get("frameLease"),
         target_hwnd=int(payload.get("foregroundHwnd") or 0),
         active_context=active_context,
         active_review=active_review,
