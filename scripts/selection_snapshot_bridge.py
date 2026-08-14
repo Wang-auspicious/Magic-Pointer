@@ -1663,6 +1663,12 @@ def capture_snapshot(
     captured = datetime.now(timezone.utc)
     # A FrameLease is the authoritative frozen surface. Validate it before any
     # structured read and never fall back to recapturing the current screen.
+    # A completed-gesture request WITHOUT a lease must fail closed: the lease
+    # is the only thing that guarantees the pixels belong to the moment of
+    # pointerup, and a live grab here would silently certify a post-gesture
+    # screen as frozen evidence (bridge-audit P1).
+    if frame_lease is None and gesture is not None:
+        return _frame_lease_failure_snapshot(captured, "missing_frame_lease")
     frozen_lease: dict[str, Any] | None = None
     frozen_visual: dict[str, Any] | None = None
     if frame_lease is not None:

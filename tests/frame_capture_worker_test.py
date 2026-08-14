@@ -270,6 +270,52 @@ def test_arm_does_not_wait_for_a_hung_previous_grab(tmp_path: Path) -> None:
 
     backend.release.set()
     time.sleep(0.05)
+    worker.handle({"id": "3", "method": "cancel", "params": {"epochId": "epoch-1"}})
+    time.sleep(0.05)
+
+
+def test_re_arm_does_not_stack_zombie_capture_threads(tmp_path: Path) -> None:
+    """Bridge-audit P1: each re-arm used to replace the stop event while the
+    old thread kept reading the attribute — the old thread latched onto the
+    NEW unset event and kept grabbing forever, stacking one concurrent
+    ImageGrab loop per re-arm. After the fix the stale thread must exit and
+    the new epoch must see exactly one live capture loop."""
+    backend = GatedCaptureBackend()
+    worker = FrameCaptureService(
+        backend=backend,
+        output_root=tmp_path,
+        clock=FakeClock(),
+        capture_interval_ms=5,
+        ring_size=4,
+    )
+    worker.handle({"id": "1", "method": "arm", "params": _arm_params()})
+    assert backend.started.wait(timeout=2.0)
+    first_thread = worker._thread
+
+    for request_id in range(2, 5):
+        worker.handle({"id": str(request_id), "method": "arm", "params": _arm_params()})
+
+    backend.release.set()
+    deadline = time.monotonic() + 1.0
+    while first_thread.is_alive() and time.monotonic() < deadline:
+        time.sleep(0.005)
+
+    # The stale thread bound to the replaced stop event exits; only the
+    # latest armed epoch keeps a live loop. The stale thread's late grab is
+    # epoch-identity guarded and never pollutes the current ring.
+    assert not first_thread.is_alive()
+    current_thread = worker._thread
+    assert current_thread is not None and current_thread.is_alive()
+    worker.handle({"id": "99", "method": "cancel", "params": {"epochId": "epoch-1"}})
+    deadline = time.monotonic() + 1.0
+    while current_thread.is_alive() and time.monotonic() < deadline:
+        time.sleep(0.005)
+    assert not current_thread.is_alive()
+    alive = [
+        thread for thread in threading.enumerate()
+        if thread.name == "frame-capture"
+    ]
+    assert len(alive) == 0
 
 
 def test_lease_timestamps_are_milliseconds(tmp_path: Path) -> None:

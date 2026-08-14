@@ -261,9 +261,18 @@ class FrameCaptureService:
     # -- internals ---------------------------------------------------------
 
     def _capture_loop(self) -> None:
-        while not self._stop.is_set():
+        # Bind this thread to the stop event and epoch it started with.
+        # ``arm`` replaces ``self._stop`` with a fresh event on re-arm; a
+        # thread that keeps reading the attribute would latch onto the NEW
+        # unset event and keep grabbing forever (writing into the new ring),
+        # stacking one zombie capture loop per re-arm (bridge-audit P1).
+        stop = self._stop
+        while not stop.is_set():
             with self._lock:
-                if self._stop.is_set() or self._epoch is None:
+                if stop.is_set() or self._epoch is None:
+                    break
+                if self._stop is not stop:
+                    # A newer arm replaced the stop event: this loop is stale.
                     break
                 epoch = self._epoch
                 ring = self._ring
@@ -275,9 +284,9 @@ class FrameCaptureService:
             image = self._backend.capture(bounds)
             captured_at = self._clock.monotonic()
             with self._lock:
-                if not self._stop.is_set() and self._epoch is epoch:
+                if not stop.is_set() and self._epoch is epoch:
                     ring.append((captured_at, image))
-            self._stop.wait(self._capture_interval_ms / 1000.0)
+            stop.wait(self._capture_interval_ms / 1000.0)
 
     def _capture_once_locked(self) -> tuple[float, Any] | None:
         epoch = self._epoch

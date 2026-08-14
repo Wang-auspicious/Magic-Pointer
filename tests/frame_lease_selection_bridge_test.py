@@ -42,6 +42,11 @@ class _SlowRegistry:
         return self.adapter
 
 
+class _EmptyRegistry:
+    def matching_adapter(self, _window):
+        return None
+
+
 def _write_text_image(path: Path, text: str, size: tuple[int, int] = (320, 200)) -> Image.Image:
     image = Image.new("RGB", size, "white")
     draw = ImageDraw.Draw(image)
@@ -212,6 +217,31 @@ def test_invalid_lease_fails_closed_without_recapture(tmp_path: Path) -> None:
     assert result["ok"] is False
     assert result["error"] == "invalid_frame_lease"
     assert result["selectionSnapshot"]["status"] == "invalid_frame_lease"
+    assert late_calls == []
+
+
+def test_gesture_without_lease_fails_closed_without_recapture(tmp_path: Path) -> None:
+    """A completed-gesture snapshot without a FrameLease must not grab the
+    live screen: post-gesture pixels are not the frozen evidence (bridge
+    audit P1)."""
+    late_calls, late_capture = _fake_late_capture([Image.new("RGB", (320, 200), "red")])
+    result = capture_snapshot(
+        [{"title": "Demo", "hwnd": 42, "supported": True}],
+        registry=_EmptyRegistry(),
+        target_point={"x": 160, "y": 100},
+        gesture=_gesture(),
+        visual_capture=late_capture,
+        capture_dir=tmp_path / "captures",
+        clock=PhaseClock("selection_snapshot", enabled=False),
+        frame_lease=None,
+    )
+    assert result["ok"] is False
+    assert result["error"] == "invalid_frame_lease"
+    snapshot = result["selectionSnapshot"]
+    assert snapshot["status"] == "invalid_frame_lease"
+    assert snapshot["structured_gap_reason"] == (
+        "invalid_frame_lease:missing_frame_lease"
+    )
     assert late_calls == []
 
 

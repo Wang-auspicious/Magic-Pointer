@@ -70,8 +70,13 @@ def _write_pipe(handle: int, line: str) -> bool:
     return bool(result) and written.value == len(payload)
 
 
-def _read_pipe(handle: int, timeout_s: float) -> str | None:
-    """Read one line; None on timeout/EOF/error."""
+def _read_pipe(handle: int, timeout_s: float, max_bytes: int = 1024 * 1024) -> str | None:
+    """Read one line; None on timeout/EOF/error/oversize.
+
+    The deadline is enforced on every iteration — a host that dribbles bytes
+    forever (without ever emitting a newline) must not hang the perception
+    chain, and the buffer must not grow without bound (perception-audit P1).
+    """
     kernel32 = ctypes.windll.kernel32
     deadline = time.monotonic() + timeout_s
     buffer = bytearray()
@@ -91,9 +96,11 @@ def _read_pipe(handle: int, timeout_s: float) -> str | None:
             buffer.extend(chunk.raw[: read.value])
             if b"\n" in buffer:
                 break
-        elif time.monotonic() >= deadline:
+            if len(buffer) > max_bytes:
+                return None
+        if time.monotonic() >= deadline:
             return None
-        else:
+        if available.value == 0:
             time.sleep(0.005)
     first, _, _rest = bytes(buffer).partition(b"\n")
     return first.decode("utf-8", errors="replace")
@@ -129,8 +136,13 @@ def build_request_line(
     return "|".join(parts)
 
 
-def parse_response(line: str) -> dict[str, Any] | None:
-    """Parse a host response line into the probe-shaped dict; None if junk."""
+def parse_response(line: str, expected_id: str | None = None) -> dict[str, Any] | None:
+    """Parse a host response line into the probe-shaped dict; None if junk.
+
+    When ``expected_id`` is given, the response must echo it — a squatted or
+    confused pipe must not answer a request with another request's payload
+    (perception-audit P2).
+    """
     if not line or not line.strip().startswith("{"):
         return None
     try:
@@ -138,6 +150,9 @@ def parse_response(line: str) -> dict[str, Any] | None:
     except ValueError:
         return None
     if not isinstance(data, dict):
+        return None
+    response_id = data.get("id")
+    if expected_id is not None and str(response_id) != str(expected_id):
         return None
     if "id" in data:
         data = {key: value for key, value in data.items() if key != "id"}
@@ -193,7 +208,7 @@ class UiaHostClient:
         if raw is None:
             self._record_failure()
             return False
-        data = parse_response(raw)
+        data = parse_response(raw, expected_id=str(request_id))
         if not data or data.get("ok") is not True:
             self._record_failure()
             return False
@@ -218,7 +233,7 @@ class UiaHostClient:
         if raw is None:
             self._record_failure()
             return None
-        data = parse_response(raw)
+        data = parse_response(raw, expected_id=str(request_id))
         if data is None or "ok" not in data:
             self._record_failure()
             return None

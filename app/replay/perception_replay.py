@@ -73,7 +73,7 @@ def trace_to_snapshot_payload(trace: DesktopTrace) -> dict[str, Any]:
             "snapshot_id": f"replay-{trace.trace_id}",
             "captured_at": now.isoformat(),
             "expires_at": (now + timedelta(seconds=600)).isoformat(),
-            "status": "frame_lease",
+            "status": "replay",
             "source_kind": "replay",
             "target_point": gesture_points[-1] if gesture_points else None,
             "target_point_space": "physical_screen_pixels",
@@ -100,7 +100,7 @@ def trace_to_snapshot_payload(trace: DesktopTrace) -> dict[str, Any]:
             "capture_path": capture_path,
             "annotated_path": None,
             "capture_attestation": {
-                "status": "frame_lease",
+                "status": "replay",
                 "backend": "replay",
                 "content_hash": str(ground_truth.get("content_hash") or "replay"),
                 "overlay_excluded": True,

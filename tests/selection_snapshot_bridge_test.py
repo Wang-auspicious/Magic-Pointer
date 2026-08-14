@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -19,6 +20,40 @@ from scripts.selection_snapshot_bridge import (
     capture_snapshot,
 )
 from scripts.selection_snapshot_bridge import _window_dicts
+
+
+def _lease_for(tmp_path: Path, window: dict, gesture: dict, size=(2000, 1200)) -> dict:
+    """A valid frozen lease whose target window matches ``window`` and whose
+    surface contains the whole gesture (the bridge's frozen-frame contract)."""
+    artifact = tmp_path / "frozen.png"
+    Image.new("RGB", size, "white").save(artifact)
+    return {
+        "schemaVersion": 1,
+        "frameLeaseId": "frame-test",
+        "epochId": "epoch-test",
+        "capturedAtMonotonicMs": 1000.0,
+        "capturedAtUtc": "2026-08-14T00:00:00.000Z",
+        "source": "gdi-fallback",
+        "targetWindow": {
+            "hwnd": int(window.get("hwnd") or 0),
+            "processId": int(window.get("process_id") or window.get("pid") or 1),
+            "processName": str(window.get("process_name") or "demo.exe"),
+            "title": str(window.get("title") or ""),
+        },
+        "surfaceBoundsPx": [0, 0, size[0], size[1]],
+        "displayId": "display-1",
+        "scaleFactor": 1,
+        "gesture": gesture,
+        "localArtifact": {
+            "path": str(artifact),
+            "mimeType": "image/png",
+            "width": size[0],
+            "height": size[1],
+        },
+        "contentHash": "sha256:" + hashlib.sha256(artifact.read_bytes()).hexdigest(),
+        "overlayExcluded": True,
+        "captureLatencyMs": 5.0,
+    }
 
 
 class _ExplorerGrounder:
@@ -552,11 +587,12 @@ def test_unsupported_foreground_becomes_local_visual_object_at_pointer(tmp_path)
     ]
 
 
-def test_gesture_snapshot_captures_only_bounded_evidence_around_the_mark(tmp_path) -> None:
+def test_gesture_snapshot_consumes_frozen_surface_instead_of_live_capture(tmp_path) -> None:
     foreground = {
         "title": "Magic Pointer",
         "hwnd": 20,
         "pid": 42,
+        "process_name": "demo.exe",
         "bbox": (100, 200, 1100, 900),
     }
     calls = []
@@ -583,17 +619,22 @@ def test_gesture_snapshot_captures_only_bounded_evidence_around_the_mark(tmp_pat
         visual_capture=grabber,
         global_capture_bbox=(0, 0, 1920, 1080),
         capture_dir=tmp_path,
+        frame_lease=_lease_for(tmp_path, foreground, gesture),
     )
 
     snapshot = payload["selectionSnapshot"]
-    assert calls == [((424, 406, 796, 598), True)]
-    assert snapshot["capture_bbox"] == [424, 406, 796, 598]
+    # With a valid lease the committed surface is the visual evidence and the
+    # live grabber is never called (the frozen frame replaces live capture).
+    assert calls == []
+    assert snapshot["capture_bbox"] == [0, 0, 2000, 1200]
     assert snapshot["selection_bbox"] == [520, 470, 180, 64]
     artifacts = snapshot["context"]["artifacts"]
     assert artifacts["selection_rectangles"] == [[520, 470, 180, 64]]
     assert artifacts["selection_geometry_kind"] == "gesture_region"
     assert Path(snapshot["capture_path"]).is_file()
-    assert Path(snapshot["annotated_path"]).is_file()
+    # The frozen lease artifact is consumed as-is; the live-grab annotated
+    # copy does not apply to a committed frame.
+    assert snapshot["annotated_path"] is None
 
 
 class _WholeWindowContainerAdapter:
@@ -632,6 +673,7 @@ def test_rejected_structured_container_falls_back_to_the_user_mark_bbox(tmp_path
         "title": "notes.txt - Notepad",
         "hwnd": 20,
         "pid": 42,
+        "process_name": "demo.exe",
         "bbox": (0, 100, 1600, 1000),
     }
     gesture = {
@@ -655,13 +697,16 @@ def test_rejected_structured_container_falls_back_to_the_user_mark_bbox(tmp_path
         ),
         global_capture_bbox=(0, 0, 1920, 1080),
         capture_dir=tmp_path,
+        frame_lease=_lease_for(tmp_path, foreground, gesture),
     )
 
     snapshot = payload["selectionSnapshot"]
     assert snapshot["structured_covers_mark"] is False
     assert snapshot["structured_gap_reason"] == "container_not_selection"
     assert snapshot["selection_bbox"] == [300, 326, 600, 8]
-    assert snapshot["capture_bbox"] == [204, 240, 996, 420]
+    # The frozen lease surface is the authoritative visual evidence; the
+    # capture bbox is the surface, not a live bounded grab.
+    assert snapshot["capture_bbox"] == [0, 0, 2000, 1200]
     assert snapshot["context"]["content"] == ""
     assert registry.adapter.calls == 1
 
@@ -1115,30 +1160,37 @@ def test_active_context_pack_takes_priority_as_agent_delivery_target() -> None:
     }]
 
 
-def test_completed_pointer_gesture_is_preserved_with_snapshot() -> None:
+def test_completed_pointer_gesture_is_preserved_with_snapshot(tmp_path) -> None:
     gesture = {
+        "schemaVersion": 2,
+        "coordinateSpace": "physical_screen_pixels",
         "kind": "line",
-        "coordinateSpace": "electron_dip_screen",
         "releasePoint": {"x": 620, "y": 440},
         "semanticPoint": {"x": 510, "y": 438},
         "bbox": {"x": 400, "y": 430, "width": 220, "height": 16},
-        "points": [
+        "strokes": [{"points": [
             {"x": 400, "y": 432, "t": 0},
             {"x": 510, "y": 438, "t": 60},
             {"x": 620, "y": 440, "t": 120},
-        ],
+        ]}],
     }
+    window = {"title": "Gesture target", "hwnd": 901, "process_id": 902, "process_name": "demo.exe"}
     payload = capture_snapshot(
-        [{"title": "Gesture target", "hwnd": 901, "process_id": 902}],
+        [window],
         registry=_FakeRegistry(supported=False),
         target_point={"x": 510, "y": 438},
         gesture=gesture,
+        frame_lease=_lease_for(tmp_path, window, gesture),
     )
 
-    assert payload["selectionSnapshot"]["selection_gesture"] == gesture
+    preserved = payload["selectionSnapshot"]["selection_gesture"]
+    assert preserved["coordinateSpace"] == "physical_screen_pixels"
+    assert preserved["releasePoint"] == {"x": 620, "y": 440}
+    assert preserved["semanticPoint"] == {"x": 510, "y": 438}
+    assert preserved["strokes"][0]["points"] == gesture["strokes"][0]["points"]
 
 
-def test_full_gesture_trace_drives_structured_grounding_instead_of_fallback_point() -> None:
+def test_full_gesture_trace_drives_structured_grounding_instead_of_fallback_point(tmp_path) -> None:
     registry = _GestureCandidateRegistry()
     gesture = {
         "schemaVersion": 2,
@@ -1156,11 +1208,13 @@ def test_full_gesture_trace_drives_structured_grounding_instead_of_fallback_poin
             ],
         }],
     }
+    window = {"title": "Gesture target", "hwnd": 901, "process_id": 902, "process_name": "demo.exe"}
     payload = capture_snapshot(
-        [{"title": "Gesture target", "hwnd": 901, "process_id": 902}],
+        [window],
         registry=registry,
         target_point={"x": 150, "y": 120},  # Deliberately points at row A.
         gesture=gesture,
+        frame_lease=_lease_for(tmp_path, window, gesture),
     )
 
     assert len(registry.adapter.points) >= 3
@@ -1169,7 +1223,7 @@ def test_full_gesture_trace_drives_structured_grounding_instead_of_fallback_poin
     assert payload["selectionSnapshot"]["gesture_grounding"]["candidate_count"] >= 1
 
 
-def test_closed_gesture_reads_the_enclosed_component_set_not_the_top_boundary_row() -> None:
+def test_closed_gesture_reads_the_enclosed_component_set_not_the_top_boundary_row(tmp_path) -> None:
     registry = _ClosedRegionRegistry()
     gesture = {
         "schemaVersion": 2,
@@ -1189,12 +1243,14 @@ def test_closed_gesture_reads_the_enclosed_component_set_not_the_top_boundary_ro
         ]}],
     }
 
+    window = {"title": "Magic Pointer", "hwnd": 901, "process_id": 902, "process_name": "demo.exe"}
     payload = capture_snapshot(
-        [{"title": "Magic Pointer", "hwnd": 901, "process_id": 902}],
+        [window],
         registry=registry,
         target_point={"x": 585, "y": 425},
         gesture=gesture,
         allow_visual_fallback=False,
+        frame_lease=_lease_for(tmp_path, window, gesture),
     )
 
     snapshot = payload["selectionSnapshot"]
@@ -1205,7 +1261,7 @@ def test_closed_gesture_reads_the_enclosed_component_set_not_the_top_boundary_ro
     assert registry.adapter.point_requests == []
 
 
-def test_open_stroke_prefers_one_bounded_region_read_over_overlay_point_sampling() -> None:
+def test_open_stroke_prefers_one_bounded_region_read_over_overlay_point_sampling(tmp_path) -> None:
     registry = _ClosedRegionRegistry()
     gesture = {
         "schemaVersion": 2,
@@ -1218,12 +1274,14 @@ def test_open_stroke_prefers_one_bounded_region_read_over_overlay_point_sampling
         ]}],
     }
 
+    window = {"title": "Magic Pointer", "hwnd": 901, "process_id": 902, "process_name": "demo.exe"}
     payload = capture_snapshot(
-        [{"title": "Magic Pointer", "hwnd": 901, "process_id": 902}],
+        [window],
         registry=registry,
         target_point={"x": 790, "y": 468},
         gesture=gesture,
         allow_visual_fallback=False,
+        frame_lease=_lease_for(tmp_path, window, gesture),
     )
 
     snapshot = payload["selectionSnapshot"]
@@ -1233,7 +1291,7 @@ def test_open_stroke_prefers_one_bounded_region_read_over_overlay_point_sampling
     assert registry.adapter.point_requests == []
 
 
-def test_terminal_line_region_does_not_repeat_the_same_textpattern_probe_at_sample_points() -> None:
+def test_terminal_line_region_does_not_repeat_the_same_textpattern_probe_at_sample_points(tmp_path) -> None:
     registry = _TerminalRegionRegistry()
     gesture = {
         "schemaVersion": 2,
@@ -1246,12 +1304,14 @@ def test_terminal_line_region_does_not_repeat_the_same_textpattern_probe_at_samp
         ]}],
     }
 
+    window = {"title": "Terminal fixture", "hwnd": 901, "process_id": 902, "process_name": "demo.exe", "bbox": [0, 0, 2500, 1400]}
     payload = capture_snapshot(
-        [{"title": "Terminal fixture", "hwnd": 901, "process_id": 902, "bbox": [0, 0, 2500, 1400]}],
+        [window],
         registry=registry,
         target_point={"x": 680, "y": 288},
         gesture=gesture,
         allow_visual_fallback=False,
+        frame_lease=_lease_for(tmp_path, window, gesture),
     )
 
     snapshot = payload["selectionSnapshot"]
@@ -1262,7 +1322,7 @@ def test_terminal_line_region_does_not_repeat_the_same_textpattern_probe_at_samp
     assert registry.adapter.point_requests == []
 
 
-def test_hard_region_adapter_failure_is_not_retried_at_every_stroke_sample() -> None:
+def test_hard_region_adapter_failure_is_not_retried_at_every_stroke_sample(tmp_path) -> None:
     registry = _CountingErrorRegistry()
     gesture = {
         "schemaVersion": 2,
@@ -1275,12 +1335,14 @@ def test_hard_region_adapter_failure_is_not_retried_at_every_stroke_sample() -> 
         ]}],
     }
 
+    window = {"title": "Slow UIA fixture", "hwnd": 901, "process_id": 902, "process_name": "demo.exe"}
     payload = capture_snapshot(
-        [{"title": "Slow UIA fixture", "hwnd": 901, "process_id": 902}],
+        [window],
         registry=registry,
         target_point={"x": 680, "y": 288},
         gesture=gesture,
         allow_visual_fallback=False,
+        frame_lease=_lease_for(tmp_path, window, gesture),
     )
 
     snapshot = payload["selectionSnapshot"]
@@ -1313,7 +1375,7 @@ def test_enclosed_gesture_allows_a_short_tail_after_the_loop_closes() -> None:
     assert _is_enclosed_gesture(gesture, points) is True
 
 
-def test_gesture_grounding_never_falls_back_to_an_unvisited_release_point_candidate() -> None:
+def test_gesture_grounding_never_falls_back_to_an_unvisited_release_point_candidate(tmp_path) -> None:
     gesture = {
         "schemaVersion": 2,
         "coordinateSpace": "physical_screen_pixels",
@@ -1324,21 +1386,26 @@ def test_gesture_grounding_never_falls_back_to_an_unvisited_release_point_candid
             {"x": 390, "y": 172, "t": 120},
         ]}],
     }
+    window = {"title": "Gesture target", "hwnd": 901, "process_id": 902, "process_name": "demo.exe"}
     payload = capture_snapshot(
-        [{"title": "Gesture target", "hwnd": 901, "process_id": 902}],
+        [window],
         registry=_FallbackOnlyRegistry(),
         target_point={"x": 150, "y": 120},
         gesture=gesture,
         allow_visual_fallback=False,
+        frame_lease=_lease_for(tmp_path, window, gesture),
     )
 
-    assert payload["selectionSnapshot"]["context"] is None
     assert payload["selectionSnapshot"]["selection_bbox"] == [110, 154, 280, 27]
     assert payload["selectionSnapshot"]["gesture_grounding"]["state"] == "unresolved"
-    assert payload["selectionSnapshot"]["perception_trace"]["selectedLayer"] is None
+    # Grounding stays honest even when the frozen surface supplies the visual
+    # record: the selected evidence layer is the lease surface, not a fake
+    # structured resolution of the gesture.
+    assert payload["selectionSnapshot"]["perception_trace"]["selectedLayer"] == "screen_region"
+    assert payload["selectionSnapshot"]["context"]["adapter"] == "screen_region"
 
 
-def test_best_scoring_rectangle_is_frozen_not_first_rectangle() -> None:
+def test_best_scoring_rectangle_is_frozen_not_first_rectangle(tmp_path) -> None:
     gesture = {
         "schemaVersion": 2,
         "coordinateSpace": "physical_screen_pixels",
@@ -1349,17 +1416,19 @@ def test_best_scoring_rectangle_is_frozen_not_first_rectangle() -> None:
             {"x": 390, "y": 172, "t": 120},
         ]}],
     }
+    window = {"title": "Gesture target", "hwnd": 901, "process_id": 902, "process_name": "demo.exe"}
     payload = capture_snapshot(
-        [{"title": "Gesture target", "hwnd": 901, "process_id": 902}],
+        [window],
         registry=_MultiRectangleRegistry(),
         target_point={"x": 390, "y": 172},
         gesture=gesture,
+        frame_lease=_lease_for(tmp_path, window, gesture),
     )
 
     assert payload["selectionSnapshot"]["selection_bbox"] == [100, 150, 300, 40]
 
 
-def test_structured_text_without_a_physical_rectangle_is_not_claimed_as_gesture_target() -> None:
+def test_structured_text_without_a_physical_rectangle_is_not_claimed_as_gesture_target(tmp_path) -> None:
     gesture = {
         "schemaVersion": 2,
         "coordinateSpace": "physical_screen_pixels",
@@ -1369,16 +1438,20 @@ def test_structured_text_without_a_physical_rectangle_is_not_claimed_as_gesture_
             {"x": 110, "y": 164, "t": 0}, {"x": 390, "y": 172, "t": 120},
         ]}],
     }
+    window = {"title": "Gesture target", "hwnd": 901, "process_id": 902, "process_name": "demo.exe"}
     payload = capture_snapshot(
-        [{"title": "Gesture target", "hwnd": 901, "process_id": 902}],
+        [window],
         registry=_ContentWithoutRectangleRegistry(),
         target_point={"x": 390, "y": 172},
         gesture=gesture,
         allow_visual_fallback=False,
+        frame_lease=_lease_for(tmp_path, window, gesture),
     )
 
-    assert payload["selectionSnapshot"]["context"] is None
     assert payload["selectionSnapshot"]["gesture_grounding"]["state"] == "unresolved"
+    # The frozen lease surface still supplies the visual record even when the
+    # structured grounder cannot resolve the gesture; grounding stays honest.
+    assert payload["selectionSnapshot"]["context"]["adapter"] == "screen_region"
 
 
 def test_runtime_issue_is_presented_as_one_agent_task_not_generic_context() -> None:
@@ -1442,7 +1515,7 @@ class _StrokeRegionRegistry:
         return self.adapter
 
 
-def test_multi_stroke_selects_only_crossed_rows_as_segments() -> None:
+def test_multi_stroke_selects_only_crossed_rows_as_segments(tmp_path) -> None:
     registry = _StrokeRegionRegistry()
     gesture = {
         "schemaVersion": 2,
@@ -1460,12 +1533,14 @@ def test_multi_stroke_selects_only_crossed_rows_as_segments() -> None:
         ],
     }
 
+    window = {"title": "PDF", "hwnd": 901, "process_id": 902, "process_name": "demo.exe"}
     payload = capture_snapshot(
-        [{"title": "PDF", "hwnd": 901, "process_id": 902}],
+        [window],
         registry=registry,
         target_point={"x": 300, "y": 150},
         gesture=gesture,
         allow_visual_fallback=False,
+        frame_lease=_lease_for(tmp_path, window, gesture),
     )
 
     snapshot = payload["selectionSnapshot"]
@@ -1477,7 +1552,7 @@ def test_multi_stroke_selects_only_crossed_rows_as_segments() -> None:
     assert snapshot["selection_bbox"] == [100, 100, 300, 110]
 
 
-def test_single_open_stroke_keeps_only_crossed_element() -> None:
+def test_single_open_stroke_keeps_only_crossed_element(tmp_path) -> None:
     registry = _StrokeRegionRegistry()
     gesture = {
         "schemaVersion": 2,
@@ -1492,12 +1567,14 @@ def test_single_open_stroke_keeps_only_crossed_element() -> None:
         ],
     }
 
+    window = {"title": "PDF", "hwnd": 901, "process_id": 902, "process_name": "demo.exe"}
     payload = capture_snapshot(
-        [{"title": "PDF", "hwnd": 901, "process_id": 902}],
+        [window],
         registry=registry,
         target_point={"x": 300, "y": 150},
         gesture=gesture,
         allow_visual_fallback=False,
+        frame_lease=_lease_for(tmp_path, window, gesture),
     )
 
     snapshot = payload["selectionSnapshot"]
@@ -1518,8 +1595,9 @@ def test_bounded_visual_evidence_does_not_relabel_a_structured_gesture_as_pixel_
         ]}],
     }
 
+    window = {"title": "PDF", "hwnd": 901, "process_id": 902, "process_name": "demo.exe", "bbox": [0, 0, 800, 600]}
     payload = capture_snapshot(
-        [{"title": "PDF", "hwnd": 901, "process_id": 902, "bbox": [0, 0, 800, 600]}],
+        [window],
         registry=_StrokeRegionRegistry(),
         target_point={"x": 300, "y": 110},
         gesture=gesture,
@@ -1527,6 +1605,7 @@ def test_bounded_visual_evidence_does_not_relabel_a_structured_gesture_as_pixel_
             "RGB", (bbox[2] - bbox[0], bbox[3] - bbox[1]), "white"
         ),
         capture_dir=tmp_path,
+        frame_lease=_lease_for(tmp_path, window, gesture),
     )
 
     snapshot = payload["selectionSnapshot"]
@@ -1537,7 +1616,10 @@ def test_bounded_visual_evidence_does_not_relabel_a_structured_gesture_as_pixel_
     assert trace["selectedLayer"] == "uia"
     assert trace["selectedAdapter"] == "uia_text_selection"
     assert trace["pixelFallbackUsed"] is False
-    assert trace["attempts"][-1]["reason"] == "bounded_visual_evidence"
+    # The bounded live grab is replaced by the committed lease surface; the
+    # structured gesture result must still not be relabeled as a pixel
+    # fallback (the layer selection stays uia).
+    assert trace["attempts"][-1]["reason"] == "frame_lease_consumed"
 
 
 def test_explorer_gesture_freezes_the_real_local_file_path(monkeypatch, tmp_path) -> None:
@@ -1564,6 +1646,7 @@ def test_explorer_gesture_freezes_the_real_local_file_path(monkeypatch, tmp_path
         "class_name": "CabinetWClass",
         "hwnd": 701,
         "process_id": 702,
+        "process_name": "explorer.exe",
         "bbox": [0, 0, 1200, 900],
     }
 
@@ -1573,6 +1656,7 @@ def test_explorer_gesture_freezes_the_real_local_file_path(monkeypatch, tmp_path
         target_point={"x": 500, "y": 136},
         gesture=gesture,
         allow_visual_fallback=False,
+        frame_lease=_lease_for(tmp_path, explorer, gesture),
     )
 
     context = payload["selectionSnapshot"]["context"]

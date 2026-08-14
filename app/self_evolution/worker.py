@@ -44,13 +44,16 @@ learning exists."""
 _AUTH_HEADER = re.compile(
     r"(?i)(\bauthorization\s*:\s*bearer\s+)[A-Za-z0-9._~+/=-]+"
 )
+# 键与分隔符之间允许 JSON 引号（"api_key": "..." / \"api_key\": \"...\"），
+# 值兼容引号串与裸 token；覆盖 pwd/passphrase/credential/AWS AKIA。
 _SECRET_ASSIGNMENT = re.compile(
-    r"(?i)(\b[A-Za-z0-9_.-]*(?:api[_-]?key|token|secret|password|passwd)"
-    r"[A-Za-z0-9_.-]*\b\s*[:=]\s*)"
+    r"(?i)(\b[A-Za-z0-9_.-]*(?:api[_-]?key|token|secret|password|passwd|pwd|"
+    r"passphrase|credential)[A-Za-z0-9_.-]*\b\s*[\"']?\s*[:=]\s*[\"']?)"
     r"(?:\"[^\"\r\n]*\"|'[^'\r\n]*'|[^\s,;]+)"
 )
 _SECRET_TOKEN = re.compile(
-    r"(?<![A-Za-z0-9])(?:sk-[A-Za-z0-9_-]{8,}|gh[opusr]_[A-Za-z0-9_]{8,})"
+    r"(?<![A-Za-z0-9])(?:sk-[A-Za-z0-9_-]{8,}|gh[opusr]_[A-Za-z0-9_]{8,}|"
+    r"AKIA[0-9A-Z]{16})"
 )
 _PRIVATE_KEY = re.compile(
     r"-----BEGIN [^-\r\n]*PRIVATE KEY-----.*?"
@@ -61,7 +64,14 @@ _SESSION_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 
 def _redact_review_text(value: str) -> str:
-    """Remove common credentials before any background model handoff."""
+    """Remove common credentials before any background model handoff.
+
+    Two passes: the JSON-aware assignment form first (quoted keys like
+    ``"api_key": "..."`` and ``x-api-key: ...``), then bare well-known token
+    shapes. Both must survive the JSON-escaped quoting the digest round-trip
+    introduces (red-team probe: ``{"api_key": "..."}`` used to pass through
+    untouched because the assignment regex could not see past the quotes).
+    """
     text = _PRIVATE_KEY.sub("[REDACTED PRIVATE KEY]", str(value or ""))
     text = _AUTH_HEADER.sub(r"\1[REDACTED]", text)
     text = _SECRET_ASSIGNMENT.sub(r"\1[REDACTED]", text)

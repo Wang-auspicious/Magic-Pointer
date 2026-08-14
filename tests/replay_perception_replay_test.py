@@ -81,7 +81,10 @@ def test_trace_to_snapshot_payload_shapes_the_bridge_input() -> None:
     trace = load_trace(FIXTURES_DIR / "notepad-document-fallback.trace.json")
     payload = trace_to_snapshot_payload(trace)
     snapshot = payload["selectionSnapshot"]
-    assert snapshot["status"] == "frame_lease"
+    # Replay evidence is honest about its origin: it is NOT a FrameLease and
+    # must not claim to be one (a live bridge must never trust it as frozen).
+    assert snapshot["status"] == "replay"
+    assert snapshot["capture_attestation"]["status"] == "replay"
     assert snapshot["source_kind"] == "replay"
     assert snapshot["capture_attestation"]["backend"] == "replay"
     context = snapshot["context"]

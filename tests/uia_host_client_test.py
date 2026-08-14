@@ -39,6 +39,16 @@ def test_parse_response_strips_id_and_keeps_probe_shape() -> None:
     assert data == {"ok": True, "result_kind": "document_text", "text": "hi"}
 
 
+def test_parse_response_requires_matching_id_when_expected() -> None:
+    line = '{"id":9,"ok":true,"text":"other-request"}'
+    assert parse_response(line, expected_id="7") is None
+    assert parse_response(line, expected_id="9") == {"ok": True, "text": "other-request"}
+
+
+def test_parse_response_accepts_missing_id_when_unexpected() -> None:
+    assert parse_response('{"ok":true}') == {"ok": True}
+
+
 def test_parse_response_rejects_junk() -> None:
     assert parse_response("not json") is None
     assert parse_response("[1,2]") is None
@@ -99,7 +109,8 @@ def test_probe_sends_full_request_line_and_parses_result() -> None:
 
     def exchange(line: str) -> str:
         sent.append(line)
-        return '{"id":9,"ok":true,"result_kind":"document_text","text":"abc"}'
+        request_id = line.split("|", 1)[0]
+        return f'{{"id":{request_id},"ok":true,"result_kind":"document_text","text":"abc"}}'
 
     client._exchange = exchange  # type: ignore[assignment]
     data = client.probe(42, target_point={"x": 5, "y": 6})
@@ -120,7 +131,7 @@ def test_probe_returns_none_on_host_level_failure() -> None:
 
 def test_success_resets_consecutive_failures() -> None:
     client = _client(max_failures=2)
-    outcomes = iter([None, '{"id":1,"ok":true,"result_kind":"ping"}', None, None])
+    outcomes = iter([None, '{"id":2,"ok":true,"result_kind":"ping"}', None, None])
 
     def exchange(_line: str) -> str | None:
         return next(outcomes)

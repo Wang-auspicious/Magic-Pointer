@@ -126,6 +126,29 @@ def test_review_context_redacts_credentials_before_model_handoff(tmp_path: Path)
     assert context.count("[REDACTED]") >= 4
 
 
+def test_review_context_redacts_json_shaped_credentials(tmp_path: Path) -> None:
+    """Red-team probe: the digest is json.dumps-ed, so ``{"api_key": "..."}``
+    (with quotes between key and separator) used to bypass the assignment
+    regex entirely and leak the value to the background model."""
+    import json
+
+    from app.self_evolution.worker import _redact_review_text
+
+    digest = json.dumps(
+        {
+            "api_key": "hunter2secretvalue",
+            "password": "p@ssw0rd",
+            "aws": "Token AKIAIOSFODNN7EXAMPLE",
+        },
+        ensure_ascii=False,
+    )
+    redacted = _redact_review_text(digest)
+    assert "hunter2secretvalue" not in redacted
+    assert "p@ssw0rd" not in redacted
+    assert "AKIAIOSFODNN7EXAMPLE" not in redacted
+    assert redacted.count("[REDACTED]") >= 3
+
+
 def test_review_result_rejects_session_id_path_traversal(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="session id"):
         write_review_result(tmp_path, "../escape", {"ok": False})
