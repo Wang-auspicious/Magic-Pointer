@@ -51,6 +51,46 @@ def provider_for_recipe(recipe_id: str) -> str:
     return get_recipe(recipe_id).provider
 
 
+def _idempotency_stable_params(params: Mapping[str, Any]) -> dict[str, Any]:
+    """Copy of the plan parameters with volatile fields normalized away.
+
+    ``TargetLease`` embeds a random leaseId and wall-clock timestamps, and the
+    permission scope embeds time — put into the canonical directly they make
+    the idempotency key different for every identical re-plan, which disables
+    durable receipt reuse and lets a retry execute a send/write twice. The
+    object fingerprint already proves WHICH frozen selection the lease covers,
+    so it is the only lease content the key needs. Every user-visible
+    execution argument (replacement text, attachments, recipes) stays bound.
+    """
+    stable: dict[str, Any] = json.loads(
+        json.dumps(dict(params), ensure_ascii=False, default=str)
+    )
+    lease = stable.get("targetLease")
+    if isinstance(lease, dict):
+        stable["targetLease"] = {
+            "objectFingerprint": lease.get("objectFingerprint") or "",
+            "objectIds": list(lease.get("objectIds") or []),
+        }
+    packet = stable.get("contextPacket")
+    if isinstance(packet, dict):
+        # packetId/createdAt are per-compilation UUIDs and wall-clock stamps;
+        # the packet's evidence content is already bound through ``objects``.
+        packet.pop("packetId", None)
+        packet.pop("createdAt", None)
+        if isinstance(packet.get("targetLease"), dict):
+            packet["targetLease"] = {
+                "objectFingerprint": packet["targetLease"].get("objectFingerprint") or "",
+                "objectIds": list(packet["targetLease"].get("objectIds") or []),
+            }
+    decision = stable.get("permissionDecision")
+    if isinstance(decision, dict):
+        stable["permissionDecision"] = {
+            "decision": decision.get("decision"),
+            "source": decision.get("source"),
+        }
+    return stable
+
+
 
 
 class FabricEngine:
@@ -652,7 +692,7 @@ class FabricEngine:
                 # key, so every execution-relevant argument must be bound.
                 # Omitting parameters could replay an earlier write containing
                 # different text against the same object and command.
-                "parameters": params,
+                "parameters": _idempotency_stable_params(params),
             },
             ensure_ascii=False,
             sort_keys=True,
@@ -801,7 +841,24 @@ class FabricEngine:
                 ).to_dict()
                 self._append_execution_audit(plan, receipt, lease_validation)
                 return receipt
-        receipt_value = self.executors.execute(plan).to_dict()
+        try:
+            receipt_value = self.executors.execute(plan).to_dict()
+        except Exception as exc:
+            # Executor exceptions must surface as honest failed receipts,
+            # never as an unshaped exception out of engine.execute (fabric
+            # audit P1: a PermissionError from a concurrent store write used
+            # to blow straight through the bridge). The audit still lands.
+            receipt_value = ExecutionReceipt(
+                id=str(uuid.uuid4()),
+                plan_id=plan.id,
+                recipe_id=plan.recipe_id,
+                status="failed",
+                provider=plan.provider,
+                verified=False,
+                error=f"executor_failed:{type(exc).__name__}",
+            ).to_dict()
+            self._append_execution_audit(plan, receipt_value, lease_validation)
+            return receipt_value
         if lease_validation is not None:
             receipt_value["verification"]["targetLease"] = lease_validation
         receipt_output = receipt_value.get("output")

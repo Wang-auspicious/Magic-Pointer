@@ -2776,12 +2776,21 @@ def _loop_router(
 
     active_engine = FabricEngine(model_transform=_local_model_transform)
 
+    def _grounded_args(args: dict) -> dict:
+        # The model may invent any parameter, but attachments are grounded
+        # file paths: they must come from the frozen evidence chain (the
+        # bridge), never from model output — otherwise a model could attach
+        # and upload an arbitrary local file (fabric audit P1).
+        grounded = dict(args or {})
+        grounded.pop("attachments", None)
+        return grounded
+
     def propose(recipe_id: str, args: dict) -> dict:
         planned = active_engine.plan(
             command,
             objects=routing_objects,
             recipe_id=recipe_id,
-            parameters=dict(args or {}),
+            parameters=_grounded_args(args),
         )
         if planned.get("ok") is not True:
             return {
@@ -2809,7 +2818,7 @@ def _loop_router(
             command,
             objects=routing_objects,
             recipe_id=recipe_id,
-            parameters=dict(args or {}),
+            parameters=_grounded_args(args),
         )
         if planned.get("ok") is not True:
             return {

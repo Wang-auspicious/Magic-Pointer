@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import threading
@@ -21,6 +22,11 @@ _SURFACES = {"cli", "gui"}
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+
+
+def _sha256_json(value: Any) -> str:
+    raw = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 class WorkflowTaskStore:
@@ -178,11 +184,19 @@ class WorkflowTaskStore:
         recipe_id = str(plan.get("recipeId") or "").strip()
         if not key or not recipe_id or not plan.get("id") or not plan.get("integrityToken"):
             raise WorkflowTaskError("workflow plan is incomplete or unsigned")
+        # The key must bind the same execution-relevant parameters. A caller
+        # that reuses a stale key with changed parameters must not silently
+        # receive the old terminal receipt (fabric audit P1).
+        params_fingerprint = _sha256_json(plan.get("parameters") or {})
         with self._mutation_lock():
             existing = self._find_by_idempotency_key(key)
             if existing is not None:
                 if existing["recipeId"] != recipe_id:
                     raise WorkflowTaskError("workflow idempotency collision")
+                if existing.get("paramsFingerprint") != params_fingerprint:
+                    raise WorkflowTaskError(
+                        "workflow idempotency collision: same key, different parameters"
+                    )
                 self._touch_surface(existing, surface)
                 self._write(existing)
                 return self._public(existing, reused=True)
@@ -193,6 +207,7 @@ class WorkflowTaskStore:
                 "taskId": task_id,
                 "idempotencyKey": key,
                 "recipeId": recipe_id,
+                "paramsFingerprint": params_fingerprint,
                 "plan": dict(plan),
                 "approvalState": "pending" if plan.get("requiresConfirmation") is True else "not_required",
                 "executionState": "idle",

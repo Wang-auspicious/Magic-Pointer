@@ -266,8 +266,12 @@ class McpStdioClient:
                     continue
                 try:
                     message = json.loads(text)
-                except ValueError:
-                    # Servers log to stdout despite the spec. Skip, do not fail.
+                except (ValueError, RecursionError, MemoryError):
+                    # Servers log to stdout despite the spec. Skip, do not
+                    # fail. RecursionError/MemoryError are deep-nesting parse
+                    # bombs: the line is under the size cap but json.loads
+                    # still explodes; treat them as protocol noise and never
+                    # report an empty dict as a real result.
                     continue
                 if message.get("id") != request_id:
                     continue

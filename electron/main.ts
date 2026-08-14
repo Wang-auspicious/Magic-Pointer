@@ -1,4 +1,4 @@
-﻿const { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen, safeStorage, systemPreferences } = require('electron');
+const { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen, safeStorage, systemPreferences } = require('electron');
 const path = require('path');
 const { dialog } = require('electron');
 const { Menu, nativeImage, Tray } = require('electron');
@@ -1582,7 +1582,16 @@ function feedProactiveEvent(event: any) {
   // 提案 UI 落点：后续 proactive_runtime 在这里弹非焦点提案卡。
 }
 
-ipcMain.handle('stash:list', () => {
+ipcMain.handle('stash:list', (event: Electron.IpcMainInvokeEvent) => {
+  // The stash index carries local file paths and selection text — only the
+  // dashboard/companion windows may read it (any compromised renderer must
+  // not walk the user's stash).
+  if (!event.sender || (
+    event.sender !== dashboardWindow?.webContents
+    && event.sender !== companionWindow?.webContents
+  )) {
+    return [];
+  }
   try {
     return initializeStashRuntime().list();
   } catch (error) {

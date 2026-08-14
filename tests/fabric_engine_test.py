@@ -685,6 +685,29 @@ def test_concurrent_task_adds_do_not_lose_updates(tmp_path: Path) -> None:
     assert len(tasks["tasks"]) == 60
 
 
+def test_idempotency_key_is_stable_for_identical_replans(tmp_path: Path) -> None:
+    """Fabric-audit P1: the target lease's random id + wall-clock timestamps
+    used to land in the canonical, so an identical re-plan produced a new key
+    and durable receipt reuse never fired (a retry could execute a write
+    twice). The key must depend only on execution-relevant content."""
+    engine = FabricEngine(root=tmp_path)
+    first = engine.plan(
+        "把这个错误建成任务",
+        objects=[_object(content="E42 failed")],
+    )["plan"]
+    second = engine.plan(
+        "把这个错误建成任务",
+        objects=[_object(content="E42 failed")],
+    )["plan"]
+    assert first["idempotencyKey"] == second["idempotencyKey"]
+
+    different = engine.plan(
+        "把这个错误建成任务",
+        objects=[_object(content="E43 failed")],
+    )["plan"]
+    assert different["idempotencyKey"] != first["idempotencyKey"]
+
+
 def test_plan_provider_and_parameters_are_integrity_bound(tmp_path: Path) -> None:
     engine = FabricEngine(root=tmp_path)
     plan = engine.plan(

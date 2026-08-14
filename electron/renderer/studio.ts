@@ -300,7 +300,7 @@ async function renderSidebar() {
   }
   const active = host.querySelector('.is-on')?.getAttribute('data-open');
   host.innerHTML = list.slice(0, 12).map((c) => `
-    <button class="side-item${c.id === active ? ' is-on' : ''}" data-open="${c.id}">
+    <button class="side-item${c.id === active ? ' is-on' : ''}" data-open="${esc(c.id)}">
       <span class="orb">${makeOrb(c.objectKey || c.id, 64)}</span>
       <span class="side-text"><b>${esc(c.title)}</b><small>${esc(c.subtitle || '')}</small></span>
     </button>`).join('');
@@ -445,7 +445,7 @@ async function renderArtifacts(force = false) {
     host.innerHTML = '<div class="view-empty">还没有产物。它写出来的东西会存在这里。</div>';
     return;
   }
-  host.innerHTML = list.map((a, i) => `<button class="card artifact enter" data-open="${a.conversationId}"
+  host.innerHTML = list.map((a, i) => `<button class="card artifact enter" data-open="${esc(a.conversationId)}"
       style="animation-delay:${Math.min(i,6)*40}ms">
     <span class="tile">${icon('ic-code')}</span>
     <span class="side-text"><span class="name">${esc(a.name)}</span>
@@ -455,7 +455,8 @@ async function renderArtifacts(force = false) {
 
 function esc(v: unknown) {
   return String(v == null ? '' : v)
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 // 本地路径进 CSS url('...')：反斜杠换正斜杠，再转义掉能截断字符串的引号。

@@ -1109,6 +1109,17 @@ def _fabric_input_schema(
     }
 
 
+def _sanitize_idempotency_key(value: Any) -> str:
+    """Artifact names embed ``key[:16]`` — a model/caller-controlled key must
+    never escape the artifact directory through ``..`` or separators (fabric
+    audit P1). Keep hex runs and fall back to a fresh random token otherwise."""
+    if isinstance(value, str):
+        cleaned = "".join(char for char in value if char in "0123456789abcdefABCDEF")
+        if len(cleaned) >= 16:
+            return cleaned[:64]
+    return uuid.uuid4().hex
+
+
 def _fabric_tool_plan(
     recipe_id: str,
     provider: str,
@@ -1143,7 +1154,7 @@ def _fabric_tool_plan(
             if isinstance(item, dict)
         ),
         parameters=parameters,
-        idempotency_key=idempotency_key,
+        idempotency_key=_sanitize_idempotency_key(idempotency_key),
     )
 
 
