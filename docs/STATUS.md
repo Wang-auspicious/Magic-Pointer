@@ -1,16 +1,18 @@
 # 当前状态
 
-> 最后核实：2026-08-14（Harness 后端重建进行中，尚未交付）。改了行为就回来改这里，别新建一份日期文件。
+> 最后核实：2026-08-14（Harness 后端重建进行中，尚未交付；同日完成全库深度安全审计与修复批）。改了行为就回来改这里，别新建一份日期文件。
 
 ## 一句话
 
-**本机安装版仍是 1.0.4；它不是当前开发树。** 当前分支正在做一次不拆批交付的 Harness 后端重建，按用户要求在全部底层、Agent 能力、插件和自进化链路验收前，**不升版本、不运行 `npm run sync`**。旧 1.0.4 用“6 轮封顶”阻断过持久后端错误的无限自旋，但这是临时止血，已经从开发树移除：Provider 瞬时错误在语义循环下方有限重试，持久错误一次性终止为 `provider_unavailable`；重复工具/重复证据由 Hermes 风格语义停滞检测终止为 `stalled`；只保留默认 90 的诊断保险丝并报告 `invariant_failed`，它不参与正常任务完成语义。插件内核已补齐依赖撤销/恢复、精确卸载回卷、`ctx.llm` Provider seam、SurfaceAdapter seam、用户 patch 文件和 agent/surface 运行域隔离；本阶段定向回归 104 项通过，尚未做最终全量验证或安装版交付。
+**本机安装版仍是 1.0.4；它不是当前开发树。** 当前分支正在做一次不拆批交付的 Harness 后端重建，按用户要求在全部底层、Agent 能力、插件和自进化链路验收前，**不升版本、不运行 `npm run sync`**。旧 1.0.4 用“6 轮封顶”阻断过持久后端错误的无限自旋，但这是临时止血，已经从开发树移除：Provider 瞬时错误在语义循环下方有限重试，持久错误一次性终止为 `provider_unavailable`；重复工具/重复证据由 Hermes 风格语义停滞检测终止为 `stalled`；只保留默认 90 的诊断保险丝并报告 `invariant_failed`，它不参与正常任务完成语义。插件内核已补齐依赖撤销/恢复、精确卸载回卷、`ctx.llm` Provider seam、SurfaceAdapter seam、用户 patch 文件和 agent/surface 运行域隔离。
 
-FrameLease 捕获地基（8·11 计划 Phase A）已全量落地并过自动化验证；外部 harness 评审（`docs/harness-gap-review-20260812.md`）已吸收，评审批次 1/2/3（L1-L16 基础设施）全部落地。2026-08-13 最强模型对交接文档（`docs/2026-08-13-ARCHITECTURE_HANDOFF.md`）的评审回复（`docs/2026-08-13-STRONGEST_MODEL_REVIEW_RESPONSE.md`）已**全量执行**：三个结构性张力（T1 预算语义/T2 证据截断/T3 in-loop 可逆写）、13 题逐答、接线批（权限门/guard 真探针/流式默认+回落/compaction）、工具合并+双轨杀死、settings 深合并、记忆铁律、常驻 UIA 宿主（真机实测 2.5x）、SurfaceAdapter SDK+微信样例、Replay 20 条 trace、薄 smoke 层、WGC CaptureProvider 契约。基建执行顺序已按评审反转：**常驻 UIA 宿主先于 WGC**（Phase 编号不变）。全量验证：**Python 991 过 / 59 秒；Node 127 全过；typecheck、ESLint 0 警告**。进度账本在 `docs/design/MAGIC_POINTER_HARNESS_20260811.md` §18。
+**2026-08-14 全库深度审计 + 修复批（已完成，见 §审计）**：9 个区域逐文件逐行审查 + 红队对抗实测；修复 6 个 P1（L0 本地动作劫持、证据进指令通道、compaction 剥围栏、tasks 并发丢数据、UIA 管道无鉴权、快照桥缺 lease fail-open、undo 无读回校验、scope 泄漏级联等 14 项）与 20+ P2。全量验证：**Python 1249 过；Node 131 全过；typecheck、ESLint 0 警告；uia-host smoke PASS**。仍未升版本、未 sync——开发树继续。
 
-七条不可回退 invariant（评审 §四，任何后续改动不得松动）：① FrameLease commit 失败 fail-closed 禁重拍；② Anchor 五路判别一等值，ambiguous/changed 永不按 exact；③ Evidence 八态 busy≠empty；④ 批准者黑名单（model/tool/agent 不能批准不可逆）+ 确认 UI harness 持有；⑤ origin 双通道屏幕内容永远是 data；⑥ UndoLog 失败不伪装 + 回执读回校验；⑦ 真机验证与自动化分账。
+FrameLease 捕获地基（8·11 计划 Phase A）已全量落地并过自动化验证；外部 harness 评审（`docs/harness-gap-review-20260812.md`）已吸收，评审批次 1/2/3（L1-L16 基础设施）全部落地。2026-08-13 最强模型对交接文档（`docs/2026-08-13-ARCHITECTURE_HANDOFF.md`）的评审回复（`docs/2026-08-13-STRONGEST_MODEL_REVIEW_RESPONSE.md`）已**全量执行**：三个结构性张力（T1 预算语义/T2 证据截断/T3 in-loop 可逆写）、13 题逐答、接线批（权限门/guard 真探针/流式默认+回落/compaction）、工具合并+双轨杀死、settings 深合并、记忆铁律、常驻 UIA 宿主（真机实测 2.5x）、SurfaceAdapter SDK+微信样例、Replay 20 条 trace、薄 smoke 层、WGC CaptureProvider 契约。基建执行顺序已按评审反转：**常驻 UIA 宿主先于 WGC**（Phase 编号不变）。进度账本在 `docs/design/MAGIC_POINTER_HARNESS_20260811.md` §18。
 
-分支 `codex/multi-stroke-and-voice-fix`，未推送。Electron/Node 非测试源码已全部迁移为 TypeScript（**89 个非测试 `.ts`，非测试 `.js` 为 0**）。
+七条不可回退 invariant（评审 §四，任何后续改动不得松动）：① FrameLease commit 失败 fail-closed 禁重拍；② Anchor 五路判别一等值，ambiguous/changed 永不按 exact；③ Evidence 八态 busy≠empty；④ 批准者黑名单（model/tool/agent 不能批准不可逆）+ 确认 UI harness 持有；⑤ origin 双通道屏幕内容永远是 data；⑥ UndoLog 失败不伪装 + 回执读回校验；⑦ 真机验证与自动化分账。**审计修正**：⑥ 的"回执读回校验"此前只在 replace 路径存在，undo 路径未验证即 mark_undone——审计批已补上读回校验并加测试；④⑤ 的接线边界以 §审计 为准（治理门 EgressGate/UndoLog 模块契约完备、生产接线仍是明确缺口，见下）。
+
+分支 `codex/harness-reconstruction`（已推送 origin）。Electron/Node 非测试源码已全部迁移为 TypeScript（**92 个非测试 `.ts`，非测试 `.js` 为 0**）。
 
 结构化应用（记事本、Edge、Office、终端）的划线读取链路已经可用；自绘应用（微信 4.x、Qt、Flutter）的 SurfaceAdapter SDK + 微信样例已落地（容器 UIA 暴露则用，否则诚实像素锚点），但**"首笔手势像素候选框"仍需真机验证**。**不能宣称"任意 Windows 软件里随手一划都能稳定理解完整对象"。**
 
@@ -172,3 +174,42 @@ python scripts/verify_marked_line_answer.py --title-contains "微信" --y <某�
 2. 按「同意」→ 那段话进微信输入框；按「拒绝」→ 什么都不发生，框留着还能继续改。
 3. 随便划一段问「这是什么」。框挂在选区旁边，**没有**「拒绝 / 同意」，markdown 正常渲染。
 4. 在回答里划中一句 → 冒出「展开讲讲」→ 点它。那一句被换成更长的、黄一下再褪掉，**底栏轮次数字不变**（它不是第二轮）。
+
+## 审计（2026-08-14：全库逐文件深度审查 + 红队对抗实测 + 修复批）
+
+按用户要求做了一次面向"可发布"的全库审查：9 个区域并行深审（harness 内核 / agent_runtime / fabric+模型层 / 安全治理 / 感知操作 / electron / Python 桥 / 红队跨域对抗 / 文档声明核验），全部发现都以文件:行 + 实测复现为证。修复分批提交（`0907b9a`、`32be047`、`2bb06ea`、`70d9c89`、`1daef91`、`cd2f661`）。以下按严重度记录。
+
+### 已修复的 P1（发布前必须修）
+
+1. **L0 本地动作可被屏幕文本劫持**（红队 T6 实测）：圈选内容含「复制这个」等词时，任意问题被零模型短路成剪贴板写入。修：本地动作只匹配纯指令通道（`run_agent_turn.local_action_input`）。
+2. **证据块整体标记 origin=instruction**（违反 invariant ⑤ 的结构性缺口）：证据现在作为独立 `origin=data` 消息进入 loop；compaction 摘要重包数据围栏；`AgentMessage.from_dict` 缺 origin 时 fail-closed 归 data。
+3. **compaction 剥离证据围栏**（红队 T3 实测）：摘要回注时重包 `<<<MAGIC_POINTER_EVIDENCE>>>` 围栏 + 非指令声明。
+4. **tasks/tasks.json 无锁并发写**（红队 T5 实测丢 47% 任务 + PermissionError）：跨进程锁 + 唯一临时文件名。
+5. **UIA 常驻宿主 named pipe 无鉴权/无界读**：任何本地进程可读任意窗口文本或 DoS。修：PipeSecurity DACL（仅当前用户）+ 有界行读（256 字符）+ 每连接请求上限；客户端校验响应 id；客户端 `_read_pipe` 每次迭代查 deadline + 1MB 缓冲上限（滴送字节不再挂死感知链）。host 已重编译，uia-host smoke PASS。
+6. **selection_snapshot_bridge 缺 FrameLease 时 fail-open**：带手势但无 lease 的请求现在 fail-closed（`missing_frame_lease`），不再实时抓屏伪报冻结证据。
+7. **Word undo 无回执读回校验**（invariant ⑥ 直接违背）：restore 后读回哈希比对，失败 FAILED 且不 mark_undone。
+8. **工作室 DOM XSS**：`esc()` 补引号转义；studio/companion HTML 加 CSP；`stash:list` 加 sender 校验。
+9. **幂等键非确定性**：targetLease 随机 id + 时间戳从 canonical 剥离，同意图重规划得到同键（回执复用恢复）；workflow 同键不同参数拒绝复用。
+10. **模型自填 attachments 任意文件外泄**：模型侧 propose/execute 闭包丢弃 attachments（路径只能来自接地证据链）。
+11. **engine.execute 异常冒泡**：执行器异常转诚实 failed receipt 并落审计。
+12. **MCP 解析炸弹**：reader 线程捕获 RecursionError/MemoryError，不再静默空成功。
+13. **resident scope 泄漏级联**：缺服务 KeyError 时 scope 不 close 的级联泄漏已修（open+get 入 try/finally）。
+14. **frame_capture_worker re-arm 僵尸线程**：旧线程绑定自己启动时的 stop 事件，re-arm 不再叠加并发 ImageGrab 循环。
+15. **computer_operator 取消后按键卡死**：CancelledError 传播前 abort 已执行动作，KEY_DOWN 键释放。
+16. **review 脱敏 JSON 绕过**：`{"api_key": "..."}`（转义引号）此前原样泄漏给后台 review 模型；正则重构 + AKIA/pwd/passphrase 覆盖。
+
+### 已修复的 P2（抽样，全部带回归测试）
+
+预算 productive 轮被 renewals 上限硬截断（改：productive 无条件续期，budget_renewals=0 保持单预算模式）；stop hook 返回 None 杀死 loop；clarification 静默丢弃同批其他工具调用（现在显式 not executed 回喂）；工具结果非字符串哈希崩溃；微信适配器子串误匹配（evilwechat.exe / "微信使用技巧 - Chrome"）；manifest 字符串类型混淆逐字符展开；model_health 并发写丢端点 + 单条目跨端点串扰；harness `_effects` 累积、unload 不清 services、parallel 吞异常；dump_config 泄漏配置密钥与绝对路径；replay 自证 frame_lease 但 frame_lease=None；deliver 判定恢复（重建批误删）+ 禁 markdown 提示词进 loop；测试 env 泄漏隔离；快照桥失败仍返回 exit 0。
+
+### 仍未修复的发布阻塞（架构性，需下批接线或显式裁决）
+
+1. **治理门零接线**：`EgressGate` / `UndoLog` / `ActionApproval` / `WindowSubscription` / `check_budget` / `merge_for_decision` / `AppBlacklist` 模块契约完备（测试全绿），但生产代码零调用——出网/undo 的"单一出口 + 全审计"目前靠权限表 + HMAC 计划签名 + 确认卡三层，没有第二道网闸兜底。**要么接线（下批），要么把 invariant ④⑤⑥ 的声明明确降级为"契约层已建、接线中"。**
+2. **replay 断言漂移**：20 条 fixture 中 5 条 FAIL（2 条内容波动 + 3 条 proposal 形状机制失败）；"机制绿"的说法不成立，断言需改成形状断言并复核 3 条机制失败。
+3. **compaction 注入持久化**已缓解（围栏重包），但"摘要模型把注入原文忠实复述"的残余面未闭环（summarize 提示已加剥离要求，无结构性保证）。
+4. **插件=任意代码执行**：`data/plugins/**/plugin.py` 只靠文件系统写权限；批准 UI 是唯一门。发布前确认插件候选批准流程展示完整 diff 且默认拒绝。
+5. **plan-signing.key 明文 + Windows 0o600 无效**：同用户进程可伪造 `requires_confirmation=false` 计划；应迁 safeStorage/DPAPI 或显式 DACL。
+6. **出网 key 重定向外泄面**：messages 模式 `x-api-key` 在跨源重定向时不被 httpx 剥离；`follow_redirects=False` 或白名单校验。
+7. **screen memory 无设置门控**：`_record_auto_memory` 无条件记录（模块契约承诺 off 即 off）；应接 settings 开关。
+8. **uia-host smoke 环境相关**：本会话 PASS（文档此前数字 2.5x 无法复验，与前台窗口类型强相关）。
+9. **交付管线**：全量验证数字以 §一句话 为准（Python 1249 / Node 131 / typecheck / lint / uia-host smoke）；真实桌面截图回归与安装版交付仍未执行——开发树仍**不能声称零 bug 或已交付**。
