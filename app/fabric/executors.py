@@ -7,7 +7,9 @@ import os
 import re
 import shutil
 import subprocess
+import threading
 import uuid
+from contextlib import contextmanager
 from difflib import unified_diff
 from pathlib import Path
 from typing import Any, Callable
@@ -30,14 +32,57 @@ def _sha256(value: str | bytes) -> str:
 
 def _atomic_text(path: Path, text: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_suffix(path.suffix + ".tmp")
-    temp.write_text(text, encoding="utf-8", newline="\n")
-    os.replace(temp, path)
+    # Unique temp name: two processes writing the same path concurrently must
+    # not collide on one ".tmp" handle (Windows: open PermissionError).
+    temp = path.with_name(path.name + f".{uuid.uuid4().hex[:8]}.tmp")
+    try:
+        temp.write_text(text, encoding="utf-8", newline="\n")
+        os.replace(temp, path)
+    finally:
+        try:
+            temp.unlink(missing_ok=True)
+        except OSError:
+            pass
     return path
 
 
 def _atomic_json(path: Path, value: dict[str, Any]) -> Path:
     return _atomic_text(path, json.dumps(value, ensure_ascii=False, indent=2) + "\n")
+
+
+_LOCK_GUARD = threading.Lock()
+_LOCKS: dict[str, threading.RLock] = {}
+
+
+@contextmanager
+def _exclusive_file_lock(lock_path: Path) -> Iterator[None]:
+    """Cross-process advisory lock (msvcrt byte-lock), like session.py's."""
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_key = str(lock_path.resolve())
+    with _LOCK_GUARD:
+        process_lock = _LOCKS.setdefault(lock_key, threading.RLock())
+    with process_lock, lock_path.open("a+b") as handle:
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write(b"\0")
+            handle.flush()
+        handle.seek(0)
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            handle.seek(0)
+            if os.name == "nt":
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def _objects(plan: OperationPlan) -> list[dict[str, Any]]:
@@ -673,25 +718,35 @@ class FabricExecutors:
 
     def _task(self, plan: OperationPlan) -> ExecutionReceipt:
         path = self.root / "tasks" / "tasks.json"
-        try:
-            state = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {"schemaVersion": 1, "tasks": []}
-        except json.JSONDecodeError:
-            return _receipt(plan, status="failed", error="task_store_corrupt")
-        tasks = list(state.get("tasks") or [])
-        existing = next((item for item in tasks if item.get("idempotencyKey") == plan.idempotency_key), None)
-        if existing is None:
-            text = "\n\n".join(_content(obj) for obj in _objects(plan) if _content(obj))
-            existing = {
-                "id": str(uuid.uuid4()),
-                "title": text.splitlines()[0][:160] if text else plan.command[:160],
-                "description": text[:12000],
-                "sourceObjectIds": list(plan.object_ids),
-                "idempotencyKey": plan.idempotency_key,
-                "status": "open",
-            }
-            tasks.append(existing)
-            _atomic_json(path, {"schemaVersion": 1, "tasks": tasks})
-        verified = path.exists() and any(item.get("id") == existing["id"] for item in json.loads(path.read_text(encoding="utf-8")).get("tasks", []))
+        lock_path = path.with_name("tasks.json.lock")
+        # Concurrent selection sessions both run local tasks; the read-modify-
+        # write below lost updates and crashed on a shared .tmp handle without
+        # a lock (red-team T5: 3 procs x 300 adds -> 315/600 kept). The lock is
+        # held across read+write so each add sees the previous one.
+        with _exclusive_file_lock(lock_path):
+            try:
+                state = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {"schemaVersion": 1, "tasks": []}
+            except (json.JSONDecodeError, OSError):
+                return _receipt(plan, status="failed", error="task_store_corrupt")
+            tasks = list(state.get("tasks") or [])
+            existing = next((item for item in tasks if item.get("idempotencyKey") == plan.idempotency_key), None)
+            if existing is None:
+                text = "\n\n".join(_content(obj) for obj in _objects(plan) if _content(obj))
+                existing = {
+                    "id": str(uuid.uuid4()),
+                    "title": text.splitlines()[0][:160] if text else plan.command[:160],
+                    "description": text[:12000],
+                    "sourceObjectIds": list(plan.object_ids),
+                    "idempotencyKey": plan.idempotency_key,
+                    "status": "open",
+                }
+                tasks.append(existing)
+                _atomic_json(path, {"schemaVersion": 1, "tasks": tasks})
+            try:
+                persisted = json.loads(path.read_text(encoding="utf-8")).get("tasks", [])
+            except (json.JSONDecodeError, OSError):
+                persisted = []
+            verified = any(item.get("id") == existing["id"] for item in persisted)
         return _receipt(plan, status="succeeded" if verified else "verification_failed", output={"taskId": existing["id"], "store": str(path)}, verified=verified, verification={"taskFound": verified})
 
     def _map(self, plan: OperationPlan) -> ExecutionReceipt:

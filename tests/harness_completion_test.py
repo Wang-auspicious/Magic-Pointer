@@ -97,6 +97,11 @@ def test_compaction_summarizes_head() -> None:
     assert len(compacted) == 4
     assert "前半段摘要" in compacted[0].content
     assert compacted[0].injected is True
+    # The summary round-trips through a model; it must come back with the
+    # data fence so injected imperative text cannot be upgraded into an
+    # instruction (red-team T3).
+    assert "<<<MAGIC_POINTER_EVIDENCE>>>" in compacted[0].content
+    assert compacted[0].origin == "data"
 
 
 def test_compaction_never_orphans_a_tool_result_from_its_assistant_call() -> None:

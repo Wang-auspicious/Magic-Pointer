@@ -745,15 +745,23 @@ try {{
   if ($expectedDoc -and $result.document -ne $expectedDoc) {{ throw "Active Word document changed before undo" }}
   $restored = $false
   if ($null -ne $startPos -and $null -ne $afterEnd) {{
+    $verifyFailed = $false
     try {{
       $range = $doc.Range([int]$startPos, [int]$afterEnd)
       $current = [string]$range.Text
       if ((Sha256Text $current) -eq $afterHash -or $current -eq $afterText) {{
         $range.Text = $beforeText
+        # 读回校验：restore 是历史事实，不是"请求已发出"。修订模式、
+        # 自动更正、受保护段落都可能静默改写或吞掉赋值——不验证等于
+        # 谎报已恢复（invariant ⑥）。
+        if ((Sha256Text ([string]$range.Text)) -ne (Sha256Text $beforeText)) {{
+          $verifyFailed = $true
+          throw "Word precise restore verification failed; the document did not take the recorded original text."
+        }}
         $result.restored_by = "recorded_range"
         $restored = $true
       }}
-    }} catch {{}}
+    }} catch {{ if ($verifyFailed) {{ throw }} }}
   }}
   if (-not $restored -and ($leftAnchorHash -or $rightAnchorHash)) {{
     $matches = @()
@@ -797,6 +805,10 @@ try {{
       $range = $doc.Range([int]$match.start, [int]$match.end)
       if ((Sha256Text ([string]$range.Text)) -ne $afterHash) {{ throw "Unique restore match changed before replacement" }}
       $range.Text = $beforeText
+      # 读回校验（同 recorded_range 路径）：不验证就谎报已恢复。
+      if ((Sha256Text ([string]$range.Text)) -ne (Sha256Text $beforeText)) {{
+        throw "Word anchored restore verification failed; the document did not take the recorded original text."
+      }}
       $result.restored_by = "anchored_text_match"
       $restored = $true
     }} elseif ($matches.Count -gt 1) {{

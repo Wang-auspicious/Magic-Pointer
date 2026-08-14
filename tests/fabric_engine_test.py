@@ -650,6 +650,41 @@ def test_safe_local_task_route_is_idempotent(tmp_path: Path) -> None:
     assert len(tasks["tasks"]) == 1
 
 
+def test_concurrent_task_adds_do_not_lose_updates(tmp_path: Path) -> None:
+    """Red-team T5: lockless read-modify-write lost ~47% of concurrent adds
+    and crashed one process with PermissionError on the shared .tmp handle."""
+    settings = FabricSettings.defaults()
+    settings.permissions.recipe_overrides["task.route"] = "allow"
+
+    def add(engine: FabricEngine, index: int) -> str:
+        plan = engine.plan(
+            "把这个错误建成任务",
+            objects=[_object(content=f"content {index}")],
+        )["plan"]
+        receipt = engine.execute(plan, confirmed=False)
+        assert receipt["status"] == "succeeded", receipt
+        return receipt["output"]["taskId"]
+
+    engines = [FabricEngine(root=tmp_path, settings=settings) for _ in range(3)]
+    results: list[list[str]] = [[], [], []]
+
+    def worker(worker_index: int) -> None:
+        for task_index in range(20):
+            results[worker_index].append(add(engines[worker_index], worker_index * 100 + task_index))
+
+    threads = [threading.Thread(target=worker, args=(index,)) for index in range(3)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    all_ids = [task_id for batch in results for task_id in batch]
+    assert len(all_ids) == 60
+    assert len(set(all_ids)) == 60
+    tasks = json.loads((tmp_path / "tasks" / "tasks.json").read_text(encoding="utf-8"))
+    assert len(tasks["tasks"]) == 60
+
+
 def test_plan_provider_and_parameters_are_integrity_bound(tmp_path: Path) -> None:
     engine = FabricEngine(root=tmp_path)
     plan = engine.plan(

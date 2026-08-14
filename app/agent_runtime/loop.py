@@ -63,11 +63,12 @@ Honest semantics of this batch:
   message list; at >=70% of the budget the ``compactor`` replaces the
   history once (``compact_triggered``), before any model call.
 - Rolling budget (T1): the FULL_ANSWER budget is a deadline that renews
-  once per productive round (at least one non-error tool result) up to
-  ``budget_renewals`` times; each renewal emits :class:`BudgetRenewed` so
-  a UI can heartbeat progress. Hard cut only when the deadline expires on
-  a non-productive round (pure-error rounds, no-tool-call stalls,
-  withhold storms) — the budget constrains feedback rhythm, not loop life.
+  once per productive round (at least one non-error tool result); each
+  renewal emits :class:`BudgetRenewed` so a UI can heartbeat progress.
+  Productive rounds renew without a cap — the budget constrains feedback
+  rhythm, not loop life. Hard cut only when the deadline expires on a
+  non-productive round (pure-error rounds, duplicate-evidence stalls,
+  withhold storms).
 - Pi StreamFn truncation guard: ``client.last_truncated`` invalidates the
   round's tool calls (nothing executes); one ``is_error=False`` tool message
   ("输出被截断，重新生成") is fed back and the loop continues, protected by
@@ -252,6 +253,7 @@ class LoopParams:
     )
     session: EventSession | None = None
     request_header: Mapping[str, Any] = field(default_factory=dict)
+    evidence_input: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -425,16 +427,17 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
     loaded_extra: list[str] = []
     stop_hooks = tuple(params.stop_hooks)
 
-    first_message = _first_message(params)
+    first_messages = _first_messages(params)
     if params.session is not None:
         # Hold the durable turn lease until turn/end. A concurrent bridge may
         # resume the same session, but it must not mistake this live turn for a
         # crashed one and synthesize repair results underneath the model.
         params.session.start_turn(hold_lease=True)
-        params.session.append_message(first_message)
+        for message in first_messages:
+            params.session.append_message(message)
         initial_messages = params.session.derive_messages()
     else:
-        initial_messages = [first_message]
+        initial_messages = list(first_messages)
     state = TurnState(
         messages=initial_messages,
         tool_calls_pending=[],
@@ -452,8 +455,17 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
         while True:
             now_ms = clock()
             if now_ms > deadline_ms:
-                productive = turn_number - 1 == last_progress_turn
-                if productive and renewals_used < params.budget_renewals:
+                productive = (
+                    last_progress_turn > 0
+                    and turn_number - 1 == last_progress_turn
+                )
+                if productive and params.budget_renewals > 0:
+                    # A productive round always renews: the budget constrains
+                    # feedback rhythm, not loop life (review T1). The renewals
+                    # cap is not consulted for genuinely progressing work —
+                    # hard cuts apply only to non-productive rounds
+                    # (duplicate evidence, pure errors, stalls) below.
+                    # budget_renewals=0 keeps the explicit single-budget mode.
                     renewals_used += 1
                     deadline_ms = now_ms + budget_ms
                     yield BudgetRenewed(
@@ -1013,22 +1025,44 @@ def _is_token_withheld(reason: str) -> bool:
     return reason in ("", "max_output_tokens")
 
 
-def _first_message(params: LoopParams) -> AgentMessage:
-    """First user message: trajectory template or plain user input."""
+def _first_messages(params: LoopParams) -> list[AgentMessage]:
+    """Initial messages: the instruction, then the evidence as data.
 
+    The bridge used to concatenate the grounded evidence block into the first
+    user message, which stamped the whole thing ``origin=instruction`` and
+    made screen text structurally indistinguishable from the user's command.
+    ``evidence_input`` now travels as a separate user-role message tagged
+    ``origin=ORIGIN_DATA`` + ``injected=True`` (the one legal user/data
+    combination), so the instruction channel filter never sees screen data
+    (invariant: screen content is always data).
+    """
     if params.trajectory is not None:
         content = params.trajectory.first_user_message.replace(
             "{input}", params.user_input
         )
     else:
         content = params.user_input
-    return AgentMessage(
-        role=Role.USER,
-        content=content,
-        tool_call_id=None,
-        name=None,
-        origin=ORIGIN_INSTRUCTION,
-    )
+    messages = [
+        AgentMessage(
+            role=Role.USER,
+            content=content,
+            tool_call_id=None,
+            name=None,
+            origin=ORIGIN_INSTRUCTION,
+        )
+    ]
+    if params.evidence_input:
+        messages.append(
+            AgentMessage(
+                role=Role.USER,
+                content=params.evidence_input,
+                tool_call_id=None,
+                name=None,
+                origin=ORIGIN_DATA,
+                injected=True,
+            )
+        )
+    return messages
 
 
 def instruction_messages(messages: Sequence[AgentMessage]) -> list[AgentMessage]:

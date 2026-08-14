@@ -1065,6 +1065,8 @@ def test_loop_router_maps_terminal_to_answer(monkeypatch):
         recorded["input"] = user_input
         recorded["objects"] = objects
         recorded["allowed"] = kwargs.get("allowed_effects")
+        recorded["evidence"] = kwargs.get("evidence_input")
+        recorded["local_action_input"] = kwargs.get("local_action_input")
         return _fake_terminal(message="循环给出的回答")
 
     monkeypatch.setattr(engine_module, "run_agent_turn", fake_run)
@@ -1073,8 +1075,12 @@ def test_loop_router_maps_terminal_to_answer(monkeypatch):
         "帮我看看", [{"id": "o1"}], None, None, None, None, "sess-1", "snap-1"
     )
 
-    assert recorded["input"].startswith("帮我看看")
-    assert "[本次圈选对象证据]" in recorded["input"]
+    assert recorded["input"] == "帮我看看"
+    # The evidence block travels as a separate origin=data message, never
+    # inside the instruction channel (invariant ⑤).
+    assert recorded["evidence"] and "[本次圈选对象证据]" in recorded["evidence"]
+    assert "帮我看看" not in (recorded["evidence"] or "")
+    assert recorded["local_action_input"] == "帮我看看"
     assert recorded["objects"] == [{"id": "o1"}]
     assert recorded["allowed"] == tuple(Effect)
     assert result["ok"] is True

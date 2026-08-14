@@ -2056,6 +2056,50 @@ def test_budget_renewals_bounded_by_budget_renewals_param():
     assert terminal.reason is TransitionReason.BUDGET_EXHAUSTED
 
 
+def test_productive_rounds_are_not_hard_cut_when_renewals_are_exhausted():
+    """A productive round must renew even past the renewals cap: the budget
+    constrains feedback rhythm, not loop life. Only non-productive rounds
+    (duplicate evidence, pure errors, stalls) are hard-cut at the deadline."""
+    clock = FakeClock()
+    values = ["evidence-1", "evidence-2", "evidence-3", "evidence-4"]
+    calls = {"n": 0}
+
+    def execute(scope=None, **kwargs):
+        index = min(calls["n"], len(values) - 1)
+        calls["n"] += 1
+        clock.advance(10_000)
+        return values[index]
+
+    registry = ToolRegistry()
+    registry.register(ToolSpec(
+        name="read_more",
+        description="read one more distinct piece",
+        input_schema=EMPTY_SCHEMA,
+        execute=execute,
+        effect=Effect.READ,
+        is_concurrency_safe=True,
+        used_backend="fake_read",
+    ))
+    rounds = []
+    for _ in range(4):
+        rounds.append([
+            ToolCallArrived(call=ToolCall(id=f"c{len(rounds)}", name="read_more", arguments={})),
+            TurnDone(usage=None, raw_text=None),
+        ])
+    rounds.append([TurnDone(usage=None, raw_text="done")])
+    backend = ScriptedBackend(*rounds)
+    client = LoopModelClient(backend)
+
+    events, terminal = asyncio.run(
+        collect(make_params(client=client, registry=registry, clock=clock, budget_renewals=1))
+    )
+
+    assert calls["n"] == 4
+    assert len(backend.received) == 5
+    assert terminal.reason is TransitionReason.COMPLETED
+    assert terminal.message == "done"
+
+
 def test_proactive_compaction_replaces_history_at_seventy_percent():
     """Proactive compaction fires before a model call at >=70% token budget."""
     calls = {"n": 0}

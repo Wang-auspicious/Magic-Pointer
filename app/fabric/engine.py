@@ -933,13 +933,17 @@ def run_agent_turn(
     hook_manager: Any | None = None,
     session: Any | None = None,
     request_header: Mapping[str, Any] | None = None,
+    local_action_input: str | None = None,
+    evidence_input: str | None = None,
 ) -> Terminal:
     """Run one agentic loop turn to its Terminal (synchronous entry).
 
     - Routing: only exact zero-model local actions (copy/screenshot/source)
-      may short-circuit. Recipe keyword trajectories are not consumed by the
-      production loop: the original instruction stays byte-for-byte intact
-      and the model chooses among self-describing tools.
+      may short-circuit; ``local_action_input`` is the pure instruction
+      channel used for that match. When the caller appends an evidence block
+      to ``user_input`` (the bridge does), it MUST pass
+      ``local_action_input`` as the raw command so screen text can never
+      hijack the request into a zero-model local action (red-team T6).
     - Budgets: ``budgets`` override (default ``DEFAULT_BUDGETS``, FULL_ANSWER
       full-answer stage); ``emergency_turn_fuse`` is an explicit diagnostic
       override,
@@ -958,7 +962,9 @@ def run_agent_turn(
       fallback that can create a second tool universe. Cancellation during a
       tool execution propagates as :class:`CancelledError`.
     """
-    local = match_local_action(user_input)
+    local = match_local_action(
+        local_action_input if local_action_input is not None else user_input
+    )
     if local is not None:
         # Deterministic local actions (save_screenshot / copy_object_text /
         # show_source) resolve without the loop and without a model call —
@@ -999,6 +1005,7 @@ def run_agent_turn(
         hook_manager=hook_manager,
         session=session,
         request_header=request_header or {},
+        evidence_input=evidence_input,
     )
     return asyncio.run(_consume_agent_loop(params))
 
