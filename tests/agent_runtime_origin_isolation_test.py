@@ -185,12 +185,12 @@ class TestLoopOriginTagging:
 
         assert state["calls"] == 1
         second_messages = backend.received[1][0]
-        assert [m.role for m in second_messages] == [Role.USER, Role.TOOL]
+        assert [m.role for m in second_messages] == [Role.USER, Role.ASSISTANT, Role.TOOL]
         assert second_messages[0].origin == ORIGIN_INSTRUCTION
-        assert second_messages[1].origin == ORIGIN_DATA
-        assert second_messages[1].content == "screenshot saved"
+        assert second_messages[2].origin == ORIGIN_DATA
+        assert second_messages[2].content == "screenshot saved"
         finished = [e for e in events if isinstance(e, TurnFinished)]
-        tool_msg = finished[-1].state.messages[1]
+        tool_msg = finished[-1].state.messages[2]
         assert tool_msg.role is Role.TOOL
         assert tool_msg.origin == ORIGIN_DATA
 
@@ -241,12 +241,12 @@ class TestLoopOriginTagging:
         )
 
         second_messages = backend.received[1][0]
-        error_msg = second_messages[1]
+        error_msg = second_messages[2]
         assert error_msg.role is Role.TOOL
         assert error_msg.is_error is True
         assert error_msg.origin == ORIGIN_DATA
 
-    def test_harness_recovery_and_backend_error_messages_are_data(self) -> None:
+    def test_token_recovery_is_data_but_provider_retry_adds_no_message(self) -> None:
         recovery_backend = ScriptedBackend(
             withheld_scene(),
             [TurnDone(usage=None, raw_text="ok")],
@@ -263,12 +263,17 @@ class TestLoopOriginTagging:
             [TurnDone(usage=None, raw_text="ok")],
         )
         error_client = LoopModelClient(error_backend)
-        asyncio.run(collect(make_params(client=error_client)))
-        error_msg = error_backend.received[1][0][-1]
-        assert error_msg.role is Role.USER
-        assert error_msg.is_error is True
-        assert "model_request_timeout" in error_msg.content
-        assert error_msg.origin == ORIGIN_DATA
+        _events, terminal = asyncio.run(collect(make_params(client=error_client)))
+        assert terminal.turns == 1
+        assert error_backend.received[1][0] == error_backend.received[0][0]
+        assert error_backend.received[1][0] == [
+            AgentMessage(
+                role=Role.USER,
+                content="hello",
+                tool_call_id=None,
+                name=None,
+            )
+        ]
 
 
 class TestInstructionChannelFilter:
@@ -440,10 +445,11 @@ class TestIsolationSafety:
         )
 
         second_messages = backend.received[1][0]
-        assert [m.role for m in second_messages] == [Role.USER, Role.TOOL]
-        assert second_messages[1].content == ATTACK_TEXT
-        assert second_messages[1].origin == ORIGIN_DATA
-        assert second_messages[1].role is Role.TOOL
+        assert [m.role for m in second_messages] == [Role.USER, Role.ASSISTANT, Role.TOOL]
+        assert second_messages[1].tool_calls[0]["name"] == "clipboard_read"
+        assert second_messages[2].content == ATTACK_TEXT
+        assert second_messages[2].origin == ORIGIN_DATA
+        assert second_messages[2].role is Role.TOOL
         instructions = instruction_messages(second_messages)
         assert len(instructions) == 1
         assert instructions[0] is second_messages[0]
@@ -464,6 +470,42 @@ class TestValidateMessages:
 
         with pytest.raises(ValueError):
             validate_messages([smuggled])
+
+    def test_accepts_injected_data_user_recovery_messages(self) -> None:
+        """Harness-injected recovery feedback is user+data but explicitly
+        tagged: it is a corrective signal, never a user instruction
+        (review P2.5)."""
+        recovery = AgentMessage(
+            role=Role.USER,
+            content="Backend error: gateway down",
+            tool_call_id=None,
+            name=None,
+            origin=ORIGIN_DATA,
+            injected=True,
+        )
+
+        assert validate_messages([recovery]) is None
+
+    def test_provider_retry_reuses_the_validated_message_snapshot(self) -> None:
+        """A request-level backend error retries below the semantic loop."""
+        backend = ScriptedBackend(
+            [TurnWithheld(reason="backend_error:gateway_unreachable")],
+            [TurnDone(usage=None, raw_text="recovered answer")],
+        )
+        client = LoopModelClient(backend)
+
+        events, terminal = asyncio.run(
+            collect(make_params(client=client))
+        )
+
+        assert terminal.reason.value == "completed"
+        assert terminal.turns == 1
+        second = backend.received[1][0]
+        assert second == backend.received[0][0]
+        assert not any(m.injected for m in second)
+        finished = [e for e in events if isinstance(e, TurnFinished)]
+        for state in finished:
+            validate_messages(state.state.messages)
 
     def test_rejects_instruction_tool_combination(self) -> None:
         mislabeled_tool = AgentMessage(

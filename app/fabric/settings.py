@@ -16,6 +16,21 @@ class SettingsError(RuntimeError):
     pass
 
 
+def deep_merge_settings(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
+    """RFC 7396 merge-patch: dicts merge recursively, scalars/arrays replace,
+    JSON null deletes the key. ``base`` is never mutated."""
+    merged: dict[str, Any] = dict(base)
+    for key, value in patch.items():
+        if value is None:
+            merged.pop(key, None)
+            continue
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = deep_merge_settings(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
 _SHORTCUT_MODIFIERS = {"control", "alt", "shift", "super", "command", "commandorcontrol"}
 _RESERVED_SHORTCUTS = {
     "control+alt+enter",

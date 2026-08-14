@@ -89,6 +89,41 @@ def _queued_events(path: Path, offset: int) -> tuple[list[dict[str, Any]], int]:
     return values, next_offset
 
 
+def _pi_rpc_response_error(value: dict[str, Any], *, request_id: str) -> str | None:
+    """Return a stable error when Pi rejects one correlated RPC command."""
+    if (
+        value.get("type") != "response"
+        or str(value.get("id") or "") != str(request_id)
+        or value.get("success") is not False
+    ):
+        return None
+    command = str(value.get("command") or "command").strip().replace(" ", "_")[:80]
+    detail = str(value.get("error") or "rejected").strip()[:1600]
+    return f"pi_rpc_{command}_rejected:{detail}"
+
+
+def _pi_rpc_terminal_error(agent_end: dict[str, Any] | None) -> str | None:
+    """Read Pi's final assistant stop reason; settlement alone does not mean success."""
+    if not isinstance(agent_end, dict) or agent_end.get("type") != "agent_end":
+        return None
+    messages = agent_end.get("messages")
+    if not isinstance(messages, list):
+        return None
+    for message in reversed(messages):
+        if not isinstance(message, dict) or message.get("role") != "assistant":
+            continue
+        reason = str(message.get("stopReason") or message.get("stop_reason") or "").casefold()
+        if reason not in {"error", "aborted"}:
+            return None
+        detail = str(
+            message.get("errorMessage")
+            or message.get("error_message")
+            or reason
+        ).strip()[:1600]
+        return f"pi_rpc_agent_{reason}:{detail}"
+    return None
+
+
 def _target_lease_allows_progress(
     store: AgentTaskStore,
     task_id: str,
@@ -121,8 +156,12 @@ def _run_pi_rpc(
 ) -> int:
     events_path = stdout_path.parent / "events.jsonl"
     settled = threading.Event()
+    initial_accepted = threading.Event()
+    protocol_failed = threading.Event()
     event_count = 0
     last_event: dict[str, Any] | None = None
+    last_agent_end: dict[str, Any] | None = None
+    protocol_error: str | None = None
     write_lock = threading.Lock()
 
     with stdout_path.open("wb") as stdout_handle, stderr_path.open("wb") as stderr_handle:
@@ -147,7 +186,7 @@ def _run_pi_rpc(
                 child.stdin.flush()
 
         def read_stdout() -> None:
-            nonlocal event_count, last_event
+            nonlocal event_count, last_event, last_agent_end, protocol_error
             if child.stdout is None:
                 return
             for raw in iter(child.stdout.readline, b""):
@@ -160,6 +199,26 @@ def _run_pi_rpc(
                 if isinstance(value, dict):
                     event_count += 1
                     last_event = value
+                    response_error = _pi_rpc_response_error(value, request_id="initial")
+                    if response_error:
+                        protocol_error = response_error
+                        protocol_failed.set()
+                    elif (
+                        value.get("type") == "response"
+                        and str(value.get("id") or "") == "initial"
+                        and value.get("success") is True
+                    ):
+                        initial_accepted.set()
+                    response_id = str(value.get("id") or "")
+                    if response_id.startswith("steer:") and value.get("type") == "response":
+                        steer_id = response_id.removeprefix("steer:")
+                        steer_error = _pi_rpc_response_error(value, request_id=response_id)
+                        if steer_error:
+                            store.mark_steer_rejected(task_id, steer_id, steer_error)
+                        elif value.get("success") is True:
+                            store.mark_steer_delivered(task_id, steer_id)
+                    if value.get("type") == "agent_end":
+                        last_agent_end = value
                     if value.get("type") == "agent_settled":
                         settled.set()
 
@@ -167,9 +226,19 @@ def _run_pi_rpc(
         reader.start()
         send({"id": "initial", "type": "prompt", "message": request.prompt})
 
+        current_attempt = int(store._read(task_id).get("attempt") or 1)
         offset = 0
         settled_at: float | None = None
+        initial_deadline = time.monotonic() + 10.0
         while child.poll() is None:
+            if protocol_failed.is_set():
+                child.terminate()
+                break
+            if not initial_accepted.is_set() and time.monotonic() >= initial_deadline:
+                protocol_error = "pi_rpc_prompt_ack_timeout"
+                protocol_failed.set()
+                child.terminate()
+                break
             if not _target_lease_allows_progress(store, task_id):
                 child.terminate()
                 break
@@ -178,9 +247,13 @@ def _run_pi_rpc(
                 settled.clear()
                 settled_at = None
                 for event in queued:
-                    if event.get("type") != "steer":
+                    if (
+                        event.get("type") != "steer"
+                        or int(event.get("attempt") or 0) != current_attempt
+                    ):
                         continue
                     send({
+                        "id": f"steer:{str(event.get('eventId') or '')}",
                         "type": "prompt",
                         "message": str(event.get("message") or ""),
                         "streamingBehavior": "steer",
@@ -208,6 +281,15 @@ def _run_pi_rpc(
         return 0
     stdout = _tail(stdout_path)
     stderr = _tail(stderr_path)
+    if protocol_error:
+        store.complete(
+            task_id,
+            exit_code=int(child.returncode or 1),
+            summary=(stdout or stderr)[-4000:],
+            output={"eventCount": event_count, "terminalEvent": last_event},
+            error=protocol_error,
+        )
+        return int(child.returncode or 1)
     if not settled.is_set():
         store.complete(
             task_id,
@@ -217,6 +299,21 @@ def _run_pi_rpc(
             error=f"pi_rpc_exit_{child.returncode}",
         )
         return int(child.returncode or 1)
+    terminal_error = _pi_rpc_terminal_error(last_agent_end)
+    if terminal_error:
+        store.complete(
+            task_id,
+            exit_code=1,
+            summary=(stdout or stderr)[-4000:],
+            output={
+                "eventCount": event_count,
+                "terminalEvent": last_agent_end,
+                "protocol": "jsonl-rpc",
+                "steering": "live",
+            },
+            error=terminal_error,
+        )
+        return 1
     store.complete(
         task_id,
         exit_code=0,

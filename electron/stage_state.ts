@@ -16,7 +16,7 @@
 (() => {
 type InputMode = 'text' | 'voice';
 type StageName = typeof STATES[number];
-type TurnStatus = 'done' | 'failed' | 'pending';
+type TurnStatus = 'awaiting' | 'done' | 'failed' | 'pending';
 type UnknownRecord = Record<string, unknown>;
 
 interface Rect {
@@ -150,7 +150,12 @@ function closeTurn(
   state: StageMachineState,
   { result = null, error = null }: { error?: unknown; result?: unknown },
 ): Pick<StageMachineState, 'nextTurnId' | 'turns'> {
-  const status: TurnStatus = error == null ? 'done' : 'failed';
+  const resultRecord = recordOf(result);
+  const status: TurnStatus = error != null
+    ? 'failed'
+    : resultRecord?.awaitingUserInput === true
+      ? 'awaiting'
+      : 'done';
   const turns = state.turns.slice();
   let index = -1;
   for (let i = turns.length - 1; i >= 0; i -= 1) {

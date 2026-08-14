@@ -3,6 +3,15 @@
 > 用途：发给 Web 端 AI 讨论架构与后续能力接入的完整参考。最后更新 2026-08-10。
 > 数据基线：Git 跟踪 ~560 源文件 / 约 11 万行；Python 测试 1073 项、Node 测试 127 项全绿；非测试 JavaScript 已全部迁移为 TypeScript。
 
+> **2026-08-14 增补（插件内核批）**：本文地图保持，但架构新增一层——
+> `app/harness/`（Context 服务仓库 / inject / 可逆 effect / 四模式事件 / scope +
+> plugin 协议 + 分层组合 + builtin bundle）。`scripts/selection_bridge.py` 的
+> `_loop_router` 不再手接线，改为 `boot_loop_context(runtime)` 组合插件树。
+> 新增 `data/plugins/`（用户插件目录）与 `scripts/harness_dump_config.py`
+> （启动树检视）。审查与实施：`docs/2026-08-14-plugin-architecture-review.md`、
+> `docs/superpowers/plans/2026-08-14-plugin-kernel.md`；权威账本仍以
+> `docs/design/MAGIC_POINTER_HARNESS_20260811.md` §18 为准。
+
 ---
 
 ## 一、项目定位（一句话）

@@ -5,10 +5,13 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
+from functools import wraps
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 from app.fabric.agents import AgentInvocation, AgentRequest
 from app.fabric.artifacts import ArtifactRegistry, ArtifactRegistryError
@@ -17,6 +20,21 @@ from app.fabric.target_lease import reconfirm_target_lease, validate_target_leas
 
 class AgentTaskError(RuntimeError):
     pass
+
+
+_PROCESS_LOCKS: dict[str, threading.RLock] = {}
+_PROCESS_LOCKS_GUARD = threading.Lock()
+
+
+def _serialized_task_mutation(method: Callable[..., Any]) -> Callable[..., Any]:
+    """Serialize one task's read-modify-write cycle across threads/processes."""
+
+    @wraps(method)
+    def wrapped(self: "AgentTaskStore", task_id: str, *args: Any, **kwargs: Any) -> Any:
+        with self._mutation_lock(task_id):
+            return method(self, task_id, *args, **kwargs)
+
+    return wrapped
 
 
 def _now() -> str:
@@ -94,6 +112,45 @@ class AgentTaskStore:
             raise AgentTaskError("invalid task id")
         return self.root / task_id / "task.json"
 
+    @contextmanager
+    def _mutation_lock(self, task_id: str) -> Iterator[None]:
+        """Hold the per-task lock for an entire read-modify-write transition.
+
+        Atomic replacement prevents torn JSON, but it does not prevent two
+        processes from both reading ``running`` and then overwriting each
+        other's terminal state.  The companion lock file closes that race on
+        Windows and POSIX; the in-process RLock also coordinates independent
+        store instances in different threads.
+        """
+        task_file = self._task_file(task_id)
+        task_file.parent.mkdir(parents=True, exist_ok=True)
+        lock_path = task_file.with_suffix(task_file.suffix + ".lock")
+        lock_key = str(lock_path.resolve())
+        with _PROCESS_LOCKS_GUARD:
+            process_lock = _PROCESS_LOCKS.setdefault(lock_key, threading.RLock())
+        with process_lock, lock_path.open("a+b") as handle:
+            handle.seek(0, os.SEEK_END)
+            if handle.tell() == 0:
+                handle.write(b"\0")
+                handle.flush()
+            handle.seek(0)
+            if os.name == "nt":
+                import msvcrt
+
+                msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                handle.seek(0)
+                if os.name == "nt":
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
     def _spawn_worker(self, task_file: Path) -> int:
         script = Path(__file__).resolve().parents[2] / "scripts" / "agent_worker.py"
         kwargs: dict[str, Any] = {
@@ -142,6 +199,15 @@ class AgentTaskStore:
 
     def start(self, request: AgentRequest, invocation: AgentInvocation) -> dict[str, Any]:
         task_id = str(uuid.uuid4())
+        return self._start_locked(task_id, request, invocation)
+
+    @_serialized_task_mutation
+    def _start_locked(
+        self,
+        task_id: str,
+        request: AgentRequest,
+        invocation: AgentInvocation,
+    ) -> dict[str, Any]:
         value = {
             "schemaVersion": 1,
             "taskId": task_id,
@@ -157,6 +223,7 @@ class AgentTaskStore:
             "result": {},
             "cancelRequested": False,
             "attempt": 1,
+            "steeringReceipts": [],
             "request": request.to_dict(),
             "invocation": invocation.to_dict(),
         }
@@ -201,6 +268,12 @@ class AgentTaskStore:
             "sessionEvidence": dict(metadata.get("sessionEvidence") or {}),
             "contextPacket": dict(metadata.get("contextPacket") or {}),
             "transport": str(invocation.get("protocol") or ""),
+            "lastSteering": dict(value.get("lastSteering") or {}),
+            "steeringReceipts": [
+                dict(item)
+                for item in list(value.get("steeringReceipts") or [])[-64:]
+                if isinstance(item, dict)
+            ],
         }
 
     @staticmethod
@@ -290,6 +363,7 @@ class AgentTaskStore:
             result["artifactIds"] = artifact_ids[:32]
             value["result"] = result
 
+    @_serialized_task_mutation
     def status(self, task_id: str) -> dict[str, Any]:
         value = self._read(task_id)
         worker_pid = int(value.get("workerPid") or 0)
@@ -326,6 +400,7 @@ class AgentTaskStore:
         public["alive"] = alive
         return public
 
+    @_serialized_task_mutation
     def mark_running(self, task_id: str, *, agent_pid: int) -> dict[str, Any]:
         value = self._read(task_id)
         if value["status"] not in {"queued", "running"}:
@@ -336,6 +411,7 @@ class AgentTaskStore:
         self._write(value)
         return self._public(value)
 
+    @_serialized_task_mutation
     def complete(
         self,
         task_id: str,
@@ -369,6 +445,7 @@ class AgentTaskStore:
         })
         return self._public(value)
 
+    @_serialized_task_mutation
     def link_provenance(
         self,
         task_id: str,
@@ -411,6 +488,7 @@ class AgentTaskStore:
         })
         return self._public(value)
 
+    @_serialized_task_mutation
     def enforce_target_lease(
         self,
         task_id: str,
@@ -485,6 +563,7 @@ class AgentTaskStore:
             })
         return self._public(value)
 
+    @_serialized_task_mutation
     def reconfirm_target(
         self,
         task_id: str,
@@ -537,22 +616,141 @@ class AgentTaskStore:
         })
         return self._public(value)
 
+    @_serialized_task_mutation
     def steer(self, task_id: str, message: str) -> dict[str, Any]:
         value = self._read(task_id)
         clean = str(message or "").strip()
         if not clean:
             raise AgentTaskError("steer message is empty")
-        event = {"timestamp": _now(), "type": "steer", "message": clean[:12000]}
+        invocation = value.get("invocation")
+        protocol = (
+            str(invocation.get("protocol") or "")
+            if isinstance(invocation, dict)
+            else ""
+        )
+        if protocol != "jsonl-rpc":
+            raise AgentTaskError("task_not_steerable")
+        if value.get("status") not in {"queued", "running"}:
+            raise AgentTaskError("task_not_active")
+        event_id = str(uuid.uuid4())
+        queued_at = _now()
+        attempt = int(value.get("attempt") or 1)
+        event = {
+            "timestamp": queued_at,
+            "type": "steer",
+            "eventId": event_id,
+            "attempt": attempt,
+            "message": clean[:12000],
+        }
         event_path = self._task_file(task_id).parent / "events.jsonl"
         with event_path.open("a", encoding="utf-8", newline="\n") as handle:
             handle.write(json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        receipt = {
+            "eventId": event_id,
+            "attempt": attempt,
+            "state": "queued",
+            "queuedAt": queued_at,
+            "deliveredAt": None,
+            "rejectedAt": None,
+            "error": None,
+        }
+        receipts = [
+            dict(item)
+            for item in list(value.get("steeringReceipts") or [])
+            if isinstance(item, dict)
+        ]
+        receipts.append(receipt)
+        value["steeringReceipts"] = receipts[-64:]
+        value["lastSteering"] = dict(receipt)
+        value["updatedAt"] = queued_at
+        self._write(value)
         return {
             "taskId": task_id,
-            "queued": value["status"] in {"queued", "running"},
-            "deliveredLive": (value.get("invocation") or {}).get("protocol") == "jsonl-rpc",
+            "queued": True,
+            "deliveredLive": False,
+            "deliveryState": "queued",
+            "eventId": event_id,
+            "attempt": attempt,
             "status": value["status"],
         }
 
+    @_serialized_task_mutation
+    def mark_steer_delivered(self, task_id: str, event_id: str) -> dict[str, Any]:
+        """Acknowledge that the live RPC child accepted one queued steering event."""
+        value = self._read(task_id)
+        delivered_at = _now()
+        receipts = [
+            dict(item)
+            for item in list(value.get("steeringReceipts") or [])
+            if isinstance(item, dict)
+        ]
+        matched: dict[str, Any] | None = None
+        for receipt in receipts:
+            if str(receipt.get("eventId") or "") == str(event_id or ""):
+                receipt["state"] = "delivered"
+                receipt["deliveredAt"] = delivered_at
+                receipt["rejectedAt"] = None
+                receipt["error"] = None
+                matched = receipt
+                break
+        if matched is None:
+            return self._public(value)
+        value["steeringReceipts"] = receipts[-64:]
+        steering = value.get("lastSteering")
+        steering = dict(steering) if isinstance(steering, dict) else {}
+        if str(steering.get("eventId") or "") == str(event_id or ""):
+            value["lastSteering"] = dict(matched)
+        value["updatedAt"] = delivered_at
+        self._write(value)
+        self._append_event(task_id, "steer_delivered", {
+            "eventId": str(event_id),
+            "attempt": int(matched.get("attempt") or 1),
+        })
+        return self._public(value)
+
+    @_serialized_task_mutation
+    def mark_steer_rejected(
+        self,
+        task_id: str,
+        event_id: str,
+        error: str,
+    ) -> dict[str, Any]:
+        """Record a Pi RPC rejection without pretending the steering was delivered."""
+        value = self._read(task_id)
+        rejected_at = _now()
+        clean_error = str(error or "steering rejected")[:2000]
+        receipts = [
+            dict(item)
+            for item in list(value.get("steeringReceipts") or [])
+            if isinstance(item, dict)
+        ]
+        matched: dict[str, Any] | None = None
+        for receipt in receipts:
+            if str(receipt.get("eventId") or "") == str(event_id or ""):
+                receipt["state"] = "rejected"
+                receipt["rejectedAt"] = rejected_at
+                receipt["error"] = clean_error
+                matched = receipt
+                break
+        if matched is None:
+            return self._public(value)
+        value["steeringReceipts"] = receipts[-64:]
+        steering = value.get("lastSteering")
+        steering = dict(steering) if isinstance(steering, dict) else {}
+        if str(steering.get("eventId") or "") == str(event_id or ""):
+            value["lastSteering"] = dict(matched)
+        value["updatedAt"] = rejected_at
+        self._write(value)
+        self._append_event(task_id, "steer_rejected", {
+            "eventId": str(event_id),
+            "attempt": int(matched.get("attempt") or 1),
+            "error": clean_error,
+        })
+        return self._public(value)
+
+    @_serialized_task_mutation
     def cancel(self, task_id: str) -> dict[str, Any]:
         value = self._read(task_id)
         if value["status"] in {"succeeded", "failed", "cancelled", "interrupted"}:
@@ -610,6 +808,7 @@ class AgentTaskStore:
     def recover(self) -> list[dict[str, Any]]:
         return self.list(limit=500)
 
+    @_serialized_task_mutation
     def resume(self, task_id: str) -> dict[str, Any]:
         value = self._read(task_id)
         if value["status"] not in {"failed", "interrupted"}:

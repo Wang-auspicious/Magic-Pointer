@@ -10,6 +10,7 @@ Pure Python, stdlib-only. No I/O, no Electron coupling.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -68,18 +69,18 @@ _TARGET_ACTIONS: dict[str, tuple[HintSpec, ...]] = {
     ),
     "url": (
         HintSpec("打开链接", "open", "打开这个链接"),
-        HintSpec("发邮件", "email", "把链接内容发给别人"),
-        HintSpec("拨号", "dial", "拨打这个号码"),
+        HintSpec("翻译", "translate", "把链接内容翻译成其他语言"),
+        HintSpec("总结", "summarize", "总结这个链接的内容"),
     ),
     "email": (
-        HintSpec("打开链接", "open", "打开这个链接"),
-        HintSpec("发邮件", "email", "把链接内容发给别人"),
-        HintSpec("拨号", "dial", "拨打这个号码"),
+        HintSpec("打开链接", "open", "打开这封邮件"),
+        HintSpec("回复", "reply", "起草一封回复"),
+        HintSpec("总结", "summarize", "总结这封邮件的内容"),
     ),
     "phone": (
-        HintSpec("打开链接", "open", "打开这个链接"),
-        HintSpec("发邮件", "email", "把链接内容发给别人"),
         HintSpec("拨号", "dial", "拨打这个号码"),
+        HintSpec("发短信", "sms", "给这个号码发短信"),
+        HintSpec("存联系人", "contact", "把这个号码存为联系人"),
     ),
 }
 
@@ -113,7 +114,21 @@ def _make_hint(spec: HintSpec, ids: Sequence[str]) -> Hint:
 
 
 def _available(spec: HintSpec, tools: Sequence[str]) -> bool:
-    return any(spec.keyword in tool for tool in tools)
+    """True when ``spec.keyword`` is a whole word in at least one tool name.
+
+    Tool names are split on non-alphanumerics into tokens, and each token is
+    split again on underscores: "translate" matches "text.translate_in_place"
+    and "markdown" matches "table.to_markdown", but "open" never matches
+    "opencode" (review P2.10: bare substring matching串线).
+    """
+    for tool in tools:
+        for token in _TOKEN_SPLIT.split(str(tool).lower()):
+            if token == spec.keyword or spec.keyword in token.split("_"):
+                return True
+    return False
+
+
+_TOKEN_SPLIT = re.compile(r"[^a-z0-9_]+")
 
 
 def hints_for(

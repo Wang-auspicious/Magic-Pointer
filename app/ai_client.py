@@ -8,8 +8,10 @@ import time
 from io import BytesIO
 from pathlib import Path
 
+from app.governance.cancellation import CancelledError
 from app.model_health import (
     record_failure,
+    record_note,
     record_success,
     record_unconfigured,
     short_circuit_message,
@@ -17,6 +19,11 @@ from app.model_health import (
 
 ROOT = Path(__file__).resolve().parents[1]
 SECRETS_DIR = ROOT / "secrets"
+USER_SECRETS_DIR = (
+    Path(os.environ["MAGIC_POINTER_USER_DATA_DIR"]) / "secrets"
+    if os.environ.get("MAGIC_POINTER_USER_DATA_DIR")
+    else None
+)
 
 LabeledImage = tuple[str, Path]
 
@@ -49,14 +56,23 @@ def _plain_error_excerpt(text: str, limit: int = 220) -> str:
 def read_local_secret(name: str) -> str | None:
     if os.getenv("MAGIC_POINTER_DISABLE_LOCAL_SECRETS") == "1":
         return None
-    path = SECRETS_DIR / name
-    try:
-        value = path.read_text(encoding="utf-8").strip()
-        if value.startswith("\ufeff"):
-            value = value[1:]
-        return value or None
-    except FileNotFoundError:
-        return None
+    # 打包安装版里 ROOT/secrets 不存在（secrets 不进安装包、也不进 git）。
+    # 查找顺序：开发树 secrets → 用户数据目录 secrets（sync_install.ps1 会把
+    # 本机 secrets 拷进 %LOCALAPPDATA%\Magic Pointer\secrets）。
+    candidates = [SECRETS_DIR / name]
+    if USER_SECRETS_DIR is not None:
+        candidates.append(USER_SECRETS_DIR / name)
+    for path in candidates:
+        try:
+            value = path.read_text(encoding="utf-8").strip()
+            if value.startswith("\ufeff"):
+                value = value[1:]
+            return value or None
+        except FileNotFoundError:
+            continue
+        except OSError:
+            continue
+    return None
 
 
 def get_ai_config() -> tuple[str | None, str | None, str]:
@@ -300,6 +316,7 @@ def _tool_completion_response(data: dict, api_mode: str) -> dict:
                 continue
             arguments = block.get("input")
             calls.append({
+                "id": str(block.get("id") or ""),
                 "name": str(block["name"]),
                 "arguments": arguments if isinstance(arguments, dict) else {},
             })
@@ -317,6 +334,7 @@ def _tool_completion_response(data: dict, api_mode: str) -> dict:
         except ValueError:
             arguments = {}
         calls.append({
+            "id": str((raw_call or {}).get("id") or ""),
             "name": name,
             "arguments": arguments if isinstance(arguments, dict) else {},
         })
@@ -408,8 +426,8 @@ def ask_text_model(
     # A gateway we already know is refusing (402 balance, 401 key, 404 model)
     # gets skipped instead of waited on. Every caller has a local fallback, and
     # burning a full timeout per command is what made the acceptance run feel
-    # broken rather than merely unconfigured.
-    blocked = short_circuit_message()
+    # broken rather than merely unconfigured. The verdict is per endpoint.
+    blocked = short_circuit_message((base_url or "").rstrip("/"))
     if blocked:
         return f"AI 调用失败：{blocked}"
 
@@ -550,7 +568,7 @@ def ask_text_model_with_tools(
         record_unconfigured()
         return {"text": "", "toolCalls": [], "error": "credential_missing"}
 
-    blocked = short_circuit_message()
+    blocked = short_circuit_message((base_url or "").rstrip("/"))
     if blocked:
         return {"text": "", "toolCalls": [], "error": blocked}
 
@@ -646,6 +664,12 @@ def ask_vision_model(
     context_text: str | None = None,
     extra_image_paths: list[Path] | None = None,
     labeled_extra_images: list[LabeledImage] | None = None,
+    *,
+    system_prompt: str | None = None,
+    timeout_s: float = 120.0,
+    attempts: int = 3,
+    max_tokens: int = 1200,
+    cancellation_scope: object = None,
 ) -> str:
     """Ask an OpenAI-compatible multimodal model about the screenshot."""
 
@@ -653,13 +677,10 @@ def ask_vision_model(
     model = get_vision_model(model)
     api_key = get_vision_key(api_key)
     if classify_vision_capability(model) is False:
-        record_failure(
-            status=None,
-            exception_name="vision_model_text_only",
-            detail=f"model {model} is classified text-only; refusing image call",
-            model=model,
-            base_url=base_url or "",
-        )
+        # A local configuration verdict, not a gateway failure: writing it
+        # into the shared health store would open the circuit for the text
+        # endpoint too (and it may be a different gateway entirely). Refuse
+        # honestly and leave every endpoint's health untouched.
         return (
             f"AI 视觉调用失败：当前模型 {model} 是纯文本模型，无法读图。\n\n"
             f"截图已保存在本地：{image_path}\n\n"
@@ -675,7 +696,9 @@ def ask_vision_model(
             "可通过环境变量或 secrets/openai_key.txt 配置 key。"
         )
 
-    blocked = short_circuit_message()
+    base_url = get_vision_base_url(base_url)
+    base_url = (base_url or "https://api.openai.com/v1").rstrip("/")
+    blocked = short_circuit_message(base_url)
     if blocked:
         return (
             f"AI 调用失败：{blocked}\n\n"
@@ -685,8 +708,11 @@ def ask_vision_model(
     try:
         import httpx
 
-        base_url = get_vision_base_url(base_url)
-        base_url = (base_url or "https://api.openai.com/v1").rstrip("/")
+        def check_cancelled() -> None:
+            checker = getattr(cancellation_scope, "raise_if_cancelled", None)
+            if callable(checker):
+                checker()
+
         api_mode = get_vision_api_mode(base_url)
         endpoint = _completion_endpoint(base_url, api_mode)
         headers = _completion_headers(api_key, api_mode)
@@ -724,13 +750,16 @@ def ask_vision_model(
             payload = {
                 "model": model,
                 "messages": [{"role": "user", "content": user_content}],
-                "max_tokens": 1200,
+                "max_tokens": max(1, int(max_tokens)),
             }
             if api_mode == "messages":
-                payload["system"] = DEFAULT_SYSTEM_PROMPT
+                payload["system"] = system_prompt or DEFAULT_SYSTEM_PROMPT
                 payload["thinking"] = {"type": "disabled"}
             else:
-                payload["messages"].insert(0, {"role": "system", "content": DEFAULT_SYSTEM_PROMPT})
+                payload["messages"].insert(
+                    0,
+                    {"role": "system", "content": system_prompt or DEFAULT_SYSTEM_PROMPT},
+                )
             return payload
 
 
@@ -739,14 +768,24 @@ def ask_vision_model(
         # Try full payload twice; if the gateway is unstable or dislikes the
         # multimodal payload, fall back to primary image only while keeping text
         # context. 5xx must not dump gateway HTML into the UI.
-        attempts = [(True, 0.0), (True, 0.9), (False, 1.3)]
-        for include_extras, delay in attempts:
+        attempt_count = min(3, max(1, int(attempts)))
+        has_extras = bool(extra_image_paths or labeled_extra_images)
+        attempt_plan = [
+            (
+                not (has_extras and index == attempt_count - 1 and attempt_count > 1),
+                0.0 if index == 0 else min(1.3, 0.45 * (2 ** (index - 1))),
+            )
+            for index in range(attempt_count)
+        ]
+        for include_extras, delay in attempt_plan:
+            check_cancelled()
             if delay:
                 time.sleep(delay)
             try:
                 payload = build_payload(include_extras=include_extras)
-                with _httpx_client(httpx, timeout=120) as client:
+                with _httpx_client(httpx, timeout=max(1.0, float(timeout_s))) as client:
                     response = client.post(endpoint, headers=headers, json=payload)
+                check_cancelled()
                 if response.status_code >= 500:
                     last_http_error = (response.status_code, _plain_error_excerpt(response.text))
                     record_failure(status=response.status_code, detail=response.text[:300], model=model, base_url=base_url)
@@ -781,6 +820,8 @@ def ask_vision_model(
         if last_exc:
             raise last_exc
         raise RuntimeError("unknown API failure")
+    except CancelledError:
+        raise
     except Exception as exc:
         return (
             "AI \u8c03\u7528\u5931\u8d25\uff0c\u4f46\u622a\u56fe\u548c\u5bf9\u8c61\u5df2\u4fdd\u7559\u3002\n\n"

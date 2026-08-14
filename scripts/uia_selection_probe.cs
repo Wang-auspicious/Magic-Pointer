@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
+using System.IO;
+using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
@@ -73,6 +76,7 @@ internal static class UiaSelectionProbe
         public Rect Rectangle = Rect.Empty;
     }
 
+#if !RESIDENT_HOST
     public static int Main(string[] args)
     {
         EnableDpiAwareness();
@@ -138,6 +142,7 @@ internal static class UiaSelectionProbe
         WriteResult(result, hwndValue, stopwatch.ElapsedMilliseconds);
         return result.Ok ? 0 : 1;
     }
+#endif
 
     private static readonly bool TraceEnabled =
         !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("MAGIC_POINTER_UIA_PROBE_TRACE"));
@@ -203,6 +208,10 @@ internal static class UiaSelectionProbe
                     {
                         TryRegionElements(root, targetRegion.Value, result);
                     }
+                    if (!result.Ok)
+                    {
+                        TryDocumentTextFallback(root, result);
+                    }
                 }
                 else
                 {
@@ -258,6 +267,17 @@ internal static class UiaSelectionProbe
                         TryPointElement(root, targetPoint.Value, result);
                     }
                     TracePhase("point_element");
+
+                    // Editors without an active text selection (Notepad,
+                    // WordPad, RichEdit Documents) expose the whole document
+                    // through TextPattern. A stroke over unselected text must
+                    // still yield the file content instead of an empty
+                    // structured layer that silently degrades to pixels.
+                    if (!result.Ok)
+                    {
+                        TryDocumentTextFallback(root, result);
+                    }
+                    TracePhase("document_text_fallback");
                 }
 
                 if (!result.Ok && string.IsNullOrEmpty(result.Error))
@@ -729,20 +749,51 @@ internal static class UiaSelectionProbe
             {
                 return false;
             }
-            string documentText = pattern.DocumentRange.GetText(MaxTextChars) ?? "";
-            if (string.IsNullOrWhiteSpace(documentText))
+            string documentText = "";
+            bool documentRead = false;
+            try
             {
-                return false;
+                documentText = pattern.DocumentRange.GetText(MaxTextChars) ?? "";
+                documentRead = true;
+            }
+            catch
+            {
+                // Windows Terminal 对超大 maxLength 的 DocumentRange.GetText
+                // 可能直接抛异常；视同空结果，走逐行窗口读取。
+            }
+            if (!documentRead || string.IsNullOrWhiteSpace(documentText))
+            {
+                // Windows Terminal 的 DocumentRange 常返回整段空白（缓冲区
+                // 开头是空行）。走 RangeFromPoint 的逐行窗口读取：这是实测
+                // 可用的终端路径（STATUS 记录过 RangeFromPoint 已验证）。
+                documentText = ReadLineWindowAroundPoint(pattern, point);
+                if (string.IsNullOrWhiteSpace(documentText))
+                {
+                    return false;
+                }
             }
             string anchorText = "";
             List<Rect> anchorRectangles = new List<Rect>();
             try
             {
-                TextPatternRange anchor = pattern.RangeFromPoint(point);
-                if (anchor != null)
+                // 与行窗口读取一致：手势可能落在空白列，偏移重试直到拿到
+                // 非空锚点行。
+                for (int attempt = 0; attempt < 6 && anchorText.Length == 0; attempt++)
                 {
+                    Point probePoint = new Point(
+                        point.X + attempt * 80,
+                        point.Y + attempt * 40);
+                    TextPatternRange anchor = pattern.RangeFromPoint(probePoint);
+                    if (anchor == null)
+                    {
+                        continue;
+                    }
                     anchor.ExpandToEnclosingUnit(TextUnit.Line);
                     anchorText = (anchor.GetText(2048) ?? "").Trim();
+                    if (anchorText.Length == 0)
+                    {
+                        continue;
+                    }
                     Rect[] lineRectangles = anchor.GetBoundingRectangles();
                     if (lineRectangles != null)
                     {
@@ -791,12 +842,154 @@ internal static class UiaSelectionProbe
         }
     }
 
+    private static string ReadLineWindowAroundPoint(TextPattern pattern, Point point)
+    {
+        // 以点所在行为中心，向前 60 行、向后 140 行，逐行收集文本窗口。
+        // 空行保留为换行占位，保持输出缓冲区的相对结构。总量封顶
+        // MaxTextChars，防止 200 行 x 1024 字失控。
+        // 手势可能落在窗口边框/空白列上（RangeFromPoint 退化），向右下
+        // 偏移重试几次，直到拿到有内容的行窗口。
+        for (int attempt = 0; attempt < 6; attempt++)
+        {
+            Point probePoint = new Point(
+                point.X + attempt * 80,
+                point.Y + attempt * 40);
+            string window = ReadLineWindowAt(pattern, probePoint);
+            if (!string.IsNullOrWhiteSpace(window))
+            {
+                return window;
+            }
+        }
+        return "";
+    }
+
+    private static string ReadLineWindowAt(TextPattern pattern, Point point)
+    {
+        StringBuilder lines = new StringBuilder();
+        try
+        {
+            TextPatternRange cursor = pattern.RangeFromPoint(point);
+            if (cursor == null)
+            {
+                return "";
+            }
+            cursor.ExpandToEnclosingUnit(TextUnit.Line);
+            int moved = cursor.Move(TextUnit.Line, -60);
+            for (int index = 0; index < 200 && lines.Length < MaxTextChars; index++)
+            {
+                string lineText = cursor.GetText(1024) ?? "";
+                lines.Append(lineText);
+                lines.Append('\n');
+                int movedNext = cursor.Move(TextUnit.Line, 1);
+                if (movedNext == 0 && index >= Math.Max(0, 60 + moved))
+                {
+                    break;
+                }
+            }
+        }
+        catch
+        {
+            return "";
+        }
+        return lines.ToString();
+    }
+
+    private static void TryDocumentTextFallback(
+        AutomationElement root,
+        SelectionResult result)
+    {
+        // Whole-document fallback: editors without an active text selection
+        // (Notepad / WordPad / RichEdit Documents) expose the entire document
+        // through TextPattern. Read it (capped at MaxTextChars) so a stroke
+        // over unselected text still yields the file content instead of an
+        // empty structured layer. Terminals never reach this path: they are
+        // handled by TryTerminalBufferAtPoint before the selection chain.
+        try
+        {
+            AutomationElement document = FindFirstTextPatternElement(root);
+            if (document == null)
+            {
+                return;
+            }
+            object patternObject;
+            if (!document.TryGetCurrentPattern(TextPattern.Pattern, out patternObject))
+            {
+                return;
+            }
+            TextPattern pattern = patternObject as TextPattern;
+            if (pattern == null)
+            {
+                return;
+            }
+            string documentText;
+            try
+            {
+                documentText = pattern.DocumentRange.GetText(MaxTextChars) ?? "";
+            }
+            catch
+            {
+                return;
+            }
+            if (string.IsNullOrWhiteSpace(documentText))
+            {
+                return;
+            }
+            result.Ok = true;
+            result.ResultKind = "document_text";
+            result.Text = documentText;
+            result.Truncated = documentText.Length >= MaxTextChars;
+            result.ElementName = SafeString(document, AutomationElement.NameProperty);
+            result.AutomationId = SafeString(document, AutomationElement.AutomationIdProperty);
+            result.ControlType = SafeControlType(document);
+            result.LocalizedControlType = SafeString(document, AutomationElement.LocalizedControlTypeProperty);
+            result.ClassName = SafeString(document, AutomationElement.ClassNameProperty);
+            result.ElementRectangle = SafeBoundingRectangle(document);
+            Rect rectangle = SafeBoundingRectangle(document);
+            if (!rectangle.IsEmpty)
+            {
+                result.Rectangles.Add(rectangle);
+                result.RectangleCountTotal = 1;
+            }
+            result.Error = "";
+        }
+        catch
+        {
+        }
+    }
+
+    private static AutomationElement FindFirstTextPatternElement(AutomationElement root)
+    {
+        // Prefer the root itself, then one bounded lookup for the first
+        // descendant that supports TextPattern (Document/Edit controls sit
+        // near the top of editor window trees).
+        try
+        {
+            object patternObject;
+            if (root.TryGetCurrentPattern(TextPattern.Pattern, out patternObject))
+            {
+                return root;
+            }
+        }
+        catch
+        {
+        }
+        try
+        {
+            PropertyCondition condition = new PropertyCondition(
+                AutomationElement.IsTextPatternAvailableProperty,
+                true);
+            return root.FindFirst(TreeScope.Descendants, condition);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private static Point RegionCenter(Rect region)
     {
         return new Point(region.Left + (region.Width / 2.0), region.Top + (region.Height / 2.0));
-    }
-
-    private static bool IsRegionControlType(string controlType)
+    }    private static bool IsRegionControlType(string controlType)
     {
         switch (controlType)
         {
@@ -1736,6 +1929,11 @@ internal static class UiaSelectionProbe
 
     private static void WriteResult(SelectionResult result, long hwnd, long elapsedMilliseconds)
     {
+        Console.WriteLine(BuildResultJson(result, hwnd, elapsedMilliseconds));
+    }
+
+    private static string BuildResultJson(SelectionResult result, long hwnd, long elapsedMilliseconds)
+    {
         StringBuilder json = new StringBuilder();
         json.Append("{\"ok\":");
         json.Append(result.Ok ? "true" : "false");
@@ -1836,6 +2034,159 @@ internal static class UiaSelectionProbe
         json.Append(",\"error\":");
         json.Append(JsonString(result.Error));
         json.Append('}');
-        Console.WriteLine(json.ToString());
+        return json.ToString();
     }
+
+#if RESIDENT_HOST
+    // -----------------------------------------------------------------------
+    // 常驻 UIA 宿主（Phase C，评审 2026-08-13 优先级第一）：
+    // 同一个探针逻辑，但进程只启动一次，通过 named pipe 接请求——
+    // 每次读不再付 ~570ms 的进程冷启动 + COM 重建税。空闲时零扫描、
+    // 零 UIA 活动：只有管道上来请求才干活（idle/event-driven 契约）。
+    //
+    // 协议（每行一条请求，UTF-8）：
+    //   id|ping                     -> {"id":N,"ok":true,"result_kind":"ping"}
+    //   id|hwnd                     -> 探针结果 JSON（多一个 "id" 字段）
+    //   id|hwnd|x|y                 -> 以点为目标
+    //   id|hwnd|region|x|y|w|h      -> 以区域为目标
+    // -----------------------------------------------------------------------
+    private static readonly bool ResidenteHostTrace =
+        !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("MAGIC_POINTER_UIA_HOST_TRACE"));
+
+    private static void ResidenteHostLog(string message)
+    {
+        if (!ResidenteHostTrace)
+        {
+            return;
+        }
+        try
+        {
+            Console.Error.WriteLine("@@uiahost " + message);
+        }
+        catch
+        {
+        }
+    }
+
+    private static void HandleResidenteRequest(string line, TextWriter writer)
+    {
+        long id = 0;
+        string[] parts = line.Split('|');
+        if (parts.Length >= 1)
+        {
+            long.TryParse(parts[0], out id);
+        }
+        if (parts.Length >= 2 && parts[1] == "ping")
+        {
+            writer.WriteLine("{\"id\":" + id + ",\"ok\":true,\"result_kind\":\"ping\"}");
+            return;
+        }
+        long hwnd = 0;
+        if (parts.Length < 2 || !long.TryParse(parts[1], out hwnd) || hwnd == 0)
+        {
+            writer.WriteLine("{\"id\":" + id + ",\"ok\":false,\"error\":\"invalid_request\"}");
+            return;
+        }
+        Point? targetPoint = null;
+        Rect? targetRegion = null;
+        double px, py, pw, ph;
+        if (parts.Length >= 8 && parts[2] == "region"
+            && double.TryParse(parts[3], NumberStyles.Float, CultureInfo.InvariantCulture, out px)
+            && double.TryParse(parts[4], NumberStyles.Float, CultureInfo.InvariantCulture, out py)
+            && double.TryParse(parts[5], NumberStyles.Float, CultureInfo.InvariantCulture, out pw)
+            && double.TryParse(parts[6], NumberStyles.Float, CultureInfo.InvariantCulture, out ph)
+            && pw > 0 && ph > 0)
+        {
+            targetRegion = new Rect(px, py, pw, ph);
+        }
+        else if (parts.Length >= 4
+            && double.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out px)
+            && double.TryParse(parts[3], NumberStyles.Float, CultureInfo.InvariantCulture, out py))
+        {
+            targetPoint = new Point(px, py);
+        }
+
+        SelectionResult result = new SelectionResult();
+        Stopwatch stopwatch = Stopwatch.StartNew();
+        try
+        {
+            Task readTask = Task.Run(() => RunProbeCore(hwnd, targetPoint, targetRegion, result));
+            if (!readTask.Wait(UiaProbeHardTimeoutMs))
+            {
+                result.Error = "uia_probe_timeout_" + UiaProbeHardTimeoutMs + "ms";
+            }
+        }
+        catch (Exception ex)
+        {
+            result.Error = ex.GetType().Name + ": " + ex.Message;
+        }
+        stopwatch.Stop();
+        string json = BuildResultJson(result, hwnd, stopwatch.ElapsedMilliseconds);
+        writer.WriteLine("{\"id\":" + id + "," + json.Substring(1));
+    }
+
+    public static int Main(string[] args)
+    {
+        EnableDpiAwareness();
+        Console.OutputEncoding = new UTF8Encoding(false);
+        string pipeName = Environment.GetEnvironmentVariable("MAGIC_POINTER_UIA_HOST_PIPE");
+        if (string.IsNullOrEmpty(pipeName))
+        {
+            pipeName = "MagicPointerUIAHost";
+        }
+        ResidenteHostLog("starting pipe=" + pipeName);
+        while (true)
+        {
+            NamedPipeServerStream server = null;
+            try
+            {
+                // .NET Framework 的 NamedPipeServerStream 断连后不能复用：
+                // 每次连接都新建一个（客户端也是每请求一条连接）。
+                server = new NamedPipeServerStream(
+                    pipeName,
+                    PipeDirection.InOut,
+                    1,
+                    PipeTransmissionMode.Byte,
+                    PipeOptions.Asynchronous);
+                server.WaitForConnection();
+                ResidenteHostLog("client connected");
+            }
+            catch (Exception ex)
+            {
+                ResidenteHostLog("wait failed: " + ex.GetType().Name);
+                try { if (server != null) server.Close(); } catch { }
+                Thread.Sleep(200);
+                continue;
+            }
+            try
+            {
+                using (var reader = new StreamReader(server, new UTF8Encoding(false)))
+                using (var writer = new StreamWriter(server, new UTF8Encoding(false)) { AutoFlush = true })
+                {
+                    string line;
+                    while ((line = reader.ReadLine()) != null)
+                    {
+                        if (line.Length == 0)
+                        {
+                            continue;
+                        }
+                        HandleResidenteRequest(line, writer);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                ResidenteHostLog("session failed: " + ex.GetType().Name);
+            }
+            try
+            {
+                server.Disconnect();
+                server.Close();
+            }
+            catch
+            {
+            }
+        }
+    }
+#endif
 }

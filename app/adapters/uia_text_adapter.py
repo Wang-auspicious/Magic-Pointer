@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import subprocess
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -206,6 +207,159 @@ def _ensure_uia_probe() -> UiaProbeResult:
     return _compile_uia_probe()
 
 
+# ---------------------------------------------------------------------------
+# Resident UIA host (Phase C): same probe logic, one long-lived process on a
+# named pipe. Kills the ~570ms per-read process cold-start tax.
+# ---------------------------------------------------------------------------
+
+UIA_HOST_EXE = ROOT / "data" / "runtime" / "uia_resident_host.exe"
+
+_uia_host_client = None
+_uia_host_disabled = None
+_last_host_spawn_ms = -1e9
+
+
+def _host_enabled() -> bool:
+    global _uia_host_disabled
+    if _uia_host_disabled is None:
+        _uia_host_disabled = (
+            os.environ.get("MAGIC_POINTER_UIA_HOST", "1").strip().casefold()
+            in ("0", "false", "no", "off")
+        )
+    return not _uia_host_disabled
+
+
+def _compile_uia_resident_host(*, timeout: int = 20) -> UiaProbeResult:
+    csc = _find_csc()
+    if csc is None:
+        return UiaProbeResult(False, {}, "Windows C# compiler was not found.")
+    if not UIA_PROBE_SOURCE.exists():
+        return UiaProbeResult(False, {}, "UI Automation probe source is missing.")
+    references: list[Path] = []
+    for name in UIA_REFERENCE_NAMES:
+        reference = _find_uia_reference(name)
+        if reference is None:
+            return UiaProbeResult(False, {}, f"Windows UI Automation reference is missing: {name}")
+        references.append(reference)
+    UIA_HOST_EXE.parent.mkdir(parents=True, exist_ok=True)
+    command = [
+        str(csc),
+        "/nologo",
+        "/target:exe",
+        "/optimize+",
+        "/define:RESIDENT_HOST",
+        f"/out:{UIA_HOST_EXE}",
+        *(f"/reference:{reference}" for reference in references),
+        str(UIA_PROBE_SOURCE),
+    ]
+    try:
+        proc = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+        )
+    except Exception as exc:
+        return UiaProbeResult(False, {}, f"resident UIA host compilation failed: {type(exc).__name__}: {exc}")
+    if proc.returncode != 0 or not UIA_HOST_EXE.exists():
+        detail = (proc.stderr or proc.stdout).strip().replace("\r", " ").replace("\n", " ")[:1600]
+        return UiaProbeResult(False, {}, f"resident UIA host compilation failed: {detail}")
+    return UiaProbeResult(True, {"compiled": True})
+
+
+def _ensure_uia_resident_host() -> UiaProbeResult:
+    try:
+        if (
+            UIA_HOST_EXE.exists()
+            and UIA_HOST_EXE.stat().st_mtime_ns >= UIA_PROBE_SOURCE.stat().st_mtime_ns
+        ):
+            return UiaProbeResult(True, {"compiled": False})
+    except OSError:
+        pass
+    return _compile_uia_resident_host()
+
+
+def _spawn_resident_host() -> None:
+    """Best-effort detached spawn; the pipe ping decides whether it worked."""
+    try:
+        pipe_name = os.environ.get("MAGIC_POINTER_UIA_HOST_PIPE", "MagicPointerUIAHost")
+        env = dict(os.environ)
+        env["MAGIC_POINTER_UIA_HOST_PIPE"] = pipe_name
+        subprocess.Popen(
+            [str(UIA_HOST_EXE)],
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "DETACHED_PROCESS", 0)
+            | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0),
+        )
+    except Exception:
+        pass
+
+
+def get_uia_host_client():
+    """The process-wide resident host client; None when disabled."""
+    global _uia_host_client
+    if not _host_enabled():
+        return None
+    if _uia_host_client is None:
+        from app.uia_host_client import UiaHostClient
+
+        _uia_host_client = UiaHostClient()
+    return _uia_host_client
+
+
+def _resident_probe(
+    hwnd: int,
+    *,
+    target_point: dict[str, int] | None = None,
+    target_region: dict[str, int] | None = None,
+) -> UiaProbeResult | None:
+    """One probe over the resident host; None when the host path is unusable
+    (caller falls back to the per-request probe process)."""
+    global _last_host_spawn_ms
+    client = get_uia_host_client()
+    if client is None or not client.available():
+        return None
+    prepared = _ensure_uia_resident_host()
+    if not prepared.ok:
+        return None
+    try:
+        data = client.probe(
+            int(hwnd),
+            target_point=target_point,
+            target_region=target_region,
+        )
+    except Exception:
+        data = None
+    if not isinstance(data, dict):
+        # Transport failure: the host may simply not be running. Spawn once
+        # per cooldown window and give it one retry before falling back.
+        now = time.monotonic()
+        if now - _last_host_spawn_ms >= 30.0:
+            _last_host_spawn_ms = now
+            _spawn_resident_host()
+            time.sleep(0.25)
+            try:
+                data = client.probe(
+                    int(hwnd),
+                    target_point=target_point,
+                    target_region=target_region,
+                )
+            except Exception:
+                data = None
+        if not isinstance(data, dict):
+            return None
+    if data.get("ok") is True:
+        return UiaProbeResult(True, data)
+    if "ok" in data:
+        return UiaProbeResult(False, data, str(data.get("error") or "")[:1600])
+    return None
+
+
 def _run_uia_selection_probe(
     hwnd: int,
     *,
@@ -220,6 +374,13 @@ def _run_uia_selection_probe(
     # answering correctly*, and the caller treated that as a read failure. This
     # timeout only bounds a wedged process, so it must stay above the probe's own
     # ceiling — callers that pass their own value are responsible for the same.
+    resident = _resident_probe(
+        int(hwnd),
+        target_point=target_point,
+        target_region=target_region,
+    )
+    if resident is not None:
+        return resident
     prepared = _ensure_uia_probe()
     if not prepared.ok:
         return prepared
@@ -243,6 +404,16 @@ def _run_uia_selection_probe(
                     str(int(target_point.get("y"))),
                 ])
             except (TypeError, ValueError):
+                pass
+        if os.environ.get("MAGIC_POINTER_UIA_PROBE_DEBUG"):
+            try:
+                with open(
+                    os.environ.get("MAGIC_POINTER_UIA_PROBE_DEBUG") or "uia-probe-debug.log",
+                    "a",
+                    encoding="utf-8",
+                ) as debug_handle:
+                    debug_handle.write(json.dumps({"argv": argv}, ensure_ascii=False) + "\n")
+            except Exception:
                 pass
         proc = subprocess.run(
             argv,
@@ -555,6 +726,8 @@ class UiaTextSelectionAdapter(AppAdapter):
         method = (
             "uia:terminal-text-pattern"
             if result_kind == "terminal_buffer"
+            else "uia:document-text"
+            if result_kind == "document_text"
             else "uia:region-elements"
             if result_kind == "region_elements"
             else "uia:element-from-point"
@@ -567,7 +740,7 @@ class UiaTextSelectionAdapter(AppAdapter):
             else "uia:text-pattern.selection"
         )
         selection_rectangles = list(data.get("rectangles") or [])[:32]
-        if result_kind in {"point_element", "point_region", "terminal_buffer"} and not selection_rectangles:
+        if result_kind in {"point_element", "point_region", "terminal_buffer", "document_text"} and not selection_rectangles:
             element_rect = data.get("element_rect")
             if isinstance(element_rect, list) and len(element_rect) == 4:
                 selection_rectangles = [element_rect]

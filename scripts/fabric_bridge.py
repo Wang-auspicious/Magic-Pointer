@@ -45,6 +45,13 @@ from app.system_context import list_visible_windows
 force_utf8_stdio()
 
 
+def _deep_merge_settings(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
+    """RFC 7396 merge-patch over the settings document (review Q6)."""
+    from app.fabric.settings import deep_merge_settings
+
+    return deep_merge_settings(base, patch)
+
+
 def _clipboard_writer(value: str) -> None:
     import pyperclip
 
@@ -361,7 +368,14 @@ def main() -> int:
         elif operation == "settings.get":
             result = {"ok": True, "settings": store.load().to_dict()}
         elif operation == "settings.save":
-            settings = FabricSettings.from_dict(dict(payload.get("settings") or {}))
+            # RFC 7396 merge-patch semantics (review Q6): dicts merge
+            # recursively, scalar/array values replace, JSON null deletes.
+            # The renderer sends a local patch; whole-object replacement is
+            # the classic lost-update trap (two writers, one stale snapshot).
+            patch = dict(payload.get("settings") or {})
+            current = store.load().to_dict()
+            merged = _deep_merge_settings(current, patch)
+            settings = FabricSettings.from_dict(merged)
             store.save(settings)
             result = {"ok": True, "settings": settings.to_dict()}
         elif operation == "browser.status":

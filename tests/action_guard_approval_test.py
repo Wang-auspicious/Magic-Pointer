@@ -25,6 +25,8 @@ from app.action_guard.approval import (
 )
 from app.agent_runtime.tool_registry import Effect
 from app.agent_runtime.types import ORIGIN_DATA, ORIGIN_INSTRUCTION
+from app.actions.executor import SafeActionExecutor
+from app.actions.schema import ActionProposal, ExecutionStatus, SafetyLevel
 
 REQUIRED_EFFECTS = (
     Effect.LOCAL_IRREVERSIBLE,
@@ -338,6 +340,26 @@ class TestRequestValidation:
     def test_empty_target_identity_rejected(self) -> None:
         with pytest.raises(ValueError):
             ActionApproval().request("t", "", None, Effect.DESTRUCTIVE)
+
+    def test_string_false_cannot_satisfy_execution_confirmation(self, monkeypatch) -> None:
+        copied: list[str] = []
+        monkeypatch.setattr("pyperclip.copy", copied.append)
+        proposal = ActionProposal(
+            id="confirm-literal",
+            action_type="copy_text_to_clipboard",
+            parameters={"text": "must not be copied"},
+            safety_level=SafetyLevel.HIGH,
+            confirmation_required=True,
+        )
+
+        result = SafeActionExecutor().execute(
+            proposal,
+            confirmed="false",  # type: ignore[arg-type]
+        )
+
+        assert result.status is ExecutionStatus.SKIPPED
+        assert result.confirmed_by_user is False
+        assert copied == []
 
 
 class TestConcurrency:

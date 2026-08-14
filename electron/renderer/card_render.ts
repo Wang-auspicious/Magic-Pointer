@@ -418,7 +418,7 @@ const CardRender = (() => {
           sandbox: 'allow-scripts allow-forms',
           csp: "default-src 'none'; style-src 'unsafe-inline'; img-src data:",
           srcdoc: html,
-          style: `height:${height}px`,
+          height: String(height),
           title: `${server} 提供的界面`,
         }, []);
       } else if (/^https:\/\//i.test(url)) {
@@ -426,7 +426,7 @@ const CardRender = (() => {
           class: 'mslot-frame',
           sandbox: 'allow-scripts allow-forms',
           src: url,
-          style: `height:${height}px`,
+          height: String(height),
           title: `${server} 提供的界面`,
         }, []);
       } else {

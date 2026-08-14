@@ -169,9 +169,11 @@ def test_min_objects_gate_filters_candidates() -> None:
     assert route_to_trajectory("两个表合并", objects=[{"id": 1}]) == []
     merged = route_to_trajectory("两个表合并", objects=[{"id": 1}, {"id": 2}])
     assert [c.trajectory.recipe_id for c in merged] == ["table.merge"]
-    # 未提供 objects 时不设限（旧路径 object_count=0 同样跳过校验）
+    # 未提供 objects（None）时不设限：调用方没有对象信息
     no_objects = route_to_trajectory("两个表合并")
     assert [c.trajectory.recipe_id for c in no_objects] == ["table.merge"]
+    # 显式空列表 = 已知零对象：minObjects>0 的候选必须被过滤（review P2.11）
+    assert route_to_trajectory("两个表合并", objects=[]) == []
 
 
 def test_extra_recipes_can_be_matched() -> None:
@@ -194,6 +196,36 @@ def test_extra_recipes_can_be_matched() -> None:
 
     en_hits = route_to_trajectory("use superpower now", extra_recipes=extra)
     assert [c.trajectory.recipe_id for c in en_hits] == ["plugin.super_tool"]
+
+
+def test_extra_recipe_risk_can_be_a_list() -> None:
+    """A plugin entry with risk as a list must not crash routing (review P2.6).
+
+    Before the fix ``"external_send" in {risk, provider}`` raised TypeError
+    for an unhashable list risk value and killed route_to_trajectory.
+    """
+    extra = {
+        "plugin.risky_tool": {
+            "id": "plugin.risky_tool",
+            "description": "测试风险插件",
+            "inputKinds": ["text"],
+            "providerStrategies": ["model_provider"],
+            "risk": ["external_send"],
+            "minObjects": 1,
+            "keywords": {"zh": ["超能力"], "en": ["superpower"]},
+        }
+    }
+    hits = route_to_trajectory("用超能力处理", extra_recipes=extra)
+    assert [c.trajectory.recipe_id for c in hits] == ["plugin.risky_tool"]
+    assert not hasattr(hits[0].trajectory, "max_turns")
+
+
+def test_extra_recipe_unknown_shapes_return_no_candidates() -> None:
+    """Malformed plugin entries fail soft: no candidates, no exceptions."""
+    assert route_to_trajectory("随便", extra_recipes={"p.bad": "not-a-dict"}) == []
+    assert route_to_trajectory("随便", extra_recipes={
+        "p.bad": {"id": "p.bad", "description": "", "inputKinds": [], "providerStrategies": [], "risk": ""},
+    }) == []
 
 
 def test_objects_parameter_is_context_not_a_match_condition() -> None:
@@ -220,7 +252,7 @@ def test_candidate_carries_a_compiled_trajectory() -> None:
     assert candidate.trajectory.recipe_id == "text.ocr_copy"
     assert candidate.trajectory.first_user_message
     assert candidate.trajectory.recommended_tools
-    assert candidate.trajectory.max_turns >= 3
+    assert not hasattr(candidate.trajectory, "max_turns")
 
 
 def test_legacy_route_api_is_unchanged(tmp_path: Path) -> None:

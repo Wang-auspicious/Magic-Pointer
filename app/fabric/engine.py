@@ -10,13 +10,14 @@ import secrets
 import shutil
 import time
 import uuid
+from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from app.agent_runtime.loop import LoopParams, LoopStopped, run_agent_loop
 from app.agent_runtime.model_client import LoopModelClient
-from app.agent_runtime.tool_registry import GLOBAL_REGISTRY, ToolRegistry
-from app.agent_runtime.types import Terminal
+from app.agent_runtime.tool_registry import Effect, ToolRegistry
+from app.agent_runtime.types import Terminal, TransitionReason
 from app.fabric.agent_gateway import AgentGateway
 from app.fabric.artifacts import ArtifactRegistry
 from app.fabric.audit import AuditStore
@@ -24,8 +25,8 @@ from app.fabric.capabilities import CapabilityRegistry
 from app.fabric.capture_policy import CapturePolicyEngine, build_capture_policy
 from app.fabric.catalog import get_recipe
 from app.fabric.context_packet import ContextPacketBuilder
-from app.fabric.executors import FabricExecutors, register_fabric_tools
-from app.fabric.intent_router import TrajectoryCandidate, route_to_trajectory
+from app.fabric.executors import FabricExecutors
+from app.fabric.intent_router import match_local_action
 from app.fabric.model_plan import TOOL_REGISTRY, ModelPlanError, parse_model_plan
 from app.fabric.provenance import ProvenanceError, ProvenanceIndex
 from app.fabric.router import RecipeRouter
@@ -253,7 +254,8 @@ class FabricEngine:
 
     def _load_signing_key(self) -> bytes:
         path = self.root / "plan-signing.key"
-        if path.exists():
+
+        def read_existing() -> bytes:
             try:
                 value = bytes.fromhex(path.read_text(encoding="ascii").strip())
             except (OSError, ValueError) as exc:
@@ -261,12 +263,36 @@ class FabricEngine:
             if len(value) != 32:
                 raise RuntimeError("plan signing key has invalid length")
             return value
+
+        if path.exists():
+            return read_existing()
         path.parent.mkdir(parents=True, exist_ok=True)
         value = secrets.token_bytes(32)
-        temp = path.with_suffix(".key.tmp")
-        temp.write_text(value.hex() + "\n", encoding="ascii", newline="\n")
-        os.replace(temp, path)
-        return value
+        temp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            descriptor = os.open(
+                temp,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o600,
+            )
+            with os.fdopen(descriptor, "w", encoding="ascii", newline="\n") as handle:
+                handle.write(value.hex() + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            try:
+                # A hard link publishes the already-fsynced inode only if the
+                # final name is still absent.  Unlike a shared .tmp + replace,
+                # two first-boot processes can never leave different in-memory
+                # keys behind.
+                os.link(temp, path)
+                return value
+            except FileExistsError:
+                return read_existing()
+        finally:
+            try:
+                temp.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     def _plan_signature(self, plan: OperationPlan) -> str:
         payload = {
@@ -618,8 +644,15 @@ class FabricEngine:
             {
                 "recipe": recipe.id,
                 "command": command,
+                "risk": recipe.risk.value,
+                "provider": provider,
                 "objectIds": object_ids,
                 "objects": clean_objects,
+                # The durable workflow may reuse a terminal receipt by this
+                # key, so every execution-relevant argument must be bound.
+                # Omitting parameters could replay an earlier write containing
+                # different text against the same object and command.
+                "parameters": params,
             },
             ensure_ascii=False,
             sort_keys=True,
@@ -705,7 +738,7 @@ class FabricEngine:
         if missing:
             return {"ok": False, "error": "unknown_target_objects", "missing": missing}
         targeted = [
-            obj for obj, object_id in zip(clean_objects, object_ids)
+            obj for obj, object_id in zip(clean_objects, object_ids, strict=True)
             if object_id in model_plan.target_object_ids
         ]
         params = dict(parameters or {})
@@ -722,7 +755,11 @@ class FabricEngine:
         )
 
     def execute(self, plan_value: dict[str, Any], *, confirmed: bool = False) -> dict[str, Any]:
-        plan = OperationPlan.from_dict(plan_value)
+        confirmed = confirmed is True
+        try:
+            plan = OperationPlan.from_dict(plan_value)
+        except (AttributeError, TypeError, ValueError):
+            return {"status": "failed", "verified": False, "error": "invalid_plan"}
         if not plan.id or not plan.recipe_id or not plan.idempotency_key:
             return {"status": "failed", "verified": False, "error": "invalid_plan"}
         if not plan.integrity_token or not hmac.compare_digest(plan.integrity_token, self._plan_signature(plan)):
@@ -737,9 +774,11 @@ class FabricEngine:
             }
         lease_validation: dict[str, Any] | None = None
         lease = plan.parameters.get("targetLease")
-        if isinstance(lease, dict) and lease.get("requiresLiveValidation") is True and self.target_probe is not None:
+        if isinstance(lease, dict):
             try:
-                live_windows = self.target_probe(dict(lease))
+                live_windows = None
+                if lease.get("requiresLiveValidation") is True and self.target_probe is not None:
+                    live_windows = self.target_probe(dict(lease))
                 validation = validate_target_lease(lease, live_windows=live_windows)
             except Exception as exc:
                 validation = None
@@ -867,64 +906,103 @@ async def _consume_agent_loop(params: LoopParams) -> Terminal:
     raise RuntimeError("agent loop ended without LoopStopped")
 
 
-_LOOP_DEFAULT_MAX_TURNS = 6
-"""Free-loop turn ceiling; mirrors :class:`LoopParams` ``max_turns`` default."""
+_LOOP_EMERGENCY_TURN_FUSE = 90
+"""Emergency invariant fuse, not a normal task-completion policy."""
 
 
 def run_agent_turn(
     user_input: str,
     objects: list | None = None,
-    registry: ToolRegistry = GLOBAL_REGISTRY,
     *,
+    registry: ToolRegistry,
     client: LoopModelClient,
     clock: Callable[[], float] | None = None,
-    max_turns: int | None = None,
+    emergency_turn_fuse: int | None = None,
     lang: str = "zh",
+    budgets: Mapping | None = None,
+    allowed_effects: tuple[Effect, ...] | None = None,
+    tool_limit: int | None = None,
+    max_parallel_tool_calls: int = 4,
+    permission_mode: str = "default",
+    budget_renewals: int | None = None,
+    compactor: Callable | None = None,
+    context_budget_tokens: int | None = None,
+    token_estimator: Callable | None = None,
+    event_sink: Callable | None = None,
+    precondition_context_factory: Callable | None = None,
+    hook_manager: Any | None = None,
+    session: Any | None = None,
+    request_header: Mapping[str, Any] | None = None,
 ) -> Terminal:
     """Run one agentic loop turn to its Terminal (synchronous entry).
 
-    - Routing: ``route_to_trajectory`` ranks keyword matches; the top
-      candidate's compiled trajectory (recipe as cache) is handed to
-      :class:`LoopParams`, which uses its first-message template and
-      recommended-tool order. No match means ``trajectory=None`` and the free
-      loop runs (the old forced-recipe fallback is deliberately absent here).
-    - Budgets: ``DEFAULT_BUDGETS`` (FULL_ANSWER full-answer stage); the
-      per-turn ceiling is the explicit ``max_turns`` override, else the
-      trajectory's compiled turn budget, else the :class:`LoopParams` default.
-    - Clock: ``time.monotonic`` unless injected; ``asyncio.run`` drives the
-      loop, so callers must not call this from inside a running event loop.
-    - Registry: defaults to the process-wide ``GLOBAL_REGISTRY``; the first
-      call with the default registry registers the fabric tool set into it
-      (``register_fabric_tools`` is idempotent, so repeated calls are no-ops).
-      Tools are only registered into ``GLOBAL_REGISTRY`` itself: when a
-      caller injects a custom registry, registering tools into it is the
-      caller's responsibility. Cancellation during a tool execution
-      propagates as :class:`CancelledError`.
+    - Routing: only exact zero-model local actions (copy/screenshot/source)
+      may short-circuit. Recipe keyword trajectories are not consumed by the
+      production loop: the original instruction stays byte-for-byte intact
+      and the model chooses among self-describing tools.
+    - Budgets: ``budgets`` override (default ``DEFAULT_BUDGETS``, FULL_ANSWER
+      full-answer stage); ``emergency_turn_fuse`` is an explicit diagnostic
+      override,
+      otherwise a high emergency fuse. The FULL_ANSWER budget is a rolling
+      deadline renewed per productive round up to ``budget_renewals``
+      (review T1: the budget constrains feedback rhythm, not loop life).
+    - Clock: a millisecond clock unless injected; the default is
+      ``time.monotonic() * 1000`` — ``time.monotonic`` alone returns seconds
+      and silently disabled budget exhaustion (the loop compares clock
+      values against millisecond budgets). ``asyncio.run`` drives the loop,
+      so callers must not call this from inside a running event loop.
+    - Permission mode: forwarded to the loop's per-tool gate (CC permission
+      mode); composes with ``allowed_effects``.
+    - Registry: required explicitly. Production receives the scoped
+      ``ctx.tools`` service from the plugin tree; there is no hidden global
+      fallback that can create a second tool universe. Cancellation during a
+      tool execution propagates as :class:`CancelledError`.
     """
-    if registry is GLOBAL_REGISTRY:
-        register_fabric_tools(registry)
-    candidates = route_to_trajectory(user_input, objects, lang=lang)
-    trajectory = next(
-        (
-            candidate.trajectory
-            for candidate in candidates
-            if isinstance(candidate, TrajectoryCandidate)
-        ),
-        None,
-    )
-    if max_turns is None:
-        max_turns = (
-            trajectory.max_turns
-            if trajectory is not None
-            else _LOOP_DEFAULT_MAX_TURNS
+    local = match_local_action(user_input)
+    if local is not None:
+        # Deterministic local actions (save_screenshot / copy_object_text /
+        # show_source) resolve without the loop and without a model call —
+        # legacy LOCAL_ACTION_RULES semantics. Local candidates sort first,
+        # so a double match keeps the local winner exactly like the legacy
+        # `_deterministic` order (LOCAL_ACTION_RULES before DETERMINISTIC_RULES).
+        return Terminal(
+            reason=TransitionReason.LOCAL_ACTION,
+            message=local.action,
+            turns=0,
+            results=(),
+            local_action=local.action,
         )
+    if emergency_turn_fuse is None:
+        emergency_turn_fuse = _LOOP_EMERGENCY_TURN_FUSE
     params = LoopParams(
         user_input=user_input,
         registry=registry,
         client=client,
-        trajectory=trajectory,
-        budgets=DEFAULT_BUDGETS,
-        clock=clock if clock is not None else time.monotonic,
-        max_turns=max_turns,
+        trajectory=None,
+        budgets=budgets if budgets is not None else DEFAULT_BUDGETS,
+        clock=clock if clock is not None else _default_ms_clock,
+        emergency_turn_fuse=emergency_turn_fuse,
+        allowed_effects=(
+            allowed_effects
+            if allowed_effects is not None
+            else (Effect.READ, Effect.REVERSIBLE_WRITE)
+        ),
+        tool_limit=tool_limit if tool_limit is not None else 12,
+        max_parallel_tool_calls=max_parallel_tool_calls,
+        permission_mode=permission_mode,
+        budget_renewals=budget_renewals if budget_renewals is not None else 3,
+        compactor=compactor,
+        context_budget_tokens=context_budget_tokens,
+        token_estimator=token_estimator,
+        event_sink=event_sink,
+        precondition_context_factory=precondition_context_factory,
+        hook_manager=hook_manager,
+        session=session,
+        request_header=request_header or {},
     )
     return asyncio.run(_consume_agent_loop(params))
+
+
+def _default_ms_clock() -> float:
+    """Millisecond monotonic clock (the loop contract consumes ms)."""
+    return time.monotonic() * 1000.0

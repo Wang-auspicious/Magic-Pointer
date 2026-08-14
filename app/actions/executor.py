@@ -128,6 +128,9 @@ class SafeActionExecutor:
         )
 
     def execute(self, proposal: ActionProposal, *, confirmed: bool = False) -> ExecutionResult:
+        # Confirmation is a trust-boundary bit, not a truthy option. Strings
+        # such as "false" must never authorize an action.
+        confirmed = confirmed is True
         started = now_iso()
         decision = self.policy.decide(proposal)
         metadata = {"policy_decision": decision.to_dict()}

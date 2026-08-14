@@ -1,0 +1,114 @@
+{
+  "schema_version": 1,
+  "trace_id": "this-that",
+  "recorded_at_utc": "2026-08-13T10:00:00Z",
+  "frames": [
+    {
+      "frame_id": "this-that-frame-1",
+      "png_path": "this-that/frame-1.png",
+      "captured_at_utc": "2026-08-13T10:00:00Z",
+      "display_bounds_ltrb": [
+        0,
+        0,
+        1920,
+        1080
+      ],
+      "dpi": null,
+      "scale_factor": 1.0
+    }
+  ],
+  "uia_snapshots": [
+    {
+      "snapshot_id": "this-that-uia-1",
+      "tree_text": "对象一：价格 100\n对象二：价格 120",
+      "tree_path": null,
+      "captured_at_utc": "2026-08-13T10:00:00Z",
+      "window_hwnd": 1009,
+      "pid": 2000,
+      "note": "THIS/THAT dual-object comparison"
+    }
+  ],
+  "pointer_trace": [
+    {
+      "t_utc": "2026-08-13T10:00:00Z",
+      "x": 400,
+      "y": 300,
+      "phase": "down",
+      "buttons": 1
+    },
+    {
+      "t_utc": "2026-08-13T10:00:00Z",
+      "x": 410,
+      "y": 302,
+      "phase": "move",
+      "buttons": 1
+    },
+    {
+      "t_utc": "2026-08-13T10:00:00Z",
+      "x": 420,
+      "y": 304,
+      "phase": "move",
+      "buttons": 1
+    },
+    {
+      "t_utc": "2026-08-13T10:00:00Z",
+      "x": 430,
+      "y": 306,
+      "phase": "move",
+      "buttons": 1
+    },
+    {
+      "t_utc": "2026-08-13T10:00:00Z",
+      "x": 440,
+      "y": 308,
+      "phase": "move",
+      "buttons": 1
+    },
+    {
+      "t_utc": "2026-08-13T10:00:00Z",
+      "x": 450,
+      "y": 310,
+      "phase": "move",
+      "buttons": 1
+    },
+    {
+      "t_utc": "2026-08-13T10:00:00Z",
+      "x": 460,
+      "y": 312,
+      "phase": "move",
+      "buttons": 1
+    },
+    {
+      "t_utc": "2026-08-13T10:00:00Z",
+      "x": 470,
+      "y": 314,
+      "phase": "up",
+      "buttons": 1
+    }
+  ],
+  "cdp_snapshots": [],
+  "focus_events": [
+    {
+      "t_utc": "2026-08-13T10:00:00Z",
+      "hwnd": 1009,
+      "title": "replay this-that",
+      "process_name": "replay.exe"
+    }
+  ],
+  "display_config": {
+    "bounds_ltrb": [
+      0,
+      0,
+      1920,
+      1080
+    ],
+    "scale_factor": 1.0
+  },
+  "ground_truth": {
+    "command": "对比这两个",
+    "contract": "THIS/THAT dual-object comparison",
+    "replay_expectation": {
+      "answer_contains": "对比"
+    }
+  }
+}

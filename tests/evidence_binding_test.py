@@ -64,7 +64,7 @@ def test_bind_frozen_evidence_accepts_matching_window_and_gesture() -> None:
     assert result.status == "verified"
     assert result.target["hwnd"] == 42
     assert result.surface_bounds_px == (0, 0, 1920, 1080)
-    assert result.capture_kind == "display"
+    assert result.capture_kind == "fallback"
 
 
 @pytest.mark.parametrize(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import inspect
 import json
 import sys
 from datetime import datetime, timedelta, timezone
@@ -28,6 +29,42 @@ from scripts.selection_bridge import (
     _screen_region_vision_answer,
     _wants_undo,
 )
+
+
+def test_selection_bridge_wires_local_model_transform(monkeypatch) -> None:
+    """Review R3: the production bridge must wire the local text model into
+    FabricEngine so model.text recipes never fall back to agent.task."""
+    captured = {}
+
+    def fake_ask(
+        user_prompt,
+        context_text=None,
+        system_prompt=None,
+        *,
+        timeout_s,
+        attempts,
+        max_tokens=None,
+    ):
+        captured["prompt"] = user_prompt
+        captured["context"] = context_text
+        captured["timeout"] = timeout_s
+        captured["attempts"] = attempts
+        return "本地模型的结果"
+
+    monkeypatch.setattr(selection_bridge, "ask_text_model", fake_ask)
+    answer = selection_bridge._local_model_transform(
+        "总结成三点", "长文本内容", "text.summarize_route"
+    )
+    assert answer == "本地模型的结果"
+    assert captured["prompt"] == "总结成三点"
+    assert captured["context"] == "长文本内容"
+    assert captured["timeout"] == selection_bridge.GENERAL_TIMEOUT_S
+    assert captured["attempts"] == 1
+
+
+def test_selection_bridge_engine_constructions_carry_transform() -> None:
+    source = Path("scripts/selection_bridge.py").read_text(encoding="utf-8")
+    assert source.count("FabricEngine(model_transform=_local_model_transform)") >= 2
 
 
 def test_explorer_file_question_reads_the_actual_file_body(tmp_path) -> None:
@@ -1003,3 +1040,271 @@ def test_record_auto_memory_sensitive_and_dedupe(tmp_path) -> None:
     entries = data['entries']
     assert len(entries) == 1, f'期望 1 条（去重+敏感挡），实际 {len(entries)}'
     assert entries[0]['excerpt'] == '这段代码在干嘛'
+
+# --- Batch-4 loop answer path (MAGIC_POINTER_LOOP_ANSWER gate) -----------------
+
+
+def _fake_terminal(reason_value="completed", message="循环答案", local_action=None):
+    from app.agent_runtime.types import Terminal, TransitionReason
+
+    return Terminal(
+        reason=TransitionReason(reason_value),
+        message=message,
+        turns=1,
+        results=(),
+        local_action=local_action,
+    )
+
+
+def test_loop_router_maps_terminal_to_answer(monkeypatch):
+    from app.agent_runtime.tool_registry import Effect
+    from app.fabric import engine as engine_module
+
+    recorded = {}
+
+    def fake_run(user_input, objects=None, registry=None, *, client, **kwargs):
+        recorded["input"] = user_input
+        recorded["objects"] = objects
+        recorded["allowed"] = kwargs.get("allowed_effects")
+        return _fake_terminal(message="循环给出的回答")
+
+    monkeypatch.setattr(engine_module, "run_agent_turn", fake_run)
+
+    result = selection_bridge._loop_router(
+        "帮我看看", [{"id": "o1"}], None, None, None, None, "sess-1", "snap-1"
+    )
+
+    assert recorded["input"].startswith("帮我看看")
+    assert "[本次圈选对象证据]" in recorded["input"]
+    assert recorded["objects"] == [{"id": "o1"}]
+    assert recorded["allowed"] == tuple(Effect)
+    assert result["ok"] is True
+    assert result["answer"] == "循环给出的回答"
+    assert result["route"]["action"] == "model_loop"
+    assert result["usedBackend"]
+    assert result["selectionSessionId"] == "sess-1"
+
+
+def test_loop_effect_ceiling_keeps_permission_modes_functional() -> None:
+    from app.agent_runtime.tool_registry import Effect
+
+    assert selection_bridge._agent_effect_ceiling("default") == tuple(Effect)
+    assert selection_bridge._agent_effect_ceiling("bypass") == tuple(Effect)
+
+
+def test_screen_region_without_explicit_image_path_never_uses_local_image_route(
+    monkeypatch, tmp_path
+) -> None:
+    """A frozen screen capture is evidence, not a selected local image file."""
+    from PIL import Image
+
+    capture = tmp_path / "screen.png"
+    Image.new("RGB", (160, 100), "white").save(capture)
+    calls: list[Path] = []
+
+    def fake_vision(path, *_args, **_kwargs):
+        calls.append(Path(path))
+        return "should not run"
+
+    monkeypatch.setattr(selection_bridge, "ask_vision_model", fake_vision)
+    app_ctx = AdapterReadContext(
+        adapter="local_ocr",
+        app="screen",
+        content="Q2 median latency 3.6s",
+        label="THIS",
+        method="local:test",
+        artifacts={"capture_path": str(capture)},
+    )
+
+    answer = selection_bridge._local_image_file_answer(
+        "Q2 是多少？",
+        app_ctx,
+        {
+            "capture_path": str(capture),
+            "selection_bbox": [20, 20, 80, 40],
+            "capture_bbox": [0, 0, 160, 100],
+            "context": {
+                "adapter": "screen_region",
+                "path": str(capture),
+                "artifacts": {"capture_path": str(capture)},
+            },
+        },
+    )
+
+    assert answer is None
+    assert calls == []
+
+
+def test_main_has_one_agent_route_and_no_post_loop_model_fallback() -> None:
+    """Normal commands get one Agent state machine, not stacked routers."""
+    module_source = inspect.getsource(selection_bridge)
+    source = inspect.getsource(selection_bridge.main)
+    assert source.count("loop_result = _loop_router") == 1
+    after_loop = source[source.index("loop_result = _loop_router") :]
+    assert "vision_answer = _screen_region_vision_answer" not in after_loop
+    assert "ask_text_model(" not in after_loop
+    assert "ask_text_model_with_tools(" not in after_loop
+    assert "IntentRouter(" not in source
+    assert "def _classify_with_model" not in module_source
+    assert "def _general_fallback_answer" not in module_source
+    assert "_shopping_list_response(" not in source
+    assert "_calendar_response(" not in source
+    assert "_route_response(" not in source
+    assert "_length_target_response(" not in source
+
+
+def test_frozen_frame_crop_translates_physical_coordinates_to_image_local(
+    tmp_path,
+) -> None:
+    from PIL import Image, ImageDraw
+
+    capture = tmp_path / "window.png"
+    image = Image.new("RGB", (100, 80), "white")
+    ImageDraw.Draw(image).rectangle((20, 10, 59, 39), fill="red")
+    image.save(capture)
+
+    cropped_bytes = selection_bridge._crop_frozen_frame_bytes(
+        capture,
+        (1020, 2010, 1060, 2040),
+        (1000, 2000, 1100, 2080),
+    )
+
+    with Image.open(io.BytesIO(cropped_bytes)) as cropped:
+        assert cropped.size == (40, 30)
+        assert cropped.convert("RGB").getpixel((10, 10)) == (255, 0, 0)
+
+
+def test_loop_evidence_names_the_verified_full_surface_visual_anchor() -> None:
+    app_ctx = AdapterReadContext(
+        adapter="local_ocr",
+        app="screen",
+        content="only one OCR heading",
+        method="local:test",
+        artifacts={},
+    )
+    snapshot = {
+        "source_kind": "screen_region",
+        "structured_covers_mark": False,
+        "structured_gap_reason": "container_not_selection",
+        "frame_lease": {
+            "surfaceBoundsPx": [1720, 446, 2682, 1836],
+        },
+        "capture_attestation": {"binding_status": "verified"},
+    }
+
+    evidence = selection_bridge._bridge_evidence_block(
+        app_ctx, {"title": "Scenario - Notepad"}, snapshot
+    )
+
+    assert "证据状态：screen_region" in evidence
+    assert "目标绑定：verified" in evidence
+    assert "视觉锚点：bbox:1720,446,2682,1836" in evidence
+
+
+def test_loop_router_crash_falls_back(monkeypatch):
+    from app.fabric import engine as engine_module
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("loop exploded")
+
+    monkeypatch.setattr(engine_module, "run_agent_turn", boom)
+
+    result = selection_bridge._loop_router(
+        "帮我看看", [], None, None, None, None, None, None
+    )
+
+    assert result["ok"] is False
+    assert result["loopError"] == "RuntimeError"
+
+
+def test_only_completed_loop_terminal_can_become_the_user_answer() -> None:
+    assert selection_bridge._loop_result_is_answer({
+        "ok": True,
+        "answer": "done",
+        "loopTerminated": False,
+    }) is True
+    assert selection_bridge._loop_result_is_answer({
+        "ok": False,
+        "answer": "full answer budget exhausted",
+        "loopTerminated": True,
+        "loopTerminatedReason": "budget_exhausted",
+    }) is False
+
+
+def test_loop_interaction_metadata_preserves_usage_and_user_suspension() -> None:
+    metadata = selection_bridge._loop_interaction_metadata({
+        "modelUsage": {"inputTokens": 12, "outputTokens": 4, "totalTokens": 16},
+        "awaitingUserInput": True,
+        "pendingInput": {"question": "Which one?", "options": ["A", "B"]},
+    })
+
+    assert metadata == {
+        "modelUsage": {"inputTokens": 12, "outputTokens": 4, "totalTokens": 16},
+        "awaitingUserInput": True,
+        "pendingInput": {"question": "Which one?", "options": ["A", "B"]},
+    }
+
+
+def test_loop_router_local_action_is_reported(monkeypatch):
+    from app.fabric import engine as engine_module
+
+    monkeypatch.setattr(
+        engine_module,
+        "run_agent_turn",
+        lambda *a, **k: _fake_terminal(
+            reason_value="local_action", message="save_screenshot", local_action="save_screenshot"
+        ),
+    )
+
+    result = selection_bridge._loop_router(
+        "截图", [], None, None, None, None, None, None
+    )
+
+    assert result["localAction"] == "save_screenshot"
+    assert result["route"]["tier"] == "L0"
+
+
+def test_loop_router_collects_capability_proposals(monkeypatch):
+    from app.agent_runtime.types import Terminal, ToolResult, TransitionReason
+    from app.fabric import engine as engine_module
+
+    signed_plan = {
+        "id": "plan-1",
+        "recipeId": "text.summarize_route",
+        "integrityToken": "sig-1",
+        "risk": "local_write",
+        "requiresConfirmation": True,
+        "preview": {"title": "摘要并路由", "description": "把选区摘要写入草稿"},
+    }
+    terminal = Terminal(
+        reason=TransitionReason.COMPLETED,
+        message="已生成方案，请确认。",
+        turns=2,
+        results=(
+            ToolResult(
+                tool_call_id="c1",
+                value=json.dumps({
+                    "ok": True,
+                    "recipeId": "text.summarize_route",
+                    "requiresConfirmation": True,
+                    "plan": signed_plan,
+                }, ensure_ascii=False),
+                is_error=False,
+                failure_type=None,
+                used_backend="fabric.plan_proposal",
+                latency_ms=5.0,
+            ),
+        ),
+    )
+    monkeypatch.setattr(engine_module, "run_agent_turn", lambda *a, **k: terminal)
+
+    result = selection_bridge._loop_router(
+        "总结成三点放到邮件", [], None, None, None, None, None, None
+    )
+
+    proposals = result["actionProposals"]
+    assert len(proposals) == 1
+    assert proposals[0]["action_type"] == "fabric_recipe_execute"
+    assert proposals[0]["target"]["metadata"]["recipe_id"] == "text.summarize_route"
+    assert proposals[0]["confirmation_required"] is True
+    assert result["answer"] == "已生成方案，请确认。"

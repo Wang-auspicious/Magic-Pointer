@@ -129,10 +129,11 @@ def apply_container_heuristic(
     evidence: Evidence,
     container_like_texts: Iterable[str],
 ) -> Evidence:
-    """Flag values that merely repeat a container/window/control-type name.
+    """Flag values that merely repeat container/window/control-type names.
 
     If ``evidence.value`` is non-empty and its stripped text matches any
-    entry of ``container_like_texts``, return a new Evidence with
+    entry of ``container_like_texts`` — OR (multi-line reads) every
+    non-empty line matches an entry — return a new Evidence with
     ``container_hint=True``, confidence capped at 0.2, and status downgraded
     from ok to degraded. Otherwise the original immutable Evidence is
     returned unchanged.
@@ -140,19 +141,23 @@ def apply_container_heuristic(
     if evidence.value is None:
         return evidence
     stripped = evidence.value.strip()
-    if not stripped or stripped not in set(container_like_texts):
+    if not stripped:
         return evidence
-    status = EvidenceStatus.DEGRADED if evidence.status is EvidenceStatus.OK else evidence.status
-    return Evidence(
-        value=evidence.value,
-        status=status,
-        confidence=min(evidence.confidence, 0.2),
-        source=evidence.source,
-        latency_ms=evidence.latency_ms,
-        captured_at_utc=evidence.captured_at_utc,
-        container_hint=True,
-        note=evidence.note,
-    )
+    container_set = set(container_like_texts)
+    lines = [line.strip() for line in stripped.splitlines() if line.strip()]
+    if lines and all(line in container_set for line in lines):
+        status = EvidenceStatus.DEGRADED if evidence.status is EvidenceStatus.OK else evidence.status
+        return Evidence(
+            value=evidence.value,
+            status=status,
+            confidence=min(evidence.confidence, 0.2),
+            source=evidence.source,
+            latency_ms=evidence.latency_ms,
+            captured_at_utc=evidence.captured_at_utc,
+            container_hint=True,
+            note=evidence.note,
+        )
+    return evidence
 
 
 _SEVERE_PRIORITY = (

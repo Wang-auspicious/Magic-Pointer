@@ -1748,14 +1748,21 @@
     // 眉毛照抄参考里那行 `▽ TASK FINISHED`：它说的是这张卡此刻的状态，
     // 用等宽 + 拉开的字距，因为在这套版式里等宽始终代表「机器说的事实」。
     const failed = turns[turns.length - 1]?.status === 'failed';
-    const eyebrowState = pending ? 'running' : failed ? 'failed' : 'done';
-    threadPanel.dataset.phase = pending ? 'running' : failed ? 'failed' : 'finished';
+    const awaiting = turns[turns.length - 1]?.status === 'awaiting';
+    const eyebrowState = pending || awaiting ? 'running' : failed ? 'failed' : 'done';
+    threadPanel.dataset.phase = pending ? 'running' : awaiting ? 'awaiting' : failed ? 'failed' : 'finished';
     threadEyebrow.dataset.state = eyebrowState;
     threadEyebrow.querySelector('use')?.setAttribute(
       'href',
-      pending ? '#ic-circle' : failed ? '#ic-warn' : '#ic-check',
+      pending ? '#ic-circle' : awaiting ? '#ic-circle' : failed ? '#ic-warn' : '#ic-check',
     );
-    threadEyebrowText.textContent = pending ? 'WORKING' : failed ? 'NEEDS ATTENTION' : 'TASK FINISHED';
+    threadEyebrowText.textContent = pending
+      ? 'WORKING'
+      : awaiting
+        ? 'YOUR INPUT NEEDED'
+        : failed
+          ? 'NEEDS ATTENTION'
+          : 'TASK FINISHED';
     const firstAskRow = resultCard.firstElementChild?.querySelector<HTMLElement>('.turn-ask');
     if (firstAskRow) firstAskRow.hidden = Boolean(firstAsk);
     // 还在跑的时候没有可复制的东西。一个点了没反应的按钮比一个明显不能点的

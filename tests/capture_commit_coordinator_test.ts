@@ -174,4 +174,59 @@ function fakeProvider(events: string[], { failCommit = false, slowCommit = false
   assert.strictEqual(received.frameLeaseId, 'frame-1');
 })();
 
+(async function rearmDuringCommitMustNotClobberTheNewEpoch() {
+  const events: string[] = [];
+  const coordinator = new CaptureCommitCoordinator({
+    provider: {
+      arm: async (req: any) => { events.push(`arm:${req.epochId}`); },
+      commit: async (req: any) => {
+        events.push(`commit:${req.epochId}`);
+        if (req.epochId === 'epoch-1') {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        return rawLease(req.epochId === 'epoch-1' ? 'frame-1' : 'frame-2');
+      },
+      cancel: async () => { events.push('cancel'); },
+    },
+    releaseOverlay: () => events.push('overlay-release'),
+    beginSession: (_g: unknown, lease: any) => events.push(`session:${lease.frameLeaseId}`),
+  });
+  await coordinator.arm(armRequest('epoch-1'));
+  const completing1 = coordinator.complete(gesture());
+  await coordinator.arm(armRequest('epoch-2'));
+  const lease1 = await completing1;
+  // The stale commit tail must be fully discarded: no overlay release, no
+  // session for the old gesture, and the new epoch's armed request survives.
+  assert.strictEqual(lease1, null);
+  assert(!events.includes('overlay-release'));
+  assert(!events.includes('session:frame-1'));
+  assert.strictEqual(coordinator.state, 'armed');
+  const lease2 = await coordinator.complete(gesture());
+  assert.strictEqual(lease2.frameLeaseId, 'frame-2');
+  assert.deepStrictEqual(events, [
+    'arm:epoch-1',
+    'commit:epoch-1',
+    'arm:epoch-2',
+    'commit:epoch-2',
+    'overlay-release',
+    'session:frame-2',
+  ]);
+})();
+
+(async function commitFailureStillReleasesOverlayAndResolvesNull() {
+  const events: string[] = [];
+  const failures: Error[] = [];
+  const coordinator = new CaptureCommitCoordinator({
+    provider: fakeProvider(events, { failCommit: true }),
+    releaseOverlay: () => events.push('overlay-release'),
+    beginSession: () => events.push('session'),
+    onCommitFailure: (error: any) => failures.push(error),
+  });
+  await coordinator.arm(armRequest());
+  const lease = await coordinator.complete(gesture());
+  assert.strictEqual(lease, null);
+  assert.deepStrictEqual(events, ['arm', 'commit', 'overlay-release']);
+  assert.strictEqual(failures.length, 1);
+})();
+
 console.log('capture commit coordinator test ok');

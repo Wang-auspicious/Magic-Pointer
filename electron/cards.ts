@@ -86,6 +86,7 @@ const CardModel = (() => {
   // 于是界面上只剩一个秒数在跳。有真实的步骤可说，就不该让人盯着秒数。
   // ---------------------------------------------------------------------------
   const PHASE_TEXT = Object.freeze({
+    perceived: '我看到了',
     payload_read: '收到了你要问的',
     settings_loaded: '读了设置',
     windows_enumerated: '过了一遍窗口',
@@ -96,6 +97,7 @@ const CardModel = (() => {
     route_recipe: '挑了能用的能力',
     model_request: '交给模型',
     model_response: '模型答完了',
+    loop_progress: '继续读证据',
     action_planned: '排好了要做的事',
     action_executed: '做完了',
     verify: '回读确认',
@@ -267,6 +269,22 @@ const CardModel = (() => {
     return card.kind === 'image' ? RUNNING_HINT.image : '在等模型回话';
   }
 
+  // 本地首反馈（review Q4）：模型一个字都还没问，感知材料里已经有的
+  // 事实就先说出来——「我看到了：记事本 · 34,660 字」。纯客户端、
+  // 零模型、零延迟，材料全在 snapshot 的 summary 里。
+  function perceivedStep(summary: { label?: unknown; detail?: unknown } | null | undefined) {
+    const label = String(summary?.label || '').trim();
+    if (!label) return null;
+    const detail = String(summary?.detail || '').trim();
+    return {
+      phase: 'perceived',
+      label: `我看到了：${label}${detail ? ` · ${detail}` : ''}`,
+      note: '',
+      ms: 0,
+      state: 'done',
+    };
+  }
+
   // 一张卡还能不能接补丁。渲染层用它决定要不要继续跑计时器。
   function isSettled(card: CardData = {}): boolean {
     return card.state === 'done' || card.state === 'failed';
@@ -282,6 +300,7 @@ const CardModel = (() => {
     normalizeCard,
     applyPatch,
     phaseStep,
+    perceivedStep,
     progressFromSteps,
     runningLabel,
     isSettled,

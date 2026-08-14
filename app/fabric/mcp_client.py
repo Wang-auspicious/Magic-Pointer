@@ -23,6 +23,7 @@ Three rules that shape it:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import subprocess
@@ -43,6 +44,15 @@ STARTUP_TIMEOUT_S = 12.0
 # cost and a way for a third party to fill the context window.
 MAX_TOOLS_PER_SERVER = 40
 MAX_DESCRIPTION_CHARS = 400
+MAX_RESPONSE_CHARS = 2_000_000
+_KNOWN_TOOL_EFFECTS = frozenset({
+    "read",
+    "reversible_write",
+    "local_irreversible",
+    "external_send",
+    "destructive",
+    "purchase",
+})
 
 
 class McpClientError(RuntimeError):
@@ -55,6 +65,7 @@ class McpTool:
     name: str
     description: str
     input_schema: dict[str, Any] = field(default_factory=dict)
+    annotations: dict[str, Any] = field(default_factory=dict)
 
     @property
     def qualified_name(self) -> str:
@@ -68,6 +79,7 @@ class McpTool:
             "qualifiedName": self.qualified_name,
             "description": self.description,
             "inputSchema": dict(self.input_schema),
+            "annotations": dict(self.annotations),
         }
 
 
@@ -78,9 +90,10 @@ class McpServerConfig:
     args: tuple[str, ...] = ()
     env: dict[str, str] = field(default_factory=dict)
     enabled: bool = True
+    tool_effects: dict[str, str] = field(default_factory=dict)
 
     @staticmethod
-    def from_dict(name: str, value: Any) -> "McpServerConfig | None":
+    def from_dict(name: str, value: Any) -> McpServerConfig | None:
         if not isinstance(value, dict):
             return None
         command = str(value.get("command") or "").strip()
@@ -92,12 +105,23 @@ class McpServerConfig:
             for key, item in dict(value.get("env") or {}).items()
             if str(key)
         }
+        raw_tool_effects = value.get("toolEffects")
+        tool_effects = {
+            str(key): str(item)
+            for key, item in (
+                raw_tool_effects.items()
+                if isinstance(raw_tool_effects, dict)
+                else ()
+            )
+            if str(key).strip() and str(item) in _KNOWN_TOOL_EFFECTS
+        }
         return McpServerConfig(
             name=str(name),
             command=command,
             args=args,
             env=env,
             enabled=value.get("disabled") is not True and value.get("enabled") is not False,
+            tool_effects=tool_effects,
         )
 
 
@@ -133,7 +157,7 @@ class McpStdioClient:
         self._next_id = 0
         self._lock = threading.Lock()
 
-    def __enter__(self) -> "McpStdioClient":
+    def __enter__(self) -> McpStdioClient:
         self.start()
         return self
 
@@ -174,10 +198,20 @@ class McpStdioClient:
                 process.stdin.close()
             process.wait(timeout=2)
         except Exception:
-            try:
+            with contextlib.suppress(Exception):
                 process.kill()
-            except Exception:
-                pass
+
+    def _abort(self) -> None:
+        """Immediately discard a protocol-violating process and its stream."""
+        process = self._process
+        self._process = None
+        if process is None:
+            return
+        with contextlib.suppress(Exception):
+            if process.stdin:
+                process.stdin.close()
+        with contextlib.suppress(Exception):
+            process.kill()
 
     def _write(self, message: dict[str, Any]) -> None:
         process = self._process
@@ -194,20 +228,39 @@ class McpStdioClient:
 
     def _request(self, method: str, params: dict[str, Any], *, timeout: float | None = None) -> dict[str, Any]:
         with self._lock:
-            self._next_id += 1
-            request_id = self._next_id
+            return self._request_locked(method, params, timeout=timeout)
+
+    def _request_locked(
+        self,
+        method: str,
+        params: dict[str, Any],
+        *,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Complete one write/read exchange while owning the stdio stream."""
+        self._next_id += 1
+        request_id = self._next_id
         self._write({"jsonrpc": "2.0", "id": request_id, "method": method, "params": params})
         deadline = float(self.timeout if timeout is None else timeout)
         result: dict[str, Any] = {}
         error: str = ""
+        fatal_protocol_error = False
 
         def read() -> None:
-            nonlocal result, error
+            nonlocal result, error, fatal_protocol_error
             process = self._process
             if process is None or process.stdout is None:
                 error = "server is not running"
                 return
-            for line in process.stdout:
+            while True:
+                line = process.stdout.readline(MAX_RESPONSE_CHARS + 1)
+                if not line:
+                    error = "server closed the connection"
+                    return
+                if len(line) > MAX_RESPONSE_CHARS:
+                    error = f"response line exceeds {MAX_RESPONSE_CHARS} characters"
+                    fatal_protocol_error = True
+                    return
                 text = line.strip()
                 if not text:
                     continue
@@ -224,16 +277,17 @@ class McpStdioClient:
                     value = message.get("result")
                     result = value if isinstance(value, dict) else {}
                 return
-            error = "server closed the connection"
 
         reader = threading.Thread(target=read, daemon=True)
         reader.start()
         reader.join(deadline)
         if reader.is_alive():
             # A hung third-party process must not hold a bubble open.
-            self.close()
+            self._abort()
             raise McpClientError(f"{self.config.name} did not answer within {deadline:.0f}s")
         if error:
+            if fatal_protocol_error:
+                self._abort()
             raise McpClientError(f"{self.config.name}: {error}")
         return result
 
@@ -252,6 +306,11 @@ class McpStdioClient:
                 name=name,
                 description=str(item.get("description") or "").strip()[:MAX_DESCRIPTION_CHARS],
                 input_schema=schema if isinstance(schema, dict) else {},
+                annotations=(
+                    dict(item.get("annotations"))
+                    if isinstance(item.get("annotations"), dict)
+                    else {}
+                ),
             ))
         return tools
 

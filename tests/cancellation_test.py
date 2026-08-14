@@ -94,11 +94,11 @@ class TestCancellationScope:
             pass
         assert registry.active_count() == 0
 
-    def test_cancelled_token_stays_registered_after_exit(self) -> None:
+    def test_cancelled_token_is_unregistered_after_exit(self) -> None:
         registry = CancellationRegistry()
         with CancellationScope(registry=registry) as scope:
             scope.cancel_all()
-        assert registry.active_count() == 1
+        assert registry.active_count() == 0
 
     def test_exit_removes_token_even_on_exception(self) -> None:
         registry = CancellationRegistry()
@@ -127,6 +127,17 @@ class TestCancellationScope:
             assert inner.is_cancelled is True
             assert outer.is_cancelled is False
             assert not outer.token.is_cancelled()
+
+    def test_closed_inner_scope_is_detached_from_outer(self) -> None:
+        registry = CancellationRegistry()
+        with CancellationScope(registry=registry) as outer:
+            with CancellationScope(registry=registry) as inner:
+                inner_token = inner.token
+            outer.cancel_all()
+
+        assert inner_token is not None
+        assert inner_token.is_cancelled() is False
+        assert registry.active_count() == 0
 
     def test_new_scope_after_cancelled_scope_is_unaffected(self) -> None:
         registry = CancellationRegistry()

@@ -39,7 +39,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from app.agent_runtime.recipe_cache import TrajectoryCompiler
+from app.agent_runtime.recipe_cache import TrajectoryCompiler, score_keyword_entry
 from app.agent_runtime.types import Trajectory
 from app.fabric.catalog import RECIPE_CATALOG, get_recipe, has_recipe
 from app.fabric.router import RecipeRouter
@@ -89,9 +89,21 @@ DETERMINISTIC_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
 # model to be understood.
 LOCAL_ACTION_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("copy_object_text", ("复制这个", "复制内容", "copy this", "copy it")),
-    ("save_screenshot", ("截图", "存成图片", "保存截图", "screenshot", "save a screenshot")),
+    (
+        "save_screenshot",
+        ("截图", "截屏", "存成图片", "保存截图", "screenshot", "save a screenshot"),
+    ),
     ("show_source", ("这是哪个窗口", "来源是哪", "哪来的", "where is this from")),
 )
+
+# L0 tie-break order: legacy `_deterministic` returned the first
+# DETERMINISTIC_RULES entry whose phrase matched, so a double-hit resolved to
+# the earlier rule (e.g. "整理后复制这段文字" -> text.ocr_copy, not ocr_clean).
+# Candidates that only matched manifest keywords (no L0 phrase) sort after
+# every L0 recipe at the same score and tie-break by recipe id.
+_L0_RULE_ORDER: dict[str, int] = {
+    recipe_id: index for index, (recipe_id, _) in enumerate(DETERMINISTIC_RULES)
+}
 
 # What a routing decision may ask the caller to do.
 ACT_RECIPE = "recipe"          # run this recipe with these parameters
@@ -194,17 +206,22 @@ _QUESTION_PREFIXES = (
     "什么", "哪个", "哪一", "为什么", "怎么", "是否", "这是什么", "这段是什么",
 )
 _QUESTION_ACTION_MARKERS = (
-    "copy", "extract", "save", "translate", "rewrite", "summarize", "create",
+    "copy", "extract", "save", "translate", "rewrite", "create",
     "add to", "send to", "open ", "run ", "ocr this", "ocr it",
-    "复制", "提取", "保存", "翻译", "改写", "重写", "总结", "创建", "添加", "发送", "打开", "运行", "识别",
+    "复制", "提取", "保存", "翻译", "改写", "重写", "创建", "添加", "发送", "打开", "运行", "识别",
+    # Explicit destinations veto question-ness: "总结成三点放到邮件" is a
+    # write-recipe command, "总结成三点" without a destination is a question
+    # the model answers in the bubble (review R1).
+    "放到", "写入", "发到", "发给", "存到", "保存到", "记到",
 )
 
 
 def _is_information_question(command: str) -> bool:
     value = _normalize(command)
+    # `_normalize` already folds `？` into `?`, so only the ASCII form can
+    # ever be present here (review P3.8: the `"？" in value` check was dead).
     looks_like_question = (
         "?" in value
-        or "？" in value
         or value.startswith(_QUESTION_PREFIXES)
         or any(token in value for token in (
             "是什么意思", "是哪一", "是什么内容", "吗",
@@ -212,6 +229,11 @@ def _is_information_question(command: str) -> bool:
             # They are requests for an answer about the grounded objects, not
             # requests to pick a capability from the entire Recipe catalog.
             "对比", "比较", "区别", "解释", "分析", "评价", "评估", "哪个好",
+            # Summarize/overview phrasings without an explicit destination
+            # (review R1: "这个文件里读到了啥。概况总结。" must be answered
+            # with the grounded content, never previewed as a write-recipe).
+            "总结", "概况", "概括", "读到了啥", "读到了什么",
+            "说了什么", "说了啥", "讲了什么", "讲什么", "啥意思",
         ))
     )
     if not looks_like_question:
@@ -390,6 +412,40 @@ class TrajectoryCandidate:
     matched_keywords: list[str]
 
 
+@dataclass
+class LocalActionCandidate:
+    """One deterministic local action (screenshot, copy, show-source).
+
+    Not a recipe: the caller performs ``action`` directly, no trajectory and
+    no model call (legacy ``LOCAL_ACTION_RULES`` semantics).
+    """
+
+    action: str
+    score: float
+    matched_keywords: list[str]
+
+
+def match_local_action(text: str) -> LocalActionCandidate | None:
+    """Return the first exact zero-model local action, without loading recipes.
+
+    Local actions are intentionally a separate seam from trajectory compilation:
+    the normal agent entry may keep the screenshot/copy/source fast paths without
+    consulting the recipe catalog or changing the user's instruction.
+    """
+    value = _normalize(text)
+    if not value:
+        return None
+    for action, phrases in LOCAL_ACTION_RULES:
+        hits = [phrase for phrase in phrases if phrase in value]
+        if hits:
+            return LocalActionCandidate(
+                action=action,
+                score=1.0,
+                matched_keywords=hits,
+            )
+    return None
+
+
 _trajectory_compiler: list[TrajectoryCompiler] = []
 
 
@@ -400,40 +456,43 @@ def get_trajectory_compiler() -> TrajectoryCompiler:
     return _trajectory_compiler[0]
 
 
-def _manifest_keywords(compiler: TrajectoryCompiler, recipe_id: str, lang: str) -> tuple[str, ...]:
-    """The manifest keyword list the compiler scored on (guarded access).
-
-    ``match_keywords`` does not expose which keywords hit, and the compiler is
-    a read-only sibling module, so this reads the same in-memory raw entries
-    that produced the score. Falls back to () if the shape ever changes.
-    """
-    try:
-        entry = compiler._raw_by_id.get(recipe_id)  # type: ignore[attr-defined]
-    except AttributeError:
-        return ()
-    if not isinstance(entry, dict):
-        return ()
-    keywords = (entry.get("keywords") or {}).get(lang)
-    if not isinstance(keywords, list):
-        return ()
-    return tuple(str(k) for k in keywords if isinstance(k, str))
-
-
-def route_to_trajectory(text: str, objects: list | None = None, lang: str = "zh") -> list[TrajectoryCandidate]:
+def route_to_trajectory(
+    text: str,
+    objects: list | None = None,
+    lang: str = "zh",
+    enabled_recipes: set[str] | None = None,
+    extra_recipes: dict | None = None,
+) -> list[TrajectoryCandidate | LocalActionCandidate]:
     """Keyword-match ``text`` to compiled recipe trajectories.
 
-    Two keyword sources are merged per recipe id (score takes the max):
-    the L0 ``DETERMINISTIC_RULES`` phrase set and the trajectory compiler's
-    manifest keywords for ``lang``. ``objects`` is trajectory context, never a
-    match condition — it cannot change keyword scores.
+    Three keyword sources are merged per recipe id (score takes the max):
+    the L0 ``DETERMINISTIC_RULES`` phrase set, the trajectory compiler's
+    manifest keywords (default ``lang="zh"`` covers zh+en as the legacy union,
+    case-insensitive) and any ``extra_recipes`` entries. ``objects`` is
+    trajectory context; three-state gate: ``None`` (no information) skips the
+    ``minObjects`` gate, an explicit empty list counts as **zero objects** and
+    filters every candidate with ``minObjects > 0``, a non-empty list compares
+    normally. ``enabled_recipes`` (None = all enabled) excludes disabled
+    recipes from every source.
 
-    Returns 0..n candidates sorted by score descending (recipe id ascending as
-    the tiebreaker). No match at all returns [] — the ``L2_FALLBACK`` free-loop
-    semantic; only the legacy ``route()`` still carries the old forced-recipe
-    fallback. The caller (engine layer) picks a candidate or runs the loop.
+    Deterministic local actions (``LOCAL_ACTION_RULES``) are returned first as
+    :class:`LocalActionCandidate` — they are not recipes and carry no
+    trajectory. Trajectory candidates follow, sorted by score descending;
+    ties break by L0 ``DETERMINISTIC_RULES`` order (legacy winner), then
+    recipe id ascending.
+
+    No match at all returns [] — the ``L2_FALLBACK`` free-loop semantic; only
+    the legacy ``route()`` still carries the old forced-recipe fallback. The
+    caller (engine layer) picks a candidate or runs the loop.
     """
     value = _normalize(text)
     if not value:
+        return []
+    # Knowledge questions without a grounded object must never enter a
+    # trajectory: "What is OCR?" would otherwise hit the bare L0 word "ocr"
+    # and drive the OCR-copy recipe into the clipboard. Legacy `_deterministic`
+    # short-circuits the same way (intent_router.py:536-540).
+    if not objects and _is_information_question(text):
         return []
     compiler = get_trajectory_compiler()
 
@@ -451,18 +510,27 @@ def route_to_trajectory(text: str, objects: list | None = None, lang: str = "zh"
 
     for recipe_id, score in compiler.match_keywords(value, lang=lang):
         best_score[recipe_id] = max(best_score.get(recipe_id, 0.0), float(score))
-        for keyword in _manifest_keywords(compiler, recipe_id, lang):
-            if keyword in value and keyword not in matched.setdefault(recipe_id, []):
+        for keyword in compiler.matched_keywords(recipe_id, value, lang):
+            if keyword not in matched.setdefault(recipe_id, []):
                 matched[recipe_id].append(keyword)
+
+    local = match_local_action(text)
+    local_candidates = [local] if local is not None else []
+
+    object_count = len(objects) if objects is not None else None
 
     candidates: list[TrajectoryCandidate] = []
     for recipe_id, score in best_score.items():
+        if enabled_recipes is not None and recipe_id not in enabled_recipes:
+            continue
         if not has_recipe(recipe_id):
             continue
         if is_non_destination_recipe(get_recipe(recipe_id)):
             continue
         trajectory = compiler.compile_trajectory(recipe_id)
         if trajectory is None:
+            continue
+        if object_count is not None and object_count < get_recipe(recipe_id).min_objects:
             continue
         candidates.append(
             TrajectoryCandidate(
@@ -471,8 +539,43 @@ def route_to_trajectory(text: str, objects: list | None = None, lang: str = "zh"
                 matched_keywords=matched.get(recipe_id, []),
             )
         )
-    candidates.sort(key=lambda c: (-c.score, c.trajectory.recipe_id or ""))
-    return candidates
+
+    for recipe_id, entry in (extra_recipes or {}).items():
+        if enabled_recipes is not None and recipe_id not in enabled_recipes:
+            continue
+        score, hits = score_keyword_entry(
+            entry.get("keywords") if isinstance(entry, dict) else None,
+            value,
+            lang,
+        )
+        if score is None:
+            continue
+        trajectory = compiler.compile_extra_entry(recipe_id, entry)
+        if trajectory is None:
+            continue
+        try:
+            min_objects = int(entry.get("minObjects", 0))
+        except (TypeError, ValueError):
+            min_objects = 0
+        if object_count is not None and object_count < min_objects:
+            continue
+        candidates.append(
+            TrajectoryCandidate(
+                trajectory=trajectory,
+                score=score,
+                matched_keywords=hits,
+            )
+        )
+
+    fallback_order = len(DETERMINISTIC_RULES)
+    candidates.sort(
+        key=lambda c: (
+            -c.score,
+            _L0_RULE_ORDER.get(c.trajectory.recipe_id or "", fallback_order),
+            c.trajectory.recipe_id or "",
+        )
+    )
+    return local_candidates + candidates
 
 
 # ---------------------------------------------------------------------------

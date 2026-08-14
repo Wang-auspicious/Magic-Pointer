@@ -96,20 +96,19 @@ def cancel_all_in_flight() -> None:
 class CancellationScope:
     """Context manager owning a cancellation token.
 
-    ``__enter__`` creates and registers a fresh token; ``__exit__`` removes
-    the token from the registry when it was not cancelled (cancelled tokens
-    stay registered so the keep-registry design survives teardown).
-    ``cancel_all()`` cancels this scope's token and the tokens of every scope
-    nested inside it.
+    ``__enter__`` creates and registers a fresh token; ``__exit__`` always
+    unregisters it and detaches the scope from its parent. ``cancel_all()``
+    cancels this scope's token and only the scopes currently nested inside it.
     """
 
-    __slots__ = ("_children", "_registry", "token")
+    __slots__ = ("_children", "_parent", "_registry", "token")
 
     _local = threading.local()
 
     def __init__(self, registry: CancellationRegistry | None = None) -> None:
         self._registry = registry if registry is not None else get_registry()
         self._children: list[CancellationScope] = []
+        self._parent: CancellationScope | None = None
         self.token: CancellationToken | None = None
 
     def __enter__(self) -> CancellationScope:
@@ -120,6 +119,7 @@ class CancellationScope:
         token = CancellationToken()
         self._registry.register(token)
         self.token = token
+        self._parent = parent
         stack.append(self)
         if parent is not None:
             parent._children.append(self)
@@ -129,8 +129,15 @@ class CancellationScope:
         stack = getattr(self._local, "stack", None)
         if stack and stack[-1] is self:
             stack.pop()
+        parent = self._parent
+        self._parent = None
+        if parent is not None:
+            try:
+                parent._children.remove(self)
+            except ValueError:
+                pass
         token = self.token
-        if token is not None and not token.is_cancelled():
+        if token is not None:
             self._registry.unregister(token)
         return False
 

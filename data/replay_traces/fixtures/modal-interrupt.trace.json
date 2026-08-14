@@ -1,0 +1,114 @@
+{
+  "schema_version": 1,
+  "trace_id": "modal-interrupt",
+  "recorded_at_utc": "2026-08-13T10:00:00Z",
+  "frames": [
+    {
+      "frame_id": "modal-interrupt-frame-1",
+      "png_path": "modal-interrupt/frame-1.png",
+      "captured_at_utc": "2026-08-13T10:00:00Z",
+      "display_bounds_ltrb": [
+        0,
+        0,
+        1920,
+        1080
+      ],
+      "dpi": null,
+      "scale_factor": 1.0
+    }
+  ],
+  "uia_snapshots": [
+    {
+      "snapshot_id": "modal-interrupt-uia-1",
+      "tree_text": "要保存更改吗？",
+      "tree_path": null,
+      "captured_at_utc": "2026-08-13T10:00:00Z",
+      "window_hwnd": 1015,
+      "pid": 2000,
+      "note": "modal appears mid-loop -> NoModalSince precondition"
+    }
+  ],
+  "pointer_trace": [
+    {
+      "t_utc": "2026-08-13T10:00:00Z",
+      "x": 400,
+      "y": 300,
+      "phase": "down",
+      "buttons": 1
+    },
+    {
+      "t_utc": "2026-08-13T10:00:00Z",
+      "x": 410,
+      "y": 302,
+      "phase": "move",
+      "buttons": 1
+    },
+    {
+      "t_utc": "2026-08-13T10:00:00Z",
+      "x": 420,
+      "y": 304,
+      "phase": "move",
+      "buttons": 1
+    },
+    {
+      "t_utc": "2026-08-13T10:00:00Z",
+      "x": 430,
+      "y": 306,
+      "phase": "move",
+      "buttons": 1
+    },
+    {
+      "t_utc": "2026-08-13T10:00:00Z",
+      "x": 440,
+      "y": 308,
+      "phase": "move",
+      "buttons": 1
+    },
+    {
+      "t_utc": "2026-08-13T10:00:00Z",
+      "x": 450,
+      "y": 310,
+      "phase": "move",
+      "buttons": 1
+    },
+    {
+      "t_utc": "2026-08-13T10:00:00Z",
+      "x": 460,
+      "y": 312,
+      "phase": "move",
+      "buttons": 1
+    },
+    {
+      "t_utc": "2026-08-13T10:00:00Z",
+      "x": 470,
+      "y": 314,
+      "phase": "up",
+      "buttons": 1
+    }
+  ],
+  "cdp_snapshots": [],
+  "focus_events": [
+    {
+      "t_utc": "2026-08-13T10:00:00Z",
+      "hwnd": 1015,
+      "title": "replay modal-interrupt",
+      "process_name": "replay.exe"
+    }
+  ],
+  "display_config": {
+    "bounds_ltrb": [
+      0,
+      0,
+      1920,
+      1080
+    ],
+    "scale_factor": 1.0
+  },
+  "ground_truth": {
+    "command": "保存它",
+    "contract": "modal appears mid-loop -> NoModalSince precondition",
+    "replay_expectation": {
+      "blocked_by_modal": true
+    }
+  }
+}

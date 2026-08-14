@@ -77,7 +77,10 @@ def main() -> int:
     except Exception as exc:
         print(json.dumps({"ok": False, "error": f"invalid proposal: {type(exc).__name__}: {exc}"}, ensure_ascii=False))
         return 2
-    result = SafeActionExecutor().execute(proposal, confirmed=bool(payload.get("confirmed")))
+    result = SafeActionExecutor().execute(
+        proposal,
+        confirmed=payload.get("confirmed") is True,
+    )
     completed = result.status == ExecutionStatus.SUCCEEDED
     accepted = result.status == ExecutionStatus.PENDING
     ok = completed or accepted

@@ -69,7 +69,7 @@ def run_round(registry: ToolRegistry, tool_names: list[str], rounds: int) -> dic
             user_input=f"bench round {i}",
             registry=registry,
             client=client,
-            max_turns=4,
+            emergency_turn_fuse=4,
         )
         started = time.monotonic()
         tools_run = 0
@@ -110,8 +110,8 @@ def summarize(data: dict) -> dict:
     lat = data["latency_ms"]
     return {
         "rounds": data["rounds"],
-        "successes": sum(1 for r in data["reasons"] if r not in ("max_turns", "budget_exhausted")),
-        "errors": data["rounds"] - sum(1 for r in data["reasons"] if r not in ("max_turns", "budget_exhausted")),
+        "successes": sum(1 for r in data["reasons"] if r not in ("invariant_failed", "budget_exhausted")),
+        "errors": data["rounds"] - sum(1 for r in data["reasons"] if r not in ("invariant_failed", "budget_exhausted")),
         "turns_p50": statistics.median(data["turns"]),
         "tools_p50": statistics.median(data["tools"]),
         "latency_p50_ms": statistics.median(lat),

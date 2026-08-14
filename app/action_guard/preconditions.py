@@ -54,8 +54,8 @@ class ResolvedExact:
         if isinstance(resolution, ResolutionAmbiguous):
             raise ActionFailure(
                 FailureType.STALE_ANCHOR,
-                "resolution is ambiguous，需要用户确认；never act on an ambiguous target",
-                recovery_hint="ambiguous，需要用户确认；re-resolve target before acting",
+                "resolution is ambiguous; user confirmation required, never act on an ambiguous target",
+                recovery_hint="ambiguous target: re-resolve and ask the user to confirm before acting",
             )
         if not isinstance(resolution, ResolutionExact):
             raise ActionFailure(
@@ -89,7 +89,7 @@ class ContentUnchanged:
             raise ActionFailure(
                 FailureType.CONTENT_CHANGED,
                 f"target content no longer matches expected hash (expected={expected!r}, actual={actual!r})",
-                recovery_hint="target content changed，停止写入",
+                recovery_hint="target content changed; stop before writing",
             )
 
 

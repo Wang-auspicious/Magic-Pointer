@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 
-from app.fabric.catalog import RECIPE_CATALOG
 from app.fabric.agents import AgentInvocation, AgentRequest
 from app.fabric.artifacts import ArtifactRegistry
+from app.fabric.catalog import RECIPE_CATALOG
 from app.fabric.engine import FabricEngine
 from app.fabric.settings import FabricSettings
-from app.models.profiles import ModelProfile, ModelProfileStore
 from app.fabric.task_store import AgentTaskStore
+from app.fabric.workflow_task_store import WorkflowTaskError, WorkflowTaskStore
+from app.models.profiles import ModelProfile, ModelProfileStore
 
 
 def _object(object_id: str = "obj-1", content: str = "Hello  123  456") -> dict:
@@ -37,6 +39,88 @@ def test_every_catalog_recipe_can_be_planned_or_reports_precise_object_requireme
         assert result["plan"]["recipeId"] == recipe.id
         assert result["plan"]["provider"]
         assert result["plan"]["idempotencyKey"]
+
+
+def test_idempotency_key_binds_the_effective_execution_parameters(tmp_path: Path) -> None:
+    engine = FabricEngine(root=tmp_path)
+    first = engine.plan(
+        "recipe: text.ocr_copy",
+        objects=[_object()],
+        parameters={"replacementText": "first"},
+    )["plan"]
+    second = engine.plan(
+        "recipe: text.ocr_copy",
+        objects=[_object()],
+        parameters={"replacementText": "second"},
+    )["plan"]
+
+    assert first["idempotencyKey"] != second["idempotencyKey"]
+
+
+def test_workflow_rejects_a_receipt_from_a_different_plan(tmp_path: Path) -> None:
+    store = WorkflowTaskStore(tmp_path / "workflows")
+    task = store.create(
+        {
+            "id": "plan-a",
+            "recipeId": "text.ocr_copy",
+            "idempotencyKey": "key-a",
+            "integrityToken": "signed",
+            "requiresConfirmation": False,
+        },
+        surface="gui",
+    )
+    claim = store.claim_execution(task["taskId"], surface="gui")
+
+    try:
+        store.complete_execution(
+            task["taskId"],
+            claim_id=claim["claimId"],
+            receipt={
+                "id": "receipt-b",
+                "planId": "plan-b",
+                "recipeId": "other.recipe",
+                "status": "succeeded",
+            },
+            surface="gui",
+        )
+    except WorkflowTaskError as exc:
+        assert "identity" in str(exc)
+    else:
+        raise AssertionError("foreign receipt was accepted")
+
+
+def test_concurrent_engine_boots_share_one_atomic_signing_key(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    real_exists = Path.exists
+    rendezvous = threading.Barrier(2)
+
+    def synchronized_exists(path: Path) -> bool:
+        exists = real_exists(path)
+        if path.name == "plan-signing.key" and not exists:
+            rendezvous.wait(timeout=2)
+        return exists
+
+    monkeypatch.setattr(Path, "exists", synchronized_exists)
+    engines: list[FabricEngine] = []
+    errors: list[BaseException] = []
+
+    def boot_engine() -> None:
+        try:
+            engines.append(FabricEngine(root=tmp_path))
+        except BaseException as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=boot_engine) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=3)
+
+    assert errors == []
+    assert len(engines) == 2
+    assert engines[0]._signing_key == engines[1]._signing_key  # noqa: SLF001
 
 
 def test_local_ocr_clean_requires_confirmation_then_verifies_clipboard(tmp_path: Path) -> None:
@@ -461,6 +545,45 @@ def test_provider_backed_recipe_never_claims_success_when_unconfigured(tmp_path:
     assert receipt["error"] == "image_provider_not_configured"
 
 
+def test_model_text_recipe_uses_local_model_when_transform_wired(tmp_path: Path) -> None:
+    """Review R3: a model.text recipe (text.summarize_route) must run through
+    the local model transform when one is wired — the Notepad incident showed
+    the production bridge left it unwired, so the plan fell back to
+    agent.task and the user got AgentGatewayError instead of a summary."""
+    calls: list[tuple] = []
+
+    def fake_transform(command: str, context_text: str, recipe_id: str) -> str:
+        calls.append((command, context_text, recipe_id))
+        return "要点摘要：这是长文本的内容。"
+
+    engine = FabricEngine(root=tmp_path, model_transform=fake_transform)
+    plan = engine.plan(
+        "总结成三点放到邮件",
+        objects=[_object(content="长文本")],
+        recipe_id="text.summarize_route",
+    )["plan"]
+    assert plan["provider"] == "model.text"
+    receipt = engine.execute(plan, confirmed=True)
+    assert receipt["status"] == "succeeded"
+    assert receipt["verified"] is True
+    assert len(calls) == 1
+    assert calls[0][0] == "总结成三点放到邮件"
+    assert "长文本" in calls[0][1]
+    assert calls[0][2] == "text.summarize_route"
+
+
+def test_model_text_recipe_without_transform_is_honest(tmp_path: Path) -> None:
+    engine = FabricEngine(root=tmp_path, agent_availability={})
+    plan = engine.plan(
+        "总结成三点放到邮件",
+        objects=[_object(content="长文本")],
+        recipe_id="text.summarize_route",
+    )["plan"]
+    receipt = engine.execute(plan, confirmed=True)
+    assert receipt["status"] == "capability_unavailable"
+    assert receipt["error"] == "text_model_not_configured"
+
+
 def test_agent_handoff_starts_real_task_adapter_and_keeps_submit_false(tmp_path: Path) -> None:
     starts: list[dict] = []
     settings = FabricSettings.defaults()
@@ -538,6 +661,18 @@ def test_plan_provider_and_parameters_are_integrity_bound(tmp_path: Path) -> Non
     forged = engine.execute(plan, confirmed=True)
     assert forged["status"] == "failed"
     assert forged["error"] == "invalid_plan_signature"
+
+
+def test_malformed_operation_plan_returns_failure_instead_of_raising(tmp_path: Path) -> None:
+    engine = FabricEngine(root=tmp_path)
+
+    receipt = engine.execute({"risk": "not-a-risk", "parameters": []})
+
+    assert receipt == {
+        "status": "failed",
+        "verified": False,
+        "error": "invalid_plan",
+    }
 
 
 def test_unconfigured_specialists_fall_back_to_installed_agent_with_receipt(tmp_path: Path) -> None:
@@ -688,6 +823,36 @@ def test_stale_target_window_blocks_signed_external_action_before_agent_start(tm
     assert receipt["verified"] is False
     assert receipt["error"] == "stale_target_window"
     assert receipt["verification"]["targetLease"]["valid"] is False
+    assert starts == []
+
+
+def test_live_target_lease_without_probe_fails_closed_before_agent_start(tmp_path: Path) -> None:
+    starts: list[dict] = []
+    engine = FabricEngine(
+        root=tmp_path,
+        agent_availability={"pi": True},
+        agent_starter=lambda payload: starts.append(payload) or {
+            "taskId": "task-1",
+            "status": "queued",
+        },
+    )
+    obj = _object(content="Fix this")
+    obj["source"].update({"hwnd": 42, "processId": 314})
+    plan = engine.plan(
+        "Let Pi fix this",
+        objects=[obj],
+        parameters={"cwd": str(tmp_path)},
+    )["plan"]
+
+    receipt = engine.execute(plan, confirmed=True)
+
+    assert receipt["status"] == "failed"
+    assert receipt["verified"] is False
+    assert receipt["error"] == "target_lease_probe_unavailable"
+    assert receipt["verification"]["targetLease"] == {
+        "valid": False,
+        "reason": "target_lease_probe_unavailable",
+    }
     assert starts == []
 
 

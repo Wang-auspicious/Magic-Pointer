@@ -130,6 +130,19 @@ assert.strictEqual(question.type, 'RESULT');
 assert.strictEqual(question.result.presentation, 'answer-card');
 assert.strictEqual(question.result.answer, '这是一个需要展示给用户的回答。');
 
+const clarification = stageEventFromBridge({
+  ok: true,
+  answer: 'Which one?\n\n1. A\n2. B',
+  answerShape: 'clarification',
+  awaitingUserInput: true,
+  pendingInput: { question: 'Which one?', options: ['A', 'B'] },
+  modelUsage: { inputTokens: 12, outputTokens: 4, totalTokens: 16 },
+});
+assert.strictEqual(clarification.type, 'RESULT');
+assert.strictEqual(clarification.result.awaitingUserInput, true);
+assert.deepStrictEqual(clarification.result.pendingInput, { question: 'Which one?', options: ['A', 'B'] });
+assert.deepStrictEqual(clarification.result.modelUsage, { inputTokens: 12, outputTokens: 4, totalTokens: 16 });
+
 const promptDraft = stageEventFromBridge({
   ok: true,
   kind: 'agent-prompt-draft',

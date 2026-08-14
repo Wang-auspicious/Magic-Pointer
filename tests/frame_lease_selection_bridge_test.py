@@ -114,7 +114,14 @@ def test_bridge_consumes_the_frozen_frame_without_recapture(tmp_path: Path) -> N
     lease = _lease_for(frozen_path)
 
     result = capture_snapshot(
-        [{"title": "Demo", "hwnd": 42, "supported": True, "bbox": list(FROZEN_BBOX)}],
+        [{
+            "title": "Demo",
+            "hwnd": 42,
+            "pid": 7,
+            "process_name": "demo.exe",
+            "supported": True,
+            "bbox": list(FROZEN_BBOX),
+        }],
         registry=registry,
         target_point={"x": 160, "y": 100},
         gesture=_gesture(),
@@ -140,10 +147,56 @@ def test_bridge_consumes_the_frozen_frame_without_recapture(tmp_path: Path) -> N
     # Backend stays honestly gdi-fallback instead of being relabeled.
     assert snapshot["capture_attestation"]["backend"] == "gdi-fallback"
     assert snapshot["capture_attestation"]["status"] == "frame_lease"
+    assert snapshot["capture_attestation"]["binding_status"] == "verified"
+    assert snapshot["capture_attestation"]["capture_kind"] == "fallback"
+    assert snapshot["capture_attestation"]["target"] == {
+        "hwnd": 42,
+        "processId": 7,
+        "processName": "demo.exe",
+        "title": "Demo",
+    }
+    assert snapshot["capture_attestation"]["surface_bounds_px"] == FROZEN_BBOX
     # Gesture selection bbox stays separate from the full-surface bbox.
     assert snapshot["selection_bbox"] == [100, 60, 120, 80]
     assert snapshot["capture_bbox"] != snapshot["selection_bbox"]
     assert snapshot["source_kind"] == "screen_region"
+
+
+def test_frozen_lease_target_mismatch_fails_before_perception(tmp_path: Path) -> None:
+    frozen_path = tmp_path / "frozen.png"
+    _write_text_image(frozen_path, "BEFORE")
+    late_calls, late_capture = _fake_late_capture(
+        [Image.new("RGB", (320, 200), "red")]
+    )
+    registry = _SlowRegistry()
+
+    result = capture_snapshot(
+        [{
+            "title": "Wrong",
+            "hwnd": 99,
+            "pid": 8,
+            "process_name": "other.exe",
+            "supported": True,
+            "bbox": list(FROZEN_BBOX),
+        }],
+        registry=registry,
+        target_point={"x": 160, "y": 100},
+        gesture=_gesture(),
+        visual_capture=late_capture,
+        capture_dir=tmp_path / "captures",
+        clock=PhaseClock("selection_snapshot", enabled=False),
+        frame_lease=_lease_for(frozen_path),
+    )
+
+    snapshot = result["selectionSnapshot"]
+    assert result["ok"] is False
+    assert result["error"] == "invalid_frame_lease"
+    assert snapshot["status"] == "invalid_frame_lease"
+    assert snapshot["structured_gap_reason"] == (
+        "invalid_frame_lease:target_hwnd_mismatch"
+    )
+    assert registry.adapter.calls == 0
+    assert late_calls == []
 
 
 def test_invalid_lease_fails_closed_without_recapture(tmp_path: Path) -> None:

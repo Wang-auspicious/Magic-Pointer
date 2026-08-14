@@ -178,13 +178,43 @@ def state_for_status(status: int | None, exception_name: str = "") -> str:
     return "ok"
 
 
-def read_health() -> GatewayHealth:
+def read_health(base_url: str | None = None) -> GatewayHealth:
+    """Read the health entry for ``base_url`` (or the text endpoint when None).
+
+    Health is stored per endpoint: a vision-endpoint failure must never open
+    the circuit for the text endpoint and vice versa. With ``base_url=None``
+    the currently configured text endpoint's entry is returned (lazy
+    ``ai_client.get_ai_config``); if that endpoint has no entry, a legacy
+    single-entry file or the ``""`` key is used as fallback. An unknown
+    endpoint returns a blank :class:`GatewayHealth` (state ``unknown``).
+    """
+    entries = _read_entries()
+    if base_url is not None:
+        raw = entries.get(str(base_url).rstrip("/"))
+    else:
+        raw = None
+        text = _configured_text_base_url()
+        if text and text in entries:
+            raw = entries[text]
+        elif len(entries) == 1:
+            raw = next(iter(entries.values()))
+        elif "" in entries:
+            raw = entries[""]
+    return _health_from_raw(raw) if isinstance(raw, dict) else GatewayHealth()
+
+
+def _configured_text_base_url() -> str:
+    """The currently configured text endpoint, normalized; "" when unknown."""
     try:
-        raw = json.loads(_state_path().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return GatewayHealth()
-    if not isinstance(raw, dict):
-        return GatewayHealth()
+        from app.ai_client import get_ai_config
+
+        _, base_url, _ = get_ai_config()
+        return (str(base_url or "") or "").rstrip("/")
+    except Exception:  # noqa: BLE001 - config lookup must never break health reads
+        return ""
+
+
+def _health_from_raw(raw: dict[str, Any]) -> GatewayHealth:
     health = GatewayHealth()
     for field in ("state", "detail", "model", "base_url"):
         value = raw.get(field)
@@ -199,12 +229,32 @@ def read_health() -> GatewayHealth:
     return health
 
 
+def _read_entries() -> dict[str, Any]:
+    try:
+        raw = json.loads(_state_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    entries = raw.get("entries")
+    if isinstance(entries, dict):
+        return entries
+    # Legacy v1 single-object file: adopt it under its own base_url (or "").
+    base = raw.get("base_url")
+    key = base.rstrip("/") if isinstance(base, str) and base.strip() else ""
+    return {key: raw}
+
+
 def _write_health(health: GatewayHealth) -> None:
     path = _state_path()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
+        entries = _read_entries()
+        key = (health.base_url or "").rstrip("/")
+        entries[key] = asdict(health)
+        payload = {"schema": 2, "entries": entries}
         tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(asdict(health), ensure_ascii=False), encoding="utf-8")
+        tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
         tmp.replace(path)
     except OSError:
         # Health tracking must never be the reason a command fails.
@@ -216,6 +266,27 @@ def record_success(*, model: str = "", base_url: str = "") -> GatewayHealth:
         state="ok",
         http_status=200,
         detail="",
+        checked_at=time.time(),
+        open_until=0.0,
+        model=model,
+        base_url=base_url,
+    )
+    _write_health(health)
+    return health
+
+
+def record_note(
+    *,
+    detail: str = "",
+    model: str = "",
+    base_url: str = "",
+) -> GatewayHealth:
+    """Non-poisoning audit note: the endpoint stays healthy (state ok), the
+    detail records a soft event like a streaming fallback."""
+    health = GatewayHealth(
+        state="ok",
+        http_status=200,
+        detail=str(detail)[:300],
         checked_at=time.time(),
         open_until=0.0,
         model=model,
@@ -270,11 +341,16 @@ def clear_health() -> None:
         pass
 
 
-def short_circuit_message() -> str | None:
-    """The sentence to return instead of calling the model, or None to go ahead."""
+def short_circuit_message(base_url: str | None = None) -> str | None:
+    """The sentence to return instead of calling the model, or None to go ahead.
+
+    The verdict is read per endpoint (``base_url``), so a downed vision
+    gateway never suppresses text answers and vice versa. ``None`` reads the
+    configured text endpoint's entry.
+    """
     if os.environ.get("MAGIC_POINTER_IGNORE_MODEL_HEALTH") == "1":
         return None
-    health = read_health()
+    health = read_health(base_url)
     return health.message if health.circuit_open else None
 
 

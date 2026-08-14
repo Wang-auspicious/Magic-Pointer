@@ -93,7 +93,7 @@ class CaptureCommitCoordinator {
     return token;
   }
 
-  async complete(gesture: UnknownRecord, token?: string): Promise<void> {
+  async complete(gesture: UnknownRecord, token?: string): Promise<unknown> {
     if (token !== undefined && token !== this.activeToken) {
       throw new Error('frame_commit_stale_token');
     }
@@ -101,6 +101,7 @@ class CaptureCommitCoordinator {
       throw new Error('frame_commit_not_armed');
     }
     const request = this.armedRequest;
+    const owningToken = this.activeToken;
     this.state = 'committing';
     let lease: ReturnType<typeof validateFrameLease> | null = null;
     let failure: unknown = null;
@@ -112,19 +113,32 @@ class CaptureCommitCoordinator {
     } catch (error) {
       failure = error;
     }
+    // A newer arm may have replaced this epoch while the commit was in
+    // flight. The stale commit's tail must not touch the new gesture: no
+    // overlay release, no armedRequest clobber, no session for the old
+    // gesture. Discard silently (the newer arm owns the surface now).
+    if (this.state !== 'committing' || this.activeToken !== owningToken) {
+      return null;
+    }
     if (this.state === 'committing') this.state = failure ? 'failed' : 'committed';
-    this.releaseOverlay();
+    try {
+      this.releaseOverlay();
+    } catch (_releaseError) {
+      // Overlay release is best effort: a destroyed window must not turn a
+      // successful freeze into a failed gesture.
+    }
     this.activeToken = null;
     this.armedRequest = null;
     if (failure !== null) {
       this.onCommitFailure(failure);
-      return;
+      return null;
     }
     if (this.cancelledDuringCommit) {
       this.state = 'cancelled';
-      return;
+      return null;
     }
     this.beginSession(gesture, lease as ReturnType<typeof validateFrameLease>);
+    return lease;
   }
 
   async cancel(): Promise<void> {

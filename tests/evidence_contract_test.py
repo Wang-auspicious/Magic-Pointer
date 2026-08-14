@@ -217,6 +217,18 @@ class TestContainerHeuristic:
         ev = ok_evidence("OK button", EvidenceSource.UIA)
         assert apply_container_heuristic(ev, self.CONTAINERS) is ev
 
+    def test_multiline_all_container_lines_are_downgraded(self) -> None:
+        """A multi-line read whose every line is a container name must be
+        flagged too (review P3.6: exact-match only let joined reads through)."""
+        ev = ok_evidence("Window\nPane\nList", EvidenceSource.UIA)
+        out = apply_container_heuristic(ev, self.CONTAINERS)
+        assert out.container_hint is True
+        assert out.status is EvidenceStatus.DEGRADED
+
+    def test_multiline_with_real_content_is_kept(self) -> None:
+        ev = ok_evidence("Window\nreal message text\nPane", EvidenceSource.UIA)
+        assert apply_container_heuristic(ev, self.CONTAINERS) is ev
+
     def test_empty_value_returns_same_object(self) -> None:
         ev = ok_evidence("", EvidenceSource.UIA)
         assert apply_container_heuristic(ev, self.CONTAINERS) is ev

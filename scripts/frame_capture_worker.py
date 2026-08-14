@@ -104,6 +104,13 @@ class SolidColorTestBackend:
         )
 
 
+def initialize_capture_process(*, enable_dpi, create_backend):
+    """Enter physical-coordinate mode before a capture backend can exist."""
+
+    enable_dpi()
+    return create_backend()
+
+
 def _ok(rid: Any, result: dict[str, Any]) -> dict[str, Any]:
     return {"id": rid, "result": result}
 
@@ -177,6 +184,15 @@ class FrameCaptureService:
         surface = params.get("surfaceBoundsPx")
         if not (isinstance(surface, (list, tuple)) and len(surface) == 4):
             raise WorkerError("invalid_arm", "surfaceBoundsPx is required to arm capture")
+        try:
+            bounds = tuple(int(round(float(value))) for value in surface)
+        except (TypeError, ValueError) as exc:
+            raise WorkerError("invalid_arm", "surfaceBoundsPx must contain numbers") from exc
+        if bounds[2] - bounds[0] <= 0 or bounds[3] - bounds[1] <= 0:
+            raise WorkerError(
+                "invalid_arm",
+                "surfaceBoundsPx must have positive area (right>left, bottom>top)",
+            )
         display_id = str(params.get("displayId") or "").strip()
         if not display_id:
             raise WorkerError("invalid_arm", "displayId is required to arm capture")
@@ -185,7 +201,7 @@ class FrameCaptureService:
             self._stop = threading.Event()
             self._epoch = {
                 "epochId": epoch_id,
-                "surfaceBoundsPx": tuple(int(value) for value in surface),
+                "surfaceBoundsPx": bounds,
                 "displayId": display_id,
                 "scaleFactor": float(params.get("scaleFactor") or 1),
                 "targetWindow": dict(params.get("targetWindow") or {}),
@@ -247,8 +263,20 @@ class FrameCaptureService:
     def _capture_loop(self) -> None:
         while not self._stop.is_set():
             with self._lock:
-                if not self._stop.is_set() and self._epoch is not None:
-                    self._capture_once_locked()
+                if self._stop.is_set() or self._epoch is None:
+                    break
+                epoch = self._epoch
+                ring = self._ring
+                bounds = epoch["surfaceBoundsPx"]
+            # Grab OUTSIDE the lock: a slow ImageGrab must not stall
+            # arm/commit/cancel, and the frame's timestamp is the grab
+            # COMPLETION time so commit only selects captures that finished
+            # before pointerup (a grab still running at commit is dropped).
+            image = self._backend.capture(bounds)
+            captured_at = self._clock.monotonic()
+            with self._lock:
+                if not self._stop.is_set() and self._epoch is epoch:
+                    ring.append((captured_at, image))
             self._stop.wait(self._capture_interval_ms / 1000.0)
 
     def _capture_once_locked(self) -> tuple[float, Any] | None:
@@ -256,18 +284,22 @@ class FrameCaptureService:
         ring = self._ring
         if epoch is None or ring is None:
             return None
-        captured_at = self._clock.monotonic()
         image = self._backend.capture(epoch["surfaceBoundsPx"])
+        captured_at = self._clock.monotonic()
         entry = (captured_at, image)
         ring.append(entry)
         return entry
 
     def _stop_epoch_locked(self) -> None:
+        """Set the stop flag and detach the capture thread.
+
+        The detached thread is never joined: it checks ``_stop`` after its
+        grab and its append is epoch-identity guarded, so it cannot pollute
+        the next epoch. A join (even outside the lock) would stall
+        arm/commit for the duration of a slow in-flight grab.
+        """
         self._stop.set()
-        thread = self._thread
         self._thread = None
-        if thread is not None:
-            thread.join(timeout=1.0)
 
     def _lease_from_frame(
         self,
@@ -291,7 +323,10 @@ class FrameCaptureService:
             "schemaVersion": 1,
             "frameLeaseId": f"frame-{uuid.uuid4().hex[:16]}",
             "epochId": epoch["epochId"],
-            "capturedAtMonotonicMs": captured_at,
+            # The worker clock is monotonic SECONDS; the lease field is named
+            # Ms, so convert explicitly. Values are only comparable within
+            # this worker process (each process has its own monotonic origin).
+            "capturedAtMonotonicMs": int(captured_at * 1000.0),
             "capturedAtUtc": self._clock.utc_iso(),
             "source": self._backend.source,
             "targetWindow": dict(epoch["targetWindow"]),
@@ -307,7 +342,7 @@ class FrameCaptureService:
             },
             "contentHash": content_hash,
             "overlayExcluded": epoch["overlayExcluded"] and os.name == "nt",
-            "captureLatencyMs": max(0.0, commit_time - captured_at),
+            "captureLatencyMs": max(0.0, (commit_time - captured_at) * 1000.0),
         }
         return normalize_frame_lease(lease)
 
@@ -318,13 +353,35 @@ class FrameCaptureService:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="idle resident frame capture worker")
-    parser.add_argument("--backend", choices=["gdi-fallback", "test"], default="gdi-fallback")
+    parser.add_argument("--backend", choices=["gdi-fallback", "wgc-window", "test"], default="gdi-fallback")
     parser.add_argument("--output-root", default=str(ROOT / "data" / "runtime"))
     parser.add_argument("--capture-interval-ms", type=float, default=DEFAULT_CAPTURE_INTERVAL_MS)
     parser.add_argument("--ring-size", type=int, default=RING_SIZE)
     args = parser.parse_args(argv)
-    backend: CaptureBackend = (
-        SolidColorTestBackend() if args.backend == "test" else PillowDisplayCaptureBackend()
+
+    def create_backend() -> CaptureBackend:
+        if args.backend == "test":
+            return SolidColorTestBackend()
+        # CaptureProvider contract (Phase B): the requested source, or an
+        # honest GDI fallback — the lease always declares what it actually
+        # used, so a fallback never pretends to be WGC.
+        from app.capture import provider_for
+
+        provider = provider_for(args.backend)
+        if provider.available():
+            return provider  # type: ignore[return-value]
+        sys.stderr.write(
+            f"capture backend {args.backend} unavailable: "
+            f"{provider.unavailable_reason}; using gdi-fallback\n"
+        )
+        sys.stderr.flush()
+        return PillowDisplayCaptureBackend()
+
+    from app.system_context import enable_dpi_awareness
+
+    backend = initialize_capture_process(
+        enable_dpi=enable_dpi_awareness,
+        create_backend=create_backend,
     )
     service = FrameCaptureService(
         backend=backend,

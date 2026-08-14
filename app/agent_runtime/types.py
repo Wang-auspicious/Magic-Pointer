@@ -42,7 +42,11 @@ class TransitionReason(enum.StrEnum):
     STOP_HOOK = "stop_hook"
     USER_INTERRUPT = "user_interrupt"
     BUDGET_EXHAUSTED = "budget_exhausted"
-    MAX_TURNS = "max_turns"
+    PROVIDER_UNAVAILABLE = "provider_unavailable"
+    AWAITING_USER = "awaiting_user"
+    STALLED = "stalled"
+    INVARIANT_FAILED = "invariant_failed"
+    LOCAL_ACTION = "local_action"
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +57,8 @@ class AgentMessage:
     name: str | None
     is_error: bool = False
     origin: str = ORIGIN_INSTRUCTION
+    injected: bool = False
+    tool_calls: tuple[dict[str, Any], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -62,12 +68,19 @@ class AgentMessage:
             "name": self.name,
             "is_error": self.is_error,
             "origin": self.origin,
+            "injected": self.injected,
+            "tool_calls": list(self.tool_calls),
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> AgentMessage:
         _reject_unknown(data, cls)
-        data = {**data, "origin": data.get("origin", ORIGIN_INSTRUCTION)}
+        data = {
+            **data,
+            "origin": data.get("origin", ORIGIN_INSTRUCTION),
+            "injected": data.get("injected", False),
+            "tool_calls": data.get("tool_calls", ()),
+        }
         _require_fields(data, cls)
         origin = data["origin"]
         if origin not in (ORIGIN_INSTRUCTION, ORIGIN_DATA):
@@ -79,6 +92,8 @@ class AgentMessage:
             name=data["name"],
             is_error=data["is_error"],
             origin=origin,
+            injected=data["injected"],
+            tool_calls=tuple(data["tool_calls"]),
         )
 
 
@@ -86,7 +101,8 @@ class AgentMessage:
 class ToolCall:
     id: str
     name: str
-    arguments: dict[str, Any]
+    arguments: Any
+    argument_error: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,12 +194,21 @@ def with_transition(
 
 @dataclass(frozen=True, slots=True)
 class Terminal:
-    """Final return value of the query loop."""
+    """Final return value of the query loop.
+
+    ``local_action`` carries a deterministic local action id
+    (save_screenshot / copy_object_text / show_source) when the routing
+    layer resolved the command without running the loop at all
+    (``reason=LOCAL_ACTION``); it is None for every loop-driven terminal.
+    """
 
     reason: TransitionReason
     message: str
     turns: int
     results: tuple[ToolResult, ...]
+    local_action: str | None = None
+    pending_input: dict[str, Any] | None = None
+    model_usage: dict[str, int] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -191,17 +216,28 @@ class Terminal:
             "message": self.message,
             "turns": self.turns,
             "results": [_tool_result_to_dict(r) for r in self.results],
+            "local_action": self.local_action,
+            "pending_input": self.pending_input,
+            "model_usage": self.model_usage,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Terminal:
         _reject_unknown(data, cls)
+        data = {
+            **data,
+            "pending_input": data.get("pending_input"),
+            "model_usage": data.get("model_usage"),
+        }
         _require_fields(data, cls)
         return cls(
             reason=TransitionReason(data["reason"]),
             message=data["message"],
             turns=data["turns"],
             results=tuple(_tool_result_from_dict(r) for r in data["results"]),
+            local_action=data["local_action"],
+            pending_input=data["pending_input"],
+            model_usage=data["model_usage"],
         )
 
 
@@ -212,7 +248,6 @@ class Trajectory:
     recipe_id: str | None
     first_user_message: str
     recommended_tools: tuple[str, ...]
-    max_turns: int = 3
     risk: str = "read"
 
 
@@ -230,16 +265,22 @@ def _require_fields(data: dict[str, Any], cls: type) -> None:
 
 
 def _tool_call_to_dict(call: ToolCall) -> dict[str, Any]:
-    return {"id": call.id, "name": call.name, "arguments": call.arguments}
+    value = {"id": call.id, "name": call.name, "arguments": call.arguments}
+    if call.argument_error is not None:
+        value["argument_error"] = call.argument_error
+    return value
 
 
 def _tool_call_from_dict(data: dict[str, Any]) -> ToolCall:
     _reject_unknown(data, ToolCall)
-    _require_fields(data, ToolCall)
+    missing = sorted({"id", "name", "arguments"} - set(data))
+    if missing:
+        raise ValueError(f"missing field(s) for ToolCall: {missing}")
     return ToolCall(
         id=data["id"],
         name=data["name"],
         arguments=data["arguments"],
+        argument_error=data.get("argument_error"),
     )
 
 

@@ -24,36 +24,51 @@ npmRebuild: false
 files:
   - build/electron/**
   - app/**
+  # 运行时脚本白名单（2026-08-13 实测补全）：桥进程 spawn / import 的全部脚本。
+  # 漏项会让安装版缺文件、首启自检失败（曾漏 recipe/抓帧/进度模块）。
   - scripts/__init__.py
   - scripts/_bridge_common.py
   - scripts/action_bridge.py
   - scripts/agent_bridge.py
   - scripts/agent_hook_bridge.py
   - scripts/agent_worker.py
+  - scripts/bridge_progress.py
   - scripts/calendar_bridge.py
+  - scripts/deliver_text_bridge.py
   - scripts/electron_bridge.py
+  - scripts/element_probe_bridge.py
+  - scripts/expand_passage_bridge.py
   - scripts/fabric_bridge.py
+  - scripts/frame_capture_worker.py
+  - scripts/frame_lease.py
   - scripts/install_agent_hooks.py
   - scripts/list_models.py
   - scripts/local_voice_bridge.py
   - scripts/local_voice_worker.py
   - scripts/magic_pointer_mcp.py
+  - scripts/ocr_resident_worker.py
   - scripts/office_selection_probe.vbs
   - scripts/pointer_input_state.ps1
-  - build/scripts/collect-diagnostics.js
   - scripts/selection_bridge.py
   - scripts/selection_snapshot_bridge.py
   - scripts/sense_voice_bridge.py
   - scripts/sense_voice_setup.py
   - scripts/shopping_list_bridge.py
   - scripts/smoke_fabric.py
+  - scripts/stash_describe_bridge.py
   - scripts/start_windows_dictation.ps1
   - scripts/uia_draft_writer.cs
   - scripts/uia_selection_probe.cs
+  - scripts/voice_engine.py
+  - build/scripts/collect-diagnostics.js
   - native/macos/magic-pointer-host
   - assets/app/icon.ico
   - data/model_capabilities.v1.json
   - data/preflight_manifest.v1.json
+  - data/recipes/**
+  - data/surface_adapters/**
+  - data/plugins/**
+  - data/objects/**
   - data/README.md
   - requirements.txt
   - package.json

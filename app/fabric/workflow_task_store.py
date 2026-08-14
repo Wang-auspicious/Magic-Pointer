@@ -294,6 +294,12 @@ class WorkflowTaskStore:
             claim = value.get("executionClaim") if isinstance(value.get("executionClaim"), dict) else {}
             if value["executionState"] != "running" or claim.get("claimId") != claim_id:
                 raise WorkflowTaskError("invalid workflow execution claim")
+            plan = value["plan"]
+            if (
+                str(receipt.get("planId") or "") != str(plan.get("id") or "")
+                or str(receipt.get("recipeId") or "") != value["recipeId"]
+            ):
+                raise WorkflowTaskError("workflow receipt identity mismatch")
             value["executionState"] = "terminal"
             value["executionClaim"] = None
             value["receipt"] = dict(receipt)

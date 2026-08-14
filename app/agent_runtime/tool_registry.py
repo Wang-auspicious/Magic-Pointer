@@ -5,10 +5,11 @@ aligned to the Claude Code toolExecution/toolOrchestration port note
 (``docs/harness-port-notes/2026-08-12-cc-tool-execution.md``) and the Kimi CU
 tool contract note (``docs/harness-port-notes/2026-08-12-kimi-cu-tools.md``):
 
-- ``ToolSpec`` mirrors the CC tool contract, trimmed: name / description /
+- ``ToolSpec`` mirrors the CC/Kimi tool contract: name / description /
   input_schema (JSON Schema style, validated structure) / effect /
   is_concurrency_safe (fail-closed False, CC ``isConcurrencySafe``) /
-  used_backend (honest reporting, Kimi CU) / execute / timeout_ms.
+  resource_keys (Kimi-style static or argument-derived conflict ownership) /
+  used_backend (honest reporting) / execute / timeout_ms.
 - ``schemas_for_model`` emits the CC API ``tools`` parameter shape
   (name + description + parameters=input_schema).
 - ``concurrency_partition`` mirrors CC ``partitionToolCalls``: safe tools may
@@ -19,12 +20,9 @@ tool contract note (``docs/harness-port-notes/2026-08-12-kimi-cu-tools.md``):
   ``failure_type`` through, any other exception is wrapped as
   ``FailureType.TOOL_ERROR`` (CC ``is_error:true`` tool_result semantics).
 
-``ActionFailure``/``FailureType`` come from ``app.agent_runtime.errors``
-(plan T2.1). That module is produced by a parallel swarm agent; until it
-lands this module carries a mirrored fallback with the documented failure
-vocabulary (stale_anchor / focus_lost / content_changed / blocked_by_modal /
-permission_denied / timeout / tool_error) so the registry works standalone.
-Once ``errors.py`` exists the import takes precedence.
+``ActionFailure``/``FailureType`` have one canonical definition in
+``app.agent_runtime.errors`` so callers never compare members from two
+look-alike enum classes.
 
 This module is pure Python and has no I/O or platform dependencies.
 """
@@ -32,39 +30,17 @@ This module is pure Python and has no I/O or platform dependencies.
 from __future__ import annotations
 
 import enum
+import math
 import re
 import time
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass
-from typing import Any
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Any
 
-from app.action_guard.preconditions import Precondition
+if TYPE_CHECKING:  # pragma: no cover - annotation-only
+    from app.action_guard.preconditions import Precondition
 
-try:
-    from app.agent_runtime.errors import ActionFailure, FailureType  # plan T2.1
-except ImportError:  # B2.1 parallel agent has not landed yet; see module docstring
-    class FailureType(enum.StrEnum):
-        STALE_ANCHOR = "stale_anchor"
-        FOCUS_LOST = "focus_lost"
-        CONTENT_CHANGED = "content_changed"
-        BLOCKED_BY_MODAL = "blocked_by_modal"
-        PERMISSION_DENIED = "permission_denied"
-        TIMEOUT = "timeout"
-        TOOL_ERROR = "tool_error"
-
-    class ActionFailure(Exception):
-        """Structured action failure carrying a :class:`FailureType`."""
-
-        def __init__(
-            self,
-            failure_type: FailureType,
-            message: str = "",
-            recovery_hint: str | None = None,
-        ) -> None:
-            super().__init__(message)
-            self.failure_type = failure_type
-            self.message = message
-            self.recovery_hint = recovery_hint
+from app.agent_runtime.errors import ActionFailure, FailureType
 
 
 class Effect(enum.StrEnum):
@@ -79,6 +55,16 @@ class Effect(enum.StrEnum):
 
 
 _NAME_PATTERN = re.compile(r"[a-z0-9_]+")
+
+_WORD_SPLIT = re.compile(r"[a-z0-9_]+")
+
+FIND_CAPABILITY_TOOL = "find_capability"
+"""Canonical name of the capability search tool (CC ToolSearch pattern);
+the loop reads its result to load deferred tool schemas into the next round."""
+
+_RESERVED_ARGUMENT_NAMES = frozenset({"scope"})
+"""Input-schema property names that collide with the harness-side execution
+keyword (``execute_tool`` forwards the cancellation token as ``scope=``)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,8 +83,11 @@ class ToolSpec:
     is_concurrency_safe: bool = False
     used_backend: str = "local"
     timeout_ms: int = 30000
+    resource_keys: tuple[str, ...] | Callable[[dict[str, object]], Iterable[str]] = ()
+    verify_result: Callable[[Any], None] | None = None
+    discovers_tools: bool = False
+    suspends_for_user_input: bool = False
     preconditions: tuple[Precondition, ...] = ()
-    compensate: Callable[[dict], None] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,16 +145,54 @@ class ToolRegistry:
             raise ValueError(f"tool {name!r} execute must be callable")
         if not isinstance(spec.timeout_ms, int) or spec.timeout_ms <= 0:
             raise ValueError(f"tool {name!r} timeout_ms must be a positive int")
+        if not callable(spec.resource_keys):
+            self._validate_resource_keys(spec.resource_keys, name)
+        if spec.verify_result is not None and not callable(spec.verify_result):
+            raise ValueError(
+                f"tool {name!r} verify_result must be callable when set"
+            )
+        if not isinstance(spec.discovers_tools, bool):
+            raise ValueError(f"tool {name!r} discovers_tools must be a bool")
+        if not isinstance(spec.suspends_for_user_input, bool):
+            raise ValueError(
+                f"tool {name!r} suspends_for_user_input must be a bool"
+            )
         if not all(callable(getattr(p, "check", None)) for p in spec.preconditions):
             raise ValueError(
                 f"tool {name!r} preconditions must be Precondition objects "
                 "with a check(context) method"
             )
-        if spec.compensate is not None and not callable(spec.compensate):
-            raise ValueError(f"tool {name!r} compensate must be callable when set")
         self._tools[name] = spec
         self._order.append(name)
         return spec
+
+    @staticmethod
+    def _validate_resource_keys(keys: object, name: str) -> tuple[str, ...]:
+        if not isinstance(keys, tuple) or not all(
+            isinstance(key, str) and bool(key.strip()) for key in keys
+        ):
+            raise ValueError(
+                f"tool {name!r} resource_keys must be a tuple of non-empty str "
+                "or a callable returning one"
+            )
+        return tuple(dict.fromkeys(key.strip() for key in keys))
+
+    def unregister(self, name: str, *, expected: ToolSpec | None = None) -> bool:
+        """Remove one exact registration; return whether it was removed.
+
+        ``expected`` prevents a stale plugin disposer from removing a newer
+        owner's registration after a reload.
+        """
+        current = self._tools.get(name)
+        if current is None or (expected is not None and current is not expected):
+            return False
+        del self._tools[name]
+        self._order.remove(name)
+        return True
+
+    def scope_for(self, context: Any) -> _ScopedToolRegistry:
+        """Return a plugin-scope view whose registrations auto-unwind."""
+        return _ScopedToolRegistry(self, context)
 
     @staticmethod
     def _validate_schema(schema: object, name: str) -> None:
@@ -180,6 +207,12 @@ class ToolRegistry:
             raise ValueError(
                 f"tool {name!r} input_schema property entries must be dicts"
             )
+        for reserved in _RESERVED_ARGUMENT_NAMES:
+            if reserved in properties:
+                raise ValueError(
+                    f"tool {name!r} input_schema property {reserved!r} is reserved: "
+                    f"it collides with the harness-side execution keyword"
+                )
         required = schema.get("required")
         if not isinstance(required, list) or not all(
             isinstance(r, str) for r in required
@@ -195,6 +228,20 @@ class ToolRegistry:
     def list(self) -> tuple[ToolSpec, ...]:
         """All registered specs in registration order."""
         return tuple(self._tools[n] for n in self._order)
+
+    def resource_keys_for(
+        self, name: str, args: dict[str, object]
+    ) -> tuple[str, ...]:
+        """Resolve the resources one invocation must own while executing.
+
+        Static declarations cover process-wide resources such as desktop input
+        or the clipboard. A callable may derive a narrower key from validated
+        arguments, for example ``file:C:/work/a.txt``.
+        """
+        spec = self.get(name)
+        declared = spec.resource_keys
+        keys = declared(args) if callable(declared) else declared
+        return self._validate_resource_keys(keys, name)
 
     def schemas_for_model(self) -> list[dict[str, object]]:
         """Emit specs in CC API ``tools`` parameters format.
@@ -220,25 +267,15 @@ class ToolRegistry:
         """
         if not isinstance(args, dict):
             raise TypeError(f"args must be a dict, got {type(args).__name__}")
-        schema = spec.input_schema
-        properties = schema["properties"]
         errors: list[str] = []
-        for field_name in schema["required"]:
-            if field_name not in args:
-                errors.append(f"missing required field {field_name!r}")
-        for field_name, value in args.items():
-            if field_name not in properties:
-                errors.append(f"unexpected field {field_name!r}")
-                continue
-            prop = properties[field_name]
-            type_name = prop.get("type") if isinstance(prop, dict) else None
-            if type_name is not None:
-                ok = _matches_json_schema_type(value, type_name)
-                if ok is False:
-                    errors.append(
-                        f"field {field_name!r} expects type {type_name!r}, "
-                        f"got {type(value).__name__}"
-                    )
+        _validate_json_schema_value(
+            args,
+            spec.input_schema,
+            path="",
+            errors=errors,
+            budget=[0],
+            root_schema=spec.input_schema,
+        )
         return errors
 
     def concurrency_partition(
@@ -257,6 +294,37 @@ class ToolRegistry:
             spec = self.get(name)
             (parallel if spec.is_concurrency_safe else sequential).append(name)
         return parallel, sequential
+
+    def search(self, keyword: str, *, limit: int = 8) -> list[ToolSpec]:
+        """Keyword search over the full registry (CC ToolSearch pattern).
+
+        Tools beyond the loop's tool_limit are invisible to the model; the
+        ``find_capability`` tool searches this index so deferred capabilities
+        stay discoverable without paying their schema tokens every turn.
+        ASCII keywords match whole words (name/description); CJK keywords
+        match substrings (Chinese has no word boundaries). Case-insensitive.
+        """
+        raw = str(keyword or "").casefold().strip()
+        if not raw:
+            return []
+        ascii_tokens = re.findall(r"[a-z0-9_]+", raw)
+        cjk_tokens = re.findall(r"[\u4e00-\u9fff]+", raw)
+        if not ascii_tokens and not cjk_tokens:
+            return []
+        results: list[tuple[int, ToolSpec]] = []
+        for spec in self.list():
+            haystack = f"{spec.name} {spec.description}".casefold()
+            haystack_words = set(re.findall(r"[a-z0-9_]+", haystack))
+            score = sum(
+                1 for token in ascii_tokens
+                for word in haystack_words
+                if token == word or token in word.split("_")
+            )
+            score += sum(1 for token in cjk_tokens if token in haystack)
+            if score > 0:
+                results.append((score, spec))
+        results.sort(key=lambda item: (-item[0], item[1].name))
+        return [spec for _, spec in results[:limit]]
 
     def execute_tool(
         self, name: str, args: dict[str, object], scope: object = None
@@ -287,6 +355,8 @@ class ToolRegistry:
                 value = spec.execute(**args)
             else:
                 value = spec.execute(scope=scope, **args)
+            if spec.verify_result is not None:
+                spec.verify_result(value)
         except ActionFailure as exc:
             return result(
                 None,
@@ -310,6 +380,9 @@ def _matches_json_schema_type(value: object, type_name: object) -> bool | None:
     Returns True/False for known types, None for unknown type names (no
     check possible). ``bool`` is deliberately not an ``integer``/``number``.
     """
+    if isinstance(type_name, list):
+        verdicts = [_matches_json_schema_type(value, item) for item in type_name]
+        return True if True in verdicts else None if None in verdicts else False
     if type_name == "string":
         return isinstance(value, str)
     if type_name == "integer":
@@ -327,5 +400,267 @@ def _matches_json_schema_type(value: object, type_name: object) -> bool | None:
     return None
 
 
+def _child_path(path: str, key: str) -> str:
+    return f"{path}.{key}" if path else key
+
+
+def _limit(value: object, default: int = 0) -> int:
+    return int(value) if isinstance(value, int) and not isinstance(value, bool) else default
+
+
+def _resolve_local_schema_ref(root: object, reference: str) -> dict[str, object] | None:
+    """Resolve one RFC 6901 JSON pointer inside the tool's own schema."""
+    if reference == "#":
+        return root if isinstance(root, dict) else None
+    if not reference.startswith("#/") or len(reference) > 512:
+        return None
+    current: object = root
+    for raw_token in reference[2:].split("/"):
+        token = raw_token.replace("~1", "/").replace("~0", "~")
+        if isinstance(current, dict):
+            if token not in current:
+                return None
+            current = current[token]
+            continue
+        if isinstance(current, list) and token.isdecimal():
+            index = int(token)
+            if index >= len(current):
+                return None
+            current = current[index]
+            continue
+        return None
+    return current if isinstance(current, dict) else None
+
+
+def _validate_json_schema_value(
+    value: object,
+    schema: object,
+    *,
+    path: str,
+    errors: list[str],
+    budget: list[int],
+    depth: int = 0,
+    root_schema: object | None = None,
+    ref_trail: tuple[tuple[str, int], ...] = (),
+) -> None:
+    """Validate the bounded JSON-Schema subset accepted from model/tool APIs."""
+    if len(errors) >= 64:
+        return
+    budget[0] += 1
+    label = path or "input"
+    if budget[0] > 10_000:
+        if not any("too many values" in item for item in errors):
+            errors.append("input contains too many values")
+        return
+    if depth > 32:
+        if not any("nesting" in item for item in errors):
+            errors.append(f"field {label!r} exceeds maximum nesting depth")
+        return
+    if isinstance(value, float) and not math.isfinite(value):
+        errors.append(f"field {label!r} must be a finite number")
+        return
+    if not isinstance(schema, dict):
+        errors.append(f"field {label!r} has an invalid schema")
+        return
+    if root_schema is None:
+        root_schema = schema
+
+    reference = schema.get("$ref")
+    if reference is not None:
+        if not isinstance(reference, str) or not reference.startswith("#"):
+            errors.append(f"field {label!r} uses a non-local schema reference")
+            return
+        resolved = _resolve_local_schema_ref(root_schema, reference)
+        if resolved is None:
+            errors.append(f"field {label!r} has an unresolved schema reference")
+            return
+        marker = (reference, id(value))
+        if marker in ref_trail:
+            errors.append(f"field {label!r} has a cyclic schema reference")
+            return
+        _validate_json_schema_value(
+            value,
+            resolved,
+            path=path,
+            errors=errors,
+            budget=budget,
+            depth=depth + 1,
+            root_schema=root_schema,
+            ref_trail=(*ref_trail, marker),
+        )
+        if len(schema) == 1:
+            return
+
+    for keyword in ("allOf",):
+        branches = schema.get(keyword)
+        if isinstance(branches, list):
+            for branch in branches:
+                _validate_json_schema_value(
+                    value,
+                    branch,
+                    path=path,
+                    errors=errors,
+                    budget=budget,
+                    depth=depth + 1,
+                    root_schema=root_schema,
+                    ref_trail=ref_trail,
+                )
+    for keyword, exact in (("anyOf", False), ("oneOf", True)):
+        branches = schema.get(keyword)
+        if isinstance(branches, list) and branches:
+            matches = 0
+            for branch in branches:
+                branch_errors: list[str] = []
+                _validate_json_schema_value(
+                    value,
+                    branch,
+                    path=path,
+                    errors=branch_errors,
+                    budget=budget,
+                    depth=depth + 1,
+                    root_schema=root_schema,
+                    ref_trail=ref_trail,
+                )
+                matches += not branch_errors
+            if matches == 0 or (exact and matches != 1):
+                errors.append(f"field {label!r} does not match {keyword}")
+                return
+
+    if "const" in schema and value != schema["const"]:
+        errors.append(f"field {label!r} must equal const value")
+    choices = schema.get("enum")
+    if isinstance(choices, list) and value not in choices:
+        errors.append(f"field {label!r} is not one of the allowed enum values")
+
+    type_name = schema.get("type")
+    if type_name is not None:
+        matches = _matches_json_schema_type(value, type_name)
+        if matches is False:
+            errors.append(
+                f"field {label!r} expects type {type_name!r}, got {type(value).__name__}"
+            )
+            return
+
+    if isinstance(value, str):
+        minimum = _limit(schema.get("minLength"), -1)
+        maximum = _limit(schema.get("maxLength"), -1)
+        if minimum >= 0 and len(value) < minimum:
+            errors.append(f"field {label!r} violates minLength={minimum}")
+        if maximum >= 0 and len(value) > maximum:
+            errors.append(f"field {label!r} violates maxLength={maximum}")
+        pattern = schema.get("pattern")
+        if isinstance(pattern, str):
+            try:
+                matched = re.search(pattern, value) is not None
+            except re.error:
+                matched = False
+            if not matched:
+                errors.append(f"field {label!r} does not match pattern")
+        return
+
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        for keyword, predicate in (
+            ("minimum", lambda actual, bound: actual >= bound),
+            ("maximum", lambda actual, bound: actual <= bound),
+            ("exclusiveMinimum", lambda actual, bound: actual > bound),
+            ("exclusiveMaximum", lambda actual, bound: actual < bound),
+        ):
+            bound = schema.get(keyword)
+            if (
+                isinstance(bound, (int, float))
+                and not isinstance(bound, bool)
+                and not predicate(value, bound)
+            ):
+                errors.append(f"field {label!r} violates {keyword}={bound}")
+        return
+
+    if isinstance(value, list):
+        minimum = _limit(schema.get("minItems"), -1)
+        maximum = _limit(schema.get("maxItems"), -1)
+        if minimum >= 0 and len(value) < minimum:
+            errors.append(f"field {label!r} violates minItems={minimum}")
+        if maximum >= 0 and len(value) > maximum:
+            errors.append(f"field {label!r} violates maxItems={maximum}")
+        if schema.get("uniqueItems") is True:
+            identities = [repr(item) for item in value]
+            if len(identities) != len(set(identities)):
+                errors.append(f"field {label!r} violates uniqueItems")
+        item_schema = schema.get("items")
+        for index, item in enumerate(value):
+            _validate_json_schema_value(
+                item,
+                item_schema if isinstance(item_schema, dict) else {},
+                path=f"{label}[{index}]",
+                errors=errors,
+                budget=budget,
+                depth=depth + 1,
+                root_schema=root_schema,
+                ref_trail=ref_trail,
+            )
+        return
+
+    if isinstance(value, dict):
+        properties = schema.get("properties")
+        properties = properties if isinstance(properties, dict) else {}
+        required = schema.get("required")
+        required = required if isinstance(required, list) else []
+        for field_name in required:
+            if isinstance(field_name, str) and field_name not in value:
+                child = _child_path(path, field_name)
+                errors.append(f"missing required field {child!r}")
+        # Tool call roots are deliberately strict (the existing Harness
+        # contract); nested JSON Schema objects follow the standard default
+        # and allow unspecified keys unless additionalProperties says no.
+        extra_schema = schema.get("additionalProperties", depth != 0)
+        for field_name, item in value.items():
+            child = _child_path(path, str(field_name))
+            property_schema = properties.get(field_name)
+            if property_schema is None:
+                if extra_schema is False:
+                    errors.append(f"unexpected field {child!r}")
+                    continue
+                property_schema = extra_schema if isinstance(extra_schema, dict) else {}
+            _validate_json_schema_value(
+                item,
+                property_schema,
+                path=child,
+                errors=errors,
+                budget=budget,
+                depth=depth + 1,
+                root_schema=root_schema,
+                ref_trail=ref_trail,
+            )
+
+
 GLOBAL_REGISTRY = ToolRegistry()
 """Process-wide singleton registry (module-level, per plan T2.2)."""
+
+
+class _ScopedToolRegistry:
+    """Context-bound view that turns every registration into an effect."""
+
+    __slots__ = ("_registry", "_context")
+
+    def __init__(self, registry: ToolRegistry, context: Any) -> None:
+        self._registry = registry
+        self._context = context
+
+    def register(self, spec: ToolSpec) -> ToolSpec:
+        execute = spec.execute
+
+        def execute_owned(*args: Any, **kwargs: Any) -> Any:
+            with self._context.work():
+                return execute(*args, **kwargs)
+
+        registered = self._registry.register(replace(spec, execute=execute_owned))
+        try:
+            self._context.effect(
+                lambda: self._registry.unregister(spec.name, expected=registered)
+            )
+        except Exception:
+            self._registry.unregister(spec.name, expected=registered)
+            raise
+        return registered
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._registry, name)

@@ -253,7 +253,10 @@ assert.ok(slotEmpty.includes('没有返回可渲染的界面'), '拿不到内容
 const slotTall = renderCard(cards.normalizeCard({
   kind: 'slot', server: 'x', html: '<p>a</p>', height: 99999,
 }));
-assert.ok(/height:520px/.test(slotTall));
+assert.ok(/height="520"/.test(slotTall));
+assert.ok(!/<iframe[^>]+style=/.test(slotTall),
+  'stage CSP forbids iframe inline style attributes');
+assert.ok(!/<iframe[^>]+style=/.test(slotHtml));
 
 console.log('card render slot test ok');
 

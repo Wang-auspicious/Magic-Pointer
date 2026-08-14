@@ -27,6 +27,10 @@ from app.grounding.perception_cascade import (
     append_perception_attempt,
     resolve_structured_perception,
 )
+from app.grounding.evidence_binding import (
+    EvidenceBindingError,
+    bind_frozen_evidence,
+)
 from app.grounding.explorer_adapter import score_item_against_stroke
 from app.grounding.explorer_context import read_explorer_file_context
 from app.grounding.marked_read import rect_is_container, structured_read_covers_mark
@@ -197,6 +201,108 @@ def _has_capability(app_ctx: Any, name: str) -> bool:
     if app_ctx is None:
         return False
     return any(cap.name == name and cap.enabled for cap in app_ctx.capabilities)
+
+
+def _surface_attempt_is_signal(attempt: dict[str, Any]) -> bool:
+    """True when the surface attempt carries information worth keeping."""
+    if str(attempt.get("status") or "") == "error":
+        return True
+    return str(attempt.get("reason") or "") != "no_adapter_claims_window"
+
+
+def _surface_adapter_attempt(
+    windows: list[dict[str, Any]],
+    gesture: dict[str, Any] | None,
+    fallback_point: dict[str, int] | None,
+):
+    """SurfaceAdapter chain (design §8): first claiming adapter wins.
+
+    Returns ``(AdapterReadContext | None, attempt | None)``. Text-bearing
+    resolutions become the structured context; anchor-only resolutions
+    (opaque trees) return ``(None, attempt)`` so the generic chain still
+    runs and the attempt is recorded in the perception trace.
+    """
+    from app.adapters.base import AdapterReadContext
+    from app.harness.builtin_bundle import boot_surface_context
+
+    target = windows[0] if windows else None
+    if not isinstance(target, dict) or not target.get("hwnd"):
+        return None, None
+    report = None
+    try:
+        report = boot_surface_context(root=ROOT)
+        result = report.ctx.get("surface_adapters").try_resolve(
+            dict(target), target_point=fallback_point, target_region=None
+        )
+    except Exception as exc:
+        return None, {
+            "layer": "surface_adapter",
+            "adapter": "registry",
+            "method": "matches",
+            "status": "error",
+            "reason": f"registry_error:{type(exc).__name__}",
+        }
+    finally:
+        if report is not None:
+            report.ctx.unload()
+    if result is None:
+        return None, {
+            "layer": "surface_adapter",
+            "adapter": "none",
+            "method": "matches",
+            "status": "empty",
+            "reason": "no_adapter_claims_window",
+        }
+    if not result.objects:
+        return None, {
+            "layer": "surface_adapter",
+            "adapter": result.adapter_id,
+            "method": "resolve",
+            "status": "empty",
+            "reason": "adapter_claimed_but_empty",
+        }
+    text_objects = [obj for obj in result.objects if obj.text.strip()]
+    if not text_objects:
+        return None, {
+            "layer": "surface_adapter",
+            "adapter": result.adapter_id,
+            "method": "resolve",
+            "status": "empty",
+            "reason": "opaque_surface_anchor_only",
+        }
+    content = "\n\n".join(f"[{obj.label}] {obj.text}" for obj in text_objects)
+    ctx = AdapterReadContext(
+        adapter=f"surface:{result.adapter_id}",
+        app=str(result.adapter_id),
+        window=dict(target),
+        content=content,
+        label=str(result.adapter_id),
+        method="surface_adapter",
+        artifacts={
+            "surface_objects": [obj.to_dict() for obj in result.objects],
+            "surface_adapter_id": result.adapter_id,
+            "surface_notes": list(result.notes),
+        },
+    )
+    return ctx, None
+
+
+def _surface_adapter_trace(ctx) -> dict[str, Any]:
+    return {
+        "schemaVersion": 1,
+        "selectedLayer": "surface_adapter",
+        "selectedAdapter": str(ctx.adapter).removeprefix("surface:"),
+        "selectedMethod": "resolve",
+        "pixelFallbackUsed": False,
+        "fallbackReason": None,
+        "attempts": [{
+            "layer": "surface_adapter",
+            "adapter": str(ctx.adapter).removeprefix("surface:"),
+            "method": "resolve",
+            "status": "ok",
+            "reason": "surface_adapter_objects",
+        }],
+    }
 
 
 def _summary_for(target_window: dict[str, Any] | None, app_ctx: Any) -> dict[str, Any]:
@@ -1605,6 +1711,22 @@ def capture_snapshot(
         available_windows = [preferred] if preferred is not None else []
     target_window = available_windows[0] if available_windows else None
     mark("windows_enumerated", n=len(available_windows), live=live_window_source)
+    if frozen_lease is not None:
+        try:
+            frozen_binding = bind_frozen_evidence(
+                frozen_lease,
+                target_window,
+                normalized_gesture,
+            )
+        except EvidenceBindingError as exc:
+            return _frame_lease_failure_snapshot(captured, exc.reason)
+        if frozen_visual is not None:
+            frozen_visual["capture_attestation"].update({
+                "binding_status": frozen_binding.status,
+                "capture_kind": frozen_binding.capture_kind,
+                "target": dict(frozen_binding.target),
+                "surface_bounds_px": list(frozen_binding.surface_bounds_px),
+            })
     gesture_grounding = None
     gesture_selection_bbox = None
     capture_decision = None
@@ -1654,6 +1776,14 @@ def capture_snapshot(
             gesture_grounding = explorer_grounding
             gesture_selection_bbox = _gesture_mark_bbox(normalized_gesture)
         else:
+            # SurfaceAdapter chain first (design §8): an adapter that claims
+            # this app family owns its surface semantics. Text-bearing
+            # resolutions become the structured context; anchor-only
+            # resolutions are recorded as an attempt and the generic chain
+            # (UIA/COM/OCR) still runs on top.
+            surface_ctx, surface_attempt = _surface_adapter_attempt(
+                available_windows, normalized_gesture, normalized_target_point
+            )
             target_window, app_ctx, perception_trace, gesture_grounding, gesture_selection_bbox = (
                 _read_gesture_target_context(
                     available_windows,
@@ -1662,6 +1792,21 @@ def capture_snapshot(
                     fallback_point=normalized_target_point,
                 )
             )
+            if surface_ctx is not None:
+                target_window = available_windows[0]
+                app_ctx = surface_ctx
+                perception_trace = _surface_adapter_trace(surface_ctx)
+                gesture_grounding = None
+                gesture_selection_bbox = _gesture_mark_bbox(normalized_gesture)
+            elif surface_attempt is not None and _surface_attempt_is_signal(surface_attempt):
+                # Only record attempts that carry signal (an adapter claimed
+                # the window, or the registry errored): "no adapter claims
+                # this window" is the default for every normal window and
+                # must not pollute the perception trace ordering.
+                perception_trace["attempts"] = [
+                    surface_attempt,
+                    *(perception_trace.get("attempts") or []),
+                ]
         perception_trace["policyMode"] = (
             capture_decision.mode if capture_decision is not None else "unconfigured"
         )

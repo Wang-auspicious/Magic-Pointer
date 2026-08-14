@@ -15,6 +15,7 @@ from urllib.parse import urlencode
 
 from app.fabric.context_packet import build_agent_prompt, write_context_packet_artifact
 from app.fabric.agent_context_handoff import AgentContextHandoffError, AgentContextHandoffStore
+from app.fabric.receipt_verification import verify_action_receipt
 from app.fabric.schema import ExecutionReceipt, OperationPlan, RiskLevel
 
 _VISUAL_SUFFIXES = {
@@ -1135,53 +1136,6 @@ def _fabric_tool_execute(
     return execute
 
 
-_COMPENSATION_FIELDS = (
-    "action_id",
-    "tool_name",
-    "target_ref",
-    "prior_content",
-    "cursor_position",
-    "was_created",
-    "captured_at_utc",
-)
-
-
-def _undo_write_back(args: dict[str, Any]) -> None:
-    """Undo wiring point for write-back tools (stub, no-op today).
-
-    接线点：写回前保存 prior_content，撤销时恢复。Real compensation logic
-    (restore prior_content into the target; delete targets that were
-    created) is wired by the ActionLease/action_guard caller batch. This
-    batch only guarantees every write-back tool carries a compensation
-    slot and that the slot is registered correctly.
-    """
-
-
-def _compensation_args(args: dict[str, Any]) -> dict[str, Any]:
-    """Normalise what a compensation slot receives into the args dict.
-
-    The slot contract is a dict (target_ref / prior_content / was_created
-    / cursor_position / captured_at_utc ...). UndoLog hands a
-    :class:`Compensation` object to ``compensate``; both shapes are
-    accepted so callers can wire ``spec.compensate`` straight into the
-    ledger entry.
-    """
-    if isinstance(args, dict):
-        return dict(args)
-    return {key: getattr(args, key, None) for key in _COMPENSATION_FIELDS}
-
-
-def _fabric_compensate(args: dict[str, Any]) -> None:
-    """Compensation slot for a write-back tool.
-
-    Receives the args dict captured before the write-back ran
-    (target_ref / prior_content / was_created / cursor_position /
-    captured_at_utc) and forwards it to the :func:`_undo_write_back`
-    wiring point. Real restore logic lives behind that stub.
-    """
-    _undo_write_back(_compensation_args(args))
-
-
 def register_fabric_tools(
     registry: ToolRegistry,
     *,
@@ -1216,9 +1170,9 @@ def register_fabric_tools(
         backend: str,
         timeout_ms: int = 30000,
         concurrency_safe: bool = False,
+        resource_keys: tuple[str, ...] = (),
         extra_properties: dict[str, dict[str, Any]] | None = None,
         required: tuple[str, ...] = ("objects",),
-        compensate: Callable[[dict[str, Any]], None] | None = None,
     ) -> ToolSpec:
         return ToolSpec(
             name=name,
@@ -1239,7 +1193,8 @@ def register_fabric_tools(
             is_concurrency_safe=concurrency_safe,
             used_backend=backend,
             timeout_ms=timeout_ms,
-            compensate=compensate,
+            resource_keys=resource_keys,
+            verify_result=verify_action_receipt,
         )
 
     specs: list[ToolSpec] = [
@@ -1256,6 +1211,7 @@ def register_fabric_tools(
             ),
             backend="ocr",
             timeout_ms=45000,
+            resource_keys=("clipboard",),
         ),
         spec_of(
             name="ocr_clean",
@@ -1271,6 +1227,7 @@ def register_fabric_tools(
             ),
             backend="ocr",
             timeout_ms=45000,
+            resource_keys=("clipboard",),
         ),
         spec_of(
             name="rewrite_in_place",
@@ -1286,7 +1243,7 @@ def register_fabric_tools(
             ),
             backend="model",
             timeout_ms=60000,
-            compensate=_fabric_compensate,
+            resource_keys=("artifact-store",),
         ),
         spec_of(
             name="translate_in_place",
@@ -1302,7 +1259,7 @@ def register_fabric_tools(
             ),
             backend="model",
             timeout_ms=60000,
-            compensate=_fabric_compensate,
+            resource_keys=("artifact-store",),
         ),
         spec_of(
             name="summarize_route",
@@ -1317,6 +1274,7 @@ def register_fabric_tools(
             ),
             backend="model",
             timeout_ms=60000,
+            resource_keys=("artifact-store",),
         ),
         spec_of(
             name="selection_expand",
@@ -1331,7 +1289,7 @@ def register_fabric_tools(
             ),
             backend="model",
             timeout_ms=60000,
-            compensate=_fabric_compensate,
+            resource_keys=("artifact-store",),
         ),
         spec_of(
             name="selection_condense",
@@ -1347,7 +1305,7 @@ def register_fabric_tools(
             ),
             backend="model",
             timeout_ms=60000,
-            compensate=_fabric_compensate,
+            resource_keys=("artifact-store",),
         ),
         spec_of(
             name="to_spreadsheet",
@@ -1361,6 +1319,7 @@ def register_fabric_tools(
                 "CSV artifact on disk (verified by readback)."
             ),
             backend="local",
+            resource_keys=("artifact-store",),
         ),
         spec_of(
             name="merge_tables",
@@ -1374,6 +1333,7 @@ def register_fabric_tools(
                 "CSV artifact on disk (verified by readback)."
             ),
             backend="local",
+            resource_keys=("artifact-store",),
         ),
         spec_of(
             name="evidence_card",
@@ -1387,6 +1347,7 @@ def register_fabric_tools(
                 "page, bbox, sha256) as a local evidence-card artifact."
             ),
             backend="local",
+            resource_keys=("artifact-store",),
         ),
         spec_of(
             name="image_to_prompt",
@@ -1400,6 +1361,7 @@ def register_fabric_tools(
                 "image for a text-only model, written as a prompt artifact."
             ),
             backend="local",
+            resource_keys=("artifact-store",),
             extra_properties={
                 "question": {
                     "type": "string",
@@ -1420,6 +1382,7 @@ def register_fabric_tools(
             ),
             backend="local",
             timeout_ms=15000,
+            resource_keys=("default-browser",),
             extra_properties={
                 "travelMode": {
                     "type": "string",
@@ -1441,6 +1404,7 @@ def register_fabric_tools(
             ),
             backend="agent",
             timeout_ms=120000,
+            resource_keys=("external-agent-dispatch",),
             extra_properties={
                 "agent": {
                     "type": "string",
@@ -1467,6 +1431,7 @@ def register_fabric_tools(
             ),
             backend="agent",
             timeout_ms=120000,
+            resource_keys=("external-agent-dispatch",),
             required=(),
             extra_properties={
                 "agent": {
@@ -1494,6 +1459,7 @@ def register_fabric_tools(
             ),
             backend="local",
             timeout_ms=15000,
+            resource_keys=("task-store",),
         ),
         spec_of(
             name="screen_translate",
@@ -1531,6 +1497,7 @@ def register_fabric_tools(
             ),
             backend="local",
             timeout_ms=10000,
+            resource_keys=("clipboard",),
             required=(),
             extra_properties={
                 "query": {"type": "string", "description": "Search term."},

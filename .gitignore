@@ -1,4 +1,4 @@
-﻿# Runtime/generated data
+# Runtime/generated data
 data/captures/*
 data/objects/*
 data/runtime/*
@@ -61,3 +61,14 @@ Thumbs.db
 /.playwright-cli/
 data/runtime/pytest-tmp/
 data/runtime/uia-smoke.txt
+
+# Sandbox-ACL leftovers from pytest basetemp probes (unremovable from the
+# sandboxed shell; delete manually from a normal session when noticed)
+/pytest-mode-probe/
+/pytest-tmp-root/
+/pytest-sandbox-*/
+/probe-*/
+.test-tmp-*/
+
+# Local reference/demo media not part of source release (design screenshots, videos)
+/参考/

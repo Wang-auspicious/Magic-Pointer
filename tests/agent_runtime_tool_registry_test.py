@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import sys
 import time
+from dataclasses import fields
 from pathlib import Path
 
 import pytest
@@ -95,12 +96,37 @@ class TestToolSpecDefaults:
         assert spec.is_concurrency_safe is False
         assert spec.used_backend == "local"
         assert spec.timeout_ms == 30000
+        assert spec.resource_keys == ()
         assert spec.description == "echoes the text argument"
+        assert "compensate" not in {field.name for field in fields(ToolSpec)}
 
     def test_explicit_effect_and_backend(self) -> None:
         spec = make_spec(effect=Effect.EXTERNAL_SEND, used_backend="foreground_click")
         assert spec.effect is Effect.EXTERNAL_SEND
         assert spec.used_backend == "foreground_click"
+
+    def test_static_and_dynamic_resource_keys_are_resolved_from_arguments(self) -> None:
+        registry = ToolRegistry()
+        registry.register(
+            make_spec(
+                name="static_tool",
+                resource_keys=("desktop-input", "clipboard"),
+            )
+        )
+        registry.register(
+            make_spec(
+                name="dynamic_tool",
+                resource_keys=lambda args: (f"file:{args['text']}",),
+            )
+        )
+
+        assert registry.resource_keys_for("static_tool", {"text": "ignored"}) == (
+            "desktop-input",
+            "clipboard",
+        )
+        assert registry.resource_keys_for("dynamic_tool", {"text": "a.txt"}) == (
+            "file:a.txt",
+        )
 
 
 class TestRegisterNameValidation:
@@ -160,6 +186,25 @@ class TestRegisterExecuteAndEffectValidation:
     def test_rejects_non_tool_spec(self) -> None:
         with pytest.raises(TypeError):
             ToolRegistry().register({"name": "echo_tool"})  # type: ignore[arg-type]
+
+    def test_rejects_non_callable_result_verifier(self) -> None:
+        with pytest.raises(ValueError, match="verify_result"):
+            ToolRegistry().register(make_spec(verify_result="not-callable"))
+
+    @pytest.mark.parametrize(
+        "resource_keys",
+        [("",), ("ok", 3), "desktop-input", 3],
+    )
+    def test_rejects_invalid_resource_key_declaration(self, resource_keys) -> None:
+        with pytest.raises(ValueError, match="resource_keys"):
+            ToolRegistry().register(make_spec(resource_keys=resource_keys))
+
+    def test_dynamic_resource_key_result_is_validated(self) -> None:
+        registry = ToolRegistry()
+        registry.register(make_spec(resource_keys=lambda _args: ("ok", "")))
+
+        with pytest.raises(ValueError, match="resource_keys"):
+            registry.resource_keys_for("echo_tool", {"text": "x"})
 
 
 class TestRegisterDuplicate:
@@ -253,6 +298,113 @@ class TestValidateInput:
         registry.register(make_spec())
         with pytest.raises(TypeError):
             registry.validate_input(registry.get("echo_tool"), ["text"])  # type: ignore[arg-type]
+
+    def test_nested_schema_enum_and_bounds_are_enforced(self) -> None:
+        registry = ToolRegistry()
+        registry.register(make_spec(input_schema={
+            "type": "object",
+            "properties": {
+                "request": {
+                    "type": "object",
+                    "properties": {
+                        "mode": {"type": "string", "enum": ["read", "write"]},
+                        "files": {
+                            "type": "array",
+                            "items": {"type": "string", "maxLength": 8},
+                            "minItems": 1,
+                            "maxItems": 2,
+                        },
+                    },
+                    "required": ["mode", "files"],
+                    "additionalProperties": False,
+                },
+            },
+            "required": ["request"],
+        }))
+
+        errors = registry.validate_input(registry.get("echo_tool"), {
+            "request": {
+                "mode": "delete",
+                "files": ["short", "way-too-long", "third"],
+                "untrusted": True,
+            },
+        })
+
+        assert any("request.mode" in error and "enum" in error for error in errors)
+        assert any("request.files" in error and "maxItems" in error for error in errors)
+        assert any("request.files[1]" in error and "maxLength" in error for error in errors)
+        assert any("request.untrusted" in error and "unexpected" in error for error in errors)
+
+    def test_non_finite_numbers_and_excessive_nesting_are_rejected(self) -> None:
+        registry = ToolRegistry()
+        registry.register(make_spec(input_schema={
+            "type": "object",
+            "properties": {"payload": {}},
+            "required": ["payload"],
+        }))
+
+        non_finite = registry.validate_input(
+            registry.get("echo_tool"),
+            {"payload": float("nan")},
+        )
+        nested: object = "leaf"
+        for _ in range(40):
+            nested = [nested]
+        excessive = registry.validate_input(
+            registry.get("echo_tool"),
+            {"payload": nested},
+        )
+
+        assert any("finite" in error for error in non_finite)
+        assert any("nesting" in error for error in excessive)
+
+    def test_local_defs_reference_is_resolved_and_enforced(self) -> None:
+        registry = ToolRegistry()
+        registry.register(make_spec(input_schema={
+            "type": "object",
+            "properties": {"request": {"$ref": "#/$defs/request"}},
+            "required": ["request"],
+            "$defs": {
+                "request": {
+                    "type": "object",
+                    "properties": {
+                        "mode": {"type": "string", "enum": ["read", "write"]},
+                    },
+                    "required": ["mode"],
+                    "additionalProperties": False,
+                },
+            },
+        }))
+
+        assert registry.validate_input(
+            registry.get("echo_tool"),
+            {"request": {"mode": "read"}},
+        ) == []
+        errors = registry.validate_input(
+            registry.get("echo_tool"),
+            {"request": {"mode": "delete"}},
+        )
+
+        assert any("request.mode" in error and "enum" in error for error in errors)
+
+    def test_unresolved_or_external_schema_reference_fails_closed(self) -> None:
+        registry = ToolRegistry()
+        registry.register(make_spec(input_schema={
+            "type": "object",
+            "properties": {
+                "missing": {"$ref": "#/$defs/missing"},
+                "external": {"$ref": "https://example.test/schema.json"},
+            },
+            "required": ["missing", "external"],
+        }))
+
+        errors = registry.validate_input(
+            registry.get("echo_tool"),
+            {"missing": "x", "external": "y"},
+        )
+
+        assert any("missing" in error and "unresolved" in error for error in errors)
+        assert any("external" in error and "local" in error for error in errors)
 
 
 class TestConcurrencyPartition:
@@ -353,6 +505,29 @@ class TestExecuteToolFailure:
         assert result.value is None
         assert result.used_backend == spec.used_backend
         assert isinstance(result.latency_ms, float)
+
+    def test_result_verification_failure_is_a_tool_error_not_success(self) -> None:
+        def verify(value: dict) -> None:
+            if value.get("verified") is not True:
+                raise ActionFailure(
+                    FailureType.CONTENT_CHANGED,
+                    "action receipt was not verified",
+                )
+
+        registry = ToolRegistry()
+        registry.register(
+            make_spec(
+                name="write_tool",
+                execute=lambda text: {"text": text, "verified": False},
+                verify_result=verify,
+            )
+        )
+
+        result = registry.execute_tool("write_tool", {"text": "hi"})
+
+        assert result.is_error is True
+        assert result.failure_type is FailureType.CONTENT_CHANGED
+        assert "not verified" in (result.error_message or "")
 
     def test_ordinary_exception_wrapped_as_tool_error(self) -> None:
         def broken_execute(text: str) -> str:

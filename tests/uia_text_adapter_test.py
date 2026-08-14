@@ -38,6 +38,15 @@ def _terminal_window() -> dict[str, object]:
     }
 
 
+def _notepad_window() -> dict[str, object]:
+    return {
+        "hwnd": 1234,
+        "pid": 5678,
+        "class_name": "Notepad",
+        "title": "some-file.txt - Notepad",
+    }
+
+
 def test_uia_window_matching_and_app_classification() -> None:
     adapter = UiaTextSelectionAdapter()
     assert adapter.match_window(_browser_window()) is True
@@ -112,6 +121,39 @@ def test_uia_terminal_buffer_becomes_bounded_structural_evidence(monkeypatch) ->
     assert evidence["exitCode"] == 7
     assert evidence["anchor"]["text"] == "Error: broken"
     assert "secret" not in str(ctx.to_dict())
+
+
+def test_uia_document_text_fallback_becomes_structured_content(monkeypatch) -> None:
+    """Review R2: an editor without an active selection now yields the whole
+    document via the probe's document_text fallback (Notepad incident:
+    34,660-char file, zero selection -> previously an empty structured layer
+    and a pixel-only object)."""
+    monkeypatch.setattr(
+        uia_module,
+        "_run_uia_selection_probe",
+        lambda hwnd: UiaProbeResult(True, {
+            "ok": True,
+            "result_kind": "document_text",
+            "hwnd": 1234,
+            "process_id": 5678,
+            "root_hwnd": 1234,
+            "text": "整篇文档的第一行\n整篇文档的第二行",
+            "truncated": False,
+            "element_name": "Document",
+            "control_type": "ControlType.Document",
+            "class_name": "Notepad",
+            "element_rect": [100, 200, 800, 600],
+            "rectangles": [],
+            "elapsed_ms": 15,
+        }),
+    )
+    ctx = UiaTextSelectionAdapter().read_context(_notepad_window())
+    assert ctx.app == "application"
+    assert ctx.method == "uia:document-text"
+    assert ctx.content == "整篇文档的第一行\n整篇文档的第二行"
+    assert ctx.artifacts["perception_result_kind"] == "document_text"
+    assert ctx.artifacts["selection_rectangles"] == [[100, 200, 800, 600]]
+    assert ctx.artifacts["selection_rectangles_coordinate_space"] == "physical_screen_pixels"
 
 
 def test_uia_context_exposes_read_only_native_selection(monkeypatch) -> None:

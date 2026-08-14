@@ -90,7 +90,7 @@ class TestResolvedExact:
                 )
             )
         assert exc.value.failure_type is FailureType.STALE_ANCHOR
-        assert "ambiguous，需要用户确认" in exc.value.recovery_hint
+        assert "ambiguous" in exc.value.recovery_hint
 
 
 class TestTargetFocused:
@@ -118,13 +118,13 @@ class TestContentUnchanged:
         with pytest.raises(ActionFailure) as exc:
             ContentUnchanged().check(ctx(expected_content_hash="h1", actual_content_hash="h2"))
         assert exc.value.failure_type is FailureType.CONTENT_CHANGED
-        assert exc.value.recovery_hint == "target content changed，停止写入"
+        assert exc.value.recovery_hint == "target content changed; stop before writing"
 
     def test_actual_none_fails_content_changed(self) -> None:
         with pytest.raises(ActionFailure) as exc:
             ContentUnchanged().check(ctx(expected_content_hash="h1"))
         assert exc.value.failure_type is FailureType.CONTENT_CHANGED
-        assert exc.value.recovery_hint == "target content changed，停止写入"
+        assert exc.value.recovery_hint == "target content changed; stop before writing"
 
     def test_expected_none_fails_closed(self) -> None:
         with pytest.raises(ActionFailure) as exc:

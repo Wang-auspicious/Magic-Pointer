@@ -3,7 +3,7 @@
 Per ``docs/harness-gap-review-20260812.md`` L1: *recipe is the cache, the
 loop is the interpreter*. A manifest entry is compiled into a
 :class:`~app.agent_runtime.types.Trajectory` (guided first message,
-recommended tool vocabulary, turn budget, risk) that the agent loop can
+recommended tool vocabulary, risk) that the agent loop can
 consume. Manifests are read-only inputs; nothing here mutates them.
 
 Honesty rules:
@@ -176,6 +176,24 @@ class TrajectoryCompiler:
             self.compile_all()
         return list(self._compiled)
 
+    def matched_keywords(self, recipe_id: str, text: str, lang: str = "zh") -> list[str]:
+        """The manifest keywords of ``recipe_id`` that hit ``text``.
+
+        Public counterpart of :meth:`match_keywords` (same raw entries, same
+        scoring semantics), so callers can report *why* a recipe matched
+        without reading compiler internals. Returns [] for unknown recipes
+        or no hits; the matched keywords keep their original casing.
+        """
+        if not text:
+            return []
+        if not self._compiled:
+            self.compile_all()
+        entry = self._raw_by_id.get(recipe_id)
+        if not isinstance(entry, dict):
+            return []
+        _, hits = score_keyword_entry(entry.get("keywords"), text, lang)
+        return hits
+
     def _compile_entry(self, entry: dict) -> Trajectory:
         recipe_id = entry["id"]
         input_kinds = [k for k in entry["inputKinds"] if isinstance(k, str) and k]
@@ -185,21 +203,11 @@ class TrajectoryCompiler:
         )
         strategies = [s for s in entry["providerStrategies"] if isinstance(s, str)]
         risk = entry["risk"]
-        provider = entry.get("provider") or ""
-        external_send = (
-            "external_send" in {risk, provider} or "external_send" in strategies
-        )
-        try:
-            min_objects = int(entry.get("minObjects", 0))
-        except (TypeError, ValueError):
-            min_objects = 0
-        max_turns = 4 if (min_objects >= 2 or external_send) else 3
         return Trajectory(
             recipe_id=recipe_id,
             first_user_message=first_user_message,
             recommended_tools=self._recommended_tools(strategies),
-            max_turns=max_turns,
-            risk=risk,
+            risk=_risk_label(risk),
         )
 
     @staticmethod
@@ -213,6 +221,15 @@ class TrajectoryCompiler:
             seen.add(tool)
             tools.append(tool)
         return tuple(tools)
+
+
+def _risk_label(risk: Any) -> str:
+    """A stable string label for the trajectory risk field."""
+    if isinstance(risk, str):
+        return risk
+    if isinstance(risk, (list, tuple)):
+        return ",".join(str(t) for t in risk)
+    return "read"
 
 
 __all__ = ["BUILTIN_RECIPES_PATH", "TrajectoryCompiler", "score_keyword_entry"]

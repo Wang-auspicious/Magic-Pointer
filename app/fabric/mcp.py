@@ -322,11 +322,11 @@ class MagicPointerMcpServer:
                 "tasks": self.gateway.list(limit=int(arguments.get("limit") or 100)),
             }
         if name == "agent_task_cancel":
-            return {"ok": True, "task": self.tasks.cancel(str(arguments.get("taskId") or ""))}
+            return {"ok": True, "task": self.gateway.cancel(str(arguments.get("taskId") or ""))}
         if name == "agent_task_steer":
             return {
                 "ok": True,
-                "task": self.tasks.steer(
+                "task": self.gateway.steer(
                     str(arguments.get("taskId") or ""),
                     str(arguments.get("message") or ""),
                 ),
@@ -334,7 +334,7 @@ class MagicPointerMcpServer:
         if name == "agent_task_resume":
             return {
                 "ok": True,
-                "task": self.tasks.resume(str(arguments.get("taskId") or "")),
+                "task": self.gateway.resume(str(arguments.get("taskId") or "")),
             }
         if name == "agent_task_reconfirm_target":
             task_id = str(arguments.get("taskId") or "")

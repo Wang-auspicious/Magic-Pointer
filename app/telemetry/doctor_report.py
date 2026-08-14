@@ -14,6 +14,7 @@ This module is pure Python and has no I/O or platform dependencies.
 from __future__ import annotations
 
 import datetime
+import hashlib
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
@@ -63,7 +64,15 @@ class HealthCheckResult:
 
 
 def _slug(label: str) -> str:
-    return "".join(ch if ch.isalnum() else "_" for ch in label.lower())
+    """Stable unique check id: slug + short digest of the exact label.
+
+    Two labels that differ only in spaces/symbols (e.g. "UIA 宿主" and
+    "UIA-宿主") would otherwise collide and silently overwrite each other
+    (review P3.7).
+    """
+    base = "".join(ch if ch.isalnum() else "_" for ch in label.lower())
+    digest = hashlib.sha1(label.encode("utf-8")).hexdigest()[:6]
+    return f"{base}_{digest}"
 
 
 def _verdict(checks: Sequence[HealthCheck]) -> str:

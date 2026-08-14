@@ -61,12 +61,10 @@ from app.agent_runtime.types import (  # noqa: E402
     Role,
     Terminal,
     ToolCall,
-    Trajectory,
     TransitionReason,
 )
 from app.fabric.engine import run_agent_turn  # noqa: E402
 from app.fabric.executors import register_fabric_tools  # noqa: E402
-from app.fabric.intent_router import TrajectoryCandidate  # noqa: E402
 from app.governance.cancellation import (  # noqa: E402
     CancelledError,
     cancel_all_in_flight,
@@ -292,7 +290,7 @@ def test_four_step_tool_chain_feedback_and_convergence() -> None:
         user_input="扩写并翻译这个段落",
         registry=registry,
         client=client,
-        max_turns=6,
+        emergency_turn_fuse=6,
     )
 
     events, terminal = asyncio.run(_collect(params))
@@ -316,11 +314,11 @@ def test_four_step_tool_chain_feedback_and_convergence() -> None:
     roles_seen = [[m.role for m in messages] for messages, _ in backend.received]
     assert roles_seen == [
         [Role.USER],
-        [Role.USER, Role.TOOL],
-        [Role.USER, Role.TOOL, Role.TOOL],
-        [Role.USER, Role.TOOL, Role.TOOL, Role.TOOL],
+        [Role.USER, Role.ASSISTANT, Role.TOOL],
+        [Role.USER, Role.ASSISTANT, Role.TOOL, Role.ASSISTANT, Role.TOOL],
+        [Role.USER, Role.ASSISTANT, Role.TOOL, Role.ASSISTANT, Role.TOOL, Role.ASSISTANT, Role.TOOL],
     ]
-    assert "The quick brown fox" in backend.received[1][0][1].content
+    assert "The quick brown fox" in backend.received[1][0][2].content
     assert "[expanded]" in backend.received[2][0][-1].content
     assert "[translated:中文]" in backend.received[3][0][-1].content
 
@@ -340,21 +338,13 @@ def test_four_step_tool_chain_feedback_and_convergence() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_run_agent_turn_trajectory_seeds_first_round(monkeypatch) -> None:
+def test_run_agent_turn_keeps_raw_instruction_and_does_not_route_via_recipe(monkeypatch) -> None:
     doc = FakeDocumentStore(PARAGRAPH)
     registry = _register_fake_tools(ToolRegistry(), doc)
-    fixed = Trajectory(
-        recipe_id="text.rewrite_in_place",
-        first_user_message="目标：改写并写回下面这段。对象内容：{input}",
-        recommended_tools=("selection_expand", "translate_in_place"),
-        max_turns=4,
-        risk="write",
+    monkeypatch.setattr(
+        "app.fabric.intent_router.get_trajectory_compiler",
+        lambda: (_ for _ in ()).throw(AssertionError("recipe router entered")),
     )
-
-    def fake_route(text, objects=None, lang="zh"):
-        return [TrajectoryCandidate(trajectory=fixed, score=1.0, matched_keywords=["改写"])]
-
-    monkeypatch.setattr("app.fabric.engine.route_to_trajectory", fake_route)
 
     backend = ChainBackend(rounds=[], final_text="已改写")
     client = LoopModelClient(backend)
@@ -369,12 +359,53 @@ def test_run_agent_turn_trajectory_seeds_first_round(monkeypatch) -> None:
     first_messages, schemas = backend.received[0]
     assert len(first_messages) == 1
     assert first_messages[0].role is Role.USER
-    assert first_messages[0].content == "目标：改写并写回下面这段。对象内容：扩写第二段"
-    assert schemas[0]["name"] == "selection_expand"
-    assert schemas[1]["name"] == "translate_in_place"
+    assert first_messages[0].content == "扩写第二段"
+    assert schemas[0]["name"] == "read_around"
+    assert schemas[1]["name"] == "selection_expand"
     assert terminal.reason is TransitionReason.COMPLETED
     assert terminal.message == "已改写"
     assert terminal.turns == 1
+
+
+def test_run_agent_turn_keeps_exact_local_actions_without_entering_recipe_router(monkeypatch) -> None:
+    doc = FakeDocumentStore(PARAGRAPH)
+    registry = _register_fake_tools(ToolRegistry(), doc)
+    monkeypatch.setattr(
+        "app.fabric.intent_router.get_trajectory_compiler",
+        lambda: (_ for _ in ()).throw(AssertionError("recipe router entered")),
+    )
+
+    backend = ChainBackend(rounds=[], final_text="model must not run")
+    terminal = run_agent_turn(
+        "截图",
+        objects=[{"id": "o1", "kind": "text", "content": PARAGRAPH}],
+        registry=registry,
+        client=LoopModelClient(backend),
+    )
+
+    assert terminal.reason is TransitionReason.LOCAL_ACTION
+    assert terminal.local_action == "save_screenshot"
+    assert terminal.turns == 0
+    assert backend.received == []
+
+
+def test_agent_turn_has_no_recipe_lifetime_control() -> None:
+    doc = FakeDocumentStore(PARAGRAPH)
+    registry = _register_fake_tools(ToolRegistry(), doc)
+    backend = ChainBackend(
+        rounds=[[("read_around", {"anchor": "p1", "radius": 3}, None, "c1")]],
+        final_text="读取完成",
+    )
+
+    terminal = run_agent_turn(
+        "读取这一段",
+        objects=[{"id": "o1", "kind": "text", "content": PARAGRAPH}],
+        registry=registry,
+        client=LoopModelClient(backend),
+    )
+
+    assert terminal.reason is TransitionReason.COMPLETED
+    assert terminal.turns == 2
 
 
 # ---------------------------------------------------------------------------
@@ -408,9 +439,9 @@ def test_failed_read_is_fed_back_and_retry_succeeds() -> None:
     assert second.is_error is False
     assert "The quick brown fox" in second.value
     second_turn_messages = backend.received[1][0]
-    assert second_turn_messages[1].role is Role.TOOL
-    assert second_turn_messages[1].is_error is True
-    assert "read worker busy" in second_turn_messages[1].content
+    assert second_turn_messages[2].role is Role.TOOL
+    assert second_turn_messages[2].is_error is True
+    assert "read worker busy" in second_turn_messages[2].content
 
 
 # ---------------------------------------------------------------------------
@@ -448,8 +479,8 @@ def test_write_back_failure_is_not_disguised_as_success() -> None:
     assert result.failure_type is FailureType.CONTENT_CHANGED
     assert "目标文档在读取后被修改" in result.value
     second_turn_messages = backend.received[1][0]
-    assert second_turn_messages[1].is_error is True
-    assert "目标文档在读取后被修改" in second_turn_messages[1].content
+    assert second_turn_messages[2].is_error is True
+    assert "目标文档在读取后被修改" in second_turn_messages[2].content
     assert doc.deliveries == []
 
 
@@ -475,7 +506,11 @@ def test_budget_exhaustion_keeps_completed_results() -> None:
     client = LoopModelClient(backend)
 
     terminal = run_agent_turn(
-        "扩写这个段落", registry=registry, client=client, clock=clock
+        "扩写这个段落",
+        registry=registry,
+        client=client,
+        clock=clock,
+        budget_renewals=0,
     )
 
     assert len(backend.received) == 1
@@ -559,5 +594,25 @@ def test_fabric_and_perception_tools_coexist_in_one_registry() -> None:
     assert set(parallel) == {"read_around", "screen_translate"}
     assert sequential == ["rewrite_in_place"]
 
+    assert registry.resource_keys_for("ocr_copy", {"objects": []}) == (
+        "clipboard",
+    )
+    assert registry.resource_keys_for("rewrite_in_place", {"objects": []}) == (
+        "artifact-store",
+    )
+    assert registry.resource_keys_for("task_route", {"objects": []}) == (
+        "task-store",
+    )
+
     register_fabric_tools(registry)
     assert len(registry.list()) == 23
+
+
+def test_fabric_unverified_receipt_is_not_reported_as_tool_success() -> None:
+    registry = ToolRegistry()
+    register_fabric_tools(registry)
+
+    result = registry.execute_tool("ocr_copy", {"objects": []})
+
+    assert result.is_error is True
+    assert "clipboard_writer_not_configured" in (result.error_message or "")

@@ -141,6 +141,7 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
   setTheme: (theme: unknown) => ipcRenderer.send('dashboard:theme', { theme }),
   fabricRequest: (operation: unknown, payload: UnknownRecord = {}) => ipcRenderer.send('dashboard:fabric-request', { operation, ...payload }),
   saveFabricSettings: (settings: unknown) => ipcRenderer.send('dashboard:fabric-request', { operation: 'settings.save', settings }),
+  getFabricSettings: () => ipcRenderer.invoke('dashboard:settings:get'),
   requestState: () => ipcRenderer.send('dashboard:request-state'),
   setChecked: (payload: unknown) => ipcRenderer.send('dashboard:set-checked', payload),
   undoAdd: (payload: unknown) => ipcRenderer.send('dashboard:undo-add', payload),
@@ -177,6 +178,12 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
     memories: () => ipcRenderer.invoke('conversations:memories'),
     artifacts: () => ipcRenderer.invoke('conversations:artifacts'),
     onTurn: (callback: PayloadCallback) => onPayload('conversations:turn', callback),
+  },
+  learningCandidates: {
+    request: (payload: UnknownRecord = {}) => ipcRenderer.invoke(
+      'learning-candidates:request',
+      payload,
+    ),
   },
   // 后台任务的进度。走的是和胶囊同一条通道——三个界面收到的是同一份补丁，
   // 所以同一次出图在哪个窗口看都是同一个进度。

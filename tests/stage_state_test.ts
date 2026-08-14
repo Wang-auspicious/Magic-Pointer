@@ -183,6 +183,18 @@ assert.strictEqual(thread.turns[0].ask, '翻译这段', 'settling must not erase
 
 // The follow-up: this is the regression that mattered — reopening the composer
 // used to null the result, so the previous exchange vanished from the screen.
+let awaitingThread = threadAtCapsule();
+awaitingThread = transition(awaitingThread, { type: 'SUBMIT', command: 'choose' });
+awaitingThread = transition(awaitingThread, {
+  type: 'RESULT',
+  result: {
+    awaitingUserInput: true,
+    pendingInput: { question: 'Which one?', options: ['A', 'B'] },
+  },
+});
+assert.strictEqual(awaitingThread.name, 'result');
+assert.strictEqual(awaitingThread.turns[0].status, 'awaiting');
+
 thread = transition(thread, { type: 'OPEN_CAPSULE', mode: 'text' });
 assert.strictEqual(thread.name, 'capsule-text');
 assert.strictEqual(thread.turns.length, 1, 'a follow-up must not discard the finished turn');

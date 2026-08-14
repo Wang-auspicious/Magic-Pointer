@@ -3,6 +3,7 @@ from __future__ import annotations
 import ctypes
 from contextlib import suppress
 from ctypes import wintypes
+from pathlib import Path
 
 
 def get_foreground_window_handle() -> int:
@@ -22,6 +23,51 @@ def enable_dpi_awareness() -> None:
     except Exception:
         with suppress(Exception):
             ctypes.windll.user32.SetProcessDPIAware()
+
+
+def _query_process_image_path(pid: int) -> str:
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.QueryFullProcessImageNameW.argtypes = [
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        wintypes.LPWSTR,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    process = kernel32.OpenProcess(0x1000, False, int(pid))
+    if not process:
+        return ""
+    try:
+        capacity = 32768
+        buffer = ctypes.create_unicode_buffer(capacity)
+        length = wintypes.DWORD(capacity)
+        if not kernel32.QueryFullProcessImageNameW(
+            process,
+            0,
+            buffer,
+            ctypes.byref(length),
+        ):
+            return ""
+        return buffer.value[: int(length.value)]
+    finally:
+        kernel32.CloseHandle(process)
+
+
+def process_name_for_pid(pid: int, *, query_path=None) -> str:
+    """Best-effort executable basename for a window PID; never guesses."""
+
+    if int(pid or 0) <= 0:
+        return ""
+    query_path = query_path or _query_process_image_path
+    try:
+        value = str(query_path(int(pid)) or "").strip()
+        return Path(value).name if value else ""
+    except (AttributeError, OSError, TypeError, ValueError):
+        return ""
 
 def _intersects(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> bool:
     return max(a[0], b[0]) < min(a[2], b[2]) and max(a[1], b[1]) < min(a[3], b[3])
@@ -107,13 +153,15 @@ def list_visible_windows() -> list[dict[str, object]]:
             lower = title.lower()
             if lower in {"program manager", "windows input experience"}:
                 return True
+            pid = get_pid(hwnd)
             windows.append(
                 {
                     "hwnd": int(hwnd),
                     "z_order": len(windows) + 1,
                     "title": title,
                     "class_name": get_class_name(hwnd),
-                    "pid": get_pid(hwnd),
+                    "pid": pid,
+                    "process_name": process_name_for_pid(pid),
                     "bbox": rect,
                     "size": (w, h),
                 }

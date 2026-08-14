@@ -26,6 +26,17 @@ Execute `docs/superpowers/plans/2026-08-11-frame-lease-foundation.md` first. Do 
 
 After each completed phase, update the progress ledger in `docs/design/MAGIC_POINTER_HARNESS_20260811.md`.
 
+## Local machine delivery (mandatory after every bug-fix batch)
+
+用户机器上的已安装应用必须与开发树同步。每次修完 bug、全量验证（Python/Node/typecheck）通过后：
+
+1. 若涉及可感知的行为变化：`package.json` version 自增一位补丁号（如 1.0.1 → 1.0.2）。
+2. 运行 `npm run sync`（scripts/sync_install.ps1：验证→构建 NSIS 安装器→杀运行中实例→静默安装→重启应用）。
+3. 确认 `%LOCALAPPDATA%\Programs\Magic Pointer\resources\app\package.json` 的 version 与开发树一致。
+4. 把本次交付版本写进 `docs/STATUS.md` 一句话状态。
+
+不要只改开发树让用户每次自己敲命令开开发版；交付=sync 后的安装版。GitHub 自动更新通道（electron-builder publish: github）对最终用户生效需要打 tag 推送发布，未配置前以本机 sync 为准。
+
 ## Task-specific rereads
 
 - Visual/card/draft UI: read `docs/design/VIDA_UI_SPEC.md`.

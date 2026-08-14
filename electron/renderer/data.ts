@@ -158,6 +158,7 @@ declare global {
   interface MagicPointerDashboardApi {
     setTheme?(theme: unknown): void;
     saveFabricSettings?(settings: unknown): void;
+    getFabricSettings?(): Promise<Record<string, unknown>>;
     conversations: {
       list(): Promise<MagicPointerConversation[]>;
       get(id: unknown): Promise<MagicPointerConversation | undefined>;

@@ -161,6 +161,12 @@ Magic Pointer 的鼠标唤醒、划线、圈选、多选、短录屏，不是聊
 10. `ArtifactStore`：可编辑 Draft、文件、地图、表格、报告等产物。
 11. `ResourceGovernor`/`RunLedger`：资源预算、事件、成本、权限和回执。
 
+插件内核（2026-08-14 新增，DSH 架构移植的承载层）：`app/harness/`
+Context 服务仓库 / inject 依赖激活 / 可逆 effect / 四模式事件 / scope +
+plugin 协议 + 分层组合（bundle 行 → 用户插件目录 → patch）。内置能力
+（工具/钩子/提示节/守卫/模型客户端）全部重写为 builtin bundle 插件行，
+`_loop_router` 不再手接线。详见 §11.5 与 `docs/2026-08-14-plugin-architecture-review.md`。
+
 主链：
 
 ```text
@@ -527,7 +533,35 @@ Magic Pointer优先接收 `TargetRef` 而非裸坐标。能用 CoreAudio、Shell
 
 按当前对象、应用、意图、权限和可用性动态加载少量工具。不得把所有 MCP/Skill/插件描述长期塞进系统 Prompt。
 
-### 11.4 示例
+### 11.4 插件内核（DSH 架构移植，2026-08-14 批）
+
+金标准：deepseek-harness（vendored Cordis，"一切皆插件"）。移植思想（不复制代码）：
+
+- `app/harness/context.py`：`Context` 服务仓库（`provide/get/has/keys`、
+  `in`）、`inject(deps, cb)` 依赖驱动激活（fork 语义，回调注册随依赖撤销
+  回卷）、`effect()` 可逆注册（unload LIFO 回卷）、事件四派发模式
+  （emit/waterfall/parallel/serial，模式是事件公开契约）、`scope()` 子
+  上下文、`provide_up()`（插件向根暴露服务）、`revoke()`。
+- `app/harness/plugin.py`：`name/inject/apply(ctx, config)` 协议 +
+  `data/plugins/<name>/plugin.py` 目录发现 + 最小 JSON Schema 配置校验 +
+  坏插件单行隔离（warning 不拖垮树）+ `waiting` 依赖缺失诚实报告。
+- `app/harness/composition.py`：分层组合（bundle 行序 → 用户插件目录 →
+  patch 按 id 替换整行 config/禁用/插新行）+ `dump_config()` 真实启动树。
+- `app/harness/builtin_bundle.py`：`boot_loop_context(runtime)`——内置能力
+  全为插件行（harness-tools / perception-tools / look-tool /
+  local-action-tools / capability-tools / guard / system-prompt /
+  model-client），旧 `MAGIC_POINTER_*` env 开关映射为行 config 基值。
+- Seam 三角第一枚：`ctx.perception`（感知 Provider；Consumer = loop 的
+  perception 工具）；`ctx.vision`、`ctx.hooks`、`ctx.prompt`、
+  `ctx.tools` 同为可注入 seam。
+- 检视：`python scripts/harness_dump_config.py`（对标 `dsh --dump-config`）。
+- 已知简化（诚实边界）：inject 一次性激活（重载 = 重 boot 新 Context）；
+  scope 子上下文生命周期独立；`model-visible means logged` 的会话事件
+  单一事实源（P8）留待 Phase E/H。
+
+用户插件目录：`data/plugins/`（`MAGIC_POINTER_PLUGIN_DIR` 覆盖）。
+
+### 11.5 示例
 
 - “音量调到30%”：CoreAudio语义工具设置并读回验证，不截图拖滑块。
 - “打开计算器”：系统 App Activation，不用鼠标找图标。
@@ -636,6 +670,14 @@ DOM、COM、UIA、Fabric等现有模块也不自动保留，只优先保存经�
 - 本地保留完整目标 surface和派生语义区。
 - 建立 pointerup→freeze benchmark。
 
+> **执行顺序修正（2026-08-13 评审 §三）**：Phase 编号不变，但执行顺序改为
+> **Phase C（常驻 UIA 宿主）先于 Phase B 的 WGC 后端**。WGC 优化的是一次性
+> 冻结延迟（192ms→30ms，用户刚画完线还没反应）；常驻 UIA 宿主优化的是每个
+> 工具调用/每次前置断言都要付的感知边际成本（573ms→~200ms/次），三个结构
+> 性张力（预算经济性、按需取数、in-loop 写前断言）全部以它为前提，并直接
+> 命中死亡风险第一名"UIA 覆盖率不够"。2026-08-13 批已落地常驻宿主（真机
+> 2.5x 实测）、WGC CaptureProvider 契约 + 脚手架。
+
 ### Phase B：并发 PerceptionBroker
 
 - Provider统一契约、deadline、取消和 trace。
@@ -711,6 +753,10 @@ DOM、COM、UIA、Fabric等现有模块也不自动保留，只优先保存经�
 
 ### 16.2 核心项目文档
 
+0. `docs/2026-08-14-MASTER_HANDOFF.md`（2026-08-14 新增）
+   - 内容：自包含全量交接（产品/历史/强模型回应固化/DSH 插件内核/逐模块核心思想/乱象盘点/下一步）。**新接手模型第一读**——只读这一份即可获得完整真相，无需再读任何文件。
+   - 回读：任何接手任务的第一件事；本文与母文档冲突时，以本文的最新状态修正读法，权威决策仍以母文档为准。
+
 1. `docs/design/VIDA_UI_SPEC.md`
    - 内容：三阶段语义、TargetLease写回、Fresh Evidence、ResumeRescue/DailyWrap和完整视觉状态机。
    - 回读：开始任何卡片/气泡/动效/可编辑 Draft UI；修改写回目标生命周期；实现 PromptRescue/ResumeRescue/DailyWrap时。
@@ -726,6 +772,10 @@ DOM、COM、UIA、Fabric等现有模块也不自动保留，只优先保存经�
 4. `docs/ARCHITECTURE.md`
    - 内容：现有结构化/像素/写回路径、历史性能数据和真实应用测试。
    - 回读：改 UIA、OCR、写回、选择桥、终端和应用 grounding前；注意其中部分旧决策会被本文替代。
+
+4b. `docs/2026-08-14-plugin-architecture-review.md`（2026-08-14 新增）
+   - 内容：对照 DSH 金标准的插件架构审查（问题 P1–P8）与目标架构。
+   - 回读：任何插件/扩展机制改动前；实现计划 `docs/superpowers/plans/2026-08-14-plugin-kernel.md`。
 
 5. `docs/STATUS.md`
    - 内容：哪些能力已验证、哪些只完成代码、已知缺口和真机命令。
@@ -865,6 +915,69 @@ DOM、COM、UIA、Fabric等现有模块也不自动保留，只优先保存经�
 - [ ] 批次 4：L1 生产接线（fabric_bridge 切换循环）、真实多轮模型客户端、写回工具挂 guard、WGC/D3D 捕获后端、常驻 UIA 宿主（Phase B/C）。
 - [ ] WGC/D3D 捕获后端（FrameLease 生产热路径）。
 
+### 2026-08-13：Harness 补全收官（CC 模式全量移植）
+
+- [x] 测试瘦身（用户裁决）：191 文件 / 2080 项 → 50 文件 / 879 项；全量 84 秒；根目录 swarm 垃圾目录已清。
+- [x] 系统提示词 section 组装器：`app/agent_runtime/system_prompt.py`（Identity/System/Permissions/Memory/Language，静态/动态边界，CC systemPromptSections 模式）；`_loop_router` 已接。
+- [x] 记忆层：`app/agent_runtime/memory.py`（MAGIC_POINTER.md 分层：用户级 + 工作区，mtime 缓存，4k 上限，注入系统提示词）。
+- [x] 上下文压缩：`compact_messages`（CC compact：前文摘要成一条 injected user 消息）。
+- [x] 权限模式：`app/agent_runtime/permission_modes.py`（default/plan/accept_reversible/bypass × 六档 effect，ask=生成确认方案，deny=禁止；purchase 永远 ask）。
+- [x] 流式后端：`StreamingMessagesBackend` + SSE 解析器（delta/tool_calls 增量重组，[DONE] 终止）；解析器全测，真实端点验证待真机。
+- [x] T4.2 结构化证据通道：assistant 消息携带 `tool_calls`，工具结果以 API 原生 role=tool/tool_use+tool_result 回传（chat-completions 与 messages 双协议）；loop 消息序列、origin 隔离、fabric 集成测试同步修订。
+- [x] 写回 guard 生产工厂：`app/action_guard/guard_factory.py`（GuardProbe 协议 + build_context_factory + anchor_from_arguments；无 anchor 时 fail-closed 返回 None→permission_denied）；`run_agent_turn` 增 `precondition_context_factory`/`hook_manager` 参数。
+- [x] hooks + AskUserQuestion + TodoWrite（上一批）全部已接线进 `_loop_router` registry。
+- [x] 验证：Python 879 过 / 84 秒；Node 131；typecheck 绿。
+- [ ] 剩余真机接线（模块全完成、待桥侧接）：permission mode 接入 loop 门、streaming 设为生产默认、guard factory 接真实 UIA 探针适配器、compaction 挂 loop compact_callback。
+
+### 2026-08-13：模型即路由器——关键词+recipe 路由退役（架构修复）
+
+- [x] 用户实测判决：关键词+recipe 路由"从根本上不好、不可扩展"（加功能不能靠关键词表）。按用户指示研读 Claude Code 源码（`C:\Users\zjz65\PycharmProjects\claude-code-main`，1350 TS 文件）：结论记录在 `docs/harness-port-notes/2026-08-13-cc-tool-architecture.md`——CC 没有关键词意图表，工具自描述（schema/description/isReadOnly/checkPermissions/searchHint）+ ToolSearch 延迟加载，模型即路由器。
+- [x] 重读 fable5（8·12 外部最强模型）产品理解：`docs/harness-gap-review-20260812.md`——产品是"指代输入模态"，必须从流水线变 harness（循环 + 四支柱 + 证据阶梯）；本批 L1-L16 即其清单。
+- [x] 端到端全链路真实数据文档：`docs/harness-port-notes/2026-08-13-end-to-end-walkthrough.md`（晃动→划线→FrameLease→UIA 探针→snapshot→loop 输入全字段→HTTP payload→工具执行→提案→确认→回执，全部用 8·13 Notepad 真实案例数字）。
+- [x] `app/fabric/capability_tools.py`：每个 recipe 变成真实工具（真实参数 schema `ARGUMENT_SCHEMAS`、诚实描述、READ effect、只生成方案）；调用只 propose 签名 plan，走原 plan/confirm/receipt 链（`make_fabric_action_proposal`）。测试 8 项。
+- [x] `AiClientMessagesBackend` 支持原生 system prompt（chat-completions system 消息 / messages 协议 system 字段）。测试 2 项。
+- [x] CC ToolSearch 模式移植：`ToolRegistry.search(keyword)`（ASCII 整词含下划线分词 + CJK 子串）+ `register_find_capability` 搜索工具 + loop 读完 `find_capability` 结果后把发现的工具动态加入下一轮 schema（`_select_tool_schemas(extra_names=...)`）；`run_agent_turn` 增 `tool_limit`。测试 3 项。
+- [x] `scripts/selection_bridge.py` 生产路由改造（`_loop_router`）：
+  - L0（确定性本地动作 + 显式 handoff + L0 recipe）保留零模型快路径；
+  - ACT_MODEL / ACT_TOOLS / 关键词命中的非 L0 recipe 全部进 agent loop：感知工具接真实后端（本轮 grounding 证据 + 实时窗口枚举）、`look` 接真实视觉模型 + 冻结帧裁剪、copy/screenshot/show_source 变成模型可调用的真实工具、能力工具 + find_capability 注册进 loop registry；
+  - 首条消息注入 `[本次圈选对象证据]`（上限 60k 字）；
+  - loop 失败/无输出自动回退旧链；`MAGIC_POINTER_LEGACY_ROUTER=1` 强制回滚。
+  - 测试：`tests/selection_bridge_test.py` 4 项（映射/崩溃回退/本地动作/提案收集）。
+- [x] 验证：Python 873 过（测试瘦身后，见下）；Node 131；typecheck 过。
+- [x] 测试瘦身（用户裁决"删的越多越好"）：191 个测试文件 / 2080 项 → **50 个文件 / 873 项**（-57%），删除迁移/静态钉死/重叠/文案类测试与 swarm 遗留根目录垃圾；全量跑通 83 秒（原 5 分钟）。保留的均为行为级测试（FrameLease 竞态、探针、快照 fail-closed、guard 状态机、anchor 判别、loop、桥）。
+- [x] Harness 补全（CC 模式移植，第二批）：`app/agent_runtime/hooks.py`（PreToolUse/PostToolUse：block 回喂模型 / approve 短路 / 输入改写 / 抛错不杀 loop，loop 已接线）+ `app/agent_runtime/ask_todo_tools.py`（AskUserQuestion 澄清工具 + TodoWrite 计划工具，桥未接 UI 时诚实拒绝不猜）；`_loop_router` 已注册。测试 7 项。
+- [ ] 诚实缺口：能力工具超 tool_limit 的部分默认不进首轮 prompt（靠 find_capability 按需发现）；loop 首条消息仍以文本携带证据（T4.2 结构化通道）；写回类能力仍只能"生成方案"，loop 内不直接执行写。
+
+### 2026-08-13：Notepad 记事本"文件内容没进模型"事故修复（真机取证）
+
+- [x] 事故：用户在 Notepad 打开 34,660 字 txt，划选未选中文本，问"这个文件里读到了啥。概况总结。"——回答是"摘要并路由：已锁定 1 个对象，provider=agent.task。 请核对动作后确认"，随后 AgentGatewayError。文件内容从未进入模型。
+- [x] 真机取证（Notepad 仍开着，hwnd 67130）：UIA 探针返回 "No non-empty UI Automation text selection was exposed."（未选中文本 → 无选区 → 结构化层空 → 对象降级为 screen_region 像素兜底）；冻结帧 OCR 显示 Notepad 文档区被其他窗口遮挡，像素路径也拿不到正文。
+- [x] R1 路由修复：`_is_information_question` 增加"总结/概况/概括/读到了啥/讲了什么/啥意思"等疑问词；`_QUESTION_ACTION_MARKERS` 移除裸"总结/summarize"、增加显式目的地词（放到/写入/发到/存到…）——"概况总结"→ ACT_MODEL 直接回答；"总结成三点放到邮件"仍走 write-recipe。测试：`test_summary_questions_with_file_wording_answer_with_content` 等 3 项。
+- [x] R2 grounding 修复：`scripts/uia_selection_probe.cs` 新增 `TryDocumentTextFallback`（无选区时读 TextPattern DocumentRange，上限 65536 字，result_kind=`document_text`，document 矩形作为选区证据），点在窗口外/被遮挡区域同样命中；adapter 映射 `uia:document-text`。真机验证：Notepad 无选区 → probe 返回 34,660 字全文；`capture_snapshot(target_hwnd=67130)` → `hasContent=true, covers_mark=True, context 34660 字`（修复前为空、app=screen）。已重编译 `data/runtime/uia_selection_probe.exe`。
+- [x] R3 provider 修复：`scripts/selection_bridge.py` 两处 `FabricEngine()` 改为 `FabricEngine(model_transform=_local_model_transform)`（本地文本模型，timeout 18s）——`model.text` recipe 不再回落到 `agent.task` 外部网关。测试：`fabric_engine_test` 2 项 + `selection_bridge_test` 2 项。
+- [x] 验证：Python 2065 过（2 既有环境失败不变）；Node 131；typecheck 过。
+- [ ] 部署注意：以上修复在开发树内；用户当前运行的打包构建需 `npm run build:electron` 重新构建后才能看到效果（`data/runtime/uia_selection_probe.exe` 已重编译，但打包产物需重建）。
+
+### 2026-08-13：v4pro 审查修复 + 批次 4（生产接线批）启动
+
+- [x] v4pro 单人全仓审查：`v4pro审查.md`（P0/P1/P2 共 25 项，均附修复方案；未改任何生产代码，只产出审查文件）。
+- [x] P0.1 时钟单位：`run_agent_turn` 默认毫秒钟（`time.monotonic()*1000`），新增 `budgets` 参数；回归测试证明旧秒时钟会失守预算（`test_run_agent_turn_default_clock_is_ms_scaled`）。
+- [x] P0.4 模型健康 per-endpoint：健康文件 v2（`{"entries": {base_url: ...}}`，v1 单条自动迁移）；`short_circuit_message(base_url)` 只熔断自己端点；视觉分类拒绝不再写健康（`tests/model_health_endpoint_test.py` 5 项）。
+- [x] 修复 swarm 批次 2 遗留的顺序依赖循环导入（`tool_registry` ↔ `action_guard`，annotation-only import 化解）。
+- [x] P2.4 本地动作：`Terminal` 增 `LOCAL_ACTION` reason / `local_action` 字段；`run_agent_turn` 对 `LocalActionCandidate` 短路返回，不再吞掉"截图/复制这个"。
+- [x] P2.11 minObjects 三态门：None 跳过 / [] 按 0 过滤 / 列表比较（`route_to_trajectory`）。
+- [x] P2.1/P2.2/P2.3 捕获 worker：`capturedAtMonotonicMs`/`captureLatencyMs` 真毫秒；选帧按抓取**完成**时间；grab 移出锁、不再 join（arm/commit 不被慢抓取拖 1 秒）；arm 校验边界正方向。
+- [x] P1.2/P1.3 commit 竞态：coordinator 尾部 token 复查（旧 commit 尾巴不再清空新 arm / 开过期会话）；lease 由 `complete()` resolve 返回，删除 `pendingFrameLease` 全局槽；main.ts await 链校验 `selectionGestureArm.token`。
+- [x] P2.5 恢复消息：`AgentMessage.injected` 白名单；`validate_messages` 每轮接入 loop（backend-error 恢复轮真实存活）。
+- [x] P2.6 `compile_extra_entry` 风险标签类型安全（list risk 不再 TypeError）；P1.7 `TrajectoryCompiler.matched_keywords` 公开接口（去 `_raw_by_id` 私有耦合）。
+- [x] P2.9 订阅 `auto_flush_interval_s` 后台 flusher（孤立事件不再滞留）；P2.10 提示目录按 target 重写（email/url 不再出现"拨号"）+ token 级关键词匹配；P3 杂项（多行容器启发式、doctor check_id 唯一、matrix app 校验、scope 保留字、死代码清理、文案统一、协议噪音消音）。
+- [x] 批次 4 第一批（生产接线批，见 `docs/superpowers/plans/2026-08-13-production-wiring-batch.md`）：
+  - `AiClientMessagesBackend`：messages 协议多轮客户端（chat-completions/messages 自适应、assistant 轮次保角色、预算→timeout、超时不毒化端点；`tests/agent_runtime_ai_backend_test.py` 5 项）。
+  - `loop_answer.terminal_to_answer`：Terminal → 桥回答形状（含 loopReceipts 审计字段；4 测试）。
+  - `selection_bridge._loop_answer`：`MAGIC_POINTER_LOOP_ANSWER=1` opt-in，ACT_TOOLS 路径先跑 READ-only 循环，失败/空答案/本地动作一律回退旧单发路径（5 测试）。
+- [ ] 批次 4 剩余：T4.1 关 opt-in、T4.2 assistant tool_calls、T4.3 流式、T4.4 四道 guard 生产接线、T4.5 fabric_bridge 入口；WGC/D3D 与常驻 UIA 子批次。
+- [x] 验证：全量 Python 2061 过（2 既有环境失败：`local_image_vision_test` 缺验收图，与改动无关）；Node 131；typecheck 过。
+
 ### 2026-08-13：recipe 重定位对账 5 项 P1 修复（review-recipes）
 
 - [x] 按 `docs/harness-port-notes/2026-08-12-review-recipes.md` P1-1~P1-5 逐项 TDD（先失败测试→观察失败→修复→转绿；63/63 通过，`route_to_trajectory` 三测试文件）：
@@ -876,4 +989,160 @@ DOM、COM、UIA、Fabric等现有模块也不自动保留，只优先保存经�
 - [x] 修正：`engine.run_agent_turn` 是 `route_to_trajectory` 真实调用方（对账笔记称零调用点有误）——改为按候选类型取轨迹；语义不变。
 - [ ] 待办（P2 遗留，未动）：en 短词子串陷阱（`recall`）、共享关键词翻转（screen.recall→memory.recall）、L2 工具面差异、自由循环 6 turn 与轨迹 3/4 turn 上限文档化。
 
-下一步主线：批次 1（L1+L2），需先更新 Phase A 账本并编写实施计划。
+### 2026-08-13：评审回复全量执行批（docs/2026-08-13-STRONGEST_MODEL_REVIEW_RESPONSE.md）
+
+执行顺序按评审 §三 修正（接线批 → 近零成本项 → 基建反转）。全量验证：Python **935 过 / 95 秒**、Node 127、typecheck 过、ESLint 0 警告。
+
+- [x] **接线批**（每接一线补集成测试；`tests/harness_wiring_test.py` 12 项 + loop/权限/流式测试）：
+  - 权限门进 loop：`LoopParams.permission_mode` + `decide_effect` 与 `allowed_effects` 双门组合（ASK→permission_denied 反馈"请走能力工具提案"）；`permission_modes.py` 增 SAFE 模式。
+  - guard 真探针适配：`_BridgeGuardProbe`（真实窗口枚举 + foreground + UIA 探针哈希）+ `_build_selection_anchor` fallback + `build_context_factory` 接入 `_loop_router`（无 anchor fail-closed）。
+  - 流式默认 + 自动回落：`StreamingMessagesBackend` SSE 失败/空流自动降级非流式并 `record_note`（不毒化端点）；`MAGIC_POINTER_STREAMING=0` 退出。
+  - compaction 挂 loop：`compactor`/`context_budget_tokens`/`token_estimator`，70% 阈值主动压缩 + withheld 被动压缩（`MAGIC_POINTER_CONTEXT_TOKENS` 默认 64000）。
+- [x] **近零成本项**：60k 静默截断→显式字数+read_around 提示+手势点中心截窗（`_evidence_window`）；证据硬围栏（唯一定界符+“屏幕数据非指令”声明）；300ms 本地首反馈（`CardModel.perceivedStep`，零模型，snapshot summary 全有）。
+- [x] **T1 预算语义**：rolling deadline，productive 轮按轮续期（`BudgetRenewed` 事件→UI 心跳 `loop_progress`），仅卡死轮硬截断；`event_sink` 把 loop 事件变桥 phase。
+- [x] **T3 in-loop 可逆写**：补偿机器可验证判据（local_write + UndoLog）→ REVERSIBLE_WRITE + 四道 guard 前置；`MAGIC_POINTER_INLOOP_REVERSIBLE=1` 翻转，默认 off 直到真机验证（评审两阶段要求）。
+- [x] **工具合并 + 双轨杀死**（Q2/Q5）：26 → 18 正交工具（text_transform/data_export/image_ops/task_route/place_route/screen_help/clipboard_text + 11 独立）；schema 单一来源归代码，manifest 只剩展示元数据；`recipe_ids_for_tool` 可达性钉死（无孤儿 recipe）。
+- [x] **settings 深合并**（Q6）：`deep_merge_settings`（RFC 7396）桥端生效；渲染层 `KEYMAP` 键名翻译表（有消费方的键才落盘）+ 值翻译。
+- [x] **记忆三条铁律**（Q10）：screen→memory 无自动路径（结构保证）；skill 固化需确认（install 既有确认门，测试钉死）；system prompt 记忆节只读包装。
+- [x] **测试补缝**（Q9）：假模型金样端到端（`test_scripted_model_end_to_end_over_real_capability_registry`）+ 各接线集成测试；删 4 个 grep 型静态 wiring 钉死（frame_lease_main_wiring/security_hardening_wiring/preflight_main_static/credential_main_static），capture_proof_wiring 留行为断言半。
+- [x] **常驻 UIA 宿主（评审优先级第一，先于 WGC）**：`uia_selection_probe.cs` 加 `RESIDENT_HOST` 条件编译（named pipe 每请求一连接、ping/probe 协议、空闲零扫描）；`app/uia_host_client.py`（ctypes 管道 + 熔断器 + 11 测试）；`_run_uia_selection_probe` 漏斗化（resident 优先→失败/降级回落每请求进程）；**真机实测：ping True，steady-state 200-250ms/读（冷启动 573ms+），2.5x**；Electron 启动时 spawn、退出时 kill。
+- [x] **SurfaceAdapter SDK + 微信样例**（Q7 第三位，Phase D）：manifest/registry/protocol + `wechat_adapter`（容器 UIA 暴露则用，否则诚实返回像素锚点）；快照桥集成（claimed/error 才记 attempt，不污染默认 trace）；8 测试。
+- [x] **Replay 20 条 trace**（Q8 按失败模式清单）：`app/replay/perception_replay.py`（trace→selection_bridge 载荷，回放时间戳防 TTL 误杀）+ `generate_replay_fixtures.py`（恰好 20 条，一半失败路径）+ `run_trace_replay.py` 驱动（实测跑通，个别答案断言随真模型波动，机制绿）。
+- [x] **薄 smoke 层**（Q12 自家 UIA 狗粮无 Playwright）：`scripts/smoke/golden_path_smoke.py`（uia-host PASS 实测；replay 20 条驱动；notepad-read 真机金路径待用户跑）。
+- [x] **WGC CaptureProvider 契约**（Phase B 契约优先）：`app/capture` 协议 + gdi-fallback/wgc-window/test 三实现 + benchmark p50/p95/p99 + worker `--backend wgc-window` 接线 + `wgc_capture_tool.cs` 脚手架（本机 csc 无 WinMD 投影 facades、无 dotnet SDK——**原生捕获未验证，如实报告 `wgc_tool_missing`**，不回退伪装）。
+- [x] 健康非毒化：`model_health.record_note`（流式回落等软事件不毒化端点）。
+- [ ] 真机验证清单（用户侧）：`MAGIC_POINTER_INLOOP_REVERSIBLE=1` 前必须过四道 guard 真机链路（评审两阶段门）；overlay 排除实测；微信首笔候选框；settings 面板落盘；多屏 DPI。
+- [ ] 评审遗留（已记录未做）：账本数据回路（ledger×capability_matrix×hints，死亡风险第二名解法）；per-input 动态 description 跳过（评审判定规模不到）；ask_user 桥接渲染层 UI。
+
+### 2026-08-13：复杂情景真机测试（视觉模型当眼睛）
+
+试验台 `scripts/real_scenario_test.py`（真窗口+SendInput+真冻结帧+常驻宿主+活网关；证据 `data/runtime/scenario-evidence/`）。六情景结果与四类真 bug 修复记录在 STATUS.md「复杂情景真机测试记录」。要点：
+
+- [x] 视觉校准（形状/颜色/数值全对）；notepad 概况总结数字全对；交叉引用 1 轮答对；屏幕注入被明确标记不执行；双窗口身份陷阱落在手势窗；图片视觉路径全对；终端结构化端到端（layer=uia 无像素兜底）答对终端内容。
+- [x] 修复 UIA 全路径 NameError（uia_text_adapter 缺 import time → 静默退化 OCR，死亡风险第一名）；测试钉死。
+- [x] 修复 Windows Terminal 结构化读取（DocumentRange 空白/异常 → RangeFromPoint 逐行窗口 + 边框偏移重试；真机 terminal_buffer 3104 字）。
+- [x] 修复 loop 终端证据饥饿（content 只有锚点行 → 证据块/感知后端统一取窗口摘录 `_evidence_content`）。
+- [x] 修场景试验台与冒烟的 payload 契约（cursor/cursorSpace/gesture schemaVersion2、FrameLease 字段）。
+- [ ] 待复跑（网关 429 配额恢复后）：notepad 各情景最终态确认；连续情景运行触发限流是环境配额问题，桥如实报告不谎称成功。
+
+下一步主线：真机验证批（用户）+ WGC 原生 vtable 编译验证 pass + 账本数据回路。
+
+### 2026-08-14：插件内核批（DSH 架构移植，问题 P1–P8 的基础修复）
+
+审查金标准 deepseek-harness 本地 clone（HEAD 47f9438，vendored Cordis：
+一切皆插件、ctx 服务仓库、inject 依赖、可逆 effect、四模式事件、分层组合）。
+审查结论 + 目标架构：`docs/2026-08-14-plugin-architecture-review.md`；
+实施计划：`docs/superpowers/plans/2026-08-14-plugin-kernel.md`。
+全量验证：Python **992 过 / 73 秒**（原 935 + 新增 57）；Node 127；typecheck、ESLint 0 警告；
+smoke：uia-host PASS、replay 20 条 trace 走真实网关（机制绿，见下）。
+
+- [x] **T1 Context 内核**（`app/harness/context.py`，24 测试）：provide/get/has/keys/
+  `in`、重复 provide 报错、inject 依赖激活（立即/等待/级联 fork 内）+ `service/<key>`
+  激活事件、effect LIFO 回卷 + 坏 disposer 不阻断、四派发模式（emit/waterfall 短路/
+  parallel 线程池/serial 末值）+ 模式错配与未声明报错、on prepend/可逆、scope 隔离、
+  revoke 级联拆 fork、provide_up 插件向根贡献服务、unload 幂等。
+- [x] **T2 插件协议**（`app/harness/plugin.py`，10 测试）：name/inject/apply(ctx, config)、
+  行 config 覆盖默认、坏 apply 行隔离（PluginActivationError 带行 id）、config schema
+  校验（最小 JSON Schema 子集）、目录发现（plugin.py + plugin.json）、坏条目 warning
+  跳过（坏 import/名字不匹配/仅 manifest 拒绝）、依赖缺失 waiting 诚实报告。
+- [x] **T3 分层组合**（`app/harness/composition.py`，10 测试）：bundle 行序挂载、
+  patch 按 id 整体替换 config/禁用/插新行、未知插件行 error 隔离、坏行不毒化树、
+  waiting 报告、core 服务注入、dump_config 真实启动树、重复行 id fail loud。
+- [x] **T4 builtin bundle 迁移**（`app/harness/builtin_bundle.py` + `tests/harness_builtin_bundle_test.py` 8 测试）：
+  `_loop_router` 的 8 个注册点全部改写为插件行（harness-tools/perception-tools/look-tool/
+  local-action-tools/capability-tools/guard/system-prompt/model-client）；
+  **注册等价性钉死**：新树 27 工具清单 == 迁移前手接线快照逐项一致（名字+effect 全对）；
+  旧 `_register_look_tool/_register_local_action_tools/_register_harness_tools/_loop_system_prompt`
+  删除，`_loop_router` 从 ~300 行瘦身为"构造 runtime → boot → 从 ctx 取服务 → run_agent_turn"；
+  env 开关（INLOOP/PERMISSION_MODE/STREAMING/CONTEXT_TOKENS）语义不变，经行 config 生效，
+  显式 patch 优先；`system_prompt.py` 拆出 `default_sections()` 单一来源。
+- [x] **T5 外部插件 + 检视**：`data/plugins/`（README + 示例）为用户插件目录
+  （`MAGIC_POINTER_PLUGIN_DIR` 覆盖，坏插件单行 warning 隔离测试钉死）；
+  `scripts/harness_dump_config.py`（对标 `dsh --dump-config`，输出 core seams/rows/warnings）；
+  electron-builder files 白名单补 `data/plugins/**`。
+- [x] **环境修复**：根 `conftest.py`——本机沙箱按 POSIX mode 位授予目录 ACL，
+  pytest 硬编码 `mode=0o700` 导致 tmp_path 全部 setup 失败（STATUS 记录的 basetemp
+  权限问题的根因）；shim 强制列表模式（真实 Windows 无副作用）。修复后全量 992 项
+  零环境失败（此前 2 项环境失败也一并消除）。另修 `scripts/sync_install.ps1`
+  缺 UTF-8 BOM 导致 Windows PowerShell 5.1 解析中文注释报错的交付阻塞（补 BOM）。
+- [x] **既有 bug 的临时止血（已被下方重建批替代）**：验证期发现非 token
+  `TurnWithheld` 可在持久网关错误下自旋 1400+ 轮；本批曾用 `max_turns=6` 封顶。
+  用户随后明确裁决：固定六轮不是 Agent 完成语义，只是掩盖 Provider 与循环状态机混层。
+- [x] 验证细节：uia-host smoke PASS（ping+probe，document_text）；replay smoke 20 条
+  fixture 走真网关 + 迁移后 `_loop_router` 全链路（18/20 断言过；2 条 FAIL 为模型
+  回答内容波动——`answer_contains 'PDF'` 与 `proposal_recipe` 属断言随真模型波动，
+  STATUS 已记录此类波动；机制绿且有界）。
+- [ ] 后续（不在本批）：P8 会话事件单一事实源（Phase E/H）；更多 seam 三角
+  （`ctx.llm`/`ctx.fs`/`ctx.actions`）；SurfaceAdapter 深度 seam 化；WGC；账本数据回路。
+
+### 2026-08-14：Harness 后端重建（进行中，未交付）
+
+执行规格：`docs/superpowers/specs/2026-08-14-magic-pointer-harness-reconstruction-design.md`；
+当前计划：`docs/superpowers/plans/2026-08-14-evidence-truth-foundation.md`。Hermes 是主要成品
+对标；DSH 用于插件/事件溯源契约；Pi/Kimi/Claude Code 分别用于简洁循环、工具体验和重型
+编码 Agent 行为参考。GUI 视觉设计不在本批。按用户裁决，本次所有工作视为一个开放批次，
+最终验收前不升 `package.json` 版本、不执行 `npm run sync`。
+
+- [x] **冻结证据与目标身份真相**：FrameLease、真实捕获来源、进程身份、物理坐标裁剪、
+  mismatch fail-closed 已接通；真实 Notepad 交叉引用场景 2 个模型回合完成，回答 Q2=3.6 秒，
+  `usedBackend=magic_pointer.messages_multiturn_streaming`，无桥错误。试验台改为唯一标题、
+  Unicode SendInput、禁用剪贴板并校验可见像素，避免复用错误标签页。
+- [x] **移除“6 轮即修复”的错误语义**：生产代码不再暴露 `max_turns`；Provider 瞬时错误
+  在模型调用层以原消息有限重试，持久错误一次终止为 `provider_unavailable`；Hermes 风格
+  Tool Guardrail 按 effect 和规范化参数/结果检测重复失败、重复读取证据和重复写入，终止为
+  `stalled`；只有默认 90 的诊断保险丝，触发时诚实报告 `invariant_failed`。Recipe 不得控制
+  Agent 生命周期，预算续期只认语义进展。
+- [x] **插件生命周期与核心 seam 修复**：依赖撤销会卸载插件 fork，重新提供会重新激活；
+  子 scope 观察父服务变化且随父卸载；工具、提示词、hooks、SurfaceAdapter 注册均随插件
+  精确回卷。用户插件自动挂载、按行卸载、动态 `dump_config`、文件 patch 与显式覆盖已接通。
+  `ctx.llm` 可用插件替换 Provider，模型消费者不 import 具体网关；SurfaceAdapter 走独立
+  插件 scope。新增 agent/surface 运行域，避免无依赖插件在两个启动阶段重复执行。
+  最新定向回归：插件/SurfaceAdapter 104 项通过。
+- [x] **事件溯源会话**：落实 “model-visible means logged”；hash-chain JSONL、原生工具消息、
+  append-only compaction、crash repair、resume/fork 已进入主路。追加/读取具备跨进程锁，真实 Agent
+  轮持有 turn lease，活跃请求不会被并发 resume 误修；压缩不产生孤立 tool result。
+- [x] **Hermes 式受控自进化（后端）**：轨迹复盘只生成用户目录候选；已有可见 diff、列表/
+  读取、批准、拒绝、审计和回滚 API，批准前禁止生效；已批准 memory/skills 才按相关性进入 prompt。
+- [x] **删除重复路由与旧 fallback（后端）**：模型作为普通命令唯一主路；确定性层只保留权限、
+  坐标、租约、显式本地动作和专门产品模式。旧分类器/第二答案路径已删除。
+- [x] **工具/Provider 完整性**：DSH 式有界滚动调度、资源冲突、取消回执、OpenAI/Anthropic
+  原生多轮+SSE、usage、畸形参数自修正、懒 MCP/动态工具发现、结果验证已接入。
+- [x] **人在环与后台 Agent 监督**：ask_user 可暂停并从同一日志恢复；后台任务状态迁移跨进程
+  串行化；Pi steering 使用 queued→delivered ack 和 attempt 隔离，不再虚报或重放旧指令。
+- [x] **Agent 循环与模型协议续审**：公开 `LoopParams` 在模型调用/会话落盘前校验权限模式、
+  保险丝、工具/并发上限、预算续期、上下文预算、effect 与 FULL_ANSWER budget；默认时钟统一为
+  毫秒。Provider 多次重试共享同一截止时间，流式→非流式降级只用剩余预算；第三方 adapter
+  抛异常、HTTP 200 空响应均转为请求层可重试失败，不再炸穿循环或生成空白成功。截断轮会为
+  每一个 assistant tool call 生成失效结果，OpenAI/Anthropic 历史保持合法；Anthropic 失败
+  `tool_result` 带 `is_error=true`。
+- [x] **插件/Hook 隔离续审**：patch 畸形 config 单行隔离；插件只能进入声明的 agent/surface
+  scope；每次激活获得独立嵌套 config，重载不继承插件私改。PostToolUse block 已进入 loop，
+  明确报告“工具已执行但结果被阻止”；PreToolUse 使用深拷贝参数，内层对象不能污染原调用并
+  隐藏动态资源所有权变化。
+- [x] **会话/执行完整性续审**：当前 turn 内按调用出现次序修复重复 provider call id；恢复历史
+  的重复/缺失 id 统一生成会话唯一 `mp_call_*`。严格布尔确认阻止字符串 `"false"` 冒充批准；
+  Fabric 幂等键绑定完整有效动作参数，receipt 必须匹配 plan/recipe；首次生成签名 key 的并发
+  进程采用唯一临时文件+原子发布，输家读取赢家 key；raising precondition probe fail-closed。
+- [x] **Hermes 自进化续审**：候选与备份在 apply/rollback 前重新校验内容哈希；已决定候选
+  不再被同 ID 新提议覆盖；propose/apply/reject/rollback 使用跨进程 mutation lock，双窗口
+  只有一个决策赢家。后台 review 在模型 handoff 前脱敏 API key/Bearer/token/password/私钥，
+  review 结果 session id 禁止路径穿越。
+- [ ] **最终验收与安装交付**：逐文件审计 dirty tree，补齐真实应用 ActionLease/SurfaceAdapter/
+  ComputerOperator 场景；完成 fresh 全量 Python/Node/typecheck/build 与实时截图验收后，再一次性
+  升版本并执行 `npm run sync`。GUI 候选审查/clarification 专用交互仍属后续视觉批。
+
+(End of file - total 942 lines)
+### 2026-08-14：后端加固续批（开发中，未交付）
+
+- [x] **TargetLease fail-closed**：所有字典租约均验证；需要实时校验但缺少 probe 时拒绝执行；畸形 OperationPlan 转为结构化失败，不能炸穿 IPC。
+- [x] **Windows-native ComputerOperator 底座**：完成 surface-only 截图、哈希/尺寸回执、SurfaceGrant 坐标约束、根 HWND/前台 HWND 复核、SendInput Unicode、取消与输入释放；常驻/一次性 Harness 均注册 `windows-native` provider。
+- [x] **UI-TARS 动作协议硬化**：支持归一化/模型截图坐标，控制意图与执行动作分离，阻止写动作伪装只读，scroll 强制锚点，hotkey 两种格式兼容。
+- [x] **UI-TARS 受控编排与 Harness 服务**：单截图单动作、自然 `finished/call_user`、相同画面重复动作停滞、源 observation SHA 绑定、动作后延迟复核、取消上抛；复用配置视觉网关并按模型实际缩放图尺寸换算坐标。`FrameLease → SurfaceGrant → ComputerTaskService` 已进入常驻 `computer-agent` row，但没有作为无条件万能点击工具暴露给模型。
+- [x] **工具输入与上下文边界**：递归有界 JSON Schema 子集；拒绝非有限数与超深输入；工具结果统一限制 64,000 字符并记录原长度/SHA-256，日志与模型保持同一值。
+- [x] **PreToolUse TOCTOU**：hook 后重新校验最终参数；precondition 读取最终参数；动态资源所有权变化拒绝执行；执行前再次检查取消。
+- [x] **插件在途卸载一致性**：SurfaceAdapter、hooks、system-prompt render 和 Context 事件派发均计入 scope 工作租约；卸载等待在途工作；并行 listener 自卸载改为立即失败，消除死锁。
+- [x] **自进化/MCP 边界**：确认 learning candidate 只由用户批准后生效且有哈希、路径、备份、回滚保护；MCP stdio 单行限制 2,000,000 字符，越界/超时立即终止进程，不再额外等待 close grace period。
+- [x] **秒级定向验证**：本批新增/相关集合分别为 12、3、10、14、56、2、4、4、11、6、7、32 项通过；触及的生产 Python 文件 `py_compile` 通过。未运行全量测试、Node/typecheck/build/sync，不能据此声明零 bug 或已交付。
+- [ ] **ComputerOperator 产品验收**：尚需 GUI 显式批准入口、真实视觉端点、多应用桌面回归与可见进度/接管交互；底层循环、动作后观察和 effect 授权服务已经完成。
+- [ ] **剩余底层审计**：dirty tree 逐文件取舍、更多真实 SurfaceAdapter/ActionLease 链路，以及 MCP/插件第三方兼容样本扩充。
+- [ ] **最终交付**：后端稳定后再执行 fresh Python/Node/typecheck/build/实时截图验收；最后统一 patch bump、`npm run sync`、安装目录版本核对与 `docs/STATUS.md` 更新。

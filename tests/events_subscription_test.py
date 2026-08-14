@@ -362,3 +362,31 @@ class TestConcurrency:
         assert sub.handled_count() == 200
         assert sub.dropped_count() == 0
         assert sub.breaker_status("hwnd-1")["broken"] is False
+
+
+class TestAutoFlush:
+    def test_isolated_event_is_delivered_by_background_flusher(self) -> None:
+        """A single event with no same-key follow-up must not be stranded
+        (review P2.9): the optional background flusher closes the throttle
+        window on a timer."""
+        import time as _time
+
+        sub = WindowSubscription(auto_flush_interval_s=0.02)
+        recorder = Recorder()
+        sub.set_handler(recorder)
+        sub.subscribe("hwnd-1", {ChangeKind.TEXT_CHANGED}, throttle_ms=50)
+        assert sub.deliver(make_event("e1", ChangeKind.TEXT_CHANGED, "hwnd-1")) is True
+        deadline = _time.monotonic() + 2.0
+        while sub.handled_count() == 0 and _time.monotonic() < deadline:
+            _time.sleep(0.01)
+        sub.close()
+        assert sub.handled_count() == 1
+        assert recorder.events[0].event_id == "e1"
+
+    def test_no_auto_flush_by_default(self) -> None:
+        """Without auto_flush_interval_s the subscription never spawns a
+        flusher thread and consumers must call flush() themselves."""
+        sub = WindowSubscription()
+        sub.subscribe("hwnd-1", {ChangeKind.TEXT_CHANGED})
+        assert sub._flush_thread is None
+        sub.close()

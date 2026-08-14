@@ -88,6 +88,8 @@ class CapabilityMatrix:
         status: CapabilityStatus,
         notes: str | None = None,
     ) -> None:
+        if not isinstance(app, str) or not app.strip():
+            raise ValueError("app must be a non-empty string")
         capability = Capability(capability)
         status = CapabilityStatus(status)
         entry = CapabilityEntry(app=app, capability=capability, status=status, notes=notes)
@@ -130,6 +132,8 @@ class CapabilityMatrix:
         for index, item in enumerate(payload["entries"]):
             try:
                 app = item["app"]
+                if not isinstance(app, str) or not app.strip():
+                    raise TypeError("app must be a non-empty string")
                 capability = Capability(item["capability"])
                 status = CapabilityStatus(item["status"])
             except (KeyError, TypeError, ValueError) as exc:

@@ -12,7 +12,10 @@ trip a cooldown during which everything is dropped.
 
 All public methods are thread-safe. ``deliver`` is called from the event
 source's threads; ``subscribe``/``unsubscribe``/``flush``/``breaker_status``
-may be called from consumer threads.
+may be called from consumer threads. With ``auto_flush_interval_s`` set, a
+background flusher closes open throttle windows on a timer so isolated
+events are never stranded (otherwise consumers must call :meth:`flush`
+themselves, e.g. on a tick loop).
 
 This module is pure Python (stdlib only).
 """
@@ -43,10 +46,12 @@ class WindowSubscription:
         clock=None,
         storm_limit: int = STORM_LIMIT,
         storm_cooldown_s: float = STORM_COOLDOWN_S,
+        auto_flush_interval_s: float | None = None,
     ) -> None:
         self._clock = clock if clock is not None else time.monotonic
         self._storm_limit = storm_limit
         self._storm_cooldown_s = storm_cooldown_s
+        self._auto_flush_interval_s = auto_flush_interval_s
 
         self._lock = threading.RLock()
         self._kinds: dict[str, set[ChangeKind]] = {}
@@ -60,6 +65,28 @@ class WindowSubscription:
         self._handled = 0
         self._dropped = 0
         self._handler = None
+        self._flush_stop = threading.Event()
+        self._flush_thread: threading.Thread | None = None
+        if auto_flush_interval_s is not None and auto_flush_interval_s > 0:
+            # Without a flush driver a single isolated event (no follow-up of
+            # the same key) stays pending forever: the trailing-edge throttle
+            # only delivers on the next same-key event or an explicit flush.
+            # The optional background flusher closes throttle windows on a
+            # timer (review P2.9). Tests keep it off for determinism.
+            self._flush_thread = threading.Thread(
+                target=self._auto_flush_loop,
+                name="mp-event-flush",
+                daemon=True,
+            )
+            self._flush_thread.start()
+
+    def _auto_flush_loop(self) -> None:
+        while not self._flush_stop.wait(self._auto_flush_interval_s):
+            self.flush()
+
+    def close(self) -> None:
+        """Stop the background flusher (if any); the whitelist stays intact."""
+        self._flush_stop.set()
 
     def set_handler(self, handler) -> None:
         """Install the consumer that receives delivered events (or None)."""

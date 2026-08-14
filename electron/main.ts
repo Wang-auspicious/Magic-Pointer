@@ -17,6 +17,7 @@ if (fs.existsSync(path.join(__dirname, 'runtime_paths.ts'))) {
 }
 
 const { projectRoot } = require('./runtime_paths');
+const { scheduleBackgroundLearning } = require('./background_learning');
 const { SelectionSessionStore } = require('./selection_session');
 const { InteractionEpisodeStore, inferReferenceLabel, inferReferenceMode } = require('./interaction_episode');
 const { ActivationGate } = require('./activation_gate');
@@ -69,6 +70,7 @@ const { createUpdateManager } = require('./update_manager');
 const { pointerPollingPolicy } = require('./pointer_polling_policy');
 const { PassThroughGestureCapture } = require('./pass_through_gesture');
 const { createPythonBridgeRunner } = require('./python_bridge_runner');
+const { SelectionWorkerClient } = require('./selection_worker_client');
 const CardModel = require('./cards');
 const { createTaskWatcher } = require('./task_watcher');
 const { createStashRuntime } = require('./stash_runtime');
@@ -110,7 +112,7 @@ let selectionGestureExpiryTimer: NodeJS.Timeout | null = null;
 // release overlay 并打开会话。旧的 34ms 合成器定时器已删除。
 let frameCaptureWorkerClient: InstanceType<typeof FrameCaptureWorkerClient> | null = null;
 let captureCommitCoordinator: InstanceType<typeof CaptureCommitCoordinator> | null = null;
-let pendingFrameLease: any = null;
+let selectionWorkerClient: InstanceType<typeof SelectionWorkerClient> | null = null;
 let passThroughChainTimer: NodeJS.Timeout | null = null;
 let passThroughChainDeadlineAt = 0;
 let passThroughChainLastPoint: { x: number; y: number; t?: number } | null = null;
@@ -2261,6 +2263,38 @@ function getFrameCaptureWorkerClient() {
   return frameCaptureWorkerClient;
 }
 
+// 常驻 UIA 宿主（Phase C，评审 2026-08-13 优先级第一）：探针进程只启动
+// 一次，之后每个感知/守卫读请求都走 named pipe，不再付每请求 ~570ms 的
+// 进程冷启动税。空闲时它零扫描零 UIA 活动（event-driven 契约）。
+let uiaResidentHostProcess: ReturnType<typeof spawn> | null = null;
+const UIA_RESIDENT_HOST_PIPE = process.env.MAGIC_POINTER_UIA_HOST_PIPE || 'MagicPointerUIAHost';
+
+function ensureResidentUiaHost(): void {
+  if (uiaResidentHostProcess) return;
+  const exe = path.join(DEVELOPMENT_RUNTIME_DIR, 'uia_resident_host.exe');
+  if (!fs.existsSync(exe)) {
+    // Python 侧首次使用时会用本机 csc 现场编译并自行拉起；
+    // 这里缺文件只意味着还没编译过，不算故障。
+    log('resident UIA host exe not compiled yet; first probe will compile it');
+    return;
+  }
+  process.env.MAGIC_POINTER_UIA_HOST_PIPE = UIA_RESIDENT_HOST_PIPE;
+  uiaResidentHostProcess = spawn(exe, [], {
+    stdio: 'ignore',
+    windowsHide: true,
+    env: { ...process.env, MAGIC_POINTER_UIA_HOST_PIPE: UIA_RESIDENT_HOST_PIPE },
+  });
+  uiaResidentHostProcess.on('exit', (code: number | null) => {
+    log(`resident UIA host exited code=${code ?? 'unknown'}`);
+    uiaResidentHostProcess = null;
+  });
+  uiaResidentHostProcess.on('error', (error: Error) => {
+    log(`resident UIA host spawn failed: ${error?.message || error}`);
+    uiaResidentHostProcess = null;
+  });
+  log('resident UIA host started');
+}
+
 function reportFrameCommitFailure(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
   log(`frame commit failed: ${message}`);
@@ -2277,11 +2311,10 @@ function getCaptureCommitCoordinator() {
         cancel: (epochId: string) => worker.cancel(epochId),
       },
       releaseOverlay: () => hideOverlay(),
-      beginSession: (_gesture: unknown, lease: any) => {
-        // Staged: completeSelectionGesture consumes the lease only after the
-        // commit fully resolves, so cancel('completed') strictly precedes
-        // beginSelectionSession.
-        pendingFrameLease = safeClone(lease);
+      beginSession: (_gesture: unknown, _lease: any) => {
+        // The lease is returned by complete() and consumed by
+        // completeSelectionGesture's await chain — no global pending slot, so
+        // two interleaved gestures can never exchange FrameLeases.
       },
       onCommitFailure: (error: unknown) => reportFrameCommitFailure(error),
     });
@@ -2502,10 +2535,18 @@ function completeSelectionGesture(payload: any) {
   // The old fixed 34ms compositor gap (which let a later screen slip into the
   // capture) is gone.
   arm.committing = true;
-  getCaptureCommitCoordinator().complete(gesture).then(() => {
+  getCaptureCommitCoordinator().complete(gesture).then((lease: any) => {
+    if (lease === null) {
+      // A newer arm replaced this epoch while the commit was in flight; the
+      // coordinator discarded the stale result. Never touch the new gesture.
+      log('frame commit discarded: a newer gesture replaced this epoch');
+      return;
+    }
+    if (!selectionGestureArm || selectionGestureArm.token !== arm.token) {
+      log('frame commit arrived for a replaced gesture; discarding session');
+      return;
+    }
     cancelSelectionGesture('completed');
-    const lease = pendingFrameLease;
-    pendingFrameLease = null;
     beginSelectionSession(reason, gesture, lease);
   }).catch((error: any) => {
     cancelSelectionGesture('commit_failed');
@@ -3148,12 +3189,13 @@ function beginSelectionSession(reason = 'manual', gesture: SelectionGesture | nu
   if (child) activeSessionChildren.set(entry.token, child);
 }
 
-app.whenReady().then(() => {
+if (gotLock) app.whenReady().then(() => {
   try {
     fs.mkdirSync(RUNTIME_DIR, { recursive: true });
     fs.writeFileSync(PID_PATH, String(process.pid), 'utf8');
   } catch (_) {}
   log(`app ready pid=${process.pid}`);
+  ensureResidentUiaHost();
   for (const eventName of ['display-added', 'display-removed', 'display-metrics-changed']) {
     screen.on(eventName, () => invalidateRuntimeState('display_configuration_changed'));
   }
@@ -3176,7 +3218,9 @@ app.whenReady().then(() => {
   if (!voiceRuntimeStart.ok) log(`voice runtime startup rejected ${voiceRuntimeStart.error}`);
   const requiredPaths = [
     path.join(ROOT, 'scripts', 'fabric_bridge.py'),
-    path.join(ROOT, 'electron', 'renderer', 'stage.html'),
+    // 渲染层打包后落在 build/electron/renderer/ 下（files: build/electron/**），
+    // 不是 ROOT/electron/renderer —— 写错会让安装版每次启动都判定未完成引导。
+    path.join(ROOT, 'build', 'electron', 'renderer', 'stage.html'),
     ...(PYTHON_RUNTIME.required === true ? [PYTHON_EXECUTABLE] : []),
   ];
   const onboardingReadiness = inspectOnboardingReadiness({
@@ -3394,6 +3438,12 @@ app.on('will-quit', () => {
   stopTitleBarSampling();
   if (wiggleCalibrationTimer) clearTimeout(wiggleCalibrationTimer);
   voiceRuntime?.shutdown();
+  selectionWorkerClient?.shutdown({ force: true });
+  selectionWorkerClient = null;
+  if (uiaResidentHostProcess && !uiaResidentHostProcess.killed) {
+    try { uiaResidentHostProcess.kill(); } catch (_) {}
+  }
+  uiaResidentHostProcess = null;
   if (frameCaptureWorkerClient) {
     frameCaptureWorkerClient.shutdown().catch((error: any) => {
       log(`frame capture worker shutdown failed: ${error?.message || error}`);
@@ -3780,6 +3830,45 @@ function runPythonBridge(payload: any, scriptPath = 'scripts/electron_bridge.py'
         : scriptPath.includes('shopping_list_bridge') || scriptPath.includes('calendar_bridge')
           ? 20_000
           : 120_000;
+  const onProgress = (record: any) => {
+    log(`bridge phase script=${scriptPath} phase=${record.phase} ms=${record.ms}`);
+    if (options.timelineToken) {
+      sessionTimeline.phase(options.timelineToken, {
+        script: scriptPath,
+        phase: record.phase,
+        ms: record.ms,
+        detail: record.detail || '',
+      });
+    }
+    if (typeof options.onProgress === 'function') options.onProgress(record);
+  };
+  const onComplete = (parsed: any) => {
+    log(`bridge complete script=${scriptPath} ok=${parsed?.ok} error=${parsed?.error || 'none'}`);
+    if (typeof options.onComplete === 'function') {
+      options.onComplete(parsed);
+      return;
+    }
+    registerActionProposals(parsed, options.selectionSessionToken || null, target);
+    sendBridgeResult(target, parsed);
+  };
+  if (scriptPath.replace(/\\/g, '/') === 'scripts/selection_bridge.py') {
+    if (!selectionWorkerClient) {
+      selectionWorkerClient = new SelectionWorkerClient({
+        root: ROOT,
+        pythonExecutable: PYTHON_EXECUTABLE,
+        pythonIsolated: PYTHON_ISOLATED,
+        userDataDir: FABRIC_DATA_DIR,
+      });
+    }
+    return selectionWorkerClient.run({
+      requestId: String(payload?.requestId || crypto.randomUUID()),
+      payload,
+      timeoutMs: Math.max(1000, Number(options.timeoutMs) || defaultTimeoutMs),
+      signal: options.signal || null,
+      onProgress,
+      onComplete,
+    });
+  }
   return pythonBridgeRunner.run({
     executable: py,
     args: pythonInvocationArgs([scriptPath], { isolated: PYTHON_ISOLATED }),
@@ -3803,31 +3892,12 @@ function runPythonBridge(payload: any, scriptPath = 'scripts/electron_bridge.py'
     // Phase timings arrive on stderr while the bridge is still running. They
     // are what turns "it took 30 seconds" into "which step took 30 seconds",
     // and they are what lets the capsule appear before the work is finished.
-    onProgress: (record: any) => {
-      log(`bridge phase script=${scriptPath} phase=${record.phase} ms=${record.ms}`);
-      if (options.timelineToken) {
-        sessionTimeline.phase(options.timelineToken, {
-          script: scriptPath,
-          phase: record.phase,
-          ms: record.ms,
-          detail: record.detail || '',
-        });
-      }
-      if (typeof options.onProgress === 'function') options.onProgress(record);
-    },
-    onComplete: (parsed: any) => {
-      log(`bridge complete script=${scriptPath} ok=${parsed?.ok} error=${parsed?.error || 'none'}`);
-      if (typeof options.onComplete === 'function') {
-        options.onComplete(parsed);
-        return;
-      }
-      registerActionProposals(parsed, options.selectionSessionToken || null, target);
-      sendBridgeResult(target, parsed);
-    },
+    onProgress,
+    onComplete,
   });
 }
 
-function runPythonBridgePromise(payload: any, scriptPath: string, { target = 'fabric-dashboard', timeoutMs = 5000 }: { target?: string; timeoutMs?: number } = {}): Promise<any> {
+function runPythonBridgePromise(payload: any, scriptPath: string, { target = 'fabric-dashboard', timeoutMs = 5000 }: { target?: string | null; timeoutMs?: number } = {}): Promise<any> {
   return new Promise((resolve, reject) => {
     let settled = false;
     let timer: NodeJS.Timeout | null = null;
@@ -3858,6 +3928,27 @@ function runPythonBridgePromise(payload: any, scriptPath: string, { target = 'fa
     }, Math.max(1000, Number(timeoutMs) || 5000));
   });
 }
+
+ipcMain.handle('learning-candidates:request', async (event: Electron.IpcMainInvokeEvent, payload: any) => {
+  if (!isDashboardSender(event) && !isCompanionSender(event)) {
+    return { ok: false, error: 'unauthorized_renderer' };
+  }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return { ok: false, error: 'candidate_request_invalid' };
+  }
+  try {
+    return await runPythonBridgePromise(
+      payload,
+      'scripts/learning_candidates_bridge.py',
+      { target: null, timeoutMs: 5_000 },
+    );
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error.message : 'candidate_request_failed',
+    };
+  }
+});
 
 // --- Model gateway health -------------------------------------------------
 // Knowing the gateway is refusing (402 balance, 401 key) before a command runs
@@ -4239,6 +4330,17 @@ function submitSelectionCommandWhenGrounded(payload: any, startedAt: number, not
   // 不在这里记下来，工作室永远只能显示答案、没有问题。
   pendingQuestions.set(selectionSessionToken, String(payload?.command || '').trim());
   log(`stage:submit-selection-command token=${selectionSessionToken} request=${requestId} command_len=${String(enriched.command || '').length}`);
+  // 本地首反馈（零模型）：感知材料里已有的「我看到了：X · N 字」先
+  // 作为第一步贴到等待卡上，再让模型慢慢跑——用户立刻知道它看见的是
+  // 不是自己圈的那个东西（review Q4）。
+  const perceived = CardModel.perceivedStep(session.summary);
+  if (perceived) {
+    safeSurfaceSend('stage', 'stage:card-patch', {
+      selectionSessionToken,
+      requestId,
+      patch: { steps: [perceived] },
+    });
+  }
   let child: ReturnType<typeof runPythonBridge> | null = null;
   child = runPythonBridge(enriched, 'scripts/selection_bridge.py', 'stage', {
     timelineToken: selectionSessionToken,
@@ -4278,6 +4380,11 @@ function submitSelectionCommandWhenGrounded(payload: any, startedAt: number, not
       parsed.selectionSessionToken = selectionSessionToken;
       parsed.selectionSnapshotId = session.snapshot?.snapshot_id || null;
       parsed.requestId = requestId;
+      scheduleBackgroundLearning({
+        request: parsed.learningReview,
+        runBridge: runPythonBridge,
+        log,
+      });
       registerActionProposals(parsed, selectionSessionToken, 'stage');
       const autoProposal = parsed.actionProposals?.find((proposal: any) => proposal.id === parsed.autoExecuteProposalId);
       if (canAutoExecuteInternalProposal(parsed, autoProposal)) {
@@ -4698,6 +4805,15 @@ ipcMain.on('dashboard:theme', (event: Electron.IpcMainEvent, payload: any = {}) 
 ipcMain.handle('runtime-snapshot:get', async (event: Electron.IpcMainInvokeEvent, options: any = {}) => {
   if (!isDashboardSender(event)) throw new Error('unauthorized_runtime_snapshot_sender');
   return runtimeSnapshot.get({ force: options?.force === true });
+});
+ipcMain.handle('dashboard:settings:get', async (event: Electron.IpcMainInvokeEvent) => {
+  if (!isDashboardSender(event)) throw new Error('unauthorized_settings_reader');
+  if (!fabricSettings) {
+    return { ok: false, error: 'settings_not_loaded' };
+  }
+  // 设置面板回填真实值（不是界面里写死的 v:）。凭据类字段不在 fabricSettings
+  // 里，模型档案的 credentialRef 也只是引用，不需要二次脱敏。
+  return { ok: true, settings: fabricSettings };
 });
 ipcMain.on('dashboard:fabric-request', (event: Electron.IpcMainEvent, payload: any) => {
   if (!isDashboardSender(event)) return;

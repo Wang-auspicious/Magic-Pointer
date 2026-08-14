@@ -142,7 +142,11 @@ def _require_physical_gesture_inside(
 
 
 def _capture_kind(source: str) -> str:
-    return "window" if source == "wgc-window" else "display"
+    if source == "wgc-window":
+        return "window"
+    if source in {"wgc-display", "dxgi-display"}:
+        return "display"
+    return "fallback"
 
 
 def bind_frozen_evidence(

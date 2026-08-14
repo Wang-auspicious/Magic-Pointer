@@ -11,6 +11,25 @@ function recordOf(value: unknown): UnknownRecord {
   return value !== null && typeof value === 'object' ? value as UnknownRecord : {};
 }
 
+function pendingInputFromBridge(value: unknown): UnknownRecord | null {
+  const pending = recordOf(value);
+  const question = String(pending.question || '').trim().slice(0, 1000);
+  const options = Array.isArray(pending.options)
+    ? pending.options.map(String).map((item) => item.trim().slice(0, 200)).filter(Boolean).slice(0, 4)
+    : [];
+  return question && options.length >= 2 ? { question, options } : null;
+}
+
+function modelUsageFromBridge(value: unknown): UnknownRecord | null {
+  const raw = recordOf(value);
+  const usage: UnknownRecord = {};
+  for (const key of ['inputTokens', 'outputTokens', 'totalTokens', 'turnsReported']) {
+    const count = Number(raw[key]);
+    if (Number.isFinite(count) && count >= 0) usage[key] = Math.floor(count);
+  }
+  return Object.keys(usage).length ? usage : null;
+}
+
 const CHIP_COMMANDS = Object.freeze({
   rewrite: '改写这段文字',
   translate: '把这段文字翻译成中文',
@@ -310,6 +329,9 @@ function stageEventFromBridge(value: unknown) {
     ...(proof.length ? { captureProof: proof, captureProofSummary: proofSummary(proof) } : {}),
     ...(screenPoints.length ? { screenPoints } : {}),
   };
+  const pendingInput = pendingInputFromBridge(parsed.pendingInput);
+  const awaitingUserInput = parsed.awaitingUserInput === true && pendingInput !== null;
+  const modelUsage = modelUsageFromBridge(parsed.modelUsage);
   if (parsed.ok === true && receipt.status === 'succeeded' && receipt.verified) {
     return {
       type: 'COMPLETE',
@@ -334,6 +356,9 @@ function stageEventFromBridge(value: unknown) {
       // 桥在调用模型前判定的回答形态：deliver（要发出去，禁 markdown）
       // / inspect（自己看）。answer_shape_policy 优先信它，再退到猜命令。
       answerShape: String(parsed.answerShape || recordOf(parsed.route).answerShape || ''),
+      awaitingUserInput,
+      ...(pendingInput ? { pendingInput } : {}),
+      ...(modelUsage ? { modelUsage } : {}),
       ...receipt,
       actions,
     },

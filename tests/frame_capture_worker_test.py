@@ -4,13 +4,14 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any
 
 from PIL import Image
 
-from scripts.frame_capture_worker import FrameCaptureService
+from scripts.frame_capture_worker import FrameCaptureService, initialize_capture_process
 
 
 class FakeCaptureBackend:
@@ -29,6 +30,27 @@ class FakeCaptureBackend:
             "RGB",
             (bbox_ltrb[2] - bbox_ltrb[0], bbox_ltrb[3] - bbox_ltrb[1]),
             color,
+        )
+
+
+class GatedCaptureBackend:
+    """Blocks inside capture until released, simulating a slow grab."""
+
+    source = "test"
+
+    def __init__(self) -> None:
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.count = 0
+
+    def capture(self, bbox_ltrb: tuple[int, int, int, int]) -> Image.Image:
+        self.count += 1
+        self.started.set()
+        self.release.wait(timeout=5.0)
+        return Image.new(
+            "RGB",
+            (bbox_ltrb[2] - bbox_ltrb[0], bbox_ltrb[3] - bbox_ltrb[1]),
+            (0, 128, 0),
         )
 
 
@@ -69,6 +91,19 @@ def _make_service(tmp_path: Path, backend: FakeCaptureBackend) -> FrameCaptureSe
         clock=FakeClock(),
         capture_interval_ms=0,
     )
+
+
+def test_capture_process_enables_dpi_before_backend_creation() -> None:
+    calls: list[str] = []
+
+    backend = initialize_capture_process(
+        enable_dpi=lambda: calls.append("dpi"),
+        create_backend=lambda: calls.append("backend")
+        or FakeCaptureBackend(colors=[(0, 0, 0)]),
+    )
+
+    assert calls == ["dpi", "backend"]
+    assert isinstance(backend, FakeCaptureBackend)
 
 
 def test_commit_returns_the_latest_frame_captured_before_commit(tmp_path: Path) -> None:
@@ -183,6 +218,86 @@ def test_armed_background_thread_captures_and_stops_on_cancel(tmp_path: Path) ->
     count_after_cancel = backend.count
     time.sleep(0.05)
     assert backend.count == count_after_cancel
+
+
+def test_in_flight_grab_is_not_selected_by_commit(tmp_path: Path) -> None:
+    """A grab still running at commit must never become the frozen frame.
+
+    The frame timestamp is the grab COMPLETION time, so a capture that
+    started before pointerup but finishes after it is excluded. With an
+    otherwise empty ring the commit fails closed (no_frame_buffered).
+    """
+    backend = GatedCaptureBackend()
+    worker = FrameCaptureService(
+        backend=backend,
+        output_root=tmp_path,
+        clock=FakeClock(),
+        capture_interval_ms=5,
+        ring_size=4,
+    )
+    worker.handle({"id": "1", "method": "arm", "params": _arm_params()})
+    assert backend.started.wait(timeout=2.0)
+
+    result = worker.handle({"id": "2", "method": "commit", "params": _commit_params()})
+    assert result["error"]["code"] == "no_frame_buffered"
+
+    backend.release.set()
+    time.sleep(0.05)
+    # The late grab completed after the epoch was stopped: it is dropped,
+    # never appended to any ring.
+    assert worker.ring_len_for_test() == 0
+
+
+def test_arm_does_not_wait_for_a_hung_previous_grab(tmp_path: Path) -> None:
+    """Re-arming while the previous capture thread is blocked in a grab must
+    return immediately instead of joining the stuck thread (review P2.3)."""
+    backend = GatedCaptureBackend()
+    worker = FrameCaptureService(
+        backend=backend,
+        output_root=tmp_path,
+        clock=FakeClock(),
+        capture_interval_ms=5,
+        ring_size=4,
+    )
+    worker.handle({"id": "1", "method": "arm", "params": _arm_params()})
+    assert backend.started.wait(timeout=2.0)
+
+    started = time.monotonic()
+    rearmed = worker.handle({"id": "2", "method": "arm", "params": _arm_params()})
+    elapsed = time.monotonic() - started
+    assert rearmed["result"]["epochId"] == "epoch-1"
+    assert elapsed < 0.5, f"arm waited {elapsed:.2f}s on a hung grab"
+
+    backend.release.set()
+    time.sleep(0.05)
+
+
+def test_lease_timestamps_are_milliseconds(tmp_path: Path) -> None:
+    """capturedAtMonotonicMs and captureLatencyMs must be milliseconds.
+
+    The worker clock is monotonic seconds; before the fix the raw seconds
+    value was stored under the Ms-named fields (review P2.1). FakeClock
+    advances 100 per call: first capture completion at 1100.0 s, commit at
+    1200.0 s -> 1_100_000 ms and 100_000 ms latency.
+    """
+    backend = FakeCaptureBackend(colors=[(0, 128, 0)])
+    worker = _make_service(tmp_path, backend)
+    worker.handle({"id": "1", "method": "arm", "params": _arm_params()})
+    assert worker.capture_once_for_test() is True
+    result = worker.handle({"id": "2", "method": "commit", "params": _commit_params()})
+    lease = result["result"]
+    assert isinstance(lease["capturedAtMonotonicMs"], (int, float))
+    assert lease["capturedAtMonotonicMs"] == 1_100_000
+    assert lease["captureLatencyMs"] == 100_000.0
+
+
+def test_arm_rejects_reversed_or_zero_area_bounds(tmp_path: Path) -> None:
+    worker = _make_service(tmp_path, FakeCaptureBackend(colors=[(0, 0, 0)]))
+    for bad in ([100, 100, 50, 50], [0, 0, 0, 0], [0, 0, 320, 0]):
+        params = dict(_arm_params())
+        params["surfaceBoundsPx"] = bad
+        result = worker.handle({"id": "1", "method": "arm", "params": params})
+        assert result["error"]["code"] == "invalid_arm", bad
 
 
 def test_real_subprocess_protocol_without_desktop_capture(tmp_path: Path) -> None:

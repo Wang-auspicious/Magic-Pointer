@@ -1,8 +1,8 @@
 """Tests for the recipe manifest -> trajectory compiler (L1 recipe-as-cache).
 
 Covers compiling all 39 builtin recipes, per-field compilation rules
-(first_user_message template, providerStrategy -> tool mapping, max_turns
-budget, risk passthrough), honest skip/error recording for corrupt entries,
+(first_user_message template, providerStrategy -> tool mapping, risk
+passthrough), honest skip/error recording for corrupt entries,
 clear failure for a missing manifest, keyword matching scoring/sorting and
 loop-consumability of the compiled Trajectory (construct-only, never run).
 """
@@ -71,7 +71,7 @@ def test_every_trajectory_field_is_valid():
         assert "请执行该任务" in trajectory.first_user_message
         assert trajectory.recommended_tools
         assert "describe_capabilities" in trajectory.recommended_tools
-        assert trajectory.max_turns in (3, 4)
+        assert not hasattr(trajectory, "max_turns")
         assert trajectory.risk in _VALID_RISKS
 
 
@@ -201,15 +201,11 @@ def test_manifest_without_recipes_list_raises_value_error(tmp_path):
         TrajectoryCompiler(path)
 
 
-def test_max_turns_budget_rules():
+def test_recipe_metadata_cannot_define_agent_loop_lifetime():
     compiler = TrajectoryCompiler()
     compiled = compiler.compile_all()
 
-    assert compiled["text.ocr_copy"].max_turns == 3
-    assert compiled["activate.wiggle"].max_turns == 3
-    assert compiled["table.merge"].max_turns == 4
-    assert compiled["map.route"].max_turns == 4
-    assert compiled["agent.handoff"].max_turns == 4
+    assert all(not hasattr(trajectory, "max_turns") for trajectory in compiled.values())
 
 
 def test_recommended_tools_provider_mapping():

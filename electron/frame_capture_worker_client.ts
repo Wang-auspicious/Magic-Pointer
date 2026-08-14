@@ -196,8 +196,20 @@ class FrameCaptureWorkerClient extends EventEmitter {
         );
         const epochId = String(recordOf(params)?.epochId || '');
         if (epochId) {
+          const cancelId = `rpc-${++this.requestSeq}`;
+          // Register a no-op pending so the cancel response resolves quietly
+          // instead of surfacing as an unknown_request_id protocol error.
+          const cancelTimer = setTimeout(() => {
+            this.pending.delete(cancelId);
+          }, this.requestTimeoutMs);
+          this.pending.set(cancelId, {
+            resolve: () => clearTimeout(cancelTimer),
+            reject: () => clearTimeout(cancelTimer),
+            label: 'cancel-after-timeout',
+            timer: cancelTimer,
+          });
           this._write({
-            id: `rpc-${++this.requestSeq}`,
+            id: cancelId,
             method: 'cancel',
             params: { epochId },
           });
@@ -248,6 +260,11 @@ class FrameCaptureWorkerClient extends EventEmitter {
       return;
     }
     const requestId = typeof candidate.id === 'string' ? candidate.id : '';
+    if (!requestId) {
+      // Error lines for unparseable/hostile input carry no id (worker
+      // contract); they are diagnostic noise, not protocol corruption.
+      return;
+    }
     const pending = requestId ? this.pending.get(requestId) : undefined;
     if (!pending) {
       this.emit('protocol-error', { error: 'unknown_request_id', id: requestId });

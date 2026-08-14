@@ -1,0 +1,114 @@
+{
+  "schema_version": 1,
+  "trace_id": "terminal-textpattern",
+  "recorded_at_utc": "2026-08-13T10:00:00Z",
+  "frames": [
+    {
+      "frame_id": "terminal-textpattern-frame-1",
+      "png_path": "terminal-textpattern/frame-1.png",
+      "captured_at_utc": "2026-08-13T10:00:00Z",
+      "display_bounds_ltrb": [
+        0,
+        0,
+        1920,
+        1080
+      ],
+      "dpi": null,
+      "scale_factor": 1.0
+    }
+  ],
+  "uia_snapshots": [
+    {
+      "snapshot_id": "terminal-textpattern-uia-1",
+      "tree_text": "$ python -m pytest tests/ -q\n42 passed",
+      "tree_path": null,
+      "captured_at_utc": "2026-08-13T10:00:00Z",
+      "window_hwnd": 1020,
+      "pid": 2000,
+      "note": "terminal TextPattern document-range buffered read"
+    }
+  ],
+  "pointer_trace": [
+    {
+      "t_utc": "2026-08-13T10:00:00Z",
+      "x": 400,
+      "y": 300,
+      "phase": "down",
+      "buttons": 1
+    },
+    {
+      "t_utc": "2026-08-13T10:00:00Z",
+      "x": 410,
+      "y": 302,
+      "phase": "move",
+      "buttons": 1
+    },
+    {
+      "t_utc": "2026-08-13T10:00:00Z",
+      "x": 420,
+      "y": 304,
+      "phase": "move",
+      "buttons": 1
+    },
+    {
+      "t_utc": "2026-08-13T10:00:00Z",
+      "x": 430,
+      "y": 306,
+      "phase": "move",
+      "buttons": 1
+    },
+    {
+      "t_utc": "2026-08-13T10:00:00Z",
+      "x": 440,
+      "y": 308,
+      "phase": "move",
+      "buttons": 1
+    },
+    {
+      "t_utc": "2026-08-13T10:00:00Z",
+      "x": 450,
+      "y": 310,
+      "phase": "move",
+      "buttons": 1
+    },
+    {
+      "t_utc": "2026-08-13T10:00:00Z",
+      "x": 460,
+      "y": 312,
+      "phase": "move",
+      "buttons": 1
+    },
+    {
+      "t_utc": "2026-08-13T10:00:00Z",
+      "x": 470,
+      "y": 314,
+      "phase": "up",
+      "buttons": 1
+    }
+  ],
+  "cdp_snapshots": [],
+  "focus_events": [
+    {
+      "t_utc": "2026-08-13T10:00:00Z",
+      "hwnd": 1020,
+      "title": "replay terminal-textpattern",
+      "process_name": "replay.exe"
+    }
+  ],
+  "display_config": {
+    "bounds_ltrb": [
+      0,
+      0,
+      1920,
+      1080
+    ],
+    "scale_factor": 1.0
+  },
+  "ground_truth": {
+    "command": "这条命令的输出是什么",
+    "contract": "terminal TextPattern document-range buffered read",
+    "replay_expectation": {
+      "answer_contains": "42"
+    }
+  }
+}

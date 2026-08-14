@@ -1,6 +1,6 @@
 {
   "name": "magic-pointer",
-  "version": "1.0.0",
+  "version": "1.0.4",
   "description": "Magic Pointer Open - cross-platform AI pointer overlay",
   "main": "build/electron/main.js",
   "scripts": {
@@ -18,7 +18,8 @@
     "lint": "eslint electron scripts tests eslint.config.mjs --max-warnings=0",
     "lint:fix": "eslint electron scripts tests eslint.config.mjs --fix",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "sync": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sync_install.ps1"
   },
   "keywords": [
     "ai-pointer",

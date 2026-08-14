@@ -1,0 +1,11 @@
+{
+  "id": "wechat",
+  "display_name": "微信",
+  "app_ids": ["WeChat.exe", "Weixin.exe", "WeChatAppEx.exe"],
+  "window_class_patterns": ["WeChatMainWndForPC", "wechat_ui_main"],
+  "title_patterns": ["微信", "WeChat"],
+  "object_kinds": ["chat_message", "message_list"],
+  "capabilities": ["read_raw_objects"],
+  "version": 1,
+  "notes": "自绘应用样例适配器：UIA 树不透明时返回消息列表区域锚点，OCR/视觉证据叠加在该锚点上；行为契约在 app/surface_adapter/adapters/wechat_adapter.py，本文件只承载展示元数据。"
+}
