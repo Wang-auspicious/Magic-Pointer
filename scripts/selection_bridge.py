@@ -1341,96 +1341,6 @@ def _enrich_screen_region_context(
     )
 
 
-def _screen_region_vision_answer(
-    command: str,
-    target_window: dict[str, Any] | None,
-    app_ctx: AdapterReadContext | None,
-    snapshot: dict[str, Any] | None,
-) -> str | None:
-    """Use the configured visual model only after an explicit upload opt-in.
-
-    指向请求（wants_pointing）例外：用户明确问「哪里/在哪」，等于显式要求
-    看屏幕指东西——这次截图只用于本次指点，与「截图上传」的默认禁语义不同。
-    除此之外（一般问答）仍受 upload_screenshots 门控。
-    """
-    pointing = wants_pointing(command)
-    if not pointing and _capture_settings().privacy.upload_screenshots is not True:
-        return None
-    # 指向请求：视觉模型必须看到全屏，才能给出「绝对屏幕坐标」——
-    # 局部 ROI 截图会让模型输出区域坐标，stage 按屏幕坐标画就错位。
-    # 指向模式下直接全屏截图，坐标即绝对屏幕像素。
-    if pointing:
-        try:
-            from PIL import ImageGrab
-
-            image_path = Path(str((snapshot or {}).get("capture_path") or "").strip())
-            if not image_path.is_file():
-                return None
-            image = ImageGrab.grab(all_screens=True)
-            full = image_path.with_name(f"full-{image_path.stem}.png")
-            image.save(full)
-            try:
-                return ask_vision_model(
-                    full,
-                    command,
-                    context_text=(
-                        _selection_context_text(app_ctx, target_window)
-                        + "\n\nThis is a FULL-SCREEN screenshot. If the user asks where "
-                        "something is, answer briefly and mark each mentioned element with "
-                        "[POINT x,y] using physical pixel coordinates from THIS screenshot. "
-                        "Coordinates must match the screenshot size. Use at most 3 points."
-                    ),
-                )
-            finally:
-                try:
-                    full.unlink(missing_ok=True)
-                except OSError:
-                    pass
-        except Exception:
-            return None
-    image_path = Path(str((snapshot or {}).get("capture_path") or "").strip())
-    if not image_path.is_file():
-        return None
-    locator_path = Path(str((snapshot or {}).get("annotated_path") or "").strip())
-    locator_images = [
-        ("IMAGE A LOCATOR / user-marked target", locator_path)
-    ] if locator_path.is_file() else []
-    roi_path = _crop_roi_for_ocr(
-        image_path,
-        (snapshot or {}).get("selection_bbox"),
-        (snapshot or {}).get("capture_bbox"),
-    )
-    if roi_path is not None:
-        locator_images.append(("IMAGE B SELECTED ROI / the exact user-marked region", roi_path))
-    selection_bbox = (snapshot or {}).get("selection_bbox")
-    context_text = _selection_context_text(app_ctx, target_window)
-    if selection_bbox:
-        context_text += f"\n\nUser-marked target bbox in physical screen pixels: {selection_bbox!r}"
-    # 指向请求：让视觉模型看全屏截图，回答里带 [POINT x,y] 标记，光标飞过去。
-    # 坐标是截图像素坐标；本函数返回的文本里的标记会被链路尾部 parse_points
-    # 转成 screenPoints 给 stage/overlay 指点。
-    if pointing:
-        context_text += (
-            "\n\nThis screenshot is the user's full screen. If the user asks where "
-            "something is, answer briefly and mark each mentioned element with "
-            "[POINT x,y] using physical pixel coordinates from THIS screenshot. "
-            "Coordinates must match the screenshot size. Use at most 3 points."
-        )
-    try:
-        return ask_vision_model(
-            image_path,
-            command,
-            context_text=context_text,
-            labeled_extra_images=locator_images,
-        )
-    finally:
-        if roi_path is not None:
-            try:
-                roi_path.unlink(missing_ok=True)
-            except OSError:
-                pass
-
-
 # 用户是不是在问「哪里/怎么找到」——是的话回答要能指点（[POINT]）。
 _POINTING_RE = re.compile(
     r"指|在哪|哪里|哪儿|位置|点在|点一下|怎么找到|哪个|何处|where|point to|show me",
@@ -1507,8 +1417,8 @@ def _local_image_file_answer(
     if context_adapter == "explorer_file":
         candidates.append(str(context_artifacts.get("path") or ""))
     # 注意：capture_path 是冻结的屏幕证据——绝不能当「用户指向的本地图片文件」。
-    # 本函数只处理有明确文件身份的图片；普通屏幕选区由
-    # _screen_region_vision_answer 处理。混用两者会造成重复模型调用，也会把
+    # 本函数只处理有明确文件身份的图片；普通屏幕选区走 loop 的 look 工具
+    # （消费冻结帧）。混用两者会造成重复模型调用，也会把
     # screen_region 伪报成 local_image_file。
 
     image_file: Path | None = None

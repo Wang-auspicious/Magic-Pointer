@@ -173,6 +173,7 @@ class Context:
         self._unloaded = False
         self._pool: ThreadPoolExecutor | None = None
         self._pool_shutdown = False
+        self._scope_handle_in_parent: Disposable | None = None
 
     # ------------------------------------------------------------- services
 
@@ -316,6 +317,13 @@ class Context:
                 waiter.state = "error"
                 if raise_errors:
                     raise
+                # A nested inject activation failure is otherwise invisible:
+                # no log, no dump_config entry (harness audit P2 — the
+                # "bad plugin is isolated" promise must leave a trace).
+                _logger.exception(
+                    "nested inject activation failed for deps=%s",
+                    sorted(waiter.deps),
+                )
 
     def _activate_waiter(self, waiter: _InjectWaiter) -> None:
         fork = Context(parent=self)
@@ -372,6 +380,17 @@ class Context:
         self._ensure_alive()
         handle = Disposable(disposer)
         self._effects.append(handle)
+
+        def self_removing_dispose() -> None:
+            # The handle stays on the list until disposed so LIFO unwinding
+            # on unload finds it; a disposed handle must remove itself or the
+            # resident root accumulates one dead effect per scope()/close()
+            # (harness audit P2: unbounded _effects growth).
+            with contextlib.suppress(ValueError):
+                self._effects.remove(handle)
+            disposer()
+
+        handle._dispose = self_removing_dispose  # noqa: SLF001
         return handle
 
     def _run_reserved_work(self, callback: Callable[..., Any], *args: Any) -> Any:
@@ -467,7 +486,16 @@ class Context:
                 pool.submit(self._run_reserved_work, entry.fn, payload)
                 for entry in entries
             ]
-            return [future.result() for future in futures]
+            results: list[Any] = []
+            for future in futures:
+                try:
+                    results.append(future.result())
+                except Exception:  # noqa: BLE001 - one listener's crash is
+                    # reported while the rest still land; a single broken
+                    # plugin must not hide the other failures (harness audit).
+                    _logger.exception("parallel event listener failed for %s", kind)
+                    results.append(None)
+            return results
 
     def serial(self, kind: str, payload: Any) -> Any:
         """Ordered dispatch returning the last listener's result."""
@@ -489,7 +517,9 @@ class Context:
         self._ensure_alive()
         child = Context(parent=self, service_boundary=service_boundary)
         self._children.append(child)
-        self.effect(child.unload)
+        # The handle must die with the child: without it the resident root
+        # accumulates one dead effect per scope()/close() (harness audit P2).
+        child._scope_handle_in_parent = self.effect(child.unload)  # noqa: SLF001
         return child
 
     # -------------------------------------------------------------- teardown
@@ -521,6 +551,10 @@ class Context:
             self._children.clear()
             self._listeners.clear()
             self._service_views.clear()
+            # has/keys must stop reporting dead services the moment the
+            # context is gone (harness audit: has('svc') stayed True after
+            # unload, only get() refused).
+            self._services.clear()
             if self._pool is not None:
                 self._pool.shutdown(wait=True, cancel_futures=True)
                 self._pool_shutdown = True
@@ -532,6 +566,14 @@ class Context:
                 self._unloaded = True
                 self._closing = False
                 self._work_condition.notify_all()
+        # Only now that the context is fully gone may the parent-side scope
+        # handle be disposed: its disposer is child.unload, which re-enters
+        # unload() and would deadlock on the still-closing context above.
+        if self._scope_handle_in_parent is not None:
+            handle = self._scope_handle_in_parent
+            self._scope_handle_in_parent = None
+            with contextlib.suppress(Exception):
+                handle.dispose()
 
     # -------------------------------------------------------------- internal
 

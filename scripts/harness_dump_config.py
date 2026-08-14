@@ -15,6 +15,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -30,17 +31,37 @@ CORE_SEAM_KEYS = (
     "selection_anchor",
 )
 
+_SECRET_KEY = re.compile(r"(?i)(api[_-]?key|token|secret|password|passwd|pwd|credential|authorization)")
+
 
 def _plain(value):
-    """Render a config value for display (callables -> <callable>)."""
+    """Render a config value for display (callables -> <callable>).
+
+    Secret-shaped keys and absolute paths are redacted: this output is meant
+    to be pasted into issues/shared (harness audit P2 — a patch config can
+    carry api keys, and paths leak the user's home directory).
+    """
     if callable(value):
         return "<callable>"
     if isinstance(value, dict):
-        return {key: _plain(item) for key, item in value.items()}
+        return {
+            key if isinstance(key, str) else key: (
+                "[REDACTED]"
+                if isinstance(key, str) and _SECRET_KEY.search(key)
+                else _plain(item)
+            )
+            for key, item in value.items()
+        }
     if isinstance(value, (list, tuple)):
         return [_plain(item) for item in value]
     if isinstance(value, set):
         return sorted(str(item) for item in value)
+    if isinstance(value, (str, Path)):
+        text = str(value)
+        home = str(Path.home())
+        if home and text.startswith(home):
+            return "~" + text[len(home):]
+        return text
     return value
 
 

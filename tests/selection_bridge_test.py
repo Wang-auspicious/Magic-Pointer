@@ -26,7 +26,6 @@ from scripts.selection_bridge import (
     _reference_label_response,
     _read_target_context,
     _shopping_list_response,
-    _screen_region_vision_answer,
     _wants_undo,
 )
 
@@ -266,46 +265,6 @@ def test_exact_readback_does_not_hijack_questions_that_need_reasoning() -> None:
     assert _exact_readback_response(
         {"command": "Why did this error happen?"}, context, {"snapshot_id": "selection-1"}
     ) is None
-
-
-def test_screen_region_vision_uses_original_and_locator_only_when_upload_is_enabled(monkeypatch, tmp_path) -> None:
-    raw = tmp_path / "screen.png"
-    locator = tmp_path / "screen.pointer.png"
-    raw.write_bytes(b"raw")
-    locator.write_bytes(b"locator")
-    seen = {}
-
-    class _Settings:
-        privacy = type("Privacy", (), {"upload_screenshots": True})()
-
-    monkeypatch.setattr(selection_bridge, "_capture_settings", lambda: _Settings())
-    monkeypatch.setattr(
-        selection_bridge,
-        "ask_vision_model",
-        lambda image, prompt, context_text=None, labeled_extra_images=None: seen.update({
-            "image": image,
-            "prompt": prompt,
-            "context": context_text,
-            "extras": labeled_extra_images,
-        }) or "视觉回答",
-    )
-
-    answer = _screen_region_vision_answer(
-        "这是什么版本？",
-        {"title": "Magic Pointer"},
-        AdapterReadContext(adapter="local_ocr", app="screen", content="Magic Pointer 1.0.0"),
-        {
-            "source_kind": "screen_region",
-            "capture_path": str(raw),
-            "annotated_path": str(locator),
-            "selection_bbox": [100, 200, 160, 32],
-        },
-    )
-
-    assert answer == "视觉回答"
-    assert seen["image"] == raw
-    assert seen["extras"] == [("IMAGE A LOCATOR / user-marked target", locator)]
-    assert "Magic Pointer 1.0.0" in seen["context"]
 
 
 class _FakeAdapter:
@@ -1152,6 +1111,9 @@ def test_main_has_one_agent_route_and_no_post_loop_model_fallback() -> None:
     assert "IntentRouter(" not in source
     assert "def _classify_with_model" not in module_source
     assert "def _general_fallback_answer" not in module_source
+    # The dead screen-region vision helper grabbed the LIVE screen via
+    # ImageGrab (frozen-frame invariant violation if ever rewired) — removed.
+    assert "def _screen_region_vision_answer" not in module_source
     assert "_shopping_list_response(" not in source
     assert "_calendar_response(" not in source
     assert "_route_response(" not in source
