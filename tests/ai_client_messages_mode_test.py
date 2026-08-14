@@ -83,12 +83,12 @@ def test_messages_tool_payload_and_response_use_anthropic_contract() -> None:
         "content": [
             {"type": "thinking", "thinking": "private"},
             {"type": "text", "text": "I'll retry it."},
-            {"type": "tool_use", "name": "retry_payment", "input": {"orderId": "A-7"}},
+            {"type": "tool_use", "id": "toolu_01X", "name": "retry_payment", "input": {"orderId": "A-7"}},
         ],
     }, "messages")
     assert response == {
         "text": "I'll retry it.",
-        "toolCalls": [{"name": "retry_payment", "arguments": {"orderId": "A-7"}}],
+        "toolCalls": [{"id": "toolu_01X", "name": "retry_payment", "arguments": {"orderId": "A-7"}}],
     }
 
 

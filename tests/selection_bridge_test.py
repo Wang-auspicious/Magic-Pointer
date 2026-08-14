@@ -1024,14 +1024,13 @@ def test_deliver_system_prompt_forbids_markdown() -> None:
 
 
 # ── 自动记忆（Vida 式主动层）：敏感挡、去重、非敏感记 ──────────────
-def test_record_auto_memory_sensitive_and_dedupe(tmp_path) -> None:
+def test_record_auto_memory_sensitive_and_dedupe(tmp_path, monkeypatch) -> None:
     import json
-    import os
 
     from app.adapters.base import AdapterReadContext
     from scripts.selection_bridge import _record_auto_memory
 
-    os.environ['MAGIC_POINTER_USER_DATA_DIR'] = str(tmp_path)
+    monkeypatch.setenv('MAGIC_POINTER_USER_DATA_DIR', str(tmp_path))
     ctx = AdapterReadContext(adapter='uia', app='Weixin.exe', method='selection', content='x', window={'title': '微信'})
     _record_auto_memory('这段代码在干嘛', ctx, {'title': '微信'}, '这是超时逻辑。')
     _record_auto_memory('这段代码在干嘛', ctx, {'title': '微信'}, '这是超时逻辑。')  # 去重

@@ -10,11 +10,12 @@ session-specific parts. Pure Python.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Any, Protocol
 
-__all__ = ["PromptSection", "SystemPromptBuilder"]
+__all__ = ["PromptSection", "SystemPromptBuilder", "DELIVER_SYSTEM_PROMPT", "is_deliver_request"]
 
 SectionRender = Callable[[dict[str, Any]], str | None]
 
@@ -104,6 +105,44 @@ class _ScopedSystemPromptBuilder:
         return getattr(self._builder, name)
 
 
+def _deliver_request_re() -> re.Pattern[str]:
+    return re.compile(
+        r"回复|回他|回她|回它|回个|答复|回信|回邮件|回消息|回微信|回短信|"
+        r"润色|改写|重写|改得|改成|帮我写|写一段|写一句|写个|写封|"
+        r"客气点|委婉|正式点|口语化|别太硬|语气|"
+        r"扩写|压缩|精简|缩短",
+        re.IGNORECASE,
+    )
+
+
+def is_deliver_request(command: str) -> bool:
+    """Answer shape split: does this text go out into someone else's window?
+
+    One boundary only: deliver means the product of this turn is written into
+    another surface (reply, email, rewritten paragraph). Deliver output must be
+    plain text — the receiver reads literal ``**`` and ``-`` if the model emits
+    markdown, and the renderer does not parse it either. ``inspect`` keeps the
+    default formatting.
+    """
+    return bool(_deliver_request_re().search(str(command or "")))
+
+
+# Kept in the same module as the detector so the bridge and the prompt builder
+# can never drift apart: the prompt is only injected when the detector fires.
+DELIVER_SYSTEM_PROMPT = (
+    "你要写的是要直接发给别人的文字（回消息、回邮件、改写一段话）。\n"
+    "禁止使用任何 markdown 标记：不要用 **、*、#、-、1. 这类符号，"
+    "不要加引号包裹，不要输出标题或列表符号。\n"
+    "只输出对方能直接读到、直接发送的纯文字；段落用空行分隔。"
+)
+
+
+def _deliver_section(ctx: dict[str, Any]) -> str | None:
+    if ctx.get("deliver") is not True:
+        return None
+    return DELIVER_SYSTEM_PROMPT
+
+
 def default_sections() -> list[Section]:
     """The Magic Pointer loop's default prompt sections: identity, rules,
     permissions, memory, approved skills and language.
@@ -163,6 +202,7 @@ def default_sections() -> list[Section]:
         Section("identity", "Identity", identity),
         Section("rules", "System", rules),
         Section("permissions", "Permissions", permissions),
+        Section("deliver", "Deliver", _deliver_section, dynamic=True),
         Section("memory", "Memory", memory, dynamic=True),
         Section("skills", "Skills", skills, dynamic=True),
         Section("language", "Language", language, dynamic=True),

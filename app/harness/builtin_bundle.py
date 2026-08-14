@@ -51,7 +51,11 @@ from app.agent_runtime.model_client import (
 )
 from app.agent_runtime.perception_tools import PerceptionTools
 from app.agent_runtime.session import FileSessionStore
-from app.agent_runtime.system_prompt import SystemPromptBuilder, default_sections
+from app.agent_runtime.system_prompt import (
+    SystemPromptBuilder,
+    default_sections,
+    is_deliver_request,
+)
 from app.agent_runtime.tool_registry import Effect, ToolRegistry, ToolSpec
 from app.computer_operator import (
     ComputerOperatorRegistry,
@@ -300,6 +304,7 @@ def _apply_model_client(fork, config: dict[str, Any]) -> None:
     user_data_dir = Path(config.get("user_data_dir") or str(_FALLBACK_ROOT))
     context = {
         "permission_mode": str(config.get("permission_mode") or "default"),
+        "deliver": is_deliver_request(str(config.get("command") or "")),
         "memory": memory or None,
         "skills": SkillLoader(
             user_data_dir,

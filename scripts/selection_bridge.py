@@ -29,6 +29,10 @@ from app.actions.calendar_draft import parse_calendar_draft, wants_calendar_draf
 from app.actions.route_draft import parse_route_draft, wants_route_draft
 from app.adapters import AdapterReadContext, default_adapter_registry, format_adapter_context
 from app.ai_client import ask_text_model, ask_vision_model
+from app.agent_runtime.system_prompt import (
+    DELIVER_SYSTEM_PROMPT,
+    is_deliver_request as _is_deliver_request,
+)
 from app.model_health import read_health
 from app.text_actions.point_markers import parse_points
 from app.text_actions.length_target import (
@@ -3466,7 +3470,14 @@ def main() -> int:
         action_proposals.extend(list(loop_result.get("actionProposals") or []))
         if not answer and action_proposals:
             answer = "已生成执行方案，请确认。"
-        answer_shape = str(loop_result.get("answerShape") or "answer")
+        # 回答形态：要发出去的文字（deliver）必须纯文本禁 markdown——
+        # 该判定在调用模型前就进了 loop 系统提示词（deliver 动态节），
+        # 桥侧同时把形态带回给渲染层（answer_shape_policy 优先信桥）。
+        answer_shape = (
+            "deliver"
+            if _is_deliver_request(command)
+            else str(loop_result.get("answerShape") or "answer")
+        )
         route_info = dict(loop_result.get("route") or route_info)
         used_backend = str(loop_result.get("usedBackend") or "") or None
 

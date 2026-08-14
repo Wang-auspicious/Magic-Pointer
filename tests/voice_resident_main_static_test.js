@@ -11,7 +11,12 @@ assert(main.includes("startLegacy: startLegacyDictation"));
 assert(main.includes("stopLegacy: stopLegacyDictation"));
 assert(/voiceRuntime\?\.start\(\{[\s\S]*?requestId,[\s\S]*?surface,[\s\S]*?contextPath,[\s\S]*?silenceMs,[\s\S]*?inputWav,/.test(main));
 assert(main.includes("const requestId = crypto.randomUUID()"));
-assert(!/payload\?\.contextPath|payload\?\.requestId|payload\?\.inputWav/.test(main));
+assert(!/payload\?\.contextPath|payload\?\.inputWav/.test(main),
+  'desktop WAV evidence may come only from the main-process development environment, never renderer IPC or packaged mode');
+assert(main.includes("requestId: String(payload?.requestId || crypto.randomUUID())"),
+  'the selection worker may only reuse the main-enriched request id with a fresh-uuid fallback');
+assert(main.includes("const requestId = selectionSessions.startRequest(selectionSessionToken)"),
+  'the selection worker request id must originate from the main-process session registry, not renderer IPC');
 assert(main.includes("!app.isPackaged && process.env.MAGIC_POINTER_VOICE_INPUT_WAV"),
   'desktop WAV evidence may come only from the main-process development environment, never renderer IPC or packaged mode');
 assert(main.includes("pythonInvocationArgs([scriptPath], { isolated: PYTHON_ISOLATED })"));

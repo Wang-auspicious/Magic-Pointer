@@ -120,10 +120,11 @@ assert(!source.includes('consentBox.style.left ='),
   'approval is part of the completion card and must not be positioned as a detached popover');
 assert(!source.includes('consentBox.style.top ='),
   'approval is part of the completion card and must not be positioned as a detached popover');
-assert(source.includes("threadPanel.dataset.phase = pending ? 'running' : failed ? 'failed' : 'finished'"));
-assert(source.includes("threadEyebrowText.textContent = pending ? 'WORKING' : failed ? 'NEEDS ATTENTION' : 'TASK FINISHED'"));
-assert(source.includes("pending ? '#ic-circle' : failed ? '#ic-warn' : '#ic-check'"),
-  'WORKING and NEEDS ATTENTION must not reuse the finished checkmark');
+assert(source.includes("threadPanel.dataset.phase = pending ? 'running' : awaiting ? 'awaiting' : failed ? 'failed' : 'finished'"));
+assert(source.includes("threadEyebrowText.textContent = pending"), 'thread eyebrow must be state-driven');
+assert(source.includes("'YOUR INPUT NEEDED'"), 'an awaiting user-input card must say it is waiting on the user');
+assert(source.includes("pending ? '#ic-circle' : awaiting ? '#ic-circle' : failed ? '#ic-warn' : '#ic-check'"),
+  'WORKING and YOUR INPUT NEEDED must not reuse the finished checkmark');
 assert(source.includes("capsuleInput.placeholder = name === 'processing' ? '正在处理…'"),
   'the neutral processing capsule must state what it is doing');
 assert(source.includes("const resultOwnsComposer = (name === 'result' || name === 'error')"),
