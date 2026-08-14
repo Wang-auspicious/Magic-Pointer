@@ -19,12 +19,16 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 import time
+import uuid
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
+
+_HEALTH_LOCK = threading.RLock()
 
 # A balance problem does not fix itself in ten seconds; a 500 might. The cooldown
 # is how long we trust a bad verdict before probing again.
@@ -196,10 +200,12 @@ def read_health(base_url: str | None = None) -> GatewayHealth:
         text = _configured_text_base_url()
         if text and text in entries:
             raw = entries[text]
-        elif len(entries) == 1:
-            raw = next(iter(entries.values()))
         elif "" in entries:
             raw = entries[""]
+        # No single-entry fallback: one lone entry belongs to whichever
+        # endpoint recorded it — using it for an unknown base_url made a
+        # vision endpoint's circuit breaker short-circuit the text path
+        # (fabric audit P2, per-endpoint isolation).
     return _health_from_raw(raw) if isinstance(raw, dict) else GatewayHealth()
 
 
@@ -247,18 +253,22 @@ def _read_entries() -> dict[str, Any]:
 
 def _write_health(health: GatewayHealth) -> None:
     path = _state_path()
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        entries = _read_entries()
-        key = (health.base_url or "").rstrip("/")
-        entries[key] = asdict(health)
-        payload = {"schema": 2, "entries": entries}
-        tmp = path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
-        tmp.replace(path)
-    except OSError:
-        # Health tracking must never be the reason a command fails.
-        pass
+    with _HEALTH_LOCK:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            entries = _read_entries()
+            key = (health.base_url or "").rstrip("/")
+            entries[key] = asdict(health)
+            payload = {"schema": 2, "entries": entries}
+            # Unique temp name: two processes recording two endpoints at once
+            # used to collide on one ".tmp" handle and one entry was lost
+            # (fabric audit P2), silently reopening/covering a circuit.
+            tmp = path.with_name(path.name + f".{uuid.uuid4().hex[:8]}.tmp")
+            tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(path)
+        except OSError:
+            # Health tracking must never be the reason a command fails.
+            pass
 
 
 def record_success(*, model: str = "", base_url: str = "") -> GatewayHealth:

@@ -352,6 +352,10 @@ def append_toolguard_guidance(result: str, decision: ToolGuardrailDecision) -> s
 
 def _result_hash(result: str | None) -> str:
     raw = result or ""
+    if isinstance(raw, (bytes, bytearray)):
+        raw = raw.decode("utf-8", errors="replace")
+    else:
+        raw = str(raw)
     try:
         parsed = json.loads(raw)
     except (TypeError, ValueError):

@@ -156,6 +156,30 @@ class UiTarsComputerAgent:
         receipts: list[OperatorActionReceipt] = []
         history: list[dict[str, Any]] = []
         repeats: dict[tuple[object, ...], int] = {}
+        # 取消（CancelledError）沿 run 向上传播，此前 KEY_DOWN 已经按下的键
+        # 永远不会被释放（perception-audit P1：Ctrl/Shift 卡住，后续输入错乱）。
+        # 传播前必须对本轮已登记的回执逐个 abort。
+        try:
+            return self._run_live(task, grant, receipts, history, repeats, scope=scope)
+        except CancelledError:
+            for receipt in receipts:
+                with contextlib.suppress(Exception):
+                    self.operator.abort(receipt.action_id)
+            raise
+
+    def _run_live(
+        self,
+        task: str,
+        grant: SurfaceGrant,
+        receipts: list[OperatorActionReceipt],
+        history: list[dict[str, Any]],
+        repeats: dict[tuple[object, ...], int],
+        *,
+        scope: Any = None,
+    ) -> UiTarsRunResult:
+        instruction = str(task or "").strip()
+        if not instruction:
+            raise ValueError("task is required")
         try:
             _check_cancel(scope)
             observation = self.operator.observe(grant, scope=scope)

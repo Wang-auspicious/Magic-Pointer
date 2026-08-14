@@ -77,7 +77,10 @@ class AgentMessage:
         _reject_unknown(data, cls)
         data = {
             **data,
-            "origin": data.get("origin", ORIGIN_INSTRUCTION),
+            # Fail closed: a message without an explicit origin tag is data,
+            # never an instruction (runtime-audit P2). The write path always
+            # emits origin; only foreign/legacy logs can omit it.
+            "origin": data.get("origin", ORIGIN_DATA),
             "injected": data.get("injected", False),
             "tool_calls": data.get("tool_calls", ()),
         }

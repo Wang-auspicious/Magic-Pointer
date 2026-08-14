@@ -29,7 +29,10 @@ __all__ = ["WeChatSurfaceAdapter", "WECHAT_MANIFEST"]
 WECHAT_MANIFEST = SurfaceAdapterManifest(
     id="wechat",
     display_name="微信",
-    app_ids=("wechat.exe", "weixin.exe", "wechatappex.exe", "wechat"),
+    # Exact executable basenames only — a bare "wechat" substring used to
+    # claim any window whose process/title merely contains it (perception
+    # audit P2: evilwechat.exe / "微信使用技巧 - Chrome" both matched).
+    app_ids=("wechat.exe", "weixin.exe", "wechatappex.exe"),
     window_class_patterns=("wechatmainwndforpc", "wechat_ui_main"),
     title_patterns=("微信", "wechat"),
     object_kinds=("chat_message", "message_list"),

@@ -237,6 +237,47 @@ def test_ui_tars_agent_propagates_user_cancellation() -> None:
     assert backend.actions == []
 
 
+class _CancelAfterOneBackend(_Backend):
+    def __init__(self) -> None:
+        super().__init__()
+        self.abort_calls: list[str] = []
+        self.token: CancellationToken | None = None
+
+    def execute(self, action, _grant, *, scope=None):
+        # First action succeeds and returns a receipt; the cancel lands while
+        # the agent is about to verify it.
+        result = super().execute(action, _grant, scope=scope)
+        if self.token is not None:
+            self.token.cancel()
+        return result
+
+    def abort(self, operation_id: str) -> bool:
+        self.abort_calls.append(str(operation_id))
+        return True
+
+
+def test_ui_tars_cancellation_releases_executed_actions() -> None:
+    """Perception-audit P1: a KEY_DOWN already executed must be aborted when
+    the run is cancelled — otherwise Ctrl/Shift stay physically held down."""
+    backend = _CancelAfterOneBackend()
+    token = CancellationToken()
+    backend.token = token
+    model = _Model([
+        "Action: click(start_box='[0.5, 0.5]')",
+        "Action: finished(content='too late')",
+    ])
+
+    with pytest.raises(CancelledError):
+        UiTarsComputerAgent(
+            operator=_operator(backend),
+            model=model,
+            classify_effect=_effect,
+        ).run("open item", _grant(), scope=token)
+
+    assert len(backend.actions) == 1
+    assert backend.abort_calls == [backend.actions[0].action_id]
+
+
 def replace_observation_image(
     observation: OperatorObservation,
     path,

@@ -28,6 +28,32 @@ def test_manifest_claims_wechat_windows() -> None:
     assert WECHAT_MANIFEST.matches_window({"process_name": "notepad.exe"}) is False
 
 
+def test_manifest_does_not_claim_lookalike_processes_or_titles() -> None:
+    """Perception-audit P2: substring app-id matching used to claim
+    evilwechat.exe and any window whose title merely contained 微信."""
+    assert WECHAT_MANIFEST.matches_window({"process_name": "evilwechat.exe"}) is False
+    assert WECHAT_MANIFEST.matches_window({"process_name": "WeChat.exe.bak"}) is False
+    assert WECHAT_MANIFEST.matches_window({"title": "微信使用技巧 - Chrome"}) is False
+    assert WECHAT_MANIFEST.matches_window({"title": "微信"}) is True
+
+
+def test_manifest_rejects_type_confused_array_fields() -> None:
+    import pytest
+
+    from app.surface_adapter.manifest import SurfaceAdapterManifest
+
+    # A string instead of an array used to iterate into single characters and
+    # claim almost every window (perception-audit P2).
+    with pytest.raises(ValueError, match="app_ids must be an array"):
+        SurfaceAdapterManifest.from_dict(
+            {"id": "x", "display_name": "x", "app_ids": "wechat"}
+        )
+    with pytest.raises(ValueError, match="version must be an integer"):
+        SurfaceAdapterManifest.from_dict(
+            {"id": "x", "display_name": "x", "app_ids": ["a.exe"], "version": 1.5}
+        )
+
+
 def test_manifest_from_dict_rejects_missing_identity() -> None:
     import pytest
 

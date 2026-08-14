@@ -5,6 +5,8 @@ using System.Globalization;
 using System.IO;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -2053,6 +2055,26 @@ internal static class UiaSelectionProbe
     private static readonly bool ResidenteHostTrace =
         !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("MAGIC_POINTER_UIA_HOST_TRACE"));
 
+    // 桥接审计 P1：resident 管道是本地隐私边界。单连接只接受少量请求，
+    // 单行只接受有限字节——任何本地进程不能借它无限读窗口文本或喂无界内存。
+    private const int ResidenteMaxLineChars = 256;
+    private const int ResidenteMaxRequestsPerConnection = 8;
+
+    private static PipeSecurity ResidentePipeSecurity()
+    {
+        var security = new PipeSecurity();
+        // 仅当前用户 + SYSTEM 可连：默认 DACL 会放行同用户全部进程，
+        // 而这条管道没有任何应用层认证。
+        var currentUser = WindowsIdentity.GetCurrent().User;
+        var userRule = new PipeAccessRule(
+            currentUser,
+            PipeAccessRights.ReadWrite,
+            AccessControlType.Allow);
+        security.AddAccessRule(userRule);
+        security.SetOwner(currentUser);
+        return security;
+    }
+
     private static void ResidenteHostLog(string message)
     {
         if (!ResidenteHostTrace)
@@ -2147,7 +2169,10 @@ internal static class UiaSelectionProbe
                     PipeDirection.InOut,
                     1,
                     PipeTransmissionMode.Byte,
-                    PipeOptions.Asynchronous);
+                    PipeOptions.Asynchronous,
+                    0,
+                    0,
+                    ResidentePipeSecurity());
                 server.WaitForConnection();
                 ResidenteHostLog("client connected");
             }
@@ -2160,15 +2185,22 @@ internal static class UiaSelectionProbe
             }
             try
             {
+                int handled = 0;
                 using (var reader = new StreamReader(server, new UTF8Encoding(false)))
                 using (var writer = new StreamWriter(server, new UTF8Encoding(false)) { AutoFlush = true })
                 {
                     string line;
-                    while ((line = reader.ReadLine()) != null)
+                    while ((line = ReadBoundedLine(reader)) != null)
                     {
                         if (line.Length == 0)
                         {
                             continue;
+                        }
+                        handled += 1;
+                        if (handled > ResidenteMaxRequestsPerConnection)
+                        {
+                            writer.WriteLine("{\"ok\":false,\"error\":\"too_many_requests\"}");
+                            break;
                         }
                         HandleResidenteRequest(line, writer);
                     }
@@ -2185,6 +2217,34 @@ internal static class UiaSelectionProbe
             }
             catch
             {
+            }
+        }
+    }
+
+    // 有界行读：超长行立刻拒绝而不是整行读进内存（内存 DoS 面）。
+    private static string ReadBoundedLine(StreamReader reader)
+    {
+        var buffer = new StringBuilder();
+        while (true)
+        {
+            int next = reader.Read();
+            if (next < 0)
+            {
+                return buffer.Length == 0 ? null : buffer.ToString();
+            }
+            char ch = (char)next;
+            if (ch == '\n')
+            {
+                return buffer.ToString().TrimEnd('\r');
+            }
+            buffer.Append(ch);
+            if (buffer.Length > ResidenteMaxLineChars)
+            {
+                // 丢弃超长行的剩余部分直到换行，保持流同步。
+                while ((next = reader.Read()) >= 0 && next != '\n')
+                {
+                }
+                return "";
             }
         }
     }

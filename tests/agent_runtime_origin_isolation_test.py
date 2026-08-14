@@ -328,7 +328,9 @@ class TestInstructionChannelFilter:
 
 
 class TestSerializationCompatibility:
-    def test_from_dict_missing_origin_defaults_to_instruction(self) -> None:
+    def test_from_dict_missing_origin_defaults_to_data(self) -> None:
+        """Fail closed: a foreign/legacy log without an explicit origin tag
+        must be treated as data, never upgraded into an instruction."""
         legacy = {
             "role": "user",
             "content": "hi",
@@ -340,9 +342,9 @@ class TestSerializationCompatibility:
         msg = AgentMessage.from_dict(legacy)
 
         assert msg.role is Role.USER
-        assert msg.origin == ORIGIN_INSTRUCTION
+        assert msg.origin == ORIGIN_DATA
 
-    def test_legacy_turn_state_messages_default_to_instruction(self) -> None:
+    def test_legacy_turn_state_messages_default_to_data(self) -> None:
         legacy_state = {
             "messages": [
                 {
@@ -365,7 +367,7 @@ class TestSerializationCompatibility:
 
         state = TurnState.from_dict(legacy_state)
 
-        assert state.messages[0].origin == ORIGIN_INSTRUCTION
+        assert state.messages[0].origin == ORIGIN_DATA
 
     def test_from_dict_explicit_data_origin_and_roundtrip(self) -> None:
         data = {

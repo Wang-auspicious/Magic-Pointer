@@ -789,6 +789,10 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
             # a speculative batch. If the model emitted actions beside it,
             # retain only the question: executing work before the answer would
             # defeat the purpose of asking and can create stale side effects.
+            # The assistant message keeps the full call list (so ids
+            # round-trip), and each dropped call gets an explicit TOOL result
+            # saying it never ran — the model must not believe writes happened
+            # (runtime-audit P2).
             suspending_call = next(
                 (
                     call
@@ -797,9 +801,25 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                 ),
                 None,
             )
+            skipped_calls: list[ToolCall] = []
             if suspending_call is not None:
+                skipped_calls = [call for call in calls if call is not suspending_call]
                 calls = [suspending_call]
+            for call in skipped_calls:
+                skipped_result = ToolResult(
+                    tool_call_id=call.id,
+                    value=(
+                        f"not executed: {call.name} was dropped because "
+                        "clarification was requested in the same turn"
+                    ),
+                    is_error=False,
+                    failure_type="not_executed",
+                    used_backend=None,
+                    latency_ms=None,
+                )
+                results.append(skipped_result)
 
+            all_calls = [call for call in calls] + list(skipped_calls)
             assistant_tool_message = AgentMessage(
                 role=Role.ASSISTANT,
                 content=text or "",
@@ -811,7 +831,7 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                         "name": call.name,
                         "arguments": dict(call.arguments),
                     }
-                    for call in calls
+                    for call in all_calls
                 ),
                 origin=ORIGIN_DATA,
             )
@@ -819,6 +839,23 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                 params.session.append_message(assistant_tool_message)
 
             tool_messages: list[AgentMessage] = []
+            for call in skipped_calls:
+                skipped = next(
+                    result for result in results
+                    if result.tool_call_id == call.id
+                    and result.failure_type == "not_executed"
+                )
+                skipped_message = AgentMessage(
+                    role=Role.TOOL,
+                    content=skipped.value,
+                    tool_call_id=skipped.tool_call_id,
+                    name=call.name,
+                    is_error=skipped.is_error,
+                    origin=ORIGIN_DATA,
+                )
+                tool_messages.append(skipped_message)
+                if params.session is not None:
+                    params.session.append_message(skipped_message)
             any_error = False
             round_progress = False
             halt_decision: ToolGuardrailDecision | None = None
@@ -1009,6 +1046,15 @@ def _run_stop_hooks(
             decision = hook(state)
         except Exception as exc:  # noqa: BLE001 -- hook failures never kill the loop
             notes.append(f"stop hook {hook!r} raised {type(exc).__name__}: {exc}")
+            return None, True
+        # A hook returning None violates the StopDecision contract; treat it
+        # like a raising hook instead of AttributeError-ing the whole loop
+        # (runtime-audit P2: 'hook failures never kill the loop').
+        if not isinstance(decision, StopDecision):
+            notes.append(
+                f"stop hook {hook!r} returned {type(decision).__name__} "
+                "instead of StopDecision"
+            )
             return None, True
         if decision.prevent_continuation:
             return decision, False
@@ -1328,7 +1374,20 @@ def _execute_one(
                 latency_ms=None,
             )
         execution_args = pre.input
-        errors = registry.validate_input(spec, execution_args)
+        try:
+            errors = registry.validate_input(spec, execution_args)
+        except TypeError as exc:
+            # A hook that rewrites input to a non-mapping must not kill the
+            # loop (runtime-audit P2: the guardrail's "never kill the loop"
+            # role fails on non-dict arguments otherwise).
+            return ToolResult(
+                tool_call_id=call.id,
+                value=f"post-hook input invalid: {exc}",
+                is_error=True,
+                failure_type=FailureType.TOOL_ERROR,
+                used_backend=None,
+                latency_ms=None,
+            )
         if errors:
             return ToolResult(
                 tool_call_id=call.id,
