@@ -42,7 +42,10 @@ interface CaptureCommitCoordinatorOptions {
   beginSession: (gesture: unknown, lease: ReturnType<typeof validateFrameLease>) => void;
   onCommitFailure?: (error: unknown) => void;
   tokenFactory?: () => string;
+  commitTimeoutMs?: number;
 }
+
+const DEFAULT_COMMIT_TIMEOUT_MS = 12_000;
 
 class CaptureCommitCoordinator {
   provider: CaptureCommitProvider;
@@ -50,6 +53,7 @@ class CaptureCommitCoordinator {
   beginSession: (gesture: unknown, lease: ReturnType<typeof validateFrameLease>) => void;
   onCommitFailure: (error: unknown) => void;
   tokenFactory: () => string;
+  commitTimeoutMs: number;
   state: CoordinatorState;
   activeToken: string | null;
   armedRequest: CaptureArmRequest | null;
@@ -61,12 +65,14 @@ class CaptureCommitCoordinator {
     beginSession,
     onCommitFailure = () => {},
     tokenFactory = () => randomUUID(),
+    commitTimeoutMs = DEFAULT_COMMIT_TIMEOUT_MS,
   }: CaptureCommitCoordinatorOptions) {
     this.provider = provider;
     this.releaseOverlay = releaseOverlay;
     this.beginSession = beginSession;
     this.onCommitFailure = onCommitFailure;
     this.tokenFactory = tokenFactory;
+    this.commitTimeoutMs = Math.max(1_000, Number(commitTimeoutMs) || DEFAULT_COMMIT_TIMEOUT_MS);
     this.state = 'idle';
     this.activeToken = null;
     this.armedRequest = null;
@@ -105,13 +111,30 @@ class CaptureCommitCoordinator {
     this.state = 'committing';
     let lease: ReturnType<typeof validateFrameLease> | null = null;
     let failure: unknown = null;
+    // A provider whose commit never settles must not leave pointerup hanging
+    // and the overlay pinned forever (electron audit P2: the coordinator
+    // cannot rely on every provider having its own internal timeout).
+    const commitDeadline = Date.now() + this.commitTimeoutMs;
+    let commitTimeout: NodeJS.Timeout | null = null;
     try {
-      lease = validateFrameLease(await this.provider.commit({
-        epochId: request.epochId,
-        gesture,
-      }));
+      const settled = await Promise.race([
+        this.provider.commit({
+          epochId: request.epochId,
+          gesture,
+        }),
+        new Promise<never>((_resolve, reject) => {
+          const wait = Math.max(0, commitDeadline - Date.now());
+          commitTimeout = setTimeout(
+            () => reject(new Error(`frame_commit_timeout_${this.commitTimeoutMs}ms`)),
+            wait,
+          );
+        }),
+      ]);
+      lease = validateFrameLease(settled);
     } catch (error) {
       failure = error;
+    } finally {
+      if (commitTimeout) clearTimeout(commitTimeout);
     }
     // A newer arm may have replaced this epoch while the commit was in
     // flight. The stale commit's tail must not touch the new gesture: no

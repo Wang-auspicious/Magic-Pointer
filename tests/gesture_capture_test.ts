@@ -5,10 +5,28 @@ const {
   CHAIN_IDLE_FINALIZE_MS,
   QUICK_POINT_MAX_DISTANCE,
   QUICK_POINT_MAX_DURATION_MS,
+  boundGestureInput,
   chainFinalizeDelay,
   pointerContinuesGestureChain,
   summarizeGesture,
 } = require('../electron/gesture_capture');
+
+const floodedStrokes = Array.from({ length: 32 }, (_unused, strokeIndex) => ({
+  points: Array.from({ length: 4096 }, (_point, pointIndex) => ({
+    x: strokeIndex * 5000 + pointIndex,
+    y: strokeIndex,
+    t: pointIndex,
+  })),
+}));
+const boundedFlood = boundGestureInput([], floodedStrokes, {
+  maxPoints: 4096,
+  maxStrokes: 32,
+});
+assert.strictEqual(boundedFlood.strokes.length, 1,
+  'the hostile multi-stroke input must share one total point budget');
+assert.strictEqual(boundedFlood.strokes.reduce((sum: number, stroke: any) => sum + stroke.points.length, 0), 4096);
+assert.doesNotThrow(() => summarizeGesture(boundedFlood.points, boundedFlood.strokes),
+  'the bounded payload must not overflow Math.min/Math.max argument limits');
 
 assert.strictEqual(CHAIN_IDLE_FINALIZE_MS, 520);
 assert.strictEqual(chainFinalizeDelay({ now: 1000, deadlineAt: 3500 }), 520,

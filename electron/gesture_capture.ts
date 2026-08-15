@@ -24,6 +24,11 @@ interface GestureThresholds {
   quickPointMaxDurationMs?: number;
 }
 
+interface GestureInputBudget {
+  maxPoints?: number;
+  maxStrokes?: number;
+}
+
 const QUICK_POINT_MAX_DURATION_MS = 420;
 const QUICK_POINT_MAX_DISTANCE = 14;
 const CHAIN_IDLE_FINALIZE_MS = 520;
@@ -229,6 +234,32 @@ function summarizeStroke(points: TimedPoint[], {
 // first stroke (stable capsule anchor) plus the last release point.
 type StrokeSummary = NonNullable<ReturnType<typeof summarizeStroke>>;
 
+function boundGestureInput(rawPoints: unknown, rawStrokes: unknown, {
+  maxPoints = 4096,
+  maxStrokes = 32,
+}: GestureInputBudget = {}) {
+  const pointBudget = Math.max(2, Math.min(65_536, Math.trunc(Number(maxPoints) || 4096)));
+  const strokeBudget = Math.max(1, Math.min(128, Math.trunc(Number(maxStrokes) || 32)));
+  if (!Array.isArray(rawStrokes) || rawStrokes.length === 0) {
+    return {
+      points: Array.isArray(rawPoints) ? rawPoints.slice(0, pointBudget) : rawPoints,
+      strokes: rawStrokes,
+    };
+  }
+  let remaining = pointBudget;
+  const strokes: Record<string, unknown>[] = [];
+  for (const value of rawStrokes.slice(0, strokeBudget)) {
+    if (remaining < 2) break;
+    const stroke = recordOf(value);
+    if (!stroke || !Array.isArray(stroke.points)) continue;
+    const points = stroke.points.slice(0, remaining);
+    if (points.length < 2) continue;
+    strokes.push({ ...stroke, points });
+    remaining -= points.length;
+  }
+  return { points: [], strokes };
+}
+
 function summarizeGesture(rawPoints: unknown, rawStrokes?: unknown, {
   minDistance = 12,
   minDurationMs = 40,
@@ -296,6 +327,7 @@ const GestureCapture = {
   QUICK_POINT_MAX_DURATION_MS,
   chainFinalizeDelay,
   pointerContinuesGestureChain,
+  boundGestureInput,
   summarizeGesture,
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = GestureCapture;

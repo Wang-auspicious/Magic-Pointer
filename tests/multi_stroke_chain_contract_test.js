@@ -1,4 +1,4 @@
-﻿'use strict';
+'use strict';
 
 // Contract for the unified multi-stroke chain:
 // - one activation path, no "modes": a chain of strokes is collected on the
@@ -94,8 +94,8 @@ const complete = main.slice(
   main.indexOf('function completeSelectionGesture('),
   main.indexOf('function processPassThroughGestureSample('),
 );
-assert(complete.includes('summarizeGesture(payload?.points, payload?.strokes)'),
-  'gesture completion must accept committed strokes');
+assert(complete.includes('summarizeGesture(') && complete.includes('payload?.strokes'),
+  'gesture completion must accept committed strokes (bounded against hostile point floods)');
 assert(complete.includes('anchorPoint'), 'gesture must carry the first-stroke anchor');
 
 // ── capsule anchors at the first stroke, count chip present ──────────────

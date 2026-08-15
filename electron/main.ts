@@ -60,6 +60,7 @@ const { inspectOnboardingReadiness, shouldStartHidden } = require('./app_lifecyc
 const { RuntimeSnapshot } = require('./runtime_snapshot');
 const {
   chainFinalizeDelay,
+  boundGestureInput,
   pointerContinuesGestureChain,
   summarizeGesture,
 } = require('./gesture_capture');
@@ -167,6 +168,7 @@ const registeredConfigurableHotkeys = new Set();
 // Bound what a (possibly compromised) overlay renderer can hand to the
 // capture bridge: distance-filtered real strokes stay far below this.
 const MAX_OVERLAY_CAPTURE_POINTS = 4096;
+const MAX_OVERLAY_CAPTURE_STROKES = 32;
 
 const ROOT = projectRoot(__dirname);
 const PYTHON_RUNTIME = resolvePythonRuntime({
@@ -2472,7 +2474,15 @@ function completeSelectionGesture(payload: any) {
     cancelSelectionGesture('stale');
     return false;
   }
-  const summary = summarizeGesture(payload?.points, payload?.strokes);
+  // A compromised overlay renderer must not feed unbounded point lists into
+  // the main process (per-point display lookup + a giant gesture object
+  // serialized onto the worker's stdin) — cap at the same budget as the
+  // overlay-done path (electron audit P2).
+  const boundedGesture = boundGestureInput(payload?.points, payload?.strokes, {
+    maxPoints: MAX_OVERLAY_CAPTURE_POINTS,
+    maxStrokes: MAX_OVERLAY_CAPTURE_STROKES,
+  });
+  const summary = summarizeGesture(boundedGesture.points, boundedGesture.strokes);
   if (!summary.valid) {
     cancelSelectionGesture(summary.reason || 'invalid');
     return false;

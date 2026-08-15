@@ -55,7 +55,9 @@ function fakeProvider(events: string[], { failCommit = false, slowCommit = false
   };
 }
 
-(async function commitsPixelsBeforeOverlayReleaseAndSessionStart() {
+const coordinatorTests: Array<() => Promise<void>> = [];
+
+coordinatorTests.push(async function commitsPixelsBeforeOverlayReleaseAndSessionStart() {
   const events: string[] = [];
   const coordinator = new CaptureCommitCoordinator({
     provider: fakeProvider(events),
@@ -65,9 +67,9 @@ function fakeProvider(events: string[], { failCommit = false, slowCommit = false
   await coordinator.arm(armRequest());
   await coordinator.complete(gesture());
   assert.deepStrictEqual(events, ['arm', 'commit', 'overlay-release', 'session:frame-1']);
-})();
+});
 
-(async function completeWithoutArmIsRefused() {
+coordinatorTests.push(async function completeWithoutArmIsRefused() {
   const events: string[] = [];
   const coordinator = new CaptureCommitCoordinator({
     provider: fakeProvider(events),
@@ -76,9 +78,9 @@ function fakeProvider(events: string[], { failCommit = false, slowCommit = false
   });
   await assert.rejects(coordinator.complete(gesture()), /frame_commit_not_armed/);
   assert.deepStrictEqual(events, []);
-})();
+});
 
-(async function staleTokenCannotCompleteAReplacedEpoch() {
+coordinatorTests.push(async function staleTokenCannotCompleteAReplacedEpoch() {
   const events: string[] = [];
   const coordinator = new CaptureCommitCoordinator({
     provider: fakeProvider(events),
@@ -90,9 +92,9 @@ function fakeProvider(events: string[], { failCommit = false, slowCommit = false
   assert.deepStrictEqual(events, ['arm', 'cancel', 'arm']);
   await assert.rejects(coordinator.complete(gesture(), token1), /frame_commit_stale_token/);
   assert.deepStrictEqual(events, ['arm', 'cancel', 'arm']);
-})();
+});
 
-(async function duplicateCompletionStartsOnlyOneSession() {
+coordinatorTests.push(async function duplicateCompletionStartsOnlyOneSession() {
   const events: string[] = [];
   const coordinator = new CaptureCommitCoordinator({
     provider: fakeProvider(events),
@@ -103,9 +105,9 @@ function fakeProvider(events: string[], { failCommit = false, slowCommit = false
   await coordinator.complete(gesture());
   await assert.rejects(coordinator.complete(gesture()), /frame_commit_not_armed/);
   assert.strictEqual(events.filter((event) => event === 'session').length, 1);
-})();
+});
 
-(async function commitFailureReleasesOverlayAndReportsWithoutSession() {
+coordinatorTests.push(async function commitFailureReleasesOverlayAndReportsWithoutSession() {
   const events: string[] = [];
   const failures: Error[] = [];
   const coordinator = new CaptureCommitCoordinator({
@@ -121,9 +123,9 @@ function fakeProvider(events: string[], { failCommit = false, slowCommit = false
   assert(failures[0] instanceof Error);
   assert.strictEqual(coordinator.state, 'failed');
   assert.strictEqual(events.includes('session'), false);
-})();
+});
 
-(async function cancellationDuringCommitSkipsTheSession() {
+coordinatorTests.push(async function cancellationDuringCommitSkipsTheSession() {
   const events: string[] = [];
   const coordinator = new CaptureCommitCoordinator({
     provider: fakeProvider(events, { slowCommit: true }),
@@ -137,9 +139,9 @@ function fakeProvider(events: string[], { failCommit = false, slowCommit = false
   assert.deepStrictEqual(events, ['arm', 'commit', 'overlay-release']);
   assert.strictEqual(events.includes('session'), false);
   assert.strictEqual(coordinator.state, 'cancelled');
-})();
+});
 
-(async function cancelWhileArmedCancelsTheWorkerEpoch() {
+coordinatorTests.push(async function cancelWhileArmedCancelsTheWorkerEpoch() {
   const events: string[] = [];
   const coordinator = new CaptureCommitCoordinator({
     provider: fakeProvider(events),
@@ -151,9 +153,9 @@ function fakeProvider(events: string[], { failCommit = false, slowCommit = false
   assert.deepStrictEqual(events, ['arm', 'cancel']);
   assert.strictEqual(coordinator.state, 'cancelled');
   await assert.rejects(coordinator.complete(gesture()), /frame_commit_not_armed/);
-})();
+});
 
-(async function beginSessionReceivesADeepFrozenLease() {
+coordinatorTests.push(async function beginSessionReceivesADeepFrozenLease() {
   let received: any = null;
   const coordinator = new CaptureCommitCoordinator({
     provider: {
@@ -172,9 +174,9 @@ function fakeProvider(events: string[], { failCommit = false, slowCommit = false
   assert.strictEqual(Object.isFrozen(received.localArtifact), true);
   assert.strictEqual(Object.isFrozen(received.gesture), true);
   assert.strictEqual(received.frameLeaseId, 'frame-1');
-})();
+});
 
-(async function rearmDuringCommitMustNotClobberTheNewEpoch() {
+coordinatorTests.push(async function rearmDuringCommitMustNotClobberTheNewEpoch() {
   const events: string[] = [];
   const coordinator = new CaptureCommitCoordinator({
     provider: {
@@ -211,9 +213,9 @@ function fakeProvider(events: string[], { failCommit = false, slowCommit = false
     'overlay-release',
     'session:frame-2',
   ]);
-})();
+});
 
-(async function commitFailureStillReleasesOverlayAndResolvesNull() {
+coordinatorTests.push(async function commitFailureStillReleasesOverlayAndResolvesNull() {
   const events: string[] = [];
   const failures: Error[] = [];
   const coordinator = new CaptureCommitCoordinator({
@@ -227,6 +229,44 @@ function fakeProvider(events: string[], { failCommit = false, slowCommit = false
   assert.strictEqual(lease, null);
   assert.deepStrictEqual(events, ['arm', 'commit', 'overlay-release']);
   assert.strictEqual(failures.length, 1);
-})();
+});
 
-console.log('capture commit coordinator test ok');
+coordinatorTests.push(async function commitTimeoutReleasesOverlayAndFailsClosed() {
+  // A provider whose commit never settles must not leave pointerup hanging
+  // with the overlay pinned (electron audit P2). The coordinator owns its
+  // own deadline.
+  const events: string[] = [];
+  const failures: Error[] = [];
+  const coordinator = new CaptureCommitCoordinator({
+    provider: {
+      arm: async () => { events.push('arm'); },
+      commit: async () => {
+        events.push('commit');
+        await new Promise(() => {}); // never settles
+      },
+      cancel: async () => { events.push('cancel'); },
+    },
+    releaseOverlay: () => events.push('overlay-release'),
+    beginSession: () => events.push('session'),
+    onCommitFailure: (error: any) => failures.push(error),
+    commitTimeoutMs: 1000,
+  });
+  await coordinator.arm(armRequest());
+  const started = Date.now();
+  const lease = await coordinator.complete(gesture());
+  const elapsed = Date.now() - started;
+  assert.strictEqual(lease, null);
+  assert(elapsed >= 1000 && elapsed < 3000, `timeout fired in ${elapsed}ms`);
+  assert.deepStrictEqual(events, ['arm', 'commit', 'overlay-release']);
+  assert.strictEqual(coordinator.state, 'failed');
+  assert.strictEqual(failures.length, 1);
+  assert(/frame_commit_timeout/.test(failures[0].message));
+});
+
+(async () => {
+  for (const test of coordinatorTests) await test();
+  console.log('capture commit coordinator test ok');
+})().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});

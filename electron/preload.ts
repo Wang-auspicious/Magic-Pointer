@@ -15,8 +15,13 @@ interface StageCommandPayload {
   selectionSessionToken?: unknown;
 }
 
-function onPayload(channel: string, callback: PayloadCallback) {
-  return ipcRenderer.on(channel, (_event: Electron.IpcRendererEvent, payload: unknown) => callback(payload));
+const MAX_COMMAND_CHARS = 4000;
+
+function onPayload(channel: string, callback: PayloadCallback): void {
+  // The ipcRenderer return value must never cross the bridge: it IS
+  // ipcRenderer, and contextBridge would proxy send/invoke/sendSync into the
+  // isolated world (electron audit P2). Return nothing.
+  ipcRenderer.on(channel, (_event: Electron.IpcRendererEvent, payload: unknown) => callback(payload));
 }
 
 // Signal channels carry no payload, so the callback is invoked with no arguments
@@ -24,8 +29,8 @@ function onPayload(channel: string, callback: PayloadCallback) {
 // an IpcRendererEvent — and `event.sender` is ipcRenderer itself, which
 // contextBridge would proxy straight into the isolated world. Dropping the
 // arguments here is what keeps `SignalCallback = () => void` true at runtime.
-function onSignal(channel: string, callback: SignalCallback) {
-  return ipcRenderer.on(channel, () => callback());
+function onSignal(channel: string, callback: SignalCallback): void {
+  ipcRenderer.on(channel, () => callback());
 }
 
 contextBridge.exposeInMainWorld('magicPointer', {
@@ -68,7 +73,10 @@ contextBridge.exposeInMainWorld('magicPointerStage', {
   dismiss: () => ipcRenderer.send('stage:dismiss'),
   submitSelectionCommand: (payload: StageCommandPayload) => ipcRenderer.send('stage:submit-selection-command', {
     selectionSessionToken: payload?.selectionSessionToken || null,
-    command: String(payload?.command || ''),
+    // Bounded at the bridge like keptStrokeIndexes: a compromised renderer
+    // must not feed megabyte commands into the bridge / pendingQuestions
+    // (electron audit P2).
+    command: String(payload?.command || '').slice(0, MAX_COMMAND_CHARS),
     inputMode: payload?.inputMode || null,
     // Which strokes survived the user's edits in the composer. Bounded here so a
     // renderer cannot send an unbounded list into the main process.
