@@ -1,12 +1,12 @@
 # 当前状态
 
-> 最后核实：2026-08-14（Harness 后端重建进行中，尚未交付；同日完成全库深度安全审计与修复批）。改了行为就回来改这里，别新建一份日期文件。
+> 最后核实：2026-08-15（1.0.5 已同步安装；Harness 更长期治理与真实多应用验收仍继续）。改了行为就回来改这里，别新建一份日期文件。
 
 ## 一句话
 
-**本机安装版仍是 1.0.4；它不是当前开发树。** 当前分支正在做一次不拆批交付的 Harness 后端重建，按用户要求在全部底层、Agent 能力、插件和自进化链路验收前，**不升版本、不运行 `npm run sync`**。旧 1.0.4 用“6 轮封顶”阻断过持久后端错误的无限自旋，但这是临时止血，已经从开发树移除：Provider 瞬时错误在语义循环下方有限重试，持久错误一次性终止为 `provider_unavailable`；重复工具/重复证据由 Hermes 风格语义停滞检测终止为 `stalled`；只保留默认 90 的诊断保险丝并报告 `invariant_failed`，它不参与正常任务完成语义。插件内核已补齐依赖撤销/恢复、精确卸载回卷、`ctx.llm` Provider seam、SurfaceAdapter seam、用户 patch 文件和 agent/surface 运行域隔离。
+**本机安装版与开发树均为 1.0.5（2026-08-15 已 sync）。** 本批修通设置的主进程确认、失败回滚与语音总开关，实际配置现为 `voice_enabled=false`、`default_input_mode=text`、`voice_resident_enabled=false`；Stage 改为固定 `480×132` 文字 Composer 与固定 `560×520` WorkPanel，移除内容驱动的宽度档、缩放变形和重复锚定；Studio/设置按 Oreo 参考重做为统一工作区与八页真实设置。交付验证：**Python 1249 过；Node 138 全过；typecheck、ESLint 0 警告；Electron build 通过；uia-host smoke PASS；NSIS 安装器已生成并同步安装**。更长期的治理门生产接线、ComputerOperator 明示批准与真实多应用桌面验收仍按下文待办继续，不能被本次 UI/设置交付冒充为完成。
 
-**2026-08-14 全库深度审计 + 修复批（已完成，见 §审计）**：9 个区域逐文件逐行审查 + 红队对抗实测；修复 6 个 P1（L0 本地动作劫持、证据进指令通道、compaction 剥围栏、tasks 并发丢数据、UIA 管道无鉴权、快照桥缺 lease fail-open、undo 无读回校验、scope 泄漏级联等 14 项）与 20+ P2。全量验证：**Python 1249 过；Node 131 全过；typecheck、ESLint 0 警告；uia-host smoke PASS**。仍未升版本、未 sync——开发树继续。
+**2026-08-14 全库深度审计 + 修复批（已完成，见 §审计）**：9 个区域逐文件逐行审查 + 红队对抗实测；修复 6 个 P1（L0 本地动作劫持、证据进指令通道、compaction 剥围栏、tasks 并发丢数据、UIA 管道无鉴权、快照桥缺 lease fail-open、undo 无读回校验、scope 泄漏级联等 14 项）与 20+ P2；已随 2026-08-15 的 1.0.5 一并同步到本机安装版。
 
 FrameLease 捕获地基（8·11 计划 Phase A）已全量落地并过自动化验证；外部 harness 评审（`docs/harness-gap-review-20260812.md`）已吸收，评审批次 1/2/3（L1-L16 基础设施）全部落地。2026-08-13 最强模型对交接文档（`docs/2026-08-13-ARCHITECTURE_HANDOFF.md`）的评审回复（`docs/2026-08-13-STRONGEST_MODEL_REVIEW_RESPONSE.md`）已**全量执行**：三个结构性张力（T1 预算语义/T2 证据截断/T3 in-loop 可逆写）、13 题逐答、接线批（权限门/guard 真探针/流式默认+回落/compaction）、工具合并+双轨杀死、settings 深合并、记忆铁律、常驻 UIA 宿主（真机实测 2.5x）、SurfaceAdapter SDK+微信样例、Replay 20 条 trace、薄 smoke 层、WGC CaptureProvider 契约。基建执行顺序已按评审反转：**常驻 UIA 宿主先于 WGC**（Phase 编号不变）。进度账本在 `docs/design/MAGIC_POINTER_HARNESS_20260811.md` §18。
 

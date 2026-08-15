@@ -1146,3 +1146,12 @@ smoke：uia-host PASS、replay 20 条 trace 走真实网关（机制绿，见下
 - [ ] **ComputerOperator 产品验收**：尚需 GUI 显式批准入口、真实视觉端点、多应用桌面回归与可见进度/接管交互；底层循环、动作后观察和 effect 授权服务已经完成。
 - [ ] **剩余底层审计**：dirty tree 逐文件取舍、更多真实 SurfaceAdapter/ActionLease 链路，以及 MCP/插件第三方兼容样本扩充。
 - [ ] **最终交付**：后端稳定后再执行 fresh Python/Node/typecheck/build/实时截图验收；最后统一 patch bump、`npm run sync`、安装目录版本核对与 `docs/STATUS.md` 更新。
+
+### 2026-08-15：Oreo Stage / Studio 与设置真值交付（1.0.5）
+
+- [x] 设置保存改为 renderer → preload invoke → main 持久化/运行时应用/失败回滚的确认链；补齐 Python `voice_engine` schema，加入语音总开关并在关闭时强制文字输入、停止常驻与禁用语音快捷键。安装机配置已核对为 voice off / text / non-resident。
+- [x] Stage 删除 40 DIP 语音球与 406/420/560/840 内容宽度档；Composer 固定 `480×132`，WorkPanel 固定 `560×520`，首次锚定后流式/完成/错误只改内部内容，body 独立滚动。
+- [x] Studio 删除营销 Hero、动态彩球、重复顶部导航和内容驱动输入框增高；六个真实工作页共用 Oreo 纸面工作区页头、导航、卡片、标签和固定输入面；设置收敛为八页真实 schema 控件。
+- [x] 外壳安全收尾：全手势点数总预算 4096、输入有界、capture commit 12s 超时与桥接边界测试；安装器运行时哈希改用 .NET SHA-256，避免非交互 PowerShell 未自动加载 Utility 模块时构建失败。
+- [x] 交付证据：Python **1249 passed**；Node **138 passed / 95 source files**；typecheck、ESLint、Electron build 通过；uia-host smoke PASS（`kind=document_text`）；`Magic-Pointer-1.0.5-x64.exe` 已生成，`npm run sync` 成功，安装目录与开发树均为 **1.0.5**。
+- [ ] 本批不改变更长期待办：治理门生产接线、ComputerOperator 明示批准 UI、真实视觉端点与多应用桌面验收仍须继续，不能因 UI/设置完成而降级或隐去。
