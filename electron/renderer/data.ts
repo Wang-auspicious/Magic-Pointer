@@ -19,10 +19,12 @@ declare global {
     at?: number;
     question?: string;
     answer?: string;
+    thinking?: string;
     failed?: boolean;
     trace?: (string | { label: string; note?: string })[];
     facts?: { label?: string; value?: string; tone?: string }[];
     artifacts?: MagicPointerArtifact[];
+    events?: Record<string, unknown>[];
     [key: string]: unknown;
   }
 
@@ -75,6 +77,16 @@ declare global {
 
   const renderCard: (card: unknown, options?: { density?: string }) => Element;
   const cardElapsedText: (card: MagicPointerCard, now: number) => string;
+
+  /* DSH 聊天渲染器（deepseek-harness 100% 移植）：classic script 暴露的全局。 */
+  interface MagicPointerDshChatApi {
+    userNode(question: string, timeMs?: number): Element;
+    assistantTurnNode(turn: Record<string, unknown>): Element[];
+    turnStatusNode(label: string): Element;
+    turnErrorNode(message: string, code?: string, tone?: 'error' | 'warning'): Element;
+    bindDelegation(scope?: Element): void;
+  }
+  const DshChat: MagicPointerDshChatApi;
 
   interface MagicPointerLiveCardsApi {
     track(card: MagicPointerCard): MagicPointerCard;

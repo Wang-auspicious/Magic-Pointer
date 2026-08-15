@@ -1,0 +1,666 @@
+/* ============================================================
+   DSH 聊天组件样式（100% 移植 deepseek-harness）
+   ------------------------------------------------------------
+   来源（类名 → DSH 原名）：
+   - ui-conversation chat/MessageItem.module.css  （.userRow/.bubble）
+   - ui-conversation chat/MessageIconActions.module.css
+   - ui-conversation chat/ReasoningRow.module.css
+   - ui-conversation chat/ChatView.module.css     （.flowItem/.turnStatus）
+   - ui-tool tool/components/ToolRow.module.css
+   - ui-primitives DisclosureRow.module.css / StateDot.module.css
+   值逐字保留；仅类名加 .dsh- 前缀避免与本库样式冲突。
+   ============================================================ */
+
+/* ---- 聊天流：整列 16px 节奏 ---- */
+.dsh-flow {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.dsh-flow-item {
+  min-width: 0;
+}
+
+/* ---- 用户气泡：右对齐（Figma User_Bubble r22） ---- */
+.dsh-user {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.dsh-user-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  min-width: 0;
+  max-width: min(525px, 82%);
+}
+
+.dsh-bubble {
+  max-width: 100%;
+  background: var(--dsw-specific-bubble);
+  border-radius: 22px;
+  padding: 10px 16px;
+  font-size: 16px;
+  line-height: 24px;
+  color: var(--dsw-alias-label-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ---- 消息动作行（时钟 hover 显现 + 复制） ---- */
+.dsh-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 28px;
+}
+
+.dsh-time {
+  font-size: 14px;
+  line-height: 24px;
+  color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap;
+}
+
+.dsh-user .dsh-time {
+  padding-right: 12px;
+}
+
+.dsh-assistant .dsh-time {
+  padding-left: 12px;
+}
+
+@media (hover: hover) {
+  .dsh-time {
+    opacity: 0;
+    transition: opacity 80ms ease;
+  }
+
+  [data-dsh-time-root]:hover .dsh-time,
+  [data-dsh-time-root]:focus-within .dsh-time {
+    opacity: 1;
+  }
+}
+
+.dsh-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 6px;
+  border: none;
+  border-radius: 28px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+}
+
+.dsh-action:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dsh-action svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* ---- 助手正文 ---- */
+.dsh-assistant {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.dsh-assistant-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.dsh-markdown {
+  font-size: 16px;
+  line-height: 26px;
+  color: var(--dsw-alias-label-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ---- 共用 24px 展开行骨架（DisclosureRow） ---- */
+.dsh-disclosure {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+}
+
+.dsh-row {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  height: 24px;
+  min-width: 0;
+}
+
+.dsh-row[data-expandable] {
+  cursor: pointer;
+}
+
+.dsh-leading {
+  position: relative;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 6px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.dsh-leading svg {
+  width: 14px;
+  height: 14px;
+}
+
+.dsh-icon-idle {
+  display: inline-flex;
+  opacity: 1;
+  transition: opacity 100ms ease;
+}
+
+.dsh-chev-hover {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 100ms ease;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dsh-row:hover .dsh-icon-idle {
+  opacity: 0;
+}
+
+.dsh-row:hover .dsh-chev-hover {
+  opacity: 1;
+}
+
+.dsh-row .dsh-chev {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dsh-title {
+  flex: none;
+  font-size: 14px;
+  line-height: 24px;
+  color: var(--dsw-alias-label-secondary);
+  font-weight: 400;
+}
+
+/* ---- 工具调用行（ToolRow） ---- */
+.dsh-tool {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 运行中扫光（ShimmerText 模式）：主题底色 60% 的光带扫过整行 */
+.dsh-tool[data-state='running'] .dsh-row::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 300px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--dsw-alias-bg-base) 60%, transparent) 55%,
+    transparent 100%
+  );
+  animation: dsh-tool-row-sweep 2.6s ease-out infinite;
+  pointer-events: none;
+}
+
+@keyframes dsh-tool-row-sweep {
+  0% { left: -300px; }
+  90%, 100% { left: 100%; }
+}
+
+.dsh-sep {
+  flex: none;
+  width: 2px;
+  height: 2px;
+  border-radius: 1px;
+  margin: 0 8px;
+  background: var(--dsw-alias-label-caption);
+}
+
+.dsh-summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  line-height: 24px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.dsh-suffix {
+  flex: none;
+  margin-left: 4px;
+  white-space: nowrap;
+  font-size: 14px;
+  line-height: 24px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.dsh-filelink {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  text-align: left;
+  font-size: 14px;
+  line-height: 24px;
+  color: var(--dsw-alias-label-secondary);
+  text-decoration: underline;
+  text-decoration-color: var(--dsw-alias-label-quaternary);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.dsh-filelink:hover {
+  color: var(--dsw-alias-label-primary);
+  text-decoration-color: currentColor;
+}
+
+.dsh-error-summary {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.dsh-body-wrap {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 闭合态隐藏展开体；事件委托只翻转 data-open，不重建 DOM */
+.dsh-disclosure:not([data-open='true']) > .dsh-body-wrap {
+  display: none;
+}
+
+.dsh-inspect {
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  gap: 4px;
+  margin: 4px 0 2px 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  line-height: 16px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 100ms ease;
+}
+
+.dsh-tool:hover .dsh-inspect,
+.dsh-inspect:focus-visible {
+  opacity: 1;
+}
+
+.dsh-inspect:hover {
+  background: var(--dsw-alias-interactive-bg-hover-solid);
+  color: var(--dsw-alias-label-primary);
+}
+
+.dsh-body-scroll {
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+/* 展开的 IN/OUT 卡（Figma 1249:35657） */
+.dsh-io-card {
+  display: flex;
+  flex-direction: column;
+  margin: 4px 0 4px 4px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 12px;
+  background: var(--dsw-alias-markdown-code-block);
+  font-family: var(--font-mono, ui-monospace, Consolas, monospace);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.dsh-io-section {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  column-gap: 14px;
+  align-items: baseline;
+  padding: 12px 16px;
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+.dsh-io-section::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: 6px;
+}
+
+.dsh-io-section::-webkit-scrollbar-track {
+  margin: 6px 0;
+}
+
+.dsh-io-label {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  color: var(--dsw-alias-label-caption);
+}
+
+.dsh-io-divider {
+  flex: none;
+  height: 1px;
+  background: var(--dsw-alias-border-l2);
+}
+
+.dsh-io-text {
+  min-width: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dsh-io-text[data-error] {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+/* ---- Think 思考行（ReasoningRow） ---- */
+.dsh-think {
+  display: flex;
+  flex-direction: column;
+}
+
+.dsh-think[data-state='running'] .dsh-row::after {
+  content: '';
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  width: 300px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in srgb, var(--dsw-alias-bg-base) 60%, transparent) 55%,
+    transparent 100%
+  );
+  animation: dsh-reasoning-row-sweep 2.6s ease-out infinite;
+  pointer-events: none;
+}
+
+@keyframes dsh-reasoning-row-sweep {
+  0% { left: -300px; }
+  90%, 100% { left: 100%; }
+}
+
+.dsh-think .dsh-summary[data-follow-end] {
+  text-overflow: clip;
+}
+
+.dsh-think-body {
+  padding: 4px 0 4px 22px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 14px;
+  line-height: 24px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ---- 状态点（StateDot） ---- */
+.dsh-dot,
+.dsh-matrix {
+  --dsh-state-ongoing: var(--dsw-static-deepseek-450);
+}
+
+.dsh-dot {
+  position: relative;
+  display: inline-block;
+  flex: none;
+}
+
+.dsh-dot::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.1;
+}
+
+.dsh-dot::after {
+  content: '';
+  position: absolute;
+  inset: 20%;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.dsh-dot[data-state='done'] {
+  color: var(--dsw-alias-state-success-primary);
+}
+
+.dsh-dot[data-state='warning'] {
+  color: var(--dsw-alias-state-warn-primary);
+}
+
+.dsh-dot[data-state='error'] {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+/* 运行中的像素追逐：3×3 外圈 8 格顺时针亮起 */
+.dsh-matrix {
+  flex: none;
+  color: var(--dsh-state-ongoing);
+}
+
+.dsh-cell {
+  fill: currentColor;
+  opacity: 0.15;
+  animation: dsh-state-dot-chase 1s infinite;
+}
+
+@keyframes dsh-state-dot-chase {
+  0%, 12.4% { opacity: 1; }
+  12.5%, 24.9% { opacity: 0.6; }
+  25%, 37.4% { opacity: 0.35; }
+  37.5%, 100% { opacity: 0.15; }
+}
+
+/* ---- 回合状态（turnStatus 渐变字） ---- */
+.dsh-turn-status {
+  align-self: flex-start;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  background: linear-gradient(
+    90deg,
+    var(--dsw-static-deepseek-500) 0%,
+    var(--dsw-static-deepseek-500) 40%,
+    var(--dsw-static-deepseek-200) 50%,
+    var(--dsw-static-deepseek-500) 60%,
+    var(--dsw-static-deepseek-500) 100%
+  );
+  background-position: 100% 0;
+  background-size: 250% 100%;
+  background-clip: text;
+  color: transparent;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: dsh-turn-status-shimmer 1.8s linear infinite;
+}
+
+.dsh-turn-status-clock {
+  margin-left: 8px;
+  font-size: 13px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  color: var(--dsw-alias-label-caption);
+  -webkit-text-fill-color: var(--dsw-alias-label-caption);
+}
+
+@keyframes dsh-turn-status-shimmer {
+  to {
+    background-position: 0 0;
+  }
+}
+
+/* ---- 回合错误行（TurnError / MaxTokens） ---- */
+.dsh-turn-error {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: start;
+  padding: 2px 0;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.dsh-turn-error .dsh-dot {
+  margin-top: 5px;
+}
+
+.dsh-turn-error-copy {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.dsh-turn-error-title {
+  margin-right: 6px;
+  color: var(--dsw-alias-state-error-primary);
+  font-weight: 600;
+}
+
+.dsh-turn-error-title[data-tone='warning'] {
+  color: var(--dsw-alias-state-warn-primary);
+}
+
+.dsh-turn-error-message {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dsh-turn-error-code {
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--font-mono, ui-monospace, Consolas, monospace);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+/* ---- 重试行（ModelRetry） ---- */
+.dsh-retry {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.dsh-retry summary {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 2px 0;
+  gap: 7px;
+  border-radius: 3px;
+  color: inherit;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.dsh-retry summary::-webkit-details-marker {
+  display: none;
+}
+
+.dsh-retry summary::after {
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentcolor;
+  border-bottom: 1.5px solid currentcolor;
+  content: '';
+  opacity: 0.8;
+  transform: rotate(-45deg);
+  transition: transform 120ms ease;
+}
+
+.dsh-retry summary:hover {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dsh-retry[open] summary::after {
+  transform: rotate(45deg);
+}
+
+.dsh-retry-details {
+  display: grid;
+  gap: 2px;
+  margin-top: 3px;
+  padding-left: 14px;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+/* ---- 无障碍 ---- */
+.dsh-vh {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* ---- 减少动效 ---- */
+@media (prefers-reduced-motion: reduce) {
+  .dsh-tool[data-state='running'] .dsh-row::after,
+  .dsh-think[data-state='running'] .dsh-row::after {
+    animation: none;
+  }
+
+  .dsh-cell {
+    animation: none;
+    opacity: 0.4;
+  }
+
+  .dsh-turn-status {
+    background-position: 0 0;
+    background-size: 100% 100%;
+    animation: none;
+  }
+}

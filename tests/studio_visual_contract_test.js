@@ -25,8 +25,12 @@ assert(!html.includes('hero.mp4'));
 assert(!html.includes('你指过的每一处'));
 assert(!source.includes('function makeOrb('), 'decorative moving avatar generation must be removed');
 assert(!source.includes("ta.style.height = 'auto'"), 'composer shell must not grow with textarea content');
-assert(source.includes("wrap.className = 'assistant-turn enter'"),
-  'assistant answers must use the open transcript treatment');
+assert(source.includes("flow.className = 'dsh-flow'"),
+  'the chat transcript must render through the DSH chat model');
+assert(source.includes('DshChat.userNode('),
+  'user messages must use the DSH right-aligned bubble');
+assert(source.includes('DshChat.assistantTurnNode('),
+  'assistant turns must render DSH text + Think + tool rows');
 assert(source.includes('<article class="mem-row enter"'),
   'read-only memories must not pretend to be clickable buttons');
 assert.match(source, /const summaryHeight = it\.summary \? 66 : 0/,
@@ -46,10 +50,15 @@ assert.match(source, /if \(initialView !== 'chat'\) \{\s*show\(initialView\);\s*
   'conversation hydration must not overwrite a requested settings or stash first view');
 assert(!source.includes('\nboot();'), 'Studio boot must receive the requested initial view');
 
-assert.match(css, /\.shell\s*\{[^}]*background:\s*#f7f7f5/s);
+assert.match(css, /\.shell\s*\{[^}]*background:\s*transparent/s,
+  'the shell must be transparent so the paper canvas shows through');
+const oreoCss = fs.readFileSync('electron/renderer/oreo.css', 'utf8');
+assert.match(oreoCss, /html,\s*body\s*\{[^}]*background:\s*var\(--paper\)/s,
+  'the warm paper canvas must live on the document root, not a shell card');
 assert.match(css, /\.workspace-composer\s*\{[^}]*height:\s*116px/s);
 assert(!css.includes('.workspace-card {'), 'global card chrome must be removed from page layout');
-assert.match(css, /\.assistant-turn\s*\{[^}]*background:\s*transparent/s);
+assert(html.includes('dsh_chat.css'), 'the DSH chat stylesheet must be linked');
+assert(html.includes('dsh_chat.js'), 'the DSH chat renderer must be loaded');
 assert.match(css, /\.btn-solid\s*\{[^}]*background:\s*#16181d/s);
 assert.match(css, /\.workspace-header\s*\{[^}]*min-height:\s*88px/s);
 assert.match(css, /\.workspace-eyebrow\s*\{[^}]*display:\s*none/s,

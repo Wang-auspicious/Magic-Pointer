@@ -260,40 +260,10 @@ async function renderSidebar() {
     </button>`).join('');
 }
 
-/* 一轮问答摊成若干张卡。答案永远有一张；事实、产物、图各自成卡。
-   这份映射只此一处——舞台、随行窗、工作室都从这里拿。 */
-function turnCards(turn: MagicPointerTurn, conversation: MagicPointerConversation) {
-  const source = conversation?.object
-    ? { app: conversation.object.app, label: conversation.object.label || conversation.object.windowTitle }
-    : null;
-  const out = [];
-  out.push(CardModel.normalizeCard({
-    id: `${turn.at || 0}-a`,
-    kind: 'prose',
-    state: turn.failed ? 'failed' : 'done',
-    answer: turn.answer || '',
-    error: turn.failed ? (turn.answer || '这次没能完成。') : '',
-    steps: (turn.trace || []).map((x) => (typeof x === 'string'
-      ? { label: x, state: 'done' }
-      : { label: x.label, note: x.note || '', state: 'done' })),
-    source,
-  }));
-  if ((turn.facts || []).length) {
-    out.push(CardModel.normalizeCard({
-      id: `${turn.at || 0}-f`, kind: 'facts', rows: turn.facts,
-    }));
-  }
-  for (const [i, art] of (turn.artifacts || []).entries()) {
-    out.push(CardModel.normalizeCard(art.kind === 'image'
-      ? { id: `${turn.at || 0}-i${i}`, kind: 'image', src: art.src, caption: art.name, w: art.w, h: art.h }
-      : { id: `${turn.at || 0}-r${i}`, kind: 'prose', eyebrow: '产物', title: art.name,
-        answer: art.summary || '', actions: [{ id: `open:${art.name}`, label: '打开' }] }));
-  }
-  return out;
-}
-
 /* ---- 打开一条对话 ---- */
 let activeConversationId: string | null = null;
+/* cardId → DSH 回合节点：后台任务补丁就地换节点，不重建整条流 */
+const dshCardNodes = new Map<string, HTMLElement>();
 
 async function openConversation(id: string) {
   const c = await Data.conversation(id);
@@ -333,29 +303,64 @@ async function openConversation(id: string) {
   const stream = document.getElementById('stream');
   if (!stream) return;
   LiveCards.reset();   // 换了一条对话，旧卡的计时器不该继续陪着跑
+  dshCardNodes.clear();
   const turns = c.turns || [];
   if (!turns.length) {
     stream.innerHTML = '<div class="view-empty">这条还没有内容。</div>';
     return;
   }
-  // 工作室里的一轮问答，渲染的就是舞台上那张卡——同一个 renderCard，
-  // 只是 density 不同。上一版这里是另写一遍的模板，于是同一次问答在小窗
-  // 和主窗里长得不一样。
-  stream.replaceChildren(...turns.flatMap((t) => {
-    const ask = document.createElement('div');
-    ask.className = 'msg-user enter';
-    ask.textContent = t.question || '';
-
-    const wrap = document.createElement('div');
-    wrap.className = 'assistant-turn enter';
-    for (const card of turnCards(t, c)) {
-      // 登记之后这张卡才接得住补丁——后台任务跑完时它会就地变成结果，
-      // 而不是等用户重新打开界面
-      wrap.appendChild(renderCard(LiveCards.track(card), { density: 'full' }));
-    }
-    return t.question ? [ask, wrap] : [wrap];
-  }));
+  // 工作室的一轮问答用 DSH 聊天模型渲染（100% 移植 deepseek-harness）：
+  // 用户消息 = 右侧 DeepSeek 蓝气泡（r22 + 时钟/复制动作行）；助手 = 正文 +
+  // Think 思考行 + 工具调用行（24px 行骨架、IN/OUT 卡、状态点）。
+  const flow = document.createElement('div');
+  flow.className = 'dsh-flow';
+  for (const t of turns) {
+    if (t.question) flow.appendChild(DshChat.userNode(String(t.question), t.at));
+    const host = document.createElement('div');
+    host.className = 'dsh-flow-item';
+    for (const node of DshChat.assistantTurnNode({
+      answer: t.answer,
+      thinking: t.thinking,
+      trace: t.trace,
+      events: t.events,
+      failed: t.failed,
+      at: t.at,
+    })) host.appendChild(node);
+    flow.appendChild(host);
+    // 后台任务补丁按舞台同款 cardId 就地落到这个节点：登记代理卡，
+    // 补丁来了 replaceWith 重画，不重建整条流。
+    const proxy = LiveCards.track(CardModel.normalizeCard({
+      id: `${t.at || 0}-a`,
+      kind: 'prose',
+      state: t.failed ? 'failed' : 'done',
+      answer: t.answer || '',
+      error: t.failed ? (t.answer || '这次没能完成。') : '',
+      steps: (t.trace || []).map((x) => (typeof x === 'string'
+        ? { label: x, state: 'done' }
+        : { label: x.label, note: x.note || '', state: 'done' })),
+    }));
+    dshCardNodes.set(proxy.id, host);
+  }
+  stream.replaceChildren(flow);
   stream.scrollTop = stream.scrollHeight;
+  DshChat.bindDelegation(stream);
+}
+
+/* 代理卡 → DSH 节点：后台任务补丁（进度/步骤/终态）就地换掉那一轮。 */
+function renderDshCardNode(card: MagicPointerCard): HTMLElement {
+  const host = document.createElement('div');
+  host.className = 'dsh-assistant';
+  host.setAttribute('data-dsh-time-root', 'true');
+  for (const node of DshChat.assistantTurnNode({
+    answer: card.answer,
+    failed: card.state === 'failed',
+    running: card.state === 'running',
+    trace: (card.steps || []).map((x) => (typeof x === 'string'
+      ? x
+      : { label: String((x as { label?: unknown }).label || ''), note: String((x as { note?: unknown }).note || '') })),
+    at: card.startedAt ?? undefined,
+  })) host.appendChild(node);
+  return host;
 }
 
 /* ---- 记忆：反复被指到的对象 ---- */
@@ -527,19 +532,23 @@ document.querySelectorAll('form.workspace-composer').forEach(form => {
     }
 
     const stream = document.getElementById('stream');
+    if (!stream) return;
+    let flow = stream.querySelector<HTMLElement>('.dsh-flow');
+    if (!flow) {
+      flow = document.createElement('div');
+      flow.className = 'dsh-flow';
+      stream.replaceChildren(...(stream.querySelector('.chat-blank, .view-empty') ? [] : [...stream.children]), flow);
+    }
+    flow.appendChild(DshChat.userNode(question));
     const pending = document.createElement('div');
-    const ask = document.createElement('div');
-    ask.className = 'msg-user enter';
-    ask.textContent = question;
-    pending.className = 'assistant-turn enter';
-    pending.appendChild(renderCard(CardModel.normalizeCard({
-      id: `studio-${Date.now()}`,
-      kind: 'prose',
-      state: 'running',
-      runningLabel: '正在回答',
-    }), { density: 'full' }));
-    stream?.replaceChildren(...(stream.querySelector('.chat-blank, .view-empty') ? [] : [...stream.children]), ask, pending);
-    if (stream) stream.scrollTop = stream.scrollHeight;
+    pending.className = 'dsh-assistant';
+    pending.setAttribute('data-dsh-time-root', 'true');
+    const pendingBody = document.createElement('div');
+    pendingBody.className = 'dsh-assistant-body';
+    pendingBody.appendChild(DshChat.turnStatusNode('Thinking'));
+    pending.appendChild(pendingBody);
+    flow.appendChild(pending);
+    stream.scrollTop = stream.scrollHeight;
 
     ta.value = '';
     studioComposerBusy = true;
@@ -552,12 +561,7 @@ document.querySelectorAll('form.workspace-composer').forEach(form => {
       await openConversation(activeConversationId);
       await renderSidebar();
     } catch (error) {
-      pending.replaceChildren(renderCard(CardModel.normalizeCard({
-        id: `studio-error-${Date.now()}`,
-        kind: 'prose',
-        state: 'failed',
-        error: error instanceof Error ? error.message : String(error),
-      }), { density: 'full' }));
+      pending.replaceChildren(DshChat.turnErrorNode(error instanceof Error ? error.message : String(error)));
       ta.value = question;
     } finally {
       studioComposerBusy = false;
@@ -775,9 +779,17 @@ window.magicPointerDashboard?.onShow?.((payload) => {
 });
 
 /* 后台任务的进度。三个界面收到的是同一份补丁，所以同一次出图
-   在哪个窗口看都是同一个进度。 */
+   在哪个窗口看都是同一个进度。工作室的 DSH 回合节点按同款 cardId
+   登记在 LiveCards，补丁落地时就地 replaceWith 重画那一轮。 */
 if (window.magicPointerDashboard?.onCardPatch) {
   window.magicPointerDashboard.onCardPatch((payload) => {
-    if (payload?.cardId) LiveCards.patch(payload.cardId, payload.patch || {});
+    if (!payload?.cardId) return;
+    const updated = LiveCards.patch(payload.cardId, payload.patch || {});
+    const host = dshCardNodes.get(payload.cardId);
+    if (host && updated) {
+      const replacement = renderDshCardNode(updated);
+      host.replaceWith(replacement);
+      dshCardNodes.set(payload.cardId, replacement);
+    }
   });
 }
