@@ -24,7 +24,8 @@ const { ActivationGate } = require('./activation_gate');
 const { WiggleDetector } = require('./wiggle_detector');
 const { runDeterministicWiggleEvidence } = require('./wiggle_reliability');
 const { MouseActivationDetector } = require('./mouse_activation');
-const { ElectronSettingsStore, defaultSettings } = require('./settings_store');
+const { ElectronSettingsStore, defaultSettings, validate: validateSettings } = require('./settings_store');
+const { mergeSettingsPatch, settingsSaveImpact } = require('./settings_save_policy');
 const { CredentialStore } = require('./credential_store');
 const { PreflightRunner } = require('./bootstrap_runner');
 const { buildAsyncPreflightChecks } = require('./preflight_checks');
@@ -2005,7 +2006,7 @@ function voiceRuntimeConfig(settings = fabricSettings) {
   const interaction = settings?.interaction || {};
   const engine = String(interaction.voice_engine || 'auto').trim().toLowerCase() || 'auto';
   return {
-    enabled: interaction.voice_resident_enabled !== false,
+    enabled: interaction.voice_enabled === true && interaction.voice_resident_enabled !== false,
     memoryLimitMb: Number(interaction.voice_memory_limit_mb) || 1024,
     idleUnloadMs: Number.isInteger(interaction.voice_idle_unload_ms) ? interaction.voice_idle_unload_ms : 0,
     root: ROOT,
@@ -2040,7 +2041,8 @@ function appendVoiceAudit({ eventType, sessionToken, surface, engine, reused, me
     surface: surface === 'stage' ? 'stage' : 'overlay',
     engine: String(engine || 'whisper-local').slice(0, 120),
     modelId: localWhisperModelName(),
-    residentEnabled: fabricSettings?.interaction?.voice_resident_enabled !== false,
+    residentEnabled: fabricSettings?.interaction?.voice_enabled === true
+      && fabricSettings?.interaction?.voice_resident_enabled !== false,
     reused: reused === true,
     memoryLimitMb: Number(fabricSettings?.interaction?.voice_memory_limit_mb) || 1024,
     measuredMemoryMb: Number.isFinite(measuredMemoryMb) ? measuredMemoryMb : null,
@@ -2093,6 +2095,7 @@ function sendVoiceRuntimeStatus(status: Record<string, unknown> = {}) {
     status.state === 'unloaded'
     && status.errorCode === 'idle_timeout'
     && !isQuitting
+    && fabricSettings?.interaction?.voice_enabled === true
     && fabricSettings?.interaction?.voice_resident_enabled !== false
   ) {
     setTimeout(() => {
@@ -2152,6 +2155,7 @@ function scheduleStartupVoiceWarmup(configResult: { ok?: boolean }) {
   if (
     startupVoiceWarmupScheduled
     || !configResult?.ok
+    || fabricSettings?.interaction?.voice_enabled !== true
     || fabricSettings?.interaction?.voice_resident_enabled === false
   ) return false;
   startupVoiceWarmupScheduled = true;
@@ -2806,8 +2810,9 @@ function currentPointerPollingPolicy() {
 
 function inputModeForReason(reason: string) {
   if (reason === 'shortcut-text') return 'text';
-  if (reason === 'shortcut-voice') return 'voice';
-  return fabricSettings?.interaction?.default_input_mode === 'voice' ? 'voice' : 'text';
+  if (reason === 'shortcut-voice') return fabricSettings?.interaction?.voice_enabled === true ? 'voice' : 'text';
+  return fabricSettings?.interaction?.voice_enabled === true
+    && fabricSettings?.interaction?.default_input_mode === 'voice' ? 'voice' : 'text';
 }
 
 function registerConfigurableHotkeys() {
@@ -2835,7 +2840,7 @@ function registerConfigurableHotkeys() {
   });
   register('voice_mode', fabricSettings.shortcuts?.voice_mode || 'Control+Alt+V', () => {
     requestActivation('shortcut-voice');
-  });
+  }, fabricSettings.interaction?.voice_enabled === true);
   register('pause', fabricSettings.shortcuts?.pause || 'Control+Alt+P', () => {
     inputPaused = !inputPaused;
     if (inputPaused) dismissTemporarySurfaces({ invalidateSession: true, hideObserver: true });
@@ -3138,11 +3143,7 @@ function beginSelectionSession(reason = 'manual', gesture: SelectionGesture | nu
         }
         log(`selection session capture done token=${entry.token} status=${attached.snapshot?.status || 'missing'} app=${attached.summary?.app || 'none'}`);
         const frozenTarget = stageTargetForSession(laidOut);
-        const mode = current.reason === 'shortcut-text'
-          ? 'text'
-          : current.reason === 'shortcut-voice'
-            ? 'voice'
-            : (fabricSettings.interaction.default_input_mode === 'voice' ? 'voice' : 'text');
+        const mode = inputModeForReason(current.reason);
         if (gesture) {
           const groundedPayload = {
             ...stageSessionPayload(laidOut),
@@ -4834,9 +4835,95 @@ ipcMain.handle('dashboard:settings:get', async (event: Electron.IpcMainInvokeEve
   // 里，模型档案的 credentialRef 也只是引用，不需要二次脱敏。
   return { ok: true, settings: fabricSettings };
 });
+
+async function saveFabricSettingsPatch(rawPatch: unknown) {
+  if (!fabricSettingsStore || !fabricSettings) return { ok: false, error: 'settings_not_loaded' };
+  if (!rawPatch || typeof rawPatch !== 'object' || Array.isArray(rawPatch)) {
+    return { ok: false, settings: safeClone(fabricSettings), error: '设置内容无效。' };
+  }
+  const previousSettings = safeClone(fabricSettings);
+  let nextSettings: any;
+  try {
+    nextSettings = validateSettings(mergeSettingsPatch(previousSettings, rawPatch));
+  } catch (error) {
+    return {
+      ok: false,
+      settings: previousSettings,
+      error: `设置没有保存：${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+  const impact = settingsSaveImpact(previousSettings, nextSettings);
+  let hotkeys: Record<string, { accelerator: string; registered: boolean; disabled?: boolean }> | null = null;
+  try {
+    fabricSettingsStore.save(nextSettings);
+    fabricSettings = nextSettings;
+    if (impact.voice) {
+      const voiceReconfigure = configureVoiceRuntime(nextSettings, { preload: true });
+      if (!voiceReconfigure.ok) {
+        throw new Error(voiceReconfigure.error === 'voice_session_active'
+          ? '语音正在使用中，请结束这次语音后再修改。'
+          : `语音设置未应用：${voiceReconfigure.error}`);
+      }
+    }
+    if (impact.hotkeys) {
+      hotkeys = registerConfigurableHotkeys();
+      const failed = Object.entries(hotkeys)
+        .filter(([, result]) => result && result.registered === false && result.disabled !== true)
+        .map(([name]) => name);
+      if (failed.length) throw new Error(`快捷键注册失败：${failed.join('、')}`);
+    }
+    if (impact.gesture && wiggleDetector) {
+      wiggleDetector.updateSettings({
+        sensitivity: nextSettings.activation?.sensitivity,
+        disabledApps: nextSettings.activation?.disabled_apps || [],
+        cooldownMs: nextSettings.activation?.cooldown_ms,
+      });
+      cancelSelectionGesture('settings_changed');
+    }
+    if (impact.update) updateManager?.setChannel(nextSettings.general?.update_channel || 'stable');
+    if (impact.login) {
+      app.setLoginItemSettings({ openAtLogin: nextSettings.general?.launch_at_login === true });
+    }
+    if (impact.gesture || impact.hotkeys) applyConfiguredWakeState();
+    if (impact.appearance) applyDashboardMaterial(nextSettings);
+    invalidateRuntimeState('settings_changed');
+    return { ok: true, settings: safeClone(nextSettings), impact, hotkeys };
+  } catch (error) {
+    fabricSettings = previousSettings;
+    try { fabricSettingsStore.save(previousSettings); } catch (_) {}
+    if (impact.voice) configureVoiceRuntime(previousSettings, { preload: true });
+    if (impact.hotkeys) registerConfigurableHotkeys();
+    if (impact.gesture && wiggleDetector) {
+      wiggleDetector.updateSettings({
+        sensitivity: previousSettings.activation?.sensitivity,
+        disabledApps: previousSettings.activation?.disabled_apps || [],
+        cooldownMs: previousSettings.activation?.cooldown_ms,
+      });
+    }
+    applyConfiguredWakeState();
+    applyDashboardMaterial(previousSettings);
+    return {
+      ok: false,
+      settings: safeClone(previousSettings),
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+ipcMain.handle('dashboard:settings:save', async (event: Electron.IpcMainInvokeEvent, payload: any = {}) => {
+  if (!isDashboardSender(event)) throw new Error('unauthorized_settings_writer');
+  return saveFabricSettingsPatch(payload?.settings);
+});
+
 ipcMain.on('dashboard:fabric-request', (event: Electron.IpcMainEvent, payload: any) => {
   if (!isDashboardSender(event)) return;
   const operation = typeof payload?.operation === 'string' ? payload.operation : '';
+  if (operation === 'settings.save') {
+    void saveFabricSettingsPatch(payload?.settings).then((result) => {
+      sendBridgeResult('fabric-dashboard', { ...result, fabricOperation: operation });
+    });
+    return;
+  }
   if (operation === 'calibration.start') {
     if (!wiggleDetector || !fabricSettingsStore) {
       sendBridgeResult('fabric-dashboard', {

@@ -105,6 +105,7 @@ function defaultSettings() {
       gesture_interaction_mode: 'exclusive_overlay',
     },
     interaction: {
+      voice_enabled: false,
       default_input_mode: 'text',
       voice_auto_submit: true,
       voice_start_strategy: 'auto',
@@ -115,7 +116,7 @@ function defaultSettings() {
       voice_script: 'unchanged',
       voice_mixed_spacing: 'preserve',
       voice_hallucination_guard: true,
-      voice_resident_enabled: true,
+      voice_resident_enabled: false,
       voice_engine: 'auto',
       voice_memory_limit_mb: 1024,
       voice_idle_unload_ms: 0, // 0 = keep the voice model resident
@@ -337,6 +338,11 @@ function validate(settings: ReturnType<typeof defaultSettings>): ReturnType<type
   const interaction = { ...defaults.interaction, ...(settings.interaction || {}) };
   if (!['voice', 'text'].includes(interaction.default_input_mode)) {
     throw new Error('interaction.default_input_mode must be voice or text');
+  }
+  interaction.voice_enabled = interaction.voice_enabled === true;
+  if (!interaction.voice_enabled) {
+    interaction.default_input_mode = 'text';
+    interaction.voice_resident_enabled = false;
   }
   interaction.voice_start_strategy = String(interaction.voice_start_strategy || '').trim().toLowerCase();
   if (!['auto', 'push_to_talk', 'hover'].includes(interaction.voice_start_strategy)) {

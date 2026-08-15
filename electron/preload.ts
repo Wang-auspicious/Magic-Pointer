@@ -148,7 +148,7 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
   hide: () => ipcRenderer.send('dashboard:hide'),
   setTheme: (theme: unknown) => ipcRenderer.send('dashboard:theme', { theme }),
   fabricRequest: (operation: unknown, payload: UnknownRecord = {}) => ipcRenderer.send('dashboard:fabric-request', { operation, ...payload }),
-  saveFabricSettings: (settings: unknown) => ipcRenderer.send('dashboard:fabric-request', { operation: 'settings.save', settings }),
+  saveFabricSettings: (settings: unknown) => ipcRenderer.invoke('dashboard:settings:save', { settings }),
   getFabricSettings: () => ipcRenderer.invoke('dashboard:settings:get'),
   requestState: () => ipcRenderer.send('dashboard:request-state'),
   setChecked: (payload: unknown) => ipcRenderer.send('dashboard:set-checked', payload),

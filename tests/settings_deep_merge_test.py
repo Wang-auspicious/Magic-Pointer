@@ -7,7 +7,22 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.fabric.settings import deep_merge_settings  # noqa: E402
+from app.fabric.settings import FabricSettings, deep_merge_settings  # noqa: E402
+
+
+def test_voice_master_switch_normalizes_dependent_fields() -> None:
+    settings = FabricSettings.from_dict({
+        **FabricSettings.defaults().to_dict(),
+        "interaction": {
+            **FabricSettings.defaults().to_dict()["interaction"],
+            "voice_enabled": False,
+            "default_input_mode": "voice",
+            "voice_resident_enabled": True,
+            "voice_engine": "auto",
+        },
+    })
+    assert settings.interaction.default_input_mode == "text"
+    assert settings.interaction.voice_resident_enabled is False
 
 
 def test_nested_dicts_merge_recursively() -> None:

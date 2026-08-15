@@ -5,16 +5,19 @@ const { defaultSettings, validate } = require('../electron/settings_store');
 
 const defaults = defaultSettings();
 
-assert.strictEqual(defaults.interaction.voice_resident_enabled, true);
+assert.strictEqual(defaults.interaction.voice_enabled, false);
+assert.strictEqual(defaults.interaction.voice_resident_enabled, false);
 assert.strictEqual(defaults.interaction.voice_memory_limit_mb, 1024);
 assert.strictEqual(defaults.interaction.voice_idle_unload_ms, 0);
 
 const configured = defaultSettings();
-configured.interaction.voice_resident_enabled = false;
+configured.interaction.voice_enabled = true;
+configured.interaction.voice_resident_enabled = true;
 configured.interaction.voice_memory_limit_mb = 2048;
 configured.interaction.voice_idle_unload_ms = 60000;
 const persisted = validate(configured).interaction;
-assert.strictEqual(persisted.voice_resident_enabled, false);
+assert.strictEqual(persisted.voice_enabled, true);
+assert.strictEqual(persisted.voice_resident_enabled, true);
 assert.strictEqual(persisted.voice_memory_limit_mb, 2048);
 assert.strictEqual(persisted.voice_idle_unload_ms, 60000);
 

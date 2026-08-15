@@ -127,6 +127,7 @@ class ActivationSettings:
 
 @dataclass
 class InteractionSettings:
+    voice_enabled: bool = False
     default_input_mode: str = "text"
     voice_auto_submit: bool = True
     voice_start_strategy: str = "auto"
@@ -137,7 +138,8 @@ class InteractionSettings:
     voice_script: str = "unchanged"
     voice_mixed_spacing: str = "preserve"
     voice_hallucination_guard: bool = True
-    voice_resident_enabled: bool = True
+    voice_resident_enabled: bool = False
+    voice_engine: str = "auto"
     voice_memory_limit_mb: int = 1024
     voice_idle_unload_ms: int = 0  # 0 = keep the voice model resident
     voice_glossaries: dict[str, list[str]] = field(default_factory=dict)
@@ -148,9 +150,16 @@ class InteractionSettings:
     def validate(self) -> None:
         if self.default_input_mode not in {"voice", "text"}:
             raise ValueError("default_input_mode must be voice or text")
+        self.voice_enabled = self.voice_enabled is True
+        if not self.voice_enabled:
+            self.default_input_mode = "text"
+            self.voice_resident_enabled = False
         self.voice_start_strategy = str(self.voice_start_strategy or "").strip().casefold()
         if self.voice_start_strategy not in {"auto", "push_to_talk", "hover"}:
             raise ValueError("voice_start_strategy is unsupported")
+        self.voice_engine = str(self.voice_engine or "auto").strip().casefold()
+        if self.voice_engine not in {"auto", "whisper", "sense_voice"}:
+            raise ValueError("voice_engine is unsupported")
         if not 600 <= int(self.voice_silence_ms) <= 5000:
             raise ValueError("voice_silence_ms must be between 600 and 5000")
         self.voice_language = str(self.voice_language or "").strip().casefold()

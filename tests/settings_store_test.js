@@ -13,6 +13,8 @@ assert.strictEqual(defaults.schema_version, 1);
 assert.strictEqual(defaults.activation.wiggle_enabled, true);
 assert.strictEqual(defaults.activation.fallback_hotkey_enabled, true);
 assert.strictEqual(defaults.interaction.default_input_mode, 'text');
+assert.strictEqual(defaults.interaction.voice_enabled, false);
+assert.strictEqual(defaults.interaction.voice_resident_enabled, false);
 assert.strictEqual(defaults.interaction.voice_auto_submit, true);
 assert.strictEqual(defaults.interaction.voice_language, 'auto');
 assert.strictEqual(defaults.interaction.voice_output_mode, 'verbatim');
@@ -27,6 +29,14 @@ assert.strictEqual(defaults.connections.browser_devtools_enabled, true);
 assert.deepStrictEqual(defaults.connections.browser_devtools_endpoints, ['http://127.0.0.1:9222']);
 assert.strictEqual(defaults.appearance.gesture_line_style, 'demo6_band');
 assert.strictEqual(defaults.appearance.gesture_line_width_dip, 40);
+
+const disabledVoice = defaultSettings();
+disabledVoice.interaction.voice_enabled = false;
+disabledVoice.interaction.default_input_mode = 'voice';
+disabledVoice.interaction.voice_resident_enabled = true;
+const normalizedDisabledVoice = validate(disabledVoice);
+assert.strictEqual(normalizedDisabledVoice.interaction.default_input_mode, 'text');
+assert.strictEqual(normalizedDisabledVoice.interaction.voice_resident_enabled, false);
 
 defaults.activation.sensitivity = 0.72;
 defaults.activation.disabled_apps.push('原神');
