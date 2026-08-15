@@ -28,9 +28,8 @@ assert.strictEqual(Composer.safeThumb('http://evil.example/a.png'), '');
 assert.strictEqual(Composer.safeThumb('data:text/html,<script>'), '');
 
 // --- 三个界面确实把该 link 的都 link 了 ---
-// 工作室（studio）2026-08-07 按用户要求回退到上一版手写形态：hero 毛玻璃条
-// + 工作态 Opus 右下条。它不再 link composer.js——共用条只服务随行窗。
-// 舞台不用输入条（它有自己的气泡），但卡片样式在 beam.css 里。
+// Studio 使用固定 Oreo 工作区输入面；Companion 继续复用 composer.js；
+// Stage 使用独立的固定 Stage Composer。
 for (const [page, needs] of Object.entries({
   'studio.html': ['cards.css', 'card_render.js', 'cards.js', 'live_cards.js'],
   'companion.html': ['composer.js', 'composer.css', 'beam.css', 'card_render.js'],
@@ -42,13 +41,12 @@ for (const [page, needs] of Object.entries({
   }
 }
 
-// --- 工作室是手写形态：hero 毛玻璃条 + 工作态 Opus 右下条 ---
+// --- 工作室只有一个固定输入面，不再有营销 Hero 的第二根条 ---
 {
   const html = read('studio.html');
-  assert.ok(/<form class="hero-composer"/.test(html), 'studio 首屏必须是手写 hero-composer（毛玻璃偏下那版）');
-  assert.ok(/<form class="composer"/.test(html), 'studio 工作态必须有手写 composer 条');
-  assert.ok(/Opus 5/.test(html), 'studio 问答条右下要显示模型选择（Opus）');
-  assert.ok(/model-select/.test(html), 'studio 问答条要有 model-select');
+  assert.ok(!/hero-composer/.test(html), 'Studio 不得保留第二根营销 Hero 输入条');
+  assert.ok(/<form class="workspace-composer"/.test(html), 'Studio 工作区必须有固定 Oreo composer');
+  assert.ok(/默认模型/.test(html), '输入面要说明当前走默认模型配置');
   assert.ok(!html.includes('composer.js'), 'studio 不该再 link 共用 composer.js');
 }
 // 随行窗没有手写条残留（它走共用 composer.js）

@@ -11,7 +11,7 @@ assert(source.includes('transition(state, event)'));
 assert(source.includes("dispatch({ type: 'WAKE'"));
 assert(source.includes('prefers-reduced-motion'));
 assert(source.includes('replaceChildren'));
-assert(source.includes('textMeasure.measureText'));
+assert(source.includes('globalThis.StageSurfacePolicy'));
 assert(source.includes('anchor.choosePointerAnchor'));
 assert(source.includes('anchor.chooseAdaptivePanelAnchor'),
   'every process/result panel must use the free-space-aware edge policy');
@@ -71,14 +71,14 @@ assert(css.includes('1.5px solid var(--stage-electric-blue)'));
 assert(css.includes('opacity 120ms'));
 assert(css.includes('2px solid var(--stage-electric-blue)'));
 assert(css.includes('2.4s'));
-assert(css.includes('--stage-capsule-size: 40px'));
-assert(css.includes('width: var(--capsule-width'));
-assert(source.includes('capsuleMaxWidthDip'));
+assert(css.includes('width: var(--stage-composer-width, 480px)'));
+assert(css.includes('height: var(--stage-composer-height, 132px)'));
+assert(source.includes("surfacePolicy.surfaceSize('composer'"));
 assert(css.includes('.fly-letter'));
 assert(css.includes('.processing-shimmer'));
 assert(css.includes('.voice-waveform'));
 const processStart = css.indexOf('.processing-shimmer {');
-const processEnd = css.indexOf(".stage-capsule[data-phase='processing']", processStart);
+const processEnd = css.indexOf(".stage-composer[data-phase='processing']", processStart);
 const processCss = css.slice(processStart, processEnd);
 assert(processCss.includes('var(--stage-process-ink)'),
   'unknown progress must use the neutral process ink token');
@@ -91,26 +91,14 @@ assert(!processCss.includes('filter: blur'),
 assert(css.includes(".stage-result .mcard[data-density='capsule'][data-state='running'] .mbar[data-mode='indeterminate']"));
 assert(css.includes('animation: stage-orbit-dot'),
   'unknown progress inside the panel must use one neutral orbit dot, not a fake progress strip');
-assert(css.includes(".stage-thread[data-side='left']"));
-assert(css.includes(".stage-thread[data-side='right']"));
-assert(css.includes('--stage-panel-reveal-ms: 360ms'));
-assert(css.includes('scaleX(.045)'),
-  'the process panel must open from a thin edge sliver, not pop in at full width');
-assert(css.includes(".stage-thread[data-phase='finished'] .thread-head"),
-  'completion content must settle after the shell instead of appearing in one frame');
-assert(css.includes(".stage-thread[data-phase='finished'] .thread-eyebrow"));
-assert(css.includes('--stage-finish-body-delay: 44ms'));
-assert(css.includes('--stage-finish-eyebrow-delay: 190ms'));
-assert(
-  css.indexOf('--stage-finish-body-delay: 44ms') < css.indexOf('--stage-finish-eyebrow-delay: 190ms'),
-  'the body must resolve before TASK FINISHED appears',
-);
-assert(css.includes('filter: blur(2.5px)'),
-  'completion body must sharpen into place instead of appearing fully resolved');
-assert(css.includes(".stage-thread[data-width-tier='context']"));
-assert(css.includes(".stage-thread[data-width-tier='wide']"));
-assert(source.includes('threadPanel.dataset.widthTier = completionWidthTier('),
-  'thread width must follow the result content instead of staying at one hard-coded size');
+assert(css.includes('width: var(--stage-work-panel-width, 560px)'));
+assert(css.includes('height: var(--stage-work-panel-height, 520px)'));
+assert(css.includes('.work-panel-scroller'));
+assert(!css.includes('scaleX(.045)'),
+  'the process panel must appear at its final geometry');
+assert(!css.includes("[data-width-tier='"));
+assert(!source.includes('completionWidthTier('),
+  'answer content must never choose the panel width');
 assert(source.includes('threadPanel.dataset.turnCount = String(turns.length)'));
 assert(css.includes(".stage-thread[data-phase='finished'][data-turn-count='1'] .thread-title"),
   'a one-turn completion must not repeat the task title under TASK FINISHED');
@@ -133,8 +121,8 @@ assert(css.includes('@media (prefers-reduced-motion: reduce)'));
 const reducedMotionCss = css.slice(css.lastIndexOf('@media (prefers-reduced-motion: reduce)'));
 assert(reducedMotionCss.includes('.processing-shimmer::after'),
   'the activity dot must stop pulsing when reduced motion is requested');
-assert(reducedMotionCss.includes(".stage-thread[data-phase='finished'] .thread-head"),
-  'the staggered completion children must become immediate under reduced motion');
+assert(reducedMotionCss.includes('.stage-composer.is-entering'),
+  'the composer fade must become immediate under reduced motion');
 assert(!/gsap/i.test(css));
 // Capsule placement contract: anchor once next to the selection, never
 // drift afterwards, and let the user drag the bubble to a new spot.
@@ -174,8 +162,8 @@ assert(!/\.innerHTML\s*=/.test(cardRender),
   'the shared renderer builds nodes; escaping must stay structural');
 assert(html.includes('card_render.js') && html.includes('../cards.js'),
   'the capsule has to actually load the shared card contract and renderer');
-assert(css.includes(".stage-capsule[data-mode='text'] .voice-waveform"));
-assert(css.includes('.stage-capsule.is-exiting'));
+assert(css.includes(".stage-composer[data-mode='text'] .voice-waveform"));
+assert(css.includes('.stage-composer.is-exiting'));
 assert(css.includes('@keyframes stage-result-expand'));
 assert.match(css, /\.stage-root \[hidden\]\s*\{\s*display:\s*none\s*!important;/,
   'hidden stage children must never leak through component display rules');

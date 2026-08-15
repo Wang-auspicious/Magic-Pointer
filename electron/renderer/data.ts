@@ -394,6 +394,8 @@ declare global {
   /* ---- stage 的 classic-script 全局（契约在 electron/*.ts，渲染层只取用） ---- */
   var StageState: any;
   var StageAnchor: any;
+  var StageSurfacePolicy: any;
+  var StudioShell: any;
   var MagicPointerVoiceTrigger: any;
   var MagicPointerStageHitPolicy: any;
   var AnswerShapePolicy: any;

@@ -220,7 +220,8 @@ assert.match(main, /capsuleDelayMs:\s*0/,
 assert.match(beginSelection, /groundingReady:\s*true/,
   'the completed snapshot must explicitly unlock voice input');
 const stageCss = fs.readFileSync('electron/renderer/stage.css', 'utf8');
-assert.match(stageCss, /--stage-capsule-delay/);
+assert.match(stageCss, /--stage-composer-width,\s*480px/,
+  'gesture activation must reveal the final fixed composer, not a delayed ball expansion');
 assert.match(stageCss, /\.stage-root\[hidden\]\s*\{\s*display:\s*none/,
   'cold-start invisibility belongs to the DOM/CSS initial state, not the stage payload gate');
 assert.match(visualVerifier, /GetForegroundWindow/,

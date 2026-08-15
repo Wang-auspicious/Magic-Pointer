@@ -108,11 +108,11 @@ assert.match(
   /calc\(var\(--stage-sweep-duration\) - var\(--stage-sweep-fade\)\)/,
   'fade must finish inside the sweep duration instead of leaving a ghost strip',
 );
-const finalCapsuleCss = stageCss.slice(stageCss.lastIndexOf('.stage-capsule {'));
+const finalCapsuleCss = stageCss.slice(stageCss.indexOf('.stage-composer {'));
 assert.match(
   finalCapsuleCss,
-  /box-shadow:\s*none/,
-  'the product capsule must not leak a rectangular shadow backing',
+  /box-shadow:\s*0 18px 46px -28px/,
+  'the fixed paper composer must use the approved shallow Oreo depth',
 );
 assert.match(
   stageCss,

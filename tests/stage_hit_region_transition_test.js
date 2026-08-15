@@ -8,18 +8,15 @@ const source = fs.readFileSync('electron/renderer/stage.ts', 'utf8');
 assert(source.includes('function syncHitRegions()'),
   'native shape updates must be isolated from dictation/state side effects');
 assert(source.includes('function scheduleHitRegionRefresh()'),
-  'animated surfaces must schedule native shape refreshes');
-assert(source.includes('function capsuleVisualRegion('),
-  'capsule native shape must reserve the final animated width before first paint');
-assert.match(
-  source,
-  /getPropertyValue\('--capsule-width'\)/,
-  'capsule region must read the committed final CSS width instead of the current animated width',
-);
+  'surface visibility changes must schedule native shape refreshes');
+assert(!source.includes('function capsuleVisualRegion('),
+  'a fixed composer must not maintain a second animated-width hit region');
+assert.doesNotMatch(source, /getPropertyValue\('--capsule-width'\)/,
+  'native hit geometry must use the already-final DOM rectangle');
 assert.match(
   source,
   /capsule\.addEventListener\('transitionend',\s*syncHitRegions\)/,
-  'the final expanded capsule bounds must be sent after its width transition',
+  'the final opacity transition still refreshes native hit geometry',
 );
 assert.match(
   source,

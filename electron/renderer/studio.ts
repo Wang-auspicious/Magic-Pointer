@@ -1,13 +1,4 @@
-/* ============================================================
-   工作室 Studio
-   ------------------------------------------------------------
-   头像/球：这里是本地占位实现，接口对齐 @oreo-design/avatar。
-   装了包之后把 makeOrb 换成：
-     import { createAvatar } from "@oreo-design/avatar";
-     const makeOrb = (seed, size) =>
-       createAvatar({ shape: "bloom", palette: "rose-milk",
-                      variantId: seed, drift: 8, size }).svg;
-   ============================================================ */
+/* Magic Pointer Studio: real data renderers mounted inside the shared Oreo shell. */
 
 /* ---- 确定性哈希 ---- */
 function hash(str: string) {
@@ -28,43 +19,9 @@ function rng(seed: unknown) {
   };
 }
 
-function makeOrb(seed: unknown, size = 64) {
-  const r = rng(seed);
-  // 色相对：黄绿 ↔ 青蓝 那一段最耐看；由种子在这个区间里取一对，
-  // 中间再插一个过渡色，所以三段之间没有硬边。
-  const h1 = 68 + Math.floor(r() * 32);            // 68–100  黄绿
-  const h3 = 178 + Math.floor(r() * 38);           // 178–216 青蓝
-  const h2 = Math.round((h1 + h3) / 2);            // 中间色
-  const A = `hsl(${h1} 62% 68%)`;
-  const M = `hsl(${h2} 56% 66%)`;
-  const B = `hsl(${h3} 60% 66%)`;
-  const id = 'o' + hash(String(seed)).toString(36);
-  const dur = (7 + r() * 5).toFixed(1);            // 7–12s，一屏里不齐步走
-
-  // 渐变轴：从右下角指向左上角，色带因此平行于反对角线。
-  // 跨度取两倍并让色序首尾同色，平移整整一个周期就能无缝循环。
-  return `<svg viewBox="0 0 64 64" width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
-    <defs>
-      <linearGradient id="${id}g" x1="1.5" y1="1.5" x2="-0.5" y2="-0.5">
-        <stop offset="0"    stop-color="${A}"/>
-        <stop offset="0.17" stop-color="${M}"/>
-        <stop offset="0.33" stop-color="${B}"/>
-        <stop offset="0.50" stop-color="${M}"/>
-        <stop offset="0.67" stop-color="${A}"/>
-        <stop offset="0.83" stop-color="${M}"/>
-        <stop offset="1"    stop-color="${B}"/>
-        <animateTransform attributeName="gradientTransform" type="translate"
-          values="0 0; -0.667 -0.667" dur="${dur}s" repeatCount="indefinite"/>
-      </linearGradient>
-      <radialGradient id="${id}s" cx="50%" cy="50%" r="52%">
-        <stop offset="0"   stop-color="#fff" stop-opacity=".34"/>
-        <stop offset="0.55" stop-color="#fff" stop-opacity=".10"/>
-        <stop offset="1"   stop-color="#fff" stop-opacity="0"/>
-      </radialGradient>
-    </defs>
-    <circle cx="32" cy="32" r="32" fill="url(#${id}g)"/>
-    <circle cx="32" cy="32" r="32" fill="url(#${id}s)"/>
-  </svg>`;
+function objectMark(seed: unknown) {
+  const label = String(seed || 'MP').replace(/[^\p{L}\p{N}]/gu, '').slice(0, 2).toUpperCase() || 'MP';
+  return `<span class="object-mark">${esc(label)}</span>`;
 }
 
 /* ---- 缩略图占位：暖调抽象，不是灰块 ---- */
@@ -89,17 +46,6 @@ function makeShot(seed: unknown) {
 
 function icon(id: string, cls = '') {
   return `<svg class="${cls}"><use href="#${id}"/></svg>`;
-}
-
-function renderOrbs() {
-  document.querySelectorAll('.orb[data-seed]').forEach((el) => {
-    const node = el as HTMLElement;
-    if (!node.childElementCount) node.innerHTML = makeOrb(node.dataset.seed, 64);
-  });
-  ['hero-avatar', 'side-avatar'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el && !el.childElementCount) el.innerHTML = makeOrb('zjz65', 64);
-  });
 }
 
 const KIND_TAG: Record<string, string> = { 灵感:'tag-indigo', 交接:'tag-teal', 凭证:'tag-amber', 素材:'tag-teal', 片段:'tag-amber' };
@@ -267,7 +213,7 @@ async function renderTimeline(force = false) {
     const items = (d.items || []) as TimelineConversation[];
     return `<div class="tl-day">${dayLabel(d.at || items[0]?.updatedAt)}</div>` + items.map((c, i) =>
       `<button class="tl-row enter" data-open="${c.id}" style="animation-delay:${Math.min(i, 6) * 40}ms">
-        <span class="tl-rail"><span class="orb">${makeOrb(c.objectKey || c.id, 64)}</span><span class="line"></span></span>
+        <span class="tl-rail">${objectMark(c.objectKey || c.id)}<span class="line"></span></span>
         <span class="tl-body">
           <span class="q">${esc(c.title)}</span>
           <span class="src">${icon('ic-window')}${esc(c.subtitle || '')}</span>
@@ -301,7 +247,7 @@ async function renderSidebar() {
   const active = host.querySelector('.is-on')?.getAttribute('data-open');
   host.innerHTML = list.slice(0, 12).map((c) => `
     <button class="side-item${c.id === active ? ' is-on' : ''}" data-open="${esc(c.id)}">
-      <span class="orb">${makeOrb(c.objectKey || c.id, 64)}</span>
+      ${objectMark(c.objectKey || c.id)}
       <span class="side-text"><b>${esc(c.title)}</b><small>${esc(c.subtitle || '')}</small></span>
     </button>`).join('');
 }
@@ -419,7 +365,7 @@ async function renderMemory(force = false) {
     return;
   }
   host.innerHTML = list.map((m, i) => `<button class="mem-row enter" style="animation-delay:${Math.min(i,6)*40}ms">
-    <span class="orb">${makeOrb(m.key, 64)}</span>
+    ${objectMark(m.key)}
     <span class="mem-body">
       <b>${esc(m.object?.windowTitle || m.object?.app || m.key)}</b>
       <small>${esc(m.subtitle || '')}</small>
@@ -469,22 +415,25 @@ function cssUrl(v: unknown) {
    交互
    ============================================================ */
 
-const hero = document.getElementById('hero') as HTMLElement;
 const shell = document.getElementById('shell') as HTMLElement;
 const aux = document.getElementById('aux') as HTMLElement;
-const VIEWS: Record<string, string> = { chat: 'view-chat', stash: 'view-stash', timeline: 'view-timeline',
-                memory: 'view-memory', artifacts: 'view-artifacts', settings: 'view-settings' };
+const studioShell = globalThis.StudioShell;
+const VIEWS: Record<string, string> = Object.fromEntries(
+  studioShell.STUDIO_VIEWS.map((view: { id: string }) => [view.id, `view-${view.id}`]),
+);
 
 function show(view: string) {
-  if (view === 'hero') {
-    hero.hidden = false;
-    shell.hidden = true;
-    return;
-  }
-  hero.hidden = true;
-  shell.hidden = false;
+  const current = studioShell.shellState(view);
+  view = current.activeView;
+  shell.dataset.view = view;
+  document.getElementById('workspace-eyebrow')!.textContent = current.eyebrow;
+  document.getElementById('workspace-title')!.textContent = current.title;
+  document.getElementById('workspace-description')!.textContent = current.description;
   Object.entries(VIEWS).forEach(([k, id]) => {
     document.getElementById(id)!.hidden = (k !== view);
+  });
+  document.querySelectorAll<HTMLElement>('[data-goto]').forEach((item) => {
+    item.classList.toggle('is-on', item.dataset.goto === view);
   });
   if (view === 'stash') { renderStash(true); bindCanvas(); }
   if (view === 'timeline') renderTimeline();
@@ -554,23 +503,9 @@ document.addEventListener('click', e => {
   if (notice) notice.closest('.notice')!.remove();
 });
 
-/* 输入框随内容长高 */
-document.addEventListener('input', e => {
-  const ta = (e.target as Element | null)?.closest('textarea');
-  if (!ta) return;
-  ta.style.height = 'auto';
-  ta.style.height = Math.min(ta.scrollHeight, 200) + 'px';
-});
-
-/* Hero 提交 → 进工作态 */
-document.getElementById('hero-composer')?.addEventListener('submit', e => {
-  e.preventDefault();
-  show('chat');
-});
-
 /* 主窗输入条还没有发送通道，但也不能放任表单默认提交——没有 action 的 form
    提交会整页重载，把当前对话和正在打的字一起冲掉。 */
-document.querySelectorAll('form.composer').forEach(form => {
+document.querySelectorAll('form.workspace-composer').forEach(form => {
   form.addEventListener('submit', e => {
     e.preventDefault();
     const ta = form.querySelector('textarea');
@@ -597,7 +532,6 @@ async function boot() {
   const list = await Data.conversations();
   if (list.length) await openConversation(list[0].id);
   else startNewChat();
-  renderOrbs();
 }
 
 /* 新对话：清空当前这一屏，把焦点交回输入框。
@@ -620,7 +554,7 @@ function startNewChat() {
       : `<div class="chat-blank"><p>还没有对话。</p>
            <p class="sub">在 Electron 里运行时，这里显示的是真实记录。</p></div>`;
   }
-  document.querySelector<HTMLTextAreaElement>('.composer textarea')?.focus();
+  document.querySelector<HTMLTextAreaElement>('.workspace-composer textarea')?.focus();
 }
 
 document.getElementById('new-chat')?.addEventListener('click', startNewChat);

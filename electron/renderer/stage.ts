@@ -9,9 +9,10 @@
 (() => {
   const machine = globalThis.StageState;
   const anchor = globalThis.StageAnchor;
+  const surfacePolicy = globalThis.StageSurfacePolicy;
   const voiceTrigger = globalThis.MagicPointerVoiceTrigger;
   const hitPolicy = globalThis.MagicPointerStageHitPolicy;
-  if (!machine || !anchor || !voiceTrigger || !hitPolicy) return;
+  if (!machine || !anchor || !surfacePolicy || !voiceTrigger || !hitPolicy) return;
   const { initialState, transition } = machine;
   const api = window.magicPointerStage;
 
@@ -42,6 +43,7 @@
   const transcriptBox = document.getElementById('transcript') as HTMLElement;
   const shimmer = document.getElementById('processing-shimmer') as HTMLElement;
   const resultCard = document.getElementById('stage-result') as HTMLElement;
+  const workPanelScroller = document.querySelector('.work-panel-scroller') as HTMLElement;
   const threadPanel = document.getElementById('stage-thread') as HTMLElement;
   const threadTitle = document.getElementById('thread-title') as HTMLElement;
   const threadEyebrow = document.getElementById('thread-eyebrow') as HTMLElement;
@@ -135,7 +137,10 @@
     capsulePlacement: { x: number; y: number; quadrant?: string } | null;
     capsulePlaced: boolean;
     capsuleDragged: boolean;
-    panelPlacement: { side?: string } | null;
+    panelPlacement: {
+      x?: number; y?: number; width?: number; height?: number; side?: string; mode?: string;
+      sessionToken?: string | null; role?: string; viewportWidth?: number; viewportHeight?: number;
+    } | null;
     resultPlacement: { x: number; y: number } | null;
     resultDragged: boolean;
     consentDismissedForTurn: unknown;
@@ -183,8 +188,6 @@
     accentRgb: '',
     visualTuning: { ...DEFAULT_VISUAL_TUNING },
   };
-  const textCanvas = document.createElement('canvas');
-  const textMeasure = textCanvas.getContext('2d');
   let dictationActive = false;
   let mouseCaptureOn = false;
   let keyboardFocusRequested = false;
@@ -703,22 +706,6 @@
       || hasEnabledButton(errorCard);
   }
 
-  function capsuleVisualRegion(element: HTMLElement, rect: DOMRect) {
-    if (element !== capsule) return rect;
-    const desiredWidth = Number.parseFloat(
-      window.getComputedStyle(capsule).getPropertyValue('--capsule-width'),
-    );
-    if (!Number.isFinite(desiredWidth) || desiredWidth <= rect.width) return rect;
-    return {
-      left: rect.left,
-      top: rect.top,
-      right: Math.min(window.innerWidth, rect.left + desiredWidth),
-      bottom: rect.bottom,
-      width: Math.min(desiredWidth, window.innerWidth - rect.left),
-      height: rect.height,
-    };
-  }
-
   function visibleStageRegions() {
     // consentBox 是「要送出去」那一路的点头按钮：它悬在胶囊下方，若不在
     // shape 区域内，点击会穿透到下层应用，整个同意流程点不响。
@@ -727,7 +714,7 @@
       .map((element) => ({ element, rect: element.getBoundingClientRect() }))
       .filter(({ rect }) => rect.width > 0 && rect.height > 0)
       .map(({ element, rect: measuredRect }) => {
-        const rect = capsuleVisualRegion(element, measuredRect);
+        const rect = measuredRect;
         const isTargetFeedback = element === targetingOutline || element === frozenGlow;
         const padding = isTargetFeedback && session.selectionVisual === 'sweep_band' ? 28 : 8;
         const x = Math.max(0, Math.floor(rect.left - padding));
@@ -880,19 +867,7 @@
     element.hidden = false;
     element.style.left = `${rect.x}px`;
     element.style.top = `${rect.y}px`;
-    if (element === capsule) {
-      const finalWidth = Number.parseFloat(window.getComputedStyle(capsule).getPropertyValue('--capsule-width')) || rect.width;
-      // Cold start throttle: ensure double windows ready before pen fall.
-      // Smooth cross-frame handover for shape switch, no half-ball or ghost.
-      element.style.width = `${Math.min(finalWidth, window.innerWidth - rect.left)}px`;
-      element.style.height = `${rect.height}px`;
-      // Reserve for smooth transition
-      if (element === capsule) {
-        capsule.style.width = `${Math.min(finalWidth, window.innerWidth - rect.left)}px`;
-      }
-    } else {
-      element.style.width = `${rect.width}px`;
-    }
+    element.style.width = `${rect.width}px`;
     element.style.height = `${rect.height}px`;
   }
 
@@ -972,27 +947,15 @@
   }
 
   function syncCapsuleWidth() {
-    const mode = state.inputMode === 'text' ? 'text' : 'voice';
-    const base = mode === 'text'
-      ? session.visualTuning.capsuleTextWidthDip
-      : session.visualTuning.capsuleVoiceWidthDip;
     const content = state.transcript || capsuleInput.value || '';
-    // 两种模式都要如实报空。上一版只在语音模式下写 'true'，于是文字模式的
-    // 输入条永远是「非空」——那个只在有内容时才该出现的提交键，空着也挂在那儿。
     capsule.dataset.empty = content ? 'false' : 'true';
-    const style = window.getComputedStyle(transcriptBox);
-    if (textMeasure) textMeasure.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
-    const measured = textMeasure ? textMeasure.measureText(content).width : content.length * 8;
-    // 58 → 92：右端多了一个 30px 的实心提交圆和它的间距。宁可宽一点也不能
-    // 窄——窄了就是把用户正在打的字裁掉。
-    const grown = content ? measured + 92 : base;
-    const width = Math.min(session.visualTuning.capsuleMaxWidthDip, Math.max(base, grown));
-    // Pre-reserve final capsule width for smooth shape switching across one frame.
-    // Prevents half-ball cut, ghost residual, or split during transition.
-    // High DPI auto scaling applied via CSS var.
-    capsule.style.setProperty('--capsule-width', `${width}px`);
-    capsule.style.setProperty('--capsule-base-width', `${base}px`);
-    return width;
+    const size = surfacePolicy.surfaceSize('composer', {
+      width: window.innerWidth,
+      height: window.innerHeight,
+    });
+    capsule.style.setProperty('--stage-composer-width', `${size.width}px`);
+    capsule.style.setProperty('--stage-composer-height', `${size.height}px`);
+    return size.width;
   }
 
   function anchorNearPointer(element: HTMLElement, fallbackWidth = 200, fallbackHeight = 44) {
@@ -1019,49 +982,42 @@
       threadPanel.style.top = `${session.resultPlacement.y}px`;
       return;
     }
-    const rect = threadPanel.getBoundingClientRect();
-    const width = rect.width || Math.min(380, window.innerWidth - 16);
-    const height = rect.height || 96;
-    if (typeof anchor.chooseAdaptivePanelAnchor === 'function') {
-      const focus = isUsableTargetRect(state.target)
-        ? state.target
-        : (session.pointer ? { ...session.pointer, width: 0, height: 0 } : null);
-      const placement = anchor.chooseAdaptivePanelAnchor({
-        source: isUsableTargetRect(session.targetWindowRect) ? session.targetWindowRect : null,
-        focus,
-        surface: { width, height },
-        viewport: { width: window.innerWidth, height: window.innerHeight },
-        preferredSide: session.panelPlacement?.side,
-      });
-      session.panelPlacement = placement;
-      threadPanel.style.left = `${placement.x}px`;
-      threadPanel.style.top = `${placement.y}px`;
-      threadPanel.dataset.side = placement.side;
-      threadPanel.dataset.quadrant = placement.side;
-      threadPanel.dataset.placementMode = placement.mode;
-      return;
-    }
-    const capsuleRect = capsule.hidden ? null : capsule.getBoundingClientRect();
-    const fallback = session.capsulePlacement || session.pointer || { x: 8, y: 8 };
-    const gap = 10;
-    const anchorLeft = capsuleRect && capsuleRect.width ? capsuleRect.left : fallback.x;
-    const anchorTop = capsuleRect && capsuleRect.height ? capsuleRect.top : fallback.y;
-    const anchorBottom = capsuleRect && capsuleRect.height ? capsuleRect.bottom : fallback.y;
-    const x = Math.max(8, Math.min(anchorLeft, window.innerWidth - width - 8));
-    let y = anchorBottom + gap;
-    let side = 'below';
-    if (y + height > window.innerHeight - 8) {
-      const above = anchorTop - gap - height;
-      if (above >= 8) {
-        y = above;
-        side = 'above';
-      }
-    }
-    y = Math.max(8, Math.min(y, window.innerHeight - height - 8));
-    threadPanel.style.left = `${x}px`;
-    threadPanel.style.top = `${y}px`;
-    threadPanel.dataset.side = side;
-    threadPanel.dataset.quadrant = session.capsulePlacement?.quadrant || 'bottom-right';
+    const viewport = { width: window.innerWidth, height: window.innerHeight };
+    const focus = isUsableTargetRect(state.target)
+      ? state.target
+      : (session.pointer ? { ...session.pointer, width: 0, height: 0 } : null);
+    const placement = surfacePolicy.stableSurfacePlacement({
+      previous: session.panelPlacement,
+      sessionToken: session.token,
+      role: 'work-panel',
+      viewport,
+      place: (size: { width: number; height: number }) => {
+        if (typeof anchor.chooseAdaptivePanelAnchor === 'function') {
+          return anchor.chooseAdaptivePanelAnchor({
+            source: isUsableTargetRect(session.targetWindowRect) ? session.targetWindowRect : null,
+            focus,
+            surface: size,
+            viewport,
+            preferredSide: session.panelPlacement?.side,
+          });
+        }
+        const point = session.capsulePlacement || session.pointer || { x: 8, y: 8 };
+        return {
+          x: Math.max(8, Math.min(point.x, window.innerWidth - size.width - 8)),
+          y: Math.max(8, Math.min(point.y, window.innerHeight - size.height - 8)),
+          side: 'right',
+          mode: 'screen-edge',
+        };
+      },
+    });
+    session.panelPlacement = placement;
+    threadPanel.style.setProperty('--stage-work-panel-width', `${placement.width}px`);
+    threadPanel.style.setProperty('--stage-work-panel-height', `${placement.height}px`);
+    threadPanel.style.left = `${placement.x}px`;
+    threadPanel.style.top = `${placement.y}px`;
+    threadPanel.dataset.side = placement.side;
+    threadPanel.dataset.quadrant = placement.side;
+    threadPanel.dataset.placementMode = placement.mode;
   }
 
   function anchorCapsuleToTarget(width: number) {
@@ -1069,6 +1025,10 @@
     // selection and then stay put (the user can drag it). Re-anchoring when
     // grounding later resolves made the bubble jump across the screen.
     if (session.capsulePlaced || session.capsuleDragged) return;
+    const height = surfacePolicy.surfaceSize('composer', {
+      width: window.innerWidth,
+      height: window.innerHeight,
+    }).height;
     if (typeof anchor.chooseStableCapsuleAnchor === 'function') {
       const point = session.pointer || (state.target
         ? { x: state.target.x + state.target.width / 2, y: state.target.y + state.target.height / 2 }
@@ -1084,7 +1044,7 @@
         mode: targetMode ? 'target' : 'pointer',
         pointer: point,
         target: targetMode ? state.target : null,
-        surface: { width, height: session.visualTuning.capsuleVoiceWidthDip },
+        surface: { width, height },
         viewport: { width: window.innerWidth, height: window.innerHeight },
         options: targetMode
           ? { gap: session.visualTuning.capsuleInlineGapDip }
@@ -1106,7 +1066,7 @@
     ) {
       const placement = anchor.chooseTargetInlineAnchor(
         state.target,
-        { width, height: session.visualTuning.capsuleVoiceWidthDip },
+        { width, height },
         { width: window.innerWidth, height: window.innerHeight },
         { gap: session.visualTuning.capsuleInlineGapDip },
       );
@@ -1116,20 +1076,13 @@
       session.capsulePlaced = true;
       return;
     }
-    anchorNearPointer(capsule, width, session.visualTuning.capsuleVoiceWidthDip);
+    anchorNearPointer(capsule, width, height);
     session.capsulePlaced = true;
   }
 
   function applyVisualTuning() {
     stageRoot.style.setProperty('--stage-sweep-duration', `${session.visualTuning.sweepDurationMs}ms`);
     stageRoot.style.setProperty('--stage-sweep-fade', `${session.visualTuning.sweepFadeMs}ms`);
-    stageRoot.style.setProperty('--stage-capsule-spawn', `${session.visualTuning.capsuleSpawnMs}ms`);
-    stageRoot.style.setProperty('--stage-capsule-expand', `${session.visualTuning.capsuleExpandMs}ms`);
-    stageRoot.style.setProperty(
-      '--stage-capsule-delay',
-      `${session.capsuleDelayMs === null ? session.visualTuning.sweepDurationMs : session.capsuleDelayMs}ms`,
-    );
-    stageRoot.style.setProperty('--stage-capsule-size', `${session.visualTuning.capsuleVoiceWidthDip}px`);
     // One assignment retints every accent in the stage, because stage.css
     // composes all of them from these channels rather than repeating literals.
     if (session.accentRgb) {
@@ -1306,19 +1259,6 @@
       .trim();
   }
 
-  function completionWidthTier({ pending, failed, result, textLength, needsConsent }: {
-    pending: boolean; failed: boolean; result: any; textLength: number; needsConsent: boolean;
-  }) {
-    if (pending) return 'context';
-    const kind = String(result?.kind || '').toLowerCase();
-    if (needsConsent || ['proposal', 'table', 'calendar', 'diff', 'image', 'agent-prompt-draft'].includes(kind)) {
-      return 'wide';
-    }
-    if (textLength > 420) return 'wide';
-    if (failed || textLength <= 180) return 'compact';
-    return 'normal';
-  }
-
   function copyResultText(container: HTMLElement, button: HTMLButtonElement) {
     const text = resultPlainText(container);
     const done = () => {
@@ -1473,7 +1413,7 @@
   passageExpand.addEventListener('mousedown', (event) => event.preventDefault());
   passageExpand.addEventListener('click', () => { void expandPickedPassage(); });
   document.addEventListener('selectionchange', syncPassageExpand);
-  resultCard.addEventListener('scroll', () => {
+  workPanelScroller.addEventListener('scroll', () => {
     if (!passageExpand.hidden) syncPassageExpand();
   });
 
@@ -1782,13 +1722,6 @@
       });
     }
     threadPanel.dataset.shape = answerShape.shape;
-    threadPanel.dataset.widthTier = completionWidthTier({
-      pending,
-      failed,
-      result: newest?.result,
-      textLength: resultPlainText(resultCard).length,
-      needsConsent: answerShape.needsConsent,
-    });
     syncConsent();
     // 卡重画过，之前记住的那段选区已经指向摘掉的节点了。
     hidePassageExpand();
@@ -2094,7 +2027,7 @@
   });
   capsule.addEventListener('transitionend', syncHitRegions);
   capsule.addEventListener('animationend', (event) => {
-    if (event.animationName === 'stage-capsule-expand') capsule.classList.remove('is-entering');
+    if (event.animationName === 'stage-surface-appear') capsule.classList.remove('is-entering');
     syncHitRegions();
   });
   frozenGlow.addEventListener('animationend', (event) => {

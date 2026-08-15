@@ -41,13 +41,6 @@
   --stage-error-tint: rgba(255, 92, 92, 0.16);
   --stage-sweep-duration: 292ms;
   --stage-sweep-fade: 96ms;
-  --stage-capsule-spawn: 80ms;
-  --stage-capsule-expand: 125ms;
-  --stage-capsule-delay: var(--stage-sweep-duration);
-  --stage-capsule-size: 40px;
-  --stage-panel-reveal-ms: 360ms;
-  --stage-finish-body-delay: 44ms;
-  --stage-finish-eyebrow-delay: 190ms;
 }
 
 * {
@@ -257,33 +250,63 @@ body {
   display: none;
 }
 
-/* --- Command capsule: dimensions and motion are persisted Dashboard values. */
-.stage-capsule {
+/* --- Fixed composer --------------------------------------------------------
+ * The entry surface is a paper-like text composer. Its shell never changes
+ * shape when dictation starts, text grows, or a request begins processing. */
+.stage-composer {
   position: absolute;
   display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 44px;
-  padding: 8px 14px;
-  width: 72px;
-  max-width: 560px;
-  border-radius: 22px;
-  background: var(--stage-graphite);
-  border: 1px solid rgba(233, 238, 244, 0.08);
+  flex-direction: column;
+  width: var(--stage-composer-width, 480px);
+  height: var(--stage-composer-height, 132px);
+  min-width: 0;
+  min-height: 0;
+  padding: 14px 16px 12px;
+  border-radius: 18px;
+  background: #fff;
+  border: 1px solid rgba(19, 22, 27, 0.10);
+  box-shadow: 0 18px 46px -28px rgba(19, 22, 27, 0.48), 0 2px 8px rgba(19, 22, 27, 0.08);
+  color: var(--stage-neutral-ink);
   overflow: hidden;
   pointer-events: auto;
-  transition: width 200ms cubic-bezier(0.22, 1, 0.36, 1);
+  box-sizing: border-box;
+  transition: opacity 150ms ease;
 }
 
-.stage-capsule[data-mode='voice'] {
-  width: var(--capsule-width, 40px);
+.composer-context,
+.composer-tools,
+.composer-input-row {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  min-width: 0;
 }
 
-.stage-capsule[data-mode='text'] {
-  width: var(--capsule-width, 144px);
+.composer-context {
+  min-height: 22px;
+  gap: 8px;
+  color: #71747b;
+  font: 650 10px/1.2 var(--mp-font-mono);
+  letter-spacing: .12em;
 }
 
-.stage-capsule[data-mode='voice'] .capsule-input {
+.composer-input-row {
+  flex: 1 1 auto;
+  gap: 10px;
+}
+
+.composer-tools {
+  justify-content: space-between;
+  min-height: 20px;
+  color: #8a8d93;
+  font: 600 9.5px/1 var(--mp-font-mono);
+  letter-spacing: .09em;
+}
+
+.stage-composer[data-mode='voice'] .capsule-input,
+.stage-composer[data-mode='text'] .capsule-transcript,
+.stage-composer[data-mode='text'] .voice-waveform {
   display: none;
 }
 
@@ -404,8 +427,8 @@ body {
   50% { opacity: .82; transform: scale(1); }
 }
 
-.stage-capsule[data-phase='processing'] .voice-waveform,
-.stage-capsule[data-phase='processing'] .capsule-input {
+.stage-composer[data-phase='processing'] .voice-waveform,
+.stage-composer[data-phase='processing'] .capsule-input {
   opacity: 0.35;
 }
 
@@ -431,9 +454,13 @@ body {
   position: absolute;
   display: flex;
   flex-direction: column;
-  width: min(var(--stage-thread-width, 560px), calc(100vw - 16px));
-  min-width: min(360px, calc(100vw - 16px));
+  width: var(--stage-work-panel-width, 560px);
+  height: var(--stage-work-panel-height, 520px);
+  min-width: 0;
+  min-height: 0;
   max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  box-sizing: border-box;
   border-radius: 20px;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, .92) 0, rgba(249, 249, 247, .985) 88px),
@@ -447,29 +474,7 @@ body {
   color: var(--stage-neutral-ink);
   pointer-events: auto;
   overflow: hidden;
-  /* Grows away from the capsule, so the scale-in reads as unfolding out of it. */
-  transform-origin: top left;
-  animation: stage-thread-in var(--stage-panel-reveal-ms) cubic-bezier(0.16, 1, 0.3, 1) both;
-  will-change: transform, opacity;
-}
-
-.stage-thread[data-side='above'] {
-  transform-origin: bottom left;
-}
-
-.stage-thread[data-width-tier='context'] { --stage-thread-width: 406px; }
-.stage-thread[data-width-tier='compact'] { --stage-thread-width: 420px; }
-.stage-thread[data-width-tier='normal'] { --stage-thread-width: 560px; }
-.stage-thread[data-width-tier='wide'] { --stage-thread-width: 840px; }
-
-.stage-thread[data-side='right'] {
-  transform-origin: left center;
-  animation-name: stage-thread-in-right;
-}
-
-.stage-thread[data-side='left'] {
-  transform-origin: right center;
-  animation-name: stage-thread-in-left;
+  animation: stage-surface-appear 150ms ease-out both;
 }
 
 /* --- 眉毛行 ---------------------------------------------------------------
@@ -577,18 +582,31 @@ body {
   color: #b42318;
 }
 
-.stage-result {
-  display: flex;
-  flex-direction: column;
-  padding: 0 24px 10px;
-  max-height: min(54vh, 480px);
-  /* Never a horizontal scrollbar: content wraps instead. Pulling one used to
-   * drag the whole bubble across the screen. */
+.work-panel-viewport {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.work-panel-scroller {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
   scrollbar-color: rgba(19, 22, 27, 0.16) transparent;
+}
+
+.stage-result {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  padding: 0 24px 18px;
+  overflow-x: hidden;
+  overflow-y: visible;
   font-size: 15px;
   line-height: 1.66;
 }
@@ -963,115 +981,23 @@ body {
   transform: none;
 }
 
-/* Motion follows the existing spec: ease-out-quint, 120-350ms. The panel
- * unfolds out of the capsule edge it is attached to rather than fading in
- * place, so it reads as growing from the bubble instead of appearing over it.
- * Only transform and opacity are animated — both composite on the GPU, so
- * none of this touches layout or costs response time. */
-@keyframes stage-thread-in {
-  from {
-    opacity: .28;
-    transform: translateY(-6px) scaleY(.045);
-  }
-  36% {
-    opacity: 1;
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scaleY(1) scaleX(1);
-  }
-}
-
-.stage-thread[data-side='above'] {
-  animation-name: stage-thread-in-above;
-}
-
-@keyframes stage-thread-in-above {
-  from {
-    opacity: .28;
-    transform: translateY(6px) scaleY(.045);
-  }
-  60% {
-    opacity: 1;
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scaleY(1) scaleX(1);
-  }
-}
-
-@keyframes stage-thread-in-right {
-  from { opacity: .28; transform: translateX(-4px) scaleX(.045); }
-  38% { opacity: 1; }
-  to { opacity: 1; transform: translateX(0) scale(1); }
-}
-
-@keyframes stage-thread-in-left {
-  from { opacity: .28; transform: translateX(4px) scaleX(.045); }
-  38% { opacity: 1; }
-  to { opacity: 1; transform: translateX(0) scale(1); }
+/* The shell is already at its final geometry before it becomes visible.
+ * Only opacity changes, so streaming and completion cannot look like a
+ * resizing bubble or move the panel under the pointer. */
+@keyframes stage-surface-appear {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 .stage-thread[data-phase='running'] .thread-head,
 .stage-thread[data-phase='running'] .stage-result,
 .stage-thread[data-phase='running'] .thread-bar {
-  animation: stage-running-content-in 210ms cubic-bezier(.22, 1, .36, 1) 105ms both;
+  animation: stage-content-appear 150ms ease-out both;
 }
 
-@keyframes stage-running-content-in {
-  from { opacity: 0; transform: translateY(3px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-.stage-thread[data-phase='finished'] {
-  transform-origin: bottom center;
-  animation: stage-thread-finish 300ms cubic-bezier(.16, 1, .3, 1) both;
-}
-
-.stage-thread[data-phase='finished'] .thread-head {
-  animation: stage-finished-head-in 170ms cubic-bezier(.22, 1, .36, 1)
-    var(--stage-finish-body-delay) both;
-}
-
-.stage-thread[data-phase='finished'] .stage-result {
-  animation: stage-finished-body-in 210ms cubic-bezier(.22, 1, .36, 1)
-    var(--stage-finish-body-delay) both;
-}
-
-.stage-thread[data-phase='finished'] .capsule-consent,
-.stage-thread[data-phase='finished'] .thread-bar {
-  animation: stage-finished-actions-in 180ms cubic-bezier(.22, 1, .36, 1) 28ms both;
-}
-
-.stage-thread[data-phase='finished'] .thread-eyebrow {
-  animation: stage-finished-eyebrow-in 140ms cubic-bezier(.22, 1, .36, 1)
-    var(--stage-finish-eyebrow-delay) both;
-}
-
-@keyframes stage-thread-finish {
-  from { opacity: .76; transform: translateY(8px) scale(.975, .82); border-radius: 24px; }
-  to { opacity: 1; transform: scale(1); }
-}
-
-@keyframes stage-finished-head-in {
-  from { opacity: .46; transform: translateY(3px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-@keyframes stage-finished-body-in {
-  from { opacity: .48; transform: translateY(4px); filter: blur(2.5px); }
-  62% { opacity: 1; }
-  to { opacity: 1; transform: translateY(0); filter: blur(0); }
-}
-
-@keyframes stage-finished-actions-in {
-  from { opacity: .42; transform: translateY(3px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
-@keyframes stage-finished-eyebrow-in {
-  from { opacity: 0; transform: translateY(3px); }
-  to { opacity: 1; transform: translateY(0); }
+@keyframes stage-content-appear {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 /* A settling turn: rises, overshoots by a hair, lands. */
@@ -1365,12 +1291,11 @@ body {
     opacity: 1;
   }
 
-  .stage-capsule {
+  .stage-composer {
     transition: none;
     animation: none;
     opacity: 1;
     transform: none;
-    width: var(--capsule-width, var(--stage-capsule-size));
   }
 
   .targeting-outline {
@@ -1387,34 +1312,14 @@ body {
   }
 }
 
-/* Demo 7 capsule contract: one pale-blue object that starts as a 40 DIP ball,
- * grows only along X as content arrives, and collapses back into the same ball.
- * Motion classes are applied once by stage.js; streaming renders never replay
- * the entrance animation. */
-.stage-capsule {
-  width: var(--capsule-width, var(--stage-capsule-size));
-  min-width: var(--stage-capsule-size);
-  min-height: var(--stage-capsule-size);
-  height: var(--stage-capsule-size);
-  max-width: none;
-  gap: 8px;
-  padding: 0 5px 0 13px;
-  overflow: visible;
-  border: 1px solid rgba(19, 22, 27, 0.14);
-  border-radius: calc(var(--stage-capsule-size) / 2);
-  background: #fff;
-  /* 参考里那条输入条底下有一大团柔光，但那是在一张不透明的网页上。我们这层是
-   * 透明、可穿透的窗口——Windows 会把 CSS 阴影渲染成一块矩形的后备缓冲残影，
-   * 于是圆胶囊外面挂着一个灰方块。所以这里永远是 none，靠那一像素的边分离。
-   * tests/selection_visual_contract_test.js 钉着这一条。 */
-  box-shadow: none;
-  color: var(--stage-neutral-ink);
-  transform-origin: center center;
-  will-change: opacity, transform, width;
-  transition:
-    width var(--stage-capsule-expand) cubic-bezier(.22, 1, .36, 1),
-    padding var(--stage-capsule-expand) cubic-bezier(.22, 1, .36, 1),
-    border-radius var(--stage-capsule-expand) cubic-bezier(.22, 1, .36, 1);
+/* The composer can fade, but its rectangle is immutable for the session. */
+.stage-composer.is-entering {
+  animation: stage-surface-appear 150ms ease-out both;
+}
+
+.stage-composer.is-exiting {
+  pointer-events: none;
+  opacity: 0;
 }
 
 /* 提交键：一个实心黑圆。没跑时是箭头，跑起来变方块。这两个状态之间不换
@@ -1448,111 +1353,22 @@ body {
 .capsule-send:active { transform: scale(0.92); }
 
 .capsule-send .capsule-stop-icon { display: none; }
-.stage-capsule[data-phase='processing'] .capsule-send .capsule-send-icon { display: none; }
-.stage-capsule[data-phase='processing'] .capsule-send .capsule-stop-icon { display: block; }
+.stage-composer[data-phase='processing'] .capsule-send .capsule-send-icon { display: none; }
+.stage-composer[data-phase='processing'] .capsule-send .capsule-stop-icon { display: block; }
 
-/* 空的时候不显示提交键：一个禁用的按钮比没有按钮更吵。 */
-.stage-capsule[data-empty='true']:not([data-phase='processing']) .capsule-send,
-.stage-capsule[data-mode='voice'][data-empty='true']:not([data-phase='processing']) .capsule-send {
-  display: none;
-}
-
-.stage-capsule.is-entering {
-  animation:
-    stage-capsule-spawn var(--stage-capsule-spawn) cubic-bezier(.22, 1, .36, 1)
-      var(--stage-capsule-delay) both,
-    stage-capsule-expand var(--stage-capsule-expand) cubic-bezier(.22, 1, .36, 1)
-      calc(var(--stage-capsule-delay) + var(--stage-capsule-spawn)) both;
-}
-
-.stage-capsule.is-exiting {
-  pointer-events: none;
-  animation: stage-capsule-collapse 150ms cubic-bezier(.4, 0, .2, 1) forwards;
-}
-
-.stage-capsule[data-mode='voice'] {
-  width: var(--capsule-width, var(--stage-capsule-size));
-}
-
-.stage-capsule[data-mode='voice'][data-empty='true'] {
-  justify-content: center;
-  gap: 0;
-  padding-inline: 0;
-}
-
-.stage-capsule[data-mode='voice'][data-empty='true'] .capsule-transcript {
-  display: none;
-}
-
-.stage-capsule[data-mode='text'] {
-  width: var(--capsule-width, 144px);
-}
-
-.stage-capsule[data-mode='text'] .voice-waveform,
-.stage-capsule[data-mode='text'] .capsule-transcript {
-  display: none;
-}
-
-@keyframes stage-capsule-spawn {
-  0% {
-    opacity: 0;
-    transform: scale(.14);
-  }
-  72% {
-    opacity: 1;
-    transform: scale(1.025);
-  }
-  100% {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
-@keyframes stage-capsule-expand {
-  from {
-    width: var(--stage-capsule-size);
-    border-radius: 50%;
-  }
-  to {
-    width: var(--capsule-width, var(--stage-capsule-size));
-    border-radius: calc(var(--stage-capsule-size) / 2);
-  }
-}
-
-@keyframes stage-capsule-collapse {
-  0% {
-    width: var(--capsule-width, var(--stage-capsule-size));
-    opacity: 1;
-    transform: scale(1);
-  }
-  72% {
-    width: var(--stage-capsule-size);
-    opacity: .92;
-    transform: scale(.96);
-  }
-  100% {
-    width: var(--stage-capsule-size);
-    opacity: 0;
-    transform: scale(.72);
-  }
+.stage-composer[data-empty='true']:not([data-phase='processing']) .capsule-send {
+  opacity: .34;
+  cursor: default;
 }
 .capsule-count {
-  position: absolute;
-  top: -15px;
-  right: -8px;
-  min-width: 26px;
-  height: 22px;
-  padding: 0 8px;
-  border-radius: 11px;
-  background: rgba(18, 102, 212, .97);
-  color: #fff;
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 22px;
-  text-align: center;
+  flex: 0 0 auto;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #edf1ff;
+  color: #5b5fc7;
+  font: 650 10px/1.2 var(--mp-font-ui);
+  letter-spacing: 0;
   white-space: nowrap;
-  pointer-events: none;
-  box-shadow: 0 2px 10px rgba(18, 60, 140, .38);
 }
 .capsule-input,
 .capsule-transcript {
@@ -1584,20 +1400,20 @@ body {
   animation-duration: 680ms;
 }
 
-.stage-capsule[data-voice-state='idle'] .voice-waveform i,
-.stage-capsule[data-voice-state='settling'] .voice-waveform i {
+.stage-composer[data-voice-state='idle'] .voice-waveform i,
+.stage-composer[data-voice-state='settling'] .voice-waveform i {
   height: 3px;
   opacity: .58;
   animation: none;
 }
 
-.stage-capsule[data-voice-state='warming'] .voice-waveform i {
+.stage-composer[data-voice-state='warming'] .voice-waveform i {
   height: 3px;
   animation: stage-voice-warm 780ms ease-in-out infinite;
 }
 
-.stage-capsule[data-voice-state='listening'] .voice-waveform i,
-.stage-capsule[data-voice-state='transcribing'] .voice-waveform i {
+.stage-composer[data-voice-state='listening'] .voice-waveform i,
+.stage-composer[data-voice-state='transcribing'] .voice-waveform i {
   animation-duration: 620ms;
 }
 
@@ -1685,8 +1501,8 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .stage-capsule.is-entering,
-  .stage-capsule.is-exiting,
+  .stage-composer.is-entering,
+  .stage-composer.is-exiting,
   .stage-result,
   .stage-error {
     animation: none;
@@ -2161,6 +1977,8 @@ body {
   .selection-stretch-hint { transition: none; }
 
   .processing-shimmer::after,
+  .stage-composer.is-entering,
+  .stage-composer.is-exiting,
   .stage-thread,
   .stage-thread[data-phase='running'] .thread-head,
   .stage-thread[data-phase='running'] .stage-result,
