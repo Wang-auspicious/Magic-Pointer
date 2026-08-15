@@ -27,7 +27,8 @@
       <div id="frozen-glow" class="frozen-glow" hidden></div>
       <div id="capsule" class="stage-composer" data-mode="text" data-phase="input" data-drag-handle="1" hidden>
         <div class="composer-context" aria-label="当前上下文">
-          <span class="composer-context-label">LOCKED CONTEXT</span>
+          <span class="stage-brand" aria-hidden="true">MP</span>
+          <span class="composer-context-label">已锁定当前对象</span>
           <span id="capsule-count" class="capsule-count" hidden></span>
           <!-- One chip per stroke, in the order they were drawn. This is what makes
                the selection visible before submitting: you can see you picked two
@@ -54,8 +55,8 @@
           </button>
         </div>
         <div class="composer-tools" aria-hidden="true">
-          <span class="composer-mode-label">TEXT INPUT</span>
-          <span class="composer-grounding-label">LOCAL EVIDENCE LOCKED</span>
+          <span class="composer-mode-label">键盘输入</span>
+          <span class="composer-grounding-label">画面已冻结</span>
         </div>
         <span id="processing-shimmer" class="processing-shimmer" aria-hidden="true" hidden></span>
       </div>
@@ -72,7 +73,8 @@
             <span class="thread-head-spacer"></span>
             <button type="button" id="thread-close" class="thread-icon is-close" data-no-drag="1"
                     aria-label="关闭" title="关闭">
-              <svg aria-hidden="true"><use href="#ic-x" /></svg>
+              <svg class="thread-close-icon" aria-hidden="true"><use href="#ic-x" /></svg>
+              <svg class="thread-stop-icon" aria-hidden="true"><use href="#ic-stop" /></svg>
             </button>
           </div>
           <b id="thread-title" class="thread-title"></b>

@@ -13,12 +13,22 @@ assert.strictEqual((html.match(/id="workspace-header"/g) || []).length, 1, 'all 
 assert(html.includes('id="workspace-title"'));
 assert(html.includes('id="workspace-description"'));
 assert(html.includes('class="workspace-composer"'), 'chat must use one fixed Oreo composer');
+assert(html.includes('class="settings-search"'), 'settings navigation must expose a real search field');
+assert(!html.includes('LOCAL AGENT HARNESS'), 'the sidebar must not show a robotic product subtitle');
+assert(!html.includes('class="chat-context workspace-card"'), 'chat context must not sit inside a decorative card');
+assert(!html.includes('class="stream workspace-card"'), 'the answer stream must be open text, not a card inside the workspace');
+assert(!html.includes('class="settings-layout workspace-card"'), 'settings must not be a rounded panel inside the workspace');
+assert(!html.includes('class="crail-btn is-on"'), 'the stash toolbar must not expose a fake selection button');
 assert(html.includes('../studio_shell.js'));
 assert(!html.includes('id="hero"'));
 assert(!html.includes('hero.mp4'));
 assert(!html.includes('你指过的每一处'));
 assert(!source.includes('function makeOrb('), 'decorative moving avatar generation must be removed');
 assert(!source.includes("ta.style.height = 'auto'"), 'composer shell must not grow with textarea content');
+assert(source.includes("wrap.className = 'assistant-turn enter'"),
+  'assistant answers must use the open transcript treatment');
+assert(source.includes('<article class="mem-row enter"'),
+  'read-only memories must not pretend to be clickable buttons');
 assert.match(source, /const summaryHeight = it\.summary \? 66 : 0/,
   'stash layout must reserve space for the visible image summary');
 assert.match(source, /renderStashList\(laid, force\);\s*resetCanvas\(\);/s,
@@ -36,11 +46,14 @@ assert.match(source, /if \(initialView !== 'chat'\) \{\s*show\(initialView\);\s*
   'conversation hydration must not overwrite a requested settings or stash first view');
 assert(!source.includes('\nboot();'), 'Studio boot must receive the requested initial view');
 
-assert.match(css, /\.shell\s*\{[^}]*background:\s*#f4f3ef/s);
-assert.match(css, /\.workspace-composer\s*\{[^}]*height:\s*128px/s);
-assert.match(css, /\.workspace-card\s*\{[^}]*border:\s*1px solid/s);
+assert.match(css, /\.shell\s*\{[^}]*background:\s*#f7f7f5/s);
+assert.match(css, /\.workspace-composer\s*\{[^}]*height:\s*116px/s);
+assert(!css.includes('.workspace-card {'), 'global card chrome must be removed from page layout');
+assert.match(css, /\.assistant-turn\s*\{[^}]*background:\s*transparent/s);
 assert.match(css, /\.btn-solid\s*\{[^}]*background:\s*#16181d/s);
-assert.match(css, /\.workspace-eyebrow\s*\{[^}]*font-family:\s*var\(--mp-font-mono\)/s);
+assert.match(css, /\.workspace-header\s*\{[^}]*min-height:\s*88px/s);
+assert.match(css, /\.workspace-eyebrow\s*\{[^}]*display:\s*none/s,
+  'the main header must not carry dashboard-style machine labels');
 assert(!/radial-gradient\([^)]*#[0-9a-f]{3,8}/i.test(css), 'marketing color orbs must not return');
 
 console.log('studio visual contract test ok');

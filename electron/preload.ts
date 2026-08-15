@@ -182,6 +182,10 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
   conversations: {
     list: () => ipcRenderer.invoke('conversations:list'),
     get: (id: unknown) => ipcRenderer.invoke('conversations:get', id),
+    send: (payload: { conversationId?: unknown; question?: unknown }) => ipcRenderer.invoke('conversations:send', {
+      conversationId: String(payload?.conversationId || '').slice(0, 120),
+      question: String(payload?.question || '').slice(0, MAX_COMMAND_CHARS),
+    }),
     timeline: () => ipcRenderer.invoke('conversations:timeline'),
     memories: () => ipcRenderer.invoke('conversations:memories'),
     artifacts: () => ipcRenderer.invoke('conversations:artifacts'),

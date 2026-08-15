@@ -130,6 +130,20 @@ function runtimeWith(clipboard, settings) {
   const media = rt5.list().flatMap((b) => b.items).map((e) => e.media);
   assert.ok(media.includes('image'), '同时有图和文本时应当收图');
 
+  // ---------------------------------------------------------------------------
+  // 图片采集关掉后，轮询不能继续偷收图片；文本开关仍可独立工作
+  // ---------------------------------------------------------------------------
+  const clip6 = makeClipboard();
+  const rt6 = runtimeWith(clip6, { stash: { clipboard: false, text: true } });
+  const beforeDisabledImage = rt6.list().flatMap((b) => b.items).length;
+  rt6.start();
+  await new Promise((r) => setTimeout(r, 100));
+  clip6.putImage(fakeImage(31));
+  await new Promise((r) => setTimeout(r, 900));
+  rt6.stop();
+  const afterDisabledImage = rt6.list().flatMap((b) => b.items).length;
+  assert.strictEqual(afterDisabledImage, beforeDisabledImage, '关闭图片收藏后轮询不能再落盘图片');
+
   fs.rmSync(dir, { recursive: true, force: true });
   console.log('stash runtime test ok');
 })().catch((error) => {

@@ -20,6 +20,18 @@ const editable = SETTINGS_PAGES.flatMap((page: any) => page.sections)
 assert(editable.length >= 30, 'the rebuilt settings surface must cover the real daily controls');
 assert(editable.every((row: any) => row.path && !row.path.startsWith('_')),
   'every editable row must map to a real schema path');
+for (const deadPath of [
+  'notifications.completion',
+  'notifications.failure',
+  'privacy.anonymous_usage',
+  'privacy.retain_audit_days',
+  'agents.image_policy',
+  'accessibility.reduce_motion',
+  'accessibility.high_contrast_controls',
+]) {
+  assert(!editable.some((row: any) => row.path === deadPath),
+    `${deadPath} has no live product behavior and must not appear as a setting`);
+}
 assert(!SETTINGS_PAGES.some((page: any) => /能力|诊断/.test(page.title)),
   'capability catalogs and diagnostics are not settings');
 const privacyRows = SETTINGS_PAGES.find((page: any) => page.id === 'perception-privacy')

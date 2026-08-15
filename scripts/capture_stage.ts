@@ -22,7 +22,6 @@ const SCENE = `(() => { try {
   const scene = ${JSON.stringify(sceneArg)};
   const panelAnchor = ${JSON.stringify(PANEL_ANCHOR)};
   const root = document.getElementById('stage');
-  const capsule = document.getElementById('capsule');
   const panel = document.getElementById('stage-thread');
   const result = document.getElementById('stage-result');
   const tpl = document.getElementById('tpl-thread-turn');
@@ -57,19 +56,6 @@ const SCENE = `(() => { try {
     return node;
   };
 
-  const showCapsule = ({ x, y, processing = false, text = '问点什么…' }) => {
-    capsule.hidden = false;
-    capsule.dataset.mode = 'text';
-    capsule.dataset.phase = processing ? 'processing' : 'input';
-    capsule.dataset.empty = 'false';
-    capsule.style.left = x + 'px';
-    capsule.style.top = y + 'px';
-    capsule.style.setProperty('--stage-composer-width', '480px');
-    capsule.style.setProperty('--stage-composer-height', '132px');
-    document.getElementById('capsule-input').value = text;
-    document.getElementById('processing-shimmer').hidden = !processing;
-  };
-
   const makeTurn = (card, ask = '', hideAsk = true, status = 'done') => {
     const node = tpl.content.firstElementChild.cloneNode(true);
     node.dataset.status = status;
@@ -102,12 +88,6 @@ const SCENE = `(() => { try {
     sourceWindow(isRight
       ? { x: 40, y: 42, width: 620, height: 690 }
       : { x: 580, y: 42, width: 620, height: 690 });
-    showCapsule({
-      x: isRight ? 160 : 600,
-      y: 108,
-      processing: true,
-      text: '把这组材料整理成提纲',
-    });
     showPanel({
       x: isRight ? panelAnchor.x : 12,
       y: panelAnchor.y,

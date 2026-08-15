@@ -52,6 +52,7 @@ interface Conversation {
 interface TurnInput {
   capturedAt?: number;
   conversationId?: string;
+  newConversation?: boolean;
   question?: unknown;
   answer?: unknown;
   object?: ReferencedObject;
@@ -180,9 +181,9 @@ function createConversationStore(
     const explicit = turn.conversationId
       ? conversations.find((conversation) => conversation.id === turn.conversationId)
       : null;
-    const target =
-      explicit ||
-      conversations.find((conversation) => conversation.objectKey === key && !conversation.closed);
+    const target = turn.newConversation === true
+      ? null
+      : explicit || conversations.find((conversation) => conversation.objectKey === key && !conversation.closed);
 
     const entry: TurnEntry = {
       id: `t${at}`,

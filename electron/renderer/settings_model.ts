@@ -19,14 +19,10 @@ type SettingsPage = { description: string; icon: string; id: string; sections: S
 const option = (value: string | number, label: string): SettingOption => ({ value, label });
 
 const SETTINGS_PAGES: SettingsPage[] = [
-  { id: 'general', icon: 'ic-window', title: '通用', description: '启动、后台、通知与更新。', sections: [
+  { id: 'general', icon: 'ic-window', title: '通用', description: '启动、后台与更新。', sections: [
     { title: '运行', rows: [
       { path: 'general.launch_at_login', control: 'toggle', label: '开机时启动', description: '登录后静默驻留。' },
       { path: 'general.keep_running', control: 'toggle', label: '关闭窗口后继续运行', description: '划线与快捷键仍然可用。' },
-    ] },
-    { title: '通知', rows: [
-      { path: 'notifications.completion', control: 'toggle', label: '长任务完成时通知' },
-      { path: 'notifications.failure', control: 'toggle', label: '任务失败时通知' },
     ] },
     { title: '更新', rows: [
       { path: 'general.update_channel', control: 'select', label: '更新通道', options: [option('stable', '稳定'), option('preview', '预览')] },
@@ -75,7 +71,6 @@ const SETTINGS_PAGES: SettingsPage[] = [
       { path: 'agents.preferred', control: 'select', label: '首选 Agent', options: [option('pi', 'Pi'), option('codex', 'Codex'), option('claude', 'Claude Code'), option('gemini', 'Gemini CLI')] },
       { path: 'agents.delivery_mode', control: 'select', label: '交付方式', options: [option('active_session', '当前会话'), option('managed_session', '托管会话'), option('clipboard', '只复制 Prompt')] },
       { path: 'agents.cwd_match', control: 'select', label: '项目目录匹配', options: [option('strict', '必须完全一致'), option('subtree', '允许子目录'), option('confirm', '不一致时询问')] },
-      { path: 'agents.image_policy', control: 'select', label: '图片交付', options: [option('vision_only', '仅视觉 Agent'), option('confirm', '每次询问'), option('never', '从不附加')] },
       { path: 'agents.auto_attach', control: 'toggle', label: '自动附加接地证据' },
     ] },
   ] },
@@ -86,7 +81,6 @@ const SETTINGS_PAGES: SettingsPage[] = [
     ] },
     { title: '边界', rows: [
       { path: 'privacy.sensitive_apps', control: 'tags', label: '完全不看的应用', description: '不读、不截，也不记。' },
-      { path: 'privacy.anonymous_usage', control: 'toggle', label: '发送匿名使用数据' },
     ] },
     { title: '记忆与学习', rows: [
       { path: 'privacy.screen_memory_enabled', control: 'toggle', label: '记住最近处理过的对象', description: '只在本机保存应用、窗口和问题摘要；默认关闭。' },
@@ -119,20 +113,17 @@ const SETTINGS_PAGES: SettingsPage[] = [
     { title: '保留期', rows: [
       { path: 'privacy.retain_captures_days', control: 'select', label: '截图与选区', options: [option(1, '1 天'), option(3, '3 天'), option(7, '7 天'), option(0, '永久')] },
       { path: 'privacy.retain_artifacts_days', control: 'select', label: '生成的产物', options: [option(7, '7 天'), option(30, '30 天'), option(90, '90 天'), option(0, '永久')] },
-      { path: 'privacy.retain_audit_days', control: 'select', label: '审计记录', options: [option(7, '7 天'), option(30, '30 天'), option(90, '90 天'), option(0, '永久')] },
     ] },
   ] },
-  { id: 'appearance-accessibility', icon: 'ic-img', title: '外观与辅助功能', description: '只改变呈现，不改变权限和执行结果。', sections: [
+  { id: 'appearance-accessibility', icon: 'ic-img', title: '外观', description: '主题和划线反馈。', sections: [
     { title: '外观', rows: [
       { path: 'appearance.theme', control: 'select', label: '主题', options: [option('system', '跟随系统'), option('light', '浅色'), option('dark', '深色')] },
       { path: 'appearance.material', control: 'select', label: '窗口材质', options: [option('auto', '自动'), option('translucent', '半透明'), option('solid', '不透明')] },
       { path: 'appearance.selection_visual', control: 'select', label: '选区反馈', options: [option('sweep_band', '扫线'), option('soft_glow', '柔光'), option('outline', '描边')] },
       { path: 'appearance.sweep_height_ratio', control: 'range', label: '扫线高度', min: 0.15, max: 1.5, step: 0.05 },
     ] },
-    { title: '辅助功能', rows: [
-      { path: 'accessibility.reduce_motion', control: 'toggle', label: '减少动态效果' },
+    { title: '窗口', rows: [
       { path: 'accessibility.reduce_transparency', control: 'toggle', label: '减少透明效果' },
-      { path: 'accessibility.high_contrast_controls', control: 'toggle', label: '高对比控件' },
     ] },
   ] },
 ];

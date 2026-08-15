@@ -34,6 +34,7 @@ files:
   - scripts/agent_worker.py
   - scripts/bridge_progress.py
   - scripts/calendar_bridge.py
+  - scripts/conversation_bridge.py
   - scripts/deliver_text_bridge.py
   - scripts/electron_bridge.py
   - scripts/element_probe_bridge.py

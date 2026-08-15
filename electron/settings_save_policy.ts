@@ -48,6 +48,7 @@ function settingsSaveImpact(previous: UnknownRecord = {}, next: UnknownRecord = 
       || changed(previous.accessibility || {}, next.accessibility || {}),
     login: previous.general?.launch_at_login !== next.general?.launch_at_login,
     update: previous.general?.update_channel !== next.general?.update_channel,
+    stash: changed(previous.stash || {}, next.stash || {}),
   };
 }
 

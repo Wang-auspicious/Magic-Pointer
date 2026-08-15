@@ -276,7 +276,7 @@ function createStashRuntime(options: StashRuntimeOptions) {
       const formats = clipboard.availableFormats();
       // 位图优先：我们自己回写之后剪贴板里图和文本同时存在，
       // 先看图才不会把那条路径当成一段值得收藏的文字。
-      if (formats.some((f: string) => f.startsWith('image/'))) {
+      if (settings()?.stash?.clipboard !== false && formats.some((f: string) => f.startsWith('image/'))) {
         const image = clipboard.readImage();
         if (!image.isEmpty()) {
           await ingest(image, 'shot');

@@ -696,9 +696,8 @@
     // push-to-talk / hover triggering both rely on stage mouse capture.
     if (name === 'capsule-voice') return !capsule.hidden;
     // Anything the user can grab or press counts, in every remaining state.
-    // `processing` in particular: the thread and its composer are both on
-    // screen while a turn runs, and dragging them there used to fall straight
-    // through and select text in the app underneath.
+    // While processing, the fixed thread is the only visible surface; it owns
+    // the stop affordance and must not fall through to the app underneath.
     if (!capsule.hidden || !threadPanel.hidden) return true;
     const hasEnabledButton = (element: HTMLElement) => !element.hidden
       && Boolean(element.querySelector('button:not([disabled])'));
@@ -729,9 +728,7 @@
 
   function interactiveStageRegions() {
     const elements = [];
-    // The capsule is operable in every state where it is on screen — including
-    // under a finished thread, where it is the composer for the follow-up.
-    // Leaving it out here made clicking it fall through to the app below.
+    // The capsule is operable only while it is the visible entry surface.
     if (!capsule.hidden && !(state.name === 'capsule-text' && capsuleInput.disabled)) {
       elements.push(capsule);
     }
@@ -1504,7 +1501,7 @@
     consentApprove.textContent = '写入中';
     api.insertResultText({ text, selectionSessionToken: session.token });
   });
-  threadClose.addEventListener('click', () => dispatch({ type: 'DISMISS' }));
+  threadClose.addEventListener('click', requestDismiss);
   // 重问一次：把上一轮问过的那句话原样再提交一遍。参考图里那张提案卡左下角
   // 那个重跑图标就是这件事——不满意的时候，最省事的动作是「再来一次」，
   // 而不是把问题重新打一遍。
@@ -1691,6 +1688,8 @@
     const awaiting = turns[turns.length - 1]?.status === 'awaiting';
     const eyebrowState = pending || awaiting ? 'running' : failed ? 'failed' : 'done';
     threadPanel.dataset.phase = pending ? 'running' : awaiting ? 'awaiting' : failed ? 'failed' : 'finished';
+    threadClose.setAttribute('aria-label', pending ? '停止' : '关闭');
+    threadClose.title = pending ? '停止' : '关闭';
     threadEyebrow.dataset.state = eyebrowState;
     threadEyebrow.querySelector('use')?.setAttribute(
       'href',
@@ -1794,7 +1793,7 @@
   // (design §2.2: no fake foreign-app animation).
   function renderDelivery(name: string) {
     const progress = state.deliveryProgress;
-    const anchorEl = name === 'processing' ? capsule : name === 'result' ? threadPanel : null;
+    const anchorEl = name === 'processing' ? threadPanel : name === 'result' ? threadPanel : null;
     if (!progress || !anchorEl || anchorEl.hidden) {
       resetDeliveryBox();
       return;
@@ -1893,9 +1892,14 @@
 
     const resultOwnsComposer = (name === 'result' || name === 'error')
       && state.turns.length > 0;
-    const capsuleOpen = name === 'capsule-voice' || name === 'capsule-text' || name === 'processing'
+    const capsuleOpen = name === 'capsule-voice' || name === 'capsule-text'
       || ((name === 'result' || name === 'error') && !resultOwnsComposer)
       || (name === 'dismissing' && !capsule.hidden);
+    // Once submitted, the question belongs to the fixed work panel. Clear the
+    // input transcript even though that separate entry surface is now hidden.
+    if ((name === 'processing' || name === 'result' || name === 'error') && state.transcript) {
+      state = { ...state, transcript: '' };
+    }
     if (capsuleOpen) {
       renderStrokeRefs();
       // The bare "2 处" badge is redundant once each stroke has its own chip:
@@ -1922,21 +1926,12 @@
       const composerMode = state.inputMode
         || (name === 'result' || name === 'error' ? 'text' : 'voice');
       capsule.dataset.mode = composerMode === 'text' ? 'text' : 'voice';
-      capsule.dataset.phase = name === 'processing' ? 'processing' : 'input';
-      capsuleInput.placeholder = name === 'processing' ? '正在处理…'
-        : (composerMode === 'text' ? '问点什么…' : '');
+      capsule.dataset.phase = 'input';
+      capsuleInput.placeholder = composerMode === 'text' ? '问点什么…' : '';
       // Once submitted, the question lives in the thread. Emptying the field
       // here is what makes the composer feel like a composer instead of a box
       // still holding the thing you already sent.
-      if (name === 'processing' || name === 'result' || name === 'error') capsuleInput.value = '';
-      // The machine keeps `transcript` after SUBMIT (it is the source of
-      // `command`), so it has to be cleared here too: a stale transcript keeps
-      // data-empty="false" (the send button stays lit over an empty input),
-      // leaves ghost text in #transcript, and makes the next send-button click
-      // re-submit the previous question.
-      if ((name === 'processing' || name === 'result' || name === 'error') && state.transcript) {
-        state = { ...state, transcript: '' };
-      }
+      if (name === 'result' || name === 'error') capsuleInput.value = '';
       renderTranscript();
       const capsuleWidth = syncCapsuleWidth();
       anchorCapsuleToTarget(capsuleWidth);
@@ -2015,7 +2010,8 @@
     noticeBox.dataset.kind = transient ? 'progress' : 'warning';
     noticeBox.hidden = false;
     noticeBox.hidden = false;
-    const rect = capsule.getBoundingClientRect();
+    const anchorSurface = name === 'processing' && !threadPanel.hidden ? threadPanel : capsule;
+    const rect = anchorSurface.getBoundingClientRect();
     const top = Math.min(window.innerHeight - 40, rect.bottom + 8);
     const left = Math.max(6, Math.min(window.innerWidth - noticeBox.offsetWidth - 6, rect.left));
     noticeBox.style.left = `${left}px`;

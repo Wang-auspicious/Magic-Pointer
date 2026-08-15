@@ -1149,6 +1149,43 @@ ipcMain.handle('conversations:get', (event: Electron.IpcMainInvokeEvent, id: str
   if (!isDashboardSender(event) && !isCompanionSender(event)) return null;
   try { return conversations().get(id); } catch (_) { return null; }
 });
+ipcMain.handle('conversations:send', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_conversation_sender' };
+  const question = String(raw?.question || '').trim().slice(0, 4000);
+  if (!question) return { ok: false, error: '问题不能为空。' };
+  const conversationId = String(raw?.conversationId || '').trim().slice(0, 120);
+  const existing = conversationId ? conversations().get(conversationId) : null;
+  const payload = {
+    question,
+    turns: Array.isArray(existing?.turns) ? existing.turns.slice(-12) : [],
+    object: existing?.object || {},
+    modelRuntime: activeModelRuntimeConfig(),
+  };
+  return new Promise((resolve) => {
+    const child = runPythonBridge(payload, 'scripts/conversation_bridge.py', 'dashboard', {
+      timeoutMs: 55_000,
+      onComplete: (parsed: any) => {
+        if (!parsed?.ok || !String(parsed?.answer || '').trim()) {
+          resolve({ ok: false, error: parsed?.error || '模型没有返回内容。', usedBackend: parsed?.usedBackend, timingMs: parsed?.timingMs });
+          return;
+        }
+        const conversation = conversations().appendTurn({
+          conversationId: existing?.id,
+          newConversation: !existing,
+          question,
+          answer: String(parsed.answer),
+          outcome: '模型',
+          object: existing?.object || {},
+        });
+        if (dashboardWindow && !dashboardWindow.isDestroyed()) {
+          dashboardWindow.webContents.send('conversations:turn', { id: conversation.id });
+        }
+        resolve({ ...parsed, conversationId: conversation.id });
+      },
+    });
+    if (!child) resolve({ ok: false, error: '对话服务没有启动。' });
+  });
+});
 ipcMain.handle('conversations:timeline', (event: Electron.IpcMainInvokeEvent) => {
   if (!isDashboardSender(event) && !isCompanionSender(event)) return [];
   try { return conversations().timeline(); } catch (_) { return []; }
@@ -1512,8 +1549,16 @@ function initializeStashRuntime() {
       });
     },
   });
-  if (fabricSettings?.stash?.clipboard !== false) stashRuntime.start();
+  if (fabricSettings?.stash?.clipboard !== false || fabricSettings?.stash?.text === true) stashRuntime.start();
   return stashRuntime;
+}
+
+function reconfigureStashRuntime(settings = fabricSettings) {
+  stashRuntime?.stop();
+  stashRuntime = null;
+  if (settings?.stash?.clipboard !== false || settings?.stash?.text === true) {
+    initializeStashRuntime();
+  }
 }
 
 // ── 主动提议（Vida 主动层触发判断）───────────────────────────────
@@ -4905,6 +4950,7 @@ async function saveFabricSettingsPatch(rawPatch: unknown) {
     if (impact.login) {
       app.setLoginItemSettings({ openAtLogin: nextSettings.general?.launch_at_login === true });
     }
+    if (impact.stash) reconfigureStashRuntime(nextSettings);
     if (impact.gesture || impact.hotkeys) applyConfiguredWakeState();
     if (impact.appearance) applyDashboardMaterial(nextSettings);
     invalidateRuntimeState('settings_changed');
@@ -4921,6 +4967,7 @@ async function saveFabricSettingsPatch(rawPatch: unknown) {
         cooldownMs: previousSettings.activation?.cooldown_ms,
       });
     }
+    if (impact.stash) reconfigureStashRuntime(previousSettings);
     applyConfiguredWakeState();
     applyDashboardMaterial(previousSettings);
     return {

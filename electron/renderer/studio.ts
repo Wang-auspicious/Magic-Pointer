@@ -293,9 +293,12 @@ function turnCards(turn: MagicPointerTurn, conversation: MagicPointerConversatio
 }
 
 /* ---- 打开一条对话 ---- */
+let activeConversationId: string | null = null;
+
 async function openConversation(id: string) {
   const c = await Data.conversation(id);
   if (!c) return;
+  activeConversationId = c.id;
   show('chat');
   document.querySelectorAll('#side-convos .side-item').forEach((n) =>
     (n as HTMLElement).classList.toggle('is-on', (n as HTMLElement).dataset.open === id));
@@ -344,7 +347,7 @@ async function openConversation(id: string) {
     ask.textContent = t.question || '';
 
     const wrap = document.createElement('div');
-    wrap.className = 'turn enter';
+    wrap.className = 'assistant-turn enter';
     for (const card of turnCards(t, c)) {
       // 登记之后这张卡才接得住补丁——后台任务跑完时它会就地变成结果，
       // 而不是等用户重新打开界面
@@ -372,7 +375,7 @@ async function renderMemory(force = false) {
     host.innerHTML = '<div class="view-empty">还没有记忆。同一个东西被问过两次以上，它才会记住。</div>';
     return;
   }
-  host.innerHTML = list.map((m, i) => `<button class="mem-row enter" style="animation-delay:${Math.min(i,6)*40}ms">
+  host.innerHTML = list.map((m, i) => `<article class="mem-row enter" style="animation-delay:${Math.min(i,6)*40}ms">
     ${objectMark(m.key)}
     <span class="mem-body">
       <b>${esc(m.object?.windowTitle || m.object?.app || m.key)}</b>
@@ -381,7 +384,7 @@ async function renderMemory(force = false) {
     </span>
     <span class="mem-n">${m.touches} 次</span>
     <span class="tl-time">${formatTime(m.lastAt)}</span>
-  </button>`).join('');
+  </article>`).join('');
 }
 
 /* ---- 产物 ---- */
@@ -511,13 +514,57 @@ document.addEventListener('click', e => {
   if (notice) notice.closest('.notice')!.remove();
 });
 
-/* 主窗输入条还没有发送通道，但也不能放任表单默认提交——没有 action 的 form
-   提交会整页重载，把当前对话和正在打的字一起冲掉。 */
+let studioComposerBusy = false;
 document.querySelectorAll('form.workspace-composer').forEach(form => {
-  form.addEventListener('submit', e => {
+  form.addEventListener('submit', async e => {
     e.preventDefault();
-    const ta = form.querySelector('textarea');
-    if (ta) ta.focus();
+    const ta = form.querySelector<HTMLTextAreaElement>('textarea');
+    const submit = form.querySelector<HTMLButtonElement>('button[type="submit"]');
+    const question = ta?.value.trim() || '';
+    if (!ta || !question || studioComposerBusy) {
+      ta?.focus();
+      return;
+    }
+
+    const stream = document.getElementById('stream');
+    const pending = document.createElement('div');
+    const ask = document.createElement('div');
+    ask.className = 'msg-user enter';
+    ask.textContent = question;
+    pending.className = 'assistant-turn enter';
+    pending.appendChild(renderCard(CardModel.normalizeCard({
+      id: `studio-${Date.now()}`,
+      kind: 'prose',
+      state: 'running',
+      runningLabel: '正在回答',
+    }), { density: 'full' }));
+    stream?.replaceChildren(...(stream.querySelector('.chat-blank, .view-empty') ? [] : [...stream.children]), ask, pending);
+    if (stream) stream.scrollTop = stream.scrollHeight;
+
+    ta.value = '';
+    studioComposerBusy = true;
+    form.setAttribute('aria-busy', 'true');
+    if (submit) submit.disabled = true;
+    try {
+      const response = await Data.sendConversation(activeConversationId, question);
+      if (!response?.ok || !response.conversationId) throw new Error(response?.error || '这次没有答完。');
+      activeConversationId = String(response.conversationId);
+      await openConversation(activeConversationId);
+      await renderSidebar();
+    } catch (error) {
+      pending.replaceChildren(renderCard(CardModel.normalizeCard({
+        id: `studio-error-${Date.now()}`,
+        kind: 'prose',
+        state: 'failed',
+        error: error instanceof Error ? error.message : String(error),
+      }), { density: 'full' }));
+      ta.value = question;
+    } finally {
+      studioComposerBusy = false;
+      form.removeAttribute('aria-busy');
+      if (submit) submit.disabled = false;
+      ta.focus();
+    }
   });
 });
 
@@ -550,6 +597,7 @@ async function boot(initialView: string) {
 /* 新对话：清空当前这一屏，把焦点交回输入框。
    不新建记录——记录在第一次真的问出去之后才产生。 */
 function startNewChat() {
+  activeConversationId = null;
   document.querySelectorAll('#side-convos .side-item').forEach((n) => n.classList.remove('is-on'));
   const title = document.getElementById('chat-title');
   if (title) title.textContent = '新对话';

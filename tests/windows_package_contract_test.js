@@ -52,6 +52,7 @@ assert(
 assert(builder.includes('- build/electron/**'), 'package must ship the compiled Electron runtime');
 assert(!builder.includes('- electron/**'), 'package must not ship the Electron source tree');
 for (const runtimeScript of [
+  'scripts/conversation_bridge.py',
   'scripts/electron_bridge.py',
   'scripts/selection_bridge.py',
   'scripts/selection_snapshot_bridge.py',

@@ -273,6 +273,19 @@ body {
   transition: opacity 150ms ease;
 }
 
+.stage-brand {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: #171717;
+  color: #fff;
+  font: 650 8px/1 var(--mp-font-mono, ui-monospace, Consolas, monospace);
+  letter-spacing: .04em;
+}
+
 .composer-context,
 .composer-tools,
 .composer-input-row {
@@ -287,8 +300,8 @@ body {
   min-height: 22px;
   gap: 8px;
   color: #71747b;
-  font: 650 10px/1.2 var(--mp-font-mono);
-  letter-spacing: .12em;
+  font: 520 10.5px/1.2 var(--mp-font-ui, "Segoe UI", sans-serif);
+  letter-spacing: 0;
 }
 
 .composer-input-row {
@@ -300,8 +313,8 @@ body {
   justify-content: space-between;
   min-height: 20px;
   color: #8a8d93;
-  font: 600 9.5px/1 var(--mp-font-mono);
-  letter-spacing: .09em;
+  font: 500 9.5px/1 var(--mp-font-ui, "Segoe UI", sans-serif);
+  letter-spacing: 0;
 }
 
 .stage-composer[data-mode='voice'] .capsule-input,
@@ -435,8 +448,7 @@ body {
 /* --- Result / error surfaces ---------------------------------------------- */
 /* --- Conversation thread ----------------------------------------------------
  * Processing and result share one edge-aware surface. While work is running,
- * the command capsule stays visible as the stop affordance; once settled, the
- * card owns follow-up/approval and the duplicate capsule retires.
+ * that panel owns Stop; once settled, the same panel owns follow-up/approval.
  *
  * 形照 Vida 那两张卡（PromptRescue 25s 的结果面板 / 22s 的提案卡）：一张几乎
  * 纯白的卡，上面一条眉毛行（这张卡讲的是什么 + 一个关掉它的叉），中间是内容，
@@ -461,16 +473,10 @@ body {
   max-width: calc(100vw - 16px);
   max-height: calc(100vh - 16px);
   box-sizing: border-box;
-  border-radius: 20px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, .92) 0, rgba(249, 249, 247, .985) 88px),
-    #f9f9f7;
-  border: 1px solid rgba(19, 22, 27, 0.075);
-  box-shadow:
-    inset 0 1px rgba(255, 255, 255, .86),
-    0 1px 2px rgba(19, 22, 27, 0.045),
-    0 12px 30px -14px rgba(19, 22, 27, 0.15),
-    0 28px 58px -30px rgba(19, 22, 27, 0.28);
+  border-radius: 18px;
+  background: #fbfbfa;
+  border: 1px solid rgba(19, 22, 27, 0.10);
+  box-shadow: 0 2px 8px rgba(19, 22, 27, 0.08), 0 22px 52px -30px rgba(19, 22, 27, 0.34);
   color: var(--stage-neutral-ink);
   pointer-events: auto;
   overflow: hidden;
@@ -571,6 +577,10 @@ body {
   width: 19px;
   height: 19px;
 }
+
+.thread-stop-icon { display: none; }
+.stage-thread[data-phase='running'] .thread-close-icon { display: none; }
+.stage-thread[data-phase='running'] .thread-stop-icon { display: block; }
 
 .thread-icon:hover {
   background: rgba(19, 22, 27, 0.05);
@@ -842,6 +852,7 @@ body {
 }
 
 .stage-thread.is-dragging .thread-bar { cursor: grabbing; }
+.stage-thread[data-phase='running'] .thread-bar { display: none; }
 
 /* placeholder 绑当前这张卡在讲什么（Vida.md §3 第 5 条：追问框绑当前对象，
  * 用户因此不用交代背景）。文本由 stage.js 按标题填。 */

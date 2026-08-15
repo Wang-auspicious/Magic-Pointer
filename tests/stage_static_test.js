@@ -118,8 +118,8 @@ assert(source.includes("threadEyebrowText.textContent = pending"), 'thread eyebr
 assert(source.includes("'YOUR INPUT NEEDED'"), 'an awaiting user-input card must say it is waiting on the user');
 assert(source.includes("pending ? '#ic-circle' : awaiting ? '#ic-circle' : failed ? '#ic-warn' : '#ic-check'"),
   'WORKING and YOUR INPUT NEEDED must not reuse the finished checkmark');
-assert(source.includes("capsuleInput.placeholder = name === 'processing' ? '正在处理…'"),
-  'the neutral processing capsule must state what it is doing');
+assert(source.includes("threadClose.setAttribute('aria-label', pending ? '停止' : '关闭')"),
+  'the fixed work panel must provide the processing stop affordance');
 assert(source.includes("const resultOwnsComposer = (name === 'result' || name === 'error')"),
   'a settled card must own follow-up and approval instead of leaving a duplicate capsule beside it');
 assert(css.includes('@media (prefers-reduced-motion: reduce)'));
@@ -149,7 +149,7 @@ assert(source.includes('placeThreadSurface()'),
   'processing and result must share the edge-aware surface placement');
 assert(!source.includes('anchorThreadToCapsule()'),
   'the old composer-owned placement concept must not return');
-assert(source.includes("if (name === 'processing' || name === 'result' || name === 'error') capsuleInput.value = '';"),
+assert(source.includes("if (name === 'result' || name === 'error') capsuleInput.value = '';"),
   'a submitted question moves into the thread, leaving an empty composer');
 assert(!source.includes('renderResultToolbar'),
   'the per-answer toolbar is replaced by the thread bar');

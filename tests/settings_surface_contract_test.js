@@ -16,7 +16,16 @@ assert.match(source, /await api\.saveFabricSettings\(patch\)/,
 assert(source.includes("dataset.saveState = 'saving'"));
 assert(source.includes("dataset.saveState = 'error'"));
 assert(source.includes('hydrateCanonical(response.settings)'));
+assert(source.includes('document.documentElement.dataset.theme = resolvedTheme'),
+  'theme changes must update the actual Studio surface, not just the native title bar');
+assert(source.includes('let settingsQuery ='), 'settings search needs persistent renderer state');
+assert(source.includes('renderSettingsSearchResults'), 'settings search must render actual matching controls');
+assert(source.includes("closest<HTMLInputElement>('#settings-search')"),
+  'the search field must have live behavior');
 assert(css.includes('.settings-save-status'));
 assert(css.includes("[data-save-state='error']"));
+assert(css.includes('.settings-section-frame'));
+assert(!css.includes('.settings-page-icon {'), 'decorative rounded page icons must be removed');
+assert(!css.includes('background: var(--studio-lavender)'), 'settings selection must stay neutral');
 
 console.log('settings surface contract test ok');

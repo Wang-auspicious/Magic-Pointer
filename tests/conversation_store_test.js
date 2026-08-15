@@ -94,6 +94,11 @@ assert.strictEqual(arts[0].from, '把这三列汇总', '产物要能说清它是
 const forced = store.appendTurn({ conversationId: c2.id, question: '再算一次', answer: '一样。', object: code });
 assert.strictEqual(forced.id, c2.id, '显式给了 conversationId 就不要再按对象猜');
 
+// 主界面的「新对话」没有屏幕对象；两次点击新对话不能都并进 unknown 那一条。
+const generic1 = store.appendTurn({ newConversation: true, question: '写一封请假邮件', answer: '草稿一。' });
+const generic2 = store.appendTurn({ newConversation: true, question: '列一个采购清单', answer: '清单二。' });
+assert.notStrictEqual(generic2.id, generic1.id, '明确的新对话必须新建，不能按 unknown 对象合并');
+
 store.clear();
 assert.strictEqual(store.list().length, 0);
 
