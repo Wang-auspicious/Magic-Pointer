@@ -67,6 +67,23 @@ def test_bind_frozen_evidence_accepts_matching_window_and_gesture() -> None:
     assert result.capture_kind == "fallback"
 
 
+def test_bind_frozen_evidence_accepts_windows_process_name_without_exe_suffix() -> None:
+    lease = _lease(target={
+        "hwnd": 42,
+        "processId": 7,
+        "processName": "notepad",
+        "title": "Notes",
+    })
+
+    result = bind_frozen_evidence(
+        lease,
+        source_window=_source_window(process_name="notepad.exe"),
+        gesture=lease["gesture"],
+    )
+
+    assert result.status == "verified"
+
+
 @pytest.mark.parametrize(
     ("source_window", "reason"),
     [

@@ -60,6 +60,7 @@ let stashKindFilter = '';
 // 画布上摆过的收藏节点：Data.stash() 的条目加上布局坐标。
 interface StashBurstNode {
   t: string; w?: number; h?: number; desc?: string; src?: string; text?: string; media?: string; summary?: string;
+  imageW?: number; imageH?: number;
   x: number; y: number;
 }
 interface LaidBurst extends MagicPointerStashEntry {
@@ -71,13 +72,16 @@ interface LaidBurst extends MagicPointerStashEntry {
 function layoutBurst(b: MagicPointerStashEntry): LaidBurst {
   let x = PAD, y = PAD + 8, rowH = 0, w = 0;
   const placed: StashBurstNode[] = b.items.map(it => {
-    const iw = it.t === 'shot' ? (it.w as number) : 210;
+    const imageW = it.t === 'shot' ? Math.max(220, Math.min(300, Number(it.w) || 240)) : 240;
+    const imageH = it.t === 'shot' ? Math.max(130, Math.min(210, Number(it.h) || 160)) : 0;
+    const summaryHeight = it.summary ? 66 : 0;
+    const iw = imageW;
     // 只有截图有说明行（+34）。文字节点不渲染 desc，给它 +34 只是把行高凭空
     // 撑高 14px，簇之间因此出现来路不明的空隙。上一版写成
     // `it.desc || it.t === 'shot' ? 34 : 20`，|| 把三元整体绑错。
-    const ih = (it.t === 'shot' ? (it.h as number) : 62) + (it.t === 'shot' ? 34 : 20);
+    const ih = (it.t === 'shot' ? imageH + 34 + summaryHeight : 82);
     if (x > PAD && x + iw > ROW_MAX) { x = PAD; y += rowH + GAP; rowH = 0; }
-    const node = { ...it, x, y, w: iw, h: ih };
+    const node = { ...it, x, y, w: iw, h: ih, imageW, imageH };
     x += iw + GAP; rowH = Math.max(rowH, ih); w = Math.max(w, x - GAP + PAD);
     return node;
   });
@@ -110,24 +114,24 @@ async function renderStash(force = false) {
   world.innerHTML = laid.map(b => {
     const nodes = b.nodes.map(n => {
       const body = n.t === 'shot'
-        ? `<span class="node-shot" style="width:${n.w}px;height:${(n.h as number) - 34}px;${n.src ? `background-image:url('file:///${cssUrl(n.src)}');background-size:cover;background-position:center` : `background-image:${makeShot(n.desc)}`}"></span>
+        ? `<span class="node-shot" style="width:${n.imageW}px;height:${n.imageH}px;${n.src ? `background-image:url('file:///${cssUrl(n.src)}');background-size:cover;background-position:center` : `background-image:${makeShot(n.desc)}`}"></span>
            <span class="node-desc">${esc(n.desc)}</span>
            ${n.summary ? `<span class="node-summary">${esc(n.summary)}</span>` : ''}`
         : `<span class="node-note">${esc(n.text)}</span>`;
-      return `<span class="node" data-src="${esc(n.src || '')}" data-text="${esc(n.text || '')}" data-summary="${esc(n.summary || '')}" style="left:${(b.cx as number) + n.x}px;top:${(b.cy as number) + n.y}px">
-        <span class="node-cap">${icon(b.icon)}${b.time}<span class="kind ${KIND_TAG[b.kind]}">${b.kind}</span></span>
+      return `<span class="node" data-src="${esc(n.src || '')}" data-text="${esc(n.text || '')}" data-summary="${esc(n.summary || '')}" style="left:${(b.cx as number) + n.x}px;top:${(b.cy as number) + n.y}px;width:${n.w}px;height:${n.h}px">
+        <span class="node-cap">${icon(b.icon)}${esc(b.time)}<span class="kind ${KIND_TAG[b.kind] || ''}">${esc(b.kind)}</span></span>
         ${body}
       </span>`;
     }).join('');
     return `<span class="cluster" style="left:${(b.cx as number) - PAD}px;top:${(b.cy as number) - 6}px;width:${b.w}px;height:${b.h}px">
-        <span class="cluster-label">${icon('ic-stash')}${b.title} · ${b.items.length}</span>
+        <span class="cluster-label">${icon('ic-stash')}${esc(b.title)} · ${b.items.length}</span>
       </span>${nodes}`;
   }).join('');
 
   world.dataset.width = String(maxW + 60);
   world.dataset.height = String(cy + colH + 60);
   renderStashList(laid, force);
-  fitCanvas();
+  resetCanvas();
 }
 
 function renderStashList(laid: LaidBurst[], force = false) {
@@ -140,9 +144,9 @@ function renderStashList(laid: LaidBurst[], force = false) {
     bs.map(b => b.items.map(it => `<button class="stash-row" data-src="${esc(it.src || '')}" data-text="${esc(it.text || '')}">
         <span class="sq" style="${it.src && /\.(png|jpe?g|gif|webp|bmp)$/i.test(it.src) ? `background-image:url('file:///${cssUrl(it.src)}');background-size:cover;background-position:center` : `background-image:${it.t === 'shot' ? makeShot(it.desc) : 'none'}`}"></span>
         <span class="txt">${esc(it.desc || it.text)}</span>
-        <span class="src">${b.app}</span>
-        <span class="kind ${KIND_TAG[b.kind]}">${b.kind}</span>
-        <span class="t">${b.time}</span>
+        <span class="src">${esc(b.app)}</span>
+        <span class="kind ${KIND_TAG[b.kind] || ''}">${esc(b.kind)}</span>
+        <span class="t">${esc(b.time)}</span>
       </button>`).join('')).join('')
   ).join('');
 }
@@ -158,6 +162,10 @@ function applyCam() {
   if (cv) cv.style.backgroundSize = `${22 * cam.k}px ${22 * cam.k}px`;
   const zv = document.getElementById('zoom-val');
   if (zv) zv.textContent = Math.round(cam.k * 100) + '%';
+}
+function resetCanvas() {
+  cam = { x: 54, y: 54, k: 1 };
+  applyCam();
 }
 function fitCanvas() {
   const cv = document.getElementById('canvas'), w = document.getElementById('canvas-world');
@@ -527,9 +535,14 @@ document.querySelectorAll('form.workspace-composer').forEach(form => {
 /* 开机：侧栏 + 打开最近那条。
    在此之前 #stream 里是一份静态样例——它只该在没有任何记录时用来占位，
    绝不能在有真实记录时还挂在那儿骗人。 */
-async function boot() {
+async function boot(initialView: string) {
   await renderSidebar();
+  if (initialView !== 'chat') {
+    show(initialView);
+    return;
+  }
   const list = await Data.conversations();
+  if (shell.dataset.view !== 'chat') return;
   if (list.length) await openConversation(list[0].id);
   else startNewChat();
 }
@@ -666,7 +679,8 @@ document.addEventListener('mouseout', (e) => {
   if (el) el.classList.remove('is-visible');
 });
 
-boot();
+const initialView = studioShell.normalizeView(new URLSearchParams(location.search).get('view'));
+void boot(initialView);
 
 // 新的一轮问答落库之后，侧栏、时间线、记忆、产物都要跟着变，
 // 不然工作室永远停在打开那一刻。
@@ -706,10 +720,6 @@ function refreshStashSummaries() {
     });
   }).catch(() => {});
 }
-
-/* 调试用：?view=stash / ?view=timeline / ?view=chat / ?view=settings */
-const q = new URLSearchParams(location.search).get('view');
-if (q) show(q);
 
 /* 主进程可以直接指定落到哪一屏（托盘「设置…」走这条） */
 window.magicPointerDashboard?.onShow?.((payload) => {

@@ -7,6 +7,7 @@ const { scheduleBackgroundLearning } = require('../electron/background_learning'
   const calls: any[] = [];
   const logs: string[] = [];
   const scheduled = scheduleBackgroundLearning({
+    enabled: true,
     request: { requested: true, sessionId: 'agent-s1', terminalReason: 'completed' },
     runBridge: (...args: any[]) => {
       calls.push(args);
@@ -25,7 +26,19 @@ const { scheduleBackgroundLearning } = require('../electron/background_learning'
 {
   let called = false;
   const scheduled = scheduleBackgroundLearning({
+    enabled: true,
     request: { requested: false, sessionId: 'agent-s1', terminalReason: 'completed' },
+    runBridge: () => { called = true; },
+  });
+  assert.strictEqual(scheduled, false);
+  assert.strictEqual(called, false);
+}
+
+{
+  let called = false;
+  const scheduled = scheduleBackgroundLearning({
+    enabled: false,
+    request: { requested: true, sessionId: 'agent-s1', terminalReason: 'completed' },
     runBridge: () => { called = true; },
   });
   assert.strictEqual(scheduled, false);

@@ -10,12 +10,14 @@ type SettingsApi = {
 
 type SettingsModelApi = {
   SETTINGS_PAGES: any[];
+  modelInfoValue(key: string, status: Record<string, any>): string;
   patchForSetting(path: string, value: unknown): Record<string, unknown>;
   valueForSetting(path: string, settings: Record<string, any>): unknown;
 };
 
 const settingsModel = (globalThis as any).SettingsModel as SettingsModelApi;
 let canonicalSettings: Record<string, any> = {};
+let activeModelStatus: Record<string, any> = {};
 let activeSettingsPage = 'general';
 let settingsSaveQueue: Promise<void> = Promise.resolve();
 let settingsHydrated = false;
@@ -65,12 +67,13 @@ function controlForSetting(row: any, value: unknown) {
     return `<input class="settings-input settings-tags" data-setting="${path}" data-control="tags"
       value="${escSetting(text)}" spellcheck="false">`;
   }
-  const count = row.label === '模型档案'
-    ? Array.isArray(canonicalSettings.models?.profiles) ? canonicalSettings.models.profiles.length : 0
+  const infoValue = row.infoKey
+    ? settingsModel.modelInfoValue(row.infoKey, activeModelStatus)
     : row.label === '范围授权'
       ? Array.isArray(canonicalSettings.permissions?.scoped_grants) ? canonicalSettings.permissions.scoped_grants.length : 0
       : null;
-  return `<span class="settings-info-value">${count == null ? '只读' : `${count} 项`}</span>`;
+  const displayValue = typeof infoValue === 'number' ? `${infoValue} 项` : infoValue || '只读';
+  return `<span class="settings-info-value" data-info-key="${escSetting(row.infoKey || '')}">${escSetting(displayValue)}</span>`;
 }
 
 function renderSettingsPage(page: any) {
@@ -119,8 +122,9 @@ function renderSettings() {
   body.innerHTML = renderSettingsPage(page);
 }
 
-function hydrateCanonical(settings: unknown) {
+function hydrateCanonical(settings: unknown, modelStatus: unknown = activeModelStatus) {
   canonicalSettings = settings && typeof settings === 'object' ? structuredClone(settings) : {};
+  activeModelStatus = modelStatus && typeof modelStatus === 'object' ? structuredClone(modelStatus) : {};
   settingsHydrated = true;
   renderSettings();
   const theme = canonicalSettings.appearance?.theme;
@@ -203,7 +207,7 @@ async function hydrateSettings() {
   if (!api?.getFabricSettings) return;
   try {
     const response = await api.getFabricSettings();
-    if (response?.ok && response.settings) hydrateCanonical(response.settings);
+    if (response?.ok && response.settings) hydrateCanonical(response.settings, response.modelStatus);
     else setSettingsStatus('error', response?.error || '设置没有载入。');
   } catch (error) {
     setSettingsStatus('error', error instanceof Error ? error.message : String(error));

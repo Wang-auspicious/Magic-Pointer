@@ -509,6 +509,8 @@ class PermissionSettings:
 @dataclass
 class PrivacySettings:
     upload_screenshots: bool = False
+    screen_memory_enabled: bool = False
+    background_learning_enabled: bool = False
     default_capture_mode: str = "follow_global"
     app_capture_modes: dict[str, str] = field(default_factory=dict)
     retain_captures_days: int = 3

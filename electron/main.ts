@@ -27,6 +27,7 @@ const { MouseActivationDetector } = require('./mouse_activation');
 const { ElectronSettingsStore, defaultSettings, validate: validateSettings } = require('./settings_store');
 const { mergeSettingsPatch, settingsSaveImpact } = require('./settings_save_policy');
 const { CredentialStore } = require('./credential_store');
+const { activeModelRuntimeStatus, resolveActiveModelRuntimeConfig } = require('./model_runtime_config');
 const { PreflightRunner } = require('./bootstrap_runner');
 const { buildAsyncPreflightChecks } = require('./preflight_checks');
 const { resolvePythonRuntime, pythonInvocationArgs, pythonSpawnEnvironment } = require('./python_runtime');
@@ -1388,7 +1389,7 @@ function applyDashboardMaterial(settings = fabricSettings) {
   }
 }
 
-function createDashboardWindow() {
+function createDashboardWindow(initialView = 'chat') {
   if (dashboardWindow && !dashboardWindow.isDestroyed()) return dashboardWindow;
   dashboardWindow = new BrowserWindow({
     width: 1320,
@@ -1422,7 +1423,9 @@ function createDashboardWindow() {
   });
   // 主窗口 = 工作室（对话 / 收藏箱 / 时间线 / 产物 / 设置）。
   // 旧的 dashboard.html 仍在磁盘上，未删除，只是不再是主界面。
-  dashboardWindow.loadFile(path.join(__dirname, 'renderer', 'studio.html'));
+  dashboardWindow.loadFile(path.join(__dirname, 'renderer', 'studio.html'), {
+    query: { view: initialView },
+  });
   dashboardWindow.on('close', (event: Electron.Event) => {
     if (!isQuitting && fabricSettings?.general?.keep_running !== false) {
       event.preventDefault();
@@ -1700,7 +1703,7 @@ function showCompanion(payload = {}, options: { activate?: boolean } = {}) {
 }
 
 function showDashboard(payload: Record<string, unknown> = {}, options: { activate?: boolean } = {}) {
-  const win = createDashboardWindow();
+  const win = createDashboardWindow(String(payload.view || 'chat'));
   const cursor = screen.getCursorScreenPoint();
   const display = screen.getDisplayNearestPoint(cursor);
   const workArea = display.workArea || display.bounds;
@@ -3436,9 +3439,16 @@ if (gotLock) app.whenReady().then(() => {
           await new Promise((resolve) => setTimeout(resolve, 300));
         }
         const image = await dashboardWindow.capturePage();
+        const renderedState = await dashboardWindow.webContents.executeJavaScript(`({
+          view: document.getElementById('shell')?.dataset.view || 'missing',
+          show: typeof show,
+          dashboardApi: Boolean(window.magicPointerDashboard),
+          studioShell: Boolean(globalThis.StudioShell),
+          settingsModel: Boolean(globalThis.SettingsModel),
+        })`);
         fs.mkdirSync(path.dirname(path.resolve(dashboardCapturePath)), { recursive: true });
         fs.writeFileSync(path.resolve(dashboardCapturePath), image.toPNG());
-        process.stdout.write(`${path.resolve(dashboardCapturePath)}\nview=${captureView}\n`);
+        process.stdout.write(`${path.resolve(dashboardCapturePath)}\nview=${captureView}\nrenderedState=${JSON.stringify(renderedState)}\n`);
       } catch (error) {
         process.stderr.write(`dashboard_capture_failed:${error instanceof Error ? `${error.name}:${error.message}` : String(error)}\n`);
         process.exitCode = 1;
@@ -3999,7 +4009,7 @@ function broadcastModelHealth() {
 async function refreshModelHealth({ probe = false } = {}) {
   try {
     const parsed = await runPythonBridgePromise(
-      { operation: 'model.health', probe, timeoutS: 6 },
+      { operation: 'model.health', probe, timeoutS: 6, modelRuntime: activeModelRuntimeConfig() },
       'scripts/fabric_bridge.py',
       { target: 'fabric-dashboard', timeoutMs: probe ? 12000 : 6000 },
     );
@@ -4115,6 +4125,10 @@ function modelCredentialRef(profileId: unknown) {
   const ref = String(profile?.credentialRef || '').trim();
   if (!profile || !ref) throw new Error('model_credential_ref_missing');
   return ref;
+}
+
+function activeModelRuntimeConfig() {
+  return resolveActiveModelRuntimeConfig(fabricSettings, credentialStore);
 }
 
 function withoutRawCredential(payload: any) {
@@ -4345,6 +4359,7 @@ function submitSelectionCommandWhenGrounded(payload: any, startedAt: number, not
     // made the whole normal routing chain unreachable from the stage.
     requestMode: payload?.requestMode === 'agent_prompt' ? 'agent_prompt' : 'auto',
     workspaceRoot: ROOT,
+    modelRuntime: activeModelRuntimeConfig(),
   };
   // 用户问的那句话只在这一刻存在：stage 事件流里不带它。
   // 不在这里记下来，工作室永远只能显示答案、没有问题。
@@ -4401,6 +4416,7 @@ function submitSelectionCommandWhenGrounded(payload: any, startedAt: number, not
       parsed.selectionSnapshotId = session.snapshot?.snapshot_id || null;
       parsed.requestId = requestId;
       scheduleBackgroundLearning({
+        enabled: fabricSettings?.privacy?.background_learning_enabled === true,
         request: parsed.learningReview,
         runBridge: runPythonBridge,
         log,
@@ -4678,6 +4694,7 @@ ipcMain.handle('stage:expand-passage', async (event: Electron.IpcMainInvokeEvent
     const child = runPythonBridge({
       passage,
       context: String(payload?.context || ''),
+      modelRuntime: activeModelRuntimeConfig(),
     }, 'scripts/expand_passage_bridge.py', 'stage', {
       timeoutMs: 60_000,
       onComplete: (parsed: any) => {
@@ -4833,7 +4850,11 @@ ipcMain.handle('dashboard:settings:get', async (event: Electron.IpcMainInvokeEve
   }
   // 设置面板回填真实值（不是界面里写死的 v:）。凭据类字段不在 fabricSettings
   // 里，模型档案的 credentialRef 也只是引用，不需要二次脱敏。
-  return { ok: true, settings: fabricSettings };
+  return {
+    ok: true,
+    settings: fabricSettings,
+    modelStatus: activeModelRuntimeStatus(fabricSettings, credentialStore),
+  };
 });
 
 async function saveFabricSettingsPatch(rawPatch: unknown) {

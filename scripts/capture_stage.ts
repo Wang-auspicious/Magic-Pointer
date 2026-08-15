@@ -8,6 +8,7 @@ const path = require('path');
 const ROOT = path.resolve(__dirname, '..');
 const outArg = process.argv[2] || path.join(ROOT, 'data', 'runtime', 'stage.png');
 const sceneArg = process.argv[3] || 'finished';
+const PANEL_ANCHOR = Object.freeze({ x: 672, y: 108 });
 
 app.setPath('userData', path.join(
   ROOT,
@@ -19,6 +20,7 @@ app.disableHardwareAcceleration();
 
 const SCENE = `(() => { try {
   const scene = ${JSON.stringify(sceneArg)};
+  const panelAnchor = ${JSON.stringify(PANEL_ANCHOR)};
   const root = document.getElementById('stage');
   const capsule = document.getElementById('capsule');
   const panel = document.getElementById('stage-thread');
@@ -55,14 +57,15 @@ const SCENE = `(() => { try {
     return node;
   };
 
-  const showCapsule = ({ x, y, width = 340, processing = false, text = '问点什么…' }) => {
+  const showCapsule = ({ x, y, processing = false, text = '问点什么…' }) => {
     capsule.hidden = false;
     capsule.dataset.mode = 'text';
     capsule.dataset.phase = processing ? 'processing' : 'input';
     capsule.dataset.empty = 'false';
     capsule.style.left = x + 'px';
     capsule.style.top = y + 'px';
-    capsule.style.setProperty('--capsule-width', width + 'px');
+    capsule.style.setProperty('--stage-composer-width', '480px');
+    capsule.style.setProperty('--stage-composer-height', '132px');
     document.getElementById('capsule-input').value = text;
     document.getElementById('processing-shimmer').hidden = !processing;
   };
@@ -78,12 +81,13 @@ const SCENE = `(() => { try {
     return node;
   };
 
-  const showPanel = ({ x, y, side, tier, phase, title, eyebrow }) => {
+  const showPanel = ({ x, y, side, phase, title, eyebrow }) => {
     panel.hidden = false;
     panel.style.left = x + 'px';
     panel.style.top = y + 'px';
     panel.dataset.side = side;
-    panel.dataset.widthTier = tier;
+    panel.style.setProperty('--stage-work-panel-width', '560px');
+    panel.style.setProperty('--stage-work-panel-height', '520px');
     panel.dataset.phase = phase;
     panel.dataset.turnCount = '1';
     document.getElementById('thread-title').textContent = title;
@@ -96,19 +100,18 @@ const SCENE = `(() => { try {
   if (scene === 'processing-right' || scene === 'processing-left') {
     const isRight = scene === 'processing-right';
     sourceWindow(isRight
-      ? { x: 48, y: 58, width: 720, height: 650 }
-      : { x: 470, y: 58, width: 720, height: 650 });
+      ? { x: 40, y: 42, width: 620, height: 690 }
+      : { x: 580, y: 42, width: 620, height: 690 });
     showCapsule({
-      x: isRight ? 520 : 590,
+      x: isRight ? 160 : 600,
       y: 108,
       processing: true,
       text: '把这组材料整理成提纲',
     });
     showPanel({
-      x: isRight ? 776 : 56,
-      y: 164,
+      x: isRight ? panelAnchor.x : 12,
+      y: panelAnchor.y,
       side: isRight ? 'right' : 'left',
-      tier: 'context',
       phase: 'running',
       title: '整理这组材料',
       eyebrow: 'WORKING',
@@ -122,7 +125,7 @@ const SCENE = `(() => { try {
 
   sourceWindow({ x: 40, y: 42, width: 620, height: 690 });
   showPanel({
-    x: 672, y: 108, side: 'right', tier: 'normal', phase: 'finished',
+    x: panelAnchor.x, y: panelAnchor.y, side: 'right', phase: 'finished',
     title: '整理选中内容', eyebrow: 'TASK FINISHED',
   });
   result.appendChild(makeTurn({

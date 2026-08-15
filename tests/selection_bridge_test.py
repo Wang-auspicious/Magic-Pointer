@@ -991,9 +991,11 @@ def test_record_auto_memory_sensitive_and_dedupe(tmp_path, monkeypatch) -> None:
 
     monkeypatch.setenv('MAGIC_POINTER_USER_DATA_DIR', str(tmp_path))
     ctx = AdapterReadContext(adapter='uia', app='Weixin.exe', method='selection', content='x', window={'title': '微信'})
-    _record_auto_memory('这段代码在干嘛', ctx, {'title': '微信'}, '这是超时逻辑。')
-    _record_auto_memory('这段代码在干嘛', ctx, {'title': '微信'}, '这是超时逻辑。')  # 去重
-    _record_auto_memory('帮我查一下密码是什么', ctx, {'title': '微信'}, '密码是 abc')  # 敏感挡
+    _record_auto_memory('这段代码在干嘛', ctx, {'title': '微信'}, '这是超时逻辑。', enabled=False)
+    assert not (tmp_path / 'screen-memory.json').exists(), '未明确开启时不得自动记忆'
+    _record_auto_memory('这段代码在干嘛', ctx, {'title': '微信'}, '这是超时逻辑。', enabled=True)
+    _record_auto_memory('这段代码在干嘛', ctx, {'title': '微信'}, '这是超时逻辑。', enabled=True)  # 去重
+    _record_auto_memory('帮我查一下密码是什么', ctx, {'title': '微信'}, '密码是 abc', enabled=True)  # 敏感挡
     data = json.loads((tmp_path / 'screen-memory.json').read_text(encoding='utf-8'))
     entries = data['entries']
     assert len(entries) == 1, f'期望 1 条（去重+敏感挡），实际 {len(entries)}'

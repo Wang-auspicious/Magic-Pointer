@@ -89,6 +89,8 @@ const known = renderCard(cards.applyPatch(
 ));
 assert.ok(known.includes('data-mode="determinate"'));
 assert.ok(known.includes('aria-valuenow="40"'));
+assert.ok(known.includes('<progress') && known.includes('value="40"'),
+  '已知进度要交给原生 progress 属性，不能靠 CSP 会拦截的内联 style');
 assert.ok(known.includes('40%'));
 
 // ---------------------------------------------------------------------------
@@ -98,7 +100,8 @@ let card = cards.normalizeCard({ kind: 'image', state: 'running', id: 'gen1', w:
 const early = renderCard(card);
 assert.ok(early.includes('data-kind="image"'), '还没出图时就要知道等来的是一张图');
 assert.ok(early.includes('is-waiting'), '等待时先占好位');
-assert.ok(early.includes('--ratio:2.0000'), '比例已知，图落下来时卡不该跳一下');
+assert.ok(early.includes('viewBox="0 0 1024 512"'),
+  '已知比例要用 SVG 固有尺寸占位，图落下来时卡不该跳一下');
 assert.ok(early.includes('data-card-id="gen1"'));
 
 card = cards.applyPatch(card, { state: 'done', src: 'file:///out.png', caption: '去掉了背景' });
@@ -108,6 +111,8 @@ assert.ok(late.includes('src="file:///out.png"'));
 assert.ok(!late.includes('is-waiting'));
 assert.ok(!late.includes('mcard-rail'), '出了结果就不该还挂着进度条');
 assert.ok(late.includes('去掉了背景'));
+assert.ok(!early.includes('style=') && !late.includes('style='),
+  '共享卡片不能生成违反 renderer CSP 的内联 style');
 
 // ---------------------------------------------------------------------------
 // 每种 kind 都要有身子，认不出来的退成一段话——绝不留白卡

@@ -5,8 +5,10 @@ import json
 import os
 import re
 import time
+from contextlib import contextmanager
 from io import BytesIO
 from pathlib import Path
+from typing import Iterator
 
 from app.governance.cancellation import CancelledError
 from app.model_health import (
@@ -26,6 +28,7 @@ USER_SECRETS_DIR = (
 )
 
 LabeledImage = tuple[str, Path]
+_REQUEST_AI_CONFIG: dict[str, str] | None = None
 
 
 DEFAULT_SYSTEM_PROMPT = """你是 Magic Pointer Open 的屏幕对象助手。
@@ -75,7 +78,31 @@ def read_local_secret(name: str) -> str | None:
     return None
 
 
+@contextmanager
+def request_ai_config(value: object) -> Iterator[None]:
+    """Bind a decrypted model profile to one resident-worker request only."""
+
+    global _REQUEST_AI_CONFIG
+    previous = _REQUEST_AI_CONFIG
+    raw = value if isinstance(value, dict) else {}
+    request_config = {
+        key: str(raw.get(key) or "").strip()
+        for key in ("provider", "credential", "baseUrl", "model", "apiMode")
+    }
+    _REQUEST_AI_CONFIG = request_config if any(request_config.values()) else None
+    try:
+        yield
+    finally:
+        _REQUEST_AI_CONFIG = previous
+
+
 def get_ai_config() -> tuple[str | None, str | None, str]:
+    if _REQUEST_AI_CONFIG:
+        return (
+            _REQUEST_AI_CONFIG.get("credential") or None,
+            _REQUEST_AI_CONFIG.get("baseUrl") or None,
+            _REQUEST_AI_CONFIG.get("model") or "gpt-4o-mini",
+        )
     api_key = os.getenv("OPENAI_API_KEY") or read_local_secret("openai_key.txt")
     base_url = os.getenv("OPENAI_BASE_URL") or read_local_secret("openai_base_url.txt")
     model = os.getenv("MAGIC_POINTER_MODEL") or read_local_secret("model.txt") or "gpt-4o-mini"
@@ -84,6 +111,10 @@ def get_ai_config() -> tuple[str | None, str | None, str]:
 
 def get_ai_api_mode(base_url: str | None = None) -> str:
     """Protocol for the configured gateway; legacy installs stay OpenAI-compatible."""
+    if _REQUEST_AI_CONFIG:
+        request_mode = str(_REQUEST_AI_CONFIG.get("apiMode") or "").casefold()
+        if request_mode in {"messages", "chat-completions"}:
+            return request_mode
     explicit = os.getenv("MAGIC_POINTER_API_MODE") or read_local_secret("model_api_mode.txt")
     mode = str(explicit or "").strip().casefold()
     if mode in {"messages", "anthropic"}:
@@ -131,6 +162,8 @@ def get_vision_key(text_api_key: str | None) -> str | None:
 #   hy3, mimo-v2-omni (unserved)       |   glm-5v / glm-4.6v are the vision lines.
 _TEXT_ONLY_MODEL_PATTERNS = (
     re.compile(r"deepseek"),
+    re.compile(r"gpt-oss"),
+    re.compile(r"llama-3\.[13]-"),
     re.compile(r"glm-4\.[56](?!v)"),
     re.compile(r"glm-5(?!v)"),
     re.compile(r"kimi-k2-"),
@@ -418,6 +451,12 @@ def ask_text_model(
     if not api_key:
         record_unconfigured()
         excerpt = (context_text or user_prompt or "").strip()[:900]
+        if _REQUEST_AI_CONFIG:
+            provider = str(_REQUEST_AI_CONFIG.get("provider") or "当前").strip().capitalize()
+            return (
+                f"{provider} 模型档案没有可用密钥，因此没有调用文本模型。\n\n"
+                f"当前读取到的上下文：{excerpt}"
+            )
         return (
             "未检测到 OPENAI_API_KEY 或 secrets/openai_key.txt，因此没有调用文本模型。\n\n"
             f"当前读取到的上下文：{excerpt}"

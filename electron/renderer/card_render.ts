@@ -230,7 +230,9 @@ const CardRender = (() => {
         'aria-valuenow': determinate ? String(pct) : null,
         'aria-valuemin': '0',
         'aria-valuemax': '100',
-      }, [h('i', { style: `--p:${determinate ? card.progress.toFixed(3) : 0}` }, [])]),
+      }, [determinate
+        ? h('progress', { max: '100', value: String(pct), 'aria-hidden': 'true' }, [])
+        : h('i', { 'aria-hidden': 'true' }, [])]),
       h('div', { class: 'mcard-stage' }, [
         h('span', { class: 'mcard-now' }, [card.runningLabel || '正在处理']),
         determinate ? h('em', { class: 'mcard-pct' }, [`${pct}%`]) : null,
@@ -319,17 +321,24 @@ const CardRender = (() => {
     image(card) {
       const src = safeSrc(card.src);
       if (card.state === 'failed' && !src) return null;
-      const ratio = Number.isFinite(card.w) && Number.isFinite(card.h) && card.h > 0
-        ? (card.w / card.h) : 1.5;
-      const style = `--ratio:${ratio.toFixed(4)}`;
+      const ratioWidth = Number.isFinite(card.w) && card.w > 0 ? card.w : 3;
+      const ratioHeight = Number.isFinite(card.h) && card.h > 0 ? card.h : 2;
+      const ratioSizer = () => h('svg', {
+        class: 'mimg-ratio',
+        viewBox: `0 0 ${ratioWidth} ${ratioHeight}`,
+        preserveAspectRatio: 'none',
+        'aria-hidden': 'true',
+      }, []);
       if (card.state === 'running' || !src) {
-        return h('div', { class: 'mcard-image is-waiting', style }, [
+        return h('div', { class: 'mcard-image is-waiting' }, [
+          ratioSizer(),
           h('div', { class: 'mimg-skeleton' }, [icon('ic-img')]),
         ]);
       }
       const before = safeSrc(card.before);
       return [
-        h('div', { class: 'mcard-image', style }, [
+        h('div', { class: 'mcard-image' }, [
+          ratioSizer(),
           before ? h('img', { class: 'mimg-before', src: before, alt: '改之前' }, []) : null,
           h('img', { class: 'mimg', src, alt: card.caption || '结果图' }, []),
           before ? h('span', { class: 'mimg-flip', 'data-act': 'flip' }, ['按住看改之前']) : null,

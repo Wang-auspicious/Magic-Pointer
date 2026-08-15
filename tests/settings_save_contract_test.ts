@@ -33,5 +33,7 @@ assert.match(preload, /saveFabricSettings:\s*\(settings:[^)]*\)\s*=>\s*ipcRender
   'settings UI must await a canonical save result');
 assert.match(main, /ipcMain\.handle\('dashboard:settings:save'/,
   'main must expose an acknowledged settings save handler');
+assert.match(main, /modelStatus:\s*activeModelRuntimeStatus\(fabricSettings, credentialStore\)/,
+  'settings hydration must include non-secret active model and credential status');
 
 console.log('settings save contract test ok');

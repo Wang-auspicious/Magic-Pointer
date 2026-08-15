@@ -4,6 +4,7 @@ const fs = require('fs');
 const source = fs.readFileSync('electron/renderer/stage.ts', 'utf8');
 const html = fs.readFileSync('electron/renderer/stage.html', 'utf8');
 const css = fs.readFileSync('electron/renderer/stage.css', 'utf8');
+const capture = fs.readFileSync('scripts/capture_stage.ts', 'utf8');
 
 assert(html.includes('class="stage-composer"'), 'the default entry surface must be a fixed text composer');
 assert(html.includes('class="work-panel-viewport"'), 'the answer shell needs a fixed viewport');
@@ -29,5 +30,9 @@ assert(!css.includes('@keyframes stage-capsule-expand'));
 assert(!css.includes('@keyframes stage-capsule-collapse'));
 assert(!css.includes('@keyframes stage-thread-finish'));
 assert(!css.includes('scaleY(.045)'), 'the answer panel must not grow from a tiny bubble');
+assert(capture.includes('const PANEL_ANCHOR = Object.freeze({ x: 672, y: 108 });'),
+  'processing and finished visual fixtures must share the same work-panel anchor');
+assert(!capture.includes("setProperty('--capsule-width'"),
+  'the visual fixture must use the real fixed composer geometry variable');
 
 console.log('stage fixed surface contract test ok');

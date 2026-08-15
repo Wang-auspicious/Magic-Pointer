@@ -133,7 +133,19 @@ class VoiceResidentRuntime {
   configure(next: VoiceConfigInput) {
     const config = normalizeConfig(next);
     if (sameConfig(this.config, config)) return { ok: true, rebuilt: false, changed: false };
-    if (this.active) return { ok: false, error: 'voice_session_active' };
+    if (this.active && config.enabled) return { ok: false, error: 'voice_session_active' };
+    if (this.active) {
+      const active = this.active;
+      if (!active.resident && typeof this.stopLegacy === 'function') {
+        this.stopLegacy({
+          requestId: active.requestId,
+          surface: active.surface,
+          graceful: false,
+          cancel: true,
+        });
+      }
+      this.active = null;
+    }
     const hadClient = Boolean(this.client);
     this._clearRestart();
     this._disposeClient();

@@ -5,6 +5,7 @@ type SettingOption = { label: string; value: string | number };
 type SettingRow = {
   control: 'toggle' | 'select' | 'range' | 'text' | 'tags' | 'info';
   description?: string;
+  infoKey?: 'active-model' | 'credential' | 'terminal';
   label: string;
   max?: number;
   min?: number;
@@ -66,7 +67,9 @@ const SETTINGS_PAGES: SettingsPage[] = [
   ] },
   { id: 'models-agents', icon: 'ic-spark', title: '模型与 Agent', description: '模型负责回答，Agent 负责接手更长的项目任务。', sections: [
     { title: '模型', rows: [
-      { control: 'info', label: '模型档案', description: '密钥存入系统安全存储；这里永不回显原文。' },
+      { control: 'info', infoKey: 'active-model', label: '当前默认模型', description: '普通回答与卡片内展开都使用这一档。' },
+      { control: 'info', infoKey: 'credential', label: '模型密钥', description: '只显示是否存在，永不回显原文。' },
+      { control: 'info', infoKey: 'terminal', label: '安全配置', description: '在项目终端运行；输入过程不会回显密钥。' },
     ] },
     { title: 'Agent', rows: [
       { path: 'agents.preferred', control: 'select', label: '首选 Agent', options: [option('pi', 'Pi'), option('codex', 'Codex'), option('claude', 'Claude Code'), option('gemini', 'Gemini CLI')] },
@@ -84,6 +87,10 @@ const SETTINGS_PAGES: SettingsPage[] = [
     { title: '边界', rows: [
       { path: 'privacy.sensitive_apps', control: 'tags', label: '完全不看的应用', description: '不读、不截，也不记。' },
       { path: 'privacy.anonymous_usage', control: 'toggle', label: '发送匿名使用数据' },
+    ] },
+    { title: '记忆与学习', rows: [
+      { path: 'privacy.screen_memory_enabled', control: 'toggle', label: '记住最近处理过的对象', description: '只在本机保存应用、窗口和问题摘要；默认关闭。' },
+      { path: 'privacy.background_learning_enabled', control: 'toggle', label: '生成学习建议', description: '任务结束后在后台生成候选；应用前仍需你批准。' },
     ] },
     { title: '浏览器', rows: [
       { path: 'connections.browser_devtools_enabled', control: 'toggle', label: '读取已授权的浏览器页面' },
@@ -158,7 +165,21 @@ function patchForSetting(path: string, value: unknown) {
   return nestedPatch(path, value);
 }
 
-const SettingsModel = { SETTINGS_PAGES, patchForSetting, valueForSetting };
+function modelInfoValue(key: string, status: Record<string, any>) {
+  if (key === 'active-model') {
+    if (!status?.configured) return '未配置';
+    return String(status.displayName || status.model || status.provider || '已配置');
+  }
+  if (key === 'credential') {
+    if (!status?.configured) return '等待模型档案';
+    if (!status.credentialBackendAvailable) return '系统安全存储不可用';
+    return status.credentialPresent ? '已安全保存' : '未配置';
+  }
+  if (key === 'terminal') return 'npm run model:groq';
+  return '只读';
+}
+
+const SettingsModel = { SETTINGS_PAGES, modelInfoValue, patchForSetting, valueForSetting };
 if (typeof module !== 'undefined' && module.exports) module.exports = SettingsModel;
 if (typeof globalThis !== 'undefined') {
   (globalThis as typeof globalThis & { SettingsModel?: typeof SettingsModel }).SettingsModel = SettingsModel;

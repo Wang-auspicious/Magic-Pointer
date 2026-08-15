@@ -16,6 +16,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from app.harness.builtin_bundle import LoopHarnessHost  # noqa: E402
+from app.ai_client import request_ai_config  # noqa: E402
 from scripts import selection_bridge  # noqa: E402
 
 _MAX_LINE_CHARS = 8 * 1024 * 1024
@@ -40,7 +41,8 @@ def _run_selection(payload: dict[str, Any]) -> dict[str, Any]:
     try:
         sys.stdin = _PayloadStdin(payload)  # type: ignore[assignment]
         sys.stdout = captured
-        selection_bridge.main()
+        with request_ai_config(payload.get("modelRuntime")):
+            selection_bridge.main()
     finally:
         sys.stdin = previous_stdin
         sys.stdout = previous_stdout

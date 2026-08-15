@@ -10,6 +10,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.fabric.settings import FabricSettings, deep_merge_settings  # noqa: E402
 
 
+def test_passive_learning_is_opt_in_by_default() -> None:
+    settings = FabricSettings.defaults()
+    assert settings.privacy.screen_memory_enabled is False
+    assert settings.privacy.background_learning_enabled is False
+
+
 def test_voice_master_switch_normalizes_dependent_fields() -> None:
     settings = FabricSettings.from_dict({
         **FabricSettings.defaults().to_dict(),

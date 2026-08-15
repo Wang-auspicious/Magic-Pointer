@@ -41,6 +41,12 @@ def test_unknown_models_are_never_refused() -> None:
     assert classify_vision_capability("some-custom-vlm") is None
 
 
+def test_groq_production_text_models_are_refused_before_image_upload() -> None:
+    assert classify_vision_capability("openai/gpt-oss-120b") is False
+    assert classify_vision_capability("llama-3.3-70b-versatile") is False
+    assert classify_vision_capability("llama-3.1-8b-instant") is False
+
+
 def test_hy3_is_text_only() -> None:
     assert classify_vision_capability("hy3") is False
 

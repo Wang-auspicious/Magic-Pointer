@@ -271,13 +271,15 @@ def main() -> int:
         elif operation == "model.health":
             # Cheap read of the last known verdict; `probe: true` asks the
             # gateway again. Startup probes so the first command already knows.
+            from app.ai_client import request_ai_config
             from app.model_health import probe_gateway, read_health
 
-            health = (
-                probe_gateway(timeout_s=float(payload.get("timeoutS") or 6.0))
-                if payload.get("probe") is True
-                else read_health()
-            )
+            with request_ai_config(payload.get("modelRuntime")):
+                health = (
+                    probe_gateway(timeout_s=float(payload.get("timeoutS") or 6.0))
+                    if payload.get("probe") is True
+                    else read_health()
+                )
             result = {"ok": True, "health": health.to_public_dict()}
         elif operation == "providers":
             result = {"ok": True, "providers": AgentGateway(root=user_root).providers()}

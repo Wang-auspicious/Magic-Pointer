@@ -3,6 +3,7 @@
 const assert = require('assert');
 const {
   SETTINGS_PAGES,
+  modelInfoValue,
   patchForSetting,
   valueForSetting,
 } = require('../electron/renderer/settings_model');
@@ -21,6 +22,24 @@ assert(editable.every((row: any) => row.path && !row.path.startsWith('_')),
   'every editable row must map to a real schema path');
 assert(!SETTINGS_PAGES.some((page: any) => /能力|诊断/.test(page.title)),
   'capability catalogs and diagnostics are not settings');
+const privacyRows = SETTINGS_PAGES.find((page: any) => page.id === 'perception-privacy')
+  .sections.flatMap((section: any) => section.rows);
+assert(privacyRows.some((row: any) => row.path === 'privacy.screen_memory_enabled'),
+  'recent screen context must have a visible opt-in switch');
+assert(privacyRows.some((row: any) => row.path === 'privacy.background_learning_enabled'),
+  'background learning proposals must have a visible opt-in switch');
+const modelRows = SETTINGS_PAGES.find((page: any) => page.id === 'models-agents')
+  .sections.find((section: any) => section.title === '模型').rows;
+assert.deepStrictEqual(modelRows.map((row: any) => row.infoKey), [
+  'active-model', 'credential', 'terminal',
+]);
+assert.strictEqual(modelInfoValue('active-model', {
+  configured: true, displayName: 'Groq · GPT OSS 120B', provider: 'groq', model: 'openai/gpt-oss-120b',
+}), 'Groq · GPT OSS 120B');
+assert.strictEqual(modelInfoValue('credential', {
+  configured: true, credentialPresent: false, credentialBackendAvailable: true,
+}), '未配置');
+assert.strictEqual(modelInfoValue('terminal', {}), 'npm run model:groq');
 
 assert.deepStrictEqual(patchForSetting('interaction.voice_enabled', false), {
   interaction: { voice_enabled: false, default_input_mode: 'text', voice_resident_enabled: false },

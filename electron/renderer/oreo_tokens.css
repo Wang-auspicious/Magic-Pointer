@@ -99,7 +99,6 @@
   --shadow-pop:  0 4px 8px rgba(0,0,0,.38), 0 24px 56px -12px rgba(0,0,0,.60);
 }
 
-/* 图标精灵的容器。icons.js 用 insertAdjacentHTML 把它塞进 body 最前面，
-   定位以前写在行内 style 属性上——而舞台的 CSP 是 style-src 'self'，行内样式
-   被整条拦掉，精灵于是在文档流里占着位置。定位搬到这里，五个界面共用。 */
+/* 图标精灵的容器。定位留在共享样式里，避免精灵进入文档流占位。舞台只为
+   必需的动态几何开放 inline style，script-src 仍然保持 self。 */
 .icon-sprite { position: absolute; }

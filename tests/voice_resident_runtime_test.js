@@ -80,6 +80,20 @@ class FakeClient extends EventEmitter {
   assert.strictEqual(clients.length, 2);
 }());
 
+(function disablingVoiceAlwaysStopsAnActiveResidentSession() {
+  const client = new FakeClient();
+  const runtime = new VoiceResidentRuntime({ createClient: () => client });
+  runtime.configure({ enabled: true, memoryLimitMb: 1024, idleUnloadMs: 300000 });
+  assert.strictEqual(runtime.start({ requestId: 'turn-off-now', surface: 'stage', contextPath: '' }).ok, true);
+  assert.deepStrictEqual(
+    runtime.configure({ enabled: false, memoryLimitMb: 1024, idleUnloadMs: 300000 }),
+    { ok: true, rebuilt: true, changed: true },
+    'the master switch must take effect even while the microphone is active',
+  );
+  assert.strictEqual(runtime.active, null);
+  assert.strictEqual(client.shutdowns, 1);
+}());
+
 (function cancellationSuppressesTranscriptUntilMicrophoneStopped() {
   const client = new FakeClient();
   const delivered = [];

@@ -56,6 +56,11 @@ assert(html.includes('id="stage-error"'));
 assert(html.includes('src="../stage_state.js"'));
 assert(html.includes('src="../stage_anchor.js"'));
 assert(html.includes('Content-Security-Policy'));
+const csp = html.match(/Content-Security-Policy" content="([^"]+)/)?.[1] || '';
+assert(csp.includes("style-src 'self' 'unsafe-inline'"),
+  'stage uses runtime geometry for the selected region and anchored panels, so its CSP must permit those styles');
+assert(!csp.includes("script-src 'self' 'unsafe-inline'"),
+  'dynamic layout must not weaken the script policy');
 
 // No legacy pill / lasso / reader / panel-rail markup on the stage
 assert(!/pill/i.test(html));

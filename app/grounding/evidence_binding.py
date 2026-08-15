@@ -66,6 +66,11 @@ def _require_complete_identity(target: Mapping[str, Any]) -> None:
         raise EvidenceBindingError("target_identity_incomplete")
 
 
+def _process_name(value: Any) -> str:
+    name = str(value or "").strip().casefold()
+    return name[:-4] if name.endswith(".exe") else name
+
+
 def _require_same_identity(
     expected: Mapping[str, Any],
     observed: Mapping[str, Any],
@@ -74,9 +79,9 @@ def _require_same_identity(
         raise EvidenceBindingError("target_hwnd_mismatch")
     if observed.get("processId") != expected.get("processId"):
         raise EvidenceBindingError("target_process_mismatch")
-    if str(observed.get("processName") or "").casefold() != str(
-        expected.get("processName") or ""
-    ).casefold():
+    if _process_name(observed.get("processName")) != _process_name(
+        expected.get("processName")
+    ):
         raise EvidenceBindingError("target_process_name_mismatch")
 
 

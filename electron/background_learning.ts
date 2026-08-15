@@ -16,16 +16,19 @@ type BridgeRunner = (
 ) => unknown;
 
 function scheduleBackgroundLearning({
+  enabled,
   request,
   runBridge,
   log = () => {},
 }: {
+  enabled: boolean;
   request: ReviewRequest | null | undefined;
   runBridge: BridgeRunner;
   log?: (message: string) => void;
 }): boolean {
   if (
-    request?.requested !== true
+    enabled !== true
+    || request?.requested !== true
     || typeof request.sessionId !== 'string'
     || request.sessionId.length === 0
     || typeof request.terminalReason !== 'string'

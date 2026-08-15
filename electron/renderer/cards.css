@@ -70,15 +70,21 @@
   position: relative; height: 4px; overflow: hidden;
   border-radius: 999px; background: var(--paper-2);
 }
+.mbar > progress {
+  display: block; width: 100%; height: 100%;
+  appearance: none; border: 0; background: transparent;
+}
+.mbar > progress::-webkit-progress-bar { background: transparent; }
+.mbar > progress::-webkit-progress-value {
+  border-radius: inherit;
+  background: var(--ink);
+  transition: width .42s var(--ease-out);
+}
 .mbar > i {
   position: absolute; inset: 0;
   border-radius: inherit;
   background: var(--ink);
   transform-origin: left center;
-}
-.mbar[data-mode="determinate"] > i {
-  transform: scaleX(var(--p, 0));
-  transition: transform .42s var(--ease-out);
 }
 .mbar[data-mode="indeterminate"] > i {
   width: 100%; inset: 0 auto 0 0;
@@ -186,12 +192,15 @@
 /* ---- 图：等待时先占好位，图落下来时卡不会跳一下 ---- */
 .mcard-image {
   position: relative; overflow: hidden;
-  aspect-ratio: var(--ratio, 1.5);
   /* 比例照原图，但不让一张 3:1 的长图把整张卡撑到半屏高。
      超过就裁——object-fit: cover 已经在做这件事。 */
   max-height: 320px;
   border-radius: var(--r-tile);
   background: var(--card-sunk);
+}
+.mcard-image > .mimg-ratio {
+  display: block; width: 100%; height: auto;
+  visibility: hidden; pointer-events: none;
 }
 .mcard[data-density="capsule"] .mcard-image { max-height: 200px; }
 .mcard-image .mimg,

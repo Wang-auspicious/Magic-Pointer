@@ -42,7 +42,6 @@ files:
   - scripts/frame_capture_worker.py
   - scripts/frame_lease.py
   - scripts/install_agent_hooks.py
-  - scripts/list_models.py
   - scripts/local_voice_bridge.py
   - scripts/local_voice_worker.py
   - scripts/magic_pointer_mcp.py

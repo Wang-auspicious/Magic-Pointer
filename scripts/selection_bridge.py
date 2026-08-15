@@ -2263,7 +2263,11 @@ def _record_auto_memory(
     app_ctx: Any,
     target_window: dict[str, Any] | None,
     answer: str,
+    *,
+    enabled: bool = False,
 ) -> None:
+    if not enabled:
+        return
     from app.context_pack.screen_memory import MAX_EXCERPT_CHARS, ScreenMemory
 
     text = str(command or "").strip()[:MAX_EXCERPT_CHARS]
@@ -3432,7 +3436,13 @@ def main() -> int:
     # 「对象 + 问题」——不依赖用户手动指令，积累上下文供未来主动提议。
     # 失败绝不影响本次回答（记忆是副作用，不是主路径）。
     try:
-        _record_auto_memory(command, app_ctx, target_window, answer)
+        _record_auto_memory(
+            command,
+            app_ctx,
+            target_window,
+            answer,
+            enabled=routing_settings.privacy.screen_memory_enabled,
+        )
     except Exception:
         pass
     elapsed_ms = clock.total(

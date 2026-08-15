@@ -31,7 +31,7 @@ from _bridge_common import (
 ensure_root_on_path()
 
 from app.actions.office import clean_replacement_text  # noqa: E402
-from app.ai_client import ask_text_model  # noqa: E402
+from app.ai_client import ask_text_model, request_ai_config  # noqa: E402
 from app.text_actions.length_target import (  # noqa: E402
     MIN_MEANINGFUL_CHARS,
     auto_expand_target,
@@ -113,7 +113,8 @@ def main() -> int:
         write_json(_fail("请求格式不对。", detail=f"invalid payload: {exc}"))
         return 2
 
-    reply = expand(str(payload.get("passage") or ""), str(payload.get("context") or ""))
+    with request_ai_config(payload.get("modelRuntime")):
+        reply = expand(str(payload.get("passage") or ""), str(payload.get("context") or ""))
     write_json(reply)
     return 0 if reply.get("ok") else 1
 

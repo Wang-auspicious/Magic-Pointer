@@ -374,7 +374,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .node-shot { display: block; background-color: #eee; background-repeat: no-repeat; }
 .node-desc,
 .node-summary { padding: 7px 9px; overflow: hidden; color: var(--studio-ink-soft); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.node-summary { border-top: 1px solid var(--studio-line-soft); white-space: normal; }
+.node-summary { display: -webkit-box; min-height: 66px; border-top: 1px solid var(--studio-line-soft); white-space: normal; line-height: 1.5; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
 .node-note { display: -webkit-box; padding: 12px; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 3; color: #3d4047; font-size: 11.5px; line-height: 1.55; }
 .node-note.is-open { display: block; overflow: auto; -webkit-line-clamp: unset; }
 .stash-list { min-height: 360px; padding: 18px; }
@@ -452,6 +452,7 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .settings-range input { flex: 1; accent-color: #16181d; }
 .settings-range output { min-width: 34px; color: var(--studio-ink-soft); font: 10.5px/1 var(--mp-font-mono); text-align: right; }
 .settings-info-value { padding: 5px 9px; border-radius: 999px; background: var(--studio-cyan); color: var(--studio-cyan-ink); font-size: 10.5px; }
+.settings-info-value[data-info-key='terminal'] { border-radius: 7px; background: #f1f0eb; color: var(--studio-ink); font-family: var(--mp-font-mono); user-select: all; }
 .settings-row-error { grid-column: 1 / -1; margin: -5px 0 0; color: var(--studio-danger); font-size: 10.5px; }
 .settings-row[data-save-state='saving'] { background: #fffdf5; }
 .settings-row[data-save-state='error'] { background: #fff7f6; }

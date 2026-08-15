@@ -147,6 +147,8 @@ function defaultSettings() {
     },
     privacy: {
       upload_screenshots: false,
+      screen_memory_enabled: false,
+      background_learning_enabled: false,
       default_capture_mode: 'follow_global',
       app_capture_modes: {},
       retain_captures_days: 3,
@@ -416,6 +418,8 @@ function validate(settings: ReturnType<typeof defaultSettings>): ReturnType<type
     }),
   );
   const privacy = { ...defaults.privacy, ...(settings.privacy || {}) };
+  privacy.screen_memory_enabled = privacy.screen_memory_enabled === true;
+  privacy.background_learning_enabled = privacy.background_learning_enabled === true;
   privacy.anonymous_usage = privacy.anonymous_usage === true;
   privacy.retain_captures_days = Math.max(
     0,

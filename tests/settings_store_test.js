@@ -24,6 +24,8 @@ assert(defaults.activation.disabled_apps.includes('blender'));
 assert.strictEqual(defaults.privacy.default_capture_mode, 'follow_global');
 assert.deepStrictEqual(defaults.privacy.app_capture_modes, {});
 assert.strictEqual(defaults.privacy.retain_artifacts_days, 30);
+assert.strictEqual(defaults.privacy.screen_memory_enabled, false);
+assert.strictEqual(defaults.privacy.background_learning_enabled, false);
 assert.deepStrictEqual(defaults.permissions.scoped_grants, []);
 assert.strictEqual(defaults.connections.browser_devtools_enabled, true);
 assert.deepStrictEqual(defaults.connections.browser_devtools_endpoints, ['http://127.0.0.1:9222']);
@@ -52,6 +54,8 @@ defaults.interaction.voice_glossaries = {
 };
 defaults.privacy.default_capture_mode = 'local_ocr';
 defaults.privacy.app_capture_modes = { '1password': 'deny', edge: 'local_screenshot' };
+defaults.privacy.screen_memory_enabled = true;
+defaults.privacy.background_learning_enabled = true;
 defaults.permissions.scoped_grants = [{
   decision: 'allow',
   recipe: 'agent.handoff',
@@ -74,6 +78,8 @@ assert.strictEqual(loaded.interaction.voice_idle_unload_ms, 60000);
 assert.deepStrictEqual(loaded.interaction.voice_glossaries['*'], ['Magic Pointer', 'Context Packet']);
 assert.strictEqual(loaded.privacy.default_capture_mode, 'local_ocr');
 assert.deepStrictEqual(loaded.privacy.app_capture_modes, { '1password': 'deny', edge: 'local_screenshot' });
+assert.strictEqual(loaded.privacy.screen_memory_enabled, true);
+assert.strictEqual(loaded.privacy.background_learning_enabled, true);
 assert.strictEqual(loaded.permissions.scoped_grants[0].project, 'D:\\work\\magic-pointer');
 assert.deepStrictEqual(loaded.connections.browser_devtools_endpoints, ['http://localhost:9333']);
 
