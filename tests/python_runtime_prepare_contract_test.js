@@ -27,6 +27,10 @@ assert(script.includes("$WheelhousePath = Join-Path $BuildRoot 'python-wheelhous
   'runtime preparation must retain a durable wheelhouse outside the disposable staging runtime');
 assert(script.includes("$LockPath = Join-Path $ProjectRoot 'requirements.lock.txt'"),
   'runtime preparation must use the committed lock instead of ranged requirements');
+assert(script.includes('[System.Security.Cryptography.SHA256]::Create()'),
+  'runtime preparation must hash the lock without relying on an auto-loaded PowerShell module');
+assert(!script.includes('Get-FileHash'),
+  'installer preparation must also work when Microsoft.PowerShell.Utility is unavailable');
 assert(script.includes("'--require-hashes'"), 'both wheel acquisition and installation must enforce package hashes');
 assert(script.includes("'--no-index'"), 'the bundled runtime must install strictly offline from the wheelhouse');
 assert(script.includes("'--find-links', $WheelhousePath"), 'offline installation must point only at the project wheelhouse');

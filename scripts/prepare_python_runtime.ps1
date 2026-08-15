@@ -46,6 +46,20 @@ function Get-BuildPythonLastLine([string[]]$Arguments) {
   return ($captured.Output | Select-Object -Last 1).ToString().Trim()
 }
 
+function Get-Sha256([string]$LiteralPath) {
+  # Do not depend on a module-provided file-hash cmdlet. The installer is launched from both Windows
+  # PowerShell and PowerShell Core, and module auto-loading is not guaranteed in
+  # the non-interactive child used by electron-builder.
+  $stream = [System.IO.File]::OpenRead($LiteralPath)
+  $hasher = [System.Security.Cryptography.SHA256]::Create()
+  try {
+    return [System.BitConverter]::ToString($hasher.ComputeHash($stream)).Replace('-', '').ToLowerInvariant()
+  } finally {
+    $hasher.Dispose()
+    $stream.Dispose()
+  }
+}
+
 function Copy-FilteredTree([string]$Source, [string]$Destination) {
   New-Item -ItemType Directory -Path $Destination -Force | Out-Null
   foreach ($entry in Get-ChildItem -LiteralPath $Source -Force) {
@@ -172,7 +186,7 @@ foreach ($pattern in $stalePatterns) {
 $PythonVersion = Get-BuildPythonLastLine @('-c', 'import sys; print(sys.version)')
 $BasePrefix = Get-BuildPythonLastLine @('-c', 'import sys; print(sys.base_prefix)')
 if (-not (Test-Path -LiteralPath $BasePrefix)) { throw "Build Python base prefix missing: $BasePrefix" }
-$RequirementsSha256 = (Get-FileHash -LiteralPath $LockPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$RequirementsSha256 = Get-Sha256 -LiteralPath $LockPath
 
 if (-not $Force -and (Test-RuntimeCache -Candidate $RuntimePath -PythonVersion $PythonVersion -RequirementsSha256 $RequirementsSha256)) {
   Write-Output "Python runtime cache valid: $RuntimePath"
