@@ -170,6 +170,19 @@ declare global {
     name: string;
     models: MagicPointerModelEntry[];
   }
+  interface MagicPointerSlashEntry {
+    name: string;
+    description: string;
+    whenToUse?: string;
+    source?: string;
+    path?: string;
+  }
+  interface MagicPointerSlashDirectory {
+    ok?: boolean;
+    commands?: MagicPointerSlashEntry[];
+    skills?: MagicPointerSlashEntry[];
+    errors?: string[];
+  }
   interface MagicPointerModelCatalog {
     current?: string;
     visionModel?: string;
@@ -190,6 +203,7 @@ declare global {
     saveFabricSettings?(settings: unknown): Promise<unknown>;
     getFabricSettings?(): Promise<Record<string, unknown>>;
     modelsCatalog?(): Promise<{ ok?: boolean; catalog?: MagicPointerModelCatalog; error?: string }>;
+    slashDirectory?(): Promise<MagicPointerSlashDirectory | { ok?: boolean; error?: string }>;
     selectModel?(model: unknown): Promise<{ ok?: boolean; model?: string; error?: string }>;
     conversations: {
       list(): Promise<MagicPointerConversation[]>;
@@ -308,6 +322,7 @@ declare global {
     conversation(id: string): Promise<MagicPointerConversation | undefined>;
     sendConversation(conversationId: string | null, question: string, permissionPreset?: string): Promise<Record<string, any>>;
   models(): Promise<MagicPointerModelCatalog | null>;
+  slashDirectory(): Promise<MagicPointerSlashDirectory | null>;
   selectModel(model: string): Promise<{ ok?: boolean; model?: string; error?: string }>;
     timeline(): Promise<MagicPointerTimelineDay[]>;
     memories(): Promise<unknown[]>;
@@ -537,6 +552,17 @@ const Data: MagicPointerDataApi = {
     try {
       const response = await bridge()!.modelsCatalog?.();
       return response?.ok ? (response.catalog ?? null) : null;
+    } catch {
+      return null;
+    }
+  },
+
+  async slashDirectory(): Promise<MagicPointerSlashDirectory | null> {
+    if (!hasBridge()) return null;
+    try {
+      const response = (await bridge()!.slashDirectory?.()) as MagicPointerSlashDirectory | { ok?: boolean; error?: string } | undefined;
+      if (!response || (response as { ok?: boolean }).ok === false) return null;
+      return response as MagicPointerSlashDirectory;
     } catch {
       return null;
     }

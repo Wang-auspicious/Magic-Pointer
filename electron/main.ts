@@ -4980,6 +4980,20 @@ async function saveFabricSettingsPatch(rawPatch: unknown) {
   }
 }
 
+ipcMain.handle('slash:directory', async (event: Electron.IpcMainInvokeEvent) => {
+  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_slash_directory' };
+  try {
+    const parsed = await runPythonBridgePromise(
+      { operation: 'slash.directory' },
+      'scripts/fabric_bridge.py',
+      { target: 'fabric-dashboard', timeoutMs: 10000 },
+    );
+    return parsed ?? { ok: false, error: 'slash_directory_failed' };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+});
+
 ipcMain.handle('models:catalog', async (event: Electron.IpcMainInvokeEvent) => {
   if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_catalog_reader' };
   try {

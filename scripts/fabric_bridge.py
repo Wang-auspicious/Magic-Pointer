@@ -287,6 +287,10 @@ def main() -> int:
 
             with request_ai_config(payload.get("modelRuntime")):
                 result = {"ok": True, "catalog": list_models()}
+        elif operation == "slash.directory":
+            from app.agent_runtime.slash_directory import directory_payload
+
+            result = directory_payload()
         elif operation == "model.select":
             from app.models_catalog import select_model
 

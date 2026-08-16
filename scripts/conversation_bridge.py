@@ -51,6 +51,72 @@ MAX_QUESTION_CHARS = 4000
 MAX_TURNS = 12
 
 
+
+from app.agent_runtime.slash_directory import SLASH_COMMANDS  # noqa: E402
+
+
+def route_slash_command(prompt: str, catalog) -> dict | None:
+    """DSH 斜杠管线：``/name args`` 是命令或 skill；否则原样放行给模型。
+
+    - ``/permission [preset]``：无参列出可用预设；有参校验后交渲染层落芯片；
+    - ``/model [id]``：走 :func:`app.models_catalog.select_model` 真实写配置；
+    - 已知 skill：返回剥离 frontmatter 的正文，由回合注入为指令；
+    - 未知名：不是命令，返回 None（按普通问题走模型）。
+    """
+    text = str(prompt or "").strip()
+    if not text.startswith("/"):
+        return None
+    name, _, rest = text[1:].partition(" ")
+    if name in SLASH_COMMANDS:
+        args = rest.strip()
+        if name == "permission":
+            from app.agent_runtime.permission_presets import PRESETS
+
+            if not args:
+                return {
+                    "ok": True,
+                    "command": {"type": "permission"},
+                    "answer": "可用权限预设：" + "、".join(PRESETS) + "。用 /permission <名字> 切换。",
+                }
+            if args not in PRESETS:
+                return {"ok": False, "error": f"未知权限预设：{args}（可用：{', '.join(PRESETS)}）"}
+            return {
+                "ok": True,
+                "command": {"type": "permission", "preset": args},
+                "answer": f"权限预设已切换为 {args}。",
+            }
+        # /model
+        from app import models_catalog
+
+        args = rest.strip()
+        if not args:
+            listing = models_catalog.list_models()
+            names = [entry["id"] for entry in listing["groups"][0]["models"][:12]]
+            return {
+                "ok": True,
+                "command": {"type": "model"},
+                "answer": "当前模型：" + str(listing["current"]) + "。网关模型（前 12）：" + "、".join(names),
+            }
+        result = models_catalog.select_model(args)
+        if not result.get("ok"):
+            return {"ok": False, "error": str(result.get("error") or "模型切换失败。")}
+        return {
+            "ok": True,
+            "command": {"type": "model", "model": args},
+            "answer": f"默认模型已切换为 {args}，下一次发送即生效。",
+        }
+    if catalog is not None:
+        body = catalog.load_skill_body(name)
+        if body:
+            return {
+                "ok": True,
+                "command": {"type": "skill", "name": name},
+                "injectedInstruction": body,
+                "rest": rest.strip(),
+            }
+    return None
+
+
 def _history_text(turns: list[dict[str, Any]], obj: dict[str, Any]) -> str:
     object_label = " · ".join(
         str(obj.get(key) or "").strip() for key in ("app", "windowTitle", "label")
@@ -168,6 +234,23 @@ def answer_conversation(
     except KeyError:
         return {"ok": False, "error": f"未知权限预设：{permission_preset}（可用：{', '.join(PRESETS)}）"}
 
+    # 斜杠管线：命令直接结算；skill 正文作为本回合指令注入（DSH pre-step 同款）。
+    from app.agent_runtime.skill_catalog import SkillCatalog
+
+    catalog = SkillCatalog(project_root=ROOT, user_home=Path.home())
+    routed = route_slash_command(prompt, catalog=catalog)
+    agent_prompt = prompt
+    if routed is not None:
+        if routed.get("ok") is not True:
+            return routed
+        if routed["command"]["type"] == "skill":
+            agent_prompt = (
+                f"<<<SKILL:{routed['command']['name']}>>>\n{routed['injectedInstruction']}\n<<<END SKILL>>>\n\n"
+                f"{routed.get('rest') or '按上面的 skill 执行。'}"
+            )
+        else:
+            return routed
+
     history = _history_text(turns if isinstance(turns, list) else [], obj if isinstance(obj, dict) else {})
     window = obj if isinstance(obj, dict) else {}
 
@@ -178,7 +261,7 @@ def answer_conversation(
 
     def propose(recipe_id: str, args: dict) -> dict:
         planned = active_engine.plan(
-            prompt,
+            agent_prompt,
             objects=[],
             recipe_id=recipe_id,
             parameters=dict(args or {}),
@@ -212,7 +295,7 @@ def answer_conversation(
             "title": str(window.get("windowTitle") or ""),
             "process_name": str(window.get("app") or ""),
         },
-        "command": prompt,
+        "command": agent_prompt,
     }
 
     report = boot_loop_context(runtime, root=ROOT)
@@ -237,7 +320,7 @@ def answer_conversation(
         agent_session_id = "agent-studio-" + hashlib.sha256(session_key.encode("utf-8")).hexdigest()[:32]
         agent_session = sessions.open_or_create(agent_session_id, repair=True)
         terminal = run_agent_turn(
-            prompt,
+            agent_prompt,
             objects=[],
             registry=registry,
             client=client,
@@ -251,13 +334,13 @@ def answer_conversation(
             hook_manager=ctx.get("hooks"),
             session=agent_session,
             request_header=request_header,
-            local_action_input=prompt,
+            local_action_input=agent_prompt,
             evidence_input=evidence or None,
         )
     except Exception as exc:  # noqa: BLE001 - loop crash must never kill the answer path
         return {"ok": False, "error": f"Agent 运行失败：{type(exc).__name__}", "usedBackend": "agent_runtime"}
 
-    mapped = terminal_to_answer(terminal, prompt)
+    mapped = terminal_to_answer(terminal, agent_prompt)
     answer = clean_replacement_text(str(mapped.get("answer") or ""))
     if not answer or answer.startswith("AI 调用失败"):
         return {

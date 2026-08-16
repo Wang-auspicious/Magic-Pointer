@@ -1482,3 +1482,86 @@ body[data-ds-dark-theme] {
   font-size: 12px;
   line-height: 18px;
 }
+
+/* ---- `+` 斜杠目录菜单（DSH input-trigger 菜单：搜索 + 分组行） ---- */
+.dshw-slash-menu {
+  min-width: 340px;
+  max-width: 400px;
+  padding: 6px;
+}
+
+.dshw-slash-menu input[type="search"] {
+  width: 100%;
+  height: 30px;
+  margin-bottom: 4px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 8px;
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  font-family: var(--dsw-font-family);
+  outline: none;
+}
+
+.dshw-slash-rows {
+  display: flex;
+  flex-direction: column;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.dshw-slash-group {
+  padding: 8px 10px 4px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 14px;
+  letter-spacing: 0.04em;
+}
+
+.dshw-slash-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.dshw-slash-row:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.dshw-slash-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.dshw-slash-name em {
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  font-style: normal;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+.dshw-slash-text small {
+  overflow: hidden;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dshw-slash-empty {
+  padding: 10px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+}

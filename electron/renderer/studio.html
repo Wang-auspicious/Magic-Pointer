@@ -95,14 +95,14 @@
                     </div>
                     <div class="dshw-row">
                       <div class="dshw-tools">
-                        <button type="button" class="dshw-add" id="composer-add" aria-label="更多操作" aria-haspopup="menu" aria-expanded="false">
+                        <button type="button" class="dshw-add" id="composer-add" aria-label="命令与技能" aria-haspopup="menu" aria-expanded="false" title="命令与技能">
                           <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true">
                             <path d="M8 3.5v9M3.5 8h9" />
                           </svg>
                         </button>
-                        <div class="dshw-add-menu" id="composer-add-menu" hidden role="menu">
-                          <button type="button" data-composer-act="copy-last" role="menuitem">复制最近回答</button>
-                          <button type="button" data-composer-act="origin" role="menuitem">查看当前对象来源</button>
+                        <div class="dshw-add-menu dshw-slash-menu" id="composer-add-menu" hidden role="menu" aria-label="命令与技能">
+                          <input type="search" id="composer-slash-search" placeholder="搜索命令与技能…" autocomplete="off" aria-label="搜索命令与技能" />
+                          <div class="dshw-slash-rows" id="composer-slash-rows"></div>
                         </div>
                         <button type="button" class="dshw-perm" id="composer-permission" aria-haspopup="listbox" aria-expanded="false" title="本轮 Agent 的权限预设">
                           <span class="dshw-perm-glyph" id="composer-permission-glyph" aria-hidden="true"></span>

@@ -365,7 +365,6 @@ async function openConversation(id: string) {
   stream.scrollTop = stream.scrollHeight;
   DshChat.bindDelegation(stream);
   renderStatsLine(turns);
-  lastAnswerText = (turns[turns.length - 1]?.answer || '').trim();
 }
 
 /* 代理卡 → DSH 节点：后台任务补丁（进度/步骤/终态）就地换掉那一轮。 */
@@ -505,33 +504,20 @@ document.addEventListener('click', e => {
     closeModelMenu();
   }
 
-  /* 作曲家 `+` 扩展菜单：真实动作（复制最近回答 / 查看来源），点击外部关闭 */
+  /* 作曲家 `+`：DSH 斜杠目录（命令 + 本机技能），本地过滤，选中插入 `/name ` */
   const addBtn = target.closest<HTMLElement>('#composer-add');
   const addMenu = document.getElementById('composer-add-menu');
   if (addBtn) {
     if (addMenu) {
       const willShow = addMenu.hidden;
-      addMenu.hidden = !willShow;
+      if (willShow) void openSlashMenu();
+      else closeSlashMenu();
       addBtn.setAttribute('aria-expanded', String(willShow));
     }
     return;
   }
-  const composerAct = target.closest<HTMLElement>('[data-composer-act]');
-  if (composerAct) {
-    if (addMenu) addMenu.hidden = true;
-    document.getElementById('composer-add')?.setAttribute('aria-expanded', 'false');
-    const act = composerAct.getAttribute('data-composer-act');
-    if (act === 'copy-last' && lastAnswerText) {
-      void (navigator.clipboard?.writeText(lastAnswerText) || Promise.resolve());
-    } else if (act === 'origin') {
-      const peek = document.getElementById('chat-peek');
-      if (peek) peek.hidden = false;
-    }
-    return;
-  }
   if (addMenu && !addMenu.hidden && !target.closest('#composer-add-menu')) {
-    addMenu.hidden = true;
-    document.getElementById('composer-add')?.setAttribute('aria-expanded', 'false');
+    closeSlashMenu();
   }
 
   const open = target.closest<HTMLElement>('[data-open]');
@@ -589,7 +575,123 @@ document.addEventListener('click', e => {
 });
 
 let studioComposerBusy = false;
-let lastAnswerText = '';
+
+/* ---- `+` 斜杠目录（DSH input-trigger 菜单：命令 / 技能 两组 + 本地过滤） ---- */
+let slashDirectory: MagicPointerSlashDirectory | null = null;
+let slashDirectoryLoaded = false;
+
+function closeSlashMenu() {
+  const menu = document.getElementById('composer-add-menu');
+  document.getElementById('composer-add')?.setAttribute('aria-expanded', 'false');
+  if (menu) menu.hidden = true;
+}
+
+function slashRow(entry: MagicPointerSlashEntry, group: 'command' | 'skill'): HTMLElement {
+  const row = document.createElement('button');
+  row.type = 'button';
+  row.className = 'dshw-slash-row';
+  row.setAttribute('role', 'menuitem');
+  row.dataset.slashName = entry.name;
+  row.dataset.slashGroup = group;
+  const head = document.createElement('span');
+  head.className = 'dshw-slash-name';
+  const slash = document.createElement('em');
+  slash.textContent = `/${entry.name}`;
+  head.appendChild(slash);
+  const desc = document.createElement('small');
+  desc.textContent = entry.description;
+  const body = document.createElement('span');
+  body.className = 'dshw-slash-text';
+  body.append(head, desc);
+  row.appendChild(body);
+  return row;
+}
+
+function renderSlashRows(filter: string) {
+  const host = document.getElementById('composer-slash-rows');
+  if (!host || !slashDirectory) return;
+  const needle = filter.trim().toLowerCase();
+  const nodes: HTMLElement[] = [];
+  const commands = (slashDirectory.commands || []).filter(e =>
+    !needle || e.name.toLowerCase().includes(needle) || e.description.toLowerCase().includes(needle));
+  const skills = (slashDirectory.skills || []).filter(e =>
+    !needle || e.name.toLowerCase().includes(needle) || e.description.toLowerCase().includes(needle)
+    || (e.whenToUse || '').toLowerCase().includes(needle));
+  if (commands.length) {
+    const head = document.createElement('div');
+    head.className = 'dshw-slash-group';
+    head.textContent = '命令';
+    nodes.push(head, ...commands.map(e => slashRow(e, 'command')));
+  }
+  if (skills.length) {
+    const head = document.createElement('div');
+    head.className = 'dshw-slash-group';
+    head.textContent = '技能';
+    nodes.push(head, ...skills.map(e => slashRow(e, 'skill')));
+  }
+  if (!nodes.length) {
+    const empty = document.createElement('div');
+    empty.className = 'dshw-slash-empty';
+    empty.textContent = slashDirectoryLoaded ? '没有匹配的命令或技能。' : '目录不可用（本机未接入桥）。';
+    nodes.push(empty);
+  }
+  host.replaceChildren(...nodes);
+}
+
+async function openSlashMenu() {
+  const menu = document.getElementById('composer-add-menu');
+  if (!menu) return;
+  if (!slashDirectoryLoaded) {
+    const rows = document.getElementById('composer-slash-rows');
+    if (rows) rows.replaceChildren();
+    const loading = document.createElement('div');
+    loading.className = 'dshw-slash-empty';
+    loading.textContent = '正在加载目录…';
+    if (rows) rows.appendChild(loading);
+    slashDirectory = await Data.slashDirectory();
+    slashDirectoryLoaded = slashDirectory !== null;
+  }
+  renderSlashRows('');
+  menu.hidden = false;
+  const search = document.getElementById('composer-slash-search') as HTMLInputElement | null;
+  if (search) {
+    search.value = '';
+    search.focus();
+  }
+}
+
+function insertSlashToken(name: string) {
+  const ta = document.querySelector<HTMLTextAreaElement>('.dshw-input');
+  if (!ta) return;
+  const token = `/${name} `;
+  const caret = ta.selectionStart ?? ta.value.length;
+  const before = ta.value.slice(0, caret);
+  // 光标前已有 / 前缀（连续挑选）就替换掉旧 token，避免 //stack。
+  const trimmed = before.replace(/\/[a-z0-9-]*$/i, '');
+  ta.value = trimmed + token + ta.value.slice(caret);
+  const nextCaret = (trimmed + token).length;
+  ta.setSelectionRange(nextCaret, nextCaret);
+  ta.focus();
+  ta.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+function bindSlashMenu() {
+  const search = document.getElementById('composer-slash-search');
+  search?.addEventListener('input', () => {
+    renderSlashRows((search as HTMLInputElement).value);
+  });
+  search?.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { closeSlashMenu(); e.stopPropagation(); }
+  });
+  document.getElementById('composer-add-menu')?.addEventListener('click', e => {
+    const row = (e.target as Element | null)?.closest<HTMLElement>('[data-slash-name]');
+    if (!row) return;
+    e.stopPropagation();
+    insertSlashToken(row.dataset.slashName || '');
+    closeSlashMenu();
+  });
+}
+bindSlashMenu();
 
 /* ---- 权限预设芯片（DSH PermissionSelect 同款：芯片 + 弹层 + Full access 确认门） ---- */
 let composerPreset = 'workspace-write';
@@ -900,6 +1002,14 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
       );
       if (!response?.ok || !response.conversationId) throw new Error(response?.error || '这次没有答完。');
       activeConversationId = String(response.conversationId);
+      /* 命令结算的副作用：/permission 落芯片，/model 刷新目录标签 */
+      const command = (response as { command?: { type?: string; preset?: string } }).command;
+      if (command?.type === 'permission' && command.preset) {
+        composerPreset = String(command.preset);
+        renderPermissionChip();
+      } else if (command?.type === 'model') {
+        await refreshComposerModel();
+      }
       await openConversation(activeConversationId);
       await renderSidebar();
     } catch (error) {
