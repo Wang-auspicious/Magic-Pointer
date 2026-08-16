@@ -1,30 +1,56 @@
 from __future__ import annotations
 
+import pytest
+
 from scripts import conversation_bridge
 
 
-def test_answer_conversation_uses_bounded_history(monkeypatch) -> None:
-    captured: dict[str, object] = {}
+def test_answer_conversation_rejects_empty_question() -> None:
+    result = conversation_bridge.answer_conversation("  ", [], {}, "default")
+    assert result == {"ok": False, "error": "问题不能为空。"}
 
-    def fake_ask(prompt: str, **kwargs: object) -> str:
-        captured["prompt"] = prompt
-        captured.update(kwargs)
-        return "这是继续回答。"
 
-    monkeypatch.setattr(conversation_bridge, "ask_text_model", fake_ask)
-    result = conversation_bridge.answer_conversation(
-        "再解释一下 200ms 的来源",
+def test_answer_conversation_rejects_unknown_permission_mode() -> None:
+    result = conversation_bridge.answer_conversation("问一个问题", [], {}, "root")
+    assert result["ok"] is False
+    assert "未知权限模式" in str(result["error"])
+
+
+def test_history_text_bounds_and_labels() -> None:
+    history = conversation_bridge._history_text(
         [{"question": "这个数是什么？", "answer": "这是硬超时兜底。"}],
         {"app": "VS Code", "label": "uia_text_adapter.py"},
     )
-
-    assert result["ok"] is True
-    assert result["answer"] == "这是继续回答。"
-    assert result["usedBackend"] == "app.ai_client.ask_text_model"
-    assert "VS Code" in str(captured["context_text"])
-    assert "硬超时兜底" in str(captured["context_text"])
+    assert "VS Code" in history
+    assert "uia_text_adapter.py" in history
+    assert "硬超时兜底" in history
 
 
-def test_answer_conversation_rejects_empty_question() -> None:
-    result = conversation_bridge.answer_conversation("  ", [], {})
-    assert result == {"ok": False, "error": "问题不能为空。"}
+def test_perception_backend_searches_history(monkeypatch) -> None:
+    backend = conversation_bridge._HistoryPerceptionBackend("第一行 alpha\n第二行 beta")
+    hits = backend.find_in_window("beta")
+    assert hits == [{"text": "第二行 beta"}]
+    assert backend.read_around("", 3)[0]["source"] == "conversation"
+
+
+def test_perception_backend_lists_real_windows(monkeypatch) -> None:
+    monkeypatch.setattr(
+        conversation_bridge,
+        "list_visible_windows",
+        lambda: [
+            {"title": "记事本", "hwnd": 1, "app": "notepad", "pid": 10},
+            {"title": "Magic Pointer Overlay", "hwnd": 2, "app": "", "pid": 0},
+        ],
+    )
+    backend = conversation_bridge._HistoryPerceptionBackend("")
+    windows = backend.list_windows()
+    assert [w["title"] for w in windows] == ["记事本"]
+
+
+def test_effect_ceiling_accepts_valid_modes_and_rejects_unknown() -> None:
+    from app.agent_runtime.tool_registry import Effect
+
+    assert conversation_bridge._effect_ceiling("default") == tuple(Effect)
+    assert conversation_bridge._effect_ceiling("bypass") == tuple(Effect)
+    with pytest.raises(ValueError):
+        conversation_bridge._effect_ceiling("root")

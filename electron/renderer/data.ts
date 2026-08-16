@@ -174,7 +174,7 @@ declare global {
     conversations: {
       list(): Promise<MagicPointerConversation[]>;
       get(id: unknown): Promise<MagicPointerConversation | undefined>;
-      send(payload: { conversationId?: string | null; question: string }): Promise<Record<string, any>>;
+      send(payload: { conversationId?: string | null; question: string; permissionMode?: string }): Promise<Record<string, any>>;
       timeline(): Promise<MagicPointerTimelineDay[]>;
       memories(): Promise<unknown[]>;
       artifacts(): Promise<unknown[]>;
@@ -286,7 +286,7 @@ declare global {
     isLive(): boolean;
     conversations(): Promise<MagicPointerConversation[]>;
     conversation(id: string): Promise<MagicPointerConversation | undefined>;
-    sendConversation(conversationId: string | null, question: string): Promise<Record<string, any>>;
+    sendConversation(conversationId: string | null, question: string, permissionMode?: string): Promise<Record<string, any>>;
     timeline(): Promise<MagicPointerTimelineDay[]>;
     memories(): Promise<unknown[]>;
     artifacts(): Promise<unknown[]>;
@@ -505,9 +505,9 @@ const Data: MagicPointerDataApi = {
     return bridge()!.conversations.get(id);
   },
 
-  async sendConversation(conversationId: string | null, question: string): Promise<Record<string, any>> {
+  async sendConversation(conversationId: string | null, question: string, permissionMode?: string): Promise<Record<string, any>> {
     if (!hasBridge()) return { ok: false, error: '请在 Magic Pointer 应用里发送。' };
-    return bridge()!.conversations.send({ conversationId, question });
+    return bridge()!.conversations.send({ conversationId, question, permissionMode: permissionMode || 'default' });
   },
 
   async timeline(): Promise<MagicPointerTimelineDay[]> {

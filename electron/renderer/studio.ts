@@ -645,7 +645,12 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
     form.setAttribute('aria-busy', 'true');
     if (submit) submit.disabled = true;
     try {
-      const response = await Data.sendConversation(activeConversationId, question);
+      const permission = document.getElementById('composer-permission') as HTMLSelectElement | null;
+      const response = await Data.sendConversation(
+        activeConversationId,
+        question,
+        permission?.value || 'default',
+      );
       if (!response?.ok || !response.conversationId) throw new Error(response?.error || '这次没有答完。');
       activeConversationId = String(response.conversationId);
       await openConversation(activeConversationId);

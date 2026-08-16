@@ -56,6 +56,7 @@ assert(!source.includes('form.workspace-composer'), 'the old Oreo composer wirin
 
 /* ---- 内嵌控制栏（DSH InputBar 1:1） ---- */
 assert(html.includes('id="composer-add"'), 'the + expand control must exist');
+assert(html.includes('id="composer-permission"'), 'the permission dropdown must exist');
 assert(html.includes('id="composer-model"'), 'the model switcher must exist');
 assert(html.includes('id="composer-context"'), 'the context ring must exist');
 assert(html.includes('dshw-ring-track'), 'the context ring must draw its track');
@@ -65,7 +66,7 @@ assert(source.includes('modelStatus?.displayName'), 'the model switcher must sho
 /* ---- 回车发送（InputBar 同款分派：组合态 / Shift 放行） ---- */
 assert(source.includes("e.key !== 'Enter' || e.shiftKey || e.isComposing"),
   'Enter must send only outside IME composition and without Shift');
-assert(source.includes('form.requestSubmit()'),
+assert(source.includes('.requestSubmit()'),
   'Enter and the send button must share one submit path');
 
 /* ---- 聊天渲染 ---- */

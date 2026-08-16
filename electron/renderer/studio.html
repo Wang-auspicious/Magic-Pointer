@@ -104,6 +104,13 @@
                           <button type="button" data-composer-act="copy-last" role="menuitem">复制最近回答</button>
                           <button type="button" data-composer-act="origin" role="menuitem">查看当前对象来源</button>
                         </div>
+                        <select class="dshw-select" id="composer-permission" aria-label="权限模式" title="本轮 Agent 的权限门">
+                          <option value="default" selected>默认权限</option>
+                          <option value="plan">仅计划</option>
+                          <option value="accept_reversible">接受可逆</option>
+                          <option value="safe">安全</option>
+                          <option value="bypass">完全访问</option>
+                        </select>
                       </div>
                       <div class="dshw-trailing">
                         <select class="dshw-select" id="composer-model" aria-label="模型">
