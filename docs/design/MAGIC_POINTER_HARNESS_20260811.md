@@ -1147,6 +1147,11 @@ smoke：uia-host PASS、replay 20 条 trace 走真实网关（机制绿，见下
 - [ ] **剩余底层审计**：dirty tree 逐文件取舍、更多真实 SurfaceAdapter/ActionLease 链路，以及 MCP/插件第三方兼容样本扩充。
 - [ ] **最终交付**：后端稳定后再执行 fresh Python/Node/typecheck/build/实时截图验收；最后统一 patch bump、`npm run sync`、安装目录版本核对与 `docs/STATUS.md` 更新。
 
+### 2026-08-15：Agent 社区真实需求调研
+
+- [x] 使用 agent-reach 完成四条指定 X 帖的全量评论阅读，并扩展读取 Claude Code、Hermes、Pi、Kimi Code、Computer Use、主动性 Agent 与 Reddit 高评论讨论；结论、证据链接、需求矩阵和当前能力缺口记录在 `docs/research/2026-08-15-agent-community-real-needs.md`。
+- [x] 调研没有改变既有产品边界：Magic Pointer 仍是桌面现场的意图编译、受限执行和可验证交接层，不转向项目级 Claude Code 替代品、全天候录屏记忆或通用 OSWorld。
+
 ### 2026-08-15：Oreo Stage / Studio 与设置真值交付（1.0.5）
 
 - [x] 设置保存改为 renderer → preload invoke → main 持久化/运行时应用/失败回滚的确认链；补齐 Python `voice_engine` schema，加入语音总开关并在关闭时强制文字输入、停止常驻与禁用语音快捷键。安装机配置已核对为 voice off / text / non-resident。
@@ -1155,3 +1160,53 @@ smoke：uia-host PASS、replay 20 条 trace 走真实网关（机制绿，见下
 - [x] 外壳安全收尾：全手势点数总预算 4096、输入有界、capture commit 12s 超时与桥接边界测试；安装器运行时哈希改用 .NET SHA-256，避免非交互 PowerShell 未自动加载 Utility 模块时构建失败。
 - [x] 交付证据：Python **1249 passed**；Node **138 passed / 95 source files**；typecheck、ESLint、Electron build 通过；uia-host smoke PASS（`kind=document_text`）；`Magic-Pointer-1.0.5-x64.exe` 已生成，`npm run sync` 成功，安装目录与开发树均为 **1.0.5**。
 - [ ] 本批不改变更长期待办：治理门生产接线、ComputerOperator 明示批准 UI、真实视觉端点与多应用桌面验收仍须继续，不能因 UI/设置完成而降级或隐去。
+
+### 2026-08-15：模型真值、隐私开关与 UI 稳定性续批（开发树，未交付）
+
+- [x] Groq `openai/gpt-oss-120b` 档案接入 Electron 安全凭据存储，主 selection worker、段落展开和健康检查均使用同一请求级模型配置；新增不回显密钥的终端配置、状态与实测命令。
+- [x] 修复语音总开关在活动录音期间被 `voice_session_active` 回滚；关闭总开关会立即终止当前语音会话并回到键盘输入。
+- [x] 自动屏幕记忆和后台学习候选均改为默认关闭，并在“感知与隐私”设置中提供独立真实开关；关闭时不落记忆、不启动后台 review bridge。
+- [x] Stage 处理/完成视觉夹具与运行时固定面板契约对齐；Studio 首屏尊重请求视图，收藏箱默认 100% 缩放并限制卡片摘要高度。
+- [x] 按 HERO 范围约束删除 6 个无引用旧网关/测试探针，未增加 hook、评分表或兼容脚手架。
+- [x] fresh 验证：Python **1256 passed**；Node **141 passed / 97 source files**；typecheck、ESLint、Electron build 通过。
+- [ ] 按用户明确要求，本批不升版本、不打包、不执行 `npm run sync`；安装版仍不得宣称包含本节改动。
+
+### 2026-08-15：HCI 系统级审查 + GUI/HUD 落地规格（文档批）
+
+- [x] 逐文件核对感知注入、坐标归一化、色彩体系、动效与层级阶梯（stage.css/studio.css/oreo_tokens.css/icons.ts、selection_bridge 证据围栏、bridge phase 流）。
+- [x] 产出 `docs/2026-08-15-HCI_SYSTEM_REVIEW.md`：感知元数据注入 Schema（归一化 1000×1000 + 节点白名单 + 预算 ≤900 token）、像素级 GUI 参数表、会话导轨与指针 HUD（放大环/状态胶囊）状态机、Refocus/Visual Diff 交互、T1-T12 落地清单。
+- [x] 提交上一批 Oreo faithful UI 实现（e48a469，30 文件）：本审查基于该提交版本；用户脏着的 STATUS/本文/research 未动。
+- [ ] 未改任何运行时行为；T1-T12 落地仍须测试先行、逐批验收，版本与 sync 维持用户裁决（最终批统一）。
+
+### 2026-08-15：Harness 认知架构重构 + DSH 聊天渲染移植（261e553 / b00753d）
+
+- [x] 按用户四定律指令逐条裁决（见 `docs/2026-08-15-HARNESS_COGNITIVE_ARCHITECTURE.md`）：预测编码只作用于环境预测、不建意图规则（用户点名否决 if/else 路由）；侧向抑制留到多 Agent（现有四守卫是单支退化）；主动遗忘/具身卸载立即落地。
+- [x] 新核心四模块（均纯函数/无 I/O，测试先行）：`app/agent_runtime/surprise.py`（S0-S3 惊奇分级，五路锚点投影，busy≠empty、预期失败不算惊奇）、`assertion_memory.py`（断言记忆 O(1)/LRU/TTL，日志真相分家）、`model_surface.py`（预算化表面 + 保护节 + 剪枝账本）、`event_loop.py`（Event-Action 仲裁：优先级抢占 + 合成取消回执 + 有界 re-ground 自愈 → needs_user）。
+- [x] 极限场景基准 `tests/cognitive_engine_test.py` **24 passed**：高并发抢占、预测失败自愈、上下文饿死、确定性回放、优先级稳定。
+- [x] deepseek-harness 聊天视觉 100% 移植进 Studio（`dsh_tokens.css`/`dsh_chat.css`/`dsh_chat.ts`）：用户气泡/工具行 IN-OUT/Think 行/StateDot/渐变字，浅色档 only；发送中/失败态与后台任务补丁接线。
+- [x] 验证：typecheck 五配置过；Node **143 passed / 98 源文件**；Python 全量见交付记录。
+- [ ] 诚实缺口：认知核尚未接生产 loop（迁移路径见映射文档 §3，先与 tool_guardrails/四守卫双轨只读）；turn.events 持久化与桥侧 receipts→trace 落盘是下一批；未升版本、未 sync。
+
+### 2026-08-15：Studio 整体重建为 deepseek-harness Web 外壳（d7328f1）
+
+- [x] 用户实测判定前一轮 DSH 移植不完整且对比度错乱（暗底黑字看不清）。本批按 DSH 源码逐文件重建 Studio：AppFrame 侧栏（280px/新对话条/导航格/底部设置入口）+ ConversationRoot（粘性作曲家座 + 22px 输入卡 + 34px 蓝色发送圆钮 + 输入框下 StatsLine 统计行）+ SettingsRoot 居中模态（800px 面板/188px 导航/遮罩模糊，内容仍是我们的 8 页设置）。
+- [x] 令牌平台改双档完整（浅色 + 暗色 `body[data-ds-dark-theme]`，默认 system，与 DSH boot-theme 一致）；oreo 令牌在暗色档重映射，收藏箱/时间线/记忆/产物/设置行跟随主题。探针实测：亮档白底黑字、暗档黑底白字，发送键按档取色（65,118,230 / 103,158,254）。
+- [x] 设置从页面改为 DSH 式模态（点击侧栏「设置」打开，遮罩/关闭键/Esc 返回上一视图；搜索与保存状态保留）。
+- [x] 验证：typecheck 五配置过；Node **143 passed / 98 源文件**、lint 0；`data/runtime/dsh-chat-check.png` / `dsh-settings-check.png` 离屏截图留档。
+- [ ] 诚实缺口：Stage 线程面与 Companion 仍用旧视觉（本批只重建 Studio）；StatsLine 目前只有轮数/步数（token 与上下文占用无数据源，不显示假数字）；未升版本、未 sync。
+
+### 2026-08-15：Studio 对话改为真实 agent 回合 + 权限门（5e96be7）
+
+- [x] 纠正上一轮判断错误：Studio 追问不是纯文本问答，而是与 selection 同构的 agent 回合。`conversation_bridge.py` 重写为 agent 运行器——boot 同一插件树（perception/look/capability/guard/model-client），`run_agent_turn` 多轮 + 工具调用；历史走 origin=data 证据通道；感知读历史 + 真实可见窗口；无选区锚点时 guard fail-closed（写动作只 propose 签名计划）。
+- [x] 作曲家新增真实权限下拉（default/plan/accept_reversible/safe/bypass，标注"完全访问"= bypass），经 preload→main→bridge 透传到 loop 的 `permission_mode` 逐工具门。
+- [x] 验证：Python **1286 passed**；Node **143 passed**；typecheck 过；conversation_bridge 单测 6 项（空问/未知模式/历史有界/感知搜索/窗口枚举/effect ceiling）。
+- [ ] 诚实缺口：端到端模型回合待真机（复用 selection loop 的 boot/run 路径，boot 由既有 loop 测试覆盖）；55s 桥超时对多轮长任务偏紧，待真机测时评估；未升版本、未 sync。
+
+### 2026-08-16：DSH harness 能力对齐——权限预设/模型目录/斜杠目录/侧栏浏览器（4 commits）
+
+- [x] 权限模式重定义（`app/agent_runtime/permission_presets.py`）：DSH 双旋钮模型——sandbox（read-only/workspace-write/danger-full-access）× approval（ask/never）捆绑成预设表，`custom` 仅派生展示态；映射到既有效果表 PermissionMode（SAFE/DEFAULT/BYPASS），loop 执行语义不变。渲染层权限下拉重建为 DSH PermissionSelect：盾形三态图标（DSH design set 1556 原路径）、弹层描述+选中勾、Full access 走 RiskConfirmation 勾选确认门。链路 `permissionPreset` 端到端改名，桥对未知名 fail-closed。
+- [x] 模型接入（`app/models_catalog.py` + fabric_bridge `model.catalog`/`model.select`）：目录从真实网关 `GET {base_url}/models` 拉（OpenAI 兼容），失败诚实回落当前配置并带原因；切换写 `secrets/model.txt`（全栈消费的同一份配置），`MAGIC_POINTER_MODEL` 环境变量覆盖时拒绝而非装成功。作曲家模型位重建为 DSH ModelSelect（芯片+目录+选中勾+视觉标签）。真机实测：opencode.ai 网关 26 模型。
+- [x] `+` 菜单=DSH 斜杠目录（`app/agent_runtime/skill_catalog.py` + `slash_directory.py`）：DSH 兼容根扫描（项目 .dsh/.agents → 用户 ~/.dsh/~/.agents skills），SKILL.md frontmatter 解析（kebab-case 校验、user-invocable、whenToUse），项目覆盖用户，坏文件跳过不毁扫描。菜单分组 命令/技能 + 本地搜索，选中插 `/name `；提交经 `route_slash_command` 结算——/permission 落芯片、/model 写配置、已知 skill 注入正文为本回合指令（DSH pre-step 语义），未知名按普通问题走模型。真机实测：51 skills 发现、0 错误。假动作（复制回答/看来源）删除。
+- [x] 侧栏 DSH WorkspaceBrowser 形状（`sidebar_groups.ts` 纯函数）：新对话下方搜索框 + 对话按 今天/昨天/近 7 天/更早 分组（新→旧），本地过滤；MP 自有导航（对话/收藏箱/时间线/记忆/产物）保留。图标对齐：DSH 原路径入 sprite（new-chat/panel-left/search/plus/chev-down/check），+ 按钮、新对话、折叠、搜索、芯片箭头、菜单勾全部换用。
+- [x] 验证：Python **1312 passed**；Node **147 passed / 100 源文件**；typecheck 五配置、ESLint 0；离屏截图 `data/runtime/dsh-studio-check.png` console_errors=0。
+- [ ] 诚实缺口：交互流（菜单开合/确认门/命令结算的视觉行为）未真机截图核验，只有合约测试+离屏渲染；`/model` 切换写文件对打包安装版走 USER_SECRETS_DIR 路径未在安装版实测；skill 注入的回合效果（模型真的按 skill 行事）待真机对话验收；未升版本、未 sync。

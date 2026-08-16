@@ -1,6 +1,20 @@
 # 当前状态
 
-> 最后核实：2026-08-15（1.0.5 已同步安装；Harness 更长期治理与真实多应用验收仍继续）。改了行为就回来改这里，别新建一份日期文件。
+> 最后核实：2026-08-16（开发树 DSH harness 能力对齐批；1.0.5 安装版未动）。改了行为就回来改这里，别新建一份日期文件。
+
+2026-08-16 DSH harness 能力对齐（4 commits，开发树未交付）：①权限模式按 DSH 重定义——sandbox×approval 预设表（read-only/workspace-write/danger-full-access，custom 派生），Full access 带勾选确认门，链路 `permissionPreset` 端到端；②模型接入真实化——`model.catalog` 从网关 `/models` 拉目录（实测 26 模型），`model.select` 写 `secrets/model.txt`，作曲家模型位=DSH ModelSelect；③`+` 菜单=DSH 斜杠目录——本机 skill 扫描（`.dsh/.agents` 项目+用户根，实测 51 个）+ 命令（/permission、/model）分组搜索，skill 正文按回合注入；④侧栏 DSH 浏览器形状（搜索+今天/昨天/7天/更早分组，MP 收藏导航保留）+ 图标换 DSH 原路径。fresh 验证：Python **1312 passed**；Node **147 passed / 100 源文件**；typecheck、ESLint 0；离屏截图 console_errors=0。交互流真机核验与安装版 sync 未做。
+
+2026-08-15 已完成 Agent 社区真实需求调研，结论与来源记录在 `docs/research/2026-08-15-agent-community-real-needs.md`；本次只新增研究文档，没有改变运行时行为，因此不升版本、不执行 sync。
+
+2026-08-15 开发树续批（**未打包、未同步安装版**）：接通 Groq `openai/gpt-oss-120b` 模型档案、安全凭据与主回答/展开/健康检查链，加入终端安全配置与实测命令；修复活动语音会话导致总开关保存回滚；自动屏幕记忆与后台学习改为默认关闭并各有真实设置开关；Stage 处理/完成态固定复用 `560×520` 面板锚点；Studio 首屏路由与收藏箱 100% 缩放可读性修复；删除 6 个无引用旧探针。fresh 验证：Python **1256 passed**；Node **141 passed / 97 source files**；typecheck、ESLint、Electron build 通过。按用户要求，本批不升版本、不执行 NSIS/`npm run sync`。
+
+2026-08-15 HCI 系统级审查完成（纯文档批）：`docs/2026-08-15-HCI_SYSTEM_REVIEW.md` 交付感知元数据注入 Schema、像素级 GUI 参数表、会话导轨/指针 HUD 状态机与 T1-T12 落地清单；上一批 Oreo Stage/Studio 实现已提交（`e48a469`，30 文件）。未改变运行时行为，不升版本、不 sync。
+
+2026-08-15 Harness 认知架构重构（`261e553` GUI 移植 + `b00753d` 认知核心，开发树未交付）：deepseek-harness 聊天视觉 100% 移植进 Studio（浅色档）；新增惊奇分级/断言记忆/预算表面/Event-Action 仲裁四模块 + 24 项极限场景基准（Python 24 passed；Node 143 passed / 98 源文件；typecheck 过）。**认知核未接生产 loop、turn.events 未落盘、未升版本未 sync**——架构映射与裁决在 `docs/2026-08-15-HARNESS_COGNITIVE_ARCHITECTURE.md`。
+
+2026-08-15 Studio 整体重建为 deepseek-harness Web 外壳（`d7328f1`，开发树未交付）：侧栏/输入卡/统计行/设置模态全部按 DSH 源码 1:1 移植，令牌平台双档完整（默认随系统，修复暗底黑字看不清）；收藏箱/时间线/记忆/产物保留并随主题。验证：Node **143 passed**、lint 0、typecheck 过，离屏截图 `data/runtime/dsh-{chat,settings}-check.png`。Stage/Companion 仍为旧视觉；未升版本未 sync。
+
+2026-08-15 Studio 对话 = 真实 agent 回合 + 权限门（`79b92c5` 控制栏/回车、`5e96be7` agent 化，开发树未交付）：`conversation_bridge.py` 改为 boot 插件树跑 `run_agent_turn`（多轮+工具），历史走 data 通道、无锚点 guard fail-closed、写动作只 propose；作曲家补 `+` 菜单/模型切换/上下文环/权限下拉（5 档，逐工具门），回车发送（IME+Shift 守卫）。验证：Python **1286 passed**、Node **143 passed**、typecheck 过。端到端模型回合待真机；未升版本未 sync。
 
 ## 一句话
 
