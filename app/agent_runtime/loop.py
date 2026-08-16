@@ -123,6 +123,7 @@ from app.agent_runtime.errors import (
     ActionFailure,
     FailureType,
 )
+from app.agent_runtime.inbox import Inbox
 from app.agent_runtime.hooks import HookManager
 from app.agent_runtime.model_client import (
     LoopModelClient,
@@ -254,6 +255,7 @@ class LoopParams:
     session: EventSession | None = None
     request_header: Mapping[str, Any] = field(default_factory=dict)
     evidence_input: str | None = None
+    inbox: Inbox | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -298,6 +300,22 @@ class BudgetRenewed:
     turn: int
     deadline_ms: float
     renewals_used: int
+
+
+@dataclass(frozen=True, slots=True)
+class Steered:
+    """Steer 输入在 step 边界被吸收：下一轮模型请求即携带（Pi next-step）。"""
+
+    turn: int
+    texts: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class FollowupContinued:
+    """模型想停时 followup 队列非空：续跑新轮而非终止（Pi 外循环）。"""
+
+    turn: int
+    texts: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -535,6 +553,35 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
             if loop_scope.is_cancelled:
                 raise CancelledError("cancelled before model call")
 
+            steered_texts = params.inbox.drain("next-step") if params.inbox is not None else []
+            if steered_texts:
+                steer_messages = [
+                    AgentMessage(
+                        role=Role.USER,
+                        content=text,
+                        tool_call_id=None,
+                        name=None,
+                        origin=ORIGIN_INSTRUCTION,
+                    )
+                    for text in steered_texts
+                ]
+                for message in steer_messages:
+                    if params.session is not None:
+                        params.session.append_message(message)
+                state = with_transition(
+                    state,
+                    TransitionReason.TOOL_RESULT,
+                    messages=(
+                        params.session.derive_messages()
+                        if params.session is not None
+                        else [*state.messages, *steer_messages]
+                    ),
+                    tool_calls_pending=[],
+                    turn_count=turn_number,
+                )
+                validate_messages(state.messages)
+                yield Steered(turn=turn_number, texts=tuple(steered_texts))
+
             if params.session is not None:
                 params.session.record_model_request(
                     state.messages,
@@ -710,6 +757,40 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                         yield TurnFinished(state)
                         turn_number += 1
                         continue
+                followup_texts = (
+                    params.inbox.drain("next-turn") if params.inbox is not None else []
+                )
+                if followup_texts:
+                    followup_messages = [
+                        AgentMessage(
+                            role=Role.USER,
+                            content=body,
+                            tool_call_id=None,
+                            name=None,
+                            origin=ORIGIN_INSTRUCTION,
+                        )
+                        for body in followup_texts
+                    ]
+                    for message in followup_messages:
+                        if params.session is not None:
+                            params.session.append_message(message)
+                    state = with_transition(
+                        state,
+                        TransitionReason.TOOL_RESULT,
+                        messages=(
+                            params.session.derive_messages()
+                            if params.session is not None
+                            else [*messages, *followup_messages]
+                        ),
+                        tool_calls_pending=[],
+                        turn_count=turn_number,
+                        stop_hook_active=False,
+                        last_result=results[-1] if results else None,
+                    )
+                    yield TurnFinished(state)
+                    yield FollowupContinued(turn=turn_number, texts=tuple(followup_texts))
+                    turn_number += 1
+                    continue
                 final_state = with_transition(
                     state,
                     TransitionReason.COMPLETED,
