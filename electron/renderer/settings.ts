@@ -160,13 +160,17 @@ function hydrateCanonical(settings: unknown, modelStatus: unknown = activeModelS
   if (theme) {
     const resolvedTheme = theme === 'system' ? (systemThemeQuery.matches ? 'dark' : 'light') : theme;
     document.documentElement.dataset.theme = resolvedTheme;
+    // DSH 令牌平台的双档开关：body[data-ds-dark-theme]（与 deepseek-harness 同款）
+    document.body.toggleAttribute('data-ds-dark-theme', resolvedTheme === 'dark');
     settingsApi()?.setTheme?.(theme);
   }
 }
 
 systemThemeQuery.addEventListener('change', () => {
   if (canonicalSettings.appearance?.theme !== 'system') return;
-  document.documentElement.dataset.theme = systemThemeQuery.matches ? 'dark' : 'light';
+  const dark = systemThemeQuery.matches;
+  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  document.body.toggleAttribute('data-ds-dark-theme', dark);
 });
 
 async function persistSetting(path: string, value: unknown) {

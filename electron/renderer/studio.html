@@ -5,47 +5,53 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data: file:;" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Magic Pointer</title>
-  <link rel="stylesheet" href="oreo_tokens.css?v=22" />
-  <link rel="stylesheet" href="oreo.css?v=22" />
-  <link rel="stylesheet" href="cards.css?v=22" />
-  <link rel="stylesheet" href="dsh_tokens.css?v=22" />
-  <link rel="stylesheet" href="dsh_chat.css?v=22" />
-  <link rel="stylesheet" href="studio.css?v=22" />
+  <link rel="stylesheet" href="oreo_tokens.css?v=23" />
+  <link rel="stylesheet" href="oreo.css?v=23" />
+  <link rel="stylesheet" href="cards.css?v=23" />
+  <link rel="stylesheet" href="dsh_tokens.css?v=23" />
+  <link rel="stylesheet" href="dsh_chat.css?v=23" />
+  <link rel="stylesheet" href="studio.css?v=23" />
+  <link rel="stylesheet" href="dsh_web.css?v=23" />
 </head>
 <body class="studio">
-  <div class="shell" id="shell" data-view="chat">
-    <aside class="side" aria-label="工作室导航">
-      <button class="side-brand" data-goto="chat" aria-label="Magic Pointer 对话">
-        <span class="brand-mark" aria-hidden="true">MP</span>
-        <span class="brand-copy"><b>Magic Pointer</b></span>
-      </button>
-
-      <button class="side-new" id="new-chat" data-goto="chat">
-        <svg aria-hidden="true"><use href="#ic-plus" /></svg><span>新对话</span>
-      </button>
-
-      <nav class="side-navigation" aria-label="主要页面">
-        <div class="side-group">
-          <p class="side-label">工作</p>
-          <button class="side-item side-nav is-on" data-goto="chat"><svg><use href="#ic-spark" /></svg>对话</button>
-          <div id="side-convos" class="side-convos"></div>
+  <!-- DSH Web 外壳（AppFrame 三栏 → 侧栏 | 中心列），100% 移植 deepseek-harness -->
+  <div class="dshw-frame" id="shell" data-view="chat">
+    <aside class="dshw-sidebar-col">
+      <div class="dshw-sidebar">
+        <div class="dshw-logo-row">
+          <button class="dshw-brand" data-goto="chat" aria-label="Magic Pointer 对话">
+            <span class="dshw-brand-mark" aria-hidden="true">MP</span>
+            <span>Magic Pointer</span>
+          </button>
+          <button class="dshw-icon-button" id="sidebar-toggle" aria-label="折叠侧栏" title="折叠侧栏">
+            <svg aria-hidden="true"><use href="#ic-expand" /></svg>
+          </button>
         </div>
-        <div class="side-group">
-          <p class="side-label">资料库</p>
-          <button class="side-item side-nav" data-goto="stash"><svg><use href="#ic-stash" /></svg>收藏箱</button>
-          <button class="side-item side-nav" data-goto="timeline"><svg><use href="#ic-timeline" /></svg>时间线</button>
-          <button class="side-item side-nav" data-goto="memory"><svg><use href="#ic-memory" /></svg>记忆</button>
-          <button class="side-item side-nav" data-goto="artifacts"><svg><use href="#ic-docs" /></svg>产物</button>
-        </div>
-      </nav>
 
-      <div class="side-foot">
-        <button class="side-item side-nav" data-goto="settings"><svg><use href="#ic-sliders" /></svg>设置</button>
-        <p class="local-status"><span aria-hidden="true"></span>本地运行</p>
+        <button class="dshw-new-session" id="new-chat" data-goto="chat">
+          <svg aria-hidden="true"><use href="#ic-plus" /></svg><span class="dshw-new-session-label">新对话</span>
+        </button>
+
+        <nav class="dshw-region" aria-label="主要页面">
+          <button class="dshw-nav-cell is-on" data-goto="chat"><svg><use href="#ic-spark" /></svg><span class="dshw-nav-label">对话</span></button>
+          <button class="dshw-nav-cell" data-goto="stash"><svg><use href="#ic-stash" /></svg><span class="dshw-nav-label">收藏箱</span></button>
+          <button class="dshw-nav-cell" data-goto="timeline"><svg><use href="#ic-timeline" /></svg><span class="dshw-nav-label">时间线</span></button>
+          <button class="dshw-nav-cell" data-goto="memory"><svg><use href="#ic-memory" /></svg><span class="dshw-nav-label">记忆</span></button>
+          <button class="dshw-nav-cell" data-goto="artifacts"><svg><use href="#ic-docs" /></svg><span class="dshw-nav-label">产物</span></button>
+          <div id="side-convos"></div>
+        </nav>
+
+        <div class="dshw-foot">
+          <button class="dshw-trigger" data-goto="settings" aria-haspopup="dialog">
+            <svg aria-hidden="true"><use href="#ic-sliders" /></svg><span>设置</span>
+          </button>
+          <p class="local-status"><span aria-hidden="true"></span>本地运行</p>
+        </div>
       </div>
     </aside>
 
-    <div class="workspace">
+    <main class="dshw-center-col">
+      <!-- 工作区页头：聊天之外各页的标题（show() 写入） -->
       <header class="workspace-header" id="workspace-header">
         <div>
           <p class="workspace-eyebrow" id="workspace-eyebrow">ACTIVE WORK</p>
@@ -55,46 +61,70 @@
         <div class="workspace-header-actions" id="workspace-header-actions" aria-live="polite"></div>
       </header>
 
-      <section class="main view-chat" id="view-chat">
-        <div class="chat-context">
-          <div class="main-title">
-            <b id="chat-title">新对话</b>
-            <span class="origin-wrap">
-              <span class="origin" id="chat-origin" tabindex="0" aria-label="查看这次对话的来源">
-                <svg><use href="#ic-eye" /></svg><span id="chat-origin-text">当前选区</span>
-              </span>
-              <span class="peek" role="tooltip" id="chat-peek" hidden>
-                <span class="peek-top"><svg><use href="#ic-eye" /></svg>来源<em id="peek-label">选区预览</em></span>
-                <img id="peek-image" class="peek-img" alt="划线选区预览" />
-              </span>
+      <!-- ===== 对话页：DSH ConversationRoot（header + 滚动体 + 底部粘性输入卡 + 统计行） ===== -->
+      <section class="dshw-conversation" id="view-chat">
+        <header class="dshw-header">
+          <div class="dshw-title-row">
+            <b class="dshw-title" id="chat-title">新对话</b>
+            <span class="dshw-origin" id="chat-origin" tabindex="0" aria-label="查看这次对话的来源">
+              <svg><use href="#ic-eye" /></svg><span id="chat-origin-text">当前选区</span>
+            </span>
+            <span class="dshw-peek" role="tooltip" id="chat-peek" hidden>
+              <span class="peek-top"><svg><use href="#ic-eye" /></svg>来源<em id="peek-label">选区预览</em></span>
+              <img id="peek-image" class="peek-img" alt="划线选区预览" />
             </span>
           </div>
-        </div>
-        <div class="stream" id="stream">
-          <div class="chat-blank"><p>还没有对话。</p><p class="sub">在屏幕上划过内容，然后直接输入你的要求。</p></div>
-        </div>
-        <div class="composer-wrap">
-          <form class="workspace-composer">
-            <textarea rows="2" maxlength="12000" placeholder="继续问，或描述你想完成的事…" aria-label="继续对话"></textarea>
-            <div class="composer-bar">
-              <span class="composer-context-label"><svg><use href="#ic-target" /></svg>当前对象</span>
-              <span class="spacer"></span>
-              <span class="model-label"><svg><use href="#ic-spark" /></svg>默认模型</span>
-              <button type="submit" class="send-btn" title="发送"><svg><use href="#ic-send" /></svg></button>
+        </header>
+
+        <div class="dshw-scrollbody">
+          <div class="dshw-stream" id="stream">
+            <div class="dshw-blank"><p>还没有对话。</p><p class="sub">在屏幕上划过内容，然后直接输入你的要求。</p></div>
+          </div>
+
+          <div class="dshw-composer-seat">
+            <div class="dshw-composer-stack">
+              <div class="dshw-stats" id="stats-line" role="status"></div>
+              <form class="dshw-input-form" id="composer-form">
+                <div class="dshw-input-root">
+                  <div class="dshw-card">
+                    <div class="dshw-scroll">
+                      <div class="dshw-grow">
+                        <textarea class="dshw-input" rows="2" maxlength="12000"
+                          placeholder="继续问，或描述你想完成的事…" aria-label="继续对话"></textarea>
+                      </div>
+                    </div>
+                    <div class="dshw-row">
+                      <div class="dshw-tools"></div>
+                      <div class="dshw-trailing">
+                        <button type="submit" class="dshw-primary" title="发送" aria-label="发送">
+                          <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+                            <path d="M8.3125 0.980183C8.66767 1.0531 8.97902 1.20418 9.2627 1.43233C9.48724 1.61297 9.73029 1.85793 9.97949 2.10714L14.707 6.83468L13.293 8.24874L9 3.95577V15.0417H7V3.95577L2.70703 8.24874L1.29297 6.83468L6.02051 2.10714C6.26971 1.85793 6.51277 1.61297 6.7373 1.43233C6.97662 1.23986 7.28445 1.04402 7.6875 0.980183C7.8973 0.947006 8.1031 0.95516 8.3125 0.980183Z" fill="currentColor" />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </form>
             </div>
-          </form>
+          </div>
         </div>
       </section>
 
-      <section class="main" id="view-stash" hidden>
+      <!-- ===== 收藏箱（保留原画布/列表机制，外壳换 DSH 令牌） ===== -->
+      <section class="dshw-view" id="view-stash" hidden>
+        <div>
+          <h2>收藏箱</h2>
+          <p class="desc">划过之后复制、截图与素材都留在这里。</p>
+        </div>
         <div class="page-toolbar">
           <span class="pill" id="stash-count">0 项</span>
-          <div class="seg-toggle" id="stash-mode"><button class="is-on" data-mode="canvas">画布</button><button data-mode="list">列表</button></div>
+          <div class="dshw-seg" id="stash-mode"><button class="is-on" data-mode="canvas">画布</button><button data-mode="list">列表</button></div>
         </div>
         <div class="stash-filters" aria-label="收藏分类">
-          <button class="tab is-on" data-kind="">全部</button><button class="tab" data-kind="灵感">灵感</button>
-          <button class="tab" data-kind="交接">交接</button><button class="tab" data-kind="凭证">凭证</button>
-          <button class="tab" data-kind="素材">素材</button><button class="tab" data-kind="片段">片段</button>
+          <button class="dshw-tab is-on" data-kind="">全部</button><button class="dshw-tab" data-kind="灵感">灵感</button>
+          <button class="dshw-tab" data-kind="交接">交接</button><button class="dshw-tab" data-kind="凭证">凭证</button>
+          <button class="dshw-tab" data-kind="素材">素材</button><button class="dshw-tab" data-kind="片段">片段</button>
         </div>
         <div class="canvas" id="canvas">
           <div class="canvas-rail">
@@ -106,27 +136,37 @@
         <div class="stash-list" id="stash-list" hidden></div>
       </section>
 
-      <section class="main" id="view-timeline" hidden><div class="tl" id="tl"></div></section>
-      <section class="main" id="view-memory" hidden><div class="view-body" id="mem-list"></div></section>
-      <section class="main" id="view-artifacts" hidden><div class="view-body" id="art-list"></div></section>
+      <section class="dshw-view" id="view-timeline" hidden><div class="tl" id="tl"></div></section>
+      <section class="dshw-view" id="view-memory" hidden><div class="view-body" id="mem-list"></div></section>
+      <section class="dshw-view" id="view-artifacts" hidden><div class="view-body" id="art-list"></div></section>
 
-      <section class="main set" id="view-settings" hidden>
-        <div class="settings-layout">
-          <aside class="set-aside">
-            <div class="settings-nav-head">
-              <b>设置</b>
-              <label class="settings-search">
+      <!-- ===== 设置：DSH SettingsRoot 居中模态（点击侧栏「设置」打开） ===== -->
+      <section id="view-settings" hidden>
+        <div class="dshw-settings-overlay" role="dialog" aria-modal="true" aria-label="设置">
+          <div class="dshw-settings-mask" data-settings-close aria-hidden="true"></div>
+          <div class="dshw-settings-panel">
+            <nav class="dshw-settings-nav" aria-label="设置分类">
+              <div class="dshw-settings-nav-title">设置</div>
+              <label class="dshw-settings-search">
                 <svg aria-hidden="true"><use href="#ic-search" /></svg>
                 <input id="settings-search" type="search" autocomplete="off" placeholder="搜索设置" aria-label="搜索设置" />
               </label>
+              <div class="dshw-settings-nav-list" id="set-nav"></div>
+            </nav>
+            <div class="dshw-settings-content">
+              <div class="dshw-settings-header">
+                <span></span>
+                <button class="dshw-settings-close" data-settings-close aria-label="关闭设置">
+                  <svg aria-hidden="true"><use href="#ic-x" /></svg>
+                </button>
+              </div>
+              <div class="dshw-settings-options" id="set-body"></div>
             </div>
-            <nav class="set-nav" id="set-nav" aria-label="设置分类"></nav>
-          </aside>
-          <div class="set-body" id="set-body"></div>
+          </div>
         </div>
         <div id="settings-save-status" class="settings-save-status" data-state="idle" role="status" aria-live="polite"></div>
       </section>
-    </div>
+    </main>
 
     <aside class="aux" id="aux" hidden>
       <header class="aux-top">
@@ -137,15 +177,15 @@
     </aside>
   </div>
 
-  <script src="icons.js?v=22"></script>
-  <script src="../cards.js?v=22"></script>
-  <script src="../studio_shell.js?v=22"></script>
-  <script src="card_render.js?v=22"></script>
-  <script src="live_cards.js?v=22"></script>
-  <script src="dsh_chat.js?v=22"></script>
-  <script src="data.js?v=22"></script>
-  <script src="settings_model.js?v=22"></script>
-  <script src="settings.js?v=22"></script>
-  <script src="studio.js?v=22"></script>
+  <script src="icons.js?v=23"></script>
+  <script src="../cards.js?v=23"></script>
+  <script src="../studio_shell.js?v=23"></script>
+  <script src="card_render.js?v=23"></script>
+  <script src="live_cards.js?v=23"></script>
+  <script src="dsh_chat.js?v=23"></script>
+  <script src="data.js?v=23"></script>
+  <script src="settings_model.js?v=23"></script>
+  <script src="settings.js?v=23"></script>
+  <script src="studio.js?v=23"></script>
 </body>
 </html>

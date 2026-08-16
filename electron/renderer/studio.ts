@@ -1,5 +1,13 @@
 /* Magic Pointer Studio: real data renderers mounted inside the shared Oreo shell. */
 
+/* ---- DSH 主题引导：默认跟随系统（deepseek-harness boot-theme.ts 同款行为），
+   设置里改了主题后由 settings.ts 同步 body[data-ds-dark-theme]。 ---- */
+(function bootTheme() {
+  const systemDark = matchMedia('(prefers-color-scheme: dark)').matches;
+  document.documentElement.style.colorScheme = systemDark ? 'dark' : 'light';
+  document.body.toggleAttribute('data-ds-dark-theme', systemDark);
+})();
+
 /* ---- 确定性哈希 ---- */
 function hash(str: string) {
   let h = 2166136261;
@@ -260,6 +268,18 @@ async function renderSidebar() {
     </button>`).join('');
 }
 
+/* DSH StatsLine（输入框下统计）：只用真实数据 —— 轮数 + 步骤数。
+   没有 token/上下文占用的数据源之前不显示假数字。 */
+function renderStatsLine(turns: MagicPointerTurn[]) {
+  const host = document.getElementById('stats-line');
+  if (!host) return;
+  const steps = turns.reduce((n, t) => n + (t.trace || []).length, 0);
+  const groups: string[] = [];
+  if (turns.length > 0) groups.push(`${turns.length} 轮`);
+  if (steps > 0) groups.push(`${steps} 步`);
+  host.textContent = groups.join(' · ');
+}
+
 /* ---- 打开一条对话 ---- */
 let activeConversationId: string | null = null;
 /* cardId → DSH 回合节点：后台任务补丁就地换节点，不重建整条流 */
@@ -344,6 +364,7 @@ async function openConversation(id: string) {
   stream.replaceChildren(flow);
   stream.scrollTop = stream.scrollHeight;
   DshChat.bindDelegation(stream);
+  renderStatsLine(turns);
 }
 
 /* 代理卡 → DSH 节点：后台任务补丁（进度/步骤/终态）就地换掉那一轮。 */
@@ -433,6 +454,7 @@ function cssUrl(v: unknown) {
 
 const shell = document.getElementById('shell') as HTMLElement;
 const aux = document.getElementById('aux') as HTMLElement;
+let lastNonSettingsView = 'chat';
 const studioShell = globalThis.StudioShell;
 const VIEWS: Record<string, string> = Object.fromEntries(
   studioShell.STUDIO_VIEWS.map((view: { id: string }) => [view.id, `view-${view.id}`]),
@@ -445,6 +467,7 @@ function show(view: string) {
   document.getElementById('workspace-eyebrow')!.textContent = current.eyebrow;
   document.getElementById('workspace-title')!.textContent = current.title;
   document.getElementById('workspace-description')!.textContent = current.description;
+  if (view !== 'settings') lastNonSettingsView = view;
   Object.entries(VIEWS).forEach(([k, id]) => {
     document.getElementById(id)!.hidden = (k !== view);
   });
@@ -465,6 +488,8 @@ function closeAux() { shell.classList.remove('has-aux'); setTimeout(() => { aux.
 document.addEventListener('click', e => {
   const target = e.target as Element | null;
   if (!target) return;
+  if (target.closest('[data-settings-close]')) { show(lastNonSettingsView); return; }
+
   const open = target.closest<HTMLElement>('[data-open]');
   if (open && open.dataset.open) { openConversation(open.dataset.open); return; }
 
@@ -520,14 +545,24 @@ document.addEventListener('click', e => {
 });
 
 let studioComposerBusy = false;
-document.querySelectorAll('form.workspace-composer').forEach(form => {
+/* DSH 输入卡：textarea 随内容长高，14 行封顶（336px，InputBar 同款上限） */
+function fitComposer(ta: HTMLTextAreaElement) {
+  ta.style.height = 'auto';
+  ta.style.height = `${Math.min(336, ta.scrollHeight)}px`;
+}
+document.querySelectorAll('form.dshw-input-form').forEach(form => {
+  const ta = form.querySelector<HTMLTextAreaElement>('textarea');
+  if (ta) {
+    fitComposer(ta);
+    ta.addEventListener('input', () => fitComposer(ta));
+  }
   form.addEventListener('submit', async e => {
     e.preventDefault();
-    const ta = form.querySelector<HTMLTextAreaElement>('textarea');
+    const textarea = form.querySelector<HTMLTextAreaElement>('textarea');
     const submit = form.querySelector<HTMLButtonElement>('button[type="submit"]');
-    const question = ta?.value.trim() || '';
-    if (!ta || !question || studioComposerBusy) {
-      ta?.focus();
+    const question = textarea?.value.trim() || '';
+    if (!textarea || !question || studioComposerBusy) {
+      textarea?.focus();
       return;
     }
 
@@ -537,7 +572,7 @@ document.querySelectorAll('form.workspace-composer').forEach(form => {
     if (!flow) {
       flow = document.createElement('div');
       flow.className = 'dsh-flow';
-      stream.replaceChildren(...(stream.querySelector('.chat-blank, .view-empty') ? [] : [...stream.children]), flow);
+      stream.replaceChildren(...(stream.querySelector('.dshw-blank, .view-empty') ? [] : [...stream.children]), flow);
     }
     flow.appendChild(DshChat.userNode(question));
     const pending = document.createElement('div');
@@ -550,7 +585,8 @@ document.querySelectorAll('form.workspace-composer').forEach(form => {
     flow.appendChild(pending);
     stream.scrollTop = stream.scrollHeight;
 
-    ta.value = '';
+    textarea.value = '';
+    fitComposer(textarea);
     studioComposerBusy = true;
     form.setAttribute('aria-busy', 'true');
     if (submit) submit.disabled = true;
@@ -562,12 +598,13 @@ document.querySelectorAll('form.workspace-composer').forEach(form => {
       await renderSidebar();
     } catch (error) {
       pending.replaceChildren(DshChat.turnErrorNode(error instanceof Error ? error.message : String(error)));
-      ta.value = question;
+      textarea.value = question;
+      fitComposer(textarea);
     } finally {
       studioComposerBusy = false;
       form.removeAttribute('aria-busy');
       if (submit) submit.disabled = false;
-      ta.focus();
+      textarea.focus();
     }
   });
 });
@@ -612,14 +649,15 @@ function startNewChat() {
   const stream = document.getElementById('stream');
   if (stream) {
     stream.innerHTML = Data.isLive()
-      ? `<div class="chat-blank">
+      ? `<div class="dshw-blank">
            <p>晃动鼠标，或者划过一段文字。</p>
            <p class="sub">它会出现在指针旁边，这里同步显示。</p>
          </div>`
-      : `<div class="chat-blank"><p>还没有对话。</p>
+      : `<div class="dshw-blank"><p>还没有对话。</p>
            <p class="sub">在 Electron 里运行时，这里显示的是真实记录。</p></div>`;
   }
-  document.querySelector<HTMLTextAreaElement>('.workspace-composer textarea')?.focus();
+  renderStatsLine([]);
+  document.querySelector<HTMLTextAreaElement>('.dshw-input')?.focus();
 }
 
 document.getElementById('new-chat')?.addEventListener('click', startNewChat);

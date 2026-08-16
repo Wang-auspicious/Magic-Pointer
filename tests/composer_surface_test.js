@@ -41,12 +41,12 @@ for (const [page, needs] of Object.entries({
   }
 }
 
-// --- 工作室只有一个固定输入面，不再有营销 Hero 的第二根条 ---
+// --- 工作室只有一个输入面：DSH InputBar（deepseek-harness 100% 移植） ---
 {
   const html = read('studio.html');
   assert.ok(!/hero-composer/.test(html), 'Studio 不得保留第二根营销 Hero 输入条');
-  assert.ok(/<form class="workspace-composer"/.test(html), 'Studio 工作区必须有固定 Oreo composer');
-  assert.ok(/默认模型/.test(html), '输入面要说明当前走默认模型配置');
+  assert.ok(/<form class="dshw-input-form"/.test(html), 'Studio 工作区必须用 DSH 输入卡');
+  assert.ok(/class="dshw-primary"/.test(html), '发送键必须是 DSH 蓝圆主按钮');
   assert.ok(!html.includes('composer.js'), 'studio 不该再 link 共用 composer.js');
 }
 // 随行窗没有手写条残留（它走共用 composer.js）

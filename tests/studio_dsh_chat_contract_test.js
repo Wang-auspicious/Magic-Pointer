@@ -90,9 +90,10 @@ assert(errorTurn.includes('class="dsh-dot"'), 'the error row leads with the red 
 assert(DshChat.turnStatusNode('Thinking').outerHTML.includes('class="dsh-turn-status"'));
 assert(css.includes('@keyframes dsh-turn-status-shimmer'), 'the status shimmer animation must exist');
 
-/* ---- 样式契约：令牌与 CSS 一致 ---- */
-assert(tokens.includes('--dsw-specific-bubble: rgb(237, 243, 254)'), 'the DSH user bubble token must be DeepSeek-50');
-assert(!tokens.includes('data-ds-dark-theme'), 'no dark alias block may enter the port (product rule: light only)');
+/* ---- 样式契约：令牌与 CSS 一致（DSH 双档完整平台） ---- */
+assert(tokens.includes('--dsw-specific-bubble: rgb(237, 243, 254)'), 'the DSH user bubble token must be DeepSeek-50 in light');
+assert(tokens.includes('body[data-ds-dark-theme]'), 'the dark alias block must exist (DSH full platform)');
+assert(tokens.includes('--dsw-specific-bubble: rgb(44, 44, 46)'), 'the dark user bubble must be bluish-850');
 assert(css.includes('border-radius: 22px'), 'the bubble radius is the DSH 22px');
 assert(css.includes('height: 24px'), 'rows keep the DSH 24px line height');
 assert(css.includes('dsh-state-dot-chase'), 'the ongoing pixel-chase animation must exist');

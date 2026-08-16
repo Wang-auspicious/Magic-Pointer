@@ -1,0 +1,1151 @@
+/* ============================================================
+   DSH Web 外壳样式（100% 移植 deepseek-harness）
+   ------------------------------------------------------------
+   来源（类名 → DSH 原名）：
+   - ui-layout AppFrame.module.css          （.frame/.sidebarCol/.centerCol）
+   - ui-sidebar SidebarRoot.module.css      （.root/.logoRow/.newSession/…）
+   - ui-conversation ConversationRoot.module.css（.root/.scrollBody/.composerSeat/.composerStack）
+   - ui-conversation InputBar.module.css    （.root/.card/.scroll/.grow/.input/.row/.tools/.trailing/.add/.select/.primary）
+   - ui-conversation StatsLine.module.css   （.root/.sep）
+   - ui-settings-general SettingsRoot.module.css（.overlay/.mask/.panel/.nav/.navCell/.content/.options/.close）
+   值逐字保留；类名加 .dshw- 前缀；主题变量来自 dsh_tokens.css（双档）。
+   ============================================================ */
+
+/* ---- 三栏框架（AppFrame） ---- */
+.dshw-frame {
+  position: relative;
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  grid-template-rows: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+}
+
+.dshw-sidebar-col {
+  min-width: 0;
+  overflow: hidden;
+  background: var(--dsw-specific-sidebar-fill);
+  border-right: 1px solid var(--dsw-alias-border-l1);
+}
+
+.dshw-center-col {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ---- 侧栏（SidebarRoot） ---- */
+.dshw-sidebar {
+  --dsh-sidebar-inline-padding: 12px;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 6px var(--dsh-sidebar-inline-padding);
+  box-sizing: border-box;
+  background: var(--dsw-specific-sidebar-fill);
+  color: var(--dsw-alias-label-primary);
+  font-size: 14px;
+  font-family: var(--dsw-font-family);
+}
+
+.dshw-logo-row {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 60px;
+  padding: 8px 0 8px 4px;
+  margin-bottom: 8px;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.dshw-brand {
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.dshw-brand-mark {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  background: var(--dsw-alias-state-business-primary);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.dshw-icon-button {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 50%;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dshw-icon-button:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.dshw-icon-button svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* 新对话：38px 条，12px 半径 */
+.dshw-new-session {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 38px;
+  padding: 8px 16px;
+  margin: 0 2px 8px;
+  box-sizing: border-box;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 12px;
+  background: var(--dsw-alias-button-elevated-fill);
+  color: var(--dsw-alias-label-primary);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 22px;
+  cursor: pointer;
+  overflow: hidden;
+  font-family: var(--dsw-font-family);
+}
+
+.dshw-new-session:hover {
+  background: var(--dsw-alias-button-floating-hover);
+}
+
+.dshw-new-session svg {
+  width: 14px;
+  height: 14px;
+}
+
+.dshw-new-session-label {
+  max-width: 200px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* 浏览区：页面导航 + 会话列表 */
+.dshw-region {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-left: -4px;
+  margin-right: calc(-1 * var(--dsh-sidebar-inline-padding));
+  padding-left: 4px;
+  overflow-y: auto;
+}
+
+.dshw-nav-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 6px 16px 6px 12px;
+  margin: 0 8px 0 0;
+  box-sizing: border-box;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 22px;
+  color: var(--dsw-alias-label-primary);
+  text-align: left;
+}
+
+.dshw-nav-cell:hover {
+  background: var(--dsw-specific-sidebar-nav-item-hover);
+}
+
+.dshw-nav-cell.is-on {
+  background: var(--dsw-specific-sidebar-nav-item-active);
+}
+
+.dshw-nav-cell svg {
+  width: 16px;
+  height: 16px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dshw-nav-cell.is-on svg {
+  color: var(--dsw-alias-label-primary);
+}
+
+.dshw-nav-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* 侧栏会话列表行 */
+.dshw-side-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 36px;
+  padding: 7px 10px 7px 12px;
+  margin: 0;
+  box-sizing: border-box;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+  color: var(--dsw-alias-label-primary);
+  text-align: left;
+}
+
+.dshw-side-item:hover {
+  background: var(--dsw-specific-sidebar-nav-item-hover);
+}
+
+.dshw-side-item.is-on {
+  background: var(--dsw-specific-sidebar-nav-item-active);
+}
+
+.dshw-side-item .object-mark {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  background: var(--dsw-alias-markdown-inline-code);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.dshw-side-text {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
+}
+
+.dshw-side-text b {
+  font-size: 13px;
+  font-weight: 500;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.dshw-side-text small {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.dshw-side-empty {
+  padding: 8px 12px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12.5px;
+}
+
+/* 底部：设置入口 */
+.dshw-foot {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  margin-top: 4px;
+}
+
+.dshw-trigger {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: calc(100% + 8px);
+  height: 34px;
+  margin: 4px -4px 4px;
+  padding: 6px 2px 6px 10px;
+  box-sizing: border-box;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  cursor: pointer;
+  overflow: hidden;
+  color: var(--dsw-alias-label-primary);
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 22px;
+  text-align: left;
+}
+
+.dshw-trigger:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.dshw-trigger svg {
+  width: 16px;
+  height: 16px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* ---- 会话列（ConversationRoot） ---- */
+.dshw-conversation {
+  --dsh-chat-content-width: 748px;
+  --dsh-composer-card-max-width: calc(var(--dsh-chat-content-width) + 32px);
+  --dsh-composer-side-clearance: 16px;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  background: var(--dsw-alias-bg-base);
+  font-family: var(--dsw-font-family);
+  overflow: hidden;
+}
+
+.dshw-header {
+  position: relative;
+  flex: none;
+  padding: 12px 28px 0 20px;
+}
+
+.dshw-header::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: 1px;
+  left: 0;
+  z-index: 0;
+  height: 1px;
+  background: var(--dsw-alias-border-l2);
+  pointer-events: none;
+}
+
+.dshw-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+}
+
+.dshw-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  color: var(--dsw-alias-label-primary);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.dshw-origin {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 320px;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  font-size: 14px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-tertiary);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: default;
+}
+
+.dshw-origin svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+
+/* 选区缩略预览（peek 沿用原逻辑） */
+.dshw-peek {
+  position: absolute;
+  z-index: 10;
+  top: 40px;
+  right: 20px;
+  padding: 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 12px;
+  background: var(--dsw-specific-menu);
+  box-shadow: var(--dsw-shadow-lv3);
+}
+
+.dshw-peek img {
+  display: block;
+  width: 100%;
+  max-height: 180px;
+  object-fit: contain;
+  border-radius: 8px;
+}
+
+/* 滚动体 + 底部粘性作曲家座 */
+.dshw-scrollbody {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+}
+
+.dshw-stream {
+  flex: 1 0 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 16px calc(var(--dsh-composer-side-clearance) + 16px);
+}
+
+.dshw-stream > .dsh-flow {
+  max-width: var(--dsh-chat-content-width);
+  width: 100%;
+  margin: 0 auto;
+}
+
+/* 空态：居中 */
+.dshw-blank {
+  margin: auto;
+  max-width: var(--dsh-composer-card-max-width);
+  width: 100%;
+  padding: 0 var(--dsh-composer-side-clearance) 32px;
+  text-align: center;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.dshw-blank p {
+  margin: 0;
+  font-size: 16px;
+  line-height: 24px;
+}
+
+.dshw-blank .sub {
+  margin-top: 8px;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-caption);
+}
+
+.dshw-composer-seat {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  position: sticky;
+  bottom: 0;
+  z-index: 7;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--dsw-alias-bg-base) 0%, transparent) 0px,
+    var(--dsw-alias-bg-base) 36px
+  );
+}
+
+.dshw-composer-stack {
+  --dsh-composer-stack-gap: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--dsh-composer-stack-gap);
+}
+
+/* ---- 输入框下统计行（StatsLine） ---- */
+.dshw-stats {
+  display: block;
+  text-align: center;
+  max-width: var(--dsh-chat-content-width);
+  width: 100%;
+  margin: 0 auto;
+  box-sizing: border-box;
+  padding: 4px calc(var(--dsh-composer-side-clearance) + 16px) 0;
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dshw-stats .sep {
+  color: var(--dsw-alias-separator-primary);
+  margin: 0 10px;
+}
+
+.dshw-stats:empty {
+  display: none;
+}
+
+/* ---- 输入框（InputBar） ---- */
+.dshw-input-root {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0 var(--dsh-composer-side-clearance) 8px;
+}
+
+.dshw-notice {
+  width: 100%;
+  max-width: var(--dsh-composer-card-max-width);
+  margin-bottom: 6px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.dshw-notice.is-error {
+  background: var(--dsw-alias-interactive-bg-hover-danger);
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.dshw-card {
+  box-sizing: border-box;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: var(--dsh-composer-card-max-width);
+  padding-top: 10px;
+  border: 1px solid var(--dsw-alias-border-l2-darkmode-thin);
+  border-radius: 22px;
+  background: var(--dsw-specific-input-major);
+  box-shadow: var(--dsw-shadow-lv2);
+  font-size: 16px;
+  line-height: 24px;
+}
+
+.dshw-card:focus-within {
+  border-color: var(--dsw-alias-border-l3);
+}
+
+.dshw-scroll {
+  max-height: 336px;
+  overflow-y: auto;
+}
+
+.dshw-grow {
+  position: relative;
+}
+
+.dshw-input {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 52px;
+  resize: none;
+  overflow: hidden;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  caret-color: var(--dsw-alias-state-business-primary);
+  font-family: var(--dsw-font-family);
+  font-size: inherit;
+  line-height: inherit;
+  padding: 4px 12px 0 16px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.dshw-input::placeholder {
+  color: var(--dsw-alias-label-caption);
+  user-select: none;
+}
+
+.dshw-input:disabled {
+  color: var(--dsw-alias-label-tertiary);
+  cursor: not-allowed;
+}
+
+.dshw-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 2px 8px 6px;
+  min-width: 0;
+}
+
+.dshw-tools,
+.dshw-trailing {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.dshw-tools {
+  gap: 16px;
+}
+
+.dshw-trailing {
+  flex: none;
+  gap: 12px;
+}
+
+.dshw-add {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 999px;
+  background: var(--dsw-specific-selector);
+  color: var(--dsw-alias-label-primary);
+  cursor: pointer;
+}
+
+.dshw-add:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover-solid);
+}
+
+.dshw-add:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.dshw-add svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* 模型 chip 选择（Select 同款 chrome） */
+.dshw-select {
+  max-width: 220px;
+  height: 28px;
+  padding: 0 20px 0 8px;
+  border: none;
+  border-radius: 8px;
+  outline: none;
+  background-color: transparent;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5' stroke='%2381858C' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 4px center;
+  background-size: 12px 12px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  appearance: none;
+  font-family: var(--dsw-font-family);
+}
+
+.dshw-select:hover:not(:disabled) {
+  background-color: var(--dsw-alias-interactive-bg-hover);
+}
+
+.dshw-select:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* 发送键（figma IconButton 34:10465）：34px 蓝圆，白 glyph */
+.dshw-primary {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: 999px;
+  background: var(--dsw-alias-button-info-fill);
+  color: #fff;
+  cursor: pointer;
+  transition: background-color 100ms ease;
+  transform: translateY(-2px);
+}
+
+.dshw-primary:hover:not(:disabled) {
+  background: var(--dsw-alias-button-info-hover);
+}
+
+.dshw-primary:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.dshw-primary svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* ---- 设置模态（SettingsRoot） ---- */
+.dshw-settings-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.dshw-settings-mask {
+  position: absolute;
+  inset: 0;
+  background: var(--dsw-alias-bg-mask-1);
+  backdrop-filter: var(--dsw-mask-blur);
+}
+
+.dshw-settings-panel {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  width: 800px;
+  height: min(800px, calc(100vh - 48px));
+  max-width: calc(100vw - 48px);
+  border-radius: 24px;
+  overflow: hidden;
+  background: var(--dsw-alias-bg-layer-2);
+  box-shadow: var(--dsw-shadow-lv3);
+  font-family: var(--dsw-font-family);
+}
+
+.dshw-settings-nav {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  width: 188px;
+  padding: 22px 12px 0;
+  box-sizing: border-box;
+}
+
+.dshw-settings-nav-title {
+  padding: 0 12px;
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-primary);
+}
+
+.dshw-settings-nav-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  overflow-y: auto;
+}
+
+.dshw-settings-nav-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 9px 16px 9px 12px;
+  box-sizing: border-box;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 400;
+  color: var(--dsw-alias-label-primary);
+  text-align: left;
+}
+
+.dshw-settings-nav-cell:hover {
+  background: var(--dsw-specific-sidebar-nav-item-hover);
+}
+
+.dshw-settings-nav-cell.is-on {
+  background: var(--dsw-specific-sidebar-nav-item-active);
+}
+
+.dshw-settings-nav-cell svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dshw-settings-nav-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.dshw-settings-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.dshw-settings-header {
+  flex: none;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  height: 54px;
+  padding: 20px 14px 8px 10px;
+  box-sizing: border-box;
+}
+
+.dshw-settings-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 28px;
+  background: transparent;
+  cursor: pointer;
+  color: var(--dsw-alias-label-primary);
+}
+
+.dshw-settings-close:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.dshw-settings-close svg {
+  width: 14px;
+  height: 14px;
+}
+
+.dshw-settings-options {
+  flex: 1;
+  min-height: 0;
+  padding: 0 24px 24px;
+  overflow-y: auto;
+}
+
+/* ---- 设置行（内容换成我们的，chrome 按 DSH 令牌） ---- */
+.dshw-settings-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.dshw-settings-copy {
+  display: grid;
+  gap: 2px;
+}
+
+.dshw-settings-copy b {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 22px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.dshw-settings-copy small {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.dshw-settings-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.dshw-settings-row-error {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 11.5px;
+  line-height: 16px;
+}
+
+.dshw-settings-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 18px 12px 4px;
+  padding: 0 10px;
+  height: 34px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 12px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dshw-settings-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.dshw-settings-search input::placeholder {
+  color: var(--dsw-alias-label-caption);
+}
+
+.dshw-settings-search svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* ---- 其他页面（收藏箱/时间线/记忆/产物）共用 DSH 令牌底座 ---- */
+.dshw-view {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 20px 32px 28px;
+  overflow: auto;
+  background: var(--dsw-alias-bg-base);
+  font-family: var(--dsw-font-family);
+}
+
+.dshw-view h2 {
+  margin: 0 0 4px;
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 32px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.dshw-view .desc {
+  margin: 0 0 20px;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* 行（列表/时间线/记忆通用） */
+.dshw-row-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 12px;
+  box-sizing: border-box;
+  border: none;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font-family: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.dshw-row-card:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.dshw-view-empty {
+  padding: 48px 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 14px;
+  text-align: center;
+}
+
+/* 分段开关 + 页签（收藏箱沿用） */
+.dshw-seg {
+  display: inline-flex;
+  padding: 3px;
+  border-radius: 999px;
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.dshw-seg button {
+  height: 28px;
+  padding: 0 13px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12.5px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.dshw-seg button.is-on {
+  background: var(--dsw-alias-button-floating-fill);
+  color: var(--dsw-alias-label-primary);
+  box-shadow: var(--dsw-shadow-lv1);
+}
+
+.dshw-tab {
+  height: 30px;
+  padding: 0 13px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12.5px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.dshw-tab.is-on {
+  color: var(--dsw-alias-state-business-primary);
+  font-weight: 600;
+}
+
+/* 减少动效 */
+@media (prefers-reduced-motion: reduce) {
+  .dshw-settings-panel,
+  .dshw-card {
+    transition: none;
+  }
+}
+
+/* ---- 视图级页头：聊天/设置时隐藏工作区页头（show() 仍会写入文案） ---- */
+#shell[data-view='chat'] .workspace-header,
+#shell[data-view='settings'] .workspace-header {
+  display: none;
+}
+
+/* ---- settings.ts 渲染的导航格，对齐 DSH SettingsRoot 导航单元 ---- */
+.settings-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 9px 16px 9px 12px;
+  box-sizing: border-box;
+  border: none;
+  border-radius: 12px;
+  background: transparent;
+  cursor: pointer;
+  font-family: var(--dsw-font-family);
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 400;
+  color: var(--dsw-alias-label-primary);
+  text-align: left;
+}
+
+.settings-nav-item:hover {
+  background: var(--dsw-specific-sidebar-nav-item-hover);
+}
+
+.settings-nav-item.is-on {
+  background: var(--dsw-specific-sidebar-nav-item-active);
+}
+
+.settings-nav-item svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* 设置行（settings.ts 结构不变，chrome 对齐 DSH 令牌） */
+.dshw-settings-options .settings-section-frame {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.dshw-settings-options .settings-row {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  background: transparent;
+}
+
+.dshw-settings-options .settings-copy b {
+  color: var(--dsw-alias-label-primary);
+}
+
+.dshw-settings-options .settings-copy small {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+/* 侧栏本地状态行 */
+.local-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 4px 12px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  font-family: var(--dsw-font-family);
+}
+
+/* ---- 暗色档：oreo 令牌重映射 —— 收藏箱/时间线/记忆/产物与设置行跟随主题 ---- */
+body[data-ds-dark-theme] {
+  --paper: #191815;
+  --paper-2: #131210;
+  --card: #232220;
+  --card-sunk: #1D1C1A;
+  --card-hover: #2A2825;
+  --ink: #F2F1ED;
+  --ink-2: #A5A29A;
+  --ink-3: #75726B;
+  --ink-4: #4A4844;
+  --hairline: rgba(242, 241, 237, .09);
+  --hairline-2: rgba(242, 241, 237, .16);
+  --indigo: #A5A4F5;
+  --indigo-bg: rgba(122, 122, 232, .18);
+  --amber: #E0A44E;
+  --amber-bg: rgba(210, 140, 50, .18);
+  --teal: #52BFC7;
+  --teal-bg: rgba(30, 160, 172, .18);
+  --green: #74C295;
+  --green-bg: rgba(70, 165, 112, .18);
+  --terracotta: #E08055;
+  --terracotta-bg: rgba(200, 95, 50, .18);
+  --pen: rgba(224, 176, 74, .30);
+  --solid: #F2F1ED;
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, .30), 0 8px 24px -6px rgba(0, 0, 0, .44);
+  --shadow-lift: 0 2px 4px rgba(0, 0, 0, .34), 0 16px 40px -10px rgba(0, 0, 0, .52);
+  --shadow-pop: 0 4px 8px rgba(0, 0, 0, .38), 0 24px 56px -12px rgba(0, 0, 0, .60);
+}
