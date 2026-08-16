@@ -104,13 +104,14 @@
                           <button type="button" data-composer-act="copy-last" role="menuitem">复制最近回答</button>
                           <button type="button" data-composer-act="origin" role="menuitem">查看当前对象来源</button>
                         </div>
-                        <select class="dshw-select" id="composer-permission" aria-label="权限模式" title="本轮 Agent 的权限门">
-                          <option value="default" selected>默认权限</option>
-                          <option value="plan">仅计划</option>
-                          <option value="accept_reversible">接受可逆</option>
-                          <option value="safe">安全</option>
-                          <option value="bypass">完全访问</option>
-                        </select>
+                        <button type="button" class="dshw-perm" id="composer-permission" aria-haspopup="listbox" aria-expanded="false" title="本轮 Agent 的权限预设">
+                          <span class="dshw-perm-glyph" id="composer-permission-glyph" aria-hidden="true"></span>
+                          <span class="dshw-perm-label" id="composer-permission-label">工作区写入</span>
+                          <svg class="dshw-perm-chev" width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                            <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+                          </svg>
+                        </button>
+                        <div class="dshw-perm-menu" id="composer-permission-menu" hidden role="listbox" aria-label="权限预设"></div>
                       </div>
                       <div class="dshw-trailing">
                         <select class="dshw-select" id="composer-model" aria-label="模型">
@@ -209,6 +210,7 @@
   <script src="card_render.js?v=23"></script>
   <script src="live_cards.js?v=23"></script>
   <script src="dsh_chat.js?v=23"></script>
+  <script src="permission_presets.js?v=23"></script>
   <script src="data.js?v=23"></script>
   <script src="settings_model.js?v=23"></script>
   <script src="settings.js?v=23"></script>

@@ -491,6 +491,13 @@ document.addEventListener('click', e => {
   if (!target) return;
   if (target.closest('[data-settings-close]')) { show(lastNonSettingsView); return; }
 
+  /* 权限预设弹层：点外面收起（芯片/行自己的 click 已 stopPropagation） */
+  const permMenu = document.getElementById('composer-permission-menu');
+  if (permMenu && !permMenu.hidden && !target.closest('#composer-permission-menu')
+      && !target.closest('#composer-permission')) {
+    closePermissionMenu();
+  }
+
   /* 作曲家 `+` 扩展菜单：真实动作（复制最近回答 / 查看来源），点击外部关闭 */
   const addBtn = target.closest<HTMLElement>('#composer-add');
   const addMenu = document.getElementById('composer-add-menu');
@@ -576,6 +583,141 @@ document.addEventListener('click', e => {
 
 let studioComposerBusy = false;
 let lastAnswerText = '';
+
+/* ---- 权限预设芯片（DSH PermissionSelect 同款：芯片 + 弹层 + Full access 确认门） ---- */
+let composerPreset = 'workspace-write';
+interface PermPresetOption {
+  value: string; name: string; label: string; description: string; glyph: string;
+  confirm?: { title: string; description: string };
+}
+interface PermPresetsModule {
+  PRESETS: PermPresetOption[];
+  optionOf(value: string): PermPresetOption | undefined;
+  presetSvg(option: PermPresetOption): string;
+}
+const permPresets = (globalThis as { PermissionPresets?: PermPresetsModule }).PermissionPresets!;
+
+function renderPermissionChip() {
+  const btn = document.getElementById('composer-permission');
+  const glyph = document.getElementById('composer-permission-glyph');
+  const label = document.getElementById('composer-permission-label');
+  const option = permPresets.optionOf(composerPreset);
+  if (btn instanceof HTMLButtonElement) btn.title = option?.description || '';
+  if (glyph) glyph.innerHTML = option ? permPresets.presetSvg(option) : '';
+  if (label) label.textContent = option?.label || composerPreset;
+}
+
+function closePermissionMenu() {
+  const menu = document.getElementById('composer-permission-menu');
+  document.getElementById('composer-permission')?.setAttribute('aria-expanded', 'false');
+  if (menu) menu.hidden = true;
+}
+
+function openPermissionMenu() {
+  const menu = document.getElementById('composer-permission-menu');
+  if (!menu) return;
+  menu.replaceChildren(...permPresets.PRESETS.map(option => {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'dshw-perm-row' + (option.value === composerPreset ? ' is-active' : '');
+    row.setAttribute('role', 'option');
+    row.dataset.permValue = option.value;
+    row.title = option.description;
+    const glyph = document.createElement('span');
+    glyph.className = 'dshw-perm-row-glyph';
+    glyph.innerHTML = permPresets.presetSvg(option);
+    const text = document.createElement('span');
+    text.className = 'dshw-perm-row-text';
+    const name = document.createElement('span');
+    name.textContent = option.label;
+    const desc = document.createElement('small');
+    desc.textContent = option.description;
+    text.append(name, desc);
+    row.append(glyph, text);
+    if (option.value === composerPreset) {
+      const check = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      check.setAttribute('viewBox', '0 0 16 16');
+      check.setAttribute('aria-hidden', 'true');
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', 'M13.207 4.53564L6.64645 11.0962L3.11091 7.56063L2.04688 8.6247L6.64645 13.2243L14.271 5.59971L13.207 4.53564Z');
+      path.setAttribute('fill', 'currentColor');
+      check.appendChild(path);
+      check.classList.add('dshw-perm-check');
+      row.appendChild(check);
+    }
+    return row;
+  }));
+  menu.hidden = false;
+  document.getElementById('composer-permission')?.setAttribute('aria-expanded', 'true');
+}
+
+/* Full access 确认门：勾选“已了解风险”才能启用（DSH RiskConfirmation 同款语义） */
+function confirmFullAccess() {
+  const option = permPresets.PRESETS.find(p => p.value === 'danger-full-access');
+  const confirmSpec = option?.confirm;
+  if (!confirmSpec) return;
+  const overlay = document.createElement('div');
+  overlay.className = 'dshw-perm-confirm';
+  overlay.setAttribute('role', 'alertdialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.setAttribute('aria-label', confirmSpec.title);
+  const card = document.createElement('div');
+  card.className = 'dshw-perm-confirm-card';
+  const title = document.createElement('b');
+  title.textContent = confirmSpec.title;
+  const desc = document.createElement('p');
+  desc.textContent = confirmSpec.description;
+  const ackRow = document.createElement('label');
+  ackRow.className = 'dshw-perm-confirm-ack';
+  const box = document.createElement('input');
+  box.type = 'checkbox';
+  const ackText = document.createElement('span');
+  ackText.textContent = '我已了解风险，并愿意继续';
+  ackRow.append(box, ackText);
+  const actions = document.createElement('div');
+  actions.className = 'dshw-perm-confirm-actions';
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.textContent = '取消';
+  cancel.addEventListener('click', () => overlay.remove());
+  const enable = document.createElement('button');
+  enable.type = 'button';
+  enable.className = 'is-primary';
+  enable.textContent = '启用 Full access';
+  enable.disabled = true;
+  box.addEventListener('change', () => { enable.disabled = !box.checked; });
+  enable.addEventListener('click', () => {
+    composerPreset = 'danger-full-access';
+    renderPermissionChip();
+    overlay.remove();
+  });
+  actions.append(cancel, enable);
+  card.append(title, desc, ackRow, actions);
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+}
+
+function bindPermissionChip() {
+  renderPermissionChip();
+  document.getElementById('composer-permission')?.addEventListener('click', e => {
+    e.stopPropagation();
+    const menu = document.getElementById('composer-permission-menu');
+    if (menu?.hidden) openPermissionMenu();
+    else closePermissionMenu();
+  });
+  document.getElementById('composer-permission-menu')?.addEventListener('click', e => {
+    const row = (e.target as Element | null)?.closest<HTMLElement>('[data-perm-value]');
+    if (!row) return;
+    e.stopPropagation();
+    const value = row.dataset.permValue || '';
+    closePermissionMenu();
+    if (value === composerPreset) return;
+    if (value === 'danger-full-access') { confirmFullAccess(); return; }
+    composerPreset = value;
+    renderPermissionChip();
+  });
+}
+bindPermissionChip();
 /* DSH 输入卡：textarea 随内容长高，14 行封顶（336px，InputBar 同款上限） */
 function fitComposer(ta: HTMLTextAreaElement) {
   ta.style.height = 'auto';
@@ -645,11 +787,10 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
     form.setAttribute('aria-busy', 'true');
     if (submit) submit.disabled = true;
     try {
-      const permission = document.getElementById('composer-permission') as HTMLSelectElement | null;
       const response = await Data.sendConversation(
         activeConversationId,
         question,
-        permission?.value || 'default',
+        composerPreset,
       );
       if (!response?.ok || !response.conversationId) throw new Error(response?.error || '这次没有答完。');
       activeConversationId = String(response.conversationId);

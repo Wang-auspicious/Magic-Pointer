@@ -1216,3 +1216,192 @@ body[data-ds-dark-theme] {
   --shadow-lift: 0 2px 4px rgba(0, 0, 0, .34), 0 16px 40px -10px rgba(0, 0, 0, .52);
   --shadow-pop: 0 4px 8px rgba(0, 0, 0, .38), 0 24px 56px -12px rgba(0, 0, 0, .60);
 }
+
+/* ---- 权限预设芯片（DSH PermissionSelect 触发器 + Menu 弹层 + RiskConfirmation） ---- */
+.dshw-perm {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 220px;
+  height: 28px;
+  padding: 0 6px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  font-family: var(--dsw-font-family);
+}
+
+.dshw-perm:hover:not(:disabled) {
+  background-color: var(--dsw-alias-interactive-bg-hover);
+}
+
+.dshw-perm-glyph {
+  display: inline-flex;
+  flex: none;
+}
+
+.dshw-perm-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dshw-perm-chev {
+  flex: none;
+  transition: transform 0.15s ease;
+}
+
+.dshw-perm[aria-expanded="true"] .dshw-perm-chev {
+  transform: rotate(180deg);
+}
+
+.dshw-perm-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  min-width: 300px;
+  max-width: 380px;
+  padding: 4px;
+  border: 1px solid var(--dsw-alias-border-inverted);
+  border-radius: 12px;
+  background: var(--dsw-specific-menu);
+  box-shadow: var(--dsw-shadow-lv3);
+}
+
+.dshw-perm-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  line-height: 20px;
+  font-family: var(--dsw-font-family);
+  text-align: left;
+  cursor: pointer;
+}
+
+.dshw-perm-row:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.dshw-perm-row-glyph {
+  display: inline-flex;
+  flex: none;
+  margin-top: 2px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dshw-perm-row.is-active .dshw-perm-row-glyph {
+  color: var(--dsw-alias-label-primary);
+}
+
+.dshw-perm-row-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.dshw-perm-row-text small {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.dshw-perm-check {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  color: var(--dsw-alias-label-primary);
+}
+
+/* Full access 确认门（DSH RiskConfirmation：遮罩 + 卡片 + 勾选确认） */
+.dshw-perm-confirm {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.32);
+}
+
+.dshw-perm-confirm-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(420px, calc(100vw - 48px));
+  padding: 20px;
+  border: 1px solid var(--dsw-alias-border-inverted);
+  border-radius: 12px;
+  background: var(--dsw-specific-menu);
+  box-shadow: var(--dsw-shadow-lv3);
+}
+
+.dshw-perm-confirm-card b {
+  font-size: 15px;
+  line-height: 22px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.dshw-perm-confirm-card p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.dshw-perm-confirm-ack {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--dsw-alias-label-primary);
+  cursor: pointer;
+}
+
+.dshw-perm-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.dshw-perm-confirm-actions button {
+  height: 32px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 8px;
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  font-family: var(--dsw-font-family);
+  cursor: pointer;
+}
+
+.dshw-perm-confirm-actions button.is-primary:not(:disabled) {
+  background: var(--dsw-alias-button-info-fill);
+  color: #fff;
+}
+
+.dshw-perm-confirm-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.dshw-perm-confirm-actions button.is-primary:not(:disabled):hover {
+  background: var(--dsw-alias-button-info-hover);
+}

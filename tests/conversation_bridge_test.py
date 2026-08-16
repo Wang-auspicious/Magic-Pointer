@@ -6,14 +6,14 @@ from scripts import conversation_bridge
 
 
 def test_answer_conversation_rejects_empty_question() -> None:
-    result = conversation_bridge.answer_conversation("  ", [], {}, "default")
+    result = conversation_bridge.answer_conversation("  ", [], {}, "workspace-write")
     assert result == {"ok": False, "error": "问题不能为空。"}
 
 
-def test_answer_conversation_rejects_unknown_permission_mode() -> None:
-    result = conversation_bridge.answer_conversation("问一个问题", [], {}, "root")
+def test_answer_conversation_rejects_unknown_permission_preset() -> None:
+    result = conversation_bridge.answer_conversation("问一个问题", [], {}, "plan")
     assert result["ok"] is False
-    assert "未知权限模式" in str(result["error"])
+    assert "未知权限预设" in str(result["error"])
 
 
 def test_history_text_bounds_and_labels() -> None:

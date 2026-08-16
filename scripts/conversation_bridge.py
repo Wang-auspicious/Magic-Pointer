@@ -3,7 +3,8 @@
 Studio follow-ups are agent turns, not a plain text echo: the same plugin tree
 (perception / look / capability / guard / model-client) boots here as in the
 selection path, so the conversation is genuinely multi-turn and can call tools.
-The composer's permission dropdown rides ``payload.permissionMode`` and gates
+The composer's permission chip rides ``payload.permissionPreset`` (DSH 式预设：
+sandbox × approval 捆绑，见 app.agent_runtime.permission_presets) and gates
 every tool call exactly like the selection loop.
 
 Honest boundaries (no live selection):
@@ -48,7 +49,6 @@ from app.system_context import list_visible_windows  # noqa: E402
 
 MAX_QUESTION_CHARS = 4000
 MAX_TURNS = 12
-PERMISSION_MODES = ("default", "plan", "accept_reversible", "safe", "bypass")
 
 
 def _history_text(turns: list[dict[str, Any]], obj: dict[str, Any]) -> str:
@@ -150,9 +150,10 @@ def answer_conversation(
     question: str,
     turns: list[dict[str, Any]],
     obj: dict[str, Any],
-    permission_mode: str,
+    permission_preset: str,
 ) -> dict[str, Any]:
     from app.agent_runtime.permission_modes import PermissionMode
+    from app.agent_runtime.permission_presets import PRESETS, mode_for_preset
     from app.fabric.engine import FabricEngine, run_agent_turn
     from app.fabric.loop_answer import terminal_to_answer
     from app.harness.builtin_bundle import boot_loop_context
@@ -163,9 +164,9 @@ def answer_conversation(
     if len(prompt) > MAX_QUESTION_CHARS:
         return {"ok": False, "error": f"问题最多 {MAX_QUESTION_CHARS} 字。"}
     try:
-        mode = PermissionMode(permission_mode or "default")
-    except ValueError:
-        return {"ok": False, "error": f"未知权限模式：{permission_mode}"}
+        mode: PermissionMode = mode_for_preset(permission_preset or "workspace-write")
+    except KeyError:
+        return {"ok": False, "error": f"未知权限预设：{permission_preset}（可用：{', '.join(PRESETS)}）"}
 
     history = _history_text(turns if isinstance(turns, list) else [], obj if isinstance(obj, dict) else {})
     window = obj if isinstance(obj, dict) else {}
@@ -267,9 +268,9 @@ def answer_conversation(
     return {
         "ok": True,
         "answer": answer,
-        "usedBackend": mapped.get("usedBackend") or getattr(client, "used_backend", "") or "agent_runtime",
-        "permissionMode": mode.value,
-        "receipts": mapped.get("receipts") or [],
+            "usedBackend": mapped.get("usedBackend") or getattr(client, "used_backend", "") or "agent_runtime",
+            "permissionPreset": permission_preset or "workspace-write",
+            "receipts": mapped.get("receipts") or [],
     }
 
 
@@ -281,9 +282,11 @@ def main() -> int:
         write_json({"ok": False, "error": f"请求格式不对：{exc}"})
         return 2
 
-    permission_mode = str(payload.get("permissionMode") or "default")
-    if permission_mode not in PERMISSION_MODES:
-        write_json({"ok": False, "error": f"未知权限模式：{permission_mode}"})
+    from app.agent_runtime.permission_presets import PRESETS
+
+    permission_preset = str(payload.get("permissionPreset") or "workspace-write")
+    if permission_preset not in PRESETS:
+        write_json({"ok": False, "error": f"未知权限预设：{permission_preset}（可用：{', '.join(PRESETS)}）"})
         return 2
 
     with request_ai_config(payload.get("modelRuntime")):
@@ -291,7 +294,7 @@ def main() -> int:
             str(payload.get("question") or ""),
             payload.get("turns") if isinstance(payload.get("turns"), list) else [],
             payload.get("object") if isinstance(payload.get("object"), dict) else {},
-            permission_mode,
+            permission_preset,
         )
     write_json(result)
     return 0 if result.get("ok") else 1

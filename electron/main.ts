@@ -1154,14 +1154,14 @@ ipcMain.handle('conversations:send', async (event: Electron.IpcMainInvokeEvent, 
   const question = String(raw?.question || '').trim().slice(0, 4000);
   if (!question) return { ok: false, error: '问题不能为空。' };
   const conversationId = String(raw?.conversationId || '').trim().slice(0, 120);
-  const permissionMode = String(raw?.permissionMode || 'default').trim().slice(0, 40);
+  const permissionPreset = String(raw?.permissionPreset || 'workspace-write').trim().slice(0, 40);
   const existing = conversationId ? conversations().get(conversationId) : null;
   const payload = {
     question,
     turns: Array.isArray(existing?.turns) ? existing.turns.slice(-12) : [],
     object: existing?.object || {},
     modelRuntime: activeModelRuntimeConfig(),
-    permissionMode,
+    permissionPreset,
   };
   return new Promise((resolve) => {
     const child = runPythonBridge(payload, 'scripts/conversation_bridge.py', 'dashboard', {
