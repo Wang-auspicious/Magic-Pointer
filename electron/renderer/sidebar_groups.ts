@@ -3,14 +3,14 @@
 /* 侧栏会话分组（DSH ui-workspace 浏览器的 MP 等价物：无 workspace，按时间分组）。
    纯函数：分组 + 本地搜索过滤，供 Node 测试直接钉。 */
 
-export interface SidebarConversationLike {
+interface SidebarConversationLike {
   id?: string;
   title?: string;
   subtitle?: string;
   updatedAt?: number;
 }
 
-export interface SidebarGroup {
+interface SidebarGroup {
   key: string;
   label: string;
   items: SidebarConversationLike[];
@@ -19,7 +19,7 @@ export interface SidebarGroup {
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** DSH 会话列表的展示顺序：新→旧；组内同样。 */
-export function groupConversations(
+function groupConversations(
   conversations: readonly SidebarConversationLike[],
   now: number = Date.now(),
 ): SidebarGroup[] {
@@ -45,7 +45,7 @@ export function groupConversations(
 }
 
 /** 本地搜索：标题/副标题大小写不敏感子串；空关键词不过滤。 */
-export function filterConversations(
+function filterConversations(
   conversations: readonly SidebarConversationLike[],
   query: string,
 ): SidebarConversationLike[] {
