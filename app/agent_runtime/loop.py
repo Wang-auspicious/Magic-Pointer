@@ -124,6 +124,10 @@ from app.agent_runtime.errors import (
     FailureType,
 )
 from app.agent_runtime.inbox import Inbox
+from app.agent_runtime.turn_verification import (
+    VerificationGate,
+    should_nudge_before_completion,
+)
 from app.agent_runtime.hooks import HookManager
 from app.agent_runtime.model_client import (
     LoopModelClient,
@@ -319,6 +323,13 @@ class FollowupContinued:
 
 
 @dataclass(frozen=True, slots=True)
+class VerificationNudged:
+    """验证门拦截了一次收尾：注入 nudge 后续跑一轮（最多一次）。"""
+
+    turn: int
+
+
+@dataclass(frozen=True, slots=True)
 class LoopStopped:
     kind = "loop_stopped"
     terminal: Terminal
@@ -466,6 +477,7 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
     turn_number = 1
     hook_notes: list[str] = []
     tool_guardrails = ToolCallGuardrailController(params.tool_guardrail_config)
+    verification_gate = VerificationGate()
 
     yield LoopStart()
 
@@ -757,6 +769,35 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                         yield TurnFinished(state)
                         turn_number += 1
                         continue
+                nudge = should_nudge_before_completion(verification_gate)
+                if nudge is not None:
+                    verification_gate.mark_nudged()
+                    nudge_message = AgentMessage(
+                        role=Role.USER,
+                        content=nudge,
+                        tool_call_id=None,
+                        name=None,
+                        origin=ORIGIN_INSTRUCTION,
+                    )
+                    if params.session is not None:
+                        params.session.append_message(nudge_message)
+                    state = with_transition(
+                        state,
+                        TransitionReason.STOP_HOOK,
+                        messages=(
+                            params.session.derive_messages()
+                            if params.session is not None
+                            else [*messages, nudge_message]
+                        ),
+                        tool_calls_pending=[],
+                        turn_count=turn_number,
+                        stop_hook_active=True,
+                        last_result=results[-1] if results else None,
+                    )
+                    yield TurnFinished(state)
+                    yield VerificationNudged(turn=turn_number)
+                    turn_number += 1
+                    continue
                 followup_texts = (
                     params.inbox.drain("next-turn") if params.inbox is not None else []
                 )
@@ -995,6 +1036,13 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                 results.append(normalized)
                 if normalized.is_error:
                     any_error = True
+                else:
+                    committed_spec = registry.get(call.name)
+                    if committed_spec is not None:
+                        verification_gate.record_executed(
+                            effect=committed_spec.effect,
+                            verified=committed_spec.verify_result is not None,
+                        )
                 if guardrail_decision.made_progress:
                     round_progress = True
                 if guardrail_decision.should_halt and halt_decision is None:

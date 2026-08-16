@@ -296,7 +296,9 @@ def test_four_step_tool_chain_feedback_and_convergence() -> None:
     events, terminal = asyncio.run(_collect(params))
 
     assert terminal.reason is TransitionReason.COMPLETED
-    assert terminal.turns == 4
+    # translate_in_place 是无验证回执的写入 → 验证门 nudge 一轮再收工（turn 4→5）
+    assert [e for e in events if type(e).__name__ == "VerificationNudged"]
+    assert terminal.turns == 5
     assert terminal.message == FINAL_TEXT
     assert len(terminal.results) == 3
     assert [r.tool_call_id for r in terminal.results] == ["c1", "c2", "c3"]
@@ -317,6 +319,8 @@ def test_four_step_tool_chain_feedback_and_convergence() -> None:
         [Role.USER, Role.ASSISTANT, Role.TOOL],
         [Role.USER, Role.ASSISTANT, Role.TOOL, Role.ASSISTANT, Role.TOOL],
         [Role.USER, Role.ASSISTANT, Role.TOOL, Role.ASSISTANT, Role.TOOL, Role.ASSISTANT, Role.TOOL],
+        # 第 5 轮：模型第 4 轮的最终回答已入列，验证门在其后注入 nudge（USER）
+        [Role.USER, Role.ASSISTANT, Role.TOOL, Role.ASSISTANT, Role.TOOL, Role.ASSISTANT, Role.TOOL, Role.ASSISTANT, Role.USER],
     ]
     assert "The quick brown fox" in backend.received[1][0][2].content
     assert "[expanded]" in backend.received[2][0][-1].content
@@ -329,6 +333,7 @@ def test_four_step_tool_chain_feedback_and_convergence() -> None:
         TransitionReason.TOOL_RESULT,
         TransitionReason.TOOL_RESULT,
         TransitionReason.TOOL_RESULT,
+        TransitionReason.STOP_HOOK,      # 验证门 nudge（复用 stop_hook 转移语义）
         TransitionReason.COMPLETED,
     ]
 
