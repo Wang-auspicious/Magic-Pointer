@@ -498,6 +498,13 @@ document.addEventListener('click', e => {
     closePermissionMenu();
   }
 
+  /* 模型目录弹层：同上 */
+  const modelMenu = document.getElementById('composer-model-menu');
+  if (modelMenu && !modelMenu.hidden && !target.closest('#composer-model-menu')
+      && !target.closest('#composer-model')) {
+    closeModelMenu();
+  }
+
   /* 作曲家 `+` 扩展菜单：真实动作（复制最近回答 / 查看来源），点击外部关闭 */
   const addBtn = target.closest<HTMLElement>('#composer-add');
   const addMenu = document.getElementById('composer-add-menu');
@@ -724,20 +731,119 @@ function fitComposer(ta: HTMLTextAreaElement) {
   ta.style.height = `${Math.min(336, ta.scrollHeight)}px`;
 }
 
-/* 模型切换器：挂真实当前模型（settings:get 的 modelStatus.displayName） */
+/* 模型切换器：DSH ModelSelect 同款——真实网关目录（fabric_bridge model.catalog），
+   选中即写 secrets/model.txt（全栈消费的同一份配置），下次发送就生效。 */
+let modelCatalog: MagicPointerModelCatalog | null = null;
+
 async function refreshComposerModel() {
-  const sel = document.getElementById('composer-model') as HTMLSelectElement | null;
-  if (!sel) return;
-  try {
-    const api = window.magicPointerDashboard;
-    const response = api?.getFabricSettings ? await api.getFabricSettings() : null;
-    const name = (response as { modelStatus?: { displayName?: unknown } } | null)?.modelStatus?.displayName;
-    const label = name ? String(name) : '默认模型';
-    sel.replaceChildren(new Option(label, label));
-  } catch {
-    sel.replaceChildren(new Option('默认模型', ''));
+  const label = document.getElementById('composer-model-label');
+  const btn = document.getElementById('composer-model');
+  modelCatalog = await Data.models();
+  const current = modelCatalog?.current || '';
+  if (label) label.textContent = current || '默认模型';
+  if (btn instanceof HTMLButtonElement) {
+    btn.title = current
+      ? (modelCatalog?.visionModel && modelCatalog.visionModel !== current
+        ? `文本 ${current} · 视觉 ${modelCatalog.visionModel}` : current)
+      : '模型';
   }
 }
+
+function closeModelMenu() {
+  const menu = document.getElementById('composer-model-menu');
+  document.getElementById('composer-model')?.setAttribute('aria-expanded', 'false');
+  if (menu) menu.hidden = true;
+}
+
+async function openModelMenu() {
+  const menu = document.getElementById('composer-model-menu');
+  if (!menu) return;
+  const btn = document.getElementById('composer-model');
+  if (btn instanceof HTMLButtonElement) btn.disabled = true;
+  const catalog = await Data.models();
+  if (btn instanceof HTMLButtonElement) btn.disabled = false;
+  if (!catalog) {
+    menu.replaceChildren(modelMenuNote('模型目录不可用（本机未接入 Electron 桥）。'));
+    menu.hidden = false;
+    return;
+  }
+  modelCatalog = catalog;
+  const rows: HTMLElement[] = [];
+  if (catalog.error) rows.push(modelMenuNote(catalog.error));
+  for (const group of catalog.groups || []) {
+    if ((catalog.groups || []).length > 1) {
+      const head = document.createElement('div');
+      head.className = 'dshw-model-group';
+      head.textContent = group.name || group.id;
+      rows.push(head);
+    }
+    for (const entry of group.models || []) {
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'dshw-model-row' + (entry.id === catalog.current ? ' is-active' : '');
+      row.setAttribute('role', 'option');
+      row.dataset.modelId = entry.id;
+      const name = document.createElement('span');
+      name.className = 'dshw-model-name';
+      name.textContent = entry.id;
+      if (entry.vision) {
+        const tag = document.createElement('em');
+        tag.className = 'dshw-model-tag';
+        tag.textContent = '视觉';
+        name.appendChild(tag);
+      }
+      row.appendChild(name);
+      if (entry.id === catalog.current) {
+        const check = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        check.setAttribute('viewBox', '0 0 16 16');
+        check.setAttribute('aria-hidden', 'true');
+        check.classList.add('dshw-perm-check');
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', 'M13.207 4.53564L6.64645 11.0962L3.11091 7.56063L2.04688 8.6247L6.64645 13.2243L14.271 5.59971L13.207 4.53564Z');
+        path.setAttribute('fill', 'currentColor');
+        check.appendChild(path);
+        row.appendChild(check);
+      }
+      rows.push(row);
+    }
+  }
+  menu.replaceChildren(...rows);
+  menu.hidden = false;
+  document.getElementById('composer-model')?.setAttribute('aria-expanded', 'true');
+}
+
+function modelMenuNote(text: string): HTMLElement {
+  const note = document.createElement('div');
+  note.className = 'dshw-model-note';
+  note.textContent = text;
+  return note;
+}
+
+function bindModelSeat() {
+  document.getElementById('composer-model')?.addEventListener('click', async e => {
+    e.stopPropagation();
+    const menu = document.getElementById('composer-model-menu');
+    if (menu?.hidden) await openModelMenu();
+    else closeModelMenu();
+  });
+  document.getElementById('composer-model-menu')?.addEventListener('click', async e => {
+    const row = (e.target as Element | null)?.closest<HTMLElement>('[data-model-id]');
+    if (!row) return;
+    e.stopPropagation();
+    const modelId = row.dataset.modelId || '';
+    if (modelId === modelCatalog?.current) { closeModelMenu(); return; }
+    const menu = document.getElementById('composer-model-menu');
+    if (menu) menu.replaceChildren(modelMenuNote('正在切换…'));
+    const result = await Data.selectModel(modelId);
+    if (!result?.ok) {
+      if (menu) menu.replaceChildren(modelMenuNote(result?.error || '切换失败。'));
+      return;
+    }
+    closeModelMenu();
+    await refreshComposerModel();
+  });
+}
+bindModelSeat();
 
 document.querySelectorAll('form.dshw-input-form').forEach(form => {
   const ta = form.querySelector<HTMLTextAreaElement>('textarea');

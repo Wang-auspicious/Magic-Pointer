@@ -150,6 +150,8 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
   fabricRequest: (operation: unknown, payload: UnknownRecord = {}) => ipcRenderer.send('dashboard:fabric-request', { operation, ...payload }),
   saveFabricSettings: (settings: unknown) => ipcRenderer.invoke('dashboard:settings:save', { settings }),
   getFabricSettings: () => ipcRenderer.invoke('dashboard:settings:get'),
+  modelsCatalog: () => ipcRenderer.invoke('models:catalog'),
+  selectModel: (model: unknown) => ipcRenderer.invoke('models:select', { model }),
   requestState: () => ipcRenderer.send('dashboard:request-state'),
   setChecked: (payload: unknown) => ipcRenderer.send('dashboard:set-checked', payload),
   undoAdd: (payload: unknown) => ipcRenderer.send('dashboard:undo-add', payload),

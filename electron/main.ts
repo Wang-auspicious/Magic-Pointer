@@ -4980,6 +4980,37 @@ async function saveFabricSettingsPatch(rawPatch: unknown) {
   }
 }
 
+ipcMain.handle('models:catalog', async (event: Electron.IpcMainInvokeEvent) => {
+  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_catalog_reader' };
+  try {
+    const parsed = await runPythonBridgePromise(
+      { operation: 'model.catalog', modelRuntime: activeModelRuntimeConfig() },
+      'scripts/fabric_bridge.py',
+      { target: 'fabric-dashboard', timeoutMs: 12000 },
+    );
+    return { ok: true, catalog: parsed?.catalog ?? null };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+});
+
+ipcMain.handle('models:select', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_model_select' };
+  const model = String(raw?.model || '').trim().slice(0, 120);
+  if (!model) return { ok: false, error: '模型名不能为空。' };
+  try {
+    const parsed = await runPythonBridgePromise(
+      { operation: 'model.select', model },
+      'scripts/fabric_bridge.py',
+      { target: 'fabric-dashboard', timeoutMs: 8000 },
+    );
+    if (parsed?.ok === true) invalidateRuntimeState('model_selected');
+    return parsed ?? { ok: false, error: 'model_select_failed' };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+});
+
 ipcMain.handle('dashboard:settings:save', async (event: Electron.IpcMainInvokeEvent, payload: any = {}) => {
   if (!isDashboardSender(event)) throw new Error('unauthorized_settings_writer');
   return saveFabricSettingsPatch(payload?.settings);

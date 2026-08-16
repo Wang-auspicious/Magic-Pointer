@@ -161,6 +161,24 @@ declare global {
       summary?: string;
     }[];
   }
+  interface MagicPointerModelEntry {
+    id: string;
+    vision?: boolean;
+  }
+  interface MagicPointerModelGroup {
+    id: string;
+    name: string;
+    models: MagicPointerModelEntry[];
+  }
+  interface MagicPointerModelCatalog {
+    current?: string;
+    visionModel?: string;
+    provider?: string;
+    source?: string;
+    error?: string;
+    groups?: MagicPointerModelGroup[];
+  }
+
   interface MagicPointerTimelineDay {
     key?: string;
     at?: number;
@@ -171,6 +189,8 @@ declare global {
     setTheme?(theme: unknown): void;
     saveFabricSettings?(settings: unknown): Promise<unknown>;
     getFabricSettings?(): Promise<Record<string, unknown>>;
+    modelsCatalog?(): Promise<{ ok?: boolean; catalog?: MagicPointerModelCatalog; error?: string }>;
+    selectModel?(model: unknown): Promise<{ ok?: boolean; model?: string; error?: string }>;
     conversations: {
       list(): Promise<MagicPointerConversation[]>;
       get(id: unknown): Promise<MagicPointerConversation | undefined>;
@@ -287,6 +307,8 @@ declare global {
     conversations(): Promise<MagicPointerConversation[]>;
     conversation(id: string): Promise<MagicPointerConversation | undefined>;
     sendConversation(conversationId: string | null, question: string, permissionPreset?: string): Promise<Record<string, any>>;
+  models(): Promise<MagicPointerModelCatalog | null>;
+  selectModel(model: string): Promise<{ ok?: boolean; model?: string; error?: string }>;
     timeline(): Promise<MagicPointerTimelineDay[]>;
     memories(): Promise<unknown[]>;
     artifacts(): Promise<unknown[]>;
@@ -508,6 +530,25 @@ const Data: MagicPointerDataApi = {
   async sendConversation(conversationId: string | null, question: string, permissionPreset?: string): Promise<Record<string, any>> {
     if (!hasBridge()) return { ok: false, error: '请在 Magic Pointer 应用里发送。' };
     return bridge()!.conversations.send({ conversationId, question, permissionPreset: permissionPreset || 'workspace-write' });
+  },
+
+  async models(): Promise<MagicPointerModelCatalog | null> {
+    if (!hasBridge()) return null;
+    try {
+      const response = await bridge()!.modelsCatalog?.();
+      return response?.ok ? (response.catalog ?? null) : null;
+    } catch {
+      return null;
+    }
+  },
+
+  async selectModel(model: string): Promise<{ ok?: boolean; model?: string; error?: string }> {
+    if (!hasBridge()) return { ok: false, error: '请在 Magic Pointer 应用里切换。' };
+    try {
+      return (await bridge()!.selectModel?.(model)) || { ok: false, error: '模型切换通道不可用。' };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
   },
 
   async timeline(): Promise<MagicPointerTimelineDay[]> {

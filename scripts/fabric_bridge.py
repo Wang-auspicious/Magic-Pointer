@@ -281,6 +281,16 @@ def main() -> int:
                     else read_health()
                 )
             result = {"ok": True, "health": health.to_public_dict()}
+        elif operation == "model.catalog":
+            from app.ai_client import request_ai_config
+            from app.models_catalog import list_models
+
+            with request_ai_config(payload.get("modelRuntime")):
+                result = {"ok": True, "catalog": list_models()}
+        elif operation == "model.select":
+            from app.models_catalog import select_model
+
+            result = select_model(str(payload.get("model") or ""))
         elif operation == "providers":
             result = {"ok": True, "providers": AgentGateway(root=user_root).providers()}
         elif operation == "agent.sessions":

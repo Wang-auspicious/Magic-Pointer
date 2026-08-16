@@ -61,7 +61,8 @@ assert(html.includes('id="composer-model"'), 'the model switcher must exist');
 assert(html.includes('id="composer-context"'), 'the context ring must exist');
 assert(html.includes('dshw-ring-track'), 'the context ring must draw its track');
 assert(html.includes('M8.3125 0.980183'), 'the send button must carry the exact DSH arrow path');
-assert(source.includes('modelStatus?.displayName'), 'the model switcher must show the real active model');
+assert(source.includes('Data.models()'), 'the model switcher must load the real gateway catalog');
+assert(source.includes('Data.selectModel(modelId)'), 'the model switcher must select through the real config write');
 
 /* ---- 回车发送（InputBar 同款分派：组合态 / Shift 放行） ---- */
 assert(source.includes("e.key !== 'Enter' || e.shiftKey || e.isComposing"),
