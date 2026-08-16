@@ -32,7 +32,6 @@ from .shopping_list import (
 from .calendar import CALENDAR_TARGET_URI, make_calendar_create_proposal, make_calendar_undo_proposal
 from .calendar_draft import parse_calendar_draft, wants_calendar_draft
 from .route_draft import parse_route_draft, wants_route_draft
-from .table_merge import merge_episode_tables, parse_table, to_safe_csv, wants_table_merge
 
 __all__ += [
     "ActionHistoryRecord",
@@ -54,5 +53,4 @@ __all__ += [
     "merge_episode_tables",
     "parse_table",
     "to_safe_csv",
-    "wants_table_merge",
 ]

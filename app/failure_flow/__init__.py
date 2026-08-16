@@ -3,13 +3,6 @@
 Pure Python data modules consumed by the UI; no I/O, no Electron coupling.
 """
 
-from .capability_hints import (
-    MAX_HINTS,
-    MIN_HINTS,
-    Hint,
-    HintSpec,
-    hints_for,
-)
 from .repair_prompt import (
     RepairAction,
     RepairSuggestion,
