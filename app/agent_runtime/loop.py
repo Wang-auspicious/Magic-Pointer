@@ -431,6 +431,102 @@ async def run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
         raise
 
 
+def _withheld_recovery_plan(
+    state: TurnState,
+    params: LoopParams,
+    text: str | None,
+    compacted: bool,
+) -> tuple[list[AgentMessage], TransitionReason, bool, bool]:
+    """CC withhold 恢复轮的消息计划（纯构造 + 可选会话落盘）。
+
+    返回 ``(messages, transition_reason, has_attempted_compact, compacted)``；
+    调用方负责 with_transition / TurnFinished / 计数。
+    """
+    messages = list(state.messages)
+    if text is not None:
+        partial = AgentMessage(
+            role=Role.ASSISTANT,
+            content=text,
+            tool_call_id=None,
+            name=None,
+            origin=ORIGIN_DATA,
+        )
+        messages.append(partial)
+        if params.session is not None:
+            params.session.append_message(partial)
+    recovery_message = AgentMessage(
+        role=Role.USER,
+        content=_RECOVERY_MESSAGE,
+        tool_call_id=None,
+        name=None,
+        origin=ORIGIN_DATA,
+        injected=True,
+    )
+    messages.append(recovery_message)
+    if params.session is not None:
+        params.session.append_message(recovery_message)
+        messages = params.session.derive_messages()
+    has_attempted = state.has_attempted_reactive_compact
+    transition_reason = TransitionReason.MAX_OUTPUT_TOKENS_RECOVERED
+    if not has_attempted and params.compactor is not None:
+        compacted_messages = params.compactor(list(messages))
+        if len(compacted_messages) < len(messages):
+            messages = compacted_messages
+            compacted = True
+            has_attempted = True
+            transition_reason = TransitionReason.COMPACT_TRIGGERED
+            if params.session is not None:
+                params.session.replace_messages(
+                    messages,
+                    reason="reactive_context_compaction",
+                )
+                messages = params.session.derive_messages()
+    return messages, transition_reason, has_attempted, compacted
+
+
+def _truncation_messages(
+    state: TurnState,
+    params: LoopParams,
+    calls: Sequence[ToolCall],
+    text: str | None,
+) -> list[AgentMessage]:
+    """截断恢复轮的消息计划：请求原样保留，工具调用全部换成截断提示结果。"""
+    messages = list(state.messages)
+    truncated_request = AgentMessage(
+        role=Role.ASSISTANT,
+        content=text or "",
+        tool_call_id=None,
+        name=None,
+        tool_calls=tuple(
+            {
+                "id": call.id,
+                "name": call.name,
+                "arguments": dict(call.arguments),
+            }
+            for call in calls
+        ),
+        origin=ORIGIN_DATA,
+    )
+    truncated_results = [
+        AgentMessage(
+            role=Role.TOOL,
+            content=_TRUNCATION_MESSAGE,
+            tool_call_id=call.id,
+            name=call.name,
+            is_error=False,
+            origin=ORIGIN_DATA,
+        )
+        for call in calls
+    ]
+    messages.extend((truncated_request, *truncated_results))
+    if params.session is not None:
+        params.session.append_message(truncated_request)
+        for truncated_result in truncated_results:
+            params.session.append_message(truncated_result)
+        messages = params.session.derive_messages()
+    return messages
+
+
 async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
     """The loop body (see :func:`run_agent_loop` for the public contract)."""
     registry = params.registry
@@ -660,45 +756,12 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                     )
                     yield LoopStopped(terminal)
                     return
-                messages = list(state.messages)
-                if text is not None:
-                    partial = AgentMessage(
-                        role=Role.ASSISTANT,
-                        content=text,
-                        tool_call_id=None,
-                        name=None,
-                        origin=ORIGIN_DATA,
-                    )
-                    messages.append(partial)
-                    if params.session is not None:
-                        params.session.append_message(partial)
-                recovery_message = AgentMessage(
-                    role=Role.USER,
-                    content=_RECOVERY_MESSAGE,
-                    tool_call_id=None,
-                    name=None,
-                    origin=ORIGIN_DATA,
-                    injected=True,
-                )
-                messages.append(recovery_message)
-                if params.session is not None:
-                    params.session.append_message(recovery_message)
-                    messages = params.session.derive_messages()
-                has_attempted = state.has_attempted_reactive_compact
-                transition_reason = TransitionReason.MAX_OUTPUT_TOKENS_RECOVERED
-                if not has_attempted and params.compactor is not None:
-                    compacted_messages = params.compactor(list(messages))
-                    if len(compacted_messages) < len(messages):
-                        messages = compacted_messages
-                        compacted = True
-                        has_attempted = True
-                        transition_reason = TransitionReason.COMPACT_TRIGGERED
-                        if params.session is not None:
-                            params.session.replace_messages(
-                                messages,
-                                reason="reactive_context_compaction",
-                            )
-                            messages = params.session.derive_messages()
+                (
+                    messages,
+                    transition_reason,
+                    has_attempted,
+                    compacted,
+                ) = _withheld_recovery_plan(state, params, text, compacted)
                 last_transition = transition_reason
                 state = with_transition(
                     state,
@@ -851,39 +914,7 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                 return
 
             if client.last_truncated:
-                messages = list(state.messages)
-                truncated_request = AgentMessage(
-                    role=Role.ASSISTANT,
-                    content=text or "",
-                    tool_call_id=None,
-                    name=None,
-                    tool_calls=tuple(
-                        {
-                            "id": call.id,
-                            "name": call.name,
-                            "arguments": dict(call.arguments),
-                        }
-                        for call in calls
-                    ),
-                    origin=ORIGIN_DATA,
-                )
-                truncated_results = [
-                    AgentMessage(
-                        role=Role.TOOL,
-                        content=_TRUNCATION_MESSAGE,
-                        tool_call_id=call.id,
-                        name=call.name,
-                        is_error=False,
-                        origin=ORIGIN_DATA,
-                    )
-                    for call in calls
-                ]
-                messages.extend((truncated_request, *truncated_results))
-                if params.session is not None:
-                    params.session.append_message(truncated_request)
-                    for truncated_result in truncated_results:
-                        params.session.append_message(truncated_result)
-                    messages = params.session.derive_messages()
+                messages = _truncation_messages(state, params, calls, text)
                 if turn_number + 1 > params.emergency_turn_fuse:
                     terminal = Terminal(
                         reason=TransitionReason.INVARIANT_FAILED,

@@ -2,6 +2,8 @@
 
 > 最后核实：2026-08-16（开发树 DSH harness 能力对齐批；1.0.5 安装版未动）。改了行为就回来改这里，别新建一份日期文件。
 
+2026-08-16 Agent 地基融会贯通批（5 commits，纯 Python 侧）：按 Pi/Claude Code/DSH/Hermes 四源码审计（计划文档 `docs/superpowers/plans/2026-08-16-agent-foundation-consolidation.md`）——①死代码清除约 1500 行（零生产引用的认知四件套/table_merge/events 包/capability_hints 等，入口可达性+符号级核实后删除）；②Inbox steer/followup 输入模型（社区 P0「输入被吞」：next-step 下一轮即携带、next-turn 停后续跑）；③turn 端验证门（Hermes 模式：写入无验证回执想收工先 nudge 一次）；④工具效果按调用分级（CC isDestructive(input) 契约，effect_for 四消费点接线）；⑤loop 恢复块提取纯函数。fresh 验证：Python **1283 passed**（+19 新测试）。跨进程 steer 传输与 session 树仍是显式非目标。
+
 2026-08-16 DSH harness 能力对齐（4 commits，开发树未交付）：①权限模式按 DSH 重定义——sandbox×approval 预设表（read-only/workspace-write/danger-full-access，custom 派生），Full access 带勾选确认门，链路 `permissionPreset` 端到端；②模型接入真实化——`model.catalog` 从网关 `/models` 拉目录（实测 26 模型），`model.select` 写 `secrets/model.txt`，作曲家模型位=DSH ModelSelect；③`+` 菜单=DSH 斜杠目录——本机 skill 扫描（`.dsh/.agents` 项目+用户根，实测 51 个）+ 命令（/permission、/model）分组搜索，skill 正文按回合注入；④侧栏 DSH 浏览器形状（搜索+今天/昨天/7天/更早分组，MP 收藏导航保留）+ 图标换 DSH 原路径。fresh 验证：Python **1312 passed**；Node **147 passed / 100 源文件**；typecheck、ESLint 0；离屏截图 console_errors=0。交互流真机核验与安装版 sync 未做。
 
 2026-08-15 已完成 Agent 社区真实需求调研，结论与来源记录在 `docs/research/2026-08-15-agent-community-real-needs.md`；本次只新增研究文档，没有改变运行时行为，因此不升版本、不执行 sync。

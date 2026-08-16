@@ -1210,3 +1210,14 @@ smoke：uia-host PASS、replay 20 条 trace 走真实网关（机制绿，见下
 - [x] 侧栏 DSH WorkspaceBrowser 形状（`sidebar_groups.ts` 纯函数）：新对话下方搜索框 + 对话按 今天/昨天/近 7 天/更早 分组（新→旧），本地过滤；MP 自有导航（对话/收藏箱/时间线/记忆/产物）保留。图标对齐：DSH 原路径入 sprite（new-chat/panel-left/search/plus/chev-down/check），+ 按钮、新对话、折叠、搜索、芯片箭头、菜单勾全部换用。
 - [x] 验证：Python **1312 passed**；Node **147 passed / 100 源文件**；typecheck 五配置、ESLint 0；离屏截图 `data/runtime/dsh-studio-check.png` console_errors=0。
 - [ ] 诚实缺口：交互流（菜单开合/确认门/命令结算的视觉行为）未真机截图核验，只有合约测试+离屏渲染；`/model` 切换写文件对打包安装版走 USER_SECRETS_DIR 路径未在安装版实测；skill 注入的回合效果（模型真的按 skill 行事）待真机对话验收；未升版本、未 sync。
+
+### 2026-08-16：Agent 地基融会贯通批（Pi/CC/DSH/Hermes 审计 → 5 commits）
+
+- [x] 四源码审计落档 `docs/superpowers/plans/2026-08-16-agent-foundation-consolidation.md`：Pi 纯 turn 状态机 + steer/followup 双队列；CC 按调用分级的 Tool 契约 + StreamingToolExecutor；DSH Inbox target + session 日志唯一真值；Hermes turn 端验证门（其 5562 行巨石为反面教材，MP loop.py 1633 行正在同向漂移）。社区调研 P0「输入被吞」「结果不能靠模型一句完成了」为差距主轴。
+- [x] **Batch A 死代码清除**：入口可达性走查 + 符号级 re-export 核实后删除零生产引用的模块——认知四件套（event_loop/surprise/assertion_memory/model_surface，761 行 + 24 测试）、actions/table_merge（table.merge 实际走 executors 内联实现）、events 包、capability_hints、doctor_report、terminology 包、wechat_media、custom_action_request，共约 1500 行含测试。
+- [x] **Batch B Inbox**（`app/agent_runtime/inbox.py`）：`next-step`（steer，下一轮模型请求即携带）与 `next-turn`（followup，模型想停时续跑新轮）双目标有界 FIFO，线程安全 put、loop 边界 drain；与 interrupt_check（cancel 语义）分立。Steered/FollowupContinued 事件。社区 P0「用户输入被吞」补上。
+- [x] **Batch C turn 端验证门**（`app/agent_runtime/turn_verification.py`，Hermes verification_stop 模式，纯 policy）：写入类效果执行过且无通过的 verify_result 回执就想 completed → 第一次拦截注入指令通道 nudge，第二次放行；纯读不拦、失败验证不算证据。VerificationNudged 事件；门在 followup drain 之前。
+- [x] **Batch D 效果按调用分级**（CC isDestructive(input) 契约）：`ToolSpec.effect_for` + `spec_effect()`/`ToolRegistry.resolve_effect`，权限门/权限模式反馈/guardrail 分类/验证门记账四消费点全部改走解析后效果；分类器异常回落静态声明档，权限链不被实现 bug 炸掉。
+- [x] **Batch E loop 收口**：withheld 恢复与截断恢复两个内联块提取为纯函数（`_withheld_recovery_plan` / `_truncation_messages`），生成器体瘦 ~130 行，行为零变化。
+- [x] 验证：Python **1283 passed**（新增 19 项：inbox 6 + 验证门 8 + 按调用分级 5）；Node/typecheck 未受影响（纯 Python 侧批次）。
+- [ ] 诚实缺口：跨进程 steer 传输（Studio 对话中途插话需常驻 agent 进程）与 session 树形分支/maintenance 相位仍是显式非目标，另批；验证门的 nudge 复用 stop_hook 转移语义，账面上未新增 TransitionReason。
