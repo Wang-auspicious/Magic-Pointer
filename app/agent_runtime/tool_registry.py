@@ -33,7 +33,7 @@ import enum
 import math
 import re
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
@@ -80,6 +80,7 @@ class ToolSpec:
     input_schema: dict[str, object]
     execute: Callable[..., Any]
     effect: Effect = Effect.READ
+    effect_for: Callable[[dict[str, object]], Effect] | None = None
     is_concurrency_safe: bool = False
     used_backend: str = "local"
     timeout_ms: int = 30000
@@ -106,6 +107,22 @@ class ToolResult:
     error_message: str | None = None
     used_backend: str | None = None
     latency_ms: float | None = None
+
+
+def spec_effect(spec: ToolSpec, arguments: Mapping[str, object] | None) -> Effect:
+    """按调用解析效果（CC isDestructive(input) 契约）。
+
+    ``effect_for`` 在场且正常返回 Effect 时覆盖静态档；返回非 Effect 或抛错
+    一律回落静态档（静态声明是注册时校验过的底线，误分类的调用按工具的
+    声明档处理，不让权限链被实现 bug 炸掉）。
+    """
+    if spec.effect_for is None:
+        return spec.effect
+    try:
+        resolved = spec.effect_for(dict(arguments or {}))
+    except Exception:  # noqa: BLE001 - 分类器崩溃回落静态档
+        return spec.effect
+    return resolved if isinstance(resolved, Effect) else spec.effect
 
 
 class ToolRegistry:
@@ -137,6 +154,8 @@ class ToolRegistry:
             raise ValueError(
                 f"tool {name!r} effect must be an Effect member, got {spec.effect!r}"
             )
+        if spec.effect_for is not None and not callable(spec.effect_for):
+            raise ValueError(f"tool {name!r} effect_for must be callable when set")
         if not isinstance(spec.is_concurrency_safe, bool):
             raise ValueError(f"tool {name!r} is_concurrency_safe must be a bool")
         if not isinstance(spec.used_backend, str) or not spec.used_backend:
@@ -228,6 +247,10 @@ class ToolRegistry:
     def list(self) -> tuple[ToolSpec, ...]:
         """All registered specs in registration order."""
         return tuple(self._tools[n] for n in self._order)
+
+    def resolve_effect(self, name: str, arguments: Mapping[str, object] | None) -> Effect:
+        """按调用解析工具效果；未注册名抛 KeyError。"""
+        return spec_effect(self.get(name), arguments)
 
     def resource_keys_for(
         self, name: str, args: dict[str, object]

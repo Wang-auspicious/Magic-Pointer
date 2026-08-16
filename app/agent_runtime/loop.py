@@ -153,7 +153,7 @@ from app.agent_runtime.tool_guardrails import (
     ToolGuardrailDecision,
     append_toolguard_guidance,
 )
-from app.agent_runtime.tool_registry import Effect, ToolRegistry
+from app.agent_runtime.tool_registry import Effect, ToolRegistry, spec_effect
 from app.agent_runtime.types import (
     ORIGIN_DATA,
     ORIGIN_INSTRUCTION,
@@ -1040,7 +1040,7 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                     committed_spec = registry.get(call.name)
                     if committed_spec is not None:
                         verification_gate.record_executed(
-                            effect=committed_spec.effect,
+                            effect=spec_effect(committed_spec, call.arguments),
                             verified=committed_spec.verify_result is not None,
                         )
                 if guardrail_decision.made_progress:
@@ -1445,12 +1445,13 @@ def _execute_one(
             used_backend=None,
             latency_ms=None,
         )
-    if spec.effect not in allowed_effects:
+    resolved_effect = spec_effect(spec, call.arguments)
+    if resolved_effect not in allowed_effects:
         return ToolResult(
             tool_call_id=call.id,
             value=(
                 f"permission denied: tool {call.name!r} requires effect "
-                f"{spec.effect.value} which is not in allowed_effects "
+                f"{resolved_effect.value} which is not in allowed_effects "
                 f"({', '.join(effect.value for effect in allowed_effects)})"
             ),
             is_error=True,
@@ -1458,7 +1459,7 @@ def _execute_one(
             used_backend=None,
             latency_ms=None,
         )
-    mode_decision = decide_effect(permission_mode, spec.effect)
+    mode_decision = decide_effect(permission_mode, resolved_effect)
     if mode_decision is not PermissionDecision.ALLOW:
         from app.agent_runtime.permission_modes import PermissionMode
 
@@ -1466,7 +1467,7 @@ def _execute_one(
         feedback = PermissionDecisionResult(
             decision=mode_decision,
             mode=resolved_mode,
-            effect=spec.effect,
+            effect=resolved_effect,
         ).feedback(call.name)
         return ToolResult(
             tool_call_id=call.id,
@@ -1685,7 +1686,7 @@ def _apply_tool_guardrail(
     """Classify progress and append any corrective guidance to a receipt."""
 
     try:
-        effect = registry.get(call.name).effect
+        effect = registry.resolve_effect(call.name, call.arguments)
     except KeyError:
         # Unknown tools already carry an error result.  READ is only a type
         # placeholder here; failed observations never use effect semantics.
