@@ -43,6 +43,7 @@ declare global {
     title?: string;
     subtitle?: string;
     objectKey?: string;
+    updatedAt?: number;
     object?: MagicPointerObject | null;
     turns?: MagicPointerTurn[];
     [key: string]: unknown;

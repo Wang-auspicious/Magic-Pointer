@@ -24,13 +24,18 @@
             <span>Magic Pointer</span>
           </button>
           <button class="dshw-icon-button" id="sidebar-toggle" aria-label="折叠侧栏" title="折叠侧栏">
-            <svg aria-hidden="true"><use href="#ic-expand" /></svg>
+            <svg aria-hidden="true"><use href="#ic-dsh-panel-left" /></svg>
           </button>
         </div>
 
         <button class="dshw-new-session" id="new-chat" data-goto="chat">
-          <svg aria-hidden="true"><use href="#ic-plus" /></svg><span class="dshw-new-session-label">新对话</span>
+          <svg aria-hidden="true"><use href="#ic-dsh-new-chat" /></svg><span class="dshw-new-session-label">新对话</span>
         </button>
+
+        <div class="dshw-side-search">
+          <svg aria-hidden="true"><use href="#ic-dsh-search" /></svg>
+          <input id="side-search" type="search" autocomplete="off" placeholder="搜索对话" aria-label="搜索对话" />
+        </div>
 
         <nav class="dshw-region" aria-label="主要页面">
           <button class="dshw-nav-cell is-on" data-goto="chat"><svg><use href="#ic-spark" /></svg><span class="dshw-nav-label">对话</span></button>
@@ -43,7 +48,7 @@
 
         <div class="dshw-foot">
           <button class="dshw-trigger" data-goto="settings" aria-haspopup="dialog">
-            <svg aria-hidden="true"><use href="#ic-sliders" /></svg><span>设置</span>
+            <svg aria-hidden="true"><use href="#ic-gear" /></svg><span>设置</span>
           </button>
           <p class="local-status"><span aria-hidden="true"></span>本地运行</p>
         </div>
@@ -96,9 +101,7 @@
                     <div class="dshw-row">
                       <div class="dshw-tools">
                         <button type="button" class="dshw-add" id="composer-add" aria-label="命令与技能" aria-haspopup="menu" aria-expanded="false" title="命令与技能">
-                          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true">
-                            <path d="M8 3.5v9M3.5 8h9" />
-                          </svg>
+                          <svg width="14" height="14" aria-hidden="true"><use href="#ic-dsh-plus" /></svg>
                         </button>
                         <div class="dshw-add-menu dshw-slash-menu" id="composer-add-menu" hidden role="menu" aria-label="命令与技能">
                           <input type="search" id="composer-slash-search" placeholder="搜索命令与技能…" autocomplete="off" aria-label="搜索命令与技能" />
@@ -107,18 +110,14 @@
                         <button type="button" class="dshw-perm" id="composer-permission" aria-haspopup="listbox" aria-expanded="false" title="本轮 Agent 的权限预设">
                           <span class="dshw-perm-glyph" id="composer-permission-glyph" aria-hidden="true"></span>
                           <span class="dshw-perm-label" id="composer-permission-label">工作区写入</span>
-                          <svg class="dshw-perm-chev" width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-                            <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-                          </svg>
+                          <svg class="dshw-perm-chev" width="12" height="12" aria-hidden="true"><use href="#ic-dsh-chev-down" /></svg>
                         </button>
                         <div class="dshw-perm-menu" id="composer-permission-menu" hidden role="listbox" aria-label="权限预设"></div>
                       </div>
                       <div class="dshw-trailing">
                         <button type="button" class="dshw-perm dshw-model" id="composer-model" aria-haspopup="listbox" aria-expanded="false" title="模型">
                           <span class="dshw-perm-label" id="composer-model-label">默认模型</span>
-                          <svg class="dshw-perm-chev" width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-                            <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-                          </svg>
+                          <svg class="dshw-perm-chev" width="12" height="12" aria-hidden="true"><use href="#ic-dsh-chev-down" /></svg>
                         </button>
                         <div class="dshw-model-menu" id="composer-model-menu" hidden role="listbox" aria-label="模型目录"></div>
                         <button type="button" class="dshw-ring" id="composer-context" aria-label="上下文占用" title="上下文占用（暂无数据）">
@@ -179,7 +178,7 @@
             <nav class="dshw-settings-nav" aria-label="设置分类">
               <div class="dshw-settings-nav-title">设置</div>
               <label class="dshw-settings-search">
-                <svg aria-hidden="true"><use href="#ic-search" /></svg>
+                <svg aria-hidden="true"><use href="#ic-dsh-search" /></svg>
                 <input id="settings-search" type="search" autocomplete="off" placeholder="搜索设置" aria-label="搜索设置" />
               </label>
               <div class="dshw-settings-nav-list" id="set-nav"></div>
@@ -215,6 +214,7 @@
   <script src="live_cards.js?v=23"></script>
   <script src="dsh_chat.js?v=23"></script>
   <script src="permission_presets.js?v=23"></script>
+  <script src="sidebar_groups.js?v=23"></script>
   <script src="data.js?v=23"></script>
   <script src="settings_model.js?v=23"></script>
   <script src="settings.js?v=23"></script>

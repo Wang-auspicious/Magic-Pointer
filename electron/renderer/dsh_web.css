@@ -1565,3 +1565,46 @@ body[data-ds-dark-theme] {
   font-size: 12px;
   line-height: 18px;
 }
+
+/* ---- 侧栏搜索 + 分组头（DSH WorkspaceBrowser 浏览区） ---- */
+.dshw-side-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 10px 2px;
+  padding: 0 8px;
+  height: 30px;
+  border-radius: 8px;
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.dshw-side-search svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+
+.dshw-side-search input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: none;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  font-family: var(--dsw-font-family);
+  outline: none;
+}
+
+.dshw-side-search input::placeholder {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.side-day {
+  padding: 12px 12px 4px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 14px;
+  letter-spacing: 0.04em;
+}

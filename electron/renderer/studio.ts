@@ -251,22 +251,63 @@ interface TimelineConversation {
   updatedAt?: number;
 }
 
-/* ---- 侧栏：今天的对话，从真实记录来 ---- */
+/* ---- 侧栏：DSH 会话浏览器形状——搜索 + 按时间分组（今天/昨天/近 7 天/更早） ---- */
+let sidebarQuery = '';
+interface SidebarGroupModule {
+  groupConversations(rows: readonly { id?: string; title?: string; subtitle?: string; updatedAt?: number }[]): { key: string; label: string; items: { id?: string; title?: string; subtitle?: string; updatedAt?: number }[] }[];
+  filterConversations(rows: readonly { id?: string; title?: string; subtitle?: string; updatedAt?: number }[], query: string): { id?: string; title?: string; subtitle?: string; updatedAt?: number }[];
+}
+const sidebarGroups = (globalThis as { SidebarGroups?: SidebarGroupModule }).SidebarGroups!;
+
+function conversationNode(c: { id?: string; title?: string; subtitle?: string; objectKey?: string }, active?: string): HTMLElement {
+  const row = document.createElement('button');
+  row.className = 'side-item' + (c.id === active ? ' is-on' : '');
+  row.dataset.open = String(c.id || '');
+  const mark = document.createElement('span');
+  mark.innerHTML = objectMark(c.objectKey || c.id || 'MP');
+  const text = document.createElement('span');
+  text.className = 'side-text';
+  const title = document.createElement('b');
+  title.textContent = String(c.title || '未命名对话');
+  const sub = document.createElement('small');
+  sub.textContent = String(c.subtitle || '');
+  text.append(title, sub);
+  row.append(mark, text);
+  return row;
+}
+
 async function renderSidebar() {
   const host = document.getElementById('side-convos');
   if (!host) return;
   const list = await Data.conversations();
-  if (!list.length) {
-    host.innerHTML = '<div class="side-empty">还没有对话</div>';
-    return;
+  const active = host.querySelector('.is-on')?.getAttribute('data-open') ?? undefined;
+  const nodes: HTMLElement[] = [];
+  const filtered = sidebarGroups.filterConversations(list, sidebarQuery);
+  const groups = sidebarGroups.groupConversations(filtered);
+  if (!groups.length) {
+    const empty = document.createElement('div');
+    empty.className = 'side-empty';
+    empty.textContent = list.length ? '没有匹配的对话。' : '还没有对话';
+    nodes.push(empty);
   }
-  const active = host.querySelector('.is-on')?.getAttribute('data-open');
-  host.innerHTML = list.slice(0, 12).map((c) => `
-    <button class="side-item${c.id === active ? ' is-on' : ''}" data-open="${esc(c.id)}">
-      ${objectMark(c.objectKey || c.id)}
-      <span class="side-text"><b>${esc(c.title)}</b><small>${esc(c.subtitle || '')}</small></span>
-    </button>`).join('');
+  for (const group of groups) {
+    const head = document.createElement('div');
+    head.className = 'side-day';
+    head.textContent = group.label;
+    nodes.push(head);
+    for (const c of group.items) nodes.push(conversationNode(c, active));
+  }
+  host.replaceChildren(...nodes);
 }
+
+function bindSidebarSearch() {
+  const input = document.getElementById('side-search');
+  input?.addEventListener('input', () => {
+    sidebarQuery = (input as HTMLInputElement).value;
+    void renderSidebar();
+  });
+}
+bindSidebarSearch();
 
 /* DSH StatsLine（输入框下统计）：只用真实数据 —— 轮数 + 步骤数。
    没有 token/上下文占用的数据源之前不显示假数字。 */
@@ -745,13 +786,11 @@ function openPermissionMenu() {
     row.append(glyph, text);
     if (option.value === composerPreset) {
       const check = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-      check.setAttribute('viewBox', '0 0 16 16');
       check.setAttribute('aria-hidden', 'true');
-      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      path.setAttribute('d', 'M13.207 4.53564L6.64645 11.0962L3.11091 7.56063L2.04688 8.6247L6.64645 13.2243L14.271 5.59971L13.207 4.53564Z');
-      path.setAttribute('fill', 'currentColor');
-      check.appendChild(path);
       check.classList.add('dshw-perm-check');
+      const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+      use.setAttribute('href', '#ic-dsh-check');
+      check.appendChild(use);
       row.appendChild(check);
     }
     return row;
@@ -897,13 +936,11 @@ async function openModelMenu() {
       row.appendChild(name);
       if (entry.id === catalog.current) {
         const check = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-        check.setAttribute('viewBox', '0 0 16 16');
         check.setAttribute('aria-hidden', 'true');
         check.classList.add('dshw-perm-check');
-        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        path.setAttribute('d', 'M13.207 4.53564L6.64645 11.0962L3.11091 7.56063L2.04688 8.6247L6.64645 13.2243L14.271 5.59971L13.207 4.53564Z');
-        path.setAttribute('fill', 'currentColor');
-        check.appendChild(path);
+        const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+        use.setAttribute('href', '#ic-dsh-check');
+        check.appendChild(use);
         row.appendChild(check);
       }
       rows.push(row);
