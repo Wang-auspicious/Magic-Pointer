@@ -94,8 +94,27 @@
                       </div>
                     </div>
                     <div class="dshw-row">
-                      <div class="dshw-tools"></div>
+                      <div class="dshw-tools">
+                        <button type="button" class="dshw-add" id="composer-add" aria-label="更多操作" aria-haspopup="menu" aria-expanded="false">
+                          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true">
+                            <path d="M8 3.5v9M3.5 8h9" />
+                          </svg>
+                        </button>
+                        <div class="dshw-add-menu" id="composer-add-menu" hidden role="menu">
+                          <button type="button" data-composer-act="copy-last" role="menuitem">复制最近回答</button>
+                          <button type="button" data-composer-act="origin" role="menuitem">查看当前对象来源</button>
+                        </div>
+                      </div>
                       <div class="dshw-trailing">
+                        <select class="dshw-select" id="composer-model" aria-label="模型">
+                          <option value="">默认模型</option>
+                        </select>
+                        <button type="button" class="dshw-ring" id="composer-context" aria-label="上下文占用" title="上下文占用（暂无数据）">
+                          <svg viewBox="0 0 28 28" width="18" height="18" aria-hidden="true">
+                            <circle class="dshw-ring-track" cx="14" cy="14" r="8" />
+                            <circle class="dshw-ring-fill" cx="14" cy="14" r="8" />
+                          </svg>
+                        </button>
                         <button type="submit" class="dshw-primary" title="发送" aria-label="发送">
                           <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
                             <path d="M8.3125 0.980183C8.66767 1.0531 8.97902 1.20418 9.2627 1.43233C9.48724 1.61297 9.73029 1.85793 9.97949 2.10714L14.707 6.83468L13.293 8.24874L9 3.95577V15.0417H7V3.95577L2.70703 8.24874L1.29297 6.83468L6.02051 2.10714C6.26971 1.85793 6.51277 1.61297 6.7373 1.43233C6.97662 1.23986 7.28445 1.04402 7.6875 0.980183C7.8973 0.947006 8.1031 0.95516 8.3125 0.980183Z" fill="currentColor" />

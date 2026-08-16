@@ -365,6 +365,7 @@ async function openConversation(id: string) {
   stream.scrollTop = stream.scrollHeight;
   DshChat.bindDelegation(stream);
   renderStatsLine(turns);
+  lastAnswerText = (turns[turns.length - 1]?.answer || '').trim();
 }
 
 /* 代理卡 → DSH 节点：后台任务补丁（进度/步骤/终态）就地换掉那一轮。 */
@@ -490,6 +491,35 @@ document.addEventListener('click', e => {
   if (!target) return;
   if (target.closest('[data-settings-close]')) { show(lastNonSettingsView); return; }
 
+  /* 作曲家 `+` 扩展菜单：真实动作（复制最近回答 / 查看来源），点击外部关闭 */
+  const addBtn = target.closest<HTMLElement>('#composer-add');
+  const addMenu = document.getElementById('composer-add-menu');
+  if (addBtn) {
+    if (addMenu) {
+      const willShow = addMenu.hidden;
+      addMenu.hidden = !willShow;
+      addBtn.setAttribute('aria-expanded', String(willShow));
+    }
+    return;
+  }
+  const composerAct = target.closest<HTMLElement>('[data-composer-act]');
+  if (composerAct) {
+    if (addMenu) addMenu.hidden = true;
+    document.getElementById('composer-add')?.setAttribute('aria-expanded', 'false');
+    const act = composerAct.getAttribute('data-composer-act');
+    if (act === 'copy-last' && lastAnswerText) {
+      void (navigator.clipboard?.writeText(lastAnswerText) || Promise.resolve());
+    } else if (act === 'origin') {
+      const peek = document.getElementById('chat-peek');
+      if (peek) peek.hidden = false;
+    }
+    return;
+  }
+  if (addMenu && !addMenu.hidden && !target.closest('#composer-add-menu')) {
+    addMenu.hidden = true;
+    document.getElementById('composer-add')?.setAttribute('aria-expanded', 'false');
+  }
+
   const open = target.closest<HTMLElement>('[data-open]');
   if (open && open.dataset.open) { openConversation(open.dataset.open); return; }
 
@@ -545,16 +575,40 @@ document.addEventListener('click', e => {
 });
 
 let studioComposerBusy = false;
+let lastAnswerText = '';
 /* DSH 输入卡：textarea 随内容长高，14 行封顶（336px，InputBar 同款上限） */
 function fitComposer(ta: HTMLTextAreaElement) {
   ta.style.height = 'auto';
   ta.style.height = `${Math.min(336, ta.scrollHeight)}px`;
 }
+
+/* 模型切换器：挂真实当前模型（settings:get 的 modelStatus.displayName） */
+async function refreshComposerModel() {
+  const sel = document.getElementById('composer-model') as HTMLSelectElement | null;
+  if (!sel) return;
+  try {
+    const api = window.magicPointerDashboard;
+    const response = api?.getFabricSettings ? await api.getFabricSettings() : null;
+    const name = (response as { modelStatus?: { displayName?: unknown } } | null)?.modelStatus?.displayName;
+    const label = name ? String(name) : '默认模型';
+    sel.replaceChildren(new Option(label, label));
+  } catch {
+    sel.replaceChildren(new Option('默认模型', ''));
+  }
+}
+
 document.querySelectorAll('form.dshw-input-form').forEach(form => {
   const ta = form.querySelector<HTMLTextAreaElement>('textarea');
   if (ta) {
     fitComposer(ta);
     ta.addEventListener('input', () => fitComposer(ta));
+    /* Enter 发送 / Shift+Enter 换行；中文输入法组合态不误触发送
+       （deepseek-harness InputBar 同款分派：组合态与 Shift 直接放行换行）。 */
+    ta.addEventListener('keydown', e => {
+      if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
+      e.preventDefault();
+      (form as HTMLFormElement).requestSubmit();
+    });
   }
   form.addEventListener('submit', async e => {
     e.preventDefault();
@@ -625,6 +679,7 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
    绝不能在有真实记录时还挂在那儿骗人。 */
 async function boot(initialView: string) {
   await renderSidebar();
+  void refreshComposerModel();
   if (initialView !== 'chat') {
     show(initialView);
     return;

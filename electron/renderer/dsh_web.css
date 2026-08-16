@@ -651,6 +651,73 @@
   height: 14px;
 }
 
+/* `+` 扩展菜单（DSH menu surface：r12、inverted hairline、lv3 阴影） */
+.dshw-add-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  min-width: 176px;
+  padding: 4px;
+  border: 1px solid var(--dsw-alias-border-inverted);
+  border-radius: 12px;
+  background: var(--dsw-specific-menu);
+  box-shadow: var(--dsw-shadow-lv3);
+}
+
+.dshw-add-menu button {
+  display: block;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  line-height: 20px;
+  font-family: var(--dsw-font-family);
+  text-align: left;
+  cursor: pointer;
+}
+
+.dshw-add-menu button:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+/* 上下文占用环（DSH ContextMeter 同款 28px 圆形触发区，track/fill 2px） */
+.dshw-ring {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.dshw-ring:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.dshw-ring-track {
+  fill: none;
+  stroke: var(--dsw-alias-border-l3);
+  stroke-width: 2;
+}
+
+.dshw-ring-fill {
+  fill: none;
+  stroke: var(--dsw-alias-label-tertiary);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-dasharray: 0 1000;
+}
+
 /* 模型 chip 选择（Select 同款 chrome） */
 .dshw-select {
   max-width: 220px;

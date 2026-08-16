@@ -54,6 +54,20 @@ assert(source.includes('Math.min(336, ta.scrollHeight)'), 'the composer must cap
 assert(source.includes('renderStatsLine('), 'the stats line must render real turn/step counts');
 assert(!source.includes('form.workspace-composer'), 'the old Oreo composer wiring must be gone');
 
+/* ---- 内嵌控制栏（DSH InputBar 1:1） ---- */
+assert(html.includes('id="composer-add"'), 'the + expand control must exist');
+assert(html.includes('id="composer-model"'), 'the model switcher must exist');
+assert(html.includes('id="composer-context"'), 'the context ring must exist');
+assert(html.includes('dshw-ring-track'), 'the context ring must draw its track');
+assert(html.includes('M8.3125 0.980183'), 'the send button must carry the exact DSH arrow path');
+assert(source.includes('modelStatus?.displayName'), 'the model switcher must show the real active model');
+
+/* ---- 回车发送（InputBar 同款分派：组合态 / Shift 放行） ---- */
+assert(source.includes("e.key !== 'Enter' || e.shiftKey || e.isComposing"),
+  'Enter must send only outside IME composition and without Shift');
+assert(source.includes('form.requestSubmit()'),
+  'Enter and the send button must share one submit path');
+
 /* ---- 聊天渲染 ---- */
 assert(source.includes("flow.className = 'dsh-flow'"), 'the chat transcript must render through the DSH chat model');
 assert(source.includes('DshChat.userNode('), 'user messages must use the DSH right-aligned bubble');
