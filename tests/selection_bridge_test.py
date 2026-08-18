@@ -6,6 +6,7 @@ import json
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -1058,6 +1059,16 @@ def test_loop_effect_ceiling_keeps_permission_modes_functional() -> None:
     assert selection_bridge._agent_effect_ceiling("bypass") == tuple(Effect)
 
 
+def test_selection_budget_never_kills_a_normal_answer() -> None:
+    from app.governance.latency_budget import Stage
+
+    policy = selection_bridge.SELECTION_BUDGETS[Stage.FULL_ANSWER]
+    assert policy.budget_ms >= 5 * 60 * 1000, (
+        "划线问答也不能背 4 秒 FULL_ANSWER 预算：普通 3-6 秒模型回答会被误杀成 "
+        "'full answer budget exhausted'。"
+    )
+
+
 def test_screen_region_without_explicit_image_path_never_uses_local_image_route(
     monkeypatch, tmp_path
 ) -> None:
@@ -1211,6 +1222,27 @@ def test_loop_interaction_metadata_preserves_usage_and_user_suspension() -> None
         "modelUsage": {"inputTokens": 12, "outputTokens": 4, "totalTokens": 16},
         "awaitingUserInput": True,
         "pendingInput": {"question": "Which one?", "options": ["A", "B"]},
+    }
+
+
+def test_input_artifact_ledger_metadata_keeps_grounded_source_and_identity() -> None:
+    artifact = SimpleNamespace(
+        id="input-42",
+        target=SimpleNamespace(sources=("UIA", "OCR")),
+        display=SimpleNamespace(confidence=0.87),
+    )
+
+    metadata = selection_bridge._input_artifact_ledger_metadata(
+        artifact,
+        {"process_name": "notepad.exe"},
+        SimpleNamespace(app="Notepad"),
+    )
+
+    assert metadata == {
+        "appName": "notepad.exe",
+        "evidenceLayerHit": "L2",
+        "confidence": 0.87,
+        "inputArtifactId": "input-42",
     }
 
 

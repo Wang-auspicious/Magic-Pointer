@@ -22,12 +22,15 @@ import os
 import re
 import threading
 import time
+import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Sequence
 
-from app.agent_runtime.types import AgentMessage, ORIGIN_DATA, Role
+from app.agent_runtime.tool_registry import Effect
+from app.agent_runtime.types import AgentMessage, ORIGIN_DATA, ORIGIN_INSTRUCTION, Role
+from app.run_kernel import pending_inbox, project_operations
 
 __all__ = [
     "EventSession",
@@ -98,6 +101,10 @@ class ModelSurfaceMismatch(RuntimeError):
 
 class SessionForkError(RuntimeError):
     """A requested fork boundary is not a stable completed-turn boundary."""
+
+
+class InboxClaimConflict(RuntimeError):
+    """Another process consumed the same durable steer first."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -231,7 +238,7 @@ class EventSession:
     ) -> SessionEvent:
         if not event_type or not isinstance(event_type, str):
             raise ValueError("session event type must be a non-empty string")
-        if surface_op not in (None, "append", "replace"):
+        if surface_op not in (None, "append", "append_many", "replace"):
             raise ValueError(f"unsupported surface operation {surface_op!r}")
         data_snapshot = _snapshot_json(dict(data))
         with self._lock, self._file_lock():
@@ -342,12 +349,86 @@ class EventSession:
                     f"cannot end turn {requested}; open turn is {opened}"
                 )
             return
-        if event_type in {"model/request", "model/response", "tool/call"}:
+        if event_type in {
+            "model/request",
+            "model/response",
+            "tool/call",
+            "operation/prepared",
+            "operation/settled",
+            "interaction/start",
+        }:
             opened = self.open_turn
             if opened is None or int(data.get("turn") or 0) != opened:
                 raise RuntimeError(
                     f"{event_type} does not match the open turn {opened}"
                 )
+        if event_type == "operation/prepared":
+            operation_id = str(data.get("operationId") or "")
+            if not operation_id:
+                raise ValueError("prepared operation requires operationId")
+            if any(
+                event.type == "operation/prepared"
+                and event.data.get("operationId") == operation_id
+                for event in self._events
+            ):
+                raise RuntimeError(f"duplicate operation id {operation_id!r}")
+        if event_type == "interaction/start":
+            opened = self.open_turn
+            if any(
+                event.type == "interaction/start"
+                and int(event.data.get("turn") or 0) == opened
+                for event in self._events
+            ):
+                raise RuntimeError(f"turn {opened} already has an interaction start")
+        if event_type == "operation/settled":
+            operation_id = str(data.get("operationId") or "")
+            operations = {
+                operation.operation_id: operation
+                for operation in project_operations(self._events)
+            }
+            operation = operations.get(operation_id)
+            if operation is None or operation.settled_seq is not None:
+                raise RuntimeError(
+                    f"operation {operation_id!r} is missing or already settled"
+                )
+            raw_message = data.get("message")
+            if not isinstance(raw_message, dict):
+                raise ValueError("operation settlement requires a tool message")
+            message = AgentMessage.from_dict(raw_message)
+            if message.role is not Role.TOOL or message.tool_call_id != operation.call_id:
+                raise ValueError("operation settlement tool message does not match call")
+        if event_type == "inbox/message":
+            message_id = str(data.get("messageId") or "")
+            target = str(data.get("target") or "")
+            text = str(data.get("text") or "")
+            if not message_id or not text.strip() or target not in {"next-step", "next-turn"}:
+                raise ValueError("inbox message requires id, text and a supported target")
+            if any(
+                event.type == "inbox/message"
+                and event.data.get("messageId") == message_id
+                for event in self._events
+            ):
+                raise RuntimeError(f"duplicate inbox message id {message_id!r}")
+        if event_type == "inbox/consumed":
+            target = str(data.get("target") or "")
+            message_ids = tuple(str(value or "") for value in data.get("messageIds") or ())
+            available = pending_inbox(self._events, target)
+            selected = tuple(item for item in available if item.message_id in message_ids)
+            if (
+                target not in {"next-step", "next-turn"}
+                or not message_ids
+                or len(set(message_ids)) != len(message_ids)
+                or tuple(item.message_id for item in selected) != message_ids
+            ):
+                raise InboxClaimConflict("inbox messages are no longer pending")
+            raw_messages = data.get("messages")
+            if not isinstance(raw_messages, list) or len(raw_messages) != len(selected):
+                raise ValueError("inbox consumption requires matching surface messages")
+            projected = [AgentMessage.from_dict(raw) for raw in raw_messages]
+            if any(message.role is not Role.USER for message in projected):
+                raise ValueError("inbox consumption may only append user steer messages")
+            if [message.content for message in projected] != [item.text for item in selected]:
+                raise ValueError("inbox surface messages differ from durable steer text")
         if event_type == "model/request":
             projected = [message.to_dict() for message in self._surface]
             expected_hash = hashlib.sha256(_canonical_bytes(projected)).hexdigest()
@@ -441,6 +522,39 @@ class EventSession:
             },
         )
 
+    def record_interaction_start(
+        self,
+        metadata: Mapping[str, Any] | None = None,
+    ) -> SessionEvent:
+        """Bind one public ledger identity and its grounded input metadata."""
+        turn = self.open_turn
+        if turn is None:
+            raise RuntimeError("interaction start requires an open turn")
+        raw = dict(metadata or {})
+        normalized: dict[str, Any] = {
+            "interactionId": str(
+                raw.get("interactionId") or f"{self.id}:{turn}"
+            )[:260],
+            "turn": turn,
+        }
+        for key, limit in (
+            ("appName", 200),
+            ("evidenceLayerHit", 20),
+            ("inputArtifactId", 260),
+        ):
+            value = str(raw.get(key) or "").strip()
+            if value:
+                normalized[key] = value[:limit]
+        confidence = raw.get("confidence")
+        if (
+            isinstance(confidence, (int, float))
+            and not isinstance(confidence, bool)
+            and math.isfinite(float(confidence))
+        ):
+            normalized["confidence"] = min(1.0, max(0.0, float(confidence)))
+        normalized["usedLook"] = raw.get("usedLook") is True
+        return self.append("interaction/start", normalized)
+
     def record_tool_call(
         self,
         call_id: str,
@@ -448,19 +562,109 @@ class EventSession:
         arguments: Mapping[str, Any],
         *,
         step: int,
+        effect: Effect | str = "unknown",
+        dispatched: bool = True,
+        operation_id: str | None = None,
     ) -> SessionEvent:
         if self.open_turn is None:
             raise RuntimeError("tool call requires an open turn")
         return self.append(
-            "tool/call",
+            "operation/prepared",
             {
+                "operationId": str(operation_id or uuid.uuid4()),
                 "turn": self.open_turn,
                 "step": int(step),
                 "callId": str(call_id),
                 "name": str(name),
                 "arguments": dict(arguments),
+                "effect": str(effect),
+                "dispatched": bool(dispatched),
             },
         )
+
+    def record_tool_settlement(
+        self,
+        operation_id: str,
+        message: AgentMessage,
+        *,
+        failure_type: object | None,
+        used_backend: str | None,
+        latency_ms: float | None,
+        outcome: str | None = None,
+    ) -> SessionEvent:
+        """Settle an operation and append its TOOL message in one event."""
+        if self.open_turn is None:
+            raise RuntimeError("tool settlement requires an open turn")
+        if message.role is not Role.TOOL:
+            raise ValueError("tool settlement message must have role=tool")
+        resolved_outcome = outcome or ("failed" if message.is_error else "succeeded")
+        return self.append(
+            "operation/settled",
+            {
+                "operationId": str(operation_id),
+                "turn": self.open_turn,
+                "outcome": str(resolved_outcome),
+                "failureType": (
+                    str(getattr(failure_type, "value", failure_type))
+                    if failure_type is not None
+                    else None
+                ),
+                "usedBackend": str(used_backend) if used_backend else None,
+                "latencyMs": latency_ms,
+                "message": message.to_dict(),
+            },
+            surface_op="append",
+        )
+
+    def enqueue_inbox(
+        self,
+        text: str,
+        target: str,
+        *,
+        message_id: str | None = None,
+    ) -> SessionEvent:
+        """Persist one cross-process steer without mutating model history yet."""
+        return self.append(
+            "inbox/message",
+            {
+                "messageId": str(message_id or uuid.uuid4()),
+                "target": str(target),
+                "text": str(text),
+            },
+        )
+
+    def pending_inbox(self, target: str | None = None):
+        self._synchronize()
+        return pending_inbox(self._events, target)
+
+    def claim_inbox(self, target: str) -> list[str]:
+        """Atomically consume pending steer and expose it to the model surface."""
+        items = self.pending_inbox(target)
+        if not items:
+            return []
+        messages = [
+            AgentMessage(
+                role=Role.USER,
+                content=item.text,
+                tool_call_id=None,
+                name=None,
+                origin=ORIGIN_INSTRUCTION,
+            )
+            for item in items
+        ]
+        try:
+            self.append(
+                "inbox/consumed",
+                {
+                    "target": str(target),
+                    "messageIds": [item.message_id for item in items],
+                    "messages": [message.to_dict() for message in messages],
+                },
+                surface_op="append_many",
+            )
+        except InboxClaimConflict:
+            return []
+        return [item.text for item in items]
 
     def record_model_response(
         self,
@@ -527,9 +731,15 @@ class EventSession:
             # be globally unique (some gateways historically emitted call_0
             # every round), so a set over the whole surface is insufficient.
             for event in self._events[start_index + 1 :]:
-                if event.surface_op == "append":
-                    raw = event.data.get("message")
-                    if isinstance(raw, dict):
+                if event.surface_op in {"append", "append_many"}:
+                    surface_messages = (
+                        [event.data.get("message")]
+                        if event.surface_op == "append"
+                        else event.data.get("messages") or []
+                    )
+                    for raw in surface_messages:
+                        if not isinstance(raw, dict):
+                            continue
                         message = AgentMessage.from_dict(raw)
                         if message.role is Role.ASSISTANT:
                             for call in message.tool_calls:
@@ -546,7 +756,7 @@ class EventSession:
                             pending = first_unresolved(str(message.tool_call_id))
                             if pending is not None:
                                 pending["resolved"] = True
-                if event.type == "tool/call":
+                if event.type in {"tool/call", "operation/prepared"}:
                     call_id = str(event.data.get("callId") or "")
                     pending = first_unresolved(call_id)
                     if pending is not None:
@@ -556,16 +766,35 @@ class EventSession:
                 if call["resolved"]:
                     continue
                 content = _TOOL_OUTCOME_UNKNOWN if call["started"] else _TOOL_NOT_STARTED
-                self.append_message(
-                    AgentMessage(
-                        role=Role.TOOL,
-                        content=content,
-                        tool_call_id=call["id"],
-                        name=call["name"],
-                        is_error=True,
-                        origin=ORIGIN_DATA,
-                    )
+                repair_message = AgentMessage(
+                    role=Role.TOOL,
+                    content=content,
+                    tool_call_id=call["id"],
+                    name=call["name"],
+                    is_error=True,
+                    origin=ORIGIN_DATA,
                 )
+                operation = next(
+                    (
+                        item
+                        for item in reversed(project_operations(self._events))
+                        if item.turn == turn
+                        and item.call_id == call["id"]
+                        and item.settled_seq is None
+                    ),
+                    None,
+                )
+                if operation is None:
+                    self.append_message(repair_message)
+                else:
+                    self.record_tool_settlement(
+                        operation.operation_id,
+                        repair_message,
+                        failure_type="interrupted",
+                        used_backend=None,
+                        latency_ms=None,
+                        outcome=("unknown" if operation.dispatched else "not_started"),
+                    )
                 repairs += 1
             self.end_turn(turn, reason="interrupted", detail="crash_repair")
             return repairs
@@ -591,6 +820,16 @@ class EventSession:
                     f"surface append event {event.seq} has no message"
                 )
             return [*surface, AgentMessage.from_dict(raw)]
+        if event.surface_op == "append_many":
+            raw_messages = event.data.get("messages")
+            if not isinstance(raw_messages, list):
+                raise SessionCorruptionError(
+                    f"surface append-many event {event.seq} has no messages list"
+                )
+            return [
+                *surface,
+                *(AgentMessage.from_dict(raw) for raw in raw_messages),
+            ]
         raw_messages = event.data.get("messages")
         if not isinstance(raw_messages, list):
             raise SessionCorruptionError(
@@ -777,7 +1016,7 @@ class FileSessionStore:
         if not isinstance(data, dict):
             raise SessionCorruptionError(f"event {expected_seq} data must be an object")
         surface_op = payload.get("surfaceOp")
-        if surface_op not in (None, "append", "replace"):
+        if surface_op not in (None, "append", "append_many", "replace"):
             raise SessionCorruptionError(
                 f"event {expected_seq} has invalid surface operation"
             )

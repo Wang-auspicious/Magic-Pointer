@@ -116,6 +116,8 @@ class ToolResult:
     failure_type: str | None
     used_backend: str | None
     latency_ms: float | None
+    tool_name: str | None = None
+    arguments: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -295,17 +297,23 @@ def _tool_result_to_dict(result: ToolResult) -> dict[str, Any]:
         "failure_type": result.failure_type,
         "used_backend": result.used_backend,
         "latency_ms": result.latency_ms,
+        "tool_name": result.tool_name,
+        "arguments": result.arguments,
     }
 
 
 def _tool_result_from_dict(data: dict[str, Any]) -> ToolResult:
     _reject_unknown(data, ToolResult)
-    _require_fields(data, ToolResult)
+    missing = sorted({"tool_call_id", "value", "is_error"} - set(data))
+    if missing:
+        raise ValueError(f"missing field(s) for ToolResult: {missing}")
     return ToolResult(
         tool_call_id=data["tool_call_id"],
         value=data["value"],
         is_error=data["is_error"],
-        failure_type=data["failure_type"],
-        used_backend=data["used_backend"],
-        latency_ms=data["latency_ms"],
+        failure_type=data.get("failure_type"),
+        used_backend=data.get("used_backend"),
+        latency_ms=data.get("latency_ms"),
+        tool_name=data.get("tool_name"),
+        arguments=data.get("arguments"),
     )

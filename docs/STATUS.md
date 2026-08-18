@@ -1,6 +1,14 @@
 # 当前状态
 
-> 最后核实：2026-08-16（开发树 DSH harness 能力对齐批；1.0.5 安装版未动）。改了行为就回来改这里，别新建一份日期文件。
+> 最后核实：2026-08-18（Sovereign Agent Run Kernel / durable Inbox / ledger 第二批；1.0.10 已 sync 安装）。
+
+2026-08-18 Sovereign Agent 后端地基第二批（1.0.10 已交付）：现有 `EventSession` 被确立为 Runtime 唯一 durable truth，没有另建平行 session/ledger store。每个真实工具执行现在以 `operation/prepared → 物理执行 → operation/settled` 形成 effect sandwich：执行体启动前已持久化 operation id、effect 与 dispatched，settlement 同时写 usedBackend/latency/failure/outcome 并作为唯一 TOOL surface；未结算的 read 可安全重放、可逆写先核验、不可逆/send/delete/purchase 永不盲重放，未 dispatch 不再伪装成“可能执行”。进程内 Inbox 已降为 producer 缓冲，`next-step`/`next-turn` 最终写入同一 session；`inbox/consumed` 用一次 `append_many` 原子完成“领取 + 进入模型上下文”，并发 handle 不会重复消费。新增已打包的 `scripts/agent_session_bridge.py` 提供有界 put/pending 本地 API。`InteractionLedger.from_session()` 直接投影 interaction start、模型 usage、请求/响应时延、operation settlement、look、终态、感知层与 InputArtifact id；selection 与 Studio conversation 都返回公开账单，不再有生产调用方写第二本 ledger 文件。fresh 验证：Python **1313 passed**；Node **151 passed / 104 源文件**；五套 typecheck 与 ESLint 通过；`npm run sync` 再跑同套 Python/Node 门后构建 NSIS、静默安装并重启；开发树和安装目录均为 **1.0.10**，安装目录中的 run_kernel/session bridge/InputArtifact/ledger projection 均已独立核对存在。诚实边界：bridge 后端已可调用，但 GUI 尚无“运行中插话”控件；ledger 已随 bridge 返回但 Studio 尚未把整张账单可视化；崩溃恢复当前会风险感知地结算并关闭中断 turn，尚未续跑原 loop；DraftArtifact revision、ask-user UI 往返以及 Explorer/SurfaceAdapter/OCR/Vision 的统一 Broker 仍未完成。
+
+2026-08-18 Sovereign Agent 后端地基第一批（1.0.9 已交付）：方向正式收束为“**完整自有 Agent 产品 + 确定性感知/执行内核**”，不是纯外设，也不把 Hermes 当后端；三份相互链接的决策文档以 `docs/research/2026-08-17-magic-pointer-sovereign-agent-backend-blueprint.md` 为最新实施蓝图。代码侧先打感知入口：结构化适配器由串行 first-usable 改为并发证据 Broker，保留 ok/degraded/empty_confirmed/busy/timeout/unsupported/denied/error 八态、全部 observation 与显式冲突，干净证据优先于高优先级降级证据；新增纯领域对象 InputArtifact，把指令与屏幕数据分离，要求手势输入绑定 FrameLease，并提供 GUI/CLI 可直接渲染的公开投影和有界模型投影；selection loop 已实际消费该 artifact，终端场景同时保留锚点错误行与有界错误窗口。交付链同时修复 PowerShell `Copy-Item` 无法覆盖 Torch 超长路径的问题，改为不删除额外文件的 Robocopy `/E` 并严格处理退出码。fresh 验证：Python **1302 passed**；Node **151 passed / 104 源文件**；五套 typecheck 通过；NSIS 安装器生成；`npm run sync` 返回 0；安装目录版本与开发树均为 **1.0.9**，超长许可证路径存在，应用已重启。诚实边界：当前并发只覆盖结构化适配器；Explorer/SurfaceAdapter/OCR/Vision 尚未全部纳入同一 Broker，InteractionLedger 尚未接生产 loop，durable session/operation cursor 仍属后续后端批次。
+
+2026-08-17 Studio DSH 高保真收口（1.0.7 已交付）：沿用用户批准的边界——DSH 是布局/密度/展开交互金样，品牌、设置语义和运行时能力仍是 Magic Pointer。①左栏改成 MP 五个工作区入口 + DSH WorkspaceBrowser（36px「最近对话」头、点击展开的内联搜索、独立滚动列表座、32px 会话行、稳定底栏）；②修正 StatsLine 的真实 DOM 位置，从输入卡上方移到 InputBar 卡片下方，只显示会话能推导出的轮数/步骤数；③来源标签允许收缩且自身省略，900px 窄窗截图中与长标题不重叠；④设置保留八页真实 MP 内容与原保存/回滚链，外观改为 DSH 16/24 页头、14/22 说明和原位 disclosure 卡（每页首组默认展开、点击组头在当前页展开）。fresh 验证：Python **1286 passed**；Node **147 passed / 100 源文件**；五套 typecheck、ESLint 0；离屏截图 `data/runtime/dsh-fidelity-{chat,settings}-1.0.7.png` 与 `dsh-fidelity-chat-narrow-1.0.7.png`（console_errors=0）已人工审看；NSIS `Magic-Pointer-1.0.7-x64.exe` 已构建、静默安装并重启，安装目录版本核对为 **1.0.7**。
+
+2026-08-17 Studio GUI 链路批（1.0.6 已交付）：①**"full answer budget exhausted" 根除**——conversation_bridge / selection_bridge 调 loop 时没传 budgets，默认 4 秒 FULL_ANSWER 预算把普通 3-6 秒模型回答在第一轮就误杀；两桥各传宽松 FULL_ANSWER（对话 1h / 划线 5min），该错误从此不可能出现；②**工具链进 GUI**——`ToolResult` 加 `tool_name`/`arguments`（loop 执行处富化），`loop_answer` 投影 `events`（name/arguments/result/isError），bridge→conversation_store→main.ts 全链透传落盘，DSH 聊天渲染层的 pwsh/Think/工具行第一次有数据可画；③**侧栏会话行按 DSH 重做**——去掉 C1 两字母色块与副标题小字，改为 DSH 32px 行（状态点 + 单行标题 + 相对时间 + hover 省略号），StateDot/行 CSS/ellipsis 图标按 DSH 源码原样移植；④**复制按钮不再假装成功**——Promise 校验 + textarea 兜底，失败不换勾。fresh 验证：Python **1286 passed**（+3 测试）；Node **147 passed / 100 源文件**；typecheck、ESLint 0；离屏 DOM 探针：32px/8px/6px gap/状态点绿+光晕/时间 tertiary，console_errors=0；NSIS 1.0.6 已装并重启。
 
 2026-08-16 Agent 地基融会贯通批（5 commits，纯 Python 侧）：按 Pi/Claude Code/DSH/Hermes 四源码审计（计划文档 `docs/superpowers/plans/2026-08-16-agent-foundation-consolidation.md`）——①死代码清除约 1500 行（零生产引用的认知四件套/table_merge/events 包/capability_hints 等，入口可达性+符号级核实后删除）；②Inbox steer/followup 输入模型（社区 P0「输入被吞」：next-step 下一轮即携带、next-turn 停后续跑）；③turn 端验证门（Hermes 模式：写入无验证回执想收工先 nudge 一次）；④工具效果按调用分级（CC isDestructive(input) 契约，effect_for 四消费点接线）；⑤loop 恢复块提取纯函数。fresh 验证：Python **1283 passed**（+19 新测试）。跨进程 steer 传输与 session 树仍是显式非目标。
 
@@ -20,7 +28,7 @@
 
 ## 一句话
 
-**本机安装版与开发树均为 1.0.5（2026-08-15 已 sync）。** 本批修通设置的主进程确认、失败回滚与语音总开关，实际配置现为 `voice_enabled=false`、`default_input_mode=text`、`voice_resident_enabled=false`；Stage 改为固定 `480×132` 文字 Composer 与固定 `560×520` WorkPanel，移除内容驱动的宽度档、缩放变形和重复锚定；Studio/设置按 Oreo 参考重做为统一工作区与八页真实设置。交付验证：**Python 1249 过；Node 138 全过；typecheck、ESLint 0 警告；Electron build 通过；uia-host smoke PASS；NSIS 安装器已生成并同步安装**。更长期的治理门生产接线、ComputerOperator 明示批准与真实多应用桌面验收仍按下文待办继续，不能被本次 UI/设置交付冒充为完成。
+**本机安装版与开发树均为 1.0.10（2026-08-18 已 sync）。** Magic Pointer 的路线是完整自有 Agent：Studio 保留已交付的 DSH 高保真工作面，自有 Runtime 承担短任务，确定性感知/权限/执行边界归 MP；Hermes/Pi 只作为持续对照和资产语义来源。感知输入已有并发结构化证据融合与 InputArtifact；运行内核已有 effect sandwich、durable `next-step`/`next-turn` Inbox、本地 session bridge，以及从唯一 EventSession 投影的 interaction ledger，selection/Studio 均返回公开账单。交付验证：**Python 1313 过；Node 151 全过（104 个源文件）；五套 typecheck 与 ESLint 通过；NSIS 已构建；`npm run sync` 成功；安装目录版本为 1.0.10，新后端模块存在、应用已重启**。OCR/Vision/SurfaceAdapter 的统一 Broker、运行中插话 GUI、ledger 可视化、可续跑 crash resume、DraftArtifact revision 与 ask-user UI 往返仍是明确后续，不能把两批地基冒充成完整 Agent 已经做完。
 
 **2026-08-14 全库深度审计 + 修复批（已完成，见 §审计）**：9 个区域逐文件逐行审查 + 红队对抗实测；修复 6 个 P1（L0 本地动作劫持、证据进指令通道、compaction 剥围栏、tasks 并发丢数据、UIA 管道无鉴权、快照桥缺 lease fail-open、undo 无读回校验、scope 泄漏级联等 14 项）与 20+ P2；已随 2026-08-15 的 1.0.5 一并同步到本机安装版。
 
@@ -48,7 +56,7 @@ FrameLease 捕获地基（8·11 计划 Phase A）已全量落地并过自动化�
 | 300ms 本地首反馈（"我看到了：X · N 字"） | 已接线（零模型，snapshot summary 材料） |
 | 能力工具（26 → 18 正交合并，schema 单一来源归代码） | 可用；find_capability 保留；双轨已杀 |
 | settings 深合并（RFC 7396）+ 渲染层键名翻译表 | 桥端已修（先深合并后键名，顺序按评审）；渲染层只发有消费方的键 |
-| 证据契约（ok/busy/timeout/empty_confirmed 可区分 + 反容器启发式） | 模块可用，感知链未接线 |
+| 证据契约（八态 + 反容器启发式 + 冲突） | 结构化适配器链已接并发 Broker；Explorer/SurfaceAdapter/OCR/Vision 尚未全部统一接入 |
 | 延迟预算表 + 取消令牌（代际淘汰） | 模块可用；agent loop 已接线（rolling 预算按轮续期 + 循环级取消作用域），桥/其他外部调用方未接线 |
 | Desktop Trace 录制/回放（离线感知测试基座） | 基座可用 + 20 条按失败模式的 fixture trace + replay 驱动实测跑通 |
 | 薄 smoke 层（自家 UIA 狗粮，无 Playwright） | `scripts/smoke/golden_path_smoke.py`：uia-host 实测 PASS；replay 20 条；notepad-read 待真机跑 |

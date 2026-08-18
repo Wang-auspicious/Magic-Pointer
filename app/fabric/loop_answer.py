@@ -39,6 +39,7 @@ def terminal_to_answer(terminal: Terminal, command: str) -> dict[str, Any]:
                 "localAction": terminal.local_action,
             },
             "loopReceipts": _receipts(terminal),
+            "events": _events(terminal),
             "modelUsage": terminal.model_usage,
         }
     if terminal.reason is TransitionReason.AWAITING_USER:
@@ -70,6 +71,7 @@ def terminal_to_answer(terminal: Terminal, command: str) -> dict[str, Any]:
                 "turns": terminal.turns,
             },
             "loopReceipts": _receipts(terminal),
+            "events": _events(terminal),
             "modelUsage": terminal.model_usage,
         }
     terminated = terminal.reason is not TransitionReason.COMPLETED
@@ -87,6 +89,7 @@ def terminal_to_answer(terminal: Terminal, command: str) -> dict[str, Any]:
             "turns": terminal.turns,
         },
         "loopReceipts": _receipts(terminal),
+        "events": _events(terminal),
         "modelUsage": terminal.model_usage,
     }
 
@@ -96,6 +99,8 @@ def _receipts(terminal: Terminal) -> list[dict[str, Any]]:
     for result in terminal.results:
         receipts.append({
             "toolCallId": result.tool_call_id,
+            "toolName": result.tool_name,
+            "arguments": result.arguments,
             "isError": result.is_error,
             "failureType": result.failure_type,
             "usedBackend": result.used_backend,
@@ -103,3 +108,25 @@ def _receipts(terminal: Terminal) -> list[dict[str, Any]]:
             "valuePreview": (result.value or "")[:200],
         })
     return receipts
+
+
+def _events(terminal: Terminal) -> list[dict[str, Any]]:
+    """Tool-call chain for the GUI (DSH tool rows: name/arguments/result).
+
+    Pure projection of the same receipts; the renderer shows each tool as an
+    IN/OUT row instead of hiding the agent chain behind the final answer.
+    """
+    events: list[dict[str, Any]] = []
+    for result in terminal.results:
+        name = result.tool_name
+        if not name:
+            continue
+        events.append({
+            "name": name,
+            "arguments": result.arguments,
+            "result": (result.value or ""),
+            "isError": result.is_error,
+            "usedBackend": result.used_backend,
+            "latencyMs": result.latency_ms,
+        })
+    return events

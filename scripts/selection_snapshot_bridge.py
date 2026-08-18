@@ -1888,6 +1888,18 @@ def capture_snapshot(
             reason=mark_coverage.reason,
         )
     summary = _summary_for(target_window, app_ctx)
+    if app_ctx is None and perception_trace.get("readState") == "unread":
+        # Busy/timeout/error means we did not read the target.  It is not an
+        # unsupported app and it is not a confirmed empty selection.  Keep the
+        # provider details in the trace and give the public summary one honest
+        # state that callers can act on.
+        summary.update({
+            "state": "error",
+            "label": f"{str((target_window or {}).get('title') or '当前应用')} · 读取失败",
+            "detail": "感知源忙碌、超时或出错；未确认当前对象为空",
+            "hasContent": False,
+            "canRewrite": False,
+        })
     if not mark_coverage.covers:
         summary["hasContent"] = False
         summary["excerpt"] = ""

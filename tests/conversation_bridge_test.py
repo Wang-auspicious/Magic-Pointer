@@ -1,8 +1,20 @@
 from __future__ import annotations
 
 import pytest
+from types import SimpleNamespace
 
 from scripts import conversation_bridge
+
+
+class _FakeClock:
+    def __init__(self) -> None:
+        self.elapsed = 0.0
+        self.marks: list[tuple[str, dict]] = []
+
+    def mark(self, phase: str, **fields):
+        self.elapsed += 100.0
+        self.marks.append((phase, fields))
+        return self.elapsed
 
 
 def test_answer_conversation_rejects_empty_question() -> None:
@@ -125,3 +137,90 @@ def test_slash_unknown_name_is_not_a_command() -> None:
 def test_plain_text_is_not_a_command() -> None:
     assert conversation_bridge.route_slash_command("普通问题 /带斜杠的尾巴", catalog=None) is None
     assert conversation_bridge.route_slash_command("", catalog=None) is None
+
+
+def test_conversation_budget_never_kills_a_normal_answer() -> None:
+    from app.governance.latency_budget import Stage
+
+    policy = conversation_bridge.CONVERSATION_BUDGETS[Stage.FULL_ANSWER]
+    assert policy.budget_ms >= 60 * 60 * 1000, (
+        "Studio 对话不能带 4 秒 FULL_ANSWER 预算：普通 3-6 秒模型回答会被误杀成 "
+        "'full answer budget exhausted'（用户可见错误）。"
+    )
+
+
+def test_conversation_activity_sink_projects_live_model_and_tool_events() -> None:
+    clock = _FakeClock()
+    sink = conversation_bridge._ConversationActivitySink(clock)
+    sink(SimpleNamespace(kind="loop_start"))
+    sink(SimpleNamespace(kind="turn_started", turn=1))
+    sink(SimpleNamespace(kind="model_chunk", text="第一段"))
+    sink(SimpleNamespace(kind="tool_call_started", name="read", id="call-1"))
+    sink(SimpleNamespace(kind="tool_call_finished", result=SimpleNamespace(
+        tool_call_id="call-1", tool_name="read", is_error=False,
+        used_backend="uia", latency_ms=23.5)))
+    sink(SimpleNamespace(kind="turn_finished", state=SimpleNamespace(value="done")))
+
+    assert [phase for phase, _ in clock.marks] == [
+        "agent_start", "model_request", "model_first_chunk",
+        "tool_call", "tool_result", "model_response",
+    ]
+    assert sink.activities[0]["kind"] == "model"
+    assert sink.activities[0]["state"] == "done"
+    assert sink.activities[0]["firstTokenMs"] == 100.0
+    assert sink.activities[1] == {
+        "kind": "tool",
+        "id": "call-1",
+        "name": "read",
+        "state": "done",
+        "latencyMs": 23.5,
+        "usedBackend": "uia",
+    }
+    assert [record["kind"] for record in sink.trajectory] == [
+        "request-header", "message", "tool",
+    ]
+    assert [record["seq"] for record in sink.trajectory] == [1, 2, 3]
+    assert sink.trajectory[1]["firstTokenAt"] - sink.trajectory[1]["startedAt"] == 100.0
+    assert sink.trajectory[2]["callId"] == "call-1"
+    assert sink.trajectory[2]["usedBackend"] == "uia"
+
+
+def test_conversation_result_keeps_receipts_usage_activity_and_timing() -> None:
+    mapped = {
+        "answer": "done",
+        "usedBackend": "gateway",
+        "loopReceipts": [{"toolName": "read", "latencyMs": 4}],
+        "events": [{"name": "read"}],
+        "modelUsage": {"totalTokens": 11},
+    }
+    result = conversation_bridge._completed_result(
+        mapped,
+        client_backend="fallback",
+        permission_preset="workspace-write",
+        activities=[{"kind": "model", "state": "done"}],
+        trajectory=[{"seq": 1, "kind": "message", "state": "done"}],
+        timing_ms=1200,
+    )
+    assert result["receipts"][0]["toolName"] == "read"
+    assert result["modelUsage"]["totalTokens"] == 11
+    assert result["activities"][0]["kind"] == "model"
+    assert result["trajectory"][0]["seq"] == 1
+    assert result["timingMs"] == 1200
+    assert result["usedBackend"] == "gateway"
+
+
+def test_conversation_result_can_expose_authoritative_session_bill() -> None:
+    mapped = {"answer": "done", "modelUsage": {"totalTokens": 3}}
+    result = conversation_bridge._completed_result(
+        mapped,
+        client_backend="gateway",
+        permission_preset="workspace-write",
+        activities=[],
+        trajectory=[],
+        timing_ms=10,
+        agent_session_id="agent-studio-1",
+        interaction_ledger={"interactionId": "agent-studio-1:1", "tokensText": 3},
+    )
+
+    assert result["agentSessionId"] == "agent-studio-1"
+    assert result["interactionLedger"]["tokensText"] == 3

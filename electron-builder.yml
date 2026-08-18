@@ -31,6 +31,7 @@ files:
   - scripts/action_bridge.py
   - scripts/agent_bridge.py
   - scripts/agent_hook_bridge.py
+  - scripts/agent_session_bridge.py
   - scripts/agent_worker.py
   - scripts/bridge_progress.py
   - scripts/calendar_bridge.py
@@ -72,6 +73,7 @@ files:
   - data/README.md
   - requirements.txt
   - package.json
+  - THIRD_PARTY_NOTICES.md
 
 extraResources:
   - from: build/python-runtime

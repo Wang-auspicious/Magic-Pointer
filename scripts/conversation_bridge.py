@@ -19,6 +19,7 @@ Honest boundaries (no live selection):
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -45,14 +46,265 @@ ROOT = Path(__file__).resolve().parents[1]
 
 from app.actions.office import clean_replacement_text  # noqa: E402
 from app.ai_client import ask_text_model, request_ai_config  # noqa: E402
+from app.governance.latency_budget import (  # noqa: E402
+    BudgetPolicy,
+    Stage,
+    TimeoutAction,
+)
 from app.system_context import list_visible_windows  # noqa: E402
+from scripts.bridge_progress import PhaseClock  # noqa: E402
 
 MAX_QUESTION_CHARS = 4000
 MAX_TURNS = 12
 
-
+# Studio 对话没有"反馈节奏"约束：用户坐在屏幕前等这一轮答完。loop 默认的
+# FULL_ANSWER 4 秒预算是给划线快速问答设计的（L8 延迟表），直接套在对话上
+# 会在普通 3-6 秒模型回答上误杀（"full answer budget exhausted"）。这里把
+# 对话路径的 FULL_ANSWER 预算放宽到 1 小时——实际不可能耗尽，只有用户取消
+# 或进程退出才会停。
+CONVERSATION_BUDGET_MS = 60 * 60 * 1000
+CONVERSATION_BUDGETS = {
+    Stage.FULL_ANSWER: BudgetPolicy(
+        stage=Stage.FULL_ANSWER,
+        budget_ms=CONVERSATION_BUDGET_MS,
+        on_timeout=TimeoutAction.STASH_BACKGROUND,
+    ),
+}
 
 from app.agent_runtime.slash_directory import SLASH_COMMANDS  # noqa: E402
+
+
+def _trajectory_text(value: Any) -> str:
+    """Serialize structured runtime facts as the JSON DSH's tool rows display."""
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    return str(value or "")
+
+
+class _ConversationActivitySink:
+    """Project loop events into honest Studio lifecycle rows and phase marks."""
+
+    def __init__(self, clock: PhaseClock) -> None:
+        self.clock = clock
+        self.activities: list[dict[str, Any]] = []
+        self.trajectory: list[dict[str, Any]] = []
+        self._active_model: dict[str, Any] | None = None
+        self._active_message: dict[str, Any] | None = None
+        self._tools: dict[str, dict[str, Any]] = {}
+        self._trajectory_tools: dict[str, dict[str, Any]] = {}
+        self._first_chunk_seen = False
+
+    def _append_record(self, record: dict[str, Any]) -> dict[str, Any]:
+        record["seq"] = len(self.trajectory) + 1
+        self.trajectory.append(record)
+        return record
+
+    def __call__(self, event: Any) -> None:
+        kind = str(getattr(event, "kind", ""))
+        if kind == "loop_start":
+            self.clock.mark("agent_start")
+            return
+        if kind == "turn_started":
+            turn = int(getattr(event, "turn", 0) or 0)
+            started_ms = self.clock.mark("model_request", turn=turn)
+            self._append_record({
+                "kind": "request-header",
+                "turn": turn,
+                "step": turn,
+                "startedAt": started_ms,
+            })
+            self._active_message = self._append_record({
+                "kind": "message",
+                "turn": turn,
+                "step": turn,
+                "state": "running",
+                "text": "",
+                "startedAt": started_ms,
+            })
+            self._active_model = {
+                "kind": "model",
+                "turn": turn,
+                "state": "running",
+                "startedMs": started_ms,
+            }
+            self.activities.append(self._active_model)
+            self._first_chunk_seen = False
+            return
+        if kind == "model_chunk":
+            text = str(getattr(event, "text", "") or "")
+            if self._active_message is not None and text:
+                self._active_message["text"] = str(self._active_message.get("text") or "") + text
+            if not self._first_chunk_seen:
+                self._first_chunk_seen = True
+                at_ms = self.clock.mark("model_first_chunk")
+                if self._active_model is not None:
+                    self._active_model["firstTokenMs"] = max(
+                        0.0, at_ms - float(self._active_model.get("startedMs") or 0.0)
+                    )
+                if self._active_message is not None:
+                    self._active_message["firstTokenAt"] = at_ms
+            return
+        if kind == "tool_call_started":
+            call_id = str(getattr(event, "id", ""))
+            name = str(getattr(event, "name", "") or "tool")
+            started_ms = self.clock.mark("tool_call", id=call_id, name=name)
+            activity = {
+                "kind": "tool",
+                "id": call_id,
+                "name": name,
+                "state": "running",
+            }
+            self.activities.append(activity)
+            self._tools[call_id] = activity
+            record = self._append_record({
+                "kind": "tool",
+                "turn": int(self._active_message.get("turn", 0)) if self._active_message else 0,
+                "callId": call_id,
+                "name": name,
+                "state": "running",
+                "text": "",
+                "startedAt": started_ms,
+            })
+            self._trajectory_tools[call_id] = record
+            return
+        if kind == "tool_call_finished":
+            result = getattr(event, "result", None)
+            call_id = str(getattr(result, "tool_call_id", ""))
+            name = str(getattr(result, "tool_name", "") or "tool")
+            failed = bool(getattr(result, "is_error", False))
+            backend = str(getattr(result, "used_backend", "") or "")
+            latency = float(getattr(result, "latency_ms", 0.0) or 0.0)
+            completed_ms = self.clock.mark(
+                "tool_result", id=call_id, name=name,
+                state="error" if failed else "done", backend=backend or "-",
+                latency_ms=latency,
+            )
+            activity = self._tools.get(call_id)
+            if activity is None:
+                activity = {"kind": "tool", "id": call_id, "name": name}
+                self.activities.append(activity)
+            activity.update({
+                "state": "error" if failed else "done",
+                "latencyMs": latency,
+                "usedBackend": backend,
+            })
+            record = self._trajectory_tools.get(call_id)
+            if record is None:
+                record = self._append_record({
+                    "kind": "tool",
+                    "turn": int(self._active_message.get("turn", 0)) if self._active_message else 0,
+                    "callId": call_id,
+                    "name": name,
+                    "startedAt": max(0.0, completed_ms - latency),
+                })
+            record.update({
+                "state": "error" if failed else "done",
+                "completedAt": completed_ms,
+                "latencyMs": latency,
+                "usedBackend": backend,
+                "text": _trajectory_text(getattr(result, "arguments", "")),
+                "result": _trajectory_text(getattr(result, "value", "")),
+                "isError": failed,
+            })
+            return
+        if kind == "turn_finished":
+            state = getattr(event, "state", None)
+            transition = getattr(state, "transition", None)
+            state_value = str(
+                getattr(transition, "value", None)
+                or getattr(state, "value", None)
+                or "done"
+            )
+            at_ms = self.clock.mark("model_response", state=state_value)
+            if self._active_model is not None:
+                self._active_model["state"] = (
+                    "error" if state_value not in {"done", "completed", "tool_result"} else "done"
+                )
+                self._active_model["latencyMs"] = max(
+                    0.0, at_ms - float(self._active_model.pop("startedMs", at_ms))
+                )
+            if self._active_message is not None:
+                self._active_message["state"] = (
+                    "error" if state_value not in {"done", "completed", "tool_result"} else "done"
+                )
+                self._active_message["completedAt"] = at_ms
+            return
+        if kind == "budget_renewed":
+            self.clock.mark(
+                "budget_renewed",
+                turn=getattr(event, "turn", 0),
+                renewals=getattr(event, "renewals_used", 0),
+            )
+
+
+def _completed_result(
+    mapped: dict[str, Any],
+    *,
+    client_backend: str,
+    permission_preset: str,
+    activities: list[dict[str, Any]],
+    trajectory: list[dict[str, Any]],
+    timing_ms: float,
+    question: str = "",
+    agent_session_id: str | None = None,
+    interaction_ledger: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    answer = clean_replacement_text(str(mapped.get("answer") or ""))
+    model_usage = mapped.get("modelUsage") or {}
+    used_backend = mapped.get("usedBackend") or client_backend or "agent_runtime"
+    records = [dict(record) for record in trajectory]
+    if question:
+        records = [{
+            "seq": 1,
+            "kind": "user",
+            "turn": 1,
+            "state": "done",
+            "text": question,
+            "startedAt": 0.0,
+        }] + [{**record, "seq": int(record.get("seq", 0) or 0) + 1} for record in records]
+    messages = [record for record in records if record.get("kind") == "message"]
+    if messages:
+        last_message = messages[-1]
+        if not str(last_message.get("text") or "").strip():
+            last_message["text"] = answer
+        last_message["usedBackend"] = used_backend
+        for source, target in (
+            ("outputTokens", "outputTokens"),
+            ("reasoningTokens", "reasoningTokens"),
+        ):
+            value = model_usage.get(source) if isinstance(model_usage, dict) else None
+            if isinstance(value, (int, float)):
+                last_message[target] = value
+    receipts_by_id = {
+        str(receipt.get("toolCallId") or ""): receipt
+        for receipt in mapped.get("loopReceipts") or []
+        if isinstance(receipt, dict)
+    }
+    for record in records:
+        if record.get("kind") != "tool":
+            continue
+        receipt = receipts_by_id.get(str(record.get("callId") or ""))
+        if receipt is None:
+            continue
+        record["text"] = _trajectory_text(receipt.get("arguments") or record.get("text") or "")
+        record["result"] = _trajectory_text(receipt.get("valuePreview") or record.get("result") or "")
+        record["usedBackend"] = str(receipt.get("usedBackend") or record.get("usedBackend") or "")
+        if isinstance(receipt.get("latencyMs"), (int, float)):
+            record["latencyMs"] = receipt["latencyMs"]
+    return {
+        "ok": True,
+        "answer": answer,
+        "usedBackend": used_backend,
+        "permissionPreset": permission_preset or "workspace-write",
+        "receipts": mapped.get("loopReceipts") or [],
+        "events": mapped.get("events") or [],
+        "activities": activities,
+        "trajectory": records,
+        "modelUsage": model_usage,
+        "timingMs": timing_ms,
+        "agentSessionId": agent_session_id,
+        "interactionLedger": interaction_ledger,
+    }
 
 
 def route_slash_command(prompt: str, catalog) -> dict | None:
@@ -217,6 +469,8 @@ def answer_conversation(
     turns: list[dict[str, Any]],
     obj: dict[str, Any],
     permission_preset: str,
+    *,
+    clock: PhaseClock | None = None,
 ) -> dict[str, Any]:
     from app.agent_runtime.permission_modes import PermissionMode
     from app.agent_runtime.permission_presets import PRESETS, mode_for_preset
@@ -224,6 +478,7 @@ def answer_conversation(
     from app.fabric.loop_answer import terminal_to_answer
     from app.harness.builtin_bundle import boot_loop_context
 
+    conversation_clock = clock or PhaseClock("conversation")
     prompt = str(question or "").strip()
     if not prompt:
         return {"ok": False, "error": "问题不能为空。"}
@@ -298,7 +553,9 @@ def answer_conversation(
         "command": agent_prompt,
     }
 
+    conversation_clock.mark("runtime_boot")
     report = boot_loop_context(runtime, root=ROOT)
+    conversation_clock.mark("runtime_ready")
     ctx = report.ctx
     registry = ctx.get("tools")
     client = ctx.get("model_client")
@@ -319,6 +576,7 @@ def answer_conversation(
         session_key = str(window.get("windowTitle") or "chat")
         agent_session_id = "agent-studio-" + hashlib.sha256(session_key.encode("utf-8")).hexdigest()[:32]
         agent_session = sessions.open_or_create(agent_session_id, repair=True)
+        activity_sink = _ConversationActivitySink(conversation_clock)
         terminal = run_agent_turn(
             agent_prompt,
             objects=[],
@@ -336,9 +594,20 @@ def answer_conversation(
             request_header=request_header,
             local_action_input=agent_prompt,
             evidence_input=evidence or None,
+            budgets=CONVERSATION_BUDGETS,
+            event_sink=activity_sink,
+            interaction_metadata={
+                "appName": str(window.get("app") or "").strip(),
+            },
         )
     except Exception as exc:  # noqa: BLE001 - loop crash must never kill the answer path
-        return {"ok": False, "error": f"Agent 运行失败：{type(exc).__name__}", "usedBackend": "agent_runtime"}
+        timing_ms = conversation_clock.total("total", ok=0)
+        return {
+            "ok": False,
+            "error": f"Agent 运行失败：{type(exc).__name__}",
+            "usedBackend": "agent_runtime",
+            "timingMs": timing_ms,
+        }
 
     mapped = terminal_to_answer(terminal, agent_prompt)
     answer = clean_replacement_text(str(mapped.get("answer") or ""))
@@ -348,13 +617,26 @@ def answer_conversation(
             "error": answer or "模型没有返回内容。",
             "usedBackend": getattr(client, "used_backend", "") or "agent_runtime",
         }
-    return {
-        "ok": True,
-        "answer": answer,
-            "usedBackend": mapped.get("usedBackend") or getattr(client, "used_backend", "") or "agent_runtime",
-            "permissionPreset": permission_preset or "workspace-write",
-            "receipts": mapped.get("receipts") or [],
-    }
+    timing_ms = conversation_clock.total("total", ok=1)
+    from app.telemetry.interaction_ledger import InteractionLedger
+
+    ledger_entries = InteractionLedger.from_session(agent_session).query()
+    interaction_ledger = (
+        ledger_entries[-1].to_public_dict() if ledger_entries else None
+    )
+    result = _completed_result(
+        mapped,
+        client_backend=getattr(client, "used_backend", ""),
+        permission_preset=permission_preset,
+        activities=activity_sink.activities,
+        trajectory=activity_sink.trajectory,
+        timing_ms=timing_ms,
+        question=question,
+        agent_session_id=agent_session_id,
+        interaction_ledger=interaction_ledger,
+    )
+    result["answer"] = answer
+    return result
 
 
 def main() -> int:

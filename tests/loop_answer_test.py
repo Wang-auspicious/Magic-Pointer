@@ -77,6 +77,8 @@ def test_tool_receipts_are_audit_metadata() -> None:
                 failure_type=None,
                 used_backend="fake",
                 latency_ms=12.5,
+                tool_name="pwsh",
+                arguments={"command": "Get-Process"},
             ),
         ),
     )
@@ -88,6 +90,61 @@ def test_tool_receipts_are_audit_metadata() -> None:
     assert receipts[0]["usedBackend"] == "fake"
     assert receipts[0]["latencyMs"] == 12.5
     assert receipts[0]["valuePreview"] == "ok-value"
+    assert receipts[0]["toolName"] == "pwsh"
+    assert receipts[0]["arguments"] == {"command": "Get-Process"}
+
+
+def test_events_projection_carries_tool_chain_for_gui() -> None:
+    from app.agent_runtime.types import ToolResult
+
+    terminal = Terminal(
+        reason=TransitionReason.COMPLETED,
+        message="done",
+        turns=2,
+        results=(
+            ToolResult(
+                tool_call_id="c1",
+                value="stdout line",
+                is_error=False,
+                failure_type=None,
+                used_backend="fake",
+                latency_ms=5.0,
+                tool_name="pwsh",
+                arguments={"command": "Get-Process"},
+            ),
+            ToolResult(
+                tool_call_id="c2",
+                value="boom",
+                is_error=True,
+                failure_type="exec_error",
+                used_backend="fake",
+                latency_ms=1.0,
+                tool_name="read",
+                arguments={"path": "x.txt"},
+            ),
+            ToolResult(
+                tool_call_id="c3",
+                value="no-name",
+                is_error=False,
+                failure_type=None,
+                used_backend="fake",
+                latency_ms=1.0,
+            ),
+        ),
+    )
+    events = terminal_to_answer(terminal, "cmd")["events"]
+
+    assert len(events) == 2, "results without tool_name must not appear in the chain"
+    assert events[0] == {
+        "name": "pwsh",
+        "arguments": {"command": "Get-Process"},
+        "result": "stdout line",
+        "isError": False,
+        "usedBackend": "fake",
+        "latencyMs": 5.0,
+    }
+    assert events[1]["name"] == "read"
+    assert events[1]["isError"] is True
 
 
 def test_awaiting_user_terminal_maps_to_resumable_question() -> None:

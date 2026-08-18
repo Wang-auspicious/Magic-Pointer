@@ -260,6 +260,7 @@ class LoopParams:
     request_header: Mapping[str, Any] = field(default_factory=dict)
     evidence_input: str | None = None
     inbox: Inbox | None = None
+    interaction_metadata: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -558,6 +559,7 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
         # resume the same session, but it must not mistake this live turn for a
         # crashed one and synthesize repair results underneath the model.
         params.session.start_turn(hold_lease=True)
+        params.session.record_interaction_start(params.interaction_metadata)
         for message in first_messages:
             params.session.append_message(message)
         initial_messages = params.session.derive_messages()
@@ -661,7 +663,15 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
             if loop_scope.is_cancelled:
                 raise CancelledError("cancelled before model call")
 
-            steered_texts = params.inbox.drain("next-step") if params.inbox is not None else []
+            ephemeral_steer = (
+                params.inbox.drain("next-step") if params.inbox is not None else []
+            )
+            if params.session is not None:
+                for text in ephemeral_steer:
+                    params.session.enqueue_inbox(text, "next-step")
+                steered_texts = params.session.claim_inbox("next-step")
+            else:
+                steered_texts = ephemeral_steer
             if steered_texts:
                 steer_messages = [
                     AgentMessage(
@@ -673,9 +683,6 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                     )
                     for text in steered_texts
                 ]
-                for message in steer_messages:
-                    if params.session is not None:
-                        params.session.append_message(message)
                 state = with_transition(
                     state,
                     TransitionReason.TOOL_RESULT,
@@ -861,9 +868,17 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                     yield VerificationNudged(turn=turn_number)
                     turn_number += 1
                     continue
-                followup_texts = (
-                    params.inbox.drain("next-turn") if params.inbox is not None else []
+                ephemeral_followups = (
+                    params.inbox.drain("next-turn")
+                    if params.inbox is not None
+                    else []
                 )
+                if params.session is not None:
+                    for body in ephemeral_followups:
+                        params.session.enqueue_inbox(body, "next-turn")
+                    followup_texts = params.session.claim_inbox("next-turn")
+                else:
+                    followup_texts = ephemeral_followups
                 if followup_texts:
                     followup_messages = [
                         AgentMessage(
@@ -875,9 +890,6 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                         )
                         for body in followup_texts
                     ]
-                    for message in followup_messages:
-                        if params.session is not None:
-                            params.session.append_message(message)
                     state = with_transition(
                         state,
                         TransitionReason.TOOL_RESULT,
@@ -969,6 +981,8 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                     failure_type="not_executed",
                     used_backend=None,
                     latency_ms=None,
+                    tool_name=call.name,
+                    arguments=dict(call.arguments),
                 )
                 results.append(skipped_result)
 
@@ -1046,13 +1060,26 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                 max_parallel_tool_calls=params.max_parallel_tool_calls,
                 is_cancelled=lambda: loop_scope.is_cancelled,
             )
+            operation_ids: dict[int, str] = {}
             for scheduled in schedule:
                 call = scheduled.call
                 if isinstance(scheduled, ScheduledCallStarted):
                     if params.session is not None:
-                        params.session.record_tool_call(
-                            call.id, call.name, call.arguments, step=turn_number
+                        try:
+                            effect = spec_effect(
+                                registry.get(call.name), call.arguments
+                            )
+                        except KeyError:
+                            effect = Effect.DESTRUCTIVE
+                        prepared = params.session.record_tool_call(
+                            call.id,
+                            call.name,
+                            call.arguments,
+                            step=turn_number,
+                            effect=effect,
+                            dispatched=scheduled.dispatched,
                         )
+                        operation_ids[id(call)] = str(prepared.data["operationId"])
                     if scheduled.dispatched:
                         yield ToolCallStarted(name=call.name, id=call.id)
                     continue
@@ -1064,6 +1091,17 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                 normalized, guardrail_decision = _apply_tool_guardrail(
                     tool_guardrails, registry, call, scheduled.result
                 )
+                if normalized.tool_name is None:
+                    normalized = ToolResult(
+                        tool_call_id=normalized.tool_call_id,
+                        value=normalized.value,
+                        is_error=normalized.is_error,
+                        failure_type=normalized.failure_type,
+                        used_backend=normalized.used_backend,
+                        latency_ms=normalized.latency_ms,
+                        tool_name=call.name,
+                        arguments=dict(call.arguments),
+                    )
                 results.append(normalized)
                 if normalized.is_error:
                     any_error = True
@@ -1078,7 +1116,6 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                     round_progress = True
                 if guardrail_decision.should_halt and halt_decision is None:
                     halt_decision = guardrail_decision
-                yield ToolCallFinished(result=normalized)
                 tool_message = AgentMessage(
                     role=Role.TOOL,
                     content=normalized.value,
@@ -1089,7 +1126,29 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                 )
                 tool_messages.append(tool_message)
                 if params.session is not None:
-                    params.session.append_message(tool_message)
+                    operation_id = operation_ids.get(id(call))
+                    if operation_id is None:
+                        raise RuntimeError(
+                            f"tool call {call.id!r} committed without a prepared operation"
+                        )
+                    outcome = None
+                    if not scheduled.dispatched:
+                        outcome = "not_started"
+                    elif (
+                        normalized.is_error
+                        and normalized.latency_ms is None
+                        and "outcome may be unknown" in str(normalized.value).lower()
+                    ):
+                        outcome = "unknown"
+                    params.session.record_tool_settlement(
+                        operation_id,
+                        tool_message,
+                        failure_type=normalized.failure_type,
+                        used_backend=normalized.used_backend,
+                        latency_ms=normalized.latency_ms,
+                        outcome=outcome,
+                    )
+                yield ToolCallFinished(result=normalized)
                 if (
                     not normalized.is_error
                     and _tool_suspends_for_user_input(registry, call.name)

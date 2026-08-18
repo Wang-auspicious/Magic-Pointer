@@ -992,6 +992,7 @@ def run_agent_turn(
     request_header: Mapping[str, Any] | None = None,
     local_action_input: str | None = None,
     evidence_input: str | None = None,
+    interaction_metadata: Mapping[str, Any] | None = None,
 ) -> Terminal:
     """Run one agentic loop turn to its Terminal (synchronous entry).
 
@@ -1063,6 +1064,7 @@ def run_agent_turn(
         session=session,
         request_header=request_header or {},
         evidence_input=evidence_input,
+        interaction_metadata=interaction_metadata or {},
     )
     return asyncio.run(_consume_agent_loop(params))
 

@@ -18,7 +18,7 @@ import threading
 from collections import Counter
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from math import ceil, floor
 from pathlib import Path
 from typing import Any
@@ -80,6 +80,7 @@ class LedgerEntry:
     succeeded: bool | None = None
     failure_type: str | None = None
     egress_event_ids: tuple[str, ...] = ()
+    input_artifact_id: str | None = None
 
     def __post_init__(self) -> None:
         if not self.interaction_id.strip():
@@ -93,6 +94,26 @@ class LedgerEntry:
                 f"evidence_layer_hit must be one of {EVIDENCE_LAYERS}, "
                 f"got {self.evidence_layer_hit!r}"
             )
+
+    def to_public_dict(self) -> dict[str, Any]:
+        """Return the bounded GUI/CLI bill without exposing raw session events."""
+        return {
+            "interactionId": self.interaction_id,
+            "startedAtUtc": self.started_at_utc,
+            "endedAtUtc": self.ended_at_utc,
+            "appName": self.app_name,
+            "turns": self.turns,
+            "tokensText": self.tokens_text,
+            "tokensVision": self.tokens_vision,
+            "stageLatencyMs": dict(self.stage_latency_ms),
+            "evidenceLayerHit": self.evidence_layer_hit,
+            "confidence": self.confidence,
+            "usedLook": self.used_look,
+            "succeeded": self.succeeded,
+            "failureType": self.failure_type,
+            "egressEventIds": list(self.egress_event_ids),
+            "inputArtifactId": self.input_artifact_id,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,6 +141,14 @@ class InteractionLedger:
     def __init__(self) -> None:
         self._entries: dict[str, LedgerEntry] = {}
         self._lock = threading.Lock()
+
+    @classmethod
+    def from_session(cls, session: Any) -> "InteractionLedger":
+        """Project a ledger from the EventSession log; never writes another file."""
+        ledger = cls()
+        for entry in project_session(session):
+            ledger.record(entry)
+        return ledger
 
     def record(self, entry: LedgerEntry) -> None:
         """Add ``entry``; rejects a duplicate ``interaction_id``."""
@@ -243,6 +272,136 @@ def _e2e_ms(entry: LedgerEntry) -> float | None:
     return delta_ms if delta_ms >= 0 else None
 
 
+def _iso_utc(time_ms: int) -> str:
+    return datetime.fromtimestamp(time_ms / 1000.0, tz=timezone.utc).isoformat()
+
+
+def _usage_tokens(usage: Mapping[str, Any]) -> tuple[int, int]:
+    def number(*names: str) -> int:
+        for name in names:
+            value = usage.get(name)
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                return max(0, int(value))
+        return 0
+
+    vision = number("vision_tokens", "image_tokens", "visionTokens", "imageTokens")
+    total = number("total_tokens", "totalTokens")
+    if total == 0:
+        total = number("input_tokens", "prompt_tokens", "inputTokens", "promptTokens")
+        total += number(
+            "output_tokens", "completion_tokens", "outputTokens", "completionTokens"
+        )
+    return max(0, total - vision), vision
+
+
+def project_session(session: Any) -> tuple[LedgerEntry, ...]:
+    """Derive interaction bills from one verified EventSession event stream."""
+    events = tuple(session.events)
+    starts = [event for event in events if event.type == "interaction/start"]
+    entries: list[LedgerEntry] = []
+    for start in starts:
+        turn = int(start.data.get("turn") or 0)
+        relevant = [
+            event
+            for event in events[start.seq + 1 :]
+            if int(event.data.get("turn") or turn) == turn
+        ]
+        end = next(
+            (
+                event
+                for event in relevant
+                if event.type == "turn/end"
+                and int(event.data.get("turn") or 0) == turn
+            ),
+            None,
+        )
+        if end is not None:
+            relevant = [event for event in relevant if event.seq <= end.seq]
+
+        tokens_text = 0
+        tokens_vision = 0
+        model_latency = 0.0
+        model_requests: dict[int, int] = {}
+        tool_latency = 0.0
+        used_look = start.data.get("usedLook") is True
+        egress_ids: list[str] = []
+        operation_effects: dict[str, str] = {}
+        model_turns = 0
+        for event in relevant:
+            step = int(event.data.get("step") or 0)
+            if event.type == "model/request":
+                model_requests[step] = event.time_ms
+            elif event.type == "model/response":
+                model_turns += 1
+                text, vision = _usage_tokens(dict(event.data.get("usage") or {}))
+                tokens_text += text
+                tokens_vision += vision
+                requested_at = model_requests.pop(step, None)
+                if requested_at is not None:
+                    model_latency += max(0, event.time_ms - requested_at)
+            elif event.type == "operation/prepared":
+                operation_id = str(event.data.get("operationId") or "")
+                effect = str(event.data.get("effect") or "")
+                operation_effects[operation_id] = effect
+                name = str(event.data.get("name") or "").casefold()
+                used_look = used_look or name == "look" or name.endswith("_look")
+            elif event.type == "operation/settled":
+                latency = event.data.get("latencyMs")
+                if isinstance(latency, (int, float)) and not isinstance(latency, bool):
+                    tool_latency += max(0.0, float(latency))
+                operation_id = str(event.data.get("operationId") or "")
+                if (
+                    event.data.get("outcome") == "succeeded"
+                    and operation_effects.get(operation_id)
+                    in {"local_irreversible", "external_send", "destructive", "purchase"}
+                ):
+                    egress_ids.append(operation_id)
+
+        stage_latency: dict[str, float] = {
+            "model": model_latency,
+            "tool": tool_latency,
+        }
+        if end is not None:
+            stage_latency["e2e"] = max(0, end.time_ms - start.time_ms)
+        reason = str(end.data.get("reason") or "") if end is not None else ""
+        if end is None or reason in {"awaiting_user_input", "pending_user_input"}:
+            succeeded = None
+            failure_type = None
+        elif reason == "completed":
+            succeeded = True
+            failure_type = None
+        else:
+            succeeded = False
+            failure_type = reason or "unknown"
+        confidence = start.data.get("confidence")
+        entries.append(LedgerEntry(
+            interaction_id=str(start.data.get("interactionId") or f"{session.id}:{turn}"),
+            started_at_utc=_iso_utc(start.time_ms),
+            ended_at_utc=_iso_utc(end.time_ms) if end is not None else None,
+            app_name=(str(start.data.get("appName")) if start.data.get("appName") else None),
+            turns=model_turns,
+            tokens_text=tokens_text,
+            tokens_vision=tokens_vision,
+            stage_latency_ms=stage_latency,
+            evidence_layer_hit=(
+                str(start.data.get("evidenceLayerHit"))
+                if start.data.get("evidenceLayerHit")
+                else None
+            ),
+            confidence=(float(confidence) if isinstance(confidence, (int, float)) else None),
+            used_look=used_look,
+            succeeded=succeeded,
+            failure_type=failure_type,
+            egress_event_ids=tuple(egress_ids),
+            input_artifact_id=(
+                str(start.data.get("inputArtifactId"))
+                if start.data.get("inputArtifactId")
+                else None
+            ),
+        ))
+    return tuple(entries)
+
+
 def _percentile(values: Iterable[float], p: float) -> float:
     """Linear-interpolated percentile; requires a non-empty iterable."""
     ordered = sorted(values)
@@ -272,6 +431,7 @@ def _entry_to_dict(entry: LedgerEntry) -> dict[str, Any]:
         "succeeded": entry.succeeded,
         "failure_type": entry.failure_type,
         "egress_event_ids": list(entry.egress_event_ids),
+        "input_artifact_id": entry.input_artifact_id,
     }
 
 
@@ -331,4 +491,9 @@ def _entry_from_dict(d: Mapping[str, Any]) -> LedgerEntry:
         succeeded=d["succeeded"],
         failure_type=d["failure_type"],
         egress_event_ids=egress_ids,
+        input_artifact_id=(
+            str(d.get("input_artifact_id"))
+            if d.get("input_artifact_id") is not None
+            else None
+        ),
     )

@@ -6,6 +6,10 @@ param()
 $ErrorActionPreference = 'Stop'
 Set-Location (Split-Path $PSScriptRoot -Parent)
 
+$packageVersion = (Get-Content 'package.json' | ConvertFrom-Json).version
+$syncStamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+$syncOutput = Join-Path (Get-Location) "release\sync-$($packageVersion)-$syncStamp-$PID"
+
 Write-Host "== typecheck =="
 npm run typecheck
 if ($LASTEXITCODE -ne 0) { throw 'typecheck failed' }
@@ -19,22 +23,34 @@ python -m pytest tests/ -q --basetemp=data/runtime/pytest-tmp-verify
 if ($LASTEXITCODE -ne 0) { throw 'python tests failed' }
 
 Write-Host "== build installer =="
-npm run dist:win
+npm run build:electron
+if ($LASTEXITCODE -ne 0) { throw 'electron build failed' }
+npx --no-install tsx scripts/run-electron-builder.ts --config electron-builder.yml --win nsis "-c.directories.output=$syncOutput"
 if ($LASTEXITCODE -ne 0) { throw 'installer build failed' }
 
-$installer = Get-ChildItem release -Filter "Magic-Pointer-*-x64.exe" |
+$installer = Get-ChildItem $syncOutput -Filter "Magic-Pointer-*-x64.exe" |
     Where-Object { $_.Name -notlike '*__uninstaller*' } |
     Sort-Object LastWriteTime -Descending | Select-Object -First 1
-if (-not $installer) { throw 'installer not found in release/' }
+if (-not $installer) { throw "installer not found in $syncOutput" }
+$unpackedDir = Join-Path $syncOutput 'win-unpacked'
+if (-not (Test-Path $unpackedDir)) { throw "win-unpacked not found in $syncOutput" }
+
+# Keep the release installer/update metadata at their conventional paths while
+# installing from this run's isolated unpacked tree.
+Get-ChildItem $syncOutput -File |
+    Where-Object { $_.Name -notlike '*__uninstaller*' } |
+    Copy-Item -Destination 'release' -Force
 
 # 本机同步用 win-unpacked 直接覆盖安装目录（比 NSIS 静默安装快且稳）。
 # NSIS 安装器保留给最终用户（GitHub 发布）。
 $installedDir = "$env:LOCALAPPDATA\Programs\Magic Pointer"
-Write-Host "== sync install (win-unpacked -> $installedDir) =="
+Write-Host "== sync install ($unpackedDir -> $installedDir) =="
 Get-Process "Magic Pointer" -ErrorAction SilentlyContinue |
     Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep 1
-Copy-Item "release\win-unpacked\*" -Destination $installedDir -Recurse -Force
+& robocopy.exe $unpackedDir $installedDir /E /COPY:DAT /DCOPY:DAT /R:2 /W:1 /NFL /NDL /NJH /NJS /NP
+$copyExitCode = $LASTEXITCODE
+if ($copyExitCode -ge 8) { throw "robocopy sync failed with exit code $copyExitCode" }
 Start-Sleep 1
 
 $installedPackage = "$installedDir\resources\app\package.json"

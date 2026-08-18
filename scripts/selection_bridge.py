@@ -28,10 +28,16 @@ from app.actions.shopping_list import (
 from app.actions.calendar_draft import parse_calendar_draft, wants_calendar_draft
 from app.actions.route_draft import parse_route_draft, wants_route_draft
 from app.adapters import AdapterReadContext, default_adapter_registry, format_adapter_context
+from app.input_artifact import compile_input_artifact
 from app.ai_client import ask_text_model, ask_vision_model
 from app.agent_runtime.system_prompt import (
     DELIVER_SYSTEM_PROMPT,
     is_deliver_request as _is_deliver_request,
+)
+from app.governance.latency_budget import (
+    BudgetPolicy,
+    Stage,
+    TimeoutAction,
 )
 from app.model_health import read_health
 from app.text_actions.point_markers import parse_points
@@ -2640,6 +2646,49 @@ def _agent_effect_ceiling(permission_mode: str):
     return tuple(Effect)
 
 
+# 划线问答同样不能背 4 秒 FULL_ANSWER 预算：普通 3-6 秒模型回答会在第一轮
+# 就被误杀成 "full answer budget exhausted"。FULL_ANSWER 放宽到 5 分钟
+# （感知/反馈的其它 stage 预算不动，保留 L8 节奏语义）。
+SELECTION_BUDGETS = {
+    Stage.FULL_ANSWER: BudgetPolicy(
+        stage=Stage.FULL_ANSWER,
+        budget_ms=5 * 60 * 1000,
+        on_timeout=TimeoutAction.STASH_BACKGROUND,
+    ),
+}
+
+
+def _input_artifact_ledger_metadata(input_artifact, target_window, app_ctx) -> dict[str, Any]:
+    """Compile grounded perception identity into the session ledger start."""
+    layer_rank = {
+        "dom": (0, "L0"),
+        "native_app": (0, "L0"),
+        "surface_adapter": (0, "L0"),
+        "uia": (1, "L1"),
+        "ax": (1, "L1"),
+        "ocr": (2, "L2"),
+        "screen_region": (3, "L3"),
+        "pixels": (3, "L3"),
+        "vision": (4, "L4"),
+    }
+    sources = tuple(getattr(getattr(input_artifact, "target", None), "sources", ()) or ())
+    ranked = [layer_rank[str(source).casefold()] for source in sources if str(source).casefold() in layer_rank]
+    app_name = str((target_window or {}).get("process_name") or "").strip()
+    if not app_name:
+        app_name = str(getattr(app_ctx, "app", "") or "").strip()
+    metadata: dict[str, Any] = {
+        "inputArtifactId": str(getattr(input_artifact, "id", "") or ""),
+    }
+    if app_name:
+        metadata["appName"] = app_name
+    if ranked:
+        metadata["evidenceLayerHit"] = max(ranked)[1]
+    confidence = getattr(getattr(input_artifact, "display", None), "confidence", None)
+    if isinstance(confidence, (int, float)) and not isinstance(confidence, bool):
+        metadata["confidence"] = float(confidence)
+    return metadata
+
+
 def _loop_router(
     command: str,
     routing_objects: list,
@@ -2687,6 +2736,14 @@ def _loop_router(
     inloop_reversible = (
         os.environ.get("MAGIC_POINTER_INLOOP_REVERSIBLE", "0").strip() == "1"
     )
+
+    input_artifact = compile_input_artifact(
+        command,
+        target_window,
+        app_ctx,
+        snapshot,
+    )
+    input_artifact_public = input_artifact.to_public_dict()
 
     active_engine = FabricEngine(model_transform=_local_model_transform)
 
@@ -2868,10 +2925,7 @@ def _loop_router(
     # 证据不再拼进首条消息：它作为独立的 origin=data 消息进入 loop，
     # 结构性保证屏幕内容永远不会被当作指令通道（invariant ⑤）。
     first_input = command
-    evidence_block = (
-        "[本次圈选对象证据]\n"
-        + _bridge_evidence_block(app_ctx, target_window, snapshot)
-    )
+    evidence_block = "[本次圈选对象证据]\n" + input_artifact.to_model_text()
     raw_agent_session_id = str(selection_session_id or "").strip()
     if raw_agent_session_id and re.fullmatch(
         r"[A-Za-z0-9][A-Za-z0-9._-]{0,121}", raw_agent_session_id
@@ -2932,9 +2986,17 @@ def _loop_router(
                 # any question into a clipboard write (red-team T6).
                 local_action_input=command,
                 evidence_input=evidence_block,
+                budgets=SELECTION_BUDGETS,
+                interaction_metadata=_input_artifact_ledger_metadata(
+                    input_artifact, target_window, app_ctx
+                ),
             )
         except Exception as exc:  # noqa: BLE001 - loop crash must never kill answer path
-            return {"ok": False, "loopError": type(exc).__name__}
+            return {
+                "ok": False,
+                "loopError": type(exc).__name__,
+                "inputArtifact": input_artifact_public,
+            }
 
         mapped = terminal_to_answer(terminal, command)
         mapped["usedBackend"] = (
@@ -2965,6 +3027,13 @@ def _loop_router(
         mapped["selectionSessionId"] = selection_session_id or None
         mapped["selectionSnapshotId"] = selection_snapshot_id
         mapped["agentSessionId"] = agent_session_id
+        mapped["inputArtifact"] = input_artifact_public
+        from app.telemetry.interaction_ledger import InteractionLedger
+
+        ledger_entries = InteractionLedger.from_session(agent_session).query()
+        mapped["interactionLedger"] = (
+            ledger_entries[-1].to_public_dict() if ledger_entries else None
+        )
         try:
             mapped["learningReview"] = ctx.get("learning_review").prepare(
                 agent_session_id,
@@ -3300,6 +3369,8 @@ def main() -> int:
     loop_interaction = _loop_interaction_metadata(None)
     agent_session_id: str | None = None
     learning_review: dict[str, Any] | None = None
+    input_artifact_public: dict[str, Any] | None = None
+    interaction_ledger_public: dict[str, Any] | None = None
 
     if browser_failure_answer:
         answer = browser_failure_answer
@@ -3327,6 +3398,11 @@ def main() -> int:
             clock=clock,
         )
         loop_interaction = _loop_interaction_metadata(loop_result)
+        input_artifact_public = (
+            dict(loop_result.get("inputArtifact") or {})
+            if isinstance(loop_result.get("inputArtifact"), dict)
+            else None
+        )
         loop_diagnostics = {
             "terminated": bool(loop_result.get("loopTerminated")),
             "terminationReason": loop_result.get("loopTerminatedReason"),
@@ -3336,6 +3412,11 @@ def main() -> int:
             "modelUsage": loop_interaction["modelUsage"],
         }
         agent_session_id = str(loop_result.get("agentSessionId") or "") or None
+        interaction_ledger_public = (
+            dict(loop_result.get("interactionLedger") or {})
+            if isinstance(loop_result.get("interactionLedger"), dict)
+            else None
+        )
         learning_review = (
             dict(loop_result.get("learningReview") or {})
             if isinstance(loop_result.get("learningReview"), dict)
@@ -3376,6 +3457,8 @@ def main() -> int:
                 "selectionSnapshotId": selection_snapshot_id,
                 "agentSessionId": agent_session_id,
                 "learningReview": learning_review,
+                "inputArtifact": input_artifact_public,
+                "interactionLedger": interaction_ledger_public,
                 **loop_interaction,
             })
             clock.total(ok=local_response.get("ok") is True, route="local_action")
@@ -3406,6 +3489,8 @@ def main() -> int:
                 "selectionSnapshotId": selection_snapshot_id,
                 "agentSessionId": agent_session_id,
                 "learningReview": learning_review,
+                "inputArtifact": input_artifact_public,
+                "interactionLedger": interaction_ledger_public,
                 **loop_interaction,
             }, ensure_ascii=False))
             return 1
@@ -3469,6 +3554,8 @@ def main() -> int:
         "selectionSnapshotId": selection_snapshot_id,
         "agentSessionId": agent_session_id,
         "learningReview": learning_review,
+        "inputArtifact": input_artifact_public,
+        "interactionLedger": interaction_ledger_public,
         **loop_interaction,
         "interactionEpisodeId": (payload.get("interactionEpisode") or {}).get("episodeId") if isinstance(payload.get("interactionEpisode"), dict) else None,
     }, ensure_ascii=False))

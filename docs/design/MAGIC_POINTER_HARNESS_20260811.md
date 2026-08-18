@@ -1221,3 +1221,32 @@ smoke：uia-host PASS、replay 20 条 trace 走真实网关（机制绿，见下
 - [x] **Batch E loop 收口**：withheld 恢复与截断恢复两个内联块提取为纯函数（`_withheld_recovery_plan` / `_truncation_messages`），生成器体瘦 ~130 行，行为零变化。
 - [x] 验证：Python **1283 passed**（新增 19 项：inbox 6 + 验证门 8 + 按调用分级 5）；Node/typecheck 未受影响（纯 Python 侧批次）。
 - [ ] 诚实缺口：跨进程 steer 传输（Studio 对话中途插话需常驻 agent 进程）与 session 树形分支/maintenance 相位仍是显式非目标，另批；验证门的 nudge 复用 stop_hook 转移语义，账面上未新增 TransitionReason。
+
+### 2026-08-17：Studio DSH 高保真收口与安装版交付（1.0.7）
+
+- [x] 按已批准边界收口：本地 deepseek-harness 继续作为 Studio 布局、密度与交互形态金样；Magic Pointer 名称/MP 标记、五个工作区入口、八页设置语义以及真实权限/模型/Agent 能力不复制 DSH 品牌或内容。设计与实施记录：`docs/superpowers/specs/2026-08-17-dsh-studio-fidelity-design.md`、`docs/superpowers/plans/2026-08-17-dsh-studio-fidelity.md`。
+- [x] 左栏由「整块搜索框 + 导航/会话共用滚动区」改成 DSH WorkspaceBrowser 结构：固定 MP 导航、36px 最近对话头、点击展开/清除/Escape 收起的内联搜索、单独滚动列表座、既有 32px StateDot 会话行与稳定设置底栏。
+- [x] ConversationRoot 修正两处可见错误：StatsLine 成为 InputBar 卡片下方 footer；来源标签改为可收缩且文字自身 ellipsis，900px 窄窗长标题/长来源不再互相覆盖。统计仍只取真实轮数/步骤数，不伪造 token、TTFT 或上下文占用。
+- [x] SettingsRoot 保留真实设置模型、保存确认、失败回滚和主题切换，仅重组表现：DSH 16/24 页头、14/22 描述、hairline 行与一页一组原位 disclosure 卡；首组默认展开，组头按钮带稳定 id 与 `aria-expanded`，其余组就地开合。
+- [x] 测试先行：新增契约先在旧 StatsLine 顺序上失败，再完成实现；fresh 验证 Python **1286 passed**、Node **147 passed / 100 源文件**、五套 typecheck、ESLint 0。离屏截图 `data/runtime/dsh-fidelity-{chat,settings}-1.0.7.png` 和 `dsh-fidelity-chat-narrow-1.0.7.png` 已人工审看，窄窗 capture `console_errors=0`。
+- [x] 本机交付：`npm run sync` 再跑全门后构建 `release/Magic-Pointer-1.0.7-x64.exe`，静默安装、同步 secrets、重启；安装目录 `resources/app/package.json` 版本核对为 **1.0.7**。
+- [ ] 诚实边界：本批只收口 Studio；Stage/Companion 不在范围内。截图验证版式与 Chromium 渲染，不代替真实多应用手势/设置持久化人工验收；StatsLine 更丰富的 token/时延组等待真实数据源。
+
+### 2026-08-18：Sovereign Agent 后端地基第一批与安装版交付（1.0.9）
+
+- [x] **方向重新裁决**：目标是完整自有 Agent，不是纯外设、Hermes 后端或整体 fork。Hermes/Pi 作为持续对照与资产语义来源，认知循环、确定性边界、状态与产品体验由 Magic Pointer 自己持有。最新蓝图为 `docs/research/2026-08-17-magic-pointer-sovereign-agent-backend-blueprint.md`，并与前期综述、审议文档相互链接；实现顺序单列于 `docs/superpowers/plans/2026-08-17-perception-input-artifact-foundation.md`。
+- [x] **结构化感知从串行回落改为并发证据 Broker**：匹配适配器同时执行，完成顺序不参与裁决；复用 Evidence 契约输出 ok/degraded/empty_confirmed/busy/timeout/unsupported/denied/error 八态，完整保留 observations、耗时与错误，显式产出 content_disagreement；容器窗口名不再压过真实内容，干净 ok 证据可压过更高优先级的 degraded partial。
+- [x] **InputArtifact v1 成为感知到 Agent loop 的边界对象**：手势输入必须绑定已提交 FrameLease；公开投影只给 GUI/CLI 可解释信息（目标、来源徽标、置信度、冲突、预览），模型投影不重复用户指令、不泄露原始 UIA/DOM 树和本地附件路径，并使用 origin=data 硬围栏。长文本有显式窗口说明；终端输入同时携带选中锚点与 8,000 字符内错误窗口。
+- [x] **生产链已消费新契约**：`selection_bridge._loop_router` 将纯 command 放指令通道、InputArtifact 放 `evidence_input` 数据通道，并把公开 artifact 回传 GUI/CLI；后续像素证据追加不会抹掉结构化 observations/conflicts/readState。
+- [x] **TDD 与交付**：并发/八态/冲突/反容器、FrameLease、模型投影、围栏、显式截断、终端窗口与 loop 接线均先观察失败再实现。fresh 全门：Python **1302 passed**；Node **151 passed / 104 源文件**；五套 typecheck 通过。NSIS 生成成功；同步安装阶段实测发现 PowerShell `Copy-Item` 在 269 字符 Torch 源路径失败，新增失败契约后改为 Robocopy `/E`（不 purge，退出码 ≥8 才失败），重跑完整 `npm run sync` 返回 0；安装目录版本为 **1.0.9**、超长路径存在、应用已重启。
+- [ ] **下一批明确边界**：并发 Broker 当前只收束结构化适配器；Explorer、SurfaceAdapter、OCR、Vision 仍需纳入一次 fan-out/fuse，且 SurfaceAdapter 仍有按手势启动成本。InteractionLedger 仍未接 Agent loop，session 没有 durable operation program counter/effect sandwich，旧 `_bridge_evidence_block` 只剩测试调用但尚未删除。这些不得被本节冒充为完成。
+
+### 2026-08-18：Run Kernel、durable Inbox 与唯一账本投影交付（1.0.10）
+
+- [x] **EventSession 继续是唯一 durable truth**：新增 `app/run_kernel` 只承载 frozen schema 与纯投影，不拥有第二套持久化；既有 hash-chained JSONL、跨进程文件锁、turn lease、surface projection 与 repair 继续由 `EventSession` 统一负责。
+- [x] **Effect sandwich 进入真实 tool loop**：scheduler 给出 started 后、物理执行体运行前写 `operation/prepared`（operationId/callId/step/effect/dispatched）；执行完成写单一 `operation/settled`（outcome/failureType/usedBackend/latency/message），settlement 本身即 TOOL surface，新生产执行不再写 `tool/call + tool/result` 双形状。旧 `tool/call` 只保留历史日志 repair 读取。
+- [x] **恢复语义由 effect 确定**：未 dispatch 为 not_started/safe replay；未结算 read 可重放；reversible_write 必须 verify-before-retry；local irreversible/external send/destructive/purchase 永不盲重放。普通异常、取消后外部状态未知与成功结算不再混成一个“工具失败”。
+- [x] **Inbox 跨进程且消费原子化**：`inbox/message` 持久化 next-step/next-turn；`inbox/consumed` 用一次 `append_many` 同时标记已领取并把 instruction-origin USER 消息加入模型 surface。两个 store handle 并发 claim 只有一个成功；旧进程内 Inbox 在 loop 边界先落盘再 claim。新增并打包 `scripts/agent_session_bridge.py` 的有界 put/pending API。
+- [x] **InteractionLedger 改成 session projection**：每个 loop turn 在 `turn/start` 后写 `interaction/start`；投影真实 model usage/轮数、request→response 时延、tool latency/backend、look、终态、egress operation、app/evidence/confidence/InputArtifact id。open turn 的 succeeded/ended/e2e 保持 null；selection 与 conversation 返回同一公开账单，生产没有 `InteractionLedger.save()` caller。
+- [x] **TDD 与安装交付**：operation 执行前可见、settlement 单 surface、并发不双吃、next-step/next-turn 续跑、bridge 错误语义、ledger token/终态/感知身份与 package allowlist 均有回归。fresh 全门：Python **1313 passed**；Node **151 passed / 104 源文件**；五套 typecheck 与 ESLint 通过。`npm run sync` 再跑同套门、构建 `Magic-Pointer-1.0.10-x64.exe`、静默安装并重启；安装目录版本 **1.0.10**，run_kernel/session bridge/InputArtifact/ledger projection 均独立核对存在。
+- [ ] **仍未闭合**：Electron/Studio 尚未提供运行中 steer 控件，账单字段虽已随 bridge 返回但未做完整可视化；crash repair 会按风险补结算并关闭中断 turn，尚不能从 program counter 续跑原 loop；DraftArtifact revision、ask-user UI 跨进程往返、Explorer/SurfaceAdapter/OCR/Vision 同一次 fan-out/fuse 仍是后续。完整自有 Agent 产品方向不变，本节只是第二块可测地基。
