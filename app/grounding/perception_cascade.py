@@ -1,66 +1,22 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
 
-from app.adapters.base import AdapterReadContext
+from app.perception.broker import (
+    ConcurrentPerceptionBroker,
+    PerceptionBrokerResult,
+    context_has_usable_structure,
+    perception_layer,
+)
 
 
 _PIXEL_LAYERS = frozenset({"ocr", "screen_region", "vision"})
-_MEANINGFUL_ARTIFACT_KEYS = frozenset({
-    "accessible_name",
-    "address",
-    "automation_id",
-    "cell",
-    "control_type",
-    "css_selector",
-    "dom_selector",
-    "element_name",
-    "node",
-    "object",
-    "range",
-    "role",
-    "rows",
-    "selection_rectangles",
-    "value",
-})
 _DEFAULT_PRIORITIES = {
     "native_app": 10,
     "dom": 20,
     "uia": 30,
     "ax": 30,
 }
-
-
-def perception_layer(adapter: Any, context: AdapterReadContext | None = None) -> str:
-    explicit = str(getattr(adapter, "perception_layer", "") or "").strip().casefold()
-    if explicit:
-        return explicit[:40]
-    value = " ".join((
-        str(getattr(adapter, "name", "") or ""),
-        str(getattr(context, "adapter", "") or ""),
-        str(getattr(context, "method", "") or ""),
-    )).casefold()
-    if "dom" in value or "cdp" in value or "playwright" in value:
-        return "dom"
-    if "uia" in value or "automation" in value or "textpattern" in value:
-        return "uia"
-    if "ax" in value or "accessibility" in value:
-        return "ax"
-    return "native_app"
-
-
-def context_has_usable_structure(context: AdapterReadContext | None) -> bool:
-    if context is None or context.error:
-        return False
-    if str(context.content or "").strip():
-        return True
-    artifacts = dict(context.artifacts or {})
-    for key in _MEANINGFUL_ARTIFACT_KEYS:
-        value = artifacts.get(key)
-        if value not in (None, "", [], {}, ()):
-            return True
-    return False
 
 
 def _attempt(
@@ -80,10 +36,7 @@ def _attempt(
     }
 
 
-@dataclass(frozen=True)
-class StructuredPerceptionResult:
-    context: AdapterReadContext | None
-    trace: dict[str, Any]
+StructuredPerceptionResult = PerceptionBrokerResult
 
 
 def _matching_adapters(registry: Any, window: dict[str, Any]) -> list[Any]:
@@ -109,70 +62,8 @@ def resolve_structured_perception(
     registry: Any,
     **kwargs: Any,
 ) -> StructuredPerceptionResult:
-    attempts: list[dict[str, str]] = []
-    best_empty: AdapterReadContext | None = None
     candidates = _matching_adapters(registry, window)
-    for adapter in candidates:
-        layer = perception_layer(adapter)
-        adapter_name = str(getattr(adapter, "name", "") or "unknown")
-        try:
-            context = adapter.read_context(window, **kwargs)
-        except Exception:
-            attempts.append(_attempt(
-                layer=layer,
-                adapter=adapter_name,
-                method="unknown",
-                status="error",
-                reason="adapter_exception",
-            ))
-            continue
-        method = str(context.method or "unknown")
-        resolved_layer = perception_layer(adapter, context)
-        if context_has_usable_structure(context):
-            attempts.append(_attempt(
-                layer=resolved_layer,
-                adapter=adapter_name,
-                method=method,
-                status="succeeded",
-                reason="structured_context_available",
-            ))
-            return StructuredPerceptionResult(context, {
-                "schemaVersion": 1,
-                "selectedLayer": resolved_layer,
-                "selectedAdapter": adapter_name,
-                "selectedMethod": method,
-                "pixelFallbackUsed": False,
-                "fallbackReason": None,
-                "policyMode": None,
-                "attempts": attempts,
-            })
-        if best_empty is None:
-            best_empty = context
-        attempts.append(_attempt(
-            layer=resolved_layer,
-            adapter=adapter_name,
-            method=method,
-            status="error" if context.error else "empty",
-            reason="adapter_error" if context.error else "no_usable_structure",
-        ))
-    if not candidates:
-        attempts.append(_attempt(
-            layer="structured",
-            adapter="registry",
-            method="none",
-            status="unavailable",
-            reason="no_matching_adapter",
-        ))
-    return StructuredPerceptionResult(best_empty, {
-        "schemaVersion": 1,
-        "selectedLayer": None,
-        "selectedAdapter": None,
-        "selectedMethod": None,
-        "pixelFallbackUsed": False,
-        "fallbackReason": "structured_context_unavailable",
-        "policyMode": None,
-        "attempts": attempts,
-    })
+    return ConcurrentPerceptionBroker().resolve(window, candidates, **kwargs)
 
 
 def append_perception_attempt(
@@ -194,6 +85,18 @@ def append_perception_attempt(
         "pixelFallbackUsed": trace.get("pixelFallbackUsed") is True,
         "fallbackReason": trace.get("fallbackReason"),
         "policyMode": policy_mode if policy_mode is not None else trace.get("policyMode"),
+        "readState": trace.get("readState"),
+        "elapsedMs": trace.get("elapsedMs"),
+        "observations": [
+            dict(item)
+            for item in list(trace.get("observations") or [])[:12]
+            if isinstance(item, dict)
+        ],
+        "conflicts": [
+            dict(item)
+            for item in list(trace.get("conflicts") or [])[:8]
+            if isinstance(item, dict)
+        ],
         "attempts": [dict(item) for item in list(trace.get("attempts") or [])[:11]],
     }
     value["attempts"].append(_attempt(
@@ -208,6 +111,7 @@ def append_perception_attempt(
         value["selectedAdapter"] = str(adapter or "unknown")[:80]
         value["selectedMethod"] = str(method or "unknown")[:120]
         value["pixelFallbackUsed"] = str(layer or "").casefold() in _PIXEL_LAYERS
+        value["readState"] = "resolved"
         if value["pixelFallbackUsed"]:
             value["fallbackReason"] = str(reason or "structured_context_unavailable")[:120]
     return value
