@@ -765,15 +765,6 @@ class EventSession:
             for call in calls:
                 if call["resolved"]:
                     continue
-                content = _TOOL_OUTCOME_UNKNOWN if call["started"] else _TOOL_NOT_STARTED
-                repair_message = AgentMessage(
-                    role=Role.TOOL,
-                    content=content,
-                    tool_call_id=call["id"],
-                    name=call["name"],
-                    is_error=True,
-                    origin=ORIGIN_DATA,
-                )
                 operation = next(
                     (
                         item
@@ -783,6 +774,21 @@ class EventSession:
                         and item.settled_seq is None
                     ),
                     None,
+                )
+                # The prose the model reads and the outcome we persist must
+                # come from the same fact. A prepared-but-never-dispatched call
+                # is safe to replay; telling the model to verify external state
+                # first would make it refuse a retry the record permits.
+                dispatched = (
+                    operation.dispatched if operation is not None else call["started"]
+                )
+                repair_message = AgentMessage(
+                    role=Role.TOOL,
+                    content=_TOOL_OUTCOME_UNKNOWN if dispatched else _TOOL_NOT_STARTED,
+                    tool_call_id=call["id"],
+                    name=call["name"],
+                    is_error=True,
+                    origin=ORIGIN_DATA,
                 )
                 if operation is None:
                     self.append_message(repair_message)

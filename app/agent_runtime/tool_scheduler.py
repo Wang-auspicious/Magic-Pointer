@@ -43,11 +43,19 @@ class ScheduledCallStarted:
 
 @dataclass(frozen=True, slots=True)
 class ScheduledCallCommitted:
-    """One result ready to append in the model's original call order."""
+    """One result ready to append in the model's original call order.
+
+    ``outcome_known`` is false only when the body was already dispatched and
+    cancellation stole its result, so the external world may have changed in a
+    way this result does not describe. The scheduler is the only layer that can
+    observe this, so it states it here rather than leaving callers to infer it
+    from ``result.value`` prose.
+    """
 
     call: ToolCall
     result: ToolResult
     dispatched: bool
+    outcome_known: bool = True
 
 
 ToolScheduleEvent = ScheduledCallStarted | ScheduledCallCommitted
@@ -97,6 +105,7 @@ def schedule_tool_calls(
                     first,
                     _cancelled_after_dispatch(first),
                     dispatched=True,
+                    outcome_known=False,
                 )
                 cursor += 1
                 yield from _skipped_events(planned[cursor:])
@@ -137,7 +146,7 @@ def _parallel_group(
     """Run the next live parallel group and return its next unstarted index."""
     next_to_start = start
     next_to_commit = start
-    settled: dict[int, tuple[ToolResult, bool]] = {}
+    settled: dict[int, ScheduledCallCommitted] = {}
     in_flight: dict[Future[ToolResult], tuple[int, frozenset[str]]] = {}
     active_keys: set[str] = set()
     cancelled = False
@@ -174,18 +183,23 @@ def _parallel_group(
                 index, keys = in_flight.pop(future)
                 active_keys.difference_update(keys)
                 call = calls[index]
+                outcome_known = True
                 try:
                     result = future.result()
                 except CancelledError as exc:
                     cancelled = True
                     cancellation_error = cancellation_error or exc
                     result = _cancelled_after_dispatch(call)
-                settled[index] = (result, True)
+                    outcome_known = False
+                settled[index] = ScheduledCallCommitted(
+                    call,
+                    result,
+                    dispatched=True,
+                    outcome_known=outcome_known,
+                )
 
             while next_to_commit in settled:
-                result, dispatched = settled.pop(next_to_commit)
-                call = calls[next_to_commit]
-                yield ScheduledCallCommitted(call, result, dispatched=dispatched)
+                yield settled.pop(next_to_commit)
                 next_to_commit += 1
 
             if is_cancelled():
@@ -196,9 +210,7 @@ def _parallel_group(
         # an internal scheduler error, which future.result() deliberately
         # propagated instead of fabricating a model-visible result.
         while next_to_commit in settled:
-            result, dispatched = settled.pop(next_to_commit)
-            call = calls[next_to_commit]
-            yield ScheduledCallCommitted(call, result, dispatched=dispatched)
+            yield settled.pop(next_to_commit)
             next_to_commit += 1
 
     return next_to_start, cancelled, cancellation_error

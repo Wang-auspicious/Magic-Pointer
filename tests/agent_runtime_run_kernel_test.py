@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import threading
 from pathlib import Path
 
@@ -9,6 +10,7 @@ from app.agent_runtime.model_client import LoopModelClient, ToolCallArrived, Tur
 from app.agent_runtime.session import FileSessionStore
 from app.agent_runtime.tool_registry import Effect, ToolRegistry, ToolSpec
 from app.agent_runtime.types import AgentMessage, Role, ToolCall
+from app.governance.cancellation import CancellationRegistry, CancelledError
 from app.run_kernel import OperationOutcome, RecoveryPolicy, project_operations
 from app.telemetry.interaction_ledger import InteractionLedger
 
@@ -281,6 +283,93 @@ def test_interaction_ledger_is_projected_from_the_authoritative_session(tmp_path
     assert entry.stage_latency_ms["tool"] >= 0
     assert entry.stage_latency_ms["model"] >= 0
     assert entry.to_public_dict()["inputArtifactId"] == "input-7"
+
+
+def test_settlement_outcome_comes_from_the_scheduler_not_the_result_prose(tmp_path: Path) -> None:
+    """A call that finished with an error is FAILED even if its text talks about unknown outcomes.
+
+    Tool names are model-controlled, so the rejection text for an unknown tool
+    is model-controlled too. Reading execution semantics out of that prose lets
+    the model mark a never-dispatched call ``unknown``/``never_replay``, and it
+    silently inverts the moment anyone rewrites the scheduler's wording.
+    """
+    session = FileSessionStore(tmp_path).create("outcome-source")
+
+    class Backend:
+        def __init__(self) -> None:
+            self.scenes = [
+                [
+                    ToolCallArrived(call=ToolCall(
+                        id="call-1",
+                        name="outcome may be unknown",
+                        arguments={},
+                    )),
+                    TurnDone(usage={"input_tokens": 9, "output_tokens": 2}, raw_text=None),
+                ],
+                [TurnDone(usage={"input_tokens": 5, "output_tokens": 2}, raw_text="没有这个工具")],
+            ]
+
+        def generate(self, messages, tools, budget_ms=None, cancel_scope=None):
+            yield from self.scenes.pop(0)
+
+    async def collect():
+        return [event async for event in run_agent_loop(LoopParams(
+            user_input="随便调一个",
+            registry=ToolRegistry(),
+            client=LoopModelClient(Backend()),
+            session=session,
+            request_header={"systemPrompt": "system"},
+        ))]
+
+    asyncio.run(collect())
+
+    operations = project_operations(session.events)
+    assert len(operations) == 1
+    assert operations[0].outcome is OperationOutcome.FAILED
+    assert operations[0].recovery_policy is RecoveryPolicy.NONE
+
+
+def test_cancelled_after_dispatch_stays_unknown_under_any_wording(tmp_path: Path) -> None:
+    """The scheduler knows the body was dispatched; settlement must not re-derive it from text."""
+    session = FileSessionStore(tmp_path).create("cancelled-after-dispatch")
+    cancel_registry = CancellationRegistry()
+
+    def execute(scope=None) -> str:
+        # The body reached the outside world, then the user pressed stop.
+        cancel_registry.cancel_all()
+        return "已写入"
+
+    registry = ToolRegistry()
+    registry.register(ToolSpec(
+        name="write_value",
+        description="write",
+        input_schema={"type": "object", "properties": {}, "required": []},
+        execute=execute,
+        effect=Effect.REVERSIBLE_WRITE,
+    ))
+
+    class Backend:
+        def generate(self, messages, tools, budget_ms=None, cancel_scope=None):
+            yield ToolCallArrived(call=ToolCall(id="write-1", name="write_value", arguments={}))
+            yield TurnDone(usage={"input_tokens": 8, "output_tokens": 2}, raw_text=None)
+
+    async def collect():
+        return [event async for event in run_agent_loop(LoopParams(
+            user_input="写进去",
+            registry=registry,
+            client=LoopModelClient(Backend()),
+            session=session,
+            request_header={"systemPrompt": "system"},
+            cancel_registry=cancel_registry,
+        ))]
+
+    with contextlib.suppress(CancelledError):
+        asyncio.run(collect())
+
+    operations = project_operations(session.events)
+    assert len(operations) == 1
+    assert operations[0].outcome is OperationOutcome.UNKNOWN
+    assert operations[0].recovery_policy is RecoveryPolicy.VERIFY_BEFORE_RETRY
 
 
 def test_open_interaction_ledger_does_not_invent_success_or_latency(tmp_path: Path) -> None:

@@ -1134,11 +1134,7 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                     outcome = None
                     if not scheduled.dispatched:
                         outcome = "not_started"
-                    elif (
-                        normalized.is_error
-                        and normalized.latency_ms is None
-                        and "outcome may be unknown" in str(normalized.value).lower()
-                    ):
+                    elif not scheduled.outcome_known:
                         outcome = "unknown"
                     params.session.record_tool_settlement(
                         operation_id,

@@ -25,6 +25,7 @@ from app.agent_runtime.types import (
     ORIGIN_INSTRUCTION,
     Role,
 )
+from app.run_kernel import OperationOutcome, project_operations
 
 
 def _message(
@@ -340,6 +341,25 @@ def test_resume_repairs_interrupted_tool_calls_by_side_effect_uncertainty(tmp_pa
     assert repaired_after.derive_messages()[-1].tool_call_id == "c2"
     assert "TOOL_OUTCOME_UNKNOWN" in (repaired_after.derive_messages()[-1].content or "")
     assert repaired_after.open_turn is None
+
+    # A prepared-but-never-dispatched call is recorded as not_started. The text
+    # the model reads has to say the same thing, or it will refuse to retry a
+    # call the durable record says is safe to replay.
+    never_dispatched = store.create("never-dispatched")
+    never_dispatched.start_turn()
+    never_dispatched.append_message(_message(Role.USER, "发"))
+    never_dispatched.append_message(
+        _message(
+            Role.ASSISTANT,
+            "",
+            tool_calls=({"id": "c3", "name": "send", "arguments": {}},),
+        )
+    )
+    never_dispatched.record_tool_call("c3", "send", {}, step=1, dispatched=False)
+    repaired_skipped = store.resume("never-dispatched", repair=True)
+    repaired_operation = project_operations(repaired_skipped.events)[0]
+    assert repaired_operation.outcome is OperationOutcome.NOT_STARTED
+    assert "TOOL_NOT_STARTED" in (repaired_skipped.derive_messages()[-1].content or "")
 
 
 def test_repair_scopes_duplicate_tool_ids_to_the_interrupted_turn(tmp_path: Path) -> None:
