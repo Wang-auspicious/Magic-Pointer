@@ -25,7 +25,8 @@ from app.agent_runtime.types import (
     ORIGIN_INSTRUCTION,
     Role,
 )
-from app.run_kernel import OperationOutcome, project_operations
+from app.agent_runtime.tool_registry import Effect
+from app.run_kernel import OperationOutcome, RecoveryPolicy, project_operations
 
 
 def _message(
@@ -360,6 +361,51 @@ def test_resume_repairs_interrupted_tool_calls_by_side_effect_uncertainty(tmp_pa
     repaired_operation = project_operations(repaired_skipped.events)[0]
     assert repaired_operation.outcome is OperationOutcome.NOT_STARTED
     assert "TOOL_NOT_STARTED" in (repaired_skipped.derive_messages()[-1].content or "")
+
+
+def test_repair_tells_the_model_what_each_interrupted_effect_allows(tmp_path: Path) -> None:
+    """The recovery policy has to reach the model, not just the projection.
+
+    An interrupted read is safe to redo, an interrupted reversible write must be
+    verified first, and an interrupted external send must never be replayed
+    blindly. Handing all three the same sentence throws that distinction away at
+    exactly the moment it decides what happens next.
+    """
+    store = FileSessionStore(tmp_path)
+    session = store.create("repair-guidance")
+    session.start_turn()
+    session.append_message(_message(Role.USER, "做三件事"))
+    session.append_message(_message(
+        Role.ASSISTANT,
+        "",
+        tool_calls=(
+            {"id": "r1", "name": "read_value", "arguments": {}},
+            {"id": "w1", "name": "write_value", "arguments": {}},
+            {"id": "s1", "name": "send_message", "arguments": {}},
+        ),
+    ))
+    session.record_tool_call("r1", "read_value", {}, step=1, effect=Effect.READ)
+    session.record_tool_call("w1", "write_value", {}, step=1, effect=Effect.REVERSIBLE_WRITE)
+    session.record_tool_call("s1", "send_message", {}, step=1, effect=Effect.EXTERNAL_SEND)
+
+    repaired = store.resume("repair-guidance", repair=True)
+
+    guidance = {
+        message.tool_call_id: message.content or ""
+        for message in repaired.derive_messages()
+        if message.role is Role.TOOL
+    }
+    policies = {
+        operation.call_id: operation.recovery_policy
+        for operation in project_operations(repaired.events)
+    }
+    assert policies["r1"] is RecoveryPolicy.SAFE_REPLAY
+    assert policies["w1"] is RecoveryPolicy.VERIFY_BEFORE_RETRY
+    assert policies["s1"] is RecoveryPolicy.NEVER_REPLAY
+    assert len({guidance["r1"], guidance["w1"], guidance["s1"]}) == 3
+    assert "可以直接重做" in guidance["r1"]
+    assert "先读回" in guidance["w1"]
+    assert "不要重试" in guidance["s1"]
 
 
 def test_repair_scopes_duplicate_tool_ids_to_the_interrupted_turn(tmp_path: Path) -> None:

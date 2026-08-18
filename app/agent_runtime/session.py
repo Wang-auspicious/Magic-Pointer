@@ -30,7 +30,7 @@ from typing import Any, Iterator, Mapping, Sequence
 
 from app.agent_runtime.tool_registry import Effect
 from app.agent_runtime.types import AgentMessage, ORIGIN_DATA, ORIGIN_INSTRUCTION, Role
-from app.run_kernel import pending_inbox, project_operations
+from app.run_kernel import RecoveryPolicy, pending_inbox, project_operations
 
 __all__ = [
     "EventSession",
@@ -55,9 +55,20 @@ _TOOL_NOT_STARTED = (
 _TOOL_OUTCOME_UNKNOWN = (
     "TOOL_OUTCOME_UNKNOWN: The tool call was interrupted after it was "
     "recorded, but no result was durably recorded. Its outcome is unknown. "
-    "Retry only when the operation is read-only or idempotent; otherwise "
-    "verify external state or ask the user first."
 )
+# What the model may do next depends on what the interrupted step could have
+# changed, so the recovery policy is stated instead of one sentence that has to
+# cover a re-read and an irreversible send at the same time.
+_REPAIR_GUIDANCE = {
+    RecoveryPolicy.SAFE_REPLAY: "这一步只读，没有外部副作用，可以直接重做。",
+    RecoveryPolicy.VERIFY_BEFORE_RETRY: (
+        "这一步会改写状态但可撤销：先读回目标确认它是否已经生效，再决定要不要重试。"
+    ),
+    RecoveryPolicy.NEVER_REPLAY: (
+        "这一步可能已经对外产生不可撤销的效果：不要重试；"
+        "先核验外部状态，或向用户确认后再行动。"
+    ),
+}
 
 
 @contextmanager
@@ -782,9 +793,18 @@ class EventSession:
                 dispatched = (
                     operation.dispatched if operation is not None else call["started"]
                 )
+                if not dispatched:
+                    content = _TOOL_NOT_STARTED
+                else:
+                    policy = (
+                        operation.recovery_policy
+                        if operation is not None
+                        else RecoveryPolicy.NEVER_REPLAY
+                    )
+                    content = _TOOL_OUTCOME_UNKNOWN + _REPAIR_GUIDANCE[policy]
                 repair_message = AgentMessage(
                     role=Role.TOOL,
-                    content=_TOOL_OUTCOME_UNKNOWN if dispatched else _TOOL_NOT_STARTED,
+                    content=content,
                     tool_call_id=call["id"],
                     name=call["name"],
                     is_error=True,
