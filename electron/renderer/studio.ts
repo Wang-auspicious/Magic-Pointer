@@ -1,11 +1,11 @@
 /* Magic Pointer Studio: real data renderers mounted inside the shared Oreo shell. */
 
-/* ---- DSH 主题引导：默认跟随系统（deepseek-harness boot-theme.ts 同款行为），
-   设置里改了主题后由 settings.ts 同步 body[data-ds-dark-theme]。 ---- */
+/* ---- DSH Studio 参考图首屏是 dark：先同步落 dark，避免 Electron 的亮色
+   标题栏/首帧闪过；设置水合后仍由 settings.ts 接管用户主动选择。 ---- */
 (function bootTheme() {
-  const systemDark = matchMedia('(prefers-color-scheme: dark)').matches;
-  document.documentElement.style.colorScheme = systemDark ? 'dark' : 'light';
-  document.body.toggleAttribute('data-ds-dark-theme', systemDark);
+  document.documentElement.style.colorScheme = 'dark';
+  document.documentElement.dataset.theme = 'dark';
+  document.body.setAttribute('data-ds-dark-theme', '');
 })();
 
 /* ---- 确定性哈希 ---- */
@@ -251,28 +251,52 @@ interface TimelineConversation {
   updatedAt?: number;
 }
 
-/* ---- 侧栏：DSH 会话浏览器形状——搜索 + 按时间分组（今天/昨天/近 7 天/更早） ---- */
+/* ---- 侧栏：DSH WorkspaceBrowser——按真实来源工作区分组。 ---- */
 let sidebarQuery = '';
+let sidebarRecentOnly = false;
+const expandedWorkspaces = new Map<string, boolean>();
 interface SidebarGroupModule {
-  groupConversations(rows: readonly { id?: string; title?: string; subtitle?: string; updatedAt?: number }[]): { key: string; label: string; items: { id?: string; title?: string; subtitle?: string; updatedAt?: number }[] }[];
-  filterConversations(rows: readonly { id?: string; title?: string; subtitle?: string; updatedAt?: number }[], query: string): { id?: string; title?: string; subtitle?: string; updatedAt?: number }[];
+  groupConversations(rows: readonly MagicPointerConversation[]): { key: string; label: string; items: MagicPointerConversation[] }[];
+  filterConversations(rows: readonly MagicPointerConversation[], query: string): MagicPointerConversation[];
 }
 const sidebarGroups = (globalThis as { SidebarGroups?: SidebarGroupModule }).SidebarGroups!;
 
-function conversationNode(c: { id?: string; title?: string; subtitle?: string; objectKey?: string }, active?: string): HTMLElement {
+function relativeTimeLabel(at: number, now = Date.now()): string {
+  const diff = Math.max(0, now - at);
+  const MIN = 60 * 1000;
+  const HOUR = 60 * MIN;
+  const DAY = 24 * HOUR;
+  if (diff < MIN) return '刚刚';
+  if (diff < HOUR) return `${Math.floor(diff / MIN)} 分钟`;
+  if (diff < DAY) return `${Math.floor(diff / HOUR)} 小时`;
+  if (diff < 30 * DAY) return `${Math.floor(diff / DAY)} 天`;
+  if (diff < 365 * DAY) return `${Math.floor(diff / (30 * DAY))} 月`;
+  return `${Math.floor(diff / (365 * DAY))} 年`;
+}
+
+function conversationNode(c: { id?: string; title?: string; updatedAt?: number }, active?: string): HTMLElement {
   const row = document.createElement('button');
   row.className = 'side-item' + (c.id === active ? ' is-on' : '');
   row.dataset.open = String(c.id || '');
-  const mark = document.createElement('span');
-  mark.innerHTML = objectMark(c.objectKey || c.id || 'MP');
-  const text = document.createElement('span');
-  text.className = 'side-text';
-  const title = document.createElement('b');
+  row.type = 'button';
+  // DSH 会话行：状态点 + 标题 + 相对时间（hover 换成省略号动作槽）。
+  const dot = document.createElement('span');
+  dot.className = 'side-dot';
+  dot.setAttribute('aria-hidden', 'true');
+  const title = document.createElement('span');
+  title.className = 'side-title';
   title.textContent = String(c.title || '未命名对话');
-  const sub = document.createElement('small');
-  sub.textContent = String(c.subtitle || '');
-  text.append(title, sub);
-  row.append(mark, text);
+  const time = document.createElement('span');
+  time.className = 'side-time';
+  time.textContent = c.updatedAt ? relativeTimeLabel(c.updatedAt) : '';
+  const actions = document.createElement('span');
+  actions.className = 'side-actions';
+  const ellipsis = document.createElement('button');
+  ellipsis.type = 'button';
+  ellipsis.setAttribute('aria-label', '更多');
+  ellipsis.innerHTML = icon('dsh-ellipsis');
+  actions.appendChild(ellipsis);
+  row.append(dot, title, time, actions);
   return row;
 }
 
@@ -280,10 +304,24 @@ async function renderSidebar() {
   const host = document.getElementById('side-convos');
   if (!host) return;
   const list = await Data.conversations();
-  const active = host.querySelector('.is-on')?.getAttribute('data-open') ?? undefined;
+  const active = host.querySelector('.is-on')?.getAttribute('data-open')
+    ?? activeConversationId
+    ?? list[0]?.id
+    ?? undefined;
   const nodes: HTMLElement[] = [];
-  const filtered = sidebarGroups.filterConversations(list, sidebarQuery);
-  const groups = sidebarGroups.groupConversations(filtered);
+  let filtered = sidebarGroups.filterConversations(list, sidebarQuery);
+  if (sidebarRecentOnly) {
+    const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    filtered = filtered.filter((conversation) => Number(conversation.updatedAt) >= cutoff);
+  }
+  const grouped = new Map<string, MagicPointerConversation[]>();
+  for (const conversation of filtered) {
+    const workspace = String(conversation.object?.app || '').trim() || 'Magic Pointer';
+    const rows = grouped.get(workspace) || [];
+    rows.push(conversation as MagicPointerConversation);
+    grouped.set(workspace, rows);
+  }
+  const groups = [...grouped.entries()].map(([label, items]) => ({ key: label, label, items }));
   if (!groups.length) {
     const empty = document.createElement('div');
     empty.className = 'side-empty';
@@ -291,40 +329,136 @@ async function renderSidebar() {
     nodes.push(empty);
   }
   for (const group of groups) {
-    const head = document.createElement('div');
-    head.className = 'side-day';
-    head.textContent = group.label;
-    nodes.push(head);
-    for (const c of group.items) nodes.push(conversationNode(c, active));
+    const project = document.createElement('section');
+    project.className = 'dshw-project';
+    const open = expandedWorkspaces.get(group.key) !== false;
+    project.classList.toggle('is-active', group.items.some((conversation) => conversation.id === active));
+    project.dataset.open = String(open);
+    project.dataset.workspace = group.key;
+    const head = document.createElement('button');
+    head.type = 'button';
+    head.className = 'dshw-project-row';
+    head.dataset.workspaceToggle = group.key;
+    head.setAttribute('aria-expanded', String(open));
+    const folderIcon = open ? 'ic-dsh-folder-open' : 'ic-dsh-folder-close';
+    head.innerHTML = `<span class="dshw-project-slot dshw-project-folder">${icon(folderIcon)}</span><span class="dshw-project-slot dshw-project-chevron">${icon('ic-dsh-triangle-right', open ? 'is-open' : '')}</span><span class="dshw-project-name"></span>`;
+    head.querySelector<HTMLElement>('.dshw-project-name')!.textContent = group.label;
+    const sessions = document.createElement('div');
+    sessions.className = 'dshw-project-sessions';
+    for (const c of group.items) sessions.appendChild(conversationNode(c, active));
+    project.append(head, sessions);
+    nodes.push(project);
   }
   host.replaceChildren(...nodes);
 }
 
 function bindSidebarSearch() {
-  const input = document.getElementById('side-search');
-  input?.addEventListener('input', () => {
-    sidebarQuery = (input as HTMLInputElement).value;
+  const browser = document.querySelector<HTMLElement>('.dshw-workspace-browser');
+  const input = document.getElementById('side-search') as HTMLInputElement | null;
+  const toggle = document.getElementById('side-search-toggle');
+  const clear = document.getElementById('side-search-clear') as HTMLButtonElement | null;
+  if (!browser || !input || !toggle || !clear) return;
+
+  const setExpanded = (expanded: boolean) => {
+    if (expanded) browser.classList.add('is-searching');
+    else browser.classList.remove('is-searching');
+    toggle.setAttribute('aria-expanded', String(expanded));
+    if (expanded) requestAnimationFrame(() => input.focus());
+  };
+  const syncClear = () => { clear.hidden = input.value.length === 0; };
+
+  toggle.addEventListener('click', () => setExpanded(true));
+  clear.addEventListener('click', () => {
+    input.value = '';
+    sidebarQuery = '';
+    syncClear();
+    setExpanded(false);
     void renderSidebar();
+  });
+  input.addEventListener('input', () => {
+    sidebarQuery = input.value;
+    syncClear();
+    void renderSidebar();
+  });
+  input.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    if (input.value) {
+      input.value = '';
+      sidebarQuery = '';
+      syncClear();
+      void renderSidebar();
+    }
+    setExpanded(false);
   });
 }
 bindSidebarSearch();
 
-/* DSH StatsLine（输入框下统计）：只用真实数据 —— 轮数 + 步骤数。
-   没有 token/上下文占用的数据源之前不显示假数字。 */
+document.getElementById('workspace-add')?.addEventListener('click', () => startNewChat());
+document.getElementById('workspace-filter')?.addEventListener('click', (event) => {
+  sidebarRecentOnly = !sidebarRecentOnly;
+  const button = event.currentTarget as HTMLButtonElement;
+  button.classList.toggle('is-on', sidebarRecentOnly);
+  button.setAttribute('aria-pressed', String(sidebarRecentOnly));
+  button.title = sidebarRecentOnly ? '只看近 7 天（已启用）' : '筛选工作区';
+  void renderSidebar();
+});
+
+/* DSH StatsLine：只聚合落盘数据，缺的指标不渲染。 */
 function renderStatsLine(turns: MagicPointerTurn[]) {
   const host = document.getElementById('stats-line');
   if (!host) return;
-  const steps = turns.reduce((n, t) => n + (t.trace || []).length, 0);
+  const steps = turns.reduce((n, t) => n + (t.events || []).length +
+    (t.activities || []).filter((activity) => activity.kind === 'model').length, 0);
+  const modelTimeMs = turns.reduce((total, turn) => total + (turn.activities || [])
+    .filter((activity) => activity.kind === 'model')
+    .reduce((sum, activity) => sum + (Number(activity.latencyMs) || 0), 0), 0);
+  const toolTimeMs = turns.reduce((total, turn) => total + (turn.events || [])
+    .reduce((sum, event) => sum + (Number(event.latencyMs) || 0), 0), 0);
+  const firstTokenValues = turns.flatMap((turn) => (turn.activities || [])
+    .filter((activity) => activity.kind === 'model' && Number(activity.firstTokenMs) > 0)
+    .map((activity) => Number(activity.firstTokenMs)));
+  const inputTokens = turns.reduce((total, turn) => total + (Number(turn.modelUsage?.inputTokens) || 0), 0);
+  const outputTokens = turns.reduce((total, turn) => total + (Number(turn.modelUsage?.outputTokens) || 0), 0);
   const groups: string[] = [];
   if (turns.length > 0) groups.push(`${turns.length} 轮`);
   if (steps > 0) groups.push(`${steps} 步`);
-  host.textContent = groups.join(' · ');
+  if (modelTimeMs > 0) groups.push(`LLM ${(modelTimeMs / 1000).toFixed(2)}s`);
+  if (toolTimeMs > 0) groups.push(`工具 ${(toolTimeMs / 1000).toFixed(2)}s`);
+  if (firstTokenValues.length) groups.push(`TTFT ${Math.round(firstTokenValues.reduce((a, b) => a + b, 0) / firstTokenValues.length)}ms`);
+  if (inputTokens || outputTokens) groups.push(`↑ ${inputTokens} · ↓ ${outputTokens} tokens`);
+  if (outputTokens && modelTimeMs) groups.push(`${(outputTokens / (modelTimeMs / 1000)).toFixed(1)} tok/s`);
+  host.replaceChildren(...groups.flatMap((group, index) => {
+    const item = document.createElement('span');
+    item.textContent = group;
+    if (!index) return [item];
+    const sep = document.createElement('span');
+    sep.className = 'sep';
+    sep.textContent = '|';
+    return [sep, item];
+  }));
 }
 
 /* ---- 打开一条对话 ---- */
 let activeConversationId: string | null = null;
+let activeConversationTab: 'chat' | 'trajectory' = 'chat';
 /* cardId → DSH 回合节点：后台任务补丁就地换节点，不重建整条流 */
 const dshCardNodes = new Map<string, HTMLElement>();
+
+function setConversationTab(tab: 'chat' | 'trajectory') {
+  activeConversationTab = tab;
+  const stream = document.getElementById('stream');
+  const trajectory = document.getElementById('trajectory');
+  const scrollbody = document.querySelector<HTMLElement>('.dshw-scrollbody');
+  if (stream) stream.hidden = tab !== 'chat';
+  if (trajectory) trajectory.hidden = tab !== 'trajectory';
+  scrollbody?.classList.toggle('is-trajectory', tab === 'trajectory');
+  document.querySelectorAll<HTMLElement>('[data-conversation-tab]').forEach((button) => {
+    const selected = button.dataset.conversationTab === tab;
+    button.classList.toggle('is-on', selected);
+    button.setAttribute('aria-selected', String(selected));
+  });
+}
 
 async function openConversation(id: string) {
   const c = await Data.conversation(id);
@@ -336,27 +470,31 @@ async function openConversation(id: string) {
 
   const head = document.getElementById('chat-title');
   if (head) head.textContent = String(c.title);
-  const org = document.getElementById('chat-origin');
-  const orgText = document.getElementById('chat-origin-text');
+  const preview = document.getElementById('chat-source-preview');
+  const sourceThumb = document.getElementById('chat-source-thumb') as HTMLImageElement | null;
+  const contextTagLabel = document.getElementById('mp-context-tag-label');
   const peek = document.getElementById('chat-peek');
   const peekImage = document.getElementById('peek-image') as HTMLImageElement | null;
   const peekLabel = document.getElementById('peek-label');
-  if (org && orgText) {
-    org.hidden = false;
-    orgText.textContent = [c.object?.app, c.object?.windowTitle, c.object?.label]
-      .filter(Boolean).join(' · ') || '当前选区';
-  }
-  if (peek && peekImage) {
+  if (contextTagLabel) contextTagLabel.textContent = String(c.object?.app || 'Magic Pointer');
+  if (preview && sourceThumb && peek && peekImage) {
     const imgPath = c.object?.annotatedPath || '';
     if (imgPath) {
       // 划线时标注过的区域截图：主进程把本地路径经 IPC 给出来，渲染层转成
       // file:// 预览。没有这张图就整个藏掉，绝不放一张裂图。
-      peekImage.onerror = () => { peek.hidden = true; };
-      peekImage.src = 'file:///' + String(imgPath).replace(/\\/g, '/');
+      const src = 'file:///' + String(imgPath).replace(/\\/g, '/');
+      const hideBrokenPreview = () => { preview.hidden = true; peek.hidden = true; };
+      sourceThumb.onerror = hideBrokenPreview;
+      peekImage.onerror = hideBrokenPreview;
+      sourceThumb.src = src;
+      peekImage.src = src;
+      preview.hidden = false;
       peek.hidden = false;
       if (peekLabel) peekLabel.textContent = c.object?.label || '选区预览';
     } else {
+      preview.hidden = true;
       peek.hidden = true;
+      sourceThumb.removeAttribute('src');
       peekImage.removeAttribute('src');
     }
   }
@@ -368,6 +506,10 @@ async function openConversation(id: string) {
   const turns = c.turns || [];
   if (!turns.length) {
     stream.innerHTML = '<div class="view-empty">这条还没有内容。</div>';
+    renderStatsLine([]);
+    const trajectory = document.getElementById('trajectory');
+    if (trajectory) trajectory.replaceChildren(DshTrajectory.render([]));
+    setConversationTab(activeConversationTab);
     return;
   }
   // 工作室的一轮问答用 DSH 聊天模型渲染（100% 移植 deepseek-harness）：
@@ -384,6 +526,7 @@ async function openConversation(id: string) {
       thinking: t.thinking,
       trace: t.trace,
       events: t.events,
+      activities: t.activities,
       failed: t.failed,
       at: t.at,
     })) host.appendChild(node);
@@ -406,6 +549,9 @@ async function openConversation(id: string) {
   stream.scrollTop = stream.scrollHeight;
   DshChat.bindDelegation(stream);
   renderStatsLine(turns);
+  const trajectory = document.getElementById('trajectory');
+  if (trajectory) trajectory.replaceChildren(DshTrajectory.render(DshTrajectory.project(turns)));
+  setConversationTab(activeConversationTab);
 }
 
 /* 代理卡 → DSH 节点：后台任务补丁（进度/步骤/终态）就地换掉那一轮。 */
@@ -561,6 +707,36 @@ document.addEventListener('click', e => {
     closeSlashMenu();
   }
 
+  const projectToggle = target.closest<HTMLElement>('[data-workspace-toggle]');
+  if (projectToggle) {
+    const key = projectToggle.dataset.workspaceToggle || '';
+    const project = projectToggle.closest<HTMLElement>('.dshw-project');
+    const open = project?.dataset.open !== 'false';
+    expandedWorkspaces.set(key, !open);
+    if (project) project.dataset.open = String(!open);
+    projectToggle.setAttribute('aria-expanded', String(!open));
+    return;
+  }
+
+  const conversationTab = target.closest<HTMLElement>('[data-conversation-tab]');
+  if (conversationTab) {
+    setConversationTab(conversationTab.dataset.conversationTab === 'trajectory' ? 'trajectory' : 'chat');
+    return;
+  }
+
+  const surfaceButton = target.closest<HTMLElement>('#mp-context-tag');
+  const surfaceMenu = document.getElementById('mp-surface-menu-popover');
+  if (surfaceButton && surfaceMenu) {
+    const showMenu = surfaceMenu.hidden;
+    surfaceMenu.hidden = !showMenu;
+    surfaceButton.setAttribute('aria-expanded', String(showMenu));
+    return;
+  }
+  if (surfaceMenu && !surfaceMenu.hidden && !target.closest('#mp-surface-menu')) {
+    surfaceMenu.hidden = true;
+    document.getElementById('mp-context-tag')?.setAttribute('aria-expanded', 'false');
+  }
+
   const open = target.closest<HTMLElement>('[data-open]');
   if (open && open.dataset.open) { openConversation(open.dataset.open); return; }
 
@@ -581,7 +757,12 @@ document.addEventListener('click', e => {
   }
 
   const goto = target.closest<HTMLElement>('[data-goto]');
-  if (goto) { show(goto.dataset.goto || ''); return; }
+  if (goto) {
+    if (surfaceMenu) surfaceMenu.hidden = true;
+    document.getElementById('mp-context-tag')?.setAttribute('aria-expanded', 'false');
+    show(goto.dataset.goto || '');
+    return;
+  }
 
   if (target.closest('[data-open-artifact]')) { openAux(); return; }
   if (target.closest('#aux-close')) { closeAux(); return; }
@@ -984,6 +1165,50 @@ function bindModelSeat() {
 }
 bindModelSeat();
 
+interface PendingConversation {
+  requestId: string;
+  body: HTMLElement;
+  records: Map<string, Record<string, unknown>>;
+}
+let pendingConversation: PendingConversation | null = null;
+
+function progressKey(record: Record<string, unknown>): string {
+  const phase = String(record.phase || '');
+  const fields = record.fields && typeof record.fields === 'object'
+    ? record.fields as Record<string, unknown> : {};
+  if (phase === 'tool_call' || phase === 'tool_result') return `tool:${String(fields.id || fields.name || '')}`;
+  if (['runtime_boot', 'runtime_ready', 'agent_start'].includes(phase)) return 'runtime';
+  if (['model_request', 'model_first_chunk', 'model_response'].includes(phase)) return `model:${String(fields.turn || '1')}`;
+  return phase || 'progress';
+}
+
+function renderConversationProgress(record: Record<string, unknown>) {
+  if (!pendingConversation) return;
+  pendingConversation.records.set(progressKey(record), record);
+  pendingConversation.body.replaceChildren(
+    ...[...pendingConversation.records.values()]
+      .filter((item) => String(item.phase || '') !== 'total')
+      .map((item) => DshChat.liveActivityNode(item)),
+  );
+  pendingConversation.body.closest('.dshw-scrollbody')?.scrollTo({ top: 1_000_000 });
+}
+
+Data.onConversationProgress((payload) => {
+  if (!pendingConversation || payload.requestId !== pendingConversation.requestId || !payload.record) return;
+  renderConversationProgress(payload.record);
+});
+
+document.getElementById('session-log')?.addEventListener('click', async () => {
+  if (!activeConversationId) return;
+  const button = document.getElementById('session-log') as HTMLButtonElement | null;
+  if (button) button.disabled = true;
+  try {
+    await Data.exportConversation(activeConversationId);
+  } finally {
+    if (button) button.disabled = false;
+  }
+});
+
 document.querySelectorAll('form.dshw-input-form').forEach(form => {
   const ta = form.querySelector<HTMLTextAreaElement>('textarea');
   if (ta) {
@@ -1021,7 +1246,7 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
     pending.setAttribute('data-dsh-time-root', 'true');
     const pendingBody = document.createElement('div');
     pendingBody.className = 'dsh-assistant-body';
-    pendingBody.appendChild(DshChat.turnStatusNode('Thinking'));
+    pendingBody.appendChild(DshChat.liveActivityNode({ phase: 'runtime_boot', fields: {} }));
     pending.appendChild(pendingBody);
     flow.appendChild(pending);
     stream.scrollTop = stream.scrollHeight;
@@ -1031,11 +1256,15 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
     studioComposerBusy = true;
     form.setAttribute('aria-busy', 'true');
     if (submit) submit.disabled = true;
+    const requestId = globalThis.crypto?.randomUUID?.() || `conversation-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    pendingConversation = { requestId, body: pendingBody, records: new Map() };
+    renderConversationProgress({ phase: 'runtime_boot', fields: {} });
     try {
       const response = await Data.sendConversation(
         activeConversationId,
         question,
         composerPreset,
+        requestId,
       );
       if (!response?.ok || !response.conversationId) throw new Error(response?.error || '这次没有答完。');
       activeConversationId = String(response.conversationId);
@@ -1054,6 +1283,7 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
       textarea.value = question;
       fitComposer(textarea);
     } finally {
+      pendingConversation = null;
       studioComposerBusy = false;
       form.removeAttribute('aria-busy');
       if (submit) submit.disabled = false;
@@ -1093,11 +1323,14 @@ async function boot(initialView: string) {
    不新建记录——记录在第一次真的问出去之后才产生。 */
 function startNewChat() {
   activeConversationId = null;
+  activeConversationTab = 'chat';
   document.querySelectorAll('#side-convos .side-item').forEach((n) => n.classList.remove('is-on'));
   const title = document.getElementById('chat-title');
   if (title) title.textContent = '新对话';
-  const org = document.getElementById('chat-origin');
-  if (org) { org.hidden = true; }
+  const preview = document.getElementById('chat-source-preview');
+  if (preview) preview.hidden = true;
+  const contextTagLabel = document.getElementById('mp-context-tag-label');
+  if (contextTagLabel) contextTagLabel.textContent = 'Magic Pointer';
   const peek = document.getElementById('chat-peek');
   if (peek) { peek.hidden = true; }
   const stream = document.getElementById('stream');
@@ -1111,6 +1344,9 @@ function startNewChat() {
            <p class="sub">在 Electron 里运行时，这里显示的是真实记录。</p></div>`;
   }
   renderStatsLine([]);
+  const trajectory = document.getElementById('trajectory');
+  if (trajectory) trajectory.replaceChildren(DshTrajectory.render([]));
+  setConversationTab('chat');
   document.querySelector<HTMLTextAreaElement>('.dshw-input')?.focus();
 }
 

@@ -94,6 +94,47 @@ assert.strictEqual(arts[0].from, '把这三列汇总', '产物要能说清它是
 const forced = store.appendTurn({ conversationId: c2.id, question: '再算一次', answer: '一样。', object: code });
 assert.strictEqual(forced.id, c2.id, '显式给了 conversationId 就不要再按对象猜');
 
+// ---- 工具链事件：Agent 每轮的工具调用要能跟着对话一起落盘并读回 ----
+const tooled = store.appendTurn({
+  newConversation: true,
+  question: '列出进程',
+  answer: '找到了。',
+  events: [
+    { name: 'pwsh', arguments: { command: 'Get-Process' }, result: 'explorer', isError: false,
+      usedBackend: 'subprocess', latencyMs: 82 },
+    { name: 'read', arguments: { path: 'a.txt' }, result: 'boom', isError: true },
+  ],
+  activities: [{ kind: 'model', turn: 1, state: 'done', latencyMs: 625, firstTokenMs: 118 }],
+  trajectory: [
+    { seq: 1, kind: 'message', turn: 1, step: 1, state: 'done', startedAt: 10, completedAt: 635 },
+    { seq: 2, kind: 'tool', turn: 1, callId: 'pwsh-1', name: 'pwsh', state: 'done', startedAt: 20, completedAt: 102 },
+  ],
+  receipts: [{ toolName: 'pwsh', usedBackend: 'subprocess', latencyMs: 82 }],
+  modelUsage: { inputTokens: 120, outputTokens: 30, totalTokens: 150 },
+  timingMs: 910,
+  usedBackend: 'openai-compatible',
+});
+assert.strictEqual(tooled.turns.length, 1);
+assert.strictEqual(tooled.turns[0].events.length, 2, '工具链事件必须随回合持久化');
+assert.strictEqual(tooled.turns[0].events[0].name, 'pwsh');
+assert.strictEqual(tooled.turns[0].events[1].isError, true);
+assert.strictEqual(tooled.turns[0].events[0].latencyMs, 82, 'tool latency must survive persistence');
+assert.strictEqual(tooled.turns[0].events[0].usedBackend, 'subprocess', 'tool backend must survive persistence');
+assert.strictEqual(tooled.turns[0].activities[0].firstTokenMs, 118, 'model lifecycle must survive persistence');
+assert.strictEqual(tooled.turns[0].trajectory[1].callId, 'pwsh-1', 'ordered DSH trajectory records must survive persistence');
+assert.strictEqual(tooled.turns[0].receipts[0].toolName, 'pwsh', 'audit receipts must survive persistence');
+assert.strictEqual(tooled.turns[0].modelUsage.totalTokens, 150, 'real model token usage must survive persistence');
+assert.strictEqual(tooled.turns[0].timingMs, 910, 'real turn time must survive persistence');
+assert.strictEqual(tooled.turns[0].usedBackend, 'openai-compatible', 'model backend must survive persistence');
+const tooledAgain = createConversationStore({ baseDir: dir, now: () => clock }).get(tooled.id);
+assert.strictEqual(tooledAgain.turns[0].events.length, 2, '重开 store 后工具链事件仍在');
+assert.strictEqual(tooledAgain.turns[0].modelUsage.outputTokens, 30, '重开 store 后 token usage 仍在');
+assert.strictEqual(tooledAgain.turns[0].trajectory[0].seq, 1, '重开 store 后 trajectory 顺序仍在');
+
+// 没有 events 的旧回合读回来是空数组，不崩。
+const plain = store.appendTurn({ newConversation: true, question: '普通一问', answer: '普通一答。' });
+assert.ok(Array.isArray(plain.turns[0].events), '无事件回合也应有 events 字段（空数组）');
+
 // 主界面的「新对话」没有屏幕对象；两次点击新对话不能都并进 unknown 那一条。
 const generic1 = store.appendTurn({ newConversation: true, question: '写一封请假邮件', answer: '草稿一。' });
 const generic2 = store.appendTurn({ newConversation: true, question: '列一个采购清单', answer: '清单二。' });

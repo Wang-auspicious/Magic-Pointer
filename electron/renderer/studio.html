@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN" data-theme="light">
+<html lang="zh-CN" data-theme="dark">
 <head>
   <meta charset="utf-8" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data: file:;" />
@@ -32,25 +32,38 @@
           <svg aria-hidden="true"><use href="#ic-dsh-new-chat" /></svg><span class="dshw-new-session-label">新对话</span>
         </button>
 
-        <div class="dshw-side-search">
-          <svg aria-hidden="true"><use href="#ic-dsh-search" /></svg>
-          <input id="side-search" type="search" autocomplete="off" placeholder="搜索对话" aria-label="搜索对话" />
-        </div>
-
-        <nav class="dshw-region" aria-label="主要页面">
-          <button class="dshw-nav-cell is-on" data-goto="chat"><svg><use href="#ic-spark" /></svg><span class="dshw-nav-label">对话</span></button>
-          <button class="dshw-nav-cell" data-goto="stash"><svg><use href="#ic-stash" /></svg><span class="dshw-nav-label">收藏箱</span></button>
-          <button class="dshw-nav-cell" data-goto="timeline"><svg><use href="#ic-timeline" /></svg><span class="dshw-nav-label">时间线</span></button>
-          <button class="dshw-nav-cell" data-goto="memory"><svg><use href="#ic-memory" /></svg><span class="dshw-nav-label">记忆</span></button>
-          <button class="dshw-nav-cell" data-goto="artifacts"><svg><use href="#ic-docs" /></svg><span class="dshw-nav-label">产物</span></button>
-          <div id="side-convos"></div>
-        </nav>
+        <section class="dshw-workspace-browser" aria-label="对话浏览器">
+          <div class="dshw-workspace-header">
+            <span class="dshw-workspace-label">工作区</span>
+            <div class="dshw-workspace-search">
+              <button type="button" class="dshw-workspace-search-button" id="side-search-toggle"
+                aria-label="搜索对话" aria-expanded="false" title="搜索对话">
+                <svg aria-hidden="true"><use href="#ic-dsh-search" /></svg>
+              </button>
+              <input id="side-search" type="search" autocomplete="off" placeholder="搜索对话" aria-label="搜索对话" />
+              <button type="button" class="dshw-workspace-clear" id="side-search-clear"
+                aria-label="清除搜索" title="清除搜索" hidden>
+                <svg aria-hidden="true"><use href="#ic-x" /></svg>
+              </button>
+            </div>
+            <button type="button" class="dshw-workspace-action" id="workspace-filter"
+              aria-label="筛选工作区" title="筛选工作区">
+              <svg aria-hidden="true"><use href="#ic-dsh-personalization" /></svg>
+            </button>
+            <button type="button" class="dshw-workspace-action" id="workspace-add"
+              aria-label="新建对话" title="新建对话">
+              <svg aria-hidden="true"><use href="#ic-dsh-project-add" /></svg>
+            </button>
+          </div>
+          <div class="dshw-session-list-seat">
+            <div id="side-convos"></div>
+          </div>
+        </section>
 
         <div class="dshw-foot">
           <button class="dshw-trigger" data-goto="settings" aria-haspopup="dialog">
-            <svg aria-hidden="true"><use href="#ic-gear" /></svg><span>设置</span>
+            <svg aria-hidden="true"><use href="#ic-dsh-settings" /></svg><span>设置</span>
           </button>
-          <p class="local-status"><span aria-hidden="true"></span>本地运行</p>
         </div>
       </div>
     </aside>
@@ -70,25 +83,55 @@
       <section class="dshw-conversation" id="view-chat">
         <header class="dshw-header">
           <div class="dshw-title-row">
-            <b class="dshw-title" id="chat-title">新对话</b>
-            <span class="dshw-origin" id="chat-origin" tabindex="0" aria-label="查看这次对话的来源">
-              <svg><use href="#ic-eye" /></svg><span id="chat-origin-text">当前选区</span>
-            </span>
-            <span class="dshw-peek" role="tooltip" id="chat-peek" hidden>
-              <span class="peek-top"><svg><use href="#ic-eye" /></svg>来源<em id="peek-label">选区预览</em></span>
-              <img id="peek-image" class="peek-img" alt="划线选区预览" />
-            </span>
+            <div class="dshw-title-cluster">
+              <b class="dshw-title" id="chat-title">新对话</b>
+              <span class="dshw-agent-preset" title="标准模式">
+                <svg class="dshw-agent-preset-icon" width="14" height="14" aria-hidden="true"><use href="#ic-dsh-agent-preset" /></svg><span>标准模式</span>
+              </span>
+            </div>
+            <div class="dshw-header-actions">
+              <div class="dshw-source-preview" id="chat-source-preview" hidden>
+                <button type="button" class="dshw-source-thumb" id="chat-origin"
+                  aria-label="预览划线选区" aria-describedby="chat-peek">
+                  <img id="chat-source-thumb" alt="划线选区缩略图" />
+                </button>
+                <span class="dshw-peek" role="tooltip" id="chat-peek" hidden>
+                  <span class="peek-top"><svg><use href="#ic-eye" /></svg>来源<em id="peek-label">选区预览</em></span>
+                  <img id="peek-image" class="peek-img" alt="划线选区预览" />
+                </span>
+              </div>
+              <div class="dshw-surface" id="mp-surface-menu">
+                <button type="button" class="dshw-origin" id="mp-context-tag" aria-label="上下文与 Magic Pointer 工具"
+                  aria-haspopup="menu" aria-expanded="false">
+                  <span class="dshw-context-dot" aria-hidden="true"></span><span id="mp-context-tag-label">Magic Pointer</span>
+                  <svg class="dshw-origin-chev"><use href="#ic-dsh-chev-down" /></svg>
+                </button>
+                <div class="dshw-surface-menu" id="mp-surface-menu-popover" role="menu" hidden>
+                  <button role="menuitem" data-goto="stash"><svg><use href="#ic-stash" /></svg><span>收藏箱</span></button>
+                  <button role="menuitem" data-goto="timeline"><svg><use href="#ic-timeline" /></svg><span>时间线</span></button>
+                  <button role="menuitem" data-goto="memory"><svg><use href="#ic-memory" /></svg><span>记忆</span></button>
+                  <button role="menuitem" data-goto="artifacts"><svg><use href="#ic-docs" /></svg><span>产物</span></button>
+                </div>
+              </div>
+              <button type="button" class="dshw-session-log" id="session-log">
+                <span>Session log</span><svg aria-hidden="true"><use href="#ic-dsh-download" /></svg>
+              </button>
+            </div>
           </div>
+          <nav class="dshw-conversation-tabs" aria-label="对话视图">
+            <button class="is-on" data-conversation-tab="chat" aria-selected="true">对话</button>
+            <button data-conversation-tab="trajectory" aria-selected="false">轨迹</button>
+          </nav>
         </header>
 
         <div class="dshw-scrollbody">
           <div class="dshw-stream" id="stream">
             <div class="dshw-blank"><p>还没有对话。</p><p class="sub">在屏幕上划过内容，然后直接输入你的要求。</p></div>
           </div>
+          <div class="dshw-trajectory-seat" id="trajectory" hidden></div>
 
           <div class="dshw-composer-seat">
             <div class="dshw-composer-stack">
-              <div class="dshw-stats" id="stats-line" role="status"></div>
               <form class="dshw-input-form" id="composer-form">
                 <div class="dshw-input-root">
                   <div class="dshw-card">
@@ -134,6 +177,7 @@
                       </div>
                     </div>
                   </div>
+                  <div class="dshw-stats" id="stats-line" role="status"></div>
                 </div>
               </form>
             </div>
@@ -212,12 +256,15 @@
   <script src="../studio_shell.js?v=23"></script>
   <script src="card_render.js?v=23"></script>
   <script src="live_cards.js?v=23"></script>
-  <script src="dsh_chat.js?v=23"></script>
+  <script src="dsh_markdown.js?v=24"></script>
+  <script src="dsh_icons.js?v=25"></script>
+  <script src="dsh_chat.js?v=25"></script>
+  <script src="dsh_trajectory.js?v=25"></script>
   <script src="permission_presets.js?v=23"></script>
   <script src="sidebar_groups.js?v=23"></script>
   <script src="data.js?v=23"></script>
   <script src="settings_model.js?v=23"></script>
   <script src="settings.js?v=23"></script>
-  <script src="studio.js?v=23"></script>
+  <script src="studio.js?v=25"></script>
 </body>
 </html>

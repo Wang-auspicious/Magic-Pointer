@@ -35,6 +35,14 @@ interface TurnEntry {
   facts: unknown[];
   artifacts: Artifact[];
   outcome: string;
+  events?: unknown[];
+  thinking?: string;
+  activities: unknown[];
+  trajectory: unknown[];
+  receipts: unknown[];
+  modelUsage: Record<string, number>;
+  timingMs?: number;
+  usedBackend?: string;
 }
 
 interface Conversation {
@@ -60,6 +68,14 @@ interface TurnInput {
   facts?: unknown;
   artifacts?: unknown;
   outcome?: unknown;
+  events?: unknown;
+  thinking?: unknown;
+  activities?: unknown;
+  trajectory?: unknown;
+  receipts?: unknown;
+  modelUsage?: unknown;
+  timingMs?: unknown;
+  usedBackend?: unknown;
 }
 
 interface ConversationStoreOptions {
@@ -194,6 +210,18 @@ function createConversationStore(
       facts: Array.isArray(turn.facts) ? turn.facts.slice(0, 24) : [],
       artifacts: Array.isArray(turn.artifacts) ? (turn.artifacts.slice(0, 12) as Artifact[]) : [],
       outcome: String(turn.outcome || ''),
+      events: Array.isArray(turn.events) ? turn.events.slice(0, 48) : [],
+      thinking: turn.thinking !== undefined ? String(turn.thinking) : undefined,
+      activities: Array.isArray(turn.activities) ? turn.activities.slice(0, 96) : [],
+      trajectory: Array.isArray(turn.trajectory) ? turn.trajectory.slice(0, 256) : [],
+      receipts: Array.isArray(turn.receipts) ? turn.receipts.slice(0, 48) : [],
+      modelUsage: turn.modelUsage && typeof turn.modelUsage === 'object' && !Array.isArray(turn.modelUsage)
+        ? Object.fromEntries(Object.entries(turn.modelUsage as Record<string, unknown>)
+          .filter(([, value]) => Number.isFinite(Number(value)))
+          .map(([key, value]) => [key, Number(value)]))
+        : {},
+      timingMs: Number.isFinite(Number(turn.timingMs)) ? Number(turn.timingMs) : undefined,
+      usedBackend: turn.usedBackend !== undefined ? String(turn.usedBackend) : undefined,
     };
 
     if (target) {

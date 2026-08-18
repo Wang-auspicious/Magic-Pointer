@@ -20,6 +20,13 @@
 
 const DshChat = (() => {
 
+  const markdownRenderer = typeof DshMarkdown !== 'undefined'
+    ? DshMarkdown
+    : (typeof require === 'function' ? require('./dsh_markdown') : null);
+  const exactIcons = typeof DshIcons !== 'undefined'
+    ? DshIcons
+    : (typeof require === 'function' ? require('./dsh_icons') : null);
+
   interface ShimNode {
     tagName: string;
     ns: string | null;
@@ -36,7 +43,6 @@ const DshChat = (() => {
   type DshChild = string | number | ShimNode | Node | null | undefined | false;
 
   const DOC = typeof document !== 'undefined' ? document : null;
-  const SVG_NS = 'http://www.w3.org/2000/svg';
   const ESCAPES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
   const VOID_TAGS = new Set(['img', 'br', 'hr', 'input', 'use']);
 
@@ -96,39 +102,9 @@ const DshChat = (() => {
     return node;
   }
 
-  /* ---- 图标：NS 路径，1.5 描边 24 网格（与本库 icons.ts 同规） ---- */
-  interface IconSpec { viewBox: string; paths: string[]; }
-
-  const ICONS: Record<string, IconSpec> = {
-    chev: { viewBox: '0 0 24 24', paths: ['M6 9.5 12 15l6-5.5'] },
-    copy: { viewBox: '0 0 24 24', paths: ['M8.5 8.5h12v12h-12z', 'M15.5 5.5h-9a3 3 0 0 0-3 3v9'] },
-    check: { viewBox: '0 0 24 24', paths: ['m5 12.5 4.5 4.5L19 7.5'] },
-    search: { viewBox: '0 0 24 24', paths: ['M11 11m-6.5 0a6.5 6.5 0 1 0 13 0a6.5 6.5 0 1 0-13 0', 'M16 16l4 4'] },
-    browse: { viewBox: '0 0 24 24', paths: ['M2.5 13.5c3-4.3 6.2-6.5 9.5-6.5s6.5 2.2 9.5 6.5', 'M12 13m-3 0a3 3 0 1 0 6 0a3 3 0 1 0-6 0'] },
-    terminal: { viewBox: '0 0 24 24', paths: ['M3 4.5h18v15H3z', 'M7.5 10 10 12.2l-2.5 2.2M12.5 15h4'] },
-    edit: { viewBox: '0 0 24 24', paths: ['M15.5 4.5 19 8 9.5 17.5l-4.5 1 1-4.5z', 'M4 21h16'] },
-    code: { viewBox: '0 0 24 24', paths: ['M9 8.5 5 12l4 3.5M15 8.5l4 3.5-4 3.5'] },
-    sparkle: { viewBox: '0 0 24 24', paths: ['M12 3c.4 4.4 4.6 8.6 9 9-4.4.4-8.6 4.6-9 9-.4-4.4-4.6-8.6-9-9 4.4-.4 8.6-4.6 9-9Z'] },
-    think: { viewBox: '0 0 24 24', paths: ['M5.5 13a4.5 4.5 0 0 1 2.1-3.8A4.8 4.8 0 0 1 12.5 6a4.8 4.8 0 0 1 4 2.5A4.5 4.5 0 0 1 17 17h-9.4A4.6 4.6 0 0 1 5.5 13Z', 'M9 19.5h7', 'M10 21.5h5'] },
-  };
-
+  /* Exact fill glyphs from deepseek-harness ui-primitives. */
   function icon(name: string, size: number): DshNode {
-    const spec = ICONS[name];
-    const svg = DOC ? DOC.createElementNS(SVG_NS, 'svg') : shimNode('svg', SVG_NS);
-    svg.setAttribute('width', String(size));
-    svg.setAttribute('height', String(size));
-    svg.setAttribute('viewBox', spec ? spec.viewBox : '0 0 24 24');
-    svg.setAttribute('fill', 'none');
-    svg.setAttribute('stroke', 'currentColor');
-    svg.setAttribute('stroke-width', '1.5');
-    svg.setAttribute('stroke-linecap', 'round');
-    svg.setAttribute('stroke-linejoin', 'round');
-    for (const d of spec ? spec.paths : []) {
-      const path = DOC ? DOC.createElementNS(SVG_NS, 'path') : shimNode('path', SVG_NS);
-      path.setAttribute('d', d);
-      attach(svg, path);
-    }
-    return svg;
+    return exactIcons.node(name, size) as DshNode;
   }
 
   /* ---- 状态点（StateDot：10px 光晕 + 6px 实心核 / 像素追逐） ---- */
@@ -231,14 +207,20 @@ const DshChat = (() => {
   };
 
   const VARIANT_ICONS: Record<ToolVariant, string> = {
-    search: 'search', read: 'browse', bash: 'terminal',
+    search: 'search', read: 'browse', bash: 'api',
     write: 'edit', edit: 'edit', code: 'code', others: 'sparkle',
+  };
+
+  const TOOL_TITLES: Record<string, string> = {
+    pwsh: 'Pwsh',
   };
 
   const TOOL_VARIANTS: Record<string, ToolVariant> = {
     bash: 'bash', pwsh: 'bash', read: 'read', web_fetch: 'read',
     web_search: 'search', grep: 'search', glob: 'search',
     write: 'write', edit: 'edit', run_code: 'code',
+    read_around: 'read', dump_subtree: 'read', get_focused: 'read', list_windows: 'read',
+    find_in_window: 'search', look: 'read', propose: 'code', execute_plan: 'code',
   };
 
   const SUMMARY_KEYS: Record<ToolVariant, readonly string[]> = {
@@ -330,7 +312,7 @@ const DshChat = (() => {
     const errorSummary = state === 'error' && output !== null ? firstLine(output) : null;
     return {
       variant,
-      title: VARIANT_TITLES[variant],
+      title: TOOL_TITLES[name] ?? VARIANT_TITLES[variant],
       summary,
       filePath: deriveFilePath(variant, argsRaw),
       body: deriveBody(variant, argsRaw),
@@ -505,6 +487,7 @@ const DshChat = (() => {
     thinking?: string;
     trace?: Array<string | { label?: string; note?: string; state?: string; name?: string; arguments?: string; result?: string; isError?: boolean }>;
     events?: Array<Record<string, unknown>>;
+    activities?: Array<Record<string, unknown>>;
     failed?: boolean;
     running?: boolean;
     at?: number;
@@ -517,6 +500,16 @@ const DshChat = (() => {
     const bodyHost = h('div', { class: 'dsh-assistant-body' });
 
     if (turn.thinking) attach(bodyHost, thinkNode(turn.thinking, Boolean(turn.running)));
+
+    if (!turn.thinking) {
+      for (const activity of turn.activities || []) {
+        if (activity?.kind !== 'model') continue;
+        const turnNumber = Number(activity.turn) || 1;
+        const latency = Number(activity.latencyMs) || 0;
+        const summary = `模型请求 · 第 ${turnNumber} 轮${latency ? ` · ${(latency / 1000).toFixed(2)}s` : ''}`;
+        attach(bodyHost, thinkNode(summary, activity.state === 'running'));
+      }
+    }
 
     /* 结构化事件优先：{name, arguments, result, isError} → DSH 工具行 */
     const events = Array.isArray(turn.events) ? turn.events : [];
@@ -548,9 +541,7 @@ const DshChat = (() => {
     }
 
     if (turn.answer) {
-      const md = h('div', { class: 'dsh-markdown' });
-      attach(md, turn.answer);
-      attach(bodyHost, md);
+      attach(bodyHost, markdownRenderer.render(turn.answer));
     }
 
     if (turn.failed && !turn.answer) {
@@ -567,6 +558,36 @@ const DshChat = (() => {
     return items;
   }
 
+  function liveActivityNode(record: Record<string, unknown>): DshNode {
+    const phase = String(record.phase || '');
+    const fields = record.fields && typeof record.fields === 'object'
+      ? record.fields as Record<string, unknown> : {};
+    if (phase === 'tool_call' || phase === 'tool_result') {
+      const name = String(fields.name || 'tool');
+      const done = phase === 'tool_result';
+      const detail = done
+        ? [fields.backend && fields.backend !== '-' ? fields.backend : '', fields.latency_ms ? `${fields.latency_ms}ms` : '']
+          .filter(Boolean).join(' · ')
+        : '';
+      return toolRowNode(toolRowModel(name, '', done ? {
+        text: detail,
+        isError: fields.state === 'error',
+      } : undefined));
+    }
+    const labels: Record<string, string> = {
+      runtime_boot: '准备 Agent 运行环境',
+      runtime_ready: 'Agent 运行环境已就绪',
+      agent_start: '开始处理本轮任务',
+      model_request: `模型请求 · 第 ${String(fields.turn || 1)} 轮`,
+      model_first_chunk: '模型开始响应',
+      model_response: '模型响应完成',
+      budget_renewed: '继续执行下一轮',
+      total: '本轮处理完成',
+    };
+    const running = !['model_response', 'total'].includes(phase);
+    return thinkNode(labels[phase] || phase || '处理中', running);
+  }
+
   /* ---- 事件委托：copy / toggle（挂在 data-dsh-act 上） ---- */
   function toggleDisclosure(act: HTMLElement): void {
     const row = act.closest<HTMLElement>('.dsh-row');
@@ -575,6 +596,29 @@ const DshChat = (() => {
     const open = disclosure.getAttribute('data-open') === 'true';
     disclosure.setAttribute('data-open', open ? 'false' : 'true');
     row.setAttribute('aria-expanded', open ? 'false' : 'true');
+  }
+
+  function copyToClipboard(text: string): Promise<boolean> {
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      return navigator.clipboard.writeText(text).then(() => true, () => fallbackCopyText(text));
+    }
+    return Promise.resolve(fallbackCopyText(text));
+  }
+
+  function fallbackCopyText(text: string): boolean {
+    try {
+      const area = document.createElement('textarea');
+      area.value = text;
+      area.style.position = 'fixed';
+      area.style.opacity = '0';
+      document.body.appendChild(area);
+      area.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(area);
+      return ok;
+    } catch (_) {
+      return false;
+    }
   }
 
   function bindDelegation(scope: Element | Document = DOC || ({} as Element)): void {
@@ -592,15 +636,19 @@ const DshChat = (() => {
         toggleDisclosure(act);
       } else if (kind === 'copy') {
         const text = act.getAttribute('data-dsh-copy') || '';
-        void (navigator.clipboard?.writeText(text) || Promise.resolve());
-        const original = act.querySelector('svg');
-        if (original) original.remove();
-        act.appendChild(icon('check', 16) as Element);
-        window.setTimeout(() => {
-          const check = act.querySelector('svg');
-          if (check) check.remove();
-          act.appendChild(icon('copy', 16) as Element);
-        }, 1000);
+        const button = act;
+        void copyToClipboard(text).then((ok: boolean) => {
+          const original = button.querySelector('svg');
+          if (original) original.remove();
+          button.appendChild(icon(ok ? 'check' : 'copy', 16) as Element);
+          if (!ok) button.setAttribute('aria-label', '复制失败');
+          window.setTimeout(() => {
+            const check = button.querySelector('svg');
+            if (check) check.remove();
+            button.appendChild(icon('copy', 16) as Element);
+            button.setAttribute('aria-label', '复制');
+          }, 1000);
+        });
       }
     });
     host.addEventListener('keydown', (event: KeyboardEvent) => {
@@ -620,6 +668,7 @@ const DshChat = (() => {
     thinkNode,
     toolRowNode,
     toolRowModel,
+    liveActivityNode,
     stateDot,
     bindDelegation,
     __test: { firstLine, latestLine, classifyTool, deriveSummary, formatClock },

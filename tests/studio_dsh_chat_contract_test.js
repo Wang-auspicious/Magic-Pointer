@@ -107,4 +107,12 @@ assert.strictEqual(DshChat.__test.classifyTool('unknown_tool'), 'others');
 assert.strictEqual(DshChat.__test.deriveSummary('read', JSON.stringify({ path: 'x/y.md' })), 'x/y.md');
 assert.match(DshChat.__test.formatClock(1729857600000), /^\d{2}:\d{2}$/, 'clock = local HH:MM');
 
+/* ---- 复制：失败不得假装成功（Promise 校验 + textarea 兜底） ---- */
+const src = fs.readFileSync('electron/renderer/dsh_chat.ts', 'utf8');
+assert(src.includes('copyToClipboard(text).then((ok: boolean) =>'), 'copy must wait on the clipboard promise');
+assert(src.includes('fallbackCopyText(text)'), 'clipboard failure must fall back to execCommand');
+assert(src.includes('button.setAttribute(\'aria-label\', \'复制失败\')'),
+  'a failed copy must not show the success checkmark');
+assert(src.includes('document.execCommand(\'copy\')'), 'the fallback must use the textarea copy trick');
+
 console.log('studio dsh chat contract test ok');

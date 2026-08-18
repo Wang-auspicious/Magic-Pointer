@@ -19,6 +19,7 @@ const settingsModel = (globalThis as any).SettingsModel as SettingsModelApi;
 let canonicalSettings: Record<string, any> = {};
 let activeModelStatus: Record<string, any> = {};
 let activeSettingsPage = 'general';
+let activeSettingsSection: string | null = null;
 let settingsQuery = '';
 let settingsSaveQueue: Promise<void> = Promise.resolve();
 let settingsHydrated = false;
@@ -87,10 +88,16 @@ function renderSettingsRow(row: any) {
   </div>`;
 }
 
-function renderSettingsSection(title: string, rows: any[]) {
-  return `<section class="settings-section">
-    <h3>${escSetting(title)}</h3>
-    <div class="settings-section-frame">${rows.map(renderSettingsRow).join('')}</div>
+function renderSettingsSection(scope: string, title: string, rows: any[], index: number) {
+  const sectionId = `${scope}-${index}`;
+  const open = activeSettingsSection === null ? index === 0 : activeSettingsSection === sectionId;
+  return `<section class="settings-section${open ? ' is-open' : ''}">
+    <button type="button" class="settings-section-toggle" aria-expanded="${open}"
+      data-settings-section="${escSetting(sectionId)}">
+      <span class="settings-section-copy"><b>${escSetting(title)}</b><small>${rows.length} 项</small></span>
+      ${settingIcon('ic-chev')}
+    </button>
+    <div class="settings-section-frame"${open ? '' : ' hidden'}>${rows.map(renderSettingsRow).join('')}</div>
   </section>`;
 }
 
@@ -100,7 +107,7 @@ function renderSettingsPage(page: any) {
       <div><h2>${escSetting(page.title)}</h2><p>${escSetting(page.description)}</p></div>
     </header>
     <div class="settings-sections">
-      ${page.sections.map((section: any) => renderSettingsSection(section.title, section.rows)).join('')}
+      ${page.sections.map((section: any, index: number) => renderSettingsSection(page.id, section.title, section.rows, index)).join('')}
     </div>
   </section>`;
 }
@@ -119,7 +126,7 @@ function renderSettingsSearchResults(query: string) {
   return `<section class="settings-page" data-page="search">
     <header class="settings-page-head"><div><h2>搜索设置</h2><p>“${escSetting(query)}” · ${count} 项</p></div></header>
     ${matches.length
-      ? `<div class="settings-sections">${matches.map((section) => renderSettingsSection(section.title, section.rows)).join('')}</div>`
+      ? `<div class="settings-sections">${matches.map((section, index) => renderSettingsSection('search', section.title, section.rows, index)).join('')}</div>`
       : '<div class="settings-search-empty">没有匹配的设置。</div>'}
   </section>`;
 }
@@ -219,9 +226,20 @@ function parseSettingValue(element: HTMLInputElement | HTMLSelectElement) {
 
 document.addEventListener('click', (event) => {
   const target = event.target as HTMLElement;
+  const section = target.closest<HTMLElement>('[data-settings-section]');
+  if (section) {
+    const sectionId = section.dataset.settingsSection || '';
+    activeSettingsSection = activeSettingsSection === sectionId ? '' : sectionId;
+    renderSettings();
+    requestAnimationFrame(() => {
+      document.querySelector<HTMLElement>(`[data-settings-section="${CSS.escape(sectionId)}"]`)?.focus();
+    });
+    return;
+  }
   const nav = target.closest<HTMLElement>('[data-settings-page]');
   if (nav) {
     activeSettingsPage = nav.dataset.settingsPage || 'general';
+    activeSettingsSection = null;
     settingsQuery = '';
     renderSettings();
     return;
@@ -237,6 +255,7 @@ document.addEventListener('click', (event) => {
 document.addEventListener('input', (event) => {
   const search = (event.target as HTMLElement).closest<HTMLInputElement>('#settings-search');
   if (search) {
+    if (settingsQuery !== search.value) activeSettingsSection = null;
     settingsQuery = search.value;
     renderSettings();
     search.focus();

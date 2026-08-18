@@ -100,37 +100,87 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .side-convos { display: grid; gap: 2px; margin: 4px 0 0; }
 .side-empty { padding: 8px 12px; color: var(--ink-3); font-size: 12.5px; }
 
-/* 选中项是一张浮起来的白卡，不是一块灰底 */
+/* DSH 会话行（Rows.module.css sessionRow 原样）：32px 行、8px 圆角、
+   16px 状态点槽位 + 标题 + 相对时间，无头像色块、无副标题小字。 */
 .side-item {
-  display: flex; align-items: center; gap: 11px;
-  width: 100%; min-height: 38px;
-  padding: 7px 11px;
-  border-radius: 13px;
-  color: var(--ink-2);
+  display: flex; align-items: center; gap: 6px;
+  width: 100%; height: 32px;
+  padding: 0 8px;
+  border-radius: 8px;
+  color: var(--dsw-alias-label-primary);
   text-align: left;
-  font-size: 13.5px;
-  font-weight: 500;
-  transition: background-color 140ms var(--ease-out), color 140ms var(--ease-out), box-shadow 140ms var(--ease-out);
+  font-size: 14px;
+  line-height: 20px;
+  cursor: pointer;
+  user-select: none;
+  animation: dsh-side-row-in 150ms var(--ds-ease-in-out, ease-out);
 }
-.side-item:hover { background: var(--paper-2); color: var(--ink); }
-.side-item.is-on { background: var(--card); color: var(--ink); font-weight: 600; box-shadow: var(--shadow-card); }
-.side-item svg { flex: 0 0 auto; width: 17px; height: 17px; color: var(--ink-3); }
-.side-item.is-on svg { color: var(--ink); }
-.side-text { display: grid; min-width: 0; gap: 1px; }
-.side-text b, .side-text small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.side-text b { font-size: 13px; font-weight: 550; }
-.side-text small { color: var(--ink-3); font-size: 11px; }
+.side-item:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.side-item.is-on { background: var(--dsw-alias-interactive-bg-hover); }
+.side-item .side-title {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 14px; font-weight: 400; line-height: 20px;
+}
+.side-item .side-time {
+  flex: none;
+  font-size: 12px; line-height: 20px;
+  color: var(--dsw-alias-label-tertiary);
+}
+.side-item:hover .side-time { display: none; }
+.side-item .side-actions {
+  flex: none;
+  display: none;
+  align-items: center;
+  gap: 12px;
+}
+.side-item:hover .side-actions { display: inline-flex; }
+.side-item .side-actions button {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px; height: 16px;
+  border: none; border-radius: 4px;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+  color: var(--dsw-alias-label-tertiary);
+}
+.side-item .side-actions button:hover { color: var(--dsw-alias-label-primary); }
+.side-item .side-actions svg { width: 16px; height: 16px; color: inherit; }
 
-.object-mark {
-  display: grid; place-items: center; flex: 0 0 auto;
-  width: 26px; height: 26px;
-  border-radius: 9px;
-  background: var(--paper-2);
-  color: var(--ink-3);
-  font: 650 8.5px/1 var(--font-mono);
-  letter-spacing: .04em;
+/* DSH 状态点（StateDot.module.css 原样）：10px 外圈 10% 光晕 + 6px 实心核。 */
+.side-dot {
+  position: relative;
+  display: inline-block;
+  flex: none;
+  width: 10px; height: 10px;
+  color: var(--dsw-alias-state-success-primary);
 }
-.side-item.is-on .object-mark { background: var(--indigo-bg); color: var(--indigo); }
+.side-dot::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.1;
+}
+.side-dot::after {
+  content: '';
+  position: absolute;
+  inset: 20%;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+@keyframes dsh-side-row-in {
+  from { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .side-item { animation: none; }
+}
 
 .side-foot { display: grid; gap: 4px; padding-top: 10px; border-top: 1px solid var(--hairline); }
 .local-status { display: flex; align-items: center; gap: 8px; margin: 0; padding: 4px 12px; color: var(--ink-3); font-size: 11px; }

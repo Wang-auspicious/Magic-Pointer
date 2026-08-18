@@ -25,6 +25,12 @@ declare global {
     facts?: { label?: string; value?: string; tone?: string }[];
     artifacts?: MagicPointerArtifact[];
     events?: Record<string, unknown>[];
+    activities?: Record<string, unknown>[];
+    trajectory?: Record<string, unknown>[];
+    receipts?: Record<string, unknown>[];
+    modelUsage?: Record<string, number>;
+    timingMs?: number;
+    usedBackend?: string;
     [key: string]: unknown;
   }
 
@@ -86,8 +92,20 @@ declare global {
     turnStatusNode(label: string): Element;
     turnErrorNode(message: string, code?: string, tone?: 'error' | 'warning'): Element;
     bindDelegation(scope?: Element): void;
+    liveActivityNode(record: Record<string, unknown>): Element;
   }
   const DshChat: MagicPointerDshChatApi;
+
+  const DshMarkdown: {
+    render(markdown: unknown): Element;
+  };
+  const DshIcons: {
+    node(name: string, size?: number): Element;
+  };
+  const DshTrajectory: {
+    project(turns: Array<Record<string, any>>): Array<Record<string, any>>;
+    render(rows: Array<Record<string, any>>): Element;
+  };
 
   interface MagicPointerLiveCardsApi {
     track(card: MagicPointerCard): MagicPointerCard;
@@ -209,11 +227,13 @@ declare global {
     conversations: {
       list(): Promise<MagicPointerConversation[]>;
       get(id: unknown): Promise<MagicPointerConversation | undefined>;
-      send(payload: { conversationId?: string | null; question: string; permissionPreset?: string }): Promise<Record<string, any>>;
+      send(payload: { conversationId?: string | null; question: string; permissionPreset?: string; requestId?: string }): Promise<Record<string, any>>;
+      export?(id: unknown): Promise<{ ok?: boolean; canceled?: boolean; path?: string; error?: string }>;
       timeline(): Promise<MagicPointerTimelineDay[]>;
       memories(): Promise<unknown[]>;
       artifacts(): Promise<unknown[]>;
       onTurn?(cb: () => void): void;
+      onProgress?(cb: (payload: { requestId?: string; record?: Record<string, unknown> }) => void): void;
     };
     stash: {
       list(): Promise<MagicPointerStashBurst[]>;
@@ -321,10 +341,12 @@ declare global {
     isLive(): boolean;
     conversations(): Promise<MagicPointerConversation[]>;
     conversation(id: string): Promise<MagicPointerConversation | undefined>;
-    sendConversation(conversationId: string | null, question: string, permissionPreset?: string): Promise<Record<string, any>>;
-  models(): Promise<MagicPointerModelCatalog | null>;
-  slashDirectory(): Promise<MagicPointerSlashDirectory | null>;
-  selectModel(model: string): Promise<{ ok?: boolean; model?: string; error?: string }>;
+    sendConversation(conversationId: string | null, question: string, permissionPreset?: string, requestId?: string): Promise<Record<string, any>>;
+    exportConversation(id: string): Promise<{ ok?: boolean; canceled?: boolean; path?: string; error?: string }>;
+    onConversationProgress(callback: (payload: { requestId?: string; record?: Record<string, unknown> }) => void): void;
+    models(): Promise<MagicPointerModelCatalog | null>;
+    slashDirectory(): Promise<MagicPointerSlashDirectory | null>;
+    selectModel(model: string): Promise<{ ok?: boolean; model?: string; error?: string }>;
     timeline(): Promise<MagicPointerTimelineDay[]>;
     memories(): Promise<unknown[]>;
     artifacts(): Promise<unknown[]>;
@@ -474,8 +496,34 @@ const DEMO_CONVERSATIONS = [
     outcomes: ['结构层'],
     turns: [{
       at: Date.parse('2026-08-06T12:33:00'),
-      question: '这段代码在干嘛？为什么要有 200ms 这个数？',
-      answer: '这是 UIA 探针的硬超时兜底。',
+      question: '把这个模块的读取超时修好，并说明你改了什么。',
+      answer: [
+        '## 已完成',
+        '',
+        '我把读取路径改成了**冻结帧优先**，并保留 UIA 作为结构化证据。现在 `pointerup` 之后不会再抓到更晚的画面。',
+        '',
+        '- 固定了 200ms 探针预算的归属',
+        '- 为帧租约补上了回归测试',
+        '- 保留完整目标表面，不再只存手势小裁剪',
+        '',
+        '| 验证 | 结果 |',
+        '| --- | --- |',
+        '| Python | 通过 |',
+        '| TypeScript | 通过 |',
+        '',
+        '```pwsh',
+        'python -m pytest tests/frame_lease_test.py -q',
+        '```',
+      ].join('\n'),
+      activities: [{ kind: 'model', turn: 1, state: 'done', latencyMs: 2840, firstTokenMs: 612 }],
+      events: [
+        { name: 'pwsh', arguments: { command: 'rg -n "pointerup|capture" electron' }, result: 'electron/main.ts:1398', isError: false, usedBackend: 'subprocess', latencyMs: 86 },
+        { name: 'read', arguments: { path: 'electron/main.ts', line: 1380 }, result: 'capturePage(rect)', isError: false, usedBackend: 'filesystem', latencyMs: 12 },
+        { name: 'edit', arguments: { path: 'electron/main.ts' }, result: 'Done', isError: false, usedBackend: 'workspace', latencyMs: 44 },
+      ],
+      modelUsage: { inputTokens: 1842, outputTokens: 286, totalTokens: 2128 },
+      timingMs: 3218,
+      usedBackend: 'openai-compatible',
     }],
   },
   {
@@ -543,9 +591,18 @@ const Data: MagicPointerDataApi = {
     return bridge()!.conversations.get(id);
   },
 
-  async sendConversation(conversationId: string | null, question: string, permissionPreset?: string): Promise<Record<string, any>> {
+  async sendConversation(conversationId: string | null, question: string, permissionPreset?: string, requestId?: string): Promise<Record<string, any>> {
     if (!hasBridge()) return { ok: false, error: '请在 Magic Pointer 应用里发送。' };
-    return bridge()!.conversations.send({ conversationId, question, permissionPreset: permissionPreset || 'workspace-write' });
+    return bridge()!.conversations.send({ conversationId, question, permissionPreset: permissionPreset || 'workspace-write', requestId });
+  },
+
+  async exportConversation(id: string): Promise<{ ok?: boolean; canceled?: boolean; path?: string; error?: string }> {
+    if (!hasBridge() || !bridge()!.conversations.export) return { ok: false, error: '导出通道不可用。' };
+    return bridge()!.conversations.export!(id);
+  },
+
+  onConversationProgress(callback: (payload: { requestId?: string; record?: Record<string, unknown> }) => void): void {
+    bridge()?.conversations?.onProgress?.(callback);
   },
 
   async models(): Promise<MagicPointerModelCatalog | null> {

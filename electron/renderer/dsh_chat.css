@@ -127,10 +127,102 @@
 
 .dsh-markdown {
   font-size: 16px;
-  line-height: 26px;
+  line-height: 28px;
   color: var(--dsw-alias-label-primary);
-  white-space: pre-wrap;
+  white-space: normal;
   word-break: break-word;
+}
+
+.dsh-markdown > :first-child { margin-top: 0; }
+.dsh-markdown > :last-child { margin-bottom: 0; }
+.dsh-markdown p,
+.dsh-markdown ul,
+.dsh-markdown ol,
+.dsh-markdown blockquote,
+.dsh-markdown table,
+.dsh-markdown pre { margin: 0 0 16px; }
+.dsh-markdown h1,
+.dsh-markdown h2,
+.dsh-markdown h3,
+.dsh-markdown h4,
+.dsh-markdown h5,
+.dsh-markdown h6 {
+  margin: 24px 0 12px;
+  color: var(--dsw-alias-label-primary);
+  font-weight: 600;
+  line-height: 1.35;
+}
+.dsh-markdown h1 { font-size: 24px; }
+.dsh-markdown h2 { font-size: 21px; }
+.dsh-markdown h3 { font-size: 18px; }
+.dsh-markdown h4,
+.dsh-markdown h5,
+.dsh-markdown h6 { font-size: 16px; }
+.dsh-markdown ul,
+.dsh-markdown ol { padding-left: 26px; }
+.dsh-markdown li { padding-left: 2px; }
+.dsh-markdown li + li { margin-top: 4px; }
+.dsh-markdown li > input[type='checkbox'] {
+  margin: 0 8px 0 -22px;
+  accent-color: var(--dsw-alias-state-business-primary);
+}
+.dsh-markdown strong { font-weight: 650; }
+.dsh-markdown a {
+  color: var(--dsw-alias-state-business-primary);
+  text-decoration: none;
+}
+.dsh-markdown a:hover { text-decoration: underline; text-underline-offset: 3px; }
+.dsh-markdown :not(pre) > code {
+  padding: 2px 5px;
+  border-radius: 5px;
+  background: var(--dsw-alias-markdown-inline-code);
+  font-family: var(--font-mono, ui-monospace, Consolas, monospace);
+  font-size: 0.875em;
+}
+.dsh-markdown pre {
+  overflow: auto;
+  padding: 14px 16px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 10px;
+  background: var(--dsw-alias-markdown-code-block);
+  color: var(--dsw-alias-label-secondary);
+  font-family: var(--font-mono, ui-monospace, Consolas, monospace);
+  font-size: 13px;
+  line-height: 21px;
+  white-space: pre;
+}
+.dsh-markdown pre code { font: inherit; white-space: pre; }
+.dsh-markdown blockquote {
+  padding-left: 14px;
+  border-left: 3px solid var(--dsw-alias-border-l3);
+  color: var(--dsw-alias-label-secondary);
+}
+.dsh-markdown blockquote > :last-child { margin-bottom: 0; }
+.dsh-markdown hr {
+  height: 1px;
+  margin: 24px 0;
+  border: 0;
+  background: var(--dsw-alias-border-l2);
+}
+.dsh-markdown table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
+  border-spacing: 0;
+  border-collapse: collapse;
+  font-size: 14px;
+  line-height: 22px;
+}
+.dsh-markdown th,
+.dsh-markdown td {
+  padding: 7px 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  text-align: left;
+}
+.dsh-markdown th {
+  background: var(--dsw-alias-markdown-code-block);
+  font-weight: 600;
 }
 
 /* ---- 共用 24px 展开行骨架（DisclosureRow） ---- */

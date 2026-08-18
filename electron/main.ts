@@ -1149,12 +1149,30 @@ ipcMain.handle('conversations:get', (event: Electron.IpcMainInvokeEvent, id: str
   if (!isDashboardSender(event) && !isCompanionSender(event)) return null;
   try { return conversations().get(id); } catch (_) { return null; }
 });
+ipcMain.handle('conversations:export', async (event: Electron.IpcMainInvokeEvent, id: string) => {
+  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_conversation_sender' };
+  const conversation = conversations().get(String(id || '').slice(0, 120));
+  if (!conversation) return { ok: false, error: '找不到这条对话。' };
+  const printableTitle = Array.from(String(conversation.title || 'session-log'), (char) =>
+    char.charCodeAt(0) < 32 ? '-' : char).join('');
+  const safeTitle = printableTitle.replace(/[<>:"/\\|?*]/g, '-').slice(0, 80);
+  const parent = BrowserWindow.fromWebContents(event.sender) || dashboardWindow || undefined;
+  const picked = await dialog.showSaveDialog(parent, {
+    title: '导出 Session log',
+    defaultPath: `${safeTitle || 'session-log'}.json`,
+    filters: [{ name: 'JSON', extensions: ['json'] }],
+  });
+  if (picked.canceled || !picked.filePath) return { ok: false, canceled: true };
+  await fs.promises.writeFile(picked.filePath, `${JSON.stringify(conversation, null, 2)}\n`, 'utf8');
+  return { ok: true, path: picked.filePath };
+});
 ipcMain.handle('conversations:send', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
   if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_conversation_sender' };
   const question = String(raw?.question || '').trim().slice(0, 4000);
   if (!question) return { ok: false, error: '问题不能为空。' };
   const conversationId = String(raw?.conversationId || '').trim().slice(0, 120);
   const permissionPreset = String(raw?.permissionPreset || 'workspace-write').trim().slice(0, 40);
+  const requestId = String(raw?.requestId || crypto.randomUUID()).trim().slice(0, 120) || crypto.randomUUID();
   const existing = conversationId ? conversations().get(conversationId) : null;
   const payload = {
     question,
@@ -1162,10 +1180,15 @@ ipcMain.handle('conversations:send', async (event: Electron.IpcMainInvokeEvent, 
     object: existing?.object || {},
     modelRuntime: activeModelRuntimeConfig(),
     permissionPreset,
+    requestId,
   };
   return new Promise((resolve) => {
     const child = runPythonBridge(payload, 'scripts/conversation_bridge.py', 'dashboard', {
-      timeoutMs: 55_000,
+      timeoutMs: 120_000,
+      onProgress: (record: any) => {
+        if (event.sender.isDestroyed()) return;
+        event.sender.send('conversations:progress', { requestId, record });
+      },
       onComplete: (parsed: any) => {
         if (!parsed?.ok || !String(parsed?.answer || '').trim()) {
           resolve({ ok: false, error: parsed?.error || '模型没有返回内容。', usedBackend: parsed?.usedBackend, timingMs: parsed?.timingMs });
@@ -1176,6 +1199,13 @@ ipcMain.handle('conversations:send', async (event: Electron.IpcMainInvokeEvent, 
           newConversation: !existing,
           question,
           answer: String(parsed.answer),
+          events: Array.isArray(parsed.events) ? parsed.events : [],
+          activities: Array.isArray(parsed.activities) ? parsed.activities : [],
+          trajectory: Array.isArray(parsed.trajectory) ? parsed.trajectory : [],
+          receipts: Array.isArray(parsed.receipts) ? parsed.receipts : [],
+          modelUsage: parsed.modelUsage && typeof parsed.modelUsage === 'object' ? parsed.modelUsage : {},
+          timingMs: parsed.timingMs,
+          usedBackend: parsed.usedBackend,
           outcome: '模型',
           object: existing?.object || {},
         });
