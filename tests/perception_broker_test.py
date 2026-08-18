@@ -28,6 +28,7 @@ class _Adapter:
         delay_s: float = 0.0,
         raises: bool = False,
         calls: list[str] | None = None,
+        stall: threading.Event | None = None,
     ) -> None:
         self.name = name
         self.content = content
@@ -38,9 +39,12 @@ class _Adapter:
         self.delay_s = delay_s
         self.raises = raises
         self.calls = calls if calls is not None else []
+        self.stall = stall
 
     def read_context(self, window: dict, **_kwargs: object) -> AdapterReadContext:
         self.calls.append(self.name)
+        if self.stall is not None:
+            self.stall.wait(timeout=5.0)
         if self.barrier is not None:
             self.barrier.wait(timeout=0.6)
         if self.delay_s:
@@ -232,3 +236,61 @@ def test_incompatible_successful_contents_are_reported_as_a_conflict() -> None:
         "kind": "content_disagreement",
         "sources": ["dom", "uia"],
     }]
+
+
+def test_a_stalled_provider_cannot_hold_the_verdict_past_the_deadline() -> None:
+    """One wedged adapter must not make the whole read wait for it.
+
+    A UIA probe against an unresponsive window can block indefinitely. Waiting
+    for every provider makes the read as slow as its worst one, which is the
+    exact failure concurrent fusion exists to remove.
+    """
+    release = threading.Event()
+    stalled = _Adapter(
+        "native-stalled",
+        content="never arrives",
+        priority=10,
+        layer="native_app",
+        stall=release,
+    )
+    responsive = _Adapter("uia", content="真实内容", priority=30, layer="uia")
+
+    try:
+        started = time.perf_counter()
+        result = resolve_structured_perception(
+            {"title": "Editor", "class_name": "EditorWindow"},
+            _Registry(stalled, responsive),
+            deadline_ms=120,
+        )
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+
+        assert elapsed_ms < 2000
+        assert result.context is not None
+        assert result.context.content == "真实内容"
+        by_adapter = {item.adapter: item for item in result.observations}
+        assert by_adapter["native-stalled"].status.value == "timeout"
+        assert by_adapter["native-stalled"].reason == "deadline_exceeded"
+        assert by_adapter["native-stalled"].context is None
+        assert result.trace["readState"] == "resolved"
+    finally:
+        release.set()
+
+
+def test_a_single_stalled_provider_still_returns_an_honest_unread_verdict() -> None:
+    """The one-adapter path is the common case, so it needs the same deadline."""
+    release = threading.Event()
+    try:
+        started = time.perf_counter()
+        result = resolve_structured_perception(
+            {"title": "WeChat", "class_name": "WeChatMainWndForPC"},
+            _Registry(_Adapter("uia-only", content="x", stall=release)),
+            deadline_ms=120,
+        )
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+
+        assert elapsed_ms < 2000
+        assert result.context is None
+        assert result.trace["readState"] == "unread"
+        assert result.observations[0].status.value == "timeout"
+    finally:
+        release.set()

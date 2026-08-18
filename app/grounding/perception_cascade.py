@@ -60,10 +60,17 @@ def _matching_adapters(registry: Any, window: dict[str, Any]) -> list[Any]:
 def resolve_structured_perception(
     window: dict[str, Any],
     registry: Any,
+    *,
+    deadline_ms: float | None = None,
     **kwargs: Any,
 ) -> StructuredPerceptionResult:
     candidates = _matching_adapters(registry, window)
-    return ConcurrentPerceptionBroker().resolve(window, candidates, **kwargs)
+    return ConcurrentPerceptionBroker().resolve(
+        window,
+        candidates,
+        deadline_ms=deadline_ms,
+        **kwargs,
+    )
 
 
 def append_perception_attempt(

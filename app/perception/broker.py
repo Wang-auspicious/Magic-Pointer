@@ -9,7 +9,7 @@ before invoking this module.
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from time import perf_counter
 from typing import Any, Iterable
@@ -50,6 +50,12 @@ _DEFAULT_PRIORITIES = {
     "ocr": 40,
     "vision": 50,
 }
+
+# A UIA probe against an unresponsive window can block for as long as that
+# window stays wedged. Two seconds clears every healthy provider measured on
+# this machine (UIA cold start ~573ms, steady 200-250ms) while keeping a
+# wedged one from owning the interaction.
+DEFAULT_DEADLINE_MS = 2000.0
 
 _BASE_CONFIDENCE = {
     "native_app": 0.95,
@@ -217,25 +223,13 @@ class ConcurrentPerceptionBroker:
         self,
         window: dict[str, Any],
         candidates: Iterable[Any],
+        *,
+        deadline_ms: float | None = None,
         **kwargs: Any,
     ) -> PerceptionBrokerResult:
         ordered = list(candidates)
         started = perf_counter()
-        if len(ordered) == 1:
-            observations = (self._read_one(0, ordered[0], window, kwargs),)
-        elif ordered:
-            with ThreadPoolExecutor(
-                max_workers=min(self.max_workers, len(ordered)),
-                thread_name_prefix="mp-perception",
-            ) as pool:
-                futures = [
-                    pool.submit(self._read_one, index, adapter, window, kwargs)
-                    for index, adapter in enumerate(ordered)
-                ]
-                observations = tuple(future.result() for future in futures)
-        else:
-            observations = ()
-
+        observations = self._collect(ordered, window, kwargs, deadline_ms)
         selected = self._select(observations)
         conflicts = _content_conflicts(observations)
         elapsed_ms = (perf_counter() - started) * 1000.0
@@ -245,6 +239,47 @@ class ConcurrentPerceptionBroker:
             observations=observations,
             trace=trace,
         )
+
+    def _collect(
+        self,
+        ordered: list[Any],
+        window: dict[str, Any],
+        kwargs: dict[str, Any],
+        deadline_ms: float | None,
+    ) -> tuple[StructuredObservation, ...]:
+        """Read every provider, but let the deadline decide when to rule.
+
+        A provider that misses the deadline becomes a TIMEOUT observation and
+        the verdict is made from whatever did arrive. Its thread is left to
+        finish on its own: this bounds the interaction, not the thread, so
+        adapters still owe their own internal timeouts.
+        """
+        if not ordered:
+            return ()
+        budget_s = (
+            DEFAULT_DEADLINE_MS if deadline_ms is None else float(deadline_ms)
+        ) / 1000.0
+        pool = ThreadPoolExecutor(
+            max_workers=min(self.max_workers, len(ordered)),
+            thread_name_prefix="mp-perception",
+        )
+        try:
+            started = perf_counter()
+            futures = {
+                pool.submit(self._read_one, index, adapter, window, kwargs): index
+                for index, adapter in enumerate(ordered)
+            }
+            done, overdue = wait(futures, timeout=budget_s)
+            elapsed_ms = (perf_counter() - started) * 1000.0
+            collected = {futures[future]: future.result() for future in done}
+            for future in overdue:
+                index = futures[future]
+                collected[index] = _deadline_observation(
+                    index, ordered[index], elapsed_ms
+                )
+            return tuple(collected[index] for index in range(len(ordered)))
+        finally:
+            pool.shutdown(wait=False)
 
     @staticmethod
     def _read_one(
@@ -371,6 +406,32 @@ class ConcurrentPerceptionBroker:
                 item.adapter,
             ),
         )
+
+
+def _deadline_observation(
+    index: int,
+    adapter: Any,
+    elapsed_ms: float,
+) -> StructuredObservation:
+    layer = perception_layer(adapter)
+    return StructuredObservation(
+        index=index,
+        priority=int(getattr(
+            adapter,
+            "perception_priority",
+            _DEFAULT_PRIORITIES.get(layer, 50),
+        )),
+        layer=layer,
+        adapter=str(getattr(adapter, "name", "") or "unknown"),
+        method="unknown",
+        status=EvidenceStatus.TIMEOUT,
+        confidence=0.0,
+        latency_ms=elapsed_ms,
+        context=None,
+        container_hint=False,
+        reason="deadline_exceeded",
+        source=_source_for(layer),
+    )
 
 
 def _normalized_content(context: AdapterReadContext | None) -> str:
