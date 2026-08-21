@@ -361,3 +361,42 @@ def test_type_text_reports_unavailable_when_uia_cannot_confirm() -> None:
     assert result["verification"]["matched"] is False
     assert result["verification"]["status"] == "unavailable"
     assert any(call[0] == "type" for call in session.driver.calls)
+
+
+def test_press_key_accepts_common_aliases() -> None:
+    """真机 turn-3 事故：模型按 Return 被拒（只认 Enter）——别名在生产驱动
+    的键表里解析（Win32InputDriver._KEYS），会话层必须放行不报
+    unsupported_key。"""
+    registry, session = _registry()
+    snapshot_id = _payload(_exec(registry, "get_app_state", {
+        "window_id": "w-42",
+        "mode": "ax",
+    }))["snapshot_id"]
+    result = _exec(registry, "press_key", {
+        "snapshot_id": snapshot_id,
+        "keys": "Return",
+    })
+    assert not result.is_error, result.value
+    downs = [call for call in session.driver.calls if call[0] in {"down", "key_down"}]
+    assert downs, session.driver.calls
+    # 生产驱动的键表确实认识这个别名（防回归钉住）。
+    from app.computer_operator.windows import _KEYS
+
+    assert _KEYS["return"] == _KEYS["enter"]
+
+
+def test_get_app_state_finds_window_by_class_when_process_name_empty() -> None:
+    """真机 turn-3 事故：Win11 记事本 process_name 为空，app=Notepad /
+    app=Notepad.exe 全部 window not found——app 匹配必须回退到 class 与标题。"""
+    windows = [
+        {"hwnd": 11, "pid": 1, "title": "mp-doc.txt - Notepad", "class_name": "Notepad",
+         "process_name": "", "rect": [0, 0, 400, 300]},
+    ]
+    registry, _ = _registry(session=_session(windows_probe=lambda: windows))
+    result = _exec(registry, "get_app_state", {"app": "Notepad", "mode": "ax"})
+    assert not result.is_error, result.value
+    payload = json.loads(result.value)
+    assert payload["windows"][0]["hwnd"] == 11
+
+    result_exe = _exec(registry, "get_app_state", {"app": "notepad.exe", "mode": "ax"})
+    assert not result_exe.is_error

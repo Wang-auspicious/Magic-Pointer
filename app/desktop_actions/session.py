@@ -827,11 +827,28 @@ def _select_window(
                 return item
         return None
     if app:
-        needle = str(app).casefold()
+        needle = str(app).casefold().strip()
+        needle_exe = needle[:-4] if needle.endswith(".exe") else needle
+        # 1) Exact process or title match.
         for item in windows:
             process = str(item.get("process_name") or "").casefold()
             title = str(item.get("title") or "").casefold()
-            if process == needle or title == needle:
+            if process and process in (needle, needle_exe):
+                return item
+            if title == needle:
+                return item
+        # 2) Window class match. Win11 Notepad exposes an EMPTY
+        # process_name with class "Notepad" — the real-machine turn-3 run
+        # had app=Notepad/app=Notepad.exe fail as window-not-found while
+        # the target sat right there.
+        for item in windows:
+            class_name = str(item.get("class_name") or "").casefold()
+            if class_name and class_name in (needle, needle_exe):
+                return item
+        # 3) Title contains the app name (last resort; most ambiguous).
+        for item in windows:
+            title = str(item.get("title") or "").casefold()
+            if needle_exe and needle_exe in title:
                 return item
         return None
     return windows[0] if windows else None

@@ -278,7 +278,12 @@ def _close_notepad(hwnd: int) -> None:
     try:
         user32.PostMessageW(int(hwnd), 0x0010, 0, 0)  # WM_CLOSE
         time.sleep(0.6)
-        # Win11 Notepad 的保存对话框：Alt+N = 不保存
+        # Win11 Notepad 的保存对话框需要前台才收得到 Alt+N；拿不到前台就用
+        # 同一个 ALT 技巧（对话框是模态的，ALT 不会误伤文档内容）。
+        try:
+            _set_foreground(int(hwnd))
+        except RuntimeError:
+            pass
         user32.keybd_event(0x12, 0, 0, 0)
         user32.keybd_event(0x4E, 0, 0, 0)
         user32.keybd_event(0x4E, 0, 2, 0)
@@ -335,8 +340,18 @@ def _wait_for_document_pixels(hwnd: int, timeout: float = 5.0) -> bool:
 
 
 def _set_foreground(hwnd: int) -> None:
+    """Foreground via the ALT-key trick.
+
+    The Windows foreground lock rejects SetForegroundWindow from a background
+    caller (observed live: ret=0, and AttachThreadInput alone did not help
+    either). Tapping ALT first makes Windows believe the user is interacting
+    with this process, which restores SetForegroundWindow rights — the
+    standard documented workaround. Verified live after the lock engaged."""
     user32.ShowWindow(hwnd, 5)  # SW_SHOW
+    user32.keybd_event(0x12, 0, 0, 0)  # ALT down
+    time.sleep(0.05)
     user32.SetForegroundWindow(hwnd)
+    user32.keybd_event(0x12, 0, 2, 0)  # ALT up
     if not wait_for_foreground(hwnd):
         raise RuntimeError("foreground_acquisition_failed")
 
