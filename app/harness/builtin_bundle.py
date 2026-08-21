@@ -298,6 +298,19 @@ def _apply_delegate_tool(fork, config: dict[str, Any]) -> None:
     )
 
 
+def _apply_memory_tools(fork, config: dict[str, Any]) -> None:
+    """Cross-session recall over this process's durable session log."""
+    from app.agent_runtime.memory_tools import register_history_search
+
+    sessions = fork.get("sessions")
+    session_root = getattr(sessions, "root", None)
+    if session_root is None:
+        raise TypeError(
+            "memory-tools requires a file-backed sessions provider"
+        )
+    register_history_search(fork.get("tools"), sessions_root=Path(session_root))
+
+
 def _apply_capability_tools(fork, config: dict[str, Any]) -> None:
     """Recipe capabilities as model-facing tools (propose-only by default)."""
     registry = fork.get("tools")
@@ -511,6 +524,7 @@ BUILTIN_PLUGINS: dict[str, PluginSpec] = {
         _spec("desktop-action-tools", ("tools",), _apply_desktop_action_tools),
         _spec("coding-tools", ("tools",), _apply_coding_tools),
         _spec("delegate-tool", ("tools", "llm"), _apply_delegate_tool),
+        _spec("memory-tools", ("tools", "sessions"), _apply_memory_tools),
         _spec("capability-tools", ("tools",), _apply_capability_tools),
         _spec("guard", ("guard_probe", "selection_anchor"), _apply_guard),
         _spec("system-prompt", ("prompt",), _apply_system_prompt),
@@ -539,6 +553,7 @@ BUILTIN_ROW_IDS: tuple[str, ...] = (
     "desktop-action-tools",
     "coding-tools",
     "delegate-tool",
+    "memory-tools",
     "capability-tools",
     "guard",
     "system-prompt",
@@ -660,6 +675,7 @@ def _global_loop_rows(root: Path) -> list[BundleRow]:
             "session-store",
             {"session_dir": str(_runtime_root(root) / "agent-sessions")},
         ),
+        BundleRow("memory-tools", "memory-tools"),
         BundleRow(
             "mcp-provider",
             "mcp-provider",
@@ -870,6 +886,7 @@ def boot_loop_context(
                 "enabled": _env_flag("MAGIC_POINTER_BACKGROUND_REVIEW", True),
             },
         ),
+        BundleRow("memory-tools", "memory-tools"),
         BundleRow(
             "delegate-tool",
             "delegate-tool",

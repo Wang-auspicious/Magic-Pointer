@@ -142,6 +142,81 @@ _CATASTROPHIC_COMMANDS = (
 blacklist). Everything else goes through the permission ladder unchanged."""
 
 
+class BackgroundJobs:
+    """Detached child processes owned by one coding-tools registration."""
+
+    def __init__(self, root: Path) -> None:
+        self.dir = Path(root) / ".mp" / "background"
+        self._seq = 0
+
+    def start(self, command: str, cwd: Path) -> int:
+        self.dir.mkdir(parents=True, exist_ok=True)
+        self._seq += 1
+        job_id = int(time.time()) % 100000 * 100 + self._seq
+        log_path = self.dir / f"{job_id}.log"
+        meta_path = self.dir / f"{job_id}.json"
+        creationflags = 0
+        if os.name == "nt":
+            creationflags = subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
+        with log_path.open("wb") as log:
+            process = subprocess.Popen(
+                command,
+                shell=True,
+                cwd=str(cwd),
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                creationflags=creationflags,
+            )
+        meta_path.write_text(json.dumps({
+            "id": job_id,
+            "pid": process.pid,
+            "log": str(log_path),
+            "command": command[:500],
+            "started": time.time(),
+        }, ensure_ascii=False), encoding="utf-8")
+        return job_id
+
+    def status(self, job_id: int) -> str:
+        try:
+            meta = json.loads((self.dir / f"{job_id}.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return f"background job {job_id} not found"
+        tail = ""
+        try:
+            tail = Path(str(meta["log"])).read_text(encoding="utf-8", errors="replace")[-8000:]
+        except OSError:
+            pass
+        alive = _pid_alive(int(meta.get("pid") or 0))
+        header = f"job {job_id}: {'RUNNING' if alive else 'FINISHED'} — {str(meta.get('command'))[:120]}"
+        return f"{header}\n{tail or '(no output yet)'}"
+
+
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        import ctypes
+
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        STILL_ACTIVE = 259
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            return False
+        try:
+            code = ctypes.c_ulong()
+            kernel32.GetExitCodeProcess(handle, ctypes.byref(code))
+            return code.value == STILL_ACTIVE
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
 class FileCheckpointStore:
     """Before-images of every file our tools touch (CC /rewind contract).
 
@@ -316,10 +391,16 @@ def register_coding_tools(
             max(1, min(int(max_results or _MAX_GREP_RESULTS), _MAX_GREP_RESULTS)),
         )
 
+    backgrounds = BackgroundJobs(space.root)
+
+    def read_background(id: int, **_: Any) -> str:
+        return backgrounds.status(int(id or 0))
+
     def run_command(
         command: str,
         cwd: str = ".",
         timeout_s: float = _DEFAULT_COMMAND_TIMEOUT_S,
+        background: bool = False,
         **_: Any,
     ) -> str:
         text = str(command or "").strip()
@@ -328,6 +409,12 @@ def register_coding_tools(
         workdir = space.resolve(cwd or ".")
         if not workdir.is_dir():
             raise NotADirectoryError(f"cwd not found: {space.display(workdir)}")
+        if background:
+            job_id = backgrounds.start(text, workdir)
+            return (
+                f"started in background as job {job_id}; "
+                f"poll with read_background(id={job_id})"
+            )
         for rule in _CATASTROPHIC_COMMANDS:
             if rule.search(text):
                 raise ValueError(
@@ -461,7 +548,9 @@ def register_coding_tools(
         name="run_command",
         description=(
             "在工作区内执行一条 shell 命令（跑测试、构建、git 等），返回 "
-            "exit code 与有界输出。属于不可逆本地操作：需要 full-access 权限。"
+            "exit code 与有界输出。长驻进程（dev server、watch、大构建）传 "
+            "background=true 立即返回，之后用 read_background 轮询输出。"
+            "需要 full-access 权限。"
         ),
         input_schema={
             "type": "object",
@@ -469,6 +558,10 @@ def register_coding_tools(
                 "command": {"type": "string"},
                 "cwd": {"type": "string", "description": "相对工作区，默认 ."},
                 "timeout_s": {"type": "number"},
+                "background": {
+                    "type": "boolean",
+                    "description": "true=后台启动立即返回（默认 false）",
+                },
             },
             "required": ["command"],
         },
@@ -522,4 +615,18 @@ def register_coding_tools(
         is_concurrency_safe=False,
         used_backend="workspace_fs",
         timeout_ms=30_000,
+    ))
+    registry.register(ToolSpec(
+        name="read_background",
+        description="读取一个后台命令的运行状态与最近输出。",
+        input_schema={
+            "type": "object",
+            "properties": {"id": {"type": "integer"}},
+            "required": ["id"],
+        },
+        execute=read_background,
+        effect=Effect.READ,
+        is_concurrency_safe=True,
+        used_backend="shell",
+        timeout_ms=10_000,
     ))
