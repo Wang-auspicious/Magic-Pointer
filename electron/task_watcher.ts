@@ -56,7 +56,7 @@ const STATUS_CARD: Readonly<Record<string, StatusShape>> = Object.freeze({
   cancelling: { state: 'running', stage: '正在停下来' },
   succeeded: { state: 'done' },
   failed: { state: 'failed' },
-  cancelled: { state: 'failed', error: '这次被取消了，没有改动任何东西。' },
+  cancelled: { state: 'failed', error: '这次被取消了。已完成的部分记录在会话里，不会再有新动作。' },
   interrupted: { state: 'failed', error: '执行的进程中断了。已完成的部分保留，未完成的没有生效。' },
   pausing_target_mismatch: { state: 'running', stage: '目标窗口变了，正在停下来' },
   paused_target_mismatch: {

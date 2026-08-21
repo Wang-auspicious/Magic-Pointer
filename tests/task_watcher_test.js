@@ -30,10 +30,12 @@ assert.strictEqual(watcher.cardPatchFromTask({ status: 'succeeded' }).state, 'do
 assert.strictEqual(watcher.cardPatchFromTask({ status: 'running' }).progress, undefined,
   '任务没报进度就不要凭空给一个数字');
 
-// 取消和中断都是失败，但要说清区别——用户要判断有没有东西被改了
+// 取消和中断都是失败，但要说清区别：取消是主动停下（已完成部分在会话里、
+// 不再有新动作），中断是进程死了（已完成部分保留）。
 const cancelled = watcher.cardPatchFromTask({ status: 'cancelled' });
 assert.strictEqual(cancelled.state, 'failed');
-assert.match(cancelled.error, /没有改动任何东西/);
+assert.match(cancelled.error, /记录在会话里/);
+assert.match(cancelled.error, /不会再有新动作/);
 const interrupted = watcher.cardPatchFromTask({ status: 'interrupted' });
 assert.match(interrupted.error, /已完成的部分保留/);
 

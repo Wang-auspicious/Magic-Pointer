@@ -83,6 +83,6 @@ const broken = CardModel.applyPatch(
 );
 assert.strictEqual(broken.state, 'failed');
 assert.strictEqual(broken.progress, 0.4, '失败停在断掉的地方，不归零也不补满');
-assert.match(broken.error, /没有改动任何东西/);
+assert.match(broken.error, /不会再有新动作/);
 
 console.log('background task card test ok');

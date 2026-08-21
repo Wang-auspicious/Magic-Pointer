@@ -210,13 +210,17 @@ function textDraftResult(
 // codes are for the log; the acceptance run put `bridge_timeout` on screen and
 // the user had no idea what had happened or what to do next. This is the one
 // place a code becomes a sentence, so no surface can leak a raw identifier.
+// Honesty note (O4): timeout/cancel/transport failures can land AFTER tools
+// have executed, so these sentences must not claim 「没有改动任何东西」 —
+// completed steps live in the session record; only pre-model failures (capture,
+// policy) can truthfully claim nothing changed.
 const ERROR_MESSAGES = Object.freeze({
-  bridge_timeout: '这次处理超时了，没有改动任何东西。请再试一次，或换一个更小的选区。',
-  bridge_cancelled: '这次处理被取消了，没有改动任何东西。',
-  bridge_spawn_error: '本地处理进程没能启动。请重启 Magic Pointer 再试。',
-  bridge_stdin_error: '本地处理进程中断了，没有改动任何东西。请再试一次。',
-  bridge_invalid_json: '本地处理返回了看不懂的结果，已停下没有继续。请再试一次。',
-  bridge_output_limit: '结果太大了，为了不卡住已经停下。请缩小选区再试。',
+  bridge_timeout: '这次处理超时停下了。已完成步骤的记录都保留在会话里；可以重试或换一个更小的范围。',
+  bridge_cancelled: '这次处理已停下。已完成的部分都记录在会话里，不会再有新动作。',
+  bridge_spawn_error: '本地处理进程没能启动，什么都没有执行。请重启 Magic Pointer 再试。',
+  bridge_stdin_error: '本地处理进程中断了。已完成的部分记录在会话里；请再试一次。',
+  bridge_invalid_json: '本地处理返回了看不懂的结果，已停下。已完成的部分记录在会话里。',
+  bridge_output_limit: '结果太大了，为了不卡住已经停下。已完成的部分记录在会话里；请缩小选区再试。',
   payload_too_large: '这次选中的内容太大了。请缩小范围再试。',
   capture_missing: '没有拿到这块屏幕的画面，因此没有把任何内容交给模型。',
   capture_policy_denied: '当前隐私设置不允许截取这块内容，已停下。可在「隐私与权限」里调整。',
@@ -260,7 +264,7 @@ const ERROR_MESSAGES = Object.freeze({
 // Anything else is already a sentence somebody wrote on purpose.
 const CODE_SHAPE = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)+$/;
 
-function humanErrorMessage(raw: unknown, fallback = '这次没能完成，也没有改动任何东西。'): string {
+function humanErrorMessage(raw: unknown, fallback = '这次没能完成。已完成的部分记录在会话里。'): string {
   const value = String(raw == null ? '' : raw).trim();
   if (!value) return fallback;
   const messages = ERROR_MESSAGES as Readonly<Record<string, string>>;
@@ -306,7 +310,7 @@ function stageEventFromBridge(value: unknown) {
     return {
       type: 'ERROR',
       error: {
-        message: humanErrorMessage(parsed.error, humanErrorMessage(parsed.answer, '这次没能完成，也没有改动任何东西。')),
+        message: humanErrorMessage(parsed.error, humanErrorMessage(parsed.answer, '这次没能完成。已完成的部分记录在会话里。')),
       },
     };
   }

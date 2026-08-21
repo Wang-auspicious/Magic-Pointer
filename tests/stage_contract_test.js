@@ -172,19 +172,20 @@ console.log('stage_contract_test: all assertions passed');
 // --- Human error messages -------------------------------------------------
 // The acceptance run put `bridge_timeout` on screen. A bridge code is for the
 // log; the bubble gets a sentence, and an unmapped code gets the honest
-// fallback rather than the identifier.
+// fallback rather than the identifier. Timeout/cancel happen AFTER tools may
+// have run, so they must not claim nothing changed (O4).
 {
   const { humanErrorMessage } = require('../electron/stage_contract');
   assert.strictEqual(
     stageEventFromBridge({ ok: false, error: 'bridge_timeout' }).error.message,
-    '这次处理超时了，没有改动任何东西。请再试一次，或换一个更小的选区。',
+    '这次处理超时停下了。已完成步骤的记录都保留在会话里；可以重试或换一个更小的范围。',
   );
   assert.strictEqual(
     stageEventFromBridge({ ok: false, error: 'some_unmapped_future_code' }).error.message,
-    '这次没能完成，也没有改动任何东西。',
+    '这次没能完成。已完成的部分记录在会话里。',
   );
   assert.strictEqual(humanErrorMessage('已经写好的一句话。'), '已经写好的一句话。');
-  assert.strictEqual(humanErrorMessage(''), '这次没能完成，也没有改动任何东西。');
+  assert.strictEqual(humanErrorMessage(''), '这次没能完成。已完成的部分记录在会话里。');
   assert.strictEqual(humanErrorMessage('structured_context_unavailable').includes('没能从这个窗口读到可靠的文字'), true);
   for (const event of [
     stageEventFromBridge({ ok: false, error: 'bridge_timeout' }),
