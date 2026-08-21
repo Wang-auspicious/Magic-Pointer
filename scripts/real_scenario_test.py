@@ -496,7 +496,7 @@ def _run_chain(name: str, window: dict, gesture_points: list, command: str) -> d
     # gesture schemaVersion=2 + strokes（v1 形状必须有 semanticPoint）。
     last_x, last_y = gesture_points[-1]
     snapshot_payload = {
-        "selectionSessionId": f"scenario-{name}",
+        "selectionSessionId": f"scenario-{name}-{time.time_ns()}",
         "frameLease": lease,
         "foregroundHwnd": int(window["hwnd"]),
         "foregroundApp": str(window.get("process_name") or ""),
@@ -553,7 +553,7 @@ def _run_chain(name: str, window: dict, gesture_points: list, command: str) -> d
     snap = snapshot["selectionSnapshot"]
     bridge_payload = {
         "command": command,
-        "selectionSessionId": f"scenario-{name}",
+        "selectionSessionId": f"scenario-{name}-{time.time_ns()}",
         "selectionSnapshotId": snap.get("snapshot_id"),
         "selectionSnapshot": snap,
         "requestMode": "auto",

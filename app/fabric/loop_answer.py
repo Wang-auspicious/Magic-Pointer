@@ -27,6 +27,7 @@ __all__ = ["terminal_to_answer"]
 _PARTIAL_DELIVERY_REASONS = frozenset({
     TransitionReason.PROVIDER_UNAVAILABLE,
     TransitionReason.BUDGET_EXHAUSTED,
+    TransitionReason.STALLED,
 })
 
 
@@ -100,7 +101,7 @@ def terminal_to_answer(terminal: Terminal, command: str) -> dict[str, Any]:
         gap = (
             "模型连接中断"
             if terminal.reason is TransitionReason.PROVIDER_UNAVAILABLE
-            else "预算用尽"
+            else ("预算用尽" if terminal.reason is TransitionReason.BUDGET_EXHAUSTED else "多轮重试未获得新证据，已停止")
         )
         listing = "\n".join(
             f"{index}. {name}"

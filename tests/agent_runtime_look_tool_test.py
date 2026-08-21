@@ -324,3 +324,15 @@ def test_look_quota_is_honest_about_exhaustion():
     assert third.status is EvidenceStatus.UNSUPPORTED
     assert "look_quota_exhausted" in (third.note or "")
     assert len(backend.calls) == 2, "配额耗尽后不得再打视觉后端"
+
+
+def test_empty_capture_bytes_are_honest_unsupported_not_a_backend_call():
+    """真机事故：element anchor 解析出的框拿不到冻结帧裁剪时 capture 返回
+    空字节，旧路径把它发给视觉后端再炸出 AttributeError。必须在进入后端
+    前诚实报 unsupported。"""
+    backend = FakeVisionBackend()
+    tool = LookTool(backend, capture=lambda box: b"")
+    ev = tool.look(anchor="bbox:10,20,110,220", prompt="what")
+    assert ev.status is EvidenceStatus.UNSUPPORTED
+    assert "frozen_frame_crop_unavailable" in (ev.note or "")
+    assert len(backend.calls) == 0

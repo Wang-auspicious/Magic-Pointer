@@ -167,6 +167,18 @@ class LookTool:
             )
 
         image_bytes = self._capture(box)
+        if not image_bytes:
+            # Real-machine lesson: an element anchor whose box cannot be
+            # cropped from the frozen frame used to send empty bytes to the
+            # vision backend, which raised and surfaced as a raw
+            # AttributeError. Honest unsupported with a readable reason lets
+            # the model pick another source instead of retrying the same
+            # look.
+            return failed_evidence(
+                EvidenceSource.VISION,
+                EvidenceStatus.UNSUPPORTED,
+                "frozen_frame_crop_unavailable",
+            )
         self._calls_used += 1
         text_prompt = prompt if prompt is not None else DEFAULT_PROMPT
         try:

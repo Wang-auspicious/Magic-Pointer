@@ -2202,10 +2202,10 @@ def _loop_router(
 
     class _VisionBackend:
         def describe(self, image_bytes: bytes, prompt: str, timeout_ms: int) -> dict:
-            from app.agent_runtime.look_tool import LookTool
+            from app.agent_runtime.look_tool import LookTool, VisionUnavailable
 
             if not image_bytes:
-                raise LookTool.VisionUnavailable()
+                raise VisionUnavailable()
             import os as _os
             import tempfile
             import time as _time

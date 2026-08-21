@@ -240,3 +240,29 @@ def test_budget_exhausted_after_work_delivers_partial_receipts():
     assert mapped["ok"] is True
     assert "click" in mapped["answer"]
     assert "预算" in mapped["answer"] or "未能" in mapped["answer"]
+
+
+def test_stalled_after_work_delivers_partial_receipts():
+    """真机 notepad-edit：写入成功后验证阶段被重复证据守卫 halt，
+    answer 为空——活干完了必须交付已完成步骤。"""
+    from app.agent_runtime.types import ToolResult, TransitionReason
+
+    results = (
+        ToolResult(
+            tool_call_id="c1", value="ok", is_error=False,
+            failure_type=None, used_backend="desktop", latency_ms=12.0,
+            tool_name="type_text", arguments={},
+        ),
+        ToolResult(
+            tool_call_id="c2", value="ok", is_error=False,
+            failure_type=None, used_backend="desktop", latency_ms=8.0,
+            tool_name="get_app_state", arguments={},
+        ),
+    )
+    mapped = terminal_to_answer(
+        _terminal(TransitionReason.STALLED, results),
+        "改文档",
+    )
+    assert mapped["ok"] is True
+    assert "type_text" in mapped["answer"]
+    assert mapped["loopTerminatedReason"] == "stalled"
