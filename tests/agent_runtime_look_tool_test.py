@@ -311,3 +311,16 @@ def test_registry_execute_look_returns_tool_result():
     res_caps = registry.execute_tool("describe_capabilities", {"anchor": "element:x"})
     assert res_caps.is_error is False
     assert len(json.loads(res_caps.value.value)) == 5
+
+
+def test_look_quota_is_honest_about_exhaustion():
+    """Each look is a real vision call (seconds + money). A model that spams
+    it must get an honest unsupported receipt, not an infinite budget."""
+    backend = FakeVisionBackend()
+    tool = LookTool(backend, max_calls=2)
+    assert tool.look(anchor="bbox:0,0,100,100").status is EvidenceStatus.OK
+    assert tool.look(anchor="bbox:0,0,100,100").status is EvidenceStatus.OK
+    third = tool.look(anchor="bbox:0,0,100,100")
+    assert third.status is EvidenceStatus.UNSUPPORTED
+    assert "look_quota_exhausted" in (third.note or "")
+    assert len(backend.calls) == 2, "配额耗尽后不得再打视觉后端"

@@ -196,3 +196,29 @@ console.log('stage_contract_test: all assertions passed');
   }
 }
 console.log('stage contract human error test ok');
+
+// ---- 账单随结果到达渲染层（O6）：真实轮数/token，不是假数字 ----
+const billed = stageEventFromBridge({
+  ok: true,
+  answer: '做完了。',
+  interactionLedger: {
+    interactionId: 'sess:3',
+    turns: 12,
+    tokensText: 3400,
+    tokensVision: 900,
+    succeeded: true,
+    failureType: null,
+    egressEventIds: [],
+  },
+});
+assert.strictEqual(billed.type, 'RESULT');
+assert.deepStrictEqual(billed.result.ledger, {
+  turns: 12,
+  tokensText: 3400,
+  tokensVision: 900,
+  succeeded: true,
+  failureType: null,
+}, '账单只带可渲染的事实，原始 session 事件不过界');
+
+const unbilled = stageEventFromBridge({ ok: true, answer: '好。' });
+assert.strictEqual(unbilled.result.ledger, undefined, '没有账单就不编一个');

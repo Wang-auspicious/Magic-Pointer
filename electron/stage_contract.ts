@@ -30,6 +30,24 @@ function modelUsageFromBridge(value: unknown): UnknownRecord | null {
   return Object.keys(usage).length ? usage : null;
 }
 
+function ledgerFromBridge(value: unknown): UnknownRecord | null {
+  // The interaction bill (O6): only render-safe facts cross the boundary —
+  // rounds, token counts, outcome. Raw session events, stage latency maps
+  // and egress ids stay in main.
+  const raw = recordOf(value);
+  if (!Object.keys(raw).length) return null;
+  const ledger: UnknownRecord = {};
+  const turns = Number(raw.turns);
+  if (Number.isFinite(turns) && turns >= 0) ledger.turns = Math.floor(turns);
+  for (const key of ['tokensText', 'tokensVision'] as const) {
+    const count = Number(raw[key]);
+    if (Number.isFinite(count) && count >= 0) ledger[key] = Math.floor(count);
+  }
+  if (typeof raw.succeeded === 'boolean') ledger.succeeded = raw.succeeded;
+  if (raw.failureType !== undefined) ledger.failureType = raw.failureType;
+  return Object.keys(ledger).length ? ledger : null;
+}
+
 const CHIP_COMMANDS = Object.freeze({
   rewrite: '改写这段文字',
   translate: '把这段文字翻译成中文',
@@ -332,6 +350,7 @@ function stageEventFromBridge(value: unknown) {
   const pendingInput = pendingInputFromBridge(parsed.pendingInput);
   const awaitingUserInput = parsed.awaitingUserInput === true && pendingInput !== null;
   const modelUsage = modelUsageFromBridge(parsed.modelUsage);
+  const ledger = ledgerFromBridge(parsed.interactionLedger);
   if (parsed.ok === true && receipt.status === 'succeeded' && receipt.verified) {
     return {
       type: 'COMPLETE',
@@ -359,6 +378,7 @@ function stageEventFromBridge(value: unknown) {
       awaitingUserInput,
       ...(pendingInput ? { pendingInput } : {}),
       ...(modelUsage ? { modelUsage } : {}),
+      ...(ledger ? { ledger } : {}),
       ...receipt,
       actions,
     },

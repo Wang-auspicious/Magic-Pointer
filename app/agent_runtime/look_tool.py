@@ -92,12 +92,15 @@ class LookTool:
         min_box_side: int = 32,
         timeout_ms: int = 30000,
         capture: Callable[[tuple[int, int, int, int]], bytes] | None = None,
+        max_calls: int | None = 12,
     ) -> None:
         self._backend = backend
         self._max_box_side = max_box_side
         self._min_box_side = min_box_side
         self._timeout_ms = timeout_ms
         self._capture = capture if capture is not None else _box_bytes
+        self._max_calls = max_calls
+        self._calls_used = 0
 
     # -- look ----------------------------------------------------------------
 
@@ -121,6 +124,17 @@ class LookTool:
                 EvidenceSource.VISION,
                 EvidenceStatus.UNSUPPORTED,
                 "vision_not_configured",
+            )
+        # P5: one LookTool instance serves one loop run, so an instance
+        # counter is a per-run quota. Vision calls are seconds and real
+        # money; an unbounded look loop is a resource-governor failure the
+        # design doc explicitly rules out. The receipt is honest
+        # unsupported, never a fake reading.
+        if self._max_calls is not None and self._calls_used >= self._max_calls:
+            return failed_evidence(
+                EvidenceSource.VISION,
+                EvidenceStatus.UNSUPPORTED,
+                f"look_quota_exhausted: {self._max_calls} vision calls used this run",
             )
 
         if box_ltrb is None:
@@ -153,6 +167,7 @@ class LookTool:
             )
 
         image_bytes = self._capture(box)
+        self._calls_used += 1
         text_prompt = prompt if prompt is not None else DEFAULT_PROMPT
         try:
             result = self._backend.describe(image_bytes, text_prompt, self._timeout_ms)

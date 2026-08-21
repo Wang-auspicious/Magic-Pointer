@@ -2327,14 +2327,19 @@ def _loop_router(
         a heartbeat so a long productive loop reads as progress instead of
         a hang. The first event also carries the durable agent session id so
         the GUI can address steer/cancel at the session while the bridge is
-        still running."""
+        still running. Steer/follow-up absorption and compaction are visible
+        too (O7): a course correction or a context reset must not look like
+        the loop silently ignored it."""
         from app.agent_runtime.loop import (
             BudgetRenewed,
+            FollowupContinued,
             LoopStart,
+            Steered,
             ToolCallStarted,
             TurnFinished,
             TurnStarted,
         )
+        from app.agent_runtime.types import TransitionReason
 
         if clock is None:
             return
@@ -2343,11 +2348,18 @@ def _loop_router(
         elif isinstance(event, TurnStarted):
             clock.mark("model_request", turn=event.turn)
         elif isinstance(event, TurnFinished):
-            clock.mark("model_response", turn=event.state.turn_count)
+            if event.state.transition is TransitionReason.COMPACT_TRIGGERED:
+                clock.mark("context_compacted", turn=event.state.turn_count)
+            else:
+                clock.mark("model_response", turn=event.state.turn_count)
         elif isinstance(event, BudgetRenewed):
             clock.mark("loop_progress", turn=event.turn, renewals=event.renewals_used)
         elif isinstance(event, ToolCallStarted):
             clock.mark("tool_call", name=event.name)
+        elif isinstance(event, Steered):
+            clock.mark("steer_absorbed", turn=event.turn)
+        elif isinstance(event, FollowupContinued):
+            clock.mark("followup_continued", turn=event.turn)
 
     try:
         try:
