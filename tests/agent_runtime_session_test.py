@@ -664,3 +664,65 @@ def test_answer_to_clarification_resumes_the_exact_logged_surface(tmp_path: Path
     ]
     assert surface[-1].content == "B"
     assert json.loads(surface[2].content or "")["question"] == "选 A 还是 B？"
+
+
+def _count_full_loads(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Count full-log loads so O(n) reloads per append are observable."""
+    from app.agent_runtime import session as session_module
+
+    calls = {"full": 0}
+    original = FileSessionStore._load
+
+    def counting_load(self, path, session_id, *, already_locked=False):
+        calls["full"] += 1
+        return original(self, path, session_id, already_locked=already_locked)
+
+    monkeypatch.setattr(FileSessionStore, "_load", counting_load)
+    return calls
+
+
+def test_append_does_not_reload_the_whole_log_per_event(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A long job appends thousands of events; re-reading and re-verifying the
+    whole hash chain on every append is O(n^2) IO that grows with the very
+    history the session exists to protect. Unchanged files must cost one
+    stat, and external growth must be adopted incrementally."""
+    calls = _count_full_loads(monkeypatch)
+    store = FileSessionStore(tmp_path)
+    store.create("longrun")
+    session = store.resume("longrun")
+    baseline = calls["full"]
+    for index in range(50):
+        session.append("audit/test", {"index": index})
+    assert calls["full"] == baseline
+
+
+def test_concurrent_writer_events_are_adopted_incrementally(tmp_path: Path) -> None:
+    store = FileSessionStore(tmp_path)
+    store.create("shared")
+    left = store.resume("shared")
+    right = store.resume("shared")
+    right.append("audit/test", {"writer": "right", "index": 0})
+    right.append("audit/test", {"writer": "right", "index": 1})
+    left.append("audit/test", {"writer": "left", "index": 2})
+    resumed = store.resume("shared")
+    writers = [event.data.get("writer") for event in resumed.events if event.type == "audit/test"]
+    assert writers == ["right", "right", "left"]
+    assert len(resumed.events) == 4
+
+
+def test_incremental_refresh_falls_back_when_the_tail_is_corrupt(tmp_path: Path) -> None:
+    store = FileSessionStore(tmp_path)
+    store.create("shared")
+    session = store.resume("shared")
+    other = store.resume("shared")
+    other.append("audit/test", {"writer": "other"})
+    # Simulate a crash mid-append: a partial line grows the file beyond our
+    # known size but is not valid JSON.
+    with session.path.open("ab") as handle:
+        handle.write(b'{"formatVersion":1,"seq":') 
+    session.append("audit/test", {"writer": "after-crash"})
+    resumed = store.resume("shared")
+    writers = [event.data.get("writer") for event in resumed.events if event.type == "audit/test"]
+    assert writers == ["other", "after-crash"]

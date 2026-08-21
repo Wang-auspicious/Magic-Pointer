@@ -196,6 +196,15 @@ class EventSession:
         self._lock = threading.RLock()
         self._turn_lease_context: Any | None = None
         self.repaired_tail_bytes = repaired_tail_bytes
+        # Bytes of the log this handle has already verified. A long job
+        # appends thousands of events; re-reading and re-verifying the whole
+        # hash chain on every append is O(n^2) IO that grows with the very
+        # history the session protects. Unchanged files cost one stat;
+        # external growth is adopted incrementally (Codex rollout pattern).
+        try:
+            self._known_size = path.stat().st_size
+        except OSError:
+            self._known_size = 0
         self._rebuild_surface()
 
     @property
@@ -295,6 +304,7 @@ class EventSession:
                 os.fsync(handle.fileno())
             self._events.append(event)
             self._surface = candidate_surface
+            self._known_size += len(line)
             return event
 
     @contextmanager
@@ -305,8 +315,23 @@ class EventSession:
             yield
 
     def _refresh_from_disk(self) -> None:
-        """Adopt the latest verified chain before deriving the next event."""
+        """Adopt the latest verified chain before deriving the next event.
+
+        Fast path: the file is exactly as long as the bytes this handle has
+        already verified, so nobody else wrote and one stat settles it.
+        Growth is adopted line-by-line, chaining onto the in-memory hash
+        chain; only shrinkage, crash debris or a parse failure falls back to
+        the full repairing load.
+        """
         if not self.path.exists():
+            return
+        try:
+            size = self.path.stat().st_size
+        except OSError:
+            return
+        if size == self._known_size:
+            return
+        if size > self._known_size and self._adopt_incremental(size):
             return
         latest = FileSessionStore(self.path.parent)._load(
             self.path, self.id, already_locked=True
@@ -315,6 +340,55 @@ class EventSession:
         self._events = list(latest.events)
         self._surface = latest.derive_messages()
         self.repaired_tail_bytes += latest.repaired_tail_bytes
+        try:
+            self._known_size = self.path.stat().st_size
+        except OSError:
+            self._known_size = 0
+
+    def _adopt_incremental(self, size: int) -> bool:
+        """Adopt only the bytes beyond the already-verified prefix.
+
+        Returns False when the new tail cannot be chained (crash debris,
+        invalid JSON, hash mismatch); the caller then repairs via the full
+        load. The verification strength is identical to a full read: every
+        adopted line must extend the in-memory chain with contiguous seq and
+        matching prevHash/hash.
+        """
+        try:
+            with self.path.open("rb") as handle:
+                handle.seek(self._known_size)
+                new_bytes = handle.read()
+        except OSError:
+            return False
+        previous_hash = self._events[-1].hash if self._events else _ZERO_HASH
+        adopted: list[SessionEvent] = []
+        consumed = 0
+        for raw_line in new_bytes.splitlines(keepends=True):
+            if not raw_line.endswith(b"\n"):
+                return False
+            try:
+                payload = json.loads(raw_line.decode("utf-8"))
+            except (UnicodeError, json.JSONDecodeError):
+                return False
+            try:
+                event = FileSessionStore._parse_event(
+                    payload,
+                    self.id,
+                    len(self._events) + len(adopted),
+                    previous_hash,
+                )
+            except SessionCorruptionError:
+                return False
+            adopted.append(event)
+            previous_hash = event.hash
+            consumed += len(raw_line)
+        surface = self._surface
+        for event in adopted:
+            surface = self._project_event(surface, event)
+        self._events.extend(adopted)
+        self._surface = surface
+        self._known_size += consumed
+        return True
 
     def _synchronize(self) -> None:
         with self._lock, self._file_lock():
