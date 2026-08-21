@@ -179,7 +179,7 @@ class DesktopActionSession:
         count: int = 1,
         **_: Any,
     ) -> str:
-        snap = self._require_snapshot(snapshot_id)
+        snap = self._require_snapshot(snapshot_id, index=index)
         self._require_input()
         point, _element = self._target_point(snap, index=index, x=x, y=y)
         self.driver.click(point, button=button or "left", count=int(count or 1))
@@ -196,7 +196,7 @@ class DesktopActionSession:
         submit: bool = False,
         **_: Any,
     ) -> str:
-        snap = self._require_snapshot(snapshot_id)
+        snap = self._require_snapshot(snapshot_id, index=index)
         self._require_input()
         element = None
         if index is not None or x is not None or y is not None:
@@ -250,7 +250,7 @@ class DesktopActionSession:
         **_: Any,
     ) -> str:
         del dx
-        snap = self._require_snapshot(snapshot_id)
+        snap = self._require_snapshot(snapshot_id, index=index)
         self._require_input()
         point, _element = self._target_point(snap, index=index, x=x, y=y)
         self.driver.scroll(point, delta=int(dy or 0))
@@ -263,7 +263,7 @@ class DesktopActionSession:
         value: str = "",
         **_: Any,
     ) -> str:
-        snap = self._require_snapshot(snapshot_id)
+        snap = self._require_snapshot(snapshot_id, index=index)
         self._require_input()
         element = _element_by_index(snap.elements, index)
         result = self.uia_act("value", element, str(value))
@@ -283,7 +283,7 @@ class DesktopActionSession:
         action: str = "invoke",
         **_: Any,
     ) -> str:
-        snap = self._require_snapshot(snapshot_id)
+        snap = self._require_snapshot(snapshot_id, index=index)
         self._require_input()
         element = _element_by_index(snap.elements, index)
         name = str(action or "invoke")
@@ -305,7 +305,7 @@ class DesktopActionSession:
         y: float | None = None,
         **_: Any,
     ) -> str:
-        snap = self._require_snapshot(snapshot_id)
+        snap = self._require_snapshot(snapshot_id, index=index)
         self._require_input()
         point, element = self._target_point(snap, index=index, x=x, y=y)
         if element is not None:
@@ -328,7 +328,10 @@ class DesktopActionSession:
         duration_ms: int = 0,
         **_: Any,
     ) -> str:
-        snap = self._require_snapshot(snapshot_id)
+        snap = self._require_snapshot(
+            snapshot_id,
+            indexes=[i for i in (index, to_index) if i is not None],
+        )
         self._require_input()
         start, _ = self._target_point(snap, index=index, x=x, y=y)
         end, _ = self._target_point(snap, index=to_index, x=to_x, y=to_y)
@@ -350,7 +353,13 @@ class DesktopActionSession:
                 recovery_hint="retry after the other session calls turn_ended; do not bypass with shell",
             )
 
-    def _require_snapshot(self, snapshot_id: str | None) -> _Snapshot:
+    def _require_snapshot(
+        self,
+        snapshot_id: str | None,
+        *,
+        index: int | None = None,
+        indexes: Sequence[int] = (),
+    ) -> _Snapshot:
         if not snapshot_id or snapshot_id not in self._snapshots:
             raise ActionFailure(
                 FailureType.STALE_SNAPSHOT,
@@ -365,7 +374,62 @@ class DesktopActionSession:
                 "window moved, resized, or changed process",
                 recovery_hint="call get_app_state again",
             )
+        targets = tuple(indexes) if indexes else ((index,) if index is not None else ())
+        if targets and snap.elements:
+            for target_index in targets:
+                self._require_unchanged_element(snap, live, int(target_index))
         return snap
+
+    def _require_unchanged_element(
+        self,
+        snap: _Snapshot,
+        live_window: dict[str, Any],
+        index: int,
+    ) -> None:
+        """Re-probe the element an index action targets before acting.
+
+        Window geometry alone does not prove the tree still matches: a list
+        that replaced row 5 leaves hwnd/pid/rect untouched while ``index=5``
+        now points at a different control. Kimi's snapshot contract binds an
+        action to the observed element, so the element at that index must
+        still carry the same role, name and rect; anything else is a new
+        state and the caller must re-observe.
+        """
+        snapshotted = next(
+            (
+                item
+                for item in snap.elements
+                if int(item.get("index") or 0) == index
+            ),
+            None,
+        )
+        if snapshotted is None:
+            return
+        try:
+            hwnd = int(live_window.get("hwnd") or 0)
+            live_elements = list(self.elements_probe(hwnd) or [])
+        except Exception as exc:
+            raise ActionFailure(
+                FailureType.STALE_SNAPSHOT,
+                "element tree could not be re-read before acting",
+                recovery_hint="call get_app_state again",
+            ) from exc
+        current = next(
+            (
+                item
+                for item in live_elements
+                if int(item.get("index") or 0) == index
+            ),
+            None,
+        )
+        if current is None or _element_fingerprint(current) != _element_fingerprint(
+            snapshotted
+        ):
+            raise ActionFailure(
+                FailureType.STALE_SNAPSHOT,
+                f"element at index {index} changed since the snapshot was taken",
+                recovery_hint="call get_app_state again",
+            )
 
     def _target_point(
         self,
@@ -448,8 +512,9 @@ def register_desktop_action_tools(
         ToolSpec(
             name="get_app_state",
             description=(
-                "观察窗口、发 snapshot_id 和元素树，不激活。"
-                "写操作必须带这个 id。窗口移动或 stale_snapshot 时重跑这一步。"
+                "实时观察窗口（live，当前状态），发 snapshot_id 和元素树，不激活。"
+                "它与 look/read_around 的冻结帧证据（手势时刻的历史画面）不同。"
+                "写操作必须带这个 id。窗口移动、目标元素变化或 stale_snapshot 时重跑这一步。"
             ),
             input_schema={
                 "type": "object",
@@ -793,6 +858,24 @@ def _element_by_index(elements: list[dict[str, Any]], index: int | None) -> dict
         if int(item.get("index") or 0) == int(index):
             return item
     raise ActionFailure(FailureType.TOOL_ERROR, f"unknown index {index}")
+
+
+def _element_fingerprint(element: dict[str, Any]) -> tuple[str, str, tuple[int, ...]]:
+    """Semantic identity of one observed element (P4): role + name + rect.
+
+    A replaced element at the same index (list refresh, renamed button)
+    changes at least one of these; geometry-only identity cannot see it.
+    """
+    raw_rect = element.get("rect") or element.get("bbox") or (0, 0, 0, 0)
+    try:
+        rect = tuple(int(value) for value in raw_rect)
+    except (TypeError, ValueError):
+        rect = (0, 0, 0, 0)
+    return (
+        str(element.get("role") or element.get("type") or ""),
+        str(element.get("name") or ""),
+        rect,
+    )
 
 
 def _rect_center(rect: Any) -> tuple[int, int]:

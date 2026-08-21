@@ -14,6 +14,7 @@ Both are pure Python; file I/O only in MemoryLoader.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -176,6 +177,12 @@ def compact_messages(
     ``_find_tail_cut_by_tokens``). A fixed count is the wrong unit here: four
     short replies are nothing, while four 64k tool results are the entire
     problem the compaction was supposed to solve.
+
+    Duplicate tool outputs are pruned from the summarized head before the
+    summarizer sees them (Hermes compaction prune): a long job that polls the
+    same subtree produces byte-identical reads, and paying a summarizer to
+    read the same payload N times buys nothing while pushing the source past
+    its own truncation limit.
     """
     if len(messages) <= min_tail_messages:
         return list(messages)
@@ -185,7 +192,7 @@ def compact_messages(
     # tool exchange instead of emitting an orphaned ``tool`` message.
     while cutoff > 0 and messages[cutoff].role is Role.TOOL:
         cutoff -= 1
-    head = messages[:cutoff]
+    head = _prune_duplicate_tool_results(messages[:cutoff])
     tail = messages[cutoff:]
     source = "\n".join(
         line for message in head if (line := _compaction_source_line(message))
@@ -218,6 +225,41 @@ def compact_messages(
         injected=True,
     )
     return [condensed, *tail]
+
+
+def _prune_duplicate_tool_results(head: list[AgentMessage]) -> list[AgentMessage]:
+    """Drop repeated identical tool payloads from the summarized source.
+
+    The first occurrence stays verbatim; every later byte-identical result
+    becomes a one-line provenance note. The session log keeps everything;
+    only the summarizer's source shrinks.
+    """
+    seen: set[str] = set()
+    pruned: list[AgentMessage] = []
+    for message in head:
+        if message.role is Role.TOOL and message.content:
+            digest = hashlib.sha256(
+                message.content.encode("utf-8", errors="surrogatepass")
+            ).hexdigest()
+            if digest in seen:
+                placeholder = AgentMessage(
+                    role=Role.TOOL,
+                    content=(
+                        f"[Duplicate tool output name={message.name or '?'} "
+                        f"call_id={message.tool_call_id or '?'}: identical to an "
+                        "earlier result; "
+                        f"{len(message.content)} chars omitted]"
+                    ),
+                    tool_call_id=message.tool_call_id,
+                    name=message.name,
+                    is_error=message.is_error,
+                    origin=message.origin,
+                )
+                pruned.append(placeholder)
+                continue
+            seen.add(digest)
+        pruned.append(message)
+    return pruned
 
 
 def _tail_cut_by_tokens(

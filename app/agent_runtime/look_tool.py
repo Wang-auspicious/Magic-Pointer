@@ -176,9 +176,18 @@ class LookTool:
         text = result.get("text", "")
         latency = result.get("latency_ms")
         backend_name = result.get("backend", "unknown")
-        note = f"backend={backend_name}; box={box[0]},{box[1]},{box[2]},{box[3]}"
+        note = (
+            f"backend={backend_name}; box={box[0]},{box[1]},{box[2]},{box[3]}"
+            "; frame=historical"
+        )
+        # P1 semantic isolation: ``look`` reads the frozen frame captured at
+        # pointerup, never the live screen. The marker travels inside the
+        # model-visible value so the reading cannot be mistaken for the
+        # current UI state (long tasks must re-observe with get_app_state
+        # before acting).
+        value = f"[historical frozen frame captured at gesture time]\n{text}"
         return ok_evidence(
-            text,
+            value,
             EvidenceSource.VISION,
             latency_ms=latency,
             note=note,
@@ -270,9 +279,11 @@ class LookTool:
             ToolSpec(
                 name="look",
                 description=(
-                    "Describe the screen region identified by an anchor (vision "
-                    "escape hatch; the crop box is decided by the anchor, never "
-                    "the full screen)."
+                    "Describe a region of the frozen frame captured at gesture "
+                    "time (vision escape hatch; historical pixels, not the live "
+                    "screen — do not act or click based on it; for the current "
+                    "UI state call get_app_state). The crop box is decided by "
+                    "the anchor, never the full screen."
                 ),
                 input_schema={
                     "type": "object",

@@ -161,7 +161,7 @@ def default_sections() -> list[Section]:
     def rules(ctx: dict[str, Any]) -> str:
         return "\n".join([
             "1. 基于证据回答，绝不编造屏幕内容。只要回答或生成就能交付的任务，证据够了就直接给结果，不要为了显得勤奋而继续调用工具；需要多步才能交付的任务，要做完全部步骤才算完成，不得因为「证据已经看够」在中途收工。看够了是可以停止翻找，不是可以停止干活。",
-            "2. 若证据里已有 look_once 或已覆盖手势的内容，直接回答，勿重复 look。没有覆盖手势的内容且没有视觉结果时，才把 visual_anchor 原样传给 look 一次；empty/error/unsupported 就换来源或说明缺什么。",
+            "2. look/read_around/dump_subtree 读的是手势时刻的冻结帧（historical，画面可能已过期），不得据此点击或判断当前状态；判断当前状态用 get_app_state。若证据里已有 look_once 或已覆盖手势的内容，直接回答，勿重复 look。没有覆盖手势的内容且没有视觉结果时，才把 visual_anchor 原样传给 look 一次；empty/error/unsupported 就换来源或说明缺什么。",
             "3. 不确定用户要哪一个目标或下一步时，调用 ask_user_question，等用户点选后再继续。",
             "4. 需要写回应用、导出文件、发送内容或执行改变外部状态的操作时，调用对应能力工具生成方案；这些工具只生成方案，用户确认后才真正执行。",
             "5. 复制文本、保存截图、查看来源可以直接调用对应工具。",

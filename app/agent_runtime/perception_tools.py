@@ -213,10 +213,12 @@ class PerceptionTools:
             ToolSpec(
                 name="read_around",
                 description=(
-                    "Read text around an anchor point. anchor is a stable "
-                    "element/anchor identifier; radius controls how many "
-                    "surrounding items to include (1..10). Returns the "
-                    "concatenated text of the read items."
+                    "Read text around an anchor point in the frozen snapshot "
+                    "captured for this turn (historical state, not the live "
+                    "screen — for the current state call get_app_state). "
+                    "anchor is a stable element/anchor identifier; radius "
+                    "controls how many surrounding items to include (1..10). "
+                    "Returns the concatenated text of the read items."
                 ),
                 input_schema={
                     "type": "object",
@@ -237,8 +239,10 @@ class PerceptionTools:
                 name="dump_subtree",
                 description=(
                     "Dump the structured accessibility subtree rooted at an "
-                    "anchor. depth controls how many levels to descend "
-                    "(clamped to 1..8). Cyclic data is truncated and noted."
+                    "anchor in the frozen snapshot captured for this turn "
+                    "(historical state — for the live UI call get_app_state). "
+                    "depth controls how many levels to descend (clamped to "
+                    "1..8). Cyclic data is truncated and noted."
                 ),
                 input_schema={
                     "type": "object",
@@ -258,8 +262,10 @@ class PerceptionTools:
             ToolSpec(
                 name="find_in_window",
                 description=(
-                    "Find text matching a pattern inside the current window. "
-                    "Returns the matched texts with their bounding boxes."
+                    "Find text matching a pattern inside the frozen snapshot "
+                    "captured for this turn (historical state — for the live "
+                    "UI call get_app_state). Returns the matched texts with "
+                    "their bounding boxes."
                 ),
                 input_schema={
                     "type": "object",

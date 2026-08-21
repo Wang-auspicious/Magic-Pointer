@@ -52,6 +52,16 @@ class ToolCallGuardrailConfig:
     duplicate_read_halt_after: int = 3
     repeated_action_warn_after: int = 2
     repeated_action_halt_after: int = 4
+    live_poll_tools: frozenset[str] = frozenset({"get_app_state"})
+    """Live observation tools that legitimately poll while waiting.
+
+    A byte-identical live observation means ``nothing changed yet``, which is
+    the correct reading while a progress bar fills or a window appears. These
+    tools are warned like any other stale read but never halted: killing a
+    legitimate wait is exactly the long-task failure this guard must not
+    cause (S5). The rolling wall-clock budget still bounds how long a wait
+    can hold the loop.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,8 +190,10 @@ class ToolCallGuardrailController:
         else:
             self._consecutive_duplicate_reads = 0
 
+        is_live_poll = tool_name in self.config.live_poll_tools
         if (
             self.config.hard_stop_enabled
+            and not is_live_poll
             and same_call_count >= self.config.read_no_progress_halt_after
         ):
             return self._decision(
@@ -197,6 +209,7 @@ class ToolCallGuardrailController:
             )
         if (
             self.config.hard_stop_enabled
+            and not is_live_poll
             and self._consecutive_duplicate_reads
             >= self.config.duplicate_read_halt_after
         ):
@@ -216,6 +229,19 @@ class ToolCallGuardrailController:
             self.config.warnings_enabled
             and same_call_count >= self.config.read_no_progress_warn_after
         ):
+            if is_live_poll:
+                return self._decision(
+                    "warn",
+                    "live_poll_unchanged_warning",
+                    (
+                        f"{tool_name} still shows the same state after "
+                        f"{same_call_count} observations. The target has not "
+                        "changed yet; keep waiting only if the task is to wait "
+                        "for a change, otherwise act on the current state."
+                    ),
+                    same_call_count,
+                    signature,
+                )
             return self._decision(
                 "warn",
                 "read_no_progress_warning",
