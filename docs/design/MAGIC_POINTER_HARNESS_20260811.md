@@ -1322,3 +1322,17 @@ smoke：uia-host PASS、replay 20 条 trace 走真实网关（机制绿，见下
 - [x] **长任务能力差距盘点已完成**：`docs/2026-08-19-LONG_RUN_CAPABILITY_GAP.md`，四路并发只读审计，全部结论带 `文件:行号`，含五层缺口与建议批次 A–E。后续长任务工作先读该文档，不要重新推导清单。
 - [x] **长任务地基第一批已落地（开发树，未升版本）**：按用户裁决「别造轮子，本地顶级 agent 源码直接搬」，从 HermesAgent（MIT）移植。硬天花板全解除——bridge 期限改无活动超时、`emergency_turn_fuse` 90→1000；上下文层——请求级 token 估算（补上此前完全漏算的 system prompt 与 tool schema）、可反复触发的压缩 + anti-thrash、`TodoStore` 跨压缩保留未完成步骤、尾部按 token 预算裁剪、压缩成功判据由条数改为 token 权重（实施中发现的真 bug）。出处登记在 `THIRD_PARTY_NOTICES.md`。fresh：Python **1401 passed**、Node **152 passed**、typecheck + lint 干净。
 - [ ] **未闭合（长任务真实缺口，不得冒充已完成）**：首要事实是**长任务当前跑不了**——Stage 60s / Studio 120s bridge 硬超时（`electron/main.ts:3933-3934`、`1187`）与 90 轮 fuse（`app/fabric/engine.py:983-984`）在任何长跑能力被用到之前就落闸，当前上限 ≤2 分钟、≤90 轮，而 OSWorld 2.0 量纲是 1.6 小时、318 次工具调用。其后依次是：上下文耐久（rolling compaction、进度事实保护、工具结果窗口化、真实 token 计数）、感知语义隔离（冻结 look/read_around 与 live get_app_state 混用、InputArtifact 不可中途再编译）、持久性（program counter 续跑、effect sandwich 上生产盘、session 轮转）、可控性（steer 生产接线、graceful interrupt、真实步数与账本可视化）、结构性（子任务分解、todo 落盘、回执准入）。**Gate 2 的“crash recovery”需升级为“program counter 续跑”；长任务的上下文耐久性此前不在任何 Gate 里，是新边界带来的新需求。**
+
+### 2026-08-19：Codex 逐行学习 + 全链修复批（1.0.12 已交付）
+
+- [x] **Codex harness 逐行学习完成**：clone `openai/codex`（HEAD `2151d3a`），逐文件读 `codex-rs/core` 的 turn 循环、compact、tools/parallel、input_queue、rollout 持久化与 ext/goal；学习结论 + 与 MP 同名子系统的逐条裁决（吸收/已有/明确不取）在 `docs/research/2026-08-19-codex-harness-study-and-audit.md`。
+- [x] **上一批悬空的 9 个 TDD 契约全部实现转绿**：冻结/实时语义隔离（look/read_around/dump_subtree/find_in_window 标注 historical/frozen，系统提示「冻结帧不得据此点击」）、get_app_state 轮询只 warn 不 halt（S5）、index 类动作前重探元素树 role/name/rect 变化即 stale_snapshot（P4）、压缩摘要源去重（C3）。
+- [x] **压缩摘要升级为 Codex 五段结构化交接**（进度/关键决定/约束/剩余步骤/关键数据），摘要源上限 12k→48k，selection/conversation 双桥单源（`app/agent_runtime/compaction_prompt.py`）。
+- [x] **session append O(n²) → 增量采用**：`_known_size` 前缀验证 + `_adopt_incremental` 逐行链上内存哈希链（对照 Codex rollout）；崩溃残尾/哈希不连续回退全量修复加载。50 次 append 零全量重载有测试钉死。
+- [x] **跨进程优雅取消（O3）**：`cancel/request`+`cancel/consumed` 持久事件按 turn 隔离单次消费；agent_session_bridge `action=cancel`；selection/conversation 双桥 interrupt_check 接入（engine 透传）；GUI 停止先优雅（loop 下轮边界 USER_INTERRUPT + Receipt）后 kill 兑底（5s 宽限）。
+- [x] **运行中插话（O1/O2）**：stage 处理中提交不再被静默丢弃——`stage:steer-selection-command` 写 durable inbox（next-step），loop 下轮携带；preload/main/stage 三端接线 + 界面反馈。
+- [x] **真实步数上卡（O5）**：loop 事件 turn 字段进进度通道，「第 N 轮」+ 工具名显示在运行卡上；TYPICAL_PHASES=7 不再是唯一进度语义。
+- [x] **待续标记（D2）**：`EventSession.has_pending_work()` 从最后一条 turn/end reason 派生（Hermes resume_pending 语义，零新增写入）；bridge `action=status` 供 GUI 重启后查询。
+- [x] **其余同权重修复**：look 每 run 12 次配额（P5）；steer_absorbed/followup_continued/context_compacted 进度阶段（O7）；账单过契约层（O6）；取消/超时文案不再谎称「没有改动任何东西」（O4）。
+- [x] **交付**：fresh 全门 Python **1426 passed**、Node **154 passed / 106 源文件**、五套 typecheck 与 ESLint 干净；`npm run sync` 构建 `Magic-Pointer-1.0.12-x64.exe`、静默安装并重启，安装目录版本核对为 **1.0.12**。
+- [ ] **未闭合**：steer/取消 GUI 链路未经真机长任务实测；压缩中撞墙的删最老重试、agent 间 mailbox、session 轮转/zstd、目标 token 余量提醒记录在审计文档 §3 暂不做；300 步真机基准仍未跑。

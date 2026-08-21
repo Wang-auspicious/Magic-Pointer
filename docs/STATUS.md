@@ -1,8 +1,10 @@
 # 当前状态
 
-> 最后核实：2026-08-19（产品边界纠正 + Gate 2 聪明感收口在开发树。**未升版本、未 sync**——安装版仍为 1.0.11）。
+> 最后核实：2026-08-19（Codex 逐行学习 + 全链修复批，1.0.12 已 sync 到安装版）。
 
 > **产品边界（2026-08-19 用户裁决，优先于本文一切旧表述）：** Magic Pointer 是顶级 Agent Harness 本身，**短任务和长任务都自己做，任务时长不是边界**。把 prompt 写进 Claude Code/Codex 输入框只是一条投递通道，与写进微信输入框同级，不是移交执行权，也不是任务难度分级器。目标是最综合、最集成各方优点的 harness。凡文档写着"短任务 Harness / 长任务交给外部 Agent"的一律作废。
+
+2026-08-19 Codex 逐行学习 + 全链修复批（1.0.12 已交付）：clone `openai/codex`（HEAD `2151d3a`）逐文件读 `codex-rs/core`（turn 循环/压缩/并行工具/输入队列/rollout 持久化/goal 系统），对照 MP 同名子系统逐条裁决，学习与审计全文在 `docs/research/2026-08-19-codex-harness-study-and-audit.md`。本批修复（全部同权重，每批独立 fresh 验证并单独提交）：①完成上一批悬空的 9 个 TDD 契约——look/read_around 等冻结证据与描述标注 historical/frozen（P1）、系统提示「冻结帧不得据此点击」、get_app_state 轮询只 warn 不 halt（S5）、index 类动作前重探元素树 role/name/rect 变化即 stale_snapshot（P4）、压缩摘要源去重（C3/Hermes prune）；②压缩摘要升级为 Codex 五段结构化交接（进度/关键决定/约束/剩余步骤/关键数据）+ 摘要源 12k→48k，双桥单源；③session append 从每 append 全量重读重验（O(n²)）改为 stat 前缀 + 增量采用（对照 Codex rollout）；④跨进程优雅取消（O3）：cancel/request+consumed 持久事件、bridge action=cancel、双桥 interrupt_check、GUI 停止先优雅后 kill 兑底；⑤运行中插话（O1/O2）：stage 处理中提交走 stage:steer-selection-command 写 durable inbox，loop 下轮携带；⑥真实步数上卡（O5）：「第 N 轮」+ 工具名，不再共用 TYPICAL_PHASES=7 假估计；⑦has_pending_work() 从 turn/end reason 派生 + bridge status（D2）；⑧look 每 run 12 次配额（P5）；⑨steer_absorbed/context_compacted 等进度阶段（O7）；⑩账单过契约层（O6）；⑪取消/超时文案不再谎称「没有改动任何东西」（O4）。fresh 验证：Python **1426 passed**；Node **154 passed / 106 源文件**；五套 typecheck 与 ESLint 干净。交付：`npm run sync` 构建 `Magic-Pointer-1.0.12-x64.exe`、静默安装并重启，安装目录版本核对为 **1.0.12**。诚实边界：steer/取消的 GUI 链路未经真机长任务实测；压缩中撞墙的删最老重试、agent 间 mailbox、session 轮转压缩、目标 token 余量提醒记录在审计文档 §3 暂不做；300 步真机基准仍未跑。
 
 2026-08-19 产品边界纠正（开发树，未升版本）：根因是 8·17 已裁决"完整自有 Agent"，却只写进了进度账本与 research 文档，没同步 `AGENTS.md` 和设计文档 §1 产品定位——而那才是每个新会话的必读入口，于是"短任务"边界持续自我复制。本批把事实源改对（设计文档 §1.1/§1.2/§4.8/§9/§10.2/§16.1/§17、`AGENTS.md`、`AGENT.md`、两份 HANDOFF、RECONSTRUCTION_PROGRESS、本文），并给被推翻的两份 research 文档加作废横幅。同时修掉唯一一处真行为 bug：`app/agent_runtime/system_prompt.py` rules 第 1 条"证据已经足够时立即回答并结束"会让模型在多步长作业中途收工，改为区分回答类（够了就交付）与多步交付类（做完全部步骤，"看够了是可以停止翻找，不是可以停止干活"）。先观察测试失败再实现，fresh 全量 Python **1384 passed**。**未升版本、未 sync**（延续本开放批次的用户指示）。诚实边界：loop 的 rolling budget 本就支持长跑（productive 轮无条件续期），但外壳没跟上。
 
@@ -48,7 +50,7 @@
 
 ## 一句话
 
-**本机安装版为 1.0.11（上一批已 sync）；开发树在其之上多了感知 provider/fusion、DraftArtifact revision、Kimi 13 桌面动作面 + JobObject、UIA ControlView 树/Receipt，以及本批的 Gate 2 聪明感收口（澄清选项芯片、写后必再观察、未覆盖手势时自动 look 一次、max_tokens 4096；均已验证，按用户指示未升版本、未 sync）。** Magic Pointer 的路线是完整自有 Agent：Studio 保留已交付的 DSH 高保真工作面，自有 Runtime 承担**全部任务（短任务与长程任务，时长不是边界）**，确定性感知/权限/执行边界归 MP；Hermes/Pi 只作为持续对照和资产语义来源，不是底座。感知能读，主 loop 能按 snapshot 绑定去 click/type/set_value，点完必须再观察，收工必须发票。验证（开发树，未 sync）：**Python 1384 过**；触及的 Stage Node 测试与 renderer/tests typecheck 通过；本批未升版本、未构建 NSIS、未 `npm run sync`，安装版仍为 1.0.11。真机记事本写回归、Vision 每轮 fan-out、运行中插话 GUI、ledger 可视化、可续跑 crash resume、ask-user Inbox 按 question id 绑定仍是明确后续。
+**本机安装版为 1.0.12（Codex 学习批已 sync）；开发树与安装版同源。** Magic Pointer 的路线是完整自有 Agent：Studio 保留已交付的 DSH 高保真工作面，自有 Runtime 承担**全部任务（短任务与长程任务，时长不是边界）**，确定性感知/权限/执行边界归 MP；Hermes/Pi/Codex 只作为持续对照和资产语义来源，不是底座。感知能读（冻结/实时语义硬隔离），主 loop 能按 snapshot 绑定去 click/type/set_value（元素级失效），点完必须再观察，收工必须发票；运行中可插话（durable inbox）、可优雅停止（cancel/request → USER_INTERRUPT + Receipt）、看得见真实轮数，崩了能从会话记录知道有活没干完。验证：**Python 1426 过 / Node 154 过 / 五套 typecheck 干净**。真机 300 步长任务基准、steer/取消 GUI 真机实测、ledger 完整可视化仍是明确后续（见 `docs/research/2026-08-19-codex-harness-study-and-audit.md` §3）。
 
 **2026-08-14 全库深度审计 + 修复批（已完成，见 §审计）**：9 个区域逐文件逐行审查 + 红队对抗实测；修复 6 个 P1（L0 本地动作劫持、证据进指令通道、compaction 剥围栏、tasks 并发丢数据、UIA 管道无鉴权、快照桥缺 lease fail-open、undo 无读回校验、scope 泄漏级联等 14 项）与 20+ P2；已随 2026-08-15 的 1.0.5 一并同步到本机安装版。
 
