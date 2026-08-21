@@ -39,6 +39,7 @@ class TransitionReason(enum.StrEnum):
     TOOL_ERROR = "tool_error"
     MAX_OUTPUT_TOKENS_RECOVERED = "max_output_tokens_recovered"
     COMPACT_TRIGGERED = "compact_triggered"
+    BACKEND_RECOVERY = "backend_recovery"
     STOP_HOOK = "stop_hook"
     USER_INTERRUPT = "user_interrupt"
     BUDGET_EXHAUSTED = "budget_exhausted"

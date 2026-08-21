@@ -42,6 +42,11 @@ COOLDOWN_S = {
 }
 DEFAULT_COOLDOWN_S = 30.0
 
+_TRANSIENT_STATES = frozenset({"unreachable", "server_error", "rate_limited"})
+_TRANSIENT_STREAK_TO_OPEN = 2
+"""Consecutive transient failures before the breaker trips. One flap is a
+fact about a request, not about the endpoint (see record_failure)."""
+
 # Codes stage_contract.js knows how to say out loud.
 STATE_ERROR_CODES = {
     "payment_required": "model_gateway_payment_required",
@@ -120,6 +125,7 @@ class GatewayHealth:
     open_until: float = 0.0
     model: str = ""
     base_url: str = ""
+    transient_streak: int = 0
 
     @property
     def healthy(self) -> bool:
@@ -230,6 +236,9 @@ def _health_from_raw(raw: dict[str, Any]) -> GatewayHealth:
         value = raw.get(field)
         if isinstance(value, (int, float)):
             setattr(health, field, float(value))
+    streak = raw.get("transient_streak")
+    if isinstance(streak, int) and streak > 0:
+        health.transient_streak = streak
     status = raw.get("http_status")
     health.http_status = int(status) if isinstance(status, int) else None
     return health
@@ -280,6 +289,7 @@ def record_success(*, model: str = "", base_url: str = "") -> GatewayHealth:
         open_until=0.0,
         model=model,
         base_url=base_url,
+        transient_streak=0,
     )
     _write_health(health)
     return health
@@ -318,6 +328,30 @@ def record_failure(
     if state == "ok":
         return record_success(model=model, base_url=base_url)
     now = time.time()
+    key = (base_url or "").rstrip("/")
+    previous = read_health(key if base_url else None)
+    # Real-machine lesson (notepad-edit): ONE transient SSL flap during an
+    # auxiliary call opened the breaker for 20s and the main call right after
+    # was skipped — ten productive rounds died with it. Transient states
+    # (unreachable / 5xx / 429) must streak before they trip; hard states
+    # (401/402/404) are facts, not flaps, and open immediately.
+    if state in _TRANSIENT_STATES:
+        streak = int(getattr(previous, "transient_streak", 0) or 0) + 1
+        if streak < _TRANSIENT_STREAK_TO_OPEN:
+            health = GatewayHealth(
+                state=state,
+                http_status=status,
+                detail=str(detail or exception_name)[:300],
+                checked_at=now,
+                open_until=0.0,
+                model=model,
+                base_url=base_url,
+                transient_streak=streak,
+            )
+            _write_health(health)
+            return health
+    else:
+        streak = int(getattr(previous, "transient_streak", 0) or 0)
     health = GatewayHealth(
         state=state,
         http_status=status,
@@ -326,6 +360,7 @@ def record_failure(
         open_until=now + COOLDOWN_S.get(state, DEFAULT_COOLDOWN_S),
         model=model,
         base_url=base_url,
+        transient_streak=streak,
     )
     _write_health(health)
     return health

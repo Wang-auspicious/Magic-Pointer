@@ -2269,3 +2269,149 @@ def test_raising_event_sink_never_kills_the_loop():
 
     assert terminal.reason is TransitionReason.COMPLETED
     assert terminal.message == "hi"
+
+
+def test_real_prompt_tokens_trigger_compaction_when_estimator_undercounts():
+    """真机事故（notepad-edit）：估算器把全中文上下文低估近一半，真实
+    prompt_tokens 已 86k（预算 64k）压缩还没触发。上一轮 provider 报告的
+    真实 usage 是 ground truth——超过阈值必须直接触发压缩，不等估算器。"""
+    compactions = {"n": 0}
+
+    def compactor(messages):
+        compactions["n"] += 1
+        return messages[:1]
+
+    def estimator(messages):
+        return 10  # 故意严重低估：模拟 CJK 低估场景
+
+    # 第一轮返回真实 usage：prompt_tokens 超过 70% 预算线。
+    backend = ScriptedBackend(
+        [
+            ToolCallArrived(call=ToolCall(id="c1", name="echo", arguments={})),
+            TurnDone(usage={"prompt_tokens": 90}, raw_text=None),
+        ],
+        [TurnDone(usage=None, raw_text="done")],
+    )
+    bulky, _ = make_counting_tool("echo", value="ok")
+    registry = ToolRegistry()
+    registry.register(bulky)
+    client = LoopModelClient(backend)
+
+    events, terminal = asyncio.run(
+        collect(
+            make_params(
+                client=client,
+                registry=registry,
+                user_input="x" * 20,
+                compactor=compactor,
+                context_budget_tokens=100,
+                token_estimator=estimator,
+            )
+        )
+    )
+
+    assert compactions["n"] == 1, "真实 prompt_tokens 90/100 必须触发压缩"
+    assert terminal.reason is TransitionReason.COMPLETED
+
+
+def test_small_real_usage_does_not_force_compaction():
+    """反过来：估算器超线但上一轮真实 usage 很小（例如刚压缩完），不得因
+    估算误差空转一次摘要调用……不——估算器超线仍要压（防患未然）；
+    此测试钉的是真实 usage 小时不阻止估算路径。"""
+    compactions = {"n": 0}
+
+    def compactor(messages):
+        compactions["n"] += 1
+        return messages[:1]
+
+    def estimator(messages):
+        return 95  # 超线
+
+    backend = ScriptedBackend([TurnDone(usage={"prompt_tokens": 5}, raw_text="done")])
+    client = LoopModelClient(backend)
+
+    events, terminal = asyncio.run(
+        collect(
+            make_params(
+                client=client,
+                user_input="x" * 20,
+                compactor=compactor,
+                context_budget_tokens=100,
+                token_estimator=estimator,
+            )
+        )
+    )
+
+    assert compactions["n"] == 1
+    assert terminal.reason is TransitionReason.COMPLETED
+
+
+def test_transient_backend_error_retries_when_the_turn_has_progress(monkeypatch):
+    """真机事故（notepad-edit）：10 轮成功工作后，一次瞬时 SSL 错误（压缩
+    摘要调用失败 → 熔断器开 20s → 主调用被跳过）把整个 turn 报废成
+    provider_unavailable，answer 为空——活干完了用户却看到失败。有进展的
+    turn 必须先退避重试（等过熔断冷却），而不是立刻终止。"""
+    from app.agent_runtime import loop as loop_module
+    from app.governance.latency_budget import BudgetPolicy, Stage, TimeoutAction
+
+    sleeps: list[float] = []
+    monkeypatch.setattr(loop_module, "_sleep", lambda seconds: sleeps.append(seconds))
+
+    withheld_scene = [
+        TurnWithheld(reason="backend_error:连不上模型端点。已跳过模型调用。"),
+        TurnDone(usage=None, raw_text=None),
+    ]
+    backend = ScriptedBackend(
+        [
+            ToolCallArrived(call=ToolCall(id="c1", name="echo", arguments={})),
+            TurnDone(usage=None, raw_text=None),
+        ],
+        # 客户端内部重试（max_provider_retries=2）也全部失败：三个相同场景
+        withheld_scene,
+        withheld_scene,
+        withheld_scene,
+        # loop 级退避后恢复
+        [TurnDone(usage=None, raw_text="最终答复")],
+    )
+    tool, _ = make_counting_tool("echo", value="ok")
+    registry = ToolRegistry()
+    registry.register(tool)
+    client = LoopModelClient(backend)
+
+    events, terminal = asyncio.run(
+        collect(
+            make_params(
+                client=client,
+                registry=registry,
+                user_input="开始",
+                budgets={
+                    Stage.FULL_ANSWER: BudgetPolicy(
+                        stage=Stage.FULL_ANSWER,
+                        budget_ms=600_000,
+                        on_timeout=TimeoutAction.ABANDON,
+                    )
+                },
+            )
+        )
+    )
+
+    assert terminal.reason is TransitionReason.COMPLETED
+    assert terminal.message == "最终答复"
+    assert sleeps and sleeps[0] >= 10, "必须真的等过熔断冷却（秒级退避），不能 0.25s 走过场"
+    recovered = [e for e in events if type(e).__name__ == "BackendRecovery"]
+    assert recovered, "重试必须作为可见事件发出，GUI 才能显示「端点抖动，等待恢复」"
+
+
+def test_transient_backend_error_terminates_when_no_progress():
+    """没有进展的 turn（第一轮就失败）不退避——立即终止，避免空等。"""
+    from app.agent_runtime import loop as loop_module
+
+    withheld_scene = [
+        TurnWithheld(reason="backend_error:连不上模型端点。"),
+        TurnDone(usage=None, raw_text=None),
+    ]
+    backend = ScriptedBackend(withheld_scene, withheld_scene, withheld_scene)
+    client = LoopModelClient(backend)
+    events, terminal = asyncio.run(collect(make_params(client=client, user_input="开始")))
+
+    assert terminal.reason is TransitionReason.PROVIDER_UNAVAILABLE

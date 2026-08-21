@@ -24,6 +24,11 @@ from app.agent_runtime.types import Terminal, TransitionReason
 
 __all__ = ["terminal_to_answer"]
 
+_PARTIAL_DELIVERY_REASONS = frozenset({
+    TransitionReason.PROVIDER_UNAVAILABLE,
+    TransitionReason.BUDGET_EXHAUSTED,
+})
+
 
 def terminal_to_answer(terminal: Terminal, command: str) -> dict[str, Any]:
     """Map a loop :class:`Terminal` to the selection_bridge answer shape."""
@@ -75,6 +80,54 @@ def terminal_to_answer(terminal: Terminal, command: str) -> dict[str, Any]:
             "modelUsage": terminal.model_usage,
         }
     terminated = terminal.reason is not TransitionReason.COMPLETED
+    partial_answer = ""
+    if (
+        terminated
+        and terminal.reason in _PARTIAL_DELIVERY_REASONS
+        and any(not result.is_error for result in terminal.results)
+    ):
+        # Real-machine lesson (notepad-edit): a transient provider failure
+        # AFTER the work was done used to throw the whole turn away — the
+        # document had actually been edited, yet the user only saw "Agent
+        # 未完成". Design §10.2: reaching a budget is not fake completion;
+        # it means handing back the evidence, the finished steps and the
+        # honest gap. The same applies to a dead endpoint.
+        done_steps = [
+            result.tool_name or result.tool_call_id
+            for result in terminal.results
+            if not result.is_error and result.tool_name
+        ]
+        gap = (
+            "模型连接中断"
+            if terminal.reason is TransitionReason.PROVIDER_UNAVAILABLE
+            else "预算用尽"
+        )
+        listing = "\n".join(
+            f"{index}. {name}"
+            for index, name in enumerate(done_steps[:12], 1)
+        )
+        partial_answer = (
+            f"{gap}，未能生成最终答复。此前已完成的操作：\n{listing}\n"
+            "（以上操作已真实执行；如需继续请重试或换一个范围。）"
+        )
+    if partial_answer:
+        return {
+            "ok": True,
+            "prompt": command,
+            "answer": partial_answer,
+            "error": None,
+            "answerShape": "answer",
+            "loopTerminated": True,
+            "loopTerminatedReason": terminal.reason.value,
+            "route": {
+                "tier": "L2",
+                "action": "model_loop_partial",
+                "turns": terminal.turns,
+            },
+            "loopReceipts": _receipts(terminal),
+            "events": _events(terminal),
+            "modelUsage": terminal.model_usage,
+        }
     return {
         "ok": not terminated,
         "prompt": command,

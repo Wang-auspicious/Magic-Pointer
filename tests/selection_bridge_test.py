@@ -1226,6 +1226,21 @@ def test_only_completed_loop_terminal_can_become_the_user_answer() -> None:
         "loopTerminated": True,
         "loopTerminatedReason": "budget_exhausted",
     }) is False
+    # 部分交付：终止但携带实质完成内容（notepad-edit 教训）——
+    # 活干完了不得只报一句错误。
+    assert selection_bridge._loop_result_is_answer({
+        "ok": True,
+        "answer": "模型连接中断，未能生成最终答复。此前已完成的操作：\n1. click\n2. type_text\n（以上操作已真实执行）",
+        "loopTerminated": True,
+        "loopTerminatedReason": "provider_unavailable",
+    }) is True
+    # 终止且没有实质内容的仍然走失败路径。
+    assert selection_bridge._loop_result_is_answer({
+        "ok": True,
+        "answer": "",
+        "loopTerminated": True,
+        "loopTerminatedReason": "provider_unavailable",
+    }) is False
 
 
 def test_loop_interaction_metadata_preserves_usage_and_user_suspension() -> None:

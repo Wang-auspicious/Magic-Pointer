@@ -179,6 +179,9 @@ def test_compaction_prunes_duplicate_tool_results_before_summarizing() -> None:
 
 
 def test_compaction_never_orphans_a_tool_result_from_its_assistant_call() -> None:
+    # 尾部消息用 ASCII：CJK 计数修正后「现在呢」= 3 token 会提前截住尾部，
+    # 走不到工具结果分支；这个测试要覆盖的正是「边界落在 TOOL 上时回退到
+    # 它的 assistant 调用」的孤儿守卫。
     messages = [
         AgentMessage(role=Role.USER, content=f"old-{index}", tool_call_id=None, name=None)
         for index in range(3)
@@ -199,7 +202,7 @@ def test_compaction_never_orphans_a_tool_result_from_its_assistant_call() -> Non
             name="read",
             origin="data",
         ),
-        AgentMessage(role=Role.USER, content="现在呢", tool_call_id=None, name=None),
+        AgentMessage(role=Role.USER, content="now?", tool_call_id=None, name=None),
     ])
 
     compacted = compact_messages(

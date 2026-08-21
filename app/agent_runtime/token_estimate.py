@@ -34,29 +34,60 @@ __all__ = [
 ]
 
 _CHARS_PER_TOKEN = 4
+_CJK_CHARS_PER_TOKEN = 1
+"""CJK scripts tokenize at roughly one token per character (mimo/deepseek/
+gpt families all land near 1.0-1.5); English averages ~4 chars/token. The
+real-machine notepad-edit run proved the flat 4-char rate underestimates an
+all-Chinese desktop context by ~2x (real prompt_tokens 86k while the
+estimator said ~48k), which delayed compaction by whole rounds. Text is
+therefore counted in two buckets: CJK codepoints at 1 token each, everything
+else at 4 chars per token."""
+
+
+def _count_cjk(text: str) -> int:
+    import unicodedata
+
+    return sum(
+        1
+        for ch in text
+        if unicodedata.east_asian_width(ch) in ("W", "F")
+    )
 
 
 def estimate_text_tokens(text: str | None) -> int:
     """Rough token count for a blob of text, rounding up."""
     if not text:
         return 0
-    return (len(text) + _CHARS_PER_TOKEN - 1) // _CHARS_PER_TOKEN
+    cjk = _count_cjk(text)
+    other = len(text) - cjk
+    tokens = cjk * _CJK_CHARS_PER_TOKEN
+    if other:
+        tokens += (other + _CHARS_PER_TOKEN - 1) // _CHARS_PER_TOKEN
+    return tokens
 
 
-def _message_chars(message: Any) -> int:
-    chars = len(getattr(message, "content", None) or "")
+def _message_chars(message: Any) -> tuple[int, int]:
+    """(cjk_chars, other_chars) for one message, tool-call envelopes included."""
+    content = getattr(message, "content", None) or ""
     tool_calls = getattr(message, "tool_calls", ()) or ()
     if tool_calls:
-        chars += len(str(list(tool_calls)))
-    return chars
+        content = f"{content}{list(tool_calls)}"
+    cjk = _count_cjk(content)
+    return cjk, len(content) - cjk
 
 
 def estimate_messages_tokens(messages: Iterable[Any]) -> int:
     """Rough token count for a message list, including tool-call envelopes."""
-    total_chars = sum(_message_chars(m) for m in messages)
-    if total_chars <= 0:
-        return 0
-    return (total_chars + _CHARS_PER_TOKEN - 1) // _CHARS_PER_TOKEN
+    cjk_total = 0
+    other_total = 0
+    for message in messages:
+        cjk, other = _message_chars(message)
+        cjk_total += cjk
+        other_total += other
+    tokens = cjk_total * _CJK_CHARS_PER_TOKEN
+    if other_total:
+        tokens += (other_total + _CHARS_PER_TOKEN - 1) // _CHARS_PER_TOKEN
+    return tokens
 
 
 def estimate_request_tokens(

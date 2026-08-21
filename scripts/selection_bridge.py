@@ -2331,6 +2331,7 @@ def _loop_router(
         too (O7): a course correction or a context reset must not look like
         the loop silently ignored it."""
         from app.agent_runtime.loop import (
+            BackendRecovery,
             BudgetRenewed,
             FollowupContinued,
             LoopStart,
@@ -2360,6 +2361,8 @@ def _loop_router(
             clock.mark("steer_absorbed", turn=event.turn)
         elif isinstance(event, FollowupContinued):
             clock.mark("followup_continued", turn=event.turn)
+        elif isinstance(event, BackendRecovery):
+            clock.mark("backend_recovery", turn=event.turn, attempt=event.attempt)
 
     try:
         try:
@@ -2461,14 +2464,18 @@ def _loop_router(
 
 
 def _loop_result_is_answer(result: dict[str, Any] | None) -> bool:
-    """Only a naturally completed model loop may own the user-visible answer."""
+    """A naturally completed loop owns the answer; a terminated loop does too
+    when it carries a partial-delivery answer (real work happened — the
+    notepad-edit lesson: ten productive rounds must not be reported as a
+    bare error just because the final model call died)."""
 
-    return bool(
-        isinstance(result, dict)
-        and result.get("ok") is True
-        and result.get("loopTerminated") is not True
-        and not result.get("localAction")
-    )
+    if not isinstance(result, dict) or result.get("ok") is not True:
+        return False
+    if result.get("localAction"):
+        return False
+    if result.get("loopTerminated") is not True:
+        return True
+    return bool(str(result.get("answer") or "").strip())
 
 
 def _loop_interaction_metadata(result: dict[str, Any] | None) -> dict[str, Any]:

@@ -102,6 +102,7 @@ const CardModel = (() => {
     context_compacted: '压缩了上下文，进度已保留',
     steer_absorbed: '你的插话已吸收',
     followup_continued: '按你的补充继续跑',
+    backend_recovery: '模型端点抖动，等待恢复后重试',
     action_planned: '排好了要做的事',
     action_executed: '做完了',
     verify: '回读确认',

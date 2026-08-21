@@ -195,6 +195,7 @@ __all__ = [
     "LoopStopped",
     "ModelChunk",
     "BudgetRenewed",
+    "BackendRecovery",
     "StopDecision",
     "ToolCallFinished",
     "ToolCallStarted",
@@ -234,6 +235,22 @@ def _over_compact_threshold(
     estimated = params.token_estimator(list(messages)) + tool_schema_tokens
     return estimated >= _PROACTIVE_COMPACT_RATIO * params.context_budget_tokens
 
+
+def _real_prompt_tokens(usage: Mapping[str, Any] | None) -> int:
+    """Provider-reported prompt tokens from the last round (0 when absent)."""
+    if not isinstance(usage, Mapping):
+        return 0
+    for key in ("prompt_tokens", "input_tokens"):
+        value = usage.get(key)
+        if (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and math.isfinite(value)
+            and value > 0
+        ):
+            return int(value)
+    return 0
+
 _MAX_TOOL_RESULT_CHARS = 64_000
 """Maximum model-visible/logged characters from one tool invocation."""
 
@@ -245,6 +262,21 @@ _RECOVERY_MESSAGE = (
 
 _TRUNCATION_MESSAGE = "输出被截断，重新生成"
 """Pi StreamFn truncation feedback: tool calls were cut off, regenerate."""
+
+_sleep = time.sleep
+"""Indirection for tests: the backend-recovery backoff must be observable
+and monkeypatchable without real wall-clock waits."""
+
+_MAX_BACKEND_RECOVERIES = 2
+_BACKEND_RECOVERY_DELAYS_S = (15.0, 25.0)
+"""Backoff schedule for transient backend errors on a productive turn.
+
+The real-machine notepad-edit failure chain was: compaction summarizer hit a
+transient SSL error → endpoint circuit breaker opened (20s cooldown) → the
+main call was skipped → the whole turn died as provider_unavailable after ten
+productive rounds. Sub-second retries cannot outlive a 20s breaker; these
+delays can. The rolling budget still bounds total wait: rounds spent waiting
+are non-productive, so the deadline eventually hard-cuts."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -361,6 +393,19 @@ class VerificationNudged:
     """验证门拦截了一次收尾：注入 nudge 后续跑一轮（最多一次）。"""
 
     turn: int
+
+
+@dataclass(frozen=True, slots=True)
+class BackendRecovery:
+    """瞬时后端错误后的退避重试（真机 notepad-edit 事故的修复）。
+
+    有进展的 turn 遇到 backend_error 不再立即终止：等待一段能穿过熔断
+    冷却的时间后重试同一轮。GUI 通过这个事件显示「端点抖动，等待恢复」。"""
+
+    turn: int
+    attempt: int
+    delay_s: float
+    reason: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -580,6 +625,7 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
     renewals_used = 0
     last_progress_turn = 0
     fruitless_compactions = 0
+    backend_recovery_attempts = 0
     tool_schemas = _select_tool_schemas(params)
     tool_schema_tokens = estimate_text_tokens(str(tool_schemas))
     loaded_extra: list[str] = []
@@ -603,6 +649,7 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
     )
     results: list[ToolResult] = []
     model_usage: dict[str, int] = {}
+    last_real_prompt_tokens = 0
     last_transition: TransitionReason | None = None
     turn_number = 1
     hook_notes: list[str] = []
@@ -667,7 +714,17 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                 and params.context_budget_tokens is not None
                 and params.token_estimator is not None
                 and fruitless_compactions < _MAX_FRUITLESS_COMPACTIONS
-                and _over_compact_threshold(params, state.messages, tool_schema_tokens)
+                and (
+                    _over_compact_threshold(params, state.messages, tool_schema_tokens)
+                    # The provider's own prompt_tokens from the previous round
+                    # is ground truth. The real-machine notepad-edit run had
+                    # the estimator at ~48k while the provider reported 86k —
+                    # CJK-heavy contexts defeat char-rate estimates, and a
+                    # late compaction costs whole rounds of duplicated tool
+                    # output (or a context-window rejection).
+                    or last_real_prompt_tokens
+                    >= _PROACTIVE_COMPACT_RATIO * params.context_budget_tokens
+                )
             ):
                 compacted_messages = params.compactor(list(state.messages))
                 # Judge by weight, not by count. Compaction trades many
@@ -769,6 +826,7 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                 raise CancelledError("cancelled during model call")
             calls, text = client.parse_tool_calls(events)
             _merge_model_usage(model_usage, client.last_usage)
+            last_real_prompt_tokens = _real_prompt_tokens(client.last_usage)
             if params.session is not None:
                 params.session.record_model_response(
                     step=turn_number,
@@ -798,6 +856,44 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                 )
                 if not token_withheld:
                     reasons = ", ".join(event.reason for event in withheld_events)
+                    # A transient backend failure must not throw away a turn
+                    # that has already done work (real-machine notepad-edit:
+                    # ten productive rounds, the document actually edited,
+                    # then one skipped call killed everything). Wait out a
+                    # breaker-scale cooldown and retry the same round; only
+                    # a turn with zero progress terminates immediately.
+                    if (
+                        any(not result.is_error for result in results)
+                        and backend_recovery_attempts < _MAX_BACKEND_RECOVERIES
+                    ):
+                        delay_s = _BACKEND_RECOVERY_DELAYS_S[
+                            backend_recovery_attempts
+                        ]
+                        bounded_delay_s = min(
+                            delay_s, max(0.0, (remaining_ms - 1_000.0) / 1000.0)
+                        )
+                        if bounded_delay_s >= 1.0:
+                            backend_recovery_attempts += 1
+                            yield BackendRecovery(
+                                turn=turn_number,
+                                attempt=backend_recovery_attempts,
+                                delay_s=bounded_delay_s,
+                                reason=reasons,
+                            )
+                            state = with_transition(
+                                state,
+                                TransitionReason.BACKEND_RECOVERY,
+                                tool_calls_pending=[],
+                                turn_count=turn_number,
+                                last_result=results[-1] if results else None,
+                            )
+                            yield TurnFinished(state)
+                            _sleep(bounded_delay_s)
+                            if loop_scope.is_cancelled:
+                                raise CancelledError(
+                                    "cancelled during backend recovery wait"
+                                )
+                            continue
                     terminal = Terminal(
                         reason=TransitionReason.PROVIDER_UNAVAILABLE,
                         message=reasons or "backend_error:unknown",

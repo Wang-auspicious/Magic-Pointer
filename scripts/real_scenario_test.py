@@ -543,7 +543,9 @@ def _run_chain(name: str, window: dict, gesture_points: list, command: str) -> d
         "selectionSnapshot": snap,
         "requestMode": "auto",
     }
-    result, result_err = _run_bridge("scripts/selection_bridge.py", bridge_payload)
+    result, result_err = _run_bridge(
+        "scripts/selection_bridge.py", bridge_payload, timeout=900
+    )
     _save_evidence(name, snapshot, result, snapshot_err + "\n---\n" + result_err)
     summary = snapshot.get("captureSummary") or {}
     print(
@@ -825,11 +827,161 @@ def scenario_image_file() -> None:
     print(str(answer)[:500])
 
 
+def _read_document_text_uia(hwnd: int) -> str:
+    """Independent verification eyes: read the live document text through the
+    compiled UIA probe (document_text fallback), NOT through the product
+    chain under test. Returns '' when the probe cannot serve."""
+    exe = ROOT / "data" / "runtime" / "uia_selection_probe.exe"
+    if not exe.exists():
+        return ""
+    try:
+        proc = subprocess.run(
+            [str(exe), str(int(hwnd))],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=20,
+            creationflags=0x08000000,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return ""
+    for line in reversed((proc.stdout or "").splitlines()):
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            payload = json.loads(line)
+        except ValueError:
+            continue
+        if payload.get("ok") is not True:
+            return ""
+        text = payload.get("text")
+        if isinstance(text, str):
+            return text
+        result_kind = str(payload.get("result_kind") or "")
+        if result_kind:
+            return ""
+    return ""
+
+
+def _save_complex_evidence(name: str, result: dict, final_text: str, verdict: dict) -> None:
+    out_dir = EVIDENCE_ROOT / name
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "result.json").write_text(
+        json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    (out_dir / "final_document.txt").write_text(final_text, encoding="utf-8")
+    (out_dir / "verification.json").write_text(
+        json.dumps(verdict, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+def _run_desktop_task_scenario(
+    name: str,
+    document_content: str,
+    command: str,
+    verify,
+) -> None:
+    """Complex multi-step desktop task: real notepad, real agent loop with
+    desktop action tools, REAL mutation, then an independent UIA read that
+    decides pass/fail — the model's own claim is never the verification."""
+    document = _create_scenario_document(name, document_content)
+    window = _open_notepad(document)
+    if not window:
+        document.unlink(missing_ok=True)
+        print(f"{name}: FAIL (no notepad window)")
+        return
+    hwnd = int(window["hwnd"])
+    try:
+        _set_foreground(hwnd)
+        if not _wait_for_document_pixels(hwnd):
+            raise RuntimeError("document_pixels_not_ready")
+        rect = _window_rect(hwnd)
+        window = _scenario_window(window, rect)
+        points = [(rect[0] + 130, rect[1] + 60 + i * 12) for i in range(10)]
+        result = _run_chain(name, window, points, command)
+        time.sleep(1.0)
+        final_text = _read_document_text_uia(hwnd)
+        verdict = verify(final_text, result)
+        verdict["finalTextChars"] = len(final_text)
+        _save_complex_evidence(name, result, final_text, verdict)
+        print(f"[{name}] verdict={verdict.get('verdict')} answer={str(result.get('answer') or '')[:200]!r}")
+        print(f"[{name}] final document tail: {final_text[-160:]!r}")
+    finally:
+        _close_notepad(hwnd)
+        document.unlink(missing_ok=True)
+
+
+EDIT_DOC = """Magic Pointer 复核文档
+========================
+
+本文件用于复杂任务真机测试。
+Q1 激活 12840 次，Q2 激活 19207 次。
+文档到此结束。
+"""
+
+
+def scenario_notepad_edit() -> None:
+    """多步写任务：观察 → 定位 → 写入 → 读回确认。独立 UIA 验证真改没改。"""
+
+    def verify(final_text: str, result: dict) -> dict:
+        written = "MP-2026" in final_text and "审核通过" in final_text
+        intact = "12840" in final_text and "19207" in final_text
+        verdict = {
+            "verdict": "PASS" if (written and intact) else "FAIL",
+            "appendedLineWritten": written,
+            "originalContentIntact": intact,
+        }
+        return verdict
+
+    _run_desktop_task_scenario(
+        "notepad-edit",
+        EDIT_DOC,
+        "在这份文档的最后另起一行，加上一句：审核通过 MP-2026。"
+        "写完后重新读一遍文档末尾，确认已经写上，再告诉我你做了什么。",
+        verify,
+    )
+
+
+BATCH_DOC = """批次处理底稿
+============
+
+以下是待追加的批次记录区。
+"""
+
+
+def scenario_notepad_batch() -> None:
+    """长链写任务：五行逐行追加，每行都要求读回确认——逼出 15+ 轮工具循环。"""
+
+    def verify(final_text: str, result: dict) -> dict:
+        marks = ["Alpha", "Beta", "Gamma", "Delta", "Epsilon"]
+        found = [mark for mark in marks if mark in final_text]
+        verdict = {
+            "verdict": "PASS" if len(found) == 5 else "PARTIAL" if found else "FAIL",
+            "linesWritten": len(found),
+            "missing": [mark for mark in marks if mark not in found],
+        }
+        return verdict
+
+    _run_desktop_task_scenario(
+        "notepad-batch",
+        BATCH_DOC,
+        "在这份文档的最后依次追加 5 行，每行一条：第一批 Alpha、第二批 Beta、"
+        "第三批 Gamma、第四批 Delta、第五批 Epsilon。"
+        "要求每写完一行都重新读一遍文档确认这一行真的在，再写下一行；"
+        "全部写完后告诉我总共写了几行。",
+        verify,
+    )
+
+
 def main() -> int:
     scenarios = {
         "notepad-complex": scenario_notepad_complex,
         "notepad-crossref": scenario_notepad_crossref,
         "notepad-injection": scenario_notepad_injection,
+        "notepad-edit": scenario_notepad_edit,
+        "notepad-batch": scenario_notepad_batch,
         "two-windows-trap": scenario_two_windows_trap,
         "terminal-output": scenario_terminal_output,
         "image-file": scenario_image_file,

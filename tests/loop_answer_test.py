@@ -162,3 +162,81 @@ def test_awaiting_user_terminal_maps_to_resumable_question() -> None:
     assert answer["awaitingUserInput"] is True
     assert answer["pendingInput"]["options"] == ["A", "B"]
     assert answer["loopTerminated"] is False
+
+
+def _terminal(reason, results=(), message=""):
+    from app.agent_runtime.types import Terminal, TransitionReason
+
+    return Terminal(
+        reason=reason,
+        message=message,
+        turns=3,
+        results=results,
+    )
+
+
+def test_provider_failure_after_work_delivers_partial_receipts():
+    """真机事故（notepad-edit）：10 轮成功工作（文档真的改对了）之后一个
+    瞬时后端错误把 turn 报废，answer 为空、ok=False——用户看到「Agent 未
+    完成」却不知道活已经干完。有成功工具回执的终止 turn 必须交付部分结
+    果：已完成步骤 + 诚实缺口，而不是一句报错。"""
+    from app.agent_runtime.types import ToolResult, TransitionReason
+
+    results = (
+        ToolResult(
+            tool_call_id="c1", value="ok", is_error=False,
+            failure_type=None, used_backend="desktop", latency_ms=12.0,
+            tool_name="get_app_state", arguments={},
+        ),
+        ToolResult(
+            tool_call_id="c2", value="ok", is_error=False,
+            failure_type=None, used_backend="desktop", latency_ms=8.0,
+            tool_name="click", arguments={},
+        ),
+        ToolResult(
+            tool_call_id="c3", value="ok", is_error=False,
+            failure_type=None, used_backend="desktop", latency_ms=30.0,
+            tool_name="type_text", arguments={},
+        ),
+    )
+    mapped = terminal_to_answer(
+        _terminal(TransitionReason.PROVIDER_UNAVAILABLE, results),
+        "改文档",
+    )
+
+    assert mapped["ok"] is True, "有实质完成的工作时不得伪装成纯失败"
+    assert "type_text" in mapped["answer"] and "get_app_state" in mapped["answer"]
+    assert "中断" in mapped["answer"] or "未能" in mapped["answer"], "缺口必须诚实说明"
+    assert mapped["loopTerminated"] is True
+    assert mapped["loopTerminatedReason"] == "provider_unavailable"
+
+
+def test_provider_failure_without_work_stays_a_failure():
+    """零进展的终止仍然是失败，不编造「已完成 0 步」的答案。"""
+    from app.agent_runtime.types import TransitionReason
+
+    mapped = terminal_to_answer(
+        _terminal(TransitionReason.PROVIDER_UNAVAILABLE),
+        "改文档",
+    )
+    assert mapped["ok"] is False
+    assert mapped["loopTerminated"] is True
+
+
+def test_budget_exhausted_after_work_delivers_partial_receipts():
+    from app.agent_runtime.types import ToolResult, TransitionReason
+
+    results = (
+        ToolResult(
+            tool_call_id="c1", value="ok", is_error=False,
+            failure_type=None, used_backend="desktop", latency_ms=12.0,
+            tool_name="click", arguments={},
+        ),
+    )
+    mapped = terminal_to_answer(
+        _terminal(TransitionReason.BUDGET_EXHAUSTED, results),
+        "任务",
+    )
+    assert mapped["ok"] is True
+    assert "click" in mapped["answer"]
+    assert "预算" in mapped["answer"] or "未能" in mapped["answer"]
