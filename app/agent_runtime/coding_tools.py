@@ -13,16 +13,18 @@ are reversible_write (allowed in default), shell is local_irreversible
 from __future__ import annotations
 
 import fnmatch
+import json
 import os
 import re
 import subprocess
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from app.agent_runtime.tool_registry import Effect, ToolRegistry, ToolSpec
 
-__all__ = ["register_coding_tools"]
+__all__ = ["WorkspaceSpace", "FileCheckpointStore", "register_coding_tools"]
 
 _MAX_READ_CHARS = 50_000
 _MAX_READ_LINES = 2_000
@@ -33,7 +35,7 @@ _DEFAULT_COMMAND_TIMEOUT_S = 60.0
 _MAX_COMMAND_TIMEOUT_S = 600.0
 
 
-class _Workspace:
+class WorkspaceSpace:
     """Path confinement: every tool path must stay inside the workspace."""
 
     def __init__(self, root: Path) -> None:
@@ -125,13 +127,90 @@ def _display(root: Path, path: Path) -> str:
         return str(path)
 
 
+_CATASTROPHIC_COMMANDS = (
+    re.compile(r"rm\s+(-[a-z]*r[a-z]*f|-[a-z]*f[a-z]*r)[a-z]*\s+/(?:\s|$)"),
+    re.compile(r"rm\s+-[a-z]*r[a-z]*\s+/(?:\s|$)"),
+    re.compile(r"Remove-Item\b[^\n]*-Recurse[^\n]*\s+[A-Za-z]:\\\s*(?:$|['\"|;])"),
+    re.compile(r"\bformat\s+[A-Za-z]:", re.IGNORECASE),
+    re.compile(r"\bdiskpart\b", re.IGNORECASE),
+    re.compile(r"\b(shutdown|Restart-Computer|Stop-Computer)\b", re.IGNORECASE),
+    re.compile(r"\bcipher\s+/w\b", re.IGNORECASE),
+    re.compile(r"\bmkfs\b"),
+    re.compile(r"\bdd\s+if=", re.IGNORECASE),
+)
+"""Catastrophic, never-legitimate-dev-work commands (handoff §A2 minimal
+blacklist). Everything else goes through the permission ladder unchanged."""
+
+
+class FileCheckpointStore:
+    """Before-images of every file our tools touch (CC /rewind contract).
+
+    Backups live under ``<workspace>/.mp/backups``: one content file per
+    mutation plus a JSONL manifest. ``restore`` rewinds the last N mutations
+    so an agent that went down the wrong path is one call from clean.
+    """
+
+    def __init__(self, root: Path) -> None:
+        self.dir = Path(root).resolve() / ".mp" / "backups"
+        self.manifest = self.dir / "manifest.jsonl"
+        self._seq = 0
+
+    def record(self, path: Path, *, existed: bool) -> None:
+        self.dir.mkdir(parents=True, exist_ok=True)
+        self._seq += 1
+        entry = {
+            "seq": self._seq,
+            "path": str(path),
+            "existed": existed,
+            "ts": time.time(),
+        }
+        if existed and path.is_file():
+            backup = self.dir / f"{self._seq:06d}.bak"
+            backup.write_bytes(path.read_bytes())
+            entry["backup"] = backup.name
+        with self.manifest.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+    def restore(self, steps: int = 0) -> str:
+        """Undo the last ``steps`` mutations (0 = every recorded one)."""
+        if not self.manifest.is_file():
+            return "no file edits recorded to restore"
+        entries: list[dict[str, Any]] = []
+        for line in self.manifest.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line:
+                entries.append(json.loads(line))
+        pending = entries[-steps:] if steps > 0 else entries
+        if not pending:
+            return "nothing to restore"
+        restored: list[str] = []
+        for entry in reversed(pending):  # undo newest-first
+            target = Path(str(entry["path"]))
+            backup = entry.get("backup")
+            if backup:
+                source = self.dir / str(backup)
+                if source.is_file():
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(source.read_bytes())
+                    restored.append(f"reverted {target.name}")
+            elif entry.get("existed") is False and target.exists():
+                target.unlink()
+                restored.append(f"removed {target.name} (was created by the agent)")
+        remaining = entries[: len(entries) - len(pending)]
+        with self.manifest.open("w", encoding="utf-8") as handle:
+            for entry in remaining:
+                handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        return "restored: " + "; ".join(restored) if restored else "nothing changed on disk"
+
+
 def register_coding_tools(
     registry: ToolRegistry,
     *,
     workspace_root: Path | str,
 ) -> None:
     """Register the file/shell tool set, confined to ``workspace_root``."""
-    space = _Workspace(Path(workspace_root))
+    space = WorkspaceSpace(Path(workspace_root))
+    checkpoints = FileCheckpointStore(space.root)
 
     def read_file(path: str, offset: int = 1, limit: int = _MAX_READ_LINES, **_: Any) -> str:
         target = space.resolve(path)
@@ -141,6 +220,7 @@ def register_coding_tools(
 
     def write_file(path: str, content: str, **_: Any) -> str:
         target = space.resolve(path)
+        checkpoints.record(target, existed=target.exists())
         target.parent.mkdir(parents=True, exist_ok=True)
         text = str(content or "")
         target.write_text(text, encoding="utf-8", newline="\n")
@@ -172,9 +252,36 @@ def register_coding_tools(
                 f"old_string matches {count} times in {space.display(target)}; "
                 "it must be unique (add surrounding context) or pass replace_all"
             )
+        checkpoints.record(target, existed=True)
         updated = raw.replace(old, new) if replace_all else raw.replace(old, new, 1)
         target.write_text(updated, encoding="utf-8", newline="")
         return f"edited {space.display(target)} ({count} replacement(s))"
+
+    def apply_patch(patch: str, **_: Any) -> str:
+        from app.agent_runtime.apply_patch import ApplyPatchError, apply_patch_text, parse_patch
+
+        text = str(patch or "")
+        if not text.strip():
+            raise ValueError("patch is required")
+        try:
+            for hunk in parse_patch(text):
+                if hunk.kind == "delete":
+                    checkpoints.record(space.resolve(hunk.path), existed=True)
+                    continue
+                target = space.resolve(hunk.path)
+                checkpoints.record(target, existed=target.exists())
+                if hunk.kind == "update" and hunk.move_path:
+                    checkpoints.record(space.resolve(hunk.move_path), existed=False)
+            return apply_patch_text(text, space.root)
+        except ApplyPatchError as exc:
+            raise ValueError(f"apply_patch failed: {exc}") from exc
+
+    def restore_files(steps: int = 0, **_: Any) -> str:
+        try:
+            bounded = max(0, int(steps or 0))
+        except (TypeError, ValueError):
+            bounded = 0
+        return checkpoints.restore(bounded)
 
     def glob(pattern: str, **_: Any) -> str:
         pattern = str(pattern or "").strip()
@@ -221,6 +328,12 @@ def register_coding_tools(
         workdir = space.resolve(cwd or ".")
         if not workdir.is_dir():
             raise NotADirectoryError(f"cwd not found: {space.display(workdir)}")
+        for rule in _CATASTROPHIC_COMMANDS:
+            if rule.search(text):
+                raise ValueError(
+                    "command rejected by the catastrophic-command guard: "
+                    + text[:120]
+                )
         bounded = max(1.0, min(float(timeout_s or _DEFAULT_COMMAND_TIMEOUT_S), _MAX_COMMAND_TIMEOUT_S))
         try:
             completed = subprocess.run(
@@ -364,4 +477,49 @@ def register_coding_tools(
         is_concurrency_safe=False,
         used_backend="shell",
         timeout_ms=620_000,
+    ))
+    registry.register(ToolSpec(
+        name="apply_patch",
+        description=(
+            "用 Codex apply_patch 格式一次修改多个文件（Add/Delete/Update + "
+            "@@ 上下文 + -/+ 行）。比多次 edit_file 更适合跨文件改动；"
+            "补丁里的上下文行必须与文件内容逐字匹配。"
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "patch": {
+                    "type": "string",
+                    "description": (
+                        "以 *** Begin Patch 开头、*** End Patch 结尾的完整补丁文本"
+                    ),
+                },
+            },
+            "required": ["patch"],
+        },
+        execute=apply_patch,
+        effect=Effect.REVERSIBLE_WRITE,
+        is_concurrency_safe=False,
+        used_backend="workspace_fs",
+        timeout_ms=30_000,
+    ))
+    registry.register(ToolSpec(
+        name="restore_files",
+        description=(
+            "把本会话内被 write_file/edit_file/apply_patch 改过的文件回滚到"
+            "改动前状态。steps=N 只撤销最近 N 次改动，默认全部撤销。"
+            "走错方向时用它回到干净状态，不要手工反向编辑。"
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "steps": {"type": "integer", "description": "撤销最近 N 次改动，0=全部"},
+            },
+            "required": [],
+        },
+        execute=restore_files,
+        effect=Effect.REVERSIBLE_WRITE,
+        is_concurrency_safe=False,
+        used_backend="workspace_fs",
+        timeout_ms=30_000,
     ))

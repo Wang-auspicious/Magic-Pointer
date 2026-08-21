@@ -244,6 +244,36 @@ def _apply_desktop_action_tools(fork, config: dict[str, Any]) -> None:
     register_desktop_action_tools(fork.get("tools"), default_session())
 
 
+def _apply_coding_tools(fork, config: dict[str, Any]) -> None:
+    """CC/Codex file+shell tool set over the workspace bound to this turn.
+
+    No ``workspace_root`` in the row config means no workspace was bound:
+    the row stays a no-op so the tool surface honestly reflects what this
+    turn can touch (a chat about a screenshot must not offer run_command).
+    """
+    from app.agent_runtime.coding_tools import register_coding_tools
+
+    raw_root = str(config.get("workspace_root") or "").strip()
+    if not raw_root:
+        return
+    register_coding_tools(fork.get("tools"), workspace_root=Path(raw_root))
+
+
+def _apply_delegate_tool(fork, config: dict[str, Any]) -> None:
+    """Hermes-style subagent: isolated-context coding child of this turn."""
+    from app.agent_runtime.subagent import register_delegate_tool
+
+    raw_root = str(config.get("workspace_root") or "").strip()
+    if not raw_root:
+        return
+    register_delegate_tool(
+        fork.get("tools"),
+        llm_provider=fork.get("llm"),
+        workspace_root=Path(raw_root),
+        permission_mode=str(config.get("permission_mode") or "default"),
+    )
+
+
 def _apply_capability_tools(fork, config: dict[str, Any]) -> None:
     """Recipe capabilities as model-facing tools (propose-only by default)."""
     registry = fork.get("tools")
@@ -316,6 +346,10 @@ def _apply_model_client(fork, config: dict[str, Any]) -> None:
         workspace_root=Path.cwd(),
     ).load()
     user_data_dir = Path(config.get("user_data_dir") or str(_FALLBACK_ROOT))
+    from app.agent_runtime.model_profiles import context_budget_for
+    from app.ai_client import get_ai_config
+
+    model_name = str(get_ai_config()[2] or "")
     context = {
         "permission_mode": str(config.get("permission_mode") or "default"),
         "deliver": is_deliver_request(str(config.get("command") or "")),
@@ -325,6 +359,7 @@ def _apply_model_client(fork, config: dict[str, Any]) -> None:
             command=str(config.get("command") or ""),
         ).load() or None,
         "language": "用中文",
+        "workspace_root": str(config.get("workspace_root") or "").strip(),
     }
     system_prompt = fork.get("prompt").build(context)
     provider = fork.get("llm")
@@ -347,6 +382,11 @@ def _apply_model_client(fork, config: dict[str, Any]) -> None:
 
     todo_store = fork.get("todo_store")
 
+    context_budget = context_budget_for(
+        model_name,
+        config.get("context_budget_tokens"),
+    )
+
     def compactor(messages):
         original = list(messages)
         compacted = compact_messages(original, config["summarize"])
@@ -365,6 +405,7 @@ def _apply_model_client(fork, config: dict[str, Any]) -> None:
         return compacted
 
     fork.provide_up("compactor", compactor)
+    fork.provide_up("context_budget", context_budget)
 
     def token_estimator(messages) -> int:
         # The system prompt carries memory (<=4000 chars) and skills (<=12000);
@@ -442,6 +483,8 @@ BUILTIN_PLUGINS: dict[str, PluginSpec] = {
         _spec("look-tool", ("tools", "vision"), _apply_look_tool),
         _spec("local-action-tools", ("tools",), _apply_local_action_tools),
         _spec("desktop-action-tools", ("tools",), _apply_desktop_action_tools),
+        _spec("coding-tools", ("tools",), _apply_coding_tools),
+        _spec("delegate-tool", ("tools", "llm"), _apply_delegate_tool),
         _spec("capability-tools", ("tools",), _apply_capability_tools),
         _spec("guard", ("guard_probe", "selection_anchor"), _apply_guard),
         _spec("system-prompt", ("prompt",), _apply_system_prompt),
@@ -466,6 +509,8 @@ BUILTIN_ROW_IDS: tuple[str, ...] = (
     "look-tool",
     "local-action-tools",
     "desktop-action-tools",
+    "coding-tools",
+    "delegate-tool",
     "capability-tools",
     "guard",
     "system-prompt",
@@ -496,6 +541,16 @@ def _env_int(name: str, default: int) -> int:
         return int(os.environ.get(name, ""))
     except ValueError:
         return default
+
+
+def _env_int_or_none(name: str) -> int | None:
+    raw = os.environ.get(name, "")
+    if not raw.strip():
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        return None
 
 
 def _user_plugin_dir(root: Path) -> Path:
@@ -609,6 +664,11 @@ def _run_loop_rows(runtime: dict[str, Any], root: Path) -> list[BundleRow]:
         ),
         BundleRow("desktop-action-tools", "desktop-action-tools"),
         BundleRow(
+            "coding-tools",
+            "coding-tools",
+            {"workspace_root": str(runtime.get("workspace_root") or "")},
+        ),
+        BundleRow(
             "capability-tools",
             "capability-tools",
             {
@@ -630,12 +690,13 @@ def _run_loop_rows(runtime: dict[str, Any], root: Path) -> list[BundleRow]:
                     or "default"
                 ),
                 "max_tokens": 4096,
-                "context_budget_tokens": _env_int(
-                    "MAGIC_POINTER_CONTEXT_TOKENS", 64000
+                "context_budget_tokens": _env_int_or_none(
+                    "MAGIC_POINTER_CONTEXT_TOKENS"
                 ),
                 "summarize": runtime.get("summarize"),
                 "user_data_dir": str(_user_extension_root(root)),
                 "command": str(runtime.get("command") or ""),
+                "workspace_root": str(runtime.get("workspace_root") or ""),
             },
         ),
     ]
@@ -734,6 +795,11 @@ def boot_loop_context(
         ),
         BundleRow("desktop-action-tools", "desktop-action-tools"),
         BundleRow(
+            "coding-tools",
+            "coding-tools",
+            {"workspace_root": str(runtime.get("workspace_root") or "")},
+        ),
+        BundleRow(
             "capability-tools",
             "capability-tools",
             {
@@ -765,6 +831,14 @@ def boot_loop_context(
             },
         ),
         BundleRow(
+            "delegate-tool",
+            "delegate-tool",
+            {
+                "workspace_root": str(runtime.get("workspace_root") or ""),
+                "permission_mode": str(runtime.get("permission_mode") or "default"),
+            },
+        ),
+        BundleRow(
             "model-client",
             "model-client",
             {
@@ -773,12 +847,13 @@ def boot_loop_context(
                     or "default"
                 ),
                 "max_tokens": 4096,
-                "context_budget_tokens": _env_int(
-                    "MAGIC_POINTER_CONTEXT_TOKENS", 64000
+                "context_budget_tokens": _env_int_or_none(
+                    "MAGIC_POINTER_CONTEXT_TOKENS"
                 ),
                 "summarize": runtime.get("summarize"),
                 "user_data_dir": str(_user_extension_root(root)),
                 "command": command,
+                "workspace_root": str(runtime.get("workspace_root") or ""),
             },
         ),
     ]

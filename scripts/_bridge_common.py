@@ -87,9 +87,26 @@ def resolve_root() -> Path:
 
 
 def ensure_root_on_path() -> None:
-    """Insert the repository root and scripts/ into sys.path."""
+    """Insert the repository root and scripts/ into sys.path.
+
+    Also evicts a poisoned ``scripts`` entry from sys.modules: pywin32 ships a
+    ``scripts`` directory that lands on sys.path (Python312\\scripts,
+    site-packages\\win32\\scripts), so an import attempted BEFORE the root is
+    on the path caches ``scripts`` as a namespace package pointing at those
+    directories, and every later ``from scripts.X import ...`` fails with
+    ModuleNotFoundError even after the path is fixed. Real-machine failure,
+    not theory: direct ``python scripts/conversation_bridge.py`` died at line
+    55 on this machine.
+    """
     scripts_dir = Path(__file__).resolve().parent
     root = scripts_dir.parent
     for entry in (str(root), str(scripts_dir)):
         if entry not in sys.path:
             sys.path.insert(0, entry)
+    stale = sys.modules.get("scripts")
+    if stale is not None and getattr(stale, "__file__", None) is None:
+        # Namespace package (no __init__.py) → it cannot be ours; drop it so
+        # the real package resolves against the freshly inserted root.
+        del sys.modules["scripts"]
+        for name in [key for key in sys.modules if key.startswith("scripts.")]:
+            del sys.modules[name]

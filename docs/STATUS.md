@@ -1,6 +1,8 @@
 # 当前状态
 
-> 最后核实：2026-08-19（Codex 逐行学习 + 全链修复批，1.0.12 已 sync 到安装版）。
+> 最后核实：2026-08-21（编码工具接线 + E2E 真修 + Hermes 对照，1.0.13 已 sync 到安装版）。
+
+2026-08-21 编码工具批（1.0.13 已交付）：交接文档 §5 的 ①②③ 全部完成。①coding-tools/delegate-tool 行接线进 builtin_bundle（无 workspace_root 时诚实缺席），`/cwd` 命令持久化工作区，selection/conversation 双桥传 workspace_root+permission_mode；②E2E 真实修复：生产链路 + mimo-v2.5 用 78s/17 工具调用把含 3 个种子 bug 的实验室包修到 4/4 全绿（自主跑测试→定位→edit_file×5→再跑到绿→读回验证）；③Hermes 对照：同仓库同 prompt 同模型 Hermes 71s/18 调用，**首战同档**（`docs/research/2026-08-21-coding-tools-e2e-and-hermes-baseline.md`）。同批落地：apply_patch（Codex 契约移植）、checkpoint 回滚（restore_files）、delegate_task 子代理、plan mode 提示语义、模型档案自适应压缩预算、压缩撞窗删最老重试、危险命令小黑名单；顺手修掉 pywin32 `scripts` 目录毒化 namespace package 缓存导致桥直跑必炸的真机 bug。fresh 验证：Python **1457 passed**；Node **154 passed / 106 源文件**；五套 typecheck 干净。诚实边界：实验室仅 ~120 行；delegate_task 未真机用过；run_command 副作用不可回滚；apply_patch CRLF 新行为 LF。
 
 > **产品边界（2026-08-19 用户裁决，优先于本文一切旧表述）：** Magic Pointer 是顶级 Agent Harness 本身，**短任务和长任务都自己做，任务时长不是边界**。把 prompt 写进 Claude Code/Codex 输入框只是一条投递通道，与写进微信输入框同级，不是移交执行权，也不是任务难度分级器。目标是最综合、最集成各方优点的 harness。凡文档写着"短任务 Harness / 长任务交给外部 Agent"的一律作废。
 

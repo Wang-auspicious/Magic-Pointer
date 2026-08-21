@@ -16,6 +16,7 @@ __all__ = ["SLASH_COMMANDS", "directory_payload"]
 SLASH_COMMANDS: dict[str, str] = {
     "permission": "切换权限预设（sandbox × approval 捆绑档）",
     "model": "切换默认模型（写 secrets/model.txt，立即生效）",
+    "cwd": "查看/设置编码工作区目录（coding tools 的沙箱根）",
 }
 
 

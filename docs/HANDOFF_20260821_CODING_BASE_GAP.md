@@ -1,5 +1,11 @@
 # 交接文档：对标 Hermes/Pi/Codex 的基座差距补齐（2026-08-21）
 
+> **进度更新（同日晚些）：§5 的 ①②③ 已全部完成并交付（1.0.13），数据与
+> 结论见 `docs/research/2026-08-21-coding-tools-e2e-and-hermes-baseline.md`。
+> 下一步从 §5.4 继续：把差距清单 §2B 逐项做成带验收的批次（subagent 真机
+> 使用、plan mode GUI 往返、checkpoint UI 入口、skills 自进化、web 工具集、
+> cron）。本文其余部分保留作背景。**
+
 > 写给 /clear 后的新会话。读完这一份 + `docs/STATUS.md` 即可无缝继续。
 > 当前分支 `codex/harness-reconstruction`，最新提交见 `git log`。
 > 验证命令（必须用独立 basetemp）：

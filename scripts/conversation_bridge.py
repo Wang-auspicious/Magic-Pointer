@@ -337,6 +337,24 @@ def route_slash_command(prompt: str, catalog) -> dict | None:
                 "command": {"type": "permission", "preset": args},
                 "answer": f"权限预设已切换为 {args}。",
             }
+        if name == "cwd":
+            from app.agent_runtime.workspace_state import read_workspace, write_workspace
+
+            if not args:
+                return {
+                    "ok": True,
+                    "command": {"type": "cwd"},
+                    "answer": f"当前工作区：{read_workspace(ROOT)}。用 /cwd <目录路径> 切换。",
+                }
+            try:
+                resolved = write_workspace(ROOT, Path(args))
+            except (OSError, ValueError) as exc:
+                return {"ok": False, "error": f"工作区切换失败：{exc}"}
+            return {
+                "ok": True,
+                "command": {"type": "cwd", "path": str(resolved)},
+                "answer": f"工作区已切换为 {resolved}，下一次发送即生效。",
+            }
         # /model
         from app import models_catalog
 
@@ -556,6 +574,11 @@ def answer_conversation(
         "command": agent_prompt,
     }
 
+    from app.agent_runtime.workspace_state import read_workspace
+
+    runtime["workspace_root"] = str(read_workspace(ROOT))
+    runtime["permission_mode"] = mode.value
+
     conversation_clock.mark("runtime_boot")
     report = boot_loop_context(runtime, root=ROOT)
     conversation_clock.mark("runtime_ready")
@@ -570,7 +593,9 @@ def answer_conversation(
     model_cfg = next(
         row.resolved_config for row in report.rows if row.id == "model-client"
     )
-    context_tokens = int(model_cfg.get("context_budget_tokens") or 64000)
+    context_tokens = int(
+        ctx.get("context_budget") or model_cfg.get("context_budget_tokens") or 64000
+    )
 
     evidence = f"[本次对话历史]\n{history}" if history.strip() else ""
     try:

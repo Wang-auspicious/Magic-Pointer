@@ -194,9 +194,13 @@ def compact_messages(
         cutoff -= 1
     head = _prune_duplicate_tool_results(messages[:cutoff])
     tail = messages[cutoff:]
-    source = "\n".join(
-        line for message in head if (line := _compaction_source_line(message))
-    )
+
+    def _source_from(rows: list[AgentMessage]) -> str:
+        return "\n".join(
+            line for message in rows if (line := _compaction_source_line(message))
+        )
+
+    source = _source_from(head)
     if len(source) > COMPACTION_SOURCE_LIMIT_CHARS:
         prefix = source[:40000]
         suffix = source[-(COMPACTION_SOURCE_LIMIT_CHARS - 40000):]
@@ -204,6 +208,17 @@ def compact_messages(
     if not source.strip():
         return list(messages)
     summary = str(summarize(source) or "").strip()
+    if not summary and len(head) > 2:
+        # Codex compact window-collision retry: the summarizer produced
+        # nothing for the full source (its own request hit the model's
+        # window or the backend hiccuped). Drop the oldest half of the head
+        # and try once more before giving up the round.
+        retried_head = _prune_duplicate_tool_results(messages[len(head) // 2 : cutoff])
+        retried_source = _source_from(retried_head)
+        if len(retried_source) > COMPACTION_SOURCE_LIMIT_CHARS:
+            retried_source = retried_source[:COMPACTION_SOURCE_LIMIT_CHARS]
+        if retried_source.strip():
+            summary = str(summarize(retried_source) or "").strip()
     if not summary:
         return list(messages)
     # The summarizer is a model: it can faithfully repeat imperative text

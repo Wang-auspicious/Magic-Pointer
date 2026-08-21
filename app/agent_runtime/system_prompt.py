@@ -172,9 +172,27 @@ def default_sections() -> list[Section]:
 
     def permissions(ctx: dict[str, Any]) -> str | None:
         mode = str(ctx.get("permission_mode") or "default")
+        if mode == "plan":
+            return (
+                "当前权限模式：plan（只读研究）。先只用读类工具调查代码/证据，"
+                "然后输出一份分步实施计划（改哪些文件、每步做什么、怎么验证），"
+                "等用户确认后再进入执行；不要直接写文件或跑会改状态的命令。"
+            )
         return (
             f"当前权限模式：{mode}。只读工具可直接调用；"
             "写入/发送类能力只能生成方案并等待用户确认。"
+        )
+
+    def coding(ctx: dict[str, Any]) -> str | None:
+        root = str(ctx.get("workspace_root") or "").strip()
+        if not root:
+            return None
+        return (
+            f"工作区：{root}\n"
+            "代码任务的工作方式：先用 glob/grep/read_file 定位证据再改代码；"
+            "小改动用 edit_file（old_string 必须逐字唯一），跨文件/多处改动用 apply_patch；"
+            "改完必须用 run_command 跑测试或构建验证，绿了才算完成，红了就继续修；"
+            "方向错了用 restore_files 回滚，不要手工反向编辑。"
         )
 
     def memory(ctx: dict[str, Any]) -> str | None:
@@ -204,6 +222,7 @@ def default_sections() -> list[Section]:
         Section("identity", "Identity", identity),
         Section("rules", "System", rules),
         Section("permissions", "Permissions", permissions),
+        Section("coding", "Coding", coding, dynamic=True),
         Section("deliver", "Deliver", _deliver_section, dynamic=True),
         Section("memory", "Memory", memory, dynamic=True),
         Section("skills", "Skills", skills, dynamic=True),

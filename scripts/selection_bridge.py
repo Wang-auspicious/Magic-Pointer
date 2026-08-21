@@ -2258,6 +2258,8 @@ def _loop_router(
         "capture_path": capture_path,
         "target_window": target_window or {},
         "command": command,
+        "workspace_root": str(Path.cwd()),
+        "permission_mode": os.environ.get("MAGIC_POINTER_PERMISSION_MODE", "default").strip() or "default",
     }
     resident_scope = None
     try:
@@ -2289,7 +2291,9 @@ def _loop_router(
             resident_scope.close()
         raise
     permission_mode = str(model_cfg.get("permission_mode") or "default")
-    context_tokens = int(model_cfg.get("context_budget_tokens") or 64000)
+    context_tokens = int(
+        ctx.get("context_budget") or model_cfg.get("context_budget_tokens") or 64000
+    )
 
     from app.perception.visual_once import attach_look_once_if_needed
 

@@ -329,15 +329,35 @@ def test_model_client_allows_multi_step_desktop_tokens():
 
 def test_rows_report_active_and_dump_is_complete():
     report = boot_loop_context(_runtime())
-    assert [row.status for row in report.rows] == ["active"] * 13
+    assert [row.status for row in report.rows] == ["active"] * 15
     dump = report.dump_config()
     assert {row["id"] for row in dump} == {
         "harness-tools", "computer-agent", "perception-tools", "look-tool",
-        "local-action-tools", "desktop-action-tools",
-        "capability-tools", "guard", "system-prompt", "llm-provider",
-        "session-store", "learning-review", "model-client",
+        "local-action-tools", "desktop-action-tools", "coding-tools",
+        "delegate-tool", "capability-tools", "guard", "system-prompt",
+        "llm-provider", "session-store", "learning-review", "model-client",
     }
     assert all(row["status"] == "active" for row in dump)
+    report.ctx.unload()
+
+
+def test_coding_tools_absent_without_workspace_and_present_with_one(tmp_path):
+    report = boot_loop_context(_runtime())
+    names = {tool.name for tool in report.ctx.get("tools").list()}
+    assert "run_command" not in names
+    assert "delegate_task" not in names
+    report.ctx.unload()
+
+    report = boot_loop_context(_runtime(workspace_root=str(tmp_path)))
+    names = {tool.name for tool in report.ctx.get("tools").list()}
+    assert {
+        "read_file", "write_file", "edit_file", "glob", "grep",
+        "run_command", "apply_patch", "restore_files", "delegate_task",
+    } <= names
+    model_cfg = next(
+        row.resolved_config for row in report.rows if row.id == "model-client"
+    )
+    assert model_cfg["workspace_root"] == str(tmp_path)
     report.ctx.unload()
 
 
