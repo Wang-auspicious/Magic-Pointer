@@ -79,10 +79,12 @@ def test_look_success_passes_exact_crop_to_backend():
     ev = tool.look(anchor="bbox:10,20,110,220", box_ltrb=box, prompt="what is this")
 
     assert ev.status is EvidenceStatus.OK
-    assert ev.value == "a dialog with an OK button"
+    assert "a dialog with an OK button" in (ev.value or "")
+    assert "historical" in (ev.value or "").casefold()
     assert ev.source is EvidenceSource.VISION
     assert ev.latency_ms == 42.0
     assert "fake-vision" in (ev.note or "")
+    assert "frame=historical" in (ev.note or "")
     assert "10,20,110,220" in (ev.note or "")
 
     assert len(backend.calls) == 1
@@ -268,6 +270,8 @@ def test_register_exports_look_and_capabilities_specs():
 
     look = registry.get("look")
     caps = registry.get("describe_capabilities")
+    assert "frozen" in look.description.casefold()
+    assert "get_app_state" in look.description
     assert look.effect is Effect.READ
     assert look.is_concurrency_safe is False
     assert caps.effect is Effect.READ
@@ -292,7 +296,8 @@ def test_registry_execute_look_returns_tool_result():
 
     res = registry.execute_tool("look", {"anchor": "bbox:0,0,100,100"})
     assert res.is_error is False
-    assert res.value.value == "a dialog with an OK button"
+    assert "a dialog with an OK button" in res.value.value
+    assert "historical" in res.value.value.casefold()
     assert res.value.status is EvidenceStatus.OK
     assert res.used_backend == "vision"
     assert res.latency_ms is not None

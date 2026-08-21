@@ -21,9 +21,15 @@ class FailureType(enum.StrEnum):
     PERMISSION_DENIED = "permission_denied"
     TIMEOUT = "timeout"
     TOOL_ERROR = "tool_error"
+    STALE_SNAPSHOT = "stale_snapshot"
+    COMPUTER_USE_BUSY = "computer_use_busy"
 
 
-_RETRYABLE = frozenset({FailureType.TIMEOUT, FailureType.FOCUS_LOST})
+_RETRYABLE = frozenset({
+    FailureType.TIMEOUT,
+    FailureType.FOCUS_LOST,
+    FailureType.COMPUTER_USE_BUSY,
+})
 
 
 class ActionFailure(Exception):

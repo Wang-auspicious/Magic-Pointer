@@ -68,6 +68,7 @@ from app.agent_runtime.loop import (  # noqa: E402
     TurnStarted,
     run_agent_loop,
 )
+from app.fabric.engine import _LOOP_EMERGENCY_TURN_FUSE  # noqa: E402
 from app.agent_runtime.model_client import (  # noqa: E402
     LoopModelClient,
     MessageDelta,
@@ -344,8 +345,17 @@ def test_non_finite_provider_usage_cannot_crash_a_valid_answer() -> None:
     assert terminal.model_usage is None
 
 
-def test_default_emergency_fuse_is_not_a_normal_task_limit() -> None:
-    assert make_params().emergency_turn_fuse >= 90
+def test_default_emergency_fuse_clears_real_long_run_workloads() -> None:
+    """The fuse is an invariant backstop, so it must sit above real workloads.
+
+    OSWorld 2.0's long-horizon desktop tasks average 318 tool calls. A fuse at
+    90 turns is not a backstop for those, it is the ceiling — and it reports
+    ``INVARIANT_FAILED``, telling the user a normal long job was an internal
+    error. Stall detection (tool guardrails) is what stops spinning; the fuse
+    only catches genuine runaway.
+    """
+    assert make_params().emergency_turn_fuse >= 500
+    assert _LOOP_EMERGENCY_TURN_FUSE >= 500
 
 
 def test_two_tools_serial_then_answer_message_order():
@@ -2131,6 +2141,106 @@ def test_proactive_compaction_replaces_history_at_seventy_percent():
     assert finished[0].state.transition is TransitionReason.COMPACT_TRIGGERED
     assert terminal.reason is TransitionReason.COMPLETED
     assert terminal.message == "done"
+
+
+def test_compaction_fires_again_when_the_context_regrows():
+    """A long job needs to compact more than once.
+
+    The loop used to latch a ``compacted`` flag on the first successful
+    compaction and never look again, so a job that kept accumulating tool
+    results after that point grew unbounded until the provider refused it.
+    """
+
+    def compactor(messages):
+        return messages[:1]
+
+    def estimator(messages):
+        return sum(len(m.content or "") for m in messages)
+
+    # Each round's tool result alone pushes the request over the line; after
+    # compacting back to the opening message it is comfortably under.
+    bulky, _ = make_counting_tool("bulky", value="y" * 800)
+    registry = ToolRegistry()
+    registry.register(bulky)
+    backend = ScriptedBackend(
+        [
+            ToolCallArrived(call=ToolCall(id="c1", name="bulky", arguments={})),
+            TurnDone(usage=None, raw_text=None),
+        ],
+        [
+            ToolCallArrived(call=ToolCall(id="c2", name="bulky", arguments={})),
+            TurnDone(usage=None, raw_text=None),
+        ],
+        [TurnDone(usage=None, raw_text="done")],
+    )
+    client = LoopModelClient(backend)
+
+    events, terminal = asyncio.run(
+        collect(
+            make_params(
+                client=client,
+                registry=registry,
+                user_input="x" * 20,
+                compactor=compactor,
+                context_budget_tokens=1000,
+                token_estimator=estimator,
+            )
+        )
+    )
+
+    triggered = [
+        event
+        for event in events
+        if isinstance(event, TurnFinished)
+        and event.state.transition is TransitionReason.COMPACT_TRIGGERED
+    ]
+    assert len(triggered) >= 2
+    assert terminal.reason is TransitionReason.COMPLETED
+
+
+def test_compaction_that_never_helps_stops_being_retried():
+    """Summarising costs a model call; do not pay it every round for nothing."""
+    calls = {"n": 0}
+
+    def compactor(messages):
+        calls["n"] += 1
+        # Drops one message but never enough to get under the budget.
+        return messages[:-1] if len(messages) > 1 else list(messages)
+
+    def estimator(messages):
+        return 10_000
+
+    looping, _ = make_counting_tool("looping", value="z" * 40)
+    registry = ToolRegistry()
+    registry.register(looping)
+    backend = ScriptedBackend(
+        *[
+            [
+                ToolCallArrived(
+                    call=ToolCall(id=f"c{index}", name="looping", arguments={})
+                ),
+                TurnDone(usage=None, raw_text=None),
+            ]
+            for index in range(6)
+        ],
+        [TurnDone(usage=None, raw_text="done")],
+    )
+    client = LoopModelClient(backend)
+
+    asyncio.run(
+        collect(
+            make_params(
+                client=client,
+                registry=registry,
+                compactor=compactor,
+                context_budget_tokens=100,
+                token_estimator=estimator,
+            )
+        )
+    )
+
+    # Two fruitless attempts are enough to conclude it will not help.
+    assert calls["n"] <= 2
 
 
 def test_event_sink_sees_every_event_before_the_caller():

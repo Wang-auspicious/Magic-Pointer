@@ -12,6 +12,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import app.perception.pixel_ocr as pixel_ocr
 import scripts.action_bridge as action_bridge
 import scripts.electron_bridge as electron_bridge
 import scripts.selection_bridge as selection_bridge
@@ -21,7 +22,7 @@ from scripts.selection_bridge import (
     _crop_roi_for_ocr,
     _route_response,
     _context_from_snapshot,
-    _enrich_screen_region_context,
+    _fuse_pixel_tier,
     _interaction_episode_context,
     _exact_readback_response,
     _reference_label_response,
@@ -29,6 +30,12 @@ from scripts.selection_bridge import (
     _shopping_list_response,
     _wants_undo,
 )
+
+
+def _enrich_screen_region_context(target_window, app_ctx, snapshot):
+    """The pixel tier as the answer stage runs it, without the fused trace."""
+    context, _trace = _fuse_pixel_tier(target_window, app_ctx, snapshot)
+    return context
 
 
 def test_selection_bridge_wires_local_model_transform(monkeypatch) -> None:
@@ -130,8 +137,8 @@ def test_screen_region_snapshot_is_enriched_with_local_ocr(monkeypatch, tmp_path
     capture = tmp_path / "screen.png"
     capture.write_bytes(b"not-a-real-png-for-the-injected-reader")
     monkeypatch.setattr(
-        selection_bridge,
-        "_read_local_ocr_boxes",
+        pixel_ocr,
+        "read_ocr_blocks",
         lambda path, strokes_local=None, selection_local=None: ([{"text": "Magic Pointer 1.0.0", "rect": None, "conf": None}], "test-ocr"),
     )
     context = _enrich_screen_region_context(
@@ -162,8 +169,8 @@ def test_screen_region_with_capture_artifacts_still_runs_local_ocr(monkeypatch, 
         artifacts={"capture_path": str(capture)},
     )
     monkeypatch.setattr(
-        selection_bridge,
-        "_read_local_ocr_boxes",
+        pixel_ocr,
+        "read_ocr_blocks",
         lambda path, strokes_local=None, selection_local=None: ([{"text": "Magic Pointer 1.0.0", "rect": None, "conf": None}], "test-ocr"),
     )
 
@@ -195,8 +202,8 @@ def test_episode_screen_objects_are_locally_read_before_a_two_object_question(mo
         },
     }
     monkeypatch.setattr(
-        selection_bridge,
-        "_read_local_ocr_boxes",
+        pixel_ocr,
+        "read_ocr_blocks",
         lambda path, strokes_local=None, selection_local=None: (
             [{"text": "上一处的真实文字", "rect": [1, 1, 100, 20], "conf": 0.9}],
             "test-ocr",
@@ -681,8 +688,8 @@ def test_screen_region_enrich_filters_full_screen_ocr_by_selection_bbox(monkeypa
         {"text": "unrelated lower row", "rect": [10, 200, 120, 24], "conf": 0.9},
     ]
     monkeypatch.setattr(
-        selection_bridge,
-        "_read_local_ocr_boxes",
+        pixel_ocr,
+        "read_ocr_blocks",
         lambda path, strokes_local=None, selection_local=None: seen_paths.append(Path(path)) or (list(blocks), "test-ocr"),
     )
 
@@ -710,8 +717,8 @@ def test_legacy_bounded_crop_without_coordinate_mapping_is_not_filtered_by_scree
     capture = tmp_path / "screen.png"
     capture.write_bytes(b"png-bytes")
     monkeypatch.setattr(
-        selection_bridge,
-        "_read_local_ocr_boxes",
+        pixel_ocr,
+        "read_ocr_blocks",
         lambda path, strokes_local=None, selection_local=None: (
             [{"text": "有界截图里的真实文字", "rect": [10, 20, 180, 24], "conf": 0.9}],
             "test-ocr",
@@ -741,8 +748,8 @@ def test_ocr_touching_bounded_crop_edge_is_marked_incomplete(monkeypatch, tmp_pa
     capture = tmp_path / "screen.png"
     Image.new("RGB", (320, 180), "white").save(capture)
     monkeypatch.setattr(
-        selection_bridge,
-        "_read_local_ocr_boxes",
+        pixel_ocr,
+        "read_ocr_blocks",
         lambda path, strokes_local=None, selection_local=None: (
             [{"text": "包进文件夹了，所", "rect": [6, 136, 302, 32], "conf": 0.9}],
             "test-ocr",
@@ -787,8 +794,8 @@ def test_screen_region_enrich_falls_back_to_full_capture_without_selection_bbox(
     capture.write_bytes(b"png-bytes")
     seen = []
     monkeypatch.setattr(
-        selection_bridge,
-        "_read_local_ocr_boxes",
+        pixel_ocr,
+        "read_ocr_blocks",
         lambda path, strokes_local=None, selection_local=None: seen.append(Path(path)) or ([{"text": "FULL TEXT", "rect": None, "conf": None}], "test-ocr"),
     )
 
@@ -815,8 +822,8 @@ def test_screen_region_enrich_uses_stroke_collision_not_union_bbox(monkeypatch, 
         {"text": "second marked sentence", "rect": [100, 500, 300, 26], "conf": 0.9},
     ]
     monkeypatch.setattr(
-        selection_bridge,
-        "_read_local_ocr_boxes",
+        pixel_ocr,
+        "read_ocr_blocks",
         lambda path, strokes_local=None, selection_local=None: (list(blocks), "test-ocr"),
     )
     gesture = {
@@ -857,8 +864,8 @@ def test_underline_between_rows_belongs_only_to_the_row_above(monkeypatch, tmp_p
         {"text": "beta line", "rect": [32, 98, 810, 30], "conf": 0.9},
     ]
     monkeypatch.setattr(
-        selection_bridge,
-        "_read_local_ocr_boxes",
+        pixel_ocr,
+        "read_ocr_blocks",
         lambda path, strokes_local=None, selection_local=None: (list(blocks), "test-ocr"),
     )
     gesture = {
@@ -894,8 +901,8 @@ def test_enclosed_loop_collects_all_blocks_in_region_not_just_crossed_lines(monk
         {"text": "outside unrelated", "rect": [800, 800, 200, 26], "conf": 0.9},
     ]
     monkeypatch.setattr(
-        selection_bridge,
-        "_read_local_ocr_boxes",
+        pixel_ocr,
+        "read_ocr_blocks",
         lambda path, strokes_local=None, selection_local=None: (list(blocks), "test-ocr"),
     )
     # A closed loop around the first three lines (first point near last point).
@@ -936,8 +943,8 @@ def test_open_stroke_blocks_are_sorted_in_reading_order(monkeypatch, tmp_path) -
         {"text": "line A right", "rect": [420, 100, 200, 26], "conf": 0.9},
     ]
     monkeypatch.setattr(
-        selection_bridge,
-        "_read_local_ocr_boxes",
+        pixel_ocr,
+        "read_ocr_blocks",
         lambda path, strokes_local=None, selection_local=None: (list(blocks), "test-ocr"),
     )
     # Two open underline strokes crossing both rows.
@@ -1154,31 +1161,41 @@ def test_frozen_frame_crop_translates_physical_coordinates_to_image_local(
         assert cropped.convert("RGB").getpixel((10, 10)) == (255, 0, 0)
 
 
-def test_loop_evidence_names_the_verified_full_surface_visual_anchor() -> None:
+def test_the_loop_backend_names_the_reader_that_actually_read(monkeypatch) -> None:
+    """`read_around` must not sign OCR's work with UIA's name.
+
+    The loop weighs evidence by where it came from, and after fusion the winner
+    is often not the structured tier. A backend that answers "source: uia,
+    confidence: 1.0" for a recognised line hands the model a certainty nobody
+    produced.
+    """
     app_ctx = AdapterReadContext(
         adapter="local_ocr",
         app="screen",
-        content="only one OCR heading",
-        method="local:test",
-        artifacts={},
+        window={"title": "Windows PowerShell"},
+        content="PS D:\\Desktop> npm run sync",
+        label="划中的一行",
+        method="ocr:frozen-frame",
+        artifacts={"selection_rectangles": [[429, 290, 1175, 26]]},
     )
     snapshot = {
         "source_kind": "screen_region",
-        "structured_covers_mark": False,
-        "structured_gap_reason": "container_not_selection",
-        "frame_lease": {
-            "surfaceBoundsPx": [1720, 446, 2682, 1836],
+        "perception_trace": {
+            "selectedLayer": "ocr",
+            "selectedAdapter": "local_ocr",
+            "observations": [
+                {"layer": "ocr", "adapter": "local_ocr", "status": "ok", "confidence": 0.7},
+            ],
         },
-        "capture_attestation": {"binding_status": "verified"},
     }
 
-    evidence = selection_bridge._bridge_evidence_block(
-        app_ctx, {"title": "Scenario - Notepad"}, snapshot
+    backend = selection_bridge._BridgePerceptionBackend(
+        app_ctx, {"title": "Windows PowerShell"}, snapshot
     )
+    read = backend.read_around("", 3)[0]
 
-    assert "证据状态：screen_region" in evidence
-    assert "目标绑定：verified" in evidence
-    assert "视觉锚点：bbox:1720,446,2682,1836" in evidence
+    assert read["source"] == "ocr"
+    assert read["confidence"] == 0.7
 
 
 def test_loop_router_crash_falls_back(monkeypatch):

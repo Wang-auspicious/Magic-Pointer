@@ -15,6 +15,7 @@
     "electron/cards.ts",
     "electron/gesture_capture.ts",
     "electron/stage_anchor.ts",
+    "electron/clarification_chips.ts",
     "electron/stage_chips_policy.ts",
     "electron/stage_hit_policy.ts",
     "electron/stage_pick_policy.ts",

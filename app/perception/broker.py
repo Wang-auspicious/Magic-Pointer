@@ -1,10 +1,15 @@
-"""Concurrent structured-perception broker.
+"""Concurrent perception broker: plan, collect, normalise, fuse, project.
 
-Every matching adapter is an evidence provider. Providers run against the
-same already-bound target and are collected as typed observations; completion
-order never decides which result wins. The broker deliberately does not read
-pixels or create a FrameLease. Its caller must freeze/bind the interaction
-before invoking this module.
+The broker owns exactly two decisions: which providers this read is allowed to
+start, and how long the interaction is willing to wait for them. It never picks
+a winner — that is fusion's job — and it never reads pixels or creates a
+FrameLease; its caller must freeze and bind the interaction first.
+
+Tiers exist because concurrency is not "always launch everything" (blueprint
+§7.3). Every provider in a tier starts together and none is cancelled because a
+sibling returned first. The expensive tier is only planned when the cheap tier
+failed to answer about the mark, so a clean Notepad read never spends OCR CPU
+recognising text it already has exactly.
 """
 
 from __future__ import annotations
@@ -12,207 +17,54 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from time import perf_counter
-from typing import Any, Iterable
+from typing import Any, Iterable, Sequence
 
 from app.adapters.base import AdapterReadContext
-from app.evidence.contract import (
-    Evidence,
-    EvidenceSource,
-    EvidenceStatus,
-    apply_container_heuristic,
-    empty_confirmed,
-    failed_evidence,
+from app.evidence.contract import EvidenceStatus
+from app.perception.fusion import FusedPerception, fuse_observations, pixel_tier_warranted
+from app.perception.providers import (
+    NOT_APPLICABLE,
+    TIER_ORDER,
+    AdapterProvider,
+    PerceptionObservation,
+    PerceptionProvider,
+    PerceptionRequest,
+    ProviderResult,
+    context_has_usable_structure,
+    observation_from_result,
+    perception_layer,
+    synthetic_observation,
 )
 
-_MEANINGFUL_ARTIFACT_KEYS = frozenset({
-    "accessible_name",
-    "address",
-    "automation_id",
-    "cell",
-    "control_type",
-    "css_selector",
-    "dom_selector",
-    "element_name",
-    "node",
-    "object",
-    "range",
-    "role",
-    "rows",
-    "selection_rectangles",
-    "value",
-})
-
-_DEFAULT_PRIORITIES = {
-    "native_app": 10,
-    "dom": 20,
-    "uia": 30,
-    "ax": 30,
-    "ocr": 40,
-    "vision": 50,
-}
-
 # A UIA probe against an unresponsive window can block for as long as that
-# window stays wedged. Two seconds clears every healthy provider measured on
-# this machine (UIA cold start ~573ms, steady 200-250ms) while keeping a
-# wedged one from owning the interaction.
+# window stays wedged. Two seconds clears every healthy structured provider
+# measured on this machine (UIA cold start ~573ms, steady 200-250ms) while
+# keeping a wedged one from owning the interaction.
 DEFAULT_DEADLINE_MS = 2000.0
 
-_BASE_CONFIDENCE = {
-    "native_app": 0.95,
-    "dom": 0.90,
-    "uia": 0.80,
-    "ax": 0.80,
-    "ocr": 0.70,
-    "vision": 0.65,
+# Frozen-frame OCR on a warm resident worker is 1-3s; a cold one pays ~9s of
+# model init. This tier only runs when the structured tier already failed to
+# answer, so the budget buys the only remaining chance at the marked content.
+DEFAULT_PIXEL_DEADLINE_MS = 12000.0
+
+_TIER_DEADLINES = {
+    "structured": DEFAULT_DEADLINE_MS,
+    "pixel": DEFAULT_PIXEL_DEADLINE_MS,
 }
 
 
-def perception_layer(adapter: Any, context: AdapterReadContext | None = None) -> str:
-    explicit = str(getattr(adapter, "perception_layer", "") or "").strip().casefold()
-    if explicit:
-        return explicit[:40]
-    value = " ".join((
-        str(getattr(adapter, "name", "") or ""),
-        str(getattr(context, "adapter", "") or ""),
-        str(getattr(context, "method", "") or ""),
-    )).casefold()
-    if "dom" in value or "cdp" in value or "playwright" in value:
-        return "dom"
-    if "uia" in value or "automation" in value or "textpattern" in value:
-        return "uia"
-    if "ocr" in value:
-        return "ocr"
-    if "vision" in value:
-        return "vision"
-    if "ax" in value or "accessibility" in value:
-        return "ax"
-    return "native_app"
-
-
-def context_has_usable_structure(context: AdapterReadContext | None) -> bool:
-    if context is None:
-        return False
-    if str(context.content or "").strip():
-        return True
-    artifacts = dict(context.artifacts or {})
-    for key in _MEANINGFUL_ARTIFACT_KEYS:
-        value = artifacts.get(key)
-        if value not in (None, "", [], {}, ()):
-            return True
-    return False
-
-
-def _source_for(layer: str) -> EvidenceSource:
-    return {
-        "native_app": EvidenceSource.COM,
-        "dom": EvidenceSource.CDP,
-        "uia": EvidenceSource.UIA,
-        "ax": EvidenceSource.UIA,
-        "ocr": EvidenceSource.OCR,
-        "vision": EvidenceSource.VISION,
-    }.get(layer, EvidenceSource.FILE)
-
-
-def _error_status(error: str) -> EvidenceStatus:
-    value = error.casefold()
-    if "timed out" in value or "timeout" in value:
-        return EvidenceStatus.TIMEOUT
-    if "busy" in value or "occupied" in value:
-        return EvidenceStatus.BUSY
-    if "denied" in value or "permission" in value:
-        return EvidenceStatus.DENIED
-    if "unsupported" in value or "not supported" in value:
-        return EvidenceStatus.UNSUPPORTED
-    return EvidenceStatus.ERROR
-
-
-def _context_value(context: AdapterReadContext) -> str:
-    content = str(context.content or "").strip()
-    if content:
-        return content
-    label = str(context.label or "").strip()
-    if label:
-        return label
-    return "<structured-context>"
-
-
-def _container_like_texts(window: dict[str, Any]) -> tuple[str, ...]:
-    candidates = (
-        window.get("title"),
-        window.get("process_name"),
-        window.get("processName"),
-        window.get("class_name"),
-        window.get("className"),
-    )
-    return tuple(str(value).strip() for value in candidates if str(value or "").strip())
-
-
 @dataclass(frozen=True, slots=True)
-class StructuredObservation:
-    """One adapter result, kept independently from the fused selection."""
-
-    index: int
-    priority: int
-    layer: str
-    adapter: str
-    method: str
-    status: EvidenceStatus
-    confidence: float
-    latency_ms: float
+class PerceptionResult:
     context: AdapterReadContext | None
-    container_hint: bool
-    reason: str
-    source: EvidenceSource
-
-    @property
-    def usable(self) -> bool:
-        return (
-            self.context is not None
-            and context_has_usable_structure(self.context)
-            and self.status in {EvidenceStatus.OK, EvidenceStatus.DEGRADED}
-        )
-
-    def to_trace_dict(self) -> dict[str, Any]:
-        return {
-            "layer": self.layer,
-            "adapter": self.adapter,
-            "method": self.method,
-            "status": self.status.value,
-            "confidence": round(self.confidence, 4),
-            "latencyMs": round(self.latency_ms, 3),
-            "containerHint": self.container_hint,
-            "reason": self.reason,
-        }
-
-    def to_legacy_attempt(self) -> dict[str, str]:
-        if self.status is EvidenceStatus.OK:
-            status = "succeeded"
-        elif self.status is EvidenceStatus.DEGRADED:
-            status = "degraded"
-        elif self.status is EvidenceStatus.EMPTY_CONFIRMED:
-            status = "empty"
-        elif self.status is EvidenceStatus.UNSUPPORTED:
-            status = "unavailable"
-        else:
-            status = "error"
-        return {
-            "layer": self.layer[:40],
-            "adapter": self.adapter[:80],
-            "method": self.method[:120],
-            "status": status,
-            "reason": self.reason[:120],
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class PerceptionBrokerResult:
-    context: AdapterReadContext | None
-    observations: tuple[StructuredObservation, ...]
+    observations: tuple[PerceptionObservation, ...]
     trace: dict[str, Any]
+    selected: PerceptionObservation | None
+    conflicts: tuple[dict[str, Any], ...]
+    fused: FusedPerception
 
 
-class ConcurrentPerceptionBroker:
-    """Collect all selected structured providers and fuse after collection."""
+class PerceptionBroker:
+    """Run a perception plan against one bound interaction."""
 
     def __init__(self, *, max_workers: int = 4) -> None:
         if max_workers <= 0:
@@ -221,291 +73,230 @@ class ConcurrentPerceptionBroker:
 
     def resolve(
         self,
-        window: dict[str, Any],
-        candidates: Iterable[Any],
+        request: PerceptionRequest,
+        providers: Iterable[PerceptionProvider],
         *,
         deadline_ms: float | None = None,
-        **kwargs: Any,
-    ) -> PerceptionBrokerResult:
-        ordered = list(candidates)
+        pixel_deadline_ms: float | None = None,
+        prior_observations: Sequence[PerceptionObservation] = (),
+        policy_mode: str | None = None,
+    ) -> PerceptionResult:
+        planned = list(providers)
         started = perf_counter()
-        observations = self._collect(ordered, window, kwargs, deadline_ms)
-        selected = self._select(observations)
-        conflicts = _content_conflicts(observations)
-        elapsed_ms = (perf_counter() - started) * 1000.0
-        trace = _trace_for(observations, selected, conflicts, elapsed_ms)
-        return PerceptionBrokerResult(
-            context=selected.context if selected is not None else None,
-            observations=observations,
-            trace=trace,
+        observations: list[PerceptionObservation] = list(prior_observations)
+        # A specialist declining a window it was never for is routing detail, not
+        # evidence about the target. It is counted, not fused: otherwise every
+        # Notepad read carries one dead line per surface specialist.
+        declined: list[str] = []
+        next_index = (
+            max((item.index for item in observations), default=-1) + 1
         )
+        for tier in TIER_ORDER:
+            tier_providers = [
+                provider for provider in planned
+                if provider.descriptor.tier == tier
+            ]
+            if not tier_providers:
+                continue
+            if tier != TIER_ORDER[0]:
+                warranted, _reason = pixel_tier_warranted(observations)
+                if not warranted:
+                    continue
+            budget = (
+                deadline_ms if tier == TIER_ORDER[0] else pixel_deadline_ms
+            )
+            collected = self._collect(
+                tier_providers,
+                request,
+                first_index=next_index,
+                tier=tier,
+                deadline_ms=budget,
+            )
+            for item in collected:
+                if item.reason == NOT_APPLICABLE:
+                    declined.append(item.provider_id)
+                else:
+                    observations.append(item)
+            next_index += len(collected)
+        elapsed_ms = (perf_counter() - started) * 1000.0
+        fused = fuse_observations(
+            observations,
+            elapsed_ms=elapsed_ms,
+            policy_mode=policy_mode,
+            declined=tuple(declined),
+        )
+        return PerceptionResult(
+            context=fused.context,
+            observations=fused.observations,
+            trace=fused.trace,
+            selected=fused.selected,
+            conflicts=fused.conflicts,
+            fused=fused,
+        )
+
+    def observe(
+        self,
+        provider: PerceptionProvider,
+        request: PerceptionRequest,
+        *,
+        index: int = 0,
+    ) -> PerceptionObservation:
+        """Read one provider and normalise it. Same path the plan uses."""
+        return self._read_one(provider, request, index)
 
     def _collect(
         self,
-        ordered: list[Any],
-        window: dict[str, Any],
-        kwargs: dict[str, Any],
+        providers: list[PerceptionProvider],
+        request: PerceptionRequest,
+        *,
+        first_index: int,
+        tier: str,
         deadline_ms: float | None,
-    ) -> tuple[StructuredObservation, ...]:
-        """Read every provider, but let the deadline decide when to rule.
+    ) -> tuple[PerceptionObservation, ...]:
+        """Read every provider in this tier, but let the deadline rule.
 
         A provider that misses the deadline becomes a TIMEOUT observation and
         the verdict is made from whatever did arrive. Its thread is left to
         finish on its own: this bounds the interaction, not the thread, so
-        adapters still owe their own internal timeouts.
+        providers still owe their own internal timeouts.
+
+        A provider may declare its own ceiling: the gesture strategy spends a
+        documented 3.5s sampling budget, and holding it to the tier default
+        would throw away reads that succeed today. The tier therefore ends when
+        its most patient planned provider ends, and each provider is only ever
+        cut off at its own deadline.
         """
-        if not ordered:
-            return ()
-        budget_s = (
-            DEFAULT_DEADLINE_MS if deadline_ms is None else float(deadline_ms)
-        ) / 1000.0
-        pool = ThreadPoolExecutor(
-            max_workers=min(self.max_workers, len(ordered)),
-            thread_name_prefix="mp-perception",
-        )
-        try:
-            started = perf_counter()
-            futures = {
-                pool.submit(self._read_one, index, adapter, window, kwargs): index
-                for index, adapter in enumerate(ordered)
-            }
-            done, overdue = wait(futures, timeout=budget_s)
-            elapsed_ms = (perf_counter() - started) * 1000.0
-            collected = {futures[future]: future.result() for future in done}
-            for future in overdue:
-                index = futures[future]
-                collected[index] = _deadline_observation(
-                    index, ordered[index], elapsed_ms
+        runnable: list[tuple[int, PerceptionProvider]] = []
+        collected: dict[int, PerceptionObservation] = {}
+        for offset, provider in enumerate(providers):
+            index = first_index + offset
+            descriptor = provider.descriptor
+            if descriptor.requires_frozen_pixels and not request.has_frozen_pixels:
+                # No lease means no pixels. Reading the live screen here would
+                # certify a post-gesture frame as the moment of the gesture.
+                collected[index] = synthetic_observation(
+                    descriptor,
+                    request,
+                    index=index,
+                    status=EvidenceStatus.UNSUPPORTED,
+                    reason="frozen_pixels_unavailable",
                 )
-            return tuple(collected[index] for index in range(len(ordered)))
-        finally:
-            pool.shutdown(wait=False)
+                continue
+            runnable.append((index, provider))
+        if runnable:
+            tier_budget_ms = (
+                _TIER_DEADLINES.get(tier, DEFAULT_DEADLINE_MS)
+                if deadline_ms is None
+                else float(deadline_ms)
+            )
+            by_index = dict(runnable)
+            cutoff_ms = {
+                index: float(provider.descriptor.deadline_ms or tier_budget_ms)
+                for index, provider in runnable
+            }
+            pool = ThreadPoolExecutor(
+                max_workers=min(self.max_workers, len(runnable)),
+                thread_name_prefix="mp-perception",
+            )
+            try:
+                tier_started = perf_counter()
+                pending = {
+                    pool.submit(self._read_one, provider, request, index): index
+                    for index, provider in runnable
+                }
+                for cutoff in sorted(set(cutoff_ms.values())):
+                    if not pending:
+                        break
+                    remaining_s = (
+                        cutoff / 1000.0 - (perf_counter() - tier_started)
+                    )
+                    done, _still_running = wait(
+                        list(pending), timeout=max(0.0, remaining_s)
+                    )
+                    for future in done:
+                        collected[pending.pop(future)] = future.result()
+                    tier_elapsed_ms = (perf_counter() - tier_started) * 1000.0
+                    overdue = [
+                        future
+                        for future, index in pending.items()
+                        if cutoff_ms[index] <= cutoff
+                    ]
+                    for future in overdue:
+                        index = pending.pop(future)
+                        collected[index] = synthetic_observation(
+                            by_index[index].descriptor,
+                            request,
+                            index=index,
+                            status=EvidenceStatus.TIMEOUT,
+                            reason="deadline_exceeded",
+                            latency_ms=tier_elapsed_ms,
+                        )
+            finally:
+                pool.shutdown(wait=False)
+        return tuple(collected[index] for index in sorted(collected))
 
     @staticmethod
     def _read_one(
+        provider: PerceptionProvider,
+        request: PerceptionRequest,
         index: int,
-        adapter: Any,
-        window: dict[str, Any],
-        kwargs: dict[str, Any],
-    ) -> StructuredObservation:
-        adapter_name = str(getattr(adapter, "name", "") or "unknown")
-        declared_layer = perception_layer(adapter)
-        priority = int(getattr(
-            adapter,
-            "perception_priority",
-            _DEFAULT_PRIORITIES.get(declared_layer, 50),
-        ))
+    ) -> PerceptionObservation:
+        descriptor = provider.descriptor
         started = perf_counter()
         try:
-            context = adapter.read_context(window, **kwargs)
+            result = provider.read(request)
         except Exception as exc:  # one provider must not erase the others
-            latency_ms = (perf_counter() - started) * 1000.0
-            return StructuredObservation(
+            return synthetic_observation(
+                descriptor,
+                request,
                 index=index,
-                priority=priority,
-                layer=declared_layer,
-                adapter=adapter_name,
-                method="unknown",
                 status=EvidenceStatus.ERROR,
-                confidence=0.0,
-                latency_ms=latency_ms,
-                context=None,
-                container_hint=False,
-                reason=f"adapter_exception:{type(exc).__name__}",
-                source=_source_for(declared_layer),
+                reason=f"provider_exception:{type(exc).__name__}",
+                latency_ms=(perf_counter() - started) * 1000.0,
             )
-
         latency_ms = (perf_counter() - started) * 1000.0
-        if not isinstance(context, AdapterReadContext):
-            return StructuredObservation(
+        if not isinstance(result, ProviderResult):
+            return synthetic_observation(
+                descriptor,
+                request,
                 index=index,
-                priority=priority,
-                layer=declared_layer,
-                adapter=adapter_name,
-                method="unknown",
                 status=EvidenceStatus.ERROR,
-                confidence=0.0,
+                reason="invalid_provider_result",
                 latency_ms=latency_ms,
-                context=None,
-                container_hint=False,
-                reason="invalid_adapter_result",
-                source=_source_for(declared_layer),
             )
-
-        layer = perception_layer(adapter, context)
-        source = _source_for(layer)
-        method = str(context.method or "unknown")
-        usable = context_has_usable_structure(context)
-        error = str(context.error or "").strip()
-        if usable:
-            status = EvidenceStatus.DEGRADED if error else EvidenceStatus.OK
-            confidence = _BASE_CONFIDENCE.get(layer, 0.70)
-            if error:
-                confidence = min(confidence, 0.60)
-            evidence = Evidence(
-                value=_context_value(context),
-                status=status,
-                confidence=confidence,
-                source=source,
-                latency_ms=latency_ms,
-                note=error or None,
-            )
-            evidence = apply_container_heuristic(
-                evidence,
-                _container_like_texts(window),
-            )
-            reason = (
-                "container_like_content"
-                if evidence.container_hint
-                else "structured_context_degraded"
-                if evidence.status is EvidenceStatus.DEGRADED
-                else "structured_context_available"
-            )
-        elif error:
-            status = _error_status(error)
-            evidence = failed_evidence(source, status, error, latency_ms=latency_ms)
-            reason = {
-                EvidenceStatus.TIMEOUT: "adapter_timeout",
-                EvidenceStatus.BUSY: "adapter_busy",
-                EvidenceStatus.DENIED: "adapter_denied",
-                EvidenceStatus.UNSUPPORTED: "adapter_unsupported",
-            }.get(status, "adapter_error")
-        else:
-            evidence = empty_confirmed(source, latency_ms=latency_ms)
-            reason = "no_usable_structure"
-
-        return StructuredObservation(
+        return observation_from_result(
+            descriptor,
+            result,
+            request,
             index=index,
-            priority=priority,
-            layer=layer,
-            adapter=adapter_name,
-            method=method,
-            status=evidence.status,
-            confidence=evidence.confidence,
             latency_ms=latency_ms,
-            context=context,
-            container_hint=evidence.container_hint,
-            reason=reason,
-            source=source,
-        )
-
-    @staticmethod
-    def _select(
-        observations: tuple[StructuredObservation, ...],
-    ) -> StructuredObservation | None:
-        usable = [item for item in observations if item.usable]
-        if not usable:
-            return None
-        return min(
-            usable,
-            key=lambda item: (
-                item.container_hint,
-                item.status is EvidenceStatus.DEGRADED,
-                item.priority,
-                -item.confidence,
-                item.adapter,
-            ),
         )
 
 
-def _deadline_observation(
-    index: int,
-    adapter: Any,
-    elapsed_ms: float,
-) -> StructuredObservation:
-    layer = perception_layer(adapter)
-    return StructuredObservation(
-        index=index,
-        priority=int(getattr(
-            adapter,
-            "perception_priority",
-            _DEFAULT_PRIORITIES.get(layer, 50),
-        )),
-        layer=layer,
-        adapter=str(getattr(adapter, "name", "") or "unknown"),
-        method="unknown",
-        status=EvidenceStatus.TIMEOUT,
-        confidence=0.0,
-        latency_ms=elapsed_ms,
-        context=None,
-        container_hint=False,
-        reason="deadline_exceeded",
-        source=_source_for(layer),
+def providers_for_registry(
+    registry: Any,
+    window: dict[str, Any],
+) -> list[AdapterProvider]:
+    """Every adapter that claims this window becomes one structured provider."""
+    matcher = getattr(registry, "matching_adapters", None)
+    if callable(matcher):
+        candidates = list(matcher(window) or [])
+    else:
+        adapter = registry.matching_adapter(window)
+        candidates = [adapter] if adapter is not None else []
+    providers = [AdapterProvider(adapter) for adapter in candidates]
+    return sorted(
+        providers,
+        key=lambda provider: (provider.descriptor.priority, provider.descriptor.id),
     )
 
 
-def _normalized_content(context: AdapterReadContext | None) -> str:
-    return " ".join(str(getattr(context, "content", "") or "").casefold().split())
-
-
-def _content_conflicts(
-    observations: tuple[StructuredObservation, ...],
-) -> list[dict[str, Any]]:
-    text_observations = [
-        item
-        for item in observations
-        if item.usable and not item.container_hint and _normalized_content(item.context)
-    ]
-    incompatible = False
-    for index, left in enumerate(text_observations):
-        left_text = _normalized_content(left.context)
-        for right in text_observations[index + 1:]:
-            right_text = _normalized_content(right.context)
-            if left_text == right_text or left_text in right_text or right_text in left_text:
-                continue
-            incompatible = True
-            break
-        if incompatible:
-            break
-    if not incompatible:
-        return []
-    return [{
-        "kind": "content_disagreement",
-        "sources": [item.adapter for item in text_observations],
-    }]
-
-
-def _trace_for(
-    observations: tuple[StructuredObservation, ...],
-    selected: StructuredObservation | None,
-    conflicts: list[dict[str, Any]],
-    elapsed_ms: float,
-) -> dict[str, Any]:
-    if selected is not None:
-        read_state = "resolved"
-    elif observations and all(
-        item.status is EvidenceStatus.EMPTY_CONFIRMED for item in observations
-    ):
-        read_state = "empty_confirmed"
-    elif any(item.status in {
-        EvidenceStatus.BUSY,
-        EvidenceStatus.TIMEOUT,
-        EvidenceStatus.DENIED,
-        EvidenceStatus.ERROR,
-    } for item in observations):
-        read_state = "unread"
-    else:
-        read_state = "unavailable"
-    attempts = [item.to_legacy_attempt() for item in observations]
-    if not observations:
-        attempts = [{
-            "layer": "structured",
-            "adapter": "registry",
-            "method": "none",
-            "status": "unavailable",
-            "reason": "no_matching_adapter",
-        }]
-    return {
-        "schemaVersion": 1,
-        "selectedLayer": selected.layer if selected is not None else None,
-        "selectedAdapter": selected.adapter if selected is not None else None,
-        "selectedMethod": selected.method if selected is not None else None,
-        "pixelFallbackUsed": False,
-        "fallbackReason": None if selected is not None else "structured_context_unavailable",
-        "policyMode": None,
-        "readState": read_state,
-        "elapsedMs": round(elapsed_ms, 3),
-        "attempts": attempts,
-        "observations": [item.to_trace_dict() for item in observations],
-        "conflicts": conflicts,
-    }
+__all__ = [
+    "DEFAULT_DEADLINE_MS",
+    "DEFAULT_PIXEL_DEADLINE_MS",
+    "PerceptionBroker",
+    "PerceptionResult",
+    "context_has_usable_structure",
+    "perception_layer",
+    "providers_for_registry",
+]

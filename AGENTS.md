@@ -37,8 +37,12 @@ Then read `docs/STATUS.md` and inspect `git status`. Preserve user and other-age
 
 ## Current product boundary
 
-- Magic Pointer is an interaction-compiled desktop Agent Harness for short daily tasks, usually a few turns/minutes.
-- Project-scale Claude Code/Codex/Pi work remains in those native clients; Magic Pointer may compile and fill a prompt into them.
+- Magic Pointer is a complete, self-owned desktop Agent Harness. It is the harness, not a front-end for someone else's.
+- Task length is not a product boundary. A one-turn rewrite and a many-turn, cross-hour, cross-session job are both first-class, and both run on MP's own Runtime.
+- Therefore long-run capability — compaction, subtasks, durable memory, resume after interruption, visible progress, steer/interrupt/takeover — is required harness work, never "out of scope, use another client".
+- The target is the most complete harness available: deliberately absorb the strongest ideas from Claude Code (self-describing tools, model-as-router), Pi (loop), Hermes (product surface), Kimi CU (action primitives) and DSH (plugin/event sourcing) into MP's own kernel.
+- Writing a compiled prompt into an external client (Claude Code/Codex/Cursor) is one delivery channel, the same kind of thing as typing into WeChat's input box. It exists only for users who prefer their existing client. It is never a task-difficulty router, and it never hands execution to another harness.
+- Do not build Magic Pointer as a plugin or context-supplier for another harness. Interaction compilation (gesture -> frozen frame -> object graph -> RunEnvelope) is how MP's own Agent starts on useful work immediately; it is not a service exported to competitors' loops.
 - Gesture completion must freeze historical pixels before UIA/DOM/COM/OCR or any overlay can change the observed state.
 - Full local target-surface evidence is retained; a tiny gesture crop is never the sole OCR/vision evidence.
 - Perception is concurrent evidence fusion, not serial first-nonempty fallback.
@@ -51,7 +55,11 @@ Then read `docs/STATUS.md` and inspect `git status`. Preserve user and other-age
 
 ## Current implementation phase
 
-Execute `docs/superpowers/plans/2026-08-11-frame-lease-foundation.md` first. Do not start later Harness, plugin, MCP or visual work while pointerup can still capture a later screen.
+FrameLease foundation (8·11 Phase A) is fully landed and verified — do not re-execute it. The current implementation map is `docs/research/2026-08-17-magic-pointer-sovereign-agent-backend-blueprint.md` (sovereign Runtime, Gate 0/2), tracked in the progress ledger.
+
+Long-run gaps are audited in `docs/2026-08-19-LONG_RUN_CAPABILITY_GAP.md` (four-way read-only audit, every finding carries file:line). Read it before proposing long-task work; do not re-derive the list.
+
+The headline: long tasks currently cannot start, let alone survive. Stage kills the Python child at 60s and Studio at 120s (`electron/main.ts:3933-3934`, `electron/main.ts:1187`), and `run_agent_turn` fuses at 90 model rounds (`app/fabric/engine.py:983-984`). The loop kernel is far ahead of the shell — its rolling budget already renews on every productive round. Batch A in that document (lift the hard ceiling) blocks everything else.
 
 After each completed phase, update the progress ledger in `docs/design/MAGIC_POINTER_HARNESS_20260811.md`.
 
@@ -71,7 +79,7 @@ After each completed phase, update the progress ledger in `docs/design/MAGIC_POI
 - Visual/card/draft UI: read `docs/design/VIDA_UI_SPEC.md`.
 - Tool/UIA/app adapter/source reuse: read `docs/REFERENCE_PROJECTS_20260810.md` and the routed sources in canonical design §16.
 - Current truth and manual verification: read `docs/STATUS.md`.
-- External Agent connectors: read `docs/AGENT_INTEGRATION.md`; do not confuse them with MPAgentRuntime.
+- External Agent connectors: read `docs/AGENT_INTEGRATION.md`. They are a prompt-delivery channel only. MPAgentRuntime is the execution path for every task, short or long.
 
 ## Engineering rules
 

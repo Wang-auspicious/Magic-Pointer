@@ -708,6 +708,47 @@ def test_idempotency_key_is_stable_for_identical_replans(tmp_path: Path) -> None
     assert different["idempotencyKey"] != first["idempotencyKey"]
 
 
+def test_editing_an_unrelated_file_does_not_change_the_idempotency_key(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Same P1, second volatile field: the packet carries the repo's dirty state.
+
+    `git status`/`git diff` output is ambient — saving any file in the workspace
+    changed the key, so a retry of the same send never found its receipt. This
+    is not hypothetical during a test run: the suite writes files under the repo
+    and two identical re-plans seconds apart hashed differently.
+    """
+    from app.fabric import context_packet
+
+    engine = FabricEngine(root=tmp_path)
+    workspace = {
+        "cwd": str(tmp_path),
+        "repoRoot": str(tmp_path),
+        "branch": "main",
+        "head": "aaaaaaaaaaaa",
+        "isDirty": False,
+        "changedFiles": [],
+        "diffStat": "",
+        "diffExcerpt": "",
+    }
+    monkeypatch.setattr(context_packet, "probe_workspace", lambda _cwd: dict(workspace))
+    before = engine.plan("把这个错误建成任务", objects=[_object(content="E42 failed")])["plan"]
+
+    workspace.update({
+        "head": "bbbbbbbbbbbb",
+        "isDirty": True,
+        "changedFiles": ["notes/todo.md"],
+        "diffStat": " notes/todo.md | 1 +",
+        "diffExcerpt": "+一行无关的笔记",
+    })
+    after = engine.plan("把这个错误建成任务", objects=[_object(content="E42 failed")])["plan"]
+
+    assert after["idempotencyKey"] == before["idempotencyKey"]
+    # The evidence itself still moves the key.
+    other = engine.plan("把这个错误建成任务", objects=[_object(content="E43 failed")])["plan"]
+    assert other["idempotencyKey"] != before["idempotencyKey"]
+
+
 def test_plan_provider_and_parameters_are_integrity_bound(tmp_path: Path) -> None:
     engine = FabricEngine(root=tmp_path)
     plan = engine.plan(

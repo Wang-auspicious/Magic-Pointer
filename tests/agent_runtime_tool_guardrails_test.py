@@ -99,6 +99,26 @@ def test_switching_read_tools_does_not_hide_duplicate_evidence() -> None:
     assert decisions[-1].code == "duplicate_read_evidence_halt"
 
 
+def test_live_observation_polling_does_not_halt_a_long_wait() -> None:
+    guard = ToolCallGuardrailController()
+    snapshot = '{"snapshot_id":"s1","elements":[]}'
+
+    decisions = [
+        guard.observe(
+            "get_app_state",
+            {"window_id": "w-42"},
+            snapshot,
+            failed=False,
+            effect=Effect.READ,
+        )
+        for _ in range(8)
+    ]
+
+    assert all(decision.action != "halt" for decision in decisions)
+    assert any(decision.action == "warn" for decision in decisions)
+    assert decisions[-1].code != "read_no_progress_halt"
+
+
 def test_successful_mutations_with_distinct_arguments_are_progress() -> None:
     guard = ToolCallGuardrailController()
 

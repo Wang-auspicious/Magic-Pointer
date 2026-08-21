@@ -291,6 +291,14 @@ class TestRegisterAll:
         tools.register_all(registry)
         assert all(isinstance(spec, ToolSpec) for spec in registry.list())
 
+    def test_frozen_reads_are_labelled_historical(self, tools: PerceptionTools) -> None:
+        registry = ToolRegistry()
+        tools.register_all(registry)
+        for name in ("read_around", "dump_subtree", "find_in_window"):
+            description = registry.get(name).description.casefold()
+            assert "frozen" in description, name
+            assert "get_app_state" in description, name
+
 
 class TestInputValidation:
     def test_validate_input_missing_anchor(self, tools: PerceptionTools) -> None:

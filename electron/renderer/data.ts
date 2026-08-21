@@ -478,6 +478,7 @@ declare global {
   var StagePickPolicy: any;
   var StageTurnStream: any;
   var StageChipsPolicy: any;
+  var ClarificationChips: any;
 }
 
 /* exported Data, formatTime, dayLabel */

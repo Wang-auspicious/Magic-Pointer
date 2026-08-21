@@ -58,6 +58,9 @@ interface RunOptions {
   args?: string[];
   spawnOptions?: SpawnOptions;
   input?: unknown;
+  /** How long the bridge may stay *silent* before it counts as hung. Every
+   * chunk of stdout/stderr re-arms it, so an agent that keeps working keeps
+   * running. */
   timeoutMs?: number;
   maxStdoutBytes?: number;
   maxStderrBytes?: number;
@@ -137,7 +140,20 @@ function createPythonBridgeRunner({
       }
       deliver(value);
     };
+    const armIdleDeadline = (): void => {
+      if (delivered) return;
+      if (timer !== null) clearTimeoutImpl(timer);
+      timer = setTimeoutImpl(
+        () => stop({ ok: false, error: 'bridge_timeout' }),
+        Math.max(1, Number(timeoutMs) || 60_000),
+      );
+    };
     const append = (stream: 'stdout' | 'stderr', chunk: unknown): void => {
+      // Any output is proof of life. The deadline measures silence, not
+      // elapsed time: a wall-clock kill caps how long a task may take
+      // regardless of whether it is making progress, which is the wrong
+      // question to ask of an agent that may legitimately run for hours.
+      armIdleDeadline();
       const text = String(chunk);
       const bytes = Buffer.byteLength(text, 'utf8');
       if (stream === 'stdout') {
@@ -203,10 +219,7 @@ function createPythonBridgeRunner({
       deliver({ ok: false, error: 'bridge_stdin_error' });
     });
 
-    timer = setTimeoutImpl(
-      () => stop({ ok: false, error: 'bridge_timeout' }),
-      Math.max(1, Number(timeoutMs) || 60_000),
-    );
+    armIdleDeadline();
     if (signal) {
       if (signal.aborted) onAbort();
       else signal.addEventListener('abort', onAbort, { once: true });

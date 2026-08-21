@@ -116,6 +116,12 @@ assert(!source.includes('consentBox.style.top ='),
 assert(source.includes("threadPanel.dataset.phase = pending ? 'running' : awaiting ? 'awaiting' : failed ? 'failed' : 'finished'"));
 assert(source.includes("threadEyebrowText.textContent = pending"), 'thread eyebrow must be state-driven');
 assert(source.includes("'YOUR INPUT NEEDED'"), 'an awaiting user-input card must say it is waiting on the user');
+assert(source.includes('ClarificationChips') && source.includes('clarificationChips(newest'),
+  'awaiting option chips come from ClarificationChips, not idle StageChipsPolicy');
+assert(source.includes('chip.command'),
+  'clicking a clarification chip must submit the option text, not commandForChip');
+assert(html.includes('../clarification_chips.js'),
+  'stage must load the clarification helper as a classic script');
 assert(source.includes("pending ? '#ic-circle' : awaiting ? '#ic-circle' : failed ? '#ic-warn' : '#ic-check'"),
   'WORKING and YOUR INPUT NEEDED must not reuse the finished checkmark');
 assert(source.includes("threadClose.setAttribute('aria-label', pending ? '停止' : '关闭')"),

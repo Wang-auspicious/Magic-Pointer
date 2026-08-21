@@ -21,6 +21,7 @@ import stat
 from pathlib import Path
 from typing import Any, Callable
 
+from app.agent_runtime.token_estimate import estimate_messages_tokens
 from app.agent_runtime.types import AgentMessage, Role
 
 __all__ = ["MemoryLoader", "SkillLoader", "compact_messages"]
@@ -162,16 +163,23 @@ def compact_messages(
     messages: list[AgentMessage],
     summarize: SummarizeFn,
     *,
-    keep_last: int = 6,
+    tail_token_budget: int = 2000,
+    min_tail_messages: int = 3,
 ) -> list[AgentMessage]:
-    """Condense history: everything before the last ``keep_last`` messages is
-    summarized into one user-role data message (CC compact). Assistant tool
-    calls and tool results retain explicit provenance in the summary source;
-    the append-only session remains the lossless record. Returns the compacted
-    list or the original when there is nothing to compact."""
-    if len(messages) <= keep_last:
+    """Condense history: everything before the recent tail is summarized into
+    one user-role data message (CC compact). Assistant tool calls and tool
+    results retain explicit provenance in the summary source; the append-only
+    session remains the lossless record. Returns the compacted list or the
+    original when there is nothing to compact.
+
+    The tail is sized by tokens, not by message count (Hermes
+    ``_find_tail_cut_by_tokens``). A fixed count is the wrong unit here: four
+    short replies are nothing, while four 64k tool results are the entire
+    problem the compaction was supposed to solve.
+    """
+    if len(messages) <= min_tail_messages:
         return list(messages)
-    cutoff = len(messages) - keep_last
+    cutoff = _tail_cut_by_tokens(messages, tail_token_budget, min_tail_messages)
     # A tool result is only valid when the assistant tool call that created it
     # is still present.  Move the compaction boundary to the beginning of that
     # tool exchange instead of emitting an orphaned ``tool`` message.
@@ -210,6 +218,32 @@ def compact_messages(
         injected=True,
     )
     return [condensed, *tail]
+
+
+def _tail_cut_by_tokens(
+    messages: list[AgentMessage],
+    token_budget: int,
+    min_tail_messages: int,
+) -> int:
+    """Index where the verbatim tail starts, walking backward by token weight.
+
+    The message-count floor is honoured only when it stays within 1.5x the
+    budget; past that a run of bulky tool outputs would survive every
+    compaction and defeat it.
+    """
+    accumulated = 0
+    cut = len(messages)
+    for index in range(len(messages) - 1, -1, -1):
+        accumulated += estimate_messages_tokens([messages[index]])
+        cut = index
+        if accumulated >= token_budget:
+            break
+    floor_cut = max(0, len(messages) - min_tail_messages)
+    if floor_cut < cut and estimate_messages_tokens(
+        messages[floor_cut:]
+    ) <= token_budget * 1.5:
+        cut = floor_cut
+    return cut
 
 
 def _compaction_source_line(message: AgentMessage) -> str:

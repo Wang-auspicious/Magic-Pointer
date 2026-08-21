@@ -60,8 +60,14 @@ Honest semantics of this batch:
   ``compact_triggered``.
 - Proactive compaction: when ``context_budget_tokens`` and a
   ``token_estimator`` are configured, each round starts by estimating the
-  message list; at >=70% of the budget the ``compactor`` replaces the
-  history once (``compact_triggered``), before any model call.
+  request — messages and system prompt via the estimator, tool schemas added
+  by the loop, which owns that list. At >=70% of the budget the ``compactor``
+  replaces the history (``compact_triggered``) before any model call. This
+  repeats for the life of the loop: a long job that keeps accumulating tool
+  results needs to compact more than once. Two consecutive attempts that
+  leave the request still over the line stop further tries
+  (``_MAX_FRUITLESS_COMPACTIONS``) — summarising is a model call, and a
+  history that will not shrink must not be re-summarised every round.
 - Rolling budget (T1): the FULL_ANSWER budget is a deadline that renews
   once per productive round (at least one non-error tool result); each
   renewal emits :class:`BudgetRenewed` so a UI can heartbeat progress.
@@ -135,6 +141,7 @@ from app.agent_runtime.model_client import (
     TurnWithheld,
 )
 from app.agent_runtime.perception_tools import evidence_to_text
+from app.agent_runtime.token_estimate import estimate_text_tokens
 from app.agent_runtime.permission_modes import (
     PermissionDecision,
     PermissionDecisionResult,
@@ -167,7 +174,9 @@ from app.agent_runtime.types import (
     TurnState,
     with_transition,
 )
+from app.artifacts.projection import project_artifacts
 from app.evidence.contract import Evidence
+from app.receipts.projection import compose_receipt
 from app.governance.cancellation import (
     CancellationRegistry,
     CancellationScope,
@@ -201,6 +210,30 @@ _FULL_ANSWER_STAGE = Stage.FULL_ANSWER
 _PROACTIVE_COMPACT_RATIO = 0.7
 """Proactive compaction threshold: >=70% of the token budget (review Q11)."""
 
+_MAX_FRUITLESS_COMPACTIONS = 2
+"""Give up re-compacting after this many attempts that stayed over threshold.
+
+Ported from Hermes' anti-thrash counters (``context_compressor.should_compress``):
+compaction is a model call, so a history that will not shrink must not be
+re-summarised every round for the rest of a long job.
+"""
+
+
+def _over_compact_threshold(
+    params: LoopParams,
+    messages: Sequence[AgentMessage],
+    tool_schema_tokens: int,
+) -> bool:
+    """Would this request sit at or above the proactive compaction line?
+
+    The estimator covers messages and the system prompt; tool schemas are the
+    loop's own list, so their weight is added here.
+    """
+    if params.token_estimator is None or params.context_budget_tokens is None:
+        return False
+    estimated = params.token_estimator(list(messages)) + tool_schema_tokens
+    return estimated >= _PROACTIVE_COMPACT_RATIO * params.context_budget_tokens
+
 _MAX_TOOL_RESULT_CHARS = 64_000
 """Maximum model-visible/logged characters from one tool invocation."""
 
@@ -233,7 +266,7 @@ class LoopParams:
     user_input: str
     registry: ToolRegistry
     client: LoopModelClient
-    emergency_turn_fuse: int = 90
+    emergency_turn_fuse: int = 1000
     trajectory: Trajectory | None = None
     budgets: Mapping[Stage, BudgetPolicy] = field(default_factory=lambda: DEFAULT_BUDGETS)
     cancel_registry: CancellationRegistry | None = None
@@ -436,11 +469,10 @@ def _withheld_recovery_plan(
     state: TurnState,
     params: LoopParams,
     text: str | None,
-    compacted: bool,
-) -> tuple[list[AgentMessage], TransitionReason, bool, bool]:
+) -> tuple[list[AgentMessage], TransitionReason, bool]:
     """CC withhold 恢复轮的消息计划（纯构造 + 可选会话落盘）。
 
-    返回 ``(messages, transition_reason, has_attempted_compact, compacted)``；
+    返回 ``(messages, transition_reason, has_attempted_compact)``；
     调用方负责 with_transition / TurnFinished / 计数。
     """
     messages = list(state.messages)
@@ -473,7 +505,6 @@ def _withheld_recovery_plan(
         compacted_messages = params.compactor(list(messages))
         if len(compacted_messages) < len(messages):
             messages = compacted_messages
-            compacted = True
             has_attempted = True
             transition_reason = TransitionReason.COMPACT_TRIGGERED
             if params.session is not None:
@@ -482,7 +513,7 @@ def _withheld_recovery_plan(
                     reason="reactive_context_compaction",
                 )
                 messages = params.session.derive_messages()
-    return messages, transition_reason, has_attempted, compacted
+    return messages, transition_reason, has_attempted
 
 
 def _truncation_messages(
@@ -548,8 +579,9 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
     deadline_ms = start_ms + budget_ms
     renewals_used = 0
     last_progress_turn = 0
-    compacted = False
+    fruitless_compactions = 0
     tool_schemas = _select_tool_schemas(params)
+    tool_schema_tokens = estimate_text_tokens(str(tool_schemas))
     loaded_extra: list[str] = []
     stop_hooks = tuple(params.stop_hooks)
 
@@ -576,6 +608,13 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
     hook_notes: list[str] = []
     tool_guardrails = ToolCallGuardrailController(params.tool_guardrail_config)
     verification_gate = VerificationGate()
+
+    def _stop(terminal: Terminal) -> LoopStopped:
+        if params.session is not None:
+            _record_loop_receipt(
+                params.session, verification_gate, terminal, results
+            )
+        return LoopStopped(terminal)
 
     yield LoopStart()
 
@@ -609,7 +648,7 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                         results=tuple(results),
                         model_usage=_model_usage_snapshot(model_usage),
                     )
-                    yield LoopStopped(terminal)
+                    yield _stop(terminal)
                     return
             elapsed_ms = now_ms - start_ms
             remaining_ms = max(0.0, deadline_ms - now_ms)
@@ -624,16 +663,20 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
             yield TurnStarted(turn=turn_number)
 
             if (
-                not compacted
-                and params.compactor is not None
+                params.compactor is not None
                 and params.context_budget_tokens is not None
                 and params.token_estimator is not None
-                and params.token_estimator(state.messages)
-                >= _PROACTIVE_COMPACT_RATIO * params.context_budget_tokens
+                and fruitless_compactions < _MAX_FRUITLESS_COMPACTIONS
+                and _over_compact_threshold(params, state.messages, tool_schema_tokens)
             ):
                 compacted_messages = params.compactor(list(state.messages))
-                if len(compacted_messages) < len(state.messages):
-                    compacted = True
+                # Judge by weight, not by count. Compaction trades many
+                # messages for one summary and may re-attach carried-over
+                # state (the unfinished plan), so the list can get *longer*
+                # while the request gets much smaller.
+                if params.token_estimator(compacted_messages) < params.token_estimator(
+                    list(state.messages)
+                ):
                     if params.session is not None:
                         params.session.replace_messages(
                             compacted_messages,
@@ -648,6 +691,18 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                         turn_count=turn_number,
                     )
                     yield TurnFinished(state)
+                    # Still over the line after compacting means the history is
+                    # not where the weight is; summarising again costs a model
+                    # call and buys nothing.
+                    fruitless_compactions = (
+                        fruitless_compactions + 1
+                        if _over_compact_threshold(
+                            params, compacted_messages, tool_schema_tokens
+                        )
+                        else 0
+                    )
+                else:
+                    fruitless_compactions += 1
 
             if params.interrupt_check is not None and params.interrupt_check():
                 terminal = Terminal(
@@ -657,7 +712,7 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                     results=tuple(results),
                     model_usage=_model_usage_snapshot(model_usage),
                 )
-                yield LoopStopped(terminal)
+                yield _stop(terminal)
                 return
 
             if loop_scope.is_cancelled:
@@ -750,7 +805,7 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                         results=tuple(results),
                         model_usage=_model_usage_snapshot(model_usage),
                     )
-                    yield LoopStopped(terminal)
+                    yield _stop(terminal)
                     return
                 recovery = state.max_output_tokens_recovery_count + 1
                 if recovery > MAX_OUTPUT_TOKENS_RECOVERY_LIMIT:
@@ -761,14 +816,13 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                         results=tuple(results),
                         model_usage=_model_usage_snapshot(model_usage),
                     )
-                    yield LoopStopped(terminal)
+                    yield _stop(terminal)
                     return
                 (
                     messages,
                     transition_reason,
                     has_attempted,
-                    compacted,
-                ) = _withheld_recovery_plan(state, params, text, compacted)
+                ) = _withheld_recovery_plan(state, params, text)
                 last_transition = transition_reason
                 state = with_transition(
                     state,
@@ -822,7 +876,7 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                             results=tuple(results),
                             model_usage=_model_usage_snapshot(model_usage),
                         )
-                        yield LoopStopped(terminal)
+                        yield _stop(terminal)
                         return
                     if hook_errored:
                         last_transition = TransitionReason.STOP_HOOK
@@ -907,6 +961,8 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                     yield FollowupContinued(turn=turn_number, texts=tuple(followup_texts))
                     turn_number += 1
                     continue
+                if params.session is not None and str(text or "").strip():
+                    params.session.record_artifact_generated(str(text))
                 final_state = with_transition(
                     state,
                     TransitionReason.COMPLETED,
@@ -922,7 +978,7 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                     model_usage=_model_usage_snapshot(model_usage),
                 )
                 yield TurnFinished(final_state)
-                yield LoopStopped(terminal)
+                yield _stop(terminal)
                 return
 
             if client.last_truncated:
@@ -935,7 +991,7 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                         results=tuple(results),
                         model_usage=_model_usage_snapshot(model_usage),
                     )
-                    yield LoopStopped(terminal)
+                    yield _stop(terminal)
                     return
                 state = with_transition(
                     state,
@@ -1110,7 +1166,11 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                     if committed_spec is not None:
                         verification_gate.record_executed(
                             effect=spec_effect(committed_spec, call.arguments),
-                            verified=committed_spec.verify_result is not None,
+                            verified=(
+                                committed_spec.verify_result is not None
+                                or _json_verification_matched(normalized.value)
+                            ),
+                            tool_name=call.name,
                         )
                 if guardrail_decision.made_progress:
                     round_progress = True
@@ -1172,6 +1232,7 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                         loaded_extra.append(name)
             if loaded_extra:
                 tool_schemas = _select_tool_schemas(params, extra_names=loaded_extra)
+                tool_schema_tokens = estimate_text_tokens(str(tool_schemas))
 
             if pending_input is not None:
                 messages = list(state.messages)
@@ -1197,7 +1258,7 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                     model_usage=_model_usage_snapshot(model_usage),
                 )
                 yield TurnFinished(waiting_state)
-                yield LoopStopped(terminal)
+                yield _stop(terminal)
                 return
 
             if halt_decision is not None:
@@ -1208,7 +1269,7 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                     results=tuple(results),
                     model_usage=_model_usage_snapshot(model_usage),
                 )
-                yield LoopStopped(terminal)
+                yield _stop(terminal)
                 return
 
             if turn_number + 1 > params.emergency_turn_fuse:
@@ -1219,7 +1280,7 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                     results=tuple(results),
                     model_usage=_model_usage_snapshot(model_usage),
                 )
-                yield LoopStopped(terminal)
+                yield _stop(terminal)
                 return
 
             last_transition = (
@@ -1825,6 +1886,47 @@ def _normalize_result(executed: Any, call: ToolCall) -> ToolResult:
         used_backend=executed.used_backend,
         latency_ms=executed.latency_ms,
     )
+
+
+def _json_verification_matched(value: Any) -> bool:
+    """Desktop tools report verification.matched in JSON; that counts as evidence."""
+    if not isinstance(value, str):
+        return False
+    text = value.strip()
+    if not text.startswith("{"):
+        return False
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(payload, dict):
+        return False
+    verification = payload.get("verification")
+    if not isinstance(verification, dict):
+        return False
+    return verification.get("matched") is True
+
+
+def _record_loop_receipt(
+    session: EventSession,
+    gate: VerificationGate,
+    terminal: Terminal,
+    results: Sequence[ToolResult],
+) -> None:
+    artifacts = project_artifacts(session.events)
+    used_backend = "loop"
+    for item in reversed(tuple(results or ())):
+        backend = getattr(item, "used_backend", None)
+        if backend:
+            used_backend = str(backend)
+            break
+    session.record_receipt(compose_receipt(
+        wrote=gate.wrote,
+        verified=gate.verified,
+        artifact_ids=tuple(item.artifact_id for item in artifacts),
+        reason=str(terminal.reason.value),
+        used_backend=used_backend,
+    ))
 
 
 def _result_value_text(value: Any) -> str:

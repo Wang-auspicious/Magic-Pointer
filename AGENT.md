@@ -1,6 +1,8 @@
 # AGENT.md — 给接手这个项目的 AI
 
-> **2026-08-11 当前最高优先级：** 先完整阅读 `docs/design/MAGIC_POINTER_HARNESS_20260811.md`，再读本文件和 `docs/STATUS.md`。8·11 文档已经固化用户最新确认的短任务 Harness、FrameLease、并发感知、SurfaceAdapter、Pi 边界、资源策略、可编辑 Draft 和 Reuse Gate；与下方旧阶段描述冲突时，以 8·11 文档为准。
+> **2026-08-19 产品边界纠正（优先于本文一切旧表述）：** Magic Pointer 是完整自有的顶级 Agent Harness，**短任务和长任务都自己做**，任务时长不是边界。写进 Claude Code/Codex 输入框只是一条投递通道，与写进微信输入框同级，不是把执行外包出去。凡本仓库文档写着“短任务 Harness / 长任务交给外部 Agent”的，一律作废，以 `docs/design/MAGIC_POINTER_HARNESS_20260811.md` §1.1 为准。
+>
+> **阅读顺序：** 先完整阅读 `docs/design/MAGIC_POINTER_HARNESS_20260811.md`，再读本文件和 `docs/STATUS.md`。8·11 文档已经固化 FrameLease、并发感知、SurfaceAdapter、Pi 边界、资源策略、可编辑 Draft 和 Reuse Gate；与下方旧阶段描述冲突时，以 8·11 文档为准。
 >
 > 当前实施入口：`docs/superpowers/plans/2026-08-11-frame-lease-foundation.md`。在 pointerup 仍可能截到后续界面之前，不得跳去做后续 Agent/MCP/视觉扩展。
 

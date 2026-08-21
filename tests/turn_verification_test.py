@@ -62,6 +62,56 @@ def test_purchase_gates_too() -> None:
     assert should_nudge_before_completion(gate) is not None
 
 
+def test_click_matched_is_not_task_completion() -> None:
+    gate = VerificationGate()
+    gate.record_executed(
+        effect=Effect.REVERSIBLE_WRITE,
+        verified=True,
+        tool_name="click",
+    )
+    assert should_nudge_before_completion(gate) is not None
+
+
+def test_click_then_get_app_state_counts_as_observed() -> None:
+    gate = VerificationGate()
+    gate.record_executed(
+        effect=Effect.REVERSIBLE_WRITE,
+        verified=True,
+        tool_name="click",
+    )
+    gate.record_executed(
+        effect=Effect.READ,
+        verified=False,
+        tool_name="get_app_state",
+    )
+    assert should_nudge_before_completion(gate) is None
+
+
+def test_observe_before_click_does_not_count() -> None:
+    gate = VerificationGate()
+    gate.record_executed(
+        effect=Effect.READ,
+        verified=False,
+        tool_name="get_app_state",
+    )
+    gate.record_executed(
+        effect=Effect.REVERSIBLE_WRITE,
+        verified=True,
+        tool_name="click",
+    )
+    assert should_nudge_before_completion(gate) is not None
+
+
+def test_type_text_matched_still_passes_the_gate() -> None:
+    gate = VerificationGate()
+    gate.record_executed(
+        effect=Effect.REVERSIBLE_WRITE,
+        verified=True,
+        tool_name="type_text",
+    )
+    assert should_nudge_before_completion(gate) is None
+
+
 # ---- loop 端到端 ------------------------------------------------------------
 
 
@@ -169,3 +219,44 @@ def test_loop_no_nudge_when_write_has_verify() -> None:
     events = asyncio.run(collect())
     assert not [e for e in events if isinstance(e, VerificationNudged)]
     assert events[-1].terminal.reason.value == "completed"
+
+
+def test_loop_click_matched_nudges_until_the_window_is_observed_again() -> None:
+    import asyncio
+    import importlib.util as ilu
+    import json
+
+    spec = ilu.spec_from_file_location(
+        "_loop_test_fakes", Path(__file__).resolve().parent / "agent_runtime_loop_test.py")
+    mod = ilu.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    from app.agent_runtime.loop import VerificationNudged, run_agent_loop
+    from app.agent_runtime.model_client import (
+        LoopModelClient, MessageDelta, ToolCallArrived, TurnDone,
+    )
+    from app.agent_runtime.tool_registry import ToolRegistry, ToolSpec
+    from app.agent_runtime.types import ToolCall
+
+    registry = ToolRegistry()
+    registry.register(ToolSpec(
+        name="click",
+        description="c",
+        input_schema=mod.EMPTY_SCHEMA,
+        execute=lambda **kw: json.dumps({"verification": {"matched": True}}),
+        effect=Effect.REVERSIBLE_WRITE,
+    ))
+    backend = mod.ScriptedBackend(
+        [ToolCallArrived(call=ToolCall(id="c1", name="click", arguments={})),
+         TurnDone(usage=None, raw_text=None)],
+        [MessageDelta(text="点完了。"), TurnDone(usage=None, raw_text=None)],
+        [MessageDelta(text="已执行但未验证。"), TurnDone(usage=None, raw_text=None)],
+    )
+    params = mod.make_params(
+        "点一下", registry=registry, client=LoopModelClient(backend))
+
+    async def collect():
+        return [event async for event in run_agent_loop(params)]
+
+    events = asyncio.run(collect())
+    assert len([e for e in events if isinstance(e, VerificationNudged)]) == 1

@@ -21,17 +21,22 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import scripts.selection_bridge as selection_bridge  # noqa: E402
+import app.perception.pixel_ocr as pixel_ocr  # noqa: E402
 from app.adapters.base import AdapterReadContext  # noqa: E402
-from scripts.selection_bridge import _enrich_screen_region_context  # noqa: E402
+from scripts.selection_bridge import _fuse_pixel_tier  # noqa: E402  (used directly below)
 
 POWERSHELL_IDENTITY = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
 
 
+def _enrich_screen_region_context(target_window, app_ctx, snapshot):
+    context, _trace = _fuse_pixel_tier(target_window, app_ctx, snapshot)
+    return context
+
+
 def _fake_ocr(monkeypatch, text: str = "LINE-ALPHA 第一行 hello") -> None:
     monkeypatch.setattr(
-        selection_bridge,
-        "_read_local_ocr_boxes",
+        pixel_ocr,
+        "read_ocr_blocks",
         lambda path, strokes_local=None, selection_local=None: (
             [{"text": text, "rect": None, "conf": None}],
             "test-ocr",
@@ -100,20 +105,35 @@ def test_a_structured_read_that_covered_the_mark_is_left_alone(monkeypatch, tmp_
     assert context is original
 
 
-def test_snapshots_written_before_this_field_existed_keep_the_old_rule(monkeypatch, tmp_path) -> None:
+def test_a_snapshot_without_the_coverage_field_is_judged_by_its_own_content(
+    monkeypatch, tmp_path
+) -> None:
+    """缺字段不再等于"当作已经读到了"。
+
+    旧规则靠 `structured_covers_mark` 这个布尔值决定要不要跑像素；字段不存在时
+    就整条跳过。现在这一层拿着结构读取本身，覆盖判定就地重算——同一段
+    `powershell.exe` 无论快照什么时候写的，都是"读到了容器名"，不是答案。
+    """
     capture = tmp_path / "screen.png"
     capture.write_bytes(b"capture")
     _fake_ocr(monkeypatch)
 
-    # 老快照 + 非 screen_region：仍按旧规则跳过，不会因为字段缺失就改变行为。
-    untouched = _identity_context(capture)
-    assert _enrich_screen_region_context(
+    context = _enrich_screen_region_context(
         {"title": "Windows PowerShell"},
-        untouched,
+        _identity_context(capture),
         {"source_kind": "native_selection", "capture_path": str(capture)},
-    ) is untouched
+    )
 
-    # 老快照 + screen_region + 空 content：仍会跑 OCR。
+    assert context.content == "LINE-ALPHA 第一行 hello"
+    # 被压过的结构观测仍然留在裁决里，且明说压过它的理由。
+    _, trace = _fuse_pixel_tier(
+        {"title": "Windows PowerShell"},
+        _identity_context(capture),
+        {"source_kind": "native_selection", "capture_path": str(capture)},
+    )
+    assert [item["reason"] for item in trace["notes"]] == ["identity_only"]
+
+    # screen_region + 空 content：仍会跑 OCR。
     empty = AdapterReadContext(
         adapter="screen_region",
         app="screen",
@@ -195,9 +215,8 @@ def test_the_grounding_keeps_the_drawn_mark_when_only_a_container_was_crossed() 
     assert '"stroke_crossed_no_element"' in text, "笔画一个元素都没穿过时仍会宣称已解析"
     assert "structured_read_covers_mark(" in text
     assert '"structured_covers_mark": bool(mark_coverage.covers)' in text, "判断没写进快照"
-
-    bridge = (Path(__file__).resolve().parents[1] / "scripts" / "selection_bridge.py").read_text(encoding="utf-8")
-    assert 'snapshot.get("structured_covers_mark")' in bridge, "命令桥没有读这个判断"
+    # 命令桥这一侧不再读这个布尔：覆盖判断随 observation 过河，由第二段融合排序。
+    # 真接线由 perception_two_stage_seam_test 跑出来，不靠在这里 grep 字符串。
 
 
 # --- 模型挂掉时 -------------------------------------------------------------

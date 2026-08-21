@@ -82,6 +82,23 @@ def _idempotency_stable_params(params: Mapping[str, Any]) -> dict[str, Any]:
                 "objectFingerprint": packet["targetLease"].get("objectFingerprint") or "",
                 "objectIds": list(packet["targetLease"].get("objectIds") or []),
             }
+        # The workspace probe carries the repo's live dirty state — HEAD, the
+        # changed-file list, the diff excerpt. Saving any unrelated file in the
+        # workspace would otherwise give an identical re-plan a new key, which
+        # is the same defect as the lease id above: no receipt reuse, and a
+        # retry free to send twice. Where the operation acts still counts.
+        if isinstance(packet.get("workspace"), dict):
+            packet["workspace"] = {
+                "cwd": packet["workspace"].get("cwd") or "",
+                "repoRoot": packet["workspace"].get("repoRoot") or "",
+            }
+        runtime = packet.get("runtime")
+        if isinstance(runtime, dict) and isinstance(runtime.get("processBinding"), dict):
+            binding = runtime["processBinding"]
+            runtime["processBinding"] = {
+                "cwd": binding.get("cwd") or "",
+                "repoRoot": binding.get("repoRoot") or "",
+            }
     decision = stable.get("permissionDecision")
     if isinstance(decision, dict):
         stable["permissionDecision"] = {
@@ -963,8 +980,15 @@ async def _consume_agent_loop(params: LoopParams) -> Terminal:
     raise RuntimeError("agent loop ended without LoopStopped")
 
 
-_LOOP_EMERGENCY_TURN_FUSE = 90
-"""Emergency invariant fuse, not a normal task-completion policy."""
+_LOOP_EMERGENCY_TURN_FUSE = 1000
+"""Emergency invariant fuse, not a normal task-completion policy.
+
+It was 90, which is below real long-horizon desktop work (OSWorld 2.0 tasks
+average 318 tool calls) — so a legitimate long job hit it and was reported to
+the user as ``INVARIANT_FAILED``, an internal error. What stops a spinning
+agent is stall detection in ``tool_guardrails`` plus the rolling budget; this
+fuse only catches genuine runaway.
+"""
 
 
 def run_agent_turn(

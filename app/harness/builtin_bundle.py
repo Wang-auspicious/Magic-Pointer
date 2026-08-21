@@ -56,12 +56,16 @@ from app.agent_runtime.system_prompt import (
     default_sections,
     is_deliver_request,
 )
+from app.agent_runtime.todo_store import TodoStore
+from app.agent_runtime.token_estimate import estimate_request_tokens
 from app.agent_runtime.tool_registry import Effect, ToolRegistry, ToolSpec
+from app.agent_runtime.types import ORIGIN_DATA, AgentMessage, Role
 from app.computer_operator import (
     ComputerOperatorRegistry,
     ComputerTaskService,
     WindowsComputerOperatorBackend,
 )
+from app.desktop_actions import default_session, register_desktop_action_tools
 from app.fabric.capability_tools import (
     register_capability_tools,
     register_find_capability,
@@ -113,7 +117,11 @@ def _apply_harness_tools(fork, config: dict[str, Any]) -> None:
     """CC-pattern loop tools: clarification + visible plan."""
     registry = fork.get("tools")
     register_ask_user_question(registry, ask=None)
-    register_todo_write(registry, sink=None)
+    # The plan is state, not just a tool result: compaction re-attaches the
+    # unfinished part so progress does not depend on the summariser.
+    todo_store = TodoStore()
+    fork.provide_up("todo_store", todo_store)
+    register_todo_write(registry, sink=todo_store.write)
 
 
 def _apply_perception_tools(fork, config: dict[str, Any]) -> None:
@@ -230,6 +238,12 @@ def _apply_local_action_tools(fork, config: dict[str, Any]) -> None:
     ))
 
 
+def _apply_desktop_action_tools(fork, config: dict[str, Any]) -> None:
+    """Kimi CU 13 tools on the main loop, bound to one input-ownership session."""
+    del config
+    register_desktop_action_tools(fork.get("tools"), default_session())
+
+
 def _apply_capability_tools(fork, config: dict[str, Any]) -> None:
     """Recipe capabilities as model-facing tools (propose-only by default)."""
     registry = fork.get("tools")
@@ -318,7 +332,7 @@ def _apply_model_client(fork, config: dict[str, Any]) -> None:
         raise TypeError("llm service does not implement LlmProvider")
     client = provider.create_client(
         system_prompt=system_prompt,
-        max_tokens=int(config.get("max_tokens") or 800),
+        max_tokens=int(config.get("max_tokens") or 4096),
     )
     fork.provide_up("model_client", client)
     fork.provide_up(
@@ -326,20 +340,37 @@ def _apply_model_client(fork, config: dict[str, Any]) -> None:
         {
             "systemPrompt": system_prompt,
             "usedBackend": str(provider.used_backend),
-            "maxTokens": int(config.get("max_tokens") or 800),
+            "maxTokens": int(config.get("max_tokens") or 4096),
             "permissionMode": str(config.get("permission_mode") or "default"),
         },
     )
 
+    todo_store = fork.get("todo_store")
+
     def compactor(messages):
-        return compact_messages(
-            list(messages), config["summarize"], keep_last=4
-        )
+        original = list(messages)
+        compacted = compact_messages(original, config["summarize"])
+        if len(compacted) >= len(original):
+            return compacted
+        outstanding = todo_store.format_for_injection()
+        if outstanding:
+            compacted.append(AgentMessage(
+                role=Role.USER,
+                content=outstanding,
+                tool_call_id=None,
+                name=None,
+                origin=ORIGIN_DATA,
+                injected=True,
+            ))
+        return compacted
 
     fork.provide_up("compactor", compactor)
 
     def token_estimator(messages) -> int:
-        return sum(max(0, len(message.content or "") // 2) for message in messages)
+        # The system prompt carries memory (<=4000 chars) and skills (<=12000);
+        # counting messages alone made the compaction threshold fire far too
+        # late. Tool schemas are added by the loop, which owns that list.
+        return estimate_request_tokens(messages, system_prompt=system_prompt)
 
     fork.provide_up("token_estimator", token_estimator)
 
@@ -410,6 +441,7 @@ BUILTIN_PLUGINS: dict[str, PluginSpec] = {
         _spec("perception-tools", ("tools", "perception"), _apply_perception_tools),
         _spec("look-tool", ("tools", "vision"), _apply_look_tool),
         _spec("local-action-tools", ("tools",), _apply_local_action_tools),
+        _spec("desktop-action-tools", ("tools",), _apply_desktop_action_tools),
         _spec("capability-tools", ("tools",), _apply_capability_tools),
         _spec("guard", ("guard_probe", "selection_anchor"), _apply_guard),
         _spec("system-prompt", ("prompt",), _apply_system_prompt),
@@ -418,7 +450,7 @@ BUILTIN_PLUGINS: dict[str, PluginSpec] = {
         _spec("mcp-provider", ("tools",), _apply_mcp_provider),
         _spec("learning-review", ("sessions",), _apply_learning_review),
         _spec("computer-agent", ("computer_operators",), _apply_computer_agent),
-        _spec("model-client", ("prompt", "llm"), _apply_model_client),
+        _spec("model-client", ("prompt", "llm", "todo_store"), _apply_model_client),
         _spec(
             "surface-wechat",
             ("surface_adapters",),
@@ -433,6 +465,7 @@ BUILTIN_ROW_IDS: tuple[str, ...] = (
     "perception-tools",
     "look-tool",
     "local-action-tools",
+    "desktop-action-tools",
     "capability-tools",
     "guard",
     "system-prompt",
@@ -574,6 +607,7 @@ def _run_loop_rows(runtime: dict[str, Any], root: Path) -> list[BundleRow]:
                 "window_process": str(window.get("process_name") or ""),
             },
         ),
+        BundleRow("desktop-action-tools", "desktop-action-tools"),
         BundleRow(
             "capability-tools",
             "capability-tools",
@@ -595,7 +629,7 @@ def _run_loop_rows(runtime: dict[str, Any], root: Path) -> list[BundleRow]:
                     os.environ.get("MAGIC_POINTER_PERMISSION_MODE", "default").strip()
                     or "default"
                 ),
-                "max_tokens": 800,
+                "max_tokens": 4096,
                 "context_budget_tokens": _env_int(
                     "MAGIC_POINTER_CONTEXT_TOKENS", 64000
                 ),
@@ -698,6 +732,7 @@ def boot_loop_context(
                 "window_process": str(window.get("process_name") or ""),
             },
         ),
+        BundleRow("desktop-action-tools", "desktop-action-tools"),
         BundleRow(
             "capability-tools",
             "capability-tools",
@@ -737,7 +772,7 @@ def boot_loop_context(
                     os.environ.get("MAGIC_POINTER_PERMISSION_MODE", "default").strip()
                     or "default"
                 ),
-                "max_tokens": 800,
+                "max_tokens": 4096,
                 "context_budget_tokens": _env_int(
                     "MAGIC_POINTER_CONTEXT_TOKENS", 64000
                 ),

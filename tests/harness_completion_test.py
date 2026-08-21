@@ -93,7 +93,10 @@ def test_compaction_summarizes_head() -> None:
         AgentMessage(role=Role.USER, content=f"m{i}", tool_call_id=None, name=None)
         for i in range(10)
     ]
-    compacted = compact_messages(messages, lambda source: "前半段摘要", keep_last=3)
+    # Each "mN" is one token, so a 3-token tail keeps the last three verbatim.
+    compacted = compact_messages(
+        messages, lambda source: "前半段摘要", tail_token_budget=3
+    )
     assert len(compacted) == 4
     assert "前半段摘要" in compacted[0].content
     assert compacted[0].injected is True
@@ -102,6 +105,77 @@ def test_compaction_summarizes_head() -> None:
     # instruction (red-team T3).
     assert "<<<MAGIC_POINTER_EVIDENCE>>>" in compacted[0].content
     assert compacted[0].origin == "data"
+
+
+def test_bulky_tail_messages_do_not_all_survive_compaction() -> None:
+    """A message-count tail lets four 64k tool results ride through untouched.
+
+    Sizing the tail by tokens is the whole point: the run that most needs
+    compaction is exactly the one whose recent messages are huge.
+    """
+    messages = [
+        AgentMessage(role=Role.USER, content="开始", tool_call_id=None, name=None)
+    ]
+    for index in range(6):
+        messages.append(AgentMessage(
+            role=Role.ASSISTANT,
+            content="",
+            tool_call_id=None,
+            name=None,
+            origin="data",
+            tool_calls=({"id": f"c{index}", "name": "dump_subtree", "arguments": {}},),
+        ))
+        messages.append(AgentMessage(
+            role=Role.TOOL,
+            content="u" * 40_000,
+            tool_call_id=f"c{index}",
+            name="dump_subtree",
+            origin="data",
+        ))
+
+    compacted = compact_messages(
+        messages, lambda _source: "摘要", tail_token_budget=2000
+    )
+
+    # 2000 tokens is one 40k-char result, not six.
+    assert len(compacted) < len(messages)
+    assert sum(len(m.content or "") for m in compacted) < 100_000
+
+
+def test_compaction_prunes_duplicate_tool_results_before_summarizing() -> None:
+    payload = ("same subtree " * 80) + "END"
+    messages = [
+        AgentMessage(role=Role.USER, content="开始", tool_call_id=None, name=None)
+    ]
+    for index in range(4):
+        messages.append(AgentMessage(
+            role=Role.ASSISTANT,
+            content="",
+            tool_call_id=None,
+            name=None,
+            origin="data",
+            tool_calls=({"id": f"d{index}", "name": "dump_subtree", "arguments": {}},),
+        ))
+        messages.append(AgentMessage(
+            role=Role.TOOL,
+            content=payload,
+            tool_call_id=f"d{index}",
+            name="dump_subtree",
+            origin="data",
+        ))
+    seen: list[str] = []
+
+    def summarize(source: str) -> str:
+        seen.append(source)
+        return "摘要"
+
+    compacted = compact_messages(messages, summarize, tail_token_budget=200)
+    assert seen
+    assert seen[0].count(payload) <= 1
+    assert "Duplicate tool output" in seen[0] or "dump_subtree" in seen[0]
+    assert sum(len(m.content or "") for m in compacted) < sum(
+        len(m.content or "") for m in messages
+    )
 
 
 def test_compaction_never_orphans_a_tool_result_from_its_assistant_call() -> None:
@@ -128,7 +202,9 @@ def test_compaction_never_orphans_a_tool_result_from_its_assistant_call() -> Non
         AgentMessage(role=Role.USER, content="现在呢", tool_call_id=None, name=None),
     ])
 
-    compacted = compact_messages(messages, lambda _source: "旧对话摘要", keep_last=2)
+    compacted = compact_messages(
+        messages, lambda _source: "旧对话摘要", tail_token_budget=2
+    )
 
     assert [message.role for message in compacted] == [
         Role.USER,
@@ -166,7 +242,8 @@ def test_compaction_summary_keeps_old_tool_evidence_and_provenance() -> None:
     compact_messages(
         messages,
         lambda source: captured.append(source) or "summary",
-        keep_last=1,
+        tail_token_budget=1,
+        min_tail_messages=1,
     )
 
     assert "read_file" in captured[0]

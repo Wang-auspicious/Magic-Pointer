@@ -23,7 +23,7 @@ Magic Pointer 不应退化成“在桌面上套一个聊天框”，也不应靠
 - Claude Code / Pi：单一模型循环、自描述工具、工具结果反馈、模型自然完成；
 - DeepSeek Harness（DSH）：作用域插件、依赖注入、卸载回滚、事件溯源会话；
 - Hermes：后台轨迹审查、受控学习候选、自进化闭环；
-- Magic Pointer 自身：手势即任务编译器、冻结画面证据、指代对象、短任务低摩擦入口、ActionLease 与本地目标表面验证。
+- Magic Pointer 自身：手势即任务编译器、冻结画面证据、指代对象、低摩擦入口（任务时长不设上限）、ActionLease 与本地目标表面验证。
 
 Kimi、Hermes、Claude Code 与新克隆的 UI-TARS 仍需继续做逐模块差距审计；当前不能声称已经完整对齐任何一个成品 Agent。
 
@@ -144,9 +144,9 @@ Kimi、Hermes、Claude Code 与新克隆的 UI-TARS 仍需继续做逐模块差�
 1. **手势即对象编译**：用户不是先描述“屏幕上那个东西”，而是用动作直接建立 `THIS/THAT/THESE/HERE` 对象。
 2. **历史像素被冻结**：pointerup 后 UIA、OCR、overlay 或窗口变化不能偷换模型观察的画面。
 3. **多证据融合**：UIA、OCR、像素、窗口/进程身份和应用适配器并发形成证据；小 crop 不是唯一真相。
-4. **短任务入口**：目标是几分钟、少数回合的日常任务，不与项目级 Codex/Claude Code 客户端争夺同一个工作区场景。
+4. **零摩擦入口 + 不封顶的执行**：指一下就能开工，首轮直接进入有效工作；任务要跑几十上百轮、跨小时也照跑，时长不是入口的代价。
 5. **动作安全在模型之外**：模型可以选择工具和提出计划，但坐标、权限、precondition、ActionLease、确认和结果验证保持确定性。
-6. **可交接但不依附**：Magic Pointer 可把冻结证据编译为 prompt 交给 Codex/Claude/Pi；外部 Agent 是一种能力，不是全部产品。
+6. **可投递但不依附**：Magic Pointer 可把冻结证据编译为 prompt 写进 Codex/Claude/微信等任意输入框；那是一条投递通道，执行权始终在 MP 自己的 Runtime。
 
 尚未完全贯穿的新主干优势：版本化 `DraftArtifact`、用户编辑与 Agent patch、跨手势对象记忆、完整 ActionLease 写回链、SurfaceAdapter 的更多真实应用实现。
 

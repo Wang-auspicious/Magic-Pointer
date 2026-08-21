@@ -30,23 +30,25 @@
 
 ## 1. 这次对话最终澄清的产品定位
 
-### 1.1 Magic Pointer 不是另一个项目级 Coding Agent
+### 1.1 Magic Pointer 就是那个 Harness，任务时长不是边界
 
-用户已经明确：
+> 2026-08-19 用户纠正：本节此前写的“短任务边界 / 项目级交给外部 Agent”是错的，已作废。以下为现行边界。
 
-- Claude Code、Codex GUI/CLI、Pi 等项目级 Agent 按用户原有方式正常使用。
-- 中大型项目、长程编码和跨仓库重构不会默认搬进 Magic Pointer 的小框里。
-- Magic Pointer 内部 Agent 主要完成一两轮、几分钟内结束的日常桌面任务。
-- 当用户正在 Claude Code/Codex 中工作时，Magic Pointer 可以收集散落上下文、组织 Prompt、填入原输入框，但默认不代替原 Agent 承担整个项目。
-- 外部 Agent 将来可以作为能力提供方接入，但不是“简单任务/复杂任务”分级器。
+- Magic Pointer 要做的是顶级 Agent Harness 本身，不是别人 Harness 的前端、插件或上下文供应商。
+- 任务时长不是产品边界。一轮改写，和需要几十上百轮、跨小时、跨会话的长程任务，同为一等公民，都由 MP 自有 Runtime 承担。
+- 因此长程能力是必须做的本体功能，不得以“这属于项目级 Agent”为由推给外部客户端：上下文压缩、子任务分解、持久记忆、断点续跑、进度可见、steer/中断/接管、失败恢复。
+- 目标是最综合、最集成各方优点的 harness。Claude Code 的自描述工具与模型即路由、Pi 的 loop、Hermes 的成品面、Kimi CU 的动作原语、DSH 的插件与事件溯源，全部吸收进 MP 自己的内核，而不是把活外包给它们。
+- 把编译好的 Prompt 写进外部客户端（Claude Code/Codex/Cursor）只是一条投递通道，与“把文字写进微信输入框”同一性质、同一量级。它只服务于“用户已经用惯那个客户端、不愿意换”的情况；它不是任务难度分级器，也不交出执行权。
+- 唯一仍然属实的旧结论：MP 不专门做仓库级代码重构的产品化体验。这是产品重心，不是能力上限——不得据此给 Runtime 加轮次、时长或复杂度封顶。
 
-典型内部任务：
+典型任务，短与长都在范围内：
 
 - 圈选聊天记录、图片、文件和桌面材料，生成报告或回复；
 - 把多处零散信息编译成高质量 Prompt；
 - OCR、改写、翻译、扩写、表格提取、文件转换；
 - 打开应用、调整音量、调用地图/日历等 MCP；
-- 在少量步骤内完成可验证的跨应用任务；
+- 跨应用完成可验证的多步任务，步数由任务决定而非由预算封顶；
+- 长程作业：批量处理成百上千条目、盯守长时间运行的过程并按结果分支、跨小时推进并在中断后续跑；
 - 生成结果后允许用户编辑，再写回、发送或保存。
 
 ### 1.2 产品的真正发明点：交互预编译式 Harness
@@ -61,7 +63,7 @@ Magic Pointer 的鼠标唤醒、划线、圈选、多选、短录屏，不是聊
 
 一句话定义：
 
-> Magic Pointer 是把人的桌面指代理解预编译为短任务 Agent 可直接执行上下文的桌面 Harness。
+> Magic Pointer 是一个完整的桌面 Agent Harness：它把人的桌面指代理解预编译成 Agent 可直接执行的上下文，再用自有 Runtime 承担从一轮到长程的全部任务。
 
 ### 1.3 不做的事情
 
@@ -143,7 +145,7 @@ Magic Pointer 的鼠标唤醒、划线、圈选、多选、短录屏，不是聊
 
 ### 3.6 Fabric 不是内部 Agent loop
 
-`app/fabric/model_plan.py` 接受多个工具调用，但 `app/fabric/engine.py::plan_from_model` 在生产路径要求恰好一个 tool call。`agent_gateway.py` 面向外部项目 Agent 和 session worker，不适合作为默认的短任务桌面 Runtime。
+`app/fabric/model_plan.py` 接受多个工具调用，但 `app/fabric/engine.py::plan_from_model` 在生产路径要求恰好一个 tool call。`agent_gateway.py` 面向外部项目 Agent 和 session worker，不适合作为默认的桌面 Runtime。
 
 ## 4. 总体架构
 
@@ -156,7 +158,7 @@ Magic Pointer 的鼠标唤醒、划线、圈选、多选、短录屏，不是聊
 5. `AdapterRuntime`：按应用/版本渐进增强的 `SurfaceAdapter`。
 6. `ContextCompiler`：把证据编译成 `SelectionBundle` 和 `RunEnvelope`。
 7. `CapabilityBroker`：本地工具、MCP、Skills、插件和动态工具搜索。
-8. `MPAgentRuntime`：基于 Pi 稳定 agent-loop 的短任务执行器。
+8. `MPAgentRuntime`：自有任务执行器（loop 借鉴 Pi 的稳定实现）。短任务与长程任务走同一条 loop，靠压缩、记忆和续期扩展寿命，不设轮次上限。
 9. `ActionBroker`：输入所有权、ActionLease、动作稳定、验证和撤销。
 10. `ArtifactStore`：可编辑 Draft、文件、地图、表格、报告等产物。
 11. `ResourceGovernor`/`RunLedger`：资源预算、事件、成本、权限和回执。
@@ -438,7 +440,7 @@ Windows UIA 改为常驻原生进程：
 - 单 provider 不能阻塞上下文编译超过 300ms；
 - 结构化路径达到最低完整上下文：p95 ≤ 350ms；
 - OCR慢路径可继续到 800ms，但必须有明确进度和取消；
-- 默认短任务 1–2轮，通常数分钟内结束。
+- 交互预编译的目的，是让常见桌面任务在 1–2 轮内就能完成；这是首轮效率目标，不是轮次上限。长程任务按 §10.2 的续期预算继续跑。
 
 这些是待实测目标，不是已经达成的声明。
 
@@ -462,9 +464,9 @@ Windows UIA 改为常驻原生进程：
 - Magic Pointer 自己拥有 RunEnvelope、桌面工具、租约、权限、验证、Artifact和资源治理。
 - Pi升级必须先过兼容测试和本文 §16 回读流程。
 
-### 10.2 短任务 Governor
+### 10.2 任务 Governor
 
-每个内部任务有明确预算：
+每个任务有明确预算：
 
 - wall-clock；
 - provider调用次数；
@@ -472,6 +474,10 @@ Windows UIA 改为常驻原生进程：
 - token/费用；
 - 相同错误重试次数；
 - 新应用和新权限范围。
+
+预算约束的是反馈节奏和无效消耗，不是循环寿命。有实质进展的一轮无条件续期
+（`app/agent_runtime/loop.py` 的 rolling deadline），因此长程任务可以一直跑下去；
+硬切只发生在一轮既无进展、预算又耗尽时。
 
 达到预算不是伪造完成，而是交回当前证据、已完成步骤和清晰缺口。
 
@@ -705,7 +711,7 @@ DOM、COM、UIA、Fabric等现有模块也不自动保留，只优先保存经�
 ### Phase E：MPAgentRuntime
 
 - 引入固定 Pi agent-loop适配；
-- RunEnvelope、短任务 governor和事件流；
+- RunEnvelope、任务 governor和事件流；
 - Tool hooks接权限、租约、验证和回执；
 - 多工具/并行读取/串行动作；
 - 停止把内部任务映射成单一 Fabric Recipe。
@@ -748,7 +754,7 @@ DOM、COM、UIA、Fabric等现有模块也不自动保留，只优先保存经�
    - 回读：`VIDA_UI_SPEC.md`出现证据缺口、需要重新核对原对话时；普通底层任务不必每次读取797行。
 
 3. 当前 Codex任务对话
-   - 内容：用户对 Harness的最终澄清、短任务边界、FrameLease、原始对象、UIA速度、执行授权、资源策略和“不得被旧代码约束”。
+   - 内容：用户对 Harness的最终澄清、任务边界（其中“短任务”一条已于 2026-08-19 推翻，见 §1.1）、FrameLease、原始对象、UIA速度、执行授权、资源策略和“不得被旧代码约束”。
    - 持久化方式：已归纳进本文；后续模型以本文为准，不依赖聊天窗口仍存在。
 
 ### 16.2 核心项目文档
@@ -866,7 +872,7 @@ DOM、COM、UIA、Fabric等现有模块也不自动保留，只优先保存经�
 
 - [x] 重读用户提供的完整需求导出 Markdown。
 - [x] 合并 VIDA UI规格、参考项目报告和本轮用户纠正。
-- [x] 确认短任务内部 Agent与项目级外部 Agent边界。
+- [~] 曾确认“短任务内部 Agent 与项目级外部 Agent”边界——**2026-08-19 已被用户推翻**，现行边界见 §1.1。
 - [x] 确认明确指令可直接发送/删除/运行。
 - [x] 确认空闲常驻但不扫描的资源策略。
 - [x] 确认最终 Draft可手动/局部 Agent编辑。
@@ -1012,7 +1018,7 @@ DOM、COM、UIA、Fabric等现有模块也不自动保留，只优先保存经�
 - [x] **WGC CaptureProvider 契约**（Phase B 契约优先）：`app/capture` 协议 + gdi-fallback/wgc-window/test 三实现 + benchmark p50/p95/p99 + worker `--backend wgc-window` 接线 + `wgc_capture_tool.cs` 脚手架（本机 csc 无 WinMD 投影 facades、无 dotnet SDK——**原生捕获未验证，如实报告 `wgc_tool_missing`**，不回退伪装）。
 - [x] 健康非毒化：`model_health.record_note`（流式回落等软事件不毒化端点）。
 - [ ] 真机验证清单（用户侧）：`MAGIC_POINTER_INLOOP_REVERSIBLE=1` 前必须过四道 guard 真机链路（评审两阶段门）；overlay 排除实测；微信首笔候选框；settings 面板落盘；多屏 DPI。
-- [ ] 评审遗留（已记录未做）：账本数据回路（ledger×capability_matrix×hints，死亡风险第二名解法）；per-input 动态 description 跳过（评审判定规模不到）；ask_user 桥接渲染层 UI。
+- [ ] 评审遗留（已记录未做）：账本数据回路（ledger×capability_matrix×hints，死亡风险第二名解法）；per-input 动态 description 跳过（评审判定规模不到）；ask_user Inbox 按 question id 绑定 answer（Stage 选项芯片已接）。
 
 ### 2026-08-13：复杂情景真机测试（视觉模型当眼睛）
 
@@ -1250,3 +1256,69 @@ smoke：uia-host PASS、replay 20 条 trace 走真实网关（机制绿，见下
 - [x] **InteractionLedger 改成 session projection**：每个 loop turn 在 `turn/start` 后写 `interaction/start`；投影真实 model usage/轮数、request→response 时延、tool latency/backend、look、终态、egress operation、app/evidence/confidence/InputArtifact id。open turn 的 succeeded/ended/e2e 保持 null；selection 与 conversation 返回同一公开账单，生产没有 `InteractionLedger.save()` caller。
 - [x] **TDD 与安装交付**：operation 执行前可见、settlement 单 surface、并发不双吃、next-step/next-turn 续跑、bridge 错误语义、ledger token/终态/感知身份与 package allowlist 均有回归。fresh 全门：Python **1313 passed**；Node **151 passed / 104 源文件**；五套 typecheck 与 ESLint 通过。`npm run sync` 再跑同套门、构建 `Magic-Pointer-1.0.10-x64.exe`、静默安装并重启；安装目录版本 **1.0.10**，run_kernel/session bridge/InputArtifact/ledger projection 均独立核对存在。
 - [ ] **仍未闭合**：Electron/Studio 尚未提供运行中 steer 控件，账单字段虽已随 bridge 返回但未做完整可视化；crash repair 会按风险补结算并关闭中断 turn，尚不能从 program counter 续跑原 loop；DraftArtifact revision、ask-user UI 跨进程往返、Explorer/SurfaceAdapter/OCR/Vision 同一次 fan-out/fuse 仍是后续。完整自有 Agent 产品方向不变，本节只是第二块可测地基。
+
+### 2026-08-18：两批地基复审与四处修复交付（1.0.11）
+
+- [x] **结算语义不再嗅探结果文本**：`outcome_known` 由唯一能观察到它的调度器直接给出，取代对 `"outcome may be unknown"` 子串的匹配（工具名是模型可控的，子串判断把"是否未知"交给了模型）。
+- [x] **崩溃修复文本与持久记录对齐**：prepared 但从未 dispatched 记为 not_started 时，给模型的文本不再说 TOOL_OUTCOME_UNKNOWN。
+- [x] **`RecoveryPolicy` 第一次被生产代码消费**：safe_replay / verify_before_retry / never_replay 各自成句，从 prepared 时的 effect 一路走到模型读到的指引。
+- [x] **并发感知加裁决 deadline**：broker 不再等最慢的 provider 无限久；超时记 timeout observation，用已到达的证据裁决，单适配器路径不再走同步特例。
+- [x] **交付**：fresh 全门 Python **1318 passed**、Node **151 passed / 104 源文件**、五套 typecheck 与 ESLint 0；`npm run sync` 构建 `Magic-Pointer-1.0.11-x64.exe`、静默安装并重启，安装目录版本 **1.0.11**。
+
+### 2026-08-18：感知 provider 协议、独立融合与像素 tier 同表裁决（开发树已实现并全量验证，未升版本、未 sync）
+
+- [x] **§13.1 的 provider 协议真实存在，并与第二类 provider 同批落地**：`app/perception/providers.py`（`ProviderDescriptor`/`ProviderResult`/`PerceptionObservation`/`AdapterProvider`/`CallableProvider`）+ `app/perception/fusion.py`（纯裁决）+ `app/perception/pixel_ocr.py`（冻结帧 OCR provider）。协议不是为单一实现立的抽象：结构化适配器、Explorer、SurfaceAdapter、手势结构化策略与 OCR 各自是一个 provider。
+- [x] **provider 不再互相压制**：Explorer 命中不再短路 fan-out，SurfaceAdapter 不再覆写别人的 trace，手势策略把自己内部的 attempts/冲突原样并入外层 trace（复合 provider 是这些细节唯一存在的地方）。对当前窗口不适用的 provider 记 declined，不往证据里塞噪音。
+- [x] **裁决只有一处**：`fuse_observations` 按「覆盖 mark > 非容器 > 非降级 > tier > 优先级 > 置信度」排序；跨来源文字比对把数字当关键位（"120" vs "210" 是冲突，不是 70% 相似）；被压过的结构化读取记为 note 而非 conflict，避免每个纯像素应用都弹确认。
+- [x] **像素 tier 进同一张表**：OCR 不再由 `structured_covers_mark` 布尔在另一个进程触发、命中后整体替换上下文。快照阶段的 observation 随 trace 过河并被复原，OCR 作为一个 observation 参与同一次排序；结构化读到划中那一行时像素 tier 不启动；被压过时容器名仍留在裁决里。没有冻结帧就记 `unsupported: frozen_pixels_unavailable`，不改抓实时屏幕。
+- [x] **broker 按 provider 计时**：每个 provider 可有自己的 deadline，tier 只等到最有耐心的那个为止。
+- [x] **模型表面与真实来源对齐**：来源徽标只列被选中的读取及与它一致的读取；`read_around` 不再把 OCR 结果签成 `source: uia, confidence: 1.0`；长文本投影改为以手势位置为中心的 16k 字窗口 + 前后缺字交代（此前该窗口逻辑只挂在无生产调用方的 `_bridge_evidence_block` 上，实际投影是"取前 16k 字"）；系统提示词第 2 条指向 InputArtifact 真实携带的 `visual_anchor`（`bbox:l,t,r,b`，`look` 原样可用）。死代码 `_bridge_evidence_block` 与其专属截断助手已删除。
+- [x] **幂等键不再随工作树抖动**：`contextPacket.workspace` 的活体脏状态（HEAD、changedFiles、diffStat、diffExcerpt、isDirty）与 `runtime.processBinding` 的进程号曾一起进 canonical，于是保存任何无关文件都会让同意图重规划换键——回执复用不命中，重试可以把同一封外部发送再发一遍。现在只保留操作落在哪里（cwd/repoRoot），证据内容照旧绑定。与 §审计第 9 条剥掉的随机 leaseId 是同一缺陷的第二处，随机顺序的完整套跑实测暴露。
+- [x] **TDD 与交付**：provider/fusion 单元契约、像素 provider 冻结帧约束、两段接缝集成（容器名被压过仍在裁决里 / 干净结构化读取不花 OCR / 无冻结帧诚实 unsupported）、模型表面来源与截窗、幂等键对无关文件改动免疫均先观察失败再实现。fresh 全门：Python **1338 passed**；Node **151 passed / 104 源文件**；五套 typecheck 与 ESLint 0。**未升版本、未 sync**（按用户指示，版本号留到成熟里程碑统一升；安装版仍为上一批 1.0.11）。
+- [ ] **诚实边界**：Vision 仍未成为 provider（`look` 仍是模型可调工具，不参与自动 fan-out）；SurfaceAdapter 仍有按手势启动成本；像素 tier 仍在回答阶段跑（同一张冻结帧、同一套融合，但首反馈之后才有 OCR），把它提前到 pointerup 需要单独的延迟预算裁决。
+
+### 2026-08-18：DraftArtifact revision（开发树，未升版本、未 sync）
+
+- [x] **产物不再是聊天气泡**：`app/artifacts/` 只有 schema 与纯投影，EventSession 仍是唯一 store。`artifact/generated` / `artifact/patched` / `artifact/accepted` 三类事件；批准绑定 `(revision, contentHash)`，过期 hash 拒绝；批准后再改把 state 打回 edited。
+- [x] **生产接线**：loop 在 `TransitionReason.COMPLETED` 且文本非空时写入 generated；追问生成新 artifactId；ask_user 澄清不产生草稿；补丁不进模型表面。
+- [x] **TDD**：生成/补丁/批准/空文本/loop 终稿/澄清非草稿/追问新草稿均先观察失败再实现。Python 全门 **1346 passed**。**未升版本、未 sync**。
+- [ ] **诚实边界**：written/submitted/verified 要等 ActionLease 真写回；GUI 尚未渲染草稿与 diff；crash 从 program counter 续跑、ask-user UI 往返仍未做。Receipt 停止条件见 2026-08-19。
+
+### 2026-08-18：桌面动作面（开发树，未升版本、未 sync）
+
+- [x] **Kimi 13 工具进主 loop**：`list_apps` / `launch_app` / `activate_window` / `get_app_state` / `click` / `type_text` / `press_key` / `scroll` / `set_value` / `perform_secondary_action` / `select_text` / `drag` / `turn_ended` 注册在 `desktop-action-tools` row。`ComputerTaskService` 仍是另一条视觉环，不是这 13 个工具。
+- [x] **StateVersion**：`snapshot_id` 绑定 hwnd/pid/bounds；窗口移动/换进程 stale；内容重排不靠 snapshot 检测（Kimi 规则）。index XOR 坐标，混传拒绝。
+- [x] **InputOwnershipLock**：mutating 互斥；busy 时只读放行；`turn_ended` 释放。`FailureType.STALE_SNAPSHOT` / `COMPUTER_USE_BUSY`。
+- [x] **UFO² 原生优先**：`set_value` / `perform_secondary_action` 先走注入 UIA；失败不假装 click 成功。`press_key` 拒 Win/Meta；`launch_app` 未知名不打开 Explorer。
+- [x] **Everywhere 看门狗（自写）**：MCP stdio 与 OCR worker 的 Popen 进入 `KILL_ON_JOB_CLOSE` JobObject。不抄 BSL 源码。常驻 UIA 宿主保持 DETACHED，不进此 job。
+- [x] **TDD**：13 工具注册、缺 snapshot、窗口移动 stale、混传、busy、turn_ended、未知 app、Win 键、set_value 原生路径、type_text unavailable、JobObject 杀子进程、MCP/OCR 接线均先观察失败再实现。Python **1359 passed**。**未升版本、未 sync**。
+- [ ] **当时诚实边界（已被 2026-08-19 收口）**：生产 `elements_probe` 仍空；`uia_act` 未接 COM；Receipt 未做。
+
+### 2026-08-19：UIA 树接入 + Receipt 停止条件（开发树，未升版本、未 sync）
+
+- [x] **生产 AX 树不再为空**：`app/desktop_actions/uia.py` 把原始 UIA 节点规范成 Kimi 元素（1-based index / role / name / rect / patterns）；无名无 pattern 的容器丢掉；预算 400。`UiaBridge` 可注入 walker/actor。
+- [x] **ctypes COM，不改 C# 宿主协议**：生产 `walk_window` / `act_on_element` 走 `CUIAutomation` ControlView（IID 取 Wine `uiautomationclient.idl` 的 `30cbe57d-…-7ac5ac4825ee`）。hwnd 0 或 COM 失败返回空树 / `{ok:false}`，不假装 click。`default_session` 的 `_live_elements` / `_live_uia` 走这座桥。真机对前台窗口走出 266 个 ControlView 节点，按钮带 Invoke。
+- [x] **Receipt 是停止条件**：`app/receipts/` schema + 纯投影；session 事件 `receipt/issued`。loop 在每一次 `LoopStopped` 前发票。写过未验证 → `unverified`；写后验证 → `succeeded`/`write_verified`；纯回答成稿 → `succeeded`/`draft_generated`。
+- [x] **验证门认工具 JSON**：`verification.matched is true` 与 `verify_result` 同等为证据，13 工具的 set_value 不再永远 nudge。随后一批规定 click 的 matched 不能单独收工。
+- [x] **TDD**：normalize/bridge/缺 pattern/live probe、walk_window(0) 空列表、纯回答发票、未验证写入发票、JSON 验证消 nudge 均先观察失败再实现。Python **1369 passed**。**未升版本、未 sync**。
+- [ ] **诚实边界**：未做记事本/Office 端到端手势写回回归；COM 树是当场 ControlView，不是 named-pipe 宿主；Receipt 未进 GUI/ledger；crash 从 program counter 续跑、Vision 每轮 fan-out 仍未做。ask-user Stage 芯片见下一批。
+
+### 2026-08-19：Gate 2 聪明感收口（开发树，未升版本、未 sync）
+
+- [x] **澄清选项芯片**：Stage 在 turn `awaiting` 且 `pendingInput.options` ≥2 时渲染 `.stage-chip`；点击把选项原文送进现有 `submitCommand` / 同 selection session。闲置罐头命令让路。不新 bridge、不新 session。
+- [x] **写后必再观察**：`type_text` 用 ValuePattern GetCurrentValue 读回，匹配才 matched。验证门：click 的 JSON matched 不是完成证明；写后再成功 `get_app_state` 才算观察过；type_text/set_value 自带 matched 仍可过门。
+- [x] **中文操作手册**：13 个桌面 ToolSpec description 改为何时用/失败码/下一步；系统提示加上证据够就停、不确定 ask_user_question、写入后再 get_app_state、视觉已尝试则勿重复 look。
+- [x] **结构化未覆盖时自动 look 一次**：fusion `marksCovered` 不为 true、且有 visual_anchor + 冻结帧 + vision backend 时，selection 桥同步 look 一次，结果写入 InputArtifact `look_once` 再进 loop。失败保持八态，不改抓实时屏。conversation 无冻结帧仍 unsupported。这不是 Vision 每轮 fan-out。
+- [x] **多步 token**：builtin bundle `max_tokens` 800→4096；FULL_ANSWER 墙钟预算不变。
+- [x] **TDD 与验证**：澄清芯片、读回确认、click 不能单独收工、look_once、4096 token 均先观察失败再实现。Python **1384 passed**；触及的 Stage Node 测试与 renderer/tests typecheck 通过。**未升版本、未 sync**。
+- [ ] **诚实边界**：crash 从 program counter 中段续跑原 loop、DraftArtifact `written`、Vision 每轮 fan-out、ask-user Inbox 按 question id 绑定、真机记事本写回归仍未做。不把本批冒充 Gate 2 完成。
+
+### 2026-08-19：产品边界纠正——任务时长不是边界（文档事实源 + prompt 早停偏置）
+
+- [x] **用户裁决**：Magic Pointer 是顶级 Agent Harness 本身，短任务和长任务都自己做；对接 Claude Code 等外部客户端只是“把 prompt 写进它输入框”，与写进微信输入框同级，不是把执行外包出去，也不是任务难度分级器。目标是最综合、最集成各方优点的 harness。
+- [x] **根因**：8·17 已把方向裁决为“完整自有 Agent”（§18 2026-08-18 条、`docs/research/2026-08-17-magic-pointer-sovereign-agent-backend-blueprint.md`），但那次只写进了进度账本和 research 文档，**没有同步 §1 产品定位和根目录 `AGENTS.md`**——而那两处才是每个新会话的必读入口。于是“短任务”边界持续自我复制，直到 8·19 仍在产出“中文短任务手册”“证据够就停”。
+- [x] **事实源已改**：§1.1（推翻旧短任务边界）、§1.2 一句话定义、§4.8 `MPAgentRuntime`、§9 轮次目标、§10.2 改名“任务 Governor”并写明 rolling budget 约束反馈节奏而非循环寿命、§16.1、§17 checklist；根 `AGENTS.md` 与 `AGENT.md` 产品边界段；`docs/2026-08-13-ARCHITECTURE_HANDOFF.md`、`docs/2026-08-14-MASTER_HANDOFF.md`、`docs/2026-08-14-HARNESS_RECONSTRUCTION_PROGRESS.md`、`docs/STATUS.md`。
+- [x] **prompt 早停偏置已修（真行为 bug）**：`app/agent_runtime/system_prompt.py` rules 第 1 条原为“证据已经足够时立即回答并结束”，会让模型在多步长作业中途以“看够了”为由收工。改为区分两种形态：回答/生成类证据够就交付、不为显得勤奋空转；多步交付类必须做完全部步骤，“看够了是可以停止翻找，不是可以停止干活”。先观察 `tests/harness_builtin_bundle_test.py` 断言失败再实现，fresh 全量 Python **1384 passed**。
+- [x] **长任务能力差距盘点已完成**：`docs/2026-08-19-LONG_RUN_CAPABILITY_GAP.md`，四路并发只读审计，全部结论带 `文件:行号`，含五层缺口与建议批次 A–E。后续长任务工作先读该文档，不要重新推导清单。
+- [x] **长任务地基第一批已落地（开发树，未升版本）**：按用户裁决「别造轮子，本地顶级 agent 源码直接搬」，从 HermesAgent（MIT）移植。硬天花板全解除——bridge 期限改无活动超时、`emergency_turn_fuse` 90→1000；上下文层——请求级 token 估算（补上此前完全漏算的 system prompt 与 tool schema）、可反复触发的压缩 + anti-thrash、`TodoStore` 跨压缩保留未完成步骤、尾部按 token 预算裁剪、压缩成功判据由条数改为 token 权重（实施中发现的真 bug）。出处登记在 `THIRD_PARTY_NOTICES.md`。fresh：Python **1401 passed**、Node **152 passed**、typecheck + lint 干净。
+- [ ] **未闭合（长任务真实缺口，不得冒充已完成）**：首要事实是**长任务当前跑不了**——Stage 60s / Studio 120s bridge 硬超时（`electron/main.ts:3933-3934`、`1187`）与 90 轮 fuse（`app/fabric/engine.py:983-984`）在任何长跑能力被用到之前就落闸，当前上限 ≤2 分钟、≤90 轮，而 OSWorld 2.0 量纲是 1.6 小时、318 次工具调用。其后依次是：上下文耐久（rolling compaction、进度事实保护、工具结果窗口化、真实 token 计数）、感知语义隔离（冻结 look/read_around 与 live get_app_state 混用、InputArtifact 不可中途再编译）、持久性（program counter 续跑、effect sandwich 上生产盘、session 轮转）、可控性（steer 生产接线、graceful interrupt、真实步数与账本可视化）、结构性（子任务分解、todo 落盘、回执准入）。**Gate 2 的“crash recovery”需升级为“program counter 续跑”；长任务的上下文耐久性此前不在任何 Gate 里，是新边界带来的新需求。**

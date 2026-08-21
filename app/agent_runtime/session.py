@@ -30,6 +30,8 @@ from typing import Any, Iterator, Mapping, Sequence
 
 from app.agent_runtime.tool_registry import Effect
 from app.agent_runtime.types import AgentMessage, ORIGIN_DATA, ORIGIN_INSTRUCTION, Role
+from app.artifacts import content_hash, project_artifacts
+from app.receipts.schema import Receipt, ReceiptStatus
 from app.run_kernel import RecoveryPolicy, pending_inbox, project_operations
 
 __all__ = [
@@ -450,6 +452,55 @@ class EventSession:
                 raise ModelSurfaceMismatch(
                     "model request messages differ from the event-sourced surface"
                 )
+        if event_type in {"artifact/generated", "artifact/patched", "artifact/accepted"}:
+            self._validate_artifact_event(event_type, data)
+        if event_type == "receipt/issued":
+            self._validate_receipt_event(data)
+
+    def _validate_artifact_event(self, event_type: str, data: Mapping[str, Any]) -> None:
+        artifact_id = str(data.get("artifactId") or "")
+        if not artifact_id:
+            raise ValueError("draft event requires artifactId")
+        current = {
+            item.artifact_id: item for item in project_artifacts(self._events)
+        }.get(artifact_id)
+        if event_type == "artifact/generated":
+            content = str(data.get("content") or "")
+            if not content.strip():
+                raise ValueError("draft content is empty")
+            if current is not None:
+                raise RuntimeError(f"duplicate artifact id {artifact_id!r}")
+            if int(data.get("revision") or 0) != 1:
+                raise ValueError("generated draft must be revision 1")
+            if str(data.get("contentHash") or "") != content_hash(content):
+                raise ValueError("contentHash does not match content")
+            return
+        if current is None:
+            raise ValueError(f"unknown artifact {artifact_id!r}")
+        if event_type == "artifact/patched":
+            content = str(data.get("content") or "")
+            if not content.strip():
+                raise ValueError("draft content is empty")
+            if str(data.get("author") or "") not in {"user", "agent"}:
+                raise ValueError("patch author must be user or agent")
+            if int(data.get("revision") or 0) != current.revision + 1:
+                raise ValueError("patched revision must follow the current draft")
+            if str(data.get("contentHash") or "") != content_hash(content):
+                raise ValueError("contentHash does not match content")
+            return
+        if int(data.get("revision") or 0) != current.revision:
+            raise ValueError("accepted revision is not current")
+        if str(data.get("contentHash") or "") != current.content_hash:
+            raise ValueError("contentHash does not match the current draft")
+
+    def _validate_receipt_event(self, data: Mapping[str, Any]) -> None:
+        if not str(data.get("receiptId") or ""):
+            raise ValueError("receipt requires receiptId")
+        status = str(data.get("status") or "")
+        try:
+            ReceiptStatus(status)
+        except ValueError as exc:
+            raise ValueError(f"unknown receipt status {status!r}") from exc
 
     def start_turn(self, *, hold_lease: bool = False) -> int:
         if hold_lease:
@@ -707,6 +758,82 @@ class EventSession:
                 "usage": bounded_usage,
                 "outputTextChars": max(0, int(output_text_chars)),
                 "toolCallCount": max(0, int(tool_call_count)),
+            },
+        )
+
+    def record_artifact_generated(self, content: str) -> SessionEvent:
+        """Persist a completed answer as revision 1 of a new draft."""
+        text = str(content or "")
+        return self.append(
+            "artifact/generated",
+            {
+                "artifactId": uuid.uuid4().hex,
+                "revision": 1,
+                "content": text,
+                "contentHash": content_hash(text),
+                "author": "model",
+            },
+        )
+
+    def record_artifact_patched(
+        self,
+        artifact_id: str,
+        content: str,
+        *,
+        author: str,
+    ) -> SessionEvent:
+        """Record a user or agent edit. Later edits void a previous approval."""
+        text = str(content or "")
+        current = {
+            item.artifact_id: item for item in project_artifacts(self.events)
+        }.get(str(artifact_id))
+        if current is None:
+            raise ValueError(f"unknown artifact {artifact_id!r}")
+        return self.append(
+            "artifact/patched",
+            {
+                "artifactId": str(artifact_id),
+                "revision": current.revision + 1,
+                "baseRevision": current.revision,
+                "content": text,
+                "contentHash": content_hash(text),
+                "author": str(author),
+            },
+        )
+
+    def record_artifact_accepted(
+        self,
+        artifact_id: str,
+        *,
+        revision: int,
+        content_hash: str,
+    ) -> SessionEvent:
+        """Approve one exact revision. The hash is what the approval is of."""
+        return self.append(
+            "artifact/accepted",
+            {
+                "artifactId": str(artifact_id),
+                "revision": int(revision),
+                "contentHash": str(content_hash),
+            },
+        )
+
+    def record_receipt(self, receipt: Receipt) -> SessionEvent:
+        """Persist the stop proof. Not model-visible."""
+        failure = receipt.failure_type
+        return self.append(
+            "receipt/issued",
+            {
+                "receiptId": str(receipt.receipt_id),
+                "status": str(receipt.status.value),
+                "effect": str(receipt.effect),
+                "verificationMethod": str(receipt.verification_method),
+                "usedBackend": str(receipt.used_backend),
+                "artifactIds": list(receipt.artifact_ids),
+                "wrote": bool(receipt.wrote),
+                "verified": bool(receipt.verified),
+                "failureType": None if failure is None else str(failure),
+                "memoryEligible": bool(receipt.memory_eligible),
             },
         )
 

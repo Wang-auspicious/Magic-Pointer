@@ -32,6 +32,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from app.process.job_object import attach_kill_on_close
+
 PROTOCOL_VERSION = "2025-06-18"
 
 # A server that has not answered in this long is not going to. The command that
@@ -179,6 +181,7 @@ class McpStdioClient:
                 env=env,
                 bufsize=1,
             )
+            attach_kill_on_close(self._process)
         except (OSError, ValueError) as exc:
             raise McpClientError(f"could not start {self.config.name}: {type(exc).__name__}") from exc
         self._request("initialize", {

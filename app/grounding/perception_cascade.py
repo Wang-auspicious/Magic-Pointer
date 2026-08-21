@@ -3,20 +3,15 @@ from __future__ import annotations
 from typing import Any
 
 from app.perception.broker import (
-    ConcurrentPerceptionBroker,
-    PerceptionBrokerResult,
+    PerceptionBroker,
+    PerceptionResult,
     context_has_usable_structure,
     perception_layer,
+    providers_for_registry,
 )
-
+from app.perception.providers import PerceptionRequest
 
 _PIXEL_LAYERS = frozenset({"ocr", "screen_region", "vision"})
-_DEFAULT_PRIORITIES = {
-    "native_app": 10,
-    "dom": 20,
-    "uia": 30,
-    "ax": 30,
-}
 
 
 def _attempt(
@@ -36,25 +31,7 @@ def _attempt(
     }
 
 
-StructuredPerceptionResult = PerceptionBrokerResult
-
-
-def _matching_adapters(registry: Any, window: dict[str, Any]) -> list[Any]:
-    matcher = getattr(registry, "matching_adapters", None)
-    if callable(matcher):
-        candidates = list(matcher(window) or [])
-    else:
-        adapter = registry.matching_adapter(window)
-        candidates = [adapter] if adapter is not None else []
-    return sorted(
-        candidates,
-        key=lambda adapter: (
-            int(getattr(adapter, "perception_priority", _DEFAULT_PRIORITIES.get(
-                perception_layer(adapter), 50
-            ))),
-            str(getattr(adapter, "name", "")),
-        ),
-    )
+StructuredPerceptionResult = PerceptionResult
 
 
 def resolve_structured_perception(
@@ -62,14 +39,25 @@ def resolve_structured_perception(
     registry: Any,
     *,
     deadline_ms: float | None = None,
+    command: str = "",
+    target_point: dict[str, int] | None = None,
+    target_region: dict[str, int] | None = None,
+    mark_bbox: tuple[int, int, int, int] | None = None,
     **kwargs: Any,
 ) -> StructuredPerceptionResult:
-    candidates = _matching_adapters(registry, window)
-    return ConcurrentPerceptionBroker().resolve(
-        window,
-        candidates,
+    """Structured-only entry point: every claiming adapter becomes a provider."""
+    request = PerceptionRequest(
+        window=dict(window),
+        command=command,
+        target_point=target_point,
+        target_region=target_region,
+        mark_bbox=mark_bbox,
+        adapter_kwargs=dict(kwargs),
+    )
+    return PerceptionBroker().resolve(
+        request,
+        providers_for_registry(registry, window),
         deadline_ms=deadline_ms,
-        **kwargs,
     )
 
 
@@ -89,10 +77,14 @@ def append_perception_attempt(
         "selectedLayer": trace.get("selectedLayer"),
         "selectedAdapter": trace.get("selectedAdapter"),
         "selectedMethod": trace.get("selectedMethod"),
+        "selectedProviderId": trace.get("selectedProviderId"),
+        "selectedTier": trace.get("selectedTier"),
         "pixelFallbackUsed": trace.get("pixelFallbackUsed") is True,
         "fallbackReason": trace.get("fallbackReason"),
         "policyMode": policy_mode if policy_mode is not None else trace.get("policyMode"),
         "readState": trace.get("readState"),
+        "marksCovered": trace.get("marksCovered"),
+        "coverageReason": trace.get("coverageReason"),
         "elapsedMs": trace.get("elapsedMs"),
         "observations": [
             dict(item)
@@ -102,6 +94,16 @@ def append_perception_attempt(
         "conflicts": [
             dict(item)
             for item in list(trace.get("conflicts") or [])[:8]
+            if isinstance(item, dict)
+        ],
+        "corroborations": [
+            dict(item)
+            for item in list(trace.get("corroborations") or [])[:8]
+            if isinstance(item, dict)
+        ],
+        "notes": [
+            dict(item)
+            for item in list(trace.get("notes") or [])[:8]
             if isinstance(item, dict)
         ],
         "attempts": [dict(item) for item in list(trace.get("attempts") or [])[:11]],
@@ -122,3 +124,12 @@ def append_perception_attempt(
         if value["pixelFallbackUsed"]:
             value["fallbackReason"] = str(reason or "structured_context_unavailable")[:120]
     return value
+
+
+__all__ = [
+    "StructuredPerceptionResult",
+    "append_perception_attempt",
+    "context_has_usable_structure",
+    "perception_layer",
+    "resolve_structured_perception",
+]

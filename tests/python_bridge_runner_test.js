@@ -71,4 +71,38 @@ function fakeChild() {
   assert.deepStrictEqual(delivered, [{ ok: false, error: 'bridge_cancelled' }]);
 }
 
+{
+  // The deadline is inactivity, not wall clock. A bridge that keeps producing
+  // output is working, and a long job must be allowed to keep working: the old
+  // wall-clock kill made any task past 60s impossible regardless of progress.
+  // Only silence means hung.
+  const child = fakeChild();
+  const delivered = [];
+  let fire = null;
+  let armed = 0;
+  let cleared = 0;
+  const runner = createPythonBridgeRunner({
+    spawnImpl: () => child,
+    setTimeoutImpl: (fn) => { fire = fn; armed += 1; return armed; },
+    clearTimeoutImpl: () => { cleared += 1; },
+  });
+  runner.run({
+    executable: 'python', args: [], input: {}, timeoutMs: 25,
+    onProgress: () => {},
+    onComplete: value => delivered.push(value),
+  });
+  assert.equal(armed, 1);
+
+  child.stderr.write('@@mp phase=model_request ms=10\n');
+  assert.equal(armed, 2, 'stderr activity must re-arm the idle deadline');
+  child.stdout.write('partial');
+  assert.equal(armed, 3, 'stdout activity must re-arm the idle deadline');
+  assert.ok(cleared >= 2, 'each re-arm clears the previous timer');
+  assert.deepStrictEqual(delivered, [], 'an active bridge is never killed');
+
+  fire();
+  assert.equal(child.killed, true);
+  assert.deepStrictEqual(delivered, [{ ok: false, error: 'bridge_timeout' }]);
+}
+
 console.log('python bridge runner test ok');

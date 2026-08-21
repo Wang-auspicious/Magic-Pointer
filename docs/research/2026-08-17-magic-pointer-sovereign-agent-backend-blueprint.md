@@ -654,7 +654,7 @@ Swarm 同样不是默认形态。只有同时满足“可分解、子任务独�
 | `app/run_kernel/schema.py` | Run/Operation/phase/effect/recovery policy | 下一批 |
 | `app/run_kernel/store.py` | entries/registers/usage 与 durable Inbox | 下一批 |
 | `app/run_kernel/runner.py` | operation program counter、effect sandwich | 下一批 |
-| `app/artifacts/store.py` | DraftArtifact revision 与差异 | 下一批 |
+| `app/artifacts/schema.py` + `projection.py` | DraftArtifact revision 与差异；session 事件是 store | Gate 2 本批（开发树，未升版本）
 | `app/memory/kernel.py` | candidate、准入、冲突、检索 | 闭环后 |
 | `app/compat/hermes_assets.py` | 配置/Skills/MCP/memory 索引兼容 | Runtime 闭环后 |
 

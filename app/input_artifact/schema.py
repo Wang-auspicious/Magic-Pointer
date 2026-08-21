@@ -277,16 +277,19 @@ def _observations(trace: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _badges(trace: dict[str, Any]) -> tuple[str, ...]:
-    values: list[str] = []
-    for item in _observations(trace):
-        if str(item.get("status") or "") not in {"ok", "degraded"}:
-            continue
-        badge = _source_badge(item.get("layer"))
-        if badge:
-            values.append(badge)
-    if not values and trace.get("selectedLayer"):
-        values.append(_source_badge(trace.get("selectedLayer")))
-    return _unique(values)
+    """Which readers back the content this artifact carries.
+
+    Every reader that ran is in the perception trace, but only the selected one
+    and the ones that agreed with it are sources *of this text*. A superseded
+    container name and a reader that disagreed travel as a note and a conflict;
+    badging them here is how "UIA read the marked line" ends up asserted about a
+    line only OCR ever saw.
+    """
+    layers = [trace.get("selectedLayer")]
+    for item in list(trace.get("corroborations") or [])[:8]:
+        if isinstance(item, dict):
+            layers.extend(list(item.get("layers") or []))
+    return _unique(_source_badge(layer) for layer in layers if layer)
 
 
 def _selected_confidence(trace: dict[str, Any], *, has_context: bool) -> float:
@@ -297,23 +300,95 @@ def _selected_confidence(trace: dict[str, Any], *, has_context: bool) -> float:
     return 0.7 if has_context else 0.0
 
 
-def _facts(context: AdapterReadContext | None, badges: tuple[str, ...]) -> tuple[InputFact, ...]:
-    if context is None:
-        return ()
+def _mark_char_center(content: str, snapshot: dict[str, Any]) -> int:
+    """Estimate the character offset under the mark, from the frozen surface.
+
+    Proportional, and deliberately crude: where the mark sits inside the frozen
+    target surface maps to the same ratio over the text. Rows dominate because
+    the text people mark runs in rows. Without a gesture or a surface to measure
+    against, the middle of the document beats its head for the same reason.
+    """
+    gesture = snapshot.get("selection_gesture")
+    bbox = gesture.get("bbox") if isinstance(gesture, dict) else None
+    lease = snapshot.get("frame_lease")
+    surface = lease.get("surfaceBoundsPx") if isinstance(lease, dict) else None
+    if not (
+        isinstance(bbox, dict)
+        and isinstance(surface, (list, tuple))
+        and len(surface) == 4
+    ):
+        return len(content) // 2
+    try:
+        mark_x = float(bbox["x"]) + float(bbox.get("width") or 0) / 2.0 - float(surface[0])
+        mark_y = float(bbox["y"]) + float(bbox.get("height") or 0) / 2.0 - float(surface[1])
+        width = float(surface[2]) - float(surface[0])
+        height = float(surface[3]) - float(surface[1])
+    except (TypeError, ValueError, KeyError):
+        return len(content) // 2
+    if width <= 0 or height <= 0:
+        return len(content) // 2
+    ratio = (mark_y / height * 0.8) + (mark_x / width * 0.2)
+    return int(max(0.0, min(1.0, ratio)) * len(content))
+
+
+def _content_window(content: str, snapshot: dict[str, Any]) -> tuple[str, str]:
+    """Bound the projected text around the mark, and say what was left out."""
+    if len(content) <= _SELECTED_TEXT_LIMIT:
+        return content, ""
+    center = _mark_char_center(content, snapshot)
+    start = max(
+        0,
+        min(len(content) - _SELECTED_TEXT_LIMIT, center - _SELECTED_TEXT_LIMIT // 2),
+    )
+    body = content[start:start + _SELECTED_TEXT_LIMIT]
+    head, tail = start, len(content) - (start + _SELECTED_TEXT_LIMIT)
+    notice = (
+        f"全文 {len(content)} 字；仅投影第 {start + 1}-{start + _SELECTED_TEXT_LIMIT} 字"
+        "（以手势位置为中心）"
+    )
+    if head:
+        notice += f"；前面 {head} 字未显示"
+    if tail:
+        notice += f"；后面 {tail} 字未显示"
+    return body, notice + "。其余内容仍保留在本地证据中，可用 read_around 按范围读取。"
+
+
+def _visual_anchor(snapshot: dict[str, Any]) -> str | None:
+    """The frozen target surface as the anchor string `look` accepts verbatim."""
+    lease = snapshot.get("frame_lease")
+    surface = lease.get("surfaceBoundsPx") if isinstance(lease, dict) else None
+    if not isinstance(surface, (list, tuple)) or len(surface) != 4:
+        return None
+    try:
+        left, top, right, bottom = (int(round(float(value))) for value in surface)
+    except (TypeError, ValueError):
+        return None
+    if right - left <= 0 or bottom - top <= 0:
+        return None
+    return f"bbox:{left},{top},{right},{bottom}"
+
+
+def _facts(
+    context: AdapterReadContext | None,
+    badges: tuple[str, ...],
+    snapshot: dict[str, Any],
+) -> tuple[InputFact, ...]:
     facts: list[InputFact] = []
+    anchor = _visual_anchor(snapshot)
+    if anchor is not None:
+        facts.append(InputFact(
+            "visual_anchor",
+            f"{anchor}（手势时刻已冻结的目标面；需要看像素时用该 anchor 调一次 look）",
+            ("PIXELS",),
+        ))
+    if context is None:
+        return tuple(facts)
     full_content = str(context.content or "")
-    content = full_content[:_SELECTED_TEXT_LIMIT]
+    content, window_notice = _content_window(full_content, snapshot)
     if content.strip():
         facts.append(InputFact("selected_text", content, badges))
-    if len(full_content) > _SELECTED_TEXT_LIMIT:
-        facts.append(InputFact(
-            "content_window",
-            (
-                f"全文 {len(full_content)} 字；仅投影第 1-{_SELECTED_TEXT_LIMIT} 字。"
-                "其余内容仍保留在本地证据中，需要时应按范围读取。"
-            ),
-            badges,
-        ))
+    if window_notice:
+        facts.append(InputFact("content_window", window_notice, badges))
     artifacts = dict(context.artifacts or {})
     terminal_evidence = artifacts.get("terminal_evidence")
     if isinstance(terminal_evidence, dict):
@@ -394,7 +469,7 @@ def compile_input_artifact(
             sources=badges,
         )
 
-    facts = _facts(app_ctx, badges)
+    facts = _facts(app_ctx, badges, snap)
     summary_source = next(
         (fact.value for fact in facts if fact.kind == "selected_text"),
         "",

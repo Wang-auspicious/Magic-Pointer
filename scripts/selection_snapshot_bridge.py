@@ -34,6 +34,15 @@ from app.grounding.evidence_binding import (
 from app.grounding.explorer_adapter import score_item_against_stroke
 from app.grounding.explorer_context import read_explorer_file_context
 from app.grounding.marked_read import rect_is_container, structured_read_covers_mark
+from app.perception import (
+    NOT_APPLICABLE,
+    CallableProvider,
+    PerceptionBroker,
+    PerceptionRequest,
+    ProviderDescriptor,
+    ProviderResult,
+)
+from app.evidence.contract import EvidenceStatus
 from app.review import ReviewSessionError, ReviewSessionStore
 from app.fabric.settings import FabricSettings, SettingsError, SettingsStore
 from scripts.bridge_progress import PhaseClock
@@ -203,13 +212,6 @@ def _has_capability(app_ctx: Any, name: str) -> bool:
     return any(cap.name == name and cap.enabled for cap in app_ctx.capabilities)
 
 
-def _surface_attempt_is_signal(attempt: dict[str, Any]) -> bool:
-    """True when the surface attempt carries information worth keeping."""
-    if str(attempt.get("status") or "") == "error":
-        return True
-    return str(attempt.get("reason") or "") != "no_adapter_claims_window"
-
-
 def _surface_adapter_attempt(
     windows: list[dict[str, Any]],
     gesture: dict[str, Any] | None,
@@ -287,22 +289,66 @@ def _surface_adapter_attempt(
     return ctx, None
 
 
-def _surface_adapter_trace(ctx) -> dict[str, Any]:
-    return {
-        "schemaVersion": 1,
-        "selectedLayer": "surface_adapter",
-        "selectedAdapter": str(ctx.adapter).removeprefix("surface:"),
-        "selectedMethod": "resolve",
-        "pixelFallbackUsed": False,
-        "fallbackReason": None,
-        "attempts": [{
-            "layer": "surface_adapter",
-            "adapter": str(ctx.adapter).removeprefix("surface:"),
-            "method": "resolve",
-            "status": "ok",
-            "reason": "surface_adapter_objects",
-        }],
-    }
+def _surface_provider_result(
+    windows: list[dict[str, Any]],
+    gesture: dict[str, Any] | None,
+    fallback_point: dict[str, int] | None,
+) -> ProviderResult:
+    """The surface-adapter chain as one observation among the others.
+
+    It used to overwrite the whole perception trace on a hit, which deleted
+    every observation the concurrent read had just collected. Now a claiming
+    adapter is ranked, not privileged.
+    """
+    ctx, attempt = _surface_adapter_attempt(windows, gesture, fallback_point)
+    if ctx is not None:
+        return ProviderResult(
+            context=ctx,
+            layer="surface_adapter",
+            reason="surface_adapter_objects",
+            selection_bbox=_gesture_mark_bbox(gesture),
+        )
+    reason = str((attempt or {}).get("reason") or NOT_APPLICABLE)
+    if attempt is None or reason == "no_adapter_claims_window":
+        return ProviderResult(status=EvidenceStatus.UNSUPPORTED, reason=NOT_APPLICABLE)
+    if str(attempt.get("status") or "") == "error":
+        return ProviderResult(status=EvidenceStatus.ERROR, reason=reason)
+    # An adapter that claimed the window and returned anchors without text has
+    # not read the mark, and it has not confirmed the surface is empty either.
+    return ProviderResult(status=EvidenceStatus.UNSUPPORTED, reason=reason)
+
+
+def _explorer_provider_result(
+    windows: list[dict[str, Any]],
+    gesture: dict[str, Any] | None,
+    fallback_point: dict[str, int] | None,
+) -> ProviderResult:
+    """Explorer grounding as one observation, no longer a short circuit.
+
+    It ran before the generic chain and took over the whole read on a hit, so
+    UIA never got the chance to corroborate or contradict it on the one surface
+    where both can answer.
+    """
+    context, grounding, trace = read_explorer_file_context(
+        windows,
+        gesture=gesture,
+        fallback_point=fallback_point,
+    )
+    if context is None:
+        return ProviderResult(
+            status=EvidenceStatus.UNSUPPORTED,
+            reason=(
+                "explorer_no_grounded_file" if grounding is not None else NOT_APPLICABLE
+            ),
+        )
+    return ProviderResult(
+        context=context,
+        layer="explorer",
+        reason="gesture_grounded_local_file",
+        grounding=grounding,
+        provider_trace=trace,
+        selection_bbox=_gesture_mark_bbox(gesture),
+    )
 
 
 def _summary_for(target_window: dict[str, Any] | None, app_ctx: Any) -> dict[str, Any]:
@@ -1201,6 +1247,161 @@ def _read_gesture_target_context(
     return target_window, best["context"], best["trace"], grounding, chosen_rect
 
 
+# Per-provider ceilings, replacing three *unbounded* serial calls. Each is the
+# honest bound of the reader behind it: Explorer grounding pays COM/PowerShell
+# cold start, the surface chain boots the harness bundle, and the gesture
+# strategy owns a documented 3.5s sampling budget on top of one cascade that can
+# itself take 3.7s on this machine.
+EXPLORER_PROVIDER_DEADLINE_MS = 5000.0
+SURFACE_PROVIDER_DEADLINE_MS = 4000.0
+GESTURE_PROVIDER_DEADLINE_MS = GESTURE_SAMPLE_BUDGET_S * 1000.0 + 4000.0
+
+
+def _composite_read_status(
+    trace: dict[str, Any],
+) -> tuple[EvidenceStatus | None, str]:
+    """Carry a composite provider's own read state out to the outer fusion.
+
+    A provider that fans out internally already knows the difference between
+    "this surface has nothing" and "nobody managed to read it". Without this the
+    outer layer sees only a missing context and would report a busy or wedged
+    provider as a confirmed empty selection.
+    """
+    if trace.get("selectedLayer") or str(trace.get("readState") or "") != "unread":
+        return None, ""
+    statuses = {
+        str(item.get("status") or "")
+        for item in list(trace.get("observations") or [])
+        if isinstance(item, dict)
+    }
+    reason = str(trace.get("fallbackReason") or "") or "structured_unread"
+    for candidate in (
+        EvidenceStatus.TIMEOUT,
+        EvidenceStatus.BUSY,
+        EvidenceStatus.DENIED,
+    ):
+        if candidate.value in statuses:
+            return candidate, reason
+    return EvidenceStatus.ERROR, reason
+
+
+def _fuse_snapshot_perception(
+    windows: list[dict[str, Any]],
+    *,
+    registry: Any | None,
+    gesture: dict[str, Any] | None,
+    fallback_point: dict[str, int] | None,
+    fallback_window: dict[str, Any] | None,
+) -> tuple[
+    dict[str, Any] | None,
+    Any,
+    dict[str, Any],
+    dict[str, Any] | None,
+    list[int] | None,
+]:
+    """One concurrent read of every structured source, then one verdict.
+
+    What this replaces: Explorer grounding running first and taking over the
+    read on any hit, a surface-adapter hit overwriting the perception trace, and
+    the generic gesture chain being the only one of the three whose evidence was
+    ever kept. All three now answer the same bound request at the same time, and
+    fusion ranks the answers.
+
+    Pixels are deliberately not in this plan. Frozen-frame OCR costs 1-3s on a
+    warm worker, and the interaction has to show the user something within a
+    couple of hundred milliseconds of release; the pixel tier runs in the answer
+    stage against this same frozen frame, through this same fusion.
+    """
+    resolved_windows: dict[str, dict[str, Any] | None] = {}
+
+    def explorer_read(request: PerceptionRequest) -> ProviderResult:
+        result = _explorer_provider_result(windows, gesture, fallback_point)
+        if result.context is not None:
+            resolved_windows["explorer-file"] = windows[0] if windows else None
+        return result
+
+    def surface_read(request: PerceptionRequest) -> ProviderResult:
+        result = _surface_provider_result(windows, gesture, fallback_point)
+        if result.context is not None:
+            resolved_windows["surface-adapter"] = windows[0] if windows else None
+        return result
+
+    def gesture_read(request: PerceptionRequest) -> ProviderResult:
+        window, context, trace, grounding, selection_bbox = _read_gesture_target_context(
+            windows,
+            registry=registry,
+            gesture=gesture,
+            fallback_point=fallback_point,
+        )
+        resolved_windows["structured-gesture"] = window
+        status, reason = _composite_read_status(trace)
+        return ProviderResult(
+            context=context,
+            status=status,
+            reason=reason,
+            layer=str(trace.get("selectedLayer") or "") or None,
+            grounding=grounding,
+            provider_trace=trace,
+            selection_bbox=list(selection_bbox) if selection_bbox is not None else None,
+        )
+
+    providers = [
+        CallableProvider(
+            ProviderDescriptor(
+                id="explorer-file",
+                layer="explorer",
+                deadline_ms=EXPLORER_PROVIDER_DEADLINE_MS,
+            ),
+            explorer_read,
+        ),
+        CallableProvider(
+            ProviderDescriptor(
+                id="surface-adapter",
+                layer="surface_adapter",
+                deadline_ms=SURFACE_PROVIDER_DEADLINE_MS,
+            ),
+            surface_read,
+        ),
+        CallableProvider(
+            ProviderDescriptor(
+                id="structured-gesture",
+                layer="uia",
+                deadline_ms=GESTURE_PROVIDER_DEADLINE_MS,
+            ),
+            gesture_read,
+        ),
+    ]
+    mark_bbox = _gesture_mark_bbox(gesture)
+    request = PerceptionRequest(
+        window=dict(windows[0]) if windows else {},
+        target_point=fallback_point,
+        gesture=gesture,
+        mark_bbox=tuple(mark_bbox) if mark_bbox is not None else None,
+    )
+    result = PerceptionBroker().resolve(request, providers)
+    selected = result.selected
+    if selected is None:
+        # Nothing was read, but the gesture provider still knows what the mark
+        # landed on — "the stroke crossed no element" is the answer to a
+        # different question than "which source won", and the stage needs it.
+        unresolved = next(
+            (
+                item.grounding
+                for item in result.observations
+                if item.provider_id == "structured-gesture"
+            ),
+            None,
+        )
+        return fallback_window, None, result.trace, unresolved, None
+    return (
+        resolved_windows.get(selected.provider_id) or fallback_window,
+        selected.context,
+        result.trace,
+        selected.grounding,
+        selected.selection_bbox,
+    )
+
+
 def _pointer_anchor_ltrb(target_point: dict[str, int]) -> list[int]:
     half = POINTER_ANCHOR_SIZE // 2
     return [
@@ -1770,49 +1971,23 @@ def capture_snapshot(
             }],
         }
     else:
-        explorer_context, explorer_grounding, explorer_trace = read_explorer_file_context(
+        # One concurrent read: Explorer grounding, the surface-adapter chain and
+        # the gesture structured strategy all answer the same bound request, and
+        # fusion ranks the answers instead of the first non-empty one taking
+        # over the trace.
+        (
+            target_window,
+            app_ctx,
+            perception_trace,
+            gesture_grounding,
+            gesture_selection_bbox,
+        ) = _fuse_snapshot_perception(
             available_windows,
+            registry=registry,
             gesture=normalized_gesture,
             fallback_point=normalized_target_point,
+            fallback_window=target_window,
         )
-        if explorer_context is not None and explorer_trace is not None:
-            target_window = available_windows[0]
-            app_ctx = explorer_context
-            perception_trace = explorer_trace
-            gesture_grounding = explorer_grounding
-            gesture_selection_bbox = _gesture_mark_bbox(normalized_gesture)
-        else:
-            # SurfaceAdapter chain first (design §8): an adapter that claims
-            # this app family owns its surface semantics. Text-bearing
-            # resolutions become the structured context; anchor-only
-            # resolutions are recorded as an attempt and the generic chain
-            # (UIA/COM/OCR) still runs on top.
-            surface_ctx, surface_attempt = _surface_adapter_attempt(
-                available_windows, normalized_gesture, normalized_target_point
-            )
-            target_window, app_ctx, perception_trace, gesture_grounding, gesture_selection_bbox = (
-                _read_gesture_target_context(
-                    available_windows,
-                    registry=registry,
-                    gesture=normalized_gesture,
-                    fallback_point=normalized_target_point,
-                )
-            )
-            if surface_ctx is not None:
-                target_window = available_windows[0]
-                app_ctx = surface_ctx
-                perception_trace = _surface_adapter_trace(surface_ctx)
-                gesture_grounding = None
-                gesture_selection_bbox = _gesture_mark_bbox(normalized_gesture)
-            elif surface_attempt is not None and _surface_attempt_is_signal(surface_attempt):
-                # Only record attempts that carry signal (an adapter claimed
-                # the window, or the registry errored): "no adapter claims
-                # this window" is the default for every normal window and
-                # must not pollute the perception trace ordering.
-                perception_trace["attempts"] = [
-                    surface_attempt,
-                    *(perception_trace.get("attempts") or []),
-                ]
         perception_trace["policyMode"] = (
             capture_decision.mode if capture_decision is not None else "unconfigured"
         )
@@ -1844,6 +2019,10 @@ def capture_snapshot(
                 "selectedMethod": None,
                 "pixelFallbackUsed": False,
                 "fallbackReason": "target_mismatch",
+                # The observations described a window that is no longer there.
+                # Leaving them would let the answer stage rehydrate them and
+                # conclude the mark was already read.
+                "observations": [],
                 "attempts": [
                     *(perception_trace.get("attempts") or []),
                     {

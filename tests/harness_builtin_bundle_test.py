@@ -1,11 +1,8 @@
 """Builtin bundle tests (plugin-kernel batch, plan T4).
 
-Pins the migration invariant: the composed plugin tree registers exactly
-the tool inventory the hand-wired ``_loop_router`` used to register
-(snapshot captured from the pre-migration path: 27 tools, effects
-unchanged), the plugin-contributed services exist, legacy env knobs keep
-their semantics through the patch layer, and a broken user plugin never
-poisons the tree.
+Pins the composed plugin tree inventory (perception + local actions +
+Kimi CU 13 desktop tools + capability tools), the plugin-contributed
+services, legacy env knobs, and isolation of a broken user plugin.
 """
 
 from __future__ import annotations
@@ -13,20 +10,30 @@ from __future__ import annotations
 import json
 import os
 
+from app.agent_runtime.types import ORIGIN_DATA, AgentMessage, Role
 from app.harness.builtin_bundle import LoopHarnessHost, boot_loop_context
 
-# Snapshot of the OLD hand-wired registration (pre-migration `_loop_router`):
-# 5 perception tools + look + 3 local actions + ask_user_question/todo_write
-# + 16 capability tools + find_capability.
+# 5 perception tools + look + 3 local actions + 13 desktop CU tools
+# + ask_user_question/todo_write + 16 capability tools + find_capability.
 EXPECTED_TOOLS = [
-    "agent_handoff", "ask_user_question", "canvas_transform", "clipboard_text",
+    "activate_window", "agent_handoff", "ask_user_question", "canvas_transform",
+    "click", "clipboard_text",
     "compare_objects", "copy_selected_text", "data_export",
-    "describe_capabilities", "dump_subtree", "find_capability",
-    "find_in_window", "get_focused", "image_ops", "list_windows", "look",
-    "place_route", "read_around", "recipe_scale", "research_card",
-    "save_screenshot", "screen_help", "show_source", "table_merge",
-    "task_route", "text_transform", "todo_write", "vision_bridge",
+    "describe_capabilities", "drag", "dump_subtree", "find_capability",
+    "find_in_window", "get_app_state", "get_focused", "image_ops", "launch_app",
+    "list_apps", "list_windows", "look",
+    "perform_secondary_action", "place_route", "press_key", "read_around",
+    "recipe_scale", "research_card",
+    "save_screenshot", "screen_help", "scroll", "select_text", "set_value",
+    "show_source", "table_merge",
+    "task_route", "text_transform", "todo_write", "turn_ended", "type_text",
+    "vision_bridge",
 ]
+WRITE_TOOLS = {
+    "activate_window", "click", "copy_selected_text", "drag", "launch_app",
+    "perform_secondary_action", "press_key", "save_screenshot", "scroll",
+    "select_text", "set_value", "type_text",
+}
 
 
 class _FakePerception:
@@ -88,9 +95,16 @@ def test_composed_tree_registers_the_old_inventory():
     effects = {spec.name: spec.effect.value for spec in registry.list()}
     assert effects["copy_selected_text"] == "reversible_write"
     assert effects["save_screenshot"] == "reversible_write"
+    assert effects["click"] == "reversible_write"
     assert effects["show_source"] == "read"
-    assert all(effect == "read" for name, effect in effects.items()
-               if name not in ("copy_selected_text", "save_screenshot"))
+    assert effects["list_apps"] == "read"
+    assert effects["get_app_state"] == "read"
+    assert effects["turn_ended"] == "read"
+    assert all(
+        effect == "read"
+        for name, effect in effects.items()
+        if name not in WRITE_TOOLS
+    )
     report.ctx.unload()
 
 
@@ -241,21 +255,85 @@ def test_resident_host_exposes_lazy_mcp_search_when_configured(tmp_path, monkeyp
     host.close()
 
 
-def test_system_prompt_stops_after_sufficient_evidence_and_prioritizes_frozen_pixels():
+def test_system_prompt_stops_gathering_evidence_without_stopping_multi_step_jobs():
     report = boot_loop_context(_runtime())
     prompt = report.ctx.get("model_client")._backend.system_prompt
-    assert "证据已经足够时立即回答并结束" in prompt
-    assert "冻结目标面的视觉锚点" in prompt
-    assert "look 成功返回后" in prompt
+    # 问答形态：证据够了就别再翻，避免为显得勤奋而空转。
+    assert "不要为了显得勤奋" in prompt
+    # 多步作业形态：证据够 ≠ 活干完，不得中途收工（任务时长不是边界）。
+    assert "做完全部步骤" in prompt
+    assert "勿重复 look" in prompt
+    assert "冻结帧" in prompt
+    assert "不得据此点击" in prompt
+    assert "ask_user_question" in prompt
+    assert "再 get_app_state" in prompt
+    assert "get_app_state" in prompt
+    assert "turn_ended" in prompt
+    report.ctx.unload()
+
+
+def _bulky_history() -> list[AgentMessage]:
+    """History heavy enough to cross the production tail-token budget."""
+    return [
+        AgentMessage(
+            role=Role.USER if index % 2 else Role.ASSISTANT,
+            content=f"第 {index} 轮：" + "证据正文" * 200,
+            tool_call_id=None,
+            name=None,
+            origin=ORIGIN_DATA,
+        )
+        for index in range(12)
+    ]
+
+
+def test_the_unfinished_plan_survives_compaction():
+    # A long job's progress must not depend on the summariser remembering it.
+    report = boot_loop_context(_runtime(summarize=lambda text: "早期步骤的摘要"))
+    report.ctx.get("tools").get("todo_write").execute(todos=[
+        {"content": "已导出前 90 条", "status": "completed"},
+        {"content": "继续处理第 91 条起", "status": "in_progress"},
+    ])
+    history = _bulky_history()
+    compacted = report.ctx.get("compactor")(history)
+
+    def weight(messages):
+        return sum(len(m.content or "") for m in messages)
+
+    assert weight(compacted) < weight(history)
+    carried = "\n".join(message.content or "" for message in compacted)
+    assert "继续处理第 91 条起" in carried
+    # Re-injecting finished work would make the model redo it.
+    assert "已导出前 90 条" not in carried
+    report.ctx.unload()
+
+
+def test_compaction_without_a_plan_adds_nothing():
+    report = boot_loop_context(_runtime(summarize=lambda text: "摘要"))
+    history = _bulky_history()
+    compacted = report.ctx.get("compactor")(history)
+    assert sum(len(m.content or "") for m in compacted) < sum(
+        len(m.content or "") for m in history
+    )
+    assert not any("尚未完成的步骤" in (m.content or "") for m in compacted)
+    report.ctx.unload()
+
+
+def test_model_client_allows_multi_step_desktop_tokens():
+    report = boot_loop_context(_runtime())
+    model_cfg = next(
+        row.resolved_config for row in report.rows if row.id == "model-client"
+    )
+    assert int(model_cfg["max_tokens"]) == 4096
     report.ctx.unload()
 
 
 def test_rows_report_active_and_dump_is_complete():
     report = boot_loop_context(_runtime())
-    assert [row.status for row in report.rows] == ["active"] * 12
+    assert [row.status for row in report.rows] == ["active"] * 13
     dump = report.dump_config()
     assert {row["id"] for row in dump} == {
-        "harness-tools", "computer-agent", "perception-tools", "look-tool", "local-action-tools",
+        "harness-tools", "computer-agent", "perception-tools", "look-tool",
+        "local-action-tools", "desktop-action-tools",
         "capability-tools", "guard", "system-prompt", "llm-provider",
         "session-store", "learning-review", "model-client",
     }

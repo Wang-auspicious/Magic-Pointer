@@ -1738,8 +1738,15 @@
     button.className = 'stage-chip';
     button.textContent = String(chip.label || chip.id);
     button.addEventListener('click', () => {
-      // A chip is a canned command: it submits through the same path as
-      // typed/spoken input (policy owns the chip -> command mapping).
+      // Clarification chips carry the option text on chip.command and submit
+      // that string as a follow-up. Idle canned chips still map id → command
+      // through StageChipsPolicy; a clarification option named "rewrite"
+      // must not become "改写这段文字".
+      const direct = String(chip.command || '').trim();
+      if (direct) {
+        submitCommand(direct);
+        return;
+      }
       const policy = globalThis.StageChipsPolicy;
       const command = policy && typeof policy.commandForChip === 'function'
         ? policy.commandForChip(chip.id)
@@ -1749,13 +1756,20 @@
     return button;
   }
 
-  // Chips: click-selected object + idle capsule only; first keystroke or
-  // voice mode hides them (policy owns the rule). Defensive: no policy
-  // module loaded -> no chips, ever.
-  function renderChips(allowed: boolean) {
-    const policy = globalThis.StageChipsPolicy;
+  // Idle canned chips: click-selected object + idle capsule only.
+  // Clarification chips: newest turn is awaiting with ≥2 pendingInput options.
+  // Awaiting wins — the two sets never show together. Defensive: missing
+  // helper → no chips of that kind.
+  function renderChips(idleAllowed: boolean) {
+    const newest = state.turns[state.turns.length - 1];
+    const awaiting = newest?.status === 'awaiting';
+    const clarify = globalThis.ClarificationChips;
     let chips: any[] = [];
-    if (allowed && policy
+    if (clarify && typeof clarify.clarificationChips === 'function') {
+      chips = clarify.clarificationChips(newest).slice(0, 4);
+    }
+    const policy = globalThis.StageChipsPolicy;
+    if (!chips.length && !awaiting && idleAllowed && policy
       && typeof policy.shouldShowChips === 'function'
       && typeof policy.deriveChips === 'function'
       && policy.shouldShowChips({
@@ -1775,7 +1789,8 @@
       chipsBox.replaceChildren(...chips.map(buildChip));
     }
     chipsBox.hidden = false;
-    const anchor = capsule.getBoundingClientRect();
+    const anchorEl = awaiting && !threadPanel.hidden ? threadPanel : capsule;
+    const anchor = anchorEl.getBoundingClientRect();
     chipsBox.style.left = `${anchor.left}px`;
     chipsBox.style.top = `${anchor.bottom + 8}px`;
   }
@@ -1949,8 +1964,6 @@
       capsuleInput.value = '';
     }
     shimmer.hidden = name !== 'processing';
-    // Chips only while the capsule is awaiting input (never during processing).
-    renderChips(name === 'capsule-voice' || name === 'capsule-text');
 
     // The thread is driven by `turns`, not by the latest result, so a question
     // and its answer stay on screen once a follow-up is under way.
@@ -1964,6 +1977,9 @@
       resultCard.replaceChildren();
       syncWaitClock(false);
     }
+    // Idle canned chips only while the capsule is open. Clarification chips
+    // still render when the newest turn is awaiting (closeTurn → `result`).
+    renderChips(name === 'capsule-voice' || name === 'capsule-text');
 
     // Errors that belong to a turn already render inside the thread. The
     // standalone card is only for failures with no thread to attach to.
