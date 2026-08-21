@@ -42,6 +42,7 @@ __all__ = [
     "SessionEvent",
     "SessionForkError",
     "SessionHeader",
+    "cancel_interrupt_check",
 ]
 
 SESSION_FORMAT_VERSION = 1
@@ -443,12 +444,22 @@ class EventSession:
             "operation/prepared",
             "operation/settled",
             "interaction/start",
+            "cancel/request",
+            "cancel/consumed",
         }:
             opened = self.open_turn
             if opened is None or int(data.get("turn") or 0) != opened:
                 raise RuntimeError(
                     f"{event_type} does not match the open turn {opened}"
                 )
+        if event_type == "cancel/request":
+            if not str(data.get("requestId") or ""):
+                raise ValueError("cancel request requires requestId")
+            if self._pending_cancel_request_locked(int(data.get("turn") or -1)):
+                raise RuntimeError("this turn already has a pending cancel request")
+        if event_type == "cancel/consumed":
+            if not self._pending_cancel_request_locked(int(data.get("turn") or -1)):
+                raise RuntimeError("no pending cancel request to consume")
         if event_type == "operation/prepared":
             operation_id = str(data.get("operationId") or "")
             if not operation_id:
@@ -911,6 +922,74 @@ class EventSession:
             },
         )
 
+    def request_cancel(self, *, turn: int | None = None, reason: str = "") -> SessionEvent:
+        """Persist a graceful-cancel request for the open turn.
+
+        The request is durable so a cancel that lands while the loop is mid
+        round is not lost: the running loop polls it at the next round
+        boundary and terminates as ``user_interrupt`` (Receipt issued, turn
+        closed) instead of being killed mid-write. Scoped to the requested
+        turn so a stale request can never interrupt a later turn.
+        """
+        opened = self.open_turn
+        if opened is None:
+            raise RuntimeError("cancel request requires an open turn")
+        target = int(opened if turn is None else turn)
+        if target != opened:
+            raise RuntimeError(
+                f"cannot cancel turn {target}; open turn is {opened}"
+            )
+        return self.append(
+            "cancel/request",
+            {
+                "turn": target,
+                "requestId": uuid.uuid4().hex,
+                "reason": str(reason or "")[:200],
+            },
+        )
+
+    def pending_cancel_request(self, turn: int | None = None) -> bool:
+        """True when the given (default: open) turn has an unclaimed cancel."""
+        self._synchronize()
+        return self._pending_cancel_request_locked(
+            self.open_turn if turn is None else int(turn)
+        )
+
+    def _pending_cancel_request_locked(self, target: int) -> bool:
+        """Scan without syncing: safe inside append's already-held lock."""
+        consumed = {
+            str(event.data.get("requestId") or "")
+            for event in self._events
+            if event.type == "cancel/consumed"
+        }
+        return any(
+            event.type == "cancel/request"
+            and int(event.data.get("turn") or -1) == target
+            and str(event.data.get("requestId") or "") not in consumed
+            for event in self._events
+        )
+
+    def consume_cancel_request(self, *, turn: int | None = None) -> bool:
+        """Claim the pending cancel for this turn so it fires at most once."""
+        opened = self.open_turn
+        target = int(opened if turn is None else turn)
+        if not self.pending_cancel_request(target):
+            return False
+        request_id = next(
+            (
+                str(event.data.get("requestId") or "")
+                for event in reversed(self._events)
+                if event.type == "cancel/request"
+                and int(event.data.get("turn") or -1) == target
+            ),
+            "",
+        )
+        self.append(
+            "cancel/consumed",
+            {"turn": target, "requestId": request_id},
+        )
+        return True
+
     def repair_interrupted_turn(self) -> int:
         """Append risk-aware results for unresolved calls, then close the turn."""
         if self._turn_lease_context is None:
@@ -1063,6 +1142,26 @@ class EventSession:
                 f"surface replace event {event.seq} has no messages list"
             )
         return [AgentMessage.from_dict(raw) for raw in raw_messages]
+
+
+def cancel_interrupt_check(session: EventSession):
+    """Pollable graceful-cancel check for :class:`LoopParams`.
+
+    Returns an ``interrupt_check`` callable that consumes the open turn's
+    pending cancel request; the loop then terminates as ``user_interrupt``
+    with a Receipt instead of being killed mid-write. Bridges pass this so
+    the GUI stop button gets the graceful path (O3).
+    """
+
+    def check() -> bool:
+        turn = session.open_turn
+        if turn is None:
+            return False
+        if not session.pending_cancel_request(turn):
+            return False
+        return session.consume_cancel_request(turn=turn)
+
+    return check
 
 
 class FileSessionStore:

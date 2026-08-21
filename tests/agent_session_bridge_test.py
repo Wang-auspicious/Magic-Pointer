@@ -53,3 +53,36 @@ def test_agent_session_bridge_rejects_unknown_session_and_target(tmp_path, monke
 
     assert missing == {"ok": False, "error": "session_not_found"}
     assert invalid == {"ok": False, "error": "invalid_target"}
+
+
+def test_agent_session_bridge_cancel_requests_graceful_stop(tmp_path, monkeypatch) -> None:
+    from app.agent_runtime.loop import run_agent_loop  # noqa: F401  (import sanity)
+    from app.agent_runtime.session import cancel_interrupt_check
+
+    monkeypatch.setenv("MAGIC_POINTER_USER_DATA_DIR", str(tmp_path))
+    store = FileSessionStore(tmp_path / "agent-sessions")
+    session = store.create("running-session")
+    session.start_turn()
+
+    no_turn = handle_request({
+        "action": "cancel",
+        "sessionId": "missing-session",
+    })
+    assert no_turn == {"ok": False, "error": "session_not_found"}
+
+    cancelled = handle_request({
+        "action": "cancel",
+        "sessionId": "running-session",
+    })
+    assert cancelled == {"ok": True, "sessionId": "running-session", "turn": 1}
+    # The production interrupt check sees it and consumes it exactly once.
+    check = cancel_interrupt_check(session)
+    assert check() is True
+    assert check() is False
+    session.end_turn(session.open_turn, reason="user_interrupt")
+
+    idle = handle_request({
+        "action": "cancel",
+        "sessionId": "running-session",
+    })
+    assert idle == {"ok": False, "error": "no_open_turn"}

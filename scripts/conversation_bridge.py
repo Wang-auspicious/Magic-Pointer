@@ -580,6 +580,8 @@ def answer_conversation(
         agent_session_id = "agent-studio-" + hashlib.sha256(session_key.encode("utf-8")).hexdigest()[:32]
         agent_session = sessions.open_or_create(agent_session_id, repair=True)
         activity_sink = _ConversationActivitySink(conversation_clock)
+        from app.agent_runtime.session import cancel_interrupt_check
+
         terminal = run_agent_turn(
             agent_prompt,
             objects=[],
@@ -602,6 +604,7 @@ def answer_conversation(
             interaction_metadata={
                 "appName": str(window.get("app") or "").strip(),
             },
+            interrupt_check=cancel_interrupt_check(agent_session),
         )
     except Exception as exc:  # noqa: BLE001 - loop crash must never kill the answer path
         timing_ms = conversation_clock.total("total", ok=0)

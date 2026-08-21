@@ -829,14 +829,18 @@
   function submitCommand(command: string) {
     const trimmed = String(command == null ? '' : command).trim();
     if (!trimmed) return;
-    // A turn is already running: SUBMIT is a machine no-op in `processing`, so
-    // the old guard below used to pass and fire a SECOND request on top of the
-    // first (Enter in the follow-up bar / capsule while the bridge is busy).
-    if (state.name === 'processing') return;
     const inputMode = state.inputMode;
     // Chips the user removed are removed from the request too, or the chip is a
     // decoration that lies about what was sent.
     const keptStrokeIndexes = strokeRefs.map((ref) => ref.strokeIndex);
+    if (state.name === 'processing') {
+      // A turn is already running: this is a steer, not a second request. The
+      // text goes into the durable session inbox and the loop claims it at the
+      // next round boundary (next-step), so mid-run course corrections no
+      // longer require killing the run (O1/O2).
+      steerSelectionCommand(trimmed);
+      return;
+    }
     dispatch({ type: 'SUBMIT', command: trimmed });
     if (state.name !== 'processing') return;
     if (api && typeof api.submitSelectionCommand === 'function') {
@@ -848,6 +852,35 @@
         pickedElement: pickedElement ? { rect: pickedElement.rect, source: pickedElement.source } : null,
       });
     }
+  }
+
+  function steerSelectionCommand(command: string) {
+    const trimmed = String(command == null ? '' : command).trim();
+    if (!trimmed) return;
+    capsuleInput.value = '';
+    if (!api || typeof api.steerSelectionCommand !== 'function') {
+      dispatch({ type: 'NOTICE', notice: { message: '这一轮不支持中途插话，等它跑完再发。' } });
+      return;
+    }
+    api
+      .steerSelectionCommand({ selectionSessionToken: session.token, text: trimmed })
+      .then((reply: any) => {
+        if (reply?.ok === true) {
+          dispatch({ type: 'NOTICE', notice: { message: '已插话，当前步骤结束后生效。' } });
+        } else {
+          const reason = String(reply?.error || '');
+          const message = reason === 'no_agent_session'
+            ? '这一轮还没有可插话的会话，等它跑完再发。'
+            : `插话没有送达：${reason || '未知原因'}`;
+          dispatch({ type: 'NOTICE', notice: { message } });
+        }
+        if (state.notice) {
+          setTimeout(() => { if (state.notice) dispatch({ type: 'NOTICE', notice: { message: '' } }); }, 4000);
+        }
+      })
+      .catch(() => {
+        dispatch({ type: 'NOTICE', notice: { message: '插话没有送达，等它跑完再发。' } });
+      });
   }
 
   function requestDismiss() {

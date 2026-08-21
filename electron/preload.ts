@@ -97,6 +97,13 @@ contextBridge.exposeInMainWorld('magicPointerStage', {
   }),
   executeAction: (payload: unknown) => ipcRenderer.send('stage:execute-action', payload),
   contextAction: (payload: unknown) => ipcRenderer.send('stage:context-action', payload),
+  // Mid-run steer: a distinct IPC from submit so it can never start a second
+  // loop — it only writes the durable inbox the running loop already claims.
+  steerSelectionCommand: (payload: { selectionSessionToken?: unknown; text?: unknown }) =>
+    ipcRenderer.invoke('stage:steer-selection-command', {
+      selectionSessionToken: payload?.selectionSessionToken || null,
+      text: String(payload?.text || '').slice(0, 4000),
+    }),
   // The renderer sends the text it is showing; the target window and point stay
   // in main, bound to the selection session, so a renderer cannot aim a write.
   insertResultText: (payload: { text?: unknown; selectionSessionToken?: unknown }) => ipcRenderer.send('stage:insert-result-text', {

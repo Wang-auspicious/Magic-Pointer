@@ -726,3 +726,36 @@ def test_incremental_refresh_falls_back_when_the_tail_is_corrupt(tmp_path: Path)
     resumed = store.resume("shared")
     writers = [event.data.get("writer") for event in resumed.events if event.type == "audit/test"]
     assert writers == ["other", "after-crash"]
+
+
+def test_cancel_request_is_durable_scoped_and_single_shot(tmp_path: Path) -> None:
+    from app.agent_runtime.session import cancel_interrupt_check
+
+    store = FileSessionStore(tmp_path)
+    session = store.create("cancellable")
+    session.start_turn()
+    session.append_message(_message(Role.USER, "跑一个长任务"))
+    session.request_cancel(reason="user pressed stop")
+    assert session.pending_cancel_request(session.open_turn) is True
+
+    check = cancel_interrupt_check(session)
+    assert check() is True
+    # Consumed: the same turn does not cancel twice.
+    assert check() is False
+    turn = session.open_turn
+    session.end_turn(turn, reason="user_interrupt")
+
+    # A later turn must not inherit the old request.
+    session.start_turn()
+    assert session.pending_cancel_request(session.open_turn) is False
+    assert check() is False
+
+
+def test_cancel_request_requires_the_open_turn(tmp_path: Path) -> None:
+    store = FileSessionStore(tmp_path)
+    session = store.create("scoped")
+    with pytest.raises(RuntimeError):
+        session.request_cancel(reason="no turn open")
+    session.start_turn()
+    with pytest.raises(RuntimeError):
+        session.request_cancel(turn=session.open_turn + 7, reason="wrong turn")

@@ -26,8 +26,8 @@ assert(
   'steer must be a distinct IPC from submit so it cannot start a second loop',
 );
 assert(
-  main.includes("ipcMain.on('stage:steer-selection-command'"),
-  'main must handle mid-run steer',
+  main.includes("ipcMain.handle('stage:steer-selection-command'"),
+  'main must handle mid-run steer (invoke: the renderer needs the delivery verdict)',
 );
 assert(
   main.includes('scripts/agent_session_bridge.py'),

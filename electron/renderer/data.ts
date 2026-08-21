@@ -446,6 +446,7 @@ declare global {
     hidden(): void;
     dismiss(): void;
     submitSelectionCommand(payload: unknown): void;
+    steerSelectionCommand(payload: unknown): Promise<any>;
     executeAction(payload: unknown): void;
     contextAction(payload: unknown): void;
     insertResultText(payload: unknown): void;

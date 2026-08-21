@@ -223,6 +223,12 @@ const selectionSessions = new SelectionSessionStore({ ttlMs: SELECTION_SESSION_T
 const interactionEpisodes = new InteractionEpisodeStore({ ttlMs: 30 * 60 * 1000 });
 const activationGate = new ActivationGate({ debounceMs: 600 });
 const activeSessionChildren = new Map();
+// Durable agent session id per live selection session, learned from the
+// bridge's `loop_started` progress line. This is what lets the stop button
+// request a graceful cancel (Receipt + closed turn) instead of only killing
+// the Python child mid-write.
+const activeSessionAgentIds = new Map();
+const GRACEFUL_CANCEL_GRACE_MS = 5_000;
 // Recent sessions, as durations a person can read. Every number here was
 // already being emitted to the log; this is what puts it somewhere anybody
 // would look. See session_timeline.ts for why it is memory-only.
@@ -580,8 +586,54 @@ function invalidateActionProposalsForSession(selectionSessionToken: string | nul
 function cancelSessionChild(selectionSessionToken: string | null) {
   const child = activeSessionChildren.get(selectionSessionToken);
   activeSessionChildren.delete(selectionSessionToken);
+  const agentSessionId = activeSessionAgentIds.get(selectionSessionToken);
+  activeSessionAgentIds.delete(selectionSessionToken);
   if (!child || child.killed) return;
-  try { child.kill(); } catch (_) {}
+  if (agentSessionId) requestGracefulAgentCancel(agentSessionId);
+  // The loop checks the durable cancel at the next round boundary and exits
+  // on its own with a Receipt; if it misses the grace window (model call in
+  // flight, hung tool), kill as before — crash repair already handles that
+  // path honestly.
+  setTimeout(() => {
+    try { if (!child.killed) child.kill(); } catch (_) {}
+  }, GRACEFUL_CANCEL_GRACE_MS);
+}
+
+ipcMain.handle('stage:steer-selection-command', async (event: Electron.IpcMainInvokeEvent, payload: any) => {
+  if (!isSurfaceSender(event, 'stage', resultTargetWindow)) return { ok: false, error: 'unauthorized_renderer' };
+  const token = String(payload?.selectionSessionToken || '');
+  const text = String(payload?.text || '').trim();
+  if (!token || !text) return { ok: false, error: 'invalid_request' };
+  // Steer addresses the DURABLE agent session, not the bridge child: the loop
+  // claims next-step at the next round boundary. Without a known session id
+  // (loop_started progress has not arrived yet) there is nothing to steer.
+  const agentSessionId = activeSessionAgentIds.get(token);
+  if (!agentSessionId) return { ok: false, error: 'no_agent_session' };
+  try {
+    const parsed = await runPythonBridgePromise(
+      { action: 'put', sessionId: agentSessionId, target: 'next-step', text },
+      'scripts/agent_session_bridge.py',
+      { target: null, timeoutMs: 8_000 },
+    );
+    log(`stage steer delivered session=${agentSessionId} messageId=${parsed?.messageId || '-'}`);
+    return { ok: true, messageId: parsed?.messageId || null };
+  } catch (error: any) {
+    return { ok: false, error: String(error?.message || error || 'bridge_failed') };
+  }
+});
+
+function requestGracefulAgentCancel(agentSessionId: string) {
+  runPythonBridgePromise(
+    { action: 'cancel', sessionId: agentSessionId, reason: 'user stop' },
+    'scripts/agent_session_bridge.py',
+    { target: null, timeoutMs: 8_000 },
+  ).then(
+    (parsed: any) => {
+      if (parsed?.ok !== true) log(`graceful cancel not accepted session=${agentSessionId} error=${parsed?.error || 'unknown'}`);
+      else log(`graceful cancel requested session=${agentSessionId} turn=${parsed.turn}`);
+    },
+    (error: any) => log(`graceful cancel bridge failed session=${agentSessionId}: ${error?.message || error}`),
+  );
 }
 
 function invalidateSelectionSession(selectionSessionToken: string | null = null) {
@@ -4461,6 +4513,9 @@ function submitSelectionCommandWhenGrounded(payload: any, startedAt: number, not
     // 现在每一步都变成正在等的那张卡上的一行。
     onProgress: (record: any) => {
       if (!selectionSessions.isCurrentRequest(selectionSessionToken, requestId)) return;
+      if (record.phase === 'loop_started' && typeof record.fields?.session === 'string' && record.fields.session && record.fields.session !== '-') {
+        activeSessionAgentIds.set(selectionSessionToken, record.fields.session);
+      }
       const step = CardModel.phaseStep(record);
       if (!step) return;
       safeSurfaceSend('stage', 'stage:card-patch', {

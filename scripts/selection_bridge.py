@@ -2274,6 +2274,8 @@ def _loop_router(
         precondition_factory = ctx.get("precondition_factory")
         sessions = ctx.get("sessions")
         request_header = ctx.get("model_request_header")
+        from app.agent_runtime.session import cancel_interrupt_check
+
         model_cfg = next(
             row.resolved_config for row in report.rows if row.id == "model-client"
         )
@@ -2323,9 +2325,12 @@ def _loop_router(
 
         Each model round becomes a visible step; a budget renewal shows as
         a heartbeat so a long productive loop reads as progress instead of
-        a hang."""
+        a hang. The first event also carries the durable agent session id so
+        the GUI can address steer/cancel at the session while the bridge is
+        still running."""
         from app.agent_runtime.loop import (
             BudgetRenewed,
+            LoopStart,
             ToolCallStarted,
             TurnFinished,
             TurnStarted,
@@ -2333,7 +2338,9 @@ def _loop_router(
 
         if clock is None:
             return
-        if isinstance(event, TurnStarted):
+        if isinstance(event, LoopStart):
+            clock.mark("loop_started", session=agent_session_id)
+        elif isinstance(event, TurnStarted):
             clock.mark("model_request", turn=event.turn)
         elif isinstance(event, TurnFinished):
             clock.mark("model_response", turn=event.state.turn_count)
@@ -2371,6 +2378,10 @@ def _loop_router(
                 interaction_metadata=_input_artifact_ledger_metadata(
                     input_artifact, target_window, app_ctx
                 ),
+                # GUI stop button -> durable cancel request -> graceful
+                # USER_INTERRUPT with a Receipt (O3); kill stays as the
+                # fallback for a loop that misses the boundary.
+                interrupt_check=cancel_interrupt_check(agent_session),
             )
         except Exception as exc:  # noqa: BLE001 - loop crash must never kill answer path
             return {

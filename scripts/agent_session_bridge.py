@@ -43,7 +43,7 @@ def handle_request(payload: dict[str, Any]) -> dict[str, Any]:
     action = str(payload.get("action") or "").strip()
     session_id = str(payload.get("sessionId") or "").strip()
     target = str(payload.get("target") or "").strip()
-    if target not in TARGETS:
+    if action != "cancel" and target not in TARGETS:
         return {"ok": False, "error": "invalid_target"}
     try:
         session = FileSessionStore(_session_root()).resume(session_id, repair=False)
@@ -52,6 +52,25 @@ def handle_request(payload: dict[str, Any]) -> dict[str, Any]:
     except ValueError:
         return {"ok": False, "error": "invalid_session_id"}
 
+    if action == "cancel":
+        # Graceful stop (O3): the running loop polls this at the next round
+        # boundary and terminates with a Receipt instead of being killed.
+        # A repeat click while one is already pending stays ok: a cancel IS
+        # pending.
+        turn = session.open_turn
+        if turn is None:
+            return {"ok": False, "error": "no_open_turn"}
+        try:
+            event = session.request_cancel(reason=str(payload.get("reason") or "user stop"))
+        except RuntimeError as exc:
+            if "pending cancel" in str(exc):
+                return {"ok": True, "sessionId": session.id, "turn": turn}
+            return {"ok": False, "error": f"cancel_rejected: {exc}"}
+        return {
+            "ok": True,
+            "sessionId": session.id,
+            "turn": int(event.data["turn"]),
+        }
     if action == "put":
         text = str(payload.get("text") or "").strip()
         if not text or len(text) > MAX_TEXT_CHARS:
