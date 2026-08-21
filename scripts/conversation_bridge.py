@@ -304,6 +304,16 @@ def _completed_result(
         "timingMs": timing_ms,
         "agentSessionId": agent_session_id,
         "interactionLedger": interaction_ledger,
+        # Clarification / plan-approval gates ride through so the Stage can
+        # render its option buttons (same shape as loop_answer's AWAITING_USER).
+        **(
+            {
+                "awaitingUserInput": True,
+                "pendingInput": mapped["pendingInput"],
+            }
+            if mapped.get("awaitingUserInput") and mapped.get("pendingInput")
+            else {}
+        ),
     }
 
 
@@ -530,6 +540,22 @@ def answer_conversation(
     history = _history_text(turns if isinstance(turns, list) else [], obj if isinstance(obj, dict) else {})
     window = obj if isinstance(obj, dict) else {}
 
+    # Plan-mode approval gate: clicking the fixed approve button lands here as
+    # the next question; consume the stored plan and unlock write execution.
+    from app.agent_runtime.plan_mode import PLAN_APPROVED_OPTION, consume_approved_plan
+    from app.agent_runtime.workspace_state import read_workspace
+
+    if prompt == PLAN_APPROVED_OPTION:
+        plan_text = consume_approved_plan(read_workspace(ROOT))
+        if plan_text:
+            mode = PermissionMode.DEFAULT
+            agent_prompt = (
+                "用户已批准以下计划，现在以工作区写入权限执行它。"
+                "按步骤动手，改完必须用测试/构建验证，绿了才算完成：\n\n"
+                f"{plan_text}"
+            )
+            prompt = agent_prompt
+
     def _identity_transform(_command: str, context_text: str, _recipe_id: str) -> str:
         return context_text
 
@@ -574,8 +600,6 @@ def answer_conversation(
         "command": agent_prompt,
     }
 
-    from app.agent_runtime.workspace_state import read_workspace
-
     runtime["workspace_root"] = str(read_workspace(ROOT))
     runtime["permission_mode"] = mode.value
 
@@ -614,7 +638,7 @@ def answer_conversation(
             client=client,
             allowed_effects=_effect_ceiling(mode.value),
             permission_mode=mode.value,
-            tool_limit=30,
+            tool_limit=64,
             precondition_context_factory=precondition_factory,
             compactor=compactor,
             context_budget_tokens=context_tokens,

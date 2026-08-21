@@ -71,12 +71,40 @@ Hermes CLI：`python cli.py --query <同文> --model mimo-v2.5 --provider openco
 关闭。剩余差距按 §2B 继续：subagent 已有雏形（单层、顺序执行），plan mode
 有提示语义但 GUI 无确认往返，checkpoint 有工具无 UI 入口。
 
-## 4. 诚实边界
+## 4. 真机暴露的两个新缺陷（已修）
 
-- E2E 只跑了这一个 ~120 行的实验室；300 步级真实仓库任务未测。
-- delegate_task 未在真机任务中用过（工具注册与 bundle 装配过测试）。
-- checkpoint 只覆盖自家工具的写入；run_command 里的副作用不可回滚（CC 同限）。
-- apply_patch 对 CRLF 文件插入的新行是 LF（混合换行）；Codex 的
-  PreserveLineEndings 模式未移植。
-- pi-subagents 插件在 `pi --print` 下不回传子代理输出（TUI 功能），本次审查
-  由主会话自查完成。
+1. **tool_limit 截断静默藏工具**：loop 把发给模型的 schema 按注册顺序截到
+   ``tool_limit``（双桥传 30）。编码批后注册表涨到 ~52 个，delegate_task 和
+   capability 工具全部跌出窗口——模型说「没有 delegate_task 工具」是真的：
+   schema 根本没发给它。真机 delegate 验证抓出。修复：双桥 30 → 64
+   （52 个 schema ≈ 4k token，可接受）。
+2. **apply_patch 的 delete 文件不进 checkpoint**：restore_files 回滚不了被删
+   文件。已修并加 roundtrip 验证。
+
+## 5. delegate_task 真机验证（生产链路）
+
+任务：委派子代理统计仓库每个 .py 行数写入 report.txt，父代理只验收。
+结果：139s，delegate_task 真实调用，子代理完成统计，父代理读回 report.txt
+并用 wc -l 交叉核对（还抓出并修正一处 27→26 的行数差异）。事件流里父子
+两代工具调用都在会话回执中。
+
+## 5.5 plan mode 闭环真机验证
+
+第二轮补齐后真机跑通完整闭环：turn1（plan 预设）33s 出计划挂起
+（present_plan → .mp/plan.md → Stage 选项按钮 pendingInput）；点"批准该计划，
+开始执行"后 turn2 171s 自动转写入权限执行——edit_file×4 实现 apply_coupon +
+自写 3 个测试 + pytest 验证，实验室 7/7 全绿，plan.md 批准即消费。
+配套：权限预设表新增 "plan" 档（Python + 渲染层镜像），桥透传
+awaitingUserInput/pendingInput 字段（此前 _completed_result 把它丢了）。
+
+## 6. 同批新增能力（Hermes/Codex 对齐继续）
+
+| 能力 | 出处 | 文件 |
+|---|---|---|
+| web_search / web_fetch（DDG HTML + httpx 抽正文，零 key） | Hermes web_tools 契约 | `app/agent_runtime/web_tools.py` |
+| save_skill（agent 自写 skill，下回合 SkillLoader 自动注入——自进化闭环合拢） | Hermes skills 自进化 | `app/agent_runtime/skill_writer.py` |
+| 压缩尾部陈旧工具输出修剪（>24k 时仅保留最近 6 条全文） | Codex | `memory.py::_prune_stale_tool_outputs` |
+
+诚实边界：web_fetch 不执行 JS、不支持 PDF；save_skill 无人工审批门
+（SkillLoader 本就只注入 user_data 目录）；尾部修剪阈值是拍定的经验值。
+

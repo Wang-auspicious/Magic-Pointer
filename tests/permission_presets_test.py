@@ -26,7 +26,7 @@ from app.agent_runtime.permission_presets import (
 def test_preset_table_matches_dsh_defaults() -> None:
     # DSH 默认表：workspace-write（工作区写 + 问）与 danger-full-access
     # （全访问 + 从不问）。MP 追加 read-only（只读 + 问）作为最窄档。
-    assert list(PRESETS) == ["read-only", "workspace-write", "danger-full-access"]
+    assert list(PRESETS) == ["plan", "read-only", "workspace-write", "danger-full-access"]
     assert PRESETS["workspace-write"].sandbox == "workspace-write"
     assert PRESETS["workspace-write"].approval == "ask"
     assert PRESETS["danger-full-access"].sandbox == "danger-full-access"
@@ -56,7 +56,7 @@ def test_select_payload_shape() -> None:
     select = preset_select("workspace-write")
     assert select["currentValue"] == "workspace-write"
     values = [option["value"] for option in select["options"]]
-    assert values == ["read-only", "workspace-write", "danger-full-access"]
+    assert values == ["plan", "read-only", "workspace-write", "danger-full-access"]
     for option in select["options"]:
         assert option["name"] and option["description"]
     full = next(o for o in select["options"] if o["value"] == "danger-full-access")
@@ -75,7 +75,7 @@ def test_custom_is_display_only() -> None:
 
 def test_resolve_unknown_preset_raises() -> None:
     with pytest.raises(KeyError):
-        resolve_preset("plan")
+        resolve_preset("yolo")
 
 
 def test_preset_spec_is_plain_data() -> None:

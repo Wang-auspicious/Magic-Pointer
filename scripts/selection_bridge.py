@@ -2378,7 +2378,7 @@ def _loop_router(
                 client=client,
                 allowed_effects=_agent_effect_ceiling(permission_mode),
                 permission_mode=permission_mode,
-                tool_limit=30,
+                tool_limit=64,
                 precondition_context_factory=precondition_factory,
                 compactor=compactor,
                 context_budget_tokens=context_tokens,

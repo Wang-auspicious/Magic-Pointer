@@ -19,6 +19,7 @@ import json
 import os
 import re
 import stat
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -193,7 +194,7 @@ def compact_messages(
     while cutoff > 0 and messages[cutoff].role is Role.TOOL:
         cutoff -= 1
     head = _prune_duplicate_tool_results(messages[:cutoff])
-    tail = messages[cutoff:]
+    tail = _prune_stale_tool_outputs(messages[cutoff:])
 
     def _source_from(rows: list[AgentMessage]) -> str:
         return "\n".join(
@@ -240,6 +241,47 @@ def compact_messages(
         injected=True,
     )
     return [condensed, *tail]
+
+
+def _prune_stale_tool_outputs(tail: list[AgentMessage]) -> list[AgentMessage]:
+    """Truncate old tool payloads inside the retained tail (Codex behaviour).
+
+    Compaction keeps a recent tail verbatim, but a tail full of 64k reads is
+    the very weight compaction was meant to shed. When the tail is heavy,
+    every TOOL message except the most recent few keeps only its opening —
+    the lossless record stays in the session log.
+    """
+    total = sum(len(message.content or "") for message in tail)
+    if total <= _TAIL_PRUNE_THRESHOLD_CHARS:
+        return tail
+    kept = 0
+    pruned: list[AgentMessage] = []
+    for message in reversed(tail):
+        if message.role is Role.TOOL and kept < _TAIL_KEEP_RECENT_TOOLS:
+            kept += 1
+            pruned.append(message)
+            continue
+        if message.role is Role.TOOL and len(message.content or "") > _TAIL_TOOL_KEEP_CHARS:
+            pruned.append(replace(
+                message,
+                content=(
+                    message.content[:_TAIL_TOOL_KEEP_CHARS]
+                    + f"\n[earlier tool output pruned ({len(message.content)} chars); "
+                    "full text remains in the session log]"
+                ),
+            ))
+            continue
+        pruned.append(message)
+    pruned.reverse()
+    return pruned
+
+
+_TAIL_PRUNE_THRESHOLD_CHARS = 24_000
+"""Only prune when the retained tail itself carries real weight."""
+_TAIL_KEEP_RECENT_TOOLS = 6
+"""The freshest tool results stay verbatim — the model is acting on them."""
+_TAIL_TOOL_KEEP_CHARS = 600
+"""Opening of a pruned older result: enough to know what it was."""
 
 
 def _prune_duplicate_tool_results(head: list[AgentMessage]) -> list[AgentMessage]:

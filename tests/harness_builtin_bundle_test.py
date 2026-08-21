@@ -14,7 +14,8 @@ from app.agent_runtime.types import ORIGIN_DATA, AgentMessage, Role
 from app.harness.builtin_bundle import LoopHarnessHost, boot_loop_context
 
 # 5 perception tools + look + 3 local actions + 13 desktop CU tools
-# + ask_user_question/todo_write + 16 capability tools + find_capability.
+# + ask_user_question/todo_write + web_search/web_fetch/save_skill
+# + 16 capability tools + find_capability.
 EXPECTED_TOOLS = [
     "activate_window", "agent_handoff", "ask_user_question", "canvas_transform",
     "click", "clipboard_text",
@@ -24,15 +25,16 @@ EXPECTED_TOOLS = [
     "list_apps", "list_windows", "look",
     "perform_secondary_action", "place_route", "press_key", "read_around",
     "recipe_scale", "research_card",
-    "save_screenshot", "screen_help", "scroll", "select_text", "set_value",
+    "save_screenshot", "save_skill", "screen_help", "scroll", "select_text",
+    "set_value",
     "show_source", "table_merge",
     "task_route", "text_transform", "todo_write", "turn_ended", "type_text",
-    "vision_bridge",
+    "vision_bridge", "web_fetch", "web_search",
 ]
 WRITE_TOOLS = {
     "activate_window", "click", "copy_selected_text", "drag", "launch_app",
-    "perform_secondary_action", "press_key", "save_screenshot", "scroll",
-    "select_text", "set_value", "type_text",
+    "perform_secondary_action", "press_key", "save_screenshot", "save_skill",
+    "scroll", "select_text", "set_value", "type_text",
 }
 
 
@@ -152,7 +154,10 @@ def test_resident_loop_host_reuses_globals_and_unwinds_request_tools(tmp_path) -
     global_registry = host.report.ctx.get("tools")
     assert sorted(spec.name for spec in global_registry.list()) == [
         "ask_user_question",
+        "save_skill",
         "todo_write",
+        "web_fetch",
+        "web_search",
     ]
 
     first = host.open(_runtime(content="first"))
@@ -161,7 +166,10 @@ def test_resident_loop_host_reuses_globals_and_unwinds_request_tools(tmp_path) -
     first.close()
     assert sorted(spec.name for spec in global_registry.list()) == [
         "ask_user_question",
+        "save_skill",
         "todo_write",
+        "web_fetch",
+        "web_search",
     ]
 
     second = host.open(_runtime(content="second"))
@@ -329,10 +337,11 @@ def test_model_client_allows_multi_step_desktop_tokens():
 
 def test_rows_report_active_and_dump_is_complete():
     report = boot_loop_context(_runtime())
-    assert [row.status for row in report.rows] == ["active"] * 15
+    assert [row.status for row in report.rows] == ["active"] * 17
     dump = report.dump_config()
     assert {row["id"] for row in dump} == {
-        "harness-tools", "computer-agent", "perception-tools", "look-tool",
+        "harness-tools", "web-tools", "skill-writer", "computer-agent",
+        "perception-tools", "look-tool",
         "local-action-tools", "desktop-action-tools", "coding-tools",
         "delegate-tool", "capability-tools", "guard", "system-prompt",
         "llm-provider", "session-store", "learning-review", "model-client",

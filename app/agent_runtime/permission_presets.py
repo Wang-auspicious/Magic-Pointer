@@ -50,6 +50,12 @@ class PermissionPresetSpec:
 
 
 PRESETS: dict[str, PermissionPresetSpec] = {
+    "plan": PermissionPresetSpec(
+        sandbox="read-only",
+        approval="ask",
+        name="计划模式",
+        description="先只读研究并提交计划；你批准后才以写入权限执行。",
+    ),
     "read-only": PermissionPresetSpec(
         sandbox="read-only",
         approval="ask",
@@ -71,10 +77,12 @@ PRESETS: dict[str, PermissionPresetSpec] = {
     ),
 }
 
-# 预设 → MP 效果表档位。read-only 落 SAFE（读直行、其余全问）；
+# 预设 → MP 效果表档位。plan 落 PLAN（读直行、写问、destructive/purchase 拒）；
+# read-only 落 SAFE（读直行、其余全问）；
 # workspace-write 落 DEFAULT（可逆写在环内、不可逆问）；danger-full-access
 # 落 BYPASS（购买仍问——那是 MP 自己的红线，不在 DSH 语义内）。
 _PRESET_MODES: dict[str, PermissionMode] = {
+    "plan": PermissionMode.PLAN,
     "read-only": PermissionMode.SAFE,
     "workspace-write": PermissionMode.DEFAULT,
     "danger-full-access": PermissionMode.BYPASS,

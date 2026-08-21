@@ -26,6 +26,13 @@ const GLYPHS: Record<string, string> = {
 
 const PRESETS: PresetOption[] = [
   {
+    value: 'plan',
+    name: '计划模式',
+    label: '计划',
+    description: '先只读研究并提交计划；你批准后才以写入权限执行。',
+    glyph: GLYPHS['read-only'],
+  },
+  {
     value: 'read-only',
     name: '只读',
     label: '只读',

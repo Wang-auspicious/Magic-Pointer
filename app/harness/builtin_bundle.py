@@ -124,6 +124,23 @@ def _apply_harness_tools(fork, config: dict[str, Any]) -> None:
     register_todo_write(registry, sink=todo_store.write)
 
 
+def _apply_web_tools(fork, config: dict[str, Any]) -> None:
+    """Hermes-contract keyless web search/fetch; READ-only, always safe."""
+    from app.agent_runtime.web_tools import register_web_tools
+
+    register_web_tools(fork.get("tools"))
+
+
+def _apply_skill_writer(fork, config: dict[str, Any]) -> None:
+    """Hermes self-evolution write side: agent-distilled skills persist."""
+    from app.agent_runtime.skill_writer import register_skill_writer
+
+    raw_root = str(config.get("skills_root") or "").strip()
+    if not raw_root:
+        return
+    register_skill_writer(fork.get("tools"), skills_root=Path(raw_root))
+
+
 def _apply_perception_tools(fork, config: dict[str, Any]) -> None:
     """Model-facing perception over this turn's grounded evidence."""
     PerceptionTools(fork.get("perception")).register_all(fork.get("tools"))
@@ -257,6 +274,13 @@ def _apply_coding_tools(fork, config: dict[str, Any]) -> None:
     if not raw_root:
         return
     register_coding_tools(fork.get("tools"), workspace_root=Path(raw_root))
+    from app.agent_runtime.plan_mode import register_present_plan
+
+    register_present_plan(
+        fork.get("tools"),
+        workspace_root=Path(raw_root),
+        todo_sink=fork.get("todo_store").write,
+    )
 
 
 def _apply_delegate_tool(fork, config: dict[str, Any]) -> None:
@@ -479,6 +503,8 @@ BUILTIN_PLUGINS: dict[str, PluginSpec] = {
     spec.name: spec
     for spec in (
         _spec("harness-tools", ("tools",), _apply_harness_tools),
+        _spec("web-tools", ("tools",), _apply_web_tools),
+        _spec("skill-writer", ("tools",), _apply_skill_writer),
         _spec("perception-tools", ("tools", "perception"), _apply_perception_tools),
         _spec("look-tool", ("tools", "vision"), _apply_look_tool),
         _spec("local-action-tools", ("tools",), _apply_local_action_tools),
@@ -505,6 +531,8 @@ BUILTIN_PLUGINS: dict[str, PluginSpec] = {
 
 BUILTIN_ROW_IDS: tuple[str, ...] = (
     "harness-tools",
+    "web-tools",
+    "skill-writer",
     "perception-tools",
     "look-tool",
     "local-action-tools",
@@ -614,6 +642,12 @@ def _global_loop_rows(root: Path) -> list[BundleRow]:
     """Rows whose providers live for the whole resident Agent process."""
     return [
         BundleRow("harness-tools", "harness-tools"),
+        BundleRow("web-tools", "web-tools"),
+        BundleRow(
+            "skill-writer",
+            "skill-writer",
+            {"skills_root": str(_user_extension_root(root) / "skills")},
+        ),
         BundleRow("computer-agent", "computer-agent"),
         BundleRow("system-prompt", "system-prompt"),
         BundleRow(
@@ -773,6 +807,12 @@ def boot_loop_context(
 
     rows = [
         BundleRow("harness-tools", "harness-tools"),
+        BundleRow("web-tools", "web-tools"),
+        BundleRow(
+            "skill-writer",
+            "skill-writer",
+            {"skills_root": str(_user_extension_root(root) / "skills")},
+        ),
         BundleRow("computer-agent", "computer-agent"),
         BundleRow("perception-tools", "perception-tools"),
         BundleRow(

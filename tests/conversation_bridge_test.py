@@ -23,7 +23,7 @@ def test_answer_conversation_rejects_empty_question() -> None:
 
 
 def test_answer_conversation_rejects_unknown_permission_preset() -> None:
-    result = conversation_bridge.answer_conversation("问一个问题", [], {}, "plan")
+    result = conversation_bridge.answer_conversation("问一个问题", [], {}, "yolo")
     assert result["ok"] is False
     assert "未知权限预设" in str(result["error"])
 
