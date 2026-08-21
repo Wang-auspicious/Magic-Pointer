@@ -759,3 +759,24 @@ def test_cancel_request_requires_the_open_turn(tmp_path: Path) -> None:
     session.start_turn()
     with pytest.raises(RuntimeError):
         session.request_cancel(turn=session.open_turn + 7, reason="wrong turn")
+
+
+def test_pending_work_is_derived_from_the_last_turn_reason(tmp_path: Path) -> None:
+    store = FileSessionStore(tmp_path)
+    session = store.create("resumable")
+    assert session.has_pending_work() is False
+
+    session.start_turn()
+    session.append_message(_message(Role.USER, "长任务"))
+    session.end_turn(session.open_turn, reason="budget_exhausted")
+    assert session.has_pending_work() is True, "预算耗尽不等于任务完成"
+
+    session.start_turn()
+    session.append_message(_message(Role.ASSISTANT, "做完了"))
+    session.end_turn(session.open_turn, reason="completed")
+    assert session.has_pending_work() is False, "自然完成不欠活"
+
+    session.start_turn()
+    session.append_message(_message(Role.USER, "下一个"))
+    session.end_turn(session.open_turn, reason="awaiting_user")
+    assert session.has_pending_work() is False, "等用户澄清不是未完成"

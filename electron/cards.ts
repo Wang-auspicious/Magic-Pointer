@@ -123,6 +123,13 @@ const CardModel = (() => {
     else if (fields.hit) note = String(fields.hit);
     else if (fields.recipe) note = String(fields.recipe);
     else if (fields.tier) note = String(fields.tier);
+    else if (fields.name) note = String(fields.name);
+    // 长任务的真实步数（O5）：轮数由 loop 事件携带，不是 TYPICAL_PHASES 的
+    // 估计。100 步和 3 步的任务在卡上必须读得出差别。
+    const round = Number(fields.turn);
+    if (Number.isFinite(round) && round > 0) {
+      note = note ? `第 ${round} 轮 · ${note}` : `第 ${round} 轮`;
+    }
     return {
       phase,
       label,

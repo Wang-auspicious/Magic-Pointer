@@ -51,6 +51,20 @@ _ZERO_HASH = "0" * 64
 _PROCESS_FILE_LOCKS: dict[str, threading.RLock] = {}
 _PROCESS_FILE_LOCKS_GUARD = threading.Lock()
 
+# Turn endings that may leave steps undone. The pending-work marker is
+# derived from these (Hermes resume_pending semantics); everything else
+# (completed / awaiting_user / local_action / stop_hook) finished its turn
+# honestly.
+_UNFINISHED_TURN_REASONS = frozenset({
+    "budget_exhausted",
+    "stalled",
+    "provider_unavailable",
+    "user_interrupt",
+    "max_output_tokens_recovered",
+    "invariant_failed",
+    "interrupted",
+})
+
 _TOOL_NOT_STARTED = (
     "TOOL_NOT_STARTED: The tool call was interrupted before the Harness "
     "recorded it as started. Retry it if it is still needed."
@@ -989,6 +1003,25 @@ class EventSession:
             {"turn": target, "requestId": request_id},
         )
         return True
+
+    def has_pending_work(self) -> bool:
+        """True when the latest finished turn ended without finishing the job.
+
+        Derived from the durable turn/end reason — no second marker to keep
+        in sync. A budget cut, a stall, a provider failure or a user
+        interrupt may all leave steps undone (Hermes' ``resume_pending``
+        semantics); a natural completion, an awaiting-user pause or a local
+        action do not. The GUI uses this to offer continuation instead of
+        silently forgetting an unfinished task after a restart.
+        """
+        self._synchronize()
+        for event in reversed(self._events):
+            if event.type == "turn/end":
+                return (
+                    str(event.data.get("reason") or "")
+                    in _UNFINISHED_TURN_REASONS
+                )
+        return False
 
     def repair_interrupted_turn(self) -> int:
         """Append risk-aware results for unresolved calls, then close the turn."""

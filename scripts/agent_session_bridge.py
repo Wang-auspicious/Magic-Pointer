@@ -43,7 +43,7 @@ def handle_request(payload: dict[str, Any]) -> dict[str, Any]:
     action = str(payload.get("action") or "").strip()
     session_id = str(payload.get("sessionId") or "").strip()
     target = str(payload.get("target") or "").strip()
-    if action != "cancel" and target not in TARGETS:
+    if action not in {"cancel", "status"} and target not in TARGETS:
         return {"ok": False, "error": "invalid_target"}
     try:
         session = FileSessionStore(_session_root()).resume(session_id, repair=False)
@@ -70,6 +70,21 @@ def handle_request(payload: dict[str, Any]) -> dict[str, Any]:
             "ok": True,
             "sessionId": session.id,
             "turn": int(event.data["turn"]),
+        }
+    if action == "status":
+        """Pending-work query (D2): lets the GUI offer continuation of an
+        unfinished task after a restart instead of silently forgetting it."""
+        last_reason = None
+        for event in reversed(session.events):
+            if event.type == "turn/end":
+                last_reason = str(event.data.get("reason") or "")
+                break
+        return {
+            "ok": True,
+            "sessionId": session.id,
+            "hasPendingWork": session.has_pending_work(),
+            "lastTurnReason": last_reason,
+            "openTurn": session.open_turn,
         }
     if action == "put":
         text = str(payload.get("text") or "").strip()

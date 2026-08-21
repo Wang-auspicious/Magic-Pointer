@@ -108,3 +108,16 @@ assert.ok(cards.isSettled({ state: 'done' }));
 assert.ok(cards.isSettled({ state: 'failed' }));
 
 console.log('cards contract test ok');
+
+// ---- 长任务的真实步数（O5）：轮数来自 loop 事件，不是估计值 ----
+const roundStep = cards.phaseStep({ phase: 'model_request', ms: 900, fields: { turn: '12' } });
+assert.strictEqual(roundStep.note, '第 12 轮', '运行中的卡必须显示真实轮数，100 步和 3 步不能长得一样');
+const roundWithFact = cards.phaseStep({ phase: 'model_response', ms: 1200, fields: { turn: '13' } });
+assert.strictEqual(roundWithFact.note, '第 13 轮');
+const toolStep = cards.phaseStep({ phase: 'tool_call', ms: 200, fields: { name: 'get_app_state' } });
+assert.strictEqual(toolStep.note, 'get_app_state', '工具步骤要显示是哪个工具在跑');
+assert.strictEqual(
+  cards.phaseStep({ phase: 'model_request', fields: {} }).note,
+  '',
+  '没有轮数事实时不编造',
+);
