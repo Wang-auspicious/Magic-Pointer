@@ -1023,6 +1023,69 @@ class EventSession:
                 )
         return False
 
+    def interrupted_turn_summary(self) -> dict[str, Any] | None:
+        """Harness-v2 resume reduction over the last finished turn.
+
+        Returns None when the newest turn completed naturally, is still
+        awaiting user input, or the session has no turns. Otherwise returns
+        {turn, reason, task_input, steps}: what the interrupted run was
+        doing, where it stopped, and which tool steps settled — exactly what
+        a continuation prompt needs. One-shot by construction: the next
+        turn appended after this read becomes the newest turn and the
+        reduction moves past it.
+        """
+        self._synchronize()
+        last_end = None
+        for event in reversed(self._events):
+            if event.type == "turn/end":
+                last_end = event
+                break
+        if last_end is None:
+            return None
+        reason = str(last_end.data.get("reason") or "")
+        if reason not in _UNFINISHED_TURN_REASONS:
+            return None
+        turn = int(last_end.data.get("turn") or 0)
+        cutoff = self._events.index(last_end)
+        task_input = ""
+        prepared: dict[str, str] = {}
+        steps: list[dict[str, str]] = []
+        for event in self._events[:cutoff + 1]:
+            data = event.data or {}
+            if event.type == "user/message":
+                message = data.get("message")
+                content = ""
+                if isinstance(message, dict):
+                    if not message.get("injected") and not message.get("tool_call_id"):
+                        content = str(message.get("content") or "").strip()
+                elif not content:
+                    content = str(data.get("text") or "").strip()
+                if content:
+                    task_input = content[:600]
+                continue
+            try:
+                event_turn = int(data.get("turn") or -1)
+            except (TypeError, ValueError):
+                continue
+            if event_turn != turn:
+                continue
+            if event.type == "operation/prepared":
+                prepared[str(data.get("operationId"))] = str(data.get("name") or "?")
+            elif event.type == "operation/settled":
+                op_id = str(data.get("operationId") or "")
+                steps.append({
+                    "name": prepared.get(op_id, "?"),
+                    "outcome": str(data.get("outcome") or "?"),
+                })
+        if not task_input:
+            return None
+        return {
+            "turn": turn,
+            "reason": reason,
+            "task_input": task_input,
+            "steps": steps[-20:],
+        }
+
     def repair_interrupted_turn(self) -> int:
         """Append risk-aware results for unresolved calls, then close the turn."""
         if self._turn_lease_context is None:

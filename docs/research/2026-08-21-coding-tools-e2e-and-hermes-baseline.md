@@ -108,3 +108,23 @@ awaitingUserInput/pendingInput 字段（此前 _completed_result 把它丢了）
 诚实边界：web_fetch 不执行 JS、不支持 PDF；save_skill 无人工审批门
 （SkillLoader 本就只注入 user_data 目录）；尾部修剪阈值是拍定的经验值。
 
+
+
+## 5.6 第三轮：Codex 工作区/工具暴露设计移植 + harness-v2 resume
+
+对照 Codex 源码（`codex-rs/core/src/tools/spec_plan.rs` 的 ToolExposure、
+thread-scoped `workspace_roots`）补两个产品级设计缺陷：
+
+1. **会话级工作区**（不再是"先敲 /cwd 才能干活"）：作曲家新增工作区芯片，
+   点击弹系统文件夹选择器，绑定后随每次发送传 `payload.workspaceRoot`；
+   桥校验存在性并回写为持久默认。链路 preload→main(IPC
+   conversations:pick-workspace)→data.ts→studio.ts 全通。
+2. **工具 Direct/Deferred 分档**（不再 50 个 schema 全列）：ToolSpec 新增
+   deferred 标记，14 个 capability 工具退出初始列表；模型经 find_capability
+   （CC ToolSearch 契约，loop 已有发现装载机制）按需拉取，Direct 从 47 降到 30。
+3. **harness-v2 resume 归约**（用户投喂 pi `harness-v2.md` 后落地）：
+   `EventSession.interrupted_turn_summary()` 按记录归约最后一轮断点
+   （原始任务/停止原因/已结算步骤）；conversation_bridge 在下一次发送时注入
+   一次性续跑上下文——真机验证：伪造 budget_exhausted 中断 → 发"继续" →
+   模型核对磁盘实际状态 → apply_patch 实现 black_friday + 自写测试 →
+   pytest 8/8 全绿读回验证。

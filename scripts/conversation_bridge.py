@@ -544,7 +544,7 @@ def answer_conversation(
     # Plan-mode approval gate: clicking the fixed approve button lands here as
     # the next question; consume the stored plan and unlock write execution.
     from app.agent_runtime.plan_mode import PLAN_APPROVED_OPTION, consume_approved_plan
-    from app.agent_runtime.workspace_state import read_workspace
+    from app.agent_runtime.workspace_state import read_workspace, write_workspace
 
     if prompt == PLAN_APPROVED_OPTION:
         plan_text = consume_approved_plan(read_workspace(ROOT))
@@ -645,6 +645,19 @@ def answer_conversation(
         session_key = str(window.get("windowTitle") or "chat")
         agent_session_id = "agent-studio-" + hashlib.sha256(session_key.encode("utf-8")).hexdigest()[:32]
         agent_session = sessions.open_or_create(agent_session_id, repair=True)
+        # Harness-v2 resume: if the previous turn ended unfinished, surface
+        # the breakpoint on this send. One-shot by construction — this turn
+        # becomes the newest one, so the reduction moves past it.
+        continuation_block = ""
+        if prompt != PLAN_APPROVED_OPTION:
+            try:
+                from app.agent_runtime.resume_context import continuation_prefix
+
+                continuation_block = continuation_prefix(
+                    agent_session.interrupted_turn_summary()
+                )
+            except Exception:
+                continuation_block = ""
         activity_sink = _ConversationActivitySink(conversation_clock)
         from app.agent_runtime.session import cancel_interrupt_check
 
@@ -664,7 +677,7 @@ def answer_conversation(
             session=agent_session,
             request_header=request_header,
             local_action_input=agent_prompt,
-            evidence_input=evidence or None,
+            evidence_input="\n\n".join(x for x in (continuation_block, evidence) if x) or None,
             budgets=CONVERSATION_BUDGETS,
             event_sink=activity_sink,
             interaction_metadata={
