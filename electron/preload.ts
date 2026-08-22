@@ -192,11 +192,15 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
   conversations: {
     list: () => ipcRenderer.invoke('conversations:list'),
     get: (id: unknown) => ipcRenderer.invoke('conversations:get', id),
-    send: (payload: { conversationId?: unknown; question?: unknown; permissionPreset?: unknown; requestId?: unknown }) => ipcRenderer.invoke('conversations:send', {
+    pickWorkspace: () => ipcRenderer.invoke('conversations:pick-workspace'),
+    send: (payload: { conversationId?: unknown; question?: unknown; permissionPreset?: unknown; requestId?: unknown; workspaceRoot?: unknown }) => ipcRenderer.invoke('conversations:send', {
       conversationId: String(payload?.conversationId || '').slice(0, 120),
       question: String(payload?.question || '').slice(0, MAX_COMMAND_CHARS),
       permissionPreset: String(payload?.permissionPreset || 'workspace-write').slice(0, 40),
       requestId: String(payload?.requestId || '').slice(0, 120),
+      ...(String(payload?.workspaceRoot || '').trim()
+        ? { workspaceRoot: String(payload?.workspaceRoot || '').trim().slice(0, 500) }
+        : {}),
     }),
     export: (id: unknown) => ipcRenderer.invoke('conversations:export', String(id || '').slice(0, 120)),
     timeline: () => ipcRenderer.invoke('conversations:timeline'),

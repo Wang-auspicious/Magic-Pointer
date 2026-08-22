@@ -917,6 +917,7 @@ bindSlashMenu();
 
 /* ---- 权限预设芯片（DSH PermissionSelect 同款：芯片 + 弹层 + Full access 确认门） ---- */
 let composerPreset = 'workspace-write';
+let composerWorkspace = ''; // '' = 用上次持久化的默认工作区
 interface PermPresetOption {
   value: string; name: string; label: string; description: string; glyph: string;
   confirm?: { title: string; description: string };
@@ -1046,6 +1047,33 @@ function bindPermissionChip() {
     renderPermissionChip();
   });
 }
+function renderWorkspaceChip() {
+  const label = document.getElementById('composer-workspace-label');
+  if (!label) return;
+  if (!composerWorkspace) {
+    label.textContent = '工作区';
+    label.title = '编码工作区：未指定（用上次持久化的默认值，/cwd 可查）。点击选择文件夹';
+    return;
+  }
+  const segments = composerWorkspace.split(/[\/]/).filter(Boolean);
+  label.textContent = segments[segments.length - 1] || composerWorkspace;
+  label.title = `编码工作区：${composerWorkspace}（点击更换）`;
+}
+
+function bindWorkspaceChip() {
+  renderWorkspaceChip();
+  document.getElementById('composer-workspace')?.addEventListener('click', async e => {
+    e.stopPropagation();
+    try {
+      const picked = await Data.pickWorkspace();
+      if (picked?.ok && picked.path) {
+        composerWorkspace = String(picked.path);
+        renderWorkspaceChip();
+      }
+    } catch { /* 选择器不可用时静默保留当前状态 */ }
+  });
+}
+bindWorkspaceChip();
 bindPermissionChip();
 /* DSH 输入卡：textarea 随内容长高，14 行封顶（336px，InputBar 同款上限） */
 function fitComposer(ta: HTMLTextAreaElement) {
@@ -1265,6 +1293,7 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
         question,
         composerPreset,
         requestId,
+        composerWorkspace || undefined,
       );
       if (!response?.ok || !response.conversationId) throw new Error(response?.error || '这次没有答完。');
       activeConversationId = String(response.conversationId);
@@ -1275,6 +1304,9 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
         renderPermissionChip();
       } else if (command?.type === 'model') {
         await refreshComposerModel();
+      } else if (command?.type === 'cwd' && typeof (response as { command?: { path?: string } }).command?.path === 'string') {
+        composerWorkspace = String((response as { command?: { path?: string } }).command!.path);
+        renderWorkspaceChip();
       }
       await openConversation(activeConversationId);
       await renderSidebar();

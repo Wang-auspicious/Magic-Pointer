@@ -364,6 +364,7 @@ def _merged_tool_spec(
         used_backend=(
             "fabric.plan_execute_inloop" if write_inloop else "fabric.plan_proposal"
         ),
+        deferred=True,
         timeout_ms=30000,
         verify_result=verify_action_receipt if write_inloop else None,
     )
@@ -415,6 +416,7 @@ def _individual_tool_spec(
         used_backend=(
             "fabric.plan_execute_inloop" if write_inloop else "fabric.plan_proposal"
         ),
+        deferred=True,
         timeout_ms=30000,
         verify_result=verify_action_receipt if write_inloop else None,
     )

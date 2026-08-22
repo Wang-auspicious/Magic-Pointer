@@ -1218,6 +1218,16 @@ ipcMain.handle('conversations:export', async (event: Electron.IpcMainInvokeEvent
   await fs.promises.writeFile(picked.filePath, `${JSON.stringify(conversation, null, 2)}\n`, 'utf8');
   return { ok: true, path: picked.filePath };
 });
+ipcMain.handle('conversations:pick-workspace', async (event: Electron.IpcMainInvokeEvent) => {
+  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_conversation_sender' };
+  const parent = BrowserWindow.fromWebContents(event.sender) || dashboardWindow || undefined;
+  const picked = await dialog.showOpenDialog(parent, {
+    title: '选择编码工作区（agent 在这个目录里读写与执行）',
+    properties: ['openDirectory'],
+  });
+  if (picked.canceled || !picked.filePaths?.length) return { ok: false, canceled: true };
+  return { ok: true, path: picked.filePaths[0] };
+});
 ipcMain.handle('conversations:send', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
   if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_conversation_sender' };
   const question = String(raw?.question || '').trim().slice(0, 4000);
@@ -1225,6 +1235,7 @@ ipcMain.handle('conversations:send', async (event: Electron.IpcMainInvokeEvent, 
   const conversationId = String(raw?.conversationId || '').trim().slice(0, 120);
   const permissionPreset = String(raw?.permissionPreset || 'workspace-write').trim().slice(0, 40);
   const requestId = String(raw?.requestId || crypto.randomUUID()).trim().slice(0, 120) || crypto.randomUUID();
+  const workspaceRoot = String(raw?.workspaceRoot || '').trim();
   const existing = conversationId ? conversations().get(conversationId) : null;
   const payload = {
     question,
@@ -1233,6 +1244,7 @@ ipcMain.handle('conversations:send', async (event: Electron.IpcMainInvokeEvent, 
     modelRuntime: activeModelRuntimeConfig(),
     permissionPreset,
     requestId,
+    ...(workspaceRoot ? { workspaceRoot } : {}),
   };
   return new Promise((resolve) => {
     const child = runPythonBridge(payload, 'scripts/conversation_bridge.py', 'dashboard', {

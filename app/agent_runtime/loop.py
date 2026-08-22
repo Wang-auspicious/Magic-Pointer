@@ -1538,8 +1538,11 @@ def _select_tool_schemas(
         if name in specs and name not in selected:
             selected.append(name)
     for spec in registry.list():
-        if spec.name not in selected:
-            selected.append(spec.name)
+        if spec.name in selected or spec.deferred:
+            # Deferred tools (Codex exposure model) stay out of the initial
+            # list; find_capability surfaces and loads them on demand.
+            continue
+        selected.append(spec.name)
     selected = selected[: params.tool_limit]
     return [
         {

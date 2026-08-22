@@ -501,6 +501,7 @@ def answer_conversation(
     obj: dict[str, Any],
     permission_preset: str,
     *,
+    workspace_root: str = "",
     clock: PhaseClock | None = None,
 ) -> dict[str, Any]:
     from app.agent_runtime.permission_modes import PermissionMode
@@ -602,6 +603,22 @@ def answer_conversation(
 
     runtime["workspace_root"] = str(read_workspace(ROOT))
     runtime["permission_mode"] = mode.value
+    # Codex thread-scoped workspace_roots: the conversation carries its own
+    # workspace; an explicit one overrides the persisted default and becomes
+    # the new default.
+    explicit_workspace = str(workspace_root or "").strip()
+    if explicit_workspace:
+        candidate = Path(explicit_workspace).expanduser()
+        if not candidate.is_dir():
+            return {
+                "ok": False,
+                "error": f"工作区目录不存在：{explicit_workspace}",
+            }
+        runtime["workspace_root"] = str(candidate.resolve())
+        try:
+            write_workspace(ROOT, candidate)
+        except (OSError, ValueError):
+            pass
 
     conversation_clock.mark("runtime_boot")
     report = boot_loop_context(runtime, root=ROOT)
@@ -715,6 +732,7 @@ def main() -> int:
             payload.get("turns") if isinstance(payload.get("turns"), list) else [],
             payload.get("object") if isinstance(payload.get("object"), dict) else {},
             permission_preset,
+            workspace_root=str(payload.get("workspaceRoot") or ""),
         )
     write_json(result)
     return 0 if result.get("ok") else 1

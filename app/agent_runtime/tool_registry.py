@@ -88,6 +88,10 @@ class ToolSpec:
     verify_result: Callable[[Any], None] | None = None
     discovers_tools: bool = False
     suspends_for_user_input: bool = False
+    deferred: bool = False
+    """Codex ToolExposure::Deferred: absent from the model's initial tool
+    list; discoverable through the search tool (find_capability), which the
+    loop turns into next-round schemas. Core tools stay direct."""
     preconditions: tuple[Precondition, ...] = ()
 
 
