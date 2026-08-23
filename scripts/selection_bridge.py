@@ -2068,6 +2068,7 @@ def _loop_router(
     selection_session_id: str | None,
     selection_snapshot_id: str | None,
     clock=None,
+    reply_style: str = "normal",
 ) -> dict:
     """The agent loop as the production router (model-as-router architecture).
 
@@ -2261,6 +2262,7 @@ def _loop_router(
         "workspace_root": str(Path.cwd()),
         "permission_mode": os.environ.get("MAGIC_POINTER_PERMISSION_MODE", "default").strip() or "default",
         "permission_preset": "",
+        "reply_style": reply_style,
     }
     resident_scope = None
     try:
@@ -2277,6 +2279,7 @@ def _loop_router(
         precondition_factory = ctx.get("precondition_factory")
         sessions = ctx.get("sessions")
         request_header = ctx.get("model_request_header")
+        selection_todo_store = ctx.get("todo_store")
         from app.agent_runtime.session import cancel_interrupt_check
 
         model_cfg = next(
@@ -2402,6 +2405,12 @@ def _loop_router(
                 # USER_INTERRUPT with a Receipt (O3); kill stays as the
                 # fallback for a loop that misses the boundary.
                 interrupt_check=cancel_interrupt_check(agent_session),
+                # Stage path rides the same idle-deadline heartbeat the
+                # conversation bridge uses: a long model call or a single
+                # long run_command must not be killed by the Electron
+                # silence deadline (B1.3).
+                keepalive=clock.mark if clock is not None else None,
+                todo_store=selection_todo_store,
             )
         except Exception as exc:  # noqa: BLE001 - loop crash must never kill answer path
             return {
@@ -2575,6 +2584,8 @@ def build_agent_prompt_draft(
     model_compiler: Callable[[str, str], str] | None = None,
     clock: PhaseClock | None = None,
 ) -> dict[str, Any]:
+    reply_style = str(payload.get("replyStyle") or "normal").strip().lower()[:20]
+
     def mark(phase: str, **fields: Any) -> None:
         if clock is not None:
             clock.mark(phase, **fields)
@@ -2815,6 +2826,7 @@ def main() -> int:
             selection_session_id,
             selection_snapshot_id,
             clock=clock,
+            reply_style=reply_style,
         )
         loop_interaction = _loop_interaction_metadata(loop_result)
         input_artifact_public = (

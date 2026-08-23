@@ -328,6 +328,26 @@ class LoopParams:
     evidence_input: str | None = None
     inbox: Inbox | None = None
     interaction_metadata: Mapping[str, Any] = field(default_factory=dict)
+    keepalive: Callable[[str], None] | None = None
+    todo_store: Any = None
+    """Optional TodoStore-like object that exposes ``read()`` -> list[dict].
+
+    Used by partial-delivery message construction when the loop hits
+    BUDGET_EXHAUSTED — the user-facing terminal message lists the still
+    pending todos so the next /resume picks them up.
+    """
+    """Optional stderr heartbeat used to reset the IPC idle deadline.
+
+    The Electron-side ``python_bridge_runner`` kills a Python child after 60s
+    of silence on stderr/stdout (long-task blocker). During one model call or
+    a long-running tool the agent can legitimately stay quiet for minutes
+    while a single ``run_command``/``read_file`` finishes, and the child is
+    killed before any progress is delivered. A bridge-provided callback that
+    writes a single ``@@mp phase=…`` line to stderr at every turn and tool
+    boundary is enough to keep the deadline alive without inventing data the
+    model did not produce. Receivers must be silent on failure (a downstream
+    stream that fails to flush must never abort a tool call).
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -632,6 +652,24 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
     tool_schema_tokens = estimate_text_tokens(str(tool_schemas))
     loaded_extra: list[str] = []
     stop_hooks = tuple(params.stop_hooks)
+    keepalive = params.keepalive
+
+    def _beat(label: str) -> None:
+        """Optional stderr heartbeat for the IPC bridge idle deadline.
+
+        The Electron-side ``python_bridge_runner`` kills any Python child
+        that stays silent on stderr/stdout for 60s (the long-task ceiling
+        users see as "agent disconnected mid-run"). One callback per turn
+        and per tool is enough to keep the deadline re-armed without
+        inventing data the model did not produce; receivers must be silent
+        on failure because a broken heartbeat must never abort a tool call.
+        """
+        if keepalive is None:
+            return
+        try:
+            keepalive(label)
+        except Exception:  # noqa: BLE001 - heartbeat is best-effort
+            return
 
     first_messages = _first_messages(params)
     if params.session is not None:
@@ -671,9 +709,27 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
         while True:
             now_ms = clock()
             if now_ms > deadline_ms:
-                productive = (
+                last_round_productive = (
                     last_progress_turn > 0
                     and turn_number - 1 == last_progress_turn
+                )
+                # Compaction and pending inbox / tool suspension are forms of
+                # genuine progress that the pure tool-mark metric cannot see.
+                # A round that fired proactive compaction spent a turn paying
+                # for cheaper follow-up calls; a round that woke for a
+                # pending user steer must not be killed by the deadline check
+                # before it can act (Codex agent.rs::is_auto_compact +
+                # input_queue pending).
+                compaction_progress = (
+                    last_transition is TransitionReason.COMPACT_TRIGGERED
+                )
+                pending_steer_or_input = (
+                    params.inbox is not None and params.inbox.has_pending()
+                )
+                productive = (
+                    last_round_productive
+                    or compaction_progress
+                    or pending_steer_or_input
                 )
                 if productive and params.budget_renewals > 0:
                     # A productive round always renews: the budget constrains
@@ -692,7 +748,9 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                 else:
                     terminal = Terminal(
                         reason=TransitionReason.BUDGET_EXHAUSTED,
-                        message="full answer budget exhausted",
+                        message=_build_partial_delivery_message(
+                            results, getattr(params, "todo_store", None)
+                        ),
                         turns=turn_number - 1,
                         results=tuple(results),
                         model_usage=_model_usage_snapshot(model_usage),
@@ -709,6 +767,7 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                 budget_remaining_ms=remaining_ms,
             )
             validate_messages(state.messages)
+            _beat(f"agent_turn turn={turn_number}")
             yield TurnStarted(turn=turn_number)
 
             if (
@@ -733,6 +792,7 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                 # messages for one summary and may re-attach carried-over
                 # state (the unfinished plan), so the list can get *longer*
                 # while the request gets much smaller.
+                compactor_succeeded_this_turn = False
                 if params.token_estimator(compacted_messages) < params.token_estimator(
                     list(state.messages)
                 ):
@@ -750,6 +810,7 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                         turn_count=turn_number,
                     )
                     yield TurnFinished(state)
+                    compactor_succeeded_this_turn = True
                     # Still over the line after compacting means the history is
                     # not where the weight is; summarising again costs a model
                     # call and buys nothing.
@@ -762,6 +823,13 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                     )
                 else:
                     fruitless_compactions += 1
+                # A successful compaction spent a round paying for cheaper
+                # follow-up calls; without marking it productive, the next
+                # model's deadline check sees the stale progress marker
+                # (the previous turn's tool call) and hard-cuts a long
+                # task that is genuinely making progress (review T1).
+                if compactor_succeeded_this_turn:
+                    last_progress_turn = turn_number
 
             if params.interrupt_check is not None and params.interrupt_check():
                 terminal = Terminal(
@@ -773,6 +841,7 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                 )
                 yield _stop(terminal)
                 return
+
 
             if loop_scope.is_cancelled:
                 raise CancelledError("cancelled before model call")
@@ -1211,6 +1280,7 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                     params.precondition_context_factory,
                     params.hook_manager,
                     params.permission_mode,
+                    interrupt_check=params.interrupt_check,
                 )
 
             schedule = schedule_tool_calls(
@@ -1312,6 +1382,7 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                         outcome=outcome,
                     )
                 yield ToolCallFinished(result=normalized)
+                _beat(f"tool_done name={call.name} ok={int(not normalized.is_error)}")
                 if (
                     not normalized.is_error
                     and _tool_suspends_for_user_input(registry, call.name)
@@ -1624,6 +1695,51 @@ def _model_usage_snapshot(aggregate: Mapping[str, int]) -> dict[str, int] | None
     return dict(aggregate) if aggregate else None
 
 
+def _summarize_tool_result(result: Any, limit: int = 240) -> str:
+    """Compact one ToolResult into a single-line digest for partial delivery."""
+    name = getattr(result, "tool_call_id", None) or "tool"
+    is_error = bool(getattr(result, "is_error", False))
+    value = getattr(result, "value", "") or ""
+    value = str(value).replace("\n", " ").strip()
+    if len(value) > limit:
+        value = value[: limit - 1] + "…"
+    flag = "ERR" if is_error else "OK"
+    return f"{name} [{flag}]: {value}"
+
+
+def _build_partial_delivery_message(
+    results: Sequence[Any], todo_store: Any
+) -> str:
+    """Compose a human-readable partial delivery for BUDGET_EXHAUSTED.
+
+    The user is looking at a deadline kill. They deserve to know what got
+    done, what is still pending, and the last thing that the agent
+    observed — Hermes partial delivery (hermes_cli.exit_codes).
+    """
+    completed: list[str] = []
+    for result in results[-5:]:
+        completed.append(_summarize_tool_result(result))
+    pending: list[str] = []
+    todo_snapshot = getattr(todo_store, "read", None)
+    if callable(todo_snapshot):
+        try:
+            todos = todo_snapshot()
+        except Exception:
+            todos = []
+        for entry in list(todos)[-6:]:
+            status = entry.get("status") if isinstance(entry, dict) else None
+            content = (
+                entry.get("content") if isinstance(entry, dict) else None
+            ) or str(entry)
+            pending.append(f"[{status or 'pending'}] {content}")
+    lines = ["full answer budget exhausted", "completed steps:"]
+    lines.extend(f"  - {line}" for line in completed) if completed else lines.append("  - (none)")
+    lines.append("pending todos:")
+    lines.extend(f"  - {line}" for line in pending) if pending else lines.append("  - (none)")
+    lines.append("next: the user can /resume to keep going from this point.")
+    return "\n".join(lines)
+
+
 def _pending_user_input(value: str) -> dict[str, Any] | None:
     """Return the bounded clarification payload explicitly requested by a tool."""
     try:
@@ -1655,6 +1771,8 @@ def _execute_one(
     precondition_context_factory: Callable[[ToolCall], PreconditionContext] | None,
     hook_manager: HookManager | None = None,
     permission_mode: str = "default",
+    *,
+    interrupt_check: Callable[[], bool] | None = None,
 ) -> ToolResult:
     """Validate, gate, execute and normalize one tool call.
 
@@ -1876,6 +1994,24 @@ def _execute_one(
             )
     if loop_scope.is_cancelled:
         raise CancelledError(f"cancelled before tool {call.name!r} ({call.id})")
+    # The pre-execution check above only catches a cancel that landed during
+    # the model call. A cancel that the bridge observes while a tool is
+    # *about* to dispatch (between the model yielding ToolCallArrived and
+    # the worker picking it up) would otherwise wait for the tool's full
+    # timeout. The runtime contract is that the next tool boundary honours
+    # the user's stop, not the wall-clock (CC: stop kills the next tool,
+    # not the model). Returning a cancelled result (rather than raising)
+    # lets the loop's existing turn-boundary interrupt check convert the
+    # observation into a USER_INTERRUPT terminal on the very next round.
+    if interrupt_check is not None and interrupt_check():
+        return ToolResult(
+            tool_call_id=call.id,
+            value=f"Error: cancelled before tool {call.name!r} ({call.id})",
+            is_error=True,
+            failure_type=FailureType.TOOL_ERROR,
+            used_backend=None,
+            latency_ms=None,
+        )
     timeout_fired = threading.Event()
     with CancellationScope(cancel_registry) as scope:
         def expire_tool() -> None:

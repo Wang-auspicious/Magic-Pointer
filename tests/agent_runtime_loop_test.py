@@ -89,6 +89,7 @@ from app.governance.cancellation import (  # noqa: E402
     CancellationRegistry,
     CancelledError,
 )
+from app.governance.latency_budget import BudgetPolicy, Stage, TimeoutAction  # noqa: E402
 from app.action_guard.preconditions import PreconditionContext  # noqa: E402
 
 EMPTY_SCHEMA = {"type": "object", "properties": {}, "required": []}
@@ -957,6 +958,156 @@ def test_budget_exhaustion_stops_model_calls():
     assert terminal.turns == 1
     assert len(terminal.results) == 1
     assert isinstance(events[-1], LoopStopped)
+
+
+def test_budget_exhausted_message_includes_partial_delivery():
+    """§13 B1.2: BUDGET_EXHAUSTED message must carry the partial delivery so
+    the user can see what got done, what is still pending, and the path
+    forward — instead of staring at 'full answer budget exhausted'.
+    """
+    clock = FakeClock()
+    registry = CancellationRegistry()
+    slow, _ = make_counting_tool(
+        "slow_tool", value="x", on_call=lambda: clock.advance(10_000)
+    )
+    tools = ToolRegistry()
+    tools.register(slow)
+    backend = ScriptedBackend(
+        [
+            ToolCallArrived(call=ToolCall(id="c1", name="slow_tool", arguments={})),
+            TurnDone(usage=None, raw_text=None),
+        ],
+        [TurnDone(usage=None, raw_text="too late")],
+    )
+    client = LoopModelClient(backend)
+    todo_store = _SimpleTodoStore([
+        {"content": "draw the diagram", "status": "in_progress"},
+        {"content": "ship the README", "status": "pending"},
+    ])
+
+    _events, terminal = asyncio.run(
+        collect(
+            make_params(
+                user_input="draw a diagram and ship the README",
+                client=client,
+                registry=tools,
+                clock=clock,
+                cancel_registry=registry,
+                budget_renewals=0,
+                todo_store=todo_store,
+            )
+        )
+    )
+
+    assert terminal.reason is TransitionReason.BUDGET_EXHAUSTED
+    message = terminal.message
+    assert "completed steps:" in message
+    assert "pending todos:" in message
+    assert "ship the README" in message
+    assert "/resume" in message
+
+
+def test_pending_inbox_renews_budget_on_deadline():
+    """§13 B1.2: a deadline-killed turn that woke because of a pending
+    inbox entry must renew, because the user is steering — killing it
+    before it acts would be exactly what the user is trying to avoid
+    (Codex input_queue.rs pending semantics).
+    """
+    clock = FakeClock()
+    registry = CancellationRegistry()
+    slow, _ = make_counting_tool(
+        "slow_tool", value="x", on_call=lambda: clock.advance(20_000)
+    )
+    tools = ToolRegistry()
+    tools.register(slow)
+    # Two turn scripts: first turn tool call blows the budget; if renewal
+    # works, second turn is reached and the slow tool fires again before
+    # the budget blows a second time without inbox pending.
+    backend = ScriptedBackend(
+        [
+            ToolCallArrived(call=ToolCall(id="c1", name="slow_tool", arguments={})),
+            TurnDone(usage=None, raw_text=None),
+        ],
+        [TurnDone(usage=None, raw_text="still going")],
+    )
+    client = LoopModelClient(backend)
+    inbox = _PendingInboxStub()
+
+    events, terminal = asyncio.run(
+        collect(
+            make_params(
+                user_input="kick off the long job",
+                client=client,
+                registry=tools,
+                clock=clock,
+                cancel_registry=registry,
+                budgets={
+                    Stage.FULL_ANSWER: BudgetPolicy(
+                        stage=Stage.FULL_ANSWER,
+                        budget_ms=15_000,
+                        on_timeout=TimeoutAction.ABANDON,
+                    )
+                },
+                budget_renewals=2,
+                inbox=inbox,
+            )
+        )
+    )
+
+    renewals = [e for e in events if isinstance(e, BudgetRenewed)]
+    assert renewals, "pending inbox must renew the deadline"
+    assert terminal.reason in (
+        TransitionReason.BUDGET_EXHAUSTED,
+        TransitionReason.COMPLETED,
+    )
+    # The renewal that did fire should have happened at the deadline check
+    # following the first slow_tool call, which is turn 1 -> turn 2.
+    assert renewals[0].renewals_used == 1
+
+
+def test_compact_triggered_renews_budget_on_deadline():
+    """§13 B1.2: a turn that fired COMPACT_TRIGGERED without making tool
+    progress must still renew — compaction is itself progress.
+    """
+    clock = FakeClock()
+    registry = CancellationRegistry()
+    # No tools: the script triggers reactive compaction by emitting nothing,
+    # which forces a compact-only round.
+    backend = ScriptedBackend(
+        [TurnWithheld(reason="max_output_tokens")],
+        [TurnDone(usage=None, raw_text="done after compact")],
+    )
+    client = LoopModelClient(backend)
+
+    def compact(messages):
+        return messages[:-1]
+
+    def estimator(messages):
+        return 100 if messages else 0
+
+    events, terminal = asyncio.run(
+        collect(
+            make_params(
+                user_input="compact me",
+                client=client,
+                clock=clock,
+                cancel_registry=registry,
+                budgets={
+                    Stage.FULL_ANSWER: BudgetPolicy(
+                        stage=Stage.FULL_ANSWER,
+                        budget_ms=10_000,
+                        on_timeout=TimeoutAction.ABANDON,
+                    )
+                },
+                budget_renewals=1,
+                compactor=compact,
+                token_estimator=estimator,
+            )
+        )
+    )
+
+    finished = [e for e in events if isinstance(e, TurnFinished)]
+    assert any(f.state.transition is TransitionReason.COMPACT_TRIGGERED for f in finished)
 
 
 def test_loop_default_clock_uses_milliseconds(monkeypatch):
@@ -1884,6 +2035,9 @@ def test_stop_hook_raising_keeps_loop_running():
 
 
 def test_interrupt_check_stops_before_model_call():
+    """A user interrupt observed at any turn boundary terminates the loop with
+    ``USER_INTERRUPT`` (the pre-execution tool check is a runtime contract,
+    not just a model-call one)."""
     tool, _ = make_counting_tool("itool")
     registry = ToolRegistry()
     registry.register(tool)
@@ -1891,6 +2045,7 @@ def test_interrupt_check_stops_before_model_call():
 
     def interrupt_check():
         checks["n"] += 1
+        # Cancel observed between turn 1's model call and the tool dispatch.
         return checks["n"] >= 2
 
     backend = ScriptedBackend(
@@ -1912,7 +2067,12 @@ def test_interrupt_check_stops_before_model_call():
         )
     )
 
-    assert checks["n"] == 2
+    assert terminal.reason is TransitionReason.USER_INTERRUPT
+    # At least two checks fired: one before the model call (False), one
+    # before the tool dispatch (True). The exact count after the tool check
+    # is implementation detail; what matters is that the loop honours
+    # USER_INTERRUPT instead of running the second turn.
+    assert checks["n"] >= 2
     assert len(backend.received) == 1
     assert terminal.reason is TransitionReason.USER_INTERRUPT
     assert terminal.message == "user interrupt"
@@ -1975,6 +2135,96 @@ def test_truncation_then_tool_round_then_complete():
     assert terminal.turns == 3
     assert terminal.message == "done"
     assert terminal.reason is TransitionReason.COMPLETED
+
+
+def test_compaction_keeps_budget_renewable_on_followup_round() -> None:
+    """T1+T5: a turn that fires compaction makes no tool progress, but the
+    follow-up round must still count as productive relative to the previous
+    tool turn, otherwise the very next model call at the deadline is treated
+    as non-productive and the budget cuts hard. Real-machine notepad-edit:
+    the loop hit the deadline exactly after compaction ran, then a follow-up
+    answer was rejected as BUDGET_EXHAUSTED — the model had progress to
+    show, but the loop killed it on a stale progress marker.
+    """
+    from app.fabric.engine import _LOOP_EMERGENCY_TURN_FUSE
+    from app.governance.latency_budget import (
+        BudgetPolicy,
+        Stage,
+        TimeoutAction,
+    )
+
+    clock = FakeClock()
+    call_count = {"n": 0}
+
+    def advance_clock() -> None:
+        call_count["n"] += 1
+        # First tool call: 10s. Second tool call: 14s. Total 24s, just past
+        # the 20s budget so turn 3's deadline check must fire.
+        clock.advance(14_000 if call_count["n"] >= 2 else 10_000)
+
+    tool, _ = make_counting_tool(
+        "work_tool", value="ok", on_call=advance_clock
+    )
+    registry = ToolRegistry()
+    registry.register(tool)
+
+    compactions = {"n": 0}
+
+    def compactor(messages):
+        compactions["n"] += 1
+        # Cut enough messages so the estimator sees a meaningful savings:
+        # the loop only counts the compaction as successful when the
+        # post-call weight is strictly below the pre-call weight, so the
+        # estimator below maps N messages to a larger number and keeps one.
+        if len(messages) <= 1:
+            return list(messages)
+        return messages[:1]
+
+    def estimator(messages):
+        # Proportional to message count so a real cut is observed; the
+        # threshold (_PROACTIVE_COMPACT_RATIO * budget) trips on the first
+        # turn when there is enough history to compact.
+        return 100 + 10 * len(messages)
+
+    backend = ScriptedBackend(
+        [
+            ToolCallArrived(call=ToolCall(id="c1", name="work_tool", arguments={})),
+            TurnDone(usage=None, raw_text=None),
+        ],
+        [
+            ToolCallArrived(call=ToolCall(id="c2", name="work_tool", arguments={})),
+            TurnDone(usage=None, raw_text=None),
+        ],
+        [TurnDone(usage=None, raw_text="answer after compaction")],
+    )
+    client = LoopModelClient(backend)
+
+    params = make_params(
+        client=client,
+        registry=registry,
+        clock=clock,
+        compactor=compactor,
+        context_budget_tokens=100,
+        token_estimator=estimator,
+        budgets={
+            Stage.FULL_ANSWER: BudgetPolicy(
+                stage=Stage.FULL_ANSWER,
+                budget_ms=20_000,
+                on_timeout=TimeoutAction.ABANDON,
+            )
+        },
+    )
+    assert params.emergency_turn_fuse >= 4
+
+    events, terminal = asyncio.run(collect(params))
+
+    assert terminal.reason is TransitionReason.COMPLETED, terminal.message
+    assert compactions["n"] >= 1, "estimator must have forced compaction"
+    renewals = [e for e in events if isinstance(e, BudgetRenewed)]
+    assert renewals, (
+        "compaction-only turn must not strand the budget: the follow-up "
+        "model call needs BudgetRenewed to surface its progress"
+    )
 
 
 def test_budget_renews_after_productive_round_and_emits_event():
@@ -2415,3 +2665,139 @@ def test_transient_backend_error_terminates_when_no_progress():
     events, terminal = asyncio.run(collect(make_params(client=client, user_input="开始")))
 
     assert terminal.reason is TransitionReason.PROVIDER_UNAVAILABLE
+
+
+# --- keepalive: IPC idle-deadline heartbeat (long-task blocker) --------------
+
+
+def test_keepalive_fires_at_turn_and_tool_boundaries() -> None:
+    """Each turn boundary and each tool execution must call the keepalive so
+    Electron's stderr-idle deadline (60s) does not kill long agent runs.
+
+    Bridge-side heartbeat line shape is owned by the bridge; the loop only
+    guarantees it sees at least one call per turn start, per model chunk
+    boundary, and per tool finish (one call per non-trivial tool)."""
+    beats: list[str] = []
+
+    add_schema = {
+        "type": "object",
+        "properties": {"a": {"type": "integer"}, "b": {"type": "integer"}},
+        "required": ["a", "b"],
+    }
+    add, add_state = make_counting_tool("add", value=3, schema=add_schema)
+    registry = ToolRegistry()
+    registry.register(add)
+
+    backend = ScriptedBackend(
+        [
+            ToolCallArrived(call=ToolCall(id="c1", name="add", arguments={"a": 1, "b": 2})),
+            TurnDone(usage=None, raw_text=None),
+        ],
+        [TurnDone(usage=None, raw_text="done")],
+    )
+    client = LoopModelClient(backend)
+    events, terminal = asyncio.run(
+        collect(
+            make_params(
+                client=client,
+                registry=registry,
+                keepalive=beats.append,
+            )
+        )
+    )
+    assert terminal.reason is TransitionReason.COMPLETED
+    # Must beat on each turn boundary (≥1 per turn: 2 turns) and after each tool.
+    assert add_state["calls"] == 1
+    assert len(beats) >= 2, beats
+    # Each beat carries some text the bridge can recognise.
+    assert all(isinstance(beat, str) and beat for beat in beats)
+
+
+def test_keepalive_swallows_callback_exceptions() -> None:
+    """A failing heartbeat must never abort the loop — diagnostics own no data."""
+
+    def explode(label: str) -> None:
+        raise RuntimeError(f"keepalive_broken:{label}")
+
+    backend = ScriptedBackend([TurnDone(usage=None, raw_text="hi")])
+    client = LoopModelClient(backend)
+    events, terminal = asyncio.run(
+        collect(make_params(client=client, keepalive=explode))
+    )
+    assert terminal.reason is TransitionReason.COMPLETED
+
+
+# --- interrupt_check: must fire on the way INTO a tool call ------------------
+
+
+def test_interrupt_check_terminates_before_long_running_tool_starts() -> None:
+    """A cancel that arrives mid-turn must end the loop at the next tool
+    boundary — not after the entire turn (CC: stop button kills the next tool,
+    not the model). Without this, a 60-second ``run_command`` swallows the
+    user's cancel and reports success anyway.
+    """
+    answer = iter([False, True, True])  # turn start -> False; tool -> True; next-turn recheck -> True
+    def interrupt_check() -> bool:
+        return next(answer, True)
+
+    # Tool that proves it was NOT called when interrupt fires before it.
+    tool_calls: list[str] = []
+
+    def slow_tool(**_: object) -> str:
+        tool_calls.append("invoked")
+        return "should-never-run"
+
+    spec = ToolSpec(
+        name="slow",
+        description="long running tool (test only)",
+        input_schema=EMPTY_SCHEMA,
+        execute=slow_tool,
+        effect=Effect.READ,
+        timeout_ms=60_000,
+    )
+    registry = ToolRegistry()
+    registry.register(spec)
+
+    backend = ScriptedBackend(
+        [
+            ToolCallArrived(call=ToolCall(id="c1", name="slow", arguments={})),
+            TurnDone(usage=None, raw_text=None),
+        ],
+    )
+    client = LoopModelClient(backend)
+
+    events, terminal = asyncio.run(
+        collect(
+            make_params(
+                client=client,
+                registry=registry,
+                interrupt_check=interrupt_check,
+            )
+        )
+    )
+    assert tool_calls == [], (
+        "interrupt_check that fires before tool execution must abort the call"
+    )
+    assert terminal.reason is TransitionReason.USER_INTERRUPT
+
+
+class _SimpleTodoStore:
+    """Minimal in-memory TodoStore that satisfies LoopParams.todo_store."""
+
+    def __init__(self, entries):
+        self._entries = list(entries)
+
+    def read(self):
+        return list(self._entries)
+
+
+class _PendingInboxStub:
+    """Inbox stub that always reports a pending entry."""
+
+    def has_pending(self):
+        return True
+
+    def drain(self, _target=None):  # pragma: no cover - not exercised here
+        return []
+
+

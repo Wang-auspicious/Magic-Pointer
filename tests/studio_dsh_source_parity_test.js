@@ -43,6 +43,9 @@ const sprite = fs.readFileSync('electron/renderer/icons.ts', 'utf8');
 const shellCss = fs.readFileSync('electron/renderer/dsh_web.css', 'utf8');
 const studioSource = fs.readFileSync('electron/renderer/studio.ts', 'utf8');
 const tokens = fs.readFileSync('electron/renderer/dsh_tokens.css', 'utf8');
+// CSS may be CRLF on Windows; the parity intent is source-equality of
+// declarations, not byte-level line endings.
+const shellCssText = shellCss.replace(/\r\n/g, '\n');
 assert(html.includes('id="chat-source-thumb"'), 'the header must own an actual source thumbnail');
 assert(html.includes('id="mp-context-tag"'), 'the ZCode-style source tag must be independent from preview');
 assert(!html.includes('id="chat-origin-text"'), 'the header must not paint a project/folder path into the preview control');
@@ -67,13 +70,13 @@ assert(html.includes('<use href="#ic-dsh-agent-preset"'), 'Header preset label m
 assert(html.includes('<use href="#ic-dsh-download"'), 'Session log must use IconDownloadOutline16');
 assert(!html.includes('class="dshw-agent-mark"'), 'Header preset must not fall back to a homemade MP badge');
 
-assert(shellCss.includes('background: transparent;\n  color: var(--dsw-alias-label-primary);'), 'Session log must preserve the source transparent/primary treatment');
-assert(shellCss.includes('.dshw-session-log svg { width: 12px; height: 12px; }'), 'Session log download glyph is source-sized at 12px');
+assert(shellCssText.includes('background: transparent;\n  color: var(--dsw-alias-label-primary);'), 'Session log must preserve the source transparent/primary treatment');
+assert(shellCssText.includes('.dshw-session-log svg { width: 12px; height: 12px; }'), 'Session log download glyph is source-sized at 12px');
 assert(tokens.includes('--dsw-alias-label-dimmed: rgb(225, 229, 238);'), 'light tokens must include the source label-dimmed value');
 assert(tokens.includes('--dsw-alias-label-dimmed: rgb(67, 69, 74);'), 'dark tokens must include the source label-dimmed value');
 assert(tokens.includes('--dsw-alias-border-inverted: rgba(255, 255, 255, 0.06);'), 'dark border-inverted must match DSH exactly');
 assert(studioSource.includes("group.items.some((conversation) => conversation.id === active)"), 'the expanded current workspace must drive DSH folder-active state');
 assert(studioSource.includes('?? list[0]?.id'), 'initial workspace rendering must anticipate the first opened conversation');
-assert(shellCss.includes(".dshw-project.is-active[data-open='true'] .dshw-project-folder"), 'current expanded workspace folder must use the DSH business color');
+assert(shellCssText.includes(".dshw-project.is-active[data-open='true'] .dshw-project-folder"), 'current expanded workspace folder must use the DSH business color');
 
 console.log('studio DSH source parity test ok');

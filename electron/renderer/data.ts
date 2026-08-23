@@ -227,7 +227,7 @@ declare global {
     conversations: {
       list(): Promise<MagicPointerConversation[]>;
       get(id: unknown): Promise<MagicPointerConversation | undefined>;
-      send(payload: { conversationId?: string | null; question: string; permissionPreset?: string; requestId?: string; workspaceRoot?: string }): Promise<Record<string, any>>;
+      send(payload: { conversationId?: string | null; question: string; permissionPreset?: string; requestId?: string; workspaceRoot?: string; replyStyle?: string }): Promise<Record<string, any>>;
       pickWorkspace?(): Promise<{ ok?: boolean; canceled?: boolean; path?: string; error?: string }>;
       export?(id: unknown): Promise<{ ok?: boolean; canceled?: boolean; path?: string; error?: string }>;
       timeline(): Promise<MagicPointerTimelineDay[]>;
@@ -342,7 +342,7 @@ declare global {
     isLive(): boolean;
     conversations(): Promise<MagicPointerConversation[]>;
     conversation(id: string): Promise<MagicPointerConversation | undefined>;
-    sendConversation(conversationId: string | null, question: string, permissionPreset?: string, requestId?: string, workspaceRoot?: string): Promise<Record<string, any>>;
+    sendConversation(conversationId: string | null, question: string, permissionPreset?: string, requestId?: string, workspaceRoot?: string, replyStyle?: string): Promise<Record<string, any>>;
     pickWorkspace(): Promise<{ ok?: boolean; canceled?: boolean; path?: string; error?: string }>;
     exportConversation(id: string): Promise<{ ok?: boolean; canceled?: boolean; path?: string; error?: string }>;
     onConversationProgress(callback: (payload: { requestId?: string; record?: Record<string, unknown> }) => void): void;
@@ -595,9 +595,9 @@ const Data: MagicPointerDataApi = {
     return bridge()!.conversations.get(id);
   },
 
-  async sendConversation(conversationId: string | null, question: string, permissionPreset?: string, requestId?: string, workspaceRoot?: string): Promise<Record<string, any>> {
+  async sendConversation(conversationId: string | null, question: string, permissionPreset?: string, requestId?: string, workspaceRoot?: string, replyStyle?: string): Promise<Record<string, any>> {
     if (!hasBridge()) return { ok: false, error: '请在 Magic Pointer 应用里发送。' };
-    return bridge()!.conversations.send({ conversationId, question, permissionPreset: permissionPreset || 'workspace-write', requestId, workspaceRoot });
+    return bridge()!.conversations.send({ conversationId, question, permissionPreset: permissionPreset || 'workspace-write', requestId, workspaceRoot, replyStyle: replyStyle || 'normal' });
   },
 
   async pickWorkspace(): Promise<{ ok?: boolean; canceled?: boolean; path?: string; error?: string }> {

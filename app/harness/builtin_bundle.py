@@ -751,6 +751,7 @@ def _run_loop_rows(runtime: dict[str, Any], root: Path) -> list[BundleRow]:
                 "command": str(runtime.get("command") or ""),
                 "workspace_root": str(runtime.get("workspace_root") or ""),
                 "permission_preset": str(runtime.get("permission_preset") or ""),
+                "reply_style": str(runtime.get("reply_style") or "normal"),
             },
         ),
     ]
@@ -916,6 +917,7 @@ def boot_loop_context(
                 "command": command,
                 "workspace_root": str(runtime.get("workspace_root") or ""),
                 "permission_preset": str(runtime.get("permission_preset") or ""),
+                "reply_style": str(runtime.get("reply_style") or "normal"),
             },
         ),
     ]

@@ -142,6 +142,48 @@ _CATASTROPHIC_COMMANDS = (
 blacklist). Everything else goes through the permission ladder unchanged."""
 
 
+# Read-only shell-command allowlist (Codex sandboxMode:read-only + CC Bash
+# readonly subset). Anything not on this list falls back to the static
+# LOCAL_IRREVERSIBLE declaration (default-closed), so a missed entry costs
+# a confirmation prompt, never silent data loss.
+_READ_ONLY_COMMANDS = frozenset({
+    "ls", "dir", "pwd", "echo", "cat", "type", "head", "tail",
+    "wc", "find", "tree", "date", "whoami", "hostname", "env",
+    "printenv", "set", "get-childitem", "get-location", "get-content",
+    "get-date", "get-item", "test-path", "select-object", "where-object",
+})
+"""Allowlist of commands with no observable mutation effect (Codex
+sandboxMode=readOnly + CC Bash readonly subset). Comparison is lowercase
+(Linux + Windows PowerShell). First whitespace-separated token must hit
+this set; anything chained (| / ; / && / || / $( / backtick) falls back to
+LOCAL_IRREVERSIBLE because the static check cannot prove the right-hand
+side is also benign."""
+
+_CHAIN_OPERATORS = re.compile(r"[|&;]|&&|\|\||`|\$\(")
+
+
+def _classify_command_effect(arguments: dict) -> "Effect":
+    """``run_command`` 的动态 effect_for:把纯只读 shell 当作 READ,其余按静态声明。
+
+    Codex 把任何不可证明为只读的命令当作 sandbox=workspace-write 不可触发的
+    操作;CC Bash 走 readonly 子集允许列目录/读文件。这两条折在一起就是:
+    命令首 token 在 ``_READ_ONLY_COMMANDS`` 白名单、且不含 shell 链式操作符,
+    才返回 ``Effect.READ``。其余一律回落 ``LOCAL_IRREVERSIBLE``,让权限链
+    用默认值拦住,而不是把误判当放行凭据。
+    """
+    from app.agent_runtime.tool_registry import Effect
+
+    command = str((arguments or {}).get("command") or "").strip()
+    if not command:
+        return Effect.LOCAL_IRREVERSIBLE
+    if _CHAIN_OPERATORS.search(command):
+        return Effect.LOCAL_IRREVERSIBLE
+    first = command.split(maxsplit=1)[0].lower()
+    if first in _READ_ONLY_COMMANDS:
+        return Effect.READ
+    return Effect.LOCAL_IRREVERSIBLE
+
+
 class BackgroundJobs:
     """Detached child processes owned by one coding-tools registration."""
 
@@ -332,24 +374,32 @@ def register_coding_tools(
         target.write_text(updated, encoding="utf-8", newline="")
         return f"edited {space.display(target)} ({count} replacement(s))"
 
-    def apply_patch(patch: str, **_: Any) -> str:
+    def apply_patch(patch: str | list[str], **_: Any) -> str:
         from app.agent_runtime.apply_patch import ApplyPatchError, apply_patch_text, parse_patch
 
-        text = str(patch or "")
-        if not text.strip():
+        if isinstance(patch, (list, tuple)):
+            blocks = [str(p) for p in patch if str(p).strip()]
+        else:
+            blocks = [str(patch or "")]
+        if not blocks:
             raise ValueError("patch is required")
         try:
-            for hunk in parse_patch(text):
-                if hunk.kind == "delete":
-                    checkpoints.record(space.resolve(hunk.path), existed=True)
+            for block in blocks:
+                text = str(block).strip()
+                if not text:
                     continue
-                target = space.resolve(hunk.path)
-                checkpoints.record(target, existed=target.exists())
-                if hunk.kind == "update" and hunk.move_path:
-                    checkpoints.record(space.resolve(hunk.move_path), existed=False)
-            return apply_patch_text(text, space.root)
+                for hunk in parse_patch(text):
+                    if hunk.kind == "delete":
+                        checkpoints.record(space.resolve(hunk.path), existed=True)
+                        continue
+                    target = space.resolve(hunk.path)
+                    checkpoints.record(target, existed=target.exists())
+                    if hunk.kind == "update" and hunk.move_path:
+                        checkpoints.record(space.resolve(hunk.move_path), existed=False)
+                apply_patch_text(text, space.root)
         except ApplyPatchError as exc:
             raise ValueError(f"apply_patch failed: {exc}") from exc
+        return f"applied {len(blocks)} patch block(s)"
 
     def restore_files(steps: int = 0, **_: Any) -> str:
         try:
@@ -567,6 +617,7 @@ def register_coding_tools(
         },
         execute=run_command,
         effect=Effect.LOCAL_IRREVERSIBLE,
+        effect_for=_classify_command_effect,
         is_concurrency_safe=False,
         used_backend="shell",
         timeout_ms=620_000,
@@ -582,9 +633,13 @@ def register_coding_tools(
             "type": "object",
             "properties": {
                 "patch": {
-                    "type": "string",
+                    "oneOf": [
+                        {"type": "string"},
+                        {"type": "array", "items": {"type": "string"}},
+                    ],
                     "description": (
-                        "以 *** Begin Patch 开头、*** End Patch 结尾的完整补丁文本"
+                        "以 *** Begin Patch 开头、*** End Patch 结尾的完整补丁"
+                        "文本；也可以传多个补丁块的数组，逐段依次应用"
                     ),
                 },
             },
@@ -592,6 +647,18 @@ def register_coding_tools(
         },
         execute=apply_patch,
         effect=Effect.REVERSIBLE_WRITE,
+        examples=(
+            {
+                "patch": (
+                    "*** Begin Patch\n"
+                    "*** Update File: app/agent_runtime/loop.py\n"
+                    "@@\n"
+                    "-    old_line = 1\n"
+                    "+    new_line = 2\n"
+                    "*** End Patch"
+                )
+            },
+        ),
         is_concurrency_safe=False,
         used_backend="workspace_fs",
         timeout_ms=30_000,

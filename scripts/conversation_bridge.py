@@ -503,6 +503,7 @@ def answer_conversation(
     *,
     workspace_root: str = "",
     clock: PhaseClock | None = None,
+    reply_style: str = "normal",
 ) -> dict[str, Any]:
     from app.agent_runtime.permission_modes import PermissionMode
     from app.agent_runtime.permission_presets import PRESETS, mode_for_preset
@@ -583,6 +584,7 @@ def answer_conversation(
             "process_name": str(window.get("app") or ""),
         },
         "command": agent_prompt,
+        "reply_style": reply_style,
     }
 
     from app.agent_runtime.workspace_state import read_workspace, write_workspace
@@ -702,6 +704,7 @@ def answer_conversation(
             },
             interrupt_check=cancel_interrupt_check(agent_session),
             nudge_hooks=(_plan_completion_gate,),
+            keepalive=conversation_clock.mark,
         )
     except Exception as exc:  # noqa: BLE001 - loop crash must never kill the answer path
         timing_ms = conversation_clock.total("total", ok=0)
@@ -758,6 +761,7 @@ def main() -> int:
     if permission_preset not in PRESETS:
         write_json({"ok": False, "error": f"未知权限预设：{permission_preset}（可用：{', '.join(PRESETS)}）"})
         return 2
+    reply_style = str(payload.get("replyStyle") or "normal").strip().lower()[:20]
 
     with request_ai_config(payload.get("modelRuntime")):
         result = answer_conversation(
@@ -766,6 +770,7 @@ def main() -> int:
             payload.get("object") if isinstance(payload.get("object"), dict) else {},
             permission_preset,
             workspace_root=str(payload.get("workspaceRoot") or ""),
+            reply_style=reply_style,
         )
     write_json(result)
     return 0 if result.get("ok") else 1

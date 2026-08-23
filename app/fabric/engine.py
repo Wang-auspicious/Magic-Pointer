@@ -1019,6 +1019,8 @@ def run_agent_turn(
     interaction_metadata: Mapping[str, Any] | None = None,
     interrupt_check: Callable[[], bool] | None = None,
     nudge_hooks: Sequence[Callable[[], str | None]] = (),
+    keepalive: Callable[[str], None] | None = None,
+    todo_store: Any = None,
 ) -> Terminal:
     """Run one agentic loop turn to its Terminal (synchronous entry).
 
@@ -1093,6 +1095,8 @@ def run_agent_turn(
         interaction_metadata=interaction_metadata or {},
         interrupt_check=interrupt_check,
         nudge_hooks=tuple(nudge_hooks),
+        keepalive=keepalive,
+        todo_store=todo_store,
     )
     return asyncio.run(_consume_agent_loop(params))
 

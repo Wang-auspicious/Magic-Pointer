@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import enum
 import math
+import json
 import re
 import time
 from collections.abc import Callable, Iterable, Mapping
@@ -92,6 +93,10 @@ class ToolSpec:
     """Codex ToolExposure::Deferred: absent from the model's initial tool
     list; discoverable through the search tool (find_capability), which the
     loop turns into next-round schemas. Core tools stay direct."""
+    examples: tuple[dict[str, object], ...] = ()
+    """CC prompt_sample / Codex examples: one concrete usage per tool,
+    surfaced verbatim in the schema so the model does not burn a round
+    guessing ARGUMENT shapes (roadmap §1.1)."""
     preconditions: tuple[Precondition, ...] = ()
 
 
@@ -275,15 +280,20 @@ class ToolRegistry:
 
         Each entry is ``{"name", "description", "parameters": input_schema}``
         (query.ts calls the model with these as the ``tools`` argument).
+        When a tool declares ``examples`` they are attached top-level so the
+        model sees a concrete usage on the first round.
         """
-        return [
-            {
+        emitted: list[dict[str, object]] = []
+        for spec in self.list():
+            entry: dict[str, object] = {
                 "name": spec.name,
                 "description": spec.description,
                 "parameters": spec.input_schema,
             }
-            for spec in self.list()
-        ]
+            if spec.examples:
+                entry["examples"] = spec.examples
+            emitted.append(entry)
+        return emitted
 
     def validate_input(self, spec: ToolSpec, args: dict[str, object]) -> list[str]:
         """Strictly validate ``args`` against ``spec.input_schema``.
@@ -340,7 +350,12 @@ class ToolRegistry:
             return []
         results: list[tuple[int, ToolSpec]] = []
         for spec in self.list():
-            haystack = f"{spec.name} {spec.description}".casefold()
+            example_text = " ".join(
+                json.dumps(ex, ensure_ascii=False) for ex in spec.examples
+            )
+            haystack = (
+                f"{spec.name} {spec.description} {example_text}".casefold()
+            )
             haystack_words = set(re.findall(r"[a-z0-9_]+", haystack))
             score = sum(
                 1 for token in ascii_tokens

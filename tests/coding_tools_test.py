@@ -188,3 +188,27 @@ def test_run_command_timeout_kills_the_process(registry: ToolRegistry) -> None:
         "run_command", {"command": cmd, "timeout_s": 2}
     )
     assert result.is_error is True
+
+
+# --- run_command effect_classifier (Codex/CC allowlist) --------------------
+
+
+def test_run_command_classifies_pure_read_commands_as_read() -> None:
+    """``_classify_command_effect`` 是 run_command 喂给 effect_for 的分类器;
+    测试它本身,避免和 registry 的去重规则打架。"""
+    from app.agent_runtime.coding_tools import _classify_command_effect
+    from app.agent_runtime.tool_registry import Effect
+
+    pure_reads = ["ls", "ls -la", "pwd", "Get-ChildItem", "Get-Location", "cat a.txt"]
+    for cmd in pure_reads:
+        assert _classify_command_effect({"command": cmd}) is Effect.READ, cmd
+
+    # 副作用命令保持 local_irreversible
+    irreversible = ["npm install", "git push", "python -m pytest", "npm test"]
+    for cmd in irreversible:
+        assert _classify_command_effect({"command": cmd}) is Effect.LOCAL_IRREVERSIBLE, cmd
+
+    # 管道 / 链式 shell 走 worst-case
+    chained = ["ls | head", "ls && rm -rf foo", "ls ; rm a"]
+    for cmd in chained:
+        assert _classify_command_effect({"command": cmd}) is Effect.LOCAL_IRREVERSIBLE, cmd

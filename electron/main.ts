@@ -1234,6 +1234,7 @@ ipcMain.handle('conversations:send', async (event: Electron.IpcMainInvokeEvent, 
   if (!question) return { ok: false, error: '问题不能为空。' };
   const conversationId = String(raw?.conversationId || '').trim().slice(0, 120);
   const permissionPreset = String(raw?.permissionPreset || 'workspace-write').trim().slice(0, 40);
+  const replyStyle = String(raw?.replyStyle || 'normal').trim().slice(0, 20);
   const requestId = String(raw?.requestId || crypto.randomUUID()).trim().slice(0, 120) || crypto.randomUUID();
   const workspaceRoot = String(raw?.workspaceRoot || '').trim();
   const existing = conversationId ? conversations().get(conversationId) : null;
@@ -1243,6 +1244,7 @@ ipcMain.handle('conversations:send', async (event: Electron.IpcMainInvokeEvent, 
     object: existing?.object || {},
     modelRuntime: activeModelRuntimeConfig(),
     permissionPreset,
+    replyStyle,
     requestId,
     ...(workspaceRoot ? { workspaceRoot } : {}),
   };
@@ -4495,6 +4497,7 @@ function submitSelectionCommandWhenGrounded(payload: any, startedAt: number, not
     interactionEpisode,
     targetPoint: safeClone(session.snapshot?.target_point || null),
     targetPointSpace: session.snapshot?.target_point_space || null,
+    replyStyle: String(payload?.replyStyle || 'normal').trim().slice(0, 20),
     // 'auto' lets the Python router decide. Hardcoding 'agent_prompt' here (as
     // d9f92b1 did) turned every bubble command into a codex handoff draft and
     // made the whole normal routing chain unreachable from the stage.

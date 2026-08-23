@@ -7,7 +7,7 @@ const assert = require('assert');
 const { PRESETS, optionOf, presetSvg } = require('../electron/renderer/permission_presets');
 
 const VALUES = PRESETS.map(option => option.value);
-assert.deepStrictEqual(VALUES, ['read-only', 'workspace-write', 'danger-full-access'],
+assert.deepStrictEqual(VALUES, ['plan', 'read-only', 'workspace-write', 'danger-full-access'],
   `预设表顺序/取值：${VALUES}`);
 
 for (const option of PRESETS) {
@@ -28,6 +28,7 @@ assert.ok(!VALUES.includes('custom'));
 
 // 未知值查不到（渲染层绝不编造档位）。
 assert.strictEqual(optionOf('bypass'), undefined);
-assert.strictEqual(optionOf('plan'), undefined);
+// plan 是真实档位（不在 Python 真值表之外的展示态）。
+assert.ok(optionOf('plan') && optionOf('plan').value === 'plan');
 
 console.log('permission_presets render mirror: PASS');

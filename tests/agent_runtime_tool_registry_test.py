@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import sys
 import time
-from dataclasses import fields
+from dataclasses import fields, replace
 from pathlib import Path
 
 import pytest
@@ -239,6 +239,37 @@ class TestGetAndList:
 
 
 class TestSchemasForModel:
+    def test_examples_are_surfaced_in_schema_when_present(self) -> None:
+        """ToolSpec.examples (CC prompt_sample / Codex examples) ride the
+        schema so the model sees one concrete usage on the first round instead
+        of guessing argument shapes (roadmap §1.1)."""
+        registry = ToolRegistry()
+        registry.register(make_spec(
+            name="echo_tool",
+            examples=({"text": "hello"}, {"text": "世界"}),
+        ))
+        emitted = registry.schemas_for_model()[0]
+        assert "examples" in emitted
+        assert emitted["examples"] == ({"text": "hello"}, {"text": "世界"})
+
+    def test_examples_absent_keeps_schema_shape_stable(self) -> None:
+        registry = ToolRegistry()
+        registry.register(make_spec(name="echo_tool"))
+        first = registry.schemas_for_model()[0]
+        assert set(first) == {"name", "description", "parameters"}
+
+    def test_search_hits_words_that_only_appear_in_examples(self) -> None:
+        """find_capability must find a tool whose keyword lives only in
+        examples, not in name/description (roadmap §1.2)."""
+        registry = ToolRegistry()
+        registry.register(make_spec(
+            name="apply_patch",
+            description="用 Codex 补丁格式修改多个文件",
+            examples=({"patch": "*** Begin Patch *** End Patch"},),
+        ))
+        hits = registry.search("codex", limit=4)
+        assert any(h.name == "apply_patch" for h in hits)
+
     def test_output_shape_matches_cc_api_tools_parameters(self) -> None:
         registry = ToolRegistry()
         spec = registry.register(make_spec(name="echo_tool"))

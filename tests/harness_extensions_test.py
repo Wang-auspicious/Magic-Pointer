@@ -131,6 +131,43 @@ class TestHooks:
 
 
 class TestPromptSections:
+    def test_reply_style_section_omitted_when_normal(self) -> None:
+        """Default (normal) reply style injects no directive at all."""
+        from app.agent_runtime.system_prompt import default_sections
+
+        builder = SystemPromptBuilder()
+        for section in default_sections():
+            builder.add(section)
+        text = builder.build({"language": "中文", "reply_style": "normal"})
+        assert "# Style" not in text
+        assert "# Language" in text
+
+    def test_reply_style_section_injects_verbosity_directive(self) -> None:
+        """compact/ultra styles add a real Style directive; normal does not."""
+        from app.agent_runtime.system_prompt import default_sections
+
+        builder = SystemPromptBuilder()
+        for section in default_sections():
+            builder.add(section)
+
+        compact_text = builder.build({"language": "中文", "reply_style": "compact"})
+        assert "# Style" in compact_text
+        assert "简洁" in compact_text
+
+        ultra_text = builder.build({"language": "中文", "reply_style": "ultra"})
+        assert "# Style" in ultra_text
+        assert "极简" in ultra_text
+
+    def test_reply_style_section_unknown_value_behaves_like_normal(self) -> None:
+        """An unregistered style must not crash or inject a directive."""
+        from app.agent_runtime.system_prompt import default_sections
+
+        builder = SystemPromptBuilder()
+        for section in default_sections():
+            builder.add(section)
+        text = builder.build({"language": "中文", "reply_style": "galactic"})
+        assert "# Style" not in text
+
     def test_plugin_unload_waits_for_inflight_section_render(self) -> None:
         from app.harness.context import Context
 

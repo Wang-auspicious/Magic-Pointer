@@ -915,6 +915,87 @@ function bindSlashMenu() {
 }
 bindSlashMenu();
 
+/* ---- 回复风格芯片（caveman 式语量控制：极简/简洁/正常/古典，自选调节） ---- */
+let composerStyle = 'normal';
+const REPLY_STYLES = [
+  { value: 'ultra', label: '极简', description: '短句直说，能省则省；技术细节不丢' },
+  { value: 'compact', label: '简洁', description: '去客套铺垫，保留完整句' },
+  { value: 'normal', label: '正常', description: '默认回复风格（不带任何指令）' },
+  { value: 'terse', label: '干脆', description: '省略口头语，直说结论' },
+  { value: 'wenyan', label: '文言', description: '文言文回答，古雅精简' },
+] as const;
+
+function styleOption(value: string) {
+  return REPLY_STYLES.find(s => s.value === value) || REPLY_STYLES[2];
+}
+
+function renderStyleChip() {
+  const btn = document.getElementById('composer-style');
+  const glyph = document.getElementById('composer-style-glyph');
+  const label = document.getElementById('composer-style-label');
+  const option = styleOption(composerStyle);
+  if (btn instanceof HTMLButtonElement) btn.title = `回复风格：${option.label} — ${option.description}`;
+  if (glyph) glyph.textContent = option.value === 'normal' ? '≡' : option.label[0];
+  if (label) label.textContent = option.label;
+}
+
+function closeStyleMenu() {
+  const menu = document.getElementById('composer-style-menu');
+  document.getElementById('composer-style')?.setAttribute('aria-expanded', 'false');
+  if (menu) menu.hidden = true;
+}
+
+function openStyleMenu() {
+  const menu = document.getElementById('composer-style-menu');
+  if (!menu) return;
+  menu.replaceChildren(...REPLY_STYLES.map(option => {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'dshw-perm-row' + (option.value === composerStyle ? ' is-active' : '');
+    row.setAttribute('role', 'option');
+    row.dataset.styleValue = option.value;
+    const text = document.createElement('span');
+    text.className = 'dshw-perm-row-text';
+    const name = document.createElement('span');
+    name.textContent = option.label;
+    const desc = document.createElement('small');
+    desc.textContent = option.description;
+    text.append(name, desc);
+    row.append(text);
+    if (option.value === composerStyle) {
+      const check = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      check.setAttribute('aria-hidden', 'true');
+      check.classList.add('dshw-perm-check');
+      const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+      use.setAttribute('href', '#ic-dsh-check');
+      check.appendChild(use);
+      row.appendChild(check);
+    }
+    return row;
+  }));
+  menu.hidden = false;
+  document.getElementById('composer-style')?.setAttribute('aria-expanded', 'true');
+}
+
+function bindStyleChip() {
+  renderStyleChip();
+  document.getElementById('composer-style')?.addEventListener('click', e => {
+    e.stopPropagation();
+    const menu = document.getElementById('composer-style-menu');
+    closePermissionMenu();
+    if (menu?.hidden) openStyleMenu();
+    else closeStyleMenu();
+  });
+  document.getElementById('composer-style-menu')?.addEventListener('click', e => {
+    const row = (e.target as Element | null)?.closest<HTMLElement>('[data-style-value]');
+    if (!row) return;
+    e.stopPropagation();
+    composerStyle = row.dataset.styleValue || 'normal';
+    closeStyleMenu();
+    renderStyleChip();
+  });
+}
+
 /* ---- 权限预设芯片（DSH PermissionSelect 同款：芯片 + 弹层 + Full access 确认门） ---- */
 let composerPreset = 'workspace-write';
 let composerWorkspace = ''; // '' = 用上次持久化的默认工作区
@@ -1055,7 +1136,7 @@ function renderWorkspaceChip() {
     label.title = '编码工作区：未指定（用上次持久化的默认值，/cwd 可查）。点击选择文件夹';
     return;
   }
-  const segments = composerWorkspace.split(/[\/]/).filter(Boolean);
+  const segments = composerWorkspace.split(/[/]/).filter(Boolean);
   label.textContent = segments[segments.length - 1] || composerWorkspace;
   label.title = `编码工作区：${composerWorkspace}（点击更换）`;
 }
@@ -1115,6 +1196,7 @@ function bindWorkspaceChip() {
   });
 }
 bindWorkspaceChip();
+bindStyleChip();
 bindPermissionChip();
 /* DSH 输入卡：textarea 随内容长高，14 行封顶（336px，InputBar 同款上限） */
 function fitComposer(ta: HTMLTextAreaElement) {
@@ -1339,6 +1421,7 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
         composerPreset,
         requestId,
         composerWorkspace || undefined,
+        composerStyle,
       );
       if (!response?.ok || !response.conversationId) throw new Error(response?.error || '这次没有答完。');
       activeConversationId = String(response.conversationId);

@@ -69,6 +69,7 @@ from app.governance.cancellation import (  # noqa: E402
     CancelledError,
     cancel_all_in_flight,
 )
+from app.governance.latency_budget import Stage  # noqa: E402
 
 PARAGRAPH = "The quick brown fox jumps over the lazy dog."
 FINAL_TEXT = "已翻译并写回：一只敏捷的棕色狐狸跳过了懒狗。"
@@ -127,6 +128,17 @@ class FakeDocumentStore:
         self.deliveries.append(text)
         self.text = text
         return "delivered:ok"
+
+
+def _ms_budget(ms: int) -> Any:
+    """A single FULL_ANSWER budget policy with a millisecond cap."""
+    from app.governance.latency_budget import BudgetPolicy, TimeoutAction
+
+    return BudgetPolicy(
+        stage=Stage.FULL_ANSWER,
+        budget_ms=ms,
+        on_timeout=TimeoutAction.STASH_BACKGROUND,
+    )
 
 
 def _register_fake_tools(registry: ToolRegistry, doc: FakeDocumentStore) -> ToolRegistry:
@@ -343,6 +355,67 @@ def test_four_step_tool_chain_feedback_and_convergence() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_run_agent_turn_forwards_keepalive_to_the_loop() -> None:
+    """The bridge passes ``keepalive`` to keep the IPC idle deadline alive
+    during long model calls/tools; the loop entry must forward it, otherwise
+    the first message dies with TypeError in production (2026-08-23 bug)."""
+    doc = FakeDocumentStore(PARAGRAPH)
+    registry = _register_fake_tools(ToolRegistry(), doc)
+    beats: list[str] = []
+    backend = ChainBackend(rounds=[], final_text="已改写")
+
+    terminal = run_agent_turn(
+        "扩写第二段",
+        objects=[{"id": "o1", "kind": "text", "content": PARAGRAPH}],
+        registry=registry,
+        client=LoopModelClient(backend),
+        keepalive=beats.append,
+    )
+
+    assert terminal.reason is TransitionReason.COMPLETED
+    assert len(beats) >= 1, beats  # at least the turn-start beat
+    assert all(isinstance(b, str) and b for b in beats)
+
+
+def test_run_agent_turn_forwards_todo_store_for_partial_delivery() -> None:
+    """BUDGET_EXHAUSTED must list pending todos; ``run_agent_turn`` must
+    forward the bridge's todo_store into the loop (roadmap §12.1)."""
+    class _Todo:
+        def read(self):
+            return [
+                {"status": "in_progress", "content": "修复 keepalive 接线"},
+                {"status": "pending", "content": "交付 sync"},
+            ]
+
+    doc = FakeDocumentStore(PARAGRAPH)
+    registry = _register_fake_tools(ToolRegistry(), doc)
+    backend = ChainBackend(rounds=[], final_text="x")
+
+    # Budget 1 ms + no progress yet → BUDGET_EXHAUSTED on the first check.
+    # (first clock call = loop start, later calls = past deadline)
+    _clock_state = {"calls": 0}
+
+    def _past_deadline_clock() -> float:
+        _clock_state["calls"] += 1
+        return 6_000.0 if _clock_state["calls"] > 1 else 0.0
+
+    terminal = run_agent_turn(
+        "干活",
+        objects=[{"id": "o1", "kind": "text", "content": PARAGRAPH}],
+        registry=registry,
+        client=LoopModelClient(backend),
+        todo_store=_Todo(),
+        budgets={
+            Stage.FULL_ANSWER: _ms_budget(1),
+        },
+        clock=_past_deadline_clock,
+    )
+
+    assert terminal.reason is TransitionReason.BUDGET_EXHAUSTED
+    assert "修复 keepalive 接线" in terminal.message
+    assert "待办" in terminal.message or "pending" in terminal.message
+
+
 def test_run_agent_turn_keeps_raw_instruction_and_does_not_route_via_recipe(monkeypatch) -> None:
     doc = FakeDocumentStore(PARAGRAPH)
     registry = _register_fake_tools(ToolRegistry(), doc)
@@ -545,7 +618,11 @@ def test_budget_exhaustion_keeps_completed_results() -> None:
 
     assert len(backend.received) == 1
     assert terminal.reason is TransitionReason.BUDGET_EXHAUSTED
-    assert terminal.message == "full answer budget exhausted"
+    # 12.1/§B1: the terminal message is now an honest partial delivery
+    # listing completed steps, not a bare "budget exhausted" stub.
+    assert terminal.message.startswith("full answer budget exhausted")
+    assert "completed steps:" in terminal.message
+    assert "/resume" in terminal.message
     assert terminal.turns == 1
     assert len(terminal.results) == 2
     assert [r.tool_call_id for r in terminal.results] == ["c1", "c2"]
