@@ -1036,12 +1036,16 @@ def test_loop_router_maps_terminal_to_answer(monkeypatch):
         recorded["allowed"] = kwargs.get("allowed_effects")
         recorded["evidence"] = kwargs.get("evidence_input")
         recorded["local_action_input"] = kwargs.get("local_action_input")
+        recorded["keepalive"] = kwargs.get("keepalive")
+        recorded["todo_store"] = kwargs.get("todo_store")
         return _fake_terminal(message="循环给出的回答")
 
     monkeypatch.setattr(engine_module, "run_agent_turn", fake_run)
 
+    clock = selection_bridge.PhaseClock("test", enabled=False)
     result = selection_bridge._loop_router(
-        "帮我看看", [{"id": "o1"}], None, None, None, None, "sess-1", "snap-1"
+        "帮我看看", [{"id": "o1"}], None, None, None, None, "sess-1", "snap-1",
+        clock=clock,
     )
 
     assert recorded["input"] == "帮我看看"
@@ -1052,6 +1056,10 @@ def test_loop_router_maps_terminal_to_answer(monkeypatch):
     assert recorded["local_action_input"] == "帮我看看"
     assert recorded["objects"] == [{"id": "o1"}]
     assert recorded["allowed"] == tuple(Effect)
+    # Stage path rides the same idle-deadline heartbeat + partial delivery
+    # as the conversation path (B1.3/§12.1) — both must reach run_agent_turn.
+    assert callable(recorded["keepalive"])
+    assert recorded["todo_store"] is not None
     assert result["ok"] is True
     assert result["answer"] == "循环给出的回答"
     assert result["route"]["action"] == "model_loop"
