@@ -587,14 +587,16 @@ def answer_conversation(
         "reply_style": reply_style,
     }
 
-    from app.agent_runtime.workspace_state import read_workspace, write_workspace
+    from app.agent_runtime.workspace_state import read_workspace
 
     runtime["workspace_root"] = str(read_workspace(ROOT))
     runtime["permission_mode"] = mode.value
     runtime["permission_preset"] = permission_preset
-    # Codex thread-scoped workspace_roots: the conversation carries its own
-    # workspace; an explicit one overrides the persisted default and becomes
-    # the new default.
+    # Codex thread workspace_roots: the conversation carries its own
+    # workspace; an explicit one overrides the persisted default for THIS
+    # request only. The profile default is written by /cwd, never silently
+    # by a chip pick (a chip pick used to rewrite workspace.txt globally,
+    # leaking this thread's choice into every other conversation).
     explicit_workspace = str(workspace_root or "").strip()
     if explicit_workspace:
         candidate = Path(explicit_workspace).expanduser()
@@ -604,10 +606,6 @@ def answer_conversation(
                 "error": f"工作区目录不存在：{explicit_workspace}",
             }
         runtime["workspace_root"] = str(candidate.resolve())
-        try:
-            write_workspace(ROOT, candidate)
-        except (OSError, ValueError):
-            pass
 
     conversation_clock.mark("runtime_boot")
     report = boot_loop_context(runtime, root=ROOT)

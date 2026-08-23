@@ -610,6 +610,22 @@
   border-color: var(--dsw-alias-border-l3);
 }
 
+/* 「+」点击的可见回应：输入卡短促脉冲一圈（用户反馈：点了没反应）。 */
+@keyframes dshw-card-pulse {
+  0% { box-shadow: var(--dsw-shadow-lv2), 0 0 0 0 rgba(103, 158, 254, 0.45); }
+  70% { box-shadow: var(--dsw-shadow-lv2), 0 0 0 10px rgba(103, 158, 254, 0); }
+  100% { box-shadow: var(--dsw-shadow-lv2), 0 0 0 0 rgba(103, 158, 254, 0); }
+}
+.dshw-card.is-pulsed {
+  animation: dshw-card-pulse 0.6s ease-out;
+}
+
+/* 侧栏 + / 新对话按钮的按压反馈。 */
+.dshw-workspace-action:active,
+.dshw-new-session:active {
+  transform: scale(0.94);
+}
+
 .dshw-scroll {
   max-height: 336px;
   overflow-y: auto;

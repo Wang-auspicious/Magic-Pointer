@@ -224,3 +224,115 @@ def test_conversation_result_can_expose_authoritative_session_bill() -> None:
 
     assert result["agentSessionId"] == "agent-studio-1"
     assert result["interactionLedger"]["tokensText"] == 3
+
+
+class _FakeTodoStore:
+    def __init__(self):
+        self.on_update = None
+    def read(self):
+        return []
+    def has_items(self):
+        return False
+
+
+class _FakeSession:
+    events = ()
+
+    def interrupted_turn_summary(self):
+        return None
+    def enqueue_inbox(self, *a, **k):
+        pass
+    def claim_inbox(self, *a, **k):
+        return []
+
+
+def _install_workspace_boot_stubs(monkeypatch, captured):
+    """boot_loop_context 之后到 run_agent_turn 之间的最小服务桩。"""
+    from types import SimpleNamespace
+
+    from app.agent_runtime.tool_registry import ToolRegistry
+
+    class _Ctx:
+        def get(self, key):
+            if key == "tools":
+                return ToolRegistry()
+            if key == "todo_store":
+                return _FakeTodoStore()
+            if key == "sessions":
+                return SimpleNamespace(open_or_create=lambda *a, **k: _FakeSession())
+            if key == "context_budget":
+                return 64000
+            return SimpleNamespace()  # model_client/compactor/estimator/...
+
+    report = SimpleNamespace(ctx=_Ctx(), rows=[
+        SimpleNamespace(id="model-client", resolved_config={"permission_mode": "default"}),
+    ])
+
+    import app.harness.builtin_bundle as builtin_bundle
+    monkeypatch.setattr(
+        builtin_bundle, "boot_loop_context", lambda runtime, root=None: captured.update(
+            workspace_root=runtime.get("workspace_root")
+        ) or report
+    )
+
+    import app.fabric.engine as engine_module
+
+    def fake_run(user_input, objects=None, registry=None, *, client, **kwargs):
+        from app.agent_runtime.loop import TransitionReason
+        from app.agent_runtime.types import Terminal
+
+        captured["run_kwargs"] = kwargs
+        return Terminal(reason=TransitionReason.COMPLETED, message="好了", turns=1, results=())
+
+    monkeypatch.setattr(engine_module, "run_agent_turn", fake_run)
+
+    import app.fabric.loop_answer as loop_answer
+    monkeypatch.setattr(loop_answer, "terminal_to_answer", lambda terminal, prompt: {"answer": "好了"})
+
+
+def test_explicit_workspace_pick_is_thread_scoped_not_global(monkeypatch, tmp_path):
+    """Codex thread workspace_roots 语义：芯片选择只改本请求的 runtime，
+    绝不回写全局 workspace.txt（那是 /cwd 的职责）——否则 A 会话选的工作区
+    会静默泄漏进 B 会话。"""
+    import app.agent_runtime.workspace_state as workspace_state
+
+    written = []
+    monkeypatch.setattr(
+        workspace_state, "write_workspace", lambda root, path: written.append(path)
+    )
+    ws_dir = tmp_path / "some-repo"
+    ws_dir.mkdir()
+    default_ws = tmp_path / "profile-default"
+    default_ws.mkdir()
+    monkeypatch.setattr(workspace_state, "read_workspace", lambda root: default_ws)
+
+    captured = {}
+    _install_workspace_boot_stubs(monkeypatch, captured)
+
+    result = conversation_bridge.answer_conversation(
+        "看看这个仓库",
+        [],
+        {},
+        "workspace-write",
+        workspace_root=str(ws_dir),
+    )
+    assert captured["workspace_root"] == str(ws_dir.resolve())
+    assert written == [], "芯片选择不得回写全局 workspace.txt"
+    assert result["ok"] is True
+
+
+def test_missing_explicit_workspace_falls_back_to_profile_default(monkeypatch, tmp_path):
+    """不带显式 root 时用持久化默认（/cwd 写的那份），而不是进程 cwd。"""
+    import app.agent_runtime.workspace_state as workspace_state
+
+    default_ws = tmp_path / "profile-default"
+    default_ws.mkdir()
+    monkeypatch.setattr(workspace_state, "read_workspace", lambda root: default_ws)
+
+    captured = {}
+    _install_workspace_boot_stubs(monkeypatch, captured)
+
+    result = conversation_bridge.answer_conversation("随便问", [], {}, "workspace-write")
+    assert captured["workspace_root"] == str(default_ws)
+    assert result["ok"] is True
+

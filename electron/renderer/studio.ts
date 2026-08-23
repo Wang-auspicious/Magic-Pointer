@@ -255,9 +255,16 @@ interface TimelineConversation {
 let sidebarQuery = '';
 let sidebarRecentOnly = false;
 const expandedWorkspaces = new Map<string, boolean>();
+interface SidebarWorkspaceGroup {
+  key: string;
+  label: string;
+  workspaceRoot: string;
+  items: MagicPointerConversation[];
+}
 interface SidebarGroupModule {
   groupConversations(rows: readonly MagicPointerConversation[]): { key: string; label: string; items: MagicPointerConversation[] }[];
   filterConversations(rows: readonly MagicPointerConversation[], query: string): MagicPointerConversation[];
+  groupByWorkspace(rows: readonly MagicPointerConversation[]): SidebarWorkspaceGroup[];
 }
 const sidebarGroups = (globalThis as { SidebarGroups?: SidebarGroupModule }).SidebarGroups!;
 
@@ -314,14 +321,10 @@ async function renderSidebar() {
     const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
     filtered = filtered.filter((conversation) => Number(conversation.updatedAt) >= cutoff);
   }
-  const grouped = new Map<string, MagicPointerConversation[]>();
-  for (const conversation of filtered) {
-    const workspace = String(conversation.object?.app || '').trim() || 'Magic Pointer';
-    const rows = grouped.get(workspace) || [];
-    rows.push(conversation as MagicPointerConversation);
-    grouped.set(workspace, rows);
-  }
-  const groups = [...grouped.entries()].map(([label, items]) => ({ key: label, label, items }));
+  // Codex WorkspaceBrowser 语义：组头是线程绑定的真实工作区（文件夹名），
+  // 不再拿屏幕 app 名冒充工作区。未绑定的落「默认工作区」。
+  const wsGroups = sidebarGroups.groupByWorkspace(filtered as Array<MagicPointerConversation & { workspaceRoot?: string }>);
+  const groups = wsGroups.map((g) => ({ key: g.workspaceRoot || '__default__', label: g.label, items: g.items as MagicPointerConversation[] }));
   if (!groups.length) {
     const empty = document.createElement('div');
     empty.className = 'side-empty';
@@ -464,6 +467,11 @@ async function openConversation(id: string) {
   const c = await Data.conversation(id);
   if (!c) return;
   activeConversationId = c.id;
+  // Codex thread semantics: switching threads shows that thread's bound
+  // workspace on the chip; a thread without one falls back to the profile
+  // default (chip shows unspecified).
+  composerWorkspace = String((c as { workspaceRoot?: string }).workspaceRoot || '');
+  renderWorkspaceChip();
   show('chat');
   document.querySelectorAll('#side-convos .side-item').forEach((n) =>
     (n as HTMLElement).classList.toggle('is-on', (n as HTMLElement).dataset.open === id));
@@ -1488,6 +1496,9 @@ async function boot(initialView: string) {
 function startNewChat() {
   activeConversationId = null;
   activeConversationTab = 'chat';
+  // 新线程不继承上一线程的芯片工作区：未指定 = 跟随默认（Codex 新线程语义）。
+  composerWorkspace = '';
+  renderWorkspaceChip();
   document.querySelectorAll('#side-convos .side-item').forEach((n) => n.classList.remove('is-on'));
   const title = document.getElementById('chat-title');
   if (title) title.textContent = '新对话';
@@ -1511,7 +1522,17 @@ function startNewChat() {
   const trajectory = document.getElementById('trajectory');
   if (trajectory) trajectory.replaceChildren(DshTrajectory.render([]));
   setConversationTab('chat');
-  document.querySelector<HTMLTextAreaElement>('.dshw-input')?.focus();
+  // 「+」的可见回应：即便本来就在空会话上，输入卡也要闪一下并聚焦，
+  // 让点击永远有看得见的结果（用户反馈：点了没反应）。
+  const card = document.querySelector<HTMLElement>('#composer-form .dshw-card');
+  const textarea = document.querySelector<HTMLTextAreaElement>('.dshw-input');
+  if (card) {
+    card.classList.remove('is-pulsed');
+    void card.offsetWidth; // restart the animation
+    card.classList.add('is-pulsed');
+    window.setTimeout(() => card.classList.remove('is-pulsed'), 700);
+  }
+  textarea?.focus();
 }
 
 document.getElementById('new-chat')?.addEventListener('click', startNewChat);

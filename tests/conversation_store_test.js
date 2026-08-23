@@ -140,6 +140,30 @@ const generic1 = store.appendTurn({ newConversation: true, question: '写一封�
 const generic2 = store.appendTurn({ newConversation: true, question: '列一个采购清单', answer: '清单二。' });
 assert.notStrictEqual(generic2.id, generic1.id, '明确的新对话必须新建，不能按 unknown 对象合并');
 
+// ---- Codex thread workspace_roots：工作区是线程属性，不随别的会话漂移 ----
+const wsA = store.appendTurn({
+  newConversation: true,
+  question: '看看这个仓库',
+  answer: '好。',
+  workspaceRoot: 'C:/repos/alpha',
+});
+assert.strictEqual(wsA.workspaceRoot, 'C:/repos/alpha', '新会话必须记住自己的工作区');
+
+// 同会话追问（不带显式 root）保持原绑定；带显式 root 则线程跟随芯片前进。
+store.appendTurn({ conversationId: wsA.id, question: '再看看', answer: '嗯。' });
+assert.strictEqual(store.get(wsA.id).workspaceRoot, 'C:/repos/alpha', '追问不得丢线程工作区');
+store.appendTurn({ conversationId: wsA.id, question: '换到 beta', answer: '好。', workspaceRoot: 'C:/repos/beta' });
+assert.strictEqual(store.get(wsA.id).workspaceRoot, 'C:/repos/beta', '显式换工作区只改本线程');
+
+// 另一会话不受影响（全局默认不被芯片改写的核心断言）。
+const wsB = store.appendTurn({ newConversation: true, question: '另一个会话', answer: '好。', workspaceRoot: 'C:/repos/gamma' });
+assert.strictEqual(wsB.workspaceRoot, 'C:/repos/gamma');
+assert.notStrictEqual(wsB.workspaceRoot, store.get(wsA.id).workspaceRoot, '线程之间工作区互不污染');
+
+// list() 摘要必须携带 workspaceRoot，侧栏分组靠它。
+const listed = store.list().find((c) => c.id === wsA.id);
+assert.strictEqual(listed.workspaceRoot, 'C:/repos/beta', 'list 摘要要带工作区');
+
 store.clear();
 assert.strictEqual(store.list().length, 0);
 

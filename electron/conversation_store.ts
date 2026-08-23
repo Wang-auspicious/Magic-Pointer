@@ -55,6 +55,8 @@ interface Conversation {
   updatedAt: number;
   closed: boolean;
   turns?: TurnEntry[];
+  workspaceRoot?: string;
+  /** Codex thread workspace_roots：线程级绑定，追问保持，显式换才跟随。 */
 }
 
 interface TurnInput {
@@ -76,6 +78,7 @@ interface TurnInput {
   modelUsage?: unknown;
   timingMs?: unknown;
   usedBackend?: unknown;
+  workspaceRoot?: unknown;
 }
 
 interface ConversationStoreOptions {
@@ -228,6 +231,10 @@ function createConversationStore(
       if (!Array.isArray(target.turns)) target.turns = [];
       target.turns.push(entry);
       if (target.turns.length > MAX_TURNS) target.turns.splice(0, target.turns.length - MAX_TURNS);
+      // Codex thread semantics: the thread keeps its workspace across
+      // follow-ups; an explicit root on this turn moves THIS thread only.
+      const explicitRoot = String(turn.workspaceRoot || '').trim();
+      if (explicitRoot) target.workspaceRoot = explicitRoot;
       target.updatedAt = at;
       // 换到列表最前面：最近碰过的排最上，和人的记忆顺序一致
       conversations.splice(conversations.indexOf(target), 1);
@@ -246,6 +253,7 @@ function createConversationStore(
       updatedAt: at,
       closed: false,
       turns: [entry],
+      workspaceRoot: String(turn.workspaceRoot || '').trim() || undefined,
     };
     conversations.unshift(created);
     if (conversations.length > MAX_CONVERSATIONS) {
@@ -264,6 +272,7 @@ function createConversationStore(
       subtitle: c.subtitle,
       object: c.object,
       updatedAt: c.updatedAt,
+      workspaceRoot: c.workspaceRoot || '',
       // 磁盘上的旧文件可能没有 turns 字段（早期版本/手改），逐条判空，
       // 否则一条坏记录会把整个列表、时间线、记忆、产物五个 handler 一起打挂。
       turns: (c.turns || []).length,

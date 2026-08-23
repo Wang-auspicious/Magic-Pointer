@@ -1238,6 +1238,9 @@ ipcMain.handle('conversations:send', async (event: Electron.IpcMainInvokeEvent, 
   const requestId = String(raw?.requestId || crypto.randomUUID()).trim().slice(0, 120) || crypto.randomUUID();
   const workspaceRoot = String(raw?.workspaceRoot || '').trim();
   const existing = conversationId ? conversations().get(conversationId) : null;
+  // Codex thread workspace_roots: an explicit chip pick moves THIS thread;
+  // without one, a thread that already has a root keeps it (no global bleed).
+  const effectiveWorkspaceRoot = workspaceRoot || String(existing?.workspaceRoot || '').trim();
   const payload = {
     question,
     turns: Array.isArray(existing?.turns) ? existing.turns.slice(-12) : [],
@@ -1246,7 +1249,7 @@ ipcMain.handle('conversations:send', async (event: Electron.IpcMainInvokeEvent, 
     permissionPreset,
     replyStyle,
     requestId,
-    ...(workspaceRoot ? { workspaceRoot } : {}),
+    ...(effectiveWorkspaceRoot ? { workspaceRoot: effectiveWorkspaceRoot } : {}),
   };
   return new Promise((resolve) => {
     const child = runPythonBridge(payload, 'scripts/conversation_bridge.py', 'dashboard', {
@@ -1274,6 +1277,7 @@ ipcMain.handle('conversations:send', async (event: Electron.IpcMainInvokeEvent, 
           usedBackend: parsed.usedBackend,
           outcome: '模型',
           object: existing?.object || {},
+          workspaceRoot: effectiveWorkspaceRoot || undefined,
         });
         if (dashboardWindow && !dashboardWindow.isDestroyed()) {
           dashboardWindow.webContents.send('conversations:turn', { id: conversation.id });

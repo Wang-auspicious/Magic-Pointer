@@ -1349,3 +1349,83 @@ def test_loop_router_collects_capability_proposals(monkeypatch):
     assert proposals[0]["target"]["metadata"]["recipe_id"] == "text.summarize_route"
     assert proposals[0]["confirmation_required"] is True
     assert result["answer"] == "已生成方案，请确认。"
+
+
+def test_loop_router_binds_profile_default_workspace_not_process_cwd(monkeypatch, tmp_path):
+    """Stage 的 coding 工作区必须来自持久化默认（/cwd 写的那份）。
+
+    安装版里 Path.cwd() 是安装目录：硬编码让手势任务 `ls` 列出的是
+    Magic Pointer 自己的文件，而不是用户绑定的工作区（用户实测）。
+    """
+    from app.agent_runtime.tool_registry import Effect
+    from app.fabric import engine as engine_module
+    from types import SimpleNamespace
+
+    default_ws = tmp_path / "profile-ws"
+    default_ws.mkdir()
+    monkeypatch.setattr(selection_bridge, "read_workspace", lambda root: default_ws)
+
+    captured = {}
+
+    class _Ctx:
+        def unload(self):
+            pass
+
+        def get(self, key):
+            if key == "tools":
+                from app.agent_runtime.tool_registry import ToolRegistry
+                return ToolRegistry()
+            if key == "todo_store":
+                class _T:
+                    on_update = None
+                    def read(self):
+                        return []
+                    def has_items(self):
+                        return False
+                return _T()
+            if key == "sessions":
+                class _S:
+                    def open_or_create(self, *a, **k):
+                        class _Sess:
+                            events = ()
+
+                            def interrupted_turn_summary(self):
+                                return None
+                            def enqueue_inbox(self, *a, **k):
+                                pass
+                            def claim_inbox(self, *a, **k):
+                                return []
+                        return _Sess()
+                return _S()
+            if key == "context_budget":
+                return 64000
+            return SimpleNamespace()
+
+    report = SimpleNamespace(ctx=_Ctx(), rows=[
+        SimpleNamespace(id="model-client", resolved_config={"permission_mode": "default"}),
+    ])
+
+    import app.harness.builtin_bundle as builtin_bundle
+    monkeypatch.setattr(
+        builtin_bundle, "boot_loop_context",
+        lambda runtime, root=None: captured.update(runtime=dict(runtime)) or report,
+    )
+
+    def fake_run(user_input, objects=None, registry=None, *, client, **kwargs):
+        from app.agent_runtime.loop import TransitionReason
+        from app.agent_runtime.types import Terminal
+        return Terminal(reason=TransitionReason.COMPLETED, message="好", turns=1, results=())
+
+    monkeypatch.setattr(engine_module, "run_agent_turn", fake_run)
+    import app.fabric.loop_answer as loop_answer
+    monkeypatch.setattr(loop_answer, "terminal_to_answer", lambda t, p: {"ok": True, "answer": "好"})
+
+    clock = selection_bridge.PhaseClock("test", enabled=False)
+    result = selection_bridge._loop_router(
+        "看看工作区", [{"id": "o1"}], None, None, None, None, "sess-ws", "snap-ws",
+        clock=clock,
+    )
+    assert result["ok"] is True
+    assert captured["runtime"]["workspace_root"] == str(default_ws), (
+        "Stage 必须绑定持久化默认工作区，而不是进程 cwd（安装目录）"
+    )

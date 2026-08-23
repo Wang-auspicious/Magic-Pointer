@@ -35,4 +35,27 @@ assert.deepStrictEqual(filtered.map(i => i.id), ['a']);
 assert.deepStrictEqual(filterConversations(rows, '').length, 5, '空关键词不过滤');
 assert.deepStrictEqual(filterConversations(rows, '浏览器').map(i => i.id), ['c'], '副标题也能命中');
 
+// ---- Codex WorkspaceBrowser：会话按线程工作区分组（文件夹名做组头） ----
+const { groupByWorkspace } = require('../electron/renderer/sidebar_groups');
+const wsRows = [
+  { id: 'w1', title: 'alpha 里的一问', updatedAt: at(0), workspaceRoot: 'C:/repos/alpha' },
+  { id: 'w2', title: 'alpha 里的二问', updatedAt: at(1), workspaceRoot: 'C:/repos/alpha' },
+  { id: 'w3', title: 'beta 里的一问', updatedAt: at(2), workspaceRoot: 'C:/repos/beta' },
+  { id: 'w4', title: '没绑工作区的旧会话', updatedAt: at(3) },
+];
+const wsGroups = groupByWorkspace(wsRows);
+assert.deepStrictEqual(wsGroups.map(g => g.label), ['alpha', 'beta', '默认工作区'], '组头是文件夹名；未绑定的落默认组');
+assert.deepStrictEqual(
+  wsGroups.map(g => [g.workspaceRoot, g.items.map(i => i.id)]),
+  [
+    ['C:/repos/alpha', ['w1', 'w2']],
+    ['C:/repos/beta', ['w3']],
+    ['', ['w4']],
+  ],
+  '组内新→旧，root 原样携带供点击切工作区',
+);
+assert.deepStrictEqual(groupByWorkspace([]), [], '空列表不出空组');
+// 单工作区也要出组头——侧栏「工作区」区必须说真话。
+assert.strictEqual(groupByWorkspace([{ id: 's1', title: 'x', updatedAt: NOW, workspaceRoot: 'D:/only' }]).length, 1);
+
 console.log('sidebar groups test ok');

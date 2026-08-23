@@ -8,6 +8,7 @@ interface SidebarConversationLike {
   title?: string;
   subtitle?: string;
   updatedAt?: number;
+  workspaceRoot?: string;
 }
 
 interface SidebarGroup {
@@ -56,7 +57,43 @@ function filterConversations(
     || String(item.subtitle || '').toLowerCase().includes(needle));
 }
 
-const SidebarGroups = { groupConversations, filterConversations };
+/** Codex WorkspaceBrowser：会话按线程工作区分组，组头是文件夹名。
+ *  未绑定工作区的落「默认工作区」组；组内新→旧；root 原样携带。 */
+function groupByWorkspace(
+  conversations: readonly (SidebarConversationLike & { workspaceRoot?: string })[],
+): Array<{ key: string; label: string; workspaceRoot: string; items: SidebarConversationLike[] }> {
+  const sorted = [...conversations].sort(
+    (a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0),
+  );
+  const groups = new Map<
+    string,
+    { key: string; label: string; workspaceRoot: string; items: SidebarConversationLike[] }
+  >();
+  for (const item of sorted) {
+    const root = String(item.workspaceRoot || '').trim().replace(/\\/g, '/');
+    const key = root || '__default__';
+    let group = groups.get(key);
+    if (!group) {
+      const segments = root.split('/').filter(Boolean);
+      group = {
+        key,
+        label: segments[segments.length - 1] || '默认工作区',
+        workspaceRoot: root,
+        items: [],
+      };
+      groups.set(key, group);
+    }
+    group.items.push(item);
+  }
+  // 默认组永远排最后；其余按组内最新一条的时序（sorted 已保证首次出现序）。
+  return [...groups.values()].sort((a, b) => {
+    if (a.key === '__default__') return 1;
+    if (b.key === '__default__') return -1;
+    return 0;
+  });
+}
+
+const SidebarGroups = { groupConversations, filterConversations, groupByWorkspace };
 if (typeof module !== 'undefined' && module.exports) module.exports = SidebarGroups;
 if (typeof globalThis !== 'undefined') {
   (globalThis as typeof globalThis & { SidebarGroups?: typeof SidebarGroups }).SidebarGroups = SidebarGroups;

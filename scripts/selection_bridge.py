@@ -19,6 +19,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.bridge_progress import PhaseClock
+from app.agent_runtime.workspace_state import read_workspace
 from app.actions.history import ActionHistoryStore, make_word_undo_proposal
 from app.actions.office import clean_replacement_text, make_word_replace_selection_proposal, wants_word_rewrite
 from app.actions.shopping_list import (
@@ -2259,7 +2260,11 @@ def _loop_router(
         "capture_path": capture_path,
         "target_window": target_window or {},
         "command": command,
-        "workspace_root": str(Path.cwd()),
+        # Stage shares the profile default workspace (/cwd), not the process
+        # cwd — on the installed app Path.cwd() is the install dir, so a
+        # gesture-run `ls` silently listed Magic Pointer's own files instead
+        # of the user's bound workspace.
+        "workspace_root": str(read_workspace(ROOT)),
         "permission_mode": os.environ.get("MAGIC_POINTER_PERMISSION_MODE", "default").strip() or "default",
         "permission_preset": "",
         "reply_style": reply_style,
