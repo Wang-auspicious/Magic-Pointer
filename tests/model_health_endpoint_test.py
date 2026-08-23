@@ -163,6 +163,33 @@ def test_success_between_failures_resets_the_transient_count(monkeypatch, tmp_pa
     assert model_health.read_health(base).circuit_open is False
 
 
+def test_open_circuit_message_carries_retry_horizon(monkeypatch, tmp_path: Path) -> None:
+    """roadmap §12.2: an open circuit must tell the user how long until
+    retry is possible, not a bare '稍后自动重试' with no horizon."""
+    import time
+
+    from app.model_health import (
+        DEFAULT_COOLDOWN_S,
+        GatewayHealth,
+    )
+
+    now = time.time()
+    health = GatewayHealth(
+        state="rate_limited",
+        checked_at=now,
+        open_until=now + DEFAULT_COOLDOWN_S,
+        detail="",
+    )
+    assert health.circuit_open is True
+    assert "秒后可重试" in health.message
+    remaining = int(DEFAULT_COOLDOWN_S)
+    assert f"约 {remaining} 秒后可重试" in health.message
+
+    # A healthy (or never-opened) entry adds no retry sentence.
+    relaxed = GatewayHealth(state="ok", open_until=0.0, checked_at=now)
+    assert "秒后可重试" not in relaxed.message
+
+
 def test_hard_failures_still_open_immediately(monkeypatch, tmp_path):
     """401/402/404 不是抖动：一次就熔断，等冷却过去再探测。"""
     monkeypatch.setattr(model_health, "_state_path", lambda: tmp_path / "health.json")

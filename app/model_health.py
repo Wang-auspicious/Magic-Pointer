@@ -144,7 +144,15 @@ class GatewayHealth:
     def message(self) -> str:
         base = STATE_MESSAGES.get(self.state, "模型端点当前不可用，已跳过模型调用。")
         detail = _quota_detail(self.detail)
-        return f"{base} {detail}" if detail else base
+        text = f"{base} {detail}" if detail else base
+        # roadmap §12.2: tell the user when the circuit will let them retry
+        # instead of a bare "稍后自动重试" with no horizon. ``open_until``
+        # is only set by an actual failure verdict, so this never invents
+        # a deadline for a healthy endpoint.
+        if self.circuit_open and self.open_until > 0:
+            remaining = max(1, int(self.open_until - time.time()))
+            text = f"{text} 约 {remaining} 秒后可重试。"
+        return text
 
     def to_public_dict(self) -> dict[str, Any]:
         return {

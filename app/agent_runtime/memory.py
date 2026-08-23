@@ -251,8 +251,7 @@ def _prune_stale_tool_outputs(tail: list[AgentMessage]) -> list[AgentMessage]:
     every TOOL message except the most recent few keeps only its opening —
     the lossless record stays in the session log.
     """
-    total = sum(len(message.content or "") for message in tail)
-    if total <= _TAIL_PRUNE_THRESHOLD_CHARS:
+    if estimate_messages_tokens(tail) <= _TAIL_PRUNE_THRESHOLD_TOKENS:
         return tail
     kept = 0
     pruned: list[AgentMessage] = []
@@ -276,8 +275,10 @@ def _prune_stale_tool_outputs(tail: list[AgentMessage]) -> list[AgentMessage]:
     return pruned
 
 
-_TAIL_PRUNE_THRESHOLD_CHARS = 24_000
-"""Only prune when the retained tail itself carries real weight."""
+_TAIL_PRUNE_THRESHOLD_TOKENS = 4_000
+"""Prune when the retained tail weighs 4k+ tokens (roadmap §3.2 — the
+estimator already counts CJK as 1 字/token, so a single token gate works
+for both CJK and English; no separate char gate, one source of truth)."""
 _TAIL_KEEP_RECENT_TOOLS = 6
 """The freshest tool results stay verbatim — the model is acting on them."""
 _TAIL_TOOL_KEEP_CHARS = 600

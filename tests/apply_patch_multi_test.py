@@ -73,3 +73,31 @@ def test_apply_patch_execute_accepts_a_list_of_patches(tmp_path: Path) -> None:
     assert "2 patch block(s)" in str(result.value), result.value
     assert a.read_text(encoding="utf-8") == "new-a\n"
     assert b.read_text(encoding="utf-8") == "new-b\n"
+
+
+def test_apply_patch_delete_is_restorable_by_checkpoint(tmp_path: Path) -> None:
+    """Roadmap §1.3 P3: apply_patch deletes must snapshot before removal so
+    restore_files can bring the file back (CC /rewind contract)."""
+    from app.agent_runtime.coding_tools import register_coding_tools
+
+    from app.agent_runtime.tool_registry import ToolRegistry
+
+    victim = tmp_path / "victim.txt"
+    victim.write_text("precious data\n", encoding="utf-8")
+
+    registry = ToolRegistry()
+    register_coding_tools(registry, workspace_root=str(tmp_path))
+
+    delete_patch = (
+        "*** Begin Patch\n"
+        "*** Delete File: victim.txt\n"
+        "*** End Patch"
+    )
+    result = registry.execute_tool("apply_patch", {"patch": delete_patch})
+    assert not result.is_error, result.value
+    assert not victim.exists()
+
+    # restore_files rewinds the delete from the pre-delete snapshot.
+    rewind = registry.execute_tool("restore_files", {"steps": 1})
+    assert not rewind.is_error, rewind.value
+    assert victim.read_text(encoding="utf-8") == "precious data\n"
