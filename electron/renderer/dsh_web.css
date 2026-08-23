@@ -2511,3 +2511,35 @@ body[data-ds-dark-theme] {
   .dshw-session-log { min-width: 32px; width: 32px; padding: 0; }
   .dshw-session-log span { display: none; }
 }
+
+/* Codex update_plan 式计划卡：可折叠，做完一项划掉一项 */
+.dshw-plan {
+  margin: 0 16px 8px;
+  border: 1px solid var(--dsh-border, rgba(127,127,127,.25));
+  border-radius: 10px;
+  background: var(--dsh-surface, rgba(127,127,127,.06));
+  overflow: hidden;
+}
+.dshw-plan-head {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; padding: 8px 12px;
+  border: 0; background: transparent; cursor: pointer;
+  font: inherit; color: inherit; text-align: left;
+}
+.dshw-plan-chev { transition: transform .15s ease; }
+.dshw-plan.is-collapsed .dshw-plan-chev { transform: rotate(-90deg); }
+.dshw-plan-title { font-weight: 600; font-size: 13px; }
+.dshw-plan-count { font-size: 12px; opacity: .65; margin-left: auto; }
+.dshw-plan-steps {
+  margin: 0; padding: 2px 14px 10px 30px;
+  display: grid; gap: 4px; font-size: 13px;
+}
+.dshw-plan.is-collapsed .dshw-plan-steps { display: none; }
+.dshw-plan-step { position: relative; line-height: 1.45; color: var(--dsh-fg, inherit); }
+.dshw-plan-step::before {
+  content: ""; position: absolute; left: -16px; top: .55em;
+  width: 6px; height: 6px; border-radius: 50%;
+  border: 1.4px solid currentColor; opacity: .55;
+}
+.dshw-plan-step.is-active::before { background: currentColor; opacity: 1; }
+.dshw-plan-step.is-done { text-decoration: line-through; opacity: .5; }

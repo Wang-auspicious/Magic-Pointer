@@ -10,7 +10,7 @@ import secrets
 import shutil
 import time
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -1018,6 +1018,7 @@ def run_agent_turn(
     evidence_input: str | None = None,
     interaction_metadata: Mapping[str, Any] | None = None,
     interrupt_check: Callable[[], bool] | None = None,
+    nudge_hooks: Sequence[Callable[[], str | None]] = (),
 ) -> Terminal:
     """Run one agentic loop turn to its Terminal (synchronous entry).
 
@@ -1091,6 +1092,7 @@ def run_agent_turn(
         evidence_input=evidence_input,
         interaction_metadata=interaction_metadata or {},
         interrupt_check=interrupt_check,
+        nudge_hooks=tuple(nudge_hooks),
     )
     return asyncio.run(_consume_agent_loop(params))
 

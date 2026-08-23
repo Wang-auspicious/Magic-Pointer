@@ -51,10 +51,10 @@ class PermissionPresetSpec:
 
 PRESETS: dict[str, PermissionPresetSpec] = {
     "plan": PermissionPresetSpec(
-        sandbox="read-only",
+        sandbox="workspace-write",
         approval="ask",
         name="计划模式",
-        description="先只读研究并提交计划；你批准后才以写入权限执行。",
+        description="先列出计划再逐步执行；进度实时显示，做完一项划掉一项。",
     ),
     "read-only": PermissionPresetSpec(
         sandbox="read-only",
@@ -82,7 +82,9 @@ PRESETS: dict[str, PermissionPresetSpec] = {
 # workspace-write 落 DEFAULT（可逆写在环内、不可逆问）；danger-full-access
 # 落 BYPASS（购买仍问——那是 MP 自己的红线，不在 DSH 语义内）。
 _PRESET_MODES: dict[str, PermissionMode] = {
-    "plan": PermissionMode.PLAN,
+    # 计划模式的"先计划后执行"是提示契约（todo_write 列步骤→立即执行→逐步更新），
+    # 不是效果门——Codex update_plan 就是这么做的。
+    "plan": PermissionMode.DEFAULT,
     "read-only": PermissionMode.SAFE,
     "workspace-write": PermissionMode.DEFAULT,
     "danger-full-access": PermissionMode.BYPASS,

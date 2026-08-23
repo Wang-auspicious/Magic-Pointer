@@ -54,6 +54,8 @@ class TodoStore:
 
     def __init__(self) -> None:
         self._items: list[dict[str, str]] = []
+        self.on_update = None
+        """Optional callable(list) — Codex update_plan live UI push."""
 
     def write(self, todos: list[dict[str, Any]]) -> list[dict[str, str]]:
         """Replace the plan. Returns the stored list."""

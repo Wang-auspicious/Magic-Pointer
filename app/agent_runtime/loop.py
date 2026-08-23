@@ -303,6 +303,8 @@ class LoopParams:
     budgets: Mapping[Stage, BudgetPolicy] = field(default_factory=lambda: DEFAULT_BUDGETS)
     cancel_registry: CancellationRegistry | None = None
     stop_hooks: Sequence = ()
+    nudge_hooks: Sequence = ()
+    """Completion gates: each callable() -> str | None; text injects a nudge."""
     clock: Callable[[], float] | None = None
     tool_limit: int = 12
     max_parallel_tool_calls: int = 4
@@ -990,6 +992,15 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                         turn_number += 1
                         continue
                 nudge = should_nudge_before_completion(verification_gate)
+                if nudge is None:
+                    for nudge_hook in params.nudge_hooks:
+                        try:
+                            nudge = nudge_hook()
+                        except Exception as exc:  # noqa: BLE001 - gates never kill the loop
+                            del exc
+                            continue
+                        if nudge:
+                            break
                 if nudge is not None:
                     verification_gate.mark_nudged()
                     nudge_message = AgentMessage(

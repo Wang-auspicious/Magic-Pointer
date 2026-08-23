@@ -2260,6 +2260,7 @@ def _loop_router(
         "command": command,
         "workspace_root": str(Path.cwd()),
         "permission_mode": os.environ.get("MAGIC_POINTER_PERMISSION_MODE", "default").strip() or "default",
+        "permission_preset": "",
     }
     resident_scope = None
     try:

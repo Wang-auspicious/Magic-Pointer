@@ -121,7 +121,16 @@ def _apply_harness_tools(fork, config: dict[str, Any]) -> None:
     # unfinished part so progress does not depend on the summariser.
     todo_store = TodoStore()
     fork.provide_up("todo_store", todo_store)
-    register_todo_write(registry, sink=todo_store.write)
+
+    def sink(todos):
+        stored = todo_store.write(todos)
+        if todo_store.on_update is not None:
+            # Codex update_plan semantics: the UI sees every transition.
+            # Settable post-boot so both resident and one-shot hosts work.
+            todo_store.on_update(todo_store.read())
+        return stored
+
+    register_todo_write(registry, sink=sink)
 
 
 def _apply_web_tools(fork, config: dict[str, Any]) -> None:
@@ -274,13 +283,6 @@ def _apply_coding_tools(fork, config: dict[str, Any]) -> None:
     if not raw_root:
         return
     register_coding_tools(fork.get("tools"), workspace_root=Path(raw_root))
-    from app.agent_runtime.plan_mode import register_present_plan
-
-    register_present_plan(
-        fork.get("tools"),
-        workspace_root=Path(raw_root),
-        todo_sink=fork.get("todo_store").write,
-    )
 
 
 def _apply_delegate_tool(fork, config: dict[str, Any]) -> None:
@@ -397,6 +399,7 @@ def _apply_model_client(fork, config: dict[str, Any]) -> None:
         ).load() or None,
         "language": "用中文",
         "workspace_root": str(config.get("workspace_root") or "").strip(),
+        "permission_preset": str(config.get("permission_preset") or ""),
     }
     system_prompt = fork.get("prompt").build(context)
     provider = fork.get("llm")
@@ -747,6 +750,7 @@ def _run_loop_rows(runtime: dict[str, Any], root: Path) -> list[BundleRow]:
                 "user_data_dir": str(_user_extension_root(root)),
                 "command": str(runtime.get("command") or ""),
                 "workspace_root": str(runtime.get("workspace_root") or ""),
+                "permission_preset": str(runtime.get("permission_preset") or ""),
             },
         ),
     ]
@@ -911,6 +915,7 @@ def boot_loop_context(
                 "user_data_dir": str(_user_extension_root(root)),
                 "command": command,
                 "workspace_root": str(runtime.get("workspace_root") or ""),
+                "permission_preset": str(runtime.get("permission_preset") or ""),
             },
         ),
     ]

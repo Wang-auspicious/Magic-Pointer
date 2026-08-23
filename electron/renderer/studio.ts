@@ -1060,6 +1060,47 @@ function renderWorkspaceChip() {
   label.title = `编码工作区：${composerWorkspace}（点击更换）`;
 }
 
+/* Codex update_plan 式计划卡：todo_write 实时推送 + 终态 result.plan 双通道 */
+let composerPlan: { steps: Array<{ content: string; status: string }> } | null = null;
+let planCollapsed = false;
+
+function decodePlanToken(token: unknown): { steps: Array<{ content: string; status: string }> } | null {
+  try {
+    const decoded = JSON.parse(decodeURIComponent(escape(atob(String(token)))));
+    const steps = Array.isArray(decoded?.steps) ? decoded.steps : [];
+    return steps.length ? { steps: steps.map((s: any) => ({ content: String(s.content || ''), status: String(s.status || 'pending') })) } : null;
+  } catch { return null; }
+}
+
+function renderPlanCard() {
+  const card = document.getElementById('composer-plan');
+  if (!card) return;
+  const steps = composerPlan?.steps || [];
+  if (!steps.length) { card.hidden = true; return; }
+  card.hidden = false;
+  card.classList.toggle('is-collapsed', planCollapsed);
+  const done = steps.filter(s => s.status === 'completed').length;
+  const title = document.getElementById('composer-plan-title');
+  if (title) title.textContent = '计划';
+  const count = document.getElementById('composer-plan-count');
+  if (count) count.textContent = `${done}/${steps.length}`;
+  const list = document.getElementById('composer-plan-steps');
+  if (!list) return;
+  list.replaceChildren(...steps.map(step => {
+    const li = document.createElement('li');
+    li.className = 'dshw-plan-step'
+      + (step.status === 'completed' ? ' is-done' : '')
+      + (step.status === 'in_progress' ? ' is-active' : '');
+    li.textContent = step.content;
+    return li;
+  }));
+}
+
+document.getElementById('composer-plan-toggle')?.addEventListener('click', () => {
+  planCollapsed = !planCollapsed;
+  renderPlanCard();
+});
+
 function bindWorkspaceChip() {
   renderWorkspaceChip();
   document.getElementById('composer-workspace')?.addEventListener('click', async e => {
@@ -1211,6 +1252,10 @@ function progressKey(record: Record<string, unknown>): string {
 }
 
 function renderConversationProgress(record: Record<string, unknown>) {
+  if (String(record.phase || '') === 'plan' && record.plan) {
+    const snapshot = decodePlanToken(record.plan);
+    if (snapshot) { composerPlan = snapshot; renderPlanCard(); }
+  }
   if (!pendingConversation) return;
   pendingConversation.records.set(progressKey(record), record);
   pendingConversation.body.replaceChildren(
@@ -1304,7 +1349,11 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
         renderPermissionChip();
       } else if (command?.type === 'model') {
         await refreshComposerModel();
-      } else if (command?.type === 'cwd' && typeof (response as { command?: { path?: string } }).command?.path === 'string') {
+      } else if ((response as { plan?: unknown }).plan && typeof (response as { plan?: unknown }).plan === 'object') {
+        composerPlan = (response as { plan: { steps: Array<{ content: string; status: string }> } }).plan;
+        renderPlanCard();
+      }
+      if ((response as { command?: { type?: string; path?: string } }).command?.type === 'cwd' && typeof (response as { command?: { path?: string } }).command?.path === 'string') {
         composerWorkspace = String((response as { command?: { path?: string } }).command!.path);
         renderWorkspaceChip();
       }

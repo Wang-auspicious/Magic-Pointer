@@ -171,14 +171,14 @@ def default_sections() -> list[Section]:
         ])
 
     def permissions(ctx: dict[str, Any]) -> str | None:
-        mode = str(ctx.get("permission_mode") or "default")
-        if mode == "plan":
+        if str(ctx.get("permission_preset") or "") == "plan":
             return (
-                "当前权限模式：plan（只读研究）。先用读类工具调查代码/证据，"
-                "然后调用 present_plan 提交分步实施计划（目标/改哪些文件/每步做什么/"
-                "怎么验证），等用户批准；不要直接写文件或跑会改状态的命令。"
-                "用户批准后你会在下一轮收到计划原文并以写入权限执行。"
+                "当前是计划模式：先用读工具研究清楚，然后调用 todo_write 一次性列出"
+                "全部执行步骤（每步一条），随即开始逐步执行；做完一步就把该步标为"
+                " completed、正在做的一步标为 in_progress（再调 todo_write）。"
+                "全部步骤完成并验证后才收工。"
             )
+        mode = str(ctx.get("permission_mode") or "default")
         return (
             f"当前权限模式：{mode}。只读工具可直接调用；"
             "写入/发送类能力只能生成方案并等待用户确认。"

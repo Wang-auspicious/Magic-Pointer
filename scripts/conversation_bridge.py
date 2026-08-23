@@ -541,22 +541,6 @@ def answer_conversation(
     history = _history_text(turns if isinstance(turns, list) else [], obj if isinstance(obj, dict) else {})
     window = obj if isinstance(obj, dict) else {}
 
-    # Plan-mode approval gate: clicking the fixed approve button lands here as
-    # the next question; consume the stored plan and unlock write execution.
-    from app.agent_runtime.plan_mode import PLAN_APPROVED_OPTION, consume_approved_plan
-    from app.agent_runtime.workspace_state import read_workspace, write_workspace
-
-    if prompt == PLAN_APPROVED_OPTION:
-        plan_text = consume_approved_plan(read_workspace(ROOT))
-        if plan_text:
-            mode = PermissionMode.DEFAULT
-            agent_prompt = (
-                "用户已批准以下计划，现在以工作区写入权限执行它。"
-                "按步骤动手，改完必须用测试/构建验证，绿了才算完成：\n\n"
-                f"{plan_text}"
-            )
-            prompt = agent_prompt
-
     def _identity_transform(_command: str, context_text: str, _recipe_id: str) -> str:
         return context_text
 
@@ -601,8 +585,11 @@ def answer_conversation(
         "command": agent_prompt,
     }
 
+    from app.agent_runtime.workspace_state import read_workspace, write_workspace
+
     runtime["workspace_root"] = str(read_workspace(ROOT))
     runtime["permission_mode"] = mode.value
+    runtime["permission_preset"] = permission_preset
     # Codex thread-scoped workspace_roots: the conversation carries its own
     # workspace; an explicit one overrides the persisted default and becomes
     # the new default.
@@ -638,6 +625,37 @@ def answer_conversation(
         ctx.get("context_budget") or model_cfg.get("context_budget_tokens") or 64000
     )
 
+    # Codex update_plan live push: every todo_write transitions the plan card.
+    todo_store = ctx.get("todo_store")
+
+    def _push_plan(snapshot):
+        import base64
+
+        payload_json = json.dumps({"steps": snapshot}, ensure_ascii=False)
+        conversation_clock.mark(
+            "plan", plan=base64.b64encode(payload_json.encode("utf-8")).decode("ascii")
+        )
+
+    todo_store.on_update = _push_plan
+    todo_store.on_update = _push_plan
+
+    # 计划门：模型想收工但计划还有未完成步骤 → nudge 续跑（最多两次，防死循环）。
+    plan_nudges = {"count": 0}
+
+    def _plan_completion_gate():
+        steps = todo_store.read()
+        pending = [s for s in steps if s.get("status") != "completed"]
+        if not pending or plan_nudges["count"] >= 2:
+            return None
+        plan_nudges["count"] += 1
+        names = "；".join(str(s.get("content"))[:40] for s in pending[:5])
+        return (
+            f"（计划门）计划还有 {len(pending)} 步未完成：{names}。"
+            "继续执行；每做完一步调用 todo_write 把该步标为 completed、"
+            "正在做的标为 in_progress。全部完成后正常给出最终回答。"
+        )
+
+
     evidence = f"[本次对话历史]\n{history}" if history.strip() else ""
     try:
         import hashlib
@@ -649,15 +667,14 @@ def answer_conversation(
         # the breakpoint on this send. One-shot by construction — this turn
         # becomes the newest one, so the reduction moves past it.
         continuation_block = ""
-        if prompt != PLAN_APPROVED_OPTION:
-            try:
-                from app.agent_runtime.resume_context import continuation_prefix
+        try:
+            from app.agent_runtime.resume_context import continuation_prefix
 
-                continuation_block = continuation_prefix(
-                    agent_session.interrupted_turn_summary()
-                )
-            except Exception:
-                continuation_block = ""
+            continuation_block = continuation_prefix(
+                agent_session.interrupted_turn_summary()
+            )
+        except Exception:
+            continuation_block = ""
         activity_sink = _ConversationActivitySink(conversation_clock)
         from app.agent_runtime.session import cancel_interrupt_check
 
@@ -684,6 +701,7 @@ def answer_conversation(
                 "appName": str(window.get("app") or "").strip(),
             },
             interrupt_check=cancel_interrupt_check(agent_session),
+            nudge_hooks=(_plan_completion_gate,),
         )
     except Exception as exc:  # noqa: BLE001 - loop crash must never kill the answer path
         timing_ms = conversation_clock.total("total", ok=0)
@@ -721,6 +739,8 @@ def answer_conversation(
         interaction_ledger=interaction_ledger,
     )
     result["answer"] = answer
+    # 终态计划卡（与实时推送同一形状）
+    result["plan"] = {"steps": todo_store.read()} if todo_store.has_items() else None
     return result
 
 
