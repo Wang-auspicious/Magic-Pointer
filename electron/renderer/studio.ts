@@ -1190,6 +1190,45 @@ document.getElementById('composer-plan-toggle')?.addEventListener('click', () =>
   renderPlanCard();
 });
 
+/* CC toolPermissionDecision：工具被拒后模型发起的权限提问，三个结构化选项。
+   点击 = 授权随下一条消息生效（grant/once/deny），文本同时告诉模型继续。 */
+let pendingPermissionAsk: { tool: string } | null = null;
+let pendingPermissionChoice: { grant?: string; deny?: string; once?: string } | null = null;
+
+function renderPermissionAsk() {
+  const host = document.getElementById('composer-permission-ask');
+  if (!host) return;
+  if (!pendingPermissionAsk) { host.hidden = true; host.replaceChildren(); return; }
+  const tool = pendingPermissionAsk.tool;
+  host.hidden = false;
+  const label = document.createElement('span');
+  label.className = 'dshw-perm-ask-label';
+  label.textContent = `是否授权执行 ${tool}？`;
+  const make = (text: string, choice: { grant?: string; deny?: string; once?: string }, message: string) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'dshw-perm-ask-btn';
+    btn.textContent = text;
+    btn.addEventListener('click', () => {
+      pendingPermissionChoice = choice;
+      const ta = document.querySelector<HTMLTextAreaElement>('#composer-form textarea');
+      const form = document.getElementById('composer-form') as HTMLFormElement | null;
+      if (ta && form) {
+        ta.value = message;
+        fitComposer(ta);
+        form.requestSubmit();
+      }
+    });
+    return btn;
+  };
+  host.replaceChildren(
+    label,
+    make('仅这一次允许', { once: tool }, `仅这一次允许 ${tool}，请继续。`),
+    make('本会话总是允许', { grant: tool }, `本会话总是允许 ${tool}，请继续。`),
+    make('拒绝', { deny: tool }, `拒绝执行 ${tool}，换别的办法。`),
+  );
+}
+
 function bindWorkspaceChip() {
   renderWorkspaceChip();
   document.getElementById('composer-workspace')?.addEventListener('click', async e => {
@@ -1430,7 +1469,11 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
         requestId,
         composerWorkspace || undefined,
         composerStyle,
+        pendingPermissionChoice || undefined,
       );
+      pendingPermissionChoice = null;
+      pendingPermissionAsk = null;
+      renderPermissionAsk();
       if (!response?.ok || !response.conversationId) throw new Error(response?.error || '这次没有答完。');
       activeConversationId = String(response.conversationId);
       /* 命令结算的副作用：/permission 落芯片，/model 刷新目录标签 */
@@ -1443,6 +1486,12 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
       } else if ((response as { plan?: unknown }).plan && typeof (response as { plan?: unknown }).plan === 'object') {
         composerPlan = (response as { plan: { steps: Array<{ content: string; status: string }> } }).plan;
         renderPlanCard();
+      }
+      /* 权限提问：模型 ask_user_question(kind=permission) 的结构化回传 */
+      const awaiting = response as { awaitingUserInput?: boolean; pendingInput?: { kind?: string; tool?: string } };
+      if (awaiting.awaitingUserInput && awaiting.pendingInput?.kind === 'permission' && awaiting.pendingInput.tool) {
+        pendingPermissionAsk = { tool: String(awaiting.pendingInput.tool) };
+        renderPermissionAsk();
       }
       if ((response as { command?: { type?: string; path?: string } }).command?.type === 'cwd' && typeof (response as { command?: { path?: string } }).command?.path === 'string') {
         composerWorkspace = String((response as { command?: { path?: string } }).command!.path);

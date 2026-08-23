@@ -1237,7 +1237,15 @@ ipcMain.handle('conversations:send', async (event: Electron.IpcMainInvokeEvent, 
   const replyStyle = String(raw?.replyStyle || 'normal').trim().slice(0, 20);
   const requestId = String(raw?.requestId || crypto.randomUUID()).trim().slice(0, 120) || crypto.randomUUID();
   const workspaceRoot = String(raw?.workspaceRoot || '').trim();
+  // CC toolPermissionDecision: chip grants/denies join the thread memo; a
+  // once-grant rides this request only. Sanitized to bare tool names.
   const existing = conversationId ? conversations().get(conversationId) : null;
+  const sanitizeTool = (value: unknown) => String(value || '').trim().replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64);
+  const grantNow = sanitizeTool(raw?.permissionGrant);
+  const denyNow = sanitizeTool(raw?.permissionDeny);
+  const onceNow = sanitizeTool(raw?.permissionGrantOnce);
+  const threadGrants = [...new Set([...(Array.isArray(existing?.permissionGrants) ? existing!.permissionGrants as string[] : []), ...(grantNow ? [grantNow] : [])])];
+  const threadDenials = [...new Set([...(Array.isArray(existing?.permissionDenials) ? existing!.permissionDenials as string[] : []), ...(denyNow ? [denyNow] : [])])];
   // Codex thread workspace_roots: an explicit chip pick moves THIS thread;
   // without one, a thread that already has a root keeps it (no global bleed).
   const effectiveWorkspaceRoot = workspaceRoot || String(existing?.workspaceRoot || '').trim();
@@ -1250,6 +1258,9 @@ ipcMain.handle('conversations:send', async (event: Electron.IpcMainInvokeEvent, 
     replyStyle,
     requestId,
     ...(effectiveWorkspaceRoot ? { workspaceRoot: effectiveWorkspaceRoot } : {}),
+    ...(threadGrants.length ? { permissionGrants: threadGrants } : {}),
+    ...(threadDenials.length ? { permissionDenials: threadDenials } : {}),
+    ...(onceNow ? { permissionGrantOnce: [onceNow] } : {}),
   };
   return new Promise((resolve) => {
     const child = runPythonBridge(payload, 'scripts/conversation_bridge.py', 'dashboard', {
@@ -1278,6 +1289,8 @@ ipcMain.handle('conversations:send', async (event: Electron.IpcMainInvokeEvent, 
           outcome: '模型',
           object: existing?.object || {},
           workspaceRoot: effectiveWorkspaceRoot || undefined,
+          permissionGrant: grantNow || undefined,
+          permissionDeny: denyNow || undefined,
         });
         if (dashboardWindow && !dashboardWindow.isDestroyed()) {
           dashboardWindow.webContents.send('conversations:turn', { id: conversation.id });

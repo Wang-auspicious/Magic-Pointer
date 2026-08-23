@@ -96,6 +96,20 @@ class PermissionDecisionResult:
         if self.decision is PermissionDecision.ALLOW:
             return ""
         if self.decision is PermissionDecision.ASK:
+            # Hermes/Codex plan-mode split: grantable local writes may offer
+            # the quick user-grant channel; external sends, destructive and
+            # purchase actions are script-level changes — only a plan
+            # proposal (harness-owned confirm card) can ever run them.
+            from app.agent_runtime.permission_decisions import GRANTABLE_EFFECTS
+
+            if self.effect in GRANTABLE_EFFECTS:
+                return (
+                    f"tool {tool_name!r} needs user confirmation: propose a plan "
+                    "through a capability tool instead of executing directly, or call "
+                    "ask_user_question（question 说明要执行什么，options 固定为："
+                    "[\"仅这一次允许\", \"本会话总是允许\"+工具名, \"拒绝\"]）——"
+                    "用户点选后授权会随下一条消息生效。"
+                )
             return (
                 f"tool {tool_name!r} needs user confirmation: propose a plan "
                 "through a capability tool instead of executing directly"

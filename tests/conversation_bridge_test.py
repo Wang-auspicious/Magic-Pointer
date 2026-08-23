@@ -336,3 +336,59 @@ def test_missing_explicit_workspace_falls_back_to_profile_default(monkeypatch, t
     assert captured["workspace_root"] == str(default_ws)
     assert result["ok"] is True
 
+
+
+def test_thread_permission_grants_reach_the_runtime(monkeypatch):
+    """CC toolPermissionDecision：会话里授予/拒绝过的工具随每条消息注入
+    loop memo——grant 升级 ASK，deny 压过 mode-allow；一次性 grant 只进
+    本次请求。"""
+    captured = {}
+    _install_workspace_boot_stubs(monkeypatch, captured)
+
+    result = conversation_bridge.answer_conversation(
+        "帮我跑一下构建",
+        [],
+        {},
+        "workspace-write",
+        permission_grants=("run_command",),
+        permission_denials=("launch_app",),
+        permission_grant_once=("read_background",),
+    )
+    decisions = captured["run_kwargs"]["permission_decisions"]
+    assert decisions.lookup("run_command") == "allow"
+    assert decisions.lookup("launch_app") == "deny"
+    assert decisions.lookup("read_background") == "allow"
+    assert result["ok"] is True
+
+
+def test_no_grants_means_no_memo(monkeypatch):
+    captured = {}
+    _install_workspace_boot_stubs(monkeypatch, captured)
+
+    conversation_bridge.answer_conversation("解释一下这段日志", [], {}, "workspace-write")
+    assert captured["run_kwargs"]["permission_decisions"] is None
+
+
+def test_slash_rewind_restores_workspace_checkpoints(monkeypatch, tmp_path) -> None:
+    """/rewind 是 checkpoint 的 GUI 入口（B5-25）：走绑定工作区的
+    FileCheckpointStore，步数可选；无记录时诚实回答。"""
+    import app.agent_runtime.workspace_state as workspace_state
+
+    default_ws = tmp_path / "ws"
+    default_ws.mkdir()
+    monkeypatch.setattr(workspace_state, "read_workspace", lambda root: default_ws)
+
+    (default_ws / "a.txt").write_text("old", encoding="utf-8")
+    from app.agent_runtime.coding_tools import FileCheckpointStore
+
+    store = FileCheckpointStore(default_ws)
+    store.record(default_ws / "a.txt", existed=True)
+    (default_ws / "a.txt").write_text("new", encoding="utf-8")
+
+    result = conversation_bridge.route_slash_command("/rewind", catalog=None)
+    assert result["ok"] is True
+    assert (default_ws / "a.txt").read_text(encoding="utf-8") == "old"
+
+    empty = conversation_bridge.route_slash_command("/rewind", catalog=None)
+    assert empty["ok"] is True
+    assert "nothing to restore" in empty["answer"], "空账本必须诚实回答"

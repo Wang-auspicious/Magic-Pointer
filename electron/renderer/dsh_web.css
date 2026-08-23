@@ -610,6 +610,34 @@
   border-color: var(--dsw-alias-border-l3);
 }
 
+/* 权限提问条（CC toolPermissionDecision）：三个结构化选项按钮。 */
+.dshw-perm-ask {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border: 1px solid var(--dsw-alias-border-l2-darkmode-thin);
+  border-radius: 14px;
+  background: var(--dsw-specific-input-major);
+}
+.dshw-perm-ask-label {
+  font-size: 13px;
+  color: var(--dsw-alias-text-primary);
+}
+.dshw-perm-ask-btn {
+  border: 1px solid var(--dsw-alias-border-l2-darkmode-thin);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 12px;
+  color: var(--dsw-alias-text-primary);
+  background: transparent;
+  cursor: pointer;
+}
+.dshw-perm-ask-btn:hover {
+  border-color: var(--dsw-alias-border-l3);
+}
+
 /* 「+」点击的可见回应：输入卡短促脉冲一圈（用户反馈：点了没反应）。 */
 @keyframes dshw-card-pulse {
   0% { box-shadow: var(--dsw-shadow-lv2), 0 0 0 0 rgba(103, 158, 254, 0.45); }

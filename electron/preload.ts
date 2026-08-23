@@ -193,7 +193,7 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
     list: () => ipcRenderer.invoke('conversations:list'),
     get: (id: unknown) => ipcRenderer.invoke('conversations:get', id),
     pickWorkspace: () => ipcRenderer.invoke('conversations:pick-workspace'),
-    send: (payload: { conversationId?: unknown; question?: unknown; permissionPreset?: unknown; requestId?: unknown; workspaceRoot?: unknown; replyStyle?: unknown }) => ipcRenderer.invoke('conversations:send', {
+    send: (payload: { conversationId?: unknown; question?: unknown; permissionPreset?: unknown; requestId?: unknown; workspaceRoot?: unknown; replyStyle?: unknown; permissionGrant?: unknown; permissionDeny?: unknown; permissionGrantOnce?: unknown }) => ipcRenderer.invoke('conversations:send', {
       conversationId: String(payload?.conversationId || '').slice(0, 120),
       question: String(payload?.question || '').slice(0, MAX_COMMAND_CHARS),
       permissionPreset: String(payload?.permissionPreset || 'workspace-write').slice(0, 40),
@@ -202,6 +202,15 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
         ? { workspaceRoot: String(payload?.workspaceRoot || '').trim().slice(0, 500) }
         : {}),
       replyStyle: String(payload?.replyStyle || 'normal').trim().slice(0, 20),
+      ...(String(payload?.permissionGrant || '').trim()
+        ? { permissionGrant: String(payload?.permissionGrant).trim().slice(0, 64) }
+        : {}),
+      ...(String(payload?.permissionDeny || '').trim()
+        ? { permissionDeny: String(payload?.permissionDeny).trim().slice(0, 64) }
+        : {}),
+      ...(String(payload?.permissionGrantOnce || '').trim()
+        ? { permissionGrantOnce: String(payload?.permissionGrantOnce).trim().slice(0, 64) }
+        : {}),
     }),
     export: (id: unknown) => ipcRenderer.invoke('conversations:export', String(id || '').slice(0, 120)),
     timeline: () => ipcRenderer.invoke('conversations:timeline'),

@@ -17,6 +17,7 @@ SLASH_COMMANDS: dict[str, str] = {
     "permission": "切换权限预设（sandbox × approval 捆绑档）",
     "model": "切换默认模型（写 secrets/model.txt，立即生效）",
     "cwd": "查看/设置编码工作区目录（coding tools 的沙箱根）",
+    "rewind": "回滚 agent 对文件的最近改动（checkpoint 恢复，可带步数）",
 }
 
 

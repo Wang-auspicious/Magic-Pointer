@@ -212,3 +212,16 @@ def test_run_command_classifies_pure_read_commands_as_read() -> None:
     chained = ["ls | head", "ls && rm -rf foo", "ls ; rm a"]
     for cmd in chained:
         assert _classify_command_effect({"command": cmd}) is Effect.LOCAL_IRREVERSIBLE, cmd
+
+
+def test_edit_file_normalizes_crlf_files_like_cc_edit(registry: ToolRegistry, ws: Path) -> None:
+    """CC FileEditTool 契约：读入时 CRLF→LF 归一后再匹配（模型发的
+    old_string 永远是 \n），Windows 的 CRLF 文件不再必然 not found；
+    写回为 LF。"""
+    (ws / "win.py").write_bytes(b"x = 1\r\ny = 2\r\n")
+    ok = registry.execute_tool(
+        "edit_file",
+        {"path": "win.py", "old_string": "y = 2", "new_string": "y = 3"},
+    )
+    assert ok.is_error is False
+    assert (ws / "win.py").read_bytes() == b"x = 1\ny = 3\n"

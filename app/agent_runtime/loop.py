@@ -330,6 +330,14 @@ class LoopParams:
     interaction_metadata: Mapping[str, Any] = field(default_factory=dict)
     keepalive: Callable[[str], None] | None = None
     todo_store: Any = None
+    permission_decisions: Any = None
+    """Optional :class:`PermissionDecisions` thread-scoped allow/deny memo.
+
+    CC toolPermissionDecision: a tool the user granted this conversation
+    stops re-asking; an explicitly denied tool stays blocked. Consulted in
+    ``_execute_one`` after the mode table, never overriding mode DENY or
+    non-grantable effects (external send / destructive / purchase).
+    """
     """Optional TodoStore-like object that exposes ``read()`` -> list[dict].
 
     Used by partial-delivery message construction when the loop hits
@@ -1162,10 +1170,13 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                 if turn_number + 1 > params.emergency_turn_fuse:
                     terminal = Terminal(
                         reason=TransitionReason.INVARIANT_FAILED,
-                        message="emergency turn fuse reached; agent loop invariant failed",
+                        message=(
+                            "输出反复被截断，恢复预算耗尽；请缩小本轮任务范围或分步重试。"
+                        ),
                         turns=turn_number,
                         results=tuple(results),
                         model_usage=_model_usage_snapshot(model_usage),
+                        failure_kind="output_truncation",
                     )
                     yield _stop(terminal)
                     return
@@ -1280,6 +1291,7 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                     params.precondition_context_factory,
                     params.hook_manager,
                     params.permission_mode,
+                    permission_decisions=params.permission_decisions,
                     interrupt_check=params.interrupt_check,
                 )
 
@@ -1453,10 +1465,13 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
             if turn_number + 1 > params.emergency_turn_fuse:
                 terminal = Terminal(
                     reason=TransitionReason.INVARIANT_FAILED,
-                    message="emergency turn fuse reached; agent loop invariant failed",
+                    message=(
+                        "回合数超过安全上限，循环未收敛；请把任务拆成更小的步骤重试。"
+                    ),
                     turns=turn_number,
                     results=tuple(results),
                     model_usage=_model_usage_snapshot(model_usage),
+                    failure_kind="runaway_rounds",
                 )
                 yield _stop(terminal)
                 return
@@ -1759,7 +1774,15 @@ def _pending_user_input(value: str) -> dict[str, Any] | None:
     ]
     if len(options) < 2:
         return None
-    return {"question": question, "options": options}
+    pending: dict[str, Any] = {"question": question, "options": options}
+    # Structured permission question (CC canUseTool): kind/tool ride as
+    # bounded data so the renderer can map a chip click onto a real grant.
+    kind = str(payload.get("kind") or "").strip()[:20]
+    tool = str(payload.get("tool") or "").strip()[:64]
+    if kind == "permission" and tool:
+        pending["kind"] = "permission"
+        pending["tool"] = tool
+    return pending
 
 
 def _execute_one(
@@ -1772,6 +1795,7 @@ def _execute_one(
     hook_manager: HookManager | None = None,
     permission_mode: str = "default",
     *,
+    permission_decisions: Any = None,
     interrupt_check: Callable[[], bool] | None = None,
 ) -> ToolResult:
     """Validate, gate, execute and normalize one tool call.
@@ -1835,6 +1859,21 @@ def _execute_one(
             latency_ms=None,
         )
     mode_decision = decide_effect(permission_mode, resolved_effect)
+    if permission_decisions is not None:
+        # Thread-scoped memo (CC toolPermissionDecision): an explicit user
+        # deny beats any mode-allow; an allow upgrades an ASK only for
+        # grantable effects — dangerous classes keep asking per-mode.
+        from app.agent_runtime.permission_decisions import GRANTABLE_EFFECTS
+
+        memo = permission_decisions.lookup(call.name)
+        if memo == "deny":
+            mode_decision = PermissionDecision.DENY
+        elif (
+            memo == "allow"
+            and mode_decision is PermissionDecision.ASK
+            and resolved_effect in GRANTABLE_EFFECTS
+        ):
+            mode_decision = PermissionDecision.ALLOW
     if mode_decision is not PermissionDecision.ALLOW:
         from app.agent_runtime.permission_modes import PermissionMode
 

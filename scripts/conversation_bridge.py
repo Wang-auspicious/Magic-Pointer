@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 try:
     from scripts._bridge_common import (
@@ -365,6 +365,22 @@ def route_slash_command(prompt: str, catalog) -> dict | None:
                 "command": {"type": "cwd", "path": str(resolved)},
                 "answer": f"工作区已切换为 {resolved}，下一次发送即生效。",
             }
+        if name == "rewind":
+            # B5-25：checkpoint 的用户入口。备份落在 <workspace>/.mp/backups，
+            # 跨进程持久；默认回滚最近一次改动，/rewind N 回滚 N 步。
+            from app.agent_runtime.coding_tools import FileCheckpointStore
+            from app.agent_runtime.workspace_state import read_workspace
+
+            try:
+                steps = max(0, int(args)) if args else 1
+            except ValueError:
+                return {"ok": False, "error": f"/rewind 步数必须是整数，收到：{args!r}"}
+            report = FileCheckpointStore(Path(read_workspace(ROOT))).restore(steps)
+            return {
+                "ok": True,
+                "command": {"type": "rewind"},
+                "answer": report,
+            }
         # /model
         from app import models_catalog
 
@@ -470,6 +486,17 @@ class _HistoryPerceptionBackend:
         return None
 
 
+def _build_permission_decisions(grants, denials, once):
+    """Thread-scoped memo (CC toolPermissionDecision); empty → None."""
+    from app.agent_runtime.permission_decisions import PermissionDecisions
+
+    allowed = tuple(grants or ()) + tuple(once or ())
+    denied = tuple(denials or ())
+    if not allowed and not denied:
+        return None
+    return PermissionDecisions(allowed=allowed, denied=denied)
+
+
 def _effect_ceiling(permission_mode: str):
     from app.agent_runtime.permission_modes import PermissionMode
     from app.agent_runtime.tool_registry import Effect
@@ -504,6 +531,9 @@ def answer_conversation(
     workspace_root: str = "",
     clock: PhaseClock | None = None,
     reply_style: str = "normal",
+    permission_grants: Sequence[str] | tuple = (),
+    permission_denials: Sequence[str] | tuple = (),
+    permission_grant_once: Sequence[str] | tuple = (),
 ) -> dict[str, Any]:
     from app.agent_runtime.permission_modes import PermissionMode
     from app.agent_runtime.permission_presets import PRESETS, mode_for_preset
@@ -703,6 +733,9 @@ def answer_conversation(
             interrupt_check=cancel_interrupt_check(agent_session),
             nudge_hooks=(_plan_completion_gate,),
             keepalive=conversation_clock.mark,
+            permission_decisions=_build_permission_decisions(
+                permission_grants, permission_denials, permission_grant_once
+            ),
         )
     except Exception as exc:  # noqa: BLE001 - loop crash must never kill the answer path
         timing_ms = conversation_clock.total("total", ok=0)

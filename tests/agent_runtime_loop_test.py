@@ -2801,3 +2801,43 @@ class _PendingInboxStub:
         return []
 
 
+
+
+def test_invariant_failure_kinds_distinguish_truncation_from_runaway():
+    """§12.3：invariant 不再一锅烩——truncation 路径烧完与回合顶熔断
+    各自带 failure_kind，用户能看到下一步该做什么。"""
+    # 路径 1：turn-top 熔断（无截断参与）→ runaway_rounds
+    tool, _ = make_counting_tool("loop_tool", value="x")
+    registry = ToolRegistry()
+    registry.register(tool)
+    backend = ScriptedBackend(
+        [ToolCallArrived(call=ToolCall(id="c1", name="loop_tool", arguments={})), TurnDone(usage=None, raw_text=None)],
+        [ToolCallArrived(call=ToolCall(id="c2", name="loop_tool", arguments={})), TurnDone(usage=None, raw_text=None)],
+    )
+    _events, terminal = asyncio.run(
+        collect(make_params(client=LoopModelClient(backend), registry=registry, emergency_turn_fuse=2))
+    )
+    assert terminal.failure_kind == "runaway_rounds"
+
+    # 路径 2：truncation 恢复路径上烧完（带工具调用且文本以…结尾）→ output_truncation
+    truncating = ScriptedBackend(
+        *[
+            [
+                ToolCallArrived(call=ToolCall(id=f"t{index}", name="loop_tool", arguments={})),
+                TurnDone(usage=None, raw_text="部分输出…"),
+            ]
+            for index in range(1, 6)
+        ]
+    )
+    _events2, terminal2 = asyncio.run(
+        collect(
+            make_params(
+                client=LoopModelClient(truncating),
+                registry=registry,
+                emergency_turn_fuse=2,
+            )
+        )
+    )
+    assert terminal2.reason is TransitionReason.INVARIANT_FAILED
+    assert terminal2.failure_kind == "output_truncation"
+    assert "截断" in terminal2.message

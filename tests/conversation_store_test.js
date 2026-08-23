@@ -169,3 +169,24 @@ assert.strictEqual(store.list().length, 0);
 
 fs.rmSync(dir, { recursive: true, force: true });
 console.log('conversation store test ok');
+
+// ---- 线程级权限授权（CC toolPermissionDecision）：授权/拒绝随会话持久，
+// 同名去重，list() 摘要携带，追问不丢。----
+const pmA = store.appendTurn({
+  newConversation: true, question: '跑构建', answer: '好。',
+  permissionGrant: 'run_command',
+});
+assert.deepStrictEqual(pmA.permissionGrants, ['run_command'], '授权必须记进线程');
+store.appendTurn({ conversationId: pmA.id, question: '再跑', answer: '好。', permissionGrant: 'run_command' });
+store.appendTurn({ conversationId: pmA.id, question: '继续', answer: '好。', permissionGrant: 'read_background' });
+assert.deepStrictEqual(
+  store.get(pmA.id).permissionGrants, ['run_command', 'read_background'],
+  '同名授权必须去重，不同工具追加',
+);
+store.appendTurn({ conversationId: pmA.id, question: '别开应用', answer: '好。', permissionDeny: 'launch_app' });
+assert.deepStrictEqual(store.get(pmA.id).permissionDenials, ['launch_app'], '拒绝也要进线程 memo');
+const pmListed = store.list(10).find((c) => c.id === pmA.id);
+assert.deepStrictEqual(pmListed.permissionGrants, ['run_command', 'read_background'], 'list 摘要带授权');
+assert.deepStrictEqual(pmListed.permissionDenials, ['launch_app'], 'list 摘要带拒绝');
+
+console.log('conversation store test ok (permission memo)');

@@ -57,6 +57,9 @@ interface Conversation {
   turns?: TurnEntry[];
   workspaceRoot?: string;
   /** Codex thread workspace_roots：线程级绑定，追问保持，显式换才跟随。 */
+  permissionGrants?: string[];
+  permissionDenials?: string[];
+  /** CC toolPermissionDecision：用户在本会话授予/拒绝过的工具名。 */
 }
 
 interface TurnInput {
@@ -79,6 +82,8 @@ interface TurnInput {
   timingMs?: unknown;
   usedBackend?: unknown;
   workspaceRoot?: unknown;
+  permissionGrant?: unknown;
+  permissionDeny?: unknown;
 }
 
 interface ConversationStoreOptions {
@@ -235,6 +240,18 @@ function createConversationStore(
       // follow-ups; an explicit root on this turn moves THIS thread only.
       const explicitRoot = String(turn.workspaceRoot || '').trim();
       if (explicitRoot) target.workspaceRoot = explicitRoot;
+      // CC toolPermissionDecision: a chip grant/deny joins the thread memo
+      // (dedup); the memo rides every later request in this thread.
+      const grant = String(turn.permissionGrant || '').trim();
+      if (grant) {
+        target.permissionGrants = target.permissionGrants || [];
+        if (!target.permissionGrants.includes(grant)) target.permissionGrants.push(grant);
+      }
+      const deny = String(turn.permissionDeny || '').trim();
+      if (deny) {
+        target.permissionDenials = target.permissionDenials || [];
+        if (!target.permissionDenials.includes(deny)) target.permissionDenials.push(deny);
+      }
       target.updatedAt = at;
       // 换到列表最前面：最近碰过的排最上，和人的记忆顺序一致
       conversations.splice(conversations.indexOf(target), 1);
@@ -254,6 +271,8 @@ function createConversationStore(
       closed: false,
       turns: [entry],
       workspaceRoot: String(turn.workspaceRoot || '').trim() || undefined,
+      ...(String(turn.permissionGrant || '').trim() ? { permissionGrants: [String(turn.permissionGrant).trim()] } : {}),
+      ...(String(turn.permissionDeny || '').trim() ? { permissionDenials: [String(turn.permissionDeny).trim()] } : {}),
     };
     conversations.unshift(created);
     if (conversations.length > MAX_CONVERSATIONS) {
@@ -273,6 +292,8 @@ function createConversationStore(
       object: c.object,
       updatedAt: c.updatedAt,
       workspaceRoot: c.workspaceRoot || '',
+      permissionGrants: Array.isArray(c.permissionGrants) ? c.permissionGrants : [],
+      permissionDenials: Array.isArray(c.permissionDenials) ? c.permissionDenials : [],
       // 磁盘上的旧文件可能没有 turns 字段（早期版本/手改），逐条判空，
       // 否则一条坏记录会把整个列表、时间线、记忆、产物五个 handler 一起打挂。
       turns: (c.turns || []).length,
