@@ -22,6 +22,8 @@
     "electron/stage_state.ts",
     "electron/stage_stretch_policy.ts",
     "electron/stage_turn_stream.ts",
-    "electron/voice_trigger_policy.ts"
+    "electron/voice_trigger_policy.ts",
+    "electron/conversation_control.ts",
+    "electron/slash_trigger.ts"
   ]
 }
