@@ -943,6 +943,13 @@
   50% { opacity: 0; }
 }
 
+/* 运行中耗时（DSH TurnStatus 的 run clock）：15 秒后出现 */
+.dsh-stream-clock {
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--dsw-alias-label-caption);
+}
+
 /* 排队插话的用户气泡：视觉上降调，明确它还没影响本轮 */
 .dsh-user[data-queued='true'] .dsh-bubble {
   opacity: 0.72;

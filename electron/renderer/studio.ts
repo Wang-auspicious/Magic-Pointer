@@ -1628,6 +1628,33 @@ function updateScrollPill() {
 
 /* 贴底才跟随（DSH FOLLOW_THRESHOLD 同款）：用户往上翻阅历史时，进度记录
    不再把视图拽走；回到距底 48px 内恢复自动跟随。 */
+/* 运行中耗时：DSH TurnStatus 同款，超过 15 秒才出现，避免短回合闪数字。 */
+const PENDING_CLOCK_VISIBLE_MS = 15_000;
+let pendingClockTimer: number | null = null;
+
+function startPendingClock(body: HTMLElement) {
+  stopPendingClock();
+  const startedAt = Date.now();
+  const clock = document.createElement('div');
+  clock.className = 'dsh-stream-clock';
+  const tick = () => {
+    const elapsed = Date.now() - startedAt;
+    if (elapsed < PENDING_CLOCK_VISIBLE_MS) return;
+    clock.textContent = `已运行 ${Math.floor(elapsed / 1000)} 秒`;
+    if (!clock.isConnected) body.appendChild(clock);
+  };
+  tick();
+  pendingClockTimer = window.setInterval(tick, 1000);
+}
+
+function stopPendingClock() {
+  if (pendingClockTimer !== null) {
+    window.clearInterval(pendingClockTimer);
+    pendingClockTimer = null;
+  }
+  document.querySelector('.dsh-stream-clock')?.remove();
+}
+
 function followIfNearBottom(body: HTMLElement, mutate: () => void): void {
   const scroller = body.closest('.dshw-scrollbody') as HTMLElement | null;
   const near = scroller ? isNearBottom(scroller) : true;
@@ -1790,6 +1817,7 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
     studioComposerBusy = true;
     form.setAttribute('aria-busy', 'true');
     setComposerRunningState(true);
+    startPendingClock(pendingBody);
     const requestId = globalThis.crypto?.randomUUID?.() || `conversation-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     pendingConversation = { requestId, body: pendingBody, records: new Map(), nodes: new Map(), agentSessionId: null, streamText: '', streamNode: null };
     renderConversationProgress({ phase: 'runtime_boot', fields: {} });
@@ -1838,6 +1866,7 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
     } finally {
       pendingConversation = null;
       studioComposerBusy = false;
+      stopPendingClock();
       form.removeAttribute('aria-busy');
       setComposerRunningState(false);
       textarea.focus();

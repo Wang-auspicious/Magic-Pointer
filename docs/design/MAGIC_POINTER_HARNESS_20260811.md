@@ -1323,6 +1323,18 @@ smoke：uia-host PASS、replay 20 条 trace 走真实网关（机制绿，见下
 - [x] **长任务地基第一批已落地（开发树，未升版本）**：按用户裁决「别造轮子，本地顶级 agent 源码直接搬」，从 HermesAgent（MIT）移植。硬天花板全解除——bridge 期限改无活动超时、`emergency_turn_fuse` 90→1000；上下文层——请求级 token 估算（补上此前完全漏算的 system prompt 与 tool schema）、可反复触发的压缩 + anti-thrash、`TodoStore` 跨压缩保留未完成步骤、尾部按 token 预算裁剪、压缩成功判据由条数改为 token 权重（实施中发现的真 bug）。出处登记在 `THIRD_PARTY_NOTICES.md`。fresh：Python **1401 passed**、Node **152 passed**、typecheck + lint 干净。
 - [ ] **未闭合（长任务真实缺口，不得冒充已完成）**：首要事实是**长任务当前跑不了**——Stage 60s / Studio 120s bridge 硬超时（`electron/main.ts:3933-3934`、`1187`）与 90 轮 fuse（`app/fabric/engine.py:983-984`）在任何长跑能力被用到之前就落闸，当前上限 ≤2 分钟、≤90 轮，而 OSWorld 2.0 量纲是 1.6 小时、318 次工具调用。其后依次是：上下文耐久（rolling compaction、进度事实保护、工具结果窗口化、真实 token 计数）、感知语义隔离（冻结 look/read_around 与 live get_app_state 混用、InputArtifact 不可中途再编译）、持久性（program counter 续跑、effect sandwich 上生产盘、session 轮转）、可控性（steer 生产接线、graceful interrupt、真实步数与账本可视化）、结构性（子任务分解、todo 落盘、回执准入）。**Gate 2 的“crash recovery”需升级为“program counter 续跑”；长任务的上下文耐久性此前不在任何 Gate 里，是新边界带来的新需求。**
 
+### 2026-08-24：Studio GUI 对标批（五源码拆解文档 → 逐项差距修复，开发树未升版本）
+
+- [x] 对照 `D:\Desktop\Persistence\harness`（CC/Codex/DSH/Hermes/Pi 拆解）+ DSH web 源码逐项找差距，DSH GUI 差距报告 34 项落档 `data/runtime/research-dsh-gui-gap.md`（P0：无流式、无停止、无排队、代码块无语言标签/复制、无数学渲染；P1：会话菜单死按钮、无状态徽章、强制滚动等）。
+- [x] **流式正文**：`answer_chunk` base64 进度行 + Studio 边收边画（节流 + 边界冲刷，不丢字有测试钉死）；顺带修 plan 推送被 `_token` 120 字符截断导致计划卡消失的真 bug（改 `mark_blob`）。
+- [x] **停止**：`session_ready` 广播 durable session id → 忙态发送钮变停止钮 → `conversations:stop` 优雅取消（Receipt）+ 5s 兑底 kill。
+- [x] **插话**：忙态 Enter 写 durable inbox(next-step)，立即显示排队气泡（降调虚线样式），未就绪时诚实拒绝。
+- [x] **CodeBlock 卡 / diff 卡 / 增量渲染 / 滚动跟随 / 运行耗时**：语言标签+复制钮；edit_file/write_file 红删绿加（40 行封顶）；签名未变的活动行不重建（保展开态）；贴底才跟随 + 回到底部胶囊；15s 后显示运行秒数。
+- [x] **会话重命名/删除**：store `rename/remove`（titleCustom 防覆盖、空白拒绝、落盘）+ IPC 全链 + DSH Rows 动作菜单 + 内联重命名对话框。
+- [x] **斜杠目录内联触发+键盘导航**：`slash_trigger.detectSlashToken` 纯函数；textarea 内联开合随输入过滤；方向键循环高亮 + Enter/Tab 选中 + Escape 关闭。
+- [x] 验证：Python **1503 passed**；Node **157 passed / 110 源文件**；五套 typecheck 与 eslint 0。**未升版本、未 sync**（延续用户指示）。
+- [ ] 路线图对账结论（防重做）：§1.6 capability deferred 已落地（两 spec 工厂均 deferred=True）；§5.1 derive_messages 已是内存投影 + 增量采用；§7.3 图像 token 前提不成立（图像从不进模型表面）；§8.2 排序无失败可达。诚实边界：KaTeX 数学渲染（需新依赖）、消息分支 fork GUI、粘贴/拖拽图片进作曲家、每会话 pending-work 徽章仍未做。
+
 ### 2026-08-19：Codex 逐行学习 + 全链修复批（1.0.12 已交付）
 
 - [x] **Codex harness 逐行学习完成**：clone `openai/codex`（HEAD `2151d3a`），逐文件读 `codex-rs/core` 的 turn 循环、compact、tools/parallel、input_queue、rollout 持久化与 ext/goal；学习结论 + 与 MP 同名子系统的逐条裁决（吸收/已有/明确不取）在 `docs/research/2026-08-19-codex-harness-study-and-audit.md`。

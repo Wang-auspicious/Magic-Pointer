@@ -997,6 +997,14 @@ python scripts/dual_bridge_steer_smoke.py selection+studio 同一 session
 
 > 用户：「根本无法支持长任务、各种模式也没设置好、上下文管理做的也不好、细小的地方抄歪了」
 
+> **2026-08-24 对账更新（新会话勿重做）**：逐项复核后，以下条目已在早前批次落地或前提不成立——
+> §1.6 capability 全部 deferred（`app/fabric/capability_tools.py` 两个 spec 工厂均 `deferred=True`）；
+> §5.1 derive_messages O(n) 已被 `_adopt_incremental` 内存投影解决（`session.py:349`，非全量重读）；
+> §7.3 图像 token 前提不成立（look 返回文本描述，图像从不进模型表面）；
+> §8.2 effect 排序无失败可达（deferred 后 direct 列表远低于 64 上限）。
+> Studio GUI 差距另见 `data/runtime/research-dsh-gui-gap.md`；流式/停止/插话/CodeBlock/diff 卡/
+> 重命名删除/斜杠内联触发已于同日落批修复（见 STATUS.md 2026-08-24 条）。
+
 | 用户口述 | 本文档对应的真问题（按最贴切） |
 |---|---|
 | 根本不支持长任务 | §3.3 compaction 不重压模型切换,§3.5 双轨 70% 触发过激,§5.1 derive_messages O(n),§5.2 inbox 跨进程不 wake,§12.1 BUDGET 携带 partial |
