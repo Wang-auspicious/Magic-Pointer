@@ -31,6 +31,7 @@ const { activeModelRuntimeStatus, resolveActiveModelRuntimeConfig } = require('.
 const { PreflightRunner } = require('./bootstrap_runner');
 const { buildAsyncPreflightChecks } = require('./preflight_checks');
 const { resolvePythonRuntime, pythonInvocationArgs, pythonSpawnEnvironment } = require('./python_runtime');
+const { planConversationStop, planConversationSteer, sessionIdFromRecord } = require('./conversation_control');
 const { VoiceResidentRuntime } = require('./voice_resident_runtime');
 const { captureEligibility } = require('./result_surface_policy');
 const { humanErrorMessage, inferObjectKind, selectionSourceForReason, stageEventFromBridge } = require('./stage_contract');
@@ -228,6 +229,9 @@ const activeSessionChildren = new Map();
 // request a graceful cancel (Receipt + closed turn) instead of only killing
 // the Python child mid-write.
 const activeSessionAgentIds = new Map();
+// Live Studio conversation turns keyed by requestId: the bridge child (kill
+// fallback) plus the durable agent session id learned from `session_ready`.
+const activeConversations = new Map();
 const GRACEFUL_CANCEL_GRACE_MS = 5_000;
 // Recent sessions, as durations a person can read. Every number here was
 // already being emitted to the log; this is what puts it somewhere anybody
@@ -1266,10 +1270,15 @@ ipcMain.handle('conversations:send', async (event: Electron.IpcMainInvokeEvent, 
     const child = runPythonBridge(payload, 'scripts/conversation_bridge.py', 'dashboard', {
       timeoutMs: 120_000,
       onProgress: (record: any) => {
+        // session_ready 广播 durable session id：停止/插话都指向它。
+        const sid = sessionIdFromRecord(record);
+        const entry = sid ? activeConversations.get(requestId) : null;
+        if (sid && entry) entry.agentSessionId = sid;
         if (event.sender.isDestroyed()) return;
         event.sender.send('conversations:progress', { requestId, record });
       },
       onComplete: (parsed: any) => {
+        activeConversations.delete(requestId);
         if (!parsed?.ok || !String(parsed?.answer || '').trim()) {
           resolve({ ok: false, error: parsed?.error || '模型没有返回内容。', usedBackend: parsed?.usedBackend, timingMs: parsed?.timingMs });
           return;
@@ -1299,7 +1308,41 @@ ipcMain.handle('conversations:send', async (event: Electron.IpcMainInvokeEvent, 
       },
     });
     if (!child) resolve({ ok: false, error: '对话服务没有启动。' });
+    else activeConversations.set(requestId, { child, agentSessionId: null });
   });
+});
+
+ipcMain.handle('conversations:stop', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_renderer' };
+  const requestId = String(raw?.requestId || '').trim().slice(0, 120);
+  const entry = activeConversations.get(requestId);
+  const plan = planConversationStop({ requestId, agentSessionId: entry?.agentSessionId });
+  if (plan.action !== 'cancel') return { ok: false, error: plan.reason };
+  requestGracefulAgentCancel(plan.sessionId);
+  // 优雅路径失败兑底：与 Stage 同款宽限后强杀，crash repair 会诚实结算。
+  setTimeout(() => {
+    try {
+      if (entry?.child && !entry.child.killed) entry.child.kill();
+    } catch (_) {}
+  }, GRACEFUL_CANCEL_GRACE_MS);
+  log(`conversation stop requested id=${requestId} session=${plan.sessionId}`);
+  return { ok: true, sessionId: plan.sessionId };
+});
+
+ipcMain.handle('conversations:steer', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_renderer' };
+  const plan = planConversationSteer({ text: String(raw?.text || ''), agentSessionId: String(raw?.agentSessionId || '') });
+  if (plan.action !== 'steer') return { ok: false, error: plan.reason };
+  try {
+    const parsed = await runPythonBridgePromise(
+      { action: 'put', sessionId: plan.sessionId, target: 'next-step', text: plan.text },
+      'scripts/agent_session_bridge.py',
+      { target: null, timeoutMs: 8_000 },
+    );
+    return { ok: parsed?.ok === true, messageId: parsed?.messageId || null, error: parsed?.error };
+  } catch (error: any) {
+    return { ok: false, error: String(error?.message || error || 'bridge_failed') };
+  }
 });
 ipcMain.handle('conversations:timeline', (event: Electron.IpcMainInvokeEvent) => {
   if (!isDashboardSender(event) && !isCompanionSender(event)) return [];

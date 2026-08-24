@@ -77,6 +77,35 @@ class PhaseClock:
             self.enabled = False
         return total_ms
 
+    def mark_blob(self, phase: str, blob: str) -> float:
+        """mark() 变体：blob 原样作为一个 token 上线，不做 120 字符截断。
+
+        base64 载荷（计划快照、流式正文增量）天然无空白，但会超过 _token
+        的截断上限——多步计划的 JSON 一旦被截断，解码端就静默失败。调用方
+        必须保证 blob 不含空白字符。
+        """
+        now = time.perf_counter()
+        total_ms = (now - self._start) * 1000.0
+        delta_ms = now - self._last
+        self._last = now
+        self._marks.append((str(phase), total_ms))
+        if not self.enabled:
+            return total_ms
+        parts = [
+            PROGRESS_PREFIX,
+            f"phase={_token(phase)}",
+            f"ms={int(total_ms)}",
+            f"d={int(delta_ms)}",
+            f"scope={self.scope}",
+            f"b64={blob}",
+        ]
+        try:
+            self._stream.write(" ".join(parts) + "\n")
+            self._stream.flush()
+        except Exception:
+            self.enabled = False
+        return total_ms
+
     def total(self, phase: str = "total", **fields: Any) -> float:
         """Emit a closing mark carrying the per-phase breakdown."""
         breakdown = ",".join(f"{name}:{int(ms)}" for name, ms in self._marks)

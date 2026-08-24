@@ -1149,17 +1149,10 @@ function renderWorkspaceChip() {
   label.title = `编码工作区：${composerWorkspace}（点击更换）`;
 }
 
-/* Codex update_plan 式计划卡：todo_write 实时推送 + 终态 result.plan 双通道 */
+/* Codex update_plan 式计划卡：todo_write 实时推送（answer 同款 b64 blob 通道）
+   + 终态 result.plan 双通道 */
 let composerPlan: { steps: Array<{ content: string; status: string }> } | null = null;
 let planCollapsed = false;
-
-function decodePlanToken(token: unknown): { steps: Array<{ content: string; status: string }> } | null {
-  try {
-    const decoded = JSON.parse(decodeURIComponent(escape(atob(String(token)))));
-    const steps = Array.isArray(decoded?.steps) ? decoded.steps : [];
-    return steps.length ? { steps: steps.map((s: any) => ({ content: String(s.content || ''), status: String(s.status || 'pending') })) } : null;
-  } catch { return null; }
-}
 
 function renderPlanCard() {
   const card = document.getElementById('composer-plan');
@@ -1367,6 +1360,9 @@ interface PendingConversation {
   requestId: string;
   body: HTMLElement;
   records: Map<string, Record<string, unknown>>;
+  agentSessionId: string | null;
+  streamText: string;
+  streamNode: HTMLElement | null;
 }
 let pendingConversation: PendingConversation | null = null;
 
@@ -1381,23 +1377,111 @@ function progressKey(record: Record<string, unknown>): string {
 }
 
 function renderConversationProgress(record: Record<string, unknown>) {
-  if (String(record.phase || '') === 'plan' && record.plan) {
-    const snapshot = decodePlanToken(record.plan);
+  if (!pendingConversation) return;
+  /* session_ready：拿到 durable session id —— 停止/插话都指向它。 */
+  const sid = ConversationControl.sessionIdFromRecord(record);
+  if (sid) {
+    pendingConversation.agentSessionId = sid;
+    setComposerRunningState(true);
+  }
+  if (String(record.phase || '') === 'plan') {
+    const snapshot = ConversationControl.planStepsFromRecord(record);
     if (snapshot) { composerPlan = snapshot; renderPlanCard(); }
   }
-  if (!pendingConversation) return;
+  if (String(record.phase || '') === 'answer_chunk') {
+    const fields = record.fields && typeof record.fields === 'object'
+      ? record.fields as Record<string, string> : {};
+    appendLiveStreamText(ConversationControl.decodeChunkBlob(fields));
+    return; // 正文增量不是活动行，不进 records。
+  }
   pendingConversation.records.set(progressKey(record), record);
   pendingConversation.body.replaceChildren(
     ...[...pendingConversation.records.values()]
       .filter((item) => String(item.phase || '') !== 'total')
       .map((item) => DshChat.liveActivityNode(item)),
+    ...renderLiveStreamNode(),
   );
   pendingConversation.body.closest('.dshw-scrollbody')?.scrollTo({ top: 1_000_000 });
+}
+
+/* 流式正文：边收边画（纯文本 pre-wrap），回合完成后 openConversation 用
+   markdown 重画正式版本。空文本不建节点。 */
+function renderLiveStreamNode(): Element[] {
+  const pending = pendingConversation;
+  if (!pending || !pending.streamText) return [];
+  if (!pending.streamNode) {
+    const node = document.createElement('div');
+    node.className = 'dsh-stream-live';
+    node.setAttribute('aria-live', 'polite');
+    pending.streamNode = node;
+  }
+  pending.streamNode.textContent = pending.streamText;
+  return [pending.streamNode];
+}
+
+function appendLiveStreamText(text: string) {
+  const pending = pendingConversation;
+  if (!pending || !text) return;
+  pending.streamText += text;
+  const nodes = renderLiveStreamNode();
+  pending.body.replaceChildren(
+    ...[...pending.records.values()]
+      .filter((item) => String(item.phase || '') !== 'total')
+      .map((item) => DshChat.liveActivityNode(item)),
+    ...nodes,
+  );
+  pending.body.closest('.dshw-scrollbody')?.scrollTo({ top: 1_000_000 });
+}
+
+/* 作曲家忙态：发送钮变停止钮（DSH InputBar 同款形态）。
+   isRunning=false 时恢复发送钮并清掉流式残留状态。 */
+function setComposerRunningState(running: boolean) {
+  const submit = document.querySelector<HTMLButtonElement>('#composer-form button[type="submit"]');
+  if (submit) {
+    submit.classList.toggle('is-stop', running);
+    submit.title = running ? '停止' : '发送';
+    submit.setAttribute('aria-label', running ? '停止' : '发送');
+  }
 }
 
 Data.onConversationProgress((payload) => {
   if (!pendingConversation || payload.requestId !== pendingConversation.requestId || !payload.record) return;
   renderConversationProgress(payload.record);
+});
+
+/* 忙态插话：文本写入 durable inbox（next-step），下一轮模型请求即携带。
+   界面立即给一条排队的用户气泡，不假装它已经影响本轮。 */
+async function steerActiveConversation(question: string, textarea: HTMLTextAreaElement): Promise<void> {
+  const pending = pendingConversation;
+  const sessionId = pending?.agentSessionId || '';
+  if (!sessionId) return; // runtime 还没就绪：保持输入，不打断用户。
+  const response = await Data.steerConversation(sessionId, question);
+  if (!response?.ok) return; // 桥拒绝时保留输入，让用户重试或改发送。
+  textarea.value = '';
+  fitComposer(textarea);
+  const flow = document.querySelector<HTMLElement>('#stream .dsh-flow');
+  if (flow) {
+    const node = DshChat.userNode(question);
+    node.setAttribute('data-queued', 'true');
+    flow.appendChild(node);
+    flow.closest('.dshw-scrollbody')?.scrollTo({ top: 1_000_000 });
+  }
+}
+
+/* 忙态下点发送钮 = 停止本回合：优雅取消优先（Receipt + 部分结果）。
+   停止后 openConversation 会用会话里的最终状态重画。 */
+document.getElementById('composer-form')?.querySelector('button[type="submit"]')?.addEventListener('click', (e) => {
+  if (!studioComposerBusy || !pendingConversation) return;
+  e.preventDefault();
+  e.stopPropagation();
+  void (async () => {
+    const requestId = pendingConversation!.requestId;
+    const note = document.createElement('div');
+    note.className = 'dsh-turn-status';
+    note.textContent = '正在停止…';
+    pendingConversation!.body.appendChild(note);
+    await Data.stopConversation(requestId);
+  })();
 });
 
 document.getElementById('session-log')?.addEventListener('click', async () => {
@@ -1427,10 +1511,12 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
   form.addEventListener('submit', async e => {
     e.preventDefault();
     const textarea = form.querySelector<HTMLTextAreaElement>('textarea');
-    const submit = form.querySelector<HTMLButtonElement>('button[type="submit"]');
     const question = textarea?.value.trim() || '';
-    if (!textarea || !question || studioComposerBusy) {
-      textarea?.focus();
+    if (!textarea || !question) { textarea?.focus(); return; }
+    /* 忙态下 Enter = 插话（steer）：写入 durable inbox，下一轮即携带。
+       还没拿到 session id 时诚实拒绝，不假装已送达。 */
+    if (studioComposerBusy) {
+      await steerActiveConversation(question, textarea);
       return;
     }
 
@@ -1457,9 +1543,9 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
     fitComposer(textarea);
     studioComposerBusy = true;
     form.setAttribute('aria-busy', 'true');
-    if (submit) submit.disabled = true;
+    setComposerRunningState(true);
     const requestId = globalThis.crypto?.randomUUID?.() || `conversation-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    pendingConversation = { requestId, body: pendingBody, records: new Map() };
+    pendingConversation = { requestId, body: pendingBody, records: new Map(), agentSessionId: null, streamText: '', streamNode: null };
     renderConversationProgress({ phase: 'runtime_boot', fields: {} });
     try {
       const response = await Data.sendConversation(
@@ -1507,7 +1593,7 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
       pendingConversation = null;
       studioComposerBusy = false;
       form.removeAttribute('aria-busy');
-      if (submit) submit.disabled = false;
+      setComposerRunningState(false);
       textarea.focus();
     }
   });

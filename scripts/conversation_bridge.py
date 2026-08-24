@@ -19,7 +19,9 @@ Honest boundaries (no live selection):
 
 from __future__ import annotations
 
+import base64
 import json
+import time
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -84,6 +86,9 @@ def _trajectory_text(value: Any) -> str:
 class _ConversationActivitySink:
     """Project loop events into honest Studio lifecycle rows and phase marks."""
 
+    #: 流式正文增量的节流窗口：太密会淹没 stderr，太久会让用户看着空屏。
+    CHUNK_FLUSH_INTERVAL_S = 0.12
+
     def __init__(self, clock: PhaseClock) -> None:
         self.clock = clock
         self.activities: list[dict[str, Any]] = []
@@ -93,6 +98,19 @@ class _ConversationActivitySink:
         self._tools: dict[str, dict[str, Any]] = {}
         self._trajectory_tools: dict[str, dict[str, Any]] = {}
         self._first_chunk_seen = False
+        self._pending_chunk_b64: list[str] = []
+        self._last_chunk_flush = 0.0
+
+    def _flush_answer_chunks(self) -> None:
+        if not self._pending_chunk_b64:
+            return
+        blob = "".join(self._pending_chunk_b64)
+        self._pending_chunk_b64.clear()
+        self._last_chunk_flush = time.perf_counter()
+        try:
+            self.clock.mark_blob("answer_chunk", blob)
+        except Exception:  # noqa: BLE001 - 流式展示永远不能弄坏回合本身
+            self._pending_chunk_b64.clear()
 
     def _append_record(self, record: dict[str, Any]) -> dict[str, Any]:
         record["seq"] = len(self.trajectory) + 1
@@ -105,6 +123,7 @@ class _ConversationActivitySink:
             self.clock.mark("agent_start")
             return
         if kind == "turn_started":
+            self._flush_answer_chunks()
             turn = int(getattr(event, "turn", 0) or 0)
             started_ms = self.clock.mark("model_request", turn=turn)
             self._append_record({
@@ -143,8 +162,18 @@ class _ConversationActivitySink:
                     )
                 if self._active_message is not None:
                     self._active_message["firstTokenAt"] = at_ms
+            if text:
+                # Studio 流式正文：增量 base64 上线，渲染层边收边画。
+                self._pending_chunk_b64.append(
+                    base64.b64encode(text.encode("utf-8")).decode("ascii")
+                )
+                if time.perf_counter() - self._last_chunk_flush >= self.CHUNK_FLUSH_INTERVAL_S:
+                    self._flush_answer_chunks()
             return
         if kind == "tool_call_started":
+            # 工具边界前把持有的正文尾巴冲出去：模型先说话再调工具时，
+            # 文本必须落在工具行之前，不能被节流窗口吞到下一轮。
+            self._flush_answer_chunks()
             call_id = str(getattr(event, "id", ""))
             name = str(getattr(event, "name", "") or "tool")
             started_ms = self.clock.mark("tool_call", id=call_id, name=name)
@@ -208,6 +237,8 @@ class _ConversationActivitySink:
             })
             return
         if kind == "turn_finished":
+            # 回合正文结束：把节流窗口里持有的尾巴全部冲出去，不能丢字。
+            self._flush_answer_chunks()
             state = getattr(event, "state", None)
             transition = getattr(state, "transition", None)
             state_value = str(
@@ -315,6 +346,21 @@ def _completed_result(
             else {}
         ),
     }
+
+
+def emit_plan_snapshot(clock: PhaseClock, steps: Any) -> None:
+    """Codex update_plan live push：计划快照以 base64 走 mark_blob。
+
+    必须走 blob 通道：_token 的 120 字符截断会把多步计划的 JSON 剪断，
+    渲染层 decodePlanToken 解不出来，计划卡就静默消失。
+    """
+    payload_json = json.dumps({"steps": steps}, ensure_ascii=False)
+    clock.mark_blob("plan", base64.b64encode(payload_json.encode("utf-8")).decode("ascii"))
+
+
+def emit_session_ready(clock: PhaseClock, agent_session_id: str) -> None:
+    """把 durable session id 广播给渲染层——停止/插话按钮都指向它。"""
+    clock.mark("session_ready", sid=agent_session_id)
 
 
 def route_slash_command(prompt: str, catalog) -> dict | None:
@@ -659,14 +705,8 @@ def answer_conversation(
     todo_store = ctx.get("todo_store")
 
     def _push_plan(snapshot):
-        import base64
+        emit_plan_snapshot(conversation_clock, snapshot)
 
-        payload_json = json.dumps({"steps": snapshot}, ensure_ascii=False)
-        conversation_clock.mark(
-            "plan", plan=base64.b64encode(payload_json.encode("utf-8")).decode("ascii")
-        )
-
-    todo_store.on_update = _push_plan
     todo_store.on_update = _push_plan
 
     # 计划门：模型想收工但计划还有未完成步骤 → nudge 续跑（最多两次，防死循环）。
@@ -692,6 +732,8 @@ def answer_conversation(
 
         session_key = str(window.get("windowTitle") or "chat")
         agent_session_id = "agent-studio-" + hashlib.sha256(session_key.encode("utf-8")).hexdigest()[:32]
+        # 渲染层由此拿到停止/插话要指向的 durable session（Studio stop/steer）。
+        emit_session_ready(conversation_clock, agent_session_id)
         agent_session = sessions.open_or_create(agent_session_id, repair=True)
         # Harness-v2 resume: if the previous turn ended unfinished, surface
         # the breakpoint on this send. One-shot by construction — this turn

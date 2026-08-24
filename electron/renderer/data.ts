@@ -99,6 +99,16 @@ declare global {
   const DshMarkdown: {
     render(markdown: unknown): Element;
   };
+  /* Studio 会话控制（流式/停止/插话）的纯决策层全局。 */
+  interface MagicPointerConversationControlApi {
+    SESSION_READY_PHASE: string;
+    ANSWER_CHUNK_PHASE: string;
+    PLAN_PHASE: string;
+    sessionIdFromRecord(record: unknown): string | null;
+    decodeChunkBlob(fields: Record<string, string>): string;
+    planStepsFromRecord(record: unknown): { steps: Array<{ content: string; status: string }> } | null;
+  }
+  const ConversationControl: MagicPointerConversationControlApi;
   const DshIcons: {
     node(name: string, size?: number): Element;
   };
@@ -230,6 +240,8 @@ declare global {
       send(payload: { conversationId?: string | null; question: string; permissionPreset?: string; requestId?: string; workspaceRoot?: string; replyStyle?: string; permissionGrant?: string; permissionDeny?: string; permissionGrantOnce?: string }): Promise<Record<string, any>>;
       pickWorkspace?(): Promise<{ ok?: boolean; canceled?: boolean; path?: string; error?: string }>;
       export?(id: unknown): Promise<{ ok?: boolean; canceled?: boolean; path?: string; error?: string }>;
+      stop?(requestId: unknown): Promise<{ ok?: boolean; sessionId?: string; error?: string }>;
+      steer?(payload: { agentSessionId?: unknown; text?: unknown }): Promise<{ ok?: boolean; messageId?: string; error?: string }>;
       timeline(): Promise<MagicPointerTimelineDay[]>;
       memories(): Promise<unknown[]>;
       artifacts(): Promise<unknown[]>;
@@ -345,6 +357,8 @@ declare global {
     sendConversation(conversationId: string | null, question: string, permissionPreset?: string, requestId?: string, workspaceRoot?: string, replyStyle?: string, permission?: { grant?: string; deny?: string; once?: string }): Promise<Record<string, any>>;
     pickWorkspace(): Promise<{ ok?: boolean; canceled?: boolean; path?: string; error?: string }>;
     exportConversation(id: string): Promise<{ ok?: boolean; canceled?: boolean; path?: string; error?: string }>;
+    stopConversation(requestId: string): Promise<{ ok?: boolean; sessionId?: string; error?: string }>;
+    steerConversation(agentSessionId: string, text: string): Promise<{ ok?: boolean; messageId?: string; error?: string }>;
     onConversationProgress(callback: (payload: { requestId?: string; record?: Record<string, unknown> }) => void): void;
     models(): Promise<MagicPointerModelCatalog | null>;
     slashDirectory(): Promise<MagicPointerSlashDirectory | null>;
@@ -608,6 +622,16 @@ const Data: MagicPointerDataApi = {
   async exportConversation(id: string): Promise<{ ok?: boolean; canceled?: boolean; path?: string; error?: string }> {
     if (!hasBridge() || !bridge()!.conversations.export) return { ok: false, error: '导出通道不可用。' };
     return bridge()!.conversations.export!(id);
+  },
+
+  async stopConversation(requestId: string): Promise<{ ok?: boolean; sessionId?: string; error?: string }> {
+    if (!hasBridge()) return { ok: false, error: '停止通道不可用。' };
+    return bridge()!.conversations.stop!(requestId);
+  },
+
+  async steerConversation(agentSessionId: string, text: string): Promise<{ ok?: boolean; messageId?: string; error?: string }> {
+    if (!hasBridge()) return { ok: false, error: '插话通道不可用。' };
+    return bridge()!.conversations.steer!({ agentSessionId, text });
   },
 
   onConversationProgress(callback: (payload: { requestId?: string; record?: Record<string, unknown> }) => void): void {

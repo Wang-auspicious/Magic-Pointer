@@ -875,6 +875,55 @@
   height: 16px;
 }
 
+/* 忙态：发送钮变停止钮（DSH InputBar 同款形态）。方块 glyph 用伪元素画。 */
+.dshw-primary.is-stop {
+  background: var(--dsw-alias-button-info-fill);
+}
+
+.dshw-primary.is-stop::before {
+  content: '';
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: currentColor;
+}
+
+.dshw-primary.is-stop svg {
+  display: none;
+}
+
+/* 流式正文：回答增量边收边画的临时节点（回合完成后被 markdown 正式版替换） */
+.dsh-stream-live {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 14px;
+  line-height: 1.75;
+  color: var(--dsw-alias-text-primary, inherit);
+  padding: 2px 0;
+}
+
+.dsh-stream-live:not(:empty)::after {
+  content: '';
+  display: inline-block;
+  width: 7px;
+  height: 15px;
+  margin-left: 2px;
+  vertical-align: -2px;
+  background: currentColor;
+  opacity: 0.55;
+  animation: dsh-stream-blink 1s steps(2) infinite;
+}
+
+@keyframes dsh-stream-blink {
+  50% { opacity: 0; }
+}
+
+/* 排队插话的用户气泡：视觉上降调，明确它还没影响本轮 */
+.dsh-user[data-queued='true'] .dsh-bubble {
+  opacity: 0.72;
+  border-style: dashed;
+}
+
 /* ---- 设置模态（SettingsRoot） ---- */
 .dshw-settings-overlay {
   position: fixed;
