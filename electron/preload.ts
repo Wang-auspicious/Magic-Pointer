@@ -213,6 +213,11 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
         : {}),
     }),
     export: (id: unknown) => ipcRenderer.invoke('conversations:export', String(id || '').slice(0, 120)),
+    rename: (payload: { id?: unknown; title?: unknown }) => ipcRenderer.invoke('conversations:rename', {
+      id: String(payload?.id || '').slice(0, 120),
+      title: String(payload?.title || '').slice(0, 200),
+    }),
+    delete: (id: unknown) => ipcRenderer.invoke('conversations:delete', { id: String(id || '').slice(0, 120) }),
     stop: (requestId: unknown) => ipcRenderer.invoke('conversations:stop', { requestId: String(requestId || '').slice(0, 120) }),
     steer: (payload: { agentSessionId?: unknown; text?: unknown }) => ipcRenderer.invoke('conversations:steer', {
       agentSessionId: String(payload?.agentSessionId || '').slice(0, 120),

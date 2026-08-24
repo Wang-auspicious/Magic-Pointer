@@ -1348,6 +1348,33 @@ ipcMain.handle('conversations:timeline', (event: Electron.IpcMainInvokeEvent) =>
   if (!isDashboardSender(event) && !isCompanionSender(event)) return [];
   try { return conversations().timeline(); } catch (_) { return []; }
 });
+
+ipcMain.handle('conversations:rename', (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_renderer' };
+  const id = String(raw?.id || '').slice(0, 120);
+  const title = String(raw?.title || '').slice(0, 200);
+  try {
+    const result = conversations().rename(id, title);
+    if (!result.ok) return { ok: false, error: 'invalid_id_or_title' };
+    if (dashboardWindow && !dashboardWindow.isDestroyed()) {
+      dashboardWindow.webContents.send('conversations:turn', { id });
+    }
+    return { ok: true, title: result.conversation?.title || title };
+  } catch (_) { return { ok: false, error: 'store_failed' }; }
+});
+
+ipcMain.handle('conversations:delete', (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_renderer' };
+  const id = String(raw?.id || '').slice(0, 120);
+  try {
+    const result = conversations().remove(id);
+    if (!result.ok) return { ok: false, error: 'unknown_conversation' };
+    if (dashboardWindow && !dashboardWindow.isDestroyed()) {
+      dashboardWindow.webContents.send('conversations:turn', { id });
+    }
+    return { ok: true };
+  } catch (_) { return { ok: false, error: 'store_failed' }; }
+});
 ipcMain.handle('conversations:memories', (event: Electron.IpcMainInvokeEvent) => {
   if (!isDashboardSender(event) && !isCompanionSender(event)) return [];
   try { return conversations().memories(); } catch (_) { return []; }

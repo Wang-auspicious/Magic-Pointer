@@ -240,6 +240,8 @@ declare global {
       send(payload: { conversationId?: string | null; question: string; permissionPreset?: string; requestId?: string; workspaceRoot?: string; replyStyle?: string; permissionGrant?: string; permissionDeny?: string; permissionGrantOnce?: string }): Promise<Record<string, any>>;
       pickWorkspace?(): Promise<{ ok?: boolean; canceled?: boolean; path?: string; error?: string }>;
       export?(id: unknown): Promise<{ ok?: boolean; canceled?: boolean; path?: string; error?: string }>;
+      rename?(payload: { id?: unknown; title?: unknown }): Promise<{ ok?: boolean; title?: string; error?: string }>;
+      delete?(id: unknown): Promise<{ ok?: boolean; error?: string }>;
       stop?(requestId: unknown): Promise<{ ok?: boolean; sessionId?: string; error?: string }>;
       steer?(payload: { agentSessionId?: unknown; text?: unknown }): Promise<{ ok?: boolean; messageId?: string; error?: string }>;
       timeline(): Promise<MagicPointerTimelineDay[]>;
@@ -357,6 +359,8 @@ declare global {
     sendConversation(conversationId: string | null, question: string, permissionPreset?: string, requestId?: string, workspaceRoot?: string, replyStyle?: string, permission?: { grant?: string; deny?: string; once?: string }): Promise<Record<string, any>>;
     pickWorkspace(): Promise<{ ok?: boolean; canceled?: boolean; path?: string; error?: string }>;
     exportConversation(id: string): Promise<{ ok?: boolean; canceled?: boolean; path?: string; error?: string }>;
+    renameConversation(id: string, title: string): Promise<{ ok?: boolean; title?: string; error?: string }>;
+    deleteConversation(id: string): Promise<{ ok?: boolean; error?: string }>;
     stopConversation(requestId: string): Promise<{ ok?: boolean; sessionId?: string; error?: string }>;
     steerConversation(agentSessionId: string, text: string): Promise<{ ok?: boolean; messageId?: string; error?: string }>;
     onConversationProgress(callback: (payload: { requestId?: string; record?: Record<string, unknown> }) => void): void;
@@ -622,6 +626,16 @@ const Data: MagicPointerDataApi = {
   async exportConversation(id: string): Promise<{ ok?: boolean; canceled?: boolean; path?: string; error?: string }> {
     if (!hasBridge() || !bridge()!.conversations.export) return { ok: false, error: '导出通道不可用。' };
     return bridge()!.conversations.export!(id);
+  },
+
+  async renameConversation(id: string, title: string): Promise<{ ok?: boolean; title?: string; error?: string }> {
+    if (!hasBridge() || !bridge()!.conversations.rename) return { ok: false, error: '重命名通道不可用。' };
+    return bridge()!.conversations.rename!({ id, title });
+  },
+
+  async deleteConversation(id: string): Promise<{ ok?: boolean; error?: string }> {
+    if (!hasBridge() || !bridge()!.conversations.delete) return { ok: false, error: '删除通道不可用。' };
+    return bridge()!.conversations.delete!(id);
   },
 
   async stopConversation(requestId: string): Promise<{ ok?: boolean; sessionId?: string; error?: string }> {

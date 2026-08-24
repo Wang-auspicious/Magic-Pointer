@@ -49,6 +49,8 @@ interface Conversation {
   id: string;
   objectKey: string;
   title: string;
+  /** 用户重命名过：后续追问的自动标题不再覆盖它。 */
+  titleCustom?: boolean;
   subtitle: string;
   object: ReferencedObject;
   createdAt: number;
@@ -240,6 +242,8 @@ function createConversationStore(
       // follow-ups; an explicit root on this turn moves THIS thread only.
       const explicitRoot = String(turn.workspaceRoot || '').trim();
       if (explicitRoot) target.workspaceRoot = explicitRoot;
+      // 用户起过的名字不覆盖；自动标题只在未自定义时跟随最新问题。
+      if (!target.titleCustom) target.title = titleFrom(turn.question);
       // CC toolPermissionDecision: a chip grant/deny joins the thread memo
       // (dedup); the memo rides every later request in this thread.
       const grant = String(turn.permissionGrant || '').trim();
@@ -372,7 +376,29 @@ function createConversationStore(
     persist();
   }
 
-  return { appendTurn, list, get, timeline, memories, artifacts, clear, objectKey };
+  /** 用户自定义标题优先于自动标题；空白拒绝，不把对话改成空标题。 */
+  function rename(id: unknown, title: unknown): { ok: boolean; conversation?: Conversation } {
+    const clean = String(title || '').trim().slice(0, TITLE_MAX);
+    if (!clean) return { ok: false };
+    const conversations = load();
+    const target = conversations.find((conversation) => conversation.id === id);
+    if (!target) return { ok: false };
+    target.title = clean;
+    target.titleCustom = true;
+    persist();
+    return { ok: true, conversation: target };
+  }
+
+  function remove(id: unknown): { ok: boolean } {
+    const conversations = load();
+    const next = conversations.filter((conversation) => conversation.id !== id);
+    if (next.length === conversations.length) return { ok: false };
+    items = next;
+    persist();
+    return { ok: true };
+  }
+
+  return { appendTurn, list, get, rename, remove, timeline, memories, artifacts, clear, objectKey };
 }
 
 export {

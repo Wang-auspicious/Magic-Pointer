@@ -298,14 +298,132 @@ function conversationNode(c: { id?: string; title?: string; updatedAt?: number }
   time.textContent = c.updatedAt ? relativeTimeLabel(c.updatedAt) : '';
   const actions = document.createElement('span');
   actions.className = 'side-actions';
-  const ellipsis = document.createElement('button');
-  ellipsis.type = 'button';
-  ellipsis.setAttribute('aria-label', '更多');
+  // DSH Rows 的会话动作菜单：重命名 / 删除。行本身是 button，动作槽用
+  // role=button 的 span（按钮不能嵌按钮）。
+  const ellipsis = document.createElement('span');
+  ellipsis.className = 'side-ellipsis';
+  ellipsis.setAttribute('role', 'button');
+  ellipsis.setAttribute('tabindex', '0');
+  ellipsis.setAttribute('aria-label', '会话操作');
+  ellipsis.dataset.sessionMenu = String(c.id || '');
   ellipsis.innerHTML = icon('dsh-ellipsis');
   actions.appendChild(ellipsis);
+  actions.appendChild(buildSessionMenu(c));
   row.append(dot, title, time, actions);
   return row;
 }
+
+/* 会话动作菜单：挂在行内，打开时才可见；点击外部由全局委托收起。 */
+function buildSessionMenu(c: { id?: string; title?: string }): HTMLElement {
+  const menu = document.createElement('span');
+  menu.className = 'side-session-menu';
+  menu.hidden = true;
+  menu.dataset.forSession = String(c.id || '');
+  const makeItem = (label: string, danger: boolean, action: () => void) => {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'side-session-menu-item' + (danger ? ' is-danger' : '');
+    item.textContent = label;
+    item.addEventListener('click', (e) => {
+      e.stopPropagation();
+      menu.hidden = true;
+      action();
+    });
+    return item;
+  };
+  menu.append(
+    makeItem('重命名', false, () => openRenameDialog(String(c.id || ''), String(c.title || ''))),
+    makeItem('删除对话', true, () => {
+      if (String(c.id || '') === activeConversationId) startNewChat();
+      void Data.deleteConversation(String(c.id || '')).then(() => renderSidebar());
+    }),
+  );
+  return menu;
+}
+
+/* 重命名对话框：Electron 不支持 window.prompt，用内联覆盖层。 */
+function openRenameDialog(id: string, currentTitle: string) {
+  if (!id) return;
+  const overlay = document.createElement('div');
+  overlay.className = 'dshw-perm-confirm';
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.setAttribute('aria-label', '重命名对话');
+  const card = document.createElement('div');
+  card.className = 'dshw-perm-confirm-card';
+  const titleEl = document.createElement('b');
+  titleEl.textContent = '重命名对话';
+  const input = document.createElement('input');
+  input.className = 'dshw-rename-input';
+  input.value = currentTitle;
+  input.maxLength = 60;
+  const err = document.createElement('p');
+  err.className = 'dshw-rename-error';
+  err.hidden = true;
+  const actionsEl = document.createElement('div');
+  actionsEl.className = 'dshw-perm-confirm-actions';
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.textContent = '取消';
+  cancel.addEventListener('click', () => overlay.remove());
+  const save = document.createElement('button');
+  save.type = 'button';
+  save.className = 'is-primary';
+  save.textContent = '保存';
+  const submit = async () => {
+    const value = input.value.trim();
+    if (!value) {
+      err.textContent = '标题不能为空。';
+      err.hidden = false;
+      return;
+    }
+    const response = await Data.renameConversation(id, value);
+    if (!response?.ok) {
+      err.textContent = response?.error === 'invalid_id_or_title' ? '标题无效。' : '重命名失败，请重试。';
+      err.hidden = false;
+      return;
+    }
+    overlay.remove();
+    await renderSidebar();
+    const head = document.getElementById('chat-title');
+    if (head && activeConversationId === id) head.textContent = value;
+  };
+  save.addEventListener('click', () => void submit());
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.isComposing) {
+      e.preventDefault();
+      void submit();
+    }
+  });
+  actionsEl.append(cancel, save);
+  card.append(titleEl, input, err, actionsEl);
+  overlay.appendChild(card);
+  document.body.appendChild(overlay);
+  input.focus();
+  input.select();
+}
+
+(function bindSessionMenuDismiss() {
+  document.addEventListener('click', (e) => {
+    const target = e.target as HTMLElement | null;
+    if (!target) return;
+    const trigger = target.closest<HTMLElement>('[data-session-menu]');
+    if (trigger) {
+      e.stopPropagation();
+      const host = trigger.parentElement?.querySelector<HTMLElement>('.side-session-menu');
+      if (host) {
+        document.querySelectorAll('.side-session-menu:not([hidden])').forEach((m) => {
+          if (m !== host) (m as HTMLElement).hidden = true;
+        });
+        host.hidden = !host.hidden;
+      }
+      return;
+    }
+    document.querySelectorAll('.side-session-menu:not([hidden])').forEach((m) => {
+      if (!target.closest('.side-session-menu')) (m as HTMLElement).hidden = true;
+    });
+  });
+})();
 
 async function renderSidebar() {
   const host = document.getElementById('side-convos');
