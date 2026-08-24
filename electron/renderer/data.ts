@@ -109,6 +109,11 @@ declare global {
     planStepsFromRecord(record: unknown): { steps: Array<{ content: string; status: string }> } | null;
   }
   const ConversationControl: MagicPointerConversationControlApi;
+
+  /* 斜杠触发检测（DSH input-trigger detect 层）。 */
+  const SlashTrigger: {
+    detectSlashToken(textBeforeCaret: string): string | null;
+  };
   const DshIcons: {
     node(name: string, size?: number): Element;
   };

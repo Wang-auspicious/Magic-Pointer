@@ -984,25 +984,58 @@ function renderSlashRows(filter: string) {
     nodes.push(empty);
   }
   host.replaceChildren(...nodes);
+  setActiveSlashRow(slashRows()[0] || null);
 }
 
-async function openSlashMenu() {
+/* 键盘导航：高亮行在可见行之间循环移动，Enter/Tab 选中。 */
+function slashRows(): HTMLElement[] {
+  return [...document.querySelectorAll<HTMLElement>('#composer-slash-rows [data-slash-name]')];
+}
+
+function activeSlashRow(): HTMLElement | null {
+  return document.querySelector<HTMLElement>('#composer-slash-rows [data-slash-name].is-active');
+}
+
+function setActiveSlashRow(row: HTMLElement | null) {
+  slashRows().forEach((r) => {
+    r.classList.toggle('is-active', r === row);
+    if (r === row) r.setAttribute('aria-selected', 'true');
+    else r.removeAttribute('aria-selected');
+  });
+  row?.scrollIntoView({ block: 'nearest' });
+}
+
+function moveSlashSelection(delta: number): boolean {
+  const rows = slashRows();
+  if (!rows.length) return false;
+  const current = activeSlashRow();
+  const index = current ? rows.indexOf(current) : -1;
+  const next = rows[Math.min(rows.length - 1, Math.max(0, index + delta))]
+    || (delta < 0 ? rows[rows.length - 1] : rows[0]);
+  setActiveSlashRow(next);
+  return true;
+}
+
+async function openSlashMenu(inlineFilter?: string) {
   const menu = document.getElementById('composer-add-menu');
   if (!menu) return;
-  if (!slashDirectoryLoaded) {
+  const inline = typeof inlineFilter === 'string';
+  if (!slashDirectoryLoaded && !inline) {
     const rows = document.getElementById('composer-slash-rows');
     if (rows) rows.replaceChildren();
     const loading = document.createElement('div');
     loading.className = 'dshw-slash-empty';
     loading.textContent = '正在加载目录…';
     if (rows) rows.appendChild(loading);
+  }
+  if (!slashDirectoryLoaded) {
     slashDirectory = await Data.slashDirectory();
     slashDirectoryLoaded = slashDirectory !== null;
   }
-  renderSlashRows('');
+  renderSlashRows(inline ? inlineFilter : '');
   menu.hidden = false;
   const search = document.getElementById('composer-slash-search') as HTMLInputElement | null;
-  if (search) {
+  if (search && !inline) {
     search.value = '';
     search.focus();
   }
@@ -1030,6 +1063,16 @@ function bindSlashMenu() {
   });
   search?.addEventListener('keydown', e => {
     if (e.key === 'Escape') { closeSlashMenu(); e.stopPropagation(); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); moveSlashSelection(1); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); moveSlashSelection(-1); }
+    else if (e.key === 'Enter') {
+      const active = activeSlashRow();
+      if (active) {
+        e.preventDefault();
+        insertSlashToken(active.dataset.slashName || '');
+        closeSlashMenu();
+      }
+    }
   });
   document.getElementById('composer-add-menu')?.addEventListener('click', e => {
     const row = (e.target as Element | null)?.closest<HTMLElement>('[data-slash-name]');
@@ -1681,9 +1724,31 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
   if (ta) {
     fitComposer(ta);
     ta.addEventListener('input', () => fitComposer(ta));
-    /* Enter 发送 / Shift+Enter 换行；中文输入法组合态不误触发送
-       （deepseek-harness InputBar 同款分派：组合态与 Shift 直接放行换行）。 */
+    /* DSH input-trigger：光标前是未提交的 /token 时内联开目录并随输入过滤。 */
+    ta.addEventListener('input', () => {
+      const caret = ta.selectionStart ?? ta.value.length;
+      const token = SlashTrigger.detectSlashToken(ta.value.slice(0, caret));
+      if (token !== null) void openSlashMenu(token);
+      else closeSlashMenu();
+    });
+    /* 目录打开时方向键移动高亮、Enter/Tab 选中、Escape 关闭；
+       未打开时 Enter 走发送分派（下方 keydown）。 */
     ta.addEventListener('keydown', e => {
+      const menu = document.getElementById('composer-add-menu');
+      if (menu && !menu.hidden) {
+        if (e.key === 'ArrowDown') { e.preventDefault(); moveSlashSelection(1); return; }
+        if (e.key === 'ArrowUp') { e.preventDefault(); moveSlashSelection(-1); return; }
+        if (e.key === 'Escape') { closeSlashMenu(); return; }
+        if ((e.key === 'Enter' && !e.isComposing) || e.key === 'Tab') {
+          const active = activeSlashRow();
+          if (active) {
+            e.preventDefault();
+            insertSlashToken(active.dataset.slashName || '');
+            closeSlashMenu();
+            return;
+          }
+        }
+      }
       if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
       e.preventDefault();
       (form as HTMLFormElement).requestSubmit();

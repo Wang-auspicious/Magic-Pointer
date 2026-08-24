@@ -1919,8 +1919,13 @@ body[data-ds-dark-theme] {
   cursor: pointer;
 }
 
-.dshw-slash-row:hover {
+.dshw-slash-row:hover,
+.dshw-slash-row.is-active {
   background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.dshw-slash-row.is-active {
+  outline: 1px solid var(--dsw-alias-border-l2);
 }
 
 .dshw-slash-text {
