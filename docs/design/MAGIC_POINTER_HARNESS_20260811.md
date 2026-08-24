@@ -1325,7 +1325,7 @@ smoke：uia-host PASS、replay 20 条 trace 走真实网关（机制绿，见下
 
 ### 2026-08-24：Studio GUI 对标批（五源码拆解文档 → 逐项差距修复，开发树未升版本）
 
-- [x] 对照 `D:\Desktop\Persistence\harness`（CC/Codex/DSH/Hermes/Pi 拆解）+ DSH web 源码逐项找差距，DSH GUI 差距报告 34 项落档 `data/runtime/research-dsh-gui-gap.md`（P0：无流式、无停止、无排队、代码块无语言标签/复制、无数学渲染；P1：会话菜单死按钮、无状态徽章、强制滚动等）。
+- [x] 对照 `D:\Desktop\Persistence\harness`（CC/Codex/DSH/Hermes/Pi 拆解）+ DSH web 源码逐项找差距，DSH GUI 差距报告 34 项落档 `docs/research/2026-08-24-dsh-web-ui-gap-report.md`（P0：无流式、无停止、无排队、代码块无语言标签/复制、无数学渲染；P1：会话菜单死按钮、无状态徽章、强制滚动等）。
 - [x] **流式正文**：`answer_chunk` base64 进度行 + Studio 边收边画（节流 + 边界冲刷，不丢字有测试钉死）；顺带修 plan 推送被 `_token` 120 字符截断导致计划卡消失的真 bug（改 `mark_blob`）。
 - [x] **停止**：`session_ready` 广播 durable session id → 忙态发送钮变停止钮 → `conversations:stop` 优雅取消（Receipt）+ 5s 兑底 kill。
 - [x] **插话**：忙态 Enter 写 durable inbox(next-step)，立即显示排队气泡（降调虚线样式），未就绪时诚实拒绝。
