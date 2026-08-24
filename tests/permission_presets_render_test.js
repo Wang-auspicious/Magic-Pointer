@@ -12,8 +12,10 @@ assert.deepStrictEqual(VALUES, ['plan', 'read-only', 'workspace-write', 'danger-
 
 for (const option of PRESETS) {
   assert.ok(option.name && option.description, `${option.value} 需要名称与描述`);
-  assert.ok(option.glyph, `${option.value} 需要盾形路径`);
-  assert.ok(presetSvg(option).startsWith('<svg'), `${option.value} 的 SVG 可渲染`);
+  const svg = presetSvg(option);
+  assert.ok(svg.startsWith('<svg'), `${option.value} 的 SVG 可渲染`);
+  assert.ok(svg.includes('viewBox="0 0 24 24"') && svg.includes('stroke-width="1.5"'),
+    `${option.value} 必须使用 Studio 统一的 24px / 1.5px 线性图标`);
 }
 
 // Full access 带确认门文案；其余档位没有。

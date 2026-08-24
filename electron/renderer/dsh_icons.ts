@@ -117,18 +117,39 @@ const DshIcons = (() => {
     },
   };
 
+  // Studio 使用统一的 24px / 1.5px 圆头线性图标。保留上面的来源路径只为
+  // 兼容历史快照；实际产品不再混用粗实心 glyph。
+  const LINE_ICONS: Readonly<Record<string, IconSpec>> = {
+    search: { viewBox: '0 0 24 24', paths: [{ d: 'M16 16l4 4M11 17.5a6.5 6.5 0 1 1 0-13 6.5 6.5 0 0 1 0 13Z' }] },
+    check: { viewBox: '0 0 24 24', paths: [{ d: 'm5 12.5 4.2 4.2L19 7' }] },
+    chev: { viewBox: '0 0 24 24', paths: [{ d: 'm7 9.5 5 5 5-5' }] },
+    copy: { viewBox: '0 0 24 24', paths: [{ d: 'M15.5 5.5h-9a3 3 0 0 0-3 3v9M8.5 8.5h9a3 3 0 0 1 3 3v6a3 3 0 0 1-3 3h-6a3 3 0 0 1-3-3Z' }] },
+    branch: { viewBox: '0 0 24 24', paths: [{ d: 'M6 7v10M8 12h3a7 7 0 0 0 7-3M6 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4ZM6 21a2 2 0 1 0 0-4 2 2 0 0 0 0 4ZM18 9a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z' }] },
+    edit: { viewBox: '0 0 24 24', paths: [{ d: 'm14.5 5.5 4 4M5 19l1-4 9.8-9.8a2 2 0 0 1 2.8 0l.2.2a2 2 0 0 1 0 2.8L9 18Z' }] },
+    think: { viewBox: '0 0 24 24', paths: [{ d: 'M12 3c.4 4.4 4.6 8.6 9 9-4.4.4-8.6 4.6-9 9-.4-4.4-4.6-8.6-9-9 4.4-.4 8.6-4.6 9-9Z' }] },
+    browse: { viewBox: '0 0 24 24', paths: [{ d: 'M6 5.5h12M6 10h8M6 14.5h10M6 19h6' }] },
+    code: { viewBox: '0 0 24 24', paths: [{ d: 'm9 7-5 5 5 5M15 7l5 5-5 5' }] },
+    api: { viewBox: '0 0 24 24', paths: [{ d: 'M5 5.5h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2ZM7 10l2 2-2 2M12 14h4' }] },
+    sparkle: { viewBox: '0 0 24 24', paths: [{ d: 'M12 3c.4 4.4 4.6 8.6 9 9-4.4.4-8.6 4.6-9 9-.4-4.4-4.6-8.6-9-9 4.4-.4 8.6-4.6 9-9Z' }] },
+    send: { viewBox: '0 0 24 24', paths: [{ d: 'M12 19V5m-6 6 6-6 6 6' }] },
+  };
+
   function node(name: string, size = 16): IconNode {
-    const spec = ICONS[name] ?? ICONS.sparkle;
+    const spec = LINE_ICONS[name] || LINE_ICONS.sparkle || ICONS.sparkle;
     const svg = DOC ? DOC.createElementNS(SVG_NS, 'svg') : shim('svg');
     svg.setAttribute('width', String(size));
     svg.setAttribute('height', String(size));
     svg.setAttribute('viewBox', spec.viewBox);
     svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '1.5');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
     svg.setAttribute('aria-hidden', 'true');
     for (const item of spec.paths) {
       const path = DOC ? DOC.createElementNS(SVG_NS, 'path') : shim('path');
       path.setAttribute('d', item.d);
-      path.setAttribute('fill', 'currentColor');
+      path.setAttribute('fill', 'none');
       if (item.fillRule) path.setAttribute('fill-rule', item.fillRule);
       if (item.clipRule) path.setAttribute('clip-rule', item.clipRule);
       if (item.transform) path.setAttribute('transform', item.transform);

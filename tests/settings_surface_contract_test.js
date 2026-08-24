@@ -5,7 +5,7 @@ const fs = require('fs');
 
 const html = fs.readFileSync('electron/renderer/studio.html', 'utf8');
 const source = fs.readFileSync('electron/renderer/settings.ts', 'utf8');
-const css = fs.readFileSync('electron/renderer/studio.css', 'utf8');
+const css = fs.readFileSync('electron/renderer/magic_studio.css', 'utf8');
 
 assert(html.includes('settings_model.js'), 'Studio must load the canonical settings model');
 assert(html.includes('id="settings-save-status"'), 'settings must have a visible save status live region');
@@ -24,7 +24,12 @@ assert(source.includes("closest<HTMLInputElement>('#settings-search')"),
   'the search field must have live behavior');
 assert(css.includes('.settings-save-status'));
 assert(css.includes("[data-save-state='error']"));
-assert(css.includes('.settings-section-frame'));
+assert(source.includes('claude-settings-row'));
+assert(source.includes('claude-settings-list'));
+assert(!source.includes('settings-section-frame'), 'the rejected rounded settings cards must be gone');
+assert(css.includes('.claude-settings-row'));
+assert(css.includes('.claude-settings-list'));
+assert(!css.includes('.dshw-settings-options .settings-section-frame'));
 assert(!css.includes('.settings-page-icon {'), 'decorative rounded page icons must be removed');
 assert(!css.includes('background: var(--studio-lavender)'), 'settings selection must stay neutral');
 

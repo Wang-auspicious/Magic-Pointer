@@ -14,12 +14,12 @@ type SettingRow = {
   step?: number;
 };
 type SettingSection = { title: string; rows: SettingRow[] };
-type SettingsPage = { description: string; icon: string; id: string; sections: SettingSection[]; title: string };
+type SettingsPage = { description: string; group: '设置' | 'Agent' | '自定义'; icon: string; id: string; sections: SettingSection[]; title: string };
 
 const option = (value: string | number, label: string): SettingOption => ({ value, label });
 
 const SETTINGS_PAGES: SettingsPage[] = [
-  { id: 'general', icon: 'ic-window', title: '通用', description: '启动、后台与更新。', sections: [
+  { id: 'general', group: '设置', icon: 'ic-window', title: '通用', description: '启动、后台与更新。', sections: [
     { title: '运行', rows: [
       { path: 'general.launch_at_login', control: 'toggle', label: '开机时启动', description: '登录后静默驻留。' },
       { path: 'general.keep_running', control: 'toggle', label: '关闭窗口后继续运行', description: '划线与快捷键仍然可用。' },
@@ -28,7 +28,7 @@ const SETTINGS_PAGES: SettingsPage[] = [
       { path: 'general.update_channel', control: 'select', label: '更新通道', options: [option('stable', '稳定'), option('preview', '预览')] },
     ] },
   ] },
-  { id: 'interaction', icon: 'ic-cursor', title: '交互', description: '怎么唤起、怎么输入，以及全局快捷键。', sections: [
+  { id: 'interaction', group: '设置', icon: 'ic-cursor', title: '交互', description: '怎么唤起、怎么输入，以及全局快捷键。', sections: [
     { title: '唤起', rows: [
       { path: 'activation.wake_mode', control: 'select', label: '唤起方式', options: [option('wiggle_hotkey', '晃动 + 快捷键'), option('wiggle', '只用晃动'), option('hotkey', '只用快捷键'), option('mouse_button', '鼠标侧键')] },
       { path: 'activation.sensitivity', control: 'range', label: '晃动灵敏度', min: 0, max: 1, step: 0.05 },
@@ -47,7 +47,7 @@ const SETTINGS_PAGES: SettingsPage[] = [
       { path: 'shortcuts.pause', control: 'text', label: '暂停输入' },
     ] },
   ] },
-  { id: 'voice', icon: 'ic-mic', title: '语音', description: '语音是可选输入方式；关闭后不会启动语音模型。', sections: [
+  { id: 'voice', group: '设置', icon: 'ic-mic', title: '语音', description: '语音是可选输入方式；关闭后不会启动语音模型。', sections: [
     { title: '语音输入', rows: [
       { path: 'interaction.voice_enabled', control: 'toggle', label: '启用语音输入', description: '关闭后默认输入强制为键盘，并隐藏普通语音入口。' },
       { path: 'interaction.voice_engine', control: 'select', label: '本地引擎', options: [option('auto', '自动'), option('sense_voice', 'SenseVoice'), option('whisper', 'Whisper')] },
@@ -61,7 +61,7 @@ const SETTINGS_PAGES: SettingsPage[] = [
       { path: 'interaction.voice_memory_limit_mb', control: 'select', label: '内存上限', options: [option(512, '512 MB'), option(1024, '1 GB'), option(2048, '2 GB')] },
     ] },
   ] },
-  { id: 'models-agents', icon: 'ic-spark', title: '模型与 Agent', description: '模型负责回答，Agent 负责接手更长的项目任务。', sections: [
+  { id: 'models-agents', group: 'Agent', icon: 'ic-spark', title: '模型与 Agent', description: '选择推理模型与 Magic Pointer 自有 Runtime 的工作方式。', sections: [
     { title: '模型', rows: [
       { control: 'info', infoKey: 'active-model', label: '当前默认模型', description: '普通回答与卡片内展开都使用这一档。' },
       { control: 'info', infoKey: 'credential', label: '模型密钥', description: '只显示是否存在，永不回显原文。' },
@@ -74,7 +74,7 @@ const SETTINGS_PAGES: SettingsPage[] = [
       { path: 'agents.auto_attach', control: 'toggle', label: '自动附加接地证据' },
     ] },
   ] },
-  { id: 'perception-privacy', icon: 'ic-eye', title: '感知与隐私', description: '它能看什么、画面能否出本机，以及哪些应用永远不看。', sections: [
+  { id: 'perception-privacy', group: 'Agent', icon: 'ic-eye', title: '感知与隐私', description: '它能看什么、画面能否出本机，以及哪些应用永远不看。', sections: [
     { title: '读取', rows: [
       { path: 'privacy.default_capture_mode', control: 'select', label: '默认读取方式', options: [option('follow_global', '自动'), option('structured_only', '只用结构层'), option('local_screenshot', '只在本机看画面'), option('deny', '完全不读')] },
       { path: 'privacy.upload_screenshots', control: 'toggle', label: '允许把画面发给视觉模型' },
@@ -82,16 +82,12 @@ const SETTINGS_PAGES: SettingsPage[] = [
     { title: '边界', rows: [
       { path: 'privacy.sensitive_apps', control: 'tags', label: '完全不看的应用', description: '不读、不截，也不记。' },
     ] },
-    { title: '记忆与学习', rows: [
-      { path: 'privacy.screen_memory_enabled', control: 'toggle', label: '记住最近处理过的对象', description: '只在本机保存应用、窗口和问题摘要；默认关闭。' },
-      { path: 'privacy.background_learning_enabled', control: 'toggle', label: '生成学习建议', description: '任务结束后在后台生成候选；应用前仍需你批准。' },
-    ] },
     { title: '浏览器', rows: [
       { path: 'connections.browser_devtools_enabled', control: 'toggle', label: '读取已授权的浏览器页面' },
       { path: 'connections.browser_devtools_endpoints', control: 'tags', label: '本机调试端点', description: '只接受 localhost/127.0.0.1。' },
     ] },
   ] },
-  { id: 'permissions', icon: 'ic-shield', title: '权限', description: '按后果决定直接做、先问还是拒绝。', sections: [
+  { id: 'permissions', group: 'Agent', icon: 'ic-shield', title: '权限', description: '按后果决定直接做、先问还是拒绝。', sections: [
     { title: '默认策略', rows: [
       { path: 'permissions.default_read', control: 'select', label: '读取', options: [option('allow', '直接做'), option('confirm', '每次问我'), option('deny', '拒绝')] },
       { path: 'permissions.default_write', control: 'select', label: '写入', options: [option('allow', '直接做'), option('confirm', '每次问我'), option('deny', '拒绝')] },
@@ -103,7 +99,17 @@ const SETTINGS_PAGES: SettingsPage[] = [
       { control: 'info', label: '范围授权', description: '只展示仍有效的应用、项目和到期时间；默认拒绝新增。' },
     ] },
   ] },
-  { id: 'storage', icon: 'ic-stash', title: '存储', description: '收藏箱、截图、产物与审计在本机如何保存。', sections: [
+  { id: 'memory-context', group: '自定义', icon: 'ic-memory', title: '记忆与上下文', description: '决定 Agent 能记住什么，并查看已经形成的本地上下文。', sections: [
+    { title: '记忆', rows: [
+      { path: 'privacy.screen_memory_enabled', control: 'toggle', label: '记住处理过的对象', description: '在本机保存应用、窗口和问题摘要，供之后的任务召回。' },
+      { path: 'privacy.background_learning_enabled', control: 'toggle', label: '生成学习建议', description: '任务结束后生成候选记忆；应用前仍需你批准。' },
+    ] },
+    { title: '上下文', rows: [
+      { control: 'info', label: '项目上下文', description: '项目文件夹、当前对话与已批准记忆会一起进入 Agent 上下文。' },
+      { control: 'info', label: '自动压缩', description: '长任务接近上下文窗口时，由 Runtime 保留目标、决定与未完成工作。' },
+    ] },
+  ] },
+  { id: 'storage', group: '自定义', icon: 'ic-stash', title: '存储', description: '收藏、截图、产物与审计在本机如何保存。', sections: [
     { title: '收藏箱', rows: [
       { path: 'stash.dir', control: 'text', label: '保存目录' },
       { path: 'stash.clipboard', control: 'toggle', label: '自动收藏剪贴板图片' },
@@ -115,7 +121,7 @@ const SETTINGS_PAGES: SettingsPage[] = [
       { path: 'privacy.retain_artifacts_days', control: 'select', label: '生成的产物', options: [option(7, '7 天'), option(30, '30 天'), option(90, '90 天'), option(0, '永久')] },
     ] },
   ] },
-  { id: 'appearance-accessibility', icon: 'ic-img', title: '外观', description: '主题和划线反馈。', sections: [
+  { id: 'appearance-accessibility', group: '自定义', icon: 'ic-img', title: '外观', description: '主题和划线反馈。', sections: [
     { title: '外观', rows: [
       { path: 'appearance.theme', control: 'select', label: '主题', options: [option('system', '跟随系统'), option('light', '浅色'), option('dark', '深色')] },
       { path: 'appearance.material', control: 'select', label: '窗口材质', options: [option('auto', '自动'), option('translucent', '半透明'), option('solid', '不透明')] },

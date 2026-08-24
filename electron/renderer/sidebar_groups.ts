@@ -57,8 +57,8 @@ function filterConversations(
     || String(item.subtitle || '').toLowerCase().includes(needle));
 }
 
-/** Codex WorkspaceBrowser：会话按线程工作区分组，组头是文件夹名。
- *  未绑定工作区的落「默认工作区」组；组内新→旧；root 原样携带。 */
+/** 会话按线程绑定的真实项目文件夹分组，组头取文件夹名。
+ *  没有项目的历史记录不属于 Studio 项目浏览器，直接过滤；组内新→旧。 */
 function groupByWorkspace(
   conversations: readonly (SidebarConversationLike & { workspaceRoot?: string })[],
 ): Array<{ key: string; label: string; workspaceRoot: string; items: SidebarConversationLike[] }> {
@@ -71,13 +71,14 @@ function groupByWorkspace(
   >();
   for (const item of sorted) {
     const root = String(item.workspaceRoot || '').trim().replace(/\\/g, '/');
-    const key = root || '__default__';
+    if (!root) continue;
+    const key = root;
     let group = groups.get(key);
     if (!group) {
       const segments = root.split('/').filter(Boolean);
       group = {
         key,
-        label: segments[segments.length - 1] || '默认工作区',
+        label: segments[segments.length - 1] || root,
         workspaceRoot: root,
         items: [],
       };
@@ -85,12 +86,7 @@ function groupByWorkspace(
     }
     group.items.push(item);
   }
-  // 默认组永远排最后；其余按组内最新一条的时序（sorted 已保证首次出现序）。
-  return [...groups.values()].sort((a, b) => {
-    if (a.key === '__default__') return 1;
-    if (b.key === '__default__') return -1;
-    return 0;
-  });
+  return [...groups.values()];
 }
 
 const SidebarGroups = { groupConversations, filterConversations, groupByWorkspace };

@@ -6,6 +6,7 @@ type SettingsApi = {
   getFabricSettings?: () => Promise<any>;
   saveFabricSettings?: (patch: unknown) => Promise<any>;
   setTheme?: (theme: unknown) => void;
+  conversations?: { memories?: () => Promise<any[]> };
 };
 
 type SettingsModelApi = {
@@ -18,8 +19,8 @@ type SettingsModelApi = {
 const settingsModel = (globalThis as any).SettingsModel as SettingsModelApi;
 let canonicalSettings: Record<string, any> = {};
 let activeModelStatus: Record<string, any> = {};
+let learnedMemories: Array<Record<string, any>> = [];
 let activeSettingsPage = 'general';
-let activeSettingsSection: string | null = null;
 let settingsQuery = '';
 let settingsSaveQueue: Promise<void> = Promise.resolve();
 let settingsHydrated = false;
@@ -81,34 +82,45 @@ function controlForSetting(row: any, value: unknown) {
 
 function renderSettingsRow(row: any) {
   const value = row.path ? settingsModel.valueForSetting(row.path, canonicalSettings) : undefined;
-  return `<div class="settings-row" data-setting-row="${escSetting(row.path || row.label)}" data-save-state="idle">
-    <div class="settings-copy"><b>${escSetting(row.label)}</b>${row.description ? `<small>${escSetting(row.description)}</small>` : ''}</div>
-    <div class="settings-control">${controlForSetting(row, value)}</div>
+  return `<div class="claude-settings-row" data-setting-row="${escSetting(row.path || row.label)}" data-save-state="idle">
+    <div class="claude-settings-copy"><b>${escSetting(row.label)}</b>${row.description ? `<small>${escSetting(row.description)}</small>` : ''}</div>
+    <div class="claude-settings-control">${controlForSetting(row, value)}</div>
     <p class="settings-row-error" hidden></p>
   </div>`;
 }
 
-function renderSettingsSection(scope: string, title: string, rows: any[], index: number) {
-  const sectionId = `${scope}-${index}`;
-  const open = activeSettingsSection === null ? index === 0 : activeSettingsSection === sectionId;
-  return `<section class="settings-section${open ? ' is-open' : ''}">
-    <button type="button" class="settings-section-toggle" aria-expanded="${open}"
-      data-settings-section="${escSetting(sectionId)}">
-      <span class="settings-section-copy"><b>${escSetting(title)}</b><small>${rows.length} 项</small></span>
-      ${settingIcon('ic-chev')}
-    </button>
-    <div class="settings-section-frame"${open ? '' : ' hidden'}>${rows.map(renderSettingsRow).join('')}</div>
+function renderSettingsSection(title: string, rows: any[]) {
+  return `<section class="claude-settings-section">
+    <h3>${escSetting(title)}</h3>
+    <div class="claude-settings-list">${rows.map(renderSettingsRow).join('')}</div>
   </section>`;
 }
 
+function renderMemoryLibrary() {
+  if (!learnedMemories.length) {
+    return `<section class="claude-settings-section claude-memory-library"><h3>已学习的上下文</h3>
+      <div class="claude-memory-empty">还没有形成可复用记忆。反复处理同一个对象后，它会在这里出现。</div></section>`;
+  }
+  return `<section class="claude-settings-section claude-memory-library"><h3>已学习的上下文</h3><div class="claude-memory-list">
+    ${learnedMemories.slice(0, 12).map((memory) => {
+      const identity = String(memory.object?.windowTitle || memory.object?.label || memory.object?.app || '未命名对象');
+      const questions = Array.isArray(memory.questions) ? memory.questions.slice(0, 2) : [];
+      return `<article class="claude-memory-item"><span class="claude-memory-mark">${settingIcon('ic-memory')}</span>
+        <span class="claude-memory-copy"><b>${escSetting(identity)}</b><small>${escSetting(questions.join(' · ') || memory.subtitle || '本地上下文')}</small></span>
+        <span class="claude-memory-count">${escSetting(memory.touches || 0)} 次</span></article>`;
+    }).join('')}
+  </div></section>`;
+}
+
 function renderSettingsPage(page: any) {
-  return `<section class="settings-page" data-page="${escSetting(page.id)}">
-    <header class="settings-page-head">
+  return `<section class="claude-settings-page" data-page="${escSetting(page.id)}">
+    <header class="claude-settings-page-head">
       <div><h2>${escSetting(page.title)}</h2><p>${escSetting(page.description)}</p></div>
     </header>
-    <div class="settings-sections">
-      ${page.sections.map((section: any, index: number) => renderSettingsSection(page.id, section.title, section.rows, index)).join('')}
+    <div class="claude-settings-sections">
+      ${page.sections.map((section: any) => renderSettingsSection(section.title, section.rows)).join('')}
     </div>
+    ${page.id === 'memory-context' ? renderMemoryLibrary() : ''}
   </section>`;
 }
 
@@ -123,11 +135,11 @@ function renderSettingsSearchResults(query: string) {
     }
   }
   const count = matches.reduce((total, section) => total + section.rows.length, 0);
-  return `<section class="settings-page" data-page="search">
-    <header class="settings-page-head"><div><h2>搜索设置</h2><p>“${escSetting(query)}” · ${count} 项</p></div></header>
+  return `<section class="claude-settings-page" data-page="search">
+    <header class="claude-settings-page-head"><div><h2>搜索设置</h2><p>“${escSetting(query)}” · ${count} 项</p></div></header>
     ${matches.length
-      ? `<div class="settings-sections">${matches.map((section, index) => renderSettingsSection('search', section.title, section.rows, index)).join('')}</div>`
-      : '<div class="settings-search-empty">没有匹配的设置。</div>'}
+      ? `<div class="claude-settings-sections">${matches.map((section) => renderSettingsSection(section.title, section.rows)).join('')}</div>`
+      : '<div class="claude-settings-search-empty">没有匹配的设置。</div>'}
   </section>`;
 }
 
@@ -146,8 +158,16 @@ function renderSettings() {
   if (!settingsModel.SETTINGS_PAGES.some((page) => page.id === activeSettingsPage)) {
     activeSettingsPage = settingsModel.SETTINGS_PAGES[0].id;
   }
-  nav.innerHTML = settingsModel.SETTINGS_PAGES.map((page) => `<button type="button" class="settings-nav-item${!settingsQuery && page.id === activeSettingsPage ? ' is-on' : ''}"
-    data-settings-page="${escSetting(page.id)}">${settingIcon(page.icon)}<span>${escSetting(page.title)}</span></button>`).join('');
+  const groups = new Map<string, any[]>();
+  settingsModel.SETTINGS_PAGES.forEach((page) => {
+    const group = String(page.group || '设置');
+    groups.set(group, [...(groups.get(group) || []), page]);
+  });
+  nav.innerHTML = [...groups.entries()].map(([group, pages]) => `<section class="settings-nav-group">
+    <h2>${escSetting(group)}</h2>
+    ${pages.map((page) => `<button type="button" class="settings-nav-item${!settingsQuery && page.id === activeSettingsPage ? ' is-on' : ''}"
+      data-settings-page="${escSetting(page.id)}">${settingIcon(page.icon)}<span>${escSetting(page.title)}</span></button>`).join('')}
+  </section>`).join('');
   const search = document.getElementById('settings-search') as HTMLInputElement | null;
   if (search && search.value !== settingsQuery) search.value = settingsQuery;
   if (settingsQuery.trim()) {
@@ -169,6 +189,7 @@ function hydrateCanonical(settings: unknown, modelStatus: unknown = activeModelS
     document.documentElement.dataset.theme = resolvedTheme;
     // DSH 令牌平台的双档开关：body[data-ds-dark-theme]（与 deepseek-harness 同款）
     document.body.toggleAttribute('data-ds-dark-theme', resolvedTheme === 'dark');
+    try { localStorage.setItem('mp:theme', resolvedTheme); } catch { /* storage unavailable */ }
     settingsApi()?.setTheme?.(theme);
   }
 }
@@ -226,20 +247,9 @@ function parseSettingValue(element: HTMLInputElement | HTMLSelectElement) {
 
 document.addEventListener('click', (event) => {
   const target = event.target as HTMLElement;
-  const section = target.closest<HTMLElement>('[data-settings-section]');
-  if (section) {
-    const sectionId = section.dataset.settingsSection || '';
-    activeSettingsSection = activeSettingsSection === sectionId ? '' : sectionId;
-    renderSettings();
-    requestAnimationFrame(() => {
-      document.querySelector<HTMLElement>(`[data-settings-section="${CSS.escape(sectionId)}"]`)?.focus();
-    });
-    return;
-  }
   const nav = target.closest<HTMLElement>('[data-settings-page]');
   if (nav) {
     activeSettingsPage = nav.dataset.settingsPage || 'general';
-    activeSettingsSection = null;
     settingsQuery = '';
     renderSettings();
     return;
@@ -255,7 +265,6 @@ document.addEventListener('click', (event) => {
 document.addEventListener('input', (event) => {
   const search = (event.target as HTMLElement).closest<HTMLInputElement>('#settings-search');
   if (search) {
-    if (settingsQuery !== search.value) activeSettingsSection = null;
     settingsQuery = search.value;
     renderSettings();
     search.focus();
@@ -276,7 +285,9 @@ async function hydrateSettings() {
   const api = settingsApi();
   if (!api?.getFabricSettings) return;
   try {
-    const response = await api.getFabricSettings();
+    const memoryPromise = api.conversations?.memories ? api.conversations.memories() : Promise.resolve([]);
+    const [response, memories] = await Promise.all([api.getFabricSettings(), memoryPromise]);
+    learnedMemories = Array.isArray(memories) ? memories : [];
     if (response?.ok && response.settings) hydrateCanonical(response.settings, response.modelStatus);
     else setSettingsStatus('error', response?.error || '设置没有载入。');
   } catch (error) {

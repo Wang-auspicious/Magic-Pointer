@@ -52,50 +52,36 @@
   word-break: break-word;
 }
 
-/* ---- 消息动作行（时钟 hover 显现 + 复制） ---- */
+/* ---- 消息动作行：静止时完全退场，悬停/键盘聚焦才出现 ---- */
 .dsh-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
-  height: 28px;
+  gap: 2px;
+  min-height: 24px;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-2px);
+  transition: opacity 100ms ease, transform 100ms ease;
 }
 
-.dsh-time {
-  font-size: 14px;
-  line-height: 24px;
-  color: var(--dsw-alias-label-tertiary);
-  white-space: nowrap;
-}
-
-.dsh-user .dsh-time {
-  padding-right: 12px;
-}
-
-.dsh-assistant .dsh-time {
-  padding-left: 12px;
-}
-
-@media (hover: hover) {
-  .dsh-time {
-    opacity: 0;
-    transition: opacity 80ms ease;
-  }
-
-  [data-dsh-time-root]:hover .dsh-time,
-  [data-dsh-time-root]:focus-within .dsh-time {
-    opacity: 1;
-  }
+.dsh-user:hover .dsh-actions,
+.dsh-user:focus-within .dsh-actions,
+.dsh-assistant:hover .dsh-actions,
+.dsh-assistant:focus-within .dsh-actions {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
 }
 
 .dsh-action {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
-  padding: 6px;
+  width: 26px;
+  height: 26px;
+  padding: 5px;
   border: none;
-  border-radius: 28px;
+  border-radius: 7px;
   background: transparent;
   color: var(--dsw-alias-label-tertiary);
   cursor: pointer;

@@ -15,8 +15,8 @@ assert.match(main, /ipcMain\.handle\('conversations:send'/,
 assert(main.includes("runPythonBridge(payload, 'scripts/conversation_bridge.py', 'dashboard'"),
   'Studio follow-ups must use the configured model runtime through a bounded bridge');
 assert(data.includes('sendConversation('), 'Studio data must expose the live send operation');
-assert.match(studio, /Data\.sendConversation\(\s*activeConversationId,\s*question,\s*composerPreset/,
-  'submitting the visible composer must run the real operation with the permission preset');
+assert.match(studio, /Data\.sendConversation\(\s*activeConversationId,\s*requestQuestion,\s*composerPreset,\s*requestId,\s*activeProjectRoot/,
+  'submitting the visible composer must carry attachments, permission preset, and the selected project');
 assert(studio.includes("composerPreset = 'workspace-write'"),
   'the permission chip must default to the workspace-write preset');
 assert(studio.includes('confirmFullAccess'),

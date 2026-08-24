@@ -44,15 +44,14 @@ const wsRows = [
   { id: 'w4', title: '没绑工作区的旧会话', updatedAt: at(3) },
 ];
 const wsGroups = groupByWorkspace(wsRows);
-assert.deepStrictEqual(wsGroups.map(g => g.label), ['alpha', 'beta', '默认工作区'], '组头是文件夹名；未绑定的落默认组');
+assert.deepStrictEqual(wsGroups.map(g => g.label), ['alpha', 'beta'], '组头只来自真实项目；未绑定记录不进入 Studio');
 assert.deepStrictEqual(
   wsGroups.map(g => [g.workspaceRoot, g.items.map(i => i.id)]),
   [
     ['C:/repos/alpha', ['w1', 'w2']],
     ['C:/repos/beta', ['w3']],
-    ['', ['w4']],
   ],
-  '组内新→旧，root 原样携带供点击切工作区',
+  '组内新→旧，root 原样携带；无项目记录不进入 Studio',
 );
 assert.deepStrictEqual(groupByWorkspace([]), [], '空列表不出空组');
 // 单工作区也要出组头——侧栏「工作区」区必须说真话。
