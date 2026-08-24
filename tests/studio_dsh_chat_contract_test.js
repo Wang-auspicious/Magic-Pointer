@@ -51,6 +51,27 @@ assert(failed.includes('data-state="error"'), 'error state must ride the root');
 assert(failed.includes('dsh-error-summary'), 'the collapsed error summary must use the error color');
 assert(failed.includes('no such file'));
 
+/* ---- 编辑工具 diff 卡：红删绿加，不再让用户读 JSON 汤 ---- */
+const editArgs = JSON.stringify({ path: 'a.py', old_string: 'x = 1\ny = 2', new_string: 'x = 42\ny = 2' });
+const editDiff = DshChat.toolRowNode(DshChat.toolRowModel('edit_file', editArgs)).outerHTML;
+assert(editDiff.includes('class="dsh-diff"'), 'edit_file must render a diff card');
+assert(editDiff.includes('dsh-diff-line data-kind="del"') || /dsh-diff-line[^>]*data-kind="del"/.test(editDiff),
+  'removed lines must carry the del marker');
+assert(/dsh-diff-line[^>]*data-kind="add"/.test(editDiff), 'added lines must carry the add marker');
+assert(editDiff.includes('- x = 1'), 'deleted lines show their literal content');
+assert(editDiff.includes('+ x = 42'), 'added lines show their literal content');
+assert(!editDiff.includes('old_string'), 'raw argument names must not leak into the diff view');
+
+const writeDiff = DshChat.toolRowNode(DshChat.toolRowModel('write_file', JSON.stringify({ path: 'n.txt', content: 'a\nb' }))).outerHTML;
+assert(/dsh-diff-line[^>]*data-kind="add"/.test(writeDiff) && writeDiff.includes('+ a'), 'write_file renders as an all-add diff');
+
+// 行数上限：超长 diff 折叠并给出省略提示，不能撑爆 DOM。
+const bigOld = Array.from({ length: 120 }, (_, i) => `old ${i}`).join('\n');
+const capped = DshChat.__test.deriveDiff('edit_file', JSON.stringify({ path: 'p', old_string: bigOld, new_string: 'new' }));
+assert(capped && capped.hidden >= 80, `over-cap lines must collapse with a count (hidden=${capped && capped.hidden})`);
+assert(!/dsh-diff/.test(DshChat.toolRowNode(DshChat.toolRowModel('grep', JSON.stringify({ pattern: 'x' }))).outerHTML),
+  'read-only tools must not grow a diff card');
+
 /* ---- 状态点四态 ---- */
 assert(DshChat.stateDot('done').outerHTML.includes('data-state="done"'));
 assert(DshChat.stateDot('warning').outerHTML.includes('data-state="warning"'));

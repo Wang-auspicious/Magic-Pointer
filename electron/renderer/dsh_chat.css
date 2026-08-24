@@ -492,6 +492,79 @@
   color: var(--dsw-alias-state-error-primary);
 }
 
+/* ---- 代码块卡（DSH CodeBlock）：语言标签 + 复制钮 + 原字面代码体 ---- */
+.dsh-code {
+  overflow: hidden;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-base);
+}
+
+.dsh-code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 8px 5px 12px;
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+}
+
+.dsh-code-lang {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+  color: var(--dsw-alias-label-caption);
+  user-select: none;
+}
+
+.dsh-code-head .dsh-code-lang:empty::before {
+  content: 'code';
+}
+
+.dsh-code pre {
+  margin: 0;
+  padding: 10px 12px;
+  overflow-x: auto;
+}
+
+.dsh-code code {
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+/* ---- 编辑工具 diff 卡：红删绿加 ---- */
+.dsh-diff {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.dsh-diff-line {
+  white-space: pre-wrap;
+  word-break: break-all;
+  padding: 0 10px;
+}
+
+.dsh-diff-line[data-kind='del'] {
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 12%, transparent);
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.dsh-diff-line[data-kind='add'] {
+  background: color-mix(in srgb, var(--dsw-alias-state-success-primary, #2ea043) 12%, transparent);
+  color: var(--dsw-alias-state-success-primary, #2ea043);
+}
+
+.dsh-diff-more {
+  padding: 3px 10px;
+  color: var(--dsw-alias-label-caption);
+  border-top: 1px dashed var(--dsw-alias-border-l2);
+}
+
 /* ---- Think 思考行（ReasoningRow） ---- */
 .dsh-think {
   display: flex;

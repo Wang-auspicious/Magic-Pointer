@@ -290,8 +290,52 @@ const DshChat = (() => {
     return JSON.stringify(parsed, null, 2);
   }
 
+  /* ---- 编辑工具 diff 卡（DSH DiffBlock 的简化同构：红删绿加） ----
+     不做 LCS 对齐——编辑工具的 old/new 本身就是完整的删/加两列，
+     直接列出即可；行数封顶防 DOM 爆炸。 */
+  interface DiffLine { kind: 'del' | 'add'; text: string }
+  interface DiffView { lines: DiffLine[]; hidden: number }
+
+  const DIFF_MAX_LINES = 40;
+
+  function diffLinesFrom(text: string, kind: DiffLine['kind'], out: DiffLine[]): number {
+    const parts = String(text || '').split('\n');
+    let hidden = 0;
+    for (let i = 0; i < parts.length; i += 1) {
+      if (out.length >= DIFF_MAX_LINES) { hidden += parts.length - i; break; }
+      out.push({ kind, text: parts[i] });
+    }
+    return hidden;
+  }
+
+  function deriveDiff(name: string, argsRaw: string): DiffView | null {
+    if (!argsRaw) return null;
+    let parsed: unknown;
+    try { parsed = JSON.parse(argsRaw); } catch { return null; }
+    if (typeof parsed !== 'object' || parsed === null) return null;
+    const args = parsed as Record<string, unknown>;
+    const view: DiffView = { lines: [], hidden: 0 };
+    if (name === 'edit_file') {
+      const oldText = typeof args.old_string === 'string' ? args.old_string : '';
+      const newText = typeof args.new_string === 'string' ? args.new_string : '';
+      if (!oldText && !newText) return null;
+      view.hidden += diffLinesFrom(oldText, 'del', view.lines);
+      view.hidden += diffLinesFrom(newText, 'add', view.lines);
+      return view;
+    }
+    if (name === 'write_file') {
+      const content = typeof args.content === 'string' ? args.content : '';
+      if (!content) return null;
+      view.hidden += diffLinesFrom(content, 'add', view.lines);
+      return view;
+    }
+    return null;
+  }
+
   interface ToolRowModel {
     variant: ToolVariant;
+    name: string;
+    argsRaw: string;
     title: string;
     summary: string;
     filePath?: string;
@@ -312,6 +356,8 @@ const DshChat = (() => {
     const errorSummary = state === 'error' && output !== null ? firstLine(output) : null;
     return {
       variant,
+      name,
+      argsRaw,
       title: TOOL_TITLES[name] ?? VARIANT_TITLES[variant],
       summary,
       filePath: deriveFilePath(variant, argsRaw),
@@ -323,6 +369,22 @@ const DshChat = (() => {
   }
 
   /* ---- 工具调用行（ToolRow） ---- */
+  function diffNode(diff: DiffView): DshNode {
+    const card = h('div', { class: 'dsh-diff' });
+    for (const line of diff.lines) {
+      const row = h('div', { class: 'dsh-diff-line' });
+      row.setAttribute('data-kind', line.kind);
+      attach(row, `${line.kind === 'del' ? '-' : '+'} ${line.text}`);
+      attach(card, row);
+    }
+    if (diff.hidden > 0) {
+      const more = h('div', { class: 'dsh-diff-more' });
+      attach(more, `… 还有 ${diff.hidden} 行`);
+      attach(card, more);
+    }
+    return card;
+  }
+
   function toolRowNode(model: ToolRowModel): DshNode {
     const root = h('div', { class: 'dsh-tool' });
     root.setAttribute('data-tool', '');
@@ -348,7 +410,10 @@ const DshChat = (() => {
     }
 
     const body: DshNode[] = [];
-    if (model.body !== null || model.output !== null) {
+    const diff = deriveDiff(model.name, model.argsRaw ?? '');
+    if (diff !== null && (model.body !== null || model.output !== null)) {
+      body.push(diffNode(diff));
+    } else if (model.body !== null || model.output !== null) {
       const ioCard = h('div', { class: 'dsh-io-card' });
       if (model.body !== null) {
         const section = h('div', { class: 'dsh-io-section' });
@@ -671,7 +736,7 @@ const DshChat = (() => {
     liveActivityNode,
     stateDot,
     bindDelegation,
-    __test: { firstLine, latestLine, classifyTool, deriveSummary, formatClock },
+    __test: { firstLine, latestLine, classifyTool, deriveSummary, deriveDiff, formatClock },
   };
 })();
 

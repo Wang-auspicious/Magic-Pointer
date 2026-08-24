@@ -480,6 +480,31 @@
   scrollbar-gutter: stable;
 }
 
+/* 回到底部胶囊（DSH toBottomSlot）：距底超过一屏的 1/4 时出现 */
+.dshw-scroll-pill {
+  position: sticky;
+  bottom: 12px;
+  left: 50%;
+  translate: -50% 0;
+  z-index: 5;
+  align-self: center;
+  width: 30px;
+  height: 30px;
+  margin-top: -42px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 24%);
+  display: grid;
+  place-items: center;
+}
+
+.dshw-scroll-pill:hover {
+  color: var(--dsw-alias-label-primary);
+}
+
 .dshw-stream {
   flex: 1 0 auto;
   min-height: 0;

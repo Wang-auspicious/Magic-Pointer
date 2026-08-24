@@ -72,6 +72,15 @@ const DshMarkdown = (() => {
     return null;
   }
 
+  /* 复制图标：有 DshIcons 用原 glyph，否则退化为文字。 */
+  function codeCopyIcon(): MdChild {
+    const icons = typeof DshIcons !== 'undefined'
+      ? DshIcons
+      : (typeof require === 'function' ? require('./dsh_icons') : null);
+    const node = icons ? icons.node('copy', 14) : null;
+    return node as unknown as MdChild;
+  }
+
   type InlineMatch = { index: number; length: number; nodes: MdChild[] };
 
   function firstInline(text: string): InlineMatch | null {
@@ -166,8 +175,25 @@ const DshMarkdown = (() => {
         index += 1;
         while (index < lines.length && !/^\s*```\s*$/.test(lines[index])) body.push(lines[index++]);
         if (index < lines.length) index += 1;
-        const attrs: Record<string, string> = fence[1] ? { class: `language-${fence[1]}` } : {};
-        blocks.push(h('pre', {}, h('code', attrs, body.join('\n'))));
+        const lang = fence[1] || '';
+        const attrs: Record<string, string> = lang ? { class: `language-${lang}` } : {};
+        // DSH CodeBlock：头部（语言标签 + 复制钮）+ 原字面代码体。
+        // 复制走 dsh_chat 的全局委托（data-dsh-act=copy），无需额外绑定。
+        const card = h('div', { class: 'dsh-code' });
+        if (lang) card.setAttribute('data-lang', lang);
+        const head = h('div', { class: 'dsh-code-head' });
+        append(head, h('span', { class: 'dsh-code-lang' }, lang));
+        const copyAttrs: Record<string, string> = {
+          type: 'button',
+          class: 'dsh-action dsh-code-copy',
+          'aria-label': '复制代码',
+          'data-dsh-act': 'copy',
+          'data-dsh-copy': body.join('\n'),
+        };
+        append(head, h('button', copyAttrs, codeCopyIcon()));
+        append(card, head);
+        append(card, h('pre', {}, h('code', attrs, body.join('\n'))));
+        blocks.push(card);
         continue;
       }
 

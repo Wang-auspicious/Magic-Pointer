@@ -1360,6 +1360,8 @@ interface PendingConversation {
   requestId: string;
   body: HTMLElement;
   records: Map<string, Record<string, unknown>>;
+  /** 已渲染的活动行，key=progressKey；签名变了才重建，保住用户展开的行。 */
+  nodes: Map<string, { sig: string; el: HTMLElement }>;
   agentSessionId: string | null;
   streamText: string;
   streamNode: HTMLElement | null;
@@ -1395,13 +1397,44 @@ function renderConversationProgress(record: Record<string, unknown>) {
     return; // 正文增量不是活动行，不进 records。
   }
   pendingConversation.records.set(progressKey(record), record);
-  pendingConversation.body.replaceChildren(
-    ...[...pendingConversation.records.values()]
-      .filter((item) => String(item.phase || '') !== 'total')
-      .map((item) => DshChat.liveActivityNode(item)),
-    ...renderLiveStreamNode(),
-  );
-  pendingConversation.body.closest('.dshw-scrollbody')?.scrollTo({ top: 1_000_000 });
+  followIfNearBottom(pendingConversation.body, renderPendingBody);
+}
+
+function recordSignature(record: Record<string, unknown>): string {
+  const phase = String(record.phase || '');
+  const fields = record.fields && typeof record.fields === 'object'
+    ? record.fields as Record<string, unknown> : {};
+  return `${phase}|${String(fields.state || '')}|${String(fields.turn || '')}|${String(fields.name || '')}`;
+}
+
+/* 活动行按 key 增量渲染：签名没变的行绝不重建——否则用户展开的工具行
+   在每条进度记录到达时都被拍回折叠态（DSH 的行内局部状态模型）。 */
+function renderPendingBody() {
+  const pending = pendingConversation;
+  if (!pending) return;
+  const seen = new Set<string>();
+  const els: HTMLElement[] = [];
+  for (const [key, item] of pending.records) {
+    if (String(item.phase || '') === 'total') continue;
+    seen.add(key);
+    const sig = recordSignature(item);
+    const cached = pending.nodes.get(key);
+    if (cached && cached.sig === sig) {
+      els.push(cached.el);
+      continue;
+    }
+    const el = DshChat.liveActivityNode(item) as HTMLElement;
+    if (cached) cached.el.replaceWith(el);
+    pending.nodes.set(key, { sig, el });
+    els.push(el);
+  }
+  for (const [key, cached] of [...pending.nodes]) {
+    if (!seen.has(key)) {
+      cached.el.remove();
+      pending.nodes.delete(key);
+    }
+  }
+  pending.body.replaceChildren(...els, ...renderLiveStreamNode());
 }
 
 /* 流式正文：边收边画（纯文本 pre-wrap），回合完成后 openConversation 用
@@ -1419,18 +1452,48 @@ function renderLiveStreamNode(): Element[] {
   return [pending.streamNode];
 }
 
+const SCROLL_FOLLOW_THRESHOLD_PX = 48;
+
+function isNearBottom(el: HTMLElement, threshold = SCROLL_FOLLOW_THRESHOLD_PX): boolean {
+  return el.scrollHeight - el.scrollTop - el.clientHeight <= threshold;
+}
+
+function updateScrollPill() {
+  const scroller = document.querySelector<HTMLElement>('.dshw-scrollbody');
+  const pill = document.getElementById('scroll-pill');
+  if (!scroller || !pill) return;
+  pill.hidden = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 240;
+}
+
+/* 贴底才跟随（DSH FOLLOW_THRESHOLD 同款）：用户往上翻阅历史时，进度记录
+   不再把视图拽走；回到距底 48px 内恢复自动跟随。 */
+function followIfNearBottom(body: HTMLElement, mutate: () => void): void {
+  const scroller = body.closest('.dshw-scrollbody') as HTMLElement | null;
+  const near = scroller ? isNearBottom(scroller) : true;
+  mutate();
+  if (near && scroller) {
+    scroller.scrollTo({ top: scroller.scrollHeight });
+    updateScrollPill();
+  }
+}
+
+(function bindScrollPill() {
+  const scroller = document.querySelector<HTMLElement>('.dshw-scrollbody');
+  const pill = document.getElementById('scroll-pill');
+  if (!scroller || !pill || scroller.dataset.pillBound) return;
+  scroller.dataset.pillBound = '1';
+  scroller.addEventListener('scroll', updateScrollPill, { passive: true });
+  pill.addEventListener('click', () => {
+    scroller.scrollTo({ top: scroller.scrollHeight });
+    updateScrollPill();
+  });
+})();
+
 function appendLiveStreamText(text: string) {
   const pending = pendingConversation;
   if (!pending || !text) return;
   pending.streamText += text;
-  const nodes = renderLiveStreamNode();
-  pending.body.replaceChildren(
-    ...[...pending.records.values()]
-      .filter((item) => String(item.phase || '') !== 'total')
-      .map((item) => DshChat.liveActivityNode(item)),
-    ...nodes,
-  );
-  pending.body.closest('.dshw-scrollbody')?.scrollTo({ top: 1_000_000 });
+  followIfNearBottom(pending.body, renderPendingBody);
 }
 
 /* 作曲家忙态：发送钮变停止钮（DSH InputBar 同款形态）。
@@ -1545,7 +1608,7 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
     form.setAttribute('aria-busy', 'true');
     setComposerRunningState(true);
     const requestId = globalThis.crypto?.randomUUID?.() || `conversation-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    pendingConversation = { requestId, body: pendingBody, records: new Map(), agentSessionId: null, streamText: '', streamNode: null };
+    pendingConversation = { requestId, body: pendingBody, records: new Map(), nodes: new Map(), agentSessionId: null, streamText: '', streamNode: null };
     renderConversationProgress({ phase: 'runtime_boot', fields: {} });
     try {
       const response = await Data.sendConversation(
