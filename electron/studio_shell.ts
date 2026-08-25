@@ -1,5 +1,5 @@
 (() => {
-type StudioViewId = 'chat' | 'stash' | 'timeline' | 'memory' | 'artifacts' | 'settings';
+type StudioViewId = 'chat' | 'design' | 'stash' | 'artifacts' | 'settings';
 
 interface StudioView {
   id: StudioViewId;
@@ -11,9 +11,8 @@ interface StudioView {
 
 const STUDIO_VIEWS: readonly StudioView[] = Object.freeze([
   Object.freeze({ id: 'chat', title: '对话', description: '围绕刚才指过的对象继续工作。', eyebrow: 'ACTIVE WORK', allowsDetail: true }),
+  Object.freeze({ id: 'design', title: 'Design', description: '从项目素材、可视化画布和设计产物开始。', eyebrow: 'DESIGN WORKSPACE', allowsDetail: true }),
   Object.freeze({ id: 'stash', title: '收藏箱', description: '整理本地保存的截图、文字与引用。', eyebrow: 'LOCAL STASH', allowsDetail: false }),
-  Object.freeze({ id: 'timeline', title: '时间线', description: '按对象回看真实发生过的交互。', eyebrow: 'ACTIVITY LOG', allowsDetail: false }),
-  Object.freeze({ id: 'memory', title: '记忆', description: '管理反复出现并值得保留的上下文。', eyebrow: 'REUSABLE CONTEXT', allowsDetail: false }),
   Object.freeze({ id: 'artifacts', title: '产物', description: '查看、复用和导出已经生成的本地产物。', eyebrow: 'LOCAL OUTPUTS', allowsDetail: true }),
   Object.freeze({ id: 'settings', title: '设置', description: '控制交互、模型、权限、隐私与外观。', eyebrow: 'PREFERENCES', allowsDetail: false }),
 ]);

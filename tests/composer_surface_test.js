@@ -31,7 +31,7 @@ assert.strictEqual(Composer.safeThumb('data:text/html,<script>'), '');
 // Studio 使用固定 Oreo 工作区输入面；Companion 继续复用 composer.js；
 // Stage 使用独立的固定 Stage Composer。
 for (const [page, needs] of Object.entries({
-  'studio.html': ['cards.css', 'card_render.js', 'cards.js', 'live_cards.js'],
+  'studio.html': ['studio_system.css', 'card_render.js', 'cards.js', 'live_cards.js'],
   'companion.html': ['composer.js', 'composer.css', 'beam.css', 'card_render.js'],
   'stage.html': ['beam.css', 'card_render.js'],
 })) {
@@ -41,12 +41,12 @@ for (const [page, needs] of Object.entries({
   }
 }
 
-// --- 工作室只有一个输入面：DSH InputBar（deepseek-harness 100% 移植） ---
+// --- 工作室只有一个输入面：稳定行为骨架 + Oreo/Claude 产品外观 ---
 {
   const html = read('studio.html');
   assert.ok(!/hero-composer/.test(html), 'Studio 不得保留第二根营销 Hero 输入条');
-  assert.ok(/<form class="dshw-input-form"/.test(html), 'Studio 工作区必须用 DSH 输入卡');
-  assert.ok(/class="dshw-primary"/.test(html), '发送键必须是 DSH 蓝圆主按钮');
+  assert.ok(/<form class="[^"]*dshw-input-form[^"]*"/.test(html), 'Studio 必须只有一张真实输入卡');
+  assert.ok(/class="dshw-primary"/.test(html), '发送键必须是紧凑主动作');
   assert.ok(!html.includes('composer.js'), 'studio 不该再 link 共用 composer.js');
 }
 // 随行窗没有手写条残留（它走共用 composer.js）

@@ -1,44 +1,80 @@
 <!doctype html>
-<html lang="zh-CN" data-theme="dark">
+<html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data: file:;" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Magic Pointer</title>
-  <link rel="stylesheet" href="oreo_tokens.css?v=23" />
-  <link rel="stylesheet" href="oreo.css?v=23" />
-  <link rel="stylesheet" href="cards.css?v=23" />
-  <link rel="stylesheet" href="dsh_tokens.css?v=23" />
-  <link rel="stylesheet" href="dsh_chat.css?v=23" />
-  <link rel="stylesheet" href="studio.css?v=23" />
-  <link rel="stylesheet" href="dsh_web.css?v=23" />
+  <script src="theme_boot.js?v=26"></script>
+  <link rel="stylesheet" href="studio_system.css?v=27" />
+  <link rel="stylesheet" href="sv.css?v=26" />
 </head>
 <body class="studio">
-  <!-- DSH Web 外壳（AppFrame 三栏 → 侧栏 | 中心列），100% 移植 deepseek-harness -->
-  <div class="dshw-frame" id="shell" data-view="chat">
+  <div class="dshw-frame" id="shell" data-view="chat" data-sidebar="expanded">
+    <header class="mp-window-titlebar" id="window-titlebar">
+      <div class="mp-window-titlebar-leading">
+        <button type="button" class="mp-toolbar-button" id="sidebar-toggle" aria-label="折叠侧栏" title="折叠侧栏">
+          <svg class="codex-icon" aria-hidden="true"><use href="#ic-panel-left" /></svg>
+        </button>
+        <span class="mp-titlebar-divider" aria-hidden="true"></span>
+        <button type="button" class="mp-toolbar-button" id="window-back" aria-label="后退" title="后退" disabled>
+          <svg class="codex-icon" aria-hidden="true"><use href="#ic-arrow-left" /></svg>
+        </button>
+        <button type="button" class="mp-toolbar-button" id="window-forward" aria-label="前进" title="前进" disabled>
+          <svg class="codex-icon" aria-hidden="true"><use href="#ic-arrow-right" /></svg>
+        </button>
+        <nav class="mp-window-menu-bar" aria-label="应用菜单">
+          <button type="button" id="window-menu-file" data-window-menu="file" aria-haspopup="menu" aria-expanded="false">文件</button>
+          <button type="button" id="window-menu-edit" data-window-menu="edit" aria-haspopup="menu" aria-expanded="false">编辑</button>
+          <button type="button" id="window-menu-view" data-window-menu="view" aria-haspopup="menu" aria-expanded="false">视图</button>
+          <button type="button" id="window-menu-help" data-window-menu="help" aria-haspopup="menu" aria-expanded="false">帮助</button>
+        </nav>
+      </div>
+      <div class="mp-window-caption-safe" aria-hidden="true"></div>
+    </header>
+
     <aside class="dshw-sidebar-col">
       <div class="dshw-sidebar">
         <div class="dshw-logo-row">
-          <button class="dshw-brand" data-goto="chat" aria-label="Magic Pointer 对话">
-            <span class="dshw-brand-mark" aria-hidden="true">MP</span>
-            <span>Magic Pointer</span>
+          <button type="button" class="mp-mode-switch" id="mode-switch" aria-haspopup="menu" aria-expanded="false">
+            <span id="mode-switch-label">Work</span>
+            <svg class="codex-icon" aria-hidden="true"><use href="#ic-chev" /></svg>
           </button>
-          <button class="dshw-icon-button" id="sidebar-toggle" aria-label="折叠侧栏" title="折叠侧栏">
-            <svg aria-hidden="true"><use href="#ic-dsh-panel-left" /></svg>
-          </button>
+          <div class="mp-mode-menu" id="mode-menu" role="menu" hidden>
+            <button type="button" id="mode-walker" data-product-mode="walker" role="menuitemradio" aria-checked="true">
+              <span><strong>Work</strong><small>Agent 工作与对话</small></span><svg class="codex-icon" aria-hidden="true"><use href="#ic-check" /></svg>
+            </button>
+            <button type="button" id="mode-design" data-product-mode="design" role="menuitemradio" aria-checked="false">
+              <span><strong>Design</strong><small>素材、画布与设计产物</small></span><svg class="codex-icon" aria-hidden="true"><use href="#ic-check" /></svg>
+            </button>
+          </div>
         </div>
 
-        <button class="dshw-new-session" id="new-chat" data-goto="chat">
-          <svg aria-hidden="true"><use href="#ic-dsh-new-chat" /></svg><span class="dshw-new-session-label">新对话</span>
+        <button class="dshw-new-session" id="nav-new-chat" data-goto="chat">
+          <svg aria-hidden="true"><use href="#ic-square-pen" /></svg><span class="dshw-new-session-label">新对话</span>
         </button>
+
+        <nav class="mp-design-nav" aria-label="Design 功能">
+          <button type="button" data-goto="design"><svg class="codex-icon" aria-hidden="true"><use href="#ic-layout-grid" /></svg><span>概览</span></button>
+          <button type="button" data-goto="stash" data-design-layout="canvas"><svg class="codex-icon" aria-hidden="true"><use href="#ic-stash" /></svg><span>素材画布</span></button>
+          <button type="button" data-goto="stash" data-design-layout="list"><svg class="codex-icon" aria-hidden="true"><use href="#ic-img" /></svg><span>素材列表</span></button>
+          <button type="button" data-goto="artifacts"><svg class="codex-icon" aria-hidden="true"><use href="#ic-docs" /></svg><span>设计产物</span></button>
+        </nav>
+
+        <nav class="mp-library-nav" aria-label="主要功能">
+          <button type="button" id="nav-pull-requests" data-inspector-tab="changes"><svg aria-hidden="true"><use href="#ic-git-pull-request" /></svg><span>拉取请求</span></button>
+          <button type="button" id="nav-sites" data-inspector-tab="browser"><svg aria-hidden="true"><use href="#ic-globe" /></svg><span>站点</span></button>
+          <button type="button" id="nav-scheduled" data-inspector-tab="tasks"><svg aria-hidden="true"><use href="#ic-alarm-clock" /></svg><span>已安排</span></button>
+          <button type="button" id="nav-plugins" data-directory-open><svg aria-hidden="true"><use href="#ic-plug" /></svg><span>插件</span></button>
+        </nav>
 
         <section class="dshw-workspace-browser" aria-label="对话浏览器">
           <div class="dshw-workspace-header">
-            <span class="dshw-workspace-label">工作区</span>
+            <span class="mp-projects-label">项目</span>
             <div class="dshw-workspace-search">
               <button type="button" class="dshw-workspace-search-button" id="side-search-toggle"
                 aria-label="搜索对话" aria-expanded="false" title="搜索对话">
-                <svg aria-hidden="true"><use href="#ic-dsh-search" /></svg>
+                <svg aria-hidden="true"><use href="#ic-search" /></svg>
               </button>
               <input id="side-search" type="search" autocomplete="off" placeholder="搜索对话" aria-label="搜索对话" />
               <button type="button" class="dshw-workspace-clear" id="side-search-clear"
@@ -46,13 +82,13 @@
                 <svg aria-hidden="true"><use href="#ic-x" /></svg>
               </button>
             </div>
-            <button type="button" class="dshw-workspace-action" id="workspace-filter"
-              aria-label="筛选工作区" title="筛选工作区">
-              <svg aria-hidden="true"><use href="#ic-dsh-personalization" /></svg>
+            <button type="button" class="dshw-workspace-action" id="workspace-filter" hidden
+              aria-label="只看最近项目" title="只看最近项目">
+              <svg aria-hidden="true"><use href="#ic-sliders" /></svg>
             </button>
             <button type="button" class="dshw-workspace-action" id="workspace-add"
-              aria-label="新建对话" title="新建对话">
-              <svg aria-hidden="true"><use href="#ic-dsh-project-add" /></svg>
+              aria-label="打开项目" title="打开项目文件夹">
+              <svg aria-hidden="true"><use href="#ic-folder-plus" /></svg>
             </button>
           </div>
           <div class="dshw-session-list-seat">
@@ -61,15 +97,18 @@
         </section>
 
         <div class="dshw-foot">
-          <button class="dshw-trigger" data-goto="settings" aria-haspopup="dialog">
-            <svg aria-hidden="true"><use href="#ic-dsh-settings" /></svg><span>设置</span>
+          <button class="dshw-trigger" id="settings-open" data-goto="settings" aria-haspopup="dialog">
+            <svg aria-hidden="true"><use href="#ic-gear" /></svg><span>设置</span>
+          </button>
+          <button type="button" class="mp-theme-toggle" id="theme-toggle" aria-label="切换到深色主题" title="切换主题">
+            <svg aria-hidden="true"><use id="theme-toggle-icon" href="#ic-moon" /></svg>
           </button>
         </div>
       </div>
     </aside>
 
     <main class="dshw-center-col">
-      <!-- 工作区页头：聊天之外各页的标题（show() 写入） -->
+      <!-- 收藏与产物页共用页头；聊天有自己的紧凑顶栏。 -->
       <header class="workspace-header" id="workspace-header">
         <div>
           <p class="workspace-eyebrow" id="workspace-eyebrow">ACTIVE WORK</p>
@@ -79,15 +118,19 @@
         <div class="workspace-header-actions" id="workspace-header-actions" aria-live="polite"></div>
       </header>
 
-      <!-- ===== 对话页：DSH ConversationRoot（header + 滚动体 + 底部粘性输入卡 + 统计行） ===== -->
       <section class="dshw-conversation" id="view-chat">
+        <div class="mp-project-gate" id="project-gate" hidden>
+          <div class="mp-project-gate-mark" aria-hidden="true"><svg><use href="#ic-folder-plus" /></svg></div>
+          <h2>打开项目</h2>
+          <p>选择一个文件夹开始。</p>
+          <button type="button" id="project-gate-open"><svg aria-hidden="true"><use href="#ic-folder-plus" /></svg>打开项目</button>
+        </div>
         <header class="dshw-header">
           <div class="dshw-title-row">
             <div class="dshw-title-cluster">
+              <span class="mp-chat-project"><svg aria-hidden="true"><use href="#ic-folder" /></svg><span id="chat-project-label">未选择项目</span></span>
+              <span class="mp-title-separator" aria-hidden="true">/</span>
               <b class="dshw-title" id="chat-title">新对话</b>
-              <span class="dshw-agent-preset" title="标准模式">
-                <svg class="dshw-agent-preset-icon" width="14" height="14" aria-hidden="true"><use href="#ic-dsh-agent-preset" /></svg><span>标准模式</span>
-              </span>
             </div>
             <div class="dshw-header-actions">
               <div class="dshw-source-preview" id="chat-source-preview" hidden>
@@ -100,28 +143,41 @@
                   <img id="peek-image" class="peek-img" alt="划线选区预览" />
                 </span>
               </div>
-              <div class="dshw-surface" id="mp-surface-menu">
-                <button type="button" class="dshw-origin" id="mp-context-tag" aria-label="上下文与 Magic Pointer 工具"
-                  aria-haspopup="menu" aria-expanded="false">
-                  <span class="dshw-context-dot" aria-hidden="true"></span><span id="mp-context-tag-label">Magic Pointer</span>
-                  <svg class="dshw-origin-chev"><use href="#ic-dsh-chev-down" /></svg>
-                </button>
-                <div class="dshw-surface-menu" id="mp-surface-menu-popover" role="menu" hidden>
-                  <button role="menuitem" data-goto="stash"><svg><use href="#ic-stash" /></svg><span>收藏箱</span></button>
-                  <button role="menuitem" data-goto="timeline"><svg><use href="#ic-timeline" /></svg><span>时间线</span></button>
-                  <button role="menuitem" data-goto="memory"><svg><use href="#ic-memory" /></svg><span>记忆</span></button>
-                  <button role="menuitem" data-goto="artifacts"><svg><use href="#ic-docs" /></svg><span>产物</span></button>
-                </div>
-              </div>
-              <button type="button" class="dshw-session-log" id="session-log">
-                <span>Session log</span><svg aria-hidden="true"><use href="#ic-dsh-download" /></svg>
+              <nav class="mp-conversation-view" aria-label="对话视图">
+                <button class="is-on" data-conversation-tab="chat" aria-selected="true" title="对话"><svg aria-hidden="true"><use href="#ic-message" /></svg></button>
+                <button data-conversation-tab="trajectory" aria-selected="false" title="运行轨迹"><svg aria-hidden="true"><use href="#ic-activity" /></svg></button>
+              </nav>
+              <button type="button" class="mp-thread-action" id="thread-more" aria-label="对话操作" title="对话操作"><svg aria-hidden="true"><use href="#ic-ellipsis" /></svg></button>
+              <span class="mp-header-divider" aria-hidden="true"></span>
+              <button type="button" class="mp-location-action" id="header-open-location" title="在资源管理器中打开项目">
+                <svg class="codex-icon" aria-hidden="true"><use href="#ic-folder" /></svg><span id="header-location-label">项目</span>
               </button>
+              <button type="button" class="mp-thread-action" id="magic-brain-toggle" aria-label="打开项目上下文" aria-expanded="false" title="项目上下文">
+                <svg class="codex-icon" aria-hidden="true"><use href="#ic-sliders" /></svg>
+              </button>
+              <button type="button" class="mp-thread-action" id="bottom-panel-toggle" aria-label="打开底部面板" aria-expanded="false" title="切换底部面板">
+                <svg class="codex-icon" aria-hidden="true"><use href="#ic-panel-bottom" /></svg>
+              </button>
+              <button type="button" class="mp-thread-action" id="inspector-toggle" aria-label="打开项目面板" aria-expanded="false" title="打开项目面板"><svg class="codex-icon" aria-hidden="true"><use href="#ic-panel-right" /></svg></button>
             </div>
           </div>
-          <nav class="dshw-conversation-tabs" aria-label="对话视图">
-            <button class="is-on" data-conversation-tab="chat" aria-selected="true">对话</button>
-            <button data-conversation-tab="trajectory" aria-selected="false">轨迹</button>
-          </nav>
+          <section class="mp-magic-brain" id="magic-brain-popover" hidden aria-label="项目上下文">
+            <header><span>项目上下文</span><small id="magic-brain-project">当前项目</small></header>
+            <button type="button" class="mp-brain-row" id="magic-brain-changes">
+              <span class="mp-brain-row-icon"><svg class="codex-icon" aria-hidden="true"><use href="#ic-git-pull-request" /></svg></span>
+              <span><strong>工作树变更</strong><small id="magic-brain-changes-detail">正在读取…</small></span>
+              <svg class="codex-icon mp-brain-trailing" aria-hidden="true"><use href="#ic-arrow-right" /></svg>
+            </button>
+            <button type="button" class="mp-brain-row" id="magic-brain-branch">
+              <span class="mp-brain-row-icon"><svg class="codex-icon" aria-hidden="true"><use href="#ic-branch" /></svg></span>
+              <span><strong id="magic-brain-branch-name">Git 分支</strong><small id="magic-brain-branch-detail">正在读取…</small></span>
+              <svg class="codex-icon mp-brain-trailing" aria-hidden="true"><use href="#ic-open" /></svg>
+            </button>
+            <div class="mp-brain-sources" id="magic-brain-sources">
+              <div class="mp-brain-section-title">本任务来源</div>
+              <div id="magic-brain-source-list"><p>当前任务尚无网页来源。</p></div>
+            </div>
+          </section>
         </header>
 
         <div class="dshw-scrollbody">
@@ -129,13 +185,13 @@
             <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M8 11.5L2.5 6l1-1L8 9.5 12.5 5l1 1z" fill="currentColor"/></svg>
           </button>
           <div class="dshw-stream" id="stream">
-            <div class="dshw-blank"><p>还没有对话。</p><p class="sub">在屏幕上划过内容，然后直接输入你的要求。</p></div>
+            <div class="dshw-blank" aria-hidden="true"></div>
           </div>
           <div class="dshw-trajectory-seat" id="trajectory" hidden></div>
 
           <div class="dshw-plan" id="composer-plan" hidden>
             <button type="button" class="dshw-plan-head" id="composer-plan-toggle" aria-expanded="true">
-              <svg class="dshw-plan-chev" width="12" height="12" aria-hidden="true"><use href="#ic-dsh-chev-down" /></svg>
+              <svg class="dshw-plan-chev" width="12" height="12" aria-hidden="true"><use href="#ic-chev" /></svg>
               <span class="dshw-plan-title" id="composer-plan-title">计划</span>
               <span class="dshw-plan-count" id="composer-plan-count"></span>
             </button>
@@ -144,57 +200,64 @@
           <div class="dshw-perm-ask" id="composer-permission-ask" hidden role="group" aria-label="权限请求"></div>
           <div class="dshw-composer-seat">
             <div class="dshw-composer-stack">
-              <form class="dshw-input-form" id="composer-form">
+              <form class="dshw-input-form mp-compact-composer" id="composer-form">
                 <div class="dshw-input-root">
                   <div class="dshw-card">
                     <div class="dshw-scroll">
                       <div class="dshw-grow">
-                        <textarea class="dshw-input" rows="2" maxlength="12000"
-                          placeholder="继续问，或描述你想完成的事…" aria-label="继续对话"></textarea>
+                        <textarea class="dshw-input" rows="1" maxlength="12000"
+                          placeholder="描述任务，或按 / 使用命令…" aria-label="继续对话"></textarea>
                       </div>
                     </div>
+                    <div class="mp-composer-attachments" id="composer-attachments" hidden aria-label="附件"></div>
                     <div class="dshw-row">
                       <div class="dshw-tools">
-                        <button type="button" class="dshw-add" id="composer-add" aria-label="命令与技能" aria-haspopup="menu" aria-expanded="false" title="命令与技能">
-                          <svg width="14" height="14" aria-hidden="true"><use href="#ic-dsh-plus" /></svg>
+                        <button type="button" class="dshw-add" id="composer-add" aria-label="添加附件" aria-haspopup="menu" aria-expanded="false" title="添加附件">
+                          <svg width="17" height="17" aria-hidden="true"><use href="#ic-plus" /></svg>
                         </button>
                         <div class="dshw-add-menu dshw-slash-menu" id="composer-add-menu" hidden role="menu" aria-label="命令与技能">
                           <input type="search" id="composer-slash-search" placeholder="搜索命令与技能…" autocomplete="off" aria-label="搜索命令与技能" />
                           <div class="dshw-slash-rows" id="composer-slash-rows"></div>
                         </div>
-                        <button type="button" class="dshw-perm" id="composer-workspace" title="编码工作区：agent 在这个目录里读写与执行（点击选择文件夹）">
-                          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M1.5 4.5A1.5 1.5 0 0 1 3 3h3l1.5 1.8H13A1.5 1.5 0 0 1 14.5 6.3v5.2A1.5 1.5 0 0 1 13 13H3a1.5 1.5 0 0 1-1.5-1.5v-7Z" stroke="currentColor" stroke-width="1.2"/></svg>
-                          <span class="dshw-perm-label" id="composer-workspace-label">工作区</span>
+                        <button type="button" class="dshw-add mp-composer-secondary" id="composer-mention" aria-label="提及上下文" title="提及文件或上下文">
+                          <svg width="17" height="17" aria-hidden="true"><use href="#ic-at" /></svg>
                         </button>
-                        <button type="button" class="dshw-perm" id="composer-style" aria-haspopup="listbox" aria-expanded="false" title="回复风格：控制 AI 回复的详细程度（极简/简洁/正常/古典）">
-                          <span class="dshw-perm-glyph" id="composer-style-glyph" aria-hidden="true"></span>
-                          <span class="dshw-perm-label" id="composer-style-label">正常</span>
-                          <svg class="dshw-perm-chev" width="12" height="12" aria-hidden="true"><use href="#ic-dsh-chev-down" /></svg>
+                        <button type="button" class="dshw-add mp-composer-secondary" id="composer-options" aria-label="回复与权限" aria-haspopup="menu" aria-expanded="false" title="回复与权限">
+                          <svg width="16" height="16" aria-hidden="true"><use href="#ic-sliders" /></svg>
                         </button>
-                        <div class="dshw-perm-menu" id="composer-style-menu" hidden role="listbox" aria-label="回复风格"></div>
-                        <button type="button" class="dshw-perm" id="composer-permission" aria-haspopup="listbox" aria-expanded="false" title="本轮 Agent 的权限预设">
+                        <div class="mp-composer-options" id="composer-options-menu" hidden role="menu" aria-label="回复与权限">
+                          <span class="mp-composer-options-label">回复风格</span>
+                          <button type="button" class="dshw-perm" id="composer-style" aria-haspopup="listbox" aria-expanded="false" title="回复风格">
+                            <span class="dshw-perm-glyph" id="composer-style-glyph" aria-hidden="true"></span>
+                            <span class="dshw-perm-label" id="composer-style-label">正常</span>
+                            <svg class="dshw-perm-chev" width="12" height="12" aria-hidden="true"><use href="#ic-chev" /></svg>
+                          </button>
+                          <div class="dshw-perm-menu" id="composer-style-menu" hidden role="listbox" aria-label="回复风格"></div>
+                        </div>
+                        <button type="button" class="dshw-perm mp-permission-seat" id="composer-permission" aria-haspopup="listbox" aria-expanded="false" title="本轮 Agent 权限">
                           <span class="dshw-perm-glyph" id="composer-permission-glyph" aria-hidden="true"></span>
-                          <span class="dshw-perm-label" id="composer-permission-label">工作区写入</span>
-                          <svg class="dshw-perm-chev" width="12" height="12" aria-hidden="true"><use href="#ic-dsh-chev-down" /></svg>
+                          <span class="dshw-perm-label" id="composer-permission-label">项目写入</span>
+                          <svg class="dshw-perm-chev" width="12" height="12" aria-hidden="true"><use href="#ic-chev" /></svg>
                         </button>
-                        <div class="dshw-perm-menu" id="composer-permission-menu" hidden role="listbox" aria-label="权限预设"></div>
+                        <div class="dshw-perm-menu mp-permission-menu-seat" id="composer-permission-menu" hidden role="listbox" aria-label="权限预设"></div>
                       </div>
                       <div class="dshw-trailing">
                         <button type="button" class="dshw-perm dshw-model" id="composer-model" aria-haspopup="listbox" aria-expanded="false" title="模型">
                           <span class="dshw-perm-label" id="composer-model-label">默认模型</span>
-                          <svg class="dshw-perm-chev" width="12" height="12" aria-hidden="true"><use href="#ic-dsh-chev-down" /></svg>
+                          <svg class="dshw-perm-chev" width="12" height="12" aria-hidden="true"><use href="#ic-chev" /></svg>
                         </button>
                         <div class="dshw-model-menu" id="composer-model-menu" hidden role="listbox" aria-label="模型目录"></div>
-                        <button type="button" class="dshw-ring" id="composer-context" aria-label="上下文占用" title="上下文占用（暂无数据）">
-                          <svg viewBox="0 0 28 28" width="18" height="18" aria-hidden="true">
-                            <circle class="dshw-ring-track" cx="14" cy="14" r="8" />
-                            <circle class="dshw-ring-fill" cx="14" cy="14" r="8" />
-                          </svg>
+                        <button type="button" class="dshw-ring" id="composer-context" aria-label="本会话模型用量"
+                          aria-haspopup="dialog" aria-expanded="false" title="本会话模型用量" hidden>
+                          <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M2.5 11.5V8.8M6.2 11.5V5.2M9.8 11.5V7M13.5 11.5V3.5" /></svg>
+                          <span id="composer-usage-label"></span>
+                        </button>
+                        <div class="mp-usage-popover" id="composer-usage-popover" role="dialog" aria-label="本会话模型用量" hidden></div>
+                        <button type="button" class="dshw-add mp-voice" id="composer-voice" aria-label="语音输入" title="语音输入">
+                          <svg width="17" height="17" aria-hidden="true"><use href="#ic-mic" /></svg>
                         </button>
                         <button type="submit" class="dshw-primary" title="发送" aria-label="发送">
-                          <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
-                            <path d="M8.3125 0.980183C8.66767 1.0531 8.97902 1.20418 9.2627 1.43233C9.48724 1.61297 9.73029 1.85793 9.97949 2.10714L14.707 6.83468L13.293 8.24874L9 3.95577V15.0417H7V3.95577L2.70703 8.24874L1.29297 6.83468L6.02051 2.10714C6.26971 1.85793 6.51277 1.61297 6.7373 1.43233C6.97662 1.23986 7.28445 1.04402 7.6875 0.980183C7.8973 0.947006 8.1031 0.95516 8.3125 0.980183Z" fill="currentColor" />
-                          </svg>
+                          <svg width="16" height="16" aria-hidden="true"><use href="#ic-send" /></svg>
                         </button>
                       </div>
                     </div>
@@ -207,12 +270,39 @@
         </div>
       </section>
 
+      <section class="dshw-view mp-design-home" id="view-design" hidden>
+        <div class="mp-design-intro">
+          <p>DESIGN</p>
+          <h1>从项目素材开始</h1>
+          <span>收集、检视和组织当前项目的视觉素材，生成的产物会留在本地。</span>
+        </div>
+        <div class="mp-design-bento" id="design-bento">
+          <button type="button" class="mp-design-card mp-design-card-primary sv-bento-card" data-design-action="canvas">
+            <span class="mp-design-card-icon sv-bento-card-icon"><svg aria-hidden="true"><use href="#ic-file-input" /></svg></span>
+            <span class="mp-design-card-copy"><strong>素材画布</strong><small>自由排列截图、引用和灵感片段</small></span>
+            <svg class="mp-design-card-arrow sv-bento-card-arrow" aria-hidden="true"><use href="#ic-arrow-right" /></svg>
+          </button>
+          <button type="button" class="mp-design-card sv-bento-card" data-design-action="list">
+            <span class="mp-design-card-icon sv-bento-card-icon"><svg aria-hidden="true"><use href="#ic-file-text" /></svg></span>
+            <span class="mp-design-card-copy"><strong>素材列表</strong><small>按类型、来源和时间查看本地素材</small></span>
+            <svg class="mp-design-card-arrow sv-bento-card-arrow" aria-hidden="true"><use href="#ic-arrow-right" /></svg>
+          </button>
+          <button type="button" class="mp-design-card mp-design-card-wide sv-bento-card" data-design-action="files">
+            <span class="mp-design-card-icon sv-bento-card-icon"><svg aria-hidden="true"><use href="#ic-folder-open" /></svg></span>
+            <span class="mp-design-card-copy"><strong>项目文件</strong><small>在右侧展开真实文件树，预览或用本地应用打开</small></span>
+            <span class="mp-design-live"><i aria-hidden="true"></i>已连接项目</span>
+            <svg class="mp-design-card-arrow sv-bento-card-arrow" aria-hidden="true"><use href="#ic-arrow-right" /></svg>
+          </button>
+          <button type="button" class="mp-design-card mp-design-card-wide sv-bento-card" data-design-action="artifacts">
+            <span class="mp-design-card-icon sv-bento-card-icon"><svg aria-hidden="true"><use href="#ic-docs" /></svg></span>
+            <span class="mp-design-card-copy"><strong>设计产物</strong><small>查看 Agent 已经生成并落盘的图片、文档和代码</small></span>
+            <svg class="mp-design-card-arrow sv-bento-card-arrow" aria-hidden="true"><use href="#ic-arrow-right" /></svg>
+          </button>
+        </div>
+      </section>
+
       <!-- ===== 收藏箱（保留原画布/列表机制，外壳换 DSH 令牌） ===== -->
       <section class="dshw-view" id="view-stash" hidden>
-        <div>
-          <h2>收藏箱</h2>
-          <p class="desc">划过之后复制、截图与素材都留在这里。</p>
-        </div>
         <div class="page-toolbar">
           <span class="pill" id="stash-count">0 项</span>
           <div class="dshw-seg" id="stash-mode"><button class="is-on" data-mode="canvas">画布</button><button data-mode="list">列表</button></div>
@@ -232,11 +322,9 @@
         <div class="stash-list" id="stash-list" hidden></div>
       </section>
 
-      <section class="dshw-view" id="view-timeline" hidden><div class="tl" id="tl"></div></section>
-      <section class="dshw-view" id="view-memory" hidden><div class="view-body" id="mem-list"></div></section>
       <section class="dshw-view" id="view-artifacts" hidden><div class="view-body" id="art-list"></div></section>
 
-      <!-- ===== 设置：DSH SettingsRoot 居中模态（点击侧栏「设置」打开） ===== -->
+      <!-- 设置采用 Claude Desktop 的双栏 sheet：左侧目录，右侧平铺设置。 -->
       <section id="view-settings" hidden>
         <div class="dshw-settings-overlay" role="dialog" aria-modal="true" aria-label="设置">
           <div class="dshw-settings-mask" data-settings-close aria-hidden="true"></div>
@@ -244,7 +332,7 @@
             <nav class="dshw-settings-nav" aria-label="设置分类">
               <div class="dshw-settings-nav-title">设置</div>
               <label class="dshw-settings-search">
-                <svg aria-hidden="true"><use href="#ic-dsh-search" /></svg>
+                <svg aria-hidden="true"><use href="#ic-search" /></svg>
                 <input id="settings-search" type="search" autocomplete="off" placeholder="搜索设置" aria-label="搜索设置" />
               </label>
               <div class="dshw-settings-nav-list" id="set-nav"></div>
@@ -262,7 +350,50 @@
         </div>
         <div id="settings-save-status" class="settings-save-status" data-state="idle" role="status" aria-live="polite"></div>
       </section>
+
+      <section class="mp-bottom-panel" id="bottom-panel" hidden aria-label="底部面板">
+        <header class="mp-bottom-panel-header">
+          <nav aria-label="底部工具"><button type="button" class="is-on">终端</button></nav>
+          <button type="button" class="mp-toolbar-button" id="bottom-panel-close" aria-label="关闭底部面板"><svg class="codex-icon" aria-hidden="true"><use href="#ic-x" /></svg></button>
+        </header>
+        <div class="mp-terminal-output" id="bottom-terminal-output" role="log" aria-live="polite"><span>PowerShell · 当前项目</span></div>
+        <form class="mp-terminal-form" id="bottom-terminal-form"><span>&gt;</span><input id="bottom-terminal-input" autocomplete="off" spellcheck="false" aria-label="终端命令" /><button type="submit">运行</button></form>
+      </section>
     </main>
+
+    <aside class="mp-inspector" id="project-inspector" hidden aria-label="项目面板">
+      <header class="mp-inspector-header">
+        <nav class="mp-inspector-tabs" aria-label="项目工具">
+          <button type="button" class="is-on" data-inspector-tab="files" aria-selected="true">文件</button>
+          <button type="button" data-inspector-tab="browser" aria-selected="false">浏览器</button>
+          <button type="button" data-inspector-tab="terminal" aria-selected="false">终端</button>
+        </nav>
+        <button type="button" class="mp-thread-action" id="inspector-close" aria-label="关闭项目面板"><svg aria-hidden="true"><use href="#ic-x" /></svg></button>
+      </header>
+      <section class="mp-inspector-panel is-on" id="inspector-files" data-inspector-panel="files">
+        <label class="mp-inspector-filter"><svg aria-hidden="true"><use href="#ic-search" /></svg><input id="file-tree-filter" type="search" placeholder="筛选文件…" autocomplete="off" /></label>
+        <div class="mp-file-tree" id="project-file-tree" role="tree"><p class="mp-inspector-empty">打开项目后显示文件。</p></div>
+        <article class="mp-file-preview" id="project-file-preview" hidden><header><span id="project-file-name"></span><button type="button" id="project-file-open" title="在系统中打开"><svg aria-hidden="true"><use href="#ic-open" /></svg></button></header><pre id="project-file-content"></pre></article>
+      </section>
+      <section class="mp-inspector-panel" id="inspector-browser" data-inspector-panel="browser" hidden>
+        <div class="mp-browser-toolbar">
+          <button type="button" id="project-browser-back" aria-label="后退" title="后退" disabled><svg class="codex-icon" aria-hidden="true"><use href="#ic-arrow-left" /></svg></button>
+          <button type="button" id="project-browser-forward" aria-label="前进" title="前进" disabled><svg class="codex-icon" aria-hidden="true"><use href="#ic-arrow-right" /></svg></button>
+          <button type="button" id="project-browser-reload" aria-label="重新加载" title="重新加载"><svg class="codex-icon" aria-hidden="true"><use href="#ic-refresh" /></svg></button>
+          <form class="mp-browser-bar" id="project-browser-form"><input id="project-browser-url" type="text" inputmode="url" placeholder="输入网址或 localhost 地址" aria-label="网页地址" /><button type="submit">前往</button></form>
+          <button type="button" id="project-browser-external" aria-label="在 Web 浏览器中打开" title="在 Web 浏览器中打开"><svg class="codex-icon" aria-hidden="true"><use href="#ic-open" /></svg></button>
+        </div>
+        <div class="mp-browser-host" id="project-browser-host" aria-label="内置网页浏览器">
+          <div class="mp-browser-empty" id="project-browser-empty"><svg class="codex-icon" aria-hidden="true"><use href="#ic-globe" /></svg><strong>项目浏览器</strong><p>输入网址即可在这里真实打开；链接右键可交给系统 Web 浏览器。</p></div>
+        </div>
+      </section>
+      <section class="mp-inspector-panel" id="inspector-terminal" data-inspector-panel="terminal" hidden>
+        <div class="mp-terminal-output" id="project-terminal-output" role="log" aria-live="polite"><span>PowerShell · 当前项目</span></div>
+        <form class="mp-terminal-form" id="project-terminal-form"><span>&gt;</span><input id="project-terminal-input" autocomplete="off" spellcheck="false" aria-label="终端命令" /><button type="submit">运行</button></form>
+      </section>
+      <section class="mp-inspector-panel" id="inspector-changes" data-inspector-panel="changes" hidden><div id="project-changes"><p class="mp-inspector-empty">打开 Git 项目后显示工作树变更。</p></div></section>
+      <section class="mp-inspector-panel" id="inspector-tasks" data-inspector-panel="tasks" hidden><div id="project-tasks"><p class="mp-inspector-empty">这里显示当前项目的后台与已安排任务。</p></div></section>
+    </aside>
 
     <aside class="aux" id="aux" hidden>
       <header class="aux-top">
@@ -273,6 +404,65 @@
     </aside>
   </div>
 
+  <div class="mp-window-menu-popover" id="window-menu-popover" role="menu" hidden>
+    <div data-window-menu-panel="file" hidden>
+      <button type="button" data-window-command="new-chat"><span>新建对话</span><kbd>Ctrl+N</kbd></button>
+      <button type="button" data-window-command="open-project"><span>打开项目…</span><kbd>Ctrl+O</kbd></button>
+      <button type="button" data-window-command="add-files"><span>添加文件…</span><kbd></kbd></button>
+      <hr />
+      <button type="button" data-window-command="open-project-folder"><span>在资源管理器中显示</span><kbd></kbd></button>
+      <button type="button" data-window-command="close-window"><span>关闭窗口</span><kbd>Alt+F4</kbd></button>
+    </div>
+    <div data-window-menu-panel="edit" hidden>
+      <button type="button" data-window-command="undo"><span>撤销</span><kbd>Ctrl+Z</kbd></button>
+      <button type="button" data-window-command="redo"><span>重做</span><kbd>Ctrl+Y</kbd></button>
+      <hr />
+      <button type="button" data-window-command="cut"><span>剪切</span><kbd>Ctrl+X</kbd></button>
+      <button type="button" data-window-command="copy"><span>复制</span><kbd>Ctrl+C</kbd></button>
+      <button type="button" data-window-command="paste"><span>粘贴</span><kbd>Ctrl+V</kbd></button>
+      <button type="button" data-window-command="select-all"><span>全选</span><kbd>Ctrl+A</kbd></button>
+    </div>
+    <div data-window-menu-panel="view" hidden>
+      <button type="button" data-window-command="toggle-sidebar"><span>切换侧栏</span><kbd>Ctrl+B</kbd></button>
+      <button type="button" data-window-command="toggle-inspector"><span>切换项目面板</span><kbd>Ctrl+Shift+B</kbd></button>
+      <button type="button" data-window-command="toggle-bottom-panel"><span>切换底部面板</span><kbd>Ctrl+J</kbd></button>
+      <hr />
+      <button type="button" data-window-command="toggle-theme"><span>切换浅色 / 深色</span><kbd></kbd></button>
+      <button type="button" data-window-command="zoom-in"><span>放大</span><kbd>Ctrl++</kbd></button>
+      <button type="button" data-window-command="zoom-out"><span>缩小</span><kbd>Ctrl+-</kbd></button>
+      <button type="button" data-window-command="zoom-reset"><span>实际大小</span><kbd>Ctrl+0</kbd></button>
+      <button type="button" data-window-command="fullscreen"><span>全屏</span><kbd>F11</kbd></button>
+    </div>
+    <div data-window-menu-panel="help" hidden>
+      <button type="button" data-window-command="shortcuts"><span>键盘快捷键</span><kbd>Ctrl+/</kbd></button>
+      <button type="button" data-window-command="diagnostics"><span>诊断与日志</span><kbd></kbd></button>
+      <button type="button" data-window-command="settings"><span>设置</span><kbd>Ctrl+,</kbd></button>
+      <hr />
+      <button type="button" data-window-command="about"><span>关于</span><kbd></kbd></button>
+    </div>
+  </div>
+
+  <section class="mp-directory-overlay" id="plugin-directory" hidden aria-label="技能与命令目录">
+    <div class="mp-directory-mask" data-directory-close aria-hidden="true"></div>
+    <div class="mp-directory-panel" role="dialog" aria-modal="true" aria-labelledby="plugin-directory-title">
+      <header class="mp-directory-titlebar">
+        <h2 id="plugin-directory-title">Directory</h2>
+        <button type="button" data-directory-close aria-label="关闭目录"><svg aria-hidden="true"><use href="#ic-x" /></svg></button>
+      </header>
+      <div class="mp-directory-body">
+        <nav class="mp-directory-nav" aria-label="目录分类">
+          <button type="button" class="is-on" data-directory-kind="skills"><svg aria-hidden="true"><use href="#ic-spark" /></svg><span>技能</span></button>
+          <button type="button" data-directory-kind="commands"><svg aria-hidden="true"><use href="#ic-term" /></svg><span>命令</span></button>
+        </nav>
+        <main class="mp-directory-main">
+          <label class="mp-directory-search"><svg aria-hidden="true"><use href="#ic-search" /></svg><input id="plugin-directory-search" type="search" autocomplete="off" placeholder="搜索技能与命令…" /></label>
+          <div class="mp-directory-section-head"><strong id="plugin-directory-kind-label">已安装技能</strong><span id="plugin-directory-count"></span></div>
+          <div class="mp-directory-list" id="plugin-directory-list"></div>
+        </main>
+      </div>
+    </div>
+  </section>
+
   <script src="icons.js?v=23"></script>
   <script src="../cards.js?v=23"></script>
   <script src="../studio_shell.js?v=23"></script>
@@ -280,15 +470,16 @@
   <script src="live_cards.js?v=23"></script>
   <script src="dsh_markdown.js?v=24"></script>
   <script src="dsh_icons.js?v=25"></script>
-  <script src="dsh_chat.js?v=25"></script>
+  <script src="dsh_chat.js?v=26"></script>
   <script src="dsh_trajectory.js?v=25"></script>
   <script src="../conversation_control.js?v=23"></script>
   <script src="../slash_trigger.js?v=23"></script>
   <script src="permission_presets.js?v=23"></script>
   <script src="sidebar_groups.js?v=23"></script>
+  <script src="sv_motion.js?v=26"></script>
   <script src="data.js?v=23"></script>
   <script src="settings_model.js?v=23"></script>
   <script src="settings.js?v=23"></script>
-  <script src="studio.js?v=25"></script>
+  <script src="studio.js?v=26"></script>
 </body>
 </html>

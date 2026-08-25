@@ -868,6 +868,15 @@ DOM、COM、UIA、Fabric等现有模块也不自动保留，只优先保存经�
 
 ## 18. 进度账本
 
+### 2026-08-25：阶段完成——8·25 真机事故批
+
+- [x] **普通对话桌面空转根因**（session 取证："回复 你好" 17 轮/41 次模型请求/9 个桌面工具）：系统提示 identity 无条件声称"用户在屏幕上圈选了对象"。修法：identity 与冻结帧规则改按 `has_selection`（selection_anchor/对话 object 证据）注入；`boot_loop_context` 的 model-client 行将 `runtime.selection_anchor` 传入 ctx；conversation_bridge 把非空 object 计为证据。红绿 4 测（§6 系统提示契约）。
+- [x] **"四个 Think 没意义"收口**：模型轮次与工具行收进默认折叠的「运行记录 N 步」簇（dsh_chat 补全工作区未完成的折叠重构），denseTurn 契约 11 步一簇钉死。
+- [x] **Stage 入库对话 GUI 不可见**（sidebar_groups 按项目分组过滤空 workspace）：新增 `electron/profile_workspace.ts` 读 `<app>/data/runtime/workspace.txt`（与 Python read_workspace 同语义），`recordConversationTurn` 给 Stage 结果绑工作区。
+- [x] **GUI 外壳对齐**：Walker→Work（内部名不变）；右上角项目名占位移除；`.dshw-logo-row` overflow 裁剪模式菜单（Design 点不了）已除；文件树按 sv-animations folder.svelte 去 chevron/对齐 gap-1、text-sm、ml-5。
+- [x] 交付：Python 1508 / Node 177·122 files / 五套 typecheck / ESLint 0 / CSS parity ok / 无头探针 console_errors=0；`npm run sync` 装 **1.0.23**。
+- [ ] 诚实边界：composer 栏图标未动（无新参照不盲改）；"消息浮最上层/新对话最上层"未复现到具体层；划线问问题报错为视觉凭证配置问题非代码 bug。
+
 ### 2026-08-11：设计冻结
 
 - [x] 重读用户提供的完整需求导出 Markdown。
@@ -1323,7 +1332,7 @@ smoke：uia-host PASS、replay 20 条 trace 走真实网关（机制绿，见下
 - [x] **长任务地基第一批已落地（开发树，未升版本）**：按用户裁决「别造轮子，本地顶级 agent 源码直接搬」，从 HermesAgent（MIT）移植。硬天花板全解除——bridge 期限改无活动超时、`emergency_turn_fuse` 90→1000；上下文层——请求级 token 估算（补上此前完全漏算的 system prompt 与 tool schema）、可反复触发的压缩 + anti-thrash、`TodoStore` 跨压缩保留未完成步骤、尾部按 token 预算裁剪、压缩成功判据由条数改为 token 权重（实施中发现的真 bug）。出处登记在 `THIRD_PARTY_NOTICES.md`。fresh：Python **1401 passed**、Node **152 passed**、typecheck + lint 干净。
 - [ ] **未闭合（长任务真实缺口，不得冒充已完成）**：首要事实是**长任务当前跑不了**——Stage 60s / Studio 120s bridge 硬超时（`electron/main.ts:3933-3934`、`1187`）与 90 轮 fuse（`app/fabric/engine.py:983-984`）在任何长跑能力被用到之前就落闸，当前上限 ≤2 分钟、≤90 轮，而 OSWorld 2.0 量纲是 1.6 小时、318 次工具调用。其后依次是：上下文耐久（rolling compaction、进度事实保护、工具结果窗口化、真实 token 计数）、感知语义隔离（冻结 look/read_around 与 live get_app_state 混用、InputArtifact 不可中途再编译）、持久性（program counter 续跑、effect sandwich 上生产盘、session 轮转）、可控性（steer 生产接线、graceful interrupt、真实步数与账本可视化）、结构性（子任务分解、todo 落盘、回执准入）。**Gate 2 的“crash recovery”需升级为“program counter 续跑”；长任务的上下文耐久性此前不在任何 Gate 里，是新边界带来的新需求。**
 
-### 2026-08-24：Studio GUI 对标批（五源码拆解文档 → 逐项差距修复，开发树未升版本）
+### 2026-08-24：Studio 项目制 + Claude/Oreo 结构重做批（1.0.19 已交付）
 
 - [x] 对照 `D:\Desktop\Persistence\harness`（CC/Codex/DSH/Hermes/Pi 拆解）+ DSH web 源码逐项找差距，DSH GUI 差距报告 34 项落档 `docs/research/2026-08-24-dsh-web-ui-gap-report.md`（P0：无流式、无停止、无排队、代码块无语言标签/复制、无数学渲染；P1：会话菜单死按钮、无状态徽章、强制滚动等）。
 - [x] **流式正文**：`answer_chunk` base64 进度行 + Studio 边收边画（节流 + 边界冲刷，不丢字有测试钉死）；顺带修 plan 推送被 `_token` 120 字符截断导致计划卡消失的真 bug（改 `mark_blob`）。
@@ -1332,8 +1341,20 @@ smoke：uia-host PASS、replay 20 条 trace 走真实网关（机制绿，见下
 - [x] **CodeBlock 卡 / diff 卡 / 增量渲染 / 滚动跟随 / 运行耗时**：语言标签+复制钮；edit_file/write_file 红删绿加（40 行封顶）；签名未变的活动行不重建（保展开态）；贴底才跟随 + 回到底部胶囊；15s 后显示运行秒数。
 - [x] **会话重命名/删除**：store `rename/remove`（titleCustom 防覆盖、空白拒绝、落盘）+ IPC 全链 + DSH Rows 动作菜单 + 内联重命名对话框。
 - [x] **斜杠目录内联触发+键盘导航**：`slash_trigger.detectSlashToken` 纯函数；textarea 内联开合随输入过滤；方向键循环高亮 + Enter/Tab 选中 + Escape 关闭。
-- [x] 验证：Python **1503 passed**；Node **157 passed / 110 源文件**；五套 typecheck 与 eslint 0。**未升版本、未 sync**（延续用户指示）。
-- [ ] 路线图对账结论（防重做）：§1.6 capability deferred 已落地（两 spec 工厂均 deferred=True）；§5.1 derive_messages 已是内存投影 + 增量采用；§7.3 图像 token 前提不成立（图像从不进模型表面）；§8.2 排序无失败可达。诚实边界：KaTeX 数学渲染（需新依赖）、消息分支 fork GUI、粘贴/拖拽图片进作曲家、每会话 pending-work 徽章仍未做。
+- [x] **项目成为 Studio 硬前提**：一个确定文件夹就是一个项目；独立 `projects.json` 让空项目先于对话持久存在，并从已有带目录线程导入。左栏是打开/选择项目的唯一入口；Composer 删除项目选择；无项目历史不造“其他对话/默认项目”，renderer 与主进程都拒绝无项目发送。
+- [x] **Claude/Oreo 产品壳层**：官方暖纸/墨色/发丝灰 token（`#faf9f5` / `#141413` / `#e8e6dc`）+ 系统 UI 字体栈；设置页从圆角 section cards 改成 Claude Desktop 式连续 sheet（分组左轨 + 自由右页 + 发丝分隔行）；Hermes 证据支持记忆留在“记忆与上下文”设置，不进主导航。
+- [x] **Composer 与消息动作均是真功能**：Oreo 式内容层 + 极简工具层；真实多文件选择和可删除附件条、`@` 提及、合并后的回复/权限弹层、模型/发送；消息复制/分支等动作仅 hover 显示。branch 贯通 store/IPC/renderer，保留项目和前缀上下文但不复用 Agent session。
+- [x] **验证与交付**：正式 preload/IPC 下真实 Electron 验证无项目门禁、有项目对话/Composer、Claude 式设置，证据位于 `data/runtime/studio-redesign-20260824-v2/`。Python **1503 passed**（1 条 Pillow 弃用警告）；Node **160 passed / 110 源文件**；五套 typecheck、ESLint、Electron build 全绿；`npm run sync` 构建、静默安装、重启，安装目录版本核对 **1.0.19**。
+- [ ] 路线图对账结论（防重做）：§1.6 capability deferred 已落地（两 spec 工厂均 deferred=True）；§5.1 derive_messages 已是内存投影 + 增量采用；§7.3 图像 token 前提不成立（图像从不进模型表面）；§8.2 排序无失败可达。诚实边界：KaTeX 数学渲染与附件内容预解析仍未做；附件当前以明确本地路径交给 Runtime 按权限读取。
+
+### 2026-08-24：Codex Desktop 外壳复刻与真实链路修复批（1.0.20 已交付）
+
+- [x] **正式产品源码基线**：直接读取本机 Windows Store Codex 26.818.5229 的 `app.asar`/渲染 bundle，提取其真实 Lucide path 与壳层结构；不再依据印象局部拼接。Studio 落为 Codex 式左栏（新对话/拉取请求/站点/已安排/插件/项目）、双视图顶栏、会话更多菜单、右侧 Inspector 和紧凑底部 Composer，图标统一 1.5px 细线。
+- [x] **Claude 暖灰视觉系统**：浅色 canvas/sidebar/surface=`#f7f6f2/#efede6/#fbfaf7`，深色=`#292927/#181817/#343431`，accent=`#d97757`；Composer 768px/18px，设置 sheet 960×740/16px、左轨 230px。真实 Electron 测得设置矩形 `{x:139.5,y:40,width:960,height:740}`（viewport 1239×820，DPR 2）。
+- [x] **项目工具面接通**：一个文件夹仍是一个项目、无项目 renderer/main 双门禁；Inspector 接真实懒加载文件树、受项目根约束的文本预览与外部打开、URL 浏览器入口、项目 PowerShell、Git changes、任务面。会话菜单接重命名/分支/导出/删除；Directory 从本机 `slashDirectory` 读取真实 52 项 skill/command 并可插回 Composer；dashboard dictation 接到麦克风按钮。
+- [x] **交互与错误根因修复**：模型菜单不再等待 `Data.models()` 后才出现，异步刷新期间保持可见且尊重关闭；Composer textarea 去掉第二层蓝色 focus outline；单轮纯模型成功活动行隐藏，多轮/工具轨迹保留。Python bridge 空 stdout 不再被 `JSON.parse(... || '{}')` 冒充成功，`bridge_no_output/timeout/invalid_json/empty_answer/provider_unavailable` 连同 exitCode/usedBackend/timing 诚实上屏。
+- [x] **真实对话闭环**：真实 Electron 在项目 `my_daily_skills` 中依次发送 `只回答 UI_BRIDGE_OK`、`只回答 FINAL_UI_OK`，Provider 约 7.6s 返回 `UIBRIDGEOK/FINALUIOK`，会话落盘并刷新左栏；证明 renderer→IPC→Python Runtime→Provider→persist→rerender 全链可用。实测截图在 `data/runtime/studio-settings-sheet-final.png`、`studio-plugin-directory-final.png`、`studio-project-inspector.png`、`studio-model-menu.png`、`studio-real-send-final.png`。
+- [x] **验证与安装交付**：TDD 契约覆盖 Codex shell、Directory、项目 Inspector、模型菜单、Composer focus、bridge 空输出与错误映射。fresh 五套 typecheck、ESLint 0；Node **164 tests / 112 source files**；Python **1503 passed**（1 条 Pillow 弃用预告）。`npm run sync` 又执行全门，构建 `release/sync-1.0.20-20260824-233113-14772/Magic-Pointer-1.0.20-x64.exe`、静默安装并重启；独立核对安装目录版本 **1.0.20**、新导航 payload 存在、运行进程指向安装目录。
 
 ### 2026-08-19：Codex 逐行学习 + 全链修复批（1.0.12 已交付）
 
@@ -1348,3 +1369,17 @@ smoke：uia-host PASS、replay 20 条 trace 走真实网关（机制绿，见下
 - [x] **其余同权重修复**：look 每 run 12 次配额（P5）；steer_absorbed/followup_continued/context_compacted 进度阶段（O7）；账单过契约层（O6）；取消/超时文案不再谎称「没有改动任何东西」（O4）。
 - [x] **交付**：fresh 全门 Python **1426 passed**、Node **154 passed / 106 源文件**、五套 typecheck 与 ESLint 干净；`npm run sync` 构建 `Magic-Pointer-1.0.12-x64.exe`、静默安装并重启，安装目录版本核对为 **1.0.12**。
 - [ ] **未闭合**：steer/取消 GUI 链路未经真机长任务实测；压缩中撞墙的删最老重试、agent 间 mailbox、session 轮转/zstd、目标 token 余量提醒记录在审计文档 §3 暂不做；300 步真机基准仍未跑。
+
+### 2026-08-24：Studio 外壳 sv 素材移植 + 四代 CSS 合并（1.0.21 已交付）
+
+- [x] **视觉层工作回读本文（§16.4 触发）**：按 VIDA_UI_SPEC 与用户裁决执行；素材站源码全部存档 `_sv_sources/`（sv-animations MIT / sv-particles 无 LICENSE 仅参数参考 / sv-agentation MIT 判定不适用）。
+- [x] **动效组件逐字移植**（`electron/renderer/sv_motion.ts` 解析弹簧 + `sv.css` 组件层，7 个 TDD 契约钉死参数）：animated-checkbox→计划卡、file-tree→Inspector、animated-list→会话列表、bento-grid+Lucide 五图标→Design 概览；animated-theme-toggler 判定既有实现等价未重复移植；smooth-cursor 用户裁决不上。
+- [x] **四代 8 文件 CSS 机械合并**为 `studio_system.css`（`scripts/consolidate_studio_css.ts`，保守相邻折叠），三重等价证据（重算一致/每作用域终态投影相等/计算样式探针双主题 4496 字段 0 差异）；顺带修复内联主题引导被 CSP 拦截的潜在 bug（外置 `theme_boot.js`）。
+- [x] **交付**：Node **174 tests / 118 files**、Python **1503 passed**、五套 typecheck、ESLint 0；`npm run sync` 静默安装 **1.0.21**；截图 `data/runtime/studio-sv-1.0.21-*.png`；来源与许可证登记于 `THIRD_PARTY_NOTICES.md`。
+- [ ] 诚实边界：CSS 合并仅机械等价，死规则语义清理未做；sv-particles 批量采用需作者授权；动效的真机手感（非无头）验收待用户日常使用反馈。
+
+### 2026-08-25：模型切换 secrets 修复 + 图标 100% 网站同款（1.0.22 已交付）
+
+- [x] **真机 bug（用户实测）**：安装版切模型报"没有可写的 secrets 目录"。根因是写入侧自造了一套解析（错误 env 名 `MAGIC_POINTER_USER_SECRETS_DIR` + `~/.magic-pointer` 默认 + 目录必须预存在），与读取侧 `ai_client` 的候选链（开发树 → `$MAGIC_POINTER_USER_DATA_DIR/secrets`）错位。修复：写入对齐读取链，用户目录写即创建，失败带路径诚实报错；红绿 `tests/models_catalog_test.py` 7/7。
+- [x] **图标 100% 网站同款（用户裁决）**：file-tree 内嵌 trio 以源 SVG 原样 stroke 2 / 16px 渲染；bento 五图标 stroke 1.4（源 `stroke-[1.4]`）；主题切换换 Lucide 官方 Moon/Sun。契约 `tests/studio_sv_icons_test.js`。
+- [x] **交付**：Node **175 tests / 119 files**、五套 typecheck、lint 0；`npm run sync` 静默安装 **1.0.22**，安装目录独立核对一致。

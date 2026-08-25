@@ -18,9 +18,12 @@ __all__ = ["list_models", "provider_label", "select_model"]
 
 ROOT = Path(__file__).resolve().parents[1]
 SECRETS_DIR = ROOT / "secrets"
+# 与 ai_client.read_local_secret 的读取候选链保持同一处:安装版里主进程传
+# MAGIC_POINTER_USER_DATA_DIR(sync 把本机 secrets 放在 %LOCALAPPDATA% 下的
+# 用户数据目录),开发树则直接写 ROOT/secrets。
 USER_SECRETS_DIR = (
-    Path(os.environ.get("MAGIC_POINTER_USER_SECRETS_DIR") or Path.home() / ".magic-pointer" / "secrets")
-    if os.name == "nt"
+    Path(os.environ["MAGIC_POINTER_USER_DATA_DIR"]) / "secrets"
+    if os.environ.get("MAGIC_POINTER_USER_DATA_DIR")
     else None
 )
 
@@ -89,9 +92,14 @@ def list_models(timeout_s: float = GATEWAY_TIMEOUT_S) -> dict:
 
 
 def _secret_write_path() -> Path | None:
+    """与 ai_client 的读取顺序一致:开发树 secrets 优先,其次用户数据目录。
+
+    用户目录不存在不算失败——写入本来就意味着创建它;只有连候选都没有
+    (既不在开发树、也没有 MAGIC_POINTER_USER_DATA_DIR)才返回 None。
+    """
     if SECRETS_DIR.is_dir():
         return SECRETS_DIR / "model.txt"
-    if USER_SECRETS_DIR is not None and USER_SECRETS_DIR.is_dir():
+    if USER_SECRETS_DIR is not None:
         return USER_SECRETS_DIR / "model.txt"
     return None
 
@@ -105,6 +113,10 @@ def select_model(model_id: str) -> dict:
         return {"ok": False, "error": "环境变量 MAGIC_POINTER_MODEL 在优先级上覆盖文件，改文件不会生效；请先 unset。"}
     target = _secret_write_path()
     if target is None:
-        return {"ok": False, "error": "没有可写的 secrets 目录（开发树或用户数据目录均不存在）。"}
-    target.write_text(name + "\n", encoding="utf-8")
-    return {"ok": True, "model": name}
+        return {"ok": False, "error": "没有可写的 secrets 目录（开发树不存在，且未设置 MAGIC_POINTER_USER_DATA_DIR）。"}
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(name + "\n", encoding="utf-8")
+    except OSError as exc:
+        return {"ok": False, "error": f"secrets 写入失败（{target.parent}）：{exc}"}
+    return {"ok": True, "model": name, "path": str(target)}

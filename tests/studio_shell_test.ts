@@ -3,8 +3,8 @@ const { STUDIO_VIEWS, normalizeView, shellState } = require('../electron/studio_
 
 assert.deepStrictEqual(
   STUDIO_VIEWS.map((view: { id: string }) => view.id),
-  ['chat', 'stash', 'timeline', 'memory', 'artifacts', 'settings'],
-  'Studio must have one canonical list of real work views',
+  ['chat', 'design', 'stash', 'artifacts', 'settings'],
+  'Studio must keep only real primary views; trajectory is per-conversation and memory is settings',
 );
 assert.strictEqual(new Set(STUDIO_VIEWS.map((view: { id: string }) => view.id)).size, STUDIO_VIEWS.length);
 for (const view of STUDIO_VIEWS) {

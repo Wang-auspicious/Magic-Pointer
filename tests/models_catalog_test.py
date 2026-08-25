@@ -93,3 +93,35 @@ def test_select_model_rejects_blank(monkeypatch, tmp_path) -> None:
     _configured(monkeypatch)
     result = select_model("   ")
     assert result["ok"] is False
+
+
+def test_select_model_creates_user_data_secrets_dir_and_writes_there(monkeypatch, tmp_path) -> None:
+    """安装版常态:开发树 secrets 不进包;写入必须落在 MAGIC_POINTER_USER_DATA_DIR
+    下的 secrets(与 ai_client.read_local_secret 的读取候选链同一处),目录不存在就创建。"""
+    _configured(monkeypatch)
+    dev_secrets = tmp_path / "app-bundle" / "secrets"  # 不存在(安装包里没有)
+    monkeypatch.setattr("app.models_catalog.SECRETS_DIR", dev_secrets)
+    user_data = tmp_path / "UserData" / "Magic Pointer"
+    monkeypatch.setattr("app.models_catalog.USER_SECRETS_DIR", user_data / "secrets")
+
+    result = select_model("kimi-k3")
+    assert result["ok"] is True, result
+    written = user_data / "secrets" / "model.txt"
+    assert written.is_file(), "user secrets dir must be created on write"
+    assert written.read_text(encoding="utf-8").strip() == "kimi-k3"
+    assert result["path"] == str(written)
+
+
+def test_select_model_prefers_dev_tree_secrets_when_present(monkeypatch, tmp_path) -> None:
+    _configured(monkeypatch)
+    dev_secrets = tmp_path / "dev" / "secrets"
+    dev_secrets.mkdir(parents=True)
+    monkeypatch.setattr("app.models_catalog.SECRETS_DIR", dev_secrets)
+    user_secrets = tmp_path / "user" / "secrets"
+    user_secrets.mkdir(parents=True)
+    monkeypatch.setattr("app.models_catalog.USER_SECRETS_DIR", user_secrets)
+
+    result = select_model("deepseek-v4-flash")
+    assert result["ok"] is True
+    assert (dev_secrets / "model.txt").read_text(encoding="utf-8").strip() == "deepseek-v4-flash"
+    assert not (user_secrets / "model.txt").exists()
