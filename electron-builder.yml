@@ -52,6 +52,9 @@ files:
   - scripts/pointer_input_state.ps1
   - scripts/selection_bridge.py
   - scripts/selection_snapshot_bridge.py
+  - scripts/selection_worker.py
+  - scripts/learning_candidates_bridge.py
+  - scripts/learning_review_bridge.py
   - scripts/sense_voice_bridge.py
   - scripts/sense_voice_setup.py
   - scripts/shopping_list_bridge.py

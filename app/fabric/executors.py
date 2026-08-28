@@ -12,9 +12,10 @@ import uuid
 from contextlib import contextmanager
 from difflib import unified_diff
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 from urllib.parse import urlencode
 
+from app.agent_runtime.tool_registry import ToolRegistry
 from app.fabric.context_packet import build_agent_prompt, write_context_packet_artifact
 from app.fabric.agent_context_handoff import AgentContextHandoffError, AgentContextHandoffStore
 from app.fabric.receipt_verification import verify_action_receipt

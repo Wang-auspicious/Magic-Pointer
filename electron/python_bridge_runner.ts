@@ -191,10 +191,19 @@ function createPythonBridgeRunner({
     });
     child.on('close', (code) => {
       if (delivered) return;
+      if (!stdout.trim()) {
+        // 进程死了却一个字都没写：把 stderr 尾巴一起带出来，否则 crash
+        // traceback（ModuleNotFoundError/语法错误/启动即崩）永远不可见——
+        // 1.0.24 的 bridge_no_output 就这样盲修了一小时。
+        const stderrTail = stderr.slice(-800).trim();
+        log(`bridge no-output stderr tail code=${code}: ${stderrTail || '(empty)'}`);
+        deliver({ ok: false, error: 'bridge_no_output', code, stderrTail });
+        return;
+      }
       let parsed: BridgeResult;
       try {
         const lines = stdout.trim().split(/\r?\n/).filter(Boolean);
-        const decoded: unknown = JSON.parse(lines.at(-1) || '{}');
+        const decoded: unknown = JSON.parse(lines.at(-1) as string);
         parsed =
           decoded && typeof decoded === 'object'
             ? (decoded as BridgeResult)

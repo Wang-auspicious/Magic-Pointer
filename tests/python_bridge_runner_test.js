@@ -61,6 +61,42 @@ function fakeChild() {
 }
 
 {
+  // A clean process exit with no stdout is not a valid bridge response.  The
+  // old JSON.parse('{}') fallback turned this into an object with no `ok` or
+  // `error`, which the Studio later mislabeled as “模型没有返回内容”。
+  const child = fakeChild();
+  const delivered = [];
+  const logs = [];
+  const runner = createPythonBridgeRunner({ spawnImpl: () => child });
+  runner.run({
+    executable: 'python', args: [], input: {}, timeoutMs: 1000,
+    onComplete: value => delivered.push(value),
+    logger: message => logs.push(message),
+  });
+  child.emit('close', 0);
+  assert.deepStrictEqual(delivered, [{
+    ok: false, error: 'bridge_no_output', code: 0, stderrTail: '',
+  }]);
+  assert(logs.some(line => line.includes('bridge no-output stderr tail')));
+
+  // 1.0.24 真机事故：进程 import 崩溃（traceback 只进 stderr），runner 把
+  // stderr 一起丢掉 → bridge_no_output 无从诊断。尾巴必须随错误带出。
+  const crashed = fakeChild();
+  const crashedDelivered = [];
+  const crashedRunner = createPythonBridgeRunner({ spawnImpl: () => crashed });
+  crashedRunner.run({
+    executable: 'python', args: [], input: {}, timeoutMs: 1000,
+    onComplete: value => crashedDelivered.push(value),
+  });
+  crashed.stderr.write('Traceback (most recent call last):\n');
+  crashed.stderr.write("ModuleNotFoundError: No module named 'scripts'\n");
+  crashed.emit('close', 1);
+  assert.strictEqual(crashedDelivered[0].ok, false);
+  assert.strictEqual(crashedDelivered[0].error, 'bridge_no_output');
+  assert.match(crashedDelivered[0].stderrTail, /ModuleNotFoundError/);
+}
+
+{
   const child = fakeChild();
   const controller = new AbortController();
   const delivered = [];

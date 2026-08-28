@@ -86,7 +86,7 @@ class PhaseClock:
         """
         now = time.perf_counter()
         total_ms = (now - self._start) * 1000.0
-        delta_ms = now - self._last
+        delta_ms = (now - self._last) * 1000.0
         self._last = now
         self._marks.append((str(phase), total_ms))
         if not self.enabled:
