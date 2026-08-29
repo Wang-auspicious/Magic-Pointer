@@ -113,6 +113,8 @@ const tooled = store.appendTurn({
   modelUsage: { inputTokens: 120, outputTokens: 30, totalTokens: 150 },
   timingMs: 910,
   usedBackend: 'openai-compatible',
+  agentSessionId: 'agent-studio-abc123',
+  hasPendingWork: true,
 });
 assert.strictEqual(tooled.turns.length, 1);
 assert.strictEqual(tooled.turns[0].events.length, 2, '工具链事件必须随回合持久化');
@@ -126,10 +128,13 @@ assert.strictEqual(tooled.turns[0].receipts[0].toolName, 'pwsh', 'audit receipts
 assert.strictEqual(tooled.turns[0].modelUsage.totalTokens, 150, 'real model token usage must survive persistence');
 assert.strictEqual(tooled.turns[0].timingMs, 910, 'real turn time must survive persistence');
 assert.strictEqual(tooled.turns[0].usedBackend, 'openai-compatible', 'model backend must survive persistence');
+assert.strictEqual(tooled.agentSessionId, 'agent-studio-abc123', 'durable Agent session identity must survive on the thread');
+assert.strictEqual(tooled.hasPendingWork, true, 'unfinished work must be visible at thread level');
 const tooledAgain = createConversationStore({ baseDir: dir, now: () => clock }).get(tooled.id);
 assert.strictEqual(tooledAgain.turns[0].events.length, 2, '重开 store 后工具链事件仍在');
 assert.strictEqual(tooledAgain.turns[0].modelUsage.outputTokens, 30, '重开 store 后 token usage 仍在');
 assert.strictEqual(tooledAgain.turns[0].trajectory[0].seq, 1, '重开 store 后 trajectory 顺序仍在');
+assert.strictEqual(tooledAgain.hasPendingWork, true, '重开 store 后待续标记仍在');
 
 // 没有 events 的旧回合读回来是空数组，不崩。
 const plain = store.appendTurn({ newConversation: true, question: '普通一问', answer: '普通一答。' });
@@ -164,6 +169,15 @@ assert.notStrictEqual(wsB.workspaceRoot, store.get(wsA.id).workspaceRoot, '线�
 const listed = store.list().find((c) => c.id === wsA.id);
 assert.strictEqual(listed.workspaceRoot, 'C:/repos/beta', 'list 摘要要带工作区');
 
+// ---- 项目先于对话存在：打开空文件夹后也必须留在左栏 ----
+const emptyProject = store.registerProject('C:/repos/empty-project');
+assert.strictEqual(emptyProject.name, 'empty-project');
+assert(store.listProjects().some((project) => project.root.endsWith('empty-project')),
+  '还没有对话的项目也必须持久化');
+const reopenedProjects = createConversationStore({ baseDir: dir, now: () => clock }).listProjects();
+assert(reopenedProjects.some((project) => project.root.endsWith('empty-project')),
+  '重启后仍要看见已经打开过的空项目');
+
 store.clear();
 assert.strictEqual(store.list().length, 0);
 
@@ -190,3 +204,50 @@ assert.deepStrictEqual(pmListed.permissionGrants, ['run_command', 'read_backgrou
 assert.deepStrictEqual(pmListed.permissionDenials, ['launch_app'], 'list 摘要带拒绝');
 
 console.log('conversation store test ok (permission memo)');
+
+// ── Stage↔GUI 实时同步：updateTurn 就地补 answer/终态 ─────────────────
+{
+  const liveStore = createConversationStore({ baseDir: fs.mkdtempSync(path.join(os.tmpdir(), 'mp-conv-live-')), now: () => (clock += 1000) });
+  const conversation = liveStore.appendTurn({ question: '圈选的问题', answer: '', outcome: '进行中' });
+  assert.strictEqual(conversation.turns.length, 1);
+  assert.strictEqual(conversation.turns[0].outcome, '进行中');
+
+  const updated = liveStore.updateTurn({
+    conversationId: conversation.id,
+    answer: '流式到达的答案',
+    outcome: '已完成',
+    modelUsage: { totalTokens: 4321 },
+  });
+  assert.ok(updated.ok, 'updateTurn on a live turn must succeed');
+
+  const reread = liveStore.get(conversation.id);
+  assert.strictEqual(reread.turns.length, 1, 'must update in place, not append a second turn');
+  assert.strictEqual(reread.turns[0].answer, '流式到达的答案');
+  assert.strictEqual(reread.turns[0].outcome, '已完成');
+  assert.strictEqual(reread.turns[0].modelUsage.totalTokens, 4321);
+
+  assert.strictEqual(liveStore.updateTurn({ conversationId: 'nope' }).ok, false,
+    'unknown conversation id fails honestly');
+}
+
+// ---- 思考流（P0-1）：turn.thinking 持久化，渲染层 Think 行的数据源 ----
+{
+  const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-conv-think-'));
+  const thinkStore = createConversationStore({ baseDir: dir2, now: () => (clock += 1000) });
+  const conversation = thinkStore.appendTurn({ question: '解释一下', answer: '' });
+  assert.strictEqual(conversation.turns[0].thinking, undefined, '没有思考流时不造假字段');
+
+  const withThink = thinkStore.updateTurn({
+    conversationId: conversation.id,
+    answer: '答',
+    thinking: '先定位数据结构\n再推断含义',
+  });
+  assert.ok(withThink.ok);
+  assert.strictEqual(withThink.conversation.turns[0].thinking, '先定位数据结构\n再推断表达'.replace('表达', '含义'),
+    'updateTurn 必须持久化 thinking（Think 行的数据源）');
+
+  const noThink = thinkStore.updateTurn({ conversationId: conversation.id, answer: '答2' });
+  assert.ok(noThink.ok);
+  assert.strictEqual(noThink.conversation.turns[0].thinking, '先定位数据结构\n再推断含义',
+    '不带 thinking 的更新不得清掉已有的思考流');
+}

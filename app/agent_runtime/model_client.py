@@ -48,6 +48,7 @@ __all__ = [
     "ModelBackend",
     "ModelTurnEvent",
     "ModelUnsupported",
+    "ReasoningDelta",
     "StreamingMessagesBackend",
     "ToolCallArrived",
     "TurnDone",
@@ -73,6 +74,20 @@ class TurnStarted(ModelTurnEvent):
 @dataclass(frozen=True, slots=True)
 class MessageDelta(ModelTurnEvent):
     kind = "message_delta"
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class ReasoningDelta(ModelTurnEvent):
+    """模型思考流增量（用户裁决：思考流一定要有）。
+
+    DeepSeek/Moonshot/MiMo 的 ``reasoning_content``、OpenRouter 的
+    ``reasoning``、Anthropic 的 thinking 块都归一成这个事件。它只用于
+    展示与账面，不进 messages 载荷（DeepSeek 系拒绝回传、Anthropic 系
+    需要完整的 thinking 块往返，后者在思考开关真正打开时另行处理）。
+    """
+
+    kind = "reasoning_delta"
     text: str
 
 
@@ -152,6 +167,7 @@ class LoopModelClient:
         self._retry_sleeper = retry_sleeper
         self._retry_clock = retry_clock
         self.last_usage: dict | None = None
+        self.last_reasoning: str | None = None
         self.last_truncated = False
         self.last_errors: list[str] = []
         self.withheld_count = 0
@@ -184,6 +200,7 @@ class LoopModelClient:
         ``TurnDone``.
         """
         self.last_usage = None
+        self.last_reasoning = None
         for message in messages:
             if message.tool_call_id:
                 self._reserved_call_ids.add(str(message.tool_call_id))
@@ -222,6 +239,8 @@ class LoopModelClient:
                         self.withheld_count += 1
                     elif isinstance(event, TurnDone):
                         self.last_usage = event.usage
+                    elif isinstance(event, ReasoningDelta):
+                        self.last_reasoning = (self.last_reasoning or "") + event.text
                     events.append(event)
             except CancelledError:
                 raise
@@ -437,6 +456,34 @@ def _normalize_call(call: ToolCall, errors: list[str]) -> ToolCall | None:
     )
 
 
+def _reasoning_from_payload(payload: object, api_mode: str) -> str:
+    """Non-streaming reasoning extraction (chat ``reasoning_content`` /
+    messages ``thinking`` blocks). Empty string when the provider sent none —
+    reasoning is display-only and must never fabricate."""
+    if not isinstance(payload, dict):
+        return ""
+    if api_mode == "messages":
+        parts: list[str] = []
+        content = payload.get("content")
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "thinking":
+                    parts.append(str(block.get("thinking") or ""))
+        return "".join(parts)
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return ""
+    first = choices[0] if isinstance(choices[0], dict) else None
+    message = first.get("message") if isinstance(first, dict) else None
+    if not isinstance(message, dict):
+        return ""
+    for key in ("reasoning_content", "reasoning"):
+        value = message.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return ""
+
+
 class AiClientMessagesBackend:
     """Real multi-turn backend: the loop's history as a native messages array.
 
@@ -577,6 +624,9 @@ class AiClientMessagesBackend:
             yield TurnDone(usage=None, raw_text=None)
             return
         _ai_client.record_success(model=model, base_url=base_url)
+        reasoning_text = _reasoning_from_payload(response_payload, api_mode)
+        if reasoning_text:
+            yield ReasoningDelta(reasoning_text)
         if text:
             yield MessageDelta(text)
         for index, raw in enumerate(valid_calls):
@@ -962,6 +1012,7 @@ def _parse_sse(
     if api_mode == "messages":
         return _parse_messages_sse(lines, cancel_scope=cancel_scope)
     text_parts: list[str] = []
+    reasoning_parts: list[str] = []
     pending: dict[int, dict[str, Any]] = {}
     events: list[ModelTurnEvent] = []
     finish_reason: str | None = None
@@ -989,6 +1040,11 @@ def _parse_sse(
         delta = choice.get("delta") or {}
         if isinstance(delta.get("content"), str) and delta["content"]:
             text_parts.append(delta["content"])
+        for reasoning_key in ("reasoning_content", "reasoning"):
+            reasoning_value = delta.get(reasoning_key)
+            if isinstance(reasoning_value, str) and reasoning_value:
+                reasoning_parts.append(reasoning_value)
+                break
         for fragment in delta.get("tool_calls") or []:
             index = int(fragment.get("index") or 0)
             slot = pending.setdefault(index, {"id": "", "name": "", "arguments": ""})
@@ -1000,6 +1056,9 @@ def _parse_sse(
                 slot["arguments"] += str(fragment["function"]["arguments"])
         if choice.get("finish_reason"):
             finish_reason = str(choice["finish_reason"])
+    reasoning_text = "".join(reasoning_parts)
+    if reasoning_text:
+        events.append(ReasoningDelta(reasoning_text))
     text = "".join(text_parts)
     if text:
         events.append(MessageDelta(text))
@@ -1029,6 +1088,7 @@ def _parse_messages_sse(
 ) -> list[ModelTurnEvent]:
     """Parse Anthropic Messages SSE frames into the common turn events."""
     text_parts: list[str] = []
+    reasoning_parts: list[str] = []
     pending: dict[int, dict[str, Any]] = {}
     usage: dict[str, Any] = {}
     events: list[ModelTurnEvent] = []
@@ -1072,6 +1132,9 @@ def _parse_messages_sse(
                 continue
             if block.get("type") == "text" and block.get("text"):
                 text_parts.append(str(block["text"]))
+            elif block.get("type") == "thinking":
+                if block.get("thinking"):
+                    reasoning_parts.append(str(block["thinking"]))
             elif block.get("type") == "tool_use":
                 initial = block.get("input")
                 pending[index] = {
@@ -1092,12 +1155,18 @@ def _parse_messages_sse(
             continue
         if delta.get("type") == "text_delta" and delta.get("text"):
             text_parts.append(str(delta["text"]))
+        elif delta.get("type") == "thinking_delta":
+            if delta.get("thinking"):
+                reasoning_parts.append(str(delta["thinking"]))
         elif delta.get("type") == "input_json_delta":
             slot = pending.setdefault(
                 index, {"id": "", "name": "", "arguments": ""}
             )
             slot["arguments"] += str(delta.get("partial_json") or "")
 
+    reasoning_text = "".join(reasoning_parts)
+    if reasoning_text:
+        events.append(ReasoningDelta(reasoning_text))
     text = "".join(text_parts)
     if text:
         events.append(MessageDelta(text))

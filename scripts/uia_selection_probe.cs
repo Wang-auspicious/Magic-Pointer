@@ -30,6 +30,10 @@ internal static class UiaSelectionProbe
     // for pathological trees, not a latency budget: a window with a selection
     // answers far sooner, and the Python caller applies its own shorter timeout.
     private const int UiaProbeHardTimeoutMs = 1200;
+    // 区域遍历模式（TryRegionElements）：有界 BFS（6000 节点上限 + 区域剪枝），
+    // Chromium 冷树首跑要跨进程读数千节点，1200ms 会掐死正在正确作答的探针。
+    // 仍是天花板不是预算：正常命中远快于此。Python 侧调用超时须高于它。
+    private const int RegionHardTimeoutMs = 3000;
     private const double SelectionPointTolerance = 4.0;
 
     private sealed class SelectionResult
@@ -130,9 +134,10 @@ internal static class UiaSelectionProbe
         try
         {
             Task readTask = Task.Run(() => RunProbeCore(hwndValue, targetPoint, targetRegion, result));
-            if (!readTask.Wait(UiaProbeHardTimeoutMs))
+            int hardTimeoutMs = targetRegion.HasValue ? RegionHardTimeoutMs : UiaProbeHardTimeoutMs;
+            if (!readTask.Wait(hardTimeoutMs))
             {
-                result.Error = "uia_probe_timeout_" + UiaProbeHardTimeoutMs + "ms";
+                result.Error = "uia_probe_timeout_" + hardTimeoutMs + "ms";
             }
         }
         catch (Exception ex)
@@ -1031,10 +1036,46 @@ internal static class UiaSelectionProbe
         // every needed property is bulk-fetched in one cross-process pass.
         List<RegionElement> found = new List<RegionElement>();
         HashSet<string> seen = new HashSet<string>(StringComparer.Ordinal);
-        const int maxVisitedNodes = 1200;
+        const int maxVisitedNodes = 6000;
         const int maxOutputElements = 64;
         try
         {
+            // 从「区域中心命中的元素」向上找最小包含子树，从那里开始 BFS。
+            // 从窗口根起走必被无关子树耗尽预算（Chromium 树数千节点深，
+            // 实测 3s 量级还在 3000ms 天花板上抖动）；子树起点把遍历收缩到
+            // 圈选内容附近，毫秒级直达。
+            AutomationElement startRoot = root;
+            try
+            {
+                AutomationElement atPoint = AutomationElement.FromPoint(RegionCenter(region));
+                AutomationElement cursor = atPoint;
+                AutomationElement smallest = atPoint;
+                for (int hop = 0; hop < 32 && cursor != null; hop++)
+                {
+                    Rect cursorRect = SafeBoundingRectangle(cursor);
+                    if (!cursorRect.IsEmpty && cursorRect.Left <= region.Left
+                        && cursorRect.Top <= region.Top
+                        && cursorRect.Right >= region.Right
+                        && cursorRect.Bottom >= region.Bottom)
+                    {
+                        smallest = cursor;
+                    }
+                    AutomationElement parent = TreeWalker.ControlViewWalker.GetParent(cursor);
+                    if (parent == null || root.Equals(parent))
+                    {
+                        break;
+                    }
+                    cursor = parent;
+                }
+                if (smallest != null)
+                {
+                    startRoot = smallest;
+                }
+            }
+            catch
+            {
+                // FromPoint/上溯失败就退回窗口根，行为与旧版一致。
+            }
             CacheRequest cacheRequest = new CacheRequest();
             cacheRequest.Add(AutomationElement.BoundingRectangleProperty);
             cacheRequest.Add(AutomationElement.ControlTypeProperty);
@@ -1047,7 +1088,7 @@ internal static class UiaSelectionProbe
             bool truncated = false;
             using (cacheRequest.Activate())
             {
-                queue.Add(root);
+                queue.Add(startRoot);
                 int visited = 0;
                 for (int index = 0; index < queue.Count && visited < maxVisitedNodes && found.Count < maxOutputElements; index++)
                 {
@@ -1102,18 +1143,29 @@ internal static class UiaSelectionProbe
                         truncated = true;
                         break;
                     }
-                    try
+                    // 区域剪枝：容器自身矩形非空且与圈选区域完全不相交时，
+                    // 其子树大概率也在区域外（Chromium 容器 rect 可信），
+                    // 不下钻——否则几千节点的树在到达内容前就耗尽预算。
+                    bool containerMissesRegion = !rectangle.IsEmpty
+                        && rectangle.Width > 0
+                        && rectangle.Height > 0
+                        && index > 0
+                        && !rectangle.IntersectsWith(region);
+                    if (!containerMissesRegion)
                     {
-                        AutomationElement child = walker.GetFirstChild(element);
-                        while (child != null && visited < maxVisitedNodes)
+                        try
                         {
-                            queue.Add(child);
-                            child = walker.GetNextSibling(child);
+                            AutomationElement child = walker.GetFirstChild(element);
+                            while (child != null && visited < maxVisitedNodes)
+                            {
+                                queue.Add(child);
+                                child = walker.GetNextSibling(child);
+                            }
                         }
-                    }
-                    catch (Exception)
-                    {
-                        // A subtree may be broken or in a different process; skip it.
+                        catch (Exception)
+                        {
+                            // A subtree may be broken or in a different process; skip it.
+                        }
                     }
                 }
                 if (visited >= maxVisitedNodes)
@@ -2133,9 +2185,10 @@ internal static class UiaSelectionProbe
         try
         {
             Task readTask = Task.Run(() => RunProbeCore(hwnd, targetPoint, targetRegion, result));
-            if (!readTask.Wait(UiaProbeHardTimeoutMs))
+            int hardTimeoutMs2 = targetRegion.HasValue ? RegionHardTimeoutMs : UiaProbeHardTimeoutMs;
+            if (!readTask.Wait(hardTimeoutMs2))
             {
-                result.Error = "uia_probe_timeout_" + UiaProbeHardTimeoutMs + "ms";
+                result.Error = "uia_probe_timeout_" + hardTimeoutMs2 + "ms";
             }
         }
         catch (Exception ex)

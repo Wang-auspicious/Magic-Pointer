@@ -86,6 +86,50 @@ function onGuidePoint(payload: Record<string, unknown> | null | undefined) {
   };
 }
 
+// ── Hermes drive 回放：结构化元素框 + 语义句柄标签 ─────────────────
+// 主进程在圈选快照落地后发 overlay:element-ghosts（策略层已换算成本
+// overlay 本地 DIP 矩形）。错峰浮现 → 驻留 → 淡出，动画结束整层自动清。
+const ghostLayer = document.getElementById('element-ghosts') as HTMLElement;
+let ghostTimer: ReturnType<typeof setTimeout> | null = null;
+
+function onElementGhosts(payload: Record<string, unknown> | null | undefined) {
+  if (!ghostLayer || !payload) return;
+  if (ghostTimer) clearTimeout(ghostTimer);
+  ghostTimer = null;
+  ghostLayer.replaceChildren();
+  const ghosts = Array.isArray(payload.ghosts) ? payload.ghosts : [];
+  const holdMs = Math.max(0, Number(payload.holdMs) || 0);
+  const fadeMs = Math.max(0, Number(payload.fadeMs) || 0);
+  if (!ghosts.length) {
+    ghostLayer.hidden = true;
+    return;
+  }
+  const total = holdMs + fadeMs;
+  for (const ghost of ghosts) {
+    const rect = (ghost as { rect?: { x: number; y: number; width: number; height: number } }).rect;
+    if (!rect) continue;
+    const box = document.createElement('div');
+    box.className = 'element-ghost';
+    box.style.left = `${rect.x}px`;
+    box.style.top = `${rect.y}px`;
+    box.style.width = `${rect.width}px`;
+    box.style.height = `${rect.height}px`;
+    box.style.setProperty('--ghost-delay', `${Number((ghost as { delayMs?: unknown }).delayMs) || 0}ms`);
+    box.style.setProperty('--ghost-total', `${total}ms`);
+    const tag = document.createElement('span');
+    tag.className = 'element-ghost-tag';
+    tag.textContent = String((ghost as { ref?: unknown }).ref || '');
+    box.appendChild(tag);
+    ghostLayer.appendChild(box);
+  }
+  ghostLayer.hidden = false;
+  ghostTimer = setTimeout(() => {
+    ghostLayer.replaceChildren();
+    ghostLayer.hidden = true;
+    ghostTimer = null;
+  }, total + Math.max(...ghosts.map((g) => Number((g as { delayMs?: unknown }).delayMs) || 0)) + 60);
+}
+
 function overlayBounds() {
   const canvasRect = ctx.canvas.getBoundingClientRect();
   return { x: canvasRect.left, y: canvasRect.top, width: canvasRect.width, height: canvasRect.height };
@@ -638,6 +682,9 @@ window.magicPointer?.onCursor((payload) => {
   lastPointer = { x: Number(payload.x) || 0, y: Number(payload.y) || 0, t: performance.now() };
   if (gestureMode) return;
   scheduleRender();
+});
+window.magicPointer?.onElementGhosts?.((payload) => {
+  onElementGhosts(payload);
 });
 window.magicPointer?.onGuidePoint?.((payload) => {
   onGuidePoint(payload);

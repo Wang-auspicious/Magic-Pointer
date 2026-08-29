@@ -14,6 +14,7 @@ interface ActiveRequest {
   onComplete: (result: Result) => void;
   onProgress: ((record: unknown) => void) | null;
   timer: NodeJS.Timeout | null;
+  timeoutMs: number;
 }
 
 interface ClientOptions {
@@ -95,7 +96,12 @@ class SelectionWorkerClient {
     });
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (chunk: string | Buffer) => {
-      if (this.child === child) feedProgress(String(chunk));
+      if (this.child !== child) return;
+      // 桥 runner 同款语义：任何输出都是活着的证明。60s 计的是沉默，
+      // 不是总时长——长答案（大上下文的模型调用可以跑 1-2 分钟）必须
+      // 靠持续到来的 @@mp 进度行续期，否则好答案被墙钟误杀（真机 8·29）。
+      this._rearm(this.active);
+      feedProgress(String(chunk));
     });
     child.on('error', (error: Error) => {
       if (this.child !== child) return;
@@ -130,6 +136,7 @@ class SelectionWorkerClient {
       onComplete,
       onProgress,
       timer: null,
+      timeoutMs: 0,
     };
     this.active = active;
     const cancel = (): void => {
@@ -140,10 +147,8 @@ class SelectionWorkerClient {
       if (signal.aborted) cancel();
       else signal.addEventListener('abort', cancel, { once: true });
     }
-    active.timer = setTimeout(
-      () => this._stopWorker({ ok: false, error: 'bridge_timeout' }),
-      Math.max(1000, Number(timeoutMs) || 60_000),
-    );
+    active.timeoutMs = Math.max(1000, Number(timeoutMs) || 60_000);
+    this._rearm(active);
     try {
       if (!child.stdin) throw new Error('selection_worker_stdin_unavailable');
       child.stdin.write(`${JSON.stringify({ id: requestId, op: 'run', payload })}\n`, 'utf8');
@@ -200,7 +205,18 @@ class SelectionWorkerClient {
     }
   }
 
+  private _rearm(active: ActiveRequest | null): void {
+    if (!active) return;
+    if (active.timer) clearTimeout(active.timer);
+    active.timer = setTimeout(() => {
+      active.timer = null;
+      this._stopWorker({ ok: false, error: 'bridge_timeout' });
+    }, active.timeoutMs);
+  }
+
   _finish(result: Result): void {
+    if (this.active?.timer) clearTimeout(this.active.timer);
+    if (this.active) this.active.timer = null;
     const active = this.active;
     if (!active) return;
     this.active = null;

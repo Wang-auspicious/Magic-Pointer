@@ -266,3 +266,24 @@ def test_stalled_after_work_delivers_partial_receipts():
     assert mapped["ok"] is True
     assert "type_text" in mapped["answer"]
     assert mapped["loopTerminatedReason"] == "stalled"
+
+
+def test_backend_error_code_becomes_human_guidance():
+    """原始代码（backend_error:http_500）不得当答案渲染。
+
+    真机 8·29：GUI 第一条消息撞上网关 500，气泡里出现斜体的
+    「backenderror:http500」——用户看到的应该是人话和下一步建议，
+    原始码留在 error 字段里供日志和诊断。
+    """
+    from app.agent_runtime.types import TransitionReason
+
+    mapped = terminal_to_answer(
+        _terminal(TransitionReason.PROVIDER_UNAVAILABLE, message="backend_error:http_500"),
+        "你好",
+    )
+    assert mapped["ok"] is False
+    assert "500" in mapped["answer"] and "重" in mapped["answer"], (
+        "答案必须是人话：说清发生了什么 + 下一步（重试）"
+    )
+    assert "backend_error" not in mapped["answer"], "原始码不进答案正文"
+    assert mapped["error"] == "provider_unavailable"

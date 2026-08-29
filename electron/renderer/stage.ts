@@ -1441,7 +1441,11 @@
   // mousedown 上就阻止默认行为，否则按钮一拿到焦点选区就塌了，
   // 等 click 到达时已经没有可展开的东西。
   passageExpand.addEventListener('mousedown', (event) => event.preventDefault());
-  passageExpand.addEventListener('click', () => { void expandPickedPassage(); });
+  passageExpand.addEventListener('click', () => {
+    console.log('[stage] passage-expand click pick=', passagePick ? 'present' : 'null',
+      'busy=', passageExpand.dataset.busy || 'false');
+    void expandPickedPassage();
+  });
   document.addEventListener('selectionchange', syncPassageExpand);
   workPanelScroller.addEventListener('scroll', () => {
     if (!passageExpand.hidden) syncPassageExpand();

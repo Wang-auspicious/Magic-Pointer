@@ -31,6 +31,18 @@ _PARTIAL_DELIVERY_REASONS = frozenset({
 })
 
 
+def _backend_error_brief(reason: str) -> str:
+    """backend_error:xxx → 短人话。"""
+    code = str(reason or "").split(":", 1)[1] if ":" in str(reason or "") else ""
+    if code.startswith("http_5"):
+        return f"HTTP {code[5:]}"
+    if code == "credential_missing":
+        return "缺少模型密钥"
+    if code == "model_request_timeout":
+        return "请求超时"
+    return code or "未知错误"
+
+
 def terminal_to_answer(terminal: Terminal, command: str) -> dict[str, Any]:
     """Map a loop :class:`Terminal` to the selection_bridge answer shape."""
     if terminal.reason is TransitionReason.LOCAL_ACTION:
@@ -129,10 +141,19 @@ def terminal_to_answer(terminal: Terminal, command: str) -> dict[str, Any]:
             "events": _events(terminal),
             "modelUsage": terminal.model_usage,
         }
+    answer = terminal.message or ""
+    # 原始后端错误码（backend_error:http_500 之类）不得当答案渲染：
+    # 翻成人话 + 下一步，原始码留在 loopTerminatedReason/error 里供诊断。
+    if terminated and answer.startswith("backend_error:"):
+        answer = (
+            f"模型服务刚才没有响应（{_backend_error_brief(answer)}）。"
+            "通常是网关瞬时故障，稍等几秒重发即可；"
+            "若连续出现，请到设置里检查模型与网络。"
+        )
     return {
         "ok": not terminated,
         "prompt": command,
-        "answer": terminal.message or "",
+        "answer": answer,
         "error": terminal.reason.value if terminated else None,
         "answerShape": "answer",
         "loopTerminated": terminated,

@@ -1022,6 +1022,7 @@ def run_agent_turn(
     keepalive: Callable[[str], None] | None = None,
     todo_store: Any = None,
     permission_decisions: Any = None,
+    tool_result_dir: str | None = None,
 ) -> Terminal:
     """Run one agentic loop turn to its Terminal (synchronous entry).
 
@@ -1104,6 +1105,7 @@ def run_agent_turn(
         keepalive=keepalive,
         todo_store=todo_store,
         permission_decisions=permission_decisions,
+        tool_result_dir=tool_result_dir,
     )
     return asyncio.run(_consume_agent_loop(params))
 

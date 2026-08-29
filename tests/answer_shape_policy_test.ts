@@ -7,10 +7,22 @@ const assert = require('assert');
 const { answerShape } = require('../electron/answer_shape_policy');
 
 // --- 要送出去的 -------------------------------------------------------------
-// 回微信、回邮件这类：对面读到的是字，所以不许带 markdown，写之前要点头。
+// --- 意图由模型/证据判定，问题文本永不触发（8·29 教训）---------------------
+// 「帮我回复一下他」这类命令本身不再分类：写回条只在模型真的产出交付物时
+// 出现（调了交付能力 → actionProposals / 桥显式声明）。用户不点关键词，
+// 模型理解意图——它判断这次该交付，就会调用交付能力，证据自然出现。
 for (const command of ['帮我回复一下他', '这段润色一下', '改写得客气点', '语气委婉一点', '扩写到长一点']) {
   const shape = answerShape({ command });
-  assert.strictEqual(shape.shape, 'deliver', `「${command}」是要发出去的：${shape.reason}`);
+  assert.strictEqual(shape.shape, 'inspect', `裸命令不分类：deliver 等证据（${command} → ${shape.reason}）`);
+}
+
+// 证据一：模型生成了写回类执行方案 → 要送出去，禁 markdown，要点头。
+{
+  const shape = answerShape({
+    command: '帮我回复一下他',
+    result: { actionProposals: [{ action_type: 'office_replace_selection' }] },
+  });
+  assert.strictEqual(shape.shape, 'deliver');
   assert.strictEqual(shape.allowMarkdown, false, '发出去的东西不许带 markdown');
   assert.strictEqual(shape.needsConsent, true, '往别人窗口里写必须先点头');
 }
@@ -43,9 +55,15 @@ for (const command of ['这是什么', '解释一下这段', '为什么会这样
   assert.strictEqual(answerShape({ command }).shape, 'inspect', `「${command}」是讲给我听的`);
 }
 
-// 两类动词撞车时，「讲给我听」优先：问的是解释，不是要一段能直接发出去的话。
-assert.strictEqual(answerShape({ command: '解释一下这段该怎么润色' }).shape, 'inspect',
-  '同时命中两类动词时必须偏向不写');
+// 元话语误触发回归钉（8·29 真机）：追问里出现「回复/润色」等词，绝不产生写回条。
+{
+  const meta = answerShape({
+    command: '你刚刚在回复这段话的过程中，发生了什么，调用工具了吗，还是只传入input到API服务商那边返回了答案呢？',
+  });
+  assert.strictEqual(meta.needsConsent, false, 'meta-discussion must not trigger the write-back bar');
+  const metaQ = answerShape({ command: '这个软件帮我润色一下会更好吗' });
+  assert.strictEqual(metaQ.needsConsent, false, 'a question about polishing is not a deliver command');
+}
 
 // --- 拿不准时 ---------------------------------------------------------------
 // 判错成 inspect，用户少一个按钮；判错成 deliver，我们会剥掉格式并准备往别人的
@@ -62,3 +80,21 @@ assert.strictEqual(answerShape({ command: '帮我回复', result: { answerShape:
 assert.strictEqual(answerShape({ result: { kind: 'image', answerShape: 'deliver' } }).shape, 'inspect');
 
 console.log('answer shape policy test ok');
+
+// 8·29 真机：追问「你刚刚在回复这段话的过程中，发生了什么」——句中的
+// 「回复」是元话语，不是交付指令。deliver 动词必须落在祈使位置（句首），
+// 否则写回条凭空出现，用户被迫面对一个莫名其妙的「拒绝/同意」。
+{
+  const meta = answerShape({
+    result: { answerShape: 'inspect' },
+    command: '你刚刚在回复这段话的过程中，发生了什么，调用工具了吗，还是只传入input到API服务商那边返回了答案呢？',
+  });
+  assert.strictEqual(meta.needsConsent, false, 'meta-discussion must not trigger the write-back bar');
+
+  // 「回复 你好」这类真交付：模型理解后会调交付能力 → 证据出现才 deliver。
+  const imperative = answerShape({ command: '回复 你好', result: { actionProposals: [{ action_type: 'capsule_delivery' }] } });
+  assert.strictEqual(imperative.needsConsent, true, 'delivery evidence still delivers');
+
+  const midSentence = answerShape({ command: '这个软件帮我润色一下会更好吗' });
+  assert.strictEqual(midSentence.needsConsent, false, 'embedded 润色 in a question is not a deliver command');
+}

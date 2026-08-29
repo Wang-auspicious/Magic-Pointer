@@ -45,6 +45,7 @@ contextBridge.exposeInMainWorld('magicPointer', {
   onHide: (callback: SignalCallback) => onSignal('overlay:hide', callback),
   onCursor: (callback: PayloadCallback) => onPayload('overlay:cursor', callback),
   onGuidePoint: (callback: PayloadCallback) => onPayload('overlay:guide-point', callback),
+  onElementGhosts: (callback: PayloadCallback) => onPayload('overlay:element-ghosts', callback),
   guideFinished: () => ipcRenderer.send('overlay:guide-finished'),
   onGestureInput: (callback: PayloadCallback) => onPayload('overlay:gesture-input', callback),
   onGestureSubmit: (callback: PayloadCallback) => onPayload('overlay:gesture-submit', callback),
@@ -153,6 +154,11 @@ contextBridge.exposeInMainWorld('magicPointerStage', {
 
 contextBridge.exposeInMainWorld('magicPointerDashboard', {
   hide: () => ipcRenderer.send('dashboard:hide'),
+  startDictation: () => ipcRenderer.send('dictation:start', { surface: 'dashboard' }),
+  stopDictation: (options: { graceful?: boolean } = {}) => ipcRenderer.send('dictation:stop', {
+    surface: 'dashboard',
+    graceful: options?.graceful === true,
+  }),
   setTheme: (theme: unknown) => ipcRenderer.send('dashboard:theme', { theme }),
   fabricRequest: (operation: unknown, payload: UnknownRecord = {}) => ipcRenderer.send('dashboard:fabric-request', { operation, ...payload }),
   saveFabricSettings: (settings: unknown) => ipcRenderer.invoke('dashboard:settings:save', { settings }),
@@ -182,6 +188,7 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
   onVoiceResidencyStatus: (callback: PayloadCallback) => onPayload('dashboard:voice-residency-status', callback),
   onPreflightEvent: (callback: PayloadCallback) => onPayload('dashboard:preflight-event', callback),
   onModelHealth: (callback: PayloadCallback) => onPayload('dashboard:model-health', callback),
+  onDictationResult: (callback: PayloadCallback) => onPayload('dictation:result', callback),
   refreshModelHealth: () => ipcRenderer.invoke('dashboard:model-health-refresh'),
   sessionTimeline: () => ipcRenderer.invoke('dashboard:session-timeline'),
   stash: {
@@ -189,9 +196,63 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
     describe: (imagePath: unknown) => ipcRenderer.invoke('stash:describe', imagePath),
     onEntry: (callback: PayloadCallback) => onPayload('stash:entry', callback),
   },
+  projects: {
+    list: () => ipcRenderer.invoke('projects:list'),
+    open: () => ipcRenderer.invoke('projects:open'),
+    pickFiles: (projectRoot: unknown) => ipcRenderer.invoke('projects:pick-files', {
+      projectRoot: String(projectRoot || '').trim().slice(0, 500),
+    }),
+    tree: (projectRoot: unknown, relativePath: unknown = '') => ipcRenderer.invoke('projects:tree', {
+      projectRoot: String(projectRoot || '').trim().slice(0, 500),
+      path: String(relativePath || '').trim().slice(0, 1000),
+    }),
+    readFile: (projectRoot: unknown, relativePath: unknown) => ipcRenderer.invoke('projects:read-file', {
+      projectRoot: String(projectRoot || '').trim().slice(0, 500),
+      path: String(relativePath || '').trim().slice(0, 1000),
+    }),
+    environment: (projectRoot: unknown, conversationId: unknown = '') => ipcRenderer.invoke('projects:environment', {
+      projectRoot: String(projectRoot || '').trim().slice(0, 500),
+      conversationId: String(conversationId || '').trim().slice(0, 120),
+    }),
+    contextMenu: (projectRoot: unknown, relativePath: unknown, kind: unknown) => ipcRenderer.invoke('projects:context-menu', {
+      projectRoot: String(projectRoot || '').trim().slice(0, 500),
+      path: String(relativePath || '').trim().slice(0, 1000),
+      kind: kind === 'directory' ? 'directory' : 'file',
+    }),
+    openPath: (projectRoot: unknown, relativePath: unknown) => ipcRenderer.invoke('projects:open-path', {
+      projectRoot: String(projectRoot || '').trim().slice(0, 500),
+      path: String(relativePath || '').trim().slice(0, 1000),
+    }),
+    openUrl: (url: unknown) => ipcRenderer.invoke('projects:open-url', { url: String(url || '').trim().slice(0, 3000) }),
+    runCommand: (projectRoot: unknown, command: unknown, relativeDirectory: unknown = '') => ipcRenderer.invoke('projects:run-command', {
+      projectRoot: String(projectRoot || '').trim().slice(0, 500),
+      command: String(command || '').slice(0, 8000),
+      path: String(relativeDirectory || '').trim().slice(0, 1000),
+    }),
+  },
+  browserView: {
+    open: (url: unknown, bounds: UnknownRecord = {}) => ipcRenderer.invoke('browser:view-open', {
+      url: String(url || '').trim().slice(0, 3000),
+      bounds,
+    }),
+    resize: (bounds: UnknownRecord = {}) => ipcRenderer.invoke('browser:view-resize', { bounds }),
+    command: (command: unknown) => ipcRenderer.invoke('browser:view-command', {
+      command: String(command || '').trim().slice(0, 40),
+    }),
+    onState: (callback: PayloadCallback) => onPayload('browser:view-state', callback),
+  },
+  windowControls: {
+    command: (command: unknown) => ipcRenderer.invoke('window:command', {
+      command: String(command || '').trim().slice(0, 40),
+    }),
+  },
   conversations: {
     list: () => ipcRenderer.invoke('conversations:list'),
     get: (id: unknown) => ipcRenderer.invoke('conversations:get', id),
+    branch: (payload: { id?: unknown; turnIndex?: unknown }) => ipcRenderer.invoke('conversations:branch', {
+      id: String(payload?.id || '').slice(0, 120),
+      turnIndex: Number(payload?.turnIndex),
+    }),
     pickWorkspace: () => ipcRenderer.invoke('conversations:pick-workspace'),
     send: (payload: { conversationId?: unknown; question?: unknown; permissionPreset?: unknown; requestId?: unknown; workspaceRoot?: unknown; replyStyle?: unknown; permissionGrant?: unknown; permissionDeny?: unknown; permissionGrantOnce?: unknown }) => ipcRenderer.invoke('conversations:send', {
       conversationId: String(payload?.conversationId || '').slice(0, 120),

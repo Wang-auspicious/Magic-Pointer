@@ -168,6 +168,38 @@ class TestPromptSections:
         text = builder.build({"language": "中文", "reply_style": "galactic"})
         assert "# Style" not in text
 
+    def test_identity_claims_screen_selection_only_when_evidence_exists(self) -> None:
+        """普通文本对话不得谎称用户圈选了屏幕对象——那是 Stage 流才会
+        用的身份，写进普通对话会让模型去全桌面找并不存在的选区对象
+        （真机事故："回复你好" 跑了 17 轮桌面工具空转）。"""
+        from app.agent_runtime.system_prompt import default_sections
+
+        builder = SystemPromptBuilder()
+        for section in default_sections():
+            builder.add(section)
+
+        plain = builder.build({"language": "中文", "has_selection": False})
+        selected = builder.build({"language": "中文", "has_selection": True})
+        assert "圈选" not in plain
+        assert "圈选" in selected
+        assert "没有屏幕选区对象" in plain
+
+    def test_frozen_frame_rule_skipped_without_selection_evidence(self) -> None:
+        """look/read_around 的冻结帧规则只在有圈选证据时注入；普通对话
+        没有 visual_anchor，写这些只会诱导模型去 "look" 并不存在的屏幕。"""
+        from app.agent_runtime.system_prompt import default_sections
+
+        builder = SystemPromptBuilder()
+        for section in default_sections():
+            builder.add(section)
+
+        plain = builder.build({"language": "中文", "has_selection": False})
+        selected = builder.build({"language": "中文", "has_selection": True})
+        assert "冻结帧" not in plain
+        assert "visual_anchor" not in plain
+        assert "冻结帧" in selected
+        assert "visual_anchor" in selected
+
     def test_plugin_unload_waits_for_inflight_section_render(self) -> None:
         from app.harness.context import Context
 
@@ -241,3 +273,25 @@ class TestAskTodoTools:
         ]))
         assert result["plan"][0]["content"] == "读取选区"
         assert result["plan"][1]["status"] == "in_progress"
+
+
+class TestVoiceSection:
+    def test_voice_section_gives_the_model_a_persona(self) -> None:
+        """「回话生硬」的提示词层根因：全部规则都是操作纪律（禁令/工具
+        纪律），没有一条教模型怎么说话。Voice section 是静态人格层：
+        先结论后有细节、不写套话、语气跟用户走、给下一步建议。"""
+        from app.agent_runtime.system_prompt import default_sections
+
+        builder = SystemPromptBuilder()
+        for section in default_sections():
+            builder.add(section)
+
+        text = builder.build({"language": "中文", "has_selection": False})
+        assert "# Voice" in text
+        assert "结论" in text
+        assert "套话" in text
+        # 与无选区身份约束一致：人格层不得重新引入「圈选」身份。
+        assert "圈选" not in text
+        # 静态 section：不随 ctx 变化，保住 system prompt 前缀缓存。
+        again = builder.build({"language": "英文", "has_selection": False})
+        assert "# Voice" in again

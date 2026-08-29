@@ -114,13 +114,20 @@ public static class UiaDraftWriter
     {
         object value;
         if (!data.TryGetValue("target_point", out value) || value == null) return null;
-        object[] items = value as object[];
-        if (items == null || items.Length != 2) return null;
-        int x;
-        int y;
-        if (!Int32.TryParse(Convert.ToString(items[0]), out x)) return null;
-        if (!Int32.TryParse(Convert.ToString(items[1]), out y)) return null;
-        return new int[] { x, y };
+        // JavaScriptSerializer 反序列化 JSON 数组的运行时类型不保证是
+        // object[]（实测 as object[] 恒 null → 写入永远「target point is
+        // missing」）。按 IEnumerable 逐项解析，数组/List 通吃。
+        System.Collections.IEnumerable items = value as System.Collections.IEnumerable;
+        if (items == null) return null;
+        List<int> parsed = new List<int>();
+        foreach (object item in items)
+        {
+            int coordinate;
+            if (!Int32.TryParse(Convert.ToString(item), out coordinate)) return null;
+            parsed.Add(coordinate);
+        }
+        if (parsed.Count != 2) return null;
+        return parsed.ToArray();
     }
 
     private static string WindowText(IntPtr hwnd)
@@ -462,12 +469,49 @@ public static class UiaDraftWriter
     private static bool VerifyTextPattern(AutomationElement element, string expected)
     {
         object textPattern;
-        if (!element.TryGetCurrentPattern(TextPattern.Pattern, out textPattern)) return false;
-        TextPattern pattern = textPattern as TextPattern;
-        if (pattern == null) return false;
-        string actual = NormalizeNewlines(pattern.DocumentRange.GetText(-1));
-        return actual.Contains(NormalizeNewlines(expected));
+        if (element.TryGetCurrentPattern(TextPattern.Pattern, out textPattern))
+        {
+            TextPattern pattern = textPattern as TextPattern;
+            if (pattern != null)
+            {
+                string actual = NormalizeNewlines(pattern.DocumentRange.GetText(-1));
+                if (actual.Contains(NormalizeNewlines(expected))) return true;
+            }
+        }
+        // 经典 Win32 控件（旧版记事本的 Edit、部分 WinForms 框）没有
+        // TextPattern/ValuePattern 可读回——WM_GETTEXT 是最后一道可靠的读回。
+        // 没有它，写入明明落地却被判「无法验证」，用户以为失败。
+        return VerifyNativeWindowText(element, expected);
     }
+
+    private static bool VerifyNativeWindowText(AutomationElement element, string expected)
+    {
+        try
+        {
+            IntPtr handle = new IntPtr(element.Current.NativeWindowHandle);
+            if (handle == IntPtr.Zero)
+            {
+                IntPtr focused = GetFocus();
+                handle = focused;
+            }
+            if (handle == IntPtr.Zero) return false;
+            int length = SendMessageWindowTextLength(handle, 0x000E /*WM_GETTEXTLENGTH*/, IntPtr.Zero, IntPtr.Zero).ToInt32();
+            if (length <= 0) return false;
+            var builder = new System.Text.StringBuilder(length + 16);
+            SendMessageWindowText(handle, 0x000D /*WM_GETTEXT*/, new IntPtr(length + 16), builder);
+            return NormalizeNewlines(builder.ToString()).Contains(NormalizeNewlines(expected));
+        }
+        catch { return false; }
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern IntPtr SendMessageWindowText(IntPtr hWnd, int msg, IntPtr wParam, System.Text.StringBuilder lParam);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern IntPtr SendMessageWindowTextLength(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr GetFocus();
 
     private static WriterResult Write(Dictionary<string, object> data)
     {
@@ -618,6 +662,9 @@ public static class UiaDraftWriter
         WriterResult result;
         try
         {
+            // stdin 是管道时 Console.In 用控制台默认编码（本机 GBK）：
+            // UTF-8 的中文被按 GBK 解码，字符数膨胀（24→26），字数校验必挂。
+            try { Console.InputEncoding = System.Text.Encoding.UTF8; } catch { }
             string raw = Console.In.ReadToEnd();
             Dictionary<string, object> data = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(raw);
             result = data == null ? new WriterResult { error = "invalid JSON payload" } : Write(data);

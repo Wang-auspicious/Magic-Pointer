@@ -1,11 +1,10 @@
 /* Magic Pointer Studio: real data renderers mounted inside the shared Oreo shell. */
 
-/* ---- DSH Studio 参考图首屏是 dark：先同步落 dark，避免 Electron 的亮色
-   标题栏/首帧闪过；设置水合后仍由 settings.ts 接管用户主动选择。 ---- */
+/* head 中已经在首帧前解析系统/已保存主题；这里同步旧组件需要的属性。 */
 (function bootTheme() {
-  document.documentElement.style.colorScheme = 'dark';
-  document.documentElement.dataset.theme = 'dark';
-  document.body.setAttribute('data-ds-dark-theme', '');
+  const dark = document.documentElement.dataset.theme === 'dark';
+  document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+  document.body.toggleAttribute('data-ds-dark-theme', dark);
 })();
 
 /* ---- 确定性哈希 ---- */
@@ -25,11 +24,6 @@ function rng(seed: unknown) {
     s ^= s << 5;  s >>>= 0;
     return s / 4294967296;
   };
-}
-
-function objectMark(seed: unknown) {
-  const label = String(seed || 'MP').replace(/[^\p{L}\p{N}]/gu, '').slice(0, 2).toUpperCase() || 'MP';
-  return `<span class="object-mark">${esc(label)}</span>`;
 }
 
 /* ---- 缩略图占位：暖调抽象，不是灰块 ---- */
@@ -54,6 +48,20 @@ function makeShot(seed: unknown) {
 
 function icon(id: string, cls = '') {
   return `<svg class="${cls}"><use href="#${id}"/></svg>`;
+}
+
+function emptyStateMarkup(
+  iconId: string,
+  title: string,
+  description: string,
+  action?: { label: string; view: string },
+) {
+  return `<div class="mp-empty-state">
+    <span class="mp-empty-icon" aria-hidden="true">${icon(iconId)}</span>
+    <strong>${esc(title)}</strong>
+    <p>${esc(description)}</p>
+    ${action ? `<button type="button" data-goto="${esc(action.view)}">${esc(action.label)}</button>` : ''}
+  </div>`;
 }
 
 const KIND_TAG: Record<string, string> = { 灵感:'tag-indigo', 交接:'tag-teal', 凭证:'tag-amber', 素材:'tag-teal', 片段:'tag-amber' };
@@ -106,8 +114,8 @@ async function renderStash(force = false) {
     bursts.reduce((n, b) => n + b.items.length, 0) + ' 项';
   if (!bursts.length) {
     world.innerHTML = stashKindFilter
-      ? `<span class="canvas-empty">这个分类里还没有收藏。</span>`
-      : '<span class="canvas-empty">收藏箱还是空的。截个图，或者复制一张图片，它就会落到这里。</span>';
+      ? `<span class="canvas-empty">这个分类里还没有素材。</span>`
+      : emptyStateMarkup('ic-stash', '画布还没有素材', '划过屏幕内容、复制图片或保存引用后，它们会在这里形成可整理的视觉上下文。', { label: '回到对话', view: 'chat' });
     renderStashList([], force);
     return;
   }
@@ -217,44 +225,59 @@ function bindCanvas() {
   document.getElementById('zoom-out')?.addEventListener('click', () => { cam.k = Math.max(.25, cam.k / 1.2); applyCam(); });
 }
 
-async function renderTimeline(force = false) {
-  const tl = document.getElementById('tl');
-  if (!tl || (tl.childElementCount && !force)) return;
-  const days = await Data.timeline();
-  if (!days.length) {
-    tl.innerHTML = '<div class="tl-inner"><div class="view-empty">还没有记录。划一笔问点什么，这里就会长出来。</div></div>';
-    return;
-  }
-  tl.innerHTML = '<div class="tl-inner">' + days.map((d) => {
-    const items = (d.items || []) as TimelineConversation[];
-    return `<div class="tl-day">${dayLabel(d.at || items[0]?.updatedAt)}</div>` + items.map((c, i) =>
-      `<button class="tl-row enter" data-open="${c.id}" style="animation-delay:${Math.min(i, 6) * 40}ms">
-        <span class="tl-rail">${objectMark(c.objectKey || c.id)}<span class="line"></span></span>
-        <span class="tl-body">
-          <span class="q">${esc(c.title)}</span>
-          <span class="src">${icon('ic-window')}${esc(c.subtitle || '')}</span>
-          <span class="out">${(c.outcomes || []).map((t) => `<span class="pill">${esc(t)}</span>`).join('')}
-            ${Number(c.turns) > 1 ? `<span class="pill">${c.turns} 轮</span>` : ''}</span>
-        </span>
-        <span class="tl-time">${formatTime(c.updatedAt)}</span>
-      </button>`).join('');
-  }).join('') + '</div>';
-}
-
-interface TimelineConversation {
-  id?: string;
-  title?: string;
-  subtitle?: string;
-  objectKey?: string;
-  outcomes?: string[];
-  turns?: number;
-  updatedAt?: number;
-}
-
-/* ---- 侧栏：DSH WorkspaceBrowser——按真实来源工作区分组。 ---- */
+/* ---- 侧栏：一个确定的文件夹就是一个项目；没有项目就不能进入对话。 ---- */
 let sidebarQuery = '';
 let sidebarRecentOnly = false;
 const expandedWorkspaces = new Map<string, boolean>();
+let activeProjectRoot = '';
+try { activeProjectRoot = localStorage.getItem('mp:active-project-root') || ''; } catch { /* storage unavailable */ }
+
+function normalizedProjectRoot(root: unknown): string {
+  return String(root || '').trim().replace(/\\/g, '/').replace(/\/$/, '').toLocaleLowerCase();
+}
+
+function setActiveProject(root: unknown) {
+  activeProjectRoot = String(root || '').trim();
+  projectEnvironment = null;
+  activeTerminalRelativeDirectory = '';
+  try {
+    if (activeProjectRoot) localStorage.setItem('mp:active-project-root', activeProjectRoot);
+    else localStorage.removeItem('mp:active-project-root');
+  } catch { /* storage unavailable */ }
+  renderProjectGate();
+  renderTerminalPrompt();
+  if (document.getElementById('project-inspector') && shell?.dataset.inspector === 'open') {
+    void refreshProjectInspector();
+  }
+}
+
+function renderProjectGate() {
+  const gate = document.getElementById('project-gate');
+  const view = document.getElementById('view-chat');
+  const headerLabel = document.getElementById('chat-project-label');
+  const locationLabel = document.getElementById('header-location-label');
+  const hasProject = Boolean(activeProjectRoot);
+  const designStatus = document.querySelector<HTMLElement>('.mp-design-live');
+  if (designStatus) {
+    designStatus.classList.toggle('is-offline', !hasProject);
+    const text = designStatus.lastChild;
+    if (text?.nodeType === Node.TEXT_NODE) text.textContent = hasProject ? '已连接项目' : '等待打开项目';
+  }
+  if (gate) gate.hidden = hasProject;
+  view?.classList.toggle('has-no-project', !hasProject);
+  if (!headerLabel) return;
+  if (!hasProject) {
+    headerLabel.textContent = '项目';
+    headerLabel.removeAttribute('title');
+    if (locationLabel) locationLabel.textContent = '项目';
+    return;
+  }
+  const parts = activeProjectRoot.replace(/\\/g, '/').split('/').filter(Boolean);
+  const projectName = parts[parts.length - 1] || activeProjectRoot;
+  headerLabel.textContent = projectName;
+  headerLabel.title = activeProjectRoot;
+  if (locationLabel) locationLabel.textContent = projectName;
+}
 interface SidebarWorkspaceGroup {
   key: string;
   label: string;
@@ -268,34 +291,31 @@ interface SidebarGroupModule {
 }
 const sidebarGroups = (globalThis as { SidebarGroups?: SidebarGroupModule }).SidebarGroups!;
 
-function relativeTimeLabel(at: number, now = Date.now()): string {
-  const diff = Math.max(0, now - at);
-  const MIN = 60 * 1000;
-  const HOUR = 60 * MIN;
-  const DAY = 24 * HOUR;
-  if (diff < MIN) return '刚刚';
-  if (diff < HOUR) return `${Math.floor(diff / MIN)} 分钟`;
-  if (diff < DAY) return `${Math.floor(diff / HOUR)} 小时`;
-  if (diff < 30 * DAY) return `${Math.floor(diff / DAY)} 天`;
-  if (diff < 365 * DAY) return `${Math.floor(diff / (30 * DAY))} 月`;
-  return `${Math.floor(diff / (365 * DAY))} 年`;
+/* sv_motion:sv-animations 组件的弹簧/勾线常量(经典脚本全局,见 renderer/sv_motion.ts)。
+   局部名必须小写:全局已有 const SvMotion(sv_motion.js),同名会撞经典脚本词法作用域。 */
+interface SvMotionModule {
+  PLAN_CHECK: { path: string; transform: string; strokeWidth: number; drawEase: string; drawDurationMs: number };
 }
+const svMotionGlobals = (globalThis as { SvMotion?: SvMotionModule }).SvMotion!;
 
-function conversationNode(c: { id?: string; title?: string; updatedAt?: number }, active?: string): HTMLElement {
+function conversationNode(c: { id?: string; title?: string; updatedAt?: number; hasPendingWork?: boolean }, active?: string): HTMLElement {
   const row = document.createElement('button');
   row.className = 'side-item' + (c.id === active ? ' is-on' : '');
   row.dataset.open = String(c.id || '');
   row.type = 'button';
-  // DSH 会话行：状态点 + 标题 + 相对时间（hover 换成省略号动作槽）。
+  // 会话行保持安静：标题是主体，待续状态与操作只在需要时出现。
   const dot = document.createElement('span');
   dot.className = 'side-dot';
+  dot.classList.toggle('is-pending', c.hasPendingWork === true);
+  if (c.hasPendingWork) {
+    dot.title = '有未完成工作，可继续此会话';
+    row.dataset.pendingWork = 'true';
+    row.setAttribute('aria-label', `${String(c.title || '未命名对话')}，有待续工作`);
+  }
   dot.setAttribute('aria-hidden', 'true');
   const title = document.createElement('span');
   title.className = 'side-title';
   title.textContent = String(c.title || '未命名对话');
-  const time = document.createElement('span');
-  time.className = 'side-time';
-  time.textContent = c.updatedAt ? relativeTimeLabel(c.updatedAt) : '';
   const actions = document.createElement('span');
   actions.className = 'side-actions';
   // DSH Rows 的会话动作菜单：重命名 / 删除。行本身是 button，动作槽用
@@ -306,10 +326,10 @@ function conversationNode(c: { id?: string; title?: string; updatedAt?: number }
   ellipsis.setAttribute('tabindex', '0');
   ellipsis.setAttribute('aria-label', '会话操作');
   ellipsis.dataset.sessionMenu = String(c.id || '');
-  ellipsis.innerHTML = icon('dsh-ellipsis');
+  ellipsis.innerHTML = icon('ic-ellipsis');
   actions.appendChild(ellipsis);
   actions.appendChild(buildSessionMenu(c));
-  row.append(dot, title, time, actions);
+  row.append(dot, title, actions);
   return row;
 }
 
@@ -425,13 +445,20 @@ function openRenameDialog(id: string, currentTitle: string) {
   });
 })();
 
+let sidebarListSignature = '';
+
 async function renderSidebar() {
   const host = document.getElementById('side-convos');
   if (!host) return;
-  const list = await Data.conversations();
+  const [list, projects] = await Promise.all([Data.conversations(), Data.projects()]);
+  const registeredRoots = new Set(projects.map((project) => normalizedProjectRoot(project.root)));
+  if (!registeredRoots.has(normalizedProjectRoot(activeProjectRoot))) {
+    setActiveProject(projects[0]?.root || '');
+  } else {
+    renderProjectGate();
+  }
   const active = host.querySelector('.is-on')?.getAttribute('data-open')
     ?? activeConversationId
-    ?? list[0]?.id
     ?? undefined;
   const nodes: HTMLElement[] = [];
   let filtered = sidebarGroups.filterConversations(list, sidebarQuery);
@@ -439,34 +466,61 @@ async function renderSidebar() {
     const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
     filtered = filtered.filter((conversation) => Number(conversation.updatedAt) >= cutoff);
   }
-  // Codex WorkspaceBrowser 语义：组头是线程绑定的真实工作区（文件夹名），
-  // 不再拿屏幕 app 名冒充工作区。未绑定的落「默认工作区」。
+  // 项目独立持久化；即使还没有第一条对话，打开过的文件夹也必须留在左栏。
   const wsGroups = sidebarGroups.groupByWorkspace(filtered as Array<MagicPointerConversation & { workspaceRoot?: string }>);
-  const groups = wsGroups.map((g) => ({ key: g.workspaceRoot || '__default__', label: g.label, items: g.items as MagicPointerConversation[] }));
+  const conversationsByRoot = new Map(wsGroups.map((group) => [normalizedProjectRoot(group.workspaceRoot), group.items]));
+  const groups = projects.map((project) => ({
+    key: project.root,
+    label: project.name,
+    items: (conversationsByRoot.get(normalizedProjectRoot(project.root)) || []) as MagicPointerConversation[],
+  })).filter((project) => {
+    if (!sidebarQuery.trim()) return true;
+    return project.label.toLocaleLowerCase().includes(sidebarQuery.trim().toLocaleLowerCase()) || project.items.length > 0;
+  });
   if (!groups.length) {
     const empty = document.createElement('div');
     empty.className = 'side-empty';
-    empty.textContent = list.length ? '没有匹配的对话。' : '还没有对话';
+    empty.textContent = projects.length ? '没有匹配的项目。' : '打开一个项目开始';
     nodes.push(empty);
   }
+  const listSignature = groups
+    .map((group) => `${group.key}:${group.items.map((c) => String(c.id || '')).join(',')}`)
+    .join('|');
+  const animateRows = listSignature !== sidebarListSignature;
+  sidebarListSignature = listSignature;
+  let rowIndex = 0;
   for (const group of groups) {
     const project = document.createElement('section');
     project.className = 'dshw-project';
     const open = expandedWorkspaces.get(group.key) !== false;
-    project.classList.toggle('is-active', group.items.some((conversation) => conversation.id === active));
+    project.classList.toggle('is-active', normalizedProjectRoot(group.key) === normalizedProjectRoot(activeProjectRoot));
     project.dataset.open = String(open);
     project.dataset.workspace = group.key;
     const head = document.createElement('button');
     head.type = 'button';
     head.className = 'dshw-project-row';
     head.dataset.workspaceToggle = group.key;
+    head.dataset.projectSelect = group.key;
     head.setAttribute('aria-expanded', String(open));
-    const folderIcon = open ? 'ic-dsh-folder-open' : 'ic-dsh-folder-close';
-    head.innerHTML = `<span class="dshw-project-slot dshw-project-folder">${icon(folderIcon)}</span><span class="dshw-project-slot dshw-project-chevron">${icon('ic-dsh-triangle-right', open ? 'is-open' : '')}</span><span class="dshw-project-name"></span>`;
+    head.innerHTML = `<span class="dshw-project-slot dshw-project-chevron">${icon('ic-triangle-right', open ? 'is-open' : '')}</span><span class="dshw-project-slot dshw-project-folder">${icon('ic-folder')}</span><span class="dshw-project-name"></span>`;
     head.querySelector<HTMLElement>('.dshw-project-name')!.textContent = group.label;
     const sessions = document.createElement('div');
     sessions.className = 'dshw-project-sessions';
-    for (const c of group.items) sessions.appendChild(conversationNode(c, active));
+    for (const c of group.items) {
+      const node = conversationNode(c, active);
+      if (animateRows) {
+        node.classList.add('sv-row-in');
+        node.style.setProperty('--sv-i', String(rowIndex));
+      }
+      rowIndex += 1;
+      sessions.appendChild(node);
+    }
+    if (!group.items.length) {
+      const empty = document.createElement('span');
+      empty.className = 'dshw-project-empty';
+      empty.textContent = '新项目';
+      sessions.appendChild(empty);
+    }
     project.append(head, sessions);
     nodes.push(project);
   }
@@ -515,13 +569,22 @@ function bindSidebarSearch() {
 }
 bindSidebarSearch();
 
-document.getElementById('workspace-add')?.addEventListener('click', () => startNewChat());
+async function openProjectFromPicker() {
+  const picked = await Data.openProject();
+  if (!picked?.ok || !picked.project?.root) return;
+  setActiveProject(picked.project.root);
+  startNewChat();
+  await renderSidebar();
+}
+
+document.getElementById('workspace-add')?.addEventListener('click', () => { void openProjectFromPicker(); });
+document.getElementById('project-gate-open')?.addEventListener('click', () => { void openProjectFromPicker(); });
 document.getElementById('workspace-filter')?.addEventListener('click', (event) => {
   sidebarRecentOnly = !sidebarRecentOnly;
   const button = event.currentTarget as HTMLButtonElement;
   button.classList.toggle('is-on', sidebarRecentOnly);
   button.setAttribute('aria-pressed', String(sidebarRecentOnly));
-  button.title = sidebarRecentOnly ? '只看近 7 天（已启用）' : '筛选工作区';
+  button.title = sidebarRecentOnly ? '只看近 7 天（已启用）' : '只看最近项目';
   void renderSidebar();
 });
 
@@ -558,11 +621,65 @@ function renderStatsLine(turns: MagicPointerTurn[]) {
     sep.textContent = '|';
     return [sep, item];
   }));
+  renderUsageMeter(turns);
 }
+
+function compactTokenCount(value: number): string {
+  if (value < 1000) return String(value);
+  if (value < 10000) return `${(value / 1000).toFixed(1)}k`;
+  return `${Math.round(value / 1000)}k`;
+}
+
+function renderUsageMeter(turns: MagicPointerTurn[]) {
+  const button = document.getElementById('composer-context') as HTMLButtonElement | null;
+  const label = document.getElementById('composer-usage-label');
+  const popover = document.getElementById('composer-usage-popover');
+  if (!button || !label || !popover) return;
+  const inputTokens = turns.reduce((total, turn) => total + (Number(turn.modelUsage?.inputTokens) || 0), 0);
+  const outputTokens = turns.reduce((total, turn) => total + (Number(turn.modelUsage?.outputTokens) || 0), 0);
+  const totalTokens = inputTokens + outputTokens;
+  button.hidden = totalTokens <= 0;
+  if (totalTokens <= 0) {
+    label.textContent = '';
+    popover.hidden = true;
+    button.setAttribute('aria-expanded', 'false');
+    return;
+  }
+  label.textContent = compactTokenCount(totalTokens);
+  button.title = `本会话模型用量：${totalTokens.toLocaleString()} tokens`;
+  popover.replaceChildren();
+  const eyebrow = document.createElement('span');
+  eyebrow.className = 'mp-usage-eyebrow';
+  eyebrow.textContent = 'SESSION USAGE';
+  const title = document.createElement('strong');
+  title.textContent = `${totalTokens.toLocaleString()} tokens`;
+  const rows = document.createElement('dl');
+  for (const [term, value] of [['输入', inputTokens], ['输出', outputTokens], ['已记录回合', turns.length]] as const) {
+    const dt = document.createElement('dt');
+    dt.textContent = term;
+    const dd = document.createElement('dd');
+    dd.textContent = Number(value).toLocaleString();
+    rows.append(dt, dd);
+  }
+  const note = document.createElement('p');
+  note.textContent = '这是落盘的实际模型用量，不把它冒充为上下文窗口占比。';
+  popover.append(eyebrow, title, rows, note);
+}
+
+document.getElementById('composer-context')?.addEventListener('click', (event) => {
+  event.stopPropagation();
+  const button = event.currentTarget as HTMLButtonElement;
+  const popover = document.getElementById('composer-usage-popover');
+  if (!popover) return;
+  const open = popover.hidden;
+  popover.hidden = !open;
+  button.setAttribute('aria-expanded', String(open));
+});
 
 /* ---- 打开一条对话 ---- */
 let activeConversationId: string | null = null;
 let activeConversationTab: 'chat' | 'trajectory' = 'chat';
+let activeConversationTurnCount = 0;
 /* cardId → DSH 回合节点：后台任务补丁就地换节点，不重建整条流 */
 const dshCardNodes = new Map<string, HTMLElement>();
 
@@ -585,24 +702,22 @@ async function openConversation(id: string) {
   const c = await Data.conversation(id);
   if (!c) return;
   activeConversationId = c.id;
-  // Codex thread semantics: switching threads shows that thread's bound
-  // workspace on the chip; a thread without one falls back to the profile
-  // default (chip shows unspecified).
-  composerWorkspace = String((c as { workspaceRoot?: string }).workspaceRoot || '');
-  renderWorkspaceChip();
+  activeConversationTurnCount = Array.isArray(c.turns) ? c.turns.length : 0;
+  const projectRoot = String((c as { workspaceRoot?: string }).workspaceRoot || '');
+  if (!projectRoot) return;
+  setActiveProject(projectRoot);
   show('chat');
   document.querySelectorAll('#side-convos .side-item').forEach((n) =>
     (n as HTMLElement).classList.toggle('is-on', (n as HTMLElement).dataset.open === id));
 
   const head = document.getElementById('chat-title');
   if (head) head.textContent = String(c.title);
+  renderProjectGate();
   const preview = document.getElementById('chat-source-preview');
   const sourceThumb = document.getElementById('chat-source-thumb') as HTMLImageElement | null;
-  const contextTagLabel = document.getElementById('mp-context-tag-label');
   const peek = document.getElementById('chat-peek');
   const peekImage = document.getElementById('peek-image') as HTMLImageElement | null;
   const peekLabel = document.getElementById('peek-label');
-  if (contextTagLabel) contextTagLabel.textContent = String(c.object?.app || 'Magic Pointer');
   if (preview && sourceThumb && peek && peekImage) {
     const imgPath = c.object?.annotatedPath || '';
     if (imgPath) {
@@ -631,20 +746,19 @@ async function openConversation(id: string) {
   dshCardNodes.clear();
   const turns = c.turns || [];
   if (!turns.length) {
-    stream.innerHTML = '<div class="view-empty">这条还没有内容。</div>';
+    stream.innerHTML = emptyStateMarkup('ic-message-plus', '这条对话还没有内容', '继续输入任务，或从屏幕上划过一个对象作为上下文。');
     renderStatsLine([]);
     const trajectory = document.getElementById('trajectory');
     if (trajectory) trajectory.replaceChildren(DshTrajectory.render([]));
     setConversationTab(activeConversationTab);
     return;
   }
-  // 工作室的一轮问答用 DSH 聊天模型渲染（100% 移植 deepseek-harness）：
-  // 用户消息 = 右侧 DeepSeek 蓝气泡（r22 + 时钟/复制动作行）；助手 = 正文 +
-  // Think 思考行 + 工具调用行（24px 行骨架、IN/OUT 卡、状态点）。
+  // 每轮使用稳定的工具/思考结构；消息本身保持克制，操作在悬停时出现。
   const flow = document.createElement('div');
   flow.className = 'dsh-flow';
-  for (const t of turns) {
-    if (t.question) flow.appendChild(DshChat.userNode(String(t.question), t.at));
+  for (const [turnIndex, t] of turns.entries()) {
+    const branchTarget = { conversationId: c.id, turnIndex };
+    if (t.question) flow.appendChild(DshChat.userNode(String(t.question), undefined, branchTarget));
     const host = document.createElement('div');
     host.className = 'dsh-flow-item';
     for (const node of DshChat.assistantTurnNode({
@@ -653,8 +767,12 @@ async function openConversation(id: string) {
       trace: t.trace,
       events: t.events,
       activities: t.activities,
+      trajectory: t.trajectory,
+      modelUsage: t.modelUsage,
       failed: t.failed,
       at: t.at,
+      conversationId: c.id,
+      turnIndex,
     })) host.appendChild(node);
     flow.appendChild(host);
     // 后台任务补丁按舞台同款 cardId 就地落到这个节点：登记代理卡，
@@ -684,7 +802,6 @@ async function openConversation(id: string) {
 function renderDshCardNode(card: MagicPointerCard): HTMLElement {
   const host = document.createElement('div');
   host.className = 'dsh-assistant';
-  host.setAttribute('data-dsh-time-root', 'true');
   for (const node of DshChat.assistantTurnNode({
     answer: card.answer,
     failed: card.state === 'failed',
@@ -695,35 +812,6 @@ function renderDshCardNode(card: MagicPointerCard): HTMLElement {
     at: card.startedAt ?? undefined,
   })) host.appendChild(node);
   return host;
-}
-
-/* ---- 记忆：反复被指到的对象 ---- */
-interface MemoryEntry {
-  key?: string;
-  subtitle?: string;
-  touches?: number;
-  lastAt?: number;
-  questions?: string[];
-  object?: { app?: string; windowTitle?: string; label?: string };
-}
-async function renderMemory(force = false) {
-  const host = document.getElementById('mem-list');
-  if (!host || (host.childElementCount && !force)) return;
-  const list = (await Data.memories()) as MemoryEntry[];
-  if (!list.length) {
-    host.innerHTML = '<div class="view-empty">还没有记忆。同一个东西被问过两次以上，它才会记住。</div>';
-    return;
-  }
-  host.innerHTML = list.map((m, i) => `<article class="mem-row enter" style="animation-delay:${Math.min(i,6)*40}ms">
-    ${objectMark(m.key)}
-    <span class="mem-body">
-      <b>${esc(m.object?.windowTitle || m.object?.app || m.key)}</b>
-      <small>${esc(m.subtitle || '')}</small>
-      <span class="mem-qs">${(m.questions || []).slice(0, 3).map((q) => `<span>${esc(q)}</span>`).join('')}</span>
-    </span>
-    <span class="mem-n">${m.touches} 次</span>
-    <span class="tl-time">${formatTime(m.lastAt)}</span>
-  </article>`).join('');
 }
 
 /* ---- 产物 ---- */
@@ -738,7 +826,7 @@ async function renderArtifacts(force = false) {
   if (!host || (host.childElementCount && !force)) return;
   const list = (await Data.artifacts()) as ArtifactEntry[];
   if (!list.length) {
-    host.innerHTML = '<div class="view-empty">还没有产物。它写出来的东西会存在这里。</div>';
+    host.innerHTML = emptyStateMarkup('ic-docs', '还没有产物', 'Agent 生成并落盘的文档、代码、表格与可编辑草稿会集中出现在这里。', { label: '去对话创建', view: 'chat' });
     return;
   }
   host.innerHTML = list.map((a, i) => `<button class="card artifact enter" data-open="${esc(a.conversationId)}"
@@ -769,6 +857,7 @@ const shell = document.getElementById('shell') as HTMLElement;
 const aux = document.getElementById('aux') as HTMLElement;
 let lastNonSettingsView = 'chat';
 const studioShell = globalThis.StudioShell;
+const SIDEBAR_COLLAPSE_KEY = 'mp:studio-sidebar-collapsed';
 const VIEWS: Record<string, string> = Object.fromEntries(
   studioShell.STUDIO_VIEWS.map((view: { id: string }) => [view.id, `view-${view.id}`]),
 );
@@ -782,26 +871,947 @@ function show(view: string) {
   document.getElementById('workspace-description')!.textContent = current.description;
   if (view !== 'settings') lastNonSettingsView = view;
   Object.entries(VIEWS).forEach(([k, id]) => {
-    document.getElementById(id)!.hidden = (k !== view);
+    const element = document.getElementById(id);
+    if (element) element.hidden = (k !== view);
   });
   document.querySelectorAll<HTMLElement>('[data-goto]').forEach((item) => {
     item.classList.toggle('is-on', item.dataset.goto === view);
   });
   if (view === 'stash') { renderStash(true); bindCanvas(); }
-  if (view === 'timeline') renderTimeline();
-  if (view === 'memory') renderMemory();
   if (view === 'artifacts') renderArtifacts();
   if (view === 'settings') renderSettings();
-  if (view !== 'chat') closeAux();
+  if (view !== 'chat') {
+    closeAux();
+    if (shell.dataset.inspector === 'open') setInspector(false);
+    if (shell.dataset.bottomPanel === 'open') setBottomPanel(false);
+  }
+  recordWindowNavigation(view);
 }
+
+const windowViewHistory = ['chat'];
+let windowViewHistoryIndex = 0;
+let replayingWindowNavigation = false;
+
+function syncWindowNavigation() {
+  const back = document.getElementById('window-back') as HTMLButtonElement | null;
+  const forward = document.getElementById('window-forward') as HTMLButtonElement | null;
+  if (back) back.disabled = windowViewHistoryIndex <= 0;
+  if (forward) forward.disabled = windowViewHistoryIndex >= windowViewHistory.length - 1;
+}
+
+function recordWindowNavigation(view: string) {
+  if (replayingWindowNavigation || windowViewHistory[windowViewHistoryIndex] === view) {
+    syncWindowNavigation();
+    return;
+  }
+  windowViewHistory.splice(windowViewHistoryIndex + 1);
+  windowViewHistory.push(view);
+  windowViewHistoryIndex = windowViewHistory.length - 1;
+  syncWindowNavigation();
+}
+
+function moveWindowNavigation(delta: number) {
+  const next = windowViewHistoryIndex + delta;
+  if (next < 0 || next >= windowViewHistory.length) return;
+  windowViewHistoryIndex = next;
+  replayingWindowNavigation = true;
+  show(windowViewHistory[next]);
+  replayingWindowNavigation = false;
+  syncWindowNavigation();
+}
+
+document.getElementById('window-back')?.addEventListener('click', () => moveWindowNavigation(-1));
+document.getElementById('window-forward')?.addEventListener('click', () => moveWindowNavigation(1));
+syncWindowNavigation();
+
+type ProductMode = 'walker' | 'design';
+let productMode: ProductMode = 'walker';
+
+function setProductMode(mode: ProductMode, navigate = true) {
+  productMode = mode;
+  shell.dataset.productMode = mode;
+  const label = document.getElementById('mode-switch-label');
+  if (label) label.textContent = mode === 'design' ? 'Design' : 'Work';
+  document.querySelectorAll<HTMLElement>('[data-product-mode]').forEach((button) => {
+    button.setAttribute('aria-checked', String(button.dataset.productMode === mode));
+  });
+  try { localStorage.setItem('mp:product-mode', mode); } catch { /* renderer storage unavailable */ }
+  if (navigate) {
+    show(mode === 'design' ? 'design' : 'chat');
+    if (mode === 'design') {
+      document.querySelectorAll<HTMLElement>('.mp-design-nav button').forEach((button) => button.classList.toggle('is-on', button.dataset.goto === 'design'));
+    }
+  }
+}
+
+(function bindProductMode() {
+  try { productMode = localStorage.getItem('mp:product-mode') === 'design' ? 'design' : 'walker'; } catch { productMode = 'walker'; }
+  setProductMode(productMode, false);
+  const toggle = document.getElementById('mode-switch');
+  const menu = document.getElementById('mode-menu');
+  toggle?.addEventListener('click', (event) => {
+    event.stopPropagation();
+    if (!menu) return;
+    menu.hidden = !menu.hidden;
+    toggle.setAttribute('aria-expanded', String(!menu.hidden));
+  });
+  document.getElementById('mode-walker')?.addEventListener('click', (event) => {
+    event.stopPropagation();
+    setProductMode('walker');
+    if (menu) menu.hidden = true;
+    toggle?.setAttribute('aria-expanded', 'false');
+  });
+  document.getElementById('mode-design')?.addEventListener('click', (event) => {
+    event.stopPropagation();
+    setProductMode('design');
+    if (menu) menu.hidden = true;
+    toggle?.setAttribute('aria-expanded', 'false');
+  });
+})();
+
+(function bindDesignHome() {
+  document.querySelectorAll<HTMLElement>('[data-design-action]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const action = button.dataset.designAction;
+      if (action === 'canvas' || action === 'list') {
+        show('stash');
+        requestAnimationFrame(() => {
+          document.querySelector<HTMLElement>(`#stash-mode [data-mode="${action}"]`)?.click();
+        });
+        return;
+      }
+      if (action === 'files') {
+        show('design');
+        setInspector(true, 'files');
+        return;
+      }
+      if (action === 'artifacts') show('artifacts');
+    });
+  });
+})();
+
+function closeWindowMenu() {
+  const popover = document.getElementById('window-menu-popover');
+  if (popover) popover.hidden = true;
+  document.querySelectorAll<HTMLElement>('[data-window-menu]').forEach((button) => button.setAttribute('aria-expanded', 'false'));
+}
+
+function openWindowMenu(button: HTMLElement, menuName: string) {
+  const popover = document.getElementById('window-menu-popover');
+  if (!popover) return;
+  const wasOpen = !popover.hidden && button.getAttribute('aria-expanded') === 'true';
+  closeWindowMenu();
+  if (wasOpen) return;
+  document.querySelectorAll<HTMLElement>('[data-window-menu-panel]').forEach((panel) => {
+    panel.hidden = panel.dataset.windowMenuPanel !== menuName;
+  });
+  const rect = button.getBoundingClientRect();
+  popover.style.left = `${Math.max(4, rect.left)}px`;
+  popover.hidden = false;
+  button.setAttribute('aria-expanded', 'true');
+}
+
+document.querySelectorAll<HTMLElement>('.mp-window-menu-bar [data-window-menu]').forEach((button) => {
+  button.addEventListener('click', (event) => {
+    event.stopPropagation();
+    openWindowMenu(button, button.dataset.windowMenu || 'file');
+  });
+  button.addEventListener('pointerenter', () => {
+    if (document.getElementById('window-menu-popover')?.hidden === false) openWindowMenu(button, button.dataset.windowMenu || 'file');
+  });
+});
+
+function applyTheme(theme: 'light' | 'dark') {
+  document.documentElement.dataset.theme = theme;
+  document.documentElement.style.colorScheme = theme;
+  document.body.toggleAttribute('data-ds-dark-theme', theme === 'dark');
+  try { localStorage.setItem('mp:theme', theme); } catch { /* renderer storage unavailable */ }
+  window.magicPointerDashboard?.setTheme?.(theme);
+  const use = document.getElementById('theme-toggle-icon');
+  use?.setAttribute('href', theme === 'dark' ? '#ic-sun' : '#ic-moon');
+  const toggle = document.getElementById('theme-toggle');
+  if (toggle) toggle.setAttribute('aria-label', theme === 'dark' ? '切换到浅色主题' : '切换到深色主题');
+}
+
+function toggleAnimatedTheme(origin?: { x: number; y: number }) {
+  const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+  const documentWithTransition = document as Document & {
+    startViewTransition?: (callback: () => void) => { ready: Promise<void> };
+  };
+  const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (!documentWithTransition.startViewTransition || reduceMotion) { applyTheme(next); return; }
+  const x = origin?.x ?? window.innerWidth / 2;
+  const y = origin?.y ?? 22;
+  const radius = Math.hypot(Math.max(x, innerWidth - x), Math.max(y, innerHeight - y));
+  const transition = documentWithTransition.startViewTransition(() => applyTheme(next));
+  void transition.ready.then(() => {
+    document.documentElement.animate(
+      { clipPath: [`circle(0px at ${x}px ${y}px)`, `circle(${radius}px at ${x}px ${y}px)`] },
+      { duration: 400, easing: 'cubic-bezier(.2,.8,.2,1)', pseudoElement: '::view-transition-new(root)' } as KeyframeAnimationOptions,
+    );
+  }).catch(() => {});
+}
+
+(function bindVisibleThemeToggle() {
+  const button = document.getElementById('theme-toggle');
+  const current = document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
+  document.body.toggleAttribute('data-ds-dark-theme', current === 'dark');
+  const use = document.getElementById('theme-toggle-icon');
+  use?.setAttribute('href', current === 'dark' ? '#ic-sun' : '#ic-moon');
+  button?.setAttribute('aria-label', current === 'dark' ? '切换到浅色主题' : '切换到深色主题');
+  button?.addEventListener('click', () => {
+    const rect = button.getBoundingClientRect();
+    toggleAnimatedTheme({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
+  });
+})();
+
+function openInformationDialog(title: string, detail: string) {
+  const overlay = document.createElement('div');
+  overlay.className = 'dshw-perm-confirm';
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+  const card = document.createElement('div');
+  card.className = 'dshw-perm-confirm-card';
+  const heading = document.createElement('b');
+  heading.textContent = title;
+  const body = document.createElement('p');
+  body.style.whiteSpace = 'pre-line';
+  body.textContent = detail;
+  const actions = document.createElement('div');
+  actions.className = 'dshw-perm-confirm-actions';
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'is-primary';
+  close.textContent = '完成';
+  close.addEventListener('click', () => overlay.remove());
+  actions.appendChild(close);
+  card.append(heading, body, actions);
+  overlay.appendChild(card);
+  overlay.addEventListener('click', (event) => { if (event.target === overlay) overlay.remove(); });
+  document.body.appendChild(overlay);
+  close.focus();
+}
+
+async function executeWindowMenuCommand(command: string, origin?: HTMLElement) {
+  closeWindowMenu();
+  if (command === 'new-chat') { setProductMode('walker'); startNewChat(); return; }
+  if (command === 'open-project') { await openProjectFromPicker(); return; }
+  if (command === 'add-files') {
+    if (!activeProjectRoot) { renderProjectGate(); return; }
+    const picked = await Data.pickProjectFiles(activeProjectRoot);
+    if (picked?.ok && Array.isArray(picked.paths)) {
+      composerAttachments = [...new Set([...composerAttachments, ...picked.paths.map(String)])];
+      renderComposerAttachments();
+      setProductMode('walker');
+    }
+    return;
+  }
+  if (command === 'open-project-folder') { if (activeProjectRoot) await Data.openProjectPath(activeProjectRoot, ''); return; }
+  if (command === 'toggle-sidebar') { setSidebarCollapsed(shell.dataset.sidebar !== 'collapsed'); return; }
+  if (command === 'toggle-inspector') { setInspector(shell.dataset.inspector !== 'open', activeInspectorTab); return; }
+  if (command === 'toggle-bottom-panel') { setBottomPanel(shell.dataset.bottomPanel !== 'open'); return; }
+  if (command === 'toggle-theme') {
+    const rect = origin?.getBoundingClientRect();
+    toggleAnimatedTheme(rect ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 } : undefined);
+    return;
+  }
+  if (command === 'settings') { show('settings'); return; }
+  if (command === 'shortcuts') {
+    openInformationDialog('键盘快捷键', 'Ctrl+N  新建对话\nCtrl+O  打开项目\nCtrl+B  切换侧栏\nCtrl+Shift+B  切换项目面板\nCtrl+J  切换底部面板\nCtrl+,  设置\nCtrl+/  快捷键');
+    return;
+  }
+  if (command === 'about') {
+    const result = await Data.windowCommand('about');
+    openInformationDialog('关于', `Magic Pointer ${result.version || ''}\nElectron ${result.electron || ''}\nChromium ${result.chrome || ''}`);
+    return;
+  }
+  await Data.windowCommand(command);
+}
+
+document.getElementById('window-menu-popover')?.addEventListener('click', (event) => {
+  const command = (event.target as Element | null)?.closest<HTMLElement>('[data-window-command]');
+  if (command) void executeWindowMenuCommand(command.dataset.windowCommand || '', command);
+});
+
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') {
+    closeWindowMenu();
+    const modeMenu = document.getElementById('mode-menu');
+    if (modeMenu) modeMenu.hidden = true;
+    const brain = document.getElementById('magic-brain-popover');
+    if (brain) brain.hidden = true;
+    return;
+  }
+  if (event.altKey && event.key === 'ArrowLeft') { event.preventDefault(); moveWindowNavigation(-1); return; }
+  if (event.altKey && event.key === 'ArrowRight') { event.preventDefault(); moveWindowNavigation(1); return; }
+  if (!event.ctrlKey || event.altKey) return;
+  const key = event.key.toLocaleLowerCase();
+  const command = key === 'n' ? 'new-chat'
+    : key === 'o' ? 'open-project'
+      : key === 'b' && event.shiftKey ? 'toggle-inspector'
+        : key === 'b' ? 'toggle-sidebar'
+          : key === 'j' ? 'toggle-bottom-panel'
+            : key === ',' ? 'settings'
+              : key === '/' ? 'shortcuts'
+                : '';
+  if (!command) return;
+  event.preventDefault();
+  void executeWindowMenuCommand(command);
+});
+
+document.addEventListener('mp:branch-conversation', (event: Event) => {
+  const detail = (event as CustomEvent<{ conversationId?: string; turnIndex?: number }>).detail;
+  const conversationId = String(detail?.conversationId || '');
+  const turnIndex = Number(detail?.turnIndex);
+  if (!conversationId || !Number.isInteger(turnIndex)) return;
+  void Data.branchConversation(conversationId, turnIndex).then(async (result) => {
+    if (!result?.ok || !result.conversation?.id) return;
+    await renderSidebar();
+    await openConversation(result.conversation.id);
+  });
+});
+
+function setSidebarCollapsed(collapsed: boolean, persist = true) {
+  shell.dataset.sidebar = collapsed ? 'collapsed' : 'expanded';
+  const button = document.getElementById('sidebar-toggle');
+  button?.setAttribute('aria-pressed', String(collapsed));
+  button?.setAttribute('aria-label', collapsed ? '展开侧栏' : '折叠侧栏');
+  if (button instanceof HTMLElement) button.title = collapsed ? '展开侧栏' : '折叠侧栏';
+  if (persist) {
+    try { localStorage.setItem(SIDEBAR_COLLAPSE_KEY, collapsed ? '1' : '0'); } catch { /* renderer storage unavailable */ }
+  }
+}
+
+(function bindSidebarCollapse() {
+  let collapsed = false;
+  try { collapsed = localStorage.getItem(SIDEBAR_COLLAPSE_KEY) === '1'; } catch { /* use expanded */ }
+  setSidebarCollapsed(collapsed, false);
+  document.getElementById('sidebar-toggle')?.addEventListener('click', (event) => {
+    event.stopPropagation();
+    setSidebarCollapsed(shell.dataset.sidebar !== 'collapsed');
+  });
+})();
 
 function openAux() { aux.hidden = false; shell.classList.add('has-aux'); }
 function closeAux() { shell.classList.remove('has-aux'); setTimeout(() => { aux.hidden = true; }, 240); }
 
+function closeThreadMenu() {
+  document.getElementById('thread-menu')?.remove();
+  document.getElementById('thread-more')?.setAttribute('aria-expanded', 'false');
+}
+
+function openThreadMenu(button: HTMLElement) {
+  closeThreadMenu();
+  const menu = document.createElement('div');
+  menu.id = 'thread-menu';
+  menu.className = 'mp-thread-menu';
+  menu.setAttribute('role', 'menu');
+  const make = (label: string, run: () => void, options: { danger?: boolean; disabled?: boolean } = {}) => {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.textContent = label;
+    item.disabled = options.disabled === true;
+    item.classList.toggle('is-danger', options.danger === true);
+    item.addEventListener('click', (event) => {
+      event.stopPropagation();
+      closeThreadMenu();
+      run();
+    });
+    return item;
+  };
+  const unavailable = !activeConversationId;
+  menu.append(
+    make('重命名', () => {
+      if (activeConversationId) openRenameDialog(activeConversationId, document.getElementById('chat-title')?.textContent || '');
+    }, { disabled: unavailable }),
+    make('从当前结果分支', () => {
+      if (!activeConversationId || activeConversationTurnCount < 1) return;
+      void Data.branchConversation(activeConversationId, activeConversationTurnCount - 1).then(async (result) => {
+        if (!result?.ok || !result.conversation?.id) return;
+        await renderSidebar();
+        await openConversation(result.conversation.id);
+      });
+    }, { disabled: unavailable || activeConversationTurnCount < 1 }),
+    make('导出 Session log', () => {
+      if (activeConversationId) void Data.exportConversation(activeConversationId);
+    }, { disabled: unavailable }),
+    make('删除对话', () => {
+      if (!activeConversationId) return;
+      const id = activeConversationId;
+      startNewChat();
+      void Data.deleteConversation(id).then(() => renderSidebar());
+    }, { danger: true, disabled: unavailable }),
+  );
+  document.body.appendChild(menu);
+  const rect = button.getBoundingClientRect();
+  menu.style.top = `${rect.bottom + 6}px`;
+  menu.style.right = `${Math.max(8, window.innerWidth - rect.right)}px`;
+  button.setAttribute('aria-expanded', 'true');
+}
+
+document.getElementById('thread-more')?.addEventListener('click', (event) => {
+  event.stopPropagation();
+  const button = event.currentTarget as HTMLElement;
+  if (document.getElementById('thread-menu')) closeThreadMenu();
+  else openThreadMenu(button);
+});
+
+type ProjectTreeEntry = { name: string; path: string; kind: 'directory' | 'file' };
+const projectTreeCache = new Map<string, ProjectTreeEntry[]>();
+const expandedProjectDirectories = new Set<string>(['']);
+let selectedProjectFile = '';
+let activeInspectorTab = 'files';
+/* sv 文件树动效:刚展开的目录(下一帧翻开入场)/ 收起退场动画的落盘定时器。 */
+let lastExpandedTreeDirectory = '';
+let pendingTreeCollapseTimer: ReturnType<typeof setTimeout> | null = null;
+
+function inspectorError(message: string) {
+  const host = document.getElementById('project-file-tree');
+  if (host) host.innerHTML = `<p class="mp-inspector-empty">${esc(message)}</p>`;
+}
+
+function renderProjectFileTree() {
+  const host = document.getElementById('project-file-tree');
+  if (!host) return;
+  const query = (document.getElementById('file-tree-filter') as HTMLInputElement | null)?.value.trim().toLocaleLowerCase() || '';
+  /* file-tree(sv-animations,MIT):目录子树包进 .sv-tree-branch,
+     展开 = grid-template-rows 0fr→1fr + opacity(200ms easeInOut),
+     刚展开的分支先以收起态入 DOM,下一帧再翻开,入场动画才会跑。 */
+  const freshDirectory = lastExpandedTreeDirectory;
+  lastExpandedTreeDirectory = '';
+  const buildLevel = (directory: string, depth: number): Node[] => {
+    const nodes: Node[] = [];
+    for (const entry of projectTreeCache.get(directory) || []) {
+      if (query && !entry.name.toLocaleLowerCase().includes(query) && entry.kind !== 'directory') continue;
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'mp-file-tree-row' + (entry.path === selectedProjectFile ? ' is-on' : '');
+      row.dataset.projectPath = entry.path;
+      row.dataset.projectKind = entry.kind;
+      row.dataset.depth = String(depth);
+      row.style.setProperty('--item-index', String(nodes.length));
+      row.style.setProperty('--tree-depth', String(depth));
+      row.style.setProperty('--tree-guide-left', `${14 + Math.max(0, depth - 1) * 20}px`);
+      row.style.paddingLeft = `${depth * 20}px`;
+      const expanded = entry.kind === 'directory' && expandedProjectDirectories.has(entry.path);
+      if (entry.kind === 'directory') row.setAttribute('aria-expanded', String(expanded));
+      /* file-tree(sv-animations,MIT) 逐字：展开行只有图标本身翻转 open/closed，
+         没有额外 chevron——参考源码 folder.svelte 默认图标就是唯一的展开指示。 */
+      row.innerHTML = `${entry.kind === 'directory'
+        ? icon(expanded ? 'ic-tree-folder-open' : 'ic-tree-folder')
+        : icon('ic-tree-file')}<span>${esc(entry.name)}</span>`;
+      nodes.push(row);
+      if (!expanded) continue;
+      const branch = document.createElement('div');
+      branch.className = 'sv-tree-branch';
+      branch.style.setProperty('--sv-guide-left', `${13 + depth * 20}px`);
+      const inner = document.createElement('div');
+      inner.className = 'sv-tree-branch-inner';
+      for (const child of buildLevel(entry.path, depth + 1)) inner.appendChild(child);
+      branch.appendChild(inner);
+      if (entry.path !== freshDirectory) branch.classList.add('is-open');
+      else requestAnimationFrame(() => { branch.classList.add('is-open'); });
+      nodes.push(branch);
+    }
+    return nodes;
+  };
+  const roots = buildLevel('', 0);
+  if (!roots.length) {
+    const empty = document.createElement('p');
+    empty.className = 'mp-inspector-empty';
+    empty.textContent = query ? '没有匹配文件。' : '项目中没有可显示的文件。';
+    roots.push(empty);
+  }
+  host.replaceChildren(...roots);
+}
+
+async function loadProjectDirectory(relativePath = '') {
+  if (!activeProjectRoot) { inspectorError('请先打开项目。'); return; }
+  const response = await Data.projectTree(activeProjectRoot, relativePath);
+  if (!response?.ok) { inspectorError(response?.error || '文件树读取失败。'); return; }
+  projectTreeCache.set(relativePath, response.entries || []);
+  renderProjectFileTree();
+}
+
+async function refreshProjectInspector() {
+  projectTreeCache.clear();
+  expandedProjectDirectories.clear();
+  expandedProjectDirectories.add('');
+  selectedProjectFile = '';
+  const preview = document.getElementById('project-file-preview');
+  if (preview) preview.hidden = true;
+  if (activeProjectRoot) await loadProjectDirectory('');
+  else inspectorError('请先打开项目。');
+  if (activeInspectorTab === 'changes') await renderProjectChanges();
+}
+
+async function selectProjectFile(relativePath: string) {
+  const response = await Data.readProjectFile(activeProjectRoot, relativePath);
+  const preview = document.getElementById('project-file-preview');
+  if (!preview) return;
+  preview.hidden = false;
+  selectedProjectFile = relativePath;
+  const name = document.getElementById('project-file-name');
+  const content = document.getElementById('project-file-content');
+  if (name) name.textContent = relativePath + (response?.truncated ? ' · 已截断' : '');
+  if (content) content.textContent = response?.ok ? String(response.text || '') : String(response?.error || '文件读取失败。');
+  renderProjectFileTree();
+}
+
+let projectEnvironment: MagicPointerProjectEnvironment | null = null;
+
+async function renderMagicBrain(force = false) {
+  const popover = document.getElementById('magic-brain-popover');
+  if (!popover) return;
+  const projectName = activeProjectRoot.replace(/\\/g, '/').split('/').filter(Boolean).pop() || '当前项目';
+  const project = document.getElementById('magic-brain-project');
+  if (project) project.textContent = projectName;
+  if (!activeProjectRoot) {
+    projectEnvironment = null;
+    document.getElementById('magic-brain-changes-detail')!.textContent = '请先打开项目';
+    document.getElementById('magic-brain-branch-name')!.textContent = 'Git 分支';
+    document.getElementById('magic-brain-branch-detail')!.textContent = '没有项目环境';
+    document.getElementById('magic-brain-source-list')!.innerHTML = '<p>打开项目并开始任务后显示来源。</p>';
+    return;
+  }
+  if (!force && projectEnvironment?.root === activeProjectRoot) return;
+  document.getElementById('magic-brain-changes-detail')!.textContent = '正在读取…';
+  document.getElementById('magic-brain-branch-detail')!.textContent = '正在读取…';
+  const response = await Data.projectEnvironment(activeProjectRoot, activeConversationId);
+  projectEnvironment = response;
+  const changes = Number(response.changedFiles || 0);
+  const added = Number(response.addedLines || 0);
+  const deleted = Number(response.deletedLines || 0);
+  document.getElementById('magic-brain-changes-detail')!.textContent = response.ok
+    ? (changes ? `${changes} 个文件 · +${added} −${deleted}` : '工作树干净')
+    : String(response.error || '读取失败');
+  document.getElementById('magic-brain-branch-name')!.textContent = response.branch || (response.isGit ? 'Git 仓库' : '未初始化 Git');
+  const sync: string[] = [];
+  if (response.upstream) sync.push(response.upstream);
+  if (response.ahead) sync.push(`领先 ${response.ahead}`);
+  if (response.behind) sync.push(`落后 ${response.behind}`);
+  document.getElementById('magic-brain-branch-detail')!.textContent = sync.join(' · ') || (response.remoteUrl ? '已连接远程仓库' : '仅本地项目');
+  const sourceHost = document.getElementById('magic-brain-source-list');
+  if (!sourceHost) return;
+  const sources = Array.isArray(response.sources) ? response.sources : [];
+  sourceHost.replaceChildren(...sources.map((url, index) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'mp-brain-source';
+    button.dataset.sourceUrl = url;
+    button.style.setProperty('--item-index', String(index));
+    let label = url;
+    try { const parsed = new URL(url); label = `${parsed.hostname}${parsed.pathname === '/' ? '' : parsed.pathname}`; } catch { /* show raw URL */ }
+    button.innerHTML = `${icon('ic-globe', 'codex-icon')}<span>${esc(label)}</span>`;
+    button.title = url;
+    return button;
+  }));
+  if (!sources.length) sourceHost.innerHTML = '<p>当前任务尚无网页来源。</p>';
+}
+
+document.getElementById('header-open-location')?.addEventListener('click', () => {
+  if (activeProjectRoot) void Data.openProjectPath(activeProjectRoot, '');
+  else void openProjectFromPicker();
+});
+document.getElementById('magic-brain-toggle')?.addEventListener('click', (event) => {
+  event.stopPropagation();
+  const popover = document.getElementById('magic-brain-popover');
+  const button = event.currentTarget as HTMLElement;
+  if (!popover) return;
+  popover.hidden = !popover.hidden;
+  button.setAttribute('aria-expanded', String(!popover.hidden));
+  if (!popover.hidden) void renderMagicBrain(true);
+});
+document.getElementById('magic-brain-changes')?.addEventListener('click', () => {
+  document.getElementById('magic-brain-popover')!.hidden = true;
+  document.getElementById('magic-brain-toggle')?.setAttribute('aria-expanded', 'false');
+  setInspector(true, 'changes');
+});
+document.getElementById('magic-brain-branch')?.addEventListener('click', () => {
+  const url = projectEnvironment?.pullRequestUrl || projectEnvironment?.remoteUrl || '';
+  if (url) void Data.openProjectUrl(url);
+  else setInspector(true, 'changes');
+});
+document.getElementById('magic-brain-sources')?.addEventListener('click', (event) => {
+  const source = (event.target as Element | null)?.closest<HTMLElement>('[data-source-url]');
+  if (!source?.dataset.sourceUrl) return;
+  setInspector(true, 'browser');
+  const input = document.getElementById('project-browser-url') as HTMLInputElement | null;
+  if (input) input.value = source.dataset.sourceUrl;
+  void openProjectBrowser(source.dataset.sourceUrl);
+});
+
+async function renderProjectChanges() {
+  const host = document.getElementById('project-changes');
+  if (!host) return;
+  if (!activeProjectRoot) { host.innerHTML = '<p class="mp-inspector-empty">请先打开项目。</p>'; return; }
+  host.innerHTML = '<p class="mp-inspector-empty">正在读取 Git 工作树…</p>';
+  const response = await Data.projectEnvironment(activeProjectRoot, activeConversationId);
+  projectEnvironment = response;
+  if (!response.ok) { host.innerHTML = `<p class="mp-inspector-empty">${esc(response.error || 'Git 环境读取失败。')}</p>`; return; }
+  const header = document.createElement('header');
+  header.className = 'mp-changes-header';
+  const branch = document.createElement('span');
+  branch.innerHTML = `${icon('ic-branch', 'codex-icon')}<strong>${esc(response.branch || '本地项目')}</strong>`;
+  const count = document.createElement('small');
+  count.textContent = `${Number(response.changedFiles || 0)} 个变更 · +${Number(response.addedLines || 0)} −${Number(response.deletedLines || 0)}`;
+  header.append(branch, count);
+  const list = document.createElement('div');
+  list.className = 'mp-change-list';
+  for (const [index, change] of (response.fileChanges || []).entries()) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'mp-change-row';
+    button.dataset.changePath = change.path;
+    button.style.setProperty('--item-index', String(index));
+    button.innerHTML = `<span class="mp-change-status">${esc(change.status || 'M')}</span><span>${esc(change.path)}</span>${change.staged ? '<small>已暂存</small>' : ''}`;
+    list.appendChild(button);
+  }
+  if (!list.childElementCount) list.innerHTML = '<p class="mp-inspector-empty">工作树干净。</p>';
+  host.replaceChildren(header, list);
+}
+
+document.getElementById('project-changes')?.addEventListener('click', (event) => {
+  const row = (event.target as Element | null)?.closest<HTMLElement>('[data-change-path]');
+  if (!row?.dataset.changePath) return;
+  setInspector(true, 'files');
+  void selectProjectFile(row.dataset.changePath);
+});
+
+let browserViewVisible = false;
+let latestBrowserViewState: MagicPointerBrowserViewState = {};
+
+function projectBrowserBounds() {
+  const host = document.getElementById('project-browser-host');
+  if (!host) return null;
+  const rect = host.getBoundingClientRect();
+  if (rect.width < 2 || rect.height < 2) return null;
+  return {
+    x: Math.round(rect.left),
+    y: Math.round(rect.top),
+    width: Math.max(1, Math.round(rect.width)),
+    height: Math.max(1, Math.round(rect.height)),
+  };
+}
+
+function renderBrowserViewState(state: MagicPointerBrowserViewState) {
+  latestBrowserViewState = { ...latestBrowserViewState, ...state };
+  const input = document.getElementById('project-browser-url') as HTMLInputElement | null;
+  if (input && state.url && document.activeElement !== input) input.value = state.url;
+  const back = document.getElementById('project-browser-back') as HTMLButtonElement | null;
+  const forward = document.getElementById('project-browser-forward') as HTMLButtonElement | null;
+  const reload = document.getElementById('project-browser-reload');
+  if (back) back.disabled = !state.canGoBack;
+  if (forward) forward.disabled = !state.canGoForward;
+  if (reload) {
+    reload.setAttribute('aria-label', state.loading ? '停止加载' : '重新加载');
+    reload.setAttribute('title', state.loading ? '停止加载' : '重新加载');
+  }
+  if (state.title) document.getElementById('inspector-browser')?.setAttribute('aria-label', state.title);
+}
+
+async function openProjectBrowser(rawUrl: string) {
+  const bounds = projectBrowserBounds();
+  if (!bounds) return;
+  const empty = document.getElementById('project-browser-empty');
+  const response = await Data.openBrowserView(rawUrl, bounds);
+  browserViewVisible = response?.ok === true;
+  if (empty) empty.hidden = browserViewVisible;
+  if (response?.state) renderBrowserViewState(response.state);
+  if (!response?.ok && empty) {
+    empty.hidden = false;
+    const message = empty.querySelector('p');
+    if (message) message.textContent = String(response?.error || '网页打开失败。');
+  }
+}
+
+function resizeProjectBrowser() {
+  if (!browserViewVisible || activeInspectorTab !== 'browser' || shell.dataset.inspector !== 'open') return;
+  const bounds = projectBrowserBounds();
+  if (bounds) void Data.resizeBrowserView(bounds);
+}
+
+function closeProjectBrowserView() {
+  if (!browserViewVisible) return;
+  browserViewVisible = false;
+  void Data.browserViewCommand('close');
+}
+
+Data.onBrowserViewState((state) => renderBrowserViewState(state));
+const projectBrowserHost = document.getElementById('project-browser-host');
+if (projectBrowserHost && typeof ResizeObserver !== 'undefined') {
+  new ResizeObserver(() => resizeProjectBrowser()).observe(projectBrowserHost);
+}
+window.addEventListener('resize', resizeProjectBrowser);
+
+function setInspector(open: boolean, tab = activeInspectorTab) {
+  const inspector = document.getElementById('project-inspector');
+  if (!inspector) return;
+  activeInspectorTab = tab;
+  inspector.hidden = !open;
+  if (open) shell.dataset.inspector = 'open';
+  else delete shell.dataset.inspector;
+  document.getElementById('inspector-toggle')?.setAttribute('aria-expanded', String(open));
+  document.querySelectorAll<HTMLElement>('[data-inspector-panel]').forEach((panel) => {
+    panel.hidden = panel.dataset.inspectorPanel !== tab;
+  });
+  document.querySelectorAll<HTMLElement>('.mp-inspector-tabs [data-inspector-tab]').forEach((button) => {
+    const active = button.dataset.inspectorTab === tab;
+    button.classList.toggle('is-on', active);
+    button.setAttribute('aria-selected', String(active));
+  });
+  document.querySelectorAll<HTMLElement>('.mp-library-nav [data-inspector-tab]').forEach((button) => {
+    button.classList.toggle('is-on', open && button.dataset.inspectorTab === tab);
+  });
+  if (!open) { closeProjectBrowserView(); return; }
+  if (tab !== 'browser') closeProjectBrowserView();
+  if (tab === 'files' && !projectTreeCache.has('')) void refreshProjectInspector();
+  if (tab === 'changes') void renderProjectChanges();
+  if (tab === 'browser') requestAnimationFrame(resizeProjectBrowser);
+}
+
+document.getElementById('inspector-toggle')?.addEventListener('click', () => {
+  setInspector(shell.dataset.inspector !== 'open', 'files');
+});
+document.getElementById('inspector-close')?.addEventListener('click', () => setInspector(false));
+document.getElementById('project-file-tree')?.addEventListener('click', (event) => {
+  const row = (event.target as Element | null)?.closest<HTMLElement>('[data-project-path]');
+  if (!row) return;
+  const relativePath = row.dataset.projectPath || '';
+  if (row.dataset.projectKind === 'directory') {
+    if (expandedProjectDirectories.has(relativePath)) {
+      expandedProjectDirectories.delete(relativePath);
+      /* 收起时先播 200ms 退场(folder.svelte AnimatePresence),再落盘重渲。 */
+      const branch = row.nextElementSibling;
+      if (pendingTreeCollapseTimer !== null) clearTimeout(pendingTreeCollapseTimer);
+      if (branch?.classList.contains('sv-tree-branch')) {
+        branch.classList.remove('is-open');
+        pendingTreeCollapseTimer = setTimeout(() => { pendingTreeCollapseTimer = null; renderProjectFileTree(); }, 220);
+      } else {
+        renderProjectFileTree();
+      }
+    } else {
+      expandedProjectDirectories.add(relativePath);
+      lastExpandedTreeDirectory = relativePath;
+      if (projectTreeCache.has(relativePath)) renderProjectFileTree();
+      else void loadProjectDirectory(relativePath);
+    }
+    return;
+  }
+  void selectProjectFile(relativePath);
+});
+document.getElementById('project-file-tree')?.addEventListener('contextmenu', (event) => {
+  const row = (event.target as Element | null)?.closest<HTMLElement>('[data-project-path]');
+  if (!row || !activeProjectRoot) return;
+  event.preventDefault();
+  const relativePath = row.dataset.projectPath || '';
+  const kind = row.dataset.projectKind === 'directory' ? 'directory' : 'file';
+  void Data.showProjectContextMenu(activeProjectRoot, relativePath, kind).then((result) => {
+    if (!result?.ok) return;
+    if (result.action === 'preview' && kind === 'file') void selectProjectFile(relativePath);
+    if (result.action === 'terminal-here') {
+      activeTerminalRelativeDirectory = relativePath;
+      setBottomPanel(true);
+      renderTerminalPrompt();
+    }
+  });
+});
+document.getElementById('file-tree-filter')?.addEventListener('input', renderProjectFileTree);
+document.getElementById('project-file-open')?.addEventListener('click', () => {
+  if (selectedProjectFile) void Data.openProjectPath(activeProjectRoot, selectedProjectFile);
+});
+document.getElementById('project-browser-form')?.addEventListener('submit', (event) => {
+  event.preventDefault();
+  const input = document.getElementById('project-browser-url') as HTMLInputElement | null;
+  if (input?.value.trim()) void openProjectBrowser(input.value.trim());
+});
+document.getElementById('project-browser-back')?.addEventListener('click', () => { void Data.browserViewCommand('back'); });
+document.getElementById('project-browser-forward')?.addEventListener('click', () => { void Data.browserViewCommand('forward'); });
+document.getElementById('project-browser-reload')?.addEventListener('click', () => {
+  void Data.browserViewCommand(latestBrowserViewState.loading ? 'stop' : 'reload');
+});
+document.getElementById('project-browser-external')?.addEventListener('click', () => {
+  if (browserViewVisible) void Data.browserViewCommand('external');
+  else {
+    const url = (document.getElementById('project-browser-url') as HTMLInputElement | null)?.value.trim();
+    if (url) void Data.openProjectUrl(/^https?:\/\//i.test(url) ? url : `https://${url}`);
+  }
+});
+
+let activeTerminalRelativeDirectory = '';
+
+function renderTerminalPrompt() {
+  const suffix = activeTerminalRelativeDirectory ? `\\${activeTerminalRelativeDirectory.replace(/\//g, '\\')}` : '';
+  for (const id of ['project-terminal-output', 'bottom-terminal-output']) {
+    const output = document.getElementById(id);
+    const label = output?.querySelector('span');
+    if (label) label.textContent = `PowerShell · 当前项目${suffix}`;
+  }
+}
+
+async function runTerminalCommand(command: string, output: HTMLElement) {
+  if (!command || !activeProjectRoot) return;
+  output.textContent += `\n> ${command}\n`;
+  const result = await Data.runProjectCommand(activeProjectRoot, command, activeTerminalRelativeDirectory);
+  output.textContent += `${String(result.output || result.error || '')}\n`;
+  output.scrollTop = output.scrollHeight;
+}
+
+for (const pair of [
+  ['project-terminal-form', 'project-terminal-input', 'project-terminal-output'],
+  ['bottom-terminal-form', 'bottom-terminal-input', 'bottom-terminal-output'],
+] as const) {
+  document.getElementById(pair[0])?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const input = document.getElementById(pair[1]) as HTMLInputElement | null;
+    const output = document.getElementById(pair[2]);
+    const command = input?.value.trim() || '';
+    if (!command || !output) return;
+    input!.value = '';
+    void runTerminalCommand(command, output);
+  });
+}
+
+function setBottomPanel(open: boolean) {
+  const panel = document.getElementById('bottom-panel');
+  if (!panel) return;
+  panel.hidden = !open;
+  if (open) shell.dataset.bottomPanel = 'open';
+  else delete shell.dataset.bottomPanel;
+  document.getElementById('bottom-panel-toggle')?.setAttribute('aria-expanded', String(open));
+  if (open) {
+    renderTerminalPrompt();
+    requestAnimationFrame(() => (document.getElementById('bottom-terminal-input') as HTMLInputElement | null)?.focus());
+  }
+}
+
+document.getElementById('bottom-panel-toggle')?.addEventListener('click', () => setBottomPanel(shell.dataset.bottomPanel !== 'open'));
+document.getElementById('bottom-panel-close')?.addEventListener('click', () => setBottomPanel(false));
+
+let dictationPrefix = '';
+let studioDictating = false;
+document.getElementById('composer-voice')?.addEventListener('click', () => {
+  const api = window.magicPointerDashboard;
+  const button = document.getElementById('composer-voice');
+  if (studioDictating) {
+    api?.stopDictation?.({ graceful: true });
+    studioDictating = false;
+    button?.classList.remove('is-recording');
+    return;
+  }
+  const textarea = document.querySelector<HTMLTextAreaElement>('#composer-form textarea');
+  dictationPrefix = textarea?.value || '';
+  studioDictating = true;
+  button?.classList.add('is-recording');
+  button?.setAttribute('title', '停止语音输入');
+  api?.startDictation?.();
+});
+window.magicPointerDashboard?.onDictationResult?.((payload) => {
+  if (payload.surface !== 'dashboard') return;
+  const textarea = document.querySelector<HTMLTextAreaElement>('#composer-form textarea');
+  const button = document.getElementById('composer-voice');
+  if (payload.transcript && textarea) {
+    textarea.value = `${dictationPrefix}${dictationPrefix && !/\s$/.test(dictationPrefix) ? ' ' : ''}${payload.transcript}`;
+    fitComposer(textarea);
+  }
+  if (payload.final || payload.ok === false) {
+    studioDictating = false;
+    button?.classList.remove('is-recording');
+    button?.setAttribute('title', payload.ok === false ? String(payload.error || '语音输入失败') : '语音输入');
+    textarea?.focus();
+  }
+});
+
+let pluginDirectoryCatalog: MagicPointerSlashDirectory | null = null;
+let pluginDirectoryKind: 'skills' | 'commands' = 'skills';
+
+function closePluginDirectory() {
+  const overlay = document.getElementById('plugin-directory');
+  if (overlay) overlay.hidden = true;
+  document.getElementById('nav-plugins')?.classList.remove('is-on');
+}
+
+function renderPluginDirectory() {
+  const host = document.getElementById('plugin-directory-list');
+  if (!host) return;
+  const query = (document.getElementById('plugin-directory-search') as HTMLInputElement | null)?.value.trim().toLocaleLowerCase() || '';
+  const entries = (pluginDirectoryKind === 'skills' ? pluginDirectoryCatalog?.skills : pluginDirectoryCatalog?.commands) || [];
+  const filtered = entries.filter((entry) => [entry.name, entry.description, entry.whenToUse, entry.source]
+    .filter(Boolean).join(' ').toLocaleLowerCase().includes(query));
+  document.getElementById('plugin-directory-kind-label')!.textContent = pluginDirectoryKind === 'skills' ? '已安装技能' : '可用命令';
+  document.getElementById('plugin-directory-count')!.textContent = `${filtered.length} 项`;
+  host.replaceChildren(...filtered.map((entry) => {
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = 'mp-directory-card';
+    card.innerHTML = `<strong>/${esc(entry.name)}</strong><p>${esc(entry.description || entry.whenToUse || '可在 Composer 中调用。')}</p><small>${esc(entry.source || entry.path || 'Magic Pointer')}</small>`;
+    card.addEventListener('click', () => {
+      insertSlashToken(entry.name);
+      closePluginDirectory();
+      show('chat');
+    });
+    return card;
+  }));
+  if (!filtered.length) host.innerHTML = '<p class="mp-inspector-empty">没有匹配项目。</p>';
+}
+
+async function openPluginDirectory() {
+  const overlay = document.getElementById('plugin-directory');
+  if (!overlay) return;
+  overlay.hidden = false;
+  document.getElementById('nav-plugins')?.classList.add('is-on');
+  const host = document.getElementById('plugin-directory-list');
+  if (host) host.innerHTML = '<p class="mp-inspector-empty">正在读取目录…</p>';
+  pluginDirectoryCatalog = await Data.slashDirectory();
+  renderPluginDirectory();
+  requestAnimationFrame(() => (document.getElementById('plugin-directory-search') as HTMLInputElement | null)?.focus());
+}
+
+document.getElementById('plugin-directory-search')?.addEventListener('input', renderPluginDirectory);
+document.querySelectorAll<HTMLElement>('[data-directory-kind]').forEach((button) => {
+  button.addEventListener('click', () => {
+    pluginDirectoryKind = button.dataset.directoryKind === 'commands' ? 'commands' : 'skills';
+    document.querySelectorAll<HTMLElement>('[data-directory-kind]').forEach((item) => item.classList.toggle('is-on', item === button));
+    renderPluginDirectory();
+  });
+});
+
 document.addEventListener('click', e => {
   const target = e.target as Element | null;
   if (!target) return;
+  if (!target.closest('#window-menu-popover') && !target.closest('.mp-window-menu-bar')) closeWindowMenu();
+  if (!target.closest('#mode-menu') && !target.closest('#mode-switch')) {
+    const modeMenu = document.getElementById('mode-menu');
+    if (modeMenu) modeMenu.hidden = true;
+    document.getElementById('mode-switch')?.setAttribute('aria-expanded', 'false');
+  }
+  if (!target.closest('#magic-brain-popover') && !target.closest('#magic-brain-toggle')) {
+    const brain = document.getElementById('magic-brain-popover');
+    if (brain) brain.hidden = true;
+    document.getElementById('magic-brain-toggle')?.setAttribute('aria-expanded', 'false');
+  }
+  if (target.closest('[data-directory-close]')) { closePluginDirectory(); return; }
+  if (target.closest('[data-directory-open]')) { void openPluginDirectory(); return; }
+  if (!target.closest('#thread-menu') && !target.closest('#thread-more')) closeThreadMenu();
   if (target.closest('[data-settings-close]')) { show(lastNonSettingsView); return; }
+
+  const inspectorTarget = target.closest<HTMLElement>('[data-inspector-tab]');
+  if (inspectorTarget) {
+    show('chat');
+    setInspector(true, inspectorTarget.dataset.inspectorTab || 'files');
+    return;
+  }
+
+  const settingsTarget = target.closest<HTMLElement>('[data-settings-section]');
+  if (settingsTarget) {
+    show('settings');
+    requestAnimationFrame(() => {
+      const requested = settingsTarget.dataset.settingsSection || 'models-agents';
+      (document.querySelector(`[data-settings-page="${requested}"]`)
+        || document.querySelector('[data-settings-page="models-agents"]'))?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    return;
+  }
 
   /* 权限预设弹层：点外面收起（芯片/行自己的 click 已 stopPropagation） */
   const permMenu = document.getElementById('composer-permission-menu');
@@ -817,30 +1827,65 @@ document.addEventListener('click', e => {
     closeModelMenu();
   }
 
-  /* 作曲家 `+`：DSH 斜杠目录（命令 + 本机技能），本地过滤，选中插入 `/name ` */
+  /* 纸夹是真附件；斜杠目录由输入 `/` 唤起。 */
   const addBtn = target.closest<HTMLElement>('#composer-add');
   const addMenu = document.getElementById('composer-add-menu');
   if (addBtn) {
-    if (addMenu) {
-      const willShow = addMenu.hidden;
-      if (willShow) void openSlashMenu();
-      else closeSlashMenu();
-      addBtn.setAttribute('aria-expanded', String(willShow));
-    }
+    if (!activeProjectRoot) { renderProjectGate(); return; }
+    void Data.pickProjectFiles(activeProjectRoot).then((picked) => {
+      if (!picked?.ok || !Array.isArray(picked.paths)) return;
+      composerAttachments = [...new Set([...composerAttachments, ...picked.paths.map(String)])];
+      renderComposerAttachments();
+    });
     return;
   }
   if (addMenu && !addMenu.hidden && !target.closest('#composer-add-menu')) {
     closeSlashMenu();
   }
 
+  const mention = target.closest<HTMLElement>('#composer-mention');
+  if (mention) {
+    const textarea = document.querySelector<HTMLTextAreaElement>('#composer-form textarea');
+    if (textarea) {
+      const start = textarea.selectionStart;
+      textarea.setRangeText('@', start, textarea.selectionEnd, 'end');
+      textarea.focus();
+      fitComposer(textarea);
+    }
+    return;
+  }
+
+  const optionsButton = target.closest<HTMLElement>('#composer-options');
+  const optionsMenu = document.getElementById('composer-options-menu');
+  if (optionsButton && optionsMenu) {
+    const open = optionsMenu.hidden;
+    optionsMenu.hidden = !open;
+    optionsButton.setAttribute('aria-expanded', String(open));
+    return;
+  }
+  if (optionsMenu && !optionsMenu.hidden && !target.closest('#composer-options-menu')) {
+    optionsMenu.hidden = true;
+    document.getElementById('composer-options')?.setAttribute('aria-expanded', 'false');
+  }
+
   const projectToggle = target.closest<HTMLElement>('[data-workspace-toggle]');
   if (projectToggle) {
     const key = projectToggle.dataset.workspaceToggle || '';
     const project = projectToggle.closest<HTMLElement>('.dshw-project');
+    const alreadyActive = normalizedProjectRoot(key) === normalizedProjectRoot(activeProjectRoot);
     const open = project?.dataset.open !== 'false';
-    expandedWorkspaces.set(key, !open);
-    if (project) project.dataset.open = String(!open);
-    projectToggle.setAttribute('aria-expanded', String(!open));
+    setActiveProject(key);
+    expandedWorkspaces.set(key, alreadyActive ? !open : true);
+    if (project) project.dataset.open = String(alreadyActive ? !open : true);
+    projectToggle.setAttribute('aria-expanded', String(alreadyActive ? !open : true));
+    void (async () => {
+      const list = await Data.conversations();
+      const recent = list.find((conversation) =>
+        normalizedProjectRoot((conversation as { workspaceRoot?: string }).workspaceRoot) === normalizedProjectRoot(key));
+      if (recent) await openConversation(recent.id);
+      else startNewChat();
+      await renderSidebar();
+    })();
     return;
   }
 
@@ -850,17 +1895,11 @@ document.addEventListener('click', e => {
     return;
   }
 
-  const surfaceButton = target.closest<HTMLElement>('#mp-context-tag');
-  const surfaceMenu = document.getElementById('mp-surface-menu-popover');
-  if (surfaceButton && surfaceMenu) {
-    const showMenu = surfaceMenu.hidden;
-    surfaceMenu.hidden = !showMenu;
-    surfaceButton.setAttribute('aria-expanded', String(showMenu));
-    return;
-  }
-  if (surfaceMenu && !surfaceMenu.hidden && !target.closest('#mp-surface-menu')) {
-    surfaceMenu.hidden = true;
-    document.getElementById('mp-context-tag')?.setAttribute('aria-expanded', 'false');
+  const usagePopover = document.getElementById('composer-usage-popover');
+  if (usagePopover && !usagePopover.hidden && !target.closest('#composer-context')
+      && !target.closest('#composer-usage-popover')) {
+    usagePopover.hidden = true;
+    document.getElementById('composer-context')?.setAttribute('aria-expanded', 'false');
   }
 
   const open = target.closest<HTMLElement>('[data-open]');
@@ -884,9 +1923,14 @@ document.addEventListener('click', e => {
 
   const goto = target.closest<HTMLElement>('[data-goto]');
   if (goto) {
-    if (surfaceMenu) surfaceMenu.hidden = true;
-    document.getElementById('mp-context-tag')?.setAttribute('aria-expanded', 'false');
     show(goto.dataset.goto || '');
+    const designLayout = goto.dataset.designLayout;
+    if (designLayout) {
+      document.querySelectorAll<HTMLElement>('.mp-design-nav [data-design-layout]').forEach((button) => button.classList.toggle('is-on', button === goto));
+      requestAnimationFrame(() => {
+        document.querySelector<HTMLElement>(`#stash-mode [data-mode="${designLayout}"]`)?.click();
+      });
+    }
     return;
   }
 
@@ -1136,7 +2180,7 @@ function openStyleMenu() {
       check.setAttribute('aria-hidden', 'true');
       check.classList.add('dshw-perm-check');
       const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
-      use.setAttribute('href', '#ic-dsh-check');
+      use.setAttribute('href', '#ic-check');
       check.appendChild(use);
       row.appendChild(check);
     }
@@ -1167,7 +2211,30 @@ function bindStyleChip() {
 
 /* ---- 权限预设芯片（DSH PermissionSelect 同款：芯片 + 弹层 + Full access 确认门） ---- */
 let composerPreset = 'workspace-write';
-let composerWorkspace = ''; // '' = 用上次持久化的默认工作区
+let composerAttachments: string[] = [];
+
+function renderComposerAttachments() {
+  const host = document.getElementById('composer-attachments');
+  if (!host) return;
+  host.hidden = composerAttachments.length === 0;
+  host.replaceChildren(...composerAttachments.map((filePath) => {
+    const chip = document.createElement('span');
+    chip.className = 'mp-composer-attachment';
+    chip.title = filePath;
+    const name = document.createElement('span');
+    name.textContent = filePath.replace(/\\/g, '/').split('/').filter(Boolean).pop() || filePath;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.setAttribute('aria-label', `移除 ${name.textContent}`);
+    remove.innerHTML = '<svg aria-hidden="true"><use href="#ic-x" /></svg>';
+    remove.addEventListener('click', () => {
+      composerAttachments = composerAttachments.filter((path) => path !== filePath);
+      renderComposerAttachments();
+    });
+    chip.append(name, remove);
+    return chip;
+  }));
+}
 interface PermPresetOption {
   value: string; name: string; label: string; description: string; glyph: string;
   confirm?: { title: string; description: string };
@@ -1221,7 +2288,7 @@ function openPermissionMenu() {
       check.setAttribute('aria-hidden', 'true');
       check.classList.add('dshw-perm-check');
       const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
-      use.setAttribute('href', '#ic-dsh-check');
+      use.setAttribute('href', '#ic-check');
       check.appendChild(use);
       row.appendChild(check);
     }
@@ -1297,19 +2364,6 @@ function bindPermissionChip() {
     renderPermissionChip();
   });
 }
-function renderWorkspaceChip() {
-  const label = document.getElementById('composer-workspace-label');
-  if (!label) return;
-  if (!composerWorkspace) {
-    label.textContent = '工作区';
-    label.title = '编码工作区：未指定（用上次持久化的默认值，/cwd 可查）。点击选择文件夹';
-    return;
-  }
-  const segments = composerWorkspace.split(/[/]/).filter(Boolean);
-  label.textContent = segments[segments.length - 1] || composerWorkspace;
-  label.title = `编码工作区：${composerWorkspace}（点击更换）`;
-}
-
 /* Codex update_plan 式计划卡：todo_write 实时推送（answer 同款 b64 blob 通道）
    + 终态 result.plan 双通道 */
 let composerPlan: { steps: Array<{ content: string; status: string }> } | null = null;
@@ -1334,7 +2388,22 @@ function renderPlanCard() {
     li.className = 'dshw-plan-step'
       + (step.status === 'completed' ? ' is-done' : '')
       + (step.status === 'in_progress' ? ' is-active' : '');
-    li.textContent = step.content;
+    /* animated-checkbox(sv-animations,MIT):盒子 + pathLength 划入勾线 + 弹簧删除线。
+       参数取自源码,见 _sv_sources/sv-animations/animated-checkbox。 */
+    const check = document.createElement('span');
+    check.className = 'sv-checkbox';
+    check.setAttribute('aria-hidden', 'true');
+    check.innerHTML = `<svg viewBox="0 0 20 20" aria-hidden="true"><path class="sv-checkbox-mark" `
+      + `pathLength="1" d="${svMotionGlobals.PLAN_CHECK.path}" transform="${svMotionGlobals.PLAN_CHECK.transform}" fill="none" `
+      + `stroke="currentColor" stroke-width="${svMotionGlobals.PLAN_CHECK.strokeWidth}" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    const content = document.createElement('span');
+    content.className = 'sv-plan-step-label';
+    content.textContent = step.content;
+    const strike = document.createElement('span');
+    strike.className = 'sv-plan-step-strike';
+    strike.setAttribute('aria-hidden', 'true');
+    content.appendChild(strike);
+    li.append(check, content);
     return li;
   }));
 }
@@ -1383,20 +2452,6 @@ function renderPermissionAsk() {
   );
 }
 
-function bindWorkspaceChip() {
-  renderWorkspaceChip();
-  document.getElementById('composer-workspace')?.addEventListener('click', async e => {
-    e.stopPropagation();
-    try {
-      const picked = await Data.pickWorkspace();
-      if (picked?.ok && picked.path) {
-        composerWorkspace = String(picked.path);
-        renderWorkspaceChip();
-      }
-    } catch { /* 选择器不可用时静默保留当前状态 */ }
-  });
-}
-bindWorkspaceChip();
 bindStyleChip();
 bindPermissionChip();
 /* DSH 输入卡：textarea 随内容长高，14 行封顶（336px，InputBar 同款上限） */
@@ -1412,7 +2467,11 @@ let modelCatalog: MagicPointerModelCatalog | null = null;
 async function refreshComposerModel() {
   const label = document.getElementById('composer-model-label');
   const btn = document.getElementById('composer-model');
-  modelCatalog = await Data.models();
+  try {
+    modelCatalog = await Data.models();
+  } catch {
+    modelCatalog = null;
+  }
   const current = modelCatalog?.current || '';
   if (label) label.textContent = current || '默认模型';
   if (btn instanceof HTMLButtonElement) {
@@ -1432,16 +2491,32 @@ function closeModelMenu() {
 async function openModelMenu() {
   const menu = document.getElementById('composer-model-menu');
   if (!menu) return;
-  const btn = document.getElementById('composer-model');
-  if (btn instanceof HTMLButtonElement) btn.disabled = true;
-  const catalog = await Data.models();
-  if (btn instanceof HTMLButtonElement) btn.disabled = false;
+  // 先把浮层画出来，再刷新目录。模型目录是 I/O，不能挟持一次点击的
+  // 可见反馈；否则网关慢半秒，用户就会连续点击并在返回瞬间把菜单关掉。
+  menu.replaceChildren(...modelMenuRows(modelCatalog));
+  menu.hidden = false;
+  document.getElementById('composer-model')?.setAttribute('aria-expanded', 'true');
+  let catalog: MagicPointerModelCatalog | null = null;
+  try {
+    catalog = await Data.models();
+  } catch {
+    catalog = null;
+  }
+  // 用户可能在请求期间主动关掉菜单；只更新缓存，不把它强行弹回来。
+  if (menu.hidden) {
+    modelCatalog = catalog;
+    return;
+  }
   if (!catalog) {
     menu.replaceChildren(modelMenuNote('模型目录不可用（本机未接入 Electron 桥）。'));
-    menu.hidden = false;
     return;
   }
   modelCatalog = catalog;
+  menu.replaceChildren(...modelMenuRows(catalog));
+}
+
+function modelMenuRows(catalog: MagicPointerModelCatalog | null): HTMLElement[] {
+  if (!catalog) return [modelMenuNote('正在读取模型…')];
   const rows: HTMLElement[] = [];
   if (catalog.error) rows.push(modelMenuNote(catalog.error));
   for (const group of catalog.groups || []) {
@@ -1472,16 +2547,14 @@ async function openModelMenu() {
         check.setAttribute('aria-hidden', 'true');
         check.classList.add('dshw-perm-check');
         const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
-        use.setAttribute('href', '#ic-dsh-check');
+      use.setAttribute('href', '#ic-check');
         check.appendChild(use);
         row.appendChild(check);
       }
       rows.push(row);
     }
   }
-  menu.replaceChildren(...rows);
-  menu.hidden = false;
-  document.getElementById('composer-model')?.setAttribute('aria-expanded', 'true');
+  return rows.length ? rows : [modelMenuNote('没有可用模型。')];
 }
 
 function modelMenuNote(text: string): HTMLElement {
@@ -1526,6 +2599,8 @@ interface PendingConversation {
   agentSessionId: string | null;
   streamText: string;
   streamNode: HTMLElement | null;
+  reasoningText: string;
+  reasoningNode: HTMLElement | null;
 }
 let pendingConversation: PendingConversation | null = null;
 
@@ -1534,9 +2609,9 @@ function progressKey(record: Record<string, unknown>): string {
   const fields = record.fields && typeof record.fields === 'object'
     ? record.fields as Record<string, unknown> : {};
   if (phase === 'tool_call' || phase === 'tool_result') return `tool:${String(fields.id || fields.name || '')}`;
-  if (['runtime_boot', 'runtime_ready', 'agent_start'].includes(phase)) return 'runtime';
-  if (['model_request', 'model_first_chunk', 'model_response'].includes(phase)) return `model:${String(fields.turn || '1')}`;
-  return phase || 'progress';
+  /* 非工具阶段全部并入单一 status 桶:运行中只有一行状态,原地更新(CC/DSH 金标准),
+     内部阶段不再逐条堆成 Think 行。 */
+  return 'status';
 }
 
 function renderConversationProgress(record: Record<string, unknown>) {
@@ -1556,6 +2631,12 @@ function renderConversationProgress(record: Record<string, unknown>) {
       ? record.fields as Record<string, string> : {};
     appendLiveStreamText(ConversationControl.decodeChunkBlob(fields));
     return; // 正文增量不是活动行，不进 records。
+  }
+  if (String(record.phase || '') === 'reasoning_chunk') {
+    const fields = record.fields && typeof record.fields === 'object'
+      ? record.fields as Record<string, string> : {};
+    appendLiveReasoningText(ConversationControl.decodeChunkBlob(fields));
+    return; // 思考流增量同样不进 records，画成 Think 行。
   }
   pendingConversation.records.set(progressKey(record), record);
   followIfNearBottom(pendingConversation.body, renderPendingBody);
@@ -1595,7 +2676,7 @@ function renderPendingBody() {
       pending.nodes.delete(key);
     }
   }
-  pending.body.replaceChildren(...els, ...renderLiveStreamNode());
+  pending.body.replaceChildren(...els, ...renderLiveReasoningNode(), ...renderLiveStreamNode());
 }
 
 /* 流式正文：边收边画（纯文本 pre-wrap），回合完成后 openConversation 用
@@ -1611,6 +2692,16 @@ function renderLiveStreamNode(): Element[] {
   }
   pending.streamNode.textContent = pending.streamText;
   return [pending.streamNode];
+}
+
+/* 思考流：DSH Think 行边想边画（running 态摘要跟随最后一行）。模型不吐
+   reasoning 时整个节点不出现，与没有思考流的行为完全一致。 */
+function renderLiveReasoningNode(): Element[] {
+  const pending = pendingConversation;
+  if (!pending || !pending.reasoningText) return [];
+  const node = DshChat.thinkNode(pending.reasoningText, true) as HTMLElement;
+  pending.reasoningNode = node;
+  return [node];
 }
 
 const SCROLL_FOLLOW_THRESHOLD_PX = 48;
@@ -1684,6 +2775,13 @@ function appendLiveStreamText(text: string) {
   followIfNearBottom(pending.body, renderPendingBody);
 }
 
+function appendLiveReasoningText(text: string) {
+  const pending = pendingConversation;
+  if (!pending || !text) return;
+  pending.reasoningText += text;
+  followIfNearBottom(pending.body, renderPendingBody);
+}
+
 /* 作曲家忙态：发送钮变停止钮（DSH InputBar 同款形态）。
    isRunning=false 时恢复发送钮并清掉流式残留状态。 */
 function setComposerRunningState(running: boolean) {
@@ -1735,17 +2833,6 @@ document.getElementById('composer-form')?.querySelector('button[type="submit"]')
   })();
 });
 
-document.getElementById('session-log')?.addEventListener('click', async () => {
-  if (!activeConversationId) return;
-  const button = document.getElementById('session-log') as HTMLButtonElement | null;
-  if (button) button.disabled = true;
-  try {
-    await Data.exportConversation(activeConversationId);
-  } finally {
-    if (button) button.disabled = false;
-  }
-});
-
 document.querySelectorAll('form.dshw-input-form').forEach(form => {
   const ta = form.querySelector<HTMLTextAreaElement>('textarea');
   if (ta) {
@@ -1786,12 +2873,21 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
     const textarea = form.querySelector<HTMLTextAreaElement>('textarea');
     const question = textarea?.value.trim() || '';
     if (!textarea || !question) { textarea?.focus(); return; }
+    if (!activeProjectRoot) {
+      renderProjectGate();
+      return;
+    }
     /* 忙态下 Enter = 插话（steer）：写入 durable inbox，下一轮即携带。
        还没拿到 session id 时诚实拒绝，不假装已送达。 */
     if (studioComposerBusy) {
       await steerActiveConversation(question, textarea);
       return;
     }
+
+    const attachmentPaths = [...composerAttachments];
+    const requestQuestion = attachmentPaths.length
+      ? `${question}\n\n附件：\n${attachmentPaths.map((filePath) => `- ${filePath}`).join('\n')}`
+      : question;
 
     const stream = document.getElementById('stream');
     if (!stream) return;
@@ -1801,10 +2897,9 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
       flow.className = 'dsh-flow';
       stream.replaceChildren(...(stream.querySelector('.dshw-blank, .view-empty') ? [] : [...stream.children]), flow);
     }
-    flow.appendChild(DshChat.userNode(question));
+    flow.appendChild(DshChat.userNode(requestQuestion));
     const pending = document.createElement('div');
     pending.className = 'dsh-assistant';
-    pending.setAttribute('data-dsh-time-root', 'true');
     const pendingBody = document.createElement('div');
     pendingBody.className = 'dsh-assistant-body';
     pendingBody.appendChild(DshChat.liveActivityNode({ phase: 'runtime_boot', fields: {} }));
@@ -1819,15 +2914,15 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
     setComposerRunningState(true);
     startPendingClock(pendingBody);
     const requestId = globalThis.crypto?.randomUUID?.() || `conversation-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    pendingConversation = { requestId, body: pendingBody, records: new Map(), nodes: new Map(), agentSessionId: null, streamText: '', streamNode: null };
+    pendingConversation = { requestId, body: pendingBody, records: new Map(), nodes: new Map(), agentSessionId: null, streamText: '', streamNode: null, reasoningText: '', reasoningNode: null };
     renderConversationProgress({ phase: 'runtime_boot', fields: {} });
     try {
       const response = await Data.sendConversation(
         activeConversationId,
-        question,
+        requestQuestion,
         composerPreset,
         requestId,
-        composerWorkspace || undefined,
+        activeProjectRoot,
         composerStyle,
         pendingPermissionChoice || undefined,
       );
@@ -1835,6 +2930,8 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
       pendingPermissionAsk = null;
       renderPermissionAsk();
       if (!response?.ok || !response.conversationId) throw new Error(response?.error || '这次没有答完。');
+      composerAttachments = [];
+      renderComposerAttachments();
       activeConversationId = String(response.conversationId);
       /* 命令结算的副作用：/permission 落芯片，/model 刷新目录标签 */
       const command = (response as { command?: { type?: string; preset?: string } }).command;
@@ -1852,10 +2949,6 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
       if (awaiting.awaitingUserInput && awaiting.pendingInput?.kind === 'permission' && awaiting.pendingInput.tool) {
         pendingPermissionAsk = { tool: String(awaiting.pendingInput.tool) };
         renderPermissionAsk();
-      }
-      if ((response as { command?: { type?: string; path?: string } }).command?.type === 'cwd' && typeof (response as { command?: { path?: string } }).command?.path === 'string') {
-        composerWorkspace = String((response as { command?: { path?: string } }).command!.path);
-        renderWorkspaceChip();
       }
       await openConversation(activeConversationId);
       await renderSidebar();
@@ -1897,7 +2990,14 @@ async function boot(initialView: string) {
   }
   const list = await Data.conversations();
   if (shell.dataset.view !== 'chat') return;
-  if (list.length) await openConversation(list[0].id);
+  if (!activeProjectRoot) {
+    renderProjectGate();
+    return;
+  }
+  const recent = list.find((conversation) =>
+    normalizedProjectRoot((conversation as { workspaceRoot?: string }).workspaceRoot)
+      === normalizedProjectRoot(activeProjectRoot));
+  if (recent) await openConversation(recent.id);
   else startNewChat();
 }
 
@@ -1905,28 +3005,22 @@ async function boot(initialView: string) {
    不新建记录——记录在第一次真的问出去之后才产生。 */
 function startNewChat() {
   activeConversationId = null;
+  activeConversationTurnCount = 0;
   activeConversationTab = 'chat';
-  // 新线程不继承上一线程的芯片工作区：未指定 = 跟随默认（Codex 新线程语义）。
-  composerWorkspace = '';
-  renderWorkspaceChip();
+  renderProjectGate();
+  if (!activeProjectRoot) return;
   document.querySelectorAll('#side-convos .side-item').forEach((n) => n.classList.remove('is-on'));
   const title = document.getElementById('chat-title');
   if (title) title.textContent = '新对话';
+  projectEnvironment = null;
+  renderProjectGate();
   const preview = document.getElementById('chat-source-preview');
   if (preview) preview.hidden = true;
-  const contextTagLabel = document.getElementById('mp-context-tag-label');
-  if (contextTagLabel) contextTagLabel.textContent = 'Magic Pointer';
   const peek = document.getElementById('chat-peek');
   if (peek) { peek.hidden = true; }
   const stream = document.getElementById('stream');
   if (stream) {
-    stream.innerHTML = Data.isLive()
-      ? `<div class="dshw-blank">
-           <p>晃动鼠标，或者划过一段文字。</p>
-           <p class="sub">它会出现在指针旁边，这里同步显示。</p>
-         </div>`
-      : `<div class="dshw-blank"><p>还没有对话。</p>
-           <p class="sub">在 Electron 里运行时，这里显示的是真实记录。</p></div>`;
+    stream.innerHTML = '<div class="dshw-blank" aria-hidden="true"></div>';
   }
   renderStatsLine([]);
   const trajectory = document.getElementById('trajectory');
@@ -1945,7 +3039,10 @@ function startNewChat() {
   textarea?.focus();
 }
 
-document.getElementById('new-chat')?.addEventListener('click', startNewChat);
+document.getElementById('nav-new-chat')?.addEventListener('click', () => {
+  setProductMode('walker');
+  startNewChat();
+});
 
 /* ============================================================
    收藏箱：悬停图片 1 秒 → 视觉模型摘要浮层
@@ -2055,14 +3152,11 @@ document.addEventListener('mouseout', (e) => {
 });
 
 const initialView = studioShell.normalizeView(new URLSearchParams(location.search).get('view'));
-void boot(initialView);
+void boot(initialView === 'chat' && productMode === 'design' ? 'design' : initialView);
 
-// 新的一轮问答落库之后，侧栏、时间线、记忆、产物都要跟着变，
-// 不然工作室永远停在打开那一刻。
+// 新的一轮问答落库之后，项目树与产物跟着刷新。
 Data.onChange(() => {
   renderSidebar();
-  renderTimeline(true);
-  renderMemory(true);
   renderArtifacts(true);
   refreshStashSummaries();
 });

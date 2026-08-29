@@ -50,9 +50,18 @@ declare global {
     subtitle?: string;
     objectKey?: string;
     updatedAt?: number;
+    agentSessionId?: string;
+    hasPendingWork?: boolean;
     object?: MagicPointerObject | null;
     turns?: MagicPointerTurn[];
     [key: string]: unknown;
+  }
+
+  interface MagicPointerProject {
+    root: string;
+    name: string;
+    addedAt?: number;
+    lastOpenedAt?: number;
   }
 
   interface MagicPointerCard {
@@ -87,12 +96,13 @@ declare global {
 
   /* DSH 聊天渲染器（deepseek-harness 100% 移植）：classic script 暴露的全局。 */
   interface MagicPointerDshChatApi {
-    userNode(question: string, timeMs?: number): Element;
+    userNode(question: string, timeMs?: number, branch?: { conversationId: string; turnIndex: number }): Element;
     assistantTurnNode(turn: Record<string, unknown>): Element[];
     turnStatusNode(label: string): Element;
     turnErrorNode(message: string, code?: string, tone?: 'error' | 'warning'): Element;
     bindDelegation(scope?: Element): void;
     liveActivityNode(record: Record<string, unknown>): Element;
+    thinkNode(reasoning: string, running?: boolean): Element;
   }
   const DshChat: MagicPointerDshChatApi;
 
@@ -234,14 +244,39 @@ declare global {
 
   interface MagicPointerDashboardApi {
     setTheme?(theme: unknown): void;
+    startDictation?(): void;
+    stopDictation?(options?: { graceful?: boolean }): void;
+    onDictationResult?(cb: (payload: MagicPointerDictationResultPayload) => void): void;
     saveFabricSettings?(settings: unknown): Promise<unknown>;
     getFabricSettings?(): Promise<Record<string, unknown>>;
     modelsCatalog?(): Promise<{ ok?: boolean; catalog?: MagicPointerModelCatalog; error?: string }>;
     slashDirectory?(): Promise<MagicPointerSlashDirectory | { ok?: boolean; error?: string }>;
     selectModel?(model: unknown): Promise<{ ok?: boolean; model?: string; error?: string }>;
+    projects?: {
+      list(): Promise<MagicPointerProject[]>;
+      open(): Promise<{ ok?: boolean; canceled?: boolean; project?: MagicPointerProject; error?: string }>;
+      pickFiles(projectRoot: string): Promise<{ ok?: boolean; canceled?: boolean; paths?: string[]; error?: string }>;
+      tree(projectRoot: string, relativePath?: string): Promise<{ ok?: boolean; entries?: Array<{ name: string; path: string; kind: 'directory' | 'file' }>; error?: string }>;
+      readFile(projectRoot: string, relativePath: string): Promise<{ ok?: boolean; text?: string; truncated?: boolean; error?: string }>;
+      openPath(projectRoot: string, relativePath: string): Promise<{ ok?: boolean; error?: string }>;
+      openUrl(url: string): Promise<{ ok?: boolean; error?: string }>;
+      environment(projectRoot: string, conversationId?: string | null): Promise<MagicPointerProjectEnvironment>;
+      contextMenu(projectRoot: string, relativePath: string, kind: 'directory' | 'file'): Promise<{ ok?: boolean; action?: string; absolutePath?: string; error?: string }>;
+      runCommand(projectRoot: string, command: string, relativeDirectory?: string): Promise<{ ok?: boolean; code?: number | null; output?: string; error?: string }>;
+    };
+    browserView?: {
+      open(url: string, bounds: { x: number; y: number; width: number; height: number }): Promise<{ ok?: boolean; state?: MagicPointerBrowserViewState; error?: string }>;
+      resize(bounds: { x: number; y: number; width: number; height: number }): Promise<{ ok?: boolean; error?: string }>;
+      command(command: 'back' | 'forward' | 'reload' | 'stop' | 'external' | 'close'): Promise<{ ok?: boolean; state?: MagicPointerBrowserViewState; error?: string }>;
+      onState(callback: (state: MagicPointerBrowserViewState) => void): void;
+    };
+    windowControls?: {
+      command(command: string): Promise<{ ok?: boolean; version?: string; electron?: string; chrome?: string; error?: string }>;
+    };
     conversations: {
       list(): Promise<MagicPointerConversation[]>;
       get(id: unknown): Promise<MagicPointerConversation | undefined>;
+      branch?(payload: { id?: unknown; turnIndex?: unknown }): Promise<{ ok?: boolean; conversation?: MagicPointerConversation; error?: string }>;
       send(payload: { conversationId?: string | null; question: string; permissionPreset?: string; requestId?: string; workspaceRoot?: string; replyStyle?: string; permissionGrant?: string; permissionDeny?: string; permissionGrantOnce?: string }): Promise<Record<string, any>>;
       pickWorkspace?(): Promise<{ ok?: boolean; canceled?: boolean; path?: string; error?: string }>;
       export?(id: unknown): Promise<{ ok?: boolean; canceled?: boolean; path?: string; error?: string }>;
@@ -359,8 +394,24 @@ declare global {
 
   interface MagicPointerDataApi {
     isLive(): boolean;
+    projects(): Promise<MagicPointerProject[]>;
+    openProject(): Promise<{ ok?: boolean; canceled?: boolean; project?: MagicPointerProject; error?: string }>;
+    pickProjectFiles(projectRoot: string): Promise<{ ok?: boolean; canceled?: boolean; paths?: string[]; error?: string }>;
+    projectTree(projectRoot: string, relativePath?: string): Promise<{ ok?: boolean; entries?: Array<{ name: string; path: string; kind: 'directory' | 'file' }>; error?: string }>;
+    readProjectFile(projectRoot: string, relativePath: string): Promise<{ ok?: boolean; text?: string; truncated?: boolean; error?: string }>;
+    openProjectPath(projectRoot: string, relativePath: string): Promise<{ ok?: boolean; error?: string }>;
+    openProjectUrl(url: string): Promise<{ ok?: boolean; error?: string }>;
+    projectEnvironment(projectRoot: string, conversationId?: string | null): Promise<MagicPointerProjectEnvironment>;
+    showProjectContextMenu(projectRoot: string, relativePath: string, kind: 'directory' | 'file'): Promise<{ ok?: boolean; action?: string; absolutePath?: string; error?: string }>;
+    openBrowserView(url: string, bounds: { x: number; y: number; width: number; height: number }): Promise<{ ok?: boolean; state?: MagicPointerBrowserViewState; error?: string }>;
+    resizeBrowserView(bounds: { x: number; y: number; width: number; height: number }): Promise<{ ok?: boolean; error?: string }>;
+    browserViewCommand(command: 'back' | 'forward' | 'reload' | 'stop' | 'external' | 'close'): Promise<{ ok?: boolean; state?: MagicPointerBrowserViewState; error?: string }>;
+    onBrowserViewState(callback: (state: MagicPointerBrowserViewState) => void): void;
+    windowCommand(command: string): Promise<{ ok?: boolean; version?: string; electron?: string; chrome?: string; error?: string }>;
+    runProjectCommand(projectRoot: string, command: string, relativeDirectory?: string): Promise<{ ok?: boolean; code?: number | null; output?: string; error?: string }>;
     conversations(): Promise<MagicPointerConversation[]>;
     conversation(id: string): Promise<MagicPointerConversation | undefined>;
+    branchConversation(id: string, turnIndex: number): Promise<{ ok?: boolean; conversation?: MagicPointerConversation; error?: string }>;
     sendConversation(conversationId: string | null, question: string, permissionPreset?: string, requestId?: string, workspaceRoot?: string, replyStyle?: string, permission?: { grant?: string; deny?: string; once?: string }): Promise<Record<string, any>>;
     pickWorkspace(): Promise<{ ok?: boolean; canceled?: boolean; path?: string; error?: string }>;
     exportConversation(id: string): Promise<{ ok?: boolean; canceled?: boolean; path?: string; error?: string }>;
@@ -381,6 +432,34 @@ declare global {
   }
   const Data: MagicPointerDataApi;
 
+  interface MagicPointerProjectEnvironment {
+    ok?: boolean;
+    root?: string;
+    name?: string;
+    isGit?: boolean;
+    branch?: string;
+    upstream?: string;
+    ahead?: number;
+    behind?: number;
+    changedFiles?: number;
+    fileChanges?: Array<{ path: string; status: string; staged: boolean }>;
+    addedLines?: number;
+    deletedLines?: number;
+    remoteUrl?: string;
+    pullRequestUrl?: string;
+    sources?: string[];
+    error?: string;
+  }
+
+  interface MagicPointerBrowserViewState {
+    url?: string;
+    title?: string;
+    loading?: boolean;
+    canGoBack?: boolean;
+    canGoForward?: boolean;
+    error?: string;
+  }
+
   interface MagicPointerOverlayApi {
     ready(): void;
     gestureReady(token: unknown): void;
@@ -393,6 +472,7 @@ declare global {
     onHide(cb: () => void): void;
     onCursor(cb: (payload: Record<string, unknown>) => void): void;
     onGuidePoint(cb: (payload: Record<string, unknown>) => void): void;
+    onElementGhosts(cb: (payload: Record<string, unknown>) => void): void;
     guideFinished(): void;
     onGestureInput(cb: (payload: Record<string, unknown>) => void): void;
     onGestureSubmit(cb: (payload: Record<string, unknown>) => void): void;
@@ -607,6 +687,94 @@ const DEMO_STASH = [
 const Data: MagicPointerDataApi = {
   isLive: hasBridge,
 
+  async projects(): Promise<MagicPointerProject[]> {
+    if (!hasBridge()) return [];
+    const projects = await bridge()!.projects?.list?.();
+    return Array.isArray(projects) ? projects : [];
+  },
+
+  async openProject(): Promise<{ ok?: boolean; canceled?: boolean; project?: MagicPointerProject; error?: string }> {
+    const projects = bridge()?.projects;
+    if (!hasBridge() || !projects?.open) return { ok: false, error: '打开项目通道不可用。' };
+    return projects.open();
+  },
+
+  async pickProjectFiles(projectRoot: string): Promise<{ ok?: boolean; canceled?: boolean; paths?: string[]; error?: string }> {
+    const projects = bridge()?.projects;
+    if (!hasBridge() || !projects?.pickFiles) return { ok: false, error: '附件通道不可用。' };
+    return projects.pickFiles(projectRoot);
+  },
+
+  async projectTree(projectRoot: string, relativePath = '') {
+    const projects = bridge()?.projects;
+    if (!hasBridge() || !projects?.tree) return { ok: false, error: '文件树通道不可用。' };
+    return projects.tree(projectRoot, relativePath);
+  },
+
+  async readProjectFile(projectRoot: string, relativePath: string) {
+    const projects = bridge()?.projects;
+    if (!hasBridge() || !projects?.readFile) return { ok: false, error: '文件读取通道不可用。' };
+    return projects.readFile(projectRoot, relativePath);
+  },
+
+  async openProjectPath(projectRoot: string, relativePath: string) {
+    const projects = bridge()?.projects;
+    if (!hasBridge() || !projects?.openPath) return { ok: false, error: '文件打开通道不可用。' };
+    return projects.openPath(projectRoot, relativePath);
+  },
+
+  async openProjectUrl(url: string) {
+    const projects = bridge()?.projects;
+    if (!hasBridge() || !projects?.openUrl) return { ok: false, error: '浏览器通道不可用。' };
+    return projects.openUrl(url);
+  },
+
+  async projectEnvironment(projectRoot: string, conversationId?: string | null) {
+    const projects = bridge()?.projects;
+    if (!hasBridge() || !projects?.environment) return { ok: false, error: '项目环境通道不可用。' };
+    return projects.environment(projectRoot, conversationId);
+  },
+
+  async showProjectContextMenu(projectRoot: string, relativePath: string, kind: 'directory' | 'file') {
+    const projects = bridge()?.projects;
+    if (!hasBridge() || !projects?.contextMenu) return { ok: false, error: '文件操作菜单不可用。' };
+    return projects.contextMenu(projectRoot, relativePath, kind);
+  },
+
+  async openBrowserView(url: string, bounds: { x: number; y: number; width: number; height: number }) {
+    const browserView = bridge()?.browserView;
+    if (!hasBridge() || !browserView?.open) return { ok: false, error: '内置浏览器不可用。' };
+    return browserView.open(url, bounds);
+  },
+
+  async resizeBrowserView(bounds: { x: number; y: number; width: number; height: number }) {
+    const browserView = bridge()?.browserView;
+    if (!hasBridge() || !browserView?.resize) return { ok: false, error: '内置浏览器不可用。' };
+    return browserView.resize(bounds);
+  },
+
+  async browserViewCommand(command: 'back' | 'forward' | 'reload' | 'stop' | 'external' | 'close') {
+    const browserView = bridge()?.browserView;
+    if (!hasBridge() || !browserView?.command) return { ok: false, error: '内置浏览器不可用。' };
+    return browserView.command(command);
+  },
+
+  onBrowserViewState(callback: (state: MagicPointerBrowserViewState) => void) {
+    bridge()?.browserView?.onState?.(callback);
+  },
+
+  async windowCommand(command: string) {
+    const controls = bridge()?.windowControls;
+    if (!hasBridge() || !controls?.command) return { ok: false, error: '窗口命令通道不可用。' };
+    return controls.command(command);
+  },
+
+  async runProjectCommand(projectRoot: string, command: string, relativeDirectory = '') {
+    const projects = bridge()?.projects;
+    if (!hasBridge() || !projects?.runCommand) return { ok: false, error: '终端通道不可用。' };
+    return projects.runCommand(projectRoot, command, relativeDirectory);
+  },
+
   async conversations(): Promise<MagicPointerConversation[]> {
     if (!hasBridge()) return DEMO_CONVERSATIONS;
     const list = await bridge()!.conversations.list();
@@ -616,6 +784,11 @@ const Data: MagicPointerDataApi = {
   async conversation(id: string): Promise<MagicPointerConversation | undefined> {
     if (!hasBridge()) return DEMO_CONVERSATIONS.find((c) => c.id === id) || DEMO_CONVERSATIONS[0];
     return bridge()!.conversations.get(id);
+  },
+
+  async branchConversation(id: string, turnIndex: number): Promise<{ ok?: boolean; conversation?: MagicPointerConversation; error?: string }> {
+    if (!hasBridge() || !bridge()!.conversations.branch) return { ok: false, error: '分支通道不可用。' };
+    return bridge()!.conversations.branch!({ id, turnIndex });
   },
 
   async sendConversation(conversationId: string | null, question: string, permissionPreset?: string, requestId?: string, workspaceRoot?: string, replyStyle?: string, permission?: { grant?: string; deny?: string; once?: string }): Promise<Record<string, any>> {

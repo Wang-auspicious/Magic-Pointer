@@ -374,6 +374,8 @@ def _run_uia_selection_probe(
     # answering correctly*, and the caller treated that as a read failure. This
     # timeout only bounds a wedged process, so it must stay above the probe's own
     # ceiling — callers that pass their own value are responsible for the same.
+    # 区域模式的遍历天花板是 3s（C# RegionHardTimeoutMs），调用超时必须高于它。
+    probe_timeout = 6.0 if target_region is not None else timeout
     resident = _resident_probe(
         int(hwnd),
         target_point=target_point,
@@ -421,7 +423,7 @@ def _run_uia_selection_probe(
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=timeout,
+            timeout=probe_timeout,
         )
     except Exception as exc:
         return UiaProbeResult(False, {}, f"UI Automation selection probe failed: {type(exc).__name__}: {exc}")

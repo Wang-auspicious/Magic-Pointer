@@ -52,27 +52,9 @@ const INSPECT_KINDS = Object.freeze([
 ]);
 
 // 「替我说一句话」类的动词。命中就是 deliver——这些词的宾语是别人要读到的东西。
-const DELIVER_VERBS = Object.freeze([
-  '回复', '回他', '回她', '回它', '回个', '答复', '回信', '回邮件', '回消息',
-  '润色', '改写', '重写', '改得', '改成', '帮我写', '写一段', '写一句', '写个',
-  '客气点', '委婉', '正式点', '口语化', '别太硬', '语气',
-  '扩写', '压缩', '精简', '缩短',
-]);
-
-// 「讲给我听」类的动词。它们和上面撞车时优先——「解释一下这段怎么润色」问的是
 // 解释，不是要一段能直接发出去的话。
-const INSPECT_VERBS = Object.freeze([
-  '解释', '什么意思', '啥意思', '是啥', '是什么', '为什么', '为啥', '怎么理解',
-  '讲讲', '说说', '分析', '总结一下这', '看看', '画', '生成图', '出图', '地图',
-  '这是', '这个是',
-]);
-
 function recordOf(value: unknown): UnknownRecord | null {
   return value !== null && typeof value === 'object' ? (value as UnknownRecord) : null;
-}
-
-function hasAny(text: string, needles: readonly string[]): boolean {
-  return needles.some((needle) => text.includes(needle));
 }
 
 function proposalTypes(result: UnknownRecord): string[] {
@@ -93,7 +75,6 @@ function proposalTypes(result: UnknownRecord): string[] {
  */
 function answerShape(input: AnswerShapeInput = {}): AnswerShapeResult {
   const result = recordOf(input.result) ?? {};
-  const command = String(input.command || '').trim();
 
   const kind = String(result.kind || '');
   if (INSPECT_KINDS.includes(kind)) return shape('inspect', `kind=${kind}`);
@@ -110,9 +91,8 @@ function answerShape(input: AnswerShapeInput = {}): AnswerShapeResult {
 
   if (String(result.intentKind || '') === 'length_target') return shape('deliver', 'length_target');
 
-  if (hasAny(command, INSPECT_VERBS)) return shape('inspect', 'inspect verb');
-  if (hasAny(command, DELIVER_VERBS)) return shape('deliver', 'deliver verb');
-
+  // 问题文本不参与分类（关键词路由的真机教训）：deliver 只来自模型/工具
+  // 证据——提案、桥的显式声明、写回类 action、模型自报的 intentKind。
   return shape('inspect', 'default');
 }
 
@@ -129,9 +109,7 @@ function shape(name: AnswerShapeName, reason: string): AnswerShapeResult {
 }
 
 const AnswerShapePolicy = {
-  DELIVER_VERBS,
   INSPECT_KINDS,
-  INSPECT_VERBS,
   WRITE_BACK_ACTIONS,
   answerShape,
 };

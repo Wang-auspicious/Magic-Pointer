@@ -202,6 +202,11 @@ def _read_target_context(
         command="",
         target_point=target_point,
         target_region=target_region,
+        # broker 默认 2000ms：Chromium 冷树上的区域遍历（6000 节点上限）
+        # 首跑就要 1.5~2s，会被这个默认值掐死在刚要答对的时刻——真机复现：
+        # ZCode 圈两行只识别一行、句柄回放不发。OCR 兜底路径实测 5.7s，
+        # 4s 的结构化额度完全在既有延迟包络内。
+        deadline_ms=6000,
     )
     return target_window, resolution.context, resolution.trace
 
@@ -869,13 +874,65 @@ def _polyline_hits_rect(
     return False
 
 
+def _convex_hull(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """Andrew monotone chain；点数 < 3 时原样返回（退化成线段/点）。"""
+    pts = sorted(set((float(x), float(y)) for x, y in points))
+    if len(pts) < 3:
+        return pts
+
+    def cross(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    lower: list[tuple[float, float]] = []
+    for pt in pts:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], pt) <= 0:
+            lower.pop()
+        lower.append(pt)
+    upper: list[tuple[float, float]] = []
+    for pt in reversed(pts):
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], pt) <= 0:
+            upper.pop()
+        upper.append(pt)
+    return lower[:-1] + upper[:-1]
+
+
+def _point_in_hull(point: tuple[float, float], hull: list[tuple[float, float]], tolerance: float) -> bool:
+    """点在凸包内（含 tolerance 外扩）。凸包退化（<3 顶点）时按线段/点距离算。"""
+    px, py = point
+    if len(hull) < 3:
+        for (ax, ay), (bx, by) in zip(hull, hull[1:]):
+            if _segment_hits_rect(ax, ay, bx, by, px - tolerance, py - tolerance, px + tolerance, py + tolerance):
+                return True
+        if len(hull) == 1:
+            hx, hy = hull[0]
+            return abs(hx - px) <= tolerance and abs(hy - py) <= tolerance
+        return False
+    inside = True
+    count = len(hull)
+    for index in range(count):
+        ax, ay = hull[index]
+        bx, by = hull[(index + 1) % count]
+        # 边向量叉积：所有边同侧 = 在内；允许 tolerance 的外扩
+        cross = (bx - ax) * (py - ay) - (by - ay) * (px - ax)
+        edge_len = ((bx - ax) ** 2 + (by - ay) ** 2) ** 0.5 or 1.0
+        if cross < -tolerance * edge_len:
+            inside = False
+            break
+    return inside
+
+
 def _select_region_elements_by_strokes(
     region_elements: list[dict[str, Any]],
     strokes: list[list[tuple[int, int]]],
     *,
     tolerance: float = 6.0,
 ) -> tuple[list[dict[str, Any]], list[list[int]]]:
-    """Keep only elements actually crossed by a stroke.
+    """磁铁语义：笔迹凸包罩住的元素 = 选中（穿越规则保留）。
+
+    旧规则要求笔画线物理穿过元素矩形——圈住文字时笔只擦过边缘，
+    容差一抖就漏（真机：圈两行只识别一行）。凸包统一「圈选」和
+    「下划线」：闭合圈 → 凸包是面 → 罩住的块全中；下划线 → 凸包是
+    细带 → 只有被压的行中。没有形状 if-else。
 
     Returns (selected_elements, segments) where each segment is the union
     rectangle of the elements hit by one stroke. Multi-stroke selections stay
@@ -887,6 +944,7 @@ def _select_region_elements_by_strokes(
     seen: set[str] = set()
     segments: list[list[int]] = []
     for stroke in strokes:
+        hull = _convex_hull([tuple(pt) for pt in stroke])
         stroke_rects: list[list[int]] = []
         for element in list(region_elements or [])[:64]:
             if not isinstance(element, dict):
@@ -894,7 +952,12 @@ def _select_region_elements_by_strokes(
             rect = element.get("rect")
             if not isinstance(rect, (list, tuple)) or len(rect) != 4:
                 continue
-            if not _polyline_hits_rect(stroke, list(rect), tolerance=tolerance):
+            l, t, w, h = (float(value) for value in rect)
+            cx, cy = l + w / 2.0, t + h / 2.0
+            crossed = _polyline_hits_rect(stroke, list(rect), tolerance=tolerance)
+            # 磁铁：中心在凸包内即选中；穿越规则对小元素更精确，两者取并。
+            enclosed = w > 0 and h > 0 and _point_in_hull((cx, cy), hull, tolerance)
+            if not crossed and not enclosed:
                 continue
             key = json.dumps(element, ensure_ascii=False, sort_keys=True)
             if key not in seen:
@@ -1504,6 +1567,33 @@ def _global_screen_bbox() -> tuple[int, int, int, int] | None:
     except Exception:
         pass
     return None
+
+
+def _context_with_element_handles(context: Any) -> Any:
+    """drive 通道数据：给结构化元素发语义句柄（圈选后在屏幕上回放框+标签）。
+
+    region_elements 来自 UIA 探针（text/control_type/automation_id/rect，
+    物理像素）。句柄文法见 app/perception/element_handles.py。没有结构化
+    元素（自绘应用 OCR 路径）就原样返回——不造假框。
+    """
+    if not isinstance(context, dict):
+        return context
+    artifacts = context.get("artifacts")
+    if not isinstance(artifacts, dict):
+        return context
+    elements = artifacts.get("region_elements")
+    if not isinstance(elements, list) or not elements:
+        return context
+    from app.perception.element_handles import assign_element_handles
+
+    handles = assign_element_handles(elements)
+    if not handles:
+        return context
+    artifacts = dict(artifacts)
+    artifacts["element_handles"] = handles
+    artifacts["element_handles_coordinate_space"] = "physical_screen_pixels"
+    artifacts["element_handles_format"] = "xywh"
+    return {**context, "artifacts": artifacts}
 
 
 def _structured_context_with_visual_evidence(
@@ -2389,11 +2479,13 @@ def capture_snapshot(
             else None
         ),
         "source_window": target_window,
-        "context": _structured_context_with_visual_evidence(
-            app_ctx, visual, structured_succeeded
-        ) if structured_succeeded else (
-            visual_context if visual_context is not None else (
-                None if app_ctx is None else app_ctx.to_dict()
+        "context": _context_with_element_handles(
+            _structured_context_with_visual_evidence(
+                app_ctx, visual, structured_succeeded
+            ) if structured_succeeded else (
+                visual_context if visual_context is not None else (
+                    None if app_ctx is None else app_ctx.to_dict()
+                )
             )
         ),
         "capture_path": visual["path"] if visual is not None else None,

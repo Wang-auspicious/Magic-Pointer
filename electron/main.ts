@@ -1,5 +1,6 @@
-const { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen, safeStorage, systemPreferences } = require('electron');
+const { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen, safeStorage, systemPreferences, WebContentsView } = require('electron');
 const path = require('path');
+const { pathToFileURL } = require('url');
 const { dialog } = require('electron');
 const { Menu, nativeImage, Tray } = require('electron');
 const { nativeTheme } = require('electron');
@@ -82,9 +83,15 @@ const { isTransientShell } = require('./stash_store');
 const { evaluateRule } = require('./proactive_rules');
 const { createProactiveOnceStore } = require('./proactive_once_store');
 const { createConversationStore } = require('./conversation_store');
+const { profileWorkspaceRoot } = require('./profile_workspace');
+const { conversationFailureMessage } = require('./conversation_error');
+const { listProjectDirectory, projectPath, readProjectText } = require('./project_inspector');
+const { parseGitEnvironment, sourceLinksFromConversation } = require('./project_environment');
+const { normalizeBrowserUrl, projectContextActions } = require('./browser_view_policy');
 
 let overlayWindow: InstanceType<typeof BrowserWindow> | null = null;
 let dashboardWindow: InstanceType<typeof BrowserWindow> | null = null;
+let dashboardBrowserView: InstanceType<typeof WebContentsView> | null = null;
 let onboardingWindow: InstanceType<typeof BrowserWindow> | null = null;
 let stageWindow: InstanceType<typeof BrowserWindow> | null = null;
 const overlayReadiness = new RendererReadiness();
@@ -1152,6 +1159,79 @@ function answerTextFrom(event: {
 
 // updateStage 是所有结果的必经之路，所以记录也挂在这里——
 // 别的地方再加一处，迟早会漏掉一条。
+// ── Stage↔GUI 实时同步 ─────────────────────────────────────────────
+// 提交的一瞬间 GUI 里就有这条对话（pending 占位），模型输出的每个
+// answer_chunk 流式补进同一条 turn，完成后 recordConversationTurn 只做
+// 收口更新。之前是整轮跑完才一次性入库——小窗和 GUI 两个世界。
+const stageLiveTurns = new Map<string, { conversationId: string; turnIndex: number }>();
+const stageLiveAnswers = new Map<string, string>();
+const stageLiveFlushTimers = new Map<string, NodeJS.Timeout>();
+
+function notifyConversationChanged(conversationId: string): void {
+  if (dashboardWindow && !dashboardWindow.isDestroyed()) {
+    dashboardWindow.webContents.send('conversations:turn', { id: conversationId });
+  }
+  if (companionWindow && !companionWindow.isDestroyed()) {
+    companionWindow.webContents.send('conversations:turn', { id: conversationId });
+  }
+}
+
+function beginStageLiveTurn(token: string, payload: any): void {
+  try {
+    const question = String(payload?.command || '').trim();
+    if (!question) return;
+    const entry = selectionSessions.get(token);
+    const object: any = entry ? episodeObjectForSession(entry) : {};
+    const conversation = conversations().appendTurn({
+      question,
+      answer: '',
+      outcome: '进行中',
+      workspaceRoot: profileWorkspaceRoot(ROOT) || undefined,
+      object: {
+        app: object.app || '',
+        windowTitle: object.windowTitle || '',
+        elementPath: object.snapshotId || '',
+        label: object.label || '',
+        annotatedPath: object.source?.annotatedPath || '',
+      },
+    });
+    stageLiveTurns.set(token, {
+      conversationId: conversation.id,
+      turnIndex: Math.max(0, (Array.isArray(conversation.turns) ? conversation.turns.length : 1) - 1),
+    });
+    stageLiveAnswers.set(token, '');
+    notifyConversationChanged(conversation.id);
+    log(`conversation live-start ${conversation.id} token=${token} q_len=${question.length}`);
+  } catch (error) {
+    log(`conversation live-start failed ${error instanceof Error ? error.name : 'Error'}`);
+  }
+}
+
+function appendStageLiveAnswer(token: string, b64: string): void {
+  const live = stageLiveTurns.get(token);
+  if (!live) return;
+  try {
+    const chunk = Buffer.from(String(b64 || ''), 'base64').toString('utf8');
+    if (!chunk) return;
+    const answer = (stageLiveAnswers.get(token) || '') + chunk;
+    stageLiveAnswers.set(token, answer);
+    if (stageLiveFlushTimers.has(token)) return;
+    stageLiveFlushTimers.set(token, setTimeout(() => {
+      stageLiveFlushTimers.delete(token);
+      const current = stageLiveTurns.get(token);
+      if (!current) return;
+      const result = conversations().updateTurn({
+        conversationId: current.conversationId,
+        turnIndex: current.turnIndex,
+        answer: stageLiveAnswers.get(token) || '',
+      });
+      if (result.ok) notifyConversationChanged(current.conversationId);
+    }, 300));
+  } catch (error) {
+    log(`conversation live-append failed ${error instanceof Error ? error.name : 'Error'}`);
+  }
+}
+
 function recordConversationTurn(payload: StageUpdatePayload = {}, type: string | undefined = '') {
   try {
     const token = payload.selectionSessionToken || '';
@@ -1169,13 +1249,43 @@ function recordConversationTurn(payload: StageUpdatePayload = {}, type: string |
     const object: Partial<ReturnType<typeof episodeObjectForSession>> = entry ? episodeObjectForSession(entry) : {};
 
     const result: { route?: { tier?: string }; actions?: unknown[] } = payload?.event?.result || {};
-    const conversation = conversations().appendTurn({
+    const live = stageLiveTurns.get(token || '');
+    const store = conversations();
+    const conversation = live
+      ? (() => {
+          const eventResult = (payload?.event?.result || {}) as any;
+          const updated = store.updateTurn({
+            conversationId: live.conversationId,
+            turnIndex: live.turnIndex,
+            answer,
+            outcome: type === 'ERROR' ? '失败' : (type === 'COMPLETE' ? '已完成' : String(eventResult?.route?.tier || '')),
+            artifacts: Array.isArray(eventResult?.actions)
+              ? eventResult.actions.filter((a: any) => a?.artifact).map((a: any) => ({ name: a.label || a.artifact, kind: 'file' }))
+              : undefined,
+            events: eventResult?.events,
+            trajectory: eventResult?.trajectory,
+            activities: eventResult?.activities,
+            receipts: eventResult?.receipts,
+            modelUsage: eventResult?.modelUsage,
+            usedBackend: eventResult?.usedBackend,
+            timingMs: eventResult?.timingMs,
+            thinking: eventResult?.thinking,
+          });
+          stageLiveTurns.delete(token || '');
+          stageLiveAnswers.delete(token || '');
+          return updated.conversation || null;
+        })()
+      : store.appendTurn({
       question,
       answer,
       outcome: type === 'ERROR' ? '失败' : (type === 'COMPLETE' ? '已完成' : String(result.route?.tier || '')),
       artifacts: Array.isArray(result.actions)
         ? result.actions.filter((a: any) => a?.artifact).map((a: any) => ({ name: a.label || a.artifact, kind: 'file' }))
         : [],
+      // Stage 结果绑定画像默认工作区（agent 实际跑的那个目录）：不给它挂
+      // workspace 的话，sidebar_groups 按项目分组会把它整个过滤掉——
+      // 划线问问题的对话在 GUI 里永远看不到。
+      workspaceRoot: profileWorkspaceRoot(ROOT) || undefined,
       object: {
         app: object.app || '',
         windowTitle: object.windowTitle || '',
@@ -1201,9 +1311,408 @@ ipcMain.handle('conversations:list', (event: Electron.IpcMainInvokeEvent) => {
   if (!isDashboardSender(event) && !isCompanionSender(event)) return [];
   try { return conversations().list(); } catch (_) { return []; }
 });
+ipcMain.handle('projects:list', (event: Electron.IpcMainInvokeEvent) => {
+  if (!isDashboardSender(event)) return [];
+  try { return conversations().listProjects(); } catch (_) { return []; }
+});
+ipcMain.handle('projects:open', async (event: Electron.IpcMainInvokeEvent) => {
+  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_project_sender' };
+  const parent = BrowserWindow.fromWebContents(event.sender) || dashboardWindow || undefined;
+  const picked = await dialog.showOpenDialog(parent, {
+    title: '打开项目文件夹',
+    properties: ['openDirectory'],
+  });
+  if (picked.canceled || !picked.filePaths?.length) return { ok: false, canceled: true };
+  const project = conversations().registerProject(picked.filePaths[0]);
+  return project ? { ok: true, project } : { ok: false, error: 'invalid_project_folder' };
+});
+ipcMain.handle('projects:pick-files', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_project_sender' };
+  const projectRoot = String(raw?.projectRoot || '').trim();
+  if (!projectRoot) return { ok: false, error: '请先打开项目。' };
+  const parent = BrowserWindow.fromWebContents(event.sender) || dashboardWindow || undefined;
+  const picked = await dialog.showOpenDialog(parent, {
+    title: '添加附件',
+    defaultPath: projectRoot,
+    properties: ['openFile', 'multiSelections'],
+  });
+  if (picked.canceled || !picked.filePaths?.length) return { ok: false, canceled: true };
+  return { ok: true, paths: picked.filePaths };
+});
+
+function knownProjectRoot(rawRoot: unknown): string | null {
+  const requested = path.resolve(String(rawRoot || '').trim());
+  if (!String(rawRoot || '').trim()) return null;
+  const match = conversations().listProjects().find((project: { root?: string }) =>
+    path.resolve(String(project.root || '')).toLocaleLowerCase() === requested.toLocaleLowerCase());
+  return match ? path.resolve(String(match.root || '')) : null;
+}
+
+function runGitCapture(root: string, args: string[], timeoutMs = 5000): Promise<string> {
+  return new Promise((resolve) => {
+    const child = spawn('git.exe', args, {
+      cwd: root,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let settled = false;
+    const finish = (value = '') => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value.trim());
+    };
+    const timer = setTimeout(() => {
+      try { child.kill(); } catch (_) {}
+      finish('');
+    }, timeoutMs);
+    child.stdout?.setEncoding('utf8');
+    child.stdout?.on('data', (chunk: unknown) => { stdout = (stdout + String(chunk)).slice(-512 * 1024); });
+    child.on('error', () => finish(''));
+    child.on('close', (code: number | null) => finish(code === 0 ? stdout : ''));
+  });
+}
+
+ipcMain.handle('projects:environment', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_project_sender' };
+  const root = knownProjectRoot(raw?.projectRoot);
+  if (!root) return { ok: false, error: '请先打开项目。' };
+  const [branchOutput, unstagedNumstat, stagedNumstat, remoteUrl] = await Promise.all([
+    runGitCapture(root, ['status', '--porcelain=v1', '--branch']),
+    runGitCapture(root, ['diff', '--numstat']),
+    runGitCapture(root, ['diff', '--cached', '--numstat']),
+    runGitCapture(root, ['remote', 'get-url', 'origin']),
+  ]);
+  const conversationId = String(raw?.conversationId || '').slice(0, 120);
+  const conversation = conversationId ? conversations().get(conversationId) : null;
+  return {
+    ok: true,
+    ...parseGitEnvironment({
+      root,
+      branchOutput,
+      numstatOutput: [unstagedNumstat, stagedNumstat].filter(Boolean).join('\n'),
+      remoteUrl,
+    }),
+    sources: sourceLinksFromConversation(conversation),
+  };
+});
+
+ipcMain.handle('projects:context-menu', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_project_sender' };
+  const root = knownProjectRoot(raw?.projectRoot);
+  if (!root) return { ok: false, error: '请先打开项目。' };
+  const relativePath = String(raw?.path || '').slice(0, 1000);
+  const kind = raw?.kind === 'directory' ? 'directory' : 'file';
+  let absolutePath = '';
+  try { absolutePath = projectPath(root, relativePath); } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+  const parent = BrowserWindow.fromWebContents(event.sender) || dashboardWindow || undefined;
+  return new Promise((resolve) => {
+    let resolved = false;
+    const complete = (action: string, result: Record<string, unknown> = {}) => {
+      if (resolved) return;
+      resolved = true;
+      resolve({ ok: true, action, path: relativePath, ...result });
+    };
+    const labels: Record<string, string> = {
+      preview: '预览',
+      open: kind === 'directory' ? '在文件资源管理器中打开' : '使用默认应用打开',
+      reveal: '在文件资源管理器中显示',
+      'open-in-browser': '在 Web 浏览器中打开',
+      'terminal-here': '在此处打开终端',
+      'copy-path': '复制路径',
+    };
+    const menu = Menu.buildFromTemplate(projectContextActions(kind, relativePath).map((action: string) => ({
+      label: labels[action] || action,
+      click: async () => {
+        try {
+          if (action === 'open') {
+            const error = await shell.openPath(absolutePath);
+            complete(action, error ? { error } : {});
+          } else if (action === 'reveal') {
+            shell.showItemInFolder(absolutePath);
+            complete(action);
+          } else if (action === 'open-in-browser') {
+            await shell.openExternal(pathToFileURL(absolutePath).href);
+            complete(action);
+          } else if (action === 'copy-path') {
+            clipboard.writeText(absolutePath);
+            complete(action);
+          } else {
+            complete(action, { absolutePath });
+          }
+        } catch (error) {
+          complete(action, { error: error instanceof Error ? error.message : String(error) });
+        }
+      },
+    })));
+    menu.popup({ window: parent, callback: () => {
+      if (!resolved) complete('dismissed');
+    } });
+  });
+});
+
+ipcMain.handle('projects:tree', (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_project_sender' };
+  const root = knownProjectRoot(raw?.projectRoot);
+  if (!root) return { ok: false, error: '请先打开项目。' };
+  try {
+    return { ok: true, entries: listProjectDirectory(root, String(raw?.path || '')) };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+});
+
+ipcMain.handle('projects:read-file', (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_project_sender' };
+  const root = knownProjectRoot(raw?.projectRoot);
+  if (!root) return { ok: false, error: '请先打开项目。' };
+  try {
+    return { ok: true, ...readProjectText(root, String(raw?.path || '')) };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+});
+
+ipcMain.handle('projects:open-path', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_project_sender' };
+  const root = knownProjectRoot(raw?.projectRoot);
+  if (!root) return { ok: false, error: '请先打开项目。' };
+  try {
+    const error = await shell.openPath(projectPath(root, String(raw?.path || '')));
+    return error ? { ok: false, error } : { ok: true };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+});
+
+ipcMain.handle('projects:open-url', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_project_sender' };
+  try {
+    const url = new URL(String(raw?.url || '').trim());
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return { ok: false, error: '只支持 http/https 地址。' };
+    await shell.openExternal(url.toString());
+    return { ok: true };
+  } catch {
+    return { ok: false, error: '网页地址无效。' };
+  }
+});
+
+ipcMain.handle('window:command', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_window_sender' };
+  const command = String(raw?.command || '').trim();
+  const window = BrowserWindow.fromWebContents(event.sender) || dashboardWindow;
+  if (!window || window.isDestroyed()) return { ok: false, error: 'dashboard_unavailable' };
+  try {
+    if (command === 'undo') event.sender.undo();
+    else if (command === 'redo') event.sender.redo();
+    else if (command === 'cut') event.sender.cut();
+    else if (command === 'copy') event.sender.copy();
+    else if (command === 'paste') event.sender.paste();
+    else if (command === 'select-all') event.sender.selectAll();
+    else if (command === 'zoom-in') event.sender.setZoomFactor(Math.min(2, event.sender.getZoomFactor() + 0.1));
+    else if (command === 'zoom-out') event.sender.setZoomFactor(Math.max(0.6, event.sender.getZoomFactor() - 0.1));
+    else if (command === 'zoom-reset') event.sender.setZoomFactor(1);
+    else if (command === 'fullscreen') window.setFullScreen(!window.isFullScreen());
+    else if (command === 'close-window') window.close();
+    else if (command === 'diagnostics') {
+      const error = await shell.openPath(app.getPath('logs'));
+      if (error) return { ok: false, error };
+    } else if (command === 'about') {
+      return { ok: true, version: app.getVersion(), electron: process.versions.electron, chrome: process.versions.chrome };
+    } else return { ok: false, error: 'unknown_window_command' };
+    return { ok: true, zoomFactor: event.sender.getZoomFactor(), fullscreen: window.isFullScreen() };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+});
+
+function normalizedBrowserBounds(raw: any = {}): { x: number; y: number; width: number; height: number } {
+  const content = dashboardWindow?.getContentBounds() || { width: 1320, height: 860 };
+  const x = Math.max(0, Math.min(Math.round(Number(raw?.x) || 0), content.width));
+  const y = Math.max(0, Math.min(Math.round(Number(raw?.y) || 0), content.height));
+  const width = Math.max(1, Math.min(Math.round(Number(raw?.width) || 1), Math.max(1, content.width - x)));
+  const height = Math.max(1, Math.min(Math.round(Number(raw?.height) || 1), Math.max(1, content.height - y)));
+  return { x, y, width, height };
+}
+
+function emitBrowserViewState(extra: Record<string, unknown> = {}) {
+  if (!dashboardWindow || dashboardWindow.isDestroyed()) return;
+  const webContents = dashboardBrowserView?.webContents;
+  dashboardWindow.webContents.send('browser:view-state', {
+    url: webContents && !webContents.isDestroyed() ? webContents.getURL() : '',
+    title: webContents && !webContents.isDestroyed() ? webContents.getTitle() : '',
+    canGoBack: Boolean(webContents && !webContents.isDestroyed() && webContents.navigationHistory.canGoBack()),
+    canGoForward: Boolean(webContents && !webContents.isDestroyed() && webContents.navigationHistory.canGoForward()),
+    loading: Boolean(webContents && !webContents.isDestroyed() && webContents.isLoading()),
+    ...extra,
+  });
+}
+
+function destroyDashboardBrowserView() {
+  const view = dashboardBrowserView;
+  dashboardBrowserView = null;
+  if (!view) return;
+  try { dashboardWindow?.contentView.removeChildView(view); } catch (_) {}
+  try { if (!view.webContents.isDestroyed()) view.webContents.close(); } catch (_) {}
+}
+
+function ensureDashboardBrowserView() {
+  if (dashboardBrowserView && !dashboardBrowserView.webContents.isDestroyed()) return dashboardBrowserView;
+  if (!dashboardWindow || dashboardWindow.isDestroyed()) throw new Error('dashboard_unavailable');
+  const view = new WebContentsView({
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
+      partition: 'persist:magic-pointer-browser',
+    },
+  });
+  dashboardWindow.contentView.addChildView(view);
+  dashboardBrowserView = view;
+  view.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#292927' : '#f7f6f2');
+  view.webContents.setWindowOpenHandler(({ url }: { url: string }) => {
+    try { shell.openExternal(normalizeBrowserUrl(url)); } catch (_) {}
+    return { action: 'deny' };
+  });
+  view.webContents.on('will-navigate', (event: Electron.Event, url: string) => {
+    try { normalizeBrowserUrl(url); } catch (_) { event.preventDefault(); }
+  });
+  view.webContents.on('did-start-loading', () => emitBrowserViewState({ loading: true }));
+  view.webContents.on('did-stop-loading', () => emitBrowserViewState({ loading: false }));
+  view.webContents.on('did-navigate', () => emitBrowserViewState());
+  view.webContents.on('did-navigate-in-page', () => emitBrowserViewState());
+  view.webContents.on('page-title-updated', () => emitBrowserViewState());
+  view.webContents.on('context-menu', (_event: Electron.Event, params: any) => {
+    const currentUrl = view.webContents.getURL();
+    const template: any[] = [];
+    if (params?.linkURL) {
+      template.push({
+        label: '在 Web 浏览器中打开链接',
+        click: () => { try { shell.openExternal(normalizeBrowserUrl(params.linkURL)); } catch (_) {} },
+      });
+      template.push({ label: '复制链接地址', click: () => clipboard.writeText(String(params.linkURL || '')) });
+      template.push({ type: 'separator' });
+    }
+    if (params?.selectionText) template.push({ label: '复制', role: 'copy' });
+    template.push(
+      { label: '后退', enabled: view.webContents.navigationHistory.canGoBack(), click: () => view.webContents.navigationHistory.goBack() },
+      { label: '前进', enabled: view.webContents.navigationHistory.canGoForward(), click: () => view.webContents.navigationHistory.goForward() },
+      { label: '重新加载', click: () => view.webContents.reload() },
+      { type: 'separator' },
+      { label: '在 Web 浏览器中打开当前页面', enabled: Boolean(currentUrl), click: () => { if (currentUrl) shell.openExternal(currentUrl); } },
+      { label: '复制当前页面地址', enabled: Boolean(currentUrl), click: () => clipboard.writeText(currentUrl) },
+    );
+    Menu.buildFromTemplate(template).popup({ window: dashboardWindow || undefined });
+  });
+  view.webContents.on('destroyed', () => {
+    if (dashboardBrowserView === view) dashboardBrowserView = null;
+  });
+  return view;
+}
+
+ipcMain.handle('browser:view-open', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_browser_sender' };
+  try {
+    const url = normalizeBrowserUrl(String(raw?.url || ''));
+    const view = ensureDashboardBrowserView();
+    view.setBounds(normalizedBrowserBounds(raw?.bounds));
+    await view.webContents.loadURL(url);
+    emitBrowserViewState();
+    return { ok: true, url: view.webContents.getURL() || url };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+});
+
+ipcMain.handle('browser:view-resize', (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_browser_sender' };
+  if (!dashboardBrowserView || dashboardBrowserView.webContents.isDestroyed()) return { ok: false, error: 'browser_view_closed' };
+  dashboardBrowserView.setBounds(normalizedBrowserBounds(raw?.bounds));
+  return { ok: true };
+});
+
+ipcMain.handle('browser:view-command', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_browser_sender' };
+  const view = dashboardBrowserView;
+  const command = String(raw?.command || '');
+  if (command === 'close') {
+    destroyDashboardBrowserView();
+    return { ok: true };
+  }
+  if (!view || view.webContents.isDestroyed()) return { ok: false, error: 'browser_view_closed' };
+  try {
+    if (command === 'back' && view.webContents.navigationHistory.canGoBack()) view.webContents.navigationHistory.goBack();
+    else if (command === 'forward' && view.webContents.navigationHistory.canGoForward()) view.webContents.navigationHistory.goForward();
+    else if (command === 'reload') view.webContents.reload();
+    else if (command === 'stop') view.webContents.stop();
+    else if (command === 'external') await shell.openExternal(view.webContents.getURL());
+    else return { ok: false, error: 'unknown_browser_command' };
+    emitBrowserViewState();
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+});
+
+function runProjectPowerShell(workingDirectory: string, command: string): Promise<{ ok: boolean; code?: number | null; output?: string; error?: string }> {
+  return new Promise((resolve) => {
+    const child = spawn('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', command], {
+      cwd: workingDirectory,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    const append = (current: string, chunk: unknown) => (current + String(chunk)).slice(-512 * 1024);
+    child.stdout?.setEncoding('utf8');
+    child.stderr?.setEncoding('utf8');
+    child.stdout?.on('data', (chunk: unknown) => { stdout = append(stdout, chunk); });
+    child.stderr?.on('data', (chunk: unknown) => { stderr = append(stderr, chunk); });
+    child.on('error', (error: Error) => resolve({ ok: false, error: error.message }));
+    child.on('close', (code: number | null) => resolve({
+      ok: code === 0,
+      code,
+      output: [stdout.trimEnd(), stderr.trimEnd()].filter(Boolean).join('\n'),
+      ...(code === 0 ? {} : { error: `命令退出码 ${code}` }),
+    }));
+  });
+}
+
+ipcMain.handle('projects:run-command', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_project_sender' };
+  const root = knownProjectRoot(raw?.projectRoot);
+  const command = String(raw?.command || '').trim().slice(0, 8000);
+  if (!root) return { ok: false, error: '请先打开项目。' };
+  if (!command) return { ok: false, error: '请输入命令。' };
+  try {
+    const relativeDirectory = String(raw?.path || '').trim().slice(0, 1000);
+    const workingDirectory = relativeDirectory ? projectPath(root, relativeDirectory) : root;
+    if (!fs.statSync(workingDirectory).isDirectory()) return { ok: false, error: '终端目录不是文件夹。' };
+    return runProjectPowerShell(workingDirectory, command);
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+});
 ipcMain.handle('conversations:get', (event: Electron.IpcMainInvokeEvent, id: string) => {
   if (!isDashboardSender(event) && !isCompanionSender(event)) return null;
   try { return conversations().get(id); } catch (_) { return null; }
+});
+ipcMain.handle('conversations:branch', (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_renderer' };
+  const id = String(raw?.id || '').slice(0, 120);
+  const turnIndex = Number(raw?.turnIndex);
+  try {
+    const conversation = conversations().branch(id, turnIndex);
+    if (!conversation) return { ok: false, error: 'invalid_conversation_or_turn' };
+    if (dashboardWindow && !dashboardWindow.isDestroyed()) {
+      dashboardWindow.webContents.send('conversations:turn', { id: conversation.id });
+    }
+    return { ok: true, conversation };
+  } catch (_) { return { ok: false, error: 'store_failed' }; }
 });
 ipcMain.handle('conversations:export', async (event: Electron.IpcMainInvokeEvent, id: string) => {
   if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_conversation_sender' };
@@ -1226,7 +1735,7 @@ ipcMain.handle('conversations:pick-workspace', async (event: Electron.IpcMainInv
   if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_conversation_sender' };
   const parent = BrowserWindow.fromWebContents(event.sender) || dashboardWindow || undefined;
   const picked = await dialog.showOpenDialog(parent, {
-    title: '选择编码工作区（agent 在这个目录里读写与执行）',
+    title: '选择项目文件夹（Agent 将在这里读写与执行）',
     properties: ['openDirectory'],
   });
   if (picked.canceled || !picked.filePaths?.length) return { ok: false, canceled: true };
@@ -1253,6 +1762,7 @@ ipcMain.handle('conversations:send', async (event: Electron.IpcMainInvokeEvent, 
   // Codex thread workspace_roots: an explicit chip pick moves THIS thread;
   // without one, a thread that already has a root keeps it (no global bleed).
   const effectiveWorkspaceRoot = workspaceRoot || String(existing?.workspaceRoot || '').trim();
+  if (!effectiveWorkspaceRoot) return { ok: false, error: '请先打开项目。' };
   const payload = {
     question,
     turns: Array.isArray(existing?.turns) ? existing.turns.slice(-12) : [],
@@ -1261,6 +1771,13 @@ ipcMain.handle('conversations:send', async (event: Electron.IpcMainInvokeEvent, 
     permissionPreset,
     replyStyle,
     requestId,
+    // 会话身份必须过桥：Python 侧的 agent session（断点续跑摘要/待办/取消
+    // 请求/pending work 挂靠的那条哈希链 JSONL）按它分文件。不传的话桥端
+    // 只能从空的 selection object 派生，全部普通对话塌缩成同一条 session。
+    ...(conversationId ? { conversationId } : {}),
+    ...(String(existing?.agentSessionId || '').trim()
+      ? { agentSessionId: String(existing!.agentSessionId).trim() }
+      : {}),
     ...(effectiveWorkspaceRoot ? { workspaceRoot: effectiveWorkspaceRoot } : {}),
     ...(threadGrants.length ? { permissionGrants: threadGrants } : {}),
     ...(threadDenials.length ? { permissionDenials: threadDenials } : {}),
@@ -1280,7 +1797,14 @@ ipcMain.handle('conversations:send', async (event: Electron.IpcMainInvokeEvent, 
       onComplete: (parsed: any) => {
         activeConversations.delete(requestId);
         if (!parsed?.ok || !String(parsed?.answer || '').trim()) {
-          resolve({ ok: false, error: parsed?.error || '模型没有返回内容。', usedBackend: parsed?.usedBackend, timingMs: parsed?.timingMs });
+          resolve({
+            ok: false,
+            error: conversationFailureMessage(parsed),
+            errorCode: parsed?.error || (parsed?.ok === true ? 'empty_answer' : 'missing_bridge_error'),
+            exitCode: parsed?.code,
+            usedBackend: parsed?.usedBackend,
+            timingMs: parsed?.timingMs,
+          });
           return;
         }
         const conversation = conversations().appendTurn({
@@ -1295,6 +1819,8 @@ ipcMain.handle('conversations:send', async (event: Electron.IpcMainInvokeEvent, 
           modelUsage: parsed.modelUsage && typeof parsed.modelUsage === 'object' ? parsed.modelUsage : {},
           timingMs: parsed.timingMs,
           usedBackend: parsed.usedBackend,
+          agentSessionId: parsed.agentSessionId,
+          hasPendingWork: parsed.hasPendingWork === true,
           outcome: '模型',
           object: existing?.object || {},
           workspaceRoot: effectiveWorkspaceRoot || undefined,
@@ -1667,7 +2193,11 @@ function createDashboardWindow(initialView = 'chat') {
       setImmediate(() => app.quit());
     }
   });
-  dashboardWindow.on('closed', () => { dashboardWindow = null; stopTitleBarSampling(); });
+  dashboardWindow.on('closed', () => {
+    destroyDashboardBrowserView();
+    dashboardWindow = null;
+    stopTitleBarSampling();
+  });
   return dashboardWindow;
 }
 
@@ -2428,6 +2958,45 @@ function stopDictation(surface: string | null, { graceful = false }: { graceful?
     return voiceRuntime.stop(voiceRuntime.active.requestId, { graceful, cancel: !graceful });
   }
   return stopLegacyDictation({ surface, graceful, cancel: !graceful });
+}
+
+// ── Hermes drive 回放：圈选落地后把“我看到了什么”画在屏幕上 ──
+// 结构化读取拿到的元素（语义句柄）以框+标签回放：错峰浮现 → 驻留 1s
+// → 淡出 600ms。自绘应用没有句柄就静默跳过，不造假框。overlay 是
+// click-through 的，回放期间不拦任何输入。
+let overlayGhostTimer: NodeJS.Timeout | null = null;
+let overlayGhostShownByUs = false;
+
+function replayElementGhosts(attachedSession: any, display: Electron.Display): void {
+  if (!overlayWindow || overlayWindow.isDestroyed()) return;
+  const artifacts = attachedSession?.snapshot?.context?.artifacts || {};
+  const handles = Array.isArray(artifacts.element_handles) ? artifacts.element_handles : [];
+  const { buildElementGhosts } = require('./element_ghost_policy');
+  const replay = buildElementGhosts({
+    handles,
+    displayBounds: display.bounds,
+    scaleFactor: display.scaleFactor || 1,
+  });
+  if (!replay.ghosts.length) return;
+  if (overlayGhostTimer) clearTimeout(overlayGhostTimer);
+  overlayGhostTimer = null;
+  const wasVisible = overlayWindow.isVisible();
+  overlayWindow.setBounds(display.bounds);
+  overlayWindow.showInactive();
+  overlayWindow.webContents.send('overlay:element-ghosts', replay);
+  overlayGhostShownByUs = !wasVisible;
+  const total = replay.holdMs + replay.fadeMs
+    + Math.max(...replay.ghosts.map((ghost: any) => Number(ghost.delayMs) || 0)) + 80;
+  overlayGhostTimer = setTimeout(() => {
+    overlayGhostTimer = null;
+    if (!overlayWindow || overlayWindow.isDestroyed()) return;
+    overlayWindow.webContents.send('overlay:element-ghosts', { ghosts: [] });
+    // 只收自己拉起的窗：手势/拨片还在用 overlay 时绝不替别人藏。
+    if (overlayGhostShownByUs && !overlayOwnsPointerInput && !hasActiveSelectionCapture()) {
+      overlayWindow.hide();
+    }
+    overlayGhostShownByUs = false;
+  }, total);
 }
 
 // overlay 当前覆盖的屏幕 index（避免高频轮询反复 setBounds）。
@@ -3375,6 +3944,7 @@ function beginSelectionSession(reason = 'manual', gesture: SelectionGesture | nu
           return;
         }
         log(`selection session capture done token=${entry.token} status=${attached.snapshot?.status || 'missing'} app=${attached.summary?.app || 'none'}`);
+        replayElementGhosts(attached, display);
         const frozenTarget = stageTargetForSession(laidOut);
         const mode = inputModeForReason(current.reason);
         if (gesture) {
@@ -3634,6 +4204,8 @@ if (gotLock) app.whenReady().then(() => {
   if (!app.isPackaged && dashboardCapturePath) {
     const captureView = String(process.env.MAGIC_POINTER_DASHBOARD_VIEW || 'activity');
     const captureAnchor = String(process.env.MAGIC_POINTER_DASHBOARD_CAPTURE_ANCHOR || '').trim();
+    const captureClick = String(process.env.MAGIC_POINTER_DASHBOARD_CAPTURE_CLICK || '').trim() === '1';
+    const capturePrompt = String(process.env.MAGIC_POINTER_DASHBOARD_CAPTURE_PROMPT || '').trim().slice(0, 4000);
     const captureProvenanceObjectId = String(
       process.env.MAGIC_POINTER_DASHBOARD_PROVENANCE_OBJECT_ID || '',
     ).trim();
@@ -3664,13 +4236,39 @@ if (gotLock) app.whenReady().then(() => {
             const target = document.getElementById(${JSON.stringify(captureAnchor)});
             if (!target) return false;
             target.scrollIntoView({ block: 'center', inline: 'nearest' });
+            if (${JSON.stringify(captureClick)}) target.click();
             return true;
           })()`);
-          await new Promise((resolve) => setTimeout(resolve, 300));
+          await new Promise((resolve) => setTimeout(resolve, captureClick ? 3000 : 300));
+        }
+        if (capturePrompt) {
+          await dashboardWindow.webContents.executeJavaScript(`(() => {
+            const textarea = document.querySelector('#composer-form textarea');
+            const form = document.getElementById('composer-form');
+            if (!textarea || !form) return false;
+            textarea.value = ${JSON.stringify(capturePrompt)};
+            textarea.dispatchEvent(new Event('input', { bubbles: true }));
+            form.requestSubmit();
+            return true;
+          })()`);
+          const submitDeadline = Date.now() + Math.max(5000, Math.min(
+            Number(process.env.MAGIC_POINTER_DASHBOARD_CAPTURE_SUBMIT_TIMEOUT_MS || 60000),
+            90000,
+          ));
+          while (Date.now() < submitDeadline) {
+            const busy = await dashboardWindow.webContents.executeJavaScript(
+              `document.getElementById('composer-form')?.getAttribute('aria-busy') === 'true'`,
+            );
+            if (!busy) break;
+            await new Promise((resolve) => setTimeout(resolve, 250));
+          }
+          await new Promise((resolve) => setTimeout(resolve, 700));
         }
         const image = await dashboardWindow.capturePage();
         const renderedState = await dashboardWindow.webContents.executeJavaScript(`({
           view: document.getElementById('shell')?.dataset.view || 'missing',
+          viewport: { width: innerWidth, height: innerHeight, dpr: devicePixelRatio },
+          settingsRect: (() => { const rect = document.querySelector('.dshw-settings-panel')?.getBoundingClientRect(); return rect ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height } : null; })(),
           show: typeof show,
           dashboardApi: Boolean(window.magicPointerDashboard),
           studioShell: Boolean(globalThis.StudioShell),
@@ -3824,7 +4422,9 @@ ipcMain.on('stage:set-mouse-capture', (event: Electron.IpcMainEvent, payload: an
   );
 });
 ipcMain.on('dictation:stop', (event: Electron.IpcMainEvent, payload: any) => {
-  const surface = payload?.surface === 'overlay' ? 'overlay' : payload?.surface === 'stage' ? 'stage' : null;
+  const surface = payload?.surface === 'overlay' ? 'overlay'
+    : payload?.surface === 'stage' ? 'stage'
+      : payload?.surface === 'dashboard' ? 'dashboard' : null;
   if (!surface || !isSurfaceSender(event, surface, resultTargetWindow)) return;
   stopDictation(surface, { graceful: payload?.graceful === true });
 });
@@ -3969,9 +4569,15 @@ function startLegacyDictation({ requestId, surface, contextPath, silenceMs }: {
 }
 
 ipcMain.on('dictation:start', (event: Electron.IpcMainEvent, payload: any) => {
-  const surface = payload?.surface === 'overlay' ? 'overlay' : payload?.surface === 'stage' ? 'stage' : null;
+  const surface = payload?.surface === 'overlay' ? 'overlay'
+    : payload?.surface === 'stage' ? 'stage'
+      : payload?.surface === 'dashboard' ? 'dashboard' : null;
   if (!surface || !isSurfaceSender(event, surface, resultTargetWindow)) {
     log('dictation:start rejected untrusted sender or surface');
+    return;
+  }
+  if (surface === 'dashboard') {
+    startDashboardDictation();
     return;
   }
   const selectionToken = activeSelectionSessionToken;
@@ -4005,6 +4611,27 @@ ipcMain.on('dictation:start', (event: Electron.IpcMainEvent, payload: any) => {
   }
   startStageDictation({ surface, selectionSession, selectionToken });
 });
+
+function startDashboardDictation() {
+  const surface = 'dashboard';
+  const requestId = crypto.randomUUID();
+  const silenceMs = Math.max(600, Math.min(5000, Number(fabricSettings?.interaction?.voice_silence_ms) || 1600));
+  const result = voiceRuntime?.start({
+    requestId,
+    surface,
+    contextPath: '',
+    silenceMs,
+    inputWav: !app.isPackaged && process.env.MAGIC_POINTER_VOICE_INPUT_WAV
+      ? path.resolve(process.env.MAGIC_POINTER_VOICE_INPUT_WAV) : '',
+  }) || { ok: false, error: 'voice_runtime_unavailable' };
+  if (!result.ok) {
+    safeSurfaceSend(surface, 'dictation:result', {
+      ok: false,
+      surface,
+      error: `本地语音未启动：${result.error}`,
+    });
+  }
+}
 
 function startStageDictation({ surface, selectionSession, selectionToken }: {
   surface: string | null;
@@ -4103,7 +4730,7 @@ function runPythonBridge(payload: any, scriptPath = 'scripts/electron_bridge.py'
     if (typeof options.onProgress === 'function') options.onProgress(record);
   };
   const onComplete = (parsed: any) => {
-    log(`bridge complete script=${scriptPath} ok=${parsed?.ok} error=${parsed?.error || 'none'}`);
+    log(`bridge complete script=${scriptPath} ok=${parsed?.ok} error=${parsed?.error || 'none'}${parsed?.detail ? ` detail=${String(parsed.detail).slice(0, 300)}` : ''}`);
     if (typeof options.onComplete === 'function') {
       options.onComplete(parsed);
       return;
@@ -4595,6 +5222,7 @@ function submitSelectionCommandWhenGrounded(payload: any, startedAt: number, not
   // 用户问的那句话只在这一刻存在：stage 事件流里不带它。
   // 不在这里记下来，工作室永远只能显示答案、没有问题。
   pendingQuestions.set(selectionSessionToken, String(payload?.command || '').trim());
+  beginStageLiveTurn(selectionSessionToken, payload);
   log(`stage:submit-selection-command token=${selectionSessionToken} request=${requestId} command_len=${String(enriched.command || '').length}`);
   // 本地首反馈（零模型）：感知材料里已有的「我看到了：X · N 字」先
   // 作为第一步贴到等待卡上，再让模型慢慢跑——用户立刻知道它看见的是
@@ -4617,6 +5245,9 @@ function submitSelectionCommandWhenGrounded(payload: any, startedAt: number, not
       if (!selectionSessions.isCurrentRequest(selectionSessionToken, requestId)) return;
       if (record.phase === 'loop_started' && typeof record.fields?.session === 'string' && record.fields.session && record.fields.session !== '-') {
         activeSessionAgentIds.set(selectionSessionToken, record.fields.session);
+      }
+      if (record.phase === 'answer_chunk' && typeof record.fields?.b64 === 'string' && record.fields.b64) {
+        appendStageLiveAnswer(selectionSessionToken, record.fields.b64);
       }
       const step = CardModel.phaseStep(record);
       if (!step) return;

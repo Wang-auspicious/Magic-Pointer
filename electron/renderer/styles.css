@@ -374,3 +374,44 @@ body[data-mode='observer'] * {
   font-size: 13px;
   line-height: 1.35;
 }
+
+/* ---- Hermes drive 回放：结构化元素框 + 语义句柄标签 ----
+   圈选读取完成后在目标应用上回放“Magic Pointer 此刻看到了什么”：
+   错峰浮现（45ms/个）→ 驻留 1s → 淡出 600ms → 整层移除。 */
+#element-ghosts {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 40;
+}
+.element-ghost {
+  position: absolute;
+  border: 1.5px solid rgba(224, 64, 168, 0.85);
+  border-radius: 4px;
+  background: rgba(224, 64, 168, 0.06);
+  opacity: 0;
+  animation: element-ghost-life var(--ghost-total, 1600ms) ease-out forwards;
+  animation-delay: var(--ghost-delay, 0ms);
+}
+.element-ghost-tag {
+  position: absolute;
+  top: -13px;
+  left: -1.5px;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 5px;
+  border-radius: 3px;
+  background: rgba(224, 64, 168, 0.92);
+  color: #fff;
+  font: 500 10px/15px "Segoe UI Variable", "Segoe UI", "Microsoft YaHei", sans-serif;
+}
+@keyframes element-ghost-life {
+  0% { opacity: 0; transform: scale(0.97); }
+  /* hold/fade 时序由主进程按策略下发，动画按总时长等比铺：前 6% 浮现，
+     尾段 37% 淡出，中段稳定可见。 */
+  6% { opacity: 1; transform: scale(1); }
+  63% { opacity: 1; }
+  100% { opacity: 0; }
+}

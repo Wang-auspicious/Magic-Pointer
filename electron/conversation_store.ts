@@ -58,6 +58,9 @@ interface Conversation {
   closed: boolean;
   turns?: TurnEntry[];
   workspaceRoot?: string;
+  /** 可跨重启继续的 Agent session 与其最后一个真实终态。 */
+  agentSessionId?: string;
+  hasPendingWork?: boolean;
   /** Codex thread workspace_roots：线程级绑定，追问保持，显式换才跟随。 */
   permissionGrants?: string[];
   permissionDenials?: string[];
@@ -84,6 +87,8 @@ interface TurnInput {
   timingMs?: unknown;
   usedBackend?: unknown;
   workspaceRoot?: unknown;
+  agentSessionId?: unknown;
+  hasPendingWork?: unknown;
   permissionGrant?: unknown;
   permissionDeny?: unknown;
 }
@@ -91,6 +96,13 @@ interface TurnInput {
 interface ConversationStoreOptions {
   baseDir: string;
   now?: () => number;
+}
+
+interface ProjectRecord {
+  root: string;
+  name: string;
+  addedAt: number;
+  lastOpenedAt: number;
 }
 
 // 同一个对象的稳定标识：进程 + 窗口标题 + 元素路径。
@@ -179,7 +191,9 @@ function createConversationStore(
   },
 ) {
   const file = path.join(baseDir, 'conversations.json');
+  const projectsFile = path.join(baseDir, 'projects.json');
   let items: Conversation[] | null = null;
+  let projectItems: ProjectRecord[] | null = null;
 
   function load(): Conversation[] {
     if (items) return items;
@@ -197,6 +211,80 @@ function createConversationStore(
     const tmp = `${file}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(items || []), 'utf8');
     fs.renameSync(tmp, file);
+  }
+
+  function loadProjects(): ProjectRecord[] {
+    if (projectItems) return projectItems;
+    try {
+      const parsed: unknown = JSON.parse(fs.readFileSync(projectsFile, 'utf8'));
+      projectItems = Array.isArray(parsed)
+        ? (parsed as ProjectRecord[]).filter((project) => Boolean(String(project?.root || '').trim()))
+        : [];
+    } catch {
+      projectItems = [];
+    }
+    return projectItems;
+  }
+
+  function persistProjects(): void {
+    fs.mkdirSync(baseDir, { recursive: true });
+    const tmp = `${projectsFile}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(projectItems || []), 'utf8');
+    fs.renameSync(tmp, projectsFile);
+  }
+
+  /** 一个确定的文件夹就是一个项目。项目先于对话存在，因此单独落盘。 */
+  function registerProject(rawRoot: unknown): ProjectRecord | null {
+    const input = String(rawRoot || '').trim();
+    if (!input) return null;
+    const root = input;
+    const key = root.replace(/\\/g, '/').replace(/\/$/, '').toLocaleLowerCase();
+    const projects = loadProjects();
+    const existing = projects.find((project) => {
+      const candidate = project.root.replace(/\\/g, '/').replace(/\/$/, '').toLocaleLowerCase();
+      return candidate === key;
+    });
+    const openedAt = now();
+    if (existing) {
+      existing.lastOpenedAt = openedAt;
+      persistProjects();
+      return existing;
+    }
+    const project: ProjectRecord = {
+      root,
+      name: path.basename(path.normalize(root)) || root,
+      addedAt: openedAt,
+      lastOpenedAt: openedAt,
+    };
+    projects.unshift(project);
+    persistProjects();
+    return project;
+  }
+
+  function listProjects(): ProjectRecord[] {
+    const projects = loadProjects();
+    let imported = false;
+    for (const conversation of load()) {
+      const root = String(conversation.workspaceRoot || '').trim();
+      if (!root) continue;
+      const normalized = root;
+      const key = normalized.replace(/\\/g, '/').replace(/\/$/, '').toLocaleLowerCase();
+      if (projects.some((project) => {
+        const candidate = project.root.replace(/\\/g, '/').replace(/\/$/, '').toLocaleLowerCase();
+        return candidate === key;
+      })) continue;
+      projects.push({
+        root: normalized,
+        name: path.basename(path.normalize(normalized)) || normalized,
+        addedAt: conversation.createdAt,
+        lastOpenedAt: conversation.updatedAt,
+      });
+      imported = true;
+    }
+    if (imported) persistProjects();
+    return [...projects]
+      .sort((a, b) => b.lastOpenedAt - a.lastOpenedAt)
+      .map((project) => ({ ...project }));
   }
 
   // 一次追问接在同一条对话上；指向了别的对象就另起一条。
@@ -241,7 +329,10 @@ function createConversationStore(
       // Codex thread semantics: the thread keeps its workspace across
       // follow-ups; an explicit root on this turn moves THIS thread only.
       const explicitRoot = String(turn.workspaceRoot || '').trim();
-      if (explicitRoot) target.workspaceRoot = explicitRoot;
+      if (explicitRoot) target.workspaceRoot = registerProject(explicitRoot)?.root || explicitRoot;
+      const agentSessionId = String(turn.agentSessionId || '').trim();
+      if (agentSessionId) target.agentSessionId = agentSessionId;
+      if (typeof turn.hasPendingWork === 'boolean') target.hasPendingWork = turn.hasPendingWork;
       // 用户起过的名字不覆盖；自动标题只在未自定义时跟随最新问题。
       if (!target.titleCustom) target.title = titleFrom(turn.question);
       // CC toolPermissionDecision: a chip grant/deny joins the thread memo
@@ -274,7 +365,9 @@ function createConversationStore(
       updatedAt: at,
       closed: false,
       turns: [entry],
-      workspaceRoot: String(turn.workspaceRoot || '').trim() || undefined,
+      workspaceRoot: registerProject(turn.workspaceRoot)?.root || undefined,
+      agentSessionId: String(turn.agentSessionId || '').trim() || undefined,
+      hasPendingWork: typeof turn.hasPendingWork === 'boolean' ? turn.hasPendingWork : false,
       ...(String(turn.permissionGrant || '').trim() ? { permissionGrants: [String(turn.permissionGrant).trim()] } : {}),
       ...(String(turn.permissionDeny || '').trim() ? { permissionDenials: [String(turn.permissionDeny).trim()] } : {}),
     };
@@ -284,6 +377,56 @@ function createConversationStore(
     }
     persist();
     return created;
+  }
+
+  // Stage↔GUI 实时同步：先 appendTurn 一条「进行中」的占位 turn，读取
+  // 过程中用 updateTurn 就地补 answer/终态——不再等整轮跑完才在 GUI 出现。
+  function updateTurn(input: {
+    conversationId?: unknown;
+    turnIndex?: unknown;
+    answer?: unknown;
+    outcome?: unknown;
+    events?: unknown;
+    activities?: unknown;
+    trajectory?: unknown;
+    receipts?: unknown;
+    artifacts?: unknown;
+    modelUsage?: unknown;
+    usedBackend?: unknown;
+    timingMs?: unknown;
+    thinking?: unknown;
+  }): { ok: boolean; conversation?: Conversation } {
+    const conversations = load();
+    const target = String(input.conversationId || '').trim()
+      ? conversations.find((conversation) => conversation.id === String(input.conversationId).trim())
+      : null;
+    if (!target || !Array.isArray(target.turns) || target.turns.length === 0) {
+      return { ok: false };
+    }
+    const index = Number.isInteger(Number(input.turnIndex))
+      ? Math.max(0, Math.min(target.turns.length - 1, Number(input.turnIndex)))
+      : target.turns.length - 1;
+    const turn = target.turns[index];
+    if (!turn) return { ok: false };
+    if (input.answer !== undefined) turn.answer = String(input.answer || '').slice(0, 200000);
+    if (input.outcome !== undefined) turn.outcome = String(input.outcome || '').slice(0, 40);
+    if (Array.isArray(input.events)) turn.events = input.events.slice(0, 48);
+    if (Array.isArray(input.activities)) turn.activities = input.activities.slice(0, 96);
+    if (Array.isArray(input.trajectory)) turn.trajectory = input.trajectory.slice(0, 256);
+    if (Array.isArray(input.receipts)) turn.receipts = input.receipts.slice(0, 48);
+    if (Array.isArray(input.artifacts)) turn.artifacts = input.artifacts.slice(0, 12);
+    if (input.modelUsage && typeof input.modelUsage === 'object' && !Array.isArray(input.modelUsage)) {
+      turn.modelUsage = Object.fromEntries(Object.entries(input.modelUsage as Record<string, unknown>)
+        .filter(([, value]) => Number.isFinite(Number(value)))
+        .map(([key, value]) => [key, Number(value)]));
+    }
+    if (input.usedBackend !== undefined) turn.usedBackend = String(input.usedBackend || '');
+    if (input.thinking !== undefined) turn.thinking = String(input.thinking || '');
+    if (Number.isFinite(Number(input.timingMs))) turn.timingMs = Number(input.timingMs);
+    turn.at = now();
+    target.updatedAt = now();
+    persist();
+    return { ok: true, conversation: target };
   }
 
   // 侧栏用：只要摘要，不要把全部 turn 塞进 IPC
@@ -296,6 +439,8 @@ function createConversationStore(
       object: c.object,
       updatedAt: c.updatedAt,
       workspaceRoot: c.workspaceRoot || '',
+      agentSessionId: c.agentSessionId || '',
+      hasPendingWork: c.hasPendingWork === true,
       permissionGrants: Array.isArray(c.permissionGrants) ? c.permissionGrants : [],
       permissionDenials: Array.isArray(c.permissionDenials) ? c.permissionDenials : [],
       // 磁盘上的旧文件可能没有 turns 字段（早期版本/手改），逐条判空，
@@ -307,6 +452,44 @@ function createConversationStore(
 
   function get(id: unknown): Conversation | null {
     return load().find((conversation) => conversation.id === id) || null;
+  }
+
+  /**
+   * 从一个已经完成的回合创建真正的新对话。turnIndex 为包含式索引：
+   * 分支保留该回合及之前的上下文，但清空运行时 session / 待续状态，
+   * 避免两个对话继续写进同一个 Agent session。
+   */
+  function branch(id: unknown, turnIndex: unknown): Conversation | null {
+    const conversations = load();
+    const source = conversations.find((conversation) => conversation.id === id);
+    const index = Number(turnIndex);
+    const sourceTurns = source?.turns || [];
+    if (!source || !Number.isInteger(index) || index < 0 || index >= sourceTurns.length) return null;
+
+    const at = now();
+    const titleSuffix = ' · 分支';
+    const baseTitle = String(source.title || '未命名');
+    const title = `${baseTitle.slice(0, Math.max(1, TITLE_MAX - titleSuffix.length))}${titleSuffix}`;
+    const created: Conversation = {
+      id: `c${at}`,
+      objectKey: source.objectKey,
+      title,
+      titleCustom: true,
+      subtitle: source.subtitle,
+      object: structuredClone(source.object || {}),
+      createdAt: at,
+      updatedAt: at,
+      closed: false,
+      turns: structuredClone(sourceTurns.slice(0, index + 1)),
+      workspaceRoot: source.workspaceRoot,
+      hasPendingWork: false,
+      permissionGrants: structuredClone(source.permissionGrants || []),
+      permissionDenials: structuredClone(source.permissionDenials || []),
+    };
+    conversations.unshift(created);
+    if (conversations.length > MAX_CONVERSATIONS) conversations.length = MAX_CONVERSATIONS;
+    persist();
+    return created;
   }
 
   // 时间线按天分组；同一天里最近的在上面。
@@ -398,7 +581,22 @@ function createConversationStore(
     return { ok: true };
   }
 
-  return { appendTurn, list, get, rename, remove, timeline, memories, artifacts, clear, objectKey };
+  return {
+    appendTurn,
+    updateTurn,
+    list,
+    get,
+    branch,
+    rename,
+    remove,
+    timeline,
+    memories,
+    artifacts,
+    clear,
+    registerProject,
+    listProjects,
+    objectKey,
+  };
 }
 
 export {

@@ -103,6 +103,72 @@ assert(turnHtml.includes('已转换。'));
 assert(turnHtml.includes('class="dsh-tool"'), 'structured events must render tool rows');
 assert(turnHtml.includes('class="dsh-actions"'), 'settled answers must carry copy actions');
 
+/* ---- CC 折叠协议：叙述段 + 单行工具芯片，证据在展开里 ---- */
+const flowingTurn = DshChat.assistantTurnNode({
+  answer: '这个项目是一个 Obsidian 日记技能，包含脚本和评估用例。',
+  trajectory: [
+    { kind: 'message', turn: 1, state: 'done', text: '我先看看目录结构。' },
+    { kind: 'tool', turn: 1, callId: 'c1', name: 'search', state: 'done', text: 'obsidian-daily-log/README.md' },
+    { kind: 'message', turn: 2, state: 'done', text: '找到文件了，我读一下。' },
+    { kind: 'tool', turn: 2, callId: 'c2', name: 'read_file', state: 'error', text: 'Error calling tool (read_file): not found: README.md' },
+    { kind: 'tool', turn: 2, callId: 'c3', name: 'read_file', state: 'done', text: '# Obsidian Daily Log' },
+    { kind: 'message', turn: 3, state: 'done', text: '这个项目是一个 Obsidian 日记技能，包含脚本和评估用例。' },
+  ],
+  events: [
+    { name: 'search', arguments: { pattern: '**/*' }, result: 'obsidian-daily-log/README.md', isError: false },
+    { name: 'read_file', arguments: { path: 'README.md' }, result: 'Error calling tool (read_file): not found: README.md', isError: true },
+    { name: 'read_file', arguments: { path: 'obsidian-daily-log/README.md' }, result: '# Obsidian Daily Log', isError: false },
+  ],
+}).map(html).join('');
+assert(flowingTurn.includes('class="dsh-narration"'), 'model narration must render as visible prose');
+assert(flowingTurn.includes('我先看看目录结构。'));
+assert(!flowingTurn.includes('class="dsh-think"'),
+  'fake per-round Think rows must be gone');
+assert(!flowingTurn.includes('运行记录'),
+  'the 运行记录 N 步 cluster header must be gone');
+assert(flowingTurn.includes('class="dsh-tool-group"'),
+  'consecutive tool calls must group into one rounded container');
+assert(flowingTurn.includes('class="dsh-narration"') === true);
+// 叙述按顺序夹在工具之间：先叙述，再工具芯片，再叙述，再工具组。
+assert(flowingTurn.indexOf('我先看看目录结构。') < flowingTurn.indexOf('dsh-summary'),
+  'narration precedes the first tool chip it introduces');
+assert(flowingTurn.indexOf('找到文件了，我读一下。') > flowingTurn.indexOf('obsidian-daily-log/README.md'),
+  'the second narration comes after the first tool chip');
+assert(flowingTurn.indexOf('找到文件了，我读一下。') < flowingTurn.indexOf('dsh-tool-group'),
+  'the second narration precedes the tool group it introduces');
+// 展开证据保留：IN/OUT 在芯片展开体里。
+assert(flowingTurn.includes('dsh-io-card'), 'expanded evidence (IN/OUT) must survive');
+// 错误芯片：失败摘要可见（红），不是只靠颜色。
+assert(flowingTurn.includes('not found: README.md'));
+// 最终答案不与最后一轮叙述重复渲染。
+assert((flowingTurn.match(/>这个项目是一个 Obsidian 日记技能，包含脚本和评估用例。</g) || []).length === 1,
+  'final-round narration must not duplicate the answer (text nodes only)');
+
+/* ---- 工具组标题折叠：连续同类工具折成 "Read N files ⌄" ---- */
+const groupedReads = DshChat.assistantTurnNode({
+  answer: '读完。',
+  trajectory: Array.from({ length: 3 }, (_, index) => ({
+    kind: 'tool', turn: 1, callId: `r${index}`, name: 'read_file', state: 'done',
+    text: JSON.stringify({ path: `f${index}.md` }), result: 'x',
+  })),
+  events: Array.from({ length: 3 }, (_, index) => ({
+    name: 'read_file', arguments: { path: `f${index}.md` }, result: 'x', isError: false,
+  })),
+}).map(html).join('');
+assert(groupedReads.includes('Read 3 files'),
+  'consecutive reads must collapse into one "Read N files" group header');
+assert(groupedReads.includes('f0.md') && groupedReads.includes('f2.md'),
+  'the collapsed group still carries the per-file chips inside');
+
+/* ---- 无 trajectory 的事件降级：不再画假 Think 行 ---- */
+const eventsOnly = DshChat.assistantTurnNode({
+  answer: 'ok',
+  activities: [{ kind: 'model', turn: 1, latencyMs: 1200 }, { kind: 'model', turn: 2, latencyMs: 900 }],
+  events: [{ name: 'search', arguments: { pattern: '**/*.md' }, result: 'a.md', isError: false }],
+}).map(html).join('');
+assert(!eventsOnly.includes('dsh-think'), 'model activities without content must not become Think rows');
+assert(eventsOnly.includes('**/*.md'));
+
 const errorTurn = DshChat.assistantTurnNode({ failed: true, at: 1 }).map(html).join('');
 assert(errorTurn.includes('class="dsh-turn-error"'), 'a failed turn must render the DSH turn error row');
 assert(errorTurn.includes('class="dsh-dot"'), 'the error row leads with the red state dot');
