@@ -62,68 +62,44 @@
 }
 .mcard-origin:active { transform: scale(.97); }
 
-/* ---- 进度 ----
-   有已知进度 → 从左长出来的实条。没有 → 一条来回扫的带。
-   两者视觉上必须不一样，用户才分得清「走到 40%」和「不知道还要多久」。 */
-.mcard-rail { display: flex; flex-direction: column; gap: 7px; }
-.mbar {
-  position: relative; height: 4px; overflow: hidden;
-  border-radius: 999px; background: var(--paper-2);
-}
-.mbar > progress {
-  display: block; width: 100%; height: 100%;
-  appearance: none; border: 0; background: transparent;
-}
-.mbar > progress::-webkit-progress-bar { background: transparent; }
-.mbar > progress::-webkit-progress-value {
-  border-radius: inherit;
-  background: var(--ink);
-  transition: width .42s var(--ease-out);
-}
-.mbar > i {
-  position: absolute; inset: 0;
-  border-radius: inherit;
-  background: var(--ink);
-  transform-origin: left center;
-}
-.mbar[data-mode="indeterminate"] > i {
-  width: 100%; inset: 0 auto 0 0;
-  background: transparent;
-  box-shadow: inset -5px 0 var(--ink);
-  animation: mbar-sweep 1.45s var(--ease-in-out) infinite;
-}
-@keyframes mbar-sweep {
-  0%   { transform: translateX(-100%); }
-  100% { transform: translateX(0); }
-}
-
-.mcard-stage {
-  display: flex; align-items: baseline; gap: 8px;
-  font-size: 12.5px; color: var(--ink-2);
-}
-.mcard-now { flex: 1; }
-.mcard-pct, .mcard-elapsed {
-  font-family: var(--font-mono); font-size: 11px; font-style: normal;
-  font-variant-numeric: tabular-nums; color: var(--ink-3);
-}
-
-/* ---- 步骤：勾是动作，后面跟着的是从这个动作里读到的事实 ---- */
-.mcard-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
+/* ---- 运行进度 = 证据流（PromptRescue 逐帧复刻，Vida §5.3）----
+   ✓ 行是黑色无衬线的动作；「从这个动作里读到什么」是它下面独立的
+   → 等宽灰行。没有百分比条、没有不定量条、没有转圈——逐行长出来的
+   证据本身就是进度，百分比条从结构到样式都不存在了。 */
+.mcard-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
 .mcard-steps li {
-  display: flex; align-items: center; gap: 7px;
-  font-size: 12.5px; color: var(--ink-2);
-  animation: mstep-in .3s var(--ease-out) both;
+  display: flex; flex-direction: column; gap: 3px;
+  animation: mstep-in 360ms cubic-bezier(0.32, 0.72, 0, 1) both;
 }
-@keyframes mstep-in { from { opacity: 0; transform: translateY(-3px); } }
+/* 单行入场照视频逐帧复刻：淡入 + 上浮 + 雾化（blur→clear，实测 350-400ms），
+   缓动全套统一 §6.3 实测减速曲线。 */
+@keyframes mstep-in {
+  from { opacity: 0; transform: translateY(8px); filter: blur(4px); }
+  to { opacity: 1; transform: translateY(0); filter: blur(0); }
+}
+.mstep-row { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .mstep-dot { width: 13px; height: 13px; flex: none; stroke: var(--green); fill: none; stroke-width: 2; }
 .mcard-steps li[data-state="pending"] .mstep-dot { stroke: var(--ink-4); }
-.mstep-label { flex: none; }
-.mstep-note {
-  padding: 1px 6px; border-radius: 6px;
-  background: var(--card-sunk); color: var(--ink-3);
-  font-family: var(--font-mono); font-size: 11px;
+.mstep-label {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 12.5px; line-height: 1.5; color: var(--ink);
 }
-.mstep-ms { margin-left: auto; font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-4); }
+.mstep-fact {
+  padding-left: 20px;
+  font-family: var(--font-mono); font-size: 11px; line-height: 1.5;
+  color: var(--ink-3); overflow-wrap: anywhere;
+}
+
+/* 证据流末尾一行安静的等宽小字：在做什么 + 真实秒数。进度不再靠它表达，
+   但一个两分钟的卡死和一个两秒的等待仍要分得出来（秒数必须走）。 */
+.mcard-nowline {
+  display: flex; align-items: baseline; gap: 8px;
+  font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-4);
+}
+.mcard-now { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mcard-elapsed {
+  font-style: normal; font-variant-numeric: tabular-nums;
+}
 
 /* ---- 正文 ---- */
 .mcard-prose { display: grid; gap: 9px; font-size: 14px; line-height: 1.62; }
@@ -403,11 +379,9 @@
 
 @media (prefers-reduced-motion: reduce) {
   .mcard[data-state="running"]::before,
-  .mbar[data-mode="indeterminate"] > i,
   .mimg-skeleton,
   .mimg-skeleton::after,
   .mcard-steps li,
   .mfolder, .mfile,
   .mcard-image .mimg { animation: none; }
-  .mbar[data-mode="indeterminate"] > i { width: 100%; opacity: .4; }
 }

@@ -77,21 +77,21 @@ const evil = renderCard(cards.normalizeCard({ kind: 'image', state: 'done', src:
 assert.ok(!evil.includes('javascript:'));
 
 // ---------------------------------------------------------------------------
-// 进度：有就画实条，没有就画不定量条，绝不编一个数字
+// 运行态：进度是一根条子的时代结束了。Vida §0.3/§5.3——进度就是逐行展开的
+// 证据流本身，百分比条、不定量条、百分数一个都不许出现在运行卡上。
 // ---------------------------------------------------------------------------
 const unknown = renderCard(cards.normalizeCard({ kind: 'image', state: 'running' }));
-assert.ok(unknown.includes('data-mode="indeterminate"'), '没有已知进度时要画不定量条');
+assert.ok(!unknown.includes('mbar') && !unknown.includes('progressbar'),
+  '运行卡不得出现任何进度条：证据行就是进度');
 assert.ok(!/aria-valuenow/.test(unknown), '不知道进度就不要报一个 aria 数值出去');
 
 const known = renderCard(cards.applyPatch(
   cards.normalizeCard({ kind: 'image', state: 'running', id: 'a' }),
   { progress: 0.4 },
 ));
-assert.ok(known.includes('data-mode="determinate"'));
-assert.ok(known.includes('aria-valuenow="40"'));
-assert.ok(known.includes('<progress') && known.includes('value="40"'),
-  '已知进度要交给原生 progress 属性，不能靠 CSP 会拦截的内联 style');
-assert.ok(known.includes('40%'));
+assert.ok(!known.includes('<progress') && !known.includes('%'),
+  '已知进度也不画百分比：数字条不能回来');
+assert.ok(!known.includes('mcard-rail'), '进度条容器一并删除，不留死结构');
 
 // ---------------------------------------------------------------------------
 // 「进度条走到 100% 然后就地变成图」——同一张卡，同一个 id，形状从第一帧就对
@@ -120,7 +120,7 @@ assert.ok(!early.includes('style=') && !late.includes('style='),
 for (const kind of cards.KINDS) {
   const html = renderCard(cards.normalizeCard({ kind, state: 'running' }));
   assert.ok(html.includes(`data-kind="${kind}"`), `${kind} 应当渲染出自己的形状`);
-  assert.ok(html.includes('mcard-rail'), `${kind} 运行中要有进度条`);
+  assert.ok(!html.includes('mcard-rail'), `${kind} 运行中也不许出现进度条容器`);
 }
 const weird = renderCard(cards.normalizeCard({ kind: '还没做的新卡', answer: '先当一段话' }));
 assert.ok(weird.includes('data-kind="prose"'));
@@ -128,7 +128,9 @@ assert.ok(weird.includes('先当一段话'));
 assert.strictEqual(cardRender.renderCard(null), null);
 
 // ---------------------------------------------------------------------------
-// 步骤：✓ 是动作，后面跟着的是从这个动作里读到的事实
+// 步骤：✓ 是动作，后面跟着的是从这个动作里读到的事实。
+// 照 PromptRescue 逐帧复刻：✓ 行是黑色无衬线动作，事实是它下面独立的
+// → 等宽灰行；舞台那张窄卡运行中就是证据流本体，不再藏步骤。
 // ---------------------------------------------------------------------------
 const withSteps = renderCard(cards.applyPatch(
   cards.normalizeCard({ kind: 'prose', state: 'running', id: 's1' }),
@@ -137,14 +139,17 @@ const withSteps = renderCard(cards.applyPatch(
 assert.ok(withSteps.includes('冻住了这块画面'));
 assert.ok(withSteps.includes('2950×1200'), '读到的事实要跟着动作一起显示');
 assert.ok(withSteps.includes('412ms'));
+assert.ok(withSteps.includes('mstep-row'), '✓ 动作是独立的一行');
+assert.ok(withSteps.includes('mstep-fact'), '事实是 ✓ 行下面独立的 → 行，不是标签行内的尾巴');
+assert.ok(withSteps.includes('→'), '事实行以 → 开头（§5.3 版式即语义）');
+assert.ok(!withSteps.includes('mstep-note'), '旧的行内尾巴结构必须删掉');
 
-// 胶囊很窄，运行中不铺步骤列表——但随行窗和工作室要铺
+// 舞台（capsule 密度）运行中必须铺证据流——那正是参考卡的全部内容
 const capsule = renderCard(cards.applyPatch(
   cards.normalizeCard({ kind: 'prose', state: 'running', id: 's2' }),
   { steps: [cards.phaseStep({ phase: 'structured_read' })] },
 ), { density: 'capsule' });
-assert.ok(!capsule.includes('mcard-steps'));
-assert.ok(capsule.includes('data-density="capsule"'));
+assert.ok(capsule.includes('mcard-steps'), '舞台窄卡运行中就是逐行展开的证据流，不许藏');
 
 // ---------------------------------------------------------------------------
 // 提案：预览要长得像结果，而不是像一条命令
@@ -177,13 +182,18 @@ assert.ok(cardsCss.includes('flex-wrap: wrap'),
   'real proposal items keep their existing responsive flow layout');
 assert.ok(!cardsCss.includes('grid-template-columns: repeat(3, minmax(0, 1fr))'),
   'the supplied 3×3 reference collage must not become a product grid');
-const progressStart = cardsCss.indexOf('.mbar {');
-const progressEnd = cardsCss.indexOf('.mcard-stage', progressStart);
-const progressCss = cardsCss.slice(progressStart, progressEnd);
-assert.ok(progressCss.includes('var(--ink)'),
-  'card processing feedback must use neutral graphite ink');
-assert.ok(!progressCss.includes('linear-gradient'),
-  'the disliked colored processing strip must not return in result cards');
+// 证据流排版契约（PromptRescue 逐帧 + VIDA_UI_SPEC §5.3）
+assert.ok(!cardsCss.includes('.mbar'), '百分比条的样式必须连同结构一起删干净');
+const factCss = cardsCss.slice(cardsCss.indexOf('.mstep-fact'), cardsCss.indexOf('.mstep-fact') + 420);
+assert.ok(cardsCss.includes('.mstep-fact'), '事实行要有自己的样式块');
+assert.ok(factCss.includes('var(--font-mono)'), '→ 事实行是等宽字（§5.3 版式即语义）');
+assert.ok(cardsCss.includes('cubic-bezier(0.32, 0.72, 0, 1)'),
+  '全套动效统一用实测减速曲线（§6.3，起步快收尾长无过冲）');
+assert.ok(/animation: mstep-in 360ms/.test(cardsCss), '单行入场约 360ms（逐帧实测 350-400ms）');
+assert.ok(/@keyframes mstep-in \{[^}]*blur\(/.test(cardsCss),
+  '入场带雾化淡入（视频里逐行 blur→clear）');
+assert.ok(/prefers-reduced-motion[\s\S]*mcard-steps li[^{]*\{[^}]*animation: none/.test(cardsCss),
+  'reduced motion 必须关掉逐行入场');
 
 // ---------------------------------------------------------------------------
 // 失败：要说出哪里断了，并且停在断掉的地方

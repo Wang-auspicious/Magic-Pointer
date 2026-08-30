@@ -1014,7 +1014,6 @@ button {
 }
 
   .mcard[data-state="running"]::before,
-.mbar[data-mode="indeterminate"] > i,
 .mimg-skeleton,
 .mimg-skeleton::after,
 .mcard-steps li,
@@ -1022,11 +1021,6 @@ button {
 .mfile,
 .mcard-image .mimg {
   animation: none;
-}
-
-  .mbar[data-mode="indeterminate"] > i {
-  width: 100%;
-  opacity: .4;
 }
 
   .dsh-tool[data-state='running'] .dsh-row::after,
@@ -1387,100 +1381,31 @@ button {
   transform: scale(.97);
 }
 
-.mcard-rail {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-}
-
-.mbar {
-  position: relative;
-  height: 4px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: var(--paper-2);
-}
-
-.mbar > progress {
-  display: block;
-  width: 100%;
-  height: 100%;
-  appearance: none;
-  border: 0;
-  background: transparent;
-}
-
-.mbar > progress::-webkit-progress-bar {
-  background: transparent;
-}
-
-.mbar > progress::-webkit-progress-value {
-  border-radius: inherit;
-  background: var(--ink);
-  transition: width .42s var(--ease-out);
-}
-
-.mbar > i {
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background: var(--ink);
-  transform-origin: left center;
-}
-
-.mbar[data-mode="indeterminate"] > i {
-  width: 100%;
-  inset: 0 auto 0 0;
-  background: transparent;
-  box-shadow: inset -5px 0 var(--ink);
-  animation: mbar-sweep 1.45s var(--ease-in-out) infinite;
-}
-
-@keyframes mbar-sweep {
-  0%   { transform: translateX(-100%); }
-    100% { transform: translateX(0); }
-}
-
-.mcard-stage {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  font-size: 12.5px;
-  color: var(--ink-2);
-}
-
-.mcard-now {
-  flex: 1;
-}
-
-.mcard-pct,
-.mcard-elapsed {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-style: normal;
-  font-variant-numeric: tabular-nums;
-  color: var(--ink-3);
-}
-
 .mcard-steps {
   list-style: none;
   margin: 0;
   padding: 0;
   display: grid;
-  gap: 5px;
+  gap: 10px;
 }
 
 .mcard-steps li {
   display: flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 12.5px;
-  color: var(--ink-2);
-  animation: mstep-in .3s var(--ease-out) both;
+  flex-direction: column;
+  gap: 3px;
+  animation: mstep-in 360ms cubic-bezier(0.32, 0.72, 0, 1) both;
 }
 
 @keyframes mstep-in {
-  from { opacity: 0; transform: translateY(-3px); }
+  from { opacity: 0; transform: translateY(8px); filter: blur(4px); }
+    to { opacity: 1; transform: translateY(0); filter: blur(0); }
+}
+
+.mstep-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
 }
 
 .mstep-dot {
@@ -1497,23 +1422,43 @@ button {
 }
 
 .mstep-label {
-  flex: none;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink);
 }
 
-.mstep-note {
-  padding: 1px 6px;
-  border-radius: 6px;
-  background: var(--card-sunk);
-  color: var(--ink-3);
+.mstep-fact {
+  padding-left: 20px;
   font-family: var(--font-mono);
   font-size: 11px;
+  line-height: 1.5;
+  color: var(--ink-3);
+  overflow-wrap: anywhere;
 }
 
-.mstep-ms {
-  margin-left: auto;
+.mcard-nowline {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   font-family: var(--font-mono);
   font-size: 10.5px;
   color: var(--ink-4);
+}
+
+.mcard-now {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mcard-elapsed {
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
 }
 
 .mcard-prose {

@@ -93,9 +93,10 @@ assert(!processCss.includes('rgba(134, 239, 172'),
   'the disliked green/orange/pink/blue sweep must not return');
 assert(!processCss.includes('filter: blur'),
   'transparent stage processing must not depend on a blurred rainbow layer');
-assert(css.includes(".stage-result .mcard[data-density='capsule'][data-state='running'] .mbar[data-mode='indeterminate']"));
-assert(css.includes('animation: stage-orbit-dot'),
-  'unknown progress inside the panel must use one neutral orbit dot, not a fake progress strip');
+assert(!css.includes('mbar'),
+  'progress inside the panel is the expanding evidence stream (Vida §5.3), not a percent bar');
+assert(!css.includes('stage-orbit-dot') && !css.includes('mcard-rail'),
+  'unknown progress is the expanding evidence stream now; orbit dot and rail are gone');
 assert(css.includes('width: var(--stage-work-panel-width, 560px)'));
 assert(css.includes('height: var(--stage-work-panel-height, 520px)'));
 assert(css.includes('.work-panel-scroller'));
@@ -105,8 +106,8 @@ assert(!css.includes("[data-width-tier='"));
 assert(!source.includes('completionWidthTier('),
   'answer content must never choose the panel width');
 assert(source.includes('threadPanel.dataset.turnCount = String(turns.length)'));
-assert(css.includes(".stage-thread[data-phase='finished'][data-turn-count='1'] .thread-title"),
-  'a one-turn completion must not repeat the task title under TASK FINISHED');
+assert(!css.includes("[data-phase='finished'][data-turn-count='1'] .thread-title"),
+  'on success the eyebrow retreats and the task title stays visible, exactly like the reference card header');
 assert(source.includes("threadPanel.dataset.consent = want ? 'true' : 'false'"),
   'the card must expose whether its approval footer is active');
 assert(!source.includes('consentBox.style.left ='),

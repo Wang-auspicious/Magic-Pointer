@@ -1724,6 +1724,9 @@
     const failed = turns[turns.length - 1]?.status === 'failed';
     const awaiting = turns[turns.length - 1]?.status === 'awaiting';
     const eyebrowState = pending || awaiting ? 'running' : failed ? 'failed' : 'done';
+    // 成功时眉毛行退位：完成信号由底部的绿色完成行承担（PromptRescue 的
+    // 卡顶没有状态词，绿行贴着追问条）。同一个事实不在一张卡上写两遍。
+    threadEyebrow.hidden = eyebrowState === 'done';
     threadPanel.dataset.phase = pending ? 'running' : awaiting ? 'awaiting' : failed ? 'failed' : 'finished';
     threadClose.setAttribute('aria-label', pending ? '停止' : '关闭');
     threadClose.title = pending ? '停止' : '关闭';

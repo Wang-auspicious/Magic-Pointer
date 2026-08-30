@@ -212,48 +212,37 @@ const CardRender = (() => {
   }
 
   /* ============================================================
-     进度
+     运行进度 = 证据流本身
      ----------------------------------------------------------------------------
-     有已知进度 → 一条从左长出来的实条。
-     没有       → 一条来回扫的不定量条 + 真实秒数。
-     绝不把没有的进度编成一个数字。
+     百分比条从根上删掉了（PromptRescue 逐帧：Vida 卡内部是逐行展开的
+     证据流，没有任何进度条）。唯一保留的附注是真实秒数——一个两分钟的
+     卡死和一个两秒的等待，光靠步骤行分不出来。它排成证据流末尾一行
+     安静的等宽小字，不参与进度表达。
      ============================================================ */
-  function renderRail(card: CardSpec): CardNode | null {
+  function renderNowLine(card: CardSpec): CardNode | null {
     if (card.state !== 'running') return null;
-    const determinate = Number.isFinite(card.progress);
-    const pct = determinate ? Math.round(card.progress * 100) : 0;
-    return h('div', { class: 'mcard-rail' }, [
-      h('div', {
-        class: 'mbar',
-        'data-mode': determinate ? 'determinate' : 'indeterminate',
-        role: 'progressbar',
-        'aria-valuenow': determinate ? String(pct) : null,
-        'aria-valuemin': '0',
-        'aria-valuemax': '100',
-      }, [determinate
-        ? h('progress', { max: '100', value: String(pct), 'aria-hidden': 'true' }, [])
-        : h('i', { 'aria-hidden': 'true' }, [])]),
-      h('div', { class: 'mcard-stage' }, [
-        h('span', { class: 'mcard-now' }, [card.runningLabel || '正在处理']),
-        determinate ? h('em', { class: 'mcard-pct' }, [`${pct}%`]) : null,
-        h('em', { class: 'mcard-elapsed', 'data-elapsed': '' }, []),
-      ]),
+    return h('div', { class: 'mcard-nowline' }, [
+      h('span', { class: 'mcard-now' }, [card.runningLabel || '正在处理']),
+      h('em', { class: 'mcard-elapsed', 'data-elapsed': '' }, []),
     ]);
   }
 
-  /* 走过的步骤。Vida 那条「勾是动作，跟着的是从这个动作里读到的事实」直接抄
-     过来——等待的十几秒因此在建立信任，而不是在耗人。 */
+  /* 走过的步骤，照 PromptRescue 逐帧复刻（Vida §5.3 版式即语义）：
+     ✓ 是「我做了什么」，黑色无衬线一行；「我从那个动作里读到什么」是
+     它下面独立的 → 等宽灰行。等待的十几秒因此在建立信任，而不是在耗人。 */
   function renderSteps(card: CardSpec): CardNode | null {
     const steps: any[] = card.steps || [];
     if (!steps.length) return null;
-    return h('ol', { class: 'mcard-steps' }, steps.map((s) => h('li', {
-      'data-state': s.state || 'done',
-    }, [
-      icon(s.state === 'done' ? 'ic-check' : 'ic-circle', 'mstep-dot'),
-      h('span', { class: 'mstep-label' }, [s.label || '']),
-      s.note ? h('span', { class: 'mstep-note' }, [s.note]) : null,
-      Number.isFinite(s.ms) ? h('span', { class: 'mstep-ms' }, [`${s.ms}ms`]) : null,
-    ])));
+    return h('ol', { class: 'mcard-steps' }, steps.map((s) => {
+      const facts = [s.note, Number.isFinite(s.ms) ? `${s.ms}ms` : ''].filter(Boolean);
+      return h('li', { 'data-state': s.state || 'done' }, [
+        h('span', { class: 'mstep-row' }, [
+          icon(s.state === 'done' ? 'ic-check' : 'ic-circle', 'mstep-dot'),
+          h('span', { class: 'mstep-label' }, [s.label || '']),
+        ]),
+        facts.length ? h('span', { class: 'mstep-fact' }, [`→ ${facts.join(' · ')}`]) : null,
+      ]);
+    }));
   }
 
   /* ============================================================
@@ -503,8 +492,8 @@ const CardRender = (() => {
       'data-card-id': card.id || '',
     }, [
       renderTop(card),
-      renderRail(card),
-      density === 'capsule' && card.state === 'running' ? null : renderSteps(card),
+      renderSteps(card),
+      renderNowLine(card),
       card.state === 'failed'
         ? h('p', { class: 'mcard-fail' }, [icon('ic-warn'), card.error || '这次没能完成。'])
         : null,
