@@ -267,17 +267,33 @@ const DshChat = (() => {
     return TOOL_VARIANTS[name] || 'others';
   }
 
+  /* 机器 id 不是人能读的摘要：长十六进制（任务/会话/计划 id）、空对象、
+     空串一律不配上芯片行。参考（Claude Desktop）的芯片行只有「动词 + 人话」。 */
+  function isJunkSummary(value: string): boolean {
+    const v = value.trim();
+    if (v === '' || v === '{}' || v === 'null' || v === 'undefined') return true;
+    if (/^[0-9a-f]{16,}$/i.test(v.replace(/[-_\s]/g, ''))) return true;
+    return false;
+  }
+
   function deriveSummary(variant: ToolVariant, argsRaw: string): string {
+    const candidates: string[] = [];
     let parsed: unknown;
-    try { parsed = JSON.parse(argsRaw); } catch { return firstLine(argsRaw); }
-    if (typeof parsed !== 'object' || parsed === null) return firstLine(argsRaw);
-    const args = parsed as Record<string, unknown>;
-    const picked = pickString(args, SUMMARY_KEYS[variant]);
-    if (picked !== undefined) return firstLine(picked);
-    for (const v of Object.values(args)) {
-      if (typeof v === 'string' && v !== '') return firstLine(v);
+    try {
+      parsed = JSON.parse(argsRaw);
+    } catch {
+      candidates.push(firstLine(argsRaw));
     }
-    return firstLine(argsRaw);
+    if (typeof parsed === 'object' && parsed !== null) {
+      const args = parsed as Record<string, unknown>;
+      const picked = pickString(args, SUMMARY_KEYS[variant]);
+      if (picked !== undefined) candidates.push(firstLine(picked));
+      for (const v of Object.values(args)) {
+        if (typeof v === 'string' && v !== '') candidates.push(firstLine(v));
+      }
+      candidates.push(firstLine(argsRaw));
+    }
+    return candidates.find((c) => !isJunkSummary(c)) ?? '';
   }
 
   function deriveFilePath(variant: ToolVariant, argsRaw: string): string | undefined {
@@ -360,14 +376,20 @@ const DshChat = (() => {
       : result.interrupted ? 'stopped'
         : result.isError ? 'error' : 'ok';
     const base = argsRaw === '' ? name : deriveSummary(variant, argsRaw);
-    const summary = variant === 'others' && name && argsRaw !== '' ? `${name} · ${base}` : base;
+    // 认不出的工具直接用自己的名字当标题——「Tool call ·」这种前缀和
+    // 「· {}」这种尾巴都不提供任何信息，只是把行撑长。
+    const title = TOOL_TITLES[name] ?? (variant === 'others' ? name : VARIANT_TITLES[variant]);
+    const summary = variant === 'others' ? '' : base;
     const output = result === undefined || !result.text ? null : result.text;
-    const errorSummary = state === 'error' && output !== null ? firstLine(output) : null;
+    // 报错只露一行短的：完整原文在折叠体里，展开才见。整段红字倾倒会把
+    // 流变成事故现场。
+    const rawError = state === 'error' && output !== null ? firstLine(output) : null;
+    const errorSummary = rawError !== null && rawError.length > 60 ? `${rawError.slice(0, 60)}…` : rawError;
     return {
       variant,
       name,
       argsRaw,
-      title: TOOL_TITLES[name] ?? VARIANT_TITLES[variant],
+      title,
       summary,
       filePath: deriveFilePath(variant, argsRaw),
       body: deriveBody(variant, argsRaw),
@@ -593,11 +615,16 @@ const DshChat = (() => {
   }
 
   /* 连续同类读取/搜索折成一条组头（CC "Read 2 files" 契约）。 */
-  function collapsedGroupNode(titleVerb: string, chips: TurnChip[]): DshNode {
-    const root = h('details', { class: 'dsh-tool-group dsh-tool-group-folded' });
+  /* 连续的一串工具调用 = 参考里那种「整合起来的条」：组头一行语义标签 +
+     chevron，默认展开露出组内芯片，点击收起只留组头。混合工具也成组——
+     参考的 Found files, ran a command 就是一个混合串，按工具种类硬拆是
+     上一版模仿不到位的原因。 */
+  function toolGroupNode(chips: TurnChip[]): DshNode {
+    const root = h('details', { class: 'dsh-tool-group' });
+    root.setAttribute('open', '');
     const summary = h('summary', { class: 'dsh-tool-group-header' });
     const label = h('span', { class: 'dsh-tool-group-title' });
-    attach(label, `${titleVerb} ${chips.length} files`);
+    attach(label, toolGroupLabel(chips));
     const chev = h('span', { class: 'dsh-tool-group-chev', 'aria-hidden': 'true' });
     attach(chev, icon('chev', 14));
     attach(summary, label);
@@ -609,30 +636,26 @@ const DshChat = (() => {
     return root;
   }
 
-  function openGroupNode(chips: TurnChip[]): DshNode {
-    const root = h('div', { class: 'dsh-tool-group' });
-    chips.forEach((chip) => attach(root, chipNode(chip)));
-    return root;
-  }
-
-  function chipGroupTitle(chips: TurnChip[]): string {
-    const names = new Set(chips.map((chip) => chip.name));
-    if (names.size === 1) {
-      const variant = classifyTool(chips[0].name);
-      return VARIANT_TITLES[variant];
+  function toolGroupLabel(chips: TurnChip[]): string {
+    const n = chips.length;
+    const variants = new Set(chips.map((chip) => classifyTool(chip.name)));
+    if (variants.size === 1) {
+      const variant = chips.length ? classifyTool(chips[0].name) : 'others';
+      switch (variant) {
+        case 'read': return `Read ${n} files`;
+        case 'bash': return `Ran ${n} commands`;
+        case 'search': return `Searched ${n} times`;
+        case 'write': return `Wrote ${n} files`;
+        case 'edit': return `Edited ${n} files`;
+        default: break;
+      }
     }
-    return '执行';
-  }
-
-  function isFileFetchRun(chips: TurnChip[]): boolean {
-    return chips.length >= 3
-      && chips.every((chip) => classifyTool(chip.name) === 'read');
+    return `Ran ${n} tools`;
   }
 
   function chipRunNode(chips: TurnChip[]): DshNode {
-    if (isFileFetchRun(chips)) return collapsedGroupNode(chipGroupTitle(chips), chips);
-    if (chips.length >= 2) return openGroupNode(chips);
-    return chipNode(chips[0]);
+    if (chips.length < 2) return chipNode(chips[0]);
+    return toolGroupNode(chips);
   }
 
   function formatRunMeta(ms: number, tokens: number | null): string {

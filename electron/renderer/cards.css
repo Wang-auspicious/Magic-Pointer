@@ -90,6 +90,28 @@
   color: var(--ink-3); overflow-wrap: anywhere;
 }
 
+/* 准备阶段折叠组与终态过程折叠组：一行带头，展开才见全表。
+   summary 的默认三角摘掉，行高跟芯片一致。 */
+.mcard-steps-plumbing > summary,
+.mcard-process-folded > summary {
+  display: flex; align-items: center; gap: 6px;
+  padding: 2px 0;
+  list-style: none; cursor: pointer;
+  font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-3);
+  user-select: none;
+}
+.mcard-steps-plumbing > summary::-webkit-details-marker,
+.mcard-process-folded > summary::-webkit-details-marker { display: none; }
+.mcard-steps-plumbing[open] > summary,
+.mcard-process-folded[open] > summary { margin-bottom: 6px; }
+.mcard-steps-plumbing > summary::before,
+.mcard-process-folded > summary::before {
+  content: '⌄'; font-size: 11px; line-height: 1;
+  transition: transform .18s var(--ease-out);
+}
+.mcard-steps-plumbing:not([open]) > summary::before,
+.mcard-process-folded:not([open]) > summary::before { transform: rotate(-90deg); }
+
 /* 证据流末尾一行安静的等宽小字：在做什么 + 真实秒数。进度不再靠它表达，
    但一个两分钟的卡死和一个两秒的等待仍要分得出来（秒数必须走）。 */
 .mcard-nowline {

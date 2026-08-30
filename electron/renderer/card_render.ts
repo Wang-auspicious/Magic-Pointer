@@ -229,20 +229,50 @@ const CardRender = (() => {
 
   /* 走过的步骤，照 PromptRescue 逐帧复刻（Vida §5.3 版式即语义）：
      ✓ 是「我做了什么」，黑色无衬线一行；「我从那个动作里读到什么」是
-     它下面独立的 → 等宽灰行。等待的十几秒因此在建立信任，而不是在耗人。 */
-  function renderSteps(card: CardSpec): CardNode | null {
-    const steps: any[] = card.steps || [];
-    if (!steps.length) return null;
+     它下面独立的 → 等宽灰行。等待的十几秒因此在建立信任，而不是在耗人。
+     毫秒不上屏：那是机器的账，不是人要读的字。 */
+  function stepRows(steps: any[]): CardNode {
     return h('ol', { class: 'mcard-steps' }, steps.map((s) => {
-      const facts = [s.note, Number.isFinite(s.ms) ? `${s.ms}ms` : ''].filter(Boolean);
+      const fact = typeof s.note === 'string' ? s.note.trim() : '';
       return h('li', { 'data-state': s.state || 'done' }, [
         h('span', { class: 'mstep-row' }, [
           icon(s.state === 'done' ? 'ic-check' : 'ic-circle', 'mstep-dot'),
           h('span', { class: 'mstep-label' }, [s.label || '']),
         ]),
-        facts.length ? h('span', { class: 'mstep-fact' }, [`→ ${facts.join(' · ')}`]) : null,
+        fact ? h('span', { class: 'mstep-fact' }, [`→ ${fact}`]) : null,
       ]);
     }));
+  }
+
+  /* 感知/准备流水账（冻结、枚举窗口、凑上下文……）收进一个折叠组一行带过；
+     用户关心的是动作（交给模型、做完了、回读确认），那些保持展开。 */
+  function renderSteps(card: CardSpec): CardNode | null {
+    const steps: any[] = card.steps || [];
+    if (!steps.length) return null;
+    const model: any = (globalThis as { CardModel?: unknown }).CardModel;
+    const isPlumbing = typeof model?.isPlumbingPhase === 'function'
+      ? (phase: unknown) => model.isPlumbingPhase(phase)
+      : () => false;
+    const plumbing = steps.filter((s) => isPlumbing(s.phase));
+    const actions = steps.filter((s) => !isPlumbing(s.phase));
+    if (!plumbing.length) return stepRows(actions.length ? actions : steps);
+    return h('div', { class: 'mcard-steps-wrap' }, [
+      h('details', { class: 'mcard-steps-plumbing' }, [
+        h('summary', {}, [`准备阶段 · ${plumbing.length} 步`]),
+        stepRows(plumbing),
+      ]),
+      actions.length ? stepRows(actions) : null,
+    ]);
+  }
+
+  /* 终态不是把过程扔掉：答案出来后整个过程收进这个默认折叠的组，想查就展开。
+     （用户裁决：出答案是折叠起来，而不是消失。） */
+  function renderFoldedProcess(steps: any[] | undefined | null): CardNode | null {
+    if (!Array.isArray(steps) || !steps.length) return null;
+    return h('details', { class: 'mcard-process-folded' }, [
+      h('summary', {}, [`过程 · ${steps.length} 步`]),
+      stepRows(steps),
+    ]);
   }
 
   /* ============================================================
@@ -502,13 +532,15 @@ const CardRender = (() => {
     ]);
   }
 
-  return { renderCard, cardElapsedText, esc, safeSrc, markdown, inlineMd, h, KIND_FACE };
+  return { renderCard, renderFoldedProcess, cardElapsedText, esc, safeSrc, markdown, inlineMd, h, KIND_FACE };
 })();
 
 // 渲染层用 renderCard(...)；主进程/测试 require 这个模块。
 // 这两个名字是 classic-script 跨文件全局 API，定义文件本身不再引用。
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const renderCard = CardRender.renderCard;
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const renderFoldedProcess = CardRender.renderFoldedProcess;
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const cardElapsedText = CardRender.cardElapsedText;
 

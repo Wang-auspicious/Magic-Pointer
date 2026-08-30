@@ -109,6 +109,20 @@ const CardModel = (() => {
     total: '完成',
   });
 
+
+  // 感知/准备阶段的流水账（冻结、枚举窗口、凑上下文……）。它们是真实发生的，
+  // 但不是用户关心的「动作」——在卡上收进一个折叠组，一行带过，展开才见全表。
+  const PLUMBING_PHASES: ReadonlySet<string> = new Set([
+    'perceived', 'payload_read', 'settings_loaded', 'windows_enumerated',
+    'pixels_frozen', 'structured_read', 'context_from_snapshot',
+    'enrich_screen_region', 'route_recipe', 'loop_started', 'backend_recovery',
+    'total',
+  ]);
+
+  function isPlumbingPhase(phase: unknown): boolean {
+    return PLUMBING_PHASES.has(String(phase || ''));
+  }
+
   // 常规一次问答会经过的阶段数。用来把「已完成 N 步」换算成进度。
   // 不是所有路线都走满，所以它是估计值——因此进度条**不允许倒退**，
   // 也不允许在没到终态时显示 100%。
@@ -307,6 +321,7 @@ const CardModel = (() => {
     STATES,
     LEGACY_KIND,
     PHASE_TEXT,
+    isPlumbingPhase,
     TYPICAL_PHASES,
     normalizeKind,
     normalizeCard,

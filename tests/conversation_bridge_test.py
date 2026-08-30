@@ -626,3 +626,49 @@ def test_slash_skill_load_bumps_usage(tmp_path, monkeypatch) -> None:
     usage_file = user_data / "skill-usage.json"
     assert usage_file.is_file(), "斜杠加载技能应落使用计数"
     assert json.loads(usage_file.read_text(encoding="utf-8"))["demo-skill"]["count"] == 1
+
+def test_history_text_carries_scene_evidence() -> None:
+    turns = [
+        {
+            "question": "这是啥呀。",
+            "answer": "是一份实测分析笔记。",
+            "evidence": {
+                "label": "批注段",
+                "capturePath": "D:/x/screen-abc123.png",
+                "annotatedPath": "D:/x/screen-abc123.pointer.png",
+                "contentDigest": "卡片动画逐帧实测笔记" * 40,
+            },
+        },
+        {"question": "后来呢？", "answer": "后来没有下文。"},
+    ]
+    history = conversation_bridge._history_text(turns, {})
+    assert "第1轮现场证据" in history
+    assert "对象：批注段" in history
+    assert "screen-abc123.png" in history
+    assert "当时读取到的内容" in history
+    # 没有证据的轮次不添乱
+    assert "后来没有下文" in history
+    assert history.count("现场证据") == 1
+
+
+def test_strip_options_tail_removes_numbered_list_only() -> None:
+    question = "是否允许执行 Get-Clipboard?"
+    options = ["仅这一次允许", "本会话总是允许Bash命令", "拒绝"]
+    result = {
+        "ok": True,
+        "answer": question + "\n\n" + "\n".join(f"{i}. {o}" for i, o in enumerate(options, 1)),
+        "awaitingUserInput": True,
+        "pendingInput": {"question": question, "options": options},
+    }
+    stripped = conversation_bridge._strip_options_tail(result)
+    assert stripped["answer"] == question, "编号选项尾巴必须裁掉，审批卡来接"
+    assert stripped["pendingInput"]["options"] == options, "结构化选项原样保留"
+
+
+def test_strip_options_tail_leaves_real_content_alone() -> None:
+    result = {
+        "ok": True,
+        "answer": "步骤如下：\n\n1. 先读文件\n2. 再改代码",
+        "pendingInput": None,
+    }
+    assert conversation_bridge._strip_options_tail(result)["answer"].endswith("再改代码")

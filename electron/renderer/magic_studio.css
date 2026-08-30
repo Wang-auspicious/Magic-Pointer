@@ -701,6 +701,42 @@ svg { shape-rendering: geometricPrecision; }
   background: var(--mp-surface);
   box-shadow: 0 1px 2px rgba(20, 20, 19, .035);
 }
+/* 审批卡：从 composer 上沿长出来的那张卡。底边与 composer 顶边贴合
+   （无下圆角、负 margin 压住接缝），出现时自下而上生长（实测减速曲线）。 */
+.dshw-perm-ask {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: -4px;
+  padding: 12px 16px 14px;
+  border: 1px solid var(--mp-border);
+  border-bottom: 0;
+  border-radius: 14px 14px 0 0;
+  box-shadow: 0 -10px 28px -22px rgba(20, 20, 19, .38);
+  transform-origin: bottom center;
+  animation: dshw-approval-in 220ms cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+.dshw-perm-ask-question {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--mp-ink);
+}
+@keyframes dshw-approval-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scaleY(0.97);
+    filter: blur(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scaleY(1);
+    filter: blur(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dshw-perm-ask { animation: none; }
+}
 .dshw-plan-head { min-height: 36px; border-radius: 11px; color: var(--mp-ink); }
 .dshw-plan-steps { border-top-color: var(--mp-border); }
 .dshw-plan-step { color: var(--mp-ink-secondary); }

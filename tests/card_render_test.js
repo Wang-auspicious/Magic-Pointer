@@ -9,6 +9,7 @@ const cards = require('../electron/cards');
 const cardRender = require('../electron/renderer/card_render');
 const { esc, safeSrc } = cardRender;
 const cardsCss = fs.readFileSync('electron/renderer/cards.css', 'utf8');
+globalThis.CardModel = cards; // 渲染层 classic script 里它就是全局；测试里同样要挂上
 
 // renderCard 造节点不拼串——舞台不许出现 innerHTML（tests/stage_static_test.js）。
 // 这两个薄封装只为断言方便：把节点序列化回字符串。
@@ -138,7 +139,18 @@ const withSteps = renderCard(cards.applyPatch(
 ));
 assert.ok(withSteps.includes('冻住了这块画面'));
 assert.ok(withSteps.includes('2950×1200'), '读到的事实要跟着动作一起显示');
-assert.ok(withSteps.includes('412ms'));
+assert.ok(!/d+ms</.test(withSteps), '毫秒不上屏：那是机器的账，不是人要读的字');
+assert.ok(withSteps.includes('准备阶段 · 1 步'), '感知流水账收进折叠组，一行带过');
+assert.ok(withSteps.includes('mcard-steps-plumbing'), '准备组是 details 折叠');
+const mixed = renderCard(cards.applyPatch(
+  cards.normalizeCard({ kind: 'prose', state: 'running', id: 's3' }),
+  { steps: [
+    cards.phaseStep({ phase: 'pixels_frozen', fields: { w: '1', h: '1' } }),
+    cards.phaseStep({ phase: 'model_request', fields: { turn: '2' } }),
+  ] },
+));
+assert.ok(mixed.includes('准备阶段 · 1 步'), '准备组折叠出现');
+assert.ok(mixed.includes('交给模型'), '动作行保持展开');
 assert.ok(withSteps.includes('mstep-row'), '✓ 动作是独立的一行');
 assert.ok(withSteps.includes('mstep-fact'), '事实是 ✓ 行下面独立的 → 行，不是标签行内的尾巴');
 assert.ok(withSteps.includes('→'), '事实行以 → 开头（§5.3 版式即语义）');
@@ -229,7 +241,7 @@ console.log('card render test ok');
 // 所以这两份共享模块必须各自只暴露一个名字。
 // ---------------------------------------------------------------------------
 for (const [file, allowed] of [
-  ['electron/renderer/card_render.ts', ['CardRender', 'renderCard', 'cardElapsedText']],
+  ['electron/renderer/card_render.ts', ['CardRender', 'renderCard', 'cardElapsedText', 'renderFoldedProcess']],
   ['electron/cards.ts', ['CardModel']],
   ['electron/renderer/live_cards.ts', ['LiveCards']],
 ]) {

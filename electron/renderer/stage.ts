@@ -1558,8 +1558,11 @@
   //
   // agent-prompt-draft 留在原地：它不是一张卡，是一个带会话选择器和自己那套
   // IPC 的控件。硬塞进卡片契约只会两头不讨好。
-  function renderStructured(container: HTMLElement, payload: any) {
+  function renderStructured(container: HTMLElement, payload: any, processSteps?: any[]) {
     container.replaceChildren();
+    // 终态不丢过程：等的那张卡上长出来的步骤，收进一个默认折叠的组跟在
+    // 答案前面。出答案是折叠起来，而不是消失（用户裁决）。
+    const folded = renderFoldedProcess(processSteps);
     const kind = payload && typeof payload === 'object' ? payload.kind : null;
     container.dataset.kind = kind || 'inline';
     if (kind === 'agent-prompt-draft') {
@@ -1578,7 +1581,7 @@
       : { allowMarkdown: true };
     card.plainText = shape.allowMarkdown === false;
     container.dataset.shape = shape.allowMarkdown === false ? 'deliver' : 'inspect';
-    container.replaceChildren(renderCard(card, { density: 'capsule' }));
+    container.replaceChildren(...([folded, renderCard(card, { density: 'capsule' })].filter(Boolean) as Node[]));
     bindCardActions(container, payload);
   }
 
@@ -1660,8 +1663,9 @@
       answer.dataset.kind = 'error';
       renderFailure(answer, turn.error);
     } else {
+      const steps = runningCards.get(`t${turn.id}`)?.steps;
       runningCards.delete(`t${turn.id}`);
-      renderStructured(answer, turn.result);
+      renderStructured(answer, turn.result, steps);
     }
     return node;
   }

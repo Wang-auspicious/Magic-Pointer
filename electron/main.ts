@@ -1247,6 +1247,14 @@ function recordConversationTurn(payload: StageUpdatePayload = {}, type: string |
       ? selectionSessions.get(payload.selectionSessionToken)
       : null;
     const object: Partial<ReturnType<typeof episodeObjectForSession>> = entry ? episodeObjectForSession(entry) : {};
+    // 划线轮次的现场证据随轮存档：截图存档 + 标注图 + 当时读到的内容摘要。
+    // Studio 里几分钟后的追问全靠它接得上那次圈选。
+    const evidence = {
+      capturePath: String((object as any).source?.path || ''),
+      annotatedPath: String((object as any).source?.annotatedPath || ''),
+      label: String(object.label || ''),
+      contentDigest: String((object as any).content || '').slice(0, 1600),
+    };
 
     const result: { route?: { tier?: string }; actions?: unknown[] } = payload?.event?.result || {};
     const live = stageLiveTurns.get(token || '');
@@ -1270,6 +1278,7 @@ function recordConversationTurn(payload: StageUpdatePayload = {}, type: string |
             usedBackend: eventResult?.usedBackend,
             timingMs: eventResult?.timingMs,
             thinking: eventResult?.thinking,
+            evidence,
           });
           stageLiveTurns.delete(token || '');
           stageLiveAnswers.delete(token || '');
@@ -1285,6 +1294,7 @@ function recordConversationTurn(payload: StageUpdatePayload = {}, type: string |
       // Stage 结果绑定画像默认工作区（agent 实际跑的那个目录）：不给它挂
       // workspace 的话，sidebar_groups 按项目分组会把它整个过滤掉——
       // 划线问问题的对话在 GUI 里永远看不到。
+      evidence,
       workspaceRoot: profileWorkspaceRoot(ROOT) || undefined,
       object: {
         app: object.app || '',
@@ -1821,6 +1831,7 @@ ipcMain.handle('conversations:send', async (event: Electron.IpcMainInvokeEvent, 
           usedBackend: parsed.usedBackend,
           agentSessionId: parsed.agentSessionId,
           hasPendingWork: parsed.hasPendingWork === true,
+          pendingInput: parsed.pendingInput && typeof parsed.pendingInput === 'object' ? parsed.pendingInput : undefined,
           outcome: '模型',
           object: existing?.object || {},
           workspaceRoot: effectiveWorkspaceRoot || undefined,

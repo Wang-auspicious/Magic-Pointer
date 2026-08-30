@@ -1788,6 +1788,15 @@ body {
   z-index: 4;
 }
 
+/* 答案卡/气泡/错误卡在证据层之上：capture-proof 的 band 画的是目标应用里
+ * 被读过的矩形，永远不许盖到卡面上（蓝线压卡的根因就是这里缺了层叠）。 */
+.stage-thread,
+.stage-composer,
+.stage-chips,
+.stage-error {
+  z-index: 6;
+}
+
 .capture-proof-band {
   position: absolute;
   border-radius: 8px;
@@ -1796,7 +1805,14 @@ body {
   box-shadow: 0 0 0 3px var(--proof-halo), inset 0 0 12px var(--proof-halo);
   animation:
     capture-proof-in 220ms cubic-bezier(.22, 1, .36, 1) var(--proof-delay, 0ms) both,
-    capture-proof-run 1500ms cubic-bezier(.4, 0, .2, 1) calc(var(--proof-delay, 0ms) + 160ms) 1 both;
+    capture-proof-run 1500ms cubic-bezier(.4, 0, .2, 1) calc(var(--proof-delay, 0ms) + 160ms) 1 both,
+    capture-proof-out 600ms ease-out calc(var(--proof-delay, 0ms) + 2800ms) forwards;
+}
+
+/* 看过即走：band 证明「读的是这里」，读完 ~3s 淡出。答案卡出现后绝不能
+ * 还压着一条蓝线（z-index 已把卡抬到 band 之上，这里再把 band 收走）。 */
+@keyframes capture-proof-out {
+  to { opacity: 0; }
 }
 
 /* Read exactly: the app told us these characters. */

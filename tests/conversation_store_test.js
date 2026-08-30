@@ -251,3 +251,41 @@ console.log('conversation store test ok (permission memo)');
   assert.strictEqual(noThink.conversation.turns[0].thinking, '先定位数据结构\n再推断含义',
     '不带 thinking 的更新不得清掉已有的思考流');
 }
+
+// ---- 划线轮次的现场证据与结构化提问随轮存档（追问接得上的前提） ----
+{
+  const withEvidence = store.appendTurn({
+    question: '这是啥呀。',
+    answer: '是一份实测分析笔记。',
+    object: { app: 'Code.exe', windowTitle: 'doc.md', label: '批注段' },
+    evidence: {
+      capturePath: 'D:/x/screen-abc123.png',
+      annotatedPath: 'D:/x/screen-abc123.pointer.png',
+      label: '批注段',
+      contentDigest: '卡片动画逐帧实测'.repeat(300),
+    },
+    pendingInput: { question: '是否允许执行 Bash？', options: ['仅这一次允许', '本会话总是允许', '拒绝'], kind: 'permission', tool: 'Bash' },
+  });
+  const saved = withEvidence.turns[withEvidence.turns.length - 1];
+  assert.strictEqual(saved.evidence.capturePath, 'D:/x/screen-abc123.png');
+  assert.strictEqual(saved.evidence.annotatedPath, 'D:/x/screen-abc123.pointer.png');
+  assert.ok(saved.evidence.contentDigest.length <= 1600, '内容摘要有界存档');
+  assert.deepStrictEqual(saved.pendingInput.options, ['仅这一次允许', '本会话总是允许', '拒绝']);
+  assert.strictEqual(saved.pendingInput.tool, 'Bash');
+  // 垃圾输入不落字段
+  const clean = store.appendTurn({
+    question: '普通一问',
+    answer: '普通一答',
+    object: { app: 'a', windowTitle: 'b' },
+    evidence: 'not-an-object',
+    pendingInput: null,
+  });
+  const cleanTurn = clean.turns[clean.turns.length - 1];
+  assert.strictEqual(cleanTurn.evidence, undefined);
+  assert.strictEqual(cleanTurn.pendingInput, undefined);
+  // 重开同一目录，证据还在（重启后追问靠它）
+  const reopened = require('../electron/conversation_store').createConversationStore({ baseDir: dir, now: () => (clock += 1000) });
+  const reread = reopened.get(withEvidence.id);
+  assert.strictEqual(reread.turns[reread.turns.length - 1].evidence.capturePath, 'D:/x/screen-abc123.png',
+    'evidence must survive a store reload');
+}

@@ -386,7 +386,7 @@ def _completed_result(
         record["usedBackend"] = str(receipt.get("usedBackend") or record.get("usedBackend") or "")
         if isinstance(receipt.get("latencyMs"), (int, float)):
             record["latencyMs"] = receipt["latencyMs"]
-    return {
+    _completed_payload = {
         "ok": True,
         "answer": answer,
         "usedBackend": used_backend,
@@ -411,6 +411,22 @@ def _completed_result(
             else {}
         ),
     }
+    return _strip_options_tail(_completed_payload)
+
+
+def _strip_options_tail(result: dict[str, Any]) -> dict[str, Any]:
+    """等待输入时，loop_answer 把选项编成 1. 2. 3. 接在问题后面——那是给没有
+    结构化审批面的表面准备的。Studio 有审批卡，正文再印一遍编号列表就是
+    同一个事实写两遍，还会诱导用户打字回答。这里把追加的选项尾巴裁掉。"""
+    pending = result.get("pendingInput")
+    if isinstance(pending, dict) and pending.get("options"):
+        tail = "\n\n" + "\n".join(
+            f"{index}. {option}" for index, option in enumerate(pending["options"], 1)
+        )
+        answer_text = result.get("answer")
+        if isinstance(answer_text, str) and answer_text.endswith(tail):
+            result["answer"] = answer_text[: -len(tail)].rstrip()
+    return result
 
 
 def emit_plan_snapshot(clock: PhaseClock, steps: Any) -> None:
@@ -567,13 +583,31 @@ def _history_text(turns: list[dict[str, Any]], obj: dict[str, Any]) -> str:
         if str(obj.get(key) or "").strip()
     )
     chunks = [f"当前对象：{object_label}"] if object_label else []
-    for turn in turns[-MAX_TURNS:]:
+    for index, turn in enumerate(turns[-MAX_TURNS:], 1):
         question = str(turn.get("question") or "").strip()[:2000]
         answer = str(turn.get("answer") or "").strip()[:4000]
         if question:
             chunks.append(f"用户：{question}")
         if answer:
             chunks.append(f"助手：{answer}")
+        # 划线轮次的现场证据随轮持久化：截图存档路径 + 当时读到的内容。
+        # 没有它，几分钟后的追问就接不上那次圈选（证据早已出上下文）。
+        evidence = turn.get("evidence") if isinstance(turn.get("evidence"), dict) else None
+        if evidence:
+            label = str(evidence.get("label") or "").strip()
+            capture = str(evidence.get("capturePath") or "").strip()
+            annotated = str(evidence.get("annotatedPath") or "").strip()
+            head = f"[第{index}轮现场证据]{f' 对象：{label}' if label else ' '}"
+            paths = "；".join(
+                part for part in (
+                    f"截图存档：{capture}" if capture else "",
+                    f"标注图：{annotated}" if annotated else "",
+                ) if part
+            )
+            chunks.append(head if not paths else f"{head} {paths}")
+            digest = str(evidence.get("contentDigest") or "").strip()
+            if digest:
+                chunks.append(f"当时读取到的内容：{digest[:1200]}")
     return "\n\n".join(chunks)
 
 

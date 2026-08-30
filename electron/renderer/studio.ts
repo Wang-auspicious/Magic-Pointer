@@ -793,6 +793,24 @@ async function openConversation(id: string) {
   stream.scrollTop = stream.scrollHeight;
   DshChat.bindDelegation(stream);
   renderStatsLine(turns);
+  /* 会话重开后审批卡要能 reconstruct：最后一条 turn 若带着未消化的
+     pendingInput（等待输入被打断/重启），卡重新长在 composer 上沿。
+     已被回答过的旧提问不复活——只有最后一轮还在等才亮。 */
+  const lastTurn = turns[turns.length - 1] as { pendingInput?: { question?: unknown; options?: unknown } | null; failed?: boolean } | undefined;
+  const lastPending = lastTurn && !lastTurn.failed && lastTurn.pendingInput && typeof lastTurn.pendingInput === 'object'
+    ? lastTurn.pendingInput
+    : null;
+  const lastOptions = lastPending && Array.isArray(lastPending.options)
+    ? (lastPending.options as unknown[]).map((o) => String(o)).filter(Boolean)
+    : [];
+  if (lastOptions.length >= 2) {
+    pendingAskInput = {
+      question: String(lastPending?.question || '需要你的决定'),
+      options: lastOptions,
+    };
+    pendingPermissionAsk = null;
+    renderPermissionAsk();
+  }
   const trajectory = document.getElementById('trajectory');
   if (trajectory) trajectory.replaceChildren(DshTrajectory.render(DshTrajectory.project(turns)));
   setConversationTab(activeConversationTab);
@@ -2413,42 +2431,60 @@ document.getElementById('composer-plan-toggle')?.addEventListener('click', () =>
   renderPlanCard();
 });
 
-/* CC toolPermissionDecision：工具被拒后模型发起的权限提问，三个结构化选项。
-   点击 = 授权随下一条消息生效（grant/once/deny），文本同时告诉模型继续。 */
+/* 审批卡：贴着 composer 上沿长出的那张卡。两类决定走同一个卡：
+   - permission：CC toolPermissionDecision 语义，三个结构化选项（grant/once/deny），
+     点击 = 授权随下一条消息生效，文本同时告诉模型继续；
+   - ask：ask_user_question 的 options，点哪个就把哪个作为回答发出去。
+   审批而已，用户不该需要打字。 */
 let pendingPermissionAsk: { tool: string } | null = null;
 let pendingPermissionChoice: { grant?: string; deny?: string; once?: string } | null = null;
+let pendingAskInput: { question: string; options: string[] } | null = null;
 
 function renderPermissionAsk() {
   const host = document.getElementById('composer-permission-ask');
   if (!host) return;
-  if (!pendingPermissionAsk) { host.hidden = true; host.replaceChildren(); return; }
-  const tool = pendingPermissionAsk.tool;
+  if (!pendingPermissionAsk && !pendingAskInput) { host.hidden = true; host.replaceChildren(); return; }
   host.hidden = false;
-  const label = document.createElement('span');
-  label.className = 'dshw-perm-ask-label';
-  label.textContent = `是否授权执行 ${tool}？`;
-  const make = (text: string, choice: { grant?: string; deny?: string; once?: string }, message: string) => {
+  host.dataset.mode = pendingPermissionAsk ? 'permission' : 'ask';
+  const question = document.createElement('p');
+  question.className = 'dshw-perm-ask-question';
+  const make = (text: string, onClick: () => void, variant?: string) => {
     const btn = document.createElement('button');
     btn.type = 'button';
-    btn.className = 'dshw-perm-ask-btn';
+    btn.className = variant ? `dshw-perm-ask-btn is-${variant}` : 'dshw-perm-ask-btn';
     btn.textContent = text;
-    btn.addEventListener('click', () => {
-      pendingPermissionChoice = choice;
-      const ta = document.querySelector<HTMLTextAreaElement>('#composer-form textarea');
-      const form = document.getElementById('composer-form') as HTMLFormElement | null;
-      if (ta && form) {
-        ta.value = message;
-        fitComposer(ta);
-        form.requestSubmit();
-      }
-    });
+    btn.addEventListener('click', onClick);
     return btn;
   };
+  const submitText = (message: string, choice: { grant?: string; deny?: string; once?: string } | null) => {
+    pendingPermissionChoice = choice;
+    const ta = document.querySelector<HTMLTextAreaElement>('#composer-form textarea');
+    const form = document.getElementById('composer-form') as HTMLFormElement | null;
+    if (ta && form) {
+      ta.value = message;
+      fitComposer(ta);
+      form.requestSubmit();
+    }
+  };
+  if (pendingPermissionAsk) {
+    const tool = pendingPermissionAsk.tool;
+    question.textContent = `是否授权执行 ${tool}？`;
+    host.replaceChildren(
+      question,
+      make('仅这一次允许', () => submitText(`仅这一次允许 ${tool}，请继续。`, { once: tool })),
+      make('本会话总是允许', () => submitText(`本会话总是允许 ${tool}，请继续。`, { grant: tool })),
+      make('拒绝', () => submitText(`拒绝执行 ${tool}，换别的办法。`, { deny: tool }), 'danger'),
+    );
+    return;
+  }
+  const options = pendingAskInput?.options || [];
+  question.textContent = pendingAskInput?.question || '需要你的决定';
   host.replaceChildren(
-    label,
-    make('仅这一次允许', { once: tool }, `仅这一次允许 ${tool}，请继续。`),
-    make('本会话总是允许', { grant: tool }, `本会话总是允许 ${tool}，请继续。`),
-    make('拒绝', { deny: tool }, `拒绝执行 ${tool}，换别的办法。`),
+    question,
+    ...options.map((option) => make(option, () => {
+      pendingAskInput = null;
+      submitText(option, null);
+    })),
   );
 }
 
@@ -2928,6 +2964,7 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
       );
       pendingPermissionChoice = null;
       pendingPermissionAsk = null;
+      pendingAskInput = null;
       renderPermissionAsk();
       if (!response?.ok || !response.conversationId) throw new Error(response?.error || '这次没有答完。');
       composerAttachments = [];
@@ -2944,10 +2981,22 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
         composerPlan = (response as { plan: { steps: Array<{ content: string; status: string }> } }).plan;
         renderPlanCard();
       }
-      /* 权限提问：模型 ask_user_question(kind=permission) 的结构化回传 */
-      const awaiting = response as { awaitingUserInput?: boolean; pendingInput?: { kind?: string; tool?: string } };
+      /* 结构化提问回传：权限门（kind=permission）走三键授权语义；
+         ask_user_question 的 options 走逐选项按钮。都长在 composer 上沿，
+         点按钮即答，不需要打字。 */
+      const awaiting = response as {
+        awaitingUserInput?: boolean;
+        pendingInput?: { kind?: string; tool?: string; question?: string; options?: unknown };
+      };
       if (awaiting.awaitingUserInput && awaiting.pendingInput?.kind === 'permission' && awaiting.pendingInput.tool) {
         pendingPermissionAsk = { tool: String(awaiting.pendingInput.tool) };
+        renderPermissionAsk();
+      } else if (awaiting.awaitingUserInput && Array.isArray(awaiting.pendingInput?.options)
+        && (awaiting.pendingInput.options as unknown[]).length >= 2) {
+        pendingAskInput = {
+          question: String(awaiting.pendingInput.question || '需要你的决定'),
+          options: (awaiting.pendingInput.options as unknown[]).map((o) => String(o)).filter(Boolean),
+        };
         renderPermissionAsk();
       }
       await openConversation(activeConversationId);

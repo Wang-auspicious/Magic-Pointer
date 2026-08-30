@@ -92,6 +92,7 @@ declare global {
   const CardModel: MagicPointerCardModel;
 
   const renderCard: (card: unknown, options?: { density?: string }) => Element;
+  const renderFoldedProcess: (steps?: unknown[]) => Element | null;
   const cardElapsedText: (card: MagicPointerCard, now: number) => string;
 
   /* DSH 聊天渲染器（deepseek-harness 100% 移植）：classic script 暴露的全局。 */

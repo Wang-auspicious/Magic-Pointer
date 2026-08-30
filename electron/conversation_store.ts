@@ -43,6 +43,24 @@ interface TurnEntry {
   modelUsage: Record<string, number>;
   timingMs?: number;
   usedBackend?: string;
+  /** 划线轮次的现场证据：截图存档 + 标注图 + 当时读到的内容摘要。追问时随桥回上下文。 */
+  evidence?: TurnEvidence;
+  /** 结构化提问（ask_user_question / 权限门）随轮存档：会话重开后审批卡靠它 reconstruct。 */
+  pendingInput?: TurnPendingInput;
+}
+
+export interface TurnEvidence {
+  capturePath?: string;
+  annotatedPath?: string;
+  label?: string;
+  contentDigest?: string;
+}
+
+export interface TurnPendingInput {
+  question?: string;
+  options?: string[];
+  kind?: string;
+  tool?: string;
 }
 
 interface Conversation {
@@ -91,6 +109,8 @@ interface TurnInput {
   hasPendingWork?: unknown;
   permissionGrant?: unknown;
   permissionDeny?: unknown;
+  evidence?: unknown;
+  pendingInput?: unknown;
 }
 
 interface ConversationStoreOptions {
@@ -320,6 +340,11 @@ function createConversationStore(
         : {},
       timingMs: Number.isFinite(Number(turn.timingMs)) ? Number(turn.timingMs) : undefined,
       usedBackend: turn.usedBackend !== undefined ? String(turn.usedBackend) : undefined,
+      // 划线轮次的现场证据与结构化提问随轮存档：追问时桥把它们带回上下文，
+      // 审批卡在会话重开后还能从这 reconstruct。没有这两样，「五分钟后问
+      // 就接不上」是无解的。
+      evidence: sanitizeEvidence(turn.evidence),
+      pendingInput: sanitizePendingInput(turn.pendingInput),
     };
 
     if (target) {
@@ -381,6 +406,27 @@ function createConversationStore(
 
   // Stage↔GUI 实时同步：先 appendTurn 一条「进行中」的占位 turn，读取
   // 过程中用 updateTurn 就地补 answer/终态——不再等整轮跑完才在 GUI 出现。
+  function sanitizeEvidence(value: unknown): TurnEntry['evidence'] {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+    const raw = value as Record<string, unknown>;
+    const out: Record<string, string> = {};
+    for (const key of ['capturePath', 'annotatedPath', 'label', 'contentDigest'] as const) {
+      const text = String(raw[key] ?? '').trim();
+      if (text) out[key] = text.slice(0, key === 'contentDigest' ? 1600 : 500);
+    }
+    return Object.keys(out).length ? out : undefined;
+  }
+
+  function sanitizePendingInput(value: unknown): TurnEntry['pendingInput'] {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+    const raw = value as Record<string, unknown>;
+    const question = String(raw.question ?? '').trim();
+    const options = Array.isArray(raw.options) ? raw.options.map((o) => String(o)).filter(Boolean) : [];
+    const kind = String(raw.kind ?? '').trim();
+    if (!question && !options.length && !kind) return undefined;
+    return { question, options, kind: kind || undefined, tool: String(raw.tool ?? '').trim() || undefined };
+  }
+
   function updateTurn(input: {
     conversationId?: unknown;
     turnIndex?: unknown;
@@ -395,6 +441,8 @@ function createConversationStore(
     usedBackend?: unknown;
     timingMs?: unknown;
     thinking?: unknown;
+    evidence?: unknown;
+    pendingInput?: unknown;
   }): { ok: boolean; conversation?: Conversation } {
     const conversations = load();
     const target = String(input.conversationId || '').trim()
@@ -422,6 +470,8 @@ function createConversationStore(
     }
     if (input.usedBackend !== undefined) turn.usedBackend = String(input.usedBackend || '');
     if (input.thinking !== undefined) turn.thinking = String(input.thinking || '');
+    if (input.evidence !== undefined) turn.evidence = sanitizeEvidence(input.evidence);
+    if (input.pendingInput !== undefined) turn.pendingInput = sanitizePendingInput(input.pendingInput);
     if (Number.isFinite(Number(input.timingMs))) turn.timingMs = Number(input.timingMs);
     turn.at = now();
     target.updatedAt = now();
