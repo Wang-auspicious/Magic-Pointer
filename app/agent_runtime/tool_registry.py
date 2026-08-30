@@ -55,11 +55,13 @@ class Effect(enum.StrEnum):
     PURCHASE = "purchase"
 
 
-_NAME_PATTERN = re.compile(r"[a-z0-9_]+")
+_NAME_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+"""CC 风格工具名（Read/Edit/Bash/Observe…）允许大写驼峰；下划线蛇形
+保留作旧名别名兼容（一个版本）。"""
 
 _WORD_SPLIT = re.compile(r"[a-z0-9_]+")
 
-FIND_CAPABILITY_TOOL = "find_capability"
+FIND_CAPABILITY_TOOL = "Tools"
 """Canonical name of the capability search tool (CC ToolSearch pattern);
 the loop reads its result to load deferred tool schemas into the next round."""
 
@@ -83,6 +85,10 @@ class ToolSpec:
     effect: Effect = Effect.READ
     effect_for: Callable[[dict[str, object]], Effect] | None = None
     is_concurrency_safe: bool = False
+    is_concurrency_safe_for: Callable[[dict[str, object]], bool] | None = None
+    """按调用判并发（CC isConcurrencySafe(input) 同型）：只读子代理
+    （delegate readonly=true）可进并行车道，写子代理保持串行。误抛异常
+    按 False 处理（并发判定误真会写冲突，误假只损失并行）。"""
     used_backend: str = "local"
     timeout_ms: int = 30000
     resource_keys: tuple[str, ...] | Callable[[dict[str, object]], Iterable[str]] = ()
@@ -144,6 +150,23 @@ class ToolRegistry:
     def __init__(self) -> None:
         self._tools: dict[str, ToolSpec] = {}
         self._order: list[str] = []
+        self._aliases: dict[str, str] = {}
+        self._execution_listeners: list[Callable[[str], None]] = []
+        self._session_end_listeners: list[Callable[[], None]] = []
+
+    def register_alias(self, alias: str, canonical: str) -> None:
+        """旧名 → 新名兼容（一个版本）：模型/historical 权限授权/旧测试
+        用旧名仍路由到规范工具。别名绝不进 schema（schemas_for_model 走
+        list()，只出规范名）。"""
+        alias = str(alias).strip()
+        if not _NAME_PATTERN.fullmatch(alias):
+            raise ValueError(f"invalid tool alias {alias!r}: must match tool name pattern")
+        if alias in self._tools:
+            raise ValueError(f"alias {alias!r} collides with a registered tool")
+        self._aliases[alias] = canonical
+
+    def canonical_name(self, name: str) -> str:
+        return self._aliases.get(name, name)
 
     def register(self, spec: ToolSpec) -> ToolSpec:
         """Register ``spec``; raises on invalid spec or duplicate name."""
@@ -167,6 +190,12 @@ class ToolRegistry:
             raise ValueError(f"tool {name!r} effect_for must be callable when set")
         if not isinstance(spec.is_concurrency_safe, bool):
             raise ValueError(f"tool {name!r} is_concurrency_safe must be a bool")
+        if spec.is_concurrency_safe_for is not None and not callable(
+            spec.is_concurrency_safe_for
+        ):
+            raise ValueError(
+                f"tool {name!r} is_concurrency_safe_for must be callable when set"
+            )
         if not isinstance(spec.used_backend, str) or not spec.used_backend:
             raise ValueError(f"tool {name!r} used_backend must be a non-empty str")
         if not callable(spec.execute):
@@ -249,13 +278,70 @@ class ToolRegistry:
                 f"tool {name!r} input_schema required must be a list of str"
             )
 
+    def add_execution_listener(self, callback: Callable[[str], None]) -> None:
+        """Subscribe to every executed tool name (bounded; oldest dropped).
+
+        工具家族用它实现跨工具的状态机（如 coding 工具的连读熔断：任何
+        非 read_file 的执行都打断连读计数）。监听器抛错一律吞掉——它们
+        只是提示信号，绝不是执行路径的一部分。
+        """
+        if not callable(callback):
+            raise TypeError("execution listener must be callable")
+        self._execution_listeners.append(callback)
+        if len(self._execution_listeners) > 32:
+            del self._execution_listeners[: len(self._execution_listeners) - 32]
+
+    def notify_executed(self, name: str) -> None:
+        for listener in tuple(self._execution_listeners):
+            try:
+                listener(name)
+            except Exception:  # noqa: BLE001 - 信号失败不连累执行
+                pass
+
+    def add_session_end_listener(self, callback: Callable[[], None]) -> None:
+        """Subscribe to loop termination (any terminal reason, bounded).
+
+        桌面输入锁一类"必须归还"的会话资源在这里挂自动释放——把"记得调
+        turn_ended"从模型的责任里拿走（模型忘了调就 COMPUTER_USE_BUSY 卡死
+        下一个会话）。loop 的每个终态路径收口处调用一次。
+        """
+        if not callable(callback):
+            raise TypeError("session end listener must be callable")
+        self._session_end_listeners.append(callback)
+        if len(self._session_end_listeners) > 32:
+            del self._session_end_listeners[: len(self._session_end_listeners) - 32]
+
+    def notify_session_end(self) -> None:
+        for listener in tuple(self._session_end_listeners):
+            try:
+                listener()
+            except Exception:  # noqa: BLE001 - 清理失败不连累终态
+                pass
+
     def get(self, name: str) -> ToolSpec:
-        """Return the spec for ``name``; :class:`KeyError` when unknown."""
-        return self._tools[name]
+        """Return the spec for ``name`` (old-name aliases resolve); KeyError otherwise."""
+        canonical = self._aliases.get(name, name)
+        try:
+            return self._tools[canonical]
+        except KeyError:
+            raise KeyError(name) from None
 
     def list(self) -> tuple[ToolSpec, ...]:
         """All registered specs in registration order."""
         return tuple(self._tools[n] for n in self._order)
+
+    def is_concurrency_safe_for(
+        self, name: str, arguments: Mapping[str, object] | None
+    ) -> bool:
+        """按调用解析并发安全性；动态判定抛错一律按 False（fail-closed）。"""
+        spec = self.get(name)
+        if spec.is_concurrency_safe_for is None:
+            return spec.is_concurrency_safe
+        try:
+            verdict = bool(spec.is_concurrency_safe_for(dict(arguments or {})))
+        except Exception:  # noqa: BLE001
+            return False
+        return verdict
 
     def resolve_effect(self, name: str, arguments: Mapping[str, object] | None) -> Effect:
         """按调用解析工具效果；未注册名抛 KeyError。"""

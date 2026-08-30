@@ -210,7 +210,7 @@ class LookTool:
         # P1 semantic isolation: ``look`` reads the frozen frame captured at
         # pointerup, never the live screen. The marker travels inside the
         # model-visible value so the reading cannot be mistaken for the
-        # current UI state (long tasks must re-observe with get_app_state
+        # current UI state (long tasks must re-observe with Observe
         # before acting).
         value = f"[historical frozen frame captured at gesture time]\n{text}"
         return ok_evidence(
@@ -302,14 +302,17 @@ class LookTool:
         """Register ``look`` (read, not concurrency-safe: vision is slow and
         shares one backend, so no concurrent storm) and
         ``describe_capabilities`` (read, concurrency-safe)."""
+        # 旧名别名（一个版本）：历史授权/旧调用仍路由到规范工具；别名不进 schema。
+        registry.register_alias("look", "Look")
+        registry.register_alias("describe_capabilities", "Capabilities")
         registry.register(
             ToolSpec(
-                name="look",
+                name="Look",
                 description=(
                     "Describe a region of the frozen frame captured at gesture "
                     "time (vision escape hatch; historical pixels, not the live "
                     "screen — do not act or click based on it; for the current "
-                    "UI state call get_app_state). The crop box is decided by "
+                    "UI state call Observe). The crop box is decided by "
                     "the anchor, never the full screen."
                 ),
                 input_schema={
@@ -337,7 +340,7 @@ class LookTool:
         )
         registry.register(
             ToolSpec(
-                name="describe_capabilities",
+                name="Capabilities",
                 description=(
                     "List the actions available for the target identified by "
                     "the anchor."
@@ -358,5 +361,6 @@ class LookTool:
                 is_concurrency_safe=True,
                 used_backend="local",
                 timeout_ms=5000,
+                deferred=True,  # 低频目录查询，find_capability 按需加载
             )
         )

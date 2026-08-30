@@ -24,6 +24,9 @@ def register_ask_user_question(
     ask: AskQuestionFn | None = None,
 ) -> ToolSpec:
     """Register the CC-style clarification tool; ``ask`` is the UI bridge."""
+    # 旧名别名（一个版本）：历史授权/旧调用仍路由到规范工具；别名不进 schema。
+    registry.register_alias("ask_user_question", "AskUser")
+    registry.register_alias("todo_write", "Todo")
 
     def execute(
         question: str,
@@ -63,7 +66,7 @@ def register_ask_user_question(
         return json.dumps(dict(answer), ensure_ascii=False)
 
     return registry.register(ToolSpec(
-        name="ask_user_question",
+        name="AskUser",
         description=(
             "不确定用户的意图或需要用户在几个选项中选择时，向用户提问。"
             "options 是 2-4 个中文选项。返回用户的选择。"
@@ -104,13 +107,22 @@ def register_todo_write(
     sink: Callable[[list[dict[str, Any]]], None] | None = None,
 ) -> ToolSpec:
     """Register the CC-style plan tool; ``sink`` persists the plan (UI/log)."""
+    registry.register_alias("todo_write", "Todo")
+
+    valid_statuses = ("pending", "in_progress", "completed")
 
     def execute(todos: list, scope: object = None) -> str:
-        entries = [
-            {"content": str(item.get("content") or ""), "status": str(item.get("status") or "pending")}
-            for item in todos
-            if isinstance(item, dict)
-        ]
+        entries = []
+        for item in todos:
+            if not isinstance(item, dict):
+                continue
+            status = str(item.get("status") or "pending")
+            if status not in valid_statuses:
+                raise ValueError(
+                    f"todo status {status!r} is invalid; use one of "
+                    + ", ".join(valid_statuses)
+                )
+            entries.append({"content": str(item.get("content") or ""), "status": status})
         if sink is not None:
             try:
                 sink(entries)
@@ -119,7 +131,7 @@ def register_todo_write(
         return json.dumps({"plan": entries}, ensure_ascii=False)
 
     return registry.register(ToolSpec(
-        name="todo_write",
+        name="Todo",
         description=(
             "维护本次任务的步骤清单。todos 是 [{content, status}]，"
             "status 为 pending/in_progress/completed。用于多步任务时保持计划可见。"

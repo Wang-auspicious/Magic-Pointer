@@ -122,18 +122,18 @@ def _payload(result) -> dict:
 
 
 KIMI_WINDOWS_TOOLS = (
-    "list_apps",
-    "launch_app",
-    "activate_window",
-    "get_app_state",
-    "click",
-    "type_text",
-    "press_key",
-    "scroll",
-    "set_value",
-    "perform_secondary_action",
-    "select_text",
-    "drag",
+    "ListApps",
+    "Launch",
+    "Focus",
+    "Observe",
+    "Click",
+    "Type",
+    "Key",
+    "Scroll",
+    "SetValue",
+    "Act",
+    "Select",
+    "Drag",
     "turn_ended",
 )
 
@@ -141,24 +141,24 @@ KIMI_WINDOWS_TOOLS = (
 def test_all_thirteen_kimi_tools_are_registered() -> None:
     registry, _session = _registry()
     assert tuple(spec.name for spec in registry.list() if spec.name in KIMI_WINDOWS_TOOLS) == KIMI_WINDOWS_TOOLS
-    assert registry.get("list_apps").effect is Effect.READ
-    assert registry.get("click").effect is Effect.REVERSIBLE_WRITE
-    assert registry.get("get_app_state").is_concurrency_safe is True
-    assert registry.get("click").is_concurrency_safe is False
+    assert registry.get("ListApps").effect is Effect.READ
+    assert registry.get("Click").effect is Effect.REVERSIBLE_WRITE
+    assert registry.get("Observe").is_concurrency_safe is True
+    assert registry.get("Click").is_concurrency_safe is False
 
 
 def test_get_app_state_issues_a_snapshot_that_click_must_present() -> None:
     registry, session = _registry()
-    observed = _payload(_exec(registry, "get_app_state", {"window_id": "w-42", "mode": "ax"}))
+    observed = _payload(_exec(registry, "Observe", {"window_id": "w-42", "mode": "ax"}))
     snapshot_id = observed["snapshot_id"]
     assert observed["windows"][0]["title"] == "记事本"
     assert {item["index"] for item in observed["elements"]} == {1, 2}
 
-    missing = _exec(registry, "click", {"index": 2})
+    missing = _exec(registry, "Click", {"index": 2})
     assert missing.is_error
     assert missing.failure_type is FailureType.STALE_SNAPSHOT
 
-    clicked = _payload(_exec(registry, "click", {
+    clicked = _payload(_exec(registry, "Click", {
         "snapshot_id": snapshot_id,
         "index": 2,
     }))
@@ -175,12 +175,12 @@ def test_a_replaced_element_at_the_same_index_invalidates_the_snapshot() -> None
         return elements
 
     registry, _owned = _registry(session=_session(elements_probe=probe))
-    snapshot_id = _payload(_exec(registry, "get_app_state", {
+    snapshot_id = _payload(_exec(registry, "Observe", {
         "window_id": "w-42",
         "mode": "ax",
     }))["snapshot_id"]
     elements[1] = {**elements[1], "name": "取消"}
-    stale = _exec(registry, "click", {"snapshot_id": snapshot_id, "index": 2})
+    stale = _exec(registry, "Click", {"snapshot_id": snapshot_id, "index": 2})
     assert stale.is_error
     assert stale.failure_type is FailureType.STALE_SNAPSHOT
 
@@ -192,23 +192,23 @@ def test_a_moved_window_invalidates_the_snapshot() -> None:
         return windows
 
     registry, _owned = _registry(session=_session(windows_probe=probe))
-    snapshot_id = _payload(_exec(registry, "get_app_state", {
+    snapshot_id = _payload(_exec(registry, "Observe", {
         "window_id": "w-42",
         "mode": "ax",
     }))["snapshot_id"]
     windows[0] = {**windows[0], "rect": [800, 100, 1200, 400]}
-    stale = _exec(registry, "click", {"snapshot_id": snapshot_id, "index": 2})
+    stale = _exec(registry, "Click", {"snapshot_id": snapshot_id, "index": 2})
     assert stale.is_error
     assert stale.failure_type is FailureType.STALE_SNAPSHOT
 
 
 def test_index_and_coordinates_must_not_be_mixed() -> None:
     registry, _session = _registry()
-    snapshot_id = _payload(_exec(registry, "get_app_state", {
+    snapshot_id = _payload(_exec(registry, "Observe", {
         "window_id": "w-42",
         "mode": "ax",
     }))["snapshot_id"]
-    mixed = _exec(registry, "click", {
+    mixed = _exec(registry, "Click", {
         "snapshot_id": snapshot_id,
         "index": 2,
         "x": 10,
@@ -220,25 +220,25 @@ def test_index_and_coordinates_must_not_be_mixed() -> None:
 
 def test_real_input_is_busy_but_reads_still_work() -> None:
     registry, session = _registry()
-    snapshot_id = _payload(_exec(registry, "get_app_state", {
+    snapshot_id = _payload(_exec(registry, "Observe", {
         "window_id": "w-42",
         "mode": "ax",
     }))["snapshot_id"]
-    assert session.ownership.acquire("other-session", "click") is True
-    busy = _exec(registry, "click", {"snapshot_id": snapshot_id, "index": 2})
+    assert session.ownership.acquire("other-session", "Click") is True
+    busy = _exec(registry, "Click", {"snapshot_id": snapshot_id, "index": 2})
     assert busy.is_error
     assert busy.failure_type is FailureType.COMPUTER_USE_BUSY
-    listed = _payload(_exec(registry, "list_apps", {}))
+    listed = _payload(_exec(registry, "ListApps", {}))
     assert any(item["title"] == "记事本" for item in listed["apps"])
 
 
 def test_turn_ended_releases_the_input_lock() -> None:
     registry, session = _registry()
-    snapshot_id = _payload(_exec(registry, "get_app_state", {
+    snapshot_id = _payload(_exec(registry, "Observe", {
         "window_id": "w-42",
         "mode": "ax",
     }))["snapshot_id"]
-    _exec(registry, "click", {"snapshot_id": snapshot_id, "index": 2})
+    _exec(registry, "Click", {"snapshot_id": snapshot_id, "index": 2})
     assert session.ownership.holder == "s1"
     _exec(registry, "turn_ended", {})
     assert session.ownership.holder is None
@@ -246,7 +246,7 @@ def test_turn_ended_releases_the_input_lock() -> None:
 
 def test_unknown_app_name_does_not_open_explorer() -> None:
     registry, session = _registry()
-    unknown = _exec(registry, "launch_app", {"app": "definitely-not-installed-xyz"})
+    unknown = _exec(registry, "Launch", {"app": "definitely-not-installed-xyz"})
     assert unknown.is_error
     assert "unknown" in (unknown.error_message or "").lower()
     assert session.launched == []
@@ -254,18 +254,18 @@ def test_unknown_app_name_does_not_open_explorer() -> None:
 
 def test_known_process_name_may_launch() -> None:
     registry, session = _registry()
-    result = _payload(_exec(registry, "launch_app", {"app": "notepad.exe"}))
+    result = _payload(_exec(registry, "Launch", {"app": "notepad.exe"}))
     assert result["ok"] is True
     assert session.launched == ["notepad.exe"]
 
 
 def test_win_key_chords_are_rejected() -> None:
     registry, _session = _registry()
-    snapshot_id = _payload(_exec(registry, "get_app_state", {
+    snapshot_id = _payload(_exec(registry, "Observe", {
         "window_id": "w-42",
         "mode": "ax",
     }))["snapshot_id"]
-    blocked = _exec(registry, "press_key", {
+    blocked = _exec(registry, "Key", {
         "snapshot_id": snapshot_id,
         "keys": "Win+r",
     })
@@ -275,11 +275,11 @@ def test_win_key_chords_are_rejected() -> None:
 
 def test_set_value_uses_native_uia_before_clicking() -> None:
     registry, session = _registry()
-    snapshot_id = _payload(_exec(registry, "get_app_state", {
+    snapshot_id = _payload(_exec(registry, "Observe", {
         "window_id": "w-42",
         "mode": "ax",
     }))["snapshot_id"]
-    result = _payload(_exec(registry, "set_value", {
+    result = _payload(_exec(registry, "SetValue", {
         "snapshot_id": snapshot_id,
         "index": 1,
         "value": "hello",
@@ -295,7 +295,7 @@ def test_desktop_tool_descriptions_are_chinese_handbooks() -> None:
         description = registry.get(name).description
         assert any("\u4e00" <= char <= "\u9fff" for char in description), name
         assert "when to" not in description.casefold()
-    live = registry.get("get_app_state").description
+    live = registry.get("Observe").description
     assert "实时" in live
     assert "冻结" in live
 
@@ -310,11 +310,11 @@ def test_type_text_confirms_by_reading_current_value_not_setting() -> None:
         return {"ok": True, "backend": "uia_value"}
 
     registry, session = _registry(session=_session(uia_act=uia))
-    snapshot_id = _payload(_exec(registry, "get_app_state", {
+    snapshot_id = _payload(_exec(registry, "Observe", {
         "window_id": "w-42",
         "mode": "ax",
     }))["snapshot_id"]
-    result = _payload(_exec(registry, "type_text", {
+    result = _payload(_exec(registry, "Type", {
         "snapshot_id": snapshot_id,
         "index": 1,
         "text": "hello",
@@ -331,11 +331,11 @@ def test_type_text_mismatch_on_readback_is_not_matched() -> None:
         return {"ok": True, "backend": "uia_value"}
 
     registry, _sess = _registry(session=_session(uia_act=uia))
-    snapshot_id = _payload(_exec(registry, "get_app_state", {
+    snapshot_id = _payload(_exec(registry, "Observe", {
         "window_id": "w-42",
         "mode": "ax",
     }))["snapshot_id"]
-    result = _payload(_exec(registry, "type_text", {
+    result = _payload(_exec(registry, "Type", {
         "snapshot_id": snapshot_id,
         "index": 1,
         "text": "hello",
@@ -348,11 +348,11 @@ def test_type_text_reports_unavailable_when_uia_cannot_confirm() -> None:
         return {"ok": False, "backend": "uia_value", "reason": "no_value_pattern"}
 
     registry, session = _registry(session=_session(uia_act=uia))
-    snapshot_id = _payload(_exec(registry, "get_app_state", {
+    snapshot_id = _payload(_exec(registry, "Observe", {
         "window_id": "w-42",
         "mode": "ax",
     }))["snapshot_id"]
-    result = _payload(_exec(registry, "type_text", {
+    result = _payload(_exec(registry, "Type", {
         "snapshot_id": snapshot_id,
         "index": 1,
         "text": "hello",
@@ -368,11 +368,11 @@ def test_press_key_accepts_common_aliases() -> None:
     的键表里解析（Win32InputDriver._KEYS），会话层必须放行不报
     unsupported_key。"""
     registry, session = _registry()
-    snapshot_id = _payload(_exec(registry, "get_app_state", {
+    snapshot_id = _payload(_exec(registry, "Observe", {
         "window_id": "w-42",
         "mode": "ax",
     }))["snapshot_id"]
-    result = _exec(registry, "press_key", {
+    result = _exec(registry, "Key", {
         "snapshot_id": snapshot_id,
         "keys": "Return",
     })
@@ -393,10 +393,92 @@ def test_get_app_state_finds_window_by_class_when_process_name_empty() -> None:
          "process_name": "", "rect": [0, 0, 400, 300]},
     ]
     registry, _ = _registry(session=_session(windows_probe=lambda: windows))
-    result = _exec(registry, "get_app_state", {"app": "Notepad", "mode": "ax"})
+    result = _exec(registry, "Observe", {"app": "Notepad", "mode": "ax"})
     assert not result.is_error, result.value
     payload = json.loads(result.value)
     assert payload["windows"][0]["hwnd"] == 11
 
-    result_exe = _exec(registry, "get_app_state", {"app": "notepad.exe", "mode": "ax"})
+    result_exe = _exec(registry, "Observe", {"app": "notepad.exe", "mode": "ax"})
     assert not result_exe.is_error
+
+
+def test_session_end_listener_releases_input_lock() -> None:
+    """loop 终态自动归还输入锁：模型忘调 turn_ended 不再卡死下一个会话。"""
+    import json as _json
+
+    registry, session = _registry()
+    # 拿一个快照 + 占锁（模拟模型做过一次点击但忘了 turn_ended）
+    state = registry.execute_tool("Observe", {})
+    snapshot_id = _json.loads(str(state.value))["snapshot_id"]
+    first_click = registry.execute_tool("Click", {"snapshot_id": snapshot_id, "index": 1})
+    assert first_click.is_error is False, first_click.error_message
+    # 第二个会话：同一把进程锁、不同 session_id（生产 = process_input_lock）。
+    other_session = _session(session_id="s2", ownership=session.ownership)
+    other = ToolRegistry()
+    register_desktop_action_tools(other, other_session)
+    other_state = other.execute_tool("Observe", {})
+    other_snapshot = _json.loads(str(other_state.value))["snapshot_id"]
+    busy = other.execute_tool("Click", {"snapshot_id": other_snapshot, "index": 1})
+    assert busy.is_error is True  # 锁被占着
+
+    registry.notify_session_end()  # loop 终态
+
+    retried = other.execute_tool("Click", {"snapshot_id": other_snapshot, "index": 1})
+    assert retried.is_error is False, f"终态后锁必须已自动归还: {retried.error_message}"
+
+
+def test_get_app_state_compresses_element_flood() -> None:
+    """元素树压缩：零面积剔除、去重、长文本截断、100 上限 + 截断计数。
+    模型上下文不被大窗口的 JSON 洪水冲掉（对照 Kimi/Anthropic 的观察压缩）。"""
+    raw = []
+    for i in range(150):
+        raw.append({
+            "index": i + 1,
+            "role": "listitem",
+            "name": f"行 {i} " + "x" * 200,
+            "rect": [0, i * 20, 200, i * 20 + 18],
+        })
+    raw.append({"index": 200, "role": "pane", "name": "", "rect": [5, 5, 5, 5]})  # 零面积
+    session = _session(elements_probe=lambda hwnd: list(raw))
+    registry = ToolRegistry()
+    register_desktop_action_tools(registry, session)
+    state = registry.execute_tool("Observe", {})
+    payload = json.loads(str(state.value))
+    elements = payload["elements"]
+    assert len(elements) <= 100, "上限 100"
+    assert all(len(str(e.get("name") or "")) <= 90 for e in elements), "长文本截断"
+    assert all(
+        (e["rect"][2] - e["rect"][0]) > 1 and (e["rect"][3] - e["rect"][1]) > 1
+        for e in elements
+    ), "零面积剔除"
+    assert payload.get("elements_truncated") >= 50, "截断计数诚实上报"
+
+
+def test_click_reports_changes_after() -> None:
+    """点完必须再观察——Click 直接带回元素变化摘要，省一轮 Observe。"""
+    calls = {"n": 0}
+    before = [
+        {"index": 1, "role": "button", "name": "打开", "rect": [0, 0, 60, 20]},
+        {"index": 2, "role": "edit", "name": "旧值", "rect": [0, 30, 120, 50]},
+    ]
+    after = [
+        {"index": 1, "role": "button", "name": "打开", "rect": [0, 0, 60, 20]},
+        {"index": 2, "role": "edit", "name": "新值", "rect": [0, 30, 120, 50]},
+        {"index": 3, "role": "list", "name": "下拉项", "rect": [0, 60, 120, 90]},
+    ]
+
+    def elements(hwnd: int):
+        calls["n"] += 1
+        return list(after) if calls["n"] > 1 else list(before)
+
+    session = _session(elements_probe=elements)
+    registry = ToolRegistry()
+    register_desktop_action_tools(registry, session)
+    state = registry.execute_tool("Observe", {})
+    snapshot_id = json.loads(str(state.value))["snapshot_id"]
+    result = registry.execute_tool("Click", {"snapshot_id": snapshot_id, "index": 1})
+    payload = json.loads(str(result.value))
+    changes = payload.get("changes_after") or []
+    names = [c.get("name") for c in changes]
+    assert "新值" in names and "下拉项" in names, f"点击后的变化要回带: {changes}"
+    assert "打开" not in names, "未变的元素不算变化"

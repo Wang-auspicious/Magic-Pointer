@@ -13,46 +13,45 @@ import os
 from app.agent_runtime.types import ORIGIN_DATA, AgentMessage, Role
 from app.harness.builtin_bundle import LoopHarnessHost, boot_loop_context
 
-# 5 perception tools + look + 3 local actions + 13 desktop CU tools
-# + ask_user_question/todo_write + web_search/web_fetch/save_skill
-# + search_history (read_background only mounts with a workspace)
-# + 16 capability tools + find_capability.
+# 5 perception tools + Look + 3 local actions + 13 desktop CU tools
+# + AskUser/Todo + Search/Fetch/SaveSkill
+# + Recall (BashRead only mounts with a workspace)
+# + 16 capability tools + Tools.
 EXPECTED_TOOLS = [
-    "activate_window", "agent_handoff", "ask_user_question", "canvas_transform",
-    "click", "clipboard_text",
-    "compare_objects", "copy_selected_text", "data_export",
-    "describe_capabilities", "drag", "dump_subtree", "find_capability",
-    "find_in_window", "get_app_state", "get_focused", "image_ops", "launch_app",
-    "list_apps", "list_windows", "look",
-    "perform_secondary_action", "place_route", "press_key", "read_around",
-    "recipe_scale", "research_card",
-    "save_screenshot", "save_skill", "screen_help", "scroll", "search_history",
-    "select_text", "set_value",
-    "show_source", "table_merge",
-    "task_route", "text_transform", "todo_write", "turn_ended", "type_text",
-    "vision_bridge", "web_fetch", "web_search",
+    "Act", "Around", "AskUser", "Capabilities",
+    "Click", "Drag", "Fetch", "Find",
+    "Focus", "GetFocus", "Key", "Launch",
+    "ListApps", "ListWindows", "Look", "Observe",
+    "Recall", "SaveSkill", "Scroll", "Search",
+    "Select", "SetValue", "Todo", "Tools",
+    "Tree", "Type", "agent_handoff", "canvas_transform",
+    "clipboard_text", "compare_objects", "copy_selected_text", "data_export",
+    "image_ops", "place_route", "recipe_scale", "research_card",
+    "save_screenshot", "screen_help", "show_source", "table_merge",
+    "task_route", "text_transform", "turn_ended", "vision_bridge",
+    "wait",
 ]
 WRITE_TOOLS = {
-    "activate_window", "click", "copy_selected_text", "drag", "launch_app",
-    "perform_secondary_action", "press_key", "save_screenshot", "save_skill",
-    "scroll", "select_text", "set_value", "type_text",
+    "Focus", "Click", "copy_selected_text", "Drag", "Launch",
+    "Act", "Key", "save_screenshot", "SaveSkill",
+    "Scroll", "Select", "SetValue", "Type",
 }
 
 
 class _FakePerception:
-    def read_around(self, anchor, radius):
+    def Around(self, anchor, radius):
         return []
 
-    def find_in_window(self, query, limit=10):
+    def Find(self, query, limit=10):
         return []
 
-    def dump_subtree(self, path=None):
+    def Tree(self, path=None):
         return {}
 
-    def list_windows(self):
+    def ListWindows(self):
         return []
 
-    def get_focused(self):
+    def GetFocus(self):
         return None
 
 
@@ -98,10 +97,10 @@ def test_composed_tree_registers_the_old_inventory():
     effects = {spec.name: spec.effect.value for spec in registry.list()}
     assert effects["copy_selected_text"] == "reversible_write"
     assert effects["save_screenshot"] == "reversible_write"
-    assert effects["click"] == "reversible_write"
+    assert effects["Click"] == "reversible_write"
     assert effects["show_source"] == "read"
-    assert effects["list_apps"] == "read"
-    assert effects["get_app_state"] == "read"
+    assert effects["ListApps"] == "read"
+    assert effects["Observe"] == "read"
     assert effects["turn_ended"] == "read"
     assert all(
         effect == "read"
@@ -154,12 +153,12 @@ def test_resident_loop_host_reuses_globals_and_unwinds_request_tools(tmp_path) -
     host = LoopHarnessHost(root=tmp_path, plugin_dir=tmp_path / "plugins")
     global_registry = host.report.ctx.get("tools")
     assert sorted(spec.name for spec in global_registry.list()) == [
-        "ask_user_question",
-        "save_skill",
-        "search_history",
-        "todo_write",
-        "web_fetch",
-        "web_search",
+        "AskUser",
+        "Fetch",
+        "Recall",
+        "SaveSkill",
+        "Search",
+        "Todo",
     ]
 
     first = host.open(_runtime(content="first"))
@@ -167,12 +166,12 @@ def test_resident_loop_host_reuses_globals_and_unwinds_request_tools(tmp_path) -
     assert first.ctx.has("model_client")
     first.close()
     assert sorted(spec.name for spec in global_registry.list()) == [
-        "ask_user_question",
-        "save_skill",
-        "search_history",
-        "todo_write",
-        "web_fetch",
-        "web_search",
+        "AskUser",
+        "Fetch",
+        "Recall",
+        "SaveSkill",
+        "Search",
+        "Todo",
     ]
 
     second = host.open(_runtime(content="second"))
@@ -267,19 +266,30 @@ def test_resident_host_exposes_lazy_mcp_search_when_configured(tmp_path, monkeyp
 
 
 def test_system_prompt_stops_gathering_evidence_without_stopping_multi_step_jobs():
-    report = boot_loop_context(_runtime())
+    report = boot_loop_context(_runtime(selection_anchor={"kind": "test"}))
     prompt = report.ctx.get("model_client")._backend.system_prompt
     # 问答形态：证据够了就别再翻，避免为显得勤奋而空转。
     assert "不要为了显得勤奋" in prompt
     # 多步作业形态：证据够 ≠ 活干完，不得中途收工（任务时长不是边界）。
     assert "做完全部步骤" in prompt
-    assert "勿重复 look" in prompt
+    assert "勿重复 Look" in prompt
     assert "冻结帧" in prompt
     assert "不得据此点击" in prompt
-    assert "ask_user_question" in prompt
-    assert "再 get_app_state" in prompt
-    assert "get_app_state" in prompt
+    assert "AskUser" in prompt
+    assert "再 Observe" in prompt
+    assert "Observe" in prompt
     assert "turn_ended" in prompt
+    report.ctx.unload()
+
+
+def test_system_prompt_without_selection_evidence_does_not_claim_circled_object():
+    report = boot_loop_context(_runtime())
+    prompt = report.ctx.get("model_client")._backend.system_prompt
+    # 普通文本对话：摘掉"用户圈选了对象"的谎言，模型才不会被骗去
+    # 全桌面找并不存在的选区（真机事故：17 轮桌面工具空转）。
+    assert "圈选" not in prompt
+    assert "visual_anchor" not in prompt
+    assert "冻结帧" not in prompt
     report.ctx.unload()
 
 
@@ -300,7 +310,7 @@ def _bulky_history() -> list[AgentMessage]:
 def test_the_unfinished_plan_survives_compaction():
     # A long job's progress must not depend on the summariser remembering it.
     report = boot_loop_context(_runtime(summarize=lambda text: "早期步骤的摘要"))
-    report.ctx.get("tools").get("todo_write").execute(todos=[
+    report.ctx.get("tools").get("Todo").execute(todos=[
         {"content": "已导出前 90 条", "status": "completed"},
         {"content": "继续处理第 91 条起", "status": "in_progress"},
     ])
@@ -356,15 +366,15 @@ def test_rows_report_active_and_dump_is_complete():
 def test_coding_tools_absent_without_workspace_and_present_with_one(tmp_path):
     report = boot_loop_context(_runtime())
     names = {tool.name for tool in report.ctx.get("tools").list()}
-    assert "run_command" not in names
-    assert "delegate_task" not in names
+    assert "Bash" not in names
+    assert "Agent" not in names
     report.ctx.unload()
 
     report = boot_loop_context(_runtime(workspace_root=str(tmp_path)))
     names = {tool.name for tool in report.ctx.get("tools").list()}
     assert {
-        "read_file", "write_file", "edit_file", "glob", "grep",
-        "run_command", "apply_patch", "restore_files", "delegate_task",
+        "Read", "Write", "Edit", "Glob", "Grep",
+        "Bash", "Patch", "Rewind", "Agent",
     } <= names
     model_cfg = next(
         row.resolved_config for row in report.rows if row.id == "model-client"
@@ -578,7 +588,86 @@ def test_disabled_row_skips_its_registration():
     assert "copy_selected_text" not in names
     assert "save_screenshot" not in names
     assert "show_source" not in names
-    assert "look" in names
+    assert "Look" in names
     status = {row.id: row.status for row in report.rows}
     assert status["local-action-tools"] == "disabled"
+    report.ctx.unload()
+
+
+def test_reply_style_reaches_the_prompt_context() -> None:
+    """作曲家的语量芯片必须真的改系统提示。
+
+    reply_style 一路从 renderer 传到 model-client 的 resolved_config，然后
+    ``_apply_model_client`` 建 prompt context 时把它丢了——五档芯片对模型
+    完全不可见（Style section 的三个单测只测 builder，测不到这段接线）。
+    """
+    report = boot_loop_context(_runtime(command="随便问问", reply_style="ultra"))
+    prompt = report.ctx.get("model_request_header")["systemPrompt"]
+    assert "# Style" in prompt, "ultra 档必须注入 Style section"
+    assert "极简" in prompt
+    report.ctx.unload()
+
+    normal = boot_loop_context(_runtime(command="随便问问", reply_style="normal"))
+    assert "# Style" not in normal.ctx.get("model_request_header")["systemPrompt"]
+    normal.ctx.unload()
+
+
+def test_permission_mode_in_prompt_matches_the_mode_the_loop_enforces() -> None:
+    """提示里的权限模式必须是本回合真正执行的那个。
+
+    两座桥都把用户选的预设写进 ``runtime['permission_mode']``，但 model-client
+    行只读 ``MAGIC_POINTER_PERMISSION_MODE`` 环境变量（生产从不设置），所以
+    提示恒为 default：用户选 read-only 时模型仍被告知可逆写可直接执行，
+    连着一轮工具拒绝。
+    """
+    report = boot_loop_context(_runtime(permission_mode="safe"))
+    model_row = next(row for row in report.rows if row.id == "model-client")
+    assert model_row.resolved_config["permission_mode"] == "safe"
+    assert "safe" in report.ctx.get("model_request_header")["systemPrompt"]
+    report.ctx.unload()
+
+
+def test_env_permission_mode_still_overrides_when_runtime_says_nothing(monkeypatch) -> None:
+    """回滚开关保持有效：runtime 不带模式时环境变量仍然说话。"""
+    monkeypatch.setenv("MAGIC_POINTER_PERMISSION_MODE", "plan")
+    runtime = _runtime()
+    runtime.pop("permission_mode", None)
+    report = boot_loop_context(runtime)
+    model_row = next(row for row in report.rows if row.id == "model-client")
+    assert model_row.resolved_config["permission_mode"] == "plan"
+    report.ctx.unload()
+
+
+def test_resident_host_stage_path_passes_selection_anchor_to_model_client(tmp_path):
+    """Stage 常驻 worker 的 model-client 行必须带上 selection_anchor。
+
+    boot_loop_context（conversation 一次性路径）修了 ``has_selection`` 恒
+    False 的骗局，但 Stage 生产路径走 LoopHarnessHost._run_loop_rows——
+    那条 model-client 行没传 anchor，划线任务仍然被提示词告知
+    「本任务没有屏幕选区对象」，冻结帧 / Look 规则全部失效。
+    """
+    host = LoopHarnessHost(root=tmp_path, plugin_dir=tmp_path / "plugins")
+    report = host.open(_runtime(selection_anchor={"kind": "test"}))
+    assert "圈选" in report.ctx.get("model_request_header")["systemPrompt"]
+    host.close()
+
+    host = LoopHarnessHost(root=tmp_path, plugin_dir=tmp_path / "plugins")
+    report = host.open(_runtime())
+    assert "圈选" not in report.ctx.get("model_request_header")["systemPrompt"]
+    assert "冻结帧" not in report.ctx.get("model_request_header")["systemPrompt"]
+    host.close()
+
+
+def test_system_prompt_bans_raw_output_dumps_in_answers():
+    """回答是写给用户的对话，不是工具输出的倾倒。
+
+    真机（图3）：用户问「项目里有什么」，模型把 search 的原始输出抄成
+    ASCII 目录树——完全不想沟通。五源码共同的输出契约：先直接回答问题
+    本身，工具输出是证据不是答案；清单/树/原始输出只在用户明确要时给。
+    """
+    report = boot_loop_context(_runtime(command="项目里有什么", workspace_root="D:/x"))
+    prompt = report.ctx.get("model_request_header")["systemPrompt"]
+    assert "倾倒" in prompt
+    assert "项目里有什么" in prompt
+    assert "证据" in prompt
     report.ctx.unload()

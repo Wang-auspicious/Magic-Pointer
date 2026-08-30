@@ -253,7 +253,7 @@ class TestRegisterAll:
         registry = ToolRegistry()
         tools.register_all(registry)
         names = {spec.name for spec in registry.list()}
-        assert names == {"read_around", "dump_subtree", "find_in_window", "list_windows", "get_focused"}
+        assert names == {"Around", "Tree", "Find", "ListWindows", "GetFocus"}
         for spec in registry.list():
             assert spec.effect is Effect.READ
             assert spec.is_concurrency_safe is True
@@ -273,7 +273,7 @@ class TestRegisterAll:
         backend.read_items = [{"text": "hello", "source": "uia", "bbox_ltrb": [0, 0, 1, 1], "confidence": 1.0}]
         registry = ToolRegistry()
         tools.register_all(registry)
-        result = registry.execute_tool("read_around", {"anchor": "a", "radius": 2})
+        result = registry.execute_tool("Around", {"anchor": "a", "radius": 2})
         assert result.is_error is False
         assert "hello" in result.value.value
         assert result.failure_type is None
@@ -282,7 +282,7 @@ class TestRegisterAll:
         backend.timeout = True
         registry = ToolRegistry()
         tools.register_all(registry)
-        result = registry.execute_tool("read_around", {"anchor": "a"})
+        result = registry.execute_tool("Around", {"anchor": "a"})
         assert result.is_error is True
         assert result.failure_type is FailureType.TIMEOUT
 
@@ -294,31 +294,31 @@ class TestRegisterAll:
     def test_frozen_reads_are_labelled_historical(self, tools: PerceptionTools) -> None:
         registry = ToolRegistry()
         tools.register_all(registry)
-        for name in ("read_around", "dump_subtree", "find_in_window"):
+        for name in ("Around", "Tree", "Find"):
             description = registry.get(name).description.casefold()
             assert "frozen" in description, name
-            assert "get_app_state" in description, name
+            assert "observe" in description, name
 
 
 class TestInputValidation:
     def test_validate_input_missing_anchor(self, tools: PerceptionTools) -> None:
         registry = ToolRegistry()
         tools.register_all(registry)
-        spec = registry.get("read_around")
+        spec = registry.get("Around")
         errors = registry.validate_input(spec, {"radius": 2})
         assert any("anchor" in e for e in errors)
 
     def test_validate_input_extra_field_rejected(self, tools: PerceptionTools) -> None:
         registry = ToolRegistry()
         tools.register_all(registry)
-        spec = registry.get("find_in_window")
+        spec = registry.get("Find")
         errors = registry.validate_input(spec, {"pattern": "x", "radius": 9})
         assert any("radius" in e for e in errors)
 
     def test_validate_input_ok_when_complete(self, tools: PerceptionTools) -> None:
         registry = ToolRegistry()
         tools.register_all(registry)
-        spec = registry.get("find_in_window")
+        spec = registry.get("Find")
         assert registry.validate_input(spec, {"pattern": "x"}) == []
 
     def test_backend_busy_through_registry_is_busy_evidence_not_error(
@@ -327,6 +327,6 @@ class TestInputValidation:
         backend.busy = True
         registry = ToolRegistry()
         tools.register_all(registry)
-        result = registry.execute_tool("read_around", {"anchor": "a"})
+        result = registry.execute_tool("Around", {"anchor": "a"})
         assert result.is_error is False
         assert result.value.status is EvidenceStatus.BUSY

@@ -58,7 +58,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.agent_runtime.errors import ActionFailure, FailureType  # noqa: E402
 from app.agent_runtime.hooks import HookManager  # noqa: E402
 from app.agent_runtime.loop import (  # noqa: E402
+    BackendRecovery,
     BudgetRenewed,
+    _merge_model_usage,
     LoopParams,
     LoopStopped,
     StopDecision,
@@ -323,6 +325,53 @@ def test_model_usage_is_aggregated_across_agent_rounds() -> None:
         "totalTokens": 13,
         "turnsReported": 1,
     }
+
+
+def test_model_usage_records_provider_cache_hit_fields() -> None:
+    """缓存命中必须可观测，否则 prefix cache 的省钱效果无法验收。
+
+    DeepSeek（chat-completions）报 ``prompt_cache_hit_tokens``；
+    Anthropic（messages）报 ``cache_read_input_tokens`` /
+    ``cache_creation_input_tokens``。_merge_model_usage 此前只认
+    input/output/total，命中率被静默丢弃。
+    """
+    aggregate: dict = {}
+    _merge_model_usage(aggregate, {
+        "prompt_tokens": 100,
+        "completion_tokens": 5,
+        "prompt_cache_hit_tokens": 80,
+        "prompt_cache_miss_tokens": 20,
+    })
+    assert aggregate["cacheReadTokens"] == 80
+
+    _merge_model_usage(aggregate, {
+        "input_tokens": 50,
+        "output_tokens": 4,
+        "cache_read_input_tokens": 30,
+        "cache_creation_input_tokens": 7,
+    })
+    assert aggregate["cacheReadTokens"] == 110
+    assert aggregate["cacheWriteTokens"] == 7
+
+    # 未知/缺省 provider：键不出现，消费方以键存在为准。
+    plain: dict = {}
+    _merge_model_usage(plain, {"prompt_tokens": 10, "completion_tokens": 2})
+    assert "cacheReadTokens" not in plain
+
+
+def test_single_round_surfaces_cache_hit_in_terminal_usage() -> None:
+    backend = ScriptedBackend(
+        [TurnDone(usage={
+            "prompt_tokens": 100,
+            "completion_tokens": 3,
+            "prompt_cache_hit_tokens": 90,
+        }, raw_text="one")],
+    )
+    _events, terminal = asyncio.run(collect(make_params(
+        client=LoopModelClient(backend),
+    )))
+    assert terminal.model_usage is not None
+    assert terminal.model_usage["cacheReadTokens"] == 90
 
 
 def test_non_finite_provider_usage_cannot_crash_a_valid_answer() -> None:
@@ -2841,3 +2890,150 @@ def test_invariant_failure_kinds_distinguish_truncation_from_runaway():
     assert terminal2.reason is TransitionReason.INVARIANT_FAILED
     assert terminal2.failure_kind == "output_truncation"
     assert "截断" in terminal2.message
+
+
+def test_keepalive_fires_during_a_long_tool() -> None:
+    """长时间 run_command 中途不能沉默：Electron 的 60s/120s 静默闸会在
+    单个长工具执行期间杀掉 Python 子进程。loop 必须在工具执行中持续打心跳，
+    而不只是回合边界。"""
+    beats: list[str] = []
+    slow, _state = make_counting_tool("slow_tool", delay=3.0)
+    registry = ToolRegistry()
+    registry.register(slow)
+
+    backend = ScriptedBackend(
+        [
+            ToolCallArrived(call=ToolCall(id="slow1", name="slow_tool", arguments={})),
+            TurnDone(usage=None, raw_text=None),
+        ],
+        [TurnDone(usage=None, raw_text="done")],
+    )
+    client = LoopModelClient(backend)
+    events, terminal = asyncio.run(collect(
+        make_params(
+            client=client,
+            registry=registry,
+            keepalive=beats.append,
+        )
+    ))
+    assert terminal.reason is TransitionReason.COMPLETED, terminal
+    tool_beats = [b for b in beats if "slow_tool" in b or "tool_beat" in b]
+    assert tool_beats, f"expected a heartbeat during the long tool, got {beats}"
+
+
+def test_thread_grant_upgrades_ask_tool_in_the_loop() -> None:
+    """线程授权必须让被拒的 ASK 工具真正跑起来（授权条的全部意义）。
+
+    run_command 是 LOCAL_IRREVERSIBLE，workspace-write 预设下 mode 给 ASK；
+    用户点「本会话总是允许」后，memo 要把它抬成 allow，否则同一道门每轮
+    都拦——编程闭环走不完。"""
+    from app.agent_runtime.permission_decisions import PermissionDecisions
+
+    ran = {"n": 0}
+
+    def execute(**kwargs):
+        ran["n"] += 1
+        return "ran"
+
+    registry = ToolRegistry()
+    registry.register(ToolSpec(
+        name="run_cmd",
+        description="run a shell command",
+        input_schema={"type": "object", "properties": {"command": {"type": "string"}}, "required": ["command"]},
+        execute=execute,
+        effect=Effect.LOCAL_IRREVERSIBLE,
+        used_backend="shell",
+        timeout_ms=10_000,
+    ))
+    backend = ScriptedBackend(
+        [
+            ToolCallArrived(call=ToolCall(id="r1", name="run_cmd", arguments={"command": "pytest"})),
+            TurnDone(usage=None, raw_text=None),
+        ],
+        [TurnDone(usage=None, raw_text="done")],
+    )
+    client = LoopModelClient(backend)
+    events, terminal = asyncio.run(collect(
+        make_params(
+            client=client,
+            registry=registry,
+            permission_mode="default",
+            # Production passes the full ceiling (see _effect_ceiling in the
+            # bridges); the mode gate is what blocks LOCAL_IRREVERSIBLE here.
+            allowed_effects=(Effect.READ, Effect.REVERSIBLE_WRITE, Effect.LOCAL_IRREVERSIBLE),
+            permission_decisions=PermissionDecisions(allowed=("run_cmd",)),
+        )
+    ))
+    assert terminal.reason is TransitionReason.COMPLETED, terminal
+    assert ran["n"] == 1, "granted tool must actually execute"
+
+
+def test_transient_http_500_on_fresh_turn_waits_and_retries():
+    """网关 5xx 打在新会话第一条消息上：等一次冷却后重试，而不是把
+    原始错误码当答案终止（真机 8·29 backenderror:http500）。
+
+    凭据缺失类错误不重试——立即终止把真实原因交给用户。"""
+    # LoopModelClient 自带 2 次内部重试；关掉它，才能测到 loop 层的
+    # BackendRecovery 分支（客户端重试穷尽后 withheld 才会浮到 loop）。
+    backend = ScriptedBackend([
+        TurnWithheld(reason="backend_error:http_500"),
+        TurnWithheld(reason="backend_error:http_500"),
+        TurnWithheld(reason="backend_error:http_500"),
+        TurnDone(usage=None, raw_text="好了"),
+    ])
+    events, terminal = asyncio.run(collect(make_params(
+        client=LoopModelClient(backend, max_provider_retries=0),
+    )))
+    assert terminal.reason is TransitionReason.COMPLETED, terminal.reason
+    assert any(isinstance(event, BackendRecovery) for event in events)
+
+
+def test_credential_missing_on_fresh_turn_terminates_immediately():
+    backend = ScriptedBackend([
+        TurnWithheld(reason="backend_error:credential_missing"),
+    ])
+    events, terminal = asyncio.run(collect(make_params(
+        client=LoopModelClient(backend),
+    )))
+    assert terminal.reason is TransitionReason.PROVIDER_UNAVAILABLE
+    assert not any(isinstance(event, BackendRecovery) for event in events)
+
+
+def test_unknown_tool_error_lists_available_tools():
+    """P2-6a：模型拼错工具名时，错误里附上当前可用工具名——否则它只能
+    瞎猜，下一轮大概率再错一次（Hermes conversation_loop 同款）。"""
+    tool, _state = make_counting_tool("run_command")
+    registry = ToolRegistry()
+    registry.register(tool)
+    backend = ScriptedBackend(
+        [
+            ToolCallArrived(call=ToolCall(id="c1", name="run_comand", arguments={})),
+            TurnDone(usage=None, raw_text=None),
+        ],
+        [TurnDone(usage=None, raw_text="明白了")],
+    )
+    client = LoopModelClient(backend)
+
+    events, terminal = asyncio.run(collect(make_params(client=client, registry=registry)))
+
+    result = terminal.results[0]
+    assert result.is_error is True
+    assert "unknown tool" in result.value
+    assert "run_command" in result.value, "错误必须列出可用工具名"
+
+
+def test_loop_end_notifies_session_end_listeners():
+    """loop 终态(任意 reason)必须触发 registry 的 session_end 监听——
+    桌面输入锁的自动归还挂在这里，模型忘调 turn_ended 不再卡死下个会话。"""
+    released = []
+    tool, _state = make_counting_tool("probe")
+    registry = ToolRegistry()
+    registry.register(tool)
+    registry.add_session_end_listener(lambda: released.append(True))
+    backend = ScriptedBackend([TurnDone(usage=None, raw_text="完成")])
+    client = LoopModelClient(backend)
+
+    events, terminal = asyncio.run(collect(make_params(client=client, registry=registry)))
+
+    assert terminal.reason is TransitionReason.COMPLETED
+    assert released == [True]

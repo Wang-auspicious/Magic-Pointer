@@ -54,7 +54,6 @@ from app.agent_runtime.session import FileSessionStore
 from app.agent_runtime.system_prompt import (
     SystemPromptBuilder,
     default_sections,
-    is_deliver_request,
 )
 from app.agent_runtime.todo_store import TodoStore
 from app.agent_runtime.token_estimate import estimate_request_tokens
@@ -266,8 +265,17 @@ def _apply_local_action_tools(fork, config: dict[str, Any]) -> None:
 
 def _apply_desktop_action_tools(fork, config: dict[str, Any]) -> None:
     """Kimi CU 13 tools on the main loop, bound to one input-ownership session."""
-    del config
+    from app.agent_runtime.wait_tool import WaitTool
+    from app.desktop_actions.session import _live_elements, _live_windows, default_session
+
     register_desktop_action_tools(fork.get("tools"), default_session())
+    # Wait：确定性条件等待（点开菜单→等它渲染→点菜单项）。三家都没有，
+    # MP 的桌面 agent 刚需；探针与 Observe 同源（真实 UIA）。
+    WaitTool(
+        windows_probe=_live_windows,
+        elements_probe=_live_elements,
+        workspace_root=str(config.get("workspace_root") or "") or None,
+    ).register(fork.get("tools"))
 
 
 def _apply_coding_tools(fork, config: dict[str, Any]) -> None:
@@ -282,7 +290,11 @@ def _apply_coding_tools(fork, config: dict[str, Any]) -> None:
     raw_root = str(config.get("workspace_root") or "").strip()
     if not raw_root:
         return
-    register_coding_tools(fork.get("tools"), workspace_root=Path(raw_root))
+    register_coding_tools(
+        fork.get("tools"),
+        workspace_root=Path(raw_root),
+        inbox=config.get("inbox"),
+    )
 
 
 def _apply_delegate_tool(fork, config: dict[str, Any]) -> None:
@@ -391,7 +403,8 @@ def _apply_model_client(fork, config: dict[str, Any]) -> None:
     model_name = str(get_ai_config()[2] or "")
     context = {
         "permission_mode": str(config.get("permission_mode") or "default"),
-        "deliver": is_deliver_request(str(config.get("command") or "")),
+        # 交付格式规则常驻（模型自己判断意图），不再做关键词预分类。
+        "deliver": True,
         "memory": memory or None,
         "skills": SkillLoader(
             user_data_dir,
@@ -400,6 +413,10 @@ def _apply_model_client(fork, config: dict[str, Any]) -> None:
         "language": "用中文",
         "workspace_root": str(config.get("workspace_root") or "").strip(),
         "permission_preset": str(config.get("permission_preset") or ""),
+        "has_selection": bool(config.get("selection_anchor")),
+        # 语量芯片（五档）此前只到 resolved_config 就断了：prompt context 不带
+        # reply_style，Style section 永远读到 None，用户选什么模型都不知道。
+        "reply_style": str(config.get("reply_style") or "normal"),
     }
     system_prompt = fork.get("prompt").build(context)
     provider = fork.get("llm")
@@ -614,6 +631,24 @@ def _runtime_root(root: Path) -> Path:
     return Path(user_data) if user_data else root / "data" / "runtime"
 
 
+def _permission_mode_for(runtime: dict[str, Any]) -> str:
+    """The mode this turn will actually enforce, as the prompt must state it.
+
+    Both bridges resolve the user's permission preset into
+    ``runtime["permission_mode"]`` and hand that same value to
+    ``run_agent_turn``. This row used to read only
+    ``MAGIC_POINTER_PERMISSION_MODE``, which production never sets — so the
+    prompt said ``default`` while the gate enforced ``safe``, and a read-only
+    turn was told reversible writes run in-loop right up until the tool was
+    refused. The env knob stays as the documented rollback switch for a turn
+    that carries no mode of its own.
+    """
+    explicit = str(runtime.get("permission_mode") or "").strip()
+    if explicit:
+        return explicit
+    return os.environ.get("MAGIC_POINTER_PERMISSION_MODE", "default").strip() or "default"
+
+
 def _computer_operator_registry(root: Path) -> ComputerOperatorRegistry:
     registry = ComputerOperatorRegistry()
     if os.name == "nt":
@@ -715,11 +750,20 @@ def _run_loop_rows(runtime: dict[str, Any], root: Path) -> list[BundleRow]:
                 "window_process": str(window.get("process_name") or ""),
             },
         ),
-        BundleRow("desktop-action-tools", "desktop-action-tools"),
+        BundleRow(
+            "desktop-action-tools",
+            "desktop-action-tools",
+            {"workspace_root": str(runtime.get("workspace_root") or "")},
+        ),
         BundleRow(
             "coding-tools",
             "coding-tools",
-            {"workspace_root": str(runtime.get("workspace_root") or "")},
+            {
+                "workspace_root": str(runtime.get("workspace_root") or ""),
+                # 后台 job 完成推送（Hermes notify_on_complete）：桥在
+                # runtime 里带 session_inbox=enqueue_inbox 回调。
+                "inbox": runtime.get("session_inbox"),
+            },
         ),
         BundleRow(
             "capability-tools",
@@ -738,10 +782,7 @@ def _run_loop_rows(runtime: dict[str, Any], root: Path) -> list[BundleRow]:
             "model-client",
             "model-client",
             {
-                "permission_mode": (
-                    os.environ.get("MAGIC_POINTER_PERMISSION_MODE", "default").strip()
-                    or "default"
-                ),
+                "permission_mode": _permission_mode_for(runtime),
                 "max_tokens": 4096,
                 "context_budget_tokens": _env_int_or_none(
                     "MAGIC_POINTER_CONTEXT_TOKENS"
@@ -752,6 +793,9 @@ def _run_loop_rows(runtime: dict[str, Any], root: Path) -> list[BundleRow]:
                 "workspace_root": str(runtime.get("workspace_root") or ""),
                 "permission_preset": str(runtime.get("permission_preset") or ""),
                 "reply_style": str(runtime.get("reply_style") or "normal"),
+                # Stage 常驻路径与 boot_loop_context 同规则：圈选证据存在
+                # 与否决定身份与冻结帧规则是否注入。
+                "selection_anchor": runtime.get("selection_anchor"),
             },
         ),
     ]
@@ -904,10 +948,7 @@ def boot_loop_context(
             "model-client",
             "model-client",
             {
-                "permission_mode": (
-                    os.environ.get("MAGIC_POINTER_PERMISSION_MODE", "default").strip()
-                    or "default"
-                ),
+                "permission_mode": _permission_mode_for(runtime),
                 "max_tokens": 4096,
                 "context_budget_tokens": _env_int_or_none(
                     "MAGIC_POINTER_CONTEXT_TOKENS"
@@ -918,6 +959,9 @@ def boot_loop_context(
                 "workspace_root": str(runtime.get("workspace_root") or ""),
                 "permission_preset": str(runtime.get("permission_preset") or ""),
                 "reply_style": str(runtime.get("reply_style") or "normal"),
+                # 圈选证据（selection_anchor / object）存在与否决定身份与
+                # 冻结帧规则是否注入：普通文本对话不谎称有圈选对象。
+                "selection_anchor": runtime.get("selection_anchor"),
             },
         ),
     ]

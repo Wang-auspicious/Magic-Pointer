@@ -206,11 +206,6 @@ const DshChat = (() => {
     write: 'Write', edit: 'Edit', code: 'Code', others: 'Tool call',
   };
 
-  const VARIANT_ICONS: Record<ToolVariant, string> = {
-    search: 'search', read: 'browse', bash: 'api',
-    write: 'edit', edit: 'edit', code: 'code', others: 'sparkle',
-  };
-
   const TOOL_TITLES: Record<string, string> = {
     pwsh: 'Pwsh',
   };
@@ -221,6 +216,20 @@ const DshChat = (() => {
     write: 'write', edit: 'edit', run_code: 'code',
     read_around: 'read', dump_subtree: 'read', get_focused: 'read', list_windows: 'read',
     find_in_window: 'search', look: 'read', propose: 'code', execute_plan: 'code',
+    // 生产 coding/delegate 工具名（图1 里模型真实调用的那些）。
+    read_file: 'read', write_file: 'write', edit_file: 'edit',
+    apply_patch: 'edit', run_command: 'bash', search: 'search',
+    list_dir: 'read', delegate_task: 'code',
+    // B5 改名后的规范名（旧名保留渲染历史会话的 replay）。
+    Read: 'read', Write: 'write', Edit: 'edit', Patch: 'edit',
+    Grep: 'search', Glob: 'search', Bash: 'bash', BashRead: 'bash',
+    Search: 'search', Fetch: 'read', Agent: 'code', Wait: 'read',
+    Observe: 'read', Look: 'read', Tree: 'read', Around: 'read',
+    Find: 'search', ListApps: 'read', ListWindows: 'read', GetFocus: 'read',
+    Launch: 'code', Focus: 'code', Click: 'code', Type: 'code',
+    Key: 'code', Scroll: 'code', Drag: 'code', SetValue: 'code',
+    Act: 'code', Select: 'code', AskUser: 'read', Todo: 'read',
+    Recall: 'search', SaveSkill: 'write', Tools: 'search',
   };
 
   const SUMMARY_KEYS: Record<ToolVariant, readonly string[]> = {
@@ -446,7 +455,7 @@ const DshChat = (() => {
       : model.state === 'stopped' ? stateDot('warning') : undefined;
 
     const { root: disclosure } = disclosureRow({
-      iconName: VARIANT_ICONS[model.variant],
+      iconName: undefined,
       leadingOverride,
       title: model.title,
       collapsed,
@@ -470,7 +479,7 @@ const DshChat = (() => {
     attach(body, reasoning);
 
     const { root } = disclosureRow({
-      iconName: 'think',
+      iconName: undefined,
       title: 'Think',
       collapsed: [h('span', { class: 'dsh-sep', 'aria-hidden': 'true' }), summary],
       body: [body],
@@ -482,20 +491,24 @@ const DshChat = (() => {
     return root;
   }
 
-  /* ---- 消息动作行（复制 + 时钟） ---- */
+  /* ---- 消息动作行（悬停后才出现：分支 + 复制） ---- */
   function formatClock(ms: number): string {
     const d = new Date(ms);
     const pad = (n: number) => String(n).padStart(2, '0');
     return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
 
-  function messageActions(message: string, timeMs?: number): DshNode {
+  interface BranchTarget { conversationId: string; turnIndex: number }
+
+  function messageActions(message: string, branch?: BranchTarget): DshNode {
     const actions = h('div', { class: 'dsh-actions' });
-    actions.setAttribute('data-dsh-time-root', 'true');
-    if (timeMs !== undefined) {
-      const clock = h('span', { class: 'dsh-time' });
-      attach(clock, formatClock(timeMs));
-      attach(actions, clock);
+    if (branch?.conversationId && Number.isInteger(branch.turnIndex)) {
+      const fork = h('button', { type: 'button', class: 'dsh-action', 'aria-label': '从这里创建分支' });
+      fork.setAttribute('data-dsh-act', 'branch');
+      fork.setAttribute('data-dsh-branch-conversation', branch.conversationId);
+      fork.setAttribute('data-dsh-branch-turn', String(branch.turnIndex));
+      attach(fork, icon('branch', 16));
+      attach(actions, fork);
     }
     const copy = h('button', { type: 'button', class: 'dsh-action', 'aria-label': '复制' });
     copy.setAttribute('data-dsh-act', 'copy');
@@ -506,15 +519,14 @@ const DshChat = (() => {
   }
 
   /* ---- 用户消息节点（UserMessageNodeView） ---- */
-  function userNode(question: string, timeMs?: number): DshNode {
+  function userNode(question: string, _timeMs?: number, branch?: BranchTarget): DshNode {
     const root = h('div', { class: 'dsh-user' });
-    root.setAttribute('data-dsh-time-root', 'true');
     const stack = h('div', { class: 'dsh-user-stack' });
     const bubble = h('div', { class: 'dsh-bubble' });
     attach(bubble, question);
     attach(stack, bubble);
     attach(root, stack);
-    attach(root, messageActions(question, timeMs));
+    attach(root, messageActions(question, branch));
     return root;
   }
 
@@ -546,63 +558,192 @@ const DshChat = (() => {
     return root;
   }
 
-  /* ---- 助手回合节点：正文 + Think + 工具行 ---- */
+  /* ---- 助手回合节点：叙述段 + 单行工具芯片 + 证据展开 ---- */
   interface AssistantTurnInput {
     answer?: string;
     thinking?: string;
     trace?: Array<string | { label?: string; note?: string; state?: string; name?: string; arguments?: string; result?: string; isError?: boolean }>;
     events?: Array<Record<string, unknown>>;
     activities?: Array<Record<string, unknown>>;
+    trajectory?: Array<Record<string, unknown>>;
+    modelUsage?: Record<string, unknown> | null;
     failed?: boolean;
     running?: boolean;
     at?: number;
+    conversationId?: string;
+    turnIndex?: number;
+  }
+
+  interface TurnChip {
+    name: string;
+    argsRaw: string;
+    result?: { text: string; isError: boolean; interrupted?: boolean };
+  }
+
+  type FlowItem = { type: 'narration'; text: string } | { type: 'chip'; chip: TurnChip };
+
+  function narrationNode(text: string): DshNode {
+    const root = h('div', { class: 'dsh-narration' });
+    attach(root, text);
+    return root;
+  }
+
+  function chipNode(chip: TurnChip): DshNode {
+    return toolRowNode(toolRowModel(chip.name, chip.argsRaw, chip.result));
+  }
+
+  /* 连续同类读取/搜索折成一条组头（CC "Read 2 files" 契约）。 */
+  function collapsedGroupNode(titleVerb: string, chips: TurnChip[]): DshNode {
+    const root = h('details', { class: 'dsh-tool-group dsh-tool-group-folded' });
+    const summary = h('summary', { class: 'dsh-tool-group-header' });
+    const label = h('span', { class: 'dsh-tool-group-title' });
+    attach(label, `${titleVerb} ${chips.length} files`);
+    const chev = h('span', { class: 'dsh-tool-group-chev', 'aria-hidden': 'true' });
+    attach(chev, icon('chev', 14));
+    attach(summary, label);
+    attach(summary, chev);
+    const body = h('div', { class: 'dsh-tool-group-body' });
+    chips.forEach((chip) => attach(body, chipNode(chip)));
+    attach(root, summary);
+    attach(root, body);
+    return root;
+  }
+
+  function openGroupNode(chips: TurnChip[]): DshNode {
+    const root = h('div', { class: 'dsh-tool-group' });
+    chips.forEach((chip) => attach(root, chipNode(chip)));
+    return root;
+  }
+
+  function chipGroupTitle(chips: TurnChip[]): string {
+    const names = new Set(chips.map((chip) => chip.name));
+    if (names.size === 1) {
+      const variant = classifyTool(chips[0].name);
+      return VARIANT_TITLES[variant];
+    }
+    return '执行';
+  }
+
+  function isFileFetchRun(chips: TurnChip[]): boolean {
+    return chips.length >= 3
+      && chips.every((chip) => classifyTool(chip.name) === 'read');
+  }
+
+  function chipRunNode(chips: TurnChip[]): DshNode {
+    if (isFileFetchRun(chips)) return collapsedGroupNode(chipGroupTitle(chips), chips);
+    if (chips.length >= 2) return openGroupNode(chips);
+    return chipNode(chips[0]);
+  }
+
+  function formatRunMeta(ms: number, tokens: number | null): string {
+    const seconds = Math.max(0, Math.round(ms / 1000));
+    const time = seconds >= 60
+      ? `${Math.floor(seconds / 60)}m ${seconds % 60}s`
+      : `${seconds}s`;
+    return tokens !== null && tokens > 0
+      ? `${time} · ${tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : tokens} tokens`
+      : time;
+  }
+
+  function runMetaNode(meta: string): DshNode {
+    const root = h('div', { class: 'dsh-run-meta', role: 'status' });
+    attach(root, meta);
+    return root;
+  }
+
+  function trajectoryFlowItems(turn: AssistantTurnInput): FlowItem[] | null {
+    const records = Array.isArray(turn.trajectory) ? turn.trajectory : [];
+    const usable = records.filter((record) => record && typeof record === 'object'
+      && (record.kind === 'message' || record.kind === 'tool'));
+    if (!usable.length) return null;
+    const answerText = String(turn.answer || '').trim();
+    const items: FlowItem[] = [];
+    for (const record of usable) {
+      if (record.kind === 'message') {
+        const text = String(record.text || '').trim();
+        // 最后一轮叙述通常就是最终答案：答案存在且相等时不重复渲染。
+        if (!text || (answerText && text === answerText)) continue;
+        items.push({ type: 'narration', text });
+        continue;
+      }
+      items.push({
+        type: 'chip',
+        chip: {
+          name: String(record.name || 'tool'),
+          argsRaw: String(record.text || ''),
+          result: record.result !== undefined && record.result !== null
+            ? { text: String(record.result || ''), isError: Boolean(record.isError) }
+            : record.state === 'running' ? undefined : { text: '', isError: false },
+        },
+      });
+    }
+    return items;
+  }
+
+  function eventFlowItems(turn: AssistantTurnInput): FlowItem[] {
+    const items: FlowItem[] = [];
+    const events = Array.isArray(turn.events) ? turn.events : [];
+    for (const event of events) {
+      const argsRaw = typeof event.arguments === 'string'
+        ? event.arguments
+        : event.arguments !== undefined && event.arguments !== null ? JSON.stringify(event.arguments) : '';
+      items.push({
+        type: 'chip',
+        chip: {
+          name: String(event.name || event.tool || ''),
+          argsRaw,
+          result: event.result !== undefined
+            ? {
+              text: String(event.result || ''),
+              isError: Boolean(event.isError),
+              interrupted: event.interrupted === true,
+            }
+            : undefined,
+        },
+      });
+    }
+    return items;
   }
 
   function assistantTurnNode(turn: AssistantTurnInput): DshNode[] {
     const items: DshNode[] = [];
     const root = h('div', { class: 'dsh-assistant' });
-    root.setAttribute('data-dsh-time-root', 'true');
     const bodyHost = h('div', { class: 'dsh-assistant-body' });
 
     if (turn.thinking) attach(bodyHost, thinkNode(turn.thinking, Boolean(turn.running)));
 
-    if (!turn.thinking) {
-      for (const activity of turn.activities || []) {
-        if (activity?.kind !== 'model') continue;
-        const turnNumber = Number(activity.turn) || 1;
-        const latency = Number(activity.latencyMs) || 0;
-        const summary = `模型请求 · 第 ${turnNumber} 轮${latency ? ` · ${(latency / 1000).toFixed(2)}s` : ''}`;
-        attach(bodyHost, thinkNode(summary, activity.state === 'running'));
+    /* CC 折叠协议：模型的轮间叙述是可见的散文，工具调用是单行可扫描的
+       芯片（动词 + 最有辨识度的参数），证据保留在展开体里。没有内容的
+       "模型轮次"不再画成行——耗时与 token 进尾部 meta。 */
+    const flow = trajectoryFlowItems(turn) ?? eventFlowItems(turn);
+    let chipRun: TurnChip[] = [];
+    const flushChips = () => {
+      if (!chipRun.length) return;
+      attach(bodyHost, chipRunNode(chipRun));
+      chipRun = [];
+    };
+    for (const item of flow) {
+      if (item.type === 'narration') {
+        flushChips();
+        attach(bodyHost, narrationNode(item.text));
+      } else {
+        chipRun.push(item.chip);
       }
     }
+    flushChips();
 
-    /* 结构化事件优先：{name, arguments, result, isError} → DSH 工具行 */
-    const events = Array.isArray(turn.events) ? turn.events : [];
-    for (const event of events) {
-      const name = String(event.name || event.tool || '');
-      const argsRaw = typeof event.arguments === 'string'
-        ? event.arguments
-        : event.arguments !== undefined && event.arguments !== null ? JSON.stringify(event.arguments) : '';
-      const result = event.result !== undefined
-        ? { text: String(event.result || ''), isError: Boolean(event.isError), interrupted: event.interrupted === true }
-        : undefined;
-      attach(bodyHost, toolRowNode(toolRowModel(name, argsRaw, result)));
-    }
-
-    /* 老 trace 降级：{label, note} / 字符串 → 通用工具行 */
-    if (!events.length) {
-      for (const step of turn.trace || []) {
-        if (typeof step === 'string') {
-          attach(bodyHost, toolRowNode(toolRowModel('', step, undefined)));
-        } else if (step && typeof step === 'object') {
-          const label = String(step.label || step.name || '');
-          const note = String(step.note || step.result || '');
-          const state = String(step.state || (step.isError ? 'error' : 'ok'));
-          const model = toolRowModel(label || 'step', note ? JSON.stringify({ note }) : '',
-            note ? { text: note, isError: state === 'error' } : undefined);
-          attach(bodyHost, toolRowNode(model));
-        }
-      }
+    /* 运行 meta（耗时/token）——只有真实数据才画。 */
+    const records = Array.isArray(turn.trajectory) ? turn.trajectory : [];
+    const times = records
+      .map((record) => Number(record.startedAt) || 0)
+      .filter((value) => value > 0);
+    const doneTimes = records
+      .map((record) => Number(record.completedAt) || 0)
+      .filter((value) => value > 0);
+    const totalTokens = Number(turn.modelUsage?.totalTokens) || 0;
+    if (times.length && doneTimes.length) {
+      const elapsed = Math.max(0, Math.max(...doneTimes) - Math.min(...times));
+      attach(bodyHost, runMetaNode(formatRunMeta(elapsed, totalTokens || null)));
     }
 
     if (turn.answer) {
@@ -618,7 +759,10 @@ const DshChat = (() => {
     }
 
     attach(root, bodyHost);
-    if (turn.answer) attach(root, messageActions(turn.answer, turn.at));
+    if (turn.answer) attach(root, messageActions(turn.answer,
+      turn.conversationId && Number.isInteger(turn.turnIndex)
+        ? { conversationId: turn.conversationId, turnIndex: Number(turn.turnIndex) }
+        : undefined));
     items.push(root);
     return items;
   }
@@ -639,18 +783,33 @@ const DshChat = (() => {
         isError: fields.state === 'error',
       } : undefined));
     }
+    /* 非工具阶段 = 单行运行状态(CC/DSH 金标准):StateDot 渐变字,原地更新,
+       绝不逐条堆叠成 Think 行;内部管道细节在轨迹视图里看。 */
+    return turnStatusNode(liveStatusLabel(phase, fields));
+  }
+
+  function liveStatusLabel(phase: string, fields: Record<string, unknown>): string {
+    const turn = String(fields.turn || '');
     const labels: Record<string, string> = {
       runtime_boot: '准备 Agent 运行环境',
-      runtime_ready: 'Agent 运行环境已就绪',
+      runtime_ready: '运行环境已就绪',
+      session_ready: '会话已就绪',
       agent_start: '开始处理本轮任务',
-      model_request: `模型请求 · 第 ${String(fields.turn || 1)} 轮`,
+      agent_turn: turn ? `第 ${turn} 轮推理中` : '推理中',
+      model_request: turn ? `第 ${turn} 轮推理中` : '推理中',
       model_first_chunk: '模型开始响应',
-      model_response: '模型响应完成',
+      model_response: '整理结果',
       budget_renewed: '继续执行下一轮',
       total: '本轮处理完成',
     };
-    const running = !['model_response', 'total'].includes(phase);
-    return thinkNode(labels[phase] || phase || '处理中', running);
+    if (labels[phase]) return labels[phase];
+    /* 桥的 keepalive 会把轮次拼进 phase 原文(如 agent_turn_turn=1),归一后再试一次。 */
+    const normalized = phase.replace(/[_-]turn[=_]\d+$/i, '');
+    if (labels[normalized]) {
+      const embedded = /turn[=_](\d+)$/i.exec(phase);
+      return embedded ? `第 ${embedded[1]} 轮推理中` : labels[normalized];
+    }
+    return phase || '处理中';
   }
 
   /* ---- 事件委托：copy / toggle（挂在 data-dsh-act 上） ---- */
@@ -712,8 +871,15 @@ const DshChat = (() => {
             if (check) check.remove();
             button.appendChild(icon('copy', 16) as Element);
             button.setAttribute('aria-label', '复制');
-          }, 1000);
+          }, 2000); /* sv-particles copy-with-feedback 的反馈时长(参数参考,无 LICENSE 不复制码) */
         });
+      } else if (kind === 'branch') {
+        const conversationId = act.getAttribute('data-dsh-branch-conversation') || '';
+        const turnIndex = Number(act.getAttribute('data-dsh-branch-turn'));
+        if (!conversationId || !Number.isInteger(turnIndex)) return;
+        DOC.dispatchEvent(new CustomEvent('mp:branch-conversation', {
+          detail: { conversationId, turnIndex },
+        }));
       }
     });
     host.addEventListener('keydown', (event: KeyboardEvent) => {

@@ -188,7 +188,7 @@ def test_find_capability_searches_merged_descriptions() -> None:
     registry = _registry()
     register_find_capability(registry)
 
-    spec = next(s for s in registry.list() if s.name == "find_capability")
+    spec = next(s for s in registry.list() if s.name == "Tools")
     translated = json.loads(spec.execute("翻译"))
     names = {tool["name"] for tool in translated["tools"]}
     assert "text_transform" in names

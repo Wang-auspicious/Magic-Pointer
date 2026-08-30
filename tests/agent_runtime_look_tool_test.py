@@ -271,22 +271,22 @@ def test_register_exports_look_and_capabilities_specs():
     look = registry.get("look")
     caps = registry.get("describe_capabilities")
     assert "frozen" in look.description.casefold()
-    assert "get_app_state" in look.description
+    assert "Observe" in look.description
     assert look.effect is Effect.READ
     assert look.is_concurrency_safe is False
     assert caps.effect is Effect.READ
     assert caps.is_concurrency_safe is True
-    assert [s.name for s in registry.list()] == ["look", "describe_capabilities"]
+    assert [s.name for s in registry.list()] == ["Look", "Capabilities"]
 
     schemas = registry.schemas_for_model()
-    look_params = next(s["parameters"] for s in schemas if s["name"] == "look")
+    look_params = next(s["parameters"] for s in schemas if s["name"] == "Look")
     assert "anchor" in look_params["required"]
 
     parallel, sequential = registry.concurrency_partition(
-        ["look", "describe_capabilities", "look"]
+        ["Look", "Capabilities", "Look"]
     )
-    assert parallel == ["describe_capabilities"]
-    assert sequential == ["look", "look"]
+    assert parallel == ["Capabilities"]
+    assert sequential == ["Look", "Look"]
 
 
 def test_registry_execute_look_returns_tool_result():

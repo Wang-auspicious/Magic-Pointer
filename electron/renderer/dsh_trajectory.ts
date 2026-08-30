@@ -101,10 +101,10 @@ const DshTrajectory = (() => {
   function titleForTool(name: string): string {
     const normalized = String(name || '').toLowerCase();
     if (normalized === 'pwsh') return 'Pwsh';
-    if (['bash', 'shell'].includes(normalized)) return 'Bash';
-    if (['read', 'read_around', 'dump_subtree', 'web_fetch'].includes(normalized)) return 'Read';
-    if (['grep', 'glob', 'find_in_window', 'web_search'].includes(normalized)) return 'Search';
-    if (['edit', 'write'].includes(normalized)) return normalized === 'edit' ? 'Edit' : 'Write';
+    if (['bash', 'shell', 'Bash', 'BashRead'].includes(normalized)) return 'Bash';
+    if (['read', 'read_around', 'dump_subtree', 'web_fetch', 'Read', 'Around', 'Tree', 'Fetch', 'Observe', 'Look', 'ListApps', 'ListWindows', 'GetFocus', 'Wait'].includes(normalized)) return 'Read';
+    if (['grep', 'glob', 'find_in_window', 'web_search', 'Grep', 'Glob', 'Find', 'Search', 'Tools', 'Recall'].includes(normalized)) return 'Search';
+    if (['edit', 'write', 'Edit', 'Patch', 'Write', 'SaveSkill'].includes(normalized)) return normalized === 'edit' || normalized === 'Edit' || normalized === 'Patch' ? 'Edit' : 'Write';
     return name || 'Tool';
   }
 

@@ -6,8 +6,9 @@ import json
 import os
 import subprocess
 import threading
+import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -151,9 +152,10 @@ class DesktopActionSession:
         if target is None:
             raise ActionFailure(FailureType.TOOL_ERROR, "window not found")
         hwnd = int(target.get("hwnd") or 0)
-        elements: list[dict[str, Any]] = []
+        raw_elements: list[dict[str, Any]] = []
         if resolved in {"ax", "full", "text"}:
-            elements = list(self.elements_probe(hwnd) or [])
+            raw_elements = list(self.elements_probe(hwnd) or [])
+        elements, truncated = _compress_elements(raw_elements)
         snapshot_id = uuid.uuid4().hex
         self._snapshots[snapshot_id] = _Snapshot(
             snapshot_id=snapshot_id,
@@ -162,12 +164,15 @@ class DesktopActionSession:
             elements=elements,
             mode=resolved,
         )
-        return _dump({
+        payload: dict[str, Any] = {
             "snapshot_id": snapshot_id,
             "windows": [target],
             "elements": elements,
             "mode": resolved,
-        })
+        }
+        if truncated:
+            payload["elements_truncated"] = truncated
+        return _dump(payload)
 
     def click(
         self,
@@ -183,7 +188,8 @@ class DesktopActionSession:
         self._require_input()
         point, _element = self._target_point(snap, index=index, x=x, y=y)
         self.driver.click(point, button=button or "left", count=int(count or 1))
-        return _acted("foreground_click", matched=True, point=list(point))
+        result = _acted("foreground_click", matched=True, point=list(point))
+        return self._with_changes_after(snap, result)
 
     def type_text(
         self,
@@ -364,7 +370,7 @@ class DesktopActionSession:
             raise ActionFailure(
                 FailureType.STALE_SNAPSHOT,
                 "snapshot_id is required and must be current",
-                recovery_hint="call get_app_state again",
+                recovery_hint="call Observe again",
             )
         snap = self._snapshots[snapshot_id]
         live = _select_window(self._windows(), window_id=_window_id(snap.window))
@@ -372,7 +378,7 @@ class DesktopActionSession:
             raise ActionFailure(
                 FailureType.STALE_SNAPSHOT,
                 "window moved, resized, or changed process",
-                recovery_hint="call get_app_state again",
+                recovery_hint="call Observe again",
             )
         targets = tuple(indexes) if indexes else ((index,) if index is not None else ())
         if targets and snap.elements:
@@ -412,7 +418,7 @@ class DesktopActionSession:
             raise ActionFailure(
                 FailureType.STALE_SNAPSHOT,
                 "element tree could not be re-read before acting",
-                recovery_hint="call get_app_state again",
+                recovery_hint="call Observe again",
             ) from exc
         current = next(
             (
@@ -422,13 +428,18 @@ class DesktopActionSession:
             ),
             None,
         )
-        if current is None or _element_fingerprint(current) != _element_fingerprint(
-            snapshotted
+        # 指纹比较用同一视图：快照侧存的是压缩元素（长文本截断），live 侧
+        # 不过同一把压缩就会在截断差异上报假 stale。
+        current_view = _compress_elements([current])[0] if current else []
+        if (
+            current is None
+            or not current_view
+            or _element_fingerprint(current_view[0]) != _element_fingerprint(snapshotted)
         ):
             raise ActionFailure(
                 FailureType.STALE_SNAPSHOT,
                 f"element at index {index} changed since the snapshot was taken",
-                recovery_hint="call get_app_state again",
+                recovery_hint="call Observe again",
             )
 
     def _target_point(
@@ -456,6 +467,55 @@ class DesktopActionSession:
             )
         return (int(x), int(y)), None
 
+    def _with_changes_after(self, snap: _Snapshot, result: str) -> str:
+        """点完必须再观察：click 直接带回元素变化摘要（省一轮 Observe）。
+
+        UIA 树重探失败时静默省略——变化摘要是增益，不是新增失败面。
+        """
+        try:
+            changes = self._changes_after(snap)
+        except Exception:  # noqa: BLE001
+            return result
+        if not changes:
+            return result
+        try:
+            payload = json.loads(result)
+        except ValueError:
+            return result
+        payload["changes_after"] = changes
+        return _dump(payload)
+
+    def _changes_after(
+        self, snap: _Snapshot, *, settle_s: float = 0.15, limit: int = 3
+    ) -> list[dict[str, Any]]:
+        time.sleep(settle_s)
+        hwnd = int(snap.window.get("hwnd") or 0)
+        live_raw = list(self.elements_probe(hwnd) or [])
+        live, _truncated = _compress_elements(live_raw)
+
+        def view(rows: list[dict[str, Any]]) -> dict[int, tuple[str, str]]:
+            return {
+                int(row.get("index") or 0): (str(row.get("role")), str(row.get("name")))
+                for row in rows
+            }
+
+        before = view(snap.elements)
+        after = view(live)
+        changes: list[dict[str, Any]] = []
+        for index in sorted(set(before) | set(after)):
+            was = before.get(index)
+            now = after.get(index)
+            if was == now:
+                continue
+            changes.append({
+                "index": index,
+                "role": now[0] if now else "(gone)",
+                "name": (now[1] if now else (was[1] if was else ""))[:60],
+            })
+            if len(changes) >= limit:
+                break
+        return changes
+
     def _chord(self, keys: tuple[str, ...] | list[str]) -> None:
         tokens = [str(key) for key in keys if str(key).strip()]
         for token in tokens:
@@ -475,7 +535,7 @@ def register_desktop_action_tools(
     """Register Kimi's 13 Windows tools in whitelist order."""
     specs = (
         ToolSpec(
-            name="list_apps",
+            name="ListApps",
             description="列出当前可见窗口（id/标题/pid）。只观察，不激活。列表空就说明没有可操作窗口。",
             input_schema=_EMPTY_SCHEMA,
             execute=session.list_apps,
@@ -484,7 +544,7 @@ def register_desktop_action_tools(
             used_backend="desktop",
         ),
         ToolSpec(
-            name="launch_app",
+            name="Launch",
             description="按已知 exe 名启动应用。未知名字直接失败，下一步换正确进程名；禁止打开资源管理器。",
             input_schema={
                 "type": "object",
@@ -497,8 +557,8 @@ def register_desktop_action_tools(
             resource_keys=("real_input",),
         ),
         ToolSpec(
-            name="activate_window",
-            description="把已有窗口提到前台。需要 window_id。失败则先 list_apps 核对窗口是否还在。",
+            name="Focus",
+            description="把已有窗口提到前台。需要 window_id。失败则先 ListApps 核对窗口是否还在。",
             input_schema={
                 "type": "object",
                 "properties": {"window_id": {"type": "string"}},
@@ -510,7 +570,7 @@ def register_desktop_action_tools(
             resource_keys=("real_input",),
         ),
         ToolSpec(
-            name="get_app_state",
+            name="Observe",
             description=(
                 "实时观察窗口（live，当前状态），发 snapshot_id 和元素树，不激活。"
                 "它与 look/read_around 的冻结帧证据（手势时刻的历史画面）不同。"
@@ -533,7 +593,7 @@ def register_desktop_action_tools(
             used_backend="desktop",
         ),
         ToolSpec(
-            name="click",
+            name="Click",
             description="按 index 或 x/y 点击（不可混传）。点成功不等于任务完成，必须再 get_app_state。snapshot 过期就重观察。",
             input_schema={
                 "type": "object",
@@ -553,7 +613,7 @@ def register_desktop_action_tools(
             resource_keys=("real_input",),
         ),
         ToolSpec(
-            name="type_text",
+            name="Type",
             description="点中后输入文字，用当前值读回，匹配才 matched。读不回是 unavailable。写完必须再 get_app_state。",
             input_schema={
                 "type": "object",
@@ -574,7 +634,7 @@ def register_desktop_action_tools(
             resource_keys=("real_input",),
         ),
         ToolSpec(
-            name="press_key",
+            name="Key",
             description="真实按键。禁止 Win/Meta/Super。失败则换应用内快捷键；按完再观察。",
             input_schema={
                 "type": "object",
@@ -590,7 +650,7 @@ def register_desktop_action_tools(
             resource_keys=("real_input",),
         ),
         ToolSpec(
-            name="scroll",
+            name="Scroll",
             description="在 index 或坐标处滚动。dy>0 上、dy<0 下。滚完再 get_app_state。",
             input_schema={
                 "type": "object",
@@ -610,7 +670,7 @@ def register_desktop_action_tools(
             resource_keys=("real_input",),
         ),
         ToolSpec(
-            name="set_value",
+            name="SetValue",
             description="原生 Value/RangeValue 写入。没有 pattern 就诚实失败，不要改成点击。成功仍要再观察。",
             input_schema={
                 "type": "object",
@@ -627,7 +687,7 @@ def register_desktop_action_tools(
             resource_keys=("real_input",),
         ),
         ToolSpec(
-            name="perform_secondary_action",
+            name="Act",
             description="原生 invoke/expand/collapse/toggle/select。不支持就说不支持，下一步换观察或问用户。",
             input_schema={
                 "type": "object",
@@ -644,7 +704,7 @@ def register_desktop_action_tools(
             resource_keys=("real_input",),
         ),
         ToolSpec(
-            name="select_text",
+            name="Select",
             description="优先用 TextPattern 选中文字，否则聚焦后 Ctrl+A。选完再观察。",
             input_schema={
                 "type": "object",
@@ -662,7 +722,7 @@ def register_desktop_action_tools(
             resource_keys=("real_input",),
         ),
         ToolSpec(
-            name="drag",
+            name="Drag",
             description="两点之间拖拽，最后手段。拖完必须再 get_app_state。",
             input_schema={
                 "type": "object",
@@ -695,6 +755,25 @@ def register_desktop_action_tools(
     )
     for spec in specs:
         registry.register(spec)
+    # 旧名别名（一个版本）：历史授权/旧调用仍路由到规范工具；别名不进 schema。
+    registry.register_alias("list_apps", "ListApps")
+    registry.register_alias("launch_app", "Launch")
+    registry.register_alias("activate_window", "Focus")
+    registry.register_alias("get_app_state", "Observe")
+    registry.register_alias("click", "Click")
+    registry.register_alias("type_text", "Type")
+    registry.register_alias("press_key", "Key")
+    registry.register_alias("scroll", "Scroll")
+    registry.register_alias("set_value", "SetValue")
+    registry.register_alias("perform_secondary_action", "Act")
+    registry.register_alias("select_text", "Select")
+    registry.register_alias("drag", "Drag")
+    # loop 终态自动归还输入锁（COMPLETED/INTERRUPT/CRASH 都算）——模型
+    # 忘调 turn_ended 不再卡死下一个会话。turn_ended 工具保留为"提前让锁"。
+    try:
+        registry.add_session_end_listener(session.turn_ended)
+    except Exception:  # noqa: BLE001 - 钩子失败不拦工具注册
+        pass
 
 
 def default_session(*, session_id: str = "loop") -> DesktopActionSession:
@@ -912,6 +991,46 @@ def _split_keys(keys: str) -> list[str]:
 def _is_win_token(token: str) -> bool:
     clean = token.strip().casefold()
     return clean in _WIN_TOKENS or clean.startswith("win")
+
+
+_COMPRESS_TEXT_CAP = 80
+_COMPRESS_MAX_ELEMENTS = 100
+
+
+def _compress_elements(
+    elements: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int]:
+    """观察压缩（对照 Kimi/Anthropic computer-use 的 token 预算实践）：
+    零面积剔除、同形状去重、长文本截断、100 上限。保留探针原 index——
+    动作绑定与失效校验都按它对齐。"""
+    out: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, tuple[int, ...]]] = set()
+    for item in elements:
+        rect = item.get("rect")
+        try:
+            quad = tuple(int(v) for v in (rect or [0, 0, 0, 0]))
+        except (TypeError, ValueError):
+            quad = (0, 0, 0, 0)
+        if len(quad) == 4 and (quad[2] - quad[0]) <= 1 and (quad[3] - quad[1]) <= 1:
+            continue
+        role = str(item.get("role") or "")
+        name = str(item.get("name") or "")
+        key = (role, name, quad)
+        if key in seen:
+            continue
+        seen.add(key)
+        slim = dict(item)
+        if len(name) > _COMPRESS_TEXT_CAP:
+            slim["name"] = name[:_COMPRESS_TEXT_CAP] + "…"
+        value = slim.get("value")
+        if isinstance(value, str) and len(value) > _COMPRESS_TEXT_CAP:
+            slim["value"] = value[:_COMPRESS_TEXT_CAP] + "…"
+        out.append(slim)
+    truncated = 0
+    if len(out) > _COMPRESS_MAX_ELEMENTS:
+        truncated = len(out) - _COMPRESS_MAX_ELEMENTS
+        out = out[:_COMPRESS_MAX_ELEMENTS]
+    return out, truncated
 
 
 def _dump(payload: dict[str, Any]) -> str:

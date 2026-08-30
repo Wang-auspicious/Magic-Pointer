@@ -24,6 +24,8 @@ _MAX_SKILL_CHARS = 12_000
 
 
 def register_skill_writer(registry: ToolRegistry, *, skills_root: Path | str) -> None:
+    # 旧名别名（一个版本）：历史授权/旧调用仍路由到规范工具；别名不进 schema。
+    registry.register_alias("save_skill", "SaveSkill")
     root = Path(skills_root)
 
     def save_skill(name: str, content: str, overwrite: bool = False, **_: Any) -> str:
@@ -60,7 +62,7 @@ def register_skill_writer(registry: ToolRegistry, *, skills_root: Path | str) ->
         )
 
     registry.register(ToolSpec(
-        name="save_skill",
+        name="SaveSkill",
         description=(
             "把一条可复用的经验沉淀成 skill 文件（何时做某类任务、步骤、坑）。"
             "名字用 kebab-case，content 以 YAML frontmatter 开头（必须有 "
@@ -81,4 +83,5 @@ def register_skill_writer(registry: ToolRegistry, *, skills_root: Path | str) ->
         is_concurrency_safe=False,
         used_backend="workspace_fs",
         timeout_ms=10_000,
+        deferred=True,  # 经验沉淀是低频动作
     ))

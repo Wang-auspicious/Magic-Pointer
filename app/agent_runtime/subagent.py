@@ -23,9 +23,9 @@ _SUBAGENT_SYSTEM_PROMPT = (
     "你是 Magic Pointer 的编码子代理，独立完成父代理委派的一个具体任务。\n"
     "规则：\n"
     "1. 只做委派的任务本身，不要扩大范围；不要向用户提问。\n"
-    "2. 先用 glob/grep/read_file 定位证据再改代码；小改动用 edit_file，"
-    "跨文件改动用 apply_patch；改完用 run_command 跑测试/构建验证。\n"
-    "3. 测试红了就继续修，绿了才算完成；方向错了用 restore_files 回滚。\n"
+    "2. 先用 Glob/Grep/Read 定位证据再改代码；小改动用 Edit，"
+    "跨文件改动用 Patch；改完用 Bash 跑测试/构建验证。\n"
+    "3. 测试红了就继续修，绿了才算完成；方向错了用 Rewind 回滚。\n"
     "4. 最终输出结果摘要：做了什么、改了哪些文件、验证命令与结果。"
 )
 
@@ -40,11 +40,13 @@ def register_delegate_tool(
     max_tokens: int = 4096,
 ) -> None:
     """Register ``delegate_task``; the child runs the same loop kernel."""
+    # 旧名别名（一个版本）：历史授权/旧调用仍路由到规范工具；别名不进 schema。
+    registry.register_alias("delegate_task", "Agent")
     from app.fabric.engine import run_agent_turn
 
     root = Path(workspace_root)
 
-    def delegate_task(task: str, context: str = "", **_: Any) -> str:
+    def delegate_task(task: str, context: str = "", readonly: bool = False, **_: Any) -> str:
         prompt = str(task or "").strip()
         if not prompt:
             raise ValueError("task is required")
@@ -56,6 +58,22 @@ def register_delegate_tool(
         from app.agent_runtime.coding_tools import register_coding_tools
 
         register_coding_tools(child_registry, workspace_root=root)
+        child_effects = (
+            Effect.READ,
+            Effect.REVERSIBLE_WRITE,
+            Effect.LOCAL_IRREVERSIBLE,
+        )
+        if readonly:
+            # 只读子代理：写工具从 schema 里摘掉（不只是权限挡），调研类
+            # 委派 is_concurrency_safe_for=True 可进并行车道。
+            for write_tool in (
+                "Write", "Edit", "Patch", "Bash", "Rewind",
+            ):
+                try:
+                    child_registry.unregister(write_tool)
+                except KeyError:
+                    pass
+            child_effects = (Effect.READ,)
         child_client = llm_provider.create_client(
             system_prompt=_SUBAGENT_SYSTEM_PROMPT,
             max_tokens=max_tokens,
@@ -64,11 +82,7 @@ def register_delegate_tool(
             prompt,
             registry=child_registry,
             client=child_client,
-            allowed_effects=(
-                Effect.READ,
-                Effect.REVERSIBLE_WRITE,
-                Effect.LOCAL_IRREVERSIBLE,
-            ),
+            allowed_effects=child_effects,
             permission_mode=permission_mode,
             tool_limit=max_tool_calls,
             lang="zh",
@@ -78,24 +92,31 @@ def register_delegate_tool(
         return f"{header}\n{summary or '(no summary)'}"
 
     registry.register(ToolSpec(
-        name="delegate_task",
+        name="Agent",
         description=(
             "把一个独立子任务委派给编码子代理（全新上下文，只有文件/shell 工具，"
             "不能操作桌面、不能反问用户）。适合可以独立交代的调研、定位、"
             "批量重构、写测试这类活；父对话只收结果摘要。"
             "一次委派一件事，任务描述要自包含。"
+            "readonly=true 的调研委派只有读工具，可与其它任务并行。"
         ),
         input_schema={
             "type": "object",
             "properties": {
                 "task": {"type": "string", "description": "自包含的任务描述"},
                 "context": {"type": "string", "description": "可选背景（已知线索、文件路径等）"},
+                "readonly": {
+                    "type": "boolean",
+                    "description": "true=只读子代理（无写工具），可并行",
+                },
             },
             "required": ["task"],
         },
         execute=delegate_task,
         effect=Effect.REVERSIBLE_WRITE,
+        effect_for=lambda args: Effect.READ if args.get("readonly") else Effect.REVERSIBLE_WRITE,
         is_concurrency_safe=False,
+        is_concurrency_safe_for=lambda args: bool(args.get("readonly")),
         used_backend="subagent_loop",
         timeout_ms=1_800_000,
     ))

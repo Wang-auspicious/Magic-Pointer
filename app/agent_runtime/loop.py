@@ -138,6 +138,7 @@ from app.agent_runtime.hooks import HookManager
 from app.agent_runtime.model_client import (
     LoopModelClient,
     MessageDelta,
+    ReasoningDelta,
     TurnWithheld,
 )
 from app.agent_runtime.perception_tools import evidence_to_text
@@ -254,6 +255,9 @@ def _real_prompt_tokens(usage: Mapping[str, Any] | None) -> int:
 _MAX_TOOL_RESULT_CHARS = 64_000
 """Maximum model-visible/logged characters from one tool invocation."""
 
+_PERSIST_PREVIEW_CHARS = 3_000
+"""Preview size when an oversized tool result is persisted to disk."""
+
 _RECOVERY_MESSAGE = (
     "Output token limit hit. Resume directly — no apology, no explanation. "
     "Break remaining work into smaller pieces."
@@ -325,6 +329,14 @@ class LoopParams:
     )
     session: EventSession | None = None
     request_header: Mapping[str, Any] = field(default_factory=dict)
+    tool_result_dir: str | None = None
+    """Workspace-scoped directory for oversized tool results.
+
+    CC ``tool-results/{toolUseId}.txt`` / Hermes sandbox persistence: when
+    set (production: ``<workspace>/.mp/tool-results``), a result over the
+    size cap is persisted in full and the model gets the path to page back
+    with ``read_file``. None (no workspace) keeps head+tail truncation.
+    """
     evidence_input: str | None = None
     inbox: Inbox | None = None
     interaction_metadata: Mapping[str, Any] = field(default_factory=dict)
@@ -372,6 +384,18 @@ class TurnStarted:
 @dataclass(frozen=True, slots=True)
 class ModelChunk:
     kind = "model_chunk"
+    text: str
+
+
+@dataclass(frozen=True, slots=True)
+class ReasoningChunk:
+    """模型思考流增量（ReasoningDelta 的 loop 层事件）。
+
+    与 :class:`ModelChunk` 同权上送 UI：思考流是用户明确要求的一等输出，
+    不是调试信息。事件只用于展示，loop 不把它写进消息历史（不回传 API）。
+    """
+
+    kind = "reasoning_chunk"
     text: str
 
 
@@ -709,6 +733,9 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
             _record_loop_receipt(
                 params.session, verification_gate, terminal, results
             )
+        # 桌面输入锁一类会话资源在终态自动归还——不再依赖模型记得调
+        # turn_ended（忘调 = 下个会话 COMPUTER_USE_BUSY 卡死）。
+        params.registry.notify_session_end()
         return LoopStopped(terminal)
 
     yield LoopStart()
@@ -923,6 +950,8 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                 if isinstance(event, MessageDelta):
                     yield ModelChunk(text=event.text)
                     yielded_delta += 1
+                elif isinstance(event, ReasoningDelta):
+                    yield ReasoningChunk(text=event.text)
             if yielded_delta == 0 and text is not None:
                 yield ModelChunk(text)
 
@@ -941,10 +970,18 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                     # then one skipped call killed everything). Wait out a
                     # breaker-scale cooldown and retry the same round; only
                     # a turn with zero progress terminates immediately.
+                    # 网关 5xx（瞬时服务故障）即使零进展也值得等一次冷却重试：
+                    # 真机 8·29，GUI 第一条消息撞上 http_500 直接把原始代码
+                    # 当答案给了用户。凭据/限流类错误不在此列（重试无意义，
+                    # 立即失败把真实原因交还给用户）。
+                    transient_backend_error = any(
+                        event.reason.startswith("backend_error:http_5")
+                        for event in withheld_events
+                    )
                     if (
-                        any(not result.is_error for result in results)
-                        and backend_recovery_attempts < _MAX_BACKEND_RECOVERIES
-                    ):
+                        transient_backend_error
+                        or any(not result.is_error for result in results)
+                    ) and backend_recovery_attempts < _MAX_BACKEND_RECOVERIES:
                         delay_s = _BACKEND_RECOVERY_DELAYS_S[
                             backend_recovery_attempts
                         ]
@@ -1275,7 +1312,7 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                 try:
                     return (
                         "parallel"
-                        if registry.get(call.name).is_concurrency_safe
+                        if registry.is_concurrency_safe_for(call.name, call.arguments)
                         else "exclusive"
                     )
                 except KeyError:
@@ -1293,6 +1330,8 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                     params.permission_mode,
                     permission_decisions=params.permission_decisions,
                     interrupt_check=params.interrupt_check,
+                    keepalive=keepalive,
+                    persist_dir=params.tool_result_dir,
                 )
 
             schedule = schedule_tool_calls(
@@ -1702,6 +1741,14 @@ def _merge_model_usage(
         aggregate["outputTokens"] = aggregate.get("outputTokens", 0) + output_tokens
     if total_tokens is not None:
         aggregate["totalTokens"] = aggregate.get("totalTokens", 0) + total_tokens
+    # 缓存命中可观测：DeepSeek 报 hit/miss，Anthropic 报 read/creation。
+    # 没有 provider 报这些字段时键不出现，消费方以键存在为准。
+    cache_read = count("cache_read_input_tokens", "prompt_cache_hit_tokens")
+    if cache_read is not None:
+        aggregate["cacheReadTokens"] = aggregate.get("cacheReadTokens", 0) + cache_read
+    cache_write = count("cache_creation_input_tokens")
+    if cache_write is not None:
+        aggregate["cacheWriteTokens"] = aggregate.get("cacheWriteTokens", 0) + cache_write
     if any(value is not None for value in (input_tokens, output_tokens, total_tokens)):
         aggregate["turnsReported"] = aggregate.get("turnsReported", 0) + 1
 
@@ -1797,6 +1844,8 @@ def _execute_one(
     *,
     permission_decisions: Any = None,
     interrupt_check: Callable[[], bool] | None = None,
+    keepalive: Callable[[str], None] | None = None,
+    persist_dir: str | None = None,
 ) -> ToolResult:
     """Validate, gate, execute and normalize one tool call.
 
@@ -1827,9 +1876,15 @@ def _execute_one(
     try:
         spec = registry.get(call.name)
     except KeyError:
+        # 工具名是模型拼出来的：拼错时把可用名字附上，它下一轮才有
+        # 纠正的依据（Hermes conversation_loop 同款），否则只能瞎猜。
+        available = ", ".join(sorted(spec_.name for spec_ in registry.list()))
         return ToolResult(
             tool_call_id=call.id,
-            value=f"unknown tool {call.name!r}",
+            value=(
+                f"unknown tool {call.name!r}. "
+                f"Available tools: {available}."
+            ),
             is_error=True,
             failure_type=FailureType.TOOL_ERROR,
             used_backend=None,
@@ -2060,11 +2115,38 @@ def _execute_one(
         timeout_timer = threading.Timer(spec.timeout_ms / 1000.0, expire_tool)
         timeout_timer.daemon = True
         timeout_timer.start()
+        # A single run_command can legitimately run for minutes (pytest on a
+        # real repo, a build). The bridge's silence deadline only hears beats
+        # at turn boundaries, so this tool's silence would let Electron kill
+        # the Python child mid-run. A daemon thread beats roughly every beat
+        # while the tool works; it stops with the tool. Beats are best-effort
+        # and never abort the tool, exactly like the turn-boundary beats.
+        beat_tick = threading.Event()
+        beat_stop = threading.Event()
+
+        def beat_worker() -> None:
+            while not beat_stop.wait(timeout=20.0):
+                try:
+                    if keepalive is not None:
+                        keepalive(f"tool_beat name={call.name}")
+                except Exception:  # noqa: BLE001 - heartbeat is best-effort
+                    pass
+                if beat_tick.wait(timeout=0.0):
+                    return
+
+        beat_thread = threading.Thread(target=beat_worker, daemon=True)
+        beat_thread.start()
         try:
             executed = registry.execute_tool(
                 call.name, execution_args, scope=scope.token
             )
+            # 工具家族的跨工具状态机信号（如 coding 工具的连读熔断：
+            # 任何其他工具的执行都打断连读计数）。执行没发生（取消/拒绝/
+            # 超时）时不打点——这条路径只在 execute_tool 真正跑完才到。
+            registry.notify_executed(call.name)
         finally:
+            beat_stop.set()
+            beat_tick.set()
             timeout_timer.cancel()
     if loop_scope.is_cancelled:
         raise CancelledError(f"cancelled during tool {call.name!r} ({call.id})")
@@ -2077,7 +2159,7 @@ def _execute_one(
             used_backend=spec.used_backend,
             latency_ms=executed.latency_ms,
         )
-    normalized = _normalize_result(executed, call)
+    normalized = _normalize_result(executed, call, persist_dir=persist_dir)
     if hook_manager is not None:
         post = hook_manager.run_post_tool_use(call.name, execution_args, normalized.value)
         if not post.allowed:
@@ -2146,7 +2228,7 @@ def _apply_tool_guardrail(
     )
 
 
-def _normalize_result(executed: Any, call: ToolCall) -> ToolResult:
+def _normalize_result(executed: Any, call: ToolCall, persist_dir: str | None = None) -> ToolResult:
     """Map the registry execution-layer ToolResult to the types layer.
 
     ``error_message`` is merged into ``value`` for errors (the model only
@@ -2154,7 +2236,8 @@ def _normalize_result(executed: Any, call: ToolCall) -> ToolResult:
     with :func:`~app.agent_runtime.perception_tools.evidence_to_text` at
     this message boundary so the model reads ``{status, confidence, value,
     note}`` text instead of a dataclass repr; the Evidence object itself
-    stays untouched at the registry layer.
+    stays untouched at the registry layer. Oversized values are bounded
+    (persist-to-file when ``persist_dir`` is configured).
     """
     if executed.is_error:
         value = executed.error_message
@@ -2162,7 +2245,9 @@ def _normalize_result(executed: Any, call: ToolCall) -> ToolResult:
             value = _result_value_text(executed.value)
     else:
         value = _result_value_text(executed.value)
-    value = _bounded_tool_result(value)
+    value = _bounded_tool_result(
+        value, persist_dir=persist_dir, tool_call_id=call.id
+    )
     return ToolResult(
         tool_call_id=call.id,
         value=value,
@@ -2221,10 +2306,35 @@ def _result_value_text(value: Any) -> str:
     return "" if value is None else str(value)
 
 
-def _bounded_tool_result(value: str) -> str:
-    """Keep one result from consuming the rest of the Agent context window."""
+def _bounded_tool_result(
+    value: str,
+    *,
+    persist_dir: str | None = None,
+    tool_call_id: str | None = None,
+) -> str:
+    """Keep one result from consuming the rest of the Agent context window.
+
+    Three-layer policy (CC toolResultStorage / Hermes tool_result_storage):
+    an oversized result is persisted **in full** next to the workspace
+    (``.mp/tool-results/<call_id>.txt``) and the model gets a preview plus
+    the absolute path so ``read_file`` can page it back — hard truncation is
+    only the last-resort fallback when no persist directory is configured
+    (no workspace) or the write fails.
+    """
     if len(value) <= _MAX_TOOL_RESULT_CHARS:
         return value
+    if persist_dir and tool_call_id:
+        persisted = _persist_tool_result(value, persist_dir, tool_call_id)
+        if persisted is not None:
+            preview = value[:_PERSIST_PREVIEW_CHARS]
+            cut = preview.rfind("\n")
+            if cut > _PERSIST_PREVIEW_CHARS // 2:
+                preview = preview[:cut]
+            return (
+                f"{preview}\n"
+                f"[tool result too large: {len(value)} chars; full output saved to {persisted}. "
+                "Use Read on that path with offset/limit to inspect specific parts.]"
+            )
     digest = hashlib.sha256(value.encode("utf-8", errors="surrogatepass")).hexdigest()
     marker = (
         f"\n[tool result truncated: original_chars={len(value)} sha256={digest}; "
@@ -2234,3 +2344,20 @@ def _bounded_tool_result(value: str) -> str:
     head = available * 2 // 3
     tail = available - head
     return value[:head] + marker + (value[-tail:] if tail else "")
+
+
+def _persist_tool_result(value: str, persist_dir: str, tool_call_id: str) -> str | None:
+    """Write the full tool result under ``persist_dir``; return the path."""
+    try:
+        from pathlib import Path as _Path
+
+        base = _Path(persist_dir)
+        base.mkdir(parents=True, exist_ok=True)
+        safe_name = "".join(
+            ch if ch.isalnum() or ch in "-_." else "_" for ch in str(tool_call_id)
+        )[:120] or "result"
+        path = base / f"{safe_name}.txt"
+        path.write_text(value, encoding="utf-8", errors="surrogatepass")
+        return str(path)
+    except OSError:
+        return None

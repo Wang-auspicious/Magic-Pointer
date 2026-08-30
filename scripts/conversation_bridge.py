@@ -20,10 +20,22 @@ Honest boundaries (no live selection):
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
+import re
+import sys
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Sequence
+
+# 打包版以 ``python -I``（isolated）启动：sys.path 既没有 scripts/ 也没有
+# cwd，import _bridge_common 必须发生在自举之前——与其它每座桥相同的
+# 前置 sys.path 插入。真机失败不是理论：1.0.24 安装版 Studio 对话全部
+# bridge_no_output exit 1，dev 树（不加 -I）永远复现不了。
+_BRIDGE_ROOT = Path(__file__).resolve().parents[1]
+if str(_BRIDGE_ROOT) not in sys.path:
+    sys.path.insert(0, str(_BRIDGE_ROOT))
 
 try:
     from scripts._bridge_common import (
@@ -58,6 +70,21 @@ from scripts.bridge_progress import PhaseClock  # noqa: E402
 
 MAX_QUESTION_CHARS = 4000
 MAX_TURNS = 12
+
+# Agent session 身份前缀。
+#
+# Agent session 是磁盘上一条哈希链 JSONL：断点续跑摘要（interrupted_turn_summary）、
+# 待办、取消请求、has_pending_work 全挂在它上面。所以"一条对话 = 一条 session"
+# 必须成立。旧实现用 ``sha256(object.windowTitle or "chat")`` 派生，而普通文本
+# 对话根本没有 selection object —— 全 app 的普通对话塌缩成同一个常量 id，
+# 于是：新开的对话会被上一条对话的未完成任务续跑块劫持、停止按钮打断的是
+# 别的对话、并发两条对话往同一条哈希链里追加。
+#
+# 现在身份钉在 conversationId 上。两个前缀让"线程自己的 session"和"旧的
+# 共享 session"可区分：只有带这两个前缀的 id 才会被信任并复用，历史遗留的
+# ``agent-studio-<sha>`` 一律重新派生，不把旧的共享状态带进新语义。
+CONV_SESSION_PREFIX = "agent-studio-conv-"
+NEW_SESSION_PREFIX = "agent-studio-new-"
 
 # Studio 对话没有"反馈节奏"约束：用户坐在屏幕前等这一轮答完。loop 默认的
 # FULL_ANSWER 4 秒预算是给划线快速问答设计的（L8 延迟表），直接套在对话上
@@ -100,6 +127,11 @@ class _ConversationActivitySink:
         self._first_chunk_seen = False
         self._pending_chunk_b64: list[str] = []
         self._last_chunk_flush = 0.0
+        # 思考流（reasoning）：trajectory message record 逐轮累计 + 进度行
+        # 边想边画；turn_reasoning 供终态载荷的 thinking 字段（Think 行）。
+        self._pending_reasoning_b64: list[str] = []
+        self._last_reasoning_flush = 0.0
+        self.turn_reasoning: list[str] = []
 
     def _flush_answer_chunks(self) -> None:
         if not self._pending_chunk_b64:
@@ -111,6 +143,17 @@ class _ConversationActivitySink:
             self.clock.mark_blob("answer_chunk", blob)
         except Exception:  # noqa: BLE001 - 流式展示永远不能弄坏回合本身
             self._pending_chunk_b64.clear()
+
+    def _flush_reasoning_chunks(self) -> None:
+        if not self._pending_reasoning_b64:
+            return
+        blob = "".join(self._pending_reasoning_b64)
+        self._pending_reasoning_b64.clear()
+        self._last_reasoning_flush = time.perf_counter()
+        try:
+            self.clock.mark_blob("reasoning_chunk", blob)
+        except Exception:  # noqa: BLE001 - 流式展示永远不能弄坏回合本身
+            self._pending_reasoning_b64.clear()
 
     def _append_record(self, record: dict[str, Any]) -> dict[str, Any]:
         record["seq"] = len(self.trajectory) + 1
@@ -124,6 +167,8 @@ class _ConversationActivitySink:
             return
         if kind == "turn_started":
             self._flush_answer_chunks()
+            self._flush_reasoning_chunks()
+            self.turn_reasoning.clear()
             turn = int(getattr(event, "turn", 0) or 0)
             started_ms = self.clock.mark("model_request", turn=turn)
             self._append_record({
@@ -170,10 +215,27 @@ class _ConversationActivitySink:
                 if time.perf_counter() - self._last_chunk_flush >= self.CHUNK_FLUSH_INTERVAL_S:
                     self._flush_answer_chunks()
             return
+        if kind == "reasoning_chunk":
+            # 思考流：记进 message record（正式渲染）+ 进度行（边想边画）。
+            text = str(getattr(event, "text", "") or "")
+            if not text:
+                return
+            self.turn_reasoning.append(text)
+            if self._active_message is not None:
+                self._active_message["reasoning"] = (
+                    str(self._active_message.get("reasoning") or "") + text
+                )
+            self._pending_reasoning_b64.append(
+                base64.b64encode(text.encode("utf-8")).decode("ascii")
+            )
+            if time.perf_counter() - self._last_reasoning_flush >= self.CHUNK_FLUSH_INTERVAL_S:
+                self._flush_reasoning_chunks()
+            return
         if kind == "tool_call_started":
             # 工具边界前把持有的正文尾巴冲出去：模型先说话再调工具时，
             # 文本必须落在工具行之前，不能被节流窗口吞到下一轮。
             self._flush_answer_chunks()
+            self._flush_reasoning_chunks()
             call_id = str(getattr(event, "id", ""))
             name = str(getattr(event, "name", "") or "tool")
             started_ms = self.clock.mark("tool_call", id=call_id, name=name)
@@ -239,6 +301,7 @@ class _ConversationActivitySink:
         if kind == "turn_finished":
             # 回合正文结束：把节流窗口里持有的尾巴全部冲出去，不能丢字。
             self._flush_answer_chunks()
+            self._flush_reasoning_chunks()
             state = getattr(event, "state", None)
             transition = getattr(state, "transition", None)
             state_value = str(
@@ -278,6 +341,7 @@ def _completed_result(
     timing_ms: float,
     question: str = "",
     agent_session_id: str | None = None,
+    has_pending_work: bool = False,
     interaction_ledger: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     answer = clean_replacement_text(str(mapped.get("answer") or ""))
@@ -334,6 +398,7 @@ def _completed_result(
         "modelUsage": model_usage,
         "timingMs": timing_ms,
         "agentSessionId": agent_session_id,
+        "hasPendingWork": bool(has_pending_work),
         "interactionLedger": interaction_ledger,
         # Clarification / plan-approval gates ride through so the Stage can
         # render its option buttons (same shape as loop_answer's AWAITING_USER).
@@ -361,6 +426,35 @@ def emit_plan_snapshot(clock: PhaseClock, steps: Any) -> None:
 def emit_session_ready(clock: PhaseClock, agent_session_id: str) -> None:
     """把 durable session id 广播给渲染层——停止/插话按钮都指向它。"""
     clock.mark("session_ready", sid=agent_session_id)
+
+
+def resolve_agent_session_id(
+    *,
+    explicit: str = "",
+    conversation_id: str = "",
+) -> str:
+    """一条对话一条 agent session。
+
+    优先级：
+    1. 线程已经持有的、本语义下签发的 session（``agentSessionId`` 由结果回传、
+       conversation_store 落库、下次请求带回来）——新建对话的第一轮还没有
+       conversationId，只能靠它把第一轮和后续轮接上；
+    2. conversationId 派生——确定性、跨轮稳定，历史对话也能就地脱离旧的
+       共享 session；
+    3. 都没有 → 全新对话的第一轮，签发一个唯一 id，由回传链路落库。
+
+    绝不回退到常量：一个共享 id 会把断点状态、取消请求和哈希链写入混在一起。
+    """
+    explicit = str(explicit or "").strip()
+    if explicit.startswith((CONV_SESSION_PREFIX, NEW_SESSION_PREFIX)):
+        # session id 会变成文件名，越界的一律重新派生而不是让 store 抛错。
+        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", explicit):
+            return explicit
+    conversation_id = str(conversation_id or "").strip()
+    if conversation_id:
+        digest = hashlib.sha256(conversation_id.encode("utf-8")).hexdigest()[:32]
+        return CONV_SESSION_PREFIX + digest
+    return NEW_SESSION_PREFIX + uuid.uuid4().hex
 
 
 def route_slash_command(prompt: str, catalog) -> dict | None:
@@ -450,6 +544,14 @@ def route_slash_command(prompt: str, catalog) -> dict | None:
     if catalog is not None:
         body = catalog.load_skill_body(name)
         if body:
+            # 斜杠显式加载也计入使用频次（P2-5），与注入路径共用
+            # skill-usage.json，SkillLoader 同分排序时高频技能靠前。
+            try:
+                from app.agent_runtime.skill_usage import bump_skill_usage, usage_env_user_dir
+
+                bump_skill_usage(usage_env_user_dir(ROOT / "data" / "runtime"), name)
+            except OSError:
+                pass
             return {
                 "ok": True,
                 "command": {"type": "skill", "name": name},
@@ -532,6 +634,23 @@ class _HistoryPerceptionBackend:
         return None
 
 
+def _tool_names(value: Any) -> tuple[str, ...]:
+    """Bare tool names from a bridge payload list; anything else is dropped.
+
+    A grant becomes a permission decision, so the shape is checked here rather
+    than trusted: a name that is not a plain identifier can never match a
+    registered tool and would only widen the memo with noise.
+    """
+    if not isinstance(value, (list, tuple)):
+        return ()
+    names: list[str] = []
+    for item in list(value)[:64]:
+        name = str(item or "").strip()
+        if name and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", name):
+            names.append(name)
+    return tuple(dict.fromkeys(names))
+
+
 def _build_permission_decisions(grants, denials, once):
     """Thread-scoped memo (CC toolPermissionDecision); empty → None."""
     from app.agent_runtime.permission_decisions import PermissionDecisions
@@ -577,6 +696,8 @@ def answer_conversation(
     workspace_root: str = "",
     clock: PhaseClock | None = None,
     reply_style: str = "normal",
+    conversation_id: str = "",
+    agent_session_id: str = "",
     permission_grants: Sequence[str] | tuple = (),
     permission_denials: Sequence[str] | tuple = (),
     permission_grant_once: Sequence[str] | tuple = (),
@@ -648,7 +769,9 @@ def answer_conversation(
         "vision_backend": None,          # no frozen frame → look is honest unsupported
         "frame_crop": None,
         "guard_probe": None,             # fail-closed: no selection anchor
-        "selection_anchor": None,
+        # 对象证据（从划线/圈选入库的对话才有）：存在才注入"圈选"身份与
+        # 冻结帧规则；普通文本对话谎称有圈选对象会把模型骗去全桌面空转。
+        "selection_anchor": obj if isinstance(obj, dict) and obj else None,
         "propose": propose,
         "execute_plan": None,
         "enabled_recipes": None,
@@ -665,6 +788,10 @@ def answer_conversation(
 
     from app.agent_runtime.workspace_state import read_workspace
 
+    # 后台 job 完成推送（Hermes notify_on_complete）：cell 先进 runtime，
+    # durable session 打开后回填真正的 enqueue 回调。
+    inbox_cell: dict[str, Any] = {"fn": None}
+    runtime["session_inbox"] = lambda text: (inbox_cell["fn"] or (lambda _t: None))(text)
     runtime["workspace_root"] = str(read_workspace(ROOT))
     runtime["permission_mode"] = mode.value
     runtime["permission_preset"] = permission_preset
@@ -728,13 +855,14 @@ def answer_conversation(
 
     evidence = f"[本次对话历史]\n{history}" if history.strip() else ""
     try:
-        import hashlib
-
-        session_key = str(window.get("windowTitle") or "chat")
-        agent_session_id = "agent-studio-" + hashlib.sha256(session_key.encode("utf-8")).hexdigest()[:32]
+        resolved_session_id = resolve_agent_session_id(
+            explicit=agent_session_id,
+            conversation_id=conversation_id,
+        )
         # 渲染层由此拿到停止/插话要指向的 durable session（Studio stop/steer）。
-        emit_session_ready(conversation_clock, agent_session_id)
-        agent_session = sessions.open_or_create(agent_session_id, repair=True)
+        emit_session_ready(conversation_clock, resolved_session_id)
+        agent_session = sessions.open_or_create(resolved_session_id, repair=True)
+        inbox_cell["fn"] = lambda text: agent_session.enqueue_inbox(text, "next-step")
         # Harness-v2 resume: if the previous turn ended unfinished, surface
         # the breakpoint on this send. One-shot by construction — this turn
         # becomes the newest one, so the reduction moves past it.
@@ -775,9 +903,17 @@ def answer_conversation(
             interrupt_check=cancel_interrupt_check(agent_session),
             nudge_hooks=(_plan_completion_gate,),
             keepalive=conversation_clock.mark,
+            # 计划必须过参数边界：loop 用它做压缩后的未完成步骤回贴，
+            # 以及 BUDGET_EXHAUSTED 的部分交付。桥自己拿了 todo_store 挂
+            # on_update 推计划卡，却没交给 loop —— 长任务压过一次上下文
+            # 之后，进度就只剩摘要模型记得住多少。
+            todo_store=todo_store,
             permission_decisions=_build_permission_decisions(
                 permission_grants, permission_denials, permission_grant_once
             ),
+            # 超大工具结果全文落盘 <workspace>/.mp/tool-results（与 .mp/backups
+            # 并列），模型拿预览+绝对路径，可用 read_file 分页回读。
+            tool_result_dir=str(Path(runtime["workspace_root"]) / ".mp" / "tool-results"),
         )
     except Exception as exc:  # noqa: BLE001 - loop crash must never kill the answer path
         timing_ms = conversation_clock.total("total", ok=0)
@@ -791,10 +927,17 @@ def answer_conversation(
     mapped = terminal_to_answer(terminal, agent_prompt)
     answer = clean_replacement_text(str(mapped.get("answer") or ""))
     if not answer or answer.startswith("AI 调用失败"):
+        failure = str(
+            mapped.get("error")
+            or mapped.get("loopTerminatedReason")
+            or ("empty_answer" if not answer else answer)
+        ).strip()
         return {
             "ok": False,
-            "error": answer or "模型没有返回内容。",
+            "error": failure,
+            "loopTerminatedReason": mapped.get("loopTerminatedReason"),
             "usedBackend": getattr(client, "used_backend", "") or "agent_runtime",
+            "timingMs": conversation_clock.total("total", ok=0),
         }
     timing_ms = conversation_clock.total("total", ok=1)
     from app.telemetry.interaction_ledger import InteractionLedger
@@ -811,10 +954,18 @@ def answer_conversation(
         trajectory=activity_sink.trajectory,
         timing_ms=timing_ms,
         question=question,
-        agent_session_id=agent_session_id,
+        agent_session_id=resolved_session_id,
+        has_pending_work=bool(
+            getattr(agent_session, "has_pending_work", lambda: False)()
+        ),
         interaction_ledger=interaction_ledger,
     )
     result["answer"] = answer
+    # 思考流（用户裁决：思考流一定要有）：turn 级 thinking 供 Think 行渲染；
+    # 逐轮 reasoning 已在 trajectory message record 里。
+    turn_thinking = "".join(activity_sink.turn_reasoning).strip()
+    if turn_thinking:
+        result["thinking"] = turn_thinking
     # 终态计划卡（与实时推送同一形状）
     result["plan"] = {"steps": todo_store.read()} if todo_store.has_items() else None
     return result
@@ -844,6 +995,15 @@ def main() -> int:
             permission_preset,
             workspace_root=str(payload.get("workspaceRoot") or ""),
             reply_style=reply_style,
+            conversation_id=str(payload.get("conversationId") or ""),
+            agent_session_id=str(payload.get("agentSessionId") or ""),
+            # 权限授权条的三个通道（本会话总是允许 / 仅这一次 / 拒绝）。
+            # main() 原先不读它们，于是 run_command 这类 LOCAL_IRREVERSIBLE
+            # 工具在 workspace-write 下永远 ask：用户点了「总是允许」，下一轮
+            # 又被同一道门拦住，编程闭环走不完。
+            permission_grants=_tool_names(payload.get("permissionGrants")),
+            permission_denials=_tool_names(payload.get("permissionDenials")),
+            permission_grant_once=_tool_names(payload.get("permissionGrantOnce")),
         )
     write_json(result)
     return 0 if result.get("ok") else 1

@@ -219,10 +219,12 @@ def test_conversation_result_can_expose_authoritative_session_bill() -> None:
         trajectory=[],
         timing_ms=10,
         agent_session_id="agent-studio-1",
+        has_pending_work=True,
         interaction_ledger={"interactionId": "agent-studio-1:1", "tokensText": 3},
     )
 
     assert result["agentSessionId"] == "agent-studio-1"
+    assert result["hasPendingWork"] is True
     assert result["interactionLedger"]["tokensText"] == 3
 
 
@@ -259,7 +261,11 @@ def _install_workspace_boot_stubs(monkeypatch, captured):
             if key == "todo_store":
                 return _FakeTodoStore()
             if key == "sessions":
-                return SimpleNamespace(open_or_create=lambda *a, **k: _FakeSession())
+                def _open(session_id, *a, **k):
+                    captured["agent_session_id"] = session_id
+                    return _FakeSession()
+
+                return SimpleNamespace(open_or_create=_open)
             if key == "context_budget":
                 return 64000
             return SimpleNamespace()  # model_client/compactor/estimator/...
@@ -369,6 +375,57 @@ def test_no_grants_means_no_memo(monkeypatch):
     assert captured["run_kwargs"]["permission_decisions"] is None
 
 
+def test_each_conversation_gets_its_own_agent_session(monkeypatch):
+    """会话身份必须钉到 conversationId。
+
+    Agent session 是磁盘上一条哈希链 JSONL：断点续跑摘要、待办、取消请求、
+    pending work 全挂在它上面。两条不同的对话拿到同一个 id，就等于共用一份
+    断点状态——新开一个对话会被上一条对话的未完成任务续跑块劫持。
+    """
+    captured_a: dict = {}
+    _install_workspace_boot_stubs(monkeypatch, captured_a)
+    conversation_bridge.answer_conversation(
+        "第一条对话", [], {}, "workspace-write", conversation_id="conv-aaa"
+    )
+
+    captured_b: dict = {}
+    _install_workspace_boot_stubs(monkeypatch, captured_b)
+    conversation_bridge.answer_conversation(
+        "第二条对话", [], {}, "workspace-write", conversation_id="conv-bbb"
+    )
+
+    assert captured_a["agent_session_id"] != captured_b["agent_session_id"]
+
+
+def test_plain_conversations_without_selection_do_not_share_one_session(monkeypatch):
+    """回归：普通文本对话没有 selection object，旧实现用 windowTitle 派生
+    session_key，全部塌缩成常量 "chat" —— 整个 app 的普通对话共用一条
+    session 文件。"""
+    seen = set()
+    for conversation_id in ("conv-1", "conv-2", "conv-3"):
+        captured: dict = {}
+        _install_workspace_boot_stubs(monkeypatch, captured)
+        conversation_bridge.answer_conversation(
+            "你好", [], {}, "workspace-write", conversation_id=conversation_id
+        )
+        seen.add(captured["agent_session_id"])
+    assert len(seen) == 3
+
+
+def test_agent_session_id_is_stable_across_turns_of_one_conversation(monkeypatch):
+    """同一条对话的每一轮必须落回同一条 session，否则断点续跑永远读不到
+    上一轮——多轮对话退化成一次性问答。"""
+    ids = []
+    for _ in range(2):
+        captured: dict = {}
+        _install_workspace_boot_stubs(monkeypatch, captured)
+        conversation_bridge.answer_conversation(
+            "继续", [], {}, "workspace-write", conversation_id="conv-stable"
+        )
+        ids.append(captured["agent_session_id"])
+    assert ids[0] == ids[1]
+
+
 def test_slash_rewind_restores_workspace_checkpoints(monkeypatch, tmp_path) -> None:
     """/rewind 是 checkpoint 的 GUI 入口（B5-25）：走绑定工作区的
     FileCheckpointStore，步数可选；无记录时诚实回答。"""
@@ -392,3 +449,180 @@ def test_slash_rewind_restores_workspace_checkpoints(monkeypatch, tmp_path) -> N
     empty = conversation_bridge.route_slash_command("/rewind", catalog=None)
     assert empty["ok"] is True
     assert "nothing to restore" in empty["answer"], "空账本必须诚实回答"
+
+
+def test_permission_grants_from_the_payload_reach_the_loop(monkeypatch, tmp_path) -> None:
+    """权限授权条必须真的授权。
+
+    ``main()`` 从来不读 ``permissionGrants``/``permissionDenials``/
+    ``permissionGrantOnce``，也不把它们转给 ``answer_conversation``——三个可选
+    参数在生产里恒为空元组。后果：run_command 是 LOCAL_IRREVERSIBLE，
+    workspace-write 预设下永远 ask，模型按提示调 ask_user_question 求授权，
+    用户点「本会话总是允许」，下一轮又被同一道门拦住——编程闭环走不完。
+    """
+    captured: dict[str, object] = {}
+
+    def fake_answer(question, turns, obj, preset, **kwargs):
+        captured.update(kwargs)
+        return {"ok": True, "answer": "ok"}
+
+    monkeypatch.setattr(conversation_bridge, "answer_conversation", fake_answer)
+    monkeypatch.setattr(
+        conversation_bridge,
+        "read_bounded_json_payload",
+        lambda: {
+            "question": "跑测试",
+            "permissionPreset": "workspace-write",
+            "permissionGrants": ["run_command"],
+            "permissionDenials": ["launch_app"],
+            "permissionGrantOnce": ["write_file"],
+        },
+    )
+    monkeypatch.setattr(conversation_bridge, "write_json", lambda value: None)
+
+    import contextlib
+
+    monkeypatch.setattr(
+        conversation_bridge,
+        "request_ai_config",
+        lambda runtime: contextlib.nullcontext(),
+    )
+
+    assert conversation_bridge.main() == 0
+    assert list(captured["permission_grants"]) == ["run_command"]
+    assert list(captured["permission_denials"]) == ["launch_app"]
+    assert list(captured["permission_grant_once"]) == ["write_file"]
+
+
+def test_thread_grant_upgrades_run_command_past_the_ask_gate() -> None:
+    """线程 memo 必须把 run_command 的 ask 抬成 allow（授权的全部意义）。"""
+    from app.agent_runtime.permission_modes import PermissionDecision, decide_effect
+    from app.agent_runtime.tool_registry import Effect
+
+    assert decide_effect("default", Effect.LOCAL_IRREVERSIBLE) is PermissionDecision.ASK
+
+    decisions = conversation_bridge._build_permission_decisions(
+        ["run_command"], (), ()
+    )
+    assert decisions is not None
+    assert decisions.lookup("run_command") == "allow"
+
+
+def test_conversation_forwards_todo_store_so_the_plan_survives_compaction(monkeypatch) -> None:
+    """Studio 对话必须把 todo_store 交给 loop。
+
+    桥自己拿了 ``ctx.get("todo_store")``（挂 on_update 推计划卡、终态读回），
+    但从来没有把它当参数传给 ``run_agent_turn``——于是 loop 里
+    ``params.todo_store`` 恒为 None：①BUDGET_EXHAUSTED 的部分交付不带未完成
+    步骤；②``_build_partial_delivery_message`` 拿不到计划。这是长任务的两个
+    可见症状，恰好是 1.0.14 给 Stage 修过、却漏了对话路径的同一处接线。
+    """
+    captured: dict[str, object] = {}
+
+    def fake_run_agent_turn(*args, **kwargs):
+        captured.update(kwargs)
+        raise RuntimeError("stop here — we only need the kwargs")
+
+    import app.fabric.engine as engine
+
+    monkeypatch.setattr(engine, "run_agent_turn", fake_run_agent_turn)
+    result = conversation_bridge.answer_conversation(
+        "跑一下测试", [], {}, "workspace-write"
+    )
+    assert result["ok"] is False  # the fake raised; we assert on the wiring
+    assert captured.get("todo_store") is not None, (
+        "todo_store 必须过参数边界，否则压缩后计划回贴与部分交付都拿不到进度"
+    )
+
+
+def test_conversation_bridge_imports_under_isolated_python():
+    """安装版以 ``python -I``（isolated）启动桥：sys.path 里没有 scripts/。
+
+    1.0.24 真机事故：conversation_bridge 依赖「直接跑脚本会把脚本目录放进
+    sys.path」这一默认行为，在 -I 下 import _bridge_common 直接炸——
+    进程 exit 1 零输出，GUI 只看到 bridge_no_output。其它每座桥都在
+    import 前自举 sys.path，conversation_bridge 必须同样自举。
+    """
+    import json
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    proc = subprocess.run(
+        [sys.executable, "-I", "-X", "utf8", "scripts/conversation_bridge.py"],
+        input='{"question":"hi","permissionPreset":"no-such-preset"}',
+        capture_output=True,
+        text=True,
+        cwd=root,
+        timeout=60,
+    )
+    assert proc.returncode == 2, f"stderr: {proc.stderr[-400:]}"
+    payload = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert payload["ok"] is False
+    assert "未知权限预设" in payload["error"]
+    assert "ModuleNotFoundError" not in proc.stderr
+
+
+def test_answer_conversation_passes_tool_result_dir_under_workspace(monkeypatch, tmp_path):
+    """P1-3 收尾：超大工具结果要全文落盘 <workspace>/.mp/tool-results，
+    桥必须把 tool_result_dir 传给 run_agent_turn，否则落盘层永远不激活。"""
+    ws_dir = tmp_path / "profile-default"
+    ws_dir.mkdir()
+    import app.agent_runtime.workspace_state as workspace_state
+    monkeypatch.setattr(workspace_state, "read_workspace", lambda root: ws_dir)
+
+    captured = {}
+    _install_workspace_boot_stubs(monkeypatch, captured)
+
+    some_repo = tmp_path / "some-repo"
+    some_repo.mkdir()
+    result = conversation_bridge.answer_conversation(
+        "看看这个仓库",
+        [],
+        {},
+        "workspace-write",
+        workspace_root=str(some_repo),
+    )
+    expected = str(some_repo / ".mp" / "tool-results")
+    assert captured["run_kwargs"].get("tool_result_dir") == expected, (
+        "显式工作区时 tool_result_dir 必须落在该工作区的 .mp/tool-results"
+    )
+    assert result["ok"] is True
+
+
+def test_answer_conversation_tool_result_dir_defaults_to_profile_workspace(monkeypatch, tmp_path):
+    import app.agent_runtime.workspace_state as workspace_state
+    default_ws = tmp_path / "profile-default"
+    default_ws.mkdir()
+    monkeypatch.setattr(workspace_state, "read_workspace", lambda root: default_ws)
+
+    captured = {}
+    _install_workspace_boot_stubs(monkeypatch, captured)
+
+    result = conversation_bridge.answer_conversation("看看", [], {}, "workspace-write")
+    expected = str(default_ws / ".mp" / "tool-results")
+    assert captured["run_kwargs"].get("tool_result_dir") == expected
+    assert result["ok"] is True
+
+
+def test_slash_skill_load_bumps_usage(tmp_path, monkeypatch) -> None:
+    """P2-5：斜杠显式加载技能也要计入频次（MAGIC_POINTER_USER_DATA_DIR
+    指向的用户目录里落 skill-usage.json）。"""
+    import json
+
+    from app.agent_runtime.skill_catalog import SkillCatalog
+
+    user_data = tmp_path / "user-data"
+    monkeypatch.setenv("MAGIC_POINTER_USER_DATA_DIR", str(user_data))
+    (tmp_path / ".agents" / "skills" / "demo-skill").mkdir(parents=True)
+    (tmp_path / ".agents" / "skills" / "demo-skill" / "SKILL.md").write_text(
+        "---\nname: demo-skill\ndescription: 演示\n---\n\n# 演示正文\n",
+        encoding="utf-8",
+    )
+    catalog = SkillCatalog(project_root=tmp_path, user_home=tmp_path / "home")
+    result = conversation_bridge.route_slash_command("/demo-skill 跑", catalog=catalog)
+    assert result["ok"] is True
+    usage_file = user_data / "skill-usage.json"
+    assert usage_file.is_file(), "斜杠加载技能应落使用计数"
+    assert json.loads(usage_file.read_text(encoding="utf-8"))["demo-skill"]["count"] == 1

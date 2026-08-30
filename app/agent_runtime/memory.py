@@ -101,6 +101,10 @@ class SkillLoader:
     def __init__(self, user_dir: Path | str, *, command: str) -> None:
         self._root = Path(user_dir) / "skills"
         self._command = str(command or "").strip()
+        # 使用频次（P2-5）：注入时 bump，同分排序时高频技能靠前。
+        from app.agent_runtime.skill_usage import SkillUsageStore
+
+        self._usage = SkillUsageStore(user_dir)
 
     def load(self) -> str:
         if not self._command or not self._root.is_dir() or _is_reparse(self._root):
@@ -127,13 +131,14 @@ class SkillLoader:
                 score += 4
             if score > 0:
                 ranked.append((score, directory.name, content.strip()))
-        ranked.sort(key=lambda item: (-item[0], item[1].casefold()))
+        ranked.sort(key=lambda item: (-item[0], -self._usage.count(item[1]), item[1].casefold()))
         blocks: list[str] = []
         remaining = SKILL_TOTAL_LIMIT_CHARS
         for _score, name, content in ranked[:SKILL_COUNT_LIMIT]:
             block = f"## skill: {name}\n{content}".strip()
             if not block or remaining <= 0:
                 break
+            self._usage.bump(name)
             block = block[:remaining]
             blocks.append(block)
             remaining -= len(block)

@@ -51,7 +51,6 @@ from app.agent_runtime.compaction_prompt import (
 )
 from app.agent_runtime.system_prompt import (
     DELIVER_SYSTEM_PROMPT,
-    is_deliver_request as _is_deliver_request,
 )
 from app.governance.latency_budget import (
     BudgetPolicy,
@@ -1778,6 +1777,22 @@ def _evidence_content(app_ctx) -> str:
     return content
 
 
+def _selection_session_has_history(selection_session_id: str | None) -> bool:
+    """这个圈选会话是否已经有对话历史（存在非空的 durable session）。"""
+    sid = str(selection_session_id or "").strip()
+    if not sid or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,121}", sid):
+        return False
+    # 会话根与 harness 的 session-store 行同源：用户数据目录优先（打包版），
+    # 开发树退回 data/runtime。
+    user_data = os.environ.get("MAGIC_POINTER_USER_DATA_DIR")
+    runtime_root = Path(user_data) if user_data else ROOT / "data" / "runtime"
+    path = runtime_root / "agent-sessions" / f"agent-{sid}.jsonl"
+    try:
+        return path.stat().st_size > 2
+    except OSError:
+        return False
+
+
 def _crop_frozen_frame_bytes(
     capture_path: str | Path,
     physical_box: tuple[int, int, int, int],
@@ -2242,10 +2257,13 @@ def _loop_router(
         except Exception:
             return ""
 
+    _inbox_cell: dict = {"fn": None}
     runtime = {
         "perception_backend": _BridgePerceptionBackend(
             app_ctx, target_window, snapshot
         ),
+        # 后台 job 完成推送：cell 先进 runtime，durable session 打开后回填。
+        "session_inbox": lambda text: (_inbox_cell["fn"] or (lambda _t: None))(text),
         "vision_backend": _VisionBackend(),
         "frame_crop": crop_bytes,
         "guard_probe": _BridgeGuardProbe(target_window),
@@ -2286,6 +2304,24 @@ def _loop_router(
         request_header = ctx.get("model_request_header")
         selection_todo_store = ctx.get("todo_store")
         from app.agent_runtime.session import cancel_interrupt_check
+
+        # 计划门（与 conversation_bridge 同语义）：模型想收工但计划还有
+        # 未完成步骤 → nudge 续跑，最多两次防死循环。Stage 长任务与
+        # Studio 对话同权，写完 todo 不得跳过剩余步骤直接 COMPLETED。
+        plan_nudges = {"count": 0}
+
+        def _plan_completion_gate():
+            steps = selection_todo_store.read() if selection_todo_store else []
+            pending = [s for s in steps if s.get("status") != "completed"]
+            if not pending or plan_nudges["count"] >= 2:
+                return None
+            plan_nudges["count"] += 1
+            names = "；".join(str(s.get("content"))[:40] for s in pending[:5])
+            return (
+                f"（计划门）计划还有 {len(pending)} 步未完成：{names}。"
+                "继续执行；每做完一步调用 todo_write 把该步标为 completed、"
+                "正在做的标为 in_progress。全部完成后正常给出最终回答。"
+            )
 
         model_cfg = next(
             row.resolved_config for row in report.rows if row.id == "model-client"
@@ -2380,6 +2416,7 @@ def _loop_router(
     try:
         try:
             agent_session = sessions.open_or_create(agent_session_id, repair=True)
+            _inbox_cell["fn"] = lambda text: agent_session.enqueue_inbox(text, "next-step")
             terminal = run_agent_turn(
                 first_input,
                 objects=routing_objects,
@@ -2416,6 +2453,10 @@ def _loop_router(
                 # silence deadline (B1.3).
                 keepalive=clock.mark if clock is not None else None,
                 todo_store=selection_todo_store,
+                nudge_hooks=(_plan_completion_gate,),
+                # 超大工具结果全文落盘 <workspace>/.mp/tool-results（与
+                # .mp/backups 并列），模型拿预览+绝对路径，read_file 分页回读。
+                tool_result_dir=str(Path(runtime["workspace_root"]) / ".mp" / "tool-results"),
             )
         except Exception as exc:  # noqa: BLE001 - loop crash must never kill answer path
             return {
@@ -2687,6 +2728,11 @@ def main() -> int:
         return 2
     command = str(payload.get("command") or "").strip()
     selection_session_id = str(payload.get("selectionSessionId") or "").strip()
+    # reply_style 在 main 作用域读一次：_loop_router 的调用引用它。此前只在
+    # build_agent_prompt_draft 里读，main() 引用未定义名——1.0.14 起每个走
+    # 到 Agent loop 的手势问句都死在 NameError 上（精确读回不走 loop，所以
+    # 看起来"简单划线还能用"）。
+    reply_style = str(payload.get("replyStyle") or "normal").strip().lower()[:20]
     clock.mark("payload_read", mode=payload.get("requestMode") or "default", cmd_len=len(command))
     if not command:
         print(json.dumps({"ok": False, "error": "missing command"}, ensure_ascii=False))
@@ -2720,15 +2766,38 @@ def main() -> int:
 
     target_window, app_ctx, snapshot, snapshot_error = _context_from_snapshot(payload)
     clock.mark("context_from_snapshot", err=snapshot_error or "none")
+    stale_followup = False
     if snapshot_error:
-        print(json.dumps({
-            "ok": False,
-            "prompt": command,
-            "error": snapshot_error,
-            "actionProposals": [],
-            "selectionSessionId": selection_session_id or None,
-        }, ensure_ascii=False))
-        return 1
+        # 追问续跑：冻结帧过期（TTL 120s 比一轮长答案的往返还短，第二条
+        # 追问必死——真机 8·29）只宣布「屏幕证据不可信」，不该打死整轮。
+        # 对话历史（durable session）才是追问的上下文主源。首问没有历史
+        # 会话可退，仍旧失败，但给人话和明确动作。
+        expired = snapshot_error == "selection snapshot expired"
+        has_history = expired and _selection_session_has_history(selection_session_id)
+        if expired and has_history:
+            app_ctx = None
+            snapshot = None
+            stale_followup = True
+            command = (
+                command
+                + "\n\n（注意：本次圈选的屏幕证据已过期，屏幕内容以我们刚才的"
+                "对话为准；如需全新的屏幕证据请让我重新圈选。）"
+            )
+            clock.mark("context_snapshot_stale_followup")
+        else:
+            print(json.dumps({
+                "ok": False,
+                "prompt": command,
+                "error": snapshot_error,
+                "errorHuman": (
+                    "这次的圈选证据已过期（冻结帧超过 120 秒不再可信），"
+                    "重新圈选一次即可。"
+                    if expired else snapshot_error
+                ),
+                "actionProposals": [],
+                "selectionSessionId": selection_session_id or None,
+            }, ensure_ascii=False))
+            return 1
 
     # The pixel tier runs here, on the frozen frame the snapshot froze, and is
     # arbitrated by the same fusion as the structured tier. Local-first: the
@@ -2937,9 +3006,12 @@ def main() -> int:
         # 回答形态：要发出去的文字（deliver）必须纯文本禁 markdown——
         # 该判定在调用模型前就进了 loop 系统提示词（deliver 动态节），
         # 桥侧同时把形态带回给渲染层（answer_shape_policy 优先信桥）。
+        # 回答形态只看证据：模型真的生成了执行方案（要用户点头的事）才算
+        # deliver；问题文本里的任何词都不再触发（真机 8·29：「你刚刚在回复
+        # 这段话的过程中…」被「回复」误判成要写回）。
         answer_shape = (
             "deliver"
-            if _is_deliver_request(command)
+            if action_proposals
             else str(loop_result.get("answerShape") or "answer")
         )
         route_info = dict(loop_result.get("route") or route_info)

@@ -13,6 +13,7 @@ Both tools are READ effects and safe to run concurrently.
 from __future__ import annotations
 
 import re
+import time
 from html import unescape
 from typing import Any
 
@@ -21,6 +22,31 @@ import httpx
 from app.agent_runtime.tool_registry import Effect, ToolRegistry, ToolSpec
 
 __all__ = ["register_web_tools"]
+
+_FETCH_CACHE: dict[str, tuple[float, str]] = {}
+_FETCH_CACHE_TTL_S = 900.0
+_FETCH_CACHE_MAX = 20
+"""同 URL 15 分钟缓存（CC WebFetch 同款 TTL）：长任务里反复 fetch 同一
+文档页是常态，重复抓取只浪费时间；容量有界，按插入序淘汰。"""
+
+
+def _cache_get(url: str) -> str | None:
+    hit = _FETCH_CACHE.get(url)
+    if hit is None:
+        return None
+    ts, payload = hit
+    if time.monotonic() - ts > _FETCH_CACHE_TTL_S:
+        _FETCH_CACHE.pop(url, None)
+        return None
+    return payload
+
+
+def _cache_put(url: str, payload: str) -> None:
+    if len(_FETCH_CACHE) >= _FETCH_CACHE_MAX:
+        for stale in list(_FETCH_CACHE)[:-_FETCH_CACHE_MAX]:
+            _FETCH_CACHE.pop(stale, None)
+    _FETCH_CACHE[url] = (time.monotonic(), payload)
+
 
 _USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -114,12 +140,24 @@ def web_fetch(url: str, char_limit: int = _DEFAULT_FETCH_CHARS) -> str:
     if not target.startswith(("http://", "https://")):
         raise ValueError("url must start with http:// or https://")
     budget = max(2000, min(int(char_limit or _DEFAULT_FETCH_CHARS), _MAX_FETCH_CHARS))
+    cached = _cache_get(target)
+    if cached is not None:
+        return cached
+    # 重定向不自动跟随：跨源 30x 把用户带去哪里必须显式回显（与出网
+    # 安全审计同向），要继续就再 fetch 一次新地址。
     response = httpx.get(
         target,
         headers={"User-Agent": _USER_AGENT},
         timeout=_FETCH_TIMEOUT_S,
-        follow_redirects=True,
+        follow_redirects=False,
     )
+    if 300 <= response.status_code < 400:
+        location = str(response.headers.get("location") or "").strip()
+        if location:
+            return (
+                f"[redirect {response.status_code}: {target} → {location}; "
+                "call web_fetch on the new URL explicitly if you want it]"
+            )
     response.raise_for_status()
     content_type = response.headers.get("content-type", "")
     if "html" not in content_type and "text" not in content_type:
@@ -130,16 +168,20 @@ def web_fetch(url: str, char_limit: int = _DEFAULT_FETCH_CHARS) -> str:
     body = _strip_to_text(response.text)
     if not body:
         return "[page rendered empty after extraction — likely a JS-only app; fetch its API or repo instead]"
-    header = f"{target} ({len(body)} chars)"
-    return f"{header}\n{_head_tail(body, budget)}"
+    payload = f"{target} ({len(body)} chars)\n{_head_tail(body, budget)}"
+    _cache_put(target, payload)
+    return payload
 
 
 def register_web_tools(registry: ToolRegistry) -> None:
+    # 旧名别名（一个版本）：历史授权/旧调用仍路由到规范工具；别名不进 schema。
+    registry.register_alias("web_search", "Search")
+    registry.register_alias("web_fetch", "Fetch")
     registry.register(ToolSpec(
-        name="web_search",
+        name="Search",
         description=(
             "搜索互联网，返回标题+URL+摘要列表（无需 API key）。"
-            "查文档、找 issue、核对库用法时用；把结果里的 URL 传给 web_fetch 读全文。"
+            "查文档、找 issue、核对库用法时用；把结果里的 URL 传给 Fetch 读全文。"
         ),
         input_schema={
             "type": "object",
@@ -156,7 +198,7 @@ def register_web_tools(registry: ToolRegistry) -> None:
         timeout_ms=30_000,
     ))
     registry.register(ToolSpec(
-        name="web_fetch",
+        name="Fetch",
         description=(
             "抓取一个网页并抽取正文文本（去脚本/导航，超长页返回头尾窗口）。"
             "不能执行 JS：SPA 页面拿不到内容时会明说。PDF 不支持。"

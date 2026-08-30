@@ -130,7 +130,7 @@ class TestToolSpecDefaults:
 
 
 class TestRegisterNameValidation:
-    @pytest.mark.parametrize("bad", ["", "EchoTool", "echo tool", "echo-tool", "回声"])
+    @pytest.mark.parametrize("bad", ["", "echo tool", "echo tool", "echo-tool", "回声"])
     def test_register_rejects_invalid_name(self, bad: str) -> None:
         with pytest.raises(ValueError, match=NAME_RE_MESSAGE):
             ToolRegistry().register(make_spec(name=bad))

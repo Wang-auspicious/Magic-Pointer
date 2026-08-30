@@ -8,13 +8,13 @@ delivers the right artifacts.
 
 Scenarios:
 
-1. Four-step tool chain: read_around -> selection_expand -> translate_in_place
+1. Four-step tool chain: Around -> selection_expand -> translate_in_place
    -> final text. The fake model verifies each tool result's content before
    deciding the next step (a missed result fails the test).
 2. Trajectory-driven: ``route_to_trajectory`` is monkeypatched to a fixed
    ``text.rewrite_in_place`` trajectory; ``run_agent_turn`` seeds the first
    round with the trajectory template and recommends its tools first.
-3. Failure recovery: ``read_around`` raises ActionFailure(TIMEOUT) once; the
+3. Failure recovery: ``Around`` raises ActionFailure(TIMEOUT) once; the
    model sees the is_error tool message and retries successfully; the loop
    survives.
 4. Honest write-back failure: ``translate_in_place`` fails with
@@ -86,7 +86,7 @@ class FakeDocumentStore:
     def __init__(self, text: str) -> None:
         self.text = text
         self.calls = {
-            "read_around": 0,
+            "Around": 0,
             "selection_expand": 0,
             "translate_in_place": 0,
             "deliver_text": 0,
@@ -101,9 +101,9 @@ class FakeDocumentStore:
         if self.on_tool is not None:
             self.on_tool(name)
 
-    def read_around(self, scope=None, anchor: str = "", radius: int = 3) -> str:
-        self._hit("read_around")
-        if self.first_read_fails and self.calls["read_around"] == 1:
+    def Around(self, scope=None, anchor: str = "", radius: int = 3) -> str:
+        self._hit("Around")
+        if self.first_read_fails and self.calls["Around"] == 1:
             raise ActionFailure(
                 FailureType.TIMEOUT, "read worker busy", recovery_hint="retry"
             )
@@ -145,7 +145,7 @@ def _register_fake_tools(registry: ToolRegistry, doc: FakeDocumentStore) -> Tool
     """Register the four fake chain tools (read/expand/translate/deliver)."""
     registry.register(
         ToolSpec(
-            name="read_around",
+            name="Around",
             description="fake perception read around an anchor",
             input_schema={
                 "type": "object",
@@ -155,7 +155,7 @@ def _register_fake_tools(registry: ToolRegistry, doc: FakeDocumentStore) -> Tool
                 },
                 "required": ["anchor"],
             },
-            execute=doc.read_around,
+            execute=doc.Around,
             effect=Effect.READ,
             is_concurrency_safe=False,
             used_backend="fake_uia",
@@ -284,7 +284,7 @@ def test_four_step_tool_chain_feedback_and_convergence() -> None:
     registry = _register_fake_tools(ToolRegistry(), doc)
     backend = ChainBackend(
         rounds=[
-            [("read_around", {"anchor": "p1", "radius": 3}, None, "c1")],
+            [("Around", {"anchor": "p1", "radius": 3}, None, "c1")],
             [("selection_expand", {"text": "s", "target_length": 400}, PARAGRAPH, "c2")],
             [
                 (
@@ -319,7 +319,7 @@ def test_four_step_tool_chain_feedback_and_convergence() -> None:
     tool_starts = [e for e in events if isinstance(e, ToolCallStarted)]
     tool_finishes = [e for e in events if isinstance(e, ToolCallFinished)]
     assert [e.name for e in tool_starts] == [
-        "read_around",
+        "Around",
         "selection_expand",
         "translate_in_place",
     ]
@@ -438,7 +438,7 @@ def test_run_agent_turn_keeps_raw_instruction_and_does_not_route_via_recipe(monk
     assert len(first_messages) == 1
     assert first_messages[0].role is Role.USER
     assert first_messages[0].content == "扩写第二段"
-    assert schemas[0]["name"] == "read_around"
+    assert schemas[0]["name"] == "Around"
     assert schemas[1]["name"] == "selection_expand"
     assert terminal.reason is TransitionReason.COMPLETED
     assert terminal.message == "已改写"
@@ -496,7 +496,7 @@ def test_agent_turn_has_no_recipe_lifetime_control() -> None:
     doc = FakeDocumentStore(PARAGRAPH)
     registry = _register_fake_tools(ToolRegistry(), doc)
     backend = ChainBackend(
-        rounds=[[("read_around", {"anchor": "p1", "radius": 3}, None, "c1")]],
+        rounds=[[("Around", {"anchor": "p1", "radius": 3}, None, "c1")]],
         final_text="读取完成",
     )
 
@@ -522,8 +522,8 @@ def test_failed_read_is_fed_back_and_retry_succeeds() -> None:
     registry = _register_fake_tools(ToolRegistry(), doc)
     backend = ChainBackend(
         rounds=[
-            [("read_around", {"anchor": "p1", "radius": 3}, None, "c1")],
-            [("read_around", {"anchor": "p1", "radius": 3}, "read worker busy", "c2")],
+            [("Around", {"anchor": "p1", "radius": 3}, None, "c1")],
+            [("Around", {"anchor": "p1", "radius": 3}, "read worker busy", "c2")],
         ],
         final_text="重试成功，任务完成。",
     )
@@ -531,7 +531,7 @@ def test_failed_read_is_fed_back_and_retry_succeeds() -> None:
 
     terminal = run_agent_turn("读取并扩写这段", registry=registry, client=client)
 
-    assert doc.calls["read_around"] == 2
+    assert doc.calls["Around"] == 2
     assert terminal.reason is TransitionReason.COMPLETED
     assert terminal.turns == 3
     assert len(terminal.results) == 2
@@ -600,7 +600,7 @@ def test_budget_exhaustion_keeps_completed_results() -> None:
     backend = ChainBackend(
         rounds=[
             [
-                ("read_around", {"anchor": "p1", "radius": 3}, None, "c1"),
+                ("Around", {"anchor": "p1", "radius": 3}, None, "c1"),
                 ("selection_expand", {"text": "s", "target_length": 400}, None, "c2"),
             ]
         ],
@@ -627,7 +627,7 @@ def test_budget_exhaustion_keeps_completed_results() -> None:
     assert len(terminal.results) == 2
     assert [r.tool_call_id for r in terminal.results] == ["c1", "c2"]
     assert all(not r.is_error for r in terminal.results)
-    assert doc.calls["read_around"] == 1
+    assert doc.calls["Around"] == 1
     assert doc.calls["selection_expand"] == 1
     assert doc.calls["translate_in_place"] == 0
 
@@ -645,7 +645,7 @@ def test_cancel_in_round_two_raises_and_stops_model_calls() -> None:
     registry = _register_fake_tools(ToolRegistry(), doc)
     backend = ChainBackend(
         rounds=[
-            [("read_around", {"anchor": "p1", "radius": 3}, None, "c1")],
+            [("Around", {"anchor": "p1", "radius": 3}, None, "c1")],
             [("selection_expand", {"text": "s", "target_length": 400}, None, "c2")],
         ],
         final_text="never reached",
@@ -656,7 +656,7 @@ def test_cancel_in_round_two_raises_and_stops_model_calls() -> None:
         run_agent_turn("扩写这个段落", registry=registry, client=client)
 
     assert len(backend.received) == 2
-    assert doc.calls["read_around"] == 1
+    assert doc.calls["Around"] == 1
     assert doc.calls["selection_expand"] == 1
     assert doc.calls["translate_in_place"] == 0
 
@@ -667,19 +667,19 @@ def test_cancel_in_round_two_raises_and_stops_model_calls() -> None:
 
 
 class FakePerceptionBackend:
-    def read_around(self, anchor: str, radius: int) -> list[dict]:
+    def Around(self, anchor: str, radius: int) -> list[dict]:
         return [{"text": "one"}]
 
-    def dump_subtree(self, anchor: str, depth: int) -> dict | None:
+    def Tree(self, anchor: str, depth: int) -> dict | None:
         return {"name": "root"}
 
-    def find_in_window(self, pattern: str) -> list[dict]:
+    def Find(self, pattern: str) -> list[dict]:
         return [{"text": "hit"}]
 
-    def list_windows(self) -> list[dict]:
+    def ListWindows(self) -> list[dict]:
         return [{"hwnd": 1, "title": "t", "process_name": "p", "pid": 1}]
 
-    def get_focused(self) -> dict | None:
+    def GetFocus(self) -> dict | None:
         return {"hwnd": 1, "title": "t", "process_name": "p", "pid": 1}
 
 
@@ -691,14 +691,14 @@ def test_fabric_and_perception_tools_coexist_in_one_registry() -> None:
     names = [spec.name for spec in registry.list()]
     assert len(names) == 23
     assert len(set(names)) == len(names)
-    assert "read_around" in names
+    assert "Around" in names
     assert "rewrite_in_place" in names
     assert "deliver_text" not in names
 
     parallel, sequential = registry.concurrency_partition(
-        ["read_around", "rewrite_in_place", "screen_translate"]
+        ["Around", "rewrite_in_place", "screen_translate"]
     )
-    assert set(parallel) == {"read_around", "screen_translate"}
+    assert set(parallel) == {"Around", "screen_translate"}
     assert sequential == ["rewrite_in_place"]
 
     assert registry.resource_keys_for("ocr_copy", {"objects": []}) == (

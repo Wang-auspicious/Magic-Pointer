@@ -209,13 +209,19 @@ class PerceptionTools:
 
     def register_all(self, registry: ToolRegistry) -> None:
         """Register all five perception tools as model-usable ToolSpecs."""
+        # 旧名别名（一个版本）：历史授权/旧调用仍路由到规范工具；别名不进 schema。
+        registry.register_alias("read_around", "Around")
+        registry.register_alias("dump_subtree", "Tree")
+        registry.register_alias("find_in_window", "Find")
+        registry.register_alias("list_windows", "ListWindows")
+        registry.register_alias("get_focused", "GetFocus")
         registry.register(
             ToolSpec(
-                name="read_around",
+                name="Around",
                 description=(
                     "Read text around an anchor point in the frozen snapshot "
                     "captured for this turn (historical state, not the live "
-                    "screen — for the current state call get_app_state). "
+                    "screen — for the current state call Observe). "
                     "anchor is a stable element/anchor identifier; radius "
                     "controls how many surrounding items to include (1..10). "
                     "Returns the concatenated text of the read items."
@@ -232,15 +238,16 @@ class PerceptionTools:
                 is_concurrency_safe=True,
                 used_backend="perception_backend",
                 execute=self.read_around,
+                deferred=True,  # 冻帧三件套：Stage 手势路径专用，find_capability 按需加载
             )
         )
         registry.register(
             ToolSpec(
-                name="dump_subtree",
+                name="Tree",
                 description=(
                     "Dump the structured accessibility subtree rooted at an "
                     "anchor in the frozen snapshot captured for this turn "
-                    "(historical state — for the live UI call get_app_state). "
+                    "(historical state — for the live UI call Observe). "
                     "depth controls how many levels to descend (clamped to "
                     "1..8). Cyclic data is truncated and noted."
                 ),
@@ -256,15 +263,16 @@ class PerceptionTools:
                 is_concurrency_safe=True,
                 used_backend="perception_backend",
                 execute=self.dump_subtree,
+                deferred=True,
             )
         )
         registry.register(
             ToolSpec(
-                name="find_in_window",
+                name="Find",
                 description=(
                     "Find text matching a pattern inside the frozen snapshot "
                     "captured for this turn (historical state — for the live "
-                    "UI call get_app_state). Returns the matched texts with "
+                    "UI call Observe). Returns the matched texts with "
                     "their bounding boxes."
                 ),
                 input_schema={
@@ -278,11 +286,12 @@ class PerceptionTools:
                 is_concurrency_safe=True,
                 used_backend="perception_backend",
                 execute=self.find_in_window,
+                deferred=True,
             )
         )
         registry.register(
             ToolSpec(
-                name="list_windows",
+                name="ListWindows",
                 description=(
                     "List all top-level windows (hwnd, title, process_name, "
                     "pid) as a JSON table."
@@ -292,11 +301,12 @@ class PerceptionTools:
                 is_concurrency_safe=True,
                 used_backend="perception_backend",
                 execute=self.list_windows,
+                deferred=True,
             )
         )
         registry.register(
             ToolSpec(
-                name="get_focused",
+                name="GetFocus",
                 description=(
                     "Return the currently focused window descriptor "
                     "(hwnd, title, process_name, pid) or empty when nothing "
@@ -307,6 +317,7 @@ class PerceptionTools:
                 is_concurrency_safe=True,
                 used_backend="perception_backend",
                 execute=self.get_focused,
+                deferred=True,
             )
         )
 

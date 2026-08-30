@@ -973,14 +973,16 @@ def test_open_stroke_blocks_are_sorted_in_reading_order(monkeypatch, tmp_path) -
     assert top != -1 and bottom != -1 and top < bottom
 
 
-# ── 回答形态判定：deliver（要发出去）────────────────────────────────
-def test_deliver_request_detection() -> None:
-    from scripts.selection_bridge import _is_deliver_request
+# ── 回答形态判定：deliver 只看证据（8·29 删关键词分类器）──────────────
+def test_deliver_shape_requires_proposal_evidence() -> None:
+    """问题文本永不触发 deliver；模型真的生成了执行方案才算。
 
-    for command in ('帮我回复一下', '这段话润色一下', '改写得客气点', '语气委婉一点', '扩写这段', '帮我写一段回信'):
-        assert _is_deliver_request(command), f'{command} 应判 deliver'
-    for command in ('这是什么', '解释一下', '为什么会这样', '帮我画一张图', '总结这段'):
-        assert not _is_deliver_request(command), f'{command} 不应判 deliver'
+    「你刚刚在回复这段话的过程中…」句中出现「回复」就被旧正则判成
+    要写回，凭空拉出同意条——意图由模型理解，桥只认 actionProposals。
+    """
+    source = (Path(__file__).resolve().parents[1] / "scripts" / "selection_bridge.py").read_text(encoding="utf-8")
+    assert "_is_deliver_request" not in source, "关键词分类器必须已删除"
+    assert "action_proposals" in source, "deliver 判定必须来自执行方案证据"
 
 
 def test_deliver_system_prompt_forbids_markdown() -> None:
@@ -1371,6 +1373,9 @@ def test_loop_router_binds_profile_default_workspace_not_process_cwd(monkeypatch
         def unload(self):
             pass
 
+        def unload(self):
+            pass
+
         def get(self, key):
             if key == "tools":
                 from app.agent_runtime.tool_registry import ToolRegistry
@@ -1428,4 +1433,309 @@ def test_loop_router_binds_profile_default_workspace_not_process_cwd(monkeypatch
     assert result["ok"] is True
     assert captured["runtime"]["workspace_root"] == str(default_ws), (
         "Stage 必须绑定持久化默认工作区，而不是进程 cwd（安装目录）"
+    )
+
+
+def test_loop_router_nudges_unfinished_plan_before_completion(monkeypatch):
+    """Stage 长任务与 Studio 对话同权：计划没做完不许静默收工。
+
+    conversation_bridge 有计划门 nudge（最多两次），selection_bridge 拿了
+    todo_store 却只做 partial-delivery——loop 的 nudge_hooks 恒为空元组，
+    Stage 长任务做到一半写完 todo 就能直接 COMPLETED。
+    """
+    from types import SimpleNamespace
+
+    from app.agent_runtime.tool_registry import ToolRegistry
+    from app.fabric import engine as engine_module
+    import app.harness.builtin_bundle as builtin_bundle
+
+    class _FakeTodoStore:
+        def __init__(self):
+            self._steps = [{"content": "修完三个种子 bug", "status": "in_progress"}]
+
+        def read(self):
+            return list(self._steps)
+
+    class _FakeCtx:
+        def __init__(self, store):
+            self._store = store
+
+        def unload(self):
+            pass
+
+        def get(self, key):
+            if key == "tools":
+                return ToolRegistry()
+            if key == "todo_store":
+                return self._store
+            if key == "sessions":
+                return SimpleNamespace(open_or_create=lambda sid, *a, **k: _StubAgentSession())
+            if key == "context_budget":
+                return 64000
+            return SimpleNamespace()  # model_client/compactor/estimator/hooks/...
+
+    class _StubAgentSession:
+        events = ()
+
+        def interrupted_turn_summary(self):
+            return None
+
+        def enqueue_inbox(self, *a, **k):
+            pass
+
+        def claim_inbox(self, *a, **k):
+            return []
+
+    store = _FakeTodoStore()
+    report = SimpleNamespace(ctx=_FakeCtx(store), rows=[
+        SimpleNamespace(id="model-client", resolved_config={"permission_mode": "default"}),
+    ])
+    monkeypatch.setattr(
+        builtin_bundle, "boot_loop_context", lambda runtime, root=None: report
+    )
+
+    recorded = {}
+
+    def fake_run(user_input, objects=None, registry=None, *, client, **kwargs):
+        recorded["nudge_hooks"] = kwargs.get("nudge_hooks")
+        return _fake_terminal(message="循环给出的回答")
+
+    monkeypatch.setattr(engine_module, "run_agent_turn", fake_run)
+
+    clock = selection_bridge.PhaseClock("test", enabled=False)
+    result = selection_bridge._loop_router(
+        "帮我看看这个", [], None, None, None, None, "sess-1", "snap-1",
+        clock=clock,
+    )
+
+    hooks = recorded.get("nudge_hooks") or ()
+    assert hooks and callable(hooks[0]), "Stage 路径必须带计划门 nudge hook"
+    first = hooks[0]()
+    assert first and "计划门" in first and "修完三个种子 bug" in first
+    hooks[0]()  # 第二次仍 nudge（上限内）
+    assert hooks[0]() is None, "计划门最多 nudge 两次，防死循环"
+    assert result["ok"] is True
+
+
+def test_main_passes_reply_style_into_the_loop_router(monkeypatch):
+    """划线问句走到 Agent loop 不得死在未定义名上。
+
+    1.0.14 的 replyStyle 批把 ``reply_style = payload.get(...)`` 写进了
+    build_agent_prompt_draft 的作用域，main() 里的 _loop_router 调用
+    却引用它——NameError：自 1.0.14 起每个走到 loop 的手势问句必死
+    （精确读回不走 loop 所以看着正常），GUI 只显示兜底文案。
+    """
+    from datetime import datetime, timedelta, timezone
+
+    captured = {}
+
+    def fake_loop_router(command, routing_objects, target_window, app_ctx,
+                         snapshot, routing_enabled, selection_session_id,
+                         selection_snapshot_id, clock=None, reply_style="normal"):
+        captured["reply_style"] = reply_style
+        return {
+            "ok": True,
+            "answer": "循环回答",
+            "usedBackend": "test",
+            "route": {"action": "model_loop"},
+            "actionProposals": [],
+            "selectionSessionId": selection_session_id,
+        }
+
+    monkeypatch.setattr(selection_bridge, "_loop_router", fake_loop_router)
+
+    fresh = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+    payload = {
+        "command": "这是什么",
+        "requestId": "probe-r",
+        "selectionSessionId": "sess-r",
+        "source": "pointer_stage",
+        "replyStyle": "ultra",
+        "selectionSnapshot": {
+            "source_kind": "screen_region",
+            "app": "screen",
+            "strokes": [[100, 100], [300, 200]],
+            "target_point": [200, 150],
+            "target_point_space": "physical",
+            "expires_at": fresh,
+            "context": {"adapter": "screen_region", "path": None, "artifacts": {}},
+        },
+    }
+    monkeypatch.setattr(
+        selection_bridge.sys, "stdin",
+        io.StringIO(json.dumps(payload, ensure_ascii=False)),
+    )
+    monkeypatch.setattr(selection_bridge, "_configure_stdio", lambda: None)
+
+    assert selection_bridge.main() == 0
+    assert captured["reply_style"] == "ultra", (
+        "main() 必须从 payload 读 reply_style 并传给 _loop_router"
+    )
+
+
+def test_expired_snapshot_followup_continues_on_history(tmp_path, monkeypatch):
+    """追问时冻结帧过期：对话历史续跑，不再把整轮打死。
+
+    真机 8·29：TTL 120s 比一轮长答案的往返还短，第二条追问必死，
+    气泡里是原始码「selection snapshot expired」。
+    """
+    from datetime import datetime, timedelta, timezone
+
+    sessions_dir = tmp_path / "data" / "runtime" / "agent-sessions"
+    sessions_dir.mkdir(parents=True)
+    (sessions_dir / "agent-follow-1.jsonl").write_text(
+        json.dumps({"type": "interaction/start"}) + "\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(selection_bridge, "ROOT", tmp_path)
+
+    fresh = (datetime.now(timezone.utc) + timedelta(minutes=-1)).isoformat()
+    payload = {
+        "command": "那你把我发的消息复述出来我看看",
+        "requestId": "r-stale",
+        "selectionSessionId": "follow-1",
+        "source": "pointer_stage",
+        "selectionSnapshot": {
+            "source_kind": "screen_region",
+            "app": "screen",
+            "strokes": [[100, 100], [300, 200]],
+            "target_point": [200, 150],
+            "target_point_space": "physical_screen_pixels",
+            "expires_at": fresh,
+            "context": {"adapter": "screen_region", "path": None, "artifacts": {}},
+        },
+    }
+    monkeypatch.setattr(
+        selection_bridge.sys, "stdin",
+        io.StringIO(json.dumps(payload, ensure_ascii=False)),
+    )
+    monkeypatch.setattr(selection_bridge, "_configure_stdio", lambda: None)
+
+    captured = {}
+
+    def fake_loop_router(command, routing_objects, target_window, app_ctx,
+                         snapshot, routing_enabled, selection_session_id,
+                         selection_snapshot_id, clock=None, reply_style="normal"):
+        captured["command"] = command
+        captured["app_ctx"] = app_ctx
+        captured["snapshot"] = snapshot
+        return {"ok": True, "answer": "续跑回答", "usedBackend": "test",
+                "route": {"action": "model_loop"}, "actionProposals": [],
+                "selectionSessionId": selection_session_id}
+
+    monkeypatch.setattr(selection_bridge, "_loop_router", fake_loop_router)
+
+    assert selection_bridge.main() == 0
+    assert captured["snapshot"] is None, "过期的冻结帧必须丢弃"
+    assert captured["app_ctx"] is None
+    assert "屏幕证据已过期" in captured["command"], "模型必须知道本轮以对话历史为准"
+
+
+def test_expired_snapshot_first_question_fails_with_human_text(tmp_path, monkeypatch):
+    """首问（无历史会话）过期仍旧失败，但给人话，不给原始码。"""
+    from datetime import datetime, timedelta, timezone
+
+    monkeypatch.setattr(selection_bridge, "ROOT", tmp_path)
+
+    fresh = (datetime.now(timezone.utc) + timedelta(minutes=-1)).isoformat()
+    payload = {
+        "command": "这是什么",
+        "requestId": "r-stale-first",
+        "selectionSessionId": "fresh-1",
+        "source": "pointer_stage",
+        "selectionSnapshot": {
+            "source_kind": "screen_region",
+            "app": "screen",
+            "strokes": [[100, 100], [300, 200]],
+            "target_point": [200, 150],
+            "target_point_space": "physical_screen_pixels",
+            "expires_at": fresh,
+            "context": {"adapter": "screen_region", "path": None, "artifacts": {}},
+        },
+    }
+    monkeypatch.setattr(
+        selection_bridge.sys, "stdin",
+        io.StringIO(json.dumps(payload, ensure_ascii=False)),
+    )
+    monkeypatch.setattr(selection_bridge, "_configure_stdio", lambda: None)
+
+    captured_out = {}
+    real_print = print
+
+    def fake_print(value, **kwargs):
+        captured_out["value"] = value
+
+    import builtins
+    monkeypatch.setattr(builtins, "print", fake_print)
+    assert selection_bridge.main() == 1
+    payload_out = json.loads(captured_out["value"])
+    assert payload_out["ok"] is False
+    assert payload_out["error"] == "selection snapshot expired"
+    assert "重新圈选" in payload_out["errorHuman"], "人话必须带明确动作"
+
+
+def test_loop_router_passes_tool_result_dir_under_workspace(monkeypatch, tmp_path):
+    """P1-3 收尾：Stage 长任务的超大工具结果也要落盘回读——_loop_router
+    必须把 <workspace>/.mp/tool-results 传给 run_agent_turn。"""
+    from types import SimpleNamespace
+
+    from app.agent_runtime.tool_registry import ToolRegistry
+    from app.fabric import engine as engine_module
+    import app.harness.builtin_bundle as builtin_bundle
+
+    default_ws = tmp_path / "profile-ws"
+    default_ws.mkdir()
+    monkeypatch.setattr(selection_bridge, "read_workspace", lambda root: default_ws)
+
+    class _Ctx:
+        def unload(self):
+            pass
+
+        def get(self, key):
+            if key == "tools":
+                return ToolRegistry()
+            if key == "todo_store":
+                class _T:
+                    on_update = None
+                    def read(self):
+                        return []
+                    def has_items(self):
+                        return False
+                return _T()
+            if key == "sessions":
+                return SimpleNamespace(open_or_create=lambda sid, *a, **k: SimpleNamespace(
+                    events=(), interrupted_turn_summary=lambda: None,
+                    enqueue_inbox=lambda *a, **k: None, claim_inbox=lambda *a, **k: [],
+                ))
+            if key == "context_budget":
+                return 64000
+            return SimpleNamespace()
+
+    report = SimpleNamespace(ctx=_Ctx(), rows=[
+        SimpleNamespace(id="model-client", resolved_config={"permission_mode": "default"}),
+    ])
+    monkeypatch.setattr(
+        builtin_bundle, "boot_loop_context", lambda runtime, root=None: report
+    )
+
+    recorded = {}
+
+    def fake_run(user_input, objects=None, registry=None, *, client, **kwargs):
+        from app.agent_runtime.loop import TransitionReason
+        from app.agent_runtime.types import Terminal
+        recorded["tool_result_dir"] = kwargs.get("tool_result_dir")
+        return Terminal(reason=TransitionReason.COMPLETED, message="好", turns=1, results=())
+
+    monkeypatch.setattr(engine_module, "run_agent_turn", fake_run)
+    import app.fabric.loop_answer as loop_answer
+    monkeypatch.setattr(loop_answer, "terminal_to_answer", lambda t, p: {"ok": True, "answer": "好"})
+
+    clock = selection_bridge.PhaseClock("test", enabled=False)
+    result = selection_bridge._loop_router(
+        "看看工作区", [{"id": "o1"}], None, None, None, None, "sess-ws", "snap-ws",
+        clock=clock,
+    )
+    assert result["ok"] is True
+    expected = str(default_ws / ".mp" / "tool-results")
+    assert recorded["tool_result_dir"] == expected, (
+        "Stage 的 tool_result_dir 必须落在绑定工作区的 .mp/tool-results"
     )
