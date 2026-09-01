@@ -544,7 +544,7 @@ git commit -m "feat: rebuild Studio shell with Claude geometry"
 - Modify: `electron/renderer/studio.ts`
 - Modify: `electron/renderer/data.ts`
 
-- [ ] **Step 1: Write a failing pure render test**
+- [x] **Step 1: Write a failing pure render test**
 
 Use a minimal fake DOM or exported string render helpers to assert:
 
@@ -563,7 +563,7 @@ assert(html.includes('会话') && html.includes('消息') && html.includes('10')
 assert(!html.includes('undefined') && !html.includes('NaN'));
 ```
 
-- [ ] **Step 2: Run RED, implement, and run GREEN**
+- [x] **Step 2: Run RED, implement, and run GREEN**
 
 ```powershell
 node --require tsx/cjs tests/studio_home_render_test.ts
@@ -571,23 +571,23 @@ node --require tsx/cjs tests/studio_home_render_test.ts
 
 The module must escape all user/store strings, order attention as awaiting → running → review/resumable → unread ready, and render missing metrics as `—`.
 
-- [ ] **Step 3: Wire one shared composer**
+- [x] **Step 3: Wire one shared composer**
 
 The home and transcript toggle content, not forms. Keep one `#composer-form`; move it into a shared anchored region. `startNewChat()` shows `#studio-home`, clears active conversation, keeps the draft, and does not require a project. Opening a conversation hides home and renders stream.
 
-- [ ] **Step 4: Add environment chips and real stats loading states**
+- [x] **Step 4: Add environment chips and real stats loading states**
 
 Wire `#composer-environment` and `#composer-workspace`; update their labels from the pure policy. Load `Data.conversationStats()` in parallel with conversations. Stats failure renders a muted inline error but leaves composer active.
 
-- [ ] **Step 5: Run contracts and interaction probes**
+- [x] **Step 5: Run contracts and interaction probes**
 
 ```powershell
 node --require tsx/cjs tests/studio_home_render_test.ts
-node tests/studio_codex_shell_interaction_test.js
+node tests/studio_claude_fidelity_contract_test.js
 node tests/studio_composer_contract_test.js
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add electron/renderer/studio_home.ts electron/renderer/studio.html electron/renderer/studio.ts electron/renderer/data.ts tests/studio_home_render_test.ts
@@ -607,7 +607,7 @@ git commit -m "feat: add Studio action centre and shared composer"
 
 - [ ] **Step 1: Write failing structure/interaction assertions**
 
-Assert Ctrl+K opens search, Escape closes it before stop, selecting a conversation/project/route calls the common navigation function, segmented Work/Design buttons have radio semantics, and the sidebar renders `本机会话` for unbound rows.
+Assert Ctrl+K opens search, Escape closes it before stop, selecting a conversation/project/route calls the common navigation function, segmented Work/Design buttons have radio semantics, and the sidebar renders `本机会话` for unbound rows. Rewrite `studio_codex_shell_interaction_test.js` so the removed permanent Pull Requests/Sites/Scheduled/Plugins rows are forbidden and their destinations are reachable through search/Customize/Inspector instead.
 
 - [ ] **Step 2: Run RED**
 

@@ -289,6 +289,20 @@ interface SidebarGroupModule {
   groupByWorkspace(rows: readonly MagicPointerConversation[]): SidebarWorkspaceGroup[];
 }
 const sidebarGroups = (globalThis as { SidebarGroups?: SidebarGroupModule }).SidebarGroups!;
+interface StudioHomeModule {
+  render(options: {
+    stats: MagicPointerHomeStats | null;
+    conversations: ReadonlyArray<{
+      id: string;
+      title?: string;
+      state?: string;
+      updatedAt?: number;
+      hasPendingWork?: boolean;
+    }>;
+    onOpenConversation?: (id: string) => void;
+  }): void;
+}
+const studioHomeGlobals = (globalThis as { StudioHome?: StudioHomeModule }).StudioHome!;
 
 /* sv_motion:sv-animations 组件的弹簧/勾线常量(经典脚本全局,见 renderer/sv_motion.ts)。
    局部名必须小写:全局已有 const SvMotion(sv_motion.js),同名会撞经典脚本词法作用域。 */
@@ -451,8 +465,8 @@ async function renderSidebar() {
   if (!host) return;
   const [list, projects] = await Promise.all([Data.conversations(), Data.projects()]);
   const registeredRoots = new Set(projects.map((project) => normalizedProjectRoot(project.root)));
-  if (!registeredRoots.has(normalizedProjectRoot(activeProjectRoot))) {
-    setActiveProject(projects[0]?.root || '');
+  if (activeProjectRoot && !registeredRoots.has(normalizedProjectRoot(activeProjectRoot))) {
+    setActiveProject('');
   } else {
     renderProjectContext();
   }
@@ -468,7 +482,7 @@ async function renderSidebar() {
   // 项目独立持久化；即使还没有第一条对话，打开过的文件夹也必须留在左栏。
   const wsGroups = sidebarGroups.groupByWorkspace(filtered as Array<MagicPointerConversation & { workspaceRoot?: string }>);
   const conversationsByRoot = new Map(wsGroups.map((group) => [normalizedProjectRoot(group.workspaceRoot), group.items]));
-  const groups = projects.map((project) => ({
+  const projectGroups = projects.map((project) => ({
     key: project.root,
     label: project.name,
     items: (conversationsByRoot.get(normalizedProjectRoot(project.root)) || []) as MagicPointerConversation[],
@@ -476,10 +490,15 @@ async function renderSidebar() {
     if (!sidebarQuery.trim()) return true;
     return project.label.toLocaleLowerCase().includes(sidebarQuery.trim().toLocaleLowerCase()) || project.items.length > 0;
   });
+  const localGroup = wsGroups.find((group) => group.key === '__local__');
+  const groups = [
+    ...projectGroups,
+    ...(localGroup ? [{ key: '', label: localGroup.label, items: localGroup.items as MagicPointerConversation[] }] : []),
+  ];
   if (!groups.length) {
     const empty = document.createElement('div');
     empty.className = 'side-empty';
-    empty.textContent = projects.length ? '没有匹配的项目。' : '打开一个项目开始';
+    empty.textContent = projects.length ? '没有匹配的会话。' : '从新建开始';
     nodes.push(empty);
   }
   const listSignature = groups
@@ -683,13 +702,46 @@ let activeConversationTurnCount = 0;
 /* cardId → DSH 回合节点：后台任务补丁就地换节点，不重建整条流 */
 const dshCardNodes = new Map<string, HTMLElement>();
 
+function setStudioHomeVisible(visible: boolean) {
+  const home = document.getElementById('studio-home');
+  const header = document.querySelector<HTMLElement>('#view-chat > .dshw-header');
+  const stream = document.getElementById('stream');
+  const trajectory = document.getElementById('trajectory');
+  if (home) home.hidden = !visible;
+  if (header) header.hidden = visible;
+  if (stream) stream.hidden = visible || activeConversationTab !== 'chat';
+  if (trajectory) trajectory.hidden = visible || activeConversationTab !== 'trajectory';
+  document.querySelector<HTMLElement>('.dshw-scrollbody')?.classList.toggle('is-home', visible);
+}
+
+async function renderStudioHome() {
+  const [stats, conversations] = await Promise.all([
+    Data.conversationStats(),
+    Data.conversations(),
+  ]);
+  studioHomeGlobals.render({
+    stats,
+    conversations: conversations.map((conversation) => ({
+      id: conversation.id,
+      title: conversation.title,
+      updatedAt: conversation.updatedAt,
+      hasPendingWork: conversation.hasPendingWork,
+      state: conversation.hasPendingWork ? 'resumable' : '',
+    })),
+    onOpenConversation: (id) => { void openConversation(id); },
+  });
+  const note = document.getElementById('studio-home-stats-note');
+  if (note) note.textContent = stats ? '只统计本机已有的真实会话与模型用量。' : '统计暂不可用；对话仍可正常开始。';
+}
+
 function setConversationTab(tab: 'chat' | 'trajectory') {
   activeConversationTab = tab;
   const stream = document.getElementById('stream');
   const trajectory = document.getElementById('trajectory');
   const scrollbody = document.querySelector<HTMLElement>('.dshw-scrollbody');
-  if (stream) stream.hidden = tab !== 'chat';
-  if (trajectory) trajectory.hidden = tab !== 'trajectory';
+  const homeVisible = document.getElementById('studio-home')?.hidden === false;
+  if (stream) stream.hidden = homeVisible || tab !== 'chat';
+  if (trajectory) trajectory.hidden = homeVisible || tab !== 'trajectory';
   scrollbody?.classList.toggle('is-trajectory', tab === 'trajectory');
   document.querySelectorAll<HTMLElement>('[data-conversation-tab]').forEach((button) => {
     const selected = button.dataset.conversationTab === tab;
@@ -706,6 +758,7 @@ async function openConversation(id: string) {
   const projectRoot = String((c as { workspaceRoot?: string }).workspaceRoot || '');
   setActiveProject(projectRoot);
   show('chat');
+  setStudioHomeVisible(false);
   document.querySelectorAll('#side-convos .side-item').forEach((n) =>
     (n as HTMLElement).classList.toggle('is-on', (n as HTMLElement).dataset.open === id));
 
@@ -3090,13 +3143,8 @@ async function boot(initialView: string) {
     show(initialView);
     return;
   }
-  const list = await Data.conversations();
   if (shell.dataset.view !== 'chat') return;
-  const recent = list.find((conversation) =>
-    normalizedProjectRoot((conversation as { workspaceRoot?: string }).workspaceRoot)
-      === normalizedProjectRoot(activeProjectRoot));
-  if (recent) await openConversation(recent.id);
-  else startNewChat();
+  startNewChat();
 }
 
 /* 新对话：清空当前这一屏，把焦点交回输入框。
@@ -3106,6 +3154,7 @@ function startNewChat() {
   activeConversationTurnCount = 0;
   activeConversationTab = 'chat';
   renderProjectContext();
+  setStudioHomeVisible(true);
   document.querySelectorAll('#side-convos .side-item').forEach((n) => n.classList.remove('is-on'));
   const title = document.getElementById('chat-title');
   if (title) title.textContent = '新对话';
@@ -3123,6 +3172,7 @@ function startNewChat() {
   const trajectory = document.getElementById('trajectory');
   if (trajectory) trajectory.replaceChildren(DshTrajectory.render([]));
   setConversationTab('chat');
+  void renderStudioHome();
   // 「+」的可见回应：即便本来就在空会话上，输入卡也要闪一下并聚焦，
   // 让点击永远有看得见的结果（用户反馈：点了没反应）。
   const card = document.querySelector<HTMLElement>('#composer-form .dshw-card');
@@ -3254,6 +3304,7 @@ void boot(initialView === 'chat' && productMode === 'design' ? 'design' : initia
 // 新的一轮问答落库之后，项目树与产物跟着刷新。
 Data.onChange(() => {
   renderSidebar();
+  if (document.getElementById('studio-home')?.hidden === false) void renderStudioHome();
   renderArtifacts(true);
   refreshStashSummaries();
 });
