@@ -219,8 +219,8 @@ const CardRender = (() => {
      卡死和一个两秒的等待，光靠步骤行分不出来。它排成证据流末尾一行
      安静的等宽小字，不参与进度表达。
      ============================================================ */
-  function renderNowLine(card: CardSpec): CardNode | null {
-    if (card.state !== 'running') return null;
+  function renderNowLine(card: CardSpec, density = 'full'): CardNode | null {
+    if (card.state !== 'running' || density === 'capsule') return null;
     return h('div', { class: 'mcard-nowline' }, [
       h('span', { class: 'mcard-now' }, [card.runningLabel || '正在处理']),
       h('em', { class: 'mcard-elapsed', 'data-elapsed': '' }, []),
@@ -231,30 +231,44 @@ const CardRender = (() => {
      ✓ 是「我做了什么」，黑色无衬线一行；「我从那个动作里读到什么」是
      它下面独立的 → 等宽灰行。等待的十几秒因此在建立信任，而不是在耗人。
      毫秒不上屏：那是机器的账，不是人要读的字。 */
-  function stepRows(steps: any[]): CardNode {
+  function stepRows(steps: any[], { showFacts = true } = {}): CardNode {
     return h('ol', { class: 'mcard-steps' }, steps.map((s) => {
       const fact = typeof s.note === 'string' ? s.note.trim() : '';
       return h('li', { 'data-state': s.state || 'done' }, [
         h('span', { class: 'mstep-row' }, [
           icon(s.state === 'done' ? 'ic-check' : 'ic-circle', 'mstep-dot'),
           h('span', { class: 'mstep-label' }, [s.label || '']),
+          s.state === 'pending'
+            ? h('em', { class: 'mstep-elapsed', 'data-elapsed': '' }, [])
+            : null,
         ]),
-        fact ? h('span', { class: 'mstep-fact' }, [`→ ${fact}`]) : null,
+        showFacts && fact ? h('span', { class: 'mstep-fact' }, [`→ ${fact}`]) : null,
       ]);
     }));
   }
 
   /* 感知/准备流水账（冻结、枚举窗口、凑上下文……）收进一个折叠组一行带过；
      用户关心的是动作（交给模型、做完了、回读确认），那些保持展开。 */
-  function renderSteps(card: CardSpec): CardNode | null {
+  function renderSteps(card: CardSpec, density = 'full'): CardNode | null {
     const steps: any[] = card.steps || [];
-    if (!steps.length) return null;
     const model: any = (globalThis as { CardModel?: unknown }).CardModel;
     const isPlumbing = typeof model?.isPlumbingPhase === 'function'
       ? (phase: unknown) => model.isPlumbingPhase(phase)
       : () => false;
     const plumbing = steps.filter((s) => isPlumbing(s.phase));
     const actions = steps.filter((s) => !isPlumbing(s.phase));
+    if (density === 'capsule') {
+      const activity = [...actions];
+      if (card.state === 'running' && !activity.some((s) => s.state === 'pending')) {
+        activity.push({
+          phase: '__active__',
+          label: card.runningLabel || '正在处理',
+          state: 'pending',
+        });
+      }
+      return activity.length ? stepRows(activity, { showFacts: false }) : null;
+    }
+    if (!steps.length) return null;
     if (!plumbing.length) return stepRows(actions.length ? actions : steps);
     return h('div', { class: 'mcard-steps-wrap' }, [
       h('details', { class: 'mcard-steps-plumbing' }, [
@@ -522,8 +536,8 @@ const CardRender = (() => {
       'data-card-id': card.id || '',
     }, [
       renderTop(card),
-      renderSteps(card),
-      renderNowLine(card),
+      renderSteps(card, density),
+      renderNowLine(card, density),
       card.state === 'failed'
         ? h('p', { class: 'mcard-fail' }, [icon('ic-warn'), card.error || '这次没能完成。'])
         : null,

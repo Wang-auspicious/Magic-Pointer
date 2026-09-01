@@ -139,6 +139,69 @@ def test_plain_text_is_not_a_command() -> None:
     assert conversation_bridge.route_slash_command("", catalog=None) is None
 
 
+def test_slash_compact_and_help_are_deferred_runtime_commands() -> None:
+    compact = conversation_bridge.route_slash_command("/compact", catalog=None)
+    help_result = conversation_bridge.route_slash_command("/help", catalog=None)
+
+    assert compact is not None
+    assert compact["ok"] is True
+    assert compact["command"] == {"type": "compact"}
+    assert help_result is not None
+    assert help_result["ok"] is True
+    assert help_result["command"] == {"type": "help"}
+
+
+def test_tool_names_accepts_bare_names_and_bounded_bash_prefix_rules() -> None:
+    max_prefix = "x" * 160
+    values = [
+        "Read",
+        "Bash(pytest -q)",
+        f"Bash({max_prefix})",
+        "Bash()",
+        "Bash(   )",
+        "Bash(pytest (unit))",
+        "Bash(pytest\n-q)",
+        f"Bash({'x' * 161})",
+        "free form grant",
+    ]
+
+    assert conversation_bridge._tool_names(values) == (
+        "Read",
+        "Bash(pytest -q)",
+        f"Bash({max_prefix})",
+    )
+
+
+def test_permission_memo_canonicalizes_aliases_and_drops_unknown_tools() -> None:
+    from app.agent_runtime.tool_registry import ToolRegistry, ToolSpec
+
+    registry = ToolRegistry()
+    registry.register(ToolSpec(
+        name="Read",
+        description="read",
+        input_schema={"type": "object", "properties": {}, "required": []},
+        execute=lambda: "ok",
+    ))
+    registry.register(ToolSpec(
+        name="Bash",
+        description="shell",
+        input_schema={"type": "object", "properties": {}, "required": []},
+        execute=lambda: "ok",
+    ))
+    registry.register_alias("read_file", "Read")
+
+    decisions = conversation_bridge._build_permission_decisions(
+        ["read_file", "FutureTool", "Bash(pytest)"],
+        ["read_file"],
+        (),
+        registry=registry,
+    )
+
+    assert decisions is not None
+    assert decisions.allowed == ("Read", "Bash(pytest)")
+    assert decisions.denied == ("Read",)
+
+
 def test_conversation_budget_never_kills_a_normal_answer() -> None:
     from app.governance.latency_budget import Stage
 
@@ -151,7 +214,12 @@ def test_conversation_budget_never_kills_a_normal_answer() -> None:
 
 def test_conversation_activity_sink_projects_live_model_and_tool_events() -> None:
     clock = _FakeClock()
-    sink = conversation_bridge._ConversationActivitySink(clock)
+    sink = conversation_bridge._ConversationActivitySink(clock, request_header={
+        "promptCache": True,
+        "usedBackend": "magic_pointer.messages_multiturn_streaming",
+        "maxTokens": 4096,
+        "systemPrompt": "must never enter trajectory",
+    })
     sink(SimpleNamespace(kind="loop_start"))
     sink(SimpleNamespace(kind="turn_started", turn=1))
     sink(SimpleNamespace(kind="model_chunk", text="第一段"))
@@ -180,6 +248,10 @@ def test_conversation_activity_sink_projects_live_model_and_tool_events() -> Non
         "request-header", "message", "tool",
     ]
     assert [record["seq"] for record in sink.trajectory] == [1, 2, 3]
+    assert sink.trajectory[0]["promptCache"] is True
+    assert sink.trajectory[0]["usedBackend"] == "magic_pointer.messages_multiturn_streaming"
+    assert sink.trajectory[0]["maxTokens"] == 4096
+    assert "systemPrompt" not in sink.trajectory[0]
     assert sink.trajectory[1]["firstTokenAt"] - sink.trajectory[1]["startedAt"] == 100.0
     assert sink.trajectory[2]["callId"] == "call-1"
     assert sink.trajectory[2]["usedBackend"] == "uia"
@@ -240,6 +312,9 @@ class _FakeTodoStore:
 class _FakeSession:
     events = ()
 
+    def derive_messages(self):
+        return []
+
     def interrupted_turn_summary(self):
         return None
     def enqueue_inbox(self, *a, **k):
@@ -248,16 +323,18 @@ class _FakeSession:
         return []
 
 
-def _install_workspace_boot_stubs(monkeypatch, captured):
+def _install_workspace_boot_stubs(monkeypatch, captured, *, registry=None):
     """boot_loop_context 之后到 run_agent_turn 之间的最小服务桩。"""
     from types import SimpleNamespace
 
     from app.agent_runtime.tool_registry import ToolRegistry
 
+    active_registry = registry or ToolRegistry()
+
     class _Ctx:
         def get(self, key):
             if key == "tools":
-                return ToolRegistry()
+                return active_registry
             if key == "todo_store":
                 return _FakeTodoStore()
             if key == "sessions":
@@ -294,6 +371,61 @@ def _install_workspace_boot_stubs(monkeypatch, captured):
 
     import app.fabric.loop_answer as loop_answer
     monkeypatch.setattr(loop_answer, "terminal_to_answer", lambda terminal, prompt: {"answer": "好了"})
+
+
+def _install_runtime_service_stubs(
+    monkeypatch,
+    *,
+    session_store,
+    registry,
+    compactor,
+    token_estimator,
+    run_impl,
+) -> None:
+    """Install a real session seam with deterministic runtime services."""
+    from types import SimpleNamespace
+
+    services = {
+        "tools": registry,
+        "todo_store": _FakeTodoStore(),
+        "sessions": session_store,
+        "context_budget": 64000,
+        "model_client": SimpleNamespace(used_backend="fake.runtime"),
+        "compactor": compactor,
+        "token_estimator": token_estimator,
+        "precondition_factory": None,
+        "model_request_header": {},
+        "hooks": SimpleNamespace(),
+    }
+
+    class _Ctx:
+        def get(self, key):
+            return services[key]
+
+    report = SimpleNamespace(
+        ctx=_Ctx(),
+        rows=[SimpleNamespace(
+            id="model-client",
+            resolved_config={"context_budget_tokens": 64000},
+        )],
+    )
+
+    import app.harness.builtin_bundle as builtin_bundle
+    monkeypatch.setattr(
+        builtin_bundle,
+        "boot_loop_context",
+        lambda runtime, root=None: report,
+    )
+
+    import app.fabric.engine as engine_module
+    monkeypatch.setattr(engine_module, "run_agent_turn", run_impl)
+
+    import app.fabric.loop_answer as loop_answer
+    monkeypatch.setattr(
+        loop_answer,
+        "terminal_to_answer",
+        lambda terminal, prompt: {"answer": terminal.message or "好了"},
+    )
 
 
 def test_explicit_workspace_pick_is_thread_scoped_not_global(monkeypatch, tmp_path):
@@ -348,8 +480,21 @@ def test_thread_permission_grants_reach_the_runtime(monkeypatch):
     """CC toolPermissionDecision：会话里授予/拒绝过的工具随每条消息注入
     loop memo——grant 升级 ASK，deny 压过 mode-allow；一次性 grant 只进
     本次请求。"""
+    from app.agent_runtime.tool_registry import ToolRegistry, ToolSpec
+
     captured = {}
-    _install_workspace_boot_stubs(monkeypatch, captured)
+    registry = ToolRegistry()
+    for name in ("Bash", "Launch", "BashRead"):
+        registry.register(ToolSpec(
+            name=name,
+            description=name,
+            input_schema={"type": "object", "properties": {}, "required": []},
+            execute=lambda: "ok",
+        ))
+    registry.register_alias("run_command", "Bash")
+    registry.register_alias("launch_app", "Launch")
+    registry.register_alias("read_background", "BashRead")
+    _install_workspace_boot_stubs(monkeypatch, captured, registry=registry)
 
     result = conversation_bridge.answer_conversation(
         "帮我跑一下构建",
@@ -361,9 +506,9 @@ def test_thread_permission_grants_reach_the_runtime(monkeypatch):
         permission_grant_once=("read_background",),
     )
     decisions = captured["run_kwargs"]["permission_decisions"]
-    assert decisions.lookup("run_command") == "allow"
-    assert decisions.lookup("launch_app") == "deny"
-    assert decisions.lookup("read_background") == "allow"
+    assert decisions.lookup("Bash") == "allow"
+    assert decisions.lookup("Launch") == "deny"
+    assert decisions.lookup("BashRead") == "allow"
     assert result["ok"] is True
 
 
@@ -424,6 +569,126 @@ def test_agent_session_id_is_stable_across_turns_of_one_conversation(monkeypatch
         )
         ids.append(captured["agent_session_id"])
     assert ids[0] == ids[1]
+
+
+def test_established_event_session_does_not_reinject_electron_message_history(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    """An empty Agent session imports legacy Electron history once; after the
+    first durable turn, only object/scene evidence is attached again."""
+    from app.agent_runtime.session import FileSessionStore
+    from app.agent_runtime.tool_registry import ToolRegistry
+    from app.agent_runtime.types import (
+        ORIGIN_DATA,
+        ORIGIN_INSTRUCTION,
+        AgentMessage,
+        Role,
+        Terminal,
+        TransitionReason,
+    )
+
+    store = FileSessionStore(tmp_path / "sessions")
+    evidence_inputs: list[str] = []
+
+    def fake_run(user_input, objects=None, registry=None, *, client, **kwargs):
+        session = kwargs["session"]
+        evidence = str(kwargs.get("evidence_input") or "")
+        evidence_inputs.append(evidence)
+        turn = session.start_turn()
+        session.append_message(AgentMessage(
+            role=Role.USER,
+            content=user_input,
+            tool_call_id=None,
+            name=None,
+            origin=ORIGIN_INSTRUCTION,
+        ))
+        if evidence:
+            session.append_message(AgentMessage(
+                role=Role.USER,
+                content=evidence,
+                tool_call_id=None,
+                name=None,
+                origin=ORIGIN_DATA,
+                injected=True,
+            ))
+        session.append_message(AgentMessage(
+            role=Role.ASSISTANT,
+            content="好了",
+            tool_call_id=None,
+            name=None,
+            origin=ORIGIN_DATA,
+        ))
+        session.end_turn(turn, reason="completed")
+        return Terminal(
+            reason=TransitionReason.COMPLETED,
+            message="好了",
+            turns=1,
+            results=(),
+        )
+
+    _install_runtime_service_stubs(
+        monkeypatch,
+        session_store=store,
+        registry=ToolRegistry(),
+        compactor=lambda messages, **_kwargs: list(messages),
+        token_estimator=lambda messages: sum(len(message.content or "") for message in messages),
+        run_impl=fake_run,
+    )
+
+    legacy_turns = [{
+        "question": "旧 Electron 第一问",
+        "answer": "旧 Electron 第一答",
+        "evidence": {
+            "label": "圈选现场",
+            "capturePath": "D:/captures/scene.png",
+            "contentDigest": "当时屏幕上的数据 42",
+        },
+    }]
+    object_ref = {"app": "Notepad", "windowTitle": "notes.txt", "label": "数据行"}
+
+    first = conversation_bridge.answer_conversation(
+        "接入 Agent session",
+        legacy_turns,
+        object_ref,
+        "workspace-write",
+        conversation_id="legacy-conversation",
+        workspace_root=str(tmp_path),
+    )
+    second = conversation_bridge.answer_conversation(
+        "继续追问",
+        legacy_turns,
+        object_ref,
+        "workspace-write",
+        conversation_id="legacy-conversation",
+        agent_session_id=str(first["agentSessionId"]),
+        workspace_root=str(tmp_path),
+    )
+    third = conversation_bridge.answer_conversation(
+        "再继续追问",
+        legacy_turns,
+        object_ref,
+        "workspace-write",
+        conversation_id="legacy-conversation",
+        agent_session_id=str(first["agentSessionId"]),
+        workspace_root=str(tmp_path),
+    )
+
+    assert first["ok"] is True and second["ok"] is True and third["ok"] is True
+    assert "用户：旧 Electron 第一问" in evidence_inputs[0]
+    assert "助手：旧 Electron 第一答" in evidence_inputs[0]
+    assert "旧 Electron 第一问" not in evidence_inputs[1]
+    assert "旧 Electron 第一答" not in evidence_inputs[1]
+    assert "当前对象：Notepad · notes.txt · 数据行" in evidence_inputs[1]
+    assert "第1轮现场证据" not in evidence_inputs[1]
+    assert "当时屏幕上的数据 42" not in evidence_inputs[1]
+    assert "第1轮现场证据" not in evidence_inputs[2]
+
+    durable = store.resume(str(first["agentSessionId"]))
+    durable_text = "\n".join(message.content or "" for message in durable.derive_messages())
+    assert "旧 Electron 第一问" in durable_text
+    assert "接入 Agent session" in durable_text
+    assert durable_text.count("当时屏幕上的数据 42") == 1
 
 
 def test_slash_rewind_restores_workspace_checkpoints(monkeypatch, tmp_path) -> None:
@@ -604,6 +869,363 @@ def test_answer_conversation_tool_result_dir_defaults_to_profile_workspace(monke
     expected = str(default_ws / ".mp" / "tool-results")
     assert captured["run_kwargs"].get("tool_result_dir") == expected
     assert result["ok"] is True
+
+
+def test_conversation_uses_128_tool_slots_for_direct_and_mcp_tools(monkeypatch) -> None:
+    captured = {}
+    _install_workspace_boot_stubs(monkeypatch, captured)
+
+    result = conversation_bridge.answer_conversation(
+        "查看可用工具", [], {}, "workspace-write"
+    )
+
+    assert result["ok"] is True
+    assert captured["run_kwargs"]["tool_limit"] == 128
+
+
+def test_slash_compact_replaces_surface_only_when_token_weight_drops(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    from app.agent_runtime.session import FileSessionStore
+    from app.agent_runtime.tool_registry import ToolRegistry
+    from app.agent_runtime.types import ORIGIN_DATA, AgentMessage, Role
+
+    store = FileSessionStore(tmp_path / "sessions")
+    session_id = conversation_bridge.resolve_agent_session_id(
+        conversation_id="compact-conversation"
+    )
+    seeded = store.create(session_id)
+    for index in range(5):
+        seeded.append_message(AgentMessage(
+            role=Role.USER if index % 2 == 0 else Role.ASSISTANT,
+            content=(f"第 {index} 条历史 " + "长内容" * 40),
+            tool_call_id=None,
+            name=None,
+            origin=ORIGIN_DATA,
+        ))
+
+    compacted = [AgentMessage(
+        role=Role.USER,
+        content="压缩后摘要",
+        tool_call_id=None,
+        name=None,
+        origin=ORIGIN_DATA,
+        injected=True,
+    )]
+    calls = {"compactor": 0, "loop": 0}
+
+    def compactor(messages, *, force=False):
+        calls["compactor"] += 1
+        return list(compacted)
+
+    def forbidden_loop(*args, **kwargs):
+        calls["loop"] += 1
+        raise AssertionError("/compact must not enter the agent loop")
+
+    _install_runtime_service_stubs(
+        monkeypatch,
+        session_store=store,
+        registry=ToolRegistry(),
+        compactor=compactor,
+        token_estimator=lambda messages: sum(len(message.content or "") for message in messages),
+        run_impl=forbidden_loop,
+    )
+
+    result = conversation_bridge.answer_conversation(
+        "/compact",
+        [],
+        {},
+        "workspace-write",
+        conversation_id="compact-conversation",
+        workspace_root=str(tmp_path),
+    )
+
+    assert result["ok"] is True
+    assert calls == {"compactor": 1, "loop": 0}
+    assert "5 条消息" in result["answer"]
+    assert "1 条" in result["answer"]
+    assert "token" in result["answer"].lower()
+    reopened = store.resume(session_id)
+    replacements = [event for event in reopened.events if event.type == "surface/replace"]
+    assert len(replacements) == 1
+    assert replacements[0].data["reason"] == "manual_compaction"
+    assert reopened.derive_messages() == compacted
+
+
+def test_slash_compact_imports_legacy_electron_history_before_compacting(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    from app.agent_runtime.memory import compact_messages
+    from app.agent_runtime.session import FileSessionStore
+    from app.agent_runtime.tool_registry import ToolRegistry
+    from app.agent_runtime.types import ORIGIN_DATA, AgentMessage, Role
+
+    store = FileSessionStore(tmp_path / "sessions")
+    seen_sources: list[str] = []
+
+    def compactor(messages, *, force=False):
+        return compact_messages(
+            list(messages),
+            lambda source: seen_sources.append(source) or "旧对话压缩摘要",
+            force=force,
+        )
+
+    _install_runtime_service_stubs(
+        monkeypatch,
+        session_store=store,
+        registry=ToolRegistry(),
+        compactor=compactor,
+        token_estimator=lambda messages: sum(len(message.content or "") for message in messages),
+        run_impl=lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("/compact must not enter the agent loop")
+        ),
+    )
+
+    result = conversation_bridge.answer_conversation(
+        "/compact",
+        [{
+            "question": "旧 Electron 第一问" + "长内容" * 80,
+            "answer": "旧 Electron 第一答" + "长回答" * 80,
+        }],
+        {"app": "Notepad", "windowTitle": "legacy.txt"},
+        "workspace-write",
+        conversation_id="legacy-compact-conversation",
+        workspace_root=str(tmp_path),
+    )
+
+    assert result["ok"] is True
+    assert seen_sources and "旧 Electron 第一问" in seen_sources[0]
+    assert "[旧对话首次迁移]" in seen_sources[0]
+    session_id = conversation_bridge.resolve_agent_session_id(
+        conversation_id="legacy-compact-conversation"
+    )
+    reopened = store.resume(session_id)
+    reopened_messages = reopened.derive_messages()
+    assert len(reopened_messages) == 1
+    assert "旧对话压缩摘要" in reopened_messages[0].content
+    assert "<<<MAGIC_POINTER_EVIDENCE>>>" in reopened_messages[0].content
+    replacements = [event for event in reopened.events if event.type == "surface/replace"]
+    assert len(replacements) == 1
+    assert replacements[0].data["reason"] == "manual_compaction"
+
+
+def test_slash_compact_does_not_replace_when_compactor_saves_no_tokens(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    from app.agent_runtime.session import FileSessionStore
+    from app.agent_runtime.tool_registry import ToolRegistry
+    from app.agent_runtime.types import ORIGIN_DATA, AgentMessage, Role
+
+    store = FileSessionStore(tmp_path / "sessions")
+    session_id = conversation_bridge.resolve_agent_session_id(
+        conversation_id="compact-no-gain"
+    )
+    seeded = store.create(session_id)
+    seeded.append_message(AgentMessage(
+        role=Role.USER,
+        content="太短，没有可压缩空间",
+        tool_call_id=None,
+        name=None,
+        origin=ORIGIN_DATA,
+    ))
+
+    _install_runtime_service_stubs(
+        monkeypatch,
+        session_store=store,
+        registry=ToolRegistry(),
+        compactor=lambda messages, **_kwargs: list(messages),
+        token_estimator=lambda messages: sum(len(message.content or "") for message in messages),
+        run_impl=lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("/compact must not enter the agent loop")
+        ),
+    )
+
+    result = conversation_bridge.answer_conversation(
+        "/compact",
+        [],
+        {},
+        "workspace-write",
+        conversation_id="compact-no-gain",
+        workspace_root=str(tmp_path),
+    )
+
+    assert result["ok"] is True
+    assert "未替换" in result["answer"] or "无需压缩" in result["answer"]
+    reopened = store.resume(session_id)
+    assert not any(event.type == "surface/replace" for event in reopened.events)
+
+
+def test_slash_compact_does_not_erase_a_turn_completed_during_summary(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    from app.agent_runtime.session import FileSessionStore
+    from app.agent_runtime.tool_registry import ToolRegistry
+    from app.agent_runtime.types import ORIGIN_DATA, AgentMessage, Role
+
+    store = FileSessionStore(tmp_path / "sessions")
+    session_id = conversation_bridge.resolve_agent_session_id(
+        conversation_id="compact-concurrent"
+    )
+    seeded = store.create(session_id)
+    turn = seeded.start_turn()
+    seeded.append_message(AgentMessage(
+        role=Role.USER,
+        content="old " * 500,
+        tool_call_id=None,
+        name=None,
+        origin=ORIGIN_DATA,
+    ))
+    seeded.end_turn(turn, reason="completed")
+
+    def compactor(_messages, *, force=False):
+        concurrent = store.resume(session_id)
+        concurrent_turn = concurrent.start_turn()
+        concurrent.append_message(AgentMessage(
+            role=Role.USER,
+            content="new user",
+            tool_call_id=None,
+            name=None,
+            origin=ORIGIN_DATA,
+        ))
+        concurrent.append_message(AgentMessage(
+            role=Role.ASSISTANT,
+            content="new answer",
+            tool_call_id=None,
+            name=None,
+            origin=ORIGIN_DATA,
+        ))
+        concurrent.end_turn(concurrent_turn, reason="completed")
+        return [AgentMessage(
+            role=Role.USER,
+            content="short summary",
+            tool_call_id=None,
+            name=None,
+            origin=ORIGIN_DATA,
+            injected=True,
+        )]
+
+    _install_runtime_service_stubs(
+        monkeypatch,
+        session_store=store,
+        registry=ToolRegistry(),
+        compactor=compactor,
+        token_estimator=lambda messages: sum(len(message.content or "") for message in messages),
+        run_impl=lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("/compact must not enter the agent loop")
+        ),
+    )
+
+    result = conversation_bridge.answer_conversation(
+        "/compact",
+        [],
+        {},
+        "workspace-write",
+        conversation_id="compact-concurrent",
+        workspace_root=str(tmp_path),
+    )
+
+    assert result["ok"] is True
+    assert "压缩期间对话收到新消息" in result["answer"]
+    reopened = store.resume(session_id)
+    contents = [message.content for message in reopened.derive_messages()]
+    assert contents[-2:] == ["new user", "new answer"]
+    assert not any(event.type == "surface/replace" for event in reopened.events)
+
+
+def test_slash_help_lists_real_commands_skills_and_registry_tools_without_loop(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    from app.agent_runtime.session import FileSessionStore
+    from app.agent_runtime.tool_registry import Effect, ToolRegistry, ToolSpec
+
+    registry = ToolRegistry()
+    for name in ("Read", "Bash"):
+        registry.register(ToolSpec(
+            name=name,
+            description=f"{name} test tool",
+            input_schema={"type": "object", "properties": {}, "required": []},
+            execute=lambda: None,
+            effect=Effect.READ,
+        ))
+
+    class _Catalog:
+        errors = []
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def list_skills(self):
+            return [{"name": "demo-skill", "description": "演示技能"}]
+
+        def load_skill_body(self, name):
+            return None
+
+    import app.agent_runtime.skill_catalog as skill_catalog
+    monkeypatch.setattr(skill_catalog, "SkillCatalog", _Catalog)
+
+    calls = {"loop": 0, "compactor": 0}
+
+    def forbidden_loop(*args, **kwargs):
+        calls["loop"] += 1
+        raise AssertionError("/help must not enter the agent loop")
+
+    def forbidden_compactor(messages):
+        calls["compactor"] += 1
+        raise AssertionError("/help must not compact")
+
+    _install_runtime_service_stubs(
+        monkeypatch,
+        session_store=FileSessionStore(tmp_path / "sessions"),
+        registry=registry,
+        compactor=forbidden_compactor,
+        token_estimator=lambda messages: 0,
+        run_impl=forbidden_loop,
+    )
+
+    result = conversation_bridge.answer_conversation(
+        "/help", [], {}, "workspace-write", workspace_root=str(tmp_path)
+    )
+
+    assert result["ok"] is True
+    assert calls == {"loop": 0, "compactor": 0}
+    assert "/compact" in result["answer"]
+    assert "demo-skill" in result["answer"]
+    assert "Read" in result["answer"]
+    assert "Bash" in result["answer"]
+
+
+def test_slash_help_reads_skills_from_the_bound_workspace(monkeypatch, tmp_path) -> None:
+    from app.agent_runtime.session import FileSessionStore
+    from app.agent_runtime.tool_registry import ToolRegistry
+
+    skill_dir = tmp_path / ".agents" / "skills" / "workspace-help-proof"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: workspace-help-proof\ndescription: 只属于绑定工作区的技能\n---\n正文",
+        encoding="utf-8",
+    )
+    _install_runtime_service_stubs(
+        monkeypatch,
+        session_store=FileSessionStore(tmp_path / "sessions"),
+        registry=ToolRegistry(),
+        compactor=lambda messages, **_kwargs: list(messages),
+        token_estimator=lambda messages: 0,
+        run_impl=lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("/help must not enter the agent loop")
+        ),
+    )
+
+    result = conversation_bridge.answer_conversation(
+        "/help", [], {}, "workspace-write", workspace_root=str(tmp_path)
+    )
+
+    assert result["ok"] is True
+    assert "workspace-help-proof" in result["answer"]
 
 
 def test_slash_skill_load_bumps_usage(tmp_path, monkeypatch) -> None:

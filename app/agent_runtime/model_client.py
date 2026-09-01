@@ -6,8 +6,8 @@ Ported semantics from the CC query-loop and Pi agent-loop study notes
 
 - ``ModelTurnEvent`` union: the per-turn model stream is a discriminated
   union of frozen dataclasses, discriminated via ``isinstance`` (the Python
-  form of the CC ``StreamEvent`` union; the loop layer consumes the list
-  returned by :meth:`LoopModelClient.generate_turn`).
+  form of the CC ``StreamEvent`` union; the loop consumes
+  :meth:`LoopModelClient.stream_turn` incrementally).
 - CC withhold-until-recover: output-token ``TurnWithheld`` is passed to the
   semantic loop, whose recovery ceiling is
   ``MAX_OUTPUT_TOKENS_RECOVERY_LIMIT``. Provider/backend failures are a
@@ -29,6 +29,7 @@ Pure Python, stdlib-only; no network in this module itself.
 from __future__ import annotations
 
 import json
+import os
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -54,6 +55,7 @@ __all__ = [
     "TurnDone",
     "TurnStarted",
     "TurnWithheld",
+    "prompt_cache_enabled",
 ]
 
 _DEFAULT_TRUNCATION_SUFFIX = "…"
@@ -144,8 +146,9 @@ class ModelBackend(Protocol):
 class LoopModelClient:
     """Client over an injected :class:`ModelBackend`.
 
-    ``generate_turn`` consumes the backend generator into a list of events,
-    keeping a cumulative ``withheld_count`` (CC recovery counter) and the
+    ``stream_turn`` forwards committed events as the backend produces them;
+    ``generate_turn`` remains the list-returning compatibility wrapper. The
+    client keeps a cumulative ``withheld_count`` (CC recovery counter) and the
     ``last_usage`` aggregate from :class:`TurnDone`. ``parse_tool_calls``
     extracts tool calls and the final text, recording malformed argument
     JSON into ``last_errors`` instead of raising, and sets ``last_truncated``
@@ -170,6 +173,7 @@ class LoopModelClient:
         self.last_reasoning: str | None = None
         self.last_truncated = False
         self.last_errors: list[str] = []
+        self.last_events: list[ModelTurnEvent] = []
         self.withheld_count = 0
         self._reserved_call_ids: set[str] = set()
         self._next_synthetic_call_id = 0
@@ -183,6 +187,11 @@ class LoopModelClient:
         backend_type = type(self._backend)
         return f"{backend_type.__module__}.{backend_type.__qualname__}"
 
+    @property
+    def prompt_cache_requested(self) -> bool:
+        """Whether this concrete backend will attach prompt-cache controls."""
+        return bool(getattr(self._backend, "prompt_cache_requested", False))
+
     def generate_turn(
         self,
         messages: list[AgentMessage],
@@ -190,7 +199,7 @@ class LoopModelClient:
         budget_ms: float | None = None,
         cancel_scope: object = None,
     ) -> list[ModelTurnEvent]:
-        """Consume the backend generator; events come back untouched.
+        """Compatibility wrapper that collects :meth:`stream_turn`.
 
         Output-token ``TurnWithheld`` events are passed through as-is and the
         loop owns their recovery ceiling. Retryable ``backend_error`` events
@@ -199,8 +208,30 @@ class LoopModelClient:
         messages. ``last_usage`` is reset per turn and set from each
         ``TurnDone``.
         """
+        return list(self.stream_turn(
+            messages,
+            tools,
+            budget_ms=budget_ms,
+            cancel_scope=cancel_scope,
+        ))
+
+    def stream_turn(
+        self,
+        messages: list[AgentMessage],
+        tools: list[dict],
+        budget_ms: float | None = None,
+        cancel_scope: object = None,
+    ) -> Iterator[ModelTurnEvent]:
+        """Yield a model turn as it arrives without replaying visible text.
+
+        Retryable provider failures are held below the semantic loop only
+        while an attempt has produced no message, reasoning, or tool call.
+        Once any such event is yielded, retrying the request would duplicate
+        content in the UI, so a later adapter failure is surfaced honestly.
+        """
         self.last_usage = None
         self.last_reasoning = None
+        self.last_events = []
         for message in messages:
             if message.tool_call_id:
                 self._reserved_call_ids.add(str(message.tool_call_id))
@@ -224,35 +255,85 @@ class LoopModelClient:
                 )
                 if attempt_budget_ms <= 0.0:
                     self.withheld_count += 1
-                    return [
+                    terminal_events: list[ModelTurnEvent] = [
                         TurnWithheld(
                             reason="backend_error:model_request_timeout"
                         ),
                         TurnDone(usage=None, raw_text=None),
                     ]
-            events: list[ModelTurnEvent] = []
+                    for event in terminal_events:
+                        self._accept_event(event)
+                        yield event
+                    return
+            buffered: list[ModelTurnEvent] = []
+            committed = False
+            terminal_seen = False
             try:
                 for event in self._backend.generate(
                     messages, tools, attempt_budget_ms, cancel_scope
                 ):
+                    if terminal_seen:
+                        # Drain the backend generator after its terminal event so
+                        # transport cleanup and endpoint-health bookkeeping run.
+                        # Nothing produced during that cleanup may revise the
+                        # already committed terminal result.
+                        continue
                     if isinstance(event, TurnWithheld):
                         self.withheld_count += 1
-                    elif isinstance(event, TurnDone):
-                        self.last_usage = event.usage
-                    elif isinstance(event, ReasoningDelta):
-                        self.last_reasoning = (self.last_reasoning or "") + event.text
-                    events.append(event)
+                    if not committed:
+                        buffered.append(event)
+                        if isinstance(
+                            event,
+                            (MessageDelta, ReasoningDelta, ToolCallArrived),
+                        ):
+                            committed = True
+                            for held in buffered:
+                                self._accept_event(held)
+                                yield held
+                            buffered.clear()
+                        elif isinstance(event, TurnDone):
+                            # A backend may deliver a valid non-streaming answer
+                            # only through TurnDone.raw_text. Keep it buffered so
+                            # zero-output provider failures can still retry, but
+                            # remember that cleanup is now post-terminal.
+                            terminal_seen = True
+                        continue
+                    self._accept_event(event)
+                    yield event
+                    if isinstance(event, TurnDone):
+                        terminal_seen = True
             except CancelledError:
-                raise
+                if not terminal_seen:
+                    raise
+                if committed:
+                    return
             except Exception as exc:  # third-party model adapter seam
-                events = [
-                    TurnWithheld(reason=f"backend_error:{type(exc).__name__}"),
-                    TurnDone(usage=None, raw_text=None),
-                ]
+                if terminal_seen:
+                    if committed:
+                        return
+                elif committed:
+                    terminal_events = [
+                        TurnWithheld(reason=f"backend_error:{type(exc).__name__}"),
+                        TurnDone(usage=None, raw_text=None),
+                    ]
+                    for event in terminal_events:
+                        if isinstance(event, TurnWithheld):
+                            self.withheld_count += 1
+                        self._accept_event(event)
+                        yield event
+                    return
+                else:
+                    buffered = [
+                        TurnWithheld(reason=f"backend_error:{type(exc).__name__}"),
+                        TurnDone(usage=None, raw_text=None),
+                    ]
+                    self.withheld_count += 1
+            if terminal_seen and committed:
+                return
             _check_cancelled(cancel_scope)
             backend_failures = [
                 event.reason
-                for event in events
+                for event in buffered
                 if isinstance(event, TurnWithheld)
                 and event.reason.startswith("backend_error:")
             ]
@@ -261,16 +342,30 @@ class LoopModelClient:
                 for reason in backend_failures
             )
             if not retryable or attempt >= self.max_provider_retries:
-                return events
+                for event in buffered:
+                    self._accept_event(event)
+                    yield event
+                return
             attempt += 1
             retry_delay_s = 0.25 * (2 ** (attempt - 1))
             if (
                 deadline is not None
                 and self._retry_clock() + retry_delay_s >= deadline
             ):
-                return events
+                for event in buffered:
+                    self._accept_event(event)
+                    yield event
+                return
             self._retry_sleeper(retry_delay_s)
             _check_cancelled(cancel_scope)
+
+    def _accept_event(self, event: ModelTurnEvent) -> None:
+        """Update the public last-turn snapshot for one committed event."""
+        self.last_events.append(event)
+        if isinstance(event, TurnDone):
+            self.last_usage = event.usage
+        elif isinstance(event, ReasoningDelta):
+            self.last_reasoning = (self.last_reasoning or "") + event.text
 
     def parse_tool_calls(
         self,
@@ -505,6 +600,14 @@ class AiClientMessagesBackend:
 
     used_backend = "magic_pointer.messages_multiturn"
 
+    @property
+    def prompt_cache_requested(self) -> bool:
+        _key, base_url, _model = _ai_client.get_ai_config()
+        return (
+            prompt_cache_enabled()
+            and _ai_client.get_ai_api_mode(str(base_url or "")) == "messages"
+        )
+
     def __init__(
         self,
         *,
@@ -723,6 +826,65 @@ def _message_entry(message: AgentMessage, api_mode: str) -> dict:
     return {"role": "user", "content": message.content or ""}
 
 
+def _messages_blocks(content: object) -> list[dict[str, Any]]:
+    """Copy one Messages content value into a mergeable block list."""
+    if isinstance(content, list):
+        blocks: list[dict[str, Any]] = []
+        for block in content:
+            if isinstance(block, dict):
+                blocks.append(dict(block))
+            elif block is not None:
+                blocks.append({"type": "text", "text": str(block)})
+        return blocks
+    if content is None or content == "":
+        return []
+    return [{"type": "text", "text": str(content)}]
+
+
+def _merge_messages_entries(entries: list[dict]) -> list[dict]:
+    """Merge adjacent same-role Messages entries without losing block order.
+
+    The loop logs each parallel tool result as its own TOOL message. Anthropic
+    expects all results for one assistant tool-use turn in the immediately
+    following user turn; a later steer can also follow that result as plain
+    user text. Normalizing both shapes here keeps the durable log untouched
+    while projecting one provider-valid message.
+    """
+    merged: list[dict] = []
+    for raw in entries:
+        entry = dict(raw)
+        content = entry.get("content")
+        previous = merged[-1] if merged else None
+        if previous is not None and previous.get("role") == entry.get("role"):
+            previous["content"] = [
+                *_messages_blocks(previous.get("content")),
+                *_messages_blocks(content),
+            ]
+            continue
+        if isinstance(content, list):
+            entry["content"] = _messages_blocks(content)
+        merged.append(entry)
+    return merged
+
+
+def prompt_cache_enabled() -> bool:
+    """Whether Messages requests should carry explicit cache breakpoints."""
+    return os.environ.get("MAGIC_POINTER_PROMPT_CACHE", "1").strip().casefold() not in {
+        "0", "false", "no", "off",
+    }
+
+
+def _mark_entry_cache_boundary(entry: dict[str, Any]) -> None:
+    blocks = _messages_blocks(entry.get("content"))
+    if not blocks:
+        return
+    blocks[-1] = {
+        **blocks[-1],
+        "cache_control": {"type": "ephemeral"},
+    }
+    entry["content"] = blocks
+
+
 def _messages_payload(
     model: str,
     messages: list[AgentMessage],
@@ -735,6 +897,8 @@ def _messages_payload(
     entries = [_message_entry(message, api_mode) for message in messages]
     converted = _convert_tools(tools, api_mode)
     if api_mode == "messages":
+        entries = _merge_messages_entries(entries)
+        use_prompt_cache = prompt_cache_enabled()
         payload: dict = {
             "model": model,
             "max_tokens": max(1, int(max_tokens)),
@@ -742,9 +906,31 @@ def _messages_payload(
             "messages": entries,
         }
         if system_prompt:
-            payload["system"] = system_prompt
+            payload["system"] = (
+                [{
+                    "type": "text",
+                    "text": system_prompt,
+                    "cache_control": {"type": "ephemeral"},
+                }]
+                if use_prompt_cache
+                else system_prompt
+            )
         if converted:
+            if use_prompt_cache:
+                converted = [dict(tool) for tool in converted]
+                converted[-1]["cache_control"] = {"type": "ephemeral"}
             payload["tools"] = converted
+        if use_prompt_cache:
+            user_indices = [
+                index
+                for index, entry in enumerate(entries)
+                if entry.get("role") == "user"
+            ]
+            if user_indices and user_indices[-1] > 0:
+                # The current trailing user turn changes on every request;
+                # cache the complete stable history immediately before it,
+                # including the previous assistant/tool-use response.
+                _mark_entry_cache_boundary(entries[user_indices[-1] - 1])
         return payload
     payload = {
         "model": model,
@@ -809,7 +995,7 @@ class StreamingMessagesBackend(AiClientMessagesBackend):
         api_mode: str,
         *,
         cancel_scope: object = None,
-    ) -> list[ModelTurnEvent]:
+    ) -> Iterator[ModelTurnEvent]:
         import httpx  # noqa: PLC0415 -- optional transport dependency
 
         if self._client_factory is not None:
@@ -820,10 +1006,11 @@ class StreamingMessagesBackend(AiClientMessagesBackend):
             "POST", endpoint, headers=headers, json=payload
         ) as response:
             if response.status_code >= 400:
-                return [
-                    TurnWithheld(reason=f"backend_error:http_{response.status_code}")
-                ]
-            return _parse_sse(
+                yield TurnWithheld(
+                    reason=f"backend_error:http_{response.status_code}"
+                )
+                return
+            yield from _parse_sse(
                 response.iter_lines(),
                 api_mode=api_mode,
                 cancel_scope=cancel_scope,
@@ -862,54 +1049,93 @@ class StreamingMessagesBackend(AiClientMessagesBackend):
             system_prompt=self.system_prompt,
         )
         payload["stream"] = True
+        buffered: list[ModelTurnEvent] = []
+        committed = False
+        committed_terminal_seen = False
+        committed_failure_reason = ""
         try:
-            events = self._post_streaming(
+            for event in self._post_streaming(
                 endpoint,
                 headers,
                 payload,
                 budget,
                 api_mode,
                 cancel_scope=cancel_scope,
-            )
+            ):
+                if (
+                    isinstance(event, TurnWithheld)
+                    and event.reason.startswith("backend_error:")
+                ):
+                    committed_failure_reason = event.reason
+                if not committed:
+                    buffered.append(event)
+                    if isinstance(
+                        event,
+                        (MessageDelta, ReasoningDelta, ToolCallArrived),
+                    ):
+                        committed = True
+                        yield from buffered
+                        buffered.clear()
+                    continue
+                if isinstance(event, TurnDone):
+                    committed_terminal_seen = True
+                yield event
         except CancelledError:
-            raise
+            if not committed_terminal_seen:
+                raise
         except Exception as exc:  # noqa: BLE001
-            _ai_client.record_failure(
-                status=None,
-                exception_name=type(exc).__name__,
-                detail=str(exc)[:300],
-                model=model,
-                base_url=base_url,
-            )
-            _ai_client.record_note(
-                detail=f"streaming_fallback:{type(exc).__name__}",
-                model=model,
-                base_url=base_url,
-            )
-            yield from self._fallback_generate(
-                messages,
-                tools,
-                max(0.0, (deadline - time.monotonic()) * 1000.0),
-                cancel_scope,
-            )
-            return
-        if _stream_looks_empty(events):
-            _ai_client.record_note(
-                detail="streaming_fallback:empty_sse",
-                model=model,
-                base_url=base_url,
-            )
-            yield from self._fallback_generate(
-                messages,
-                tools,
-                max(0.0, (deadline - time.monotonic()) * 1000.0),
-                cancel_scope,
-            )
+            if not committed_terminal_seen:
+                _ai_client.record_failure(
+                    status=None,
+                    exception_name=type(exc).__name__,
+                    detail=str(exc)[:300],
+                    model=model,
+                    base_url=base_url,
+                )
+                if committed:
+                    _ai_client.record_note(
+                        detail=f"streaming_committed_error:{type(exc).__name__}",
+                        model=model,
+                        base_url=base_url,
+                    )
+                    yield TurnWithheld(
+                        reason=f"backend_error:{type(exc).__name__}"
+                    )
+                    yield TurnDone(usage=None, raw_text=None)
+                    return
+                _ai_client.record_note(
+                    detail=f"streaming_fallback:{type(exc).__name__}",
+                    model=model,
+                    base_url=base_url,
+                )
+                yield from self._fallback_generate(
+                    messages,
+                    tools,
+                    max(0.0, (deadline - time.monotonic()) * 1000.0),
+                    cancel_scope,
+                )
+                return
+        if committed:
+            if committed_failure_reason:
+                _ai_client.record_failure(
+                    status=None,
+                    exception_name="StreamError",
+                    detail=committed_failure_reason[:300],
+                    model=model,
+                    base_url=base_url,
+                )
+                _ai_client.record_note(
+                    detail=f"streaming_committed_error:{committed_failure_reason}",
+                    model=model,
+                    base_url=base_url,
+                )
+            else:
+                _ai_client.record_success(model=model, base_url=base_url)
             return
         backend_failure = next(
             (
                 event
-                for event in events
+                for event in buffered
                 if isinstance(event, TurnWithheld)
                 and event.reason.startswith("backend_error:")
             ),
@@ -928,8 +1154,22 @@ class StreamingMessagesBackend(AiClientMessagesBackend):
                 cancel_scope,
             )
             return
+        has_withheld = any(isinstance(event, TurnWithheld) for event in buffered)
+        if not has_withheld:
+            _ai_client.record_note(
+                detail="streaming_fallback:empty_sse",
+                model=model,
+                base_url=base_url,
+            )
+            yield from self._fallback_generate(
+                messages,
+                tools,
+                max(0.0, (deadline - time.monotonic()) * 1000.0),
+                cancel_scope,
+            )
+            return
         _ai_client.record_success(model=model, base_url=base_url)
-        yield from events
+        yield from buffered
 
     def _fallback_generate(
         self,
@@ -952,21 +1192,6 @@ class StreamingMessagesBackend(AiClientMessagesBackend):
             if isinstance(event, TurnStarted):
                 continue
             yield event
-
-
-def _stream_looks_empty(events: list[ModelTurnEvent]) -> bool:
-    """True when the SSE pass produced no text, no tool calls and no
-    withheld — the gateway ignored ``stream: true`` or sent a foreign
-    content type. A real model that says nothing still produces a
-    ``finish_reason`` frame; here we cannot distinguish, so a genuinely
-    empty answer costs one extra non-streaming round trip."""
-    if any(isinstance(event, TurnWithheld) for event in events):
-        return False
-    text = "".join(
-        event.text for event in events if isinstance(event, MessageDelta)
-    )
-    has_calls = any(isinstance(event, ToolCallArrived) for event in events)
-    return not text and not has_calls
 
 
 def _provider_failure_is_retryable(reason: str) -> bool:
@@ -1001,7 +1226,7 @@ def _parse_sse(
     *,
     api_mode: str = "chat",
     cancel_scope: object = None,
-) -> list[ModelTurnEvent]:
+) -> Iterator[ModelTurnEvent]:
     """Parse an SSE line iterator into loop model events.
 
     OpenAI chat-completions and Anthropic messages streams share the same
@@ -1010,11 +1235,11 @@ def _parse_sse(
     can return a structured correction instead of silently dropping a call.
     """
     if api_mode == "messages":
-        return _parse_messages_sse(lines, cancel_scope=cancel_scope)
+        yield from _parse_messages_sse(lines, cancel_scope=cancel_scope)
+        return
     text_parts: list[str] = []
-    reasoning_parts: list[str] = []
+    saw_reasoning = False
     pending: dict[int, dict[str, Any]] = {}
-    events: list[ModelTurnEvent] = []
     finish_reason: str | None = None
     usage: dict[str, Any] = {}
     for raw in lines:
@@ -1040,10 +1265,12 @@ def _parse_sse(
         delta = choice.get("delta") or {}
         if isinstance(delta.get("content"), str) and delta["content"]:
             text_parts.append(delta["content"])
+            yield MessageDelta(delta["content"])
         for reasoning_key in ("reasoning_content", "reasoning"):
             reasoning_value = delta.get(reasoning_key)
             if isinstance(reasoning_value, str) and reasoning_value:
-                reasoning_parts.append(reasoning_value)
+                saw_reasoning = True
+                yield ReasoningDelta(reasoning_value)
                 break
         for fragment in delta.get("tool_calls") or []:
             index = int(fragment.get("index") or 0)
@@ -1056,12 +1283,7 @@ def _parse_sse(
                 slot["arguments"] += str(fragment["function"]["arguments"])
         if choice.get("finish_reason"):
             finish_reason = str(choice["finish_reason"])
-    reasoning_text = "".join(reasoning_parts)
-    if reasoning_text:
-        events.append(ReasoningDelta(reasoning_text))
     text = "".join(text_parts)
-    if text:
-        events.append(MessageDelta(text))
     for index in sorted(pending):
         slot = pending[index]
         if not slot["name"]:
@@ -1070,28 +1292,29 @@ def _parse_sse(
             arguments = json.loads(slot["arguments"] or "{}")
         except ValueError:
             arguments = slot["arguments"]
-        events.append(ToolCallArrived(
+        yield ToolCallArrived(
             call=ToolCall(
                 id=slot["id"] or f"call_{index}",
                 name=slot["name"],
                 arguments=arguments,
             )
-        ))
+        )
+    has_tool_call = any(str(slot.get("name") or "") for slot in pending.values())
     if finish_reason == "length":
-        events.append(TurnWithheld(reason="max_output_tokens"))
-    events.append(TurnDone(usage=usage or None, raw_text=text or None))
-    return events
+        yield TurnWithheld(reason="max_output_tokens")
+    elif saw_reasoning and not text and not has_tool_call:
+        yield TurnWithheld(reason="backend_error:empty_response")
+    yield TurnDone(usage=usage or None, raw_text=text or None)
 
 
 def _parse_messages_sse(
     lines, *, cancel_scope: object = None
-) -> list[ModelTurnEvent]:
+) -> Iterator[ModelTurnEvent]:
     """Parse Anthropic Messages SSE frames into the common turn events."""
     text_parts: list[str] = []
-    reasoning_parts: list[str] = []
+    saw_reasoning = False
     pending: dict[int, dict[str, Any]] = {}
     usage: dict[str, Any] = {}
-    events: list[ModelTurnEvent] = []
     stop_reason: str | None = None
     for raw in lines:
         _check_cancelled(cancel_scope)
@@ -1111,7 +1334,7 @@ def _parse_messages_sse(
         if frame_type == "error":
             error = frame.get("error")
             error_type = str(error.get("type") or "stream_error") if isinstance(error, dict) else "stream_error"
-            events.append(TurnWithheld(reason=f"backend_error:{error_type}"))
+            yield TurnWithheld(reason=f"backend_error:{error_type}")
             continue
         message = frame.get("message")
         if isinstance(message, dict) and isinstance(message.get("usage"), dict):
@@ -1131,10 +1354,14 @@ def _parse_messages_sse(
             if not isinstance(block, dict):
                 continue
             if block.get("type") == "text" and block.get("text"):
-                text_parts.append(str(block["text"]))
+                value = str(block["text"])
+                text_parts.append(value)
+                yield MessageDelta(value)
             elif block.get("type") == "thinking":
                 if block.get("thinking"):
-                    reasoning_parts.append(str(block["thinking"]))
+                    value = str(block["thinking"])
+                    saw_reasoning = True
+                    yield ReasoningDelta(value)
             elif block.get("type") == "tool_use":
                 initial = block.get("input")
                 pending[index] = {
@@ -1154,22 +1381,21 @@ def _parse_messages_sse(
         if not isinstance(delta, dict):
             continue
         if delta.get("type") == "text_delta" and delta.get("text"):
-            text_parts.append(str(delta["text"]))
+            value = str(delta["text"])
+            text_parts.append(value)
+            yield MessageDelta(value)
         elif delta.get("type") == "thinking_delta":
             if delta.get("thinking"):
-                reasoning_parts.append(str(delta["thinking"]))
+                value = str(delta["thinking"])
+                saw_reasoning = True
+                yield ReasoningDelta(value)
         elif delta.get("type") == "input_json_delta":
             slot = pending.setdefault(
                 index, {"id": "", "name": "", "arguments": ""}
             )
             slot["arguments"] += str(delta.get("partial_json") or "")
 
-    reasoning_text = "".join(reasoning_parts)
-    if reasoning_text:
-        events.append(ReasoningDelta(reasoning_text))
     text = "".join(text_parts)
-    if text:
-        events.append(MessageDelta(text))
     for index in sorted(pending):
         slot = pending[index]
         if not slot["name"]:
@@ -1179,15 +1405,17 @@ def _parse_messages_sse(
             arguments = json.loads(raw_arguments)
         except ValueError:
             arguments = raw_arguments
-        events.append(ToolCallArrived(call=ToolCall(
+        yield ToolCallArrived(call=ToolCall(
             id=slot["id"] or f"call_{index}",
             name=slot["name"],
             arguments=arguments,
-        )))
+        ))
+    has_tool_call = any(str(slot.get("name") or "") for slot in pending.values())
     if stop_reason == "max_tokens":
-        events.append(TurnWithheld(reason="max_output_tokens"))
-    events.append(TurnDone(usage=usage or None, raw_text=text or None))
-    return events
+        yield TurnWithheld(reason="max_output_tokens")
+    elif saw_reasoning and not text and not has_tool_call:
+        yield TurnWithheld(reason="backend_error:empty_response")
+    yield TurnDone(usage=usage or None, raw_text=text or None)
 
 
 def _serialize_messages(messages: list[AgentMessage]) -> str:

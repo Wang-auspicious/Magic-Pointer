@@ -602,11 +602,23 @@ const DshChat = (() => {
     result?: { text: string; isError: boolean; interrupted?: boolean };
   }
 
-  type FlowItem = { type: 'narration'; text: string } | { type: 'chip'; chip: TurnChip };
+  type FlowItem =
+    | { type: 'narration'; text: string }
+    | { type: 'notice'; text: string }
+    | { type: 'chip'; chip: TurnChip };
 
   function narrationNode(text: string): DshNode {
     const root = h('div', { class: 'dsh-narration' });
     attach(root, text);
+    return root;
+  }
+
+  function noticeNode(text: string): DshNode {
+    const root = h('div', { class: 'dsh-notice', role: 'status' });
+    attach(root, stateDot('warning'));
+    const copy = h('span', { class: 'dsh-notice-copy' });
+    attach(copy, text);
+    attach(root, copy);
     return root;
   }
 
@@ -677,7 +689,7 @@ const DshChat = (() => {
   function trajectoryFlowItems(turn: AssistantTurnInput): FlowItem[] | null {
     const records = Array.isArray(turn.trajectory) ? turn.trajectory : [];
     const usable = records.filter((record) => record && typeof record === 'object'
-      && (record.kind === 'message' || record.kind === 'tool'));
+      && (record.kind === 'message' || record.kind === 'notice' || record.kind === 'tool'));
     if (!usable.length) return null;
     const answerText = String(turn.answer || '').trim();
     const items: FlowItem[] = [];
@@ -687,6 +699,11 @@ const DshChat = (() => {
         // 最后一轮叙述通常就是最终答案：答案存在且相等时不重复渲染。
         if (!text || (answerText && text === answerText)) continue;
         items.push({ type: 'narration', text });
+        continue;
+      }
+      if (record.kind === 'notice') {
+        const text = String(record.text || '').trim();
+        if (text) items.push({ type: 'notice', text });
         continue;
       }
       items.push({
@@ -749,6 +766,9 @@ const DshChat = (() => {
       if (item.type === 'narration') {
         flushChips();
         attach(bodyHost, narrationNode(item.text));
+      } else if (item.type === 'notice') {
+        flushChips();
+        attach(bodyHost, noticeNode(item.text));
       } else {
         chipRun.push(item.chip);
       }

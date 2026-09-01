@@ -9,9 +9,13 @@ from __future__ import annotations
 
 import json
 import os
+import platform
+from datetime import datetime
+from pathlib import Path
 
 from app.agent_runtime.types import ORIGIN_DATA, AgentMessage, Role
-from app.harness.builtin_bundle import LoopHarnessHost, boot_loop_context
+from app.harness.builtin_bundle import LoopHarnessHost, _git_branch, boot_loop_context
+from app.agent_runtime.system_prompt import default_builder, default_sections
 
 # 5 perception tools + Look + 3 local actions + 13 desktop CU tools
 # + AskUser/Todo + Search/Fetch/SaveSkill
@@ -457,12 +461,17 @@ def test_disabling_llm_provider_leaves_model_client_honestly_waiting() -> None:
     report.ctx.unload()
 
 
-def test_user_llm_provider_replaces_builtin_by_configuration() -> None:
+def test_user_llm_provider_replaces_builtin_by_configuration(monkeypatch) -> None:
     import shutil
     import uuid
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[1]
+    monkeypatch.delenv("MAGIC_POINTER_PROMPT_CACHE", raising=False)
+    monkeypatch.setattr(
+        "app.ai_client.get_ai_config",
+        lambda: ("key", "https://api.example/anthropic/v1", "claude-sonnet-5"),
+    )
     plugin_dir = root / f"pytest-sandbox-{uuid.uuid4().hex[:12]}"
     os.mkdir(plugin_dir)
     try:
@@ -494,6 +503,7 @@ def apply(ctx, config):
         )
 
         assert report.ctx.get("model_client").used_backend == "fake.plugin.llm"
+        assert report.ctx.get("model_request_header")["promptCache"] is False
         dump = {row["id"]: row for row in report.dump_config()}
         assert dump["model-client"]["status"] == "active"
         assert dump["user:fake_llm"]["status"] == "active"
@@ -610,6 +620,116 @@ def test_reply_style_reaches_the_prompt_context() -> None:
     normal = boot_loop_context(_runtime(command="随便问问", reply_style="normal"))
     assert "# Style" not in normal.ctx.get("model_request_header")["systemPrompt"]
     normal.ctx.unload()
+
+
+def test_pointing_instruction_reaches_prompt_only_when_requested() -> None:
+    report = boot_loop_context(_runtime(
+        command="这个按钮在哪里",
+        pointing_instruction="在句中插入 [POINT x,y] 指向已确认的位置。",
+    ))
+    prompt = report.ctx.get("model_request_header")["systemPrompt"]
+    assert "# Pointing" in prompt
+    assert "[POINT x,y]" in prompt
+    report.ctx.unload()
+
+    normal = boot_loop_context(_runtime(command="总结这段话", pointing_instruction=""))
+    assert "# Pointing" not in normal.ctx.get("model_request_header")["systemPrompt"]
+    normal.ctx.unload()
+
+
+def test_model_request_header_reports_prompt_cache_request(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.ai_client.get_ai_config",
+        lambda: ("key", "https://api.example/anthropic/v1", "claude-sonnet-5"),
+    )
+    monkeypatch.delenv("MAGIC_POINTER_PROMPT_CACHE", raising=False)
+    report = boot_loop_context(_runtime())
+    assert report.ctx.get("model_request_header")["promptCache"] is True
+    report.ctx.unload()
+
+    monkeypatch.setenv("MAGIC_POINTER_PROMPT_CACHE", "0")
+    report = boot_loop_context(_runtime())
+    assert report.ctx.get("model_request_header")["promptCache"] is False
+    report.ctx.unload()
+
+    monkeypatch.delenv("MAGIC_POINTER_PROMPT_CACHE", raising=False)
+    monkeypatch.setattr(
+        "app.ai_client.get_ai_config",
+        lambda: ("key", "https://gateway.example/v1", "gpt-5.6-sol"),
+    )
+    report = boot_loop_context(_runtime())
+    assert report.ctx.get("model_request_header")["promptCache"] is False
+    report.ctx.unload()
+
+
+def test_environment_section_is_dynamic_and_precedes_coding() -> None:
+    sections = default_sections()
+    ids = [section.id for section in sections]
+    assert "environment" in ids
+    assert ids.index("environment") < ids.index("coding")
+
+    prompt = default_builder().build({
+        "today": "2026-09-01（Tuesday）",
+        "platform": "Windows 11",
+        "workspace_root": r"D:\work\project",
+        "git_branch": "codex/harness-reconstruction",
+    })
+    assert "# Environment" in prompt
+    assert "2026-09-01（Tuesday）" in prompt
+    assert "Windows 11" in prompt
+    assert r"D:\work\project" in prompt
+    assert "codex/harness-reconstruction" in prompt
+    assert prompt.count(r"D:\work\project") == 1
+    assert "# Environment" not in default_builder().build({})
+
+
+def test_git_branch_reads_symbolic_head_and_ignores_detached_head(tmp_path: Path) -> None:
+    git_dir = tmp_path / ".git"
+    git_dir.mkdir()
+    (git_dir / "HEAD").write_text(
+        "ref: refs/heads/codex/harness-reconstruction\n",
+        encoding="utf-8",
+    )
+    assert _git_branch(str(tmp_path)) == "codex/harness-reconstruction"
+
+    (git_dir / "HEAD").write_text("a" * 40 + "\n", encoding="utf-8")
+    assert _git_branch(str(tmp_path)) == ""
+
+
+def test_bound_workspace_memory_and_environment_reach_the_prompt(tmp_path: Path) -> None:
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    (workspace / "MAGIC_POINTER.md").write_text(
+        "项目唯一规则：回答前写 MP_WORKSPACE_MEMORY_OK。",
+        encoding="utf-8",
+    )
+    git_dir = workspace / ".git"
+    git_dir.mkdir()
+    (git_dir / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+
+    report = boot_loop_context(
+        _runtime(workspace_root=str(workspace)),
+        root=tmp_path,
+        plugin_dir=tmp_path / "plugins",
+    )
+    prompt = report.ctx.get("model_request_header")["systemPrompt"]
+    assert "MP_WORKSPACE_MEMORY_OK" in prompt
+    assert datetime.now().astimezone().date().isoformat() in prompt
+    assert platform.system() in prompt
+    assert "当前 git 分支：main" in prompt
+    report.ctx.unload()
+
+
+def test_coding_prompt_uses_only_canonical_tool_names(tmp_path: Path) -> None:
+    report = boot_loop_context(_runtime(workspace_root=str(tmp_path)))
+    prompt = report.ctx.get("model_request_header")["systemPrompt"]
+    for stale in (
+        "read_file", "write_file", "edit_file", "apply_patch",
+        "run_command", "restore_files",
+    ):
+        assert stale not in prompt
+    assert "Rewind" in prompt
+    report.ctx.unload()
 
 
 def test_permission_mode_in_prompt_matches_the_mode_the_loop_enforces() -> None:

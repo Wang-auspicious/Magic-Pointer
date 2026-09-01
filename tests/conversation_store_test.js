@@ -106,8 +106,9 @@ const tooled = store.appendTurn({
   ],
   activities: [{ kind: 'model', turn: 1, state: 'done', latencyMs: 625, firstTokenMs: 118 }],
   trajectory: [
-    { seq: 1, kind: 'message', turn: 1, step: 1, state: 'done', startedAt: 10, completedAt: 635 },
-    { seq: 2, kind: 'tool', turn: 1, callId: 'pwsh-1', name: 'pwsh', state: 'done', startedAt: 20, completedAt: 102 },
+    { seq: 1, kind: 'request-header', turn: 1, promptCache: true, usedBackend: 'gateway', maxTokens: 4096 },
+    { seq: 2, kind: 'message', turn: 1, step: 1, state: 'done', startedAt: 10, completedAt: 635 },
+    { seq: 3, kind: 'tool', turn: 1, callId: 'pwsh-1', name: 'pwsh', state: 'done', startedAt: 20, completedAt: 102 },
   ],
   receipts: [{ toolName: 'pwsh', usedBackend: 'subprocess', latencyMs: 82 }],
   modelUsage: { inputTokens: 120, outputTokens: 30, totalTokens: 150 },
@@ -123,7 +124,7 @@ assert.strictEqual(tooled.turns[0].events[1].isError, true);
 assert.strictEqual(tooled.turns[0].events[0].latencyMs, 82, 'tool latency must survive persistence');
 assert.strictEqual(tooled.turns[0].events[0].usedBackend, 'subprocess', 'tool backend must survive persistence');
 assert.strictEqual(tooled.turns[0].activities[0].firstTokenMs, 118, 'model lifecycle must survive persistence');
-assert.strictEqual(tooled.turns[0].trajectory[1].callId, 'pwsh-1', 'ordered DSH trajectory records must survive persistence');
+assert.strictEqual(tooled.turns[0].trajectory[2].callId, 'pwsh-1', 'ordered DSH trajectory records must survive persistence');
 assert.strictEqual(tooled.turns[0].receipts[0].toolName, 'pwsh', 'audit receipts must survive persistence');
 assert.strictEqual(tooled.turns[0].modelUsage.totalTokens, 150, 'real model token usage must survive persistence');
 assert.strictEqual(tooled.turns[0].timingMs, 910, 'real turn time must survive persistence');
@@ -134,6 +135,8 @@ const tooledAgain = createConversationStore({ baseDir: dir, now: () => clock }).
 assert.strictEqual(tooledAgain.turns[0].events.length, 2, '重开 store 后工具链事件仍在');
 assert.strictEqual(tooledAgain.turns[0].modelUsage.outputTokens, 30, '重开 store 后 token usage 仍在');
 assert.strictEqual(tooledAgain.turns[0].trajectory[0].seq, 1, '重开 store 后 trajectory 顺序仍在');
+assert.strictEqual(tooledAgain.turns[0].trajectory[0].promptCache, true,
+  'prompt cache request header must survive bridge → store persistence');
 assert.strictEqual(tooledAgain.hasPendingWork, true, '重开 store 后待续标记仍在');
 
 // 没有 events 的旧回合读回来是空数组，不崩。
@@ -203,6 +206,36 @@ const pmListed = store.list(10).find((c) => c.id === pmA.id);
 assert.deepStrictEqual(pmListed.permissionGrants, ['run_command', 'read_background'], 'list 摘要带授权');
 assert.deepStrictEqual(pmListed.permissionDenials, ['launch_app'], 'list 摘要带拒绝');
 
+const permissionTurnCount = store.get(pmA.id).turns.length;
+store.updateTurn({
+  conversationId: pmA.id,
+  pendingInput: {
+    question: '是否允许执行 Bash？',
+    options: ['仅这一次允许', '本会话总是允许', '拒绝'],
+    kind: 'permission',
+    tool: 'Bash',
+    prefix: 'pytest',
+  },
+});
+const memoOnly = store.recordPermissionDecision({
+  conversationId: pmA.id,
+  grant: 'Bash(pytest)',
+  deny: 'Bash(npm install)',
+});
+assert.strictEqual(memoOnly.ok, true, '用户的授权决定必须能独立于模型回合落盘');
+assert.strictEqual(store.get(pmA.id).turns.length, permissionTurnCount,
+  '落权限 memo 不能伪造一条问答 turn');
+const permissionReopened = createConversationStore({ baseDir: dir, now: () => clock }).get(pmA.id);
+assert(permissionReopened.permissionGrants.includes('Bash(pytest)'),
+  'provider 失败后重开会话仍必须保留总是允许的 Bash prefix');
+assert(permissionReopened.permissionDenials.includes('Bash(npm install)'),
+  '拒绝决定同样必须独立持久化');
+assert.strictEqual(
+  permissionReopened.turns[permissionReopened.turns.length - 1].pendingInput,
+  undefined,
+  '已回答的权限 pending 不得在 provider 失败后的会话重开时复活',
+);
+
 console.log('conversation store test ok (permission memo)');
 
 // ── Stage↔GUI 实时同步：updateTurn 就地补 answer/终态 ─────────────────
@@ -264,7 +297,7 @@ console.log('conversation store test ok (permission memo)');
       label: '批注段',
       contentDigest: '卡片动画逐帧实测'.repeat(300),
     },
-    pendingInput: { question: '是否允许执行 Bash？', options: ['仅这一次允许', '本会话总是允许', '拒绝'], kind: 'permission', tool: 'Bash' },
+    pendingInput: { question: '是否允许执行 Bash？', options: ['仅这一次允许', '本会话总是允许', '拒绝'], kind: 'permission', tool: 'Bash', prefix: 'pytest' },
   });
   const saved = withEvidence.turns[withEvidence.turns.length - 1];
   assert.strictEqual(saved.evidence.capturePath, 'D:/x/screen-abc123.png');
@@ -272,6 +305,7 @@ console.log('conversation store test ok (permission memo)');
   assert.ok(saved.evidence.contentDigest.length <= 1600, '内容摘要有界存档');
   assert.deepStrictEqual(saved.pendingInput.options, ['仅这一次允许', '本会话总是允许', '拒绝']);
   assert.strictEqual(saved.pendingInput.tool, 'Bash');
+  assert.strictEqual(saved.pendingInput.prefix, 'pytest');
   // 垃圾输入不落字段
   const clean = store.appendTurn({
     question: '普通一问',
@@ -288,4 +322,6 @@ console.log('conversation store test ok (permission memo)');
   const reread = reopened.get(withEvidence.id);
   assert.strictEqual(reread.turns[reread.turns.length - 1].evidence.capturePath, 'D:/x/screen-abc123.png',
     'evidence must survive a store reload');
+  assert.strictEqual(reread.turns[reread.turns.length - 1].pendingInput.prefix, 'pytest',
+    'permission command prefix must survive a store reload');
 }

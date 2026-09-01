@@ -107,6 +107,30 @@ def test_compaction_summarizes_head() -> None:
     assert compacted[0].origin == "data"
 
 
+def test_manual_compaction_can_summarize_one_legacy_evidence_message() -> None:
+    source = AgentMessage(
+        role=Role.USER,
+        content="[旧对话首次迁移]\n" + "旧问答内容" * 1000,
+        tool_call_id=None,
+        name=None,
+        origin="data",
+        injected=True,
+    )
+    seen: list[str] = []
+
+    compacted = compact_messages(
+        [source],
+        lambda text: seen.append(text) or "旧历史摘要",
+        force=True,
+    )
+
+    assert seen and "旧问答内容" in seen[0]
+    assert len(compacted) == 1
+    assert compacted[0] != source
+    assert "旧历史摘要" in compacted[0].content
+    assert "<<<MAGIC_POINTER_EVIDENCE>>>" in compacted[0].content
+
+
 def test_bulky_tail_messages_do_not_all_survive_compaction() -> None:
     """A message-count tail lets four 64k tool results ride through untouched.
 
@@ -272,7 +296,7 @@ def test_sse_parser_accumulates_deltas_and_tool_calls() -> None:
         'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}',
         "data: [DONE]",
     ]
-    events = _parse_sse(frames)
+    events = list(_parse_sse(frames))
     texts = [e.text for e in events if type(e).__name__ == "MessageDelta"]
     assert "".join(texts) == "你好"
     calls = [e for e in events if type(e).__name__ == "ToolCallArrived"]
@@ -301,7 +325,7 @@ def test_sse_parser_supports_anthropic_messages_text_and_tool_use() -> None:
         'data: {"type":"message_stop"}',
     ]
 
-    events = _parse_sse(frames, api_mode="messages")
+    events = list(_parse_sse(frames, api_mode="messages"))
 
     assert "".join(
         event.text for event in events if type(event).__name__ == "MessageDelta"
@@ -316,28 +340,52 @@ def test_sse_parser_supports_anthropic_messages_text_and_tool_use() -> None:
 
 
 def test_openai_length_finish_is_withheld_for_continuation() -> None:
-    events = _parse_sse([
+    events = list(_parse_sse([
         'data: {"choices":[{"delta":{"content":"partial"},"finish_reason":null}]}',
         'data: {"choices":[{"delta":{},"finish_reason":"length"}]}',
         "data: [DONE]",
-    ])
+    ]))
 
     withheld = [event for event in events if type(event).__name__ == "TurnWithheld"]
     assert [event.reason for event in withheld] == ["max_output_tokens"]
 
 
 def test_anthropic_max_tokens_stop_is_withheld_for_continuation() -> None:
-    events = _parse_sse(
+    events = list(_parse_sse(
         [
             'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}',
             'data: {"type":"message_delta","delta":{"stop_reason":"max_tokens"},"usage":{"output_tokens":64}}',
             'data: {"type":"message_stop"}',
         ],
         api_mode="messages",
-    )
+    ))
 
     withheld = [event for event in events if type(event).__name__ == "TurnWithheld"]
     assert [event.reason for event in withheld] == ["max_output_tokens"]
+
+
+def test_chat_reasoning_only_eof_is_not_a_fake_success() -> None:
+    events = list(_parse_sse([
+        'data: {"choices":[{"delta":{"reasoning_content":"thinking"}}]}',
+        'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}',
+        "data: [DONE]",
+    ]))
+    assert any(type(event).__name__ == "ReasoningDelta" for event in events)
+    assert [
+        event.reason for event in events if type(event).__name__ == "TurnWithheld"
+    ] == ["backend_error:empty_response"]
+
+
+def test_messages_reasoning_only_eof_is_not_a_fake_success() -> None:
+    events = list(_parse_sse([
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"thinking"}}',
+        'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}',
+        'data: {"type":"message_stop"}',
+    ], api_mode="messages"))
+    assert any(type(event).__name__ == "ReasoningDelta" for event in events)
+    assert [
+        event.reason for event in events if type(event).__name__ == "TurnWithheld"
+    ] == ["backend_error:empty_response"]
 
 
 def test_sse_parser_stops_consuming_after_cancellation() -> None:
@@ -349,7 +397,7 @@ def test_sse_parser_stops_consuming_after_cancellation() -> None:
         yield 'data: {"choices":[{"delta":{"content":"late"}}]}'
 
     with pytest.raises(CancelledError):
-        _parse_sse(frames(), cancel_scope=token)
+        list(_parse_sse(frames(), cancel_scope=token))
 
 
 def test_guard_factory_fail_closed_without_anchor() -> None:

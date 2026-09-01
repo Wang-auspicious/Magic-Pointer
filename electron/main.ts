@@ -32,7 +32,13 @@ const { activeModelRuntimeStatus, resolveActiveModelRuntimeConfig } = require('.
 const { PreflightRunner } = require('./bootstrap_runner');
 const { buildAsyncPreflightChecks } = require('./preflight_checks');
 const { resolvePythonRuntime, pythonInvocationArgs, pythonSpawnEnvironment } = require('./python_runtime');
-const { planConversationStop, planConversationSteer, sessionIdFromRecord } = require('./conversation_control');
+const {
+  isConversationSender,
+  planConversationStop,
+  planConversationSteer,
+  sanitizePermissionRule,
+  sessionIdFromRecord,
+} = require('./conversation_control');
 const { VoiceResidentRuntime } = require('./voice_resident_runtime');
 const { captureEligibility } = require('./result_surface_policy');
 const { humanErrorMessage, inferObjectKind, selectionSourceForReason, stageEventFromBridge } = require('./stage_contract');
@@ -1752,7 +1758,9 @@ ipcMain.handle('conversations:pick-workspace', async (event: Electron.IpcMainInv
   return { ok: true, path: picked.filePaths[0] };
 });
 ipcMain.handle('conversations:send', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
-  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_conversation_sender' };
+  if (!isConversationSender(event, dashboardWindow, companionWindow)) {
+    return { ok: false, error: 'unauthorized_conversation_sender' };
+  }
   const question = String(raw?.question || '').trim().slice(0, 4000);
   if (!question) return { ok: false, error: '问题不能为空。' };
   const conversationId = String(raw?.conversationId || '').trim().slice(0, 120);
@@ -1761,12 +1769,24 @@ ipcMain.handle('conversations:send', async (event: Electron.IpcMainInvokeEvent, 
   const requestId = String(raw?.requestId || crypto.randomUUID()).trim().slice(0, 120) || crypto.randomUUID();
   const workspaceRoot = String(raw?.workspaceRoot || '').trim();
   // CC toolPermissionDecision: chip grants/denies join the thread memo; a
-  // once-grant rides this request only. Sanitized to bare tool names.
-  const existing = conversationId ? conversations().get(conversationId) : null;
-  const sanitizeTool = (value: unknown) => String(value || '').trim().replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64);
-  const grantNow = sanitizeTool(raw?.permissionGrant);
-  const denyNow = sanitizeTool(raw?.permissionDeny);
-  const onceNow = sanitizeTool(raw?.permissionGrantOnce);
+  // once-grant rides this request only. A Bash(prefix) rule is kept intact;
+  // stripping its punctuation would persist an inert "Bashpytest" grant.
+  let existing = conversationId ? conversations().get(conversationId) : null;
+  const grantNow = sanitizePermissionRule(raw?.permissionGrant);
+  const denyNow = sanitizePermissionRule(raw?.permissionDeny);
+  const onceNow = sanitizePermissionRule(raw?.permissionGrantOnce);
+  if (existing && (grantNow || denyNow)) {
+    const recorded = conversations().recordPermissionDecision({
+      conversationId: existing.id,
+      grant: grantNow,
+      deny: denyNow,
+    });
+    if (!recorded.ok || !recorded.conversation) {
+      return { ok: false, error: 'permission_decision_not_persisted' };
+    }
+    existing = recorded.conversation;
+    notifyConversationChanged(existing.id);
+  }
   const threadGrants = [...new Set([...(Array.isArray(existing?.permissionGrants) ? existing!.permissionGrants as string[] : []), ...(grantNow ? [grantNow] : [])])];
   const threadDenials = [...new Set([...(Array.isArray(existing?.permissionDenials) ? existing!.permissionDenials as string[] : []), ...(denyNow ? [denyNow] : [])])];
   // Codex thread workspace_roots: an explicit chip pick moves THIS thread;
@@ -1838,9 +1858,7 @@ ipcMain.handle('conversations:send', async (event: Electron.IpcMainInvokeEvent, 
           permissionGrant: grantNow || undefined,
           permissionDeny: denyNow || undefined,
         });
-        if (dashboardWindow && !dashboardWindow.isDestroyed()) {
-          dashboardWindow.webContents.send('conversations:turn', { id: conversation.id });
-        }
+        notifyConversationChanged(conversation.id);
         resolve({ ...parsed, conversationId: conversation.id });
       },
     });
@@ -1850,7 +1868,9 @@ ipcMain.handle('conversations:send', async (event: Electron.IpcMainInvokeEvent, 
 });
 
 ipcMain.handle('conversations:stop', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
-  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_renderer' };
+  if (!isConversationSender(event, dashboardWindow, companionWindow)) {
+    return { ok: false, error: 'unauthorized_renderer' };
+  }
   const requestId = String(raw?.requestId || '').trim().slice(0, 120);
   const entry = activeConversations.get(requestId);
   const plan = planConversationStop({ requestId, agentSessionId: entry?.agentSessionId });
@@ -1867,7 +1887,9 @@ ipcMain.handle('conversations:stop', async (event: Electron.IpcMainInvokeEvent, 
 });
 
 ipcMain.handle('conversations:steer', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
-  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_renderer' };
+  if (!isConversationSender(event, dashboardWindow, companionWindow)) {
+    return { ok: false, error: 'unauthorized_renderer' };
+  }
   const plan = planConversationSteer({ text: String(raw?.text || ''), agentSessionId: String(raw?.agentSessionId || '') });
   if (plan.action !== 'steer') return { ok: false, error: plan.reason };
   try {
@@ -2987,6 +3009,7 @@ function replayElementGhosts(attachedSession: any, display: Electron.Display): v
     handles,
     displayBounds: display.bounds,
     scaleFactor: display.scaleFactor || 1,
+    focusPoint: attachedSession?.snapshot?.target_point || null,
   });
   if (!replay.ghosts.length) return;
   if (overlayGhostTimer) clearTimeout(overlayGhostTimer);

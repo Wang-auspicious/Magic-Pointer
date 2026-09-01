@@ -61,6 +61,7 @@ export interface TurnPendingInput {
   options?: string[];
   kind?: string;
   tool?: string;
+  prefix?: string;
 }
 
 interface Conversation {
@@ -424,7 +425,13 @@ function createConversationStore(
     const options = Array.isArray(raw.options) ? raw.options.map((o) => String(o)).filter(Boolean) : [];
     const kind = String(raw.kind ?? '').trim();
     if (!question && !options.length && !kind) return undefined;
-    return { question, options, kind: kind || undefined, tool: String(raw.tool ?? '').trim() || undefined };
+    return {
+      question,
+      options,
+      kind: kind || undefined,
+      tool: String(raw.tool ?? '').trim() || undefined,
+      prefix: String(raw.prefix ?? '').trim().slice(0, 160) || undefined,
+    };
   }
 
   function updateTurn(input: {
@@ -474,6 +481,34 @@ function createConversationStore(
     if (input.pendingInput !== undefined) turn.pendingInput = sanitizePendingInput(input.pendingInput);
     if (Number.isFinite(Number(input.timingMs))) turn.timingMs = Number(input.timingMs);
     turn.at = now();
+    target.updatedAt = now();
+    persist();
+    return { ok: true, conversation: target };
+  }
+
+  function recordPermissionDecision(input: {
+    conversationId?: unknown;
+    grant?: unknown;
+    deny?: unknown;
+  }): { ok: boolean; conversation?: Conversation } {
+    const conversations = load();
+    const target = conversations.find(
+      (conversation) => conversation.id === String(input.conversationId || '').trim(),
+    );
+    const grant = String(input.grant || '').trim();
+    const deny = String(input.deny || '').trim();
+    if (!target || (!grant && !deny)) return { ok: false };
+    if (grant) {
+      target.permissionGrants = target.permissionGrants || [];
+      if (!target.permissionGrants.includes(grant)) target.permissionGrants.push(grant);
+    }
+    if (deny) {
+      target.permissionDenials = target.permissionDenials || [];
+      if (!target.permissionDenials.includes(deny)) target.permissionDenials.push(deny);
+    }
+    const turns = target.turns || [];
+    const lastTurn = turns[turns.length - 1];
+    if (lastTurn?.pendingInput?.kind === 'permission') delete lastTurn.pendingInput;
     target.updatedAt = now();
     persist();
     return { ok: true, conversation: target };
@@ -634,6 +669,7 @@ function createConversationStore(
   return {
     appendTurn,
     updateTurn,
+    recordPermissionDecision,
     list,
     get,
     branch,

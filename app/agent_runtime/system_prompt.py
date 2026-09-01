@@ -200,12 +200,31 @@ def default_sections() -> list[Section]:
         if not root:
             return None
         return (
-            f"工作区：{root}\n"
             "代码任务的工作方式：先用 Glob/Grep/Read 定位证据再改代码；"
             "小改动用 Edit（old_string 必须逐字唯一，同文件多处用 edits 数组），跨文件/多处改动用 Patch；"
             "改完必须用 Bash 跑测试或构建验证，绿了才算完成，红了就继续修；"
-            "方向错了用 restore_files 回滚，不要手工反向编辑。"
+            "方向错了用 Rewind 回滚，不要手工反向编辑。"
         )
+
+    def environment(ctx: dict[str, Any]) -> str | None:
+        """Stable local facts supplied by the harness, never probed here."""
+        lines: list[str] = []
+        today = str(ctx.get("today") or "").strip()
+        if today:
+            lines.append(f"今天的日期：{today}")
+        platform_name = str(ctx.get("platform") or "").strip()
+        if platform_name:
+            lines.append(f"运行平台：{platform_name}")
+        root = str(ctx.get("workspace_root") or "").strip()
+        if root:
+            lines.append(f"工作区目录：{root}")
+        branch = str(ctx.get("git_branch") or "").strip()
+        if branch:
+            lines.append(f"当前 git 分支：{branch}")
+        if not lines:
+            return None
+        lines.append("以上是本机事实，不要凭训练记忆推断日期或平台。")
+        return "\n".join(lines)
 
     def memory(ctx: dict[str, Any]) -> str | None:
         value = str(ctx.get("memory") or "").strip()
@@ -229,6 +248,10 @@ def default_sections() -> list[Section]:
 
     def language(ctx: dict[str, Any]) -> str | None:
         return str(ctx.get("language") or "中文") + "回答。"
+
+    def pointing(ctx: dict[str, Any]) -> str | None:
+        value = str(ctx.get("pointing_instruction") or "").strip()
+        return value or None
 
     # Reply-style directives (MP's own cabal of the caveman skill): a
     # user-selectable verbosity control that only injects text when a
@@ -264,11 +287,13 @@ def default_sections() -> list[Section]:
         Section("voice", "Voice", voice),
         Section("rules", "System", rules),
         Section("permissions", "Permissions", permissions),
+        Section("environment", "Environment", environment, dynamic=True),
         Section("coding", "Coding", coding, dynamic=True),
         Section("deliver", "Deliver", _deliver_section, dynamic=True),
         Section("memory", "Memory", memory, dynamic=True),
         Section("skills", "Skills", skills, dynamic=True),
         Section("language", "Language", language, dynamic=True),
+        Section("pointing", "Pointing", pointing, dynamic=True),
         Section("style", "Style", style, dynamic=True),
     ]
 

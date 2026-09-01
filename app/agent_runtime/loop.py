@@ -138,7 +138,9 @@ from app.agent_runtime.hooks import HookManager
 from app.agent_runtime.model_client import (
     LoopModelClient,
     MessageDelta,
+    ModelTurnEvent,
     ReasoningDelta,
+    ToolCallArrived,
     TurnWithheld,
 )
 from app.agent_runtime.perception_tools import evidence_to_text
@@ -195,6 +197,7 @@ __all__ = [
     "LoopStart",
     "LoopStopped",
     "ModelChunk",
+    "ToolsTruncated",
     "BudgetRenewed",
     "BackendRecovery",
     "StopDecision",
@@ -209,8 +212,12 @@ __all__ = [
 
 _FULL_ANSWER_STAGE = Stage.FULL_ANSWER
 
-_PROACTIVE_COMPACT_RATIO = 0.7
-"""Proactive compaction threshold: >=70% of the token budget (review Q11)."""
+_PROACTIVE_COMPACT_RATIO = 0.8
+"""The single compaction safety margin: compact at >=80% of the window.
+
+The remaining 20% covers schemas and the next reply. Do not pre-discount the
+model profile too; two margins previously compounded to 49% usable context.
+"""
 
 _MAX_FRUITLESS_COMPACTIONS = 2
 """Give up re-compacting after this many attempts that stayed over threshold.
@@ -241,7 +248,8 @@ def _real_prompt_tokens(usage: Mapping[str, Any] | None) -> int:
     """Provider-reported prompt tokens from the last round (0 when absent)."""
     if not isinstance(usage, Mapping):
         return 0
-    for key in ("prompt_tokens", "input_tokens"):
+
+    def count(key: str) -> int:
         value = usage.get(key)
         if (
             isinstance(value, (int, float))
@@ -250,7 +258,21 @@ def _real_prompt_tokens(usage: Mapping[str, Any] | None) -> int:
             and value > 0
         ):
             return int(value)
-    return 0
+        return 0
+
+    # OpenAI-style prompt_tokens already includes cached input; adding any
+    # cache detail bucket would double count it.
+    prompt_tokens = count("prompt_tokens")
+    if prompt_tokens:
+        return prompt_tokens
+    # Anthropic reports only the uncached suffix as input_tokens. The two
+    # cache buckets are still part of the context window and must be restored
+    # before this usage becomes the compaction ground truth.
+    return sum(count(key) for key in (
+        "input_tokens",
+        "cache_read_input_tokens",
+        "cache_creation_input_tokens",
+    ))
 
 _MAX_TOOL_RESULT_CHARS = 64_000
 """Maximum model-visible/logged characters from one tool invocation."""
@@ -373,6 +395,15 @@ class LoopParams:
 @dataclass(frozen=True, slots=True)
 class LoopStart:
     kind = "loop_start"
+
+
+@dataclass(frozen=True, slots=True)
+class ToolsTruncated:
+    """Visible notice that registered tools exceeded this turn's limit."""
+
+    kind = "tools_truncated"
+    dropped: tuple[str, ...]
+    limit: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -562,6 +593,12 @@ async def run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
             except Exception:  # noqa: BLE001
                 pass
         raise
+    finally:
+        # Real-input ownership and other per-session resources must be returned
+        # on every exit, including provider/session failures and early consumer
+        # cancellation. Keeping this only in the normal LoopStopped path leaves
+        # the next desktop task permanently blocked by COMPUTER_USE_BUSY.
+        params.registry.notify_session_end()
 
 
 def _withheld_recovery_plan(
@@ -680,7 +717,8 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
     last_progress_turn = 0
     fruitless_compactions = 0
     backend_recovery_attempts = 0
-    tool_schemas = _select_tool_schemas(params)
+    tool_schemas, dropped_tools = _select_tool_schemas_with_dropped(params)
+    reported_dropped_tools = dropped_tools
     tool_schema_tokens = estimate_text_tokens(str(tool_schemas))
     loaded_extra: list[str] = []
     stop_hooks = tuple(params.stop_hooks)
@@ -733,12 +771,14 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
             _record_loop_receipt(
                 params.session, verification_gate, terminal, results
             )
-        # 桌面输入锁一类会话资源在终态自动归还——不再依赖模型记得调
-        # turn_ended（忘调 = 下个会话 COMPUTER_USE_BUSY 卡死）。
-        params.registry.notify_session_end()
         return LoopStopped(terminal)
 
     yield LoopStart()
+    if dropped_tools:
+        yield ToolsTruncated(
+            dropped=dropped_tools,
+            limit=params.tool_limit,
+        )
 
     with CancellationScope(cancel_registry) as loop_scope:
         while True:
@@ -922,12 +962,18 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                     header=params.request_header,
                     step=turn_number,
                 )
-            events = client.generate_turn(
+            events: list[ModelTurnEvent] = []
+            for event in client.stream_turn(
                 state.messages,
                 tool_schemas,
                 budget_ms=remaining_ms,
                 cancel_scope=loop_scope.token,
-            )
+            ):
+                events.append(event)
+                if isinstance(event, MessageDelta):
+                    yield ModelChunk(text=event.text)
+                elif isinstance(event, ReasoningDelta):
+                    yield ReasoningChunk(text=event.text)
             if loop_scope.is_cancelled:
                 raise CancelledError("cancelled during model call")
             calls, text = client.parse_tool_calls(events)
@@ -945,20 +991,17 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                     output_text_chars=len(text or ""),
                     tool_call_count=len(calls),
                 )
-            yielded_delta = 0
-            for event in events:
-                if isinstance(event, MessageDelta):
-                    yield ModelChunk(text=event.text)
-                    yielded_delta += 1
-                elif isinstance(event, ReasoningDelta):
-                    yield ReasoningChunk(text=event.text)
-            if yielded_delta == 0 and text is not None:
-                yield ModelChunk(text)
-
             if any(isinstance(event, TurnWithheld) for event in events):
                 withheld_events = [
                     event for event in events if isinstance(event, TurnWithheld)
                 ]
+                model_stream_committed = any(
+                    isinstance(
+                        event,
+                        (MessageDelta, ReasoningDelta, ToolCallArrived),
+                    )
+                    for event in events
+                )
                 token_withheld = any(
                     _is_token_withheld(event.reason) for event in withheld_events
                 )
@@ -979,8 +1022,11 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                         for event in withheld_events
                     )
                     if (
-                        transient_backend_error
-                        or any(not result.is_error for result in results)
+                        not model_stream_committed
+                        and (
+                            transient_backend_error
+                            or any(not result.is_error for result in results)
+                        )
                     ) and backend_recovery_attempts < _MAX_BACKEND_RECOVERIES:
                         delay_s = _BACKEND_RECOVERY_DELAYS_S[
                             backend_recovery_attempts
@@ -1004,11 +1050,32 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                                 last_result=results[-1] if results else None,
                             )
                             yield TurnFinished(state)
-                            _sleep(bounded_delay_s)
-                            if loop_scope.is_cancelled:
-                                raise CancelledError(
-                                    "cancelled during backend recovery wait"
+                            remaining_sleep = bounded_delay_s
+                            interrupted_during_wait = False
+                            while remaining_sleep > 0:
+                                slice_s = min(0.5, remaining_sleep)
+                                _sleep(slice_s)
+                                remaining_sleep = max(0.0, remaining_sleep - slice_s)
+                                if loop_scope.is_cancelled:
+                                    raise CancelledError(
+                                        "cancelled during backend recovery wait"
+                                    )
+                                if (
+                                    params.interrupt_check is not None
+                                    and params.interrupt_check()
+                                ):
+                                    interrupted_during_wait = True
+                                    break
+                            if interrupted_during_wait:
+                                terminal = Terminal(
+                                    reason=TransitionReason.USER_INTERRUPT,
+                                    message="user interrupt",
+                                    turns=turn_number,
+                                    results=tuple(results),
+                                    model_usage=_model_usage_snapshot(model_usage),
                                 )
+                                yield _stop(terminal)
+                                return
                             continue
                     terminal = Terminal(
                         reason=TransitionReason.PROVIDER_UNAVAILABLE,
@@ -1460,8 +1527,17 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                     if name not in loaded_extra:
                         loaded_extra.append(name)
             if loaded_extra:
-                tool_schemas = _select_tool_schemas(params, extra_names=loaded_extra)
+                tool_schemas, dynamic_dropped = _select_tool_schemas_with_dropped(
+                    params,
+                    extra_names=loaded_extra,
+                )
                 tool_schema_tokens = estimate_text_tokens(str(tool_schemas))
+                if dynamic_dropped and dynamic_dropped != reported_dropped_tools:
+                    yield ToolsTruncated(
+                        dropped=dynamic_dropped,
+                        limit=params.tool_limit,
+                    )
+                reported_dropped_tools = dynamic_dropped
 
             if pending_input is not None:
                 messages = list(state.messages)
@@ -1663,6 +1739,19 @@ def _select_tool_schemas(
     discovered via find_capability (``extra_names``), then the rest of the
     registry in registration order, truncated at tool_limit."""
 
+    schemas, _dropped = _select_tool_schemas_with_dropped(
+        params,
+        extra_names=extra_names,
+    )
+    return schemas
+
+
+def _select_tool_schemas_with_dropped(
+    params: LoopParams,
+    *,
+    extra_names: Sequence[str] = (),
+) -> tuple[list[dict[str, object]], tuple[str, ...]]:
+    """Select the model tool surface and report names hidden by the limit."""
     registry = params.registry
     specs = {spec.name: spec for spec in registry.list()}
     selected: list[str] = []
@@ -1679,15 +1768,27 @@ def _select_tool_schemas(
             # list; find_capability surfaces and loads them on demand.
             continue
         selected.append(spec.name)
+    dropped = tuple(selected[params.tool_limit:])
     selected = selected[: params.tool_limit]
+
+    def describe(spec) -> str:
+        text = spec.description
+        if spec.examples:
+            samples = "\n".join(
+                json.dumps(example, ensure_ascii=False)
+                for example in spec.examples
+            )
+            text = f"{text}\n调用示例：\n{samples}"
+        return text
+
     return [
         {
             "name": specs[name].name,
-            "description": specs[name].description,
+            "description": describe(specs[name]),
             "parameters": specs[name].input_schema,
         }
         for name in selected
-    ]
+    ], dropped
 
 
 def _discovered_tool_names(value: str) -> list[str]:
@@ -1829,7 +1930,68 @@ def _pending_user_input(value: str) -> dict[str, Any] | None:
     if kind == "permission" and tool:
         pending["kind"] = "permission"
         pending["tool"] = tool
+        prefix = str(payload.get("prefix") or "").strip()[:160]
+        if prefix:
+            pending["prefix"] = prefix
     return pending
+
+
+def _permission_refusal(
+    *,
+    call: ToolCall,
+    arguments: Mapping[str, Any],
+    spec: Any,
+    allowed_effects: tuple[Effect, ...],
+    permission_mode: str,
+    permission_decisions: Any,
+) -> ToolResult | None:
+    """Return a refusal for the exact arguments about to be executed."""
+    permission_name = str(getattr(spec, "name", "") or call.name)
+    resolved_effect = spec_effect(spec, arguments)
+    if resolved_effect not in allowed_effects:
+        return ToolResult(
+            tool_call_id=call.id,
+            value=(
+                f"permission denied: tool {permission_name!r} requires effect "
+                f"{resolved_effect.value} which is not in allowed_effects "
+                f"({', '.join(effect.value for effect in allowed_effects)})"
+            ),
+            is_error=True,
+            failure_type=FailureType.PERMISSION_DENIED,
+            used_backend=None,
+            latency_ms=None,
+        )
+    mode_decision = decide_effect(permission_mode, resolved_effect)
+    if permission_decisions is not None:
+        # Thread-scoped memo (CC toolPermissionDecision): an explicit user
+        # deny beats any mode-allow; an allow upgrades an ASK only for
+        # grantable effects — dangerous classes keep asking per-mode.
+        from app.agent_runtime.permission_decisions import GRANTABLE_EFFECTS
+
+        memo = permission_decisions.lookup(permission_name)
+        if memo == "deny":
+            mode_decision = PermissionDecision.DENY
+        elif (
+            permission_decisions.allows_call(permission_name, arguments)
+            and mode_decision is PermissionDecision.ASK
+            and resolved_effect in GRANTABLE_EFFECTS
+        ):
+            mode_decision = PermissionDecision.ALLOW
+    if mode_decision is PermissionDecision.ALLOW:
+        return None
+    feedback = PermissionDecisionResult(
+        decision=mode_decision,
+        mode=PermissionMode(permission_mode),
+        effect=resolved_effect,
+    ).feedback(permission_name, arguments)
+    return ToolResult(
+        tool_call_id=call.id,
+        value=feedback,
+        is_error=True,
+        failure_type=FailureType.PERMISSION_DENIED,
+        used_backend=None,
+        latency_ms=None,
+    )
 
 
 def _execute_one(
@@ -1899,53 +2061,16 @@ def _execute_one(
             used_backend=None,
             latency_ms=None,
         )
-    resolved_effect = spec_effect(spec, call.arguments)
-    if resolved_effect not in allowed_effects:
-        return ToolResult(
-            tool_call_id=call.id,
-            value=(
-                f"permission denied: tool {call.name!r} requires effect "
-                f"{resolved_effect.value} which is not in allowed_effects "
-                f"({', '.join(effect.value for effect in allowed_effects)})"
-            ),
-            is_error=True,
-            failure_type=FailureType.PERMISSION_DENIED,
-            used_backend=None,
-            latency_ms=None,
-        )
-    mode_decision = decide_effect(permission_mode, resolved_effect)
-    if permission_decisions is not None:
-        # Thread-scoped memo (CC toolPermissionDecision): an explicit user
-        # deny beats any mode-allow; an allow upgrades an ASK only for
-        # grantable effects — dangerous classes keep asking per-mode.
-        from app.agent_runtime.permission_decisions import GRANTABLE_EFFECTS
-
-        memo = permission_decisions.lookup(call.name)
-        if memo == "deny":
-            mode_decision = PermissionDecision.DENY
-        elif (
-            memo == "allow"
-            and mode_decision is PermissionDecision.ASK
-            and resolved_effect in GRANTABLE_EFFECTS
-        ):
-            mode_decision = PermissionDecision.ALLOW
-    if mode_decision is not PermissionDecision.ALLOW:
-        from app.agent_runtime.permission_modes import PermissionMode
-
-        resolved_mode = PermissionMode(permission_mode)
-        feedback = PermissionDecisionResult(
-            decision=mode_decision,
-            mode=resolved_mode,
-            effect=resolved_effect,
-        ).feedback(call.name)
-        return ToolResult(
-            tool_call_id=call.id,
-            value=feedback,
-            is_error=True,
-            failure_type=FailureType.PERMISSION_DENIED,
-            used_backend=None,
-            latency_ms=None,
-        )
+    permission_refusal = _permission_refusal(
+        call=call,
+        arguments=call.arguments,
+        spec=spec,
+        allowed_effects=allowed_effects,
+        permission_mode=permission_mode,
+        permission_decisions=permission_decisions,
+    )
+    if permission_refusal is not None:
+        return permission_refusal
     errors = registry.validate_input(spec, call.arguments)
     if errors:
         return ToolResult(
@@ -1996,6 +2121,17 @@ def _execute_one(
                 used_backend=None,
                 latency_ms=None,
             )
+        if execution_args != call.arguments:
+            permission_refusal = _permission_refusal(
+                call=call,
+                arguments=execution_args,
+                spec=spec,
+                allowed_effects=allowed_effects,
+                permission_mode=permission_mode,
+                permission_decisions=permission_decisions,
+            )
+            if permission_refusal is not None:
+                return permission_refusal
         if execution_args != call.arguments and callable(spec.resource_keys):
             try:
                 original_resources = frozenset(

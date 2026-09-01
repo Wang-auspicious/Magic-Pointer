@@ -16,7 +16,7 @@ def test_ask_feedback_for_dangerous_effects_never_offers_a_grant():
             mode=PermissionMode.PLAN,
             effect=effect,
         ).feedback("send_email")
-        assert "ask_user_question" not in text, f"{effect} 不得出现快授通道"
+        assert "AskUser" not in text, f"{effect} 不得出现快授通道"
         assert "propose a plan" in text
 
 
@@ -33,4 +33,4 @@ def test_grantable_feedback_keeps_the_grant_channel():
         mode=PermissionMode.DEFAULT,
         effect=Effect.LOCAL_IRREVERSIBLE,
     ).feedback("run_command")
-    assert "ask_user_question" in text
+    assert "AskUser" in text

@@ -51,6 +51,7 @@ function makeOrb(seed: unknown, size = 64) {
    ============================================================ */
 
 let currentId: string | null = null;
+let currentWorkspaceRoot = '';
 
 function setTitle(text: string, seed?: unknown) {
   const title = document.getElementById('cp-title');
@@ -106,6 +107,7 @@ async function renderConversation(id: string | null) {
     return;
   }
   currentId = target.id;
+  currentWorkspaceRoot = String(target.workspaceRoot || '');
   setTitle(target.title || '未命名对话', target.objectKey || target.id);
   bindComposerToObject(target.object);
   const turns = target.turns || [];
@@ -145,6 +147,59 @@ async function renderConversation(id: string | null) {
    上下文藏起来。
    ============================================================ */
 let cpComposer: MagicPointerComposerInstance | null = null;
+let cpRequestId: string | null = null;
+let cpAgentSessionId: string | null = null;
+const cpStopGate = Composer.createInFlightGate();
+
+async function submitCompanionTurn(payload: { text: string; attachments: MagicPointerAttachment[] }) {
+  const text = String(payload.text || '').trim();
+  if (!text || cpRequestId || !currentWorkspaceRoot) return false;
+  if (payload.attachments.length) return false;
+  const requestId = globalThis.crypto?.randomUUID?.() || `companion-${Date.now()}`;
+  cpRequestId = requestId;
+  cpAgentSessionId = null;
+  cpComposer?.running(true);
+  try {
+    const response = await Data.sendConversation(
+      currentId,
+      text,
+      'workspace-write',
+      requestId,
+      currentWorkspaceRoot,
+    );
+    if (response?.ok && response.conversationId) {
+      currentId = String(response.conversationId);
+      try { await renderConversation(currentId); } catch { /* turn already persisted; keep the ack */ }
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  } finally {
+    cpRequestId = null;
+    cpAgentSessionId = null;
+    cpComposer?.running(false);
+  }
+}
+
+async function steerCompanionTurn(text: string) {
+  if (!cpAgentSessionId) return false;
+  const response = await Data.steerConversation(cpAgentSessionId, text);
+  return response?.ok === true;
+}
+
+async function stopCompanionTurn() {
+  if (!cpRequestId || !cpStopGate.tryEnter()) return false;
+  const requestId = cpRequestId;
+  try {
+    return await Composer.callAcknowledged(async () => {
+      const response = await Data.stopConversation(requestId);
+      return response?.ok === true;
+    });
+  } finally {
+    cpStopGate.leave();
+  }
+}
 
 function mountCompanionComposer() {
   const host = document.getElementById('cp-composer');
@@ -152,7 +207,10 @@ function mountCompanionComposer() {
   cpComposer = Composer.create({
     placeholder: '继续问…',
     density: 'capsule',
-    onSubmit: () => {},
+    allowAttachments: false,
+    onSubmit: (payload) => submitCompanionTurn(payload),
+    onSteer: (text) => steerCompanionTurn(text),
+    onStop: () => stopCompanionTurn(),
   });
   host.replaceChildren(cpComposer.el);
 }
@@ -186,6 +244,14 @@ document.addEventListener('click', (e) => {
 
 /* 有新一轮就重画。桥推的是「哪条对话动了」，不是整份数据。 */
 Data.onChange(() => renderConversation(currentId));
+Data.onConversationProgress((payload) => {
+  if (!cpRequestId || payload.requestId !== cpRequestId || !payload.record) return;
+  const fields = payload.record.fields && typeof payload.record.fields === 'object'
+    ? payload.record.fields as Record<string, unknown> : {};
+  if (String(payload.record.phase || '') === 'session_ready') {
+    cpAgentSessionId = String(fields.sid || '') || null;
+  }
+});
 
 /* ?empty=1 看空态 */
 if (new URLSearchParams(location.search).has('empty')) {

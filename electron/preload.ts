@@ -264,13 +264,13 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
         : {}),
       replyStyle: String(payload?.replyStyle || 'normal').trim().slice(0, 20),
       ...(String(payload?.permissionGrant || '').trim()
-        ? { permissionGrant: String(payload?.permissionGrant).trim().slice(0, 64) }
+        ? { permissionGrant: String(payload?.permissionGrant).trim().slice(0, 200) }
         : {}),
       ...(String(payload?.permissionDeny || '').trim()
-        ? { permissionDeny: String(payload?.permissionDeny).trim().slice(0, 64) }
+        ? { permissionDeny: String(payload?.permissionDeny).trim().slice(0, 200) }
         : {}),
       ...(String(payload?.permissionGrantOnce || '').trim()
-        ? { permissionGrantOnce: String(payload?.permissionGrantOnce).trim().slice(0, 64) }
+        ? { permissionGrantOnce: String(payload?.permissionGrantOnce).trim().slice(0, 200) }
         : {}),
     }),
     export: (id: unknown) => ipcRenderer.invoke('conversations:export', String(id || '').slice(0, 120)),

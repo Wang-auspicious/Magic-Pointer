@@ -868,6 +868,24 @@ DOM、COM、UIA、Fabric等现有模块也不自动保留，只优先保存经�
 
 ## 18. 进度账本
 
+### 2026-09-01：Harness UX 20 条工单 + 交叉复审（1.0.32 已交付）
+
+- [x] **P0 五项**：SSE parser → streaming backend → `LoopModelClient` → loop → bridge 真增量；EventSession 成为对话历史单一真值并只迁移一次旧 Electron 历史/去重现场证据；模型窗口按真实 family longest-prefix（含 provider-qualified id），唯一安全边际在 loop 0.8；Messages 协议最多三个 prompt-cache breakpoint、环境变量可关闭、capability/header/Studio trajectory 可见；Environment 动态注入日期、平台、绑定 workspace 和 symbolic branch。
+- [x] **P1 九项**：workspace `MAGIC_POINTER.md` 按绑定目录加载；Messages 相邻 role 合并；初始/动态 `ToolsTruncated` 在 Studio 与 Stage 都可见，remote MCP sibling 保持 deferred；模型只见 Read/Write/Edit/Patch/Bash/Rewind；`Bash(prefix)` token-boundary 授权、hook 改写后重跑最终参数权限、旧 alias canonicalize 且 deny 不绕过；Grep case/output/pagination 语义统一；examples 折进 description；backend recovery 0.5s 可中断；`/compact`/`/help` 本地执行，surface CAS 防并发覆盖，旧对话空 session 的首次 `/compact` 使用真实 force compactor。
+- [x] **P2 六项**：shared Composer running 可编辑（非空 steer、空 stop），ack 失败保留草稿且 in-flight 去重；无 voice capability 不建麦克风；Studio Escape 先消费菜单/侧栏搜索再走共享 stop，失败可重试；idle focus 不抢其他输入框；图片与八类 ≤200KiB 文本附件按提交 snapshot 发送，Companion 因无结构化附件 IPC 诚实隐藏纸夹；Unicode W/F parity 保留，真实 `estimate_messages_tokens` 对短消息集合做 64KiB 有界批扫描。
+- [x] **工单事实纠正**：P1-8 不是“匹配 MCP 最先被砍”，而是静默截断与 remote sibling 回流；P2-18 不是“不回焦点”，而是既有无条件 focus 抢走设置/搜索等输入目标。
+- [x] **多轮 code review 追加修复**：base64 padding 丢块、reasoning-only EOF 假成功、`TurnDone` 后 cleanup 双终态/usage/endpoint-health 反写、semantic recovery 重放 partial stream、custom provider cache header 误报、cache 稳定边界少上一轮 assistant、manual compact 并发覆盖、授权决策依赖模型成功才落盘/permission pending 复活、Python/Electron session id 语法不一致、Companion action IPC sender 断链、prompt cache Anthropic usage 三桶漏算与 trajectory 诊断断链等，最终专项与全 diff 审查均 **Approved**。
+- [x] **真实流式证据**：同批活网关无 UI 探针 `usedBackend=magic_pointer.messages_multiturn_streaming`，124 chunks / 409 chars，TTFT 10948.5ms、total 15480.8ms、`firstBeforeDone=true`；刻意设置 512 输出上限得到 `withheld=max_output_tokens`，如实记录而不伪装成功。
+- [x] **fresh 验证与本机交付**：ESLint 0，`git diff --check` 0（仅 LF→CRLF 提示）；`npm run sync` 内五套 typecheck、Node **180 tests / 124 source files**、Python **1710 passed / 1 个既有 Pillow warning / 274.34s**；Electron build、NSIS、blockmap、覆盖安装与重启全部退出 0。安装器 `release/sync-1.0.32-20260901-172913-14056/Magic-Pointer-1.0.32-x64.exe`（362,300,056 bytes）；开发树/安装目录版本均 1.0.32，运行进程全部来自 `%LOCALAPPDATA%\Programs\Magic Pointer\Magic Pointer.exe`。
+- [ ] **诚实人工边界**：本批没有交互式逐按钮验收 Companion send/steer/stop、搜索框 Escape、附件与 focus；安装版已启动但未让自动化操纵桌面。当前模型配置是 chat-completions，因此只验证 prompt-cache 请求状态/协议投影，不声称 Anthropic 真机 cache hit 数字。
+
+### 2026-08-31：竞品/体积/UX 审计 + loop 异常出口输入锁修复（1.0.31 已交付）
+
+- [x] **源码级审计**：当前 MP 对照 Everywhere/Clicky 四个本地 clone，并量本机安装树、最新 `win-unpacked` 与开发目录；48 条复核结论落档 `docs/research/2026-08-31-magic-pointer-competitor-footprint-ux-audit.md`。结论不是“自有代码写到 1.4GB”：安装目录 1,459,698,678 bytes 中 Python runtime 占 72.52%，`resources/app` 只占 1.81%；审计时 `release/` 的 26 份 sync staging 另占 59.0GB，本批强制交付后已新增第 27 份。
+- [x] **隐藏 P0 修复**：`run_agent_loop` 原只在正常 `LoopStopped` 调 `registry.notify_session_end()`；provider/session 异常会留下 DesktopActionSession 真实输入锁，让后续任务永久 `COMPUTER_USE_BUSY`。归还移至 public loop `finally`，正常、异常和 consumer 提前关闭都经过同一出口，异常继续原样传播。
+- [x] **验证与交付**：回归先红（正常 1 次、异常 0 次）后绿（两路各 1 次）；loop 91/91。fresh Python **1647 passed**、Node **180 passed / 124 source files**、五套 typecheck 通过；`npm run sync` 再跑全门，构建、安装、重启 **1.0.31**。独立核对安装版版本与开发树一致，安装代码含修复，运行进程来自安装目录。
+- [ ] **明确未做**：未删除 59GB 历史 staging、未把安装复制改 `/MIR`、未裁 Whisper/Torch 依赖；这些分别涉及不可逆清理或语音交付形态裁决，需按用户新约束单独确认，不能混进本批。
+
 ### 2026-08-25：阶段完成——8·25 真机事故批
 
 - [x] **普通对话桌面空转根因**（session 取证："回复 你好" 17 轮/41 次模型请求/9 个桌面工具）：系统提示 identity 无条件声称"用户在屏幕上圈选了对象"。修法：identity 与冻结帧规则改按 `has_selection`（selection_anchor/对话 object 证据）注入；`boot_loop_context` 的 model-client 行将 `runtime.selection_anchor` 传入 ctx；conversation_bridge 把非空 object 计为证据。红绿 4 测（§6 系统提示契约）。

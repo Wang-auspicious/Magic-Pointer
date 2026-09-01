@@ -33,6 +33,7 @@ def register_ask_user_question(
         options: list,
         kind: str = None,
         tool: str = None,
+        prefix: str = None,
         scope: object = None,
     ) -> str:
         normalized_question = str(question or "").strip()[:1000]
@@ -57,12 +58,12 @@ def register_ask_user_question(
         if str(kind or "").strip() == "permission" and str(tool or "").strip():
             payload["kind"] = "permission"
             payload["tool"] = str(tool).strip()[:64]
+            normalized_prefix = str(prefix or "").strip()[:160]
+            if normalized_prefix:
+                payload["prefix"] = normalized_prefix
         if ask is None:
             return json.dumps(payload, ensure_ascii=False)
-        answer = ask({
-            "question": normalized_question,
-            "options": normalized_options,
-        })
+        answer = ask(dict(payload))
         return json.dumps(dict(answer), ensure_ascii=False)
 
     return registry.register(ToolSpec(
@@ -89,6 +90,10 @@ def register_ask_user_question(
                 "tool": {
                     "type": "string",
                     "description": "kind=permission 时填被拒的工具名",
+                },
+                "prefix": {
+                    "type": "string",
+                    "description": "Bash 权限提问时填提示返回的命令前缀",
                 },
             },
             "required": ["question", "options"],

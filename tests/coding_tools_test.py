@@ -41,12 +41,36 @@ def _names(registry: ToolRegistry) -> set[str]:
     return {spec.name for spec in registry.list()}
 
 
+def _result_text(result) -> str:
+    value = result.value
+    return str(value.value if hasattr(value, "value") else value)
+
+
 # --- 工具面 ------------------------------------------------------------------
 
 
 def test_registers_the_coding_tool_surface(registry: ToolRegistry) -> None:
     names = _names(registry)
     assert {"Read", "Write", "Edit", "Glob", "Grep", "Bash"} <= names
+
+
+def test_model_visible_coding_text_uses_canonical_names_while_aliases_still_route(
+    registry: ToolRegistry,
+) -> None:
+    import json
+
+    visible = json.dumps(registry.schemas_for_model(), ensure_ascii=False)
+    aliases = {
+        "read_file": "Read",
+        "write_file": "Write",
+        "edit_file": "Edit",
+        "apply_patch": "Patch",
+        "run_command": "Bash",
+        "restore_files": "Rewind",
+    }
+    for alias, canonical in aliases.items():
+        assert alias not in visible
+        assert registry.get(alias) is registry.get(canonical)
 
 
 def test_effects_follow_the_permission_ladder(registry: ToolRegistry) -> None:
@@ -160,6 +184,120 @@ def test_grep_bounds_results(registry: ToolRegistry, ws: Path) -> None:
     result = registry.execute_tool("Grep", {"pattern": "hit", "max_results": 10})
     text = str(result.value.value if hasattr(result.value, "value") else result.value)
     assert text.count("hit") <= 12  # 10 条 + 截断说明的余量
+
+
+def test_grep_case_sensitive_identifier_search(registry: ToolRegistry, ws: Path) -> None:
+    (ws / "symbols.py").write_text("Read\nread\nREAD\n", encoding="utf-8")
+
+    insensitive = registry.execute_tool(
+        "Grep", {"pattern": "Read", "case_sensitive": False}
+    )
+    sensitive = registry.execute_tool(
+        "Grep", {"pattern": "Read", "case_sensitive": True}
+    )
+
+    assert insensitive.is_error is False
+    assert sensitive.is_error is False
+    insensitive_text = _result_text(insensitive)
+    sensitive_text = _result_text(sensitive)
+    assert insensitive_text.count("symbols.py:") == 3
+    assert sensitive_text.count("symbols.py:") == 1
+
+
+def test_grep_output_modes_page_by_unique_file(registry: ToolRegistry, ws: Path) -> None:
+    (ws / "a.txt").write_text("needle\nneedle\n", encoding="utf-8")
+    (ws / "b.txt").write_text("needle\n", encoding="utf-8")
+    (ws / "c.txt").write_text("nothing\n", encoding="utf-8")
+
+    content = registry.execute_tool(
+        "Grep", {"pattern": "needle", "output_mode": "content"}
+    )
+    files = registry.execute_tool(
+        "Grep", {"pattern": "needle", "output_mode": "files_with_matches"}
+    )
+    paged_files = registry.execute_tool(
+        "Grep",
+        {
+            "pattern": "needle",
+            "output_mode": "files_with_matches",
+            "offset": 1,
+            "max_results": 1,
+        },
+    )
+    exhausted_files = registry.execute_tool(
+        "Grep",
+        {
+            "pattern": "needle",
+            "output_mode": "files_with_matches",
+            "offset": 2,
+            "max_results": 1,
+        },
+    )
+    exhausted_content = registry.execute_tool(
+        "Grep",
+        {
+            "pattern": "needle",
+            "output_mode": "content",
+            "offset": 3,
+            "max_results": 1,
+        },
+    )
+    counts = registry.execute_tool(
+        "Grep", {"pattern": "needle", "output_mode": "count"}
+    )
+    exhausted_counts = registry.execute_tool(
+        "Grep",
+        {
+            "pattern": "needle",
+            "output_mode": "count",
+            "offset": 2,
+            "max_results": 1,
+        },
+    )
+
+    assert content.is_error is False
+    assert "a.txt:1:" in _result_text(content)
+    assert files.is_error is False
+    assert _result_text(files).splitlines() == ["a.txt", "b.txt"]
+    assert _result_text(paged_files) == "b.txt"
+    assert "page exhausted" in _result_text(exhausted_files)
+    assert "offset=2" in _result_text(exhausted_files)
+    assert "total=2 files" in _result_text(exhausted_files)
+    assert "page exhausted" in _result_text(exhausted_content)
+    assert "offset=3" in _result_text(exhausted_content)
+    assert "total=3 results" in _result_text(exhausted_content)
+    assert counts.is_error is False
+    assert _result_text(counts).splitlines() == ["a.txt: 2", "b.txt: 1"]
+    assert "page exhausted" in _result_text(exhausted_counts)
+    assert "offset=2" in _result_text(exhausted_counts)
+    assert "total=2 files" in _result_text(exhausted_counts)
+
+
+def test_grep_rg_and_python_fallback_share_output_semantics(
+    registry: ToolRegistry, ws: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import app.agent_runtime.coding_tools as coding_tools
+
+    rg_path = coding_tools.shutil.which("rg")
+    if rg_path is None:
+        pytest.skip("ripgrep is not installed on this test host")
+    (ws / "a.py").write_text("Token\ntoken\nToken\n", encoding="utf-8")
+    (ws / "b.py").write_text("Token\n", encoding="utf-8")
+
+    for output_mode in ("content", "files_with_matches", "count"):
+        arguments = {
+            "pattern": "Token",
+            "case_sensitive": True,
+            "output_mode": output_mode,
+        }
+        monkeypatch.setattr(coding_tools.shutil, "which", lambda _name: rg_path)
+        rg_result = registry.execute_tool("Grep", arguments)
+        monkeypatch.setattr(coding_tools.shutil, "which", lambda _name: None)
+        python_result = registry.execute_tool("Grep", arguments)
+
+        assert rg_result.is_error is False
+        assert python_result.is_error is False
+        assert _result_text(rg_result) == _result_text(python_result)
 
 
 # --- Bash ----------------------------------------------------------------

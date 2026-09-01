@@ -1017,6 +1017,8 @@ button {
 .mimg-skeleton,
 .mimg-skeleton::after,
 .mcard-steps li,
+.mcard-steps li::after,
+.mcard-steps .mstep-dot,
 .mfolder,
 .mfile,
 .mcard-image .mimg {
@@ -1394,10 +1396,24 @@ button {
 }
 
 .mcard-steps li {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 3px;
   animation: mstep-in 360ms cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+
+.mcard-steps li:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: 18px;
+  bottom: -10px;
+  width: 1px;
+  border-radius: 1px;
+  background: var(--hairline-strong, rgba(23, 23, 15, .16));
+  transform-origin: top;
+  animation: mstep-link-in 280ms cubic-bezier(0.32, 0.72, 0, 1) both;
 }
 
 @keyframes mstep-in {
@@ -1421,8 +1437,15 @@ button {
   stroke-width: 2;
 }
 
+.mcard-steps li[data-state="done"] .mstep-dot {
+  animation: mstep-check 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
 .mcard-steps li[data-state="pending"] .mstep-dot {
-  stroke: var(--ink-4);
+  stroke: var(--ink-3);
+  stroke-dasharray: 11 7;
+  transform-origin: center;
+  animation: mstep-spin 900ms linear infinite;
 }
 
 .mstep-label {
@@ -1442,6 +1465,27 @@ button {
   line-height: 1.5;
   color: var(--ink-3);
   overflow-wrap: anywhere;
+}
+
+.mstep-elapsed {
+  margin-left: auto;
+  font: normal 10px/1 var(--font-mono);
+  color: var(--ink-4);
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes mstep-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes mstep-check {
+  from { opacity: .25; transform: scale(.72); }
+    to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes mstep-link-in {
+  from { opacity: 0; transform: scaleY(0); }
+    to { opacity: 1; transform: scaleY(1); }
 }
 
 .mcard-steps-plumbing > summary,
@@ -11577,6 +11621,26 @@ svg {
   color: var(--dsw-alias-label-primary);
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.dsh-notice {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  padding: 2px 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.dsh-notice .dsh-dot {
+  margin-top: 5px;
+}
+
+.dsh-notice-copy {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .dsh-tool-group {

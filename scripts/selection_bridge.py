@@ -58,7 +58,7 @@ from app.governance.latency_budget import (
     TimeoutAction,
 )
 from app.model_health import read_health
-from app.text_actions.point_markers import parse_points
+from app.text_actions.point_markers import instruction_for_model, parse_points
 from app.text_actions.length_target import (
     build_instruction,
     hit_target,
@@ -810,13 +810,18 @@ def _fuse_pixel_tier(
 
 # 用户是不是在问「哪里/怎么找到」——是的话回答要能指点（[POINT]）。
 _POINTING_RE = re.compile(
-    r"指|在哪|哪里|哪儿|位置|点在|点一下|怎么找到|哪个|何处|where|point to|show me",
+    r"指给|指出|指一下|指向|在哪|哪里|哪儿|位置|点在|点一下|怎么找到|哪个|何处|where|point to|show me",
     re.IGNORECASE,
 )
 
 
 def wants_pointing(command: str) -> bool:
     return bool(_POINTING_RE.search(str(command or "")))
+
+
+def pointing_instruction_for_command(command: str, bounds: Any = None) -> str:
+    """Expose the existing Clicky marker protocol only for location questions."""
+    return instruction_for_model(bounds) if wants_pointing(command) else ""
 
 
 # 本地图片文件：用户划线指向的是一张图（资源管理器里选中、桌面上的一张
@@ -2286,6 +2291,10 @@ def _loop_router(
         "permission_mode": os.environ.get("MAGIC_POINTER_PERMISSION_MODE", "default").strip() or "default",
         "permission_preset": "",
         "reply_style": reply_style,
+        "pointing_instruction": pointing_instruction_for_command(
+            command,
+            (target_window or {}).get("bbox"),
+        ),
     }
     resident_scope = None
     try:
@@ -2386,6 +2395,7 @@ def _loop_router(
             LoopStart,
             Steered,
             ToolCallStarted,
+            ToolsTruncated,
             TurnFinished,
             TurnStarted,
         )
@@ -2395,6 +2405,16 @@ def _loop_router(
             return
         if isinstance(event, LoopStart):
             clock.mark("loop_started", session=agent_session_id)
+        elif isinstance(event, ToolsTruncated):
+            dropped_count = len(event.dropped)
+            names = ",".join(str(name) for name in event.dropped[:4])[:120]
+            clock.mark(
+                "tools_truncated",
+                count=event.limit + dropped_count,
+                limit=event.limit,
+                dropped=dropped_count,
+                names=names,
+            )
         elif isinstance(event, TurnStarted):
             clock.mark("model_request", turn=event.turn)
         elif isinstance(event, TurnFinished):
@@ -2424,7 +2444,9 @@ def _loop_router(
                 client=client,
                 allowed_effects=_agent_effect_ceiling(permission_mode),
                 permission_mode=permission_mode,
-                tool_limit=64,
+                # 33 个直连工具之外还要给一次 MCP/能力发现留余量；若真超限，
+                # loop 会发 ToolsTruncated 可见通知，不再静默让工具消失。
+                tool_limit=128,
                 precondition_context_factory=precondition_factory,
                 compactor=compactor,
                 context_budget_tokens=context_tokens,

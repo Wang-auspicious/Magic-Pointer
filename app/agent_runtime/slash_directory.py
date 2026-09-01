@@ -1,7 +1,7 @@
 """斜杠目录：作曲家 ``+`` 菜单背后的命令 + 技能清单。
 
 DSH 的 ``+`` 打开的是 input-trigger 菜单（命令 / 技能 / 子智能体分组）。
-MP 的等价物：命令只列真实现的（permission / model）；技能来自
+MP 的等价物：命令只列 bridge 真实结算的能力；技能来自
 :mod:`app.agent_runtime.skill_catalog` 的本机扫描。选中即把 ``/name `` 插入
 草稿，提交后由 :mod:`scripts.conversation_bridge.route_slash_command` 结算。
 """
@@ -18,6 +18,8 @@ SLASH_COMMANDS: dict[str, str] = {
     "model": "切换默认模型（写 secrets/model.txt，立即生效）",
     "cwd": "查看/设置编码工作区目录（coding tools 的沙箱根）",
     "rewind": "回滚 agent 对文件的最近改动（checkpoint 恢复，可带步数）",
+    "compact": "立即压缩本对话的上下文（保留结论与未完成计划，释放窗口）",
+    "help": "列出当前可用的命令、技能与工具",
 }
 
 

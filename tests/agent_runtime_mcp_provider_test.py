@@ -83,6 +83,8 @@ def test_search_lazily_connects_registers_and_reuses_mcp_tools() -> None:
 
     read = registry.get("mcp_figma_dev__get_file")
     publish = registry.get("mcp_figma_dev__publish")
+    assert read.deferred is True
+    assert publish.deferred is True
     assert read.effect is Effect.READ
     assert read.is_concurrency_safe is True
     assert read.resource_keys == ("mcp:Figma Dev",)

@@ -17,7 +17,7 @@ const DshTrajectory = (() => {
   }
   type TrajectoryNode = Element | ShimNode;
   type Child = TrajectoryNode | string | number | null | undefined;
-  type TrajectoryKind = 'system' | 'user' | 'context' | 'compacted' | 'message' | 'tool' | 'subtool';
+  type TrajectoryKind = 'system' | 'user' | 'request' | 'context' | 'compacted' | 'message' | 'tool' | 'subtool';
   interface TrajectoryRow {
     index: number;
     recordId: string;
@@ -40,11 +40,11 @@ const DshTrajectory = (() => {
   const SVG_NS = 'http://www.w3.org/2000/svg';
   const ESC: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
   const KIND_LABEL: Record<TrajectoryKind, string> = {
-    system: 'SYSTEM', user: 'USER', context: 'CONTEXT', compacted: 'COMPACTED',
+    system: 'SYSTEM', user: 'USER', request: 'REQUEST', context: 'CONTEXT', compacted: 'COMPACTED',
     message: 'ASSISTANT', tool: 'TOOL', subtool: 'SUBTOOL',
   };
   const KIND_LANE: Record<TrajectoryKind, number> = {
-    system: 0, user: 0, context: 0, compacted: 0, message: 1, tool: 2, subtool: 2,
+    system: 0, user: 0, request: 0, context: 0, compacted: 0, message: 1, tool: 2, subtool: 2,
   };
 
   function shim(tag: string): ShimNode {
@@ -117,8 +117,10 @@ const DshTrajectory = (() => {
 
   function mapStoredRecord(record: Record<string, any>, fallbackIndex: number): TrajectoryRow | null {
     const rawKind = String(record.kind || '');
-    if (rawKind === 'request-header') return null;
-    const kind = (rawKind === 'input' ? 'user' : rawKind === 'think' || rawKind === 'output' ? 'message' : rawKind) as TrajectoryKind;
+    const kind = (rawKind === 'request-header' ? 'request'
+      : rawKind === 'input' ? 'user'
+        : rawKind === 'think' || rawKind === 'output' ? 'message'
+          : rawKind) as TrajectoryKind;
     if (!Object.prototype.hasOwnProperty.call(KIND_LABEL, kind)) return null;
     const index = Math.max(1, Math.round(finite(record.seq) ?? fallbackIndex));
     const turn = Math.max(1, Math.round(finite(record.turn) ?? 1));
@@ -127,9 +129,17 @@ const DshTrajectory = (() => {
     const firstTokenAt = finite(record.firstTokenAt);
     const outputTokens = finite(record.outputTokens ?? record.tokens);
     const elapsed = duration(record);
-    const text = kind === 'tool'
-      ? String(record.text ?? record.arguments ?? '')
-      : String(record.text ?? '');
+    const text = kind === 'request'
+      ? [
+        `Prompt cache: ${record.promptCache === true
+          ? 'on'
+          : record.promptCache === false ? 'off' : 'not recorded'}`,
+        record.usedBackend ? `Backend: ${String(record.usedBackend)}` : '',
+        finite(record.maxTokens) !== undefined ? `Max tokens: ${finite(record.maxTokens)}` : '',
+      ].filter(Boolean).join(' · ')
+      : kind === 'tool'
+        ? String(record.text ?? record.arguments ?? '')
+        : String(record.text ?? '');
     return {
       index,
       recordId: recordId(kind, record, index),

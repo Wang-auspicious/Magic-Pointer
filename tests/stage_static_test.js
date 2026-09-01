@@ -97,8 +97,12 @@ assert(!css.includes('mbar'),
   'progress inside the panel is the expanding evidence stream (Vida §5.3), not a percent bar');
 assert(!css.includes('stage-orbit-dot') && !css.includes('mcard-rail'),
   'unknown progress is the expanding evidence stream now; orbit dot and rail are gone');
-assert(css.includes('width: var(--stage-work-panel-width, 560px)'));
-assert(css.includes('height: var(--stage-work-panel-height, 520px)'));
+assert(css.includes('width: var(--stage-work-panel-width, 440px)'));
+assert(css.includes('height: var(--stage-work-panel-height, 300px)'));
+assert(css.includes('.thread-eyebrow { display: none; }'),
+  'activity spine owns status; the compact header must not repeat WORKING/TASK FINISHED');
+assert(css.includes('.stage-result .mstep-fact { display: none; }'),
+  'Stage must hide internal UIA/L0 notes while the shared full card keeps diagnostics');
 assert(css.includes('.work-panel-scroller'));
 assert(!css.includes('scaleX(.045)'),
   'the process panel must appear at its final geometry');

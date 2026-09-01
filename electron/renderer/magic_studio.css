@@ -1458,6 +1458,26 @@ svg { shape-rendering: geometricPrecision; }
   word-break: break-word;
 }
 
+.dsh-notice {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  padding: 2px 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.dsh-notice .dsh-dot {
+  margin-top: 5px;
+}
+
+.dsh-notice-copy {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .dsh-tool-group {
   margin: 4px 0;
   border: 1px solid var(--dsw-alias-border-l1);

@@ -72,8 +72,8 @@ const SCENE = `(() => { try {
     panel.style.left = x + 'px';
     panel.style.top = y + 'px';
     panel.dataset.side = side;
-    panel.style.setProperty('--stage-work-panel-width', '560px');
-    panel.style.setProperty('--stage-work-panel-height', '520px');
+    panel.style.setProperty('--stage-work-panel-width', '440px');
+    panel.style.setProperty('--stage-work-panel-height', '300px');
     panel.dataset.phase = phase;
     panel.dataset.turnCount = '1';
     document.getElementById('thread-title').textContent = title;
@@ -97,7 +97,10 @@ const SCENE = `(() => { try {
       eyebrow: 'WORKING',
     });
     result.appendChild(makeTurn({
-      kind: 'prose', state: 'running', runningLabel: '正在理解选中内容',
+      kind: 'prose', state: 'running', runningLabel: '在等模型回话',
+      steps: [
+        { phase: 'model_request', label: '读取选中内容', state: 'done' },
+      ],
     }, '', true, 'pending'));
     document.getElementById('thread-followup').placeholder = '任务完成后可以继续追问';
     return 'ok ' + scene;

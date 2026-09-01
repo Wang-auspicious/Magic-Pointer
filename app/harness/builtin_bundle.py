@@ -27,7 +27,9 @@ Seam keys provided by the boot (the composition contract):
 from __future__ import annotations
 
 import os
+import platform as _platform
 from collections.abc import Callable
+from datetime import datetime as _datetime
 from pathlib import Path
 from typing import Any
 
@@ -392,15 +394,20 @@ def _apply_llm_provider(fork, config: dict[str, Any]) -> None:
 
 def _apply_model_client(fork, config: dict[str, Any]) -> None:
     """Model client + compaction services from config and the prompt seam."""
+    workspace_root = str(config.get("workspace_root") or "").strip()
     memory = MemoryLoader(
         user_dir=Path(config.get("user_data_dir") or str(_FALLBACK_ROOT)),
-        workspace_root=Path.cwd(),
+        # The packaged process cwd is the install directory, not the project
+        # bound to this turn. Using cwd made workspace MAGIC_POINTER.md
+        # invisible in the installed app.
+        workspace_root=Path(workspace_root) if workspace_root else None,
     ).load()
     user_data_dir = Path(config.get("user_data_dir") or str(_FALLBACK_ROOT))
     from app.agent_runtime.model_profiles import context_budget_for
     from app.ai_client import get_ai_config
 
-    model_name = str(get_ai_config()[2] or "")
+    _api_key, _base_url, configured_model = get_ai_config()
+    model_name = str(configured_model or "")
     context = {
         "permission_mode": str(config.get("permission_mode") or "default"),
         # 交付格式规则常驻（模型自己判断意图），不再做关键词预分类。
@@ -411,12 +418,18 @@ def _apply_model_client(fork, config: dict[str, Any]) -> None:
             command=str(config.get("command") or ""),
         ).load() or None,
         "language": "用中文",
-        "workspace_root": str(config.get("workspace_root") or "").strip(),
+        "today": _datetime.now().astimezone().strftime("%Y-%m-%d（%A）"),
+        "platform": " ".join(
+            part for part in (_platform.system(), _platform.release()) if part
+        ),
+        "workspace_root": workspace_root,
+        "git_branch": _git_branch(workspace_root),
         "permission_preset": str(config.get("permission_preset") or ""),
         "has_selection": bool(config.get("selection_anchor")),
         # 语量芯片（五档）此前只到 resolved_config 就断了：prompt context 不带
         # reply_style，Style section 永远读到 None，用户选什么模型都不知道。
         "reply_style": str(config.get("reply_style") or "normal"),
+        "pointing_instruction": str(config.get("pointing_instruction") or ""),
     }
     system_prompt = fork.get("prompt").build(context)
     provider = fork.get("llm")
@@ -434,6 +447,9 @@ def _apply_model_client(fork, config: dict[str, Any]) -> None:
             "usedBackend": str(provider.used_backend),
             "maxTokens": int(config.get("max_tokens") or 4096),
             "permissionMode": str(config.get("permission_mode") or "default"),
+            "promptCache": bool(
+                getattr(client, "prompt_cache_requested", False)
+            ),
         },
     )
 
@@ -444,9 +460,13 @@ def _apply_model_client(fork, config: dict[str, Any]) -> None:
         config.get("context_budget_tokens"),
     )
 
-    def compactor(messages):
+    def compactor(messages, *, force: bool = False):
         original = list(messages)
-        compacted = compact_messages(original, config["summarize"])
+        compacted = compact_messages(
+            original,
+            config["summarize"],
+            force=force,
+        )
         if len(compacted) >= len(original):
             return compacted
         outstanding = todo_store.format_for_injection()
@@ -614,6 +634,38 @@ def _env_int_or_none(name: str) -> int | None:
         return int(raw)
     except ValueError:
         return None
+
+
+def _git_branch(root: str) -> str:
+    """Read a symbolic branch from ``.git/HEAD`` without spawning git.
+
+    A project may itself be a linked git worktree, where ``.git`` is a text
+    pointer rather than a directory; that is a supported workspace shape, so
+    resolve the pointer before reading HEAD. Detached HEADs stay unnamed.
+    """
+    value = str(root or "").strip()
+    if not value:
+        return ""
+    try:
+        project = Path(value).expanduser()
+        marker = project / ".git"
+        if marker.is_dir():
+            git_dir = marker
+        elif marker.is_file():
+            line = marker.read_text(encoding="utf-8").strip()
+            if not line.casefold().startswith("gitdir:"):
+                return ""
+            target = line.split(":", 1)[1].strip()
+            git_dir = Path(target)
+            if not git_dir.is_absolute():
+                git_dir = project / git_dir
+        else:
+            return ""
+        head = (git_dir / "HEAD").read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeError, ValueError):
+        return ""
+    prefix = "ref: refs/heads/"
+    return head[len(prefix):].strip() if head.startswith(prefix) else ""
 
 
 def _user_plugin_dir(root: Path) -> Path:
@@ -793,6 +845,7 @@ def _run_loop_rows(runtime: dict[str, Any], root: Path) -> list[BundleRow]:
                 "workspace_root": str(runtime.get("workspace_root") or ""),
                 "permission_preset": str(runtime.get("permission_preset") or ""),
                 "reply_style": str(runtime.get("reply_style") or "normal"),
+                "pointing_instruction": str(runtime.get("pointing_instruction") or ""),
                 # Stage 常驻路径与 boot_loop_context 同规则：圈选证据存在
                 # 与否决定身份与冻结帧规则是否注入。
                 "selection_anchor": runtime.get("selection_anchor"),
@@ -959,6 +1012,7 @@ def boot_loop_context(
                 "workspace_root": str(runtime.get("workspace_root") or ""),
                 "permission_preset": str(runtime.get("permission_preset") or ""),
                 "reply_style": str(runtime.get("reply_style") or "normal"),
+                "pointing_instruction": str(runtime.get("pointing_instruction") or ""),
                 # 圈选证据（selection_anchor / object）存在与否决定身份与
                 # 冻结帧规则是否注入：普通文本对话不谎称有圈选对象。
                 "selection_anchor": runtime.get("selection_anchor"),

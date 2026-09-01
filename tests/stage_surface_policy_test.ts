@@ -8,7 +8,7 @@ const {
 } = require('../electron/stage_surface_policy');
 
 assert.deepStrictEqual(COMPOSER_SIZE, { width: 480, height: 132 });
-assert.deepStrictEqual(WORK_PANEL_SIZE, { width: 560, height: 520 });
+assert.deepStrictEqual(WORK_PANEL_SIZE, { width: 440, height: 300 });
 
 assert.deepStrictEqual(
   surfaceSize('composer', { width: 1920, height: 1080 }),
@@ -22,7 +22,7 @@ assert.deepStrictEqual(
 );
 assert.deepStrictEqual(
   surfaceSize('work-panel', { width: 420, height: 360 }),
-  { width: 404, height: 344 },
+  { width: 404, height: 300 },
   'small screens may clamp a surface once, but content must not resize it',
 );
 

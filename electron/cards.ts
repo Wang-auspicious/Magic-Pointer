@@ -103,6 +103,7 @@ const CardModel = (() => {
     steer_absorbed: '你的插话已吸收',
     followup_continued: '按你的补充继续跑',
     backend_recovery: '模型端点抖动，等待恢复后重试',
+    tools_truncated: '工具太多，本轮只加载一部分',
     action_planned: '排好了要做的事',
     action_executed: '做完了',
     verify: '回读确认',
@@ -143,6 +144,10 @@ const CardModel = (() => {
     else if (fields.recipe) note = String(fields.recipe);
     else if (fields.tier) note = String(fields.tier);
     else if (fields.name) note = String(fields.name);
+    else if (phase === 'tools_truncated' && fields.count && fields.limit) {
+      note = `${fields.count} 个 · 上限 ${fields.limit}`;
+      if (fields.names) note += ` · ${fields.names}`;
+    }
     // 长任务的真实步数（O5）：轮数由 loop 事件携带，不是 TYPICAL_PHASES 的
     // 估计。100 步和 3 步的任务在卡上必须读得出差别。
     const round = Number(fields.turn);

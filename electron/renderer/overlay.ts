@@ -116,10 +116,6 @@ function onElementGhosts(payload: Record<string, unknown> | null | undefined) {
     box.style.height = `${rect.height}px`;
     box.style.setProperty('--ghost-delay', `${Number((ghost as { delayMs?: unknown }).delayMs) || 0}ms`);
     box.style.setProperty('--ghost-total', `${total}ms`);
-    const tag = document.createElement('span');
-    tag.className = 'element-ghost-tag';
-    tag.textContent = String((ghost as { ref?: unknown }).ref || '');
-    box.appendChild(tag);
     ghostLayer.appendChild(box);
   }
   ghostLayer.hidden = false;

@@ -188,6 +188,11 @@ class McpToolProvider:
             used_backend=f"mcp:{tool.server}",
             timeout_ms=max(1000, int(self.timeout * 1000)),
             resource_keys=(f"mcp:{tool.server}",),
+            # mcp_search returns matching names through the loop's
+            # ``extra_names`` channel. Keeping every discovered sibling out
+            # of the default surface prevents one search from exploding the
+            # next prompt and preserves the stable tool-cache prefix.
+            deferred=True,
         )
         try:
             registry.register(spec)

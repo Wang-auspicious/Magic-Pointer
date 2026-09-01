@@ -26,6 +26,7 @@ import re
 import sys
 import time
 import uuid
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -116,8 +117,26 @@ class _ConversationActivitySink:
     #: 流式正文增量的节流窗口：太密会淹没 stderr，太久会让用户看着空屏。
     CHUNK_FLUSH_INTERVAL_S = 0.12
 
-    def __init__(self, clock: PhaseClock) -> None:
+    def __init__(
+        self,
+        clock: PhaseClock,
+        request_header: Mapping[str, Any] | None = None,
+    ) -> None:
         self.clock = clock
+        raw_header = request_header if isinstance(request_header, Mapping) else {}
+        try:
+            max_tokens = max(0, int(raw_header.get("maxTokens") or 0))
+        except (TypeError, ValueError):
+            max_tokens = 0
+        self._request_header = {
+            "promptCache": bool(raw_header.get("promptCache")),
+            **(
+                {"usedBackend": str(raw_header.get("usedBackend") or "")[:160]}
+                if str(raw_header.get("usedBackend") or "").strip()
+                else {}
+            ),
+            **({"maxTokens": max_tokens} if max_tokens else {}),
+        }
         self.activities: list[dict[str, Any]] = []
         self.trajectory: list[dict[str, Any]] = []
         self._active_model: dict[str, Any] | None = None
@@ -125,35 +144,37 @@ class _ConversationActivitySink:
         self._tools: dict[str, dict[str, Any]] = {}
         self._trajectory_tools: dict[str, dict[str, Any]] = {}
         self._first_chunk_seen = False
-        self._pending_chunk_b64: list[str] = []
+        self._pending_chunk_text: list[str] = []
         self._last_chunk_flush = 0.0
         # 思考流（reasoning）：trajectory message record 逐轮累计 + 进度行
         # 边想边画；turn_reasoning 供终态载荷的 thinking 字段（Think 行）。
-        self._pending_reasoning_b64: list[str] = []
+        self._pending_reasoning_text: list[str] = []
         self._last_reasoning_flush = 0.0
         self.turn_reasoning: list[str] = []
 
     def _flush_answer_chunks(self) -> None:
-        if not self._pending_chunk_b64:
+        if not self._pending_chunk_text:
             return
-        blob = "".join(self._pending_chunk_b64)
-        self._pending_chunk_b64.clear()
+        text = "".join(self._pending_chunk_text)
+        self._pending_chunk_text.clear()
+        blob = base64.b64encode(text.encode("utf-8")).decode("ascii")
         self._last_chunk_flush = time.perf_counter()
         try:
             self.clock.mark_blob("answer_chunk", blob)
         except Exception:  # noqa: BLE001 - 流式展示永远不能弄坏回合本身
-            self._pending_chunk_b64.clear()
+            self._pending_chunk_text.clear()
 
     def _flush_reasoning_chunks(self) -> None:
-        if not self._pending_reasoning_b64:
+        if not self._pending_reasoning_text:
             return
-        blob = "".join(self._pending_reasoning_b64)
-        self._pending_reasoning_b64.clear()
+        text = "".join(self._pending_reasoning_text)
+        self._pending_reasoning_text.clear()
+        blob = base64.b64encode(text.encode("utf-8")).decode("ascii")
         self._last_reasoning_flush = time.perf_counter()
         try:
             self.clock.mark_blob("reasoning_chunk", blob)
         except Exception:  # noqa: BLE001 - 流式展示永远不能弄坏回合本身
-            self._pending_reasoning_b64.clear()
+            self._pending_reasoning_text.clear()
 
     def _append_record(self, record: dict[str, Any]) -> dict[str, Any]:
         record["seq"] = len(self.trajectory) + 1
@@ -164,6 +185,20 @@ class _ConversationActivitySink:
         kind = str(getattr(event, "kind", ""))
         if kind == "loop_start":
             self.clock.mark("agent_start")
+            return
+        if kind == "tools_truncated":
+            dropped = tuple(str(name) for name in getattr(event, "dropped", ()) if str(name))
+            limit = int(getattr(event, "limit", 0) or 0)
+            self._append_record({
+                "kind": "notice",
+                "state": "done",
+                "text": (
+                    f"已注册 {limit + len(dropped)} 个工具，超过本轮上限 {limit}；"
+                    "本轮未暴露："
+                    + "、".join(dropped)
+                    + "。需要时可用 Tools 搜索加载。"
+                ),
+            })
             return
         if kind == "turn_started":
             self._flush_answer_chunks()
@@ -176,6 +211,7 @@ class _ConversationActivitySink:
                 "turn": turn,
                 "step": turn,
                 "startedAt": started_ms,
+                **self._request_header,
             })
             self._active_message = self._append_record({
                 "kind": "message",
@@ -209,9 +245,7 @@ class _ConversationActivitySink:
                     self._active_message["firstTokenAt"] = at_ms
             if text:
                 # Studio 流式正文：增量 base64 上线，渲染层边收边画。
-                self._pending_chunk_b64.append(
-                    base64.b64encode(text.encode("utf-8")).decode("ascii")
-                )
+                self._pending_chunk_text.append(text)
                 if time.perf_counter() - self._last_chunk_flush >= self.CHUNK_FLUSH_INTERVAL_S:
                     self._flush_answer_chunks()
             return
@@ -225,9 +259,7 @@ class _ConversationActivitySink:
                 self._active_message["reasoning"] = (
                     str(self._active_message.get("reasoning") or "") + text
                 )
-            self._pending_reasoning_b64.append(
-                base64.b64encode(text.encode("utf-8")).decode("ascii")
-            )
+            self._pending_reasoning_text.append(text)
             if time.perf_counter() - self._last_reasoning_flush >= self.CHUNK_FLUSH_INTERVAL_S:
                 self._flush_reasoning_chunks()
             return
@@ -478,6 +510,7 @@ def route_slash_command(prompt: str, catalog) -> dict | None:
 
     - ``/permission [preset]``：无参列出可用预设；有参校验后交渲染层落芯片；
     - ``/model [id]``：走 :func:`app.models_catalog.select_model` 真实写配置；
+    - ``/compact`` / ``/help``：只返回延后命令，runtime 启动后执行；
     - 已知 skill：返回剥离 frontmatter 的正文，由回合注入为指令；
     - 未知名：不是命令，返回 None（按普通问题走模型）。
     """
@@ -487,6 +520,11 @@ def route_slash_command(prompt: str, catalog) -> dict | None:
     name, _, rest = text[1:].partition(" ")
     if name in SLASH_COMMANDS:
         args = rest.strip()
+        if name in {"compact", "help"}:
+            return {
+                "ok": True,
+                "command": {"type": name},
+            }
         if name == "permission":
             from app.agent_runtime.permission_presets import PRESETS
 
@@ -577,27 +615,77 @@ def route_slash_command(prompt: str, catalog) -> dict | None:
     return None
 
 
-def _history_text(turns: list[dict[str, Any]], obj: dict[str, Any]) -> str:
+def _help_text(catalog, registry) -> str:
+    commands = "\n".join(
+        f"/{name} — {description}"
+        for name, description in SLASH_COMMANDS.items()
+    )
+    skills = catalog.list_skills()
+    skill_lines = "\n".join(
+        f"/{row['name']} — {row['description']}"
+        for row in skills
+    ) or "（当前没有可由用户调用的技能）"
+    tool_names = "、".join(spec.name for spec in registry.list()) or "（无）"
+    return (
+        "可用命令：\n"
+        f"{commands}\n\n"
+        "可用技能：\n"
+        f"{skill_lines}\n\n"
+        "当前 Runtime 工具：\n"
+        f"{tool_names}"
+    )
+
+
+def _object_label_text(obj: dict[str, Any]) -> str:
     object_label = " · ".join(
         str(obj.get(key) or "").strip() for key in ("app", "windowTitle", "label")
         if str(obj.get(key) or "").strip()
     )
-    chunks = [f"当前对象：{object_label}"] if object_label else []
+    return f"当前对象：{object_label}" if object_label else ""
+
+
+_SCENE_EVIDENCE_ID_RE = re.compile(r"\[scene-evidence:([0-9a-f]{16})\]")
+
+
+def _scene_evidence_id(evidence: dict[str, Any]) -> str:
+    identity = {
+        key: str(evidence.get(key) or "").strip()
+        for key in ("capturePath", "annotatedPath", "label", "contentDigest")
+    }
+    return hashlib.sha256(
+        json.dumps(identity, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()[:16]
+
+
+def _scene_evidence_ids(messages) -> set[str]:
+    ids: set[str] = set()
+    for message in messages or ():
+        ids.update(_SCENE_EVIDENCE_ID_RE.findall(str(message.content or "")))
+    return ids
+
+
+def _selection_evidence_text(
+    turns: list[dict[str, Any]],
+    *,
+    exclude_ids: set[str] | frozenset[str] = frozenset(),
+) -> str:
+    """Retain per-turn selection facts that EventSession messages do not own."""
+    chunks: list[str] = []
     for index, turn in enumerate(turns[-MAX_TURNS:], 1):
-        question = str(turn.get("question") or "").strip()[:2000]
-        answer = str(turn.get("answer") or "").strip()[:4000]
-        if question:
-            chunks.append(f"用户：{question}")
-        if answer:
-            chunks.append(f"助手：{answer}")
         # 划线轮次的现场证据随轮持久化：截图存档路径 + 当时读到的内容。
         # 没有它，几分钟后的追问就接不上那次圈选（证据早已出上下文）。
         evidence = turn.get("evidence") if isinstance(turn.get("evidence"), dict) else None
         if evidence:
+            evidence_id = _scene_evidence_id(evidence)
+            if evidence_id in exclude_ids:
+                continue
             label = str(evidence.get("label") or "").strip()
             capture = str(evidence.get("capturePath") or "").strip()
             annotated = str(evidence.get("annotatedPath") or "").strip()
-            head = f"[第{index}轮现场证据]{f' 对象：{label}' if label else ' '}"
+            head = (
+                f"[第{index}轮现场证据] [scene-evidence:{evidence_id}]"
+                f"{f' 对象：{label}' if label else ' '}"
+            )
             paths = "；".join(
                 part for part in (
                     f"截图存档：{capture}" if capture else "",
@@ -611,15 +699,39 @@ def _history_text(turns: list[dict[str, Any]], obj: dict[str, Any]) -> str:
     return "\n\n".join(chunks)
 
 
-class _HistoryPerceptionBackend:
-    """PerceptionBackend over the recorded conversation history + live windows.
+def _history_text(turns: list[dict[str, Any]], obj: dict[str, Any]) -> str:
+    """Legacy Electron history projection used only for first attachment.
 
-    The history is the only local evidence a Studio follow-up owns; window
-    enumeration is real and lets the agent look at what is actually on screen.
+    Established EventSessions already project their lossless user/assistant
+    messages through ``derive_messages()``; injecting this truncated copy on
+    every turn would duplicate and sometimes contradict that durable truth.
+    """
+    chunks = [text for text in (_object_label_text(obj),) if text]
+    for turn in turns[-MAX_TURNS:]:
+        question = str(turn.get("question") or "").strip()[:2000]
+        answer = str(turn.get("answer") or "").strip()[:4000]
+        if question:
+            chunks.append(f"用户：{question}")
+        if answer:
+            chunks.append(f"助手：{answer}")
+    scene_evidence = _selection_evidence_text(turns)
+    if scene_evidence:
+        chunks.append(scene_evidence)
+    return "\n\n".join(chunks)
+
+
+class _HistoryPerceptionBackend:
+    """PerceptionBackend over saved object/scene evidence + live windows.
+
+    Durable user/assistant/tool history stays on EventSession's model surface;
+    this backend only exposes evidence not represented by those messages.
     """
 
     def __init__(self, history: str) -> None:
         self._content = history
+
+    def set_content(self, history: str) -> None:
+        self._content = str(history or "")
 
     def read_around(self, anchor: str, radius: int) -> list[dict]:
         if not self._content.strip():
@@ -669,28 +781,53 @@ class _HistoryPerceptionBackend:
 
 
 def _tool_names(value: Any) -> tuple[str, ...]:
-    """Bare tool names from a bridge payload list; anything else is dropped.
+    """Canonical tool names or bounded ``Bash(prefix)`` grant rules.
 
     A grant becomes a permission decision, so the shape is checked here rather
-    than trusted: a name that is not a plain identifier can never match a
-    registered tool and would only widen the memo with noise.
+    than trusted. Free-form strings never widen the thread permission memo.
     """
     if not isinstance(value, (list, tuple)):
         return ()
     names: list[str] = []
     for item in list(value)[:64]:
         name = str(item or "").strip()
-        if name and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", name):
+        bare_name = re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", name)
+        bash_rule = re.fullmatch(r"Bash\(([^()\r\n]{1,160})\)", name)
+        if bare_name or (bash_rule and bash_rule.group(1).strip()):
             names.append(name)
     return tuple(dict.fromkeys(names))
 
 
-def _build_permission_decisions(grants, denials, once):
-    """Thread-scoped memo (CC toolPermissionDecision); empty → None."""
+def _build_permission_decisions(grants, denials, once, *, registry=None):
+    """Thread memo normalized to tools that exist on this runtime surface."""
     from app.agent_runtime.permission_decisions import PermissionDecisions
 
-    allowed = tuple(grants or ()) + tuple(once or ())
-    denied = tuple(denials or ())
+    def canonical(values) -> tuple[str, ...]:
+        normalized: list[str] = []
+        for value in values or ():
+            rule = str(value or "").strip()
+            if not rule:
+                continue
+            if registry is None:
+                normalized.append(rule)
+                continue
+            if re.fullmatch(r"Bash\(([^()\r\n]{1,160})\)", rule):
+                try:
+                    registry.get("Bash")
+                except KeyError:
+                    continue
+                normalized.append(rule)
+                continue
+            name = registry.canonical_name(rule)
+            try:
+                registry.get(name)
+            except KeyError:
+                continue
+            normalized.append(name)
+        return tuple(dict.fromkeys(normalized))
+
+    allowed = canonical(tuple(grants or ()) + tuple(once or ()))
+    denied = canonical(denials)
     if not allowed and not denied:
         return None
     return PermissionDecisions(allowed=allowed, denied=denied)
@@ -753,12 +890,26 @@ def answer_conversation(
     except KeyError:
         return {"ok": False, "error": f"未知权限预设：{permission_preset}（可用：{', '.join(PRESETS)}）"}
 
+    from app.agent_runtime.workspace_state import read_workspace
+
+    resolved_workspace = str(read_workspace(ROOT))
+    explicit_workspace = str(workspace_root or "").strip()
+    if explicit_workspace:
+        candidate = Path(explicit_workspace).expanduser()
+        if not candidate.is_dir():
+            return {
+                "ok": False,
+                "error": f"工作区目录不存在：{explicit_workspace}",
+            }
+        resolved_workspace = str(candidate.resolve())
+
     # 斜杠管线：命令直接结算；skill 正文作为本回合指令注入（DSH pre-step 同款）。
     from app.agent_runtime.skill_catalog import SkillCatalog
 
-    catalog = SkillCatalog(project_root=ROOT, user_home=Path.home())
+    catalog = SkillCatalog(project_root=Path(resolved_workspace), user_home=Path.home())
     routed = route_slash_command(prompt, catalog=catalog)
     agent_prompt = prompt
+    deferred_command: str | None = None
     if routed is not None:
         if routed.get("ok") is not True:
             return routed
@@ -767,10 +918,25 @@ def answer_conversation(
                 f"<<<SKILL:{routed['command']['name']}>>>\n{routed['injectedInstruction']}\n<<<END SKILL>>>\n\n"
                 f"{routed.get('rest') or '按上面的 skill 执行。'}"
             )
+        elif routed["command"]["type"] in {"compact", "help"}:
+            deferred_command = str(routed["command"]["type"])
         else:
             return routed
 
-    history = _history_text(turns if isinstance(turns, list) else [], obj if isinstance(obj, dict) else {})
+    safe_turns = turns if isinstance(turns, list) else []
+    safe_obj = obj if isinstance(obj, dict) else {}
+    legacy_history = _history_text(safe_turns, safe_obj)
+    legacy_evidence = (
+        f"[旧对话首次迁移]\n{legacy_history}"
+        if safe_turns and legacy_history.strip()
+        else ""
+    )
+    current_evidence = "\n\n".join(
+        text for text in (
+            _object_label_text(safe_obj),
+            _selection_evidence_text(safe_turns),
+        ) if text
+    )
     window = obj if isinstance(obj, dict) else {}
 
     def _identity_transform(_command: str, context_text: str, _recipe_id: str) -> str:
@@ -798,8 +964,12 @@ def answer_conversation(
             "plan": planned["plan"],
         }
 
+    history_backend = _HistoryPerceptionBackend(current_evidence)
     runtime: dict[str, Any] = {
-        "perception_backend": _HistoryPerceptionBackend(history),
+        # Durable user/assistant messages live in EventSession. Perception and
+        # local context retain only object/scene facts so an established
+        # session cannot rediscover a truncated duplicate history via tools.
+        "perception_backend": history_backend,
         "vision_backend": None,          # no frozen frame → look is honest unsupported
         "frame_crop": None,
         "guard_probe": None,             # fail-closed: no selection anchor
@@ -810,7 +980,7 @@ def answer_conversation(
         "execute_plan": None,
         "enabled_recipes": None,
         "summarize": lambda text: _summarize_history(text),
-        "content": history,
+        "content": current_evidence,
         "capture_path": "",
         "target_window": {
             "title": str(window.get("windowTitle") or ""),
@@ -820,13 +990,11 @@ def answer_conversation(
         "reply_style": reply_style,
     }
 
-    from app.agent_runtime.workspace_state import read_workspace
-
     # 后台 job 完成推送（Hermes notify_on_complete）：cell 先进 runtime，
     # durable session 打开后回填真正的 enqueue 回调。
     inbox_cell: dict[str, Any] = {"fn": None}
     runtime["session_inbox"] = lambda text: (inbox_cell["fn"] or (lambda _t: None))(text)
-    runtime["workspace_root"] = str(read_workspace(ROOT))
+    runtime["workspace_root"] = resolved_workspace
     runtime["permission_mode"] = mode.value
     runtime["permission_preset"] = permission_preset
     # Codex thread workspace_roots: the conversation carries its own
@@ -834,21 +1002,20 @@ def answer_conversation(
     # request only. The profile default is written by /cwd, never silently
     # by a chip pick (a chip pick used to rewrite workspace.txt globally,
     # leaking this thread's choice into every other conversation).
-    explicit_workspace = str(workspace_root or "").strip()
-    if explicit_workspace:
-        candidate = Path(explicit_workspace).expanduser()
-        if not candidate.is_dir():
-            return {
-                "ok": False,
-                "error": f"工作区目录不存在：{explicit_workspace}",
-            }
-        runtime["workspace_root"] = str(candidate.resolve())
-
     conversation_clock.mark("runtime_boot")
     report = boot_loop_context(runtime, root=ROOT)
     conversation_clock.mark("runtime_ready")
     ctx = report.ctx
     registry = ctx.get("tools")
+    if deferred_command == "help":
+        return {
+            "ok": True,
+            "answer": _help_text(catalog, registry),
+            "command": {"type": "help"},
+            "usedBackend": "agent_runtime.slash_help",
+            "permissionPreset": permission_preset,
+            "timingMs": conversation_clock.total("total", ok=1),
+        }
     client = ctx.get("model_client")
     compactor = ctx.get("compactor")
     token_estimator = ctx.get("token_estimator")
@@ -885,9 +1052,6 @@ def answer_conversation(
             "继续执行；每做完一步调用 todo_write 把该步标为 completed、"
             "正在做的标为 in_progress。全部完成后正常给出最终回答。"
         )
-
-
-    evidence = f"[本次对话历史]\n{history}" if history.strip() else ""
     try:
         resolved_session_id = resolve_agent_session_id(
             explicit=agent_session_id,
@@ -896,6 +1060,94 @@ def answer_conversation(
         # 渲染层由此拿到停止/插话要指向的 durable session（Studio stop/steer）。
         emit_session_ready(conversation_clock, resolved_session_id)
         agent_session = sessions.open_or_create(resolved_session_id, repair=True)
+        if deferred_command == "compact":
+            session_messages, compact_surface_hash = agent_session.surface_snapshot()
+            if not session_messages and legacy_evidence:
+                from app.agent_runtime.types import ORIGIN_DATA, AgentMessage, Role
+
+                agent_session.append_message(AgentMessage(
+                    role=Role.USER,
+                    content=legacy_evidence,
+                    tool_call_id=None,
+                    name=None,
+                    origin=ORIGIN_DATA,
+                    injected=True,
+                ))
+                session_messages, compact_surface_hash = agent_session.surface_snapshot()
+        else:
+            session_messages = agent_session.derive_messages()
+            compact_surface_hash = ""
+        if deferred_command == "compact":
+            before_count = len(session_messages)
+            before_tokens = int(token_estimator(session_messages))
+            compacted_messages = list(compactor(list(session_messages), force=True))
+            after_count = len(compacted_messages)
+            after_tokens = int(token_estimator(compacted_messages))
+            if after_tokens < before_tokens:
+                replacement = agent_session.replace_messages_if_unchanged(
+                    compacted_messages,
+                    expected_surface_hash=compact_surface_hash,
+                    reason="manual_compaction",
+                )
+                if replacement is None:
+                    answer = (
+                        "未替换：压缩期间对话收到新消息或仍有回合在运行，"
+                        "请等当前回合结束后再试。"
+                    )
+                else:
+                    answer = (
+                        f"已压缩：{before_count} 条消息 → {after_count} 条，"
+                        f"估算 token {before_tokens} → {after_tokens}"
+                        f"（减少 {before_tokens - after_tokens}）。"
+                    )
+            else:
+                answer = (
+                    "未替换：压缩后估算 token 未下降"
+                    f"（{before_tokens} → {after_tokens}，"
+                    f"{before_count} 条消息 → {after_count} 条）。"
+                )
+            return {
+                "ok": True,
+                "answer": answer,
+                "command": {"type": "compact"},
+                "usedBackend": "agent_runtime.compactor",
+                "permissionPreset": permission_preset,
+                "timingMs": conversation_clock.total("total", ok=1),
+                "agentSessionId": resolved_session_id,
+                "hasPendingWork": bool(
+                    getattr(agent_session, "has_pending_work", lambda: False)()
+                ),
+            }
+
+        # EventSession already carries lossless user/assistant/tool messages.
+        # Only an old Electron conversation attaching to an empty Agent
+        # session gets the legacy full-history projection, once. Every
+        # established turn retains just the object label and saved selection
+        # evidence that the Agent session itself does not own.
+        first_legacy_attachment = not session_messages and bool(safe_turns)
+        if first_legacy_attachment:
+            evidence_body = legacy_history
+        else:
+            fresh_scene_evidence = _selection_evidence_text(
+                safe_turns,
+                exclude_ids=_scene_evidence_ids(session_messages),
+            )
+            evidence_body = "\n\n".join(
+                text for text in (
+                    _object_label_text(safe_obj),
+                    fresh_scene_evidence,
+                ) if text
+            )
+        history_backend.set_content(evidence_body)
+        evidence = (
+            legacy_evidence
+            if first_legacy_attachment
+            else (
+                f"[本轮对象与现场证据]\n{evidence_body}"
+                if evidence_body.strip()
+                else ""
+            )
+        )
         inbox_cell["fn"] = lambda text: agent_session.enqueue_inbox(text, "next-step")
         # Harness-v2 resume: if the previous turn ended unfinished, surface
         # the breakpoint on this send. One-shot by construction — this turn
@@ -909,7 +1161,10 @@ def answer_conversation(
             )
         except Exception:
             continuation_block = ""
-        activity_sink = _ConversationActivitySink(conversation_clock)
+        activity_sink = _ConversationActivitySink(
+            conversation_clock,
+            request_header=request_header,
+        )
         from app.agent_runtime.session import cancel_interrupt_check
 
         terminal = run_agent_turn(
@@ -919,7 +1174,9 @@ def answer_conversation(
             client=client,
             allowed_effects=_effect_ceiling(mode.value),
             permission_mode=mode.value,
-            tool_limit=64,
+            # Keep headroom for the direct coding/desktop surface plus MCP
+            # tools; any real overflow is surfaced as ToolsTruncated notice.
+            tool_limit=128,
             precondition_context_factory=precondition_factory,
             compactor=compactor,
             context_budget_tokens=context_tokens,
@@ -943,7 +1200,10 @@ def answer_conversation(
             # 之后，进度就只剩摘要模型记得住多少。
             todo_store=todo_store,
             permission_decisions=_build_permission_decisions(
-                permission_grants, permission_denials, permission_grant_once
+                permission_grants,
+                permission_denials,
+                permission_grant_once,
+                registry=registry,
             ),
             # 超大工具结果全文落盘 <workspace>/.mp/tool-results（与 .mp/backups
             # 并列），模型拿预览+绝对路径，可用 read_file 分页回读。

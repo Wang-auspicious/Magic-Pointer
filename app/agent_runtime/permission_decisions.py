@@ -13,13 +13,17 @@ be able to mint invariant ④⑤⑥ authority. An explicit deny always wins.
 
 from __future__ import annotations
 
+import re
+from collections.abc import Mapping
 from dataclasses import dataclass
+from typing import Any
 
 from app.agent_runtime.tool_registry import Effect
 
 __all__ = ["PermissionDecisions", "GRANTABLE_EFFECTS"]
 
 GRANTABLE_EFFECTS = frozenset({Effect.LOCAL_IRREVERSIBLE})
+_UNSAFE_PREFIX_COMMAND = re.compile(r"[|&;<>`]|\$\(|[\r\n]")
 
 
 @dataclass(frozen=True)
@@ -39,6 +43,43 @@ class PermissionDecisions:
         if name in self.allowed:
             return "allow"
         return None
+
+    def allows_call(
+        self,
+        tool_name: str,
+        arguments: Mapping[str, Any],
+    ) -> bool:
+        """Allow a whole tool or a bounded ``Bash(<prefix>)`` rule.
+
+        Prefix rules apply only to Bash and only on a clean command token
+        boundary. Shell chaining, substitution, redirection, and multiline
+        input never inherit a prefix grant; the user is asked again instead.
+        """
+        name = str(tool_name or "").strip()
+        if not name or name in self.denied:
+            return False
+        if name in self.allowed:
+            return True
+        if name != "Bash":
+            return False
+        command = str((arguments or {}).get("command") or "").strip()
+        if not command or _UNSAFE_PREFIX_COMMAND.search(command):
+            return False
+        marker = f"{name}("
+        for rule in self.allowed:
+            value = str(rule or "").strip()
+            if not value.startswith(marker) or not value.endswith(")"):
+                continue
+            prefix = value[len(marker):-1].strip()
+            if not prefix or _UNSAFE_PREFIX_COMMAND.search(prefix):
+                continue
+            if command == prefix:
+                return True
+            if command.startswith(prefix):
+                suffix = command[len(prefix):]
+                if suffix and suffix[0].isspace():
+                    return True
+        return False
 
     @staticmethod
     def from_allowed(value) -> "PermissionDecisions | None":

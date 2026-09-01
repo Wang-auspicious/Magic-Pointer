@@ -193,6 +193,12 @@ def _event_hash(payload_without_hash: Mapping[str, Any]) -> str:
     return hashlib.sha256(_canonical_bytes(payload_without_hash)).hexdigest()
 
 
+def _surface_hash(messages: Sequence[AgentMessage]) -> str:
+    return hashlib.sha256(
+        _canonical_bytes([message.to_dict() for message in messages])
+    ).hexdigest()
+
+
 class EventSession:
     """One local append-only JSONL session and its model-surface projection."""
 
@@ -266,12 +272,20 @@ class EventSession:
         """
         return copy.deepcopy(self._surface)
 
+    def surface_snapshot(self) -> tuple[list[AgentMessage], str]:
+        """Atomically refresh and snapshot the current model surface."""
+        with self._lock, self._file_lock():
+            self._refresh_from_disk()
+            snapshot = copy.deepcopy(self._surface)
+            return snapshot, _surface_hash(snapshot)
+
     def append(
         self,
         event_type: str,
         data: Mapping[str, Any],
         *,
         surface_op: str | None = None,
+        expected_surface_hash: str | None = None,
     ) -> SessionEvent:
         if not event_type or not isinstance(event_type, str):
             raise ValueError("session event type must be a non-empty string")
@@ -280,6 +294,15 @@ class EventSession:
         data_snapshot = _snapshot_json(dict(data))
         with self._lock, self._file_lock():
             self._refresh_from_disk()
+            if expected_surface_hash is not None:
+                if self.open_turn is not None:
+                    raise ModelSurfaceMismatch(
+                        "model surface changed while a turn is open"
+                    )
+                if _surface_hash(self._surface) != expected_surface_hash:
+                    raise ModelSurfaceMismatch(
+                        "model surface changed since the caller snapshot"
+                    )
             if event_type == "session/created" and self._events:
                 raise FileExistsError(f"session {self.id!r} already exists")
             self._validate_append_transition(event_type, data_snapshot)
@@ -654,6 +677,27 @@ class EventSession:
             },
             surface_op="replace",
         )
+
+    def replace_messages_if_unchanged(
+        self,
+        messages: Sequence[AgentMessage],
+        *,
+        expected_surface_hash: str,
+        reason: str,
+    ) -> SessionEvent | None:
+        """Compare-and-swap a compacted surface without erasing new turns."""
+        try:
+            return self.append(
+                "surface/replace",
+                {
+                    "messages": [message.to_dict() for message in messages],
+                    "reason": str(reason),
+                },
+                surface_op="replace",
+                expected_surface_hash=str(expected_surface_hash),
+            )
+        except ModelSurfaceMismatch:
+            return None
 
     def record_model_request(
         self,

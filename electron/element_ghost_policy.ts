@@ -16,11 +16,26 @@ export interface GhostReplay {
   staggerMs: number;
 }
 
-const MAX_GHOSTS = 18;
-const HOLD_MS = 1000;
-const FADE_MS = 600;
-const STAGGER_MS = 45;
+const MAX_GHOSTS = 1;
+const HOLD_MS = 900;
+const FADE_MS = 400;
+const STAGGER_MS = 0;
 const MIN_SIZE = 6;
+
+function pointOf(value: unknown): { x: number; y: number } | null {
+  const candidate = value as { x?: unknown; y?: unknown } | null;
+  const x = Number(Array.isArray(value) ? value[0] : candidate?.x);
+  const y = Number(Array.isArray(value) ? value[1] : candidate?.y);
+  return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
+}
+
+function roleRank(role: string): number {
+  const value = role.trim().toLowerCase();
+  if (['button', 'edit', 'checkbox', 'combobox', 'menuitem', 'tabitem'].includes(value)) return 0;
+  if (['link', 'hyperlink', 'listitem', 'treeitem'].includes(value)) return 1;
+  if (['text', 'image'].includes(value)) return 2;
+  return 3;
+}
 
 function usableRect(rect: unknown, displayBounds: { x: number; y: number; width: number; height: number }, scale: number): GhostRect | null {
   if (!Array.isArray(rect) || rect.length !== 4) return null;
@@ -49,28 +64,45 @@ export function buildElementGhosts({
   handles,
   displayBounds,
   scaleFactor,
+  focusPoint = null,
 }: {
   handles: Array<Record<string, unknown>>;
   displayBounds: { x: number; y: number; width: number; height: number };
   scaleFactor: number;
+  focusPoint?: unknown;
 }): GhostReplay {
   const scale = scaleFactor > 0 ? scaleFactor : 1;
-  const ghosts: ElementGhost[] = [];
+  const point = pointOf(focusPoint);
+  const candidates: Array<ElementGhost & { area: number; containsFocus: boolean; rank: number }> = [];
   for (const handle of Array.isArray(handles) ? handles : []) {
-    if (ghosts.length >= MAX_GHOSTS) break;
     if (!handle || typeof handle !== 'object') continue;
-    const rect = usableRect((handle as { rect?: unknown }).rect, displayBounds, scale);
+    const raw = (handle as { rect?: unknown }).rect;
+    const rect = usableRect(raw, displayBounds, scale);
     if (!rect) continue;
+    const physical = Array.isArray(raw) && raw.length === 4 ? raw.map(Number) : [];
+    const containsFocus = Boolean(point && physical.length === 4
+      && point.x >= physical[0] && point.x <= physical[0] + physical[2]
+      && point.y >= physical[1] && point.y <= physical[1] + physical[3]);
     const ref = String((handle as { ref?: unknown }).ref || '');
     if (!ref) continue;
-    ghosts.push({
+    const role = String((handle as { role?: unknown }).role || '');
+    candidates.push({
       ref,
       label: String((handle as { name?: unknown }).name || '').trim() || ref,
-      role: String((handle as { role?: unknown }).role || ''),
+      role,
       rect,
-      delayMs: ghosts.length * STAGGER_MS,
+      delayMs: 0,
+      area: Math.max(1, physical[2] * physical[3]),
+      containsFocus,
+      rank: roleRank(role),
     });
   }
+  candidates.sort((left, right) => {
+    if (left.containsFocus !== right.containsFocus) return left.containsFocus ? -1 : 1;
+    if (left.rank !== right.rank) return left.rank - right.rank;
+    return left.area - right.area;
+  });
+  const ghosts = candidates.slice(0, MAX_GHOSTS).map(({ area: _area, containsFocus: _contains, rank: _rank, ...ghost }) => ghost);
   return { ghosts, holdMs: HOLD_MS, fadeMs: FADE_MS, staggerMs: STAGGER_MS };
 }
 

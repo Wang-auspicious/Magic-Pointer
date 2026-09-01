@@ -992,6 +992,19 @@ def test_deliver_system_prompt_forbids_markdown() -> None:
     assert '纯文字' in DELIVER_SYSTEM_PROMPT
 
 
+def test_pointing_instruction_is_only_added_for_location_questions() -> None:
+    pointing = selection_bridge.pointing_instruction_for_command(
+        "这个按钮在哪里，指给我看",
+        [0, 0, 1920, 1080],
+    )
+    assert "[POINT x,y]" in pointing
+    assert "1920" in pointing and "1080" in pointing
+    assert selection_bridge.pointing_instruction_for_command(
+        "总结这段文字",
+        [0, 0, 1920, 1080],
+    ) == ""
+
+
 # ── 自动记忆（Vida 式主动层）：敏感挡、去重、非敏感记 ──────────────
 def test_record_auto_memory_sensitive_and_dedupe(tmp_path, monkeypatch) -> None:
     import json
@@ -1040,6 +1053,7 @@ def test_loop_router_maps_terminal_to_answer(monkeypatch):
         recorded["local_action_input"] = kwargs.get("local_action_input")
         recorded["keepalive"] = kwargs.get("keepalive")
         recorded["todo_store"] = kwargs.get("todo_store")
+        recorded["tool_limit"] = kwargs.get("tool_limit")
         return _fake_terminal(message="循环给出的回答")
 
     monkeypatch.setattr(engine_module, "run_agent_turn", fake_run)
@@ -1062,11 +1076,46 @@ def test_loop_router_maps_terminal_to_answer(monkeypatch):
     # as the conversation path (B1.3/§12.1) — both must reach run_agent_turn.
     assert callable(recorded["keepalive"])
     assert recorded["todo_store"] is not None
+    assert recorded["tool_limit"] == 128
     assert result["ok"] is True
     assert result["answer"] == "循环给出的回答"
     assert result["route"]["action"] == "model_loop"
     assert result["usedBackend"]
     assert result["selectionSessionId"] == "sess-1"
+
+
+def test_loop_router_surfaces_tool_truncation_to_stage_progress(monkeypatch):
+    from app.agent_runtime.loop import ToolsTruncated
+    from app.fabric import engine as engine_module
+
+    marks: list[tuple[str, dict]] = []
+
+    class RecordingClock:
+        def mark(self, phase, **fields):
+            marks.append((phase, fields))
+            return 0.0
+
+    def fake_run(_user_input, objects=None, registry=None, *, client, **kwargs):
+        kwargs["event_sink"](ToolsTruncated(
+            dropped=("mcp_alpha", "mcp_beta"),
+            limit=3,
+        ))
+        return _fake_terminal(message="完成")
+
+    monkeypatch.setattr(engine_module, "run_agent_turn", fake_run)
+
+    selection_bridge._loop_router(
+        "帮我看看", [{"id": "o1"}], None, None, None, None, "sess-1", "snap-1",
+        clock=RecordingClock(),
+    )
+
+    notice = next(fields for phase, fields in marks if phase == "tools_truncated")
+    assert notice == {
+        "count": 5,
+        "limit": 3,
+        "dropped": 2,
+        "names": "mcp_alpha,mcp_beta",
+    }
 
 
 def test_loop_effect_ceiling_keeps_permission_modes_functional() -> None:

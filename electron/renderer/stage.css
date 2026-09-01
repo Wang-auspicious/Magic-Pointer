@@ -466,14 +466,14 @@ body {
   position: absolute;
   display: flex;
   flex-direction: column;
-  width: var(--stage-work-panel-width, 560px);
-  height: var(--stage-work-panel-height, 520px);
+  width: var(--stage-work-panel-width, 440px);
+  height: var(--stage-work-panel-height, 300px);
   min-width: 0;
   min-height: 0;
   max-width: calc(100vw - 16px);
   max-height: calc(100vh - 16px);
   box-sizing: border-box;
-  border-radius: 18px;
+  border-radius: 16px;
   background: #fbfbfa;
   border: 1px solid rgba(19, 22, 27, 0.10);
   box-shadow: 0 2px 8px rgba(19, 22, 27, 0.08), 0 22px 52px -30px rgba(19, 22, 27, 0.34);
@@ -489,9 +489,9 @@ body {
 .thread-head {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 0;
   flex: 0 0 auto;
-  padding: 16px 14px 14px 24px;
+  padding: 13px 12px 10px 18px;
   cursor: grab;
 }
 
@@ -501,7 +501,7 @@ body {
   gap: 8px;
 }
 
-.thread-head-spacer { flex: 1 1 auto; }
+.thread-head-spacer { display: none; }
 
 .stage-thread.is-dragging .thread-head { cursor: grabbing; }
 
@@ -523,6 +523,11 @@ body {
   white-space: nowrap;
 }
 
+/* Status now lives in the activity spine. Repeating WORKING/TASK FINISHED in
+ * the header made the small surface read like a diagnostic dashboard. Keep the
+ * node for state/ARIA wiring, but remove it from layout. */
+.thread-eyebrow { display: none; }
+
 .thread-eyebrow svg {
   width: 17px;
   height: 17px;
@@ -539,8 +544,8 @@ body {
 .thread-title {
   flex: 1 1 auto;
   min-width: 0;
-  padding-right: 10px;
-  font-size: 17px;
+  padding-right: 8px;
+  font-size: 16px;
   font-weight: 660;
   line-height: 1.35;
   letter-spacing: -0.012em;
@@ -560,8 +565,8 @@ body {
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   padding: 0;
   appearance: none;
   border: 0;
@@ -573,8 +578,8 @@ body {
 }
 
 .thread-icon svg {
-  width: 19px;
-  height: 19px;
+  width: 17px;
+  height: 17px;
 }
 
 .thread-stop-icon { display: none; }
@@ -613,11 +618,11 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 100%;
-  padding: 0 24px 18px;
+  padding: 0 18px 14px;
   overflow-x: hidden;
   overflow-y: visible;
-  font-size: 15px;
-  line-height: 1.66;
+  font-size: 14px;
+  line-height: 1.58;
 }
 
 /* 卡片区光标统一：鼠标在卡片里移动不应当在手套/箭头之间高频切换
@@ -694,11 +699,15 @@ body {
  * 还在（它们的边界是内容的一部分，不是装饰）。 */
 .stage-result .mcard[data-density='capsule'] {
   padding: 0;
-  gap: 10px;
+  gap: 8px;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
 }
+
+/* The shared full card can retain diagnostic facts. The pointer surface only
+ * shows the activity name; UIA/L0/ms details belong in the expandable run log. */
+.stage-result .mstep-fact { display: none; }
 
 .stage-result .mcard[data-density='capsule'][data-state='failed'] {
   box-shadow: none;

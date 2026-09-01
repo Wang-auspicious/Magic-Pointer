@@ -17,6 +17,7 @@ worker process all see the same verdict without an IPC round trip.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import threading
@@ -150,7 +151,7 @@ class GatewayHealth:
         # is only set by an actual failure verdict, so this never invents
         # a deadline for a healthy endpoint.
         if self.circuit_open and self.open_until > 0:
-            remaining = max(1, int(self.open_until - time.time()))
+            remaining = max(1, math.ceil(self.open_until - time.time()))
             text = f"{text} 约 {remaining} 秒后可重试。"
         return text
 

@@ -32,7 +32,7 @@ from app.agent_runtime.permission_decisions import PermissionDecisions  # noqa: 
 from app.agent_runtime.tool_registry import Effect, ToolRegistry, ToolSpec  # noqa: E402
 from app.agent_runtime.permission_decisions import PermissionDecisions  # noqa: E402
 from app.agent_runtime.tool_registry import Effect, ToolRegistry, ToolSpec  # noqa: E402
-from app.agent_runtime.types import ToolCall  # noqa: E402
+from app.agent_runtime.types import Role, ToolCall  # noqa: E402
 
 # 复用 loop 测试的假件（ScriptedBackend/collect）——同目录导入
 import importlib.util as _ilu  # noqa: E402
@@ -97,6 +97,129 @@ def test_lookup_semantics():
     assert PermissionDecisions().lookup("run_command") is None
 
 
+def test_bash_prefix_grant_matches_only_a_clean_token_boundary():
+    decisions = PermissionDecisions(allowed=("Bash(pytest)",))
+    assert decisions.allows_call("Bash", {"command": "pytest -q"}) is True
+    assert decisions.allows_call("Bash", {"command": "pytest"}) is True
+    assert decisions.allows_call("Bash", {"command": "pytestx"}) is False
+    assert decisions.allows_call("Bash", {"command": "pytest && rm -rf ."}) is False
+    assert decisions.allows_call("Bash", {"command": "pytest > result.txt"}) is False
+    assert decisions.allows_call("Bash", {"command": "pytest\nRemove-Item x"}) is False
+
+
+def test_bash_prefix_grant_executes_only_the_matching_command():
+    calls: list[str] = []
+    registry = ToolRegistry()
+    registry.register(ToolSpec(
+        name="Bash",
+        description="run",
+        input_schema={
+            "type": "object",
+            "properties": {"command": {"type": "string"}},
+            "required": ["command"],
+        },
+        execute=lambda command, scope=None: calls.append(command) or "ran",
+        effect=Effect.LOCAL_IRREVERSIBLE,
+    ))
+    backend = ScriptedBackend(
+        [
+            ToolCallArrived(call=ToolCall(
+                id="call-1", name="Bash", arguments={"command": "pytest -q"},
+            )),
+            TurnDone(usage=None, raw_text=None),
+        ],
+        [TurnDone(usage=None, raw_text="done")],
+    )
+
+    _events, terminal = asyncio.run(collect(_params(
+        registry,
+        backend,
+        PermissionDecisions(allowed=("Bash(pytest)",)),
+    )))
+    assert terminal.reason is TransitionReason.COMPLETED
+    assert calls == ["pytest -q"]
+
+
+def test_legacy_bash_alias_asks_with_the_canonical_command_prefix():
+    calls: list[str] = []
+    registry = ToolRegistry()
+    registry.register(ToolSpec(
+        name="Bash",
+        description="run",
+        input_schema={
+            "type": "object",
+            "properties": {"command": {"type": "string"}},
+            "required": ["command"],
+        },
+        execute=lambda command, scope=None: calls.append(command) or "ran",
+        effect=Effect.LOCAL_IRREVERSIBLE,
+    ))
+    registry.register_alias("run_command", "Bash")
+    backend = ScriptedBackend(
+        [
+            ToolCallArrived(call=ToolCall(
+                id="call-alias", name="run_command", arguments={"command": "pytest -q"},
+            )),
+            TurnDone(usage=None, raw_text=None),
+        ],
+        [TurnDone(usage=None, raw_text="done")],
+    )
+
+    events, terminal = asyncio.run(collect(_params(
+        registry,
+        backend,
+        PermissionDecisions(),
+    )))
+
+    assert terminal.reason is TransitionReason.COMPLETED
+    assert calls == []
+    feedback = "\n".join(
+        str(message.content or "")
+        for event in events if type(event).__name__ == "TurnFinished"
+        for message in event.state.messages if message.role is Role.TOOL
+    )
+    assert "tool 'Bash'" in feedback
+    assert 'prefix="pytest"' in feedback
+    assert "Bash(pytest)" in feedback
+
+
+def test_canonical_bash_deny_blocks_legacy_alias_even_in_bypass_mode():
+    from dataclasses import replace
+
+    calls: list[str] = []
+    registry = ToolRegistry()
+    registry.register(ToolSpec(
+        name="Bash",
+        description="run",
+        input_schema={
+            "type": "object",
+            "properties": {"command": {"type": "string"}},
+            "required": ["command"],
+        },
+        execute=lambda command, scope=None: calls.append(command) or "ran",
+        effect=Effect.LOCAL_IRREVERSIBLE,
+    ))
+    registry.register_alias("run_command", "Bash")
+    backend = ScriptedBackend(*(
+        [
+            ToolCallArrived(call=ToolCall(
+                id="call-denied", name="run_command", arguments={"command": "pytest -q"},
+            )),
+            TurnDone(usage=None, raw_text=None),
+        ],
+        [TurnDone(usage=None, raw_text="done")],
+    ))
+    params = replace(
+        _params(registry, backend, PermissionDecisions(denied=("Bash",))),
+        permission_mode="bypass",
+    )
+
+    _events, terminal = asyncio.run(collect(params))
+
+    assert terminal.reason is TransitionReason.COMPLETED
+    assert calls == []
+
+
 def test_granted_local_irreversible_tool_executes_without_reasking():
     registry = _tool_registry_with("run_command", Effect.LOCAL_IRREVERSIBLE)
     backend = ScriptedBackend(*_two_turn_scene("run_command"))
@@ -116,7 +239,11 @@ def test_ungranted_local_irreversible_tool_is_refused_with_ask_feedback():
     assert terminal.reason is TransitionReason.COMPLETED
     tool_messages = [e for e in events if type(e).__name__ == "TurnFinished"]
     # The refusal must route the model to the grant question.
-    assert any("ask_user_question" in str(getattr(e, "state", "")) or True for e in events)
+    assert any(
+        message.role is Role.TOOL and "AskUser" in str(message.content or "")
+        for event in tool_messages
+        for message in event.state.messages
+    )
 
 
 def test_allow_memo_never_upgrades_purchase_or_destructive_or_send():
@@ -154,5 +281,21 @@ def test_ask_feedback_routes_model_to_structured_grant_question():
         mode=PermissionMode.DEFAULT,
         effect=Effect.LOCAL_IRREVERSIBLE,
     ).feedback("run_command")
-    assert "ask_user_question" in text
+    assert "AskUser" in text
     assert "总是允许" in text
+
+
+def test_bash_ask_feedback_carries_a_specific_command_prefix():
+    from app.agent_runtime.permission_modes import (
+        PermissionDecision,
+        PermissionDecisionResult,
+        PermissionMode,
+    )
+
+    text = PermissionDecisionResult(
+        decision=PermissionDecision.ASK,
+        mode=PermissionMode.DEFAULT,
+        effect=Effect.LOCAL_IRREVERSIBLE,
+    ).feedback("Bash", {"command": "npm run test -- --watch=false"})
+    assert 'prefix="npm run test"' in text
+    assert "Bash(npm run test)" in text

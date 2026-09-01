@@ -86,7 +86,7 @@ def _numbered(path: Path, offset: int, limit: int) -> tuple[str, bool]:
         truncated = True
     if len(body) > _MAX_READ_CHARS:
         body = body[:_MAX_READ_CHARS] + (
-            f"\n[read_file output truncated at {_MAX_READ_CHARS} chars: "
+            f"\n[Read output truncated at {_MAX_READ_CHARS} chars: "
             "re-read with a smaller limit or use offset to page through the file]"
         )
         truncated = True
@@ -117,10 +117,14 @@ def _rg_search(
     context: int,
     offset: int,
     rg_path: str,
+    case_sensitive: bool,
+    output_mode: str,
 ) -> str | None:
     """ripgrep --json 主路；进程失败返回 None 让调用方退回纯 Python。"""
-    args = [rg_path, "--json", "--no-messages", "-i"]
-    if context:
+    args = [rg_path, "--json", "--no-messages"]
+    if not case_sensitive:
+        args.append("-i")
+    if context and output_mode == "content":
         args.append(f"-C{context}")
     if glob_filter:
         args.extend(["--glob", glob_filter])
@@ -152,16 +156,7 @@ def _rg_search(
         body = str(((data.get("lines") or {}).get("text")) or "").rstrip("\r\n")
         rel = _display(space.root, Path(path_text)) if path_text.startswith(root_text) else path_text
         entries.append((kind == "match", rel, line_number, body))
-    selected = entries[offset:offset + max_results]
-    if not selected:
-        return f"no matches for {pattern!r}"
-    truncated = len(entries) > offset + max_results
-    rows = []
-    for is_match, rel, number, body in selected:
-        body = _credential_mask(rel, body.strip()[:200])
-        rows.append(f"{rel}:{number}: {body}" if is_match else f"{rel}-{number}- {body}")
-    suffix = f"\n[results truncated at {max_results} after offset {offset}]" if truncated else ""
-    return "\n".join(rows) + suffix
+    return _render_search(entries, pattern, max_results, offset, output_mode)
 
 
 def _py_search(
@@ -172,10 +167,12 @@ def _py_search(
     max_results: int,
     context: int,
     offset: int,
+    case_sensitive: bool,
+    output_mode: str,
 ) -> str:
     """纯 Python 兜底（无 ripgrep 的机器）：与 rg 路同一种输出形状。"""
     try:
-        regex = re.compile(pattern, re.IGNORECASE)
+        regex = re.compile(pattern, 0 if case_sensitive else re.IGNORECASE)
     except re.error as exc:
         raise ValueError(f"invalid pattern: {exc}") from exc
     files: list[Path] = (
@@ -196,7 +193,7 @@ def _py_search(
             continue
         wanted: set[int] = set()
         for number in hits:
-            if context:
+            if context and output_mode == "content":
                 wanted.update(range(max(1, number - context), number + context + 1))
             else:
                 wanted.add(number)
@@ -204,15 +201,76 @@ def _py_search(
             if number > len(lines):
                 continue
             entries.append((number in hits, rel, number, lines[number - 1]))
-    selected = entries[offset:offset + max_results]
-    if not selected:
+    return _render_search(entries, pattern, max_results, offset, output_mode)
+
+
+def _render_search(
+    entries: list[tuple[bool, str, int, str]],
+    pattern: str,
+    max_results: int,
+    offset: int,
+    output_mode: str,
+) -> str:
+    """Render both search backends with one deterministic paging contract."""
+    ordered = sorted(
+        set(entries),
+        key=lambda entry: (entry[1], entry[2], not entry[0], entry[3]),
+    )
+    matches = [entry for entry in ordered if entry[0]]
+    if not matches:
         return f"no matches for {pattern!r}"
-    truncated = len(entries) > offset + max_results
+
+    if output_mode == "files_with_matches":
+        files = sorted({entry[1] for entry in matches})
+        selected = files[offset:offset + max_results]
+        if not selected:
+            return (
+                f"page exhausted for {pattern!r}: "
+                f"offset={offset}, total={len(files)} files"
+            )
+        truncated = len(files) > offset + max_results
+        suffix = (
+            f"\n[files truncated at {max_results} after offset {offset}]"
+            if truncated
+            else ""
+        )
+        return "\n".join(selected) + suffix
+
+    if output_mode == "count":
+        counts: dict[str, int] = {}
+        for _, rel, _, _ in matches:
+            counts[rel] = counts.get(rel, 0) + 1
+        items = sorted(counts.items())
+        selected = items[offset:offset + max_results]
+        if not selected:
+            return (
+                f"page exhausted for {pattern!r}: "
+                f"offset={offset}, total={len(items)} files"
+            )
+        truncated = len(items) > offset + max_results
+        suffix = (
+            f"\n[files truncated at {max_results} after offset {offset}]"
+            if truncated
+            else ""
+        )
+        return "\n".join(f"{rel}: {count}" for rel, count in selected) + suffix
+
+    selected_entries = ordered[offset:offset + max_results]
+    if not selected_entries:
+        return (
+            f"page exhausted for {pattern!r}: "
+            f"offset={offset}, total={len(ordered)} results"
+        )
     rows = []
-    for is_match, rel, number, body in selected:
+    for is_match, rel, number, body in selected_entries:
         body = _credential_mask(rel, body.strip()[:200])
         rows.append(f"{rel}:{number}: {body}" if is_match else f"{rel}-{number}- {body}")
-    suffix = f"\n[results truncated at {max_results} after offset {offset}]" if truncated else ""
+    truncated = len(ordered) > offset + max_results
+    suffix = (
+        f"\n[results truncated at {max_results} after offset {offset}]"
+        if truncated
+        else ""
+    )
     return "\n".join(rows) + suffix
 
 
@@ -237,15 +295,36 @@ def _do_search(
     max_results: int,
     context: int = 0,
     offset: int = 0,
+    case_sensitive: bool = False,
+    output_mode: str = "content",
 ) -> str:
     rg_path = shutil.which("rg")
     if rg_path:
         result = _rg_search(
-            space, base, pattern, glob_filter, max_results, context, offset, rg_path
+            space,
+            base,
+            pattern,
+            glob_filter,
+            max_results,
+            context,
+            offset,
+            rg_path,
+            case_sensitive,
+            output_mode,
         )
         if result is not None:
             return result
-    return _py_search(space, base, pattern, glob_filter, max_results, context, offset)
+    return _py_search(
+        space,
+        base,
+        pattern,
+        glob_filter,
+        max_results,
+        context,
+        offset,
+        case_sensitive,
+        output_mode,
+    )
 
 
 def _do_grep(root: Path, pattern: str, glob_filter: str, max_results: int) -> str:
@@ -447,13 +526,13 @@ def _state_freshness(store: _FileReadState, path: Path) -> str:
 def _gate_message(reason: str, display: str) -> str:
     if reason == "not-read":
         return (
-            f"File has not been read yet: {display}. Call read_file first — "
+            f"File has not been read yet: {display}. Call Read first — "
             "editing a file you have not read is a blind edit."
         )
     if reason == "truncated":
         return (
             f"Your earlier read of {display} was truncated. Re-read the "
-            "region you intend to change (read_file with offset/limit) "
+            "region you intend to change (Read with offset/limit) "
             "before editing."
         )
     if reason == "gone":
@@ -531,13 +610,13 @@ def _binary_guard(target: Path) -> None:
     ext = target.suffix.casefold()
     if ext in _OFFICE_IMAGE_EXTENSIONS:
         raise ValueError(
-            f"{target.name} is an image; read_file renders text only. "
-            "Use look (vision) on the frozen frame, or view it in the UI."
+            f"{target.name} is an image; Read renders text only. "
+            "Use Look (vision) on the frozen frame, or view it in the UI."
         )
     if ext in _OFFICE_DOC_EXTENSIONS:
         raise ValueError(
-            f"{target.name} is a binary document ({ext}); read_file cannot "
-            "render it. Extract its text with a script, e.g. run_command: "
+            f"{target.name} is a binary document ({ext}); Read cannot "
+            "render it. Extract its text with a script, e.g. Bash: "
             f"python -c \"...\" (zipfile/html2text for docx/xlsx), or ask "
             "the user to export it."
         )
@@ -549,7 +628,7 @@ def _binary_guard(target: Path) -> None:
     if b"\x00" in chunk:
         raise ValueError(
             f"{target.name} looks binary (NUL byte in the first 8KB); "
-            "read_file renders text only. Inspect it with run_command "
+            "Read renders text only. Inspect it with Bash "
             "(strings/hexdump) instead."
         )
 
@@ -983,7 +1062,7 @@ class BackgroundJobs:
                 try:
                     self._notify(
                         f"background job {job_id} finished (exit={code}); "
-                        f"poll read_background(id={job_id}) for its output"
+                        f"poll BashRead(id={job_id}) for its output"
                     )
                 except Exception:  # noqa: BLE001
                     pass
@@ -1134,7 +1213,7 @@ def register_coding_tools(
     read_store = _read_state_for(space.root)
     try:
         registry.add_execution_listener(
-            lambda name: None if name == "read_file" else _read_guard_reset(read_store)
+            lambda name: None if name == "Read" else _read_guard_reset(read_store)
         )
     except Exception:  # noqa: BLE001 - 监听只是提示信号，注册失败不拦工具面
         pass
@@ -1174,7 +1253,7 @@ def register_coding_tools(
                 f"[{space.display(target)} is unchanged since your last read "
                 f"of this exact range (read {streak}x in a row); the earlier "
                 "tool result is still accurate — do not re-read. If it is no "
-                "longer in your context, call read_file again with force=true.]"
+                "longer in your context, call Read again with force=true.]"
             )
             if streak >= _READ_LOOP_WARN_AT:
                 stub = (
@@ -1206,7 +1285,7 @@ def register_coding_tools(
             freshness = _state_freshness(store, target)
             if freshness != "fresh":
                 raise ValueError(
-                    f"write_file refused: {_gate_message(freshness, space.display(target))}"
+                    f"Write refused: {_gate_message(freshness, space.display(target))}"
                 )
         checkpoints.record(target, existed=target.exists())
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -1233,7 +1312,7 @@ def register_coding_tools(
         store = _read_state_for(space.root)
         freshness = _state_freshness(store, target)
         if freshness != "fresh":
-            raise ValueError(f"edit_file refused: {_gate_message(freshness, space.display(target))}")
+            raise ValueError(f"Edit refused: {_gate_message(freshness, space.display(target))}")
 
         if edits is not None and (old_string is not None or new_string is not None):
             raise ValueError(
@@ -1318,7 +1397,7 @@ def register_coding_tools(
                         checkpoints.record(space.resolve(hunk.move_path), existed=False)
                 apply_patch_text(text, space.root)
         except ApplyPatchError as exc:
-            raise ValueError(f"apply_patch failed: {exc}") from exc
+            raise ValueError(f"Patch failed: {exc}") from exc
         for target in dict.fromkeys(touched):
             # patch 成功 = 补丁内容模型刚写的，视为已读最新，省一轮重读。
             if target.is_file():
@@ -1376,11 +1455,18 @@ def register_coding_tools(
         context: int = 0,
         offset: int = 0,
         path: str = ".",
+        case_sensitive: bool = False,
+        output_mode: str = "content",
         **_: Any,
     ) -> str:
         base = space.resolve(path or ".")
         if not base.exists():
             raise FileNotFoundError(f"path not found: {space.display(base)}")
+        mode = str(output_mode or "content")
+        if mode not in {"content", "files_with_matches", "count"}:
+            raise ValueError(
+                "output_mode must be content, files_with_matches, or count"
+            )
         return _do_search(
             space,
             base,
@@ -1389,6 +1475,8 @@ def register_coding_tools(
             max(1, min(int(max_results or _MAX_GREP_RESULTS), _MAX_GREP_RESULTS)),
             context=max(0, min(int(context or 0), 5)),
             offset=max(0, int(offset or 0)),
+            case_sensitive=bool(case_sensitive),
+            output_mode=mode,
         )
 
     backgrounds = BackgroundJobs(space.root, notify=inbox)
@@ -1417,7 +1505,7 @@ def register_coding_tools(
             job_id = backgrounds.start(text, workdir)
             return (
                 f"started in background as job {job_id}; "
-                f"poll with read_background(id={job_id})"
+                f"poll with BashRead(id={job_id})"
             )
         for rule in _CATASTROPHIC_COMMANDS:
             if rule.search(text):
@@ -1498,7 +1586,7 @@ def register_coding_tools(
         name="Write",
         description=(
             "在工作区内创建或整体覆盖一个文本文件。修改现有文件优先用 "
-            "edit_file（精确替换），整体重写才用这个。"
+            "Edit（精确替换），整体重写才用这个。"
         ),
         input_schema={
             "type": "object",
@@ -1517,7 +1605,7 @@ def register_coding_tools(
     registry.register(ToolSpec(
         name="Edit",
         description=(
-            "精确字符串替换修改文件。修改前必须先 read_file（未读先写会被拒绝；"
+            "精确字符串替换修改文件。修改前必须先 Read（未读先写会被拒绝；"
             "读后文件被外部改动也要重读）。old_string 必须逐字符唯一匹配；"
             "匹配失败会自动尝试弯/直引号、行尾空白、空白压缩、缩进放宽四级"
             "归一化。多处相同时传 replace_all=true 或加长 old_string。"
@@ -1574,7 +1662,9 @@ def register_coding_tools(
         name="Grep",
         description=(
             "在工作区文件内容里做正则搜索，返回 file:line: text 匹配列表。"
-            "找代码、找报错文本、找定义都用它。"
+            "找代码、找报错文本、找定义都用它。探索大仓库时先用 "
+            "output_mode=files_with_matches 定位文件，再对具体文件用 content "
+            "模式读细节，不要一开始就拉取大量匹配正文。"
         ),
         input_schema={
             "type": "object",
@@ -1593,6 +1683,18 @@ def register_coding_tools(
                 "path": {
                     "type": "string",
                     "description": "搜索起点（文件或目录），默认工作区根",
+                },
+                "case_sensitive": {
+                    "type": "boolean",
+                    "description": "默认 false（不区分大小写）；查标识符时传 true",
+                },
+                "output_mode": {
+                    "type": "string",
+                    "enum": ["content", "files_with_matches", "count"],
+                    "description": (
+                        "默认 content；files_with_matches 只列唯一文件，"
+                        "count 输出每个文件的命中行数"
+                    ),
                 },
             },
             "required": ["pattern"],
@@ -1634,8 +1736,8 @@ def register_coding_tools(
     registry.register(ToolSpec(
         name="Patch",
         description=(
-            "用 Codex apply_patch 格式一次修改多个文件（Add/Delete/Update + "
-            "@@ 上下文 + -/+ 行）。比多次 edit_file 更适合跨文件改动；"
+            "用 Codex Patch 格式一次修改多个文件（Add/Delete/Update + "
+            "@@ 上下文 + -/+ 行）。比多次 Edit 更适合跨文件改动；"
             "补丁里的上下文行必须与文件内容逐字匹配。"
         ),
         input_schema={
@@ -1675,7 +1777,7 @@ def register_coding_tools(
     registry.register(ToolSpec(
         name="Rewind",
         description=(
-            "把本会话内被 write_file/edit_file/apply_patch 改过的文件回滚到"
+            "把本会话内被 Write/Edit/Patch 改过的文件回滚到"
             "改动前状态。steps=N 只撤销最近 N 次改动，默认全部撤销。"
             "走错方向时用它回到干净状态，不要手工反向编辑。"
         ),

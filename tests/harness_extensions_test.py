@@ -264,6 +264,20 @@ class TestAskTodoTools:
         assert result["answer"] == "B"
         assert result["asked"] is True
 
+    def test_permission_question_carries_command_prefix(self) -> None:
+        registry = ToolRegistry()
+        spec = register_ask_user_question(registry, ask=None)
+        result = json.loads(spec.execute(
+            question="允许跑测试吗？",
+            options=["仅这一次允许", "本会话总是允许", "拒绝"],
+            kind="permission",
+            tool="Bash",
+            prefix="pytest",
+        ))
+        assert result["kind"] == "permission"
+        assert result["tool"] == "Bash"
+        assert result["prefix"] == "pytest"
+
     def test_todo_write_returns_the_plan(self) -> None:
         registry = ToolRegistry()
         spec = register_todo_write(registry)

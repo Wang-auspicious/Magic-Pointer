@@ -14,6 +14,7 @@ const studio = fs.readFileSync('electron/renderer/studio.ts', 'utf8');
 const html = fs.readFileSync('electron/renderer/studio.html', 'utf8');
 const bridge = fs.readFileSync('scripts/conversation_bridge.py', 'utf8');
 const fabric = fs.readFileSync('scripts/fabric_bridge.py', 'utf8');
+const slashDirectory = fs.readFileSync('app/agent_runtime/slash_directory.py', 'utf8');
 
 assert(main.includes("ipcMain.handle('slash:directory'"), 'main must own the slash directory IPC');
 assert(preload.includes('slashDirectory'), 'preload must expose the directory');
@@ -28,6 +29,8 @@ assert(studio.includes("token = `/${name} `"), 'the token is the DSH /name-then-
 assert.match(fabric, /operation == "slash\.directory"/, 'fabric bridge must serve the directory');
 assert.match(bridge, /def route_slash_command/, 'the bridge must route slash commands');
 assert(bridge.includes('load_skill_body'), 'known skills must inject their rendered body');
+assert(slashDirectory.includes('"compact"'), 'directory must expose /compact');
+assert(slashDirectory.includes('"help"'), 'directory must expose /help');
 assert(studio.includes('command?.type === \'permission\''), 'permission settlement must move the chip');
 assert(studio.includes('command?.type === \'model\''), 'model settlement must refresh the model seat');
 

@@ -172,6 +172,7 @@ def compact_messages(
     *,
     tail_token_budget: int = 2000,
     min_tail_messages: int = 3,
+    force: bool = False,
 ) -> list[AgentMessage]:
     """Condense history: everything before the recent tail is summarized into
     one user-role data message (CC compact). Assistant tool calls and tool
@@ -190,13 +191,17 @@ def compact_messages(
     read the same payload N times buys nothing while pushing the source past
     its own truncation limit.
     """
-    if len(messages) <= min_tail_messages:
+    if not force and len(messages) <= min_tail_messages:
         return list(messages)
-    cutoff = _tail_cut_by_tokens(messages, tail_token_budget, min_tail_messages)
+    cutoff = (
+        len(messages)
+        if force
+        else _tail_cut_by_tokens(messages, tail_token_budget, min_tail_messages)
+    )
     # A tool result is only valid when the assistant tool call that created it
     # is still present.  Move the compaction boundary to the beginning of that
     # tool exchange instead of emitting an orphaned ``tool`` message.
-    while cutoff > 0 and messages[cutoff].role is Role.TOOL:
+    while cutoff < len(messages) and cutoff > 0 and messages[cutoff].role is Role.TOOL:
         cutoff -= 1
     head = _prune_duplicate_tool_results(messages[:cutoff])
     tail = _prune_stale_tool_outputs(messages[cutoff:])

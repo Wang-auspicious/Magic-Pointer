@@ -269,6 +269,33 @@ def test_compaction_replaces_surface_without_deleting_raw_history(tmp_path: Path
     assert len(session.events[-1].data["messages"]) == 1
 
 
+def test_manual_compaction_compare_and_swap_preserves_concurrent_turn(
+    tmp_path: Path,
+) -> None:
+    store = FileSessionStore(tmp_path)
+    first = store.create("s1")
+    turn = first.start_turn()
+    first.append_message(_message(Role.USER, "initial"))
+    first.end_turn(turn, reason="completed")
+    _snapshot, expected_hash = first.surface_snapshot()
+
+    second = store.resume("s1")
+    concurrent_turn = second.start_turn()
+    second.append_message(_message(Role.USER, "concurrent user"))
+    second.append_message(_message(Role.ASSISTANT, "concurrent answer"))
+    second.end_turn(concurrent_turn, reason="completed")
+
+    replaced = first.replace_messages_if_unchanged(
+        [_message(Role.USER, "stale summary")],
+        expected_surface_hash=expected_hash,
+        reason="manual_compaction",
+    )
+
+    assert replaced is None
+    contents = [message.content for message in store.resume("s1").derive_messages()]
+    assert contents == ["initial", "concurrent user", "concurrent answer"]
+
+
 def test_jsonl_reload_repairs_only_a_truncated_last_record(tmp_path: Path) -> None:
     store = FileSessionStore(tmp_path)
     session = store.create("s1")

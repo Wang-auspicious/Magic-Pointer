@@ -25,6 +25,7 @@ from app.agent_runtime.model_client import (  # noqa: E402
     LoopModelClient,
     MessageDelta,
     ReasoningDelta,
+    StreamingMessagesBackend,
     TurnDone,
     TurnStarted,
     _parse_messages_sse,
@@ -54,19 +55,19 @@ def _chat_lines(*deltas: dict, finish: str = "stop") -> list[str]:
 
 
 def test_chat_sse_reasoning_content_becomes_reasoning_delta_before_text() -> None:
-    events = _parse_sse(
+    events = list(_parse_sse(
         _chat_lines(
             {"reasoning_content": "先想"},
             {"reasoning_content": "清楚再答"},
             {"content": "答案"},
         )
-    )
+    ))
     kinds = [type(event) for event in events]
     assert kinds[0] is TurnStarted or kinds[0] is ReasoningDelta
     reasoning = [e for e in events if isinstance(e, ReasoningDelta)]
     text = [e for e in events if isinstance(e, MessageDelta)]
-    assert len(reasoning) == 1
-    assert reasoning[0].text == "先想清楚再答"
+    assert [event.text for event in reasoning] == ["先想", "清楚再答"]
+    assert "".join(event.text for event in reasoning) == "先想清楚再答"
     assert len(text) == 1 and text[0].text == "答案"
     # 思考在正文之前（事件序 = 模型输出序）。
     assert kinds.index(ReasoningDelta) < kinds.index(MessageDelta)
@@ -74,13 +75,13 @@ def test_chat_sse_reasoning_content_becomes_reasoning_delta_before_text() -> Non
 
 def test_chat_sse_reasoning_field_variant_also_parsed() -> None:
     """OpenRouter 等网关把 reasoning 放在 delta.reasoning 而非 reasoning_content。"""
-    events = _parse_sse(_chat_lines({"reasoning": " thunk"}, {"content": "ok"}))
+    events = list(_parse_sse(_chat_lines({"reasoning": " thunk"}, {"content": "ok"})))
     reasoning = [e for e in events if isinstance(e, ReasoningDelta)]
     assert len(reasoning) == 1 and reasoning[0].text == " thunk"
 
 
 def test_chat_sse_without_reasoning_has_no_reasoning_delta() -> None:
-    events = _parse_sse(_chat_lines({"content": "plain"}))
+    events = list(_parse_sse(_chat_lines({"content": "plain"})))
     assert not [e for e in events if isinstance(e, ReasoningDelta)]
 
 
@@ -115,10 +116,10 @@ def test_messages_sse_thinking_blocks_become_reasoning_delta() -> None:
         ),
         "data: [DONE]",
     ]
-    events = _parse_messages_sse(iter(lines))
+    events = list(_parse_messages_sse(iter(lines)))
     reasoning = [e for e in events if isinstance(e, ReasoningDelta)]
     text = [e for e in events if isinstance(e, MessageDelta)]
-    assert len(reasoning) == 1 and reasoning[0].text == "推演一下"
+    assert [event.text for event in reasoning] == ["推演", "一下"]
     assert len(text) == 1 and text[0].text == "结论"
 
 
@@ -231,6 +232,105 @@ def test_loop_model_client_accumulates_last_reasoning() -> None:
     assert text == "答案" and calls == []
 
 
+def test_turn_done_is_terminal_even_if_backend_cleanup_would_raise() -> None:
+    class DoneThenRaiseBackend:
+        used_backend = "fake"
+
+        def generate(self, messages, tools, budget_ms, cancel_scope):
+            yield TurnStarted()
+            yield MessageDelta("complete")
+            yield TurnDone(usage={"prompt_tokens": 7}, raw_text="complete")
+            raise OSError("response context failed after terminal event")
+
+    client = LoopModelClient(DoneThenRaiseBackend())
+    events = list(client.stream_turn([_user_msg("问")], []))
+
+    assert sum(isinstance(event, TurnDone) for event in events) == 1
+    assert not [event for event in events if type(event).__name__ == "TurnWithheld"]
+    assert client.last_usage == {"prompt_tokens": 7}
+
+
+def test_raw_text_turn_done_survives_backend_cleanup_failure() -> None:
+    class RawTextThenRaiseBackend:
+        used_backend = "fake"
+
+        def generate(self, messages, tools, budget_ms, cancel_scope):
+            yield TurnStarted()
+            yield TurnDone(
+                usage={"prompt_tokens": 9},
+                raw_text="raw-only answer",
+            )
+            raise OSError("response context failed after raw-text terminal")
+
+    client = LoopModelClient(RawTextThenRaiseBackend())
+    events = list(client.stream_turn([_user_msg("问")], []))
+    calls, text = client.parse_tool_calls(events)
+
+    assert sum(isinstance(event, TurnDone) for event in events) == 1
+    assert not [event for event in events if type(event).__name__ == "TurnWithheld"]
+    assert client.last_usage == {"prompt_tokens": 9}
+    assert calls == []
+    assert text == "raw-only answer"
+
+
+def test_turn_done_drains_stream_backend_success_bookkeeping(
+    _no_circuit,
+    monkeypatch,
+) -> None:
+    from app import ai_client
+
+    successes: list[dict] = []
+    monkeypatch.setattr(ai_client, "record_success", lambda **fields: successes.append(fields))
+    monkeypatch.setattr(ai_client, "get_ai_api_mode", lambda _base_url: "chat")
+
+    backend = StreamingMessagesBackend(timeout_s=5.0, max_tokens=120)
+    backend._post_streaming = lambda *_args, **_kwargs: iter((  # type: ignore[method-assign]
+        MessageDelta("complete"),
+        TurnDone(usage={"prompt_tokens": 7}, raw_text="complete"),
+    ))
+    client = LoopModelClient(backend)
+
+    events = list(client.stream_turn([_user_msg("问")], []))
+
+    assert successes == [{
+        "model": "text-model",
+        "base_url": "https://gateway.example/v1",
+    }]
+    assert sum(isinstance(event, TurnDone) for event in events) == 1
+    assert client.last_usage == {"prompt_tokens": 7}
+
+
+def test_stream_backend_terminal_cleanup_failure_does_not_poison_health(
+    _no_circuit,
+    monkeypatch,
+) -> None:
+    from app import ai_client
+
+    successes: list[dict] = []
+    failures: list[dict] = []
+    monkeypatch.setattr(ai_client, "record_success", lambda **fields: successes.append(fields))
+    monkeypatch.setattr(ai_client, "record_failure", lambda **fields: failures.append(fields))
+    monkeypatch.setattr(ai_client, "get_ai_api_mode", lambda _base_url: "chat")
+
+    def terminal_then_raise(*_args, **_kwargs):
+        yield MessageDelta("complete")
+        yield TurnDone(usage={"prompt_tokens": 11}, raw_text="complete")
+        raise OSError("response context failed after terminal")
+
+    backend = StreamingMessagesBackend(timeout_s=5.0, max_tokens=120)
+    backend._post_streaming = terminal_then_raise  # type: ignore[method-assign]
+
+    events = list(backend.generate([_user_msg("问")], []))
+
+    assert sum(isinstance(event, TurnDone) for event in events) == 1
+    assert not [event for event in events if type(event).__name__ == "TurnWithheld"]
+    assert successes == [{
+        "model": "text-model",
+        "base_url": "https://gateway.example/v1",
+    }]
+    assert failures == []
+
+
 def test_agent_loop_yields_reasoning_chunk_events() -> None:
     """loop 把 ReasoningDelta 转成 ReasoningChunk 往 UI 送（与 ModelChunk 同权）。"""
 
@@ -268,6 +368,50 @@ def test_agent_loop_yields_reasoning_chunk_events() -> None:
         if type(event).__name__ == "ReasoningChunk"
     ]
     assert chunks == ["想想"], f"loop 必须把 reasoning 送出去，收到：{[type(e).__name__ for e in events]}"
+
+
+def test_agent_loop_exposes_first_model_delta_before_backend_finishes() -> None:
+    """真正的流式必须在后端产出后续 delta 前把首段交给消费者。
+
+    只断言最终收到了 a/b/c 仍会让「先攒完整 list、再一次性重放」的假流式
+    混过去；逐个 ``__anext__`` 才能钉死首字延迟的真实边界。
+    """
+    produced: list[str] = []
+
+    class FakeBackend:
+        used_backend = "fake"
+
+        def generate(self, messages, tools, budget_ms, cancel_scope):
+            yield TurnStarted()
+            for text in ("a", "b", "c"):
+                produced.append(text)
+                yield MessageDelta(text=text)
+            yield TurnDone(usage=None, raw_text="abc")
+
+    from app.agent_runtime.loop import LoopParams, ModelChunk, run_agent_loop
+    from app.agent_runtime.tool_registry import ToolRegistry
+    from app.governance.latency_budget import DEFAULT_BUDGETS
+
+    async def _first_chunk():
+        stream = run_agent_loop(LoopParams(
+            user_input="问",
+            registry=ToolRegistry(),
+            client=LoopModelClient(FakeBackend()),
+            budgets=DEFAULT_BUDGETS,
+        ))
+        try:
+            while True:
+                event = await stream.__anext__()
+                if isinstance(event, ModelChunk):
+                    return event
+        finally:
+            await stream.aclose()
+
+    import asyncio
+
+    first = asyncio.run(_first_chunk())
+    assert first.text == "a"
+    assert produced == ["a"], "后端的 b/c 不该在消费者看到首段前就被读完"
 
 
 # ---- 桥 sink 层：trajectory + 进度行 -------------------------------------

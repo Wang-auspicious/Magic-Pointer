@@ -108,6 +108,7 @@ const flowingTurn = DshChat.assistantTurnNode({
   answer: '这个项目是一个 Obsidian 日记技能，包含脚本和评估用例。',
   trajectory: [
     { kind: 'message', turn: 1, state: 'done', text: '我先看看目录结构。' },
+    { kind: 'notice', state: 'done', text: '已注册 130 个工具，超过本轮上限 128；本轮未暴露：mcp_alpha、mcp_beta。' },
     { kind: 'tool', turn: 1, callId: 'c1', name: 'search', state: 'done', text: 'obsidian-daily-log/README.md' },
     { kind: 'message', turn: 2, state: 'done', text: '找到文件了，我读一下。' },
     { kind: 'tool', turn: 2, callId: 'c2', name: 'read_file', state: 'error', text: 'Error calling tool (read_file): not found: README.md' },
@@ -122,6 +123,10 @@ const flowingTurn = DshChat.assistantTurnNode({
 }).map(html).join('');
 assert(flowingTurn.includes('class="dsh-narration"'), 'model narration must render as visible prose');
 assert(flowingTurn.includes('我先看看目录结构。'));
+assert(flowingTurn.includes('class="dsh-notice"'),
+  'trajectory notice must remain visible beside normal message/tool rows');
+assert(flowingTurn.includes('超过本轮上限 128'),
+  'tool truncation notice text must reach the Studio conversation');
 assert(!flowingTurn.includes('class="dsh-think"'),
   'fake per-round Think rows must be gone');
 assert(!flowingTurn.includes('运行记录'),

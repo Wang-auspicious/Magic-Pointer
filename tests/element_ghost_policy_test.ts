@@ -12,25 +12,29 @@ const handles = [
   { ref: 'LNK-far', role: 'Hyperlink', name: 'far', rect: [4000, 220, 60, 16] },
 ];
 
-const result = buildElementGhosts({ handles, displayBounds: display.bounds, scaleFactor: display.scaleFactor });
+const result = buildElementGhosts({
+  handles,
+  displayBounds: display.bounds,
+  scaleFactor: display.scaleFactor,
+  focusPoint: { x: 310, y: 225 },
+});
 
-assert.strictEqual(result.holdMs, 1000, 'ghost must hold about one second before fading');
-assert.strictEqual(result.fadeMs, 600);
-assert.strictEqual(result.ghosts.length, 2, 'tiny and off-display rects must be dropped');
+assert.strictEqual(result.holdMs, 900, 'selected element scan holds briefly before fading');
+assert.strictEqual(result.fadeMs, 400);
+assert.strictEqual(result.ghosts.length, 1, 'only the UIA element nearest the gesture should scan');
 
 const first = result.ghosts[0];
-assert.strictEqual(first.ref, 'A#copy-btn');
-assert.strictEqual(first.label, '复制');
-assert.deepStrictEqual(first.rect, { x: 50, y: 100, width: 24, height: 16 },
+assert.strictEqual(first.ref, 'LNK-hide');
+assert.deepStrictEqual(first.rect, { x: 150, y: 110, width: 15, height: 8 },
   'physical px must map to display-local DIP');
-assert.strictEqual(result.ghosts[1].delayMs, 45, 'stagger matches the proof-band rhythm');
+assert.strictEqual(first.delayMs, 0, 'one selected element starts immediately');
 
-// 封顶：再多也只画 18 个（屏幕回放不需要全量）
+// 再多也只画与指针最相关的一个，不能把元素树倾倒成满屏粉框。
 const many = Array.from({ length: 40 }, (_, i) => ({
   ref: `TXT-${i}`, role: 'Text', name: `行${i}`, rect: [10, i * 40, 200, 30],
 }));
 const capped = buildElementGhosts({ handles: many, displayBounds: display.bounds, scaleFactor: 1 });
-assert.strictEqual(capped.ghosts.length, 18);
+assert.strictEqual(capped.ghosts.length, 1);
 
 // 无句柄 → 空回放（自绘应用不造假框）
 const empty = buildElementGhosts({ handles: [], displayBounds: display.bounds, scaleFactor: 1 });

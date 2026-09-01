@@ -558,6 +558,7 @@ function bindSidebarSearch() {
   input.addEventListener('keydown', (event) => {
     if (event.key !== 'Escape') return;
     event.preventDefault();
+    event.stopPropagation();
     if (input.value) {
       input.value = '';
       sidebarQuery = '';
@@ -796,14 +797,33 @@ async function openConversation(id: string) {
   /* 会话重开后审批卡要能 reconstruct：最后一条 turn 若带着未消化的
      pendingInput（等待输入被打断/重启），卡重新长在 composer 上沿。
      已被回答过的旧提问不复活——只有最后一轮还在等才亮。 */
-  const lastTurn = turns[turns.length - 1] as { pendingInput?: { question?: unknown; options?: unknown } | null; failed?: boolean } | undefined;
+  const lastTurn = turns[turns.length - 1] as {
+    pendingInput?: {
+      question?: unknown;
+      options?: unknown;
+      kind?: unknown;
+      tool?: unknown;
+      prefix?: unknown;
+    } | null;
+    failed?: boolean;
+  } | undefined;
   const lastPending = lastTurn && !lastTurn.failed && lastTurn.pendingInput && typeof lastTurn.pendingInput === 'object'
     ? lastTurn.pendingInput
     : null;
   const lastOptions = lastPending && Array.isArray(lastPending.options)
     ? (lastPending.options as unknown[]).map((o) => String(o)).filter(Boolean)
     : [];
-  if (lastOptions.length >= 2) {
+  if (
+    lastPending?.kind === 'permission'
+    && String(lastPending.tool || '').trim()
+  ) {
+    pendingPermissionAsk = {
+      tool: String(lastPending.tool),
+      prefix: String(lastPending.prefix || '').trim() || undefined,
+    };
+    pendingAskInput = null;
+    renderPermissionAsk();
+  } else if (lastOptions.length >= 2) {
     pendingAskInput = {
       question: String(lastPending?.question || '需要你的决定'),
       options: lastOptions,
@@ -1153,11 +1173,42 @@ document.getElementById('window-menu-popover')?.addEventListener('click', (event
 
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
+    const menuWasOpen = [
+      'window-menu-popover',
+      'mode-menu',
+      'magic-brain-popover',
+      'composer-add-menu',
+      'composer-style-menu',
+      'composer-permission-menu',
+      'composer-model-menu',
+      'composer-options-menu',
+      'composer-usage-popover',
+    ].some((id) => document.getElementById(id)?.hidden === false)
+      || Boolean(document.getElementById('thread-menu'))
+      || Boolean(document.querySelector('.side-session-menu:not([hidden])'));
     closeWindowMenu();
+    closeThreadMenu();
+    closeSlashMenu();
+    closeStyleMenu();
+    closePermissionMenu();
+    closeModelMenu();
     const modeMenu = document.getElementById('mode-menu');
     if (modeMenu) modeMenu.hidden = true;
+    document.getElementById('mode-switch')?.setAttribute('aria-expanded', 'false');
     const brain = document.getElementById('magic-brain-popover');
     if (brain) brain.hidden = true;
+    document.getElementById('magic-brain-toggle')?.setAttribute('aria-expanded', 'false');
+    const optionsMenu = document.getElementById('composer-options-menu');
+    if (optionsMenu) optionsMenu.hidden = true;
+    document.getElementById('composer-options')?.setAttribute('aria-expanded', 'false');
+    const usagePopover = document.getElementById('composer-usage-popover');
+    if (usagePopover) usagePopover.hidden = true;
+    document.getElementById('composer-context')?.setAttribute('aria-expanded', 'false');
+    document.querySelectorAll<HTMLElement>('.side-session-menu:not([hidden])')
+      .forEach((menu) => { menu.hidden = true; });
+    if (!menuWasOpen && studioComposerBusy && pendingConversation) {
+      void stopActiveConversation();
+    }
     return;
   }
   if (event.altKey && event.key === 'ArrowLeft') { event.preventDefault(); moveWindowNavigation(-1); return; }
@@ -2436,7 +2487,7 @@ document.getElementById('composer-plan-toggle')?.addEventListener('click', () =>
      点击 = 授权随下一条消息生效，文本同时告诉模型继续；
    - ask：ask_user_question 的 options，点哪个就把哪个作为回答发出去。
    审批而已，用户不该需要打字。 */
-let pendingPermissionAsk: { tool: string } | null = null;
+let pendingPermissionAsk: { tool: string; prefix?: string } | null = null;
 let pendingPermissionChoice: { grant?: string; deny?: string; once?: string } | null = null;
 let pendingAskInput: { question: string; options: string[] } | null = null;
 
@@ -2468,11 +2519,23 @@ function renderPermissionAsk() {
   };
   if (pendingPermissionAsk) {
     const tool = pendingPermissionAsk.tool;
-    question.textContent = `是否授权执行 ${tool}？`;
+    const prefix = pendingPermissionAsk.prefix || '';
+    const grantRule = ConversationControl.permissionGrantRule(tool, prefix);
+    const grantTarget = prefix || tool;
+    question.textContent = `是否授权执行 ${grantTarget}？`;
+    const grantButtons = grantRule ? [
+      make('仅这一次允许', () => submitText(
+        `仅这一次允许 ${grantTarget}，请继续。`,
+        { once: grantRule },
+      )),
+      make(`总是允许 ${prefix || tool}`, () => submitText(
+        `本会话总是允许 ${grantTarget}，请继续。`,
+        { grant: grantRule },
+      )),
+    ] : [];
     host.replaceChildren(
       question,
-      make('仅这一次允许', () => submitText(`仅这一次允许 ${tool}，请继续。`, { once: tool })),
-      make('本会话总是允许', () => submitText(`本会话总是允许 ${tool}，请继续。`, { grant: tool })),
+      ...grantButtons,
       make('拒绝', () => submitText(`拒绝执行 ${tool}，换别的办法。`, { deny: tool }), 'danger'),
     );
     return;
@@ -2820,12 +2883,39 @@ function appendLiveReasoningText(text: string) {
 
 /* 作曲家忙态：发送钮变停止钮（DSH InputBar 同款形态）。
    isRunning=false 时恢复发送钮并清掉流式残留状态。 */
+function focusComposerWhenIdle() {
+  const textarea = document.querySelector<HTMLTextAreaElement>('#composer-form textarea');
+  if (!textarea) return;
+  const active = document.activeElement;
+  const tagName = String((active as HTMLElement | null)?.tagName || '').toLowerCase();
+  const anotherTypingTarget = active !== textarea && (tagName === 'input' || tagName === 'textarea');
+  if (!anotherTypingTarget) textarea.focus();
+}
+
 function setComposerRunningState(running: boolean) {
   const submit = document.querySelector<HTMLButtonElement>('#composer-form button[type="submit"]');
   if (submit) {
     submit.classList.toggle('is-stop', running);
     submit.title = running ? '停止' : '发送';
     submit.setAttribute('aria-label', running ? '停止' : '发送');
+  }
+  if (!running) focusComposerWhenIdle();
+}
+
+async function stopActiveConversation() {
+  const pending = pendingConversation;
+  if (!studioComposerBusy || !pending || pending.body.dataset.stopRequested === 'true') return;
+  pending.body.dataset.stopRequested = 'true';
+  const note = document.createElement('div');
+  note.className = 'dsh-turn-status';
+  note.textContent = '正在停止…';
+  pending.body.appendChild(note);
+  const result = await ConversationControl.callConversationAction(
+    () => Data.stopConversation(pending.requestId),
+  );
+  if (!result.ok && pendingConversation === pending) {
+    delete pending.body.dataset.stopRequested;
+    note.textContent = result.error;
   }
 }
 
@@ -2859,14 +2949,7 @@ document.getElementById('composer-form')?.querySelector('button[type="submit"]')
   if (!studioComposerBusy || !pendingConversation) return;
   e.preventDefault();
   e.stopPropagation();
-  void (async () => {
-    const requestId = pendingConversation!.requestId;
-    const note = document.createElement('div');
-    note.className = 'dsh-turn-status';
-    note.textContent = '正在停止…';
-    pendingConversation!.body.appendChild(note);
-    await Data.stopConversation(requestId);
-  })();
+  void stopActiveConversation();
 });
 
 document.querySelectorAll('form.dshw-input-form').forEach(form => {
@@ -2888,7 +2971,7 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
       if (menu && !menu.hidden) {
         if (e.key === 'ArrowDown') { e.preventDefault(); moveSlashSelection(1); return; }
         if (e.key === 'ArrowUp') { e.preventDefault(); moveSlashSelection(-1); return; }
-        if (e.key === 'Escape') { closeSlashMenu(); return; }
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeSlashMenu(); return; }
         if ((e.key === 'Enter' && !e.isComposing) || e.key === 'Tab') {
           const active = activeSlashRow();
           if (active) {
@@ -2986,10 +3069,13 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
          点按钮即答，不需要打字。 */
       const awaiting = response as {
         awaitingUserInput?: boolean;
-        pendingInput?: { kind?: string; tool?: string; question?: string; options?: unknown };
+        pendingInput?: { kind?: string; tool?: string; prefix?: string; question?: string; options?: unknown };
       };
       if (awaiting.awaitingUserInput && awaiting.pendingInput?.kind === 'permission' && awaiting.pendingInput.tool) {
-        pendingPermissionAsk = { tool: String(awaiting.pendingInput.tool) };
+        pendingPermissionAsk = {
+          tool: String(awaiting.pendingInput.tool),
+          prefix: String(awaiting.pendingInput.prefix || '').trim() || undefined,
+        };
         renderPermissionAsk();
       } else if (awaiting.awaitingUserInput && Array.isArray(awaiting.pendingInput?.options)
         && (awaiting.pendingInput.options as unknown[]).length >= 2) {
@@ -3003,7 +3089,7 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
       await renderSidebar();
     } catch (error) {
       pending.replaceChildren(DshChat.turnErrorNode(error instanceof Error ? error.message : String(error)));
-      textarea.value = question;
+      textarea.value = ConversationControl.failedDraftValue(textarea.value, question);
       fitComposer(textarea);
     } finally {
       pendingConversation = null;
@@ -3011,7 +3097,6 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
       stopPendingClock();
       form.removeAttribute('aria-busy');
       setComposerRunningState(false);
-      textarea.focus();
     }
   });
 });

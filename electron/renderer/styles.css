@@ -375,9 +375,10 @@ body[data-mode='observer'] * {
   line-height: 1.35;
 }
 
-/* ---- Hermes drive 回放：结构化元素框 + 语义句柄标签 ----
-   圈选读取完成后在目标应用上回放“Magic Pointer 此刻看到了什么”：
-   错峰浮现（45ms/个）→ 驻留 1s → 淡出 600ms → 整层移除。 */
+/* ---- Structured element scan ---------------------------------------------
+   Snapshot completion selects the UIA element nearest the gesture. A single
+   bright segment travels its perimeter once, then the outline dissolves. No
+   labels, no filled pink rectangles, no accessibility tree dumped on screen. */
 #element-ghosts {
   position: fixed;
   inset: 0;
@@ -386,32 +387,46 @@ body[data-mode='observer'] * {
 }
 .element-ghost {
   position: absolute;
-  border: 1.5px solid rgba(224, 64, 168, 0.85);
-  border-radius: 4px;
-  background: rgba(224, 64, 168, 0.06);
+  border: 1px solid rgba(66, 126, 236, 0.62);
+  border-radius: 7px;
+  background: transparent;
+  box-shadow: 0 0 0 3px rgba(66, 126, 236, 0.10), inset 0 0 10px rgba(66, 126, 236, 0.08);
   opacity: 0;
-  animation: element-ghost-life var(--ghost-total, 1600ms) ease-out forwards;
+  animation: element-ghost-life var(--ghost-total, 1300ms) linear forwards;
   animation-delay: var(--ghost-delay, 0ms);
 }
-.element-ghost-tag {
+.element-ghost::after {
+  content: '';
   position: absolute;
-  top: -13px;
-  left: -1.5px;
-  max-width: 260px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  padding: 0 5px;
-  border-radius: 3px;
-  background: rgba(224, 64, 168, 0.92);
-  color: #fff;
-  font: 500 10px/15px "Segoe UI Variable", "Segoe UI", "Microsoft YaHei", sans-serif;
+  inset: -2px;
+  border-radius: 9px;
+  padding: 2px;
+  background: conic-gradient(
+    from var(--ghost-angle, 0turn),
+    transparent 0deg,
+    transparent 278deg,
+    rgba(255, 255, 255, .98) 318deg,
+    rgba(66, 126, 236, .96) 342deg,
+    transparent 360deg
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: element-ghost-scan 1050ms cubic-bezier(.32, .72, 0, 1) 100ms both;
 }
 @keyframes element-ghost-life {
   0% { opacity: 0; transform: scale(0.97); }
-  /* hold/fade 时序由主进程按策略下发，动画按总时长等比铺：前 6% 浮现，
-     尾段 37% 淡出，中段稳定可见。 */
-  6% { opacity: 1; transform: scale(1); }
-  63% { opacity: 1; }
+  8% { opacity: 1; transform: scale(1); }
+  70% { opacity: 1; }
   100% { opacity: 0; }
+}
+@keyframes element-ghost-scan { to { --ghost-angle: 1turn; } }
+@property --ghost-angle {
+  syntax: '<angle>';
+  initial-value: 0turn;
+  inherits: false;
+}
+@media (prefers-reduced-motion: reduce) {
+  .element-ghost { animation-duration: 800ms; }
+  .element-ghost::after { display: none; }
 }

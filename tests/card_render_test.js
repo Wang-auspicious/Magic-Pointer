@@ -156,12 +156,29 @@ assert.ok(withSteps.includes('mstep-fact'), '事实是 ✓ 行下面独立的 �
 assert.ok(withSteps.includes('→'), '事实行以 → 开头（§5.3 版式即语义）');
 assert.ok(!withSteps.includes('mstep-note'), '旧的行内尾巴结构必须删掉');
 
+const toolLimitNotice = cards.phaseStep({
+  phase: 'tools_truncated',
+  fields: { count: '130', limit: '128', dropped: '2', names: 'mcp_alpha,mcp_beta' },
+});
+const toolLimitHtml = renderCard(cards.applyPatch(
+  cards.normalizeCard({ kind: 'prose', state: 'running', id: 'tools-limit' }),
+  { steps: [toolLimitNotice] },
+));
+assert.ok(toolLimitHtml.includes('工具太多，本轮只加载一部分'),
+  'Stage 必须把 ToolsTruncated 画成中文可见通知');
+assert.ok(toolLimitHtml.includes('130 个 · 上限 128 · mcp_alpha,mcp_beta'),
+  '截断通知必须说明总数、上限和有界的未加载工具名');
+
 // 舞台（capsule 密度）运行中必须铺证据流——那正是参考卡的全部内容
 const capsule = renderCard(cards.applyPatch(
   cards.normalizeCard({ kind: 'prose', state: 'running', id: 's2' }),
   { steps: [cards.phaseStep({ phase: 'structured_read' })] },
 ), { density: 'capsule' });
 assert.ok(capsule.includes('mcard-steps'), '舞台窄卡运行中就是逐行展开的证据流，不许藏');
+assert.ok(!capsule.includes('准备阶段'), '舞台不报告冻结/枚举/凑上下文等内部流水账');
+assert.ok(!capsule.includes('mstep-fact'), '舞台不倾倒 UIA/L0/毫秒等内部说明');
+assert.ok(capsule.includes('data-state="pending"'), '已完成步骤下面必须有持续运动的当前活动');
+assert.ok(capsule.includes('data-elapsed'), '当前活动保留真实等待秒数，但不另占一行');
 
 // ---------------------------------------------------------------------------
 // 提案：预览要长得像结果，而不是像一条命令
@@ -202,6 +219,10 @@ assert.ok(factCss.includes('var(--font-mono)'), '→ 事实行是等宽字（§5
 assert.ok(cardsCss.includes('cubic-bezier(0.32, 0.72, 0, 1)'),
   '全套动效统一用实测减速曲线（§6.3，起步快收尾长无过冲）');
 assert.ok(/animation: mstep-in 360ms/.test(cardsCss), '单行入场约 360ms（逐帧实测 350-400ms）');
+assert.ok(cardsCss.includes('.mcard-steps li:not(:last-child)::after'),
+  '相邻活动必须由一段短竖线连接，而不是互不相关的图标列表');
+assert.ok(/@keyframes mstep-spin/.test(cardsCss), '当前活动的小点必须持续运动，避免卡死感');
+assert.ok(/@keyframes mstep-check/.test(cardsCss), '完成时转成对号要有克制的落定转场');
 assert.ok(/@keyframes mstep-in \{[^}]*blur\(/.test(cardsCss),
   '入场带雾化淡入（视频里逐行 blur→clear）');
 assert.ok(/prefers-reduced-motion[\s\S]*mcard-steps li[^{]*\{[^}]*animation: none/.test(cardsCss),

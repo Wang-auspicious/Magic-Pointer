@@ -31,6 +31,13 @@ declare global {
     modelUsage?: Record<string, number>;
     timingMs?: number;
     usedBackend?: string;
+    pendingInput?: {
+      question?: string;
+      options?: string[];
+      kind?: string;
+      tool?: string;
+      prefix?: string;
+    };
     [key: string]: unknown;
   }
 
@@ -117,7 +124,11 @@ declare global {
     PLAN_PHASE: string;
     sessionIdFromRecord(record: unknown): string | null;
     decodeChunkBlob(fields: Record<string, string>): string;
+    failedDraftValue(current: unknown, submitted: unknown): string;
+    callConversationAction(action: () => Promise<{ ok?: boolean; error?: string }>): Promise<{ ok: boolean; error: string }>;
     planStepsFromRecord(record: unknown): { steps: Array<{ content: string; status: string }> } | null;
+    permissionGrantRule(tool: unknown, prefix?: unknown): string;
+    sanitizePermissionRule(value: unknown): string;
   }
   const ConversationControl: MagicPointerConversationControlApi;
 
@@ -144,15 +155,19 @@ declare global {
   interface MagicPointerAttachment {
     name?: string;
     src?: string;
+    text?: string;
     icon?: string;
     [key: string]: unknown;
   }
   interface MagicPointerComposerOptions {
     placeholder?: string;
     density?: string;
-    onSubmit?: (payload: { text: string; attachments: MagicPointerAttachment[] }) => void;
-    onStop?: () => void;
+    onSubmit?: (payload: { text: string; attachments: MagicPointerAttachment[] }) => boolean | void | Promise<boolean | void>;
+    onStop?: (() => boolean | void | Promise<boolean | void>) | null;
+    onSteer?: ((text: string) => boolean | void | Promise<boolean | void>) | null;
+    onVoice?: (() => void) | null;
     onScissor?: (() => void) | null;
+    allowAttachments?: boolean;
     meta?: { id?: string; title?: string; label?: string; dot?: string; icon?: string }[];
     onMeta?: (id: string, btn: HTMLElement) => void;
   }
@@ -170,6 +185,15 @@ declare global {
   const Composer: {
     create(options?: MagicPointerComposerOptions): MagicPointerComposerInstance;
     safeThumb(value: unknown): string;
+    decideSubmission(state: 'idle' | 'running', value: unknown, attachments: MagicPointerAttachment[]): Record<string, unknown>;
+    shouldRestoreFocus(active: unknown, composerInput: unknown): boolean;
+    isTextAttachmentName(name: unknown): boolean;
+    textAttachmentWithinLimit(size: unknown): boolean;
+    attachmentSubmissionSnapshot<T extends { id: number }>(entries: T[], cutoff: number): T[];
+    pendingReadsThrough(pending: Map<number, Promise<void>>, cutoff: number): Promise<void>[];
+    remainingAttachmentEntries<T extends { id: number }>(current: T[], submitted: T[]): T[];
+    createInFlightGate(): { tryEnter(): boolean; leave(): void; active(): boolean };
+    callAcknowledged(callback: () => boolean | void | Promise<boolean | void>): Promise<boolean>;
   };
 
   interface MagicPointerStashItem {

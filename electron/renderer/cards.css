@@ -68,8 +68,21 @@
    证据本身就是进度，百分比条从结构到样式都不存在了。 */
 .mcard-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
 .mcard-steps li {
+  position: relative;
   display: flex; flex-direction: column; gap: 3px;
   animation: mstep-in 360ms cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+.mcard-steps li:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: 18px;
+  bottom: -10px;
+  width: 1px;
+  border-radius: 1px;
+  background: var(--hairline-strong, rgba(23, 23, 15, .16));
+  transform-origin: top;
+  animation: mstep-link-in 280ms cubic-bezier(0.32, 0.72, 0, 1) both;
 }
 /* 单行入场照视频逐帧复刻：淡入 + 上浮 + 雾化（blur→clear，实测 350-400ms），
    缓动全套统一 §6.3 实测减速曲线。 */
@@ -79,7 +92,15 @@
 }
 .mstep-row { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .mstep-dot { width: 13px; height: 13px; flex: none; stroke: var(--green); fill: none; stroke-width: 2; }
-.mcard-steps li[data-state="pending"] .mstep-dot { stroke: var(--ink-4); }
+.mcard-steps li[data-state="done"] .mstep-dot {
+  animation: mstep-check 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.mcard-steps li[data-state="pending"] .mstep-dot {
+  stroke: var(--ink-3);
+  stroke-dasharray: 11 7;
+  transform-origin: center;
+  animation: mstep-spin 900ms linear infinite;
+}
 .mstep-label {
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-size: 12.5px; line-height: 1.5; color: var(--ink);
@@ -88,6 +109,22 @@
   padding-left: 20px;
   font-family: var(--font-mono); font-size: 11px; line-height: 1.5;
   color: var(--ink-3); overflow-wrap: anywhere;
+}
+.mstep-elapsed {
+  margin-left: auto;
+  font: normal 10px/1 var(--font-mono);
+  color: var(--ink-4);
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes mstep-spin { to { transform: rotate(360deg); } }
+@keyframes mstep-check {
+  from { opacity: .25; transform: scale(.72); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes mstep-link-in {
+  from { opacity: 0; transform: scaleY(0); }
+  to { opacity: 1; transform: scaleY(1); }
 }
 
 /* 准备阶段折叠组与终态过程折叠组：一行带头，展开才见全表。
@@ -404,6 +441,8 @@
   .mimg-skeleton,
   .mimg-skeleton::after,
   .mcard-steps li,
+  .mcard-steps li::after,
+  .mcard-steps .mstep-dot,
   .mfolder, .mfile,
   .mcard-image .mimg { animation: none; }
 }

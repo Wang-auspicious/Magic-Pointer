@@ -64,6 +64,7 @@ from app.agent_runtime.loop import (  # noqa: E402
     LoopParams,
     LoopStopped,
     StopDecision,
+    ToolsTruncated,
     ToolCallFinished,
     ToolCallStarted,
     TurnFinished,
@@ -216,7 +217,10 @@ async def collect(params: LoopParams) -> tuple[list, Terminal]:
 
 
 def test_single_turn_direct_answer_terminates():
-    backend = ScriptedBackend([TurnDone(usage=None, raw_text="hello!")])
+    backend = ScriptedBackend([
+        MessageDelta("hello!"),
+        TurnDone(usage=None, raw_text="hello!"),
+    ])
     client = LoopModelClient(backend)
 
     events, terminal = asyncio.run(collect(make_params(client=client)))
@@ -308,6 +312,26 @@ def test_user_input_tool_suspends_without_another_model_round() -> None:
         "options": ["A", "B"],
     }
     assert len(backend.received) == 1
+
+
+def test_pending_permission_input_preserves_bounded_command_prefix() -> None:
+    from app.agent_runtime.loop import _pending_user_input
+
+    value = __import__("json").dumps({
+        "awaitingUserInput": True,
+        "question": "允许跑测试吗？",
+        "options": ["仅这一次允许", "本会话总是允许", "拒绝"],
+        "kind": "permission",
+        "tool": "Bash",
+        "prefix": "pytest",
+    }, ensure_ascii=False)
+    assert _pending_user_input(value) == {
+        "question": "允许跑测试吗？",
+        "options": ["仅这一次允许", "本会话总是允许", "拒绝"],
+        "kind": "permission",
+        "tool": "Bash",
+        "prefix": "pytest",
+    }
 
 
 def test_model_usage_is_aggregated_across_agent_rounds() -> None:
@@ -1283,7 +1307,42 @@ def test_tool_limit_truncation_keeps_recommended():
     assert names[1] == "t01"
     assert set(("t19", "t01")).issubset(set(names))
     assert names == ["t19", "t01", "t00", "t02", "t03", "t04", "t05", "t06", "t07", "t08", "t09", "t10"]
+    notices = [event for event in events if type(event).__name__ == "ToolsTruncated"]
+    assert len(notices) == 1
+    assert notices[0].limit == 12
+    assert notices[0].dropped == (
+        "t11", "t12", "t13", "t14", "t15", "t16", "t17", "t18",
+    )
     assert terminal.reason is TransitionReason.COMPLETED
+
+
+def test_tool_examples_are_folded_into_model_visible_description() -> None:
+    from app.agent_runtime.loop import _select_tool_schemas
+
+    registry = ToolRegistry()
+    registry.register(ToolSpec(
+        name="Patch",
+        description="Apply a patch.",
+        input_schema=EMPTY_SCHEMA,
+        execute=lambda: "ok",
+        examples=({"patch": "*** Begin Patch\n*** End Patch"},),
+    ))
+    registry.register(ToolSpec(
+        name="Plain",
+        description="Plain description.",
+        input_schema=EMPTY_SCHEMA,
+        execute=lambda: "ok",
+    ))
+
+    schemas = _select_tool_schemas(make_params(
+        registry=registry,
+        client=LoopModelClient(ScriptedBackend()),
+        tool_limit=10,
+    ))
+    descriptions = {schema["name"]: schema["description"] for schema in schemas}
+    assert "调用示例：" in descriptions["Patch"]
+    assert '"patch"' in descriptions["Patch"]
+    assert descriptions["Plain"] == "Plain description."
 
 
 def test_discovery_tool_loads_newly_registered_tools_for_next_model_turn():
@@ -1879,6 +1938,7 @@ def test_exhausted_model_call_budget_never_enters_provider() -> None:
         TurnWithheld(reason="backend_error:model_request_timeout"),
         TurnDone(usage=None, raw_text=None),
     ]
+    assert client.withheld_count == 1
 
 
 def test_raising_model_adapter_is_retried_without_crashing_the_agent():
@@ -2570,7 +2630,17 @@ def test_raising_event_sink_never_kills_the_loop():
     assert terminal.message == "hi"
 
 
-def test_real_prompt_tokens_trigger_compaction_when_estimator_undercounts():
+@pytest.mark.parametrize("reported_usage", [
+    {"prompt_tokens": 90},
+    {
+        "input_tokens": 10,
+        "cache_read_input_tokens": 70,
+        "cache_creation_input_tokens": 10,
+    },
+])
+def test_real_prompt_tokens_trigger_compaction_when_estimator_undercounts(
+    reported_usage,
+):
     """真机事故（notepad-edit）：估算器把全中文上下文低估近一半，真实
     prompt_tokens 已 86k（预算 64k）压缩还没触发。上一轮 provider 报告的
     真实 usage 是 ground truth——超过阈值必须直接触发压缩，不等估算器。"""
@@ -2587,7 +2657,7 @@ def test_real_prompt_tokens_trigger_compaction_when_estimator_undercounts():
     backend = ScriptedBackend(
         [
             ToolCallArrived(call=ToolCall(id="c1", name="echo", arguments={})),
-            TurnDone(usage={"prompt_tokens": 90}, raw_text=None),
+            TurnDone(usage=reported_usage, raw_text=None),
         ],
         [TurnDone(usage=None, raw_text="done")],
     )
@@ -2696,9 +2766,92 @@ def test_transient_backend_error_retries_when_the_turn_has_progress(monkeypatch)
 
     assert terminal.reason is TransitionReason.COMPLETED
     assert terminal.message == "最终答复"
-    assert sleeps and sleeps[0] >= 10, "必须真的等过熔断冷却（秒级退避），不能 0.25s 走过场"
+    assert sum(sleeps) >= 10, "必须真的等过熔断冷却（秒级退避），不能 0.25s 走过场"
+    assert max(sleeps) <= 0.5, "退避必须切片，停止键不能被一口气 sleep 15 秒挡住"
     recovered = [e for e in events if type(e).__name__ == "BackendRecovery"]
     assert recovered, "重试必须作为可见事件发出，GUI 才能显示「端点抖动，等待恢复」"
+
+
+def test_backend_recovery_never_replays_a_round_with_visible_model_output(
+    monkeypatch,
+):
+    from app.agent_runtime import loop as loop_module
+
+    monkeypatch.setattr(loop_module, "_sleep", lambda _seconds: None)
+    backend = ScriptedBackend(
+        [
+            ToolCallArrived(call=ToolCall(id="c1", name="echo", arguments={})),
+            TurnDone(usage=None, raw_text=None),
+        ],
+        [
+            MessageDelta("partial answer"),
+            TurnWithheld(reason="backend_error:OSError"),
+            TurnDone(usage=None, raw_text="partial answer"),
+        ],
+        [TurnDone(usage=None, raw_text="replayed answer")],
+    )
+    tool, _ = make_counting_tool("echo", value="ok")
+    registry = ToolRegistry()
+    registry.register(tool)
+
+    events, terminal = asyncio.run(collect(make_params(
+        client=LoopModelClient(backend),
+        registry=registry,
+        budgets={
+            Stage.FULL_ANSWER: BudgetPolicy(
+                stage=Stage.FULL_ANSWER,
+                budget_ms=600_000,
+                on_timeout=TimeoutAction.ABANDON,
+            )
+        },
+    )))
+
+    assert len(backend.received) == 2
+    assert [
+        event.text for event in events if type(event).__name__ == "ModelChunk"
+    ] == ["partial answer"]
+    assert not any(isinstance(event, BackendRecovery) for event in events)
+    assert terminal.reason is TransitionReason.PROVIDER_UNAVAILABLE
+
+
+def test_backend_recovery_wait_honors_interrupt_within_two_seconds(monkeypatch):
+    from app.agent_runtime import loop as loop_module
+    from app.governance.latency_budget import BudgetPolicy, Stage, TimeoutAction
+
+    sleeps: list[float] = []
+    monkeypatch.setattr(loop_module, "_sleep", lambda seconds: sleeps.append(seconds))
+    withheld = [
+        TurnWithheld(reason="backend_error:temporary_transport"),
+        TurnDone(usage=None, raw_text=None),
+    ]
+    backend = ScriptedBackend(
+        [
+            ToolCallArrived(call=ToolCall(id="c1", name="echo", arguments={})),
+            TurnDone(usage=None, raw_text=None),
+        ],
+        withheld,
+        withheld,
+        withheld,
+    )
+    tool, _ = make_counting_tool("echo", value="ok")
+    registry = ToolRegistry()
+    registry.register(tool)
+
+    _events, terminal = asyncio.run(collect(make_params(
+        client=LoopModelClient(backend),
+        registry=registry,
+        interrupt_check=lambda: len(sleeps) >= 3,
+        budgets={
+            Stage.FULL_ANSWER: BudgetPolicy(
+                stage=Stage.FULL_ANSWER,
+                budget_ms=600_000,
+                on_timeout=TimeoutAction.ABANDON,
+            )
+        },
+    )))
+
+    assert terminal.reason is TransitionReason.USER_INTERRUPT
+    assert 0 < sum(sleeps) < 2.0
 
 
 def test_transient_backend_error_terminates_when_no_progress():
@@ -2968,6 +3121,53 @@ def test_thread_grant_upgrades_ask_tool_in_the_loop() -> None:
     assert ran["n"] == 1, "granted tool must actually execute"
 
 
+def test_pre_tool_hook_rewrite_must_recheck_bash_prefix_grant() -> None:
+    from app.agent_runtime.permission_decisions import PermissionDecisions
+
+    bash, state = make_counting_tool(
+        "Bash",
+        schema={
+            "type": "object",
+            "properties": {"command": {"type": "string"}},
+            "required": ["command"],
+        },
+        effect=Effect.LOCAL_IRREVERSIBLE,
+    )
+    registry = ToolRegistry()
+    registry.register(bash)
+    hooks = HookManager(pre_tool_use=[
+        lambda _payload: {"input": {"command": "npm install"}},
+    ])
+    backend = ScriptedBackend(
+        [
+            ToolCallArrived(call=ToolCall(
+                id="bash-1",
+                name="Bash",
+                arguments={"command": "pytest -q"},
+            )),
+            TurnDone(usage=None, raw_text=None),
+        ],
+        [TurnDone(usage=None, raw_text="done")],
+    )
+
+    _events, terminal = asyncio.run(collect(make_params(
+        client=LoopModelClient(backend),
+        registry=registry,
+        hook_manager=hooks,
+        permission_mode="default",
+        allowed_effects=(
+            Effect.READ,
+            Effect.REVERSIBLE_WRITE,
+            Effect.LOCAL_IRREVERSIBLE,
+        ),
+        permission_decisions=PermissionDecisions(allowed=("Bash(pytest)",)),
+    )))
+
+    assert state["calls"] == 0
+    assert terminal.results[0].failure_type is FailureType.PERMISSION_DENIED
+    assert "needs user confirmation" in terminal.results[0].value
+
+
 def test_transient_http_500_on_fresh_turn_waits_and_retries():
     """网关 5xx 打在新会话第一条消息上：等一次冷却后重试，而不是把
     原始错误码当答案终止（真机 8·29 backenderror:http500）。
@@ -3036,4 +3236,71 @@ def test_loop_end_notifies_session_end_listeners():
     events, terminal = asyncio.run(collect(make_params(client=client, registry=registry)))
 
     assert terminal.reason is TransitionReason.COMPLETED
+    assert released == [True]
+
+
+def test_dynamic_discovery_reports_tools_dropped_by_the_limit() -> None:
+    registry = ToolRegistry()
+
+    def discover(scope=None):
+        names = []
+        for index in range(5):
+            name = f"remote_{index}"
+            registry.register(ToolSpec(
+                name=name,
+                description=name,
+                input_schema=EMPTY_SCHEMA,
+                execute=lambda scope=None: "ok",
+                deferred=True,
+            ))
+            names.append({"name": name})
+        return __import__("json").dumps({"tools": names})
+
+    registry.register(ToolSpec(
+        name="provider_search",
+        description="discover provider tools",
+        input_schema=EMPTY_SCHEMA,
+        execute=discover,
+        discovers_tools=True,
+    ))
+    backend = ScriptedBackend(
+        [
+            ToolCallArrived(call=ToolCall(
+                id="discover", name="provider_search", arguments={},
+            )),
+            TurnDone(usage=None, raw_text=None),
+        ],
+        [TurnDone(usage=None, raw_text="ready")],
+    )
+
+    events, terminal = asyncio.run(collect(make_params(
+        client=LoopModelClient(backend),
+        registry=registry,
+        tool_limit=3,
+    )))
+
+    notices = [event for event in events if isinstance(event, ToolsTruncated)]
+    assert len(notices) == 1
+    assert notices[0].dropped == ("remote_3", "remote_4", "provider_search")
+    assert [schema["name"] for schema in backend.received[1][1]] == [
+        "remote_0", "remote_1", "remote_2",
+    ]
+    assert terminal.reason is TransitionReason.COMPLETED
+
+
+def test_loop_exception_notifies_session_end_listeners_once():
+    """异常出口也必须归还桌面输入锁，且不能与正常终态重复通知。"""
+    released = []
+    registry = ToolRegistry()
+    registry.add_session_end_listener(lambda: released.append(True))
+    client = LoopModelClient(ScriptedBackend([]))
+
+    def crash(*_args, **_kwargs):
+        raise RuntimeError("provider crashed")
+
+    client.stream_turn = crash
+
+    with pytest.raises(RuntimeError, match="provider crashed"):
+        asyncio.run(collect(make_params(client=client, registry=registry)))
+
     assert released == [True]

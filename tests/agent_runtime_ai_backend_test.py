@@ -22,6 +22,7 @@ from app.agent_runtime.model_client import (  # noqa: E402
     ToolCallArrived,
     TurnDone,
     TurnWithheld,
+    _messages_payload,
 )
 from app.agent_runtime.types import AgentMessage, Role  # noqa: E402
 
@@ -224,6 +225,114 @@ def test_messages_protocol_endpoint_and_headers(monkeypatch):
     tool_calls = [event for event in events if isinstance(event, ToolCallArrived)]
     assert tool_calls[0].call.name == "look"
     assert tool_calls[0].call.arguments == {"anchor": "bbox:1,2,3,4"}
+
+
+def test_messages_protocol_merges_parallel_tool_results_into_one_user_turn() -> None:
+    assistant = AgentMessage(
+        role=Role.ASSISTANT,
+        content="",
+        tool_call_id=None,
+        name=None,
+        tool_calls=(
+            {"id": "call_1", "name": "one", "arguments": {}},
+            {"id": "call_2", "name": "two", "arguments": {}},
+        ),
+    )
+    payload = _messages_payload(
+        "model",
+        [
+            _user("run both"),
+            assistant,
+            _tool_result("first", call_id="call_1", name="one"),
+            _tool_result("second", call_id="call_2", name="two"),
+        ],
+        [],
+        64,
+        "messages",
+    )
+
+    assert [entry["role"] for entry in payload["messages"]] == [
+        "user", "assistant", "user",
+    ]
+    results = payload["messages"][-1]["content"]
+    assert [block["tool_use_id"] for block in results] == ["call_1", "call_2"]
+
+
+def test_messages_protocol_merges_tool_result_and_followup_user_text() -> None:
+    payload = _messages_payload(
+        "model",
+        [_tool_result("done"), _user("now continue")],
+        [],
+        64,
+        "messages",
+    )
+
+    assert len(payload["messages"]) == 1
+    assert [block["type"] for block in payload["messages"][0]["content"]] == [
+        "tool_result", "text",
+    ]
+    assert payload["messages"][0]["content"][1]["text"] == "now continue"
+
+
+def _cache_control_count(value) -> int:
+    if isinstance(value, dict):
+        return int("cache_control" in value) + sum(
+            _cache_control_count(item) for item in value.values()
+        )
+    if isinstance(value, list):
+        return sum(_cache_control_count(item) for item in value)
+    return 0
+
+
+def test_messages_payload_requests_three_prompt_cache_breakpoints(monkeypatch) -> None:
+    monkeypatch.delenv("MAGIC_POINTER_PROMPT_CACHE", raising=False)
+    payload = _messages_payload(
+        "model",
+        [_user("u1"), _assistant("a1"), _user("u2"), _assistant("a2"), _user("u3")],
+        TOOLS,
+        64,
+        "messages",
+        system_prompt="stable system",
+    )
+
+    assert _cache_control_count(payload) == 3
+    assert payload["system"][0]["cache_control"] == {"type": "ephemeral"}
+    assert payload["tools"][-1]["cache_control"] == {"type": "ephemeral"}
+    stable_boundary = payload["messages"][3]
+    assert stable_boundary["role"] == "assistant"
+    assert stable_boundary["content"][-1]["cache_control"] == {
+        "type": "ephemeral"
+    }
+    assert _cache_control_count(payload["messages"][2]) == 0
+
+
+def test_prompt_cache_can_be_disabled_for_incompatible_gateways(monkeypatch) -> None:
+    monkeypatch.setenv("MAGIC_POINTER_PROMPT_CACHE", "0")
+    payload = _messages_payload(
+        "model",
+        [_user("u1"), _assistant("a1"), _user("u2")],
+        TOOLS,
+        64,
+        "messages",
+        system_prompt="stable system",
+    )
+    assert _cache_control_count(payload) == 0
+    assert payload["system"] == "stable system"
+
+
+def test_chat_completions_payload_never_injects_anthropic_cache_fields(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("MAGIC_POINTER_PROMPT_CACHE", raising=False)
+    payload = _messages_payload(
+        "model",
+        [_user("u1"), _assistant("a1"), _user("u2")],
+        TOOLS,
+        64,
+        "chat",
+        system_prompt="stable system",
+    )
+    assert _cache_control_count(payload) == 0
 
 
 def test_budget_ms_becomes_http_timeout(monkeypatch):
@@ -466,5 +575,9 @@ def test_system_prompt_uses_messages_protocol_system_field(monkeypatch):
     list(backend.generate([_user("hi")], TOOLS))
 
     payload = calls[0]["json"]
-    assert payload["system"] == "你是桌面助手。"
+    assert payload["system"] == [{
+        "type": "text",
+        "text": "你是桌面助手。",
+        "cache_control": {"type": "ephemeral"},
+    }]
     assert payload["messages"][0] == {"role": "user", "content": "hi"}

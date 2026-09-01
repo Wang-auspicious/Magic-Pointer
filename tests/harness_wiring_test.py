@@ -39,6 +39,7 @@ from app.agent_runtime.model_client import (  # noqa: E402
     StreamingMessagesBackend,
     ToolCallArrived,
     TurnDone,
+    TurnWithheld,
 )
 from app.agent_runtime.tool_registry import Effect, ToolRegistry, ToolSpec  # noqa: E402
 from app.agent_runtime.types import Role, Terminal, ToolCall  # noqa: E402
@@ -383,6 +384,51 @@ def test_streaming_backend_keeps_streamed_text(monkeypatch):
     text = "".join(e.text for e in events if isinstance(e, MessageDelta))
     assert text == "你好"
     assert successes == [("text-model", "https://gateway.example/v1")]
+
+
+def test_streaming_backend_never_replays_after_committed_text(monkeypatch):
+    _stream_config(monkeypatch)
+    calls: list = []
+
+    class BreakingStreamResponse:
+        status_code = 200
+
+        def iter_lines(self):
+            yield 'data: {"choices":[{"delta":{"content":"first"}}]}'
+            raise OSError("socket broke after first token")
+
+    backend = _streaming_backend(calls, BreakingStreamResponse())
+    events = list(backend.generate([_user("hi")], [], budget_ms=3000))
+
+    assert [call["method"] for call in calls] == ["stream"]
+    assert "".join(
+        event.text for event in events if isinstance(event, MessageDelta)
+    ) == "first"
+    assert [
+        event.reason for event in events if type(event).__name__ == "TurnWithheld"
+    ] == ["backend_error:OSError"]
+    assert isinstance(events[-1], TurnDone)
+
+
+def test_committed_stream_error_is_not_recorded_as_endpoint_success(monkeypatch):
+    _stream_config(monkeypatch)
+    successes: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        ai_client,
+        "record_success",
+        lambda *, model, base_url: successes.append((model, base_url)),
+    )
+    backend = StreamingMessagesBackend(timeout_s=5.0, max_tokens=120)
+    backend._post_streaming = lambda *args, **kwargs: iter((  # type: ignore[method-assign]
+        MessageDelta("first"),
+        TurnWithheld(reason="backend_error:stream_error"),
+        TurnDone(usage=None, raw_text="first"),
+    ))
+
+    events = list(backend.generate([_user("hi")], [], budget_ms=3000))
+
+    assert any(type(event).__name__ == "TurnWithheld" for event in events)
+    assert successes == []
 
 
 def test_streaming_token_limit_reaches_agent_recovery_without_http_fallback(

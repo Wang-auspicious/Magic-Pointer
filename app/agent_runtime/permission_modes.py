@@ -11,7 +11,9 @@ card is harness-owned, the model can never self-confirm).
 from __future__ import annotations
 
 import enum
+import re
 from dataclasses import dataclass
+from typing import Any, Mapping
 
 from app.agent_runtime.tool_registry import Effect
 
@@ -92,7 +94,11 @@ class PermissionDecisionResult:
     def allowed(self) -> bool:
         return self.decision is PermissionDecision.ALLOW
 
-    def feedback(self, tool_name: str) -> str:
+    def feedback(
+        self,
+        tool_name: str,
+        arguments: Mapping[str, Any] | None = None,
+    ) -> str:
         if self.decision is PermissionDecision.ALLOW:
             return ""
         if self.decision is PermissionDecision.ASK:
@@ -103,11 +109,18 @@ class PermissionDecisionResult:
             from app.agent_runtime.permission_decisions import GRANTABLE_EFFECTS
 
             if self.effect in GRANTABLE_EFFECTS:
+                prefix = _bash_permission_prefix(tool_name, arguments)
+                prefix_instruction = (
+                    f'，prefix="{prefix}"（会保存为 Bash({prefix})）'
+                    if prefix
+                    else ""
+                )
                 return (
                     f"tool {tool_name!r} needs user confirmation: propose a plan "
                     "through a capability tool instead of executing directly, or call "
-                    "ask_user_question（question 说明要执行什么，options 固定为："
-                    "[\"仅这一次允许\", \"本会话总是允许\"+工具名, \"拒绝\"]）——"
+                    "AskUser（question 说明要执行什么，options 固定为："
+                    "[\"仅这一次允许\", \"本会话总是允许\"+工具名, \"拒绝\"]"
+                    f"{prefix_instruction}）——"
                     "用户点选后授权会随下一条消息生效。"
                 )
             return (
@@ -115,6 +128,33 @@ class PermissionDecisionResult:
                 "through a capability tool instead of executing directly"
             )
         return f"tool {tool_name!r} is denied in permission mode {self.mode.value}"
+
+
+_UNSAFE_PREFIX_COMMAND = re.compile(r"[|&;<>`]|\$\(|[\r\n]")
+
+
+def _bash_permission_prefix(
+    tool_name: str,
+    arguments: Mapping[str, Any] | None,
+) -> str:
+    if str(tool_name or "") != "Bash":
+        return ""
+    command = str((arguments or {}).get("command") or "").strip()
+    if not command or _UNSAFE_PREFIX_COMMAND.search(command):
+        return ""
+    tokens = command.split()
+    if not tokens:
+        return ""
+    first = tokens[0].casefold()
+    if first in {"pytest", "py.test", "ruff", "mypy"}:
+        count = 1
+    elif first in {"python", "python3", "py"} and len(tokens) >= 3 and tokens[1] == "-m":
+        count = 3
+    elif first in {"npm", "pnpm", "yarn"} and len(tokens) >= 3 and tokens[1].casefold() == "run":
+        count = 3
+    else:
+        count = min(2, len(tokens))
+    return " ".join(tokens[:count])[:160]
 
 
 def decide_effect(

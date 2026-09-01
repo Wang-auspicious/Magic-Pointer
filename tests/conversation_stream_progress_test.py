@@ -41,6 +41,21 @@ def _answer_chunks(stream: io.StringIO) -> list[str]:
     return blobs
 
 
+def _phase_chunks(stream: io.StringIO, phase: str) -> list[str]:
+    blobs: list[str] = []
+    for line in stream.getvalue().splitlines():
+        if not line.startswith(PROGRESS_PREFIX):
+            continue
+        fields = dict(
+            token.split("=", 1)
+            for token in line[len(PROGRESS_PREFIX):].split()
+            if "=" in token
+        )
+        if fields.get("phase") == phase:
+            blobs.append(fields["b64"])
+    return blobs
+
+
 def test_mark_blob_writes_verbatim_token_beyond_token_cap():
     clock, stream = _clock_with_stream()
     blob = "A" * 500  # 远超 _token 的 120 字符截断
@@ -88,11 +103,32 @@ def test_activity_sink_flushes_tail_before_turn_boundary():
     )
 
 
+def test_batched_ascii_deltas_are_encoded_once_without_padding_loss():
+    import time
+
+    clock, stream = _clock_with_stream()
+    sink = conversation_bridge._ConversationActivitySink(clock)
+    sink(SimpleNamespace(kind="turn_started", turn=1))
+    sink._last_chunk_flush = time.perf_counter()
+    sink._last_reasoning_flush = time.perf_counter()
+    for text in ("a", "b", "c"):
+        sink(SimpleNamespace(kind="model_chunk", text=text))
+    for text in ("x", "y", "z"):
+        sink(SimpleNamespace(kind="reasoning_chunk", text=text))
+    sink(SimpleNamespace(kind="turn_finished", state=SimpleNamespace(value="done")))
+
+    answers = _phase_chunks(stream, "answer_chunk")
+    reasoning = _phase_chunks(stream, "reasoning_chunk")
+    assert "".join(base64.b64decode(blob).decode("utf-8") for blob in answers) == "abc"
+    assert "".join(base64.b64decode(blob).decode("utf-8") for blob in reasoning) == "xyz"
+
+
 def test_session_ready_mark_carries_sid():
     clock, stream = _clock_with_stream()
-    conversation_bridge.emit_session_ready(clock, "agent-studio-abc123")
+    session_id = "agent-studio-new-" + "a" * 32
+    conversation_bridge.emit_session_ready(clock, session_id)
     line = [l for l in stream.getvalue().splitlines() if "phase=session_ready" in l][0]
-    assert "sid=agent-studio-abc123" in line
+    assert f"sid={session_id}" in line
 
 
 def test_empty_chunk_never_emits_answer_chunk_line():
@@ -103,3 +139,19 @@ def test_empty_chunk_never_emits_answer_chunk_line():
     sink(SimpleNamespace(kind="tool_call_finished", result=SimpleNamespace(
         tool_call_id="c1", tool_name="ls", is_error=False, used_backend="x", latency_ms=1.0)))
     assert not _answer_chunks(stream)
+
+
+def test_tool_truncation_is_projected_as_a_visible_notice() -> None:
+    clock, _stream = _clock_with_stream()
+    sink = conversation_bridge._ConversationActivitySink(clock)
+    sink(SimpleNamespace(
+        kind="tools_truncated",
+        dropped=("mcp_alpha", "mcp_beta"),
+        limit=3,
+    ))
+
+    notices = [record for record in sink.trajectory if record.get("kind") == "notice"]
+    assert len(notices) == 1
+    assert "已注册 5 个工具" in notices[0]["text"]
+    assert "超过本轮上限 3" in notices[0]["text"]
+    assert "mcp_alpha" in notices[0]["text"]

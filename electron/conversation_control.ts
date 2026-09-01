@@ -18,8 +18,8 @@ const ConversationControl = (() => {
   const ANSWER_CHUNK_PHASE = 'answer_chunk';
   const PLAN_PHASE = 'plan';
 
-  /** agent_session_bridge 只接受这个形状的 durable session id。 */
-  const SESSION_ID_PATTERN = /^agent-studio-[0-9a-f]{32}$/;
+  /** 与 conversation_bridge 当前签发语义一致；旧共享 id 明确不再信任。 */
+  const SESSION_ID_PATTERN = /^agent-studio-(?:new|conv)-[0-9a-f]{32}$/;
   /** 与 scripts/agent_session_bridge.py 的 MAX_TEXT_CHARS 一致。 */
   const MAX_STEER_CHARS = 4000;
 
@@ -32,6 +32,19 @@ const ConversationControl = (() => {
   function phaseOf(record: unknown): string {
     if (!record || typeof record !== 'object') return '';
     return String((record as { phase?: unknown }).phase || '');
+  }
+
+  function isConversationSender(
+    event: { sender?: unknown } | null | undefined,
+    dashboardWindow: { isDestroyed: () => boolean; webContents: unknown } | null | undefined,
+    companionWindow: { isDestroyed: () => boolean; webContents: unknown } | null | undefined,
+  ): boolean {
+    const sender = event?.sender;
+    return [dashboardWindow, companionWindow].some((window) => Boolean(
+      window
+      && !window.isDestroyed()
+      && sender === window.webContents
+    ));
   }
 
   /** session_ready 记录里的 durable session id；任何不合形都拒绝。 */
@@ -122,15 +135,59 @@ const ConversationControl = (() => {
     return { action: 'steer', sessionId, text };
   }
 
+  /** Bounded thread grant: a canonical tool name or one Bash prefix rule. */
+  function sanitizePermissionRule(value: unknown): string {
+    const rule = String(value || '').trim();
+    if (/^[A-Za-z_][A-Za-z0-9_-]{0,63}$/.test(rule)) return rule;
+    const match = /^Bash\(([^()\r\n]{1,160})\)$/.exec(rule);
+    const prefix = String(match?.[1] || '').trim();
+    if (!prefix || /[|&;<>`]|\$\(|[\r\n]/.test(prefix)) return '';
+    return `Bash(${prefix})`;
+  }
+
+  function permissionGrantRule(tool: unknown, prefix: unknown = ''): string {
+    const canonical = sanitizePermissionRule(tool);
+    if (!canonical) return '';
+    const boundedPrefix = String(prefix || '').trim();
+    if (canonical !== 'Bash' || !boundedPrefix) return canonical;
+    return sanitizePermissionRule(`Bash(${boundedPrefix})`);
+  }
+
+  function failedDraftValue(current: unknown, submitted: unknown): string {
+    const currentText = String(current ?? '');
+    const submittedText = String(submitted ?? '');
+    return currentText === '' || currentText === submittedText
+      ? submittedText
+      : currentText;
+  }
+
+  async function callConversationAction(
+    action: () => Promise<{ ok?: boolean; error?: string }>,
+  ): Promise<{ ok: boolean; error: string }> {
+    try {
+      const result = await action();
+      return result?.ok === true
+        ? { ok: true, error: '' }
+        : { ok: false, error: String(result?.error || '请求未送达，请重试。') };
+    } catch {
+      return { ok: false, error: '请求未送达，请重试。' };
+    }
+  }
+
   return {
     SESSION_READY_PHASE,
     ANSWER_CHUNK_PHASE,
     PLAN_PHASE,
     sessionIdFromRecord,
     decodeChunkBlob,
+    failedDraftValue,
+    isConversationSender,
+    callConversationAction,
     planStepsFromRecord,
     planConversationStop,
     planConversationSteer,
+    permissionGrantRule,
+    sanitizePermissionRule,
   };
 })();
 
