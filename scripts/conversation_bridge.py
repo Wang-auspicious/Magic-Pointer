@@ -505,7 +505,12 @@ def resolve_agent_session_id(
     return NEW_SESSION_PREFIX + uuid.uuid4().hex
 
 
-def route_slash_command(prompt: str, catalog) -> dict | None:
+def route_slash_command(
+    prompt: str,
+    catalog,
+    *,
+    workspace_root: Path | None = None,
+) -> dict | None:
     """DSH 斜杠管线：``/name args`` 是命令或 skill；否则原样放行给模型。
 
     - ``/permission [preset]``：无参列出可用预设；有参校验后交渲染层落芯片；
@@ -563,13 +568,18 @@ def route_slash_command(prompt: str, catalog) -> dict | None:
             # B5-25：checkpoint 的用户入口。备份落在 <workspace>/.mp/backups，
             # 跨进程持久；默认回滚最近一次改动，/rewind N 回滚 N 步。
             from app.agent_runtime.coding_tools import FileCheckpointStore
-            from app.agent_runtime.workspace_state import read_workspace
+
+            if workspace_root is None:
+                return {
+                    "ok": False,
+                    "error": "当前会话未绑定文件夹，无法回滚文件。",
+                }
 
             try:
                 steps = max(0, int(args)) if args else 1
             except ValueError:
                 return {"ok": False, "error": f"/rewind 步数必须是整数，收到：{args!r}"}
-            report = FileCheckpointStore(Path(read_workspace(ROOT))).restore(steps)
+            report = FileCheckpointStore(workspace_root).restore(steps)
             return {
                 "ok": True,
                 "command": {"type": "rewind"},
@@ -858,6 +868,16 @@ def _summarize_history(history_text: str) -> str:
         return ""
 
 
+def _resolve_workspace_root(explicit_workspace: str) -> Path | None:
+    raw = str(explicit_workspace or "").strip()
+    if not raw:
+        return None
+    candidate = Path(raw).expanduser()
+    if not candidate.is_dir():
+        raise ValueError(f"工作区目录不存在：{raw}")
+    return candidate.resolve()
+
+
 def answer_conversation(
     question: str,
     turns: list[dict[str, Any]],
@@ -890,24 +910,29 @@ def answer_conversation(
     except KeyError:
         return {"ok": False, "error": f"未知权限预设：{permission_preset}（可用：{', '.join(PRESETS)}）"}
 
-    from app.agent_runtime.workspace_state import read_workspace
-
-    resolved_workspace = str(read_workspace(ROOT))
-    explicit_workspace = str(workspace_root or "").strip()
-    if explicit_workspace:
-        candidate = Path(explicit_workspace).expanduser()
-        if not candidate.is_dir():
-            return {
-                "ok": False,
-                "error": f"工作区目录不存在：{explicit_workspace}",
-            }
-        resolved_workspace = str(candidate.resolve())
+    try:
+        resolved_workspace_path = _resolve_workspace_root(workspace_root)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    resolved_workspace = (
+        str(resolved_workspace_path)
+        if resolved_workspace_path is not None
+        else ""
+    )
 
     # 斜杠管线：命令直接结算；skill 正文作为本回合指令注入（DSH pre-step 同款）。
     from app.agent_runtime.skill_catalog import SkillCatalog
 
-    catalog = SkillCatalog(project_root=Path(resolved_workspace), user_home=Path.home())
-    routed = route_slash_command(prompt, catalog=catalog)
+    catalog = SkillCatalog(
+        project_root=resolved_workspace_path,
+        user_home=Path.home(),
+        include_project=resolved_workspace_path is not None,
+    )
+    routed = route_slash_command(
+        prompt,
+        catalog=catalog,
+        workspace_root=resolved_workspace_path,
+    )
     agent_prompt = prompt
     deferred_command: str | None = None
     if routed is not None:
@@ -1207,7 +1232,11 @@ def answer_conversation(
             ),
             # 超大工具结果全文落盘 <workspace>/.mp/tool-results（与 .mp/backups
             # 并列），模型拿预览+绝对路径，可用 read_file 分页回读。
-            tool_result_dir=str(Path(runtime["workspace_root"]) / ".mp" / "tool-results"),
+            tool_result_dir=(
+                str(resolved_workspace_path / ".mp" / "tool-results")
+                if resolved_workspace_path is not None
+                else None
+            ),
         )
     except Exception as exc:  # noqa: BLE001 - loop crash must never kill the answer path
         timing_ms = conversation_clock.total("total", ok=0)

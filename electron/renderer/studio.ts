@@ -225,7 +225,7 @@ function bindCanvas() {
   document.getElementById('zoom-out')?.addEventListener('click', () => { cam.k = Math.max(.25, cam.k / 1.2); applyCam(); });
 }
 
-/* ---- 侧栏：一个确定的文件夹就是一个项目；没有项目就不能进入对话。 ---- */
+/* ---- 侧栏：文件夹启用项目工具，但普通 Studio 会话可以不绑定文件夹。 ---- */
 let sidebarQuery = '';
 let sidebarRecentOnly = false;
 const expandedWorkspaces = new Map<string, boolean>();
@@ -244,18 +244,17 @@ function setActiveProject(root: unknown) {
     if (activeProjectRoot) localStorage.setItem('mp:active-project-root', activeProjectRoot);
     else localStorage.removeItem('mp:active-project-root');
   } catch { /* storage unavailable */ }
-  renderProjectGate();
+  renderProjectContext();
   renderTerminalPrompt();
   if (document.getElementById('project-inspector') && shell?.dataset.inspector === 'open') {
     void refreshProjectInspector();
   }
 }
 
-function renderProjectGate() {
-  const gate = document.getElementById('project-gate');
-  const view = document.getElementById('view-chat');
+function renderProjectContext() {
   const headerLabel = document.getElementById('chat-project-label');
   const locationLabel = document.getElementById('header-location-label');
+  const workspaceLabel = document.getElementById('composer-workspace-label');
   const hasProject = Boolean(activeProjectRoot);
   const designStatus = document.querySelector<HTMLElement>('.mp-design-live');
   if (designStatus) {
@@ -263,13 +262,12 @@ function renderProjectGate() {
     const text = designStatus.lastChild;
     if (text?.nodeType === Node.TEXT_NODE) text.textContent = hasProject ? '已连接项目' : '等待打开项目';
   }
-  if (gate) gate.hidden = hasProject;
-  view?.classList.toggle('has-no-project', !hasProject);
   if (!headerLabel) return;
   if (!hasProject) {
-    headerLabel.textContent = '项目';
+    headerLabel.textContent = '本机会话';
     headerLabel.removeAttribute('title');
-    if (locationLabel) locationLabel.textContent = '项目';
+    if (locationLabel) locationLabel.textContent = '本机';
+    if (workspaceLabel) workspaceLabel.textContent = '选择文件夹…';
     return;
   }
   const parts = activeProjectRoot.replace(/\\/g, '/').split('/').filter(Boolean);
@@ -277,6 +275,7 @@ function renderProjectGate() {
   headerLabel.textContent = projectName;
   headerLabel.title = activeProjectRoot;
   if (locationLabel) locationLabel.textContent = projectName;
+  if (workspaceLabel) workspaceLabel.textContent = projectName;
 }
 interface SidebarWorkspaceGroup {
   key: string;
@@ -455,7 +454,7 @@ async function renderSidebar() {
   if (!registeredRoots.has(normalizedProjectRoot(activeProjectRoot))) {
     setActiveProject(projects[0]?.root || '');
   } else {
-    renderProjectGate();
+    renderProjectContext();
   }
   const active = host.querySelector('.is-on')?.getAttribute('data-open')
     ?? activeConversationId
@@ -579,7 +578,7 @@ async function openProjectFromPicker() {
 }
 
 document.getElementById('workspace-add')?.addEventListener('click', () => { void openProjectFromPicker(); });
-document.getElementById('project-gate-open')?.addEventListener('click', () => { void openProjectFromPicker(); });
+document.getElementById('composer-workspace')?.addEventListener('click', () => { void openProjectFromPicker(); });
 document.getElementById('workspace-filter')?.addEventListener('click', (event) => {
   sidebarRecentOnly = !sidebarRecentOnly;
   const button = event.currentTarget as HTMLButtonElement;
@@ -705,7 +704,6 @@ async function openConversation(id: string) {
   activeConversationId = c.id;
   activeConversationTurnCount = Array.isArray(c.turns) ? c.turns.length : 0;
   const projectRoot = String((c as { workspaceRoot?: string }).workspaceRoot || '');
-  if (!projectRoot) return;
   setActiveProject(projectRoot);
   show('chat');
   document.querySelectorAll('#side-convos .side-item').forEach((n) =>
@@ -713,7 +711,7 @@ async function openConversation(id: string) {
 
   const head = document.getElementById('chat-title');
   if (head) head.textContent = String(c.title);
-  renderProjectGate();
+  renderProjectContext();
   const preview = document.getElementById('chat-source-preview');
   const sourceThumb = document.getElementById('chat-source-thumb') as HTMLImageElement | null;
   const peek = document.getElementById('chat-peek');
@@ -1135,7 +1133,7 @@ async function executeWindowMenuCommand(command: string, origin?: HTMLElement) {
   if (command === 'new-chat') { setProductMode('walker'); startNewChat(); return; }
   if (command === 'open-project') { await openProjectFromPicker(); return; }
   if (command === 'add-files') {
-    if (!activeProjectRoot) { renderProjectGate(); return; }
+    if (!activeProjectRoot) { renderProjectContext(); return; }
     const picked = await Data.pickProjectFiles(activeProjectRoot);
     if (picked?.ok && Array.isArray(picked.paths)) {
       composerAttachments = [...new Set([...composerAttachments, ...picked.paths.map(String)])];
@@ -1900,7 +1898,7 @@ document.addEventListener('click', e => {
   const addBtn = target.closest<HTMLElement>('#composer-add');
   const addMenu = document.getElementById('composer-add-menu');
   if (addBtn) {
-    if (!activeProjectRoot) { renderProjectGate(); return; }
+    if (!activeProjectRoot) { renderProjectContext(); return; }
     void Data.pickProjectFiles(activeProjectRoot).then((picked) => {
       if (!picked?.ok || !Array.isArray(picked.paths)) return;
       composerAttachments = [...new Set([...composerAttachments, ...picked.paths.map(String)])];
@@ -2992,10 +2990,6 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
     const textarea = form.querySelector<HTMLTextAreaElement>('textarea');
     const question = textarea?.value.trim() || '';
     if (!textarea || !question) { textarea?.focus(); return; }
-    if (!activeProjectRoot) {
-      renderProjectGate();
-      return;
-    }
     /* 忙态下 Enter = 插话（steer）：写入 durable inbox，下一轮即携带。
        还没拿到 session id 时诚实拒绝，不假装已送达。 */
     if (studioComposerBusy) {
@@ -3124,10 +3118,6 @@ async function boot(initialView: string) {
   }
   const list = await Data.conversations();
   if (shell.dataset.view !== 'chat') return;
-  if (!activeProjectRoot) {
-    renderProjectGate();
-    return;
-  }
   const recent = list.find((conversation) =>
     normalizedProjectRoot((conversation as { workspaceRoot?: string }).workspaceRoot)
       === normalizedProjectRoot(activeProjectRoot));
@@ -3141,13 +3131,12 @@ function startNewChat() {
   activeConversationId = null;
   activeConversationTurnCount = 0;
   activeConversationTab = 'chat';
-  renderProjectGate();
-  if (!activeProjectRoot) return;
+  renderProjectContext();
   document.querySelectorAll('#side-convos .side-item').forEach((n) => n.classList.remove('is-on'));
   const title = document.getElementById('chat-title');
   if (title) title.textContent = '新对话';
   projectEnvironment = null;
-  renderProjectGate();
+  renderProjectContext();
   const preview = document.getElementById('chat-source-preview');
   if (preview) preview.hidden = true;
   const peek = document.getElementById('chat-peek');

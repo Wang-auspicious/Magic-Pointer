@@ -27,27 +27,47 @@ class _Root:
     source: str
 
 
-def skill_roots(project_root: Path | None = None, user_home: Path | None = None) -> list[_Root]:
+def skill_roots(
+    project_root: Path | None = None,
+    user_home: Path | None = None,
+    *,
+    include_project: bool = True,
+) -> list[_Root]:
     """DSH 同款发现根，按优先级排序（项目先于用户）。"""
     from pathlib import Path as _Path
 
-    project = _Path(project_root) if project_root is not None else _Path.cwd()
     home = _Path(user_home) if user_home is not None else _Path.home()
-    return [
-        _Root(project / ".dsh" / "skills", "project-dsh"),
-        _Root(project / ".agents" / "skills", "project-agents"),
+    roots: list[_Root] = []
+    if include_project:
+        project = _Path(project_root) if project_root is not None else _Path.cwd()
+        roots.extend([
+            _Root(project / ".dsh" / "skills", "project-dsh"),
+            _Root(project / ".agents" / "skills", "project-agents"),
+        ])
+    roots.extend([
         _Root(home / ".dsh" / "skills", "user-dsh"),
         _Root(home / ".agents" / "skills", "user-agents"),
-    ]
+    ])
+    return roots
 
 
 class SkillCatalog:
     """扫描 DSH 兼容根并解析 SKILL.md。"""
 
-    def __init__(self, project_root: Path | None = None, user_home: Path | None = None) -> None:
+    def __init__(
+        self,
+        project_root: Path | None = None,
+        user_home: Path | None = None,
+        *,
+        include_project: bool = True,
+    ) -> None:
         self.project_root = Path(project_root) if project_root is not None else Path.cwd()
         self.user_home = Path(user_home) if user_home is not None else Path.home()
-        self._roots = skill_roots(project_root, user_home)
+        self._roots = skill_roots(
+            project_root,
+            user_home,
+            include_project=include_project,
+        )
         # name → (root, path)：第一个根胜出（项目覆盖用户）。惰性扫描。
         self._resolved: dict[str, tuple[_Root, Path]] | None = None
         self._errors: list[str] = []

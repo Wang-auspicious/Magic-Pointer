@@ -11,14 +11,16 @@ const preload = fs.readFileSync('electron/preload.ts', 'utf8');
 const data = fs.readFileSync('electron/renderer/data.ts', 'utf8');
 const store = fs.readFileSync('electron/conversation_store.ts', 'utf8');
 
-// A folder is the project. There is no folderless Studio conversation and no
-// second project selector inside the Composer.
-assert(!html.includes('id="composer-workspace"'), 'Composer must not duplicate project selection');
-assert(!html.includes('id="composer-workspace-label"'), 'Composer must not carry a project label');
-assert(!html.includes('其他对话'), 'folderless conversations must not be exposed as a fake project');
-assert(!studio.includes('其他对话'), 'renderer must not synthesize an unassigned project');
-assert(!sidebar.includes('__unassigned__'), 'project grouping must drop folderless records');
-assert(!sidebar.includes('其他对话'), 'project grouping must never name a fake bucket');
+// Studio is a complete Agent surface. A folder enables coding tools but is not
+// a prerequisite for ordinary conversation, desktop work, attachments, MCP, or
+// Skills. The folder selector lives beside the shared composer.
+assert(html.includes('id="composer-workspace"'), 'Composer must expose the optional folder chip');
+assert(html.includes('id="composer-workspace-label"'), 'folder chip must expose its current label');
+assert(!html.includes('id="project-gate"'), 'the mandatory project gate must be deleted');
+assert(!studio.includes('renderProjectGate'), 'renderer must not replace conversation with a project gate');
+assert(!main.includes("if (!effectiveWorkspaceRoot) return { ok: false, error: '请先打开项目。' }"),
+  'main process must accept an unbound Studio conversation');
+assert(main.includes('resolveConversationWorkspace'), 'main process must use the shared workspace policy');
 
 // Projects are durable even before their first conversation, otherwise an
 // opened empty folder disappears from the sidebar.
@@ -32,10 +34,9 @@ assert(preload.includes("ipcRenderer.invoke('projects:open'"), 'preload must exp
 assert(data.includes('async projects()'), 'renderer data layer must list projects');
 assert(data.includes('async openProject()'), 'renderer data layer must open projects');
 
-// Both the renderer and the main process enforce the same product boundary.
-assert(studio.includes('activeProjectRoot'), 'selected project must be explicit renderer state');
-assert(studio.includes('renderProjectGate'), 'no-project state must replace, not decorate, the conversation surface');
-assert(main.includes("if (!effectiveWorkspaceRoot) return { ok: false, error: '请先打开项目。' }"),
-  'main process must reject folderless Studio sends');
+// Explicit project binding remains durable and thread-scoped.
+assert(studio.includes('activeProjectRoot'), 'selected project remains explicit renderer state');
+assert(store.includes('workspaceRoot?: string'), 'thread workspace stays optional in the durable schema');
+assert(sidebar.includes('groupByWorkspace'), 'sidebar still groups genuinely bound project sessions');
 
 console.log('studio project gate contract test ok');

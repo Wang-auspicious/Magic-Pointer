@@ -28,6 +28,31 @@ def test_answer_conversation_rejects_unknown_permission_preset() -> None:
     assert "未知权限预设" in str(result["error"])
 
 
+def test_resolve_workspace_allows_unbound_conversation() -> None:
+    assert conversation_bridge._resolve_workspace_root("") is None
+
+
+def test_resolve_workspace_accepts_explicit_existing_directory(tmp_path) -> None:
+    assert conversation_bridge._resolve_workspace_root(str(tmp_path)) == tmp_path.resolve()
+
+
+def test_skill_catalog_can_scan_user_roots_without_project_root(tmp_path) -> None:
+    from app.agent_runtime.skill_catalog import SkillCatalog
+
+    user_skill = tmp_path / ".agents" / "skills" / "demo"
+    user_skill.mkdir(parents=True)
+    (user_skill / "SKILL.md").write_text(
+        "---\nname: demo\ndescription: user skill\n---\nbody",
+        encoding="utf-8",
+    )
+    catalog = SkillCatalog(
+        project_root=None,
+        user_home=tmp_path,
+        include_project=False,
+    )
+    assert [row["name"] for row in catalog.list_skills()] == ["demo"]
+
+
 def test_history_text_bounds_and_labels() -> None:
     history = conversation_bridge._history_text(
         [{"question": "这个数是什么？", "answer": "这是硬超时兜底。"}],
@@ -459,8 +484,9 @@ def test_explicit_workspace_pick_is_thread_scoped_not_global(monkeypatch, tmp_pa
     assert result["ok"] is True
 
 
-def test_missing_explicit_workspace_falls_back_to_profile_default(monkeypatch, tmp_path):
-    """不带显式 root 时用持久化默认（/cwd 写的那份），而不是进程 cwd。"""
+def test_missing_explicit_workspace_remains_unbound(monkeypatch, tmp_path):
+    """普通 Studio 会话没有文件夹时保持 unbound；profile 默认只供
+    显式 /cwd 与后续新建选择使用，不能偷偷给本线程挂 coding tools。"""
     import app.agent_runtime.workspace_state as workspace_state
 
     default_ws = tmp_path / "profile-default"
@@ -471,7 +497,7 @@ def test_missing_explicit_workspace_falls_back_to_profile_default(monkeypatch, t
     _install_workspace_boot_stubs(monkeypatch, captured)
 
     result = conversation_bridge.answer_conversation("随便问", [], {}, "workspace-write")
-    assert captured["workspace_root"] == str(default_ws)
+    assert captured["workspace_root"] == ""
     assert result["ok"] is True
 
 
@@ -694,11 +720,8 @@ def test_established_event_session_does_not_reinject_electron_message_history(
 def test_slash_rewind_restores_workspace_checkpoints(monkeypatch, tmp_path) -> None:
     """/rewind 是 checkpoint 的 GUI 入口（B5-25）：走绑定工作区的
     FileCheckpointStore，步数可选；无记录时诚实回答。"""
-    import app.agent_runtime.workspace_state as workspace_state
-
     default_ws = tmp_path / "ws"
     default_ws.mkdir()
-    monkeypatch.setattr(workspace_state, "read_workspace", lambda root: default_ws)
 
     (default_ws / "a.txt").write_text("old", encoding="utf-8")
     from app.agent_runtime.coding_tools import FileCheckpointStore
@@ -707,13 +730,36 @@ def test_slash_rewind_restores_workspace_checkpoints(monkeypatch, tmp_path) -> N
     store.record(default_ws / "a.txt", existed=True)
     (default_ws / "a.txt").write_text("new", encoding="utf-8")
 
-    result = conversation_bridge.route_slash_command("/rewind", catalog=None)
+    result = conversation_bridge.route_slash_command(
+        "/rewind",
+        catalog=None,
+        workspace_root=default_ws,
+    )
     assert result["ok"] is True
     assert (default_ws / "a.txt").read_text(encoding="utf-8") == "old"
 
-    empty = conversation_bridge.route_slash_command("/rewind", catalog=None)
+    empty = conversation_bridge.route_slash_command(
+        "/rewind",
+        catalog=None,
+        workspace_root=default_ws,
+    )
     assert empty["ok"] is True
     assert "nothing to restore" in empty["answer"], "空账本必须诚实回答"
+
+
+def test_slash_rewind_requires_bound_workspace(monkeypatch, tmp_path) -> None:
+    import app.agent_runtime.workspace_state as workspace_state
+
+    monkeypatch.setattr(workspace_state, "read_workspace", lambda root: tmp_path)
+    result = conversation_bridge.route_slash_command(
+        "/rewind",
+        catalog=None,
+        workspace_root=None,
+    )
+    assert result == {
+        "ok": False,
+        "error": "当前会话未绑定文件夹，无法回滚文件。",
+    }
 
 
 def test_permission_grants_from_the_payload_reach_the_loop(monkeypatch, tmp_path) -> None:
@@ -856,7 +902,7 @@ def test_answer_conversation_passes_tool_result_dir_under_workspace(monkeypatch,
     assert result["ok"] is True
 
 
-def test_answer_conversation_tool_result_dir_defaults_to_profile_workspace(monkeypatch, tmp_path):
+def test_answer_conversation_unbound_has_no_tool_result_dir(monkeypatch, tmp_path):
     import app.agent_runtime.workspace_state as workspace_state
     default_ws = tmp_path / "profile-default"
     default_ws.mkdir()
@@ -866,8 +912,7 @@ def test_answer_conversation_tool_result_dir_defaults_to_profile_workspace(monke
     _install_workspace_boot_stubs(monkeypatch, captured)
 
     result = conversation_bridge.answer_conversation("看看", [], {}, "workspace-write")
-    expected = str(default_ws / ".mp" / "tool-results")
-    assert captured["run_kwargs"].get("tool_result_dir") == expected
+    assert captured["run_kwargs"].get("tool_result_dir") is None
     assert result["ok"] is True
 
 

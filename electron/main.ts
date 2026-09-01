@@ -39,6 +39,7 @@ const {
   sanitizePermissionRule,
   sessionIdFromRecord,
 } = require('./conversation_control');
+const { resolveConversationWorkspace } = require('./conversation_workspace_policy');
 const { VoiceResidentRuntime } = require('./voice_resident_runtime');
 const { captureEligibility } = require('./result_surface_policy');
 const { humanErrorMessage, inferObjectKind, selectionSourceForReason, stageEventFromBridge } = require('./stage_contract');
@@ -1791,8 +1792,10 @@ ipcMain.handle('conversations:send', async (event: Electron.IpcMainInvokeEvent, 
   const threadDenials = [...new Set([...(Array.isArray(existing?.permissionDenials) ? existing!.permissionDenials as string[] : []), ...(denyNow ? [denyNow] : [])])];
   // Codex thread workspace_roots: an explicit chip pick moves THIS thread;
   // without one, a thread that already has a root keeps it (no global bleed).
-  const effectiveWorkspaceRoot = workspaceRoot || String(existing?.workspaceRoot || '').trim();
-  if (!effectiveWorkspaceRoot) return { ok: false, error: '请先打开项目。' };
+  const effectiveWorkspaceRoot = resolveConversationWorkspace(
+    workspaceRoot,
+    existing?.workspaceRoot,
+  );
   const payload = {
     question,
     turns: Array.isArray(existing?.turns) ? existing.turns.slice(-12) : [],

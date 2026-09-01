@@ -119,12 +119,6 @@
       </header>
 
       <section class="dshw-conversation" id="view-chat">
-        <div class="mp-project-gate" id="project-gate" hidden>
-          <div class="mp-project-gate-mark" aria-hidden="true"><svg><use href="#ic-folder-plus" /></svg></div>
-          <h2>打开项目</h2>
-          <p>选择一个文件夹开始。</p>
-          <button type="button" id="project-gate-open"><svg aria-hidden="true"><use href="#ic-folder-plus" /></svg>打开项目</button>
-        </div>
         <header class="dshw-header">
           <div class="dshw-title-row">
             <div class="dshw-title-cluster">
@@ -200,6 +194,14 @@
           <div class="dshw-perm-ask" id="composer-permission-ask" hidden role="group" aria-label="需要你的决定"></div>
           <div class="dshw-composer-seat">
             <div class="dshw-composer-stack">
+              <div class="mp-composer-context-row" aria-label="运行环境">
+                <button type="button" class="mp-composer-environment" id="composer-environment" aria-label="本机运行环境">
+                  <svg aria-hidden="true"><use href="#ic-term" /></svg><span>本机</span>
+                </button>
+                <button type="button" class="mp-composer-workspace" id="composer-workspace" aria-label="选择会话文件夹">
+                  <svg aria-hidden="true"><use href="#ic-folder" /></svg><span id="composer-workspace-label">选择文件夹…</span>
+                </button>
+              </div>
               <form class="dshw-input-form mp-compact-composer" id="composer-form">
                 <div class="dshw-input-root">
                   <div class="dshw-card">
