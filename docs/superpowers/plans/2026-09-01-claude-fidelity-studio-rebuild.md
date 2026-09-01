@@ -390,7 +390,7 @@ git commit -m "feat: add local sessions and global Studio search"
 - Modify: `electron/renderer/studio.html`
 - Modify: `electron/main.ts`
 
-- [ ] **Step 1: Write the failing visual contract**
+- [x] **Step 1: Write the failing visual contract**
 
 ```js
 'use strict';
@@ -423,7 +423,7 @@ assert.match(chat, /max-width:\s*var\(--mp-content-width\)/);
 console.log('studio Claude fidelity contract ok');
 ```
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```powershell
 node tests/studio_claude_fidelity_contract_test.js
@@ -431,7 +431,7 @@ node tests/studio_claude_fidelity_contract_test.js
 
 Expected: missing new CSS files.
 
-- [ ] **Step 3: Create the complete token foundation**
+- [x] **Step 3: Create the complete token foundation**
 
 Start `claude_tokens.css` with the Hallmark app stamp and the exact token block:
 
@@ -481,7 +481,7 @@ body[data-ds-dark-theme] {
 
 Add the base reset, typography, focus-visible, reduced-motion, and form-control inheritance from `design.md` without importing an old stylesheet.
 
-- [ ] **Step 4: Rebuild the HTML shell while preserving required IDs**
+- [x] **Step 4: Rebuild the HTML shell while preserving required IDs**
 
 Use this top-level structure:
 
@@ -498,7 +498,7 @@ Use this top-level structure:
 
 Keep IDs consumed by `studio.ts`; remove the old File/Edit/View/Help buttons, mandatory project gate, permanent low-frequency nav, mode dropdown, and bento-only wrapper. Add the app menu/search/mode segment/home/workspace chip IDs from the test.
 
-- [ ] **Step 5: Implement shell/chat base CSS**
+- [x] **Step 5: Implement shell/chat base CSS**
 
 Implement every selector used by the new structure. The non-negotiable geometry is:
 
@@ -515,18 +515,18 @@ Implement every selector used by the new structure. The non-negotiable geometry 
 
 Complete all reachable states before moving on; no empty legacy class may determine layout.
 
-- [ ] **Step 6: Change the native titlebar overlay to 36px and stop sampling pixels**
+- [x] **Step 6: Change the native titlebar overlay to 36px and stop sampling pixels**
 
 Set overlay height to 36 and use deterministic theme symbol colours. Remove `startTitleBarSampling()`/timer invocation for dashboard Studio and its capture loop; retain unrelated pure contrast utilities until zero-consumer cleanup.
 
-- [ ] **Step 7: Run GREEN plus typecheck**
+- [x] **Step 7: Run GREEN plus typecheck**
 
 ```powershell
 node tests/studio_claude_fidelity_contract_test.js
 npm run typecheck
 ```
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```powershell
 git add electron/renderer/claude_tokens.css electron/renderer/claude_shell.css electron/renderer/claude_chat.css electron/renderer/studio.html electron/main.ts tests/studio_claude_fidelity_contract_test.js

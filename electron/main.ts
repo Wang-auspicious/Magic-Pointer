@@ -2106,7 +2106,7 @@ function titleBarColors(symbol: string | null = null) {
   return {
     color: '#00000000',
     symbolColor: symbol || (appIsDark() ? '#F2F1ED' : '#17170F'),
-    height: 44,
+    height: 36,
   };
 }
 
@@ -2525,7 +2525,6 @@ function showDashboard(payload: Record<string, unknown> = {}, options: { activat
     dashboardWindow.webContents.send('dashboard:show', payload);
     dashboardWindow.webContents.send('dashboard:voice-residency-status', latestVoiceRuntimeStatus);
     log(`showDashboard highlight=${payload.highlightItemId || 'none'}`);
-    startTitleBarSampling();
   };
   if (win.webContents.isLoadingMainFrame()) win.webContents.once('did-finish-load', reveal);
   else reveal();

@@ -6,29 +6,29 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Magic Pointer</title>
   <script src="theme_boot.js?v=26"></script>
-  <link rel="stylesheet" href="studio_system.css?v=27" />
-  <link rel="stylesheet" href="sv.css?v=26" />
+  <link rel="stylesheet" href="claude_tokens.css?v=33" />
+  <link rel="stylesheet" href="claude_shell.css?v=33" />
+  <link rel="stylesheet" href="claude_chat.css?v=33" />
 </head>
 <body class="studio">
-  <div class="dshw-frame" id="shell" data-view="chat" data-sidebar="expanded">
-    <header class="mp-window-titlebar" id="window-titlebar">
+  <div class="dshw-frame mp-shell" id="shell" data-view="chat" data-sidebar="expanded">
+    <header class="mp-window-titlebar mp-window-bar" id="window-titlebar">
       <div class="mp-window-titlebar-leading">
+        <button type="button" class="mp-toolbar-button" id="app-menu" aria-label="应用菜单" title="应用菜单" aria-haspopup="menu" aria-expanded="false">
+          <svg class="codex-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M5 7h14M5 12h14M5 17h14" /></svg>
+        </button>
         <button type="button" class="mp-toolbar-button" id="sidebar-toggle" aria-label="折叠侧栏" title="折叠侧栏">
           <svg class="codex-icon" aria-hidden="true"><use href="#ic-panel-left" /></svg>
         </button>
-        <span class="mp-titlebar-divider" aria-hidden="true"></span>
+        <button type="button" class="mp-toolbar-button" id="global-search-toggle" aria-label="全局搜索" title="搜索会话、项目和命令">
+          <svg class="codex-icon" aria-hidden="true"><use href="#ic-search" /></svg>
+        </button>
         <button type="button" class="mp-toolbar-button" id="window-back" aria-label="后退" title="后退" disabled>
           <svg class="codex-icon" aria-hidden="true"><use href="#ic-arrow-left" /></svg>
         </button>
         <button type="button" class="mp-toolbar-button" id="window-forward" aria-label="前进" title="前进" disabled>
           <svg class="codex-icon" aria-hidden="true"><use href="#ic-arrow-right" /></svg>
         </button>
-        <nav class="mp-window-menu-bar" aria-label="应用菜单">
-          <button type="button" id="window-menu-file" data-window-menu="file" aria-haspopup="menu" aria-expanded="false">文件</button>
-          <button type="button" id="window-menu-edit" data-window-menu="edit" aria-haspopup="menu" aria-expanded="false">编辑</button>
-          <button type="button" id="window-menu-view" data-window-menu="view" aria-haspopup="menu" aria-expanded="false">视图</button>
-          <button type="button" id="window-menu-help" data-window-menu="help" aria-haspopup="menu" aria-expanded="false">帮助</button>
-        </nav>
       </div>
       <div class="mp-window-caption-safe" aria-hidden="true"></div>
     </header>
@@ -36,22 +36,21 @@
     <aside class="dshw-sidebar-col">
       <div class="dshw-sidebar">
         <div class="dshw-logo-row">
-          <button type="button" class="mp-mode-switch" id="mode-switch" aria-haspopup="menu" aria-expanded="false">
-            <span id="mode-switch-label">Work</span>
-            <svg class="codex-icon" aria-hidden="true"><use href="#ic-chev" /></svg>
-          </button>
-          <div class="mp-mode-menu" id="mode-menu" role="menu" hidden>
-            <button type="button" id="mode-walker" data-product-mode="walker" role="menuitemradio" aria-checked="true">
-              <span><strong>Work</strong><small>Agent 工作与对话</small></span><svg class="codex-icon" aria-hidden="true"><use href="#ic-check" /></svg>
+          <div class="mp-mode-segment" id="mode-switch" role="tablist" aria-label="工作模式">
+            <button type="button" id="mode-work" data-product-mode="walker" role="tab" aria-selected="true">
+              <svg class="codex-icon" aria-hidden="true"><use href="#ic-check" /></svg><span>Work</span>
             </button>
-            <button type="button" id="mode-design" data-product-mode="design" role="menuitemradio" aria-checked="false">
-              <span><strong>Design</strong><small>素材、画布与设计产物</small></span><svg class="codex-icon" aria-hidden="true"><use href="#ic-check" /></svg>
+            <button type="button" id="mode-design" data-product-mode="design" role="tab" aria-selected="false">
+              <svg class="codex-icon" aria-hidden="true"><use href="#ic-layout-grid" /></svg><span>Design</span>
             </button>
           </div>
         </div>
 
         <button class="dshw-new-session" id="nav-new-chat" data-goto="chat">
-          <svg aria-hidden="true"><use href="#ic-square-pen" /></svg><span class="dshw-new-session-label">新对话</span>
+          <svg aria-hidden="true"><use href="#ic-plus" /></svg><span class="dshw-new-session-label">新建</span>
+        </button>
+        <button class="dshw-customize" id="settings-open" data-goto="settings" aria-haspopup="dialog">
+          <svg aria-hidden="true"><use href="#ic-plug" /></svg><span>自定义</span>
         </button>
 
         <nav class="mp-design-nav" aria-label="Design 功能">
@@ -59,13 +58,6 @@
           <button type="button" data-goto="stash" data-design-layout="canvas"><svg class="codex-icon" aria-hidden="true"><use href="#ic-stash" /></svg><span>素材画布</span></button>
           <button type="button" data-goto="stash" data-design-layout="list"><svg class="codex-icon" aria-hidden="true"><use href="#ic-img" /></svg><span>素材列表</span></button>
           <button type="button" data-goto="artifacts"><svg class="codex-icon" aria-hidden="true"><use href="#ic-docs" /></svg><span>设计产物</span></button>
-        </nav>
-
-        <nav class="mp-library-nav" aria-label="主要功能">
-          <button type="button" id="nav-pull-requests" data-inspector-tab="changes"><svg aria-hidden="true"><use href="#ic-git-pull-request" /></svg><span>拉取请求</span></button>
-          <button type="button" id="nav-sites" data-inspector-tab="browser"><svg aria-hidden="true"><use href="#ic-globe" /></svg><span>站点</span></button>
-          <button type="button" id="nav-scheduled" data-inspector-tab="tasks"><svg aria-hidden="true"><use href="#ic-alarm-clock" /></svg><span>已安排</span></button>
-          <button type="button" id="nav-plugins" data-directory-open><svg aria-hidden="true"><use href="#ic-plug" /></svg><span>插件</span></button>
         </nav>
 
         <section class="dshw-workspace-browser" aria-label="对话浏览器">
@@ -97,8 +89,11 @@
         </section>
 
         <div class="dshw-foot">
-          <button class="dshw-trigger" id="settings-open" data-goto="settings" aria-haspopup="dialog">
-            <svg aria-hidden="true"><use href="#ic-gear" /></svg><span>设置</span>
+          <button type="button" class="mp-update-card" id="update-card" hidden>
+            <span class="mp-update-mark" aria-hidden="true"></span><span><strong id="update-card-title">重启以更新</strong><small id="update-card-detail"></small></span><svg aria-hidden="true"><use href="#ic-arrow-right" /></svg>
+          </button>
+          <button type="button" class="mp-account-footer" id="account-footer" aria-label="本机账户与 Provider">
+            <span class="mp-account-mark" aria-hidden="true"></span><span><strong>zjz65</strong><small>Gateway</small></span><svg aria-hidden="true"><use href="#ic-chev" /></svg>
           </button>
           <button type="button" class="mp-theme-toggle" id="theme-toggle" aria-label="切换到深色主题" title="切换主题">
             <svg aria-hidden="true"><use id="theme-toggle-icon" href="#ic-moon" /></svg>
@@ -119,6 +114,19 @@
       </header>
 
       <section class="dshw-conversation" id="view-chat">
+        <section class="mp-studio-home" id="studio-home" aria-label="Studio 首页" hidden>
+          <header class="mp-home-heading">
+            <span class="mp-home-mark" aria-hidden="true"></span>
+            <h1 id="studio-home-title">下一步做什么，zjz65？</h1>
+          </header>
+          <div class="mp-home-attention" id="studio-home-attention" hidden></div>
+          <section class="mp-home-stats" id="studio-home-stats" aria-label="本机使用统计">
+            <div class="mp-home-stats-tabs"><span class="is-on">概览</span><span>模型</span><i></i><span class="is-on">全部</span><span>30天</span><span>7天</span></div>
+            <div class="mp-home-stat-grid" id="studio-home-stat-grid"></div>
+            <div class="mp-home-heatmap" id="studio-home-heatmap" aria-label="近半年活动热力图"></div>
+            <p class="mp-home-stats-note" id="studio-home-stats-note"></p>
+          </section>
+        </section>
         <header class="dshw-header">
           <div class="dshw-title-row">
             <div class="dshw-title-cluster">

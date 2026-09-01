@@ -1,0 +1,228 @@
+/* Hallmark · genre: modern-minimal · macrostructure: Workbench · design-system: design.md · designed-as-app */
+:root {
+  color-scheme: light;
+  --mp-window-bar: 36px;
+  --mp-sidebar-width: 288px;
+  --mp-sidebar-collapsed: 44px;
+  --mp-content-width: 768px;
+  --mp-inspector-min: 420px;
+  --mp-inspector-max: 760px;
+
+  --mp-page: #FCFCFB;
+  --mp-sidebar: #FBFBF9;
+  --mp-panel: #FDFDFC;
+  --mp-panel-subtle: #F3F3F2;
+  --mp-composer: #FCFCFB;
+  --mp-selected: #EDECE8;
+  --mp-text: #0B0B0B;
+  --mp-text-secondary: #52514E;
+  --mp-text-muted: #898781;
+  --mp-rule: rgba(11, 11, 11, .10);
+  --mp-rule-strong: rgba(11, 11, 11, .18);
+  --mp-hover: rgba(11, 11, 11, .05);
+  --mp-active: rgba(11, 11, 11, .09);
+  --mp-clay: #D97757;
+  --mp-clay-strong: #C6613F;
+  --mp-activity-blue: #86ACEA;
+  --mp-danger: #B42318;
+  --mp-success: #2E7D4F;
+  --mp-focus: #2566D0;
+
+  --mp-font-ui: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+  --mp-font-mono: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  --mp-text-body: 13px;
+  --mp-leading-body: 18px;
+  --mp-text-footnote: 12px;
+  --mp-leading-footnote: 16px;
+  --mp-text-caption: 11px;
+  --mp-leading-caption: 14px;
+  --mp-text-title: 22px;
+  --mp-leading-title: 28px;
+  --mp-weight-regular: 400;
+  --mp-weight-medium: 500;
+  --mp-weight-semibold: 580;
+  --mp-weight-bold: 600;
+
+  --mp-s0: 0px;
+  --mp-s1: 2px;
+  --mp-s2: 3px;
+  --mp-s3: 4px;
+  --mp-s4: 5px;
+  --mp-s5: 6px;
+  --mp-s6: 8px;
+  --mp-s7: 10px;
+  --mp-s8: 12px;
+  --mp-s9: 16px;
+  --mp-s10: 20px;
+  --mp-s11: 24px;
+  --mp-s12: 32px;
+  --mp-s13: 40px;
+  --mp-s14: 56px;
+
+  --mp-r0: 0px;
+  --mp-r1: 2px;
+  --mp-r2: 3px;
+  --mp-r3: 4px;
+  --mp-r4: 5px;
+  --mp-r5: 6px;
+  --mp-r6: 8px;
+  --mp-r7: 10px;
+  --mp-r8: 12px;
+  --mp-r-sheet: 16px;
+  --mp-r-pill: 999px;
+
+  --mp-dur-fast: 120ms;
+  --mp-dur-normal: 180ms;
+  --mp-dur-structure: 300ms;
+  --mp-ease-out: cubic-bezier(.32,.72,0,1);
+
+  --mp-shadow-menu: 0 0 0 .5px rgba(0,0,0,.06), 0 4px 12px rgba(0,0,0,.06), 0 16px 40px rgba(0,0,0,.08);
+  --mp-shadow-sheet: 0 0 0 .5px rgba(0,0,0,.05), 0 12px 32px rgba(0,0,0,.06);
+
+  /* Transitional semantic aliases consumed by existing render functions. */
+  --paper: var(--mp-page);
+  --paper-2: var(--mp-panel-subtle);
+  --card: var(--mp-panel);
+  --card-sunk: var(--mp-panel-subtle);
+  --card-hover: var(--mp-hover);
+  --ink: var(--mp-text);
+  --ink-2: var(--mp-text-secondary);
+  --ink-3: var(--mp-text-muted);
+  --ink-4: var(--mp-rule-strong);
+  --hairline: var(--mp-rule);
+  --hairline-2: var(--mp-rule-strong);
+  --terracotta: var(--mp-clay);
+  --terracotta-bg: color-mix(in srgb, var(--mp-clay) 12%, transparent);
+  --green: var(--mp-success);
+  --green-bg: color-mix(in srgb, var(--mp-success) 12%, transparent);
+  --indigo: var(--mp-focus);
+  --indigo-bg: color-mix(in srgb, var(--mp-focus) 10%, transparent);
+  --font-ui: var(--mp-font-ui);
+  --font-mono: var(--mp-font-mono);
+}
+
+:root[data-theme="dark"],
+body[data-ds-dark-theme] {
+  color-scheme: dark;
+  --mp-page: #151515;
+  --mp-sidebar: #111111;
+  --mp-panel: #1E1E1E;
+  --mp-panel-subtle: #303030;
+  --mp-composer: #20201F;
+  --mp-selected: #292929;
+  --mp-text: #F0EFEC;
+  --mp-text-secondary: #C3C2B7;
+  --mp-text-muted: #898781;
+  --mp-rule: rgba(255, 255, 255, .10);
+  --mp-rule-strong: rgba(255, 255, 255, .18);
+  --mp-hover: rgba(255, 255, 255, .07);
+  --mp-active: rgba(255, 255, 255, .12);
+  --mp-danger: #FF6159;
+  --mp-success: #74C295;
+  --mp-focus: #86ACEA;
+  --mp-shadow-menu: 0 0 0 .5px rgba(255,255,255,.08), 0 4px 12px rgba(0,0,0,.40), 0 16px 40px rgba(0,0,0,.50);
+  --mp-shadow-sheet: 0 0 0 .5px rgba(255,255,255,.07), 0 12px 32px rgba(0,0,0,.42);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: var(--mp-page);
+  color: var(--mp-text);
+  font-family: var(--mp-font-ui);
+  font-size: var(--mp-text-body);
+  font-weight: var(--mp-weight-regular);
+  line-height: var(--mp-leading-body);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: geometricPrecision;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+button:disabled,
+input:disabled,
+textarea:disabled {
+  cursor: default;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+svg {
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--mp-focus);
+  outline-offset: 1px;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--mp-activity-blue) 35%, transparent);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: var(--mp-r-pill);
+  background: var(--mp-rule-strong);
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--mp-text-muted);
+  background-clip: content-box;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0s !important;
+    animation-delay: 0s !important;
+    transition-duration: var(--mp-dur-fast) !important;
+    transition-property: opacity, color, background-color, border-color !important;
+  }
+}

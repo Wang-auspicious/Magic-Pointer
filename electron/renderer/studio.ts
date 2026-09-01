@@ -966,10 +966,10 @@ let productMode: ProductMode = 'walker';
 function setProductMode(mode: ProductMode, navigate = true) {
   productMode = mode;
   shell.dataset.productMode = mode;
-  const label = document.getElementById('mode-switch-label');
-  if (label) label.textContent = mode === 'design' ? 'Design' : 'Work';
   document.querySelectorAll<HTMLElement>('[data-product-mode]').forEach((button) => {
-    button.setAttribute('aria-checked', String(button.dataset.productMode === mode));
+    const selected = button.dataset.productMode === mode;
+    button.classList.toggle('is-on', selected);
+    button.setAttribute('aria-selected', String(selected));
   });
   try { localStorage.setItem('mp:product-mode', mode); } catch { /* renderer storage unavailable */ }
   if (navigate) {
@@ -983,26 +983,8 @@ function setProductMode(mode: ProductMode, navigate = true) {
 (function bindProductMode() {
   try { productMode = localStorage.getItem('mp:product-mode') === 'design' ? 'design' : 'walker'; } catch { productMode = 'walker'; }
   setProductMode(productMode, false);
-  const toggle = document.getElementById('mode-switch');
-  const menu = document.getElementById('mode-menu');
-  toggle?.addEventListener('click', (event) => {
-    event.stopPropagation();
-    if (!menu) return;
-    menu.hidden = !menu.hidden;
-    toggle.setAttribute('aria-expanded', String(!menu.hidden));
-  });
-  document.getElementById('mode-walker')?.addEventListener('click', (event) => {
-    event.stopPropagation();
-    setProductMode('walker');
-    if (menu) menu.hidden = true;
-    toggle?.setAttribute('aria-expanded', 'false');
-  });
-  document.getElementById('mode-design')?.addEventListener('click', (event) => {
-    event.stopPropagation();
-    setProductMode('design');
-    if (menu) menu.hidden = true;
-    toggle?.setAttribute('aria-expanded', 'false');
-  });
+  document.getElementById('mode-work')?.addEventListener('click', () => setProductMode('walker'));
+  document.getElementById('mode-design')?.addEventListener('click', () => setProductMode('design'));
 })();
 
 (function bindDesignHome() {
@@ -1190,9 +1172,6 @@ document.addEventListener('keydown', (event) => {
     closeStyleMenu();
     closePermissionMenu();
     closeModelMenu();
-    const modeMenu = document.getElementById('mode-menu');
-    if (modeMenu) modeMenu.hidden = true;
-    document.getElementById('mode-switch')?.setAttribute('aria-expanded', 'false');
     const brain = document.getElementById('magic-brain-popover');
     if (brain) brain.hidden = true;
     document.getElementById('magic-brain-toggle')?.setAttribute('aria-expanded', 'false');
@@ -1846,12 +1825,7 @@ document.querySelectorAll<HTMLElement>('[data-directory-kind]').forEach((button)
 document.addEventListener('click', e => {
   const target = e.target as Element | null;
   if (!target) return;
-  if (!target.closest('#window-menu-popover') && !target.closest('.mp-window-menu-bar')) closeWindowMenu();
-  if (!target.closest('#mode-menu') && !target.closest('#mode-switch')) {
-    const modeMenu = document.getElementById('mode-menu');
-    if (modeMenu) modeMenu.hidden = true;
-    document.getElementById('mode-switch')?.setAttribute('aria-expanded', 'false');
-  }
+  if (!target.closest('#window-menu-popover') && !target.closest('#app-menu')) closeWindowMenu();
   if (!target.closest('#magic-brain-popover') && !target.closest('#magic-brain-toggle')) {
     const brain = document.getElementById('magic-brain-popover');
     if (brain) brain.hidden = true;
