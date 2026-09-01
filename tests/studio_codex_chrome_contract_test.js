@@ -16,6 +16,7 @@ for (const id of [
   'header-open-location', 'magic-brain-toggle', 'magic-brain-popover',
   'magic-brain-changes', 'magic-brain-branch', 'magic-brain-sources',
   'bottom-panel-toggle', 'bottom-panel',
+  'inspector-resize-handle', 'inspector-maximize',
   'project-browser-back', 'project-browser-forward', 'project-browser-reload',
   'project-browser-external', 'project-browser-host',
 ]) {
@@ -46,6 +47,11 @@ assert(studio.includes('renderMagicBrain'), 'environment information must render
 assert(studio.includes("addEventListener('contextmenu'"), 'the file tree must expose a real right-click menu');
 assert(studio.includes('Data.showProjectContextMenu'), 'file context actions must cross the preload boundary');
 assert(studio.includes('Data.openBrowserView'), 'the browser panel must create a real browser surface');
+assert(studio.includes('function scheduleProjectBrowserResize()'),
+  'Inspector/browser resizing must be animation-frame coalesced');
+assert(studio.includes('requestAnimationFrame(() =>'),
+  'coalesced browser resizing must use the next animation frame');
+assert(studio.includes('inspectorMaximized'), 'maximise/restore must be real renderer state');
 
 assert(preload.includes("ipcRenderer.invoke('projects:environment'"));
 assert(preload.includes("ipcRenderer.invoke('projects:context-menu'"));

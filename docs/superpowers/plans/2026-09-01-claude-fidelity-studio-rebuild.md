@@ -701,7 +701,7 @@ git commit -m "feat: adopt Claude conversation and composer grammar"
 - Modify: `electron/renderer/studio.ts`
 - Modify: `electron/renderer/claude_shell.css`
 
-- [ ] **Step 1: Write the failing state policy test**
+- [x] **Step 1: Write the failing state policy test**
 
 ```ts
 const assert = require('node:assert');
@@ -717,21 +717,21 @@ state = reduceInspectorState(state, { type: 'restore' });
 assert.deepStrictEqual(state, { open: true, maximized: false, width: 560, previousWidth: 560, tab: 'terminal' });
 ```
 
-- [ ] **Step 2: Run RED, implement pure reducer, run GREEN**
+- [x] **Step 2: Run RED, implement pure reducer, run GREEN**
 
 ```powershell
 node --require tsx/cjs tests/studio_inspector_state_test.ts
 ```
 
-- [ ] **Step 3: Add resize/maximise controls**
+- [x] **Step 3: Add resize/maximise controls**
 
 Add an 8px drag handle, `inspector-maximize`, `inspector-close`, and header/context row. Persist width/tab/maximise in renderer storage. Keep expanded tree paths, selected file, browser URL, terminal output, and scroll in their current owning variables; do not reinitialise them on layout actions.
 
-- [ ] **Step 4: Coalesce BrowserView resize**
+- [x] **Step 4: Coalesce BrowserView resize**
 
 Schedule at most one `resizeProjectBrowser()` per animation frame during drag. Close/hide the BrowserView before the Inspector becomes hidden; reopen at the new bounds after restore.
 
-- [ ] **Step 5: Run GREEN and browser/file regressions**
+- [x] **Step 5: Run GREEN and browser/file regressions**
 
 ```powershell
 node --require tsx/cjs tests/studio_inspector_state_test.ts
@@ -739,7 +739,7 @@ node tests/studio_codex_chrome_contract_test.js
 node tests/studio_file_tree_motion_test.js
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add electron/renderer/studio_inspector_state.ts electron/renderer/studio.html electron/renderer/studio.ts electron/renderer/claude_shell.css tests/studio_inspector_state_test.ts

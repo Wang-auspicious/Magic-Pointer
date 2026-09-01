@@ -941,6 +941,33 @@
   background: var(--mp-panel);
 }
 
+.mp-inspector-resize-handle {
+  position: absolute;
+  z-index: 5;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  width: 8px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.mp-inspector-resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 1px;
+  background: transparent;
+  transition: background-color var(--mp-dur-fast);
+}
+
+.mp-inspector-resize-handle:hover::after,
+.mp-inspector-resize-handle[data-dragging="true"]::after {
+  background: var(--mp-focus);
+}
+
 .mp-inspector-header {
   display: flex;
   min-height: 32px;
@@ -951,10 +978,26 @@
   border-bottom: 1px solid var(--mp-rule);
 }
 
-.mp-inspector-tabs {
+.mp-inspector-title {
+  font-size: 14px;
+  font-weight: var(--mp-weight-medium);
+}
+
+.mp-inspector-actions {
   display: flex;
   align-items: center;
   gap: 2px;
+}
+
+.mp-inspector-tabs {
+  display: flex;
+  min-height: 32px;
+  flex: 0 0 32px;
+  align-items: center;
+  gap: 2px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--mp-rule);
+  background: var(--mp-panel-subtle);
 }
 
 .mp-inspector-tabs button {
@@ -976,6 +1019,23 @@
   min-height: 0;
   flex: 1 1 auto;
   overflow: auto;
+}
+
+.mp-shell[data-inspector-maximized="true"] .dshw-center-col {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.mp-shell[data-inspector-maximized="true"] .mp-inspector {
+  grid-column: 2 / 4;
+  z-index: 65;
+  width: auto !important;
+  min-width: 0;
+  margin: 8px;
+}
+
+.mp-shell[data-inspector-maximized="true"] .mp-inspector-resize-handle {
+  display: none;
 }
 
 .mp-inspector-filter {

@@ -1553,6 +1553,32 @@ const projectTreeCache = new Map<string, ProjectTreeEntry[]>();
 const expandedProjectDirectories = new Set<string>(['']);
 let selectedProjectFile = '';
 let activeInspectorTab = 'files';
+interface InspectorState {
+  open: boolean;
+  maximized: boolean;
+  width: number;
+  previousWidth: number;
+  tab: string;
+}
+interface InspectorStateModule {
+  clampInspectorWidth(desired: unknown, availableWidth: unknown): number;
+  reduceInspectorState(state: InspectorState, action: Record<string, unknown>): InspectorState;
+}
+const inspectorStatePolicy = (globalThis as { StudioInspectorState?: InspectorStateModule }).StudioInspectorState!;
+const INSPECTOR_WIDTH_KEY = 'mp:inspector-width';
+let initialInspectorWidth = 560;
+try {
+  const stored = Number(localStorage.getItem(INSPECTOR_WIDTH_KEY));
+  if (Number.isFinite(stored)) initialInspectorWidth = stored;
+} catch { /* storage unavailable */ }
+let inspectorState: InspectorState = {
+  open: false,
+  maximized: false,
+  width: inspectorStatePolicy.clampInspectorWidth(initialInspectorWidth, window.innerWidth),
+  previousWidth: inspectorStatePolicy.clampInspectorWidth(initialInspectorWidth, window.innerWidth),
+  tab: 'files',
+};
+let inspectorMaximized = false;
 /* sv 文件树动效:刚展开的目录(下一帧翻开入场)/ 收起退场动画的落盘定时器。 */
 let lastExpandedTreeDirectory = '';
 let pendingTreeCollapseTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1823,6 +1849,16 @@ function resizeProjectBrowser() {
   if (bounds) void Data.resizeBrowserView(bounds);
 }
 
+let projectBrowserResizeFrame: number | null = null;
+
+function scheduleProjectBrowserResize() {
+  if (projectBrowserResizeFrame !== null) return;
+  projectBrowserResizeFrame = requestAnimationFrame(() => {
+    projectBrowserResizeFrame = null;
+    resizeProjectBrowser();
+  });
+}
+
 function closeProjectBrowserView() {
   if (!browserViewVisible) return;
   browserViewVisible = false;
@@ -1832,40 +1868,98 @@ function closeProjectBrowserView() {
 Data.onBrowserViewState((state) => renderBrowserViewState(state));
 const projectBrowserHost = document.getElementById('project-browser-host');
 if (projectBrowserHost && typeof ResizeObserver !== 'undefined') {
-  new ResizeObserver(() => resizeProjectBrowser()).observe(projectBrowserHost);
+  new ResizeObserver(() => scheduleProjectBrowserResize()).observe(projectBrowserHost);
 }
-window.addEventListener('resize', resizeProjectBrowser);
+window.addEventListener('resize', scheduleProjectBrowserResize);
+
+function inspectorAvailableWidth(): number {
+  const sidebarWidth = shell.dataset.sidebar === 'collapsed' ? 44 : 288;
+  return Math.max(0, shell.clientWidth - sidebarWidth);
+}
+
+function syncInspectorGeometry() {
+  const inspector = document.getElementById('project-inspector');
+  const maximize = document.getElementById('inspector-maximize');
+  if (!inspector) return;
+  inspectorMaximized = inspectorState.maximized;
+  inspector.hidden = !inspectorState.open;
+  inspector.style.width = inspectorState.maximized ? '' : `${inspectorState.width}px`;
+  if (inspectorState.open) shell.dataset.inspector = 'open';
+  else delete shell.dataset.inspector;
+  if (inspectorState.maximized) shell.dataset.inspectorMaximized = 'true';
+  else delete shell.dataset.inspectorMaximized;
+  maximize?.setAttribute('aria-pressed', String(inspectorState.maximized));
+  maximize?.setAttribute('aria-label', inspectorState.maximized ? '还原项目面板' : '展开项目面板');
+  try { localStorage.setItem(INSPECTOR_WIDTH_KEY, String(inspectorState.width)); } catch { /* storage unavailable */ }
+  document.getElementById('inspector-toggle')?.setAttribute('aria-expanded', String(inspectorState.open));
+  scheduleProjectBrowserResize();
+}
 
 function setInspector(open: boolean, tab = activeInspectorTab) {
   const inspector = document.getElementById('project-inspector');
   if (!inspector) return;
-  activeInspectorTab = tab;
-  inspector.hidden = !open;
-  if (open) shell.dataset.inspector = 'open';
-  else delete shell.dataset.inspector;
-  document.getElementById('inspector-toggle')?.setAttribute('aria-expanded', String(open));
+  inspectorState = inspectorStatePolicy.reduceInspectorState(
+    inspectorState,
+    open ? { type: 'open', tab } : { type: 'close' },
+  );
+  activeInspectorTab = inspectorState.tab;
+  syncInspectorGeometry();
   document.querySelectorAll<HTMLElement>('[data-inspector-panel]').forEach((panel) => {
-    panel.hidden = panel.dataset.inspectorPanel !== tab;
+    panel.hidden = panel.dataset.inspectorPanel !== activeInspectorTab;
   });
   document.querySelectorAll<HTMLElement>('.mp-inspector-tabs [data-inspector-tab]').forEach((button) => {
-    const active = button.dataset.inspectorTab === tab;
+    const active = button.dataset.inspectorTab === activeInspectorTab;
     button.classList.toggle('is-on', active);
     button.setAttribute('aria-selected', String(active));
   });
-  document.querySelectorAll<HTMLElement>('.mp-library-nav [data-inspector-tab]').forEach((button) => {
-    button.classList.toggle('is-on', open && button.dataset.inspectorTab === tab);
-  });
+  const inspectorTitle = document.getElementById('inspector-title');
+  if (inspectorTitle) {
+    inspectorTitle.textContent = ({ files: '文件', browser: '浏览器', terminal: '终端', changes: '更改', tasks: '任务' } as Record<string, string>)[activeInspectorTab] || '项目';
+  }
   if (!open) { closeProjectBrowserView(); return; }
-  if (tab !== 'browser') closeProjectBrowserView();
-  if (tab === 'files' && !projectTreeCache.has('')) void refreshProjectInspector();
-  if (tab === 'changes') void renderProjectChanges();
-  if (tab === 'browser') requestAnimationFrame(resizeProjectBrowser);
+  if (activeInspectorTab !== 'browser') closeProjectBrowserView();
+  if (activeInspectorTab === 'files' && !projectTreeCache.has('')) void refreshProjectInspector();
+  if (activeInspectorTab === 'changes') void renderProjectChanges();
+  if (activeInspectorTab === 'browser') scheduleProjectBrowserResize();
 }
 
 document.getElementById('inspector-toggle')?.addEventListener('click', () => {
   setInspector(shell.dataset.inspector !== 'open', 'files');
 });
 document.getElementById('inspector-close')?.addEventListener('click', () => setInspector(false));
+document.getElementById('inspector-maximize')?.addEventListener('click', () => {
+  inspectorState = inspectorStatePolicy.reduceInspectorState(
+    inspectorState,
+    { type: inspectorState.maximized ? 'restore' : 'maximize' },
+  );
+  syncInspectorGeometry();
+});
+
+document.getElementById('inspector-resize-handle')?.addEventListener('pointerdown', (event) => {
+  if (inspectorState.maximized) return;
+  const handle = event.currentTarget as HTMLElement;
+  const startX = event.clientX;
+  const startWidth = inspectorState.width;
+  handle.dataset.dragging = 'true';
+  handle.setPointerCapture(event.pointerId);
+  const move = (moveEvent: PointerEvent) => {
+    inspectorState = inspectorStatePolicy.reduceInspectorState(inspectorState, {
+      type: 'resize',
+      width: startWidth + startX - moveEvent.clientX,
+      availableWidth: inspectorAvailableWidth(),
+    });
+    syncInspectorGeometry();
+  };
+  const finish = () => {
+    delete handle.dataset.dragging;
+    handle.removeEventListener('pointermove', move);
+    handle.removeEventListener('pointerup', finish);
+    handle.removeEventListener('pointercancel', finish);
+  };
+  handle.addEventListener('pointermove', move);
+  handle.addEventListener('pointerup', finish);
+  handle.addEventListener('pointercancel', finish);
+});
 document.getElementById('project-file-tree')?.addEventListener('click', (event) => {
   const row = (event.target as Element | null)?.closest<HTMLElement>('[data-project-path]');
   if (!row) return;
