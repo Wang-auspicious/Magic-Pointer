@@ -86,7 +86,6 @@ Replace the old assertions with:
 assert(html.includes('id="composer-workspace"'), 'Composer exposes the optional folder chip');
 assert(html.includes('id="composer-workspace-label"'));
 assert(!html.includes('id="project-gate"'), 'the mandatory project gate is deleted');
-assert(sidebar.includes('__local__'), 'unbound sessions have a truthful local group');
 assert(!main.includes("if (!effectiveWorkspaceRoot) return { ok: false, error: '请先打开项目。' }"));
 assert(main.includes('resolveConversationWorkspace'));
 ```
@@ -204,7 +203,7 @@ Use it in `answer_conversation`; pass an empty runtime workspace for an unbound 
 Run the three RED commands plus:
 
 ```powershell
-python -m pytest tests/harness_builtin_bundle_test.py tests/agent_runtime_skill_catalog_test.py -q --basetemp=data/runtime/pytest-tmp-claude-studio-adjacent
+python -m pytest tests/harness_builtin_bundle_test.py tests/skill_catalog_test.py -q --basetemp=data/runtime/pytest-tmp-claude-studio-adjacent
 ```
 
 Expected: all pass; unbound Runtime has no coding/delegate tools while desktop and ordinary model tools remain.
