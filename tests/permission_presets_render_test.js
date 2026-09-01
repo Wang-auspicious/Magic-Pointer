@@ -4,11 +4,16 @@
 // 保持同档同名，custom 只作展示。执行 fail-closed 在桥那端，这里钉的是 UI 数据面。
 
 const assert = require('assert');
-const { PRESETS, optionOf, presetSvg } = require('../electron/renderer/permission_presets');
+const { PRESETS, PRIMARY_PRESETS, optionOf, presetSvg } = require('../electron/renderer/permission_presets');
 
 const VALUES = PRESETS.map(option => option.value);
-assert.deepStrictEqual(VALUES, ['plan', 'read-only', 'workspace-write', 'danger-full-access'],
+assert.deepStrictEqual(VALUES, ['plan', 'workspace-write', 'danger-full-access', 'read-only'],
   `预设表顺序/取值：${VALUES}`);
+assert.deepStrictEqual(PRIMARY_PRESETS.map(option => option.value), [
+  'plan', 'workspace-write', 'danger-full-access',
+]);
+assert.strictEqual(optionOf('workspace-write').label, '接受编辑');
+assert.strictEqual(optionOf('read-only').primary, false);
 
 for (const option of PRESETS) {
   assert.ok(option.name && option.description, `${option.value} 需要名称与描述`);

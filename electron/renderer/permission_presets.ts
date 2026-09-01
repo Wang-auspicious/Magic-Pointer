@@ -9,6 +9,7 @@ interface PresetOption {
   name: string;
   description: string;
   label: string;
+  primary?: boolean;
   confirm?: { title: string; description: string };
 }
 
@@ -18,31 +19,37 @@ const PRESETS: PresetOption[] = [
     name: '计划模式',
     label: '计划',
     description: '先只读研究并提交计划；你批准后才以写入权限执行。',
-  },
-  {
-    value: 'read-only',
-    name: '只读',
-    label: '只读',
-    description: '只允许读取；任何写入、发送或删除都要先经你确认。',
+    primary: true,
   },
   {
     value: 'workspace-write',
-    name: '项目写入',
-    label: '项目写入',
+    name: '接受编辑',
+    label: '接受编辑',
     description: '项目文件夹内的可逆写入直接执行；更大范围的操作需要确认。',
+    primary: true,
   },
   {
     value: 'danger-full-access',
     name: '完全访问',
     label: 'Full access',
     description: '完整文件访问，不再弹出确认提示。',
+    primary: true,
     confirm: {
       title: '确认启用 Full access？',
       description:
         '启用 Full access 后，agent 将减少确认步骤，并且可以直接执行更多操作，包括敏感操作、文件修改或外部命令。仅建议在你信任当前任务时使用。',
     },
   },
+  {
+    value: 'read-only',
+    name: '只读',
+    label: '只读',
+    description: '只允许读取；任何写入、发送或删除都要先经你确认。',
+    primary: false,
+  },
 ];
+
+const PRIMARY_PRESETS = PRESETS.filter(option => option.primary === true);
 
 const CUSTOM_OPTION: PresetOption = {
   value: 'custom',
@@ -68,7 +75,7 @@ function presetSvg(option: PresetOption): string {
   return `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${paths[option.value] || paths.custom}" /></svg>`;
 }
 
-const PermissionPresets = { PRESETS, optionOf, presetSvg };
+const PermissionPresets = { PRESETS, PRIMARY_PRESETS, optionOf, presetSvg };
 if (typeof module !== 'undefined' && module.exports) module.exports = PermissionPresets;
 if (typeof globalThis !== 'undefined') {
   (globalThis as typeof globalThis & { PermissionPresets?: typeof PermissionPresets }).PermissionPresets = PermissionPresets;

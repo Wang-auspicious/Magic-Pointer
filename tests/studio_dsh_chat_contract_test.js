@@ -1,15 +1,14 @@
 'use strict';
 
-// DSH 聊天渲染器契约（deepseek-harness 100% 移植）：
-// 钉死用户气泡 / Think 行 / 工具调用行的 DOM 结构与展开、状态点、
-// 复制动作、错误行——渲染层不拼 innerHTML，文本走文本节点。
+// Studio 聊天语义契约：保留已经正确的文本安全、真实 reasoning、工具证据
+// 与折叠逻辑；视觉由 Claude-fidelity token/chat CSS 统一承载。
 
 const assert = require('node:assert');
 const fs = require('node:fs');
 const DshChat = require('../electron/renderer/dsh_chat');
 
-const css = fs.readFileSync('electron/renderer/dsh_chat.css', 'utf8');
-const tokens = fs.readFileSync('electron/renderer/dsh_tokens.css', 'utf8');
+const css = fs.readFileSync('electron/renderer/claude_chat.css', 'utf8');
+const tokens = fs.readFileSync('electron/renderer/claude_tokens.css', 'utf8');
 const html = (node) => (node ? node.outerHTML : '');
 
 /* ---- 用户气泡（Figma User_Bubble r22，右对齐 + 时钟 + 复制） ---- */
@@ -42,8 +41,8 @@ assert(collapsedByDefault.includes('data-open="false"'), 'tool rows start collap
 const running = html(DshChat.toolRowNode(DshChat.toolRowModel('grep', JSON.stringify({ pattern: 'x' }), undefined)));
 assert(running.includes('data-state="running"'), 'an unsettled call must render the running state');
 assert(running.includes('class="dsh-vh"'), 'running state must carry a screen-reader label');
-assert(css.includes('.dsh-tool[data-state=\'running\'] .dsh-row::after'),
-  'the running sweep glare must exist in the stylesheet');
+assert(!css.includes('.dsh-tool[data-state=\'running\'] .dsh-row::after'),
+  'the Claude-fidelity activity row must not use a perpetual sweep glare');
 
 const failed = html(DshChat.toolRowNode(DshChat.toolRowModel('read', JSON.stringify({ path: 'b.txt' }), { text: 'no such file\nmore', isError: true })));
 assert(failed.includes('class="dsh-dot"'), 'an error row must show the state dot');
@@ -178,18 +177,18 @@ const errorTurn = DshChat.assistantTurnNode({ failed: true, at: 1 }).map(html).j
 assert(errorTurn.includes('class="dsh-turn-error"'), 'a failed turn must render the DSH turn error row');
 assert(errorTurn.includes('class="dsh-dot"'), 'the error row leads with the red state dot');
 
-/* ---- 回合状态渐变字 ---- */
+/* ---- 回合状态只呈现真实文字，不跑永久 shimmer ---- */
 assert(DshChat.turnStatusNode('Thinking').outerHTML.includes('class="dsh-turn-status"'));
-assert(css.includes('@keyframes dsh-turn-status-shimmer'), 'the status shimmer animation must exist');
+assert(!css.includes('@keyframes dsh-turn-status-shimmer'), 'perpetual status shimmer must be removed');
 
-/* ---- 样式契约：令牌与 CSS 一致（DSH 双档完整平台） ---- */
-assert(tokens.includes('--dsw-specific-bubble: rgb(237, 243, 254)'), 'the DSH user bubble token must be DeepSeek-50 in light');
+/* ---- 样式契约：Claude 精确灰阶与轻量消息语法 ---- */
+assert(tokens.includes('--mp-page: #FCFCFB'), 'light page token matches the measured reference');
 assert(tokens.includes('body[data-ds-dark-theme]'), 'the dark alias block must exist (DSH full platform)');
-assert(tokens.includes('--dsw-specific-bubble: rgb(44, 44, 46)'), 'the dark user bubble must be bluish-850');
-assert(css.includes('border-radius: 22px'), 'the bubble radius is the DSH 22px');
-assert(css.includes('height: 24px'), 'rows keep the DSH 24px line height');
-assert(css.includes('dsh-state-dot-chase'), 'the ongoing pixel-chase animation must exist');
-assert(css.includes('prefers-reduced-motion'), 'reduced motion must disable the sweeps');
+assert(tokens.includes('--mp-page: #151515'), 'dark page token matches the measured reference');
+assert.match(css, /\.dsh-bubble\s*\{[^}]*border-radius:\s*12px/s, 'user bubble uses the measured restrained radius');
+assert.match(css, /\.dsh-tool-group-header,[\s\S]*min-height:\s*28px/s, 'activity rows use the compact Claude height');
+assert(!css.includes('dsh-state-dot-chase'), 'ongoing activity must not use decorative pixel chase');
+assert(tokens.includes('prefers-reduced-motion'), 'reduced motion must collapse spatial transitions');
 
 /* ---- 纯函数导出 ---- */
 assert.strictEqual(DshChat.__test.firstLine('a\nb'), 'a');

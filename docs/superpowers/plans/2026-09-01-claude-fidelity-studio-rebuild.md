@@ -647,11 +647,11 @@ git commit -m "feat: adopt Claude Studio navigation and search"
 - Modify: `tests/permission_presets_render_test.js`
 - Create: `tests/studio_composer_states_test.js`
 
-- [ ] **Step 1: Write RED tests for the approved message grammar**
+- [x] **Step 1: Write RED tests for the approved message grammar**
 
 Assert user messages use one right-aligned pill; assistant text has no outer card; contiguous tools share one group; real reasoning is collapsed; errors retain full disclosure; unchanged activity signatures are not rebuilt; pending input is immediately above composer.
 
-- [ ] **Step 2: Flip permission presentation tests**
+- [x] **Step 2: Flip permission presentation tests**
 
 Keep runtime values but assert primary order/presentation:
 
@@ -661,7 +661,7 @@ assert.strictEqual(optionOf('workspace-write').label, '接受编辑');
 assert.strictEqual(optionOf('read-only').primary, false);
 ```
 
-- [ ] **Step 3: Run RED**
+- [x] **Step 3: Run RED**
 
 ```powershell
 node tests/studio_dsh_chat_contract_test.js
@@ -669,11 +669,11 @@ node tests/permission_presets_render_test.js
 node tests/studio_composer_states_test.js
 ```
 
-- [ ] **Step 4: Implement semantic adjustments and complete CSS states**
+- [x] **Step 4: Implement semantic adjustments and complete CSS states**
 
 Preserve existing escaping/markdown/diff/tool summary functions. Change only wrappers/classes needed by the new contract. Implement default, hover, focus-visible, active, disabled, running, error, selected/success states for inputs, buttons, segmented controls, permission rows, message actions, and activity disclosures. Running + non-empty submit remains steer; running + empty submit remains stop; failed steer preserves text.
 
-- [ ] **Step 5: Run GREEN and adjacent stream tests**
+- [x] **Step 5: Run GREEN and adjacent stream tests**
 
 ```powershell
 node tests/studio_dsh_chat_contract_test.js
@@ -683,7 +683,7 @@ node tests/studio_markdown_render_test.js
 python -m pytest tests/conversation_stream_progress_test.py -q --basetemp=data/runtime/pytest-tmp-claude-stream
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add electron/renderer/dsh_chat.ts electron/renderer/permission_presets.ts electron/renderer/studio.ts electron/renderer/claude_chat.css tests/studio_dsh_chat_contract_test.js tests/permission_presets_render_test.js tests/studio_composer_states_test.js

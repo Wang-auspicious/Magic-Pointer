@@ -854,6 +854,11 @@
   background: var(--mp-text);
 }
 
+.dshw-input-form[data-state="running"] .dshw-scroll {
+  border-color: color-mix(in srgb, var(--mp-text-muted) 42%, transparent);
+  background: color-mix(in srgb, var(--mp-composer) 94%, var(--mp-panel-subtle));
+}
+
 .dshw-input-form[aria-busy="true"] .dshw-primary svg {
   transform: scale(.72);
 }

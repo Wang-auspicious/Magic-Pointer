@@ -3110,12 +3110,33 @@ function focusComposerWhenIdle() {
   if (!anotherTypingTarget) textarea.focus();
 }
 
+let composerSettledTimer: number | null = null;
+
+function setComposerSettledState(state: 'idle' | 'error' | 'success') {
+  const form = document.getElementById('composer-form');
+  if (!form) return;
+  if (composerSettledTimer !== null) window.clearTimeout(composerSettledTimer);
+  composerSettledTimer = null;
+  form.setAttribute('data-state', state);
+  if (state === 'idle') return;
+  composerSettledTimer = window.setTimeout(() => {
+    if (form.dataset.state === state) form.setAttribute('data-state', 'idle');
+    composerSettledTimer = null;
+  }, 1200);
+}
+
 function setComposerRunningState(running: boolean) {
+  const form = document.getElementById('composer-form');
   const submit = document.querySelector<HTMLButtonElement>('#composer-form button[type="submit"]');
+  if (running || form?.dataset.state === 'running') {
+    form?.setAttribute('data-state', running ? 'running' : 'idle');
+  }
   if (submit) {
     submit.classList.toggle('is-stop', running);
     submit.title = running ? '停止' : '发送';
     submit.setAttribute('aria-label', running ? '停止' : '发送');
+    const use = submit.querySelector('use');
+    use?.setAttribute('href', running ? '#ic-stop' : '#ic-send');
   }
   if (!running) focusComposerWhenIdle();
 }
@@ -3301,10 +3322,12 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
       }
       await openConversation(activeConversationId);
       await renderSidebar();
+      setComposerSettledState('success');
     } catch (error) {
       pending.replaceChildren(DshChat.turnErrorNode(error instanceof Error ? error.message : String(error)));
       textarea.value = ConversationControl.failedDraftValue(textarea.value, question);
       fitComposer(textarea);
+      setComposerSettledState('error');
     } finally {
       pendingConversation = null;
       studioComposerBusy = false;
