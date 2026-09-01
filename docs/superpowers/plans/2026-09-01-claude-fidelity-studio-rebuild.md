@@ -315,7 +315,7 @@ git commit -m "feat: project real Studio home statistics"
 - Create: `electron/renderer/studio_search.ts`
 - Test: `tests/studio_search_test.ts`
 
-- [ ] **Step 1: Write failing local-session grouping assertions**
+- [x] **Step 1: Write failing local-session grouping assertions**
 
 Change the expected workspace groups to:
 
@@ -326,7 +326,7 @@ assert.strictEqual(wsGroups.at(-1).key, '__local__');
 assert.strictEqual(wsGroups.at(-1).workspaceRoot, '');
 ```
 
-- [ ] **Step 2: Write the failing search test**
+- [x] **Step 2: Write the failing search test**
 
 ```ts
 const assert = require('node:assert');
@@ -348,14 +348,14 @@ assert.deepStrictEqual(searchStudioIndex(index, '', 8), []);
 console.log('studio search test ok');
 ```
 
-- [ ] **Step 3: Run RED**
+- [x] **Step 3: Run RED**
 
 ```powershell
 node tests/sidebar_groups_test.js
 node --require tsx/cjs tests/studio_search_test.ts
 ```
 
-- [ ] **Step 4: Implement truthful local grouping**
+- [x] **Step 4: Implement truthful local grouping**
 
 Keep workspace groups in recency order and append one group:
 
@@ -365,11 +365,11 @@ if (localItems.length) {
 }
 ```
 
-- [ ] **Step 5: Implement bounded search**
+- [x] **Step 5: Implement bounded search**
 
 Use a discriminated `StudioSearchItem` with `kind`, `key`, `label`, `detail`, `keywords`, and `target`. Normalise with trim/lowercase. Ranking is exact label 0, label prefix 1, token prefix 2, substring 3; then recency, then label. Cap the index at 500 conversations, 100 projects, 200 commands/skills, and the fixed route list. Cap results at 20.
 
-- [ ] **Step 6: Run GREEN and commit**
+- [x] **Step 6: Run GREEN and commit**
 
 ```powershell
 node tests/sidebar_groups_test.js

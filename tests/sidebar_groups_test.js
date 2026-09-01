@@ -44,15 +44,21 @@ const wsRows = [
   { id: 'w4', title: '没绑工作区的旧会话', updatedAt: at(3) },
 ];
 const wsGroups = groupByWorkspace(wsRows);
-assert.deepStrictEqual(wsGroups.map(g => g.label), ['alpha', 'beta'], '组头只来自真实项目；未绑定记录不进入 Studio');
+assert.deepStrictEqual(
+  wsGroups.map(g => g.label),
+  ['alpha', 'beta', '本机会话'],
+  '真实项目保持分组；未绑定记录进入明确的本机会话组',
+);
 assert.deepStrictEqual(
   wsGroups.map(g => [g.workspaceRoot, g.items.map(i => i.id)]),
   [
     ['C:/repos/alpha', ['w1', 'w2']],
     ['C:/repos/beta', ['w3']],
+    ['', ['w4']],
   ],
-  '组内新→旧，root 原样携带；无项目记录不进入 Studio',
+  '组内新→旧，root 原样携带；本机会话明确使用空 root',
 );
+assert.strictEqual(wsGroups.at(-1).key, '__local__');
 assert.deepStrictEqual(groupByWorkspace([]), [], '空列表不出空组');
 // 单工作区也要出组头——侧栏「工作区」区必须说真话。
 assert.strictEqual(groupByWorkspace([{ id: 's1', title: 'x', updatedAt: NOW, workspaceRoot: 'D:/only' }]).length, 1);

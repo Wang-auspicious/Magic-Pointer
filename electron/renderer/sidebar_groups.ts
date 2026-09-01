@@ -69,9 +69,13 @@ function groupByWorkspace(
     string,
     { key: string; label: string; workspaceRoot: string; items: SidebarConversationLike[] }
   >();
+  const localItems: SidebarConversationLike[] = [];
   for (const item of sorted) {
     const root = String(item.workspaceRoot || '').trim().replace(/\\/g, '/');
-    if (!root) continue;
+    if (!root) {
+      localItems.push(item);
+      continue;
+    }
     const key = root;
     let group = groups.get(key);
     if (!group) {
@@ -86,7 +90,16 @@ function groupByWorkspace(
     }
     group.items.push(item);
   }
-  return [...groups.values()];
+  const result = [...groups.values()];
+  if (localItems.length) {
+    result.push({
+      key: '__local__',
+      label: '本机会话',
+      workspaceRoot: '',
+      items: localItems,
+    });
+  }
+  return result;
 }
 
 const SidebarGroups = { groupConversations, filterConversations, groupByWorkspace };
