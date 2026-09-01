@@ -112,6 +112,7 @@ const tooled = store.appendTurn({
   ],
   receipts: [{ toolName: 'pwsh', usedBackend: 'subprocess', latencyMs: 82 }],
   modelUsage: { inputTokens: 120, outputTokens: 30, totalTokens: 150 },
+  modelId: 'mimo-v2.5',
   timingMs: 910,
   usedBackend: 'openai-compatible',
   agentSessionId: 'agent-studio-abc123',
@@ -127,6 +128,7 @@ assert.strictEqual(tooled.turns[0].activities[0].firstTokenMs, 118, 'model lifec
 assert.strictEqual(tooled.turns[0].trajectory[2].callId, 'pwsh-1', 'ordered DSH trajectory records must survive persistence');
 assert.strictEqual(tooled.turns[0].receipts[0].toolName, 'pwsh', 'audit receipts must survive persistence');
 assert.strictEqual(tooled.turns[0].modelUsage.totalTokens, 150, 'real model token usage must survive persistence');
+assert.strictEqual(tooled.turns[0].modelId, 'mimo-v2.5', 'request model id must survive persistence');
 assert.strictEqual(tooled.turns[0].timingMs, 910, 'real turn time must survive persistence');
 assert.strictEqual(tooled.turns[0].usedBackend, 'openai-compatible', 'model backend must survive persistence');
 assert.strictEqual(tooled.agentSessionId, 'agent-studio-abc123', 'durable Agent session identity must survive on the thread');
@@ -134,6 +136,7 @@ assert.strictEqual(tooled.hasPendingWork, true, 'unfinished work must be visible
 const tooledAgain = createConversationStore({ baseDir: dir, now: () => clock }).get(tooled.id);
 assert.strictEqual(tooledAgain.turns[0].events.length, 2, '重开 store 后工具链事件仍在');
 assert.strictEqual(tooledAgain.turns[0].modelUsage.outputTokens, 30, '重开 store 后 token usage 仍在');
+assert.strictEqual(tooledAgain.turns[0].modelId, 'mimo-v2.5', '重开 store 后模型 id 仍在');
 assert.strictEqual(tooledAgain.turns[0].trajectory[0].seq, 1, '重开 store 后 trajectory 顺序仍在');
 assert.strictEqual(tooledAgain.turns[0].trajectory[0].promptCache, true,
   'prompt cache request header must survive bridge → store persistence');

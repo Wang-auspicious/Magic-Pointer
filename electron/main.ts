@@ -1328,6 +1328,10 @@ ipcMain.handle('conversations:list', (event: Electron.IpcMainInvokeEvent) => {
   if (!isDashboardSender(event) && !isCompanionSender(event)) return [];
   try { return conversations().list(); } catch (_) { return []; }
 });
+ipcMain.handle('conversations:stats', (event: Electron.IpcMainInvokeEvent) => {
+  if (!isDashboardSender(event)) return null;
+  try { return conversations().stats(); } catch (_) { return null; }
+});
 ipcMain.handle('projects:list', (event: Electron.IpcMainInvokeEvent) => {
   if (!isDashboardSender(event)) return [];
   try { return conversations().listProjects(); } catch (_) { return []; }
@@ -1796,11 +1800,12 @@ ipcMain.handle('conversations:send', async (event: Electron.IpcMainInvokeEvent, 
     workspaceRoot,
     existing?.workspaceRoot,
   );
+  const modelRuntime = activeModelRuntimeConfig();
   const payload = {
     question,
     turns: Array.isArray(existing?.turns) ? existing.turns.slice(-12) : [],
     object: existing?.object || {},
-    modelRuntime: activeModelRuntimeConfig(),
+    modelRuntime,
     permissionPreset,
     replyStyle,
     requestId,
@@ -1850,6 +1855,7 @@ ipcMain.handle('conversations:send', async (event: Electron.IpcMainInvokeEvent, 
           trajectory: Array.isArray(parsed.trajectory) ? parsed.trajectory : [],
           receipts: Array.isArray(parsed.receipts) ? parsed.receipts : [],
           modelUsage: parsed.modelUsage && typeof parsed.modelUsage === 'object' ? parsed.modelUsage : {},
+          modelId: String(modelRuntime?.model || '').trim() || undefined,
           timingMs: parsed.timingMs,
           usedBackend: parsed.usedBackend,
           agentSessionId: parsed.agentSessionId,

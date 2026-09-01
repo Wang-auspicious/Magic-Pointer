@@ -11,6 +11,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { projectStudioHomeStats } = require('./studio_home_stats');
 
 const MAX_CONVERSATIONS = 500;
 const MAX_TURNS = 200;
@@ -41,6 +42,7 @@ interface TurnEntry {
   trajectory: unknown[];
   receipts: unknown[];
   modelUsage: Record<string, number>;
+  modelId?: string;
   timingMs?: number;
   usedBackend?: string;
   /** 划线轮次的现场证据：截图存档 + 标注图 + 当时读到的内容摘要。追问时随桥回上下文。 */
@@ -103,6 +105,7 @@ interface TurnInput {
   trajectory?: unknown;
   receipts?: unknown;
   modelUsage?: unknown;
+  modelId?: unknown;
   timingMs?: unknown;
   usedBackend?: unknown;
   workspaceRoot?: unknown;
@@ -339,6 +342,7 @@ function createConversationStore(
           .filter(([, value]) => Number.isFinite(Number(value)))
           .map(([key, value]) => [key, Number(value)]))
         : {},
+      modelId: String(turn.modelId || '').trim() || undefined,
       timingMs: Number.isFinite(Number(turn.timingMs)) ? Number(turn.timingMs) : undefined,
       usedBackend: turn.usedBackend !== undefined ? String(turn.usedBackend) : undefined,
       // 划线轮次的现场证据与结构化提问随轮存档：追问时桥把它们带回上下文，
@@ -639,6 +643,10 @@ function createConversationStore(
     return out.sort((x, y) => y.at - x.at).slice(0, limit);
   }
 
+  function stats(at = now()) {
+    return projectStudioHomeStats(load(), at);
+  }
+
   function clear(): void {
     items = [];
     persist();
@@ -678,6 +686,7 @@ function createConversationStore(
     timeline,
     memories,
     artifacts,
+    stats,
     clear,
     registerProject,
     listProjects,

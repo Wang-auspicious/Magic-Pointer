@@ -248,6 +248,7 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
   },
   conversations: {
     list: () => ipcRenderer.invoke('conversations:list'),
+    stats: () => ipcRenderer.invoke('conversations:stats'),
     get: (id: unknown) => ipcRenderer.invoke('conversations:get', id),
     branch: (payload: { id?: unknown; turnIndex?: unknown }) => ipcRenderer.invoke('conversations:branch', {
       id: String(payload?.id || '').slice(0, 120),

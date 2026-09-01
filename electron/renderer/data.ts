@@ -29,6 +29,7 @@ declare global {
     trajectory?: Record<string, unknown>[];
     receipts?: Record<string, unknown>[];
     modelUsage?: Record<string, number>;
+    modelId?: string;
     timingMs?: number;
     usedBackend?: string;
     pendingInput?: {
@@ -59,6 +60,7 @@ declare global {
     updatedAt?: number;
     agentSessionId?: string;
     hasPendingWork?: boolean;
+    workspaceRoot?: string;
     object?: MagicPointerObject | null;
     turns?: MagicPointerTurn[];
     [key: string]: unknown;
@@ -69,6 +71,18 @@ declare global {
     name: string;
     addedAt?: number;
     lastOpenedAt?: number;
+  }
+
+  interface MagicPointerHomeStats {
+    sessions: number;
+    messages: number;
+    totalTokens: number;
+    activeDays: number;
+    currentStreak: number;
+    longestStreak: number;
+    peakHour: number | null;
+    favoriteModel: string | null;
+    heatmap: Array<{ date: string; messages: number; future: boolean }>;
   }
 
   interface MagicPointerCard {
@@ -300,6 +314,7 @@ declare global {
     };
     conversations: {
       list(): Promise<MagicPointerConversation[]>;
+      stats?(): Promise<MagicPointerHomeStats | null>;
       get(id: unknown): Promise<MagicPointerConversation | undefined>;
       branch?(payload: { id?: unknown; turnIndex?: unknown }): Promise<{ ok?: boolean; conversation?: MagicPointerConversation; error?: string }>;
       send(payload: { conversationId?: string | null; question: string; permissionPreset?: string; requestId?: string; workspaceRoot?: string; replyStyle?: string; permissionGrant?: string; permissionDeny?: string; permissionGrantOnce?: string }): Promise<Record<string, any>>;
@@ -435,6 +450,7 @@ declare global {
     windowCommand(command: string): Promise<{ ok?: boolean; version?: string; electron?: string; chrome?: string; error?: string }>;
     runProjectCommand(projectRoot: string, command: string, relativeDirectory?: string): Promise<{ ok?: boolean; code?: number | null; output?: string; error?: string }>;
     conversations(): Promise<MagicPointerConversation[]>;
+    conversationStats(): Promise<MagicPointerHomeStats | null>;
     conversation(id: string): Promise<MagicPointerConversation | undefined>;
     branchConversation(id: string, turnIndex: number): Promise<{ ok?: boolean; conversation?: MagicPointerConversation; error?: string }>;
     sendConversation(conversationId: string | null, question: string, permissionPreset?: string, requestId?: string, workspaceRoot?: string, replyStyle?: string, permission?: { grant?: string; deny?: string; once?: string }): Promise<Record<string, any>>;
@@ -804,6 +820,15 @@ const Data: MagicPointerDataApi = {
     if (!hasBridge()) return DEMO_CONVERSATIONS;
     const list = await bridge()!.conversations.list();
     return Array.isArray(list) ? list : [];
+  },
+
+  async conversationStats(): Promise<MagicPointerHomeStats | null> {
+    if (!hasBridge() || !bridge()!.conversations.stats) return null;
+    try {
+      return await bridge()!.conversations.stats!();
+    } catch {
+      return null;
+    }
   },
 
   async conversation(id: string): Promise<MagicPointerConversation | undefined> {

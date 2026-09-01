@@ -53,7 +53,7 @@
 - Modify: `scripts/conversation_bridge.py`
 - Modify: `tests/conversation_bridge_test.py`
 
-- [ ] **Step 1: Write the failing TypeScript policy test**
+- [x] **Step 1: Write the failing TypeScript policy test**
 
 ```ts
 const assert = require('node:assert');
@@ -78,7 +78,7 @@ assert.deepStrictEqual(workspaceCapabilityState('C:/repo'), {
 console.log('conversation workspace policy test ok');
 ```
 
-- [ ] **Step 2: Flip the old project-gate contract to the new product boundary**
+- [x] **Step 2: Flip the old project-gate contract to the new product boundary**
 
 Replace the old assertions with:
 
@@ -90,7 +90,7 @@ assert(!main.includes("if (!effectiveWorkspaceRoot) return { ok: false, error: '
 assert(main.includes('resolveConversationWorkspace'));
 ```
 
-- [ ] **Step 3: Add failing Python tests for no implicit profile workspace**
+- [x] **Step 3: Add failing Python tests for no implicit profile workspace**
 
 ```py
 def test_resolve_workspace_allows_unbound_conversation(tmp_path) -> None:
@@ -114,7 +114,7 @@ def test_skill_catalog_can_scan_user_roots_without_project_root(tmp_path) -> Non
     assert [row["name"] for row in catalog.list_skills()] == ["demo"]
 ```
 
-- [ ] **Step 4: Run RED tests**
+- [x] **Step 4: Run RED tests**
 
 Run:
 
@@ -126,7 +126,7 @@ python -m pytest tests/conversation_bridge_test.py -q --basetemp=data/runtime/py
 
 Expected: missing module, old hard-gate assertions, and missing Python helper/argument failures.
 
-- [ ] **Step 5: Implement the pure workspace policy**
+- [x] **Step 5: Implement the pure workspace policy**
 
 ```ts
 import path from 'node:path';
@@ -149,7 +149,7 @@ export function workspaceCapabilityState(root: unknown) {
 }
 ```
 
-- [ ] **Step 6: Use the policy in `conversations:send`**
+- [x] **Step 6: Use the policy in `conversations:send`**
 
 Import the helper and replace the hard gate with:
 
@@ -162,7 +162,7 @@ const effectiveWorkspaceRoot = resolveConversationWorkspace(
 
 Only add `workspaceRoot` to the bridge/store payload when non-null.
 
-- [ ] **Step 7: Make project Skill roots explicitly optional**
+- [x] **Step 7: Make project Skill roots explicitly optional**
 
 Add `include_project: bool = True` to `skill_roots` and `SkillCatalog`, and build roots as:
 
@@ -181,7 +181,7 @@ roots.extend([
 return roots
 ```
 
-- [ ] **Step 8: Make the bridge boot with no coding workspace**
+- [x] **Step 8: Make the bridge boot with no coding workspace**
 
 Add:
 
@@ -198,7 +198,7 @@ def _resolve_workspace_root(explicit_workspace: str) -> Path | None:
 
 Use it in `answer_conversation`; pass an empty runtime workspace for an unbound thread, use `SkillCatalog(..., include_project=False)`, and set `tool_result_dir=None` unless a real root exists. Do not call `read_workspace(ROOT)` in this path.
 
-- [ ] **Step 9: Run GREEN and adjacent regressions**
+- [x] **Step 9: Run GREEN and adjacent regressions**
 
 Run the three RED commands plus:
 
@@ -208,7 +208,7 @@ python -m pytest tests/harness_builtin_bundle_test.py tests/skill_catalog_test.p
 
 Expected: all pass; unbound Runtime has no coding/delegate tools while desktop and ordinary model tools remain.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```powershell
 git add electron/conversation_workspace_policy.ts electron/main.ts app/agent_runtime/skill_catalog.py scripts/conversation_bridge.py tests/conversation_workspace_policy_test.ts tests/studio_project_gate_contract_test.js tests/conversation_bridge_test.py
@@ -227,7 +227,7 @@ git commit -m "feat: allow folderless Studio conversations"
 - Modify: `electron/preload.ts`
 - Modify: `electron/renderer/data.ts`
 
-- [ ] **Step 1: Write the failing projection test**
+- [x] **Step 1: Write the failing projection test**
 
 ```ts
 const assert = require('node:assert');
@@ -239,13 +239,13 @@ const stats = projectStudioHomeStats([
   {
     id: 'a', createdAt: now - day, updatedAt: now,
     turns: [
-      { question: 'q1', answer: 'a1', capturedAt: now - day, modelUsage: { inputTokens: 10, outputTokens: 5 }, usedBackend: 'm1' },
-      { question: 'q2', answer: 'a2', capturedAt: now, modelUsage: { totalTokens: 20 }, usedBackend: 'm1' },
+      { question: 'q1', answer: 'a1', at: now - day, modelUsage: { inputTokens: 10, outputTokens: 5 }, modelId: 'm1' },
+      { question: 'q2', answer: 'a2', at: now, modelUsage: { totalTokens: 20 }, modelId: 'm1' },
     ],
   },
   {
     id: 'b', createdAt: now, updatedAt: now,
-    turns: [{ question: 'q3', answer: 'a3', capturedAt: now, modelUsage: { totalTokens: 'bad' }, usedBackend: 'm2' }],
+    turns: [{ question: 'q3', answer: 'a3', at: now, modelUsage: { totalTokens: 'bad' }, modelId: 'm2' }],
   },
 ], now);
 
@@ -257,11 +257,12 @@ assert.strictEqual(stats.currentStreak, 2);
 assert.strictEqual(stats.longestStreak, 2);
 assert.strictEqual(stats.favoriteModel, 'm1');
 assert.strictEqual(stats.heatmap.length, 182);
-assert.strictEqual(stats.heatmap.at(-1).messages, 4);
+assert.strictEqual(stats.heatmap.find(day => day.date === '2026-09-01').messages, 4);
+assert.strictEqual(stats.heatmap.at(-1).future, true);
 console.log('studio home stats test ok');
 ```
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```powershell
 node --require tsx/cjs tests/studio_home_stats_test.ts
@@ -269,7 +270,7 @@ node --require tsx/cjs tests/studio_home_stats_test.ts
 
 Expected: module not found.
 
-- [ ] **Step 3: Implement the projection**
+- [x] **Step 3: Implement the projection**
 
 Implement exported types and `projectStudioHomeStats(conversations, now)` with these exact rules:
 
@@ -283,13 +284,13 @@ const localDateKey = (at: number) => {
 };
 ```
 
-Count two messages for each non-empty stored question/answer pair. Prefer finite `totalTokens`; otherwise sum finite input/output/cache-write fields without double-counting cache-read tokens. Count models by summed tokens, then turn count, then lexical id. Compute peak local hour by turn count. Fill all 182 heatmap days, including zero days.
+Count one message for each non-empty stored question and answer. Prefer finite `totalTokens`; otherwise sum finite input/output/cache-write fields without double-counting cache-read tokens. Persist the request model id on new turns and count models by summed tokens, then turn count, then lexical id; never use `usedBackend` as a model name. Compute peak local hour by turn count. Fill all 182 heatmap days, including zero days.
 
-- [ ] **Step 4: Expose one bounded stats IPC**
+- [x] **Step 4: Expose one bounded stats IPC**
 
 Add `conversationStore.stats()` returning the projection of loaded summaries, `ipcMain.handle('conversations:stats')`, preload `stats()`, and renderer `Data.conversationStats()` types. Do not send full EventSession logs.
 
-- [ ] **Step 5: Run GREEN and store regressions**
+- [x] **Step 5: Run GREEN and store regressions**
 
 ```powershell
 node --require tsx/cjs tests/studio_home_stats_test.ts
@@ -297,7 +298,7 @@ node --require tsx/cjs tests/conversation_store_lifecycle_test.ts
 node tests/conversation_store_test.js
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add electron/studio_home_stats.ts electron/conversation_store.ts electron/main.ts electron/preload.ts electron/renderer/data.ts tests/studio_home_stats_test.ts
