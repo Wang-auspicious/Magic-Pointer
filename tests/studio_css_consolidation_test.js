@@ -18,7 +18,12 @@ const SOURCES = ['oreo_tokens.css', 'oreo.css', 'cards.css', 'dsh_tokens.css', '
 const sources = SOURCES.map((name) => ({ name, text: fs.readFileSync(path.join(RENDERER, name), 'utf8') }));
 const regenerated = buildConsolidated(sources);
 const committed = fs.readFileSync(path.join(RENDERER, 'studio_system.css'), 'utf8');
-assert.strictEqual(regenerated, committed, 'studio_system.css must equal regeneration');
+const normalizeEol = (text) => String(text).replace(/\r\n/g, '\n');
+assert.strictEqual(
+  normalizeEol(regenerated),
+  normalizeEol(committed),
+  'studio_system.css must equal regeneration independent of checkout EOL',
+);
 
 /* ---- 2) 终态等价 ---- */
 function flattenEffective(items) {
