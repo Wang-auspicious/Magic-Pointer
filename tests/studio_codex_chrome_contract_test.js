@@ -4,15 +4,14 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 
 const html = fs.readFileSync('electron/renderer/studio.html', 'utf8');
-const css = fs.readFileSync('electron/renderer/magic_studio.css', 'utf8');
+const css = fs.readFileSync('electron/renderer/claude_shell.css', 'utf8');
 const studio = fs.readFileSync('electron/renderer/studio.ts', 'utf8');
 const main = fs.readFileSync('electron/main.ts', 'utf8');
 const preload = fs.readFileSync('electron/preload.ts', 'utf8');
 
 for (const id of [
-  'window-titlebar', 'window-back', 'window-forward',
-  'window-menu-file', 'window-menu-edit', 'window-menu-view', 'window-menu-help',
-  'mode-switch', 'mode-menu', 'mode-walker', 'mode-design',
+  'window-titlebar', 'app-menu', 'global-search-toggle', 'window-back', 'window-forward',
+  'mode-switch', 'mode-work', 'mode-design',
   'theme-toggle', 'theme-toggle-icon', 'view-design', 'design-bento',
   'header-open-location', 'magic-brain-toggle', 'magic-brain-popover',
   'magic-brain-changes', 'magic-brain-branch', 'magic-brain-sources',
@@ -29,7 +28,7 @@ assert(!html.includes('魔脑'), 'the project environment surface must use a lit
 assert(html.includes('项目上下文'), 'the project environment surface must be named 项目上下文');
 assert(html.includes('class="mp-design-bento"'), 'Design must expose a visible Bento home instead of routing straight to stash');
 assert(html.includes('class="mp-design-card') && html.includes('data-design-action="canvas"'), 'Bento cards must be real actions');
-assert.match(css, /#shell\s*\{[^}]*grid-template-rows:\s*44px\s+minmax\(0,\s*1fr\)/s,
+assert.match(css, /\.mp-shell\s*\{[^}]*grid-template-rows:\s*var\(--mp-window-bar\)\s+minmax\(0,\s*1fr\)/s,
   'the window titlebar must occupy a real independent grid row');
 assert.match(css, /\.mp-window-titlebar\s*\{[^}]*grid-column:\s*1\s*\/\s*-1/s,
   'the window titlebar must span the entire shell');
@@ -41,7 +40,7 @@ assert.match(css, /\.mp-window-titlebar button[^}]*-webkit-app-region:\s*no-drag
 assert(studio.includes("setProductMode('walker'"), 'Walker must be a real product mode');
 assert(studio.includes("setProductMode('design'"), 'Design must be a real product mode');
 assert(studio.includes("show(mode === 'design' ? 'design' : 'chat')"), 'Design mode must open its own home');
-assert(studio.includes("toggleAnimatedTheme({ x:"), 'the visible sidebar theme control must drive the circular reveal origin');
+assert(studio.includes("toggleAnimatedTheme({ x:"), 'the visible sidebar theme control must drive the theme transition origin');
 assert(studio.includes("icon(expanded ? 'ic-tree-folder-open' : 'ic-tree-folder')"), 'the file tree must show distinct open and closed folder glyphs');
 assert(studio.includes('renderMagicBrain'), 'environment information must render from live project state');
 assert(studio.includes("addEventListener('contextmenu'"), 'the file tree must expose a real right-click menu');

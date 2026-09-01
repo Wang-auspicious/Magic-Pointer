@@ -414,6 +414,18 @@
     </aside>
   </div>
 
+  <section class="mp-global-search" id="global-search" hidden aria-label="全局搜索">
+    <button type="button" class="mp-global-search-mask" data-global-search-close aria-label="关闭搜索"></button>
+    <div class="mp-global-search-dialog" role="dialog" aria-modal="true" aria-labelledby="global-search-label">
+      <label class="mp-global-search-field" id="global-search-label">
+        <svg aria-hidden="true"><use href="#ic-search" /></svg>
+        <input id="global-search-input" type="search" autocomplete="off" placeholder="搜索会话、项目、文件和命令" aria-label="搜索会话、项目、文件和命令" />
+        <kbd>Esc</kbd>
+      </label>
+      <div class="mp-global-search-results" id="global-search-results" role="listbox"></div>
+    </div>
+  </section>
+
   <div class="mp-window-menu-popover" id="window-menu-popover" role="menu" hidden>
     <div data-window-menu-panel="file" hidden>
       <button type="button" data-window-command="new-chat"><span>新建对话</span><kbd>Ctrl+N</kbd></button>
@@ -486,6 +498,7 @@
   <script src="../slash_trigger.js?v=23"></script>
   <script src="permission_presets.js?v=23"></script>
   <script src="sidebar_groups.js?v=23"></script>
+  <script src="studio_search.js?v=33"></script>
   <script src="studio_home.js?v=33"></script>
   <script src="sv_motion.js?v=26"></script>
   <script src="data.js?v=23"></script>

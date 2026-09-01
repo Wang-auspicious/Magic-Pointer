@@ -605,26 +605,26 @@ git commit -m "feat: add Studio action centre and shared composer"
 - Test: `tests/studio_navigation_interaction_test.js`
 - Modify: `tests/studio_codex_chrome_contract_test.js`
 
-- [ ] **Step 1: Write failing structure/interaction assertions**
+- [x] **Step 1: Write failing structure/interaction assertions**
 
 Assert Ctrl+K opens search, Escape closes it before stop, selecting a conversation/project/route calls the common navigation function, segmented Work/Design buttons have radio semantics, and the sidebar renders `本机会话` for unbound rows. Rewrite `studio_codex_shell_interaction_test.js` so the removed permanent Pull Requests/Sites/Scheduled/Plugins rows are forbidden and their destinations are reachable through search/Customize/Inspector instead.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```powershell
 node tests/studio_navigation_interaction_test.js
 node tests/studio_codex_chrome_contract_test.js
 ```
 
-- [ ] **Step 3: Implement the application menu and global search overlay**
+- [x] **Step 3: Implement the application menu and global search overlay**
 
 The app menu owns existing commands. Search builds its bounded index after conversations/projects/directory load, renders at most 20 results, and routes each selection through `show`, `openConversation`, project binding, or command insertion. Keep a single document-level Escape handler with this order: active menu → search → local popover → settings/directory → sidebar search → graceful stop.
 
-- [ ] **Step 4: Replace mode dropdown and permanent nav**
+- [x] **Step 4: Replace mode dropdown and permanent nav**
 
 Use `role="tablist"`/`role="tab"` for Work/Design. Remove permanent Pull Requests/Sites/Scheduled/Plugins rows. Expose those destinations in search/Customize/Inspector and attention rows.
 
-- [ ] **Step 5: Run GREEN and commit**
+- [x] **Step 5: Run GREEN and commit**
 
 ```powershell
 node tests/studio_navigation_interaction_test.js

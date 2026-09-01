@@ -303,6 +303,36 @@ interface StudioHomeModule {
   }): void;
 }
 const studioHomeGlobals = (globalThis as { StudioHome?: StudioHomeModule }).StudioHome!;
+interface StudioSearchItem {
+  kind: 'conversation' | 'project' | 'command' | 'skill' | 'route';
+  key: string;
+  label: string;
+  detail: string;
+  target: Record<string, unknown>;
+}
+interface StudioSearchModule {
+  buildStudioSearchIndex(sources: {
+    conversations?: readonly MagicPointerConversation[];
+    projects?: readonly MagicPointerProject[];
+    commands?: readonly MagicPointerSlashEntry[];
+    skills?: readonly MagicPointerSlashEntry[];
+    routes?: ReadonlyArray<{ id: string; label: string; keywords: readonly string[] }>;
+  }): StudioSearchItem[];
+  searchStudioIndex(index: readonly StudioSearchItem[], query: unknown, limit?: number): StudioSearchItem[];
+}
+const studioSearchGlobals = (globalThis as { StudioSearch?: StudioSearchModule }).StudioSearch!;
+
+const STUDIO_SEARCH_ROUTES = [
+  { id: 'chat', label: '新建对话', keywords: ['首页', '会话', 'new'] },
+  { id: 'design', label: 'Design', keywords: ['设计', '素材', '画布'] },
+  { id: 'settings', label: '自定义', keywords: ['设置', '插件', '模型', '权限', 'Skills', 'MCP'] },
+  { id: 'changes', label: '工作树变更', keywords: ['Git', 'Review', '拉取请求'] },
+  { id: 'browser', label: '项目浏览器', keywords: ['站点', '网页', 'localhost'] },
+  { id: 'tasks', label: '任务', keywords: ['已安排', '后台', '运行中'] },
+] as const;
+let studioSearchIndex: StudioSearchItem[] = [];
+let visibleSearchResults: StudioSearchItem[] = [];
+let globalSearchActiveIndex = 0;
 
 /* sv_motion:sv-animations 组件的弹簧/勾线常量(经典脚本全局,见 renderer/sv_motion.ts)。
    局部名必须小写:全局已有 const SvMotion(sv_motion.js),同名会撞经典脚本词法作用域。 */
@@ -734,6 +764,152 @@ async function renderStudioHome() {
   if (note) note.textContent = stats ? '只统计本机已有的真实会话与模型用量。' : '统计暂不可用；对话仍可正常开始。';
 }
 
+async function refreshGlobalSearchIndex() {
+  const [conversations, projects, directory] = await Promise.all([
+    Data.conversations(),
+    Data.projects(),
+    Data.slashDirectory(),
+  ]);
+  studioSearchIndex = studioSearchGlobals.buildStudioSearchIndex({
+    conversations,
+    projects,
+    commands: directory?.commands ?? [],
+    skills: directory?.skills ?? [],
+    routes: [...STUDIO_SEARCH_ROUTES],
+  });
+}
+
+function globalSearchKindLabel(kind: StudioSearchItem['kind']): string {
+  switch (kind) {
+    case 'conversation': return '会';
+    case 'project': return '项';
+    case 'command': return '/';
+    case 'skill': return '技';
+    case 'route': return '→';
+  }
+}
+
+function renderGlobalSearchResults(query: string) {
+  const host = document.getElementById('global-search-results');
+  if (!host) return;
+  visibleSearchResults = studioSearchGlobals.searchStudioIndex(studioSearchIndex, query, 20);
+  globalSearchActiveIndex = Math.min(globalSearchActiveIndex, Math.max(0, visibleSearchResults.length - 1));
+  if (!query.trim()) {
+    host.innerHTML = '<p class="mp-global-search-empty">输入内容以搜索会话、项目、命令、Skills 和设置。</p>';
+    return;
+  }
+  if (!visibleSearchResults.length) {
+    host.innerHTML = '<p class="mp-global-search-empty">没有匹配结果。</p>';
+    return;
+  }
+  const rows = visibleSearchResults.map((item, index) => {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'mp-global-search-row';
+    row.classList.toggle('is-active', index === globalSearchActiveIndex);
+    row.dataset.searchIndex = String(index);
+    row.setAttribute('role', 'option');
+    row.setAttribute('aria-selected', String(index === globalSearchActiveIndex));
+    const kind = document.createElement('span');
+    kind.className = 'mp-global-search-kind';
+    kind.textContent = globalSearchKindLabel(item.kind);
+    const copy = document.createElement('span');
+    copy.className = 'mp-global-search-copy';
+    const title = document.createElement('strong');
+    title.textContent = item.label;
+    const detail = document.createElement('small');
+    detail.textContent = item.detail;
+    copy.append(title, detail);
+    row.append(kind, copy);
+    row.addEventListener('click', () => selectGlobalSearchResult(item));
+    return row;
+  });
+  host.replaceChildren(...rows);
+}
+
+function selectGlobalSearchResult(item: StudioSearchItem) {
+  closeGlobalSearch();
+  const kind = item.kind;
+  if (kind === 'conversation') {
+    void openConversation(String(item.target.conversationId || ''));
+    return;
+  }
+  if (kind === 'project') {
+    setActiveProject(String(item.target.workspaceRoot || ''));
+    startNewChat();
+    void renderSidebar();
+    return;
+  }
+  if (kind === 'route') {
+    const view = String(item.target.view || 'chat');
+    if (view === 'changes' || view === 'browser' || view === 'tasks') {
+      show('chat');
+      setInspector(true, view);
+    } else {
+      show(view);
+    }
+    return;
+  }
+  const name = String(item.target.command || item.target.skill || '');
+  const textarea = document.querySelector<HTMLTextAreaElement>('.dshw-input');
+  if (!textarea || !name) return;
+  textarea.value = `/${name} `;
+  textarea.dispatchEvent(new Event('input', { bubbles: true }));
+  textarea.focus();
+}
+
+async function openGlobalSearch() {
+  const overlay = document.getElementById('global-search');
+  const toggle = document.getElementById('global-search-toggle');
+  const input = document.getElementById('global-search-input') as HTMLInputElement | null;
+  if (!overlay || !input) return;
+  overlay.hidden = false;
+  toggle?.setAttribute('aria-expanded', 'true');
+  globalSearchActiveIndex = 0;
+  input.value = '';
+  renderGlobalSearchResults('');
+  await refreshGlobalSearchIndex();
+  renderGlobalSearchResults(input.value);
+  input.focus();
+}
+
+function closeGlobalSearch() {
+  const overlay = document.getElementById('global-search');
+  if (overlay) overlay.hidden = true;
+  document.getElementById('global-search-toggle')?.setAttribute('aria-expanded', 'false');
+  visibleSearchResults = [];
+  globalSearchActiveIndex = 0;
+}
+
+document.getElementById('global-search-toggle')?.addEventListener('click', () => {
+  if (document.getElementById('global-search')?.hidden === false) closeGlobalSearch();
+  else void openGlobalSearch();
+});
+document.querySelectorAll<HTMLElement>('[data-global-search-close]').forEach((element) => {
+  element.addEventListener('click', closeGlobalSearch);
+});
+document.getElementById('global-search-input')?.addEventListener('input', (event) => {
+  globalSearchActiveIndex = 0;
+  renderGlobalSearchResults((event.currentTarget as HTMLInputElement).value);
+});
+document.getElementById('global-search-input')?.addEventListener('keydown', (event) => {
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    event.preventDefault();
+    if (!visibleSearchResults.length) return;
+    const direction = event.key === 'ArrowDown' ? 1 : -1;
+    globalSearchActiveIndex = (globalSearchActiveIndex + direction + visibleSearchResults.length) % visibleSearchResults.length;
+    renderGlobalSearchResults((event.currentTarget as HTMLInputElement).value);
+    return;
+  }
+  if (event.key === 'Enter' && !event.isComposing) {
+    const item = visibleSearchResults[globalSearchActiveIndex];
+    if (item) {
+      event.preventDefault();
+      selectGlobalSearchResult(item);
+    }
+  }
+});
+
 function setConversationTab(tab: 'chat' | 'trajectory') {
   activeConversationTab = tab;
   const stream = document.getElementById('stream');
@@ -1065,6 +1241,7 @@ function closeWindowMenu() {
   const popover = document.getElementById('window-menu-popover');
   if (popover) popover.hidden = true;
   document.querySelectorAll<HTMLElement>('[data-window-menu]').forEach((button) => button.setAttribute('aria-expanded', 'false'));
+  document.getElementById('app-menu')?.setAttribute('aria-expanded', 'false');
 }
 
 function openWindowMenu(button: HTMLElement, menuName: string) {
@@ -1074,7 +1251,7 @@ function openWindowMenu(button: HTMLElement, menuName: string) {
   closeWindowMenu();
   if (wasOpen) return;
   document.querySelectorAll<HTMLElement>('[data-window-menu-panel]').forEach((panel) => {
-    panel.hidden = panel.dataset.windowMenuPanel !== menuName;
+    panel.hidden = menuName !== 'all' && panel.dataset.windowMenuPanel !== menuName;
   });
   const rect = button.getBoundingClientRect();
   popover.style.left = `${Math.max(4, rect.left)}px`;
@@ -1090,6 +1267,11 @@ document.querySelectorAll<HTMLElement>('.mp-window-menu-bar [data-window-menu]')
   button.addEventListener('pointerenter', () => {
     if (document.getElementById('window-menu-popover')?.hidden === false) openWindowMenu(button, button.dataset.windowMenu || 'file');
   });
+});
+
+document.getElementById('app-menu')?.addEventListener('click', (event) => {
+  event.stopPropagation();
+  openWindowMenu(event.currentTarget as HTMLElement, 'all');
 });
 
 function applyTheme(theme: 'light' | 'dark') {
@@ -1205,10 +1387,21 @@ document.getElementById('window-menu-popover')?.addEventListener('click', (event
 });
 
 document.addEventListener('keydown', (event) => {
+  if ((event.ctrlKey || event.metaKey) && !event.altKey
+      && event.key.toLocaleLowerCase() === 'k') {
+    event.preventDefault();
+    void openGlobalSearch();
+    return;
+  }
   if (event.key === 'Escape') {
+    const globalSearchOpen = document.getElementById('global-search')?.hidden === false;
+    if (globalSearchOpen) {
+      event.preventDefault();
+      closeGlobalSearch();
+      return;
+    }
     const menuWasOpen = [
       'window-menu-popover',
-      'mode-menu',
       'magic-brain-popover',
       'composer-add-menu',
       'composer-style-menu',
