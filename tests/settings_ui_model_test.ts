@@ -10,7 +10,9 @@ const {
 
 assert.deepStrictEqual(SETTINGS_PAGES.map((page: any) => page.id), [
   'general', 'interaction', 'voice', 'models-agents',
+  'skills', 'plugins', 'connectors',
   'perception-privacy', 'permissions', 'memory-context', 'storage', 'appearance-accessibility',
+  'shortcuts', 'updates', 'diagnostics',
 ]);
 assert.strictEqual(new Set(SETTINGS_PAGES.map((page: any) => page.id)).size, SETTINGS_PAGES.length);
 
@@ -32,8 +34,10 @@ for (const deadPath of [
   assert(!editable.some((row: any) => row.path === deadPath),
     `${deadPath} has no live product behavior and must not appear as a setting`);
 }
-assert(!SETTINGS_PAGES.some((page: any) => /能力|诊断/.test(page.title)),
-  'capability catalogs and diagnostics are not settings');
+assert(SETTINGS_PAGES.some((page: any) => page.id === 'skills' && page.title === 'Skills'));
+assert(SETTINGS_PAGES.some((page: any) => page.id === 'plugins' && page.title === '插件'));
+assert(SETTINGS_PAGES.some((page: any) => page.id === 'connectors' && page.title === 'MCP 与连接器'));
+assert(SETTINGS_PAGES.some((page: any) => page.id === 'diagnostics' && page.title === '诊断与关于'));
 const memoryRows = SETTINGS_PAGES.find((page: any) => page.id === 'memory-context')
   .sections.flatMap((section: any) => section.rows);
 assert(memoryRows.some((row: any) => row.path === 'privacy.screen_memory_enabled'),

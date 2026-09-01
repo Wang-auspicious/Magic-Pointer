@@ -2110,65 +2110,16 @@ function titleBarColors(symbol: string | null = null) {
   };
 }
 
-// ── 标题栏符号颜色：采样按钮底下的真实像素，不是猜主题 ─────────────
-// 主屏背景是用户自定义的视频/图片，明暗不定；主题只能给个初始值。
-// 每个采样周期截右上角按钮区域，算平均亮度：底亮 → 深色符号，底暗 →
-// 浅色符号。周期 500ms，仅采样 138×44 的小区域，开销可忽略。
-const { averageBrightness, symbolColorForBrightness } = require('./titlebar_contrast');
-const TITLEBAR_SAMPLE_REGION = { width: 138, height: 44 };
-let titleBarSampleTimer: NodeJS.Timeout | null = null;
-let titleBarLastSymbol: string | null = null;
-
-function sampleTitleBarSymbolColor() {
-  if (process.platform !== 'win32' || !dashboardWindow || dashboardWindow.isDestroyed()) return;
-  if (!dashboardWindow.isVisible()) return;
-  const bounds = dashboardWindow.getBounds();
-  const rect = {
-    x: Math.max(0, bounds.width - TITLEBAR_SAMPLE_REGION.width),
-    y: 0,
-    width: TITLEBAR_SAMPLE_REGION.width,
-    height: TITLEBAR_SAMPLE_REGION.height,
-  };
-  dashboardWindow.webContents.capturePage(rect).then((image: Electron.NativeImage) => {
-    if (image.isEmpty()) return;
-    const symbol = symbolColorForBrightness(averageBrightness(image.toBitmap()));
-    if (symbol !== titleBarLastSymbol) {
-      titleBarLastSymbol = symbol;
-      try {
-        dashboardWindow.setTitleBarOverlay(titleBarColors(symbol));
-      } catch (error) {
-        log(`title bar overlay unavailable ${error instanceof Error ? error.name : 'Error'}`);
-      }
-    }
-  }).catch(() => { /* 采样失败保持上一次的颜色 */ });
-}
-
-function startTitleBarSampling() {
-  stopTitleBarSampling();
-  sampleTitleBarSymbolColor();
-  titleBarSampleTimer = setInterval(sampleTitleBarSymbolColor, 500);
-}
-
-function stopTitleBarSampling() {
-  if (titleBarSampleTimer) {
-    clearInterval(titleBarSampleTimer);
-    titleBarSampleTimer = null;
-  }
-}
-
 function applyTitleBarTheme() {
   if (process.platform !== 'win32' || !dashboardWindow || dashboardWindow.isDestroyed()) return;
   try {
-    dashboardWindow.setTitleBarOverlay(titleBarColors(titleBarLastSymbol));
+    dashboardWindow.setTitleBarOverlay(titleBarColors());
   } catch (error) {
     log(`title bar overlay unavailable ${error instanceof Error ? error.name : 'Error'}`);
   }
 }
 
 nativeTheme.on('updated', applyTitleBarTheme);
-
-// 渲染层切主题时同步过来，否则按钮颜色会滞后一个来回
-ipcMain.on('dashboard:theme', () => setImmediate(applyTitleBarTheme));
 
 function applyDashboardMaterial(settings = fabricSettings) {
   if (process.platform !== 'win32' || !dashboardWindow || dashboardWindow.isDestroyed()) return;
@@ -2220,7 +2171,6 @@ function createDashboardWindow(initialView = 'chat') {
     if (!isQuitting && fabricSettings?.general?.keep_running !== false) {
       event.preventDefault();
       dashboardWindow.hide();
-      stopTitleBarSampling();
       if (!backgroundHintShown && tray && !tray.isDestroyed() && process.platform === 'win32') {
         backgroundHintShown = true;
         try {
@@ -2238,7 +2188,6 @@ function createDashboardWindow(initialView = 'chat') {
   dashboardWindow.on('closed', () => {
     destroyDashboardBrowserView();
     dashboardWindow = null;
-    stopTitleBarSampling();
   });
   return dashboardWindow;
 }
@@ -4157,7 +4106,6 @@ if (gotLock) app.whenReady().then(() => {
     if (onboardingRequired) showOnboarding({}, { activate: true });
     else if (dashboardWindow?.isVisible()) {
       dashboardWindow.hide();
-      stopTitleBarSampling();
     }
     else showDashboard({}, { activate: true });
   });
@@ -4335,7 +4283,6 @@ app.on('will-quit', () => {
   temporaryDismissShortcutRegistered = false;
   temporaryGestureSubmitShortcutRegistered = false;
   if (mousePollTimer) clearInterval(mousePollTimer);
-  stopTitleBarSampling();
   if (wiggleCalibrationTimer) clearTimeout(wiggleCalibrationTimer);
   voiceRuntime?.shutdown();
   selectionWorkerClient?.shutdown({ force: true });
@@ -5730,18 +5677,13 @@ ipcMain.on('companion:expand', (event: Electron.IpcMainEvent) => {
 ipcMain.on('dashboard:hide', (event: Electron.IpcMainEvent) => {
   if (!isDashboardSender(event)) return;
   dashboardWindow.hide();
-  stopTitleBarSampling();
 });
 ipcMain.on('dashboard:theme', (event: Electron.IpcMainEvent, payload: any = {}) => {
   if (!isDashboardSender(event) || process.platform === 'darwin') return;
   const theme = ['light', 'dark'].includes(payload.theme) ? payload.theme : 'system';
   const dark = theme === 'dark' || (theme === 'system' && nativeTheme.shouldUseDarkColors);
   try {
-    dashboardWindow.setTitleBarOverlay({
-      color: 'rgba(1, 0, 0, 0)',
-      symbolColor: dark ? '#f5f5f7' : '#1d1d1f',
-      height: 46,
-    });
+    dashboardWindow.setTitleBarOverlay(titleBarColors(dark ? '#F2F1ED' : '#17170F'));
   } catch (_) {
     // Window Controls Overlay is optional; renderer chrome remains usable.
   }

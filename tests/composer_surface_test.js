@@ -134,7 +134,7 @@ assert.match(composerSource, /mic\.addEventListener\('click'/,
 // Studio 使用固定 Oreo 工作区输入面；Companion 继续复用 composer.js；
 // Stage 使用独立的固定 Stage Composer。
 for (const [page, needs] of Object.entries({
-  'studio.html': ['studio_system.css', 'card_render.js', 'cards.js', 'live_cards.js'],
+  'studio.html': ['claude_tokens.css', 'claude_shell.css', 'claude_chat.css', 'card_render.js', 'cards.js', 'live_cards.js'],
   'companion.html': ['composer.js', 'composer.css', 'beam.css', 'card_render.js'],
   'stage.html': ['beam.css', 'card_render.js'],
 })) {

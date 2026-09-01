@@ -1065,6 +1065,56 @@
   padding: 6px 8px 12px;
 }
 
+.mp-file-tree-row {
+  position: relative;
+  display: flex;
+  width: 100%;
+  min-height: 26px;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 7px;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--mp-r4);
+  color: var(--mp-text-secondary);
+  background: transparent;
+  font-size: 12px;
+  line-height: 18px;
+  text-align: left;
+  transition: color var(--mp-dur-fast), background-color var(--mp-dur-fast);
+}
+
+.mp-file-tree-row:hover,
+.mp-file-tree-row.is-on {
+  color: var(--mp-text);
+  background: var(--mp-hover);
+}
+
+.mp-file-tree-row svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  color: currentColor;
+}
+
+.mp-file-tree-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-file-tree-row[data-depth]:not([data-depth="0"])::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--tree-guide-left);
+  width: 1px;
+  background: var(--mp-rule);
+  content: '';
+  pointer-events: none;
+}
+
 .mp-file-row {
   display: flex;
   height: 24px;

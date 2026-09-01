@@ -914,7 +914,7 @@ const DshChat = (() => {
             if (check) check.remove();
             button.appendChild(icon('copy', 16) as Element);
             button.setAttribute('aria-label', '复制');
-          }, 2000); /* sv-particles copy-with-feedback 的反馈时长(参数参考,无 LICENSE 不复制码) */
+          }, 2000); /* 给用户足够时间看清复制成功，再恢复原按钮。 */
         });
       } else if (kind === 'branch') {
         const conversationId = act.getAttribute('data-dsh-branch-conversation') || '';

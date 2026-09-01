@@ -334,13 +334,6 @@ let studioSearchIndex: StudioSearchItem[] = [];
 let visibleSearchResults: StudioSearchItem[] = [];
 let globalSearchActiveIndex = 0;
 
-/* sv_motion:sv-animations 组件的弹簧/勾线常量(经典脚本全局,见 renderer/sv_motion.ts)。
-   局部名必须小写:全局已有 const SvMotion(sv_motion.js),同名会撞经典脚本词法作用域。 */
-interface SvMotionModule {
-  PLAN_CHECK: { path: string; transform: string; strokeWidth: number; drawEase: string; drawDurationMs: number };
-}
-const svMotionGlobals = (globalThis as { SvMotion?: SvMotionModule }).SvMotion!;
-
 function conversationNode(c: { id?: string; title?: string; updatedAt?: number; hasPendingWork?: boolean }, active?: string): HTMLElement {
   const row = document.createElement('button');
   row.className = 'side-item' + (c.id === active ? ' is-on' : '');
@@ -488,8 +481,6 @@ function openRenameDialog(id: string, currentTitle: string) {
   });
 })();
 
-let sidebarListSignature = '';
-
 async function renderSidebar() {
   const host = document.getElementById('side-convos');
   if (!host) return;
@@ -531,12 +522,6 @@ async function renderSidebar() {
     empty.textContent = projects.length ? '没有匹配的会话。' : '从新建开始';
     nodes.push(empty);
   }
-  const listSignature = groups
-    .map((group) => `${group.key}:${group.items.map((c) => String(c.id || '')).join(',')}`)
-    .join('|');
-  const animateRows = listSignature !== sidebarListSignature;
-  sidebarListSignature = listSignature;
-  let rowIndex = 0;
   for (const group of groups) {
     const project = document.createElement('section');
     project.className = 'dshw-project';
@@ -556,11 +541,6 @@ async function renderSidebar() {
     sessions.className = 'dshw-project-sessions';
     for (const c of group.items) {
       const node = conversationNode(c, active);
-      if (animateRows) {
-        node.classList.add('sv-row-in');
-        node.style.setProperty('--sv-i', String(rowIndex));
-      }
-      rowIndex += 1;
       sessions.appendChild(node);
     }
     if (!group.items.length) {
@@ -1578,11 +1558,6 @@ let inspectorState: InspectorState = {
   previousWidth: inspectorStatePolicy.clampInspectorWidth(initialInspectorWidth, window.innerWidth),
   tab: 'files',
 };
-let inspectorMaximized = false;
-/* sv 文件树动效:刚展开的目录(下一帧翻开入场)/ 收起退场动画的落盘定时器。 */
-let lastExpandedTreeDirectory = '';
-let pendingTreeCollapseTimer: ReturnType<typeof setTimeout> | null = null;
-
 function inspectorError(message: string) {
   const host = document.getElementById('project-file-tree');
   if (host) host.innerHTML = `<p class="mp-inspector-empty">${esc(message)}</p>`;
@@ -1592,11 +1567,6 @@ function renderProjectFileTree() {
   const host = document.getElementById('project-file-tree');
   if (!host) return;
   const query = (document.getElementById('file-tree-filter') as HTMLInputElement | null)?.value.trim().toLocaleLowerCase() || '';
-  /* file-tree(sv-animations,MIT):目录子树包进 .sv-tree-branch,
-     展开 = grid-template-rows 0fr→1fr + opacity(200ms easeInOut),
-     刚展开的分支先以收起态入 DOM,下一帧再翻开,入场动画才会跑。 */
-  const freshDirectory = lastExpandedTreeDirectory;
-  lastExpandedTreeDirectory = '';
   const buildLevel = (directory: string, depth: number): Node[] => {
     const nodes: Node[] = [];
     for (const entry of projectTreeCache.get(directory) || []) {
@@ -1607,29 +1577,17 @@ function renderProjectFileTree() {
       row.dataset.projectPath = entry.path;
       row.dataset.projectKind = entry.kind;
       row.dataset.depth = String(depth);
-      row.style.setProperty('--item-index', String(nodes.length));
       row.style.setProperty('--tree-depth', String(depth));
       row.style.setProperty('--tree-guide-left', `${14 + Math.max(0, depth - 1) * 20}px`);
       row.style.paddingLeft = `${depth * 20}px`;
       const expanded = entry.kind === 'directory' && expandedProjectDirectories.has(entry.path);
       if (entry.kind === 'directory') row.setAttribute('aria-expanded', String(expanded));
-      /* file-tree(sv-animations,MIT) 逐字：展开行只有图标本身翻转 open/closed，
-         没有额外 chevron——参考源码 folder.svelte 默认图标就是唯一的展开指示。 */
       row.innerHTML = `${entry.kind === 'directory'
         ? icon(expanded ? 'ic-tree-folder-open' : 'ic-tree-folder')
         : icon('ic-tree-file')}<span>${esc(entry.name)}</span>`;
       nodes.push(row);
       if (!expanded) continue;
-      const branch = document.createElement('div');
-      branch.className = 'sv-tree-branch';
-      branch.style.setProperty('--sv-guide-left', `${13 + depth * 20}px`);
-      const inner = document.createElement('div');
-      inner.className = 'sv-tree-branch-inner';
-      for (const child of buildLevel(entry.path, depth + 1)) inner.appendChild(child);
-      branch.appendChild(inner);
-      if (entry.path !== freshDirectory) branch.classList.add('is-open');
-      else requestAnimationFrame(() => { branch.classList.add('is-open'); });
-      nodes.push(branch);
+      nodes.push(...buildLevel(entry.path, depth + 1));
     }
     return nodes;
   };
@@ -1881,7 +1839,6 @@ function syncInspectorGeometry() {
   const inspector = document.getElementById('project-inspector');
   const maximize = document.getElementById('inspector-maximize');
   if (!inspector) return;
-  inspectorMaximized = inspectorState.maximized;
   inspector.hidden = !inspectorState.open;
   inspector.style.width = inspectorState.maximized ? '' : `${inspectorState.width}px`;
   if (inspectorState.open) shell.dataset.inspector = 'open';
@@ -1967,18 +1924,9 @@ document.getElementById('project-file-tree')?.addEventListener('click', (event) 
   if (row.dataset.projectKind === 'directory') {
     if (expandedProjectDirectories.has(relativePath)) {
       expandedProjectDirectories.delete(relativePath);
-      /* 收起时先播 200ms 退场(folder.svelte AnimatePresence),再落盘重渲。 */
-      const branch = row.nextElementSibling;
-      if (pendingTreeCollapseTimer !== null) clearTimeout(pendingTreeCollapseTimer);
-      if (branch?.classList.contains('sv-tree-branch')) {
-        branch.classList.remove('is-open');
-        pendingTreeCollapseTimer = setTimeout(() => { pendingTreeCollapseTimer = null; renderProjectFileTree(); }, 220);
-      } else {
-        renderProjectFileTree();
-      }
+      renderProjectFileTree();
     } else {
       expandedProjectDirectories.add(relativePath);
-      lastExpandedTreeDirectory = relativePath;
       if (projectTreeCache.has(relativePath)) renderProjectFileTree();
       else void loadProjectDirectory(relativePath);
     }
@@ -2769,21 +2717,13 @@ function renderPlanCard() {
     li.className = 'dshw-plan-step'
       + (step.status === 'completed' ? ' is-done' : '')
       + (step.status === 'in_progress' ? ' is-active' : '');
-    /* animated-checkbox(sv-animations,MIT):盒子 + pathLength 划入勾线 + 弹簧删除线。
-       参数取自源码,见 _sv_sources/sv-animations/animated-checkbox。 */
     const check = document.createElement('span');
-    check.className = 'sv-checkbox';
+    check.className = 'mp-plan-check';
     check.setAttribute('aria-hidden', 'true');
-    check.innerHTML = `<svg viewBox="0 0 20 20" aria-hidden="true"><path class="sv-checkbox-mark" `
-      + `pathLength="1" d="${svMotionGlobals.PLAN_CHECK.path}" transform="${svMotionGlobals.PLAN_CHECK.transform}" fill="none" `
-      + `stroke="currentColor" stroke-width="${svMotionGlobals.PLAN_CHECK.strokeWidth}" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+    check.innerHTML = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5.25 10.5 3 3 6.5-7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
     const content = document.createElement('span');
-    content.className = 'sv-plan-step-label';
+    content.className = 'mp-plan-step-label';
     content.textContent = step.content;
-    const strike = document.createElement('span');
-    strike.className = 'sv-plan-step-strike';
-    strike.setAttribute('aria-hidden', 'true');
-    content.appendChild(strike);
     li.append(check, content);
     return li;
   }));

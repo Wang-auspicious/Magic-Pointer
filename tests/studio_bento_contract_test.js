@@ -20,8 +20,12 @@ for (const action of ['canvas', 'list', 'files', 'artifacts']) {
 assert.match(css, /\.mp-design-action-row\s*\{[^}]*border-bottom:\s*1px solid var\(--mp-rule\)/s);
 assert(!css.includes('scale(0.75)'), 'Design rows do not shrink icons for decoration');
 
-/* ---- bento demo 五枚 Lucide 图标全部入 sprite(官方路径,外壳 1.5 描边约定) ---- */
-for (const id of ['ic-file-text', 'ic-file-input', 'ic-calendar', 'ic-bell', 'ic-globe']) {
-  assert(icons.includes(`id="${id}"`), `sprite must contain ${id}`);
+/* Design 只保留四个真实动作正在使用的图标，描边服从 Studio 统一 1.5px。 */
+for (const id of ['ic-file-text', 'ic-file-input', 'ic-folder-open', 'ic-docs']) {
+  const symbol = icons.match(new RegExp(`<symbol id="${id}"[^>]*>[\\s\\S]*?</symbol>`));
+  assert(symbol, `sprite must contain ${id}`);
+  assert(symbol[0].includes('stroke-width="1.5"'), `${id} must use the Studio 1.5px stroke`);
 }
+assert(!icons.includes('id="ic-calendar"'));
+assert(!icons.includes('id="ic-bell"'));
 console.log('studio_bento_contract ok');

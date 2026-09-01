@@ -1,18 +1,15 @@
 'use strict';
 
-/* 移植组件图标 100% 网站同款契约:
-   - file-tree 内嵌默认 trio:stroke-width 2(源 SVG 原样)
-   - bento demo 五图标:stroke-width 1.4(源 iconClass stroke-[1.4])
-   - animated-theme-toggler:Lucide 官方 Moon/Sun path,stroke-width 2
-   - 树行图标渲染 16px(源 size-4)
-   用户裁决:图标不允许"神似",必须与网站渲染参数一致。 */
+/* Studio 图标契约：保留真实文件树与主题切换所需的 SVG，渲染尺寸
+   统一进入新的 Claude-fidelity 样式表；已经删除的 Design bento 不再
+   为了旧测试继续携带一套展示专用图标。 */
 
 const assert = require('node:assert');
 const fs = require('node:fs');
 
 const icons = fs.readFileSync('electron/renderer/icons.ts', 'utf8');
 const html = fs.readFileSync('electron/renderer/studio.html', 'utf8');
-const shellCss = fs.readFileSync('electron/renderer/magic_studio.css', 'utf8');
+const shellCss = fs.readFileSync('electron/renderer/claude_shell.css', 'utf8');
 
 function symbolLine(id) {
   const match = icons.match(new RegExp(`<symbol id="${id}"[^>]*>[\\s\\S]*?</symbol>`));
@@ -25,11 +22,6 @@ for (const id of ['ic-tree-folder-open', 'ic-tree-folder', 'ic-tree-file']) {
   assert(symbolLine(id).includes('stroke-width="2"'), `${id} must render at source stroke 2`);
 }
 assert(symbolLine('ic-tree-folder-open').includes('M2 10h20'), 'open folder carries the source second path');
-
-/* bento demo 五图标:stroke-[1.4] */
-for (const id of ['ic-file-text', 'ic-file-input', 'ic-calendar', 'ic-bell', 'ic-globe']) {
-  assert(symbolLine(id).includes('stroke-width="1.4"'), `${id} must render at the demo stroke 1.4`);
-}
 
 /* theme-toggler:Lucide 官方 Moon/Sun,stroke 2 */
 {

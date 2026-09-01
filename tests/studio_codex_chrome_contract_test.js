@@ -12,7 +12,7 @@ const preload = fs.readFileSync('electron/preload.ts', 'utf8');
 for (const id of [
   'window-titlebar', 'app-menu', 'global-search-toggle', 'window-back', 'window-forward',
   'mode-switch', 'mode-work', 'mode-design',
-  'theme-toggle', 'theme-toggle-icon', 'view-design', 'design-bento',
+  'theme-toggle', 'theme-toggle-icon', 'view-design', 'design-actions',
   'header-open-location', 'magic-brain-toggle', 'magic-brain-popover',
   'magic-brain-changes', 'magic-brain-branch', 'magic-brain-sources',
   'bottom-panel-toggle', 'bottom-panel',
@@ -27,8 +27,9 @@ assert(!html.includes('class="dshw-brand-mark"'), 'the Walker/Design switch must
 assert(!html.includes('class="dshw-brand-name">Magic Pointer'), 'the sidebar must not repeat the product name');
 assert(!html.includes('魔脑'), 'the project environment surface must use a literal, useful name');
 assert(html.includes('项目上下文'), 'the project environment surface must be named 项目上下文');
-assert(html.includes('class="mp-design-bento"'), 'Design must expose a visible Bento home instead of routing straight to stash');
-assert(html.includes('class="mp-design-card') && html.includes('data-design-action="canvas"'), 'Bento cards must be real actions');
+assert(!html.includes('class="mp-design-bento"'), 'Design must not retain the old marketing Bento');
+assert(html.includes('class="mp-design-action-row"') && html.includes('data-design-action="canvas"'),
+  'Design workbench rows must remain real actions');
 assert.match(css, /\.mp-shell\s*\{[^}]*grid-template-rows:\s*var\(--mp-window-bar\)\s+minmax\(0,\s*1fr\)/s,
   'the window titlebar must occupy a real independent grid row');
 assert.match(css, /\.mp-window-titlebar\s*\{[^}]*grid-column:\s*1\s*\/\s*-1/s,
@@ -51,7 +52,8 @@ assert(studio.includes('function scheduleProjectBrowserResize()'),
   'Inspector/browser resizing must be animation-frame coalesced');
 assert(studio.includes('requestAnimationFrame(() =>'),
   'coalesced browser resizing must use the next animation frame');
-assert(studio.includes('inspectorMaximized'), 'maximise/restore must be real renderer state');
+assert(studio.includes('inspectorState.maximized'), 'maximise/restore must use the Inspector reducer state');
+assert(studio.includes('shell.dataset.inspectorMaximized'), 'maximised state must reach shell layout');
 
 assert(preload.includes("ipcRenderer.invoke('projects:environment'"));
 assert(preload.includes("ipcRenderer.invoke('projects:context-menu'"));

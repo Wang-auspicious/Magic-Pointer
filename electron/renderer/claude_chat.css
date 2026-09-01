@@ -522,6 +522,83 @@
   font-size: 12px;
 }
 
+.dshw-plan.is-collapsed .dshw-plan-steps {
+  display: none;
+}
+
+.dshw-plan-step {
+  display: flex;
+  min-height: 20px;
+  align-items: flex-start;
+  gap: 7px;
+  list-style: none;
+  color: var(--mp-text-secondary);
+  line-height: 18px;
+}
+
+.dshw-plan-step.is-active {
+  color: var(--mp-text);
+}
+
+.dshw-plan-step.is-done {
+  color: var(--mp-text-muted);
+}
+
+.mp-plan-check {
+  position: relative;
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  align-items: center;
+  justify-content: center;
+  margin-top: 1px;
+  border: 1px solid color-mix(in srgb, var(--mp-text-muted) 54%, transparent);
+  border-radius: var(--mp-r4);
+  color: var(--mp-panel);
+  background: transparent;
+}
+
+.mp-plan-check svg {
+  width: 14px;
+  height: 14px;
+  opacity: 0;
+}
+
+.dshw-plan-step.is-active .mp-plan-check {
+  border-color: color-mix(in srgb, var(--mp-clay) 70%, transparent);
+  background: color-mix(in srgb, var(--mp-clay) 8%, transparent);
+}
+
+.dshw-plan-step.is-active .mp-plan-check::after {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--mp-clay);
+  content: '';
+}
+
+.dshw-plan-step.is-done .mp-plan-check {
+  border-color: var(--mp-text);
+  color: var(--mp-panel);
+  background: var(--mp-text);
+}
+
+.dshw-plan-step.is-done .mp-plan-check svg {
+  opacity: 1;
+}
+
+.mp-plan-step-label {
+  min-width: 0;
+  flex: 1;
+}
+
+.dshw-plan-step.is-done .mp-plan-step-label {
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+  text-decoration-color: color-mix(in srgb, currentColor 55%, transparent);
+}
+
 .dshw-perm-ask {
   position: relative;
   z-index: 25;
