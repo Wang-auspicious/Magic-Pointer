@@ -5,7 +5,7 @@ type SettingOption = { label: string; value: string | number };
 type SettingRow = {
   control: 'toggle' | 'select' | 'range' | 'text' | 'tags' | 'info';
   description?: string;
-  infoKey?: 'active-model' | 'credential' | 'terminal';
+  infoKey?: 'active-model' | 'credential' | 'terminal' | 'skills' | 'plugins' | 'connectors' | 'updates' | 'diagnostics';
   label: string;
   max?: number;
   min?: number;
@@ -24,9 +24,6 @@ const SETTINGS_PAGES: SettingsPage[] = [
       { path: 'general.launch_at_login', control: 'toggle', label: '开机时启动', description: '登录后静默驻留。' },
       { path: 'general.keep_running', control: 'toggle', label: '关闭窗口后继续运行', description: '划线与快捷键仍然可用。' },
     ] },
-    { title: '更新', rows: [
-      { path: 'general.update_channel', control: 'select', label: '更新通道', options: [option('stable', '稳定'), option('preview', '预览')] },
-    ] },
   ] },
   { id: 'interaction', group: '设置', icon: 'ic-cursor', title: '交互', description: '怎么唤起、怎么输入，以及全局快捷键。', sections: [
     { title: '唤起', rows: [
@@ -39,12 +36,6 @@ const SETTINGS_PAGES: SettingsPage[] = [
     ] },
     { title: '默认输入', rows: [
       { path: 'interaction.default_input_mode', control: 'select', label: '划线后先用', options: [option('text', '键盘输入'), option('voice', '语音输入')] },
-    ] },
-    { title: '快捷键', rows: [
-      { path: 'shortcuts.wake', control: 'text', label: '唤起' },
-      { path: 'shortcuts.text_mode', control: 'text', label: '直接键盘输入' },
-      { path: 'shortcuts.voice_mode', control: 'text', label: '直接语音输入' },
-      { path: 'shortcuts.pause', control: 'text', label: '暂停输入' },
     ] },
   ] },
   { id: 'voice', group: '设置', icon: 'ic-mic', title: '语音', description: '语音是可选输入方式；关闭后不会启动语音模型。', sections: [
@@ -72,6 +63,21 @@ const SETTINGS_PAGES: SettingsPage[] = [
       { path: 'agents.delivery_mode', control: 'select', label: '交付方式', options: [option('active_session', '当前会话'), option('managed_session', '托管会话'), option('clipboard', '只复制 Prompt')] },
       { path: 'agents.cwd_match', control: 'select', label: '项目目录匹配', options: [option('strict', '必须完全一致'), option('subtree', '允许子目录'), option('confirm', '不一致时询问')] },
       { path: 'agents.auto_attach', control: 'toggle', label: '自动附加接地证据' },
+    ] },
+  ] },
+  { id: 'skills', group: '自定义', icon: 'ic-spark', title: 'Skills', description: '查看和调用本机已安装的 Skills。', sections: [
+    { title: '本机目录', rows: [
+      { control: 'info', infoKey: 'skills', label: 'Skills 目录', description: '项目与用户目录按优先级合并；选择条目会把真实 Slash 名称插入 Composer。' },
+    ] },
+  ] },
+  { id: 'plugins', group: '自定义', icon: 'ic-plug', title: '插件', description: '管理经过批准后进入 Harness 的本地插件。', sections: [
+    { title: '插件', rows: [
+      { control: 'info', infoKey: 'plugins', label: '本地插件', description: '插件保留完整 diff、批准、拒绝与回滚记录；默认不自动应用。' },
+    ] },
+  ] },
+  { id: 'connectors', group: '自定义', icon: 'ic-globe', title: 'MCP 与连接器', description: '连接本地 MCP、浏览器和外部结构化能力。', sections: [
+    { title: '连接器', rows: [
+      { control: 'info', infoKey: 'connectors', label: 'MCP 与连接器', description: '能力按当前任务惰性发现，不把全部工具长期塞进模型上下文。' },
     ] },
   ] },
   { id: 'perception-privacy', group: 'Agent', icon: 'ic-eye', title: '感知与隐私', description: '它能看什么、画面能否出本机，以及哪些应用永远不看。', sections: [
@@ -132,6 +138,25 @@ const SETTINGS_PAGES: SettingsPage[] = [
       { path: 'accessibility.reduce_transparency', control: 'toggle', label: '减少透明效果' },
     ] },
   ] },
+  { id: 'shortcuts', group: '设置', icon: 'ic-cursor', title: '快捷键', description: 'Studio、划线和语音入口的键盘设置。', sections: [
+    { title: '快捷键', rows: [
+      { path: 'shortcuts.wake', control: 'text', label: '唤起' },
+      { path: 'shortcuts.text_mode', control: 'text', label: '直接键盘输入' },
+      { path: 'shortcuts.voice_mode', control: 'text', label: '直接语音输入' },
+      { path: 'shortcuts.pause', control: 'text', label: '暂停输入' },
+    ] },
+  ] },
+  { id: 'updates', group: '设置', icon: 'ic-refresh', title: '更新', description: '本机安装版更新通道与当前状态。', sections: [
+    { title: '更新', rows: [
+      { path: 'general.update_channel', control: 'select', label: '更新通道', options: [option('stable', '稳定'), option('preview', '预览')] },
+      { control: 'info', infoKey: 'updates', label: '安装状态', description: '下载与重启状态也会出现在左栏底部。' },
+    ] },
+  ] },
+  { id: 'diagnostics', group: '设置', icon: 'ic-term', title: '诊断与关于', description: '查看运行信息、日志入口与版本。', sections: [
+    { title: '诊断', rows: [
+      { control: 'info', infoKey: 'diagnostics', label: '诊断与日志', description: '打开当前版本、Electron/Chromium 信息和本机诊断入口。' },
+    ] },
+  ] },
 ];
 
 function valueForSetting(path: string, settings: Record<string, any>) {
@@ -173,6 +198,11 @@ function modelInfoValue(key: string, status: Record<string, any>) {
     return status.credentialPresent ? '已安全保存' : '未配置';
   }
   if (key === 'terminal') return 'npm run model:groq';
+  if (key === 'skills') return '打开 Skills 与命令目录';
+  if (key === 'plugins') return '批准后生效';
+  if (key === 'connectors') return '按任务惰性加载';
+  if (key === 'updates') return '由自动更新器提供';
+  if (key === 'diagnostics') return '本机运行信息';
   return '只读';
 }
 

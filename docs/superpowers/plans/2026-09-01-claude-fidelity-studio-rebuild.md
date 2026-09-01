@@ -760,11 +760,11 @@ git commit -m "feat: rebuild Studio Inspector interactions"
 - Modify: `tests/studio_bento_contract_test.js`
 - Modify: `tests/studio_plugin_directory_contract_test.js`
 
-- [ ] **Step 1: Write RED contracts**
+- [x] **Step 1: Write RED contracts**
 
 Assert Customize contains General/Appearance/Models/Permissions/Skills/Plugins/Connectors/Memory/Privacy/Voice/Shortcuts/Updates/Diagnostics, uses a continuous row sheet, and search covers directory entries. Assert Design no longer contains `.mp-design-bento` or marketing eyebrow/hero; it exposes Canvas/Assets/Files/Artifacts as workbench rows.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```powershell
 node tests/settings_surface_contract_test.js
@@ -772,15 +772,15 @@ node tests/studio_bento_contract_test.js
 node tests/studio_plugin_directory_contract_test.js
 ```
 
-- [ ] **Step 3: Implement Customize composition**
+- [x] **Step 3: Implement Customize composition**
 
 Keep the existing settings save/apply/rollback functions. Compose Skills/plugins/commands into the same sheet instead of a separate visual language. Search filters both settings and directory rows; selecting a command still inserts it into composer through the existing path.
 
-- [ ] **Step 4: Implement Design workbench rows**
+- [x] **Step 4: Implement Design workbench rows**
 
 Replace bento markup with four quiet action rows. Each row routes to the existing canvas, list, file Inspector, or artifacts behaviour. No action is removed.
 
-- [ ] **Step 5: Run GREEN and commit**
+- [x] **Step 5: Run GREEN and commit**
 
 ```powershell
 node tests/settings_surface_contract_test.js

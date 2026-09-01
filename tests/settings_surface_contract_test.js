@@ -5,7 +5,8 @@ const fs = require('fs');
 
 const html = fs.readFileSync('electron/renderer/studio.html', 'utf8');
 const source = fs.readFileSync('electron/renderer/settings.ts', 'utf8');
-const css = fs.readFileSync('electron/renderer/magic_studio.css', 'utf8');
+const css = fs.readFileSync('electron/renderer/claude_shell.css', 'utf8');
+const model = fs.readFileSync('electron/renderer/settings_model.ts', 'utf8');
 
 assert(html.includes('settings_model.js'), 'Studio must load the canonical settings model');
 assert(html.includes('id="settings-save-status"'), 'settings must have a visible save status live region');
@@ -32,5 +33,13 @@ assert(css.includes('.claude-settings-list'));
 assert(!css.includes('.dshw-settings-options .settings-section-frame'));
 assert(!css.includes('.settings-page-icon {'), 'decorative rounded page icons must be removed');
 assert(!css.includes('background: var(--studio-lavender)'), 'settings selection must stay neutral');
+for (const id of [
+  'general', 'appearance-accessibility', 'models-agents', 'permissions',
+  'skills', 'plugins', 'connectors', 'memory-context', 'perception-privacy',
+  'voice', 'shortcuts', 'updates', 'diagnostics',
+]) {
+  assert(model.includes(`id: '${id}'`), `Customize category missing: ${id}`);
+}
+assert(html.includes('data-directory-open'), 'Customize exposes the real Skill/command directory');
 
 console.log('settings surface contract test ok');

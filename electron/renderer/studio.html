@@ -282,31 +282,29 @@
 
       <section class="dshw-view mp-design-home" id="view-design" hidden>
         <div class="mp-design-intro">
-          <p>DESIGN</p>
-          <h1>从项目素材开始</h1>
-          <span>收集、检视和组织当前项目的视觉素材，生成的产物会留在本地。</span>
+          <h1>Design</h1>
+          <span>收集、检视和组织视觉素材；所有产物都留在本地工作区。</span>
         </div>
-        <div class="mp-design-bento" id="design-bento">
-          <button type="button" class="mp-design-card mp-design-card-primary sv-bento-card" data-design-action="canvas">
-            <span class="mp-design-card-icon sv-bento-card-icon"><svg aria-hidden="true"><use href="#ic-file-input" /></svg></span>
+        <div class="mp-design-actions" id="design-actions">
+          <button type="button" class="mp-design-action-row" data-design-action="canvas">
+            <span class="mp-design-card-icon"><svg aria-hidden="true"><use href="#ic-file-input" /></svg></span>
             <span class="mp-design-card-copy"><strong>素材画布</strong><small>自由排列截图、引用和灵感片段</small></span>
-            <svg class="mp-design-card-arrow sv-bento-card-arrow" aria-hidden="true"><use href="#ic-arrow-right" /></svg>
+            <svg class="mp-design-card-arrow" aria-hidden="true"><use href="#ic-arrow-right" /></svg>
           </button>
-          <button type="button" class="mp-design-card sv-bento-card" data-design-action="list">
-            <span class="mp-design-card-icon sv-bento-card-icon"><svg aria-hidden="true"><use href="#ic-file-text" /></svg></span>
+          <button type="button" class="mp-design-action-row" data-design-action="list">
+            <span class="mp-design-card-icon"><svg aria-hidden="true"><use href="#ic-file-text" /></svg></span>
             <span class="mp-design-card-copy"><strong>素材列表</strong><small>按类型、来源和时间查看本地素材</small></span>
-            <svg class="mp-design-card-arrow sv-bento-card-arrow" aria-hidden="true"><use href="#ic-arrow-right" /></svg>
+            <svg class="mp-design-card-arrow" aria-hidden="true"><use href="#ic-arrow-right" /></svg>
           </button>
-          <button type="button" class="mp-design-card mp-design-card-wide sv-bento-card" data-design-action="files">
-            <span class="mp-design-card-icon sv-bento-card-icon"><svg aria-hidden="true"><use href="#ic-folder-open" /></svg></span>
+          <button type="button" class="mp-design-action-row" data-design-action="files">
+            <span class="mp-design-card-icon"><svg aria-hidden="true"><use href="#ic-folder-open" /></svg></span>
             <span class="mp-design-card-copy"><strong>项目文件</strong><small>在右侧展开真实文件树，预览或用本地应用打开</small></span>
-            <span class="mp-design-live"><i aria-hidden="true"></i>已连接项目</span>
-            <svg class="mp-design-card-arrow sv-bento-card-arrow" aria-hidden="true"><use href="#ic-arrow-right" /></svg>
+            <svg class="mp-design-card-arrow" aria-hidden="true"><use href="#ic-arrow-right" /></svg>
           </button>
-          <button type="button" class="mp-design-card mp-design-card-wide sv-bento-card" data-design-action="artifacts">
-            <span class="mp-design-card-icon sv-bento-card-icon"><svg aria-hidden="true"><use href="#ic-docs" /></svg></span>
+          <button type="button" class="mp-design-action-row" data-design-action="artifacts">
+            <span class="mp-design-card-icon"><svg aria-hidden="true"><use href="#ic-docs" /></svg></span>
             <span class="mp-design-card-copy"><strong>设计产物</strong><small>查看 Agent 已经生成并落盘的图片、文档和代码</small></span>
-            <svg class="mp-design-card-arrow sv-bento-card-arrow" aria-hidden="true"><use href="#ic-arrow-right" /></svg>
+            <svg class="mp-design-card-arrow" aria-hidden="true"><use href="#ic-arrow-right" /></svg>
           </button>
         </div>
       </section>
@@ -346,6 +344,9 @@
                 <input id="settings-search" type="search" autocomplete="off" placeholder="搜索设置" aria-label="搜索设置" />
               </label>
               <div class="dshw-settings-nav-list" id="set-nav"></div>
+              <button type="button" class="mp-customize-directory" data-directory-open>
+                <svg aria-hidden="true"><use href="#ic-plug" /></svg><span>Skills 与命令目录</span>
+              </button>
             </nav>
             <div class="dshw-settings-content">
               <div class="dshw-settings-header">
