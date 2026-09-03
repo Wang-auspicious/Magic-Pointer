@@ -28,6 +28,7 @@ from app.evidence.contract import (
     apply_container_heuristic,
     empty_confirmed,
     failed_evidence,
+    is_glyph_only,
 )
 from app.grounding.marked_read import structured_read_covers_mark
 
@@ -469,7 +470,11 @@ def observation_from_result(
             note=error or None,
         )
         evidence = apply_container_heuristic(evidence, request.container_like_texts())
-        container_hint = bool(evidence.container_hint) or (
+        # 只读回一枚字形（`*`、`>`、一段框线）的一次读，和只读回容器名一样，
+        # 是「没有回答这个 mark」。它走同一条降级路径，于是像素层仍然会被
+        # 派上去，而它自己也不会在融合里压过还能再试一次的来源。
+        glyph_only = is_glyph_only(context.content)
+        container_hint = bool(evidence.container_hint) or glyph_only or (
             coverage_reason in _CONTAINER_COVERAGE_REASONS
         )
         if container_hint and evidence.status is EvidenceStatus.OK:
@@ -484,7 +489,9 @@ def observation_from_result(
                 note=evidence.note,
             )
         reason = result.reason or (
-            f"container:{coverage_reason or 'container_like_content'}"
+            "container:glyph_only_content"
+            if glyph_only
+            else f"container:{coverage_reason or 'container_like_content'}"
             if container_hint
             else "structured_context_degraded"
             if evidence.status is EvidenceStatus.DEGRADED

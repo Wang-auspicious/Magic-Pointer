@@ -11,11 +11,15 @@ interface StableSurfaceInput {
   place: (size: SurfaceSize) => UnknownRecord;
 }
 
-const COMPOSER_SIZE = Object.freeze({ width: 480, height: 132 });
+// 480/56 = 8.571 holds the measured PromptRescue pill ratio of 8.609
+// (1739x202). See docs/design/VIDA_PROMPTRESCUE_MEASURED.md.
+const COMPOSER_SIZE = Object.freeze({ width: 480, height: 56 });
 // The work surface is a compact activity card, not a second application
 // window. 440×300 keeps a full answer readable while removing the large blank
 // canvas that made one-step tasks feel stalled and visually heavy.
-const WORK_PANEL_SIZE = Object.freeze({ width: 440, height: 300 });
+// The reference process card is portrait, 804x973 (aspect 0.826). 440/533
+// holds that ratio. See docs/design/VIDA_PROMPTRESCUE_MEASURED.md.
+const WORK_PANEL_SIZE = Object.freeze({ width: 440, height: 533 });
 
 function recordOf(value: unknown): UnknownRecord | null {
   return value !== null && typeof value === 'object' ? value as UnknownRecord : null;

@@ -482,3 +482,38 @@ def test_click_reports_changes_after() -> None:
     names = [c.get("name") for c in changes]
     assert "新值" in names and "下拉项" in names, f"点击后的变化要回带: {changes}"
     assert "打开" not in names, "未变的元素不算变化"
+
+
+def test_observe_defaults_to_the_marked_window_not_the_foreground() -> None:
+    """真机 9·3：气泡弹出后终端失去前台，不带参数的 Observe 读到了桌面，
+    回答里于是冒出桌面上那四个快捷方式——用户圈的明明是终端里的一行。
+
+    圈选发生在哪个窗口，"观察一下"的默认目标就是哪个窗口。
+    """
+    # 前台（windows[0]）是记事本，圈选发生在飞书那个窗口上。
+    registry, _bound = _registry(_session(origin_window_hwnd=7))
+    payload = _payload(_exec(registry, "Observe"))
+    assert payload["windows"][0]["hwnd"] == 7, "默认目标是圈选所在的窗口"
+    assert payload["is_origin_window"] is True
+
+    # 显式指定别的窗口仍然可以，只是要说出来读的不是圈选那个。
+    other = _payload(_exec(registry, "Observe", {"window_id": "w-42"}))
+    assert other["windows"][0]["hwnd"] == 42
+    assert other["is_origin_window"] is False
+
+
+def test_observe_says_so_when_the_marked_window_is_gone() -> None:
+    """圈选那个窗口被关掉之后，退回前台是合理的——但必须写在证据里，
+    不能悄悄换一个窗口继续回答。"""
+    registry, _bound = _registry(_session(origin_window_hwnd=99999))
+    payload = _payload(_exec(registry, "Observe"))
+    assert payload["windows"][0]["hwnd"] == 42
+    assert payload["is_origin_window"] is False
+    assert payload["origin_window_gone"] is True
+
+
+def test_observe_without_an_origin_keeps_the_old_foreground_default() -> None:
+    registry, _bound = _registry()
+    payload = _payload(_exec(registry, "Observe"))
+    assert payload["windows"][0]["hwnd"] == 42
+    assert "is_origin_window" not in payload

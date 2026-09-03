@@ -113,10 +113,15 @@ const CardModel = (() => {
 
   // 感知/准备阶段的流水账（冻结、枚举窗口、凑上下文……）。它们是真实发生的，
   // 但不是用户关心的「动作」——在卡上收进一个折叠组，一行带过，展开才见全表。
+  // 「交给模型 / 模型答完了 / 继续读证据」也在这里面。它们听起来像动作，其实
+  // 是同一个 while 循环的进出口：一次问答走三轮就写六行，六行里没有一行说出
+  // 它去动了什么。真正的动作行由 tool: 前缀的工具调用承担。
   const PLUMBING_PHASES: ReadonlySet<string> = new Set([
     'perceived', 'payload_read', 'settings_loaded', 'windows_enumerated',
     'pixels_frozen', 'structured_read', 'context_from_snapshot',
-    'enrich_screen_region', 'route_recipe', 'loop_started', 'backend_recovery',
+    'enrich_screen_region', 'enrich_local_file', 'route_recipe',
+    'loop_started', 'loop_router_start', 'loop_progress',
+    'model_request', 'model_response', 'backend_recovery',
     'total',
   ]);
 
@@ -129,9 +134,75 @@ const CardModel = (() => {
   // 也不允许在没到终态时显示 100%。
   const TYPICAL_PHASES = 7;
 
+  // 工具调用的那一行既在主进程（Node，Buffer）也在渲染层（classic script，
+  // atob）解码，所以解码器要两边都能用。解不开就当没有这一行——一条诊断信息
+  // 不许把一次回答弄崩。
+  function decodeActivity(blob: unknown): Record<string, unknown> | null {
+    const text = String(blob || '').trim();
+    if (!text) return null;
+    try {
+      const globalScope = globalThis as unknown as {
+        Buffer?: { from(input: string, encoding: string): { toString(encoding: string): string } };
+        atob?: (input: string) => string;
+      };
+      let json = '';
+      if (typeof globalScope.Buffer?.from === 'function') {
+        json = globalScope.Buffer.from(text, 'base64').toString('utf8');
+      } else if (typeof globalScope.atob === 'function') {
+        const binary = globalScope.atob(text);
+        const bytes = Uint8Array.from(binary, (ch) => ch.charCodeAt(0));
+        json = new TextDecoder().decode(bytes);
+      } else {
+        return null;
+      }
+      const parsed = JSON.parse(json);
+      return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // Claude Code 的过程流里每一行都是一次真实的工具调用和它作用的那个对象。
+  // 这两个 phase 就是那一行的两个时刻：`tool_call` 是「开始动了」，
+  // `tool_activity` 是「动完了，结果是这个」。两者共用 `tool:<id>` 这个 phase，
+  // 于是 applyPatch 会就地把等待行升级成完成行，而不是叠出两行。
+  function toolStep(record: { phase?: unknown; fields?: unknown } = {}) {
+    const phase = String(record.phase || '').trim();
+    const fields = record.fields && typeof record.fields === 'object'
+      ? record.fields as Record<string, unknown>
+      : {};
+    if (phase === 'tool_call') {
+      const name = String(fields.name || '').trim();
+      if (!name) return null;
+      return {
+        phase: `tool:${String(fields.id || name)}`,
+        label: name,
+        note: '',
+        ms: null,
+        state: 'pending',
+      };
+    }
+    if (phase !== 'tool_activity') return null;
+    const line = decodeActivity(fields.b64);
+    if (!line) return null;
+    const tool = String(line.tool || '').trim();
+    if (!tool) return null;
+    const target = String(line.target || '').trim();
+    return {
+      phase: `tool:${String(line.id || tool)}`,
+      label: target ? `${tool}(${target})` : tool,
+      note: String(line.detail || ''),
+      ms: null,
+      state: line.ok === false ? 'failed' : 'done',
+    };
+  }
+
   function phaseStep(record: { phase?: unknown; fields?: unknown; ms?: number } = {}) {
     const phase = String(record.phase || '').trim();
     if (!phase) return null;
+    // 工具行有它自己的形状。解不开的那一条就是没有这一条——绝不能退化成
+    // 一行写着 `tool activity` 的空步骤。
+    if (phase === 'tool_call' || phase === 'tool_activity') return toolStep(record);
     const label = (PHASE_TEXT as Readonly<Record<string, string>>)[phase] || phase.replace(/_/g, ' ');
     const fields = record.fields && typeof record.fields === 'object'
       ? record.fields as Record<string, unknown>
@@ -332,6 +403,7 @@ const CardModel = (() => {
     normalizeCard,
     applyPatch,
     phaseStep,
+    toolStep,
     perceivedStep,
     progressFromSteps,
     runningLabel,

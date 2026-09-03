@@ -12,7 +12,8 @@ assert(source.includes("api.startDictation()"));
 assert(source.includes("commandInput.addEventListener('input'"));
 assert(source.includes("event.key === 'Enter'"));
 assert(source.includes('captureEligibility.commandReady !== false'));
-assert(source.includes('payload.sessionExpiresAt'));
+assert(!source.includes('payload.sessionExpiresAt'),
+  '定格住的一刻不会过期，面板不该在用户还在想问什么的时候自己消失');
 assert(source.includes('replaceChildren'));
 assert(!source.includes('renderSuggestionChips'));
 assert(!source.includes('suggestedCommands.slice'));

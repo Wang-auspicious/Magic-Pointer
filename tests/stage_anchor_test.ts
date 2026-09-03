@@ -13,8 +13,8 @@ assert.deepStrictEqual(
     surface: { width: 360, height: 500 },
     viewport: { width: 1440, height: 900 },
   }),
-  { x: 788, y: 78, side: 'right', mode: 'outside' },
-  'a fitting right gutter must receive the panel with an 8 DIP gap',
+  { x: 788, y: 80, side: 'right', mode: 'outside' },
+  'a fitting right gutter must receive the panel level with the marked content',
 );
 
 assert.deepStrictEqual(
@@ -24,7 +24,7 @@ assert.deepStrictEqual(
     surface: { width: 360, height: 500 },
     viewport: { width: 1440, height: 900 },
   }),
-  { x: 52, y: 78, side: 'left', mode: 'outside' },
+  { x: 52, y: 80, side: 'left', mode: 'outside' },
   'a fitting left gutter must receive the panel instead of covering the source',
 );
 
@@ -36,7 +36,7 @@ assert.deepStrictEqual(
     viewport: { width: 1440, height: 900 },
     preferredSide: 'left',
   }),
-  { x: 52, y: 78, side: 'left', mode: 'outside' },
+  { x: 52, y: 80, side: 'left', mode: 'outside' },
   'when both gutters fit, the current session side must remain stable',
 );
 
@@ -47,8 +47,22 @@ assert.deepStrictEqual(
     surface: { width: 380, height: 620 },
     viewport: { width: 1440, height: 900 },
   }),
-  { x: 8, y: 30, side: 'left', mode: 'screen-edge' },
+  { x: 8, y: 30, side: 'left', mode: 'window-edge' },
   'fullscreen surfaces must dock opposite a right-side focus rectangle',
+);
+
+// 真机 9·3：终端窗口在 2560 宽的屏幕上只占中间一块，右侧空隙放不下面板，
+// 于是面板贴到了**屏幕**右上角——离它正在回答的那个窗口十万八千里，看上去
+// 不属于任何东西。没有空隙时它要贴的是那个窗口自己的边。
+assert.deepStrictEqual(
+  chooseAdaptivePanelAnchor({
+    source: { x: 300, y: 120, width: 1900, height: 800 },
+    focus: { x: 700, y: 400, width: 200, height: 40 },
+    surface: { width: 440, height: 533 },
+    viewport: { width: 2560, height: 1080 },
+  }),
+  { x: 1752, y: 154, side: 'right', mode: 'window-edge' },
+  'a windowed source with no fitting gutter must hug its own right edge',
 );
 
 assert.deepStrictEqual(
@@ -58,8 +72,20 @@ assert.deepStrictEqual(
     surface: { width: 380, height: 980 },
     viewport: { width: 1440, height: 900 },
   }),
-  { x: 1052, y: 8, side: 'right', mode: 'screen-edge' },
+  { x: 1052, y: 8, side: 'right', mode: 'window-edge' },
   'fullscreen fallback must clamp an oversized panel to the work-area edge',
+);
+
+// 窗口矩形没解出来时（没识别到是哪个软件），才退回屏幕边。
+assert.deepStrictEqual(
+  chooseAdaptivePanelAnchor({
+    source: null,
+    focus: { x: 300, y: 400, width: 120, height: 60 },
+    surface: { width: 440, height: 533 },
+    viewport: { width: 1440, height: 900 },
+  }),
+  { x: 992, y: 164, side: 'right', mode: 'screen-edge' },
+  'without a resolved window the screen edge is the only honest fallback',
 );
 
 assert.deepStrictEqual(

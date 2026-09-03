@@ -1714,40 +1714,30 @@
     const pending = turns.some((turn) => turn.status === 'pending');
     threadPanel.dataset.turnCount = String(turns.length);
     syncWaitClock(pending);
-    // 眉毛行写的是你问的那句话。参考里那张卡的标题就是这次任务本身
-    // （"DietControl landing page update"），不是一个产品名。
-    //
-    // 写上去之后第一轮那行 .turn-ask 就得收起来——同一句话在一张卡上出现两次，
-    // 第二次不提供任何信息，只是把卡撑高。第二轮起照常显示：那时候标题说的是
-    // 整场对话，行内那句说的是这一轮。
+    // 标题说的是「这个窗口是谁」，不是你问了什么。你问的那句话是一条消息，
+    // 它属于对话流里靠右的那一条——把它抬进标题，就等于每问一句都在改窗口
+    // 名，而且第一轮的问题永远读不到第二遍。
     const firstAsk = String(turns[0]?.ask || '').trim();
-    threadTitle.textContent = firstAsk || '选中的内容';
-    threadTitle.title = firstAsk;
-    // 眉毛照抄参考里那行 `▽ TASK FINISHED`：它说的是这张卡此刻的状态，
-    // 用等宽 + 拉开的字距，因为在这套版式里等宽始终代表「机器说的事实」。
+    const surfaceTitle = session.targetAppLabel || '选中的内容';
+    threadTitle.textContent = surfaceTitle;
+    threadTitle.title = surfaceTitle;
     const failed = turns[turns.length - 1]?.status === 'failed';
     const awaiting = turns[turns.length - 1]?.status === 'awaiting';
-    const eyebrowState = pending || awaiting ? 'running' : failed ? 'failed' : 'done';
-    // 成功时眉毛行退位：完成信号由底部的绿色完成行承担（PromptRescue 的
-    // 卡顶没有状态词，绿行贴着追问条）。同一个事实不在一张卡上写两遍。
-    threadEyebrow.hidden = eyebrowState === 'done';
+    // 状态词从卡头撤走。运行中的证据流、失败卡、等待输入的选项本身就在正文
+    // 里写着，卡头再用等宽全大写重复一遍（WORKING / TASK FINISHED），既难看
+    // 也没有增加任何信息。节点留着只为 ARIA 播报。
+    threadEyebrow.hidden = true;
     threadPanel.dataset.phase = pending ? 'running' : awaiting ? 'awaiting' : failed ? 'failed' : 'finished';
     threadClose.setAttribute('aria-label', pending ? '停止' : '关闭');
     threadClose.title = pending ? '停止' : '关闭';
-    threadEyebrow.dataset.state = eyebrowState;
-    threadEyebrow.querySelector('use')?.setAttribute(
-      'href',
-      pending ? '#ic-circle' : awaiting ? '#ic-circle' : failed ? '#ic-warn' : '#ic-check',
-    );
+    threadEyebrow.dataset.state = pending || awaiting ? 'running' : failed ? 'failed' : 'done';
     threadEyebrowText.textContent = pending
-      ? 'WORKING'
+      ? '正在处理'
       : awaiting
-        ? 'YOUR INPUT NEEDED'
+        ? '需要你补充'
         : failed
-          ? 'NEEDS ATTENTION'
-          : 'TASK FINISHED';
-    const firstAskRow = resultCard.firstElementChild?.querySelector<HTMLElement>('.turn-ask');
-    if (firstAskRow) firstAskRow.hidden = Boolean(firstAsk);
+          ? '这次没完成'
+          : '已完成';
     // 还在跑的时候没有可复制的东西。一个点了没反应的按钮比一个明显不能点的
     // 按钮更让人以为是坏了。
     const settled = !pending && turns.some((turn) => turn.status === 'done');

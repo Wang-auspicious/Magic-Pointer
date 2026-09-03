@@ -236,7 +236,10 @@ const CardRender = (() => {
       const fact = typeof s.note === 'string' ? s.note.trim() : '';
       return h('li', { 'data-state': s.state || 'done' }, [
         h('span', { class: 'mstep-row' }, [
-          icon(s.state === 'done' ? 'ic-check' : 'ic-circle', 'mstep-dot'),
+          icon(
+            s.state === 'done' ? 'ic-check' : s.state === 'failed' ? 'ic-warn' : 'ic-circle',
+            'mstep-dot',
+          ),
           h('span', { class: 'mstep-label' }, [s.label || '']),
           s.state === 'pending'
             ? h('em', { class: 'mstep-elapsed', 'data-elapsed': '' }, [])

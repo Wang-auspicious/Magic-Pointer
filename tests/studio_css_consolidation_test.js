@@ -15,10 +15,17 @@ const RENDERER = path.resolve(__dirname, '..', 'electron', 'renderer');
 const SOURCES = ['oreo_tokens.css', 'oreo.css', 'cards.css', 'dsh_tokens.css', 'dsh_chat.css', 'studio.css', 'dsh_web.css', 'magic_studio.css'];
 
 /* ---- 1) 再生成一致 ---- */
+// 换行符按 git 的 text=auto 在检出时被改写成 CRLF,而生成器写 LF。
+// 比较前统一到 LF,否则这条门在任何 Windows 检出上都恒红,和内容无关。
+const normalizeEol = (text) => text.replace(/\r\n/g, '\n');
 const sources = SOURCES.map((name) => ({ name, text: fs.readFileSync(path.join(RENDERER, name), 'utf8') }));
 const regenerated = buildConsolidated(sources);
 const committed = fs.readFileSync(path.join(RENDERER, 'studio_system.css'), 'utf8');
-assert.strictEqual(regenerated, committed, 'studio_system.css must equal regeneration');
+assert.strictEqual(
+  normalizeEol(regenerated),
+  normalizeEol(committed),
+  'studio_system.css must equal regeneration',
+);
 
 /* ---- 2) 终态等价 ---- */
 function flattenEffective(items) {

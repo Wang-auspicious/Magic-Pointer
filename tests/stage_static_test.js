@@ -77,7 +77,7 @@ assert(css.includes('opacity 120ms'));
 assert(css.includes('2px solid var(--stage-electric-blue)'));
 assert(css.includes('2.4s'));
 assert(css.includes('width: var(--stage-composer-width, 480px)'));
-assert(css.includes('height: var(--stage-composer-height, 132px)'));
+assert(css.includes('height: var(--stage-composer-height, 56px)'));
 assert(source.includes("surfacePolicy.surfaceSize('composer'"));
 assert(css.includes('.fly-letter'));
 assert(css.includes('.processing-shimmer'));
@@ -98,9 +98,14 @@ assert(!css.includes('mbar'),
 assert(!css.includes('stage-orbit-dot') && !css.includes('mcard-rail'),
   'unknown progress is the expanding evidence stream now; orbit dot and rail are gone');
 assert(css.includes('width: var(--stage-work-panel-width, 440px)'));
-assert(css.includes('height: var(--stage-work-panel-height, 300px)'));
-assert(css.includes('.thread-eyebrow { display: none; }'),
-  'activity spine owns status; the compact header must not repeat WORKING/TASK FINISHED');
+assert(css.includes('height: var(--stage-work-panel-height, 533px)'));
+// Status words left the card header, and the green completion row is gone.
+// Both restated something the transcript already shows: a running evidence
+// stream, an answer, or a failure card.
+assert(!css.includes('thread-done-line'),
+  'the green completion row and its styles are gone, not merely hidden');
+assert(/\.thread-eyebrow \{[^}]*clip-path: inset\(50%\)/.test(css),
+  'the header status node survives only for screen readers');
 assert(css.includes('.stage-result .mstep-fact { display: none; }'),
   'Stage must hide internal UIA/L0 notes while the shared full card keeps diagnostics');
 assert(css.includes('.work-panel-scroller'));
@@ -111,7 +116,7 @@ assert(!source.includes('completionWidthTier('),
   'answer content must never choose the panel width');
 assert(source.includes('threadPanel.dataset.turnCount = String(turns.length)'));
 assert(!css.includes("[data-phase='finished'][data-turn-count='1'] .thread-title"),
-  'on success the eyebrow retreats and the task title stays visible, exactly like the reference card header');
+  'the header identifies the window being read and never hides itself by phase');
 assert(source.includes("threadPanel.dataset.consent = want ? 'true' : 'false'"),
   'the card must expose whether its approval footer is active');
 assert(!source.includes('consentBox.style.left ='),
@@ -120,15 +125,16 @@ assert(!source.includes('consentBox.style.top ='),
   'approval is part of the completion card and must not be positioned as a detached popover');
 assert(source.includes("threadPanel.dataset.phase = pending ? 'running' : awaiting ? 'awaiting' : failed ? 'failed' : 'finished'"));
 assert(source.includes("threadEyebrowText.textContent = pending"), 'thread eyebrow must be state-driven');
-assert(source.includes("'YOUR INPUT NEEDED'"), 'an awaiting user-input card must say it is waiting on the user');
+assert(source.includes("'需要你补充'"),
+  'an awaiting card must still announce, to assistive tech, that it waits on the user');
 assert(source.includes('ClarificationChips') && source.includes('clarificationChips(newest'),
   'awaiting option chips come from ClarificationChips, not idle StageChipsPolicy');
 assert(source.includes('chip.command'),
   'clicking a clarification chip must submit the option text, not commandForChip');
 assert(html.includes('../clarification_chips.js'),
   'stage must load the clarification helper as a classic script');
-assert(source.includes("pending ? '#ic-circle' : awaiting ? '#ic-circle' : failed ? '#ic-warn' : '#ic-check'"),
-  'WORKING and YOUR INPUT NEEDED must not reuse the finished checkmark');
+assert(!source.includes("threadEyebrow.querySelector('use')"),
+  'the hidden status node carries text only; there is no header glyph left to swap');
 assert(source.includes("threadClose.setAttribute('aria-label', pending ? '停止' : '关闭')"),
   'the fixed work panel must provide the processing stop affordance');
 assert(source.includes("const resultOwnsComposer = (name === 'result' || name === 'error')"),
