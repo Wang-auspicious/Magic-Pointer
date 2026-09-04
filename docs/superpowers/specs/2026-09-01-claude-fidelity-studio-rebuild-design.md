@@ -247,6 +247,14 @@ statistics, or change workspace identity without an explicit user action.
   from the latest unconsumed pending input after restart.
 - Streaming, queue/steer, graceful stop, scroll-follow, and branch behaviour
   keep their proven data paths.
+- Real reasoning follows Claude Code Desktop's timeline grammar: a quiet
+  Extended-Thinking row, a one-line collapsed recap, and an expanded body that
+  shows the actual stored reasoning text. Completed long reasoning is capped at
+  200px with a bottom fade and explicit Show more/Show less; streaming reasoning
+  remains uncapped. The UI never invents hidden reasoning.
+- `Agent`/legacy `delegate_task` calls use Claude's subagent row grammar: Agent
+  glyph, real task description, running/completed state, step count, and a
+  disclosure containing child tool activity that the Runtime actually emitted.
 
 ### 8.5 Composer
 
@@ -270,6 +278,11 @@ statistics, or change workspace identity without an explicit user action.
   and terminal output survive message rerenders and width changes.
 - BrowserView bounds update after resize and close; it never coverlays Studio
   controls after the Inspector changes state.
+- Tasks is the Claude-style compact task lane. It projects real parent and
+  subagent activity, orders running work before finished work, and exposes each
+  task's description, current tool, step count, status, and final summary.
+  Opening an Agent row focuses the matching task. No real task means an honest
+  empty lane, not fixture activity.
 
 ### 8.7 Customize
 
@@ -280,6 +293,12 @@ statistics, or change workspace identity without an explicit user action.
   and shortcut text.
 - Settings remain bound to the existing save/apply/rollback chain.
 - Content is a continuous sheet with hairline rows, not nested cards.
+- Claude Code Desktop's information architecture is adopted where MP has a
+  real equivalent: model/effort and thinking display, default permissions,
+  Skills, plugins, MCP/connectors, workspace memory, hooks/automation entry
+  points, terminal/environment, updates, diagnostics, and managed/local
+  configuration visibility. Unsupported Claude-only account controls are not
+  copied as dead toggles.
 
 ### 8.8 Design
 

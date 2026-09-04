@@ -133,6 +133,7 @@ const DshChat = (() => {
   interface DisclosureOptions {
     iconName?: string;
     leadingOverride?: DshNode;
+    leadingClass?: string;
     title: string;
     collapsed?: DshNode[];
     body?: DshNode[] | null;
@@ -140,7 +141,7 @@ const DshChat = (() => {
     open?: boolean;
   }
 
-  function disclosureRow(opts: DisclosureOptions): { root: DshNode; toggle(): void } {
+  function disclosureRow(opts: DisclosureOptions): { root: DshNode; row: DshNode; toggle(): void } {
     const open = Boolean(opts.open);
     const expandable = opts.expandable !== false && (opts.body !== null && opts.body !== undefined);
     const root = h('div', { class: 'dsh-disclosure' });
@@ -154,7 +155,9 @@ const DshChat = (() => {
       row.setAttribute('aria-expanded', open ? 'true' : 'false');
     }
 
-    const leading = h('span', { class: 'dsh-leading' });
+    const leading = h('span', {
+      class: opts.leadingClass ? `dsh-leading ${opts.leadingClass}` : 'dsh-leading',
+    });
     if (opts.leadingOverride) {
       attach(leading, opts.leadingOverride);
     } else if (open) {
@@ -194,7 +197,7 @@ const DshChat = (() => {
       if (expandable) row.setAttribute('aria-expanded', next ? 'true' : 'false');
     };
     if (expandable) row.setAttribute('data-dsh-act', 'toggle');
-    return { root, toggle };
+    return { root, row, toggle };
   }
 
   /* ---- 工具调用行模型（tool-call-model.ts 移植） ---- */
@@ -208,7 +211,11 @@ const DshChat = (() => {
 
   const TOOL_TITLES: Record<string, string> = {
     pwsh: 'Pwsh',
+    search: 'Searched',
+    list_dir: 'Listed files in working directory',
   };
+
+  const SUBAGENT_TOOLS = new Set(['Agent', 'delegate_task']);
 
   const TOOL_VARIANTS: Record<string, ToolVariant> = {
     bash: 'bash', pwsh: 'bash', read: 'read', web_fetch: 'read',
@@ -368,9 +375,15 @@ const DshChat = (() => {
     output: string | null;
     errorSummary: string | null;
     state: ToolState;
+    callId: string;
   }
 
-  function toolRowModel(name: string, argsRaw: string, result?: { text?: string; isError?: boolean; interrupted?: boolean }): ToolRowModel {
+  function toolRowModel(
+    name: string,
+    argsRaw: string,
+    result?: { text?: string; isError?: boolean; interrupted?: boolean },
+    callId = '',
+  ): ToolRowModel {
     const variant = classifyTool(name);
     const state: ToolState = result === undefined ? 'running'
       : result.interrupted ? 'stopped'
@@ -378,8 +391,10 @@ const DshChat = (() => {
     const base = argsRaw === '' ? name : deriveSummary(variant, argsRaw);
     // 认不出的工具直接用自己的名字当标题——「Tool call ·」这种前缀和
     // 「· {}」这种尾巴都不提供任何信息，只是把行撑长。
-    const title = TOOL_TITLES[name] ?? (variant === 'others' ? name : VARIANT_TITLES[variant]);
-    const summary = variant === 'others' ? '' : base;
+    const title = SUBAGENT_TOOLS.has(name)
+      ? state === 'running' ? 'Running subagent' : 'Subagent'
+      : TOOL_TITLES[name] ?? (variant === 'others' ? name : VARIANT_TITLES[variant]);
+    const summary = variant === 'others' || name === 'list_dir' ? '' : base;
     const output = result === undefined || !result.text ? null : result.text;
     // 报错只露一行短的：完整原文在折叠体里，展开才见。整段红字倾倒会把
     // 流变成事故现场。
@@ -396,6 +411,7 @@ const DshChat = (() => {
       output,
       errorSummary,
       state,
+      callId,
     };
   }
 
@@ -433,7 +449,10 @@ const DshChat = (() => {
 
     const collapsed: DshNode[] = [];
     if (summaryText !== '') {
-      const sep = h('span', { class: 'dsh-sep', 'aria-hidden': 'true' });
+      /* Claude's tool rows read as a plain action phrase ("Read file.md"),
+         not the dotted metadata grammar used by the thinking row. */
+      const sep = h('span', { class: 'dsh-tool-sep', 'aria-hidden': 'true' });
+      attach(sep, ' ');
       collapsed.push(sep);
       const summary = h('span', { class: failureLine !== null ? 'dsh-summary dsh-error-summary' : 'dsh-summary' });
       attach(summary, summaryText);
@@ -476,15 +495,25 @@ const DshChat = (() => {
     const leadingOverride = model.state === 'error' ? stateDot('error')
       : model.state === 'stopped' ? stateDot('warning') : undefined;
 
-    const { root: disclosure } = disclosureRow({
+    const isSubagent = SUBAGENT_TOOLS.has(model.name) && Boolean(model.callId);
+    const { root: disclosure, row: disclosureAction } = disclosureRow({
       iconName: undefined,
       leadingOverride,
+      leadingClass: 'dsh-tool-caret',
       title: model.title,
       collapsed,
       body: body.length ? body : null,
-      expandable: body.length > 0,
+      expandable: !isSubagent && body.length > 0,
       open: false,
     });
+
+    if (isSubagent) {
+      disclosure.setAttribute('data-subagent-row', '');
+      disclosureAction.setAttribute('data-dsh-act', 'open-subagent');
+      disclosureAction.setAttribute('data-subagent-parent-call-id', model.callId);
+      disclosureAction.setAttribute('role', 'button');
+      disclosureAction.setAttribute('tabindex', '0');
+    }
 
     attach(root, disclosure);
     return root;
@@ -499,17 +528,32 @@ const DshChat = (() => {
 
     const body = h('div', { class: 'dsh-think-body' });
     attach(body, reasoning);
+    const viewport = h('div', { class: 'dsh-think-viewport' });
+    attach(viewport, body);
+    const isLong = !running && (reasoning.length > 420 || reasoning.split('\n').length > 8);
+    if (isLong) attach(viewport, h('span', { class: 'dsh-think-fade', 'aria-hidden': 'true' }));
+    const expandedBody: DshNode[] = [viewport];
+    if (isLong) {
+      const more = h('button', { type: 'button', class: 'dsh-think-more' });
+      more.setAttribute('data-dsh-act', 'think-more');
+      attach(more, 'Show more');
+      expandedBody.push(more);
+    }
 
     const { root } = disclosureRow({
-      iconName: undefined,
-      title: 'Think',
+      iconName: 'think',
+      title: running ? 'Thinking…' : 'Thought',
       collapsed: [h('span', { class: 'dsh-sep', 'aria-hidden': 'true' }), summary],
-      body: [body],
+      body: expandedBody,
       expandable: true,
       open: false,
     });
     root.setAttribute('data-state', running ? 'running' : 'ok');
     root.setAttribute('class', 'dsh-disclosure dsh-think');
+    if (isLong) {
+      root.setAttribute('data-long', 'true');
+      root.setAttribute('data-expanded', 'false');
+    }
     return root;
   }
 
@@ -554,8 +598,12 @@ const DshChat = (() => {
 
   /* ---- 回合状态行（turnStatus 渐变字） ---- */
   function turnStatusNode(label: string): DshNode {
-    const root = h('div', { class: 'dsh-turn-status', role: 'status' });
-    attach(root, label);
+    const root = h('div', { class: 'dsh-turn-status', role: 'status', 'aria-label': label });
+    attach(root, h('span', { class: 'dsh-thinking-mark', 'aria-hidden': 'true' }));
+    const copy = h('span', { class: 'dsh-turn-status-label' });
+    if (label === 'Thinking') copy.setAttribute('data-quiet', 'true');
+    attach(copy, label);
+    attach(root, copy);
     return root;
   }
 
@@ -599,6 +647,9 @@ const DshChat = (() => {
   interface TurnChip {
     name: string;
     argsRaw: string;
+    callId: string;
+    groupLabel?: string;
+    displayLabel?: string;
     result?: { text: string; isError: boolean; interrupted?: boolean };
   }
 
@@ -623,7 +674,12 @@ const DshChat = (() => {
   }
 
   function chipNode(chip: TurnChip): DshNode {
-    return toolRowNode(toolRowModel(chip.name, chip.argsRaw, chip.result));
+    const model = toolRowModel(chip.name, chip.argsRaw, chip.result, chip.callId);
+    if (chip.displayLabel?.trim()) {
+      model.title = chip.displayLabel.trim();
+      model.summary = '';
+    }
+    return toolRowNode(model);
   }
 
   /* 连续同类读取/搜索折成一条组头（CC "Read 2 files" 契约）。 */
@@ -633,7 +689,9 @@ const DshChat = (() => {
      上一版模仿不到位的原因。 */
   function toolGroupNode(chips: TurnChip[]): DshNode {
     const root = h('details', { class: 'dsh-tool-group' });
-    root.setAttribute('open', '');
+    /* Claude keeps the short, two-action groups open so the user can scan the
+       concrete actions immediately; longer runs stay compact until requested. */
+    if (chips.length <= 2) root.setAttribute('open', '');
     const summary = h('summary', { class: 'dsh-tool-group-header' });
     const label = h('span', { class: 'dsh-tool-group-title' });
     attach(label, toolGroupLabel(chips));
@@ -649,6 +707,8 @@ const DshChat = (() => {
   }
 
   function toolGroupLabel(chips: TurnChip[]): string {
+    const explicit = chips.find((chip) => typeof chip.groupLabel === 'string' && chip.groupLabel.trim());
+    if (explicit?.groupLabel) return explicit.groupLabel.trim();
     const n = chips.length;
     const variants = new Set(chips.map((chip) => classifyTool(chip.name)));
     if (variants.size === 1) {
@@ -682,7 +742,11 @@ const DshChat = (() => {
 
   function runMetaNode(meta: string): DshNode {
     const root = h('div', { class: 'dsh-run-meta', role: 'status' });
-    attach(root, meta);
+    const mark = h('span', { class: 'dsh-run-meta-mark', 'aria-hidden': 'true' });
+    const copy = h('span', { class: 'dsh-run-meta-copy' });
+    attach(copy, meta);
+    attach(root, mark);
+    attach(root, copy);
     return root;
   }
 
@@ -711,6 +775,9 @@ const DshChat = (() => {
         chip: {
           name: String(record.name || 'tool'),
           argsRaw: String(record.text || ''),
+          callId: String(record.callId || ''),
+          groupLabel: typeof record.groupLabel === 'string' ? record.groupLabel : undefined,
+          displayLabel: typeof record.summary === 'string' ? record.summary : undefined,
           result: record.result !== undefined && record.result !== null
             ? { text: String(record.result || ''), isError: Boolean(record.isError) }
             : record.state === 'running' ? undefined : { text: '', isError: false },
@@ -732,6 +799,9 @@ const DshChat = (() => {
         chip: {
           name: String(event.name || event.tool || ''),
           argsRaw,
+          callId: String(event.callId || event.id || ''),
+          groupLabel: typeof event.groupLabel === 'string' ? event.groupLabel : undefined,
+          displayLabel: typeof event.summary === 'string' ? event.summary : undefined,
           result: event.result !== undefined
             ? {
               text: String(event.result || ''),
@@ -784,13 +854,15 @@ const DshChat = (() => {
       .map((record) => Number(record.completedAt) || 0)
       .filter((value) => value > 0);
     const totalTokens = Number(turn.modelUsage?.totalTokens) || 0;
+    if (turn.answer) {
+      attach(bodyHost, markdownRenderer.render(turn.answer));
+    }
+
+    /* Claude places the compact run summary after the answer, so it reads as
+       metadata for the completed turn rather than as another activity row. */
     if (times.length && doneTimes.length) {
       const elapsed = Math.max(0, Math.max(...doneTimes) - Math.min(...times));
       attach(bodyHost, runMetaNode(formatRunMeta(elapsed, totalTokens || null)));
-    }
-
-    if (turn.answer) {
-      attach(bodyHost, markdownRenderer.render(turn.answer));
     }
 
     if (turn.failed && !turn.answer) {
@@ -901,6 +973,18 @@ const DshChat = (() => {
       const kind = act.getAttribute('data-dsh-act');
       if (kind === 'toggle') {
         toggleDisclosure(act);
+      } else if (kind === 'open-subagent') {
+        const parentCallId = act.getAttribute('data-subagent-parent-call-id') || '';
+        if (!parentCallId) return;
+        DOC.dispatchEvent(new CustomEvent('mp:open-subagent', {
+          detail: { parentCallId },
+        }));
+      } else if (kind === 'think-more') {
+        const disclosure = act.closest<HTMLElement>('.dsh-think');
+        if (!disclosure) return;
+        const expanded = disclosure.dataset.expanded === 'true';
+        disclosure.dataset.expanded = expanded ? 'false' : 'true';
+        act.textContent = expanded ? 'Show more' : 'Show less';
       } else if (kind === 'copy') {
         const text = act.getAttribute('data-dsh-copy') || '';
         const button = act;
@@ -927,10 +1011,11 @@ const DshChat = (() => {
     });
     host.addEventListener('keydown', (event: KeyboardEvent) => {
       if (event.key !== 'Enter' && event.key !== ' ') return;
-      const row = (event.target as HTMLElement | null)?.closest?.('.dsh-row[data-dsh-act="toggle"]') as HTMLElement | null;
+      const row = (event.target as HTMLElement | null)?.closest?.('.dsh-row[data-dsh-act]') as HTMLElement | null;
       if (!row) return;
       event.preventDefault();
-      toggleDisclosure(row);
+      if (row.dataset.dshAct === 'toggle') toggleDisclosure(row);
+      else row.click();
     });
   }
 

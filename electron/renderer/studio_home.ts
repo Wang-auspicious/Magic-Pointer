@@ -60,6 +60,12 @@ function compactNumber(value: unknown): string {
   return Math.round(number).toLocaleString('zh-CN');
 }
 
+/* Claude's overview keeps ordinary counts readable at their full precision
+   ("52,275"), while only the token total switches to compact B/M/K notation. */
+function countNumber(value: unknown): string {
+  return Math.round(finite(value)).toLocaleString('en-US');
+}
+
 function stateOf(item: HomeAttentionItem): string {
   const state = String(item.state ?? '').trim();
   if (state) return state;
@@ -86,34 +92,34 @@ function heatLevel(messages: number, max: number): number {
 
 function renderStatsCard(stats: HomeStatsLike | null): string {
   if (!stats) {
-    return '<p class="mp-home-stats-unavailable">统计暂不可用；对话仍可正常开始。</p>';
+    return '<p class="mp-home-stats-unavailable">Stats unavailable. You can still start a task.</p>';
   }
   const heatmap = Array.isArray(stats.heatmap) ? stats.heatmap : [];
   const max = Math.max(0, ...heatmap.map((day) => finite(day.messages)));
   const tiles = [
-    statTile('会话', compactNumber(stats.sessions)),
-    statTile('消息', compactNumber(stats.messages)),
-    statTile('总 token', compactNumber(stats.totalTokens)),
-    statTile('活跃天数', compactNumber(stats.activeDays)),
-    statTile('当前连续', `${compactNumber(stats.currentStreak)}天`),
-    statTile('最长连续', `${compactNumber(stats.longestStreak)}天`),
-    statTile('高峰时段', stats.peakHour === null ? '—' : `${String(stats.peakHour).padStart(2, '0')}:00`),
-    statTile('常用模型', stats.favoriteModel || '—'),
+    statTile('Sessions', countNumber(stats.sessions)),
+    statTile('Messages', countNumber(stats.messages)),
+    statTile('Total tokens', compactNumber(stats.totalTokens)),
+    statTile('Active days', countNumber(stats.activeDays)),
+    statTile('Current streak', `${countNumber(stats.currentStreak)}d`),
+    statTile('Longest streak', `${countNumber(stats.longestStreak)}d`),
+    statTile('Peak hour', stats.peakHour === null ? '—' : `${((stats.peakHour + 11) % 12) + 1} ${stats.peakHour >= 12 ? 'PM' : 'AM'}`),
+    statTile('Favorite model', stats.favoriteModel || '—'),
   ].join('');
   const cells = heatmap.map((day) => {
     const messages = finite(day.messages);
-    return `<i data-level="${heatLevel(messages, max)}"${day.future ? ' data-future="true"' : ''} title="${esc(day.date)} · ${messages} 条消息"></i>`;
+    return `<i data-level="${heatLevel(messages, max)}"${day.future ? ' data-future="true"' : ''} title="${esc(day.date)} · ${messages} messages"></i>`;
   }).join('');
   return `<div class="mp-home-stat-grid">${tiles}</div><div class="mp-home-heatmap" aria-label="近半年活动热力图">${cells}</div>`;
 }
 
 function attentionLabel(state: string): string {
   switch (state) {
-    case 'awaiting': return '等待你的决定';
-    case 'running': return '正在运行';
-    case 'review': return '可以审阅';
-    case 'resumable': return '可以继续';
-    case 'ready': return '已有新结果';
+    case 'awaiting': return 'Needs your input';
+    case 'running': return 'Running';
+    case 'review': return 'Ready to review';
+    case 'resumable': return 'Continue';
+    case 'ready': return 'New result';
     default: return '';
   }
 }
@@ -148,7 +154,7 @@ function render(options: {
     button.className = 'mp-home-attention-row';
     button.dataset.conversationId = item.id;
     const title = document.createElement('strong');
-    title.textContent = String(item.title || '未命名会话');
+    title.textContent = String(item.title || 'Untitled');
     const state = document.createElement('span');
     state.textContent = attentionLabel(stateOf(item));
     button.append(title, state);

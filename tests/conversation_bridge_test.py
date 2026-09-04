@@ -10,11 +10,35 @@ class _FakeClock:
     def __init__(self) -> None:
         self.elapsed = 0.0
         self.marks: list[tuple[str, dict]] = []
+        self.blobs: list[tuple[str, str]] = []
 
     def mark(self, phase: str, **fields):
         self.elapsed += 100.0
         self.marks.append((phase, fields))
         return self.elapsed
+
+    def mark_blob(self, phase: str, blob: str):
+        self.blobs.append((phase, blob))
+        return self.elapsed
+
+
+def test_subagent_progress_uses_lossless_bounded_blob() -> None:
+    import base64
+    import json
+
+    clock = _FakeClock()
+    payload = {
+        "id": "child-a",
+        "description": "核对右侧文件预览",
+        "status": "running",
+        "stepCount": 1,
+        "currentTool": "Read",
+        "steps": [{"index": 1, "tool": "Read", "status": "running"}],
+    }
+    conversation_bridge._emit_subagent_progress(clock, payload)
+    assert clock.blobs[0][0] == "subagent"
+    decoded = json.loads(base64.b64decode(clock.blobs[0][1]).decode("utf-8"))
+    assert decoded == payload
 
 
 def test_answer_conversation_rejects_empty_question() -> None:

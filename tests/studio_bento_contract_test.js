@@ -14,6 +14,11 @@ assert(!html.includes('mp-design-bento'), 'Design marketing bento is deleted');
 assert(!html.includes('sv-bento-card'), 'Design does not retain SV hover choreography');
 assert.strictEqual((html.match(/class="mp-design-action-row"/g) || []).length, 4,
   'Design exposes four real workbench actions');
+assert.match(html, /class="mp-design-intro">\s*<h1>Cowork<\/h1>/,
+  'the left segment and its destination use the same Claude product name');
+for (const label of ['Canvas', 'Assets', 'Files', 'Artifacts']) {
+  assert(html.includes(`<strong>${label}</strong>`), `Cowork row missing: ${label}`);
+}
 for (const action of ['canvas', 'list', 'files', 'artifacts']) {
   assert(html.includes(`data-design-action="${action}"`), `Design action missing: ${action}`);
 }

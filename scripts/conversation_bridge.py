@@ -363,6 +363,42 @@ class _ConversationActivitySink:
             )
 
 
+def _emit_subagent_progress(clock: PhaseClock, payload: dict[str, Any]) -> None:
+    """Send one truthful, bounded child snapshot over the existing progress line."""
+    safe = dict(payload or {})
+    safe["id"] = str(safe.get("id") or "")[:120]
+    safe["description"] = str(safe.get("description") or "")[:600]
+    safe["currentTool"] = str(safe.get("currentTool") or "")[:120]
+    if "summary" in safe:
+        safe["summary"] = str(safe.get("summary") or "")[:1200]
+    steps = safe.get("steps") if isinstance(safe.get("steps"), list) else []
+    bounded_steps: list[dict[str, Any]] = []
+    for raw in steps[-12:]:
+        if not isinstance(raw, dict):
+            continue
+        step = {
+            "index": int(raw.get("index") or 0),
+            "tool": str(raw.get("tool") or "")[:120],
+            "status": str(raw.get("status") or "")[:40],
+        }
+        for key, limit in (
+            ("callId", 120),
+            ("input", 400),
+            ("output", 400),
+            ("usedBackend", 120),
+        ):
+            if raw.get(key):
+                step[key] = str(raw[key])[:limit]
+        if raw.get("latencyMs"):
+            step["latencyMs"] = float(raw["latencyMs"])
+        bounded_steps.append(step)
+    safe["steps"] = bounded_steps
+    blob = base64.b64encode(
+        json.dumps(safe, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    ).decode("ascii")
+    clock.mark_blob("subagent", blob)
+
+
 def _completed_result(
     mapped: dict[str, Any],
     *,
@@ -1019,6 +1055,10 @@ def answer_conversation(
     # durable session 打开后回填真正的 enqueue 回调。
     inbox_cell: dict[str, Any] = {"fn": None}
     runtime["session_inbox"] = lambda text: (inbox_cell["fn"] or (lambda _t: None))(text)
+    subagent_sink_cell: dict[str, Any] = {"fn": None}
+    runtime["subagent_event_sink"] = lambda payload: (
+        subagent_sink_cell["fn"] or (lambda _payload: None)
+    )(payload)
     runtime["workspace_root"] = resolved_workspace
     runtime["permission_mode"] = mode.value
     runtime["permission_preset"] = permission_preset
@@ -1189,6 +1229,10 @@ def answer_conversation(
         activity_sink = _ConversationActivitySink(
             conversation_clock,
             request_header=request_header,
+        )
+        subagent_sink_cell["fn"] = lambda payload: _emit_subagent_progress(
+            conversation_clock,
+            payload,
         )
         from app.agent_runtime.session import cancel_interrupt_check
 

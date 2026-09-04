@@ -27,7 +27,7 @@ export function workspaceCapabilityState(root: unknown): WorkspaceCapabilityStat
     return {
       bound: false,
       codingTools: false,
-      label: '选择文件夹…',
+      label: 'Select folder…',
     };
   }
   return {

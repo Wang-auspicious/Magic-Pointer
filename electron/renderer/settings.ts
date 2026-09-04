@@ -72,11 +72,11 @@ function controlForSetting(row: any, value: unknown) {
       value="${escSetting(text)}" spellcheck="false">`;
   }
   const infoValue = row.infoKey
-    ? settingsModel.modelInfoValue(row.infoKey, activeModelStatus)
-    : row.label === '范围授权'
+    ? row.infoKey === 'grants'
       ? Array.isArray(canonicalSettings.permissions?.scoped_grants) ? canonicalSettings.permissions.scoped_grants.length : 0
-      : null;
-  const displayValue = typeof infoValue === 'number' ? `${infoValue} 项` : infoValue || '只读';
+      : settingsModel.modelInfoValue(row.infoKey, activeModelStatus)
+    : null;
+  const displayValue = typeof infoValue === 'number' ? `${infoValue} active` : infoValue || 'Read only';
   return `<span class="settings-info-value" data-info-key="${escSetting(row.infoKey || '')}">${escSetting(displayValue)}</span>`;
 }
 
@@ -98,16 +98,16 @@ function renderSettingsSection(title: string, rows: any[]) {
 
 function renderMemoryLibrary() {
   if (!learnedMemories.length) {
-    return `<section class="claude-settings-section claude-memory-library"><h3>已学习的上下文</h3>
-      <div class="claude-memory-empty">还没有形成可复用记忆。反复处理同一个对象后，它会在这里出现。</div></section>`;
+    return `<section class="claude-settings-section claude-memory-library"><h3>Memory files</h3>
+      <div class="claude-memory-empty">No memory files yet. Repeated work on the same objects will appear here.</div></section>`;
   }
-  return `<section class="claude-settings-section claude-memory-library"><h3>已学习的上下文</h3><div class="claude-memory-list">
+  return `<section class="claude-settings-section claude-memory-library"><h3>Memory files</h3><div class="claude-memory-list">
     ${learnedMemories.slice(0, 12).map((memory) => {
-      const identity = String(memory.object?.windowTitle || memory.object?.label || memory.object?.app || '未命名对象');
+      const identity = String(memory.object?.windowTitle || memory.object?.label || memory.object?.app || 'Untitled object');
       const questions = Array.isArray(memory.questions) ? memory.questions.slice(0, 2) : [];
       return `<article class="claude-memory-item"><span class="claude-memory-mark">${settingIcon('ic-memory')}</span>
-        <span class="claude-memory-copy"><b>${escSetting(identity)}</b><small>${escSetting(questions.join(' · ') || memory.subtitle || '本地上下文')}</small></span>
-        <span class="claude-memory-count">${escSetting(memory.touches || 0)} 次</span></article>`;
+        <span class="claude-memory-copy"><b>${escSetting(identity)}</b><small>${escSetting(questions.join(' · ') || memory.subtitle || 'Local context')}</small></span>
+        <span class="claude-memory-count">${escSetting(memory.touches || 0)} uses</span></article>`;
     }).join('')}
   </div></section>`;
 }
@@ -136,10 +136,10 @@ function renderSettingsSearchResults(query: string) {
   }
   const count = matches.reduce((total, section) => total + section.rows.length, 0);
   return `<section class="claude-settings-page" data-page="search">
-    <header class="claude-settings-page-head"><div><h2>搜索设置</h2><p>“${escSetting(query)}” · ${count} 项</p></div></header>
+    <header class="claude-settings-page-head"><div><h2>Search settings</h2><p>“${escSetting(query)}” · ${count} results</p></div></header>
     ${matches.length
       ? `<div class="claude-settings-sections">${matches.map((section) => renderSettingsSection(section.title, section.rows)).join('')}</div>`
-      : '<div class="claude-settings-search-empty">没有匹配的设置。</div>'}
+      : '<div class="claude-settings-search-empty">No matching settings.</div>'}
   </section>`;
 }
 
@@ -147,7 +147,7 @@ function setSettingsStatus(state: 'idle' | 'saving' | 'saved' | 'error', message
   const status = document.getElementById('settings-save-status');
   if (!status) return;
   status.dataset.state = state;
-  status.textContent = message || (state === 'saving' ? '正在保存…' : state === 'saved' ? '已保存' : '');
+  status.textContent = message || (state === 'saving' ? 'Saving…' : state === 'saved' ? 'Saved' : '');
 }
 
 function renderSettings() {
@@ -160,7 +160,7 @@ function renderSettings() {
   }
   const groups = new Map<string, any[]>();
   settingsModel.SETTINGS_PAGES.forEach((page) => {
-    const group = String(page.group || '设置');
+    const group = String(page.group || 'Settings');
     groups.set(group, [...(groups.get(group) || []), page]);
   });
   nav.innerHTML = [...groups.entries()].map(([group, pages]) => `<section class="settings-nav-group">
@@ -211,7 +211,7 @@ async function persistSetting(path: string, value: unknown) {
   setSettingsStatus('saving');
   try {
     const response = await api.saveFabricSettings(patch);
-    if (!response?.ok || !response.settings) throw new Error(response?.error || '主进程没有确认这次设置。');
+    if (!response?.ok || !response.settings) throw new Error(response?.error || 'The main process did not confirm this setting.');
     hydrateCanonical(response.settings);
     const savedRow = document.querySelector<HTMLElement>(`[data-setting-row="${CSS.escape(path)}"]`);
     if (savedRow) savedRow.dataset.saveState = 'saved';
@@ -289,7 +289,7 @@ async function hydrateSettings() {
     const [response, memories] = await Promise.all([api.getFabricSettings(), memoryPromise]);
     learnedMemories = Array.isArray(memories) ? memories : [];
     if (response?.ok && response.settings) hydrateCanonical(response.settings, response.modelStatus);
-    else setSettingsStatus('error', response?.error || '设置没有载入。');
+    else setSettingsStatus('error', response?.error || 'Settings did not load.');
   } catch (error) {
     setSettingsStatus('error', error instanceof Error ? error.message : String(error));
   }

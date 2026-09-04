@@ -24,7 +24,7 @@ const PRESETS: PresetOption[] = [
   {
     value: 'workspace-write',
     name: '接受编辑',
-    label: '接受编辑',
+    label: 'Accept edits',
     description: '项目文件夹内的可逆写入直接执行；更大范围的操作需要确认。',
     primary: true,
   },

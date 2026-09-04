@@ -18,6 +18,10 @@ assert.match(css, /\.mp-plan-check\s*\{[^}]*width:\s*16px[^}]*height:\s*16px/s);
 assert.match(css, /\.dshw-plan-step\.is-active \.mp-plan-check\s*\{[^}]*var\(--mp-clay\)/s);
 assert.match(css, /\.dshw-plan-step\.is-done \.mp-plan-check\s*\{[^}]*background:\s*var\(--mp-text\)/s);
 assert.match(css, /\.dshw-plan-step\.is-done \.mp-plan-step-label\s*\{[^}]*text-decoration:\s*line-through/s);
-assert(!css.includes('infinite'), 'plan state must not pulse forever');
+const planRules = (css.match(/(?:\.dshw-plan|\.mp-plan)[^{]*\{[^}]*\}/g) || []).join('\n');
+assert(!/animation\s*:[^;}]*(?:infinite|pulse)/i.test(planRules),
+  'plan state must not pulse forever');
+assert(!/@keyframes\s+[^\s{]*plan[^\s{]*(?:pulse)?/i.test(css),
+  'plan state must not regain a dedicated pulse animation');
 
 console.log('studio plan checkbox contract ok');

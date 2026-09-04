@@ -76,8 +76,10 @@ assert.match(studio, /pendingPermissionAsk:\s*\{ tool: string; prefix\?: string 
   'Studio pending permission state must retain the command prefix');
 assert(studio.includes('ConversationControl.permissionGrantRule'),
   'Studio must build a deterministic Bash(prefix) grant rule');
-assert.match(studio, /总是允许 \$\{prefix \|\| tool\}/,
+assert.match(studio, /Always allow \$\{prefix \|\| tool\}/,
   'the always-allow button must show the granted command prefix');
+assert(studio.includes("make('Allow once'"));
+assert(studio.includes("make('Deny'"));
 assert.match(preload, /permissionGrant[^\n]*slice\(0, 200\)/,
   'preload must not truncate a bounded Bash(prefix) rule at the old 64-char tool-name cap');
 

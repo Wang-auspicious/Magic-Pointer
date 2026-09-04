@@ -246,6 +246,11 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
       command: String(command || '').trim().slice(0, 40),
     }),
   },
+  updates: {
+    status: () => ipcRenderer.invoke('updates:status'),
+    check: () => ipcRenderer.invoke('updates:check'),
+    onStatus: (callback: PayloadCallback) => onPayload('dashboard:update-status', callback),
+  },
   conversations: {
     list: () => ipcRenderer.invoke('conversations:list'),
     stats: () => ipcRenderer.invoke('conversations:stats'),

@@ -12,7 +12,7 @@ assert.deepStrictEqual(VALUES, ['plan', 'workspace-write', 'danger-full-access',
 assert.deepStrictEqual(PRIMARY_PRESETS.map(option => option.value), [
   'plan', 'workspace-write', 'danger-full-access',
 ]);
-assert.strictEqual(optionOf('workspace-write').label, '接受编辑');
+assert.strictEqual(optionOf('workspace-write').label, 'Accept edits');
 assert.strictEqual(optionOf('read-only').primary, false);
 
 for (const option of PRESETS) {

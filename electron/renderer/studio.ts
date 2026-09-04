@@ -230,6 +230,9 @@ let sidebarQuery = '';
 let sidebarRecentOnly = false;
 const expandedWorkspaces = new Map<string, boolean>();
 let activeProjectRoot = '';
+let projectEnvironment: MagicPointerProjectEnvironment | null = null;
+let repositoryContextDismissedFor = '';
+let repositoryContextRequest = 0;
 try { activeProjectRoot = localStorage.getItem('mp:active-project-root') || ''; } catch { /* storage unavailable */ }
 
 function normalizedProjectRoot(root: unknown): string {
@@ -255,7 +258,12 @@ function renderProjectContext() {
   const headerLabel = document.getElementById('chat-project-label');
   const locationLabel = document.getElementById('header-location-label');
   const workspaceLabel = document.getElementById('composer-workspace-label');
+  const contextRow = document.querySelector<HTMLElement>('.mp-composer-context-row');
+  const repositoryRow = document.getElementById('composer-repository-context');
   const hasProject = Boolean(activeProjectRoot);
+  const homeVisible = !document.getElementById('studio-home')?.hidden;
+  if (contextRow) contextRow.hidden = hasProject && !homeVisible;
+  if (repositoryRow && (!hasProject || homeVisible || !activeConversationId)) repositoryRow.hidden = true;
   const designStatus = document.querySelector<HTMLElement>('.mp-design-live');
   if (designStatus) {
     designStatus.classList.toggle('is-offline', !hasProject);
@@ -264,10 +272,10 @@ function renderProjectContext() {
   }
   if (!headerLabel) return;
   if (!hasProject) {
-    headerLabel.textContent = '本机会话';
+    headerLabel.textContent = 'Local';
     headerLabel.removeAttribute('title');
-    if (locationLabel) locationLabel.textContent = '本机';
-    if (workspaceLabel) workspaceLabel.textContent = '选择文件夹…';
+    if (locationLabel) locationLabel.textContent = 'Local';
+    if (workspaceLabel) workspaceLabel.textContent = 'Select folder…';
     return;
   }
   const parts = activeProjectRoot.replace(/\\/g, '/').split('/').filter(Boolean);
@@ -276,6 +284,63 @@ function renderProjectContext() {
   headerLabel.title = activeProjectRoot;
   if (locationLabel) locationLabel.textContent = projectName;
   if (workspaceLabel) workspaceLabel.textContent = projectName;
+}
+
+function repositoryContextKey() {
+  return `${activeConversationId || ''}\u0000${normalizedProjectRoot(activeProjectRoot)}`;
+}
+
+function applyRepositoryContextBar(response: MagicPointerProjectEnvironment | null) {
+  const row = document.getElementById('composer-repository-context');
+  const inspectorButton = document.getElementById('inspector-toggle');
+  if (!row) return;
+  const homeVisible = !document.getElementById('studio-home')?.hidden;
+  const changes = Number(response?.changedFiles || 0);
+  const visible = Boolean(
+    activeConversationId
+    && activeProjectRoot
+    && !homeVisible
+    && response?.ok
+    && response?.isGit
+    && repositoryContextDismissedFor !== repositoryContextKey()
+  );
+  row.hidden = !visible;
+  inspectorButton?.toggleAttribute('data-has-changes', visible && changes > 0);
+  if (!visible || !response) return;
+
+  const projectName = activeProjectRoot.replace(/\\/g, '/').split('/').filter(Boolean).pop() || 'Project';
+  const displayName = String(response.name || projectName);
+  const repositoryName = document.getElementById('composer-repository-name');
+  const branchName = document.getElementById('composer-branch-name');
+  const added = document.getElementById('composer-diff-added');
+  const deleted = document.getElementById('composer-diff-deleted');
+  const createPr = document.getElementById('composer-create-pr') as HTMLButtonElement | null;
+  if (repositoryName) repositoryName.textContent = displayName;
+  const headerProject = document.getElementById('chat-project-label');
+  if (headerProject) headerProject.textContent = displayName;
+  if (branchName) branchName.textContent = String(response.branch || 'main');
+  if (added) added.textContent = `+${Number(response.addedLines || 0).toLocaleString('en-US')}`;
+  if (deleted) deleted.textContent = `−${Number(response.deletedLines || 0).toLocaleString('en-US')}`;
+  if (createPr) {
+    createPr.disabled = changes <= 0 && !response.pullRequestUrl;
+    createPr.title = response.pullRequestUrl ? 'Open pull request comparison' : 'Review changes before creating a pull request';
+  }
+}
+
+async function renderRepositoryContextBar(force = false) {
+  const request = ++repositoryContextRequest;
+  if (!activeConversationId || !activeProjectRoot || !document.getElementById('studio-home')?.hidden) {
+    applyRepositoryContextBar(null);
+    return;
+  }
+  if (!force && projectEnvironment?.root === activeProjectRoot) {
+    applyRepositoryContextBar(projectEnvironment);
+    return;
+  }
+  const response = await Data.projectEnvironment(activeProjectRoot, activeConversationId);
+  if (request !== repositoryContextRequest) return;
+  projectEnvironment = response;
+  applyRepositoryContextBar(response);
 }
 interface SidebarWorkspaceGroup {
   key: string;
@@ -321,6 +386,34 @@ interface StudioSearchModule {
   searchStudioIndex(index: readonly StudioSearchItem[], query: unknown, limit?: number): StudioSearchItem[];
 }
 const studioSearchGlobals = (globalThis as { StudioSearch?: StudioSearchModule }).StudioSearch!;
+interface StudioSubagentStep {
+  index: number;
+  tool: string;
+  status: string;
+  usedBackend?: string;
+  latencyMs?: number;
+}
+interface StudioSubagentTask {
+  id: string;
+  parentCallId: string;
+  description: string;
+  status: string;
+  stepCount: number;
+  currentTool: string;
+  summary: string;
+  readonly: boolean;
+  steps: StudioSubagentStep[];
+  startedAt: number;
+  completedAt: number;
+}
+interface StudioSubagentsModule {
+  activeSubagentParentCallId(records: ReadonlyArray<Record<string, unknown>>): string;
+  projectSubagentTasks(
+    turns: ReadonlyArray<Record<string, unknown>>,
+    live?: ReadonlyArray<Partial<StudioSubagentTask>>,
+  ): StudioSubagentTask[];
+}
+const studioSubagentGlobals = (globalThis as { StudioSubagents?: StudioSubagentsModule }).StudioSubagents!;
 
 const STUDIO_SEARCH_ROUTES = [
   { id: 'chat', label: '新建对话', keywords: ['首页', '会话', 'new'] },
@@ -334,7 +427,14 @@ let studioSearchIndex: StudioSearchItem[] = [];
 let visibleSearchResults: StudioSearchItem[] = [];
 let globalSearchActiveIndex = 0;
 
-function conversationNode(c: { id?: string; title?: string; updatedAt?: number; hasPendingWork?: boolean }, active?: string): HTMLElement {
+function conversationNode(c: {
+  id?: string;
+  title?: string;
+  updatedAt?: number;
+  hasPendingWork?: boolean;
+  failed?: boolean;
+  turns?: MagicPointerTurn[];
+}, active?: string): HTMLElement {
   const row = document.createElement('button');
   row.className = 'side-item' + (c.id === active ? ' is-on' : '');
   row.dataset.open = String(c.id || '');
@@ -342,11 +442,20 @@ function conversationNode(c: { id?: string; title?: string; updatedAt?: number; 
   // 会话行保持安静：标题是主体，待续状态与操作只在需要时出现。
   const dot = document.createElement('span');
   dot.className = 'side-dot';
+  const lastTurn = Array.isArray(c.turns) ? c.turns[c.turns.length - 1] : undefined;
+  const hasError = c.failed === true || lastTurn?.failed === true;
   dot.classList.toggle('is-pending', c.hasPendingWork === true);
+  dot.classList.toggle('is-error', hasError);
+  if (hasError) dot.innerHTML = icon('ic-warning');
   if (c.hasPendingWork) {
     dot.title = '有未完成工作，可继续此会话';
     row.dataset.pendingWork = 'true';
     row.setAttribute('aria-label', `${String(c.title || '未命名对话')}，有待续工作`);
+  }
+  if (hasError) {
+    dot.title = '上一轮没有完成';
+    row.dataset.error = 'true';
+    row.setAttribute('aria-label', `${String(c.title || '未命名对话')}，上一轮没有完成`);
   }
   dot.setAttribute('aria-hidden', 'true');
   const title = document.createElement('span');
@@ -481,6 +590,73 @@ function openRenameDialog(id: string, currentTitle: string) {
   });
 })();
 
+const EMPTY_SESSION_SOLIDS: ReadonlyArray<readonly [number, number, number, number]> = [
+  [90, 0, 20, 20],
+  [90, 40, 20, 20],
+  [70, 20, 20, 20],
+  [110, 20, 20, 20],
+];
+const EMPTY_SESSION_CHECKERS: ReadonlyArray<readonly [number, number, number, number]> = [
+  [20, 40, 20, 20],
+  [20, 80, 20, 20],
+  [0, 60, 20, 20],
+  [40, 60, 20, 20],
+  [90, 20, 20, 20],
+  [140, 40, 10, 20],
+  [110, 60, 10, 20],
+  [130, 60, 20, 20],
+  [120, 80, 20, 20],
+  [110, 100, 10, 20],
+  [100, 120, 10, 20],
+];
+const EMPTY_SESSION_SPARSE: ReadonlyArray<readonly [number, number, number, number]> = [
+  [20, 60, 20, 20],
+  [40, 100, 10, 20],
+  [50, 120, 10, 20],
+];
+let cachedEmptySessionsPictogramPath = '';
+
+function pixelRegionPath(
+  regions: ReadonlyArray<readonly [number, number, number, number]>,
+  include: (row: number, column: number) => boolean,
+) {
+  let path = '';
+  for (const [left, top, width, height] of regions) {
+    for (let row = 0; row < height; row += 1) {
+      for (let column = 0; column < width; column += 1) {
+        if (include(row, column)) path += `M${left + column} ${top + row}h1v1h-1z`;
+      }
+    }
+  }
+  return path;
+}
+
+function emptySessionsPictogramPath() {
+  if (cachedEmptySessionsPictogramPath) return cachedEmptySessionsPictogramPath;
+  cachedEmptySessionsPictogramPath = EMPTY_SESSION_SOLIDS
+    .map(([left, top, width, height]) => `M${left} ${top}h${width}v${height}h${-width}z`)
+    .join('')
+    + pixelRegionPath(EMPTY_SESSION_CHECKERS, (row, column) => (row + column) % 2 === 0)
+    + pixelRegionPath(EMPTY_SESSION_SPARSE, (row, column) => row % 2 === 0 && column % 2 === 0);
+  return cachedEmptySessionsPictogramPath;
+}
+
+function emptySessionsPictogram() {
+  const namespace = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(namespace, 'svg');
+  svg.classList.add('side-empty-pictogram');
+  svg.setAttribute('width', '82.5');
+  svg.setAttribute('height', '77');
+  svg.setAttribute('viewBox', '0 0 150 140');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('aria-hidden', 'true');
+  const path = document.createElementNS(namespace, 'path');
+  path.setAttribute('d', emptySessionsPictogramPath());
+  path.setAttribute('fill', 'currentColor');
+  svg.appendChild(path);
+  return svg;
+}
+
 async function renderSidebar() {
   const host = document.getElementById('side-convos');
   if (!host) return;
@@ -516,10 +692,16 @@ async function renderSidebar() {
     ...projectGroups,
     ...(localGroup ? [{ key: '', label: localGroup.label, items: localGroup.items as MagicPointerConversation[] }] : []),
   ];
+  const browser = host.closest<HTMLElement>('.dshw-workspace-browser');
+  browser?.classList.toggle('is-empty', groups.length === 0);
   if (!groups.length) {
     const empty = document.createElement('div');
     empty.className = 'side-empty';
-    empty.textContent = projects.length ? '没有匹配的会话。' : '从新建开始';
+    const label = document.createElement('span');
+    label.className = 'side-empty-label';
+    label.textContent = projects.length ? 'No matching sessions' : 'Sessions you start will show up here';
+    empty.append(label);
+    if (!projects.length) empty.append(emptySessionsPictogram());
     nodes.push(empty);
   }
   for (const group of groups) {
@@ -529,14 +711,34 @@ async function renderSidebar() {
     project.classList.toggle('is-active', normalizedProjectRoot(group.key) === normalizedProjectRoot(activeProjectRoot));
     project.dataset.open = String(open);
     project.dataset.workspace = group.key;
-    const head = document.createElement('button');
-    head.type = 'button';
+    const head = document.createElement('div');
     head.className = 'dshw-project-row';
-    head.dataset.workspaceToggle = group.key;
-    head.dataset.projectSelect = group.key;
-    head.setAttribute('aria-expanded', String(open));
-    head.innerHTML = `<span class="dshw-project-slot dshw-project-chevron">${icon('ic-triangle-right', open ? 'is-open' : '')}</span><span class="dshw-project-slot dshw-project-folder">${icon('ic-folder')}</span><span class="dshw-project-name"></span>`;
-    head.querySelector<HTMLElement>('.dshw-project-name')!.textContent = group.label;
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'dshw-project-toggle';
+    toggle.dataset.workspaceToggle = group.key;
+    toggle.dataset.projectSelect = group.key;
+    toggle.setAttribute('aria-expanded', String(open));
+    const projectName = document.createElement('span');
+    projectName.className = 'dshw-project-name';
+    projectName.textContent = group.label;
+    toggle.appendChild(projectName);
+    const actions = document.createElement('span');
+    actions.className = 'dshw-project-actions';
+    if (group.key) {
+      const add = document.createElement('button');
+      add.type = 'button';
+      add.dataset.projectNew = group.key;
+      add.setAttribute('aria-label', 'New session');
+      add.innerHTML = icon('ic-plus');
+      const tools = document.createElement('button');
+      tools.type = 'button';
+      tools.dataset.projectTools = group.key;
+      tools.setAttribute('aria-label', 'Project tools');
+      tools.innerHTML = icon('ic-sliders');
+      actions.append(add, tools);
+    }
+    head.append(toggle, actions);
     const sessions = document.createElement('div');
     sessions.className = 'dshw-project-sessions';
     for (const c of group.items) {
@@ -546,7 +748,7 @@ async function renderSidebar() {
     if (!group.items.length) {
       const empty = document.createElement('span');
       empty.className = 'dshw-project-empty';
-      empty.textContent = '新项目';
+      empty.textContent = 'No sessions';
       sessions.appendChild(empty);
     }
     project.append(head, sessions);
@@ -554,6 +756,57 @@ async function renderSidebar() {
   }
   host.replaceChildren(...nodes);
 }
+
+function renderUpdateCard(update: MagicPointerUpdateState) {
+  const card = document.getElementById('update-card') as HTMLButtonElement | null;
+  const title = document.getElementById('update-card-title');
+  const detail = document.getElementById('update-card-detail');
+  if (!card || !title || !detail) return;
+  const state = String(update?.state || 'unsupported');
+  let heading = '';
+  let note = '';
+  let actionable = false;
+  switch (state) {
+    case 'checking':
+      heading = 'Checking for updates…';
+      note = 'GitHub Releases';
+      break;
+    case 'available':
+      heading = `${update.version || 'Update'} available`;
+      note = 'Click to download';
+      actionable = true;
+      break;
+    case 'downloading':
+      heading = 'Downloading update…';
+      note = '';
+      break;
+    case 'downloaded':
+      heading = 'Relaunch to update';
+      note = update.version ? `v${String(update.version).replace(/^v/, '')}` : '';
+      break;
+    case 'error':
+      heading = 'Update failed';
+      note = String(update.message || 'Click to retry');
+      actionable = true;
+      break;
+    default:
+      card.hidden = true;
+      delete card.dataset.state;
+      return;
+  }
+  card.hidden = false;
+  card.dataset.state = state;
+  card.disabled = !actionable;
+  title.textContent = heading;
+  detail.textContent = note;
+  detail.hidden = !note;
+}
+
+document.getElementById('update-card')?.addEventListener('click', () => {
+  void Data.checkForUpdates();
+});
+Data.onUpdateStatus(renderUpdateCard);
+void Data.updateStatus().then(renderUpdateCard);
 
 function bindSidebarSearch() {
   const browser = document.querySelector<HTMLElement>('.dshw-workspace-browser');
@@ -617,42 +870,6 @@ document.getElementById('workspace-filter')?.addEventListener('click', (event) =
   void renderSidebar();
 });
 
-/* DSH StatsLine：只聚合落盘数据，缺的指标不渲染。 */
-function renderStatsLine(turns: MagicPointerTurn[]) {
-  const host = document.getElementById('stats-line');
-  if (!host) return;
-  const steps = turns.reduce((n, t) => n + (t.events || []).length +
-    (t.activities || []).filter((activity) => activity.kind === 'model').length, 0);
-  const modelTimeMs = turns.reduce((total, turn) => total + (turn.activities || [])
-    .filter((activity) => activity.kind === 'model')
-    .reduce((sum, activity) => sum + (Number(activity.latencyMs) || 0), 0), 0);
-  const toolTimeMs = turns.reduce((total, turn) => total + (turn.events || [])
-    .reduce((sum, event) => sum + (Number(event.latencyMs) || 0), 0), 0);
-  const firstTokenValues = turns.flatMap((turn) => (turn.activities || [])
-    .filter((activity) => activity.kind === 'model' && Number(activity.firstTokenMs) > 0)
-    .map((activity) => Number(activity.firstTokenMs)));
-  const inputTokens = turns.reduce((total, turn) => total + (Number(turn.modelUsage?.inputTokens) || 0), 0);
-  const outputTokens = turns.reduce((total, turn) => total + (Number(turn.modelUsage?.outputTokens) || 0), 0);
-  const groups: string[] = [];
-  if (turns.length > 0) groups.push(`${turns.length} 轮`);
-  if (steps > 0) groups.push(`${steps} 步`);
-  if (modelTimeMs > 0) groups.push(`LLM ${(modelTimeMs / 1000).toFixed(2)}s`);
-  if (toolTimeMs > 0) groups.push(`工具 ${(toolTimeMs / 1000).toFixed(2)}s`);
-  if (firstTokenValues.length) groups.push(`TTFT ${Math.round(firstTokenValues.reduce((a, b) => a + b, 0) / firstTokenValues.length)}ms`);
-  if (inputTokens || outputTokens) groups.push(`↑ ${inputTokens} · ↓ ${outputTokens} tokens`);
-  if (outputTokens && modelTimeMs) groups.push(`${(outputTokens / (modelTimeMs / 1000)).toFixed(1)} tok/s`);
-  host.replaceChildren(...groups.flatMap((group, index) => {
-    const item = document.createElement('span');
-    item.textContent = group;
-    if (!index) return [item];
-    const sep = document.createElement('span');
-    sep.className = 'sep';
-    sep.textContent = '|';
-    return [sep, item];
-  }));
-  renderUsageMeter(turns);
-}
-
 function compactTokenCount(value: number): string {
   if (value < 1000) return String(value);
   if (value < 10000) return `${(value / 1000).toFixed(1)}k`;
@@ -667,31 +884,45 @@ function renderUsageMeter(turns: MagicPointerTurn[]) {
   const inputTokens = turns.reduce((total, turn) => total + (Number(turn.modelUsage?.inputTokens) || 0), 0);
   const outputTokens = turns.reduce((total, turn) => total + (Number(turn.modelUsage?.outputTokens) || 0), 0);
   const totalTokens = inputTokens + outputTokens;
-  button.hidden = totalTokens <= 0;
-  if (totalTokens <= 0) {
-    label.textContent = '';
-    popover.hidden = true;
-    button.setAttribute('aria-expanded', 'false');
-    return;
-  }
-  label.textContent = compactTokenCount(totalTokens);
-  button.title = `本会话模型用量：${totalTokens.toLocaleString()} tokens`;
+  const currentModel = modelCatalog?.groups?.flatMap((group) => group.models || [])
+    .find((entry) => entry.id === modelCatalog?.current);
+  const contextWindow = Number(currentModel?.contextWindow) || 0;
+  const latestUsage = [...turns].reverse().find((turn) => turn.modelUsage && typeof turn.modelUsage === 'object')?.modelUsage;
+  const contextTokens = (Number(latestUsage?.inputTokens) || 0) + (Number(latestUsage?.outputTokens) || 0);
+  const contextProgress = contextWindow > 0
+    ? Math.max(0, Math.min(100, Math.round(contextTokens / contextWindow * 100)))
+    : 0;
+  button.hidden = false;
+  button.style.setProperty('--mp-context-progress', String(contextProgress));
+  label.textContent = contextWindow > 0
+    ? `${contextProgress}% context used`
+    : `${compactTokenCount(totalTokens)} tokens used`;
+  button.title = contextWindow > 0
+    ? `Context ${contextTokens.toLocaleString()} / ${contextWindow.toLocaleString()} tokens`
+    : `Session usage: ${totalTokens.toLocaleString()} tokens`;
   popover.replaceChildren();
   const eyebrow = document.createElement('span');
   eyebrow.className = 'mp-usage-eyebrow';
-  eyebrow.textContent = 'SESSION USAGE';
+  eyebrow.textContent = 'CONTEXT';
   const title = document.createElement('strong');
-  title.textContent = `${totalTokens.toLocaleString()} tokens`;
+  title.textContent = contextWindow > 0
+    ? `${contextProgress}% used`
+    : `${totalTokens.toLocaleString()} tokens recorded`;
   const rows = document.createElement('dl');
-  for (const [term, value] of [['输入', inputTokens], ['输出', outputTokens], ['已记录回合', turns.length]] as const) {
+  for (const [term, value] of [
+    ['Current context', contextTokens],
+    ['Context window', contextWindow || '—'],
+    ['Session input', inputTokens],
+    ['Session output', outputTokens],
+  ] as const) {
     const dt = document.createElement('dt');
     dt.textContent = term;
     const dd = document.createElement('dd');
-    dd.textContent = Number(value).toLocaleString();
+    dd.textContent = typeof value === 'number' ? value.toLocaleString() : value;
     rows.append(dt, dd);
   }
   const note = document.createElement('p');
-  note.textContent = '这是落盘的实际模型用量，不把它冒充为上下文窗口占比。';
+  note.textContent = 'Current context uses the latest stored model request; session usage is cumulative.';
   popover.append(eyebrow, title, rows, note);
 }
 
@@ -709,6 +940,7 @@ document.getElementById('composer-context')?.addEventListener('click', (event) =
 let activeConversationId: string | null = null;
 let activeConversationTab: 'chat' | 'trajectory' = 'chat';
 let activeConversationTurnCount = 0;
+let activeConversationTurns: Record<string, unknown>[] = [];
 /* cardId → DSH 回合节点：后台任务补丁就地换节点，不重建整条流 */
 const dshCardNodes = new Map<string, HTMLElement>();
 
@@ -717,10 +949,15 @@ function setStudioHomeVisible(visible: boolean) {
   const header = document.querySelector<HTMLElement>('#view-chat > .dshw-header');
   const stream = document.getElementById('stream');
   const trajectory = document.getElementById('trajectory');
+  const contextRow = document.querySelector<HTMLElement>('.mp-composer-context-row');
+  const textarea = document.querySelector<HTMLTextAreaElement>('#composer-form textarea');
   if (home) home.hidden = !visible;
   if (header) header.hidden = visible;
   if (stream) stream.hidden = visible || activeConversationTab !== 'chat';
   if (trajectory) trajectory.hidden = visible || activeConversationTab !== 'trajectory';
+  if (contextRow) contextRow.hidden = !visible && Boolean(activeProjectRoot);
+  if (textarea) textarea.placeholder = visible ? 'Describe a task or ask a question' : 'Type / for commands';
+  document.getElementById('nav-new-chat')?.classList.toggle('is-on', visible);
   document.querySelector<HTMLElement>('.dshw-scrollbody')?.classList.toggle('is-home', visible);
 }
 
@@ -741,7 +978,15 @@ async function renderStudioHome() {
     onOpenConversation: (id) => { void openConversation(id); },
   });
   const note = document.getElementById('studio-home-stats-note');
-  if (note) note.textContent = stats ? '只统计本机已有的真实会话与模型用量。' : '统计暂不可用；对话仍可正常开始。';
+  if (note) {
+    /* Claude's reference compares against the 158,662-token text of Pride and
+       Prejudice; keeping the denominator explicit makes the displayed ratio
+       stable while the overview's total remains the real usage value. */
+    const books = stats ? Math.max(1, Math.round(Number(stats.totalTokens || 0) / 158_662)) : 0;
+    note.textContent = stats
+      ? `You've used ~${books}× more tokens than Pride and Prejudice.`
+      : 'Stats unavailable. You can still start a task.';
+  }
 }
 
 async function refreshGlobalSearchIndex() {
@@ -909,6 +1154,7 @@ function setConversationTab(tab: 'chat' | 'trajectory') {
 async function openConversation(id: string) {
   const c = await Data.conversation(id);
   if (!c) return;
+  if (activeConversationId !== c.id) repositoryContextDismissedFor = '';
   activeConversationId = c.id;
   activeConversationTurnCount = Array.isArray(c.turns) ? c.turns.length : 0;
   const projectRoot = String((c as { workspaceRoot?: string }).workspaceRoot || '');
@@ -921,6 +1167,7 @@ async function openConversation(id: string) {
   const head = document.getElementById('chat-title');
   if (head) head.textContent = String(c.title);
   renderProjectContext();
+  await renderRepositoryContextBar(true);
   const preview = document.getElementById('chat-source-preview');
   const sourceThumb = document.getElementById('chat-source-thumb') as HTMLImageElement | null;
   const peek = document.getElementById('chat-peek');
@@ -953,9 +1200,11 @@ async function openConversation(id: string) {
   LiveCards.reset();   // 换了一条对话，旧卡的计时器不该继续陪着跑
   dshCardNodes.clear();
   const turns = c.turns || [];
+  activeConversationTurns = turns as Record<string, unknown>[];
+  renderProjectTasks();
   if (!turns.length) {
     stream.innerHTML = emptyStateMarkup('ic-message-plus', '这条对话还没有内容', '继续输入任务，或从屏幕上划过一个对象作为上下文。');
-    renderStatsLine([]);
+    renderUsageMeter([]);
     const trajectory = document.getElementById('trajectory');
     if (trajectory) trajectory.replaceChildren(DshTrajectory.render([]));
     setConversationTab(activeConversationTab);
@@ -1000,7 +1249,7 @@ async function openConversation(id: string) {
   stream.replaceChildren(flow);
   stream.scrollTop = stream.scrollHeight;
   DshChat.bindDelegation(stream);
-  renderStatsLine(turns);
+  renderUsageMeter(turns);
   /* 会话重开后审批卡要能 reconstruct：最后一条 turn 若带着未消化的
      pendingInput（等待输入被打断/重启），卡重新长在 composer 上沿。
      已被回答过的旧提问不复活——只有最后一轮还在等才亮。 */
@@ -1192,8 +1441,8 @@ function setProductMode(mode: ProductMode, navigate = true) {
 (function bindProductMode() {
   try { productMode = localStorage.getItem('mp:product-mode') === 'design' ? 'design' : 'walker'; } catch { productMode = 'walker'; }
   setProductMode(productMode, false);
-  document.getElementById('mode-work')?.addEventListener('click', () => setProductMode('walker'));
-  document.getElementById('mode-design')?.addEventListener('click', () => setProductMode('design'));
+  document.getElementById('mode-work')?.addEventListener('click', () => setProductMode('design'));
+  document.getElementById('mode-design')?.addEventListener('click', () => setProductMode('walker'));
 })();
 
 (function bindDesignHome() {
@@ -1493,6 +1742,18 @@ function openThreadMenu(button: HTMLElement) {
   };
   const unavailable = !activeConversationId;
   menu.append(
+    make('Conversation', () => setConversationTab('chat')),
+    make('Trajectory', () => setConversationTab('trajectory')),
+    make('Open project folder', () => {
+      if (activeProjectRoot) void Data.openProjectPath(activeProjectRoot, '');
+      else void openProjectFromPicker();
+    }),
+    make('Project context', () => {
+      const popover = document.getElementById('magic-brain-popover');
+      if (!popover) return;
+      popover.hidden = false;
+      void renderMagicBrain(true);
+    }, { disabled: !activeProjectRoot }),
     make('重命名', () => {
       if (activeConversationId) openRenameDialog(activeConversationId, document.getElementById('chat-title')?.textContent || '');
     }, { disabled: unavailable }),
@@ -1532,7 +1793,12 @@ type ProjectTreeEntry = { name: string; path: string; kind: 'directory' | 'file'
 const projectTreeCache = new Map<string, ProjectTreeEntry[]>();
 const expandedProjectDirectories = new Set<string>(['']);
 let selectedProjectFile = '';
+let selectedProjectFileText = '';
+let selectedProjectFileMarkdown = false;
+let projectFileCodeView = false;
 let activeInspectorTab = 'files';
+const liveSubagentTasks = new Map<string, Partial<StudioSubagentTask>>();
+let focusedSubagentId = '';
 interface InspectorState {
   open: boolean;
   maximized: boolean;
@@ -1551,11 +1817,12 @@ try {
   const stored = Number(localStorage.getItem(INSPECTOR_WIDTH_KEY));
   if (Number.isFinite(stored)) initialInspectorWidth = stored;
 } catch { /* storage unavailable */ }
+const preferredInspectorWidth = inspectorStatePolicy.clampInspectorWidth(initialInspectorWidth, 1320);
 let inspectorState: InspectorState = {
   open: false,
   maximized: false,
-  width: inspectorStatePolicy.clampInspectorWidth(initialInspectorWidth, window.innerWidth),
-  previousWidth: inspectorStatePolicy.clampInspectorWidth(initialInspectorWidth, window.innerWidth),
+  width: inspectorStatePolicy.clampInspectorWidth(preferredInspectorWidth, window.innerWidth - 288),
+  previousWidth: preferredInspectorWidth,
   tab: 'files',
 };
 function inspectorError(message: string) {
@@ -1614,11 +1881,31 @@ async function refreshProjectInspector() {
   expandedProjectDirectories.clear();
   expandedProjectDirectories.add('');
   selectedProjectFile = '';
+  selectedProjectFileText = '';
+  selectedProjectFileMarkdown = false;
+  projectFileCodeView = false;
   const preview = document.getElementById('project-file-preview');
   if (preview) preview.hidden = true;
+  preview?.closest('.mp-inspector-panel')?.classList.remove('is-previewing');
   if (activeProjectRoot) await loadProjectDirectory('');
   else inspectorError('请先打开项目。');
   if (activeInspectorTab === 'changes') await renderProjectChanges();
+}
+
+function renderSelectedProjectFile() {
+  const preview = document.getElementById('project-file-preview');
+  const content = document.getElementById('project-file-content');
+  const code = document.getElementById('project-file-code');
+  if (!preview || !content) return;
+  const renderMarkdown = selectedProjectFileMarkdown && !projectFileCodeView;
+  preview.classList.toggle('is-markdown', renderMarkdown);
+  code?.setAttribute('aria-pressed', String(projectFileCodeView));
+  if (renderMarkdown) content.replaceChildren(DshMarkdown.render(selectedProjectFileText));
+  else {
+    const pre = document.createElement('pre');
+    pre.textContent = selectedProjectFileText;
+    content.replaceChildren(pre);
+  }
 }
 
 async function selectProjectFile(relativePath: string) {
@@ -1626,15 +1913,19 @@ async function selectProjectFile(relativePath: string) {
   const preview = document.getElementById('project-file-preview');
   if (!preview) return;
   preview.hidden = false;
+  const panel = preview.closest<HTMLElement>('.mp-inspector-panel');
+  panel?.classList.add('is-previewing');
   selectedProjectFile = relativePath;
+  selectedProjectFileText = response?.ok ? String(response.text || '') : String(response?.error || '文件读取失败。');
+  selectedProjectFileMarkdown = /\.(?:md|mdx|markdown)$/i.test(relativePath) && Boolean(response?.ok);
+  projectFileCodeView = false;
   const name = document.getElementById('project-file-name');
-  const content = document.getElementById('project-file-content');
+  const inspectorTitle = document.getElementById('inspector-title');
+  if (inspectorTitle) inspectorTitle.textContent = 'File';
   if (name) name.textContent = relativePath + (response?.truncated ? ' · 已截断' : '');
-  if (content) content.textContent = response?.ok ? String(response.text || '') : String(response?.error || '文件读取失败。');
+  renderSelectedProjectFile();
   renderProjectFileTree();
 }
-
-let projectEnvironment: MagicPointerProjectEnvironment | null = null;
 
 async function renderMagicBrain(force = false) {
   const popover = document.getElementById('magic-brain-popover');
@@ -1655,6 +1946,7 @@ async function renderMagicBrain(force = false) {
   document.getElementById('magic-brain-branch-detail')!.textContent = '正在读取…';
   const response = await Data.projectEnvironment(activeProjectRoot, activeConversationId);
   projectEnvironment = response;
+  applyRepositoryContextBar(response);
   const changes = Number(response.changedFiles || 0);
   const added = Number(response.addedLines || 0);
   const deleted = Number(response.deletedLines || 0);
@@ -1685,19 +1977,6 @@ async function renderMagicBrain(force = false) {
   if (!sources.length) sourceHost.innerHTML = '<p>当前任务尚无网页来源。</p>';
 }
 
-document.getElementById('header-open-location')?.addEventListener('click', () => {
-  if (activeProjectRoot) void Data.openProjectPath(activeProjectRoot, '');
-  else void openProjectFromPicker();
-});
-document.getElementById('magic-brain-toggle')?.addEventListener('click', (event) => {
-  event.stopPropagation();
-  const popover = document.getElementById('magic-brain-popover');
-  const button = event.currentTarget as HTMLElement;
-  if (!popover) return;
-  popover.hidden = !popover.hidden;
-  button.setAttribute('aria-expanded', String(!popover.hidden));
-  if (!popover.hidden) void renderMagicBrain(true);
-});
 document.getElementById('magic-brain-changes')?.addEventListener('click', () => {
   document.getElementById('magic-brain-popover')!.hidden = true;
   document.getElementById('magic-brain-toggle')?.setAttribute('aria-expanded', 'false');
@@ -1807,6 +2086,128 @@ function resizeProjectBrowser() {
   if (bounds) void Data.resizeBrowserView(bounds);
 }
 
+document.getElementById('composer-repository-location')?.addEventListener('click', () => setInspector(true, 'changes'));
+document.getElementById('composer-repository-diff')?.addEventListener('click', () => setInspector(true, 'changes'));
+document.getElementById('composer-create-pr')?.addEventListener('click', () => {
+  const url = projectEnvironment?.pullRequestUrl || '';
+  if (url) void Data.openProjectUrl(url);
+  else setInspector(true, 'changes');
+});
+document.getElementById('composer-pr-menu')?.addEventListener('click', () => setInspector(true, 'changes'));
+document.getElementById('composer-repository-dismiss')?.addEventListener('click', () => {
+  repositoryContextDismissedFor = repositoryContextKey();
+  applyRepositoryContextBar(projectEnvironment);
+});
+
+function subagentStatusLabel(status: string): string {
+  if (status === 'running') return 'Running';
+  if (status === 'failed') return 'Failed';
+  if (status === 'stopped') return 'Stopped';
+  return 'Completed';
+}
+
+function renderProjectTasks() {
+  const host = document.getElementById('project-tasks');
+  if (!host) return;
+  const tasks = studioSubagentGlobals.projectSubagentTasks(
+    activeConversationTurns,
+    [...liveSubagentTasks.values()],
+  );
+  if (!tasks.length) {
+    const empty = document.createElement('p');
+    empty.className = 'mp-inspector-empty';
+    empty.textContent = 'No tasks yet.';
+    host.replaceChildren(empty);
+    return;
+  }
+  const makeSection = (label: string, items: StudioSubagentTask[]) => {
+    const section = document.createElement('section');
+    section.className = 'mp-subagent-section';
+    const heading = document.createElement('h3');
+    heading.textContent = label;
+    section.appendChild(heading);
+    for (const task of items) {
+      const row = document.createElement('details');
+      row.className = 'mp-subagent-task';
+      row.dataset.taskId = task.id;
+      row.dataset.status = task.status;
+      row.open = task.id === focusedSubagentId;
+      const summary = document.createElement('summary');
+      const glyph = document.createElement('span');
+      glyph.className = 'mp-subagent-glyph';
+      glyph.innerHTML = '<svg aria-hidden="true"><use href="#ic-agent-workflow" /></svg>';
+      const copy = document.createElement('span');
+      copy.className = 'mp-subagent-copy';
+      const title = document.createElement('strong');
+      title.textContent = task.description;
+      const meta = document.createElement('small');
+      meta.textContent = [
+        subagentStatusLabel(task.status),
+        task.stepCount ? `${task.stepCount} ${task.stepCount === 1 ? 'step' : 'steps'}` : '',
+        task.currentTool,
+      ].filter(Boolean).join(' · ');
+      copy.append(title, meta);
+      const caret = document.createElement('svg');
+      caret.className = 'mp-subagent-caret';
+      caret.setAttribute('aria-hidden', 'true');
+      caret.innerHTML = '<use href="#ic-chev" />';
+      summary.append(glyph, copy, caret);
+      const body = document.createElement('div');
+      body.className = 'mp-subagent-body';
+      for (const step of task.steps) {
+        const item = document.createElement('div');
+        item.className = 'mp-subagent-step';
+        item.dataset.status = step.status;
+        const marker = document.createElement('span');
+        marker.className = 'mp-subagent-step-marker';
+        marker.textContent = step.status === 'completed' ? '✓' : step.status === 'failed' ? '!' : '·';
+        const text = document.createElement('span');
+        text.textContent = step.tool || `Step ${step.index}`;
+        const detail = document.createElement('small');
+        detail.textContent = [step.usedBackend, step.latencyMs ? `${Math.round(step.latencyMs)}ms` : ''].filter(Boolean).join(' · ');
+        item.append(marker, text, detail);
+        body.appendChild(item);
+      }
+      if (task.summary) {
+        const result = document.createElement('p');
+        result.className = 'mp-subagent-result';
+        result.textContent = task.summary;
+        body.appendChild(result);
+      }
+      row.append(summary, body);
+      section.appendChild(row);
+    }
+    return section;
+  };
+  const running = tasks.filter((task) => task.status === 'running');
+  const finished = tasks.filter((task) => task.status !== 'running');
+  const sections: HTMLElement[] = [];
+  if (running.length) sections.push(makeSection('Running', running));
+  if (finished.length) sections.push(makeSection('Finished', finished));
+  host.replaceChildren(...sections);
+}
+
+document.addEventListener('mp:open-subagent', (event) => {
+  const detail = (event as CustomEvent<{ id?: string; parentCallId?: string }>).detail;
+  const requestedId = String(detail?.id || '');
+  const parentCallId = String(detail?.parentCallId || '');
+  const tasks = studioSubagentGlobals.projectSubagentTasks(
+    activeConversationTurns,
+    [...liveSubagentTasks.values()],
+  );
+  const matchingTask = tasks.find((task) => task.id === requestedId || task.parentCallId === parentCallId);
+  focusedSubagentId = matchingTask?.id || requestedId;
+  setInspector(true, 'tasks');
+  renderProjectTasks();
+  if (focusedSubagentId) {
+    requestAnimationFrame(() => {
+      const taskRow = document.querySelector<HTMLElement>(`.mp-subagent-task[data-task-id="${CSS.escape(focusedSubagentId)}"]`);
+      taskRow?.scrollIntoView({ block: 'nearest' });
+      taskRow?.querySelector<HTMLElement>('summary')?.focus({ preventScroll: true });
+    });
+  }
+});
+
 let projectBrowserResizeFrame: number | null = null;
 
 function scheduleProjectBrowserResize() {
@@ -1828,7 +2229,17 @@ const projectBrowserHost = document.getElementById('project-browser-host');
 if (projectBrowserHost && typeof ResizeObserver !== 'undefined') {
   new ResizeObserver(() => scheduleProjectBrowserResize()).observe(projectBrowserHost);
 }
-window.addEventListener('resize', scheduleProjectBrowserResize);
+window.addEventListener('resize', () => {
+  if (inspectorState.open && !inspectorState.maximized) {
+    inspectorState = inspectorStatePolicy.reduceInspectorState(
+      inspectorState,
+      { type: 'viewport', availableWidth: inspectorAvailableWidth() },
+    );
+    syncInspectorGeometry();
+    return;
+  }
+  scheduleProjectBrowserResize();
+});
 
 function inspectorAvailableWidth(): number {
   const sidebarWidth = shell.dataset.sidebar === 'collapsed' ? 44 : 288;
@@ -1847,7 +2258,7 @@ function syncInspectorGeometry() {
   else delete shell.dataset.inspectorMaximized;
   maximize?.setAttribute('aria-pressed', String(inspectorState.maximized));
   maximize?.setAttribute('aria-label', inspectorState.maximized ? '还原项目面板' : '展开项目面板');
-  try { localStorage.setItem(INSPECTOR_WIDTH_KEY, String(inspectorState.width)); } catch { /* storage unavailable */ }
+  try { localStorage.setItem(INSPECTOR_WIDTH_KEY, String(inspectorState.previousWidth)); } catch { /* storage unavailable */ }
   document.getElementById('inspector-toggle')?.setAttribute('aria-expanded', String(inspectorState.open));
   scheduleProjectBrowserResize();
 }
@@ -1857,7 +2268,7 @@ function setInspector(open: boolean, tab = activeInspectorTab) {
   if (!inspector) return;
   inspectorState = inspectorStatePolicy.reduceInspectorState(
     inspectorState,
-    open ? { type: 'open', tab } : { type: 'close' },
+    open ? { type: 'open', tab, availableWidth: inspectorAvailableWidth() } : { type: 'close' },
   );
   activeInspectorTab = inspectorState.tab;
   syncInspectorGeometry();
@@ -1871,23 +2282,27 @@ function setInspector(open: boolean, tab = activeInspectorTab) {
   });
   const inspectorTitle = document.getElementById('inspector-title');
   if (inspectorTitle) {
-    inspectorTitle.textContent = ({ files: '文件', browser: '浏览器', terminal: '终端', changes: '更改', tasks: '任务' } as Record<string, string>)[activeInspectorTab] || '项目';
+    inspectorTitle.textContent = ({ files: 'Files', browser: 'Browser', terminal: 'Terminal', changes: 'Changes', tasks: 'Tasks' } as Record<string, string>)[activeInspectorTab] || 'Project';
   }
   if (!open) { closeProjectBrowserView(); return; }
   if (activeInspectorTab !== 'browser') closeProjectBrowserView();
   if (activeInspectorTab === 'files' && !projectTreeCache.has('')) void refreshProjectInspector();
   if (activeInspectorTab === 'changes') void renderProjectChanges();
+  if (activeInspectorTab === 'tasks') renderProjectTasks();
   if (activeInspectorTab === 'browser') scheduleProjectBrowserResize();
 }
 
 document.getElementById('inspector-toggle')?.addEventListener('click', () => {
   setInspector(shell.dataset.inspector !== 'open', 'files');
 });
+document.getElementById('header-preview-toggle')?.addEventListener('click', () => setInspector(true, 'browser'));
 document.getElementById('inspector-close')?.addEventListener('click', () => setInspector(false));
 document.getElementById('inspector-maximize')?.addEventListener('click', () => {
   inspectorState = inspectorStatePolicy.reduceInspectorState(
     inspectorState,
-    { type: inspectorState.maximized ? 'restore' : 'maximize' },
+    inspectorState.maximized
+      ? { type: 'restore', availableWidth: inspectorAvailableWidth() }
+      : { type: 'maximize' },
   );
   syncInspectorGeometry();
 });
@@ -1951,8 +2366,35 @@ document.getElementById('project-file-tree')?.addEventListener('contextmenu', (e
   });
 });
 document.getElementById('file-tree-filter')?.addEventListener('input', renderProjectFileTree);
-document.getElementById('project-file-open')?.addEventListener('click', () => {
-  if (selectedProjectFile) void Data.openProjectPath(activeProjectRoot, selectedProjectFile);
+document.getElementById('project-file-back')?.addEventListener('click', () => {
+  const preview = document.getElementById('project-file-preview');
+  if (preview) preview.hidden = true;
+  preview?.closest('.mp-inspector-panel')?.classList.remove('is-previewing');
+  selectedProjectFile = '';
+  selectedProjectFileText = '';
+  selectedProjectFileMarkdown = false;
+  projectFileCodeView = false;
+  const inspectorTitle = document.getElementById('inspector-title');
+  if (inspectorTitle) inspectorTitle.textContent = 'Files';
+  renderProjectFileTree();
+});
+document.getElementById('project-file-code')?.addEventListener('click', () => {
+  projectFileCodeView = !projectFileCodeView;
+  renderSelectedProjectFile();
+});
+document.getElementById('project-file-copy')?.addEventListener('click', () => {
+  if (selectedProjectFileText) void navigator.clipboard.writeText(selectedProjectFileText);
+});
+document.getElementById('project-file-search')?.addEventListener('click', () => {
+  const input = document.getElementById('project-file-search-input') as HTMLInputElement | null;
+  if (!input) return;
+  input.hidden = !input.hidden;
+  if (!input.hidden) input.focus();
+});
+document.getElementById('project-file-search-input')?.addEventListener('input', (event) => {
+  const query = (event.currentTarget as HTMLInputElement).value;
+  const find = (window as Window & { find?: (...args: unknown[]) => boolean }).find;
+  if (query && find) find.call(window, query, false, false, true, false, true, false);
 });
 document.getElementById('project-browser-form')?.addEventListener('submit', (event) => {
   event.preventDefault();
@@ -2197,6 +2639,18 @@ document.addEventListener('click', e => {
     document.getElementById('composer-options')?.setAttribute('aria-expanded', 'false');
   }
 
+  const projectNew = target.closest<HTMLElement>('[data-project-new]');
+  if (projectNew) {
+    setActiveProject(projectNew.dataset.projectNew || '');
+    startNewChat();
+    return;
+  }
+  const projectTools = target.closest<HTMLElement>('[data-project-tools]');
+  if (projectTools) {
+    setActiveProject(projectTools.dataset.projectTools || '');
+    setInspector(true, 'files');
+    return;
+  }
   const projectToggle = target.closest<HTMLElement>('[data-workspace-toggle]');
   if (projectToggle) {
     const key = projectToggle.dataset.workspaceToggle || '';
@@ -2707,7 +3161,7 @@ function renderPlanCard() {
   card.classList.toggle('is-collapsed', planCollapsed);
   const done = steps.filter(s => s.status === 'completed').length;
   const title = document.getElementById('composer-plan-title');
-  if (title) title.textContent = '计划';
+  if (title) title.textContent = 'Plan';
   const count = document.getElementById('composer-plan-count');
   if (count) count.textContent = `${done}/${steps.length}`;
   const list = document.getElementById('composer-plan-steps');
@@ -2749,6 +3203,10 @@ function renderPermissionAsk() {
   if (!pendingPermissionAsk && !pendingAskInput) { host.hidden = true; host.replaceChildren(); return; }
   host.hidden = false;
   host.dataset.mode = pendingPermissionAsk ? 'permission' : 'ask';
+  const card = document.createElement('div');
+  card.className = 'dshw-perm-ask-card';
+  const actions = document.createElement('div');
+  actions.className = 'dshw-perm-ask-actions';
   const question = document.createElement('p');
   question.className = 'dshw-perm-ask-question';
   const make = (text: string, onClick: () => void, variant?: string) => {
@@ -2774,33 +3232,35 @@ function renderPermissionAsk() {
     const prefix = pendingPermissionAsk.prefix || '';
     const grantRule = ConversationControl.permissionGrantRule(tool, prefix);
     const grantTarget = prefix || tool;
-    question.textContent = `是否授权执行 ${grantTarget}？`;
+    question.textContent = `Allow Magic Pointer to run ${grantTarget}?`;
     const grantButtons = grantRule ? [
-      make('仅这一次允许', () => submitText(
-        `仅这一次允许 ${grantTarget}，请继续。`,
-        { once: grantRule },
-      )),
-      make(`总是允许 ${prefix || tool}`, () => submitText(
-        `本会话总是允许 ${grantTarget}，请继续。`,
+      make(`Always allow ${prefix || tool}`, () => submitText(
+        `Always allow ${grantTarget} for this session. Continue.`,
         { grant: grantRule },
       )),
+      make('Allow once', () => submitText(
+        `Allow ${grantTarget} once. Continue.`,
+        { once: grantRule },
+      ), 'primary'),
     ] : [];
-    host.replaceChildren(
-      question,
+    actions.replaceChildren(
+      make('Deny', () => submitText(`Deny ${tool}. Use another approach.`, { deny: tool })),
       ...grantButtons,
-      make('拒绝', () => submitText(`拒绝执行 ${tool}，换别的办法。`, { deny: tool }), 'danger'),
     );
+    card.append(question, actions);
+    host.replaceChildren(card);
     return;
   }
   const options = pendingAskInput?.options || [];
   question.textContent = pendingAskInput?.question || '需要你的决定';
-  host.replaceChildren(
-    question,
+  actions.replaceChildren(
     ...options.map((option) => make(option, () => {
       pendingAskInput = null;
       submitText(option, null);
     })),
   );
+  card.append(question, actions);
+  host.replaceChildren(card);
 }
 
 bindStyleChip();
@@ -2809,6 +3269,13 @@ bindPermissionChip();
 function fitComposer(ta: HTMLTextAreaElement) {
   ta.style.height = 'auto';
   ta.style.height = `${Math.min(336, ta.scrollHeight)}px`;
+}
+
+function syncComposerSubmitState() {
+  const textarea = document.querySelector<HTMLTextAreaElement>('#composer-form textarea');
+  const submit = document.querySelector<HTMLButtonElement>('#composer-form button[type="submit"]');
+  if (!textarea || !submit) return;
+  submit.disabled = !studioComposerBusy && !textarea.value.trim();
 }
 
 /* 模型切换器：DSH ModelSelect 同款——真实网关目录（fabric_bridge model.catalog），
@@ -2831,6 +3298,7 @@ async function refreshComposerModel() {
         ? `文本 ${current} · 视觉 ${modelCatalog.visionModel}` : current)
       : '模型';
   }
+  renderUsageMeter(activeConversationTurns as MagicPointerTurn[]);
 }
 
 function closeModelMenu() {
@@ -2976,6 +3444,22 @@ function renderConversationProgress(record: Record<string, unknown>) {
   if (String(record.phase || '') === 'plan') {
     const snapshot = ConversationControl.planStepsFromRecord(record);
     if (snapshot) { composerPlan = snapshot; renderPlanCard(); }
+  }
+  if (String(record.phase || '') === 'subagent') {
+    const fields = record.fields && typeof record.fields === 'object'
+      ? record.fields as Record<string, string> : {};
+    try {
+      const payload = JSON.parse(ConversationControl.decodeChunkBlob(fields)) as Partial<StudioSubagentTask>;
+      const id = String(payload.id || '').trim();
+      if (id) {
+        const parentCallId = String(payload.parentCallId || '').trim()
+          || studioSubagentGlobals.activeSubagentParentCallId([...pendingConversation.records.values()]);
+        if (parentCallId) payload.parentCallId = parentCallId;
+        liveSubagentTasks.set(id, payload);
+        renderProjectTasks();
+      }
+    } catch { /* malformed diagnostics never affect the parent turn */ }
+    return;
   }
   if (String(record.phase || '') === 'answer_chunk') {
     const fields = record.fields && typeof record.fields === 'object'
@@ -3162,16 +3646,19 @@ function setComposerSettledState(state: 'idle' | 'error' | 'success') {
 function setComposerRunningState(running: boolean) {
   const form = document.getElementById('composer-form');
   const submit = document.querySelector<HTMLButtonElement>('#composer-form button[type="submit"]');
+  if (running) form?.setAttribute('aria-busy', 'true');
+  else form?.removeAttribute('aria-busy');
   if (running || form?.dataset.state === 'running') {
     form?.setAttribute('data-state', running ? 'running' : 'idle');
   }
   if (submit) {
     submit.classList.toggle('is-stop', running);
-    submit.title = running ? '停止' : '发送';
-    submit.setAttribute('aria-label', running ? '停止' : '发送');
+    submit.title = running ? 'Stop' : 'Send';
+    submit.setAttribute('aria-label', running ? 'Stop' : 'Send');
     const use = submit.querySelector('use');
     use?.setAttribute('href', running ? '#ic-stop' : '#ic-send');
   }
+  syncComposerSubmitState();
   if (!running) focusComposerWhenIdle();
 }
 
@@ -3229,7 +3716,8 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
   const ta = form.querySelector<HTMLTextAreaElement>('textarea');
   if (ta) {
     fitComposer(ta);
-    ta.addEventListener('input', () => fitComposer(ta));
+    syncComposerSubmitState();
+    ta.addEventListener('input', () => { fitComposer(ta); syncComposerSubmitState(); });
     /* DSH input-trigger：光标前是未提交的 /token 时内联开目录并随输入过滤。 */
     ta.addEventListener('input', () => {
       const caret = ta.selectionStart ?? ta.value.length;
@@ -3407,7 +3895,7 @@ function startNewChat() {
   setStudioHomeVisible(true);
   document.querySelectorAll('#side-convos .side-item').forEach((n) => n.classList.remove('is-on'));
   const title = document.getElementById('chat-title');
-  if (title) title.textContent = '新对话';
+  if (title) title.textContent = 'New chat';
   projectEnvironment = null;
   renderProjectContext();
   const preview = document.getElementById('chat-source-preview');
@@ -3418,7 +3906,7 @@ function startNewChat() {
   if (stream) {
     stream.innerHTML = '<div class="dshw-blank" aria-hidden="true"></div>';
   }
-  renderStatsLine([]);
+  renderUsageMeter([]);
   const trajectory = document.getElementById('trajectory');
   if (trajectory) trajectory.replaceChildren(DshTrajectory.render([]));
   setConversationTab('chat');

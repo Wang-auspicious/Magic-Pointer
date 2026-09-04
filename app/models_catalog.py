@@ -13,6 +13,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from app import ai_client
+from app.agent_runtime.model_profiles import context_window_for
 
 __all__ = ["list_models", "provider_label", "select_model"]
 
@@ -73,12 +74,23 @@ def list_models(timeout_s: float = GATEWAY_TIMEOUT_S) -> dict:
             names = _gateway_models(base_url, api_key, timeout_s)
             if model not in names:
                 names.insert(0, model)
-            entries = [{"id": name, "vision": name == vision_model} for name in names]
+            entries = [
+                {
+                    "id": name,
+                    "vision": name == vision_model,
+                    "contextWindow": context_window_for(name),
+                }
+                for name in names
+            ]
             source = "gateway"
         except Exception as exc:  # noqa: BLE001 - 目录失败回落到配置，不阻断 UI
             error = f"网关模型列表不可用：{exc}"
     if not entries:
-        entries = [{"id": model, "vision": model == vision_model}]
+        entries = [{
+            "id": model,
+            "vision": model == vision_model,
+            "contextWindow": context_window_for(model),
+        }]
 
     return {
         "ok": True,

@@ -311,6 +311,7 @@ def _apply_delegate_tool(fork, config: dict[str, Any]) -> None:
         llm_provider=fork.get("llm"),
         workspace_root=Path(raw_root),
         permission_mode=str(config.get("permission_mode") or "default"),
+        subagent_event_sink=config.get("subagent_event_sink"),
     )
 
 
@@ -995,6 +996,7 @@ def boot_loop_context(
             {
                 "workspace_root": str(runtime.get("workspace_root") or ""),
                 "permission_mode": str(runtime.get("permission_mode") or "default"),
+                "subagent_event_sink": runtime.get("subagent_event_sink"),
             },
         ),
         BundleRow(

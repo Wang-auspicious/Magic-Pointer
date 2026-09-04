@@ -1,4 +1,4 @@
-/* Hallmark · genre: modern-minimal · macrostructure: Workbench · design-system: design.md · designed-as-app */
+/* Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4 · genre: modern-minimal · macrostructure: Workbench · design-system: design.md · designed-as-app */
 :root {
   color-scheme: light;
   --mp-window-bar: 36px;
@@ -12,7 +12,10 @@
   --mp-sidebar: #FBFBF9;
   --mp-panel: #FDFDFC;
   --mp-panel-subtle: #F3F3F2;
-  --mp-composer: #FCFCFB;
+  --mp-markdown-cell: #F2F2F1;
+  --mp-repository-surface: #F2F2F1;
+  --mp-composer: #FEFEFE;
+  --mp-user-bubble: #F0F0EF;
   --mp-selected: #EDECE8;
   --mp-text: #0B0B0B;
   --mp-text-secondary: #52514E;
@@ -24,6 +27,11 @@
   --mp-clay: #D97757;
   --mp-clay-strong: #C6613F;
   --mp-activity-blue: #86ACEA;
+  --mp-heat-level-1: #86ACEA;
+  --mp-heat-level-2: #6394E3;
+  --mp-heat-level-3: #407CDD;
+  --mp-heat-level-4: #2566D0;
+  --mp-pictogram-200: 51 16.5% 84.5%;
   --mp-danger: #B42318;
   --mp-success: #2E7D4F;
   --mp-focus: #2566D0;
@@ -108,7 +116,10 @@ body[data-ds-dark-theme] {
   --mp-sidebar: #111111;
   --mp-panel: #1E1E1E;
   --mp-panel-subtle: #303030;
+  --mp-markdown-cell: #30302F;
+  --mp-repository-surface: #292928;
   --mp-composer: #20201F;
+  --mp-user-bubble: #30302F;
   --mp-selected: #292929;
   --mp-text: #F0EFEC;
   --mp-text-secondary: #C3C2B7;
@@ -117,6 +128,7 @@ body[data-ds-dark-theme] {
   --mp-rule-strong: rgba(255, 255, 255, .18);
   --mp-hover: rgba(255, 255, 255, .07);
   --mp-active: rgba(255, 255, 255, .12);
+  --mp-pictogram-200: 60 2.5% 23.3%;
   --mp-danger: #FF6159;
   --mp-success: #74C295;
   --mp-focus: #86ACEA;
@@ -143,7 +155,7 @@ body {
   font-weight: var(--mp-weight-regular);
   line-height: var(--mp-leading-body);
   -webkit-font-smoothing: antialiased;
-  text-rendering: geometricPrecision;
+  text-rendering: auto;
 }
 
 button,

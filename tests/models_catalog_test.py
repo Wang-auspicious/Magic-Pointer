@@ -54,6 +54,7 @@ def test_list_models_from_gateway(monkeypatch) -> None:
     group = catalog["groups"][0]
     assert group["id"] == "opencode.ai"
     assert [m["id"] for m in group["models"]] == ["deepseek-v4-flash", "kimi-k3", "qwen3.7-plus"]
+    assert [m["contextWindow"] for m in group["models"]] == [128_000, 256_000, 128_000]
     # 目录条目标记视觉档（独立视觉模型不在同组也标出来）
     assert next(m for m in group["models"] if m["id"] == "deepseek-v4-flash")["vision"] is False
 

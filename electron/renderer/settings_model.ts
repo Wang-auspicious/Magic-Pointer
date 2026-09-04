@@ -5,7 +5,7 @@ type SettingOption = { label: string; value: string | number };
 type SettingRow = {
   control: 'toggle' | 'select' | 'range' | 'text' | 'tags' | 'info';
   description?: string;
-  infoKey?: 'active-model' | 'credential' | 'terminal' | 'skills' | 'plugins' | 'connectors' | 'updates' | 'diagnostics';
+  infoKey?: 'active-model' | 'credential' | 'terminal' | 'runtime' | 'thinking' | 'grants' | 'skills' | 'plugins' | 'connectors' | 'updates' | 'diagnostics';
   label: string;
   max?: number;
   min?: number;
@@ -14,147 +14,151 @@ type SettingRow = {
   step?: number;
 };
 type SettingSection = { title: string; rows: SettingRow[] };
-type SettingsPage = { description: string; group: '设置' | 'Agent' | '自定义'; icon: string; id: string; sections: SettingSection[]; title: string };
+type SettingsPage = { description: string; group: 'Settings' | 'Agent' | 'Customize'; icon: string; id: string; sections: SettingSection[]; title: string };
 
 const option = (value: string | number, label: string): SettingOption => ({ value, label });
 
 const SETTINGS_PAGES: SettingsPage[] = [
-  { id: 'general', group: '设置', icon: 'ic-window', title: '通用', description: '启动、后台与更新。', sections: [
-    { title: '运行', rows: [
-      { path: 'general.launch_at_login', control: 'toggle', label: '开机时启动', description: '登录后静默驻留。' },
-      { path: 'general.keep_running', control: 'toggle', label: '关闭窗口后继续运行', description: '划线与快捷键仍然可用。' },
+  { id: 'general', group: 'Settings', icon: 'ic-window', title: 'General', description: 'Startup, background behavior, and updates.', sections: [
+    { title: 'Application', rows: [
+      { path: 'general.launch_at_login', control: 'toggle', label: 'Launch at login', description: 'Start quietly after you sign in.' },
+      { path: 'general.keep_running', control: 'toggle', label: 'Continue running when the window closes', description: 'Selection gestures and shortcuts remain available.' },
     ] },
   ] },
-  { id: 'interaction', group: '设置', icon: 'ic-cursor', title: '交互', description: '怎么唤起、怎么输入，以及全局快捷键。', sections: [
-    { title: '唤起', rows: [
-      { path: 'activation.wake_mode', control: 'select', label: '唤起方式', options: [option('wiggle_hotkey', '晃动 + 快捷键'), option('wiggle', '只用晃动'), option('hotkey', '只用快捷键'), option('mouse_button', '鼠标侧键')] },
-      { path: 'activation.sensitivity', control: 'range', label: '晃动灵敏度', min: 0, max: 1, step: 0.05 },
-      { path: 'activation.gesture_arm_delay_ms', control: 'select', label: '长按判定', options: [option(120, '120 ms'), option(180, '180 ms'), option(240, '240 ms'), option(320, '320 ms')] },
-      { path: 'activation.mouse_side_button', control: 'select', label: '鼠标按键', options: [option('none', '不使用'), option('xbutton1', '侧键 1'), option('xbutton2', '侧键 2'), option('middle_hold', '按住中键')] },
-      { path: 'activation.keep_current_app_focus', control: 'toggle', label: '目标窗口切走时暂停' },
-      { path: 'activation.disabled_apps', control: 'tags', label: '不唤起的应用', description: '用逗号分隔进程名或应用名。' },
+  { id: 'interaction', group: 'Settings', icon: 'ic-cursor', title: 'Interaction', description: 'Choose how Magic Pointer wakes, captures intent, and accepts input.', sections: [
+    { title: 'Activation', rows: [
+      { path: 'activation.wake_mode', control: 'select', label: 'Wake method', options: [option('wiggle_hotkey', 'Wiggle + shortcut'), option('wiggle', 'Wiggle only'), option('hotkey', 'Shortcut only'), option('mouse_button', 'Mouse side button')] },
+      { path: 'activation.sensitivity', control: 'range', label: 'Wiggle sensitivity', min: 0, max: 1, step: 0.05 },
+      { path: 'activation.gesture_arm_delay_ms', control: 'select', label: 'Press-and-hold delay', options: [option(120, '120 ms'), option(180, '180 ms'), option(240, '240 ms'), option(320, '320 ms')] },
+      { path: 'activation.mouse_side_button', control: 'select', label: 'Mouse button', options: [option('none', 'None'), option('xbutton1', 'Side button 1'), option('xbutton2', 'Side button 2'), option('middle_hold', 'Hold middle button')] },
+      { path: 'activation.keep_current_app_focus', control: 'toggle', label: 'Pause when the target app loses focus' },
+      { path: 'activation.disabled_apps', control: 'tags', label: 'Disabled apps', description: 'Comma-separated process or app names.' },
     ] },
-    { title: '默认输入', rows: [
-      { path: 'interaction.default_input_mode', control: 'select', label: '划线后先用', options: [option('text', '键盘输入'), option('voice', '语音输入')] },
-    ] },
-  ] },
-  { id: 'voice', group: '设置', icon: 'ic-mic', title: '语音', description: '语音是可选输入方式；关闭后不会启动语音模型。', sections: [
-    { title: '语音输入', rows: [
-      { path: 'interaction.voice_enabled', control: 'toggle', label: '启用语音输入', description: '关闭后默认输入强制为键盘，并隐藏普通语音入口。' },
-      { path: 'interaction.voice_engine', control: 'select', label: '本地引擎', options: [option('auto', '自动'), option('sense_voice', 'SenseVoice'), option('whisper', 'Whisper')] },
-      { path: 'interaction.voice_language', control: 'select', label: '语言', options: [option('auto', '自动'), option('zh', '中文'), option('en', '英语'), option('ja', '日语'), option('ko', '韩语')] },
-      { path: 'interaction.voice_silence_ms', control: 'select', label: '静音多久算说完', options: [option(1000, '1.0 秒'), option(1600, '1.6 秒'), option(2400, '2.4 秒')] },
-      { path: 'interaction.voice_auto_submit', control: 'toggle', label: '转写完成后自动提交' },
-    ] },
-    { title: '性能', rows: [
-      { path: 'interaction.voice_resident_enabled', control: 'toggle', label: '让语音模型常驻内存' },
-      { path: 'interaction.voice_idle_unload_ms', control: 'select', label: '闲置后卸载', options: [option(0, '不自动卸载'), option(300000, '5 分钟'), option(900000, '15 分钟')] },
-      { path: 'interaction.voice_memory_limit_mb', control: 'select', label: '内存上限', options: [option(512, '512 MB'), option(1024, '1 GB'), option(2048, '2 GB')] },
+    { title: 'Default input', rows: [
+      { path: 'interaction.default_input_mode', control: 'select', label: 'After a selection', options: [option('text', 'Type'), option('voice', 'Voice')] },
     ] },
   ] },
-  { id: 'models-agents', group: 'Agent', icon: 'ic-spark', title: '模型与 Agent', description: '选择推理模型与 Magic Pointer 自有 Runtime 的工作方式。', sections: [
-    { title: '模型', rows: [
-      { control: 'info', infoKey: 'active-model', label: '当前默认模型', description: '普通回答与卡片内展开都使用这一档。' },
-      { control: 'info', infoKey: 'credential', label: '模型密钥', description: '只显示是否存在，永不回显原文。' },
-      { control: 'info', infoKey: 'terminal', label: '安全配置', description: '在项目终端运行；输入过程不会回显密钥。' },
+  { id: 'voice', group: 'Settings', icon: 'ic-mic', title: 'Voice', description: 'Voice is optional. When it is off, no speech model is started.', sections: [
+    { title: 'Voice input', rows: [
+      { path: 'interaction.voice_enabled', control: 'toggle', label: 'Enable voice input', description: 'Turning this off forces text input and hides ordinary voice entry points.' },
+      { path: 'interaction.voice_engine', control: 'select', label: 'Local engine', options: [option('auto', 'Auto'), option('sense_voice', 'SenseVoice'), option('whisper', 'Whisper')] },
+      { path: 'interaction.voice_language', control: 'select', label: 'Language', options: [option('auto', 'Auto'), option('zh', 'Chinese'), option('en', 'English'), option('ja', 'Japanese'), option('ko', 'Korean')] },
+      { path: 'interaction.voice_silence_ms', control: 'select', label: 'End after silence', options: [option(1000, '1.0 seconds'), option(1600, '1.6 seconds'), option(2400, '2.4 seconds')] },
+      { path: 'interaction.voice_auto_submit', control: 'toggle', label: 'Submit after transcription' },
     ] },
-    { title: 'Agent', rows: [
-      { path: 'agents.preferred', control: 'select', label: '首选 Agent', options: [option('pi', 'Pi'), option('codex', 'Codex'), option('claude', 'Claude Code'), option('gemini', 'Gemini CLI')] },
-      { path: 'agents.delivery_mode', control: 'select', label: '交付方式', options: [option('active_session', '当前会话'), option('managed_session', '托管会话'), option('clipboard', '只复制 Prompt')] },
-      { path: 'agents.cwd_match', control: 'select', label: '项目目录匹配', options: [option('strict', '必须完全一致'), option('subtree', '允许子目录'), option('confirm', '不一致时询问')] },
-      { path: 'agents.auto_attach', control: 'toggle', label: '自动附加接地证据' },
-    ] },
-  ] },
-  { id: 'skills', group: '自定义', icon: 'ic-spark', title: 'Skills', description: '查看和调用本机已安装的 Skills。', sections: [
-    { title: '本机目录', rows: [
-      { control: 'info', infoKey: 'skills', label: 'Skills 目录', description: '项目与用户目录按优先级合并；选择条目会把真实 Slash 名称插入 Composer。' },
+    { title: 'Performance', rows: [
+      { path: 'interaction.voice_resident_enabled', control: 'toggle', label: 'Keep the speech model in memory' },
+      { path: 'interaction.voice_idle_unload_ms', control: 'select', label: 'Unload when idle', options: [option(0, 'Never'), option(300000, '5 minutes'), option(900000, '15 minutes')] },
+      { path: 'interaction.voice_memory_limit_mb', control: 'select', label: 'Memory limit', options: [option(512, '512 MB'), option(1024, '1 GB'), option(2048, '2 GB')] },
     ] },
   ] },
-  { id: 'plugins', group: '自定义', icon: 'ic-plug', title: '插件', description: '管理经过批准后进入 Harness 的本地插件。', sections: [
-    { title: '插件', rows: [
-      { control: 'info', infoKey: 'plugins', label: '本地插件', description: '插件保留完整 diff、批准、拒绝与回滚记录；默认不自动应用。' },
+  { id: 'models-agents', group: 'Agent', icon: 'ic-spark', title: 'Models & runtime', description: 'Model selection, reasoning display, and Magic Pointer’s own execution runtime.', sections: [
+    { title: 'Model', rows: [
+      { control: 'info', infoKey: 'active-model', label: 'Active model', description: 'The model used by ordinary replies and Agent turns.' },
+      { control: 'info', infoKey: 'credential', label: 'Model credential', description: 'Shows only whether a credential exists. The value is never displayed.' },
+      { control: 'info', infoKey: 'terminal', label: 'Configure model', description: 'Run the command in Terminal; secret input is not echoed.' },
+    ] },
+    { title: 'Runtime', rows: [
+      { control: 'info', infoKey: 'runtime', label: 'Execution runtime', description: 'Every short or long task runs on Magic Pointer’s own Runtime.' },
+      { control: 'info', infoKey: 'thinking', label: 'Thinking display', description: 'Stored reasoning appears in the conversation timeline and can be expanded.' },
+    ] },
+    { title: 'External clients', rows: [
+      { path: 'agents.preferred', control: 'select', label: 'Preferred delivery client', description: 'Used only when you explicitly deliver a compiled prompt to another client.', options: [option('pi', 'Pi'), option('codex', 'Codex'), option('claude', 'Claude Code'), option('gemini', 'Gemini CLI')] },
+      { path: 'agents.delivery_mode', control: 'select', label: 'Delivery mode', description: 'This changes prompt delivery, not the task execution path.', options: [option('active_session', 'Current client session'), option('managed_session', 'Managed client session'), option('clipboard', 'Copy prompt only')] },
+      { path: 'agents.cwd_match', control: 'select', label: 'Project folder match', options: [option('strict', 'Exact match'), option('subtree', 'Allow subfolders'), option('confirm', 'Ask when different')] },
+      { path: 'agents.auto_attach', control: 'toggle', label: 'Attach grounded evidence', description: 'Include the selected objects and frozen evidence in explicit prompt delivery.' },
     ] },
   ] },
-  { id: 'connectors', group: '自定义', icon: 'ic-globe', title: 'MCP 与连接器', description: '连接本地 MCP、浏览器和外部结构化能力。', sections: [
-    { title: '连接器', rows: [
-      { control: 'info', infoKey: 'connectors', label: 'MCP 与连接器', description: '能力按当前任务惰性发现，不把全部工具长期塞进模型上下文。' },
+  { id: 'skills', group: 'Customize', icon: 'ic-spark', title: 'Skills', description: 'View and invoke Skills installed on this device.', sections: [
+    { title: 'On this device', rows: [
+      { control: 'info', infoKey: 'skills', label: 'Your skills', description: 'Project and user directories are merged by priority; choosing one inserts its real Slash name.' },
     ] },
   ] },
-  { id: 'perception-privacy', group: 'Agent', icon: 'ic-eye', title: '感知与隐私', description: '它能看什么、画面能否出本机，以及哪些应用永远不看。', sections: [
-    { title: '读取', rows: [
-      { path: 'privacy.default_capture_mode', control: 'select', label: '默认读取方式', options: [option('follow_global', '自动'), option('structured_only', '只用结构层'), option('local_screenshot', '只在本机看画面'), option('deny', '完全不读')] },
-      { path: 'privacy.upload_screenshots', control: 'toggle', label: '允许把画面发给视觉模型' },
-    ] },
-    { title: '边界', rows: [
-      { path: 'privacy.sensitive_apps', control: 'tags', label: '完全不看的应用', description: '不读、不截，也不记。' },
-    ] },
-    { title: '浏览器', rows: [
-      { path: 'connections.browser_devtools_enabled', control: 'toggle', label: '读取已授权的浏览器页面' },
-      { path: 'connections.browser_devtools_endpoints', control: 'tags', label: '本机调试端点', description: '只接受 localhost/127.0.0.1。' },
+  { id: 'plugins', group: 'Customize', icon: 'ic-plug', title: 'Plugins', description: 'Manage local Harness plugins that take effect only after approval.', sections: [
+    { title: 'Plugins', rows: [
+      { control: 'info', infoKey: 'plugins', label: 'Personal plugins', description: 'Each candidate retains its diff, approval, rejection, audit, and rollback record.' },
     ] },
   ] },
-  { id: 'permissions', group: 'Agent', icon: 'ic-shield', title: '权限', description: '按后果决定直接做、先问还是拒绝。', sections: [
-    { title: '默认策略', rows: [
-      { path: 'permissions.default_read', control: 'select', label: '读取', options: [option('allow', '直接做'), option('confirm', '每次问我'), option('deny', '拒绝')] },
-      { path: 'permissions.default_write', control: 'select', label: '写入', options: [option('allow', '直接做'), option('confirm', '每次问我'), option('deny', '拒绝')] },
-      { path: 'permissions.default_send', control: 'select', label: '对外发送', options: [option('confirm', '每次问我'), option('deny', '一律拒绝')] },
-      { path: 'permissions.default_destructive', control: 'select', label: '删除或覆盖', options: [option('confirm', '确认后执行'), option('deny', '一律拒绝')] },
-      { path: 'permissions.default_purchase', control: 'select', label: '购买与付款', options: [option('confirm', '确认后执行'), option('deny', '一律拒绝')] },
-    ] },
-    { title: '临时授权', rows: [
-      { control: 'info', label: '范围授权', description: '只展示仍有效的应用、项目和到期时间；默认拒绝新增。' },
+  { id: 'connectors', group: 'Customize', icon: 'ic-globe', title: 'MCP & connectors', description: 'Connect local MCP servers, browsers, and structured capabilities.', sections: [
+    { title: 'Connectors', rows: [
+      { control: 'info', infoKey: 'connectors', label: 'MCP servers', description: 'Capabilities are discovered lazily for the current task instead of remaining in every prompt.' },
     ] },
   ] },
-  { id: 'memory-context', group: '自定义', icon: 'ic-memory', title: '记忆与上下文', description: '决定 Agent 能记住什么，并查看已经形成的本地上下文。', sections: [
-    { title: '记忆', rows: [
-      { path: 'privacy.screen_memory_enabled', control: 'toggle', label: '记住处理过的对象', description: '在本机保存应用、窗口和问题摘要，供之后的任务召回。' },
-      { path: 'privacy.background_learning_enabled', control: 'toggle', label: '生成学习建议', description: '任务结束后生成候选记忆；应用前仍需你批准。' },
+  { id: 'perception-privacy', group: 'Agent', icon: 'ic-eye', title: 'Perception & privacy', description: 'Control what the Agent can inspect, what may leave the device, and which apps remain private.', sections: [
+    { title: 'Reading', rows: [
+      { path: 'privacy.default_capture_mode', control: 'select', label: 'Default capture mode', options: [option('follow_global', 'Auto'), option('structured_only', 'Structured only'), option('local_screenshot', 'Local screenshot only'), option('deny', 'Deny')] },
+      { path: 'privacy.upload_screenshots', control: 'toggle', label: 'Allow screenshots to reach the vision model' },
     ] },
-    { title: '上下文', rows: [
-      { control: 'info', label: '项目上下文', description: '项目文件夹、当前对话与已批准记忆会一起进入 Agent 上下文。' },
-      { control: 'info', label: '自动压缩', description: '长任务接近上下文窗口时，由 Runtime 保留目标、决定与未完成工作。' },
+    { title: 'Boundaries', rows: [
+      { path: 'privacy.sensitive_apps', control: 'tags', label: 'Apps Magic Pointer never reads', description: 'No reading, capture, or memory.' },
     ] },
-  ] },
-  { id: 'storage', group: '自定义', icon: 'ic-stash', title: '存储', description: '收藏、截图、产物与审计在本机如何保存。', sections: [
-    { title: '收藏箱', rows: [
-      { path: 'stash.dir', control: 'text', label: '保存目录' },
-      { path: 'stash.clipboard', control: 'toggle', label: '自动收藏剪贴板图片' },
-      { path: 'stash.text', control: 'toggle', label: '自动收藏剪贴板文字' },
-      { path: 'stash.burst_window_ms', control: 'select', label: '归为同一组的时间', options: [option(30000, '30 秒'), option(120000, '2 分钟'), option(600000, '10 分钟')] },
-    ] },
-    { title: '保留期', rows: [
-      { path: 'privacy.retain_captures_days', control: 'select', label: '截图与选区', options: [option(1, '1 天'), option(3, '3 天'), option(7, '7 天'), option(0, '永久')] },
-      { path: 'privacy.retain_artifacts_days', control: 'select', label: '生成的产物', options: [option(7, '7 天'), option(30, '30 天'), option(90, '90 天'), option(0, '永久')] },
+    { title: 'Browser', rows: [
+      { path: 'connections.browser_devtools_enabled', control: 'toggle', label: 'Read authorized browser pages' },
+      { path: 'connections.browser_devtools_endpoints', control: 'tags', label: 'Local debugging endpoints', description: 'Only localhost and 127.0.0.1 are accepted.' },
     ] },
   ] },
-  { id: 'appearance-accessibility', group: '自定义', icon: 'ic-img', title: '外观', description: '主题和划线反馈。', sections: [
-    { title: '外观', rows: [
-      { path: 'appearance.theme', control: 'select', label: '主题', options: [option('system', '跟随系统'), option('light', '浅色'), option('dark', '深色')] },
-      { path: 'appearance.material', control: 'select', label: '窗口材质', options: [option('auto', '自动'), option('translucent', '半透明'), option('solid', '不透明')] },
-      { path: 'appearance.selection_visual', control: 'select', label: '选区反馈', options: [option('sweep_band', '扫线'), option('soft_glow', '柔光'), option('outline', '描边')] },
-      { path: 'appearance.sweep_height_ratio', control: 'range', label: '扫线高度', min: 0.15, max: 1.5, step: 0.05 },
+  { id: 'permissions', group: 'Agent', icon: 'ic-shield', title: 'Permissions', description: 'Choose whether each effect is allowed, asks first, or is denied.', sections: [
+    { title: 'Default permissions', rows: [
+      { path: 'permissions.default_read', control: 'select', label: 'Read', options: [option('allow', 'Allow'), option('confirm', 'Ask every time'), option('deny', 'Deny')] },
+      { path: 'permissions.default_write', control: 'select', label: 'Write', options: [option('allow', 'Allow'), option('confirm', 'Ask every time'), option('deny', 'Deny')] },
+      { path: 'permissions.default_send', control: 'select', label: 'External send', options: [option('confirm', 'Ask every time'), option('deny', 'Deny')] },
+      { path: 'permissions.default_destructive', control: 'select', label: 'Delete or overwrite', options: [option('confirm', 'Confirm before executing'), option('deny', 'Deny')] },
+      { path: 'permissions.default_purchase', control: 'select', label: 'Purchases', options: [option('confirm', 'Confirm before executing'), option('deny', 'Deny')] },
     ] },
-    { title: '窗口', rows: [
-      { path: 'accessibility.reduce_transparency', control: 'toggle', label: '减少透明效果' },
-    ] },
-  ] },
-  { id: 'shortcuts', group: '设置', icon: 'ic-cursor', title: '快捷键', description: 'Studio、划线和语音入口的键盘设置。', sections: [
-    { title: '快捷键', rows: [
-      { path: 'shortcuts.wake', control: 'text', label: '唤起' },
-      { path: 'shortcuts.text_mode', control: 'text', label: '直接键盘输入' },
-      { path: 'shortcuts.voice_mode', control: 'text', label: '直接语音输入' },
-      { path: 'shortcuts.pause', control: 'text', label: '暂停输入' },
+    { title: 'Session grants', rows: [
+      { control: 'info', infoKey: 'grants', label: 'Scoped grants', description: 'Shows active app, project, and expiry scopes. New scopes are denied by default.' },
     ] },
   ] },
-  { id: 'updates', group: '设置', icon: 'ic-refresh', title: '更新', description: '本机安装版更新通道与当前状态。', sections: [
-    { title: '更新', rows: [
-      { path: 'general.update_channel', control: 'select', label: '更新通道', options: [option('stable', '稳定'), option('preview', '预览')] },
-      { control: 'info', infoKey: 'updates', label: '安装状态', description: '下载与重启状态也会出现在左栏底部。' },
+  { id: 'memory-context', group: 'Customize', icon: 'ic-memory', title: 'Memory & context', description: 'Control what the Agent remembers and inspect context formed on this device.', sections: [
+    { title: 'Memory', rows: [
+      { path: 'privacy.screen_memory_enabled', control: 'toggle', label: 'Remember handled objects', description: 'Store app, window, and question summaries locally for later recall.' },
+      { path: 'privacy.background_learning_enabled', control: 'toggle', label: 'Generate learning suggestions', description: 'Candidates still require approval before they take effect.' },
+    ] },
+    { title: 'Context', rows: [
+      { control: 'info', label: 'Workspace memory', description: 'The bound folder, current conversation, and approved memories enter the Agent context.' },
+      { control: 'info', label: 'Automatic compaction', description: 'Near the context limit, Runtime preserves goals, decisions, evidence, and unfinished work.' },
     ] },
   ] },
-  { id: 'diagnostics', group: '设置', icon: 'ic-term', title: '诊断与关于', description: '查看运行信息、日志入口与版本。', sections: [
-    { title: '诊断', rows: [
-      { control: 'info', infoKey: 'diagnostics', label: '诊断与日志', description: '打开当前版本、Electron/Chromium 信息和本机诊断入口。' },
+  { id: 'storage', group: 'Customize', icon: 'ic-stash', title: 'Storage', description: 'Choose how captures, artifacts, and audit data remain on this device.', sections: [
+    { title: 'Collection', rows: [
+      { path: 'stash.dir', control: 'text', label: 'Save directory' },
+      { path: 'stash.clipboard', control: 'toggle', label: 'Collect clipboard images' },
+      { path: 'stash.text', control: 'toggle', label: 'Collect clipboard text' },
+      { path: 'stash.burst_window_ms', control: 'select', label: 'Group within', options: [option(30000, '30 seconds'), option(120000, '2 minutes'), option(600000, '10 minutes')] },
+    ] },
+    { title: 'Retention', rows: [
+      { path: 'privacy.retain_captures_days', control: 'select', label: 'Captures and selections', options: [option(1, '1 day'), option(3, '3 days'), option(7, '7 days'), option(0, 'Forever')] },
+      { path: 'privacy.retain_artifacts_days', control: 'select', label: 'Generated artifacts', options: [option(7, '7 days'), option(30, '30 days'), option(90, '90 days'), option(0, 'Forever')] },
+    ] },
+  ] },
+  { id: 'appearance-accessibility', group: 'Customize', icon: 'ic-img', title: 'Appearance', description: 'Theme, window material, and selection feedback.', sections: [
+    { title: 'Appearance', rows: [
+      { path: 'appearance.theme', control: 'select', label: 'Theme', options: [option('system', 'System'), option('light', 'Light'), option('dark', 'Dark')] },
+      { path: 'appearance.material', control: 'select', label: 'Window material', options: [option('auto', 'Auto'), option('translucent', 'Translucent'), option('solid', 'Solid')] },
+      { path: 'appearance.selection_visual', control: 'select', label: 'Selection feedback', options: [option('sweep_band', 'Sweep'), option('soft_glow', 'Soft glow'), option('outline', 'Outline')] },
+      { path: 'appearance.sweep_height_ratio', control: 'range', label: 'Sweep height', min: 0.15, max: 1.5, step: 0.05 },
+    ] },
+    { title: 'Window', rows: [
+      { path: 'accessibility.reduce_transparency', control: 'toggle', label: 'Reduce transparency' },
+    ] },
+  ] },
+  { id: 'shortcuts', group: 'Settings', icon: 'ic-cursor', title: 'Shortcuts', description: 'Keyboard access for Studio, selections, and voice.', sections: [
+    { title: 'Shortcuts', rows: [
+      { path: 'shortcuts.wake', control: 'text', label: 'Wake Magic Pointer' },
+      { path: 'shortcuts.text_mode', control: 'text', label: 'Start text input' },
+      { path: 'shortcuts.voice_mode', control: 'text', label: 'Start voice input' },
+      { path: 'shortcuts.pause', control: 'text', label: 'Pause input' },
+    ] },
+  ] },
+  { id: 'updates', group: 'Settings', icon: 'ic-refresh', title: 'Updates', description: 'Update channel and installed application status.', sections: [
+    { title: 'Updates', rows: [
+      { path: 'general.update_channel', control: 'select', label: 'Update channel', options: [option('stable', 'Stable'), option('preview', 'Preview')] },
+      { control: 'info', infoKey: 'updates', label: 'Installed status', description: 'Download and relaunch state also appears at the bottom of the sidebar.' },
+    ] },
+  ] },
+  { id: 'diagnostics', group: 'Settings', icon: 'ic-term', title: 'Diagnostics & about', description: 'Version, runtime information, logs, and local diagnostics.', sections: [
+    { title: 'Diagnostics', rows: [
+      { control: 'info', infoKey: 'diagnostics', label: 'Diagnostics and logs', description: 'Shows the installed version, Electron/Chromium build, and local diagnostic entry points.' },
     ] },
   ] },
 ];
@@ -189,21 +193,23 @@ function patchForSetting(path: string, value: unknown) {
 
 function modelInfoValue(key: string, status: Record<string, any>) {
   if (key === 'active-model') {
-    if (!status?.configured) return '未配置';
-    return String(status.displayName || status.model || status.provider || '已配置');
+    if (!status?.configured) return 'Not configured';
+    return String(status.displayName || status.model || status.provider || 'Configured');
   }
   if (key === 'credential') {
-    if (!status?.configured) return '等待模型档案';
-    if (!status.credentialBackendAvailable) return '系统安全存储不可用';
-    return status.credentialPresent ? '已安全保存' : '未配置';
+    if (!status?.configured) return 'Waiting for model profile';
+    if (!status.credentialBackendAvailable) return 'Secure storage unavailable';
+    return status.credentialPresent ? 'Stored securely' : 'Not configured';
   }
   if (key === 'terminal') return 'npm run model:groq';
-  if (key === 'skills') return '打开 Skills 与命令目录';
-  if (key === 'plugins') return '批准后生效';
-  if (key === 'connectors') return '按任务惰性加载';
-  if (key === 'updates') return '由自动更新器提供';
-  if (key === 'diagnostics') return '本机运行信息';
-  return '只读';
+  if (key === 'runtime') return 'MPAgentRuntime';
+  if (key === 'thinking') return 'Stored reasoning';
+  if (key === 'skills') return 'Open Skills and commands';
+  if (key === 'plugins') return 'Effective after approval';
+  if (key === 'connectors') return 'Loaded lazily by task';
+  if (key === 'updates') return 'Provided by the updater';
+  if (key === 'diagnostics') return 'Local runtime information';
+  return 'Read only';
 }
 
 const SettingsModel = { SETTINGS_PAGES, modelInfoValue, patchForSetting, valueForSetting };

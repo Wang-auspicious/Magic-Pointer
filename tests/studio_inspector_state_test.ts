@@ -27,4 +27,32 @@ assert.deepStrictEqual(state, {
 });
 assert.strictEqual(reduceInspectorState(state, { type: 'close' }).open, false);
 
+const narrowOpen = reduceInspectorState({
+  open: false,
+  maximized: false,
+  width: 747,
+  previousWidth: 747,
+  tab: 'tasks',
+}, { type: 'open', tab: 'tasks', availableWidth: 911 });
+assert.strictEqual(narrowOpen.width, 483,
+  'opening a persisted wide Inspector must leave the 420px primary pane intact');
+assert.strictEqual(narrowOpen.previousWidth, 747,
+  'temporary viewport clamping must preserve the user\'s preferred Inspector width');
+
+const viewportClamped = reduceInspectorState({
+  ...narrowOpen,
+  width: 747,
+}, { type: 'viewport', availableWidth: 911 });
+assert.strictEqual(viewportClamped.width, 483);
+assert.strictEqual(viewportClamped.previousWidth, 747);
+
+const narrowRestore = reduceInspectorState({
+  ...narrowOpen,
+  maximized: true,
+  width: 747,
+}, { type: 'restore', availableWidth: 911 });
+assert.strictEqual(narrowRestore.width, 483,
+  'restoring from maximized must revalidate against the current viewport');
+assert.strictEqual(narrowRestore.previousWidth, 747);
+
 console.log('studio inspector state test ok');

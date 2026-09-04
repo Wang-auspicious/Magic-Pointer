@@ -29,5 +29,12 @@ assert(!chat.includes('模型请求 · 第'), 'no plumbing text in the transcrip
 /* studio:非工具进度全部并入单一 status 桶(原地更新,不堆叠) */
 assert(/return 'status'/.test(studio), 'non-tool progress collapses into one status bucket');
 assert(!studio.includes("return 'runtime'"), 'old runtime bucket must be gone');
+assert(studio.includes("String(record.phase || '') === 'subagent'"));
+assert(studio.includes('ConversationControl.decodeChunkBlob(fields)'));
+assert(studio.includes('liveSubagentTasks.set('));
+assert(studio.includes('renderProjectTasks()'));
+assert(studio.includes('studioSubagentGlobals.activeSubagentParentCallId('),
+  'a live child snapshot must inherit the active parent Agent call id');
+assert(studio.includes("payload.parentCallId = parentCallId"));
 
 console.log('studio_live_status_contract ok');

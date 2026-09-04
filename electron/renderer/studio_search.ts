@@ -1,6 +1,9 @@
-export type StudioSearchKind = 'conversation' | 'project' | 'command' | 'skill' | 'route';
+'use strict';
 
-export interface StudioSearchItem {
+(() => {
+type StudioSearchKind = 'conversation' | 'project' | 'command' | 'skill' | 'route';
+
+interface StudioSearchItem {
   kind: StudioSearchKind;
   key: string;
   label: string;
@@ -55,7 +58,7 @@ function keywordList(value: unknown): string[] {
   return text ? [text] : [];
 }
 
-export function buildStudioSearchIndex(sources: StudioSearchSources): StudioSearchItem[] {
+function buildStudioSearchIndex(sources: StudioSearchSources): StudioSearchItem[] {
   const items: StudioSearchItem[] = [];
   for (const conversation of (sources.conversations ?? []).slice(0, LIMITS.conversation)) {
     const id = clean(conversation.id);
@@ -141,7 +144,7 @@ function matchRank(item: StudioSearchItem, query: string): number | null {
   return null;
 }
 
-export function searchStudioIndex(
+function searchStudioIndex(
   index: readonly StudioSearchItem[],
   rawQuery: unknown,
   limit = 20,
@@ -157,3 +160,14 @@ export function searchStudioIndex(
     .slice(0, Math.max(0, Math.min(20, Number(limit) || 20)))
     .map((entry) => entry.item);
 }
+
+const StudioSearch = {
+  buildStudioSearchIndex,
+  searchStudioIndex,
+};
+
+if (typeof module !== 'undefined' && module.exports) module.exports = StudioSearch;
+if (typeof globalThis !== 'undefined') {
+  (globalThis as typeof globalThis & { StudioSearch?: typeof StudioSearch }).StudioSearch = StudioSearch;
+}
+})();

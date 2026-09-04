@@ -774,7 +774,12 @@ function initializeUpdateManager({ automatic = true } = {}) {
     updater,
     dialog,
     log,
-    onStatus: () => refreshTrayMenu(),
+    onStatus: (state: { state: string; checkedAt?: number; version?: string; progress?: number; message?: string }) => {
+      refreshTrayMenu();
+      if (dashboardWindow && !dashboardWindow.isDestroyed()) {
+        dashboardWindow.webContents.send('dashboard:update-status', state);
+      }
+    },
   });
   updateManager.start({
     channel: fabricSettings?.general?.update_channel || 'stable',
@@ -5687,6 +5692,16 @@ ipcMain.on('dashboard:theme', (event: Electron.IpcMainEvent, payload: any = {}) 
   } catch (_) {
     // Window Controls Overlay is optional; renderer chrome remains usable.
   }
+});
+ipcMain.handle('updates:status', (event: Electron.IpcMainInvokeEvent) => {
+  if (!isDashboardSender(event)) throw new Error('unauthorized_update_status_reader');
+  return updateManager?.status() || { state: app.isPackaged ? 'idle' : 'unsupported' };
+});
+ipcMain.handle('updates:check', async (event: Electron.IpcMainInvokeEvent) => {
+  if (!isDashboardSender(event)) throw new Error('unauthorized_update_check_sender');
+  const manager = initializeUpdateManager({ automatic: false });
+  if (!manager) return { ok: false, reason: 'update_runtime_unavailable' };
+  return manager.check({ manual: true });
 });
 ipcMain.handle('runtime-snapshot:get', async (event: Electron.IpcMainInvokeEvent, options: any = {}) => {
   if (!isDashboardSender(event)) throw new Error('unauthorized_runtime_snapshot_sender');

@@ -38,6 +38,19 @@ assert(row.includes('data-dsh-act="toggle"'), 'the row must be expandable via th
 const collapsedByDefault = DshChat.toolRowNode(model).outerHTML;
 assert(collapsedByDefault.includes('data-open="false"'), 'tool rows start collapsed');
 
+const agentModel = DshChat.toolRowModel(
+  'Agent',
+  JSON.stringify({ task: '核对 Inspector 文件预览' }),
+  undefined,
+  'parent-agent-1',
+);
+assert.strictEqual(agentModel.title, 'Running subagent');
+assert.strictEqual(agentModel.summary, '核对 Inspector 文件预览');
+const agentRow = html(DshChat.toolRowNode(agentModel));
+assert(agentRow.includes('data-dsh-act="open-subagent"'),
+  'an Agent row opens the matching Tasks lane instead of a generic local disclosure');
+assert(agentRow.includes('data-subagent-parent-call-id="parent-agent-1"'));
+
 const running = html(DshChat.toolRowNode(DshChat.toolRowModel('grep', JSON.stringify({ pattern: 'x' }), undefined)));
 assert(running.includes('data-state="running"'), 'an unsettled call must render the running state');
 assert(running.includes('class="dsh-vh"'), 'running state must carry a screen-reader label');
@@ -80,13 +93,20 @@ assert(DshChat.stateDot('ongoing').outerHTML.includes('class="dsh-matrix"'));
 /* ---- Think 思考行 ---- */
 const think = html(DshChat.thinkNode('先读这个文件\n再判断结构', false));
 assert(think.includes('dsh-think"'), 'reasoning must render as the Think disclosure');
-assert(think.includes('dsh-title">Think</span>'), 'the Think row title is the DSH literal');
+assert(think.includes('dsh-title">Thought</span>'), 'completed reasoning uses Claude\'s timeline label');
 assert(think.includes('先读这个文件'), 'collapsed summary = first line of reasoning');
 assert(think.includes('class="dsh-think-body"'), 'expanded body must exist');
 assert(think.includes('data-open="false"'), 'Think rows start collapsed');
+const longThink = html(DshChat.thinkNode('推理步骤。'.repeat(120), false));
+assert(longThink.includes('data-long="true"'), 'long completed reasoning must expose the 200px disclosure cap');
+assert(longThink.includes('class="dsh-think-viewport"'));
+assert(longThink.includes('class="dsh-think-fade"'));
+assert(longThink.includes('data-dsh-act="think-more"'));
+assert(longThink.includes('Show more'));
 const runningThink = html(DshChat.thinkNode('多行\n思考', true));
 assert(runningThink.includes('data-state="running"'), 'a streaming Think row must carry the running state');
-assert(runningThink.includes('思考'), 'a running row must follow the latest line');
+assert(runningThink.includes('Thinking…'), 'a running row uses Claude\'s exact status label');
+assert(!runningThink.includes('data-long="true"'), 'streaming reasoning must remain uncapped');
 
 /* ---- 助手回合组装：正文 + Think + 工具行 + 动作 ---- */
 const turn = DshChat.assistantTurnNode({
@@ -163,6 +183,56 @@ assert(groupedReads.includes('Read 3 files'),
   'consecutive reads must collapse into one "Read N files" group header');
 assert(groupedReads.includes('f0.md') && groupedReads.includes('f2.md'),
   'the collapsed group still carries the per-file chips inside');
+assert(!/<details[^>]*class="dsh-tool-group"[^>]*\sopen(?:=|\s|>)/.test(groupedReads),
+  'Claude tool groups start collapsed and reveal evidence only on demand');
+
+/* ---- 参考图逐字轨迹：真实组标题、工具动作语法与尾部 meta 顺序 ---- */
+const referenceFlow = DshChat.assistantTurnNode({
+  answer: '读完了。',
+  trajectory: [
+    { kind: 'message', text: '我先找到本地的两个 md 文件,同时看看目录结构。' },
+    { kind: 'tool', groupLabel: 'Found files, ran a command', name: 'search', callId: 's1',
+      text: JSON.stringify({ pattern: '**/*.md' }), result: 'VisLexicon-完整方案.md\nrebuttal.md', state: 'done',
+      startedAt: 1000, completedAt: 9000 },
+    { kind: 'tool', groupLabel: 'Found files, ran a command', name: 'list_dir', callId: 'l1',
+      text: JSON.stringify({ path: '.' }), result: 'VisLexicon-完整方案.md\nrebuttal.md', state: 'done',
+      startedAt: 9000, completedAt: 12000 },
+    { kind: 'message', text: '找到两个文件了,我读一下。' },
+    { kind: 'tool', groupLabel: 'Read 2 files', name: 'read_file', callId: 'r1',
+      text: JSON.stringify({ path: 'VisLexicon-完整方案.md' }), result: '内容', state: 'done',
+      startedAt: 12000, completedAt: 30000 },
+    { kind: 'tool', groupLabel: 'Read 2 files', name: 'read_file', callId: 'r2',
+      text: JSON.stringify({ path: 'rebuttal.md' }), result: '内容', state: 'done',
+      startedAt: 30000, completedAt: 68000 },
+  ],
+  modelUsage: { totalTokens: 417 },
+}).map(html).join('');
+assert(referenceFlow.includes('Found files, ran a command'),
+  'reference mixed tool group keeps Claude\'s exact group label');
+assert(referenceFlow.includes('Searched') && referenceFlow.includes('**/*.md'),
+  'search tool uses the completed-action label from the reference');
+assert(referenceFlow.includes('Listed files in working directory'),
+  'directory listing uses the completed-action label from the reference');
+assert(referenceFlow.includes('Read') && referenceFlow.includes('VisLexicon-完整方案.md') && referenceFlow.includes('rebuttal.md'),
+  'read chips preserve both exact reference filenames');
+assert(/<details[^>]*class="dsh-tool-group"[^>]*\sopen(?:=|\s|>)/.test(referenceFlow),
+  'two-item Claude groups start expanded so their child rows are visible');
+assert(referenceFlow.indexOf('读完了。') < referenceFlow.indexOf('1m 7s · 417 tokens'),
+  'the final answer appears before the run meta, as in the reference transcript');
+assert(referenceFlow.includes('dsh-tool-caret'),
+  'tool chips expose a trailing disclosure caret rather than a leading generic chevron');
+
+const explicitActionLabels = DshChat.assistantTurnNode({
+  trajectory: [
+    { kind: 'tool', name: 'Bash', summary: 'Checked git status and recent commits', callId: 'g1', state: 'done', text: '{"command":"git status"}', result: 'clean' },
+    { kind: 'message', text: 'Mandatory docs first per AGENTS.md.' },
+    { kind: 'tool', name: 'Read', summary: 'Read STATUS.md', callId: 'r1', state: 'done', text: '{"file_path":"docs/STATUS.md"}', result: 'loaded' },
+  ],
+}).map(html).join('');
+assert(explicitActionLabels.includes('Checked git status and recent commits'),
+  'a truthful stored action summary must override generic tool wording');
+assert(explicitActionLabels.includes('Read STATUS.md'),
+  'reference action labels must survive as individual tool rows');
 
 /* ---- 无 trajectory 的事件降级：不再画假 Think 行 ---- */
 const eventsOnly = DshChat.assistantTurnNode({
@@ -187,6 +257,13 @@ assert(tokens.includes('body[data-ds-dark-theme]'), 'the dark alias block must e
 assert(tokens.includes('--mp-page: #151515'), 'dark page token matches the measured reference');
 assert.match(css, /\.dsh-bubble\s*\{[^}]*border-radius:\s*12px/s, 'user bubble uses the measured restrained radius');
 assert.match(css, /\.dsh-tool-group-header,[\s\S]*min-height:\s*28px/s, 'activity rows use the compact Claude height');
+assert.match(css, /\.dsh-tool \.dsh-tool-caret\s*\{[^}]*margin-left:\s*4px/s,
+  'tool disclosure arrows sit directly after the action text');
+assert.match(css, /\.dsh-tool-group-title,[^}]*\{[^}]*flex:\s*0 0 auto/s,
+  'group disclosure arrows sit directly after the group label');
+assert.match(css, /\.dsh-disclosure:not\(\[data-open='true'\]\) > \.dsh-body-wrap\s*\{[^}]*display:\s*none/s);
+assert.match(css, /\.dsh-think\[data-long="true"\][^{]*\.dsh-think-viewport\s*\{[^}]*max-height:\s*200px/s);
+assert.match(css, /\.dsh-think-fade\s*\{[^}]*linear-gradient/s);
 assert(!css.includes('dsh-state-dot-chase'), 'ongoing activity must not use decorative pixel chase');
 assert(tokens.includes('prefers-reduced-motion'), 'reduced motion must collapse spatial transitions');
 

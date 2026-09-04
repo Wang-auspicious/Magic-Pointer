@@ -12,8 +12,10 @@ by construction rather than by hope.
 
 from __future__ import annotations
 
+import json
+import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from app.agent_runtime.tool_registry import Effect, ToolRegistry, ToolSpec
 
@@ -38,6 +40,8 @@ def register_delegate_tool(
     permission_mode: str = "bypass",
     max_tool_calls: int = 60,
     max_tokens: int = 4096,
+    subagent_event_sink: Callable[[dict[str, Any]], None] | None = None,
+    id_factory: Callable[[], str] | None = None,
 ) -> None:
     """Register ``delegate_task``; the child runs the same loop kernel."""
     # 旧名别名（一个版本）：历史授权/旧调用仍路由到规范工具；别名不进 schema。
@@ -46,6 +50,33 @@ def register_delegate_tool(
 
     root = Path(workspace_root)
 
+    def emit(payload: dict[str, Any]) -> None:
+        if subagent_event_sink is None:
+            return
+        try:
+            subagent_event_sink(payload)
+        except Exception:
+            # A visual progress consumer can disappear with its window; it may
+            # never be able to abort or alter the child loop.
+            return
+
+    def bounded(value: Any, limit: int = 1600) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            text = value
+        else:
+            try:
+                text = json.dumps(
+                    value,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+            except (TypeError, ValueError):
+                text = str(value)
+        return text if len(text) <= limit else f"{text[:limit]}…"
+
     def delegate_task(task: str, context: str = "", readonly: bool = False, **_: Any) -> str:
         prompt = str(task or "").strip()
         if not prompt:
@@ -53,6 +84,73 @@ def register_delegate_tool(
         extra = str(context or "").strip()
         if extra:
             prompt = f"{prompt}\n\n背景上下文：\n{extra}"
+
+        child_id = str((id_factory or (lambda: uuid.uuid4().hex[:12]))())
+        steps: list[dict[str, Any]] = []
+        active_steps: dict[str, dict[str, Any]] = {}
+
+        def publish(status: str, *, summary: str = "") -> None:
+            payload: dict[str, Any] = {
+                "id": child_id,
+                "description": str(task or "").strip(),
+                "readonly": bool(readonly),
+                "status": status,
+                "stepCount": len(steps),
+                "currentTool": next(
+                    (
+                        str(step.get("tool") or "")
+                        for step in reversed(steps)
+                        if step.get("status") == "running"
+                    ),
+                    "",
+                ),
+                "steps": [dict(step) for step in steps],
+            }
+            if summary:
+                payload["summary"] = summary
+            emit(payload)
+
+        def child_event(event: Any) -> None:
+            kind = str(getattr(event, "kind", "") or "")
+            if kind == "tool_call_started":
+                call_id = str(getattr(event, "id", "") or f"step-{len(steps) + 1}")
+                step = {
+                    "index": len(steps) + 1,
+                    "callId": call_id,
+                    "tool": str(getattr(event, "name", "") or "Tool"),
+                    "status": "running",
+                }
+                steps.append(step)
+                active_steps[call_id] = step
+                publish("running")
+                return
+            if kind != "tool_call_finished":
+                return
+            result = getattr(event, "result", None)
+            call_id = str(getattr(result, "tool_call_id", "") or "")
+            step = active_steps.pop(call_id, None)
+            if step is None:
+                step = {
+                    "index": len(steps) + 1,
+                    "callId": call_id or f"step-{len(steps) + 1}",
+                    "tool": str(getattr(result, "tool_name", "") or "Tool"),
+                }
+                steps.append(step)
+            failed = bool(getattr(result, "is_error", False))
+            step.update(
+                {
+                    "status": "failed" if failed else "completed",
+                    "input": bounded(getattr(result, "arguments", None)),
+                    "output": bounded(
+                        getattr(result, "error_message", None)
+                        if failed
+                        else getattr(result, "value", None)
+                    ),
+                    "usedBackend": str(getattr(result, "used_backend", "") or ""),
+                    "latencyMs": float(getattr(result, "latency_ms", 0.0) or 0.0),
+                }
+            )
+            publish("running")
 
         child_registry = ToolRegistry()
         from app.agent_runtime.coding_tools import register_coding_tools
@@ -78,17 +176,27 @@ def register_delegate_tool(
             system_prompt=_SUBAGENT_SYSTEM_PROMPT,
             max_tokens=max_tokens,
         )
-        terminal = run_agent_turn(
-            prompt,
-            registry=child_registry,
-            client=child_client,
-            allowed_effects=child_effects,
-            permission_mode=permission_mode,
-            tool_limit=max_tool_calls,
-            lang="zh",
-        )
+        publish("running")
+        try:
+            terminal = run_agent_turn(
+                prompt,
+                registry=child_registry,
+                client=child_client,
+                allowed_effects=child_effects,
+                permission_mode=permission_mode,
+                tool_limit=max_tool_calls,
+                lang="zh",
+                event_sink=child_event,
+            )
+        except Exception as exc:
+            publish("failed", summary=str(exc))
+            raise
         summary = str(terminal.message or "").strip()
-        header = f"[subagent {terminal.reason.value}]"
+        publish(terminal.reason.value, summary=summary)
+        header = (
+            f"[subagent id={child_id} status={terminal.reason.value} "
+            f"steps={len(steps)}]"
+        )
         return f"{header}\n{summary or '(no summary)'}"
 
     registry.register(ToolSpec(

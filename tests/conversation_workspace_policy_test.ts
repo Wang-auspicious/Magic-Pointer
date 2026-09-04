@@ -10,7 +10,7 @@ assert.strictEqual(resolveConversationWorkspace('', ' C:/thread '), 'C:/thread')
 assert.deepStrictEqual(workspaceCapabilityState(null), {
   bound: false,
   codingTools: false,
-  label: '选择文件夹…',
+  label: 'Select folder…',
 });
 assert.deepStrictEqual(workspaceCapabilityState('C:/repo'), {
   bound: true,

@@ -1,4 +1,7 @@
-export interface StudioInspectorState {
+'use strict';
+
+(() => {
+interface StudioInspectorState {
   open: boolean;
   maximized: boolean;
   width: number;
@@ -6,20 +9,21 @@ export interface StudioInspectorState {
   tab: string;
 }
 
-export type StudioInspectorAction =
-  | { type: 'open'; tab?: string }
+type StudioInspectorAction =
+  | { type: 'open'; tab?: string; availableWidth?: number }
   | { type: 'close' }
   | { type: 'select-tab'; tab: string }
   | { type: 'resize'; width: number; availableWidth?: number }
+  | { type: 'viewport'; availableWidth?: number }
   | { type: 'maximize' }
-  | { type: 'restore' };
+  | { type: 'restore'; availableWidth?: number };
 
 const MIN_WIDTH = 420;
 const MAX_WIDTH = 760;
 const MIN_PRIMARY = 420;
 const GAP = 8;
 
-export function clampInspectorWidth(desired: unknown, availableWidth: unknown): number {
+function clampInspectorWidth(desired: unknown, availableWidth: unknown): number {
   const requested = Number(desired);
   const available = Number(availableWidth);
   const safeRequested = Number.isFinite(requested) ? requested : 560;
@@ -28,17 +32,22 @@ export function clampInspectorWidth(desired: unknown, availableWidth: unknown): 
   return Math.round(Math.min(maximum, Math.max(MIN_WIDTH, safeRequested)));
 }
 
-export function reduceInspectorState(
+function reduceInspectorState(
   state: StudioInspectorState,
   action: StudioInspectorAction,
 ): StudioInspectorState {
   switch (action.type) {
-    case 'open':
+    case 'open': {
+      const width = action.availableWidth === undefined
+        ? state.width
+        : clampInspectorWidth(state.previousWidth || state.width, action.availableWidth);
       return {
         ...state,
         open: true,
+        width,
         tab: action.tab || state.tab,
       };
+    }
     case 'close':
       return { ...state, open: false, maximized: false };
     case 'select-tab':
@@ -47,6 +56,11 @@ export function reduceInspectorState(
       if (state.maximized) return state;
       const width = clampInspectorWidth(action.width, action.availableWidth);
       return { ...state, open: true, width, previousWidth: width };
+    }
+    case 'viewport': {
+      if (state.maximized) return state;
+      const width = clampInspectorWidth(state.previousWidth || state.width, action.availableWidth);
+      return { ...state, width };
     }
     case 'maximize':
       if (state.maximized) return state;
@@ -61,7 +75,9 @@ export function reduceInspectorState(
         ...state,
         open: true,
         maximized: false,
-        width: state.previousWidth,
+        width: action.availableWidth === undefined
+          ? state.previousWidth
+          : clampInspectorWidth(state.previousWidth, action.availableWidth),
       };
   }
 }
@@ -76,3 +92,4 @@ if (typeof globalThis !== 'undefined') {
   (globalThis as typeof globalThis & { StudioInspectorState?: typeof StudioInspectorStateApi })
     .StudioInspectorState = StudioInspectorStateApi;
 }
+})();

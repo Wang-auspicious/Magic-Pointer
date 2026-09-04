@@ -26,8 +26,21 @@ const html = renderStatsCard({
   favoriteModel: 'm1',
   heatmap: [],
 });
-assert(html.includes('会话') && html.includes('消息') && html.includes('10'));
+assert(html.includes('Sessions') && html.includes('Messages') && html.includes('10'));
 assert(!html.includes('undefined') && !html.includes('NaN'));
-assert(renderStatsCard(null).includes('统计暂不可用'));
+const referenceStats = renderStatsCard({
+  sessions: 231,
+  messages: 52_275,
+  totalTokens: 2_500_000_000,
+  activeDays: 157,
+  currentStreak: 1,
+  longestStreak: 132,
+  peakHour: 16,
+  favoriteModel: 'Opus 5',
+  heatmap: [],
+});
+assert(referenceStats.includes('>52,275<'), 'messages keep the exact reference comma formatting');
+assert(referenceStats.includes('>2.5B<'), 'large token totals use the compact reference notation');
+assert(renderStatsCard(null).includes('Stats unavailable'));
 
 console.log('studio home render test ok');

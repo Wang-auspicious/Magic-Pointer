@@ -9,6 +9,8 @@ const css = fs.readFileSync('electron/renderer/claude_shell.css', 'utf8');
 const model = fs.readFileSync('electron/renderer/settings_model.ts', 'utf8');
 
 assert(html.includes('settings_model.js'), 'Studio must load the canonical settings model');
+assert(html.includes('<div class="dshw-settings-nav-title">Settings</div>'));
+assert(html.includes('placeholder="Search settings"'));
 assert(html.includes('id="settings-save-status"'), 'settings must have a visible save status live region');
 assert(source.includes('SettingsModel'), 'renderer must consume the canonical settings model');
 assert(!source.includes('const KEYMAP'), 'renderer-local key translation table must be removed');
@@ -41,5 +43,13 @@ for (const id of [
   assert(model.includes(`id: '${id}'`), `Customize category missing: ${id}`);
 }
 assert(html.includes('data-directory-open'), 'Customize exposes the real Skill/command directory');
+assert.match(css, /#view-settings svg\s*\{[^}]*width:\s*16px[^}]*height:\s*16px[^}]*flex:\s*none/s,
+  'every Customize SVG is bounded before a state can render it');
+assert.match(css, /\.settings-select\s*\{[^}]*position:\s*relative[^}]*display:\s*flex[^}]*height:\s*30px/s);
+assert.match(css, /\.settings-select select\s*\{[^}]*appearance:\s*none[^}]*width:\s*100%[^}]*height:\s*100%/s);
+assert.match(css, /\.settings-select > svg\s*\{[^}]*position:\s*absolute[^}]*right:\s*8px[^}]*pointer-events:\s*none/s);
+assert.match(css, /\.settings-switch\s*\{[^}]*width:\s*30px[^}]*height:\s*18px/s,
+  'the stylesheet must target the toggle class emitted by settings.ts');
+assert(!css.includes('.settings-toggle {'), 'retired selector cannot leave every real toggle unstyled');
 
 console.log('settings surface contract test ok');

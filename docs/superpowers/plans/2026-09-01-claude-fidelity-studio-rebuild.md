@@ -802,7 +802,7 @@ git commit -m "feat: unify Studio Customize and Design workbench"
 - Modify tests that read retired CSS directly
 - Modify packaging/build references if any
 
-- [ ] **Step 1: Prove exact consumers before deletion**
+- [x] **Step 1: Prove exact consumers before deletion**
 
 Run:
 
@@ -815,21 +815,21 @@ rg -n --fixed-strings "cards.css" electron/renderer/*.html
 
 Expected decision: `cards.css` and `oreo_tokens.css` remain for Stage/Companion/Gallery/Lab. Delete only files whose remaining hits are their own parity tests or the retired consolidator.
 
-- [ ] **Step 2: Write the failing no-legacy contract**
+- [x] **Step 2: Write the failing no-legacy contract**
 
 Extend `studio_claude_fidelity_contract_test.js` to assert the retired files do not exist and Studio HTML has no legacy href/script.
 
-- [ ] **Step 3: Run RED**
+- [x] **Step 3: Run RED**
 
 ```powershell
 node tests/studio_claude_fidelity_contract_test.js
 ```
 
-- [ ] **Step 4: Delete verified zero-consumer files and obsolete tests**
+- [x] **Step 4: Delete verified zero-consumer files and obsolete tests**
 
 Use `apply_patch` deletions. Update semantic renderer tests to inspect the new CSS rather than pinning old DSH/SV source parity.
 
-- [ ] **Step 5: Run GREEN, build, and commit**
+- [x] **Step 5: Run GREEN, build, and commit**
 
 ```powershell
 node tests/studio_claude_fidelity_contract_test.js
@@ -848,17 +848,17 @@ git commit -m "refactor: retire the legacy Studio visual stack"
 - Modify: new Studio CSS/HTML/renderer files as measurements require
 - Test: `tests/studio_render_probe_contract_test.js`
 
-- [ ] **Step 1: Write a deterministic probe contract**
+- [x] **Step 1: Write a deterministic probe contract**
 
 The probe accepts `--width`, `--height`, `--scale-factor`, `--theme`, `--state`, and `--output`. It loads built `studio.html` with a fake preload before boot, injects bounded fixture data, waits for two animation frames, records console errors, and captures PNG.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```powershell
 node tests/studio_render_probe_contract_test.js
 ```
 
-- [ ] **Step 3: Implement the probe and capture the matrix**
+- [x] **Step 3: Implement the probe and capture the matrix**
 
 ```powershell
 npm run build:electron
@@ -866,9 +866,12 @@ npx --no-install tsx scripts/probe_studio_claude.ts --width 1560 --height 992 --
 npx --no-install tsx scripts/probe_studio_claude.ts --width 1199 --height 800 --scale-factor 2 --theme dark --state landing --output data/runtime/claude-studio-dark.png
 ```
 
-Also capture running, awaiting permission, error, Inspector maximised, Customize, Design, and minimum 1020×700 in both themes.
+Also capture running, awaiting permission, error, Inspector maximised,
+Customize, Design, Subagent Tasks, expanded reasoning, and minimum 1020×700 in
+both themes. The Subagent fixture must use the same event shape emitted by the
+real Runtime; the reasoning fixture must use the persisted `thinking` field.
 
-- [ ] **Step 4: Measure concrete reference failures and tune**
+- [x] **Step 4: Measure concrete reference failures and tune**
 
 For each reference state, inspect:
 
@@ -881,7 +884,7 @@ For each reference state, inspect:
 
 Change CSS/markup only when the measured mismatch changes a concrete reference or state requirement.
 
-- [ ] **Step 5: Run the Hallmark slop test at handoff time, fix actual failures, and commit**
+- [x] **Step 5: Run the Hallmark slop test at handoff time, fix actual failures, and commit**
 
 Load `references/slop-test.md` only now. Fix any applicable desktop-app gate failure. Commit the verified render probe and tuning.
 

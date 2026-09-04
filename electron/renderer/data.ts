@@ -247,6 +247,7 @@ declare global {
   interface MagicPointerModelEntry {
     id: string;
     vision?: boolean;
+    contextWindow?: number;
   }
   interface MagicPointerModelGroup {
     id: string;
@@ -273,6 +274,14 @@ declare global {
     source?: string;
     error?: string;
     groups?: MagicPointerModelGroup[];
+  }
+
+  interface MagicPointerUpdateState {
+    state: string;
+    checkedAt?: number;
+    version?: string;
+    progress?: number;
+    message?: string;
   }
 
   interface MagicPointerTimelineDay {
@@ -311,6 +320,11 @@ declare global {
     };
     windowControls?: {
       command(command: string): Promise<{ ok?: boolean; version?: string; electron?: string; chrome?: string; error?: string }>;
+    };
+    updates?: {
+      status(): Promise<MagicPointerUpdateState>;
+      check(): Promise<{ ok?: boolean; reason?: string }>;
+      onStatus(callback: (state: MagicPointerUpdateState) => void): void;
     };
     conversations: {
       list(): Promise<MagicPointerConversation[]>;
@@ -448,6 +462,9 @@ declare global {
     browserViewCommand(command: 'back' | 'forward' | 'reload' | 'stop' | 'external' | 'close'): Promise<{ ok?: boolean; state?: MagicPointerBrowserViewState; error?: string }>;
     onBrowserViewState(callback: (state: MagicPointerBrowserViewState) => void): void;
     windowCommand(command: string): Promise<{ ok?: boolean; version?: string; electron?: string; chrome?: string; error?: string }>;
+    updateStatus(): Promise<MagicPointerUpdateState>;
+    checkForUpdates(): Promise<{ ok?: boolean; reason?: string }>;
+    onUpdateStatus(callback: (state: MagicPointerUpdateState) => void): void;
     runProjectCommand(projectRoot: string, command: string, relativeDirectory?: string): Promise<{ ok?: boolean; code?: number | null; output?: string; error?: string }>;
     conversations(): Promise<MagicPointerConversation[]>;
     conversationStats(): Promise<MagicPointerHomeStats | null>;
@@ -808,6 +825,31 @@ const Data: MagicPointerDataApi = {
     const controls = bridge()?.windowControls;
     if (!hasBridge() || !controls?.command) return { ok: false, error: '窗口命令通道不可用。' };
     return controls.command(command);
+  },
+
+  async updateStatus(): Promise<MagicPointerUpdateState> {
+    const updates = bridge()?.updates;
+    if (!hasBridge() || !updates?.status) return { state: 'unsupported' };
+    try {
+      const state = await updates.status();
+      return state && typeof state === 'object' ? state : { state: 'unsupported' };
+    } catch {
+      return { state: 'error', message: '暂时无法读取更新状态。' };
+    }
+  },
+
+  async checkForUpdates(): Promise<{ ok?: boolean; reason?: string }> {
+    const updates = bridge()?.updates;
+    if (!hasBridge() || !updates?.check) return { ok: false, reason: 'update_channel_unavailable' };
+    try {
+      return await updates.check();
+    } catch {
+      return { ok: false, reason: 'update_check_failed' };
+    }
+  },
+
+  onUpdateStatus(callback: (state: MagicPointerUpdateState) => void): void {
+    bridge()?.updates?.onStatus?.(callback);
   },
 
   async runProjectCommand(projectRoot: string, command: string, relativeDirectory = '') {
