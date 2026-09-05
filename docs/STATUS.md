@@ -1,6 +1,10 @@
 # 当前状态
 
-> 最后核实：2026-09-05（Studio Claude 交互纠偏已在开发树完成全量验证；按用户要求保持 1.0.33，仅提交，不 sync、不覆盖安装版）。
+> 最后核实：2026-09-05（接管修复批 1.0.34；正在执行完整验证与本机安装同步，尚不宣称整个 PRD 已完成）。
+
+2026-09-06 桌面办公 SOTA 地基批：基于 VIDA/OpenChronicle、Clicky、Pi、Hermes 与 Everywhere 的源码盘点，新增 `docs/research/2026-09-06-sota-desktop-harness-design.md`，把第一主线收敛为 Office／浏览器／微信或钉钉的真实闭环；并修复 ScreenMemory 多任务并发读改写丢失（路径事务锁、唯一临时文件、Windows 原子替换有限重试），新增并发回归测试，定向测试 **3 passed**。已推送至 `main`（`ae75c67`）。本批未宣称 ActionBroker、PointerSurface、常驻 UIA 或真实长任务验收已完成。
+
+2026-09-05 接管修复批（1.0.34）：承接办公材料 W00–W10 与 Studio 已有改动，修复默认模型被 effort 覆盖后无法对话、PowerPoint 原生窗口无法绑定、Excel 错取活动工作簿、收藏笔记／分类调用 Electron 不支持的 prompt，以及材料关注重复保存时并发启动同一任务的问题。材料关注接入正式 Studio IPC、持久设置和 MP Runtime；单文件不扩大为父目录授权。真实 PowerPoint 已完成指定 slideId/shapeId 局部改字与读回，保留原有加粗和未选中幻灯片；Excel 目标值 10→15、公式仍为 =A1*2 且结果 30，另一个活动工作簿保持 999。详细证据与尚未通过的真实场景见 `docs/research/2026-09-05-takeover-release.md`。此前“1.0.33 仅提交、不 sync”是上一批的历史交付约束，本次按接管要求同步安装版。
 
 2026-09-05 Studio Claude 交互纠偏（1.0.33 开发树，按用户要求仅提交）：针对用户真机指出的“左下角弹层不对、圈选处不能点击、右下角杂乱、Extra 不是五档努力程度、Voice/Caveman 混入错误、更新常驻”等问题，不再保留静态近似件。左下账户区现为 viewport-safe 真弹层，Settings、Models & runtime、Check for updates、View changelog、Keyboard shortcuts、About 均接入既有真实命令；Composer 权限改为 Claude 对应的 Plan / Accept edits / Bypass permissions / Manual，模型目录与选中态可真实切换，弹层共享统一的测量定位/互斥关闭/Escape/外点关闭/ARIA 状态。努力程度独立为 Low / Medium / High / Extra / Max 五档，Voice 保持独立按钮，Caveman/旧 Response style 不再占此处；选择值贯通 renderer→IPC→conversation bridge→MP 自有 Runtime，系统提示表达推理深度而非回答口吻，chat-completions 可选发送 `reasoning_effort`，4xx 时仅剥离可选字段重试一次，Messages 模式不伪造不支持的字段。首页 Overview / Models 与 All / 30d / 7d 均为真实按钮和缓存投影，模型输入/输出/占比、每日 token 与可 hover/focus/click 的热力图 tooltip 已接通。更新卡只在 available/downloading/downloaded 时出现；后台自动检查失败安静回到 idle，手动检查失败仍给一次原生提示。新增 offscreen Electron 真实鼠标输入探针，逐一点击账户、权限、模型、努力程度、Models、30d 与热力图，验证状态变化、弹层不越界和 `console_errors=0`，截图证据为 `data/runtime/studio-claude-interactions-20260905.png` 及 `-account/-permission/-model/-effort` 分图。fresh 门：五套 typecheck、ESLint 0、Electron build、`git diff --check` 全绿；Node **191 tests / 133 source files**；Python **1731 passed / 1 个既有 Pillow 弃用 warning / 200.18s**。本批未调用 provider，探针使用确定性 preload，故不声称活网关 `usedBackend`；未运行 `npm run sync`、未制作安装器、未改 `package.json`/`package-lock.json`，开发树仍为 **1.0.33**，当前已安装的同版本应用仍是上一批代码。
 
