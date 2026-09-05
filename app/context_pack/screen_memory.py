@@ -23,9 +23,13 @@ Three properties this has to keep, in order of how badly they fail:
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
+import threading
+import time
+import uuid
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -50,6 +54,9 @@ class MemoryEntry:
     app: str
     window_title: str
     excerpt: str
+    source_id: str | None = None
+    locator: dict[str, Any] | None = None
+    provenance_missing: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -58,10 +65,13 @@ class MemoryEntry:
             "app": self.app,
             "windowTitle": self.window_title,
             "excerpt": self.excerpt,
+            "sourceId": self.source_id,
+            "locator": copy.deepcopy(self.locator),
+            "provenanceMissing": self.provenance_missing,
         }
 
     @staticmethod
-    def from_dict(value: Any) -> "MemoryEntry | None":
+    def from_dict(value: Any) -> MemoryEntry | None:
         if not isinstance(value, dict):
             return None
         try:
@@ -72,19 +82,47 @@ class MemoryEntry:
         title = str(value.get("windowTitle") or "")
         if not excerpt and not title:
             return None
+        source_id = str(value.get("sourceId") or "").strip() or None
+        locator = value.get("locator")
+        parsed_locator = copy.deepcopy(locator) if isinstance(locator, dict) else None
+        provenance_missing = value.get("provenanceMissing") is True or not (
+            source_id and parsed_locator is not None
+        )
         return MemoryEntry(
             id=str(value.get("id") or ""),
             at=at,
             app=str(value.get("app") or ""),
             window_title=title,
             excerpt=excerpt,
+            source_id=source_id,
+            locator=parsed_locator,
+            provenance_missing=provenance_missing,
         )
 
 
 class ScreenMemory:
+    _path_locks: dict[str, threading.RLock] = {}
+    _path_locks_guard = threading.Lock()
+
     def __init__(self, path: Path | str | None = None, *, enabled: bool = True) -> None:
         self.path = Path(path) if path is not None else _store_path()
         self.enabled = enabled is True
+
+    def _lock(self) -> threading.RLock:
+        """Return the process-wide lock for this store.
+
+        Screen memory is updated by more than one task in the desktop
+        process.  The operation is a read/modify/write transaction, so a
+        per-instance lock is insufficient: two ``ScreenMemory`` instances
+        pointing at the same file would otherwise lose one another's rows.
+        """
+        key = str(self.path.resolve()).casefold()
+        with self._path_locks_guard:
+            lock = self._path_locks.get(key)
+            if lock is None:
+                lock = threading.RLock()
+                self._path_locks[key] = lock
+            return lock
 
     def _load(self) -> list[MemoryEntry]:
         try:
@@ -96,16 +134,33 @@ class ScreenMemory:
         return [entry for entry in entries if entry is not None]
 
     def _save(self, entries: list[MemoryEntry]) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temp = self.path.with_name(
+            f".{self.path.name}.{os.getpid()}.{threading.get_ident()}.{uuid.uuid4().hex}.tmp"
+        )
         try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            temp = self.path.with_suffix(".json.tmp")
             temp.write_text(
-                json.dumps({"version": 1, "entries": [entry.to_dict() for entry in entries]}, ensure_ascii=False),
+                json.dumps({"version": 2, "entries": [entry.to_dict() for entry in entries]}, ensure_ascii=False),
                 encoding="utf-8",
             )
-            os.replace(temp, self.path)
-        except OSError:
-            pass
+            last_error: OSError | None = None
+            for attempt in range(4):
+                try:
+                    os.replace(temp, self.path)
+                    last_error = None
+                    break
+                except PermissionError as exc:
+                    last_error = exc
+                    if attempt == 3:
+                        raise
+                    time.sleep(0.01 * (attempt + 1))
+            if last_error is not None:
+                raise last_error
+        finally:
+            try:
+                temp.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     def record(
         self,
@@ -113,6 +168,8 @@ class ScreenMemory:
         app: str = "",
         window_title: str = "",
         excerpt: str = "",
+        source_id: str | None = None,
+        locator: dict[str, Any] | None = None,
         sensitive: bool = False,
         now: float | None = None,
     ) -> MemoryEntry | None:
@@ -124,22 +181,34 @@ class ScreenMemory:
         if not text and not title:
             return None
         moment = time.time() if now is None else now
+        parsed_source_id = str(source_id or "").strip() or None
+        parsed_locator = copy.deepcopy(locator) if isinstance(locator, dict) else None
         entry = MemoryEntry(
-            id=hashlib.sha256(f"{moment}:{title}:{text}".encode("utf-8")).hexdigest()[:16],
+            id=hashlib.sha256(f"{moment}:{title}:{text}".encode()).hexdigest()[:16],
             at=moment,
             app=str(app or "").strip()[:80],
             window_title=title,
             excerpt=text,
+            source_id=parsed_source_id,
+            locator=parsed_locator,
+            provenance_missing=not (parsed_source_id and parsed_locator is not None),
         )
-        entries = self._load()
-        # Re-reading the same thing updates when you saw it rather than adding a
-        # row; otherwise one long session buries every other memory.
-        entries = [
-            item for item in entries
-            if not (item.window_title == entry.window_title and item.excerpt == entry.excerpt)
-        ]
-        entries.insert(0, entry)
-        self._save(self._prune(entries, moment))
+        with self._lock():
+            entries = self._load()
+            # Re-reading the same thing updates when you saw it rather than
+            # adding a row; otherwise one long session buries every other
+            # memory.  Keep the load and replace in the same transaction.
+            entries = [
+                item for item in entries
+                if not (
+                    item.window_title == entry.window_title
+                    and item.excerpt == entry.excerpt
+                    and item.source_id == entry.source_id
+                    and item.locator == entry.locator
+                )
+            ]
+            entries.insert(0, entry)
+            self._save(self._prune(entries, moment))
         return entry
 
     def _prune(self, entries: list[MemoryEntry], now: float) -> list[MemoryEntry]:
