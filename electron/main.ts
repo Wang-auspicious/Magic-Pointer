@@ -19,8 +19,9 @@ if (fs.existsSync(path.join(__dirname, 'runtime_paths.ts'))) {
 
 const { projectRoot } = require('./runtime_paths');
 const { scheduleBackgroundLearning } = require('./background_learning');
-const { SelectionSessionStore } = require('./selection_session');
-const { InteractionEpisodeStore, inferReferenceLabel, inferReferenceMode } = require('./interaction_episode');
+const { SelectionSessionStore, continuationTaskForSelection } = require('./selection_session');
+const { InteractionEpisodeStore, inferReferenceLabel } = require('./interaction_episode');
+const TaskSources = require('./task_sources');
 const { ActivationGate } = require('./activation_gate');
 const { WiggleDetector } = require('./wiggle_detector');
 const { runDeterministicWiggleEvidence } = require('./wiggle_reliability');
@@ -39,7 +40,8 @@ const {
   sanitizePermissionRule,
   sessionIdFromRecord,
 } = require('./conversation_control');
-const { resolveConversationWorkspace } = require('./conversation_workspace_policy');
+const { studioConversationSessionId } = require('./agent_session_id');
+const { attachmentDialogOptions, resolveConversationWorkspace } = require('./conversation_workspace_policy');
 const { VoiceResidentRuntime } = require('./voice_resident_runtime');
 const { captureEligibility } = require('./result_surface_policy');
 const { humanErrorMessage, inferObjectKind, selectionSourceForReason, stageEventFromBridge } = require('./stage_contract');
@@ -90,11 +92,16 @@ const { isTransientShell } = require('./stash_store');
 const { evaluateRule } = require('./proactive_rules');
 const { createProactiveOnceStore } = require('./proactive_once_store');
 const { createConversationStore } = require('./conversation_store');
+const { createArtifactRuntime } = require('./artifact_runtime');
+const { FigmaRuntimeController } = require('./figma_runtime');
+const { createContextTrackerRuntime, createMaterialTracker, buildContextTrackerConversationRequest } = require('./context_trackers');
+let contextTrackerRuntime: ReturnType<typeof createContextTrackerRuntime> | null = null;
 const { profileWorkspaceRoot } = require('./profile_workspace');
 const { conversationFailureMessage } = require('./conversation_error');
 const { listProjectDirectory, projectPath, readProjectText } = require('./project_inspector');
 const { parseGitEnvironment, sourceLinksFromConversation } = require('./project_environment');
 const { normalizeBrowserUrl, projectContextActions } = require('./browser_view_policy');
+const { withKeptStrokes } = require('./stage_turn_stream');
 
 const CONVERSATION_EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
 
@@ -217,6 +224,11 @@ if (ELECTRON_USER_DATA_DIR) {
 }
 const DEFAULT_USER_DATA_DIR = app.isPackaged ? app.getPath('userData') : DEVELOPMENT_RUNTIME_DIR;
 const FABRIC_DATA_DIR = path.resolve(EXPLICIT_USER_DATA_DIR || DEFAULT_USER_DATA_DIR);
+const FIGMA_BRIDGE_PORT = Number.parseInt(process.env.MAGIC_POINTER_FIGMA_PORT || '37843', 10);
+if (!Number.isInteger(FIGMA_BRIDGE_PORT) || FIGMA_BRIDGE_PORT < 1 || FIGMA_BRIDGE_PORT > 65535) {
+  throw new Error('MAGIC_POINTER_FIGMA_PORT must be an integer from 1 to 65535');
+}
+const figmaRuntime = new FigmaRuntimeController({ port: FIGMA_BRIDGE_PORT });
 const RUNTIME_DIR = FABRIC_DATA_DIR;
 const LOG_PATH = path.join(RUNTIME_DIR, 'electron.log');
 const PID_PATH = path.join(RUNTIME_DIR, 'electron.pid');
@@ -624,24 +636,57 @@ function cancelSessionChild(selectionSessionToken: string | null) {
   }, GRACEFUL_CANCEL_GRACE_MS);
 }
 
+async function putTaskInputToSession(
+  sessionId: string,
+  rawTaskInput: unknown,
+  sources: unknown[] = [],
+) {
+  const taskInput = TaskSources.normalizeTaskInput({
+    ...(rawTaskInput && typeof rawTaskInput === 'object' ? rawTaskInput : {}),
+    taskId: sessionId,
+    target: 'next-step',
+  });
+  const payload: Record<string, unknown> = { action: 'put', sessionId, taskInput };
+  if (sources.length) payload.sources = sources;
+  return runPythonBridgePromise(
+    payload,
+    'scripts/agent_session_bridge.py',
+    { target: null, timeoutMs: 8_000 },
+  );
+}
+
 ipcMain.handle('stage:steer-selection-command', async (event: Electron.IpcMainInvokeEvent, payload: any) => {
   if (!isSurfaceSender(event, 'stage', resultTargetWindow)) return { ok: false, error: 'unauthorized_renderer' };
   const token = String(payload?.selectionSessionToken || '');
-  const text = String(payload?.text || '').trim();
-  if (!token || !text) return { ok: false, error: 'invalid_request' };
+  const selectionSession = selectionSessions.get(token);
+  if (!token || !selectionSession) return { ok: false, error: 'invalid_request' };
   // Steer addresses the DURABLE agent session, not the bridge child: the loop
   // claims next-step at the next round boundary. Without a known session id
   // (loop_started progress has not arrived yet) there is nothing to steer.
-  const agentSessionId = activeSessionAgentIds.get(token);
+  const agentSessionId = activeSessionAgentIds.get(token) || selectionSession.taskId;
   if (!agentSessionId) return { ok: false, error: 'no_agent_session' };
   try {
-    const parsed = await runPythonBridgePromise(
-      { action: 'put', sessionId: agentSessionId, target: 'next-step', text },
-      'scripts/agent_session_bridge.py',
-      { target: null, timeoutMs: 8_000 },
-    );
-    log(`stage steer delivered session=${agentSessionId} messageId=${parsed?.messageId || '-'}`);
-    return { ok: true, messageId: parsed?.messageId || null };
+    const rawTaskInput = payload?.taskInput && typeof payload.taskInput === 'object'
+      ? payload.taskInput
+      : {
+        inputId: String(payload?.inputId || crypto.randomUUID()),
+        taskId: agentSessionId,
+        target: 'next-step',
+        instruction: String(payload?.text || '').trim(),
+        referenceUpdates: [],
+        sourceIds: [],
+        timeline: [],
+        capturedAtMs: Date.now(),
+      };
+    const parsed = await putTaskInputToSession(agentSessionId, rawTaskInput);
+    log(`stage TaskInput queued session=${agentSessionId} inputId=${parsed?.inputId || '-'}`);
+    return {
+      ok: parsed?.ok === true,
+      inputId: parsed?.inputId || null,
+      status: parsed?.status || null,
+      referenceRevision: parsed?.referenceRevision,
+      error: parsed?.error,
+    };
   } catch (error: any) {
     return { ok: false, error: String(error?.message || error || 'bridge_failed') };
   }
@@ -994,6 +1039,8 @@ function showStage(payload = {}) {
 
 type StageUpdatePayload = {
   selectionSessionToken?: string | null;
+  taskId?: string | null;
+  taskContext?: unknown;
   selectionSource?: unknown;
   objectKind?: unknown;
   targetGeometryKind?: unknown;
@@ -1146,6 +1193,7 @@ function taskWatcher() {
 // 对话记录
 // ---------------------------------------------------------------------------
 let conversationStore: ReturnType<typeof createConversationStore> | null = null;
+let artifactRuntime: ReturnType<typeof createArtifactRuntime> | null = null;
 
 function conversations() {
   if (!conversationStore) {
@@ -1155,6 +1203,26 @@ function conversations() {
     });
   }
   return conversationStore;
+}
+
+function artifactCommands() {
+  if (!artifactRuntime) {
+    artifactRuntime = createArtifactRuntime({
+      conversationStore: conversations(),
+      runBridge: (payload: Record<string, unknown>) => runPythonBridgePromise(
+        {
+          ...payload,
+          // Runtime-only credentials go over this one child-process stdin.
+          // createArtifactRuntime rebuilds its payload field-by-field, so a
+          // renderer cannot inject or select a different Figma connection.
+          _figmaRuntimeConnections: figmaRuntime.clientConfigurations(),
+        },
+        'scripts/artifact_bridge.py',
+        { target: null, timeoutMs: 120_000 },
+      ),
+    });
+  }
+  return artifactRuntime;
 }
 
 const pendingQuestions = new Map();
@@ -1362,13 +1430,8 @@ ipcMain.handle('projects:open', async (event: Electron.IpcMainInvokeEvent) => {
 ipcMain.handle('projects:pick-files', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
   if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_project_sender' };
   const projectRoot = String(raw?.projectRoot || '').trim();
-  if (!projectRoot) return { ok: false, error: '请先打开项目。' };
   const parent = BrowserWindow.fromWebContents(event.sender) || dashboardWindow || undefined;
-  const picked = await dialog.showOpenDialog(parent, {
-    title: '添加附件',
-    defaultPath: projectRoot,
-    properties: ['openFile', 'multiSelections'],
-  });
+  const picked = await dialog.showOpenDialog(parent, attachmentDialogOptions(projectRoot));
   if (picked.canceled || !picked.filePaths?.length) return { ok: false, canceled: true };
   return { ok: true, paths: picked.filePaths };
 });
@@ -1780,6 +1843,10 @@ ipcMain.handle('conversations:send', async (event: Electron.IpcMainInvokeEvent, 
   if (!isConversationSender(event, dashboardWindow, companionWindow)) {
     return { ok: false, error: 'unauthorized_conversation_sender' };
   }
+  return sendConversation(raw, event.sender);
+});
+
+async function sendConversation(raw: any = {}, sender?: Electron.WebContents): Promise<any> {
   const question = String(raw?.question || '').trim().slice(0, 4000);
   if (!question) return { ok: false, error: '问题不能为空。' };
   const conversationId = String(raw?.conversationId || '').trim().slice(0, 120);
@@ -1787,6 +1854,12 @@ ipcMain.handle('conversations:send', async (event: Electron.IpcMainInvokeEvent, 
   const effort = normalizeConversationEffort(raw?.effort);
   const requestId = String(raw?.requestId || crypto.randomUUID()).trim().slice(0, 120) || crypto.randomUUID();
   const workspaceRoot = String(raw?.workspaceRoot || '').trim();
+  const attachments = Array.isArray(raw?.attachments)
+    ? [...new Set(raw.attachments
+        .map((item: unknown) => String(item || '').trim())
+        .filter(Boolean)
+        .map((item: string) => path.resolve(item)))].slice(0, 32)
+    : [];
   // CC toolPermissionDecision: chip grants/denies join the thread memo; a
   // once-grant rides this request only. A Bash(prefix) rule is kept intact;
   // stripping its punctuation would persist an inert "Bashpytest" grant.
@@ -1814,6 +1887,45 @@ ipcMain.handle('conversations:send', async (event: Electron.IpcMainInvokeEvent, 
     workspaceRoot,
     existing?.workspaceRoot,
   );
+  const effectiveAgentSessionId = studioConversationSessionId({
+    existing: existing?.agentSessionId,
+    conversationId,
+  });
+  const capturedAtMs = Date.now();
+  const rawTaskInput = raw?.taskInput && typeof raw.taskInput === 'object' && !Array.isArray(raw.taskInput)
+    ? { ...raw.taskInput }
+    : {
+        inputId: `input:studio:${requestId}`,
+        taskId: effectiveAgentSessionId,
+        target: 'next-step',
+        instruction: question,
+        referenceUpdates: [],
+        sourceIds: [],
+        timeline: [],
+        capturedAtMs,
+      };
+  if (Array.isArray(rawTaskInput.sourceIds)) {
+    rawTaskInput.sourceIds = rawTaskInput.sourceIds.map((value: unknown) => {
+      const sourceId = String(value || '').trim();
+      const prefix = 'source:attachment:';
+      if (!sourceId.startsWith(prefix)) return sourceId;
+      const filePath = sourceId.slice(prefix.length).trim();
+      return filePath
+        ? `${prefix}${path.resolve(filePath).replace(/\\/g, '/')}`
+        : sourceId;
+    });
+  }
+  let taskInput: Record<string, unknown>;
+  try {
+    taskInput = TaskSources.bindConversationTaskInput(rawTaskInput, {
+      taskId: effectiveAgentSessionId,
+      instruction: question,
+      attachments,
+      capturedAtMs,
+    });
+  } catch (error: any) {
+    return { ok: false, error: `invalid_task_input: ${String(error?.message || error)}` };
+  }
   const modelRuntime = activeModelRuntimeConfig();
   const payload = {
     question,
@@ -1823,13 +1935,16 @@ ipcMain.handle('conversations:send', async (event: Electron.IpcMainInvokeEvent, 
     permissionPreset,
     effort,
     requestId,
+    attachments,
+    taskInput,
     // 会话身份必须过桥：Python 侧的 agent session（断点续跑摘要/待办/取消
     // 请求/pending work 挂靠的那条哈希链 JSONL）按它分文件。不传的话桥端
     // 只能从空的 selection object 派生，全部普通对话塌缩成同一条 session。
     ...(conversationId ? { conversationId } : {}),
-    ...(String(existing?.agentSessionId || '').trim()
-      ? { agentSessionId: String(existing!.agentSessionId).trim() }
-      : {}),
+    agentSessionId: effectiveAgentSessionId,
+    _figmaRuntimeConnections: figmaRuntime.clientConfigurations().filter(
+      (connection: { taskId: string }) => connection.taskId === effectiveAgentSessionId,
+    ),
     ...(effectiveWorkspaceRoot ? { workspaceRoot: effectiveWorkspaceRoot } : {}),
     ...(threadGrants.length ? { permissionGrants: threadGrants } : {}),
     ...(threadDenials.length ? { permissionDenials: threadDenials } : {}),
@@ -1843,8 +1958,7 @@ ipcMain.handle('conversations:send', async (event: Electron.IpcMainInvokeEvent, 
         const sid = sessionIdFromRecord(record);
         const entry = sid ? activeConversations.get(requestId) : null;
         if (sid && entry) entry.agentSessionId = sid;
-        if (event.sender.isDestroyed()) return;
-        event.sender.send('conversations:progress', { requestId, record });
+        if (sender && !sender.isDestroyed()) sender.send('conversations:progress', { requestId, record });
       },
       onComplete: (parsed: any) => {
         activeConversations.delete(requestId);
@@ -1868,11 +1982,13 @@ ipcMain.handle('conversations:send', async (event: Electron.IpcMainInvokeEvent, 
           activities: Array.isArray(parsed.activities) ? parsed.activities : [],
           trajectory: Array.isArray(parsed.trajectory) ? parsed.trajectory : [],
           receipts: Array.isArray(parsed.receipts) ? parsed.receipts : [],
+          artifacts: Array.isArray(parsed.artifacts) ? parsed.artifacts : [],
           modelUsage: parsed.modelUsage && typeof parsed.modelUsage === 'object' ? parsed.modelUsage : {},
           modelId: String(modelRuntime?.model || '').trim() || undefined,
           timingMs: parsed.timingMs,
           usedBackend: parsed.usedBackend,
           agentSessionId: parsed.agentSessionId,
+          taskContext: parsed.taskContext,
           hasPendingWork: parsed.hasPendingWork === true,
           pendingInput: parsed.pendingInput && typeof parsed.pendingInput === 'object' ? parsed.pendingInput : undefined,
           outcome: '模型',
@@ -1886,8 +2002,53 @@ ipcMain.handle('conversations:send', async (event: Electron.IpcMainInvokeEvent, 
       },
     });
     if (!child) resolve({ ok: false, error: '对话服务没有启动。' });
-    else activeConversations.set(requestId, { child, agentSessionId: null });
+    else activeConversations.set(requestId, { child, agentSessionId: effectiveAgentSessionId });
   });
+}
+
+function initializeContextTrackers() {
+  contextTrackerRuntime = createContextTrackerRuntime({
+    loadTrackers: () => fabricSettings.context_trackers || [],
+    persistTrackers: (trackers: unknown[]) => {
+      const next = { ...fabricSettings, context_trackers: trackers };
+      fabricSettingsStore!.save(next);
+      fabricSettings = next;
+    },
+    runTask: (request: any) => sendConversation(buildContextTrackerConversationRequest(request)),
+    onError: (error: unknown, trackerId: string) => log(`material tracker ${trackerId}: ${String(error)}`),
+  });
+  void contextTrackerRuntime.start().catch((error: unknown) => log(`material trackers: ${String(error)}`));
+}
+
+ipcMain.handle('context-trackers:material', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_renderer' };
+  if (!contextTrackerRuntime) return { ok: false, error: '材料关注尚未就绪。' };
+  try {
+    const conversation = conversations().get(String(raw.conversationId || ''));
+    const sources = conversation?.taskContext?.sources;
+    const source = Array.isArray(sources) ? sources.find((item: any) => item.sourceId === raw.sourceId) : null;
+    if (!source?.identity?.absolutePath) return { ok: false, error: '请选择本任务的本机文件或文件夹。' };
+    const materialPath = path.resolve(source.identity.absolutePath).replace(/\\/g, '/');
+    const existing = contextTrackerRuntime.list().find((tracker: any) => (
+      tracker.sourceIds.includes(`source:attachment:${materialPath}`) || tracker.folderRoot === materialPath
+    ));
+    if (raw.action === 'stop') {
+      if (existing) contextTrackerRuntime.setEnabled(existing.trackerId, false);
+    } else if (raw.action === 'follow') {
+      const tracker = createMaterialTracker({
+        source: { identity: { absolutePath: materialPath } },
+        task: String(raw.task || ''), cadence: raw.cadence,
+        trackerId: existing?.trackerId || crypto.randomUUID(),
+        isDirectory: fs.statSync(materialPath).isDirectory(),
+      });
+      contextTrackerRuntime.upsert(tracker);
+    } else if (raw.action !== 'get') return { ok: false, error: '未知材料关注操作。' };
+    return { ok: true, tracker: contextTrackerRuntime.list().find((tracker: any) => (
+      tracker.sourceIds.includes(`source:attachment:${materialPath}`) || tracker.folderRoot === materialPath
+    )) || null };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
 });
 
 ipcMain.handle('conversations:stop', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
@@ -1913,15 +2074,37 @@ ipcMain.handle('conversations:steer', async (event: Electron.IpcMainInvokeEvent,
   if (!isConversationSender(event, dashboardWindow, companionWindow)) {
     return { ok: false, error: 'unauthorized_renderer' };
   }
-  const plan = planConversationSteer({ text: String(raw?.text || ''), agentSessionId: String(raw?.agentSessionId || '') });
+  const plan = planConversationSteer({
+    text: String(raw?.text || ''),
+    taskInput: raw?.taskInput,
+    agentSessionId: String(raw?.agentSessionId || ''),
+  });
   if (plan.action !== 'steer') return { ok: false, error: plan.reason };
   try {
-    const parsed = await runPythonBridgePromise(
-      { action: 'put', sessionId: plan.sessionId, target: 'next-step', text: plan.text },
-      'scripts/agent_session_bridge.py',
-      { target: null, timeoutMs: 8_000 },
-    );
-    return { ok: parsed?.ok === true, messageId: parsed?.messageId || null, error: parsed?.error };
+    const capturedAtMs = Date.now();
+    const taskInput = plan.taskInput || {
+      inputId: String(raw?.inputId || crypto.randomUUID()),
+      taskId: plan.sessionId,
+      target: 'next-step',
+      instruction: plan.text,
+      referenceUpdates: [],
+      sourceIds: [],
+      timeline: [{
+        eventId: `utterance:${capturedAtMs}`,
+        kind: 'utterance',
+        startMs: capturedAtMs,
+        endMs: capturedAtMs,
+        text: plan.text,
+      }],
+      capturedAtMs,
+    };
+    const parsed = await putTaskInputToSession(plan.sessionId, taskInput, Array.isArray(raw?.sources) ? raw.sources : []);
+    return {
+      ok: parsed?.ok === true,
+      inputId: parsed?.inputId || null,
+      status: parsed?.status || null,
+      error: parsed?.error,
+    };
   } catch (error: any) {
     return { ok: false, error: String(error?.message || error || 'bridge_failed') };
   }
@@ -1964,6 +2147,138 @@ ipcMain.handle('conversations:memories', (event: Electron.IpcMainInvokeEvent) =>
 ipcMain.handle('conversations:artifacts', (event: Electron.IpcMainInvokeEvent) => {
   if (!isDashboardSender(event) && !isCompanionSender(event)) return [];
   try { return conversations().artifacts(); } catch (_) { return []; }
+});
+ipcMain.handle('conversations:event-summaries', (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+  if (!isDashboardSender(event) && !isCompanionSender(event)) {
+    return { materialAvailable: false, events: [], error: 'unauthorized_renderer' };
+  }
+  try {
+    return conversations().eventSummaries({
+      fromMs: raw?.fromMs,
+      toMs: raw?.toMs,
+      conversationIds: Array.isArray(raw?.conversationIds) ? raw.conversationIds.slice(0, 500) : [],
+      limit: Math.max(1, Math.min(500, Number(raw?.limit) || 200)),
+    });
+  } catch (_) {
+    return { materialAvailable: false, events: [], error: 'store_failed' };
+  }
+});
+ipcMain.handle('artifacts:read', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_renderer' };
+  return artifactCommands().read(raw);
+});
+ipcMain.handle('artifacts:edit', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_renderer' };
+  return artifactCommands().edit(raw);
+});
+ipcMain.handle('artifacts:accept', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_renderer' };
+  return artifactCommands().accept(raw);
+});
+ipcMain.handle('artifacts:apply', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_renderer' };
+  return artifactCommands().apply(raw);
+});
+
+function figmaTaskForConversation(rawConversationId: unknown): { conversationId: string; taskId: string } {
+  const conversationId = String(rawConversationId || '').trim().slice(0, 120);
+  const conversation = conversationId ? conversations().get(conversationId) : null;
+  const taskId = String(conversation?.agentSessionId || '').trim();
+  if (!conversation || !taskId) throw new Error('figma_connection_requires_started_task');
+  return { conversationId, taskId };
+}
+
+ipcMain.handle('figma:pair', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_renderer' };
+  try {
+    const { taskId } = figmaTaskForConversation(raw?.conversationId);
+    const pairing = await figmaRuntime.openPairing(taskId);
+    const manifestPath = path.join(ROOT, 'build', 'figma', 'manifest.json');
+    return {
+      ok: true,
+      ...pairing,
+      installableManifestBuilt: fs.existsSync(manifestPath),
+      ...(fs.existsSync(manifestPath) ? { manifestPath } : {}),
+    };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+});
+
+ipcMain.handle('figma:status', (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_renderer' };
+  try {
+    const { taskId } = figmaTaskForConversation(raw?.conversationId);
+    return { ok: true, ...figmaRuntime.status(taskId) };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+});
+
+ipcMain.handle('figma:disconnect', (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_renderer' };
+  try {
+    const { taskId } = figmaTaskForConversation(raw?.conversationId);
+    const documentSessionId = String(raw?.documentSessionId || '').trim().slice(0, 256);
+    if (!documentSessionId) return { ok: false, error: 'document_session_id_required' };
+    return { ok: figmaRuntime.disconnect(taskId, documentSessionId) };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+});
+
+function figmaDocumentForTask(taskId: string, rawDocumentSessionId: unknown): string {
+  const requested = String(rawDocumentSessionId || '').trim().slice(0, 256);
+  const connections = figmaRuntime.status(taskId).connections;
+  const connection = requested
+    ? connections.find((candidate: { documentSessionId: string }) => (
+      candidate.documentSessionId === requested
+    ))
+    : connections[0];
+  if (!connection) throw new Error('figma-current-document-connection-required');
+  return connection.documentSessionId;
+}
+
+ipcMain.handle('figma:inspect-selection', async (
+  event: Electron.IpcMainInvokeEvent,
+  raw: any = {},
+) => {
+  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_renderer' };
+  try {
+    const { taskId } = figmaTaskForConversation(raw?.conversationId);
+    const documentSessionId = figmaDocumentForTask(taskId, raw?.documentSessionId);
+    const result = await figmaRuntime.request(
+      taskId,
+      documentSessionId,
+      'read_selection',
+      {},
+    );
+    return { ok: true, documentSessionId, result };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+});
+
+ipcMain.handle('figma:export-preview', async (
+  event: Electron.IpcMainInvokeEvent,
+  raw: any = {},
+) => {
+  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_renderer' };
+  try {
+    const { taskId } = figmaTaskForConversation(raw?.conversationId);
+    const documentSessionId = figmaDocumentForTask(taskId, raw?.documentSessionId);
+    const nodeId = String(raw?.nodeId || '').trim().slice(0, 256);
+    if (!nodeId) return { ok: false, error: 'figma_node_id_required' };
+    const result = await figmaRuntime.request(
+      taskId,
+      documentSessionId,
+      'export_preview',
+      { nodeId },
+    );
+    return { ok: true, documentSessionId, result };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
 });
 
 function hideStage() {
@@ -2052,24 +2367,6 @@ function deliverStageBridgeResult(selectionSessionToken: string | null, parsed: 
 // with no chip edits looks like. A list that would remove every stroke is
 // ignored: submitting a gesture with nothing selected would make the perception
 // work meaningless, and the user removing the last chip means they want to redraw.
-function withKeptStrokes(snapshot: any, keptStrokeIndexes: any[]) {
-  if (!snapshot || !Array.isArray(keptStrokeIndexes) || keptStrokeIndexes.length === 0) return snapshot;
-  const strokes = snapshot?.selection_gesture?.strokes;
-  if (!Array.isArray(strokes) || strokes.length <= 1) return snapshot;
-  const keep = new Set(keptStrokeIndexes.map((value: number) => Number(value)));
-  const kept = strokes.filter((_stroke, index) => keep.has(index));
-  if (kept.length === 0 || kept.length === strokes.length) return snapshot;
-  log(`stage submit dropped strokes kept=${kept.length}/${strokes.length}`);
-  return {
-    ...snapshot,
-    selection_gesture: { ...snapshot.selection_gesture, strokes: kept },
-    // The recorded bbox described all the strokes, so it no longer describes
-    // this selection. Better absent than wrong: the bridge recomputes from the
-    // strokes it is given.
-    selection_bbox: null,
-  };
-}
-
 // Narrow a snapshot to the element the user clicked on.
 //
 // A pick lights the element up, so the command has to act on that element and
@@ -2269,14 +2566,14 @@ function initializeStashRuntime() {
       });
     },
   });
-  if (fabricSettings?.stash?.clipboard !== false || fabricSettings?.stash?.text === true) stashRuntime.start();
+  if (fabricSettings?.stash?.clipboard === true || fabricSettings?.stash?.text === true) stashRuntime.start();
   return stashRuntime;
 }
 
 function reconfigureStashRuntime(settings = fabricSettings) {
   stashRuntime?.stop();
   stashRuntime = null;
-  if (settings?.stash?.clipboard !== false || settings?.stash?.text === true) {
+  if (settings?.stash?.clipboard === true || settings?.stash?.text === true) {
     initializeStashRuntime();
   }
 }
@@ -2318,7 +2615,6 @@ function proactiveStore() {
 // （收藏是副作用，不是主路径）。
 function autoStashResultImage(payload: any) {
   try {
-    if (fabricSettings?.stash?.clipboard === false) return;
     const token = payload?.selectionSessionToken;
     const entry = token ? selectionSessions.get(token) : null;
     if (!entry) return;
@@ -2369,6 +2665,116 @@ ipcMain.handle('stash:list', (event: Electron.IpcMainInvokeEvent) => {
     log(`stash list failed ${error instanceof Error ? error.name : 'Error'}`);
     return [];
   }
+});
+
+function canManageStash(event: Electron.IpcMainInvokeEvent): boolean {
+  return Boolean(event.sender && event.sender === dashboardWindow?.webContents);
+}
+
+function stashEntryWithPath(entry: any) {
+  return entry ? { ...entry, absPath: path.join(stashBaseDir(), String(entry.relPath || '')) } : null;
+}
+
+ipcMain.handle('stash:add-note', async (event: Electron.IpcMainInvokeEvent, payload: any = {}) => {
+  if (!canManageStash(event)) return { ok: false, error: 'forbidden_sender' };
+  const text = String(payload?.text || '').trim().slice(0, 200_000);
+  if (!text) return { ok: false, error: 'empty_note' };
+  try {
+    const entry = await initializeStashRuntime().addText({
+      text,
+      summary: String(payload?.summary || text).trim().slice(0, 2000),
+      userCategory: String(payload?.userCategory || '笔记').trim().slice(0, 80),
+      sourceId: String(payload?.sourceId || '').trim().slice(0, 300),
+      sourceTimeMs: Number.isFinite(Number(payload?.sourceTimeMs))
+        ? Number(payload.sourceTimeMs)
+        : Date.now(),
+      locator: payload?.locator && typeof payload.locator === 'object'
+        ? structuredClone(payload.locator)
+        : null,
+    });
+    return entry ? { ok: true, entry: stashEntryWithPath(entry) } : { ok: false, error: 'add_failed' };
+  } catch (error) {
+    log(`stash add note failed ${error instanceof Error ? error.name : 'Error'}`);
+    return { ok: false, error: 'add_failed' };
+  }
+});
+
+ipcMain.handle('stash:add-files', async (event: Electron.IpcMainInvokeEvent) => {
+  if (!canManageStash(event) || !dashboardWindow) return { ok: false, error: 'forbidden_sender' };
+  const picked = await dialog.showOpenDialog(dashboardWindow, {
+    title: '加入材料',
+    properties: ['openFile', 'multiSelections'],
+  });
+  if (picked.canceled || !picked.filePaths.length) return { ok: false, canceled: true, entries: [] };
+  const added = [];
+  for (const filePath of picked.filePaths.slice(0, 32)) {
+    try {
+      const entry = await initializeStashRuntime().addFile(filePath, {
+        userCategory: '文件',
+        summary: path.basename(filePath),
+      });
+      if (entry) added.push(stashEntryWithPath(entry));
+    } catch (error) {
+      log(`stash add file failed ${error instanceof Error ? error.name : 'Error'}`);
+    }
+  }
+  return added.length
+    ? { ok: true, entries: added }
+    : { ok: false, error: 'no_files_added', entries: [] };
+});
+
+ipcMain.handle('stash:search', (event: Electron.IpcMainInvokeEvent, payload: any = {}) => {
+  if (!event.sender || (
+    event.sender !== dashboardWindow?.webContents
+    && event.sender !== companionWindow?.webContents
+  )) return [];
+  try {
+    return initializeStashRuntime().search(payload?.query, {
+      category: payload?.category,
+      limit: payload?.limit,
+    }).map(stashEntryWithPath);
+  } catch (error) {
+    log(`stash search failed ${error instanceof Error ? error.name : 'Error'}`);
+    return [];
+  }
+});
+
+ipcMain.handle('stash:open', async (event: Electron.IpcMainInvokeEvent, id: unknown) => {
+  if (!canManageStash(event)) return { ok: false, error: 'forbidden_sender' };
+  const entry = initializeStashRuntime().get(id);
+  if (!entry) return { ok: false, error: 'not_found' };
+  const original = String(entry.originalArtifactPath || '').trim();
+  const retained = path.join(stashBaseDir(), String(entry.relPath || ''));
+  const target = original && fs.existsSync(original) ? original : retained;
+  if (!target || !fs.existsSync(target)) {
+    return {
+      ok: false,
+      error: 'source_unavailable',
+      sourceTimeMs: entry.sourceTimeMs || entry.capturedAt,
+    };
+  }
+  const error = await shell.openPath(target);
+  return error
+    ? { ok: false, error, path: target }
+    : {
+        ok: true,
+        path: target,
+        evidenceState: target === original ? 'original' : 'retained_evidence',
+        sourceTimeMs: entry.sourceTimeMs || entry.capturedAt,
+      };
+});
+
+ipcMain.handle('stash:update-category', (event: Electron.IpcMainInvokeEvent, payload: any = {}) => {
+  if (!canManageStash(event)) return { ok: false, error: 'forbidden_sender' };
+  const entry = initializeStashRuntime().updateCategory(payload?.id, payload?.category);
+  return entry
+    ? { ok: true, entry: stashEntryWithPath(entry) }
+    : { ok: false, error: 'not_found_or_empty_category' };
+});
+
+ipcMain.handle('stash:remove', (event: Electron.IpcMainInvokeEvent, id: unknown) => {
+  if (!canManageStash(event)) return { ok: false, error: 'forbidden_sender' };
+  return initializeStashRuntime().remove(id);
 });
 
 // 悬停收藏图片 1 秒后调用：本地文件 + 视觉模型 → 3-4 句简介。
@@ -3698,6 +4104,7 @@ function stageSessionPayload(entry: any) {
     : 1;
   return {
     selectionSessionToken: entry.token,
+    taskId: entry.taskId,
     selectionSnapshotId: entry.snapshot?.snapshot_id || null,
     selectionCount: strokeCount,
     captureEligibility: entry.captureEligibility,
@@ -3727,6 +4134,21 @@ function episodeObjectForSession(entry: any) {
   const snapshot = entry?.snapshot || {};
   const context = snapshot.context || {};
   const sourceWindow = snapshot.source_window || {};
+  const strokes = Array.isArray(snapshot.selection_gesture?.strokes)
+    ? snapshot.selection_gesture.strokes.slice(0, 12)
+    : [];
+  const regions = strokes.flatMap((stroke: any, strokeIndex: number) => {
+    const points = Array.isArray(stroke?.points) ? stroke.points : [];
+    const xs = points.map((point: any) => Number(point?.x)).filter(Number.isFinite);
+    const ys = points.map((point: any) => Number(point?.y)).filter(Number.isFinite);
+    if (!xs.length || !ys.length) return [];
+    const left = Math.min(...xs);
+    const top = Math.min(...ys);
+    return [{
+      strokeIndex,
+      bbox: [left, top, Math.max(...xs) - left, Math.max(...ys) - top],
+    }];
+  });
   return {
     snapshotId: String(snapshot.snapshot_id || ''),
     selectionSessionToken: entry?.token || '',
@@ -3737,7 +4159,9 @@ function episodeObjectForSession(entry: any) {
     capturedAt: String(snapshot.captured_at || ''),
     expiresAt: String(snapshot.expires_at || ''),
     content: String(context.content || ''),
+    frameLeaseId: String(snapshot.frame_lease?.frameLeaseId || ''),
     bbox: snapshot.selection_bbox || snapshot.selection_rect || null,
+    regions,
     source: {
       app: String(context.app || entry?.summary?.app || ''),
       title: String(sourceWindow.title || context?.window?.title || ''),
@@ -3754,32 +4178,50 @@ function episodeObjectForSession(entry: any) {
 }
 
 function bindEpisodeForCommand(session: any, command: string) {
-  const mode = inferReferenceMode(command);
   const referenceLabel = inferReferenceLabel(command);
   const object = episodeObjectForSession(session);
-  interactionEpisodes.bindCommandTarget(object, command);
+  interactionEpisodes.bindCommandTarget(object, command, {
+    taskId: session.taskId,
+    slot: 'this',
+    role: 'target',
+  });
   if (referenceLabel) interactionEpisodes.labelCurrent(referenceLabel);
-  if (mode === 'these' || referenceLabel) interactionEpisodes.bindThese();
   const episode = interactionEpisodes.contextPayload();
   persistCurrentObjectEpisode(session);
-  log(`interaction episode bind mode=${mode} episode=${episode?.episodeId || 'none'} session=${session?.token || 'none'}`);
+  log(`interaction episode bind task=${session.taskId || 'none'} episode=${episode?.episodeId || 'none'} session=${session?.token || 'none'}`);
   return episode;
 }
 
-function shouldContinueGestureEpisode(command: string, episode: any) {
-  if (!episode) return false;
-  const mode = inferReferenceMode(command);
-  if (mode === 'here') return false;
-  return mode === 'append' || ['add', 'move'].includes(episode.pendingIntent);
+function runningTaskContinuation(excludeToken: string | null = null) {
+  const episode = interactionEpisodes.contextPayload();
+  const stageOwners = [...activeSessionAgentIds.entries()].map(([token, taskId]) => ({
+    token,
+    taskId,
+    running: token !== excludeToken && activeSessionChildren.has(token),
+  }));
+  const studioOwners = [...activeConversations.entries()].flatMap(([requestId, entry]: [string, any]) => {
+    const taskId = String(entry?.agentSessionId || '').trim();
+    return taskId ? [{
+      token: `conversation:${requestId}`,
+      taskId,
+      running: Boolean(entry?.child && !entry.child.killed),
+    }] : [];
+  });
+  return continuationTaskForSelection({
+    episodeTaskId: episode?.taskId,
+    taskOwners: [...stageOwners, ...studioOwners],
+  });
 }
 
-function composedEpisodeCommand(command: string, episode: any) {
-  if (!episode || inferReferenceMode(command) !== 'here') return command;
-  const sourceCount = Array.isArray(episode?.slots?.these) ? episode.slots.these.length : 0;
-  if (!episode?.slots?.here || sourceCount < 1) return command;
-  if (episode.pendingIntent === 'add') return 'add these here';
-  if (episode.pendingIntent === 'move') return 'move these here';
-  return command;
+function detachSelectionSurface(selectionSessionToken: string | null) {
+  if (!selectionSessionToken) return;
+  if (voiceRuntime?.active && activeSelectionSessionToken === selectionSessionToken) {
+    voiceRuntime.stop(voiceRuntime.active.requestId, { cancel: true });
+  }
+  if (voiceFocusGuards.has(selectionSessionToken)) {
+    finishVoiceFocusGuard('continued-with-new-point', selectionSessionToken);
+  }
+  if (activeSelectionSessionToken === selectionSessionToken) activeSelectionSessionToken = null;
 }
 
 type SelectionGesture = {
@@ -3790,7 +4232,16 @@ type SelectionGesture = {
 };
 
 function beginSelectionSession(reason = 'manual', gesture: SelectionGesture | null = null, frameLease: any = null) {
-  if (activeSelectionSessionToken) invalidateSelectionSession(activeSelectionSessionToken);
+  const continuation = runningTaskContinuation();
+  if (activeSelectionSessionToken) {
+    if (continuation?.token === activeSelectionSessionToken) {
+      // A new point is input to the live task. Retire only the old surface;
+      // its bridge child must keep running so the new TaskInput can be claimed.
+      detachSelectionSurface(activeSelectionSessionToken);
+    } else {
+      invalidateSelectionSession(activeSelectionSessionToken);
+    }
+  }
   lastStageResult = null;
 
   const liveCursor = screen.getCursorScreenPoint();
@@ -3810,7 +4261,11 @@ function beginSelectionSession(reason = 'manual', gesture: SelectionGesture | nu
   const physicalCursor = physicalScreenPoint(screen, targetPoint);
   const physicalGesture = physicalGestureTrace(screen, gesture);
   const display = screen.getDisplayNearestPoint(targetPoint);
-  const entry = selectionSessions.create({ reason, cursor: targetPoint });
+  const entry = selectionSessions.create({
+    reason,
+    cursor: targetPoint,
+    taskId: continuation?.taskId,
+  });
   entry.gesture = gesture ? safeClone(gesture) : null;
   activeSelectionSessionToken = entry.token;
   const initialInputMode = inputModeForReason(reason);
@@ -4057,6 +4512,7 @@ if (gotLock) app.whenReady().then(() => {
     requiredPaths,
   });
   onboardingRequired = !onboardingReadiness.ready;
+  initializeContextTrackers();
   startModelHealthWatch();
   setTimeout(warmUpOcrWorker, 2500);
   // 收藏箱要在应用就绪时就开始收，而不是等用户打开工作室。
@@ -4292,6 +4748,10 @@ if (gotLock) app.whenReady().then(() => {
 });
 
 app.on('will-quit', () => {
+  void contextTrackerRuntime?.stop();
+  void figmaRuntime.stop().catch((error: unknown) => {
+    log(`figma bridge shutdown failed: ${error instanceof Error ? error.message : String(error)}`);
+  });
   try { fs.unlinkSync(PID_PATH); } catch (_) {}
   globalShortcut.unregisterAll();
   temporaryDismissShortcutRegistered = false;
@@ -4708,13 +5168,14 @@ function runPythonBridge(payload: any, scriptPath = 'scripts/electron_bridge.py'
     // always has a grounded fallback; anything past this is a hang, and a hang
     // must fail visibly rather than spin for two minutes.
     //
-    // 60s, not 30s: the Python side budgets 40s for one model attempt because
-    // the configured gateway measured 20-33s for a one-line question on
-    // 2026-08-04. A deadline under the budget it is supposed to contain would
-    // kill working answers and report them as a hang — which is exactly what
-    // the user saw as "连不上模型端点".
+    // Selection tasks are the desktop task runtime, not a short request /
+    // response probe.  The runner resets this deadline on every stdout or
+    // stderr chunk, so fifteen minutes measures silence rather than task
+    // lifetime.  A long Office workflow can legitimately spend several
+    // minutes inside one native operation; killing it at 60s turns a healthy
+    // task into a false bridge_timeout and loses the recovery transcript.
     : scriptPath.includes('selection_bridge')
-      ? 60_000
+      ? 15 * 60_000
       : scriptPath.includes('action_bridge')
         ? 45_000
         : scriptPath.includes('shopping_list_bridge') || scriptPath.includes('calendar_bridge')
@@ -5184,16 +5645,62 @@ function submitSelectionCommandWhenGrounded(payload: any, startedAt: number, not
 
   const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
   const interactionEpisode = bindEpisodeForCommand(session, payload?.command);
-  if (shouldContinueGestureEpisode(payload?.command, interactionEpisode)) {
-    log(`interaction episode continue episode=${interactionEpisode?.episodeId || 'none'} mode=${inferReferenceMode(payload?.command)}`);
-    dismissTemporarySurfaces({ invalidateSession: true, hideObserver: true });
-    setTimeout(() => armSelectionGesture('episode-continue'), 90);
+  updateStage({
+    selectionSessionToken,
+    taskId: session.taskId,
+    taskContext: interactionEpisode ? {
+      sources: interactionEpisode.sources,
+      references: interactionEpisode.references,
+      referenceRevision: interactionEpisode.referenceRevision,
+    } : null,
+  });
+  const continuationOwner = runningTaskContinuation(selectionSessionToken);
+  if (continuationOwner && interactionEpisode?.taskInput) {
+    const requestId = selectionSessions.startRequest(selectionSessionToken);
+    if (!requestId) return;
+    activeSessionAgentIds.set(selectionSessionToken, continuationOwner.taskId);
+    pendingQuestions.set(selectionSessionToken, String(payload?.command || '').trim());
+    beginStageLiveTurn(selectionSessionToken, payload);
+    log(`stage TaskInput continuation token=${selectionSessionToken} owner=${continuationOwner.token} task=${continuationOwner.taskId}`);
+    void putTaskInputToSession(
+      continuationOwner.taskId,
+      interactionEpisode.taskInput,
+      Array.isArray(interactionEpisode.sources) ? interactionEpisode.sources : [],
+    ).then((parsed: any) => {
+      selectionSessions.finishRequest(selectionSessionToken, requestId);
+      if (parsed?.ok !== true || parsed?.status !== 'queued') {
+        deliverStageError(
+          selectionSessionToken,
+          `这次补充没有排入任务：${String(parsed?.error || '持久化确认缺失')}`,
+        );
+        return;
+      }
+      updateStage({
+        selectionSessionToken,
+        event: {
+          type: 'RESULT',
+          result: {
+            route: { tier: 'L0' },
+            taskId: continuationOwner.taskId,
+            status: 'queued',
+            prompt: String(payload?.command || '').trim(),
+            answer: '已接收新的指向或纠正；它会在当前任务下一次安全边界前生效。',
+          },
+        },
+      });
+    }).catch((error: any) => {
+      selectionSessions.finishRequest(selectionSessionToken, requestId);
+      deliverStageError(
+        selectionSessionToken,
+        `这次补充没有送达：${String(error?.message || error || 'bridge_failed')}`,
+      );
+    });
     return;
   }
   cancelSessionChild(selectionSessionToken);
   const requestId = selectionSessions.startRequest(selectionSessionToken);
   if (!requestId) return;
-  const effectiveCommand = composedEpisodeCommand(payload?.command, interactionEpisode);
+  const effectiveCommand = String(payload?.command || '');
   // A chip the user removed must actually leave the request. Dropping it only
   // from the display would make the chip a decoration that lies about what was
   // sent — the one thing worse than not having chips at all.
@@ -5206,6 +5713,7 @@ function submitSelectionCommandWhenGrounded(payload: any, startedAt: number, not
     originalCommand: payload?.command,
     inputMode: payload?.inputMode || null,
     selectionSessionId: selectionSessionToken,
+    taskId: session.taskId,
     selectionSnapshot: safeClone(snapshotForRequest),
     requestId,
     screenBounds: display.bounds,
@@ -5221,6 +5729,9 @@ function submitSelectionCommandWhenGrounded(payload: any, startedAt: number, not
     requestMode: payload?.requestMode === 'agent_prompt' ? 'agent_prompt' : 'auto',
     workspaceRoot: ROOT,
     modelRuntime: activeModelRuntimeConfig(),
+    _figmaRuntimeConnections: figmaRuntime.clientConfigurations().filter(
+      (connection: { taskId: string }) => connection.taskId === session.taskId,
+    ),
   };
   // 用户问的那句话只在这一刻存在：stage 事件流里不带它。
   // 不在这里记下来，工作室永远只能显示答案、没有问题。
@@ -5239,6 +5750,7 @@ function submitSelectionCommandWhenGrounded(payload: any, startedAt: number, not
     });
   }
   let child: ReturnType<typeof runPythonBridge> | null = null;
+  activeSessionAgentIds.set(selectionSessionToken, session.taskId);
   child = runPythonBridge(enriched, 'scripts/selection_bridge.py', 'stage', {
     timelineToken: selectionSessionToken,
     // 桥在跑的时候就在报它走到哪一步了。这些阶段一直存在，只是从来没有送到
