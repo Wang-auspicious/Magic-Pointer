@@ -2,7 +2,7 @@
 
 > 最后核实：2026-09-06（用户可见 durable 撤销入口批 1.0.39 已完成全量验证并同步安装版；尚不宣称整个 PRD 已完成）。
 
-2026-09-06 用户可见 durable 撤销入口（1.0.39，已同步安装版）：成功写动作现在在结果卡带出“撤销这一步”，由受 sender 校验的 Electron IPC 以 taskId/actionId 调用 `action_bridge.py` 的 durable undo operation，跨 bridge 重启仍从 task journal 恢复补偿；新增 Python 路由契约测试。全量验证为 Python **1837 passed / 1 个既有 Pillow warning**、Node **201 test files passed**、lint/typecheck 全绿；待 `npm run sync` 完成后核对安装目录版本 **1.0.39**。
+2026-09-06 用户可见 durable 撤销入口（1.0.39，已同步安装版）：成功写动作现在在结果卡带出“撤销这一步”，由受 sender 校验的 Electron IPC 以 taskId/actionId 调用 `action_bridge.py` 的 durable undo operation，跨 bridge 重启仍从 task journal 恢复补偿；新增 Python 路由契约测试。全量验证为 Python **1837 passed / 1 个既有 Pillow warning**、Node **201 test files passed**、lint/typecheck 全绿；`npm run sync` 已构建并同步安装器，核对安装目录版本 **1.0.39**，应用已重启。
 
 2026-09-06 执行器撤销闭环批（1.0.35，已同步安装版）：`SafeActionExecutor` 现在把成功写动作产生的结构化 `undo_proposal` 登记到共享 `UndoLog`，撤销重新走同一执行器并要求成功回执；同时修复全量门发现的 document patch handler 返回断路，并兼容 Fabric 权限字符串/字典两种现有配置形态。fresh 全量验证：Python **1833 passed / 1 个既有 Pillow warning**，Node **201 test files passed**，lint/typecheck 全绿；`npm run sync` 构建并同步 `Magic-Pointer-1.0.35-x64.exe`，开发树与 `%LOCALAPPDATA%\Programs\Magic Pointer\resources\app\package.json` 均为 **1.0.35**。本批仍未宣称完整 `ActionBroker`、跨进程撤销持久化或真实 Office 端到端验收完成。
 
