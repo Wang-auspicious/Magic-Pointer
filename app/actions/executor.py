@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import uuid
+from dataclasses import replace
 from datetime import datetime
 from typing import Any
 
@@ -14,6 +15,7 @@ from app.actions.draft_writer import write_draft_to_target
 from app.actions.policy import LocalPermissionPolicy
 from app.actions.schema import ActionProposal, ExecutionResult, ExecutionStatus, SafetyLevel
 from app.action_guard.approval import ActionApproval, ApprovalError
+from app.action_guard.undo_log import Compensation, UndoLog
 from app.agent_runtime.tool_registry import Effect
 from app.adapters.office_adapter import ALLOWED_WORD_COM_PROG_IDS, WORD_COM_PROG_ID, _run_powershell_json
 from app.dashboard.shopping_list import ShoppingListError, ShoppingListStore
@@ -90,6 +92,7 @@ class SafeActionExecutor:
         document_operation_executor: Any | None = None,
         fabric_engine: Any | None = None,
         approval_ledger: ActionApproval | None = None,
+        undo_log: UndoLog | None = None,
     ) -> None:
         self.policy = policy or LocalPermissionPolicy()
         self.history_store = history_store or ActionHistoryStore()
@@ -103,6 +106,7 @@ class SafeActionExecutor:
         # local default keeps old embedders compatible while still recording
         # every proposal that reaches this execution seam.
         self.approval_ledger = approval_ledger or ActionApproval()
+        self.undo_log = undo_log or UndoLog()
 
     def preview(self, proposal: ActionProposal) -> JsonDict:
         decision = self.policy.decide(proposal)
@@ -157,35 +161,74 @@ class SafeActionExecutor:
             return self._result(proposal, started, ExecutionStatus.SKIPPED, confirmed=False, error="confirmation required", metadata=metadata)
 
         if proposal.action_type == "copy_text_to_clipboard":
-            return self._copy_text_to_clipboard(proposal, started, confirmed=confirmed, metadata=metadata)
+            return self._finalize_execution(self._copy_text_to_clipboard(proposal, started, confirmed=confirmed, metadata=metadata))
         if proposal.action_type == "office_replace_selection":
-            return self._office_replace_selection(proposal, started, confirmed=confirmed, metadata=metadata)
+            return self._finalize_execution(self._office_replace_selection(proposal, started, confirmed=confirmed, metadata=metadata))
         if proposal.action_type == "office_undo_last_action":
-            return self._office_undo_last_action(proposal, started, confirmed=confirmed, metadata=metadata)
+            return self._finalize_execution(self._office_undo_last_action(proposal, started, confirmed=confirmed, metadata=metadata))
         if proposal.action_type == "shopping_list_add":
-            return self._shopping_list_add(proposal, started, confirmed=confirmed, metadata=metadata)
+            return self._finalize_execution(self._shopping_list_add(proposal, started, confirmed=confirmed, metadata=metadata))
         if proposal.action_type == "shopping_list_add_many":
-            return self._shopping_list_add_many(proposal, started, confirmed=confirmed, metadata=metadata)
+            return self._finalize_execution(self._shopping_list_add_many(proposal, started, confirmed=confirmed, metadata=metadata))
         if proposal.action_type == "shopping_list_set_checked":
-            return self._shopping_list_set_checked(proposal, started, confirmed=confirmed, metadata=metadata)
+            return self._finalize_execution(self._shopping_list_set_checked(proposal, started, confirmed=confirmed, metadata=metadata))
         if proposal.action_type == "shopping_list_undo_add":
-            return self._shopping_list_undo_add(proposal, started, confirmed=confirmed, metadata=metadata)
+            return self._finalize_execution(self._shopping_list_undo_add(proposal, started, confirmed=confirmed, metadata=metadata))
         if proposal.action_type == "calendar_event_create":
-            return self._calendar_event_create(proposal, started, confirmed=confirmed, metadata=metadata)
+            return self._finalize_execution(self._calendar_event_create(proposal, started, confirmed=confirmed, metadata=metadata))
         if proposal.action_type == "calendar_event_undo_create":
-            return self._calendar_event_undo_create(proposal, started, confirmed=confirmed, metadata=metadata)
+            return self._finalize_execution(self._calendar_event_undo_create(proposal, started, confirmed=confirmed, metadata=metadata))
         if proposal.action_type == "paste_text_to_foreground":
-            return self._paste_text_to_foreground(proposal, started, confirmed=confirmed, metadata=metadata)
+            return self._finalize_execution(self._paste_text_to_foreground(proposal, started, confirmed=confirmed, metadata=metadata))
         if proposal.action_type == "fabric_recipe_execute":
-            return self._fabric_recipe_execute(proposal, started, confirmed=confirmed, metadata=metadata)
+            return self._finalize_execution(self._fabric_recipe_execute(proposal, started, confirmed=confirmed, metadata=metadata))
         if proposal.action_type == "document_patch_operation":
-            return self._document_patch_operation(
+            return self._finalize_execution(self._document_patch_operation(
                 proposal,
                 started,
                 confirmed=confirmed,
                 metadata=metadata,
-            )
+            ))
         return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="unreachable action dispatch", metadata=metadata)
+
+    def _finalize_execution(self, result: ExecutionResult) -> ExecutionResult:
+        """Register a generated compensation after a verified write succeeds.
+
+        Handlers remain responsible for producing a precise, target-bound
+        ``undo_proposal``.  The executor owns the common ledger so every
+        action surface gets the same LIFO recovery semantics.
+        """
+        if result.status is not ExecutionStatus.SUCCEEDED:
+            return result
+        raw = result.output.get("undo_proposal")
+        if not isinstance(raw, dict):
+            return result
+        try:
+            undo_proposal = ActionProposal.from_dict(raw)
+        except (KeyError, TypeError, ValueError) as exc:
+            return replace(result, metadata={**result.metadata, "undo_registered": False, "undo_registration_error": str(exc)})
+
+        def compensate(_: Compensation) -> None:
+            undone = self.execute(undo_proposal, confirmed=True)
+            if undone.status is not ExecutionStatus.SUCCEEDED:
+                raise RuntimeError(undone.error or f"undo action returned {undone.status.value}")
+
+        target_ref = None
+        if undo_proposal.target is not None:
+            target_ref = undo_proposal.target.selection_id or undo_proposal.target.object_id
+        self.undo_log.record(
+            Compensation(
+                action_id=result.proposal_id,
+                tool_name=result.action_type or "action",
+                target_ref=target_ref,
+                prior_content=result.output.get("before_text"),
+                cursor_position=None,
+                was_created=bool(result.output.get("created", False)),
+                captured_at_utc=now_iso(),
+                compensate=compensate,
+            )
+        )
+        return replace(result, metadata={**result.metadata, "undo_registered": True})
 
     def _document_patch_operation(
         self,
@@ -258,6 +301,15 @@ class SafeActionExecutor:
             "wrote": write.wrote,
             "used_backend": write.used_backend,
         }
+        return self._result(
+            proposal,
+            started,
+            ExecutionStatus.SUCCEEDED if write.ok else ExecutionStatus.FAILED,
+            confirmed=confirmed,
+            output=output,
+            error=write.error,
+            metadata=metadata,
+        )
 
     @staticmethod
     def _effect_for(proposal: ActionProposal) -> Effect:
@@ -303,15 +355,6 @@ class SafeActionExecutor:
                 # request's PENDING state instead of executing as approved.
                 return request
         return request
-        return self._result(
-            proposal,
-            started,
-            ExecutionStatus.SUCCEEDED if write.ok else ExecutionStatus.FAILED,
-            confirmed=confirmed,
-            output=output,
-            error=write.error,
-            metadata=metadata,
-        )
 
     def _fabric_recipe_execute(
         self,

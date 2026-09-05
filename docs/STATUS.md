@@ -2,6 +2,8 @@
 
 > 最后核实：2026-09-05（接管修复批 1.0.34；正在执行完整验证与本机安装同步，尚不宣称整个 PRD 已完成）。
 
+2026-09-06 执行器撤销闭环批（开发树，待全量验证与安装同步）：`SafeActionExecutor` 现在把成功写动作产生的结构化 `undo_proposal` 登记到共享 `UndoLog`，撤销重新走同一执行器并要求成功回执；新增登记、调用和失败语义回归测试，定向 action/undo 22 项、executor/治理/桌面动作 73 项通过。本批仍未宣称完整 `ActionBroker`、跨进程撤销持久化或真实 Office 端到端验收完成。
+
 2026-09-06 桌面办公 SOTA 地基批：基于 VIDA/OpenChronicle、Clicky、Pi、Hermes 与 Everywhere 的源码盘点，新增 `docs/research/2026-09-06-sota-desktop-harness-design.md`，把第一主线收敛为 Office／浏览器／微信或钉钉的真实闭环；并修复 ScreenMemory 多任务并发读改写丢失（路径事务锁、唯一临时文件、Windows 原子替换有限重试），新增并发回归测试，定向测试 **3 passed**。已推送至 `main`（`ae75c67`）。本批未宣称 ActionBroker、PointerSurface、常驻 UIA 或真实长任务验收已完成。
 
 2026-09-06 治理接线批：`SafeActionExecutor` 统一记录 `ActionApproval` request，`FabricEngine.execute` 对 external send、agent handoff 与允许上传的视觉计划接入 `EgressGate`，并补充 scope 分类与执行回归测试；定向治理／Fabric 测试通过。已推送至 `main`（`9a16d18`）。撤销栈、完整 ActionBroker、Electron 长驻任务和真实办公验收仍未完成。

@@ -868,6 +868,116 @@ DOM、COM、UIA、Fabric等现有模块也不自动保留，只优先保存经�
 
 ## 18. 进度账本
 
+### 2026-09-06：执行器撤销闭环批（开发树，待全量验证与安装同步）
+
+- `SafeActionExecutor` 新增共享 `UndoLog` 接缝；所有执行分支统一在成功结果返回前检查结构化 `undo_proposal`，登记带目标引用、原内容和时间的 `Compensation`。
+- 撤销补偿重新进入同一个执行器并要求 `ExecutionStatus.SUCCEEDED`；撤销失败沿用 `UndoFailedError`，不把未验证恢复伪装成成功；撤销动作本身不生成递归补偿。
+- 先写集成回归测试覆盖登记与 LIFO 撤销调用，再通过 22 项 action/undo 定向测试和 73 项 executor/治理/桌面动作测试。
+- 本批只补齐可逆恢复的执行接线，尚未宣称完整 `ActionBroker`、跨进程持久化撤销栈或真实 Office 端到端验收完成。
+
+### 2026-09-05：接管收尾与本机交付（1.0.34）
+
+- [x] 保留 W00–W10 和已有 Studio 工作，不重做 FrameLease／历史长任务 Batch A，不开启 subagent。修正 AGENTS 中已过期的 60/120 秒总时长与 90 轮上限结论。
+- [x] 真实接口发现并修复默认配置回归：仅含 effort 的请求不再清空本机模型地址／密钥。新增回归先红后绿，明确模型档案仍使用其自身凭据。
+- [x] Office 真机发现并修复两处绑定断路：PowerPoint 从捕获 HWND 的 mdiClass 子窗口取得 OBJID_NATIVEOM，再核对文档路径；Excel 从目标 Workbook 的 Windows 绑定 HWND，不读取应用 ActiveWorkbook。实际修改和外部读回证明 slideId、shapeId、其他幻灯片、加粗、公式及另一工作簿保持正确。
+- [x] Electron 收藏笔记／分类改用现有样式的文本输入弹层，真实渲染器点击验证通过。清理过时的项目标签断言，修复 settings 类型错误。
+- [x] W12 已有 runtime 接入正式 main/preload/Studio：明确关注／停止、文件变化或每日一次、正常 Runtime 草稿任务、持久设置、连续保存合并。单文件授权保持为单文件；真实 Windows 文件替换保存两次均继续触发。
+- [ ] 完整 verify、安装同步与安装后 smoke 正在收尾，最终版本和计数以 `docs/STATUS.md` 为准。验收记录：`docs/research/2026-09-05-takeover-release.md`。
+- [ ] W11 完整办公／设计闭环保持未完成：Figma 缺真实插件 ID，Word、聊天、浏览器和运行中改指等尚无全部真实桌面验收；不得把协议测试或合成文件覆盖写成这些场景已通过。
+
+### 2026-09-05：办公材料主线 W00——统一自然语言入口与验证链去重（1.0.33 开发树）
+
+- [x] **自然语言只走 MP Runtime loop**：删除 `intent_router`、`TrajectoryCompiler`／recipe cache、`LoopParams.trajectory` 与自然语言 local-action 短路；复合请求中的“截图”“复制”不再绕过模型。显式复制／截图按钮仍使用真实本地工具，instruction 与 evidence 继续用独立 origin。
+- [x] **活分类保留、静态目录删除**：非目标配方的名称及 `activation_intent`／`grounded_object`／`interaction_episode` 三种 output kind 原样迁入 catalog；能力工具继续过滤 plumbing recipe。删除静态 `Capabilities`，保留真实 `Look` 与旧会话 replay 清理。
+- [x] **验证入口去重**：Node runner 默认仅跑测试，支持精确文件参数并拒绝非法／缺失路径；`verify` 唯一编排 lint、五套 typecheck、Node、Python，`sync` 只调用一次 `verify`。引用芯片删除、原编号及 snapshot 窄化由同一共享纯函数驱动并被行为测试覆盖；重复字体源码字面量测试已删除。
+- [x] **TDD 与 fresh 门**：先观察三条复合请求、runner 参数、sync 编排及 snapshot 窄化红灯；修复后 ESLint、五套 typecheck、Node **190 test files**、Python **1682 passed / 1 个既有 Pillow warning / 280.10s** 全绿。
+- [ ] **交付边界**：W00 是 PRD 连续实施的首包，尚未单独升版本或运行 `npm run sync`；安装交付在 W11 对完整办公主线一次完成，避免每包反复制作安装器。W02–W11 尚未完成。
+
+### 2026-09-05：办公材料主线 W01——来源、局部定位与覆盖度（1.0.33 开发树）
+
+- [x] **EventSession 是任务材料真值**：新增严格的 `SourceRef`、`FragmentLocator`、`Coverage`、`ReferenceBinding`、`TaskInput`／read result 契约与 `context/updated` 事件投影；来源身份、引用 locator、角色及 revision 可从 JSONL 重放，store 不另建状态文件。客户端 revision 只做期望值，服务端引用 revision 单调推进。
+- [x] **指向进入真实 Runtime task**：SelectionSession 创建时即获得 `agent-<selection token>` taskId；InteractionEpisode 只保留 UI 槽位和最近事件预览，每次提交产生结构化 TaskInput。选择桥在模型首轮前持久化冻结来源和引用 ACK，InputArtifact 携带 source catalog、reference locator、coverage 与 FrameLease；同一快照重试不会重复注册。
+- [x] **正则退出语义决策**：命令里的“比较／这里／add”不再决定 target/source/reference 或继续手势；角色和槽位只接收显式主进程/UI 输入。仅保留用户显式命名 A/B/C 的 label 解析。删除 A 不会把 B 重编号，同标题不同身份的来源不会合并。
+- [x] **TDD 与 focused 门**：先观察 SelectionSession 无 taskId、命令正则覆盖显式槽位、模型调用前 session 无来源三类失败；随后共享 Python/TS fixture、EventSession 重放、InputArtifact、interaction episode、selection bridge 共 **85 个 Python focused tests** 及 4 个相关 Node 行为测试通过，Electron 与 browser-global typecheck 通过。尚未升版本或同步安装版。
+
+### 2026-09-05：办公材料主线 W02——运行中持续指代（1.0.33 开发树）
+
+- [x] **统一 TaskInput durable ACK**：Stage 与 Studio 的插话都传 `instruction + referenceUpdates + sourceIds + timeline`；主进程按已验证的 selection／conversation session 覆盖 renderer taskId。只有 bridge 返回同一 inputId 的 `queued` 才清空输入或删除引用芯片，失败保留本地内容。
+- [x] **结构化 inbox 与写前 steer 门**：EventSession/in-memory inbox 保留完整 payload；claim 将 instruction 与材料拆为 ORIGIN_INSTRUCTION / ORIGIN_DATA，并在同一 `inbox/consumed` 事件原子应用引用 revision。每个变更类工具 dispatch 前重查 next-step；新输入出现时旧写调用以 `not-started/steer_pending` 跳过，消费后重新规划。Steered 进度携带 inputId 与已应用 revision。
+- [x] **任务中再指向不中断原任务**：新的手势会加入唯一匹配的活跃 Stage 或 Studio Runtime，旧 Python child 不再因开启第二次圈选而被取消；新冻结来源随 TaskInput 注册。多笔画在 JS/Python 两端都映射为同一 source 下稳定的 A/B… referenceId 与独立 visual locator，删除一个不会重编号其余引用。
+- [x] **TDD 与 focused 门**：先观察引用-only 被拒、结构化溢出静默丢弃、重启 claim 丢材料、写工具抢在纠正前 dispatch、Studio/Stage ACK 前清空、后续手势新建 task、多笔画压成单引用等失败。规定的 Python W02 组 **120 passed**，相关 selection bridge 组 **91 passed**，Node 5 个 W02 行为文件通过，五套 TypeScript typecheck 与 `git diff --check` 通过。
+- [ ] **真实验收边界**：这一步证明传输、持久化、重放、写前阻断与 UI ACK 语义；真实 PowerPoint 中“运行时补指 B、A 只参考”的模型及 COM 行为留到 W08/W11，不以 fake bridge 代替。
+
+### 2026-09-05：办公材料主线 W03——Runtime 主动检索与任务来源范围（1.0.33 开发树）
+
+- [x] **来源权限进入真实调用边界**：新增 `TaskSourceScope`、任务绑定的 source/folder/window/recipient/action grant 与撤销投影；用户加入/指向的来源及可追溯附件可直接读，材料文本不能生成授权。`ToolSpec.access_for` 在 pre-tool hook 改参后按实际参数复核，越界 reader 不会被调用；显式项目目录的材料读取 grant 只持久化一次。
+- [x] **Runtime 可主动补材料**：`Context.list/read/search/follow/bind` 接入 Harness；read/search 结果保留 sourceId、locator、coverage、backend、耗时与 continuation。`follow` 只登记带正确 parentSourceId 的候选，`bind` 只绑定本任务已读取 locator，不能扩大 scope。Stage 的冻结来源已有真实 reader，Studio 与 Stage 使用同一注入 seam。
+- [x] **办公默认面收紧**：普通办公/手势任务不再因 profile `/cwd` 自动获得代码、Bash、SaveSkill 或任意 MCP；Studio 明确选择项目文件夹才启用现有 advanced 工具面，且代码工具仍受项目根约束。系统提示只增加目标/角色、主动读取、来源/覆盖度及冲突写入门四项原则。
+- [x] **素材采集改为显式开启**：新设置缺省 `stash.clipboard=false`；图片与文字轮询均只在对应设置严格为 true 时启动，显式收藏仍可写入；设置文案区分持续收集和一次加入。无项目 Studio 继续可提交普通任务。
+- [x] **TDD 与 focused 门**：先观察未授权同类文件、hook 改路径、过期 grant、伪造 bind、默认 SaveSkill/MCP/Bash、Stage 隐式工作区和剪贴板缺省开启的失败。PRD 指定 Python 组 **55 passed**，Selection bridge **68 passed**，Conversation bridge **53 passed**，Node W03 组 **3 files passed**，五套 TypeScript typecheck 与 `git diff --check` 通过。
+- [ ] **真实验收边界**：本包证明权限投影、工具参数复核和上下文工具协议；完整 PDF/PPT/Word/Excel reader 从 W04 开始，Office 精确写入与读回在 W07–W11，尚未用假 reader 冒充真实办公能力。
+
+### 2026-09-05：办公材料主线 W04——全结构文档读取与可继续检索（1.0.33 开发树）
+
+- [x] **四类文档保持结构与身份**：新增 task-scoped `DocumentReader`；PDF 可跨全部页面检索并保留 pageIndex/rectPt/页面尺寸/旋转/目录，DOCX 按 OOXML body 顺序交错段落与表格并覆盖标题、页眉页脚，PPTX 递归组 shape 并保留 slideId/shapeId/父子/bbox/备注，XLSX 同时读取公式与缓存视图并保留表头、单位、合并及隐藏状态。扫描页、浮动对象、修订与未知公式缓存均报告真实缺口，不伪造成已覆盖。
+- [x] **live 与磁盘 revision 分开**：打开且未保存的 Office 选择由 source-specific live reader 优先；磁盘 reader 作为 fallback，不覆盖当前可见内容。PowerPoint/Excel/Word COM 均按捕获 hwnd 找对应窗口/文档，PowerPoint 不再取任意 `ActivePresentation`，当前 slide/shape/group locator 使用稳定原生身份。
+- [x] **大材料可翻页、可沿结果继续**：`file_context` 复用 bounded preview 并返回 sourceId/coverage/structure；目录超过 120 项通过 cursor 继续，显式搜索会读取授权目录内直接子文档正文而非只猜文件名，命中结果可 `follow` 成独立 child source。未知格式返回 unsupported。Studio 附件以结构化路径进入 task sources，不再拼进 instruction。
+- [x] **依赖与安装 runtime 实证**：锁定并打包 `python-docx 1.2.0`、`python-pptx 1.0.2`、`openpyxl 3.1.5` 及 Windows 所需 `sherpa-onnx-core 1.13.7`。隔离 Python 3.12.8 runtime 从 hash lock 构建成功，并真实创建、重开 PDF/DOCX/PPTX/XLSX，分别读回 `runtime … target`。修复 Torch 深层许可证导致旧 runtime 备份无法删除：rollback 目录改用短路径，build-root 限定的 extended-length 删除器清掉了本次真实遗留目录；随后 cache 验证退出 0。
+- [x] **TDD 与 focused 门**：先观察后页、body 顺序、同名/组内 shape、合并表头与缓存未知、目录正文搜索、live 优先、COM hwnd 绑定、附件结构化及 runtime 缺包/长路径失败。W04 规定组加 runtime smoke **36 passed**，相关来源/Selection/Conversation 桥 **157 passed**，Node 打包/transport **5 files passed**，新增 Python 文件 Ruff 与五套 TypeScript typecheck 全绿。
+- [ ] **真实验收边界**：离线生成/重读和 fake COM 证明 reader/绑定协议；真实已打开 Office、浏览器屏幕外内容以及局部写回仍按 W05/W08/W11 验收，尚不以合成文件代替桌面结果。
+
+### 2026-09-05：办公材料主线 W05——实时观察与浏览器屏幕外深读（1.0.33 开发树）
+
+- [x] **历史与实时证据不互相覆盖**：`Look` 继续只裁手势完成时的 frozen frame，结果携带明确 capture 时间；新增 `LiveObserver` 只接受当前 task 已绑定 `SourceRef`，先按 hwnd 获取新 UIA snapshot，再抓完整目标窗口像素并把真实 bytes 交给共享视觉 backend。返回 observedAt、locator、snapshotId、coverage、usedBackend 与 latency；未绑定来源在 state/capture 前拒绝。
+- [x] **视觉 backend 单一实现**：把 Selection bridge 内嵌临时文件逻辑抽成 `FileVisionBackend`；Look 与 Observe 共用同一 timeout/一次尝试/清理语义，模型拿到的是视觉观察文字而非 image path 或 snapshot_id 冒充的内容。Studio 普通任务没有 frozen frame 时 Look 仍诚实 unsupported，但后续加入已授权表面后可 Observe。
+- [x] **浏览器按实例、标签与文档代际读取**：Selection source/locator 保存 browserInstanceId + targetId + documentEpoch。新增 `BrowserContextReader` 与只读 `ChromeDevToolsDocumentClient`，CDP 只以 exact instance/target 选页，不按 URL/标题猜；DOM 全文分页/字面查询可返回 viewport 外节点及父级/selector。导航后 epoch 不同会令旧 locator 返回 degraded/无 fragment，不能进入 Context.bind；iframe/canvas 覆盖缺口显式报告。
+- [x] **真实装配与权限边界**：Stage/Studio 注册同一浏览器 reader；桌面 Observe schema 支持 source_id/question/locator，同时保留既有结构快照调用。来源作用域通过 `ToolSpec.access_for` 在抓屏前复核；无显式 sourceId 时只可推断当前 task 中与原始 hwnd 匹配的 pointed source，否则拒绝。系统提示明确 Look/Around/Tree 是历史、Observe 是当前。
+- [x] **TDD 与 focused 门**：先观察缺少 live observer、共享视觉 bridge、自定义 Observe 注册、浏览器 reader/CDP exact target、浏览器 source identity 与历史 capture 时间等红灯。PRD W05 组 **35 passed**；Selection/Conversation/Harness/Desktop/Snapshot 集成组 **231 passed / 1 个既有 Pillow warning**；新增模块 Ruff 与 `git diff --check` 通过。
+- [ ] **真实验收边界**：fake pixels/CDP 只证明绑定、传输和失效规则；未为取得 CDP 重启浏览器或替换 profile。真实 Windows 浏览器、遮挡/frame/canvas 降级和视觉 provider 结果留在 W11 分别记录，不以 fake DOM 冒充桌面可用。
+
+### 2026-09-05：办公材料主线 W06——可追溯微信／钉钉会话（1.0.33 开发树）
+
+- [x] **聊天来源有独立身份与诚实语义**：微信、钉钉都通过 SurfaceAdapter 注册；会话以 adapter + native conversation/account 或 window/surface 绑定，标题只作显示与复核，两个同名窗口不会只因 title 合并。RawObject 按可见坐标排序，speaker/time/replyTo/nativeMessageId/attachment 只接收应用实际暴露的字段；UIA 只有容器或像素时不拆假消息，明确返回需要视觉观察的缺口。
+- [x] **跨页 reader 保留顺序与不确定性**：新增 `ChatReader`，每页前后核对 conversation identity，原生 messageId 精确合并；无 ID 时只合并相邻页完整 suffix/prefix 重叠，不算指纹、不按 text 去重。相同的“好的”保留为两条；会话切换立即停止且不混入另一群内容。coverage 记录每页 cursor、观察数、重叠数、接收数及导航回执，当前 viewport 不冒充完整历史。
+- [x] **附件成为可追溯子来源**：消息附件通过 `Context.follow` 生成 task-discovered child SourceRef，parentSourceId 指回会话；同名 v1/v2 以真实 attachment identity 分开。未打开的附件卡不假称可读，已有本地路径／公开 URL 才暴露 read/search；下载或翻页使用原有桌面动作并在 Context 结果中保留 backend/receipt。
+- [x] **真实 Runtime 装配**：Selection 从冻结 adapter object 或冻结 window 的纯 identity binder 生成 chat source/message locator；Stage 与 Studio 都注册 chat reader。历史 Look 仍指向冻结帧，当前会话读取走 live SurfaceAdapter；身份只有模糊 window-surface 且无法区分同名会话时拒绝自动翻页，不以“可能读错群”换覆盖率。
+- [x] **TDD 与 focused 门**：先观察缺少 reader/钉钉 adapter/chat source 三类红灯；脱敏两页 fixture 覆盖屏幕外最终口径、同文重复、无 ID 相邻页重叠、两版同名附件及中途切群。PRD 指定组 **21 passed**，Context/Selection/Conversation/Harness 集成组 **189 passed**；新增模块 Ruff、compileall 与 `git diff --check` 全绿。
+- [ ] **真实验收边界**：本包没有读取私有数据库、解密记录或注入客户端。真实微信／钉钉跨屏读取、客户端版本、视觉 backend 与身份充足度在 W11 各自记录；缺失客户端或模糊身份必须保持未完成，不能用脱敏 fixture 代替真机结果。
+
+### 2026-09-05：办公材料主线 W07——版本化草稿、结构化补丁与读回回执（1.0.33 开发树）
+
+- [x] **同一 revision 贯穿编辑、接受和应用**：DraftArtifact 现保存 kind 与 DocumentPatch payload；用户和 Agent 编辑均走 expectedRevision CAS，任一修改立即失效旧接受状态。Studio inspector 加载真实编辑器脚本，切 task 有 generation 隔离；摘要与每项实际 after 值可分别编辑，保存失败保持 dirty，接受和应用都携带 artifactId + revision。
+- [x] **补丁是值对象而非模型脚本**：首批仅允许 replace_text、set_cell_values、set_shape_text/style/geometry、add_pdf_annotation、create_file、move_file。每项必须精确绑定当前 target source/locator 与 before/after；参考对象不能被目标补丁改写。模型只能用 `Document.propose_patch` 为已经存在的任务引用生成可编辑草稿，不能提交任意代码或直接产生外部写入。
+- [x] **UI Apply 不绕过 Runtime**：artifact bridge 提供 read/edit/accept/apply；接受文档补丁时建立仅覆盖该 revision 所列 source/path 的 patch scope，真正写入仍经 `authorize_access → SafeActionExecutor → 固定 handler → readback`。写前再次检查 artifact revision/acceptedRevision 和 base；批次失败区分已写、已验证及未执行项，读回不符为 unverified，拒绝/过期 revision 在 writer 前停止。
+- [x] **产物与回执可追溯**：成功生成／移动／PDF 副本登记到既有 ArtifactRegistry，记录 sourceId、DraftArtifact id/revision、引用、精确预览、路径和 verification receipt；普通外部发送继续使用独立 external-send 语义，不伪装成文本替换。安装器白名单已包含 artifact bridge。
+- [x] **TDD 与 focused 门**：先观察缺失 DocumentPatch、CAS、IPC/editor、生产 backend/scope、模型补丁工具与 Registry 关联等红灯。W07 Python 核心组 **27 passed**，renderer/runtime **2 files passed**，五套 TypeScript typecheck 通过；W08 的真实 handler 聚焦组另行记账。
+- [ ] **真实验收边界**：本包证明版本、权限、执行门和回执语义；真实 PowerPoint/PDF/Word/Excel 写入由 W08 实现并在 W11 用本机应用核对。尚未把 fake backend 或离线 Office 文件当成桌面真机通过。
+
+### 2026-09-05：办公材料主线 W08——Office／PDF 精确修改与可编辑产物（1.0.33 开发树）
+
+- [x] **PowerPoint 写入绑定原生身份**：局部修改固定按完整路径 + 窗口 HWND + slideId + 递归 shapeId 定位，插页、同名演示、同名 shape 和组内对象不退回顺序或标题猜测；写前再读文本／属性，锁定、母版、base 改变即停。文本只改最小 range，样式与几何仅接受 fillRgb／lineRgb／left／top／width／height 白名单及有限数值。
+- [x] **PDF 与 Office 文件得到可核对结果**：PDF 高亮／批注按页面旋转坐标写入新副本，原文件不覆盖；DOCX/XLSX/PPTX 新产物保留可编辑结构、来源页并重开核对。DOCX 局部替换保留未选 run 格式，XLSX 保留公式文本且不把空缓存冒充计算结果。
+- [x] **整理与执行仍走统一门**：文件移动遇同名目标不覆盖，成功移动产生可恢复 inverse；Word/Excel live gateway 及离线文件 handler、PowerPoint、PDF、产物生成均由 DocumentOperationBackend 经 SafeActionExecutor 执行，Document.propose_patch 只生成 W07 的版本化有限补丁。
+- [x] **TDD 与 focused 门**：先观察同名窗口／插页／组 shape、旋转 PDF、原件覆盖、不可重开产物、移动冲突、未选格式损坏、公式缓存误报及任意 PowerPoint 属性等红灯。W07/W08 相关组 **20 passed**，新增 Python 模块 Ruff 全绿；完整 TypeScript typecheck 与 Figma 同批通过。
+- [ ] **真实验收边界**：合成 Office 文件、fake COM 和重新打开证明身份与文件结构契约，但尚未在本机真实 PowerPoint/Word/Excel 进程中修改对象并导出受影响页预览，也未人工核对扫描／文本 PDF 各一份；这些保持 W11 待验收。
+
+### 2026-09-05：办公材料主线 W09——Figma Design Mode 原生节点接入（1.0.33 开发树）
+
+- [x] **任务／文档绑定的最小插件桥**：新增只监听 127.0.0.1 的 HTTP bridge，配对码、插件 token 与 Runtime 控制 token 分离；命令固定为 read_selection/read_nodes/read_parent/export_preview/apply_patch/readback，并始终携带 taskId + documentSessionId。预检、事件、短轮询、结果、断开取消未 dispatch 命令与端口冲突都有明确语义，不暴露文件或 shell 接口。
+- [x] **节点读取与有限修改进入自己的 Runtime**：Figma SourceRef/reader 保留页面、父子、同层节点、bounds、文本、style、auto-layout、组件关系和 capability；DocumentPatch 仅映射文本、填充、间距、尺寸、位置。插件在任何写前核对完整 base，先加载所有涉及字体，缺字体／节点删除／锁定／不支持的 auto-layout 位置变更均在首个 mutation 前停止；写后 readback 进入同一回执链。
+- [x] **可编辑 artifact 有节点预览和改指**：Studio 可从无项目任务打开 Figma 连接，artifact inspector 向当前绑定文档导出 PNG；“改用当前选中节点”会同步更新 target reference、同引用下所有 operation locator 与新 base，并使旧批准失效，不能只换 UI 标签后仍写旧 node。
+- [x] **独立插件构建与 focused 门**：插件使用官方 typings + esbuild，Design Mode、dynamic-page、loopback network contract 均由 manifest 生成器校验；build/figma 已进入 Electron 包。Node **8 files passed**、相关 Python **156 passed**、ESLint、完整 TypeScript typecheck 与 build:figma 全绿。
+- [ ] **真实插件交付边界**：当前机器没有通过 Figma “Create new plugin” 分配的真实数字 ID，因此构建明确只产出 code.js/ui.html/BUILD_STATUS，不生成假 manifest；Windows Figma Design Mode 的多字体、auto-layout、前后图、普通安装与断开行为仍待真实环境验证。按 PRD 完成条件，Figma 产品支持仍标为未完成，不能用协议绿灯替代。
+
+### 2026-09-05：办公材料主线 W10——长任务恢复、显式知识与有依据的总结（1.0.33 开发树）
+
+- [x] **计划、指代与产物可以跨重启继续**：TodoStore 由每次运行独占，EventSession 追加 `plan/updated` 并兼容投影旧 Todo 结果；Conversation/Selection 两入口均先恢复计划、来源、引用、授权、最新 steer、待消费 TaskInput 和 artifact revision，再启动 loop。hydration 不伪造更新，UI 广播失败不回滚已持久化计划；压缩后只重附有限计划与可回读 source/locator 入口，不重复原文。
+- [x] **恢复上下文有界且不重放未知外部动作**：continuation 总块限制为 24,000 字符，按事实行省略并保留 evidence fence；capture/file/live connection 分别标明 historical/available/rebind/missing。已 dispatch 且结果未知的 external_send 按 exact tool+arguments 进入 deterministic recovery barrier，即使 BYPASS 也返回 `RECOVERY_RETRY_BLOCKED`，必须先读回或取得新确认。
+- [x] **收藏是显式材料库，不是后台录屏**：Stash 条目保留 sourceId、locator、原始 artifact、摘要、用户分类和来源时间；监控关闭时仍可从 Studio 显式加入文件／图片／笔记、线性搜索、打开原来源或保留证据、改分类和删除。删除只移除收藏副本与索引，不删除权威原件；既有采样指纹仅用于实际节约重复存储，没有新增全文指纹或 FTS。
+- [x] **短期记忆与 DailyWrap 均可追溯**：screen memory 仍默认关闭、敏感内容不写、24 小时／400 条有界，但新记录携带 sourceId+locator，旧摘要明确 `provenanceMissing=true`。ConversationStore 分开记录 startedAt/completedAt，不再让流式 patch 覆盖开始时间；`DailyWrap.read` 只读用户指定时段／任务的真实事件、回执和材料，artifact revision 以 EventSession 为权威，空范围明确“没有纳入本次材料”，不推断窗口停留或填造全天时间表。
+- [x] **TDD 与 focused 门**：先观察上下文 221,508 字符、BYPASS 自动重发、Todo 回调／持久化不一致、收藏元数据丢失、显式入口缺失、旧 screen memory 假来源及 DailyWrap 时间漂移等红灯。W10 Python 恢复／桥接／材料组 **217 passed**，Node 收藏／会话组 **4 files passed**，新增 knowledge/daily-wrap/screen-memory 模块 Ruff 全绿，五套 TypeScript typecheck 通过。
+- [ ] **真实验收边界**：协议和可控重启测试证明 durable 语义，但真实跨进程重启的办公主线、安装版 Studio 收藏操作与长工具 heartbeat smoke 留到 W11；未把 fake clock、fake model 或协议测试记作真实应用通过。
+
 ### 2026-09-05：Studio Claude 交互纠偏（1.0.33 开发树；按用户要求仅提交）
 
 - [x] **高亮控件从近似件改成真实交互**：左下账户区为测量定位且不越界的真弹层，Settings、Models & runtime、Check for updates、View changelog、Keyboard shortcuts、About 均接现有命令；Composer 权限四档为 Plan / Accept edits / Bypass permissions / Manual，模型目录可真实选择，公共弹层控制器统一互斥、Escape/外点关闭、选中态和 ARIA。
