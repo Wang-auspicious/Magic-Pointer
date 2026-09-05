@@ -25,10 +25,10 @@ assert(placementStart >= 0);
 assert(!source.slice(placementStart, placementEnd).includes('getBoundingClientRect'),
   'work-panel placement must use its fixed contract size, not rendered content');
 
-assert.match(css, /\.stage-composer\s*\{[^}]*width:\s*var\(--stage-composer-width,\s*480px\)[^}]*height:\s*var\(--stage-composer-height,\s*132px\)/s);
-assert.match(css, /\.stage-thread\s*\{[^}]*width:\s*var\(--stage-work-panel-width,\s*440px\)[^}]*height:\s*var\(--stage-work-panel-height,\s*300px\)/s);
+assert.match(css, /\.stage-composer\s*\{[^}]*width:\s*var\(--stage-composer-width,\s*480px\)[^}]*height:\s*var\(--stage-composer-height,\s*56px\)/s);
+assert.match(css, /\.stage-thread\s*\{[^}]*width:\s*var\(--stage-work-panel-width,\s*440px\)[^}]*height:\s*var\(--stage-work-panel-height,\s*533px\)/s);
 assert.match(css, /\.work-panel-scroller\s*\{[^}]*overflow-y:\s*auto/s);
-assert.match(css, /\.stage-thread\s*\{[^}]*border-radius:\s*16px/s);
+assert.match(css, /\.stage-thread\s*\{[^}]*border-radius:\s*18px/s);
 assert.match(css, /\.thread-bar\s*\{[^}]*border-top:\s*1px solid/s);
 assert(css.includes(".stage-thread[data-phase='running'] .thread-bar { display: none; }"),
   'running work must not show disabled follow-up controls');

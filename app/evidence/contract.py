@@ -11,10 +11,43 @@ This module is pure Python and has no I/O or platform dependencies.
 from __future__ import annotations
 
 import enum
+import re
 from dataclasses import dataclass
 from typing import Any, Iterable
 
 MIN_CONFIDENCE_FOR_TRUST = 0.5
+
+# 一个字符类别的问题：`*` 不是一次阅读。
+#
+# 真机 9·3：用户在终端里划过 Claude Code 那个转圈的 `*`，感知层读回来一个
+# 星号，非空、于是被当成「读到了圈选的内容」，模型就拿着一个星号去回答。
+# 「非空」和「读到了」不是一回事——一行里没有任何字母、数字或汉字时，读到的
+# 是一枚字形，不是内容。
+_WORD_LIKE = re.compile(
+    "[0-9A-Za-z"
+    "À-ɏ"    # Latin extended
+    "Ͱ-Ͽ"    # Greek
+    "Ѐ-ӿ"    # Cyrillic
+    "֐-ۿ"    # Hebrew / Arabic
+    "぀-ヿ"    # Kana
+    "㐀-䶿"    # CJK extension A
+    "一-鿿"    # CJK
+    "가-힯"    # Hangul
+    "]"
+)
+
+
+def is_glyph_only(text: Any) -> bool:
+    """Does this reading contain no word character at all?
+
+    Punctuation, box-drawing characters, spinners and bullets are surface
+    decoration. A read that returned only those answered nothing about the
+    mark, and must not outrank a source that can still try.
+    """
+    stripped = str(text or "").strip()
+    if not stripped:
+        return False
+    return _WORD_LIKE.search(stripped) is None
 
 
 class EvidenceStatus(str, enum.Enum):

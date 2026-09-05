@@ -467,18 +467,35 @@ def test_fabric_object_keeps_structured_browser_devtools_evidence() -> None:
     assert objects[0]["source"]["browserContext"]["selector"] == "#retry-payment"
 
 
-def test_expired_snapshot_fails_closed() -> None:
-    expires_at = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
-    _, context, _, error = _context_from_snapshot({
+def test_old_snapshot_is_still_readable() -> None:
+    """定格住的那一刻不会因为时间流逝而失效。
+
+    旧行为是 120s 硬过期：证据还完整躺在磁盘上，第二个问题却被判死。
+    """
+    long_past = (datetime.now(timezone.utc) - timedelta(hours=3)).isoformat()
+    window, context, snapshot, error = _context_from_snapshot({
         "selectionSnapshot": {
-            "snapshot_id": "expired",
-            "expires_at": expires_at,
+            "snapshot_id": "aged",
+            "expires_at": long_past,
             "source_window": {"title": "doc.docx - Word"},
             "context": None,
         }
     })
-    assert context is None
-    assert error == "selection snapshot expired"
+    assert error is None
+    assert context is None  # 这份快照本来就没带 context
+    assert window == {"title": "doc.docx - Word"}
+    assert snapshot["snapshot_id"] == "aged"
+
+
+def test_malformed_snapshot_still_fails_closed() -> None:
+    """时间不再是错误来源，结构坏掉仍然是。"""
+    _, _, _, error = _context_from_snapshot({
+        "selectionSnapshot": {
+            "snapshot_id": "broken",
+            "source_window": "not-a-dict",
+        }
+    })
+    assert error == "invalid selection source window"
 
 
 def test_interaction_episode_context_exposes_only_bound_slots() -> None:
@@ -1622,11 +1639,11 @@ def test_main_passes_reply_style_into_the_loop_router(monkeypatch):
     )
 
 
-def test_expired_snapshot_followup_continues_on_history(tmp_path, monkeypatch):
-    """追问时冻结帧过期：对话历史续跑，不再把整轮打死。
+def test_aged_snapshot_followup_keeps_the_frozen_evidence(tmp_path, monkeypatch):
+    """追问时冻结帧已经很旧：证据照用，不再降级成「只剩对话历史」。
 
-    真机 8·29：TTL 120s 比一轮长答案的往返还短，第二条追问必死，
-    气泡里是原始码「selection snapshot expired」。
+    真机 8·29 的老 bug 是 TTL 120s 比一轮长答案的往返还短，第二条追问必死。
+    现在那一刻是定格的，所以第二条追问看到的仍然是同一份屏幕证据。
     """
     from datetime import datetime, timedelta, timezone
 
@@ -1674,21 +1691,21 @@ def test_expired_snapshot_followup_continues_on_history(tmp_path, monkeypatch):
     monkeypatch.setattr(selection_bridge, "_loop_router", fake_loop_router)
 
     assert selection_bridge.main() == 0
-    assert captured["snapshot"] is None, "过期的冻结帧必须丢弃"
-    assert captured["app_ctx"] is None
-    assert "屏幕证据已过期" in captured["command"], "模型必须知道本轮以对话历史为准"
+    assert captured["snapshot"] is not None, "定格住的冻结帧不因时间被丢弃"
+    assert captured["app_ctx"] is not None
+    assert "屏幕证据" not in captured["command"], "没有降级，就不该对模型说证据没了"
 
 
-def test_expired_snapshot_first_question_fails_with_human_text(tmp_path, monkeypatch):
-    """首问（无历史会话）过期仍旧失败，但给人话，不给原始码。"""
+def test_aged_snapshot_first_question_still_answers(tmp_path, monkeypatch):
+    """首问（无历史会话）用一份很旧的冻结帧，照样跑通。"""
     from datetime import datetime, timedelta, timezone
 
     monkeypatch.setattr(selection_bridge, "ROOT", tmp_path)
 
-    fresh = (datetime.now(timezone.utc) + timedelta(minutes=-1)).isoformat()
+    long_past = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
     payload = {
         "command": "这是什么",
-        "requestId": "r-stale-first",
+        "requestId": "r-aged-first",
         "selectionSessionId": "fresh-1",
         "source": "pointer_stage",
         "selectionSnapshot": {
@@ -1697,7 +1714,7 @@ def test_expired_snapshot_first_question_fails_with_human_text(tmp_path, monkeyp
             "strokes": [[100, 100], [300, 200]],
             "target_point": [200, 150],
             "target_point_space": "physical_screen_pixels",
-            "expires_at": fresh,
+            "expires_at": long_past,
             "context": {"adapter": "screen_region", "path": None, "artifacts": {}},
         },
     }
@@ -1707,19 +1724,20 @@ def test_expired_snapshot_first_question_fails_with_human_text(tmp_path, monkeyp
     )
     monkeypatch.setattr(selection_bridge, "_configure_stdio", lambda: None)
 
-    captured_out = {}
-    real_print = print
+    captured = {}
 
-    def fake_print(value, **kwargs):
-        captured_out["value"] = value
+    def fake_loop_router(command, routing_objects, target_window, app_ctx,
+                         snapshot, routing_enabled, selection_session_id,
+                         selection_snapshot_id, clock=None, reply_style="normal"):
+        captured["snapshot"] = snapshot
+        return {"ok": True, "answer": "回答", "usedBackend": "test",
+                "route": {"action": "model_loop"}, "actionProposals": [],
+                "selectionSessionId": selection_session_id}
 
-    import builtins
-    monkeypatch.setattr(builtins, "print", fake_print)
-    assert selection_bridge.main() == 1
-    payload_out = json.loads(captured_out["value"])
-    assert payload_out["ok"] is False
-    assert payload_out["error"] == "selection snapshot expired"
-    assert "重新圈选" in payload_out["errorHuman"], "人话必须带明确动作"
+    monkeypatch.setattr(selection_bridge, "_loop_router", fake_loop_router)
+
+    assert selection_bridge.main() == 0
+    assert captured["snapshot"] is not None
 
 
 def test_loop_router_passes_tool_result_dir_under_workspace(monkeypatch, tmp_path):
@@ -1788,3 +1806,47 @@ def test_loop_router_passes_tool_result_dir_under_workspace(monkeypatch, tmp_pat
     assert recorded["tool_result_dir"] == expected, (
         "Stage 的 tool_result_dir 必须落在绑定工作区的 .mp/tool-results"
     )
+
+
+def test_tool_activity_line_is_verb_plus_object() -> None:
+    """过程流里的一行必须说出「它去动了什么」。
+
+    真机 9·3：小窗展开十一行「思考过程」，十一行全是管道流水账（读了设置 /
+    过了一遍窗口 / 冻住了这块画面 / 交给模型 …），没有一行是一次真实的动作。
+    """
+    line = selection_bridge.tool_activity_line(
+        "Read",
+        {"path": r"D:\Desktop\Magic Pointer\electron\renderer\stage.ts"},
+        value="2371 lines\nrest",
+    )
+    assert line["tool"] == "Read"
+    # 路径里带空格（Magic Pointer）也要正确收成末两段。
+    assert line["target"] == "…/renderer/stage.ts"
+    assert line["ok"] is True
+    assert line["detail"] == "2371 lines"
+
+    failed = selection_bridge.tool_activity_line(
+        "Bash", {"command": "npm test"}, is_error=True, error_message="TOOL_ERROR"
+    )
+    assert failed["ok"] is False
+    assert failed["target"] == "npm test"
+    assert failed["detail"] == "TOOL_ERROR"
+
+    # 命令里的斜杠不是路径，不许被截成 …/。
+    piped = selection_bridge.tool_activity_line("Bash", {"command": "ls /tmp && echo ok"})
+    assert piped["target"] == "ls /tmp && echo ok"
+
+    # 没有约定键时也不能只剩一个工具名。
+    guessed = selection_bridge.tool_activity_line("Grep", {"whatever": "hello world"})
+    assert guessed["target"] == "hello world"
+
+
+def test_tool_activity_blob_round_trips() -> None:
+    import base64
+
+    encoded = selection_bridge._encode_activity(
+        selection_bridge.tool_activity_line("Read", {"path": "a/b/c.ts"})
+    )
+    assert " " not in encoded, "blob 走 @@mp 行，必须无空白"
+    decoded = json.loads(base64.b64decode(encoded).decode("utf-8"))
+    assert decoded["tool"] == "Read"

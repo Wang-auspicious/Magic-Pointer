@@ -95,6 +95,7 @@ class DesktopActionSession:
         uia_act: Callable[..., dict[str, Any]],
         session_id: str,
         ownership: InputOwnershipLock | None = None,
+        origin_window_hwnd: int | None = None,
     ) -> None:
         self.driver = driver
         self.windows_probe = windows_probe
@@ -103,7 +104,21 @@ class DesktopActionSession:
         self.uia_act = uia_act
         self.session_id = session_id
         self.ownership = ownership or InputOwnershipLock()
+        # 这一轮是围绕哪个窗口发生的。用户划线圈的是终端里的一行，那么
+        # 「不带参数地观察一下」就必须是观察那个终端——而不是此刻碰巧在前台
+        # 的东西。真机 9·3：气泡弹出后终端失去前台，Observe 拿到了桌面，
+        # 回答里于是出现了桌面上那四个快捷方式。
+        self.origin_window_hwnd = int(origin_window_hwnd or 0) or None
         self._snapshots: dict[str, _Snapshot] = {}
+
+    def _default_window(self, windows: list[dict[str, Any]]) -> dict[str, Any] | None:
+        """The marked window, while it still exists."""
+        if not self.origin_window_hwnd:
+            return None
+        for item in windows:
+            if int(item.get("hwnd") or 0) == self.origin_window_hwnd:
+                return item
+        return None
 
     def list_apps(self, **_: Any) -> str:
         apps = [_public_window(item) for item in self._windows()]
@@ -148,7 +163,12 @@ class DesktopActionSession:
         if resolved == "all":
             raise ActionFailure(FailureType.TOOL_ERROR, "mode 'all' is illegal")
         windows = self._windows()
-        target = _select_window(windows, window_id=window_id, pid=pid, app=app)
+        asked = bool(window_id or pid is not None or app)
+        target = None
+        if not asked:
+            target = self._default_window(windows)
+        if target is None:
+            target = _select_window(windows, window_id=window_id, pid=pid, app=app)
         if target is None:
             raise ActionFailure(FailureType.TOOL_ERROR, "window not found")
         hwnd = int(target.get("hwnd") or 0)
@@ -170,6 +190,12 @@ class DesktopActionSession:
             "elements": elements,
             "mode": resolved,
         }
+        # 说清楚这次读的是不是「用户圈的那个窗口」。读了别的窗口而不说，
+        # 就是把另一块屏幕的内容当成用户问的那件事回答出去。
+        if self.origin_window_hwnd:
+            payload["is_origin_window"] = hwnd == self.origin_window_hwnd
+            if not asked and hwnd != self.origin_window_hwnd:
+                payload["origin_window_gone"] = True
         if truncated:
             payload["elements_truncated"] = truncated
         return _dump(payload)
@@ -573,6 +599,8 @@ def register_desktop_action_tools(
             name="Observe",
             description=(
                 "实时观察窗口（live，当前状态），发 snapshot_id 和元素树，不激活。"
+                "不带 window_id/pid/app 时观察的是本轮圈选所在的那个窗口，"
+                "不是此刻恰好在前台的窗口；要看别的窗口必须显式指定。"
                 "它与 look/read_around 的冻结帧证据（手势时刻的历史画面）不同。"
                 "写操作必须带这个 id。窗口移动、目标元素变化或 stale_snapshot 时重跑这一步。"
             ),
@@ -776,7 +804,11 @@ def register_desktop_action_tools(
         pass
 
 
-def default_session(*, session_id: str = "loop") -> DesktopActionSession:
+def default_session(
+    *,
+    session_id: str = "loop",
+    origin_window_hwnd: int | None = None,
+) -> DesktopActionSession:
     """Production session: live window list, COM UIA tree/act, Win32 driver."""
     return DesktopActionSession(
         driver=_live_driver(),
@@ -786,6 +818,7 @@ def default_session(*, session_id: str = "loop") -> DesktopActionSession:
         uia_act=_live_uia,
         session_id=session_id,
         ownership=process_input_lock(),
+        origin_window_hwnd=origin_window_hwnd,
     )
 
 

@@ -1,12 +1,16 @@
 'use strict';
 
-// PromptRescue 逐帧复刻契约（参考/Vida/PromptRescue.mp4，1920×1080 @60fps，
-// 与 docs/design/VIDA_UI_SPEC.md §5/§6.3/§7.4.2 对账）。
-// 这份测试钉的是舞台任务卡的「展开过程」：
-//   1. 面板 233ms 从右滑入（15.750-15.983s 实测），不是原地淡入；
-//   2. 运行中底部没有百分比进度条，进度由逐行展开的证据流表达；
-//   3. 完成信号在底部绿色完成行（19.4-19.6s 淡入），成功时顶部眉毛行退位，
-//      同一个事实不写两遍。
+// 舞台面板的运动与状态契约。
+//
+// 运动仍然照 PromptRescue 实测（参考/Vida/PromptRescue.mp4，1920×1080 @60fps）：
+// 233ms 右滑入场、退场快十倍、进度是逐行展开的证据流而不是百分比条。
+//
+// 状态表达不再照抄参考。参考把 `TASK FINISHED` 写在卡头、又在底部贴一条绿色
+// 完成行；两者都是给一件正文已经说清楚的事再发一次奖状，在一块浮在别人窗口
+// 上的小面板里只是噪音。这份测试因此钉的是「不写第二遍」：
+//   1. 卡头没有状态词；
+//   2. 没有绿色完成行；
+//   3. 你问的那句话是对话流里靠右的一条消息，不是面板标题。
 
 const assert = require('node:assert');
 const fs = require('node:fs');
@@ -29,34 +33,29 @@ assert.ok(
   '入场带雾化淡入（视频 15.9-16.1s 逐帧可见 blur→clear）',
 );
 
-// ---- 2. 完成行：底部绿行，完成态才出现 ------------------------------------
-assert.ok(stageHtml.includes('thread-done-line'),
-  'stage.html 必须有底部绿色完成行元素（§5.2 完成行）');
-const doneHtml = stageHtml.slice(
-  stageHtml.indexOf('thread-done-line') - 200,
-  stageHtml.indexOf('thread-done-line') + 400,
-);
-assert.ok(doneHtml.includes('ic-check'), '完成行带圆勾图标（视频 19.6s 帧）');
-assert.ok(doneHtml.includes('已完成'), '完成行文案说明任务完成');
-assert.ok(stageHtml.indexOf('thread-done-line') < stageHtml.indexOf('thread-bar'),
-  '完成行在追问条上方，位置对齐 §5.2 结构');
+// ---- 2. 没有绿色完成行 ----------------------------------------------------
+assert.ok(!stageHtml.includes('thread-done-line'),
+  '绿色完成行整块撤掉：答案出现、追问框回来，本身就是完成信号');
+assert.ok(!stageCss.includes('thread-done-line'),
+  '完成行的样式一并清掉，不留一个没有消费者的选择器');
 
-const doneCss = stageCss.slice(
-  stageCss.indexOf('.thread-done-line'),
-  stageCss.indexOf('.thread-done-line') + 700,
-);
-assert.ok(doneCss.includes('var(--green)'), '完成行是绿色（§2.1 success 语义色）');
-assert.ok(stageCss.includes('.stage-thread[data-phase=\'finished\'] .thread-done-line'),
-  '完成行只在 finished 态出现，运行中不许剧透结果');
-assert.ok(/thread-done-line[^{]*\{[^}]*display: none/.test(stageCss)
-  || stageHtml.includes('id="thread-done-line"[^>]*hidden'),
-  '完成行默认不可见，完成后才淡入');
+// ---- 3. 卡头不写状态词 ----------------------------------------------------
+assert.ok(stageTs.includes('threadEyebrow.hidden = true'),
+  '卡头的 WORKING / TASK FINISHED 撤走，节点只留给屏幕阅读器');
+assert.ok(!stageTs.includes("'TASK FINISHED'") && !stageTs.includes("'NEEDS ATTENTION'"),
+  '等宽全大写的机器状态词不再出现在这块面板上');
+assert.ok(stageTs.includes('threadTitle.textContent = surfaceTitle'),
+  '标题说的是「我正看着哪个窗口」，不是你问了什么');
 
-// ---- 3. 眉毛行退位：成功时同一事实不写两遍 --------------------------------
-assert.ok(stageTs.includes('threadEyebrow.hidden'),
-  '成功态顶部眉毛行必须退位，完成信号交给底部绿行');
-assert.ok(stageTs.includes("eyebrowState === 'done'"),
-  '退位条件就是完成态本身，不引入第二套判定');
+// ---- 3b. 你的问题是一条靠右的消息 ------------------------------------------
+const askCss = stageCss.slice(stageCss.indexOf('.turn-ask {'),
+  stageCss.indexOf('.turn-ask {') + 400);
+assert.ok(askCss.includes('align-self: flex-end'),
+  '用户消息靠右，和 Claude 桌面版同一套对话语法');
+assert.ok(askCss.includes('border-radius'),
+  '用户消息是一枚气泡，不是一行灰色标签');
+assert.ok(!stageTs.includes('firstAskRow.hidden = Boolean(firstAsk)'),
+  '第一轮的问题不再因为「标题已经写过」而被藏起来');
 
 // ---- 4. 退出仍旧要快（§7.2：进入慢退出快，相差十倍） ----------------------
 assert.ok(/stage-thread-out \d+ms/.test(stageCss), '退场动画保留且毫秒级');

@@ -253,17 +253,20 @@ body {
 /* --- Fixed composer --------------------------------------------------------
  * The entry surface is a paper-like text composer. Its shell never changes
  * shape when dictation starts, text grows, or a request begins processing. */
+/* Geometry is the measured PromptRescue pill, expressed against its own
+   height: radius .317h, send circle .500h, left inset .262h, right inset
+   .158h. Numbers and method: docs/design/VIDA_PROMPTRESCUE_MEASURED.md. */
 .stage-composer {
   position: absolute;
   display: flex;
-  flex-direction: column;
+  align-items: center;
   width: var(--stage-composer-width, 480px);
-  height: var(--stage-composer-height, 132px);
+  height: var(--stage-composer-height, 56px);
   min-width: 0;
   min-height: 0;
-  padding: 14px 16px 12px;
+  padding: 0 9px 0 15px;
   border-radius: 18px;
-  background: #fff;
+  background: #f9f8fb;
   border: 1px solid rgba(19, 22, 27, 0.10);
   box-shadow: 0 18px 46px -28px rgba(19, 22, 27, 0.48), 0 2px 8px rgba(19, 22, 27, 0.08);
   color: var(--stage-neutral-ink);
@@ -296,25 +299,17 @@ body {
   min-width: 0;
 }
 
-.composer-context {
-  min-height: 22px;
-  gap: 8px;
-  color: #71747b;
-  font: 520 10.5px/1.2 var(--mp-font-ui, "Segoe UI", sans-serif);
-  letter-spacing: 0;
+/* The reference pill carries one row only: text, glyph, send. The context and
+   tool rows stay in the DOM so stage.ts keeps its handles, but they do not
+   occupy the pill. */
+.composer-context,
+.composer-tools {
+  display: none;
 }
 
 .composer-input-row {
   flex: 1 1 auto;
-  gap: 10px;
-}
-
-.composer-tools {
-  justify-content: space-between;
-  min-height: 20px;
-  color: #8a8d93;
-  font: 500 9.5px/1 var(--mp-font-ui, "Segoe UI", sans-serif);
-  letter-spacing: 0;
+  gap: 14px;
 }
 
 .stage-composer[data-mode='voice'] .capsule-input,
@@ -467,14 +462,15 @@ body {
   display: flex;
   flex-direction: column;
   width: var(--stage-work-panel-width, 440px);
-  height: var(--stage-work-panel-height, 300px);
+  height: var(--stage-work-panel-height, 533px);
   min-width: 0;
   min-height: 0;
   max-width: calc(100vw - 16px);
   max-height: calc(100vh - 16px);
   box-sizing: border-box;
-  border-radius: 16px;
-  background: #fbfbfa;
+  /* One surface radius token across pill and card, as in the reference. */
+  border-radius: 18px;
+  background: #f9f8fb;
   border: 1px solid rgba(19, 22, 27, 0.10);
   box-shadow: 0 2px 8px rgba(19, 22, 27, 0.08), 0 22px 52px -30px rgba(19, 22, 27, 0.34);
   color: var(--stage-neutral-ink);
@@ -505,51 +501,31 @@ body {
 
 .stage-thread.is-dragging .thread-head { cursor: grabbing; }
 
-/* 参考里那个 `▽ TASK FINISHED`：一枚标记 + 一行等宽全大写、字距拉得很开的
- * 小字。它不是装饰——它是这张卡的状态，而状态用等宽写，是因为等宽在这套版式
- * 里始终代表「机器说的事实」（Vida.md §3 第 2 条：证据与判断用版式分离）。
- * 中文没有大写，所以靠字距和字号把它和标题分开。 */
+/* 状态词离开卡头。`WORKING` / `TASK FINISHED` 那一行是参考里的做法，但它把
+ * 一件正文已经说过的事，用等宽全大写在标题旁边又喊了一遍：跑的时候证据流
+ * 就在动，完成的时候答案就在那儿，失败的时候失败卡就在那儿。留下节点只是
+ * 为了屏幕阅读器还能播报状态。 */
 .thread-eyebrow {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  flex: 0 0 auto;
-  color: var(--stage-neutral-ink);
-  font-family: var(--mp-font-mono, ui-monospace, Consolas, monospace);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
   white-space: nowrap;
 }
 
-/* Status now lives in the activity spine. Repeating WORKING/TASK FINISHED in
- * the header made the small surface read like a diagnostic dashboard. Keep the
- * node for state/ARIA wiring, but remove it from layout. */
-.thread-eyebrow { display: none; }
-
-.thread-eyebrow svg {
-  width: 17px;
-  height: 17px;
-  flex: 0 0 auto;
-}
-
-.thread-eyebrow em {
-  font-style: normal;
-}
-
-.thread-eyebrow[data-state='running'] { color: var(--stage-neutral-ink-soft); }
-.thread-eyebrow[data-state='failed'] { color: #b42318; }
-
+/* 标题是「我正看着哪个窗口」，属于说明文字那一级——它不该比对话本身重。 */
 .thread-title {
   flex: 1 1 auto;
   min-width: 0;
   padding-right: 8px;
-  font-size: 16px;
-  font-weight: 660;
+  font-size: 12px;
+  font-weight: 500;
   line-height: 1.35;
-  letter-spacing: -0.012em;
-  color: var(--stage-neutral-ink);
+  letter-spacing: 0;
+  color: var(--stage-neutral-ink-soft);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -621,8 +597,10 @@ body {
   padding: 0 18px 14px;
   overflow-x: hidden;
   overflow-y: visible;
-  font-size: 14px;
-  line-height: 1.58;
+  /* 正文字号/卡高 = 31.2/973 = 0.0321,面板 533 高 → 17px。
+     行距两张卡独立测得 1.24 与 1.27,取 1.25;原来的 1.58 明显偏松。 */
+  font-size: 17px;
+  line-height: 1.25;
 }
 
 /* 卡片区光标统一：鼠标在卡片里移动不应当在手套/箭头之间高频切换
@@ -648,42 +626,37 @@ body {
 .thread-turn {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  align-items: flex-start;
+  gap: 12px;
   animation: stage-turn-in 220ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-/* One hairline between turns — never a box inside a box. */
+/* 轮次之间是空白，不是横线。一条对话不需要在每两句话之间画一道分隔——
+ * 靠右的气泡本身就标出了新一轮从哪里开始。 */
 .thread-turn + .thread-turn {
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid rgba(19, 22, 27, 0.08);
+  margin-top: 18px;
 }
 
-/* The ask is a quiet label, not a chat bubble: it is there so you can see
- * what this answer belongs to, not to look like a message you sent again. */
+/* 你说的那句话就是一条消息，靠右；回答不套框，靠左通栏。这是 Claude 桌面版
+ * 的对话语法，也是这块小窗真正的身份——它不是一张「结果卡」，它是同一场对话
+ * 的一个窗口。所以第一轮的问题不再被标题吃掉，每一轮都在原位读得到。 */
 .turn-ask {
-  display: flex;
-  align-items: baseline;
-  gap: 7px;
-  color: var(--stage-neutral-ink-soft);
-  font-size: 12px;
-  font-weight: 650;
-  letter-spacing: 0.01em;
+  align-self: flex-end;
+  max-width: 86%;
+  padding: 7px 12px 8px;
+  border-radius: 12px;
+  background: #efeeeb;
+  color: var(--stage-neutral-ink);
+  font-size: 15px;
+  font-weight: 450;
+  line-height: 1.45;
+  letter-spacing: 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
-.turn-ask::before {
-  content: '';
-  flex: 0 0 auto;
-  width: 3px;
-  height: 12px;
-  border-radius: 2px;
-  background: var(--stage-accent-line-strong);
-  transform: translateY(1px);
-}
-
 .turn-answer {
+  align-self: stretch;
   overflow-wrap: anywhere;
   user-select: text;
 }
@@ -724,6 +697,35 @@ body {
 .stage-result .mcard[data-density='capsule'][data-state='running'] .mcard-stage {
   min-height: 19px;
   padding-left: 24px;
+}
+
+/* 参考里的证据行是折行显示全文的三行段落,不是一行省略号——被截掉的恰好是
+ * "→ 所以要做什么"那半句,也就是这行证据唯一有用的部分。段与段之间空一行
+ * (实测段距 75 / 行距 38.7 = 1.94)。舞台域覆盖:cards.css 是 Studio 的合并
+ * 源,共享改动会牵动 studio_system.css 重生成,这里只改舞台。
+ * 数据见 docs/design/VIDA_PROMPTRESCUE_MEASURED.md §3.6。 */
+.stage-result .mcard-steps {
+  gap: 18px;
+}
+
+.stage-result .mstep-label {
+  overflow: visible;
+  white-space: normal;
+  text-overflow: clip;
+}
+
+/* 参考的证据行只有一枚绿勾起头,没有竖脊线。脊线是「状态住在活动脊上」那一版
+ * 的产物;状态已经搬回卡头的眉毛行,脊线就没有承载物了,去掉。
+ * 绿勾保留——它就是参考里那个 ✓。 */
+.stage-result .mcard-steps li:not(:last-child)::after {
+  display: none;
+}
+
+/* 证据行与正文同级:字号 17、行距 1.25。cards.css 那边的 12.5/1.5 是给
+ * Studio 与 Companion 的,不动。 */
+.stage-result .mstep-label {
+  font-size: 17px;
+  line-height: 1.25;
 }
 
 .turn-answer[data-kind='error'] {
@@ -817,37 +819,6 @@ body {
  * PromptRescue 19.4-19.6s 逐帧：任务完成的信号是一条贴着追问框上方的
  * 绿色圆勾 + 绿字，约 300ms 淡入上浮；不是卡顶的状态词。成功时顶部
  * 眉毛行退位（stage.ts），同一个事实不写两遍。 */
-.thread-done-line {
-  display: none;
-  align-items: center;
-  gap: 7px;
-  flex: 0 0 auto;
-  padding: 8px 24px 10px;
-  font-size: 12.5px;
-  font-weight: 560;
-  color: var(--green);
-}
-
-.thread-done-line svg {
-  width: 14px;
-  height: 14px;
-  stroke: var(--green);
-  fill: none;
-  stroke-width: 2;
-}
-
-.stage-thread[data-phase='finished'] .thread-done-line {
-  display: flex;
-  animation: thread-done-in 300ms cubic-bezier(0.32, 0.72, 0, 1) both;
-}
-
-@keyframes thread-done-in {
-  from {
-    opacity: 0;
-    transform: translateY(5px);
-  }
-}
-
 /* --- 底栏：一条追问条 -------------------------------------------------------
  * 参考里这块永远是「Ask Vida anything about …」——因为这张卡还没结束。
  * 一条极淡的分隔线，一个 placeholder，右边一个提交箭头。没有一排动作按钮：
@@ -921,14 +892,17 @@ body {
  * The decision belongs to TASK FINISHED, so it is the card's footer. The
  * editable draft still lives in the capsule; this row only makes the target
  * and the irreversible boundary explicit. */
+/* Footer rhythm measured off the reference approval card, expressed against
+   the button height: bar 1.775h, gap 0.378h, right inset 0.423h.
+   See docs/design/VIDA_PROMPTRESCUE_MEASURED.md §6. */
 .capsule-consent {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 16px;
   flex: 0 0 auto;
   width: 100%;
-  padding: 14px 16px 16px 24px;
-  background: #fbfbfa;
+  padding: 16px 18px 17px 24px;
+  background: #f9f8fb;
   border-top: 1px solid rgba(19, 22, 27, 0.07);
   pointer-events: auto;
   animation: consent-in 200ms cubic-bezier(0.16, 1, 0.3, 1);
@@ -952,7 +926,9 @@ body {
 }
 
 .capsule-consent .thread-btn {
-  min-width: 104px;
+  /* Reject in the reference is 1.874x its own height; the labels size the
+     buttons, they are not forced to a common width. */
+  min-width: 79px;
 }
 
 .stage-thread[data-consent='true'] .thread-bar { display: none; }
@@ -966,7 +942,8 @@ body {
   height: 42px;
   padding: 0 22px;
   border: 1.5px solid rgba(19, 22, 27, 0.16);
-  border-radius: 13px;
+  /* 0.261 x button height, measured off the reference Approve control. */
+  border-radius: 11px;
   background: #fff;
   color: var(--stage-neutral-ink);
   font: inherit;
@@ -988,8 +965,8 @@ body {
 .thread-btn:active { transform: scale(0.972); }
 
 .thread-btn.is-solid {
-  border-color: #16181d;
-  background: #16181d;
+  border-color: #191919;
+  background: #191919;
   color: #fff;
 }
 
@@ -1076,7 +1053,6 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .stage-thread,
   .thread-turn,
-  .thread-done-line,
   .stage-root[data-state='dismissing'] .stage-thread {
     animation: none;
   }
@@ -1353,8 +1329,23 @@ body {
 }
 
 /* The composer can fade, but its rectangle is immutable for the session. */
+/* 入场实测(11.6-12.9s 逐帧,60fps):胶囊表面亮度从背景线性升到满值,历时
+ * 12.514→12.700 ≈ 186ms,期间宽高全程不变(1773×202),背景标记行也不动,
+ * 所以是纯不透明度淡入,不是缩放也不是镜头。淡入结束后再上浮 7px/183ms
+ * (7/202 = 0.035h,56px 胶囊上折合 2px)。 */
 .stage-composer.is-entering {
-  animation: stage-surface-appear 150ms ease-out both;
+  animation: stage-composer-appear 186ms linear both,
+    stage-composer-settle 183ms 186ms cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+
+@keyframes stage-composer-appear {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes stage-composer-settle {
+  from { transform: translateY(2px); }
+  to { transform: translateY(0); }
 }
 
 .stage-composer.is-exiting {
@@ -1372,13 +1363,13 @@ body {
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
   padding: 0;
   appearance: none;
   border: 0;
   border-radius: 50%;
-  background: #16181d;
+  background: #191919;
   color: #fff;
   cursor: pointer;
   transition: background 130ms ease, opacity 130ms ease, transform 130ms cubic-bezier(.22, 1, .36, 1);
@@ -1415,7 +1406,9 @@ body {
   position: relative;
   z-index: 1;
   color: var(--stage-neutral-ink);
-  font-size: 14px;
+  /* 参考胶囊正文墨迹跨度 61 / 胶囊高 202 = 0.302,56px 胶囊上折合 16.9px 墨迹,
+     反解字号 18px。见 docs/design/VIDA_PROMPTRESCUE_MEASURED.md §2。 */
+  font-size: 18px;
   font-weight: 520;
   letter-spacing: -0.003em;
 }

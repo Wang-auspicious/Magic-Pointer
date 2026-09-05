@@ -364,3 +364,42 @@ def test_observations_survive_a_trace_round_trip_and_fuse_the_same_way() -> None
 
 def _observation(provider: _FakeProvider, *, index: int) -> PerceptionObservation:
     return PerceptionBroker().observe(provider, _request(), index=index)
+
+
+def test_a_glyph_only_read_does_not_count_as_reading_the_mark() -> None:
+    """真机 9·3：终端里划过 Claude Code 的转圈符 `*`。
+
+    结构化层读回一个星号——非空，于是被当成「读到了圈选内容」，模型拿着一枚
+    字形去回答。「非空」和「读到了」不是一回事：一行里没有任何字母、数字或
+    汉字，读到的就是装饰，不是内容。它必须和只读回容器名一样降级，好让像素
+    层还有机会真的读一次。
+    """
+    glyph = _structured("uia-glyph", "*", rects=[LINE_RECT])
+    body = _pixel(
+        "frozen-ocr",
+        "npm test 跑完了，182 个测试全过",
+        rects=[LINE_RECT],
+    )
+
+    result = PerceptionBroker().resolve(_request(), [glyph, body])
+
+    by_provider = {item.provider_id: item for item in result.observations}
+    assert by_provider["uia-glyph"].container_hint is True
+    assert by_provider["uia-glyph"].reason == "container:glyph_only_content"
+    assert result.trace["pixelFallbackUsed"] is True, "只读到一枚字形时像素层必须上"
+    assert result.selected is not None
+    assert result.selected.provider_id == "frozen-ocr"
+    assert result.context is not None
+    assert result.context.content.startswith("npm test")
+
+
+def test_punctuation_inside_real_text_is_not_glyph_only() -> None:
+    """降级的判据是「一个词字符都没有」，不是「含有符号」。"""
+    real = _structured("uia-line", ">>> print('hi')", rects=[LINE_RECT])
+    pixels = _pixel("frozen-ocr", "should not run", rects=[LINE_RECT])
+
+    result = PerceptionBroker().resolve(_request(), [real, pixels])
+
+    assert result.selected is not None
+    assert result.selected.provider_id == "uia-line"
+    assert result.trace["pixelFallbackUsed"] is False

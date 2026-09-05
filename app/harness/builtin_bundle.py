@@ -270,7 +270,9 @@ def _apply_desktop_action_tools(fork, config: dict[str, Any]) -> None:
     from app.agent_runtime.wait_tool import WaitTool
     from app.desktop_actions.session import _live_elements, _live_windows, default_session
 
-    register_desktop_action_tools(fork.get("tools"), default_session())
+    register_desktop_action_tools(fork.get("tools"), default_session(
+        origin_window_hwnd=int(config.get("origin_window_hwnd") or 0) or None,
+    ))
     # Wait：确定性条件等待（点开菜单→等它渲染→点菜单项）。三家都没有，
     # MP 的桌面 agent 刚需；探针与 Observe 同源（真实 UIA）。
     WaitTool(
@@ -806,7 +808,12 @@ def _run_loop_rows(runtime: dict[str, Any], root: Path) -> list[BundleRow]:
         BundleRow(
             "desktop-action-tools",
             "desktop-action-tools",
-            {"workspace_root": str(runtime.get("workspace_root") or "")},
+            {
+                "workspace_root": str(runtime.get("workspace_root") or ""),
+                # 本轮圈选发生在哪个窗口。Observe 不带参数时的默认目标就是它，
+                # 否则一旦气泡抢走前台，"观察一下"读到的是桌面。
+                "origin_window_hwnd": int(window.get("hwnd") or 0),
+            },
         ),
         BundleRow(
             "coding-tools",

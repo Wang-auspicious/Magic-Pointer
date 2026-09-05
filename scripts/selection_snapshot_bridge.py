@@ -54,7 +54,13 @@ from scripts._bridge_common import PayloadTooLargeError, read_bounded_json_paylo
 enable_dpi_awareness()
 
 MAGIC_WINDOW_TITLES = {"Magic Pointer Overlay", "Magic Pointer Panel", "Magic Pointer Stage"}
-SNAPSHOT_TTL_SECONDS = 120
+# A frozen moment does not expire; only the frozen PNG behind it is eventually
+# pruned (by retention days, in _prune_capture_dir). `expires_at` therefore
+# describes when the evidence file may stop existing, not when the reading stops
+# being true. Nothing gates a question on it — the 120s gate that used to live
+# in selection_bridge is gone, because it failed second questions on evidence
+# that was still on disk.
+SNAPSHOT_TTL_SECONDS = 3 * 86400  # matches the default capture retain_days
 VISUAL_REGION_WIDTH = 640
 VISUAL_REGION_HEIGHT = 420
 POINTER_ANCHOR_SIZE = 16

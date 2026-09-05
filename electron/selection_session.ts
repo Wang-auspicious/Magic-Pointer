@@ -33,6 +33,7 @@ interface SelectionSession {
 
 interface StoreOptions {
   ttlMs?: number;
+  maxFrozen?: number;
   idFactory?: () => string;
 }
 
@@ -59,25 +60,60 @@ interface AgentPromptDraftInput {
   generatedBy?: unknown;
 }
 
+// A capture is a *frozen moment*, not a lease on the live screen. Once the
+// pixels and the structured read are in hand, waiting three minutes before
+// asking the next question changes nothing about what that moment contained,
+// so nothing about it may expire. The old 2-minute TTL turned every slow
+// human into "NEEDS ATTENTION" and threw the moment away.
+//
+// What still has a deadline is a capture that never finished: a session stuck
+// in `capturing` holds no evidence, so it is ordinary garbage.
 class SelectionSessionStore {
   readonly ttlMs: number;
+  readonly maxFrozen: number;
   readonly idFactory: () => string;
   readonly sessions = new Map<string, SelectionSession>();
 
-  constructor({ ttlMs = 2 * 60 * 1000, idFactory = () => crypto.randomUUID() }: StoreOptions = {}) {
+  constructor({
+    ttlMs = 2 * 60 * 1000,
+    maxFrozen = 24,
+    idFactory = () => crypto.randomUUID(),
+  }: StoreOptions = {}) {
     this.ttlMs = ttlMs;
+    this.maxFrozen = Math.max(1, Math.floor(maxFrozen));
     this.idFactory = idFactory;
+  }
+
+  // A session holds evidence once a capture landed on it. `unavailable` counts:
+  // "we looked and there was nothing readable there" is itself a frozen fact,
+  // and dropping it would make the same question fail differently over time.
+  static isFrozen(entry: SelectionSession): boolean {
+    return entry.state === 'ready' || entry.state === 'unavailable' || entry.state === 'running';
   }
 
   prune(now = Date.now()): void {
     for (const [token, entry] of this.sessions.entries()) {
-      // A request that was accepted while its selection was valid remains
-      // valid until the bridge completes or is explicitly cancelled. Model
-      // latency must not turn a successful response into a stale response.
-      const requestInFlight = entry.state === 'running' && Boolean(entry.activeRequestId);
-      if ((!requestInFlight && entry.expiresAt <= now) || entry.state === 'cancelled') {
+      if (entry.state === 'cancelled') {
         this.sessions.delete(token);
+        continue;
       }
+      // Frozen evidence never ages out. Only a capture that never produced a
+      // snapshot can go stale, because it is holding nothing.
+      if (SelectionSessionStore.isFrozen(entry)) continue;
+      if (entry.expiresAt <= now) this.sessions.delete(token);
+    }
+  }
+
+  // Memory, not time, is the only reason a frozen moment is ever released:
+  // keep the newest `maxFrozen` captures and drop the oldest beyond that.
+  evictOverflow(): void {
+    const frozen = [...this.sessions.entries()].filter(([, entry]) =>
+      SelectionSessionStore.isFrozen(entry),
+    );
+    if (frozen.length <= this.maxFrozen) return;
+    frozen.sort((a, b) => a[1].createdAt - b[1].createdAt);
+    for (const [token] of frozen.slice(0, frozen.length - this.maxFrozen)) {
+      this.sessions.delete(token);
     }
   }
 
@@ -104,6 +140,7 @@ class SelectionSessionStore {
       expiresAt: now + this.ttlMs,
     };
     this.sessions.set(token, entry);
+    this.evictOverflow();
     return entry;
   }
 
@@ -126,7 +163,10 @@ class SelectionSessionStore {
       ? payload.suggestedCommands.slice(0, 4)
       : [];
     entry.state = entry.snapshot ? 'ready' : 'unavailable';
-    return entry;
+    // The entry only becomes frozen here, so this is where the cap can first
+    // be exceeded.
+    this.evictOverflow();
+    return this.sessions.get(entry.token) ?? entry;
   }
 
   setPanelLayout(

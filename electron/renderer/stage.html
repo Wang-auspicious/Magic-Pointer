@@ -84,11 +84,8 @@
             <div id="stage-result" class="stage-result" role="log" aria-live="polite"></div>
           </div>
         </div>
-        <!-- 完成信号贴在追问条上方：绿色圆勾 + 绿字（PromptRescue 19.4-19.6s）。
-             只在 finished 态由 CSS 亮出；成功时顶部眉毛行退位，同一事实不写两遍。 -->
-        <div id="thread-done-line" class="thread-done-line" role="status">
-          <svg aria-hidden="true"><use href="#ic-check" /></svg><span>已完成这项任务</span>
-        </div>
+        <!-- 这里以前是一条绿色的「已完成这项任务」。答案出现、追问框回来，
+             本身就是完成信号；再给一件看得见的事发一张奖状，只是把面板撑高。 -->
         <!-- 需要写回原应用时，点头动作就是完成卡的决策底栏。待写文本缓存到
              同一会话的输入值，结果态不再旁挂第二个可见胶囊。 -->
         <div id="capsule-consent" class="capsule-consent" role="group" aria-label="要不要写出去" hidden>

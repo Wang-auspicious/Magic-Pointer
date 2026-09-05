@@ -91,28 +91,57 @@ function chooseAdaptivePanelAnchor({
     side = 'left';
   }
   const maxY = Math.max(edge, viewHeight - edge - height);
+  // Vertically the panel tracks the marked content, not the window's title
+  // bar. Pinning it to the window top is what made a mark near the bottom of a
+  // long terminal answer show up in the far top corner, with nothing visually
+  // connecting the two. The window box is the clamp: the panel stays beside
+  // its window even when the mark sits at the very edge of it.
+  const verticalWithin = (box: { y: number; height: number }): number => {
+    const marked = focusRect.height > 0 || focusRect.width > 0;
+    const desired = marked
+      ? focusRect.y + ((focusRect.height - height) / 2)
+      : box.y + gap;
+    const lowest = Math.max(box.y + gap, box.y + box.height - gap - height);
+    const bounded = Math.min(lowest, Math.max(box.y + gap, desired));
+    return Math.round(Math.min(maxY, Math.max(edge, bounded)));
+  };
   if (side) {
-    const desiredY = sourceRect.y + gap;
     return {
       x: Math.round(side === 'right'
         ? sourceRect.x + sourceRect.width + gap
         : sourceRect.x - gap - width),
-      y: Math.round(Math.min(maxY, Math.max(edge, desiredY))),
+      y: verticalWithin(sourceRect),
       side,
       mode: 'outside',
     };
   }
-  const leftClear = focusRect.x - edge;
-  const rightClear = viewWidth - edge - (focusRect.x + focusRect.width);
+  // No gutter fits. The panel still belongs to the window it is answering
+  // about, so it hugs *that window's* edge from the inside — not the screen's
+  // corner. A maximised window makes the two identical; a 1200px terminal on a
+  // 2560px screen does not, and docking to the screen edge there left the
+  // bubble stranded in empty desktop, visually attached to nothing.
+  const hasSourceWindow = sourceRect.width > 0 && sourceRect.height > 0;
+  const box = hasSourceWindow
+    ? sourceRect
+    : { x: 0, y: 0, width: viewWidth, height: viewHeight };
+  // Inside the window, side is chosen away from what the user marked: the
+  // panel must not cover the very thing it is talking about.
+  const leftClear = focusRect.x - box.x;
+  const rightClear = (box.x + box.width) - (focusRect.x + focusRect.width);
   side = preferredSide === 'left' || preferredSide === 'right'
     ? preferredSide
     : (rightClear >= leftClear ? 'right' : 'left');
-  const desiredY = focusRect.y + ((focusRect.height - height) / 2);
+  const insideX = side === 'right'
+    ? box.x + box.width - gap - width
+    : box.x + gap;
+  // The window can sit partly off-screen, or be narrower than the panel; the
+  // viewport clamp is the last word either way.
+  const maxX = Math.max(edge, viewWidth - edge - width);
   return {
-    x: Math.round(side === 'right' ? Math.max(edge, viewWidth - edge - width) : edge),
-    y: Math.round(Math.min(maxY, Math.max(edge, desiredY))),
+    x: Math.round(Math.min(maxX, Math.max(edge, insideX))),
+    y: verticalWithin(box),
     side,
-    mode: 'screen-edge',
+    mode: hasSourceWindow ? 'window-edge' : 'screen-edge',
   };
 }
 

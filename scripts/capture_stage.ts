@@ -72,8 +72,9 @@ const SCENE = `(() => { try {
     panel.style.left = x + 'px';
     panel.style.top = y + 'px';
     panel.dataset.side = side;
-    panel.style.setProperty('--stage-work-panel-width', '440px');
-    panel.style.setProperty('--stage-work-panel-height', '300px');
+    // Do not pin the surface size here. Hardcoded numbers made this probe blind
+    // to size regressions; falling through to the CSS defaults keeps the render
+    // honest about whatever stage_surface_policy currently declares.
     panel.dataset.phase = phase;
     panel.dataset.turnCount = '1';
     document.getElementById('thread-title').textContent = title;

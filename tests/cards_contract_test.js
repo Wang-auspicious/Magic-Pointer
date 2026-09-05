@@ -114,8 +114,14 @@ const roundStep = cards.phaseStep({ phase: 'model_request', ms: 900, fields: { t
 assert.strictEqual(roundStep.note, '第 12 轮', '运行中的卡必须显示真实轮数，100 步和 3 步不能长得一样');
 const roundWithFact = cards.phaseStep({ phase: 'model_response', ms: 1200, fields: { turn: '13' } });
 assert.strictEqual(roundWithFact.note, '第 13 轮');
-const toolStep = cards.phaseStep({ phase: 'tool_call', ms: 200, fields: { name: 'get_app_state' } });
-assert.strictEqual(toolStep.note, 'get_app_state', '工具步骤要显示是哪个工具在跑');
+// 工具调用不再是一行写着「tool call」、事实写在 → 里的通用阶段。它就是过程
+// 流里那一行本身：标签是工具名，phase 带调用 id，好让结果就地覆盖它。
+const toolStep = cards.phaseStep({
+  phase: 'tool_call', ms: 200, fields: { name: 'get_app_state', id: 'c9' },
+});
+assert.strictEqual(toolStep.label, 'get_app_state', '工具步骤要显示是哪个工具在跑');
+assert.strictEqual(toolStep.phase, 'tool:c9');
+assert.strictEqual(toolStep.state, 'pending');
 assert.strictEqual(
   cards.phaseStep({ phase: 'model_request', fields: {} }).note,
   '',

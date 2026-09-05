@@ -142,15 +142,25 @@ assert.ok(withSteps.includes('2950×1200'), '读到的事实要跟着动作一�
 assert.ok(!/d+ms</.test(withSteps), '毫秒不上屏：那是机器的账，不是人要读的字');
 assert.ok(withSteps.includes('准备阶段 · 1 步'), '感知流水账收进折叠组，一行带过');
 assert.ok(withSteps.includes('mcard-steps-plumbing'), '准备组是 details 折叠');
+// 动作行 = 一次真实的工具调用。「交给模型」和冻结画面一样是管道，两条都
+// 收进折叠组；展开的那一行说的是它去动了什么。
 const mixed = renderCard(cards.applyPatch(
   cards.normalizeCard({ kind: 'prose', state: 'running', id: 's3' }),
   { steps: [
     cards.phaseStep({ phase: 'pixels_frozen', fields: { w: '1', h: '1' } }),
     cards.phaseStep({ phase: 'model_request', fields: { turn: '2' } }),
+    cards.phaseStep({
+      phase: 'tool_activity',
+      fields: {
+        b64: Buffer.from(JSON.stringify({
+          id: 'c1', tool: 'Read', target: 'stage.ts', ok: true, detail: '2371 行',
+        }), 'utf8').toString('base64'),
+      },
+    }),
   ] },
 ));
-assert.ok(mixed.includes('准备阶段 · 1 步'), '准备组折叠出现');
-assert.ok(mixed.includes('交给模型'), '动作行保持展开');
+assert.ok(mixed.includes('准备阶段 · 2 步'), '准备组折叠出现，模型往返也在里面');
+assert.ok(mixed.includes('Read(stage.ts)'), '动作行是「动词 + 对象」，保持展开');
 assert.ok(withSteps.includes('mstep-row'), '✓ 动作是独立的一行');
 assert.ok(withSteps.includes('mstep-fact'), '事实是 ✓ 行下面独立的 → 行，不是标签行内的尾巴');
 assert.ok(withSteps.includes('→'), '事实行以 → 开头（§5.3 版式即语义）');

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import io
 import json
@@ -405,15 +406,89 @@ def _parse_timestamp(value: Any) -> datetime | None:
         return None
 
 
+# 一行过程 = 一次工具调用。
+#
+# 界面上以前那十一行（读了设置 / 过了一遍窗口 / 冻住了这块画面 / 凑上下文 /
+# 交给模型 …）全是管道自己的流水账：它们证明程序在动，但对「它到底去动了
+# 什么」一个字都没说。Claude Code 的过程流之所以有用，是因为每一行都是一次
+# 真实的工具调用和它作用的那个对象——`Read(stage.ts)`、`Bash(npm test)`。
+# 这个函数把一次调用压成那一行。
+_TOOL_PATH_KEYS = ("path", "file_path", "filepath", "file", "notebook_path")
+_TOOL_TARGET_KEYS = _TOOL_PATH_KEYS + (
+    "command", "cmd", "script", "query", "pattern", "url", "selector",
+    "target", "name", "text",
+)
+
+
+def _short_target(value: Any, *, is_path: bool = False) -> str:
+    text = str(value or "").strip().replace("\n", " ")
+    if not text:
+        return ""
+    # 路径只留末两段：整条绝对路径把一行撑爆，而且信息全在末尾。空格不能用来
+    # 判断「这是不是路径」——`D:\Desktop\Magic Pointer\…` 里就有空格。
+    if is_path:
+        parts = [part for part in re.split(r"[\\/]+", text) if part]
+        if len(parts) > 2:
+            text = "…/" + "/".join(parts[-2:])
+    return text if len(text) <= 64 else text[:63] + "…"
+
+
+def tool_activity_line(
+    name: Any,
+    arguments: Any,
+    *,
+    is_error: bool = False,
+    error_message: Any = None,
+    value: Any = None,
+) -> dict[str, Any]:
+    """把一次工具调用压成过程流里的一行。"""
+    tool = str(name or "").strip() or "tool"
+    args = arguments if isinstance(arguments, dict) else {}
+    target = ""
+    for key in _TOOL_TARGET_KEYS:
+        if key in args:
+            target = _short_target(args.get(key), is_path=key in _TOOL_PATH_KEYS)
+            if target:
+                break
+    if not target:
+        # 没有约定好的键就用第一个像内容的标量，总好过只写一个工具名。
+        for candidate in args.values():
+            if isinstance(candidate, (str, int, float)):
+                target = _short_target(candidate)
+                if target:
+                    break
+    detail = ""
+    if is_error:
+        detail = _short_target(error_message) or "失败"
+    elif isinstance(value, str) and value.strip():
+        first = value.strip().splitlines()[0]
+        detail = _short_target(first)
+    return {
+        "tool": tool,
+        "target": target,
+        "ok": not is_error,
+        "detail": detail,
+    }
+
+
+def _encode_activity(line: dict[str, Any]) -> str:
+    raw = json.dumps(line, ensure_ascii=False, separators=(",", ":"))
+    return base64.b64encode(raw.encode("utf-8")).decode("ascii")
+
+
 def _context_from_snapshot(
     payload: dict[str, Any],
 ) -> tuple[dict[str, Any] | None, AdapterReadContext | None, dict[str, Any] | None, str | None]:
     snapshot = payload.get("selectionSnapshot")
     if not isinstance(snapshot, dict):
         return None, None, None, "missing selection snapshot"
-    expires_at = _parse_timestamp(snapshot.get("expires_at"))
-    if expires_at is None or expires_at <= datetime.now(timezone.utc):
-        return None, None, snapshot, "selection snapshot expired"
+    # A snapshot is a frozen moment, not a lease on the live screen. Its pixels
+    # and its structured read describe what was there when the mark was drawn,
+    # and no amount of elapsed time changes that. The old 120s gate meant a
+    # second question three minutes later failed on evidence that was still
+    # sitting on disk, intact. Acting on the world keeps its own, separate
+    # deadline (the action lease in app/computer_operator), which is where a
+    # freshness requirement actually belongs.
     target_window = snapshot.get("source_window")
     if target_window is not None and not isinstance(target_window, dict):
         return None, None, snapshot, "invalid selection source window"
@@ -2394,6 +2469,7 @@ def _loop_router(
             FollowupContinued,
             LoopStart,
             Steered,
+            ToolCallFinished,
             ToolCallStarted,
             ToolsTruncated,
             TurnFinished,
@@ -2425,7 +2501,19 @@ def _loop_router(
         elif isinstance(event, BudgetRenewed):
             clock.mark("loop_progress", turn=event.turn, renewals=event.renewals_used)
         elif isinstance(event, ToolCallStarted):
-            clock.mark("tool_call", name=event.name)
+            clock.mark("tool_call", name=event.name, id=event.id)
+        elif isinstance(event, ToolCallFinished):
+            result = event.result
+            clock.mark_blob("tool_activity", _encode_activity({
+                "id": str(getattr(result, "tool_call_id", "") or ""),
+                **tool_activity_line(
+                    getattr(result, "tool_name", None) or "",
+                    getattr(result, "arguments", None),
+                    is_error=bool(getattr(result, "is_error", False)),
+                    error_message=getattr(result, "failure_type", None),
+                    value=getattr(result, "value", None),
+                ),
+            }))
         elif isinstance(event, Steered):
             clock.mark("steer_absorbed", turn=event.turn)
         elif isinstance(event, FollowupContinued):
@@ -2790,19 +2878,17 @@ def main() -> int:
     clock.mark("context_from_snapshot", err=snapshot_error or "none")
     stale_followup = False
     if snapshot_error:
-        # 追问续跑：冻结帧过期（TTL 120s 比一轮长答案的往返还短，第二条
-        # 追问必死——真机 8·29）只宣布「屏幕证据不可信」，不该打死整轮。
-        # 对话历史（durable session）才是追问的上下文主源。首问没有历史
-        # 会话可退，仍旧失败，但给人话和明确动作。
-        expired = snapshot_error == "selection snapshot expired"
-        has_history = expired and _selection_session_has_history(selection_session_id)
-        if expired and has_history:
+        # 到这里只剩「快照结构坏了」这一类真错误——时间不再是错误来源。
+        # 有对话历史时仍然续跑：屏幕证据坏掉不该打死整轮，历史本身就是
+        # 追问的上下文主源。
+        has_history = _selection_session_has_history(selection_session_id)
+        if has_history:
             app_ctx = None
             snapshot = None
             stale_followup = True
             command = (
                 command
-                + "\n\n（注意：本次圈选的屏幕证据已过期，屏幕内容以我们刚才的"
+                + "\n\n（注意：本次圈选的屏幕证据读不出来，屏幕内容以我们刚才的"
                 "对话为准；如需全新的屏幕证据请让我重新圈选。）"
             )
             clock.mark("context_snapshot_stale_followup")
@@ -2811,11 +2897,7 @@ def main() -> int:
                 "ok": False,
                 "prompt": command,
                 "error": snapshot_error,
-                "errorHuman": (
-                    "这次的圈选证据已过期（冻结帧超过 120 秒不再可信），"
-                    "重新圈选一次即可。"
-                    if expired else snapshot_error
-                ),
+                "errorHuman": f"这次的圈选证据读不出来：{snapshot_error}。重新圈选一次即可。",
                 "actionProposals": [],
                 "selectionSessionId": selection_session_id or None,
             }, ensure_ascii=False))
