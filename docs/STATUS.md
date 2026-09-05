@@ -1,10 +1,12 @@
 # 当前状态
 
-> 最后核实：2026-09-06（桥接撤销栈批 1.0.36 已完成全量验证并同步安装版；尚不宣称整个 PRD 已完成）。
+> 最后核实：2026-09-06（任务级 durable ActionBroker 批 1.0.37 已完成全量验证并同步安装版；尚不宣称整个 PRD 已完成）。
 
 2026-09-06 执行器撤销闭环批（1.0.35，已同步安装版）：`SafeActionExecutor` 现在把成功写动作产生的结构化 `undo_proposal` 登记到共享 `UndoLog`，撤销重新走同一执行器并要求成功回执；同时修复全量门发现的 document patch handler 返回断路，并兼容 Fabric 权限字符串/字典两种现有配置形态。fresh 全量验证：Python **1833 passed / 1 个既有 Pillow warning**，Node **201 test files passed**，lint/typecheck 全绿；`npm run sync` 构建并同步 `Magic-Pointer-1.0.35-x64.exe`，开发树与 `%LOCALAPPDATA%\Programs\Magic Pointer\resources\app\package.json` 均为 **1.0.35**。本批仍未宣称完整 `ActionBroker`、跨进程撤销持久化或真实 Office 端到端验收完成。
 
 2026-09-06 桥接入口共享撤销栈（1.0.36，已同步安装版）：默认构造的 `SafeActionExecutor` 共享进程内 `UndoLog`，修复 action bridge、calendar bridge、shopping-list bridge 等短生命周期执行器之间看不到同一撤销历史的问题；新增默认构造器共享性回归测试。全量验证为 Python **1834 passed / 1 个既有 Pillow warning**，Node **201 test files passed**；`npm run sync` 完成并核对安装目录版本 **1.0.36**。跨进程／跨会话 durable ActionBroker 仍未完成。
+
+2026-09-06 任务级 durable ActionBroker（1.0.37，已同步安装版）：新增本地 task-scoped JSONL journal，`ActionBroker` 在 bridge/Runtime 重启后重建成功写动作的精确 undo proposal，并把 `scripts/action_bridge.py` 接入 taskId/sessionId 分区；全量验证为 Python **1836 passed / 1 个既有 Pillow warning**、Node **201 test files passed**；`npm run sync` 完成并核对安装目录版本 **1.0.37**。当前仍未宣称 GUI 撤销面、跨机器同步或真实 Office 端到端验收完成。
 
 2026-09-06 桌面办公 SOTA 地基批：基于 VIDA/OpenChronicle、Clicky、Pi、Hermes 与 Everywhere 的源码盘点，新增 `docs/research/2026-09-06-sota-desktop-harness-design.md`，把第一主线收敛为 Office／浏览器／微信或钉钉的真实闭环；并修复 ScreenMemory 多任务并发读改写丢失（路径事务锁、唯一临时文件、Windows 原子替换有限重试），新增并发回归测试，定向测试 **3 passed**。已推送至 `main`（`ae75c67`）。本批未宣称 ActionBroker、PointerSurface、常驻 UIA 或真实长任务验收已完成。
 

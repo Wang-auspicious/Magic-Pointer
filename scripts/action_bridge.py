@@ -10,7 +10,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from app.actions import ActionProposal
-from app.actions.executor import SafeActionExecutor
+from app.action_guard.action_broker import ActionBroker
 from app.actions.schema import ExecutionStatus
 from app.context_pack.session import ContextSessionError, ContextSessionStore
 from scripts._bridge_common import PayloadTooLargeError, read_bounded_json_payload
@@ -77,7 +77,14 @@ def main() -> int:
     except Exception as exc:
         print(json.dumps({"ok": False, "error": f"invalid proposal: {type(exc).__name__}: {exc}"}, ensure_ascii=False))
         return 2
-    result = SafeActionExecutor().execute(
+    task_id = str(
+        payload.get("taskId")
+        or payload.get("sessionId")
+        or proposal.metadata.get("task_id")
+        or proposal.metadata.get("taskId")
+        or "action-bridge"
+    )
+    result = ActionBroker(task_id=task_id).execute(
         proposal,
         confirmed=payload.get("confirmed") is True,
     )
