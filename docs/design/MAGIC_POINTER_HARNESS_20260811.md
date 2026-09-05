@@ -868,14 +868,14 @@ DOM、COM、UIA、Fabric等现有模块也不自动保留，只优先保存经�
 
 ## 18. 进度账本
 
-### 2026-09-05：Claude Desktop 高保真 Studio（1.0.33 源码验证完成，待本机 sync）
+### 2026-09-05：Claude Desktop 高保真 Studio（1.0.33 已交付）
 
 - [x] **事实源与重建边界**：以本机 Claude Desktop 1.40609.1 的安装资源、用户当前 2398×1600 会话截图和本机历史深/浅色截图为基准，不保留上一版“近似设计”；Studio 已统一为 36px chrome、288px 项目侧栏、Claude 当前色板/字体/线性图标/间距、会话消息与底部 repo/branch/diff/PR/Composer 结构。旧 `studio_system.css`、consolidator、DSH/SV Studio 专用拼接层及只服务它们的测试已删除。
 - [x] **完整状态与真实行为**：landing、conversation、Inspector、running、permission、error、Inspector maximized、thinking expanded、Subagent Tasks、browser、Customize、Design、minimum 共 13 状态均有浅/深主题确定性截图；项目、对话、搜索、Composer、附件、权限选择、Git/PR、文件树/预览/浏览器与设置仍走既有真实 IPC/Runtime，不是静态 mock 页面。Subagent 进度从 Runtime 的 bounded snapshot 投影，父 Agent call 关联与 failed/stopped 终态已补正。
 - [x] **测量驱动修复**：解决 1199px 视口恢复 747px Inspector 导致中栏只剩 156px、probe `app.quit()` 吞掉失败 exit code、running 状态缺 `aria-busy`、思考/权限/错误状态见证不足；最高权限显示名对齐当前 Claude 的 `Bypass permissions`，但默认仍是 `workspace-write`，不为截图提高权限。
 - [x] **渲染证据**：双主题 26 张矩阵全部 `horizontal_overflow=0`、`console_errors=0` 且状态专属 DOM witness 成立；当前会话对用户截图测得整体 SSIM≈0.8179，titlebar≈0.9248、sidebar≈0.9122、header≈0.8590、composer≈0.8364。主线合并后 fresh 关键图为 `data/runtime/claude-merged-light-conversation.png`、`claude-merged-dark-landing.png`、`claude-merged-light-inspector.png`，耗时分别 12.82s / 4.75s / 5.21s。probe 为 fake preload，不调用 provider，故 `usedBackend` 不适用。
 - [x] **源码 fresh 门**：主线 `2d06fc5` 的感知/冻结帧/Stage 修复已合入；五套 typecheck、ESLint、Electron build、`git diff --check` 通过，Node **188 tests / 130 source files**，Python **1725 passed / 1 个既有 Pillow warning / 203.46s**。
-- [ ] **本机交付边界**：`npm run sync`、NSIS 安装器路径、安装目录版本一致性、安装版进程与可视截图将在本批最后一步核实后补录；在此之前不标记已交付。
+- [x] **本机交付**：`npm run sync` 再跑五套 typecheck、Node **188 tests / 130 source files** 与 Python **1725 passed / 1 warning / 169.62s**。长 worktree 首次构建被 Torch 深层许可证路径触发 WinError 206；把同一目录临时映射为 `M:\` 后原样重跑，runtime import、Electron、NSIS、blockmap、静默安装与重启全部退出 0。安装器 `release/sync-1.0.33-20260905-085804-22564/Magic-Pointer-1.0.33-x64.exe`（362,469,362 bytes）；开发树/安装目录版本均 1.0.33，6 个进程均来自安装目录。安装版真实会话 DPI-aware 实拍 `data/runtime/magic-pointer-1.0.33-installed-dpi-aware.png`（3146×2010）。诚实边界：未自动逐按钮遍历安装版 13 状态，状态矩阵使用确定性 preload 与 DOM witness。
 
 ### 2026-09-01：Harness UX 20 条工单 + 交叉复审（1.0.32 已交付）
 

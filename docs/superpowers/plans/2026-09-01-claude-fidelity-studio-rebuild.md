@@ -934,14 +934,14 @@ Expected: `1.0.32` becomes `1.0.33` unless a newer patch version already exists 
 
 Add one completed-phase entry to the canonical progress ledger and one concise delivery paragraph to `docs/STATUS.md`, including exact fresh counts, render evidence paths, version, known manual boundaries, and honest `usedBackend`/timing where exercised.
 
-- [ ] **Step 6: Commit the verified source before sync**
+- [x] **Step 6: Commit the verified source before sync**
 
 ```powershell
 git add -A
 git commit -m "feat: deliver Claude-fidelity Studio workbench"
 ```
 
-- [ ] **Step 7: Run mandatory local sync**
+- [x] **Step 7: Run mandatory local sync**
 
 ```powershell
 npm run sync
@@ -949,7 +949,7 @@ npm run sync
 
 This reruns validation, builds NSIS, stops installed instances, installs silently, and restarts Magic Pointer.
 
-- [ ] **Step 8: Verify installed truth**
+- [x] **Step 8: Verify installed truth**
 
 ```powershell
 $dev = (Get-Content -Raw -LiteralPath 'package.json' | ConvertFrom-Json).version
