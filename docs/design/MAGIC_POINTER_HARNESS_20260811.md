@@ -886,6 +886,12 @@ DOM、COM、UIA、Fabric等现有模块也不自动保留，只优先保存经�
 - `scripts/action_bridge.py` 已切换到 `ActionBroker`，优先绑定 payload 的 `taskId`／`sessionId`，没有任务身份时使用明确的 bridge 默认分区；旧 `SafeActionExecutor` 仍保留作为底层执行与验证边界。
 - 新增 journal 写入、重启重建和精确撤销回归测试。当前仍是本地 JSONL、单机任务级 durable；跨机器同步、GUI 撤销面和 Office 真机验收尚未完成。
 
+### 2026-09-06：办公辅助 bridge 统一进入 durable broker（开发树，待全量验证与安装同步）
+
+- `scripts/calendar_bridge.py` 与 `scripts/shopping_list_bridge.py` 现在按 `taskId`／`sessionId` 构造 `ActionBroker`，底层 `SafeActionExecutor` 与 broker 共用同一个任务 ledger；calendar create 和 shopping-list 写操作不会再绕过任务级 journal。
+- 没有任务身份时使用各自明确的 bridge 默认分区，避免把不同业务的撤销历史混在一起；真实 Runtime 提供身份时则按任务恢复。
+- 本批继续保持本地单机边界，未把 requestId 当 task identity，也未宣称 GUI 撤销交互或真实 Office 应用验收已完成。
+
 ### 2026-09-05：接管收尾与本机交付（1.0.34）
 
 - [x] 保留 W00–W10 和已有 Studio 工作，不重做 FrameLease／历史长任务 Batch A，不开启 subagent。修正 AGENTS 中已过期的 60/120 秒总时长与 90 轮上限结论。

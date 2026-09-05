@@ -1,6 +1,6 @@
 {
   "name": "magic-pointer",
-  "version": "1.0.37",
+  "version": "1.0.38",
   "description": "Magic Pointer Open - cross-platform AI pointer overlay",
   "main": "build/electron/main.js",
   "scripts": {

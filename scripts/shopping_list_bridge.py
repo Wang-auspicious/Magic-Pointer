@@ -9,6 +9,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from app.action_guard.action_broker import ActionBroker
+from app.action_guard.undo_log import UndoLog
 from app.actions.executor import SafeActionExecutor
 from app.actions.schema import ExecutionStatus
 from app.actions.shopping_list import (
@@ -41,8 +43,12 @@ def main() -> int:
         emit({"ok": False, "error": "payload_too_large", "maxPayloadBytes": exc.max_bytes})
         return 2
     request_id = str(request.get("requestId") or "") or None
+    task_id = str(request.get("taskId") or request.get("sessionId") or "shopping-list-bridge")
     operation = str(request.get("operation") or "")
     store = ShoppingListStore()
+    undo_log = UndoLog()
+    executor = SafeActionExecutor(shopping_list_store=store, undo_log=undo_log)
+    broker = ActionBroker(task_id=task_id, executor=executor, undo_log=undo_log)
 
     try:
         if operation == "list":
@@ -76,7 +82,7 @@ def main() -> int:
                 return 2
             proposal = make_shopping_list_undo_proposal(receipt_id=receipt_id, item=item)
 
-        result = SafeActionExecutor(shopping_list_store=store).execute(proposal, confirmed=False)
+        result = broker.execute(proposal, confirmed=False)
         succeeded = result.status == ExecutionStatus.SUCCEEDED
         emit({
             "ok": succeeded,
