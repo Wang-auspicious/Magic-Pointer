@@ -1,8 +1,8 @@
 # 当前状态
 
-> 最后核实：2026-09-05（接管修复批 1.0.34；正在执行完整验证与本机安装同步，尚不宣称整个 PRD 已完成）。
+> 最后核实：2026-09-06（撤销闭环批 1.0.35 已完成全量验证并同步安装版；尚不宣称整个 PRD 已完成）。
 
-2026-09-06 执行器撤销闭环批（开发树，待全量验证与安装同步）：`SafeActionExecutor` 现在把成功写动作产生的结构化 `undo_proposal` 登记到共享 `UndoLog`，撤销重新走同一执行器并要求成功回执；新增登记、调用和失败语义回归测试，定向 action/undo 22 项、executor/治理/桌面动作 73 项通过。本批仍未宣称完整 `ActionBroker`、跨进程撤销持久化或真实 Office 端到端验收完成。
+2026-09-06 执行器撤销闭环批（1.0.35，已同步安装版）：`SafeActionExecutor` 现在把成功写动作产生的结构化 `undo_proposal` 登记到共享 `UndoLog`，撤销重新走同一执行器并要求成功回执；同时修复全量门发现的 document patch handler 返回断路，并兼容 Fabric 权限字符串/字典两种现有配置形态。fresh 全量验证：Python **1833 passed / 1 个既有 Pillow warning**，Node **201 test files passed**，lint/typecheck 全绿；`npm run sync` 构建并同步 `Magic-Pointer-1.0.35-x64.exe`，开发树与 `%LOCALAPPDATA%\Programs\Magic Pointer\resources\app\package.json` 均为 **1.0.35**。本批仍未宣称完整 `ActionBroker`、跨进程撤销持久化或真实 Office 端到端验收完成。
 
 2026-09-06 桌面办公 SOTA 地基批：基于 VIDA/OpenChronicle、Clicky、Pi、Hermes 与 Everywhere 的源码盘点，新增 `docs/research/2026-09-06-sota-desktop-harness-design.md`，把第一主线收敛为 Office／浏览器／微信或钉钉的真实闭环；并修复 ScreenMemory 多任务并发读改写丢失（路径事务锁、唯一临时文件、Windows 原子替换有限重试），新增并发回归测试，定向测试 **3 passed**。已推送至 `main`（`ae75c67`）。本批未宣称 ActionBroker、PointerSurface、常驻 UIA 或真实长任务验收已完成。
 
