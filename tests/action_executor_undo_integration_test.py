@@ -53,3 +53,10 @@ def test_undo_compensation_reenters_executor_and_requires_success(monkeypatch) -
 
     assert restored.action_id == "write-1"
     assert calls == [("shopping_list_undo_add", True)]
+
+
+def test_default_executors_share_process_undo_ledger() -> None:
+    first = SafeActionExecutor()
+    second = SafeActionExecutor()
+
+    assert first.undo_log is second.undo_log

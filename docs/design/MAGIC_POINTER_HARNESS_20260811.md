@@ -875,6 +875,11 @@ DOM、COM、UIA、Fabric等现有模块也不自动保留，只优先保存经�
 - 先写集成回归测试覆盖登记与 LIFO 撤销调用，再通过 22 项 action/undo 定向测试和 73 项 executor/治理/桌面动作测试。
 - 本批只补齐可逆恢复的执行接线，尚未宣称完整 `ActionBroker`、跨进程持久化撤销栈或真实 Office 端到端验收完成。
 
+### 2026-09-06：桥接入口共享撤销栈（开发树，待全量验证与安装同步）
+
+- 修复生产桥接入口各自构造 `SafeActionExecutor()` 导致撤销历史断开的缺口：默认执行器现在共享同一进程内 `UndoLog`；需要任务隔离的 Runtime 仍可显式注入自己的 ledger。
+- 新增默认构造器共享性回归测试。该批只解决同一 Python harness 进程内的入口一致性；跨进程/跨会话恢复仍必须由后续 durable ActionBroker 批次完成。
+
 ### 2026-09-05：接管收尾与本机交付（1.0.34）
 
 - [x] 保留 W00–W10 和已有 Studio 工作，不重做 FrameLease／历史长任务 Batch A，不开启 subagent。修正 AGENTS 中已过期的 60/120 秒总时长与 90 轮上限结论。

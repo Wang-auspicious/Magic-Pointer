@@ -24,6 +24,7 @@ from app.dashboard.calendar import CalendarConflict, CalendarError, CalendarEven
 JsonDict = dict[str, Any]
 
 _ACTION_DISPATCH = {}
+_DEFAULT_UNDO_LOG = UndoLog()
 
 
 def _register(action_type: str):
@@ -106,7 +107,10 @@ class SafeActionExecutor:
         # local default keeps old embedders compatible while still recording
         # every proposal that reaches this execution seam.
         self.approval_ledger = approval_ledger or ActionApproval()
-        self.undo_log = undo_log or UndoLog()
+        # Bridge entry points often construct a short-lived executor for each
+        # call.  Keep their recovery history on the process-wide harness seam;
+        # callers with task/session isolation can still inject their own log.
+        self.undo_log = undo_log if undo_log is not None else _DEFAULT_UNDO_LOG
 
     def preview(self, proposal: ActionProposal) -> JsonDict:
         decision = self.policy.decide(proposal)
