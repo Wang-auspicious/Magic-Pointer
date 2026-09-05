@@ -36,7 +36,9 @@
   // One entry per stroke the user drew, in draw order. Dropping one here drops
   // it from the command, so a mis-drawn stroke costs one click rather than a
   // whole redraw.
-  let strokeRefs: { strokeIndex: number; label: string }[] = [];
+  let strokeRefs: { strokeIndex: number; label: string; referenceId: string | null }[] = [];
+  let referenceBindings = new Map<string, any>();
+  let taskInputSequence = 0;
   let renderedRefSignature = '';
   const capsuleInput = document.getElementById('capsule-input') as HTMLInputElement;
   const capsuleSend = document.getElementById('capsule-send') as HTMLButtonElement;
@@ -124,6 +126,8 @@
   // Live wiring context from main (stage:show / stage:update payloads).
   const session: {
     token: string | null;
+    taskId: string | null;
+    selectionSnapshotId: string | null;
     groundingReady: boolean;
     voiceAutoSubmit: boolean;
     voiceStartStrategy: string;
@@ -158,6 +162,8 @@
     visualTuning: Record<keyof typeof DEFAULT_VISUAL_TUNING, number>;
   } = {
     token: null,
+    taskId: null,
+    selectionSnapshotId: null,
     groundingReady: false,
     voiceAutoSubmit: true,
     voiceStartStrategy: 'auto',
@@ -486,9 +492,8 @@
   function renderStrokeRefs() {
     if (!capsuleRefs) return;
     const stream = globalThis.StageTurnStream;
-    const marks = stream?.ORDINAL_MARKS || [];
     const pickSignature = pickedElement ? `pick:${pickedElement.label}:${pickedElement.rect?.x},${pickedElement.rect?.y}` : '';
-    const signature = [...strokeRefs.map((ref) => `${ref.strokeIndex}:${ref.label}`), pickSignature].join('|');
+    const signature = [...strokeRefs.map((ref) => `${ref.strokeIndex}:${ref.referenceId || ''}:${ref.label}`), pickSignature].join('|');
     if (signature === renderedRefSignature) {
       capsuleRefs.hidden = strokeRefs.length === 0 && !pickedElement;
       return;
@@ -499,20 +504,33 @@
       capsuleRefs.hidden = true;
       return;
     }
-    strokeRefs.forEach((ref, index) => {
+    strokeRefs.forEach((ref) => {
       const chip = document.createElement('button');
       chip.type = 'button';
       chip.className = 'capsule-ref';
       chip.dataset.noDrag = '1';
       chip.setAttribute('role', 'listitem');
-      const mark = marks[index] || String(index + 1);
+      const mark = stream?.referenceMark?.(ref.strokeIndex) || String(ref.strokeIndex + 1);
       chip.textContent = ref.label ? `${mark} ${ref.label}` : mark;
       chip.title = '点击移除这一处';
-      chip.setAttribute('aria-label', `移除第 ${index + 1} 处选中`);
+      chip.setAttribute('aria-label', `移除第 ${ref.strokeIndex + 1} 处选中`);
       chip.addEventListener('click', () => {
-        strokeRefs = strokeRefs.filter((item) => item !== ref);
-        renderStrokeRefs();
-        syncHitRegions();
+        const removeLocally = () => {
+          strokeRefs = stream?.removeStrokeReference?.(strokeRefs, ref.strokeIndex)
+            || strokeRefs.filter((item) => item !== ref);
+          renderStrokeRefs();
+          syncHitRegions();
+        };
+        const binding = ref.referenceId ? referenceBindings.get(ref.referenceId) : null;
+        if (state.name === 'processing' && binding) {
+          chip.disabled = true;
+          steerSelectionCommand('', [{
+            operation: 'remove',
+            binding: { ...binding, active: false },
+          }], [binding.sourceId], removeLocally);
+        } else {
+          removeLocally();
+        }
       });
       capsuleRefs.appendChild(chip);
     });
@@ -832,7 +850,8 @@
     const inputMode = state.inputMode;
     // Chips the user removed are removed from the request too, or the chip is a
     // decoration that lies about what was sent.
-    const keptStrokeIndexes = strokeRefs.map((ref) => ref.strokeIndex);
+    const keptStrokeIndexes = globalThis.StageTurnStream?.keptStrokeIndexes?.(strokeRefs)
+      || strokeRefs.map((ref) => ref.strokeIndex);
     if (state.name === 'processing') {
       // A turn is already running: this is a steer, not a second request. The
       // text goes into the durable session inbox and the loop claims it at the
@@ -854,33 +873,71 @@
     }
   }
 
-  function steerSelectionCommand(command: string) {
+  function steerSelectionCommand(
+    command: string,
+    referenceUpdates: any[] = [],
+    sourceIds: string[] = [],
+    onAccepted: () => void = () => {},
+  ) {
     const trimmed = String(command == null ? '' : command).trim();
-    if (!trimmed) return;
-    capsuleInput.value = '';
+    if (!trimmed && referenceUpdates.length === 0 && sourceIds.length === 0) return;
     if (!api || typeof api.steerSelectionCommand !== 'function') {
       dispatch({ type: 'NOTICE', notice: { message: '这一轮不支持中途插话，等它跑完再发。' } });
       return;
     }
-    api
-      .steerSelectionCommand({ selectionSessionToken: session.token, text: trimmed })
-      .then((reply: any) => {
-        if (reply?.ok === true) {
-          dispatch({ type: 'NOTICE', notice: { message: '已插话，当前步骤结束后生效。' } });
+    const capturedAtMs = Date.now();
+    const inputId = `input:${session.token || 'stage'}:${capturedAtMs}:${taskInputSequence += 1}`;
+    const timeline = [
+      ...(trimmed ? [{
+        eventId: `utterance:${inputId}`,
+        kind: 'utterance',
+        startMs: capturedAtMs,
+        endMs: capturedAtMs,
+        text: trimmed,
+      }] : []),
+      ...referenceUpdates.map((update, index) => ({
+        eventId: `point:${inputId}:${index}`,
+        kind: 'point',
+        startMs: capturedAtMs,
+        endMs: capturedAtMs,
+        referenceId: String(update?.binding?.referenceId || ''),
+      })),
+    ];
+    const taskInput = globalThis.TaskSources?.normalizeTaskInput?.({
+      inputId,
+      taskId: session.taskId || `agent-${session.token}`,
+      target: 'next-step',
+      instruction: trimmed,
+      referenceUpdates,
+      sourceIds,
+      timeline,
+      capturedAtMs,
+    });
+    if (!taskInput || !globalThis.TaskInputTransport?.createTaskInputTransport) {
+      dispatch({ type: 'NOTICE', notice: { message: '这一轮的结构化输入不可用，内容已保留。' } });
+      return;
+    }
+    const transport = globalThis.TaskInputTransport.createTaskInputTransport({
+      send: (value: any) => api.steerSelectionCommand({
+        selectionSessionToken: session.token,
+        taskInput: value,
+      }),
+      onState: (status: any) => {
+        if (status.status === 'queueing') {
+          dispatch({ type: 'NOTICE', notice: { message: '正在排队，收到持久化确认前保留输入。' } });
+        } else if (status.status === 'accepted') {
+          dispatch({ type: 'NOTICE', notice: { message: '已接收，下一个安全边界前生效。' } });
         } else {
-          const reason = String(reply?.error || '');
-          const message = reason === 'no_agent_session'
-            ? '这一轮还没有可插话的会话，等它跑完再发。'
-            : `插话没有送达：${reason || '未知原因'}`;
-          dispatch({ type: 'NOTICE', notice: { message } });
+          dispatch({ type: 'NOTICE', notice: { message: `输入没有送达：${String(status.error || '未知原因')}` } });
         }
-        if (state.notice) {
-          setTimeout(() => { if (state.notice) dispatch({ type: 'NOTICE', notice: { message: '' } }); }, 4000);
-        }
-      })
-      .catch(() => {
-        dispatch({ type: 'NOTICE', notice: { message: '插话没有送达，等它跑完再发。' } });
-      });
+      },
+    });
+    void transport.submit(taskInput, {
+      onAccepted: () => {
+        if (trimmed && capsuleInput.value.trim() === trimmed) capsuleInput.value = '';
+        onAccepted();
+      },
+    });
   }
 
   function requestDismiss() {
@@ -1605,6 +1662,15 @@
             selectionSessionToken: session.token,
           });
         }
+      } else if (action.kind === 'undo' && api && typeof api.undoAction === 'function') {
+        const button = (event.target as Element).closest<HTMLElement>('[data-act="action"]') || (event.target as HTMLElement);
+        button.setAttribute('disabled', 'true');
+        api.undoAction({
+          taskId: action.taskId || payload?.taskId,
+          actionId: action.actionId || action.id,
+        }).then((result: any) => {
+          if (result?.ok !== true) button.removeAttribute('disabled');
+        }).catch(() => button.removeAttribute('disabled'));
       } else if (action.kind === 'context' && api && typeof api.contextAction === 'function') {
         api.contextAction({ id: action.id, selectionSessionToken: session.token });
       }
@@ -2144,6 +2210,29 @@
     if ('selectionSessionToken' in payload) {
       session.token = payload.selectionSessionToken ? String(payload.selectionSessionToken) : null;
     }
+    if ('taskId' in payload) {
+      session.taskId = payload.taskId ? String(payload.taskId) : null;
+    }
+    if ('selectionSnapshotId' in payload) {
+      session.selectionSnapshotId = payload.selectionSnapshotId
+        ? String(payload.selectionSnapshotId)
+        : null;
+    }
+    if (payload.taskContext && typeof payload.taskContext === 'object') {
+      const refs = Array.isArray(payload.taskContext.references)
+        ? payload.taskContext.references.filter((item: any) => item && typeof item === 'object')
+        : [];
+      referenceBindings = new Map(refs.map((item: any) => [String(item.referenceId || ''), item]));
+      strokeRefs = strokeRefs.map((ref) => {
+        const binding = refs.find((item: any) => Number(item.ordinal) === ref.strokeIndex + 1);
+        return binding ? {
+          ...ref,
+          label: String(binding.label || ref.label),
+          referenceId: String(binding.referenceId || '') || null,
+        } : ref;
+      });
+      renderedRefSignature = '';
+    }
     if ('voiceAutoSubmit' in payload) {
       session.voiceAutoSubmit = payload.voiceAutoSubmit !== false;
     }
@@ -2205,6 +2294,7 @@
         strokeRefs = Array.from({ length: session.selectionCount }, (_unused, index) => ({
           strokeIndex: index,
           label: '',
+          referenceId: null,
         }));
         renderedRefSignature = '';
       } else if (session.selectionCount <= 1 && strokeRefs.length) {
@@ -2242,6 +2332,8 @@
       renderedTranscript = '';
       reportedState = '';
       session.token = null;
+      session.taskId = null;
+      session.selectionSnapshotId = null;
       session.groundingReady = false;
       session.voiceAutoSubmit = true;
       session.voiceStartStrategy = 'auto';
@@ -2270,6 +2362,7 @@
       clearCaptureProof();
       clearScreenPoints();
       pickedElement = null;
+      referenceBindings = new Map();
       pickTargetShown = null;
       meta.selectionSource = null;
       meta.objectKind = null;

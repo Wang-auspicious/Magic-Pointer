@@ -868,6 +868,12 @@ DOM、COM、UIA、Fabric等现有模块也不自动保留，只优先保存经�
 
 ## 18. 进度账本
 
+### 2026-09-06：用户可见 durable 撤销入口（1.0.39，开发树，待安装同步）
+
+- 成功写动作的结果现在携带 `undo` action card；Stage 通过 preload 暴露的 `undoAction` 点击入口，Dashboard/Companion 也共享同一个主进程 `actions:undo` IPC。
+- 主进程只接受受信 surface sender，并限制 `taskId`／`actionId` 长度；Python bridge 按 task journal 重建补偿，执行成功后追加 `undone` 事件，失败返回可见错误而不伪装成完成。
+- 新增 bridge 路由契约测试；全量验证为 Node 201 test files、Python 1837 passed、lint/typecheck 全绿。安装版同步与版本核对在本批收尾完成；真实 Office 应用端到端验收仍未宣称完成。
+
 ### 2026-09-06：执行器撤销闭环批（开发树，待全量验证与安装同步）
 
 - `SafeActionExecutor` 新增共享 `UndoLog` 接缝；所有执行分支统一在成功结果返回前检查结构化 `undo_proposal`，登记带目标引用、原内容和时间的 `Compensation`。

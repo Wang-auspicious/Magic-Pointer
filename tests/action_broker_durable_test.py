@@ -5,6 +5,7 @@ from pathlib import Path
 
 from app.action_guard.action_broker import ActionBroker
 from app.actions.schema import ActionProposal, ExecutionResult, ExecutionStatus, SafetyLevel
+from scripts import action_bridge
 
 
 def _proposal(action_id: str = "write-1") -> ActionProposal:
@@ -69,3 +70,30 @@ def test_broker_rehydrates_compensation_after_process_restart(tmp_path: Path) ->
     assert second.calls == [("shopping_list_undo_add", True)]
     rows = [json.loads(line) for line in journal.read_text(encoding="utf-8").splitlines()]
     assert rows[-1] == {"kind": "undone", "task_id": "task-1", "action_id": "write-1"}
+
+
+def test_action_bridge_routes_durable_undo_operation(monkeypatch) -> None:
+    calls: list[str | None] = []
+
+    class FakeCompensation:
+        action_id = "write-1"
+        tool_name = "shopping_list_add"
+
+    class FakeBroker:
+        def __init__(self, *, task_id: str) -> None:
+            assert task_id == "task-1"
+
+        def undo(self, action_id=None):
+            calls.append(action_id)
+            return FakeCompensation()
+
+    monkeypatch.setattr(action_bridge, "ActionBroker", FakeBroker)
+    output, exit_code = action_bridge.process_payload({
+        "operation": "undo",
+        "taskId": "task-1",
+        "actionId": "write-1",
+    })
+    assert exit_code == 0
+    assert output["ok"] is True
+    assert output["undoneActionId"] == "write-1"
+    assert calls == ["write-1"]

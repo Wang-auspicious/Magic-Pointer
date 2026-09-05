@@ -8,6 +8,58 @@
 declare global {
   /* ---- 渲染层各 classic script 之间的共享名字 ---- */
 
+  interface MagicPointerTaskInput {
+    inputId: string;
+    taskId: string;
+    target: 'next-step' | 'next-turn';
+    instruction: string;
+    referenceUpdates: Array<{
+      operation: 'add' | 'correct' | 'remove';
+      binding: Record<string, unknown>;
+    }>;
+    sourceIds: string[];
+    timeline: Array<{
+      eventId: string;
+      kind: 'utterance' | 'point';
+      startMs: number;
+      endMs: number;
+      text?: string;
+      referenceId?: string;
+    }>;
+    capturedAtMs: number;
+  }
+
+  interface MagicPointerTaskSource {
+    sourceId: string;
+    taskId: string;
+    kind: 'file' | 'document' | 'chat' | 'web' | 'figma' | 'capture';
+    title: string;
+    identity: Record<string, unknown>;
+    revision: Record<string, unknown>;
+    capabilities: string[];
+    origin: 'user-attached' | 'user-pointed' | 'task-discovered';
+    parentSourceId: string | null;
+  }
+
+  interface MagicPointerTaskReference {
+    referenceId: string;
+    label: string;
+    sourceId: string;
+    locator: Record<string, unknown>;
+    role: 'target' | 'source' | 'reference' | 'exclude' | 'unresolved';
+    capturedAtMs: number;
+    ordinal: number;
+    active: boolean;
+    frameLeaseId?: string | null;
+  }
+
+  interface MagicPointerTaskContext {
+    taskId: string;
+    sources: MagicPointerTaskSource[];
+    references: MagicPointerTaskReference[];
+    referenceRevision: number;
+  }
+
   interface MagicPointerObject {
     app?: string;
     label?: string;
@@ -43,7 +95,13 @@ declare global {
   }
 
   interface MagicPointerArtifact {
+    artifactId?: string;
+    revision?: number;
+    content?: string;
     kind?: string;
+    state?: string;
+    acceptedRevision?: number | null;
+    patchPayload?: Record<string, unknown> | null;
     name?: string;
     src?: string;
     summary?: string;
@@ -59,6 +117,7 @@ declare global {
     objectKey?: string;
     updatedAt?: number;
     agentSessionId?: string;
+    taskContext?: MagicPointerTaskContext;
     hasPendingWork?: boolean;
     workspaceRoot?: string;
     object?: MagicPointerObject | null;
@@ -189,6 +248,44 @@ declare global {
   }
   const LiveCards: MagicPointerLiveCardsApi;
 
+  interface MagicPointerArtifactEditorState {
+    conversationId: string;
+    artifactId: string;
+    revision: number;
+    content: string;
+    savedContent: string;
+    kind: string;
+    patchPayload: Record<string, unknown> | null;
+    acceptedRevision: number | null;
+    dirty: boolean;
+    status: string;
+    error: string;
+    applyResult: Record<string, unknown> | null;
+  }
+  interface MagicPointerArtifactEditorController {
+    select(conversationId: string, artifactId: string): Promise<Record<string, any>>;
+    updateContent(content: unknown): void;
+    updatePatchPayload(payload: Record<string, unknown>): void;
+    save(): Promise<Record<string, any>>;
+    accept(): Promise<Record<string, any>>;
+    apply(): Promise<Record<string, any>>;
+    clear(): void;
+    state(): MagicPointerArtifactEditorState;
+  }
+  const ArtifactEditor: {
+    createArtifactEditor(client: {
+      read(payload: Record<string, unknown>): Promise<Record<string, any>>;
+      edit(payload: Record<string, unknown>): Promise<Record<string, any>>;
+      accept(payload: Record<string, unknown>): Promise<Record<string, any>>;
+      apply(payload: Record<string, unknown>): Promise<Record<string, any>>;
+    }): MagicPointerArtifactEditorController;
+    retargetFigmaPatch(
+      patchPayload: Record<string, unknown>,
+      operationIndex: number,
+      selectedNode: Record<string, unknown>,
+    ): Record<string, any>;
+  };
+
   interface MagicPointerAttachment {
     name?: string;
     src?: string;
@@ -234,11 +331,18 @@ declare global {
   };
 
   interface MagicPointerStashItem {
+    id?: string;
     desc?: string;
     absPath?: string;
+    capturedAt?: number;
+    locator?: Record<string, unknown> | null;
+    originalArtifactPath?: string;
+    sourceId?: string;
+    sourceTimeMs?: number;
     text?: string;
     media?: string;
     summary?: string;
+    userCategory?: string;
     [key: string]: unknown;
   }
   interface MagicPointerStashBurst {
@@ -265,6 +369,13 @@ declare global {
       text?: string;
       media?: string;
       summary?: string;
+      id?: string;
+      capturedAt?: number;
+      locator?: Record<string, unknown> | null;
+      originalArtifactPath?: string;
+      sourceId?: string;
+      sourceTimeMs?: number;
+      userCategory?: string;
     }[];
   }
   interface MagicPointerModelEntry {
@@ -314,6 +425,7 @@ declare global {
   }
 
   interface MagicPointerDashboardApi {
+    undoAction?(payload: Record<string, unknown>): Promise<Record<string, unknown>>;
     setTheme?(theme: unknown): void;
     startDictation?(): void;
     stopDictation?(options?: { graceful?: boolean }): void;
@@ -354,21 +466,44 @@ declare global {
       stats?(): Promise<MagicPointerHomeStats | null>;
       get(id: unknown): Promise<MagicPointerConversation | undefined>;
       branch?(payload: { id?: unknown; turnIndex?: unknown }): Promise<{ ok?: boolean; conversation?: MagicPointerConversation; error?: string }>;
-      send(payload: { conversationId?: string | null; question: string; permissionPreset?: string; requestId?: string; workspaceRoot?: string; effort?: string; permissionGrant?: string; permissionDeny?: string; permissionGrantOnce?: string }): Promise<Record<string, any>>;
+      send(payload: { conversationId?: string | null; question: string; attachments?: string[]; taskInput?: MagicPointerTaskInput; permissionPreset?: string; requestId?: string; workspaceRoot?: string; effort?: string; permissionGrant?: string; permissionDeny?: string; permissionGrantOnce?: string }): Promise<Record<string, any>>;
       pickWorkspace?(): Promise<{ ok?: boolean; canceled?: boolean; path?: string; error?: string }>;
       export?(id: unknown): Promise<{ ok?: boolean; canceled?: boolean; path?: string; error?: string }>;
       rename?(payload: { id?: unknown; title?: unknown }): Promise<{ ok?: boolean; title?: string; error?: string }>;
       delete?(id: unknown): Promise<{ ok?: boolean; error?: string }>;
       stop?(requestId: unknown): Promise<{ ok?: boolean; sessionId?: string; error?: string }>;
-      steer?(payload: { agentSessionId?: unknown; text?: unknown }): Promise<{ ok?: boolean; messageId?: string; error?: string }>;
+      steer?(payload: { agentSessionId?: unknown; text?: unknown; taskInput?: MagicPointerTaskInput; sources?: Record<string, unknown>[] }): Promise<{ ok?: boolean; inputId?: string; status?: string; error?: string }>;
       timeline(): Promise<MagicPointerTimelineDay[]>;
+      eventSummaries?(payload: Record<string, unknown>): Promise<Record<string, any>>;
       memories(): Promise<unknown[]>;
       artifacts(): Promise<unknown[]>;
       onTurn?(cb: () => void): void;
       onProgress?(cb: (payload: { requestId?: string; record?: Record<string, unknown> }) => void): void;
     };
+    contextTrackers?: {
+      material(payload: Record<string, unknown>): Promise<Record<string, any>>;
+    };
+    artifacts?: {
+      read(payload: { conversationId: string; artifactId?: string }): Promise<Record<string, any>>;
+      edit(payload: { conversationId: string; artifactId: string; expectedRevision: number; content: string; patchPayload?: Record<string, unknown> | null }): Promise<Record<string, any>>;
+      accept(payload: { conversationId: string; artifactId: string; revision: number }): Promise<Record<string, any>>;
+      apply(payload: { conversationId: string; artifactId: string; revision: number }): Promise<Record<string, any>>;
+    };
+    figma?: {
+      pair(conversationId: string): Promise<Record<string, any>>;
+      status(conversationId: string): Promise<Record<string, any>>;
+      disconnect(conversationId: string, documentSessionId: string): Promise<Record<string, any>>;
+      inspectSelection(conversationId: string, documentSessionId?: string): Promise<Record<string, any>>;
+      exportPreview(conversationId: string, documentSessionId: string, nodeId: string): Promise<Record<string, any>>;
+    };
     stash: {
       list(): Promise<MagicPointerStashBurst[]>;
+      addNote?(payload: Record<string, unknown>): Promise<Record<string, any>>;
+      addFiles?(): Promise<Record<string, any>>;
+      search?(payload: Record<string, unknown>): Promise<MagicPointerStashItem[]>;
+      open?(id: unknown): Promise<Record<string, any>>;
+      updateCategory?(id: unknown, category: unknown): Promise<Record<string, any>>;
+      remove?(id: unknown): Promise<Record<string, any>>;
       describe?(src: unknown): Promise<{ ok?: boolean; summary?: string }>;
       onEntry?(cb: () => void): void;
     };
@@ -493,13 +628,13 @@ declare global {
     conversationStats(): Promise<MagicPointerHomeStats | null>;
     conversation(id: string): Promise<MagicPointerConversation | undefined>;
     branchConversation(id: string, turnIndex: number): Promise<{ ok?: boolean; conversation?: MagicPointerConversation; error?: string }>;
-    sendConversation(conversationId: string | null, question: string, permissionPreset?: string, requestId?: string, workspaceRoot?: string, effort?: string, permission?: { grant?: string; deny?: string; once?: string }): Promise<Record<string, any>>;
+    sendConversation(conversationId: string | null, question: string, permissionPreset?: string, requestId?: string, workspaceRoot?: string, effort?: string, permission?: { grant?: string; deny?: string; once?: string }, attachments?: string[], taskInput?: MagicPointerTaskInput): Promise<Record<string, any>>;
     pickWorkspace(): Promise<{ ok?: boolean; canceled?: boolean; path?: string; error?: string }>;
     exportConversation(id: string): Promise<{ ok?: boolean; canceled?: boolean; path?: string; error?: string }>;
     renameConversation(id: string, title: string): Promise<{ ok?: boolean; title?: string; error?: string }>;
     deleteConversation(id: string): Promise<{ ok?: boolean; error?: string }>;
     stopConversation(requestId: string): Promise<{ ok?: boolean; sessionId?: string; error?: string }>;
-    steerConversation(agentSessionId: string, text: string): Promise<{ ok?: boolean; messageId?: string; error?: string }>;
+    steerConversation(agentSessionId: string, input: string | MagicPointerTaskInput, sources?: Record<string, unknown>[]): Promise<{ ok?: boolean; inputId?: string; status?: string; error?: string }>;
     onConversationProgress(callback: (payload: { requestId?: string; record?: Record<string, unknown> }) => void): void;
     models(): Promise<MagicPointerModelCatalog | null>;
     slashDirectory(): Promise<MagicPointerSlashDirectory | null>;
@@ -507,7 +642,23 @@ declare global {
     timeline(): Promise<MagicPointerTimelineDay[]>;
     memories(): Promise<unknown[]>;
     artifacts(): Promise<unknown[]>;
+    readArtifact(conversationId: string, artifactId: string): Promise<Record<string, any>>;
+    trackMaterial(payload: Record<string, unknown>): Promise<Record<string, any>>;
+    editArtifact(payload: { conversationId: string; artifactId: string; expectedRevision: number; content: string; patchPayload?: Record<string, unknown> | null }): Promise<Record<string, any>>;
+    acceptArtifact(conversationId: string, artifactId: string, revision: number): Promise<Record<string, any>>;
+    applyArtifact(conversationId: string, artifactId: string, revision: number): Promise<Record<string, any>>;
+    pairFigma(conversationId: string): Promise<Record<string, any>>;
+    figmaStatus(conversationId: string): Promise<Record<string, any>>;
+    disconnectFigma(conversationId: string, documentSessionId: string): Promise<Record<string, any>>;
+    inspectFigmaSelection(conversationId: string, documentSessionId?: string): Promise<Record<string, any>>;
+    exportFigmaPreview(conversationId: string, documentSessionId: string, nodeId: string): Promise<Record<string, any>>;
     stash(): Promise<MagicPointerStashEntry[]>;
+    searchStash(query?: string, category?: string): Promise<MagicPointerStashEntry[]>;
+    addStashNote(text: string, category?: string): Promise<Record<string, any>>;
+    addStashFiles(): Promise<Record<string, any>>;
+    openStashEntry(id: string): Promise<Record<string, any>>;
+    updateStashCategory(id: string, category: string): Promise<Record<string, any>>;
+    removeStashEntry(id: string): Promise<Record<string, any>>;
     describeStashImage(src: string): Promise<string | null | undefined>;
     onChange(callback: () => void): void;
   }
@@ -634,6 +785,7 @@ declare global {
     submitSelectionCommand(payload: unknown): void;
     steerSelectionCommand(payload: unknown): Promise<any>;
     executeAction(payload: unknown): void;
+    undoAction?(payload: Record<string, unknown>): Promise<Record<string, unknown>>;
     contextAction(payload: unknown): void;
     insertResultText(payload: unknown): void;
     expandPassage(payload: unknown): Promise<any>;
@@ -664,6 +816,8 @@ declare global {
   var StageStretchPolicy: any;
   var StagePickPolicy: any;
   var StageTurnStream: any;
+  var TaskSources: any;
+  var TaskInputTransport: any;
   var StageChipsPolicy: any;
   var ClarificationChips: any;
 }
@@ -906,9 +1060,9 @@ const Data: MagicPointerDataApi = {
     return bridge()!.conversations.branch!({ id, turnIndex });
   },
 
-  async sendConversation(conversationId: string | null, question: string, permissionPreset?: string, requestId?: string, workspaceRoot?: string, effort?: string, permission?: { grant?: string; deny?: string; once?: string }): Promise<Record<string, any>> {
+  async sendConversation(conversationId: string | null, question: string, permissionPreset?: string, requestId?: string, workspaceRoot?: string, effort?: string, permission?: { grant?: string; deny?: string; once?: string }, attachments: string[] = [], taskInput?: MagicPointerTaskInput): Promise<Record<string, any>> {
     if (!hasBridge()) return { ok: false, error: '请在 Magic Pointer 应用里发送。' };
-    return bridge()!.conversations.send({ conversationId, question, permissionPreset: permissionPreset || 'workspace-write', requestId, workspaceRoot, effort: effort || 'high', permissionGrant: permission?.grant, permissionDeny: permission?.deny, permissionGrantOnce: permission?.once });
+    return bridge()!.conversations.send({ conversationId, question, attachments, taskInput, permissionPreset: permissionPreset || 'workspace-write', requestId, workspaceRoot, effort: effort || 'high', permissionGrant: permission?.grant, permissionDeny: permission?.deny, permissionGrantOnce: permission?.once });
   },
 
   async pickWorkspace(): Promise<{ ok?: boolean; canceled?: boolean; path?: string; error?: string }> {
@@ -936,9 +1090,12 @@ const Data: MagicPointerDataApi = {
     return bridge()!.conversations.stop!(requestId);
   },
 
-  async steerConversation(agentSessionId: string, text: string): Promise<{ ok?: boolean; messageId?: string; error?: string }> {
+  async steerConversation(agentSessionId: string, input: string | MagicPointerTaskInput, sources: Record<string, unknown>[] = []): Promise<{ ok?: boolean; inputId?: string; status?: string; error?: string }> {
     if (!hasBridge()) return { ok: false, error: '插话通道不可用。' };
-    return bridge()!.conversations.steer!({ agentSessionId, text });
+    return bridge()!.conversations.steer!({
+      agentSessionId,
+      ...(typeof input === 'string' ? { text: input } : { taskInput: input, sources }),
+    });
   },
 
   onConversationProgress(callback: (payload: { requestId?: string; record?: Record<string, unknown> }) => void): void {
@@ -1003,6 +1160,88 @@ const Data: MagicPointerDataApi = {
     return Array.isArray(list) ? list : [];
   },
 
+  async trackMaterial(payload: Record<string, unknown>): Promise<Record<string, any>> {
+    const trackers = bridge()?.contextTrackers;
+    if (!trackers) return { ok: false, error: '材料关注通道不可用。' };
+    return trackers.material(payload);
+  },
+
+  async readArtifact(conversationId: string, artifactId: string): Promise<Record<string, any>> {
+    const artifacts = bridge()?.artifacts;
+    if (!hasBridge() || !artifacts?.read) return { ok: false, error: '产物读取通道不可用。' };
+    return artifacts.read({ conversationId, artifactId });
+  },
+
+  async editArtifact(payload): Promise<Record<string, any>> {
+    const artifacts = bridge()?.artifacts;
+    if (!hasBridge() || !artifacts?.edit) return { ok: false, error: '产物编辑通道不可用。' };
+    return artifacts.edit(payload);
+  },
+
+  async acceptArtifact(
+    conversationId: string,
+    artifactId: string,
+    revision: number,
+  ): Promise<Record<string, any>> {
+    const artifacts = bridge()?.artifacts;
+    if (!hasBridge() || !artifacts?.accept) return { ok: false, error: '产物批准通道不可用。' };
+    return artifacts.accept({ conversationId, artifactId, revision });
+  },
+
+  async applyArtifact(
+    conversationId: string,
+    artifactId: string,
+    revision: number,
+  ): Promise<Record<string, any>> {
+    const artifacts = bridge()?.artifacts;
+    if (!hasBridge() || !artifacts?.apply) return { ok: false, error: '产物应用通道不可用。' };
+    return artifacts.apply({ conversationId, artifactId, revision });
+  },
+
+  async pairFigma(conversationId: string): Promise<Record<string, any>> {
+    const figma = bridge()?.figma;
+    if (!hasBridge() || !figma?.pair) return { ok: false, error: 'Figma 配对通道不可用。' };
+    return figma.pair(conversationId);
+  },
+
+  async figmaStatus(conversationId: string): Promise<Record<string, any>> {
+    const figma = bridge()?.figma;
+    if (!hasBridge() || !figma?.status) return { ok: false, error: 'Figma 状态通道不可用。' };
+    return figma.status(conversationId);
+  },
+
+  async disconnectFigma(
+    conversationId: string,
+    documentSessionId: string,
+  ): Promise<Record<string, any>> {
+    const figma = bridge()?.figma;
+    if (!hasBridge() || !figma?.disconnect) return { ok: false, error: 'Figma 断开通道不可用。' };
+    return figma.disconnect(conversationId, documentSessionId);
+  },
+
+  async inspectFigmaSelection(
+    conversationId: string,
+    documentSessionId?: string,
+  ): Promise<Record<string, any>> {
+    const figma = bridge()?.figma;
+    if (!hasBridge() || !figma?.inspectSelection) {
+      return { ok: false, error: 'Figma 选区读取通道不可用。' };
+    }
+    return figma.inspectSelection(conversationId, documentSessionId);
+  },
+
+  async exportFigmaPreview(
+    conversationId: string,
+    documentSessionId: string,
+    nodeId: string,
+  ): Promise<Record<string, any>> {
+    const figma = bridge()?.figma;
+    if (!hasBridge() || !figma?.exportPreview) {
+      return { ok: false, error: 'Figma 节点预览通道不可用。' };
+    }
+    return figma.exportPreview(conversationId, documentSessionId, nodeId);
+  },
+
   async stash(): Promise<MagicPointerStashEntry[]> {
     if (!bridge()?.stash) return DEMO_STASH;
     const bursts = await bridge()!.stash.list();
@@ -1016,10 +1255,79 @@ const Data: MagicPointerDataApi = {
       time: formatTime(b.capturedAt),
       kind: b.kind || '素材',
       items: b.items!.map((e) => ({
-        t: 'shot', w: 180, h: 120, desc: e.desc, src: e.absPath,
+        t: e.media === 'text' ? 'note' : 'shot', w: 180, h: 120, desc: e.desc, src: e.absPath,
         text: e.text || '', media: e.media || 'image', summary: e.summary || '',
+        id: e.id,
+        capturedAt: e.capturedAt,
+        locator: e.locator,
+        originalArtifactPath: e.originalArtifactPath,
+        sourceId: e.sourceId,
+        sourceTimeMs: e.sourceTimeMs,
+        userCategory: e.userCategory,
       })),
     }));
+  },
+
+  async searchStash(query = '', category = ''): Promise<MagicPointerStashEntry[]> {
+    const stash = bridge()?.stash;
+    if (!hasBridge() || !stash?.search) return [];
+    const entries = await stash.search({ query, category, limit: 200 });
+    if (!Array.isArray(entries)) return [];
+    return entries.map((entry, index) => ({
+      id: String(entry.id || `search-${index}`),
+      title: String(entry.desc || entry.summary || entry.originalArtifactPath || '收藏材料'),
+      app: String(entry.app || ''),
+      icon: 'ic-window',
+      time: formatTime(entry.capturedAt),
+      kind: String(entry.userCategory || entry.kind || '素材'),
+      items: [{
+        t: entry.media === 'text' ? 'note' : 'shot',
+        w: 180,
+        h: 120,
+        desc: entry.desc,
+        src: entry.absPath,
+        text: entry.text || '',
+        media: entry.media || 'file',
+        summary: entry.summary || '',
+        id: entry.id,
+        capturedAt: entry.capturedAt,
+        locator: entry.locator,
+        originalArtifactPath: entry.originalArtifactPath,
+        sourceId: entry.sourceId,
+        sourceTimeMs: entry.sourceTimeMs,
+        userCategory: entry.userCategory,
+      }],
+    }));
+  },
+
+  async addStashNote(text: string, category = '笔记'): Promise<Record<string, any>> {
+    const stash = bridge()?.stash;
+    if (!hasBridge() || !stash?.addNote) return { ok: false, error: '收藏通道不可用。' };
+    return stash.addNote({ text, summary: text, userCategory: category });
+  },
+
+  async addStashFiles(): Promise<Record<string, any>> {
+    const stash = bridge()?.stash;
+    if (!hasBridge() || !stash?.addFiles) return { ok: false, error: '收藏通道不可用。' };
+    return stash.addFiles();
+  },
+
+  async openStashEntry(id: string): Promise<Record<string, any>> {
+    const stash = bridge()?.stash;
+    if (!hasBridge() || !stash?.open) return { ok: false, error: '来源打开通道不可用。' };
+    return stash.open(id);
+  },
+
+  async updateStashCategory(id: string, category: string): Promise<Record<string, any>> {
+    const stash = bridge()?.stash;
+    if (!hasBridge() || !stash?.updateCategory) return { ok: false, error: '分类修改通道不可用。' };
+    return stash.updateCategory(id, category);
+  },
+
+  async removeStashEntry(id: string): Promise<Record<string, any>> {
+    const stash = bridge()?.stash;
+    if (!hasBridge() || !stash?.remove) return { ok: false, error: '收藏删除通道不可用。' };
+    return stash.remove(id);
   },
 
   // 悬停收藏图片 1 秒后调本地视觉模型出 3-4 句简介

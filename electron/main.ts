@@ -5913,6 +5913,24 @@ ipcMain.handle('stage:agent-sessions', async (event: Electron.IpcMainInvokeEvent
   }
 });
 
+ipcMain.handle('actions:undo', async (event: Electron.IpcMainInvokeEvent, payload: any) => {
+  if (!isDashboardSender(event) && !isCompanionSender(event) && !isSurfaceSender(event, 'stage', resultTargetWindow)) {
+    return { ok: false, error: 'unauthorized_renderer' };
+  }
+  const taskId = String(payload?.taskId || payload?.sessionId || '').trim().slice(0, 200);
+  const actionId = String(payload?.actionId || payload?.action_id || '').trim().slice(0, 200);
+  if (!taskId) return { ok: false, error: 'missing_task_id' };
+  try {
+    return await runPythonBridgePromise({
+      operation: 'undo',
+      taskId,
+      actionId: actionId || undefined,
+    }, 'scripts/action_bridge.py', { target: 'stage', timeoutMs: 15000 });
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : 'undo_unavailable' };
+  }
+});
+
 ipcMain.handle('stage:dispatch-agent-prompt', async (event: Electron.IpcMainInvokeEvent, payload: any) => {
   if (!isSurfaceSender(event, 'stage', resultTargetWindow)) {
     return { ok: false, error: 'unauthorized_stage_sender' };

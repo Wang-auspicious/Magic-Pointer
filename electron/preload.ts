@@ -23,6 +23,18 @@ function normalizeEffort(value: unknown): string {
   return EFFORT_LEVELS.has(candidate) ? candidate : 'high';
 }
 
+function boundedTaskInput(value: unknown): UnknownRecord | null {
+  if (!value || typeof value !== 'object') return null;
+  try {
+    const encoded = JSON.stringify(value);
+    if (encoded.length > 48 * 1024) return null;
+    const parsed = JSON.parse(encoded);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 function onPayload(channel: string, callback: PayloadCallback): void {
   // The ipcRenderer return value must never cross the bridge: it IS
   // ipcRenderer, and contextBridge would proxy send/invoke/sendSync into the
@@ -103,13 +115,18 @@ contextBridge.exposeInMainWorld('magicPointerStage', {
     } : null,
   }),
   executeAction: (payload: unknown) => ipcRenderer.send('stage:execute-action', payload),
+  undoAction: (payload: { taskId?: unknown; sessionId?: unknown; actionId?: unknown } = {}) => ipcRenderer.invoke('actions:undo', {
+    taskId: String(payload?.taskId || payload?.sessionId || '').slice(0, 200),
+    actionId: String(payload?.actionId || '').slice(0, 200),
+  }),
   contextAction: (payload: unknown) => ipcRenderer.send('stage:context-action', payload),
   // Mid-run steer: a distinct IPC from submit so it can never start a second
   // loop — it only writes the durable inbox the running loop already claims.
-  steerSelectionCommand: (payload: { selectionSessionToken?: unknown; text?: unknown }) =>
+  steerSelectionCommand: (payload: { selectionSessionToken?: unknown; text?: unknown; taskInput?: unknown }) =>
     ipcRenderer.invoke('stage:steer-selection-command', {
       selectionSessionToken: payload?.selectionSessionToken || null,
       text: String(payload?.text || '').slice(0, 4000),
+      taskInput: boundedTaskInput(payload?.taskInput),
     }),
   // The renderer sends the text it is showing; the target window and point stay
   // in main, bound to the selection session, so a renderer cannot aim a write.
@@ -179,6 +196,10 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
   calendarPreview: (payload: unknown) => ipcRenderer.send('dashboard:calendar-preview', payload),
   calendarCreate: (payload: unknown) => ipcRenderer.send('dashboard:calendar-create', payload),
   calendarUndoCreate: (payload: unknown) => ipcRenderer.send('dashboard:calendar-undo-create', payload),
+  undoAction: (payload: { taskId?: unknown; sessionId?: unknown; actionId?: unknown } = {}) => ipcRenderer.invoke('actions:undo', {
+    taskId: String(payload?.taskId || payload?.sessionId || '').slice(0, 200),
+    actionId: String(payload?.actionId || '').slice(0, 200),
+  }),
   openRoute: (payload: unknown) => ipcRenderer.send('dashboard:route-open', payload),
   runtimeSnapshot: {
     get: (options: { force?: boolean } = {}) => ipcRenderer.invoke('runtime-snapshot:get', {
@@ -199,6 +220,26 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
   sessionTimeline: () => ipcRenderer.invoke('dashboard:session-timeline'),
   stash: {
     list: () => ipcRenderer.invoke('stash:list'),
+    addNote: (payload: UnknownRecord = {}) => ipcRenderer.invoke('stash:add-note', {
+      text: String(payload.text || '').slice(0, 200_000),
+      summary: String(payload.summary || '').slice(0, 2000),
+      userCategory: String(payload.userCategory || '').slice(0, 80),
+      sourceId: String(payload.sourceId || '').slice(0, 300),
+      sourceTimeMs: Number(payload.sourceTimeMs) || undefined,
+      locator: boundedTaskInput(payload.locator),
+    }),
+    addFiles: () => ipcRenderer.invoke('stash:add-files'),
+    search: (payload: UnknownRecord = {}) => ipcRenderer.invoke('stash:search', {
+      query: String(payload.query || '').slice(0, 2000),
+      category: String(payload.category || '').slice(0, 80),
+      limit: Math.max(1, Math.min(200, Number(payload.limit) || 50)),
+    }),
+    open: (id: unknown) => ipcRenderer.invoke('stash:open', String(id || '').slice(0, 200)),
+    updateCategory: (id: unknown, category: unknown) => ipcRenderer.invoke('stash:update-category', {
+      id: String(id || '').slice(0, 200),
+      category: String(category || '').slice(0, 80),
+    }),
+    remove: (id: unknown) => ipcRenderer.invoke('stash:remove', String(id || '').slice(0, 200)),
     describe: (imagePath: unknown) => ipcRenderer.invoke('stash:describe', imagePath),
     onEntry: (callback: PayloadCallback) => onPayload('stash:entry', callback),
   },
@@ -266,9 +307,13 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
       turnIndex: Number(payload?.turnIndex),
     }),
     pickWorkspace: () => ipcRenderer.invoke('conversations:pick-workspace'),
-    send: (payload: { conversationId?: unknown; question?: unknown; permissionPreset?: unknown; requestId?: unknown; workspaceRoot?: unknown; effort?: unknown; permissionGrant?: unknown; permissionDeny?: unknown; permissionGrantOnce?: unknown }) => ipcRenderer.invoke('conversations:send', {
+    send: (payload: { conversationId?: unknown; question?: unknown; attachments?: unknown; taskInput?: unknown; permissionPreset?: unknown; requestId?: unknown; workspaceRoot?: unknown; effort?: unknown; permissionGrant?: unknown; permissionDeny?: unknown; permissionGrantOnce?: unknown }) => ipcRenderer.invoke('conversations:send', {
       conversationId: String(payload?.conversationId || '').slice(0, 120),
       question: String(payload?.question || '').slice(0, MAX_COMMAND_CHARS),
+      attachments: Array.isArray(payload?.attachments)
+        ? [...new Set(payload.attachments.map((item) => String(item || '').trim()).filter(Boolean))].slice(0, 32).map((item) => item.slice(0, 1000))
+        : [],
+      taskInput: boundedTaskInput(payload?.taskInput),
       permissionPreset: String(payload?.permissionPreset || 'workspace-write').slice(0, 40),
       requestId: String(payload?.requestId || '').slice(0, 120),
       ...(String(payload?.workspaceRoot || '').trim()
@@ -292,15 +337,90 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
     }),
     delete: (id: unknown) => ipcRenderer.invoke('conversations:delete', { id: String(id || '').slice(0, 120) }),
     stop: (requestId: unknown) => ipcRenderer.invoke('conversations:stop', { requestId: String(requestId || '').slice(0, 120) }),
-    steer: (payload: { agentSessionId?: unknown; text?: unknown }) => ipcRenderer.invoke('conversations:steer', {
+    steer: (payload: { agentSessionId?: unknown; text?: unknown; taskInput?: unknown; sources?: unknown }) => ipcRenderer.invoke('conversations:steer', {
       agentSessionId: String(payload?.agentSessionId || '').slice(0, 120),
       text: String(payload?.text || '').slice(0, MAX_COMMAND_CHARS),
+      taskInput: boundedTaskInput(payload?.taskInput),
+      sources: Array.isArray(payload?.sources) ? payload.sources.slice(0, 32) : [],
     }),
     timeline: () => ipcRenderer.invoke('conversations:timeline'),
+    eventSummaries: (payload: UnknownRecord = {}) => ipcRenderer.invoke('conversations:event-summaries', {
+      fromMs: Math.max(0, Number(payload.fromMs) || 0),
+      toMs: Math.max(0, Number(payload.toMs) || Date.now()),
+      conversationIds: Array.isArray(payload.conversationIds)
+        ? payload.conversationIds.slice(0, 500).map((value) => String(value || '').slice(0, 120))
+        : [],
+      limit: Math.max(1, Math.min(500, Number(payload.limit) || 200)),
+    }),
     memories: () => ipcRenderer.invoke('conversations:memories'),
     artifacts: () => ipcRenderer.invoke('conversations:artifacts'),
     onTurn: (callback: PayloadCallback) => onPayload('conversations:turn', callback),
     onProgress: (callback: PayloadCallback) => onPayload('conversations:progress', callback),
+  },
+  contextTrackers: {
+    material: (payload: { conversationId: string; sourceId: string; action: string; task?: string; cadence?: string }) => ipcRenderer.invoke('context-trackers:material', {
+      conversationId: String(payload.conversationId || '').slice(0, 120),
+      sourceId: String(payload.sourceId || '').slice(0, 4096),
+      action: String(payload.action || ''),
+      task: String(payload.task || '').slice(0, 4000),
+      cadence: String(payload.cadence || 'filesystem'),
+    }),
+  },
+  artifacts: {
+    read: (payload: { conversationId?: unknown; artifactId?: unknown }) => ipcRenderer.invoke('artifacts:read', {
+      conversationId: String(payload?.conversationId || '').slice(0, 120),
+      artifactId: String(payload?.artifactId || '').slice(0, 128),
+    }),
+    edit: (payload: { conversationId?: unknown; artifactId?: unknown; expectedRevision?: unknown; content?: unknown; patchPayload?: unknown }) => ipcRenderer.invoke('artifacts:edit', {
+      conversationId: String(payload?.conversationId || '').slice(0, 120),
+      artifactId: String(payload?.artifactId || '').slice(0, 128),
+      expectedRevision: payload?.expectedRevision,
+      content: String(payload?.content ?? '').slice(0, 1_000_000),
+      ...(payload?.patchPayload && typeof payload.patchPayload === 'object'
+        ? { patchPayload: payload.patchPayload }
+        : {}),
+    }),
+    accept: (payload: { conversationId?: unknown; artifactId?: unknown; revision?: unknown }) => ipcRenderer.invoke('artifacts:accept', {
+      conversationId: String(payload?.conversationId || '').slice(0, 120),
+      artifactId: String(payload?.artifactId || '').slice(0, 128),
+      revision: payload?.revision,
+    }),
+    apply: (payload: { conversationId?: unknown; artifactId?: unknown; revision?: unknown }) => ipcRenderer.invoke('artifacts:apply', {
+      conversationId: String(payload?.conversationId || '').slice(0, 120),
+      artifactId: String(payload?.artifactId || '').slice(0, 128),
+      revision: payload?.revision,
+    }),
+  },
+  figma: {
+    pair: (conversationId: unknown) => ipcRenderer.invoke('figma:pair', {
+      conversationId: String(conversationId || '').slice(0, 120),
+    }),
+    status: (conversationId: unknown) => ipcRenderer.invoke('figma:status', {
+      conversationId: String(conversationId || '').slice(0, 120),
+    }),
+    disconnect: (conversationId: unknown, documentSessionId: unknown) => ipcRenderer.invoke(
+      'figma:disconnect',
+      {
+        conversationId: String(conversationId || '').slice(0, 120),
+        documentSessionId: String(documentSessionId || '').slice(0, 256),
+      },
+    ),
+    inspectSelection: (conversationId: unknown, documentSessionId?: unknown) => ipcRenderer.invoke(
+      'figma:inspect-selection',
+      {
+        conversationId: String(conversationId || '').slice(0, 120),
+        documentSessionId: String(documentSessionId || '').slice(0, 256),
+      },
+    ),
+    exportPreview: (
+      conversationId: unknown,
+      documentSessionId: unknown,
+      nodeId: unknown,
+    ) => ipcRenderer.invoke('figma:export-preview', {
+      conversationId: String(conversationId || '').slice(0, 120),
+      documentSessionId: String(documentSessionId || '').slice(0, 256),
+      nodeId: String(nodeId || '').slice(0, 256),
+    }),
   },
   learningCandidates: {
     request: (payload: UnknownRecord = {}) => ipcRenderer.invoke(
