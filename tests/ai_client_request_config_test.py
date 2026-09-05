@@ -15,6 +15,7 @@ def test_request_ai_config_overrides_legacy_model_for_one_request(monkeypatch) -
         "baseUrl": "https://api.groq.com/openai/v1",
         "model": "openai/gpt-oss-120b",
         "apiMode": "chat-completions",
+        "effort": "xhigh",
     }):
         assert ai_client.get_ai_config() == (
             "request-secret",
@@ -22,8 +23,10 @@ def test_request_ai_config_overrides_legacy_model_for_one_request(monkeypatch) -
             "openai/gpt-oss-120b",
         )
         assert ai_client.get_ai_api_mode() == "chat-completions"
+        assert ai_client.get_ai_effort() == "xhigh"
 
     assert ai_client.get_ai_config() == (None, None, "gpt-4o-mini")
+    assert ai_client.get_ai_effort() == "high"
 
 
 def test_request_ai_config_does_not_leak_between_resident_worker_requests(monkeypatch) -> None:

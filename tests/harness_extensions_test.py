@@ -131,42 +131,45 @@ class TestHooks:
 
 
 class TestPromptSections:
-    def test_reply_style_section_omitted_when_normal(self) -> None:
-        """Default (normal) reply style injects no directive at all."""
+    def test_effort_section_uses_balanced_default(self) -> None:
+        """Missing/unknown effort is still a truthful High reasoning policy."""
         from app.agent_runtime.system_prompt import default_sections
 
         builder = SystemPromptBuilder()
         for section in default_sections():
             builder.add(section)
-        text = builder.build({"language": "中文", "reply_style": "normal"})
+        text = builder.build({"language": "中文"})
+        assert "# Effort" in text
+        assert "balanced" in text.casefold()
         assert "# Style" not in text
         assert "# Language" in text
 
-    def test_reply_style_section_injects_verbosity_directive(self) -> None:
-        """compact/ultra styles add a real Style directive; normal does not."""
+    def test_effort_section_changes_reasoning_policy_not_reply_tone(self) -> None:
+        """Extra and Max increase work depth without becoming prose styles."""
         from app.agent_runtime.system_prompt import default_sections
 
         builder = SystemPromptBuilder()
         for section in default_sections():
             builder.add(section)
 
-        compact_text = builder.build({"language": "中文", "reply_style": "compact"})
-        assert "# Style" in compact_text
-        assert "简洁" in compact_text
+        extra_text = builder.build({"language": "中文", "effort": "xhigh"})
+        assert "# Effort" in extra_text
+        assert "thorough" in extra_text.casefold()
+        assert "caveman" not in extra_text.casefold()
 
-        ultra_text = builder.build({"language": "中文", "reply_style": "ultra"})
-        assert "# Style" in ultra_text
-        assert "极简" in ultra_text
+        max_text = builder.build({"language": "中文", "effort": "max"})
+        assert "deepest available analysis" in max_text.casefold()
 
-    def test_reply_style_section_unknown_value_behaves_like_normal(self) -> None:
-        """An unregistered style must not crash or inject a directive."""
+    def test_unknown_effort_falls_back_to_high(self) -> None:
+        """An unregistered value must not crash or silently disable effort."""
         from app.agent_runtime.system_prompt import default_sections
 
         builder = SystemPromptBuilder()
         for section in default_sections():
             builder.add(section)
-        text = builder.build({"language": "中文", "reply_style": "galactic"})
-        assert "# Style" not in text
+        text = builder.build({"language": "中文", "effort": "galactic"})
+        assert "# Effort" in text
+        assert "balanced" in text.casefold()
 
     def test_identity_claims_screen_selection_only_when_evidence_exists(self) -> None:
         """普通文本对话不得谎称用户圈选了屏幕对象——那是 Stage 流才会

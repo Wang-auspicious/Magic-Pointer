@@ -40,8 +40,44 @@ assert(source.includes("actions.className = 'dshw-perm-ask-actions'"));
 assert(source.includes('host.replaceChildren(card)'));
 assert(!html.includes('id="stats-line"'), 'Claude composer has no second telemetry text row beneath its toolbar');
 assert(!source.includes('function renderStatsLine('), 'usage remains in the context control, not loose bottom text');
-assert.match(html, /id="composer-options-menu"[\s\S]*?id="composer-voice"[\s\S]*?<\/div>[\s\S]*?id="composer-context"/,
-  'voice remains real but moves under Extra; the Claude context ring is the only trailing icon');
+assert(html.includes('id="composer-effort"'), 'composer exposes the direct effort trigger');
+assert(html.includes('id="composer-effort-menu"'), 'composer exposes the direct five-level effort popup');
+assert(html.includes('id="composer-effort-label">Extra</span>'), 'Extra is the selected effort label');
+assert(!html.includes('id="composer-options"') && !html.includes('id="composer-style"'),
+  'the former response-style nesting is removed');
+assert(!html.includes('Response style'), 'effort is not presented as a writing style');
+assert.match(html, /id="composer-effort-menu"[^>]*><\/div>[\s\S]*?id="composer-voice"[\s\S]*?id="composer-context"/,
+  'voice is a separate trailing action after the direct effort popup');
+assert(source.includes('const effortLevels = (globalThis as { EffortLevels?: EffortLevelsModule }).EffortLevels!'));
+assert(source.includes("let composerEffort = 'xhigh'"));
+assert(source.includes('function openEffortMenu()'));
+assert(source.includes('positionAnchoredPopover('));
+assert(source.includes('closeStudioPopovers('));
+for (const selector of [
+  '.dshw-perm-row',
+  '.dshw-perm-row-glyph',
+  '.dshw-perm-row-text',
+  '.dshw-perm-check',
+]) {
+  assert(css.includes(selector), `missing complete popup row style: ${selector}`);
+}
+for (const selector of [
+  '.dshw-model-row',
+  '.dshw-model-name',
+  '.dshw-model-tag',
+  '.dshw-model-group',
+  '.dshw-model-note',
+]) {
+  assert(css.includes(selector), `missing complete model popup style: ${selector}`);
+}
+assert.match(css, /\.dshw-perm-check\s*\{[^}]*width:\s*16px[^}]*height:\s*16px/s,
+  'selected checks have explicit SVG dimensions');
+assert.match(css, /\.dshw-perm-row-glyph\s*\{[^}]*width:\s*20px[^}]*height:\s*20px/s,
+  'permission glyphs cannot fall back to intrinsic SVG dimensions');
+assert.match(css, /\.dshw-model-menu\s*\{[^}]*width:\s*280px/s,
+  'model names and capability tags receive the measured non-overlapping menu width');
+assert.match(css, /\.dshw-model-row\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) 16px/s,
+  'model rows reserve a stable trailing slot for the selected check');
 assert(html.includes('class="mp-context-track"') && html.includes('class="mp-context-value"'));
 assert(source.includes('const contextWindow = Number(currentModel?.contextWindow) || 0'));
 assert(source.includes("button.style.setProperty('--mp-context-progress', String(contextProgress))"));

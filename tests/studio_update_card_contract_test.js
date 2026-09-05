@@ -25,8 +25,12 @@ assert(data.includes('updateStatus():'));
 assert(data.includes('checkForUpdates():'));
 assert(data.includes('onUpdateStatus('));
 assert(studio.includes('function renderUpdateCard('));
-for (const state of ['checking', 'available', 'downloading', 'downloaded', 'error']) {
+for (const state of ['available', 'downloading', 'downloaded']) {
   assert(studio.includes(`case '${state}':`), `update card is missing ${state}`);
+}
+for (const state of ['checking', 'current', 'error']) {
+  assert(!studio.includes(`case '${state}':`),
+    `update card must remain hidden for transient/non-actionable ${state}`);
 }
 assert(studio.includes('Data.updateStatus()'));
 assert(studio.includes('Data.onUpdateStatus('));
@@ -36,5 +40,7 @@ assert.match(studio, /case 'downloading':[\s\S]*?heading = 'Downloading updateâ€
 assert(studio.includes('detail.hidden = !note'));
 assert.match(css, /\.mp-update-card > svg\s*\{[^}]*width:\s*16px[^}]*height:\s*16px/s);
 assert.match(css, /\.mp-account-footer > svg\s*\{[^}]*width:\s*14px[^}]*height:\s*14px/s);
+assert(main.includes("command === 'changelog'"));
+assert(main.includes('https://github.com/Wang-auspicious/Magic-Pointer/releases'));
 
 console.log('studio update card contract ok');

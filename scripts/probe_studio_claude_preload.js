@@ -146,7 +146,18 @@ const heatmap = Array.from({ length: 182 }, (_, index) => {
   return { date, messages: level, future: false };
 });
 
-const stats = {
+const daily = heatmap.map((entry, _index) => ({
+  date: entry.date,
+  inputTokens: entry.messages * 73_000,
+  outputTokens: entry.messages * 19_000,
+  totalTokens: entry.messages * 92_000,
+  messages: entry.messages,
+}));
+const modelRows = [
+  { modelId: 'claude-opus-5 1M', inputTokens: 1_720_000_000, outputTokens: 430_000_000, totalTokens: 2_150_000_000, turns: 214, share: 86 },
+  { modelId: 'claude-sonnet-4', inputTokens: 250_000_000, outputTokens: 100_000_000, totalTokens: 350_000_000, turns: 17, share: 14 },
+];
+const allStats = {
   sessions: 231,
   messages: 52_275,
   totalTokens: 2_500_000_000,
@@ -156,6 +167,38 @@ const stats = {
   peakHour: 16,
   favoriteModel: 'Opus 5',
   heatmap,
+  daily,
+  models: modelRows,
+};
+const stats = {
+  ...allStats,
+  ranges: {
+    all: allStats,
+    '30d': {
+      ...allStats,
+      sessions: 47,
+      messages: 8_412,
+      totalTokens: 388_000_000,
+      activeDays: 29,
+      currentStreak: 1,
+      longestStreak: 24,
+      heatmap: heatmap.slice(-30),
+      daily: daily.slice(-30),
+      models: modelRows.map((row) => ({ ...row, inputTokens: Math.round(row.inputTokens * .155), outputTokens: Math.round(row.outputTokens * .155), totalTokens: Math.round(row.totalTokens * .155) })),
+    },
+    '7d': {
+      ...allStats,
+      sessions: 12,
+      messages: 1_639,
+      totalTokens: 74_000_000,
+      activeDays: 7,
+      currentStreak: 1,
+      longestStreak: 7,
+      heatmap: heatmap.slice(-7),
+      daily: daily.slice(-7),
+      models: modelRows.map((row) => ({ ...row, inputTokens: Math.round(row.inputTokens * .03), outputTokens: Math.round(row.outputTokens * .03), totalTokens: Math.round(row.totalTokens * .03) })),
+    },
+  },
 };
 
 const projectEntries = {
@@ -254,6 +297,7 @@ const listeners = {
   show: [],
   card: [],
 };
+let selectedModel = 'claude-opus-5 1M';
 
 const ok = async () => ({ ok: true });
 
@@ -278,7 +322,7 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
   modelsCatalog: async () => ({
     ok: true,
     catalog: {
-      current: 'claude-opus-5 1M',
+      current: selectedModel,
       provider: 'Anthropic',
       source: 'probe fixture',
       groups: [{ id: 'anthropic', name: 'Anthropic', models: [
@@ -300,7 +344,10 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
     ],
     errors: [],
   }),
-  selectModel: async (model) => ({ ok: true, model }),
+  selectModel: async (model) => {
+    selectedModel = String(model);
+    return { ok: true, model: selectedModel };
+  },
   projects: {
     list: async () => emptyLanding ? [] : exactConversation
       ? [

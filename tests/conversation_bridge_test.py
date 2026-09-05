@@ -829,6 +829,40 @@ def test_permission_grants_from_the_payload_reach_the_loop(monkeypatch, tmp_path
     assert list(captured["permission_grant_once"]) == ["write_file"]
 
 
+def test_effort_from_payload_reaches_conversation_runtime(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    request_runtime: dict[str, object] = {}
+
+    def fake_answer(question, turns, obj, preset, **kwargs):
+        captured.update(kwargs)
+        return {"ok": True, "answer": "ok"}
+
+    monkeypatch.setattr(conversation_bridge, "answer_conversation", fake_answer)
+    monkeypatch.setattr(
+        conversation_bridge,
+        "read_bounded_json_payload",
+        lambda: {
+            "question": "认真分析",
+            "permissionPreset": "workspace-write",
+            "effort": "xhigh",
+            "modelRuntime": {"model": "reasoning-model"},
+        },
+    )
+    monkeypatch.setattr(conversation_bridge, "write_json", lambda value: None)
+
+    import contextlib
+
+    def fake_request_ai_config(value):
+        request_runtime.update(value)
+        return contextlib.nullcontext()
+
+    monkeypatch.setattr(conversation_bridge, "request_ai_config", fake_request_ai_config)
+
+    assert conversation_bridge.main() == 0
+    assert captured["effort"] == "xhigh"
+    assert request_runtime["effort"] == "xhigh"
+
+
 def test_thread_grant_upgrades_run_command_past_the_ask_gate() -> None:
     """线程 memo 必须把 run_command 的 ask 抬成 allow（授权的全部意义）。"""
     from app.agent_runtime.permission_modes import PermissionDecision, decide_effect

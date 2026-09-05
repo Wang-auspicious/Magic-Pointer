@@ -386,6 +386,70 @@ interface StudioSearchModule {
   searchStudioIndex(index: readonly StudioSearchItem[], query: unknown, limit?: number): StudioSearchItem[];
 }
 const studioSearchGlobals = (globalThis as { StudioSearch?: StudioSearchModule }).StudioSearch!;
+interface EffortOption {
+  value: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+  label: string;
+  description: string;
+}
+interface EffortLevelsModule {
+  EFFORT_LEVELS: readonly EffortOption[];
+  normalizeEffort(value: unknown): EffortOption['value'];
+  effortOption(value: unknown): EffortOption;
+}
+interface PopoverPositionModule {
+  placePopover(
+    trigger: { left: number; right: number; top: number; bottom: number },
+    popup: { width: number; height: number },
+    viewport: { width: number; height: number },
+  ): { left: number; top: number };
+}
+const effortLevels = (globalThis as { EffortLevels?: EffortLevelsModule }).EffortLevels!;
+const popoverPosition = (globalThis as { PopoverPosition?: PopoverPositionModule }).PopoverPosition!;
+
+const STUDIO_POPOVERS = [
+  ['composer-permission-menu', 'composer-permission'],
+  ['composer-model-menu', 'composer-model'],
+  ['composer-effort-menu', 'composer-effort'],
+  ['composer-usage-popover', 'composer-context'],
+  ['account-menu', 'account-footer'],
+] as const;
+
+function closeAnchoredPopover(popupId: string, triggerId: string) {
+  const popup = document.getElementById(popupId);
+  if (popup) {
+    popup.hidden = true;
+    popup.style.removeProperty('left');
+    popup.style.removeProperty('top');
+    popup.style.removeProperty('visibility');
+  }
+  document.getElementById(triggerId)?.setAttribute('aria-expanded', 'false');
+}
+
+function closeStudioPopovers(exceptPopupId = '') {
+  for (const [popupId, triggerId] of STUDIO_POPOVERS) {
+    if (popupId !== exceptPopupId) closeAnchoredPopover(popupId, triggerId);
+  }
+}
+
+function positionAnchoredPopover(popupId: string, triggerId: string): HTMLElement | null {
+  const popup = document.getElementById(popupId);
+  const trigger = document.getElementById(triggerId);
+  if (!popup || !trigger || !popoverPosition) return null;
+  closeStudioPopovers(popupId);
+  popup.style.visibility = 'hidden';
+  popup.hidden = false;
+  const triggerRect = trigger.getBoundingClientRect();
+  const point = popoverPosition.placePopover(
+    triggerRect,
+    { width: popup.offsetWidth, height: popup.offsetHeight },
+    { width: window.innerWidth, height: window.innerHeight },
+  );
+  popup.style.left = `${point.left}px`;
+  popup.style.top = `${point.top}px`;
+  popup.style.removeProperty('visibility');
+  trigger.setAttribute('aria-expanded', 'true');
+  return popup;
+}
 interface StudioSubagentStep {
   index: number;
   tool: string;
@@ -767,10 +831,6 @@ function renderUpdateCard(update: MagicPointerUpdateState) {
   let note = '';
   let actionable = false;
   switch (state) {
-    case 'checking':
-      heading = 'Checking for updates…';
-      note = 'GitHub Releases';
-      break;
     case 'available':
       heading = `${update.version || 'Update'} available`;
       note = 'Click to download';
@@ -783,11 +843,6 @@ function renderUpdateCard(update: MagicPointerUpdateState) {
     case 'downloaded':
       heading = 'Relaunch to update';
       note = update.version ? `v${String(update.version).replace(/^v/, '')}` : '';
-      break;
-    case 'error':
-      heading = 'Update failed';
-      note = String(update.message || 'Click to retry');
-      actionable = true;
       break;
     default:
       card.hidden = true;
@@ -932,7 +987,8 @@ document.getElementById('composer-context')?.addEventListener('click', (event) =
   const popover = document.getElementById('composer-usage-popover');
   if (!popover) return;
   const open = popover.hidden;
-  popover.hidden = !open;
+  if (open) positionAnchoredPopover('composer-usage-popover', 'composer-context');
+  else closeAnchoredPopover('composer-usage-popover', 'composer-context');
   button.setAttribute('aria-expanded', String(open));
 });
 
@@ -977,16 +1033,6 @@ async function renderStudioHome() {
     })),
     onOpenConversation: (id) => { void openConversation(id); },
   });
-  const note = document.getElementById('studio-home-stats-note');
-  if (note) {
-    /* Claude's reference compares against the 158,662-token text of Pride and
-       Prejudice; keeping the denominator explicit makes the displayed ratio
-       stable while the overview's total remains the real usage value. */
-    const books = stats ? Math.max(1, Math.round(Number(stats.totalTokens || 0) / 158_662)) : 0;
-    note.textContent = stats
-      ? `You've used ~${books}× more tokens than Pride and Prejudice.`
-      : 'Stats unavailable. You can still start a task.';
-  }
 }
 
 async function refreshGlobalSearchIndex() {
@@ -1610,6 +1656,47 @@ async function executeWindowMenuCommand(command: string, origin?: HTMLElement) {
   await Data.windowCommand(command);
 }
 
+function closeAccountMenu() {
+  closeAnchoredPopover('account-menu', 'account-footer');
+}
+
+function openAccountMenu() {
+  const menu = positionAnchoredPopover('account-menu', 'account-footer');
+  requestAnimationFrame(() => menu?.querySelector<HTMLButtonElement>('button')?.focus());
+}
+
+async function executeAccountCommand(command: string) {
+  closeAccountMenu();
+  if (command === 'settings') { show('settings'); return; }
+  if (command === 'models') {
+    show('settings');
+    requestAnimationFrame(() => {
+      document.querySelector<HTMLElement>('[data-settings-page="models-agents"]')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    return;
+  }
+  if (command === 'updates') { await Data.checkForUpdates(); return; }
+  if (command === 'changelog') { await Data.windowCommand('changelog'); return; }
+  if (command === 'shortcuts' || command === 'about') {
+    await executeWindowMenuCommand(command);
+  }
+}
+
+document.getElementById('account-footer')?.addEventListener('click', (event) => {
+  event.stopPropagation();
+  const menu = document.getElementById('account-menu');
+  if (menu?.hidden) openAccountMenu();
+  else closeAccountMenu();
+});
+
+document.getElementById('account-menu')?.addEventListener('click', (event) => {
+  const row = (event.target as Element | null)?.closest<HTMLElement>('[data-account-command]');
+  if (!row) return;
+  event.stopPropagation();
+  void executeAccountCommand(row.dataset.accountCommand || '');
+});
+
 document.getElementById('window-menu-popover')?.addEventListener('click', (event) => {
   const command = (event.target as Element | null)?.closest<HTMLElement>('[data-window-command]');
   if (command) void executeWindowMenuCommand(command.dataset.windowCommand || '', command);
@@ -1633,26 +1720,24 @@ document.addEventListener('keydown', (event) => {
       'window-menu-popover',
       'magic-brain-popover',
       'composer-add-menu',
-      'composer-style-menu',
       'composer-permission-menu',
       'composer-model-menu',
-      'composer-options-menu',
+      'composer-effort-menu',
       'composer-usage-popover',
+      'account-menu',
     ].some((id) => document.getElementById(id)?.hidden === false)
       || Boolean(document.getElementById('thread-menu'))
       || Boolean(document.querySelector('.side-session-menu:not([hidden])'));
     closeWindowMenu();
     closeThreadMenu();
     closeSlashMenu();
-    closeStyleMenu();
     closePermissionMenu();
     closeModelMenu();
+    closeEffortMenu();
+    closeAccountMenu();
     const brain = document.getElementById('magic-brain-popover');
     if (brain) brain.hidden = true;
     document.getElementById('magic-brain-toggle')?.setAttribute('aria-expanded', 'false');
-    const optionsMenu = document.getElementById('composer-options-menu');
-    if (optionsMenu) optionsMenu.hidden = true;
-    document.getElementById('composer-options')?.setAttribute('aria-expanded', 'false');
     const usagePopover = document.getElementById('composer-usage-popover');
     if (usagePopover) usagePopover.hidden = true;
     document.getElementById('composer-context')?.setAttribute('aria-expanded', 'false');
@@ -2556,6 +2641,7 @@ document.addEventListener('click', e => {
   const target = e.target as Element | null;
   if (!target) return;
   if (!target.closest('#window-menu-popover') && !target.closest('#app-menu')) closeWindowMenu();
+  if (!target.closest('#account-menu') && !target.closest('#account-footer')) closeAccountMenu();
   if (!target.closest('#magic-brain-popover') && !target.closest('#magic-brain-toggle')) {
     const brain = document.getElementById('magic-brain-popover');
     if (brain) brain.hidden = true;
@@ -2598,6 +2684,12 @@ document.addEventListener('click', e => {
     closeModelMenu();
   }
 
+  const effortMenu = document.getElementById('composer-effort-menu');
+  if (effortMenu && !effortMenu.hidden && !target.closest('#composer-effort-menu')
+      && !target.closest('#composer-effort')) {
+    closeEffortMenu();
+  }
+
   /* 纸夹是真附件；斜杠目录由输入 `/` 唤起。 */
   const addBtn = target.closest<HTMLElement>('#composer-add');
   const addMenu = document.getElementById('composer-add-menu');
@@ -2624,19 +2716,6 @@ document.addEventListener('click', e => {
       fitComposer(textarea);
     }
     return;
-  }
-
-  const optionsButton = target.closest<HTMLElement>('#composer-options');
-  const optionsMenu = document.getElementById('composer-options-menu');
-  if (optionsButton && optionsMenu) {
-    const open = optionsMenu.hidden;
-    optionsMenu.hidden = !open;
-    optionsButton.setAttribute('aria-expanded', String(open));
-    return;
-  }
-  if (optionsMenu && !optionsMenu.hidden && !target.closest('#composer-options-menu')) {
-    optionsMenu.hidden = true;
-    document.getElementById('composer-options')?.setAttribute('aria-expanded', 'false');
   }
 
   const projectNew = target.closest<HTMLElement>('[data-project-new]');
@@ -2911,45 +2990,45 @@ function bindSlashMenu() {
 }
 bindSlashMenu();
 
-/* ---- 回复风格芯片（caveman 式语量控制：极简/简洁/正常/古典，自选调节） ---- */
-let composerStyle = 'normal';
-const REPLY_STYLES = [
-  { value: 'ultra', label: '极简', description: '短句直说，能省则省；技术细节不丢' },
-  { value: 'compact', label: '简洁', description: '去客套铺垫，保留完整句' },
-  { value: 'normal', label: '正常', description: '默认回复风格（不带任何指令）' },
-  { value: 'terse', label: '干脆', description: '省略口头语，直说结论' },
-  { value: 'wenyan', label: '文言', description: '文言文回答，古雅精简' },
-] as const;
+/* ---- Claude effort：模型工作深度，不是回复文风。 ---- */
+let composerEffort = 'xhigh';
 
-function styleOption(value: string) {
-  return REPLY_STYLES.find(s => s.value === value) || REPLY_STYLES[2];
-}
-
-function renderStyleChip() {
-  const btn = document.getElementById('composer-style');
-  const glyph = document.getElementById('composer-style-glyph');
-  const label = document.getElementById('composer-style-label');
-  const option = styleOption(composerStyle);
-  if (btn instanceof HTMLButtonElement) btn.title = `回复风格：${option.label} — ${option.description}`;
-  if (glyph) glyph.textContent = option.value === 'normal' ? '≡' : option.label[0];
+function renderEffortChip() {
+  const button = document.getElementById('composer-effort');
+  const label = document.getElementById('composer-effort-label');
+  const option = effortLevels.effortOption(composerEffort);
   if (label) label.textContent = option.label;
+  if (button instanceof HTMLButtonElement) {
+    button.title = `Reasoning effort: ${option.label} — ${option.description}`;
+    button.setAttribute('aria-label', `Reasoning effort: ${option.label}`);
+  }
 }
 
-function closeStyleMenu() {
-  const menu = document.getElementById('composer-style-menu');
-  document.getElementById('composer-style')?.setAttribute('aria-expanded', 'false');
-  if (menu) menu.hidden = true;
+function closeEffortMenu() {
+  closeAnchoredPopover('composer-effort-menu', 'composer-effort');
 }
 
-function openStyleMenu() {
-  const menu = document.getElementById('composer-style-menu');
+function selectedCheck(): SVGSVGElement {
+  const check = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  check.setAttribute('aria-hidden', 'true');
+  check.classList.add('dshw-perm-check');
+  const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+  use.setAttribute('href', '#ic-check');
+  check.appendChild(use);
+  return check;
+}
+
+function openEffortMenu() {
+  const menu = document.getElementById('composer-effort-menu');
   if (!menu) return;
-  menu.replaceChildren(...REPLY_STYLES.map(option => {
+  menu.replaceChildren(...effortLevels.EFFORT_LEVELS.map((option) => {
+    const selected = option.value === composerEffort;
     const row = document.createElement('button');
     row.type = 'button';
-    row.className = 'dshw-perm-row' + (option.value === composerStyle ? ' is-active' : '');
+    row.className = `dshw-perm-row${selected ? ' is-active' : ''}`;
     row.setAttribute('role', 'option');
-    row.dataset.styleValue = option.value;
+    row.setAttribute('aria-selected', String(selected));
+    row.dataset.effortValue = option.value;
     const text = document.createElement('span');
     text.className = 'dshw-perm-row-text';
     const name = document.createElement('span');
@@ -2957,38 +3036,29 @@ function openStyleMenu() {
     const desc = document.createElement('small');
     desc.textContent = option.description;
     text.append(name, desc);
-    row.append(text);
-    if (option.value === composerStyle) {
-      const check = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-      check.setAttribute('aria-hidden', 'true');
-      check.classList.add('dshw-perm-check');
-      const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
-      use.setAttribute('href', '#ic-check');
-      check.appendChild(use);
-      row.appendChild(check);
-    }
+    row.appendChild(text);
+    if (selected) row.appendChild(selectedCheck());
     return row;
   }));
-  menu.hidden = false;
-  document.getElementById('composer-style')?.setAttribute('aria-expanded', 'true');
+  const opened = positionAnchoredPopover('composer-effort-menu', 'composer-effort');
+  requestAnimationFrame(() => opened?.querySelector<HTMLButtonElement>('[aria-selected="true"]')?.focus());
 }
 
-function bindStyleChip() {
-  renderStyleChip();
-  document.getElementById('composer-style')?.addEventListener('click', e => {
-    e.stopPropagation();
-    const menu = document.getElementById('composer-style-menu');
-    closePermissionMenu();
-    if (menu?.hidden) openStyleMenu();
-    else closeStyleMenu();
+function bindEffortChip() {
+  renderEffortChip();
+  document.getElementById('composer-effort')?.addEventListener('click', (event) => {
+    event.stopPropagation();
+    const menu = document.getElementById('composer-effort-menu');
+    if (menu?.hidden) openEffortMenu();
+    else closeEffortMenu();
   });
-  document.getElementById('composer-style-menu')?.addEventListener('click', e => {
-    const row = (e.target as Element | null)?.closest<HTMLElement>('[data-style-value]');
+  document.getElementById('composer-effort-menu')?.addEventListener('click', (event) => {
+    const row = (event.target as Element | null)?.closest<HTMLElement>('[data-effort-value]');
     if (!row) return;
-    e.stopPropagation();
-    composerStyle = row.dataset.styleValue || 'normal';
-    closeStyleMenu();
-    renderStyleChip();
+    event.stopPropagation();
+    composerEffort = effortLevels.normalizeEffort(row.dataset.effortValue);
+    closeEffortMenu();
+    renderEffortChip();
   });
 }
 
@@ -3040,9 +3110,7 @@ function renderPermissionChip() {
 }
 
 function closePermissionMenu() {
-  const menu = document.getElementById('composer-permission-menu');
-  document.getElementById('composer-permission')?.setAttribute('aria-expanded', 'false');
-  if (menu) menu.hidden = true;
+  closeAnchoredPopover('composer-permission-menu', 'composer-permission');
 }
 
 function openPermissionMenu() {
@@ -3051,8 +3119,10 @@ function openPermissionMenu() {
   menu.replaceChildren(...permPresets.PRESETS.map(option => {
     const row = document.createElement('button');
     row.type = 'button';
-    row.className = 'dshw-perm-row' + (option.value === composerPreset ? ' is-active' : '');
+    const selected = option.value === composerPreset;
+    row.className = 'dshw-perm-row' + (selected ? ' is-active' : '');
     row.setAttribute('role', 'option');
+    row.setAttribute('aria-selected', String(selected));
     row.dataset.permValue = option.value;
     row.title = option.description;
     const glyph = document.createElement('span');
@@ -3066,19 +3136,11 @@ function openPermissionMenu() {
     desc.textContent = option.description;
     text.append(name, desc);
     row.append(glyph, text);
-    if (option.value === composerPreset) {
-      const check = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-      check.setAttribute('aria-hidden', 'true');
-      check.classList.add('dshw-perm-check');
-      const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
-      use.setAttribute('href', '#ic-check');
-      check.appendChild(use);
-      row.appendChild(check);
-    }
+    if (selected) row.appendChild(selectedCheck());
     return row;
   }));
-  menu.hidden = false;
-  document.getElementById('composer-permission')?.setAttribute('aria-expanded', 'true');
+  const opened = positionAnchoredPopover('composer-permission-menu', 'composer-permission');
+  requestAnimationFrame(() => opened?.querySelector<HTMLButtonElement>('[aria-selected="true"]')?.focus());
 }
 
 /* Full access 确认门：勾选“已了解风险”才能启用（DSH RiskConfirmation 同款语义） */
@@ -3263,7 +3325,7 @@ function renderPermissionAsk() {
   host.replaceChildren(card);
 }
 
-bindStyleChip();
+bindEffortChip();
 bindPermissionChip();
 /* DSH 输入卡：textarea 随内容长高，14 行封顶（336px，InputBar 同款上限） */
 function fitComposer(ta: HTMLTextAreaElement) {
@@ -3302,9 +3364,7 @@ async function refreshComposerModel() {
 }
 
 function closeModelMenu() {
-  const menu = document.getElementById('composer-model-menu');
-  document.getElementById('composer-model')?.setAttribute('aria-expanded', 'false');
-  if (menu) menu.hidden = true;
+  closeAnchoredPopover('composer-model-menu', 'composer-model');
 }
 
 async function openModelMenu() {
@@ -3313,8 +3373,7 @@ async function openModelMenu() {
   // 先把浮层画出来，再刷新目录。模型目录是 I/O，不能挟持一次点击的
   // 可见反馈；否则网关慢半秒，用户就会连续点击并在返回瞬间把菜单关掉。
   menu.replaceChildren(...modelMenuRows(modelCatalog));
-  menu.hidden = false;
-  document.getElementById('composer-model')?.setAttribute('aria-expanded', 'true');
+  positionAnchoredPopover('composer-model-menu', 'composer-model');
   let catalog: MagicPointerModelCatalog | null = null;
   try {
     catalog = await Data.models();
@@ -3332,6 +3391,7 @@ async function openModelMenu() {
   }
   modelCatalog = catalog;
   menu.replaceChildren(...modelMenuRows(catalog));
+  positionAnchoredPopover('composer-model-menu', 'composer-model');
 }
 
 function modelMenuRows(catalog: MagicPointerModelCatalog | null): HTMLElement[] {
@@ -3361,15 +3421,9 @@ function modelMenuRows(catalog: MagicPointerModelCatalog | null): HTMLElement[] 
         name.appendChild(tag);
       }
       row.appendChild(name);
-      if (entry.id === catalog.current) {
-        const check = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-        check.setAttribute('aria-hidden', 'true');
-        check.classList.add('dshw-perm-check');
-        const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
-      use.setAttribute('href', '#ic-check');
-        check.appendChild(use);
-        row.appendChild(check);
-      }
+      const selected = entry.id === catalog.current;
+      row.setAttribute('aria-selected', String(selected));
+      if (selected) row.appendChild(selectedCheck());
       rows.push(row);
     }
   }
@@ -3799,7 +3853,7 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
         composerPreset,
         requestId,
         activeProjectRoot,
-        composerStyle,
+        composerEffort,
         pendingPermissionChoice || undefined,
       );
       pendingPermissionChoice = null;

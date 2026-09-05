@@ -60,6 +60,7 @@ ensure_root_on_path()
 ROOT = Path(__file__).resolve().parents[1]
 
 from app.actions.office import clean_replacement_text  # noqa: E402
+from app.agent_runtime.effort import normalize_effort  # noqa: E402
 from app.ai_client import ask_text_model, request_ai_config  # noqa: E402
 from app.governance.latency_budget import (  # noqa: E402
     BudgetPolicy,
@@ -922,7 +923,7 @@ def answer_conversation(
     *,
     workspace_root: str = "",
     clock: PhaseClock | None = None,
-    reply_style: str = "normal",
+    effort: str = "high",
     conversation_id: str = "",
     agent_session_id: str = "",
     permission_grants: Sequence[str] | tuple = (),
@@ -1048,7 +1049,7 @@ def answer_conversation(
             "process_name": str(window.get("app") or ""),
         },
         "command": agent_prompt,
-        "reply_style": reply_style,
+        "effort": normalize_effort(effort),
     }
 
     # 后台 job 完成推送（Hermes notify_on_complete）：cell 先进 runtime，
@@ -1352,16 +1353,22 @@ def main() -> int:
     if permission_preset not in PRESETS:
         write_json({"ok": False, "error": f"未知权限预设：{permission_preset}（可用：{', '.join(PRESETS)}）"})
         return 2
-    reply_style = str(payload.get("replyStyle") or "normal").strip().lower()[:20]
+    effort = normalize_effort(payload.get("effort"))
+    model_runtime = (
+        dict(payload.get("modelRuntime"))
+        if isinstance(payload.get("modelRuntime"), dict)
+        else {}
+    )
+    model_runtime["effort"] = effort
 
-    with request_ai_config(payload.get("modelRuntime")):
+    with request_ai_config(model_runtime):
         result = answer_conversation(
             str(payload.get("question") or ""),
             payload.get("turns") if isinstance(payload.get("turns"), list) else [],
             payload.get("object") if isinstance(payload.get("object"), dict) else {},
             permission_preset,
             workspace_root=str(payload.get("workspaceRoot") or ""),
-            reply_style=reply_style,
+            effort=effort,
             conversation_id=str(payload.get("conversationId") or ""),
             agent_session_id=str(payload.get("agentSessionId") or ""),
             # 权限授权条的三个通道（本会话总是允许 / 仅这一次 / 拒绝）。

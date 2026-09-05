@@ -15,6 +15,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Any, Protocol
 
+from app.agent_runtime.effort import effort_instruction
+
 __all__ = ["PromptSection", "SystemPromptBuilder", "DELIVER_SYSTEM_PROMPT"]
 
 SectionRender = Callable[[dict[str, Any]], str | None]
@@ -253,34 +255,12 @@ def default_sections() -> list[Section]:
         value = str(ctx.get("pointing_instruction") or "").strip()
         return value or None
 
-    # Reply-style directives (MP's own cabal of the caveman skill): a
-    # user-selectable verbosity control that only injects text when a
-    # non-default style is requested. The default is silence — normal
-    # reply style must not pay tokens for a directive that says "be
-    # normal". Every directive keeps the technical-accuracy floor: code,
-    # file paths, numbers and tool names survive verbatim in every style.
-    _REPLY_STYLES: dict[str, str] = {
-        "compact": (
-            "回复要简洁：去客套、铺垫与重复；保留完整句子与全部技术细节"
-            "（代码、文件名、数字、专有名称原样）。"
-        ),
-        "ultra": (
-            "回复要极简：能用短句就不用长句，能省则省；但技术术语、代码、"
-            "文件名与数字必须原样保留，不得因省略而失真。"
-        ),
-        "terse": (
-            "回复要干脆：省略口头语与客套，直说结论；保留全部事实与技术"
-            "细节，不能为了短而丢信息。"
-        ),
-        "wenyan": (
-            "回复用文言文，用词精简古雅；技术术语、代码与数字仍用现代"
-            "书面语原样保留。"
-        ),
-    }
-
-    def style(ctx: dict[str, Any]) -> str | None:
-        name = str(ctx.get("reply_style") or "normal").strip().lower()
-        return _REPLY_STYLES.get(name)
+    def effort(ctx: dict[str, Any]) -> str:
+        # This is work-depth policy, deliberately independent from the voice
+        # and answer formatting sections. Provider-native reasoning effort is
+        # optional; this section keeps every supported backend semantically
+        # honest when it cannot accept a native field.
+        return effort_instruction(ctx.get("effort"))
 
     return [
         Section("identity", "Identity", identity),
@@ -294,7 +274,7 @@ def default_sections() -> list[Section]:
         Section("skills", "Skills", skills, dynamic=True),
         Section("language", "Language", language, dynamic=True),
         Section("pointing", "Pointing", pointing, dynamic=True),
-        Section("style", "Style", style, dynamic=True),
+        Section("effort", "Effort", effort, dynamic=True),
     ]
 
 

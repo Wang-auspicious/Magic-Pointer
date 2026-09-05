@@ -10,6 +10,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Iterator
 
+from app.agent_runtime.effort import normalize_effort
 from app.governance.cancellation import CancelledError
 from app.model_health import (
     record_failure,
@@ -87,7 +88,14 @@ def request_ai_config(value: object) -> Iterator[None]:
     raw = value if isinstance(value, dict) else {}
     request_config = {
         key: str(raw.get(key) or "").strip()
-        for key in ("provider", "credential", "baseUrl", "model", "apiMode")
+        for key in (
+            "provider",
+            "credential",
+            "baseUrl",
+            "model",
+            "apiMode",
+            "effort",
+        )
     }
     _REQUEST_AI_CONFIG = request_config if any(request_config.values()) else None
     try:
@@ -122,6 +130,13 @@ def get_ai_api_mode(base_url: str | None = None) -> str:
     if mode in {"chat-completions", "openai"}:
         return "chat-completions"
     return "messages" if "/anthropic" in str(base_url or "").casefold() else "chat-completions"
+
+
+def get_ai_effort() -> str:
+    """Reasoning effort bound to the current request, with High as default."""
+    if _REQUEST_AI_CONFIG:
+        return normalize_effort(_REQUEST_AI_CONFIG.get("effort"))
+    return "high"
 
 
 def get_vision_model(text_model: str) -> str:
@@ -231,6 +246,7 @@ def _text_completion_payload(
     system_prompt: str,
     max_tokens: int,
     api_mode: str,
+    effort: object | None = None,
 ) -> dict:
     if api_mode == "messages":
         return {
@@ -240,7 +256,7 @@ def _text_completion_payload(
             "max_tokens": max(1, int(max_tokens)),
             "thinking": {"type": "disabled"},
         }
-    return {
+    payload = {
         "model": model,
         "messages": [
             {"role": "system", "content": system_prompt},
@@ -253,6 +269,19 @@ def _text_completion_payload(
         # that reject the param get a stripped retry (see ask_text_model).
         "thinking": {"type": "disabled"},
     }
+    if effort is not None:
+        payload["reasoning_effort"] = normalize_effort(effort)
+    return payload
+
+
+def _without_optional_request_fields(payload: dict) -> dict | None:
+    """Drop optional reasoning controls for one compatibility retry."""
+    stripped = {
+        key: value
+        for key, value in payload.items()
+        if key not in {"thinking", "reasoning_effort"}
+    }
+    return stripped if stripped != payload else None
 
 
 def _text_completion_response(data: dict, api_mode: str) -> str:
@@ -486,6 +515,7 @@ def ask_text_model(
             system_prompt=system_prompt or "你是 Magic Pointer 的本地选区助手。只基于提供的真实应用上下文回答，不要编造。",
             max_tokens=max_tokens,
             api_mode=api_mode,
+            effort=get_ai_effort(),
         )
         last_exc: Exception | None = None
         request_timed_out = False
@@ -503,11 +533,11 @@ def ask_text_model(
                     record_failure(status=response.status_code, detail=response.text[:300], model=model, base_url=base_url)
                     continue
                 if response.status_code >= 400:
-                    # A gateway that rejects the thinking param must still
-                    # work: strip it and retry once before giving up.
-                    if "thinking" in payload:
-                        stripped = dict(payload)
-                        del stripped["thinking"]
+                    # Optional reasoning controls are best-effort transport
+                    # hints. The Effort prompt section remains authoritative,
+                    # so an incompatible gateway gets one stripped retry.
+                    stripped = _without_optional_request_fields(payload)
+                    if stripped is not None:
                         try:
                             with _httpx_client(httpx, timeout=budget) as client:
                                 response = client.post(endpoint, headers=headers, json=stripped)

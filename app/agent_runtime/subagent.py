@@ -175,6 +175,7 @@ def register_delegate_tool(
         child_client = llm_provider.create_client(
             system_prompt=_SUBAGENT_SYSTEM_PROMPT,
             max_tokens=max_tokens,
+            effort="high",
         )
         publish("running")
         try:

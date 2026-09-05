@@ -73,7 +73,7 @@ declare global {
     lastOpenedAt?: number;
   }
 
-  interface MagicPointerHomeStats {
+  interface MagicPointerHomeStatsSlice {
     sessions: number;
     messages: number;
     totalTokens: number;
@@ -83,6 +83,29 @@ declare global {
     peakHour: number | null;
     favoriteModel: string | null;
     heatmap: Array<{ date: string; messages: number; future: boolean }>;
+    daily: Array<{
+      date: string;
+      inputTokens: number;
+      outputTokens: number;
+      totalTokens: number;
+      messages: number;
+    }>;
+    models: Array<{
+      modelId: string;
+      inputTokens: number;
+      outputTokens: number;
+      totalTokens: number;
+      turns: number;
+      share: number;
+    }>;
+  }
+
+  interface MagicPointerHomeStats extends MagicPointerHomeStatsSlice {
+    ranges: {
+      all: MagicPointerHomeStatsSlice;
+      '30d': MagicPointerHomeStatsSlice;
+      '7d': MagicPointerHomeStatsSlice;
+    };
   }
 
   interface MagicPointerCard {
@@ -331,7 +354,7 @@ declare global {
       stats?(): Promise<MagicPointerHomeStats | null>;
       get(id: unknown): Promise<MagicPointerConversation | undefined>;
       branch?(payload: { id?: unknown; turnIndex?: unknown }): Promise<{ ok?: boolean; conversation?: MagicPointerConversation; error?: string }>;
-      send(payload: { conversationId?: string | null; question: string; permissionPreset?: string; requestId?: string; workspaceRoot?: string; replyStyle?: string; permissionGrant?: string; permissionDeny?: string; permissionGrantOnce?: string }): Promise<Record<string, any>>;
+      send(payload: { conversationId?: string | null; question: string; permissionPreset?: string; requestId?: string; workspaceRoot?: string; effort?: string; permissionGrant?: string; permissionDeny?: string; permissionGrantOnce?: string }): Promise<Record<string, any>>;
       pickWorkspace?(): Promise<{ ok?: boolean; canceled?: boolean; path?: string; error?: string }>;
       export?(id: unknown): Promise<{ ok?: boolean; canceled?: boolean; path?: string; error?: string }>;
       rename?(payload: { id?: unknown; title?: unknown }): Promise<{ ok?: boolean; title?: string; error?: string }>;
@@ -470,7 +493,7 @@ declare global {
     conversationStats(): Promise<MagicPointerHomeStats | null>;
     conversation(id: string): Promise<MagicPointerConversation | undefined>;
     branchConversation(id: string, turnIndex: number): Promise<{ ok?: boolean; conversation?: MagicPointerConversation; error?: string }>;
-    sendConversation(conversationId: string | null, question: string, permissionPreset?: string, requestId?: string, workspaceRoot?: string, replyStyle?: string, permission?: { grant?: string; deny?: string; once?: string }): Promise<Record<string, any>>;
+    sendConversation(conversationId: string | null, question: string, permissionPreset?: string, requestId?: string, workspaceRoot?: string, effort?: string, permission?: { grant?: string; deny?: string; once?: string }): Promise<Record<string, any>>;
     pickWorkspace(): Promise<{ ok?: boolean; canceled?: boolean; path?: string; error?: string }>;
     exportConversation(id: string): Promise<{ ok?: boolean; canceled?: boolean; path?: string; error?: string }>;
     renameConversation(id: string, title: string): Promise<{ ok?: boolean; title?: string; error?: string }>;
@@ -883,9 +906,9 @@ const Data: MagicPointerDataApi = {
     return bridge()!.conversations.branch!({ id, turnIndex });
   },
 
-  async sendConversation(conversationId: string | null, question: string, permissionPreset?: string, requestId?: string, workspaceRoot?: string, replyStyle?: string, permission?: { grant?: string; deny?: string; once?: string }): Promise<Record<string, any>> {
+  async sendConversation(conversationId: string | null, question: string, permissionPreset?: string, requestId?: string, workspaceRoot?: string, effort?: string, permission?: { grant?: string; deny?: string; once?: string }): Promise<Record<string, any>> {
     if (!hasBridge()) return { ok: false, error: '请在 Magic Pointer 应用里发送。' };
-    return bridge()!.conversations.send({ conversationId, question, permissionPreset: permissionPreset || 'workspace-write', requestId, workspaceRoot, replyStyle: replyStyle || 'normal', permissionGrant: permission?.grant, permissionDeny: permission?.deny, permissionGrantOnce: permission?.once });
+    return bridge()!.conversations.send({ conversationId, question, permissionPreset: permissionPreset || 'workspace-write', requestId, workspaceRoot, effort: effort || 'high', permissionGrant: permission?.grant, permissionDeny: permission?.deny, permissionGrantOnce: permission?.once });
   },
 
   async pickWorkspace(): Promise<{ ok?: boolean; canceled?: boolean; path?: string; error?: string }> {

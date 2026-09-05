@@ -91,7 +91,7 @@ assert.match(shell, /\.mp-home-stat-grid\s*\{[^}]*margin-top:\s*12px/s);
 assert.match(shell, /\.mp-home-stat\s*\{[^}]*background:\s*var\(--mp-panel-subtle\)/s);
 assert.match(shell, /\.mp-home-heatmap\s*\{[^}]*height:\s*120px/s);
 assert.match(shell, /\.mp-home-heatmap\s*\{[^}]*margin-top:\s*6px/s);
-assert.match(shell, /\.mp-home-heatmap i\s*\{[^}]*background:\s*var\(--mp-panel-subtle\)/s);
+assert.match(shell, /\.mp-home-heatmap-cell\s*\{[^}]*background:\s*var\(--mp-panel-subtle\)/s);
 for (const [token, value] of [
   ['--mp-repository-surface', '#F2F2F1'],
   ['--mp-heat-level-1', '#86ACEA'],
@@ -101,7 +101,7 @@ for (const [token, value] of [
 ]) {
   assert(tokens.includes(`${token}: ${value}`), `measured Claude token missing: ${token}`);
 }
-assert.match(shell, /\.mp-home-heatmap i\[data-level="1"\]\s*\{[^}]*background:\s*var\(--mp-heat-level-1\);\s*opacity:\s*1/s);
+assert.match(shell, /\.mp-home-heatmap-cell\[data-level="1"\]\s*\{[^}]*background:\s*var\(--mp-heat-level-1\);\s*opacity:\s*1/s);
 assert.match(chat, /\.mp-repository-context\s*\{[^}]*background:\s*var\(--mp-repository-surface\)/s,
   'repository bar must consume its measured theme token without an inline fallback');
 assert.match(shell, /\.mp-home-stats-note\s*\{[^}]*margin:\s*10px 0 0/s);

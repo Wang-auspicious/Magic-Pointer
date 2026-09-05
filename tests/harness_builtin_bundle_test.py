@@ -486,9 +486,10 @@ class Client:
 
 class Provider:
     used_backend = "fake.plugin.llm"
-    def create_client(self, *, system_prompt, max_tokens):
+    def create_client(self, *, system_prompt, max_tokens, effort):
         assert system_prompt
         assert max_tokens > 0
+        assert effort in {"low", "medium", "high", "xhigh", "max"}
         return Client()
 
 def apply(ctx, config):
@@ -604,22 +605,20 @@ def test_disabled_row_skips_its_registration():
     report.ctx.unload()
 
 
-def test_reply_style_reaches_the_prompt_context() -> None:
-    """作曲家的语量芯片必须真的改系统提示。
-
-    reply_style 一路从 renderer 传到 model-client 的 resolved_config，然后
-    ``_apply_model_client`` 建 prompt context 时把它丢了——五档芯片对模型
-    完全不可见（Style section 的三个单测只测 builder，测不到这段接线）。
-    """
-    report = boot_loop_context(_runtime(command="随便问问", reply_style="ultra"))
+def test_effort_reaches_prompt_client_and_request_header() -> None:
+    """Composer effort must alter both prompt semantics and native transport."""
+    report = boot_loop_context(_runtime(command="随便问问", effort="xhigh"))
     prompt = report.ctx.get("model_request_header")["systemPrompt"]
-    assert "# Style" in prompt, "ultra 档必须注入 Style section"
-    assert "极简" in prompt
+    assert "# Effort" in prompt
+    assert "thorough" in prompt.casefold()
+    assert report.ctx.get("model_request_header")["effort"] == "xhigh"
+    assert report.ctx.get("model_client")._backend.effort == "xhigh"
     report.ctx.unload()
 
-    normal = boot_loop_context(_runtime(command="随便问问", reply_style="normal"))
-    assert "# Style" not in normal.ctx.get("model_request_header")["systemPrompt"]
-    normal.ctx.unload()
+    fallback = boot_loop_context(_runtime(command="随便问问", effort="bogus"))
+    assert fallback.ctx.get("model_request_header")["effort"] == "high"
+    assert "balanced" in fallback.ctx.get("model_request_header")["systemPrompt"].casefold()
+    fallback.ctx.unload()
 
 
 def test_pointing_instruction_reaches_prompt_only_when_requested() -> None:

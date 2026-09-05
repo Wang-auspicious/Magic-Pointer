@@ -15,9 +15,23 @@ for (const id of [
   'global-search-results',
   'mode-work',
   'mode-design',
+  'account-footer',
+  'account-menu',
 ]) {
   assert(html.includes(`id="${id}"`), `navigation control missing: ${id}`);
 }
+
+for (const command of ['settings', 'models', 'updates', 'changelog', 'shortcuts', 'about']) {
+  assert(html.includes(`data-account-command="${command}"`), `account action missing: ${command}`);
+}
+assert(source.includes("document.getElementById('account-footer')?.addEventListener('click'"),
+  'account footer opens its popup');
+assert(source.includes("document.getElementById('account-menu')?.addEventListener('click'"),
+  'account actions are delegated through one real menu binding');
+assert(source.includes("if (command === 'updates')"));
+assert(source.includes("if (command === 'changelog')"));
+assert.match(shellCss, /\.mp-account-menu\s*\{[^}]*min-width:\s*208px/s,
+  'account popup uses Claude compact menu width');
 
 assert(html.includes('src="studio_search.js'));
 assert(source.includes('function openGlobalSearch('));

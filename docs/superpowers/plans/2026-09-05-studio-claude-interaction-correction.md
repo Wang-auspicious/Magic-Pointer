@@ -55,7 +55,7 @@
 - Create: `electron/renderer/popover_position.ts`
 - Modify: `electron/renderer/permission_presets.ts`
 
-- [ ] **Step 1: Write failing catalog tests**
+- [x] **Step 1: Write failing catalog tests**
 
 ```ts
 const assert = require('node:assert');
@@ -75,7 +75,7 @@ assert.deepStrictEqual(PRESETS.map((row) => row.label),
   ['Plan', 'Accept edits', 'Bypass permissions', 'Manual']);
 ```
 
-- [ ] **Step 2: Write failing placement tests**
+- [x] **Step 2: Write failing placement tests**
 
 ```ts
 const assert = require('node:assert');
@@ -84,10 +84,10 @@ assert.deepStrictEqual(placePopover(
   { left: 900, right: 980, top: 700, bottom: 728 },
   { width: 280, height: 260 },
   { width: 1024, height: 768 },
-), { left: 732, top: 432 });
+), { left: 700, top: 436 });
 ```
 
-- [ ] **Step 3: Run RED**
+- [x] **Step 3: Run RED**
 
 ```powershell
 node --require tsx/cjs tests/effort_levels_render_test.ts
@@ -97,13 +97,13 @@ node tests/permission_presets_render_test.js
 
 Expected: missing modules and old permission labels.
 
-- [ ] **Step 4: Implement the pure catalogs and placement helper**
+- [x] **Step 4: Implement the pure catalogs and placement helper**
 
 `placePopover` places above with a 4 px gap, aligns popup right edge to the
 trigger, and clamps every edge to a 12 px viewport margin. `normalizeEffort`
 accepts only the five identifiers and falls back to `high`.
 
-- [ ] **Step 5: Run GREEN**
+- [x] **Step 5: Run GREEN**
 
 Run the three commands from Step 3; expected all pass.
 
@@ -119,41 +119,41 @@ Run the three commands from Step 3; expected all pass.
 - Modify: `tests/studio_composer_states_test.js`
 - Modify: `tests/studio_navigation_interaction_test.js`
 
-- [ ] **Step 1: Write failing structure contracts**
+- [x] **Step 1: Write failing structure contracts**
 
 Require `#composer-effort`, five effort rows produced by the catalog,
 `#composer-voice` outside the effort popup, `#account-menu`, complete
 `.dshw-perm-row*`/`.dshw-perm-check` CSS, and forbid `Response style`,
 `composer-style`, and Voice inside the popup.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```powershell
 node tests/studio_composer_states_test.js
 node tests/studio_navigation_interaction_test.js
 ```
 
-- [ ] **Step 3: Implement one popup controller**
+- [x] **Step 3: Implement one popup controller**
 
 Use `placePopover(trigger.getBoundingClientRect(), popup size, viewport)` after
 temporarily revealing the popup. Opening a popup closes the other composer and
 account popups. Escape/outside click restores `aria-expanded=false`; selected
 rows carry `aria-selected=true`, and the first selected row receives focus.
 
-- [ ] **Step 4: Implement complete popup CSS**
+- [x] **Step 4: Implement complete popup CSS**
 
 Permission/effort rows use a 20 px leading slot, flexible two-line copy and a
 16 px trailing check. Set explicit SVG dimensions so no browser-default SVG can
 escape. Menus use 200 px minimum, 360 px maximum, 4 px padding, measured border,
 radius and shadow; they never use the old shared `right:32px; bottom:42px` rule.
 
-- [ ] **Step 5: Bind truthful account actions**
+- [x] **Step 5: Bind truthful account actions**
 
 Settings calls `show('settings')`; Models & runtime opens its settings section;
 Check for updates calls `Data.checkForUpdates()`; changelog delegates a new
 `window:command` action; shortcuts/about reuse `executeWindowMenuCommand`.
 
-- [ ] **Step 6: Run GREEN**
+- [x] **Step 6: Run GREEN**
 
 Run both Step 2 commands plus `node tests/studio_update_card_contract_test.js`.
 
@@ -174,7 +174,7 @@ Run both Step 2 commands plus `node tests/studio_update_card_contract_test.js`.
 - Modify: `app/agent_runtime/model_client.py`
 - Modify: `app/ai_client.py`
 
-- [ ] **Step 1: Write failing Python contracts**
+- [x] **Step 1: Write failing Python contracts**
 
 ```py
 from app.agent_runtime.effort import effort_instruction, normalize_effort
@@ -190,20 +190,20 @@ Add a bridge test passing `"effort":"xhigh"` and assert
 chat-completions receives `reasoning_effort: "xhigh"` and messages mode does
 not invent an unsupported provider field.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```powershell
 python -m pytest tests/agent_runtime_effort_test.py tests/conversation_bridge_test.py tests/ai_client_request_config_test.py -q --basetemp=data/runtime/pytest-tmp-effort-red
 ```
 
-- [ ] **Step 3: Replace reply-style transport**
+- [x] **Step 3: Replace reply-style transport**
 
 Renderer sends `effort`; preload/main validate to the five identifiers;
 conversation bridge normalizes with `app.agent_runtime.effort` and puts the
 value in Runtime context. Remove the reply-style section and add an `Effort`
 section whose text comes from `effort_instruction`.
 
-- [ ] **Step 4: Add native OpenAI-compatible effort with bounded fallback**
+- [x] **Step 4: Add native OpenAI-compatible effort with bounded fallback**
 
 `_messages_payload` and `_text_completion_payload` add
 `reasoning_effort=<canonical>` only in chat-completions mode. On an HTTP 4xx
@@ -211,7 +211,7 @@ that can be caused by optional request fields, retry once after removing
 `reasoning_effort` (and the existing optional `thinking` field where present).
 The system prompt remains, so removal does not make the UI choice inert.
 
-- [ ] **Step 5: Run GREEN**
+- [x] **Step 5: Run GREEN**
 
 Run Step 2 plus `python -m pytest tests/agent_runtime_ai_backend_test.py -q
 --basetemp=data/runtime/pytest-tmp-effort-adjacent`.
@@ -228,40 +228,40 @@ Run Step 2 plus `python -m pytest tests/agent_runtime_ai_backend_test.py -q
 - Modify: `electron/renderer/studio.html`
 - Modify: `electron/renderer/claude_shell.css`
 
-- [ ] **Step 1: Write failing range/model projection tests**
+- [x] **Step 1: Write failing range/model projection tests**
 
 Build fixtures spanning 45 days and assert all/30d/7d message totals differ,
 model rows expose input/output totals and percentages, and each range has a
 daily token series of the matching length.
 
-- [ ] **Step 2: Write failing render contracts**
+- [x] **Step 2: Write failing render contracts**
 
 Assert real `button[role=tab]` markup, selected state changes, Models markup has
 daily bars/model rows, and heatmap cells have `tabindex=0`, a tooltip string and
 no fake navigation href.
 
-- [ ] **Step 3: Run RED**
+- [x] **Step 3: Run RED**
 
 ```powershell
 node --require tsx/cjs tests/studio_home_stats_test.ts
 node --require tsx/cjs tests/studio_home_render_test.ts
 ```
 
-- [ ] **Step 4: Expand the bounded projection**
+- [x] **Step 4: Expand the bounded projection**
 
 Refactor the projector around one aggregate helper and return slices under
 `ranges.all`, `ranges['30d']`, and `ranges['7d']`. Each slice contains overview
 metrics, heatmap, per-model input/output/total/turn/share rows and daily totals.
 Keep the existing top-level fields as the all-range compatibility projection.
 
-- [ ] **Step 5: Bind the renderer state**
+- [x] **Step 5: Bind the renderer state**
 
 Keep module-owned `homeView` and `homeRange`; bind controls once, update
 `aria-selected`, and rerender from cached stats without another IPC request.
 Create one delayed positioned tooltip host used by pointer hover, focus and
 click.
 
-- [ ] **Step 6: Run GREEN**
+- [x] **Step 6: Run GREEN**
 
 Run Step 3 plus `node tests/studio_claude_fidelity_contract_test.js`.
 
@@ -278,13 +278,13 @@ Run Step 3 plus `node tests/studio_claude_fidelity_contract_test.js`.
 - Create: `scripts/probe_studio_interactions.ts`
 - Create: `tests/studio_interaction_probe_test.js`
 
-- [ ] **Step 1: Write failing update visibility tests**
+- [x] **Step 1: Write failing update visibility tests**
 
 Automatic check failure must settle to hidden `idle`; manual failure still
 opens one dialog. Renderer contract permits only available/downloading/downloaded
 to unhide the card.
 
-- [ ] **Step 2: Write the real-input probe contract**
+- [x] **Step 2: Write the real-input probe contract**
 
 The probe loads built Studio with deterministic preload data, obtains the centre
 of each highlighted trigger, calls `webContents.sendInputEvent` for mouse down/up,
@@ -292,7 +292,7 @@ and emits JSON for popup visibility/bounds, tab/range selection, account menu,
 heatmap tooltip and console errors. Test fails if a click has no corresponding
 state change or any popup exceeds the viewport.
 
-- [ ] **Step 3: Run RED**
+- [x] **Step 3: Run RED**
 
 ```powershell
 node tests/update_manager_test.js
@@ -300,13 +300,13 @@ npm run build:electron
 node tests/studio_interaction_probe_test.js
 ```
 
-- [ ] **Step 4: Implement update settlement and changelog action**
+- [x] **Step 4: Implement update settlement and changelog action**
 
 Automatic errors publish `idle` after logging; manual errors remain dialog-only.
 Renderer hides checking/current/error. Add main-process `changelog` command that
 opens the repository Releases HTTPS URL.
 
-- [ ] **Step 5: Run GREEN and inspect screenshot witness**
+- [x] **Step 5: Run GREEN and inspect screenshot witness**
 
 Run Step 3. Capture the interaction end state to
 `data/runtime/studio-claude-interactions-20260905.png` and inspect it for menu
@@ -320,12 +320,12 @@ alignment, clipping, row density and selected states.
 - Modify: `docs/STATUS.md`
 - Modify: `docs/design/MAGIC_POINTER_HARNESS_20260811.md`
 
-- [ ] **Step 1: Run focused suites**
+- [x] **Step 1: Run focused suites**
 
 Run every command named above from a fresh process. Fix only concrete failures
 and rerun affected commands.
 
-- [ ] **Step 2: Run full gates**
+- [x] **Step 2: Run full gates**
 
 ```powershell
 npm run typecheck
@@ -336,19 +336,19 @@ npm run build:electron
 git diff --check
 ```
 
-- [ ] **Step 3: Review the complete diff against the approved specification**
+- [x] **Step 3: Review the complete diff against the approved specification**
 
 Verify every highlighted control has an observable state transition, effort is
 not a tone alias, automatic update failures stay quiet, and no unrelated user
 files changed.
 
-- [ ] **Step 4: Update progress truth without changing the version**
+- [x] **Step 4: Update progress truth without changing the version**
 
 Record exact test counts, probe evidence and honest remaining boundaries in both
 ledgers. Do not edit `package.json` or `package-lock.json`; do not run the version
 bump step. The user requested a commit rather than an installed-version delivery.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add electron app scripts tests docs
@@ -364,4 +364,3 @@ final commit contains only this correction batch.
 
 The user approved the design and explicitly said to continue in this session.
 Execute inline with `superpowers:executing-plans`. Do not dispatch subagents.
-

@@ -92,9 +92,19 @@
           <button type="button" class="mp-update-card" id="update-card" hidden>
             <span class="mp-update-mark" aria-hidden="true"></span><span><strong id="update-card-title">重启以更新</strong><small id="update-card-detail"></small></span><svg aria-hidden="true"><use href="#ic-arrow-right" /></svg>
           </button>
-          <button type="button" class="mp-account-footer" id="account-footer" aria-label="Local account and provider">
+          <button type="button" class="mp-account-footer" id="account-footer" aria-label="Local account and provider" aria-haspopup="menu" aria-expanded="false">
             <span class="mp-account-mark" aria-hidden="true"></span><span><strong>zjz65</strong><small>Gateway</small></span><svg aria-hidden="true"><use href="#ic-chev" /></svg>
           </button>
+          <div class="mp-account-menu" id="account-menu" hidden role="menu" aria-label="Magic Pointer menu">
+            <div class="mp-account-menu-header"><strong>zjz65</strong><small>Gateway</small></div>
+            <button type="button" role="menuitem" data-account-command="settings"><span class="mp-menu-icon"><svg aria-hidden="true"><use href="#ic-sliders" /></svg></span><span>Settings</span><kbd>Ctrl+,</kbd></button>
+            <button type="button" role="menuitem" data-account-command="models"><span class="mp-menu-icon"><svg aria-hidden="true"><use href="#ic-spark" /></svg></span><span>Models &amp; runtime</span></button>
+            <button type="button" role="menuitem" data-account-command="updates"><span class="mp-menu-icon"><svg aria-hidden="true"><use href="#ic-refresh" /></svg></span><span>Check for updates</span></button>
+            <button type="button" role="menuitem" data-account-command="changelog"><span class="mp-menu-icon"><svg aria-hidden="true"><use href="#ic-open" /></svg></span><span>View changelog</span></button>
+            <hr />
+            <button type="button" role="menuitem" data-account-command="shortcuts"><span class="mp-menu-icon"><svg aria-hidden="true"><use href="#ic-command-line" /></svg></span><span>Keyboard shortcuts</span><kbd>Ctrl+/</kbd></button>
+            <button type="button" role="menuitem" data-account-command="about"><span class="mp-menu-icon"><svg aria-hidden="true"><use href="#ic-brain" /></svg></span><span>About Magic Pointer</span></button>
+          </div>
           <button type="button" class="mp-theme-toggle" id="theme-toggle" aria-label="切换到深色主题" title="切换主题">
             <svg aria-hidden="true"><use id="theme-toggle-icon" href="#ic-moon" /></svg>
           </button>
@@ -170,10 +180,23 @@
             </header>
             <div class="mp-home-attention" id="studio-home-attention" hidden></div>
             <section class="mp-home-stats" id="studio-home-stats" aria-label="本机使用统计">
-              <div class="mp-home-stats-tabs"><span class="is-on">Overview</span><span>Models</span><i></i><span class="is-on">All</span><span>30d</span><span>7d</span></div>
+              <div class="mp-home-stats-tabs">
+                <div class="mp-home-tab-group" role="tablist" aria-label="Stats view">
+                  <button type="button" role="tab" data-home-view="overview" class="is-on" aria-selected="true">Overview</button>
+                  <button type="button" role="tab" data-home-view="models" aria-selected="false" tabindex="-1">Models</button>
+                </div>
+                <i aria-hidden="true"></i>
+                <div class="mp-home-tab-group" role="tablist" aria-label="Stats range">
+                  <button type="button" role="tab" data-home-range="all" class="is-on" aria-selected="true">All</button>
+                  <button type="button" role="tab" data-home-range="30d" aria-selected="false" tabindex="-1">30d</button>
+                  <button type="button" role="tab" data-home-range="7d" aria-selected="false" tabindex="-1">7d</button>
+                </div>
+              </div>
               <div class="mp-home-stat-grid" id="studio-home-stat-grid"></div>
               <div class="mp-home-heatmap" id="studio-home-heatmap" aria-label="近半年活动热力图"></div>
+              <div class="mp-home-models" id="studio-home-models" hidden></div>
               <p class="mp-home-stats-note" id="studio-home-stats-note"></p>
+              <div class="mp-home-tooltip" id="studio-home-tooltip" role="tooltip" hidden></div>
             </section>
           </section>
           <button type="button" class="dshw-scroll-pill" id="scroll-pill" hidden aria-label="回到底部">
@@ -264,19 +287,11 @@
                           <svg class="dshw-perm-chev" width="12" height="12" aria-hidden="true"><use href="#ic-chev" /></svg>
                         </button>
                         <div class="dshw-model-menu" id="composer-model-menu" hidden role="listbox" aria-label="模型目录"></div>
-                        <button type="button" class="dshw-add mp-composer-secondary" id="composer-options" aria-label="Extra options" aria-haspopup="menu" aria-expanded="false" title="Extra options"><span>Extra</span></button>
-                        <div class="mp-composer-options" id="composer-options-menu" hidden role="menu" aria-label="Extra options">
-                          <span class="mp-composer-options-label">Response style</span>
-                          <button type="button" class="dshw-perm" id="composer-style" aria-haspopup="listbox" aria-expanded="false" title="Response style">
-                            <span class="dshw-perm-glyph" id="composer-style-glyph" aria-hidden="true"></span>
-                            <span class="dshw-perm-label" id="composer-style-label">Normal</span>
-                            <svg class="dshw-perm-chev" width="12" height="12" aria-hidden="true"><use href="#ic-chev" /></svg>
-                          </button>
-                          <div class="dshw-perm-menu" id="composer-style-menu" hidden role="listbox" aria-label="Response style"></div>
-                          <button type="button" class="dshw-perm mp-voice" id="composer-voice" aria-label="Voice input" title="Voice input">
-                            <svg width="16" height="16" aria-hidden="true"><use href="#ic-mic" /></svg><span>Voice input</span>
-                          </button>
-                        </div>
+                        <button type="button" class="dshw-add mp-composer-secondary" id="composer-effort" aria-label="Reasoning effort: Extra" aria-haspopup="listbox" aria-expanded="false" title="Reasoning effort"><span id="composer-effort-label">Extra</span></button>
+                        <div class="dshw-perm-menu mp-effort-menu" id="composer-effort-menu" hidden role="listbox" aria-label="Reasoning effort"></div>
+                        <button type="button" class="dshw-add mp-voice" id="composer-voice" aria-label="Voice input" title="Voice input">
+                          <svg width="16" height="16" aria-hidden="true"><use href="#ic-mic" /></svg>
+                        </button>
                         <button type="button" class="dshw-ring" id="composer-context" aria-label="Context usage"
                           aria-haspopup="dialog" aria-expanded="false" title="Context usage">
                           <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">
@@ -533,6 +548,8 @@
   <script src="../conversation_control.js?v=23"></script>
   <script src="../slash_trigger.js?v=23"></script>
   <script src="permission_presets.js?v=23"></script>
+  <script src="effort_levels.js?v=33"></script>
+  <script src="popover_position.js?v=33"></script>
   <script src="sidebar_groups.js?v=23"></script>
   <script src="studio_search.js?v=33"></script>
   <script src="studio_home.js?v=33"></script>

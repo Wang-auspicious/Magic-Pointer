@@ -24,6 +24,7 @@ class LlmProvider(Protocol):
         *,
         system_prompt: str,
         max_tokens: int,
+        effort: str,
     ) -> Any: ...
 
 

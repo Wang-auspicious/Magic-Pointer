@@ -319,7 +319,9 @@ def test_streaming_backend_falls_back_on_http_error(monkeypatch):
 
     events = list(backend.generate([_user("hi")], [], budget_ms=3000))
 
-    assert [call["method"] for call in calls] == ["stream", "post"]
+    assert [call["method"] for call in calls] == ["stream", "stream", "post"]
+    assert calls[0]["json"]["reasoning_effort"] == "high"
+    assert "reasoning_effort" not in calls[1]["json"]
     text = "".join(e.text for e in events if isinstance(e, MessageDelta))
     assert text == "fallback answer"
 
@@ -357,8 +359,8 @@ def test_streaming_fallback_uses_only_remaining_request_budget(monkeypatch):
 
     events = list(backend.generate([_user("hi")], [], budget_ms=3000))
 
-    assert [call["method"] for call in calls] == ["stream", "post"]
-    assert timeouts == [3.0, 1.0]
+    assert [call["method"] for call in calls] == ["stream", "stream", "post"]
+    assert timeouts == [3.0, 3.0, 1.0]
     assert any(isinstance(event, MessageDelta) for event in events)
 
 

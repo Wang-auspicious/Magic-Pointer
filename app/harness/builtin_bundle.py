@@ -42,6 +42,7 @@ from app.agent_runtime.ask_todo_tools import (
     register_todo_write,
 )
 from app.agent_runtime.errors import ActionFailure, FailureType
+from app.agent_runtime.effort import normalize_effort
 from app.agent_runtime.hooks import HookManager
 from app.agent_runtime.look_tool import LookTool
 from app.agent_runtime.mcp_provider import McpToolProvider
@@ -380,10 +381,15 @@ class _MessagesLlmProvider:
         *,
         system_prompt: str,
         max_tokens: int,
+        effort: str,
     ) -> LoopModelClient:
         backend_cls = StreamingMessagesBackend if self.streaming else AiClientMessagesBackend
         return LoopModelClient(
-            backend_cls(system_prompt=system_prompt, max_tokens=max_tokens)
+            backend_cls(
+                system_prompt=system_prompt,
+                max_tokens=max_tokens,
+                effort=effort,
+            )
         )
 
 
@@ -411,6 +417,7 @@ def _apply_model_client(fork, config: dict[str, Any]) -> None:
 
     _api_key, _base_url, configured_model = get_ai_config()
     model_name = str(configured_model or "")
+    effort = normalize_effort(config.get("effort"))
     context = {
         "permission_mode": str(config.get("permission_mode") or "default"),
         # 交付格式规则常驻（模型自己判断意图），不再做关键词预分类。
@@ -429,9 +436,7 @@ def _apply_model_client(fork, config: dict[str, Any]) -> None:
         "git_branch": _git_branch(workspace_root),
         "permission_preset": str(config.get("permission_preset") or ""),
         "has_selection": bool(config.get("selection_anchor")),
-        # 语量芯片（五档）此前只到 resolved_config 就断了：prompt context 不带
-        # reply_style，Style section 永远读到 None，用户选什么模型都不知道。
-        "reply_style": str(config.get("reply_style") or "normal"),
+        "effort": effort,
         "pointing_instruction": str(config.get("pointing_instruction") or ""),
     }
     system_prompt = fork.get("prompt").build(context)
@@ -441,6 +446,7 @@ def _apply_model_client(fork, config: dict[str, Any]) -> None:
     client = provider.create_client(
         system_prompt=system_prompt,
         max_tokens=int(config.get("max_tokens") or 4096),
+        effort=effort,
     )
     fork.provide_up("model_client", client)
     fork.provide_up(
@@ -449,6 +455,7 @@ def _apply_model_client(fork, config: dict[str, Any]) -> None:
             "systemPrompt": system_prompt,
             "usedBackend": str(provider.used_backend),
             "maxTokens": int(config.get("max_tokens") or 4096),
+            "effort": effort,
             "permissionMode": str(config.get("permission_mode") or "default"),
             "promptCache": bool(
                 getattr(client, "prompt_cache_requested", False)
@@ -852,7 +859,7 @@ def _run_loop_rows(runtime: dict[str, Any], root: Path) -> list[BundleRow]:
                 "command": str(runtime.get("command") or ""),
                 "workspace_root": str(runtime.get("workspace_root") or ""),
                 "permission_preset": str(runtime.get("permission_preset") or ""),
-                "reply_style": str(runtime.get("reply_style") or "normal"),
+                "effort": normalize_effort(runtime.get("effort")),
                 "pointing_instruction": str(runtime.get("pointing_instruction") or ""),
                 # Stage 常驻路径与 boot_loop_context 同规则：圈选证据存在
                 # 与否决定身份与冻结帧规则是否注入。
@@ -1020,7 +1027,7 @@ def boot_loop_context(
                 "command": command,
                 "workspace_root": str(runtime.get("workspace_root") or ""),
                 "permission_preset": str(runtime.get("permission_preset") or ""),
-                "reply_style": str(runtime.get("reply_style") or "normal"),
+                "effort": normalize_effort(runtime.get("effort")),
                 "pointing_instruction": str(runtime.get("pointing_instruction") or ""),
                 # 圈选证据（selection_anchor / object）存在与否决定身份与
                 # 冻结帧规则是否注入：普通文本对话不谎称有圈选对象。

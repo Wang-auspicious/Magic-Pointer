@@ -96,6 +96,13 @@ const { listProjectDirectory, projectPath, readProjectText } = require('./projec
 const { parseGitEnvironment, sourceLinksFromConversation } = require('./project_environment');
 const { normalizeBrowserUrl, projectContextActions } = require('./browser_view_policy');
 
+const CONVERSATION_EFFORT_LEVELS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
+
+function normalizeConversationEffort(value: unknown): string {
+  const candidate = String(value || '').trim().toLowerCase();
+  return CONVERSATION_EFFORT_LEVELS.has(candidate) ? candidate : 'high';
+}
+
 let overlayWindow: InstanceType<typeof BrowserWindow> | null = null;
 let dashboardWindow: InstanceType<typeof BrowserWindow> | null = null;
 let dashboardBrowserView: InstanceType<typeof WebContentsView> | null = null;
@@ -1546,6 +1553,8 @@ ipcMain.handle('window:command', async (event: Electron.IpcMainInvokeEvent, raw:
     else if (command === 'diagnostics') {
       const error = await shell.openPath(app.getPath('logs'));
       if (error) return { ok: false, error };
+    } else if (command === 'changelog') {
+      await shell.openExternal('https://github.com/Wang-auspicious/Magic-Pointer/releases');
     } else if (command === 'about') {
       return { ok: true, version: app.getVersion(), electron: process.versions.electron, chrome: process.versions.chrome };
     } else return { ok: false, error: 'unknown_window_command' };
@@ -1775,7 +1784,7 @@ ipcMain.handle('conversations:send', async (event: Electron.IpcMainInvokeEvent, 
   if (!question) return { ok: false, error: '问题不能为空。' };
   const conversationId = String(raw?.conversationId || '').trim().slice(0, 120);
   const permissionPreset = String(raw?.permissionPreset || 'workspace-write').trim().slice(0, 40);
-  const replyStyle = String(raw?.replyStyle || 'normal').trim().slice(0, 20);
+  const effort = normalizeConversationEffort(raw?.effort);
   const requestId = String(raw?.requestId || crypto.randomUUID()).trim().slice(0, 120) || crypto.randomUUID();
   const workspaceRoot = String(raw?.workspaceRoot || '').trim();
   // CC toolPermissionDecision: chip grants/denies join the thread memo; a
@@ -1812,7 +1821,7 @@ ipcMain.handle('conversations:send', async (event: Electron.IpcMainInvokeEvent, 
     object: existing?.object || {},
     modelRuntime,
     permissionPreset,
-    replyStyle,
+    effort,
     requestId,
     // 会话身份必须过桥：Python 侧的 agent session（断点续跑摘要/待办/取消
     // 请求/pending work 挂靠的那条哈希链 JSONL）按它分文件。不传的话桥端

@@ -152,6 +152,54 @@ const tick = () => new Promise((resolve) => setImmediate(resolve));
   assert.strictEqual(previewDialogs.length, 1,
     'preview channel may offer a newer prerelease version');
 
+  const automaticFailureUpdater = new FakeUpdater();
+  automaticFailureUpdater.checkForUpdates = async function checkForUpdates() {
+    this.checkCount += 1;
+    throw new Error('offline');
+  };
+  const automaticFailureDialogs = [];
+  const automaticFailure = createUpdateManager({
+    app: { isPackaged: true, getVersion: () => '1.0.0' },
+    updater: automaticFailureUpdater,
+    dialog: {
+      showMessageBox: async (options) => {
+        automaticFailureDialogs.push(options);
+        return { response: 0 };
+      },
+    },
+    log: () => {},
+  });
+  automaticFailure.start({ automatic: false });
+  const automaticResult = await automaticFailure.check({ manual: false });
+  assert.deepStrictEqual(automaticResult, { ok: false, reason: 'check_failed' });
+  assert.strictEqual(automaticFailure.status().state, 'idle',
+    'an automatic check failure settles quietly instead of pinning a sidebar error');
+  assert.strictEqual(automaticFailureDialogs.length, 0,
+    'automatic failures never interrupt the user with a dialog');
+
+  const manualFailureUpdater = new FakeUpdater();
+  manualFailureUpdater.checkForUpdates = async function checkForUpdates() {
+    this.checkCount += 1;
+    throw new Error('offline');
+  };
+  const manualFailureDialogs = [];
+  const manualFailure = createUpdateManager({
+    app: { isPackaged: true, getVersion: () => '1.0.0' },
+    updater: manualFailureUpdater,
+    dialog: {
+      showMessageBox: async (options) => {
+        manualFailureDialogs.push(options);
+        return { response: 0 };
+      },
+    },
+    log: () => {},
+  });
+  manualFailure.start({ automatic: false });
+  const manualResult = await manualFailure.check({ manual: true });
+  assert.deepStrictEqual(manualResult, { ok: false, reason: 'check_failed' });
+  assert.strictEqual(manualFailureDialogs.length, 1,
+    'a manual failed check keeps the one-shot native explanation');
+
   console.log('update manager test ok');
 })().catch((error) => {
   console.error(error);

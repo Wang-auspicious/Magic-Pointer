@@ -335,6 +335,65 @@ def test_chat_completions_payload_never_injects_anthropic_cache_fields(
     assert _cache_control_count(payload) == 0
 
 
+def test_runtime_effort_is_native_only_for_chat_completions() -> None:
+    chat = _messages_payload(
+        "model",
+        [_user("reason about this")],
+        [],
+        64,
+        "chat-completions",
+        effort="xhigh",
+    )
+    messages = _messages_payload(
+        "model",
+        [_user("reason about this")],
+        [],
+        64,
+        "messages",
+        effort="xhigh",
+    )
+
+    assert chat["reasoning_effort"] == "xhigh"
+    assert "reasoning_effort" not in messages
+
+
+def test_chat_effort_4xx_retries_once_without_optional_fields(monkeypatch) -> None:
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        ai_client,
+        "get_ai_config",
+        lambda: ("key", "https://gateway.example/v1", "text-model"),
+    )
+    _no_circuit(monkeypatch)
+
+    class OptionalFieldClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, url, *, headers, json):
+            calls.append(dict(json))
+            if "reasoning_effort" in json:
+                return FakeResponse(400, {"error": {"message": "unsupported"}})
+            return FakeResponse(200, {"choices": [{"message": {"content": "ok"}}]})
+
+    backend = AiClientMessagesBackend(
+        timeout_s=5.0,
+        max_tokens=120,
+        effort="xhigh",
+    )
+    backend._client_factory = lambda _timeout: OptionalFieldClient()  # type: ignore[attr-defined]
+
+    events = list(backend.generate([_user("hi")], []))
+
+    assert len(calls) == 2
+    assert calls[0]["reasoning_effort"] == "xhigh"
+    assert "reasoning_effort" not in calls[1]
+    assert events[-1].raw_text == "ok"
+
+
 def test_budget_ms_becomes_http_timeout(monkeypatch):
     calls: list = []
     monkeypatch.setattr(

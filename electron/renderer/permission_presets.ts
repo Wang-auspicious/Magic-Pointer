@@ -17,22 +17,22 @@ const PRESETS: PresetOption[] = [
   {
     value: 'plan',
     name: '计划模式',
-    label: '计划',
-    description: '先只读研究并提交计划；你批准后才以写入权限执行。',
+    label: 'Plan',
+    description: 'Create a plan before making changes',
     primary: true,
   },
   {
     value: 'workspace-write',
     name: '接受编辑',
     label: 'Accept edits',
-    description: '项目文件夹内的可逆写入直接执行；更大范围的操作需要确认。',
+    description: 'Automatically accept all file edits',
     primary: true,
   },
   {
     value: 'danger-full-access',
     name: '完全访问',
     label: 'Bypass permissions',
-    description: '完整文件访问，不再弹出确认提示。',
+    description: 'Accepts all permissions',
     primary: true,
     confirm: {
       title: '确认启用 Full access？',
@@ -43,8 +43,8 @@ const PRESETS: PresetOption[] = [
   {
     value: 'read-only',
     name: '只读',
-    label: '只读',
-    description: '只允许读取；任何写入、发送或删除都要先经你确认。',
+    label: 'Manual',
+    description: 'Always ask before making changes',
     primary: false,
   },
 ];

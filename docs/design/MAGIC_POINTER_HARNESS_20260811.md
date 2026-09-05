@@ -868,6 +868,14 @@ DOM、COM、UIA、Fabric等现有模块也不自动保留，只优先保存经�
 
 ## 18. 进度账本
 
+### 2026-09-05：Studio Claude 交互纠偏（1.0.33 开发树；按用户要求仅提交）
+
+- [x] **高亮控件从近似件改成真实交互**：左下账户区为测量定位且不越界的真弹层，Settings、Models & runtime、Check for updates、View changelog、Keyboard shortcuts、About 均接现有命令；Composer 权限四档为 Plan / Accept edits / Bypass permissions / Manual，模型目录可真实选择，公共弹层控制器统一互斥、Escape/外点关闭、选中态和 ARIA。
+- [x] **努力程度是 Runtime 语义，不是回复风格**：右下角只保留 Low / Medium / High / Extra / Max 五档努力程度；Voice 是独立按钮，Caveman 与旧 Response style 不进入该菜单。`effort` 已贯通 renderer、IPC、conversation bridge、system prompt 与 model client；提示词规定推理深度，chat-completions 可选发送原生 `reasoning_effort`，遇 4xx 仅去掉可选字段重试一次，Messages 模式不发送伪字段。
+- [x] **首页控件与更新状态可信**：Overview / Models、All / 30d / 7d 都是有状态的真实按钮；统计投影提供对应范围的指标、每日 token、模型输入/输出/占比，热力图可 hover/focus/click 并显示日期 tooltip。更新卡只为 available/downloading/downloaded 出现；自动检查失败安静回 idle，手动失败保留一次原生提示。
+- [x] **真实输入证据与 fresh 门**：offscreen Electron 用 `webContents.sendInputEvent` 逐一点击账户、权限、模型、努力程度、Models、30d 和热力图，断言状态变化、五档精确标签、弹层 viewport bounds 与 `console_errors=0`；证据为 `data/runtime/studio-claude-interactions-20260905.png` 及 `-account/-permission/-model/-effort` 分图。五套 typecheck、ESLint 0、Electron build、`git diff --check` 全绿；Node **191 tests / 133 source files**，Python **1731 passed / 1 个既有 Pillow warning / 200.18s**。
+- [ ] **诚实交付边界**：本批探针使用确定性 preload，未调用 provider，因此不声称活网关 `usedBackend`；遵照用户“不要升版本，提交一下就行”，未改 package 版本（仍为 **1.0.33**）、未运行 `npm run sync`、未制作安装器、未覆盖当前安装版。同版本安装应用仍是上一批代码，需未来明确执行安装交付后才会包含本批修正。
+
 ### 2026-09-05：Claude Desktop 高保真 Studio（1.0.33 已交付）
 
 - [x] **事实源与重建边界**：以本机 Claude Desktop 1.40609.1 的安装资源、用户当前 2398×1600 会话截图和本机历史深/浅色截图为基准，不保留上一版“近似设计”；Studio 已统一为 36px chrome、288px 项目侧栏、Claude 当前色板/字体/线性图标/间距、会话消息与底部 repo/branch/diff/PR/Composer 结构。旧 `studio_system.css`、consolidator、DSH/SV Studio 专用拼接层及只服务它们的测试已删除。

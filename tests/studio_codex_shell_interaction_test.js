@@ -25,9 +25,10 @@ for (const removed of ['nav-pull-requests', 'nav-sites', 'nav-scheduled', 'nav-p
 // A click must paint a visible menu immediately. Network/catalog refresh may
 // continue afterwards, but it may never hold the popover hostage.
 const openModel = source.slice(source.indexOf('async function openModelMenu'), source.indexOf('function modelMenuNote'));
-assert(openModel.indexOf("menu.hidden = false") >= 0, 'model menu must become visible synchronously');
-assert(openModel.indexOf("aria-expanded', 'true") >= 0, 'model button must expose its open state synchronously');
-assert(openModel.indexOf('menu.hidden = false') < openModel.indexOf('await Data.models()'),
+const positionPopover = source.slice(source.indexOf('function positionAnchoredPopover'), source.indexOf('interface StudioSubagentStep'));
+assert(positionPopover.indexOf('popup.hidden = false') >= 0, 'anchored popovers must become visible synchronously');
+assert(positionPopover.indexOf("aria-expanded', 'true") >= 0, 'popover triggers must expose their open state synchronously');
+assert(openModel.indexOf("positionAnchoredPopover('composer-model-menu', 'composer-model')") < openModel.indexOf('await Data.models()'),
   'model menu visibility must not wait for the provider catalog');
 assert(!openModel.includes('btn.disabled = true'), 'model selector must remain responsive while the catalog refreshes');
 

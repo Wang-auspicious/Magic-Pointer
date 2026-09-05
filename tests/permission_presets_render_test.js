@@ -9,11 +9,19 @@ const { PRESETS, PRIMARY_PRESETS, optionOf, presetSvg } = require('../electron/r
 const VALUES = PRESETS.map(option => option.value);
 assert.deepStrictEqual(VALUES, ['plan', 'workspace-write', 'danger-full-access', 'read-only'],
   `预设表顺序/取值：${VALUES}`);
+assert.deepStrictEqual(PRESETS.map(option => option.label), [
+  'Plan', 'Accept edits', 'Bypass permissions', 'Manual',
+]);
 assert.deepStrictEqual(PRIMARY_PRESETS.map(option => option.value), [
   'plan', 'workspace-write', 'danger-full-access',
 ]);
 assert.strictEqual(optionOf('workspace-write').label, 'Accept edits');
 assert.strictEqual(optionOf('danger-full-access').label, 'Bypass permissions');
+assert.strictEqual(optionOf('read-only').label, 'Manual');
+assert.strictEqual(optionOf('plan').description, 'Create a plan before making changes');
+assert.strictEqual(optionOf('workspace-write').description, 'Automatically accept all file edits');
+assert.strictEqual(optionOf('danger-full-access').description, 'Accepts all permissions');
+assert.strictEqual(optionOf('read-only').description, 'Always ask before making changes');
 assert.strictEqual(optionOf('read-only').primary, false);
 
 for (const option of PRESETS) {

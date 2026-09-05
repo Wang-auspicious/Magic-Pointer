@@ -35,6 +35,28 @@ def test_messages_mode_uses_anthropic_shape_and_never_bearer_auth() -> None:
     assert not any(item.get("role") == "system" for item in payload["messages"])
 
 
+def test_effort_is_native_only_for_chat_completions() -> None:
+    chat = _text_completion_payload(
+        model="reasoning-model",
+        content="question",
+        system_prompt="grounded only",
+        max_tokens=32,
+        api_mode="chat-completions",
+        effort="xhigh",
+    )
+    messages = _text_completion_payload(
+        model="reasoning-model",
+        content="question",
+        system_prompt="grounded only",
+        max_tokens=32,
+        api_mode="messages",
+        effort="xhigh",
+    )
+
+    assert chat["reasoning_effort"] == "xhigh"
+    assert "reasoning_effort" not in messages
+
+
 def test_messages_response_collects_text_blocks() -> None:
     assert _text_completion_response({
         "content": [

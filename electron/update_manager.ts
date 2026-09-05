@@ -216,7 +216,9 @@ function createUpdateManager({
       if (answer.response === 0) updater.quitAndInstall(false, true);
     });
     updater.on('error', (error) => {
-      publish({ state: 'error', message: errorMessage(error || 'update_failed') });
+      publish(lastCheckWasManual
+        ? { state: 'error', message: errorMessage(error || 'update_failed') }
+        : { state: 'idle' });
       log(`update failed ${errorName(error)}: ${errorMessage(error)}`);
     });
   }
@@ -256,9 +258,9 @@ function createUpdateManager({
       .then(() => updater.checkForUpdates())
       .then((result) => ({ ok: true, result }))
       .catch((error) => {
-        publish({ state: 'error', message: errorMessage(error) });
         log(`update check failed ${errorName(error)}: ${errorMessage(error)}`);
         if (manual) {
+          publish({ state: 'error', message: errorMessage(error) });
           return show({
             type: 'warning',
             buttons: ['知道了'],
@@ -267,6 +269,7 @@ function createUpdateManager({
             detail: '请检查网络后重试。Magic Pointer 仍可正常使用。',
           }).then(() => ({ ok: false, reason: 'check_failed' }));
         }
+        publish({ state: 'idle' });
         return { ok: false, reason: 'check_failed' };
       })
       .finally(() => {

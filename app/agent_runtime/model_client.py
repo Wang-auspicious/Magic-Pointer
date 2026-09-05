@@ -36,6 +36,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from app import ai_client as _ai_client
+from app.agent_runtime.effort import normalize_effort
 from app.agent_runtime.errors import MAX_OUTPUT_TOKENS_RECOVERY_LIMIT
 from app.agent_runtime.types import AgentMessage, Role, ToolCall
 from app.governance.cancellation import CancelledError
@@ -614,12 +615,14 @@ class AiClientMessagesBackend:
         timeout_s: float = 20.0,
         max_tokens: int = 240,
         system_prompt: str | None = None,
+        effort: object = "high",
     ) -> None:
         self.timeout_s = max(_MIN_HTTP_TIMEOUT_S, float(timeout_s))
         self.max_tokens = max(1, int(max_tokens))
         self.system_prompt = (
             system_prompt.strip() if system_prompt and system_prompt.strip() else None
         )
+        self.effort = normalize_effort(effort)
         self._client_factory = None
 
     def generate(
@@ -656,6 +659,7 @@ class AiClientMessagesBackend:
             self.max_tokens,
             api_mode,
             system_prompt=self.system_prompt,
+            effort=self.effort,
         )
         try:
             import httpx  # noqa: PLC0415 -- optional transport dependency
@@ -666,6 +670,14 @@ class AiClientMessagesBackend:
                 client = _ai_client._httpx_client(httpx, timeout=budget)
             with client:
                 response = client.post(endpoint, headers=headers, json=payload)
+                if 400 <= response.status_code < 500:
+                    stripped = _ai_client._without_optional_request_fields(payload)
+                    if stripped is not None:
+                        response = client.post(
+                            endpoint,
+                            headers=headers,
+                            json=stripped,
+                        )
             _check_cancelled(cancel_scope)
         except CancelledError:
             raise
@@ -893,6 +905,7 @@ def _messages_payload(
     api_mode: str,
     *,
     system_prompt: str | None = None,
+    effort: object | None = None,
 ) -> dict:
     entries = [_message_entry(message, api_mode) for message in messages]
     converted = _convert_tools(tools, api_mode)
@@ -945,6 +958,8 @@ def _messages_payload(
     if converted:
         payload["tools"] = converted
         payload["tool_choice"] = "auto"
+    if effort is not None:
+        payload["reasoning_effort"] = normalize_effort(effort)
     return payload
 
 
@@ -998,23 +1013,35 @@ class StreamingMessagesBackend(AiClientMessagesBackend):
     ) -> Iterator[ModelTurnEvent]:
         import httpx  # noqa: PLC0415 -- optional transport dependency
 
-        if self._client_factory is not None:
-            client = self._client_factory(budget)
-        else:
-            client = _ai_client._httpx_client(httpx, timeout=budget)
-        with client, client.stream(
-            "POST", endpoint, headers=headers, json=payload
-        ) as response:
-            if response.status_code >= 400:
-                yield TurnWithheld(
-                    reason=f"backend_error:http_{response.status_code}"
+        request_payload = payload
+        stripped_retry_used = False
+        while True:
+            if self._client_factory is not None:
+                client = self._client_factory(budget)
+            else:
+                client = _ai_client._httpx_client(httpx, timeout=budget)
+            with client, client.stream(
+                "POST", endpoint, headers=headers, json=request_payload
+            ) as response:
+                if 400 <= response.status_code < 500 and not stripped_retry_used:
+                    stripped = _ai_client._without_optional_request_fields(
+                        request_payload
+                    )
+                    if stripped is not None:
+                        request_payload = stripped
+                        stripped_retry_used = True
+                        continue
+                if response.status_code >= 400:
+                    yield TurnWithheld(
+                        reason=f"backend_error:http_{response.status_code}"
+                    )
+                    return
+                yield from _parse_sse(
+                    response.iter_lines(),
+                    api_mode=api_mode,
+                    cancel_scope=cancel_scope,
                 )
                 return
-            yield from _parse_sse(
-                response.iter_lines(),
-                api_mode=api_mode,
-                cancel_scope=cancel_scope,
-            )
 
     def generate(
         self,
@@ -1047,6 +1074,7 @@ class StreamingMessagesBackend(AiClientMessagesBackend):
         payload = _messages_payload(
             model, messages, tools, self.max_tokens, api_mode,
             system_prompt=self.system_prompt,
+            effort=self.effort,
         )
         payload["stream"] = True
         buffered: list[ModelTurnEvent] = []
