@@ -12,7 +12,9 @@ from app.actions.shopping_list import make_shopping_list_undo_proposal
 from app.actions.calendar import make_calendar_undo_proposal
 from app.actions.draft_writer import write_draft_to_target
 from app.actions.policy import LocalPermissionPolicy
-from app.actions.schema import ActionProposal, ExecutionResult, ExecutionStatus
+from app.actions.schema import ActionProposal, ExecutionResult, ExecutionStatus, SafetyLevel
+from app.action_guard.approval import ActionApproval, ApprovalError
+from app.agent_runtime.tool_registry import Effect
 from app.adapters.office_adapter import ALLOWED_WORD_COM_PROG_IDS, WORD_COM_PROG_ID, _run_powershell_json
 from app.dashboard.shopping_list import ShoppingListError, ShoppingListStore
 from app.dashboard.calendar import CalendarConflict, CalendarError, CalendarEventStore
@@ -42,6 +44,7 @@ SUPPORTED_ACTION_TYPES = frozenset({
     "calendar_event_undo_create",
     "paste_text_to_foreground",
     "fabric_recipe_execute",
+    "document_patch_operation",
 })
 
 
@@ -83,14 +86,23 @@ class SafeActionExecutor:
         shopping_list_store: ShoppingListStore | None = None,
         calendar_event_store: CalendarEventStore | None = None,
         draft_writer: Any | None = None,
+        artifact_revision_probe: Any | None = None,
+        document_operation_executor: Any | None = None,
         fabric_engine: Any | None = None,
+        approval_ledger: ActionApproval | None = None,
     ) -> None:
         self.policy = policy or LocalPermissionPolicy()
         self.history_store = history_store or ActionHistoryStore()
         self.shopping_list_store = shopping_list_store or ShoppingListStore()
         self.calendar_event_store = calendar_event_store or CalendarEventStore()
         self.draft_writer = draft_writer or write_draft_to_target
+        self.artifact_revision_probe = artifact_revision_probe
+        self.document_operation_executor = document_operation_executor
         self.fabric_engine = fabric_engine
+        # One ledger can be shared by the Runtime and GUI action bridges.  A
+        # local default keeps old embedders compatible while still recording
+        # every proposal that reaches this execution seam.
+        self.approval_ledger = approval_ledger or ActionApproval()
 
     def preview(self, proposal: ActionProposal) -> JsonDict:
         decision = self.policy.decide(proposal)
@@ -134,6 +146,9 @@ class SafeActionExecutor:
         started = now_iso()
         decision = self.policy.decide(proposal)
         metadata = {"policy_decision": decision.to_dict()}
+        approval_request = self._record_approval_request(proposal, confirmed)
+        if approval_request is not None:
+            metadata["approval_request_id"] = approval_request.request_id
         if proposal.action_type not in SUPPORTED_ACTION_TYPES:
             return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error=f"unsupported action_type: {proposal.action_type}", metadata=metadata)
         if not decision.allowed:
@@ -163,7 +178,140 @@ class SafeActionExecutor:
             return self._paste_text_to_foreground(proposal, started, confirmed=confirmed, metadata=metadata)
         if proposal.action_type == "fabric_recipe_execute":
             return self._fabric_recipe_execute(proposal, started, confirmed=confirmed, metadata=metadata)
+        if proposal.action_type == "document_patch_operation":
+            return self._document_patch_operation(
+                proposal,
+                started,
+                confirmed=confirmed,
+                metadata=metadata,
+            )
         return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="unreachable action dispatch", metadata=metadata)
+
+    def _document_patch_operation(
+        self,
+        proposal: ActionProposal,
+        started: str,
+        *,
+        confirmed: bool,
+        metadata: JsonDict,
+    ) -> ExecutionResult:
+        """Execute one whitelisted DocumentPatch operation.
+
+        The outer document-patch gate owns source authorization, base reads,
+        revision/acceptance checks, and post-write verification.  This shared
+        executor is still the only route to the physical handler so UI-started
+        edits do not bypass the normal local permission policy.
+        """
+        from app.artifacts.document_patch import OperationWriteResult, PatchOperation
+
+        if proposal.metadata.get("trusted_document_patch") is not True:
+            return self._result(
+                proposal,
+                started,
+                ExecutionStatus.FAILED,
+                confirmed=confirmed,
+                error="document patch proposal is not runtime-bound",
+                metadata=metadata,
+            )
+        raw_operation = proposal.parameters.get("operation")
+        if not isinstance(raw_operation, dict):
+            return self._result(
+                proposal,
+                started,
+                ExecutionStatus.FAILED,
+                confirmed=confirmed,
+                error="document patch operation is missing",
+                metadata=metadata,
+            )
+        callback = self.document_operation_executor
+        if callback is None:
+            return self._result(
+                proposal,
+                started,
+                ExecutionStatus.FAILED,
+                confirmed=confirmed,
+                error="document operation executor is unavailable",
+                metadata=metadata,
+            )
+        try:
+            operation = PatchOperation.from_dict(raw_operation)
+            write = callback(operation)
+        except Exception as exc:
+            return self._result(
+                proposal,
+                started,
+                ExecutionStatus.FAILED,
+                confirmed=confirmed,
+                error=f"document operation failed:{type(exc).__name__}:{exc}",
+                metadata=metadata,
+            )
+        if not isinstance(write, OperationWriteResult):
+            return self._result(
+                proposal,
+                started,
+                ExecutionStatus.FAILED,
+                confirmed=confirmed,
+                error="document operation returned an invalid result",
+                metadata=metadata,
+            )
+        output = {
+            "wrote": write.wrote,
+            "used_backend": write.used_backend,
+        }
+
+    @staticmethod
+    def _effect_for(proposal: ActionProposal) -> Effect:
+        if proposal.safety_level is SafetyLevel.READ_ONLY:
+            return Effect.READ
+        if proposal.safety_level is SafetyLevel.DESTRUCTIVE:
+            return Effect.DESTRUCTIVE
+        if proposal.action_type in {"wechat_send_message", "send_message", "submit_form"}:
+            return Effect.EXTERNAL_SEND
+        if proposal.safety_level is SafetyLevel.HIGH:
+            return Effect.LOCAL_IRREVERSIBLE
+        return Effect.REVERSIBLE_WRITE
+
+    def _record_approval_request(
+        self,
+        proposal: ActionProposal,
+        confirmed: bool,
+    ) -> Any | None:
+        """Bind the legacy boolean confirmation to the approval ledger.
+
+        Existing callers still receive the same policy result.  The ledger is
+        now the durable semantic record: an unconfirmed irreversible proposal
+        remains PENDING, while an explicitly confirmed one transitions through
+        APPROVED using a non-model actor.  This keeps approval provenance out
+        of individual action handlers.
+        """
+        effect = self._effect_for(proposal)
+        target = proposal.target.object_id if proposal.target is not None else None
+        request = self.approval_ledger.request(
+            proposal.action_type,
+            str(target or proposal.id),
+            str(proposal.parameters.get("text_sha256") or "") or None,
+            effect,
+            origin=str(proposal.metadata.get("origin") or "data"),
+        )
+        if confirmed:
+            actor = str(proposal.metadata.get("approval_actor") or "human")
+            try:
+                self.approval_ledger.approve(request.request_id, by=actor)
+            except ApprovalError:
+                # The policy result remains authoritative for compatibility;
+                # expose the failed transition in metadata through the
+                # request's PENDING state instead of executing as approved.
+                return request
+        return request
+        return self._result(
+            proposal,
+            started,
+            ExecutionStatus.SUCCEEDED if write.ok else ExecutionStatus.FAILED,
+            confirmed=confirmed,
+            output=output,
+            error=write.error,
+            metadata=metadata,
+        )
 
     def _fabric_recipe_execute(
         self,
@@ -352,6 +500,41 @@ class SafeActionExecutor:
         actual_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
         if not expected_hash or expected_hash != actual_hash:
             return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="draft text hash mismatch", metadata=metadata)
+        artifact_id = str(params.get("artifact_id") or "").strip()
+        if artifact_id:
+            artifact_revision = _optional_int(params.get("artifact_revision"))
+            source_id = str(params.get("source_id") or "").strip()
+            locator = params.get("locator")
+            action_lease = params.get("action_lease")
+            lease_valid = (
+                artifact_revision is not None
+                and source_id
+                and isinstance(locator, dict)
+                and isinstance(action_lease, dict)
+                and action_lease.get("artifactId") == artifact_id
+                and action_lease.get("artifactRevision") == artifact_revision
+                and action_lease.get("sourceId") == source_id
+                and action_lease.get("locator") == locator
+                and _optional_int(action_lease.get("targetHwnd")) == expected_hwnd
+                and _optional_int(action_lease.get("targetProcessId")) == expected_process_id
+            )
+            if not lease_valid:
+                return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="draft action lease is invalid", metadata=metadata)
+            if self.artifact_revision_probe is None:
+                return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="draft artifact verifier is unavailable", metadata=metadata)
+            try:
+                artifact_state = self.artifact_revision_probe(artifact_id)
+            except Exception as exc:
+                return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error=f"draft artifact verification failed: {type(exc).__name__}: {exc}", metadata=metadata)
+            if (
+                not isinstance(artifact_state, dict)
+                or _optional_int(artifact_state.get("revision")) != artifact_revision
+            ):
+                return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="draft artifact revision changed before execution", metadata=metadata)
+            if _optional_int(artifact_state.get("acceptedRevision")) != artifact_revision:
+                return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="draft artifact revision is not accepted", metadata=metadata)
+            if str(artifact_state.get("contentHash") or "") != actual_hash:
+                return self._result(proposal, started, ExecutionStatus.FAILED, confirmed=confirmed, error="draft artifact content changed before execution", metadata=metadata)
         try:
             receipt = self.draft_writer(params)
         except Exception as exc:
