@@ -31,7 +31,7 @@ const PRESETS: PresetOption[] = [
   {
     value: 'danger-full-access',
     name: '完全访问',
-    label: 'Full access',
+    label: 'Bypass permissions',
     description: '完整文件访问，不再弹出确认提示。',
     primary: true,
     confirm: {

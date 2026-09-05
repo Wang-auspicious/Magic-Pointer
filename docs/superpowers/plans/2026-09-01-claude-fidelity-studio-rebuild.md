@@ -897,7 +897,7 @@ Load `references/slop-test.md` only now. Fix any applicable desktop-app gate fai
 - Modify: `docs/design/MAGIC_POINTER_HARNESS_20260811.md`
 - Modify: `docs/STATUS.md`
 
-- [ ] **Step 1: Run fresh fast gates**
+- [x] **Step 1: Run fresh fast gates**
 
 ```powershell
 npm run typecheck
@@ -908,7 +908,7 @@ git diff --check
 
 Expected: five TypeScript configurations pass; Node suite passes with the new source/test counts; ESLint and diff check are clean.
 
-- [ ] **Step 2: Run fresh full Python suite**
+- [x] **Step 2: Run fresh full Python suite**
 
 ```powershell
 python -m pytest tests -q --basetemp=data/runtime/pytest-tmp-claude-studio-full
@@ -916,11 +916,11 @@ python -m pytest tests -q --basetemp=data/runtime/pytest-tmp-claude-studio-full
 
 Expected: all tests pass; only already-documented non-failing warnings may remain.
 
-- [ ] **Step 3: Run focused code review**
+- [x] **Step 3: Run focused code review**
 
 Review the complete diff against the approved spec on two axes: product behaviour and visual/state contract. Fix concrete findings and rerun affected tests. Do not add defensive scaffolding or score settled decisions.
 
-- [ ] **Step 4: Bump patch version**
+- [x] **Step 4: Bump patch version**
 
 Use npm's non-tagging version command so package and lock agree:
 
@@ -930,7 +930,7 @@ npm version patch --no-git-tag-version
 
 Expected: `1.0.32` becomes `1.0.33` unless a newer patch version already exists when this step runs.
 
-- [ ] **Step 5: Update progress truth**
+- [x] **Step 5: Update progress truth**
 
 Add one completed-phase entry to the canonical progress ledger and one concise delivery paragraph to `docs/STATUS.md`, including exact fresh counts, render evidence paths, version, known manual boundaries, and honest `usedBackend`/timing where exercised.
 
