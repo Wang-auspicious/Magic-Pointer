@@ -8,6 +8,8 @@ from app.fabric.agents import AgentInvocation, AgentRequest
 from app.fabric.artifacts import ArtifactRegistry
 from app.fabric.catalog import RECIPE_CATALOG
 from app.fabric.engine import FabricEngine
+from app.action_guard.egress_gate import EgressScope
+from app.fabric.schema import OperationPlan, RiskLevel
 from app.fabric.settings import FabricSettings
 from app.fabric.task_store import AgentTaskStore
 from app.fabric.workflow_task_store import WorkflowTaskError, WorkflowTaskStore
@@ -22,6 +24,26 @@ def _object(object_id: str = "obj-1", content: str = "Hello  123  456") -> dict:
         "content": content,
         "source": {"app": "test", "title": "Fixture"},
     }
+
+
+def test_egress_scope_classification_is_explicit() -> None:
+    handoff = OperationPlan(
+        id="p1", recipe_id="agent.handoff", command="handoff",
+        risk=RiskLevel.EXTERNAL_SEND, provider="agent.task", object_ids=(),
+    )
+    upload = OperationPlan(
+        id="p2", recipe_id="upload", command="upload",
+        risk=RiskLevel.EXTERNAL_SEND, provider="x", object_ids=(),
+        parameters={"capturePolicy": {"uploadAllowedPaths": ["frame.png"]}},
+    )
+    send = OperationPlan(
+        id="p3", recipe_id="send", command="send",
+        risk=RiskLevel.EXTERNAL_SEND, provider="x", object_ids=(),
+    )
+
+    assert FabricEngine._egress_scope(handoff) is EgressScope.AGENT_HANDOFF
+    assert FabricEngine._egress_scope(upload) is EgressScope.UPLOAD
+    assert FabricEngine._egress_scope(send) is EgressScope.EXTERNAL_SEND
 
 
 def test_every_catalog_recipe_can_be_planned_or_reports_precise_object_requirement(tmp_path: Path) -> None:
