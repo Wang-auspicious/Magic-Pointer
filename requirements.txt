@@ -1,5 +1,5 @@
-﻿# Python dependencies for MVP0
-openai>=2.0.0
+# Python dependencies for MVP0
+openai>=3.7.0
 Pillow>=10.0.0
 PyMuPDF>=1.24.0
 python-docx==1.2.0
