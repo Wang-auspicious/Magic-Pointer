@@ -96,7 +96,7 @@ def web_search(query: str, limit: int = 5) -> str:
         data={"q": text},
         headers={"User-Agent": _USER_AGENT},
         timeout=_SEARCH_TIMEOUT_S,
-        follow_redirects=True,
+        follow_redirects=False,
     )
     response.raise_for_status()
     html = response.text
