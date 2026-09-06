@@ -1,4 +1,4 @@
-"""Agent runtime turn-state and trajectory types.
+"""Agent runtime turn-state, message, tool-result and terminal types.
 
 Ported from the Claude Code query-loop study note
 (docs/harness-port-notes/2026-08-12-cc-query-loop.md): the State
@@ -251,16 +251,6 @@ class Terminal:
             model_usage=data["model_usage"],
             failure_kind=data["failure_kind"],
         )
-
-
-@dataclass(frozen=True, slots=True)
-class Trajectory:
-    """Precompiled recipe trajectory (input to later agent-runtime tasks)."""
-
-    recipe_id: str | None
-    first_user_message: str
-    recommended_tools: tuple[str, ...]
-    risk: str = "read"
 
 
 def _reject_unknown(data: dict[str, Any], cls: type) -> None:

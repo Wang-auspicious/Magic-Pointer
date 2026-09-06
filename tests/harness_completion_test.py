@@ -364,6 +364,28 @@ def test_anthropic_max_tokens_stop_is_withheld_for_continuation() -> None:
     assert [event.reason for event in withheld] == ["max_output_tokens"]
 
 
+def test_chat_stream_eof_without_finish_reason_is_withheld_for_continuation() -> None:
+    events = list(_parse_sse([
+        'data: {"choices":[{"delta":{"content":"partial senten"}}]}',
+        "data: [DONE]",
+    ]))
+
+    assert [
+        event.reason for event in events if type(event).__name__ == "TurnWithheld"
+    ] == ["max_output_tokens"]
+
+
+def test_messages_stream_eof_without_stop_reason_is_withheld_for_continuation() -> None:
+    events = list(_parse_sse([
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial senten"}}',
+        'data: {"type":"message_stop"}',
+    ], api_mode="messages"))
+
+    assert [
+        event.reason for event in events if type(event).__name__ == "TurnWithheld"
+    ] == ["max_output_tokens"]
+
+
 def test_chat_reasoning_only_eof_is_not_a_fake_success() -> None:
     events = list(_parse_sse([
         'data: {"choices":[{"delta":{"reasoning_content":"thinking"}}]}',

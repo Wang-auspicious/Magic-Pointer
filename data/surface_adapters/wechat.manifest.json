@@ -4,8 +4,8 @@
   "app_ids": ["WeChat.exe", "Weixin.exe", "WeChatAppEx.exe"],
   "window_class_patterns": ["WeChatMainWndForPC", "wechat_ui_main"],
   "title_patterns": ["微信", "WeChat"],
-  "object_kinds": ["chat_message", "message_list"],
-  "capabilities": ["read_raw_objects"],
+  "object_kinds": ["conversation", "chat_message", "message_list", "attachment"],
+  "capabilities": ["read_raw_objects", "read_current_conversation", "read_visible_history", "discover_attachments"],
   "version": 1,
-  "notes": "自绘应用样例适配器：UIA 树不透明时返回消息列表区域锚点，OCR/视觉证据叠加在该锚点上；行为契约在 app/surface_adapter/adapters/wechat_adapter.py，本文件只承载展示元数据。"
+  "notes": "公开桌面界面适配：UIA 缺少消息语义时保留列表区域锚点并请求视觉观察；不构造假的作者、时间或消息 ID。"
 }

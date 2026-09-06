@@ -21,7 +21,7 @@ def _select(params) -> list[str]:
 
 
 def _params(registry: ToolRegistry, tool_limit: int = 64):
-    return SimpleNamespace(registry=registry, trajectory=None, tool_limit=tool_limit)
+    return SimpleNamespace(registry=registry, tool_limit=tool_limit)
 
 
 # --- 各模块的 deferred 标记 ---------------------------------------------------
@@ -59,14 +59,13 @@ def test_frozen_frame_perception_trio_is_deferred() -> None:
     }
 
 
-def test_look_is_visible_but_describe_capabilities_is_deferred() -> None:
+def test_look_is_visible() -> None:
     from app.agent_runtime.look_tool import LookTool
 
     registry = ToolRegistry()
     LookTool(backend=None).register(registry)
     flags = {spec.name: spec.deferred for spec in registry.list()}
-    assert flags["Look"] is False, "Look 是冻结帧视觉主入口，保持可见"
-    assert flags["Capabilities"] is True
+    assert flags == {"Look": False}, "Look 是冻结帧视觉主入口，保持可见"
 
 
 def test_recall_and_save_skill_are_deferred() -> None:

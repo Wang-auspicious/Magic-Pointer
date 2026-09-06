@@ -129,10 +129,10 @@ def register_todo_write(
                 )
             entries.append({"content": str(item.get("content") or ""), "status": status})
         if sink is not None:
-            try:
-                sink(entries)
-            except Exception:  # noqa: BLE001 - plan sink is best effort
-                pass
+            # The sink now includes EventSession durability, not just a UI
+            # decoration. If that append fails, reporting a successful plan
+            # update would leave memory and restart state disagreeing.
+            sink(entries)
         return json.dumps({"plan": entries}, ensure_ascii=False)
 
     return registry.register(ToolSpec(

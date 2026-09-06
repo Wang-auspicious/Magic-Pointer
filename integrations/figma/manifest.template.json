@@ -1,0 +1,14 @@
+{
+  "name": "Magic Pointer",
+  "id": "__FIGMA_PLUGIN_ID__",
+  "api": "1.0.0",
+  "main": "code.js",
+  "ui": "ui.html",
+  "editorType": ["figma"],
+  "documentAccess": "dynamic-page",
+  "networkAccess": {
+    "allowedDomains": ["http://127.0.0.1:37843"],
+    "devAllowedDomains": ["http://127.0.0.1:37843"],
+    "reasoning": "Connects this explicitly opened plugin to the Magic Pointer loopback bridge on the same computer."
+  }
+}

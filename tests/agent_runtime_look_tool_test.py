@@ -7,16 +7,14 @@ Covers the VisionBackend contract and LookTool behaviour:
 - three-state failure mapping (VisionUnavailable / VisionTimeout / other ->
   unsupported / timeout / error) and the honest ``vision_not_configured`` path
   when no backend exists (zero backend calls)
-- describe_capabilities: trajectory hints take priority, output stays 3-8
-- registration: look is read / not concurrency-safe, describe_capabilities is
-  read / concurrency-safe; schema export; execution through the registry
+- registration: look is read / not concurrency-safe; schema export and
+  execution through the registry
 
 All backends are fakes; no real vision model, screen or network is touched.
 """
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -219,73 +217,27 @@ def test_look_no_backend_unsupported_and_zero_calls():
     assert backend.calls == []
 
 
-# --- describe_capabilities ----------------------------------------------------
-
-
-def test_capabilities_hints_take_priority():
-    tool = LookTool(FakeVisionBackend())
-    ev = tool.describe_capabilities(
-        "element:abc", trajectory_hints=["expand", "translate", "explain"]
-    )
-
-    assert ev.status is EvidenceStatus.OK
-    assert json.loads(ev.value) == ["expand", "translate", "explain"]
-
-
-def test_capabilities_default_list_when_no_hints():
-    tool = LookTool(FakeVisionBackend())
-    ev = tool.describe_capabilities("element:abc")
-
-    assert ev.status is EvidenceStatus.OK
-    assert json.loads(ev.value) == [
-        "translate",
-        "explain",
-        "expand",
-        "summarize",
-        "ocr_copy",
-    ]
-
-
-def test_capabilities_stays_within_3_to_8():
-    tool = LookTool(FakeVisionBackend())
-    many = [f"hint_{i}" for i in range(10)]
-    ev_many = tool.describe_capabilities("element:abc", trajectory_hints=many)
-    got_many = json.loads(ev_many.value)
-    assert len(got_many) == 8
-    assert got_many == many[:8]
-
-    ev_one = tool.describe_capabilities("element:abc", trajectory_hints=["only_one"])
-    got_one = json.loads(ev_one.value)
-    assert len(got_one) == 3
-    assert got_one[0] == "only_one"
-
-
 # --- registration + registry execution ----------------------------------------
 
 
-def test_register_exports_look_and_capabilities_specs():
+def test_register_exports_look_spec():
     registry = ToolRegistry()
     tool = LookTool(FakeVisionBackend())
     tool.register(registry)
 
     look = registry.get("look")
-    caps = registry.get("describe_capabilities")
     assert "frozen" in look.description.casefold()
     assert "Observe" in look.description
     assert look.effect is Effect.READ
     assert look.is_concurrency_safe is False
-    assert caps.effect is Effect.READ
-    assert caps.is_concurrency_safe is True
-    assert [s.name for s in registry.list()] == ["Look", "Capabilities"]
+    assert [s.name for s in registry.list()] == ["Look"]
 
     schemas = registry.schemas_for_model()
     look_params = next(s["parameters"] for s in schemas if s["name"] == "Look")
     assert "anchor" in look_params["required"]
 
-    parallel, sequential = registry.concurrency_partition(
-        ["Look", "Capabilities", "Look"]
-    )
-    assert parallel == ["Capabilities"]
+    parallel, sequential = registry.concurrency_partition(["Look", "Look"])
+    assert parallel == []
     assert sequential == ["Look", "Look"]
 
 
@@ -307,11 +259,6 @@ def test_registry_execute_look_returns_tool_result():
     )
     assert res_box.is_error is False
     assert res_box.used_backend == "vision"
-
-    res_caps = registry.execute_tool("describe_capabilities", {"anchor": "element:x"})
-    assert res_caps.is_error is False
-    assert len(json.loads(res_caps.value.value)) == 5
-
 
 def test_look_quota_is_honest_about_exhaustion():
     """Each look is a real vision call (seconds + money). A model that spams

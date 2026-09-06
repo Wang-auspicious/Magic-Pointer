@@ -53,6 +53,7 @@ from app.agent_runtime.model_client import (
     StreamingMessagesBackend,
 )
 from app.agent_runtime.perception_tools import PerceptionTools
+from app.agent_runtime.resume_context import active_source_reference_block
 from app.agent_runtime.session import FileSessionStore
 from app.agent_runtime.system_prompt import (
     SystemPromptBuilder,
@@ -79,6 +80,8 @@ from app.harness.runtime_host import HarnessRuntimeHost, RuntimeScope
 from app.harness.services import LlmProvider
 from app.self_evolution.background import BackgroundReviewLauncher
 from app.surface_adapter.adapters.wechat_adapter import WeChatSurfaceAdapter
+from app.surface_adapter.adapters.dingtalk_adapter import DingTalkSurfaceAdapter
+from app.surface_adapter.adapters.figma_adapter import FigmaSurfaceAdapter
 from app.surface_adapter.registry import SurfaceAdapterRegistry
 from app.system_context import list_visible_windows
 
@@ -125,11 +128,19 @@ def _apply_harness_tools(fork, config: dict[str, Any]) -> None:
     fork.provide_up("todo_store", todo_store)
 
     def sink(todos):
+        previous = todo_store.read()
         stored = todo_store.write(todos)
-        if todo_store.on_update is not None:
-            # Codex update_plan semantics: the UI sees every transition.
-            # Settable post-boot so both resident and one-shot hosts work.
-            todo_store.on_update(todo_store.read())
+        try:
+            if todo_store.on_update is not None:
+                # Codex update_plan semantics: the UI sees every transition.
+                # Settable post-boot so both resident and one-shot hosts work.
+                todo_store.on_update(todo_store.read())
+        except Exception:
+            # The callback includes EventSession persistence. Keep the live
+            # compactor aligned with the durable projection when that append
+            # fails, then let ToolRegistry surface the failure to the model.
+            todo_store.write(previous)
+            raise
         return stored
 
     register_todo_write(registry, sink=sink)
@@ -163,7 +174,34 @@ def _apply_look_tool(fork, config: dict[str, Any]) -> None:
         backend=fork.get("vision"),
         timeout_ms=int(config.get("timeout_ms") or 30000),
         capture=config.get("capture"),
+        captured_at=str(config.get("captured_at") or "gesture time"),
     ).register(fork.get("tools"))
+
+
+def _apply_context_tools(fork, config: dict[str, Any]) -> None:
+    """Task material discovery over the current EventSession projection."""
+    from app.context_pack.source_scope import scope_from_events
+    from app.context_pack.tools import register_context_tools
+
+    session_getter = config.get("session_getter")
+    readers = config.get("readers")
+    if not callable(session_getter) or readers is None:
+        return
+    register_context_tools(
+        fork.get("tools"),
+        session_getter=session_getter,
+        readers=readers,
+    )
+
+    def current_scope():
+        session = session_getter()
+        if session is None:
+            raise RuntimeError("task source session is not ready")
+        # Adopt inbox/context writes made by the Electron bridge process.
+        session.pending_inbox()
+        return scope_from_events(session.events, task_id=session.id)
+
+    fork.provide_up("source_scope", current_scope)
 
 
 def _apply_local_action_tools(fork, config: dict[str, Any]) -> None:
@@ -268,12 +306,140 @@ def _apply_local_action_tools(fork, config: dict[str, Any]) -> None:
 
 def _apply_desktop_action_tools(fork, config: dict[str, Any]) -> None:
     """Kimi CU 13 tools on the main loop, bound to one input-ownership session."""
-    from app.agent_runtime.wait_tool import WaitTool
-    from app.desktop_actions.session import _live_elements, _live_windows, default_session
+    import io
+    import json
 
-    register_desktop_action_tools(fork.get("tools"), default_session(
+    from app.agent_runtime.live_observer import LiveObserver, SurfaceCapture
+    from app.agent_runtime.wait_tool import WaitTool
+    from app.capture import GdiFallbackCaptureProvider, provider_for
+    from app.context_pack.source_store import resolve_source, task_sources
+    from app.desktop_actions.session import _live_elements, _live_windows
+
+    session = default_session(
         origin_window_hwnd=int(config.get("origin_window_hwnd") or 0) or None,
-    ))
+    )
+    source_session_getter = config.get("source_session_getter")
+
+    def resolve_task_source(source_id: str):
+        active = source_session_getter() if callable(source_session_getter) else None
+        if active is None:
+            return None
+        try:
+            return resolve_source(active.events, source_id)
+        except ValueError:
+            return None
+
+    def infer_bound_source_id(window_id: str | None = None) -> str:
+        active = source_session_getter() if callable(source_session_getter) else None
+        if active is None:
+            return ""
+        raw_window = str(window_id or "").strip()
+        wanted_hwnd = int(config.get("origin_window_hwnd") or 0)
+        if raw_window:
+            token = raw_window[2:] if raw_window.startswith("w-") else raw_window
+            try:
+                wanted_hwnd = int(token)
+            except ValueError:
+                return ""
+        matches = [
+            source.source_id
+            for source in task_sources(active.events)
+            if int(source.identity.get("hwnd") or 0) == wanted_hwnd and wanted_hwnd
+        ]
+        return matches[-1] if matches else ""
+
+    def read_live_state(source, locator):
+        del locator
+        hwnd = int(source.identity.get("hwnd") or 0)
+        if not hwnd:
+            raise ActionFailure(
+                FailureType.PERMISSION_DENIED,
+                f"source has no bound live window: {source.source_id}",
+            )
+        payload = json.loads(session.get_app_state(window_id=f"w-{hwnd}", mode="full"))
+        actual = int(((payload.get("windows") or [{}])[0]).get("hwnd") or 0)
+        if actual != hwnd:
+            raise ActionFailure(FailureType.STALE_SNAPSHOT, "bound source window changed")
+        payload["used_backend"] = "uia.live"
+        return payload
+
+    def capture_live_surface(source, state, locator):
+        del source, locator
+        window = dict((state.get("windows") or [{}])[0] or {})
+        raw_bounds = window.get("rect") or window.get("bbox") or ()
+        if not isinstance(raw_bounds, (list, tuple)) or len(raw_bounds) != 4:
+            raise ActionFailure(FailureType.TOOL_ERROR, "live window bounds unavailable")
+        bounds = tuple(int(value) for value in raw_bounds)
+        provider = provider_for(None)
+        if not provider.available():
+            provider = GdiFallbackCaptureProvider()
+        if not provider.available():
+            raise ActionFailure(FailureType.TOOL_ERROR, provider.unavailable_reason)
+        image = provider.capture(bounds)
+        encoded = io.BytesIO()
+        image.save(encoded, format="PNG")
+        return SurfaceCapture(encoded.getvalue(), provider.source)
+
+    observer = LiveObserver(
+        source_resolver=resolve_task_source,
+        state_reader=read_live_state,
+        capture=capture_live_surface,
+        vision_backend=fork.get("vision"),
+        timeout_ms=int(config.get("timeout_ms") or 30000),
+    )
+
+    def observe_execute(
+        source_id: str = "",
+        question: str = "",
+        locator: dict[str, Any] | None = None,
+        window_id: str | None = None,
+        pid: int | None = None,
+        app: str | None = None,
+        mode: str = "ax",
+        ax_filter: str | None = None,
+        scope: object = None,
+    ):
+        resolved_source_id = str(source_id or "").strip()
+        if not resolved_source_id and callable(source_session_getter):
+            resolved_source_id = infer_bound_source_id(window_id)
+            if not resolved_source_id:
+                raise ActionFailure(
+                    FailureType.PERMISSION_DENIED,
+                    "Observe requires a live source bound to the current task",
+                )
+        if resolved_source_id:
+            return observer.observe(resolved_source_id, question, locator, scope=scope)
+        # Existing computer-use calls can still request a structural snapshot.
+        # Fresh pixels are captured only through a task-bound source.
+        return session.get_app_state(
+            window_id=window_id,
+            pid=pid,
+            app=app,
+            mode=mode,
+            ax_filter=ax_filter,
+            scope=scope,
+        )
+
+    def observe_access(args: dict[str, Any]):
+        source_id = str(args.get("source_id") or "").strip()
+        if not source_id and callable(source_session_getter):
+            source_id = infer_bound_source_id(str(args.get("window_id") or "") or None)
+        if source_id:
+            return observer.access_for({**args, "source_id": source_id})
+        window_id = str(args.get("window_id") or "").strip()
+        from app.context_pack.source_scope import AccessRequest
+
+        return AccessRequest(
+            action="read",
+            window_ids=(window_id or "unbound-live-surface",),
+        )
+
+    register_desktop_action_tools(
+        fork.get("tools"),
+        session,
+        observe_execute=observe_execute,
+        observe_access_for=observe_access,
+    )
     # Wait：确定性条件等待（点开菜单→等它渲染→点菜单项）。三家都没有，
     # MP 的桌面 agent 刚需；探针与 Observe 同源（真实 UIA）。
     WaitTool(
@@ -489,6 +655,19 @@ def _apply_model_client(fork, config: dict[str, Any]) -> None:
                 origin=ORIGIN_DATA,
                 injected=True,
             ))
+        session_getter = config.get("session_getter")
+        active_session = session_getter() if callable(session_getter) else None
+        if active_session is not None:
+            context_block = active_source_reference_block(active_session.events)
+            if context_block:
+                compacted.append(AgentMessage(
+                    role=Role.USER,
+                    content=context_block,
+                    tool_call_id=None,
+                    name=None,
+                    origin=ORIGIN_DATA,
+                    injected=True,
+                ))
         return compacted
 
     fork.provide_up("compactor", compactor)
@@ -504,8 +683,10 @@ def _apply_model_client(fork, config: dict[str, Any]) -> None:
 
 
 def _apply_wechat_surface_adapter(fork, config: dict[str, Any]) -> None:
-    """Register the built-in WeChat adapter through the shared seam."""
+    """Register built-in public-surface chat adapters through one seam."""
     fork.get("surface_adapters").register(WeChatSurfaceAdapter())
+    fork.get("surface_adapters").register(DingTalkSurfaceAdapter())
+    fork.get("surface_adapters").register(FigmaSurfaceAdapter())
 
 
 def _apply_session_store(fork, config: dict[str, Any]) -> None:
@@ -570,6 +751,7 @@ BUILTIN_PLUGINS: dict[str, PluginSpec] = {
         _spec("skill-writer", ("tools",), _apply_skill_writer),
         _spec("perception-tools", ("tools", "perception"), _apply_perception_tools),
         _spec("look-tool", ("tools", "vision"), _apply_look_tool),
+        _spec("context-tools", ("tools",), _apply_context_tools),
         _spec("local-action-tools", ("tools",), _apply_local_action_tools),
         _spec("desktop-action-tools", ("tools",), _apply_desktop_action_tools),
         _spec("coding-tools", ("tools",), _apply_coding_tools),
@@ -599,6 +781,7 @@ BUILTIN_ROW_IDS: tuple[str, ...] = (
     "skill-writer",
     "perception-tools",
     "look-tool",
+    "context-tools",
     "local-action-tools",
     "desktop-action-tools",
     "coding-tools",
@@ -756,13 +939,7 @@ def _layered_patch(
 def _global_loop_rows(root: Path) -> list[BundleRow]:
     """Rows whose providers live for the whole resident Agent process."""
     return [
-        BundleRow("harness-tools", "harness-tools"),
         BundleRow("web-tools", "web-tools"),
-        BundleRow(
-            "skill-writer",
-            "skill-writer",
-            {"skills_root": str(_user_extension_root(root) / "skills")},
-        ),
         BundleRow("computer-agent", "computer-agent"),
         BundleRow("system-prompt", "system-prompt"),
         BundleRow(
@@ -777,11 +954,6 @@ def _global_loop_rows(root: Path) -> list[BundleRow]:
         ),
         BundleRow("memory-tools", "memory-tools"),
         BundleRow(
-            "mcp-provider",
-            "mcp-provider",
-            {"config_path": str(_mcp_config_path(root)), "timeout_s": 8.0},
-        ),
-        BundleRow(
             "learning-review",
             "learning-review",
             {
@@ -793,14 +965,56 @@ def _global_loop_rows(root: Path) -> list[BundleRow]:
     ]
 
 
+def _advanced_workspace(runtime: dict[str, Any]) -> str:
+    """Return the project root only after the trusted UI chose advanced tools."""
+    if runtime.get("advanced_tools") is not True:
+        return ""
+    return str(runtime.get("workspace_root") or "").strip()
+
+
+def _advanced_loop_rows(runtime: dict[str, Any], root: Path) -> list[BundleRow]:
+    """Generic code/self-write/MCP tools are an explicit project-mode surface."""
+    if runtime.get("advanced_tools") is not True:
+        return []
+    return [
+        BundleRow(
+            "skill-writer",
+            "skill-writer",
+            {"skills_root": str(_user_extension_root(root) / "skills")},
+        ),
+        BundleRow(
+            "mcp-provider",
+            "mcp-provider",
+            {"config_path": str(_mcp_config_path(root)), "timeout_s": 8.0},
+        ),
+    ]
+
+
 def _run_loop_rows(runtime: dict[str, Any], root: Path) -> list[BundleRow]:
     window = dict(runtime.get("target_window") or {})
-    return [
+    workspace_root = _advanced_workspace(runtime)
+    rows = [
+        # TodoStore is task state, not a resident provider. A fresh scoped
+        # instance is hydrated from this task's EventSession by the bridge;
+        # keeping it global leaks one task's plan into the next Stage run.
+        BundleRow("harness-tools", "harness-tools"),
         BundleRow("perception-tools", "perception-tools"),
         BundleRow(
             "look-tool",
             "look-tool",
-            {"capture": runtime.get("frame_crop"), "timeout_ms": 30000},
+            {
+                "capture": runtime.get("frame_crop"),
+                "timeout_ms": 30000,
+                "captured_at": runtime.get("frame_captured_at"),
+            },
+        ),
+        BundleRow(
+            "context-tools",
+            "context-tools",
+            {
+                "session_getter": runtime.get("source_session_getter"),
+                "readers": runtime.get("source_readers"),
+            },
         ),
         BundleRow(
             "local-action-tools",
@@ -816,17 +1030,18 @@ def _run_loop_rows(runtime: dict[str, Any], root: Path) -> list[BundleRow]:
             "desktop-action-tools",
             "desktop-action-tools",
             {
-                "workspace_root": str(runtime.get("workspace_root") or ""),
+                "workspace_root": workspace_root,
                 # 本轮圈选发生在哪个窗口。Observe 不带参数时的默认目标就是它，
                 # 否则一旦气泡抢走前台，"观察一下"读到的是桌面。
                 "origin_window_hwnd": int(window.get("hwnd") or 0),
+                "source_session_getter": runtime.get("source_session_getter"),
             },
         ),
         BundleRow(
             "coding-tools",
             "coding-tools",
             {
-                "workspace_root": str(runtime.get("workspace_root") or ""),
+                "workspace_root": workspace_root,
                 # 后台 job 完成推送（Hermes notify_on_complete）：桥在
                 # runtime 里带 session_inbox=enqueue_inbox 回调。
                 "inbox": runtime.get("session_inbox"),
@@ -855,9 +1070,10 @@ def _run_loop_rows(runtime: dict[str, Any], root: Path) -> list[BundleRow]:
                     "MAGIC_POINTER_CONTEXT_TOKENS"
                 ),
                 "summarize": runtime.get("summarize"),
+                "session_getter": runtime.get("source_session_getter"),
                 "user_data_dir": str(_user_extension_root(root)),
                 "command": str(runtime.get("command") or ""),
-                "workspace_root": str(runtime.get("workspace_root") or ""),
+                "workspace_root": workspace_root,
                 "permission_preset": str(runtime.get("permission_preset") or ""),
                 "effort": normalize_effort(runtime.get("effort")),
                 "pointing_instruction": str(runtime.get("pointing_instruction") or ""),
@@ -867,6 +1083,8 @@ def _run_loop_rows(runtime: dict[str, Any], root: Path) -> list[BundleRow]:
             },
         ),
     ]
+    rows[0:0] = _advanced_loop_rows(runtime, root)
+    return rows
 
 
 class LoopHarnessHost:
@@ -937,15 +1155,11 @@ def boot_loop_context(
     content = str(runtime.get("content") or "")
     capture_path = str(runtime.get("capture_path") or "").strip()
     command = str(runtime.get("command") or "")
+    workspace_root = _advanced_workspace(runtime)
 
     rows = [
         BundleRow("harness-tools", "harness-tools"),
         BundleRow("web-tools", "web-tools"),
-        BundleRow(
-            "skill-writer",
-            "skill-writer",
-            {"skills_root": str(_user_extension_root(root) / "skills")},
-        ),
         BundleRow("computer-agent", "computer-agent"),
         BundleRow("perception-tools", "perception-tools"),
         BundleRow(
@@ -954,6 +1168,15 @@ def boot_loop_context(
             {
                 "capture": runtime.get("frame_crop"),
                 "timeout_ms": 30000,
+                "captured_at": runtime.get("frame_captured_at"),
+            },
+        ),
+        BundleRow(
+            "context-tools",
+            "context-tools",
+            {
+                "session_getter": runtime.get("source_session_getter"),
+                "readers": runtime.get("source_readers"),
             },
         ),
         BundleRow(
@@ -966,11 +1189,18 @@ def boot_loop_context(
                 "window_process": str(window.get("process_name") or ""),
             },
         ),
-        BundleRow("desktop-action-tools", "desktop-action-tools"),
+        BundleRow(
+            "desktop-action-tools",
+            "desktop-action-tools",
+            {
+                "origin_window_hwnd": int(window.get("hwnd") or 0),
+                "source_session_getter": runtime.get("source_session_getter"),
+            },
+        ),
         BundleRow(
             "coding-tools",
             "coding-tools",
-            {"workspace_root": str(runtime.get("workspace_root") or "")},
+            {"workspace_root": workspace_root},
         ),
         BundleRow(
             "capability-tools",
@@ -1008,7 +1238,7 @@ def boot_loop_context(
             "delegate-tool",
             "delegate-tool",
             {
-                "workspace_root": str(runtime.get("workspace_root") or ""),
+                "workspace_root": workspace_root,
                 "permission_mode": str(runtime.get("permission_mode") or "default"),
                 "subagent_event_sink": runtime.get("subagent_event_sink"),
             },
@@ -1023,9 +1253,10 @@ def boot_loop_context(
                     "MAGIC_POINTER_CONTEXT_TOKENS"
                 ),
                 "summarize": runtime.get("summarize"),
+                "session_getter": runtime.get("source_session_getter"),
                 "user_data_dir": str(_user_extension_root(root)),
                 "command": command,
-                "workspace_root": str(runtime.get("workspace_root") or ""),
+                "workspace_root": workspace_root,
                 "permission_preset": str(runtime.get("permission_preset") or ""),
                 "effort": normalize_effort(runtime.get("effort")),
                 "pointing_instruction": str(runtime.get("pointing_instruction") or ""),
@@ -1035,6 +1266,7 @@ def boot_loop_context(
             },
         ),
     ]
+    rows[2:2] = _advanced_loop_rows(runtime, root)
 
     core = {
         "tools": ToolRegistry(),

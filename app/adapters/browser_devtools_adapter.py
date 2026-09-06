@@ -208,7 +208,11 @@ BROWSER_DOM_REGION_PROBE_SCRIPT = r"""
   const text = combined.map(item => (item.innerText || '').trim()).filter(Boolean).join('\n').slice(0, 12000);
   return {
     state: 'resolved',
-    page: { title: document.title, url: location.href },
+    page: {
+      title: document.title,
+      url: location.href,
+      documentEpoch: String(performance.timeOrigin || 0) + ':' + location.href,
+    },
     method: 'cdp:dom-region',
     text,
     textBlocks,
@@ -394,7 +398,11 @@ BROWSER_DOM_PROBE_SCRIPT = r"""
   })();
   return {
     state: 'resolved',
-    page: { title: document.title, url: location.href },
+    page: {
+      title: document.title,
+      url: location.href,
+      documentEpoch: String(performance.timeOrigin || 0) + ':' + location.href,
+    },
     node: {
       tag: element.tagName.toLowerCase(),
       id: element.id || '',
@@ -424,6 +432,115 @@ BROWSER_DOM_PROBE_SCRIPT = r"""
     },
     resourceFailures: resources,
   };
+}
+"""
+
+BROWSER_DOCUMENT_READ_SCRIPT = r"""
+request => {
+  const epoch = String(performance.timeOrigin || 0) + ':' + location.href;
+  const base = {
+    documentEpoch: epoch,
+    title: document.title,
+    url: location.href,
+    nodes: [],
+    totalUnits: 0,
+    nextCursor: null,
+    complete: true,
+    limitations: [],
+  };
+  if (String(request.documentEpoch || '') !== epoch) return base;
+
+  const esc = value => window.CSS && CSS.escape
+    ? CSS.escape(String(value))
+    : String(value).replace(/[^A-Za-z0-9_-]/g, character => '\\' + character);
+  const unique = selector => {
+    try { return document.querySelectorAll(selector).length === 1; } catch { return false; }
+  };
+  const selectorFor = node => {
+    if (!node || node.nodeType !== 1) return '';
+    if (node.id) {
+      const selector = '#' + esc(node.id);
+      if (unique(selector)) return selector;
+    }
+    for (const key of ['data-testid', 'data-test', 'data-qa', 'name', 'aria-label']) {
+      const value = node.getAttribute(key);
+      if (!value) continue;
+      const selector = node.tagName.toLowerCase() + '[' + key + '=' + JSON.stringify(value) + ']';
+      if (unique(selector)) return selector;
+    }
+    const parts = [];
+    let current = node;
+    for (let depth = 0; current && current.nodeType === 1 && depth < 10; depth += 1) {
+      let part = current.tagName.toLowerCase();
+      const siblings = current.parentElement
+        ? Array.from(current.parentElement.children).filter(item => item.tagName === current.tagName)
+        : [];
+      if (siblings.length > 1) part += ':nth-of-type(' + (siblings.indexOf(current) + 1) + ')';
+      parts.unshift(part);
+      const selector = parts.join(' > ');
+      if (unique(selector)) return selector;
+      current = current.parentElement;
+    }
+    return parts.join(' > ');
+  };
+
+  let candidates = [];
+  const requestedSelector = request.locator && request.locator.value
+    ? String(request.locator.value.selector || '')
+    : '';
+  if (requestedSelector) {
+    let target = null;
+    try { target = document.querySelector(requestedSelector); } catch { target = null; }
+    if (!target) {
+      base.limitations.push('dom-locator-not-found');
+      return base;
+    }
+    const neighborhood = new Set([target]);
+    if (target.parentElement) {
+      neighborhood.add(target.parentElement);
+      for (const sibling of target.parentElement.children) neighborhood.add(sibling);
+    }
+    for (const descendant of Array.from(target.querySelectorAll('*')).slice(0, 80)) {
+      neighborhood.add(descendant);
+    }
+    candidates = Array.from(neighborhood);
+  } else {
+    candidates = Array.from(document.querySelectorAll('body *'));
+  }
+
+  const needle = String(request.query || '').trim().toLocaleLowerCase();
+  const rows = [];
+  for (const node of candidates) {
+    if (!(node instanceof Element) || ['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE'].includes(node.tagName)) continue;
+    const text = String(node.innerText || node.getAttribute('aria-label') || node.textContent || '')
+      .replace(/\s+/g, ' ').trim();
+    if (!text || (needle && !text.toLocaleLowerCase().includes(needle))) continue;
+    const selector = selectorFor(node);
+    if (!selector) continue;
+    const rect = node.getBoundingClientRect();
+    rows.push({
+      nodeId: selector,
+      selector,
+      parentSelector: selectorFor(node.parentElement),
+      tag: node.tagName.toLowerCase(),
+      role: node.getAttribute('role') || node.tagName.toLowerCase(),
+      text: text.slice(0, 12000),
+      inViewport: rect.bottom > 0 && rect.right > 0
+        && rect.top < window.innerHeight && rect.left < window.innerWidth,
+      rectCss: {x: rect.x, y: rect.y, width: rect.width, height: rect.height},
+    });
+  }
+  const rawCursor = String(request.cursor || '');
+  const offset = rawCursor.startsWith('dom:') ? Math.max(0, Number(rawCursor.slice(4)) || 0) : 0;
+  const limit = Math.max(1, Math.min(200, Number(request.limit) || 20));
+  base.nodes = rows.slice(offset, offset + limit);
+  base.totalUnits = rows.length;
+  const end = offset + base.nodes.length;
+  base.nextCursor = end < rows.length ? 'dom:' + end : null;
+  base.complete = base.nextCursor === null;
+  if (document.querySelector('iframe')) base.limitations.push('iframe-content-not-read');
+  if (document.querySelector('canvas')) base.limitations.push('canvas-internal-content-not-read');
+  return base;
 }
 """
 
@@ -625,7 +742,11 @@ def sanitize_browser_context(value: Any) -> dict[str, Any] | None:
         "schemaVersion": 1,
         "state": state,
         "method": _bounded(value.get("method"), 120),
-        "page": {"title": _bounded(page.get("title"), 1000), "url": _safe_url(page.get("url"))},
+        "page": {
+            "title": _bounded(page.get("title"), 1000),
+            "url": _safe_url(page.get("url")),
+            "documentEpoch": _bounded(page.get("documentEpoch"), 4000),
+        },
         "node": {
             "tag": _bounded(node.get("tag"), 80),
             "id": _bounded(node.get("id"), 300),
@@ -654,7 +775,9 @@ def sanitize_browser_context(value: Any) -> dict[str, Any] | None:
         ),
         "provenance": {
             "endpoint": _safe_url(provenance.get("endpoint")),
+            "browserInstanceId": _bounded(provenance.get("browserInstanceId"), 4000),
             "targetId": _bounded(provenance.get("targetId"), 200),
+            "documentEpoch": _bounded(provenance.get("documentEpoch"), 4000),
             "structural": provenance.get("structural") is True,
             "networkSources": [
                 _bounded(item, 80)
@@ -963,7 +1086,9 @@ class ChromeDevToolsProbe:
                 "networkFailures": deduped[-20:],
                 "provenance": {
                     "endpoint": endpoint,
+                    "browserInstanceId": endpoint,
                     "targetId": str(target.get("id") or ""),
+                    "documentEpoch": str((raw.get("page") or {}).get("documentEpoch") or ""),
                     "structural": True,
                     "networkSources": sorted({
                         str(item.get("source") or "") for item in deduped if item.get("source")
@@ -1097,7 +1222,9 @@ class ChromeDevToolsProbe:
                 "networkFailures": deduped[-20:],
                 "provenance": {
                     "endpoint": endpoint,
+                    "browserInstanceId": endpoint,
                     "targetId": str(target.get("id") or ""),
+                    "documentEpoch": str((raw.get("page") or {}).get("documentEpoch") or ""),
                     "structural": True,
                     "networkSources": sorted({str(item.get("source") or "") for item in deduped if item.get("source")}),
                 },
@@ -1107,6 +1234,106 @@ class ChromeDevToolsProbe:
             return DevToolsProbeResult(True, safe or {})
         finally:
             socket.close()
+
+
+class ChromeDevToolsDocumentClient:
+    """Bound, read-only CDP access to one page target's whole DOM.
+
+    URL and title are deliberately not selection keys: multiple tabs commonly
+    share both. ``browser_instance_id`` is the endpoint captured with the
+    source and ``target_id`` is the exact CDP page target.
+    """
+
+    def __init__(
+        self,
+        *,
+        targets: Callable[[], list[tuple[str, dict[str, Any]]]] | None = None,
+        evaluate: Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]] | None = None,
+        timeout_ms: int = 2_200,
+    ) -> None:
+        self._probe = ChromeDevToolsProbe(timeout_ms=timeout_ms)
+        self._targets = targets or self._probe._available_targets
+        self._evaluate = evaluate or self._evaluate_target
+        self._timeout_ms = max(500, min(int(timeout_ms), 5_000))
+
+    def _evaluate_target(
+        self,
+        browser_instance_id: str,
+        target: dict[str, Any],
+        request: dict[str, Any],
+    ) -> dict[str, Any]:
+        del browser_instance_id
+        try:
+            import websocket
+        except Exception as exc:
+            raise RuntimeError(f"websocket_client_unavailable:{type(exc).__name__}") from exc
+        socket = websocket.create_connection(
+            str(target.get("webSocketDebuggerUrl") or ""),
+            timeout=self._timeout_ms / 1000.0,
+            suppress_origin=True,
+        )
+        try:
+            expression = (
+                f"({BROWSER_DOCUMENT_READ_SCRIPT})"
+                f"({json.dumps(request, ensure_ascii=False)})"
+            )
+            socket.send(json.dumps({
+                "id": 1,
+                "method": "Runtime.evaluate",
+                "params": {
+                    "expression": expression,
+                    "returnByValue": True,
+                    "awaitPromise": True,
+                },
+            }))
+            while True:
+                message = json.loads(socket.recv())
+                if not isinstance(message, dict) or message.get("id") != 1:
+                    continue
+                if message.get("error"):
+                    raise RuntimeError(str(message["error"])[:500])
+                value = _runtime_evaluate_value(dict(message.get("result") or {}))
+                if value is None:
+                    raise RuntimeError("browser_document_evaluate_missing")
+                return value
+        finally:
+            socket.close()
+
+    def read_document(
+        self,
+        *,
+        browser_instance_id: str,
+        target_id: str,
+        document_epoch: str,
+        locator: dict[str, Any] | None,
+        query: str | None,
+        cursor: str | None,
+        limit: int,
+        describe: bool,
+    ) -> dict[str, Any]:
+        matches = [
+            (instance, target)
+            for instance, target in self._targets()
+            if str(instance) == str(browser_instance_id)
+            and str(target.get("id") or "") == str(target_id)
+        ]
+        if len(matches) != 1:
+            raise RuntimeError("bound_browser_target_missing_or_ambiguous")
+        instance, target = matches[0]
+        request = {
+            "documentEpoch": str(document_epoch),
+            "locator": locator,
+            "query": str(query or ""),
+            "cursor": str(cursor or ""),
+            "limit": 1 if describe else max(1, min(int(limit), 200)),
+        }
+        value = dict(self._evaluate(instance, target, request) or {})
+        value.update({
+            "browserInstanceId": instance,
+            "targetId": str(target.get("id") or ""),
+            "usedBackend": "cdp.dom.document",
+        })
+        return value
 
 
 class BrowserDevToolsAdapter(AppAdapter):

@@ -4,10 +4,13 @@ import hashlib
 import re
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from app.actions.schema import ActionProposal, ActionTarget, SafetyLevel
 from app.adapters.base import AdapterReadContext
+
+if TYPE_CHECKING:
+    from app.context_pack.sources import FragmentLocator
 
 JsonDict = dict[str, Any]
 
@@ -89,6 +92,10 @@ def make_word_replace_selection_proposal(
     replacement_text: str,
     selection_session_id: str | None = None,
     selection_snapshot_id: str | None = None,
+    source_id: str | None = None,
+    locator: FragmentLocator | None = None,
+    artifact_id: str | None = None,
+    artifact_revision: int | None = None,
 ) -> ActionProposal | None:
     if ctx.app != "word":
         return None
@@ -115,6 +122,27 @@ def make_word_replace_selection_proposal(
     proposal_id = f"word-replace-{uuid.uuid4().hex[:12]}"
     before_excerpt = short_excerpt(original_text)
     after_excerpt = short_excerpt(replacement)
+    binding_requested = any(
+        value is not None
+        for value in (source_id, locator, artifact_id, artifact_revision)
+    )
+    if binding_requested:
+        if (
+            not str(source_id or "").strip()
+            or locator is None
+            or not str(artifact_id or "").strip()
+            or isinstance(artifact_revision, bool)
+            or not isinstance(artifact_revision, int)
+            or artifact_revision < 1
+        ):
+            return None
+    binding = {
+        "source_id": str(source_id or ""),
+        "locator": locator.to_dict() if locator is not None else None,
+        "base": {"text": original_text},
+        "artifact_id": str(artifact_id or ""),
+        "artifact_revision": artifact_revision,
+    } if binding_requested else {}
 
     return ActionProposal(
         id=proposal_id,
@@ -135,6 +163,7 @@ def make_word_replace_selection_proposal(
                 "selection_session_id": selection_session_id,
                 "selection_snapshot_id": selection_snapshot_id,
                 "source_window_title": source_window_title,
+                **binding,
             },
         ),
         parameters={
@@ -156,6 +185,7 @@ def make_word_replace_selection_proposal(
             "selection_session_id": selection_session_id,
             "selection_snapshot_id": selection_snapshot_id,
             "source_window_title": source_window_title,
+            **binding,
         },
         safety_level=SafetyLevel.HIGH,
         confirmation_required=True,
@@ -174,5 +204,6 @@ def make_word_replace_selection_proposal(
             "selection_session_id": selection_session_id,
             "selection_snapshot_id": selection_snapshot_id,
             "source_window_title": source_window_title,
+            **binding,
         },
     )

@@ -54,6 +54,24 @@ r = evaluateRule('window_flip', { app: 'b' }, r.state);
 assert.strictEqual(r.trigger, true, '第 4 次切换达到 3 flips');
 
 // --- once_store：一生一次 + 永久关闭 -----------------------------------
+// --- context_material_follow：明确材料只提议一次关注入口 ----------------
+r = evaluateRule('context_material_follow', {
+  kind: 'material_selected',
+  sourceId: 'source:attachment:D:/work/brief.pptx',
+  title: 'brief.pptx',
+}, null);
+assert.strictEqual(r.trigger, true);
+assert.strictEqual(r.ruleId, 'context_material_follow');
+assert.match(r.previewText, /关注此材料/);
+assert.deepStrictEqual(r.objects, [{
+  kind: 'material',
+  sourceId: 'source:attachment:D:/work/brief.pptx',
+  title: 'brief.pptx',
+}]);
+r = evaluateRule('context_material_follow', { kind: 'clip' }, null);
+assert.strictEqual(r.trigger, false, '只有明确选中的任务材料才可提议关注');
+
+// --- once_store：一生一次 + 永久关闭 -----------------------------------
 let saved = {};
 const store = createProactiveOnceStore({
   load: () => saved,

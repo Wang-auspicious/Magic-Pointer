@@ -43,8 +43,7 @@ from app.agent_runtime.tool_registry import (
     ToolRegistry,
     ToolSpec,
 )
-from app.fabric.catalog import get_recipe
-from app.fabric.intent_router import is_non_destination_recipe
+from app.fabric.catalog import get_recipe, is_non_destination_recipe
 from app.fabric.receipt_verification import verify_action_receipt
 
 __all__ = [

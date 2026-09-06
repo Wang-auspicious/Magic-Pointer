@@ -517,3 +517,35 @@ def test_observe_without_an_origin_keeps_the_old_foreground_default() -> None:
     payload = _payload(_exec(registry, "Observe"))
     assert payload["windows"][0]["hwnd"] == 42
     assert "is_origin_window" not in payload
+
+
+def test_observe_registration_can_use_task_scoped_live_observer() -> None:
+    session = _session()
+    registry = ToolRegistry()
+    calls: list[dict] = []
+
+    def live_observe(**kwargs):
+        calls.append(kwargs)
+        return {"sourceId": kwargs["source_id"], "snapshotId": "fresh"}
+
+    def live_access(args):
+        return ("read", str(args.get("source_id") or ""))
+
+    register_desktop_action_tools(
+        registry,
+        session,
+        observe_execute=live_observe,
+        observe_access_for=live_access,
+    )
+
+    result = _exec(registry, "Observe", {
+        "source_id": "source:surface",
+        "question": "what is visible now?",
+        "locator": {"kind": "visual-region", "value": {"bbox": [0, 0, 10, 10]}},
+    })
+    assert result.is_error is False
+    assert result.value["snapshotId"] == "fresh"
+    assert calls[0]["source_id"] == "source:surface"
+    observe = registry.get("Observe")
+    assert observe.access_for({"source_id": "source:surface"}) == ("read", "source:surface")
+    assert {"source_id", "question", "locator"} <= set(observe.input_schema["properties"])

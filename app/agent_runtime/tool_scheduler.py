@@ -69,6 +69,7 @@ def schedule_tool_calls(
     execute: Callable[[ToolCall], ToolResult],
     max_parallel_tool_calls: int = 4,
     is_cancelled: Callable[[], bool] | None = None,
+    before_dispatch: Callable[[ToolCall], ToolResult | None] | None = None,
 ) -> Iterator[ToolScheduleEvent]:
     """Schedule ``calls`` with exclusive barriers and ordered commits.
 
@@ -96,6 +97,12 @@ def schedule_tool_calls(
             raise CancelledError("tool batch cancelled before dispatch")
 
         first = planned[cursor]
+        blocked = before_dispatch(first) if before_dispatch is not None else None
+        if blocked is not None:
+            yield ScheduledCallStarted(first, dispatched=False)
+            yield ScheduledCallCommitted(first, blocked, dispatched=False)
+            cursor += 1
+            continue
         if _claim(classify, conflict_keys, first)[0] == "exclusive":
             yield ScheduledCallStarted(first, dispatched=True)
             try:
@@ -125,6 +132,7 @@ def schedule_tool_calls(
             execute=execute,
             max_parallel_tool_calls=max_parallel_tool_calls,
             is_cancelled=cancelled,
+            before_dispatch=before_dispatch,
         )
         if was_cancelled:
             yield from _skipped_events(planned[cursor:])
@@ -142,6 +150,7 @@ def _parallel_group(
     execute: Callable[[ToolCall], ToolResult],
     max_parallel_tool_calls: int,
     is_cancelled: Callable[[], bool],
+    before_dispatch: Callable[[ToolCall], ToolResult | None] | None,
 ) -> Iterator[ToolScheduleEvent]:
     """Run the next live parallel group and return its next unstarted index."""
     next_to_start = start
@@ -166,6 +175,19 @@ def _parallel_group(
                     cancelled = True
                     break
                 call = calls[next_to_start]
+                blocked = before_dispatch(call) if before_dispatch is not None else None
+                if blocked is not None:
+                    settled[next_to_start] = ScheduledCallCommitted(
+                        call,
+                        blocked,
+                        dispatched=False,
+                    )
+                    yield ScheduledCallStarted(call, dispatched=False)
+                    next_to_start += 1
+                    while next_to_commit in settled:
+                        yield settled.pop(next_to_commit)
+                        next_to_commit += 1
+                    continue
                 mode, keys = _claim(classify, conflict_keys, call)
                 if mode == "exclusive" or active_keys.intersection(keys):
                     break
@@ -174,6 +196,10 @@ def _parallel_group(
                 in_flight[future] = (next_to_start, keys)
                 active_keys.update(keys)
                 next_to_start += 1
+
+            while next_to_commit in settled:
+                yield settled.pop(next_to_commit)
+                next_to_commit += 1
 
             if not in_flight:
                 break

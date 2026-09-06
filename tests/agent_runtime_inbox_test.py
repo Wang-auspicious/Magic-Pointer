@@ -61,6 +61,25 @@ def test_inbox_rejects_empty_and_caps_overflow() -> None:
     assert drained == ["消息2", "消息3", "消息4"]  # 挤掉最旧的，保住最近的
 
 
+def test_structured_inbox_refuses_overflow_without_dropping_a_reference() -> None:
+    inbox = Inbox(capacity=1)
+    assert inbox.put("先做这个", "next-step") is True
+    payload = {
+        "inputId": "input-ref-only",
+        "taskId": "task-1",
+        "target": "next-step",
+        "instruction": "",
+        "referenceUpdates": [{"operation": "remove", "binding": {"referenceId": "ref-a"}}],
+        "sourceIds": [],
+        "timeline": [],
+        "capturedAtMs": 1,
+    }
+
+    assert inbox.put("", "next-step", payload=payload) is False
+    assert inbox.drain("next-step") == ["先做这个"]
+    assert inbox.dropped == 0
+
+
 def test_inbox_thread_safe_concurrent_put() -> None:
     inbox = Inbox(capacity=1000)
 

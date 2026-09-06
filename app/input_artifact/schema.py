@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from typing import Any, Iterable
 
 from app.adapters.base import AdapterReadContext
+from app.context_pack.sources import Coverage, ReferenceBinding, SourceRef
 
 _SAFE_STRUCTURE_KEYS = (
     "address",
@@ -164,6 +165,11 @@ class InputArtifact:
     attachments: tuple[str, ...]
     route_hint: str
     display: InputDisplay
+    source_ids: tuple[str, ...] = ()
+    reference_ids: tuple[str, ...] = ()
+    coverage: Coverage | None = None
+    sources: tuple[SourceRef, ...] = ()
+    references: tuple[ReferenceBinding, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.id.strip():
@@ -172,6 +178,16 @@ class InputArtifact:
             raise ValueError("InputArtifact.revision must be positive")
         if self.gesture_kind is not None and not self.frame_lease_id:
             raise ValueError("gesture-bound InputArtifact requires a FrameLease")
+        if self.source_ids != tuple(source.source_id for source in self.sources):
+            raise ValueError("InputArtifact.source_ids must match sources")
+        if self.reference_ids != tuple(reference.reference_id for reference in self.references):
+            raise ValueError("InputArtifact.reference_ids must match references")
+        unknown_sources = {
+            reference.source_id for reference in self.references
+            if reference.source_id not in self.source_ids
+        }
+        if unknown_sources:
+            raise ValueError(f"InputArtifact references unknown sources: {sorted(unknown_sources)}")
 
     def to_public_dict(self) -> dict[str, Any]:
         return {
@@ -189,6 +205,11 @@ class InputArtifact:
             "attachments": list(self.attachments),
             "routeHint": self.route_hint,
             "display": self.display.to_dict(),
+            "sourceIds": list(self.source_ids),
+            "referenceIds": list(self.reference_ids),
+            "coverage": self.coverage.to_dict() if self.coverage is not None else None,
+            "sources": [source.to_dict() for source in self.sources],
+            "references": [reference.to_dict() for reference in self.references],
         }
 
     def to_model_dict(self) -> dict[str, Any]:
@@ -207,6 +228,11 @@ class InputArtifact:
             "target": self.target.to_dict() if self.target is not None else None,
             "facts": [fact.to_dict() for fact in self.facts],
             "conflicts": [conflict.to_dict() for conflict in self.conflicts],
+            "sourceIds": list(self.source_ids),
+            "referenceIds": list(self.reference_ids),
+            "coverage": self.coverage.to_dict() if self.coverage is not None else None,
+            "sourceCatalog": [source.to_model_dict() for source in self.sources],
+            "references": [reference.to_model_dict() for reference in self.references],
         }
 
     def to_model_text(self) -> str:
@@ -434,8 +460,24 @@ def compile_input_artifact(
     *,
     artifact_id: str | None = None,
     created_at_utc: str | None = None,
+    sources: Iterable[SourceRef | dict[str, Any]] = (),
+    references: Iterable[ReferenceBinding | dict[str, Any]] = (),
+    coverage: Coverage | dict[str, Any] | None = None,
 ) -> InputArtifact:
     """Compile the bound selection and utterance into InputArtifact v1."""
+    source_items = tuple(
+        item if isinstance(item, SourceRef) else SourceRef.from_dict(item)
+        for item in sources
+    )
+    reference_items = tuple(
+        item if isinstance(item, ReferenceBinding) else ReferenceBinding.from_dict(item)
+        for item in references
+    )
+    coverage_item = (
+        coverage
+        if isinstance(coverage, Coverage) or coverage is None
+        else Coverage.from_dict(coverage)
+    )
     snap = dict(snapshot or {})
     trace = dict(snap.get("perception_trace") or {})
     snapshot_id = _bounded(snap.get("snapshot_id"), 160).strip()
@@ -517,4 +559,9 @@ def compile_input_artifact(
         attachments=attachments,
         route_hint="agent_loop",
         display=display,
+        source_ids=tuple(item.source_id for item in source_items),
+        reference_ids=tuple(item.reference_id for item in reference_items),
+        coverage=coverage_item,
+        sources=source_items,
+        references=reference_items,
     )

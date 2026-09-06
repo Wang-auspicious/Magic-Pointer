@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root { color-scheme: light dark; font: 12px/1.45 Inter, system-ui, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 20px; color: var(--figma-color-text); background: var(--figma-color-bg); }
+    h1 { margin: 0 0 6px; font-size: 16px; font-weight: 650; }
+    .lede { margin: 0 0 18px; color: var(--figma-color-text-secondary); }
+    dl { display: grid; grid-template-columns: 72px 1fr; gap: 6px 10px; margin: 0 0 18px; }
+    dt { color: var(--figma-color-text-secondary); }
+    dd { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    label { display: block; margin-top: 12px; color: var(--figma-color-text-secondary); }
+    input { width: 100%; margin-top: 5px; padding: 8px 9px; border: 1px solid var(--figma-color-border); border-radius: 5px; background: var(--figma-color-bg); color: var(--figma-color-text); }
+    .actions { display: flex; gap: 8px; margin-top: 14px; }
+    button { min-height: 32px; padding: 0 13px; border: 0; border-radius: 5px; font-weight: 600; cursor: pointer; }
+    #connect { color: var(--figma-color-text-onbrand); background: var(--figma-color-bg-brand); }
+    #disconnect { color: var(--figma-color-text-danger); background: var(--figma-color-bg-danger-tertiary); }
+    button:disabled { cursor: default; opacity: .55; }
+    #status { margin: 15px 0 0; padding: 10px; border-radius: 5px; color: var(--figma-color-text-secondary); background: var(--figma-color-bg-secondary); }
+    #status[data-state="connected"] { color: var(--figma-color-text-success); }
+    #status[data-state="error"] { color: var(--figma-color-text-danger); }
+  </style>
+</head>
+<body>
+  <h1>Magic Pointer</h1>
+  <p class="lede">Connect only the current Figma document to an active local task.</p>
+  <dl>
+    <dt>Document</dt><dd id="document">Waiting for Figma…</dd>
+    <dt>Task</dt><dd id="task">—</dd>
+  </dl>
+  <label for="bridge-url">Local bridge</label>
+  <input id="bridge-url" value="http://127.0.0.1:37843" spellcheck="false">
+  <label for="pair-code">One-time pairing code</label>
+  <input id="pair-code" autocomplete="off" spellcheck="false">
+  <div class="actions">
+    <button id="connect" type="button">Connect</button>
+    <button id="disconnect" type="button" hidden>Disconnect</button>
+  </div>
+  <p id="status" data-state="idle">Not connected.</p>
+  <!-- FIGMA_UI_SCRIPT -->
+</body>
+</html>

@@ -55,4 +55,27 @@ assert.strictEqual(narrowRestore.width, 483,
   'restoring from maximized must revalidate against the current viewport');
 assert.strictEqual(narrowRestore.previousWidth, 747);
 
+const selectedMaterial = reduceInspectorState(state, {
+  type: 'select-content',
+  contentKind: 'material',
+  contentId: 'source:attachment:D:/work/brief.pptx',
+});
+assert.deepStrictEqual(selectedMaterial.contentSelection, {
+  kind: 'material',
+  id: 'source:attachment:D:/work/brief.pptx',
+}, 'Inspector content selection must retain the exact task source identity');
+const selectedArtifact = reduceInspectorState(selectedMaterial, {
+  type: 'select-content',
+  contentKind: 'artifact',
+  contentId: 'artifact-7',
+});
+assert.deepStrictEqual(selectedArtifact.contentSelection, {
+  kind: 'artifact',
+  id: 'artifact-7',
+}, 'opening an artifact must replace, not merge with, a material selection');
+assert.strictEqual(
+  reduceInspectorState(selectedArtifact, { type: 'clear-content' }).contentSelection,
+  null,
+);
+
 console.log('studio inspector state test ok');

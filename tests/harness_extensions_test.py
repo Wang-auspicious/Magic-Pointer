@@ -202,6 +202,8 @@ class TestPromptSections:
         assert "visual_anchor" not in plain
         assert "冻结帧" in selected
         assert "visual_anchor" in selected
+        assert "source_id" in selected
+        assert "question" in selected
 
     def test_plugin_unload_waits_for_inflight_section_render(self) -> None:
         from app.harness.context import Context
@@ -290,6 +292,20 @@ class TestAskTodoTools:
         ]))
         assert result["plan"][0]["content"] == "读取选区"
         assert result["plan"][1]["status"] == "in_progress"
+
+    def test_todo_write_surfaces_durable_sink_failure(self) -> None:
+        registry = ToolRegistry()
+
+        def fail_to_persist(_items) -> None:
+            raise OSError("session log is unavailable")
+
+        register_todo_write(registry, sink=fail_to_persist)
+        result = registry.execute_tool("Todo", {
+            "todos": [{"content": "不能伪装已保存", "status": "in_progress"}],
+        })
+
+        assert result.is_error is True
+        assert "session log is unavailable" in str(result.error_message)
 
 
 class TestVoiceSection:

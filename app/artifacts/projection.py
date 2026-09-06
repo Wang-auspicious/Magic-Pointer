@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Iterable
 from dataclasses import replace
 from typing import Any
@@ -33,12 +34,20 @@ def project_artifacts(events: Iterable[Any]) -> tuple[DraftArtifact, ...]:
             if not content.strip():
                 raise ArtifactProjectionError(f"generated draft {artifact_id!r} is empty")
             digest = str(data.get("contentHash") or content_hash(content))
+            kind = str(data.get("kind") or "text")
+            patch_payload = data.get("patchPayload")
+            if patch_payload is not None and not isinstance(patch_payload, dict):
+                raise ArtifactProjectionError(
+                    f"generated draft {artifact_id!r} has invalid patch payload"
+                )
             draft = DraftArtifact(
                 artifact_id=artifact_id,
                 revision=1,
                 content=content,
                 content_hash=digest,
                 state=DraftState.GENERATED,
+                kind=kind,
+                patch_payload=copy.deepcopy(patch_payload),
                 history=(DraftPatch(
                     revision=1,
                     author=str(data.get("author") or "model"),
@@ -67,6 +76,12 @@ def project_artifacts(events: Iterable[Any]) -> tuple[DraftArtifact, ...]:
                 )
             digest = str(data.get("contentHash") or content_hash(content))
             author = str(data.get("author") or "")
+            kind = str(data.get("kind") or current.kind)
+            patch_payload = data.get("patchPayload", current.patch_payload)
+            if patch_payload is not None and not isinstance(patch_payload, dict):
+                raise ArtifactProjectionError(
+                    f"patched draft {artifact_id!r} has invalid patch payload"
+                )
             ordered[index] = replace(
                 current,
                 revision=revision,
@@ -74,6 +89,8 @@ def project_artifacts(events: Iterable[Any]) -> tuple[DraftArtifact, ...]:
                 content_hash=digest,
                 state=DraftState.EDITED,
                 accepted_revision=None,
+                kind=kind,
+                patch_payload=copy.deepcopy(patch_payload),
                 history=current.history + (DraftPatch(
                     revision=revision,
                     author=author,

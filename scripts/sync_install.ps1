@@ -10,17 +10,9 @@ $packageVersion = (Get-Content 'package.json' | ConvertFrom-Json).version
 $syncStamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $syncOutput = Join-Path (Get-Location) "release\sync-$($packageVersion)-$syncStamp-$PID"
 
-Write-Host "== typecheck =="
-npm run typecheck
-if ($LASTEXITCODE -ne 0) { throw 'typecheck failed' }
-
-Write-Host "== node tests =="
-npx --no-install tsx scripts/run-node-tests.ts
-if ($LASTEXITCODE -ne 0) { throw 'node tests failed' }
-
-Write-Host "== python tests =="
-python -m pytest tests/ -q --basetemp=data/runtime/pytest-tmp-verify
-if ($LASTEXITCODE -ne 0) { throw 'python tests failed' }
+Write-Host "== verify =="
+npm run verify
+if ($LASTEXITCODE -ne 0) { throw 'verification failed' }
 
 Write-Host "== build installer =="
 npm run build:electron

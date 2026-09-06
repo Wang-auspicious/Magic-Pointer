@@ -226,6 +226,15 @@ async function runElectron() {
     fs.mkdirSync(path.dirname(output), { recursive: true });
     fs.writeFileSync(output, image.toPNG());
 
+    await realClick(window, '#composer-effort');
+    await window.webContents.executeJavaScript(`show('stash')`);
+    await realClick(window, '#stash-add-note');
+    const noteDialogBounds = await visibleBounds(window.webContents, '.dshw-perm-confirm');
+    const noteInput = await window.webContents.executeJavaScript(
+      `Boolean(document.querySelector('.dshw-perm-confirm textarea'))`,
+    );
+    if (noteDialogBounds) await realClick(window, '.dshw-perm-confirm-actions button');
+
     const witness = {
       viewport: { width, height },
       account: {
@@ -243,6 +252,7 @@ async function runElectron() {
         labels: effortLabels,
       },
       home,
+      stash: { noteDialogOpen: Boolean(noteDialogBounds), noteInput },
       tooltip: { open: Boolean(tooltipBounds), bounds: tooltipBounds, text: tooltipText },
       screenshot: output,
       screenshots,
@@ -261,6 +271,7 @@ async function runElectron() {
       || home.view !== 'models'
       || home.range !== '30d'
       || home.modelRows < 1
+      || !noteDialogBounds || !noteInput
       || !tooltipBounds
       || consoleErrors.length > 0
     ) process.exitCode = 1;

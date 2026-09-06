@@ -7,6 +7,7 @@ interface StudioInspectorState {
   width: number;
   previousWidth: number;
   tab: string;
+  contentSelection?: { kind: 'material' | 'artifact'; id: string } | null;
 }
 
 type StudioInspectorAction =
@@ -16,7 +17,9 @@ type StudioInspectorAction =
   | { type: 'resize'; width: number; availableWidth?: number }
   | { type: 'viewport'; availableWidth?: number }
   | { type: 'maximize' }
-  | { type: 'restore'; availableWidth?: number };
+  | { type: 'restore'; availableWidth?: number }
+  | { type: 'select-content'; contentKind: 'material' | 'artifact'; contentId: string }
+  | { type: 'clear-content' };
 
 const MIN_WIDTH = 420;
 const MAX_WIDTH = 760;
@@ -79,6 +82,18 @@ function reduceInspectorState(
           ? state.previousWidth
           : clampInspectorWidth(state.previousWidth, action.availableWidth),
       };
+    case 'select-content':
+      return {
+        ...state,
+        contentSelection: {
+          kind: action.contentKind,
+          id: action.contentId,
+        },
+      };
+    case 'clear-content':
+      return { ...state, contentSelection: null };
+    default:
+      return state;
   }
 }
 

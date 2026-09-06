@@ -148,13 +148,13 @@
               <button type="button" class="mp-thread-action" id="bottom-panel-toggle" aria-label="Toggle terminal" aria-expanded="false" title="Toggle terminal">
                 <svg class="codex-icon" aria-hidden="true"><use href="#ic-command-line" /></svg>
               </button>
-              <button type="button" class="mp-thread-action" id="inspector-toggle" aria-label="Toggle file browser" aria-expanded="false" title="Toggle file browser"><svg class="codex-icon" aria-hidden="true"><use href="#ic-file-add" /></svg></button>
+              <button type="button" class="mp-thread-action" id="inspector-toggle" aria-label="打开任务材料或项目文件" aria-expanded="false" title="任务材料与项目文件"><svg class="codex-icon" aria-hidden="true"><use href="#ic-file-add" /></svg></button>
               <button type="button" class="mp-thread-action" id="header-preview-toggle" aria-label="Toggle preview" title="Toggle preview"><svg class="codex-icon" aria-hidden="true"><use href="#ic-play" /></svg></button>
               <button type="button" class="mp-thread-action" id="thread-more" aria-label="More options" title="More options"><svg aria-hidden="true"><use href="#ic-dots-vertical" /></svg></button>
             </div>
           </div>
-          <section class="mp-magic-brain" id="magic-brain-popover" hidden aria-label="项目上下文">
-            <header><span>项目上下文</span><small id="magic-brain-project">当前项目</small></header>
+          <section class="mp-magic-brain" id="magic-brain-popover" hidden aria-label="任务材料与连接">
+            <header><span>任务材料与连接</span><small id="magic-brain-project">当前任务</small></header>
             <button type="button" class="mp-brain-row" id="magic-brain-changes">
               <span class="mp-brain-row-icon"><svg class="codex-icon" aria-hidden="true"><use href="#ic-git-pull-request" /></svg></span>
               <span><strong>工作树变更</strong><small id="magic-brain-changes-detail">正在读取…</small></span>
@@ -168,6 +168,14 @@
             <div class="mp-brain-sources" id="magic-brain-sources">
               <div class="mp-brain-section-title">本任务来源</div>
               <div id="magic-brain-source-list"><p>当前任务尚无网页来源。</p></div>
+              <div class="mp-figma-connection">
+                <div>
+                  <strong>Figma Design Mode</strong>
+                  <small id="figma-connection-status">启动一次任务后，可把当前 Figma 文档连接到这里。</small>
+                  <code id="figma-pair-code" hidden></code>
+                </div>
+                <button type="button" id="figma-connect">连接</button>
+              </div>
             </div>
           </section>
         </header>
@@ -262,6 +270,7 @@
                       </button>
                     </div>
                     <div class="mp-composer-attachments" id="composer-attachments" hidden aria-label="附件"></div>
+                    <div class="mp-composer-attachments mp-composer-materials" id="composer-materials" hidden aria-label="下一步使用的任务材料"></div>
                     <div class="dshw-row">
                       <div class="dshw-tools">
                         <button type="button" class="dshw-add" id="composer-add" aria-label="添加附件" aria-haspopup="menu" aria-expanded="false" title="添加附件">
@@ -344,6 +353,12 @@
       <section class="dshw-view" id="view-stash" hidden>
         <div class="page-toolbar">
           <span class="pill" id="stash-count">0 项</span>
+          <label class="dshw-settings-search mp-stash-search">
+            <svg aria-hidden="true"><use href="#ic-search" /></svg>
+            <input id="stash-search" type="search" autocomplete="off" placeholder="搜索收藏材料" aria-label="搜索收藏材料" />
+          </label>
+          <button type="button" class="mp-toolbar-button" id="stash-add-file">加入文件</button>
+          <button type="button" class="mp-toolbar-button" id="stash-add-note">加入笔记</button>
           <div class="dshw-seg" id="stash-mode"><button class="is-on" data-mode="canvas">画布</button><button data-mode="list">列表</button></div>
         </div>
         <div class="stash-filters" aria-label="收藏分类">
@@ -403,8 +418,8 @@
       </section>
     </main>
 
-    <aside class="mp-inspector" id="project-inspector" hidden aria-label="项目面板">
-      <div class="mp-inspector-resize-handle" id="inspector-resize-handle" role="separator" aria-orientation="vertical" aria-label="调整项目面板宽度"></div>
+    <aside class="mp-inspector" id="project-inspector" hidden aria-label="任务材料与项目面板">
+      <div class="mp-inspector-resize-handle" id="inspector-resize-handle" role="separator" aria-orientation="vertical" aria-label="调整任务面板宽度"></div>
       <header class="mp-inspector-header">
         <strong class="mp-inspector-title" id="inspector-title">文件</strong>
         <div class="mp-inspector-actions">
@@ -412,13 +427,21 @@
           <button type="button" class="mp-thread-action" id="inspector-close" aria-label="关闭项目面板"><svg aria-hidden="true"><use href="#ic-x" /></svg></button>
         </div>
       </header>
-      <nav class="mp-inspector-tabs" aria-label="项目工具">
+      <nav class="mp-inspector-tabs" aria-label="任务与项目工具">
+        <button type="button" data-inspector-tab="materials" aria-selected="false">材料</button>
         <button type="button" class="is-on" data-inspector-tab="files" aria-selected="true">文件</button>
         <button type="button" data-inspector-tab="browser" aria-selected="false">浏览器</button>
         <button type="button" data-inspector-tab="terminal" aria-selected="false">终端</button>
         <button type="button" data-inspector-tab="changes" aria-selected="false">更改</button>
         <button type="button" data-inspector-tab="tasks" aria-selected="false">任务</button>
       </nav>
+      <section class="mp-inspector-panel" id="inspector-materials" data-inspector-panel="materials" hidden>
+        <header class="mp-task-material-header">
+          <div><strong>当前任务材料</strong><p>点选后会作为下一步的明确来源；详情保留来源身份与局部引用。</p></div>
+        </header>
+        <div class="mp-task-material-list" id="task-material-list"><p class="mp-inspector-empty">当前任务还没有材料。</p></div>
+        <article class="mp-task-material-detail" id="task-material-detail" hidden></article>
+      </section>
       <section class="mp-inspector-panel is-on" id="inspector-files" data-inspector-panel="files">
         <label class="mp-inspector-filter"><svg aria-hidden="true"><use href="#ic-search" /></svg><input id="file-tree-filter" type="search" placeholder="筛选文件…" autocomplete="off" /></label>
         <div class="mp-file-tree" id="project-file-tree" role="tree"><p class="mp-inspector-empty">打开项目后显示文件。</p></div>
@@ -454,6 +477,25 @@
       </section>
       <section class="mp-inspector-panel" id="inspector-changes" data-inspector-panel="changes" hidden><div id="project-changes"><p class="mp-inspector-empty">打开 Git 项目后显示工作树变更。</p></div></section>
       <section class="mp-inspector-panel" id="inspector-tasks" data-inspector-panel="tasks" hidden><div id="project-tasks"><p class="mp-inspector-empty">这里显示当前项目的后台与已安排任务。</p></div></section>
+      <section class="mp-inspector-panel" id="inspector-artifact" data-inspector-panel="artifact" hidden>
+        <div class="mp-artifact-editor" id="artifact-editor">
+          <header class="mp-artifact-editor-meta">
+            <strong id="artifact-editor-kind">Draft</strong>
+            <span id="artifact-editor-revision">revision —</span>
+          </header>
+          <textarea id="artifact-editor-content" spellcheck="true" aria-label="可编辑产物正文" placeholder="选择一个产物后在这里编辑。"></textarea>
+          <section class="mp-artifact-patch-preview" aria-labelledby="artifact-patch-title">
+            <h3 id="artifact-patch-title">修改预览</h3>
+            <div id="artifact-patch-changes"><p class="mp-inspector-empty">普通文本草稿没有外部文件修改。</p></div>
+          </section>
+          <p class="mp-artifact-editor-status" id="artifact-editor-status" role="status" aria-live="polite"></p>
+          <footer class="mp-artifact-editor-actions">
+            <button type="button" id="artifact-editor-save">保存版本</button>
+            <button type="button" id="artifact-editor-accept">接受当前版本</button>
+            <button type="button" class="is-primary" id="artifact-editor-apply">应用并验证</button>
+          </footer>
+        </div>
+      </section>
     </aside>
 
     <aside class="aux" id="aux" hidden>
@@ -555,6 +597,9 @@
   <script src="studio_home.js?v=33"></script>
   <script src="studio_subagents.js?v=33"></script>
   <script src="studio_inspector_state.js?v=33"></script>
+  <script src="artifact_editor.js?v=34"></script>
+  <script src="../task_sources.js"></script>
+  <script src="../task_input_transport.js"></script>
   <script src="data.js?v=23"></script>
   <script src="settings_model.js?v=23"></script>
   <script src="settings.js?v=23"></script>

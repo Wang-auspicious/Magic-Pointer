@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from app.agent_runtime.session import FileSessionStore
+from app.context_pack.source_store import register_source
+from app.context_pack.sources import SourceRef
 from scripts.agent_session_bridge import handle_request
 
 
@@ -53,6 +55,74 @@ def test_agent_session_bridge_rejects_unknown_session_and_target(tmp_path, monke
 
     assert missing == {"ok": False, "error": "session_not_found"}
     assert invalid == {"ok": False, "error": "invalid_target"}
+
+
+def test_agent_session_bridge_queues_reference_only_task_input_durably(
+    tmp_path, monkeypatch
+) -> None:
+    monkeypatch.setenv("MAGIC_POINTER_USER_DATA_DIR", str(tmp_path))
+    store = FileSessionStore(tmp_path / "agent-sessions")
+    session = store.create("bridge-structured")
+    register_source(session, SourceRef.from_dict({
+        "sourceId": "source-b",
+        "taskId": "bridge-structured",
+        "kind": "document",
+        "title": "需求.pdf",
+        "identity": {"absolutePath": "D:/work/B/需求.pdf"},
+        "revision": {"observedAt": "2026-09-05T00:00:00Z"},
+        "capabilities": ["read"],
+        "origin": "user-pointed",
+        "parentSourceId": None,
+    }))
+    task_input = {
+        "inputId": "input-ref-b",
+        "taskId": "bridge-structured",
+        "target": "next-step",
+        "instruction": "",
+        "referenceUpdates": [{
+            "operation": "add",
+            "binding": {
+                "referenceId": "ref-b",
+                "label": "B",
+                "sourceId": "source-b",
+                "locator": {"kind": "pdf-region", "value": {"pageIndex": 4}},
+                "role": "target",
+                "frameLeaseId": "lease-b",
+                "capturedAtMs": 1_800_000_000_000,
+                "ordinal": 2,
+                "active": True,
+            },
+        }],
+        "sourceIds": ["source-b"],
+        "timeline": [{
+            "eventId": "point-b",
+            "kind": "point",
+            "startMs": 1_800_000_000_000,
+            "endMs": 1_800_000_000_000,
+            "referenceId": "ref-b",
+        }],
+        "capturedAtMs": 1_800_000_000_000,
+    }
+
+    queued = handle_request({
+        "action": "put",
+        "sessionId": "bridge-structured",
+        "taskInput": task_input,
+    })
+
+    assert queued == {
+        "ok": True,
+        "sessionId": "bridge-structured",
+        "inputId": "input-ref-b",
+        "target": "next-step",
+        "status": "queued",
+    }
+    pending = handle_request({
+        "action": "pending",
+        "sessionId": "bridge-structured",
+        "target": "next-step",
+    })
+    assert pending["messages"][0]["taskInput"] == task_input
 
 
 def test_agent_session_bridge_cancel_requests_graceful_stop(tmp_path, monkeypatch) -> None:

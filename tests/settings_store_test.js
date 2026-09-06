@@ -31,6 +31,8 @@ assert.strictEqual(defaults.connections.browser_devtools_enabled, true);
 assert.deepStrictEqual(defaults.connections.browser_devtools_endpoints, ['http://127.0.0.1:9222']);
 assert.strictEqual(defaults.appearance.gesture_line_style, 'demo6_band');
 assert.strictEqual(defaults.appearance.gesture_line_width_dip, 40);
+assert.strictEqual(defaults.stash.clipboard, false, 'clipboard image monitoring is opt-in');
+assert.strictEqual(defaults.stash.text, false, 'clipboard text monitoring is opt-in');
 
 const disabledVoice = defaultSettings();
 disabledVoice.interaction.voice_enabled = false;

@@ -7,6 +7,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $LockPath = Join-Path $ProjectRoot 'requirements.lock.txt'
+$DocumentSmokePath = Join-Path $ProjectRoot 'app\context_pack\runtime_document_smoke.py'
 $BuildRoot = Join-Path $ProjectRoot 'build'
 $RuntimePath = Join-Path $BuildRoot 'python-runtime'
 $WheelhousePath = Join-Path $BuildRoot 'python-wheelhouse'
@@ -60,6 +61,22 @@ function Get-Sha256([string]$LiteralPath) {
   }
 }
 
+function Remove-BuildTree([string]$LiteralPath) {
+  $buildRootPath = [System.IO.Path]::GetFullPath($script:BuildRoot).TrimEnd([char[]]'\/')
+  $fullPath = [System.IO.Path]::GetFullPath($LiteralPath).TrimEnd([char[]]'\/')
+  $buildRootPrefix = $buildRootPath + [System.IO.Path]::DirectorySeparatorChar
+  if (-not $fullPath.StartsWith($buildRootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "Refusing to remove a path outside the build directory: $fullPath"
+  }
+  if (-not [System.IO.Directory]::Exists($fullPath)) { return }
+  $deletePath = if ($env:OS -eq 'Windows_NT' -and -not $fullPath.StartsWith('\\?\')) {
+    '\\?\' + $fullPath
+  } else {
+    $fullPath
+  }
+  [System.IO.Directory]::Delete($deletePath, $true)
+}
+
 function Copy-FilteredTree([string]$Source, [string]$Destination) {
   New-Item -ItemType Directory -Path $Destination -Force | Out-Null
   foreach ($entry in Get-ChildItem -LiteralPath $Source -Force) {
@@ -77,6 +94,9 @@ function Test-RuntimeImports([string]$PythonPath) {
   $probe = @'
 import PIL
 import fitz
+import docx
+import pptx
+import openpyxl
 import openai
 import pyperclip
 import onnxruntime
@@ -85,6 +105,10 @@ import sounddevice
 import whisper
 import torch
 import opencc
+import runpy
+import sys
+document_smoke = runpy.run_path(sys.argv[2])['verify_document_dependencies']()
+assert set(document_smoke) == {'pdf', 'docx', 'pptx', 'xlsx'}
 print("magic_pointer_runtime_imports_ok")
 '@
   $encodedProbe = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($probe))
@@ -94,7 +118,7 @@ print("magic_pointer_runtime_imports_ok")
     $captured = Invoke-CapturedBuildPython -Arguments @(
       '-I', '-X', 'utf8', '-c',
       'import base64,sys;exec(base64.b64decode(sys.argv[1]))',
-      $encodedProbe
+      $encodedProbe, $DocumentSmokePath
     )
   } finally {
     $script:BuildPython = $previousBuildPython
@@ -171,11 +195,11 @@ if ([string]::IsNullOrWhiteSpace($BuildPython)) {
 if (-not (Test-Path -LiteralPath $LockPath)) { throw "requirements.lock.txt missing: $LockPath" }
 
 # Remove stale staging artifacts from prior interrupted runs.
-$stalePatterns = @('python-wheelhouse.staging-*', 'python-runtime.previous-*', 'pr-stage-*', 'python-wheelhouse.previous-*')
+$stalePatterns = @('python-wheelhouse.staging-*', 'python-runtime.previous-*', 'pr-stage-*', 'pr-prev-*', 'python-wheelhouse.previous-*')
 foreach ($pattern in $stalePatterns) {
   foreach ($stale in Get-ChildItem -LiteralPath $BuildRoot -Filter $pattern -Directory -ErrorAction SilentlyContinue) {
     try {
-      Remove-Item -LiteralPath $stale.FullName -Recurse -Force -ErrorAction Stop
+      Remove-BuildTree -LiteralPath $stale.FullName
       Write-Output "Cleaned stale staging: $($stale.Name)"
     } catch {
       Write-Warning "Could not remove stale staging $($stale.Name): $_"
@@ -200,7 +224,7 @@ $shortNonce = "$PID-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
 # license metadata and still encounter the Win32 legacy path ceiling during
 # pip's cross-volume target copy.
 $StagePath = Join-Path $BuildRoot "pr-stage-$shortNonce"
-$BackupPath = Join-Path $BuildRoot "python-runtime.previous-$nonce"
+$BackupPath = Join-Path $BuildRoot "pr-prev-$shortNonce"
 $WheelhouseStagePath = Join-Path $BuildRoot ('python-wheelhouse.staging-' + $nonce)
 $WheelhouseBackupPath = Join-Path $BuildRoot "python-wheelhouse.previous-$nonce"
 $oldPythonNoUserSite = $env:PYTHONNOUSERSITE
@@ -310,7 +334,7 @@ try {
     }
     throw
   }
-  if (Test-Path -LiteralPath $BackupPath) { Remove-Item -LiteralPath $BackupPath -Recurse -Force -ErrorAction Stop }
+  if (Test-Path -LiteralPath $BackupPath) { Remove-BuildTree -LiteralPath $BackupPath }
   Write-Output "Python runtime prepared: $RuntimePath"
 }
 finally {

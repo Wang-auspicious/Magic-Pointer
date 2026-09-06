@@ -45,7 +45,12 @@ def test_a_user_patch_bumps_revision_and_is_not_model_visible(tmp_path: Path) ->
     session = FileSessionStore(tmp_path).create("draft-patch")
     generated = session.record_artifact_generated("初稿")
     artifact_id = str(generated.data["artifactId"])
-    session.record_artifact_patched(artifact_id, "用户改过的稿", author="user")
+    session.record_artifact_patched(
+        artifact_id,
+        "用户改过的稿",
+        author="user",
+        expected_revision=1,
+    )
 
     draft = project_artifacts(session.events)[0]
     assert draft.revision == 2
@@ -59,30 +64,116 @@ def test_a_user_patch_bumps_revision_and_is_not_model_visible(tmp_path: Path) ->
 def test_accept_binds_the_current_hash_and_a_later_edit_voids_it(tmp_path: Path) -> None:
     session = FileSessionStore(tmp_path).create("draft-accept")
     artifact_id = str(session.record_artifact_generated("可批准的稿").data["artifactId"])
-    current_hash = _hash("可批准的稿")
-    session.record_artifact_accepted(artifact_id, revision=1, content_hash=current_hash)
+    session.record_artifact_accepted(artifact_id, revision=1)
 
     approved = project_artifacts(session.events)[0]
     assert approved.state is DraftState.APPROVED
     assert approved.accepted_revision == 1
 
-    session.record_artifact_patched(artifact_id, "批准后又改了", author="user")
+    session.record_artifact_patched(
+        artifact_id,
+        "批准后又改了",
+        author="user",
+        expected_revision=1,
+    )
     edited = project_artifacts(session.events)[0]
     assert edited.state is DraftState.EDITED
     assert edited.accepted_revision is None
     assert edited.revision == 2
 
 
-def test_accepting_a_stale_hash_is_rejected(tmp_path: Path) -> None:
+def test_stale_editor_revision_cannot_overwrite_a_newer_draft(tmp_path: Path) -> None:
+    session = FileSessionStore(tmp_path).create("draft-edit-cas")
+    artifact_id = str(session.record_artifact_generated("revision one").data["artifactId"])
+    session.record_artifact_patched(
+        artifact_id,
+        "revision two",
+        author="user",
+        expected_revision=1,
+    )
+
+    with pytest.raises(RuntimeError, match="expected revision 1.*current revision 2"):
+        session.record_artifact_patched(
+            artifact_id,
+            "stale overwrite",
+            author="agent",
+            expected_revision=1,
+        )
+
+    current = project_artifacts(session.events)[0]
+    assert current.revision == 2
+    assert current.content == "revision two"
+
+
+def test_document_patch_payload_is_bound_to_the_same_artifact_revision(tmp_path: Path) -> None:
+    session = FileSessionStore(tmp_path).create("draft-document-patch")
+    generated = session.record_artifact_generated(
+        "把目标文本从旧值改为新值",
+        kind="document_patch",
+        patch_payload={
+            "patchId": "patch-1",
+            "references": [{
+                "referenceId": "ref-target",
+                "sourceId": "source-deck",
+                "locator": {
+                    "kind": "slide-shape",
+                    "value": {"documentId": "deck-1", "slideId": 7, "shapeId": 23},
+                },
+                "role": "target",
+            }],
+            "operations": [{
+                "operationId": "op-1",
+                "operation": "set_shape_text",
+                "referenceId": "ref-target",
+                "sourceId": "source-deck",
+                "locator": {
+                    "kind": "slide-shape",
+                    "value": {"documentId": "deck-1", "slideId": 7, "shapeId": 23},
+                },
+                "before": "旧值",
+                "after": "新值",
+            }],
+        },
+    )
+
+    draft = project_artifacts(session.events)[0]
+    assert draft.kind == "document_patch"
+    assert draft.patch_payload is not None
+    assert draft.patch_payload["artifactId"] == generated.data["artifactId"]
+    assert draft.patch_payload["artifactRevision"] == 1
+
+    session.record_artifact_patched(
+        draft.artifact_id,
+        "把目标文本从旧值改为最终值",
+        author="agent",
+        expected_revision=1,
+        patch_payload={
+            **draft.patch_payload,
+            "operations": [{
+                **draft.patch_payload["operations"][0],
+                "after": "最终值",
+            }],
+        },
+    )
+    edited = project_artifacts(session.events)[0]
+    assert edited.revision == 2
+    assert edited.patch_payload is not None
+    assert edited.patch_payload["artifactRevision"] == 2
+    assert edited.patch_payload["operations"][0]["after"] == "最终值"
+
+
+def test_accepting_a_stale_revision_is_rejected(tmp_path: Path) -> None:
     session = FileSessionStore(tmp_path).create("draft-stale")
     artifact_id = str(session.record_artifact_generated("现稿").data["artifactId"])
-    with pytest.raises(ValueError, match="contentHash"):
-        session.record_artifact_accepted(
-            artifact_id,
-            revision=1,
-            content_hash=_hash("另一份已经不在的稿"),
-        )
-    assert project_artifacts(session.events)[0].state is DraftState.GENERATED
+    session.record_artifact_patched(
+        artifact_id,
+        "当前 revision two",
+        author="user",
+        expected_revision=1,
+    )
+    with pytest.raises(ValueError, match="accepted revision is not current"):
+        session.record_artifact_accepted(artifact_id, revision=1)
+    assert project_artifacts(session.events)[0].state is DraftState.EDITED
 
 
 def test_empty_content_is_not_a_draft(tmp_path: Path) -> None:

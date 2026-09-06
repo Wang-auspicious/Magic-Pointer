@@ -5,7 +5,7 @@ import json
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
 
 from app.fabric.schema import OperationPlan
 
@@ -32,6 +32,13 @@ def _sha256_file(path: Path) -> str:
                 break
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _json_copy(value: Any, name: str) -> Any:
+    try:
+        return json.loads(json.dumps(value, ensure_ascii=False, allow_nan=False))
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ArtifactRegistryError(f"{name}_not_json_serializable") from exc
 
 
 class ArtifactRegistry:
@@ -99,6 +106,12 @@ class ArtifactRegistry:
         recipe_id: str = "",
         provider: str = "",
         source_object_ids: Iterable[str] = (),
+        source_id: str = "",
+        draft_artifact_id: str = "",
+        artifact_revision: int | None = None,
+        references: Iterable[Mapping[str, Any]] = (),
+        preview: Mapping[str, Any] | None = None,
+        verification_receipt: Mapping[str, Any] | None = None,
         kind: str = "",
         retention_days: int = 30,
         now: datetime | None = None,
@@ -108,6 +121,12 @@ class ArtifactRegistry:
             raise ArtifactRegistryError("artifact_file_missing")
         current = _now(now)
         days = max(0, min(int(retention_days), 3650))
+        if artifact_revision is not None and (
+            isinstance(artifact_revision, bool)
+            or not isinstance(artifact_revision, int)
+            or artifact_revision < 1
+        ):
+            raise ArtifactRegistryError("invalid_artifact_revision")
         normalized_path = str(artifact).casefold()
         artifact_id = "artifact-" + hashlib.sha256(
             normalized_path.encode("utf-8")
@@ -136,6 +155,15 @@ class ArtifactRegistry:
                 for item in source_object_ids
                 if str(item)
             ][:32],
+            "sourceId": str(source_id or ""),
+            "draftArtifactId": str(draft_artifact_id or ""),
+            "artifactRevision": artifact_revision,
+            "references": _json_copy(list(references), "references"),
+            "preview": _json_copy(dict(preview or {}), "preview"),
+            "verificationReceipt": _json_copy(
+                dict(verification_receipt or {}),
+                "verification_receipt",
+            ),
         }
         self._append(value)
         return dict(value)
@@ -151,6 +179,12 @@ class ArtifactRegistry:
         recipe_id: str = "",
         provider: str = "",
         source_object_ids: Iterable[str] = (),
+        source_id: str = "",
+        draft_artifact_id: str = "",
+        artifact_revision: int | None = None,
+        references: Iterable[Mapping[str, Any]] = (),
+        preview: Mapping[str, Any] | None = None,
+        verification_receipt: Mapping[str, Any] | None = None,
         kind: str = "",
         now: datetime | None = None,
     ) -> dict[str, Any]:
@@ -169,6 +203,12 @@ class ArtifactRegistry:
         if not artifact.is_file():
             raise ArtifactRegistryError("artifact_file_missing")
         current = _now(now)
+        if artifact_revision is not None and (
+            isinstance(artifact_revision, bool)
+            or not isinstance(artifact_revision, int)
+            or artifact_revision < 1
+        ):
+            raise ArtifactRegistryError("invalid_artifact_revision")
         artifact_id = "artifact-" + hashlib.sha256(
             str(artifact).casefold().encode("utf-8")
         ).hexdigest()[:24]
@@ -196,6 +236,15 @@ class ArtifactRegistry:
                 for item in source_object_ids
                 if str(item)
             ][:32],
+            "sourceId": str(source_id or ""),
+            "draftArtifactId": str(draft_artifact_id or ""),
+            "artifactRevision": artifact_revision,
+            "references": _json_copy(list(references), "references"),
+            "preview": _json_copy(dict(preview or {}), "preview"),
+            "verificationReceipt": _json_copy(
+                dict(verification_receipt or {}),
+                "verification_receipt",
+            ),
         }
         self._append(value)
         return dict(value)

@@ -20,6 +20,8 @@ type RuleEvent = {
   app?: string;
   fingerprint?: string;
   foregroundChanged?: boolean;
+  sourceId?: string;
+  title?: string;
 };
 type RuleState = {
   currentBurst?: { app: string; count: number; lastAt: number };
@@ -123,6 +125,20 @@ function evaluateRule(
         };
       }
       return { trigger: false, state: state2 };
+    }
+
+    case 'context_material_follow': {
+      if (event.kind !== 'material_selected') return { trigger: false };
+      const sourceId = String(event.sourceId || '').trim();
+      if (!sourceId) return { trigger: false };
+      const title = String(event.title || '').trim();
+      return {
+        trigger: true,
+        ruleId,
+        previewText: `${title || '这份材料'}已加入当前任务。要“关注此材料”，在它变化后自动生成更新草稿吗？`,
+        objects: [{ kind: 'material', sourceId, title }],
+        resetState: null,
+      };
     }
 
     default:

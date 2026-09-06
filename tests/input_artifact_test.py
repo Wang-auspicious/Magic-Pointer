@@ -7,6 +7,7 @@ import pytest
 from app.adapters.base import AdapterReadContext
 from app.input_artifact import compile_input_artifact
 from app.input_artifact.schema import _content_window
+from app.context_pack.sources import Coverage, ReferenceBinding, SourceRef
 
 
 def _gesture_snapshot(*, with_lease: bool = True) -> dict:
@@ -168,7 +169,70 @@ def test_model_projection_is_minimal_data_and_excludes_raw_evidence_and_instruct
         "target",
         "facts",
         "conflicts",
+        "sourceIds",
+        "referenceIds",
+        "coverage",
+        "sourceCatalog",
+        "references",
     }
+
+
+def test_model_projection_keeps_durable_source_and_locator_entry_points() -> None:
+    source = SourceRef.from_dict({
+        "sourceId": "source-contract",
+        "taskId": "task-contract",
+        "kind": "file",
+        "title": "合同.pdf",
+        "identity": {"absolutePath": "D:/Materials/合同.pdf"},
+        "revision": {"mtimeNs": 42, "size": 9000},
+        "capabilities": ["read", "search"],
+        "origin": "user-attached",
+        "parentSourceId": None,
+    })
+    reference = ReferenceBinding.from_dict({
+        "referenceId": "ref-contract",
+        "label": "A",
+        "sourceId": "source-contract",
+        "locator": {"kind": "pdf-region", "value": {"pageIndex": 36, "textQuote": "终止条款"}},
+        "role": "target",
+        "frameLeaseId": "frame-contract",
+        "capturedAtMs": 900,
+        "ordinal": 1,
+        "active": True,
+    })
+    coverage = Coverage.from_dict({
+        "extent": "page",
+        "readRanges": [{"pageStart": 36, "pageEnd": 36}],
+        "totalUnits": 80,
+        "complete": False,
+        "nextCursor": "page:37",
+        "missingReason": None,
+    })
+
+    artifact = compile_input_artifact(
+        "核对这一条",
+        None,
+        None,
+        None,
+        artifact_id="input-contract",
+        sources=(source,),
+        references=(reference,),
+        coverage=coverage,
+    )
+
+    public = artifact.to_public_dict()
+    model = artifact.to_model_dict()
+    assert public["sourceIds"] == ["source-contract"]
+    assert public["referenceIds"] == ["ref-contract"]
+    assert model["coverage"]["complete"] is False
+    assert model["sourceCatalog"][0]["sourceId"] == "source-contract"
+    assert model["references"][0]["locator"] == {
+        "kind": "pdf-region",
+        "value": {"pageIndex": 36, "textQuote": "终止条款"},
+    }
+    assert "D:/Materials/合同.pdf" not in json.dumps(model, ensure_ascii=False), (
+        "the model gets a durable source id, not an unscoped local path"
+    )
 
 
 def _fused_trace(

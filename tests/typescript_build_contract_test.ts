@@ -24,6 +24,13 @@ assert(packageJson.scripts['dist:win'].startsWith('npm run build:electron &&'));
 assert(packageJson.scripts.typecheck.includes('tsconfig.electron.json'));
 assert(packageJson.scripts.typecheck.includes('tsconfig.tools.json'));
 assert(packageJson.scripts.typecheck.includes('tsconfig.tests.json'));
+assert(packageJson.scripts.typecheck.includes('typecheck:figma'));
+assert(packageJson.scripts['build:electron'].includes('npm run build:figma'));
+assert.strictEqual(packageJson.scripts['test:python'], 'python -m pytest tests/ -q');
+assert.strictEqual(
+  packageJson.scripts.verify,
+  'npm run lint && npm run typecheck && npm test && npm run test:python',
+);
 assert.strictEqual(baseConfig.compilerOptions.strict, true);
 assert.strictEqual(baseConfig.compilerOptions.noEmitOnError, true);
 assert.strictEqual(electronConfig.extends, './tsconfig.json');
@@ -36,10 +43,15 @@ assert.deepStrictEqual(rendererConfig.include, ['electron/renderer/**/*.ts', 'el
 assert.deepStrictEqual(testsConfig.include, ['tests/**/*.ts']);
 assert.deepStrictEqual(scriptsBuildConfig.include, ['scripts/**/*.ts']);
 assert(testScript.includes('/_test\\.[jt]s$/'));
+assert(testScript.includes('process.argv.slice(2)'));
+assert(!testScript.includes('runTypecheck'));
+assert(!testScript.includes("failures.push('lint')"));
+assert(!testScript.includes("failures.push(`syntax:"));
 assert(buildScript.includes('verifyCopiedJavaScript(sourceRoot)'));
 assert(buildScript.includes("compileProject('tsconfig.renderer.json')"));
 assert(buildScript.includes("compileProject('tsconfig.scripts-build.json')"));
 assert(builder.includes('- build/electron/**'));
+assert(builder.includes('- build/figma/**'));
 assert(builder.includes('- build/scripts/collect-diagnostics.js'));
 assert(!builder.includes('- electron/**'));
 

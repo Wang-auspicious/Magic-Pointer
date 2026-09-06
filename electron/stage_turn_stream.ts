@@ -13,6 +13,7 @@ interface StrokeEntry {
   at: number;
   kind: 'stroke';
   label: string;
+  referenceId: string | null;
   strokeIndex: number;
 }
 
@@ -22,6 +23,13 @@ interface ComposerChip {
   at: number;
   label: string;
   ordinal: number;
+  referenceId: string | null;
+  strokeIndex: number;
+}
+
+interface StrokeReference {
+  label?: string;
+  referenceId?: string | null;
   strokeIndex: number;
 }
 
@@ -86,6 +94,7 @@ function normalizeEntry(value: unknown, index: number): StreamEntry | null {
       at,
       strokeIndex: Number.isFinite(strokeIndex) ? strokeIndex : index,
       label: String(entry.label || ''),
+      referenceId: String(entry.referenceId || '').trim() || null,
     };
   }
   if (entry.kind === ENTRY_WORD) {
@@ -124,9 +133,61 @@ function composerChips(entries: unknown): ComposerChip[] {
       ordinal: chips.length + 1,
       label: entry.label,
       at: entry.at,
+      referenceId: entry.referenceId,
     });
   }
   return chips;
+}
+
+function normalizeStrokeReferences(value: unknown): StrokeReference[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((candidate) => {
+    const ref = recordOf(candidate);
+    const strokeIndex = Number(ref?.strokeIndex);
+    if (!Number.isInteger(strokeIndex) || strokeIndex < 0) return [];
+    return [{
+      strokeIndex,
+      label: String(ref?.label || ''),
+      referenceId: String(ref?.referenceId || '').trim() || null,
+    }];
+  });
+}
+
+function keptStrokeIndexes(refs: unknown): number[] {
+  return normalizeStrokeReferences(refs).map((ref) => ref.strokeIndex);
+}
+
+function removeStrokeReference(refs: unknown, strokeIndex: unknown): StrokeReference[] {
+  const removedIndex = Number(strokeIndex);
+  return normalizeStrokeReferences(refs).filter((ref) => ref.strokeIndex !== removedIndex);
+}
+
+function referenceMark(strokeIndex: unknown): string {
+  const ordinal = Number(strokeIndex) + 1;
+  if (!Number.isInteger(ordinal) || ordinal < 1) return '';
+  return ORDINAL_MARKS[ordinal - 1] || `[${ordinal}]`;
+}
+
+function withKeptStrokes(snapshotValue: unknown, keptStrokeIndexesValue: unknown): unknown {
+  const snapshot = recordOf(snapshotValue);
+  if (snapshot === null || !Array.isArray(keptStrokeIndexesValue) || keptStrokeIndexesValue.length === 0) {
+    return snapshotValue;
+  }
+  const gesture = recordOf(snapshot.selection_gesture);
+  const strokes = gesture?.strokes;
+  if (!Array.isArray(strokes) || strokes.length <= 1) return snapshotValue;
+  const keep = new Set(
+    keptStrokeIndexesValue
+      .map((value) => Number(value))
+      .filter((value) => Number.isInteger(value) && value >= 0),
+  );
+  const kept = strokes.filter((_stroke, index) => keep.has(index));
+  if (kept.length === 0 || kept.length === strokes.length) return snapshotValue;
+  return {
+    ...snapshot,
+    selection_gesture: { ...gesture, strokes: kept },
+    selection_bbox: null,
+  };
 }
 
 /**
@@ -216,9 +277,13 @@ const StageTurnStream = {
   composedCommand,
   composerChips,
   hasPointingWord,
+  keptStrokeIndexes,
   orderedEntries,
+  referenceMark,
+  removeStrokeReference,
   strokeForWordAt,
   submitReadiness,
+  withKeptStrokes,
 };
 
 if (typeof module !== 'undefined' && module.exports) {

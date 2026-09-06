@@ -31,7 +31,6 @@ assert(source.includes('function syncComposerSubmitState()'));
 assert(source.includes("submit.disabled = !studioComposerBusy && !textarea.value.trim()"));
 assert.match(css, /\.dshw-primary:disabled\s*\{[^}]*opacity:\s*1[^}]*background:\s*transparent/s);
 assert.match(css, /#composer-permission\s*\{[^}]*order:\s*-2/s);
-assert.match(css, /#composer-mention\s*\{[^}]*display:\s*none/s);
 assert(source.includes('contextRow.hidden = !visible && Boolean(activeProjectRoot)'));
 assert(source.includes("textarea.placeholder = visible ? 'Describe a task or ask a question' : 'Type / for commands'"));
 assert(source.includes("title.textContent = 'Plan'"));

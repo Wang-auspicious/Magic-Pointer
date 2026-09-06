@@ -15,8 +15,12 @@ assert.match(main, /ipcMain\.handle\('conversations:send'/,
 assert(main.includes("runPythonBridge(payload, 'scripts/conversation_bridge.py', 'dashboard'"),
   'Studio follow-ups must use the configured model runtime through a bounded bridge');
 assert(data.includes('sendConversation('), 'Studio data must expose the live send operation');
-assert.match(studio, /Data\.sendConversation\(\s*activeConversationId,\s*requestQuestion,\s*composerPreset,\s*requestId,\s*activeProjectRoot/,
-  'submitting the visible composer must carry attachments, permission preset, and the selected project');
+assert.match(studio, /Data\.sendConversation\(\s*activeConversationId,\s*question,\s*composerPreset,\s*requestId,\s*activeProjectRoot,[\s\S]*?attachmentPaths/,
+  'submitting the visible composer must carry structured attachments, permission preset, and the selected project');
+assert(preload.includes('attachments: Array.isArray(payload?.attachments)'),
+  'preload must preserve attachments as a bounded structured field');
+assert.match(main, /const payload = \{[\s\S]*?requestId,\s*attachments,/,
+  'main must forward structured attachments to the Python runtime');
 assert(studio.includes("composerPreset = 'workspace-write'"),
   'the permission chip must default to the workspace-write preset');
 assert(studio.includes('confirmFullAccess'),

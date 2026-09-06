@@ -105,7 +105,12 @@ def request_ai_config(value: object) -> Iterator[None]:
 
 
 def get_ai_config() -> tuple[str | None, str | None, str]:
-    if _REQUEST_AI_CONFIG:
+    # Studio always sends effort, including installs configured with local
+    # secret files. Effort alone must not replace that model configuration.
+    if _REQUEST_AI_CONFIG and any(
+        _REQUEST_AI_CONFIG.get(key)
+        for key in ("provider", "credential", "baseUrl", "model", "apiMode")
+    ):
         return (
             _REQUEST_AI_CONFIG.get("credential") or None,
             _REQUEST_AI_CONFIG.get("baseUrl") or None,

@@ -120,19 +120,32 @@ const ConversationControl = (() => {
   }
 
   type ConversationSteerPlan =
-    | { action: 'steer'; sessionId: string; text: string }
+    | { action: 'steer'; sessionId: string; text: string; taskInput?: Record<string, unknown> }
     | { action: 'none'; reason: 'empty_text' | 'text_too_long' | 'no_session' };
 
   function planConversationSteer(input: {
     text?: string | null;
     agentSessionId?: string | null;
+    taskInput?: unknown;
   }): ConversationSteerPlan {
-    const text = String(input.text || '').trim();
-    if (!text) return { action: 'none', reason: 'empty_text' };
+    const taskInput = input.taskInput && typeof input.taskInput === 'object'
+      ? input.taskInput as Record<string, unknown>
+      : null;
+    const text = String(taskInput?.instruction ?? input.text ?? '').trim();
+    const hasStructuredMaterial = Boolean(
+      taskInput
+      && (
+        (Array.isArray(taskInput.referenceUpdates) && taskInput.referenceUpdates.length > 0)
+        || (Array.isArray(taskInput.sourceIds) && taskInput.sourceIds.length > 0)
+      ),
+    );
+    if (!text && !hasStructuredMaterial) return { action: 'none', reason: 'empty_text' };
     if (text.length > MAX_STEER_CHARS) return { action: 'none', reason: 'text_too_long' };
     const sessionId = String(input.agentSessionId || '').trim();
     if (!SESSION_ID_PATTERN.test(sessionId)) return { action: 'none', reason: 'no_session' };
-    return { action: 'steer', sessionId, text };
+    return taskInput
+      ? { action: 'steer', sessionId, text, taskInput }
+      : { action: 'steer', sessionId, text };
   }
 
   /** Bounded thread grant: a canonical tool name or one Bash prefix rule. */

@@ -274,7 +274,12 @@ def _surface_adapter_attempt(
             "status": "empty",
             "reason": "adapter_claimed_but_empty",
         }
-    text_objects = [obj for obj in result.objects if obj.text.strip()]
+    # A conversation title binds the surface but does not read the user's mark.
+    # Only message/list content may compete in perception fusion.
+    text_objects = [
+        obj for obj in result.objects
+        if obj.kind != "conversation" and obj.text.strip()
+    ]
     if not text_objects:
         return None, {
             "layer": "surface_adapter",

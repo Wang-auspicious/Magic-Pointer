@@ -72,10 +72,13 @@ const PAD = 24, GAP = 16, CLUSTER_GAP = 48, ROW_MAX = 420;
 // 收藏箱顶部的分类 tab。上一版点击只切 is-on 样式，内容一动没动——filter
 // 永远为空，等于按钮是假的。这里记下选中的分类，renderStash 按它过滤。
 let stashKindFilter = '';
+let stashQuery = '';
 
 // 画布上摆过的收藏节点：Data.stash() 的条目加上布局坐标。
 interface StashBurstNode {
   t: string; w?: number; h?: number; desc?: string; src?: string; text?: string; media?: string; summary?: string;
+  id?: string; capturedAt?: number; originalArtifactPath?: string; sourceId?: string; sourceTimeMs?: number; userCategory?: string;
+  locator?: Record<string, unknown> | null;
   imageW?: number; imageH?: number;
   x: number; y: number;
 }
@@ -108,7 +111,9 @@ async function renderStash(force = false) {
   const world = document.getElementById('canvas-world');
   if (!world || (world.childElementCount && !force)) return;
 
-  const all = await Data.stash();
+  const all = stashQuery || stashKindFilter
+    ? await Data.searchStash(stashQuery, stashKindFilter)
+    : await Data.stash();
   const bursts = stashKindFilter ? all.filter(b => b.kind === stashKindFilter) : all;
   document.getElementById('stash-count')!.textContent =
     bursts.reduce((n, b) => n + b.items.length, 0) + ' 项';
@@ -134,7 +139,7 @@ async function renderStash(force = false) {
            <span class="node-desc">${esc(n.desc)}</span>
            ${n.summary ? `<span class="node-summary">${esc(n.summary)}</span>` : ''}`
         : `<span class="node-note">${esc(n.text)}</span>`;
-      return `<span class="node" data-src="${esc(n.src || '')}" data-text="${esc(n.text || '')}" data-summary="${esc(n.summary || '')}" style="left:${(b.cx as number) + n.x}px;top:${(b.cy as number) + n.y}px;width:${n.w}px;height:${n.h}px">
+      return `<span class="node" data-stash-id="${esc(n.id || '')}" data-src="${esc(n.src || '')}" data-text="${esc(n.text || '')}" data-summary="${esc(n.summary || '')}" style="left:${(b.cx as number) + n.x}px;top:${(b.cy as number) + n.y}px;width:${n.w}px;height:${n.h}px">
         <span class="node-cap">${icon(b.icon)}${esc(b.time)}<span class="kind ${KIND_TAG[b.kind] || ''}">${esc(b.kind)}</span></span>
         ${body}
       </span>`;
@@ -157,13 +162,18 @@ function renderStashList(laid: LaidBurst[], force = false) {
   laid.forEach(b => { (byTime[/[今昨前]|月/.test(b.time) ? b.time : '今天'] ||= []).push(b); });
   list.innerHTML = Object.entries(byTime).map(([day, bs]) =>
     `<div class="stash-day">${day}<em>· ${bs.reduce((n, b) => n + b.items.length, 0)} 项</em></div>` +
-    bs.map(b => b.items.map(it => `<button class="stash-row" data-src="${esc(it.src || '')}" data-text="${esc(it.text || '')}">
+    bs.map(b => b.items.map(it => `<div class="stash-row" data-stash-id="${esc(it.id || '')}" data-src="${esc(it.src || '')}" data-text="${esc(it.text || '')}">
         <span class="sq" style="${it.src && /\.(png|jpe?g|gif|webp|bmp)$/i.test(it.src) ? `background-image:url('file:///${cssUrl(it.src)}');background-size:cover;background-position:center` : `background-image:${it.t === 'shot' ? makeShot(it.desc) : 'none'}`}"></span>
         <span class="txt">${esc(it.desc || it.text)}</span>
         <span class="src">${esc(b.app)}</span>
         <span class="kind ${KIND_TAG[b.kind] || ''}">${esc(b.kind)}</span>
         <span class="t">${esc(b.time)}</span>
-      </button>`).join('')).join('')
+        <span class="stash-row-actions">
+          <button type="button" data-stash-open="${esc(it.id || '')}">打开来源</button>
+          <button type="button" data-stash-category="${esc(it.id || '')}" data-category="${esc(it.userCategory || b.kind)}">分类</button>
+          <button type="button" data-stash-remove="${esc(it.id || '')}">删除</button>
+        </span>
+      </div>`).join('')).join('')
   ).join('');
 }
 
@@ -571,6 +581,47 @@ function buildSessionMenu(c: { id?: string; title?: string }): HTMLElement {
 }
 
 /* 重命名对话框：Electron 不支持 window.prompt，用内联覆盖层。 */
+function requestStudioText(title: string, initial = '', maxLength = 32000): Promise<string | null> {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'dshw-perm-confirm';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-label', title);
+    const card = document.createElement('div');
+    card.className = 'dshw-perm-confirm-card';
+    const label = document.createElement('b');
+    label.textContent = title;
+    const input = document.createElement('textarea');
+    input.className = 'dshw-rename-input';
+    input.value = initial;
+    input.maxLength = maxLength;
+    input.rows = maxLength > 200 ? 4 : 1;
+    input.setAttribute('aria-label', title);
+    const actions = document.createElement('div');
+    actions.className = 'dshw-perm-confirm-actions';
+    const finish = (value: string | null) => { overlay.remove(); resolve(value); };
+    const cancel = document.createElement('button');
+    cancel.textContent = '取消';
+    cancel.addEventListener('click', () => finish(null));
+    const save = document.createElement('button');
+    save.className = 'is-primary';
+    save.textContent = '确定';
+    save.addEventListener('click', () => { if (input.value.trim()) finish(input.value.trim()); });
+    overlay.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); finish(null); }
+      if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+        event.preventDefault(); event.stopPropagation(); save.click();
+      }
+    });
+    actions.append(cancel, save);
+    card.append(label, input, actions);
+    overlay.append(card);
+    document.body.append(overlay);
+    input.focus();
+  });
+}
+
 function openRenameDialog(id: string, currentTitle: string) {
   if (!id) return;
   const overlay = document.createElement('div');
@@ -997,6 +1048,111 @@ let activeConversationId: string | null = null;
 let activeConversationTab: 'chat' | 'trajectory' = 'chat';
 let activeConversationTurnCount = 0;
 let activeConversationTurns: Record<string, unknown>[] = [];
+let activeTaskContext: MagicPointerTaskContext | null = null;
+const composerSelectedSourceIds = new Set<string>();
+let figmaStatusTimer: number | null = null;
+let figmaPairExpiresAt = 0;
+
+function stopFigmaStatusPolling() {
+  if (figmaStatusTimer !== null) window.clearTimeout(figmaStatusTimer);
+  figmaStatusTimer = null;
+}
+
+function figmaConnectionElements() {
+  return {
+    status: document.getElementById('figma-connection-status'),
+    code: document.getElementById('figma-pair-code'),
+    button: document.getElementById('figma-connect') as HTMLButtonElement | null,
+  };
+}
+
+async function refreshFigmaConnection(poll = false) {
+  const conversationId = activeConversationId;
+  const { status, code, button } = figmaConnectionElements();
+  if (!status || !code || !button) return;
+  if (!conversationId) {
+    stopFigmaStatusPolling();
+    button.disabled = true;
+    button.textContent = '连接';
+    delete button.dataset.documentSessionId;
+    code.hidden = true;
+    status.textContent = '先打开并运行一个任务，再连接当前 Figma 文档。';
+    return;
+  }
+  button.disabled = true;
+  const result = await Data.figmaStatus(conversationId);
+  if (conversationId !== activeConversationId) return;
+  const connections = Array.isArray(result.connections) ? result.connections : [];
+  const connection = connections[0] as Record<string, unknown> | undefined;
+  if (result.ok && connection) {
+    stopFigmaStatusPolling();
+    figmaPairExpiresAt = 0;
+    code.hidden = true;
+    button.disabled = false;
+    button.textContent = '断开';
+    button.dataset.documentSessionId = String(connection.documentSessionId || '');
+    status.textContent = [
+      String(connection.documentName || '当前文档'),
+      String(connection.pageName || ''),
+      `${Array.isArray(connection.selectionIds) ? connection.selectionIds.length : 0} 个选中节点`,
+    ].filter(Boolean).join(' · ');
+    return;
+  }
+  delete button.dataset.documentSessionId;
+  button.textContent = '连接';
+  button.disabled = false;
+  if (!result.ok) {
+    status.textContent = result.error === 'figma_connection_requires_started_task'
+      ? '这条对话尚未产生运行时任务；先发送一次任务。'
+      : String(result.error || '暂时无法读取 Figma 连接状态。');
+    code.hidden = true;
+    stopFigmaStatusPolling();
+    return;
+  }
+  if (!figmaPairExpiresAt || Date.now() >= figmaPairExpiresAt) {
+    status.textContent = '尚未连接当前 Figma 文档。';
+    code.hidden = true;
+    stopFigmaStatusPolling();
+    return;
+  }
+  if (poll) {
+    stopFigmaStatusPolling();
+    figmaStatusTimer = window.setTimeout(() => { void refreshFigmaConnection(true); }, 1000);
+  }
+}
+
+async function toggleFigmaConnection() {
+  const conversationId = activeConversationId;
+  const { status, code, button } = figmaConnectionElements();
+  if (!conversationId || !status || !code || !button) return;
+  button.disabled = true;
+  const documentSessionId = button.dataset.documentSessionId;
+  if (documentSessionId) {
+    const result = await Data.disconnectFigma(conversationId, documentSessionId);
+    if (!result.ok) status.textContent = String(result.error || 'Figma 断开失败。');
+    await refreshFigmaConnection();
+    return;
+  }
+  const result = await Data.pairFigma(conversationId);
+  if (!result.ok) {
+    status.textContent = String(result.error || '无法启动 Figma 配对。');
+    button.disabled = false;
+    return;
+  }
+  figmaPairExpiresAt = Number(result.expiresAt) || 0;
+  code.textContent = `${String(result.pairCode || '')} · ${String(result.baseUrl || '')}`;
+  code.hidden = false;
+  status.textContent = result.installableManifestBuilt
+    ? '在 Magic Pointer Figma 插件中输入这组一次性配对码。'
+    : '插件代码已构建，但本机没有 Figma 分配的真实插件 ID；请先用 Create New Plugin 建立 ID，再生成可导入 manifest。';
+  button.disabled = false;
+  stopFigmaStatusPolling();
+  figmaStatusTimer = window.setTimeout(() => { void refreshFigmaConnection(true); }, 1000);
+}
+
+document.getElementById('figma-connect')?.addEventListener('click', () => {
+  void toggleFigmaConnection();
+});
 /* cardId → DSH 回合节点：后台任务补丁就地换节点，不重建整条流 */
 const dshCardNodes = new Map<string, HTMLElement>();
 
@@ -1200,8 +1356,16 @@ function setConversationTab(tab: 'chat' | 'trajectory') {
 async function openConversation(id: string) {
   const c = await Data.conversation(id);
   if (!c) return;
+  const switchedTask = activeConversationId !== c.id;
+  if (artifactEditor.state().conversationId && artifactEditor.state().conversationId !== c.id) {
+    artifactEditor.clear();
+    renderArtifactEditor();
+    if (activeInspectorTab === 'artifact') setInspector(false);
+  }
   if (activeConversationId !== c.id) repositoryContextDismissedFor = '';
   activeConversationId = c.id;
+  setActiveTaskContext(c.taskContext, switchedTask);
+  void refreshFigmaConnection();
   activeConversationTurnCount = Array.isArray(c.turns) ? c.turns.length : 0;
   const projectRoot = String((c as { workspaceRoot?: string }).workspaceRoot || '');
   setActiveProject(projectRoot);
@@ -1356,6 +1520,10 @@ function renderDshCardNode(card: MagicPointerCard): HTMLElement {
 
 /* ---- 产物 ---- */
 interface ArtifactEntry {
+  artifactId?: string;
+  revision?: number;
+  kind?: string;
+  summary?: string;
   name?: string;
   from?: string;
   at?: number;
@@ -1369,13 +1537,343 @@ async function renderArtifacts(force = false) {
     host.innerHTML = emptyStateMarkup('ic-docs', '还没有产物', 'Agent 生成并落盘的文档、代码、表格与可编辑草稿会集中出现在这里。', { label: '去对话创建', view: 'chat' });
     return;
   }
-  host.innerHTML = list.map((a, i) => `<button class="card artifact enter" data-open="${esc(a.conversationId)}"
+  host.innerHTML = list.map((a, i) => `<button class="card artifact enter" ${a.artifactId
+      ? `data-artifact-id="${esc(a.artifactId)}" data-artifact-conversation="${esc(a.conversationId)}"`
+      : `data-open="${esc(a.conversationId)}"`}
       style="animation-delay:${Math.min(i,6)*40}ms">
     <span class="tile">${icon('ic-code')}</span>
     <span class="side-text"><span class="name">${esc(a.name)}</span>
-      <span class="meta">${formatTime(a.at)} · 来自「${esc(a.from || '')}」</span></span>
+      <span class="meta">${formatTime(a.at)} · ${a.revision ? `revision ${a.revision} · ` : ''}来自「${esc(a.from || '')}」</span></span>
   </button>`).join('');
 }
+
+const artifactEditor = ArtifactEditor.createArtifactEditor({
+  read: (payload) => Data.readArtifact(
+    String(payload.conversationId || ''),
+    String(payload.artifactId || ''),
+  ),
+  edit: (payload) => Data.editArtifact({
+    conversationId: String(payload.conversationId || ''),
+    artifactId: String(payload.artifactId || ''),
+    expectedRevision: Number(payload.expectedRevision),
+    content: String(payload.content ?? ''),
+    patchPayload: payload.patchPayload && typeof payload.patchPayload === 'object'
+      ? payload.patchPayload as Record<string, unknown>
+      : null,
+  }),
+  accept: (payload) => Data.acceptArtifact(
+    String(payload.conversationId || ''),
+    String(payload.artifactId || ''),
+    Number(payload.revision),
+  ),
+  apply: (payload) => Data.applyArtifact(
+    String(payload.conversationId || ''),
+    String(payload.artifactId || ''),
+    Number(payload.revision),
+  ),
+});
+
+type FigmaArtifactPreview = {
+  status: 'loading' | 'ready' | 'error';
+  dataUrl?: string;
+  error?: string;
+};
+const figmaArtifactPreviews = new Map<string, FigmaArtifactPreview>();
+
+function figmaPatchCoordinates(
+  state: MagicPointerArtifactEditorState,
+  operation: Record<string, unknown>,
+  index: number,
+): { key: string; documentSessionId: string; nodeId: string } | null {
+  const locator = operation.locator && typeof operation.locator === 'object'
+    ? operation.locator as Record<string, unknown>
+    : null;
+  const value = locator?.value && typeof locator.value === 'object'
+    ? locator.value as Record<string, unknown>
+    : null;
+  if (locator?.kind !== 'figma-node' || !value) return null;
+  const documentSessionId = String(value.documentSessionId || '').trim();
+  const nodeId = String(value.nodeId || '').trim();
+  if (!documentSessionId || !nodeId) return null;
+  return {
+    key: `${state.artifactId}:${state.revision}:${index}:${documentSessionId}:${nodeId}`,
+    documentSessionId,
+    nodeId,
+  };
+}
+
+async function loadFigmaArtifactPreview(index: number, force = false): Promise<void> {
+  const state = artifactEditor.state();
+  const operations = Array.isArray(state.patchPayload?.operations)
+    ? state.patchPayload.operations as Record<string, unknown>[]
+    : [];
+  const operation = operations[index];
+  const coordinates = operation ? figmaPatchCoordinates(state, operation, index) : null;
+  if (!coordinates || !state.conversationId) return;
+  if (!force && figmaArtifactPreviews.has(coordinates.key)) return;
+  figmaArtifactPreviews.set(coordinates.key, { status: 'loading' });
+  renderArtifactPatchPreview(state);
+  const result = await Data.exportFigmaPreview(
+    state.conversationId,
+    coordinates.documentSessionId,
+    coordinates.nodeId,
+  );
+  const latest = artifactEditor.state();
+  const latestOperations = Array.isArray(latest.patchPayload?.operations)
+    ? latest.patchPayload.operations as Record<string, unknown>[]
+    : [];
+  const latestCoordinates = latestOperations[index]
+    ? figmaPatchCoordinates(latest, latestOperations[index], index)
+    : null;
+  if (latestCoordinates?.key !== coordinates.key) return;
+  const payload = result.result && typeof result.result === 'object'
+    ? result.result as Record<string, unknown>
+    : {};
+  const mimeType = String(payload.mimeType || '');
+  const base64 = String(payload.base64 || '');
+  if (result.ok && mimeType === 'image/png' && /^[A-Za-z0-9+/=]+$/.test(base64)) {
+    figmaArtifactPreviews.set(coordinates.key, {
+      status: 'ready',
+      dataUrl: `data:image/png;base64,${base64}`,
+    });
+  } else {
+    figmaArtifactPreviews.set(coordinates.key, {
+      status: 'error',
+      error: String(result.error || 'Figma 节点预览不可用。'),
+    });
+  }
+  renderArtifactPatchPreview(latest);
+}
+
+async function refreshFigmaArtifactPreviews(force = false): Promise<void> {
+  const state = artifactEditor.state();
+  const operations = Array.isArray(state.patchPayload?.operations)
+    ? state.patchPayload.operations as Record<string, unknown>[]
+    : [];
+  await Promise.all(operations.map(async (operation, index) => {
+    if (figmaPatchCoordinates(state, operation, index)) {
+      await loadFigmaArtifactPreview(index, force);
+    }
+  }));
+}
+
+async function retargetFigmaArtifact(index: number): Promise<void> {
+  const state = artifactEditor.state();
+  const operations = Array.isArray(state.patchPayload?.operations)
+    ? state.patchPayload.operations as Record<string, unknown>[]
+    : [];
+  const operation = operations[index];
+  const coordinates = operation ? figmaPatchCoordinates(state, operation, index) : null;
+  if (!coordinates || !state.patchPayload) return;
+  figmaArtifactPreviews.set(coordinates.key, { status: 'loading' });
+  renderArtifactPatchPreview(state);
+  const response = await Data.inspectFigmaSelection(
+    state.conversationId,
+    coordinates.documentSessionId,
+  );
+  const result = response.result && typeof response.result === 'object'
+    ? response.result as Record<string, unknown>
+    : {};
+  const selectionIds = Array.isArray(result.selectionIds)
+    ? result.selectionIds.map((value) => String(value || ''))
+    : [];
+  const nodes = Array.isArray(result.nodes)
+    ? result.nodes.filter((value): value is Record<string, unknown> => (
+      Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+    ))
+    : [];
+  const selected = nodes.find((node) => selectionIds.includes(String(node.id || '')));
+  if (!response.ok || !selected) {
+    figmaArtifactPreviews.set(coordinates.key, {
+      status: 'error',
+      error: String(response.error || '请先在当前 Figma 文档中选择一个可写节点。'),
+    });
+    renderArtifactPatchPreview(artifactEditor.state());
+    return;
+  }
+  try {
+    const nextPayload = ArtifactEditor.retargetFigmaPatch(
+      state.patchPayload,
+      index,
+      { ...selected, pageId: result.pageId },
+    );
+    artifactEditor.updatePatchPayload(nextPayload);
+    for (const key of [...figmaArtifactPreviews.keys()]) {
+      if (key.startsWith(`${state.artifactId}:`)) figmaArtifactPreviews.delete(key);
+    }
+    renderArtifactEditor();
+    void refreshFigmaArtifactPreviews();
+  } catch (error) {
+    figmaArtifactPreviews.set(coordinates.key, {
+      status: 'error',
+      error: error instanceof Error ? error.message : String(error),
+    });
+    renderArtifactPatchPreview(artifactEditor.state());
+  }
+}
+
+function artifactValueText(value: unknown): string {
+  if (typeof value === 'string') return value;
+  try { return JSON.stringify(value, null, 2); } catch { return String(value ?? ''); }
+}
+
+function renderArtifactPatchPreview(state: MagicPointerArtifactEditorState) {
+  const host = document.getElementById('artifact-patch-changes');
+  if (!host) return;
+  const operations = Array.isArray(state.patchPayload?.operations)
+    ? state.patchPayload.operations as Record<string, unknown>[]
+    : [];
+  if (!operations.length) {
+    host.innerHTML = '<p class="mp-inspector-empty">普通文本草稿没有外部文件修改。</p>';
+    return;
+  }
+  const busy = ['loading', 'saving', 'accepting', 'applying'].includes(state.status);
+  host.innerHTML = operations.map((operation, index) => {
+    const locator = operation.locator && typeof operation.locator === 'object'
+      ? operation.locator as Record<string, unknown>
+      : {};
+    const figmaCoordinates = figmaPatchCoordinates(state, operation, index);
+    const preview = figmaCoordinates ? figmaArtifactPreviews.get(figmaCoordinates.key) : null;
+    const figmaPreview = !figmaCoordinates ? '' : `<div class="mp-figma-artifact-preview">
+      ${preview?.dataUrl
+        ? `<img src="${esc(preview.dataUrl)}" alt="当前 Figma 节点 ${esc(figmaCoordinates.nodeId)} 的导出预览" />`
+        : `<p>${esc(preview?.status === 'loading' ? '正在从当前文档导出节点预览…' : preview?.error || '节点预览尚未加载。')}</p>`}
+      <div>
+        <button type="button" data-figma-preview-index="${index}" ${busy ? 'disabled' : ''}>刷新预览</button>
+        <button type="button" data-figma-retarget-index="${index}" ${busy ? 'disabled' : ''}>改用当前选中节点</button>
+      </div>
+    </div>`;
+    return `<article class="mp-artifact-change">
+      <header><strong>${esc(operation.operation || 'change')}</strong><code>${esc(operation.sourceId || '')}</code></header>
+      <small>${esc(locator.kind || 'locator')} · ${esc(artifactValueText(locator.value || {}))}</small>
+      ${figmaPreview}
+      <pre>之前：${esc(artifactValueText(operation.before))}</pre>
+      <label>之后（实际写入值）
+        <textarea class="mp-artifact-after-value" data-artifact-operation-index="${index}"
+          aria-label="编辑第 ${index + 1} 项实际写入值" ${busy ? 'disabled' : ''}>${esc(artifactValueText(operation.after))}</textarea>
+      </label>
+    </article>`;
+  }).join('');
+}
+
+function renderArtifactEditor() {
+  const state = artifactEditor.state();
+  const content = document.getElementById('artifact-editor-content') as HTMLTextAreaElement | null;
+  const kind = document.getElementById('artifact-editor-kind');
+  const revision = document.getElementById('artifact-editor-revision');
+  const status = document.getElementById('artifact-editor-status');
+  const save = document.getElementById('artifact-editor-save') as HTMLButtonElement | null;
+  const accept = document.getElementById('artifact-editor-accept') as HTMLButtonElement | null;
+  const apply = document.getElementById('artifact-editor-apply') as HTMLButtonElement | null;
+  if (content && document.activeElement !== content) content.value = state.content;
+  if (kind) kind.textContent = state.kind === 'document_patch' ? 'Document patch' : 'Draft';
+  if (revision) revision.textContent = state.revision ? `revision ${state.revision}` : 'revision —';
+  const busy = ['loading', 'saving', 'accepting', 'applying'].includes(state.status);
+  if (content) content.disabled = busy || !state.artifactId;
+  if (save) save.disabled = busy || !state.dirty;
+  if (accept) {
+    accept.disabled = busy || state.dirty || !state.artifactId
+      || state.acceptedRevision === state.revision;
+  }
+  if (apply) {
+    apply.disabled = busy || state.dirty || state.kind !== 'document_patch'
+      || state.acceptedRevision !== state.revision;
+  }
+  if (status) {
+    const resultStatus = String(state.applyResult?.status || '');
+    status.textContent = state.error
+      || (state.status === 'loading' ? '正在读取当前版本…'
+        : state.status === 'saving' ? '正在保存新版本…'
+          : state.status === 'accepting' ? '正在绑定批准版本…'
+            : state.status === 'applying' ? '正在写入并读回验证…'
+              : resultStatus === 'succeeded' ? '已写入并通过读回验证。'
+                : state.acceptedRevision === state.revision && state.revision > 0
+                  ? '当前版本已接受，可以应用。'
+                  : state.dirty ? '有尚未保存的编辑。' : '');
+    status.dataset.tone = state.error ? 'error' : 'neutral';
+  }
+  renderArtifactPatchPreview(state);
+}
+
+async function openArtifactEditor(conversationId: string, artifactId: string) {
+  if (!conversationId || !artifactId) return;
+  if (activeConversationId !== conversationId) await openConversation(conversationId);
+  inspectorState = inspectorStatePolicy.reduceInspectorState(inspectorState, {
+    type: 'select-content',
+    contentKind: 'artifact',
+    contentId: artifactId,
+  });
+  setInspector(true, 'artifact');
+  renderArtifactEditor();
+  await artifactEditor.select(conversationId, artifactId);
+  renderArtifactEditor();
+  void refreshFigmaArtifactPreviews();
+}
+
+document.getElementById('artifact-editor-content')?.addEventListener('input', (event) => {
+  artifactEditor.updateContent((event.currentTarget as HTMLTextAreaElement).value);
+  renderArtifactEditor();
+});
+document.getElementById('artifact-patch-changes')?.addEventListener('change', (event) => {
+  const field = (event.target as Element | null)?.closest<HTMLTextAreaElement>(
+    '[data-artifact-operation-index]',
+  );
+  if (!field) return;
+  const state = artifactEditor.state();
+  const operations = Array.isArray(state.patchPayload?.operations)
+    ? state.patchPayload.operations as Record<string, unknown>[]
+    : [];
+  const index = Number(field.dataset.artifactOperationIndex);
+  if (!Number.isInteger(index) || index < 0 || index >= operations.length) return;
+  try {
+    const after = JSON.parse(field.value) as unknown;
+    field.setCustomValidity('');
+    artifactEditor.updatePatchPayload({
+      ...state.patchPayload,
+      operations: operations.map((operation, operationIndex) => (
+        operationIndex === index ? { ...operation, after } : operation
+      )),
+    });
+    renderArtifactEditor();
+  } catch {
+    field.setCustomValidity('请输入有效的 JSON 值；无效内容不会保存。');
+    field.reportValidity();
+  }
+});
+document.getElementById('artifact-patch-changes')?.addEventListener('click', (event) => {
+  const target = event.target as Element | null;
+  const preview = target?.closest<HTMLButtonElement>('[data-figma-preview-index]');
+  if (preview) {
+    void loadFigmaArtifactPreview(Number(preview.dataset.figmaPreviewIndex), true);
+    return;
+  }
+  const retarget = target?.closest<HTMLButtonElement>('[data-figma-retarget-index]');
+  if (retarget) void retargetFigmaArtifact(Number(retarget.dataset.figmaRetargetIndex));
+});
+document.getElementById('artifact-editor-save')?.addEventListener('click', async () => {
+  const pending = artifactEditor.save();
+  renderArtifactEditor();
+  await pending;
+  renderArtifactEditor();
+  void refreshFigmaArtifactPreviews();
+});
+document.getElementById('artifact-editor-accept')?.addEventListener('click', async () => {
+  const pending = artifactEditor.accept();
+  renderArtifactEditor();
+  await pending;
+  renderArtifactEditor();
+});
+document.getElementById('artifact-editor-apply')?.addEventListener('click', async () => {
+  const pending = artifactEditor.apply();
+  renderArtifactEditor();
+  await pending;
+  const state = artifactEditor.state();
+  for (const key of [...figmaArtifactPreviews.keys()]) {
+    if (key.startsWith(`${state.artifactId}:`)) figmaArtifactPreviews.delete(key);
+  }
+  renderArtifactEditor();
+  void refreshFigmaArtifactPreviews();
+});
 
 function esc(v: unknown) {
   return String(v == null ? '' : v)
@@ -1625,7 +2123,6 @@ async function executeWindowMenuCommand(command: string, origin?: HTMLElement) {
   if (command === 'new-chat') { setProductMode('walker'); startNewChat(); return; }
   if (command === 'open-project') { await openProjectFromPicker(); return; }
   if (command === 'add-files') {
-    if (!activeProjectRoot) { renderProjectContext(); return; }
     const picked = await Data.pickProjectFiles(activeProjectRoot);
     if (picked?.ok && Array.isArray(picked.paths)) {
       composerAttachments = [...new Set([...composerAttachments, ...picked.paths.map(String)])];
@@ -1833,12 +2330,13 @@ function openThreadMenu(button: HTMLElement) {
       if (activeProjectRoot) void Data.openProjectPath(activeProjectRoot, '');
       else void openProjectFromPicker();
     }),
-    make('Project context', () => {
+    make('Task materials & Figma', () => {
       const popover = document.getElementById('magic-brain-popover');
       if (!popover) return;
       popover.hidden = false;
       void renderMagicBrain(true);
-    }, { disabled: !activeProjectRoot }),
+      void refreshFigmaConnection();
+    }, { disabled: unavailable }),
     make('重命名', () => {
       if (activeConversationId) openRenameDialog(activeConversationId, document.getElementById('chat-title')?.textContent || '');
     }, { disabled: unavailable }),
@@ -1890,6 +2388,7 @@ interface InspectorState {
   width: number;
   previousWidth: number;
   tab: string;
+  contentSelection?: { kind: 'material' | 'artifact'; id: string } | null;
 }
 interface InspectorStateModule {
   clampInspectorWidth(desired: unknown, availableWidth: unknown): number;
@@ -2012,18 +2511,42 @@ async function selectProjectFile(relativePath: string) {
   renderProjectFileTree();
 }
 
+function magicBrainMaterialNodes(startIndex = 0): HTMLButtonElement[] {
+  return (activeTaskContext?.sources || []).map((source, index) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'mp-brain-source';
+    button.dataset.materialSourceId = source.sourceId;
+    button.style.setProperty('--item-index', String(startIndex + index));
+    button.innerHTML = `${icon(source.kind === 'web' ? 'ic-globe' : source.kind === 'figma' ? 'ic-pen' : 'ic-file', 'codex-icon')}<span>${esc(source.title)}</span>`;
+    button.title = source.sourceId;
+    return button;
+  });
+}
+
 async function renderMagicBrain(force = false) {
   const popover = document.getElementById('magic-brain-popover');
   if (!popover) return;
   const projectName = activeProjectRoot.replace(/\\/g, '/').split('/').filter(Boolean).pop() || '当前项目';
   const project = document.getElementById('magic-brain-project');
   if (project) project.textContent = projectName;
+  const projectRows = [
+    document.getElementById('magic-brain-changes'),
+    document.getElementById('magic-brain-branch'),
+  ];
+  projectRows.forEach((row) => { if (row) row.hidden = !activeProjectRoot; });
   if (!activeProjectRoot) {
     projectEnvironment = null;
     document.getElementById('magic-brain-changes-detail')!.textContent = '请先打开项目';
     document.getElementById('magic-brain-branch-name')!.textContent = 'Git 分支';
     document.getElementById('magic-brain-branch-detail')!.textContent = '没有项目环境';
-    document.getElementById('magic-brain-source-list')!.innerHTML = '<p>打开项目并开始任务后显示来源。</p>';
+    const sourceHost = document.getElementById('magic-brain-source-list')!;
+    const materialNodes = magicBrainMaterialNodes();
+    if (materialNodes.length) sourceHost.replaceChildren(...materialNodes);
+    else sourceHost.innerHTML = activeConversationId
+      ? '<p>当前任务还没有材料；可连接 Figma 或添加本机文件。</p>'
+      : '<p>启动任务后可连接 Figma 或添加本机材料。</p>';
+    void refreshFigmaConnection();
     return;
   }
   if (!force && projectEnvironment?.root === activeProjectRoot) return;
@@ -2047,19 +2570,20 @@ async function renderMagicBrain(force = false) {
   const sourceHost = document.getElementById('magic-brain-source-list');
   if (!sourceHost) return;
   const sources = Array.isArray(response.sources) ? response.sources : [];
-  sourceHost.replaceChildren(...sources.map((url, index) => {
+  const materialNodes = magicBrainMaterialNodes();
+  sourceHost.replaceChildren(...materialNodes, ...sources.map((url, index) => {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'mp-brain-source';
     button.dataset.sourceUrl = url;
-    button.style.setProperty('--item-index', String(index));
+    button.style.setProperty('--item-index', String(materialNodes.length + index));
     let label = url;
     try { const parsed = new URL(url); label = `${parsed.hostname}${parsed.pathname === '/' ? '' : parsed.pathname}`; } catch { /* show raw URL */ }
     button.innerHTML = `${icon('ic-globe', 'codex-icon')}<span>${esc(label)}</span>`;
     button.title = url;
     return button;
   }));
-  if (!sources.length) sourceHost.innerHTML = '<p>当前任务尚无网页来源。</p>';
+  if (!sources.length && !materialNodes.length) sourceHost.innerHTML = '<p>当前任务尚无材料或网页来源。</p>';
 }
 
 document.getElementById('magic-brain-changes')?.addEventListener('click', () => {
@@ -2073,6 +2597,17 @@ document.getElementById('magic-brain-branch')?.addEventListener('click', () => {
   else setInspector(true, 'changes');
 });
 document.getElementById('magic-brain-sources')?.addEventListener('click', (event) => {
+  const material = (event.target as Element | null)?.closest<HTMLElement>('[data-material-source-id]');
+  if (material?.dataset.materialSourceId) {
+    setInspector(true, 'materials');
+    inspectorState = inspectorStatePolicy.reduceInspectorState(inspectorState, {
+      type: 'select-content',
+      contentKind: 'material',
+      contentId: material.dataset.materialSourceId,
+    });
+    renderTaskMaterials();
+    return;
+  }
   const source = (event.target as Element | null)?.closest<HTMLElement>('[data-source-url]');
   if (!source?.dataset.sourceUrl) return;
   setInspector(true, 'browser');
@@ -2342,7 +2877,7 @@ function syncInspectorGeometry() {
   if (inspectorState.maximized) shell.dataset.inspectorMaximized = 'true';
   else delete shell.dataset.inspectorMaximized;
   maximize?.setAttribute('aria-pressed', String(inspectorState.maximized));
-  maximize?.setAttribute('aria-label', inspectorState.maximized ? '还原项目面板' : '展开项目面板');
+  maximize?.setAttribute('aria-label', inspectorState.maximized ? '还原任务面板' : '展开任务面板');
   try { localStorage.setItem(INSPECTOR_WIDTH_KEY, String(inspectorState.previousWidth)); } catch { /* storage unavailable */ }
   document.getElementById('inspector-toggle')?.setAttribute('aria-expanded', String(inspectorState.open));
   scheduleProjectBrowserResize();
@@ -2367,18 +2902,20 @@ function setInspector(open: boolean, tab = activeInspectorTab) {
   });
   const inspectorTitle = document.getElementById('inspector-title');
   if (inspectorTitle) {
-    inspectorTitle.textContent = ({ files: 'Files', browser: 'Browser', terminal: 'Terminal', changes: 'Changes', tasks: 'Tasks' } as Record<string, string>)[activeInspectorTab] || 'Project';
+    inspectorTitle.textContent = ({ materials: 'Materials', files: 'Files', browser: 'Browser', terminal: 'Terminal', changes: 'Changes', tasks: 'Tasks', artifact: 'Artifact' } as Record<string, string>)[activeInspectorTab] || 'Task';
   }
   if (!open) { closeProjectBrowserView(); return; }
   if (activeInspectorTab !== 'browser') closeProjectBrowserView();
   if (activeInspectorTab === 'files' && !projectTreeCache.has('')) void refreshProjectInspector();
+  if (activeInspectorTab === 'materials') renderTaskMaterials();
   if (activeInspectorTab === 'changes') void renderProjectChanges();
   if (activeInspectorTab === 'tasks') renderProjectTasks();
+  if (activeInspectorTab === 'artifact') renderArtifactEditor();
   if (activeInspectorTab === 'browser') scheduleProjectBrowserResize();
 }
 
 document.getElementById('inspector-toggle')?.addEventListener('click', () => {
-  setInspector(shell.dataset.inspector !== 'open', 'files');
+  setInspector(shell.dataset.inspector !== 'open', activeProjectRoot ? 'files' : 'materials');
 });
 document.getElementById('header-preview-toggle')?.addEventListener('click', () => setInspector(true, 'browser'));
 document.getElementById('inspector-close')?.addEventListener('click', () => setInspector(false));
@@ -2694,7 +3231,6 @@ document.addEventListener('click', e => {
   const addBtn = target.closest<HTMLElement>('#composer-add');
   const addMenu = document.getElementById('composer-add-menu');
   if (addBtn) {
-    if (!activeProjectRoot) { renderProjectContext(); return; }
     void Data.pickProjectFiles(activeProjectRoot).then((picked) => {
       if (!picked?.ok || !Array.isArray(picked.paths)) return;
       composerAttachments = [...new Set([...composerAttachments, ...picked.paths.map(String)])];
@@ -2708,6 +3244,10 @@ document.addEventListener('click', e => {
 
   const mention = target.closest<HTMLElement>('#composer-mention');
   if (mention) {
+    if (activeTaskContext?.sources.length) {
+      setInspector(true, 'materials');
+      return;
+    }
     const textarea = document.querySelector<HTMLTextAreaElement>('#composer-form textarea');
     if (textarea) {
       const start = textarea.selectionStart;
@@ -2766,6 +3306,73 @@ document.addEventListener('click', e => {
 
   const open = target.closest<HTMLElement>('[data-open]');
   if (open && open.dataset.open) { openConversation(open.dataset.open); return; }
+
+  const artifact = target.closest<HTMLElement>('[data-artifact-id]');
+  if (artifact?.dataset.artifactId && artifact.dataset.artifactConversation) {
+    void openArtifactEditor(
+      artifact.dataset.artifactConversation,
+      artifact.dataset.artifactId,
+    );
+    return;
+  }
+
+  if (target.closest('#stash-add-file')) {
+    void (async () => {
+      const result = await Data.addStashFiles();
+      if (result.ok) await renderStash(true);
+      else if (!result.canceled) window.alert(String(result.error || '文件没有加入收藏。'));
+    })();
+    return;
+  }
+
+  if (target.closest('#stash-add-note')) {
+    void (async () => {
+      const text = await requestStudioText('写下要收藏的笔记');
+      if (!text?.trim()) return;
+      const category = await requestStudioText('分类', '笔记', 100);
+      if (category === null) return;
+      const result = await Data.addStashNote(text, category);
+      if (result.ok) await renderStash(true);
+      else window.alert(String(result.error || '笔记没有加入收藏。'));
+    })();
+    return;
+  }
+
+  const stashOpen = target.closest<HTMLElement>('[data-stash-open]');
+  if (stashOpen?.dataset.stashOpen) {
+    void (async () => {
+      const result = await Data.openStashEntry(stashOpen.dataset.stashOpen || '');
+      if (!result.ok) {
+        const at = Number(result.sourceTimeMs);
+        const when = Number.isFinite(at) && at > 0 ? `（来源时间：${new Date(at).toLocaleString()}）` : '';
+        window.alert(`原应用或文件当前不可达${when}。${result.error ? `\n${result.error}` : ''}`);
+      }
+    })();
+    return;
+  }
+
+  const stashCategory = target.closest<HTMLElement>('[data-stash-category]');
+  if (stashCategory?.dataset.stashCategory) {
+    void (async () => {
+      const category = await requestStudioText('修改分类', stashCategory.dataset.category || '', 100);
+      if (!category) return;
+      const result = await Data.updateStashCategory(stashCategory.dataset.stashCategory || '', category);
+      if (result.ok) await renderStash(true);
+      else window.alert(String(result.error || '分类没有更新。'));
+    })();
+    return;
+  }
+
+  const stashRemove = target.closest<HTMLElement>('[data-stash-remove]');
+  if (stashRemove?.dataset.stashRemove) {
+    if (!window.confirm('删除这条收藏？原始文件不会被删除。')) return;
+    void (async () => {
+      const result = await Data.removeStashEntry(stashRemove.dataset.stashRemove || '');
+      if (result.ok) await renderStash(true);
+      else window.alert(String(result.error || '收藏没有删除。'));
+    })();
+    return;
+  }
 
   // 收藏箱图片节点：左键 → 放大查看；查看窗里可复制图片
   const imgNode = target.closest<HTMLElement>('.node[data-src], .stash-row[data-src]');
@@ -2826,6 +3433,11 @@ document.addEventListener('click', e => {
   }
   const notice = target.closest<HTMLElement>('.notice .close');
   if (notice) notice.closest('.notice')!.remove();
+});
+
+document.getElementById('stash-search')?.addEventListener('input', (event) => {
+  stashQuery = String((event.target as HTMLInputElement | null)?.value || '').trim();
+  void renderStash(true);
 });
 
 let studioComposerBusy = false;
@@ -3065,6 +3677,233 @@ function bindEffortChip() {
 /* ---- 权限预设芯片（DSH PermissionSelect 同款：芯片 + 弹层 + Full access 确认门） ---- */
 let composerPreset = 'workspace-write';
 let composerAttachments: string[] = [];
+
+function normalizedTaskContext(value: unknown): MagicPointerTaskContext | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const taskId = String(raw.taskId || '').trim();
+  if (!taskId) return null;
+  try {
+    const sources = (Array.isArray(raw.sources) ? raw.sources : [])
+      .map((source) => TaskSources.normalizeSourceRef(source)) as MagicPointerTaskSource[];
+    const referenceValues = Array.isArray(raw.references)
+      ? raw.references
+      : raw.references && typeof raw.references === 'object'
+        ? Object.values(raw.references as Record<string, unknown>)
+        : [];
+    const references = referenceValues
+      .map((reference) => TaskSources.normalizeReferenceBinding(reference)) as MagicPointerTaskReference[];
+    return {
+      taskId,
+      sources: sources.filter((source) => source.taskId === taskId),
+      references,
+      referenceRevision: Math.max(0, Number(raw.referenceRevision) || 0),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function setActiveTaskContext(value: unknown, resetSelection = false) {
+  const next = normalizedTaskContext(value);
+  if (resetSelection || (activeTaskContext?.taskId && activeTaskContext.taskId !== next?.taskId)) {
+    composerSelectedSourceIds.clear();
+    inspectorState = inspectorStatePolicy.reduceInspectorState(inspectorState, { type: 'clear-content' });
+  }
+  activeTaskContext = next;
+  const known = new Set(next?.sources.map((source) => source.sourceId) || []);
+  for (const sourceId of [...composerSelectedSourceIds]) {
+    if (!known.has(sourceId)) composerSelectedSourceIds.delete(sourceId);
+  }
+  renderTaskMaterials();
+  renderComposerMaterials();
+}
+
+function referencesForSource(sourceId: string): MagicPointerTaskReference[] {
+  return (activeTaskContext?.references || [])
+    .filter((reference) => reference.active && reference.sourceId === sourceId)
+    .sort((left, right) => left.ordinal - right.ordinal);
+}
+
+function taskSourceLabel(source: MagicPointerTaskSource): string {
+  const role = referencesForSource(source.sourceId)
+    .map((reference) => `${reference.label} · ${reference.role}`)
+    .join('，');
+  return [source.kind, source.origin, role].filter(Boolean).join(' · ');
+}
+
+function selectTaskMaterial(sourceId: string) {
+  if (!activeTaskContext?.sources.some((source) => source.sourceId === sourceId)) return;
+  if (composerSelectedSourceIds.has(sourceId)) composerSelectedSourceIds.delete(sourceId);
+  else composerSelectedSourceIds.add(sourceId);
+  inspectorState = inspectorStatePolicy.reduceInspectorState(inspectorState, {
+    type: 'select-content',
+    contentKind: 'material',
+    contentId: sourceId,
+  });
+  renderTaskMaterials();
+  renderComposerMaterials();
+}
+
+function renderTaskMaterials() {
+  const host = document.getElementById('task-material-list');
+  const detail = document.getElementById('task-material-detail');
+  if (!host || !detail) return;
+  const sources = activeTaskContext?.sources || [];
+  if (!sources.length) {
+    host.innerHTML = '<p class="mp-inspector-empty">当前任务还没有材料。用 + 加入文件，或在屏幕上指向内容。</p>';
+    detail.hidden = true;
+    detail.replaceChildren();
+    return;
+  }
+  host.replaceChildren(...sources.map((source) => {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'mp-task-material';
+    row.dataset.materialSourceId = source.sourceId;
+    row.classList.toggle('is-selected', composerSelectedSourceIds.has(source.sourceId));
+    row.setAttribute('aria-pressed', String(composerSelectedSourceIds.has(source.sourceId)));
+    row.title = source.sourceId;
+    const iconHost = document.createElement('span');
+    iconHost.className = 'mp-task-material-icon';
+    iconHost.innerHTML = icon(source.kind === 'web' ? 'ic-globe' : source.kind === 'figma' ? 'ic-pen' : 'ic-file');
+    const copy = document.createElement('span');
+    copy.className = 'mp-task-material-copy';
+    const title = document.createElement('strong');
+    title.textContent = source.title;
+    const meta = document.createElement('small');
+    meta.textContent = taskSourceLabel(source);
+    copy.append(title, meta);
+    row.append(iconHost, copy);
+    row.addEventListener('click', () => selectTaskMaterial(source.sourceId));
+    return row;
+  }));
+  const selectedId = inspectorState.contentSelection?.kind === 'material'
+    ? inspectorState.contentSelection.id : '';
+  const selected = sources.find((source) => source.sourceId === selectedId);
+  if (!selected) {
+    detail.hidden = true;
+    detail.replaceChildren();
+    return;
+  }
+  const references = referencesForSource(selected.sourceId);
+  const title = document.createElement('strong');
+  title.textContent = selected.title;
+  const sourceId = document.createElement('code');
+  sourceId.textContent = selected.sourceId;
+  const scope = document.createElement('p');
+  scope.textContent = `可用能力：${selected.capabilities.join('、') || '无'}`;
+  const provenance = document.createElement('pre');
+  provenance.textContent = JSON.stringify(selected.identity, null, 2);
+  const referenceSummary = document.createElement('p');
+  referenceSummary.textContent = references.length
+    ? `引用：${references.map((reference) => `${reference.label}（${reference.role}）`).join('，')}`
+    : '当前没有局部引用。';
+  detail.replaceChildren(title, sourceId, scope, referenceSummary, provenance);
+  if (selected.identity.absolutePath && activeConversationId) {
+    const conversationId = activeConversationId;
+    const controls = document.createElement('div');
+    controls.className = 'mp-material-watch';
+    const task = document.createElement('input');
+    task.className = 'dshw-rename-input';
+    task.value = '核对材料变化，生成更新草稿。';
+    task.maxLength = 4000;
+    task.setAttribute('aria-label', '材料关注任务');
+    const cadence = document.createElement('select');
+    cadence.setAttribute('aria-label', '关注时机');
+    cadence.innerHTML = '<option value="filesystem">材料变化时</option><option value="daily">每天此时</option>';
+    const follow = document.createElement('button');
+    follow.type = 'button';
+    follow.textContent = '关注此材料';
+    const stop = document.createElement('button');
+    stop.type = 'button';
+    stop.textContent = '停止关注';
+    stop.hidden = true;
+    const status = document.createElement('p');
+    status.textContent = '应用运行时核对所选材料，结果出现在普通任务中。';
+    const update = async (action: string) => {
+      follow.disabled = stop.disabled = true;
+      try {
+        const result = await Data.trackMaterial({
+          conversationId, sourceId: selected.sourceId, action,
+          task: task.value, cadence: cadence.value,
+        });
+        if (!controls.isConnected) return;
+        if (!result.ok) { status.textContent = String(result.error || '关注设置未保存。'); return; }
+        const tracker = result.tracker;
+        stop.hidden = tracker?.enabled !== true;
+        follow.textContent = tracker?.enabled ? '更新关注' : '关注此材料';
+        if (tracker) {
+          task.value = tracker.task;
+          cadence.value = tracker.trigger.kind === 'schedule' ? 'daily' : 'filesystem';
+          status.textContent = tracker.enabled ? '正在关注此材料；结果出现在普通任务中。' : '已停止关注。';
+          if (tracker.lastRun) status.textContent += tracker.lastRun.ok
+            ? ' 上次已生成草稿。' : ` 上次未完成：${tracker.lastRun.error || '请查看任务结果'}`;
+        }
+      } catch (error) {
+        status.textContent = `关注设置未保存：${String(error)}`;
+      } finally { follow.disabled = stop.disabled = false; }
+    };
+    follow.addEventListener('click', () => void update('follow'));
+    stop.addEventListener('click', () => void update('stop'));
+    controls.append(task, cadence, follow, stop, status);
+    detail.append(controls);
+    void update('get');
+  }
+  detail.hidden = false;
+}
+
+function renderComposerMaterials() {
+  const host = document.getElementById('composer-materials');
+  if (!host) return;
+  const sourceById = new Map((activeTaskContext?.sources || []).map((source) => [source.sourceId, source]));
+  const selected = [...composerSelectedSourceIds]
+    .map((sourceId) => sourceById.get(sourceId))
+    .filter((source): source is MagicPointerTaskSource => Boolean(source));
+  host.hidden = selected.length === 0;
+  host.replaceChildren(...selected.map((source) => {
+    const chip = document.createElement('span');
+    chip.className = 'mp-composer-attachment mp-composer-material';
+    chip.title = source.sourceId;
+    const name = document.createElement('span');
+    name.textContent = source.title;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.setAttribute('aria-label', `不在下一步使用 ${source.title}`);
+    remove.innerHTML = '<svg aria-hidden="true"><use href="#ic-x" /></svg>';
+    remove.addEventListener('click', () => selectTaskMaterial(source.sourceId));
+    chip.append(name, remove);
+    return chip;
+  }));
+}
+
+function buildStudioTaskInput(
+  instruction: string,
+  inputId: string,
+  taskId: string,
+  attachments: string[] = [],
+): MagicPointerTaskInput {
+  const capturedAtMs = Date.now();
+  return TaskSources.bindConversationTaskInput({
+    inputId,
+    taskId: taskId || 'studio-pending',
+    target: 'next-step',
+    instruction,
+    referenceUpdates: [],
+    sourceIds: [...composerSelectedSourceIds],
+    timeline: [],
+    capturedAtMs,
+  }, {
+    taskId: taskId || 'studio-pending',
+    instruction,
+    attachments,
+    capturedAtMs,
+  }) as MagicPointerTaskInput;
+}
+
+function attachmentSourcesForTask(paths: string[], taskId: string): Record<string, unknown>[] {
+  return paths.map((filePath) => TaskSources.attachmentSourceRef(filePath, taskId));
+}
 
 function renderComposerAttachments() {
   const host = document.getElementById('composer-attachments');
@@ -3476,6 +4315,7 @@ interface PendingConversation {
   reasoningNode: HTMLElement | null;
 }
 let pendingConversation: PendingConversation | null = null;
+let studioTaskInputSequence = 0;
 
 function progressKey(record: Record<string, unknown>): string {
   const phase = String(record.phase || '');
@@ -3744,17 +4584,45 @@ async function steerActiveConversation(question: string, textarea: HTMLTextAreaE
   const pending = pendingConversation;
   const sessionId = pending?.agentSessionId || '';
   if (!sessionId) return; // runtime 还没就绪：保持输入，不打断用户。
-  const response = await Data.steerConversation(sessionId, question);
-  if (!response?.ok) return; // 桥拒绝时保留输入，让用户重试或改发送。
-  textarea.value = '';
-  fitComposer(textarea);
-  const flow = document.querySelector<HTMLElement>('#stream .dsh-flow');
-  if (flow) {
-    const node = DshChat.userNode(question);
-    node.setAttribute('data-queued', 'true');
-    flow.appendChild(node);
-    flow.closest('.dshw-scrollbody')?.scrollTo({ top: 1_000_000 });
-  }
+  const attachmentPaths = [...composerAttachments];
+  const inputId = `input:studio:${Date.now()}:${studioTaskInputSequence += 1}`;
+  const taskInput = buildStudioTaskInput(question, inputId, sessionId, attachmentPaths);
+  if (!taskInput || !TaskInputTransport?.createTaskInputTransport) return;
+  const status = document.createElement('div');
+  status.className = 'dsh-turn-status';
+  status.textContent = '正在排队…';
+  pending?.body.appendChild(status);
+  const transport = TaskInputTransport.createTaskInputTransport({
+    send: (value: MagicPointerTaskInput) => Data.steerConversation(
+      sessionId,
+      value,
+      attachmentSourcesForTask(attachmentPaths, sessionId),
+    ),
+    onState: (state: { status?: string; error?: string }) => {
+      if (state.status === 'queueing') status.textContent = '正在排队…';
+      else if (state.status === 'accepted') status.textContent = '已接收，将在下一个安全边界生效。';
+      else status.textContent = `插话未送达：${String(state.error || '未知原因')}`;
+    },
+  });
+  await transport.submit(taskInput, {
+    onAccepted: () => {
+      if (textarea.value.trim() === question) {
+        textarea.value = '';
+        fitComposer(textarea);
+      }
+      composerAttachments = [];
+      composerSelectedSourceIds.clear();
+      renderComposerAttachments();
+      renderComposerMaterials();
+      const flow = document.querySelector<HTMLElement>('#stream .dsh-flow');
+      if (flow) {
+        const node = DshChat.userNode(question);
+        node.setAttribute('data-queued', 'true');
+        flow.appendChild(node);
+        flow.closest('.dshw-scrollbody')?.scrollTo({ top: 1_000_000 });
+      }
+    },
+  });
 }
 
 /* 忙态下点发送钮 = 停止本回合：优雅取消优先（Receipt + 部分结果）。
@@ -3844,17 +4712,25 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
     setComposerRunningState(true);
     startPendingClock(pendingBody);
     const requestId = globalThis.crypto?.randomUUID?.() || `conversation-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    pendingConversation = { requestId, body: pendingBody, records: new Map(), nodes: new Map(), agentSessionId: null, streamText: '', streamNode: null, reasoningText: '', reasoningNode: null };
+    const taskInput = buildStudioTaskInput(
+      question,
+      `input:studio:${requestId}`,
+      activeTaskContext?.taskId || 'studio-pending',
+      attachmentPaths,
+    );
+    pendingConversation = { requestId, body: pendingBody, records: new Map(), nodes: new Map(), agentSessionId: activeTaskContext?.taskId || null, streamText: '', streamNode: null, reasoningText: '', reasoningNode: null };
     renderConversationProgress({ phase: 'runtime_boot', fields: {} });
     try {
       const response = await Data.sendConversation(
         activeConversationId,
-        requestQuestion,
+        question,
         composerPreset,
         requestId,
         activeProjectRoot,
         composerEffort,
         pendingPermissionChoice || undefined,
+        attachmentPaths,
+        taskInput,
       );
       pendingPermissionChoice = null;
       pendingPermissionAsk = null;
@@ -3862,7 +4738,9 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
       renderPermissionAsk();
       if (!response?.ok || !response.conversationId) throw new Error(response?.error || '这次没有答完。');
       composerAttachments = [];
+      composerSelectedSourceIds.clear();
       renderComposerAttachments();
+      renderComposerMaterials();
       activeConversationId = String(response.conversationId);
       /* 命令结算的副作用：/permission 落芯片，/model 刷新目录标签 */
       const command = (response as { command?: { type?: string; preset?: string } }).command;
@@ -3942,7 +4820,16 @@ async function boot(initialView: string) {
 /* 新对话：清空当前这一屏，把焦点交回输入框。
    不新建记录——记录在第一次真的问出去之后才产生。 */
 function startNewChat() {
+  if (artifactEditor.state().artifactId) {
+    artifactEditor.clear();
+    renderArtifactEditor();
+    if (activeInspectorTab === 'artifact') setInspector(false);
+  }
   activeConversationId = null;
+  setActiveTaskContext(null, true);
+  composerAttachments = [];
+  renderComposerAttachments();
+  void refreshFigmaConnection();
   activeConversationTurnCount = 0;
   activeConversationTab = 'chat';
   renderProjectContext();

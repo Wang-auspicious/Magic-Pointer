@@ -5,6 +5,14 @@ const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const script = fs.readFileSync(path.join(root, 'scripts', 'sync_install.ps1'), 'utf8');
 
+assert.strictEqual(
+  (script.match(/npm run verify/g) || []).length,
+  1,
+  'sync must enter the full verification pipeline exactly once',
+);
+assert.doesNotMatch(script, /npm run typecheck|run-node-tests\.ts|python -m pytest/,
+  'sync must not duplicate checks already owned by npm run verify');
+
 assert.match(
   script,
   /release\\sync-\$\(\$packageVersion\)-\$syncStamp-\$PID/,

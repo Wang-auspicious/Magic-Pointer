@@ -1,6 +1,5 @@
 const assert = require('assert');
-const fs = require('fs');
-const { InteractionEpisodeStore, inferReferenceLabel, inferReferenceMode, normalizeObject } = require('../electron/interaction_episode');
+const { InteractionEpisodeStore, inferReferenceLabel, normalizeObject } = require('../electron/interaction_episode');
 
 {
   const object = normalizeObject({
@@ -145,49 +144,66 @@ const next = store.ensureActive(30 * 60 * 1000 + 502);
 assert.strictEqual(next.id, 'episode-2');
 assert.strictEqual(next.slots.this, null);
 
-assert.strictEqual(inferReferenceMode('compare this with that'), 'this');
-assert.strictEqual(inferReferenceMode('merge these'), 'these');
-assert.strictEqual(inferReferenceMode('比较这些'), 'these');
-assert.strictEqual(inferReferenceMode('put these here'), 'here');
-assert.strictEqual(inferReferenceMode('and this'), 'append');
-assert.strictEqual(inferReferenceMode('also this'), 'append');
 assert.strictEqual(inferReferenceLabel('这是 A'), 'A');
 assert.strictEqual(inferReferenceLabel('mark this as C'), 'C');
-
-const main = fs.readFileSync('electron/main.ts', 'utf8');
-assert(main.includes('const referenceLabel = inferReferenceLabel(command)'));
-assert(main.includes('interactionEpisodes.labelCurrent(referenceLabel)'));
-assert(main.includes('referenceLabel: item.referenceLabel || null'));
-assert(main.includes('labels: episode.labels'));
-assert(main.includes('spatialRelations: episode.spatialRelations'));
-assert(main.includes('captureAttestation: snapshot.capture_attestation || null'));
-assert(main.includes('perceptionTrace: snapshot.perception_trace || null'));
-assert.strictEqual(inferReferenceMode('把这些写到这里'), 'here');
 
 {
   const continuous = new InteractionEpisodeStore({
     ttlMs: 60_000,
     idFactory: () => 'episode-continuous',
   });
-  const first = continuous.bindCommandTarget({ snapshotId: 'source-a', label: '1 lb Spaghetti' }, 'Add this', 1_000);
+  const first = continuous.bindCommandTarget(
+    { snapshotId: 'source-a', label: '1 lb Spaghetti', bbox: [10, 20, 50, 60] },
+    'compare these and put them here',
+    { taskId: 'agent-session-continuous', slot: 'this', role: 'source' },
+    1_000,
+  );
   assert.strictEqual(first.id, 'episode-continuous');
-  assert.strictEqual(first.pendingIntent, 'add');
-  assert.deepStrictEqual(first.slots.these.map((item) => item.objectId), ['selection:source-a']);
+  assert.strictEqual(first.pendingIntent, null, 'instruction text cannot assign an intent');
+  assert.strictEqual(first.slots.this.objectId, 'selection:source-a', 'the explicit UI slot wins over command wording');
 
-  const second = continuous.bindCommandTarget({ snapshotId: 'source-b', label: '2 oz Parmesan' }, 'and this', 2_000);
+  const second = continuous.bindCommandTarget(
+    { snapshotId: 'source-b', label: '2 oz Parmesan' },
+    '',
+    { taskId: 'agent-session-continuous', slot: 'these', role: 'reference', intent: 'add' },
+    2_000,
+  );
   assert.strictEqual(second.id, first.id, 'a follow-up stroke stays in the same episode');
   assert.strictEqual(second.pendingIntent, 'add');
   assert.deepStrictEqual(second.slots.these.map((item) => item.objectId), [
     'selection:source-a', 'selection:source-b',
   ]);
 
-  const destination = continuous.bindCommandTarget({ snapshotId: 'destination', label: 'Shopping list' }, 'here', 3_000);
+  const destination = continuous.bindCommandTarget(
+    { snapshotId: 'destination', label: 'Shopping list' },
+    '',
+    { taskId: 'agent-session-continuous', slot: 'here', role: 'target' },
+    3_000,
+  );
   assert.strictEqual(destination.id, first.id);
   assert.strictEqual(destination.slots.here.objectId, 'selection:destination');
   assert.deepStrictEqual(destination.slots.these.map((item) => item.objectId), [
     'selection:source-a', 'selection:source-b',
   ], 'binding HERE must not discard the ordered source set');
   assert.strictEqual(destination.pendingIntent, 'add');
+
+  const taskPayload = continuous.contextPayload(3_100);
+  assert.strictEqual(taskPayload.taskId, 'agent-session-continuous');
+  assert.deepStrictEqual(taskPayload.sources.map((item) => item.sourceId), [
+    'source:source-a', 'source:source-b', 'source:destination',
+  ]);
+  assert.deepStrictEqual(taskPayload.references.map((item) => item.label), ['A', 'B', 'C']);
+  assert.deepStrictEqual(taskPayload.references.map((item) => item.role), ['source', 'reference', 'target']);
+  assert.strictEqual(taskPayload.referenceRevision, 3);
+  assert.strictEqual(taskPayload.taskInput.instruction, '', 'a reference-only update is a valid task input');
+  assert.strictEqual(taskPayload.taskInput.referenceUpdates[0].binding.referenceId, 'reference:destination');
+  assert.strictEqual(taskPayload.taskInput.timeline[0].kind, 'point');
+
+  const removed = continuous.removeTaskReference('reference:source-a', 4_000);
+  assert.strictEqual(removed.referenceRevision, 4);
+  assert.strictEqual(removed.references.find((item) => item.referenceId === 'reference:source-a').active, false);
+  assert.strictEqual(removed.references.find((item) => item.referenceId === 'reference:source-b').label, 'B', 'removal never renumbers later references');
+  assert.strictEqual(removed.taskInput.instruction, '', 'no-text removal must still cross the task boundary');
 }
 
 console.log('interaction episode test ok');

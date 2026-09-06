@@ -1033,13 +1033,23 @@ def test_record_auto_memory_sensitive_and_dedupe(tmp_path, monkeypatch) -> None:
     ctx = AdapterReadContext(adapter='uia', app='Weixin.exe', method='selection', content='x', window={'title': '微信'})
     _record_auto_memory('这段代码在干嘛', ctx, {'title': '微信'}, '这是超时逻辑。', enabled=False)
     assert not (tmp_path / 'screen-memory.json').exists(), '未明确开启时不得自动记忆'
-    _record_auto_memory('这段代码在干嘛', ctx, {'title': '微信'}, '这是超时逻辑。', enabled=True)
-    _record_auto_memory('这段代码在干嘛', ctx, {'title': '微信'}, '这是超时逻辑。', enabled=True)  # 去重
+    locator = {'kind': 'message', 'value': {'messageId': 'm-42'}}
+    _record_auto_memory(
+        '这段代码在干嘛', ctx, {'title': '微信'}, '这是超时逻辑。',
+        enabled=True, source_id='source:wechat:m-42', locator=locator,
+    )
+    _record_auto_memory(
+        '这段代码在干嘛', ctx, {'title': '微信'}, '这是超时逻辑。',
+        enabled=True, source_id='source:wechat:m-42', locator=locator,
+    )  # 去重
     _record_auto_memory('帮我查一下密码是什么', ctx, {'title': '微信'}, '密码是 abc', enabled=True)  # 敏感挡
     data = json.loads((tmp_path / 'screen-memory.json').read_text(encoding='utf-8'))
     entries = data['entries']
     assert len(entries) == 1, f'期望 1 条（去重+敏感挡），实际 {len(entries)}'
     assert entries[0]['excerpt'] == '这段代码在干嘛'
+    assert entries[0]['sourceId'] == 'source:wechat:m-42'
+    assert entries[0]['locator'] == locator
+    assert entries[0]['provenanceMissing'] is False
 
 # --- Batch-4 loop answer path (MAGIC_POINTER_LOOP_ANSWER gate) -----------------
 
@@ -1067,7 +1077,6 @@ def test_loop_router_maps_terminal_to_answer(monkeypatch):
         recorded["objects"] = objects
         recorded["allowed"] = kwargs.get("allowed_effects")
         recorded["evidence"] = kwargs.get("evidence_input")
-        recorded["local_action_input"] = kwargs.get("local_action_input")
         recorded["keepalive"] = kwargs.get("keepalive")
         recorded["todo_store"] = kwargs.get("todo_store")
         recorded["tool_limit"] = kwargs.get("tool_limit")
@@ -1086,7 +1095,6 @@ def test_loop_router_maps_terminal_to_answer(monkeypatch):
     # inside the instruction channel (invariant ⑤).
     assert recorded["evidence"] and "[本次圈选对象证据]" in recorded["evidence"]
     assert "帮我看看" not in (recorded["evidence"] or "")
-    assert recorded["local_action_input"] == "帮我看看"
     assert recorded["objects"] == [{"id": "o1"}]
     assert recorded["allowed"] == tuple(Effect)
     # Stage path rides the same idle-deadline heartbeat + partial delivery
@@ -1099,6 +1107,211 @@ def test_loop_router_maps_terminal_to_answer(monkeypatch):
     assert result["route"]["action"] == "model_loop"
     assert result["usedBackend"]
     assert result["selectionSessionId"] == "sess-1"
+
+
+def test_loop_router_persists_frozen_source_and_locator_before_model(
+    monkeypatch, tmp_path
+) -> None:
+    """The first pointed object is durable task context, not prompt-only prose."""
+    from app.context_pack.source_store import task_references, task_sources
+    from app.fabric import engine as engine_module
+
+    monkeypatch.setenv("MAGIC_POINTER_USER_DATA_DIR", str(tmp_path))
+    seen = {}
+
+    def fake_run(user_input, objects=None, registry=None, *, client, session, **kwargs):
+        seen["sources"] = task_sources(session.events)
+        seen["references"] = task_references(session.events)
+        seen["artifact"] = kwargs["evidence_input"]
+        seen["context_tools"] = [
+            spec.name for spec in registry.list() if spec.name.startswith("Context.")
+        ]
+        seen["context_read"] = registry.execute_tool("Context.read", {
+            "source_id": "source:snapshot-w01",
+            "locator": {
+                "kind": "visual-region",
+                "value": {
+                    "snapshotId": "snapshot-w01",
+                    "bbox": [120, 240, 320, 80],
+                    "coordinateSpace": "physical-screen-pixels",
+                },
+            },
+            "limit": 4,
+        })
+        return _fake_terminal(message="已读取")
+
+    monkeypatch.setattr(engine_module, "run_agent_turn", fake_run)
+    snapshot = {
+        "snapshot_id": "snapshot-w01",
+        "captured_at": "2026-09-05T01:02:03+00:00",
+        "source_kind": "screen_region",
+        "selection_bbox": [120, 240, 320, 80],
+        "frame_lease": {
+            "frameLeaseId": "lease-w01",
+            "surfaceBoundsPx": [0, 0, 1920, 1080],
+        },
+        "source_window": {"hwnd": 42, "title": "同名窗口"},
+    }
+
+    result = selection_bridge._loop_router(
+        "看这里", [], {"hwnd": 42, "title": "同名窗口"}, None, snapshot,
+        None, "selection-w01", "snapshot-w01",
+        clock=selection_bridge.PhaseClock("test", enabled=False),
+    )
+
+    assert result["ok"] is True
+    assert [item.source_id for item in seen["sources"]] == ["source:snapshot-w01"]
+    binding = seen["references"][0]
+    assert binding.reference_id == "reference:snapshot-w01"
+    assert binding.source_id == "source:snapshot-w01"
+    assert binding.locator.kind == "visual-region"
+    assert binding.locator.value["bbox"] == [120, 240, 320, 80]
+    assert binding.frame_lease_id == "lease-w01"
+    assert '"sourceIds":["source:snapshot-w01"]' in seen["artifact"]
+    assert seen["context_tools"] == [
+        "Context.list", "Context.read", "Context.search", "Context.follow", "Context.bind",
+    ]
+    assert seen["context_read"].is_error is False
+    assert seen["context_read"].value["sourceId"] == "source:snapshot-w01"
+
+    # Opening the same Runtime task again must replay, not duplicate, its
+    # authoritative source/reference binding.
+    from app.agent_runtime.session import FileSessionStore
+
+    resumed = FileSessionStore(tmp_path / "agent-sessions").resume("agent-selection-w01")
+    assert len(task_sources(resumed.events)) == 1
+    assert len(task_references(resumed.events)) == 1
+
+
+def test_initial_task_context_keeps_each_committed_stroke_as_a_stable_reference() -> None:
+    snapshot = {
+        "snapshot_id": "snapshot-multi",
+        "captured_at": "2026-09-05T01:02:03+00:00",
+        "source_kind": "screen_region",
+        "selection_gesture": {
+            "strokes": [
+                {"points": [{"x": 10, "y": 20}, {"x": 30, "y": 45}]},
+                {"points": [{"x": 110, "y": 120}, {"x": 145, "y": 165}]},
+            ],
+        },
+    }
+
+    sources, updates, _coverage, task_input = selection_bridge._initial_task_context(
+        "agent-multi", "比较这两处", "selection-multi", None, None, snapshot,
+    )
+
+    assert len(sources) == 1
+    assert [item.binding.reference_id for item in updates] == [
+        "reference:snapshot-multi:0",
+        "reference:snapshot-multi:1",
+    ]
+    assert [item.binding.label for item in updates] == ["A", "B"]
+    assert [item.binding.locator.value["strokeIndex"] for item in updates] == [0, 1]
+    assert [item.binding.locator.value["bbox"] for item in updates] == [
+        [10, 20, 20, 25],
+        [110, 120, 35, 45],
+    ]
+    assert task_input is not None
+    assert task_input.reference_updates == updates
+
+
+def test_initial_browser_source_keeps_instance_target_and_document_epoch() -> None:
+    from types import SimpleNamespace
+
+    browser_context = {
+        "selector": "#target",
+        "page": {
+            "url": "https://example.test/same",
+            "documentEpoch": "epoch-target-b",
+        },
+        "provenance": {
+            "endpoint": "http://127.0.0.1:9222",
+            "browserInstanceId": "http://127.0.0.1:9222",
+            "targetId": "target-b",
+            "documentEpoch": "epoch-target-b",
+        },
+    }
+    app_ctx = SimpleNamespace(
+        app="browser",
+        label="Browser target",
+        content="selected target",
+        method="cdp:dom-point",
+        artifacts={"browser_context": browser_context},
+    )
+    snapshot = {
+        "snapshot_id": "snapshot-browser-b",
+        "captured_at": "2026-09-05T01:02:03+00:00",
+        "selection_bbox": [10, 20, 30, 40],
+    }
+
+    sources, updates, _coverage, _task_input = selection_bridge._initial_task_context(
+        "agent-browser", "read more", "selection-browser", {"hwnd": 42}, app_ctx, snapshot,
+    )
+
+    assert sources[0].kind == "web"
+    assert sources[0].identity["browserInstanceId"] == "http://127.0.0.1:9222"
+    assert sources[0].identity["targetId"] == "target-b"
+    assert sources[0].identity["documentEpoch"] == "epoch-target-b"
+    assert sources[0].revision["documentEpoch"] == "epoch-target-b"
+    assert updates[0].binding.locator.value["targetId"] == "target-b"
+    assert updates[0].binding.locator.value["documentEpoch"] == "epoch-target-b"
+
+
+def test_initial_chat_source_binds_window_surface_identity_not_visible_title() -> None:
+    from types import SimpleNamespace
+
+    app_ctx = SimpleNamespace(
+        app="wechat",
+        label="同名群",
+        content="最终口径按 16.8 万元",
+        method="surface_adapter",
+        artifacts={
+            "surface_adapter_id": "wechat",
+            "surface_objects": [{
+                "id": "wechat-conversation-surface",
+                "kind": "conversation",
+                "label": "当前微信会话",
+                "text": "同名群",
+                "rect_xywh": None,
+                "order_index": 0,
+                "confidence": 0.7,
+                "evidence": "window:surface_binding",
+                "fields": {
+                    "conversationIdentity": {
+                        "adapterId": "wechat",
+                        "conversationKey": "wechat:window:4242:surface:root",
+                        "keyProvenance": "window-surface",
+                        "nativeConversationId": None,
+                        "accountKey": None,
+                        "windowHwnd": 4242,
+                        "title": "同名群",
+                        "type": None,
+                    }
+                },
+            }],
+        },
+    )
+    snapshot = {
+        "snapshot_id": "snapshot-chat",
+        "captured_at": "2026-09-05T01:02:03+00:00",
+        "selection_bbox": [10, 20, 30, 40],
+    }
+
+    sources, updates, _coverage, _task_input = selection_bridge._initial_task_context(
+        "agent-chat", "按前面讨论回复", "selection-chat",
+        {"hwnd": 4242, "process_name": "Weixin.exe", "title": "同名群"},
+        app_ctx,
+        snapshot,
+    )
+
+    assert sources[0].kind == "chat"
+    identity = sources[0].identity["conversationIdentity"]
+    assert identity["conversationKey"] == "wechat:window:4242:surface:root"
+    assert identity["title"] == "同名群"
+    assert sources[0].capabilities == ("read", "search", "follow")
+    assert updates[0].binding.locator.kind == "message"
+    assert updates[0].binding.locator.value["conversationKey"] == identity["conversationKey"]
+    assert "nativeMessageId" not in updates[0].binding.locator.value
 
 
 def test_loop_router_surfaces_tool_truncation_to_stage_progress(monkeypatch):
@@ -1419,19 +1632,14 @@ def test_loop_router_collects_capability_proposals(monkeypatch):
     assert result["answer"] == "已生成方案，请确认。"
 
 
-def test_loop_router_binds_profile_default_workspace_not_process_cwd(monkeypatch, tmp_path):
-    """Stage 的 coding 工作区必须来自持久化默认（/cwd 写的那份）。
-
-    安装版里 Path.cwd() 是安装目录：硬编码让手势任务 `ls` 列出的是
-    Magic Pointer 自己的文件，而不是用户绑定的工作区（用户实测）。
-    """
+def test_loop_router_keeps_ordinary_selection_out_of_profile_coding_workspace(monkeypatch, tmp_path):
+    """A gesture is material selection, not an implicit advanced-code grant."""
     from app.agent_runtime.tool_registry import Effect
     from app.fabric import engine as engine_module
     from types import SimpleNamespace
 
     default_ws = tmp_path / "profile-ws"
     default_ws.mkdir()
-    monkeypatch.setattr(selection_bridge, "read_workspace", lambda root: default_ws)
 
     captured = {}
 
@@ -1448,11 +1656,16 @@ def test_loop_router_binds_profile_default_workspace_not_process_cwd(monkeypatch
                 return ToolRegistry()
             if key == "todo_store":
                 class _T:
-                    on_update = None
+                    def __init__(self):
+                        self.on_update = None
+                        self._items = []
+                    def write(self, items):
+                        self._items = [dict(item) for item in items]
+                        return self.read()
                     def read(self):
-                        return []
+                        return [dict(item) for item in self._items]
                     def has_items(self):
-                        return False
+                        return bool(self._items)
                 return _T()
             if key == "sessions":
                 class _S:
@@ -1497,9 +1710,8 @@ def test_loop_router_binds_profile_default_workspace_not_process_cwd(monkeypatch
         clock=clock,
     )
     assert result["ok"] is True
-    assert captured["runtime"]["workspace_root"] == str(default_ws), (
-        "Stage 必须绑定持久化默认工作区，而不是进程 cwd（安装目录）"
-    )
+    assert captured["runtime"]["workspace_root"] == ""
+    assert captured["runtime"]["advanced_tools"] is False
 
 
 def test_loop_router_nudges_unfinished_plan_before_completion(monkeypatch):
@@ -1517,10 +1729,18 @@ def test_loop_router_nudges_unfinished_plan_before_completion(monkeypatch):
 
     class _FakeTodoStore:
         def __init__(self):
-            self._steps = [{"content": "修完三个种子 bug", "status": "in_progress"}]
+            self.on_update = None
+            self._steps = []
+
+        def write(self, items):
+            self._steps = [dict(item) for item in items]
+            return self.read()
 
         def read(self):
-            return list(self._steps)
+            return [dict(item) for item in self._steps]
+
+        def has_items(self):
+            return bool(self._steps)
 
     class _FakeCtx:
         def __init__(self, store):
@@ -1541,7 +1761,16 @@ def test_loop_router_nudges_unfinished_plan_before_completion(monkeypatch):
             return SimpleNamespace()  # model_client/compactor/estimator/hooks/...
 
     class _StubAgentSession:
-        events = ()
+        events = (SimpleNamespace(
+            type="plan/updated",
+            data={
+                "taskId": "agent-selection-sess-1",
+                "plan": [{
+                    "content": "修完三个种子 bug",
+                    "status": "in_progress",
+                }],
+            },
+        ),)
 
         def interrupted_turn_summary(self):
             return None
@@ -1597,7 +1826,9 @@ def test_main_passes_reply_style_into_the_loop_router(monkeypatch):
 
     def fake_loop_router(command, routing_objects, target_window, app_ctx,
                          snapshot, routing_enabled, selection_session_id,
-                         selection_snapshot_id, clock=None, reply_style="normal"):
+                         selection_snapshot_id, clock=None, reply_style="normal",
+                         figma_runtime_connections=()):
+        assert figma_runtime_connections == ()
         captured["reply_style"] = reply_style
         return {
             "ok": True,
@@ -1680,7 +1911,9 @@ def test_aged_snapshot_followup_keeps_the_frozen_evidence(tmp_path, monkeypatch)
 
     def fake_loop_router(command, routing_objects, target_window, app_ctx,
                          snapshot, routing_enabled, selection_session_id,
-                         selection_snapshot_id, clock=None, reply_style="normal"):
+                         selection_snapshot_id, clock=None, reply_style="normal",
+                         figma_runtime_connections=()):
+        assert figma_runtime_connections == ()
         captured["command"] = command
         captured["app_ctx"] = app_ctx
         captured["snapshot"] = snapshot
@@ -1728,7 +1961,9 @@ def test_aged_snapshot_first_question_still_answers(tmp_path, monkeypatch):
 
     def fake_loop_router(command, routing_objects, target_window, app_ctx,
                          snapshot, routing_enabled, selection_session_id,
-                         selection_snapshot_id, clock=None, reply_style="normal"):
+                         selection_snapshot_id, clock=None, reply_style="normal",
+                         figma_runtime_connections=()):
+        assert figma_runtime_connections == ()
         captured["snapshot"] = snapshot
         return {"ok": True, "answer": "回答", "usedBackend": "test",
                 "route": {"action": "model_loop"}, "actionProposals": [],
@@ -1740,9 +1975,8 @@ def test_aged_snapshot_first_question_still_answers(tmp_path, monkeypatch):
     assert captured["snapshot"] is not None
 
 
-def test_loop_router_passes_tool_result_dir_under_workspace(monkeypatch, tmp_path):
-    """P1-3 收尾：Stage 长任务的超大工具结果也要落盘回读——_loop_router
-    必须把 <workspace>/.mp/tool-results 传给 run_agent_turn。"""
+def test_loop_router_does_not_create_relative_tool_result_dir_without_workspace(monkeypatch, tmp_path):
+    """Ordinary Stage tasks must not spill large results into process cwd/.mp."""
     from types import SimpleNamespace
 
     from app.agent_runtime.tool_registry import ToolRegistry
@@ -1751,7 +1985,6 @@ def test_loop_router_passes_tool_result_dir_under_workspace(monkeypatch, tmp_pat
 
     default_ws = tmp_path / "profile-ws"
     default_ws.mkdir()
-    monkeypatch.setattr(selection_bridge, "read_workspace", lambda root: default_ws)
 
     class _Ctx:
         def unload(self):
@@ -1762,11 +1995,16 @@ def test_loop_router_passes_tool_result_dir_under_workspace(monkeypatch, tmp_pat
                 return ToolRegistry()
             if key == "todo_store":
                 class _T:
-                    on_update = None
+                    def __init__(self):
+                        self.on_update = None
+                        self._items = []
+                    def write(self, items):
+                        self._items = [dict(item) for item in items]
+                        return self.read()
                     def read(self):
-                        return []
+                        return [dict(item) for item in self._items]
                     def has_items(self):
-                        return False
+                        return bool(self._items)
                 return _T()
             if key == "sessions":
                 return SimpleNamespace(open_or_create=lambda sid, *a, **k: SimpleNamespace(
@@ -1802,10 +2040,7 @@ def test_loop_router_passes_tool_result_dir_under_workspace(monkeypatch, tmp_pat
         clock=clock,
     )
     assert result["ok"] is True
-    expected = str(default_ws / ".mp" / "tool-results")
-    assert recorded["tool_result_dir"] == expected, (
-        "Stage 的 tool_result_dir 必须落在绑定工作区的 .mp/tool-results"
-    )
+    assert recorded["tool_result_dir"] is None
 
 
 def test_tool_activity_line_is_verb_plus_object() -> None:

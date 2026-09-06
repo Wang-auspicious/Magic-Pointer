@@ -54,7 +54,7 @@ function runtimeWith(clipboard, settings) {
 // ---------------------------------------------------------------------------
 (async () => {
   const clip = makeClipboard();
-  const rt = runtimeWith(clip, { stash: {} });
+  const rt = runtimeWith(clip, { stash: { clipboard: true } });
   clip.putImage(fakeImage(7));
 
   const entry = await rt.ingest(clip.readImage(), 'shot');
@@ -68,6 +68,13 @@ function runtimeWith(clipboard, settings) {
   const written = clip.state.writes[0];
   assert.ok(written.text.includes(entry.relPath.split('/').pop()), '回写的是本地路径');
   assert.ok(written.image, '位图必须一起留着，否则图片编辑器里粘不出图');
+
+  const explicitClip = makeClipboard();
+  const explicitRuntime = runtimeWith(explicitClip, { stash: {} });
+  explicitClip.putImage(fakeImage(8));
+  const explicitEntry = await explicitRuntime.ingest(explicitClip.readImage(), 'shot');
+  assert.ok(explicitEntry, 'explicit ingest works even when continuous monitoring is disabled');
+  assert.strictEqual(explicitClip.state.writes.length, 0, 'disabled monitoring does not write back to clipboard');
 
   // ---------------------------------------------------------------------------
   // 文本：默认不收
@@ -107,7 +114,7 @@ function runtimeWith(clipboard, settings) {
   // 回写的那条路径，下一轮不能被当成一段新文字收进来
   // ---------------------------------------------------------------------------
   const clip4 = makeClipboard();
-  const rt4 = runtimeWith(clip4, { stash: { text: true } });
+  const rt4 = runtimeWith(clip4, { stash: { clipboard: true, text: true } });
   clip4.putImage(fakeImage(11));
   const shot = await rt4.ingest(clip4.readImage(), 'shot');
   const backPath = path.join(dir, shot.relPath);
@@ -120,7 +127,7 @@ function runtimeWith(clipboard, settings) {
   // tick：位图优先。回写之后剪贴板里图和文本同时在，先看图才不会收错
   // ---------------------------------------------------------------------------
   const clip5 = makeClipboard();
-  const rt5 = runtimeWith(clip5, { stash: { text: true } });
+  const rt5 = runtimeWith(clip5, { stash: { clipboard: true, text: true } });
   clip5.state.formats = ['image/png', 'text/plain'];
   clip5.state.image = fakeImage(23);
   clip5.state.text = '某个之前留在剪贴板里的路径 C:\\x\\y.png';
@@ -143,6 +150,71 @@ function runtimeWith(clipboard, settings) {
   rt6.stop();
   const afterDisabledImage = rt6.list().flatMap((b) => b.items).length;
   assert.strictEqual(afterDisabledImage, beforeDisabledImage, '关闭图片收藏后轮询不能再落盘图片');
+
+  const clip7 = makeClipboard();
+  const rt7 = runtimeWith(clip7, { stash: {} });
+  const beforeOptIn = rt7.list().flatMap((b) => b.items).length;
+  rt7.start();
+  clip7.putImage(fakeImage(37));
+  await new Promise((r) => setTimeout(r, 900));
+  rt7.stop();
+  assert.strictEqual(
+    rt7.list().flatMap((b) => b.items).length,
+    beforeOptIn,
+    'missing clipboard settings must not silently enable continuous collection',
+  );
+
+  // ---------------------------------------------------------------------------
+  // 显式收藏：监控关闭时仍可加笔记/文件，并可搜索、改分类、打开来源、删除。
+  // 显式操作本身绝不能偷偷启动剪贴板轮询。
+  // ---------------------------------------------------------------------------
+  const explicitDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mp-stash-explicit-'));
+  const explicitClip2 = makeClipboard();
+  const explicit = createStashRuntime({
+    clipboard: explicitClip2,
+    baseDir: explicitDir,
+    settings: () => ({ stash: { clipboard: false, text: false } }),
+  });
+  const addedNote = await explicit.addText({
+    text: '报价以 PDF 里的含税总额为准',
+    sourceId: 'source:quote-message',
+    locator: { kind: 'message', value: { messageId: 'm-42' } },
+    summary: '报价口径',
+    userCategory: '报价',
+    sourceTimeMs: 1_770_000_000_000,
+  });
+  assert.ok(addedNote);
+  assert.strictEqual(explicit.running(), false, '显式收藏不能启动持续轮询');
+  assert.strictEqual(addedNote.userCategory, '报价');
+  assert.strictEqual(addedNote.sourceId, 'source:quote-message');
+
+  const originalFile = path.join(explicitDir, '..', `报价-${Date.now()}.pdf`);
+  fs.writeFileSync(originalFile, Buffer.from('%PDF-real-source'));
+  const addedFile = await explicit.addFile(originalFile, {
+    summary: '供应商报价附件',
+    userCategory: '附件',
+    sourceId: 'source:quote-pdf',
+    locator: { kind: 'pdf-region', value: { page: 2 } },
+    sourceTimeMs: 1_770_000_010_000,
+  });
+  assert.ok(addedFile);
+  assert.strictEqual(addedFile.originalArtifactPath, originalFile);
+  assert.ok(fs.existsSync(path.join(explicitDir, addedFile.relPath)), '收藏副本必须可打开');
+
+  const found = explicit.search('报价', { limit: 10 });
+  assert.deepStrictEqual(new Set(found.map((entry) => entry.id)), new Set([addedNote.id, addedFile.id]));
+  assert.strictEqual(explicit.get(addedNote.id).summary, '报价口径');
+  assert.strictEqual(explicit.updateCategory(addedNote.id, '合同').userCategory, '合同');
+  assert.strictEqual(explicit.search('', { category: '合同' })[0].id, addedNote.id);
+
+  const storedCopy = path.join(explicitDir, addedFile.relPath);
+  const removed = explicit.remove(addedFile.id);
+  assert.strictEqual(removed.ok, true);
+  assert.strictEqual(explicit.get(addedFile.id), null);
+  assert.strictEqual(fs.existsSync(storedCopy), false, '删除收藏要删除派生副本');
+  assert.strictEqual(fs.existsSync(originalFile), true, '删除收藏绝不能删除权威原文件');
+  fs.rmSync(originalFile, { force: true });
+  fs.rmSync(explicitDir, { recursive: true, force: true });
 
   fs.rmSync(dir, { recursive: true, force: true });
   console.log('stash runtime test ok');

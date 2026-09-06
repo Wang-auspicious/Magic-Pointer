@@ -10,6 +10,7 @@ from __future__ import annotations
 import enum
 import hashlib
 from dataclasses import dataclass
+from typing import Any
 
 
 class DraftState(enum.StrEnum):
@@ -42,4 +43,6 @@ class DraftArtifact:
     content_hash: str
     state: DraftState
     history: tuple[DraftPatch, ...]
+    kind: str = "text"
+    patch_payload: dict[str, Any] | None = None
     accepted_revision: int | None = None

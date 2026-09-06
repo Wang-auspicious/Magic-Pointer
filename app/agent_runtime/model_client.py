@@ -1330,6 +1330,12 @@ def _parse_sse(
     has_tool_call = any(str(slot.get("name") or "") for slot in pending.values())
     if finish_reason == "length":
         yield TurnWithheld(reason="max_output_tokens")
+    elif finish_reason is None and (text or has_tool_call or saw_reasoning):
+        # A well-formed chat stream carries a terminal finish_reason.  Some
+        # relays close the SSE body early (occasionally even after [DONE]); the
+        # partial text must enter the existing continuation path, never be
+        # persisted as a completed answer.
+        yield TurnWithheld(reason="max_output_tokens")
     elif saw_reasoning and not text and not has_tool_call:
         yield TurnWithheld(reason="backend_error:empty_response")
     yield TurnDone(usage=usage or None, raw_text=text or None)
@@ -1440,6 +1446,11 @@ def _parse_messages_sse(
         ))
     has_tool_call = any(str(slot.get("name") or "") for slot in pending.values())
     if stop_reason == "max_tokens":
+        yield TurnWithheld(reason="max_output_tokens")
+    elif stop_reason is None and (text or has_tool_call or saw_reasoning):
+        # Anthropic Messages requires a message_delta stop_reason before the
+        # final message_stop.  Treat a missing reason as an interrupted output
+        # and resume from the committed prefix.
         yield TurnWithheld(reason="max_output_tokens")
     elif saw_reasoning and not text and not has_tool_call:
         yield TurnWithheld(reason="backend_error:empty_response")

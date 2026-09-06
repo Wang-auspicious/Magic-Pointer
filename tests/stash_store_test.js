@@ -164,6 +164,29 @@ assert.strictEqual(note.entry.media, 'text');
 assert.strictEqual(note.entry.kind, '灵感');
 assert.match(note.entry.relPath, /\.txt$/);
 assert.strictEqual(note.entry.width, 0, '文本没有尺寸，别编一个出来');
+const sourcedNote = stash.buildEntry(
+  {
+    capturedAt: t0 + 10,
+    kind: 'text',
+    app: 'PowerPoint',
+    text: '第二页标题需要压缩',
+    sourceId: 'source:deck:slide-2',
+    locator: { kind: 'slide-shape', value: { slideId: 2, shapeId: 9 } },
+    originalArtifactPath: 'D:\\materials\\deck.pptx',
+    summary: '第二页标题修改参考',
+    userCategory: '项目资料',
+    sourceTimeMs: t0 - 5000,
+  },
+  null,
+);
+assert.strictEqual(sourcedNote.skipped, false);
+assert.strictEqual(sourcedNote.entry.sourceId, 'source:deck:slide-2');
+assert.deepStrictEqual(sourcedNote.entry.locator, { kind: 'slide-shape', value: { slideId: 2, shapeId: 9 } });
+assert.strictEqual(sourcedNote.entry.originalArtifactPath, 'D:\\materials\\deck.pptx');
+assert.strictEqual(sourcedNote.entry.summary, '第二页标题修改参考');
+assert.strictEqual(sourcedNote.entry.userCategory, '项目资料');
+assert.strictEqual(sourcedNote.entry.sourceTimeMs, t0 - 5000);
+assert.strictEqual(sourcedNote.entry.kind, '项目资料', '显式用户分类优先于启发式分类');
 // 同一段文字紧接着再复制一次 → 跳过
 const noteDup = stash.buildEntry(
   { capturedAt: t0 + 1200, kind: 'text', app: 'Chrome', text: '这一段讲的是怎么把渐变做出方向感' },

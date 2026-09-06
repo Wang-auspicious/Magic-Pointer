@@ -133,7 +133,25 @@ def make_draft_delivery_proposal(
     target_point_space: str | None = None,
     review_session_id: str | None = None,
     prompt_artifact: str | None = None,
+    artifact_id: str,
+    artifact_revision: int,
+    source_id: str,
+    locator: dict[str, Any],
 ) -> ActionProposal:
+    bound_artifact_id = str(artifact_id or "").strip()
+    bound_source_id = str(source_id or "").strip()
+    if not bound_artifact_id:
+        raise DraftDeliveryError("artifact id is missing")
+    if (
+        isinstance(artifact_revision, bool)
+        or not isinstance(artifact_revision, int)
+        or artifact_revision < 1
+    ):
+        raise DraftDeliveryError("artifact revision is invalid")
+    if not bound_source_id:
+        raise DraftDeliveryError("source id is missing")
+    if not isinstance(locator, dict) or not str(locator.get("kind") or "").strip():
+        raise DraftDeliveryError("source locator is missing")
     proposal = make_prompt_delivery_proposal(
         text,
         target_window=target_window,
@@ -143,14 +161,29 @@ def make_draft_delivery_proposal(
         prompt_artifact=prompt_artifact,
         delivery_kind="review_prompt_delivery",
     )
+    parameters = {
+        **proposal.parameters,
+        "artifact_id": bound_artifact_id,
+        "artifact_revision": artifact_revision,
+        "source_id": bound_source_id,
+        "locator": dict(locator),
+        "action_lease": {
+            "artifactId": bound_artifact_id,
+            "artifactRevision": artifact_revision,
+            "sourceId": bound_source_id,
+            "locator": dict(locator),
+            "targetHwnd": proposal.parameters["target_hwnd"],
+            "targetProcessId": proposal.parameters["target_process_id"],
+        },
+    }
     return ActionProposal(
         id=proposal.id.replace("prompt-delivery-", "draft-delivery-", 1),
         action_type=proposal.action_type,
         target=proposal.target,
-        parameters=proposal.parameters,
+        parameters=parameters,
         safety_level=proposal.safety_level,
         confirmation_required=proposal.confirmation_required,
         rationale=proposal.rationale.replace("grounded prompt", "review draft"),
         created_at=proposal.created_at,
-        metadata=proposal.metadata,
+        metadata={**proposal.metadata, "artifact_bound": True},
     )

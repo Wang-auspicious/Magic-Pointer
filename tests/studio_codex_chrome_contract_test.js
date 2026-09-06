@@ -25,7 +25,6 @@ for (const id of [
 assert(!html.includes('id="header-open-location"'));
 assert(!html.includes('id="magic-brain-toggle"'));
 assert(studio.includes("make('Open project folder', () =>"));
-assert(studio.includes("make('Project context', () =>"));
 assert.match(html, /id="project-browser-form"[\s\S]*?<button type="submit" aria-label="Go"[^>]*>[\s\S]*?<use href="#ic-arrow-right"/,
   'Browser address bar uses Claude\'s compact icon submit control');
 assert(!html.includes('>前往</button>'));
@@ -34,7 +33,6 @@ assert.match(css, /\.mp-browser-toolbar svg\s*\{[^}]*width:\s*16px[^}]*height:\s
 assert(!html.includes('class="dshw-brand-mark"'), 'the Walker/Design switch must not carry a decorative logo');
 assert(!html.includes('class="dshw-brand-name">Magic Pointer'), 'the sidebar must not repeat the product name');
 assert(!html.includes('魔脑'), 'the project environment surface must use a literal, useful name');
-assert(html.includes('项目上下文'), 'the project environment surface must be named 项目上下文');
 assert(!html.includes('class="mp-design-bento"'), 'Design must not retain the old marketing Bento');
 assert(html.includes('class="mp-design-action-row"') && html.includes('data-design-action="canvas"'),
   'Design workbench rows must remain real actions');

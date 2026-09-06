@@ -19,6 +19,29 @@ RECIPE_CATALOG, CATALOG_WARNINGS = load_all_recipes()
 
 _BY_ID = {recipe.id: recipe for recipe in RECIPE_CATALOG}
 
+# These recipes are plumbing or task-state operations, not destinations the
+# model should be offered as user-facing capabilities.  Keep this catalogue
+# judgement next to recipe metadata; natural-language routing no longer owns it.
+NON_DESTINATION_RECIPES = frozenset({
+    "activate.wiggle",
+    "ground.this",
+    "ground.references",
+    "governance.dashboard",
+    "integration.mcp",
+    "voice.short_command",
+})
+NON_DESTINATION_OUTPUT_KINDS = frozenset({
+    "activation_intent",
+    "grounded_object",
+    "interaction_episode",
+})
+
+
+def is_non_destination_recipe(recipe: object) -> bool:
+    if str(getattr(recipe, "id", "") or "") in NON_DESTINATION_RECIPES:
+        return True
+    return str(getattr(recipe, "output_kind", "") or "") in NON_DESTINATION_OUTPUT_KINDS
+
 
 def reload_catalog() -> list[str]:
     """Re-read the manifests (after installing a plugin) and return warnings."""
@@ -45,10 +68,13 @@ def public_recipe_catalog() -> list[JsonDict]:
 
 __all__ = [
     "CATALOG_WARNINGS",
+    "NON_DESTINATION_OUTPUT_KINDS",
+    "NON_DESTINATION_RECIPES",
     "RECIPE_CATALOG",
     "RecipeManifestError",
     "get_recipe",
     "has_recipe",
+    "is_non_destination_recipe",
     "public_recipe_catalog",
     "reload_catalog",
 ]

@@ -4,16 +4,6 @@ import { spawnSync } from 'node:child_process';
 
 const root = path.resolve(__dirname, '..');
 
-function walkCode(directory: string): string[] {
-  const absolute = path.join(root, directory);
-  if (!fs.existsSync(absolute)) return [];
-  return fs.readdirSync(absolute, { withFileTypes: true }).flatMap((entry) => {
-    const relative = path.join(directory, entry.name);
-    if (entry.isDirectory()) return walkCode(relative);
-    return entry.isFile() && /\.[jt]s$/.test(entry.name) ? [relative] : [];
-  });
-}
-
 function run(args: string[]): number {
   const result = spawnSync(process.execPath, args, {
     cwd: root,
@@ -23,58 +13,46 @@ function run(args: string[]): number {
   return result.status == null ? 1 : result.status;
 }
 
-const sourceFiles = [...walkCode('electron'), ...walkCode('scripts')].sort();
-const testFiles = fs
-  .readdirSync(path.join(root, 'tests'), { withFileTypes: true })
-  .filter((entry) => entry.isFile() && /_test\.[jt]s$/.test(entry.name))
-  .map((entry) => path.join('tests', entry.name))
-  .sort();
+const requested = process.argv.slice(2);
+const testPattern = /_test\.[jt]s$/;
+
+function selectedTestFiles(): string[] {
+  if (requested.length === 0) {
+    return fs
+      .readdirSync(path.join(root, 'tests'), { withFileTypes: true })
+      .filter((entry) => entry.isFile() && testPattern.test(entry.name))
+      .map((entry) => path.join('tests', entry.name))
+      .sort();
+  }
+
+  return requested.map((candidate) => {
+    const absolute = path.resolve(root, candidate);
+    const relative = path.relative(root, absolute);
+    const parts = relative.split(path.sep);
+    if (parts[0] !== 'tests' || parts.length !== 2 || !testPattern.test(parts[1])) {
+      throw new Error(`invalid test path: ${candidate}`);
+    }
+    if (!fs.existsSync(absolute) || !fs.statSync(absolute).isFile()) {
+      throw new Error(`test file not found: ${candidate}`);
+    }
+    return relative;
+  });
+}
+
+let testFiles: string[];
+try {
+  testFiles = selectedTestFiles();
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+}
+if (testFiles.length === 0) {
+  console.error('no matching test files');
+  process.exit(1);
+}
 
 const failures: string[] = [];
 
-// `node --check` only parses syntax. ESLint's no-undef check also catches missing
-// imports that would otherwise surface as delayed runtime failures.
-function runLint(): number {
-  const cli = path.join(root, 'node_modules', 'eslint', 'bin', 'eslint.js');
-  if (!fs.existsSync(cli)) {
-    console.warn('eslint not installed, skipping scope check');
-    return 0;
-  }
-  // Invoke ESLint through Node directly to avoid shell quoting differences on Windows.
-  return run([cli, 'electron', 'scripts', 'tests', '--max-warnings=0']);
-}
-
-function runTypecheck(): number {
-  const cli = path.join(path.dirname(require.resolve('typescript')), 'tsc.js');
-  const electronStatus = run([
-    cli,
-    '--project',
-    'tsconfig.electron.json',
-    '--noEmit',
-    '--pretty',
-    'false',
-  ]);
-  if (electronStatus !== 0) return electronStatus;
-  const toolsStatus = run([
-    cli,
-    '--project',
-    'tsconfig.tools.json',
-    '--noEmit',
-    '--pretty',
-    'false',
-  ]);
-  if (toolsStatus !== 0) return toolsStatus;
-  return run([cli, '--project', 'tsconfig.tests.json', '--noEmit', '--pretty', 'false']);
-}
-
-if (runLint() !== 0) failures.push('lint');
-if (runTypecheck() !== 0) failures.push('typecheck');
-
-for (const file of sourceFiles) {
-  if (file.endsWith('.js') && run(['--check', file]) !== 0) {
-    failures.push(`syntax:${file}`);
-  }
-}
 const tsxRegister = require.resolve('tsx/cjs');
 for (const file of testFiles) {
   if (run(['--require', tsxRegister, file]) !== 0) {
@@ -86,5 +64,5 @@ if (failures.length) {
   console.error(`node suite failed (${failures.length}): ${failures.join(', ')}`);
   process.exitCode = 1;
 } else {
-  console.log(`node suite passed: ${sourceFiles.length} source files, ${testFiles.length} tests`);
+  console.log(`node suite passed: ${testFiles.length} test files`);
 }

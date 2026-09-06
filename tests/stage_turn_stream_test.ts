@@ -14,17 +14,22 @@ const {
   composedCommand,
   composerChips,
   hasPointingWord,
+  keptStrokeIndexes,
   orderedEntries,
+  referenceMark,
+  removeStrokeReference,
   strokeForWordAt,
   submitReadiness,
+  withKeptStrokes,
 } = require('../electron/stage_turn_stream');
 
 const word = (text: string, at: number) => ({ kind: ENTRY_WORD, text, at });
-const stroke = (strokeIndex: number, at: number, label = '') => ({
+const stroke = (strokeIndex: number, at: number, label = '', referenceId = `ref-${strokeIndex}`) => ({
   kind: ENTRY_STROKE,
   strokeIndex,
   at,
   label,
+  referenceId,
 });
 
 // 说到"把"时画一笔，输入流当场变成 "把 ①"。
@@ -34,6 +39,7 @@ const stroke = (strokeIndex: number, at: number, label = '') => ({
   const chips = composerChips(entries);
   assert.strictEqual(chips.length, 1);
   assert.strictEqual(chips[0].ordinal, 1);
+  assert.strictEqual(chips[0].referenceId, 'ref-0');
 }
 
 // 顺序 = 用户做事的顺序，不是"文字在前、笔画在后"。
@@ -59,6 +65,33 @@ const stroke = (strokeIndex: number, at: number, label = '') => ({
     stroke(1, 1300, '第二段'),
   ];
   assert.strictEqual(composedCommand(entries), '比较 ① 和 ②');
+}
+
+// 删除一处引用后，其余引用保留原始编号，且提交只携带仍可见的笔画。
+// 这同时钉住 UI 芯片和 IPC payload 共用的纯行为，避免二者各算一遍后漂移。
+{
+  const refs = [
+    { strokeIndex: 0, label: '第一段', referenceId: 'ref-a' },
+    { strokeIndex: 1, label: '第二段', referenceId: 'ref-b' },
+    { strokeIndex: 2, label: '第三段', referenceId: 'ref-c' },
+  ];
+  const kept = removeStrokeReference(refs, 1);
+  assert.deepStrictEqual(keptStrokeIndexes(kept), [0, 2]);
+  assert.strictEqual(referenceMark(kept[0].strokeIndex), '①');
+  assert.strictEqual(referenceMark(kept[1].strokeIndex), '③');
+  assert.deepStrictEqual(kept.map((ref: { referenceId: string }) => ref.referenceId), ['ref-a', 'ref-c']);
+  assert.deepStrictEqual(refs.map((ref) => ref.strokeIndex), [0, 1, 2], 'input stays immutable');
+
+  const snapshot = {
+    selection_bbox: [10, 20, 300, 80],
+    selection_gesture: { strokes: [{ id: 'A' }, { id: 'B' }, { id: 'C' }] },
+    untouched: true,
+  };
+  const narrowed = withKeptStrokes(snapshot, keptStrokeIndexes(kept));
+  assert.deepStrictEqual(narrowed.selection_gesture.strokes, [{ id: 'A' }, { id: 'C' }]);
+  assert.strictEqual(narrowed.selection_bbox, null, 'combined bbox is invalid after narrowing');
+  assert.strictEqual(narrowed.untouched, true);
+  assert.strictEqual(snapshot.selection_gesture.strokes.length, 3, 'snapshot stays immutable');
 }
 
 // 代词绑到它前面最近的一笔；句子说完之后才画的那一笔不能反过来变成主语。

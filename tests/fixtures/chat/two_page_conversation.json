@@ -1,0 +1,87 @@
+{
+  "conversation": {
+    "adapterId": "wechat",
+    "conversationKey": "workspace-a:group-native-42",
+    "nativeConversationId": "group-native-42",
+    "accountKey": "workspace-a",
+    "windowHwnd": 9001,
+    "title": "North launch",
+    "type": "group"
+  },
+  "pages": [
+    {
+      "cursor": null,
+      "nextCursor": "page-2",
+      "complete": false,
+      "messages": [
+        {
+          "nativeMessageId": "msg-100",
+          "speaker": "Lin",
+          "time": "2026-08-19T09:01:00+08:00",
+          "text": "旧报价暂按 18 万元，等待财务确认。",
+          "attachments": [
+            {
+              "nativeAttachmentId": "att-price-v1",
+              "name": "报价单.pdf",
+              "versionLabel": "draft-v1",
+              "absolutePath": "D:/fixtures/报价单-v1.pdf",
+              "size": 18101
+            }
+          ]
+        },
+        {
+          "speaker": "Ada",
+          "time": "2026-08-19T09:02:00+08:00",
+          "text": "好的"
+        },
+        {
+          "speaker": "Ada",
+          "time": "2026-08-19T09:02:00+08:00",
+          "text": "好的"
+        },
+        {
+          "nativeMessageId": "msg-103",
+          "speaker": "Lin",
+          "time": "2026-08-19T09:03:00+08:00",
+          "text": "请以财务后续确认作为最终口径。"
+        }
+      ]
+    },
+    {
+      "cursor": "page-2",
+      "nextCursor": null,
+      "complete": true,
+      "messages": [
+        {
+          "nativeMessageId": "msg-103",
+          "speaker": "Lin",
+          "time": "2026-08-19T09:03:00+08:00",
+          "text": "请以财务后续确认作为最终口径。"
+        },
+        {
+          "nativeMessageId": "msg-104",
+          "speaker": "Mina",
+          "time": "2026-08-19T09:12:00+08:00",
+          "text": "财务确认版见附件，旧报价作废。",
+          "replyTo": "msg-100",
+          "attachments": [
+            {
+              "nativeAttachmentId": "att-price-v2",
+              "name": "报价单.pdf",
+              "versionLabel": "finance-confirmed-v2",
+              "absolutePath": "D:/fixtures/报价单-v2.pdf",
+              "size": 19308
+            }
+          ]
+        },
+        {
+          "nativeMessageId": "msg-105",
+          "speaker": "Mina",
+          "time": "2026-08-19T09:13:00+08:00",
+          "text": "FINAL POLICY：最终金额是 16.8 万元，按这个数字回复。",
+          "replyTo": "msg-104"
+        }
+      ]
+    }
+  ]
+}

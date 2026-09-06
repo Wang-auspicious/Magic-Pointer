@@ -126,6 +126,11 @@ def pending_inbox(events: Iterable[Any], target: str | None = None) -> tuple[Inb
                 text=str(data.get("text") or ""),
                 seq=seq,
                 time_ms=int(getattr(event, "time_ms", 0)),
+                payload=(
+                    dict(data.get("payload") or {})
+                    if isinstance(data.get("payload"), dict)
+                    else {}
+                ),
             )
             by_id[message_id] = item
             messages.append(item)

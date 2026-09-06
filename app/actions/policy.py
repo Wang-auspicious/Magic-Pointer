@@ -13,6 +13,7 @@ BLOCKED_ACTIONS = {
 }
 READ_ONLY_PREFIXES = ("read_", "inspect_", "explain_")
 WRITE_ACTIONS = {
+    "document_patch_operation",
     "office_replace_selection",
     "office_write_selection",
     "office_undo_last_action",

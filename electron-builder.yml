@@ -23,6 +23,7 @@ npmRebuild: false
 
 files:
   - build/electron/**
+  - build/figma/**
   - app/**
   # 运行时脚本白名单（2026-08-13 实测补全）：桥进程 spawn / import 的全部脚本。
   # 漏项会让安装版缺文件、首启自检失败（曾漏 recipe/抓帧/进度模块）。
@@ -32,6 +33,7 @@ files:
   - scripts/agent_bridge.py
   - scripts/agent_hook_bridge.py
   - scripts/agent_session_bridge.py
+  - scripts/artifact_bridge.py
   - scripts/agent_worker.py
   - scripts/bridge_progress.py
   - scripts/calendar_bridge.py

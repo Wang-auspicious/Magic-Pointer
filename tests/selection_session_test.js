@@ -1,5 +1,5 @@
 const assert = require('assert');
-const { SelectionSessionStore } = require('../electron/selection_session');
+const { SelectionSessionStore, continuationTaskForSelection } = require('../electron/selection_session');
 
 const ids = ['session-1', 'request-1', 'request-2'];
 const store = new SelectionSessionStore({
@@ -9,6 +9,47 @@ const store = new SelectionSessionStore({
 
 const session = store.create({ reason: 'hotkey', cursor: { x: 10, y: 20 } }, 100);
 assert.strictEqual(session.token, 'session-1');
+assert.strictEqual(session.taskId, 'agent-session-1', 'the selection owns its durable Runtime task identity before submit');
+
+const continuationStore = new SelectionSessionStore({ idFactory: () => 'continuation-session' });
+const continuing = continuationStore.create({
+  reason: 'gesture',
+  cursor: { x: 30, y: 40 },
+  taskId: 'agent-existing-task',
+}, 110);
+assert.strictEqual(
+  continuing.taskId,
+  'agent-existing-task',
+  'a later gesture can join the durable task that is already running',
+);
+
+assert.deepStrictEqual(
+  continuationTaskForSelection({
+    episodeTaskId: 'agent-existing-task',
+    taskOwners: [
+      { token: 'old-token', taskId: 'agent-existing-task', running: true },
+      { token: 'other-token', taskId: 'agent-other-task', running: true },
+    ],
+  }),
+  { token: 'old-token', taskId: 'agent-existing-task' },
+  'a new pointing session joins only the matching live task',
+);
+assert.strictEqual(
+  continuationTaskForSelection({
+    episodeTaskId: 'agent-existing-task',
+    taskOwners: [{ token: 'old-token', taskId: 'agent-existing-task', running: false }],
+  }),
+  null,
+  'finished tasks are not mistaken for a live mid-run steer',
+);
+assert.deepStrictEqual(
+  continuationTaskForSelection({
+    episodeTaskId: '',
+    taskOwners: [{ token: 'conversation-request', taskId: 'agent-studio-conv-1', running: true }],
+  }),
+  { token: 'conversation-request', taskId: 'agent-studio-conv-1' },
+  'the sole live Studio task owns a point made while its answer is running',
+);
 assert.strictEqual(session.state, 'capturing');
 assert.strictEqual(store.get('session-1', 200).cursor.x, 10);
 

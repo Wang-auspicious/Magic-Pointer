@@ -20,7 +20,6 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scripts.bridge_progress import PhaseClock
-from app.agent_runtime.workspace_state import read_workspace
 from app.actions.history import ActionHistoryStore, make_word_undo_proposal
 from app.actions.office import clean_replacement_text, make_word_replace_selection_proposal, wants_word_rewrite
 from app.actions.shopping_list import (
@@ -45,6 +44,24 @@ from app.perception.pixel_ocr import (
     ocr_blocks_to_text,
 )
 from app.input_artifact import compile_input_artifact
+from app.context_pack.source_store import (
+    apply_reference_updates,
+    reference_revision,
+    register_source,
+    task_references,
+    task_sources,
+)
+from app.context_pack.sources import (
+    Coverage,
+    FragmentLocator,
+    ReferenceBinding,
+    ReferenceUpdate,
+    SourceRef,
+    TaskInput,
+    SourceReaderRegistry,
+)
+from app.context_pack.selection_reader import FrozenSelectionMaterial, FrozenSelectionReader
+from app.context_pack.document_reader import DocumentReader
 from app.ai_client import ask_text_model, ask_vision_model
 from app.agent_runtime.compaction_prompt import (
     COMPACT_SOURCE_MODEL_CAP_CHARS,
@@ -53,6 +70,7 @@ from app.agent_runtime.compaction_prompt import (
 from app.agent_runtime.system_prompt import (
     DELIVER_SYSTEM_PROMPT,
 )
+from app.agent_runtime.vision_backend import FileVisionBackend
 from app.governance.latency_budget import (
     BudgetPolicy,
     Stage,
@@ -68,7 +86,6 @@ from app.text_actions.length_target import (
 )
 from app.actions.draft_delivery import (
     DraftDeliveryError,
-    make_draft_delivery_proposal,
     make_prompt_delivery_proposal,
 )
 from app.context_pack import (
@@ -474,6 +491,14 @@ def tool_activity_line(
 def _encode_activity(line: dict[str, Any]) -> str:
     raw = json.dumps(line, ensure_ascii=False, separators=(",", ":"))
     return base64.b64encode(raw.encode("utf-8")).decode("ascii")
+
+
+def _emit_plan_snapshot(clock: Any, steps: Any) -> None:
+    """Stream a lossless Todo snapshot over the existing progress channel."""
+    if clock is None:
+        return
+    raw = json.dumps({"steps": steps}, ensure_ascii=False, separators=(",", ":"))
+    clock.mark_blob("plan", base64.b64encode(raw.encode("utf-8")).decode("ascii"))
 
 
 def _context_from_snapshot(
@@ -1262,7 +1287,7 @@ def _review_response(
         prompt = compile_review_prompt(active)
         artifact = write_prompt_artifact(active, prompt)
         if wants_delivery:
-            proposal = make_draft_delivery_proposal(
+            proposal = make_prompt_delivery_proposal(
                 prompt,
                 target_window=target_window or {},
                 target_point=payload.get("targetPoint") or (snapshot or {}).get("target_point"),
@@ -1271,6 +1296,7 @@ def _review_response(
                 ),
                 review_session_id=str(active.get("session_id") or ""),
                 prompt_artifact=str(artifact),
+                delivery_kind="review_prompt_delivery",
             )
             return {
                 "ok": True,
@@ -1812,6 +1838,8 @@ def _record_auto_memory(
     answer: str,
     *,
     enabled: bool = False,
+    source_id: str | None = None,
+    locator: dict[str, Any] | None = None,
 ) -> None:
     if not enabled:
         return
@@ -1837,8 +1865,28 @@ def _record_auto_memory(
         app=str(getattr(app_ctx, "app", "") or "") if app_ctx is not None else "",
         window_title=title,
         excerpt=text,
+        source_id=source_id,
+        locator=locator,
         sensitive=sensitive,
     )
+
+
+def _memory_provenance_from_input_artifact(
+    artifact: dict[str, Any] | None,
+) -> tuple[str | None, dict[str, Any] | None]:
+    if not isinstance(artifact, dict):
+        return None, None
+    references = artifact.get("references")
+    if not isinstance(references, list):
+        return None, None
+    for reference in references:
+        if not isinstance(reference, dict):
+            continue
+        source_id = str(reference.get("sourceId") or "").strip()
+        locator = reference.get("locator")
+        if source_id and isinstance(locator, dict):
+            return source_id, dict(locator)
+    return None, None
 
 
 def _evidence_content(app_ctx) -> str:
@@ -2154,6 +2202,352 @@ def _input_artifact_ledger_metadata(input_artifact, target_window, app_ctx) -> d
     return metadata
 
 
+def _agent_session_id(selection_session_id: str | None) -> str:
+    """Map the main-process selection identity to the durable Runtime task."""
+    raw = str(selection_session_id or "").strip()
+    if raw and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,121}", raw):
+        return f"agent-{raw}"
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "-", raw).strip("-.")[:96]
+    return f"agent-{safe or uuid.uuid4().hex}"
+
+
+def _surface_conversation_identity(
+    app_ctx,
+    target_window: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    """Recover a chat binding from adapter artifacts or the frozen window.
+
+    The fallback only calls an adapter's pure identity binder. It does not read
+    the live screen after gesture completion.
+    """
+    artifacts = dict(getattr(app_ctx, "artifacts", {}) or {}) if app_ctx is not None else {}
+    for raw in list(artifacts.get("surface_objects") or ()):
+        if not isinstance(raw, dict) or str(raw.get("kind") or "") != "conversation":
+            continue
+        fields = raw.get("fields")
+        identity = fields.get("conversationIdentity") if isinstance(fields, dict) else None
+        if isinstance(identity, dict) and str(identity.get("conversationKey") or "").strip():
+            return dict(identity)
+    window = dict(target_window or {})
+    if not window:
+        return None
+    try:
+        from app.surface_adapter.registry import get_surface_registry
+
+        for adapter in get_surface_registry().list_adapters():
+            manifest = getattr(adapter, "manifest", None)
+            capabilities = tuple(getattr(manifest, "capabilities", ()) or ())
+            binder = getattr(adapter, "conversation_identity", None)
+            if (
+                "read_current_conversation" not in capabilities
+                or not callable(binder)
+                or not adapter.matches(window)
+            ):
+                continue
+            identity = binder(window)
+            if isinstance(identity, dict) and str(identity.get("conversationKey") or "").strip():
+                return dict(identity)
+    except Exception:
+        return None
+    return None
+
+
+def _selection_source_kind(
+    app_ctx,
+    snapshot: dict[str, Any],
+    target_window: dict[str, Any] | None = None,
+) -> str:
+    artifacts = dict(getattr(app_ctx, "artifacts", {}) or {}) if app_ctx is not None else {}
+    local_file = artifacts.get("local_file")
+    if isinstance(local_file, dict) and str(local_file.get("path") or "").strip():
+        suffix = Path(str(local_file["path"])).suffix.casefold()
+        if suffix in {".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx", ".xlsm"}:
+            return "document"
+        return "file"
+    if isinstance(artifacts.get("browser_context"), dict):
+        return "web"
+    if _surface_conversation_identity(app_ctx, target_window) is not None:
+        return "chat"
+    app = str(getattr(app_ctx, "app", "") or "").casefold()
+    source_identity = artifacts.get("source_identity")
+    if app in {"word", "excel", "powerpoint"} or (
+        isinstance(source_identity, dict)
+        and str(source_identity.get("absolutePath") or "").strip()
+        and Path(str(source_identity["absolutePath"])).suffix.casefold()
+        in {".pdf", ".doc", ".docx", ".ppt", ".pptx", ".xls", ".xlsx", ".xlsm"}
+    ):
+        return "document"
+    if "figma" in app:
+        return "figma"
+    context = dict(snapshot.get("context") or {})
+    if str(context.get("url") or "").strip():
+        return "web"
+    return "capture"
+
+
+def _selection_source_identity(
+    selection_session_id: str | None,
+    snapshot: dict[str, Any],
+    target_window: dict[str, Any] | None,
+    app_ctx,
+) -> dict[str, Any]:
+    identity: dict[str, Any] = {
+        "snapshotId": str(snapshot.get("snapshot_id") or ""),
+        "selectionSessionId": str(selection_session_id or ""),
+    }
+    artifacts = dict(getattr(app_ctx, "artifacts", {}) or {}) if app_ctx is not None else {}
+    local_file = artifacts.get("local_file")
+    if isinstance(local_file, dict) and str(local_file.get("path") or "").strip():
+        identity["absolutePath"] = str(Path(str(local_file["path"])).resolve())
+    source_identity = artifacts.get("source_identity")
+    if isinstance(source_identity, dict):
+        absolute_path = str(source_identity.get("absolutePath") or "").strip()
+        if absolute_path:
+            identity["absolutePath"] = str(Path(absolute_path).resolve(strict=False))
+        host = str(source_identity.get("host") or "").strip()
+        if host:
+            identity["host"] = host
+    browser = artifacts.get("browser_context")
+    if isinstance(browser, dict):
+        provenance = dict(browser.get("provenance") or {})
+        page = dict(browser.get("page") or {})
+        for field, value in (
+            ("endpoint", provenance.get("endpoint")),
+            ("browserInstanceId", provenance.get("browserInstanceId")),
+            ("targetId", provenance.get("targetId")),
+            ("documentEpoch", provenance.get("documentEpoch") or page.get("documentEpoch")),
+        ):
+            if str(value or "").strip():
+                identity[field] = str(value)
+    context = dict(snapshot.get("context") or {})
+    if str(context.get("url") or "").strip():
+        identity["url"] = str(context["url"])
+    hwnd = int((target_window or {}).get("hwnd") or 0)
+    if hwnd:
+        identity["hwnd"] = hwnd
+    conversation_identity = _surface_conversation_identity(app_ctx, target_window)
+    if conversation_identity is not None:
+        identity["conversationIdentity"] = conversation_identity
+    return identity
+
+
+def _selection_locator(snapshot: dict[str, Any], app_ctx) -> FragmentLocator:
+    artifacts = dict(getattr(app_ctx, "artifacts", {}) or {}) if app_ctx is not None else {}
+    native_locators = artifacts.get("locators")
+    if isinstance(native_locators, list) and len(native_locators) == 1:
+        try:
+            return FragmentLocator.from_dict(native_locators[0])
+        except (TypeError, ValueError):
+            pass
+    browser = artifacts.get("browser_context")
+    if isinstance(browser, dict) and str(browser.get("selector") or "").strip():
+        provenance = dict(browser.get("provenance") or {})
+        page = dict(browser.get("page") or {})
+        return FragmentLocator(
+            "dom-node",
+            {
+                "selector": str(browser["selector"]),
+                "url": str(page.get("url") or ""),
+                "browserInstanceId": str(provenance.get("browserInstanceId") or ""),
+                "targetId": str(provenance.get("targetId") or ""),
+                "documentEpoch": str(
+                    provenance.get("documentEpoch") or page.get("documentEpoch") or ""
+                ),
+            },
+        )
+    bbox = snapshot.get("selection_bbox") or snapshot.get("selection_rect")
+    return FragmentLocator(
+        "visual-region",
+        {
+            "snapshotId": str(snapshot.get("snapshot_id") or ""),
+            "bbox": list(bbox) if isinstance(bbox, (list, tuple)) and len(bbox) == 4 else None,
+            "coordinateSpace": "physical-screen-pixels",
+        },
+    )
+
+
+def _initial_task_context(
+    task_id: str,
+    instruction: str,
+    selection_session_id: str | None,
+    target_window: dict[str, Any] | None,
+    app_ctx,
+    snapshot: dict[str, Any] | None,
+) -> tuple[tuple[SourceRef, ...], tuple[ReferenceUpdate, ...], Coverage | None, TaskInput | None]:
+    """Compile one frozen gesture into a source, binding and TaskInput.
+
+    No source is invented for text-only calls: without a snapshot there is no
+    original material or local position to reopen later.
+    """
+    snap = dict(snapshot or {})
+    snapshot_id = str(snap.get("snapshot_id") or "").strip()
+    if not snapshot_id:
+        return (), (), None, None
+    safe = re.sub(r"[^A-Za-z0-9._:-]+", "-", snapshot_id).strip("-.")
+    source_id = f"source:{safe}"
+    context = dict(snap.get("context") or {})
+    title = str(
+        (target_window or {}).get("title")
+        or context.get("label")
+        or getattr(app_ctx, "label", "")
+        or "Pointed source"
+    ).strip()
+    identity = _selection_source_identity(
+        selection_session_id, snap, target_window, app_ctx
+    )
+    capabilities = ["read"]
+    if identity.get("absolutePath") or identity.get("url"):
+        capabilities.append("search")
+    source_kind = _selection_source_kind(app_ctx, snap, target_window)
+    absolute_path = str(identity.get("absolutePath") or "").strip()
+    if source_kind == "document" and Path(absolute_path).suffix.casefold() in {
+        ".pdf", ".docx", ".pptx", ".xlsx",
+    }:
+        capabilities.append("patch")
+    if source_kind == "chat":
+        capabilities.extend(["search", "follow"])
+    capabilities = list(dict.fromkeys(capabilities))
+    source = SourceRef(
+        source_id=source_id,
+        task_id=task_id,
+        kind=source_kind,
+        title=title,
+        identity=identity,
+        revision={
+            "capturedAt": str(snap.get("captured_at") or ""),
+            "snapshotId": snapshot_id,
+            **({"documentEpoch": identity["documentEpoch"]} if identity.get("documentEpoch") else {}),
+        },
+        capabilities=tuple(capabilities),
+        origin="user-pointed",
+        parent_source_id=None,
+    )
+    if source_kind == "chat":
+        conversation_identity = dict(identity.get("conversationIdentity") or {})
+        bbox = snap.get("selection_bbox") or snap.get("selection_rect")
+        locator = FragmentLocator("message", {
+            "adapterId": str(conversation_identity.get("adapterId") or ""),
+            "conversationKey": str(conversation_identity.get("conversationKey") or ""),
+            "snapshotId": snapshot_id,
+            "bbox": (
+                list(bbox)
+                if isinstance(bbox, (list, tuple)) and len(bbox) == 4
+                else None
+            ),
+            "coordinateSpace": "physical-screen-pixels",
+        })
+    else:
+        locator = _selection_locator(snap, app_ctx)
+    raw_strokes = list((snap.get("selection_gesture") or {}).get("strokes") or [])
+    stroke_locators: list[FragmentLocator] = []
+    if len(raw_strokes) > 1:
+        for stroke_index, stroke in enumerate(raw_strokes[:12]):
+            points = list((stroke or {}).get("points") or [])
+            xs = [float(point.get("x")) for point in points if isinstance(point, dict) and isinstance(point.get("x"), (int, float))]
+            ys = [float(point.get("y")) for point in points if isinstance(point, dict) and isinstance(point.get("y"), (int, float))]
+            if not xs or not ys:
+                continue
+            left, top = min(xs), min(ys)
+            stroke_locators.append(FragmentLocator(
+                "visual-region",
+                {
+                    "snapshotId": snapshot_id,
+                    "strokeIndex": stroke_index,
+                    "bbox": [
+                        int(left),
+                        int(top),
+                        int(max(xs) - left),
+                        int(max(ys) - top),
+                    ],
+                    "coordinateSpace": "physical-screen-pixels",
+                },
+            ))
+    locators = tuple(stroke_locators) if stroke_locators else (locator,)
+    lease = snap.get("frame_lease")
+    frame_lease_id = (
+        str(lease.get("frameLeaseId") or "").strip() or None
+        if isinstance(lease, dict)
+        else None
+    )
+    captured = str(snap.get("captured_at") or "").strip()
+    try:
+        captured_ms = int(datetime.fromisoformat(captured.replace("Z", "+00:00")).timestamp() * 1000)
+    except (TypeError, ValueError):
+        captured_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    bindings = tuple(
+        ReferenceBinding(
+            reference_id=f"reference:{safe}{f':{index}' if len(locators) > 1 else ''}",
+            label=chr(ord("A") + index),
+            source_id=source_id,
+            locator=item,
+            role="target",
+            frame_lease_id=frame_lease_id,
+            captured_at_ms=captured_ms,
+            ordinal=index + 1,
+            active=True,
+        )
+        for index, item in enumerate(locators)
+    )
+    content = str(getattr(app_ctx, "content", "") or "") if app_ctx is not None else ""
+    complete = len(content) <= 12_000
+    coverage = Coverage(
+        extent="selection",
+        read_ranges=tuple(item.value for item in locators),
+        total_units=len(content) if content else None,
+        complete=complete,
+        next_cursor=None,
+        missing_reason=None if complete else "bounded-preview-only",
+    )
+    updates = tuple(ReferenceUpdate("add", binding) for binding in bindings)
+    timeline = [{
+        "eventId": f"point:{binding.reference_id}:{captured_ms}",
+        "kind": "point",
+        "startMs": captured_ms,
+        "endMs": captured_ms,
+        "referenceId": binding.reference_id,
+    } for binding in bindings]
+    task_input = TaskInput.from_dict({
+        "inputId": f"input:{bindings[0].reference_id}:1",
+        "taskId": task_id,
+        "target": "next-step",
+        "instruction": str(instruction or "").strip(),
+        "referenceUpdates": [update.to_dict() for update in updates],
+        "sourceIds": [source_id],
+        "timeline": timeline,
+        "capturedAtMs": captured_ms,
+    })
+    return (source,), updates, coverage, task_input
+
+
+def _persist_initial_task_context(
+    session,
+    sources: tuple[SourceRef, ...],
+    updates: tuple[ReferenceUpdate, ...],
+) -> int:
+    """Idempotently ACK initial source/reference state in EventSession."""
+    existing_sources = {item.source_id: item for item in task_sources(session.events)}
+    for source in sources:
+        current = existing_sources.get(source.source_id)
+        if current is None:
+            register_source(session, source)
+        elif current != source:
+            raise ValueError(f"source identity changed for {source.source_id}")
+    existing_references = {item.reference_id: item for item in task_references(session.events)}
+    pending: list[ReferenceUpdate] = []
+    for update in updates:
+        current = existing_references.get(update.binding.reference_id)
+        if current is None:
+            pending.append(update)
+        elif current != update.binding:
+            pending.append(ReferenceUpdate("correct", update.binding))
+    apply_reference_updates(
+        session,
+        pending,
+        expected_revision=reference_revision(session.events),
+    )
+    return reference_revision(session.events)
+
+
 def _loop_router(
     command: str,
     routing_objects: list,
@@ -2165,6 +2559,7 @@ def _loop_router(
     selection_snapshot_id: str | None,
     clock=None,
     reply_style: str = "normal",
+    figma_runtime_connections: tuple[Any, ...] = (),
 ) -> dict:
     """The agent loop as the production router (model-as-router architecture).
 
@@ -2203,13 +2598,93 @@ def _loop_router(
         os.environ.get("MAGIC_POINTER_INLOOP_REVERSIBLE", "0").strip() == "1"
     )
 
+    agent_session_id = _agent_session_id(selection_session_id)
+    initial_sources, initial_updates, initial_coverage, initial_task_input = (
+        _initial_task_context(
+            agent_session_id,
+            command,
+            selection_session_id,
+            target_window,
+            app_ctx,
+            snapshot,
+        )
+    )
+    from app.surface_adapter.adapters.figma_adapter import (
+        FigmaSourceReader,
+        figma_runtime_materials,
+    )
+
+    figma_materials = figma_runtime_materials(
+        agent_session_id,
+        figma_runtime_connections,
+    )
+    initial_sources = (
+        *initial_sources,
+        *(source for source, _client in figma_materials),
+    )
     input_artifact = compile_input_artifact(
         command,
         target_window,
         app_ctx,
         snapshot,
+        sources=initial_sources,
+        references=tuple(item.binding for item in initial_updates),
+        coverage=initial_coverage,
     )
     input_artifact_public = input_artifact.to_public_dict()
+    from app.adapters.browser_devtools_adapter import ChromeDevToolsDocumentClient
+    from app.context_pack.browser_reader import BrowserContextReader
+    from app.context_pack.chat_reader import (
+        ChatReader,
+        DesktopChatNavigator,
+        SurfaceChatHistoryBackend,
+    )
+    from app.desktop_actions import default_session as default_desktop_action_session
+    from app.surface_adapter.registry import get_surface_registry
+
+    source_readers = SourceReaderRegistry()
+    document_reader = DocumentReader()
+    browser_reader = BrowserContextReader(ChromeDevToolsDocumentClient())
+    chat_navigation_session = default_desktop_action_session(
+        session_id=f"chat-reader:{agent_session_id}",
+        origin_window_hwnd=int((target_window or {}).get("hwnd") or 0) or None,
+    )
+    chat_reader = ChatReader(SurfaceChatHistoryBackend(
+        get_surface_registry(),
+        windows_probe=list_visible_windows,
+        navigate=DesktopChatNavigator(chat_navigation_session),
+    ))
+    source_readers.register("document", document_reader)
+    source_readers.register("file", document_reader)
+    source_readers.register("web", browser_reader)
+    source_readers.register("chat", chat_reader)
+    source_readers.register("figma", FigmaSourceReader(None))
+    for source, figma_client in figma_materials:
+        source_readers.register_source(
+            source.source_id,
+            FigmaSourceReader(figma_client),
+        )
+    if initial_sources and initial_coverage is not None and initial_updates:
+        has_local_file = bool(initial_sources[0].identity.get("absolutePath"))
+        fallback_reader = (
+            document_reader if has_local_file
+            else browser_reader if initial_sources[0].kind == "web"
+            else chat_reader if initial_sources[0].kind == "chat"
+            else None
+        )
+        frozen_reader = FrozenSelectionReader((FrozenSelectionMaterial(
+            source_id=initial_sources[0].source_id,
+            text=_evidence_content(app_ctx) if app_ctx is not None else "",
+            locator=initial_updates[0].binding.locator,
+            coverage=initial_coverage,
+            used_backend=str(getattr(app_ctx, "method", "") or "selection_snapshot"),
+        ),), fallback=fallback_reader)
+        for source in initial_sources:
+            # Chat is an ongoing surface: the frozen gesture remains in the
+            # InputArtifact/reference, while Context.read must be allowed to
+            # inspect the current semantic neighborhood and later history.
+            if source.kind not in {"chat", "figma"}:
+                source_readers.register_source(source.source_id, frozen_reader)
 
     active_engine = FabricEngine(model_transform=_local_model_transform)
 
@@ -2297,35 +2772,6 @@ def _loop_router(
             return b""
         return _crop_frozen_frame_bytes(capture_path, box, surface_bounds)
 
-    class _VisionBackend:
-        def describe(self, image_bytes: bytes, prompt: str, timeout_ms: int) -> dict:
-            from app.agent_runtime.look_tool import LookTool, VisionUnavailable
-
-            if not image_bytes:
-                raise VisionUnavailable()
-            import os as _os
-            import tempfile
-            import time as _time
-
-            from app.ai_client import ask_vision_model
-
-            started = _time.monotonic()
-            handle = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
-            try:
-                handle.write(image_bytes)
-                handle.close()
-                text = ask_vision_model(Path(handle.name), prompt)
-            finally:
-                try:
-                    _os.unlink(handle.name)
-                except OSError:
-                    pass
-            return {
-                "text": text,
-                "latency_ms": (_time.monotonic() - started) * 1000.0,
-                "backend": "vision",
-            }
-
     def summarize_history(history_text: str) -> str:
         try:
             return ask_text_model(
@@ -2338,14 +2784,18 @@ def _loop_router(
             return ""
 
     _inbox_cell: dict = {"fn": None}
+    _source_session_cell: dict[str, Any] = {"value": None}
     runtime = {
         "perception_backend": _BridgePerceptionBackend(
             app_ctx, target_window, snapshot
         ),
         # 后台 job 完成推送：cell 先进 runtime，durable session 打开后回填。
         "session_inbox": lambda text: (_inbox_cell["fn"] or (lambda _t: None))(text),
-        "vision_backend": _VisionBackend(),
+        "source_session_getter": lambda: _source_session_cell["value"],
+        "source_readers": source_readers,
+        "vision_backend": FileVisionBackend(),
         "frame_crop": crop_bytes,
+        "frame_captured_at": str((snapshot or {}).get("captured_at") or "gesture time"),
         "guard_probe": _BridgeGuardProbe(target_window),
         "selection_anchor": _build_selection_anchor(
             app_ctx, target_window, snapshot
@@ -2358,11 +2808,11 @@ def _loop_router(
         "capture_path": capture_path,
         "target_window": target_window or {},
         "command": command,
-        # Stage shares the profile default workspace (/cwd), not the process
-        # cwd — on the installed app Path.cwd() is the install dir, so a
-        # gesture-run `ls` silently listed Magic Pointer's own files instead
-        # of the user's bound workspace.
-        "workspace_root": str(read_workspace(ROOT)),
+        # A screen gesture authorizes the pointed material, not the persisted
+        # coding workspace. Project/shell tools require an explicit advanced
+        # project choice in Studio.
+        "workspace_root": "",
+        "advanced_tools": False,
         "permission_mode": os.environ.get("MAGIC_POINTER_PERMISSION_MODE", "default").strip() or "default",
         "permission_preset": "",
         "reply_style": reply_style,
@@ -2442,17 +2892,6 @@ def _loop_router(
     # 结构性保证屏幕内容永远不会被当作指令通道（invariant ⑤）。
     first_input = command
     evidence_block = "[本次圈选对象证据]\n" + input_artifact.to_model_text()
-    raw_agent_session_id = str(selection_session_id or "").strip()
-    if raw_agent_session_id and re.fullmatch(
-        r"[A-Za-z0-9][A-Za-z0-9._-]{0,121}", raw_agent_session_id
-    ):
-        agent_session_id = f"agent-{raw_agent_session_id}"
-    else:
-        identity = raw_agent_session_id or str(uuid.uuid4())
-        agent_session_id = "agent-" + hashlib.sha256(
-            identity.encode("utf-8")
-        ).hexdigest()[:32]
-
     def progress_sink(event) -> None:
         """Loop events -> bridge progress phases (UI heartbeat, review T1).
 
@@ -2515,16 +2954,63 @@ def _loop_router(
                 ),
             }))
         elif isinstance(event, Steered):
-            clock.mark("steer_absorbed", turn=event.turn)
+            clock.mark(
+                "steer_absorbed",
+                turn=event.turn,
+                input=",".join(event.input_ids)[:200],
+                referenceRevision=event.reference_revision,
+            )
         elif isinstance(event, FollowupContinued):
-            clock.mark("followup_continued", turn=event.turn)
+            clock.mark(
+                "followup_continued",
+                turn=event.turn,
+                input=",".join(event.input_ids)[:200],
+                referenceRevision=event.reference_revision,
+            )
         elif isinstance(event, BackendRecovery):
             clock.mark("backend_recovery", turn=event.turn, attempt=event.attempt)
 
     try:
         try:
             agent_session = sessions.open_or_create(agent_session_id, repair=True)
+            _source_session_cell["value"] = agent_session
+            persisted_reference_revision = _persist_initial_task_context(
+                agent_session,
+                initial_sources,
+                initial_updates,
+            )
+            if clock is not None and initial_task_input is not None:
+                clock.mark(
+                    "context_updated_ack",
+                    task=agent_session_id,
+                    referenceRevision=persisted_reference_revision,
+                    input=initial_task_input.input_id,
+                )
+            from app.agent_runtime.session import bind_todo_store
+
+            bind_todo_store(
+                agent_session,
+                selection_todo_store,
+                on_update=lambda snapshot: _emit_plan_snapshot(clock, snapshot),
+            )
             _inbox_cell["fn"] = lambda text: agent_session.enqueue_inbox(text, "next-step")
+            from app.agent_runtime.resume_context import (
+                continuation_prefix,
+                with_source_availability,
+            )
+
+            live_source_ids = {
+                source.source_id
+                for source in initial_sources
+                if source.kind in {"capture", "chat", "web"}
+            }
+            live_source_ids.update(source.source_id for source, _client in figma_materials)
+            resume_summary = with_source_availability(
+                agent_session.interrupted_turn_summary(),
+                task_sources(agent_session.events),
+                live_source_ids=live_source_ids,
+            )
+            continuation_block = continuation_prefix(resume_summary)
             terminal = run_agent_turn(
                 first_input,
                 objects=routing_objects,
@@ -2543,12 +3029,12 @@ def _loop_router(
                 hook_manager=ctx.get("hooks"),
                 session=agent_session,
                 request_header=request_header,
-                # Screen evidence travels as a separate origin=data message;
-                # the pure command alone decides zero-model local actions.
-                # Without this, a "复制这个" inside the selected text hijacks
-                # any question into a clipboard write (red-team T6).
-                local_action_input=command,
-                evidence_input=evidence_block,
+                # Screen evidence travels as a separate origin=data message.
+                evidence_input="\n\n".join(
+                    value
+                    for value in (continuation_block, evidence_block)
+                    if value
+                ),
                 budgets=SELECTION_BUDGETS,
                 interaction_metadata=_input_artifact_ledger_metadata(
                     input_artifact, target_window, app_ctx
@@ -2564,9 +3050,14 @@ def _loop_router(
                 keepalive=clock.mark if clock is not None else None,
                 todo_store=selection_todo_store,
                 nudge_hooks=(_plan_completion_gate,),
-                # 超大工具结果全文落盘 <workspace>/.mp/tool-results（与
-                # .mp/backups 并列），模型拿预览+绝对路径，read_file 分页回读。
-                tool_result_dir=str(Path(runtime["workspace_root"]) / ".mp" / "tool-results"),
+                # Only an explicitly bound advanced project owns a .mp result
+                # directory. Never fall back to the installed process cwd.
+                tool_result_dir=(
+                    str(Path(runtime["workspace_root"]) / ".mp" / "tool-results")
+                    if runtime["workspace_root"]
+                    else None
+                ),
+                source_scope=ctx.get("source_scope"),
             )
         except Exception as exc:  # noqa: BLE001 - loop crash must never kill answer path
             return {
@@ -2605,6 +3096,8 @@ def _loop_router(
         mapped["selectionSnapshotId"] = selection_snapshot_id
         mapped["agentSessionId"] = agent_session_id
         mapped["inputArtifact"] = input_artifact_public
+        if selection_todo_store is not None and selection_todo_store.has_items():
+            mapped["plan"] = {"steps": selection_todo_store.read()}
         from app.telemetry.interaction_ledger import InteractionLedger
 
         ledger_entries = InteractionLedger.from_session(agent_session).query()
@@ -3005,6 +3498,9 @@ def main() -> int:
             selection_snapshot_id,
             clock=clock,
             reply_style=reply_style,
+            figma_runtime_connections=tuple(
+                payload.get("_figmaRuntimeConnections") or []
+            ) if isinstance(payload.get("_figmaRuntimeConnections"), list) else (),
         )
         loop_interaction = _loop_interaction_metadata(loop_result)
         input_artifact_public = (
@@ -3133,12 +3629,17 @@ def main() -> int:
     # 「对象 + 问题」——不依赖用户手动指令，积累上下文供未来主动提议。
     # 失败绝不影响本次回答（记忆是副作用，不是主路径）。
     try:
+        memory_source_id, memory_locator = _memory_provenance_from_input_artifact(
+            input_artifact_public,
+        )
         _record_auto_memory(
             command,
             app_ctx,
             target_window,
             answer,
             enabled=routing_settings.privacy.screen_memory_enabled,
+            source_id=memory_source_id,
+            locator=memory_locator,
         )
     except Exception:
         pass

@@ -103,6 +103,26 @@ assert.deepStrictEqual(
   planConversationSteer({ text: '先别删文件', agentSessionId: CONVERSATION_SESSION_ID }),
   { action: 'steer', sessionId: CONVERSATION_SESSION_ID, text: '先别删文件' },
 );
+const pointedCorrection = {
+  inputId: 'input-studio-point-1',
+  taskId: 'untrusted-renderer-task',
+  target: 'next-turn',
+  instruction: '',
+  referenceUpdates: [{ operation: 'correct', binding: { referenceId: 'reference:B' } }],
+  sourceIds: ['source:B'],
+  timeline: [{ eventId: 'point-B', kind: 'point', startMs: 5, endMs: 5, referenceId: 'reference:B' }],
+  capturedAtMs: 5,
+};
+assert.deepStrictEqual(
+  planConversationSteer({ taskInput: pointedCorrection, agentSessionId: CONVERSATION_SESSION_ID }),
+  {
+    action: 'steer',
+    sessionId: CONVERSATION_SESSION_ID,
+    text: '',
+    taskInput: pointedCorrection,
+  },
+  'Studio accepts reference-only TaskInput and leaves task identity enforcement to main',
+);
 
 // 权限规则：历史裸工具名兼容；Bash 前缀保持括号/空格，不能被 main.ts
 // 旧 sanitizeTool 削成一个永远匹配不到的 Bashpytest。

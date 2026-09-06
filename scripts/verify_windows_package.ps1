@@ -6,7 +6,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Drawing
-$result = [ordered]@{ status = 'failed'; executable = $null; processId = $null; verifiedFiles = @(); packageSource = $null; bundledPython = $null; pythonImports = @(); fabricSmoke = $null; version = $null; icon = $null; userData = $null; cleanup = $null; error = $null }
+$result = [ordered]@{ status = 'failed'; executable = $null; processId = $null; verifiedFiles = @(); packageSource = $null; bundledPython = $null; pythonImports = @(); documentFixtures = $null; fabricSmoke = $null; version = $null; icon = $null; userData = $null; cleanup = $null; error = $null }
 $previousRuntimeDir = $env:MAGIC_POINTER_USER_DATA_DIR
 $runtimeDir = $null
 $process = $null
@@ -120,6 +120,9 @@ if not site_packages.is_dir():
 sys.path.insert(0, str(site_packages))
 import PIL
 import fitz
+import docx
+import pptx
+import openpyxl
 import openai
 import pyperclip
 import onnxruntime
@@ -128,19 +131,22 @@ import sounddevice
 import whisper
 import torch
 import opencc
-print(json.dumps({"executable": str(pathlib.Path(sys.executable).resolve()), "imports": ["PIL", "fitz", "openai", "pyperclip", "onnxruntime", "rapidocr", "sounddevice", "whisper", "torch", "opencc"]}))
+import runpy
+document_fixtures = runpy.run_path(sys.argv[3])["verify_document_dependencies"]()
+print(json.dumps({"executable": str(pathlib.Path(sys.executable).resolve()), "imports": ["PIL", "fitz", "docx", "pptx", "openpyxl", "openai", "pyperclip", "onnxruntime", "rapidocr", "sounddevice", "whisper", "torch", "opencc"], "documentFixtures": document_fixtures}))
 '@
   $encodedImportProbe = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($importProbe))
   $importResult = Invoke-CapturedNative -FilePath $bundledPython -Arguments @(
     '-I', '-X', 'utf8', '-c',
     'import base64,sys;exec(base64.b64decode(sys.argv[1]))',
-    $encodedImportProbe, $pythonRuntime
+    $encodedImportProbe, $pythonRuntime, (Join-Path $resourcesApp 'app\context_pack\runtime_document_smoke.py')
   )
   if ($importResult.ExitCode -ne 0) { throw "Bundled Python imports failed: $($importResult.Output -join [Environment]::NewLine)" }
   $importEvidence = ($importResult.Output | Select-Object -Last 1) | ConvertFrom-Json
   if ([IO.Path]::GetFullPath($importEvidence.executable) -ne [IO.Path]::GetFullPath($bundledPython)) { throw 'Dependency imports did not run with bundled python.exe.' }
   $result.bundledPython = [ordered]@{ path = $bundledPython; manifest = $pythonManifest }
   $result.pythonImports = @($importEvidence.imports)
+  $result.documentFixtures = $importEvidence.documentFixtures
 
   $versionInfo = [Diagnostics.FileVersionInfo]::GetVersionInfo($resolvedExe)
   $result.version = [ordered]@{ fileVersion = $versionInfo.FileVersion; productVersion = $versionInfo.ProductVersion; productName = $versionInfo.ProductName }

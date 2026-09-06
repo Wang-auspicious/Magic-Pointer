@@ -557,6 +557,9 @@ class DesktopActionSession:
 def register_desktop_action_tools(
     registry: ToolRegistry,
     session: DesktopActionSession,
+    *,
+    observe_execute: Callable[..., Any] | None = None,
+    observe_access_for: Callable[[dict[str, Any]], Any] | None = None,
 ) -> None:
     """Register Kimi's 13 Windows tools in whitelist order."""
     specs = (
@@ -602,6 +605,8 @@ def register_desktop_action_tools(
                 "不带 window_id/pid/app 时观察的是本轮圈选所在的那个窗口，"
                 "不是此刻恰好在前台的窗口；要看别的窗口必须显式指定。"
                 "它与 look/read_around 的冻结帧证据（手势时刻的历史画面）不同。"
+                "要用当前像素回答问题时传当前任务已绑定的 source_id 与 question；"
+                "没有已绑定来源不会抓取屏幕。"
                 "写操作必须带这个 id。窗口移动、目标元素变化或 stale_snapshot 时重跑这一步。"
             ),
             input_schema={
@@ -612,13 +617,17 @@ def register_desktop_action_tools(
                     "app": {"type": "string"},
                     "mode": {"type": "string", "description": "full | image | ax | text"},
                     "ax_filter": {"type": "string"},
+                    "source_id": {"type": "string", "description": "当前任务中已绑定的表面来源"},
+                    "question": {"type": "string", "description": "要用新像素回答的问题"},
+                    "locator": {"type": "object", "description": "可选的来源局部定位"},
                 },
                 "required": [],
             },
-            execute=session.get_app_state,
+            execute=observe_execute or session.get_app_state,
             effect=Effect.READ,
             is_concurrency_safe=True,
-            used_backend="desktop",
+            used_backend="live_surface" if observe_execute is not None else "desktop",
+            access_for=observe_access_for,
         ),
         ToolSpec(
             name="Click",

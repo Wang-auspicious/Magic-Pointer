@@ -20,7 +20,7 @@ export default [
     ],
   },
   {
-    files: ['electron/**/*.ts', 'scripts/**/*.ts', 'tests/**/*.ts'],
+    files: ['electron/**/*.ts', 'scripts/**/*.ts', 'tests/**/*.ts', 'integrations/figma/**/*.ts'],
     languageOptions: {
       parser: tseslint.parser,
       parserOptions: {

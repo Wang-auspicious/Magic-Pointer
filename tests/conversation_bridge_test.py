@@ -21,6 +21,9 @@ class _FakeClock:
         self.blobs.append((phase, blob))
         return self.elapsed
 
+    def total(self, phase: str = "total", **fields):
+        return self.mark(phase, **fields)
+
 
 def test_subagent_progress_uses_lossless_bounded_blob() -> None:
     import base64
@@ -50,6 +53,117 @@ def test_answer_conversation_rejects_unknown_permission_preset() -> None:
     result = conversation_bridge.answer_conversation("问一个问题", [], {}, "yolo")
     assert result["ok"] is False
     assert "未知权限预设" in str(result["error"])
+
+
+def test_attachment_sources_are_explicit_task_materials(tmp_path: Path) -> None:
+    deck = tmp_path / "brief.pptx"
+    deck.write_bytes(b"fixture identity only")
+
+    sources = conversation_bridge._attachment_sources(
+        "agent-session-1",
+        [str(deck), str(deck)],
+    )
+
+    assert len(sources) == 1
+    source = sources[0]
+    assert source.task_id == "agent-session-1"
+    assert source.kind == "document"
+    assert source.origin == "user-attached"
+    assert source.identity["absolutePath"] == str(deck.resolve())
+    assert source.capabilities == ("read", "search", "follow", "patch")
+    assert source.source_id.startswith("source:attachment:")
+
+
+def test_attachment_source_rejects_a_path_that_disappeared(tmp_path: Path) -> None:
+    missing = tmp_path / "gone.pdf"
+
+    with pytest.raises(ValueError, match="附件不存在"):
+        conversation_bridge._attachment_sources("agent-session-1", [str(missing)])
+
+
+def test_initial_studio_task_input_enters_durable_context_without_duplicate_instruction(
+    tmp_path: Path,
+) -> None:
+    from app.context_pack.source_store import register_source
+
+    deck = tmp_path / "brief.pptx"
+    deck.write_bytes(b"fixture identity only")
+    session = _FakeSession("agent-studio-new-abc")
+    source = conversation_bridge._attachment_sources(session.id, [str(deck)])[0]
+    register_source(session, source)
+    queued: list[tuple[str, str, dict]] = []
+    session.enqueue_inbox = lambda text, target, **kwargs: queued.append(
+        (text, target, dict(kwargs))
+    )
+    task_input = {
+        "inputId": "input:studio:1",
+        "taskId": session.id,
+        "target": "next-step",
+        "instruction": "结合附件修改第 4 页",
+        "referenceUpdates": [],
+        "sourceIds": [source.source_id],
+        "timeline": [{
+            "eventId": "utterance:1",
+            "kind": "utterance",
+            "startMs": 1725000000000,
+            "endMs": 1725000000000,
+            "text": "结合附件修改第 4 页",
+        }],
+        "capturedAtMs": 1725000000000,
+    }
+
+    accepted = conversation_bridge._accept_initial_task_input(
+        session,
+        task_input,
+        question="结合附件修改第 4 页",
+    )
+
+    assert accepted.input_id == "input:studio:1"
+    assert len(queued) == 1
+    text, target, kwargs = queued[0]
+    assert text == "", "the normal turn already owns the user instruction"
+    assert target == "next-step"
+    assert kwargs["message_id"] == "input:studio:1"
+    assert kwargs["payload"]["instruction"] == ""
+    assert kwargs["payload"]["sourceIds"] == [source.source_id]
+
+
+def test_initial_studio_task_input_rejects_a_source_from_another_task() -> None:
+    session = _FakeSession("agent-studio-new-abc")
+    task_input = {
+        "inputId": "input:studio:2",
+        "taskId": session.id,
+        "target": "next-step",
+        "instruction": "使用另一个任务的材料",
+        "referenceUpdates": [],
+        "sourceIds": ["source:other-task"],
+        "timeline": [],
+        "capturedAtMs": 1725000000000,
+    }
+
+    with pytest.raises(ValueError, match="target task"):
+        conversation_bridge._accept_initial_task_input(
+            session,
+            task_input,
+            question="使用另一个任务的材料",
+        )
+
+
+def test_task_context_payload_returns_authoritative_source_projection(tmp_path: Path) -> None:
+    from app.context_pack.source_store import register_source
+
+    document = tmp_path / "terms.pdf"
+    document.write_bytes(b"fixture identity only")
+    session = _FakeSession("agent-studio-new-context")
+    source = conversation_bridge._attachment_sources(session.id, [str(document)])[0]
+    register_source(session, source)
+
+    payload = conversation_bridge._task_context_payload(session)
+
+    assert payload["taskId"] == session.id
+    assert payload["referenceRevision"] == 0
+    assert payload["references"] == []
+    assert payload["sources"] == [source.to_dict()]
 
 
 def test_resolve_workspace_allows_unbound_conversation() -> None:
@@ -352,27 +466,46 @@ def test_conversation_result_can_expose_authoritative_session_bill() -> None:
 class _FakeTodoStore:
     def __init__(self):
         self.on_update = None
+        self._items = []
+    def write(self, items):
+        self._items = [dict(item) for item in items]
+        return self.read()
     def read(self):
-        return []
+        return [dict(item) for item in self._items]
     def has_items(self):
-        return False
+        return bool(self._items)
 
 
 class _FakeSession:
-    events = ()
+    def __init__(self, session_id="fake-session"):
+        self.id = session_id
+        self.events = []
+
+    def append(self, event_type, data):
+        event = SimpleNamespace(type=event_type, data=data)
+        self.events.append(event)
+        return event
 
     def derive_messages(self):
         return []
 
     def interrupted_turn_summary(self):
         return None
+    def record_plan_updated(self, plan):
+        return self.append("plan/updated", {"taskId": self.id, "plan": plan})
     def enqueue_inbox(self, *a, **k):
         pass
     def claim_inbox(self, *a, **k):
         return []
 
 
-def _install_workspace_boot_stubs(monkeypatch, captured, *, registry=None):
+def _install_workspace_boot_stubs(
+    monkeypatch,
+    captured,
+    *,
+    registry=None,
+    fake_session=None,
+):
     """boot_loop_context 之后到 run_agent_turn 之间的最小服务桩。"""
     from types import SimpleNamespace
 
@@ -389,7 +522,7 @@ def _install_workspace_boot_stubs(monkeypatch, captured, *, registry=None):
             if key == "sessions":
                 def _open(session_id, *a, **k):
                     captured["agent_session_id"] = session_id
-                    return _FakeSession()
+                    return fake_session or _FakeSession(session_id)
 
                 return SimpleNamespace(open_or_create=_open)
             if key == "context_budget":
@@ -403,7 +536,8 @@ def _install_workspace_boot_stubs(monkeypatch, captured, *, registry=None):
     import app.harness.builtin_bundle as builtin_bundle
     monkeypatch.setattr(
         builtin_bundle, "boot_loop_context", lambda runtime, root=None: captured.update(
-            workspace_root=runtime.get("workspace_root")
+            workspace_root=runtime.get("workspace_root"),
+            advanced_tools=runtime.get("advanced_tools"),
         ) or report
     )
 
@@ -422,6 +556,79 @@ def _install_workspace_boot_stubs(monkeypatch, captured, *, registry=None):
     monkeypatch.setattr(loop_answer, "terminal_to_answer", lambda terminal, prompt: {"answer": "好了"})
 
 
+def test_resume_projection_failure_is_visible_and_stops_the_new_turn(monkeypatch):
+    class BrokenResumeSession(_FakeSession):
+        def interrupted_turn_summary(self):
+            raise ValueError("broken durable context")
+
+    captured = {}
+    clock = _FakeClock()
+    _install_workspace_boot_stubs(
+        monkeypatch,
+        captured,
+        fake_session=BrokenResumeSession("broken-resume"),
+    )
+
+    result = conversation_bridge.answer_conversation(
+        "继续上次任务",
+        [],
+        {},
+        "workspace-write",
+        clock=clock,
+        conversation_id="resume-failure",
+    )
+
+    assert result["ok"] is False
+    assert "Agent 运行失败" in result["error"]
+    assert "run_kwargs" not in captured
+    assert any(phase == "resume_context_error" for phase, _fields in clock.marks)
+
+
+def test_provider_failure_is_not_saved_as_a_successful_assistant_answer(monkeypatch):
+    from app.agent_runtime.loop import TransitionReason
+    from app.agent_runtime.types import Terminal
+
+    captured = {}
+    _install_workspace_boot_stubs(monkeypatch, captured)
+
+    import app.fabric.engine as engine_module
+    import app.fabric.loop_answer as loop_answer
+
+    monkeypatch.setattr(
+        engine_module,
+        "run_agent_turn",
+        lambda *args, **kwargs: Terminal(
+            reason=TransitionReason.PROVIDER_UNAVAILABLE,
+            message="backend_error:missing_api_key",
+            turns=1,
+            results=(),
+        ),
+    )
+    monkeypatch.setattr(
+        loop_answer,
+        "terminal_to_answer",
+        lambda terminal, prompt: {
+            "ok": False,
+            "answer": "模型服务刚才没有响应（缺少模型密钥）。",
+            "error": "provider_unavailable",
+            "loopTerminatedReason": "provider_unavailable",
+        },
+    )
+
+    result = conversation_bridge.answer_conversation(
+        "读取附件后回答",
+        [],
+        {},
+        "read-only",
+        clock=_FakeClock(),
+        agent_session_id="agent-studio-new-provider-failure",
+    )
+
+    assert result["ok"] is False
+    assert result["error"] == "provider_unavailable"
+    assert result["loopTerminatedReason"] == "provider_unavailable"
+
+
 def _install_runtime_service_stubs(
     monkeypatch,
     *,
@@ -430,13 +637,14 @@ def _install_runtime_service_stubs(
     compactor,
     token_estimator,
     run_impl,
+    todo_store=None,
 ) -> None:
     """Install a real session seam with deterministic runtime services."""
     from types import SimpleNamespace
 
     services = {
         "tools": registry,
-        "todo_store": _FakeTodoStore(),
+        "todo_store": todo_store or _FakeTodoStore(),
         "sessions": session_store,
         "context_budget": 64000,
         "model_client": SimpleNamespace(used_backend="fake.runtime"),
@@ -445,6 +653,7 @@ def _install_runtime_service_stubs(
         "precondition_factory": None,
         "model_request_header": {},
         "hooks": SimpleNamespace(),
+        "source_scope": None,
     }
 
     class _Ctx:
@@ -477,6 +686,66 @@ def _install_runtime_service_stubs(
     )
 
 
+def test_conversation_hydrates_and_persists_plan_before_running(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    from app.agent_runtime.session import FileSessionStore, project_plan
+    from app.agent_runtime.todo_store import TodoStore
+    from app.agent_runtime.tool_registry import ToolRegistry
+    from app.agent_runtime.types import Terminal, TransitionReason
+
+    sessions = FileSessionStore(tmp_path / "sessions")
+    session_id = conversation_bridge.resolve_agent_session_id(
+        conversation_id="conversation-plan-resume"
+    )
+    session = sessions.create(session_id)
+    original = [{"content": "恢复原计划", "status": "in_progress"}]
+    session.record_plan_updated(original)
+    todo_store = TodoStore()
+    observed = {}
+
+    def fake_run(user_input, objects=None, registry=None, *, client, **kwargs):
+        observed["before_run"] = todo_store.read()
+        replacement = [{"content": "完成恢复步骤", "status": "completed"}]
+        todo_store.write(replacement)
+        todo_store.on_update(todo_store.read())
+        return Terminal(
+            reason=TransitionReason.COMPLETED,
+            message="好了",
+            turns=1,
+            results=(),
+        )
+
+    _install_runtime_service_stubs(
+        monkeypatch,
+        session_store=sessions,
+        registry=ToolRegistry(),
+        compactor=lambda messages, **_kwargs: list(messages),
+        token_estimator=lambda messages: 0,
+        run_impl=fake_run,
+        todo_store=todo_store,
+    )
+    clock = _FakeClock()
+
+    result = conversation_bridge.answer_conversation(
+        "继续",
+        [],
+        {},
+        "workspace-write",
+        clock=clock,
+        conversation_id="conversation-plan-resume",
+        agent_session_id=session_id,
+    )
+
+    assert result["ok"] is True
+    assert observed["before_run"] == original
+    assert project_plan(sessions.resume(session_id).events) == [
+        {"content": "完成恢复步骤", "status": "completed"}
+    ]
+    assert [phase for phase, _blob in clock.blobs].count("plan") == 2
+
+
 def test_explicit_workspace_pick_is_thread_scoped_not_global(monkeypatch, tmp_path):
     """Codex thread workspace_roots 语义：芯片选择只改本请求的 runtime，
     绝不回写全局 workspace.txt（那是 /cwd 的职责）——否则 A 会话选的工作区
@@ -504,6 +773,7 @@ def test_explicit_workspace_pick_is_thread_scoped_not_global(monkeypatch, tmp_pa
         workspace_root=str(ws_dir),
     )
     assert captured["workspace_root"] == str(ws_dir.resolve())
+    assert captured["advanced_tools"] is True
     assert written == [], "芯片选择不得回写全局 workspace.txt"
     assert result["ok"] is True
 
@@ -522,6 +792,7 @@ def test_missing_explicit_workspace_remains_unbound(monkeypatch, tmp_path):
 
     result = conversation_bridge.answer_conversation("随便问", [], {}, "workspace-write")
     assert captured["workspace_root"] == ""
+    assert captured["advanced_tools"] is False
     assert result["ok"] is True
 
 
@@ -1397,3 +1668,25 @@ def test_strip_options_tail_leaves_real_content_alone() -> None:
         "pendingInput": None,
     }
     assert conversation_bridge._strip_options_tail(result)["answer"].endswith("再改代码")
+
+
+def test_latest_turn_artifact_summary_carries_the_durable_artifact_id(tmp_path) -> None:
+    from app.agent_runtime.session import FileSessionStore
+
+    session = FileSessionStore(tmp_path).create("artifact-summary")
+    first = session.start_turn()
+    session.record_artifact_generated("first draft")
+    session.end_turn(first, reason="completed")
+    second = session.start_turn()
+    generated = session.record_artifact_generated("second draft")
+    session.end_turn(second, reason="completed")
+
+    summaries = conversation_bridge._latest_turn_artifact_summaries(session)
+
+    assert summaries == [{
+        "artifactId": generated.data["artifactId"],
+        "revision": 1,
+        "kind": "text",
+        "name": "second draft",
+        "summary": "second draft",
+    }]

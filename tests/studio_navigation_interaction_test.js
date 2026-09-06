@@ -55,7 +55,6 @@ assert(source.includes("document.getElementById('header-preview-toggle')?.addEve
 assert(source.includes("make('Conversation', () => setConversationTab('chat'))"));
 assert(source.includes("make('Trajectory', () => setConversationTab('trajectory'))"));
 assert(source.includes("make('Open project folder', () =>"));
-assert(source.includes("make('Project context', () =>"));
 assert(source.includes("browser?.classList.toggle('is-empty', groups.length === 0)"));
 assert(source.includes("empty.className = 'side-empty'"));
 assert(source.includes("label.className = 'side-empty-label'"));

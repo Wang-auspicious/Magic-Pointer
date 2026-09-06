@@ -26,6 +26,8 @@ except ModuleNotFoundError:  # direct script execution
 ensure_root_on_path()
 
 from app.agent_runtime.session import FileSessionStore  # noqa: E402
+from app.context_pack.source_store import register_source, task_sources  # noqa: E402
+from app.context_pack.sources import SourceRef, TaskInput  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGETS = frozenset({"next-step", "next-turn"})
@@ -42,7 +44,18 @@ def _session_root() -> Path:
 def handle_request(payload: dict[str, Any]) -> dict[str, Any]:
     action = str(payload.get("action") or "").strip()
     session_id = str(payload.get("sessionId") or "").strip()
-    target = str(payload.get("target") or "").strip()
+    raw_task_input = payload.get("taskInput")
+    try:
+        task_input = (
+            TaskInput.from_dict(raw_task_input)
+            if isinstance(raw_task_input, dict)
+            else None
+        )
+    except ValueError as exc:
+        return {"ok": False, "error": f"invalid_task_input: {exc}"}
+    target = str(
+        task_input.target if task_input is not None else payload.get("target") or ""
+    ).strip()
     if action not in {"cancel", "status"} and target not in TARGETS:
         return {"ok": False, "error": "invalid_target"}
     try:
@@ -87,14 +100,49 @@ def handle_request(payload: dict[str, Any]) -> dict[str, Any]:
             "openTurn": session.open_turn,
         }
     if action == "put":
-        text = str(payload.get("text") or "").strip()
-        if not text or len(text) > MAX_TEXT_CHARS:
+        text = str(
+            task_input.instruction if task_input is not None else payload.get("text") or ""
+        ).strip()
+        if len(text) > MAX_TEXT_CHARS or (task_input is None and not text):
             return {"ok": False, "error": "invalid_text"}
-        message_id = str(payload.get("messageId") or "").strip() or None
+        if task_input is not None and task_input.task_id != session.id:
+            return {"ok": False, "error": "task_mismatch"}
         try:
-            event = session.enqueue_inbox(text, target, message_id=message_id)
+            for raw_source in list(payload.get("sources") or []):
+                source = SourceRef.from_dict(raw_source)
+                if source.task_id != session.id:
+                    return {"ok": False, "error": "source_task_mismatch"}
+                known = {item.source_id: item for item in task_sources(session.events)}
+                if source.source_id not in known:
+                    register_source(session, source)
+                elif known[source.source_id] != source:
+                    return {"ok": False, "error": "source_identity_changed"}
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "invalid_source"}
+        message_id = (
+            task_input.input_id
+            if task_input is not None
+            else str(payload.get("messageId") or "").strip() or None
+        )
+        try:
+            event = session.enqueue_inbox(
+                text,
+                target,
+                message_id=message_id,
+                payload=task_input.to_dict() if task_input is not None else None,
+            )
         except RuntimeError:
             return {"ok": False, "error": "duplicate_message_id"}
+        except ValueError as exc:
+            return {"ok": False, "error": f"invalid_task_input: {exc}"}
+        if task_input is not None:
+            return {
+                "ok": True,
+                "sessionId": session.id,
+                "inputId": task_input.input_id,
+                "target": target,
+                "status": "queued",
+            }
         return {
             "ok": True,
             "sessionId": session.id,
@@ -111,6 +159,7 @@ def handle_request(payload: dict[str, Any]) -> dict[str, Any]:
                     "messageId": item.message_id,
                     "target": item.target,
                     "text": item.text,
+                    **({"taskInput": item.payload} if item.payload else {}),
                 }
                 for item in items
             ],

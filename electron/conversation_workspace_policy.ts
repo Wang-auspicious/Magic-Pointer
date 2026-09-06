@@ -6,6 +6,12 @@ export interface WorkspaceCapabilityState {
   label: string;
 }
 
+export interface AttachmentDialogOptions {
+  title: string;
+  defaultPath?: string;
+  properties: Array<'openFile' | 'multiSelections'>;
+}
+
 /**
  * Thread workspace resolution follows one rule: an explicit pick moves this
  * thread; otherwise its existing binding remains; neither means unbound.
@@ -34,5 +40,14 @@ export function workspaceCapabilityState(root: unknown): WorkspaceCapabilityStat
     bound: true,
     codingTools: true,
     label: path.basename(path.normalize(value)) || value,
+  };
+}
+
+export function attachmentDialogOptions(projectRoot: unknown): AttachmentDialogOptions {
+  const root = String(projectRoot ?? '').trim();
+  return {
+    title: '添加任务材料',
+    ...(root ? { defaultPath: root } : {}),
+    properties: ['openFile', 'multiSelections'],
   };
 }

@@ -12,7 +12,6 @@ module performs no network or screen I/O and is fully testable with fakes.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable, Sequence
 from typing import Any, Protocol, runtime_checkable
 
@@ -26,11 +25,6 @@ from app.evidence.contract import (
 )
 
 DEFAULT_PROMPT = "Describe the contents of this image region."
-DEFAULT_CAPABILITIES = ("translate", "explain", "expand", "summarize", "ocr_copy")
-MIN_CAPABILITIES = 3
-MAX_CAPABILITIES = 8
-
-
 class VisionUnavailable(Exception):
     """The vision backend cannot serve requests at all (no model, no service)."""
 
@@ -93,6 +87,7 @@ class LookTool:
         timeout_ms: int = 30000,
         capture: Callable[[tuple[int, int, int, int]], bytes] | None = None,
         max_calls: int | None = 12,
+        captured_at: str | None = None,
     ) -> None:
         self._backend = backend
         self._max_box_side = max_box_side
@@ -101,6 +96,7 @@ class LookTool:
         self._capture = capture if capture is not None else _box_bytes
         self._max_calls = max_calls
         self._calls_used = 0
+        self._captured_at = str(captured_at or "gesture time")
 
     # -- look ----------------------------------------------------------------
 
@@ -212,11 +208,14 @@ class LookTool:
         # model-visible value so the reading cannot be mistaken for the
         # current UI state (long tasks must re-observe with Observe
         # before acting).
-        value = f"[historical frozen frame captured at gesture time]\n{text}"
+        value = f"[historical frozen frame captured at {self._captured_at}]\n{text}"
         return ok_evidence(
             value,
             EvidenceSource.VISION,
             latency_ms=latency,
+            captured_at_utc=(
+                self._captured_at if self._captured_at != "gesture time" else None
+            ),
             note=note,
         )
 
@@ -245,43 +244,6 @@ class LookTool:
             return _normalize_box(box)
         raise ValueError("invalid_anchor_format")
 
-    # -- describe_capabilities ------------------------------------------------
-
-    def describe_capabilities(
-        self,
-        anchor: str,
-        trajectory_hints: Sequence[str] = (),
-    ) -> Evidence:
-        """List the actions available for the anchor's target.
-
-        Trajectory hints take priority but the output stays within 3-8 entries
-        (short hint lists are padded from the default catalog); with no hints
-        the default catalog is returned.
-        """
-        chosen = self._chosen_capabilities(trajectory_hints)
-        return ok_evidence(
-            json.dumps(chosen),
-            EvidenceSource.CACHE,
-            note=f"capability-catalog; anchor={anchor}",
-        )
-
-    @staticmethod
-    def _chosen_capabilities(hints: Sequence[str]) -> list[str]:
-        chosen: list[str] = []
-        for hint in hints:
-            if hint not in chosen:
-                chosen.append(hint)
-        chosen = chosen[:MAX_CAPABILITIES]
-        if not chosen:
-            chosen = list(DEFAULT_CAPABILITIES)
-        else:
-            for candidate in DEFAULT_CAPABILITIES:
-                if len(chosen) >= MIN_CAPABILITIES:
-                    break
-                if candidate not in chosen:
-                    chosen.append(candidate)
-        return chosen
-
     # -- registration ----------------------------------------------------------
 
     def _execute_look(
@@ -300,11 +262,9 @@ class LookTool:
 
     def register(self, registry: ToolRegistry) -> None:
         """Register ``look`` (read, not concurrency-safe: vision is slow and
-        shares one backend, so no concurrent storm) and
-        ``describe_capabilities`` (read, concurrency-safe)."""
+        shares one backend, so no concurrent storm)."""
         # 旧名别名（一个版本）：历史授权/旧调用仍路由到规范工具；别名不进 schema。
         registry.register_alias("look", "Look")
-        registry.register_alias("describe_capabilities", "Capabilities")
         registry.register(
             ToolSpec(
                 name="Look",
@@ -336,31 +296,5 @@ class LookTool:
                 is_concurrency_safe=False,
                 used_backend="vision",
                 timeout_ms=self._timeout_ms,
-            )
-        )
-        registry.register(
-            ToolSpec(
-                name="Capabilities",
-                description=(
-                    "List the actions available for the target identified by "
-                    "the anchor."
-                ),
-                input_schema={
-                    "type": "object",
-                    "properties": {
-                        "anchor": {"type": "string"},
-                        "trajectory_hints": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                        },
-                    },
-                    "required": ["anchor"],
-                },
-                execute=self.describe_capabilities,
-                effect=Effect.READ,
-                is_concurrency_safe=True,
-                used_backend="local",
-                timeout_ms=5000,
-                deferred=True,  # 低频目录查询，find_capability 按需加载
             )
         )

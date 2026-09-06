@@ -30,6 +30,8 @@ type Artifact = Record<string, unknown>;
 interface TurnEntry {
   id: string;
   at: number;
+  startedAt: number;
+  completedAt?: number;
   question: string;
   answer: string;
   trace: unknown[];
@@ -86,6 +88,7 @@ interface Conversation {
   permissionGrants?: string[];
   permissionDenials?: string[];
   /** CC toolPermissionDecision：用户在本会话授予/拒绝过的工具名。 */
+  taskContext?: Record<string, unknown>;
 }
 
 interface TurnInput {
@@ -115,6 +118,7 @@ interface TurnInput {
   permissionDeny?: unknown;
   evidence?: unknown;
   pendingInput?: unknown;
+  taskContext?: unknown;
 }
 
 interface ConversationStoreOptions {
@@ -127,6 +131,12 @@ interface ProjectRecord {
   name: string;
   addedAt: number;
   lastOpenedAt: number;
+}
+
+function isTurnSettled(outcome: unknown): boolean {
+  const value = String(outcome || '').trim().toLocaleLowerCase();
+  if (!value) return false;
+  return !['进行中', 'running', 'in_progress', 'pending', 'waiting'].includes(value);
 }
 
 // 同一个对象的稳定标识：进程 + 窗口标题 + 元素路径。
@@ -326,6 +336,8 @@ function createConversationStore(
     const entry: TurnEntry = {
       id: `t${at}`,
       at,
+      startedAt: at,
+      ...(isTurnSettled(turn.outcome) ? { completedAt: at } : {}),
       question: String(turn.question || ''),
       answer: String(turn.answer || ''),
       trace: Array.isArray(turn.trace) ? turn.trace.slice(0, 24) : [],
@@ -363,6 +375,8 @@ function createConversationStore(
       const agentSessionId = String(turn.agentSessionId || '').trim();
       if (agentSessionId) target.agentSessionId = agentSessionId;
       if (typeof turn.hasPendingWork === 'boolean') target.hasPendingWork = turn.hasPendingWork;
+      const taskContext = sanitizeTaskContext(turn.taskContext);
+      if (taskContext) target.taskContext = taskContext;
       // 用户起过的名字不覆盖；自动标题只在未自定义时跟随最新问题。
       if (!target.titleCustom) target.title = titleFrom(turn.question);
       // CC toolPermissionDecision: a chip grant/deny joins the thread memo
@@ -398,6 +412,9 @@ function createConversationStore(
       workspaceRoot: registerProject(turn.workspaceRoot)?.root || undefined,
       agentSessionId: String(turn.agentSessionId || '').trim() || undefined,
       hasPendingWork: typeof turn.hasPendingWork === 'boolean' ? turn.hasPendingWork : false,
+      ...(sanitizeTaskContext(turn.taskContext)
+        ? { taskContext: sanitizeTaskContext(turn.taskContext) }
+        : {}),
       ...(String(turn.permissionGrant || '').trim() ? { permissionGrants: [String(turn.permissionGrant).trim()] } : {}),
       ...(String(turn.permissionDeny || '').trim() ? { permissionDenials: [String(turn.permissionDeny).trim()] } : {}),
     };
@@ -484,8 +501,16 @@ function createConversationStore(
     if (input.evidence !== undefined) turn.evidence = sanitizeEvidence(input.evidence);
     if (input.pendingInput !== undefined) turn.pendingInput = sanitizePendingInput(input.pendingInput);
     if (Number.isFinite(Number(input.timingMs))) turn.timingMs = Number(input.timingMs);
-    turn.at = now();
-    target.updatedAt = now();
+    const updatedAt = now();
+    if (!Number.isFinite(Number(turn.startedAt))) turn.startedAt = Number(turn.at) || updatedAt;
+    // `at` was historically overwritten by every stream patch. It now remains
+    // the compatibility alias for the true start; completedAt records the end.
+    turn.at = turn.startedAt;
+    if (input.outcome !== undefined) {
+      if (isTurnSettled(turn.outcome)) turn.completedAt = updatedAt;
+      else delete turn.completedAt;
+    }
+    target.updatedAt = updatedAt;
     persist();
     return { ok: true, conversation: target };
   }
@@ -636,7 +661,12 @@ function createConversationStore(
     for (const c of conversations) {
       for (const t of c.turns || []) {
         for (const a of t.artifacts || []) {
-          out.push({ ...a, at: t.at, conversationId: c.id, from: c.title });
+          out.push({
+            ...a,
+            at: Number(t.completedAt || t.startedAt || t.at),
+            conversationId: c.id,
+            from: c.title,
+          });
         }
       }
     }
@@ -645,6 +675,85 @@ function createConversationStore(
 
   function stats(at = now()) {
     return projectStudioHomeStats(load(), at);
+  }
+
+  function sanitizeTaskContext(value: unknown): Record<string, unknown> | undefined {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+    const data = value as Record<string, unknown>;
+    const taskId = String(data.taskId || '').trim();
+    const revision = Number(data.referenceRevision);
+    if (!taskId || !Number.isInteger(revision) || revision < 0) return undefined;
+    return {
+      taskId,
+      referenceRevision: revision,
+      sources: Array.isArray(data.sources) ? structuredClone(data.sources) : [],
+      references: Array.isArray(data.references) ? structuredClone(data.references) : [],
+    };
+  }
+
+  function eventSummaries(options: {
+    fromMs?: unknown;
+    toMs?: unknown;
+    conversationIds?: unknown;
+    limit?: unknown;
+  } = {}) {
+    const fromMs = Math.max(0, Number(options.fromMs) || 0);
+    const toMs = Math.max(fromMs, Number(options.toMs) || now());
+    const requested = new Set(
+      (Array.isArray(options.conversationIds) ? options.conversationIds : [])
+        .map((value) => String(value || '').trim())
+        .filter(Boolean)
+        .slice(0, 500),
+    );
+    const limit = Math.max(0, Math.min(500, Number(options.limit) || 200));
+    const events: Array<Record<string, unknown>> = [];
+    const includedConversations = new Set<string>();
+    for (const conversation of load()) {
+      if (requested.size && !requested.has(conversation.id)) continue;
+      for (const turn of conversation.turns || []) {
+        const startedAt = Number(turn.startedAt || turn.at || 0);
+        const completedAt = Number.isFinite(Number(turn.completedAt))
+          ? Number(turn.completedAt)
+          : (isTurnSettled(turn.outcome) ? Number(turn.at || 0) : null);
+        const observedAt = completedAt || startedAt;
+        if (observedAt < fromMs || observedAt > toMs) continue;
+        includedConversations.add(conversation.id);
+        events.push({
+          conversationId: conversation.id,
+          conversationTitle: conversation.title,
+          turnId: turn.id,
+          startedAt,
+          completedAt,
+          question: String(turn.question || '').slice(0, 4000),
+          answer: String(turn.answer || '').slice(0, 12000),
+          outcome: String(turn.outcome || '').slice(0, 100),
+          source: structuredClone(conversation.object || {}),
+          events: structuredClone((turn.events || []).slice(0, 48)),
+          receipts: structuredClone((turn.receipts || []).slice(0, 48)),
+          artifacts: structuredClone((turn.artifacts || []).slice(0, 24)),
+          evidence: turn.evidence ? structuredClone(turn.evidence) : null,
+        });
+      }
+    }
+    events.sort((left, right) => (
+      Number(right.completedAt || right.startedAt) - Number(left.completedAt || left.startedAt)
+    ));
+    const selected = events.slice(0, limit);
+    return {
+      fromMs,
+      toMs,
+      conversationIds: [...requested],
+      materialAvailable: selected.length > 0,
+      events: selected,
+      coverage: {
+        includedConversations: includedConversations.size,
+        includedTurns: selected.length,
+        complete: events.length <= limit,
+        message: selected.length
+          ? `已纳入 ${selected.length} 条真实任务记录。`
+          : '所选时间和任务范围没有纳入本次材料；不要补造全天活动。',
+      },
+    };
   }
 
   function clear(): void {
@@ -686,6 +795,7 @@ function createConversationStore(
     timeline,
     memories,
     artifacts,
+    eventSummaries,
     stats,
     clear,
     registerProject,

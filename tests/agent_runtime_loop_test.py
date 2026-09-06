@@ -16,27 +16,25 @@ compact-callback wiring:
 7. cancel_all mid-turn -> CancelledError propagates, no new model/tool
    calls afterwards
 8. transition sequence across consecutive turns is recorded correctly
-9. tool_limit truncation: 20 registered tools -> <= 12 schemas,
-   trajectory-recommended tools preserved
-10. trajectory: first turn uses the template message ({input} replaced)
-11. concurrency-safe tools run on a worker thread pool: two 150 ms tools
+9. tool_limit truncation: 20 registered tools -> <= 12 schemas in registry order
+10. concurrency-safe tools run on a worker thread pool: two 150 ms tools
     finish well under the 300 ms serial floor; events stay in call order
-12. sequential (unsafe) tools keep input order, main-thread execution and
+11. sequential (unsafe) tools keep input order, main-thread execution and
     the serial time floor
-13. mixed round: the parallel batch runs first, sequential tools after
-14. ActionFailure inside a parallel batch keeps execute_tool semantics
-15. withheld x3 recovers and completes; recovery message and counter
+12. mixed round: the parallel batch runs first, sequential tools after
+13. ActionFailure inside a parallel batch keeps execute_tool semantics
+14. withheld x3 recovers and completes; recovery message and counter
     transitions are recorded
-16. withheld x4 terminates with reason=max_output_tokens_recovered
-17. last_truncated invalidates the round's tool calls (0 executions), one
+15. withheld x4 terminates with reason=max_output_tokens_recovered
+16. last_truncated invalidates the round's tool calls (0 executions), one
     "输出被截断，重新生成" tool message is fed back, next round completes
-18. stop hook prevent_continuation -> Terminal(stop_hook)
-19. a raising stop hook does not kill the loop; stop_hook_active is set
+17. stop hook prevent_continuation -> Terminal(stop_hook)
+18. a raising stop hook does not kill the loop; stop_hook_active is set
     True then skipped/reset next round
-20. interrupt_check True on round 2 -> Terminal(user_interrupt) before any
+19. interrupt_check True on round 2 -> Terminal(user_interrupt) before any
     second model call
-21. compact_callback fires exactly once across repeated withheld rounds
-22. full chain: truncation -> tool round -> completion
+20. compact_callback fires exactly once across repeated withheld rounds
+21. full chain: truncation -> tool round -> completion
 
 All tests inject fake model backends, fake clocks and fake pure-function
 tools; nothing real is touched, no network, no desktop.
@@ -85,7 +83,6 @@ from app.agent_runtime.types import (  # noqa: E402
     Role,
     Terminal,
     ToolCall,
-    Trajectory,
     TransitionReason,
 )
 from app.governance.cancellation import (  # noqa: E402
@@ -1275,16 +1272,11 @@ def test_transition_sequence_across_turns():
     assert terminal.turns == 3
 
 
-def test_tool_limit_truncation_keeps_recommended():
+def test_tool_limit_truncation_keeps_registry_order():
     registry = ToolRegistry()
     for index in range(20):
         tool, _ = make_counting_tool(f"t{index:02d}")
         registry.register(tool)
-    trajectory = Trajectory(
-        recipe_id="tr",
-        first_user_message="start",
-        recommended_tools=("t19", "t01"),
-    )
     backend = ScriptedBackend([TurnDone(usage=None, raw_text="done")])
     client = LoopModelClient(backend)
 
@@ -1293,7 +1285,6 @@ def test_tool_limit_truncation_keeps_recommended():
             make_params(
                 client=client,
                 registry=registry,
-                trajectory=trajectory,
                 tool_limit=12,
             )
         )
@@ -1303,15 +1294,12 @@ def test_tool_limit_truncation_keeps_recommended():
     schemas = backend.received[0][1]
     assert len(schemas) == 12
     names = [s["name"] for s in schemas]
-    assert names[0] == "t19"
-    assert names[1] == "t01"
-    assert set(("t19", "t01")).issubset(set(names))
-    assert names == ["t19", "t01", "t00", "t02", "t03", "t04", "t05", "t06", "t07", "t08", "t09", "t10"]
+    assert names == [f"t{index:02d}" for index in range(12)]
     notices = [event for event in events if type(event).__name__ == "ToolsTruncated"]
     assert len(notices) == 1
     assert notices[0].limit == 12
     assert notices[0].dropped == (
-        "t11", "t12", "t13", "t14", "t15", "t16", "t17", "t18",
+        "t12", "t13", "t14", "t15", "t16", "t17", "t18", "t19",
     )
     assert terminal.reason is TransitionReason.COMPLETED
 
@@ -1387,37 +1375,6 @@ def test_discovery_tool_loads_newly_registered_tools_for_next_model_turn():
         "deferred_tool",
         "provider_search",
     ]
-    assert terminal.reason is TransitionReason.COMPLETED
-
-
-def test_trajectory_first_message_template_replaces_input():
-    tool, _ = make_counting_tool("read_tool")
-    registry = ToolRegistry()
-    registry.register(tool)
-    trajectory = Trajectory(
-        recipe_id="tr",
-        first_user_message="Read the {input} selection",
-        recommended_tools=("read_tool",),
-    )
-    backend = ScriptedBackend([TurnDone(usage=None, raw_text="ok")])
-    client = LoopModelClient(backend)
-
-    events, terminal = asyncio.run(
-        collect(
-            make_params(
-                user_input="second paragraph",
-                client=client,
-                registry=registry,
-                trajectory=trajectory,
-            )
-        )
-    )
-
-    assert len(backend.received) == 1
-    first_messages = backend.received[0][0]
-    assert len(first_messages) == 1
-    assert first_messages[0].role is Role.USER
-    assert first_messages[0].content == "Read the second paragraph selection"
     assert terminal.reason is TransitionReason.COMPLETED
 
 
@@ -3000,6 +2957,9 @@ class _PendingInboxStub:
         return True
 
     def drain(self, _target=None):  # pragma: no cover - not exercised here
+        return []
+
+    def drain_items(self, _target=None):  # pragma: no cover - not exercised here
         return []
 
 

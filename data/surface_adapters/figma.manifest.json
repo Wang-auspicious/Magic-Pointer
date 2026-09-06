@@ -1,0 +1,11 @@
+{
+  "id": "figma",
+  "display_name": "Figma",
+  "app_ids": ["figma.exe"],
+  "window_class_patterns": ["figma"],
+  "title_patterns": ["Figma"],
+  "object_kinds": ["figma_node", "figma_connection"],
+  "capabilities": ["read_selection", "read_nodes", "patch_nodes", "export_preview"],
+  "version": 1,
+  "notes": "Design Mode 插件按当前任务与文档会话连接；画布像素仅作为视觉回退证据。"
+}

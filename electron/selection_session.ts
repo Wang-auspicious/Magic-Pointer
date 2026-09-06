@@ -16,6 +16,7 @@ interface AgentPromptDraft {
 
 interface SelectionSession {
   token: string;
+  taskId: string;
   reason: string;
   cursor: unknown;
   state: SessionState;
@@ -40,6 +41,7 @@ interface StoreOptions {
 interface CreateOptions {
   reason?: string;
   cursor?: unknown;
+  taskId?: string;
 }
 
 interface SnapshotPayload {
@@ -58,6 +60,29 @@ interface AgentPromptDraftInput {
   contextPacket?: ContextPacket | null;
   contextPacketArtifact?: unknown;
   generatedBy?: unknown;
+}
+
+interface TaskOwner {
+  token: string;
+  taskId: string;
+  running: boolean;
+}
+
+function continuationTaskForSelection({
+  episodeTaskId,
+  taskOwners,
+}: {
+  episodeTaskId?: unknown;
+  taskOwners?: TaskOwner[];
+}): { token: string; taskId: string } | null {
+  const taskId = String(episodeTaskId || '').trim();
+  const liveOwners = (Array.isArray(taskOwners) ? taskOwners : []).filter((item) =>
+    item?.running === true && Boolean(String(item.taskId || '').trim()),
+  );
+  const owner = taskId
+    ? liveOwners.find((item) => String(item.taskId || '').trim() === taskId)
+    : liveOwners.length === 1 ? liveOwners[0] : null;
+  return owner ? { token: owner.token, taskId: String(owner.taskId).trim() } : null;
 }
 
 // A capture is a *frozen moment*, not a lease on the live screen. Once the
@@ -118,13 +143,14 @@ class SelectionSessionStore {
   }
 
   create(
-    { reason = 'manual', cursor = null }: CreateOptions = {},
+    { reason = 'manual', cursor = null, taskId = '' }: CreateOptions = {},
     now = Date.now(),
   ): SelectionSession {
     this.prune(now);
     const token = this.idFactory();
     const entry: SelectionSession = {
       token,
+      taskId: String(taskId || '').trim() || `agent-${token}`,
       reason,
       cursor,
       state: 'capturing',
@@ -259,4 +285,4 @@ class SelectionSessionStore {
   }
 }
 
-export { SelectionSessionStore };
+export { SelectionSessionStore, continuationTaskForSelection };

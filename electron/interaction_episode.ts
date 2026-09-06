@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const TaskSources = require('./task_sources');
 
 type UnknownRecord = Record<string, unknown>;
 type SlotAlias = 'this' | 'that' | 'these' | 'here';
@@ -26,6 +27,9 @@ interface InteractionEpisode {
   labels: Map<string, string>;
   objects: Map<string, NormalizedObject>;
   pendingIntent: string | null;
+  taskContext: UnknownRecord | null;
+  taskId: string | null;
+  taskInput: UnknownRecord | null;
   slots: EpisodeSlots;
   state: string;
   updatedAt: number;
@@ -34,7 +38,7 @@ interface InteractionEpisode {
 
 const ALLOWED_OBJECT_FIELDS = [
   'objectId', 'snapshotId', 'selectionSessionToken', 'app', 'windowTitle',
-  'label', 'referenceLabel', 'kind', 'capturedAt', 'expiresAt', 'content',
+  'label', 'referenceLabel', 'kind', 'capturedAt', 'expiresAt', 'content', 'frameLeaseId',
 ];
 const ALLOWED_SOURCE_FIELDS = ['app', 'title', 'path', 'annotatedPath', 'url', 'page', 'hwnd', 'processId'];
 
@@ -271,6 +275,113 @@ function spatialRelations(objects: NormalizedObject[]): UnknownRecord[] {
   return results;
 }
 
+type ExplicitBindingOptions = {
+  intent?: 'add' | 'move' | null;
+  role?: 'target' | 'source' | 'reference' | 'exclude' | 'unresolved';
+  slot?: SlotAlias;
+  taskId: string;
+};
+
+function stableSelectionPart(object: NormalizedObject): string {
+  const value = String(object.snapshotId || object.objectId || '').trim();
+  if (!value) throw new Error('a pointed task reference requires a snapshot identity');
+  return value.replace(/[^A-Za-z0-9._:-]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+function sourceKind(object: NormalizedObject): 'file' | 'document' | 'web' | 'figma' | 'capture' {
+  const source = object.source || {};
+  const app = String(object.app || source.app || '').toLowerCase();
+  const path = String(source.path || '').toLowerCase();
+  if (app.includes('figma')) return 'figma';
+  if (String(source.url || '').trim()) return 'web';
+  if (/\.(?:pdf|docx?|pptx?|xlsx?|xlsm|odt|ods|odp)$/i.test(path)) return 'document';
+  if (path) return 'file';
+  return 'capture';
+}
+
+function locatorForObject(object: NormalizedObject): UnknownRecord {
+  const source = object.source || {};
+  const browser = source.browserContext && typeof source.browserContext === 'object'
+    ? source.browserContext as UnknownRecord
+    : null;
+  if (browser && String(browser.selector || '').trim()) {
+    return {
+      kind: 'dom-node',
+      value: {
+        selector: String(browser.selector),
+        url: String((browser.page as UnknownRecord | undefined)?.url || source.url || ''),
+      },
+    };
+  }
+  if (Number.isInteger(source.page) && Number(source.page) >= 0) {
+    return {
+      kind: 'pdf-region',
+      value: { pageIndex: Number(source.page), bbox: clone(object.bbox || null) },
+    };
+  }
+  return {
+    kind: 'visual-region',
+    value: {
+      snapshotId: String(object.snapshotId || ''),
+      bbox: clone(object.bbox || null),
+      coordinateSpace: 'physical-screen-pixels',
+    },
+  };
+}
+
+function taskSourceForObject(taskId: string, object: NormalizedObject): UnknownRecord {
+  const source = object.source || {};
+  const part = stableSelectionPart(object);
+  const identity: UnknownRecord = {
+    snapshotId: String(object.snapshotId || ''),
+    selectionSessionToken: String(object.selectionSessionToken || ''),
+  };
+  for (const field of ['path', 'url', 'hwnd', 'processId']) {
+    if (source[field] !== undefined && source[field] !== '' && source[field] !== null) {
+      identity[field] = source[field];
+    }
+  }
+  const capabilities = ['read'];
+  if (String(source.path || source.url || '').trim()) capabilities.push('search');
+  return TaskSources.normalizeSourceRef({
+    sourceId: `source:${part}`,
+    taskId,
+    kind: sourceKind(object),
+    title: String(object.windowTitle || object.label || object.app || 'Pointed source'),
+    identity,
+    revision: {
+      capturedAt: String(object.capturedAt || ''),
+      snapshotId: String(object.snapshotId || ''),
+    },
+    capabilities,
+    origin: 'user-pointed',
+    parentSourceId: null,
+  });
+}
+
+function taskReferenceForObject(
+  state: UnknownRecord,
+  source: UnknownRecord,
+  object: NormalizedObject,
+  role: ExplicitBindingOptions['role'],
+  now: number,
+): UnknownRecord {
+  const next = TaskSources.nextReferenceIdentity(state);
+  return TaskSources.normalizeReferenceBinding({
+    referenceId: `reference:${stableSelectionPart(object)}`,
+    label: next.label,
+    sourceId: source.sourceId,
+    locator: locatorForObject(object),
+    role: role || 'target',
+    frameLeaseId: object.frameLeaseId || null,
+    capturedAtMs: Number.isFinite(Date.parse(String(object.capturedAt || '')))
+      ? Date.parse(String(object.capturedAt))
+      : now,
+    ordinal: next.ordinal,
+    active: true,
+  });
+}
+
 class InteractionEpisodeStore {
   ttlMs: number;
   idFactory: () => string;
@@ -296,6 +407,9 @@ class InteractionEpisodeStore {
       labels: new Map(),
       slots: { this: null, that: null, these: [], here: null },
       pendingIntent: null,
+      taskId: null,
+      taskContext: null,
+      taskInput: null,
       utterances: [],
       events: [],
     };
@@ -378,25 +492,155 @@ class InteractionEpisodeStore {
     return this.snapshot(episode);
   }
 
-  bindCommandTarget(input: UnknownRecord, command: unknown, now = Date.now()) {
-    const episode = this.ensureActive(now);
-    const mode = inferReferenceMode(command);
-    const inferredIntent = inferPendingIntent(command);
-    if (inferredIntent) episode.pendingIntent = inferredIntent;
+  bindCommandTarget(
+    input: UnknownRecord,
+    command: unknown,
+    options: ExplicitBindingOptions,
+    now = Date.now(),
+  ) {
+    const taskId = String(options?.taskId || '').trim();
+    if (!taskId) throw new Error('bindCommandTarget requires an authoritative taskId');
+    let episode = this.ensureActive(now);
+    // A submitted command creates a new Runtime task unless main explicitly
+    // passes the same taskId (the W02 continuation path). Preview objects from
+    // an earlier task must never leak merely because its UI episode TTL lives.
+    if (episode.taskId && episode.taskId !== taskId) episode = this.start(now);
+    episode.taskId = taskId;
+    const taskContext: UnknownRecord = episode.taskContext || TaskSources.emptyTaskContext(taskId);
+    episode.taskContext = taskContext;
+    const mode: SlotAlias = options?.slot || 'this';
+    if (options?.intent !== undefined) episode.pendingIntent = options.intent;
     const utterance = String(command || '').trim();
     if (utterance) episode.utterances.push(utterance.slice(0, 500));
     if (episode.utterances.length > 20) episode.utterances.splice(0, episode.utterances.length - 20);
 
     let result;
     if (mode === 'here') result = this.bindHere(input, now);
-    else if (mode === 'append' || episode.pendingIntent === 'add') result = this.appendToThese(input, now);
+    else if (mode === 'these') result = this.appendToThese(input, now);
+    else if (mode === 'that') {
+      result = this.bindPointedObject(input, now);
+      if (episode.slots.this) {
+        episode.slots.that = episode.slots.this;
+        episode.slots.this = null;
+      }
+    }
     else result = this.bindPointedObject(input, now);
+
+    const object = normalizeObject(input);
+    if (!object) return null;
+    const source: any = taskSourceForObject(taskId, object);
+    const rawRegions = Array.isArray(input.regions)
+      ? input.regions.filter((item) => item && typeof item === 'object').slice(0, 12)
+      : [];
+    const regions = rawRegions.length > 1 ? rawRegions : [null];
+    const basePart = stableSelectionPart(object);
+    const currentReferences = taskContext.references as UnknownRecord;
+    const nextOrdinal = Math.max(
+      0,
+      ...Object.values(currentReferences).map((item: any) => Number(item?.ordinal) || 0),
+    ) + 1;
+    const updates: any[] = regions.map((rawRegion: any, index: number) => {
+      const referenceId = `reference:${basePart}${regions.length > 1 ? `:${index}` : ''}`;
+      const existing: any = currentReferences[referenceId];
+      const ordinal = existing?.ordinal || nextOrdinal + index;
+      const binding = TaskSources.normalizeReferenceBinding({
+        referenceId,
+        label: existing?.label || TaskSources.referenceLabel(ordinal),
+        sourceId: source.sourceId,
+        locator: rawRegion ? {
+          kind: 'visual-region',
+          value: {
+            snapshotId: String(object.snapshotId || ''),
+            strokeIndex: Number(rawRegion.strokeIndex) || 0,
+            bbox: clone(rawRegion.bbox || null),
+            coordinateSpace: 'physical-screen-pixels',
+          },
+        } : locatorForObject(object),
+        role: options?.role || existing?.role || 'target',
+        frameLeaseId: object.frameLeaseId || existing?.frameLeaseId || null,
+        capturedAtMs: existing?.capturedAtMs || (
+          Number.isFinite(Date.parse(String(object.capturedAt || '')))
+            ? Date.parse(String(object.capturedAt))
+            : now
+        ),
+        ordinal,
+        active: true,
+      });
+      return { operation: existing ? 'correct' : 'add', binding };
+    });
+    const revision = Number(taskContext.referenceRevision || 0) + 1;
+    episode.taskContext = TaskSources.reduceTaskContext(taskContext, {
+      type: 'context/updated',
+      data: { taskId, sources: [source], referenceUpdates: updates, referenceRevision: revision },
+    });
+    const timeline: UnknownRecord[] = [];
+    if (utterance) timeline.push({
+      eventId: `utterance:${episode.id}:${now}`,
+      kind: 'utterance',
+      startMs: now,
+      endMs: now,
+      text: utterance.slice(0, 500),
+    });
+    for (const update of updates) timeline.push({
+      eventId: `point:${update.binding.referenceId}:${now}`,
+      kind: 'point', startMs: now, endMs: now,
+      referenceId: update.binding.referenceId,
+    });
+    episode.taskInput = TaskSources.normalizeTaskInput({
+      inputId: `input:${updates[0].binding.referenceId}:${revision}`,
+      taskId,
+      target: 'next-step',
+      instruction: utterance,
+      referenceUpdates: updates,
+      sourceIds: [source.sourceId],
+      timeline,
+      capturedAtMs: now,
+    });
     this.recordEvent(episode, 'utterance', {
       mode,
       intent: episode.pendingIntent,
       text: utterance.slice(0, 500),
+      referenceIds: updates.map((update) => update.binding.referenceId),
     }, now);
     return result ? this.snapshot(episode) : null;
+  }
+
+  removeTaskReference(referenceId: unknown, now = Date.now()) {
+    const episode = this.active(now);
+    const id = String(referenceId || '').trim();
+    const context = episode?.taskContext;
+    if (!episode || !context || !episode.taskId || !id) return null;
+    const current = (context.references as UnknownRecord)[id] as UnknownRecord | undefined;
+    if (!current || current.active === false) return this.snapshot(episode);
+    const update = { operation: 'remove', binding: { ...clone(current), active: false } };
+    const revision = Number(context.referenceRevision || 0) + 1;
+    episode.taskContext = TaskSources.reduceTaskContext(context, {
+      type: 'context/updated',
+      data: {
+        taskId: episode.taskId,
+        sources: [],
+        referenceUpdates: [update],
+        referenceRevision: revision,
+      },
+    });
+    episode.taskInput = TaskSources.normalizeTaskInput({
+      inputId: `input:${id}:${revision}`,
+      taskId: episode.taskId,
+      target: 'next-step',
+      instruction: '',
+      referenceUpdates: [update],
+      sourceIds: [],
+      timeline: [{
+        eventId: `point:${id}:${now}`,
+        kind: 'point',
+        startMs: now,
+        endMs: now,
+        referenceId: id,
+      }],
+      capturedAtMs: now,
+    });
+    this.recordEvent(episode, 'remove', { referenceIds: [id] }, now);
+    return this.snapshot(episode);
   }
 
   labelCurrent(label: unknown, now = Date.now()) {
@@ -449,6 +693,11 @@ class InteractionEpisodeStore {
       expiresAt: episode.expiresAt,
       slots: clone(episode.slots),
       pendingIntent: episode.pendingIntent,
+      taskId: episode.taskId,
+      sources: clone((episode.taskContext?.sources as unknown[]) || []),
+      references: clone(Object.values((episode.taskContext?.references as UnknownRecord) || {})),
+      referenceRevision: Number(episode.taskContext?.referenceRevision || 0),
+      taskInput: clone(episode.taskInput),
       utterances: clone(episode.utterances),
       labels: Object.fromEntries(episode.labels),
       spatialRelations: spatialRelations(episode.slots.these || []),
@@ -459,7 +708,7 @@ class InteractionEpisodeStore {
     const episode = this.active(now);
     if (!episode) return null;
     return {
-      version: 2,
+      version: 3,
       episodeId: episode.id,
       expiresAt: episode.expiresAt,
       pendingIntent: episode.pendingIntent,
@@ -468,24 +717,14 @@ class InteractionEpisodeStore {
       objects: clone(Array.from(episode.objects.values())),
       labels: Object.fromEntries(episode.labels),
       spatialRelations: spatialRelations(episode.slots.these || []),
+      taskId: episode.taskId,
+      sources: clone((episode.taskContext?.sources as unknown[]) || []),
+      references: clone(Object.values((episode.taskContext?.references as UnknownRecord) || {})),
+      referenceRevision: Number(episode.taskContext?.referenceRevision || 0),
+      taskInput: clone(episode.taskInput),
       recentEvents: clone(episode.events.slice(-12)),
     };
   }
-}
-
-function inferReferenceMode(command: unknown): SlotAlias | 'append' {
-  const value = String(command || '').trim().toLowerCase();
-  if (/\b(here|there)\b|这里|那里|这儿|那儿|此处|放到|写到|插入到/.test(value)) return 'here';
-  if (/\b(and|also)\s+(?:this|that|it)\b|还有这个|还有它|以及这个|再加这个|并且这个/.test(value)) return 'append';
-  if (/\b(these|those|them|both)\b|这些|那些|它们|两个|两者|一起|合并|比较|对比/.test(value)) return 'these';
-  return 'this';
-}
-
-function inferPendingIntent(command: unknown): string | null {
-  const value = String(command || '').trim().toLowerCase();
-  if (/\badd\b|添加|加入|加到|放进/.test(value)) return 'add';
-  if (/\b(?:move|put|place)\b|移动|挪到|放到/.test(value)) return 'move';
-  return null;
 }
 
 function inferReferenceLabel(command: unknown): string | null {
@@ -501,4 +740,13 @@ function inferReferenceLabel(command: unknown): string | null {
   return null;
 }
 
-module.exports = { InteractionEpisodeStore, inferPendingIntent, inferReferenceLabel, inferReferenceMode, normalizeBrowserContext, normalizeObject, normalizeTerminalEvidence, spatialRelations };
+module.exports = {
+  InteractionEpisodeStore,
+  inferReferenceLabel,
+  normalizeBrowserContext,
+  normalizeObject,
+  normalizeTerminalEvidence,
+  spatialRelations,
+  taskReferenceForObject,
+  taskSourceForObject,
+};

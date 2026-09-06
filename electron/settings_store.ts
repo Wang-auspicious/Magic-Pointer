@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { normalizeContextTracker } = require('./context_trackers');
 
 const CAPTURE_MODES = new Set([
   'follow_global',
@@ -194,14 +195,10 @@ function defaultSettings() {
       browser_devtools_enabled: true,
       browser_devtools_endpoints: ['http://127.0.0.1:9222'],
     },
-    // 收藏箱。剪贴板里出现位图就落盘，并把本地路径写回剪贴板——
-    // 这样终端里 Ctrl+V 拿到的是路径，图片编辑器里粘贴仍然是图。
-    //
-    // 少了这一段，`fabricSettings.stash` 永远是 undefined：采集虽然靠
-    // `!== false` 侥幸跑起来了，但设置页里看不到、关不掉，dir / text
-    // 这些也全都读不到。
+    // 收藏箱的常驻剪贴板监控默认关闭。用户显式加入的材料仍可收藏；
+    // 只有明确打开开关后，后台才观察后续复制内容。
     stash: {
-      clipboard: true,
+      clipboard: false,
       // 文本默认关。图片是用户明确截下来的，文本不是——每一次 Ctrl+C 都会
       // 经过这里，包括密码管理器里的那一次。
       text: false,
@@ -210,6 +207,9 @@ function defaultSettings() {
       burst_window_ms: 120000,
       dedupe_window_ms: 5000,
     },
+    // 用户明确创建的材料关注／定时任务。观察器只在桌面进程存活时运行；
+    // Runtime 状态（lastObserved/lastRun）和配置一起落盘，供休眠恢复合并使用。
+    context_trackers: [] as ReturnType<typeof normalizeContextTracker>[],
     recipe_enabled: {},
   };
 }
@@ -617,6 +617,16 @@ function validate(settings: ReturnType<typeof defaultSettings>): ReturnType<type
     }
     return [cleanProvider, cleanSession];
   }));
+  const rawContextTrackers = settings.context_trackers === undefined
+    ? defaults.context_trackers
+    : settings.context_trackers;
+  if (!Array.isArray(rawContextTrackers) || rawContextTrackers.length > 100) {
+    throw new Error('context_trackers must be a bounded list');
+  }
+  const contextTrackers = rawContextTrackers.map((tracker: unknown) => normalizeContextTracker(tracker));
+  if (new Set(contextTrackers.map((tracker: { trackerId: string }) => tracker.trackerId)).size !== contextTrackers.length) {
+    throw new Error('context_trackers contains duplicate trackerId values');
+  }
   return {
     ...defaults,
     ...settings,
@@ -633,6 +643,7 @@ function validate(settings: ReturnType<typeof defaultSettings>): ReturnType<type
     accessibility,
     connections,
     stash: { ...defaults.stash, ...(settings.stash || {}) },
+    context_trackers: contextTrackers,
     recipe_enabled: { ...(settings.recipe_enabled || {}) },
   };
 }

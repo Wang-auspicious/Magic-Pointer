@@ -1,6 +1,6 @@
 'use strict';
 
-type StashMedia = 'clip' | 'text' | 'image';
+type StashMedia = 'clip' | 'text' | 'image' | 'file';
 
 interface BitmapSample {
   width: number;
@@ -15,10 +15,17 @@ interface StashInput {
   elementName?: string;
   elementPath?: string;
   fingerprint?: string | null;
+  fileExtension?: string;
   kind?: string;
+  locator?: Record<string, unknown> | null;
   media?: StashMedia;
+  originalArtifactPath?: string;
   samples?: number[];
+  sourceId?: string;
+  sourceTimeMs?: number;
+  summary?: string;
   text?: string;
+  userCategory?: string;
   windowTitle?: string;
 }
 
@@ -272,21 +279,26 @@ function shouldDedupe(
 // 落点。按月分目录，文件名带时间戳与指纹短码——重名不可能，排序即时间序。
 // 后缀跟着载体走：文本发 .png 会得到一个打不开的文件。
 // ---------------------------------------------------------------------------
-const EXT_BY_MEDIA = { clip: 'gif', text: 'txt', image: 'png' };
+const EXT_BY_MEDIA = { clip: 'gif', text: 'txt', image: 'png', file: 'bin' };
 
 function mediaOf(kind: string): StashMedia {
   if (kind === 'clip') return 'clip';
   if (kind === 'text') return 'text';
+  if (kind === 'file') return 'file';
   return 'image';
 }
 
-function relativePath(entry: { capturedAt: number; fingerprint?: string | null; kind?: string; media?: StashMedia }): string {
+function relativePath(entry: { capturedAt: number; fingerprint?: string | null; kind?: string; media?: StashMedia; fileExtension?: string }): string {
   const d = new Date(entry.capturedAt);
   const pad = (n: number) => String(n).padStart(2, '0');
   const month = `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
   const stamp = `${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
   const short = (entry.fingerprint || 'x').split('-').pop()!.slice(0, 6);
-  const ext = EXT_BY_MEDIA[entry.media || mediaOf(entry.kind || '')] || 'png';
+  const requestedExtension = String(entry.fileExtension || '').trim().replace(/^\./, '').toLowerCase();
+  const safeExtension = /^[a-z0-9]{1,12}$/.test(requestedExtension) ? requestedExtension : '';
+  const ext = entry.media === 'file' && safeExtension
+    ? safeExtension
+    : EXT_BY_MEDIA[entry.media || mediaOf(entry.kind || '')] || 'png';
   return `${month}/${stamp}-${short}.${ext}`;
 }
 
@@ -301,7 +313,7 @@ function buildEntry(
   options: StashBuildOptions = {},
 ): { skipped: true; reason: string } | { skipped: false; entry: StashEntry } {
   const capturedAt = input.capturedAt;
-  const media = mediaOf(input.kind || '');
+  const media = input.media || mediaOf(input.kind || '');
   const fp = input.fingerprint
     || (media === 'text' ? textFingerprint(input.text) : fingerprint(input.bitmap));
   const draft = { ...input, capturedAt, fingerprint: fp };
@@ -311,7 +323,8 @@ function buildEntry(
   }
 
   const burst = assignBurst(previous, draft, options.burstWindowMs);
-  const kind = input.kind === 'clip' ? '片段' : classify(input);
+  const userCategory = String(input.userCategory || '').trim().slice(0, 80);
+  const kind = userCategory || (input.kind === 'clip' ? '片段' : classify(input));
 
   return {
     skipped: false,
@@ -323,6 +336,16 @@ function buildEntry(
       burstIsNew: burst.isNew,
       media,
       kind,
+      locator: input.locator && typeof input.locator === 'object'
+        ? structuredClone(input.locator)
+        : null,
+      originalArtifactPath: String(input.originalArtifactPath || ''),
+      sourceId: String(input.sourceId || ''),
+      sourceTimeMs: Number.isFinite(Number(input.sourceTimeMs))
+        ? Number(input.sourceTimeMs)
+        : capturedAt,
+      summary: String(input.summary || '').trim().slice(0, 2000),
+      userCategory,
       desc: describe(input),
       app: input.app || '',
       windowTitle: input.windowTitle || '',
@@ -332,7 +355,12 @@ function buildEntry(
       height: input.bitmap?.height || 0,
       // 亮度采样随条目存：跨窗口的内容相似聚类需要它（哈希串不能比相似度）。
       samples: Array.isArray(input.samples) ? input.samples.slice(0, 512) : [],
-      relPath: relativePath({ capturedAt, fingerprint: fp, media }),
+      relPath: relativePath({
+        capturedAt,
+        fingerprint: fp,
+        media,
+        fileExtension: input.fileExtension,
+      }),
     },
   };
 }

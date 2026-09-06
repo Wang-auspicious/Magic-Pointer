@@ -23,26 +23,35 @@ import re
 import threading
 import time
 import uuid
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Sequence
 
 from app.agent_runtime.tool_registry import Effect
 from app.agent_runtime.types import AgentMessage, ORIGIN_DATA, ORIGIN_INSTRUCTION, Role
-from app.artifacts import content_hash, project_artifacts
+from app.artifacts import (
+    DocumentPatch,
+    bind_document_patch_payload,
+    content_hash,
+    project_artifacts,
+)
 from app.receipts.schema import Receipt, ReceiptStatus
 from app.run_kernel import RecoveryPolicy, pending_inbox, project_operations
 
 __all__ = [
+    "bind_todo_store",
     "EventSession",
     "FileSessionStore",
+    "InboxClaim",
     "ModelSurfaceMismatch",
     "SessionCorruptionError",
     "SessionEvent",
     "SessionForkError",
     "SessionHeader",
     "cancel_interrupt_check",
+    "hydrate_todo_store",
+    "project_plan",
 ]
 
 SESSION_FORMAT_VERSION = 1
@@ -86,6 +95,70 @@ _REPAIR_GUIDANCE = {
         "先核验外部状态，或向用户确认后再行动。"
     ),
 }
+
+
+@dataclass(frozen=True, slots=True)
+class InboxClaim:
+    """One atomic claim projected into instruction and data messages."""
+
+    input_ids: tuple[str, ...]
+    instructions: tuple[str, ...]
+    messages: tuple[AgentMessage, ...]
+    reference_revision: int
+
+
+def _task_input_messages(items) -> tuple[list[AgentMessage], tuple[str, ...], tuple[str, ...]]:
+    from app.context_pack.sources import TaskInput
+
+    messages: list[AgentMessage] = []
+    input_ids: list[str] = []
+    instructions: list[str] = []
+    for item in items:
+        if item.payload:
+            task_input = TaskInput.from_dict(item.payload)
+            input_ids.append(task_input.input_id)
+            if task_input.instruction:
+                instructions.append(task_input.instruction)
+                messages.append(AgentMessage(
+                    role=Role.USER,
+                    content=task_input.instruction,
+                    tool_call_id=None,
+                    name=None,
+                    origin=ORIGIN_INSTRUCTION,
+                ))
+            material = {
+                "schemaVersion": 1,
+                "inputId": task_input.input_id,
+                "taskId": task_input.task_id,
+                "target": task_input.target,
+                "referenceUpdates": [item.to_dict() for item in task_input.reference_updates],
+                "sourceIds": list(task_input.source_ids),
+                "timeline": [item.to_dict() for item in task_input.timeline],
+                "capturedAtMs": task_input.captured_at_ms,
+            }
+            if task_input.reference_updates or task_input.source_ids or task_input.timeline:
+                messages.append(AgentMessage(
+                    role=Role.USER,
+                    content=(
+                        "[TaskInput context update · origin=data]\n"
+                        + json.dumps(material, ensure_ascii=False, separators=(",", ":"))
+                    ),
+                    tool_call_id=None,
+                    name=None,
+                    origin=ORIGIN_DATA,
+                    injected=True,
+                ))
+            continue
+        input_ids.append(item.message_id)
+        instructions.append(item.text)
+        messages.append(AgentMessage(
+            role=Role.USER,
+            content=item.text,
+            tool_call_id=None,
+            name=None,
+            origin=ORIGIN_INSTRUCTION,
+        ))
+    return messages, tuple(input_ids), tuple(instructions)
 
 
 @contextmanager
@@ -187,6 +260,168 @@ def _canonical_bytes(value: Any) -> bytes:
 def _snapshot_json(value: Any) -> Any:
     """Validate and detach one durable value through a single JSON form."""
     return json.loads(_canonical_bytes(value).decode("utf-8"))
+
+
+def _normalized_plan(value: Any) -> list[dict[str, str]]:
+    """Return the bounded TodoStore wire form for one complete plan."""
+    from app.agent_runtime.todo_store import TodoStore
+
+    if not isinstance(value, list):
+        raise ValueError("plan must be an array")
+    return TodoStore().write(value)
+
+
+def _event_type_and_data(event: Any) -> tuple[str, dict[str, Any]]:
+    if isinstance(event, Mapping):
+        return str(event.get("type") or ""), dict(event.get("data") or {})
+    return (
+        str(getattr(event, "type", "") or ""),
+        dict(getattr(event, "data", {}) or {}),
+    )
+
+
+def project_plan(events: Sequence[Any]) -> list[dict[str, str]]:
+    """Project the newest valid complete task plan.
+
+    New sessions use the explicit ``plan/updated`` event. Sessions written by
+    older builds only have Todo's JSON tool result, so that is a read-only
+    compatibility source until the next update writes a first-class event.
+    """
+    materialized = tuple(events)
+    for event in reversed(materialized):
+        event_type, data = _event_type_and_data(event)
+        if event_type == "plan/updated":
+            try:
+                return _normalized_plan(data.get("plan"))
+            except ValueError:
+                continue
+        if event_type in {"operation/settled", "tool/result"}:
+            raw_message = data.get("message")
+            if not isinstance(raw_message, Mapping):
+                continue
+            name = str(raw_message.get("name") or "")
+            if name not in {"Todo", "todo_write"}:
+                continue
+            try:
+                payload = json.loads(str(raw_message.get("content") or ""))
+                if not isinstance(payload, Mapping) or "plan" not in payload:
+                    continue
+                return _normalized_plan(payload["plan"])
+            except (json.JSONDecodeError, TypeError, ValueError):
+                continue
+        else:
+            continue
+    return []
+
+
+def hydrate_todo_store(session: Any, todo_store: Any) -> list[dict[str, str]]:
+    """Restore TodoStore without making hydration look like a user update."""
+    plan = project_plan(session.events)
+    missing = object()
+    callback = getattr(todo_store, "on_update", missing)
+    if callback is not missing:
+        todo_store.on_update = None
+    try:
+        stored = todo_store.write(plan)
+    finally:
+        if callback is not missing:
+            todo_store.on_update = callback
+    return [dict(item) for item in stored]
+
+
+def bind_todo_store(
+    session: Any,
+    todo_store: Any,
+    *,
+    on_update: Any = None,
+) -> list[dict[str, str]]:
+    """Hydrate a task-local TodoStore, then persist every real replacement."""
+    hydrated = hydrate_todo_store(session, todo_store)
+
+    def persist(snapshot: Any) -> None:
+        normalized = _normalized_plan(snapshot)
+        session.record_plan_updated(normalized)
+        if on_update is not None:
+            with suppress(Exception):
+                on_update([dict(item) for item in normalized])
+            # UI progress is a best-effort projection. The append-only session
+            # is authoritative, so a closed renderer must not make the Todo
+            # tool roll a successfully persisted plan backward.
+
+    todo_store.on_update = persist
+    if hydrated and on_update is not None:
+        with suppress(Exception):
+            on_update([dict(item) for item in hydrated])
+    return hydrated
+
+
+def _pending_input_entry(item: Any) -> dict[str, Any]:
+    payload = dict(item.payload or {})
+    return {
+        "inputId": str(payload.get("inputId") or item.message_id),
+        "target": item.target,
+        "instruction": str(payload.get("instruction") or item.text)[:1200],
+        "sourceIds": [str(value) for value in payload.get("sourceIds") or []],
+        "capturedAtMs": payload.get("capturedAtMs", item.time_ms),
+    }
+
+
+def _recovery_action_entry(operation: Any) -> dict[str, Any]:
+    return {
+        "operationId": operation.operation_id,
+        "name": operation.tool_name,
+        "effect": operation.effect,
+        "dispatched": operation.dispatched,
+        "outcome": str(operation.outcome),
+        "recoveryPolicy": str(operation.recovery_policy),
+    }
+
+
+def _latest_consumed_steer(
+    events: Sequence[Any],
+    *,
+    through_index: int,
+) -> dict[str, Any] | None:
+    message_payloads: dict[str, dict[str, Any]] = {}
+    latest: dict[str, Any] | None = None
+    for event in events[:through_index + 1]:
+        event_type, data = _event_type_and_data(event)
+        if event_type == "inbox/message":
+            payload = data.get("payload")
+            if isinstance(payload, Mapping):
+                message_payloads[str(data.get("messageId") or "")] = dict(payload)
+            continue
+        if event_type != "inbox/consumed":
+            continue
+        instructions: list[str] = []
+        for raw in data.get("messages") or []:
+            if not isinstance(raw, Mapping) or raw.get("injected"):
+                continue
+            if str(raw.get("role") or "") != Role.USER.value:
+                continue
+            content = str(raw.get("content") or "").strip()
+            if content:
+                instructions.append(content[:1200])
+        source_ids: list[str] = []
+        for message_id in data.get("messageIds") or []:
+            payload = message_payloads.get(str(message_id), {})
+            for source_id in payload.get("sourceIds") or []:
+                normalized = str(source_id)
+                if normalized and normalized not in source_ids:
+                    source_ids.append(normalized)
+        context_update = data.get("contextUpdate")
+        latest = {
+            "inputIds": [str(value) for value in data.get("inputIds") or []],
+            "target": str(data.get("target") or ""),
+            "instructions": instructions,
+            "sourceIds": source_ids,
+            "referenceRevision": (
+                context_update.get("referenceRevision")
+                if isinstance(context_update, Mapping)
+                else None
+            ),
+        }
+    return latest
 
 
 def _event_hash(payload_without_hash: Mapping[str, Any]) -> str:
@@ -454,6 +689,18 @@ class EventSession:
         """Recheck turn invariants after refreshing under the file lock."""
         if not self._events and event_type != "session/created":
             raise SessionCorruptionError("first event must be session/created")
+        if event_type == "context/updated":
+            from app.context_pack.source_store import validate_context_update
+
+            validate_context_update(data, session_id=self.id, events=self._events)
+        if event_type == "plan/updated":
+            if set(data) != {"taskId", "plan"}:
+                raise ValueError("plan/updated requires exactly taskId and plan")
+            if str(data.get("taskId") or "") != self.id:
+                raise ValueError("plan/updated taskId must match EventSession")
+            normalized = _normalized_plan(data.get("plan"))
+            if normalized != data.get("plan"):
+                raise ValueError("plan/updated plan must use the normalized Todo wire form")
         if event_type == "turn/start":
             opened = self.open_turn
             if opened is not None:
@@ -536,8 +783,46 @@ class EventSession:
             message_id = str(data.get("messageId") or "")
             target = str(data.get("target") or "")
             text = str(data.get("text") or "")
-            if not message_id or not text.strip() or target not in {"next-step", "next-turn"}:
-                raise ValueError("inbox message requires id, text and a supported target")
+            raw_payload = data.get("payload")
+            task_input = None
+            if raw_payload is not None:
+                from app.context_pack.source_store import (
+                    task_sources as projected_task_sources,
+                    validate_context_update,
+                )
+                from app.context_pack.sources import TaskInput
+
+                task_input = TaskInput.from_dict(raw_payload)
+                if task_input.task_id != self.id or task_input.target != target:
+                    raise ValueError("TaskInput taskId/target must match durable inbox")
+                if task_input.instruction != text.strip():
+                    raise ValueError("TaskInput instruction differs from inbox text")
+                known_sources = {
+                    source.source_id for source in projected_task_sources(self._events)
+                }
+                if not set(task_input.source_ids).issubset(known_sources):
+                    raise ValueError("TaskInput sourceIds must belong to the target task")
+                if task_input.reference_updates:
+                    from app.context_pack.source_store import reference_revision
+
+                    validate_context_update(
+                        {
+                            "taskId": self.id,
+                            "sources": [],
+                            "referenceUpdates": [
+                                update.to_dict() for update in task_input.reference_updates
+                            ],
+                            "referenceRevision": reference_revision(self._events) + 1,
+                        },
+                        session_id=self.id,
+                        events=self._events,
+                    )
+            if (
+                not message_id
+                or target not in {"next-step", "next-turn"}
+                or (task_input is None and not text.strip())
+            ):
+                raise ValueError("inbox message requires id, content and a supported target")
             if any(
                 event.type == "inbox/message"
                 and event.data.get("messageId") == message_id
@@ -557,13 +842,26 @@ class EventSession:
             ):
                 raise InboxClaimConflict("inbox messages are no longer pending")
             raw_messages = data.get("messages")
-            if not isinstance(raw_messages, list) or len(raw_messages) != len(selected):
-                raise ValueError("inbox consumption requires matching surface messages")
+            expected_messages, input_ids, _instructions = _task_input_messages(selected)
+            if not isinstance(raw_messages, list):
+                raise ValueError("inbox consumption requires surface messages")
             projected = [AgentMessage.from_dict(raw) for raw in raw_messages]
             if any(message.role is not Role.USER for message in projected):
                 raise ValueError("inbox consumption may only append user steer messages")
-            if [message.content for message in projected] != [item.text for item in selected]:
-                raise ValueError("inbox surface messages differ from durable steer text")
+            if projected != expected_messages:
+                raise ValueError("inbox surface messages differ from durable TaskInput")
+            if tuple(str(value) for value in data.get("inputIds") or ()) != input_ids:
+                raise ValueError("inbox consumption inputIds differ from selected TaskInput")
+            context_update = data.get("contextUpdate")
+            if not isinstance(context_update, dict):
+                raise ValueError("inbox consumption requires an atomic context update")
+            from app.context_pack.source_store import validate_context_update
+
+            validate_context_update(
+                context_update,
+                session_id=self.id,
+                events=self._events,
+            )
         if event_type == "model/request":
             projected = [message.to_dict() for message in self._surface]
             expected_hash = hashlib.sha256(_canonical_bytes(projected)).hexdigest()
@@ -576,6 +874,8 @@ class EventSession:
                 )
         if event_type in {"artifact/generated", "artifact/patched", "artifact/accepted"}:
             self._validate_artifact_event(event_type, data)
+        if event_type == "artifact/applied":
+            self._validate_artifact_applied(data)
         if event_type == "receipt/issued":
             self._validate_receipt_event(data)
 
@@ -596,6 +896,7 @@ class EventSession:
                 raise ValueError("generated draft must be revision 1")
             if str(data.get("contentHash") or "") != content_hash(content):
                 raise ValueError("contentHash does not match content")
+            self._validate_artifact_payload(data, artifact_id=artifact_id, revision=1)
             return
         if current is None:
             raise ValueError(f"unknown artifact {artifact_id!r}")
@@ -607,13 +908,43 @@ class EventSession:
                 raise ValueError("patch author must be user or agent")
             if int(data.get("revision") or 0) != current.revision + 1:
                 raise ValueError("patched revision must follow the current draft")
+            if int(data.get("baseRevision") or 0) != current.revision:
+                raise ValueError("patch baseRevision is not current")
             if str(data.get("contentHash") or "") != content_hash(content):
                 raise ValueError("contentHash does not match content")
+            self._validate_artifact_payload(
+                data,
+                artifact_id=artifact_id,
+                revision=current.revision + 1,
+            )
             return
         if int(data.get("revision") or 0) != current.revision:
             raise ValueError("accepted revision is not current")
         if str(data.get("contentHash") or "") != current.content_hash:
             raise ValueError("contentHash does not match the current draft")
+
+    @staticmethod
+    def _validate_artifact_payload(
+        data: Mapping[str, Any],
+        *,
+        artifact_id: str,
+        revision: int,
+    ) -> None:
+        kind = str(data.get("kind") or "text").strip()
+        if not kind or len(kind) > 80:
+            raise ValueError("artifact kind must be a non-empty string of at most 80 chars")
+        payload = data.get("patchPayload")
+        if kind == "document_patch":
+            if not isinstance(payload, Mapping):
+                raise ValueError("document_patch artifact requires patchPayload")
+            patch = DocumentPatch.from_dict(payload)
+            if (
+                patch.artifact_id != artifact_id
+                or patch.artifact_revision != revision
+            ):
+                raise ValueError("document patch is not bound to the artifact revision")
+        elif payload is not None:
+            raise ValueError("patchPayload is only supported for document_patch artifacts")
 
     def _validate_receipt_event(self, data: Mapping[str, Any]) -> None:
         if not str(data.get("receiptId") or ""):
@@ -623,6 +954,41 @@ class EventSession:
             ReceiptStatus(status)
         except ValueError as exc:
             raise ValueError(f"unknown receipt status {status!r}") from exc
+
+    def _validate_artifact_applied(self, data: Mapping[str, Any]) -> None:
+        artifact_id = str(data.get("artifactId") or "")
+        current = {
+            item.artifact_id: item for item in project_artifacts(self._events)
+        }.get(artifact_id)
+        if current is None:
+            raise ValueError("artifact apply result names an unknown artifact")
+        revision = data.get("artifactRevision")
+        if (
+            isinstance(revision, bool)
+            or not isinstance(revision, int)
+            or revision < 1
+            or revision > current.revision
+        ):
+            raise ValueError("artifact apply result has an invalid revision")
+        patch_id = str(data.get("patchId") or "")
+        receipt_id = str(data.get("receiptId") or "")
+        if not patch_id or not receipt_id:
+            raise ValueError("artifact apply result requires patchId and receiptId")
+        if not any(
+            event.type == "receipt/issued"
+            and str(event.data.get("receiptId") or "") == receipt_id
+            for event in self._events
+        ):
+            raise ValueError("artifact apply result receipt is not recorded")
+        result = data.get("result")
+        if not isinstance(result, Mapping):
+            raise ValueError("artifact apply result payload is invalid")
+        if (
+            str(result.get("artifactId") or "") != artifact_id
+            or result.get("artifactRevision") != revision
+            or str(result.get("patchId") or "") != patch_id
+        ):
+            raise ValueError("artifact apply result binding does not match")
 
     def start_turn(self, *, hold_lease: bool = False) -> int:
         if hold_lease:
@@ -661,6 +1027,17 @@ class EventSession:
             event_type,
             {"message": message.to_dict()},
             surface_op="append",
+        )
+
+    def record_plan_updated(
+        self,
+        plan: Sequence[Mapping[str, Any]],
+    ) -> SessionEvent:
+        """Persist one complete, bounded plan replacement."""
+        normalized = _normalized_plan(list(plan))
+        return self.append(
+            "plan/updated",
+            {"taskId": self.id, "plan": normalized},
         )
 
     def replace_messages(
@@ -827,36 +1204,48 @@ class EventSession:
         target: str,
         *,
         message_id: str | None = None,
+        payload: Mapping[str, Any] | None = None,
     ) -> SessionEvent:
         """Persist one cross-process steer without mutating model history yet."""
+        data: dict[str, Any] = {
+            "messageId": str(message_id or uuid.uuid4()),
+            "target": str(target),
+            "text": str(text).strip(),
+        }
+        if payload is not None:
+            data["payload"] = dict(payload)
         return self.append(
             "inbox/message",
-            {
-                "messageId": str(message_id or uuid.uuid4()),
-                "target": str(target),
-                "text": str(text),
-            },
+            data,
         )
 
     def pending_inbox(self, target: str | None = None):
         self._synchronize()
         return pending_inbox(self._events, target)
 
-    def claim_inbox(self, target: str) -> list[str]:
-        """Atomically consume pending steer and expose it to the model surface."""
+    def claim_task_inputs(self, target: str) -> InboxClaim:
+        """Atomically consume steer text, material payload and context update."""
+        from app.context_pack.source_store import reference_revision
+        from app.context_pack.sources import TaskInput
+
         items = self.pending_inbox(target)
         if not items:
-            return []
-        messages = [
-            AgentMessage(
-                role=Role.USER,
-                content=item.text,
-                tool_call_id=None,
-                name=None,
-                origin=ORIGIN_INSTRUCTION,
-            )
-            for item in items
-        ]
+            return InboxClaim((), (), (), reference_revision(self._events))
+        messages, input_ids, instructions = _task_input_messages(items)
+        reference_updates = []
+        for item in items:
+            if item.payload:
+                task_input = TaskInput.from_dict(item.payload)
+                reference_updates.extend(
+                    update.to_dict() for update in task_input.reference_updates
+                )
+        current_revision = reference_revision(self._events)
+        context_update = {
+            "taskId": self.id,
+            "sources": [],
+            "referenceUpdates": reference_updates,
+            "referenceRevision": current_revision + (1 if reference_updates else 0),
+        }
         try:
             self.append(
                 "inbox/consumed",
@@ -864,12 +1253,23 @@ class EventSession:
                     "target": str(target),
                     "messageIds": [item.message_id for item in items],
                     "messages": [message.to_dict() for message in messages],
+                    "inputIds": list(input_ids),
+                    "contextUpdate": context_update,
                 },
                 surface_op="append_many",
             )
         except InboxClaimConflict:
-            return []
-        return [item.text for item in items]
+            return InboxClaim((), (), (), reference_revision(self._events))
+        return InboxClaim(
+            input_ids=input_ids,
+            instructions=instructions,
+            messages=tuple(messages),
+            reference_revision=context_update["referenceRevision"],
+        )
+
+    def claim_inbox(self, target: str) -> list[str]:
+        """Legacy text projection; structured callers use claim_task_inputs."""
+        return list(self.claim_task_inputs(target).instructions)
 
     def record_model_response(
         self,
@@ -904,17 +1304,36 @@ class EventSession:
             },
         )
 
-    def record_artifact_generated(self, content: str) -> SessionEvent:
+    def record_artifact_generated(
+        self,
+        content: str,
+        *,
+        kind: str = "text",
+        patch_payload: Mapping[str, Any] | None = None,
+    ) -> SessionEvent:
         """Persist a completed answer as revision 1 of a new draft."""
         text = str(content or "")
+        artifact_id = uuid.uuid4().hex
+        resolved_kind = str(kind or "").strip()
+        resolved_payload = (
+            bind_document_patch_payload(
+                patch_payload,
+                artifact_id=artifact_id,
+                artifact_revision=1,
+            )
+            if resolved_kind == "document_patch" and patch_payload is not None
+            else patch_payload
+        )
         return self.append(
             "artifact/generated",
             {
-                "artifactId": uuid.uuid4().hex,
+                "artifactId": artifact_id,
                 "revision": 1,
                 "content": text,
                 "contentHash": content_hash(text),
                 "author": "model",
+                "kind": resolved_kind,
+                "patchPayload": resolved_payload,
             },
         )
 
@@ -924,6 +1343,9 @@ class EventSession:
         content: str,
         *,
         author: str,
+        expected_revision: int,
+        kind: str | None = None,
+        patch_payload: Mapping[str, Any] | None = None,
     ) -> SessionEvent:
         """Record a user or agent edit. Later edits void a previous approval."""
         text = str(content or "")
@@ -932,15 +1354,38 @@ class EventSession:
         }.get(str(artifact_id))
         if current is None:
             raise ValueError(f"unknown artifact {artifact_id!r}")
+        if (
+            isinstance(expected_revision, bool)
+            or not isinstance(expected_revision, int)
+            or expected_revision != current.revision
+        ):
+            raise RuntimeError(
+                f"expected revision {expected_revision}; current revision {current.revision}"
+            )
+        next_revision = current.revision + 1
+        resolved_kind = str(kind if kind is not None else current.kind).strip()
+        if resolved_kind == "document_patch" and patch_payload is None:
+            raise ValueError("editing a document_patch requires the revised patchPayload")
+        resolved_payload = (
+            bind_document_patch_payload(
+                patch_payload,
+                artifact_id=current.artifact_id,
+                artifact_revision=next_revision,
+            )
+            if resolved_kind == "document_patch" and patch_payload is not None
+            else patch_payload
+        )
         return self.append(
             "artifact/patched",
             {
                 "artifactId": str(artifact_id),
-                "revision": current.revision + 1,
+                "revision": next_revision,
                 "baseRevision": current.revision,
                 "content": text,
                 "contentHash": content_hash(text),
                 "author": str(author),
+                "kind": resolved_kind,
+                "patchPayload": resolved_payload,
             },
         )
 
@@ -949,15 +1394,21 @@ class EventSession:
         artifact_id: str,
         *,
         revision: int,
-        content_hash: str,
     ) -> SessionEvent:
         """Approve one exact revision. The hash is what the approval is of."""
+        current = {
+            item.artifact_id: item for item in project_artifacts(self.events)
+        }.get(str(artifact_id))
+        if current is None:
+            raise ValueError(f"unknown artifact {artifact_id!r}")
+        if int(revision) != current.revision:
+            raise ValueError("accepted revision is not current")
         return self.append(
             "artifact/accepted",
             {
                 "artifactId": str(artifact_id),
                 "revision": int(revision),
-                "contentHash": str(content_hash),
+                "contentHash": current.content_hash,
             },
         )
 
@@ -1072,11 +1523,11 @@ class EventSession:
 
         Returns None when the newest turn completed naturally, is still
         awaiting user input, or the session has no turns. Otherwise returns
-        {turn, reason, task_input, steps}: what the interrupted run was
-        doing, where it stopped, and which tool steps settled — exactly what
-        a continuation prompt needs. One-shot by construction: the next
-        turn appended after this read becomes the newest turn and the
-        reduction moves past it.
+        the unfinished objective plus the current durable plan, sources,
+        references, artifact revisions, pending TaskInput and risk-aware
+        operation recovery state. One-shot by construction: the next turn
+        appended after this read becomes the newest turn and the reduction
+        moves past it.
         """
         self._synchronize()
         last_end = None
@@ -1123,11 +1574,54 @@ class EventSession:
                 })
         if not task_input:
             return None
+        from app.context_pack.source_scope import scope_from_events
+        from app.context_pack.source_store import task_references, task_sources
+
+        # Availability belongs to the live bridge: the durable reducer cannot
+        # know whether a Figma document was re-paired or a browser target was
+        # reacquired after restart. It exposes only source identity facts.
+        sources = [item.to_model_dict() for item in task_sources(self._events)]
+        references = [
+            item.to_model_dict()
+            for item in task_references(self._events)
+            if item.active
+        ]
+        artifacts = [
+            {
+                "artifactId": item.artifact_id,
+                "revision": item.revision,
+                "kind": item.kind,
+                "state": str(item.state),
+                "acceptedRevision": item.accepted_revision,
+            }
+            for item in project_artifacts(self._events)
+        ]
+        pending_inputs = [
+            _pending_input_entry(item)
+            for item in pending_inbox(self._events)
+        ]
+        recovery_actions = [
+            _recovery_action_entry(item)
+            for item in project_operations(self._events)
+            if item.recovery_policy is not RecoveryPolicy.NONE
+        ]
+        scope = scope_from_events(self._events, task_id=self.id)
         return {
             "turn": turn,
             "reason": reason,
             "task_input": task_input,
             "steps": steps[-20:],
+            "plan": project_plan(self._events),
+            "sources": sources,
+            "references": references,
+            "artifacts": artifacts,
+            "pendingInputs": pending_inputs,
+            "latestSteer": _latest_consumed_steer(
+                self._events,
+                through_index=cutoff,
+            ),
+            "scopeGrants": [item.to_dict() for item in scope.grants],
+            "recoveryActions": recovery_actions,
         }
 
     def repair_interrupted_turn(self) -> int:

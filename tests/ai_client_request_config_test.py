@@ -65,6 +65,25 @@ def test_empty_request_config_keeps_legacy_local_secret_fallback(monkeypatch) ->
         )
 
 
+def test_effort_without_a_model_profile_keeps_local_model_configuration(monkeypatch) -> None:
+    for name in ("OPENAI_API_KEY", "OPENAI_BASE_URL", "MAGIC_POINTER_MODEL", "MAGIC_POINTER_API_MODE"):
+        monkeypatch.delenv(name, raising=False)
+    values = {
+        "openai_key.txt": "local-secret",
+        "openai_base_url.txt": "https://local.example/v1",
+        "model.txt": "configured-model",
+        "model_api_mode.txt": "messages",
+    }
+    monkeypatch.setattr(ai_client, "read_local_secret", values.get)
+
+    with ai_client.request_ai_config({"effort": "xhigh"}):
+        assert ai_client.get_ai_config() == (
+            "local-secret", "https://local.example/v1", "configured-model",
+        )
+        assert ai_client.get_ai_api_mode() == "messages"
+        assert ai_client.get_ai_effort() == "xhigh"
+
+
 def test_missing_profile_credential_names_selected_provider_not_openai_file(monkeypatch) -> None:
     monkeypatch.setattr(ai_client, "read_local_secret", lambda _name: None)
 

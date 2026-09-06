@@ -34,6 +34,8 @@ assert.strictEqual(witness.effort.selected, 'Max');
 assert.deepStrictEqual(witness.effort.labels, ['Low', 'Medium', 'High', 'Extra', 'Max']);
 assert.strictEqual(witness.home.view, 'models');
 assert.strictEqual(witness.home.range, '30d');
+assert.strictEqual(witness.stash.noteDialogOpen, true);
+assert.strictEqual(witness.stash.noteInput, true);
 assert(witness.home.modelRows > 0);
 assert.strictEqual(witness.tooltip.open, true);
 assert.match(witness.tooltip.text, /messages/);

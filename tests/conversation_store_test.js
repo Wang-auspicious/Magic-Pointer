@@ -117,6 +117,12 @@ const tooled = store.appendTurn({
   usedBackend: 'openai-compatible',
   agentSessionId: 'agent-studio-abc123',
   hasPendingWork: true,
+  taskContext: {
+    taskId: 'agent-studio-abc123',
+    referenceRevision: 2,
+    sources: [{ sourceId: 'source:attachment:D:/work/brief.pptx', title: 'brief.pptx' }],
+    references: [{ referenceId: 'ref-b', sourceId: 'source:attachment:D:/work/brief.pptx', role: 'target' }],
+  },
 });
 assert.strictEqual(tooled.turns.length, 1);
 assert.strictEqual(tooled.turns[0].events.length, 2, '工具链事件必须随回合持久化');
@@ -133,6 +139,8 @@ assert.strictEqual(tooled.turns[0].timingMs, 910, 'real turn time must survive p
 assert.strictEqual(tooled.turns[0].usedBackend, 'openai-compatible', 'model backend must survive persistence');
 assert.strictEqual(tooled.agentSessionId, 'agent-studio-abc123', 'durable Agent session identity must survive on the thread');
 assert.strictEqual(tooled.hasPendingWork, true, 'unfinished work must be visible at thread level');
+assert.strictEqual(tooled.taskContext.referenceRevision, 2,
+  'Studio must retain the latest task-material projection on the conversation');
 const tooledAgain = createConversationStore({ baseDir: dir, now: () => clock }).get(tooled.id);
 assert.strictEqual(tooledAgain.turns[0].events.length, 2, '重开 store 后工具链事件仍在');
 assert.strictEqual(tooledAgain.turns[0].modelUsage.outputTokens, 30, '重开 store 后 token usage 仍在');
@@ -141,6 +149,21 @@ assert.strictEqual(tooledAgain.turns[0].trajectory[0].seq, 1, '重开 store 后 
 assert.strictEqual(tooledAgain.turns[0].trajectory[0].promptCache, true,
   'prompt cache request header must survive bridge → store persistence');
 assert.strictEqual(tooledAgain.hasPendingWork, true, '重开 store 后待续标记仍在');
+assert.strictEqual(tooledAgain.taskContext.sources[0].sourceId, 'source:attachment:D:/work/brief.pptx',
+  'reopening Studio must recover exact source identity for material selection');
+store.appendTurn({
+  conversationId: tooled.id,
+  question: '改用补充材料',
+  answer: '好。',
+  taskContext: {
+    taskId: 'agent-studio-abc123',
+    referenceRevision: 3,
+    sources: [{ sourceId: 'source:attachment:D:/work/new.pdf', title: 'new.pdf' }],
+    references: [],
+  },
+});
+assert.strictEqual(store.get(tooled.id).taskContext.referenceRevision, 3,
+  'a later authoritative projection must replace the stale material selection');
 
 // 没有 events 的旧回合读回来是空数组，不崩。
 const plain = store.appendTurn({ newConversation: true, question: '普通一问', answer: '普通一答。' });
@@ -247,6 +270,9 @@ console.log('conversation store test ok (permission memo)');
   const conversation = liveStore.appendTurn({ question: '圈选的问题', answer: '', outcome: '进行中' });
   assert.strictEqual(conversation.turns.length, 1);
   assert.strictEqual(conversation.turns[0].outcome, '进行中');
+  const startedAt = conversation.turns[0].startedAt;
+  assert.strictEqual(conversation.turns[0].at, startedAt, 'at/startedAt 记录真实开始时间');
+  assert.strictEqual(conversation.turns[0].completedAt, undefined, '进行中不能伪造完成时间');
 
   const updated = liveStore.updateTurn({
     conversationId: conversation.id,
@@ -261,6 +287,25 @@ console.log('conversation store test ok (permission memo)');
   assert.strictEqual(reread.turns[0].answer, '流式到达的答案');
   assert.strictEqual(reread.turns[0].outcome, '已完成');
   assert.strictEqual(reread.turns[0].modelUsage.totalTokens, 4321);
+  assert.strictEqual(reread.turns[0].startedAt, startedAt, '流式更新不能覆盖开始时间');
+  assert.strictEqual(reread.turns[0].at, startedAt, '兼容字段 at 也不再随流式更新漂移');
+  assert.ok(reread.turns[0].completedAt > startedAt, '终态要记录真实完成时间');
+
+  const wrap = liveStore.eventSummaries({
+    fromMs: startedAt - 1,
+    toMs: reread.turns[0].completedAt + 1,
+    conversationIds: [conversation.id],
+  });
+  assert.strictEqual(wrap.materialAvailable, true);
+  assert.strictEqual(wrap.events.length, 1);
+  assert.strictEqual(wrap.events[0].startedAt, startedAt);
+  assert.strictEqual(wrap.events[0].completedAt, reread.turns[0].completedAt);
+  assert.ok(!Object.hasOwn(wrap.events[0], 'durationMs'), 'DailyWrap 不推断窗口停留时长');
+  assert.deepStrictEqual(
+    liveStore.eventSummaries({ fromMs: 1, toMs: 2 }).events,
+    [],
+    '无真实记录的时间范围必须保持空',
+  );
 
   assert.strictEqual(liveStore.updateTurn({ conversationId: 'nope' }).ok, false,
     'unknown conversation id fails honestly');

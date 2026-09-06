@@ -59,7 +59,7 @@ FrameLease foundation (8·11 Phase A) is fully landed and verified — do not re
 
 Long-run gaps are audited in `docs/2026-08-19-LONG_RUN_CAPABILITY_GAP.md` (four-way read-only audit, every finding carries file:line). Read it before proposing long-task work; do not re-derive the list.
 
-The headline: long tasks currently cannot start, let alone survive. Stage kills the Python child at 60s and Studio at 120s (`electron/main.ts:3933-3934`, `electron/main.ts:1187`), and `run_agent_turn` fuses at 90 model rounds (`app/fabric/engine.py:983-984`). The loop kernel is far ahead of the shell — its rolling budget already renews on every productive round. Batch A in that document (lift the hard ceiling) blocks everything else.
+The 2026-08-19 hard-ceiling finding is historical: `electron/python_bridge_runner.ts` now renews its deadline on bridge activity, and `app/fabric/engine.py` has a 1000-round emergency fuse. Do not reimplement Batch A. Current work follows `PRD.md`: office/design sources, precise edits, durable task context and actual application acceptance. W00–W10 are implemented; W11 acceptance must distinguish real application results from protocol tests. Figma remains incomplete until a real plugin ID and native application acceptance are available. The progress ledger and `docs/STATUS.md` record the verified delivery boundary.
 
 After each completed phase, update the progress ledger in `docs/design/MAGIC_POINTER_HARNESS_20260811.md`.
 

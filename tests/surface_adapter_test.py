@@ -15,9 +15,16 @@ from app.surface_adapter import (  # noqa: E402
     SurfaceAdapterRegistry,
     get_surface_registry,
 )
+from app.surface_adapter.adapters.dingtalk_adapter import (  # noqa: E402
+    DINGTALK_MANIFEST,
+    DingTalkSurfaceAdapter,
+)
+from app.surface_adapter.adapters.figma_adapter import (  # noqa: E402
+    FIGMA_MANIFEST,
+)
 from app.surface_adapter.adapters.wechat_adapter import (  # noqa: E402
-    WeChatSurfaceAdapter,
     WECHAT_MANIFEST,
+    WeChatSurfaceAdapter,
 )
 
 
@@ -68,6 +75,18 @@ def test_manifest_round_trip_via_file() -> None:
     manifest = load_manifest(path)
     assert manifest.id == "wechat"
     assert any("wechat" in app_id.casefold() for app_id in manifest.app_ids)
+
+
+def test_figma_surface_manifest_is_packaged_with_native_node_capabilities() -> None:
+    from app.surface_adapter.manifest import load_manifest
+
+    manifest = load_manifest(Path("data/surface_adapters/figma.manifest.json"))
+
+    assert manifest.id == "figma"
+    assert manifest.app_ids == ("figma.exe",)
+    assert {"read_selection", "read_nodes", "patch_nodes", "export_preview"}.issubset(
+        manifest.capabilities
+    )
 
 
 def test_registry_returns_first_claiming_adapter() -> None:
@@ -188,9 +207,15 @@ def test_wechat_adapter_opaque_tree_returns_anchor(monkeypatch):
     adapter = WeChatSurfaceAdapter()
     result = adapter.resolve({"hwnd": 1, "title": "微信"}, None, None)
     assert result is not None
-    assert result.objects[0].kind == "message_list"
-    assert result.objects[0].text == ""
-    assert result.objects[0].evidence == "pixel:region_anchor"
+    assert result.objects[0].kind == "conversation"
+    anchor = next(item for item in result.objects if item.kind == "message_list")
+    assert anchor.text == ""
+    assert anchor.evidence == "pixel:region_anchor"
+    assert anchor.fields["requiresVisualObservation"] is True
+    assert anchor.fields["missingSemantics"] == [
+        "orderedMessages", "speaker", "time", "replyTo", "attachments",
+    ]
+    assert not any(item.kind == "chat_message" for item in result.objects)
     assert "opaque_tree_region_anchor" in result.notes
 
 
@@ -207,25 +232,122 @@ def test_wechat_adapter_uses_container_uia_when_exposed(monkeypatch):
     adapter = WeChatSurfaceAdapter()
     result = adapter.resolve({"hwnd": 1}, None, None)
     assert result is not None
-    assert result.objects[0].text == "消息一"
-    assert result.objects[0].evidence == "uia:container"
+    message_list = next(item for item in result.objects if item.kind == "message_list")
+    assert message_list.text == "消息一"
+    assert message_list.evidence == "uia:container"
 
 
-def test_default_registry_has_wechat() -> None:
+def test_wechat_adapter_orders_exposed_message_objects_without_fake_semantics(monkeypatch):
+    from app.surface_adapter.adapters import wechat_adapter
+
+    fake_probe = type("ProbeResult", (), {
+        "ok": True,
+        "data": {
+            "text": "later\nearlier",
+            "automation_id": "message-pane",
+            "region_elements": [
+                {
+                    "text": "later",
+                    "control_type": "ControlType.Text",
+                    "automation_id": "",
+                    "rect": [30, 220, 200, 30],
+                },
+                {
+                    "text": "earlier",
+                    "control_type": "ControlType.Text",
+                    "automation_id": "",
+                    "rect": [30, 120, 200, 30],
+                },
+            ],
+        },
+    })()
+    monkeypatch.setattr(wechat_adapter, "_run_uia_selection_probe", lambda *args, **kwargs: fake_probe)
+
+    result = WeChatSurfaceAdapter().resolve(
+        {"hwnd": 41, "process_id": 7, "title": "Project chat"},
+        None,
+        {"x": 0, "y": 0, "width": 500, "height": 500},
+    )
+
+    assert result is not None
+    messages = [item for item in result.objects if item.kind == "chat_message"]
+    assert [item.text for item in messages] == ["earlier", "later"]
+    assert [item.order_index for item in messages] == [1, 2]
+    assert all(item.fields["speaker"] is None for item in messages)
+    assert all(item.fields["time"] is None for item in messages)
+    assert all(item.fields["nativeMessageId"] is None for item in messages)
+    assert all(item.fields["requiresVisualObservation"] is True for item in messages)
+    assert result.objects[0].fields["conversationIdentity"]["conversationKey"] != "Project chat"
+
+
+def test_same_chat_title_in_two_windows_does_not_become_the_identity(monkeypatch):
+    from app.surface_adapter.adapters import wechat_adapter
+
+    fake_probe = type("ProbeResult", (), {"ok": False, "data": {}})()
+    monkeypatch.setattr(wechat_adapter, "_run_uia_selection_probe", lambda *args, **kwargs: fake_probe)
+    adapter = WeChatSurfaceAdapter()
+
+    first = adapter.resolve({"hwnd": 100, "title": "同名群"}, None, None)
+    second = adapter.resolve({"hwnd": 200, "title": "同名群"}, None, None)
+
+    assert first is not None and second is not None
+    first_identity = first.objects[0].fields["conversationIdentity"]
+    second_identity = second.objects[0].fields["conversationIdentity"]
+    assert first_identity["title"] == second_identity["title"] == "同名群"
+    assert first_identity["conversationKey"] != second_identity["conversationKey"]
+
+
+def test_dingtalk_manifest_and_adapter_use_the_same_honest_chat_contract(monkeypatch):
+    from app.surface_adapter.adapters import wechat_adapter
+
+    assert DINGTALK_MANIFEST.matches_window({"process_name": "DingTalk.exe"}) is True
+    assert DINGTALK_MANIFEST.matches_window({"process_name": "not-dingtalk.exe"}) is False
+    fake_probe = type("ProbeResult", (), {"ok": False, "data": {}})()
+    monkeypatch.setattr(wechat_adapter, "_run_uia_selection_probe", lambda *args, **kwargs: fake_probe)
+
+    result = DingTalkSurfaceAdapter().resolve(
+        {"hwnd": 88, "process_name": "DingTalk.exe", "title": "钉钉"}, None, None
+    )
+
+    assert result is not None
+    assert result.adapter_id == "dingtalk"
+    assert result.objects[0].fields["conversationIdentity"]["adapterId"] == "dingtalk"
+    assert next(item for item in result.objects if item.kind == "message_list").fields[
+        "requiresVisualObservation"
+    ] is True
+
+
+def test_default_registry_has_wechat_dingtalk_and_figma() -> None:
     registry = get_surface_registry()
     assert any(
         getattr(adapter, "manifest", None) is WECHAT_MANIFEST
         for adapter in registry.list_adapters()
     )
+    assert any(
+        getattr(adapter, "manifest", None) is DINGTALK_MANIFEST
+        for adapter in registry.list_adapters()
+    )
+    assert any(
+        getattr(adapter, "manifest", None) is FIGMA_MANIFEST
+        for adapter in registry.list_adapters()
+    )
 
 
-def test_surface_harness_boots_builtin_wechat_adapter() -> None:
+def test_surface_harness_boots_builtin_chat_adapters() -> None:
     from app.harness.builtin_bundle import boot_surface_context
 
     report = boot_surface_context(plugin_dir=Path("data/plugins"))
     registry = report.ctx.get("surface_adapters")
     assert any(
         getattr(adapter, "manifest", None) is WECHAT_MANIFEST
+        for adapter in registry.list_adapters()
+    )
+    assert any(
+        getattr(adapter, "manifest", None) is DINGTALK_MANIFEST
+        for adapter in registry.list_adapters()
+    )
+    assert any(
+        getattr(adapter, "manifest", None) is FIGMA_MANIFEST
         for adapter in registry.list_adapters()
     )
     report.ctx.unload()

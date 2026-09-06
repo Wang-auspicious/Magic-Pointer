@@ -11,7 +11,13 @@ const lock = fs.readFileSync(lockPath, 'utf8');
 
 assert(script.includes('pr-stage-'), 'runtime must build in a short unique staging directory');
 assert(script.includes("Substring(0, 8)"), 'runtime staging nonce must stay short enough for deep dependency paths');
-assert(script.includes('python-runtime.previous-'), 'runtime replacement must preserve a rollback directory');
+assert(script.includes('pr-prev-$shortNonce'),
+  'runtime replacement must use a short rollback directory so deep wheel paths remain removable on Windows');
+assert(script.includes("'pr-prev-*'"), 'interrupted short rollback directories must be cleaned on the next run');
+assert(script.includes('function Remove-BuildTree'),
+  'runtime cleanup must use a build-root-scoped deletion helper for deep Windows wheel paths');
+assert(script.includes("'\\\\?\\' + $fullPath"),
+  'runtime cleanup must opt into the Win32 extended-length path form');
 assert(script.includes('Move-Item -LiteralPath $RuntimePath -Destination $BackupPath'), 'previous runtime must move aside before replacement');
 assert(script.includes('Move-Item -LiteralPath $StagePath -Destination $RuntimePath'), 'staged runtime must replace only after successful preparation');
 assert(script.includes('Move-Item -LiteralPath $BackupPath -Destination $RuntimePath'), 'failed replacement must restore previous runtime');
@@ -57,9 +63,11 @@ assert(/& \$stagePython\s+-I\s+-c\s+'import base64,sys;exec\(base64\.b64decode\(
   'staged interpreter must be independently validated');
 assert(script.includes('function Test-RuntimeImports'),
   'runtime preparation and cache reuse must share a real dependency import probe');
-for (const moduleName of ['PIL', 'fitz', 'openai', 'onnxruntime', 'rapidocr', 'sounddevice', 'whisper', 'torch', 'opencc']) {
+for (const moduleName of ['PIL', 'fitz', 'docx', 'pptx', 'openpyxl', 'openai', 'onnxruntime', 'rapidocr', 'sounddevice', 'whisper', 'torch', 'opencc']) {
   assert(script.includes(`import ${moduleName}`), `runtime import probe must load ${moduleName}`);
 }
+assert(script.includes('runtime_document_smoke.py'),
+  'runtime preparation must create and reopen real PDF, DOCX, PPTX and XLSX fixtures');
 assert(/Test-RuntimeCache[\s\S]*?Test-RuntimeImports/.test(script),
   'cache hits must be rejected when bundled dependency imports are incomplete');
 assert(/Staged Python dependency imports failed/.test(script),
@@ -80,7 +88,7 @@ const lockedEntries = lock
 assert(lockedEntries.length > 0, 'lock must contain package entries');
 assert(lockedEntries.every((entry) => entry.includes('--hash=sha256:')),
   'every locked package must carry a sha256 hash');
-for (const packageName of ['openai', 'pillow', 'pymupdf', 'pyperclip', 'onnxruntime', 'rapidocr', 'openai-whisper', 'sounddevice', 'opencc', 'torch']) {
+for (const packageName of ['openai', 'pillow', 'pymupdf', 'python-docx', 'python-pptx', 'openpyxl', 'pyperclip', 'onnxruntime', 'rapidocr', 'openai-whisper', 'sounddevice', 'opencc', 'torch']) {
   assert(new RegExp(`^${packageName}==`, 'mi').test(lock), `lock must include ${packageName}`);
 }
 

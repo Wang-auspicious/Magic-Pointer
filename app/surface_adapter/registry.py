@@ -111,7 +111,11 @@ def get_surface_registry() -> SurfaceAdapterRegistry:
     global _default_registry
     if _default_registry is None:
         _default_registry = SurfaceAdapterRegistry()
+        from app.surface_adapter.adapters.dingtalk_adapter import DingTalkSurfaceAdapter
+        from app.surface_adapter.adapters.figma_adapter import FigmaSurfaceAdapter
         from app.surface_adapter.adapters.wechat_adapter import WeChatSurfaceAdapter
 
         _default_registry.register(WeChatSurfaceAdapter())
+        _default_registry.register(DingTalkSurfaceAdapter())
+        _default_registry.register(FigmaSurfaceAdapter())
     return _default_registry

@@ -844,7 +844,8 @@ class FabricEngine:
         egress_scope = self._egress_scope(plan)
         if egress_scope is not None:
             permission = self.settings.permission_for(plan.recipe_id, plan.risk.value)
-            if str(permission.get("decision") or "deny") != "deny":
+            decision = permission.get("decision") if isinstance(permission, dict) else permission
+            if str(decision or "deny") != "deny":
                 self.egress_gate.allow(egress_scope)
             try:
                 self.egress_gate.assert_allowed(

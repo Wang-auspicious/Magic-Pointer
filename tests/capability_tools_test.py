@@ -22,7 +22,7 @@ from app.fabric.capability_tools import (  # noqa: E402
     register_find_capability,
 )
 from app.fabric.catalog import RECIPE_CATALOG  # noqa: E402
-from app.fabric.intent_router import is_non_destination_recipe  # noqa: E402
+from app.fabric.catalog import is_non_destination_recipe  # noqa: E402
 
 
 def _registry(*, propose=None, **kwargs) -> ToolRegistry:

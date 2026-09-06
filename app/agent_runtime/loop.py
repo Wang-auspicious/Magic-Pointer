@@ -172,7 +172,6 @@ from app.agent_runtime.types import (
     Terminal,
     ToolCall,
     ToolResult,
-    Trajectory,
     TransitionReason,
     TurnState,
     with_transition,
@@ -180,6 +179,7 @@ from app.agent_runtime.types import (
 from app.artifacts.projection import project_artifacts
 from app.evidence.contract import Evidence
 from app.receipts.projection import compose_receipt
+from app.run_kernel import RecoveryPolicy, project_operations
 from app.governance.cancellation import (
     CancellationRegistry,
     CancellationScope,
@@ -325,7 +325,6 @@ class LoopParams:
     registry: ToolRegistry
     client: LoopModelClient
     emergency_turn_fuse: int = 1000
-    trajectory: Trajectory | None = None
     budgets: Mapping[Stage, BudgetPolicy] = field(default_factory=lambda: DEFAULT_BUDGETS)
     cancel_registry: CancellationRegistry | None = None
     stop_hooks: Sequence = ()
@@ -372,6 +371,8 @@ class LoopParams:
     ``_execute_one`` after the mode table, never overriding mode DENY or
     non-grantable effects (external send / destructive / purchase).
     """
+    source_scope: Any = None
+    """TaskSourceScope checked against each tool's effective post-hook input."""
     """Optional TodoStore-like object that exposes ``read()`` -> list[dict].
 
     Used by partial-delivery message construction when the loop hits
@@ -463,6 +464,8 @@ class Steered:
 
     turn: int
     texts: tuple[str, ...]
+    input_ids: tuple[str, ...] = ()
+    reference_revision: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -471,6 +474,8 @@ class FollowupContinued:
 
     turn: int
     texts: tuple[str, ...]
+    input_ids: tuple[str, ...] = ()
+    reference_revision: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -693,6 +698,93 @@ def _truncation_messages(
             params.session.append_message(truncated_result)
         messages = params.session.derive_messages()
     return messages
+
+
+@dataclass(frozen=True, slots=True)
+class _ClaimedInput:
+    texts: tuple[str, ...]
+    input_ids: tuple[str, ...]
+    reference_revision: int | None
+    messages: tuple[AgentMessage, ...]
+
+
+def _claim_task_input(params: LoopParams, target: str) -> _ClaimedInput:
+    """Drain the optional memory lane into the durable TaskInput lane."""
+    ephemeral_items = params.inbox.drain_items(target) if params.inbox is not None else []
+    if params.session is not None:
+        for item in ephemeral_items:
+            params.session.enqueue_inbox(
+                item.text,
+                target,
+                payload=item.payload,
+            )
+        claim_task_inputs = getattr(params.session, "claim_task_inputs", None)
+        if callable(claim_task_inputs):
+            claim = claim_task_inputs(target)
+            return _ClaimedInput(
+                texts=tuple(claim.instructions),
+                input_ids=tuple(claim.input_ids),
+                reference_revision=claim.reference_revision,
+                messages=tuple(claim.messages),
+            )
+        texts = tuple(params.session.claim_inbox(target))
+        messages = tuple(AgentMessage(
+            role=Role.USER,
+            content=text,
+            tool_call_id=None,
+            name=None,
+            origin=ORIGIN_INSTRUCTION,
+        ) for text in texts)
+        return _ClaimedInput(texts, (), None, messages)
+
+    messages: list[AgentMessage] = []
+    texts: list[str] = []
+    input_ids: list[str] = []
+    from app.context_pack.sources import TaskInput
+
+    for item in ephemeral_items:
+        if not item.payload:
+            texts.append(item.text)
+            input_ids.append(f"memory-{item.sequence}")
+            messages.append(AgentMessage(
+                role=Role.USER,
+                content=item.text,
+                tool_call_id=None,
+                name=None,
+                origin=ORIGIN_INSTRUCTION,
+            ))
+            continue
+        task_input = TaskInput.from_dict(item.payload)
+        input_ids.append(task_input.input_id)
+        if task_input.instruction:
+            texts.append(task_input.instruction)
+            messages.append(AgentMessage(
+                role=Role.USER,
+                content=task_input.instruction,
+                tool_call_id=None,
+                name=None,
+                origin=ORIGIN_INSTRUCTION,
+            ))
+        material = {
+            "schemaVersion": 1,
+            "inputId": task_input.input_id,
+            "referenceUpdates": [update.to_dict() for update in task_input.reference_updates],
+            "sourceIds": list(task_input.source_ids),
+            "timeline": [event.to_dict() for event in task_input.timeline],
+        }
+        if task_input.reference_updates or task_input.source_ids or task_input.timeline:
+            messages.append(AgentMessage(
+                role=Role.USER,
+                content=(
+                    "[TaskInput context update · origin=data]\n"
+                    + json.dumps(material, ensure_ascii=False, separators=(",", ":"))
+                ),
+                tool_call_id=None,
+                name=None,
+                origin=ORIGIN_DATA,
+                injected=True,
+            ))
+    return _ClaimedInput(tuple(texts), tuple(input_ids), None, tuple(messages))
 
 
 async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
@@ -921,39 +1013,26 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
             if loop_scope.is_cancelled:
                 raise CancelledError("cancelled before model call")
 
-            ephemeral_steer = (
-                params.inbox.drain("next-step") if params.inbox is not None else []
-            )
-            if params.session is not None:
-                for text in ephemeral_steer:
-                    params.session.enqueue_inbox(text, "next-step")
-                steered_texts = params.session.claim_inbox("next-step")
-            else:
-                steered_texts = ephemeral_steer
-            if steered_texts:
-                steer_messages = [
-                    AgentMessage(
-                        role=Role.USER,
-                        content=text,
-                        tool_call_id=None,
-                        name=None,
-                        origin=ORIGIN_INSTRUCTION,
-                    )
-                    for text in steered_texts
-                ]
+            steer_claim = _claim_task_input(params, "next-step")
+            if steer_claim.messages:
                 state = with_transition(
                     state,
                     TransitionReason.TOOL_RESULT,
                     messages=(
                         params.session.derive_messages()
                         if params.session is not None
-                        else [*state.messages, *steer_messages]
+                        else [*state.messages, *steer_claim.messages]
                     ),
                     tool_calls_pending=[],
                     turn_count=turn_number,
                 )
                 validate_messages(state.messages)
-                yield Steered(turn=turn_number, texts=tuple(steered_texts))
+                yield Steered(
+                    turn=turn_number,
+                    texts=steer_claim.texts,
+                    input_ids=steer_claim.input_ids,
+                    reference_revision=steer_claim.reference_revision,
+                )
 
             if params.session is not None:
                 params.session.record_model_request(
@@ -1210,35 +1289,15 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                     yield VerificationNudged(turn=turn_number)
                     turn_number += 1
                     continue
-                ephemeral_followups = (
-                    params.inbox.drain("next-turn")
-                    if params.inbox is not None
-                    else []
-                )
-                if params.session is not None:
-                    for body in ephemeral_followups:
-                        params.session.enqueue_inbox(body, "next-turn")
-                    followup_texts = params.session.claim_inbox("next-turn")
-                else:
-                    followup_texts = ephemeral_followups
-                if followup_texts:
-                    followup_messages = [
-                        AgentMessage(
-                            role=Role.USER,
-                            content=body,
-                            tool_call_id=None,
-                            name=None,
-                            origin=ORIGIN_INSTRUCTION,
-                        )
-                        for body in followup_texts
-                    ]
+                followup_claim = _claim_task_input(params, "next-turn")
+                if followup_claim.messages:
                     state = with_transition(
                         state,
                         TransitionReason.TOOL_RESULT,
                         messages=(
                             params.session.derive_messages()
                             if params.session is not None
-                            else [*messages, *followup_messages]
+                            else [*messages, *followup_claim.messages]
                         ),
                         tool_calls_pending=[],
                         turn_count=turn_number,
@@ -1246,7 +1305,12 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                         last_result=results[-1] if results else None,
                     )
                     yield TurnFinished(state)
-                    yield FollowupContinued(turn=turn_number, texts=tuple(followup_texts))
+                    yield FollowupContinued(
+                        turn=turn_number,
+                        texts=followup_claim.texts,
+                        input_ids=followup_claim.input_ids,
+                        reference_revision=followup_claim.reference_revision,
+                    )
                     turn_number += 1
                     continue
                 if params.session is not None and str(text or "").strip():
@@ -1399,6 +1463,72 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                     interrupt_check=params.interrupt_check,
                     keepalive=keepalive,
                     persist_dir=params.tool_result_dir,
+                    source_scope=params.source_scope,
+                )
+
+            def block_mutation_with_pending_input(call: ToolCall) -> ToolResult | None:
+                try:
+                    effect = spec_effect(registry.get(call.name), call.arguments)
+                except KeyError:
+                    return None
+                if effect is Effect.READ:
+                    return None
+                if params.session is not None:
+                    for operation in reversed(
+                        project_operations(params.session.events)
+                    ):
+                        if (
+                            operation.tool_name != call.name
+                            or operation.arguments != dict(call.arguments)
+                            or operation.recovery_policy
+                            not in {
+                                RecoveryPolicy.VERIFY_BEFORE_RETRY,
+                                RecoveryPolicy.NEVER_REPLAY,
+                            }
+                        ):
+                            continue
+                        policy = str(operation.recovery_policy)
+                        guidance = (
+                            "This external outcome may already exist. Do not "
+                            "repeat it automatically; use a fresh harness-owned "
+                            "confirmation after checking external state."
+                            if operation.recovery_policy is RecoveryPolicy.NEVER_REPLAY
+                            else
+                            "Read back and verify the target first, then use a "
+                            "fresh confirmed action instead of replaying this call."
+                        )
+                        return ToolResult(
+                            tool_call_id=call.id,
+                            value=(
+                                "RECOVERY_RETRY_BLOCKED: an earlier identical "
+                                f"operation has recoveryPolicy={policy}. {guidance}"
+                            ),
+                            is_error=True,
+                            failure_type=FailureType.PERMISSION_DENIED,
+                            used_backend=None,
+                            latency_ms=0.0,
+                        )
+                has_pending = (
+                    params.inbox is not None
+                    and params.inbox.pending("next-step") > 0
+                )
+                if params.session is not None:
+                    has_pending = has_pending or bool(
+                        params.session.pending_inbox("next-step")
+                    )
+                if not has_pending:
+                    return None
+                return ToolResult(
+                    tool_call_id=call.id,
+                    value=(
+                        "STEER_PENDING: a newer user instruction or reference "
+                        "update arrived before this mutating tool started. "
+                        "The call was not dispatched; consume TaskInput and replan."
+                    ),
+                    is_error=True,
+                    failure_type=FailureType.STEER_PENDING,
+                    used_backend=None,
+                    latency_ms=0.0,
                 )
 
             schedule = schedule_tool_calls(
@@ -1410,6 +1540,7 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                 execute=execute_scheduled,
                 max_parallel_tool_calls=params.max_parallel_tool_calls,
                 is_cancelled=lambda: loop_scope.is_cancelled,
+                before_dispatch=block_mutation_with_pending_input,
             )
             operation_ids: dict[int, str] = {}
             for scheduled in schedule:
@@ -1666,16 +1797,10 @@ def _first_messages(params: LoopParams) -> list[AgentMessage]:
     combination), so the instruction channel filter never sees screen data
     (invariant: screen content is always data).
     """
-    if params.trajectory is not None:
-        content = params.trajectory.first_user_message.replace(
-            "{input}", params.user_input
-        )
-    else:
-        content = params.user_input
     messages = [
         AgentMessage(
             role=Role.USER,
-            content=content,
+            content=params.user_input,
             tool_call_id=None,
             name=None,
             origin=ORIGIN_INSTRUCTION,
@@ -1735,9 +1860,8 @@ def _select_tool_schemas(
     *,
     extra_names: Sequence[str] = (),
 ) -> list[dict[str, object]]:
-    """Tool list: trajectory-recommended (registered ones) first, then tools
-    discovered via find_capability (``extra_names``), then the rest of the
-    registry in registration order, truncated at tool_limit."""
+    """Tool list: discovered tools first, then the registry in registration
+    order, truncated at ``tool_limit``."""
 
     schemas, _dropped = _select_tool_schemas_with_dropped(
         params,
@@ -1755,10 +1879,6 @@ def _select_tool_schemas_with_dropped(
     registry = params.registry
     specs = {spec.name: spec for spec in registry.list()}
     selected: list[str] = []
-    if params.trajectory is not None:
-        for name in params.trajectory.recommended_tools:
-            if name in specs and name not in selected:
-                selected.append(name)
     for name in extra_names:
         if name in specs and name not in selected:
             selected.append(name)
@@ -2008,6 +2128,7 @@ def _execute_one(
     interrupt_check: Callable[[], bool] | None = None,
     keepalive: Callable[[str], None] | None = None,
     persist_dir: str | None = None,
+    source_scope: Any = None,
 ) -> ToolResult:
     """Validate, gate, execute and normalize one tool call.
 
@@ -2164,6 +2285,31 @@ def _execute_one(
                     used_backend=None,
                     latency_ms=None,
                 )
+    if source_scope is not None:
+        try:
+            from app.context_pack.source_scope import authorize_access, resolve_access
+
+            access = resolve_access(spec, execution_args)
+            effective_scope = source_scope() if callable(source_scope) else source_scope
+            decision = authorize_access(effective_scope, access)
+        except Exception as exc:
+            return ToolResult(
+                tool_call_id=call.id,
+                value=f"source access is not evaluable: {type(exc).__name__}: {exc}",
+                is_error=True,
+                failure_type=FailureType.PERMISSION_DENIED,
+                used_backend=None,
+                latency_ms=None,
+            )
+        if not decision.allowed:
+            return ToolResult(
+                tool_call_id=call.id,
+                value=f"source access denied: {decision.reason}",
+                is_error=True,
+                failure_type=FailureType.PERMISSION_DENIED,
+                used_backend=None,
+                latency_ms=None,
+            )
     effective_call = ToolCall(
         id=call.id,
         name=call.name,

@@ -1,0 +1,130 @@
+{
+  "taskId": "task-alpha",
+  "sources": [
+    {
+      "sourceId": "source-brief-a",
+      "taskId": "task-alpha",
+      "kind": "file",
+      "title": "项目简报",
+      "identity": { "absolutePath": "D:/Materials/A/brief.pdf" },
+      "revision": { "mtimeNs": 101, "size": 2048 },
+      "capabilities": ["read", "search"],
+      "origin": "user-attached",
+      "parentSourceId": null
+    },
+    {
+      "sourceId": "source-brief-b",
+      "taskId": "task-alpha",
+      "kind": "file",
+      "title": "项目简报",
+      "identity": { "absolutePath": "D:/Materials/B/brief.pdf" },
+      "revision": { "mtimeNs": 202, "size": 4096 },
+      "capabilities": ["read", "search", "follow"],
+      "origin": "user-pointed",
+      "parentSourceId": null
+    }
+  ],
+  "initialUpdates": [
+    {
+      "operation": "add",
+      "binding": {
+        "referenceId": "ref-a",
+        "label": "A",
+        "sourceId": "source-brief-a",
+        "locator": { "kind": "pdf-region", "value": { "pageIndex": 0, "textQuote": "预算" } },
+        "role": "target",
+        "frameLeaseId": "frame-lease-a",
+        "capturedAtMs": 1000,
+        "ordinal": 1,
+        "active": true
+      }
+    },
+    {
+      "operation": "add",
+      "binding": {
+        "referenceId": "ref-b",
+        "label": "B",
+        "sourceId": "source-brief-b",
+        "locator": { "kind": "pdf-region", "value": { "pageIndex": 4, "textQuote": "里程碑" } },
+        "role": "reference",
+        "frameLeaseId": "frame-lease-b",
+        "capturedAtMs": 1100,
+        "ordinal": 2,
+        "active": true
+      }
+    },
+    {
+      "operation": "add",
+      "binding": {
+        "referenceId": "ref-c",
+        "label": "C",
+        "sourceId": "source-brief-a",
+        "locator": { "kind": "visual-region", "value": { "rect": [20, 30, 200, 80], "coordinateSpace": "physical_screen_pixels" } },
+        "role": "source",
+        "frameLeaseId": "frame-lease-c",
+        "capturedAtMs": 1200,
+        "ordinal": 3,
+        "active": true
+      }
+    }
+  ],
+  "updates": [
+    {
+      "operation": "correct",
+      "binding": {
+        "referenceId": "ref-b",
+        "label": "B",
+        "sourceId": "source-brief-b",
+        "locator": { "kind": "pdf-region", "value": { "pageIndex": 4, "textQuote": "里程碑" } },
+        "role": "target",
+        "frameLeaseId": "frame-lease-b",
+        "capturedAtMs": 1100,
+        "ordinal": 2,
+        "active": true
+      }
+    },
+    {
+      "operation": "remove",
+      "binding": {
+        "referenceId": "ref-a",
+        "label": "A",
+        "sourceId": "source-brief-a",
+        "locator": { "kind": "pdf-region", "value": { "pageIndex": 0, "textQuote": "预算" } },
+        "role": "target",
+        "frameLeaseId": "frame-lease-a",
+        "capturedAtMs": 1000,
+        "ordinal": 1,
+        "active": false
+      }
+    }
+  ],
+  "coverage": {
+    "extent": "page",
+    "readRanges": [{ "pageStart": 0, "pageEnd": 0 }],
+    "totalUnits": 12,
+    "complete": false,
+    "nextCursor": "page:1",
+    "missingReason": null
+  },
+  "referenceOnlyInput": {
+    "inputId": "input-correction-1",
+    "taskId": "task-alpha",
+    "target": "next-step",
+    "instruction": "",
+    "referenceUpdates": [],
+    "sourceIds": ["source-brief-b"],
+    "timeline": [{ "eventId": "point-1", "kind": "point", "startMs": 1300, "endMs": 1320, "referenceId": "ref-b" }],
+    "capturedAtMs": 1320
+  },
+  "otherTaskSource": {
+    "sourceId": "source-other",
+    "taskId": "task-beta",
+    "kind": "file",
+    "title": "项目简报",
+    "identity": { "absolutePath": "D:/Materials/C/brief.pdf" },
+    "revision": { "mtimeNs": 303, "size": 1024 },
+    "capabilities": ["read"],
+    "origin": "user-attached",
+    "parentSourceId": null
+  }
+}

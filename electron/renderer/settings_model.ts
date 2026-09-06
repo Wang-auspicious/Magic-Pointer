@@ -122,8 +122,8 @@ const SETTINGS_PAGES: SettingsPage[] = [
   { id: 'storage', group: 'Customize', icon: 'ic-stash', title: 'Storage', description: 'Choose how captures, artifacts, and audit data remain on this device.', sections: [
     { title: 'Collection', rows: [
       { path: 'stash.dir', control: 'text', label: 'Save directory' },
-      { path: 'stash.clipboard', control: 'toggle', label: 'Collect clipboard images' },
-      { path: 'stash.text', control: 'toggle', label: 'Collect clipboard text' },
+      { path: 'stash.clipboard', control: 'toggle', label: 'Continuously collect clipboard images', description: 'Off by default. You can still add an image to task materials explicitly.' },
+      { path: 'stash.text', control: 'toggle', label: 'Continuously collect clipboard text', description: 'Off by default. This watches future clipboard changes; adding a chosen file or note does not require it.' },
       { path: 'stash.burst_window_ms', control: 'select', label: 'Group within', options: [option(30000, '30 seconds'), option(120000, '2 minutes'), option(600000, '10 minutes')] },
     ] },
     { title: 'Retention', rows: [

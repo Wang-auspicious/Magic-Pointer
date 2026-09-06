@@ -171,6 +171,49 @@ def test_durable_inbox_claim_is_atomic_and_never_double_consumed(tmp_path: Path)
     assert consumed[0].surface_op == "append_many"
 
 
+def test_structured_inbox_claim_separates_instruction_and_material_and_replays(
+    tmp_path: Path,
+) -> None:
+    from app.agent_runtime.types import ORIGIN_DATA, ORIGIN_INSTRUCTION
+    from app.context_pack.source_store import register_source, task_references
+    from app.context_pack.sources import SourceRef, TaskInput
+
+    store = FileSessionStore(tmp_path)
+    session = store.create("structured-claim")
+    register_source(session, SourceRef.from_dict({
+        "sourceId": "source-b", "taskId": session.id, "kind": "document",
+        "title": "提案.pptx", "identity": {"path": "D:/B/提案.pptx"},
+        "revision": {"observedAt": "now"}, "capabilities": ["read"],
+        "origin": "user-pointed", "parentSourceId": None,
+    }))
+    task_input = TaskInput.from_dict({
+        "inputId": "input-b", "taskId": session.id, "target": "next-step",
+        "instruction": "改 B，A 只参考",
+        "referenceUpdates": [{"operation": "add", "binding": {
+            "referenceId": "ref-b", "label": "B", "sourceId": "source-b",
+            "locator": {"kind": "slide-shape", "value": {"slideId": "s2", "shapeId": "p7"}},
+            "role": "target", "frameLeaseId": "lease-b", "capturedAtMs": 10,
+            "ordinal": 2, "active": True,
+        }}],
+        "sourceIds": ["source-b"],
+        "timeline": [{"eventId": "u1", "kind": "utterance", "startMs": 9, "endMs": 10, "text": "改 B，A 只参考"}],
+        "capturedAtMs": 10,
+    })
+    session.enqueue_inbox(task_input.instruction, task_input.target, payload=task_input.to_dict())
+
+    claim = session.claim_task_inputs("next-step")
+
+    assert claim.input_ids == ("input-b",)
+    assert claim.reference_revision == 1
+    assert [message.origin for message in claim.messages] == [ORIGIN_INSTRUCTION, ORIGIN_DATA]
+    assert "referenceUpdates" not in claim.messages[0].content
+    assert '"referenceId":"ref-b"' in claim.messages[1].content
+    resumed = store.resume(session.id)
+    assert resumed.pending_inbox("next-step") == ()
+    assert task_references(resumed.events)[0].locator.value == {"slideId": "s2", "shapeId": "p7"}
+    assert [message.origin for message in resumed.derive_messages()[-2:]] == [ORIGIN_INSTRUCTION, ORIGIN_DATA]
+
+
 def test_loop_consumes_preexisting_durable_steer_before_model_request(tmp_path: Path) -> None:
     session = FileSessionStore(tmp_path).create("durable-steer")
     session.enqueue_inbox("不要写，只解释", "next-step", message_id="steer-1")
@@ -196,6 +239,94 @@ def test_loop_consumes_preexisting_durable_steer_before_model_request(tmp_path: 
 
     assert received == [["修改这个", "不要写，只解释"]]
     assert session.pending_inbox("next-step") == ()
+
+
+def test_pending_task_input_blocks_each_write_before_dispatch_and_replans(
+    tmp_path: Path,
+) -> None:
+    from app.agent_runtime.loop import Steered
+    from app.context_pack.source_store import apply_reference_updates, register_source
+    from app.context_pack.sources import ReferenceUpdate, SourceRef, TaskInput
+
+    session = FileSessionStore(tmp_path).create("steer-before-write")
+    for source_id in ("source-a", "source-b"):
+        register_source(session, SourceRef.from_dict({
+            "sourceId": source_id, "taskId": session.id, "kind": "document",
+            "title": "同名.pptx", "identity": {"path": f"D:/{source_id}/同名.pptx"},
+            "revision": {"observedAt": "now"}, "capabilities": ["read", "patch"],
+            "origin": "user-pointed", "parentSourceId": None,
+        }))
+    original = [
+        ReferenceUpdate.from_dict({"operation": "add", "binding": {
+            "referenceId": f"ref-{letter}", "label": letter.upper(),
+            "sourceId": f"source-{letter}",
+            "locator": {"kind": "slide-shape", "value": {"slideId": letter, "shapeId": "old"}},
+            "role": "target" if letter == "a" else "reference",
+            "frameLeaseId": f"lease-{letter}", "capturedAtMs": 1,
+            "ordinal": index, "active": True,
+        }})
+        for index, letter in enumerate(("a", "b"), 1)
+    ]
+    apply_reference_updates(session, original)
+    corrections = []
+    for update, role in zip(original, ("reference", "target"), strict=True):
+        raw = update.binding.to_dict()
+        raw["role"] = role
+        corrections.append({"operation": "correct", "binding": raw})
+    task_input = TaskInput.from_dict({
+        "inputId": "input-switch-to-b", "taskId": session.id,
+        "target": "next-step", "instruction": "刚才 A 只是参考，改 B",
+        "referenceUpdates": corrections, "sourceIds": ["source-a", "source-b"],
+        "timeline": [{"eventId": "u-switch", "kind": "utterance", "startMs": 2, "endMs": 3, "text": "刚才 A 只是参考，改 B"}],
+        "capturedAtMs": 3,
+    })
+    executed: list[str] = []
+    registry = ToolRegistry()
+    registry.register(ToolSpec(
+        name="patch_slide", description="write", input_schema={"type": "object", "properties": {}, "required": []},
+        execute=lambda scope=None: executed.append("patched") or "patched",
+        effect=Effect.REVERSIBLE_WRITE,
+    ))
+
+    class Backend:
+        def __init__(self) -> None:
+            self.round = 0
+
+        def generate(self, messages, tools, budget_ms=None, cancel_scope=None):
+            self.round += 1
+            if self.round == 1:
+                # This arrives after the model chose the old write but before
+                # dispatch. Every mutating call must observe it.
+                session.enqueue_inbox(
+                    task_input.instruction,
+                    task_input.target,
+                    message_id=task_input.input_id,
+                    payload=task_input.to_dict(),
+                )
+                yield ToolCallArrived(call=ToolCall(id="write-old-a", name="patch_slide", arguments={}))
+                yield TurnDone(usage=None, raw_text=None)
+                return
+            visible = "\n".join(message.content or "" for message in messages)
+            assert "刚才 A 只是参考，改 B" in visible
+            assert '"referenceId":"ref-b"' in visible
+            yield TurnDone(usage=None, raw_text="已按 B 重新规划")
+
+    async def collect():
+        return [event async for event in run_agent_loop(LoopParams(
+            user_input="修改 A", registry=registry,
+            client=LoopModelClient(Backend()), session=session,
+            request_header={"systemPrompt": "system"},
+        ))]
+
+    events = asyncio.run(collect())
+
+    assert executed == []
+    operation = project_operations(session.events)[0]
+    assert operation.dispatched is False
+    assert operation.outcome is OperationOutcome.NOT_STARTED
+    steered = next(event for event in events if isinstance(event, Steered))
+    assert steered.input_ids == ("input-switch-to-b",)
+    assert steered.reference_revision == 2
 
 
 def test_loop_continues_with_preexisting_durable_next_turn_message(tmp_path: Path) -> None:

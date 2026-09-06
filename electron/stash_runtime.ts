@@ -46,9 +46,14 @@ interface RuntimeEntry {
   capturedAt: number;
   fingerprint: string | null;
   kind: string;
-  media: 'clip' | 'text' | 'image';
+  locator?: Record<string, unknown> | null;
+  media: 'clip' | 'text' | 'image' | 'file';
+  originalArtifactPath?: string;
   relPath: string;
+  sourceId?: string;
+  sourceTimeMs?: number;
   summary?: string;
+  userCategory?: string;
   [key: string]: unknown;
 }
 
@@ -86,6 +91,7 @@ function createStashRuntime(options: StashRuntimeOptions) {
 
   const indexPath = path.join(baseDir, 'index.json');
   let entries: RuntimeEntry[] = [];
+  let loaded = false;
   let timer: NodeJS.Timeout | null = null;
   let lastFingerprint: string | null = null;
   let lastTextFingerprint: string | null = null;
@@ -106,7 +112,12 @@ function createStashRuntime(options: StashRuntimeOptions) {
     } catch (_) {
       entries = [];
     }
+    loaded = true;
     lastFingerprint = entries.length ? entries[entries.length - 1].fingerprint : null;
+  }
+
+  function ensureLoaded(): void {
+    if (!loaded) load();
   }
 
   function persist(): void {
@@ -134,15 +145,16 @@ function createStashRuntime(options: StashRuntimeOptions) {
     input: Record<string, unknown> & { capturedAt: number },
     writeBytes: (absolutePath: string) => void,
   ): Promise<{ entry: RuntimeEntry; abs: string } | null> {
+    ensureLoaded();
     const focus = await focusProbe().catch((): FocusInfo => ({}));
     const previous = entries.length ? entries[entries.length - 1] : null;
     const result = store.buildEntry(
       {
         ...input,
         app: input.app || focus.app || '',
-        windowTitle: focus.windowTitle || '',
-        elementName: focus.elementName || '',
-        elementPath: focus.elementPath || '',
+        windowTitle: input.windowTitle || focus.windowTitle || '',
+        elementName: input.elementName || focus.elementName || '',
+        elementPath: input.elementPath || focus.elementPath || '',
         text: input.text || focus.selectionText || '',
       },
       previous,
@@ -214,7 +226,11 @@ function createStashRuntime(options: StashRuntimeOptions) {
     describeQueue = describeQueue.then(run);
   }
 
-  async function ingest(image: NativeImageLike, kind = 'shot'): Promise<RuntimeEntry | null> {
+  async function ingest(
+    image: NativeImageLike,
+    kind = 'shot',
+    metadata: Record<string, unknown> = {},
+  ): Promise<RuntimeEntry | null> {
     const bitmap = sampleImage(image);
     if (!bitmap) return null;
 
@@ -223,7 +239,7 @@ function createStashRuntime(options: StashRuntimeOptions) {
     lastFingerprint = fingerprint;
 
     const committed = await commit(
-      { capturedAt: Date.now(), fingerprint, bitmap, kind },
+      { ...metadata, capturedAt: Date.now(), fingerprint, bitmap, kind },
       (abs: string) => fs.writeFileSync(abs, image.toPNG()),
     );
     if (!committed) return null;
@@ -231,7 +247,7 @@ function createStashRuntime(options: StashRuntimeOptions) {
     // 关键的一步：把本地路径写回剪贴板，同时保留位图。
     // 终端不收位图，Ctrl+V 拿到的就是路径；图片编辑器里粘贴仍然是图。
     // 只对位图这么做——对文本回写会盖掉用户刚复制的那段字。
-    if (settings()?.stash?.clipboard !== false && store.writeBackAllowed(committed.entry.media)) {
+    if (settings()?.stash?.clipboard === true && store.writeBackAllowed(committed.entry.media)) {
       const payload = store.clipboardPayload(committed.abs);
       try {
         clipboard.write(payload.keepImage ? { image, text: payload.text } : { text: payload.text });
@@ -269,6 +285,126 @@ function createStashRuntime(options: StashRuntimeOptions) {
     return committed ? committed.entry : null;
   }
 
+  async function addText(input: string | Record<string, unknown>): Promise<RuntimeEntry | null> {
+    const metadata = typeof input === 'string' ? {} : { ...input };
+    const text = typeof input === 'string' ? input : String(input.text || '');
+    if (!text.trim()) return null;
+    const committed = await commit(
+      {
+        ...metadata,
+        capturedAt: Number.isFinite(Number(metadata.capturedAt))
+          ? Number(metadata.capturedAt)
+          : Date.now(),
+        fingerprint: store.textFingerprint(text),
+        kind: 'text',
+        media: 'text',
+        text,
+      },
+      (abs: string) => fs.writeFileSync(abs, text, 'utf8'),
+    );
+    return committed ? committed.entry : null;
+  }
+
+  async function addFile(
+    sourcePath: string,
+    metadata: Record<string, unknown> = {},
+  ): Promise<RuntimeEntry | null> {
+    const originalArtifactPath = path.resolve(String(sourcePath || ''));
+    let stats: { isFile(): boolean; size: number; mtimeMs: number };
+    try {
+      stats = fs.statSync(originalArtifactPath);
+    } catch (_) {
+      return null;
+    }
+    if (!stats.isFile()) return null;
+    const extension = path.extname(originalArtifactPath).replace(/^\./, '').toLowerCase();
+    const fingerprint = store.textFingerprint(
+      `${originalArtifactPath}:${stats.size}:${Math.trunc(stats.mtimeMs)}`,
+    );
+    const committed = await commit(
+      {
+        ...metadata,
+        capturedAt: Number.isFinite(Number(metadata.capturedAt))
+          ? Number(metadata.capturedAt)
+          : Date.now(),
+        elementName: metadata.elementName || path.basename(originalArtifactPath),
+        fileExtension: extension,
+        fingerprint,
+        kind: 'file',
+        media: 'file',
+        originalArtifactPath,
+        sourceTimeMs: Number.isFinite(Number(metadata.sourceTimeMs))
+          ? Number(metadata.sourceTimeMs)
+          : Math.trunc(stats.mtimeMs),
+      },
+      (abs: string) => fs.copyFileSync(originalArtifactPath, abs),
+    );
+    return committed ? committed.entry : null;
+  }
+
+  function get(id: unknown): RuntimeEntry | null {
+    ensureLoaded();
+    const key = String(id || '').trim();
+    const entry = entries.find((item) => item.id === key);
+    return entry ? { ...entry } : null;
+  }
+
+  function search(
+    query: unknown = '',
+    searchOptions: { category?: unknown; limit?: unknown } = {},
+  ): RuntimeEntry[] {
+    ensureLoaded();
+    const needle = String(query || '').trim().toLocaleLowerCase();
+    const category = String(searchOptions.category || '').trim();
+    const limit = Math.max(0, Math.min(200, Number(searchOptions.limit) || 50));
+    return entries
+      .filter((entry) => !category || entry.userCategory === category || entry.kind === category)
+      .filter((entry) => {
+        if (!needle) return true;
+        return [
+          entry.desc,
+          entry.text,
+          entry.summary,
+          entry.userCategory,
+          entry.app,
+          entry.originalArtifactPath,
+        ].some((value) => String(value || '').toLocaleLowerCase().includes(needle));
+      })
+      .sort((left, right) => right.capturedAt - left.capturedAt)
+      .slice(0, limit)
+      .map((entry) => ({ ...entry }));
+  }
+
+  function updateCategory(id: unknown, category: unknown): RuntimeEntry | null {
+    ensureLoaded();
+    const entry = entries.find((item) => item.id === String(id || '').trim());
+    const value = String(category || '').trim().slice(0, 80);
+    if (!entry || !value) return null;
+    entry.userCategory = value;
+    entry.kind = value;
+    persist();
+    onEntry({ ...entry });
+    return { ...entry };
+  }
+
+  function remove(id: unknown): { ok: boolean; entry?: RuntimeEntry } {
+    ensureLoaded();
+    const index = entries.findIndex((item) => item.id === String(id || '').trim());
+    if (index < 0) return { ok: false };
+    const [entry] = entries.splice(index, 1);
+    const root = path.resolve(baseDir);
+    const artifactPath = path.resolve(baseDir, entry.relPath);
+    if (artifactPath !== root && artifactPath.startsWith(root + path.sep)) {
+      try {
+        if (fs.statSync(artifactPath).isFile()) fs.unlinkSync(artifactPath);
+      } catch (_) {
+        // A missing derived artifact does not resurrect its index row.
+      }
+    }
+    persist();
+    return { ok: true, entry: { ...entry } };
+  }
+
   async function tick(): Promise<void> {
     if (busy) return;
     busy = true;
@@ -276,7 +412,7 @@ function createStashRuntime(options: StashRuntimeOptions) {
       const formats = clipboard.availableFormats();
       // 位图优先：我们自己回写之后剪贴板里图和文本同时存在，
       // 先看图才不会把那条路径当成一段值得收藏的文字。
-      if (settings()?.stash?.clipboard !== false && formats.some((f: string) => f.startsWith('image/'))) {
+      if (settings()?.stash?.clipboard === true && formats.some((f: string) => f.startsWith('image/'))) {
         const image = clipboard.readImage();
         if (!image.isEmpty()) {
           await ingest(image, 'shot');
@@ -318,7 +454,7 @@ function createStashRuntime(options: StashRuntimeOptions) {
       return Boolean(timer);
     },
     list() {
-      if (!entries.length) load();
+      ensureLoaded();
       return store.groupIntoBursts(entries).map((b: RuntimeBurst) => ({
         ...b,
         items: b.items.map((e: RuntimeEntry) => ({ ...e, absPath: path.join(baseDir, e.relPath) })),
@@ -326,6 +462,12 @@ function createStashRuntime(options: StashRuntimeOptions) {
     },
     ingest,
     ingestText,
+    addText,
+    addFile,
+    get,
+    search,
+    updateCategory,
+    remove,
     baseDir,
   };
 }

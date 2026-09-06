@@ -1,0 +1,11 @@
+{
+  "id": "dingtalk",
+  "display_name": "钉钉",
+  "app_ids": ["DingTalk.exe", "DingTalkLite.exe"],
+  "window_class_patterns": ["StandardFrame_Ding", "DingTalk"],
+  "title_patterns": ["钉钉", "DingTalk"],
+  "object_kinds": ["conversation", "chat_message", "message_list", "attachment"],
+  "capabilities": ["read_raw_objects", "read_current_conversation", "read_visible_history", "discover_attachments"],
+  "version": 1,
+  "notes": "公开桌面界面适配；不读取或解密客户端私有数据库。"
+}

@@ -19,6 +19,7 @@ import itertools
 import threading
 from collections import deque
 from dataclasses import dataclass
+from typing import Any, Mapping
 
 __all__ = ["Inbox", "InboxTarget", "InboxItem"]
 
@@ -34,6 +35,7 @@ class InboxItem:
     text: str
     target: InboxTarget
     sequence: int
+    payload: dict[str, Any] | None = None
 
 
 class Inbox:
@@ -51,30 +53,42 @@ class Inbox:
         self._sequence = itertools.count()
         self.dropped = 0
 
-    def put(self, text: str, target: InboxTarget = "next-step") -> bool:
-        """排队一条输入；空白文本拒绝（False），溢出挤掉最旧并计数。"""
+    def put(
+        self,
+        text: str,
+        target: InboxTarget = "next-step",
+        *,
+        payload: Mapping[str, Any] | None = None,
+    ) -> bool:
+        """排队输入；结构化引用溢出时明确拒绝，文本保留旧的最新优先语义。"""
         cleaned = str(text or "").strip()
-        if not cleaned:
+        normalized_payload = dict(payload) if payload is not None else None
+        if not cleaned and not normalized_payload:
             return False
         queue = self._queues.get(target)
         if queue is None:
             raise ValueError(f"unknown inbox target {target!r}")
         with self._lock:
-            queue.append(InboxItem(cleaned, target, next(self._sequence)))
+            if normalized_payload is not None and len(queue) >= self._capacity:
+                return False
+            queue.append(InboxItem(cleaned, target, next(self._sequence), normalized_payload))
             while len(queue) > self._capacity:
                 queue.popleft()
                 self.dropped += 1
         return True
 
-    def drain(self, target: InboxTarget) -> list[str]:
-        """取出并清空一条队列（FLO 按入队序）。"""
+    def drain_items(self, target: InboxTarget) -> list[InboxItem]:
         queue = self._queues.get(target)
         if queue is None:
             raise ValueError(f"unknown inbox target {target!r}")
         with self._lock:
             items = list(queue)
             queue.clear()
-        return [item.text for item in items]
+        return items
+
+    def drain(self, target: InboxTarget) -> list[str]:
+        """取出并清空一条队列（FLO 按入队序）。"""
+        return [item.text for item in self.drain_items(target)]
 
     def pending(self, target: InboxTarget) -> int:
         queue = self._queues.get(target)

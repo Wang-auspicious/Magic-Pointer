@@ -55,7 +55,7 @@ class Effect(enum.StrEnum):
     PURCHASE = "purchase"
 
 
-_NAME_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_NAME_PATTERN = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*")
 """CC 风格工具名（Read/Edit/Bash/Observe…）允许大写驼峰；下划线蛇形
 保留作旧名别名兼容（一个版本）。"""
 
@@ -92,6 +92,12 @@ class ToolSpec:
     used_backend: str = "local"
     timeout_ms: int = 30000
     resource_keys: tuple[str, ...] | Callable[[dict[str, object]], Iterable[str]] = ()
+    access_for: Callable[[dict[str, object]], Any] | None = None
+    """Resolve the task-source/path/window/recipient access used by this call.
+
+    This is separate from ``resource_keys``: the latter serializes concurrent
+    ownership, while this value is checked against the user's task scope.
+    """
     verify_result: Callable[[Any], None] | None = None
     discovers_tools: bool = False
     suspends_for_user_input: bool = False
@@ -204,6 +210,8 @@ class ToolRegistry:
             raise ValueError(f"tool {name!r} timeout_ms must be a positive int")
         if not callable(spec.resource_keys):
             self._validate_resource_keys(spec.resource_keys, name)
+        if spec.access_for is not None and not callable(spec.access_for):
+            raise ValueError(f"tool {name!r} access_for must be callable when set")
         if spec.verify_result is not None and not callable(spec.verify_result):
             raise ValueError(
                 f"tool {name!r} verify_result must be callable when set"

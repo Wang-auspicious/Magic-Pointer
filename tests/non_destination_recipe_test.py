@@ -14,10 +14,10 @@
 
 from __future__ import annotations
 
-from app.fabric.catalog import RECIPE_CATALOG
-from app.fabric.intent_router import (
+from app.fabric.catalog import (
     NON_DESTINATION_OUTPUT_KINDS,
     NON_DESTINATION_RECIPES,
+    RECIPE_CATALOG,
     is_non_destination_recipe,
 )
 
@@ -58,18 +58,3 @@ def test_the_named_exceptions_still_hold() -> None:
     for recipe_id in NON_DESTINATION_RECIPES:
         if recipe_id in recipes:
             assert is_non_destination_recipe(recipes[recipe_id]) is True, recipe_id
-
-
-def test_the_tool_list_offered_to_the_model_excludes_them() -> None:
-    from app.fabric.intent_router import recipe_tool_schemas
-
-    names = {
-        str((tool.get("function") or {}).get("name") or "")
-        for tool in recipe_tool_schemas()
-    }
-    assert names, "没有向模型提供任何工具"
-    for recipe in load_recipes():
-        if is_non_destination_recipe(recipe):
-            from app.fabric.intent_router import tool_name_for_recipe
-
-            assert tool_name_for_recipe(recipe.id) not in names, recipe.id

@@ -23,6 +23,7 @@ class FailureType(enum.StrEnum):
     TOOL_ERROR = "tool_error"
     STALE_SNAPSHOT = "stale_snapshot"
     COMPUTER_USE_BUSY = "computer_use_busy"
+    STEER_PENDING = "steer_pending"
 
 
 _RETRYABLE = frozenset({

@@ -50,6 +50,7 @@ assert(
   'package files must use a runtime script allowlist instead of shipping development capture and verification tools',
 );
 assert(builder.includes('- build/electron/**'), 'package must ship the compiled Electron runtime');
+assert(builder.includes('- build/figma/**'), 'package must ship the explicitly built Figma plugin bundle');
 assert(!builder.includes('- electron/**'), 'package must not ship the Electron source tree');
 for (const runtimeScript of [
   'scripts/agent_session_bridge.py',
@@ -202,6 +203,10 @@ assert(
 assert(
   smoke.includes("'scripts\\smoke_fabric.py'"),
   'package smoke must execute the packaged Fabric smoke with bundled Python',
+);
+assert(
+  smoke.includes('runtime_document_smoke.py'),
+  'package smoke must create and reopen real PDF, DOCX, PPTX and XLSX fixtures with bundled Python',
 );
 assert(
   !/TemporaryDirectory\([^)]*dir\s*=\s*ROOT/.test(fabricSmoke),

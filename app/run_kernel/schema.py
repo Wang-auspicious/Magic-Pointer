@@ -8,7 +8,7 @@ creating another persistence system.
 from __future__ import annotations
 
 import enum
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -63,3 +63,4 @@ class InboxMessage:
     text: str
     seq: int
     time_ms: int
+    payload: dict[str, Any] = field(default_factory=dict)
