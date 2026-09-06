@@ -428,9 +428,9 @@ def _httpx_client(httpx_module, *, timeout: int = 120):
     """Use environment proxies when valid, but survive malformed proxy variables."""
 
     try:
-        return httpx_module.Client(timeout=timeout, follow_redirects=True)
+        return httpx_module.Client(timeout=timeout, follow_redirects=False)
     except httpx_module.InvalidURL:
-        return httpx_module.Client(timeout=timeout, follow_redirects=True, trust_env=False)
+        return httpx_module.Client(timeout=timeout, follow_redirects=False, trust_env=False)
 
 
 def _image_data_url(image_path: Path, max_edge: int = 1600, jpeg_quality: int = 82) -> str:

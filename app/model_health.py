@@ -429,7 +429,7 @@ def probe_gateway(*, timeout_s: float = 6.0) -> GatewayHealth:
         import httpx
 
         api_mode = get_ai_api_mode(endpoint)
-        with httpx.Client(timeout=timeout_s, follow_redirects=True) as client:
+        with httpx.Client(timeout=timeout_s, follow_redirects=False) as client:
             if api_mode == "messages":
                 # Anthropic-compatible relays commonly have no /models route.
                 # A one-token message verifies auth, model routing and actual

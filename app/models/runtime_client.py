@@ -21,7 +21,7 @@ class ModelRuntimeClient:
     def _http_transport(request: dict[str, Any]) -> dict[str, Any]:
         import httpx
 
-        with httpx.Client(timeout=120, follow_redirects=True) as client:
+        with httpx.Client(timeout=120, follow_redirects=False) as client:
             response = client.post(str(request["url"]), headers=dict(request["headers"]), json=dict(request["json"]))
         return {"status": response.status_code, "json": response.json() if response.content else {}, "text": response.text[:500]}
 
