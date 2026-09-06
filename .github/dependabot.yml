@@ -6,16 +6,34 @@ updates:
       interval: "weekly"
       day: "monday"
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
     groups:
+      production:
+        dependency-type: "production"
+        update-types:
+          - "minor"
+          - "patch"
       electron:
         patterns:
           - "electron*"
+        update-types:
+          - "minor"
+          - "patch"
       lint-and-format:
         patterns:
           - "eslint*"
           - "@eslint/*"
           - "prettier"
           - "globals"
+        update-types:
+          - "minor"
+          - "patch"
+      tooling:
+        dependency-type: "development"
+        update-types:
+          - "minor"
+          - "patch"
 
   - package-ecosystem: "pip"
     directory: "/"
@@ -23,9 +41,18 @@ updates:
       interval: "weekly"
       day: "monday"
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    groups:
+      python-patch-minor:
+        update-types:
+          - "minor"
+          - "patch"
 
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 7
       day: "monday"
