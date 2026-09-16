@@ -248,3 +248,34 @@ Stated plainly, because the difference matters:
   what it was — no worse.
 - `build/` is generated and gitignored. The source is correct; anyone running
   the app rebuilds first (`npm run overlay` does this).
+
+---
+
+# Round 2b — corrections from independent verification
+
+`docs/VERIFICATION_20260916_ROUND2.md` audited round 2 and falsified several of
+its claims. What was done about each is in
+`docs/VERIFICATION_20260916_ROUND2_CORRECTIONS.md`. The load-bearing ones:
+
+| Correction | Outcome |
+| --- | --- |
+| The twin-cursor channel was wired at both ends and **joined nowhere** — the driver was built before the sink was set, so production emitted nothing | Fixed: the emitter resolves the sink per emission and is attached at both driver sites. **The test was the real defect** — it pinned the inverse order and so could not catch this. Rewritten, and confirmed it fails against the old construction. |
+| `idle` was accepted at neither boundary | Fixed in `agent_cursor_policy.ts` and `overlay.ts` |
+| `button`/`count` dropped, so a right-click drew as a left one | Fixed; `clickCount` carried but not drawn, and recorded as such |
+| `AiClientBackend` had no truncation detection once the suffix heuristic was withdrawn | Fixed properly: `ai_client` now surfaces the provider's own `finish_reason` across all three wire branches, and the backend withholds on a length finish |
+| `errors.py` claimed a `max_tokens` fallback that does not exist | Comment corrected to say nobody strips it |
+| Two stale `max_parallel_tool_calls = 4` defaults, two "four parallel reads" comments | Aligned to 8 |
+| `deferPersist` lets `daily_wrap.py` read a file up to ~1 s stale | Documented at the reader, with the reason for the trade |
+| Both `startRequest` refusals were silent | They now say why |
+| **`cursors.py` (790 lines) and `displays.py` (240 lines) have no production caller** | Recorded as open, with a recommendation. The live implementation is the TypeScript one. Not deleted on my own judgement — see the corrections document. |
+| `buildSdfPath` "~758 µs → ~12 µs" | Removed. That pair appears in no document; the audit's own figure was 855.785 µs and the harness cannot measure the production path. The production-shaped C-069 number re-measured at **11.7–13.8×** and stands. |
+| C-053's "60.6 → 36.9 ms" | Restated as **not reproducible**; the verifier measured the real store at 46.86 ms synchronous, 0.00 ms deferred |
+| The perf audit's raw output presented as current | Now headed as a dated pre-fix snapshot at `6c5b9ad`, with the note that the `buildSdfPath` rows are meaningless in either snapshot |
+| `harness_builtin_bundle_test`'s equality assertion is self-referential | Kept as a wiring check, with a comment saying the `>= 8_000` floor is the assertion with content |
+
+## The one-sentence version
+
+There is still **no executable path from a driver click to a drawn pixel**: the
+channel is now attached and the boundaries accept every action, but no window
+has been created and no frame has been rendered. Everything that follows from
+that is listed under "Known unverified" above.
