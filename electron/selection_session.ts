@@ -255,6 +255,15 @@ class SelectionSessionStore {
   startRequest(token: unknown, now = Date.now()): string | null {
     const entry = this.get(token, now);
     if (!entry || !entry.snapshot) return null;
+    // One answer in flight at a time. This used to overwrite activeRequestId
+    // unconditionally, and finishRequest only accepts the id it was started
+    // with — so a second stroke while the first answer was still running
+    // orphaned the first request and its result was dropped with no error.
+    // The gesture layer advertises multi-stroke chains ("circle this, and
+    // this, then run the command"), so this is a supported path, not a race.
+    // Refusing the second start keeps the first answer; the caller retries
+    // once finishRequest clears the session.
+    if (entry.state === 'running' && entry.activeRequestId) return null;
     const requestId = this.idFactory();
     entry.activeRequestId = requestId;
     entry.state = 'running';

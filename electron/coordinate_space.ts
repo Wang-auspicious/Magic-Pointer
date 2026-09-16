@@ -28,6 +28,48 @@ interface GestureInput {
   strokes?: unknown;
 }
 
+// The named coordinate spaces, in one place. Every producer and consumer of a
+// discriminant uses these values; nothing spells its own. See the contract in
+// docs/research/2026-09-16-vida-circle-point.md.
+//
+//   physical_screen_pixels — physical px on the virtual desktop. The wire
+//                            format for gesture geometry, UIA/OCR rects and
+//                            every cross-process payload.
+//   dip_screen             — DIP with the virtual-desktop origin (Electron's
+//                            own screen.* APIs).
+//   dip_window             — DIP local to one window (DOM, CSS, renderer math).
+const COORDINATE_SPACES = Object.freeze({
+  PHYSICAL_SCREEN_PIXELS: 'physical_screen_pixels',
+  DIP_SCREEN: 'dip_screen',
+  DIP_WINDOW: 'dip_window',
+});
+
+// Spellings older builds wrote before the spaces were named here. A gesture or
+// locator persisted by an older version still resolves to its canonical space
+// instead of being rejected outright, but nothing may emit these again.
+const LEGACY_COORDINATE_SPACES: Record<string, string> = Object.freeze({
+  'physical-screen-pixels': COORDINATE_SPACES.PHYSICAL_SCREEN_PIXELS,
+  electron_dip: COORDINATE_SPACES.DIP_SCREEN,
+  electron_dip_screen: COORDINATE_SPACES.DIP_SCREEN,
+  logical_dips: COORDINATE_SPACES.DIP_WINDOW,
+});
+
+const COORDINATE_SPACE_VALUES: readonly string[] = Object.freeze(
+  Object.values(COORDINATE_SPACES),
+);
+
+// Canonical name for a coordinate-space discriminant, or null when the value is
+// not a space this build knows. Unknown is not a guess: fail closed.
+function normalizeCoordinateSpace(value: unknown): string | null {
+  if (typeof value !== 'string' || !value) return null;
+  if (COORDINATE_SPACE_VALUES.includes(value)) return value;
+  return LEGACY_COORDINATE_SPACES[value] || null;
+}
+
+function isPhysicalScreenPixels(value: unknown): boolean {
+  return normalizeCoordinateSpace(value) === COORDINATE_SPACES.PHYSICAL_SCREEN_PIXELS;
+}
+
 interface GeometryInput {
   captureFormat?: unknown;
   captureRect?: unknown;
@@ -95,12 +137,21 @@ function physicalGestureBoundingBox(points: unknown, minimumThickness: unknown =
   };
 }
 
-function physicalGestureTrace(
+// A gesture that cannot become a physical trace must say why. `null` on its own
+// is indistinguishable from "the user did not gesture", so the caller can only
+// drop the circle silently — which is what the user sees today.
+type GestureTraceResult =
+  | { ok: true; reason: null; trace: UnknownRecord }
+  | { ok: false; reason: string; trace: null };
+
+function physicalGestureTraceResult(
   screenApi: ScreenApi | null | undefined,
   gesture: GestureInput | null | undefined,
-) {
-  if (!gesture || typeof gesture !== 'object') return null;
-  if (gesture.coordinateSpace === 'physical_screen_pixels') {
+): GestureTraceResult {
+  if (!gesture || typeof gesture !== 'object') {
+    return { ok: false, reason: 'gesture_absent', trace: null };
+  }
+  if (isPhysicalScreenPixels(gesture.coordinateSpace)) {
     // Already physical (completeSelectionGesture output): normalize the
     // shape without a second DIP -> physical conversion.
     const rawStrokes = Array.isArray(gesture.strokes) && gesture.strokes.length
@@ -120,21 +171,36 @@ function physicalGestureTrace(
     };
     }).filter((stroke) => stroke.points.length >= 2);
     const points = strokes.flatMap((stroke) => stroke.points);
-    if (points.length < 2) return null;
-    const releasePoint = recordOf(gesture.releasePoint || points.at(-1));
+    if (points.length < 2) {
+      return { ok: false, reason: 'gesture_too_short', trace: null };
+    }
+    // `Number(x) || 0` relocated a corrupt release point to (0, 0) — the
+    // top-left of the primary monitor — instead of failing. Fall back to the
+    // last real point instead: it is always finite here.
+    const releasePoint = finitePoint(gesture.releasePoint) || points.at(-1)!;
     return {
+      ok: true,
+      reason: null,
+      trace: {
       schemaVersion: 2,
-      coordinateSpace: 'physical_screen_pixels',
+      coordinateSpace: COORDINATE_SPACES.PHYSICAL_SCREEN_PIXELS,
       strokes,
       releasePoint: {
-        x: Math.round(Number(releasePoint?.x) || 0),
-        y: Math.round(Number(releasePoint?.y) || 0),
+        x: Math.round(releasePoint.x),
+        y: Math.round(releasePoint.y),
       },
       bbox: physicalGestureBoundingBox(
         points,
         8 * Math.max(1, Number(gesture.scaleFactor) || 1),
       ),
+      },
     };
+  }
+  // Without DIP -> physical there is no trace at all, and today that is
+  // reported as "no gesture". Name it instead, so the stage can say why the
+  // stroke the user just drew did nothing.
+  if (!screenApi || typeof screenApi.dipToScreenPoint !== 'function') {
+    return { ok: false, reason: 'screen_api_unavailable', trace: null };
   }
   const rawStrokes = Array.isArray(gesture.strokes) && gesture.strokes.length
     ? gesture.strokes
@@ -150,18 +216,33 @@ function physicalGestureTrace(
   };
   }).filter((stroke) => stroke.points.length >= 2);
   const points = strokes.flatMap((stroke) => stroke.points);
-  if (points.length < 2) return null;
+  if (points.length < 2) {
+    return { ok: false, reason: 'gesture_unconvertible', trace: null };
+  }
   const releasePoint = physicalScreenPoint(screenApi, gesture.releasePoint) || {
     x: points.at(-1)!.x,
     y: points.at(-1)!.y,
   };
   return {
+    ok: true,
+    reason: null,
+    trace: {
     schemaVersion: 2,
-    coordinateSpace: 'physical_screen_pixels',
+    coordinateSpace: COORDINATE_SPACES.PHYSICAL_SCREEN_PIXELS,
     strokes,
     releasePoint,
     bbox: physicalGestureBoundingBox(points),
+    },
   };
+}
+
+// Compatibility shim: the trace itself, or null. Callers that can surface a
+// reason should use `physicalGestureTraceResult` instead.
+function physicalGestureTrace(
+  screenApi: ScreenApi | null | undefined,
+  gesture: GestureInput | null | undefined,
+) {
+  return physicalGestureTraceResult(screenApi, gesture).trace;
 }
 
 function physicalDisplayBounds({
@@ -282,7 +363,7 @@ function normalizeGroundingGeometry({
   stageBounds,
   screenApi,
 }: GeometryInput = {}) {
-  if (pointerSpace !== 'physical_screen_pixels') return invalidGeometry('invalid_pointer_space');
+  if (!isPhysicalScreenPixels(pointerSpace)) return invalidGeometry('invalid_pointer_space');
   const pointerPhysical = finitePoint(pointer);
   const stageDipBounds = finiteRect(stageBounds);
   if (!pointerPhysical) return invalidGeometry('invalid_pointer');
@@ -294,7 +375,7 @@ function normalizeGroundingGeometry({
   }
 
   const hasTargets = targetRects.length > 0;
-  if (hasTargets && targetSpace !== 'physical_screen_pixels') {
+  if (hasTargets && !isPhysicalScreenPixels(targetSpace)) {
     return invalidGeometry('invalid_target_space');
   }
   if (hasTargets && targetFormat !== 'xywh') return invalidGeometry('invalid_target_format');
@@ -308,7 +389,7 @@ function normalizeGroundingGeometry({
   let capturePhysicalRect: Rect | null = null;
   let captureDipRect: Rect | null = null;
   if (captureRect !== null && captureRect !== undefined) {
-    if (captureSpace !== 'physical_screen_pixels') return invalidGeometry('invalid_capture_space');
+    if (!isPhysicalScreenPixels(captureSpace)) return invalidGeometry('invalid_capture_space');
     if (typeof captureFormat !== 'string' || !['xywh', 'ltrb'].includes(captureFormat)) {
       return invalidGeometry('invalid_capture_format');
     }
@@ -353,11 +434,15 @@ function normalizeGroundingGeometry({
 }
 
 module.exports = {
+  COORDINATE_SPACES,
   finiteRect,
+  isPhysicalScreenPixels,
+  normalizeCoordinateSpace,
   normalizeGroundingGeometry,
   physicalDisplayBounds,
   physicalGestureBoundingBox,
   physicalGestureTrace,
+  physicalGestureTraceResult,
   physicalRectToDip,
   physicalScreenPoint,
   relativeRect,

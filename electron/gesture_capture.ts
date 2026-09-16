@@ -21,7 +21,6 @@ interface GestureThresholds {
   minDistance?: number;
   minDurationMs?: number;
   quickPointMaxDistance?: number;
-  quickPointMaxDurationMs?: number;
 }
 
 interface GestureInputBudget {
@@ -29,10 +28,46 @@ interface GestureInputBudget {
   maxStrokes?: number;
 }
 
-const QUICK_POINT_MAX_DURATION_MS = 420;
+// Stroke-shape classification, decided once, here, and published with the
+// region so no consumer re-derives it. Every threshold is a *ratio* or a DIP
+// value relative to the stroke itself — never an absolute pixel count. The
+// points are DIPs and the display scale is not known at this layer, so an
+// absolute threshold classifies the same hand-drawn circle differently on a
+// 100% and a 200% monitor. app/perception/pixel_ocr.py:71 does exactly that
+// (closure within a hardcoded 26 *physical* pixels); it must consume
+// `shapeVerdict` instead.
+const CIRCLE_MIN_POINTS = 6;
+const CIRCLE_MIN_EDGE_DIP = 16;
+const CIRCLE_MAX_CLOSURE_RATIO = 0.36;
+const CIRCLE_MIN_CIRCUIT_RATIO = 1.65;
+const LINE_MIN_STRAIGHTNESS = 0.80;
+// The shape verdict travels in `shapeVerdict.thresholds` so a consumer in
+// another language reaches the same answer without a second constant table.
+const STROKE_CLASSIFIER_THRESHOLDS = Object.freeze({
+  minPoints: CIRCLE_MIN_POINTS,
+  minEdgeDip: CIRCLE_MIN_EDGE_DIP,
+  closureRatio: CIRCLE_MAX_CLOSURE_RATIO,
+  circuitRatio: CIRCLE_MIN_CIRCUIT_RATIO,
+  straightness: LINE_MIN_STRAIGHTNESS,
+});
+
+// A point is decided by ink length alone. The old bound was a pair — a short
+// path AND a short duration — which is what dropped a deliberate press-and-hold.
+// The duration ceiling is gone rather than left inert: there is no gesture it
+// still distinguishes.
 const QUICK_POINT_MAX_DISTANCE = 14;
 const CHAIN_IDLE_FINALIZE_MS = 520;
 const CHAIN_CONTINUE_DISTANCE = 4;
+
+// Geometry emitted by this module is DIP local to the window the stroke was
+// drawn in. The canonical name lives in electron/coordinate_space.ts
+// (COORDINATE_SPACES.DIP_WINDOW); this file is also loaded as a classic script
+// in the renderer (electron/renderer/index.html:20), where `require` does not
+// exist, so the value is mirrored rather than imported and
+// tests/coordinate_space_canonical_test.ts asserts the two are equal. The name
+// used here before named no space at all ("logical" is not a space), which is
+// why nothing could compare it against anything.
+const GEOMETRY_COORDINATE_SPACE = 'dip_window';
 
 function recordOf(value: unknown): UnknownRecord | null {
   return value !== null && typeof value === 'object' ? (value as UnknownRecord) : null;
@@ -132,7 +167,6 @@ function summarizeStroke(points: TimedPoint[], {
   minDistance = 12,
   minDurationMs = 40,
   quickPointMaxDistance = QUICK_POINT_MAX_DISTANCE,
-  quickPointMaxDurationMs = QUICK_POINT_MAX_DURATION_MS,
 }: GestureThresholds = {}) {
   if (points.length < 2) {
     return null;
@@ -144,9 +178,14 @@ function summarizeStroke(points: TimedPoint[], {
   const finalPoint = points.at(-1)!;
   const durationMs = Math.max(0, finalPoint.t - points[0].t);
   const releasePoint = roundedPoint(finalPoint);
-  const isQuickPoint = durationMs <= quickPointMaxDurationMs
-    && pathLength <= quickPointMaxDistance;
-  if (isQuickPoint) {
+  // A point is a stroke that barely moved — an ink-length test, not a
+  // duration test. Requiring *both* a short path and a short duration dropped
+  // the most common deliberate gesture there is: press, hold still to aim,
+  // release. `pathLength` is ~0 there, so it failed `pathLength < minDistance`
+  // and summarizeStroke returned null with nothing said. Duration is not part
+  // of the test because a fast flick across the screen is a line, not a point.
+  const isPoint = pathLength <= quickPointMaxDistance;
+  if (isPoint) {
     return {
       schemaVersion: 2,
       kind: 'point',
@@ -157,7 +196,15 @@ function summarizeStroke(points: TimedPoint[], {
         type: 'point_target',
         point: releasePoint,
         radiusPx: quickPointMaxDistance,
-        coordinateSpace: 'logical_dips',
+        coordinateSpace: GEOMETRY_COORDINATE_SPACE,
+      },
+      shapeVerdict: {
+        kind: 'point',
+        closed: false,
+        closureRatio: null,
+        circuitRatio: null,
+        straightness: 1,
+        thresholds: STROKE_CLASSIFIER_THRESHOLDS,
       },
       direction: undefined,
       pathLength,
@@ -183,10 +230,12 @@ function summarizeStroke(points: TimedPoint[], {
   const diagonal = Math.hypot(bbox.width, bbox.height) || 1;
   const closure = chord / diagonal;
   const circuit = pathLength / diagonal;
-  const isCircle = points.length >= 6
-    && bbox.width >= 16 && bbox.height >= 16
-    && closure <= 0.36 && circuit >= 1.65;
-  const kind = isCircle ? 'circle' : straightness >= 0.80 ? 'line' : 'freeform';
+  const isCircle = points.length >= CIRCLE_MIN_POINTS
+    && bbox.width >= CIRCLE_MIN_EDGE_DIP && bbox.height >= CIRCLE_MIN_EDGE_DIP
+    && closure <= CIRCLE_MAX_CLOSURE_RATIO && circuit >= CIRCLE_MIN_CIRCUIT_RATIO;
+  const kind = isCircle
+    ? 'circle'
+    : straightness >= LINE_MIN_STRAIGHTNESS ? 'line' : 'freeform';
   const raw = kind === 'circle'
     ? { x: bbox.x + bbox.width / 2, y: bbox.y + bbox.height / 2 }
     : kind === 'freeform'
@@ -209,14 +258,30 @@ function summarizeStroke(points: TimedPoint[], {
     semanticPoint: Number.isFinite(raw.x) && Number.isFinite(raw.y)
       ? roundedPoint(raw)
       : roundedPoint({ x: (points[0].x + finalPoint.x) / 2, y: (points[0].y + finalPoint.y) / 2 }),
+    // The classification travels with the region. This is the only stroke
+    // classifier in the product: a consumer that re-derives `closed` from an
+    // absolute pixel tolerance reaches a different answer on a different
+    // display (see STROKE_CLASSIFIER_THRESHOLDS above).
+    shapeVerdict: {
+      kind,
+      closed: kind === 'circle',
+      closureRatio: closure,
+      circuitRatio: circuit,
+      straightness,
+      thresholds: STROKE_CLASSIFIER_THRESHOLDS,
+    },
     geometry: kind === 'circle'
-      ? { type: 'polygon_region', ring: buildCircleRing(bbox), coordinateSpace: 'logical_dips' }
+      ? {
+        type: 'polygon_region',
+        ring: buildCircleRing(bbox),
+        coordinateSpace: GEOMETRY_COORDINATE_SPACE,
+      }
       : {
         type: 'band_corridor',
         centerline: points.map((point) => ({ x: point.x, y: point.y })),
         corridor: buildCorridor(points, corridorWidthFor(pathLength)),
         widthPx: Math.round(corridorWidthFor(pathLength)),
-        coordinateSpace: 'logical_dips',
+        coordinateSpace: GEOMETRY_COORDINATE_SPACE,
       },
     direction: kind === 'circle' ? undefined : directionOf(points),
     pathLength,
@@ -264,7 +329,6 @@ function summarizeGesture(rawPoints: unknown, rawStrokes?: unknown, {
   minDistance = 12,
   minDurationMs = 40,
   quickPointMaxDistance = QUICK_POINT_MAX_DISTANCE,
-  quickPointMaxDurationMs = QUICK_POINT_MAX_DURATION_MS,
 }: GestureThresholds = {}) {
   const strokeInputs = (Array.isArray(rawStrokes) && rawStrokes.length)
     ? rawStrokes
@@ -283,7 +347,6 @@ function summarizeGesture(rawPoints: unknown, rawStrokes?: unknown, {
       minDistance,
       minDurationMs,
       quickPointMaxDistance,
-      quickPointMaxDurationMs,
     }))
     .filter((stroke: StrokeSummary | null): stroke is StrokeSummary => stroke !== null);
   if (!strokeSummaries.length) {
@@ -323,8 +386,9 @@ function summarizeGesture(rawPoints: unknown, rawStrokes?: unknown, {
 
 const GestureCapture = {
   CHAIN_IDLE_FINALIZE_MS,
+  GEOMETRY_COORDINATE_SPACE,
   QUICK_POINT_MAX_DISTANCE,
-  QUICK_POINT_MAX_DURATION_MS,
+  STROKE_CLASSIFIER_THRESHOLDS,
   chainFinalizeDelay,
   pointerContinuesGestureChain,
   boundGestureInput,

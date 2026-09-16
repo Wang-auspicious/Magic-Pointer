@@ -1,7 +1,7 @@
 const assert = require('assert');
 const { SelectionSessionStore, continuationTaskForSelection } = require('../electron/selection_session');
 
-const ids = ['session-1', 'request-1', 'request-2'];
+const ids = ['session-1', 'request-1', 'request-2', 'request-3'];
 const store = new SelectionSessionStore({
   ttlMs: 1000,
   idFactory: () => ids.shift(),
@@ -85,13 +85,21 @@ assert.strictEqual(promptDraft.prompt, 'editable prompt');
 assert.strictEqual(store.getAgentPromptDraft('session-1', 295).contextPacket.packetId, 'packet-1');
 
 const request1 = store.startRequest('session-1', 300);
-const request2 = store.startRequest('session-1', 350);
-assert.strictEqual(request1, 'request-1');
+// This used to start a replacement request and hand back 'request-2'. That
+// overwrote activeRequestId, and finishRequest compares against the id it was
+// started with — so the first answer was dropped with no error whenever a new
+// gesture arrived while the previous one was still running. The old assertions
+// here (request1 no longer current, finishRequest(request1) === null) encoded
+// exactly that data loss. A running session now refuses the second start and
+// keeps the first answer; the caller retries after finishRequest clears it.
+const blocked = store.startRequest('session-1', 350);
+assert.strictEqual(blocked, null, 'a second gesture does not orphan the request in flight');
+assert.strictEqual(store.isCurrentRequest('session-1', request1, 400), true);
+assert.strictEqual(store.finishRequest('session-1', request1, 400).state, 'ready');
+// With the first answer landed the session accepts the next request again.
+const request2 = store.startRequest('session-1', 405);
 assert.strictEqual(request2, 'request-2');
-assert.strictEqual(store.isCurrentRequest('session-1', request1, 400), false);
-assert.strictEqual(store.isCurrentRequest('session-1', request2, 400), true);
-assert.strictEqual(store.finishRequest('session-1', request1, 400), null);
-assert.strictEqual(store.finishRequest('session-1', request2, 400).state, 'ready');
+assert.strictEqual(store.finishRequest('session-1', request2, 410).state, 'ready');
 assert.strictEqual(store.clearAgentPromptDraft('session-1', 410), true);
 assert.strictEqual(store.getAgentPromptDraft('session-1', 420), null);
 

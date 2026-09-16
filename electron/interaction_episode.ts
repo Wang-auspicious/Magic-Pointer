@@ -1,5 +1,12 @@
 const crypto = require('crypto');
 const TaskSources = require('./task_sources');
+// A locator's bbox is physical screen pixels, and the discriminant that says so
+// has one spelling in this codebase: the enum in ./coordinate_space. This file
+// used to write the hyphenated spelling instead, which is a value no consumer
+// recognises (app/grounding/evidence_binding.py:142 and
+// scripts/selection_snapshot_bridge.py:1042 both require the underscored form),
+// so a locator produced here could not be validated anywhere.
+const { COORDINATE_SPACES } = require('./coordinate_space');
 
 type UnknownRecord = Record<string, unknown>;
 type SlotAlias = 'this' | 'that' | 'these' | 'here';
@@ -324,7 +331,7 @@ function locatorForObject(object: NormalizedObject): UnknownRecord {
     value: {
       snapshotId: String(object.snapshotId || ''),
       bbox: clone(object.bbox || null),
-      coordinateSpace: 'physical-screen-pixels',
+      coordinateSpace: COORDINATE_SPACES.PHYSICAL_SCREEN_PIXELS,
     },
   };
 }
@@ -553,7 +560,7 @@ class InteractionEpisodeStore {
             snapshotId: String(object.snapshotId || ''),
             strokeIndex: Number(rawRegion.strokeIndex) || 0,
             bbox: clone(rawRegion.bbox || null),
-            coordinateSpace: 'physical-screen-pixels',
+            coordinateSpace: COORDINATE_SPACES.PHYSICAL_SCREEN_PIXELS,
           },
         } : locatorForObject(object),
         role: options?.role || existing?.role || 'target',

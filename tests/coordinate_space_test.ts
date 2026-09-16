@@ -148,6 +148,57 @@ assert.deepStrictEqual(pointerOnly.stageTarget, { x: 272, y: 92, width: 16, heig
   );
 }
 
+// C-084: a gesture that cannot become a physical trace must say why. It used to
+// return a bare `null`, which is indistinguishable from "the user did not
+// gesture", so the circle the user just drew vanished with nothing said.
+{
+  const { normalizeCoordinateSpace, physicalGestureTraceResult } = require('../electron/coordinate_space');
+
+  assert.deepStrictEqual(
+    physicalGestureTraceResult(null, null),
+    { ok: false, reason: 'gesture_absent', trace: null },
+  );
+  assert.deepStrictEqual(
+    physicalGestureTraceResult(null, { points: [{ x: 1, y: 2 }, { x: 3, y: 4 }] }),
+    { ok: false, reason: 'screen_api_unavailable', trace: null },
+    'no dipToScreenPoint is a stated failure, not an empty gesture',
+  );
+  assert.deepStrictEqual(
+    physicalGestureTraceResult({}, { points: [{ x: 1, y: 2 }] }),
+    { ok: false, reason: 'screen_api_unavailable', trace: null },
+  );
+  assert.deepStrictEqual(
+    physicalGestureTraceResult(
+      { dipToScreenPoint: () => { throw new Error('no display'); } },
+      { points: [{ x: 1, y: 2 }, { x: 3, y: 4 }] },
+    ),
+    { ok: false, reason: 'gesture_unconvertible', trace: null },
+  );
+
+  // A corrupt release point used to be relocated to (0, 0) — the top-left of
+  // the primary monitor — because `NaN || 0` is 0. Fall back to the last real
+  // point instead of moving the capsule across the desk.
+  const doubled = { dipToScreenPoint: (p: { x: number; y: number }) => ({ x: p.x * 2, y: p.y * 2 }) };
+  const corruptRelease = physicalGestureTraceResult(doubled, {
+    coordinateSpace: 'physical_screen_pixels',
+    points: [{ x: 10, y: 20 }, { x: 30, y: 40 }],
+    releasePoint: { x: 'nope', y: undefined },
+  });
+  assert.strictEqual(corruptRelease.ok, true);
+  assert.deepStrictEqual(corruptRelease.trace.releasePoint, { x: 30, y: 40 });
+
+  // A release point of exactly 0 is a real coordinate and must survive.
+  const zeroRelease = physicalGestureTraceResult(doubled, {
+    coordinateSpace: 'physical_screen_pixels',
+    points: [{ x: 0, y: 0 }, { x: 4, y: 4 }],
+    releasePoint: { x: 0, y: 0 },
+  });
+  assert.deepStrictEqual(zeroRelease.trace.releasePoint, { x: 0, y: 0 });
+
+  assert.strictEqual(normalizeCoordinateSpace('physical_screen_pixels'), 'physical_screen_pixels');
+  assert.strictEqual(normalizeCoordinateSpace('physical-screen-pixels'), 'physical_screen_pixels');
+}
+
 const main = fs.readFileSync('electron/main.ts', 'utf8');
 assert(main.includes('physicalGestureBoundingBox,'));
 assert(main.includes('physicalScreenPoint,'));

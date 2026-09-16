@@ -4,7 +4,6 @@ const assert = require('assert');
 const {
   CHAIN_IDLE_FINALIZE_MS,
   QUICK_POINT_MAX_DISTANCE,
-  QUICK_POINT_MAX_DURATION_MS,
   boundGestureInput,
   chainFinalizeDelay,
   pointerContinuesGestureChain,
@@ -60,7 +59,12 @@ assert.strictEqual(line.geometry[0].corridor.length, line.points.length * 2,
   'corridor is a closed polygon: left edge forward + right edge backward');
 assert(line.geometry[0].widthPx >= 10 && line.geometry[0].widthPx <= 36,
   'corridor width must scale with the stroke length');
-assert.strictEqual(line.geometry[0].coordinateSpace, 'logical_dips');
+// The old value here was 'logical_dips', which named no space and could not be
+// compared against anything. The geometry this module emits is DIP local to the
+// window the stroke was drawn in, and the canonical name for that lives in
+// electron/coordinate_space.ts. tests/coordinate_space_canonical_test.ts
+// asserts this value equals COORDINATE_SPACES.DIP_WINDOW.
+assert.strictEqual(line.geometry[0].coordinateSpace, 'dip_window');
 const lineDirection = line.direction;
 assert(Math.abs(Math.hypot(lineDirection.x, lineDirection.y) - 1) < 1e-9,
   'direction must be a unit vector');
@@ -120,7 +124,7 @@ assert.deepStrictEqual(noisy.strokes[0].points, [
 
 const click = summarizeGesture([
   { x: 10, y: 10, t: 0 },
-  { x: 13, y: 12, t: QUICK_POINT_MAX_DURATION_MS },
+  { x: 13, y: 12, t: 180 },
 ]);
 assert.strictEqual(click.valid, true, 'a prompt press-release is a point target');
 assert.strictEqual(click.kind, 'point');
@@ -129,12 +133,28 @@ assert.deepStrictEqual(click.releasePoint, { x: 13, y: 12 });
 assert.strictEqual(click.geometry[0].type, 'point_target');
 assert.strictEqual(click.geometry[0].radiusPx, QUICK_POINT_MAX_DISTANCE);
 
+// Press, hold still to aim, release. This used to be dropped: the point branch
+// required BOTH a short path AND a short duration (420 ms), so a deliberate hold
+// reached the `pathLength < minDistance` rejection and the gesture vanished with
+// no reason. Holding still is the most deliberate pointing there is, and the
+// stroke's ink length is what makes it a point. The duration ceiling is gone
+// entirely rather than left inert — it distinguishes nothing now.
 const slowClick = summarizeGesture([
   { x: 10, y: 10, t: 0 },
-  { x: 13, y: 12, t: QUICK_POINT_MAX_DURATION_MS + 1 },
+  { x: 13, y: 12, t: 900 },
 ]);
-assert.strictEqual(slowClick.valid, false, 'a stationary hold beyond the threshold is not a click');
-assert.strictEqual(slowClick.reason, 'gesture_too_short');
+assert.strictEqual(slowClick.valid, true, 'a held press-release is still a point target');
+assert.strictEqual(slowClick.kind, 'point');
+assert.strictEqual(slowClick.geometry[0].type, 'point_target');
+assert.deepStrictEqual(slowClick.releasePoint, { x: 13, y: 12 });
+
+// A fast flick is ink, not a point: duration alone must not decide the shape.
+const flick = summarizeGesture([
+  { x: 100, y: 100, t: 0 },
+  { x: 300, y: 100, t: 90 },
+]);
+assert.strictEqual(flick.valid, true);
+assert.strictEqual(flick.kind, 'line', 'a long path is a line however fast it was drawn');
 
 // Unified multi-stroke chain: several circles committed before finalize.
 const multi = summarizeGesture(
