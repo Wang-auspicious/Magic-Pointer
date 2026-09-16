@@ -340,6 +340,10 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
       title: String(payload?.title || '').slice(0, 200),
     }),
     delete: (id: unknown) => ipcRenderer.invoke('conversations:delete', { id: String(id || '').slice(0, 120) }),
+    suggest: (payload: { turns?: unknown; object?: unknown } = {}) => ipcRenderer.invoke('conversations:suggest', {
+      turns: Array.isArray(payload?.turns) ? payload.turns.slice(-12) : [],
+      object: payload?.object && typeof payload.object === 'object' ? payload.object : {},
+    }),
     stop: (requestId: unknown) => ipcRenderer.invoke('conversations:stop', { requestId: String(requestId || '').slice(0, 120) }),
     steer: (payload: { agentSessionId?: unknown; text?: unknown; taskInput?: unknown; sources?: unknown }) => ipcRenderer.invoke('conversations:steer', {
       agentSessionId: String(payload?.agentSessionId || '').slice(0, 120),

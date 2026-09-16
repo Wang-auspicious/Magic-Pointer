@@ -1590,6 +1590,24 @@ def main() -> int:
         write_json({"ok": False, "error": f"请求格式不对：{exc}"})
         return 2
 
+    # 输入框联想词：一次性的只读请求，不碰会话状态、不落盘、不开 agent。
+    # 它先于权限预设与 effort 处理，因为那两样只对「真的发一轮」有意义；
+    # 一个只为生成一句话的请求不该因为预设名不合法而整条失败。
+    if str(payload.get("operation") or "") == "suggest_next":
+        from app.agent_runtime.next_prompt import suggest_next_prompt
+
+        suggestion_runtime = (
+            dict(payload.get("modelRuntime"))
+            if isinstance(payload.get("modelRuntime"), dict)
+            else {}
+        )
+        turns = payload.get("turns") if isinstance(payload.get("turns"), list) else []
+        obj = payload.get("object") if isinstance(payload.get("object"), dict) else {}
+        with request_ai_config(suggestion_runtime):
+            suggestion = suggest_next_prompt(_history_text(turns, obj))
+        write_json({"ok": True, "suggestion": suggestion})
+        return 0
+
     from app.agent_runtime.permission_presets import PRESETS
 
     permission_preset = str(payload.get("permissionPreset") or "workspace-write")

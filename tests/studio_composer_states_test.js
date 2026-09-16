@@ -37,7 +37,14 @@ assert.match(css, /#composer-permission \.dshw-perm-chev\s*\{[^}]*order:\s*-1/s,
 assert(!/#composer-permission\s*\{[^}]*order:\s*-2/s.test(css),
   'attach and mic come first; the mode name is not hoisted to the front');
 assert(source.includes('contextRow.hidden = !visible && Boolean(activeProjectRoot)'));
-assert(source.includes("textarea.placeholder = visible ? 'Describe a task or ask a question' : 'Type / for commands'"));
+/* 占位语现在经过一层：会话里优先显示联想词，其余情况回到这两句静态提示。 */
+assert(source.includes("const COMPOSER_PLACEHOLDER_HOME = 'Describe a task or ask a question'"));
+assert(source.includes("const COMPOSER_PLACEHOLDER_THREAD = 'Type / for commands'"));
+assert(source.includes('textarea.placeholder = !home && composerSuggestion ? composerSuggestion : base'),
+  'the suggestion is a placeholder override, never a value in the textarea');
+assert(source.includes('void refreshComposerSuggestion('),
+  'the suggestion is fetched after the turn settles and does not block the composer');
+assert(source.includes('clearComposerSuggestion();'), 'a consumed or stale suggestion is dropped');
 assert(source.includes("title.textContent = 'Plan'"));
 assert(source.includes("card.className = 'dshw-perm-ask-card'"));
 assert(source.includes("actions.className = 'dshw-perm-ask-actions'"));

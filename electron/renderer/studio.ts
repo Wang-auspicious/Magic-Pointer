@@ -1048,6 +1048,8 @@ let activeConversationId: string | null = null;
 let activeConversationTab: 'chat' | 'trajectory' = 'chat';
 let activeConversationTurnCount = 0;
 let activeConversationTurns: Record<string, unknown>[] = [];
+/* 这条对话挂着的屏幕对象：联想词要读它，否则模型只看到半截上下文。 */
+let activeConversationObject: Record<string, unknown> = {};
 let activeTaskContext: MagicPointerTaskContext | null = null;
 const composerSelectedSourceIds = new Set<string>();
 let figmaStatusTimer: number | null = null;
@@ -1168,7 +1170,7 @@ function setStudioHomeVisible(visible: boolean) {
   if (stream) stream.hidden = visible || activeConversationTab !== 'chat';
   if (trajectory) trajectory.hidden = visible || activeConversationTab !== 'trajectory';
   if (contextRow) contextRow.hidden = !visible && Boolean(activeProjectRoot);
-  if (textarea) textarea.placeholder = visible ? 'Describe a task or ask a question' : 'Type / for commands';
+  if (textarea) applyComposerPlaceholder(textarea);
   document.getElementById('nav-new-chat')?.classList.toggle('is-on', visible);
   document.querySelector<HTMLElement>('.dshw-scrollbody')?.classList.toggle('is-home', visible);
 }
@@ -1411,6 +1413,9 @@ async function openConversation(id: string) {
   dshCardNodes.clear();
   const turns = c.turns || [];
   activeConversationTurns = turns as Record<string, unknown>[];
+  activeConversationObject = (c as { object?: Record<string, unknown> }).object || {};
+  /* 换了对话，上一条的建议就不再是关于「这里」的了。 */
+  clearComposerSuggestion();
   renderProjectTasks();
   if (!turns.length) {
     stream.innerHTML = emptyStateMarkup('ic-message-plus', '这条对话还没有内容', '继续输入任务，或从屏幕上划过一个对象作为上下文。');
@@ -4192,6 +4197,41 @@ function fitComposer(ta: HTMLTextAreaElement) {
   });
 }
 
+/* ---- 输入框联想词 ----
+   回合结束后问一次「用户下一步最可能说什么」，把它当成 placeholder 显示。
+   它是纯装饰：拉取失败、模型没给建议、通道缺失，都退回本来的静态提示语，
+   不写任何错误提示——输入框不是一个报告错误的地方。 */
+let composerSuggestion = '';
+let composerSuggestionRequest = 0;
+
+const COMPOSER_PLACEHOLDER_HOME = 'Describe a task or ask a question';
+const COMPOSER_PLACEHOLDER_THREAD = 'Type / for commands';
+
+function applyComposerPlaceholder(ta?: HTMLTextAreaElement | null) {
+  const textarea = ta || document.querySelector<HTMLTextAreaElement>('#composer-form textarea');
+  if (!textarea) return;
+  /* 联想词只在会话里出现：首页那句问的是「要做什么」，没有「下一步」。 */
+  const home = !document.getElementById('studio-home')?.hidden;
+  const base = home ? COMPOSER_PLACEHOLDER_HOME : COMPOSER_PLACEHOLDER_THREAD;
+  textarea.placeholder = !home && composerSuggestion ? composerSuggestion : base;
+}
+
+function clearComposerSuggestion() {
+  composerSuggestion = '';
+  composerSuggestionRequest += 1;
+  applyComposerPlaceholder();
+}
+
+/* 请求不阻塞任何东西：它在回合结束之后自己跑，回来时如果用户已经换了会话
+   或又发了一轮，就整条丢掉。 */
+async function refreshComposerSuggestion(turns: unknown, object: unknown) {
+  const request = ++composerSuggestionRequest;
+  const suggestion = await Data.suggestNextPrompt(turns, object);
+  if (request !== composerSuggestionRequest) return;
+  composerSuggestion = suggestion;
+  applyComposerPlaceholder();
+}
+
 function syncComposerSubmitState() {
   const textarea = document.querySelector<HTMLTextAreaElement>('#composer-form textarea');
   const submit = document.querySelector<HTMLButtonElement>('#composer-form button[type="submit"]');
@@ -4778,6 +4818,8 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
 
     textarea.value = '';
     fitComposer(textarea);
+    /* 建议已经被采纳成这一轮了，先撤掉；下一轮结束再问新的。 */
+    clearComposerSuggestion();
     studioComposerBusy = true;
     form.setAttribute('aria-busy', 'true');
     setComposerRunningState(true);
@@ -4848,6 +4890,12 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
       await openConversation(activeConversationId);
       await renderSidebar();
       setComposerSettledState('success');
+      /* 联想词在回合彻底结束之后才问——它读的是这一轮的最终结果，不是中间态。
+         故意不 await：输入框不该等一个建议。 */
+      void refreshComposerSuggestion(
+        activeConversationTurns,
+        activeConversationObject,
+      );
     } catch (error) {
       pending.replaceChildren(DshChat.turnErrorNode(error instanceof Error ? error.message : String(error)));
       textarea.value = ConversationControl.failedDraftValue(textarea.value, question);

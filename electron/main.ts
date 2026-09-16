@@ -2361,6 +2361,34 @@ ipcMain.handle('conversations:rename', (event: Electron.IpcMainInvokeEvent, raw:
   } catch (_) { return { ok: false, error: 'store_failed' }; }
 });
 
+/* 输入框联想词：回合结束后问一次「用户下一步最可能说什么」。
+   这是一次只读的一次性请求——不改会话、不落盘、不开 agent。它跑在后台，
+   用户已经在打字时到达的建议没有价值，所以预算按「一句话」给（见
+   app/agent_runtime/next_prompt.py 的 max_tokens 说明），并且任何失败都退化成
+   空串：没有建议就是没有建议，绝不把报错画进输入框。 */
+ipcMain.handle('conversations:suggest', (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_renderer' };
+  const turns = Array.isArray(raw?.turns) ? raw.turns.slice(-12) : [];
+  if (!turns.length) return { ok: true, suggestion: '' };
+  const payload = {
+    operation: 'suggest_next',
+    turns,
+    object: raw?.object && typeof raw.object === 'object' ? raw.object : {},
+    modelRuntime: activeModelRuntimeConfig(),
+  };
+  return new Promise((resolve) => {
+    // 桥的 onComplete 在成功、超时、输出超限上都送达——没有额外的错误通道。
+    // 只有 ok:true 的返回值才算建议；其余一律退化成空串。
+    const child = runPythonBridge(payload, 'scripts/conversation_bridge.py', 'dashboard', {
+      timeoutMs: 45_000,
+      onComplete: (parsed: any) => {
+        resolve({ ok: true, suggestion: parsed?.ok === true ? String(parsed?.suggestion || '') : '' });
+      },
+    });
+    if (!child) resolve({ ok: true, suggestion: '' });
+  });
+});
+
 ipcMain.handle('conversations:delete', (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
   if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_renderer' };
   const id = String(raw?.id || '').slice(0, 120);

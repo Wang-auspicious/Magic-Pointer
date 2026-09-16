@@ -472,6 +472,8 @@ declare global {
       export?(id: unknown): Promise<{ ok?: boolean; canceled?: boolean; path?: string; error?: string }>;
       rename?(payload: { id?: unknown; title?: unknown }): Promise<{ ok?: boolean; title?: string; error?: string }>;
       delete?(id: unknown): Promise<{ ok?: boolean; error?: string }>;
+      /* 输入框联想词：一次只读请求，返回 "" 表示「没有建议」。 */
+      suggest?(payload: { turns?: unknown; object?: unknown }): Promise<{ ok?: boolean; suggestion?: string; error?: string }>;
       stop?(requestId: unknown): Promise<{ ok?: boolean; sessionId?: string; error?: string }>;
       steer?(payload: { agentSessionId?: unknown; text?: unknown; taskInput?: MagicPointerTaskInput; sources?: Record<string, unknown>[] }): Promise<{ ok?: boolean; inputId?: string; status?: string; error?: string }>;
       timeline(): Promise<MagicPointerTimelineDay[]>;
@@ -634,6 +636,7 @@ declare global {
     exportConversation(id: string): Promise<{ ok?: boolean; canceled?: boolean; path?: string; error?: string }>;
     renameConversation(id: string, title: string): Promise<{ ok?: boolean; title?: string; error?: string }>;
     deleteConversation(id: string): Promise<{ ok?: boolean; error?: string }>;
+    suggestNextPrompt(turns: unknown, object?: unknown): Promise<string>;
     stopConversation(requestId: string): Promise<{ ok?: boolean; sessionId?: string; error?: string }>;
     steerConversation(agentSessionId: string, input: string | MagicPointerTaskInput, sources?: Record<string, unknown>[]): Promise<{ ok?: boolean; inputId?: string; status?: string; error?: string }>;
     onConversationProgress(callback: (payload: { requestId?: string; record?: Record<string, unknown> }) => void): void;
@@ -1088,6 +1091,18 @@ const Data: MagicPointerDataApi = {
   async deleteConversation(id: string): Promise<{ ok?: boolean; error?: string }> {
     if (!hasBridge() || !bridge()!.conversations.delete) return { ok: false, error: '删除通道不可用。' };
     return bridge()!.conversations.delete!(id);
+  },
+
+  /* 联想词永远只返回一个字符串：通道缺失、请求失败、模型没建议，都是空串。
+     调用方不需要为它写错误分支——没有建议就是没有建议。 */
+  async suggestNextPrompt(turns: unknown, object: unknown = {}): Promise<string> {
+    if (!hasBridge() || !bridge()!.conversations.suggest) return '';
+    try {
+      const result = await bridge()!.conversations.suggest!({ turns, object });
+      return result?.ok === true ? String(result.suggestion || '') : '';
+    } catch {
+      return '';
+    }
   },
 
   async stopConversation(requestId: string): Promise<{ ok?: boolean; sessionId?: string; error?: string }> {
