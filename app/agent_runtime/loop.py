@@ -137,6 +137,7 @@ from app.agent_runtime.turn_verification import (
 )
 from app.agent_runtime.hooks import HookManager
 from app.agent_runtime.model_client import (
+    CONTEXT_OVERFLOW_REASON,
     LoopModelClient,
     MessageDelta,
     ModelTurnEvent,
@@ -222,6 +223,17 @@ model profile too; two margins previously compounded to 49% usable context.
 """
 
 _MAX_FRUITLESS_COMPACTIONS = 2
+
+#: How many times one run may answer a context-window rejection by compacting
+#: and resending. Bounded because a history that will not shrink would
+#: otherwise turn the provider's 400 into an infinite loop.
+_MAX_CONTEXT_OVERFLOW_RECOVERIES = 3
+
+#: How many times a run may answer "the model returned nothing at all" by
+#: asking again. Hermes keeps several separately bounded ladders for degenerate
+#: replies (post-tool empty: 3, thinking-only: 2, fully empty: 3); this is the
+#: one that covers a plain empty completion.
+_MAX_EMPTY_RESPONSE_RECOVERIES = 3
 """Give up re-compacting after this many attempts that stayed over threshold.
 
 Ported from Hermes' anti-thrash counters (``context_compressor.should_compress``):
@@ -244,6 +256,32 @@ def _over_compact_threshold(
         return False
     estimated = params.token_estimator(list(messages)) + tool_schema_tokens
     return estimated >= _PROACTIVE_COMPACT_RATIO * params.context_budget_tokens
+
+
+#: How much lighter the history must have become before a compaction that
+#: already failed is attempted again. Sized to ignore the ordinary churn of a
+#: round or two of tool output and to notice a genuine drop — a compacted head,
+#: a pruned subtree, a batch of tool results the model asked to discard.
+_FRUITLESS_COMPACTION_RETRY_RATIO = 0.9
+
+
+def _history_moved_since(
+    params: LoopParams,
+    messages: Sequence[AgentMessage],
+    baseline: int | None,
+) -> bool:
+    """Has the history changed enough to be worth summarizing again?
+
+    Answers the question ``fruitless_compactions`` was standing in for. That
+    counter only ever went up, and only within the guard that read it, so a
+    single bad patch of history disabled compaction for the rest of the run.
+    """
+    if baseline is None:
+        return False
+    if params.token_estimator is None:
+        return False
+    current = params.token_estimator(list(messages))
+    return current < int(baseline * _FRUITLESS_COMPACTION_RETRY_RATIO)
 
 
 def _real_prompt_tokens(usage: Mapping[str, Any] | None) -> int:
@@ -818,6 +856,19 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
     renewals_used = 0
     last_progress_turn = 0
     fruitless_compactions = 0
+    # Token estimate at the last compaction that failed to bring us under the
+    # line. ``fruitless_compactions`` counts consecutive fruitless attempts, but
+    # it had no way back down: the only assignment that resets it to zero lives
+    # *inside* the block whose guard requires it to be low, so once it reached
+    # ``_MAX_FRUITLESS_COMPACTIONS`` compaction was disabled for the rest of the
+    # run — including after the model changed direction and dropped a pile of
+    # tool output, which is exactly when compacting would have helped again.
+    # Recording what the history weighed at the failure lets the guard tell
+    # "the same history again" (thrash, skip) from "a different, smaller
+    # history" (worth another attempt).
+    fruitless_compaction_baseline: int | None = None
+    context_overflow_recoveries = 0
+    empty_response_recoveries = 0
     backend_recovery_attempts = 0
     tool_schemas, dropped_tools = _select_tool_schemas_with_dropped(params)
     reported_dropped_tools = dropped_tools
@@ -951,7 +1002,12 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                 params.compactor is not None
                 and params.context_budget_tokens is not None
                 and params.token_estimator is not None
-                and fruitless_compactions < _MAX_FRUITLESS_COMPACTIONS
+                and (
+                    fruitless_compactions < _MAX_FRUITLESS_COMPACTIONS
+                    or _history_moved_since(
+                        params, state.messages, fruitless_compaction_baseline
+                    )
+                )
                 and (
                     _over_compact_threshold(params, state.messages, tool_schema_tokens)
                     # The provider's own prompt_tokens from the previous round
@@ -991,15 +1047,24 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                     # Still over the line after compacting means the history is
                     # not where the weight is; summarising again costs a model
                     # call and buys nothing.
-                    fruitless_compactions = (
-                        fruitless_compactions + 1
-                        if _over_compact_threshold(
-                            params, compacted_messages, tool_schema_tokens
+                    if _over_compact_threshold(
+                        params, compacted_messages, tool_schema_tokens
+                    ):
+                        fruitless_compactions += 1
+                        fruitless_compaction_baseline = params.token_estimator(
+                            compacted_messages
                         )
-                        else 0
-                    )
+                    else:
+                        fruitless_compactions = 0
+                        fruitless_compaction_baseline = None
                 else:
+                    # The compactor produced something no lighter than what it
+                    # was given. Remember the weight so a later, genuinely
+                    # smaller history is not refused by a stale latch.
                     fruitless_compactions += 1
+                    fruitless_compaction_baseline = params.token_estimator(
+                        list(state.messages)
+                    )
                 # A successful compaction spent a round paying for cheaper
                 # follow-up calls; without marking it productive, the next
                 # model's deadline check sees the stale progress marker
@@ -1094,6 +1159,70 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                 token_withheld = any(
                     _is_token_withheld(event.reason) for event in withheld_events
                 )
+                if not token_withheld and any(
+                    event.reason == CONTEXT_OVERFLOW_REASON
+                    for event in withheld_events
+                ):
+                    # The request did not fit. This is the one provider refusal
+                    # that gets *more* likely to succeed the more we do to it,
+                    # so compact and resend instead of terminating. The
+                    # threshold check is deliberately bypassed: the provider
+                    # has already told us we are over the line, which is better
+                    # evidence than our estimate of where the line is.
+                    if (
+                        params.compactor is None
+                        or context_overflow_recoveries >= _MAX_CONTEXT_OVERFLOW_RECOVERIES
+                    ):
+                        terminal = Terminal(
+                            reason=TransitionReason.PROVIDER_UNAVAILABLE,
+                            message=(
+                                "context_overflow_unrecoverable"
+                                if params.compactor is not None
+                                else "context_overflow_without_compactor"
+                            ),
+                            turns=turn_number,
+                            results=tuple(results),
+                            model_usage=_model_usage_snapshot(model_usage),
+                        )
+                        yield _stop(terminal)
+                        return
+                    context_overflow_recoveries += 1
+                    compacted_messages = params.compactor(list(state.messages))
+                    if params.token_estimator is not None and params.token_estimator(
+                        compacted_messages
+                    ) >= params.token_estimator(list(state.messages)):
+                        # Compaction bought nothing, so a resend would fail the
+                        # same way. Say so rather than looping.
+                        terminal = Terminal(
+                            reason=TransitionReason.PROVIDER_UNAVAILABLE,
+                            message="context_overflow_compaction_ineffective",
+                            turns=turn_number,
+                            results=tuple(results),
+                            model_usage=_model_usage_snapshot(model_usage),
+                        )
+                        yield _stop(terminal)
+                        return
+                    if params.session is not None:
+                        params.session.replace_messages(
+                            compacted_messages,
+                            reason="context_overflow_recovery",
+                        )
+                        compacted_messages = params.session.derive_messages()
+                    state = with_transition(
+                        state,
+                        TransitionReason.COMPACT_TRIGGERED,
+                        messages=compacted_messages,
+                        tool_calls_pending=[],
+                        turn_count=turn_number,
+                        last_result=results[-1] if results else None,
+                    )
+                    # Compaction is itself progress: without this the deadline
+                    # check sees the stale marker and cuts a task that is
+                    # actively recovering.
+                    last_progress_turn = turn_number
+                    yield TurnFinished(state)
+                    turn_number += 1
+                    continue
                 if not token_withheld:
                     reasons = ", ".join(event.reason for event in withheld_events)
                     # A transient backend failure must not throw away a turn
@@ -1176,6 +1305,13 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                     yield _stop(terminal)
                     return
                 recovery = state.max_output_tokens_recovery_count + 1
+                # Ask for more room before retrying. Without this the recovery
+                # path re-sent the identical request at the identical ceiling,
+                # so the turn was guaranteed to truncate the same way until the
+                # ceiling below ran out — the retry existed but could not
+                # succeed. Best-effort: a backend that cannot raise its ceiling
+                # returns 0 and the previous behaviour stands unchanged.
+                client.escalate_output_tokens()
                 if recovery > MAX_OUTPUT_TOKENS_RECOVERY_LIMIT:
                     terminal = Terminal(
                         reason=TransitionReason.MAX_OUTPUT_TOKENS_RECOVERED,
@@ -1332,6 +1468,49 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                     continue
                 if params.session is not None and str(text or "").strip():
                     params.session.record_artifact_generated(str(text))
+                # A provider may answer finish_reason=stop with no text and no
+                # tool calls: `_parse_sse` emits no withhold for that, so
+                # nothing upstream classified it, the loop appended nothing,
+                # and this terminal closed COMPLETED with an empty message.
+                # The user got an empty bubble and a success. Everything else
+                # that could have produced content — the stop hooks, the
+                # verification nudge, a queued follow-up — has already had its
+                # turn above, so reaching here empty is genuinely degenerate.
+                if (
+                    not str(text or "").strip()
+                    and not state.tool_calls_pending
+                    and empty_response_recoveries < _MAX_EMPTY_RESPONSE_RECOVERIES
+                ):
+                    empty_response_recoveries += 1
+                    retry_message = AgentMessage(
+                        role=Role.USER,
+                        content=(
+                            "上一轮你没有返回任何内容。请直接回答用户的问题；"
+                            "如果需要调用工具就先调用，不需要就直接给出答案。"
+                            "不要返回空回复。"
+                        ),
+                        tool_call_id=None,
+                        name=None,
+                        origin=ORIGIN_INSTRUCTION,
+                    )
+                    if params.session is not None:
+                        params.session.append_message(retry_message)
+                    state = with_transition(
+                        state,
+                        TransitionReason.TOOL_RESULT,
+                        messages=(
+                            params.session.derive_messages()
+                            if params.session is not None
+                            else [*messages, retry_message]
+                        ),
+                        tool_calls_pending=[],
+                        turn_count=turn_number,
+                        stop_hook_active=False,
+                        last_result=results[-1] if results else None,
+                    )
+                    yield TurnFinished(state)
+                    turn_number += 1
+                    continue
                 final_state = with_transition(
                     state,
                     TransitionReason.COMPLETED,

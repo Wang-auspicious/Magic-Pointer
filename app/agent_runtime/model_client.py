@@ -37,7 +37,11 @@ from typing import Any, Protocol
 
 from app import ai_client as _ai_client
 from app.agent_runtime.effort import normalize_effort
-from app.agent_runtime.errors import MAX_OUTPUT_TOKENS_RECOVERY_LIMIT
+from app.agent_runtime.errors import (
+    CONTEXT_OVERFLOW_REASON,
+    MAX_OUTPUT_TOKENS_RECOVERY_LIMIT,
+    is_context_overflow_error,
+)
 from app.agent_runtime.types import AgentMessage, Role, ToolCall
 from app.governance.cancellation import CancelledError
 
@@ -61,6 +65,51 @@ __all__ = [
 
 _DEFAULT_TRUNCATION_SUFFIX = "…"
 _MIN_HTTP_TIMEOUT_S = 0.05
+
+#: Output ceiling to raise a truncated turn to, and how many times that is
+#: allowed to happen in one run.
+#:
+#: The problem this solves: the loop already noticed ``finish_reason ==
+#: "length"`` and retried — but it retried at **the same ceiling**, so a request
+#: that needed more room than 4096 tokens was re-sent at 4096 until
+#: ``MAX_OUTPUT_TOKENS_RECOVERY_LIMIT`` ran out and the turn failed. Writing a
+#: 200-line file, one long patch, or a summary of a long command's output all
+#: land in that band. Claude Code's answer is to re-send the identical request
+#: with a much larger ceiling (``CAPPED_DEFAULT_MAX_TOKENS = 8_000`` →
+#: ``ESCALATED_MAX_TOKENS = 64_000``); this is the same idea at a smaller
+#: multiple, because a self-hosted or proxied gateway is more likely to reject
+#: a jump straight to 64k than to accept a graduated one.
+ESCALATED_MAX_TOKENS = 64_000
+
+#: Multiply rather than jump: 4096 -> 16384 -> 64000. Two escalations.
+MAX_OUTPUT_TOKEN_ESCALATIONS = 2
+
+#: A single escalation never asks for less than this, so a low configured
+#: ceiling still gets real headroom on the first retry.
+_ESCALATION_FLOOR = 16_384
+
+#: How much bigger each escalation makes the ceiling.
+_ESCALATION_FACTOR = 4
+
+
+def escalated_max_tokens(current: int, escalations_used: int) -> int:
+    """The ceiling to retry a truncated turn at, or ``0`` to give up.
+
+    Pure, so the policy is testable without a model. ``escalations_used`` is
+    the count *already spent*; the return value is the new ceiling, and ``0``
+    means the ladder is exhausted and the caller should let the existing
+    recovery limit do its job.
+    """
+    if escalations_used >= MAX_OUTPUT_TOKEN_ESCALATIONS:
+        return 0
+    current = max(1, int(current))
+    # Clamp to the cap *before* comparing, not after. The other order reports
+    # 64000 -> 64000 as a successful escalation, which tells the caller to
+    # retry believing it has more room than it does.
+    proposed = min(max(current * _ESCALATION_FACTOR, _ESCALATION_FLOOR), ESCALATED_MAX_TOKENS)
+    if proposed <= current:
+        return 0
+    return proposed
 
 
 class ModelTurnEvent:
@@ -179,6 +228,28 @@ class LoopModelClient:
         self.withheld_count = 0
         self._reserved_call_ids: set[str] = set()
         self._next_synthetic_call_id = 0
+        self.output_token_escalations = 0
+
+    def escalate_output_tokens(self) -> int:
+        """Raise the backend's output ceiling after a truncated turn.
+
+        Returns the new ceiling, or ``0`` when the ceiling cannot rise further
+        — either the ladder is spent or the backend has no ceiling to raise.
+        The loop calls this on the ``max_output_tokens`` recovery path; before
+        this existed, that path re-sent the identical request at the identical
+        ceiling and simply retried until the recovery limit failed the turn.
+        """
+        escalate = getattr(self._backend, "escalate_max_tokens", None)
+        if not callable(escalate):
+            return 0
+        try:
+            raised = int(escalate(self.output_token_escalations) or 0)
+        except Exception:  # noqa: BLE001 -- a backend that cannot escalate is
+            return 0       # not an error, it just retries at the same ceiling
+        if raised <= 0:
+            return 0
+        self.output_token_escalations += 1
+        return raised
 
     @property
     def used_backend(self) -> str:
@@ -470,6 +541,13 @@ class AiClientBackend:
         self.timeout_s = max(1.0, float(timeout_s))
         self.max_tokens = max(1, int(max_tokens))
 
+    def escalate_max_tokens(self, escalations_used: int = 0) -> int:
+        """Raise the output ceiling for a retry of a truncated turn."""
+        raised = escalated_max_tokens(self.max_tokens, escalations_used)
+        if raised:
+            self.max_tokens = raised
+        return raised
+
     def generate(
         self,
         messages: list[AgentMessage],
@@ -625,6 +703,20 @@ class AiClientMessagesBackend:
         )
         self.effort = normalize_effort(effort)
         self._client_factory = None
+
+    def escalate_max_tokens(self, escalations_used: int = 0) -> int:
+        """Raise the output ceiling for a retry of a truncated turn.
+
+        Both the streaming and non-streaming payload builders read
+        ``self.max_tokens`` per call, so raising it here takes effect on the
+        very next request without rebuilding the client — which matters,
+        because the client carries the system prompt (and therefore the
+        provider's prompt cache) and a rebuild would discard it.
+        """
+        raised = escalated_max_tokens(self.max_tokens, escalations_used)
+        if raised:
+            self.max_tokens = raised
+        return raised
 
     def generate(
         self,
@@ -1140,6 +1232,18 @@ class StreamingMessagesBackend(AiClientMessagesBackend):
                         stripped_retry_used = True
                         continue
                 if response.status_code >= 400:
+                    # Read the body before deciding what this is. "Too many
+                    # tokens" arrives as an ordinary 400 and is recoverable by
+                    # compacting; anything else at 400 is not. Treating them
+                    # alike is what turned the first context-window overrun of
+                    # a long task into a terminal provider failure.
+                    try:
+                        error_body = response.read().decode("utf-8", "replace")
+                    except Exception:  # noqa: BLE001 -- classification is best-effort
+                        error_body = ""
+                    if is_context_overflow_error(error_body):
+                        yield TurnWithheld(reason=CONTEXT_OVERFLOW_REASON)
+                        return
                     yield TurnWithheld(
                         reason=f"backend_error:http_{response.status_code}"
                     )

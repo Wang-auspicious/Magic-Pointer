@@ -12,6 +12,54 @@ import enum
 
 MAX_OUTPUT_TOKENS_RECOVERY_LIMIT = 3
 
+#: Withhold reason for "the request did not fit in the model's context window".
+#:
+#: Distinct from a generic ``backend_error:http_400`` on purpose: the two need
+#: opposite responses. A malformed request will be malformed again; an oversized
+#: one becomes sendable as soon as the history is compacted. Before this existed
+#: every 400 — including the one that means "your conversation is too long" —
+#: fell through to a terminal ``PROVIDER_UNAVAILABLE``, so a long task died at
+#: the exact moment compaction existed to save it.
+CONTEXT_OVERFLOW_REASON = "context_overflow"
+
+#: Substrings providers use to say "too many tokens". Deliberately matched
+#: case-insensitively against the raw error body, because every vendor words it
+#: differently and none of them guarantees a machine-readable code. Grouped by
+#: vendor where the wording is distinctive.
+CONTEXT_OVERFLOW_MARKERS = (
+    # OpenAI / OpenAI-compatible
+    "context_length_exceeded",
+    "maximum context length",
+    "reduce the length of the messages",
+    "please reduce the length",
+    # Anthropic
+    "prompt is too long",
+    "input length and `max_tokens` exceed context limit",
+    "exceed context limit",
+    # DeepSeek / Moonshot / Qwen / GLM family
+    "context window",
+    "too many tokens",
+    "max_tokens is too large",
+    "input is too long",
+    "exceeds the maximum",
+    "上下文长度",
+    "超出最大",
+    # Google / Vertex
+    "input token count",
+    "exceeds the maximum number of tokens",
+)
+
+
+def is_context_overflow_error(body: object) -> bool:
+    """Does this provider error body mean "the request was too large"?
+
+    Pure and total: any non-string-ish input is simply not a match.
+    """
+    text = str(body or "").casefold()
+    if not text:
+        return False
+    return any(marker in text for marker in CONTEXT_OVERFLOW_MARKERS)
+
 
 class FailureType(enum.StrEnum):
     STALE_ANCHOR = "stale_anchor"
