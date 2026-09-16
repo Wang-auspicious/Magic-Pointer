@@ -17,6 +17,7 @@ from app.capture import CaptureProvider, GdiFallbackCaptureProvider
 from app.governance.cancellation import CancelledError
 
 from . import motion
+from .agent_cursor_channel import agent_cursor_observer
 from .motion import CLICK_HOLD_MS, CLICK_SETTLE_MS, approach_lead_ms, bounded_glide_ms, glide_points
 from .schema import (
     ComputerAction,
@@ -408,7 +409,12 @@ class WindowsComputerOperatorBackend:
     ) -> None:
         self.output_root = Path(output_root)
         self.capture_provider = capture_provider or GdiFallbackCaptureProvider()
-        self.driver = driver if driver is not None else Win32InputDriver()
+        self.driver = driver if driver is not None else Win32InputDriver(
+            # The visual computer-use path builds its own driver, separately
+            # from the desktop-action session. Without this the twin cursor
+            # announced nothing for anything driven through this backend.
+            approach_observer=agent_cursor_observer(),
+        )
         self._held_by_operation: dict[str, set[str]] = {}
         self._input_lock = threading.RLock()
 

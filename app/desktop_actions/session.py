@@ -1165,40 +1165,36 @@ class _UnavailableDriver:
         raise ActionFailure(FailureType.TOOL_ERROR, "windows_input_unavailable")
 
 
-#: Progress sink for the on-screen twin cursor. Set by a bridge before it runs
-#: a turn, so the driver can announce where it is about to move and click.
-#: Module-level because the driver is constructed here, lazily, by callers that
-#: have no way to pass it one — and because a stale emitter is harmless: it is
-#: replaced on every turn and ``None`` (no cursor) is the default.
-_agent_cursor_sink: Any = None
-
-
 def set_agent_cursor_sink(sink: Any) -> None:
-    """Point the twin cursor at ``sink``.
+    """Point the twin cursor at ``sink`` (anything with ``mark(phase, **fields)``).
 
-    ``sink`` is anything with ``mark(phase, **fields)`` — in practice a
-    :class:`~scripts.bridge_progress.PhaseClock`. Pass ``None`` to detach, which
-    is what a bridge should do when its turn ends so a later turn without a
-    cursor cannot inherit this one's.
+    The storage lives in :mod:`app.computer_operator.agent_cursor_channel`
+    because the visual computer-use backend builds its own driver and needs the
+    same sink; this is a thin alias so the bridges have one obvious name to
+    call.
     """
-    global _agent_cursor_sink
-    _agent_cursor_sink = sink
+    from app.computer_operator.agent_cursor_channel import set_agent_cursor_sink as _set
+
+    _set(sink)
 
 
 def _live_driver() -> Any:
     if os.name != "nt":
         return _UnavailableDriver()
     try:
-        from app.computer_operator.agent_cursor_channel import AgentCursorEmitter
+        from app.computer_operator.agent_cursor_channel import agent_cursor_observer
         from app.computer_operator.windows import Win32InputDriver
 
-        return Win32InputDriver(
-            approach_observer=(
-                AgentCursorEmitter(_agent_cursor_sink)
-                if _agent_cursor_sink is not None
-                else None
-            ),
-        )
+        # The observer is always attached and resolves the sink lazily.
+        #
+        # It used to be attached only when a sink was already set — but this
+        # driver is constructed while the plugin tree boots, and the bridge sets
+        # the sink hundreds of lines later, after it knows which clock it is
+        # reporting on. So the check was always false and the cursor was
+        # silently never announced from production, while the test (which set
+        # the sink first) passed. A lazy lookup removes the ordering dependency
+        # rather than depending on it.
+        return Win32InputDriver(approach_observer=agent_cursor_observer())
     except Exception:
         return _UnavailableDriver()
 

@@ -24,8 +24,15 @@ MAX_OUTPUT_TOKENS_RECOVERY_LIMIT = 3
 #: :func:`~app.agent_runtime.model_client.escalated_max_tokens`.
 #:
 #: Kept as a named constant and used by every call site so the number has one
-#: home. Models with a smaller hard cap are unaffected: the provider rejects the
-#: request and ``ai_client`` already retries without the optional fields.
+#: home.
+#:
+#: NOT every model is unaffected by the raise. ``ai_client`` does retry a
+#: rejected request without its *optional* fields — ``thinking``,
+#: ``reasoning_effort``, ``reasoning`` — but ``max_tokens`` is not one of them,
+#: so there is no automatic fallback for a provider whose hard output cap sits
+#: below this value. Those requests fail until the value is lowered. A model
+#: profile that declares its own cap (see ``app/models/profiles.py``) is the
+#: right place to handle them.
 DEFAULT_MAX_OUTPUT_TOKENS = 8_192
 
 #: Withhold reason for "the request did not fit in the model's context window".

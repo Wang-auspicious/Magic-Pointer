@@ -22,7 +22,10 @@ Ported semantics from the CC query-loop and Pi agent-loop study notes
   here** because it fires on ordinary Chinese punctuation — see the note on
   :meth:`LoopModelClient.parse_tool_calls`. Protocol evidence
   (``stop_reason == "max_tokens"``, or a missing stop reason) detects real
-  truncation earlier, in the withheld branch.
+  truncation earlier, in the withheld branch. ``AiClientBackend`` has no stop
+  reason to consult at all — the wrapped call returns one dict — so its own
+  provider ``finish_reason`` is plumbed through instead; before that, the text
+  heuristic was the only detector that path had.
 - ``ModelBackend`` is the StreamFn-style contract: a generator that yields
   events and never fabricates. ``AiClientBackend`` wraps the real
   ``app/ai_client`` (read-only) with an honest mapping.
@@ -599,6 +602,20 @@ class AiClientBackend:
             yield TurnDone(usage=None, raw_text=None)
             return
         text = (result or {}).get("text") or ""
+        # The provider's own verdict on whether it finished or hit the output
+        # ceiling. This backend has no streaming stop reason to consult — the
+        # wrapped call returns one dict — so before this was plumbed through,
+        # the only truncation signal available here was inspecting the text for
+        # a trailing ellipsis, which is also how a Chinese sentence ending in
+        # "…" got mistaken for a truncation. Withholding the calls here is the
+        # same contract every other backend follows, and it happens before the
+        # loop considers executing anything.
+        if _is_length_finish(result or {}):
+            if text:
+                yield MessageDelta(text)
+            yield TurnWithheld(reason="max_output_tokens")
+            yield TurnDone(usage=None, raw_text=text or None)
+            return
         if text:
             yield MessageDelta(text)
         for index, raw in enumerate((result or {}).get("toolCalls") or []):
@@ -614,6 +631,16 @@ class AiClientBackend:
                 )
             )
         yield TurnDone(usage=None, raw_text=text or None)
+
+
+#: Provider finish reasons that mean "stopped because it ran out of room",
+#: across the wire formats this client speaks.
+_LENGTH_FINISH_REASONS = frozenset({"length", "max_tokens", "max_output_tokens"})
+
+
+def _is_length_finish(result: dict) -> bool:
+    """Did the provider stop this turn at the output ceiling?"""
+    return str(result.get("finishReason") or "").strip().casefold() in _LENGTH_FINISH_REASONS
 
 
 def _normalize_call(call: ToolCall, errors: list[str]) -> ToolCall | None:

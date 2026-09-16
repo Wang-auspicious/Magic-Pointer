@@ -8,6 +8,19 @@ Everything below was read in the source. Numbers marked *measured* come from the
 
 ## Measurement harnesses
 
+> **These numbers are a PRE-FIX snapshot, measured at `6c5b9ad`.** They are kept
+> because the F-numbers below are written against them and a baseline you edit
+> when it becomes inconvenient is not a baseline — but re-running the named
+> harnesses today gives different values throughout (`log()` 0.98 → 0.58 ms,
+> `persist()` at 13 MB 85.41 → 67.13 ms, `buildSdfPath(1024)` 855.785 → 15.587
+> µs). Independent re-measurement is in
+> `docs/VERIFICATION_20260916_ROUND2.md`.
+>
+> The `buildSdfPath` rows are **not meaningful in either snapshot**: the harness
+> calls with the same array every iteration, so all but the first are cache hits,
+> and 64 points measures *slower* than 256. Quote the production-shaped figure
+> instead — `tests/sweep_visual_incremental_test.js`, re-measured at 11.7–13.8×.
+
 | script | what it measures | how to run |
 | --- | --- | --- |
 | `tools/measure_electron_hotpath.js` | pure-module microbenchmarks (pointer tick, gesture commit, sweep geometry, progress splitter) | `npx tsx tools/measure_electron_hotpath.js` |

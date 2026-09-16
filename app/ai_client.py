@@ -508,7 +508,11 @@ def _tool_completion_response(data: dict, api_mode: str) -> dict:
                 "name": str(block["name"]),
                 "arguments": arguments if isinstance(arguments, dict) else {},
             })
-        return {"text": text, "toolCalls": calls}
+        return {
+            "text": text,
+            "toolCalls": calls,
+            "finishReason": str(data.get("stop_reason") or ""),
+        }
 
     message = data["choices"][0]["message"]
     calls = []
@@ -526,7 +530,11 @@ def _tool_completion_response(data: dict, api_mode: str) -> dict:
             "name": name,
             "arguments": arguments if isinstance(arguments, dict) else {},
         })
-    return {"text": str(message.get("content") or ""), "toolCalls": calls}
+    return {
+        "text": str(message.get("content") or ""),
+        "toolCalls": calls,
+        "finishReason": str((data["choices"][0] or {}).get("finish_reason") or ""),
+    }
 
 
 def _vision_content_block(data_url: str, api_mode: str) -> dict:
@@ -870,6 +878,11 @@ def ask_text_model_with_tools(
                 "text": parsed["text"],
                 "toolCalls": parsed["toolCalls"],
                 "error": "",
+                # Carried so a caller can tell a finished turn from one the
+                # provider cut off at the output ceiling. Without it the only
+                # way to guess was to inspect the text, which is how a Chinese
+                # sentence ending in "…" got mistaken for a truncation.
+                "finishReason": str(parsed.get("finishReason") or ""),
             }
         if request_timed_out and last_error == "model_request_timeout":
             return {"text": "", "toolCalls": [], "error": "model_request_timeout"}

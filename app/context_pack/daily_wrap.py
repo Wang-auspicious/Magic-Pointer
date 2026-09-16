@@ -50,6 +50,15 @@ class ConversationEventCatalog:
         )
 
     def _load(self) -> list[dict[str, Any]]:
+        # The Electron main process writes this file on a debounce
+        # (conversation_store's deferPersist), so a read taken immediately after
+        # a turn can be up to ~1s behind. That is the accepted trade for taking
+        # a 60-85ms whole-store rewrite off the main thread; it is recorded here
+        # because this is the one reader that runs in a different process and
+        # can therefore actually observe the window. Daily-wrap summaries are
+        # end-of-day aggregates, where a second of staleness is immaterial —
+        # if that ever stops being true, flush before reading rather than
+        # shortening the debounce.
         try:
             raw = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, ValueError, TypeError):

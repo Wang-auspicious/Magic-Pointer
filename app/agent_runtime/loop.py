@@ -372,7 +372,8 @@ class LoopParams:
     """Completion gates: each callable() -> str | None; text injects a nudge."""
     clock: Callable[[], float] | None = None
     tool_limit: int = 12
-    max_parallel_tool_calls: int = 4
+    #: Kept in step with ``app/fabric/engine.py``; see the note there.
+    max_parallel_tool_calls: int = 8
     interrupt_check: Callable[[], bool] | None = None
     event_sink: Callable[[Any], None] | None = None
     permission_mode: str = "default"

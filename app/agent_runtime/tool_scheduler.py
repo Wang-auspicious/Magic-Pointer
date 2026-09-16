@@ -67,7 +67,10 @@ def schedule_tool_calls(
     classify: Callable[[ToolCall], ExecutionMode | str],
     conflict_keys: Callable[[ToolCall], Iterable[str]] | None = None,
     execute: Callable[[ToolCall], ToolResult],
-    max_parallel_tool_calls: int = 4,
+    #: Kept in step with ``app/fabric/engine.py``. It was 4 while the engine
+    #: moved to 8, so anything constructing the scheduler directly got a
+    #: narrower batch than production and no comment said why.
+    max_parallel_tool_calls: int = 8,
     is_cancelled: Callable[[], bool] | None = None,
     before_dispatch: Callable[[ToolCall], ToolResult | None] | None = None,
 ) -> Iterator[ToolScheduleEvent]:

@@ -191,10 +191,10 @@ disagree, this is current.
 | ID | What changed |
 | --- | --- |
 | C-024 | Twin cursor exists as a first-class surface: `app/computer_operator/cursors.py` (registry, accent, TTL) + `electron/renderer/overlay.ts` renders it. **Not yet rendered in anger** — see "Known unverified" below. |
-| C-025 | Per-display placement: `app/computer_operator/displays.py`, and one cursor surface per display, including the 2px bottom shave that keeps the auto-hide taskbar working. |
+| C-025 | Per-display placement: one cursor surface per display, including the 2px bottom shave that keeps the auto-hide taskbar working. **The wired implementation is the TypeScript one** (`agent_cursor_policy.ts`); `app/computer_operator/displays.py` is written and tested but has no production caller. |
 | C-026/027/028 | The guide flight and the cursor flight now use Clicky's own numbers: smoothstep easing, `clamp(dist/800, 600, 1400)` ms, Bézier arc `min(d·0.2, 80)`, tangent-following rotation, `1+sin(πp)` pulse, dwell 3000 ms, flat 1400 ms return. |
-| C-029 | Addressable multi-cursor model — id, position, accent, TTL, state. One cursor is emitted today; the wire carries an id from the start. |
-| C-053 | Per-conversation JSON cache: `updateTurn` at the audit's 13 MB store went 60.6 ms → 36.9 ms, and the debounced write is async. Per-conversation files still not done (recorded with the reason). |
+| C-029 | Addressable multi-cursor model — id, position, accent, TTL, state. One cursor is emitted today; the wire carries an id from the start. **Written and tested in `app/computer_operator/cursors.py`, which has no production caller** — the live implementation is the TypeScript one. |
+| C-053 | Per-conversation JSON cache, and the debounced write is async. **The `60.6 ms → 36.9 ms` figure originally quoted here is not reproducible and no committed harness produces it** — the verifier measured the real store at 13.17 MB: 46.86 ms synchronous, 0.00 ms with `deferPersist`. Per-conversation files still not done (recorded with the reason). |
 | C-055 | Store persistence failures are reported: bounded to 5, first always, then one per minute. |
 | C-056 | `observability.writeEvent` buffered. Measured 0.33–0.96 ms/call → 0.00 ms queue-only. Rotation preserved. |
 | C-061 | `conversations:turn` re-render cascade coalesced behind one rAF. |
@@ -221,7 +221,7 @@ disagree, this is current.
 | RC-10 | A Chinese ellipsis no longer counts as truncation evidence — it was discarding complete tool calls. |
 | RC-12 | An empty completion is retried instead of delivered as a success with an empty bubble. |
 | P-19 | `max_parallel_tool_calls` 4 → 8. |
-| — | The twin cursor's message channel is wired end to end: bridge → sink → emitter → `@@mp phase=agent_cursor` → main → cursor surface. |
+| — | The twin cursor's message channel: bridge → sink → emitter → `@@mp phase=agent_cursor` → main → cursor surface. **The attachment was broken when first claimed** — the driver was built before the sink was set, so production emitted nothing. Now resolved lazily and attached at both driver sites, with the test rewritten to exercise the production order. See `docs/VERIFICATION_20260916_ROUND2.md` §2.2. |
 
 ## Newly recorded, not fixed
 

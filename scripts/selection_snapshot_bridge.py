@@ -530,7 +530,15 @@ def _normalized_gesture(value: Any | None) -> dict[str, Any] | None:
             ]
             remaining -= len(stroke_points)
             if len(stroke_points) >= 2:
-                strokes.append({"points": stroke_points})
+                # 每一笔的区域几何（圈的环 / 线的走廊）必须一起带过去。它原来
+                # 在这里被丢掉——上面只重建了 points，于是 Electron 画出来的
+                # 多边形永远到不了 Python，OCR 只能退回 bbox：圈得松一点就会
+                # 把旁边几行一起圈进来，用户看到的是「我明明只圈了这一段」。
+                stroke = {"points": stroke_points}
+                geometry = raw_stroke.get("geometry") if isinstance(raw_stroke, dict) else None
+                if isinstance(geometry, dict):
+                    stroke["geometry"] = geometry
+                strokes.append(stroke)
             if remaining <= 0:
                 break
         points = [item for stroke in strokes for item in stroke["points"]]

@@ -129,10 +129,17 @@ class TestNeverFailsTheAction:
 
 class TestSessionAttachment:
     """The driver is built lazily by the session factory, so the emitter has to
-    be attached there rather than passed down. These pin that wiring."""
+    be attached there rather than passed down.
 
-    def test_the_driver_is_built_with_an_observer_when_a_sink_is_set(self) -> None:
-        import app.desktop_actions.session as session_module
+    These deliberately exercise the PRODUCTION order — driver first, sink
+    second. The first version of this file built the driver after setting the
+    sink, which is the opposite of what both bridges do, so it passed while
+    production announced nothing at all: `boot_loop_context` constructs the
+    driver hundreds of lines before the bridge knows which clock it reports on.
+    """
+
+    def _driver_with_fake(self):
+        import app.computer_operator.windows as windows_module
 
         seen: dict = {}
 
@@ -140,46 +147,66 @@ class TestSessionAttachment:
             def __init__(self, *, approach_observer=None):
                 seen["observer"] = approach_observer
 
-        import app.computer_operator.windows as windows_module
-
         real = windows_module.Win32InputDriver
         windows_module.Win32InputDriver = FakeDriver  # type: ignore[assignment]
+        return seen, real, windows_module
+
+    def test_sink_set_after_the_driver_is_built_still_reaches_it(self) -> None:
+        import app.desktop_actions.session as session_module
+
+        seen, real, windows_module = self._driver_with_fake()
         try:
+            session_module.set_agent_cursor_sink(None)
+            session_module._live_driver()          # driver FIRST, as production does
             sink = Recorder()
-            session_module.set_agent_cursor_sink(sink)
-            session_module._live_driver()
-            assert seen["observer"] is not None, (
-                'a sink must produce an observer, or the twin cursor never moves'
-            )
+            session_module.set_agent_cursor_sink(sink)   # sink SECOND
+            assert seen["observer"] is not None
             seen["observer"].cursor_clicked((3, 4), button="left", count=1)
+            assert sink.marks, (
+                "a driver built before the sink was set must still announce — "
+                "this is the production order"
+            )
             assert sink.marks[0][1]["action"] == ACTION_CLICK
         finally:
             windows_module.Win32InputDriver = real  # type: ignore[assignment]
             session_module.set_agent_cursor_sink(None)
 
-    def test_no_sink_means_no_observer(self) -> None:
+    def test_the_observer_is_always_attached(self) -> None:
+        # Not conditional on a sink being present: the decision has to be made
+        # per announcement, not per construction.
         import app.desktop_actions.session as session_module
 
-        seen: dict = {}
-
-        class FakeDriver:
-            def __init__(self, *, approach_observer=None):
-                seen["observer"] = approach_observer
-
-        import app.computer_operator.windows as windows_module
-
-        real = windows_module.Win32InputDriver
-        windows_module.Win32InputDriver = FakeDriver  # type: ignore[assignment]
+        seen, real, windows_module = self._driver_with_fake()
         try:
             session_module.set_agent_cursor_sink(None)
             session_module._live_driver()
-            assert seen["observer"] is None
+            assert seen["observer"] is not None
         finally:
             windows_module.Win32InputDriver = real  # type: ignore[assignment]
 
-    def test_detaching_does_not_leave_a_stale_emitter(self) -> None:
+    def test_no_sink_means_no_marks_rather_than_an_error(self) -> None:
         import app.desktop_actions.session as session_module
 
-        session_module.set_agent_cursor_sink(Recorder())
-        session_module.set_agent_cursor_sink(None)
-        assert session_module._agent_cursor_sink is None
+        seen, real, windows_module = self._driver_with_fake()
+        try:
+            session_module.set_agent_cursor_sink(None)
+            session_module._live_driver()
+            seen["observer"].cursor_clicked((3, 4), button="left", count=1)  # must not raise
+        finally:
+            windows_module.Win32InputDriver = real  # type: ignore[assignment]
+
+    def test_detaching_stops_the_announcements(self) -> None:
+        import app.desktop_actions.session as session_module
+
+        seen, real, windows_module = self._driver_with_fake()
+        try:
+            sink = Recorder()
+            session_module.set_agent_cursor_sink(sink)
+            session_module._live_driver()
+            seen["observer"].cursor_clicked((1, 1), button="left", count=1)
+            assert len(sink.marks) == 1
+            session_module.set_agent_cursor_sink(None)
+            seen["observer"].cursor_clicked((2, 2), button="left", count=1)
+            assert len(sink.marks) == 1, "a detached sink must stop receiving"
+        finally:
+            windows_module.Win32InputDriver = real  # type: ignore[assignment]

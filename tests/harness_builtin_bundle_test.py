@@ -485,6 +485,8 @@ def test_model_client_allows_multi_step_desktop_tokens():
     model_cfg = next(
         row.resolved_config for row in report.rows if row.id == "model-client"
     )
+    # The equality is a wiring check (the configured value reaches the row);
+    # the floor below is the assertion with content.
     assert int(model_cfg["max_tokens"]) == DEFAULT_MAX_OUTPUT_TOKENS
     assert int(model_cfg["max_tokens"]) >= 8_000, (
         "a multi-step desktop turn must not be bounded at a value that truncates "

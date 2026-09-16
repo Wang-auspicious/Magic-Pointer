@@ -230,7 +230,11 @@ export type AgentCursorCommandKind =
   | 'click'
   | 'hold'
   | 'release'
-  | 'clear';
+  | 'clear'
+  // Releases the cursor back to plain following. Emitted by the Python driver
+  // when a computer-use turn ends; it was produced and accepted nowhere, so
+  // the described behaviour did not exist.
+  | 'idle';
 
 export interface AgentCursorCommand {
   kind: AgentCursorCommandKind;
@@ -243,6 +247,8 @@ export interface AgentCursorCommand {
   ttlMs: number;
   glowMs: number;
   held: boolean;
+  button: 'left' | 'right';
+  count: number;
 }
 
 function stringOr(value: unknown, fallback: string): string {
@@ -272,7 +278,7 @@ export function normalizeAgentCursorCommand(raw: unknown): AgentCursorCommand | 
   if (!raw || typeof raw !== 'object') return null;
   const source = raw as Record<string, unknown>;
   const kind = stringOr(source.kind, '') as AgentCursorCommandKind;
-  const known: AgentCursorCommandKind[] = ['approach', 'mark', 'move', 'click', 'hold', 'release', 'clear'];
+  const known: AgentCursorCommandKind[] = ['approach', 'mark', 'move', 'click', 'hold', 'release', 'clear', 'idle'];
   if (!known.includes(kind)) return null;
   const x = asFiniteNumber(source.x);
   const y = asFiniteNumber(source.y);
@@ -290,6 +296,12 @@ export function normalizeAgentCursorCommand(raw: unknown): AgentCursorCommand | 
     ttlMs: ttlRaw === null ? DEFAULT_TTL_MS : Math.max(TTL_MIN_MS, Math.round(ttlRaw)),
     glowMs: clamp(intOr(source.glowMs, GLOW_MS), GLOW_MIN_MS, GLOW_MAX_MS),
     held: Boolean(source.held),
+    // Carried through so the renderer can distinguish a right-click from a
+    // left one and a double from a single. Dropping them here made every press
+    // render as a left single click, which is a worse lie than drawing nothing:
+    // the user sees the agent do something it did not do.
+    button: stringOr(source.button, 'left') === 'right' ? 'right' : 'left',
+    count: Math.max(1, Math.min(3, intOr(source.count, 1))),
   };
 }
 

@@ -1,8 +1,9 @@
 """Aggregate bound on one round's tool results.
 
 The defect this covers: ``_MAX_TOOL_RESULT_CHARS`` bounds each tool result
-individually, but a round can carry ``max_parallel_tool_calls`` of them. Four
-parallel reads each just under the cap is a quarter of a million characters
+individually, but a round can carry ``max_parallel_tool_calls`` of them — eight
+since the ceiling was raised. Eight parallel reads each just under the cap is
+half a million characters
 entering the history in a single step — the budget of an entire conversation,
 in the step that pushes the next request over the model's window. The measured
 estimate for CJK is roughly one token per character, so this is not a

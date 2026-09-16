@@ -98,6 +98,8 @@ const AGENT_OFFSET_Y = 25;
 const AGENT_TRIANGLE_SIZE = 16;
 const AGENT_REST_DEGREES = -35;
 const AGENT_ACCENT = '#3380FF';
+// 右键用另一个色：把右键画成左键，比不画更糟——用户会以为代理做了它没做的事。
+const AGENT_RIGHT_CLICK_ACCENT = '#E8563F';
 const AGENT_SPRING_STIFFNESS = 0.28;
 const AGENT_SPRING_DAMPING = 0.62;
 const AGENT_DWELL_MS = 3000;
@@ -134,6 +136,8 @@ interface AgentCursor {
   ring: { x: number; y: number } | null;
   ringPhase: number;
   glowUntil: number;
+  /** 1 = 单击，2 = 双击；右键由 accent 表达。 */
+  clickCount: number;
   dwellUntil: number;
   scale: number;
   rotation: number;
@@ -401,6 +405,7 @@ function agentCursorTarget(id: string) {
       targetX: 0,
       targetY: 0,
       flight: null,
+      clickCount: 1,
       ring: null,
       ringPhase: 0,
       glowUntil: 0,
@@ -444,6 +449,10 @@ function onAgentCursorCommand(payload: Record<string, unknown> | null | undefine
     cursor.x = x;
     cursor.y = y;
     cursor.mode = 'clicking';
+    // The accent tells the user which button was pressed; a right-click drawn
+    // as a left one is a worse lie than drawing nothing at all.
+    if (String(payload.button || '') === 'right') cursor.accent = AGENT_RIGHT_CLICK_ACCENT;
+    cursor.clickCount = Math.max(1, Math.min(3, Number(payload.count) || 1));
     cursor.glowUntil = performance.now() + Math.max(400, Math.min(12000, Number(payload.glowMs) || 2400));
   } else if (kind === 'release') {
     if (cursor.mode === 'dwelling') {
@@ -461,6 +470,22 @@ function onAgentCursorCommand(payload: Record<string, unknown> | null | undefine
     }
   } else if (kind === 'hold' && Boolean(payload.held) && cursor.mode === 'dwelling') {
     cursor.dwellUntil = Number.POSITIVE_INFINITY;
+  } else if (kind === 'idle') {
+    // The computer-use turn is over: stop being pointed at anything and go back
+    // to following the pointer. Without this the cursor stayed planted on the
+    // last click target, which reads as "still busy" long after the work
+    // finished — and the Python driver was already emitting the row.
+    cursor.flight = null;
+    cursor.ring = null;
+    cursor.dwellUntil = 0;
+    cursor.mode = 'idle';
+    if (agentPointer.seen) {
+      agentBeginFlight(
+        cursor,
+        { x: agentPointer.x + AGENT_OFFSET_X, y: agentPointer.y + AGENT_OFFSET_Y },
+        'return',
+      );
+    }
   }
   scheduleRender();
   ensureAgentCursorLoop();

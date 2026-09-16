@@ -37,6 +37,7 @@ const {
   selectActiveProfileModel,
 } = require('./model_runtime_config');
 const { createBufferedLog } = require('./append_log');
+const { toPhysicalGeometry } = require('./geometry_space');
 const { PreflightRunner } = require('./bootstrap_runner');
 const { buildAsyncPreflightChecks } = require('./preflight_checks');
 const { resolvePythonRuntime, pythonInvocationArgs, pythonSpawnEnvironment } = require('./python_runtime');
@@ -3968,8 +3969,18 @@ function completeSelectionGesture(payload: any) {
     };
   };
   const physicalPoints = summary.points.map((point: { x: number; y: number; t?: number }) => ({ ...toPhysical(point), t: point.t }));
-  const physicalStrokes = summary.strokes.map((stroke: { points: Array<{ x: number; y: number; t?: number }> }) => ({
+  // Per-stroke geometry travels with its stroke. It used to be dropped here,
+  // so only the summary-level array survived — and the Python normalizer
+  // rebuilds each stroke from `points` alone, which meant the polygon Electron
+  // drew for a circle never reached the OCR path at all. OCR then fell back to
+  // the bounding box, which is why a slightly loose circle pulled in the lines
+  // next to it.
+  const physicalStrokes = summary.strokes.map((stroke: {
+    points: Array<{ x: number; y: number; t?: number }>;
+    geometry?: unknown;
+  }) => ({
     points: stroke.points.map((point: { x: number; y: number; t?: number }) => ({ ...toPhysical(point), t: point.t })),
+    ...(stroke.geometry ? { geometry: toPhysicalGeometry(stroke.geometry, toPhysical) } : {}),
   }));
   const allPhysical = physicalStrokes.length
     ? physicalStrokes.flatMap((s: { points: Array<{ x: number; y: number; t?: number }> }) => s.points)
@@ -3991,10 +4002,18 @@ function completeSelectionGesture(payload: any) {
     // jumps while the user keeps circling; single strokes keep the release
     // point as the anchor.
     anchorPoint: summary.anchorPoint ? toPhysical(summary.anchorPoint) : toPhysical(summary.releasePoint),
-    // Stroke region geometry (logical DIPs): polygon ring for circles,
-    // bandwidth corridor for lines/freeforms. Used by grounding to rank
-    // targets by region coverage instead of a single point.
-    geometry: summary.geometry || undefined,
+    // Stroke region geometry: polygon ring for circles, bandwidth corridor for
+    // lines and freeforms. Used by grounding to rank targets by region coverage
+    // instead of by a single point.
+    //
+    // Converted to physical like every sibling above it. It used to be sent
+    // raw in `dip_window` while this same payload declared
+    // `coordinateSpace: 'physical_screen_pixels'` — the one field in the object
+    // that did not match the object's own coordinate space. Anything that read
+    // `geometry` and trusted the declared space placed the polygon at the wrong
+    // offset on any scaled display, and on multi-monitor it picked the wrong
+    // display's scale entirely.
+    geometry: toPhysicalGeometry(summary.geometry, toPhysical),
     direction: summary.direction || undefined,
     displayBounds: { ...armDisplay.bounds },
     scaleFactor,
@@ -5992,7 +6011,13 @@ function submitSelectionCommandWhenGrounded(payload: any, startedAt: number, not
   const continuationOwner = runningTaskContinuation(selectionSessionToken);
   if (continuationOwner && interactionEpisode?.taskInput) {
     const requestId = selectionSessions.startRequest(selectionSessionToken);
-    if (!requestId) return;
+    if (!requestId) {
+      deliverStageError(
+        selectionSessionToken,
+        '上一轮还在跑，这次补充没有送出。等它结束再发。',
+      );
+      return;
+    }
     activeSessionAgentIds.set(selectionSessionToken, continuationOwner.taskId);
     pendingQuestions.set(selectionSessionToken, String(payload?.command || '').trim());
     beginStageLiveTurn(selectionSessionToken, payload);
@@ -6034,7 +6059,17 @@ function submitSelectionCommandWhenGrounded(payload: any, startedAt: number, not
   }
   cancelSessionChild(selectionSessionToken);
   const requestId = selectionSessions.startRequest(selectionSessionToken);
-  if (!requestId) return;
+  if (!requestId) {
+    // Refusing is right — the previous answer is still in flight and starting
+    // a second request would overwrite it. Returning silently is not: the user
+    // just watched their submission cancel the running one and then nothing
+    // happened at all. Every other refusal on this path says why.
+    deliverStageError(
+      selectionSessionToken,
+      '上一轮还在跑，这次没有发出。等它结束，或先按停止。',
+    );
+    return;
+  }
   const effectiveCommand = String(payload?.command || '');
   // A chip the user removed must actually leave the request. Dropping it only
   // from the display would make the chip a decoration that lies about what was

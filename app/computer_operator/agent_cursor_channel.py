@@ -19,7 +19,7 @@ can be tested without Windows, without a display and without a model.
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 #: Phase name the main process reacts to. Changing this means changing
 #: ``handleAgentCursorProgress`` in ``electron/main.ts`` as well.
@@ -44,6 +44,18 @@ class ProgressSink(Protocol):
     def mark(self, phase: str, **fields: Any) -> float: ...
 
 
+def _as_resolver(
+    sink: "ProgressSink | Callable[[], ProgressSink | None] | None",
+) -> "Callable[[], ProgressSink | None]":
+    """Normalize a sink-or-provider into a provider."""
+    """Normalize a sink-or-provider into a provider."""
+    if sink is None:
+        return lambda: None
+    if callable(sink):
+        return sink  # type: ignore[return-value]
+    return lambda: sink
+
+
 class AgentCursorEmitter:
     """Turns driver callbacks into progress rows for the main process.
 
@@ -54,20 +66,36 @@ class AgentCursorEmitter:
     no display.
     """
 
-    def __init__(self, sink: ProgressSink | None, *, cursor_id: str = DEFAULT_CURSOR_ID) -> None:
-        self._sink = sink
+    def __init__(
+        self,
+        sink: ProgressSink | Callable[[], ProgressSink | None] | None,
+        *,
+        cursor_id: str = DEFAULT_CURSOR_ID,
+    ) -> None:
+        """``sink`` is a progress sink, or a zero-argument callable returning
+        one.
+
+        The callable form matters and the direct form is a trap: the input
+        driver is constructed while the plugin tree boots, which is *before*
+        the bridge knows which clock it will report on, so a sink captured at
+        construction time is ``None`` forever and the cursor is silently never
+        announced. Passing ``lambda: sink`` defers the lookup to the moment a
+        move actually happens, which is the only moment the answer is known.
+        """
+        self._resolve = _as_resolver(sink)
         self._cursor_id = str(cursor_id or DEFAULT_CURSOR_ID)
         self._last_point: tuple[int, int] | None = None
 
     @property
     def enabled(self) -> bool:
-        return self._sink is not None
+        return self._resolve() is not None
 
     def _emit(self, action: str, point: tuple[int, int], **extra: Any) -> None:
-        if self._sink is None:
+        sink = self._resolve()
+        if sink is None:
             return
         try:
-            self._sink.mark(
+            sink.mark(
                 AGENT_CURSOR_PHASE,
                 id=self._cursor_id,
                 action=action,
@@ -100,3 +128,37 @@ class AgentCursorEmitter:
         if self._last_point is None:
             return
         self._emit(ACTION_IDLE, self._last_point)
+
+
+#: Where the twin cursor's progress sink lives.
+#
+#: Module-level rather than passed down because the input driver is built in
+#: two unrelated places — ``app.desktop_actions.session._live_driver`` and
+#: ``WindowsComputerOperatorBackend.__init__`` — both lazily, both by callers
+#: with no way to hand one in, and both *before* the bridge knows which clock
+#: it will report on. Keeping the sink here (rather than in either caller) is
+#: what lets both read it at the moment they announce something instead of at
+#: the moment they are constructed. ``None`` is the default and means "no
+#: cursor"; a stale sink is harmless because every turn replaces it.
+_agent_cursor_sink: "ProgressSink | None" = None
+
+
+def set_agent_cursor_sink(sink: "ProgressSink | None") -> None:
+    """Point the twin cursor at ``sink``, or at nothing when ``None``."""
+    global _agent_cursor_sink
+    _agent_cursor_sink = sink
+
+
+def current_agent_cursor_sink() -> "ProgressSink | None":
+    """The sink in force right now, or ``None``."""
+    return _agent_cursor_sink
+
+
+def agent_cursor_observer() -> AgentCursorEmitter:
+    """An observer that follows whatever sink is current.
+
+    Always returns an emitter. An emitter with no sink is a no-op, which is the
+    behaviour we want; an emitter that was never attached is not, because it
+    can never start working once a sink appears.
+    """
+    return AgentCursorEmitter(current_agent_cursor_sink)
