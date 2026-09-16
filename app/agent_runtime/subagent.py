@@ -17,6 +17,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable
 
+from app.agent_runtime.errors import DEFAULT_MAX_OUTPUT_TOKENS
 from app.agent_runtime.tool_registry import Effect, ToolRegistry, ToolSpec
 
 __all__ = ["register_delegate_tool"]
@@ -39,7 +40,7 @@ def register_delegate_tool(
     workspace_root: Path | str,
     permission_mode: str = "bypass",
     max_tool_calls: int = 60,
-    max_tokens: int = 4096,
+    max_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
     subagent_event_sink: Callable[[dict[str, Any]], None] | None = None,
     id_factory: Callable[[], str] | None = None,
 ) -> None:

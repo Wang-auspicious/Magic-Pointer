@@ -41,7 +41,11 @@ from app.agent_runtime.ask_todo_tools import (
     register_ask_user_question,
     register_todo_write,
 )
-from app.agent_runtime.errors import ActionFailure, FailureType
+from app.agent_runtime.errors import (
+    DEFAULT_MAX_OUTPUT_TOKENS,
+    ActionFailure,
+    FailureType,
+)
 from app.agent_runtime.effort import normalize_effort
 from app.agent_runtime.hooks import HookManager
 from app.agent_runtime.look_tool import LookTool
@@ -611,7 +615,7 @@ def _apply_model_client(fork, config: dict[str, Any]) -> None:
         raise TypeError("llm service does not implement LlmProvider")
     client = provider.create_client(
         system_prompt=system_prompt,
-        max_tokens=int(config.get("max_tokens") or 4096),
+        max_tokens=int(config.get("max_tokens") or DEFAULT_MAX_OUTPUT_TOKENS),
         effort=effort,
     )
     fork.provide_up("model_client", client)
@@ -620,7 +624,7 @@ def _apply_model_client(fork, config: dict[str, Any]) -> None:
         {
             "systemPrompt": system_prompt,
             "usedBackend": str(provider.used_backend),
-            "maxTokens": int(config.get("max_tokens") or 4096),
+            "maxTokens": int(config.get("max_tokens") or DEFAULT_MAX_OUTPUT_TOKENS),
             "effort": effort,
             "permissionMode": str(config.get("permission_mode") or "default"),
             "promptCache": bool(
@@ -1065,7 +1069,7 @@ def _run_loop_rows(runtime: dict[str, Any], root: Path) -> list[BundleRow]:
             "model-client",
             {
                 "permission_mode": _permission_mode_for(runtime),
-                "max_tokens": 4096,
+                "max_tokens": DEFAULT_MAX_OUTPUT_TOKENS,
                 "context_budget_tokens": _env_int_or_none(
                     "MAGIC_POINTER_CONTEXT_TOKENS"
                 ),
@@ -1248,7 +1252,7 @@ def boot_loop_context(
             "model-client",
             {
                 "permission_mode": _permission_mode_for(runtime),
-                "max_tokens": 4096,
+                "max_tokens": DEFAULT_MAX_OUTPUT_TOKENS,
                 "context_budget_tokens": _env_int_or_none(
                     "MAGIC_POINTER_CONTEXT_TOKENS"
                 ),

@@ -469,11 +469,27 @@ def test_compaction_context_budget_keeps_the_closing_evidence_fence(tmp_path):
 
 
 def test_model_client_allows_multi_step_desktop_tokens():
+    """The ceiling must be large enough for the work the product does.
+
+    This used to assert ``== 4096``. That number was the defect, not the
+    contract: 4096 output tokens is roughly 4000 Chinese characters, so writing
+    a 200-line file, emitting one long patch, or summarising a long command's
+    output all landed in the truncated band — and the truncation recovery path
+    re-sent the request at the same 4096 until it gave up. The assertion now
+    states the property that was always meant: big enough for a multi-step
+    desktop turn, and sourced from one place.
+    """
+    from app.agent_runtime.errors import DEFAULT_MAX_OUTPUT_TOKENS
+
     report = boot_loop_context(_runtime())
     model_cfg = next(
         row.resolved_config for row in report.rows if row.id == "model-client"
     )
-    assert int(model_cfg["max_tokens"]) == 4096
+    assert int(model_cfg["max_tokens"]) == DEFAULT_MAX_OUTPUT_TOKENS
+    assert int(model_cfg["max_tokens"]) >= 8_000, (
+        "a multi-step desktop turn must not be bounded at a value that truncates "
+        "a single long file write"
+    )
     report.ctx.unload()
 
 

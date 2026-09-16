@@ -12,6 +12,22 @@ import enum
 
 MAX_OUTPUT_TOKENS_RECOVERY_LIMIT = 3
 
+#: Default output ceiling for a model turn, in tokens.
+#:
+#: It was 4096, spelled out at four separate call sites, and that number is the
+#: whole reason a long turn used to die: 4096 output tokens is roughly 4000
+#: Chinese characters, so writing a 200-line file, emitting one long patch, or
+#: summarising a long command's output all land in the truncated band — and the
+#: recovery path re-sent the request at the same 4096 until the ceiling above
+#: gave up. Claude Code's default is 8000 with escalation to 64000; this is the
+#: same shape. Escalation on truncation is
+#: :func:`~app.agent_runtime.model_client.escalated_max_tokens`.
+#:
+#: Kept as a named constant and used by every call site so the number has one
+#: home. Models with a smaller hard cap are unaffected: the provider rejects the
+#: request and ``ai_client`` already retries without the optional fields.
+DEFAULT_MAX_OUTPUT_TOKENS = 8_192
+
 #: Withhold reason for "the request did not fit in the model's context window".
 #:
 #: Distinct from a generic ``backend_error:http_400`` on purpose: the two need
