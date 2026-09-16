@@ -16,6 +16,8 @@ from typing import Any, Protocol
 from app.capture import CaptureProvider, GdiFallbackCaptureProvider
 from app.governance.cancellation import CancelledError
 
+from . import motion
+from .motion import CLICK_HOLD_MS, CLICK_SETTLE_MS
 from .schema import (
     ComputerAction,
     ComputerActionKind,
@@ -137,6 +139,8 @@ class Win32InputDriver:
         self._user32.GetForegroundWindow.restype = ctypes.wintypes.HWND
         self._user32.SetCursorPos.argtypes = [ctypes.c_int, ctypes.c_int]
         self._user32.SetCursorPos.restype = ctypes.wintypes.BOOL
+        self._user32.GetCursorPos.argtypes = [ctypes.POINTER(ctypes.wintypes.POINT)]
+        self._user32.GetCursorPos.restype = ctypes.wintypes.BOOL
         self._user32.VkKeyScanW.argtypes = [ctypes.wintypes.WCHAR]
         self._user32.VkKeyScanW.restype = ctypes.c_short
 
@@ -175,16 +179,71 @@ class Win32InputDriver:
         if not self._user32.SetCursorPos(int(point[0]), int(point[1])):
             raise RuntimeError("set_cursor_position_failed")
 
+    def _cursor_position(self) -> tuple[int, int] | None:
+        """Where the pointer is right now, or ``None`` if it cannot be read.
+
+        A glide has to start from the real position, not from where the last
+        action left it: the user may have moved the mouse, and the previous
+        action may have been a click or a scroll rather than a move.
+        """
+        point = ctypes.wintypes.POINT()
+        if not self._user32.GetCursorPos(ctypes.byref(point)):
+            return None
+        return (int(point.x), int(point.y))
+
+    def _glide(self, start: tuple[int, int], end: tuple[int, int], duration_ms: int) -> None:
+        """Walk the pointer from ``start`` to ``end`` over ``duration_ms``.
+
+        Intermediate points are eased (smoothstep) so the motion accelerates
+        and settles instead of starting and stopping at full speed. The final
+        ``end`` is always set exactly, after the loop, so an interrupted or
+        clamped glide still lands on the target.
+
+        ``duration_ms <= 0`` is a teleport, and stays one: callers that want an
+        instant jump (and tests) must keep getting one.
+        """
+        if duration_ms <= 0:
+            self._position(end)
+            return
+        points = glide_points(start, end, duration_ms)
+        if not points:
+            self._position(end)
+            return
+        delay = max(0.0, float(duration_ms) / 1000.0 / len(points))
+        for point in points:
+            self._position(point)
+            if delay:
+                time.sleep(delay)
+        self._position(end)
+
     def click(self, point: tuple[int, int], *, button: str, count: int) -> None:
         self._position(point)
+        # SetCursorPos only queues the move; the target window may not have
+        # processed the resulting WM_MOUSEMOVE yet. Pressing immediately can
+        # therefore deliver the click at the previous position.
+        time.sleep(CLICK_SETTLE_MS / 1000.0)
         down, up = (0x0008, 0x0010) if button == "right" else (0x0002, 0x0004)
-        for _ in range(max(1, int(count))):
+        repeats = max(1, int(count))
+        for index in range(repeats):
             self._mouse(down)
+            # A 0 ms press is ambiguous to double-click heuristics and is
+            # dropped outright by some applications.
+            time.sleep(CLICK_HOLD_MS / 1000.0)
             self._mouse(up)
+            if index + 1 < repeats:
+                time.sleep(CLICK_HOLD_MS / 1000.0)
 
     def move(self, point: tuple[int, int], *, duration_ms: int) -> None:
-        del duration_ms
-        self._position(point)
+        start = self._cursor_position()
+        if start is None:
+            # No usable origin to animate from. A teleport is worse than a
+            # glide but far better than failing the action.
+            self._position(point)
+            return
+        self._glide(start, point, motion.flight_duration_ms(
+            motion.distance_between(start, point),
+            requested_ms=duration_ms,
+        ))
 
     def drag(
         self,
@@ -196,16 +255,10 @@ class Win32InputDriver:
         self._position(start)
         self._mouse(0x0002)
         try:
-            steps = max(1, min(60, int(duration_ms) // 16 if duration_ms else 1))
-            delay = max(0.0, float(duration_ms) / 1000.0 / steps)
-            for index in range(1, steps + 1):
-                fraction = index / steps
-                self._position((
-                    round(start[0] + (end[0] - start[0]) * fraction),
-                    round(start[1] + (end[1] - start[1]) * fraction),
-                ))
-                if delay:
-                    time.sleep(delay)
+            self._glide(start, end, motion.flight_duration_ms(
+                motion.distance_between(start, end),
+                requested_ms=duration_ms,
+            ))
         finally:
             self._mouse(0x0004)
 

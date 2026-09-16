@@ -66,13 +66,17 @@ const { WiggleDetector } = require('../electron/wiggle_detector.ts');
     idx += 1;
     detector.push(s);
   });
+  // Monotonic clock version — this is the shape production actually sees
+  // (Date.now() never goes backwards), so the window trim actually trims.
   const detector2 = new WiggleDetector({ sensitivity: 0.5, disabledApps: [], cooldownMs: 1200 });
-  detector2.push(samples[0]);
-  bench('WiggleDetector.push with 400-point history resident', 100000, (i) => {
-    const s = samples[i % samples.length];
-    detector2.push(s);
+  let t2 = 0;
+  let x2 = 400;
+  bench('WiggleDetector.push, monotonic clock (production shape)', 100000, () => {
+    t2 += 20;
+    x2 += Math.sin(t2 / 120) * 9 + 0.4;
+    detector2.push({ t: t2, x: x2, y: 300, buttons: 0, foregroundApp: 'Code.exe', isWindowMoving: false, scrollDelta: 0 });
   });
-  console.log('  detector point history length after warm-up:', detector2.points.length);
+  console.log('  window-bounded history length (windowMs=700 @ 20ms samples):', detector2.points.length);
 }
 
 section('5. mouse_activation.push — second detector on the same tick');

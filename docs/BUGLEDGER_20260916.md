@@ -99,6 +99,60 @@ gesture chaining. Baseline measurements in `docs/perf/2026-09-16-baseline.md`.
   process lifetime instead of stopping it.
 - **Status**: `open`
 
+## Area B — twin cursor / agent pointer motion (`app/computer_operator/`)
+
+### BUG-009 — `move()` accepts a duration and throws it away
+- **Where**: `app/computer_operator/windows.py:185` (`Win32InputDriver.move`)
+- **What**: `def move(self, point, *, duration_ms): del duration_ms; self._position(point)`
+- **Why it hurts**: every agent-initiated pointer move was an **instantaneous
+  teleport**. `drag()` immediately below it already had the stepped-glide loop,
+  so the capability existed and simply was not used for the common case. A
+  teleporting pointer is the single biggest difference between this product and
+  Clicky: the user cannot follow what is being aimed at, cannot predict the next
+  action, and cannot interrupt in time. It also reads as a glitch rather than as
+  an agent doing something.
+- **Fix**: `app/computer_operator/motion.py` (new) holds the motion policy;
+  `Win32InputDriver._glide()` walks the pointer along smoothstep-eased
+  intermediate points and always sets the exact end afterwards. `move()` and
+  `drag()` both use it. Constants are Clicky's, read off
+  `external/clicky/leanring-buddy/OverlayWindow.swift:510` —
+  `min(max(distance / 800.0, 0.6), 1.4)` **seconds** — i.e. 1.25 ms per pixel,
+  floored at 600 ms and capped at 1400 ms.
+- **Status**: `fixed` — covered by `tests/computer_motion_test.py`
+
+### BUG-010 — clicks press with zero settle time after moving
+- **Where**: `app/computer_operator/windows.py` (`Win32InputDriver.click`)
+- **What**: `self._position(point)` immediately followed by `_mouse(down); _mouse(up)`.
+- **Why it hurts**: `SetCursorPos` only *queues* the move. The target window has
+  not necessarily processed the resulting `WM_MOUSEMOVE`, so a press sent
+  immediately can be delivered at the **previous** pointer position. This is the
+  classic synthetic-input race and is why synthesized clicks appear to "miss"
+  or hit the wrong control.
+- **Fix**: `CLICK_SETTLE_MS` (20 ms) between positioning and press.
+- **Status**: `fixed`
+
+### BUG-011 — a click is held for 0 ms
+- **Where**: same function
+- **What**: `_mouse(down)` immediately followed by `_mouse(up)`.
+- **Why it hurts**: a zero-length press is ambiguous to double-click heuristics
+  and is dropped outright by some applications. Clicky holds ~35 ms
+  (`OpenClickyComputerUseRuntime.swift:1106`).
+- **Fix**: `CLICK_HOLD_MS` (35 ms) between down and up, and between repeats.
+- **Status**: `fixed`
+
+### BUG-012 — the motion policy had no test and no way to be retuned
+- **Where**: `app/computer_operator/`
+- **What**: the interpolated path existed only inline inside `drag()`; nothing
+  asserted that easing happened, that the path stayed in bounds, or that the
+  final position was exact.
+- **Why it hurts**: BUG-009 was able to sit in the codebase precisely because no
+  test covered "a move should take time". Unmeasured motion is untunable, and
+  the user's core complaint was about motion feel.
+- **Fix**: `motion.py` is pure and stdlib-only; `tests/computer_motion_test.py`
+  covers easing shape, clamping at both ends, step-count bounds, in-box
+  containment, and the endpoint contract.
+- **Status**: `fixed`
+
 ### BUG-008 — a here-string that is not an argument leaks to stdout
 - **Where**: `scripts/pointer_input_state.ps1` preamble
 - **What**: introducing `$Source = @"…"@` was necessary; a bare `@"…"@` in
