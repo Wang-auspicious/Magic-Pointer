@@ -123,6 +123,7 @@ from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from app import ai_client as _ai_client
 from app.action_guard.preconditions import PreconditionContext, check_all
 from app.agent_runtime.errors import (
     MAX_OUTPUT_TOKENS_RECOVERY_LIMIT,
@@ -141,6 +142,7 @@ from app.agent_runtime.model_client import (
     ModelTurnEvent,
     ReasoningDelta,
     ToolCallArrived,
+    TurnDone,
     TurnWithheld,
 )
 from app.agent_runtime.perception_tools import evidence_to_text
@@ -548,6 +550,14 @@ def _validate_loop_params(params: LoopParams) -> None:
 
 
 async def run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
+    """Bind one durable session identity to every provider request."""
+    session_id = params.session.id if params.session is not None else None
+    with _ai_client.request_ai_session(session_id):
+        async for event in _run_agent_loop_impl(params):
+            yield event
+
+
+async def _run_agent_loop_impl(params: LoopParams) -> AsyncIterator[Any]:
     """Run one agentic query loop; yields events, Terminal on LoopStopped.
 
     CC's ``AsyncGenerator<StreamEvent, Terminal>`` dual channel cannot be
@@ -1199,12 +1209,19 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
             if not calls:
                 messages = list(state.messages)
                 if text is not None:
+                    provider_items = tuple(
+                        item
+                        for event in events
+                        if isinstance(event, TurnDone)
+                        for item in event.provider_items
+                    )
                     final_message = AgentMessage(
                         role=Role.ASSISTANT,
                         content=text,
                         tool_call_id=None,
                         name=None,
                         origin=ORIGIN_DATA,
+                        provider_items=provider_items,
                     )
                     messages.append(final_message)
                     if params.session is not None:
@@ -1412,6 +1429,12 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                     for call in all_calls
                 ),
                 origin=ORIGIN_DATA,
+                provider_items=tuple(
+                    item
+                    for event in events
+                    if isinstance(event, TurnDone)
+                    for item in event.provider_items
+                ),
             )
             if params.session is not None:
                 params.session.append_message(assistant_tool_message)
@@ -1433,7 +1456,34 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                 )
                 tool_messages.append(skipped_message)
                 if params.session is not None:
-                    params.session.append_message(skipped_message)
+                    # Sibling calls dropped because clarification suspended
+                    # the turn never reach the scheduler, so they would
+                    # otherwise bypass the effect-sandwich journal entirely.
+                    # Persist an explicit not-started operation before its
+                    # tool result; crash repair and resume must know that the
+                    # mutation was never dispatched and may be safely retried.
+                    try:
+                        skipped_effect = spec_effect(
+                            registry.get(call.name), call.arguments
+                        )
+                    except KeyError:
+                        skipped_effect = Effect.DESTRUCTIVE
+                    prepared = params.session.record_tool_call(
+                        call.id,
+                        call.name,
+                        call.arguments,
+                        step=turn_number,
+                        effect=skipped_effect,
+                        dispatched=False,
+                    )
+                    params.session.record_tool_settlement(
+                        str(prepared.data["operationId"]),
+                        skipped_message,
+                        failure_type=skipped.failure_type,
+                        used_backend=skipped.used_backend,
+                        latency_ms=skipped.latency_ms,
+                        outcome="not_started",
+                    )
             any_error = False
             round_progress = False
             halt_decision: ToolGuardrailDecision | None = None

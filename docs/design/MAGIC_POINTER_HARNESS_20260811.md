@@ -868,6 +868,18 @@ DOM、COM、UIA、Fabric等现有模块也不自动保留，只优先保存经�
 
 ## 18. 进度账本
 
+### 2026-09-15：Legacy 模型配置收敛到 Profile（1.0.44，待安装同步）
+
+- [x] 发现并修复安装版仍以 `secrets/*.txt` 为事实源、而设置页/模型菜单使用空 `models.profiles` 的配置分叉。新增幂等 `promoteLegacyProfile`：首次启动将旧模型、provider/base URL/API mode 转成 versioned profile，并将旧密钥迁入 Electron safeStorage credential reference。
+- [x] 对话、模型选择、模型状态继续使用同一个 active profile；已有 profiles 不被迁移覆盖。新增 TypeScript 回归测试，真实默认模型 `mimo-v2.5` 的基础对话回环保持通过。
+- [ ] fresh 全量验证与 `npm run sync`、安装目录版本核对待本批收尾；未宣称其他 provider 或真实 Office/Figma 验收完成。
+
+### 2026-09-15：DSH 声明式多厂家模型路由（1.0.45，待安装同步）
+
+- [x] 对照本地 `C:\Users\zjz65\Documents\Default Project\deepseek-harness\packages\llm\llm-pi-ai`：profile 现在承载任意 provider route、协议别名、额外 headers、显式模型目录、context/max tokens 默认值和 transport，而不是只允许固定服务商分支。
+- [x] profile 声明的模型目录优先于网关 `/models`，每个模型可带视觉标记和 context window；请求级 headers 经过受限合并，不能覆盖认证、Host 或 Content-Length。
+- [x] 新增/更新针对性回归测试；全量门仍被既有 Studio probe 的 ESM 加载错误挡住，未执行安装同步。
+
 ### 2026-09-06：用户可见 durable 撤销入口（1.0.39，已同步安装版）
 
 - 成功写动作的结果现在携带 `undo` action card；Stage 通过 preload 暴露的 `undoAction` 点击入口，Dashboard/Companion 也共享同一个主进程 `actions:undo` IPC。
@@ -1551,3 +1563,21 @@ smoke：uia-host PASS、replay 20 条 trace 走真实网关（机制绿，见下
 - [x] **真机 bug（用户实测）**：安装版切模型报"没有可写的 secrets 目录"。根因是写入侧自造了一套解析（错误 env 名 `MAGIC_POINTER_USER_SECRETS_DIR` + `~/.magic-pointer` 默认 + 目录必须预存在），与读取侧 `ai_client` 的候选链（开发树 → `$MAGIC_POINTER_USER_DATA_DIR/secrets`）错位。修复：写入对齐读取链，用户目录写即创建，失败带路径诚实报错；红绿 `tests/models_catalog_test.py` 7/7。
 - [x] **图标 100% 网站同款（用户裁决）**：file-tree 内嵌 trio 以源 SVG 原样 stroke 2 / 16px 渲染；bento 五图标 stroke 1.4（源 `stroke-[1.4]`）；主题切换换 Lucide 官方 Moon/Sun。契约 `tests/studio_sv_icons_test.js`。
 - [x] **交付**：Node **175 tests / 119 files**、五套 typecheck、lint 0；`npm run sync` 静默安装 **1.0.22**，安装目录独立核对一致。
+
+### 2026-09-07：Pi computer-use 状态工具面接线（1.0.41 已交付）
+
+- [x] 克隆并逐文件研读 `injaneity/pi-computer-use`（MIT，`4b8dbd7`，package `0.5.1`）；对照记录落在 `docs/research/2026-09-07-pi-computer-use-parity-study.md`。吸收 state-scoped root/element refs、渐进式 outline、同资源事务、postcondition wait 和 successor diff 的契约，不复制 Pi native helper 或把 MP Runtime 外包给 Pi。
+- [x] `app/desktop_actions/session.py` 在既有 UIA/snapshot/ActionLease 入口上新增 `find_roots`、`observe_ui`、`search_ui`、`expand_ui`、`inspect_ui`、`read_text`、`wait_for`、`act_ui`；旧 13 个 Kimi 工具继续保留，所有写动作仍经过 MP 输入锁、stale 检查、Effect 和读回边界。
+- [x] 测试先行：新增 `tests/pi_computer_use_parity_test.py`，先观察 3 个红灯后转绿；与桌面/UIA/Wait/插件树聚焦集合合计 **79 passed**。
+- [x] 全量验证与本机交付：Python **1841 passed / 1 个既有 Pillow warning**、Node **201 test files passed**、lint/typecheck 全绿；`npm run sync` 构建并静默安装 **1.0.41**，核对 `%LOCALAPPDATA%\\Programs\\Magic Pointer\\resources\\app\\package.json` 为 **1.0.41**。
+- [ ] 诚实边界：新工具面尚未完成真实 Office/微信菜单弹层的真机验收；当前 UIA outline 是有界扁平元素投影，RuntimeId/AutomationId 重定位、独立 transient root 和统一 Receipt 投影留待下一批。
+
+### 2026-09-12：模型协议、选择和中断恢复修复（1.0.43 已交付）
+
+- [x] 修复模型菜单与实际 Runtime 配置断链：有 active profile 时更新该 profile 的 model，并清除旧模型的显式能力探测结果、保留用户 override；provider-qualified model ID 不再因 `/` 被拒；Messages 模型目录使用本协议的端点和认证。
+- [x] Responses profile 保留本协议，贯通文本/视觉输入、工具调用及结果回传、SSE 文本和 function-call 事件、usage、输出上限与失败终态；兼容重试可剥离 Responses reasoning 控制；保留异常 arguments 供 Runtime 参数纠正；原生 reasoning item 作为 `AgentMessage.provider_items` 持久化并按协议回放，不冒充用户正文。
+- [x] local profile 按免密约定进入 MP Runtime，不再被远程密钥检查提前拒绝，也不伪造 Bearer 凭证。
+- [x] 实测当前 OpenCode Go / mimo-v2.5 的 5xx 原因是 `MissingSessionID`。按官方契约发送 MP durable session ID 作为 `x-opencode-session`，并标识自有 User-Agent。真实流式两轮 fixture 回环通过：firstDelta **4422ms**、总耗时 **11140ms**，`usedBackend=magic_pointer.messages_multiturn_streaming`，一次工具调用后最终 `OK`。
+- [x] 澄清暂停时跳过的 sibling tool call 补写 `operation/prepared(dispatched=False)` 和 `operation/settled(outcome=not_started)`，恢复账本不再猜测其是否已派发。
+- [x] 定向红绿验证与 fresh 全门通过：Python **1868 passed / 1 个既有 Pillow warning / 320.92s**、Node **201 test files passed**、lint/typecheck 全绿。`npm run sync` 构建 `release/sync-1.0.43-20260912-124312-42776/Magic-Pointer-1.0.43-x64.exe`（383,288,752 bytes）后成功同步安装版并重启；开发树与安装目录版本均为 **1.0.43**，6 个运行进程来自安装目录，安装代码已含会话头修复。
+- [ ] 诚实边界：Responses/local 等协议回归使用确定性响应，不能替代各服务商真实端点验收；本批真实验收覆盖当前默认 OpenCode Go / mimo-v2.5 的文本和流式两轮工具回环，未扩张为 Office/Figma 应用闭环验收。

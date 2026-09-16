@@ -12,6 +12,8 @@ type CredentialStatusReader = {
 
 const GROQ_PROFILE_ID = 'groq-main';
 const GROQ_CREDENTIAL_REF = 'credential:model:groq-main';
+const LEGACY_PROFILE_ID = 'legacy-default';
+const LEGACY_CREDENTIAL_REF = 'credential:model:legacy-default';
 
 function groqProfile(): UnknownRecord {
   return {
@@ -127,6 +129,89 @@ function resolveActiveModelRuntimeConfig(
     model: String(profile.model || ''),
     apiMode: String(profile.apiMode || ''),
     credential,
+    headers: profile.headers && typeof profile.headers === 'object' ? profile.headers : {},
+    defaultContextWindow: Number(profile.defaultContextWindow || 262144),
+    defaultMaxTokens: Number(profile.defaultMaxTokens || 32768),
+    transport: String(profile.transport || 'auto'),
+    models: Array.isArray(profile.models) ? profile.models : [],
+  };
+}
+
+/** Promote the pre-profile secrets files into the same profile contract used
+ * by the Runtime. This is intentionally pure; the caller owns credential
+ * migration and persistence. */
+function promoteLegacyProfile(settings: UnknownRecord, legacy: UnknownRecord): UnknownRecord {
+  const currentModels = settings?.models && typeof settings.models === 'object' ? settings.models : {};
+  const profiles = Array.isArray(currentModels.profiles) ? currentModels.profiles : [];
+  if (profiles.length || !String(legacy.model || '').trim()) return settings;
+  const mode = String(legacy.apiMode || 'chat-completions').trim().toLowerCase();
+  const profile = {
+    schemaVersion: 1,
+    id: LEGACY_PROFILE_ID,
+    displayName: `Legacy · ${String(legacy.model).trim()}`,
+    provider: String(legacy.provider || 'openai').trim().toLowerCase() || 'openai',
+    baseUrl: String(legacy.baseUrl || '').trim(),
+    model: String(legacy.model).trim(),
+    apiMode: mode,
+    credentialRef: mode === 'local' ? '' : LEGACY_CREDENTIAL_REF,
+    enabled: true,
+    headers: {},
+    defaultContextWindow: 262144,
+    defaultMaxTokens: 32768,
+    transport: 'auto',
+    overrides: { visionInput: 'auto', audioInput: 'auto', toolCalls: 'auto' },
+    resolved: { visionInput: 'unknown', audioInput: 'unknown', toolCalls: 'unknown', source: 'legacy_migration', evidence: '', checkedAt: '' },
+  };
+  return { ...settings, models: { ...currentModels, schemaVersion: 1, defaultProfileId: LEGACY_PROFILE_ID, profiles: [profile] } };
+}
+
+/**
+ * Return a settings copy with the active profile pointed at a selected model.
+ *
+ * The composer model menu is backed by the gateway catalog, while requests
+ * carry the resolved profile as ``modelRuntime``. Updating only the legacy
+ * secrets/model.txt file therefore has no effect whenever a profile is
+ * active. Keep this transformation pure so the IPC handler can persist it
+ * through the normal settings validation path.
+ */
+function selectActiveProfileModel(settings: UnknownRecord | null, model: unknown): UnknownRecord | null {
+  const name = String(model || '').trim();
+  if (!name) return null;
+  const profile = activeProfile(settings);
+  if (!profile || profile.enabled === false) return null;
+  const models = settings?.models;
+  const profiles: UnknownRecord[] = Array.isArray(models?.profiles) ? models.profiles : [];
+  const profileId = String(profile.id || '').trim().toLowerCase();
+  const nextProfiles = profiles.map((item) => (
+    String(item?.id || '').trim().toLowerCase() === profileId
+      ? {
+          ...item,
+          model: name,
+          // An explicit probe is bound to the previous model. Keeping it
+          // after a switch would make capability resolution trust stale
+          // vision/audio/tool results until another probe happens.
+          ...(String(item?.model || '').trim() !== name
+            && String(item?.resolved?.source || '').trim().toLowerCase() === 'explicit_probe'
+            ? {
+                resolved: {
+                  visionInput: 'unknown',
+                  audioInput: 'unknown',
+                  toolCalls: 'unknown',
+                  source: 'unknown',
+                  evidence: '',
+                  checkedAt: '',
+                },
+              }
+            : {}),
+        }
+      : item
+  ));
+  return {
+    ...(settings || {}),
+    models: {
+      ...(models || {}),
+      profiles: nextProfiles,
+    },
   };
 }
 
@@ -134,6 +219,10 @@ module.exports = {
   activeModelRuntimeStatus,
   GROQ_CREDENTIAL_REF,
   GROQ_PROFILE_ID,
+  LEGACY_PROFILE_ID,
+  LEGACY_CREDENTIAL_REF,
+  promoteLegacyProfile,
   resolveActiveModelRuntimeConfig,
+  selectActiveProfileModel,
   upsertGroqProfile,
 };

@@ -4180,7 +4180,7 @@ function syncComposerSubmitState() {
 }
 
 /* 模型切换器：DSH ModelSelect 同款——真实网关目录（fabric_bridge model.catalog），
-   选中即写 secrets/model.txt（全栈消费的同一份配置），下次发送就生效。 */
+   选中即更新当前模型档案（没有档案时才写 legacy secrets/model.txt），下次发送就生效。 */
 let modelCatalog: MagicPointerModelCatalog | null = null;
 
 async function refreshComposerModel() {

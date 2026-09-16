@@ -43,9 +43,26 @@ def provider_label(base_url: str | None) -> str:
     return host or "本地"
 
 
-def _gateway_models(base_url: str, api_key: str | None, timeout_s: float) -> list[str]:
-    url = base_url.rstrip("/") + "/models"
-    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+def _gateway_models(
+    base_url: str,
+    api_key: str | None,
+    timeout_s: float,
+    api_mode: str | None = None,
+) -> list[str]:
+    mode = str(api_mode or "").strip().casefold()
+    if mode == "messages":
+        # Anthropic's Messages API exposes its model list under /v1/models,
+        # while a configured base URL is often just https://api.anthropic.com.
+        base = base_url.rstrip("/")
+        url = base if base.endswith("/v1") else f"{base}/v1"
+        url += "/models"
+        headers = {
+            "x-api-key": str(api_key or ""),
+            "anthropic-version": "2023-06-01",
+        }
+    else:
+        url = base_url.rstrip("/") + "/models"
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
     response = _http_get_models(url, headers=headers, timeout=timeout_s)
     if response.status_code != 200:
         raise RuntimeError(f"gateway /models HTTP {response.status_code}")
@@ -69,9 +86,26 @@ def list_models(timeout_s: float = GATEWAY_TIMEOUT_S) -> dict:
     entries: list[dict] = []
     source = "config"
     error = ""
-    if base_url:
+    declared = ai_client.get_ai_model_catalog()
+    if declared:
+        names = [str(item.get("id") or item.get("model") or "").strip() for item in declared]
+        names = [name for name in names if name]
+        if model not in names:
+            names.insert(0, model)
+        entries = [{
+            "id": name,
+            "vision": next((bool(item.get("vision")) for item in declared if str(item.get("id") or item.get("model") or "").strip() == name), name == vision_model),
+            "contextWindow": next((int(item.get("contextWindow") or 0) for item in declared if str(item.get("id") or item.get("model") or "").strip() == name), context_window_for(name)),
+        } for name in names]
+        source = "profile"
+    elif base_url:
         try:
-            names = _gateway_models(base_url, api_key, timeout_s)
+            names = _gateway_models(
+                base_url,
+                api_key,
+                timeout_s,
+                ai_client.get_ai_api_mode(base_url),
+            )
             if model not in names:
                 names.insert(0, model)
             entries = [
@@ -119,7 +153,11 @@ def _secret_write_path() -> Path | None:
 def select_model(model_id: str) -> dict:
     """把默认模型写到 ``secrets/model.txt``（全栈消费的那份配置）。"""
     name = str(model_id or "").strip()
-    if not name or "/" in name or "\\" in name:
+    # Provider-qualified ids (for example ``openai/gpt-oss-120b``) are valid
+    # catalog values and must survive selection. The value is written as file
+    # content, so slash is not a path traversal concern; reject only characters
+    # that could corrupt the one-line settings file.
+    if not name or "\\" in name or any(ord(char) < 32 for char in name):
         return {"ok": False, "error": "模型名不能为空。"}
     if os.getenv("MAGIC_POINTER_MODEL"):
         return {"ok": False, "error": "环境变量 MAGIC_POINTER_MODEL 在优先级上覆盖文件，改文件不会生效；请先 unset。"}

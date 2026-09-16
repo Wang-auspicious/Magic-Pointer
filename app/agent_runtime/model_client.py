@@ -105,6 +105,7 @@ class TurnDone(ModelTurnEvent):
     kind = "turn_done"
     usage: dict | None
     raw_text: str | None
+    provider_items: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -636,12 +637,13 @@ class AiClientMessagesBackend:
         _check_cancelled(cancel_scope)
         api_key, base_url, model = _ai_client.get_ai_config()
         base_url = (base_url or "https://api.openai.com/v1").rstrip("/")
+        api_mode = _ai_client.get_ai_api_mode(base_url)
         blocked = _ai_client.short_circuit_message(base_url)
         if blocked:
             yield TurnWithheld(reason=f"backend_error:{blocked}")
             yield TurnDone(usage=None, raw_text=None)
             return
-        if not api_key:
+        if not api_key and api_mode != "local":
             yield TurnWithheld(reason="backend_error:credential_missing")
             yield TurnDone(usage=None, raw_text=None)
             return
@@ -649,9 +651,8 @@ class AiClientMessagesBackend:
             _MIN_HTTP_TIMEOUT_S,
             (budget_ms / 1000.0) if budget_ms is not None else self.timeout_s,
         )
-        api_mode = _ai_client.get_ai_api_mode(base_url)
         endpoint = _ai_client._completion_endpoint(base_url, api_mode)
-        headers = _ai_client._completion_headers(api_key, api_mode)
+        headers = _ai_client._completion_headers(api_key or "", api_mode, base_url=base_url)
         payload = _messages_payload(
             model,
             messages,
@@ -721,6 +722,23 @@ class AiClientMessagesBackend:
             yield TurnDone(usage=None, raw_text=None)
             return
         hit_token_limit = _response_hit_token_limit(response_payload, api_mode)
+        failure_reason = _response_failure_reason(response_payload, api_mode)
+        if failure_reason:
+            _ai_client.record_failure(
+                status=None,
+                exception_name="IncompleteModelResponse",
+                detail=failure_reason,
+                model=model,
+                base_url=base_url,
+            )
+            yield TurnWithheld(reason=f"backend_error:{failure_reason}")
+            usage = response_payload.get("usage")
+            yield TurnDone(
+                usage=dict(usage) if isinstance(usage, dict) else None,
+                raw_text=None,
+                provider_items=_responses_provider_items(response_payload),
+            )
+            return
         text = str(parsed.get("text") or "")
         valid_calls = [
             raw
@@ -760,6 +778,7 @@ class AiClientMessagesBackend:
         yield TurnDone(
             usage=dict(usage) if isinstance(usage, dict) else None,
             raw_text=text or None,
+            provider_items=_responses_provider_items(response_payload),
         )
 
 
@@ -767,6 +786,13 @@ def _response_hit_token_limit(payload: object, api_mode: str) -> bool:
     """Read the native non-streaming completion reason without guessing."""
     if not isinstance(payload, dict):
         return False
+    if api_mode == "responses":
+        details = payload.get("incomplete_details")
+        return (
+            str(payload.get("status") or "") == "incomplete"
+            and isinstance(details, dict)
+            and str(details.get("reason") or "") == "max_output_tokens"
+        )
     if api_mode == "messages":
         return str(payload.get("stop_reason") or "") == "max_tokens"
     choices = payload.get("choices")
@@ -777,6 +803,21 @@ def _response_hit_token_limit(payload: object, api_mode: str) -> bool:
         isinstance(first, dict)
         and str(first.get("finish_reason") or "") == "length"
     )
+
+
+def _response_failure_reason(payload: object, api_mode: str) -> str:
+    """Keep provider refusals and incomplete answers out of successful turns."""
+    if api_mode != "responses" or not isinstance(payload, dict):
+        return ""
+    status = str(payload.get("status") or "")
+    if status == "incomplete" and not _response_hit_token_limit(payload, api_mode):
+        details = payload.get("incomplete_details")
+        reason = str(details.get("reason") or "unknown") if isinstance(details, dict) else "unknown"
+        return f"response_incomplete:{reason}"
+    if status == "failed":
+        error = payload.get("error")
+        return str(error.get("code") or "response_failed") if isinstance(error, dict) else "response_failed"
+    return ""
 
 
 def _message_entry(message: AgentMessage, api_mode: str) -> dict:
@@ -907,6 +948,20 @@ def _messages_payload(
     system_prompt: str | None = None,
     effort: object | None = None,
 ) -> dict:
+    if api_mode == "responses":
+        payload: dict[str, Any] = {
+            "model": model,
+            "input": _responses_input(messages),
+            "max_output_tokens": max(1, int(max_tokens)),
+        }
+        if system_prompt:
+            payload["instructions"] = system_prompt
+        converted = _convert_tools(tools, api_mode)
+        if converted:
+            payload["tools"] = converted
+        if effort is not None:
+            payload["reasoning"] = {"effort": normalize_effort(effort)}
+        return payload
     entries = [_message_entry(message, api_mode) for message in messages]
     converted = _convert_tools(tools, api_mode)
     if api_mode == "messages":
@@ -969,7 +1024,16 @@ def _convert_tools(tools: list[dict], api_mode: str) -> list[dict]:
     for raw in tools:
         if not isinstance(raw, dict) or not raw.get("name"):
             continue
-        if api_mode == "messages":
+        if api_mode == "responses":
+            function = raw.get("function") if isinstance(raw.get("function"), dict) else raw
+            converted.append({
+                "type": "function",
+                "name": str(function.get("name") or "tool"),
+                "description": str(function.get("description") or ""),
+                "parameters": function.get("parameters") or {"type": "object", "properties": {}},
+                "strict": False,
+            })
+        elif api_mode == "messages":
             converted.append({
                 "name": str(raw["name"]),
                 "description": str(raw.get("description") or ""),
@@ -987,6 +1051,50 @@ def _convert_tools(tools: list[dict], api_mode: str) -> list[dict]:
                 },
             })
     return converted
+
+
+def _responses_input(messages: list[AgentMessage]) -> list[dict[str, Any]]:
+    """Project durable loop messages into OpenAI Responses input items."""
+    items: list[dict[str, Any]] = []
+    for message in messages:
+        content = str(message.content or "")
+        if message.role is Role.USER:
+            if content:
+                items.append({"role": "user", "content": [{"type": "input_text", "text": content}]})
+            continue
+        if message.role is Role.ASSISTANT:
+            items.extend(dict(item) for item in message.provider_items if isinstance(item, dict))
+            if content:
+                items.append({"role": "assistant", "content": content})
+            for call in message.tool_calls:
+                items.append({
+                    "type": "function_call",
+                    "call_id": str(call.get("id") or "call_unknown"),
+                    "name": str(call.get("name") or "tool"),
+                    "arguments": json.dumps(call.get("arguments") or {}, ensure_ascii=False),
+                })
+            continue
+        if message.role is Role.TOOL:
+            items.append({
+                "type": "function_call_output",
+                "call_id": str(message.tool_call_id or "call_unknown"),
+                "output": content,
+            })
+    return items or [{"role": "user", "content": [{"type": "input_text", "text": "请基于提供的上下文回答。"}]}]
+
+
+def _responses_provider_items(payload: object) -> tuple[dict[str, Any], ...]:
+    """Keep opaque Responses reasoning items for the next request."""
+    if not isinstance(payload, dict):
+        return ()
+    output = payload.get("output")
+    if not isinstance(output, list):
+        return ()
+    return tuple(
+        dict(item)
+        for item in output
+        if isinstance(item, dict) and item.get("type") == "reasoning"
+    )
 
 
 class StreamingMessagesBackend(AiClientMessagesBackend):
@@ -1054,12 +1162,13 @@ class StreamingMessagesBackend(AiClientMessagesBackend):
         _check_cancelled(cancel_scope)
         api_key, base_url, model = _ai_client.get_ai_config()
         base_url = (base_url or "https://api.openai.com/v1").rstrip("/")
+        api_mode = _ai_client.get_ai_api_mode(base_url)
         blocked = _ai_client.short_circuit_message(base_url)
         if blocked:
             yield TurnWithheld(reason=f"backend_error:{blocked}")
             yield TurnDone(usage=None, raw_text=None)
             return
-        if not api_key:
+        if not api_key and api_mode != "local":
             yield TurnWithheld(reason="backend_error:credential_missing")
             yield TurnDone(usage=None, raw_text=None)
             return
@@ -1068,9 +1177,8 @@ class StreamingMessagesBackend(AiClientMessagesBackend):
             (budget_ms / 1000.0) if budget_ms is not None else self.timeout_s,
         )
         deadline = time.monotonic() + budget
-        api_mode = _ai_client.get_ai_api_mode(base_url)
         endpoint = _ai_client._completion_endpoint(base_url, api_mode)
-        headers = _ai_client._completion_headers(api_key, api_mode)
+        headers = _ai_client._completion_headers(api_key or "", api_mode, base_url=base_url)
         payload = _messages_payload(
             model, messages, tools, self.max_tokens, api_mode,
             system_prompt=self.system_prompt,
@@ -1239,6 +1347,8 @@ def _provider_failure_is_retryable(reason: str) -> bool:
         "invalid_request",
         "circuit",
         "余额不足",
+        "response_incomplete",
+        "content_filter",
     )
     return not any(marker in value for marker in non_retryable)
 
@@ -1264,6 +1374,9 @@ def _parse_sse(
     """
     if api_mode == "messages":
         yield from _parse_messages_sse(lines, cancel_scope=cancel_scope)
+        return
+    if api_mode == "responses":
+        yield from _parse_responses_sse(lines, cancel_scope=cancel_scope)
         return
     text_parts: list[str] = []
     saw_reasoning = False
@@ -1339,6 +1452,92 @@ def _parse_sse(
     elif saw_reasoning and not text and not has_tool_call:
         yield TurnWithheld(reason="backend_error:empty_response")
     yield TurnDone(usage=usage or None, raw_text=text or None)
+
+
+def _parse_responses_sse(
+    lines, *, cancel_scope: object = None
+) -> Iterator[ModelTurnEvent]:
+    """Parse Responses' named delta events into the loop's stream contract."""
+    text_parts: list[str] = []
+    pending: dict[int, dict[str, Any]] = {}
+    usage: dict[str, Any] = {}
+    terminal: dict[str, Any] | None = None
+    provider_items: tuple[dict[str, Any], ...] = ()
+    failure = ""
+    for raw in lines:
+        _check_cancelled(cancel_scope)
+        line = str(raw or "").strip()
+        if not line.startswith("data:"):
+            continue
+        data = line[len("data:"):].strip()
+        if data == "[DONE]":
+            break
+        try:
+            frame = json.loads(data)
+        except ValueError:
+            continue
+        if not isinstance(frame, dict):
+            continue
+        event_type = str(frame.get("type") or "")
+        if event_type == "response.output_text.delta":
+            delta = frame.get("delta")
+            if isinstance(delta, str) and delta:
+                text_parts.append(delta)
+                yield MessageDelta(delta)
+        elif event_type in {"response.output_item.added", "response.output_item.done"}:
+            item = frame.get("item")
+            if isinstance(item, dict) and item.get("type") == "function_call":
+                index = int(frame.get("output_index") or 0)
+                slot = pending.setdefault(index, {"id": "", "name": "", "arguments": ""})
+                slot["id"] = str(item.get("call_id") or item.get("id") or slot["id"])
+                slot["name"] = str(item.get("name") or slot["name"])
+                if item.get("arguments"):
+                    slot["arguments"] = str(item["arguments"])
+        elif event_type == "response.function_call_arguments.delta":
+            index = int(frame.get("output_index") or 0)
+            slot = pending.setdefault(index, {"id": "", "name": "", "arguments": ""})
+            slot["arguments"] += str(frame.get("delta") or "")
+        elif event_type == "response.function_call_arguments.done":
+            index = int(frame.get("output_index") or 0)
+            slot = pending.setdefault(index, {"id": "", "name": "", "arguments": ""})
+            if frame.get("arguments") is not None:
+                slot["arguments"] = str(frame["arguments"])
+        elif event_type in {"response.completed", "response.incomplete", "response.failed"}:
+            response = frame.get("response")
+            if isinstance(response, dict):
+                terminal = response
+                if isinstance(response.get("usage"), dict):
+                    usage.update(response["usage"])
+                provider_items = _responses_provider_items(response)
+                if event_type == "response.failed":
+                    error = response.get("error")
+                    failure = str(error.get("code") or "response_failed") if isinstance(error, dict) else "response_failed"
+        elif event_type == "error":
+            failure = str(frame.get("code") or "stream_error")
+
+    text = "".join(text_parts)
+    for index in sorted(pending):
+        slot = pending[index]
+        if not slot["name"]:
+            continue
+        raw_arguments = slot["arguments"] or "{}"
+        try:
+            arguments = json.loads(raw_arguments)
+        except ValueError:
+            arguments = raw_arguments
+        yield ToolCallArrived(call=ToolCall(
+            id=slot["id"] or f"call_{index}", name=slot["name"], arguments=arguments,
+        ))
+    failure = failure or _response_failure_reason(terminal, "responses")
+    if failure:
+        yield TurnWithheld(reason=f"backend_error:{failure}")
+    elif _response_hit_token_limit(terminal, "responses") or (terminal is None and (text or pending)):
+        yield TurnWithheld(reason="max_output_tokens")
+    yield TurnDone(
+        usage=usage or None,
+        raw_text=text or None,
+        provider_items=provider_items,
+    )
 
 
 def _parse_messages_sse(

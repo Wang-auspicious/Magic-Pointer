@@ -76,6 +76,7 @@ class _Snapshot:
     windows: list[dict[str, Any]]
     elements: list[dict[str, Any]]
     mode: str
+    root_ref: str = ""
 
 
 class DesktopActionSession:
@@ -110,6 +111,8 @@ class DesktopActionSession:
         # 回答里于是出现了桌面上那四个快捷方式。
         self.origin_window_hwnd = int(origin_window_hwnd or 0) or None
         self._snapshots: dict[str, _Snapshot] = {}
+        self._root_refs: dict[str, str] = {}
+        self._root_by_ref: dict[str, str] = {}
 
     def _default_window(self, windows: list[dict[str, Any]]) -> dict[str, Any] | None:
         """The marked window, while it still exists."""
@@ -123,6 +126,238 @@ class DesktopActionSession:
     def list_apps(self, **_: Any) -> str:
         apps = [_public_window(item) for item in self._windows()]
         return _dump({"apps": apps})
+
+    # ------------------------------------------------------------------
+    # Pi computer-use parity surface.
+    #
+    # These methods deliberately sit on the existing DesktopActionSession:
+    # they reuse its window admission, UIA normalization, snapshot staleness
+    # checks, and input ownership instead of creating a second desktop truth.
+    # A state id is the existing snapshot id; @r/@e refs are model-facing
+    # projections over the same bounded snapshot.
+    # ------------------------------------------------------------------
+
+    def find_roots(
+        self,
+        text: str | None = None,
+        app: str | None = None,
+        pid: int | None = None,
+        kind: str | None = None,
+        **_: Any,
+    ) -> str:
+        roots: list[dict[str, Any]] = []
+        query = str(text or "").strip().casefold()
+        app_query = str(app or "").strip().casefold().removesuffix(".exe")
+        for row in self._windows():
+            title = str(row.get("title") or row.get("window_title") or "")
+            process = str(row.get("process_name") or row.get("app") or "")
+            row_pid = int(row.get("pid") or 0)
+            hwnd = int(row.get("hwnd") or 0)
+            if pid is not None and row_pid != int(pid):
+                continue
+            if query and query not in f"{title} {process}".casefold():
+                continue
+            if app_query and app_query not in process.casefold().removesuffix(".exe") and app_query not in title.casefold():
+                continue
+            root_kind = str(row.get("kind") or "window")
+            if kind and root_kind != str(kind):
+                continue
+            root_ref = self._root_refs.setdefault(str(hwnd), f"@r{len(self._root_refs) + 1}")
+            self._root_by_ref[root_ref] = str(hwnd)
+            roots.append({
+                "root_ref": root_ref,
+                "kind": root_kind,
+                "hwnd": hwnd,
+                "window_id": _window_id(row),
+                "pid": row_pid,
+                "app": process or str(row.get("app") or "Unknown"),
+                "title": title,
+                "rect": row.get("rect") or row.get("bbox"),
+                "focused": bool(row.get("focused") or row.get("is_focused")),
+            })
+        roots.sort(key=lambda item: (0 if item["focused"] else 1, str(item["title"])))
+        return _dump({"roots": roots[:32], "total": len(roots)})
+
+    def observe_ui(self, root: str | None = None, mode: str = "fused", **_: Any) -> str:
+        target_window_id = None
+        if root:
+            hwnd = self._root_by_ref.get(str(root).strip())
+            if hwnd is None:
+                # Be forgiving for a restored/hand-written @r reference: root
+                # discovery is cheap metadata and does not activate windows.
+                self.find_roots()
+                hwnd = self._root_by_ref.get(str(root).strip())
+            if hwnd is None:
+                raise ActionFailure(FailureType.STALE_SNAPSHOT, "root_ref is stale", recovery_hint="call find_roots again")
+            target_window_id = f"w-{hwnd}"
+        payload = json.loads(self.get_app_state(window_id=target_window_id, mode="ax" if mode != "visual" else "full"))
+        snapshot_id = str(payload["snapshot_id"])
+        snap = self._snapshots[snapshot_id]
+        payload["state_id"] = snapshot_id
+        payload["root_ref"] = snap.root_ref
+        payload["mode"] = str(mode or "fused")
+        payload["outline"] = [self._outline_node(item) for item in snap.elements]
+        return _dump(payload)
+
+    def search_ui(
+        self,
+        state_id: str,
+        text: str | None = None,
+        role: str | None = None,
+        capability: str | None = None,
+        **_: Any,
+    ) -> str:
+        snap = self._require_snapshot(state_id)
+        query = str(text or "").strip().casefold()
+        role_query = str(role or "").strip().casefold()
+        cap_query = str(capability or "").strip().casefold()
+        ranked: list[tuple[int, dict[str, Any]]] = []
+        for item in snap.elements:
+            label = " ".join(str(item.get(key) or "") for key in ("name", "value", "role"))
+            haystack = label.casefold()
+            if role_query and str(item.get("role") or "").casefold() != role_query:
+                continue
+            patterns = [str(value).casefold() for value in item.get("patterns") or []]
+            if cap_query and not any(cap_query in value for value in patterns):
+                continue
+            if query:
+                if haystack == query:
+                    score = 0
+                elif any(token.startswith(query) for token in haystack.split()):
+                    score = 1
+                elif query in haystack:
+                    score = 2
+                else:
+                    continue
+            else:
+                score = 3
+            ranked.append((score, item))
+        ranked.sort(key=lambda pair: (pair[0], int(pair[1].get("index") or 0)))
+        matches = [{"ref": self._element_ref(item), **self._outline_node(item)} for _, item in ranked[:32]]
+        return _dump({"state_id": snap.snapshot_id, "matches": matches, "total_matches": len(ranked), "returned": len(matches)})
+
+    def expand_ui(self, state_id: str, ref: str, depth: int = 3, **_: Any) -> str:
+        snap = self._require_snapshot(state_id)
+        item = self._element_for_ref(snap, ref)
+        index = snap.elements.index(item)
+        radius = max(0, min(8, int(depth or 3)))
+        start = max(0, index - radius)
+        end = min(len(snap.elements), index + radius + 1)
+        return _dump({"state_id": snap.snapshot_id, "target": {"ref": self._element_ref(item), **self._outline_node(item)}, "outline": [self._outline_node(row, ref=self._element_ref(row)) for row in snap.elements[start:end]]})
+
+    def inspect_ui(self, state_id: str, ref: str, **_: Any) -> str:
+        snap = self._require_snapshot(state_id)
+        item = self._element_for_ref(snap, ref)
+        return _dump({"state_id": snap.snapshot_id, "target": {"ref": self._element_ref(item), **self._outline_node(item)}, "evidence": {"window_id": _window_id(snap.window), "hwnd": int(snap.window.get("hwnd") or 0), "mode": snap.mode}})
+
+    def read_text(self, state_id: str, ref: str, **_: Any) -> str:
+        snap = self._require_snapshot(state_id)
+        item = self._element_for_ref(snap, ref)
+        text = str(item.get("value") or item.get("name") or "")
+        return _dump({"state_id": snap.snapshot_id, "ref": self._element_ref(item), "text": text, "used_backend": "uia.snapshot"})
+
+    def wait_for(
+        self,
+        state_id: str,
+        text: str | None = None,
+        role: str | None = None,
+        value: str | None = None,
+        until: str = "present",
+        timeout_ms: int = 10_000,
+        **_: Any,
+    ) -> str:
+        snap = self._require_snapshot(state_id)
+        deadline = time.monotonic() + max(0.1, min(60.0, int(timeout_ms or 10_000) / 1000.0))
+        target_window_id = _window_id(snap.window)
+        found = False
+        latest = snap
+        while True:
+            rows = list(self.elements_probe(int(snap.window.get("hwnd") or 0)) or [])
+            latest_rows, _ = _compress_elements(rows)
+            found = self._condition_matches(latest_rows, text=text, role=role, value=value)
+            if str(until or "present") == "absent":
+                found = not found
+            if found or time.monotonic() >= deadline:
+                if found:
+                    payload = json.loads(self.get_app_state(window_id=target_window_id, mode="ax"))
+                    latest = self._snapshots[str(payload["snapshot_id"])]
+                break
+            time.sleep(min(0.15, max(0.0, deadline - time.monotonic())))
+        return _dump({"state_id": latest.snapshot_id, "base_state_id": snap.snapshot_id, "found": found, "timed_out": not found, "text": text, "role": role, "value": value})
+
+    def act_ui(self, state_id: str, actions: list[dict[str, Any]], expect: dict[str, Any] | None = None, **_: Any) -> str:
+        snap = self._require_snapshot(state_id)
+        if not isinstance(actions, list) or not actions or len(actions) > 20:
+            raise ActionFailure(FailureType.TOOL_ERROR, "act_ui.actions must contain 1..20 actions")
+        executed: list[dict[str, Any]] = []
+        for action in actions:
+            op = str(action.get("action") or "")
+            ref = action.get("ref")
+            index = self._index_for_ref(snap, str(ref)) if ref else None
+            if op in {"click", "press"}:
+                self.click(snapshot_id=snap.snapshot_id, index=index, x=action.get("x"), y=action.get("y"), button=str(action.get("button") or "left"), count=int(action.get("click_count") or 1))
+            elif op == "setText":
+                if index is None:
+                    raise ActionFailure(FailureType.TOOL_ERROR, "setText requires ref")
+                self.set_value(snapshot_id=snap.snapshot_id, index=index, value=str(action.get("text") or ""))
+            elif op == "typeText":
+                self.type_text(snapshot_id=snap.snapshot_id, text=str(action.get("text") or ""), index=index)
+            elif op == "keypress":
+                self.press_key(snapshot_id=snap.snapshot_id, keys="+".join(str(key) for key in action.get("keys") or []))
+            elif op == "scroll":
+                self.scroll(snapshot_id=snap.snapshot_id, index=index, x=action.get("x"), y=action.get("y"), dx=int(action.get("scroll_x") or 0), dy=int(action.get("scroll_y") or 0))
+            elif op == "drag":
+                path = action.get("path") or []
+                if len(path) < 2:
+                    raise ActionFailure(FailureType.TOOL_ERROR, "drag.path must contain 2 points")
+                self.drag(snapshot_id=snap.snapshot_id, x=path[0].get("x"), y=path[0].get("y"), to_x=path[-1].get("x"), to_y=path[-1].get("y"))
+            else:
+                raise ActionFailure(FailureType.TOOL_ERROR, f"unsupported act_ui action {op!r}")
+            executed.append({"action": op, "ref": ref})
+        condition = dict(expect or {})
+        post = (json.loads(self.wait_for(snap.snapshot_id, timeout_ms=int(condition.get("timeout_ms") or 100), text=condition.get("text"), role=condition.get("role"), value=condition.get("value"), until=str(condition.get("until") or "present"))) if condition else {"found": True, "state_id": snap.snapshot_id})
+        successor = json.loads(self.get_app_state(window_id=_window_id(snap.window), mode="ax"))
+        successor_snap = self._snapshots[str(successor["snapshot_id"])]
+        changes = _snapshot_changes(snap.elements, successor_snap.elements)
+        return _dump({"state_id": successor_snap.snapshot_id, "base_state_id": snap.snapshot_id, "view": "diff" if changes else "full", "changes": changes[:32], "executed": executed, "verification": post})
+
+    def _outline_node(self, item: dict[str, Any], *, ref: str | None = None) -> dict[str, Any]:
+        return {"ref": ref or self._element_ref(item), "index": int(item.get("index") or 0), "role": str(item.get("role") or ""), "name": str(item.get("name") or ""), "value": str(item.get("value") or ""), "rect": item.get("rect"), "patterns": list(item.get("patterns") or [])}
+
+    def _element_ref(self, item: dict[str, Any]) -> str:
+        return f"@e{int(item.get('index') or 0)}"
+
+    def _element_for_ref(self, snap: _Snapshot, ref: str) -> dict[str, Any]:
+        clean = str(ref or "").strip()
+        if clean.startswith("@e"):
+            try:
+                index = int(clean[2:])
+            except ValueError:
+                index = -1
+        else:
+            index = int(clean) if clean.isdigit() else -1
+        for item in snap.elements:
+            if int(item.get("index") or 0) == index:
+                return item
+        raise ActionFailure(FailureType.STALE_SNAPSHOT, f"element ref {ref!r} is stale", recovery_hint="call observe_ui again")
+
+    def _index_for_ref(self, snap: _Snapshot, ref: str) -> int:
+        return int(self._element_for_ref(snap, ref).get("index") or 0)
+
+    @staticmethod
+    def _condition_matches(rows: list[dict[str, Any]], *, text: str | None, role: str | None, value: str | None) -> bool:
+        query = str(text or "").casefold()
+        wanted_role = str(role or "").casefold()
+        wanted_value = None if value is None else str(value)
+        for row in rows:
+            if query and query not in f"{row.get('name') or ''} {row.get('value') or ''}".casefold():
+                continue
+            if wanted_role and str(row.get("role") or "").casefold() != wanted_role:
+                continue
+            if wanted_value is not None and str(row.get("value") or "") != wanted_value:
+                continue
+            return True
+        return False
 
     def launch_app(self, app: str = "", **_: Any) -> str:
         name = str(app or "").strip()
@@ -177,15 +412,19 @@ class DesktopActionSession:
             raw_elements = list(self.elements_probe(hwnd) or [])
         elements, truncated = _compress_elements(raw_elements)
         snapshot_id = uuid.uuid4().hex
+        root_ref = self._root_refs.setdefault(str(hwnd), f"@r{len(self._root_refs) + 1}")
+        self._root_by_ref[root_ref] = str(hwnd)
         self._snapshots[snapshot_id] = _Snapshot(
             snapshot_id=snapshot_id,
             window=dict(target),
             windows=list(windows),
             elements=elements,
             mode=resolved,
+            root_ref=root_ref,
         )
         payload: dict[str, Any] = {
             "snapshot_id": snapshot_id,
+            "root_ref": root_ref,
             "windows": [target],
             "elements": elements,
             "mode": resolved,
@@ -563,6 +802,78 @@ def register_desktop_action_tools(
 ) -> None:
     """Register Kimi's 13 Windows tools in whitelist order."""
     specs = (
+        ToolSpec(
+            name="find_roots",
+            description="发现可操作的桌面窗口根节点，返回稳定 root_ref；不激活窗口。",
+            input_schema={"type": "object", "properties": {"text": {"type": "string"}, "app": {"type": "string"}, "pid": {"type": "integer"}, "kind": {"type": "string"}}, "required": []},
+            execute=session.find_roots,
+            effect=Effect.READ,
+            is_concurrency_safe=True,
+            used_backend="desktop",
+        ),
+        ToolSpec(
+            name="observe_ui",
+            description="对一个 root 建立不可变 state_id 和有界 UIA outline；后续查询/动作必须带同一状态。",
+            input_schema={"type": "object", "properties": {"root": {"type": "string"}, "mode": {"type": "string"}}, "required": []},
+            execute=session.observe_ui,
+            effect=Effect.READ,
+            is_concurrency_safe=True,
+            used_backend="uia.snapshot",
+        ),
+        ToolSpec(
+            name="search_ui",
+            description="在指定 state_id 的完整缓存树中按文字、role 或 capability 搜索，不重新抓屏。",
+            input_schema={"type": "object", "properties": {"state_id": {"type": "string"}, "text": {"type": "string"}, "role": {"type": "string"}, "capability": {"type": "string"}}, "required": ["state_id"]},
+            execute=session.search_ui,
+            effect=Effect.READ,
+            is_concurrency_safe=True,
+            used_backend="uia.snapshot",
+        ),
+        ToolSpec(
+            name="expand_ui",
+            description="展开 state_id 中一个 @e 元素的局部上下文。",
+            input_schema={"type": "object", "properties": {"state_id": {"type": "string"}, "ref": {"type": "string"}, "depth": {"type": "integer"}}, "required": ["state_id", "ref"]},
+            execute=session.expand_ui,
+            effect=Effect.READ,
+            is_concurrency_safe=True,
+            used_backend="uia.snapshot",
+        ),
+        ToolSpec(
+            name="inspect_ui",
+            description="检查一个 @e 的字段、几何、patterns 和来源证据。",
+            input_schema={"type": "object", "properties": {"state_id": {"type": "string"}, "ref": {"type": "string"}}, "required": ["state_id", "ref"]},
+            execute=session.inspect_ui,
+            effect=Effect.READ,
+            is_concurrency_safe=True,
+            used_backend="uia.snapshot",
+        ),
+        ToolSpec(
+            name="read_text",
+            description="读取 state_id 绑定的 @e 文本或值，不改变窗口。",
+            input_schema={"type": "object", "properties": {"state_id": {"type": "string"}, "ref": {"type": "string"}}, "required": ["state_id", "ref"]},
+            execute=session.read_text,
+            effect=Effect.READ,
+            is_concurrency_safe=True,
+            used_backend="uia.snapshot",
+        ),
+        ToolSpec(
+            name="wait_for",
+            description="等待有界 UI 条件出现/消失，使用 UIA 重读而不是盲目截图轮询。",
+            input_schema={"type": "object", "properties": {"state_id": {"type": "string"}, "text": {"type": "string"}, "role": {"type": "string"}, "value": {"type": "string"}, "until": {"type": "string"}, "timeout_ms": {"type": "integer"}}, "required": ["state_id"]},
+            execute=session.wait_for,
+            effect=Effect.READ,
+            is_concurrency_safe=True,
+            used_backend="uia.wait",
+        ),
+        ToolSpec(
+            name="act_ui",
+            description="基于一个 state_id 执行 1–20 个同一资源动作并返回 successor state/diff；过期状态拒绝执行。",
+            input_schema={"type": "object", "properties": {"state_id": {"type": "string"}, "actions": {"type": "array"}, "expect": {"type": "object"}}, "required": ["state_id", "actions"]},
+            execute=session.act_ui,
+            effect=Effect.REVERSIBLE_WRITE,
+            resource_keys=("real_input",),
+            used_backend="desktop.transaction",
+        ),
         ToolSpec(
             name="ListApps",
             description="列出当前可见窗口（id/标题/pid）。只观察，不激活。列表空就说明没有可操作窗口。",
@@ -1073,6 +1384,36 @@ def _compress_elements(
         truncated = len(out) - _COMPRESS_MAX_ELEMENTS
         out = out[:_COMPRESS_MAX_ELEMENTS]
     return out, truncated
+
+
+def _snapshot_changes(before: list[dict[str, Any]], after: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Small deterministic successor diff for state-scoped act_ui results."""
+    def view(rows: list[dict[str, Any]]) -> dict[int, tuple[str, str, str]]:
+        return {
+            int(row.get("index") or 0): (
+                str(row.get("role") or ""),
+                str(row.get("name") or ""),
+                str(row.get("value") or ""),
+            )
+            for row in rows
+            if int(row.get("index") or 0) > 0
+        }
+    old = view(before)
+    new = view(after)
+    changes: list[dict[str, Any]] = []
+    for index in sorted(set(old) | set(new)):
+        if old.get(index) == new.get(index):
+            continue
+        row = new.get(index) or old.get(index) or ("", "", "")
+        changes.append({
+            "ref": f"@e{index}",
+            "index": index,
+            "change": "added" if index not in old else "removed" if index not in new else "updated",
+            "role": row[0],
+            "name": row[1][:120],
+            "value": row[2][:120],
+        })
+    return changes
 
 
 def _dump(payload: dict[str, Any]) -> str:

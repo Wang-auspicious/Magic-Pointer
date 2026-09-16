@@ -60,6 +60,9 @@ class AgentMessage:
     origin: str = ORIGIN_INSTRUCTION
     injected: bool = False
     tool_calls: tuple[dict[str, Any], ...] = ()
+    # Provider-native opaque output items (currently Responses reasoning
+    # items). They are replayed as protocol data, never shown as user text.
+    provider_items: tuple[dict[str, Any], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -71,6 +74,7 @@ class AgentMessage:
             "origin": self.origin,
             "injected": self.injected,
             "tool_calls": list(self.tool_calls),
+            "provider_items": list(self.provider_items),
         }
 
     @classmethod
@@ -84,6 +88,7 @@ class AgentMessage:
             "origin": data.get("origin", ORIGIN_DATA),
             "injected": data.get("injected", False),
             "tool_calls": data.get("tool_calls", ()),
+            "provider_items": data.get("provider_items", ()),
         }
         _require_fields(data, cls)
         origin = data["origin"]
@@ -98,6 +103,9 @@ class AgentMessage:
             origin=origin,
             injected=data["injected"],
             tool_calls=tuple(data["tool_calls"]),
+            provider_items=tuple(
+                item for item in data["provider_items"] if isinstance(item, dict)
+            ),
         )
 
 

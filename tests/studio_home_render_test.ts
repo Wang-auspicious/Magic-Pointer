@@ -2,6 +2,7 @@ const assert = require('node:assert');
 const {
   renderModelsCard,
   renderStatsCard,
+  formatStatsNote,
   selectAttentionItems,
 } = require('../electron/renderer/studio_home');
 const fs = require('node:fs');
@@ -44,6 +45,8 @@ const referenceStats = renderStatsCard({
 assert(referenceStats.includes('>52,275<'), 'messages keep the exact reference comma formatting');
 assert(referenceStats.includes('>2.5B<'), 'large token totals use the compact reference notation');
 assert(renderStatsCard(null).includes('Stats unavailable'));
+assert.strictEqual(formatStatsNote({ totalTokens: 0 }), 'No usage yet. Start a task to see your stats.');
+assert.strictEqual(formatStatsNote({ totalTokens: 158_662 }), "You've used ~1× more tokens than Pride and Prejudice.");
 
 const interactiveHeatmap = renderStatsCard({
   sessions: 1,

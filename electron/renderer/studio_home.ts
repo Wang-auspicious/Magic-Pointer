@@ -52,6 +52,7 @@ interface HomeRenderOptions {
 interface StudioHomeApi {
   renderStatsCard(stats: HomeStatsLike | null): string;
   renderModelsCard(stats: HomeStatsLike | null): string;
+  formatStatsNote(stats: Pick<HomeStatsLike, 'totalTokens'> | null): string;
   selectAttentionItems(items: readonly HomeAttentionItem[]): HomeAttentionItem[];
   render(options: HomeRenderOptions): void;
 }
@@ -82,6 +83,14 @@ function esc(value: unknown): string {
 function finite(value: unknown): number {
   const number = Number(value);
   return Number.isFinite(number) ? Math.max(0, number) : 0;
+}
+
+function formatStatsNote(stats: Pick<HomeStatsLike, 'totalTokens'> | null): string {
+  if (!stats) return 'Stats unavailable. You can still start a task.';
+  const totalTokens = finite(stats.totalTokens);
+  if (totalTokens <= 0) return 'No usage yet. Start a task to see your stats.';
+  const books = Math.max(1, Math.round(totalTokens / 158_662));
+  return `You've used ~${books}× more tokens than Pride and Prejudice.`;
 }
 
 function compactNumber(value: unknown): string {
@@ -270,10 +279,7 @@ function renderSelectedStats(): void {
       models.replaceChildren();
     }
     if (note) {
-      const books = stats ? Math.max(1, Math.round(finite(stats.totalTokens) / 158_662)) : 0;
-      note.textContent = stats
-        ? `You've used ~${books}× more tokens than Pride and Prejudice.`
-        : 'Stats unavailable. You can still start a task.';
+      note.textContent = formatStatsNote(stats);
     }
   } else {
     if (grid) {
@@ -346,6 +352,7 @@ function render(options: HomeRenderOptions): void {
 const StudioHome: StudioHomeApi = {
   renderStatsCard,
   renderModelsCard,
+  formatStatsNote,
   selectAttentionItems,
   render,
 };

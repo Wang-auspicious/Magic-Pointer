@@ -17,12 +17,14 @@ from app.agent_runtime.types import ORIGIN_DATA, AgentMessage, Role
 from app.harness.builtin_bundle import LoopHarnessHost, _git_branch, boot_loop_context
 from app.agent_runtime.system_prompt import default_builder, default_sections
 
-# 5 perception tools + Look + 3 local actions + 13 desktop CU tools
+# 5 perception tools + Look + state-scoped Pi-compatible desktop tools
+# + 13 legacy desktop CU tools
 # + AskUser/Todo + Search/Fetch
 # + Recall (BashRead only mounts with a workspace)
 # + 16 capability tools + Tools.
-EXPECTED_TOOLS = [
+EXPECTED_TOOLS = sorted([
     "Act", "Around", "AskUser",
+    "act_ui", "expand_ui", "find_roots", "inspect_ui", "observe_ui", "read_text", "search_ui", "wait_for",
     "Click", "Drag", "Fetch", "Find",
     "Focus", "GetFocus", "Key", "Launch",
     "ListApps", "ListWindows", "Look", "Observe",
@@ -34,9 +36,9 @@ EXPECTED_TOOLS = [
     "save_screenshot", "screen_help", "show_source", "table_merge",
     "task_route", "text_transform", "turn_ended", "vision_bridge",
     "wait",
-]
+])
 WRITE_TOOLS = {
-    "Focus", "Click", "copy_selected_text", "Drag", "Launch",
+    "Focus", "Click", "act_ui", "copy_selected_text", "Drag", "Launch",
     "Act", "Key", "save_screenshot",
     "Scroll", "Select", "SetValue", "Type",
 }

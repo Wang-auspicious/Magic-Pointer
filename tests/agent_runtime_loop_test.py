@@ -85,6 +85,8 @@ from app.agent_runtime.types import (  # noqa: E402
     ToolCall,
     TransitionReason,
 )
+from app.agent_runtime.session import FileSessionStore  # noqa: E402
+from app.run_kernel import project_operations  # noqa: E402
 from app.governance.cancellation import (  # noqa: E402
     CancellationRegistry,
     CancelledError,
@@ -309,6 +311,65 @@ def test_user_input_tool_suspends_without_another_model_round() -> None:
         "options": ["A", "B"],
     }
     assert len(backend.received) == 1
+
+
+def test_clarification_skipped_calls_are_durably_recorded(tmp_path: Path) -> None:
+    """A write beside ask_user_question must be recoverable as not-started.
+
+    Clarification is a turn boundary: sibling calls are skipped.  They still
+    appear in the assistant surface and therefore need an operation/prepared
+    + operation/settled pair so crash repair can distinguish them from work
+    that may have run.
+    """
+    import json
+
+    registry = ToolRegistry()
+    registry.register(ToolSpec(
+        name="ask_user_question",
+        description="ask",
+        input_schema=EMPTY_SCHEMA,
+        execute=lambda scope=None: json.dumps({
+            "awaitingUserInput": True,
+            "question": "继续？",
+            "options": ["是", "否"],
+        }),
+        suspends_for_user_input=True,
+    ))
+    registry.register(ToolSpec(
+        name="write_file",
+        description="write",
+        input_schema=EMPTY_SCHEMA,
+        effect=Effect.REVERSIBLE_WRITE,
+        execute=lambda scope=None: "should not run",
+    ))
+    backend = ScriptedBackend([
+        ToolCallArrived(call=ToolCall(
+            id="ask-1", name="ask_user_question", arguments={}
+        )),
+        ToolCallArrived(call=ToolCall(
+            id="write-1", name="write_file", arguments={}
+        )),
+        TurnDone(usage=None, raw_text=None),
+    ])
+    session = FileSessionStore(tmp_path).create("clarification-skipped")
+    events = asyncio.run(collect(make_params(
+        registry=registry,
+        client=LoopModelClient(backend),
+        session=session,
+    )))[0]
+
+    assert isinstance(events[-1], LoopStopped)
+    operations = project_operations(session.events)
+    prepared = [event for event in session.events if event.type == "operation/prepared"]
+    settled = [event for event in session.events if event.type == "operation/settled"]
+    assert {event.data["name"] for event in prepared} == {
+        "ask_user_question", "write_file"
+    }
+    skipped = next(
+        operation for operation in operations if operation.tool_name == "write_file"
+    )
+    assert skipped.outcome.value == "not_started"
+    assert len(settled) == 2
 
 
 def test_pending_permission_input_preserves_bounded_command_prefix() -> None:

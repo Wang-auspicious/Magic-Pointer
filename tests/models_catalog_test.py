@@ -73,6 +73,41 @@ def test_list_models_falls_back_to_config_on_gateway_failure(monkeypatch) -> Non
     assert catalog["error"]  # 诚实带上失败原因
 
 
+def test_profile_declared_models_skip_gateway_and_preserve_capabilities(monkeypatch) -> None:
+    _configured(monkeypatch)
+    monkeypatch.setattr(ai_client, "get_ai_model_catalog", lambda: [
+        {"id": "vendor/custom-reasoner", "vision": True, "contextWindow": 999_000},
+        {"id": "vendor/fast"},
+    ])
+    def should_not_call(*_args, **_kwargs):  # noqa: ANN001
+        raise AssertionError("profile catalog should not call gateway")
+    monkeypatch.setattr("app.models_catalog._http_get_models", should_not_call)
+    catalog = list_models()
+    assert catalog["source"] == "profile"
+    assert [m["id"] for m in catalog["groups"][0]["models"]] == ["deepseek-v4-flash", "vendor/custom-reasoner", "vendor/fast"]
+    assert catalog["groups"][0]["models"][1]["contextWindow"] == 999_000
+
+
+def test_messages_catalog_uses_anthropic_models_endpoint_and_headers(monkeypatch) -> None:
+    _configured(monkeypatch, base_url="https://api.anthropic.com", model="claude-sonnet-4")
+    monkeypatch.setattr(ai_client, "get_ai_config", lambda: ("anthropic-key", "https://api.anthropic.com", "claude-sonnet-4"))
+    monkeypatch.setattr(ai_client, "get_ai_api_mode", lambda _base_url=None: "messages")
+    seen: dict = {}
+
+    def fake_get(url, headers=None, timeout=None):  # noqa: ANN001
+        seen.update(url=url, headers=headers)
+        return _FakeResponse({"data": [{"id": "claude-sonnet-4"}]})
+
+    monkeypatch.setattr("app.models_catalog._http_get_models", fake_get)
+    catalog = list_models()
+
+    assert catalog["source"] == "gateway"
+    assert seen["url"] == "https://api.anthropic.com/v1/models"
+    assert seen["headers"]["x-api-key"] == "anthropic-key"
+    assert seen["headers"]["anthropic-version"] == "2023-06-01"
+    assert "Authorization" not in seen["headers"]
+
+
 def test_select_model_writes_secret_and_refuses_env_override(monkeypatch, tmp_path) -> None:
     _configured(monkeypatch)
     secrets = tmp_path / "secrets"
@@ -94,6 +129,20 @@ def test_select_model_rejects_blank(monkeypatch, tmp_path) -> None:
     _configured(monkeypatch)
     result = select_model("   ")
     assert result["ok"] is False
+
+
+def test_select_model_accepts_provider_qualified_gateway_ids(monkeypatch, tmp_path) -> None:
+    """OpenAI-compatible catalogs commonly expose ids such as openai/foo."""
+    _configured(monkeypatch)
+    secrets = tmp_path / "secrets"
+    secrets.mkdir()
+    monkeypatch.setattr("app.models_catalog.SECRETS_DIR", secrets)
+    monkeypatch.setattr("app.models_catalog.USER_SECRETS_DIR", None)
+
+    result = select_model("openai/gpt-oss-120b")
+
+    assert result["ok"] is True
+    assert (secrets / "model.txt").read_text(encoding="utf-8").strip() == "openai/gpt-oss-120b"
 
 
 def test_select_model_creates_user_data_secrets_dir_and_writes_there(monkeypatch, tmp_path) -> None:

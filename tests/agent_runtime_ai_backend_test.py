@@ -335,6 +335,37 @@ def test_chat_completions_payload_never_injects_anthropic_cache_fields(
     assert _cache_control_count(payload) == 0
 
 
+def test_responses_payload_uses_openai_responses_shape() -> None:
+    payload = _messages_payload(
+        "gpt-5",
+        [_user("hello")],
+        TOOLS,
+        64,
+        "responses",
+        system_prompt="system",
+    )
+    assert payload["input"] == [{
+        "role": "user",
+        "content": [{"type": "input_text", "text": "hello"}],
+    }]
+    assert payload["instructions"] == "system"
+    assert payload["max_output_tokens"] == 64
+    assert payload["tools"][0]["type"] == "function"
+
+
+def test_responses_response_extracts_text_and_function_calls() -> None:
+    parsed = ai_client._tool_completion_response({
+        "output": [
+            {"type": "message", "content": [{"type": "output_text", "text": "done"}]},
+            {"type": "function_call", "call_id": "call_1", "name": "read_around", "arguments": '{"anchor":"a1"}'},
+        ],
+    }, "responses")
+    assert parsed == {
+        "text": "done",
+        "toolCalls": [{"id": "call_1", "name": "read_around", "arguments": {"anchor": "a1"}}],
+    }
+
+
 def test_runtime_effort_is_native_only_for_chat_completions() -> None:
     chat = _messages_payload(
         "model",

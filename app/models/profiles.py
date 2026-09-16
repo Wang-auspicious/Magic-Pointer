@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -62,6 +62,11 @@ class ModelProfile:
     overrides: dict[str, str]
     resolved: dict[str, str]
     schema_version: int = 1
+    headers: dict[str, str] = field(default_factory=dict)
+    default_context_window: int = 262_144
+    default_max_tokens: int = 32_768
+    transport: str = "auto"
+    models: tuple[dict[str, Any], ...] = ()
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "ModelProfile":
@@ -76,6 +81,12 @@ class ModelProfile:
         if not re.fullmatch(r"[a-z0-9][a-z0-9._-]*", provider):
             raise ModelProfileError("provider has invalid characters")
         api_mode = _text(value.get("apiMode"), name="apiMode", limit=80, required=True).casefold()
+        api_mode_aliases = {
+            "openai-completions": "chat-completions",
+            "openai-responses": "responses",
+            "anthropic-messages": "messages",
+        }
+        api_mode = api_mode_aliases.get(api_mode, api_mode)
         if api_mode not in {"chat-completions", "responses", "messages", "local"}:
             raise ModelProfileError("apiMode is unsupported")
         raw_overrides = value.get("overrides") or {}
@@ -92,6 +103,22 @@ class ModelProfile:
             "evidence": _text(raw_resolved.get("evidence"), name="resolved.evidence", limit=500),
             "checkedAt": _text(raw_resolved.get("checkedAt"), name="resolved.checkedAt", limit=64),
         }
+        raw_headers = value.get("headers") or {}
+        if not isinstance(raw_headers, dict) or any(not isinstance(k, str) or not isinstance(v, str) for k, v in raw_headers.items()):
+            raise ModelProfileError("headers must be a string map")
+        transport = str(value.get("transport") or "auto").strip().casefold()
+        if transport not in {"auto", "sse", "websocket", "websocket-cached"}:
+            raise ModelProfileError("transport is unsupported")
+        try:
+            context_window = int(value.get("defaultContextWindow") or 262_144)
+            max_tokens = int(value.get("defaultMaxTokens") or 32_768)
+        except (TypeError, ValueError) as exc:
+            raise ModelProfileError("model limits must be integers") from exc
+        if context_window < 1 or max_tokens < 1:
+            raise ModelProfileError("model limits must be positive")
+        raw_models = value.get("models") or []
+        if not isinstance(raw_models, list) or any(not isinstance(item, dict) for item in raw_models):
+            raise ModelProfileError("models must be a list of objects")
         return cls(
             id=profile_id,
             display_name=display_name,
@@ -107,6 +134,11 @@ class ModelProfile:
                 "toolCalls": _override(raw_overrides.get("toolCalls"), name="overrides.toolCalls"),
             },
             resolved=resolved,
+            headers={str(k): str(v) for k, v in raw_headers.items()},
+            default_context_window=context_window,
+            default_max_tokens=max_tokens,
+            transport=transport,
+            models=tuple(dict(item) for item in raw_models),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -122,6 +154,11 @@ class ModelProfile:
             "enabled": self.enabled,
             "overrides": dict(self.overrides),
             "resolved": dict(self.resolved),
+            "headers": dict(self.headers or {}),
+            "defaultContextWindow": self.default_context_window,
+            "defaultMaxTokens": self.default_max_tokens,
+            "transport": self.transport,
+            "models": [dict(item) for item in self.models],
         }
 
 

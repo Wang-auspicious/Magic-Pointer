@@ -29,7 +29,13 @@ const { MouseActivationDetector } = require('./mouse_activation');
 const { ElectronSettingsStore, defaultSettings, validate: validateSettings } = require('./settings_store');
 const { mergeSettingsPatch, settingsSaveImpact } = require('./settings_save_policy');
 const { CredentialStore } = require('./credential_store');
-const { activeModelRuntimeStatus, resolveActiveModelRuntimeConfig } = require('./model_runtime_config');
+const {
+  activeModelRuntimeStatus,
+  promoteLegacyProfile,
+  LEGACY_CREDENTIAL_REF,
+  resolveActiveModelRuntimeConfig,
+  selectActiveProfileModel,
+} = require('./model_runtime_config');
 const { PreflightRunner } = require('./bootstrap_runner');
 const { buildAsyncPreflightChecks } = require('./preflight_checks');
 const { resolvePythonRuntime, pythonInvocationArgs, pythonSpawnEnvironment } = require('./python_runtime');
@@ -4491,6 +4497,9 @@ if (gotLock) app.whenReady().then(() => {
     fabricSettings = defaultSettings();
     log(`settings load failed closed ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
   }
+  // Keep legacy installs usable while making the Runtime and settings UI
+  // converge on the DSH-style profile contract.
+  migrateLegacyModelProfile();
   voiceRuntime = new VoiceResidentRuntime({
     startLegacy: startLegacyDictation,
     stopLegacy: stopLegacyDictation,
@@ -5452,6 +5461,30 @@ function activeModelRuntimeConfig() {
   return resolveActiveModelRuntimeConfig(fabricSettings, credentialStore);
 }
 
+function migrateLegacyModelProfile() {
+  if (!fabricSettingsStore || !credentialStore || !fabricSettings) return;
+  const profiles = Array.isArray(fabricSettings?.models?.profiles) ? fabricSettings.models.profiles : [];
+  if (profiles.length) return;
+  const read = (name: string) => {
+    try { return fs.readFileSync(path.join(FABRIC_DATA_DIR, 'secrets', name), 'utf8').trim(); } catch (_) { return ''; }
+  };
+  const model = read('model.txt');
+  if (!model) return;
+  const baseUrl = read('openai_base_url.txt');
+  const apiMode = read('model_api_mode.txt') || (baseUrl.includes('/anthropic') ? 'messages' : 'chat-completions');
+  const key = read('openai_key.txt');
+  if (apiMode !== 'local' && !key) return;
+  if (apiMode !== 'local') {
+    try { credentialStore.set(LEGACY_CREDENTIAL_REF, key); } catch (_) { return; }
+  }
+  const host = (() => { try { return new URL(baseUrl).hostname || 'openai'; } catch (_) { return 'openai'; } })();
+  const next = promoteLegacyProfile(fabricSettings, { provider: host.replace(/[^a-z0-9._-]/gi, '') || 'openai', baseUrl, model, apiMode });
+  if (next === fabricSettings) return;
+  fabricSettingsStore.save(next);
+  fabricSettings = next;
+  log(`migrated legacy model into profile id=${LEGACY_CREDENTIAL_REF}`);
+}
+
 function withoutRawCredential(payload: any) {
   const clean = { ...(payload || {}) };
   for (const key of ['credential', 'credentialValue', 'apiKey', 'token', 'secret', 'authorization']) delete clean[key];
@@ -6369,6 +6402,16 @@ ipcMain.handle('models:select', async (event: Electron.IpcMainInvokeEvent, raw: 
   const model = String(raw?.model || '').trim().slice(0, 120);
   if (!model) return { ok: false, error: '模型名不能为空。' };
   try {
+    // Conversations send the resolved model profile on every request. Once a
+    // profile is active, writing the legacy secrets/model.txt file would make
+    // the menu claim success while the bridge keeps using profile.model.
+    const selectedSettings = selectActiveProfileModel(fabricSettings, model);
+    if (selectedSettings) {
+      const saved = await saveFabricSettingsPatch({ models: selectedSettings.models });
+      if (saved?.ok !== true) return saved;
+      invalidateRuntimeState('model_selected');
+      return { ok: true, model, profileId: selectedSettings.models?.defaultProfileId || null };
+    }
     const parsed = await runPythonBridgePromise(
       { operation: 'model.select', model },
       'scripts/fabric_bridge.py',

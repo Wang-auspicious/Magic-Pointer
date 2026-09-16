@@ -5,10 +5,12 @@ import json
 import os
 import re
 import time
+import uuid
 from contextlib import contextmanager
 from io import BytesIO
 from pathlib import Path
 from typing import Iterator
+from urllib.parse import urlsplit
 
 from app.agent_runtime.effort import normalize_effort
 from app.governance.cancellation import CancelledError
@@ -30,6 +32,8 @@ USER_SECRETS_DIR = (
 
 LabeledImage = tuple[str, Path]
 _REQUEST_AI_CONFIG: dict[str, str] | None = None
+_MODEL_SESSION_ID = uuid.uuid4().hex
+_REQUEST_SESSION_ID: str | None = None
 
 
 DEFAULT_SYSTEM_PROMPT = """你是 Magic Pointer Open 的屏幕对象助手。
@@ -80,12 +84,14 @@ def read_local_secret(name: str) -> str | None:
 
 
 @contextmanager
-def request_ai_config(value: object) -> Iterator[None]:
+def request_ai_config(value: object, *, session_id: str | None = None) -> Iterator[None]:
     """Bind a decrypted model profile to one resident-worker request only."""
 
-    global _REQUEST_AI_CONFIG
+    global _REQUEST_AI_CONFIG, _REQUEST_SESSION_ID
     previous = _REQUEST_AI_CONFIG
+    previous_session = _REQUEST_SESSION_ID
     raw = value if isinstance(value, dict) else {}
+    _REQUEST_SESSION_ID = str(session_id or raw.get("sessionId") or uuid.uuid4().hex).strip()
     request_config = {
         key: str(raw.get(key) or "").strip()
         for key in (
@@ -97,11 +103,34 @@ def request_ai_config(value: object) -> Iterator[None]:
             "effort",
         )
     }
+    extra_headers = raw.get("headers")
+    if isinstance(extra_headers, dict):
+        request_config["headers"] = {
+            str(key): str(value)[:500]
+            for key, value in extra_headers.items()
+            if isinstance(key, str) and isinstance(value, str)
+        }
+    if isinstance(raw.get("models"), list):
+        request_config["models"] = [dict(item) for item in raw["models"] if isinstance(item, dict)]
     _REQUEST_AI_CONFIG = request_config if any(request_config.values()) else None
     try:
         yield
     finally:
         _REQUEST_AI_CONFIG = previous
+        _REQUEST_SESSION_ID = previous_session
+
+
+@contextmanager
+def request_ai_session(session_id: str | None) -> Iterator[None]:
+    """Use the durable Runtime conversation identity for provider routing."""
+    global _REQUEST_SESSION_ID
+    previous = _REQUEST_SESSION_ID
+    if session_id:
+        _REQUEST_SESSION_ID = str(session_id).strip()
+    try:
+        yield
+    finally:
+        _REQUEST_SESSION_ID = previous
 
 
 def get_ai_config() -> tuple[str | None, str | None, str]:
@@ -122,11 +151,18 @@ def get_ai_config() -> tuple[str | None, str | None, str]:
     return api_key, base_url, model
 
 
+def get_ai_model_catalog() -> list[dict]:
+    """Return models explicitly declared by the active request profile."""
+    if not _REQUEST_AI_CONFIG or not isinstance(_REQUEST_AI_CONFIG.get("models"), list):
+        return []
+    return [dict(item) for item in _REQUEST_AI_CONFIG["models"] if isinstance(item, dict)]
+
+
 def get_ai_api_mode(base_url: str | None = None) -> str:
     """Protocol for the configured gateway; legacy installs stay OpenAI-compatible."""
     if _REQUEST_AI_CONFIG:
         request_mode = str(_REQUEST_AI_CONFIG.get("apiMode") or "").casefold()
-        if request_mode in {"messages", "chat-completions"}:
+        if request_mode in {"messages", "chat-completions", "responses", "local"}:
             return request_mode
     explicit = os.getenv("MAGIC_POINTER_API_MODE") or read_local_secret("model_api_mode.txt")
     mode = str(explicit or "").strip().casefold()
@@ -134,6 +170,8 @@ def get_ai_api_mode(base_url: str | None = None) -> str:
         return "messages"
     if mode in {"chat-completions", "openai"}:
         return "chat-completions"
+    if mode in {"responses", "local"}:
+        return mode
     return "messages" if "/anthropic" in str(base_url or "").casefold() else "chat-completions"
 
 
@@ -225,22 +263,36 @@ def get_vision_api_mode(base_url: str | None = None) -> str:
         return "messages"
     if mode in {"chat-completions", "openai"}:
         return "chat-completions"
+    if mode in {"responses", "local"}:
+        return mode
     return get_ai_api_mode(base_url)
 
 
 def _completion_endpoint(base_url: str | None, api_mode: str) -> str:
     base = (base_url or "https://api.openai.com/v1").rstrip("/")
-    if api_mode == "messages":
-        return f"{base}/messages" if base.endswith("/v1") else f"{base}/v1/messages"
+    if api_mode in {"messages", "responses"}:
+        suffix = "/messages" if api_mode == "messages" else "/responses"
+        return f"{base}{suffix}" if base.endswith("/v1") else f"{base}/v1{suffix}"
     return f"{base}/chat/completions"
 
 
-def _completion_headers(api_key: str, api_mode: str) -> dict[str, str]:
+def _completion_headers(
+    api_key: str | None, api_mode: str, *, base_url: str | None = None,
+) -> dict[str, str]:
     headers = {"Content-Type": "application/json", "User-Agent": "curl/8.0"}
     if api_mode == "messages":
         headers.update({"x-api-key": api_key, "anthropic-version": "2023-06-01"})
-    else:
+    elif api_mode != "local":
         headers["Authorization"] = f"Bearer {api_key}"
+    if _REQUEST_AI_CONFIG and isinstance(_REQUEST_AI_CONFIG.get("headers"), dict):
+        for key, value in _REQUEST_AI_CONFIG["headers"].items():
+            if key.lower() not in {"authorization", "x-api-key", "content-length", "host"}:
+                headers[key] = value
+    target = urlsplit(base_url if base_url is not None else (get_ai_config()[1] or ""))
+    if target.hostname == "opencode.ai" and target.path.startswith("/zen/go/"):
+        # OpenCode Go routes and caches by the client conversation identity.
+        headers["x-opencode-session"] = _REQUEST_SESSION_ID or _MODEL_SESSION_ID
+        headers["User-Agent"] = "MagicPointer"
     return headers
 
 
@@ -253,6 +305,18 @@ def _text_completion_payload(
     api_mode: str,
     effort: object | None = None,
 ) -> dict:
+    if api_mode == "responses":
+        payload: dict = {
+            "model": model,
+            "input": [{
+                "role": "user",
+                "content": [{"type": "input_text", "text": content}],
+            }],
+            "max_output_tokens": max(1, int(max_tokens)),
+        }
+        if system_prompt:
+            payload["instructions"] = system_prompt
+        return payload
     if api_mode == "messages":
         return {
             "model": model,
@@ -284,12 +348,21 @@ def _without_optional_request_fields(payload: dict) -> dict | None:
     stripped = {
         key: value
         for key, value in payload.items()
-        if key not in {"thinking", "reasoning_effort"}
+        if key not in {"thinking", "reasoning_effort", "reasoning"}
     }
     return stripped if stripped != payload else None
 
 
 def _text_completion_response(data: dict, api_mode: str) -> str:
+    if api_mode == "responses":
+        values: list[str] = []
+        for output in data.get("output") or []:
+            if not isinstance(output, dict):
+                continue
+            for block in output.get("content") or []:
+                if isinstance(block, dict) and block.get("type") == "output_text":
+                    values.append(str(block.get("text") or ""))
+        return "\n".join(values).strip()
     if api_mode == "messages":
         return "\n".join(
             str(block.get("text") or "")
@@ -307,6 +380,9 @@ def _empty_answer_evidence(data: dict, api_mode: str) -> str:
     finish=length, content='', reasoning_content=4960 chars). Surfacing
     finish_reason and the reasoning-token split makes the next fix obvious.
     """
+    if api_mode == "responses":
+        details = data.get("incomplete_details") or {}
+        return f"finish={details.get('reason') or data.get('status') or 'unknown'}"
     if api_mode == "messages":
         return f"finish={data.get('stop_reason') or 'unknown'}"
     choice = (data.get("choices") or [{}])[0]
@@ -345,6 +421,26 @@ def _tool_completion_payload(
     max_tokens: int,
     api_mode: str,
 ) -> dict:
+    if api_mode == "responses":
+        payload: dict = {
+            "model": model,
+            "input": [{
+                "role": "user",
+                "content": [{"type": "input_text", "text": content}],
+            }],
+            "max_output_tokens": max(1, int(max_tokens)),
+        }
+        if system_prompt:
+            payload["instructions"] = system_prompt
+        if tools:
+            payload["tools"] = [{
+                "type": "function",
+                "strict": False,
+                "name": str(item.get("function", {}).get("name") or item.get("name") or "tool"),
+                "description": str(item.get("function", {}).get("description") or item.get("description") or ""),
+                "parameters": item.get("function", {}).get("parameters") or item.get("parameters") or {"type": "object", "properties": {}},
+            } for item in tools if isinstance(item, dict)]
+        return payload
     if api_mode == "messages":
         payload: dict = {
             "model": model,
@@ -372,6 +468,31 @@ def _tool_completion_payload(
 
 
 def _tool_completion_response(data: dict, api_mode: str) -> dict:
+    if api_mode == "responses":
+        text_parts: list[str] = []
+        calls: list[dict] = []
+        for output in data.get("output") or []:
+            if not isinstance(output, dict):
+                continue
+            output_type = str(output.get("type") or "")
+            if output_type == "message":
+                for block in output.get("content") or []:
+                    if isinstance(block, dict) and block.get("type") == "output_text":
+                        text_parts.append(str(block.get("text") or ""))
+            elif output_type == "function_call" and output.get("name"):
+                raw_arguments = output.get("arguments") or "{}"
+                try:
+                    arguments = json.loads(raw_arguments) if isinstance(raw_arguments, str) else raw_arguments
+                except (TypeError, ValueError):
+                    # Keep the provider fragment so LoopModelClient can return
+                    # an argument_error instead of executing an invented {}.
+                    arguments = raw_arguments
+                calls.append({
+                    "id": str(output.get("call_id") or output.get("id") or ""),
+                    "name": str(output["name"]),
+                    "arguments": arguments,
+                })
+        return {"text": "\n".join(text_parts).strip(), "toolCalls": calls}
     if api_mode == "messages":
         blocks = [block for block in list(data.get("content") or []) if isinstance(block, dict)]
         text = "\n".join(
@@ -409,6 +530,8 @@ def _tool_completion_response(data: dict, api_mode: str) -> dict:
 
 
 def _vision_content_block(data_url: str, api_mode: str) -> dict:
+    if api_mode == "responses":
+        return {"type": "input_image", "image_url": data_url}
     if api_mode != "messages":
         return {"type": "image_url", "image_url": {"url": data_url}}
     match = re.fullmatch(r"data:([^;,]+);base64,(.+)", data_url, flags=re.DOTALL)
@@ -482,7 +605,8 @@ def ask_text_model(
     the ceiling the wait, so interactive callers should set one they can afford.
     """
     api_key, base_url, model = get_ai_config()
-    if not api_key:
+    api_mode = get_ai_api_mode(base_url)
+    if not api_key and api_mode != "local":
         record_unconfigured()
         excerpt = (context_text or user_prompt or "").strip()[:900]
         if _REQUEST_AI_CONFIG:
@@ -510,7 +634,7 @@ def ask_text_model(
         base_url = (base_url or "https://api.openai.com/v1").rstrip("/")
         api_mode = get_ai_api_mode(base_url)
         endpoint = _completion_endpoint(base_url, api_mode)
-        headers = _completion_headers(api_key, api_mode)
+        headers = _completion_headers(api_key, api_mode, base_url=base_url)
         content = user_prompt.strip() or "解释当前选中的内容"
         if context_text:
             content += "\n\n" + context_text
@@ -638,7 +762,8 @@ def ask_text_model_with_tools(
     text so the caller can fall back to its local path.
     """
     api_key, base_url, model = get_ai_config()
-    if not api_key:
+    api_mode = get_ai_api_mode(base_url)
+    if not api_key and api_mode != "local":
         record_unconfigured()
         return {"text": "", "toolCalls": [], "error": "credential_missing"}
 
@@ -652,7 +777,7 @@ def ask_text_model_with_tools(
         endpoint = (base_url or "https://api.openai.com/v1").rstrip("/")
         api_mode = get_ai_api_mode(endpoint)
         completion_endpoint = _completion_endpoint(endpoint, api_mode)
-        headers = _completion_headers(api_key, api_mode)
+        headers = _completion_headers(api_key, api_mode, base_url=endpoint)
         content = (user_prompt or "").strip() or "解释当前选中的内容"
         if context_text:
             content += "\n\n" + context_text
@@ -750,6 +875,8 @@ def ask_vision_model(
     api_key, base_url, model = get_ai_config()
     model = get_vision_model(model)
     api_key = get_vision_key(api_key)
+    base_url = get_vision_base_url(base_url)
+    api_mode = get_vision_api_mode(base_url)
     if classify_vision_capability(model) is False:
         # A local configuration verdict, not a gateway failure: writing it
         # into the shared health store would open the circuit for the text
@@ -762,7 +889,7 @@ def ask_vision_model(
             "secrets/vision_api_mode.txt（messages），或用环境变量 "
             "MAGIC_POINTER_VISION_MODEL / MAGIC_POINTER_VISION_API_MODE。"
         )
-    if not api_key:
+    if not api_key and api_mode != "local":
         record_unconfigured()
         return (
             "已完成截图与对象登记，但未检测到 OPENAI_API_KEY 或 secrets/openai_key.txt，所以没有调用多模态模型。\n\n"
@@ -770,7 +897,6 @@ def ask_vision_model(
             "可通过环境变量或 secrets/openai_key.txt 配置 key。"
         )
 
-    base_url = get_vision_base_url(base_url)
     base_url = (base_url or "https://api.openai.com/v1").rstrip("/")
     blocked = short_circuit_message(base_url)
     if blocked:
@@ -789,7 +915,7 @@ def ask_vision_model(
 
         api_mode = get_vision_api_mode(base_url)
         endpoint = _completion_endpoint(base_url, api_mode)
-        headers = _completion_headers(api_key, api_mode)
+        headers = _completion_headers(api_key, api_mode, base_url=base_url)
         def normalize_labeled_extras() -> list[LabeledImage]:
             labeled: list[LabeledImage] = []
             for item in labeled_extra_images or []:
@@ -812,21 +938,29 @@ def ask_vision_model(
                 "\n- IMAGE B = THAT = the previous registered object. Chinese '\u90a3\u4e2a/\u4e0a\u4e00\u4e2a/\u521a\u624d' maps only to IMAGE B."
                 "\n- Do not swap THIS and THAT. In comparisons, state which side is THIS and which side is THAT before giving conclusions."
             )
+            text_type = "input_text" if api_mode == "responses" else "text"
             user_content = [
-                {"type": "text", "text": base_text + "\n\n[IMAGE A / THIS / current object / original screenshot]"},
+                {"type": text_type, "text": base_text + "\n\n[IMAGE A / THIS / current object / original screenshot]"},
                 _vision_content_block(_image_data_url(image_path), api_mode),
             ]
             if include_extras:
                 for label, extra_path in normalize_labeled_extras()[:3]:
                     if extra_path.exists():
-                        user_content.append({"type": "text", "text": f"[{label}]"})
+                        user_content.append({"type": text_type, "text": f"[{label}]"})
                         user_content.append(_vision_content_block(_image_data_url(extra_path), api_mode))
             payload = {
                 "model": model,
                 "messages": [{"role": "user", "content": user_content}],
                 "max_tokens": max(1, int(max_tokens)),
             }
-            if api_mode == "messages":
+            if api_mode == "responses":
+                payload = {
+                    "model": model,
+                    "input": [{"role": "user", "content": user_content}],
+                    "max_output_tokens": max(1, int(max_tokens)),
+                    "instructions": system_prompt or DEFAULT_SYSTEM_PROMPT,
+                }
+            elif api_mode == "messages":
                 payload["system"] = system_prompt or DEFAULT_SYSTEM_PROMPT
                 payload["thinking"] = {"type": "disabled"}
             else:

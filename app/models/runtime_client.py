@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from app import ai_client
 from app.models.profiles import ModelProfile
 
 
@@ -36,6 +37,21 @@ class ModelRuntimeClient:
             suffix = "/chat/completions"
         return base_url + suffix
 
+    @staticmethod
+    def _headers(profile: ModelProfile, credential: str | None) -> dict[str, str]:
+        """Use the shared transport header policy for profile probes/tests.
+
+        OpenCode Go requires a stable ``x-opencode-session`` on every request;
+        the shared helper attaches it from the request-scoped model config.
+        Keeping this path on the same helper also prevents local profiles from
+        accidentally receiving an Authorization header.
+        """
+        return ai_client._completion_headers(
+            credential or "",
+            profile.api_mode,
+            base_url=profile.base_url,
+        )
+
     def complete_text(self, profile: ModelProfile, *, credential: str | None, user_text: str, system_text: str = "") -> dict[str, Any]:
         if not profile.enabled:
             return {"ok": False, "state": "failed", "error": "model_profile_disabled", "evidence": {"apiMode": profile.api_mode}}
@@ -49,7 +65,7 @@ class ModelRuntimeClient:
             }
             if system_text.strip():
                 body["instructions"] = system_text.strip()
-            headers = {"Authorization": f"Bearer {credential}", "Content-Type": "application/json"}
+            headers = self._headers(profile, credential)
         elif profile.api_mode == "messages":
             body = {
                 "model": profile.model,
@@ -58,20 +74,14 @@ class ModelRuntimeClient:
             }
             if system_text.strip():
                 body["system"] = system_text.strip()
-            headers = {
-                "x-api-key": str(credential or ""),
-                "anthropic-version": "2023-06-01",
-                "Content-Type": "application/json",
-            }
+            headers = self._headers(profile, credential)
         else:
             messages = []
             if system_text.strip():
                 messages.append({"role": "system", "content": system_text.strip()})
             messages.append({"role": "user", "content": text})
             body = {"model": profile.model, "messages": messages}
-            headers = {"Content-Type": "application/json"}
-            if profile.api_mode != "local":
-                headers["Authorization"] = f"Bearer {credential}"
+            headers = self._headers(profile, credential)
         request = {"url": self._endpoint(profile), "headers": headers, "json": body}
         try:
             response = self.transport(request)
@@ -122,7 +132,7 @@ class ModelRuntimeClient:
                     ],
                 }],
             }
-            headers = {"Authorization": f"Bearer {credential}", "Content-Type": "application/json"}
+            headers = self._headers(profile, credential)
         elif profile.api_mode == "messages":
             body = {
                 "model": profile.model,
@@ -135,11 +145,7 @@ class ModelRuntimeClient:
                     ],
                 }],
             }
-            headers = {
-                "x-api-key": str(credential or ""),
-                "anthropic-version": "2023-06-01",
-                "Content-Type": "application/json",
-            }
+            headers = self._headers(profile, credential)
         else:
             body = {
                 "model": profile.model,
@@ -152,9 +158,7 @@ class ModelRuntimeClient:
                 }],
                 "max_tokens": 8,
             }
-            headers = {"Content-Type": "application/json"}
-            if profile.api_mode != "local":
-                headers["Authorization"] = f"Bearer {credential}"
+            headers = self._headers(profile, credential)
         request = {"url": self._endpoint(profile), "headers": headers, "json": body}
         try:
             response = self.transport(request)
