@@ -6,6 +6,14 @@ a clean checkout and reproduced the result.
 
 Status key: `open` · `fixed` · `verified` · `rejected`
 
+> **Read `docs/VERIFICATION_20260916.md` alongside this file.** An independent
+> verifier re-measured every `fixed` entry here and falsified several of the
+> claims written below, including one that was a live functional regression.
+> Where the two disagree, the verification report wins. The corrections are
+> listed at the end of this file under "Corrections from verification" — they
+> are kept separate rather than quietly edited into the entries above, because
+> the fact that they were wrong is itself part of the record.
+
 ---
 
 ## Area A — pointer input stream (`scripts/pointer_input_state.ps1`)
@@ -295,3 +303,149 @@ gesture chaining. Baseline measurements in `docs/perf/2026-09-16-baseline.md`.
 - **Fix**: the here-string is assigned, never bare. Guarded by the shape check in
   `tools/measure_poller_rate.js`.
 - **Status**: `fixed`
+
+---
+
+## Corrections from verification
+
+Full evidence in `docs/VERIFICATION_20260916.md`. These are corrections to the
+entries above, not additions to them.
+
+### V-1 — BUG-009 shipped a functional regression, and the status was wrong
+
+`_glide()` called `glide_points()` without importing it into `windows.py`. Every
+HOVER and DRAG raised `NameError` and returned `executed=False` — both worked
+before the change. The verifier found this by running the driver; **no test did**,
+because `tests/computer_motion_test.py` exercises the pure policy module and
+`tests/windows_computer_operator_test.py` injects a fake driver that never
+executes `Win32InputDriver` at all.
+
+- **Fixed**: `glide_points` added to the `from .motion import` line.
+  `tests/no_undefined_names_test.py` — a pre-existing pyflakes guard that would
+  have caught it — now passes; it was failing, and the full suite had not been
+  re-run after the motion change. That is the process failure behind the code
+  failure.
+- **Guarded**: `tests/computer_operator_driver_motion_test.py` now instantiates
+  the real driver with `_position` stubbed, so the driver's own calls are
+  executed by a test for the first time, and asserts the module imports every
+  name it references.
+- **Corrected status**: BUG-009 was `fixed` when it was in fact `broken`, for the
+  duration between its commit and this correction. The lesson is recorded rather
+  than the commit rewritten: a fake at the boundary does not test the boundary.
+
+### V-2 — BUG-006 overstated by roughly 2×
+The 1470 ms → 747 ms figures were single runs. The verifier measured medians of
+**1327 ms → ~960 ms**, i.e. a saving of about **370 ms**, not 723 ms. The
+direction and cause are right; the magnitude was wrong. Quote the verification
+report for the number.
+
+### V-3 — BUG-005's cache has a stale-assembly trap that was not documented
+`Import-InputStateType` loads `pointer_input_state_<version>.dll` whenever that
+file exists. If the C# changes and `$CACHE_VERSION` is not bumped, the **old
+compiled assembly is silently loaded** and the new C# never runs. The verifier
+demonstrated it. Anyone editing the C# in that script must bump
+`$CACHE_VERSION`; the failure mode is silent, which is why it is written down
+here rather than left to the inline comment.
+
+### V-4 — BUG-013's "shared by both bridges" was false
+`StreamChunkBuffer` is used by `selection_bridge.py` only. `conversation_bridge`
+still has its own `_ConversationActivitySink._flush_answer_chunks`. The
+duplication that caused the original divergence therefore still exists; the
+shared module is a place for it to go, not yet where it lives. The behavioural
+tests cover the buffer; only the static tripwire covers the two bridges both
+publishing the channel.
+
+### V-5 — BUG-014's `import time` was dead on arrival
+`time` was added for a `time.perf_counter()` call that the `StreamChunkBuffer`
+refactor then removed. It is now deleted again. The finding stands — the module
+had no `time` and the first version of the streaming fix called into it, which
+would have been a `NameError` on the primary path — but the import as committed
+was unused. `tests/computer_operator_driver_motion_test.py` now includes the
+reverse check so a leftover import fails a test instead of a linter.
+
+### V-6 — BUG-010's settle time was not applied to `drag()` or `scroll()`
+`click()` waits `CLICK_SETTLE_MS` after `SetCursorPos`; `drag()` and `scroll()`
+do not. The same "the window has not processed the move yet" race applies to
+both. Not yet fixed.
+
+### V-7 — Line references in several entries have shifted
+`selection_bridge.py:2895` → `:2909`; `main.ts:1088` → `:1083`. The citations
+were correct when written and are wrong now that the surrounding files changed.
+Cite the verification report for current positions.
+
+### V-8 — the baseline's P1 numbers were internally inconsistent
+`samples=47 over 8079ms` and `effective_hz=15.6` cannot both describe the same
+run: 47 samples over that window is ~5.8 Hz wall-clock, while the inter-sample
+gap statistics imply 15.6 Hz. Both are real and they measure different things —
+the wall-clock figure includes the 1470 ms cold start, the gap figure does not.
+The baseline now reports them separately. The pre-fix *rate* was independently
+re-measured by the verifier at **16.3–16.9 Hz**, which is the number to quote.
+
+---
+
+## Area E — what actually breaks complex tasks
+
+From `docs/research/2026-09-16-harness-parity-audit.md`, a line-by-line harness
+comparison against Claude Code, deepseek-harness and Hermes. The four ranked root
+causes are `RC-1`…`RC-4` there, each with `path:line` on both sides.
+
+### BUG-019 — a failed summarization replaces the entire conversation history
+- **Where**: `scripts/selection_bridge.py` (`summarize_history`),
+  `scripts/conversation_bridge.py:_summarize_history`, root cause in
+  `app/ai_client.py`
+- **What**: both bridges called `ask_text_model(...)` inside
+  `try/except → return ""`. But `ask_text_model` **never raises** — it catches
+  its own exceptions and *returns* a sentence beginning `AI 调用失败：`
+  (`app/ai_client.py:732,735,740`). The `except` was therefore dead code, and the
+  error sentence became a non-empty "summary".
+  `app/agent_runtime/memory.py:221` does `summary = str(summarize(...)).strip()`
+  then `if not summary:` — a guard that is correct and was **unreachable**.
+- **Why it hurts**: the error text was accepted as a successful compaction and
+  used to replace `[condensed, *tail]` — i.e. the whole older conversation. The
+  model lost its history and received "AI 调用失败：HTTP 400" as its memory of
+  everything that had happened. It then repeats work or calls tools at random,
+  trips the duplicate-evidence guard in `tool_guardrails`, and terminates
+  `STALLED`. From the user's seat: 跑到一半突然失忆然后卡住.
+  The parameters make failure the common case rather than the exception — the
+  summarizer runs with `timeout_s=25.0`, `attempts=1`, `max_tokens=1200`
+  (`selection_bridge.py:2780-2781`, `ai_client.py:592`) over up to 48,000
+  characters of Chinese history.
+- **Fix**: `AI_FAILURE_PREFIX` and `is_ai_failure()` in `app/ai_client.py`, so a
+  caller can tell "no answer" from "an answer". Both summarizers now return `""`
+  on failure, which makes the existing (already-correct) retry-then-keep-history
+  path in `memory.compact_messages` actually reachable.
+- **Status**: `fixed`
+
+### BUG-020 — the stage never received the streaming answer
+- **Where**: `electron/main.ts:1299` (`notifyConversationChanged`), called from
+  `appendStageLiveAnswer`
+- **What**: the live-answer flush wrote the growing text into the conversation
+  store and called `notifyConversationChanged`, which sends `conversations:turn`
+  to `dashboardWindow` and `companionWindow` — **never to `stageWindow`**.
+- **Why it hurts**: this is the last hop of the streaming path fixed in BUG-013.
+  All the plumbing worked: the Python bridge emitted `answer_chunk` (0.12 s
+  coalescing), main parsed it, and the Studio and companion surfaces re-rendered
+  continuously. The on-screen stage — the window the user is actually looking at
+  — received nothing until the terminal `stage:update`, so it showed a spinner
+  and then the whole answer at once. The perceived latency of the primary
+  surface was the entire turn.
+- **Fix**: the flush now also sends the accumulated text to the stage on the
+  `stage:card-patch` channel it already subscribes to
+  (`stage.ts:2399` → `patchRunningCard` → `CardModel.applyPatch`, which copies
+  arbitrary keys including `answer`). `applyPatch` is a no-op unless the card is
+  still running, so a flush arriving after the terminal update cannot overwrite a
+  finished answer.
+- **Status**: `fixed`
+
+### RC-2 / RC-3 / RC-4 — recorded, not fixed
+- **RC-2**: there is no context-overflow rescue path (no `prompt_too_long` /
+  `context_length_exceeded` handling anywhere in the repo), and the anti-thrash
+  counter `fruitless_compactions` has **no reset path** — once it reaches 2,
+  compaction is disabled for the rest of the run.
+- **RC-3**: `max_tokens` is hard-coded to 4096 in three places, and a truncated
+  turn is retried at the same 4096 rather than escalated. Claude Code retries the
+  same request at 64,000.
+- **RC-4**: a single tool result may be 64,000 characters with no per-turn
+  aggregate budget, and `max_parallel_tool_calls = 4`.
+- **Status**: `open` — all three are specified with citations in the harness
+  audit; none is a one-line change and none could be verified in this pass.

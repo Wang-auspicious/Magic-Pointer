@@ -582,6 +582,27 @@ def _image_data_url(image_path: Path, max_edge: int = 1600, jpeg_quality: int = 
         return f"data:image/png;base64,{encoded}"
 
 
+#: Every failure in this module is reported by *returning* a sentence with this
+#: prefix — `ask_text_model` catches its own exceptions and converts them too
+#: (`return f"AI 调用失败：{type(exc).__name__}: {exc}"`), so a caller's
+#: ``except`` block is never reached. That is deliberate: most callers show the
+#: sentence to the user, and showing "AI 调用失败：HTTP 402" beats showing a
+#: traceback.
+#:
+#: It is *not* safe for callers that treat the return value as content. The
+#: compaction summarizer was one: a failed summarization produced a non-empty
+#: string, which `memory.compact_messages` accepted as a summary and used to
+#: replace the entire conversation head — so the model lost its history and was
+#: handed an error message as its own memory. Use :func:`is_ai_failure` at any
+#: call site where "no answer" and "an answer" must be told apart.
+AI_FAILURE_PREFIX = "AI 调用失败："
+
+
+def is_ai_failure(value: object) -> bool:
+    """True when ``value`` is a failure report rather than model output."""
+    return str(value or "").lstrip().startswith(AI_FAILURE_PREFIX)
+
+
 def ask_text_model(
     user_prompt: str,
     context_text: str | None = None,

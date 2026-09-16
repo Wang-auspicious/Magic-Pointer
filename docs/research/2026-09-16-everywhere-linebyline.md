@@ -155,6 +155,12 @@ Finally, the completion animation is not allowed to fight the layout pass
 `DispatcherTimer.RunOnce(..., 400ms)` — *"Leaves a just-completed running Group in place long enough for
 the 320 ms glow transition"* — before the row set is rebuilt.
 
+> **Note on Magic Pointer's current state** (verified, not assumed): MP already streams deltas end to end
+> at the transport level — `scripts/bridge_progress.py:130` throttles at 120ms with a first-flush-immediate
+> rule, and `scripts/conversation_bridge.py:234` handles `model_chunk`. What is missing is only the last
+> hop: the live chunks reach the conversation store and the dashboard/companion windows, never the stage
+> window. See port items 1–3.
+
 ### 3. Hot-path IPC discipline — there is no IPC on the hot path
 
 The UI and the model run in **one process**. The only IPC in the entire product is a named pipe used to
@@ -368,24 +374,36 @@ the render loop alive. This is the mechanism that keeps the *idle* app at ~0% GP
 
 Ordered by expected latency/feel payoff.
 
-1. **In Magic Pointer, change the Python bridge to stream results instead of buffering them.**
-   `electron/python_bridge_runner.ts:115-215` accumulates all stdout into one string and parses only
-   `lines.at(-1)` at process close. Change it to parse and forward each complete JSON line as it arrives,
-   because everywhere never lets a completed chunk wait on the end of the turn
-   (`ChatService.cs:708-716` appends each delta the moment it is yielded).
-   TARGET: `electron/python_bridge_runner.ts` — search for `stdout.trim().split`.
+> **Correction to an earlier draft of this list.** Magic Pointer's streaming transport is already live and
+> is in places better designed than assumed: `scripts/bridge_progress.py:130` `StreamChunkBuffer` throttles
+> at `STREAM_FLUSH_INTERVAL_S = 0.12` (`:127`) and sets `self._last_flush = 0.0` (`:163-165`) so **the first
+> delta always flushes immediately** — the same decision Everywhere makes by measuring TTFT at the first
+> streamed item (`ChatService.cs:640-648`). `scripts/conversation_bridge.py:234` handles `model_chunk`,
+> `scripts/selection_bridge.py:2918` consumes the shared buffer, and
+> `electron/bridge_progress_lines.ts:33-50` parses `@@mp` progress rows incrementally with partial-line
+> tolerance. Items 1–3 below are narrowed to what is *actually* still missing.
 
-2. **In Magic Pointer, stop discarding `ModelChunk` in the agent-loop consumer.**
-   `app/fabric/engine.py:1011-1013` (`_consume_agent_loop`) iterates the loop generator and returns on
-   `LoopStopped`, dropping every `ModelChunk`/`ReasoningChunk`. Route them to the UI through
-   `event_sink` (`app/agent_runtime/loop.py:583-586` already copies every event to the sink).
-   TARGET: `app/fabric/engine.py` — search for `_consume_agent_loop`.
+1. **In Magic Pointer, route `answer_chunk` to the stage window.** This is the real gap, and it is narrow.
+   `electron/main.ts:5845-5846` receives the phase and calls `appendStageLiveAnswer`
+   (`:1339`), but that function only writes the conversation store and calls `notifyConversationChanged`
+   (`:1299-1305`), which sends to `dashboardWindow` and `companionWindow` — **never to `stageWindow`**. The
+   only `stageWindow.webContents.send` calls in the file are `stage:hide` (`:3076`) and `stage:pointer-input`
+   (`:3929`). So the Studio and companion surfaces stream and the on-screen stage does not: it paints the
+   whole answer at turn end. Everywhere paints on the surface the user is actually looking at
+   (`ChatService.cs:710` → `ThreadSafeObservableStringBuilder` → the bound markdown renderer).
+   TARGET: `electron/main.ts` — search for `appendStageLiveAnswer`.
 
-3. **In Magic Pointer, coalesce token deltas per animation frame in the renderer rather than per IPC.**
-   Everywhere's projection layer drains all pending refreshes in one dispatcher pass and only re-posts if
-   new work arrived during the pass (`ChatPresentation.cs:507-565`). Add the equivalent: accumulate
-   `model_chunk` payloads into a buffer and flush with `requestAnimationFrame`.
-   TARGET FILE: TBD — search for `onUpdate` / `stage:update` consumer in `electron/renderer/stage.ts`.
+2. **In Magic Pointer, delete the second throttle.** Python coalesces at 120ms
+   (`scripts/bridge_progress.py:127`) and `appendStageLiveAnswer` then coalesces *again* behind its own
+   `setTimeout(..., 300)` (`electron/main.ts:1348-1358`). The outer 300ms window dominates and is the number
+   the user feels. Everywhere has exactly one coalescer, at one layer (`ChatPresentation.cs:488-505`).
+   TARGET: `electron/main.ts:1339-1361`.
+
+3. **In Magic Pointer, make the stage renderer append into a mutable answer buffer instead of re-rendering
+   from a full string.** Even once item 1 is wired, `stage.ts:2375` (`api.onUpdate`) replaces whole payloads.
+   Everywhere binds the markdown renderer to a mutable `ObservableStringBuilder`
+   (`ChatPresentationRowPresenter.axaml:588`) so a delta never reassigns a property or re-templates the row.
+   TARGET: `electron/renderer/stage.ts` — search for `api.onUpdate`.
 
 4. **In Magic Pointer, make the stage/overlay window pre-created and DWM-cloaked instead of destroyed and
    re-created per gesture.** `electron/main.ts:894-905` (`ensureFreshGestureOverlay`) explicitly destroys

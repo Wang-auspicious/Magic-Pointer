@@ -17,7 +17,7 @@ from app.capture import CaptureProvider, GdiFallbackCaptureProvider
 from app.governance.cancellation import CancelledError
 
 from . import motion
-from .motion import CLICK_HOLD_MS, CLICK_SETTLE_MS
+from .motion import CLICK_HOLD_MS, CLICK_SETTLE_MS, glide_points
 from .schema import (
     ComputerAction,
     ComputerActionKind,

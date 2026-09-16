@@ -91,7 +91,7 @@ Sources of record for the detail behind each line:
 | C-070 | `stage.css` has zero `will-change` and animates `clip-path`/`box-shadow`/`left`/`top`/`width`/`height` | open |
 | C-071 | `studio.ts:4170` `fitComposer` forces layout per keystroke | open |
 | C-072 | `studio.html:581-606` — 25 parser-blocking scripts, 584 KB | open |
-| C-073 | `stash_runtime.ts:412` reads and possibly resizes the clipboard bitmap every 700 ms forever | open |
+| C-073 | `stash_runtime.ts:412` re-decodes the clipboard bitmap on every 700 ms tick while an image sits on the clipboard, then compares fingerprints to discover it is the same image. **Partly overstated in the source audit**: `start()` is gated on `stash.clipboard === true \|\| stash.text === true` (`main.ts:2611`), so the poll does not run for users who never enabled the feature. The real defect is narrower — the fingerprint check happens *after* the decode, so an unchanged clipboard image is fully decoded ~1.4×/second indefinitely. Fixing it needs a cheap change-detector before decode (e.g. `clipboard.readBuffer('PNG')` and hash the bytes, skipping the PNG→bitmap decode) | open |
 | C-074 | `task_watcher.ts` spawns a Python process per poll — ~95 spawns for a 5-minute task | open |
 | C-075 | F1..F43 remainder — the full numbered list with measurements is in the audit document | open |
 

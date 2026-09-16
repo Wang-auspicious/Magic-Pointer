@@ -61,7 +61,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 from app.actions.office import clean_replacement_text  # noqa: E402
 from app.agent_runtime.effort import normalize_effort  # noqa: E402
-from app.ai_client import ask_text_model, request_ai_config  # noqa: E402
+from app.ai_client import ask_text_model, is_ai_failure, request_ai_config  # noqa: E402
 from app.governance.latency_budget import (  # noqa: E402
     BudgetPolicy,
     Stage,
@@ -927,8 +927,15 @@ def _summarize_history(history_text: str) -> str:
         compaction_instructions,
     )
 
+    # Returning "" means "no summary this round"; memory.compact_messages
+    # retries once and otherwise keeps the original history.
+    #
+    # ask_text_model reports failure by *returning* a sentence, not by raising
+    # (app/ai_client.py, AI_FAILURE_PREFIX), so the except below is unreachable
+    # and an unchecked return value would let "AI 调用失败：…" be accepted as a
+    # summary and replace the whole conversation head.
     try:
-        return ask_text_model(
+        summary = ask_text_model(
             compaction_instructions(),
             context_text=str(history_text)[:COMPACT_SOURCE_MODEL_CAP_CHARS],
             timeout_s=25.0,
@@ -936,6 +943,7 @@ def _summarize_history(history_text: str) -> str:
         )
     except Exception:
         return ""
+    return "" if is_ai_failure(summary) else summary
 
 
 def _resolve_workspace_root(explicit_workspace: str) -> Path | None:

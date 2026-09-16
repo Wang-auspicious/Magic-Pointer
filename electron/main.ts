@@ -1349,12 +1349,26 @@ function appendStageLiveAnswer(token: string, b64: string): void {
       stageLiveFlushTimers.delete(token);
       const current = stageLiveTurns.get(token);
       if (!current) return;
+      const live = stageLiveAnswers.get(token) || '';
       const result = conversations().updateTurn({
         conversationId: current.conversationId,
         turnIndex: current.turnIndex,
-        answer: stageLiveAnswers.get(token) || '',
+        answer: live,
       });
       if (result.ok) notifyConversationChanged(current.conversationId);
+      // The stage is the surface the user is actually looking at, and
+      // notifyConversationChanged only reaches the dashboard and companion
+      // windows — so the streaming text landed everywhere except the one window
+      // in front of them, and the on-screen card showed nothing until the turn
+      // ended. Push the same text to it through the card-patch channel the
+      // stage already subscribes to (stage.ts:2399 → patchRunningCard →
+      // CardModel.applyPatch, which copies arbitrary keys including `answer`).
+      // applyPatch no-ops unless the card is still running, so a late flush
+      // after the terminal update cannot overwrite a finished answer.
+      safeSurfaceSend('stage', 'stage:card-patch', {
+        selectionSessionToken: token,
+        patch: { answer: live },
+      });
     }, 300));
   } catch (error) {
     log(`conversation live-append failed ${error instanceof Error ? error.name : 'Error'}`);
