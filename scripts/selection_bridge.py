@@ -62,10 +62,11 @@ from app.context_pack.sources import (
 )
 from app.context_pack.selection_reader import FrozenSelectionMaterial, FrozenSelectionReader
 from app.context_pack.document_reader import DocumentReader
-from app.ai_client import ask_text_model, ask_vision_model, is_ai_failure
+from app.ai_client import ask_text_model, ask_vision_model
 from app.agent_runtime.compaction_prompt import (
     COMPACT_SOURCE_MODEL_CAP_CHARS,
     compaction_instructions,
+    summarize_history_text,
 )
 from app.agent_runtime.system_prompt import (
     DELIVER_SYSTEM_PROMPT,
@@ -2776,24 +2777,10 @@ def _loop_router(
         # 返回 "" 表示「这次没总结出来」，memory.compact_messages 会对它重试
         # 一次、再不行就保留原历史。
         #
-        # ask_text_model 失败时**不抛异常**，它把失败当成一句话返回
-        # （app/ai_client.py 的 AI_FAILURE_PREFIX）。所以这里的 except 是死
-        # 代码：真正会发生的是那句「AI 调用失败：…」被当成摘要，非空，
-        # 于是 compact_messages 认为压缩成功，用它替换掉整段历史——
-        # 模型于是丢了全部上下文，只拿到一句报错当记忆，接着重复劳动、
-        # 触发重复证据判定、最后 STALLED。用户看到的是「跑到一半突然失忆
-        # 然后卡住」。is_ai_failure 就是为了在「没答案」和「有答案」之间
-        # 分得清。
-        try:
-            summary = ask_text_model(
-                compaction_instructions(),
-                context_text=str(history_text)[:COMPACT_SOURCE_MODEL_CAP_CHARS],
-                timeout_s=25.0,
-                attempts=1,
-            )
-        except Exception:
-            return ""
-        return "" if is_ai_failure(summary) else summary
+        # 具体参数与失败判定都在 summarize_history_text 里，两个桥共用同一份
+        # ——它们各自抄过一份，抄出来的两份只在被改动的那一次分叉，而那次
+        # 分叉的代价是把「AI 调用失败：…」当成了摘要。
+        return summarize_history_text(history_text)
 
     _inbox_cell: dict = {"fn": None}
     _source_session_cell: dict[str, Any] = {"value": None}
