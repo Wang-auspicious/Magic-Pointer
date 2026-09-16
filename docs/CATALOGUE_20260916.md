@@ -177,3 +177,74 @@ every `fixed` row above has either a probe under `tools/` or a test under
 `tests/` that fails without the change. The open rows are enumerated with
 `file:line` and a stated cause so the next pass starts from a list rather than
 from an investigation.
+
+---
+
+# Round 2 — status update
+
+Second pass, four parallel workers plus the main agent, commits
+`ef5ee16..HEAD`. This section supersedes the per-row status above; where they
+disagree, this is current.
+
+## Newly fixed
+
+| ID | What changed |
+| --- | --- |
+| C-024 | Twin cursor exists as a first-class surface: `app/computer_operator/cursors.py` (registry, accent, TTL) + `electron/renderer/overlay.ts` renders it. **Not yet rendered in anger** — see "Known unverified" below. |
+| C-025 | Per-display placement: `app/computer_operator/displays.py`, and one cursor surface per display, including the 2px bottom shave that keeps the auto-hide taskbar working. |
+| C-026/027/028 | The guide flight and the cursor flight now use Clicky's own numbers: smoothstep easing, `clamp(dist/800, 600, 1400)` ms, Bézier arc `min(d·0.2, 80)`, tangent-following rotation, `1+sin(πp)` pulse, dwell 3000 ms, flat 1400 ms return. |
+| C-029 | Addressable multi-cursor model — id, position, accent, TTL, state. One cursor is emitted today; the wire carries an id from the start. |
+| C-053 | Per-conversation JSON cache: `updateTurn` at the audit's 13 MB store went 60.6 ms → 36.9 ms, and the debounced write is async. Per-conversation files still not done (recorded with the reason). |
+| C-055 | Store persistence failures are reported: bounded to 5, first always, then one per minute. |
+| C-056 | `observability.writeEvent` buffered. Measured 0.33–0.96 ms/call → 0.00 ms queue-only. Rotation preserved. |
+| C-061 | `conversations:turn` re-render cascade coalesced behind one rAF. |
+| C-065 | Stage bounds cached (5 call sites). The suggested "skip unchanged pointer-input" was **declined with evidence** and the reason is in the commit. |
+| C-067 | Episode persist deferred off the pointerup→capsule path. |
+| C-068 | The 30 fps pulse loop is gated and self-terminating. |
+| C-069 | Sweep geometry is incremental: 152 ms → 12.4 ms on the production shape (append-one-point-per-call, 1024 steps). |
+| C-071 | `fitComposer` coalesced to one rAF. |
+| C-072 | 25 scripts deferred; `theme_boot.js` deliberately not (it would flash the wrong theme). |
+| C-073 | Clipboard change detected by a PNG digest before the decode. |
+| C-074 | Task polling gated on a surface being visible; ~20 Python spawns for a 5-minute task instead of ~95. |
+| C-080 | One coordinate-space vocabulary (`COORDINATE_SPACES`); legacy spellings are read, never written. The last hyphenated producers in `selection_bridge.py` were fixed in round 2. |
+| C-082 | Producer half: every stroke carries a typed `shapeVerdict`. |
+| C-083 | A deliberate press-and-hold yields a point instead of being dropped. |
+| C-084 | `physicalGestureTraceResult` returns a typed reason instead of a bare `null`; adjacent NaN relocation fixed. |
+| C-085 | The stage origin is now sent by main as a **physical** value. The renderer's previous derivation produced a DIP origin, which is only correct at 100% scale with the display at virtual origin 0. |
+| C-086 | The physical-as-DIP fallback that reintroduced the very bug its own comment describes is gone. |
+| C-087 | A second `startRequest` no longer overwrites `activeRequestId` mid-flight. |
+| C-088 | Drag lease expires. |
+| RC-2a | Context overflow has a rescue path: vendor wordings classified, compaction forced, resend bounded. |
+| RC-2b | `fruitless_compactions` has a real reset path — it asks whether the history actually got lighter instead of trusting a counter that only counted up. |
+| RC-3 | Truncation escalates the ceiling (4096 → 16384 → 64000) instead of retrying at the same one; the default ceiling is 8192, from one constant. |
+| RC-4 | A tool round is bounded in aggregate, not just per result. |
+| RC-10 | A Chinese ellipsis no longer counts as truncation evidence — it was discarding complete tool calls. |
+| RC-12 | An empty completion is retried instead of delivered as a success with an empty bubble. |
+| P-19 | `max_parallel_tool_calls` 4 → 8. |
+| — | The twin cursor's message channel is wired end to end: bridge → sink → emitter → `@@mp phase=agent_cursor` → main → cursor surface. |
+
+## Newly recorded, not fixed
+
+| ID | Why not |
+| --- | --- |
+| C-062 | Pre-created standby overlay. Needs per-window readiness and a `reset()` fix first, and a wrong swap breaks the core gesture interaction. Design recorded in the commit. |
+| C-081 | The polygon still never leaves the main process. The exact three-part patch is written up in the worker report (`main.ts` geometry conversion, `selection_snapshot_bridge.py` passthrough, `pixel_ocr.py` point-in-polygon cover test). |
+| C-089 | `uia_text_adapter.py` retry gate, untouched. |
+| C-070 | Partial. The delivery bar and the shimmer sweep were converted to composited properties; the clip-path sweep, the blur pulse and the handle width were **left alone because the conversion is not provably neutral** — each needs a visual review. Recorded rather than guessed. |
+| C-043 | Reasoning chunks still not forwarded on the selection surface. |
+| C-066, C-063, C-064 | Not attempted. |
+
+## Known unverified
+
+Stated plainly, because the difference matters:
+
+- **The twin cursor has never rendered a frame.** The motion math is proven in
+  Python and cross-checked against the TypeScript constants; the window and
+  canvas code is typechecked and linted. No window has been created.
+- Everything in `electron/main.ts` changed in round 2 is typecheck-only.
+- `stash_runtime`'s clipboard change detector is verified against a fake
+  clipboard; whether Electron's Windows clipboard exposes `image/png` for images
+  copied by other apps is unverified. If it does not, behaviour degrades to
+  what it was — no worse.
+- `build/` is generated and gitignored. The source is correct; anyone running
+  the app rebuilds first (`npm run overlay` does this).
