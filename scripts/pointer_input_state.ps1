@@ -2,7 +2,11 @@ param([switch]$SelfTest)
 
 $ErrorActionPreference = "Stop"
 
-Add-Type @"
+# Source is compiled once and cached (see Import-InputStateType). It must be
+# assigned, not passed straight to Add-Type as a bare here-string: a here-string
+# that is not an argument becomes an expression, and its value would be written
+# to stdout, which is the snapshot wire.
+$Source = @"
 using System;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -245,10 +249,174 @@ public static class MagicPointerInputState {
         }
         return CallNextHookEx(wheelHook, nCode, wParam, lParam);
     }
+
+    // ---- Snapshot path -------------------------------------------------
+    //
+    // Everything below exists because the polling loop used to be written in
+    // PowerShell: `Get-Process`, `New-Object`, `Marshal::SizeOf` and
+    // `ConvertTo-Json` ran once per tick. Those are cmdlet/reflection calls
+    // costing single-digit milliseconds each, so the loop asked for 35 ms and
+    // delivered ~63 ms (measured p50; 15.6 Hz against an intended 28.6 Hz) —
+    // and the wake detector's budget is 50 ms. The work moved here, where the
+    // same reads are microsecond P/Invokes, and the loop below is back to
+    // four calls per tick.
+
+    /// <summary>The six GetAsyncKeyState reads the poller assembles into the
+    /// button mask, done in one transition instead of six.</summary>
+    public static int ButtonsRaw() {
+        int buttons = 0;
+        if (IsDown(1)) buttons |= 1;
+        if (IsDown(2)) buttons |= 2;
+        if (IsDown(4)) buttons |= 4;
+        if (IsDown(5)) buttons |= 8;
+        if (IsDown(6)) buttons |= 16;
+        return buttons;
+    }
+
+    // Get-Process was the single most expensive thing in the old loop, and the
+    // foreground process changes maybe a few times an hour. Cache it; the pid
+    // is the key, so a stale entry can never be returned for a different one.
+    private static uint cachedProcessId = 0;
+    private static string cachedProcessName = "";
+
+    private static string ProcessNameOf(uint processId) {
+        if (processId == cachedProcessId) return cachedProcessName;
+        string name = "";
+        if (processId > 0) {
+            try {
+                using (System.Diagnostics.Process p = System.Diagnostics.Process.GetProcessById((int)processId)) {
+                    name = p.ProcessName;
+                }
+            } catch { name = ""; }
+        }
+        cachedProcessId = processId;
+        cachedProcessName = name;
+        return name;
+    }
+
+    private static string JsonString(string value) {
+        if (string.IsNullOrEmpty(value)) return "\"\"";
+        StringBuilder b = new StringBuilder(value.Length + 2);
+        b.Append('"');
+        foreach (char c in value) {
+            if (c == '"' || c == '\\') b.Append('\\').Append(c);
+            else if (c < ' ') b.Append("\\u").Append(((int)c).ToString("x4"));
+            else b.Append(c);
+        }
+        b.Append('"');
+        return b.ToString();
+    }
+
+    /// <summary>Reads the whole snapshot and writes one JSON line to stdout.
+    /// The key set and key order are the wire contract `electron/main.ts`
+    /// parses — do not reorder or rename without changing both sides.</summary>
+    public static void EmitSnapshot(int buttons) {
+        long hwnd = 0;
+        uint processId = 0;
+        bool isWindowMoving = false;
+        string processName = "";
+        try {
+            IntPtr foreground = GetForegroundWindow();
+            hwnd = foreground.ToInt64();
+            uint threadId = GetWindowThreadProcessId(foreground, out processId);
+            processName = ProcessNameOf(processId);
+            GUITHREADINFO info = new GUITHREADINFO();
+            info.cbSize = Marshal.SizeOf(typeof(GUITHREADINFO));
+            if (GetGUIThreadInfo(threadId, ref info) && info.hwndMoveSize != IntPtr.Zero) {
+                isWindowMoving = true;
+            }
+        } catch { }
+        Console.Out.Write(
+            "{\"buttons\":" + buttons
+            + ",\"foregroundApp\":" + JsonString(processName)
+            + ",\"foregroundHwnd\":" + hwnd
+            + ",\"foregroundProcessId\":" + processId
+            + ",\"isWindowMoving\":" + (isWindowMoving ? "true" : "false")
+            + ",\"scrollDelta\":" + TakeWheelDelta()
+            + ",\"swallowingLeft\":" + (IsSwallowingLeft() ? "true" : "false")
+            + ",\"captureArmed\":" + (IsCaptureArmed() ? "true" : "false")
+            + "}\n");
+        Console.Out.Flush();
+    }
+
+    // ---- Pacing --------------------------------------------------------
+    //
+    // Start-Sleep rounds up to the Windows default 15.6 ms timer tick, so a
+    // requested 35 ms became ~50 ms before any work was done. A
+    // high-resolution waitable timer (Windows 10 1803+) paces at ~1 ms without
+    // raising the global timer resolution for the whole machine.
+
+    private const uint CREATE_WAITABLE_TIMER_HIGH_RESOLUTION = 0x00000002;
+    private const uint TIMER_ALL_ACCESS = 0x001F0003;
+    private const uint WAIT_OBJECT_0 = 0x00000000;
+    private const uint INFINITE = 0xFFFFFFFF;
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr CreateWaitableTimerEx(IntPtr lpTimerAttributes, string lpTimerName, uint dwFlags, uint dwDesiredAccess);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool SetWaitableTimer(IntPtr hTimer, ref long pDueTime, int lPeriod, IntPtr pfnCompletionRoutine, IntPtr lpArgToCompletionRoutine, bool fResume);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern uint WaitForSingleObject(IntPtr hHandle, uint dwMilliseconds);
+
+    private static IntPtr tickTimer = IntPtr.Zero;
+
+    /// <summary>Blocks until the next sample is due. Falls back to
+    /// Thread.Sleep only if the high-resolution timer is unavailable.</summary>
+    public static void WaitForNextTick(int intervalMs) {
+        if (intervalMs <= 0) return;
+        if (tickTimer == IntPtr.Zero) {
+            tickTimer = CreateWaitableTimerEx(IntPtr.Zero, null, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+        }
+        if (tickTimer != IntPtr.Zero) {
+            long dueTime = -(long)intervalMs * 10000L; // relative, 100 ns units
+            if (SetWaitableTimer(tickTimer, ref dueTime, 0, IntPtr.Zero, IntPtr.Zero, false)
+                && WaitForSingleObject(tickTimer, INFINITE) == WAIT_OBJECT_0) {
+                return;
+            }
+        }
+        System.Threading.Thread.Sleep(intervalMs);
+    }
 }
 "@
 
+# Add-Type compiles this file's C# with the CodeDom provider on every start —
+# measured at ~0.5 s for a trivial class, and this one is not trivial. The
+# compiled assembly is cacheable, and loading a cached DLL is a LoadFrom
+# instead of a compile, so the pointer stream stops paying a second of
+# compiler time before its first sample. Bump CACHE_VERSION whenever the C#
+# above changes; the version is in the filename, so a new version never
+# collides with an old file.
+$CACHE_VERSION = "3"
+function Import-InputStateType {
+    $cacheRoot = $env:LOCALAPPDATA
+    if (-not $cacheRoot) { $cacheRoot = [System.IO.Path]::GetTempPath() }
+    $cacheDir = Join-Path $cacheRoot "MagicPointer"
+    $cacheDll = Join-Path $cacheDir "pointer_input_state_$CACHE_VERSION.dll"
+    if (Test-Path $cacheDll) {
+        try {
+            Add-Type -Path $cacheDll -ErrorAction Stop
+            return
+        } catch {
+            # A half-written or unloadable cache must never be fatal; fall
+            # through and recompile.
+        }
+    }
+    try {
+        if (-not (Test-Path $cacheDir)) { New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null }
+        Add-Type -TypeDefinition $Source -OutputAssembly $cacheDll -ErrorAction Stop
+        Add-Type -Path $cacheDll -ErrorAction Stop
+        return
+    } catch {
+        # Read-only profile, locked file, missing compiler — in-memory is
+        # slower to start but always works.
+        Add-Type -TypeDefinition $Source
+    }
+}
+
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+Import-InputStateType
 if ($SelfTest) {
     [MagicPointerInputState]::CaptureNextStroke(500, 2500)
     [MagicPointerInputState]::SetEpisodeChord("xbutton1")
@@ -260,42 +428,31 @@ if ($SelfTest) {
 [MagicPointerInputState]::StartWheelHook()
 [MagicPointerInputState]::StartCommandReader()
 
+# Sampling interval. The wake detector's budget is 50 ms, so the loop has to
+# be comfortably under that; 16 ms is one 60 Hz frame. Override with
+# MAGIC_POINTER_POINTER_POLL_MS for experiments (inherited from Electron).
+$pollIntervalMs = 16
+try {
+    $configuredInterval = [int]$env:MAGIC_POINTER_POINTER_POLL_MS
+    if ($configuredInterval -ge 4 -and $configuredInterval -le 200) { $pollIntervalMs = $configuredInterval }
+} catch { }
+
 while ($true) {
     try {
-        $hwnd = [MagicPointerInputState]::GetForegroundWindow()
-        [uint32]$pidValue = 0
-        $threadId = [MagicPointerInputState]::GetWindowThreadProcessId($hwnd, [ref]$pidValue)
-        $processName = ""
-        if ($pidValue -gt 0) {
-            $processName = (Get-Process -Id $pidValue -ErrorAction SilentlyContinue).ProcessName
-        }
-        $info = New-Object MagicPointerInputState+GUITHREADINFO
-        $info.cbSize = [Runtime.InteropServices.Marshal]::SizeOf($info)
-        $hasInfo = [MagicPointerInputState]::GetGUIThreadInfo($threadId, [ref]$info)
-        $buttons = 0
-        if ([MagicPointerInputState]::IsDown(1)) { $buttons = $buttons -bor 1 }
+        # Four calls per tick. Everything expensive lives in EmitSnapshot.
+        $buttons = [MagicPointerInputState]::ButtonsRaw()
+        # A swallowed press never reaches the async key state table, so the
+        # poller cannot see the very stroke the hook is capturing. The hook is
+        # the only thing that still knows, so it has to say so.
         if ([MagicPointerInputState]::IsSwallowingLeft()) { $buttons = $buttons -bor 1 }
-        if ([MagicPointerInputState]::IsDown(2)) { $buttons = $buttons -bor 2 }
-        if ([MagicPointerInputState]::IsDown(4)) { $buttons = $buttons -bor 4 }
-        if ([MagicPointerInputState]::IsDown(5)) { $buttons = $buttons -bor 8 }
-        if ([MagicPointerInputState]::IsDown(6)) { $buttons = $buttons -bor 16 }
-        [ordered]@{
-            buttons = $buttons
-            foregroundApp = [string]$processName
-            foregroundHwnd = [int64]$hwnd
-            foregroundProcessId = [uint32]$pidValue
-            isWindowMoving = [bool]($hasInfo -and $info.hwndMoveSize -ne [IntPtr]::Zero)
-            scrollDelta = [MagicPointerInputState]::TakeWheelDelta()
-            # Observation only. `buttons` above is computed exactly as before —
-            # these two expose *why* it holds a value, so a left button that is
-            # reported down because the hook swallowed it can be told apart from
-            # one the user is actually holding. Never branch on them without
-            # first confirming the behaviour in a log.
-            swallowingLeft = [bool][MagicPointerInputState]::IsSwallowingLeft()
-            captureArmed = [bool][MagicPointerInputState]::IsCaptureArmed()
-        } | ConvertTo-Json -Compress
+        [MagicPointerInputState]::EmitSnapshot($buttons)
     } catch {
-        '{"buttons":0,"foregroundApp":"","foregroundHwnd":0,"foregroundProcessId":0,"isWindowMoving":false,"scrollDelta":0,"swallowingLeft":false,"captureArmed":false}'
+        # One malformed tick must not kill the stream: Electron is watching
+        # this pipe for liveness, and a dead stream means no pointer state at
+        # all. Keep the shape Electron parses, keep the loop, try again.
+        $buttons = 0
+        if ([MagicPointerInputState]::IsSwallowingLeft()) { $buttons = $buttons -bor 1 }
+        [MagicPointerInputState]::EmitSnapshot($buttons)
     }
-    Start-Sleep -Milliseconds 35
+    [MagicPointerInputState]::WaitForNextTick($pollIntervalMs)
 }
