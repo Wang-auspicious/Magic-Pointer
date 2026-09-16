@@ -3048,6 +3048,12 @@ def _loop_router(
                 live_source_ids=live_source_ids,
             )
             continuation_block = continuation_prefix(resume_summary)
+            # 双生鼠标：把这一轮的进度通道交给输入驱动，让它在上屏光标动身之前
+            # 先说一声要往哪儿去、要飞多久。没有这一句，光标会跟着鼠标走，但
+            # 永远不会「指」向任何东西。
+            from app.desktop_actions.session import set_agent_cursor_sink
+
+            set_agent_cursor_sink(clock)
             terminal = run_agent_turn(
                 first_input,
                 objects=routing_objects,
@@ -3102,6 +3108,11 @@ def _loop_router(
                 "loopError": type(exc).__name__,
                 "inputArtifact": input_artifact_public,
             }
+        finally:
+            # 这一轮结束了，下一轮没有光标就不该继承这一条通道。
+            from app.desktop_actions.session import set_agent_cursor_sink
+
+            set_agent_cursor_sink(None)
 
         mapped = terminal_to_answer(terminal, command)
         mapped["usedBackend"] = (

@@ -1478,7 +1478,10 @@ def answer_conversation(
             payload,
         )
         from app.agent_runtime.session import cancel_interrupt_check
+        from app.desktop_actions.session import set_agent_cursor_sink
 
+        # 双生鼠标：这一轮把进度通道交给输入驱动（见 selection_bridge 同名注释）。
+        set_agent_cursor_sink(conversation_clock)
         terminal = run_agent_turn(
             agent_prompt,
             objects=[],
@@ -1533,6 +1536,11 @@ def answer_conversation(
             "usedBackend": "agent_runtime",
             "timingMs": timing_ms,
         }
+    finally:
+        # 这一轮结束了，下一轮没有光标就不该继承这一条通道。
+        from app.desktop_actions.session import set_agent_cursor_sink
+
+        set_agent_cursor_sink(None)
 
     mapped = terminal_to_answer(terminal, agent_prompt)
     answer = clean_replacement_text(str(mapped.get("answer") or ""))

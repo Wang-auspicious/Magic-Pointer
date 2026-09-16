@@ -1165,13 +1165,40 @@ class _UnavailableDriver:
         raise ActionFailure(FailureType.TOOL_ERROR, "windows_input_unavailable")
 
 
+#: Progress sink for the on-screen twin cursor. Set by a bridge before it runs
+#: a turn, so the driver can announce where it is about to move and click.
+#: Module-level because the driver is constructed here, lazily, by callers that
+#: have no way to pass it one — and because a stale emitter is harmless: it is
+#: replaced on every turn and ``None`` (no cursor) is the default.
+_agent_cursor_sink: Any = None
+
+
+def set_agent_cursor_sink(sink: Any) -> None:
+    """Point the twin cursor at ``sink``.
+
+    ``sink`` is anything with ``mark(phase, **fields)`` — in practice a
+    :class:`~scripts.bridge_progress.PhaseClock`. Pass ``None`` to detach, which
+    is what a bridge should do when its turn ends so a later turn without a
+    cursor cannot inherit this one's.
+    """
+    global _agent_cursor_sink
+    _agent_cursor_sink = sink
+
+
 def _live_driver() -> Any:
     if os.name != "nt":
         return _UnavailableDriver()
     try:
+        from app.computer_operator.agent_cursor_channel import AgentCursorEmitter
         from app.computer_operator.windows import Win32InputDriver
 
-        return Win32InputDriver()
+        return Win32InputDriver(
+            approach_observer=(
+                AgentCursorEmitter(_agent_cursor_sink)
+                if _agent_cursor_sink is not None
+                else None
+            ),
+        )
     except Exception:
         return _UnavailableDriver()
 

@@ -935,6 +935,36 @@ function sendAgentCursorCommand(payload: unknown): boolean {
   return agentCursorSurfaces ? agentCursorSurfaces.command(payload) : false;
 }
 
+/**
+ * Forward a bridge's twin-cursor row to the on-screen cursor surface.
+ *
+ * The Python driver announces where it is about to move and click through the
+ * same @@mp progress channel every bridge already reports on; this is the hop
+ * that carries it the last step. Every field arrives as a string — the line
+ * parser has no types — so numbers are parsed here and anything unparseable is
+ * dropped rather than turned into NaN, which would place a cursor at 0,0.
+ */
+function handleAgentCursorProgress(record: any): void {
+  if (!record || record.phase !== 'agent_cursor') return;
+  const fields = record.fields || {};
+  const kind = String(fields.action || '').trim();
+  if (!kind) return;
+  const x = Number(fields.x);
+  const y = Number(fields.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+  const leadMs = Number(fields.leadMs);
+  const count = Number(fields.count);
+  sendAgentCursorCommand({
+    kind,
+    id: String(fields.id || 'agent'),
+    x,
+    y,
+    ...(Number.isFinite(leadMs) ? { leadMs } : {}),
+    ...(fields.button ? { button: String(fields.button) } : {}),
+    ...(Number.isFinite(count) ? { count } : {}),
+  });
+}
+
 function createOverlayWindow() {
   const display = screen.getPrimaryDisplay();
   const bounds = display.bounds;
@@ -2155,6 +2185,7 @@ async function sendConversation(raw: any = {}, sender?: Electron.WebContents): P
     const child = runPythonBridge(payload, 'scripts/conversation_bridge.py', 'dashboard', {
       timeoutMs: 120_000,
       onProgress: (record: any) => {
+      handleAgentCursorProgress(record);
         // session_ready 广播 durable session id：停止/插话都指向它。
         const sid = sessionIdFromRecord(record);
         const entry = sid ? activeConversations.get(requestId) : null;
@@ -4603,6 +4634,7 @@ function beginSelectionSession(reason = 'manual', gesture: SelectionGesture | nu
     {
       timelineToken: entry.token,
       onProgress: (record: any) => {
+      handleAgentCursorProgress(record);
         // Without content protection this marker is the earliest safe reveal:
         // the pixels are captured and attested, so nothing we draw from here on
         // can contaminate them.
@@ -6060,6 +6092,7 @@ function submitSelectionCommandWhenGrounded(payload: any, startedAt: number, not
     // 界面上——于是用户看到的是一个跳动的秒数，跟一个卡死的进程分不出来。
     // 现在每一步都变成正在等的那张卡上的一行。
     onProgress: (record: any) => {
+      handleAgentCursorProgress(record);
       if (!selectionSessions.isCurrentRequest(selectionSessionToken, requestId)) return;
       if (record.phase === 'loop_started' && typeof record.fields?.session === 'string' && record.fields.session && record.fields.session !== '-') {
         activeSessionAgentIds.set(selectionSessionToken, record.fields.session);
