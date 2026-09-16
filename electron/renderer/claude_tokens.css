@@ -1,4 +1,37 @@
 /* Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4 · genre: modern-minimal · macrostructure: Workbench · design-system: design.md · designed-as-app */
+
+@font-face {
+  font-family: "Anthropic Sans";
+  src: url("./assets/fonts/AnthropicSans-Roman-Variable-DDVos-BJ.woff2") format("woff2");
+  font-weight: 300 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Anthropic Sans";
+  src: url("./assets/fonts/AnthropicSans-Italic-Variable-CJtkx3-S.woff2") format("woff2");
+  font-weight: 300 800;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Anthropic Serif";
+  src: url("./assets/fonts/AnthropicSerif-Roman-Variable-2VcCjn5t.woff2") format("woff2");
+  font-weight: 300 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Anthropic Serif";
+  src: url("./assets/fonts/AnthropicSerif-Italic-Variable-Dcb-9NUS.woff2") format("woff2");
+  font-weight: 300 800;
+  font-style: italic;
+  font-display: swap;
+}
+
 :root {
   color-scheme: light;
   --mp-window-bar: 36px;
@@ -36,7 +69,8 @@
   --mp-success: #2E7D4F;
   --mp-focus: #2566D0;
 
-  --mp-font-ui: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+  --mp-font-ui: "Anthropic Sans", "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+  --mp-font-serif: "Anthropic Serif", Georgia, "Times New Roman", serif;
   --mp-font-mono: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
   --mp-text-body: 13px;
   --mp-leading-body: 18px;
