@@ -9,6 +9,7 @@ import re
 import socket
 import subprocess
 import sys
+import time
 import uuid
 from dataclasses import replace as replace_dataclass
 from datetime import datetime, timezone
@@ -19,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.bridge_progress import PhaseClock
+from scripts.bridge_progress import PhaseClock, StreamChunkBuffer
 from app.actions.history import ActionHistoryStore, make_word_undo_proposal
 from app.actions.office import clean_replacement_text, make_word_replace_selection_proposal, wants_word_rewrite
 from app.actions.shopping_list import (
@@ -2892,6 +2893,19 @@ def _loop_router(
     # 结构性保证屏幕内容永远不会被当作指令通道（invariant ⑤）。
     first_input = command
     evidence_block = "[本次圈选对象证据]\n" + input_artifact.to_model_text()
+
+    # 流式正文的发送端。electron/main.ts 的 onProgress 一直在等
+    # phase=answer_chunk，收到就 appendStageLiveAnswer 把增量画进当前回合；
+    # 这条通道的接收端从建好那天起就是通的，发送端却从来没写过——于是圈点
+    # 这条主路径上，答案只在整轮结束时一次性出现，用户看到的是一段没有反馈的
+    # 等待。Studio 那条路径（conversation_bridge）一直在发，所以同一个模型、
+    # 同一轮对话，两个界面的"快"完全不同。
+    #
+    # 攒到一个刷新间隔再发，而不是每个 token 发一次：进度通道是行协议，逐
+    # token 发会把 stderr 打爆，而 120ms 一次在视觉上已经是连续的。缓冲和
+    # 节流逻辑与 conversation_bridge 共用同一个实现，避免两条路径再次分叉。
+    _answer_stream = StreamChunkBuffer(clock, "answer_chunk")
+
     def progress_sink(event) -> None:
         """Loop events -> bridge progress phases (UI heartbeat, review T1).
 
@@ -2901,12 +2915,17 @@ def _loop_router(
         the GUI can address steer/cancel at the session while the bridge is
         still running. Steer/follow-up absorption and compaction are visible
         too (O7): a course correction or a context reset must not look like
-        the loop silently ignored it."""
+        the loop silently ignored it.
+
+        Model text deltas are the exception to "a mark per event": they are
+        buffered and flushed on an interval, because there is one per token."""
         from app.agent_runtime.loop import (
             BackendRecovery,
             BudgetRenewed,
             FollowupContinued,
             LoopStart,
+            LoopStopped,
+            ModelChunk,
             Steered,
             ToolCallFinished,
             ToolCallStarted,
@@ -2918,6 +2937,13 @@ def _loop_router(
 
         if clock is None:
             return
+        if isinstance(event, ModelChunk):
+            _answer_stream.append(str(getattr(event, "text", "") or ""))
+            return
+        # A turn boundary or the end of the loop must not strand the tail of
+        # the answer in the buffer: whatever is left belongs on screen now.
+        if isinstance(event, (TurnFinished, LoopStopped)):
+            _answer_stream.flush()
         if isinstance(event, LoopStart):
             clock.mark("loop_started", session=agent_session_id)
         elif isinstance(event, ToolsTruncated):
