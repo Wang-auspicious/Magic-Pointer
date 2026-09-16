@@ -120,7 +120,7 @@ import math
 import threading
 import time
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from app import ai_client as _ai_client
@@ -1870,6 +1870,11 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
             if round_progress:
                 last_progress_turn = turn_number
 
+            # Bound the round, not just each call. Several parallel reads can
+            # each respect the per-result cap and still hand the model a
+            # quarter of a million characters in one step.
+            tool_messages = _fit_turn_tool_messages(tool_messages)
+
             # Provider discovery tools may register deferred tools while they
             # execute. Load only names returned by a registry-declared
             # discovery tool; ordinary tool output can never alter schemas.
@@ -2855,6 +2860,61 @@ def _bounded_tool_result(
     head = available * 2 // 3
     tail = available - head
     return value[:head] + marker + (value[-tail:] if tail else "")
+
+
+#: Total characters one round's tool messages may contribute.
+#:
+#: The per-result cap (``_MAX_TOOL_RESULT_CHARS``) bounds each call, but a
+#: round can hold ``max_parallel_tool_calls`` of them — four parallel reads at
+#: the cap is a quarter of a million characters entering the history in a
+#: single step, which is the budget of an entire conversation. The measured
+#: estimate for CJK is roughly one token per character, so that one step can
+#: cost as much context as the rest of the task put together, and it is the
+#: step that pushes the next request over the window.
+_MAX_TURN_TOOL_RESULT_CHARS = 120_000
+
+
+def _fit_turn_tool_messages(
+    tool_messages: Sequence[AgentMessage],
+    *,
+    max_total_chars: int = _MAX_TURN_TOOL_RESULT_CHARS,
+) -> list[AgentMessage]:
+    """Shrink a round's tool messages so the batch fits an aggregate budget.
+
+    Only the *tail* of the overspend is trimmed and the largest messages are
+    trimmed first, so a round of small results is untouched and a single huge
+    read absorbs the cut rather than starving its siblings. Every trimmed
+    message says so in place, because a silently shortened tool result is
+    worse than a truncated one: the model cannot tell the difference between
+    "the file ended there" and "we stopped showing you".
+    """
+    total = sum(len(message.content or "") for message in tool_messages)
+    if total <= max_total_chars or not tool_messages:
+        return list(tool_messages)
+    fitted = list(tool_messages)
+    order = sorted(
+        range(len(fitted)),
+        key=lambda index: len(fitted[index].content or ""),
+        reverse=True,
+    )
+    for index in order:
+        if total <= max_total_chars:
+            break
+        content = fitted[index].content or ""
+        allowed = max(0, len(content) - (total - max_total_chars))
+        if allowed >= len(content):
+            continue
+        marker = (
+            f"\n[tool result trimmed to fit this round's budget: "
+            f"original_chars={len(content)}]"
+        )
+        keep = max(0, allowed - len(marker))
+        fitted[index] = replace(
+            fitted[index],
+            content=(content[:keep] + marker) if keep else marker,
+        )
+        total = sum(len(message.content or "") for message in fitted)
+    return fitted
 
 
 def _persist_tool_result(value: str, persist_dir: str, tool_call_id: str) -> str | None:
