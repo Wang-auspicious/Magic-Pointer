@@ -29,6 +29,7 @@ const STATES = [
   'customize',
   'design',
   'flow',
+  'worktree',
   'minimum',
 ];
 
@@ -147,6 +148,13 @@ function statePreparationScript(state, theme) {
         }));
         flow.appendChild(host);
       }
+    } else if (state === 'worktree') {
+      /* 打开项目 + 停在首页 = 参考里 composer 上方那一排 chip 出现的状态。 */
+      setProductMode('walker', false);
+      show('chat');
+      setActiveProject('D:/Desktop/Magic Pointer');
+      await renderStudioHome();
+      await wait(40);
     } else if (state === 'flow') {
       await openReference();
       const home = document.getElementById('studio-home');

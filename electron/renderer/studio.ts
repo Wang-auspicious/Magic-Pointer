@@ -264,7 +264,90 @@ function setActiveProject(root: unknown) {
   }
 }
 
+/* ---- 会话级 git worktree ----
+   打开后工作目录切到一棵独立的 checkout，agent 的改动落在自己的分支上。
+   `base` 记住切出去之前是哪个项目，关掉开关要切回去。 */
+interface ComposerWorktree { path: string; branch: string; base: string }
+let composerWorktree: ComposerWorktree | null = null;
+let composerWorktreeBusy = false;
+try {
+  const stored = JSON.parse(localStorage.getItem('mp:composer-worktree') || 'null') as ComposerWorktree | null;
+  if (stored?.path && stored?.base) composerWorktree = stored;
+} catch { /* storage unavailable */ }
+
+function persistComposerWorktree() {
+  try {
+    if (composerWorktree) localStorage.setItem('mp:composer-worktree', JSON.stringify(composerWorktree));
+    else localStorage.removeItem('mp:composer-worktree');
+  } catch { /* storage unavailable */ }
+}
+
+function renderComposerWorktree() {
+  const button = document.getElementById('composer-worktree') as HTMLButtonElement | null;
+  if (!button) return;
+  const base = composerWorktree?.base || activeProjectRoot;
+  button.hidden = !base;
+  button.setAttribute('aria-checked', composerWorktree ? 'true' : 'false');
+  button.disabled = composerWorktreeBusy;
+  if (composerWorktree) {
+    button.title = `${composerWorktree.branch} · ${composerWorktree.path}`;
+    button.removeAttribute('data-error');
+  }
+}
+
+/* 失败必须说出来：git 拒绝（不是仓库、有未提交改动、分支占用了）时开关弹回
+   原状并带上 git 自己的话，而不是静默地什么都不发生。 */
+function failComposerWorktree(button: HTMLElement | null, message: string) {
+  button?.setAttribute('data-error', 'true');
+  if (button) button.title = message;
+}
+
+document.getElementById('composer-worktree')?.addEventListener('click', (event) => {
+  void (async () => {
+    const button = event.currentTarget as HTMLButtonElement;
+    if (composerWorktreeBusy) return;
+    if (!composerWorktree && !activeProjectRoot) return;
+    composerWorktreeBusy = true;
+    button.disabled = true;
+    try {
+      if (composerWorktree) {
+        const closing = composerWorktree;
+        const result = await Data.projectWorktree({
+          action: 'remove',
+          projectRoot: closing.base,
+          path: closing.path,
+        });
+        if (!result?.ok) {
+          failComposerWorktree(button, String(result?.error || '无法移除 worktree。'));
+          return;
+        }
+        composerWorktree = null;
+        persistComposerWorktree();
+        setActiveProject(closing.base);
+      } else {
+        const base = activeProjectRoot;
+        const result = await Data.projectWorktree({
+          action: 'create',
+          projectRoot: base,
+          conversationId: activeConversationId || '',
+        });
+        if (!result?.ok || !result.path) {
+          failComposerWorktree(button, String(result?.error || '无法创建 worktree。'));
+          return;
+        }
+        composerWorktree = { path: String(result.path), branch: String(result.branch || 'worktree'), base };
+        persistComposerWorktree();
+        setActiveProject(result.path);
+      }
+    } finally {
+      composerWorktreeBusy = false;
+      renderComposerWorktree();
+    }
+  })();
+});
+
 function renderProjectContext() {
+  renderComposerWorktree();
   const headerLabel = document.getElementById('chat-project-label');
   const locationLabel = document.getElementById('header-location-label');
   const workspaceLabel = document.getElementById('composer-workspace-label');

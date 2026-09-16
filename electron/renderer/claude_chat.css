@@ -1189,6 +1189,60 @@
   background: var(--mp-active);
 }
 
+/* worktree 开关：参考里是一个方框加文字的勾选框，不是一枚芯片——它是布尔
+   量，读起来应该是「开/关」，不是「一个叫 worktree 的按钮」。 */
+.mp-composer-worktree {
+  display: inline-flex;
+  height: 28px;
+  align-items: center;
+  gap: 7px;
+  padding: 0 9px;
+  border-radius: var(--mp-r5);
+  color: var(--mp-text-muted);
+  white-space: nowrap;
+  transition: color var(--mp-dur-fast), background-color var(--mp-dur-fast);
+}
+
+.mp-composer-worktree:hover {
+  color: var(--mp-text-secondary);
+  background: var(--mp-hover);
+}
+
+.mp-composer-worktree[aria-checked="true"] {
+  color: var(--mp-text);
+}
+
+.mp-worktree-box {
+  display: grid;
+  width: 14px;
+  height: 14px;
+  flex: none;
+  place-items: center;
+  border: 1px solid var(--mp-rule-strong);
+  border-radius: 3px;
+  background: var(--mp-composer);
+}
+
+.mp-worktree-box svg {
+  width: 11px;
+  height: 11px;
+  opacity: 0;
+  transition: opacity var(--mp-dur-fast);
+}
+
+.mp-composer-worktree[aria-checked="true"] .mp-worktree-box {
+  border-color: var(--mp-text);
+  color: var(--mp-text);
+}
+
+.mp-composer-worktree[aria-checked="true"] .mp-worktree-box svg {
+  opacity: 1;
+}
+
+.mp-composer-worktree[data-error="true"] {
+  color: var(--mp-danger);
+}
+
 .mp-composer-environment svg,
 .mp-composer-workspace svg {
   width: 15px;

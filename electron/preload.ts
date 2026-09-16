@@ -265,6 +265,12 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
       projectRoot: String(projectRoot || '').trim().slice(0, 500),
       conversationId: String(conversationId || '').trim().slice(0, 120),
     }),
+    worktree: (payload: { action?: unknown; projectRoot?: unknown; conversationId?: unknown; path?: unknown } = {}) => ipcRenderer.invoke('projects:worktree', {
+      action: payload?.action === 'remove' ? 'remove' : 'create',
+      projectRoot: String(payload?.projectRoot || '').trim().slice(0, 500),
+      conversationId: String(payload?.conversationId || '').trim().slice(0, 120),
+      path: String(payload?.path || '').trim().slice(0, 1000),
+    }),
     contextMenu: (projectRoot: unknown, relativePath: unknown, kind: unknown) => ipcRenderer.invoke('projects:context-menu', {
       projectRoot: String(projectRoot || '').trim().slice(0, 500),
       path: String(relativePath || '').trim().slice(0, 1000),

@@ -445,6 +445,7 @@ declare global {
       openPath(projectRoot: string, relativePath: string): Promise<{ ok?: boolean; error?: string }>;
       openUrl(url: string): Promise<{ ok?: boolean; error?: string }>;
       environment(projectRoot: string, conversationId?: string | null): Promise<MagicPointerProjectEnvironment>;
+      worktree?(payload: { action: 'create' | 'remove'; projectRoot: string; conversationId?: string; path?: string }): Promise<{ ok?: boolean; path?: string; branch?: string; error?: string }>;
       contextMenu(projectRoot: string, relativePath: string, kind: 'directory' | 'file'): Promise<{ ok?: boolean; action?: string; absolutePath?: string; error?: string }>;
       runCommand(projectRoot: string, command: string, relativeDirectory?: string): Promise<{ ok?: boolean; code?: number | null; output?: string; error?: string }>;
     };
@@ -617,6 +618,7 @@ declare global {
     openProjectPath(projectRoot: string, relativePath: string): Promise<{ ok?: boolean; error?: string }>;
     openProjectUrl(url: string): Promise<{ ok?: boolean; error?: string }>;
     projectEnvironment(projectRoot: string, conversationId?: string | null): Promise<MagicPointerProjectEnvironment>;
+    projectWorktree(payload: { action: 'create' | 'remove'; projectRoot: string; conversationId?: string; path?: string }): Promise<{ ok?: boolean; path?: string; branch?: string; error?: string }>;
     showProjectContextMenu(projectRoot: string, relativePath: string, kind: 'directory' | 'file'): Promise<{ ok?: boolean; action?: string; absolutePath?: string; error?: string }>;
     openBrowserView(url: string, bounds: { x: number; y: number; width: number; height: number }): Promise<{ ok?: boolean; state?: MagicPointerBrowserViewState; error?: string }>;
     resizeBrowserView(bounds: { x: number; y: number; width: number; height: number }): Promise<{ ok?: boolean; error?: string }>;
@@ -976,6 +978,12 @@ const Data: MagicPointerDataApi = {
     const projects = bridge()?.projects;
     if (!hasBridge() || !projects?.environment) return { ok: false, error: '项目环境通道不可用。' };
     return projects.environment(projectRoot, conversationId);
+  },
+
+  async projectWorktree(payload: { action: 'create' | 'remove'; projectRoot: string; conversationId?: string; path?: string }) {
+    const projects = bridge()?.projects;
+    if (!hasBridge() || !projects?.worktree) return { ok: false, error: 'worktree 通道不可用。' };
+    return projects.worktree(payload);
   },
 
   async showProjectContextMenu(projectRoot: string, relativePath: string, kind: 'directory' | 'file') {

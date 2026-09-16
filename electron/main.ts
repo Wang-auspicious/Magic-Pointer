@@ -109,6 +109,14 @@ const { profileWorkspaceRoot } = require('./profile_workspace');
 const { conversationFailureMessage } = require('./conversation_error');
 const { listProjectDirectory, projectPath, readProjectText } = require('./project_inspector');
 const { parseGitEnvironment, sourceLinksFromConversation } = require('./project_environment');
+const {
+  isManagedWorktreePath,
+  worktreeAddArgs,
+  worktreePathFor,
+  worktreeRemoveArgs,
+  worktreeReuseArgs,
+  worktreeSlug,
+} = require('./session_worktree');
 const { normalizeBrowserUrl, projectContextActions } = require('./browser_view_policy');
 const { withKeptStrokes } = require('./stage_turn_stream');
 
@@ -1673,7 +1681,14 @@ function knownProjectRoot(rawRoot: unknown): string | null {
   if (!String(rawRoot || '').trim()) return null;
   const match = conversations().listProjects().find((project: { root?: string }) =>
     path.resolve(String(project.root || '')).toLocaleLowerCase() === requested.toLocaleLowerCase());
-  return match ? path.resolve(String(match.root || '')) : null;
+  if (match) return path.resolve(String(match.root || ''));
+  /* 会话级 worktree 不是「注册过的项目」，但它是一个合法的项目根：切进去
+     之后文件树、git 状态、终端都要在它上面工作，否则面板显示的还是主工作区
+     而 agent 改的是别处——那比没有这个开关更糟。
+     白名单只认 <userData>/worktrees 下面的路径，所以这不会变成任意目录读取。 */
+  const managed = path.join(FABRIC_DATA_DIR, 'worktrees') + path.sep;
+  if ((requested + path.sep).startsWith(managed) && fs.existsSync(requested)) return requested;
+  return null;
 }
 
 function runGitCapture(root: string, args: string[], timeoutMs = 5000): Promise<string> {
@@ -1699,6 +1714,96 @@ function runGitCapture(root: string, args: string[], timeoutMs = 5000): Promise<
     child.stdout?.on('data', (chunk: unknown) => { stdout = (stdout + String(chunk)).slice(-512 * 1024); });
     child.on('error', () => finish(''));
     child.on('close', (code: number | null) => finish(code === 0 ? stdout : ''));
+  });
+}
+
+/* ---- 会话级 git worktree ----
+   参考图里 composer 上方那个 worktree 勾选框：打开后这一轮的工作目录是一个
+   挂在工作区之外的独立 checkout，agent 的改动落在自己的分支上，主工作区
+   保持干净。
+
+   选址：worktree 建在用户数据目录下（`<userData>/worktrees/<slug>/<repo>`），
+   不建在被打开的项目里。建在项目内需要那个项目刚好忽略了该目录，否则用户
+   的 `git status` 会被我们塞进去的目录污染——一个只读的开关不该改变用户的
+   仓库状态。（本仓库自己有个 `.worktrees/` 且已忽略，但那是本仓库的选择，
+   不能替所有被打开的项目做主。）
+
+   分支：`mp/<slug>`。移除用 `git worktree remove`，它默认拒绝删掉有未提交
+   改动的 worktree——这正是我们要的：宁可让开关弹回去报错，也不静默丢掉
+   用户的改动。 */
+ipcMain.handle('projects:worktree', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_project_sender' };
+  const root = knownProjectRoot(raw?.projectRoot);
+  if (!root) return { ok: false, error: '请先打开项目。' };
+  const action = String(raw?.action || '');
+  if (action !== 'create' && action !== 'remove') return { ok: false, error: 'unknown_worktree_action' };
+
+  const insideRepo = await runGitCapture(root, ['rev-parse', '--is-inside-work-tree']);
+  if (insideRepo !== 'true') return { ok: false, error: '这个项目不是 git 仓库，无法开 worktree。' };
+
+  if (action === 'remove') {
+    const target = String(raw?.path || '').trim();
+    if (!target) return { ok: false, error: 'missing_worktree_path' };
+    // 只允许删我们托管的那棵子树：渲染层传来的路径不能变成任意目录删除。
+    if (!isManagedWorktreePath(FABRIC_DATA_DIR, target)) {
+      return { ok: false, error: 'worktree_outside_managed_dir' };
+    }
+    const resolved = path.resolve(target);
+    // `git worktree remove` 默认拒绝带未提交改动的 worktree——这正是要的：
+    // 宁可让开关弹回去报错，也不静默丢掉用户的改动。
+    const failure = await runGitCaptureCapturingError(root, worktreeRemoveArgs(resolved));
+    if (failure !== null) return { ok: false, error: failure };
+    await runGitCapture(root, ['worktree', 'prune']);
+    log(`worktree removed path=${resolved}`);
+    return { ok: true };
+  }
+
+  const slug = worktreeSlug(String(raw?.conversationId || ''));
+  const target = worktreePathFor(FABRIC_DATA_DIR, root, slug);
+  const branch = `mp/${slug}`;
+  if (fs.existsSync(target)) return { ok: true, path: target, branch };
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  // 分支可能已经存在（上一次留下、或用户手动建过）：先带 -b 建，失败就复用。
+  let failure = await runGitCaptureCapturingError(root, worktreeAddArgs(target, branch));
+  if (failure !== null) {
+    failure = await runGitCaptureCapturingError(root, worktreeReuseArgs(target, branch));
+    if (failure !== null) return { ok: false, error: failure };
+  }
+  log(`worktree created path=${target} branch=${branch}`);
+  return { ok: true, path: target, branch };
+});
+
+/* runGitCapture 把失败吞成空串——对「读一个状态」是对的，对「做一次改动」不行：
+   用户需要知道 git 为什么拒绝。这个变体成功返回 null，失败返回 git 自己的话。 */
+function runGitCaptureCapturingError(root: string, args: string[], timeoutMs = 20_000): Promise<string | null> {
+  return new Promise((resolve) => {
+    const child = spawn('git.exe', args, {
+      cwd: root,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    const finish = (value: string | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const timer = setTimeout(() => {
+      try { child.kill(); } catch (_) {}
+      finish('git 命令超时。');
+    }, timeoutMs);
+    child.stdout?.setEncoding('utf8');
+    child.stderr?.setEncoding('utf8');
+    child.stdout?.on('data', (chunk: unknown) => { stdout = (stdout + String(chunk)).slice(-256 * 1024); });
+    child.stderr?.on('data', (chunk: unknown) => { stderr = (stderr + String(chunk)).slice(-64 * 1024); });
+    child.on('error', (error: unknown) => finish(`无法运行 git：${String((error as { message?: string })?.message || error)}`));
+    child.on('close', (code: number | null) => {
+      if (code === 0) { finish(null); return; }
+      finish((stderr.trim() || stdout.trim() || `git 退出码 ${code}`).slice(0, 400));
+    });
   });
 }
 
