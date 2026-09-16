@@ -206,7 +206,11 @@ class TestLoopOriginTagging:
             ],
             [TurnDone(usage=None, raw_text="done")],
         )
-        client = LoopModelClient(backend)
+        # This test is about the ORIGIN of the truncation feedback, not about
+        # how truncation is detected. The suffix heuristic is opt-in now (see
+        # the note on LoopModelClient.parse_tool_calls: it fired on ordinary
+        # Chinese punctuation), so the test asks for it explicitly.
+        client = LoopModelClient(backend, truncation_suffix="…")
 
         events, terminal = asyncio.run(
             collect(make_params(client=client, registry=registry))

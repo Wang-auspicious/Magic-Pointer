@@ -2185,7 +2185,7 @@ async function sendConversation(raw: any = {}, sender?: Electron.WebContents): P
     const child = runPythonBridge(payload, 'scripts/conversation_bridge.py', 'dashboard', {
       timeoutMs: 120_000,
       onProgress: (record: any) => {
-      handleAgentCursorProgress(record);
+        handleAgentCursorProgress(record);
         // session_ready 广播 durable session id：停止/插话都指向它。
         const sid = sessionIdFromRecord(record);
         const entry = sid ? activeConversations.get(requestId) : null;
@@ -4634,7 +4634,7 @@ function beginSelectionSession(reason = 'manual', gesture: SelectionGesture | nu
     {
       timelineToken: entry.token,
       onProgress: (record: any) => {
-      handleAgentCursorProgress(record);
+        handleAgentCursorProgress(record);
         // Without content protection this marker is the earliest safe reveal:
         // the pixels are captured and attested, so nothing we draw from here on
         // can contaminate them.
@@ -6092,8 +6092,11 @@ function submitSelectionCommandWhenGrounded(payload: any, startedAt: number, not
     // 界面上——于是用户看到的是一个跳动的秒数，跟一个卡死的进程分不出来。
     // 现在每一步都变成正在等的那张卡上的一行。
     onProgress: (record: any) => {
-      handleAgentCursorProgress(record);
       if (!selectionSessions.isCurrentRequest(selectionSessionToken, requestId)) return;
+      // Behind the same guard as every other row: a late turn that has already
+      // been superseded must not move the on-screen cursor to where a
+      // cancelled action was going to click.
+      handleAgentCursorProgress(record);
       if (record.phase === 'loop_started' && typeof record.fields?.session === 'string' && record.fields.session && record.fields.session !== '-') {
         activeSessionAgentIds.set(selectionSessionToken, record.fields.session);
       }

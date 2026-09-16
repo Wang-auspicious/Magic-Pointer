@@ -1037,7 +1037,14 @@ def run_agent_turn(
     budgets: Mapping | None = None,
     allowed_effects: tuple[Effect, ...] | None = None,
     tool_limit: int | None = None,
-    max_parallel_tool_calls: int = 4,
+    #: Independent reads in one model turn run concurrently. Four was low for
+    #: real work: a task that reads six files ran them in two waves, and each
+    #: wave is a full model round-trip — the most expensive thing in the loop.
+    #: Claude Code caps at 10 (overridable), dsh defaults to 10, Hermes keeps 8
+    #: workers. The per-turn result budget (``_fit_turn_tool_messages``) is what
+    #: keeps the wider batch from flooding the context, which is why raising
+    #: this is safe: the ceiling on what a batch may inject is unchanged.
+    max_parallel_tool_calls: int = 8,
     permission_mode: str = "default",
     budget_renewals: int | None = None,
     compactor: Callable | None = None,
