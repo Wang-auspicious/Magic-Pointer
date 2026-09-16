@@ -173,6 +173,7 @@ def compact_messages(
     tail_token_budget: int = 2000,
     min_tail_messages: int = 3,
     force: bool = False,
+    model_free_below_chars: int | None = None,
 ) -> list[AgentMessage]:
     """Condense history: everything before the recent tail is summarized into
     one user-role data message (CC compact). Assistant tool calls and tool
@@ -218,6 +219,19 @@ def compact_messages(
         source = prefix + "\n[older compaction source truncated]\n" + suffix
     if not source.strip():
         return list(messages)
+    # Pruning may already have solved the problem. Duplicate tool results and
+    # stale outputs are removed above, and a long job that polls the same
+    # subtree can have most of its weight in exactly those — in which case the
+    # remaining source is small enough to keep verbatim, and summarizing it
+    # costs a full model call (measured failure mode: a 25 s timeout on a
+    # self-hosted endpoint) to buy nothing. Called out as opt-in because the
+    # caller is the one that knows its budget.
+    if (
+        not force
+        and model_free_below_chars is not None
+        and len(source) <= int(model_free_below_chars)
+    ):
+        return [*head, *tail]
     summary = str(summarize(source) or "").strip()
     if not summary and len(head) > 2:
         # Codex compact window-collision retry: the summarizer produced

@@ -646,6 +646,12 @@ def _apply_model_client(fork, config: dict[str, Any]) -> None:
             original,
             config["summarize"],
             force=force,
+            # Once pruning has removed the duplicates, a source this small no
+            # longer needs a model to summarize it — the call would cost a
+            # round trip and a full timeout budget to shrink something that is
+            # already small. Scaled to the model's window: 5% of it is well
+            # under any threshold the loop compacts at.
+            model_free_below_chars=max(4_000, int(context_budget * 0.05)),
         )
         if len(compacted) >= len(original):
             return compacted
