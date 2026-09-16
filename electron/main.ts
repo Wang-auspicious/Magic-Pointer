@@ -1093,6 +1093,18 @@ function updateStage(payload: StageUpdatePayload = {}) {
       tier: String(payload.event?.result?.route?.tier || ''),
     });
   }
+  // 结果先上屏，再做记账。
+  //
+  // 下面三件事都是同步的，而且都不便宜：recordConversationTurn 会走
+  // conversation_store.updateTurn → persist()，那是「把整个对话库
+  // JSON.stringify 一遍再写盘」（实测 3MB 库 18ms，13MB 库 85ms）；
+  // autoStashResultImage 会 statSync + nativeImage.createFromPath，
+  // 在主线程上同步解码一张全屏 PNG。它们排在 safeSurfaceSend 前面，
+  // 于是「答案出现」这一帧要等一次整库重写加一次图片解码。
+  //
+  // 顺序反过来是安全的：两者互不依赖，而且 safeSurfaceSend 只是发 IPC，
+  // 渲染进程最早也要等当前这一个 tick 跑完才能收到——那时记账已经做完了。
+  safeSurfaceSend('stage', 'stage:update', payload);
   if (type === 'RESULT' || type === 'COMPLETE' || type === 'ERROR') recordConversationTurn(payload, type);
   // 图相关结果（图转提示词/生图/截屏分析）→ 输入图自动进收藏箱：
   // 用户要的结果图不该只活在对话里，收藏箱随时能翻回来。
@@ -1100,7 +1112,6 @@ function updateStage(payload: StageUpdatePayload = {}) {
   // 「已受理」不是「已完成」。后台任务这时候才刚起来，卡上要继续动——
   // 底层早就能查状态了，缺的一直是这边没在看。
   watchTaskFromEvent(payload);
-  safeSurfaceSend('stage', 'stage:update', payload);
   // Clicky 式引导：回答里带了 [POINT] 指点，就把目标点给蓝边光标所在的
   // overlay——小三角默认不出现，只有回答要「指给你看」时才飞过去。
   const event: { screenPoints?: Array<{ x: number; y: number }> } = payload?.event || {};
@@ -1213,10 +1224,27 @@ function conversations() {
   if (!conversationStore) {
     conversationStore = createConversationStore({
       baseDir: path.join(app.getPath('userData'), 'history'),
-      log,
+      // Rewriting the whole store on every mutation put a 18-85ms synchronous
+      // write on the main thread up to three times a second (the stage's live
+      // answer flushes every 300ms). Coalescing moves that off the interactive
+      // path; flushConversations() on the quit paths covers the tail.
+      deferPersist: true,
     });
   }
   return conversationStore;
+}
+
+/**
+ * Write any pending conversation-store changes. Safe before the store exists,
+ * and safe to call more than once — both quit paths call it.
+ */
+function flushConversations() {
+  try {
+    conversationStore?.flush();
+  } catch (_) {
+    // Shutdown must reach the end: a failed flush cannot be allowed to skip
+    // the remaining cleanup.
+  }
 }
 
 function artifactCommands() {
@@ -4801,14 +4829,19 @@ app.on('will-quit', () => {
   tray = null;
   log('app will quit');
   // Last thing in the quit path, after every other handler has had its say:
-  // the log is buffered, so anything queued in the final 150 ms is still in
-  // memory and would be lost with the process.
+  // both the log and the conversation store are written on a delay now, so
+  // whatever is still queued lives only in memory and would go with the
+  // process. Flush them here, in this order (the store flush may log).
+  flushConversations();
   flushLog();
 });
 app.on('before-quit', () => { isQuitting = true; });
 // will-quit does not run for every exit path (a crash, or a hard process.exit
 // from a dependency). This is the last synchronous hook Node guarantees.
-process.on('exit', () => { flushLog(); });
+process.on('exit', () => {
+  flushConversations();
+  flushLog();
+});
 
 ipcMain.on('overlay:renderer-ready', (event: Electron.IpcMainEvent) => {
   if (!isSurfaceSender(event, 'overlay', resultTargetWindow)) return;

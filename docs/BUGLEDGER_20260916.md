@@ -219,6 +219,70 @@ gesture chaining. Baseline measurements in `docs/perf/2026-09-16-baseline.md`.
   inside tolerance.
 - **Status**: `fixed` — covered by `tests/append_log_test.ts`
 
+### BUG-016 — the answer is delivered to the stage *after* a store rewrite and a PNG decode
+- **Where**: `electron/main.ts:1088` (`updateStage`)
+- **What**: the order was
+  ```ts
+  if (type === 'RESULT' || ...) recordConversationTurn(payload, type);
+  autoStashResultImage(payload);
+  watchTaskFromEvent(payload);
+  safeSurfaceSend('stage', 'stage:update', payload);
+  ```
+- **Why it hurts**: `updateStage` is the path every user-visible outcome takes —
+  its own comment calls it 所有结果的必经之路. All three calls before the send are
+  synchronous and none of them is cheap: `recordConversationTurn` →
+  `conversation_store.updateTurn` → `persist()` rewrites the **entire**
+  conversation store (BUG-017), and `autoStashResultImage` does `fs.statSync` +
+  `nativeImage.createFromPath` — a synchronous PNG decode of a full-screen
+  capture on the main thread. The frame in which the answer becomes visible was
+  therefore queued behind a whole-store disk write and an image decode, on the
+  path the product is named after.
+- **Fix**: send `stage:update` first, then do the bookkeeping. Safe because the
+  two are independent and `safeSurfaceSend` only posts an IPC — the renderer
+  cannot observe it until this tick ends, by which point the records exist.
+- **Status**: `fixed`
+
+### BUG-017 — every mutation rewrites the entire conversation store
+- **Where**: `electron/conversation_store.ts:243` (`persist`)
+- **What**: `JSON.stringify(items)` over **all** conversations followed by
+  `writeFileSync` + `renameSync`, called from `appendTurn`, `updateTurn`,
+  `rename`, `remove`, `clear`, `registerProject`, and more.
+- **Why it hurts**: measured end-to-end at **4.7 ms for a 0.4 MB store,
+  15.8 ms at 3.16 MB, and 74–85 ms at 13.17 MB**
+  (`tools/measure_main_process_io.js`). `persist()` hangs off `updateTurn`, and
+  the stage's live-answer flush calls `updateTurn` **every 300 ms** while an
+  answer streams (BUG-013's fix makes that path hotter, not colder). So the
+  main thread — the thread that services the pointer poll, every IPC and every
+  window operation — stopped to rewrite the whole store roughly three times a
+  second for the duration of every answer. This is a direct cause of the
+  "输入卡顿 / 拖动掉帧" feel, and it grows with how much history the user has.
+- **Fix**: `deferPersist` option. `persist()` marks dirty and arms a single
+  coalescing timer (1000 ms, `unref`'d so it cannot hold the process open);
+  `flush()` writes immediately. Default stays synchronous, so existing callers
+  and tests are unchanged; production opts in at `conversations()` in
+  `electron/main.ts` and calls `flushConversations()` on both quit paths.
+- **Not fixed, and stated plainly**: the `JSON.stringify` of the whole store is
+  still synchronous (42 ms at 13 MB) — coalescing reduces how often it runs,
+  not how long it takes. Removing that requires not keeping one JSON document
+  as the store (per-conversation files, or an append-only journal). Tracked as
+  an open architectural item; the number is in the ledger so it is not
+  forgotten.
+- **Status**: `fixed` (coalescing) / `open` (whole-store serialisation) —
+  covered by `tests/conversation_store_deferred_persist_test.ts`
+
+### BUG-018 — `conversations()` passed a `log` option the store ignores
+- **Where**: `electron/main.ts:1225`
+- **What**: `createConversationStore({ baseDir, log })`, while
+  `ConversationStoreOptions` declares only `baseDir` and `now`. The `log`
+  argument was silently discarded — including by TypeScript, because the
+  options object was not excess-property-checked at that call site.
+- **Why it hurts**: it reads as though store failures are logged when they are
+  not. A failed persist is one of the few failures a user would actually notice
+  (their history quietly stops saving), and nothing was watching for it.
+- **Fix**: the dead argument is removed. Whether the store *should* report
+  failures is a separate decision, tracked as open.
+- **Status**: `fixed` (argument) / `open` (failure reporting)
+
 ### BUG-008 — a here-string that is not an argument leaks to stdout
 - **Where**: `scripts/pointer_input_state.ps1` preamble
 - **What**: introducing `$Source = @"…"@` was necessary; a bare `@"…"@` in

@@ -124,7 +124,22 @@ interface TurnInput {
 interface ConversationStoreOptions {
   baseDir: string;
   now?: () => number;
+  /**
+   * Coalesce whole-store writes instead of rewriting on every mutation.
+   * Off by default so callers get the old synchronous semantics; production
+   * turns it on and must call `flush()` before exit.
+   */
+  deferPersist?: boolean;
+  /** Coalescing window when `deferPersist` is on. */
+  persistDebounceMs?: number;
 }
+
+/**
+ * How long a deferred store may sit dirty. Chosen to be under the point where
+ * an interrupted session loses anything a user would notice, and well above
+ * the ~300 ms cadence of the stage's live-answer flush it exists to absorb.
+ */
+const CONVERSATION_PERSIST_DEBOUNCE_MS = 1000;
 
 interface ProjectRecord {
   root: string;
@@ -220,7 +235,12 @@ function subtitleFrom(object: ReferencedObject = {}): string {
 }
 
 function createConversationStore(
-  { baseDir, now = () => Date.now() }: ConversationStoreOptions = {
+  {
+    baseDir,
+    now = () => Date.now(),
+    deferPersist = false,
+    persistDebounceMs = CONVERSATION_PERSIST_DEBOUNCE_MS,
+  }: ConversationStoreOptions = {
     baseDir: '',
   },
 ) {
@@ -228,6 +248,8 @@ function createConversationStore(
   const projectsFile = path.join(baseDir, 'projects.json');
   let items: Conversation[] | null = null;
   let projectItems: ProjectRecord[] | null = null;
+  let dirty = false;
+  let persistTimer: ReturnType<typeof setTimeout> | null = null;
 
   function load(): Conversation[] {
     if (items) return items;
@@ -240,11 +262,59 @@ function createConversationStore(
     return items;
   }
 
-  function persist(): void {
+  function writeNow(): void {
     fs.mkdirSync(baseDir, { recursive: true });
     const tmp = `${file}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(items || []), 'utf8');
     fs.renameSync(tmp, file);
+  }
+
+  /**
+   * 落盘整个对话库。
+   *
+   * 这是「把全部对话 JSON.stringify 一遍再写盘」——实测 3MB 库 18ms，
+   * 13MB 库 85ms，跑在主进程线程上。它挂在每一次 updateTurn 上，而 stage
+   * 的流式回答每 300ms 就 updateTurn 一次，于是主线程每秒有三次要停下来
+   * 重写整库；用户感受到的就是输入卡顿、窗口拖动掉帧。
+   *
+   * deferPersist 打开时，persist() 只标脏并排一次延迟写：同一窗口内的
+   * 多次修改合并成一次落盘。flush() 立刻落盘，退出前必须调用——延迟窗口
+   * 内的修改还在内存里，进程没了就没了。
+   *
+   * 默认关闭，测试仍是同步语义；生产在 conversations() 里显式打开。
+   */
+  function persist(): void {
+    if (!deferPersist) {
+      writeNow();
+      return;
+    }
+    dirty = true;
+    if (persistTimer !== null) return;
+    persistTimer = setTimeout(() => {
+      persistTimer = null;
+      flush();
+    }, persistDebounceMs);
+    // Node 在只有定时器挂着的进程里会一直活着；这里不应该拖住退出。
+    if (typeof persistTimer === 'object' && persistTimer !== null && 'unref' in persistTimer) {
+      (persistTimer as unknown as { unref(): void }).unref();
+    }
+  }
+
+  /** 立刻把未落盘的修改写出去。任何退出路径都必须走到这里。 */
+  function flush(): void {
+    if (persistTimer !== null) {
+      clearTimeout(persistTimer);
+      persistTimer = null;
+    }
+    if (!dirty) return;
+    dirty = false;
+    try {
+      writeNow();
+    } catch (_) {
+      // 落盘失败不能把调用方（往往是退出路径）再炸一次。重新标脏，
+      // 下一次 persist/flush 会再试一次。
+      dirty = true;
+    }
   }
 
   function loadProjects(): ProjectRecord[] {
@@ -801,6 +871,9 @@ function createConversationStore(
     registerProject,
     listProjects,
     objectKey,
+    // Only meaningful when deferPersist is on; harmless (and a no-op) when the
+    // store still writes synchronously on every mutation.
+    flush,
   };
 }
 
