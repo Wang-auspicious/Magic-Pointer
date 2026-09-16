@@ -11,13 +11,13 @@ import time
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol, runtime_checkable
 
 from app.capture import CaptureProvider, GdiFallbackCaptureProvider
 from app.governance.cancellation import CancelledError
 
 from . import motion
-from .motion import CLICK_HOLD_MS, CLICK_SETTLE_MS, glide_points
+from .motion import CLICK_HOLD_MS, CLICK_SETTLE_MS, approach_lead_ms, bounded_glide_ms, glide_points
 from .schema import (
     ComputerAction,
     ComputerActionKind,
@@ -25,6 +25,22 @@ from .schema import (
     OperatorObservation,
     SurfaceGrant,
 )
+
+
+@runtime_checkable
+class ApproachObserver(Protocol):
+    """Told about a motion *before* it happens, so the twin cursor can lead it.
+
+    The observer is how the Python input path and the Electron cursor surface
+    stay in step without either blocking on the other's animation: the driver
+    announces where it is about to click and how long it will take to get
+    there, then waits exactly that long, so the press lands when the twin
+    arrives instead of the twin arriving a frame after the click.
+    """
+
+    def cursor_approach(self, point: tuple[int, int], *, lead_ms: int) -> None: ...
+
+    def cursor_clicked(self, point: tuple[int, int], *, button: str, count: int) -> None: ...
 
 
 class WindowsInputDriver(Protocol):
@@ -122,9 +138,11 @@ _KEYS = {
 class Win32InputDriver:
     """Small SendInput wrapper; no clipboard and no generated code."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, approach_observer: ApproachObserver | None = None) -> None:
         if os.name != "nt":
             raise RuntimeError("windows_input_unavailable")
+        self._approach_observer = approach_observer
+        self._cancel_check: Callable[[], None] | None = None
         self._user32 = ctypes.windll.user32
         self._user32.SendInput.argtypes = [
             ctypes.wintypes.UINT,
@@ -191,6 +209,31 @@ class Win32InputDriver:
             return None
         return (int(point.x), int(point.y))
 
+    def _sleep(self, seconds: float) -> None:
+        """The one place this driver waits, so tests can stop waiting."""
+        if seconds > 0:
+            time.sleep(seconds)
+
+    def _check_cancelled(self) -> None:
+        """Run the bound cancellation check, if any.
+
+        The check raises to abort rather than returning a flag, so a cancelled
+        glide propagates the caller's own ``CancelledError`` with its own
+        message intact instead of a re-raised lookalike.
+        """
+        check = self._cancel_check
+        if check is not None:
+            check()
+
+    def bind_cancel_check(self, check: Callable[[], None] | None) -> None:
+        """Bind a zero-argument callable that raises to abort the next motion.
+
+        Set by the operator backend so a long glide can be interrupted; duck
+        typed (``getattr``) at the call site so a test double without this
+        method keeps working.
+        """
+        self._cancel_check = check
+
     def _glide(self, start: tuple[int, int], end: tuple[int, int], duration_ms: int) -> None:
         """Walk the pointer from ``start`` to ``end`` over ``duration_ms``.
 
@@ -201,7 +244,12 @@ class Win32InputDriver:
 
         ``duration_ms <= 0`` is a teleport, and stays one: callers that want an
         instant jump (and tests) must keep getting one.
+
+        The duration is bounded by :func:`motion.bounded_glide_ms` before it is
+        slept through: the duration arrives from the model, and an absurd one
+        must not become an absurd stall with the input lock held.
         """
+        duration_ms = bounded_glide_ms(duration_ms)
         if duration_ms <= 0:
             self._position(end)
             return
@@ -211,27 +259,67 @@ class Win32InputDriver:
             return
         delay = max(0.0, float(duration_ms) / 1000.0 / len(points))
         for point in points:
+            self._check_cancelled()
             self._position(point)
-            if delay:
-                time.sleep(delay)
+            self._sleep(delay)
+        self._check_cancelled()
         self._position(end)
 
-    def click(self, point: tuple[int, int], *, button: str, count: int) -> None:
+    def click(
+        self,
+        point: tuple[int, int],
+        *,
+        button: str,
+        count: int,
+        approach: bool | None = None,
+    ) -> None:
+        """Move to ``point``, then press.
+
+        With an approach observer attached, the move is *announced* first and
+        then actually performed over the full lead time, so the twin cursor is
+        already sitting on the target when the button goes down. Without one
+        the behaviour is unchanged — the pre-roll exists to synchronise the
+        press with the twin cursor, and with no twin there is nothing to
+        synchronise with, only latency to add. ``approach`` overrides that
+        decision either way.
+        """
+        start = self._cursor_position()
+        enabled = self._approach_observer is not None if approach is None else bool(approach)
+        lead = 0
+        if enabled:
+            # With no readable origin the distance is unknown, so the floor is
+            # used: the twin cursor still has to be given its 600 ms to arrive,
+            # and the press still must not beat it there.
+            distance = 0.0 if start is None else motion.distance_between(start, point)
+            lead = approach_lead_ms(distance)
+        if lead > 0 and self._approach_observer is not None:
+            self._approach_observer.cursor_approach(point, lead_ms=lead)
+        if lead > 0 and start is not None:
+            # The lead is spent moving, not waiting: a press that arrives after
+            # a motionless pause is the teleport the twin cursor exists to
+            # eliminate, just spread over 600 ms.
+            self._glide(start, point, lead)
+        elif lead > 0:
+            self._sleep(lead / 1000.0)
         self._position(point)
         # SetCursorPos only queues the move; the target window may not have
         # processed the resulting WM_MOUSEMOVE yet. Pressing immediately can
         # therefore deliver the click at the previous position.
-        time.sleep(CLICK_SETTLE_MS / 1000.0)
+        self._sleep(CLICK_SETTLE_MS / 1000.0)
+        if self._approach_observer is not None:
+            # The glow is anchored to the press, not to the approach: it marks
+            # the moment something happened on screen.
+            self._approach_observer.cursor_clicked(point, button=button, count=max(1, int(count)))
         down, up = (0x0008, 0x0010) if button == "right" else (0x0002, 0x0004)
         repeats = max(1, int(count))
         for index in range(repeats):
             self._mouse(down)
             # A 0 ms press is ambiguous to double-click heuristics and is
             # dropped outright by some applications.
-            time.sleep(CLICK_HOLD_MS / 1000.0)
+            self._sleep(CLICK_HOLD_MS / 1000.0)
             self._mouse(up)
             if index + 1 < repeats:
-                time.sleep(CLICK_HOLD_MS / 1000.0)
+                self._sleep(CLICK_HOLD_MS / 1000.0)
 
     def move(self, point: tuple[int, int], *, duration_ms: int) -> None:
         start = self._cursor_position()
@@ -259,7 +347,17 @@ class Win32InputDriver:
                 motion.distance_between(start, end),
                 requested_ms=duration_ms,
             ))
+            # Settle before the drop, for the same reason click settles before
+            # the press: SetCursorPos only queues the final move, and a drop
+            # delivered before the target window has processed it lands at the
+            # previous position. For a click that misses by one pixel; for a
+            # drag-and-drop it is a file in the wrong folder, so this one
+            # matters more here than it does there.
+            self._sleep(CLICK_SETTLE_MS / 1000.0)
         finally:
+            # Released even when the glide was cancelled or raised: leaving the
+            # button down turns the user's next mouse move into a drag they did
+            # not ask for, which is the worst failure mode in this file.
             self._mouse(0x0004)
 
     def scroll(self, point: tuple[int, int], *, delta: int) -> None:
@@ -310,7 +408,7 @@ class WindowsComputerOperatorBackend:
     ) -> None:
         self.output_root = Path(output_root)
         self.capture_provider = capture_provider or GdiFallbackCaptureProvider()
-        self.driver = driver or Win32InputDriver()
+        self.driver = driver if driver is not None else Win32InputDriver()
         self._held_by_operation: dict[str, set[str]] = {}
         self._input_lock = threading.RLock()
 
@@ -355,6 +453,21 @@ class WindowsComputerOperatorBackend:
             raise PermissionError("pointer_target_outside_surface")
         return screen
 
+    def _bind_cancel(self, scope: Any) -> None:
+        """Let an in-flight glide observe the action's cancel token.
+
+        Duck typed on purpose: test doubles for the driver do not implement
+        ``bind_cancel_check``, and a driver that cannot be interrupted must
+        keep working rather than take the backend down with it.
+        """
+        binder = getattr(self.driver, "bind_cancel_check", None)
+        if not callable(binder):
+            return
+        if scope is None:
+            binder(None)
+            return
+        binder(lambda: self._check_cancel(scope))
+
     def _require_foreground(self, grant: SurfaceGrant) -> None:
         expected = self._expected_hwnds(grant)
         if not expected or int(self.driver.foreground_window()) not in expected:
@@ -395,7 +508,16 @@ class WindowsComputerOperatorBackend:
         try:
             with self._input_lock:
                 self._check_cancel(scope)
-                data = self._execute_locked(action, grant, scope=scope)
+                # A move or drag can now run for up to a second of real time,
+                # during which the previous arrangement — check before, run,
+                # check after — never looked at the cancel token. Bound for the
+                # duration of the action and cleared in a finally so a stale
+                # scope from action N can never abort action N+1.
+                self._bind_cancel(scope)
+                try:
+                    data = self._execute_locked(action, grant, scope=scope)
+                finally:
+                    self._bind_cancel(None)
                 self._check_cancel(scope)
             return OperatorBackendResult(executed=True, data=data)
         except CancelledError:

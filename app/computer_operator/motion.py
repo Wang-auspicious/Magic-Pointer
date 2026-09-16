@@ -49,6 +49,33 @@ CLICK_HOLD_MS = 35
 #: synthetic-input race and it is why clicks appear to miss.
 CLICK_SETTLE_MS = 20
 
+#: How far ahead of a press the twin cursor must be told to approach.
+#:
+#: The click must not land before the cursor arrives. openclicky enforces the
+#: same ordering across processes: emit the approach, fly, ack, then click
+#: (``OpenClickyComputerUseRuntime.swift:1104-1107`` for the press itself).
+#: 600 ms is Clicky's own floor for any movement at all
+#: (``OverlayWindow.swift:510``) — a shorter lead would let the press land
+#: while the cursor is still moving, which is the whole defect.
+APPROACH_LEAD_MS = 600
+
+#: How long past the flight a caller waits for the overlay to acknowledge
+#: before proceeding anyway. A stalled overlay must never become a stalled
+#: click; Clicky's flight is fire-and-forget with a completion closure
+#: (``OverlayWindow.swift:495-568``) and it never blocks an action on it.
+APPROACH_ACK_TIMEOUT_MS = 250
+
+#: The longest glide any single call may actually sleep for.
+#:
+#: ``duration_ms`` arrives from the model, and a model that asks for a
+#: ten-minute pointer move must not hold the operator's input lock for ten
+#: minutes — or, worse, move the pointer a fifth of a pixel per second while
+#: the user watches. Ten seconds is already four times the longest deliberate
+#: move in any Clicky variant; the ceiling exists to bound a hallucinated
+#: duration, not to shape the gesture. Every derived duration is 0–1400 ms and
+#: never reaches it.
+GLIDE_HARD_MAX_MS = 10_000
+
 #: Upper bound on interpolation steps, so a long flight cannot emit an
 #: unbounded number of ``SetCursorPos`` calls.
 MAX_GLIDE_STEPS = 120
@@ -100,6 +127,34 @@ def flight_duration_ms(
         return 0
     scaled = distance * FLIGHT_MS_PER_PIXEL
     return int(max(float(min_ms), min(float(max_ms), scaled)))
+
+
+def bounded_glide_ms(duration_ms: int, *, hard_max_ms: int = GLIDE_HARD_MAX_MS) -> int:
+    """Clamp a caller-supplied duration to something worth sleeping through.
+
+    Returns the duration unchanged for every real value; it exists so that a
+    hallucinated ``duration_ms`` cannot turn one action into a multi-minute
+    stall with the input lock held. Negative durations pass through untouched —
+    ``_glide`` treats those as teleports on purpose.
+    """
+    value = int(duration_ms)
+    if value > hard_max_ms:
+        return int(hard_max_ms)
+    return value
+
+
+def approach_lead_ms(
+    distance: float,
+    *,
+    floor_ms: int = APPROACH_LEAD_MS,
+) -> int:
+    """How long before the press the approach must start.
+
+    At least the flight itself, so the cursor is on target when the button goes
+    down rather than arriving with it, and never less than the 600 ms floor —
+    a same-point click still shows the twin settling before it fires.
+    """
+    return max(int(floor_ms), flight_duration_ms(distance))
 
 
 def glide_points(

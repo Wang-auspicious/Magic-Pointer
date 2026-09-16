@@ -1,0 +1,13 @@
+--- a/electron/preload.ts
++++ b/electron/preload.ts
+@@ -62,6 +62,10 @@
+   onShow: (callback: PayloadCallback) => onPayload('overlay:show', callback),
+   onHide: (callback: SignalCallback) => onSignal('overlay:hide', callback),
+   onCursor: (callback: PayloadCallback) => onPayload('overlay:cursor', callback),
++  // 双生鼠标（twin cursor）的显式指令：approach / mark / move / click /
++  // hold / release / clear。主进程由 ipcMain.on('agent:cursor') 收下
++  // （见 main.ts.patch），再按屏幕分发给对应的光标表面。
++  onAgentCursor: (callback: PayloadCallback) => onPayload('overlay:agent-cursor', callback),
+   onGuidePoint: (callback: PayloadCallback) => onPayload('overlay:guide-point', callback),
+   onElementGhosts: (callback: PayloadCallback) => onPayload('overlay:element-ghosts', callback),
+   guideFinished: () => ipcRenderer.send('overlay:guide-finished'),
