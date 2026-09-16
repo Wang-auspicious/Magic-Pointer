@@ -753,7 +753,10 @@ declare global {
     SWEEP_STYLE: Record<string, unknown>;
     VERTEX_SHADER_SOURCE: string;
     FRAGMENT_SHADER_SOURCE: string;
-    buildSdfPath(points: unknown, requestedWidth?: number): MagicPointerSweepPath | null;
+    /* 每帧几何重建的增量缓存句柄：不透明对象，只有 sweep_visual 自己解释。
+       调用方可以拿一份自己的（一个 canvas 一份），也可以不传。 */
+    createSweepPathCache(): unknown;
+    buildSdfPath(points: unknown, requestedWidth?: number, cache?: unknown): MagicPointerSweepPath | null;
     sweepProfile(progress: number): MagicPointerSweepProfile;
     buildSweepGeometry(points: unknown, requestedWidth?: number): MagicPointerSweepPath | null;
     buildSweepSegments(points: unknown, requestedWidth?: number): unknown[];

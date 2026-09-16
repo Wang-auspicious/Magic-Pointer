@@ -91,6 +91,19 @@ body {
   pointer-events: none;
 }
 
+/* .frozen-glow 是渲染器里唯一一个「只要可见就永远在动」的元素：
+   stage-breathe 无限动画 box-shadow（不可合成）+ opacity。它没有自己的合成层，
+   于是每帧的 box-shadow 重画会落进整个全屏透明 stage 文档的绘制路径里。
+   will-change: opacity 把它提升成独立合成层：动画里的 opacity 交给合成器，
+   box-shadow 的重画被关在这一层内部。元素只在选区存在时挂载（其余时候
+   display:none），所以没有常驻显存代价。
+   其余连续动画的元素不加：.voice-waveform i / .processing-shimmer::after /
+   .stage-thinking 动的都是 transform+opacity，浏览器本来就会自动合成，
+   再加 will-change 只是白占一层。 */
+.frozen-glow {
+  will-change: opacity;
+}
+
 .stage-root[data-selection-visual='outline'] .targeting-outline {
   border: 1.5px solid var(--stage-electric-blue);
   border-radius: 6px;
@@ -402,9 +415,26 @@ body {
   z-index: 0;
   border-radius: inherit;
   overflow: hidden;
+}
+
+/* 未知进度的那道匀速扫光。原来是给 .processing-shimmer 自己打
+   background-position——paint 属性，每帧重画整个 composer；现在改成让一个
+   44% 宽的子层做 transform 平移，跑在合成器上。
+   位置换算（W = 容器宽，扫光带宽度 = 44% W）：
+     background-position: P%  -> 偏移 (W - 0.44W) * P/100 = 0.56W * P/100
+     translateX:          Q%  -> 偏移 0.44W * Q/100
+   两者都随时间线性，所以 Q = 0.56/0.44 * P = 1.2727 * P；P 从 -50 到 150
+   对应 Q 从 -63.6364% 到 190.9091%，任意时刻位置逐点相同。渐变的几何也一致：
+   原来是 background-size: 44% 100%，现在是 44% 宽、100% 高的元素。
+   元素本身是空的 aria-hidden <span>，没有子节点，所以这不改变任何绘制顺序。 */
+.processing-shimmer::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 44%;
   background: linear-gradient(90deg, transparent 0%, var(--stage-process-wash) 50%, transparent 100%);
-  background-size: 44% 100%;
-  background-repeat: no-repeat;
   animation: stage-ink-wash 1.6s cubic-bezier(0.45, 0, 0.55, 1) infinite;
 }
 
@@ -423,10 +453,10 @@ body {
 
 @keyframes stage-ink-wash {
   from {
-    background-position: -50% 0;
+    transform: translateX(-63.6364%);
   }
   to {
-    background-position: 150% 0;
+    transform: translateX(190.9091%);
   }
 }
 
@@ -1284,12 +1314,20 @@ body {
   overflow: hidden;
 }
 
+/* 曾经是 width: 0% + transition: width：width 是布局属性，每次进度更新都会
+   让整个全屏透明 stage 文档重新布局 + 重画 160ms。这里换成 scaleX（合成器属性，
+   只重画这一条 120x3 的实心色块）。视觉上逐点相同：元素没有圆角、没有子节点、
+   没有背景图，父级 .delivery-track 的 overflow:hidden + 2px 圆角照旧裁剪，
+   scaleX(k) 的绘制宽度就是原来的 width: k*100%。唯一差别是中间帧的边缘不再是
+   布局的 1/64px 取整，而是连续的——只会更平滑。 */
 .delivery-bar {
   display: block;
   height: 100%;
-  width: 0%;
+  width: 100%;
   background: var(--stage-electric-blue);
-  transition: width 160ms ease-out;
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 160ms ease-out;
 }
 
 /* --- Reduced motion: no fly-in/breathing/wave, keep opacity fades ---------- */
@@ -1298,6 +1336,9 @@ body {
   .voice-waveform i,
   .fly-letter,
   .processing-shimmer,
+  /* 扫光搬到 ::before 上了，动画的减少动效开关必须跟着搬，否则开了
+     减少动效的用户反而会看到这道扫光继续动。 */
+  .processing-shimmer::before,
   .stage-result,
   .stage-error {
     animation: none;

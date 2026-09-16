@@ -165,8 +165,12 @@ assert.match(overlay, /gestureLineStyle\s*===\s*'thin'/,
   'thin stroke remains an explicit selectable style');
 assert.match(overlay, /demo6_band/,
   'Demo 6 text-row band is the default stroke style');
-assert.match(overlay, /if\s*\(!gestureMode\)\s*startPulseLoop\(\)/,
+// 原来只断言「非手势态才 startPulseLoop」。现在这条约束被收紧成三处：
+// 进入手势态时显式停掉，且脉冲自己每帧再用 pulseAllowed() 检查一次。
+assert.match(overlay, /if\s*\(gestureMode\)\s*\{\s*stopPulseLoop\(\)/,
   'armed drawing must not run the full-screen idle animation loop');
+assert.match(overlay, /function pulseAllowed\(\)\s*\{[^}]*!gestureMode/,
+  'the pulse loop must refuse to run while a gesture is armed');
 assert.match(overlay, /gestureStarted\(gestureToken\)/,
   'pointer down must extend the timeout for an in-progress stroke');
 assert.match(overlay, /if\s*\(drawing\)\s*return/,

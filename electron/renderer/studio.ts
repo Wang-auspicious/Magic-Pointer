@@ -4167,9 +4167,29 @@ function renderPermissionAsk() {
 bindEffortChip();
 bindPermissionChip();
 /* DSH 输入卡：textarea 随内容长高，14 行封顶（336px，InputBar 同款上限） */
+let composerFitRaf: number | null = null;
+let composerFitTarget: HTMLTextAreaElement | null = null;
+
+/*
+ * 自动长高原来是「写 height:auto → 读 scrollHeight（强制同步布局）→ 写 height」
+ * 每个按键跑一次，整个 studio 文档（长会话下极大）被同步 reflow。改成把测量
+ * 合并到下一帧：一次 input 突发只量一次，且测量发生在同一帧内所有样式写入
+ * 之后，读到的布局是最终的那一份。
+ *
+ * 所有调用点都只把 fitComposer 当成「下一帧变高」的视觉副作用（没有调用方在
+ * 它之后立刻读 textarea 的高度），所以延后一帧不改变任何可观察行为。
+ */
 function fitComposer(ta: HTMLTextAreaElement) {
-  ta.style.height = 'auto';
-  ta.style.height = `${Math.min(336, ta.scrollHeight)}px`;
+  composerFitTarget = ta;
+  if (composerFitRaf !== null) return;
+  composerFitRaf = window.requestAnimationFrame(() => {
+    composerFitRaf = null;
+    const target = composerFitTarget;
+    composerFitTarget = null;
+    if (!target) return;
+    target.style.height = 'auto';
+    target.style.height = `${Math.min(336, target.scrollHeight)}px`;
+  });
 }
 
 function syncComposerSubmitState() {
@@ -4311,6 +4331,8 @@ interface PendingConversation {
   agentSessionId: string | null;
   streamText: string;
   streamNode: HTMLElement | null;
+  /** 已经贴进 streamNode 的正文（追加式渲染的游标）。 */
+  streamRendered: string;
   reasoningText: string;
   reasoningNode: HTMLElement | null;
 }
@@ -4405,7 +4427,23 @@ function renderPendingBody() {
       pending.nodes.delete(key);
     }
   }
-  pending.body.replaceChildren(...els, ...renderLiveReasoningNode(), ...renderLiveStreamNode());
+  const desired = [...els, ...renderLiveReasoningNode(), ...renderLiveStreamNode()];
+  // replaceChildren 会把每个已有节点 detach 再 append，整段正文的样式/布局/
+  // 绘制因此全部失效。签名没变时 els 里拿到的就是同一批节点对象，所以只要
+  // 「目标列表和当前子节点逐个同一」就直接返回——纯增量正文的回合（没有活动
+  // 行、没有思考流）因此完全不碰 DOM 结构，只更新 stream 节点的文本。
+  const current = pending.body.children;
+  if (current.length === desired.length) {
+    let identical = true;
+    for (let index = 0; index < desired.length; index += 1) {
+      if (current[index] !== desired[index]) {
+        identical = false;
+        break;
+      }
+    }
+    if (identical) return;
+  }
+  pending.body.replaceChildren(...desired);
 }
 
 /* 流式正文：边收边画（纯文本 pre-wrap），回合完成后 openConversation 用
@@ -4418,8 +4456,25 @@ function renderLiveStreamNode(): Element[] {
     node.className = 'dsh-stream-live';
     node.setAttribute('aria-live', 'polite');
     pending.streamNode = node;
+    pending.streamRendered = '';
   }
-  pending.streamNode.textContent = pending.streamText;
+  const rendered = pending.streamRendered;
+  if (pending.streamText === rendered) return [pending.streamNode];
+  if (pending.streamText.startsWith(rendered)) {
+    // 只把新增的那一段接上去。原来是每次 chunk 都把整条已收到的正文重新赋值
+    // 一遍（textContent = streamText），一个 2000 chunk 的回答就是 O(n^2) 的
+    // 字符串构建 + 一次全节点替换；这里每个 chunk 只处理增量。
+    pending.streamNode.appendChild(document.createTextNode(pending.streamText.slice(rendered.length)));
+    if (pending.streamNode.childNodes.length > 32) {
+      // 文本节点攒多了会让布局多走几趟，到 32 段就合并回一个（每 32 个 chunk
+      // 才做一次 O(n) 合并，均摊仍是 O(n)）。
+      pending.streamNode.textContent = pending.streamText;
+    }
+  } else {
+    // 正文被替换（不是追加）时才整体重写。
+    pending.streamNode.textContent = pending.streamText;
+  }
+  pending.streamRendered = pending.streamText;
   return [pending.streamNode];
 }
 
@@ -4718,7 +4773,7 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
       activeTaskContext?.taskId || 'studio-pending',
       attachmentPaths,
     );
-    pendingConversation = { requestId, body: pendingBody, records: new Map(), nodes: new Map(), agentSessionId: activeTaskContext?.taskId || null, streamText: '', streamNode: null, reasoningText: '', reasoningNode: null };
+    pendingConversation = { requestId, body: pendingBody, records: new Map(), nodes: new Map(), agentSessionId: activeTaskContext?.taskId || null, streamText: '', streamNode: null, streamRendered: '', reasoningText: '', reasoningNode: null };
     renderConversationProgress({ phase: 'runtime_boot', fields: {} });
     try {
       const response = await Data.sendConversation(
@@ -4981,11 +5036,20 @@ const initialView = studioShell.normalizeView(new URLSearchParams(location.searc
 void boot(initialView === 'chat' && productMode === 'design' ? 'design' : initialView);
 
 // 新的一轮问答落库之后，项目树与产物跟着刷新。
+// conversations:turn 在一条回答的流式期间会连着来（main 的 300ms 实时 flush
+// 每个回合结束再来一次），而这一组刷新里 renderSidebar 与 renderStudioHome
+// 各自都要一次整库的 IPC 往返、renderArtifacts(true) 还要整份 innerHTML 重建。
+// 合并到一帧的尾部：同一个 rAF 窗口里收到 N 次通知，只重建一次列表。
+let conversationChangeRaf: number | null = null;
 Data.onChange(() => {
-  renderSidebar();
-  if (document.getElementById('studio-home')?.hidden === false) void renderStudioHome();
-  renderArtifacts(true);
-  refreshStashSummaries();
+  if (conversationChangeRaf !== null) return;
+  conversationChangeRaf = window.requestAnimationFrame(() => {
+    conversationChangeRaf = null;
+    renderSidebar();
+    if (document.getElementById('studio-home')?.hidden === false) void renderStudioHome();
+    renderArtifacts(true);
+    refreshStashSummaries();
+  });
 });
 
 // 收藏箱条目更新（新采集、自动简介生成）时：只更新简介文本，

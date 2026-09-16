@@ -578,31 +578,38 @@
     </div>
   </section>
 
-  <script src="icons.js?v=23"></script>
-  <script src="../cards.js?v=23"></script>
-  <script src="../studio_shell.js?v=23"></script>
-  <script src="card_render.js?v=23"></script>
-  <script src="live_cards.js?v=23"></script>
-  <script src="dsh_markdown.js?v=24"></script>
-  <script src="dsh_icons.js?v=25"></script>
-  <script src="dsh_chat.js?v=26"></script>
-  <script src="dsh_trajectory.js?v=25"></script>
-  <script src="../conversation_control.js?v=23"></script>
-  <script src="../slash_trigger.js?v=23"></script>
-  <script src="permission_presets.js?v=23"></script>
-  <script src="effort_levels.js?v=33"></script>
-  <script src="popover_position.js?v=33"></script>
-  <script src="sidebar_groups.js?v=23"></script>
-  <script src="studio_search.js?v=33"></script>
-  <script src="studio_home.js?v=33"></script>
-  <script src="studio_subagents.js?v=33"></script>
-  <script src="studio_inspector_state.js?v=33"></script>
-  <script src="artifact_editor.js?v=34"></script>
-  <script src="../task_sources.js"></script>
-  <script src="../task_input_transport.js"></script>
-  <script src="data.js?v=23"></script>
-  <script src="settings_model.js?v=23"></script>
-  <script src="settings.js?v=23"></script>
-  <script src="studio.js?v=26"></script>
+  <!-- 25 个 classic script（约 584 KB）原本是 parser-blocking：解析器必须停下来
+       逐个下载+执行，`studio.js` 还要等前面 24 个都求值完才能跑。加 defer 之后
+       浏览器先把 HTML 解析完（首屏能画出来），再按同一顺序执行——defer 对
+       classic script 保证顺序，所以这里的依赖关系（后面的脚本依赖前面的全局量，
+       例如 studio.js 依赖 data.js / studio_home.js）逐字不变。
+       theme_boot.js 在 <head> 里保持同步阻塞，它必须在首帧前把主题写进
+       documentElement，defer 会让首帧闪一下错主题。 -->
+  <script defer src="icons.js?v=23"></script>
+  <script defer src="../cards.js?v=23"></script>
+  <script defer src="../studio_shell.js?v=23"></script>
+  <script defer src="card_render.js?v=23"></script>
+  <script defer src="live_cards.js?v=23"></script>
+  <script defer src="dsh_markdown.js?v=24"></script>
+  <script defer src="dsh_icons.js?v=25"></script>
+  <script defer src="dsh_chat.js?v=26"></script>
+  <script defer src="dsh_trajectory.js?v=25"></script>
+  <script defer src="../conversation_control.js?v=23"></script>
+  <script defer src="../slash_trigger.js?v=23"></script>
+  <script defer src="permission_presets.js?v=23"></script>
+  <script defer src="effort_levels.js?v=33"></script>
+  <script defer src="popover_position.js?v=33"></script>
+  <script defer src="sidebar_groups.js?v=23"></script>
+  <script defer src="studio_search.js?v=33"></script>
+  <script defer src="studio_home.js?v=33"></script>
+  <script defer src="studio_subagents.js?v=33"></script>
+  <script defer src="studio_inspector_state.js?v=33"></script>
+  <script defer src="artifact_editor.js?v=34"></script>
+  <script defer src="../task_sources.js"></script>
+  <script defer src="../task_input_transport.js"></script>
+  <script defer src="data.js?v=23"></script>
+  <script defer src="settings_model.js?v=23"></script>
+  <script defer src="settings.js?v=23"></script>
+  <script defer src="studio.js?v=26"></script>
 </body>
 </html>

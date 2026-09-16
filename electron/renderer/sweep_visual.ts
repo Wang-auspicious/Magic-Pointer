@@ -131,39 +131,47 @@
     };
   }
 
+  /* 单段 Catmull-Rom 展开。smoothPath 与增量缓存共用这一份实现——两条路径
+     必须逐位一致，所以折段逻辑只能有一处。 */
+  function foldSegment(source: SweepPoint[], index: number, result: SweepPoint[]): void {
+    const p0 = source[Math.max(0, index - 1)];
+    const p1 = source[index];
+    const p2 = source[index + 1];
+    const p3 = source[Math.min(source.length - 1, index + 2)];
+    const steps = Math.max(1, Math.ceil(Math.hypot(p2.x - p1.x, p2.y - p1.y) / 6));
+    for (let step = 1; step <= steps; step += 1) {
+      const point = catmullRomPoint(p0, p1, p2, p3, step / steps);
+      const previous = result[result.length - 1];
+      if (Math.hypot(point.x - previous.x, point.y - previous.y) > 0.1) {
+        result.push(point);
+      }
+    }
+  }
+
   function smoothPath(points: SweepPoint[]): SweepPoint[] {
     if (points.length <= 2) {
       return points.map((point) => ({ x: point.x, y: point.y }));
     }
     const result = [{ x: points[0].x, y: points[0].y }];
     for (let index = 0; index < points.length - 1; index += 1) {
-      const p0 = points[Math.max(0, index - 1)];
-      const p1 = points[index];
-      const p2 = points[index + 1];
-      const p3 = points[Math.min(points.length - 1, index + 2)];
-      const steps = Math.max(1, Math.ceil(Math.hypot(p2.x - p1.x, p2.y - p1.y) / 6));
-      for (let step = 1; step <= steps; step += 1) {
-        const point = catmullRomPoint(p0, p1, p2, p3, step / steps);
-        const previous = result[result.length - 1];
-        if (Math.hypot(point.x - previous.x, point.y - previous.y) > 0.1) {
-          result.push(point);
-        }
-      }
+      foldSegment(points, index, result);
     }
     return result;
   }
 
-  function resamplePath(points: SweepPoint[], count: number): SweepPoint[] {
-    if (points.length <= count) {
-      return points.map((point) => ({ x: point.x, y: point.y }));
-    }
-    const cumulative = [0];
-    for (let index = 1; index < points.length; index += 1) {
+  /* cumulative[i] = 折线累计到 points[i] 的长度，cumulative[0] === 0。
+     可从任意已有前缀续算，这是增量重采样能命中缓存的前提。 */
+  function syncCumulative(points: SweepPoint[], cumulative: number[]): void {
+    if (!cumulative.length) cumulative.push(0);
+    for (let index = cumulative.length; index < points.length; index += 1) {
       cumulative.push(cumulative[index - 1] + Math.hypot(
         points[index].x - points[index - 1].x,
         points[index].y - points[index - 1].y,
       ));
     }
+  }
+
+  function resampleFromCumulative(points: SweepPoint[], cumulative: number[], count: number): SweepPoint[] {
     const total = cumulative[cumulative.length - 1];
     const result = [];
     let segmentIndex = 1;
@@ -184,6 +192,15 @@
       });
     }
     return result;
+  }
+
+  function resamplePath(points: SweepPoint[], count: number): SweepPoint[] {
+    if (points.length <= count) {
+      return points.map((point) => ({ x: point.x, y: point.y }));
+    }
+    const cumulative = [0];
+    syncCumulative(points, cumulative);
+    return resampleFromCumulative(points, cumulative, count);
   }
 
   function addArcProgress(points: SweepPoint[]): SweepSample[] {
@@ -215,20 +232,24 @@
     };
   }
 
-  function buildSdfPath(points: unknown, requestedWidth = 22): MagicPointerSweepPath | null {
-    const usable = usablePoints(points);
-    if (usable.length < 2 || pathLength(usable) <= 0.1) return null;
-    const smooth = smoothPath(usable);
-    const sampled = resamplePath(smooth, MAX_POINTS);
-    const samples = addArcProgress(sampled);
+  function finalizePath(samples: SweepSample[], requestedWidth: number): MagicPointerSweepPath {
     const width = clamp(Number(requestedWidth) || 22, 8, 40);
     const bodyHalfWidth = clamp(width * SWEEP_STYLE.bodyHalfWidthRatio, 4.5, 8.5);
     const maximumRadius = bodyHalfWidth
       + SWEEP_STYLE.edgeFeatherDip
       + SWEEP_STYLE.tailSoftnessBoostDip
       + 2;
-    const xs = samples.map((point) => point.x);
-    const ys = samples.map((point) => point.y);
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (let index = 0; index < samples.length; index += 1) {
+      const point = samples[index];
+      if (point.x < minX) minX = point.x;
+      if (point.x > maxX) maxX = point.x;
+      if (point.y < minY) minY = point.y;
+      if (point.y > maxY) maxY = point.y;
+    }
     return {
       mode: 'screen-space-path-sdf',
       samples,
@@ -237,12 +258,148 @@
       tailSoftnessBoost: SWEEP_STYLE.tailSoftnessBoostDip,
       tailFloorOpacity: SWEEP_STYLE.tailFloorOpacity,
       bounds: {
-        left: Math.min(...xs) - maximumRadius,
-        right: Math.max(...xs) + maximumRadius,
-        top: Math.min(...ys) - maximumRadius,
-        bottom: Math.max(...ys) + maximumRadius,
+        left: minX - maximumRadius,
+        right: maxX + maximumRadius,
+        top: minY - maximumRadius,
+        bottom: maxY + maximumRadius,
       },
     };
+  }
+
+  function buildSdfPathStateless(points: unknown, requestedWidth = 22): MagicPointerSweepPath | null {
+    const usable = usablePoints(points);
+    if (usable.length < 2 || pathLength(usable) <= 0.1) return null;
+    const smooth = smoothPath(usable);
+    const sampled = resamplePath(smooth, MAX_POINTS);
+    return finalizePath(addArcProgress(sampled), requestedWidth);
+  }
+
+  /* ---- 增量几何缓存 -------------------------------------------------------
+     buildSdfPath 以前每帧都从完整点数组重建几何。overlay.ts 的调用形状是
+     「同一条数组、只 append 新点、已有元素对象从不改写」（addPoint 只 push
+     新建的 {x,y,t}，整条数组只在起笔时被替换），所以每帧真正变的只有尾巴。
+
+     哪些部分不会变：折段 index 用到 source[index-1..index+2]，
+     p3 = source[min(len-1, index+2)]，所以只要 index+2 <= len-1
+     （即 index <= len-3），追加新点不会改变这一段的结果。因此
+     foldedSegments 只累积到 len-2 段，最后一段（index = len-2，p3 被 clamp
+     到自己）每帧单独折一次。这条「最后一段不进缓存」的规则，正是增量结果
+     与逐帧全量重建逐位一致的原因。
+
+     缓存持有的不变量（不满足就整体丢弃重建）：
+       source         上次调用时传入的那个数组对象（引用相等才算命中）
+       sourceLength   已经吃进缓存的源点个数
+       tailRef        source[sourceLength-1] 的对象引用（尾巴被换掉就失效）
+       smoothed       前 foldedSegments 段折出的点（含首点），与 cumulative 等长
+       cumulative     smoothed 的累计折线长度
+     ---------------------------------------------------------------------- */
+
+  interface SweepPathCache {
+    source: unknown;
+    sourceLength: number;
+    tailRef: SweepPoint | null;
+    travelled: number;
+    longEnough: boolean;
+    foldedSegments: number;
+    smoothed: SweepPoint[];
+    cumulative: number[];
+  }
+
+  function createSweepPathCache(): SweepPathCache {
+    return {
+      source: null,
+      sourceLength: 0,
+      tailRef: null,
+      travelled: 0,
+      longEnough: false,
+      foldedSegments: 0,
+      smoothed: [],
+      cumulative: [],
+    };
+  }
+
+  function resetPathCache(cache: SweepPathCache, points: unknown): void {
+    const list = Array.isArray(points) ? (points as SweepPoint[]) : [];
+    cache.source = points;
+    cache.sourceLength = 0;
+    cache.tailRef = null;
+    cache.travelled = 0;
+    cache.longEnough = false;
+    cache.foldedSegments = 0;
+    // smoothPath 的结果永远以首点开头，种子必须现在就放进去，否则第一折
+    // 会读到 undefined 的前驱点。
+    cache.smoothed = list.length ? [{ x: list[0].x, y: list[0].y }] : [];
+    cache.cumulative = list.length ? [0] : [];
+  }
+
+  /* 返回 undefined 表示「这次调用用不了缓存」，调用方回落到全量实现。 */
+  function buildSdfPathCached(
+    cache: SweepPathCache,
+    points: unknown,
+    requestedWidth: number,
+  ): MagicPointerSweepPath | null | undefined {
+    const list = (Array.isArray(points) ? points : []) as SweepPoint[];
+    const length = list.length;
+    const reusable = cache.source === points
+      && cache.sourceLength <= length
+      && (cache.sourceLength === 0 || list[cache.sourceLength - 1] === cache.tailRef);
+    if (!reusable) resetPathCache(cache, points);
+
+    for (let index = cache.sourceLength; index < length; index += 1) {
+      const point = list[index];
+      if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y)) return undefined;
+      if (index > 0 && !cache.longEnough) {
+        cache.travelled += Math.hypot(point.x - list[index - 1].x, point.y - list[index - 1].y);
+        // 0.1 只是「这条路至少有长度」的下限；一旦超过就永远超过（只增不减
+        // 的累计长度），所以之后可以完全跳过累加。
+        if (cache.travelled > 0.1) cache.longEnough = true;
+      }
+    }
+    cache.sourceLength = length;
+    if (length) cache.tailRef = list[length - 1];
+    if (length < 2 || !cache.longEnough) return null;
+
+    if (length <= 2) {
+      return finalizePath(
+        addArcProgress(list.map((point) => ({ x: point.x, y: point.y }))),
+        requestedWidth,
+      );
+    }
+
+    const foldTarget = length - 2; // 段 0..length-3 是稳定的
+    while (cache.foldedSegments < foldTarget) {
+      foldSegment(list, cache.foldedSegments, cache.smoothed);
+      cache.foldedSegments += 1;
+    }
+    syncCumulative(cache.smoothed, cache.cumulative);
+    const prefixLength = cache.smoothed.length;
+    // 最后一段（p3 clamp 到自己）每帧都重算，算完即用，用完就还原成前缀。
+    foldSegment(list, length - 2, cache.smoothed);
+    syncCumulative(cache.smoothed, cache.cumulative);
+    const sampled = cache.smoothed.length <= MAX_POINTS
+      ? cache.smoothed.map((point) => ({ x: point.x, y: point.y }))
+      : resampleFromCumulative(cache.smoothed, cache.cumulative, MAX_POINTS);
+    const path = finalizePath(addArcProgress(sampled), requestedWidth);
+    cache.smoothed.length = prefixLength;
+    cache.cumulative.length = prefixLength;
+    return path;
+  }
+
+  const defaultPathCache = createSweepPathCache();
+
+  function buildSdfPath(
+    points: unknown,
+    requestedWidth = 22,
+    cache: SweepPathCache | null = defaultPathCache,
+  ): MagicPointerSweepPath | null {
+    if (cache) {
+      const cached = buildSdfPathCached(cache, points, requestedWidth);
+      if (cached !== undefined) return cached;
+      // 缓存这次不可用（出现了非有限坐标，过滤器会改变下标对应关系）：
+      // 丢弃缓存状态，这次走全量实现。
+      resetPathCache(cache, null);
+    }
+    return buildSdfPathStateless(points, requestedWidth);
   }
 
   function buildSweepGeometry(points: unknown, requestedWidth = 22) {
@@ -301,9 +458,12 @@
     declare cssHeight: number;
     declare dpr: number;
     declare contextLost: boolean;
+    declare pathCache: SweepPathCache;
 
     constructor(canvas: HTMLCanvasElement) {
       this.canvas = canvas;
+      // 每个渲染器自己一份缓存：两个 canvas 交替调用不会互相把缓存踢掉。
+      this.pathCache = createSweepPathCache();
       this.gl = null;
       this.ctx = null;
       this.program = null;
@@ -404,7 +564,7 @@
         .map((entry) => {
           const item = entry as { points?: unknown; opacity?: unknown } | null | undefined;
           return {
-            path: buildSdfPath(item?.points, width),
+            path: buildSdfPath(item?.points, width, this.pathCache),
             opacity: clamp(item?.opacity == null ? 1 : Number(item.opacity), 0, 1),
           };
         })
@@ -510,6 +670,7 @@
     SWEEP_STYLE,
     VERTEX_SHADER_SOURCE,
     FRAGMENT_SHADER_SOURCE,
+    createSweepPathCache,
     buildSdfPath,
     sweepProfile,
     buildSweepGeometry,

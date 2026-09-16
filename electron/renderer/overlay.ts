@@ -188,6 +188,9 @@ function resize() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   sweepRenderer.resize(window.innerWidth, window.innerHeight, dpr);
   clear();
+  // clear() 之后画面是空的：以前靠 30 fps 脉冲最多 33ms 后补画，
+  // 现在脉冲只在可见且非手势时存在，这里显式补一帧，行为反而更即时。
+  scheduleRender();
 }
 
 function clear() {
@@ -496,12 +499,29 @@ function pointMarkerAnchor(point: OverlayPoint | null | undefined): { x: number;
 }
 
 
+/* 30 fps 保活脉冲：在没有 pointer 事件时把已有轨迹按 trailAlpha 重画一遍。
+   它是唯一一个「不依赖任何输入也会持续跑」的循环，因此必须显式设界：
+   - 主进程给 overlay 设了 backgroundThrottling:false（main.ts），浏览器不会
+     因为窗口被遮挡/最小化而自动暂停 rAF，所以一个全屏透明置顶窗口会一直
+     以刷新率空转。用 document.visibilityState 显式停掉。
+   - 手势态完全由 pointer 事件驱动（pointermove → scheduleRender，pointerup →
+     render），脉冲只是额外每秒 30 次清屏 + 重画 WebGL，纯重复劳动。
+   - 采集态（captureMode）不画任何东西，同样不该跑。 */
+function pulseAllowed() {
+  return document.visibilityState !== 'hidden' && !captureMode && !gestureMode;
+}
+
 function startPulseLoop() {
   if (pulseRaf) return;
+  if (!pulseAllowed()) return;
   function tick(now: number) {
+    if (!pulseAllowed()) {
+      pulseRaf = null; // 自停：不再排下一帧，等下一次 startPulseLoop。
+      return;
+    }
     if (now - lastPulseFrame > 33) {
       lastPulseFrame = now;
-      if (!captureMode) render();
+      render();
     }
     pulseRaf = requestAnimationFrame(tick);
   }
@@ -513,6 +533,11 @@ function stopPulseLoop() {
   pulseRaf = null;
   lastPulseFrame = 0;
 }
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') stopPulseLoop();
+  else startPulseLoop();
+});
 
 window.addEventListener('resize', resize);
 window.addEventListener('contextmenu', (e) => { e.preventDefault(); window.magicPointer?.hide(); });
@@ -670,8 +695,14 @@ window.magicPointer?.onShow((payload) => {
   } else {
     hint.classList.add('dim');
   }
-  if (!gestureMode) startPulseLoop();
-  if (gestureMode) window.magicPointer?.gestureReady(gestureToken);
+  // 手势态必须显式停掉脉冲：一次 show 可能紧跟在另一次非手势 show 之后
+  // （中间没有 hide），否则画圈时每帧会多出 30 次冗余的全屏重画。
+  if (gestureMode) {
+    stopPulseLoop();
+    window.magicPointer?.gestureReady(gestureToken);
+  } else {
+    startPulseLoop();
+  }
 });
 window.magicPointer?.onCursor((payload) => {
   if (!payload) return;
