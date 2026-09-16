@@ -2022,6 +2022,16 @@ def test_persistent_backend_errors_terminate_as_provider_unavailable():
 
 
 def test_truncation_invalidates_tool_calls_and_feeds_back():
+    """The suffix heuristic is opt-in; see the note on ``parse_tool_calls``.
+
+    Passing ``truncation_suffix`` explicitly is now required for this path.
+    The default used to be ``"…"``, which meant any Chinese tool-calling turn
+    that happened to end its prose with an ellipsis had its calls discarded —
+    including calls whose arguments were complete, as in this case. Real
+    truncation is detected from protocol evidence (``stop_reason ==
+    "max_tokens"`` or a missing stop reason) before tool calls are considered
+    at all. See ``test_ellipsis_ending_no_longer_discards_complete_calls``.
+    """
     trunc_tool, state = make_counting_tool("trunc_tool")
     registry = ToolRegistry()
     registry.register(trunc_tool)
@@ -2033,7 +2043,7 @@ def test_truncation_invalidates_tool_calls_and_feeds_back():
         ],
         [TurnDone(usage=None, raw_text="final answer")],
     )
-    client = LoopModelClient(backend)
+    client = LoopModelClient(backend, truncation_suffix="…")
 
     events, terminal = asyncio.run(
         collect(make_params(client=client, registry=registry))
@@ -2070,7 +2080,9 @@ def test_truncation_closes_every_tool_call_before_next_model_request():
     )
 
     _events, terminal = asyncio.run(
-        collect(make_params(client=LoopModelClient(backend)))
+        collect(make_params(
+            client=LoopModelClient(backend, truncation_suffix="…"),
+        ))
     )
 
     second_messages = backend.received[1][0]
@@ -2251,7 +2263,7 @@ def test_truncation_then_tool_round_then_complete():
         ],
         [TurnDone(usage=None, raw_text="done")],
     )
-    client = LoopModelClient(backend)
+    client = LoopModelClient(backend, truncation_suffix="…")
 
     events, terminal = asyncio.run(
         collect(make_params(client=client, registry=registry))
@@ -3055,7 +3067,7 @@ def test_invariant_failure_kinds_distinguish_truncation_from_runaway():
     _events2, terminal2 = asyncio.run(
         collect(
             make_params(
-                client=LoopModelClient(truncating),
+                client=LoopModelClient(truncating, truncation_suffix="…"),
                 registry=registry,
                 emergency_turn_fuse=2,
             )
@@ -3325,3 +3337,58 @@ def test_loop_exception_notifies_session_end_listeners_once():
         asyncio.run(collect(make_params(client=client, registry=registry)))
 
     assert released == [True]
+
+
+def test_ellipsis_ending_no_longer_discards_complete_calls():
+    """中文里以「…」收尾是普通标点，不是截断信号。
+
+    这条路径原来默认把「文本以 … 结尾 **且** 有工具调用」判成截断，于是每一轮
+    说了一半的散文后面跟着的完整工具调用都会被丢掉——参数完整也一样丢。真正的
+    截断由协议层证据识别（``stop_reason == "max_tokens"`` 或缺少 stop reason），
+    而那两种情况下 loop 根本不会走到工具调用这一步。
+    """
+    ellipsis_tool, state = make_counting_tool("ellipsis_tool")
+    registry = ToolRegistry()
+    registry.register(ellipsis_tool)
+    backend = ScriptedBackend(
+        [
+            MessageDelta("我看看这个文件…"),
+            ToolCallArrived(call=ToolCall(id="c1", name="ellipsis_tool", arguments={})),
+            TurnDone(usage=None, raw_text="我看看这个文件…"),
+        ],
+        [TurnDone(usage=None, raw_text="看完了")],
+    )
+    client = LoopModelClient(backend)  # default settings — no suffix heuristic
+
+    events, terminal = asyncio.run(
+        collect(make_params(client=client, registry=registry))
+    )
+
+    assert state["calls"] == 1, "a complete tool call must run"
+    assert any(isinstance(e, ToolCallFinished) for e in events)
+    assert terminal.message == "看完了"
+
+
+def test_protocol_truncation_is_still_caught_without_the_heuristic():
+    """去掉文本启发式之后，真正的截断仍然由协议层证据兜住。"""
+    trunc_tool, state = make_counting_tool("proto_trunc_tool")
+    registry = ToolRegistry()
+    registry.register(trunc_tool)
+    backend = ScriptedBackend(
+        [
+            MessageDelta("half written"),
+            ToolCallArrived(call=ToolCall(id="c1", name="proto_trunc_tool", arguments={})),
+            TurnWithheld(reason="max_output_tokens"),
+            TurnDone(usage=None, raw_text=None),
+        ],
+        [TurnDone(usage=None, raw_text="final answer")],
+    )
+    client = LoopModelClient(backend)
+
+    events, terminal = asyncio.run(
+        collect(make_params(client=client, registry=registry))
+    )
+
+    assert state["calls"] == 0, "a truncated turn's calls must not be executed"
+    assert not any(isinstance(e, ToolCallFinished) for e in events)
+    assert terminal.message == "final answer"

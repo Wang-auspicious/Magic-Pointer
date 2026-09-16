@@ -15,10 +15,14 @@ Ported semantics from the CC query-loop and Pi agent-loop study notes
   agent loop; exhausted or non-retryable failures surface once as
   ``TurnWithheld(reason="backend_error:...")`` and never become fake user
   messages or additional semantic turns.
-- Pi StreamFn truncation guard: when the final text ends with a configurable
-  truncation suffix (default ``…``) *and* the stream carried tool calls, the
-  call is marked truncated (``last_truncated``) so the caller discards the
-  calls instead of executing possibly cut-off arguments.
+- Pi StreamFn truncation guard: a turn whose tool calls may have been cut off
+  is marked truncated (``last_truncated``) so the caller discards the calls
+  instead of executing possibly cut-off arguments. The Pi study note detected
+  this from the text ending in a suffix; that heuristic is **off by default
+  here** because it fires on ordinary Chinese punctuation — see the note on
+  :meth:`LoopModelClient.parse_tool_calls`. Protocol evidence
+  (``stop_reason == "max_tokens"``, or a missing stop reason) detects real
+  truncation earlier, in the withheld branch.
 - ``ModelBackend`` is the StreamFn-style contract: a generator that yields
   events and never fabricates. ``AiClientBackend`` wraps the real
   ``app/ai_client`` (read-only) with an honest mapping.
@@ -63,7 +67,10 @@ __all__ = [
     "prompt_cache_enabled",
 ]
 
-_DEFAULT_TRUNCATION_SUFFIX = "…"
+#: Off by default. See the note on ``parse_tool_calls`` for why the text
+#: heuristic was withdrawn and what replaced it. Kept as a parameter so a
+#: caller with a provider that truncates silently can still opt in.
+_DEFAULT_TRUNCATION_SUFFIX: str | None = None
 _MIN_HTTP_TIMEOUT_S = 0.05
 
 #: Output ceiling to raise a truncated turn to, and how many times that is
@@ -453,10 +460,27 @@ class LoopModelClient:
         when no deltas were streamed. Malformed arguments (a string that is
         not valid JSON, or a non-object argument) are recorded into
         ``last_errors`` and the offending call is dropped (fail closed) --
-        never raised. ``last_truncated`` is set True when the final text ends
-        with ``truncation_suffix`` (default: the client's configured suffix)
-        *and* tool calls were extracted; the caller discards the calls in
-        that case instead of executing possibly cut-off arguments.
+        never raised.
+
+        ``last_truncated`` marks a turn whose tool calls may have been cut off
+        mid-arguments, so the caller discards them rather than executing a
+        half-written argument list. It is **off by default** now, because the
+        text heuristic that used to set it was both redundant and wrong here:
+
+        It fired when the turn's text ended with ``…`` and tool calls were
+        present. In Chinese, ending a sentence with ``…`` is ordinary
+        punctuation, so any tool-calling turn that trailed off in prose had its
+        calls thrown away — a false positive on a common shape.
+
+        What actually detects truncation is protocol evidence, and it was
+        already there: both SSE parsers yield
+        ``TurnWithheld(reason="max_output_tokens")`` on ``stop_reason ==
+        "max_tokens"`` *and* on a missing stop reason (an interrupted stream),
+        and the loop's withheld branch runs before tool calls are ever
+        considered, so a genuinely truncated turn never reaches this function.
+        Genuinely cut-off arguments arrive as invalid JSON and are dropped by
+        the ``last_errors`` path above. ``truncation_suffix`` remains available
+        for a provider that truncates without saying so; pass it explicitly.
         """
         suffix = (
             self.truncation_suffix
