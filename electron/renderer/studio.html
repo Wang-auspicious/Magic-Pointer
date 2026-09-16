@@ -6,9 +6,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Magic Pointer</title>
   <script src="theme_boot.js?v=26"></script>
-  <link rel="stylesheet" href="claude_tokens.css?v=33" />
-  <link rel="stylesheet" href="claude_shell.css?v=33" />
-  <link rel="stylesheet" href="claude_chat.css?v=33" />
+  <link rel="stylesheet" href="claude_tokens.css?v=34" />
+  <link rel="stylesheet" href="claude_shell.css?v=34" />
+  <link rel="stylesheet" href="claude_chat.css?v=34" />
 </head>
 <body class="studio">
   <div class="dshw-frame mp-shell" id="shell" data-view="chat" data-sidebar="expanded">
@@ -283,10 +283,13 @@
                         <button type="button" class="dshw-add mp-composer-secondary" id="composer-mention" aria-label="提及上下文" title="提及文件或上下文">
                           <svg width="17" height="17" aria-hidden="true"><use href="#ic-at" /></svg>
                         </button>
+                        <button type="button" class="dshw-add mp-voice" id="composer-voice" aria-label="Voice input" title="Voice input">
+                          <svg width="16" height="16" aria-hidden="true"><use href="#ic-mic" /></svg>
+                        </button>
                         <button type="button" class="dshw-perm mp-permission-seat" id="composer-permission" aria-haspopup="listbox" aria-expanded="false" title="本轮 Agent 权限">
+                          <svg class="dshw-perm-chev" width="12" height="12" aria-hidden="true"><use href="#ic-chev" /></svg>
                           <span class="dshw-perm-glyph" id="composer-permission-glyph" aria-hidden="true"></span>
                           <span class="dshw-perm-label" id="composer-permission-label">项目写入</span>
-                          <svg class="dshw-perm-chev" width="12" height="12" aria-hidden="true"><use href="#ic-chev" /></svg>
                         </button>
                         <div class="dshw-perm-menu mp-permission-menu-seat" id="composer-permission-menu" hidden role="listbox" aria-label="权限预设"></div>
                       </div>
@@ -298,9 +301,6 @@
                         <div class="dshw-model-menu" id="composer-model-menu" hidden role="listbox" aria-label="模型目录"></div>
                         <button type="button" class="dshw-add mp-composer-secondary" id="composer-effort" aria-label="Reasoning effort: Extra" aria-haspopup="listbox" aria-expanded="false" title="Reasoning effort"><span id="composer-effort-label">Extra</span></button>
                         <div class="dshw-perm-menu mp-effort-menu" id="composer-effort-menu" hidden role="listbox" aria-label="Reasoning effort"></div>
-                        <button type="button" class="dshw-add mp-voice" id="composer-voice" aria-label="Voice input" title="Voice input">
-                          <svg width="16" height="16" aria-hidden="true"><use href="#ic-mic" /></svg>
-                        </button>
                         <button type="button" class="dshw-ring" id="composer-context" aria-label="Context usage"
                           aria-haspopup="dialog" aria-expanded="false" title="Context usage">
                           <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true">

@@ -1425,7 +1425,7 @@ async function openConversation(id: string) {
   flow.className = 'dsh-flow';
   for (const [turnIndex, t] of turns.entries()) {
     const branchTarget = { conversationId: c.id, turnIndex };
-    if (t.question) flow.appendChild(DshChat.userNode(String(t.question), undefined, branchTarget));
+    if (t.question) flow.appendChild(DshChat.userNode(String(t.question), t.at, branchTarget));
     const host = document.createElement('div');
     host.className = 'dsh-flow-item';
     for (const node of DshChat.assistantTurnNode({

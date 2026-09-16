@@ -30,7 +30,12 @@ assert(html.includes('class="dshw-primary" title="Send" aria-label="Send" disabl
 assert(source.includes('function syncComposerSubmitState()'));
 assert(source.includes("submit.disabled = !studioComposerBusy && !textarea.value.trim()"));
 assert.match(css, /\.dshw-primary:disabled\s*\{[^}]*opacity:\s*1[^}]*background:\s*transparent/s);
-assert.match(css, /#composer-permission\s*\{[^}]*order:\s*-2/s);
+/* 参考的左半边读作 `＋ 🎤 ⌄ Auto`：附件和语音先出现，模式名跟在它们后面，
+   前面带一个 chevron。所以模式触发器不再被提到行首。 */
+assert.match(css, /#composer-permission \.dshw-perm-chev\s*\{[^}]*order:\s*-1/s,
+  'the mode trigger reads as a leading chevron plus the current mode name');
+assert(!/#composer-permission\s*\{[^}]*order:\s*-2/s.test(css),
+  'attach and mic come first; the mode name is not hoisted to the front');
 assert(source.includes('contextRow.hidden = !visible && Boolean(activeProjectRoot)'));
 assert(source.includes("textarea.placeholder = visible ? 'Describe a task or ask a question' : 'Type / for commands'"));
 assert(source.includes("title.textContent = 'Plan'"));
@@ -45,8 +50,12 @@ assert(html.includes('id="composer-effort-label">Extra</span>'), 'Extra is the s
 assert(!html.includes('id="composer-options"') && !html.includes('id="composer-style"'),
   'the former response-style nesting is removed');
 assert(!html.includes('Response style'), 'effort is not presented as a writing style');
-assert.match(html, /id="composer-effort-menu"[^>]*><\/div>[\s\S]*?id="composer-voice"[\s\S]*?id="composer-context"/,
-  'voice is a separate trailing action after the direct effort popup');
+/* 语音在参考里属于左半边（`＋ 🎤 ⌄ Auto`），和附件同组；右半边只放模型、
+   effort 和用量环。 */
+assert.match(html, /id="composer-mention"[\s\S]*?id="composer-voice"[\s\S]*?id="composer-permission"/,
+  'voice sits with attach on the left, between the mention and mode controls');
+assert.match(html, /id="composer-effort-menu"[^>]*><\/div>[\s\S]*?id="composer-context"/,
+  'the usage ring stays the last trailing control');
 assert(source.includes('const effortLevels = (globalThis as { EffortLevels?: EffortLevelsModule }).EffortLevels!'));
 assert(source.includes("let composerEffort = 'xhigh'"));
 assert(source.includes('function openEffortMenu()'));

@@ -616,17 +616,53 @@ const DshChat = (() => {
     return root;
   }
 
-  /* ---- 消息动作行（悬停后才出现：分支 + 复制） ---- */
+  /* ---- 消息动作行（悬停后才出现：时间 + 分支 + 复制） ---- */
   function formatClock(ms: number): string {
     const d = new Date(ms);
     const pad = (n: number) => String(n).padStart(2, '0');
     return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
 
+  /* 参考里的悬停行给的是相对时间（`23 minutes ago`）：读的人想知道「多久
+     以前」，不是「几点几分」。超过一周才退回绝对时间——「87 天前」没有人
+     会去心算。 */
+  const MINUTE_MS = 60_000;
+  const HOUR_MS = 60 * MINUTE_MS;
+  const DAY_MS = 24 * HOUR_MS;
+
+  function relativeTime(ms: number, now = Date.now()): string {
+    if (!Number.isFinite(ms) || ms <= 0) return '';
+    const delta = Math.max(0, now - ms);
+    if (delta < 45 * 1000) return '刚刚';
+    if (delta < HOUR_MS) return `${Math.round(delta / MINUTE_MS)} 分钟前`;
+    if (delta < DAY_MS) return `${Math.round(delta / HOUR_MS)} 小时前`;
+    if (delta < 7 * DAY_MS) return `${Math.round(delta / DAY_MS)} 天前`;
+    return formatClock(ms);
+  }
+
+  function absoluteTime(ms: number): string {
+    const d = new Date(ms);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${formatClock(ms)}`;
+  }
+
   interface BranchTarget { conversationId: string; turnIndex: number }
 
-  function messageActions(message: string, branch?: BranchTarget): DshNode {
+  /* skip 用来排开空白时间戳，避免给横条多留一个 6px 的间隙。 */
+  function timeNode(ms: number | undefined): DshNode | null {
+    if (!ms || !Number.isFinite(ms)) return null;
+    const label = relativeTime(ms);
+    if (!label) return null;
+    const node = h('span', { class: 'dsh-action-time', title: absoluteTime(ms) });
+    attach(node, label);
+    return node;
+  }
+
+  function messageActions(message: string, branch?: BranchTarget, timeMs?: number, timeFirst = false): DshNode {
     const actions = h('div', { class: 'dsh-actions' });
+    const time = timeNode(timeMs);
+    /* 参考里用户气泡的时间在图标左边，助手回合的在图标右边。 */
+    if (time && timeFirst) attach(actions, time);
     if (branch?.conversationId && Number.isInteger(branch.turnIndex)) {
       const fork = h('button', { type: 'button', class: 'dsh-action', 'aria-label': '从这里创建分支' });
       fork.setAttribute('data-dsh-act', 'branch');
@@ -640,18 +676,19 @@ const DshChat = (() => {
     copy.setAttribute('data-dsh-copy', String(message || ''));
     attach(copy, icon('copy', 16));
     attach(actions, copy);
+    if (time && !timeFirst) attach(actions, time);
     return actions;
   }
 
   /* ---- 用户消息节点（UserMessageNodeView） ---- */
-  function userNode(question: string, _timeMs?: number, branch?: BranchTarget): DshNode {
+  function userNode(question: string, timeMs?: number, branch?: BranchTarget): DshNode {
     const root = h('div', { class: 'dsh-user' });
     const stack = h('div', { class: 'dsh-user-stack' });
     const bubble = h('div', { class: 'dsh-bubble' });
     attach(bubble, question);
     attach(stack, bubble);
     attach(root, stack);
-    attach(root, messageActions(question, branch));
+    attach(root, messageActions(question, branch, timeMs, true));
     return root;
   }
 
@@ -975,10 +1012,14 @@ const DshChat = (() => {
     }
 
     attach(root, bodyHost);
-    if (turn.answer) attach(root, messageActions(turn.answer,
+    if (turn.answer) attach(root, messageActions(
+      turn.answer,
       turn.conversationId && Number.isInteger(turn.turnIndex)
         ? { conversationId: turn.conversationId, turnIndex: Number(turn.turnIndex) }
-        : undefined));
+        : undefined,
+      turn.at,
+      false,
+    ));
     items.push(root);
     return items;
   }
@@ -1132,7 +1173,7 @@ const DshChat = (() => {
     formatRunMeta,
     stateDot,
     bindDelegation,
-    __test: { firstLine, latestLine, classifyTool, deriveSummary, deriveDiff, formatClock },
+    __test: { firstLine, latestLine, classifyTool, deriveSummary, deriveDiff, formatClock, relativeTime },
   };
 })();
 

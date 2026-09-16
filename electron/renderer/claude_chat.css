@@ -234,6 +234,18 @@
   color: var(--mp-text-muted);
 }
 
+/* 悬停行里的相对时间（`23 minutes ago`）：图标之前/之后各一处，和图标同一
+   条基线上，所以给它和图标等高的行盒。 */
+.dsh-action-time {
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding-inline: 4px;
+  color: var(--mp-text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .dsh-action:hover {
   color: var(--mp-text);
   background: var(--mp-hover);
@@ -1308,21 +1320,28 @@
   gap: 3px;
 }
 
+/* 参考的左半边是 `＋  🎤  ⌄  Auto`：附件、语音、然后一个 chevron 加当前模式名。
+   模式名是普通灰字（hover 才起底色），chevron 在它左边——不是「一个带边的
+   芯片」，所以这里不再自己排到最前，按 DOM 顺序读出来就是参考的顺序。 */
 #composer-permission {
-  order: -2;
+  order: 0;
 }
 
 #composer-add {
-  order: -1;
+  order: 0;
 }
 
 #composer-mention {
   display: inline-flex;
 }
 
-#composer-permission .dshw-perm-glyph,
-#composer-permission .dshw-perm-chev {
+#composer-permission .dshw-perm-glyph {
   display: none;
+}
+
+#composer-permission .dshw-perm-chev {
+  order: -1;
+  flex: none;
 }
 
 #composer-effort {
@@ -1331,7 +1350,7 @@
   font-size: 12px;
 }
 
-.mp-voice {
+#composer-voice {
   width: 28px;
   min-width: 28px;
   padding: 0;

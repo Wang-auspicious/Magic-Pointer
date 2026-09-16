@@ -326,4 +326,24 @@ assert.strictEqual(DshChat.formatRunMeta(779000, 3600), '12m 59s · 3.6k tokens'
 assert.strictEqual(DshChat.formatRunMeta(12000, null), '12s',
   'with no token count the clock must not invent one');
 
+/* 4. 悬停行给相对时间：用户气泡在图标左边，助手回合在图标右边。 */
+const now = 1_700_000_000_000;
+assert.strictEqual(DshChat.__test.relativeTime(now - 30_000, now), '刚刚');
+assert.strictEqual(DshChat.__test.relativeTime(now - 23 * 60_000, now), '23 分钟前');
+assert.strictEqual(DshChat.__test.relativeTime(now - 3 * 3_600_000, now), '3 小时前');
+assert.match(DshChat.__test.relativeTime(now - 30 * 86_400_000, now), /^\d{2}:\d{2}$/,
+  'beyond a week the clock falls back to an absolute time rather than counting days');
+
+/* 节点用的是真实当前时间（相对时间是相对「现在」算的）。 */
+const stampedUser = html(DshChat.userNode('问题', Date.now() - 23 * 60_000));
+assert(stampedUser.includes('class="dsh-action-time"'), 'user hover row carries a timestamp');
+assert(stampedUser.indexOf('dsh-action-time') < stampedUser.indexOf('dsh-action"'),
+  'the user timestamp leads its icons, as in the reference');
+const stampedTurn = DshChat.assistantTurnNode({ answer: '答', at: Date.now() - 3 * 3_600_000 }).map(html).join('');
+assert(stampedTurn.includes('3 小时前'), 'assistant hover row carries its own timestamp');
+assert(stampedTurn.indexOf('dsh-action-time') > stampedTurn.indexOf('class="dsh-action"'),
+  'the assistant timestamp trails its icons, as in the reference');
+assert(!html(DshChat.userNode('问题')).includes('dsh-action-time'),
+  'a message with no recorded time must not invent one');
+
 console.log('studio dsh chat contract test ok');
