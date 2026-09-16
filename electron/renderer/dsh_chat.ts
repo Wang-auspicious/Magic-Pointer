@@ -204,13 +204,16 @@ const DshChat = (() => {
   type ToolVariant = 'search' | 'read' | 'bash' | 'write' | 'edit' | 'code' | 'others';
   type ToolState = 'running' | 'ok' | 'error' | 'stopped';
 
+  /* 参考里的工具行是「已经做完的那件事」：动词用过去式，后面直接接最有
+     辨识度的参数（`Read STATUS.md`、`Edited x.html +17 -5`）。用名词
+     （`Bash`、`Read`）会把每一行都读成一个标签而不是一个动作。 */
   const VARIANT_TITLES: Record<ToolVariant, string> = {
-    search: 'Search', read: 'Read', bash: 'Bash',
-    write: 'Write', edit: 'Edit', code: 'Code', others: 'Tool call',
+    search: 'Searched', read: 'Read', bash: 'Ran',
+    write: 'Wrote', edit: 'Edited', code: 'Used', others: 'Tool call',
   };
 
   const TOOL_TITLES: Record<string, string> = {
-    pwsh: 'Pwsh',
+    pwsh: 'Ran',
     search: 'Searched',
     list_dir: 'Listed files in working directory',
   };
@@ -364,6 +367,43 @@ const DshChat = (() => {
     return null;
   }
 
+  interface DiffStat { added: number; removed: number }
+
+  /* 行数计——参考里的 `Edited x.html +17 -5`：加/删都算「行」，不数字符。
+     尾部换行不算一行，否则每次编辑都会多出一个假的 +1。 */
+  function countLines(text: string): number {
+    if (text === '') return 0;
+    const parts = text.split('\n');
+    if (parts.length > 1 && parts[parts.length - 1] === '') parts.pop();
+    return parts.length;
+  }
+
+  function firstString(args: Record<string, unknown>, keys: readonly string[]): string {
+    return pickString(args, keys) ?? '';
+  }
+
+  /* 编辑类工具的行数增减。认不出的编辑形态返回 null——宁可不显示，
+     也不给一个编出来的数字。 */
+  function deriveDiffStat(name: string, argsRaw: string): DiffStat | null {
+    if (!argsRaw) return null;
+    let parsed: unknown;
+    try { parsed = JSON.parse(argsRaw); } catch { return null; }
+    if (typeof parsed !== 'object' || parsed === null) return null;
+    const args = parsed as Record<string, unknown>;
+    if (name === 'Edit' || name === 'edit_file' || name === 'edit') {
+      const oldText = firstString(args, ['old_string', 'oldText', 'old_str']);
+      const newText = firstString(args, ['new_string', 'newText', 'new_str']);
+      if (!oldText && !newText) return null;
+      return { added: countLines(newText), removed: countLines(oldText) };
+    }
+    if (name === 'Write' || name === 'write_file' || name === 'write') {
+      const content = firstString(args, ['content', 'text', 'new_string']);
+      if (!content) return null;
+      return { added: countLines(content), removed: 0 };
+    }
+    return null;
+  }
+
   interface ToolRowModel {
     variant: ToolVariant;
     name: string;
@@ -376,6 +416,7 @@ const DshChat = (() => {
     errorSummary: string | null;
     state: ToolState;
     callId: string;
+    diffStat: DiffStat | null;
   }
 
   function toolRowModel(
@@ -412,6 +453,7 @@ const DshChat = (() => {
       errorSummary,
       state,
       callId,
+      diffStat: deriveDiffStat(name, argsRaw),
     };
   }
 
@@ -457,6 +499,23 @@ const DshChat = (() => {
       const summary = h('span', { class: failureLine !== null ? 'dsh-summary dsh-error-summary' : 'dsh-summary' });
       attach(summary, summaryText);
       collapsed.push(summary);
+    }
+
+    /* 参考里编辑行的收尾是一对行数增减（绿加红删），只在行里露一眼，
+       完整 diff 仍在展开体里。 */
+    if (model.diffStat && (model.diffStat.added > 0 || model.diffStat.removed > 0)) {
+      const stat = h('span', { class: 'dsh-diff-stat', 'aria-hidden': 'true' });
+      if (model.diffStat.added > 0) {
+        const add = h('span', { class: 'dsh-diff-add' });
+        attach(add, `+${model.diffStat.added}`);
+        attach(stat, add);
+      }
+      if (model.diffStat.removed > 0) {
+        const del = h('span', { class: 'dsh-diff-del' });
+        attach(del, `−${model.diffStat.removed}`);
+        attach(stat, del);
+      }
+      collapsed.push(stat);
     }
 
     const body: DshNode[] = [];
@@ -596,13 +655,23 @@ const DshChat = (() => {
     return root;
   }
 
-  /* ---- 回合状态行（turnStatus 渐变字） ---- */
+  /* ---- 回合状态行（turnStatus 渐变字） ----
+     参考里运行中的那一行是：橙色星芒 + `12m 59s · 3.6k tokens · Almost done
+     thinking…`。计时是前缀，阶段名是句尾——所以这里给计时留一个空槽，
+     由渲染层按秒原地写进去（写空槽不重建节点，星芒的旋转动画不会被打断）。 */
   function turnStatusNode(label: string): DshNode {
     const root = h('div', { class: 'dsh-turn-status', role: 'status', 'aria-label': label });
     attach(root, h('span', { class: 'dsh-thinking-mark', 'aria-hidden': 'true' }));
-    const copy = h('span', { class: 'dsh-turn-status-label' });
-    if (label === 'Thinking') copy.setAttribute('data-quiet', 'true');
-    attach(copy, label);
+    /* 计时与阶段名是同一条句子的两段，中间的分隔符由 CSS 生成：
+       计时为空时整段消失，不留下一个孤零零的「·」。 */
+    const copy = h('span', { class: 'dsh-turn-status-copy' });
+    /* h() 会丢掉空串属性，所以标记位给一个真值；计时槽本身仍以文本为空
+       来表示「还没开始计时」。 */
+    attach(copy, h('span', { class: 'dsh-turn-status-meta', 'data-turn-meta': 'true' }));
+    const labelNode = h('span', { class: 'dsh-turn-status-label' });
+    if (label === 'Thinking') labelNode.setAttribute('data-quiet', 'true');
+    attach(labelNode, label);
+    attach(copy, labelNode);
     attach(root, copy);
     return root;
   }
@@ -706,23 +775,55 @@ const DshChat = (() => {
     return root;
   }
 
+  /* 组头是「这一串到底干了什么」的一句话：按动作种类分句，失败数跟在
+     对应分句后面，最后一项用 and/逗号收尾——参考里的原文就是这样长出来的：
+     `Ran 25 commands (1 failed), fetched 4 pages, browsed the web, used 2 tools`。 */
+  const GROUP_CLAUSES: Record<ToolVariant, (n: number) => string> = {
+    bash: (n) => `Ran ${n} command${n === 1 ? '' : 's'}`,
+    read: (n) => `Read ${n} file${n === 1 ? '' : 's'}`,
+    search: (n) => `Searched ${n} time${n === 1 ? '' : 's'}`,
+    write: (n) => `Wrote ${n} file${n === 1 ? '' : 's'}`,
+    edit: (n) => `Edited ${n} file${n === 1 ? '' : 's'}`,
+    code: (n) => `Used ${n} tool${n === 1 ? '' : 's'}`,
+    others: (n) => `Used ${n} tool${n === 1 ? '' : 's'}`,
+  };
+
+  const GROUP_ORDER: readonly ToolVariant[] = ['bash', 'read', 'search', 'edit', 'write', 'code', 'others'];
+
+  function failedCount(chips: TurnChip[]): number {
+    return chips.filter((chip) => chip.result?.isError === true).length;
+  }
+
   function toolGroupLabel(chips: TurnChip[]): string {
     const explicit = chips.find((chip) => typeof chip.groupLabel === 'string' && chip.groupLabel.trim());
     if (explicit?.groupLabel) return explicit.groupLabel.trim();
-    const n = chips.length;
-    const variants = new Set(chips.map((chip) => classifyTool(chip.name)));
-    if (variants.size === 1) {
-      const variant = chips.length ? classifyTool(chips[0].name) : 'others';
-      switch (variant) {
-        case 'read': return `Read ${n} files`;
-        case 'bash': return `Ran ${n} commands`;
-        case 'search': return `Searched ${n} times`;
-        case 'write': return `Wrote ${n} files`;
-        case 'edit': return `Edited ${n} files`;
-        default: break;
-      }
+    const counts = new Map<ToolVariant, number>();
+    /* 失败数要挂在「真的失败的那一类」上，不是挂在最后一句上：参考里读到的
+       是 `Ran 25 commands (1 failed), fetched 4 pages`——failed 跟着它属的
+       那个动词。 */
+    const failures = new Map<ToolVariant, number>();
+    for (const chip of chips) {
+      const variant = classifyTool(chip.name);
+      counts.set(variant, (counts.get(variant) || 0) + 1);
+      if (chip.result?.isError === true) failures.set(variant, (failures.get(variant) || 0) + 1);
     }
-    return `Ran ${n} tools`;
+    const order = GROUP_ORDER.filter((variant) => counts.has(variant));
+    const clauseFor = (variant: ToolVariant) => {
+      const base = GROUP_CLAUSES[variant](counts.get(variant) as number);
+      const failed = failures.get(variant) || 0;
+      return failed > 0 ? `${base} (${failed} failed)` : base;
+    };
+    if (order.length === 1) return clauseFor(order[0]);
+    if (!order.length) return `Ran ${chips.length} tools`;
+    const failed = failedCount(chips);
+    const placed = [...failures.keys()].some((variant) => order.includes(variant));
+    const parts = order.map(clauseFor);
+    /* 单个动作的组已经在 clauseFor 里标好了；只有「失败的那类不在分组里」
+       这种对不上的情况，才退化到整句尾部标注，保证失败永远不会被吞掉。 */
+    if (failed > 0 && !placed) parts[parts.length - 1] = `${parts[parts.length - 1]} (${failed} failed)`;
+    return parts
+      .map((part, index) => (index === 0 ? part : part.charAt(0).toLowerCase() + part.slice(1)))
+      .join(', ');
   }
 
   function chipRunNode(chips: TurnChip[]): DshNode {
@@ -1028,6 +1129,7 @@ const DshChat = (() => {
     toolRowNode,
     toolRowModel,
     liveActivityNode,
+    formatRunMeta,
     stateDot,
     bindDelegation,
     __test: { firstLine, latestLine, classifyTool, deriveSummary, deriveDiff, formatClock },

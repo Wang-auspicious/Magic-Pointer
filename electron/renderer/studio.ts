@@ -4335,6 +4335,8 @@ interface PendingConversation {
   streamRendered: string;
   reasoningText: string;
   reasoningNode: HTMLElement | null;
+  /** 运行中已产出的 token 数——只有进度记录真的带了才填，否则时间行只报时长。 */
+  liveTokens: number | null;
 }
 let pendingConversation: PendingConversation | null = null;
 let studioTaskInputSequence = 0;
@@ -4356,6 +4358,14 @@ function renderConversationProgress(record: Record<string, unknown>) {
   if (sid) {
     pendingConversation.agentSessionId = sid;
     setComposerRunningState(true);
+  }
+  /* 进度记录带了 token 数就采纳，运行态那行因此能写成
+     `1m 12s · 3.6k tokens · 第 2 轮推理中`；没带就只报时长，不编数字。 */
+  const tokenFields = record.fields && typeof record.fields === 'object'
+    ? record.fields as Record<string, unknown> : {};
+  const reportedTokens = Number(tokenFields.total_tokens ?? tokenFields.tokens ?? tokenFields.output_tokens);
+  if (Number.isFinite(reportedTokens) && reportedTokens > 0) {
+    pendingConversation.liveTokens = reportedTokens;
   }
   if (String(record.phase || '') === 'plan') {
     const snapshot = ConversationControl.planStepsFromRecord(record);
@@ -4428,6 +4438,9 @@ function renderPendingBody() {
     }
   }
   const desired = [...els, ...renderLiveReasoningNode(), ...renderLiveStreamNode()];
+  /* 状态行可能刚被重建（签名叫变），计时槽此刻是空的——立刻补一次，
+     不让那一行在两次 tick 之间空着。 */
+  pendingClockWrite?.();
   // replaceChildren 会把每个已有节点 detach 再 append，整段正文的样式/布局/
   // 绘制因此全部失效。签名没变时 els 里拿到的就是同一批节点对象，所以只要
   // 「目标列表和当前子节点逐个同一」就直接返回——纯增量正文的回合（没有活动
@@ -4503,21 +4516,24 @@ function updateScrollPill() {
 
 /* 贴底才跟随（DSH FOLLOW_THRESHOLD 同款）：用户往上翻阅历史时，进度记录
    不再把视图拽走；回到距底 48px 内恢复自动跟随。 */
-/* 运行中耗时：DSH TurnStatus 同款，超过 15 秒才出现，避免短回合闪数字。 */
-const PENDING_CLOCK_VISIBLE_MS = 15_000;
+/* 运行中计时：参考把「已经跑了多久」并进那一行状态里，而不是另起一行——
+   星芒 + `12m 59s · 第 2 轮推理中`。计时槽是状态行里预留的空 span，这里按秒
+   就地写文本；不重建节点，星芒的旋转动画因此不会每秒被打断一次。 */
 let pendingClockTimer: number | null = null;
+/** 当前计时器的写槽函数：状态行重建后由渲染循环立刻补一次，避免新行空一拍。 */
+let pendingClockWrite: (() => void) | null = null;
 
 function startPendingClock(body: HTMLElement) {
   stopPendingClock();
   const startedAt = Date.now();
-  const clock = document.createElement('div');
-  clock.className = 'dsh-stream-clock';
   const tick = () => {
+    const slot = body.querySelector<HTMLElement>('[data-turn-meta]');
+    if (!slot) return;
     const elapsed = Date.now() - startedAt;
-    if (elapsed < PENDING_CLOCK_VISIBLE_MS) return;
-    clock.textContent = `已运行 ${Math.floor(elapsed / 1000)} 秒`;
-    if (!clock.isConnected) body.appendChild(clock);
+    const text = DshChat.formatRunMeta(elapsed, pendingConversation?.liveTokens ?? null);
+    if (slot.textContent !== text) slot.textContent = text;
   };
+  pendingClockWrite = tick;
   tick();
   pendingClockTimer = window.setInterval(tick, 1000);
 }
@@ -4527,7 +4543,7 @@ function stopPendingClock() {
     window.clearInterval(pendingClockTimer);
     pendingClockTimer = null;
   }
-  document.querySelector('.dsh-stream-clock')?.remove();
+  pendingClockWrite = null;
 }
 
 function followIfNearBottom(body: HTMLElement, mutate: () => void): void {
@@ -4773,7 +4789,7 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
       activeTaskContext?.taskId || 'studio-pending',
       attachmentPaths,
     );
-    pendingConversation = { requestId, body: pendingBody, records: new Map(), nodes: new Map(), agentSessionId: activeTaskContext?.taskId || null, streamText: '', streamNode: null, streamRendered: '', reasoningText: '', reasoningNode: null };
+    pendingConversation = { requestId, body: pendingBody, records: new Map(), nodes: new Map(), agentSessionId: activeTaskContext?.taskId || null, streamText: '', streamNode: null, streamRendered: '', reasoningText: '', reasoningNode: null, liveTokens: null };
     renderConversationProgress({ phase: 'runtime_boot', fields: {} });
     try {
       const response = await Data.sendConversation(

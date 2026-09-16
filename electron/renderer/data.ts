@@ -207,6 +207,7 @@ declare global {
     bindDelegation(scope?: Element): void;
     liveActivityNode(record: Record<string, unknown>): Element;
     thinkNode(reasoning: string, running?: boolean): Element;
+    formatRunMeta(ms: number, tokens: number | null): string;
   }
   const DshChat: MagicPointerDshChatApi;
 

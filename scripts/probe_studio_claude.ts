@@ -28,6 +28,7 @@ const STATES = [
   'browser',
   'customize',
   'design',
+  'flow',
   'minimum',
 ];
 
@@ -146,6 +147,67 @@ function statePreparationScript(state, theme) {
         }));
         flow.appendChild(host);
       }
+    } else if (state === 'flow') {
+      await openReference();
+      const home = document.getElementById('studio-home');
+      if (home) home.hidden = true;
+      const stream = document.getElementById('stream');
+      const flow = document.createElement('div');
+      flow.className = 'dsh-flow';
+      stream.replaceChildren(flow);
+      const question = '读一下参考图，然后按 Claude Desktop 的对话流重做这一块。';
+      flow.appendChild(DshChat.userNode(question, Date.now() - 4 * 60 * 1000));
+
+      /* 注意：这一整段是外层模板字符串的内容，美元花括号会被外层先插值。
+         所以这里只用字符串拼接，不写模板字面量。 */
+      const lines = (n, prefix) => {
+        const out = [];
+        for (let i = 1; i <= n; i += 1) out.push(prefix + i + ' 行');
+        return out.join('\\n');
+      };
+      const NEW_TEXT = lines(17, '第 ');
+      const OLD_TEXT = lines(5, '旧第 ');
+      const editChip = (path, newText, oldText, callId) => ({
+        kind: 'tool', name: 'Edit', callId, state: 'done', isError: false, result: 'ok',
+        text: JSON.stringify({ file_path: path, old_string: oldText, new_string: newText }),
+      });
+      flow.appendChild(DshChat.assistantTurnNode({
+        conversationId: 'probe-flow',
+        turnIndex: 0,
+        answer: '前 15 张图的口径已经对齐，剩下的按同一套令牌收尾。',
+        trajectory: [
+          { kind: 'message', text: '三个都实搜验证过，空白很干净。现在合并进 HTML。' },
+          editChip('cvpr2027-verified-top5.html', NEW_TEXT, OLD_TEXT, 'e1'),
+          { kind: 'message', text: 'Now the CSS for lanes + the 人话 row style:' },
+          editChip('cvpr2027-verified-top5.html', NEW_TEXT + NEW_TEXT, '', 'e2'),
+          { kind: 'tool', name: 'Bash', callId: 'b1', state: 'done', isError: false, result: 'clean',
+            text: '{"command":"git status --porcelain"}' },
+          { kind: 'tool', name: 'Bash', callId: 'b2', state: 'done', isError: true, result: 'exit 1',
+            text: '{"command":"npm run typecheck"}' },
+          { kind: 'tool', name: 'Read', callId: 'r1', state: 'done', isError: false, result: 'ok',
+            text: '{"file_path":"electron/renderer/claude_chat.css"}' },
+          { kind: 'tool', name: 'Grep', callId: 's1', state: 'done', isError: false, result: 'ok',
+            text: '{"pattern":"dsh-code"}' },
+          { kind: 'tool', name: 'Edit', callId: 'e3', state: 'done', isError: false, result: 'ok',
+            text: JSON.stringify({ file_path: 'electron/renderer/claude_chat.css', old_string: 'a\\nb', new_string: 'x' }) },
+        ],
+      })[0]);
+
+      /* 运行中的回合：星芒 + 计时 + 阶段名，同一行。 */
+      const live = document.createElement('div');
+      live.className = 'dsh-assistant';
+      const liveBody = document.createElement('div');
+      liveBody.className = 'dsh-assistant-body';
+      liveBody.appendChild(DshChat.liveActivityNode({
+        phase: 'agent_turn',
+        fields: { turn: '2' },
+      }));
+      liveBody.appendChild(DshChat.thinkNode('第一张图里主色是暖白，第二张是纯白——需要逐张取色再定。', true));
+      live.appendChild(liveBody);
+      flow.appendChild(live);
+      const metaSlot = liveBody.querySelector('[data-turn-meta]');
+      if (metaSlot) metaSlot.textContent = DshChat.formatRunMeta(12 * 60 * 1000 + 59 * 1000, 3600);
+      if (stream) stream.scrollTop = stream.scrollHeight;
     } else if (state === 'permission') {
       await openReference();
       pendingPermissionAsk = { tool: 'Bash', prefix: 'npm run sync' };

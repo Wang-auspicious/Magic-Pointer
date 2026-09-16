@@ -23,13 +23,14 @@ assert(!DshChat.userNode('<script>alert(1)</script>').outerHTML.includes('<scrip
 
 /* ---- 工具调用行：24px 行骨架 + IN/OUT 卡 + 状态点 ---- */
 const model = DshChat.toolRowModel('write', JSON.stringify({ path: 'a.txt', content: 'x' }), { text: 'ok', isError: false });
-assert.strictEqual(model.title, 'Write');
+assert.strictEqual(model.title, 'Wrote');
 assert.strictEqual(model.summary, 'a.txt');
 assert.strictEqual(model.state, 'ok');
 const row = html(DshChat.toolRowNode(model));
 assert(row.includes('class="dsh-tool"'), 'tool row root');
 assert(row.includes('class="dsh-row"'), 'tool rows must share the 24px disclosure row chrome');
-assert(row.includes('class="dsh-title">Write</span>'), 'row title = variant literal');
+assert(row.includes('class="dsh-title">Wrote</span>'),
+  'row title is the completed action ("Wrote a.txt"), never the bare noun');
 assert(row.includes('class="dsh-io-card"'), 'args/result must render as the IN/OUT card');
 assert(row.includes('class="dsh-io-label">IN</span>'), 'input section must carry the IN gutter label');
 assert(row.includes('class="dsh-io-label">OUT</span>'), 'result section must carry the OUT gutter label');
@@ -259,7 +260,10 @@ assert.match(css, /\.dsh-bubble\s*\{[^}]*border-radius:\s*12px/s, 'user bubble u
 assert.match(css, /\.dsh-tool-group-header,[\s\S]*min-height:\s*28px/s, 'activity rows use the compact Claude height');
 assert.match(css, /\.dsh-tool \.dsh-tool-caret\s*\{[^}]*margin-left:\s*4px/s,
   'tool disclosure arrows sit directly after the action text');
-assert.match(css, /\.dsh-tool-group-title,[^}]*\{[^}]*flex:\s*0 0 auto/s,
+/* 组标签必须能收缩：Claude 的组头会写成一整句话
+   (`Ran 25 commands (1 failed), fetched 4 pages, used 2 tools`)，
+   不可收缩的标签会把 chevron 推出行外，而不是自己截断。 */
+assert.match(css, /\.dsh-tool-group-title,[^}]*\{[^}]*flex:\s*0 1 auto/s,
   'group disclosure arrows sit directly after the group label');
 assert.match(css, /\.dsh-disclosure:not\(\[data-open='true'\]\) > \.dsh-body-wrap\s*\{[^}]*display:\s*none/s);
 assert.match(css, /\.dsh-think\[data-long="true"\][^{]*\.dsh-think-viewport\s*\{[^}]*max-height:\s*200px/s);
@@ -282,5 +286,44 @@ assert(src.includes('fallbackCopyText(text)'), 'clipboard failure must fall back
 assert(src.includes('button.setAttribute(\'aria-label\', \'复制失败\')'),
   'a failed copy must not show the success checkmark');
 assert(src.includes('document.execCommand(\'copy\')'), 'the fallback must use the textarea copy trick');
+
+/* ---- 参考的对话流三件事：改动行数、组头成句、运行态一行 ---- */
+
+/* 1. 编辑行必须自报改了多少行。参考里 `Edited x.html +17 -5` 是这一行唯一
+      的能量信息——只写文件名，读者无法判断这次编辑大小。 */
+const editRow = html(DshChat.toolRowNode(DshChat.toolRowModel(
+  'Edit',
+  JSON.stringify({ file_path: 'a.html', old_string: '1\n2\n3\n4\n5', new_string: Array.from({ length: 17 }, (_, i) => `n${i}`).join('\n') }),
+  { text: 'ok', isError: false },
+)));
+assert(editRow.includes('class="dsh-diff-stat"'), 'edit rows must carry a line-count stat');
+assert(editRow.includes('class="dsh-diff-add">+17<'), `edit row must count added lines, got ${editRow}`);
+assert(editRow.includes('class="dsh-diff-del">−5<'), `edit row must count removed lines, got ${editRow}`);
+assert(html(DshChat.toolRowNode(DshChat.toolRowModel(
+  'Read', JSON.stringify({ file_path: 'a.md' }), { text: 'ok', isError: false },
+))).includes('dsh-diff-stat') === false, 'non-editing rows must not invent a diff stat');
+
+/* 2. 组头是一句「做了什么」，不是「几个工具」；失败数挂在出事的那一类上。 */
+const mixedGroup = DshChat.assistantTurnNode({
+  trajectory: [
+    { kind: 'tool', name: 'Bash', callId: 'b1', state: 'error', isError: true, text: '{"command":"npm run typecheck"}', result: 'exit 1' },
+    { kind: 'tool', name: 'Read', callId: 'r1', state: 'done', isError: false, text: '{"file_path":"a.md"}', result: 'ok' },
+    { kind: 'tool', name: 'Grep', callId: 's1', state: 'done', isError: false, text: '{"pattern":"x"}', result: 'ok' },
+  ],
+}).map(html).join('');
+assert(mixedGroup.includes('Ran 1 command (1 failed)'),
+  `the failure count rides the clause it belongs to, got ${mixedGroup}`);
+assert(/ran|read|searched/.test(mixedGroup),
+  'later clauses stay lowercase so the line reads as one sentence');
+
+/* 3. 运行态是「星芒 + 计时 · 阶段名」的一行，计时槽由渲染层原地写。 */
+const runningLine = html(DshChat.turnStatusNode('第 2 轮推理中'));
+assert(runningLine.includes('class="dsh-thinking-mark"'), 'the running line leads with the star mark');
+assert(runningLine.includes('data-turn-meta'), 'the running line must expose a clock slot');
+assert(runningLine.includes('class="dsh-turn-status-label">第 2 轮推理中<'),
+  'the phase name is the tail of the running line, not a separate row');
+assert.strictEqual(DshChat.formatRunMeta(779000, 3600), '12m 59s · 3.6k tokens');
+assert.strictEqual(DshChat.formatRunMeta(12000, null), '12s',
+  'with no token count the clock must not invent one');
 
 console.log('studio dsh chat contract test ok');

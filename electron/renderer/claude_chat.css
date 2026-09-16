@@ -102,8 +102,12 @@
   overflow-wrap: anywhere;
 }
 
+/* 叙述是这段流里的「正文」，动作行是「脚注」：参考里前者明显大于且重于
+   后者，一眼就能分出「它在说什么」和「它做了什么」。 */
 .dsh-narration {
   white-space: pre-wrap;
+  font-size: 15px;
+  line-height: 23px;
 }
 
 .dsh-markdown > :first-child {
@@ -349,6 +353,23 @@
   display: none;
 }
 
+/* 展开是一次「展开」，不是一次跳变：淡入 + 轻微下移，和 chevron 的旋转
+   同一个节奏（--mp-dur-structure）。 */
+.dsh-disclosure[data-open='true'] > .dsh-body-wrap {
+  animation: dsh-reveal var(--mp-dur-structure) var(--mp-ease-out);
+}
+
+@keyframes dsh-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
 .dsh-tool-group {
   overflow: visible;
   border: 0;
@@ -392,7 +413,7 @@
 .dsh-tool-group-title,
 .dsh-disclosure-title {
   min-width: 0;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -435,8 +456,14 @@
 
 .dsh-tool > .dsh-disclosure > .dsh-row {
   min-height: 36px;
-  padding-inline: 10px;
   border-radius: 0;
+}
+
+/* 组内行在带边框的卡片里，需要内缩让 hover 底色不贴边；顶层动作行则要和
+   上面的叙述行同一个左边距——参考里的 `Edited x +17 -5` 与散文是齐头的，
+   多缩 10px 会让整段流转成阶梯。 */
+.dsh-tool-group-body > .dsh-tool > .dsh-disclosure > .dsh-row {
+  padding-inline: 10px;
 }
 
 .dsh-tool > .dsh-disclosure > .dsh-row {
@@ -455,6 +482,85 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 编辑行的行数增减：绿加红删，紧跟在文件名后，是「这次改了多少」的唯一
+   可见指标——完整 diff 仍在展开体里。 */
+/* ---- 代码卡（markdown 围栏） ----
+   dsh_markdown 发出的是 .dsh-code / .dsh-code-head / .dsh-code-lang /
+   .dsh-code-copy，而这里原本只有一组 .dsh-codeblock* 规则——两者名字对不上，
+   于是所有代码块都以裸 <pre> 渲染：没有边框、没有等宽字体、复制钮裸奔。
+   按参考的代码卡外形补齐：细边圆角、头部一行、可滚动的等宽体。 */
+.dsh-code {
+  overflow: hidden;
+  margin: 10px 0;
+  border: 1px solid var(--mp-rule);
+  border-radius: var(--mp-r7);
+  background: var(--mp-markdown-cell);
+}
+
+.dsh-code-head {
+  display: flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 4px 0 10px;
+}
+
+.dsh-code-lang {
+  overflow: hidden;
+  color: var(--mp-text-muted);
+  font-family: var(--mp-font-mono);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-code-lang:empty {
+  min-height: 1px;
+}
+
+.dsh-code-copy {
+  opacity: 0;
+  transition: opacity var(--mp-dur-fast);
+}
+
+.dsh-code:hover .dsh-code-copy,
+.dsh-code-copy:focus-visible {
+  opacity: 1;
+}
+
+.dsh-code pre {
+  margin: 0;
+  padding: 0 10px 10px;
+  overflow: auto;
+  font-family: var(--mp-font-mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+  tab-size: 2;
+}
+
+.dsh-code code {
+  font-family: inherit;
+  white-space: pre;
+}
+
+.dsh-diff-stat {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: baseline;
+  gap: 5px;
+  margin-left: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.dsh-diff-add {
+  color: var(--mp-success);
+}
+
+.dsh-diff-del {
+  color: var(--mp-danger);
 }
 
 .dsh-error-summary,
@@ -1001,6 +1107,31 @@
   animation: mp-thinking-spin 1400ms linear infinite;
 }
 
+.dsh-turn-status-copy {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+}
+
+/* 参考里运行态是一句连着的 `12m 59s · 3.6k tokens · Almost done thinking…`：
+   计时为空时连分隔符一起消失，不留孤零零一个「·」。 */
+.dsh-turn-status-meta {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.dsh-turn-status-meta:not(:empty)::after {
+  content: "·";
+  margin: 0 6px;
+}
+
+.dsh-turn-status-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .dsh-turn-status-label[data-quiet="true"] {
   position: absolute;
   width: 1px;
@@ -1015,6 +1146,8 @@
 
 @media (prefers-reduced-motion: reduce) {
   .dsh-thinking-mark { animation: none; }
+
+  .dsh-disclosure[data-open='true'] > .dsh-body-wrap { animation: none; }
 }
 
 .mp-composer-context-row {
