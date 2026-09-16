@@ -14,10 +14,18 @@ assert(main.includes("fabricSettings?.activation?.mouse_side_button || 'none'"))
 assert(main.includes('requestActivation(mouseActivationReason)'));
 assert(main.includes('pointerPolicy.detectMouseButton'),
   'mouse-button wake remains explicitly enabled by the shared polling policy');
-assert(pointerState.includes('IsDown(5)'));
-assert(pointerState.includes('$buttons -bor 8'));
-assert(pointerState.includes('IsDown(6)'));
-assert(pointerState.includes('$buttons -bor 16'));
+// The XButton reads moved into the C# ButtonsRaw() helper — the PowerShell
+// loop now calls it instead of doing five GetAsyncKeyState round-trips per
+// tick. The contract is unchanged: side buttons 1 and 2 must reach the polled
+// button mask as bits 3 and 4.
+assert(pointerState.includes('if (IsDown(5)) buttons |= 8;'),
+  'the poller must report XButton1 as bit 3 of the button mask');
+assert(pointerState.includes('if (IsDown(6)) buttons |= 16;'),
+  'the poller must report XButton2 as bit 4 of the button mask');
+assert(pointerState.includes('$buttons = [MagicPointerInputState]::ButtonsRaw()'),
+  'the polling loop must source the button mask from ButtonsRaw');
+assert(pointerState.includes("$buttons = $buttons -bor 1"),
+  'a swallowed left button must still be OR-ed into the mask after ButtonsRaw');
 assert(!main.includes("showOverlay('mouse-shake'"));
 assert(!main.includes("const ENABLE_MOUSE_SHAKE = process.env.MAGIC_POINTER_ENABLE_MOUSE_SHAKE === '1';"));
 assert(main.includes('applyConfiguredWakeState'));

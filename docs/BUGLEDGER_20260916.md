@@ -153,6 +153,72 @@ gesture chaining. Baseline measurements in `docs/perf/2026-09-16-baseline.md`.
   containment, and the endpoint contract.
 - **Status**: `fixed`
 
+## Area C — perceived latency (`scripts/selection_bridge.py`)
+
+### BUG-013 — the selection surface never streamed its answer
+- **Where**: `scripts/selection_bridge.py:2895` (`progress_sink`)
+- **What**: `progress_sink` handled ten loop event types — `LoopStart`,
+  `ToolsTruncated`, `TurnStarted`, `TurnFinished`, `BudgetRenewed`,
+  `ToolCallStarted`, `ToolCallFinished`, `Steered`, `FollowupContinued`,
+  `BackendRecovery` — and silently dropped `ModelChunk`. The chain is a plain
+  `if/elif` with no `else`, so the deltas were discarded without a trace.
+- **Why it hurts**: the receiving end was already built and waiting.
+  `electron/main.ts:5799` reacts to `phase=answer_chunk` by calling
+  `appendStageLiveAnswer`, which batches into the conversation turn every
+  300 ms; `conversation_bridge` has always emitted that phase, so the Studio
+  surface streamed normally. The circle-and-point surface — the primary one —
+  showed a spinner and then the entire answer at once. Same model, same turn,
+  two surfaces, only one of them streamed. This is the single largest
+  contributor to "响应起来特别特别慢": the user was not waiting for the answer,
+  they were waiting for the answer *plus* the whole turn, with no text until
+  the end.
+- **Fix**: `StreamChunkBuffer` in `scripts/bridge_progress.py`, shared by both
+  bridges so the two cannot diverge again; `progress_sink` feeds it
+  `ModelChunk` and flushes on `TurnFinished`/`LoopStopped` so the tail of an
+  answer is never stranded in the buffer. The first delta always flushes —
+  time-to-first-token is what the user feels — and later deltas coalesce at
+  120 ms so the stderr line protocol is not flooded with one row per token.
+- **Status**: `fixed` — covered by `tests/bridge_stream_chunks_test.py`
+
+### BUG-014 — `selection_bridge` never imported `time`
+- **Where**: `scripts/selection_bridge.py` (module imports)
+- **What**: the module used no `time` at all, and had no `import time`. The
+  streaming fix above calls `time.perf_counter()`.
+- **Why it hurts**: would have been a `NameError` on the first model delta of
+  every selection turn — the highest-traffic path in the product — while
+  passing a syntax check and every existing test, because the sink is a closure
+  inside a multi-thousand-line function that no test instantiates.
+- **Status**: `fixed` (recorded because the near-miss is the finding: this
+  path has no behavioural test coverage, which is also why BUG-013 survived)
+
+---
+
+## Area D — main-process I/O (`electron/main.ts`)
+
+### BUG-015 — `log()` does synchronous filesystem I/O per call
+- **Where**: `electron/main.ts:301` (`log`)
+- **What**: `fs.mkdirSync(RUNTIME_DIR, { recursive: true })` followed by
+  `fs.appendFileSync(LOG_PATH, ...)` on every invocation, across ~150 call
+  sites — including one per bridge progress record, which is per-event.
+- **Why it hurts**: measured at **1.20 ms per call** (`appendFileSync` alone
+  0.56 ms), on the main process thread — the same thread that services the
+  20 ms pointer poll, every IPC handler, and every bridge progress line.
+  A logging call is not worth blocking the UI for, and the `mkdirSync` was
+  re-checking a directory that had existed for hours.
+- **Fix**: `electron/append_log.ts` — `createBufferedLog`. `log()` becomes a
+  push; lines are written in one batched `appendFileSync` on a 150 ms timer,
+  and the directory is created once. Flushed on `will-quit` and on
+  `process.on('exit')` so a shutdown or a crash does not lose the tail — the
+  tail being the part anyone actually reads. A burst is capped at 5000 pending
+  lines so a runaway logger cannot grow the buffer without bound.
+  Deliberately synchronous on flush rather than `appendFile`: a pending async
+  write can land after the shutdown flush and invert the end of the log.
+- **Compatibility**: the repo's verification scripts poll the log with
+  `wait_for_log(..., timeout=20)` at 150 ms intervals
+  (`scripts/verify_first_run_onboarding.py:151`), so a 150 ms write delay is
+  inside tolerance.
+- **Status**: `fixed` — covered by `tests/append_log_test.ts`
+
 ### BUG-008 — a here-string that is not an argument leaks to stdout
 - **Where**: `scripts/pointer_input_state.ps1` preamble
 - **What**: introducing `$Source = @"…"@` was necessary; a bare `@"…"@` in

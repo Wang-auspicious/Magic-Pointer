@@ -36,6 +36,7 @@ const {
   resolveActiveModelRuntimeConfig,
   selectActiveProfileModel,
 } = require('./model_runtime_config');
+const { createBufferedLog } = require('./append_log');
 const { PreflightRunner } = require('./bootstrap_runner');
 const { buildAsyncPreflightChecks } = require('./preflight_checks');
 const { resolvePythonRuntime, pythonInvocationArgs, pythonSpawnEnvironment } = require('./python_runtime');
@@ -298,13 +299,20 @@ let lastStageResult: { token: string | null; parsed: any } | null = null;
 let dashboardRequestSerial = 0;
 let dashboardOperationQueue = Promise.resolve();
 
+// Buffered: log() is called on hot paths (~150 call sites, including once per
+// bridge progress record) and a synchronous mkdir+append per call measured at
+// 1.20 ms on the same thread that services the pointer poll and every IPC.
+// Lines are queued and written in one batch on a short timer; flushLog() is
+// called on both quit paths so nothing is lost at shutdown.
+const appendLog = createBufferedLog({ filePath: LOG_PATH });
+
 function log(message: unknown) {
-  try {
-    fs.mkdirSync(RUNTIME_DIR, { recursive: true });
-    fs.appendFileSync(LOG_PATH, `${new Date().toISOString()} ${message}\n`, 'utf8');
-  } catch (_) {
-    // Logging must never break the overlay.
-  }
+  appendLog.log(message);
+}
+
+/** Write anything still queued. Safe to call at any point in shutdown. */
+function flushLog() {
+  appendLog.flush();
 }
 
 securityHardening.install({
@@ -4792,8 +4800,15 @@ app.on('will-quit', () => {
   try { tray?.destroy(); } catch (_) {}
   tray = null;
   log('app will quit');
+  // Last thing in the quit path, after every other handler has had its say:
+  // the log is buffered, so anything queued in the final 150 ms is still in
+  // memory and would be lost with the process.
+  flushLog();
 });
 app.on('before-quit', () => { isQuitting = true; });
+// will-quit does not run for every exit path (a crash, or a hard process.exit
+// from a dependency). This is the last synchronous hook Node guarantees.
+process.on('exit', () => { flushLog(); });
 
 ipcMain.on('overlay:renderer-ready', (event: Electron.IpcMainEvent) => {
   if (!isSurfaceSender(event, 'overlay', resultTargetWindow)) return;

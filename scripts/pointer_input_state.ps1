@@ -450,9 +450,18 @@ while ($true) {
         # One malformed tick must not kill the stream: Electron is watching
         # this pipe for liveness, and a dead stream means no pointer state at
         # all. Keep the shape Electron parses, keep the loop, try again.
-        $buttons = 0
-        if ([MagicPointerInputState]::IsSwallowingLeft()) { $buttons = $buttons -bor 1 }
-        [MagicPointerInputState]::EmitSnapshot($buttons)
+        #
+        # The fallback is itself guarded. If it throws too — a closed pipe, a
+        # type that failed to load — an unguarded retry inside `catch` would
+        # propagate out of the loop and take the whole stream down, which is
+        # the one outcome this block exists to prevent.
+        try {
+            $buttons = 0
+            if ([MagicPointerInputState]::IsSwallowingLeft()) { $buttons = $buttons -bor 1 }
+            [MagicPointerInputState]::EmitSnapshot($buttons)
+        } catch {
+            '{"buttons":0,"foregroundApp":"","foregroundHwnd":0,"foregroundProcessId":0,"isWindowMoving":false,"scrollDelta":0,"swallowingLeft":false,"captureArmed":false}'
+        }
     }
     [MagicPointerInputState]::WaitForNextTick($pollIntervalMs)
 }

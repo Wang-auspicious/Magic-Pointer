@@ -24,12 +24,24 @@ function requireCode(source, pattern, contract) {
 }
 
 (function pointerStateCarriesForegroundIdentityInEveryJsonShape() {
-  requireCode(pointerState, /foregroundHwnd\s*=\s*(?:\[int64\])?\s*\$hwnd(?:\.ToInt64\(\))?\b/i,
-    'PowerShell success JSON must expose foregroundHwnd from GetForegroundWindow');
-  requireCode(pointerState, /foregroundProcessId\s*=\s*(?:\[u?int32\]|\[int64\])?\s*\$pidValue\b/i,
-    'PowerShell success JSON must expose foregroundProcessId from GetWindowThreadProcessId');
+  // The snapshot is assembled in the C# helper now rather than in the
+  // PowerShell loop body, because per-tick cmdlets were the poller's dominant
+  // cost. The contract is unchanged: the success shape must carry both
+  // identity fields, each sourced from the right Win32 call, and a fallback
+  // shape must exist that zeroes both.
+  requireCode(pointerState, /hwnd\s*=\s*foreground\.ToInt64\(\)/,
+    'the snapshot must expose foregroundHwnd from GetForegroundWindow');
+  requireCode(pointerState, /GetWindowThreadProcessId\(foreground,\s*out\s+processId\)/,
+    'the snapshot must expose foregroundProcessId from GetWindowThreadProcessId');
+  // The JSON keys are assembled with escaped quotes inside a C# verbatim
+  // string, so match on the key being built from the value it just read
+  // rather than on the exact escaping.
+  requireCode(pointerState, /foregroundHwnd[^\r\n]{0,10}\+\s*hwnd/,
+    'the JSON must carry the foreground HWND it read');
+  requireCode(pointerState, /foregroundProcessId[^\r\n]{0,10}\+\s*processId/,
+    'the JSON must carry the foreground process id it read');
   requireCode(pointerState, /\{(?=[^\r\n}]*"foregroundHwnd":0)(?=[^\r\n}]*"foregroundProcessId":0)[^\r\n}]*\}/,
-    'PowerShell fallback JSON must default both foreground identity fields to zero');
+    'the last-resort fallback JSON must default both foreground identity fields to zero');
 }());
 
 (function mainParsesForegroundIdentityWithSafeDefaults() {
