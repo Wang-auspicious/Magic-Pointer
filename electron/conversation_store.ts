@@ -132,6 +132,13 @@ interface ConversationStoreOptions {
   deferPersist?: boolean;
   /** Coalescing window when `deferPersist` is on. */
   persistDebounceMs?: number;
+  /**
+   * Report a write failure. Called from `flush()`/`persist()` *and* from the
+   * background write, so a store that silently stopped saving has something
+   * watching it. Deliberately bounded (see `reportPersistFailure`): the point
+   * is to be noticed, not to fill the log.
+   */
+  onPersistError?: (error: unknown, context: string) => void;
 }
 
 /**
@@ -140,6 +147,24 @@ interface ConversationStoreOptions {
  * the ~300 ms cadence of the stage's live-answer flush it exists to absorb.
  */
 const CONVERSATION_PERSIST_DEBOUNCE_MS = 1000;
+
+/**
+ * Failure reporting budget. A store on a read-only or full disk fails on every
+ * single mutation; without a ceiling that is a log flood on the same thread.
+ * The first failure always reports, then at most one per minute, then nothing —
+ * the counter (not the log) carries the real total.
+ */
+const MAX_PERSIST_FAILURE_REPORTS = 5;
+const PERSIST_FAILURE_REPORT_INTERVAL_MS = 60_000;
+
+/**
+ * How many times the background write retries itself after a failure before it
+ * stops and waits for the next mutation instead. Without a cap, a disk that is
+ * full or a directory that has gone away turns the debounce timer into a
+ * permanent 1 Hz failing-write loop. The store stays dirty either way, so the
+ * next `persist()`/`flush()` is a retry — this only stops the *self*-retry.
+ */
+const ASYNC_WRITE_RETRY_BUDGET = 3;
 
 interface ProjectRecord {
   root: string;
@@ -240,6 +265,7 @@ function createConversationStore(
     now = () => Date.now(),
     deferPersist = false,
     persistDebounceMs = CONVERSATION_PERSIST_DEBOUNCE_MS,
+    onPersistError = () => {},
   }: ConversationStoreOptions = {
     baseDir: '',
   },
@@ -250,6 +276,90 @@ function createConversationStore(
   let projectItems: ProjectRecord[] | null = null;
   let dirty = false;
   let persistTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // --- failure reporting ---------------------------------------------------
+  let failureCount = 0;
+  let failureReports = 0;
+  let lastFailureReportAt = 0;
+
+  function reportPersistFailure(error: unknown, context: string): void {
+    failureCount += 1;
+    if (failureReports >= MAX_PERSIST_FAILURE_REPORTS) return;
+    const at = now();
+    if (failureReports > 0 && at - lastFailureReportAt < PERSIST_FAILURE_REPORT_INTERVAL_MS) return;
+    failureReports += 1;
+    lastFailureReportAt = at;
+    try {
+      onPersistError(error, context);
+    } catch (_) {
+      // The reporter must not be able to break persistence.
+    }
+  }
+
+  // --- per-conversation serialisation cache --------------------------------
+  //
+  // `persist()` was `JSON.stringify(all conversations)` on every mutation —
+  // measured at 45.7 ms for a 13 MB store, 60.6 ms end-to-end. Only one
+  // conversation actually changed per mutation (the streaming answer), so the
+  // other 49 were re-serialised for nothing. Each conversation is serialised
+  // once and reused until something marks it dirty.
+  interface SerializedConversation {
+    ref: Conversation;
+    json: string;
+    updatedAt: number;
+    turnCount: number;
+    title: string;
+  }
+  const serializedConversations = new Map<string, SerializedConversation>();
+  // Authoritative invalidation: every mutating path marks what it touched.
+  const dirtyConversations = new WeakSet<object>();
+  // Belt and braces for mutations that bypass those paths (a caller holding a
+  // reference from `get()` and mutating it): the structural fields below are
+  // compared as well, and a mismatch forces a re-serialisation. This can only
+  // ever *invalidate* the cache, never wrongly validate it.
+
+  function markDirty(conversation: Conversation | null | undefined): void {
+    if (conversation && typeof conversation === 'object') dirtyConversations.add(conversation);
+  }
+
+  function serializeConversations(): string {
+    const conversations = items || [];
+    const live = new Set<string>();
+    const parts: string[] = [];
+    for (const conversation of conversations) {
+      const id = String(conversation.id);
+      live.add(id);
+      const cached = serializedConversations.get(id);
+      const turnCount = (conversation.turns || []).length;
+      if (
+        cached
+        && cached.ref === conversation
+        && !dirtyConversations.has(conversation)
+        && cached.updatedAt === Number(conversation.updatedAt)
+        && cached.turnCount === turnCount
+        && cached.title === String(conversation.title || '')
+      ) {
+        parts.push(cached.json);
+        continue;
+      }
+      const json = JSON.stringify(conversation);
+      serializedConversations.set(id, {
+        ref: conversation,
+        json,
+        updatedAt: Number(conversation.updatedAt),
+        turnCount,
+        title: String(conversation.title || ''),
+      });
+      dirtyConversations.delete(conversation);
+      parts.push(json);
+    }
+    // Dropped conversations (remove/clear/MAX_CONVERSATIONS trim) must not keep
+    // their JSON alive.
+    for (const id of [...serializedConversations.keys()]) {
+      if (!live.has(id)) serializedConversations.delete(id);
+    }
+    return `[${parts.join(',')}]`;
+  }
 
   function load(): Conversation[] {
     if (items) return items;
@@ -262,11 +372,85 @@ function createConversationStore(
     return items;
   }
 
+  // A synchronous write is the one that must win: it is what `flush()` uses on
+  // the exit paths, and it always serialises the current state.
+  let syncWriteCount = 0;
+  let asyncWritePending = false;
+  let asyncRetryBudget = ASYNC_WRITE_RETRY_BUDGET;
+
   function writeNow(): void {
+    const payload = serializeConversations();
     fs.mkdirSync(baseDir, { recursive: true });
     const tmp = `${file}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify(items || []), 'utf8');
+    fs.writeFileSync(tmp, payload, 'utf8');
     fs.renameSync(tmp, file);
+    syncWriteCount += 1;
+  }
+
+  /**
+   * The debounced write, off the main thread.
+   *
+   * `writeFileSync` of a 13 MB payload measured 19.3 ms — on the same thread as
+   * every IPC and the pointer poll. The coalescing timer exists precisely to
+   * get this off the interactive path, so the I/O moves to the thread pool too.
+   * Ordering is preserved by `syncWriteCount`: if a synchronous flush landed a
+   * newer payload while this was in flight, this one is discarded rather than
+   * renamed over it.
+   */
+  function writeNowAsync(): void {
+    if (asyncWritePending) return;
+    asyncWritePending = true;
+    const startedAtSyncWrite = syncWriteCount;
+    let payload: string;
+    try {
+      payload = serializeConversations();
+    } catch (error) {
+      asyncWritePending = false;
+      dirty = true;
+      reportPersistFailure(error, 'serialize');
+      return;
+    }
+    const tmp = `${file}.tmp.async`;
+    const finish = (error: unknown): void => {
+      asyncWritePending = false;
+      if (!error) {
+        asyncRetryBudget = ASYNC_WRITE_RETRY_BUDGET;
+        return;
+      }
+      dirty = true;
+      reportPersistFailure(error, 'background-write');
+      // Retry on the normal debounce cadence; a transient lock must not lose
+      // the changes that are still only in memory. Bounded, so a permanent
+      // failure goes quiet rather than pulsing a failing write every second.
+      if (persistTimer === null && asyncRetryBudget > 0) {
+        asyncRetryBudget -= 1;
+        persistTimer = setTimeout(() => {
+          persistTimer = null;
+          if (!dirty) return;
+          dirty = false;
+          writeNowAsync();
+        }, persistDebounceMs);
+        if (typeof persistTimer === 'object' && persistTimer !== null && 'unref' in persistTimer) {
+          (persistTimer as unknown as { unref(): void }).unref();
+        }
+      }
+    };
+    fs.mkdir(baseDir, { recursive: true }, (mkdirError: NodeJS.ErrnoException | null) => {
+      if (mkdirError) { finish(mkdirError); return; }
+      fs.writeFile(tmp, payload, 'utf8', (writeError: NodeJS.ErrnoException | null) => {
+        if (writeError) { finish(writeError); return; }
+        if (syncWriteCount !== startedAtSyncWrite) {
+          // A synchronous flush already replaced the file with newer data.
+          // Drop this payload instead of renaming stale bytes over it.
+          asyncWritePending = false;
+          return;
+        }
+        fs.rename(tmp, file, (renameError: NodeJS.ErrnoException | null) => {
+          if (renameError) { finish(renameError); return; }
+          asyncWritePending = false;
+        });
+      });
+    });
   }
 
   /**
@@ -285,14 +469,25 @@ function createConversationStore(
    */
   function persist(): void {
     if (!deferPersist) {
-      writeNow();
+      dirty = true;
+      try {
+        writeNow();
+        dirty = false;
+      } catch (error) {
+        // 落盘失败不能把调用方炸掉。重新标脏，下一次 persist/flush 会再试。
+        reportPersistFailure(error, 'persist');
+      }
       return;
     }
     dirty = true;
+    // A new mutation is a fresh reason to try again.
+    asyncRetryBudget = ASYNC_WRITE_RETRY_BUDGET;
     if (persistTimer !== null) return;
     persistTimer = setTimeout(() => {
       persistTimer = null;
-      flush();
+      if (!dirty) return;
+      dirty = false;
+      writeNowAsync();
     }, persistDebounceMs);
     // Node 在只有定时器挂着的进程里会一直活着；这里不应该拖住退出。
     if (typeof persistTimer === 'object' && persistTimer !== null && 'unref' in persistTimer) {
@@ -306,14 +501,19 @@ function createConversationStore(
       clearTimeout(persistTimer);
       persistTimer = null;
     }
-    if (!dirty) return;
+    // An in-flight background write is *not* a reason to skip the flush: it may
+    // not land before the process exits, and it may be carrying older bytes.
+    // writeNow() bumps syncWriteCount, which makes the background write discard
+    // itself rather than rename over this payload.
+    if (!dirty && !asyncWritePending) return;
     dirty = false;
     try {
       writeNow();
-    } catch (_) {
+    } catch (error) {
       // 落盘失败不能把调用方（往往是退出路径）再炸一次。重新标脏，
       // 下一次 persist/flush 会再试一次。
       dirty = true;
+      reportPersistFailure(error, 'flush');
     }
   }
 
@@ -465,6 +665,7 @@ function createConversationStore(
       // 换到列表最前面：最近碰过的排最上，和人的记忆顺序一致
       conversations.splice(conversations.indexOf(target), 1);
       conversations.unshift(target);
+      markDirty(target);
       persist();
       return target;
     }
@@ -492,6 +693,7 @@ function createConversationStore(
     if (conversations.length > MAX_CONVERSATIONS) {
       conversations.length = MAX_CONVERSATIONS;
     }
+    markDirty(created);
     persist();
     return created;
   }
@@ -581,6 +783,7 @@ function createConversationStore(
       else delete turn.completedAt;
     }
     target.updatedAt = updatedAt;
+    markDirty(target);
     persist();
     return { ok: true, conversation: target };
   }
@@ -609,6 +812,7 @@ function createConversationStore(
     const lastTurn = turns[turns.length - 1];
     if (lastTurn?.pendingInput?.kind === 'permission') delete lastTurn.pendingInput;
     target.updatedAt = now();
+    markDirty(target);
     persist();
     return { ok: true, conversation: target };
   }
@@ -672,6 +876,7 @@ function createConversationStore(
     };
     conversations.unshift(created);
     if (conversations.length > MAX_CONVERSATIONS) conversations.length = MAX_CONVERSATIONS;
+    markDirty(created);
     persist();
     return created;
   }
@@ -840,6 +1045,7 @@ function createConversationStore(
     if (!target) return { ok: false };
     target.title = clean;
     target.titleCustom = true;
+    markDirty(target);
     persist();
     return { ok: true, conversation: target };
   }

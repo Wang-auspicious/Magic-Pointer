@@ -156,6 +156,76 @@ assert.strictEqual(done.caption, '去掉了背景');
   w3.stopAll();
   assert.deepStrictEqual(w3.watching(), []);
 
+  // ---- 闸门：没人看得见卡片时不去起解释器，但回来时必须立刻补看 ----
+  //
+  // 每一次 probe 都是一个全新的 Python 解释器；五分钟的后台任务在原来的
+  // 梯度下要起 95 次进程。闸门关闭时跳过 probe，kick() 负责把攒下的状态
+  // 变化补上——「任务完成仍然被看见」这条不变量靠 kick 保住。
+  {
+    let visible = false;
+    let probes = 0;
+    let status = 'running';
+    const gatedPatches = [];
+    const pending = [];
+    let clock = 0;
+
+    const w = watcher.createTaskWatcher({
+      probe: async () => { probes += 1; return { status }; },
+      probeEnabled: () => visible,
+      idleDelayMs: 15_000,
+      onPatch: (p) => gatedPatches.push(p),
+      now: () => clock,
+      schedule: (fn, ms) => { pending.push({ fn, ms }); return { unref() {} }; },
+      cancelSchedule: () => {},
+      CardModel,
+    });
+    const flush = async () => { for (let i = 0; i < 8; i += 1) await Promise.resolve(); };
+
+    w.watch({ taskId: 'gated-1', cardId: 'card-g' });
+    await flush();
+    assert.strictEqual(probes, 0, '卡片不可见时一次 probe 都不该发生');
+    assert.deepStrictEqual(w.watching(), ['gated-1'], '跳过 probe 不等于放弃这条 watch');
+    assert.strictEqual(pending.length, 1, '闸门关闭时要排下一次，不能停摆');
+    assert.strictEqual(pending[0].ms, 15_000, '闸门关闭时用 idle 间隔重排');
+
+    // 闸门关着的这段时间里任务跑完了，但没人看——补丁不该推（推了也没人看）
+    status = 'succeeded';
+    clock += 20_000;
+    pending.shift().fn();
+    await flush();
+    assert.strictEqual(probes, 0, '闸门仍然关着，还是不该 probe');
+    assert.strictEqual(gatedPatches.length, 0);
+
+    // 用户打开窗口 → kick：必须立刻看到终态
+    visible = true;
+    w.kick();
+    await flush();
+    assert.strictEqual(probes, 1, 'kick 必须立刻放行一次 probe');
+    assert.strictEqual(gatedPatches.length, 1, 'kick 之后积压的终态必须马上变成补丁');
+    assert.strictEqual(gatedPatches[0].patch.state, 'done');
+    assert.deepStrictEqual(w.watching(), [], '终态之后照常停止轮询');
+  }
+
+  // ---- kick 不会让多个在看的任务同时起解释器 ----
+  {
+    const pending = [];
+    let probes = 0;
+    const w = watcher.createTaskWatcher({
+      probe: async () => { probes += 1; return { status: 'running' }; },
+      now: () => 0,
+      schedule: (fn, ms) => { pending.push(ms); return { unref() {} }; },
+      cancelSchedule: () => {},
+    });
+    for (const id of ['a', 'b', 'c']) w.watch({ taskId: id, cardId: `card-${id}` });
+    await Promise.resolve();
+    assert.strictEqual(probes, 3, 'watch() 会立刻看一次');
+    assert.deepStrictEqual(pending, [1000, 1000, 1000], '回到退避节奏');
+    pending.length = 0;
+    w.kick();
+    assert.deepStrictEqual(pending, [200, 400], 'kick 要错峰：第一个立刻、后面依次排开');
+    assert.strictEqual(probes, 4, '错开的是排期，不是少看一次');
+  }
+
   console.log('task watcher test ok');
 })().catch((error) => {
   console.error(error);

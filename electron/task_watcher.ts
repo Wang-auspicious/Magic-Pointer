@@ -26,6 +26,21 @@ function pollDelayMs(elapsedMs: number): number {
   return 8000;
 }
 
+// 没人看着的时候用这个间隔。
+//
+// 每一次 probe 都是一个全新的 Python 解释器（runPythonBridgePromise 起
+// agent_bridge.py），一个跑五分钟的后台任务在原先的梯度下要起 95 次进程。
+// 而卡片只在 stage / 随行窗 / 工作室里存在——三个窗口都不可见的时候，
+// 一次探针的产出没有任何人能看见。所以这时把间隔拉到 15 秒：仍然会看到
+// 终态（保底，防止 kick 漏掉），但不再按秒烧进程。
+//
+// 代价说清楚：卡片不可见期间，任务的终态最多晚 15 秒被观察到；窗口重新
+// 可见时会立刻 kick() 一次，把这个延迟收回去（见 task_watcher 的 kick）。
+const IDLE_DELAY_MS = 15_000;
+
+// kick() 时每个任务之间的错峰间隔。
+const KICK_STAGGER_MS = 200;
+
 const TERMINAL = new Set([
   'succeeded',
   'failed',
@@ -208,6 +223,14 @@ interface WatcherDependencies {
   schedule?: (callback: () => void, delayMs: number) => ScheduleHandle;
   cancelSchedule?: (handle: ScheduleHandle) => void;
   CardModel?: unknown;
+  /**
+   * 便宜的、同步的闸门：返回 false 时这一轮不 probe，直接按 idleDelayMs 排下一次。
+   * 主进程把它接到「是否有任何一个窗口在显示卡片」上。默认永远为 true（测试与
+   * 无窗口上下文保持原来的行为）。
+   */
+  probeEnabled?: () => boolean;
+  /** 闸门关闭时的重排间隔。 */
+  idleDelayMs?: number;
 }
 
 interface WatchEntry {
@@ -229,6 +252,12 @@ interface TaskWatcher {
   stop(taskId: string): void;
   stopAll(): void;
   watching(): string[];
+  /**
+   * 立刻重新看一次所有在看的任务。窗口重新可见时调用：闸门关闭期间攒下的
+   * 状态变化必须马上补上，不能让用户对着旧卡片等下一次 idle 轮询。
+   * 错开排期，避免 N 个任务同时起 N 个解释器。
+   */
+  kick(): void;
 }
 
 function errorDetails(error: unknown): string {
@@ -243,6 +272,8 @@ function createTaskWatcher({
   schedule = (callback, ms) => setTimeout(callback, ms),
   cancelSchedule = (handle) => clearTimeout(handle as NodeJS.Timeout),
   CardModel = null,
+  probeEnabled = () => true,
+  idleDelayMs = IDLE_DELAY_MS,
 }: WatcherDependencies = {}): TaskWatcher {
   const watching = new Map<string, WatchEntry>();
 
@@ -253,10 +284,33 @@ function createTaskWatcher({
     watching.delete(taskId);
   }
 
+  function reschedule(taskId: string, delayMs: number): void {
+    const entry = watching.get(taskId);
+    if (!entry) return;
+    entry.handle = schedule(() => {
+      void tick(taskId);
+    }, delayMs);
+    entry.handle?.unref?.();
+  }
+
   async function tick(taskId: string): Promise<void> {
     const entry = watching.get(taskId);
     if (!entry) return;
     entry.handle = null;
+
+    // 闸门先于 probe：没人看得见卡片的时候，一次完整的 Python 冷启动是纯浪费。
+    // 注意这里只跳过「去看」，不放弃这条 watch——重排后仍然会在 idleDelayMs
+    // 内再试一次，kick() 还会立刻叫醒它。
+    let enabled = true;
+    try {
+      enabled = probeEnabled() !== false;
+    } catch (error) {
+      log(`task watch gate failed task=${taskId} ${errorDetails(error)}`);
+    }
+    if (!enabled) {
+      reschedule(taskId, idleDelayMs);
+      return;
+    }
 
     let task = null;
     try {
@@ -287,11 +341,7 @@ function createTaskWatcher({
       }
     }
 
-    const elapsed = now() - entry.startedAt;
-    entry.handle = schedule(() => {
-      void tick(taskId);
-    }, pollDelayMs(elapsed));
-    entry.handle?.unref?.();
+    reschedule(taskId, pollDelayMs(now() - entry.startedAt));
   }
 
   return {
@@ -316,6 +366,22 @@ function createTaskWatcher({
     },
     watching(): string[] {
       return [...watching.keys()];
+    },
+    kick(): void {
+      // 逐个错开 200ms：一次 kick 往往会命中好几个在看的任务，同时起
+      // 好几个解释器会和用户刚回到前台的这一刻抢 CPU。
+      let index = 0;
+      for (const [taskId, entry] of watching) {
+        const delayMs = index * KICK_STAGGER_MS;
+        index += 1;
+        if (entry.handle) cancelSchedule(entry.handle);
+        entry.handle = null;
+        if (delayMs === 0) {
+          void tick(taskId);
+          continue;
+        }
+        reschedule(taskId, delayMs);
+      }
     },
   };
 }

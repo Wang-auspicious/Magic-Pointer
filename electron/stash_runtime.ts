@@ -2,6 +2,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
 const store = require('./stash_store');
 const { projectRoot } = require('./runtime_paths');
@@ -20,6 +21,12 @@ interface ClipboardLike {
   readImage(): NativeImageLike;
   readText(): string;
   write(payload: { image?: NativeImageLike; text?: string }): void;
+  /**
+   * 编码后的剪贴板位图。拿它当「变没变」的信号，就不必先把整张位图
+   * decode 出来（C-073）。返回空/抛错都当「这个平台给不了信号」处理，
+   * 调用方会退回原来的 readImage() 路径。
+   */
+  readBuffer?(format: string): Buffer | null | undefined;
 }
 
 interface StashSettings {
@@ -95,6 +102,8 @@ function createStashRuntime(options: StashRuntimeOptions) {
   let timer: NodeJS.Timeout | null = null;
   let lastFingerprint: string | null = null;
   let lastTextFingerprint: string | null = null;
+  // 上一次看到的剪贴板位图（编码后）的哈希。null = 还没有信号。
+  let lastClipboardImageDigest: string | null = null;
   // 我们自己回写进剪贴板的路径。下一轮轮询会原样读到它们，
   // 不记住就会把每一次回写都当成一条新的文本采集收进来。
   const ownPaths: string[] = [];
@@ -126,6 +135,30 @@ function createStashRuntime(options: StashRuntimeOptions) {
     const tmp = `${indexPath}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(entries, null, 0), 'utf8');
     fs.renameSync(tmp, indexPath);
+  }
+
+  /**
+   * 剪贴板位图的「变没变」信号——在 readImage() 之前用它。
+   *
+   * 为什么需要：这个轮询是 700ms 一次，而指纹比对发生在 readImage() 和
+   * sampleImage() 的 resize **之后**。于是「剪贴板内容没变」这条最常见的
+   * 路径，每一轮仍然付一次完整的位图解码 + 原生重采样（一张 4K 截图约
+   * 33MB 的原始位图），每秒 1.4 次。而我们自己回写剪贴板时是带着位图的
+   * （见底下 clipboard.write），所以第一次截图之后剪贴板就一直有图。
+   *
+   * 现在改用编码后的 PNG 字节：它比原始位图小一到两个数量级，读出来做一次
+   * 哈希，比 decode 便宜得多。拿不到这个格式就返回 null——调用方会退回
+   * 原来的路径，正确性不受影响，只是没有这份优化。
+   */
+  function clipboardImageDigest(): string | null {
+    if (typeof clipboard.readBuffer !== 'function') return null;
+    try {
+      const buffer = clipboard.readBuffer('image/png');
+      if (!buffer || !buffer.length) return null;
+      return crypto.createHash('sha1').update(buffer).digest('hex');
+    } catch (_) {
+      return null;
+    }
   }
 
   // 便宜的指纹：缩到 16×16 再取每个像素的一个通道
@@ -413,9 +446,16 @@ function createStashRuntime(options: StashRuntimeOptions) {
       // 位图优先：我们自己回写之后剪贴板里图和文本同时存在，
       // 先看图才不会把那条路径当成一段值得收藏的文字。
       if (settings()?.stash?.clipboard === true && formats.some((f: string) => f.startsWith('image/'))) {
+        // 先问便宜的信号，再决定要不要 decode 整张位图。
+        const digest = clipboardImageDigest();
+        if (digest !== null && digest === lastClipboardImageDigest) return;
         const image = clipboard.readImage();
         if (!image.isEmpty()) {
           await ingest(image, 'shot');
+          // ingest 可能把「本地路径 + 位图」回写进剪贴板，那会改变编码后的
+          // 字节；不重新取一次信号，下一轮就会把自己写回的东西当成新内容
+          // 再解码一遍——正是这个缺陷本身。
+          lastClipboardImageDigest = clipboardImageDigest();
           return;
         }
       }
@@ -438,6 +478,8 @@ function createStashRuntime(options: StashRuntimeOptions) {
         const image = clipboard.readImage();
         if (!image.isEmpty()) lastFingerprint = store.fingerprint(sampleImage(image));
         lastTextFingerprint = store.textFingerprint(clipboard.readText());
+        // 启动时先把当前位图的信号记下来，别让第一轮轮询白 decode 一次。
+        lastClipboardImageDigest = clipboardImageDigest();
       } catch (_) {
         // Clipboard access can fail while another application owns it; polling will retry.
       }

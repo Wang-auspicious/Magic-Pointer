@@ -318,8 +318,14 @@ function flushLog() {
 securityHardening.install({
   logger: log,
   onFatal: ({ kind }: { kind: string }) => {
-    try { observability.writeEvent('main.fatal', { kind }); } catch (_) {}
+    try {
+      observability.writeEvent('main.fatal', { kind });
+      // Events are buffered; a fatal handler is the last chance to get this
+      // one on disk. flushEvents() is synchronous and never throws.
+      observability.flushEvents();
+    } catch (_) {}
     log(`fatal handler notified kind=${kind}`);
+    flushLog();
   },
   electron: require('electron'),
 });
@@ -444,17 +450,67 @@ function persistCurrentObjectEpisode(session: any) {
       },
     }],
   };
-  const tempPath = `${currentObjectPath}.tmp`;
+  // The write is deferred past the current tick (see the note on
+  // pendingEpisodeWrite). The payload is serialised *now* so the snapshot can
+  // never change under us between here and the flush.
+  //
+  // `true` therefore means "built and queued", not "on disk" — no caller reads
+  // it (both call sites ignore it), and a later write failure is logged by
+  // writeEpisodeNow rather than swallowed.
+  queueEpisodeWrite(currentObjectPath, `${JSON.stringify(value, null, 2)}\n`);
+  return true;
+}
+
+// C-067: persistCurrentObjectEpisode used to do mkdir + writeFileSync +
+// renameSync synchronously, and `onComplete` calls it between pointerup and
+// `setPanelLayout`/`showStage` — i.e. inside the latency the user experiences
+// as "the bubble finally showed up".
+//
+// Measured on this machine (tools-style bench, payload = one object with the
+// full selected content plus captureAttestation/perceptionTrace):
+//   content=10KB   pretty stringify 0.04ms   writeFileSync+rename 1.39ms
+//   content=100KB  pretty stringify 0.14ms   writeFileSync+rename 1.61ms
+//   content=400KB  pretty stringify 0.87ms   writeFileSync+rename 1.75ms
+// The file I/O is the cost, not the indentation, so this defers the *write*
+// and keeps the pretty-print: current-object.json is a documented, inspected
+// runtime artifact (SECURITY.md, docs/AGENT_INTEGRATION.md) and the indent
+// costs ~0.2 ms at the largest realistic payload.
+//
+// Durability: every reader of this file is a Python process spawned later —
+// fabric_bridge.py's `current_object` operation, app/fabric/hooks.py
+// read_live_episode (a UserPromptSubmit/BeforeAgent hook), and
+// app/fabric/mcp.py. None of them can observe this file in the same tick, and
+// all of them already respect the episode's `expiresAt`. Nothing in the
+// Electron process reads it at all. `flushCurrentObjectEpisode()` runs on both
+// quit paths so a deferred write cannot be lost at shutdown.
+let pendingEpisodeWrite: { filePath: string; payload: string } | null = null;
+let episodeWriteScheduled = false;
+
+function writeEpisodeNow(job: { filePath: string; payload: string }): void {
+  const tempPath = `${job.filePath}.tmp`;
   try {
-    fs.mkdirSync(path.dirname(currentObjectPath), { recursive: true });
-    fs.writeFileSync(tempPath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
-    fs.renameSync(tempPath, currentObjectPath);
-    return true;
+    fs.mkdirSync(path.dirname(job.filePath), { recursive: true });
+    fs.writeFileSync(tempPath, job.payload, 'utf8');
+    fs.renameSync(tempPath, job.filePath);
   } catch (error) {
     try { fs.unlinkSync(tempPath); } catch (_) {}
     log(`current object persist failed ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
-    return false;
   }
+}
+
+function flushCurrentObjectEpisode(): void {
+  episodeWriteScheduled = false;
+  const job = pendingEpisodeWrite;
+  pendingEpisodeWrite = null;
+  if (job) writeEpisodeNow(job);
+}
+
+function queueEpisodeWrite(filePath: string, payload: string): void {
+  // Only the newest state matters; an unflushed earlier write is superseded.
+  pendingEpisodeWrite = { filePath, payload };
+  if (episodeWriteScheduled) return;
+  episodeWriteScheduled = true;
+  setImmediate(flushCurrentObjectEpisode);
 }
 
 function startPointerInputStateStream() {
@@ -941,6 +997,7 @@ function createStageWindow() {
   if (stageWindow && !stageWindow.isDestroyed()) return stageWindow;
   const display = screen.getPrimaryDisplay();
   const bounds = display.bounds;
+  invalidateStageBounds();
   stageReadiness.reset();
   stageWindow = new BrowserWindow({
     x: bounds.x,
@@ -989,16 +1046,50 @@ function createStageWindow() {
   });
   stageWindow.on('closed', () => {
     stageWindow = null;
+    invalidateStageBounds();
     stageReadiness.reset();
   });
   return stageWindow;
+}
+
+// The stage window is created full-screen and `movable`/`resizable` are false,
+// so between display changes it only ever moves in one place: the `setBounds`
+// below. `getBounds()` is a native round trip, and it used to be paid 50 times
+// a second by the pointer poll (audit F7) plus once per hit-region/geometry
+// call. Cache it, keyed on the window instance, and invalidate on the only
+// things that can move it: this `setBounds`, a new window, and the
+// display-added/-removed/-metrics-changed handlers.
+let stageBoundsCache: { window: Electron.BrowserWindow; bounds: Electron.Rectangle } | null = null;
+
+function stageBounds(): Electron.Rectangle | null {
+  if (!stageWindow || stageWindow.isDestroyed()) {
+    stageBoundsCache = null;
+    return null;
+  }
+  if (!stageBoundsCache || stageBoundsCache.window !== stageWindow) {
+    stageBoundsCache = { window: stageWindow, bounds: stageWindow.getBounds() };
+  }
+  return stageBoundsCache.bounds;
+}
+
+function invalidateStageBounds() {
+  stageBoundsCache = null;
+}
+
+/**
+ * For call sites that have already established the stage window is alive.
+ * A destroyed window can only race us between two synchronous statements, so
+ * this is unreachable in practice — but it keeps the type honest.
+ */
+function liveStageBounds(): Electron.Rectangle {
+  return stageBounds() || { x: 0, y: 0, width: 0, height: 0 };
 }
 
 function placeStageOnDisplay(display: Electron.Display) {
   const win = createStageWindow();
   const desired = display?.bounds;
   if (!desired) return win;
-  const current = win.getBounds();
+  const current = stageBounds() || win.getBounds();
   if (
     current.x !== desired.x
     || current.y !== desired.y
@@ -1006,6 +1097,7 @@ function placeStageOnDisplay(display: Electron.Display) {
     || current.height !== desired.height
   ) {
     win.setBounds(desired);
+    invalidateStageBounds();
   }
   return win;
 }
@@ -1047,6 +1139,7 @@ function showStage(payload = {}) {
     if (!win || win.isDestroyed()) return;
     win.webContents.send('stage:show', trustedPayload);
     if (!win.isVisible()) win.showInactive();
+    kickTaskWatch();
   };
   stageReadiness.whenReady(send);
 }
@@ -1187,11 +1280,32 @@ function watchTaskFromEvent(payload: StageUpdatePayload = {}) {
 
 let taskWatcherInstance: ReturnType<typeof createTaskWatcher> | null = null;
 
+// 任务卡片只在这三个窗口里存在（onPatch 往 stage / 随行窗 / 工作室各推一份）。
+// 三个都不可见时，一次探针的产出没有任何人能看见——而每一次探针都是一个
+// 全新的 Python 解释器（audit F27：五分钟的任务要起 95 次进程）。
+function taskCardSurfaceVisible(): boolean {
+  const visible = (win: Electron.BrowserWindow | null) =>
+    Boolean(win && !win.isDestroyed() && win.isVisible());
+  return visible(stageWindow) || visible(companionWindow) || visible(dashboardWindow);
+}
+
+/**
+ * 窗口重新可见时叫醒观察器。
+ *
+ * 闸门关闭期间攒下的状态变化必须马上补上：用户打开工作室时看到的卡片不能
+ * 停在旧状态上。这是「跳过探针」这个优化不破坏「任务完成一定被看见」那条
+ * 不变量的关键——不看的代价最多是 idleDelayMs，前提是回到看得见时立刻补看。
+ */
+function kickTaskWatch() {
+  try { taskWatcherInstance?.kick(); } catch (_) { /* watching must never break a window show */ }
+}
+
 function taskWatcher() {
   if (taskWatcherInstance) return taskWatcherInstance;
   taskWatcherInstance = createTaskWatcher({
     log,
     CardModel,
+    probeEnabled: taskCardSurfaceVisible,
     probe: async (taskId: string) => {
       const parsed = await runPythonBridgePromise(
         { operation: 'status', taskId },
@@ -1229,6 +1343,13 @@ function conversations() {
       // answer flushes every 300ms). Coalescing moves that off the interactive
       // path; flushConversations() on the quit paths covers the tail.
       deferPersist: true,
+      // History that silently stops saving is a data-loss bug with no symptom
+      // until the user reopens the app and it is gone. The store reports its
+      // own failures (bounded, so a full disk cannot flood the log) and this is
+      // the only place that knows how to write them down.
+      onPersistError: (error: unknown, context: string) => {
+        log(`conversation store persist failed context=${context} ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
+      },
     });
   }
   return conversationStore;
@@ -2346,7 +2467,7 @@ function hideStage() {
 // chips) is on screen.
 function sanitizeStageHitRegions(rawRegions: any[]) {
   if (!stageWindow || stageWindow.isDestroyed() || !Array.isArray(rawRegions)) return [];
-  const bounds = stageWindow.getBounds();
+  const bounds = liveStageBounds();
   const regions = [];
   for (const raw of rawRegions.slice(0, 16)) {
     const x = Math.max(0, Math.floor(Number(raw?.x)));
@@ -2374,7 +2495,7 @@ function applyStageShape(dipRegions: Array<{ x: number; y: number; width: number
   const regions = nativeShapeRegions({
     platform: process.platform,
     screenApi: screen,
-    stageBounds: stageWindow.getBounds(),
+    stageBounds: liveStageBounds(),
     regions: dipRegions,
   });
   stageWindow.setShape(regions);
@@ -2922,6 +3043,7 @@ function showCompanion(payload = {}, options: { activate?: boolean } = {}) {
     companionWindow.setBounds(bounds);
     if (options.activate === false) companionWindow.showInactive();
     else companionWindow.show();
+    kickTaskWatch();
     companionWindow.webContents.send('companion:show', payload);
     log('showCompanion');
   };
@@ -2947,6 +3069,7 @@ function showDashboard(payload: Record<string, unknown> = {}, options: { activat
     dashboardWindow.setBounds(bounds);
     if (options.activate === false) dashboardWindow.showInactive();
     else dashboardWindow.show();
+    kickTaskWatch();
     dashboardWindow.webContents.send('dashboard:show', payload);
     dashboardWindow.webContents.send('dashboard:voice-residency-status', latestVoiceRuntimeStatus);
     log(`showDashboard highlight=${payload.highlightItemId || 'none'}`);
@@ -3035,7 +3158,8 @@ function panelGeometryForSession(entry: any) {
   const artifacts = context.artifacts || {};
   const cursor = entry?.cursor || screen.getCursorScreenPoint();
   const display = screen.getDisplayNearestPoint(cursor);
-  const stageBounds = placeStageOnDisplay(display).getBounds();
+  placeStageOnDisplay(display);
+  const stageBounds = liveStageBounds();
   const grounding = normalizeGroundingGeometry({
     pointer: snapshot.target_point,
     pointerSpace: snapshot.target_point_space,
@@ -3939,11 +4063,23 @@ function startMouseShakePolling() {
     pointerInputState.scrollDelta = 0;
     if (overlayWindow && !overlayWindow.isDestroyed() && overlayWindow.isVisible()) sendCursorToOverlay(pos);
     if (stageWindow && !stageWindow.isDestroyed() && stageWindow.isVisible()) {
-      const stageBounds = stageWindow.getBounds();
-      stageWindow.webContents.send('stage:pointer-input', {
+      // The bounds are cached: this used to be a native getBounds() per 20 ms
+      // tick (audit F7). The window is full-screen, movable/resizable false,
+      // and only ever moved by placeStageOnDisplay, which invalidates.
+      //
+      // The send itself stays unconditional on purpose. Dropping "unchanged"
+      // samples looks free but is not: the renderer's `t` is the *timestamp*
+      // of the sample, and VoiceTriggerPolicy.hover advances its dwell clock
+      // only on `tick` events (electron/voice_trigger_policy.ts:103-108). A
+      // stationary hover produces identical x/y/buttons and nothing else, so
+      // a position-equality test would freeze hover-to-talk. Button edges are
+      // the same story: handleVoicePointerInput latches previousPointerButtons
+      // on every sample, so a dropped transition is dropped for good.
+      const bounds = stageBounds();
+      if (bounds) stageWindow.webContents.send('stage:pointer-input', {
         t: now,
-        x: pos.x - stageBounds.x,
-        y: pos.y - stageBounds.y,
+        x: pos.x - bounds.x,
+        y: pos.y - bounds.y,
         // Pick mode asks the target app's automation tree about a point, and
         // that tree speaks screen coordinates, not ours.
         screenX: pos.x,
@@ -4335,10 +4471,12 @@ function beginSelectionSession(reason = 'manual', gesture: SelectionGesture | nu
     // Secure the physical screen before showing any stage surface. Otherwise
     // the voice capsule becomes part of the screenshot and UIA point probes
     // hit our overlay instead of the user's application.
-    stageBounds = placeStageOnDisplay(display).getBounds();
+    placeStageOnDisplay(display);
+    stageBounds = liveStageBounds();
   } else {
     // Shortcut/native-selection paths retain immediate targeting.
-    stageBounds = placeStageOnDisplay(display).getBounds();
+    placeStageOnDisplay(display);
+    stageBounds = liveStageBounds();
     showStage({
       reason,
       selectionSessionToken: entry.token,
@@ -4536,7 +4674,12 @@ if (gotLock) app.whenReady().then(() => {
   log(`app ready pid=${process.pid}`);
   ensureResidentUiaHost();
   for (const eventName of ['display-added', 'display-removed', 'display-metrics-changed']) {
-    screen.on(eventName, () => invalidateRuntimeState('display_configuration_changed'));
+    screen.on(eventName, () => {
+      // The stage window is positioned from display bounds, so a display
+      // change is exactly when the cached geometry stops being true.
+      invalidateStageBounds();
+      invalidateRuntimeState('display_configuration_changed');
+    });
   }
   if (process.platform === 'win32') app.setAppUserModelId('com.magicpointer.desktop');
   fabricSettingsStore = new ElectronSettingsStore(path.join(FABRIC_DATA_DIR, 'fabric-settings.json'));
@@ -4843,18 +4986,22 @@ app.on('will-quit', () => {
   tray = null;
   log('app will quit');
   // Last thing in the quit path, after every other handler has had its say:
-  // both the log and the conversation store are written on a delay now, so
-  // whatever is still queued lives only in memory and would go with the
-  // process. Flush them here, in this order (the store flush may log).
+  // the log, the event log and the conversation store are all written on a
+  // delay now, so whatever is still queued lives only in memory and would go
+  // with the process. Flush them here, in this order (the store flush may log).
   flushConversations();
+  flushCurrentObjectEpisode();
   flushLog();
+  observability.flushEvents();
 });
 app.on('before-quit', () => { isQuitting = true; });
 // will-quit does not run for every exit path (a crash, or a hard process.exit
 // from a dependency). This is the last synchronous hook Node guarantees.
 process.on('exit', () => {
   flushConversations();
+  flushCurrentObjectEpisode();
   flushLog();
+  observability.flushEvents();
 });
 
 ipcMain.on('overlay:renderer-ready', (event: Electron.IpcMainEvent) => {
@@ -4919,6 +5066,7 @@ ipcMain.on('stage:show', (event: Electron.IpcMainEvent) => {
   // Renderer re-asserts visibility once it has content to paint.
   if (!isSurfaceSender(event, 'stage', resultTargetWindow)) return;
   if (stageWindow && !stageWindow.isDestroyed() && !stageWindow.isVisible()) stageWindow.showInactive();
+  kickTaskWatch();
 });
 ipcMain.on('stage:state', (event: Electron.IpcMainEvent, payload: any) => {
   if (!isSurfaceSender(event, 'stage', resultTargetWindow)) return;
