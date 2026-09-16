@@ -692,6 +692,23 @@ const DshChat = (() => {
     return root;
   }
 
+  /* ---- 权限回执（回答一道权限门的那一轮） ----
+     用户点的是审批卡上的一个选项，不是发了一条消息。画成气泡会让它读起来像
+     新起的一轮对话；这里画成一枚回执，说明「谁被授权了/被拒了」。 */
+  function permissionAnswerNode(answer: { decision?: string; rule?: string }): DshNode {
+    const decision = String(answer?.decision || '');
+    const rule = String(answer?.rule || '');
+    const root = h('div', { class: 'dsh-perm-receipt' });
+    root.setAttribute('data-decision', decision);
+    const label = h('span', { class: 'dsh-perm-receipt-label' });
+    attach(label, decision === 'deny' ? '已拒绝' : decision === 'once' ? '允许一次' : '本会话允许');
+    const target = h('code', { class: 'dsh-perm-receipt-rule' });
+    attach(target, rule);
+    attach(root, label);
+    if (rule) attach(root, target);
+    return root;
+  }
+
   /* ---- 回合状态行（turnStatus 渐变字） ----
      参考里运行中的那一行是：橙色星芒 + `12m 59s · 3.6k tokens · Almost done
      thinking…`。计时是前缀，阶段名是句尾——所以这里给计时留一个空槽，
@@ -764,9 +781,12 @@ const DshChat = (() => {
     | { type: 'notice'; text: string }
     | { type: 'chip'; chip: TurnChip };
 
+  /* 叙述走 markdown，和最终答案同一条渲染路径。轮间叙述里模型一样会写
+     `**加粗**` 和反引号——按纯文本画出来的就是字面上的星号，而它出现在
+     用户判断「它在说什么」的那一句里。 */
   function narrationNode(text: string): DshNode {
     const root = h('div', { class: 'dsh-narration' });
-    attach(root, text);
+    attach(root, markdownRenderer.render(text));
     return root;
   }
 
@@ -1031,11 +1051,20 @@ const DshChat = (() => {
     if (phase === 'tool_call' || phase === 'tool_result') {
       const name = String(fields.name || 'tool');
       const done = phase === 'tool_result';
+      /* 参数跟着结果回来（tool_call 那一刻运行时还没有参数），所以这一行在
+         完成时才能写成「Ran curl -L -o x.pdf」。 */
+      const argsRaw = done ? String(fields.args || '') : '';
+      /* 后端是「它是怎么做到的」，对排障有用；耗时不是——参考的工具行不报
+         毫秒，而且被权限门拦下的工具耗时是 0.0，写出来只是一行「0.0ms」。
+         亚毫秒本来就量不出东西，一并丢掉。 */
+      const latencyMs = Number(fields.latency_ms);
       const detail = done
-        ? [fields.backend && fields.backend !== '-' ? fields.backend : '', fields.latency_ms ? `${fields.latency_ms}ms` : '']
-          .filter(Boolean).join(' · ')
+        ? [
+          fields.backend && fields.backend !== '-' ? String(fields.backend) : '',
+          Number.isFinite(latencyMs) && latencyMs >= 1 ? `${Math.round(latencyMs)}ms` : '',
+        ].filter(Boolean).join(' · ')
         : '';
-      return toolRowNode(toolRowModel(name, '', done ? {
+      return toolRowNode(toolRowModel(name, argsRaw, done ? {
         text: detail,
         isError: fields.state === 'error',
       } : undefined));
@@ -1170,6 +1199,7 @@ const DshChat = (() => {
     toolRowNode,
     toolRowModel,
     liveActivityNode,
+    permissionAnswerNode,
     formatRunMeta,
     stateDot,
     bindDelegation,

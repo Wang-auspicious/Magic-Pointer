@@ -49,6 +49,11 @@ interface TurnEntry {
   usedBackend?: string;
   /** 划线轮次的现场证据：截图存档 + 标注图 + 当时读到的内容摘要。追问时随桥回上下文。 */
   evidence?: TurnEvidence;
+  /** 这一轮是「回答一道权限门」，不是用户新起的一句话。
+   *  它带的是决定（allow once / allow / deny），显示层据此画一枚授权回执，
+   *  而不是一个用户气泡——否则读起来像用户又发了一条消息，把权限门和对话
+   *  轮次混成同一件事。 */
+  permissionAnswer?: { decision: 'once' | 'grant' | 'deny'; rule: string };
   /** 结构化提问（ask_user_question / 权限门）随轮存档：会话重开后审批卡靠它 reconstruct。 */
   pendingInput?: TurnPendingInput;
 }
@@ -116,6 +121,7 @@ interface TurnInput {
   hasPendingWork?: unknown;
   permissionGrant?: unknown;
   permissionDeny?: unknown;
+  permissionGrantOnce?: unknown;
   evidence?: unknown;
   pendingInput?: unknown;
   taskContext?: unknown;
@@ -592,6 +598,20 @@ function createConversationStore(
   }
 
   // 一次追问接在同一条对话上；指向了别的对象就另起一条。
+/* 一轮是不是「回答权限门」：看它带了哪种决定。三种互斥，deny 优先——
+   同时给出 allow 和 deny 没有意义，而把 deny 当 allow 记会更糟。 */
+  function permissionAnswerOf(
+    turn: TurnInput,
+  ): { decision: 'once' | 'grant' | 'deny'; rule: string } | undefined {
+    const grant = String(turn.permissionGrant || '').trim();
+    const deny = String(turn.permissionDeny || '').trim();
+    const once = String(turn.permissionGrantOnce || '').trim();
+    if (deny) return { decision: 'deny', rule: deny };
+    if (grant) return { decision: 'grant', rule: grant };
+    if (once) return { decision: 'once', rule: once };
+    return undefined;
+  }
+
   function appendTurn(turn: TurnInput = {}): Conversation {
     const conversations = load();
     const at = turn.capturedAt || now();
@@ -608,6 +628,7 @@ function createConversationStore(
       at,
       startedAt: at,
       ...(isTurnSettled(turn.outcome) ? { completedAt: at } : {}),
+      ...(permissionAnswerOf(turn) ? { permissionAnswer: permissionAnswerOf(turn) } : {}),
       question: String(turn.question || ''),
       answer: String(turn.answer || ''),
       trace: Array.isArray(turn.trace) ? turn.trace.slice(0, 24) : [],

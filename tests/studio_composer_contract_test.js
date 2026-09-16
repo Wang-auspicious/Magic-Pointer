@@ -76,11 +76,11 @@ assert(studio.includes('ConversationControl.failedDraftValue(textarea.value, que
 // Bash prefix grant must survive bridge/store/UI and persist the narrow rule,
 // never widen "always allow pytest" into the whole Bash tool.
 assert(data.includes('prefix?: string'), 'pending permission input must type the Bash prefix');
-assert.match(studio, /pendingPermissionAsk:\s*\{ tool: string; prefix\?: string \}/,
+assert.match(studio, /pendingPermissionAsk:\s*\{ tool: string; prefix\?: string;/,
   'Studio pending permission state must retain the command prefix');
-assert(studio.includes('ConversationControl.permissionGrantRule'),
-  'Studio must build a deterministic Bash(prefix) grant rule');
-assert.match(studio, /Always allow \$\{prefix \|\| tool\}/,
+assert(studio.includes('const grantTarget = prefix || tool;'),
+  'the grant target is the narrow prefix when the runtime supplied one');
+assert.match(studio, /Always allow \$\{grantTarget\}/,
   'the always-allow button must show the granted command prefix');
 assert(studio.includes("make('Allow once'"));
 assert(studio.includes("make('Deny'"));

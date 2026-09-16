@@ -1513,7 +1513,14 @@ async function openConversation(id: string) {
   flow.className = 'dsh-flow';
   for (const [turnIndex, t] of turns.entries()) {
     const branchTarget = { conversationId: c.id, turnIndex };
-    if (t.question) flow.appendChild(DshChat.userNode(String(t.question), t.at, branchTarget));
+    /* 回答权限门的那一轮不带用户气泡：用户点的是卡上的选项，不是发了消息。
+       回执保留了「授权了什么」，所以信息没丢，只是不再是「用户说了这句话」。 */
+    const permissionAnswer = (t as { permissionAnswer?: { decision?: string; rule?: string } }).permissionAnswer;
+    if (permissionAnswer) {
+      flow.appendChild(DshChat.permissionAnswerNode(permissionAnswer));
+    } else if (t.question) {
+      flow.appendChild(DshChat.userNode(String(t.question), t.at, branchTarget));
+    }
     const host = document.createElement('div');
     host.className = 'dsh-flow-item';
     for (const node of DshChat.assistantTurnNode({
@@ -4182,7 +4189,11 @@ document.getElementById('composer-plan-toggle')?.addEventListener('click', () =>
      点击 = 授权随下一条消息生效，文本同时告诉模型继续；
    - ask：ask_user_question 的 options，点哪个就把哪个作为回答发出去。
    审批而已，用户不该需要打字。 */
-let pendingPermissionAsk: { tool: string; prefix?: string } | null = null;
+/* 权限门。`options` 是运行时给的那三个选项原文（"仅这一次允许" / "本会话总是
+   允许 X" / "拒绝"）——用它的文案，但**按位置**映射到 once/grant/deny：
+   选项是模型按 permission_modes 的指令「固定为」这个顺序生成的，顺序就是
+   契约。位置对不上（少于三个）时退回自绘的英文按钮。 */
+let pendingPermissionAsk: { tool: string; prefix?: string; question?: string; options?: string[] } | null = null;
 let pendingPermissionChoice: { grant?: string; deny?: string; once?: string } | null = null;
 let pendingAskInput: { question: string; options: string[] } | null = null;
 
@@ -4221,7 +4232,32 @@ function renderPermissionAsk() {
     const prefix = pendingPermissionAsk.prefix || '';
     const grantRule = ConversationControl.permissionGrantRule(tool, prefix);
     const grantTarget = prefix || tool;
-    question.textContent = `Allow Magic Pointer to run ${grantTarget}?`;
+    question.textContent = pendingPermissionAsk.question || `Allow Magic Pointer to run ${grantTarget}?`;
+    const labels = pendingPermissionAsk.options || [];
+    /* 运行时给了三个选项就用它的原文和顺序：这是用户看到的那句话，也是
+       loop 按顺序解释的那句话。每一个都必须带上决定，否则授权到不了运行时，
+       工具会被再拦一次、再问一遍——那正是「卡不消失」的样子。 */
+    if (labels.length === 3 && grantRule) {
+      const answer = (decision: { grant?: string; deny?: string; once?: string }, text: string) =>
+        submitText(text, decision);
+      actions.replaceChildren(
+        make(labels[0], () => answer(
+          { once: grantRule },
+          `Allow ${grantTarget} once. Continue.`,
+        ), 'primary'),
+        make(labels[1], () => answer(
+          { grant: grantRule },
+          `Always allow ${grantTarget} for this session. Continue.`,
+        )),
+        make(labels[2], () => answer(
+          { deny: tool },
+          `Deny ${tool}. Use another approach.`,
+        )),
+      );
+      card.append(question, actions);
+      host.replaceChildren(card);
+      return;
+    }
     const grantButtons = grantRule ? [
       make(`Always allow ${prefix || tool}`, () => submitText(
         `Always allow ${grantTarget} for this session. Continue.`,
@@ -4883,13 +4919,25 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
 
     const stream = document.getElementById('stream');
     if (!stream) return;
+    /* 发送这一下就要离开首页。等桥返回再离开的话，新建的对话被写进一个
+       `hidden` 的 stream 里——用户盯着首页几十秒，以为消息丢了。对话界面
+       在用户按下回车的那一刻就该出现。 */
+    setStudioHomeVisible(false);
     let flow = stream.querySelector<HTMLElement>('.dsh-flow');
     if (!flow) {
       flow = document.createElement('div');
       flow.className = 'dsh-flow';
       stream.replaceChildren(...(stream.querySelector('.dshw-blank, .view-empty') ? [] : [...stream.children]), flow);
     }
-    flow.appendChild(DshChat.userNode(requestQuestion));
+    /* 回答权限门的那一下也不画用户气泡：用户点的是卡上的选项。 */
+    if (pendingPermissionChoice && (pendingPermissionChoice.grant || pendingPermissionChoice.deny || pendingPermissionChoice.once)) {
+      flow.appendChild(DshChat.permissionAnswerNode({
+        decision: pendingPermissionChoice.deny ? 'deny' : pendingPermissionChoice.once ? 'once' : 'grant',
+        rule: String(pendingPermissionChoice.deny || pendingPermissionChoice.once || pendingPermissionChoice.grant || ''),
+      }));
+    } else {
+      flow.appendChild(DshChat.userNode(requestQuestion));
+    }
     const pending = document.createElement('div');
     pending.className = 'dsh-assistant';
     const pendingBody = document.createElement('div');
@@ -4955,12 +5003,18 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
       const awaiting = response as {
         awaitingUserInput?: boolean;
         pendingInput?: { kind?: string; tool?: string; prefix?: string; question?: string; options?: unknown };
+        /* 见上面 pendingPermissionAsk：运行时的权限选项自带决定，位置即契约。 */
       };
       if (awaiting.awaitingUserInput && awaiting.pendingInput?.kind === 'permission' && awaiting.pendingInput.tool) {
         pendingPermissionAsk = {
           tool: String(awaiting.pendingInput.tool),
           prefix: String(awaiting.pendingInput.prefix || '').trim() || undefined,
+          question: String(awaiting.pendingInput.question || '').trim() || undefined,
+          options: Array.isArray(awaiting.pendingInput.options)
+            ? (awaiting.pendingInput.options as unknown[]).map((o) => String(o)).filter(Boolean)
+            : undefined,
         };
+        pendingAskInput = null;
         renderPermissionAsk();
       } else if (awaiting.awaitingUserInput && Array.isArray(awaiting.pendingInput?.options)
         && (awaiting.pendingInput.options as unknown[]).length >= 2) {

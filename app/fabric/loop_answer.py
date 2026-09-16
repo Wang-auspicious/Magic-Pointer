@@ -73,6 +73,21 @@ def terminal_to_answer(terminal: Terminal, command: str) -> dict[str, Any]:
             visible_answer += "\n\n" + "\n".join(
                 f"{index}. {option}" for index, option in enumerate(options, 1)
             )
+        # 权限门与普通澄清共用 AWAITING_USER 通道，但回答的语义完全不同：澄清
+        # 的选项就是用户要说的话，权限门的选项必须变成 grant/once/deny 重新进
+        # loop，否则工具被拦、重新提问、再被拦。裁掉 kind/tool 会把前者退化成
+        # 后者——Studio 的审批卡和会话存储都在等这两个字段
+        # （conversation_store.recordPermissionDecision 就按 pendingInput.kind
+        # 判断要不要清掉这道门）。
+        pending_input: dict[str, Any] = {"question": question, "options": options}
+        if str(pending.get("kind") or "").strip() == "permission":
+            pending_input["kind"] = "permission"
+            tool = str(pending.get("tool") or "").strip()
+            if tool:
+                pending_input["tool"] = tool
+            prefix = str(pending.get("prefix") or "").strip()
+            if prefix:
+                pending_input["prefix"] = prefix
         return {
             "ok": True,
             "prompt": command,
@@ -80,7 +95,7 @@ def terminal_to_answer(terminal: Terminal, command: str) -> dict[str, Any]:
             "error": None,
             "answerShape": "clarification",
             "awaitingUserInput": True,
-            "pendingInput": {"question": question, "options": options},
+            "pendingInput": pending_input,
             "loopTerminated": False,
             "loopTerminatedReason": None,
             "route": {

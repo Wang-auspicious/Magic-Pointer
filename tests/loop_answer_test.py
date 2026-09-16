@@ -164,6 +164,53 @@ def test_awaiting_user_terminal_maps_to_resumable_question() -> None:
     assert answer["loopTerminated"] is False
 
 
+def test_permission_gate_keeps_its_kind_and_tool_across_the_bridge() -> None:
+    """权限门和普通澄清共用 AWAITING_USER，但回答的语义不同。
+
+    澄清的选项就是用户要说的话；权限门的选项必须变成 grant/once/deny 回到
+    loop 里。裁掉 kind/tool 会把前者退化成后者：Studio 画出普通选项按钮，
+    点下去发出一条普通消息，授权到不了运行时，工具被再拦一次、再问一遍——
+    实测里这就是同一个 curl 连问五轮、审批卡「不消失」的原因。
+    conversation_store.recordPermissionDecision 也按 pendingInput.kind 判断
+    要不要清掉那道门，所以这两个字段是两端共同的契约。"""
+    terminal = Terminal(
+        reason=TransitionReason.AWAITING_USER,
+        message="需要下载这篇论文的 PDF，可以吗？",
+        turns=1,
+        results=(),
+        pending_input={
+            "question": "需要下载这篇论文的 PDF，可以吗？",
+            "options": ["仅这一次允许", "本会话总是允许 Bash", "拒绝"],
+            "kind": "permission",
+            "tool": "Bash",
+            "prefix": "curl -L",
+        },
+    )
+
+    pending = terminal_to_answer(terminal, "下载它")["pendingInput"]
+
+    assert pending["kind"] == "permission"
+    assert pending["tool"] == "Bash"
+    assert pending["prefix"] == "curl -L"
+    assert pending["options"] == ["仅这一次允许", "本会话总是允许 Bash", "拒绝"]
+
+
+def test_a_clarification_never_grows_a_permission_decision() -> None:
+    """反方向也要成立：普通提问不带决定，否则显示层会把它画成审批卡。"""
+    terminal = Terminal(
+        reason=TransitionReason.AWAITING_USER,
+        message="要哪个？",
+        turns=1,
+        results=(),
+        pending_input={"question": "要哪个？", "options": ["A", "B"], "kind": "clarification"},
+    )
+
+    pending = terminal_to_answer(terminal, "要哪个")["pendingInput"]
+
+    assert "kind" not in pending
+    assert "tool" not in pending
+
+
 def _terminal(reason, results=(), message=""):
     from app.agent_runtime.types import Terminal, TransitionReason
 

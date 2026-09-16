@@ -373,3 +373,57 @@ console.log('conversation store test ok (permission memo)');
   assert.strictEqual(reread.turns[reread.turns.length - 1].pendingInput.prefix, 'pytest',
     'permission command prefix must survive a store reload');
 }
+
+// ---- 回答权限门的那一轮不是「用户发了一条消息」 ----
+// 用户点的是审批卡上的选项。如果按普通提问记，重开会话时会看到一条像是用户
+// 自己打的「本会话总是允许 Bash」气泡，而且分不清它是提问还是授权。
+{
+  const conversation = store.appendTurn({
+    question: 'Always allow Bash(curl -L) for this session. Continue.',
+    answer: '好。',
+    outcome: '模型',
+    permissionGrant: 'Bash(curl -L)',
+    object: { app: 'Code.exe', windowTitle: 'perm-grant' },
+  });
+  const turn = conversation.turns[conversation.turns.length - 1];
+  assert.deepStrictEqual(turn.permissionAnswer, { decision: 'grant', rule: 'Bash(curl -L)' },
+    'a grant is recorded as a permission answer, not a plain question');
+  assert.strictEqual(turn.question, 'Always allow Bash(curl -L) for this session. Continue.',
+    'the raw question stays on the record; only the rendering changes');
+
+  const denied = store.appendTurn({
+    question: 'Deny Bash.',
+    outcome: '模型',
+    permissionDeny: 'Bash',
+    object: { app: 'Code.exe', windowTitle: 'perm-deny' },
+  });
+  assert.strictEqual(denied.turns[denied.turns.length - 1].permissionAnswer.decision, 'deny');
+
+  const once = store.appendTurn({
+    question: 'Allow Bash(curl -L) once. Continue.',
+    outcome: '模型',
+    permissionGrantOnce: 'Bash(curl -L)',
+    object: { app: 'Code.exe', windowTitle: 'perm-once' },
+  });
+  assert.strictEqual(once.turns[once.turns.length - 1].permissionAnswer.decision, 'once');
+
+  // 反方向：普通提问不长出这个字段。
+  const plain = store.appendTurn({
+    question: '这是啥',
+    answer: '一个错误。',
+    outcome: '模型',
+    object: { app: 'Code.exe', windowTitle: 'perm-plain' },
+  });
+  assert.strictEqual(plain.turns[plain.turns.length - 1].permissionAnswer, undefined,
+    'a normal turn must not be marked as a permission answer');
+
+  // deny 优先：同时给出 allow 和 deny 时把 deny 当 allow 记会更糟。
+  const both = store.appendTurn({
+    question: 'both', outcome: '模型',
+    permissionGrant: 'Bash(curl)', permissionDeny: 'Bash',
+    object: { app: 'Code.exe', windowTitle: 'perm-both' },
+  });
+  assert.strictEqual(both.turns[both.turns.length - 1].permissionAnswer.decision, 'deny');
+}
+
+console.log('conversation store permission answer ok');

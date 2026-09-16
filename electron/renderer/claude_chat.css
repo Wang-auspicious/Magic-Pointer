@@ -103,11 +103,46 @@
 }
 
 /* 叙述是这段流里的「正文」，动作行是「脚注」：参考里前者明显大于且重于
-   后者，一眼就能分出「它在说什么」和「它做了什么」。 */
+   后者，一眼就能分出「它在说什么」和「它做了什么」。
+   正文走 markdown，所以这里不再 pre-wrap——换行由 markdown 的块结构决定，
+   保留原始空白会和它叠成双倍行距。 */
 .dsh-narration {
-  white-space: pre-wrap;
   font-size: 15px;
   line-height: 23px;
+}
+
+/* ---- 权限回执 ----
+   回答一道权限门不是用户发了一条消息。画成一枚小回执：左边说决定了什么，
+   右边是它落到哪条规则上。（参考里这一步发生在审批卡内部，不入正文；
+   我们保留一枚回执，因为会话重开之后这是唯一能看出「当时授权的是谁」的地方。） */
+.dsh-perm-receipt {
+  display: inline-flex;
+  max-width: 100%;
+  align-self: flex-end;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px;
+  border-radius: var(--mp-r6);
+  color: var(--mp-text-secondary);
+  background: var(--mp-panel-subtle);
+  font-size: 13px;
+}
+
+.dsh-perm-receipt-label {
+  flex: none;
+}
+
+.dsh-perm-receipt-rule {
+  overflow: hidden;
+  color: var(--mp-text);
+  font-family: var(--mp-font-mono);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-perm-receipt[data-decision='deny'] .dsh-perm-receipt-label {
+  color: var(--mp-danger);
 }
 
 .dsh-markdown > :first-child {

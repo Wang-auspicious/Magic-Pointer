@@ -301,10 +301,15 @@ class _ConversationActivitySink:
             failed = bool(getattr(result, "is_error", False))
             backend = str(getattr(result, "used_backend", "") or "")
             latency = float(getattr(result, "latency_ms", 0.0) or 0.0)
+            # args 一起过桥：工具行要能写成「Ran curl -L -o x.pdf …」而不是光
+            # 一个动词。tool_call 那一刻还没有参数（ToolCallStarted 只带
+            # name/id），所以参数只能跟着结果回来。_token 会截断，前缀足够
+            # 认出这条命令。
             completed_ms = self.clock.mark(
                 "tool_result", id=call_id, name=name,
                 state="error" if failed else "done", backend=backend or "-",
                 latency_ms=latency,
+                args=_trajectory_text(getattr(result, "arguments", "")),
             )
             activity = self._tools.get(call_id)
             if activity is None:

@@ -2334,6 +2334,7 @@ async function sendConversation(raw: any = {}, sender?: Electron.WebContents): P
           workspaceRoot: effectiveWorkspaceRoot || undefined,
           permissionGrant: grantNow || undefined,
           permissionDeny: denyNow || undefined,
+          permissionGrantOnce: onceNow || undefined,
         });
         notifyConversationChanged(conversation.id);
         resolve({ ...parsed, conversationId: conversation.id });

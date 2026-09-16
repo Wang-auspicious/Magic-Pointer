@@ -346,4 +346,46 @@ assert(stampedTurn.indexOf('dsh-action-time') > stampedTurn.indexOf('class="dsh-
 assert(!html(DshChat.userNode('问题')).includes('dsh-action-time'),
   'a message with no recorded time must not invent one');
 
+/* ---- 轮间叙述走同一条 markdown 路径 ----
+   模型在叙述里一样会写 `**加粗**`。按纯文本画出来就是字面上的星号，而它出现
+   在用户判断「它在说什么」的那一句里。 */
+const narration = DshChat.assistantTurnNode({
+  answer: '结束。',
+  trajectory: [
+    { kind: 'message', text: '论文是 **StarDojo: Benchmarking** 这一篇。' },
+    { kind: 'tool', name: 'Read', callId: 'r1', state: 'done', text: '{"file_path":"a.md"}', result: 'ok' },
+  ],
+}).map(html).join('');
+assert(narration.includes('<strong>StarDojo: Benchmarking</strong>'),
+  `mid-turn narration must render markdown, got ${narration.slice(0, 400)}`);
+assert(!narration.includes('**StarDojo'),
+  'the literal asterisks must not survive into the transcript');
+
+/* ---- 权限回执 ----
+   回答一道权限门不是用户发了一条消息；画成气泡会把权限门和对话轮次混成
+   同一件事。 */
+const receipt = html(DshChat.permissionAnswerNode({ decision: 'grant', rule: 'Bash(curl -L)' }));
+assert(receipt.includes('class="dsh-perm-receipt"'), 'a permission answer renders as a receipt');
+assert(receipt.includes('本会话允许') && receipt.includes('Bash(curl -L)'),
+  'the receipt names both the decision and the rule it landed on');
+assert(receipt.includes('data-decision="grant"'));
+assert(html(DshChat.permissionAnswerNode({ decision: 'deny', rule: 'Bash' })).includes('已拒绝'));
+assert(html(DshChat.permissionAnswerNode({ decision: 'once', rule: 'Bash' })).includes('允许一次'));
+
+/* ---- 运行中工具行 ----
+   参数只能跟着结果回来（ToolCallStarted 只带 name/id），所以完成时才写成
+   「Ran <命令>」；被权限门拦下的工具耗时是 0.0，写出来只是一行「0.0ms」。 */
+const liveDone = html(DshChat.liveActivityNode({
+  phase: 'tool_result',
+  fields: { name: 'Bash', state: 'done', backend: 'desktop', latency_ms: '0.0', args: '{"command":"curl -L -o a.pdf https://x"}' },
+}));
+assert(liveDone.includes('curl -L -o a.pdf'),
+  `a finished live tool row must name the command, got ${liveDone}`);
+assert(!liveDone.includes('0.0ms'), 'a sub-millisecond latency is not worth printing');
+const liveSlow = html(DshChat.liveActivityNode({
+  phase: 'tool_result',
+  fields: { name: 'Search', state: 'done', backend: 'ripgrep', latency_ms: '5237.3', args: '{"query":"x"}' },
+}));
+assert(liveSlow.includes('5237ms'), `a real latency rounds to whole milliseconds, got ${liveSlow}`);
+
 console.log('studio dsh chat contract test ok');
