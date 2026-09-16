@@ -703,6 +703,7 @@ declare global {
     onShow(cb: (payload: Record<string, unknown>) => void): void;
     onHide(cb: () => void): void;
     onCursor(cb: (payload: Record<string, unknown>) => void): void;
+    onAgentCursor(cb: (payload: Record<string, unknown>) => void): void;
     onGuidePoint(cb: (payload: Record<string, unknown>) => void): void;
     onElementGhosts(cb: (payload: Record<string, unknown>) => void): void;
     guideFinished(): void;

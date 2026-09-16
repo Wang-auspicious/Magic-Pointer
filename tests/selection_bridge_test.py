@@ -1133,7 +1133,7 @@ def test_loop_router_persists_frozen_source_and_locator_before_model(
                 "value": {
                     "snapshotId": "snapshot-w01",
                     "bbox": [120, 240, 320, 80],
-                    "coordinateSpace": "physical-screen-pixels",
+                    "coordinateSpace": "physical_screen_pixels",
                 },
             },
             "limit": 4,

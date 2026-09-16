@@ -590,7 +590,19 @@
     const buttons = Number(payload?.buttons || 0);
     if (![t, x, y, buttons].every(Number.isFinite)) return;
     lastPointerPoint = { x, y };
-    if (Number.isFinite(payload?.screenX) && Number.isFinite(payload?.screenY)) {
+    // stageOriginX/Y is consumed as a PHYSICAL screen origin: both
+    // CaptureProofPolicy.toStageRects and renderScreenPoints subtract it from
+    // a physical coordinate taken off the frozen frame. main sends it directly
+    // (stageOriginX/Y on this payload) because the renderer cannot derive it —
+    // screenX here is DIP, so `screenX - x` produced a DIP origin that only
+    // happened to be right at 100% scale with the display at virtual origin 0.
+    // The subtraction stays as a fallback for a main process that predates the
+    // field; it is wrong at other scales, which is why it is no longer the
+    // primary path.
+    if (Number.isFinite(payload?.stageOriginX) && Number.isFinite(payload?.stageOriginY)) {
+      stageOriginX = Number(payload.stageOriginX);
+      stageOriginY = Number(payload.stageOriginY);
+    } else if (Number.isFinite(payload?.screenX) && Number.isFinite(payload?.screenY)) {
       stageOriginX = Number(payload.screenX) - x;
       stageOriginY = Number(payload.screenY) - y;
     }
@@ -1899,7 +1911,7 @@
     deliveryBox.hidden = true;
     deliveryLabel.textContent = '';
     deliveryCount.textContent = '';
-    deliveryBar.style.width = '0%';
+    deliveryBar.style.transform = 'scaleX(0)';
   }
 
   // Delivery progress mirrors REAL UIA draft-write events only: the bar moves
@@ -1916,7 +1928,7 @@
     deliveryLabel.textContent = progress.label || '正在写入草稿';
     deliveryCount.textContent = `${progress.step}/${progress.totalSteps}`;
     const percent = Math.round((progress.step / progress.totalSteps) * 100);
-    deliveryBar.style.width = `${Math.min(100, Math.max(0, percent))}%`;
+    deliveryBar.style.transform = `scaleX(${Math.min(100, Math.max(0, percent)) / 100})`;
     deliveryBox.hidden = false;
     const anchor = anchorEl.getBoundingClientRect();
     deliveryBox.style.left = `${anchor.left}px`;

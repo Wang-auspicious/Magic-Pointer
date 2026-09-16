@@ -2361,7 +2361,7 @@ def _selection_locator(snapshot: dict[str, Any], app_ctx) -> FragmentLocator:
         {
             "snapshotId": str(snapshot.get("snapshot_id") or ""),
             "bbox": list(bbox) if isinstance(bbox, (list, tuple)) and len(bbox) == 4 else None,
-            "coordinateSpace": "physical-screen-pixels",
+            "coordinateSpace": "physical_screen_pixels",
         },
     )
 
@@ -2434,7 +2434,7 @@ def _initial_task_context(
                 if isinstance(bbox, (list, tuple)) and len(bbox) == 4
                 else None
             ),
-            "coordinateSpace": "physical-screen-pixels",
+            "coordinateSpace": "physical_screen_pixels",
         })
     else:
         locator = _selection_locator(snap, app_ctx)
@@ -2459,7 +2459,7 @@ def _initial_task_context(
                         int(max(xs) - left),
                         int(max(ys) - top),
                     ],
-                    "coordinateSpace": "physical-screen-pixels",
+                    "coordinateSpace": "physical_screen_pixels",
                 },
             ))
     locators = tuple(stroke_locators) if stroke_locators else (locator,)

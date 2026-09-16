@@ -72,6 +72,7 @@ const { FrameCaptureWorkerClient } = require('./frame_capture_worker_client');
 const { CaptureCommitCoordinator } = require('./capture_commit_coordinator');
 const { nativeShapeRegions } = require('./stage_hit_regions');
 const { isSurfaceSender } = require('./ipc_surface_policy');
+const { AgentCursorSurfaces } = require('./agent_cursor_window');
 const { buildGoogleMapsDirectionsUrl, isAllowedGoogleMapsDirectionsUrl } = require('./route_policy');
 const securityHardening = require('./security_hardening');
 const observability = require('./observability');
@@ -118,6 +119,9 @@ function normalizeConversationEffort(value: unknown): string {
 }
 
 let overlayWindow: InstanceType<typeof BrowserWindow> | null = null;
+// 双生鼠标（twin cursor）的独立表面。见 electron/agent_cursor_window.ts 顶部
+// 的三条硬约束：每屏一个窗口、创建后永不移动、底部留 2px。
+let agentCursorSurfaces: InstanceType<typeof AgentCursorSurfaces> | null = null;
 let dashboardWindow: InstanceType<typeof BrowserWindow> | null = null;
 let dashboardBrowserView: InstanceType<typeof WebContentsView> | null = null;
 let onboardingWindow: InstanceType<typeof BrowserWindow> | null = null;
@@ -909,6 +913,26 @@ function initializeUpdateManager({ automatic = true } = {}) {
   });
   refreshTrayMenu();
   return updateManager;
+}
+
+function syncAgentCursorSurfaces() {
+  // 刻意不复用 overlayWindow：ensureFreshGestureOverlay() 每个手势都销毁重建
+  // 它（见上面那段注释），而"手势进行到一半光标消失"比没有光标更糟。Clicky
+  // 把光标层和交互层分成两个窗口，是同一个理由
+  // （OverlayWindow.swift:3184-3189）。
+  if (!agentCursorSurfaces) {
+    agentCursorSurfaces = new AgentCursorSurfaces({
+      rendererFile: path.join(__dirname, 'renderer', 'index.html'),
+      log,
+    });
+  }
+  agentCursorSurfaces.sync();
+}
+
+// 由 Python 侧的动作前置信号（app/computer_operator/windows.py 的
+// ApproachObserver）驱动：先让光标飞过去，落点之后才按下。
+function sendAgentCursorCommand(payload: unknown): boolean {
+  return agentCursorSurfaces ? agentCursorSurfaces.command(payload) : false;
 }
 
 function createOverlayWindow() {
@@ -4076,16 +4100,34 @@ function startMouseShakePolling() {
       // the same story: handleVoicePointerInput latches previousPointerButtons
       // on every sample, so a dropped transition is dropped for good.
       const bounds = stageBounds();
-      if (bounds) stageWindow.webContents.send('stage:pointer-input', {
-        t: now,
-        x: pos.x - bounds.x,
-        y: pos.y - bounds.y,
-        // Pick mode asks the target app's automation tree about a point, and
-        // that tree speaks screen coordinates, not ours.
-        screenX: pos.x,
-        screenY: pos.y,
-        buttons: Number(pointerInputState.buttons || 0),
-      });
+      if (bounds) {
+        // The renderer needs the stage's PHYSICAL screen origin, and it cannot
+        // derive it: every coordinate it is handed here is DIP (Electron's
+        // screen module works in DIP), while the capture-proof rects it maps
+        // are physical pixels straight off the frozen frame. Subtracting a DIP
+        // origin from a physical rect is only correct at 100% scale on a
+        // display whose virtual-screen origin is 0 — everywhere else the proof
+        // bands and [POINT] arrows land at the wrong offset, by exactly the
+        // scale factor. main has both the bounds and the display, so it does
+        // the conversion once, here.
+        const stageDisplay = screen.getDisplayMatching(bounds);
+        const stageScale = Number(stageDisplay?.scaleFactor) > 0
+          ? Number(stageDisplay.scaleFactor)
+          : 1;
+        stageWindow.webContents.send('stage:pointer-input', {
+          t: now,
+          x: pos.x - bounds.x,
+          y: pos.y - bounds.y,
+          // Pick mode asks the target app's automation tree about a point, and
+          // that tree speaks screen coordinates, not ours.
+          screenX: pos.x,
+          screenY: pos.y,
+          // Physical origin of the stage window, for physical->CSS mapping.
+          stageOriginX: Math.round(bounds.x * stageScale),
+          stageOriginY: Math.round(bounds.y * stageScale),
+          buttons: Number(pointerInputState.buttons || 0),
+        });
+      }
     }
     const temporarySurfaceVisible = hasVisibleTemporarySurface()
       || Boolean(overlayWindow && !overlayWindow.isDestroyed() && overlayWindow.isVisible());
@@ -4444,10 +4486,14 @@ function beginSelectionSession(reason = 'manual', gesture: SelectionGesture | nu
   // viewport edge and clamped it into the bottom-right corner.  For
   // multi-stroke sessions the anchor is the FIRST stroke so the capsule
   // appears next to the first selection and never jumps while chaining.
+  // The fallback used to hand the raw physical point back as DIP, which is the
+  // very bug the comment above says was fixed — so on any scaled display, and
+  // only when screenToDipPoint is unavailable, the capsule went back to being
+  // clamped into the bottom-right corner. There is always a correct DIP point
+  // available: the live cursor is already in DIP.
   const releasePointDip = (gesture?.anchorPoint || gesture?.releasePoint)
-    ? (typeof screen.screenToDipPoint === 'function'
-      ? screen.screenToDipPoint({ x: releasePoint.x, y: releasePoint.y })
-      : { x: Number(releasePoint.x) || 0, y: Number(releasePoint.y) || 0 })
+    && typeof screen.screenToDipPoint === 'function'
+    ? screen.screenToDipPoint({ x: releasePoint.x, y: releasePoint.y })
     : liveCursor;
   const targetPoint = releasePointDip;
   const physicalCursor = physicalScreenPoint(screen, targetPoint);
@@ -4679,8 +4725,15 @@ if (gotLock) app.whenReady().then(() => {
       // change is exactly when the cached geometry stops being true.
       invalidateStageBounds();
       invalidateRuntimeState('display_configuration_changed');
+      // 光标表面同样是按屏幕矩形定位的：插拔显示器必须重建。
+      syncAgentCursorSurfaces();
     });
   }
+  syncAgentCursorSurfaces();
+  // 独立于 wiggle 轮询：双生鼠标要在整个桌面会话里跟着指针，而不是只在手势
+  // 唤醒时有。指针没动时闸门会拦掉 IPC，所以空闲成本只有一次
+  // getCursorScreenPoint()。
+  agentCursorSurfaces?.startSampling();
   if (process.platform === 'win32') app.setAppUserModelId('com.magicpointer.desktop');
   fabricSettingsStore = new ElectronSettingsStore(path.join(FABRIC_DATA_DIR, 'fabric-settings.json'));
   credentialStore = new CredentialStore(path.join(FABRIC_DATA_DIR, 'credentials.v1.json'), safeStorage);
@@ -4959,6 +5012,8 @@ app.on('will-quit', () => {
   temporaryDismissShortcutRegistered = false;
   temporaryGestureSubmitShortcutRegistered = false;
   if (mousePollTimer) clearInterval(mousePollTimer);
+  agentCursorSurfaces?.dispose();
+  agentCursorSurfaces = null;
   if (wiggleCalibrationTimer) clearTimeout(wiggleCalibrationTimer);
   voiceRuntime?.shutdown();
   selectionWorkerClient?.shutdown({ force: true });
@@ -5004,6 +5059,11 @@ process.on('exit', () => {
   observability.flushEvents();
 });
 
+ipcMain.on('agent:cursor', (event: Electron.IpcMainEvent, payload: any) => {
+  // 只有 overlay 面可以驱动双生光标，它不是一条通用广播通道。
+  if (!isSurfaceSender(event, 'overlay', resultTargetWindow)) return;
+  sendAgentCursorCommand(payload);
+});
 ipcMain.on('overlay:renderer-ready', (event: Electron.IpcMainEvent) => {
   if (!isSurfaceSender(event, 'overlay', resultTargetWindow)) return;
   overlayReadiness.markReady();
