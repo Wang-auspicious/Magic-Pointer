@@ -50,6 +50,16 @@ class PermissionPresetSpec:
 
 
 PRESETS: dict[str, PermissionPresetSpec] = {
+    # Auto：sandbox 仍收在工作区内，但可逆写不再逐次发问——这是 Claude 里
+    # "Claude handles permission decisions" 的那一档，也是效果表里
+    # ACCEPT_REVERSIBLE 一直没被任何预设绑定的原因所在。它和
+    # danger-full-access 的区别正是「还在不在沙箱里」。
+    "auto": PermissionPresetSpec(
+        sandbox="workspace-write",
+        approval="never",
+        name="自动",
+        description="可逆的写入直接执行，不可逆的操作和越出工作区的动作仍然会问。",
+    ),
     "plan": PermissionPresetSpec(
         sandbox="workspace-write",
         approval="ask",
@@ -82,6 +92,7 @@ PRESETS: dict[str, PermissionPresetSpec] = {
 # workspace-write 落 DEFAULT（可逆写在环内、不可逆问）；danger-full-access
 # 落 BYPASS（购买仍问——那是 MP 自己的红线，不在 DSH 语义内）。
 _PRESET_MODES: dict[str, PermissionMode] = {
+    "auto": PermissionMode.ACCEPT_REVERSIBLE,
     # 计划模式的"先计划后执行"是提示契约（todo_write 列步骤→立即执行→逐步更新），
     # 不是效果门——Codex update_plan 就是这么做的。
     "plan": PermissionMode.DEFAULT,

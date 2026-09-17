@@ -1145,67 +1145,107 @@ function compactTokenCount(value: number): string {
   return `${Math.round(value / 1000)}k`;
 }
 
-/* ---- 左侧跳转条 ----
-   参考里会话左边那条短横：每一条我发出去的消息一枚，点一下滚过去。它是
-   整段对话的缩略图，不是滚动条——位置按消息在全文里的比例定，所以它不随
-   滚动漂移，长会话里一眼能看出「我问了几次、都在哪」。位置算完就不再重排，
-   滚动只改高亮。 */
+/* ---- 左上角的跳转条 ----
+   参考里它不是一条贯穿整屏的轨道，而是钉在正文左上角的一小撮短横：每一条
+   我发出去的消息一枚，叠在一起。鼠标移上去才展开成带标签的列表（`— Session
+   start` / `— 核验完成，构建档案页`），点一行滚过去。
+   以前做成「按全文比例摊在整条左槽上」是错的——那是滚动条的位置，不是
+   参考的形状。 */
+const RAIL_START_LABEL = 'Session start';
+
+function railEntries(): Array<{ label: string; target: HTMLElement | null }> {
+  const stream = document.getElementById('stream');
+  if (!stream) return [];
+  const entries: Array<{ label: string; target: HTMLElement | null }> = [
+    { label: RAIL_START_LABEL, target: null },
+  ];
+  for (const message of Array.from(stream.querySelectorAll<HTMLElement>('.dsh-user'))) {
+    const text = (message.querySelector('.dsh-bubble')?.textContent || '').trim();
+    entries.push({ label: text.split('\n')[0].slice(0, 60) || '未命名', target: message });
+  }
+  /* 只有 Session start 一条时整个控件没有意义——一个没有目的地的跳转条。 */
+  return entries.length > 1 ? entries : [];
+}
+/* 高亮的是「当前视口顶部那一条」。参考里两枚短横一深一浅，深的那枚就是
+   你正看着的那一段。 */
 function syncStreamRailActive() {
   const rail = document.getElementById('stream-rail');
   const stream = document.getElementById('stream');
   if (!rail || !stream) return;
-  const messages = Array.from(stream.querySelectorAll<HTMLElement>('.dsh-user'));
-  if (messages.length === 0) return;
+  const anchors = Array.from(rail.querySelectorAll<HTMLElement>('.dshw-rail-mark'));
+  if (!anchors.length) return;
   const streamTop = stream.getBoundingClientRect().top;
-  const cursor = stream.scrollTop + stream.clientHeight * 0.35;
-  let best = -1;
+  const cursor = stream.scrollTop + 24;
+  let best = 0;
   let bestDistance = Number.POSITIVE_INFINITY;
-  messages.forEach((message, index) => {
-    const offset = message.getBoundingClientRect().top - streamTop + stream.scrollTop;
+  anchors.forEach((mark, index) => {
+    const target = mark.dataset.railIndex === '0' ? null : stream.querySelectorAll<HTMLElement>('.dsh-user')[index - 1];
+    const offset = target
+      ? target.getBoundingClientRect().top - streamTop + stream.scrollTop
+      : 0;
     const distance = Math.abs(offset - cursor);
     if (distance < bestDistance) { bestDistance = distance; best = index; }
   });
-  const ticks = rail.querySelectorAll<HTMLElement>('.dshw-rail-tick');
-  ticks.forEach((tick, index) => {
-    tick.setAttribute('data-active', index === best ? 'true' : 'false');
+  anchors.forEach((mark, index) => {
+    mark.setAttribute('data-active', index === best ? 'true' : 'false');
   });
+}
+
+function railScrollTo(index: number): void {
+  const stream = document.getElementById('stream');
+  if (!stream) return;
+  const reduceMotion = typeof window.matchMedia === 'function'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const behavior: ScrollBehavior = reduceMotion ? 'auto' : 'smooth';
+  if (index === 0) {
+    stream.scrollTo({ top: 0, behavior });
+    return;
+  }
+  const message = stream.querySelectorAll<HTMLElement>('.dsh-user')[index - 1];
+  message?.scrollIntoView({ block: 'start', behavior });
 }
 
 function renderStreamRail() {
   const rail = document.getElementById('stream-rail');
-  const stream = document.getElementById('stream');
-  if (!rail || !stream) return;
-  const messages = Array.from(stream.querySelectorAll<HTMLElement>('.dsh-user'));
-  if (messages.length === 0) {
-    rail.replaceChildren();
+  const marks = document.getElementById('stream-rail-marks');
+  const menu = document.getElementById('stream-rail-menu');
+  if (!rail || !marks || !menu) return;
+  const entries = railEntries();
+  if (!entries.length) {
     rail.hidden = true;
+    marks.replaceChildren();
+    menu.replaceChildren();
     return;
   }
   rail.hidden = false;
-  rail.replaceChildren();
-  const streamTop = stream.getBoundingClientRect().top;
-  const contentHeight = Math.max(1, stream.scrollHeight);
-  const reduceMotion = typeof window.matchMedia === 'function'
-    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  messages.forEach((message, index) => {
-    const tick = document.createElement('button');
-    tick.type = 'button';
-    tick.className = 'dshw-rail-tick';
-    const offset = Math.max(0, message.getBoundingClientRect().top - streamTop + stream.scrollTop);
-    tick.style.setProperty('--mp-rail-pos', (Math.min(1, offset / contentHeight)).toFixed(4));
-    const text = (message.querySelector('.dsh-bubble')?.textContent || '').trim();
-    tick.title = text.slice(0, 120) || `第 ${index + 1} 条`;
-    tick.setAttribute('aria-label', `跳到第 ${index + 1} 条消息`);
-    tick.addEventListener('click', () => {
-      message.scrollIntoView({ block: 'start', behavior: reduceMotion ? 'auto' : 'smooth' });
-    });
-    rail.appendChild(tick);
+  marks.replaceChildren();
+  menu.replaceChildren();
+  entries.forEach((entry, index) => {
+    const mark = document.createElement('span');
+    mark.className = 'dshw-rail-mark';
+    mark.dataset.railIndex = String(index);
+    marks.appendChild(mark);
+
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'dshw-rail-row';
+    row.dataset.railIndex = String(index);
+    const dash = document.createElement('span');
+    dash.className = 'dshw-rail-dash';
+    dash.setAttribute('aria-hidden', 'true');
+    const label = document.createElement('span');
+    label.className = 'dshw-rail-label';
+    label.textContent = entry.label;
+    row.append(dash, label);
+    row.setAttribute('aria-label', `跳到：${entry.label}`);
+    row.addEventListener('click', () => railScrollTo(index));
+    menu.appendChild(row);
   });
   syncStreamRailActive();
 }
 
-/* 流是一轮一轮长出来的，每轮都会改所有消息的位置，所以重新测量要等这一轮
-   画完再做——用 debounce 而不是 rAF，因为一轮里可能连改好几次。 */
+/* 流是一轮一轮长出来的，每轮都会改消息的条数，所以重新数要等这一轮画完再做。
+   用 debounce 而不是 rAF：一轮里可能连改好几次 DOM。 */
 let streamRailTimer = 0;
 function scheduleStreamRail(delay = 80) {
   if (streamRailTimer) window.clearTimeout(streamRailTimer);
@@ -1365,14 +1405,18 @@ function renderUsageMeter(turns: MagicPointerTurn[]) {
     .find((entry) => entry.id === modelCatalog?.current);
   const contextWindow = Number(currentModel?.contextWindow) || 0;
   const latestUsage = [...turns].reverse().find((turn) => turn.modelUsage && typeof turn.modelUsage === 'object')?.modelUsage;
-  const contextTokens = (Number(latestUsage?.inputTokens) || 0) + (Number(latestUsage?.outputTokens) || 0);
-  const contextProgress = contextWindow > 0
-    ? Math.max(0, Math.min(100, Math.round(contextTokens / contextWindow * 100)))
-    : 0;
+  /* 「上下文占了多少」问的是**这一次请求送进去多少**，所以只数输入。
+     以前把输出也加了进来：输出还没被送回去，把它算进窗口占用既说不通，
+     又会把百分比顶到 100%，看上去像一条越界的实心色块。
+     比例本身不夹：真超过窗口就该看得见超过，夹掉的数字是在替数据圆谎。
+     夹的只有进度条的宽度——那条画不出超过 100%。 */
+  const contextTokens = Number(latestUsage?.inputTokens) || 0;
+  const contextRatio = contextWindow > 0 ? contextTokens / contextWindow * 100 : 0;
+  const contextProgress = Math.max(0, Math.min(100, Math.round(contextRatio)));
   button.hidden = false;
   button.style.setProperty('--mp-context-progress', String(contextProgress));
   label.textContent = contextWindow > 0
-    ? `${contextProgress}% context used`
+    ? `${Math.round(contextRatio)}% context used`
     : `${compactTokenCount(totalTokens)} tokens used`;
   button.title = contextWindow > 0
     ? `Context ${contextTokens.toLocaleString()} / ${contextWindow.toLocaleString()} tokens`
@@ -1392,7 +1436,7 @@ function renderUsageMeter(turns: MagicPointerTurn[]) {
   head.append(el('span', 'mp-usage-head-label', 'Context window'));
   const headValue = el('span', 'mp-usage-head-value',
     contextWindow > 0
-      ? `${compactTokenCount(contextTokens)} / ${compactTokenCount(contextWindow)} (${contextProgress}%)`
+      ? `${compactTokenCount(contextTokens)} / ${compactTokenCount(contextWindow)} (${Math.round(contextRatio)}%)`
       : `${compactTokenCount(totalTokens)} tokens`);
   const chev = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   chev.setAttribute('aria-hidden', 'true');
@@ -1435,13 +1479,19 @@ function renderUsageMeter(turns: MagicPointerTurn[]) {
   section.append(arrow);
   popover.append(section);
 
+  /* 两行的条按类别上色，和上面那条分段条同一套颜色：两行都刷成蓝的，读起来
+     像「这两项是一回事」，而它们恰恰是上下文的两半。 */
   const sessionTotal = Math.max(1, inputTokens + outputTokens);
-  for (const [label, value] of [['读取上下文', inputTokens], ['写出内容', outputTokens]] as const) {
+  for (const [kind, label, value] of [
+    ['input', '读取上下文', inputTokens],
+    ['output', '写出内容', outputTokens],
+  ] as const) {
     const row = el('div', 'mp-usage-row');
     row.append(el('span', 'mp-usage-row-label', label));
     row.append(el('span', 'mp-usage-row-value', compactTokenCount(value)));
     const track = el('div', 'mp-usage-row-track');
     const fill = el('div', 'mp-usage-row-fill');
+    fill.setAttribute('data-kind', kind);
     fill.style.width = `${Math.round(value / sessionTotal * 100)}%`;
     track.append(fill);
     row.append(track);
@@ -2002,22 +2052,262 @@ interface ArtifactEntry {
   at?: number;
   conversationId?: string;
 }
+/* 产物页的筛选状态。写在模块级：切走再切回来时 renderArtifacts 会因为
+   host 已有内容而早退，状态必须活得比一次渲染长。 */
+let artifactCache: ArtifactEntry[] = [];
+let artifactScope: 'all' | 'mine' = 'all';
+let artifactKind = '';
+let artifactQuery = '';
+let artifactLayout: 'list' | 'grid' = 'list';
+let artifactViewBound = false;
+
+/* kind 是桥端透传的自由字符串（现网见过 file / text / document_patch）。
+   只给认得的 kind 配中文名和图标，认不得的原样显示——不编类型。 */
+const ARTIFACT_KIND_LABELS: Record<string, string> = {
+  file: '文件',
+  text: '文本',
+  document_patch: '文档补丁',
+  code: '代码',
+  image: '图片',
+};
+
+function artifactKindLabel(kind: string) {
+  return ARTIFACT_KIND_LABELS[kind] || kind;
+}
+
+function artifactKindIcon(kind: string) {
+  if (kind === 'code') return 'ic-code';
+  if (kind === 'document_patch') return 'ic-file-text';
+  if (kind === 'image') return 'ic-img';
+  if (kind === 'text') return 'ic-docs';
+  return 'ic-file';
+}
+
+/* 产物名是落盘内容的第一行，模型经常写成 `**验证结果：已通过。**`。列表里一行
+   标题不能留 Markdown 记号，所以渲染前剥成纯文本：这里不解析结构，只去掉
+   标记符号、保留文字。 */
+function artifactPlainLine(value: unknown, limit = 120) {
+  const text = String(value == null ? '' : value)
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(' ')
+    .replace(/^#{1,6}\s+/, '')
+    .replace(/^>\s?/, '')
+    .replace(/^[-+*]\s+/, '')
+    .replace(/^\d+[.)]\s+/, '')
+    .replace(/!\[([^\]]*)\]\(([^)]*)\)/g, '$1')
+    .replace(/\[([^\]]*)\]\(([^)]*)\)/g, '$1')
+    .replace(/`+([^`]*)`+/g, '$1')
+    .replace(/(\*\*|__)([\s\S]*?)\1/g, '$2')
+    .replace(/(\*|_)([^*_\n]+)\1/g, '$2')
+    .replace(/~~([^~\n]+)~~/g, '$1')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return text.length > limit ? `${text.slice(0, limit - 1)}…` : text;
+}
+
+/* 分组标题要的是参考里的「今天 / 昨天 / 9月13日」。data.ts 的 dayLabel 回的是
+   「9 月 13 日」（带空格），formatTime 当天只回时刻，都对不上，所以单独一个。 */
+function artifactDayKey(at: number) {
+  const date = new Date(at);
+  const today = new Date();
+  if (date.toDateString() === today.toDateString()) return '今天';
+  if (date.toDateString() === new Date(today.getTime() - 86400000).toDateString()) return '昨天';
+  return `${date.getMonth() + 1}月${date.getDate()}日`;
+}
+
+function artifactMatches(entry: ArtifactEntry) {
+  if (artifactScope === 'mine' && !String(entry.artifactId || '').trim()) return false;
+  if (artifactKind && String(entry.kind || '') !== artifactKind) return false;
+  if (artifactQuery) {
+    const haystack = `${entry.name || ''} ${entry.summary || ''} ${entry.from || ''}`.toLowerCase();
+    if (!haystack.includes(artifactQuery)) return false;
+  }
+  return true;
+}
+
+function artifactRowMarkup(entry: ArtifactEntry) {
+  const kind = String(entry.kind || '');
+  const name = artifactPlainLine(entry.name) || artifactPlainLine(entry.summary) || '未命名产物';
+  const meta = [
+    entry.from ? `来自「${entry.from}」` : '',
+    Number(entry.revision) > 0 ? `revision ${Number(entry.revision)}` : '',
+    formatTime(entry.at),
+  ].filter(Boolean).join(' · ');
+  const openAttrs = entry.artifactId
+    ? `data-artifact-id="${esc(entry.artifactId)}" data-artifact-conversation="${esc(entry.conversationId)}"`
+    : `data-open="${esc(entry.conversationId)}"`;
+  return `<button type="button" class="mp-artifact-row" ${openAttrs}>
+      <span class="mp-artifact-tile" data-kind="${esc(kind)}" aria-hidden="true">${icon(artifactKindIcon(kind))}</span>
+      <span class="mp-artifact-name">${esc(name)}</span>
+      <span class="mp-artifact-meta">${esc(meta)}</span>
+    </button>`;
+}
+
+/* 空态照参考的克制写法：只有一行灰字，没有插画、没有那颗撑满页面的图标。 */
+function artifactEmptyMarkup(message: string) {
+  return `<p class="mp-artifact-empty">${esc(message)}</p>`;
+}
+
+function closeArtifactKindMenu() {
+  const menu = document.getElementById('artifact-kind-menu');
+  if (menu) menu.hidden = true;
+  document.getElementById('artifact-kind-trigger')?.setAttribute('aria-expanded', 'false');
+}
+
+function paintArtifactToolbar(list: ArtifactEntry[]) {
+  const kinds = Array.from(new Set(list.map((entry) => String(entry.kind || '')).filter(Boolean))).sort();
+  if (artifactKind && !kinds.includes(artifactKind)) artifactKind = '';
+  const menu = document.getElementById('artifact-kind-menu');
+  if (menu) {
+    menu.innerHTML = [''].concat(kinds).map((kind) => {
+      const label = kind ? artifactKindLabel(kind) : '全部类型';
+      const count = kind ? list.filter((entry) => String(entry.kind || '') === kind).length : list.length;
+      return `<button type="button" role="menuitemradio" aria-checked="${kind === artifactKind ? 'true' : 'false'}"
+        data-artifact-kind="${esc(kind || '__all__')}"><span>${esc(label)}</span><em>${count}</em></button>`;
+    }).join('');
+  }
+  const kindLabel = document.getElementById('artifact-kind-label');
+  if (kindLabel) kindLabel.textContent = artifactKind ? artifactKindLabel(artifactKind) : '全部类型';
+  for (const tab of document.querySelectorAll<HTMLElement>('[data-artifact-scope]')) {
+    const on = tab.dataset.artifactScope === artifactScope;
+    tab.classList.toggle('is-on', on);
+    tab.setAttribute('aria-pressed', String(on));
+  }
+  const layout = document.getElementById('artifact-layout-toggle');
+  if (layout) {
+    const grid = artifactLayout === 'grid';
+    const text = grid ? '切换为列表布局' : '切换为网格布局';
+    layout.setAttribute('aria-pressed', String(grid));
+    layout.setAttribute('aria-label', text);
+    layout.setAttribute('title', text);
+  }
+  const host = document.getElementById('art-list');
+  if (host) host.dataset.layout = artifactLayout;
+}
+
+function paintArtifacts() {
+  const host = document.getElementById('art-list');
+  if (!host) return;
+  paintArtifactToolbar(artifactCache);
+  if (!artifactCache.length) {
+    host.innerHTML = artifactEmptyMarkup('还没有产物。Agent 生成并落盘的文档、代码与草稿会出现在这里。');
+    return;
+  }
+  const filtered = artifactCache.filter(artifactMatches);
+  if (!filtered.length) {
+    host.innerHTML = artifactEmptyMarkup('没有匹配的产物。');
+    return;
+  }
+  // 分组按「第一次出现的日期」排序，缓存本身已按 at 从新到旧，所以组序和组内
+  // 顺序都不需要再排一次。
+  const groups: Array<{ label: string; items: ArtifactEntry[] }> = [];
+  const byLabel = new Map<string, ArtifactEntry[]>();
+  for (const entry of filtered) {
+    const at = Number(entry.at);
+    const label = Number.isFinite(at) && at > 0 ? artifactDayKey(at) : '更早';
+    let bucket = byLabel.get(label);
+    if (!bucket) {
+      bucket = [];
+      byLabel.set(label, bucket);
+      groups.push({ label, items: bucket });
+    }
+    bucket.push(entry);
+  }
+  host.innerHTML = groups.map((group) => `<div class="mp-artifact-group">
+    <div class="mp-artifact-group-label">${esc(group.label)}</div>
+    ${group.items.map((entry) => artifactRowMarkup(entry)).join('')}
+  </div>`).join('');
+}
+
+/* 工具条是真的在筛东西：tab / 类型 / 搜索 / 布局四种状态都落到同一份缓存上。
+   行本身的打开动作仍由 studio.ts 既有的 document 委托处理（[data-artifact-id]
+   与 [data-open]）。 */
+function bindArtifactView() {
+  if (artifactViewBound) return;
+  const view = document.getElementById('view-artifacts');
+  const trigger = document.getElementById('artifact-kind-trigger');
+  const menu = document.getElementById('artifact-kind-menu');
+  const searchToggle = document.getElementById('artifact-search-toggle');
+  const searchField = document.getElementById('artifact-search-field');
+  const searchInput = document.getElementById('artifact-search-input') as HTMLInputElement | null;
+  const layoutToggle = document.getElementById('artifact-layout-toggle');
+  if (!view || !trigger || !menu || !searchToggle || !searchField || !searchInput || !layoutToggle) return;
+  artifactViewBound = true;
+
+  const setSearchOpen = (open: boolean) => {
+    searchField.hidden = !open;
+    searchToggle.setAttribute('aria-expanded', String(open));
+    if (open) searchInput.focus();
+    else if (artifactQuery) {
+      artifactQuery = '';
+      searchInput.value = '';
+      paintArtifacts();
+    }
+  };
+
+  view.addEventListener('click', (event) => {
+    const target = event.target as Element | null;
+    const scope = target?.closest<HTMLElement>('[data-artifact-scope]');
+    if (scope) {
+      artifactScope = scope.dataset.artifactScope === 'mine' ? 'mine' : 'all';
+      closeArtifactKindMenu();
+      paintArtifacts();
+      return;
+    }
+    if (target?.closest('#artifact-layout-toggle')) {
+      artifactLayout = artifactLayout === 'grid' ? 'list' : 'grid';
+      paintArtifacts();
+      return;
+    }
+    if (target?.closest('#artifact-search-toggle')) {
+      setSearchOpen(Boolean(searchField.hidden));
+      return;
+    }
+    const option = target?.closest<HTMLElement>('[data-artifact-kind]');
+    if (option) {
+      const value = String(option.dataset.artifactKind || '');
+      artifactKind = value === '__all__' ? '' : value;
+      closeArtifactKindMenu();
+      paintArtifacts();
+      return;
+    }
+    if (target?.closest('#artifact-kind-trigger')) {
+      const open = menu.hidden;
+      closeArtifactKindMenu();
+      if (open) {
+        menu.hidden = false;
+        trigger.setAttribute('aria-expanded', 'true');
+      }
+      return;
+    }
+    closeArtifactKindMenu();
+  });
+
+  searchInput.addEventListener('input', () => {
+    artifactQuery = searchInput.value.trim().toLowerCase();
+    paintArtifacts();
+  });
+
+  document.addEventListener('click', (event) => {
+    if (!view.contains(event.target as Node)) closeArtifactKindMenu();
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    closeArtifactKindMenu();
+    if (!searchField.hidden) setSearchOpen(false);
+  });
+}
+
 async function renderArtifacts(force = false) {
+  bindArtifactView();
   const host = document.getElementById('art-list');
   if (!host || (host.childElementCount && !force)) return;
   const list = (await Data.artifacts()) as ArtifactEntry[];
-  if (!list.length) {
-    host.innerHTML = emptyStateMarkup('ic-docs', '还没有产物', 'Agent 生成并落盘的文档、代码、表格与可编辑草稿会集中出现在这里。', { label: '去对话创建', view: 'chat' });
-    return;
-  }
-  host.innerHTML = list.map((a, i) => `<button class="card artifact enter" ${a.artifactId
-      ? `data-artifact-id="${esc(a.artifactId)}" data-artifact-conversation="${esc(a.conversationId)}"`
-      : `data-open="${esc(a.conversationId)}"`}
-      style="animation-delay:${Math.min(i,6)*40}ms">
-    <span class="tile">${icon('ic-code')}</span>
-    <span class="side-text"><span class="name">${esc(a.name)}</span>
-      <span class="meta">${formatTime(a.at)} · ${a.revision ? `revision ${a.revision} · ` : ''}来自「${esc(a.from || '')}」</span></span>
-  </button>`).join('');
+  artifactCache = list.slice().sort((left, right) => (Number(right.at) || 0) - (Number(left.at) || 0));
+  paintArtifacts();
 }
 
 const artifactEditor = ArtifactEditor.createArtifactEditor({
@@ -4528,6 +4818,9 @@ function renderComposerAttachments() {
 interface PermPresetOption {
   value: string; name: string; label: string; description: string; glyph: string;
   confirm?: { title: string; description: string };
+  badge?: string;
+  action?: string;
+  shortcut?: string;
 }
 interface PermPresetsModule {
   PRESETS: PermPresetOption[];
@@ -4553,7 +4846,13 @@ function closePermissionMenu() {
 function openPermissionMenu() {
   const menu = document.getElementById('composer-permission-menu');
   if (!menu) return;
-  menu.replaceChildren(...permPresets.PRESETS.map(option => {
+  /* 参考里这枚菜单的第一行是分组标题 `Mode`，行首不放图标，行尾是数字快捷键，
+     当前档在编号前面打一个勾；Bypass 那一行没有编号，右侧改放一个 Enable。
+     以前的版本是「行首图标 + 行尾只打勾」，形状对不上。 */
+  const heading = document.createElement('div');
+  heading.className = 'dshw-perm-heading';
+  heading.textContent = 'Mode';
+  const rows = permPresets.PRESETS.map(option => {
     const row = document.createElement('button');
     row.type = 'button';
     const selected = option.value === composerPreset;
@@ -4561,22 +4860,46 @@ function openPermissionMenu() {
     row.setAttribute('role', 'option');
     row.setAttribute('aria-selected', String(selected));
     row.dataset.permValue = option.value;
+    if (option.shortcut) row.dataset.permKey = option.shortcut;
     row.title = option.description;
-    const glyph = document.createElement('span');
-    glyph.className = 'dshw-perm-row-glyph';
-    glyph.innerHTML = permPresets.presetSvg(option);
     const text = document.createElement('span');
     text.className = 'dshw-perm-row-text';
     const name = document.createElement('span');
+    name.className = 'dshw-perm-row-name';
     name.textContent = option.label;
+    if (option.badge) {
+      const badge = document.createElement('span');
+      badge.className = 'dshw-perm-badge';
+      badge.textContent = option.badge;
+      name.appendChild(badge);
+    }
     const desc = document.createElement('small');
     desc.textContent = option.description;
     text.append(name, desc);
-    row.append(glyph, text);
-    if (selected) row.appendChild(selectedCheck());
+    row.append(text);
+    const trail = document.createElement('span');
+    trail.className = 'dshw-perm-trail';
+    if (option.action) {
+      /* 有 action 的行没有编号：它不是「切过去」，是一次要确认的开启。 */
+      const action = document.createElement('span');
+      action.className = 'dshw-perm-action';
+      action.textContent = option.action;
+      trail.appendChild(action);
+    } else {
+      if (selected) trail.appendChild(selectedCheck());
+      if (option.shortcut) {
+        const key = document.createElement('span');
+        key.className = 'dshw-perm-key';
+        key.textContent = option.shortcut;
+        trail.appendChild(key);
+      }
+    }
+    row.appendChild(trail);
     return row;
-  }));
+  });
+  menu.replaceChildren(heading, ...rows);
   const opened = positionAnchoredPopover('composer-permission-menu', 'composer-permission');
+  bindDigitShortcuts(menu, 'permKey');
   requestAnimationFrame(() => opened?.querySelector<HTMLButtonElement>('[aria-selected="true"]')?.focus());
 }
 
@@ -4895,7 +5218,7 @@ async function openModelMenu() {
   // 可见反馈；否则网关慢半秒，用户就会连续点击并在返回瞬间把菜单关掉。
   menu.replaceChildren(...modelMenuRows(modelCatalog));
   positionAnchoredPopover('composer-model-menu', 'composer-model');
-  bindModelShortcuts(menu);
+  bindDigitShortcuts(menu, 'modelKey');
   let catalog: MagicPointerModelCatalog | null = null;
   try {
     catalog = await Data.models();
@@ -4918,11 +5241,13 @@ async function openModelMenu() {
 
 /* 菜单打开时按 1..9 直接选中对应模型——行右端写着的那个数字要是按不动，
    就只是一个装饰。监挂在 document 上、菜单一关就摘掉，避免和输入框抢键。 */
-function bindModelShortcuts(menu: HTMLElement): void {
+/* 菜单打开时按数字直接选。模型菜单和 Mode 菜单共用这一份——两者的区别只在
+   属性名，复制一遍的话「菜单关掉要解绑」这个容易漏的收尾就会漏第二次。 */
+function bindDigitShortcuts(menu: HTMLElement, attribute: 'modelKey' | 'permKey'): void {
   const onKey = (event: KeyboardEvent) => {
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     if (!/^[1-9]$/.test(event.key)) return;
-    const row = menu.querySelector<HTMLElement>(`[data-model-key="${event.key}"]`);
+    const row = menu.querySelector<HTMLElement>(`[data-${attribute}="${event.key}"]`);
     if (!row) return;
     event.preventDefault();
     event.stopPropagation();
@@ -5320,10 +5645,27 @@ function setComposerRunningState(running: boolean) {
     submit.classList.toggle('is-stop', running);
     submit.title = running ? 'Stop' : 'Send';
     submit.setAttribute('aria-label', running ? 'Stop' : 'Send');
-    /* 参考里发送键画的是回车符号（↵），不是向上箭头：它表达的是「提交这一行」，
-       不是「往上送」。 */
-    const use = submit.querySelector('use');
-    use?.setAttribute('href', running ? '#ic-stop' : '#ic-corner-down-left');
+    /* 空闲时是 Claude 自己的 send 字形（字体图标）。跑起来要换成方块停止键，
+       而字体里没有对应的码位，所以只有运行态走自绘的 svg——两态外形差别够大，
+       值得为它留一个例外。 */
+    const hasStop = Boolean(submit.querySelector('use[href="#ic-stop"]'));
+    if (running !== hasStop) {
+      submit.replaceChildren();
+      if (running) {
+        const stop = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        stop.setAttribute('width', '20');
+        stop.setAttribute('height', '20');
+        stop.setAttribute('aria-hidden', 'true');
+        const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+        use.setAttribute('href', '#ic-stop');
+        stop.appendChild(use);
+        submit.appendChild(stop);
+      } else {
+        const api = globalThis as unknown as { CdsIcons?: { html?: (name: string, size?: string) => string } };
+        const markup = typeof api.CdsIcons?.html === 'function' ? api.CdsIcons.html('send') : '';
+        if (markup) submit.insertAdjacentHTML('afterbegin', markup);
+      }
+    }
   }
   /* 运行时右下角那个环跟着转：它是「还在动」，不是「用了多少」。 */
   document.getElementById('composer-context')?.setAttribute('data-state', running ? 'running' : 'idle');

@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="claude_tokens.css?v=35" />
   <link rel="stylesheet" href="claude_shell.css?v=34" />
   <link rel="stylesheet" href="claude_chat.css?v=34" />
+  <link rel="stylesheet" href="studio_artifacts.css?v=1" />
 </head>
 <body class="studio">
   <div class="dshw-frame mp-shell" id="shell" data-view="chat" data-sidebar="expanded">
@@ -219,7 +220,10 @@
           <div class="dshw-stream" id="stream">
             <div class="dshw-blank" aria-hidden="true"></div>
           </div>
-          <div class="dshw-rail" id="stream-rail" hidden></div>
+          <div class="dshw-rail" id="stream-rail" hidden>
+            <div class="dshw-rail-marks" id="stream-rail-marks" aria-hidden="true"></div>
+            <div class="dshw-rail-menu" id="stream-rail-menu" role="menu" aria-label="跳到某一段"></div>
+          </div>
           <div class="dshw-trajectory-seat" id="trajectory" hidden></div>
 
           <div class="dshw-plan" id="composer-plan" hidden>
@@ -389,7 +393,37 @@
         <div class="stash-list" id="stash-list" hidden></div>
       </section>
 
-      <section class="dshw-view" id="view-artifacts" hidden><div class="view-body" id="art-list"></div></section>
+      <!-- 产物页照 claude.ai 的 Artifacts 页搭骨架：标题（页头，衬线）→ tab 行 +
+           右侧工具条 → 按日期分组的一行一条。参考里的推广卡和「Make something
+           new」模板行在这里没有数据，不做。 -->
+      <section class="dshw-view" id="view-artifacts" hidden>
+        <div class="mp-artifacts">
+          <div class="mp-artifacts-bar">
+            <div class="mp-artifacts-tabs" role="group" aria-label="产物范围">
+              <button type="button" class="mp-artifact-tab is-on" data-artifact-scope="all" aria-pressed="true">全部</button>
+              <button type="button" class="mp-artifact-tab" data-artifact-scope="mine" aria-pressed="false">我的</button>
+            </div>
+            <div class="mp-artifacts-tools">
+              <button type="button" class="mp-artifact-tool" id="artifact-search-toggle" aria-label="搜索产物" title="搜索产物" aria-expanded="false" aria-controls="artifact-search-field">
+                <svg aria-hidden="true"><use href="#ic-search" /></svg>
+              </button>
+              <button type="button" class="mp-artifact-tool" id="artifact-layout-toggle" aria-label="切换为网格布局" title="切换为网格布局" aria-pressed="false">
+                <svg aria-hidden="true"><use href="#ic-layout-grid" /></svg>
+              </button>
+              <button type="button" class="mp-artifact-kind" id="artifact-kind-trigger" aria-label="按类型筛选产物" aria-haspopup="menu" aria-expanded="false" aria-controls="artifact-kind-menu">
+                <span id="artifact-kind-label">全部类型</span>
+                <svg aria-hidden="true"><use href="#ic-chev" /></svg>
+              </button>
+              <div class="mp-artifact-kind-menu" id="artifact-kind-menu" role="menu" aria-label="产物类型" hidden></div>
+            </div>
+          </div>
+          <label class="mp-artifact-search" id="artifact-search-field" hidden>
+            <span class="mp-artifact-search-glyph" aria-hidden="true"><svg><use href="#ic-search" /></svg></span>
+            <input type="search" id="artifact-search-input" autocomplete="off" placeholder="搜索产物名称或来源" aria-label="搜索产物名称或来源" />
+          </label>
+          <div class="view-body" id="art-list" data-layout="list"></div>
+        </div>
+      </section>
 
       <!-- 设置采用 Claude Desktop 的双栏 sheet：左侧目录，右侧平铺设置。 -->
       <section id="view-settings" hidden>

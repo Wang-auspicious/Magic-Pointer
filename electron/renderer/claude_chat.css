@@ -1040,55 +1040,90 @@
   border-left: 1px solid var(--mp-rule);
 }
 
-/* ---- 左侧跳转条 ----
-   每条用户消息一枚小卡。位置按消息在全文里的比例定，所以它读起来是整段
-   对话的缩略图：长会话里一眼看出问了几次、都在哪一段。 */
+/* ---- 左上角的跳转条 ----
+   钉在正文左上角的一小撮短横，不是一条贯穿整屏的轨道。收起来时只有横线，
+   鼠标移上去才展开成带标签的列表——参考里就是这个两态。 */
 .dshw-rail {
   position: absolute;
-  z-index: 20;
-  top: 12px;
-  bottom: 12px;
-  left: 6px;
-  width: 20px;
-  pointer-events: none;
+  z-index: 25;
+  top: 14px;
+  left: 10px;
+  display: flex;
+  align-items: flex-start;
 }
 
-.dshw-rail-tick {
-  position: absolute;
-  left: 0;
-  display: grid;
-  width: 18px;
-  height: 30px;
-  place-items: center;
-  border: 1px solid var(--mp-rule);
-  border-radius: var(--mp-r5);
-  background: var(--mp-panel);
-  pointer-events: auto;
-  /* 比例存成无单位数，才能和 (100% - 卡片高) 相乘——百分比和百分比相乘在
-     calc 里是不合法的。 */
-  top: calc(var(--mp-rail-pos, 0) * (100% - 30px));
-  transition: border-color var(--mp-dur-fast), background-color var(--mp-dur-fast);
+.dshw-rail-marks {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 5px 6px;
 }
 
-/* 卡片里那根短横。它只是个记号，不承载信息，所以是伪元素。 */
-.dshw-rail-tick::before {
-  content: "";
-  width: 10px;
+.dshw-rail-mark {
+  display: block;
+  width: 12px;
   height: 2px;
   border-radius: 1px;
   background: var(--mp-text-muted);
   transition: background-color var(--mp-dur-fast), width var(--mp-dur-fast);
 }
 
-.dshw-rail-tick:hover,
-.dshw-rail-tick[data-active='true'] {
-  border-color: var(--mp-rule-strong);
+/* 当前视口顶部那一段的横线更黑也更长——参考里两枚横线一深一浅就是这个意思。 */
+.dshw-rail-mark[data-active='true'] {
+  width: 16px;
+  background: var(--mp-text);
+}
+
+.dshw-rail-menu {
+  display: none;
+  min-width: 180px;
+  max-width: 320px;
+  margin-left: 2px;
+  padding: 4px;
+  border: 1px solid var(--mp-rule);
+  border-radius: var(--mp-r6);
+  background: var(--mp-panel);
+  box-shadow: var(--mp-shadow-menu);
+}
+
+/* 悬停或键盘进入才展开。收起态不给它留位置，展开时是浮层，不推正文。 */
+.dshw-rail:hover .dshw-rail-menu,
+.dshw-rail:focus-within .dshw-rail-menu {
+  display: block;
+}
+
+.dshw-rail-row {
+  display: flex;
+  width: 100%;
+  min-height: 30px;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: var(--mp-r4);
+  color: var(--mp-text);
+  font-size: 14px;
+  text-align: left;
+}
+
+.dshw-rail-row:hover,
+.dshw-rail-row:focus-visible {
   background: var(--mp-hover);
 }
 
-.dshw-rail-tick[data-active='true']::before {
-  width: 14px;
-  background: var(--mp-text);
+/* 行首那根短横，和收起态是同一个记号：列表里每一行就是外面每一根线。 */
+.dshw-rail-dash {
+  width: 12px;
+  height: 2px;
+  flex: none;
+  border-radius: 1px;
+  background: var(--mp-text-muted);
+}
+
+.dshw-rail-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .dshw-scroll-pill {
@@ -2212,6 +2247,11 @@
   background: var(--mp-focus);
 }
 
+/* 和上面那条分段条同一套类别色。 */
+.mp-usage-row-fill[data-kind='output'] {
+  background: var(--mp-clay);
+}
+
 .mp-usage-foot {
   display: block;
   width: 100%;
@@ -2284,6 +2324,11 @@
   width: 408px;
 }
 
+/* Mode 菜单比普通菜单窄：它是两行文字的行，宽度由描述长度定，不是由模型名定。 */
+#composer-permission-menu {
+  width: 320px;
+}
+
 .dshw-model-row {
   display: grid !important;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -2331,31 +2376,61 @@
   line-height: 17px;
 }
 
+/* 参考里的 Mode 菜单：行首不放图标，行尾是「勾 + 数字」，整行两行文字，
+   行距和字号都比普通菜单行大一档——它是一枚需要读的菜单，不是一串命令。 */
 .dshw-perm-row {
-  display: grid;
-  min-height: 44px;
-  grid-template-columns: 20px minmax(0, 1fr) 16px;
-  align-items: center;
+  display: flex;
+  min-height: 47px;
+  align-items: flex-start;
   gap: 8px;
-  padding: 5px 8px;
+  padding: 10px 8px;
 }
 
 .dshw-perm-row.is-active {
   color: var(--mp-text);
 }
 
-.dshw-perm-row-glyph {
-  display: grid;
-  width: 20px;
-  height: 20px;
-  place-items: center;
-  color: var(--mp-text-secondary);
+.dshw-perm-heading {
+  padding: 10px 8px 4px;
+  color: var(--mp-text-muted);
+  font-size: 13px;
+  line-height: 18px;
 }
 
-.dshw-perm-row-glyph svg {
-  display: block;
-  width: 16px;
-  height: 16px;
+/* 行尾：勾、数字编号，或者一个动作词（Bypass 那行是 Enable）。三者都在同一
+   条基线上，所以是 flex 行而不是各自定位。 */
+.dshw-perm-trail {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  padding-top: 1px;
+}
+
+.dshw-perm-key {
+  min-width: 9px;
+  color: var(--mp-text-muted);
+  font-size: 13px;
+  line-height: 18px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.dshw-perm-action {
+  color: var(--mp-text);
+  font-size: 15px;
+  line-height: 20px;
+}
+
+.dshw-perm-badge {
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--mp-focus) 14%, transparent);
+  color: var(--mp-focus);
+  font-size: 13px;
+  line-height: 18px;
 }
 
 .dshw-perm-row-text {
@@ -2368,16 +2443,17 @@
 .dshw-perm-row-text > span {
   overflow: hidden;
   color: var(--mp-text);
-  font-size: 13px;
-  line-height: 17px;
+  font-size: 15px;
+  line-height: 20px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .dshw-perm-row-text > small {
+  margin-top: 2px;
   color: var(--mp-text-muted);
-  font-size: 11px;
-  line-height: 15px;
+  font-size: 13px;
+  line-height: 18px;
   white-space: normal;
 }
 

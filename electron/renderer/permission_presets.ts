@@ -11,34 +11,28 @@ interface PresetOption {
   label: string;
   primary?: boolean;
   confirm?: { title: string; description: string };
+  /** 行尾的短标记（参考里 Auto 后面的 `Start`）。 */
+  badge?: string;
+  /** 有值时行尾不放编号，改放这个可点的动作（参考里 Bypass 行的 `Enable`）。 */
+  action?: string;
+  /** 菜单打开时的数字快捷键。 */
+  shortcut?: string;
 }
 
+/* 顺序即菜单顺序，照参考：Auto / Manual / Accept edits / Plan / Bypass permissions。
+   `badge` 是参考里 Auto 行后面那个小标记，`action` 是 Bypass 行右侧的字（参考里
+   它是 Enable，在我们这里点下去走的就是既有的风险确认门）。
+   `shortcut` 是菜单打开时的数字快捷键；Bypass 没有编号——参考里它也是唯一
+   一行没有编号的，因为它不是一个「切换过去」的档，而是一次要确认的开启。 */
 const PRESETS: PresetOption[] = [
   {
-    value: 'plan',
-    name: '计划模式',
-    label: 'Plan',
-    description: 'Create a plan before making changes',
+    value: 'auto',
+    name: '自动',
+    label: 'Auto',
+    description: 'Claude handles permission decisions',
     primary: true,
-  },
-  {
-    value: 'workspace-write',
-    name: '接受编辑',
-    label: 'Accept edits',
-    description: 'Automatically accept all file edits',
-    primary: true,
-  },
-  {
-    value: 'danger-full-access',
-    name: '完全访问',
-    label: 'Bypass permissions',
-    description: 'Accepts all permissions',
-    primary: true,
-    confirm: {
-      title: '确认启用 Full access？',
-      description:
-        '启用 Full access 后，agent 将减少确认步骤，并且可以直接执行更多操作，包括敏感操作、文件修改或外部命令。仅建议在你信任当前任务时使用。',
-    },
+    badge: 'Start',
+    shortcut: '1',
   },
   {
     value: 'read-only',
@@ -46,6 +40,36 @@ const PRESETS: PresetOption[] = [
     label: 'Manual',
     description: 'Always ask before making changes',
     primary: false,
+    shortcut: '2',
+  },
+  {
+    value: 'workspace-write',
+    name: '接受编辑',
+    label: 'Accept edits',
+    description: 'Automatically accept all file edits',
+    primary: true,
+    shortcut: '3',
+  },
+  {
+    value: 'plan',
+    name: '计划模式',
+    label: 'Plan',
+    description: 'Create a plan before making changes',
+    primary: true,
+    shortcut: '4',
+  },
+  {
+    value: 'danger-full-access',
+    name: '完全访问',
+    label: 'Bypass permissions',
+    description: 'Accepts all permissions',
+    primary: true,
+    action: 'Enable',
+    confirm: {
+      title: '确认启用 Full access？',
+      description:
+        '启用 Full access 后，agent 将减少确认步骤，并且可以直接执行更多操作，包括敏感操作、文件修改或外部命令。仅建议在你信任当前任务时使用。',
+    },
   },
 ];
 

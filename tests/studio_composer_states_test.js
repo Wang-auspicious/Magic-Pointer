@@ -21,9 +21,12 @@ assert(source.includes("form?.setAttribute('data-state', running ? 'running' : '
 assert(source.includes("form?.setAttribute('aria-busy', 'true')")
   && source.includes("form?.removeAttribute('aria-busy')"),
   'the shared running-state transition must keep its accessibility state in sync');
-/* 参考里发送键画的是回车符号（↵），不是向上箭头：它表达「提交这一行」，
-   不是「往上送」。 */
-assert(source.includes("use?.setAttribute('href', running ? '#ic-stop' : '#ic-corner-down-left')"));
+/* 发送键空闲时是 Claude 的 send 字形（字体图标），运行时换成自绘的方块停止键：
+   字体里没有停止的码位，所以只有这一态走 svg。两态外形差别够大，值得留这个例外。 */
+assert(source.includes("submit.querySelector('use[href=\"#ic-stop\"]')"),
+  'the send button swaps glyph markup per state instead of only retargeting a <use>');
+assert(source.includes("api.CdsIcons.html('send')"),
+  'the idle state restores the font send glyph');
 assert(source.includes("document.getElementById('composer-context')?.setAttribute('data-state', running ? 'running' : 'idle')"),
   'the usage ring must switch to its running state with the turn');
 assert(source.includes("setComposerSettledState('success')"));
@@ -77,11 +80,14 @@ assert(source.includes('function persistEffort()'));
 assert(source.includes('function openEffortMenu()'));
 assert(source.includes('positionAnchoredPopover('));
 assert(source.includes('closeStudioPopovers('));
+/* 行首图标没有了：参考里的 Mode 菜单是「两行文字 + 行尾编号」，不放图标。
+   这条以前钉的是 .dshw-perm-row-glyph 必须在，现在反过来。 */
 for (const selector of [
   '.dshw-perm-row',
-  '.dshw-perm-row-glyph',
   '.dshw-perm-row-text',
   '.dshw-perm-check',
+  '.dshw-perm-key',
+  '.dshw-perm-heading',
 ]) {
   assert(css.includes(selector), `missing complete popup row style: ${selector}`);
 }
@@ -99,8 +105,7 @@ for (const selector of [
    所以钉的是「退回路径仍有尺寸」，而不是「这个类永远写死 16」。 */
 assert.match(css, /\.dshw-perm-check svg\s*\{[^}]*width:\s*16px[^}]*height:\s*16px/s,
   'the svg fallback check keeps explicit dimensions; the glyph sizes itself');
-assert.match(css, /\.dshw-perm-row-glyph\s*\{[^}]*width:\s*20px[^}]*height:\s*20px/s,
-  'permission glyphs cannot fall back to intrinsic SVG dimensions');
+
 /* 408 是抓到的模型菜单宽度（computed.json 的 popover.menuRow __rect.width）。
    以前钉的 280 是量自己的截图量出来的，比参考窄了一整档。 */
 assert.match(css, /\.dshw-model-menu\s*\{[^}]*width:\s*408px/s,
