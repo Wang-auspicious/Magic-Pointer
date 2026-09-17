@@ -76,6 +76,24 @@ async function realClick(window, selector, settleMs = 90) {
   await wait(settleMs);
 }
 
+/* 按横向比例点：滑块的两端不是同一档，取中点只能验到中间那一档。 */
+async function realClickAt(window, selector, ratio, settleMs = 90) {
+  const box = await window.webContents.executeJavaScript(`(() => {
+    const element = document.querySelector(${JSON.stringify(selector)});
+    if (!element) return null;
+    const rect = element.getBoundingClientRect();
+    return { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+  })()`);
+  if (!box) throw new Error(`realClickAt: no box for ${selector}`);
+  // ratio=1 会落到盒子右边界之外那一像素上，命中不到元素本身。
+  const x = Math.min(Math.round(box.left + box.width * ratio), Math.round(box.left + box.width) - 1);
+  const y = Math.round(box.top + box.height / 2);
+  window.webContents.sendInputEvent({ type: 'mouseMove', x, y });
+  window.webContents.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
+  window.webContents.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
+  await wait(settleMs);
+}
+
 async function visibleBounds(webContents, selector) {
   return webContents.executeJavaScript(`(() => {
     const element = document.querySelector(${JSON.stringify(selector)});
@@ -192,11 +210,39 @@ async function runElectron() {
 
     await realClick(window, '#composer-effort');
     const effortBounds = await visibleBounds(window.webContents, '#composer-effort-menu');
-    const effortLabels = await window.webContents.executeJavaScript(
-      `Array.from(document.querySelectorAll('#composer-effort-menu [data-effort-value] .dshw-perm-row-text > span')).map((row) => row.textContent.trim())`,
-    );
+    /* effort 从一列选项变成了一根滑块：能读的是两端的方向标签、当前档名和
+       刻度数，选档靠点在轨道上的位置。 */
+    const effortLabels = await window.webContents.executeJavaScript(`({
+      scale: Array.from(document.querySelectorAll('#composer-effort-menu .mp-effort-scale > span')).map((node) => node.textContent.trim()),
+      current: document.querySelector('#composer-effort-menu .mp-effort-head-value')?.textContent.trim() || '',
+      ticks: document.querySelectorAll('#composer-effort-menu .mp-effort-tick').length,
+    })`);
     await captureWitness('effort');
-    await realClick(window, '#composer-effort-menu [data-effort-value="max"]');
+    await realClickAt(window, '#composer-effort-menu .mp-effort-track', 1);
+
+    /* 上下文卡：参考里是「标题行 + 彩色分段条 + 分组 + 行 + 页脚」，不是竖排
+       的标签/值。截一张图，标题行那个百分比和分段条的宽度都能直接看。 */
+    await realClick(window, '#composer-effort');
+    await realClick(window, '#composer-context');
+    const usageBounds = await visibleBounds(window.webContents, '#composer-usage-popover');
+    const usageHead = await window.webContents.executeJavaScript(
+      `document.querySelector('#composer-usage-popover .mp-usage-head-value')?.textContent.trim() || ''`,
+    );
+    const usageSegments = await window.webContents.executeJavaScript(
+      `document.querySelectorAll('#composer-usage-popover .mp-usage-seg').length`,
+    );
+    await captureWitness('usage');
+    await realClick(window, '#composer-context');
+
+    /* 工作目录小卡：参考里点文件夹先出「No folder / Recent / <项目> ✓ /
+       Open folder…」，不是直接弹系统对话框。 */
+    await realClick(window, '#composer-workspace');
+    const workspaceBounds = await visibleBounds(window.webContents, '#composer-workspace-menu');
+    const workspaceItems = await window.webContents.executeJavaScript(
+      `Array.from(document.querySelectorAll('#composer-workspace-menu .mp-workspace-menu-row')).map((node) => node.textContent.trim())`,
+    );
+    await captureWitness('workspace');
+    await realClick(window, '#composer-workspace');
     const selectedEffort = await window.webContents.executeJavaScript(
       `document.getElementById('composer-effort-label')?.textContent.trim()`,
     );
@@ -251,6 +297,8 @@ async function runElectron() {
         selected: selectedEffort,
         labels: effortLabels,
       },
+      usage: { bounds: usageBounds, head: usageHead, segments: usageSegments },
+      workspace: { bounds: workspaceBounds, items: workspaceItems },
       home,
       stash: { noteDialogOpen: Boolean(noteDialogBounds), noteInput },
       tooltip: { open: Boolean(tooltipBounds), bounds: tooltipBounds, text: tooltipText },
@@ -268,6 +316,12 @@ async function runElectron() {
       || selectedModel !== 'claude-sonnet-4'
       || !effortBounds
       || selectedEffort !== 'Max'
+      || !usageBounds
+      || !usageHead
+      || usageSegments < 1
+      || !workspaceBounds
+      || !workspaceItems.includes('No folder')
+      || !workspaceItems.some((item) => item.startsWith('Open folder'))
       || home.view !== 'models'
       || home.range !== '30d'
       || home.modelRows < 1

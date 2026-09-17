@@ -474,6 +474,58 @@ const DshChat = (() => {
     return card;
   }
 
+  /* 命令类工具的那条命令：首行进卡头，其余进卡体。非命令类返回 null，
+     调用方退回用参数 JSON 当卡体。 */
+  interface ToolCommand { first: string; rest: string; full: string }
+
+  function toolCommandOf(model: ToolRowModel): ToolCommand | null {
+    if (!model.argsRaw) return null;
+    let parsed: unknown;
+    try { parsed = JSON.parse(model.argsRaw); } catch { return null; }
+    if (typeof parsed !== 'object' || parsed === null) return null;
+    const args = parsed as Record<string, unknown>;
+    const raw = model.variant === 'bash'
+      ? pickString(args, ['command', 'cmd'])
+      : model.variant === 'code' ? pickString(args, ['code']) : undefined;
+    if (!raw) return null;
+    const lines = String(raw).split('\n');
+    return { first: lines[0], rest: lines.slice(1).join('\n'), full: String(raw) };
+  }
+
+  function commandPrompt(model: ToolRowModel): string {
+    return model.name === 'pwsh' ? '>' : '$';
+  }
+
+  /* 代码卡：头一行（带提示符）+ 复制钮，下面是等宽的其余行。 */
+  function commandCardNode(command: ToolCommand, prompt: string, copyText: string): DshNode {
+    const card = h('div', { class: 'dsh-code' });
+    const head = h('div', { class: 'dsh-code-head' });
+    const line = h('span', { class: 'dsh-code-first' });
+    if (prompt) {
+      const mark = h('span', { class: 'dsh-code-prompt', 'aria-hidden': 'true' });
+      attach(mark, prompt);
+      attach(line, mark);
+    }
+    attach(line, command.first);
+    const copy = h('button', {
+      type: 'button',
+      class: 'dsh-action dsh-code-copy',
+      'aria-label': '复制命令',
+      'data-dsh-act': 'copy',
+      'data-dsh-copy': String(copyText || ''),
+    });
+    attach(copy, icon('copy', 14));
+    attach(head, line);
+    attach(head, copy);
+    attach(card, head);
+    if (command.rest) {
+      const pre = h('pre');
+      attach(pre, h('code', {}, command.rest));
+      attach(card, pre);
+    }
+    return card;
+  }
+
   function toolRowNode(model: ToolRowModel): DshNode {
     const root = h('div', { class: 'dsh-tool' });
     root.setAttribute('data-tool', '');
@@ -518,37 +570,24 @@ const DshChat = (() => {
       collapsed.push(stat);
     }
 
+    /* 参考里展开的工具行是「一张代码卡 + 卡下面的原文输出」：卡头是命令首行
+       加提示符和复制钮，卡体是其余行；输出是普通正文，出错时红字。标签式的
+       IN/OUT 分栏在参考里没有——它把「输入」和「输出」摆成两件事，而人读的
+       其实是「跑了什么」和「回了什么」。 */
     const body: DshNode[] = [];
     const diff = deriveDiff(model.name, model.argsRaw ?? '');
     if (diff !== null && (model.body !== null || model.output !== null)) {
       body.push(diffNode(diff));
-    } else if (model.body !== null || model.output !== null) {
-      const ioCard = h('div', { class: 'dsh-io-card' });
-      if (model.body !== null) {
-        const section = h('div', { class: 'dsh-io-section' });
-        const label = h('span', { class: 'dsh-io-label' });
-        attach(label, 'IN');
-        const payload = h('span', { class: 'dsh-io-text' });
-        attach(payload, model.body);
-        attach(section, label);
-        attach(section, payload);
-        attach(ioCard, section);
-      }
-      if (model.body !== null && model.output !== null) {
-        attach(ioCard, h('span', { class: 'dsh-io-divider', 'aria-hidden': 'true' }));
-      }
-      if (model.output !== null) {
-        const section = h('div', { class: 'dsh-io-section' });
-        const label = h('span', { class: 'dsh-io-label' });
-        attach(label, 'OUT');
-        const payload = h('span', { class: 'dsh-io-text' });
-        if (model.state === 'error') payload.setAttribute('data-error', 'true');
-        attach(payload, model.output);
-        attach(section, label);
-        attach(section, payload);
-        attach(ioCard, section);
-      }
-      body.push(ioCard);
+    } else if (model.body !== null) {
+      const command = toolCommandOf(model);
+      const card: ToolCommand = command ?? { first: model.title, rest: model.body, full: model.body };
+      body.push(commandCardNode(card, command ? commandPrompt(model) : '', card.full));
+    }
+    if (model.output !== null) {
+      const output = h('div', { class: 'dsh-tool-output' });
+      if (model.state === 'error') output.setAttribute('data-error', 'true');
+      attach(output, model.output);
+      body.push(output);
     }
 
     const leadingOverride = model.state === 'error' ? stateDot('error')
@@ -658,11 +697,32 @@ const DshChat = (() => {
     return node;
   }
 
-  function messageActions(message: string, branch?: BranchTarget, timeMs?: number, timeFirst = false): DshNode {
+  function messageActions(
+    message: string,
+    branch?: BranchTarget,
+    timeMs?: number,
+    options: { align?: 'user' | 'assistant'; retry?: boolean } = {},
+  ): DshNode {
     const actions = h('div', { class: 'dsh-actions' });
+    actions.setAttribute('data-align', options.align === 'user' ? 'user' : 'assistant');
     const time = timeNode(timeMs);
     /* 参考里用户气泡的时间在图标左边，助手回合的在图标右边。 */
-    if (time && timeFirst) attach(actions, time);
+    if (time && options.align === 'user') attach(actions, time);
+    /* 三枚图标对应参考里的 ⧉ ↻ ⌥：复制、重发、从这里分支。参考还有一枚
+       朗读——本机还没有把回答读出来的通道，所以那一枚先不放，不放一个按不动
+       的按钮。 */
+    const copy = h('button', { type: 'button', class: 'dsh-action', 'aria-label': '复制' });
+    copy.setAttribute('data-dsh-act', 'copy');
+    copy.setAttribute('data-dsh-copy', String(message || ''));
+    attach(copy, icon('copy', 16));
+    attach(actions, copy);
+
+    const retry = h('button', { type: 'button', class: 'dsh-action', 'aria-label': '重新发送' });
+    retry.setAttribute('data-dsh-act', 'retry');
+    retry.setAttribute('data-dsh-retry', String(message || ''));
+    attach(retry, icon('retry', 16));
+    attach(actions, retry);
+
     if (branch?.conversationId && Number.isInteger(branch.turnIndex)) {
       const fork = h('button', { type: 'button', class: 'dsh-action', 'aria-label': '从这里创建分支' });
       fork.setAttribute('data-dsh-act', 'branch');
@@ -671,12 +731,7 @@ const DshChat = (() => {
       attach(fork, icon('branch', 16));
       attach(actions, fork);
     }
-    const copy = h('button', { type: 'button', class: 'dsh-action', 'aria-label': '复制' });
-    copy.setAttribute('data-dsh-act', 'copy');
-    copy.setAttribute('data-dsh-copy', String(message || ''));
-    attach(copy, icon('copy', 16));
-    attach(actions, copy);
-    if (time && !timeFirst) attach(actions, time);
+    if (time && options.align !== 'user') attach(actions, time);
     return actions;
   }
 
@@ -688,7 +743,7 @@ const DshChat = (() => {
     attach(bubble, question);
     attach(stack, bubble);
     attach(root, stack);
-    attach(root, messageActions(question, branch, timeMs, true));
+    attach(root, messageActions(question, branch, timeMs, { align: 'user' }));
     return root;
   }
 
@@ -1038,7 +1093,7 @@ const DshChat = (() => {
         ? { conversationId: turn.conversationId, turnIndex: Number(turn.turnIndex) }
         : undefined,
       turn.at,
-      false,
+      { align: 'assistant' },
     ));
     items.push(root);
     return items;
@@ -1171,6 +1226,10 @@ const DshChat = (() => {
             button.setAttribute('aria-label', '复制');
           }, 2000); /* 给用户足够时间看清复制成功，再恢复原按钮。 */
         });
+      } else if (kind === 'retry') {
+        const question = act.getAttribute('data-dsh-retry') || '';
+        if (!question) return;
+        DOC.dispatchEvent(new CustomEvent('mp:retry-question', { detail: { question } }));
       } else if (kind === 'branch') {
         const conversationId = act.getAttribute('data-dsh-branch-conversation') || '';
         const turnIndex = Number(act.getAttribute('data-dsh-branch-turn'));

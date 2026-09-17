@@ -31,7 +31,15 @@ assert.strictEqual(witness.account.settingsOpened, true);
 assert.strictEqual(witness.permission.selected, 'Manual');
 assert.strictEqual(witness.model.selected, 'claude-sonnet-4');
 assert.strictEqual(witness.effort.selected, 'Max');
-assert.deepStrictEqual(witness.effort.labels, ['Low', 'Medium', 'High', 'Extra', 'Max']);
+/* effort 是一根滑块：能读的是两端的方向和刻度数，档名是当前那一档。
+   点击轨道最右端必须落到最高档，这一条同时验了命中区域和吸附。 */
+assert.deepStrictEqual(witness.effort.labels.scale, ['Faster', 'Smarter']);
+assert.strictEqual(witness.effort.labels.ticks, 5,
+  'one tick per effort level, so the slider cannot point between levels');
+// 滑块打开的档位来自上一次会话（档位是持久偏好），所以这里只验它落在五个
+// 合法档名之一——具体是哪一档由用户的最后一次选择决定。
+assert(['Low', 'Medium', 'High', 'Extra', 'Max'].includes(witness.effort.labels.current),
+  `the slider opens on a real level, got ${witness.effort.labels.current}`);
 assert.strictEqual(witness.home.view, 'models');
 assert.strictEqual(witness.home.range, '30d');
 assert.strictEqual(witness.stash.noteDialogOpen, true);

@@ -21,7 +21,11 @@ assert(source.includes("form?.setAttribute('data-state', running ? 'running' : '
 assert(source.includes("form?.setAttribute('aria-busy', 'true')")
   && source.includes("form?.removeAttribute('aria-busy')"),
   'the shared running-state transition must keep its accessibility state in sync');
-assert(source.includes("use?.setAttribute('href', running ? '#ic-stop' : '#ic-send')"));
+/* 参考里发送键画的是回车符号（↵），不是向上箭头：它表达「提交这一行」，
+   不是「往上送」。 */
+assert(source.includes("use?.setAttribute('href', running ? '#ic-stop' : '#ic-corner-down-left')"));
+assert(source.includes("document.getElementById('composer-context')?.setAttribute('data-state', running ? 'running' : 'idle')"),
+  'the usage ring must switch to its running state with the turn');
 assert(source.includes("setComposerSettledState('success')"));
 assert(source.includes("setComposerSettledState('error')"));
 assert(source.includes('if (studioComposerBusy)'));
@@ -64,7 +68,8 @@ assert.match(html, /id="composer-mention"[\s\S]*?id="composer-voice"[\s\S]*?id="
 assert.match(html, /id="composer-effort-menu"[^>]*><\/div>[\s\S]*?id="composer-context"/,
   'the usage ring stays the last trailing control');
 assert(source.includes('const effortLevels = (globalThis as { EffortLevels?: EffortLevelsModule }).EffortLevels!'));
-assert(source.includes("let composerEffort = 'xhigh'"));
+assert(source.includes('const EFFORT_STORAGE_KEY'), 'the effort level outlives the session');
+assert(source.includes('function persistEffort()'));
 assert(source.includes('function openEffortMenu()'));
 assert(source.includes('positionAnchoredPopover('));
 assert(source.includes('closeStudioPopovers('));

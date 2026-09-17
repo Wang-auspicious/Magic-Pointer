@@ -132,6 +132,8 @@ const DshIcons = (() => {
     api: { viewBox: '0 0 24 24', paths: [{ d: 'M5 5.5h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2ZM7 10l2 2-2 2M12 14h4' }] },
     sparkle: { viewBox: '0 0 24 24', paths: [{ d: 'M12 3c.4 4.4 4.6 8.6 9 9-4.4.4-8.6 4.6-9 9-.4-4.4-4.6-8.6-9-9 4.4-.4 8.6-4.6 9-9Z' }] },
     send: { viewBox: '0 0 24 24', paths: [{ d: 'M12 19V5m-6 6 6-6 6 6' }] },
+    retry: { viewBox: '0 0 24 24', paths: [{ d: 'M19.5 12a7.5 7.5 0 1 1-2.2-5.3M19.5 4.5V9H15' }] },
+    return: { viewBox: '0 0 24 24', paths: [{ d: 'M20 5v7a4 4 0 0 1-4 4H5m0 0 4-4m-4 4 4 4' }] },
   };
 
   function node(name: string, size = 16): IconNode {

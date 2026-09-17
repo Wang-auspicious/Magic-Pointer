@@ -1049,7 +1049,91 @@ async function openProjectFromPicker() {
 }
 
 document.getElementById('workspace-add')?.addEventListener('click', () => { void openProjectFromPicker(); });
-document.getElementById('composer-workspace')?.addEventListener('click', () => { void openProjectFromPicker(); });
+
+/* 点工作目录芯片先开一张小卡（参考里就是这个），而不是直接弹系统对话框：
+   系统对话框里没有「最近打开过哪个项目」这件事，而用户十次里有九次是切回
+   刚才那个。最后一行才是「打开文件夹…」。 */
+function workspaceMenuRow(
+  className: string,
+  label: string,
+  onClick: () => void,
+  options: { role?: string; selected?: boolean; title?: string } = {},
+): HTMLButtonElement {
+  const row = document.createElement('button');
+  row.type = 'button';
+  row.className = className;
+  row.setAttribute('role', options.role || 'menuitem');
+  if (options.selected) row.setAttribute('aria-checked', 'true');
+  if (options.title) row.title = options.title;
+  const text = document.createElement('span');
+  text.className = 'mp-workspace-menu-label';
+  text.textContent = label;
+  row.appendChild(text);
+  if (options.selected) {
+    const check = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    check.setAttribute('aria-hidden', 'true');
+    check.classList.add('mp-workspace-menu-check');
+    const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+    use.setAttribute('href', '#ic-check');
+    check.appendChild(use);
+    row.appendChild(check);
+  }
+  row.addEventListener('click', onClick);
+  return row;
+}
+
+async function openWorkspaceMenu() {
+  const menu = document.getElementById('composer-workspace-menu');
+  if (!menu) return;
+  const projects = await Data.projects().catch(() => [] as MagicPointerProject[]);
+  const rows: HTMLElement[] = [];
+  const close = () => {
+    closeAnchoredPopover('composer-workspace-menu', 'composer-workspace');
+  };
+  rows.push(workspaceMenuRow('mp-workspace-menu-row', 'No folder', () => {
+    close();
+    setActiveProject('');
+  }, { selected: !activeProjectRoot }));
+  if (projects.length) {
+    const label = document.createElement('div');
+    label.className = 'mp-workspace-menu-section';
+    label.textContent = 'Recent';
+    rows.push(label);
+    for (const project of projects.slice(0, 6)) {
+      const root = String(project.root || '');
+      if (!root) continue;
+      const name = String(project.name || root);
+      rows.push(workspaceMenuRow('mp-workspace-menu-row', name || root, () => {
+        close();
+        setActiveProject(root);
+        void startNewChat();
+        void renderSidebar();
+      }, {
+        selected: normalizedProjectRoot(root) === normalizedProjectRoot(activeProjectRoot),
+        title: root,
+      }));
+    }
+  }
+  const divider = document.createElement('div');
+  divider.className = 'mp-workspace-menu-divider';
+  rows.push(divider);
+  rows.push(workspaceMenuRow('mp-workspace-menu-row', 'Open folder…', () => {
+    close();
+    void openProjectFromPicker();
+  }));
+  menu.replaceChildren(...rows);
+  positionAnchoredPopover('composer-workspace-menu', 'composer-workspace');
+}
+
+document.getElementById('composer-workspace')?.addEventListener('click', (event) => {
+  event.stopPropagation();
+  const button = event.currentTarget as HTMLButtonElement;
+  const menu = document.getElementById('composer-workspace-menu');
+  if (!menu) return;
+  if (!menu.hidden) { closeAnchoredPopover('composer-workspace-menu', 'composer-workspace'); return; }
+  button.setAttribute('aria-expanded', 'true');
+  void openWorkspaceMenu();
+});
 document.getElementById('workspace-filter')?.addEventListener('click', (event) => {
   sidebarRecentOnly = !sidebarRecentOnly;
   const button = event.currentTarget as HTMLButtonElement;
@@ -1089,30 +1173,87 @@ function renderUsageMeter(turns: MagicPointerTurn[]) {
   button.title = contextWindow > 0
     ? `Context ${contextTokens.toLocaleString()} / ${contextWindow.toLocaleString()} tokens`
     : `Session usage: ${totalTokens.toLocaleString()} tokens`;
+  /* 参考的这张卡是一行标题 + 一条彩色分段条 + 分组 + 两行配额 + 页脚链接。
+     形状照搬，数字换成我们真有的：Claude 那两行是套餐限额（5 小时 / 每周），
+     Magic Pointer 没有配额这回事，所以分组里放的是这个会话真实的输入/输出。
+     宁可少一行，也不画一个没有来源的百分比。 */
   popover.replaceChildren();
-  const eyebrow = document.createElement('span');
-  eyebrow.className = 'mp-usage-eyebrow';
-  eyebrow.textContent = 'CONTEXT';
-  const title = document.createElement('strong');
-  title.textContent = contextWindow > 0
-    ? `${contextProgress}% used`
-    : `${totalTokens.toLocaleString()} tokens recorded`;
-  const rows = document.createElement('dl');
-  for (const [term, value] of [
-    ['Current context', contextTokens],
-    ['Context window', contextWindow || '—'],
-    ['Session input', inputTokens],
-    ['Session output', outputTokens],
-  ] as const) {
-    const dt = document.createElement('dt');
-    dt.textContent = term;
-    const dd = document.createElement('dd');
-    dd.textContent = typeof value === 'number' ? value.toLocaleString() : value;
-    rows.append(dt, dd);
+  const el = (tag: string, className: string, text?: string) => {
+    const node = document.createElement(tag);
+    node.className = className;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  };
+  const head = el('div', 'mp-usage-head');
+  head.append(el('span', 'mp-usage-head-label', 'Context window'));
+  const headValue = el('span', 'mp-usage-head-value',
+    contextWindow > 0
+      ? `${compactTokenCount(contextTokens)} / ${compactTokenCount(contextWindow)} (${contextProgress}%)`
+      : `${compactTokenCount(totalTokens)} tokens`);
+  const chev = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  chev.setAttribute('aria-hidden', 'true');
+  chev.classList.add('mp-usage-chev');
+  const chevUse = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+  chevUse.setAttribute('href', '#ic-chev');
+  chev.appendChild(chevUse);
+  head.append(headValue, chev);
+  popover.append(head);
+
+  /* 分段条：已用的部分按「这一轮读进去的」和「这一轮写出来的」拆开，剩下的
+     留空。三段之和就是上下文窗口，所以这条是能对上的，不是装饰。 */
+  const latestInput = Number(latestUsage?.inputTokens) || 0;
+  const latestOutput = Number(latestUsage?.outputTokens) || 0;
+  const bar = el('div', 'mp-usage-bar');
+  if (contextWindow > 0) {
+    const share = (value: number) => `${Math.max(0, Math.min(100, value / contextWindow * 100))}%`;
+    const used = el('span', 'mp-usage-seg is-input');
+    used.style.width = share(latestInput);
+    const wrote = el('span', 'mp-usage-seg is-output');
+    wrote.style.width = share(latestOutput);
+    bar.append(used, wrote);
   }
-  const note = document.createElement('p');
-  note.textContent = 'Current context uses the latest stored model request; session usage is cumulative.';
-  popover.append(eyebrow, title, rows, note);
+  popover.append(bar);
+
+  popover.append(el('div', 'mp-usage-divider'));
+  const section = el('div', 'mp-usage-section');
+  section.append(el('span', 'mp-usage-section-label', '本会话用量'));
+  const arrow = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  arrow.setAttribute('aria-hidden', 'true');
+  arrow.classList.add('mp-usage-arrow');
+  const arrowPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  arrowPath.setAttribute('d', 'M4 10h12m0 0-5-5m5 5-5 5');
+  arrowPath.setAttribute('fill', 'none');
+  arrowPath.setAttribute('stroke', 'currentColor');
+  arrowPath.setAttribute('stroke-width', '1.5');
+  arrowPath.setAttribute('stroke-linecap', 'round');
+  arrowPath.setAttribute('stroke-linejoin', 'round');
+  arrow.appendChild(arrowPath);
+  section.append(arrow);
+  popover.append(section);
+
+  const sessionTotal = Math.max(1, inputTokens + outputTokens);
+  for (const [label, value] of [['读取上下文', inputTokens], ['写出内容', outputTokens]] as const) {
+    const row = el('div', 'mp-usage-row');
+    row.append(el('span', 'mp-usage-row-label', label));
+    row.append(el('span', 'mp-usage-row-value', compactTokenCount(value)));
+    const track = el('div', 'mp-usage-row-track');
+    const fill = el('div', 'mp-usage-row-fill');
+    fill.style.width = `${Math.round(value / sessionTotal * 100)}%`;
+    track.append(fill);
+    row.append(track);
+    popover.append(row);
+  }
+
+  popover.append(el('div', 'mp-usage-divider'));
+  const foot = document.createElement('button');
+  foot.type = 'button';
+  foot.className = 'mp-usage-foot';
+  foot.textContent = '查看完整统计';
+  foot.addEventListener('click', () => {
+    closeAnchoredPopover('composer-usage-popover', 'composer-context');
+    void renderStudioHome();
+  });
+  popover.append(foot);
 }
 
 document.getElementById('composer-context')?.addEventListener('click', (event) => {
@@ -2355,6 +2496,21 @@ document.addEventListener('keydown', (event) => {
   if (!command) return;
   event.preventDefault();
   void executeWindowMenuCommand(command);
+});
+
+/* 重新发送一条已经发过的消息：把它放回输入框并提交。不新建对话——重发是
+   「这一条再走一遍」，不是「另起一轮」。 */
+document.addEventListener('mp:retry-question', (event: Event) => {
+  const detail = (event as CustomEvent<{ question?: string }>).detail;
+  const question = String(detail?.question || '').trim();
+  if (!question || studioComposerBusy) return;
+  const textarea = document.querySelector<HTMLTextAreaElement>('#composer-form textarea');
+  const form = document.getElementById('composer-form') as HTMLFormElement | null;
+  if (!textarea || !form) return;
+  textarea.value = question;
+  fitComposer(textarea);
+  syncComposerSubmitState();
+  form.requestSubmit();
 });
 
 document.addEventListener('mp:branch-conversation', (event: Event) => {
@@ -3698,7 +3854,18 @@ function bindSlashMenu() {
 bindSlashMenu();
 
 /* ---- Claude effort：模型工作深度，不是回复文风。 ---- */
-let composerEffort = 'xhigh';
+const EFFORT_STORAGE_KEY = 'mp:composer-effort';
+let composerEffort = (() => {
+  try {
+    const stored = localStorage.getItem(EFFORT_STORAGE_KEY);
+    return stored ? String(stored) : 'xhigh';
+  } catch { return 'xhigh'; }
+})();
+
+/* 档位随会话存下来：它不是一次性选择，是用户对这个助手的长期偏好。 */
+function persistEffort() {
+  try { localStorage.setItem(EFFORT_STORAGE_KEY, composerEffort); } catch { /* storage unavailable */ }
+}
 
 function renderEffortChip() {
   const button = document.getElementById('composer-effort');
@@ -3725,31 +3892,110 @@ function selectedCheck(): SVGSVGElement {
   return check;
 }
 
+/* 参考里的 effort 不是一列选项，是一根滑块：左边 Faster、右边 Smarter，
+   一条槽上五个刻度点，方形白滑块停在当前档。选档因此是一个「往左还是往右」
+   的动作，而不是在五个词里读哪一个——这两件事对用户是不同的负担。
+   槽是连续的，档是离散的：点击/拖动都吸附到最近的那一档。 */
 function openEffortMenu() {
   const menu = document.getElementById('composer-effort-menu');
   if (!menu) return;
-  menu.replaceChildren(...effortLevels.EFFORT_LEVELS.map((option) => {
-    const selected = option.value === composerEffort;
-    const row = document.createElement('button');
-    row.type = 'button';
-    row.className = `dshw-perm-row${selected ? ' is-active' : ''}`;
-    row.setAttribute('role', 'option');
-    row.setAttribute('aria-selected', String(selected));
-    row.dataset.effortValue = option.value;
-    const text = document.createElement('span');
-    text.className = 'dshw-perm-row-text';
-    const name = document.createElement('span');
-    name.textContent = option.label;
-    const desc = document.createElement('small');
-    desc.textContent = option.description;
-    text.append(name, desc);
-    row.appendChild(text);
-    if (selected) row.appendChild(selectedCheck());
-    return row;
-  }));
+  const levels = effortLevels.EFFORT_LEVELS;
+  const currentIndex = Math.max(0, levels.findIndex((option) => option.value === composerEffort));
+
+  const head = document.createElement('div');
+  head.className = 'mp-effort-head';
+  const headLabel = document.createElement('span');
+  headLabel.className = 'mp-effort-head-label';
+  headLabel.textContent = 'Effort';
+  const headValue = document.createElement('strong');
+  headValue.className = 'mp-effort-head-value';
+  headValue.textContent = levels[currentIndex].label;
+  const help = document.createElement('span');
+  help.className = 'mp-effort-help';
+  help.setAttribute('title', levels[currentIndex].description);
+  help.textContent = '?';
+  head.append(headLabel, headValue, help);
+
+  const scale = document.createElement('div');
+  scale.className = 'mp-effort-scale';
+  const faster = document.createElement('span');
+  faster.textContent = 'Faster';
+  const smarter = document.createElement('span');
+  smarter.textContent = 'Smarter';
+  scale.append(faster, smarter);
+
+  const track = document.createElement('div');
+  track.className = 'mp-effort-track';
+  track.setAttribute('role', 'slider');
+  track.setAttribute('tabindex', '0');
+  track.setAttribute('aria-label', 'Reasoning effort');
+  track.setAttribute('aria-valuemin', '1');
+  track.setAttribute('aria-valuemax', String(levels.length));
+  track.setAttribute('aria-valuenow', String(currentIndex + 1));
+  track.setAttribute('aria-valuetext', levels[currentIndex].label);
+  const fill = document.createElement('div');
+  fill.className = 'mp-effort-fill';
+  const thumb = document.createElement('div');
+  thumb.className = 'mp-effort-thumb';
+  track.append(fill, thumb);
+  /* 位置一律内缩半个滑块宽：不内缩的话第一档和最后一档的方块各有一半悬在
+     槽外，参考里两端都是完整落在槽里的。 */
+  const position = (ratio: number) => `calc(var(--mp-effort-inset) + ${ratio} * (100% - 2 * var(--mp-effort-inset)))`;
+  for (let index = 0; index < levels.length; index += 1) {
+    const tick = document.createElement('i');
+    tick.className = 'mp-effort-tick';
+    tick.style.left = position(index / (levels.length - 1));
+    track.append(tick);
+  }
+
+  const paint = (index: number) => {
+    const ratio = index / (levels.length - 1);
+    fill.style.width = `calc(var(--mp-effort-inset) + ${ratio} * (100% - 2 * var(--mp-effort-inset)))`;
+    thumb.style.left = position(ratio);
+  };
+  paint(currentIndex);
+
+  let activeIndex = currentIndex;
+  const select = (index: number) => {
+    activeIndex = Math.max(0, Math.min(levels.length - 1, index));
+    composerEffort = levels[activeIndex].value;
+    paint(activeIndex);
+    headValue.textContent = levels[activeIndex].label;
+    help.setAttribute('title', levels[activeIndex].description);
+    track.setAttribute('aria-valuenow', String(activeIndex + 1));
+    track.setAttribute('aria-valuetext', levels[activeIndex].label);
+    renderEffortChip();
+    persistEffort();
+  };
+  const indexFromPointer = (clientX: number) => {
+    const rect = track.getBoundingClientRect();
+    const inset = 11; // = --mp-effort-inset，即滑块半宽
+    const usable = rect.width - inset * 2;
+    if (usable <= 0) return activeIndex;
+    const ratio = (clientX - rect.left - inset) / usable;
+    return Math.round(ratio * (levels.length - 1));
+  };
+  track.addEventListener('pointerdown', (event) => {
+    /* 先选档再捕获：捕获对合成事件（探针的 sendInputEvent）会抛 NotFoundError，
+       放在前面会让整个处理器在那一次点击里直接中止——档位看着像点不动。 */
+    select(indexFromPointer(event.clientX));
+    try { track.setPointerCapture(event.pointerId); } catch { /* synthetic pointer */ }
+  });
+  track.addEventListener('pointermove', (event) => {
+    if (track.hasPointerCapture(event.pointerId)) select(indexFromPointer(event.clientX));
+  });
+  track.addEventListener('keydown', (event) => {
+    const delta = event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : 0;
+    if (!delta) return;
+    event.preventDefault();
+    select(activeIndex + delta);
+  });
+
+  menu.replaceChildren(head, scale, track);
   const opened = positionAnchoredPopover('composer-effort-menu', 'composer-effort');
-  requestAnimationFrame(() => opened?.querySelector<HTMLButtonElement>('[aria-selected="true"]')?.focus());
+  requestAnimationFrame(() => opened?.querySelector<HTMLElement>('.mp-effort-track')?.focus());
 }
+
 
 function bindEffortChip() {
   renderEffortChip();
@@ -3758,14 +4004,6 @@ function bindEffortChip() {
     const menu = document.getElementById('composer-effort-menu');
     if (menu?.hidden) openEffortMenu();
     else closeEffortMenu();
-  });
-  document.getElementById('composer-effort-menu')?.addEventListener('click', (event) => {
-    const row = (event.target as Element | null)?.closest<HTMLElement>('[data-effort-value]');
-    if (!row) return;
-    event.stopPropagation();
-    composerEffort = effortLevels.normalizeEffort(row.dataset.effortValue);
-    closeEffortMenu();
-    renderEffortChip();
   });
 }
 
@@ -4392,6 +4630,7 @@ async function openModelMenu() {
   // 可见反馈；否则网关慢半秒，用户就会连续点击并在返回瞬间把菜单关掉。
   menu.replaceChildren(...modelMenuRows(modelCatalog));
   positionAnchoredPopover('composer-model-menu', 'composer-model');
+  bindModelShortcuts(menu);
   let catalog: MagicPointerModelCatalog | null = null;
   try {
     catalog = await Data.models();
@@ -4412,9 +4651,35 @@ async function openModelMenu() {
   positionAnchoredPopover('composer-model-menu', 'composer-model');
 }
 
+/* 菜单打开时按 1..9 直接选中对应模型——行右端写着的那个数字要是按不动，
+   就只是一个装饰。监挂在 document 上、菜单一关就摘掉，避免和输入框抢键。 */
+function bindModelShortcuts(menu: HTMLElement): void {
+  const onKey = (event: KeyboardEvent) => {
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    if (!/^[1-9]$/.test(event.key)) return;
+    const row = menu.querySelector<HTMLElement>(`[data-model-key="${event.key}"]`);
+    if (!row) return;
+    event.preventDefault();
+    event.stopPropagation();
+    row.click();
+  };
+  const observer = new MutationObserver(() => {
+    if (menu.hidden) {
+      document.removeEventListener('keydown', onKey, true);
+      observer.disconnect();
+    }
+  });
+  observer.observe(menu, { attributes: true, attributeFilter: ['hidden'] });
+  document.addEventListener('keydown', onKey, true);
+}
+
+/* 模型目录里前九个带数字快捷键；再多就不该用单键了。 */
+const MODEL_SHORTCUT_LIMIT = 9;
+
 function modelMenuRows(catalog: MagicPointerModelCatalog | null): HTMLElement[] {
   if (!catalog) return [modelMenuNote('正在读取模型…')];
   const rows: HTMLElement[] = [];
+  let shortcutIndex = 0;
   if (catalog.error) rows.push(modelMenuNote(catalog.error));
   for (const group of catalog.groups || []) {
     if ((catalog.groups || []).length > 1) {
@@ -4441,6 +4706,17 @@ function modelMenuRows(catalog: MagicPointerModelCatalog | null): HTMLElement[] 
       row.appendChild(name);
       const selected = entry.id === catalog.current;
       row.setAttribute('aria-selected', String(selected));
+      /* 参考里每行右端有一个数字，是**真的快捷键**（按 1 直接选中第一个）。
+         只画数字不接键盘就成了骗人的提示，所以两边一起给：编号写进
+         data-model-key，打开菜单时挂一次按键监听。 */
+      const index = shortcutIndex++;
+      if (index < MODEL_SHORTCUT_LIMIT) {
+        row.dataset.modelKey = String(index + 1);
+        const key = document.createElement('kbd');
+        key.className = 'dshw-model-key';
+        key.textContent = String(index + 1);
+        row.appendChild(key);
+      }
       if (selected) row.appendChild(selectedCheck());
       rows.push(row);
     }
@@ -4779,9 +5055,13 @@ function setComposerRunningState(running: boolean) {
     submit.classList.toggle('is-stop', running);
     submit.title = running ? 'Stop' : 'Send';
     submit.setAttribute('aria-label', running ? 'Stop' : 'Send');
+    /* 参考里发送键画的是回车符号（↵），不是向上箭头：它表达的是「提交这一行」，
+       不是「往上送」。 */
     const use = submit.querySelector('use');
-    use?.setAttribute('href', running ? '#ic-stop' : '#ic-send');
+    use?.setAttribute('href', running ? '#ic-stop' : '#ic-corner-down-left');
   }
+  /* 运行时右下角那个环跟着转：它是「还在动」，不是「用了多少」。 */
+  document.getElementById('composer-context')?.setAttribute('data-state', running ? 'running' : 'idle');
   syncComposerSubmitState();
   if (!running) focusComposerWhenIdle();
 }

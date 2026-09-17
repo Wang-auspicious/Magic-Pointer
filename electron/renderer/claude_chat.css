@@ -243,21 +243,30 @@
   line-height: 17px;
 }
 
+/* 动作行属于消息，不属于消息上面的空白：它是这条消息的脚注，和正文同一个
+   左边界（用户气泡则是同一个右边界）。常驻显示，静止时用弱一点的颜色，
+   悬停才提亮——只在 hover 时才存在的话，用户永远不知道这里能点。 */
 .dsh-actions {
-  position: absolute;
-  top: 0;
-  right: 0;
   display: flex;
   align-items: center;
   gap: 2px;
-  opacity: 0;
-  transition: opacity var(--mp-dur-fast);
+  margin-top: 2px;
+  color: var(--mp-text-muted);
+  transition: color var(--mp-dur-fast);
+}
+
+.dsh-actions[data-align='user'] {
+  justify-content: flex-end;
+}
+
+.dsh-actions[data-align='assistant'] {
+  justify-content: flex-start;
 }
 
 .dsh-user:hover > .dsh-actions,
 .dsh-assistant:hover > .dsh-actions,
 .dsh-actions:focus-within {
-  opacity: 1;
+  color: var(--mp-text-secondary);
 }
 
 .dsh-action {
@@ -553,6 +562,40 @@
   justify-content: space-between;
   gap: 8px;
   padding: 0 4px 0 10px;
+}
+
+/* 命令卡的头：提示符 + 首行，等宽，可横向滚动而不是折行——命令折行之后
+   就没法读了。 */
+.dsh-code-first {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 6px;
+  overflow: hidden;
+  color: var(--mp-text);
+  font-family: var(--mp-font-mono);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.dsh-code-prompt {
+  flex: none;
+  color: var(--mp-text-muted);
+}
+
+/* 工具的输出是普通正文，不是等宽体：参考里那行报错读起来和叙述一样。
+   换行照原样保留，出错时红字。 */
+.dsh-tool-output {
+  padding: 8px 10px 2px;
+  color: var(--mp-text);
+  font-size: 14px;
+  line-height: 21px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.dsh-tool-output[data-error='true'] {
+  color: var(--mp-danger);
 }
 
 .dsh-code-lang {
@@ -1195,6 +1238,8 @@
   .dsh-thinking-mark { animation: none; }
 
   .dsh-disclosure[data-open='true'] > .dsh-body-wrap { animation: none; }
+
+  #composer-context[data-state='running'] .mp-context-value { animation: none; }
 }
 
 .mp-composer-context-row {
@@ -1222,6 +1267,163 @@
 .mp-composer-workspace:hover {
   color: var(--mp-text);
   background: var(--mp-active);
+}
+
+/* 模型行右端的快捷键数字：等宽、灰、不抢名字。 */
+.dshw-model-key {
+  flex: none;
+  margin-left: auto;
+  padding-left: 10px;
+  color: var(--mp-text-muted);
+  font-family: var(--mp-font-mono);
+  font-size: 12px;
+}
+
+/* ---- Effort 滑块（参考 R2） ----
+   一列五个词读完才知道该选哪个；一根滑块只要知道「往左还是往右」。方形
+   滑块 + 刻度点是参考里最容易被忽略、也最容易被认出来的那一处。 */
+.mp-effort-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 10px 10px 0;
+}
+
+.mp-effort-head-label {
+  color: var(--mp-text-secondary);
+  font-size: 15px;
+}
+
+.mp-effort-head-value {
+  color: var(--mp-text);
+  font-size: 15px;
+  font-weight: var(--mp-weight-medium);
+}
+
+.mp-effort-help {
+  display: grid;
+  width: 15px;
+  height: 15px;
+  margin-left: auto;
+  place-items: center;
+  border: 1px solid var(--mp-rule-strong);
+  border-radius: 50%;
+  color: var(--mp-text-muted);
+  font-size: 10px;
+  line-height: 1;
+}
+
+.mp-effort-scale {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 12px 6px;
+  color: var(--mp-text-muted);
+  font-size: 14px;
+}
+
+.mp-effort-track {
+  --mp-effort-inset: 11px;
+
+  position: relative;
+  height: 28px;
+  margin: 0 12px 12px;
+  border-radius: var(--mp-r6);
+  background: var(--mp-hover);
+  cursor: pointer;
+  touch-action: none;
+}
+
+.mp-effort-track:focus-visible {
+  outline: 2px solid var(--mp-focus);
+  outline-offset: 2px;
+}
+
+.mp-effort-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: var(--mp-r6);
+  background: color-mix(in srgb, var(--mp-text) 18%, transparent);
+}
+
+.mp-effort-thumb {
+  position: absolute;
+  top: 50%;
+  width: 22px;
+  height: 34px;
+  /* 参考里的滑块是方块，不是圆的：它标的是一个可拖的位置，不是一个焦点。 */
+  border-radius: var(--mp-r5);
+  background: var(--mp-panel);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .22);
+  transform: translate(-50%, -50%);
+}
+
+.mp-effort-tick {
+  position: absolute;
+  top: 50%;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--mp-text) 28%, transparent);
+  transform: translate(-50%, -50%);
+}
+
+/* ---- 工作目录小卡（参考 R10） ----
+   先给「No folder / Recent / <项目> ✓ / Open folder…」，再谈系统对话框。 */
+.mp-workspace-menu {
+  position: fixed;
+  z-index: 150;
+  min-width: 220px;
+  max-width: min(340px, calc(100vw - 32px));
+  padding: 4px;
+  border: 1px solid var(--mp-rule);
+  border-radius: var(--mp-r6);
+  background: var(--mp-panel);
+  box-shadow: var(--mp-shadow-menu);
+}
+
+.mp-workspace-menu-row {
+  display: flex;
+  width: 100%;
+  min-height: 30px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  border-radius: var(--mp-r5);
+  color: var(--mp-text);
+  font-size: 14px;
+  text-align: left;
+}
+
+.mp-workspace-menu-row:hover,
+.mp-workspace-menu-row[aria-checked='true'] {
+  background: var(--mp-hover);
+}
+
+.mp-workspace-menu-label {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-workspace-menu-check {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: var(--mp-focus);
+}
+
+.mp-workspace-menu-section {
+  padding: 8px 8px 4px;
+  color: var(--mp-text-muted);
+  font-size: 12px;
+}
+
+.mp-workspace-menu-divider {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--mp-rule);
 }
 
 /* worktree 开关：参考里是一个方框加文字的勾选框，不是一枚芯片——它是布尔
@@ -1539,6 +1741,17 @@
   transform-origin: 50% 50%;
 }
 
+/* 跑起来的时候这个环不是「用量」，是「还在动」：参考里那一圈细弧一直在转。
+   用量弧线同时留着没有意义（转动中它读不出比例），所以运行时整圆描边并旋转。 */
+#composer-context[data-state='running'] .mp-context-value {
+  stroke-dasharray: 30 70;
+  animation: mp-context-spin 900ms linear infinite;
+}
+
+@keyframes mp-context-spin {
+  to { transform: rotate(270deg); }
+}
+
 .mp-visually-hidden {
   position: absolute;
   width: 1px;
@@ -1568,13 +1781,138 @@
 .dshw-add-menu,
 .dshw-perm-menu,
 .dshw-model-menu,
+/* 参考的上下文卡：一行标题 + 一条彩色分段条 + 分组 + 行 + 页脚，比自己那套
+   竖排「标签 / 值」的 dl 宽、疏、轻。 */
 .mp-usage-popover {
   position: fixed;
   right: auto;
   bottom: auto;
-  max-width: min(420px, calc(100vw - 32px));
-  max-height: 360px;
+  width: min(380px, calc(100vw - 32px));
+  max-height: 420px;
+  padding: 14px 16px 6px;
   overflow: auto;
+  border-radius: var(--mp-r8);
+}
+
+.mp-usage-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--mp-text-secondary);
+  font-size: 15px;
+}
+
+.mp-usage-head-value {
+  margin-left: auto;
+  color: var(--mp-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.mp-usage-chev {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: var(--mp-text-muted);
+  /* 参考里这一行右端是「可以点进去」的右尖角，不是展开用的下尖角。 */
+  transform: rotate(-90deg);
+}
+
+.mp-usage-bar {
+  display: flex;
+  overflow: hidden;
+  height: 4px;
+  margin-top: 9px;
+  border-radius: 2px;
+  background: var(--mp-hover);
+}
+
+.mp-usage-seg {
+  height: 100%;
+  flex: none;
+}
+
+.mp-usage-seg.is-input {
+  background: var(--mp-focus);
+}
+
+.mp-usage-seg.is-output {
+  background: var(--mp-clay);
+}
+
+.mp-usage-divider {
+  height: 1px;
+  margin: 14px 0;
+  background: var(--mp-rule);
+}
+
+.mp-usage-section {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  color: var(--mp-text-secondary);
+  font-size: 15px;
+}
+
+.mp-usage-section-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-usage-arrow {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  margin-left: auto;
+  color: var(--mp-text-muted);
+}
+
+.mp-usage-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 10px;
+  color: var(--mp-text);
+  font-size: 15px;
+}
+
+.mp-usage-row + .mp-usage-row {
+  margin-top: 12px;
+}
+
+.mp-usage-row-value {
+  color: var(--mp-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.mp-usage-row-track {
+  grid-column: 1 / -1;
+  height: 2px;
+  margin-top: 7px;
+  overflow: hidden;
+  border-radius: 1px;
+  background: var(--mp-hover);
+}
+
+.mp-usage-row-fill {
+  height: 100%;
+  border-radius: 1px;
+  background: var(--mp-focus);
+}
+
+.mp-usage-foot {
+  display: block;
+  width: 100%;
+  padding: 12px 0 10px;
+  color: var(--mp-text);
+  font-size: 15px;
+  text-align: left;
+}
+
+.mp-usage-foot:hover {
+  color: var(--mp-focus);
 }
 
 .dshw-add-menu {

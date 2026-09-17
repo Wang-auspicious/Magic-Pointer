@@ -253,9 +253,10 @@
                 <button type="button" class="mp-composer-environment" id="composer-environment" aria-label="Local environment">
                   <svg aria-hidden="true"><use href="#ic-laptop" /></svg><span>Local</span>
                 </button>
-                <button type="button" class="mp-composer-workspace" id="composer-workspace" aria-label="Select a folder for this session">
+                <button type="button" class="mp-composer-workspace" id="composer-workspace" aria-label="Select a folder for this session" aria-haspopup="menu" aria-expanded="false">
                   <svg aria-hidden="true"><use href="#ic-folder" /></svg><span id="composer-workspace-label">Select folder…</span>
                 </button>
+                <div class="mp-workspace-menu" id="composer-workspace-menu" hidden role="menu" aria-label="选择工作目录"></div>
                 <button type="button" class="mp-composer-worktree" id="composer-worktree" role="switch" aria-checked="false"
                   aria-label="在独立的 git worktree 中工作" title="在独立的 git worktree 中工作" hidden>
                   <span class="mp-worktree-box" aria-hidden="true"><svg aria-hidden="true"><use href="#ic-check" /></svg></span>
@@ -271,7 +272,7 @@
                           placeholder="Describe a task or ask a question" aria-label="Continue conversation"></textarea>
                       </div>
                       <button type="submit" class="dshw-primary" title="Send" aria-label="Send" disabled>
-                        <svg width="16" height="16" aria-hidden="true"><use href="#ic-send" /></svg>
+                        <svg width="16" height="16" aria-hidden="true"><use href="#ic-corner-down-left" /></svg>
                       </button>
                     </div>
                     <div class="mp-composer-attachments" id="composer-attachments" hidden aria-label="附件"></div>

@@ -31,10 +31,13 @@ assert(row.includes('class="dsh-tool"'), 'tool row root');
 assert(row.includes('class="dsh-row"'), 'tool rows must share the 24px disclosure row chrome');
 assert(row.includes('class="dsh-title">Wrote</span>'),
   'row title is the completed action ("Wrote a.txt"), never the bare noun');
-assert(row.includes('class="dsh-io-card"'), 'args/result must render as the IN/OUT card');
-assert(row.includes('class="dsh-io-label">IN</span>'), 'input section must carry the IN gutter label');
-assert(row.includes('class="dsh-io-label">OUT</span>'), 'result section must carry the OUT gutter label');
+/* 展开体是「一张代码卡 + 卡下面的原文输出」，不是 IN/OUT 分栏：人读的是
+   「跑了什么」和「回了什么」，标签把这两件事摆成了两个格子。 */
+assert(row.includes('class="dsh-code"'), 'the expanded body renders as a code card');
+assert(row.includes('class="dsh-tool-output"'), 'the result renders as plain output text below the card');
+assert(!row.includes('dsh-io-label'), 'the IN/OUT gutter labels are gone');
 assert(row.includes('data-dsh-act="toggle"'), 'the row must be expandable via the shared delegation');
+assert(row.includes('data-dsh-act="copy"'), 'the command card carries its own copy action');
 
 const collapsedByDefault = DshChat.toolRowNode(model).outerHTML;
 assert(collapsedByDefault.includes('data-open="false"'), 'tool rows start collapsed');
@@ -63,6 +66,9 @@ assert(failed.includes('class="dsh-dot"'), 'an error row must show the state dot
 assert(failed.includes('data-state="error"'), 'error state must ride the root');
 assert(failed.includes('dsh-error-summary'), 'the collapsed error summary must use the error color');
 assert(failed.includes('no such file'));
+assert(failed.includes('class="dsh-tool-output"'),
+  'a tool result renders as plain output text, not as an OUT gutter label');
+assert(failed.includes('data-error="true"'), 'a failed result keeps its error coloring');
 
 /* ---- 编辑工具 diff 卡：红删绿加，不再让用户读 JSON 汤 ---- */
 const editArgs = JSON.stringify({ path: 'a.py', old_string: 'x = 1\ny = 2', new_string: 'x = 42\ny = 2' });
@@ -161,8 +167,9 @@ assert(flowingTurn.indexOf('找到文件了，我读一下。') > flowingTurn.in
   'the second narration comes after the first tool chip');
 assert(flowingTurn.indexOf('找到文件了，我读一下。') < flowingTurn.indexOf('dsh-tool-group'),
   'the second narration precedes the tool group it introduces');
-// 展开证据保留：IN/OUT 在芯片展开体里。
-assert(flowingTurn.includes('dsh-io-card'), 'expanded evidence (IN/OUT) must survive');
+// 展开证据保留：参数在芯片展开体里（这个 fixture 的 trajectory 工具没带结果，
+// 结果文本另有一条用例覆盖）。
+assert(flowingTurn.includes('dsh-code'), 'expanded evidence (the command card) must survive');
 // 错误芯片：失败摘要可见（红），不是只靠颜色。
 assert(flowingTurn.includes('not found: README.md'));
 // 最终答案不与最后一轮叙述重复渲染。
