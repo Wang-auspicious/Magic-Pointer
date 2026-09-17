@@ -1,0 +1,364 @@
+/* 产物页（#view-artifacts）。
+   结构照 claude.ai 的 Artifacts 页：衬线标题 → tab 行 + 右侧工具条 → 按日期分组
+   的一行一条。配色不照抄参考的深色，全部走 Magic Pointer 自己的 token。
+
+   这一页原来的标记（.card / .tile / .side-text）在任何已加载的样式表里都没有
+   定义，所以渲染出来是一颗撑满页面的 `</>` 图标加一行没有层级的文字。这里给
+   产物页自己的类名和尺寸，不再依赖那几个不存在的类。 */
+
+/* ---- 页头：参考里 Artifacts 是页面的衬线大标题，不是工具条上的小字 ---- */
+.mp-shell[data-view="artifacts"] .workspace-header {
+  min-height: 0;
+  align-items: flex-end;
+  padding: 32px 40px 8px;
+  border-bottom: 0;
+}
+
+.mp-shell[data-view="artifacts"] .workspace-header h1 {
+  font-family: var(--mp-font-serif);
+  font-size: 32px;
+  font-weight: var(--mp-weight-regular);
+  line-height: 40px;
+  letter-spacing: -.01em;
+}
+
+/* ---- 页面列 ---- */
+.mp-artifacts {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  padding: 0 40px 48px;
+}
+
+/* ---- tab 行 + 工具条 ---- */
+.mp-artifacts-bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 44px;
+  padding: 8px 0 12px;
+}
+
+.mp-artifacts-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.mp-artifact-tab {
+  padding: 5px 13px;
+  border: 0;
+  border-radius: var(--mp-r-pill);
+  background: transparent;
+  color: var(--mp-text-secondary);
+  font: inherit;
+  font-size: 14px;
+  line-height: 20px;
+  cursor: pointer;
+}
+
+.mp-artifact-tab:hover {
+  background: var(--mp-hover);
+  color: var(--mp-text);
+}
+
+/* 选中的 tab 是实心药丸，不是下划线——参考里没有下划线。 */
+.mp-artifact-tab.is-on,
+.mp-artifact-tab[aria-pressed="true"] {
+  background: var(--mp-active);
+  color: var(--mp-text);
+  font-weight: var(--mp-weight-medium);
+}
+
+.mp-artifacts-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mp-artifact-tool {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--mp-r6);
+  background: transparent;
+  color: var(--mp-text-secondary);
+  cursor: pointer;
+}
+
+.mp-artifact-tool:hover,
+.mp-artifact-tool[aria-pressed="true"] {
+  background: var(--mp-hover);
+  color: var(--mp-text);
+}
+
+.mp-artifact-tool svg {
+  width: 17px;
+  height: 17px;
+}
+
+.mp-artifact-tool[aria-pressed="true"] {
+  background: var(--mp-active);
+}
+
+.mp-artifact-kind {
+  display: inline-flex;
+  height: 32px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px 0 12px;
+  border: 1px solid var(--mp-rule-strong);
+  border-radius: var(--mp-r6);
+  background: transparent;
+  color: var(--mp-text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+  cursor: pointer;
+}
+
+.mp-artifact-kind:hover {
+  background: var(--mp-hover);
+}
+
+.mp-artifact-kind svg {
+  width: 14px;
+  height: 14px;
+  color: var(--mp-text-muted);
+}
+
+.mp-artifact-kind-menu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% - 6px);
+  right: 0;
+  display: flex;
+  min-width: 168px;
+  flex-direction: column;
+  padding: 4px;
+  border: 1px solid var(--mp-rule);
+  border-radius: var(--mp-r6);
+  background: var(--mp-panel);
+  box-shadow: var(--mp-shadow-menu);
+}
+
+.mp-artifact-kind-menu[hidden] {
+  display: none;
+}
+
+.mp-artifact-kind-menu button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--mp-r5);
+  background: transparent;
+  color: var(--mp-text);
+  font: inherit;
+  font-size: 13px;
+  line-height: 20px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mp-artifact-kind-menu button:hover {
+  background: var(--mp-hover);
+}
+
+.mp-artifact-kind-menu button[aria-checked="true"] {
+  background: var(--mp-active);
+  font-weight: var(--mp-weight-medium);
+}
+
+.mp-artifact-kind-menu em {
+  color: var(--mp-text-muted);
+  font-style: normal;
+}
+
+/* ---- 搜索行：点搜索图标才出现，是同一排工具的真展开，不是装饰 ---- */
+.mp-artifact-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  padding: 0 12px;
+  border: 1px solid var(--mp-rule);
+  border-radius: var(--mp-r6);
+  background: var(--mp-panel);
+}
+
+.mp-artifact-search[hidden] {
+  display: none;
+}
+
+.mp-artifact-search:focus-within {
+  border-color: var(--mp-focus);
+}
+
+.mp-artifact-search-glyph svg {
+  display: block;
+  width: 15px;
+  height: 15px;
+  color: var(--mp-text-muted);
+}
+
+.mp-artifact-search input {
+  width: 100%;
+  padding: 8px 0;
+  border: 0;
+  background: transparent;
+  color: var(--mp-text);
+  font: inherit;
+  font-size: 14px;
+}
+
+.mp-artifact-search input:focus {
+  outline: none;
+}
+
+.mp-artifact-search input::placeholder {
+  color: var(--mp-text-muted);
+}
+
+/* ---- 分组 ---- */
+.mp-artifact-group {
+  margin: 24px 0 0;
+}
+
+.mp-artifact-group:first-child {
+  margin-top: 8px;
+}
+
+.mp-artifact-group-label {
+  margin: 0 0 6px;
+  color: var(--mp-text-muted);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+/* ---- 一行一条 ---- */
+.mp-artifact-row {
+  display: grid;
+  width: 100%;
+  min-height: 56px;
+  align-items: center;
+  gap: 12px;
+  /* 名字列有下限，灰字列下限为 0：来源那一串可以很长，空间不够时先截灰字，
+     不是把标题挤没。 */
+  grid-template-columns: 32px minmax(120px, 1fr) minmax(0, auto);
+  padding: 8px 12px;
+  border: 0;
+  border-radius: var(--mp-r6);
+  background: transparent;
+  color: var(--mp-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mp-artifact-row:hover {
+  background: var(--mp-hover);
+}
+
+.mp-artifact-row:focus-visible {
+  outline: 2px solid var(--mp-focus);
+  outline-offset: -2px;
+}
+
+.mp-artifact-tile {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--mp-r6);
+  background: var(--mp-panel-subtle);
+  color: var(--mp-text-secondary);
+}
+
+.mp-artifact-tile svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* kind 是桥端透传的自由字符串。只给认得的 kind 上色，认不得的保持中性底。 */
+.mp-artifact-tile[data-kind="file"] { background: rgba(37, 102, 208, .10); color: #2566D0; }
+.mp-artifact-tile[data-kind="text"] { background: rgba(217, 119, 87, .14); color: var(--mp-clay-strong); }
+.mp-artifact-tile[data-kind="document_patch"] { background: rgba(46, 125, 79, .12); color: var(--mp-success); }
+.mp-artifact-tile[data-kind="code"] { background: rgba(37, 102, 208, .10); color: #2566D0; }
+.mp-artifact-tile[data-kind="image"] { background: rgba(180, 35, 24, .10); color: var(--mp-danger); }
+
+:root[data-theme="dark"] .mp-artifact-tile[data-kind="file"],
+:root[data-theme="dark"] .mp-artifact-tile[data-kind="code"],
+body[data-ds-dark-theme] .mp-artifact-tile[data-kind="file"],
+body[data-ds-dark-theme] .mp-artifact-tile[data-kind="code"] { background: rgba(134, 172, 234, .16); color: #86ACEA; }
+
+.mp-artifact-name {
+  overflow: hidden;
+  font-size: 15px;
+  line-height: 22px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mp-artifact-meta {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--mp-text-muted);
+  font-size: 13px;
+  line-height: 18px;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 网格布局：同一个列表换一种读法，不是第二份内容。 */
+#art-list[data-layout="grid"] {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(232px, 1fr));
+}
+
+#art-list[data-layout="grid"] .mp-artifact-group {
+  display: contents;
+}
+
+#art-list[data-layout="grid"] .mp-artifact-group-label {
+  grid-column: 1 / -1;
+  margin-top: 16px;
+}
+
+#art-list[data-layout="grid"] .mp-artifact-row {
+  min-height: 0;
+  overflow: hidden;
+  align-content: start;
+  grid-template-columns: 32px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  padding: 12px;
+  border: 1px solid var(--mp-rule);
+}
+
+#art-list[data-layout="grid"] .mp-artifact-meta {
+  grid-column: 2;
+  overflow-wrap: anywhere;
+  text-align: left;
+  white-space: normal;
+}
+
+/* ---- 空态：参考里只有一行灰字，没有插画 ---- */
+.mp-artifact-empty {
+  margin: 8px 0 0;
+  color: var(--mp-text-muted);
+  font-size: 13px;
+  line-height: 20px;
+}
