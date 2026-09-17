@@ -1149,6 +1149,92 @@ function compactTokenCount(value: number): string {
   return `${Math.round(value / 1000)}k`;
 }
 
+/* ---- 左侧跳转条 ----
+   参考里会话左边那条短横：每一条我发出去的消息一枚，点一下滚过去。它是
+   整段对话的缩略图，不是滚动条——位置按消息在全文里的比例定，所以它不随
+   滚动漂移，长会话里一眼能看出「我问了几次、都在哪」。位置算完就不再重排，
+   滚动只改高亮。 */
+function syncStreamRailActive() {
+  const rail = document.getElementById('stream-rail');
+  const stream = document.getElementById('stream');
+  if (!rail || !stream) return;
+  const messages = Array.from(stream.querySelectorAll<HTMLElement>('.dsh-user'));
+  if (messages.length === 0) return;
+  const streamTop = stream.getBoundingClientRect().top;
+  const cursor = stream.scrollTop + stream.clientHeight * 0.35;
+  let best = -1;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  messages.forEach((message, index) => {
+    const offset = message.getBoundingClientRect().top - streamTop + stream.scrollTop;
+    const distance = Math.abs(offset - cursor);
+    if (distance < bestDistance) { bestDistance = distance; best = index; }
+  });
+  const ticks = rail.querySelectorAll<HTMLElement>('.dshw-rail-tick');
+  ticks.forEach((tick, index) => {
+    tick.setAttribute('data-active', index === best ? 'true' : 'false');
+  });
+}
+
+function renderStreamRail() {
+  const rail = document.getElementById('stream-rail');
+  const stream = document.getElementById('stream');
+  if (!rail || !stream) return;
+  const messages = Array.from(stream.querySelectorAll<HTMLElement>('.dsh-user'));
+  if (messages.length === 0) {
+    rail.replaceChildren();
+    rail.hidden = true;
+    return;
+  }
+  rail.hidden = false;
+  rail.replaceChildren();
+  const streamTop = stream.getBoundingClientRect().top;
+  const contentHeight = Math.max(1, stream.scrollHeight);
+  const reduceMotion = typeof window.matchMedia === 'function'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  messages.forEach((message, index) => {
+    const tick = document.createElement('button');
+    tick.type = 'button';
+    tick.className = 'dshw-rail-tick';
+    const offset = Math.max(0, message.getBoundingClientRect().top - streamTop + stream.scrollTop);
+    tick.style.setProperty('--mp-rail-pos', (Math.min(1, offset / contentHeight)).toFixed(4));
+    const text = (message.querySelector('.dsh-bubble')?.textContent || '').trim();
+    tick.title = text.slice(0, 120) || `第 ${index + 1} 条`;
+    tick.setAttribute('aria-label', `跳到第 ${index + 1} 条消息`);
+    tick.addEventListener('click', () => {
+      message.scrollIntoView({ block: 'start', behavior: reduceMotion ? 'auto' : 'smooth' });
+    });
+    rail.appendChild(tick);
+  });
+  syncStreamRailActive();
+}
+
+/* 流是一轮一轮长出来的，每轮都会改所有消息的位置，所以重新测量要等这一轮
+   画完再做——用 debounce 而不是 rAF，因为一轮里可能连改好几次。 */
+let streamRailTimer = 0;
+function scheduleStreamRail(delay = 80) {
+  if (streamRailTimer) window.clearTimeout(streamRailTimer);
+  streamRailTimer = window.setTimeout(() => {
+    streamRailTimer = 0;
+    renderStreamRail();
+  }, delay);
+}
+
+(function bindStreamRail() {
+  const stream = document.getElementById('stream');
+  if (!stream) return;
+  /* 滚动只改高亮，不重新测量：位置是按全文比例定的，不随滚动漂移。
+     用 rAF 合并同一帧里的多次 scroll 事件。 */
+  let ticking = false;
+  stream.addEventListener('scroll', () => {
+    if (ticking) return;
+    ticking = true;
+    window.requestAnimationFrame(() => {
+      ticking = false;
+      syncStreamRailActive();
+    });
+  }, { passive: true });
+}());
+
 /* 账户配额只问一次：这张卡是「点开看一眼」，不是仪表盘。主进程那边还有
    60 秒缓存，所以即使这里被重建也不会重复打接口。 */
 let composerQuota: MagicPointerQuotaReport | null = null;
@@ -1744,6 +1830,7 @@ async function openConversation(id: string) {
   stream.replaceChildren(flow);
   stream.scrollTop = stream.scrollHeight;
   DshChat.bindDelegation(stream);
+  scheduleStreamRail();
   renderUsageMeter(turns);
   /* 会话重开后审批卡要能 reconstruct：最后一条 turn 若带着未消化的
      pendingInput（等待输入被打断/重启），卡重新长在 composer 上沿。
@@ -3150,6 +3237,8 @@ if (projectBrowserHost && typeof ResizeObserver !== 'undefined') {
   new ResizeObserver(() => scheduleProjectBrowserResize()).observe(projectBrowserHost);
 }
 window.addEventListener('resize', () => {
+  /* 跳转条的位置按全文高度算，换尺寸之后整张图都变了，要重新测。 */
+  scheduleStreamRail();
   if (inspectorState.open && !inspectorState.maximized) {
     inspectorState = inspectorStatePolicy.reduceInspectorState(
       inspectorState,
@@ -5275,6 +5364,7 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
     pending.appendChild(pendingBody);
     flow.appendChild(pending);
     stream.scrollTop = stream.scrollHeight;
+    scheduleStreamRail();
 
     textarea.value = '';
     fitComposer(textarea);

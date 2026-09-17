@@ -496,8 +496,74 @@ const DshChat = (() => {
     return model.name === 'pwsh' ? '>' : '$';
   }
 
-  /* 代码卡：头一行（带提示符）+ 复制钮，下面是等宽的其余行。 */
-  function commandCardNode(command: ToolCommand, prompt: string, copyText: string): DshNode {
+  /* 语法高亮来自 DshHighlight（自己的模块，也能被 Node 侧的 shim 测试加载）。
+     加载不到、或者它抛了，都退回一整段纯文本——一张没上色的代码卡仍然可读，
+     一张空的卡不是。 */
+  interface HighlightSpan { text: string; token: string }
+  function highlightLines(text: string, lang: string): HighlightSpan[][] | null {
+    const api = typeof globalThis !== 'undefined'
+      ? (globalThis as unknown as { DshHighlight?: { highlight?: (code: string, lang: string) => HighlightSpan[][] } }).DshHighlight
+      : undefined;
+    if (!api || typeof api.highlight !== 'function') return null;
+    try {
+      const lines = api.highlight(text, lang);
+      return Array.isArray(lines) ? lines : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function highlightLang(toolName: string, command: string): string {
+    const api = typeof globalThis !== 'undefined'
+      ? (globalThis as unknown as { DshHighlight?: { langFor?: (name: string, command: string) => string } }).DshHighlight
+      : undefined;
+    if (!api || typeof api.langFor !== 'function') return 'plain';
+    try {
+      return String(api.langFor(toolName, command) || 'plain');
+    } catch {
+      return 'plain';
+    }
+  }
+
+  /* 一行代码 → 若干带 token 类的 span。拼起来必须和原行一模一样，所以拿不到
+     高亮时给的就是整行原文，不会少字符。 */
+  function codeLineNode(line: string, spans: HighlightSpan[] | undefined): DshNode {
+    const node = h('span', { class: 'dsh-code-line' });
+    if (!spans || spans.length === 0) {
+      attach(node, line);
+      return node;
+    }
+    for (const span of spans) {
+      const piece = h('span', { class: `dsh-tok-${String(span.token || 'plain')}` });
+      attach(piece, String(span.text ?? ''));
+      attach(node, piece);
+    }
+    return node;
+  }
+
+  function codeBodyNode(text: string, lang: string): DshNode {
+    const lines = text.split('\n');
+    const highlighted = highlightLines(text, lang);
+    const code = h('code');
+    lines.forEach((line, index) => {
+      if (index > 0) attach(code, '\n');
+      attach(code, codeLineNode(line, highlighted ? highlighted[index] : undefined));
+    });
+    return code;
+  }
+
+  /* 工具展开后的两种形态，参考里是分开的：
+     - 单行命令 → 终端卡。`$ ls …` 的头和它的输出在同一张卡里，输出可滚。
+     - 多行命令 → 代码卡。整段脚本带语法高亮进卡，输出在卡外当正文读。
+     区别是有道理的：一条命令加它的输出本来就是一个终端会话；一段脚本是
+     一份清单，它的回执不该长在清单里面。 */
+  function commandCardNode(
+    command: ToolCommand,
+    prompt: string,
+    copyText: string,
+    options: { output?: string | null; error?: boolean; lang?: string; toolName?: string } = {},
+  ): DshNode {
+    const lang = options.lang || highlightLang(String(options.toolName || ''), command.full);
     const card = h('div', { class: 'dsh-code' });
     const head = h('div', { class: 'dsh-code-head' });
     const line = h('span', { class: 'dsh-code-first' });
@@ -506,7 +572,7 @@ const DshChat = (() => {
       attach(mark, prompt);
       attach(line, mark);
     }
-    attach(line, command.first);
+    attach(line, codeLineNode(command.first, highlightLines(command.first, lang)?.[0]));
     const copy = h('button', {
       type: 'button',
       class: 'dsh-action dsh-code-copy',
@@ -520,8 +586,14 @@ const DshChat = (() => {
     attach(card, head);
     if (command.rest) {
       const pre = h('pre');
-      attach(pre, h('code', {}, command.rest));
+      attach(pre, codeBodyNode(command.rest, lang));
       attach(card, pre);
+    }
+    if (options.output) {
+      const body = h('div', { class: 'dsh-code-body' });
+      if (options.error) body.setAttribute('data-error', 'true');
+      attach(body, codeBodyNode(String(options.output), 'plain'));
+      attach(card, body);
     }
     return card;
   }
@@ -576,14 +648,29 @@ const DshChat = (() => {
        其实是「跑了什么」和「回了什么」。 */
     const body: DshNode[] = [];
     const diff = deriveDiff(model.name, model.argsRaw ?? '');
+    const command = toolCommandOf(model);
+    /* 单行命令的输出进卡，多行命令的输出留在卡外——见 commandCardNode 上面
+       那段注释。 */
+    const singleLine = command !== null && command.rest === '';
+    let outputInCard = false;
     if (diff !== null && (model.body !== null || model.output !== null)) {
       body.push(diffNode(diff));
+    } else if (command !== null) {
+      /* 参考里卡片上方另起一行写工具名（`Bash`，蓝色）。它回答的是「这是谁跑的」，
+         和卡里的命令不是一回事，所以不并进卡头。 */
+      const tag = h('div', { class: 'dsh-tool-tag' });
+      attach(tag, model.name);
+      body.push(tag);
+      body.push(commandCardNode(command, commandPrompt(model), command.full, {
+        output: singleLine ? model.output : null,
+        error: model.state === 'error',
+        toolName: model.name,
+      }));
+      outputInCard = singleLine && model.output !== null;
     } else if (model.body !== null) {
-      const command = toolCommandOf(model);
-      const card: ToolCommand = command ?? { first: model.title, rest: model.body, full: model.body };
-      body.push(commandCardNode(card, command ? commandPrompt(model) : '', card.full));
+      body.push(commandCardNode({ first: model.title, rest: model.body, full: model.body }, '', model.body));
     }
-    if (model.output !== null) {
+    if (model.output !== null && !outputInCard) {
       const output = h('div', { class: 'dsh-tool-output' });
       if (model.state === 'error') output.setAttribute('data-error', 'true');
       attach(output, model.output);

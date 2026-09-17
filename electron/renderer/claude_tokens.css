@@ -69,6 +69,17 @@
   --mp-success: #2E7D4F;
   --mp-focus: #2566D0;
 
+  /* 展开的工具卡里那段命令的着色。取的是 PowerShell ISE 那套读惯了的分配：
+     命令蓝、变量红、字符串绿、数字红、关键字橙。不是为了还原某个编辑器，
+     是为了让一行命令里的「动词」「参数」「值」在扫一眼时分开。 */
+  --mp-syn-command: #2566D0;
+  --mp-syn-keyword: #A15C00;
+  --mp-syn-variable: #B42318;
+  --mp-syn-number: #B42318;
+  --mp-syn-string: #2E7D4F;
+  --mp-syn-comment: #6E7B6E;
+  --mp-syn-operator: #52514E;
+
   --mp-font-ui: "Anthropic Sans", "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
   --mp-font-serif: "Anthropic Serif", Georgia, "Times New Roman", serif;
   --mp-font-mono: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
@@ -166,6 +177,13 @@ body[data-ds-dark-theme] {
   --mp-danger: #FF6159;
   --mp-success: #74C295;
   --mp-focus: #86ACEA;
+  --mp-syn-command: #86ACEA;
+  --mp-syn-keyword: #E0A030;
+  --mp-syn-variable: #FF918A;
+  --mp-syn-number: #FF918A;
+  --mp-syn-string: #74C295;
+  --mp-syn-comment: #8A9A8A;
+  --mp-syn-operator: #A9A79F;
   --mp-shadow-menu: 0 0 0 .5px rgba(255,255,255,.08), 0 4px 12px rgba(0,0,0,.40), 0 16px 40px rgba(0,0,0,.50);
   --mp-shadow-sheet: 0 0 0 .5px rgba(255,255,255,.07), 0 12px 32px rgba(0,0,0,.42);
 }

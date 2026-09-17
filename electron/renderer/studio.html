@@ -49,6 +49,11 @@
         <button class="dshw-new-session" id="nav-new-chat" data-goto="chat">
           <svg aria-hidden="true"><use href="#ic-plus" /></svg><span class="dshw-new-session-label">New</span>
         </button>
+        <!-- `dshw-customize` 这个名字是历史遗留，它现在的实际含义是「侧栏导航
+             行」——New / Artifacts / Customize 共用一套排版，所以三行同一个类。 -->
+        <button class="dshw-customize" id="nav-artifacts" data-goto="artifacts">
+          <svg aria-hidden="true"><use href="#ic-docs" /></svg><span>Artifacts</span>
+        </button>
         <button class="dshw-customize" id="settings-open" data-goto="settings" aria-haspopup="dialog">
           <svg aria-hidden="true"><use href="#ic-briefcase" /></svg><span>Customize</span>
         </button>
@@ -213,6 +218,7 @@
           <div class="dshw-stream" id="stream">
             <div class="dshw-blank" aria-hidden="true"></div>
           </div>
+          <div class="dshw-rail" id="stream-rail" hidden></div>
           <div class="dshw-trajectory-seat" id="trajectory" hidden></div>
 
           <div class="dshw-plan" id="composer-plan" hidden>
@@ -598,7 +604,8 @@
   <script defer src="live_cards.js?v=23"></script>
   <script defer src="dsh_markdown.js?v=24"></script>
   <script defer src="dsh_icons.js?v=25"></script>
-  <script defer src="dsh_chat.js?v=26"></script>
+  <script defer src="dsh_highlight.js?v=1"></script>
+  <script defer src="dsh_chat.js?v=27"></script>
   <script defer src="dsh_trajectory.js?v=25"></script>
   <script defer src="../conversation_control.js?v=23"></script>
   <script defer src="../slash_trigger.js?v=23"></script>

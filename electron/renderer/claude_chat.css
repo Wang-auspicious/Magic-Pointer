@@ -561,6 +561,20 @@
   background: var(--mp-markdown-cell);
 }
 
+/* 展开体在组内要和行文字同一个左边界，否则卡片会贴到容器的边框上——参考里
+   它和上面的动作行是齐头的。 */
+.dsh-tool-group-body > .dsh-tool > .dsh-disclosure > .dsh-body-wrap {
+  padding: 0 10px 10px;
+}
+
+/* 卡上方的工具名。它不是标题（标题是上面那一行动作），只是「谁跑的」。 */
+.dsh-tool-tag {
+  margin-top: 8px;
+  color: var(--mp-focus);
+  font-size: 13px;
+  line-height: 18px;
+}
+
 .dsh-code-head {
   display: flex;
   min-height: 30px;
@@ -604,6 +618,41 @@
   color: var(--mp-danger);
 }
 
+/* 终端卡：单行命令的回执和命令在同一张卡里，输出放在卡体、等宽、封顶滚动。
+   参考里的终端块高度是固定的，再长就滚——一段输出把整页推开，会让上面那条
+   命令滚出视野。 */
+.dsh-code-body {
+  max-height: 360px;
+  overflow: auto;
+  padding: 0 10px 10px;
+  color: var(--mp-text-secondary);
+  font-family: var(--mp-font-mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+  /* 换行是这一段里唯一的结构信息，掉了就成了一坨。 */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.dsh-code-body[data-error='true'] {
+  color: var(--mp-danger);
+}
+
+.dsh-code-line {
+  display: inline;
+}
+
+/* 词法着色。取不到高亮时整行就是 plain，读起来和以前一样；这些类只是
+   在能分辨的时候把动词、参数和值分开。 */
+.dsh-tok-command { color: var(--mp-syn-command); }
+.dsh-tok-keyword { color: var(--mp-syn-keyword); }
+.dsh-tok-variable { color: var(--mp-syn-variable); }
+.dsh-tok-number { color: var(--mp-syn-number); }
+.dsh-tok-string { color: var(--mp-syn-string); }
+.dsh-tok-comment { color: var(--mp-syn-comment); font-style: italic; }
+.dsh-tok-operator { color: var(--mp-syn-operator); }
+.dsh-tok-plain { color: inherit; }
+
 .dsh-code-lang {
   overflow: hidden;
   color: var(--mp-text-muted);
@@ -617,29 +666,35 @@
   min-height: 1px;
 }
 
+/* 复制钮常驻。参考里它就在卡头右端露着，只是颜色淡；藏到 hover 才出现的话，
+   一段要复制的命令得先猜出「这里能复制」。 */
 .dsh-code-copy {
-  opacity: 0;
-  transition: opacity var(--mp-dur-fast);
+  color: var(--mp-text-muted);
+  opacity: 1;
+  transition: color var(--mp-dur-fast);
 }
 
 .dsh-code:hover .dsh-code-copy,
 .dsh-code-copy:focus-visible {
-  opacity: 1;
+  color: var(--mp-text);
 }
 
 .dsh-code pre {
   margin: 0;
   padding: 0 10px 10px;
-  overflow: auto;
   font-family: var(--mp-font-mono);
   font-size: 12.5px;
   line-height: 1.55;
   tab-size: 2;
+  /* 参考里长行是折的，不是横向滚的：一张要左右拖才能读完命令的卡，比折行
+     更难读。缩进由 pre-wrap 保住。 */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .dsh-code code {
   font-family: inherit;
-  white-space: pre;
+  white-space: inherit;
 }
 
 .dsh-diff-stat {
@@ -837,6 +892,57 @@
   height: 1px;
   overflow: hidden;
   clip-path: inset(50%);
+}
+
+/* ---- 左侧跳转条 ----
+   每条用户消息一枚小卡。位置按消息在全文里的比例定，所以它读起来是整段
+   对话的缩略图：长会话里一眼看出问了几次、都在哪一段。 */
+.dshw-rail {
+  position: absolute;
+  z-index: 20;
+  top: 12px;
+  bottom: 12px;
+  left: 6px;
+  width: 20px;
+  pointer-events: none;
+}
+
+.dshw-rail-tick {
+  position: absolute;
+  left: 0;
+  display: grid;
+  width: 18px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid var(--mp-rule);
+  border-radius: var(--mp-r5);
+  background: var(--mp-panel);
+  pointer-events: auto;
+  /* 比例存成无单位数，才能和 (100% - 卡片高) 相乘——百分比和百分比相乘在
+     calc 里是不合法的。 */
+  top: calc(var(--mp-rail-pos, 0) * (100% - 30px));
+  transition: border-color var(--mp-dur-fast), background-color var(--mp-dur-fast);
+}
+
+/* 卡片里那根短横。它只是个记号，不承载信息，所以是伪元素。 */
+.dshw-rail-tick::before {
+  content: "";
+  width: 10px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--mp-text-muted);
+  transition: background-color var(--mp-dur-fast), width var(--mp-dur-fast);
+}
+
+.dshw-rail-tick:hover,
+.dshw-rail-tick[data-active='true'] {
+  border-color: var(--mp-rule-strong);
+  background: var(--mp-hover);
+}
+
+.dshw-rail-tick[data-active='true']::before {
+  width: 14px;
+  background: var(--mp-text);
 }
 
 .dshw-scroll-pill {

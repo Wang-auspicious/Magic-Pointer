@@ -29,6 +29,7 @@ const STATES = [
   'customize',
   'design',
   'flow',
+  'tool-cards',
   'worktree',
   'minimum',
 ];
@@ -216,6 +217,71 @@ function statePreparationScript(state, theme) {
       const metaSlot = liveBody.querySelector('[data-turn-meta]');
       if (metaSlot) metaSlot.textContent = DshChat.formatRunMeta(12 * 60 * 1000 + 59 * 1000, 3600);
       if (stream) stream.scrollTop = stream.scrollHeight;
+    } else if (state === 'tool-cards') {
+      /* 展开的工具卡有两种形态，参考里是分开的：多行脚本走「带高亮的代码卡，
+         输出在卡外」；单行命令走「提示符 + 命令和它的输出同在一张终端卡里」。
+         这一屏把两种并排放在一条流里，配色、缩进、滚动区一眼可比。
+         注意：这段注释在外层模板字符串里面，反引号和美元花括号都不能出现。 */
+      await openReference();
+      const home = document.getElementById('studio-home');
+      if (home) home.hidden = true;
+      const stream = document.getElementById('stream');
+      const flow = document.createElement('div');
+      flow.className = 'dsh-flow';
+      stream.replaceChildren(flow);
+
+      /* 外层是模板字符串，所以这里不能出现反引号或美元花括号——参考图里的
+         那段 PowerShell 用反引号拼行，这里换成等价写法。 */
+      const script = [
+        'function Txt($u,$n=7000) {',
+        '  try { $r = Invoke-WebRequest -Uri $u -UseBasicParsing -TimeoutSec 40 } catch { "ERR $u : $($_.Exception.Message)"; return }',
+        "  $c = $r.Content -replace '(?s)<script.*?</script>','' -replace '(?s)<style.*?</style>',''",
+        "  $c = [System.Net.WebUtility]::HtmlDecode($c) -replace '[ ]+',' '",
+        '  $c = $c.Trim()',
+        '  "===== $u"',
+        '  $c.Substring(0,[Math]::Min($n,$c.Length))',
+        '}',
+        'Txt "https://openai.com/index/gpt-6-astra/" 9000',
+      ].join('\\n');
+
+      const listing = ['total 33816'];
+      for (let i = 1; i <= 24; i += 1) {
+        listing.push('-rw-r--r-- 1 zjz65 197609 ' + (825637 + i * 997)
+          + ' Sep 16 14:31 43709c3d-aa31-4509-ae9b-10852a2fd298.jsonl');
+      }
+      listing.push('drwxr-xr-x 1 zjz65 197609 0 Sep 16 14:31 356913b5-a21d-4cf1-a7f5-faf21a3007c0');
+
+      flow.appendChild(DshChat.assistantTurnNode({
+        conversationId: 'probe-tool-cards',
+        turnIndex: 0,
+        answer: '',
+        trajectory: [
+          /* 折叠的行要有若干条才看得出「组」——单个工具在参考里是一条裸行，
+             不会长成带边框的容器，所以夹具必须凑够两条以上。 */
+          { kind: 'tool', name: 'Bash', callId: 'w1', state: 'done', isError: false,
+            text: JSON.stringify({ command: 'rg -n "novelty" docs/ --glob "*.md" | head -40' }),
+            result: 'docs/01.md:12:novelty search' },
+          { kind: 'tool', name: 'Bash', callId: 'w2', state: 'done', isError: false,
+            text: JSON.stringify({ command: 'curl -s https://cvpr.thecvf.com/Conferences/2027/Dates' }),
+            result: 'ok' },
+          { kind: 'message', text: '三个都实搜验证过，空白很干净。现在合并进 HTML。' },
+          { kind: 'tool', name: 'pwsh', callId: 'ps1', state: 'done', isError: false,
+            text: JSON.stringify({ command: script }),
+            result: 'ERR https://openai.com/index/gpt-6-astra/ ： 远程服务器返回错误: (403) 已禁止。' },
+          { kind: 'message', text: '换成先看本地会话文件，再决定要不要抓网页。' },
+          { kind: 'tool', name: 'Bash', callId: 'b1', state: 'done', isError: false,
+            text: JSON.stringify({ command: 'ls -1t "/c/Users/zjz65/.claude/projects/D--Desktop-Magic-Pointer/" | head -30' }),
+            result: listing.join('\\n') },
+        ],
+      })[0]);
+      /* 直接写属性展开，不走 click：点击会经过事件委托，委托里有些分支会去
+         调桥，探针只想要那一屏静止的像素。 */
+      for (const group of stream.querySelectorAll('details.dsh-tool-group')) group.open = true;
+      for (const row of stream.querySelectorAll('.dsh-disclosure')) row.setAttribute('data-open', 'true');
+      if (stream) stream.scrollTop = 0;
+      /* 展开是一次带淡入的动画（dsh-reveal）。不等它跑完就截图，拍到的是
+         半透明的那一帧，看起来像配色出了问题。 */
+      await wait(400);
     } else if (state === 'permission') {
       await openReference();
       pendingPermissionAsk = { tool: 'Bash', prefix: 'npm run sync' };
