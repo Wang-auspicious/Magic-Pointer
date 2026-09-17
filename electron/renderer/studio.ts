@@ -1219,6 +1219,110 @@ function scheduleStreamRail(delay = 80) {
   }, delay);
 }
 
+/* ---- 选中文字 → Start a side chat / Reply ----
+   在消息里选中一段文字，旁边浮出这两个动作。它们回答的是同一件事的两个方向：
+   「就着这段说一句」（把选中的话引到输入框里）和「拿这段另起一个对话」。
+   引用用的是 markdown 引用块——它进的是输入框，用户还能改，而不是偷偷发出去。 */
+function quotedSelection(text: string): string {
+  const lines = text.split('\n').map((line) => `> ${line}`).join('\n');
+  return `${lines}\n\n`;
+}
+
+(function bindSelectionActions() {
+  const stream = document.getElementById('stream');
+  if (!stream) return;
+  const pill = document.createElement('div');
+  pill.className = 'dshw-select-pill';
+  pill.hidden = true;
+  pill.setAttribute('role', 'toolbar');
+  pill.setAttribute('aria-label', '选中内容的操作');
+  const side = document.createElement('button');
+  side.type = 'button';
+  side.textContent = 'Start a side chat';
+  const reply = document.createElement('button');
+  reply.type = 'button';
+  reply.textContent = 'Reply';
+  pill.append(side, reply);
+  document.body.appendChild(pill);
+
+  let selected = '';
+  let selectionTurn: { conversationId: string; turnIndex: number } | null = null;
+
+  const hide = () => { pill.hidden = true; };
+
+  const update = () => {
+    const selection = window.getSelection();
+    const text = selection ? String(selection).trim() : '';
+    if (!selection || selection.isCollapsed || !text || selection.rangeCount === 0) {
+      hide();
+      return;
+    }
+    const range = selection.getRangeAt(0);
+    const node = range.commonAncestorContainer;
+    const element = node.nodeType === 1 ? node as Element : node.parentElement;
+    const message = element?.closest<HTMLElement>('.dsh-user, .dsh-assistant');
+    if (!message || !stream.contains(message)) { hide(); return; }
+    /* 引用要连回它出自哪一轮，所以从消息上取分支目标（用户气泡带着它）。 */
+    const fork = message.querySelector<HTMLElement>('[data-dsh-branch-conversation]');
+    const turnIndex = Number(fork?.getAttribute('data-dsh-branch-turn'));
+    selectionTurn = fork && Number.isInteger(turnIndex)
+      ? { conversationId: fork.getAttribute('data-dsh-branch-conversation') || '', turnIndex }
+      : null;
+    const rect = range.getBoundingClientRect();
+    if (!rect.width && !rect.height) { hide(); return; }
+    selected = text.slice(0, 4000);
+    pill.hidden = false;
+    const width = pill.offsetWidth;
+    const left = Math.max(12, Math.min(window.innerWidth - width - 12, rect.left));
+    /* 选中的是最后一行时，浮层放到选区上方——放到下方会压在输入框上。 */
+    const below = rect.bottom + 10;
+    const top = below + pill.offsetHeight < window.innerHeight - 12 ? below : rect.top - pill.offsetHeight - 10;
+    pill.style.left = `${Math.round(left)}px`;
+    pill.style.top = `${Math.round(Math.max(12, top))}px`;
+  };
+
+  side.addEventListener('mousedown', (event) => event.preventDefault());
+  reply.addEventListener('mousedown', (event) => event.preventDefault());
+  side.addEventListener('click', () => {
+    const target = selectionTurn;
+    hide();
+    window.getSelection()?.removeAllRanges();
+    const textarea = document.querySelector<HTMLTextAreaElement>('#composer-form textarea');
+    if (textarea) {
+      textarea.value = quotedSelection(selected);
+      fitComposer(textarea);
+      syncComposerSubmitState();
+      textarea.focus();
+    }
+    if (target?.conversationId) {
+      document.dispatchEvent(new CustomEvent('mp:branch-conversation', { detail: target }));
+    }
+  });
+  reply.addEventListener('click', () => {
+    hide();
+    window.getSelection()?.removeAllRanges();
+    const textarea = document.querySelector<HTMLTextAreaElement>('#composer-form textarea');
+    if (!textarea) return;
+    const quoted = quotedSelection(selected);
+    textarea.value = `${quoted}${textarea.value}`;
+    fitComposer(textarea);
+    syncComposerSubmitState();
+    textarea.focus();
+    textarea.setSelectionRange(quoted.length, quoted.length);
+  });
+
+  /* selectionchange 在拖选过程中会连续触发，等手停下来再定位。 */
+  let timer = 0;
+  document.addEventListener('selectionchange', () => {
+    if (timer) window.clearTimeout(timer);
+    timer = window.setTimeout(() => { timer = 0; update(); }, 90);
+  });
+  stream.addEventListener('scroll', hide, { passive: true });
+  document.addEventListener('mousedown', (event) => {
+    if (!pill.contains(event.target as Node)) hide();
+  });
+}());
+
 (function bindStreamRail() {
   const stream = document.getElementById('stream');
   if (!stream) return;

@@ -894,6 +894,41 @@
   clip-path: inset(50%);
 }
 
+/* ---- 选中文字后的浮层 ----
+   固定在视口上，因为选区可能滚出视野；滚动就收起。两个动作之间一条 1px 分隔，
+   和参考里那个「Start a side chat | Reply」同形。 */
+.dshw-select-pill {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--mp-rule);
+  border-radius: var(--mp-r6);
+  background: var(--mp-panel);
+  box-shadow: var(--mp-shadow-menu);
+}
+
+.dshw-select-pill[hidden] {
+  display: none;
+}
+
+.dshw-select-pill button {
+  padding: 6px 10px;
+  color: var(--mp-text);
+  font-size: 13px;
+  line-height: 18px;
+  white-space: nowrap;
+  transition: background-color var(--mp-dur-fast);
+}
+
+.dshw-select-pill button:hover {
+  background: var(--mp-hover);
+}
+
+.dshw-select-pill button + button {
+  border-left: 1px solid var(--mp-rule);
+}
+
 /* ---- 左侧跳转条 ----
    每条用户消息一枚小卡。位置按消息在全文里的比例定，所以它读起来是整段
    对话的缩略图：长会话里一眼看出问了几次、都在哪一段。 */
