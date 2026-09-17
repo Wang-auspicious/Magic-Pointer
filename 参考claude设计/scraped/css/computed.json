@@ -1,0 +1,108 @@
+{
+  "_note": "枚举方式为 [...getComputedStyle] 全枚举后在页面端过滤，只保留视觉复刻关键属性 + 全部 --* 变量 + __rect（全量 400+ 属性/组件体积过大，见 README）。value 均为 getComputedStyle 原样返回。",
+  "composer.editor": {
+    "selector": "[data-cds=\"ChatComposerEditor\"]",
+    "__rect": { "x": 370, "y": 423.25, "width": 585, "height": 54 },
+    "display": "grid",
+    "grid-template-columns": "577px",
+    "grid-template-rows": "44px",
+    "height": "54px",
+    "min-height": "54px",
+    "max-height": "384px",
+    "width": "585px",
+    "font-size": "16px",
+    "font-weight": "400",
+    "font-variation-settings": "\"wght\" 360",
+    "line-height": "22px",
+    "letter-spacing": "normal",
+    "color": "rgb(240, 239, 236)",
+    "caret-color": "rgb(240, 239, 236)",
+    "background-color": "rgba(0, 0, 0, 0)",
+    "padding": "5px 0px 5px 8px",
+    "border-width": "0px",
+    "border-style": "solid",
+    "border-color": "color(srgb 1 1 1 / 0.1)",
+    "border-radius": "0px (editor 自身；圆角在外层容器，见 composer.root 待补)",
+    "cursor": "text",
+    "overflow": "auto",
+    "overflow-wrap": "break-word",
+    "scrollbar-width": "thin",
+    "scrollbar-color": "rgba(225, 224, 217, 0.35) rgba(0, 0, 0, 0)",
+    "tab-size": "4",
+    "transition": "opacity .2s, padding-left .2s, padding-right .2s cubic-bezier(0.4, 0, 0.2, 1)",
+    "color-scheme": "dark",
+    "vars": {
+      "--cmp-type-size": "max(0px, 1rem)",
+      "--cmp-leading": "round(max(0px, 1rem) * 1.4, 1px)",
+      "--cmp-row-h": "calc(round(max(0px, 1rem) * 1.4, 1px) + 2 * max(0px, (calc(2rem * 1) - round(max(0px, 1rem) * 1.4, 1px)) / 2))",
+      "--cmp-row-py": "max(0px, (calc(2rem * 1) - round(max(0px, 1rem) * 1.4, 1px)) / 2)",
+      "--cmp-pad-x": ".5rem",
+      "--cmp-gap-y": ".5rem",
+      "--cmp-lead-w": "167px",
+      "--cmp-trail-w": "231px",
+      "--cmp-wrap-h": "22px",
+      "--cds-radius-composer": "calc(.875rem * 1)"
+    }
+  },
+  "composer.send": {
+    "selector": "[data-testid=chat-input-send] button[aria-label=Send message]",
+    "__rect": { "x": 923, "y": 479.25, "width": 32, "height": 32 },
+    "note": "空输入禁用态 opacity .4",
+    "display": "flex", "align-items": "center", "justify-content": "center", "gap": "6px",
+    "width": "32px", "height": "32px", "padding": "0px",
+    "font-size": "14px", "font-weight": "500", "font-variation-settings": "\"wght\" 460", "line-height": "20px",
+    "color": "rgb(255,255,255)", "background-color": "rgba(0,0,0,0)",
+    "border": "0px solid", "border-radius": "8px", "box-shadow": "none",
+    "opacity": ".4 (disabled-empty)", "cursor": "pointer", "outline-offset": "2px",
+    "icon": "Anthropicons U+E013 20px/433.3"
+  },
+  "sidebar.root": {
+    "selector": ".dframe-sidebar",
+    "__rect": { "x": 0, "y": 0, "width": 288, "height": 879 },
+    "display": "flex", "flex-direction": "column", "padding": "0px",
+    "font-size": "14px", "font-weight": "400", "line-height": "21px",
+    "color": "rgb(240,239,236)",
+    "background-color": "color-mix(in srgb, #151515 80%, black) [web variant; desktop light: white]",
+    "border-right": "0.5px solid hsl(from #fff h s l / 10%)", "border-radius": "0px (web)",
+    "vars": { "--df-sidebar-width": "288px", "--static-sidebar-width": "288px", "--df-selected": "hsl(from #fff h s l / 15%) [dark]", "--df-hover": "hsl(from #fff h s l / 7.5%)", "--df-row-h": "32px", "--df-row-px": "2px", "--df-row-ctl": "24px", "--df-row-gap": "8px", "--df-row-font": "14px", "--df-group-font": "13px", "--df-icon-size": "20px", "--df-leading-slot": "28px", "--df-header-h": "48px", "--df-footer-btn-size": "32px", "--df-footer-gap": "6px", "--df-radius-card": "8px", "--df-radius-pill": "8px", "--df-dur-fast": ".12s", "--df-dur-slow": ".3s", "--df-ease-out": "cubic-bezier(.32,.72,0,1)" }
+  },
+  "sidebar.row": {
+    "selector": ".df-recents-anchor button.w-full",
+    "__rect": { "x": 8, "y": 271.5, "width": 269.5, "height": 32 },
+    "display": "flex", "align-items": "center", "gap": "8px",
+    "height": "32px (min 32)", "padding": "0px 2px", "border": "none", "border-radius": "8px",
+    "font-size": "14px", "font-weight": "400", "line-height": "21px",
+    "color": "rgb(195,194,183) [secondary]", "background-color": "transparent",
+    "cursor": "pointer", "text-align": "left"
+  },
+  "sidebar.groupLabel": {
+    "selector": ".df-session-list [data-sidebar-group-label][data-kind=group] (from css)",
+    "padding-top": "var(--df-group-pt)=16px(web)/14px(desktop)", "padding-bottom": "2px", "margin-top": "14px (首组 0)",
+    "color": "var(--cds-text-secondary)", "font-size": "calc(var(--df-group-font) - 1px) = 12px", "font-weight": "500"
+  },
+  "composer.modeSwitch": {
+    "selector": "[data-cds=SegmentedControl] (Chat/Cowork + Write/Learn/Code…)",
+    "__rect": { "x": 410, "y": 481.25, "width": 119.17, "height": 28 },
+    "display": "flex", "padding": "1px", "gap": "normal",
+    "height": "28px", "background-color": "hsl(from #fff h s l / 5%)",
+    "border": "0px", "border-radius": "7px",
+    "font-size": "14px", "font-weight": "400", "line-height": "21px",
+    "thumb": "var(--cds-segmented-control-thumb) = hsl(from #fff h s l / 10%), radius calc(var(--cds-radius) - 1px)"
+  },
+  "popover.menuRow": {
+    "selector": "[role=menu] [role^=menuitem] (model/attach/account 通用)",
+    "__rect": { "x": 452, "y": 519.5, "width": 408, "height": 50 },
+    "display": "flex", "align-items": "center", "gap": "8px",
+    "padding": "6px 10px 7px 10px", "border-radius": "8px",
+    "font-size": "14px", "font-weight": "400", "line-height": "20px",
+    "color": "rgb(240,239,236)", "cursor": "pointer"
+  },
+  "switch": {
+    "selector": "[role=switch] (settings Response completions, 关态)",
+    "__rect": { "x": 950, "y": 664.5, "width": 36, "height": 20 },
+    "display": "flex", "padding": "2px", "width": "36px", "height": "20px",
+    "background-color": "hsl(from #fff h s l / 10%) [off]; knob #fff 16px (20-2*2)",
+    "border": "0px", "border-radius": "pill (1.67772e+07px)", "cursor": "pointer",
+    "token": "--cds-switch-h: 20px"
+  }
+}
