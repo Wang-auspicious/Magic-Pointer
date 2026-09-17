@@ -36,6 +36,7 @@ const {
   resolveActiveModelRuntimeConfig,
   selectActiveProfileModel,
 } = require('./model_runtime_config');
+const { probeQuota } = require('./quota_probe');
 const { createBufferedLog } = require('./append_log');
 const { toPhysicalGeometry } = require('./geometry_space');
 const { PreflightRunner } = require('./bootstrap_runner');
@@ -4941,8 +4942,15 @@ if (gotLock) app.whenReady().then(() => {
   if (!voiceRuntimeStart.ok) log(`voice runtime startup rejected ${voiceRuntimeStart.error}`);
   const requiredPaths = [
     path.join(ROOT, 'scripts', 'fabric_bridge.py'),
-    // 渲染层打包后落在 build/electron/renderer/ 下（files: build/electron/**），
-    // 不是 ROOT/electron/renderer —— 写错会让安装版每次启动都判定未完成引导。
+    // 渲染层打包后落在 build/electron/renderer/ 下（electron-builder 的 files
+    // 字段收的是 build/electron 整棵子树），不是 ROOT/electron/renderer ——
+    // 写错会让安装版每次启动都判定未完成引导。
+    //
+    // 这里原本写的是 `files: build/electron/**`。别写回去：那几个字符里的
+    // `/*` 会在 `//` 注释里开一个块注释，而块注释的配对是全局的——本文件后面
+    // 只要再出现一处 `/* … */`，正则就会把它当成结束符，一次性吃掉四万字符的
+    // 源码。静态契约测试（tests 下带 _static_test 的那些会先剥注释再匹配）
+    // 届时会报一堆看不出原因的失败。
     path.join(ROOT, 'build', 'electron', 'renderer', 'stage.html'),
     ...(PYTHON_RUNTIME.required === true ? [PYTHON_EXECUTABLE] : []),
   ];
@@ -5894,7 +5902,15 @@ async function probeRuntimeState() {
   return parsed.snapshot;
 }
 
+/* 账户配额。和 models:catalog 不同，这里直连 provider 自己的接口，不走
+   Python 桥——它是一次普通的 GET，没有需要重用 harness 的理由。
+   结果按 profile 缓存 60 秒：这张卡是「我点开看一眼」，不是仪表盘，
+   每次点开都打一次 API 会把这个端点变成热点。换模型/换配置时清掉。 */
+const QUOTA_CACHE_TTL_MS = 60_000;
+const quotaCache = new Map<string, { at: number; report: any }>();
+
 function invalidateRuntimeState(reason: string | null = null) {
+  quotaCache.clear();
   const generation = runtimeSnapshot.invalidate(reason);
   safeSurfaceSend('dashboard', 'runtime-snapshot:changed', {
     generation,
@@ -6867,6 +6883,30 @@ ipcMain.handle('models:catalog', async (event: Electron.IpcMainInvokeEvent) => {
       { target: 'fabric-dashboard', timeoutMs: 12000 },
     );
     return { ok: true, catalog: parsed?.catalog ?? null };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+});
+
+ipcMain.handle('models:quota', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_quota_reader' };
+  const runtime = activeModelRuntimeConfig();
+  if (!runtime) return { ok: false, error: 'no_active_model_profile' };
+  const key = String(runtime.profileId || runtime.provider || 'active');
+  const force = raw?.force === true;
+  const cached = quotaCache.get(key);
+  if (!force && cached && Date.now() - cached.at < QUOTA_CACHE_TTL_MS) {
+    return { ok: true, quota: cached.report };
+  }
+  try {
+    const report = await probeQuota({
+      provider: runtime.provider,
+      baseUrl: runtime.baseUrl,
+      apiMode: runtime.apiMode,
+      credential: runtime.credential,
+    });
+    quotaCache.set(key, { at: Date.now(), report });
+    return { ok: true, quota: report };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
