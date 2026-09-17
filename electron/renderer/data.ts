@@ -67,6 +67,19 @@ declare global {
     [key: string]: unknown;
   }
 
+  /* 一轮用掉的 token，按来源分开记。缓存命中/写入只有 provider 报了才有这个
+     键——缺键和 0 是两回事：缺键表示「这家不报」，0 表示「报了，是零」。
+     上下文卡据此决定画不画那一段，所以两边都不能拿 0 顶替。 */
+  interface MagicPointerModelUsage {
+    inputTokens?: number;
+    outputTokens?: number;
+    totalTokens?: number;
+    cacheReadTokens?: number;
+    cacheWriteTokens?: number;
+    reasoningTokens?: number;
+    [key: string]: number | undefined;
+  }
+
   interface MagicPointerTurn {
     at?: number;
     question?: string;
@@ -80,7 +93,7 @@ declare global {
     activities?: Record<string, unknown>[];
     trajectory?: Record<string, unknown>[];
     receipts?: Record<string, unknown>[];
-    modelUsage?: Record<string, number>;
+    modelUsage?: MagicPointerModelUsage;
     modelId?: string;
     timingMs?: number;
     usedBackend?: string;

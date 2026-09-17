@@ -25,8 +25,22 @@ from app.agent_runtime.permission_presets import (
 
 def test_preset_table_matches_dsh_defaults() -> None:
     # DSH 默认表：workspace-write（工作区写 + 问）与 danger-full-access
-    # （全访问 + 从不问）。MP 追加 read-only（只读 + 问）作为最窄档。
-    assert list(PRESETS) == ["plan", "read-only", "workspace-write", "danger-full-access"]
+    # （全访问 + 从不问）。MP 追加 read-only（只读 + 问）作为最窄档，
+    # 以及 auto（工作区写 + 从不问）——参考里的 Mode 菜单第一档。
+    # 顺序即菜单顺序：Auto / Manual / Accept edits / Plan / Bypass permissions。
+    assert list(PRESETS) == [
+        "auto",
+        "plan",
+        "read-only",
+        "workspace-write",
+        "danger-full-access",
+    ]
+    assert PRESETS["auto"].sandbox == "workspace-write"
+    assert PRESETS["auto"].approval == "never"
+    # auto 落在效果表的 ACCEPT_REVERSIBLE —— 这个档位此前没有任何预设绑定，
+    # 而它和 workspace-write 的区别正是「可逆写不再逐次发问」。
+    assert mode_for_preset("auto") == PermissionMode.ACCEPT_REVERSIBLE
+    assert mode_for_preset("workspace-write") == PermissionMode.DEFAULT
     assert PRESETS["workspace-write"].sandbox == "workspace-write"
     assert PRESETS["workspace-write"].approval == "ask"
     assert PRESETS["danger-full-access"].sandbox == "danger-full-access"
@@ -56,7 +70,13 @@ def test_select_payload_shape() -> None:
     select = preset_select("workspace-write")
     assert select["currentValue"] == "workspace-write"
     values = [option["value"] for option in select["options"]]
-    assert values == ["plan", "read-only", "workspace-write", "danger-full-access"]
+    assert values == [
+        "auto",
+        "plan",
+        "read-only",
+        "workspace-write",
+        "danger-full-access",
+    ]
     for option in select["options"]:
         assert option["name"] and option["description"]
     full = next(o for o in select["options"] if o["value"] == "danger-full-access")

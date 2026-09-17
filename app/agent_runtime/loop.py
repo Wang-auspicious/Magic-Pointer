@@ -2186,6 +2186,28 @@ def _merge_model_usage(
                 return max(0, int(value))
         return None
 
+    def nested(*path: str) -> int | None:
+        """按路径取一个嵌套计数。
+
+        OpenAI 兼容的网关把缓存命中塞在 ``prompt_tokens_details`` 里，而不是
+        顶层 ``prompt_cache_hit_tokens``；只读顶层的话，这一项永远不出现，
+        于是「缓存到底有没有命中」在账上完全看不见。实测同一个 2019 token
+        的请求连发两次：第一次 ``cached_tokens`` 为 0，第二次 1984。
+        命中是真的，只是我们从来没读那个位置。
+        """
+        value: Any = raw_usage
+        for key in path:
+            if not isinstance(value, Mapping):
+                return None
+            value = value.get(key)
+        if (
+            isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and math.isfinite(value)
+        ):
+            return max(0, int(value))
+        return None
+
     input_tokens = count("input_tokens", "prompt_tokens")
     output_tokens = count("output_tokens", "completion_tokens")
     total_tokens = count("total_tokens")
@@ -2200,9 +2222,13 @@ def _merge_model_usage(
     # 缓存命中可观测：DeepSeek 报 hit/miss，Anthropic 报 read/creation。
     # 没有 provider 报这些字段时键不出现，消费方以键存在为准。
     cache_read = count("cache_read_input_tokens", "prompt_cache_hit_tokens")
+    if cache_read is None:
+        cache_read = nested("prompt_tokens_details", "cached_tokens")
     if cache_read is not None:
         aggregate["cacheReadTokens"] = aggregate.get("cacheReadTokens", 0) + cache_read
     cache_write = count("cache_creation_input_tokens")
+    if cache_write is None:
+        cache_write = nested("prompt_tokens_details", "cache_write_tokens")
     if cache_write is not None:
         aggregate["cacheWriteTokens"] = aggregate.get("cacheWriteTokens", 0) + cache_write
     if any(value is not None for value in (input_tokens, output_tokens, total_tokens)):

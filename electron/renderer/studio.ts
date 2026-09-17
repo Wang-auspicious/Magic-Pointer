@@ -1392,6 +1392,63 @@ function ensureComposerQuota() {
   });
 }
 
+/* 上下文卡里的类别，顺序固定：缓存命中 → 缓存写入 → 新输入 → 输出。
+   顺序就是「上下文花在哪」的顺序：缓存里的最便宜，也最该先看见。 */
+const USAGE_CATEGORIES = [
+  { kind: 'cache-read', label: '缓存命中' },
+  { kind: 'cache-write', label: '缓存写入' },
+  { kind: 'input', label: '新输入' },
+  { kind: 'output', label: '输出' },
+] as const;
+
+interface UsageCategoryRow {
+  kind: string;
+  label: string;
+  value: number;
+}
+
+/* 一轮 usage 拆成类别行，只留「真到过且不为零」的。缺键整项不出现——「这家
+   provider 不报」和「报了零」是两回事，前者画出来就是编数据；值为零的也不
+   画，一段零宽的彩色只会让人以为那儿有东西。 */
+function usageCategoryRows(usage: MagicPointerModelUsage | undefined): UsageCategoryRow[] {
+  if (!usage || typeof usage !== 'object') return [];
+  const read = (key: string): number | undefined => {
+    const value = usage[key];
+    return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+  };
+  const cacheRead = read('cacheReadTokens');
+  const cacheWrite = read('cacheWriteTokens');
+  const input = read('inputTokens');
+  const output = read('outputTokens');
+  /* 新输入 = 输入总量 − 命中 − 写入，负数按 0。OpenAI 系（含 DeepSeek）的
+     prompt_tokens 已经把缓存那段算在内，减出来就是这次真被重新读进去的部分。 */
+  const fresh = input === undefined
+    ? undefined
+    : Math.max(0, input - (cacheRead || 0) - (cacheWrite || 0));
+  const values: Record<string, number | undefined> = {
+    'cache-read': cacheRead,
+    'cache-write': cacheWrite,
+    input: fresh,
+    output,
+  };
+  const rows: UsageCategoryRow[] = [];
+  for (const category of USAGE_CATEGORIES) {
+    const value = values[category.kind];
+    if (typeof value === 'number' && value > 0) {
+      rows.push({ kind: category.kind, label: category.label, value });
+    }
+  }
+  return rows;
+}
+
+/* 一段占窗口多少，换算成百分比宽度。夹在 0..100：一段画不出比整条还长。
+   零和负数在这里也返回 0%，虽然它们在 usageCategoryRows 就已经被滤掉——
+   零宽的彩色段看着像「这里有东西」，两头都不放它进来。 */
+function usageSegmentShare(value: number, contextWindow: number): string {
+  if (!(contextWindow > 0) || !(value > 0)) return '0%';
+  return `${Math.max(0, Math.min(100, value / contextWindow * 100))}%`;
+}
+
 function renderUsageMeter(turns: MagicPointerTurn[]) {
   usageMeterTurns = turns;
   const button = document.getElementById('composer-context') as HTMLButtonElement | null;
@@ -1421,9 +1478,9 @@ function renderUsageMeter(turns: MagicPointerTurn[]) {
   button.title = contextWindow > 0
     ? `Context ${contextTokens.toLocaleString()} / ${contextWindow.toLocaleString()} tokens`
     : `Session usage: ${totalTokens.toLocaleString()} tokens`;
-  /* 参考的这张卡是一行标题 + 一条彩色分段条 + 分组 + 两行配额 + 页脚链接。
-     形状照搬，数字换成我们真有的：Claude 那两行是套餐限额（5 小时 / 每周），
-     Magic Pointer 没有配额这回事，所以分组里放的是这个会话真实的输入/输出。
+  /* 参考的这张卡是一行标题 + 一条彩色分段条 + 分组 + 几行 + 页脚链接。
+     形状照搬，数字换成我们真有的：Claude 那几行是套餐限额（5 小时 / 每周），
+     Magic Pointer 没有配额这回事，所以分组里放的是这个会话真实的几个类别。
      宁可少一行，也不画一个没有来源的百分比。 */
   popover.replaceChildren();
   const el = (tag: string, className: string, text?: string) => {
@@ -1447,18 +1504,20 @@ function renderUsageMeter(turns: MagicPointerTurn[]) {
   head.append(headValue, chev);
   popover.append(head);
 
-  /* 分段条：已用的部分按「这一轮读进去的」和「这一轮写出来的」拆开，剩下的
-     留空。三段之和就是上下文窗口，所以这条是能对上的，不是装饰。 */
-  const latestInput = Number(latestUsage?.inputTokens) || 0;
-  const latestOutput = Number(latestUsage?.outputTokens) || 0;
+  /* 分段条：这一轮的用量按类别切成相邻的几段，一段一个颜色，剩下的空位就是
+     窗口里没用的部分——那是底色，不是第五段。宽度都按同一个窗口算，所以几段
+     里输入侧那三段加起来正是标头那个百分比；输出也画在同一条上，按同一个
+     尺度，只是它还没被送回窗口里去。某家 provider 不报的类别不出现：条上只
+     剩两段是实情，不是没画完。 */
+  const latestRows = usageCategoryRows(latestUsage);
   const bar = el('div', 'mp-usage-bar');
   if (contextWindow > 0) {
-    const share = (value: number) => `${Math.max(0, Math.min(100, value / contextWindow * 100))}%`;
-    const used = el('span', 'mp-usage-seg is-input');
-    used.style.width = share(latestInput);
-    const wrote = el('span', 'mp-usage-seg is-output');
-    wrote.style.width = share(latestOutput);
-    bar.append(used, wrote);
+    for (const row of latestRows) {
+      const segment = el('span', `mp-usage-seg is-${row.kind}`);
+      segment.setAttribute('data-kind', row.kind);
+      segment.style.width = usageSegmentShare(row.value, contextWindow);
+      bar.append(segment);
+    }
   }
   popover.append(bar);
 
@@ -1479,23 +1538,34 @@ function renderUsageMeter(turns: MagicPointerTurn[]) {
   section.append(arrow);
   popover.append(section);
 
-  /* 两行的条按类别上色，和上面那条分段条同一套颜色：两行都刷成蓝的，读起来
-     像「这两项是一回事」，而它们恰恰是上下文的两半。 */
-  const sessionTotal = Math.max(1, inputTokens + outputTokens);
-  for (const [kind, label, value] of [
-    ['input', '读取上下文', inputTokens],
-    ['output', '写出内容', outputTokens],
-  ] as const) {
-    const row = el('div', 'mp-usage-row');
-    row.append(el('span', 'mp-usage-row-label', label));
-    row.append(el('span', 'mp-usage-row-value', compactTokenCount(value)));
+  /* 本会话的类别合计。一行一个类别，每行的条用这一类别自己的颜色——四行四个
+     色，不是四行一个色。这一段的尺度和上面那条不一样：上面问的是「这一轮占
+     了窗口多少」，这里问的是「整个会话花在哪」，所以各算各的，不硬凑成一个数。 */
+  const sessionTotals: Record<string, number> = {};
+  for (const turn of turns) {
+    for (const row of usageCategoryRows(turn.modelUsage)) {
+      sessionTotals[row.kind] = (sessionTotals[row.kind] || 0) + row.value;
+    }
+  }
+  const sessionRows = USAGE_CATEGORIES
+    .map((category) => ({
+      kind: category.kind,
+      label: category.label,
+      value: sessionTotals[category.kind] || 0,
+    }))
+    .filter((row) => row.value > 0);
+  const sessionTotal = Math.max(1, sessionRows.reduce((total, row) => total + row.value, 0));
+  for (const row of sessionRows) {
+    const node = el('div', 'mp-usage-row');
+    node.append(el('span', 'mp-usage-row-label', row.label));
+    node.append(el('span', 'mp-usage-row-value', compactTokenCount(row.value)));
     const track = el('div', 'mp-usage-row-track');
     const fill = el('div', 'mp-usage-row-fill');
-    fill.setAttribute('data-kind', kind);
-    fill.style.width = `${Math.round(value / sessionTotal * 100)}%`;
+    fill.setAttribute('data-kind', row.kind);
+    fill.style.width = `${Math.round(row.value / sessionTotal * 100)}%`;
     track.append(fill);
-    row.append(track);
-    popover.append(row);
+    node.append(track);
+    popover.append(node);
   }
 
   /* 账户配额。数字来自 provider 自己的接口（见 electron/quota_probe.ts），

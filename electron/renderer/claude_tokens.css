@@ -80,6 +80,15 @@
   --mp-syn-comment: #6E7B6E;
   --mp-syn-operator: #52514E;
 
+  /* 上下文卡的四个类别色。四个色相彼此拉开（绿 / 紫 / 蓝 / 橙），扫一眼就能
+     把「缓存命中、缓存写入、新输入、输出」分开——之前两行都刷 --mp-focus，
+     读起来像同一件事的两半，而这四件恰恰不是。窗口里剩下的空位不上色，
+     由轨道的底色表示。 */
+  --mp-usage-cache-read: #2E7D4F;
+  --mp-usage-cache-write: #8B3A9E;
+  --mp-usage-input: #2566D0;
+  --mp-usage-output: #D97757;
+
   --mp-font-ui: "Anthropic Sans", "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
   --mp-font-serif: "Anthropic Serif", Georgia, "Times New Roman", serif;
   --mp-font-mono: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
@@ -191,6 +200,12 @@ body[data-ds-dark-theme] {
   --mp-syn-string: #74C295;
   --mp-syn-comment: #8A9A8A;
   --mp-syn-operator: #A9A79F;
+  /* 暗色下同一组类别：同样是绿 / 紫 / 蓝 / 橙四个相，只是把明度提上来，
+     免得四段在深底上一起糊成灰。 */
+  --mp-usage-cache-read: #74C295;
+  --mp-usage-cache-write: #C77BD8;
+  --mp-usage-input: #86ACEA;
+  --mp-usage-output: #D97757;
   --mp-shadow-menu: 0 0 0 .5px rgba(255,255,255,.08), 0 4px 12px rgba(0,0,0,.40), 0 16px 40px rgba(0,0,0,.50);
   --mp-shadow-sheet: 0 0 0 .5px rgba(255,255,255,.07), 0 12px 32px rgba(0,0,0,.42);
 }

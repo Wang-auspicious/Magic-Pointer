@@ -2159,12 +2159,20 @@
   flex: none;
 }
 
+.mp-usage-seg.is-cache-read {
+  background: var(--mp-usage-cache-read);
+}
+
+.mp-usage-seg.is-cache-write {
+  background: var(--mp-usage-cache-write);
+}
+
 .mp-usage-seg.is-input {
-  background: var(--mp-focus);
+  background: var(--mp-usage-input);
 }
 
 .mp-usage-seg.is-output {
-  background: var(--mp-clay);
+  background: var(--mp-usage-output);
 }
 
 .mp-usage-divider {
@@ -2241,15 +2249,28 @@
   background: var(--mp-hover);
 }
 
+/* 和上面那条分段条同一套类别色：一行一个类别的颜色，四行四个色，不是
+   四行一个色。 */
 .mp-usage-row-fill {
   height: 100%;
   border-radius: 1px;
-  background: var(--mp-focus);
+  background: var(--mp-usage-input);
 }
 
-/* 和上面那条分段条同一套类别色。 */
+.mp-usage-row-fill[data-kind='cache-read'] {
+  background: var(--mp-usage-cache-read);
+}
+
+.mp-usage-row-fill[data-kind='cache-write'] {
+  background: var(--mp-usage-cache-write);
+}
+
+.mp-usage-row-fill[data-kind='input'] {
+  background: var(--mp-usage-input);
+}
+
 .mp-usage-row-fill[data-kind='output'] {
-  background: var(--mp-clay);
+  background: var(--mp-usage-output);
 }
 
 .mp-usage-foot {

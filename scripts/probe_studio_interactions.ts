@@ -221,7 +221,18 @@ async function runElectron() {
     await realClickAt(window, '#composer-effort-menu .mp-effort-track', 1);
 
     /* 上下文卡：参考里是「标题行 + 彩色分段条 + 分组 + 行 + 页脚」，不是竖排
-       的标签/值。截一张图，标题行那个百分比和分段条的宽度都能直接看。 */
+       的标签/值。截一张图，标题行那个百分比和分段条的宽度都能直接看。
+       这个流程跑在空会话上，卡片的「什么都没有」那一态本来就不该有段——真正
+       要看的是有数的时候。所以先塞一轮真用量：没有缓存字段，正是 provider
+       不报缓存时的默认路径，条上应当只有新输入和输出两段、两个颜色。 */
+    const usageEmptySegments = await window.webContents.executeJavaScript(`(() => {
+      renderUsageMeter([]);
+      const empty = document.querySelectorAll('#composer-usage-popover .mp-usage-seg').length;
+      renderUsageMeter([{
+        modelUsage: { inputTokens: 61234, outputTokens: 417, totalTokens: 61651 },
+      }]);
+      return empty;
+    })()`);
     await realClick(window, '#composer-effort');
     await realClick(window, '#composer-context');
     const usageBounds = await visibleBounds(window.webContents, '#composer-usage-popover');
@@ -230,6 +241,14 @@ async function runElectron() {
     );
     const usageSegments = await window.webContents.executeJavaScript(
       `document.querySelectorAll('#composer-usage-popover .mp-usage-seg').length`,
+    );
+    const usageSegmentKinds = await window.webContents.executeJavaScript(
+      `Array.from(document.querySelectorAll('#composer-usage-popover .mp-usage-seg')).map((node) => node.dataset.kind || '')`,
+    );
+    /* 只数带类别的填充：配额那几行也会画 .mp-usage-row-fill，但它们不属于
+       上下文的类别，混进来会让这条断言在接上配额适配器之后莫名其妙地红。 */
+    const usageRowKinds = await window.webContents.executeJavaScript(
+      `Array.from(document.querySelectorAll('#composer-usage-popover .mp-usage-row-fill[data-kind]')).map((node) => node.dataset.kind || '')`,
     );
     await captureWitness('usage');
     await realClick(window, '#composer-context');
@@ -297,7 +316,14 @@ async function runElectron() {
         selected: selectedEffort,
         labels: effortLabels,
       },
-      usage: { bounds: usageBounds, head: usageHead, segments: usageSegments },
+      usage: {
+        bounds: usageBounds,
+        head: usageHead,
+        segments: usageSegments,
+        segmentKinds: usageSegmentKinds,
+        rowKinds: usageRowKinds,
+        emptySegments: usageEmptySegments,
+      },
       workspace: { bounds: workspaceBounds, items: workspaceItems },
       home,
       stash: { noteDialogOpen: Boolean(noteDialogBounds), noteInput },
@@ -318,7 +344,12 @@ async function runElectron() {
       || selectedEffort !== 'Max'
       || !usageBounds
       || !usageHead
-      || usageSegments < 1
+      /* 有数的时候一条一段：这一轮的输入总量（唯一到过的类别）加上输出。
+         空会话那一条相反，一段都不该有——零宽的彩色段看着像「这里有东西」。 */
+      || usageSegments !== 2
+      || usageSegmentKinds.join(',') !== 'input,output'
+      || usageRowKinds.join(',') !== 'input,output'
+      || usageEmptySegments !== 0
       || !workspaceBounds
       || !workspaceItems.includes('No folder')
       || !workspaceItems.some((item) => item.startsWith('Open folder'))

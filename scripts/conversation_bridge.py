@@ -440,7 +440,13 @@ def _completed_result(
         if not str(last_message.get("text") or "").strip():
             last_message["text"] = answer
         last_message["usedBackend"] = used_backend
+        # 输入侧和缓存侧也要一起带上：卡片要按类别分段着色，只有输出这一项
+        # 就画不出「上下文花在哪」。缺的键保持缺失（不补 0），渲染层才知道
+        # 该不该画那一段。
         for source, target in (
+            ("inputTokens", "inputTokens"),
+            ("cacheReadTokens", "cacheReadTokens"),
+            ("cacheWriteTokens", "cacheWriteTokens"),
             ("outputTokens", "outputTokens"),
             ("reasoningTokens", "reasoningTokens"),
         ):

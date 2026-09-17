@@ -444,6 +444,53 @@ def test_conversation_result_keeps_receipts_usage_activity_and_timing() -> None:
     assert result["usedBackend"] == "gateway"
 
 
+def test_conversation_result_carries_every_usage_bucket_the_provider_reported() -> None:
+    """上下文卡按类别分段着色，所以输入侧和缓存侧必须一起过桥。
+
+    以前只透传 outputTokens：卡片只剩一个数字可用，一条条自然只有一种颜色。
+    """
+    mapped = {
+        "answer": "done",
+        "modelUsage": {
+            "inputTokens": 900,
+            "cacheReadTokens": 700,
+            "cacheWriteTokens": 120,
+            "outputTokens": 40,
+            "totalTokens": 940,
+        },
+    }
+    result = conversation_bridge._completed_result(
+        mapped,
+        client_backend="gateway",
+        permission_preset="workspace-write",
+        activities=[],
+        trajectory=[{"seq": 1, "kind": "message", "state": "done"}],
+        timing_ms=10,
+    )
+    message = result["trajectory"][0]
+    assert message["inputTokens"] == 900
+    assert message["cacheReadTokens"] == 700
+    assert message["cacheWriteTokens"] == 120
+    assert message["outputTokens"] == 40
+
+
+def test_conversation_result_leaves_absent_usage_buckets_absent() -> None:
+    """provider 不报缓存时键不出现——补一个 0 会让卡片画出一段并不存在的量。"""
+    mapped = {"answer": "done", "modelUsage": {"inputTokens": 12, "outputTokens": 3}}
+    result = conversation_bridge._completed_result(
+        mapped,
+        client_backend="gateway",
+        permission_preset="workspace-write",
+        activities=[],
+        trajectory=[{"seq": 1, "kind": "message", "state": "done"}],
+        timing_ms=10,
+    )
+    message = result["trajectory"][0]
+    assert message["inputTokens"] == 12
+    assert "cacheReadTokens" not in message
+    assert "cacheWriteTokens" not in message
+
+
 def test_conversation_result_can_expose_authoritative_session_bill() -> None:
     mapped = {"answer": "done", "modelUsage": {"totalTokens": 3}}
     result = conversation_bridge._completed_result(
