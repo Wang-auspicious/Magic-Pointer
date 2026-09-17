@@ -184,6 +184,9 @@ function statePreparationScript(state, theme) {
         conversationId: 'probe-flow',
         turnIndex: 0,
         answer: '前 15 张图的口径已经对齐，剩下的按同一套令牌收尾。',
+        /* 产物卡挂在回合末尾，所以它出现在下一条用户消息之前——参考里就是这个
+           位置。字段用运行时会真的给的那几个。 */
+        artifacts: [{ artifactId: 'artifact-probe-1', revision: 3, kind: 'markdown', name: 'CVPR 2027 选题核验' }],
         trajectory: [
           { kind: 'message', text: '三个都实搜验证过，空白很干净。现在合并进 HTML。' },
           editChip('cvpr2027-verified-top5.html', NEW_TEXT, OLD_TEXT, 'e1'),

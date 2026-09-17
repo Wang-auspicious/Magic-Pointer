@@ -851,6 +851,60 @@ const DshChat = (() => {
     return root;
   }
 
+  /* ---- 产物卡（Published artifact） ----
+     参考里它有固定的两行：上行是「发布了什么」，右端一枚描边的 Open；下行是
+     产物本体，右端一行增减和一个可以点进去的箭头。
+     我们这边下行没有文件名的位置（产物是草稿，不是文件），所以放的是它的
+     形态和修订号——都是真有的字段，不是照着形状补的。 */
+  function artifactCardNode(items: Array<Record<string, unknown>>, conversationId: string): DshNode | null {
+    const usable = items.filter((item) => item && typeof item === 'object' && String(item.artifactId || ''));
+    if (!usable.length) return null;
+    const card = h('div', { class: 'dsh-artifact-card' });
+    for (const item of usable) {
+      const artifactId = String(item.artifactId || '');
+      const name = String(item.name || '').trim() || '未命名草稿';
+      const kind = String(item.kind || '').trim();
+      const revision = Number(item.revision);
+      const head = h('div', { class: 'dsh-artifact-head' });
+      const label = h('span', { class: 'dsh-artifact-label' });
+      const prefix = h('span', { class: 'dsh-artifact-label-prefix' });
+      attach(prefix, 'Published artifact');
+      attach(label, prefix);
+      attach(label, name);
+      attach(head, label);
+      const open = h('button', {
+        type: 'button',
+        class: 'dsh-artifact-open',
+        'data-dsh-act': 'open-artifact',
+        'data-artifact-id': artifactId,
+        'data-artifact-conversation': conversationId,
+      });
+      attach(open, 'Open');
+      attach(head, open);
+      attach(card, head);
+
+      const row = h('div', { class: 'dsh-artifact-row' });
+      const mark = h('span', { class: 'dsh-artifact-mark', 'aria-hidden': 'true' });
+      /* 参考里这一枚是个小小的「产物」记号。我们这边没有对应的原始图标，
+         所以用现成的 browse（几行文字），而不是照着形状画一个新的。 */
+      attach(mark, icon('browse', 14));
+      attach(row, mark);
+      const meta = h('span', { class: 'dsh-artifact-meta' });
+      attach(meta, [kind, Number.isInteger(revision) && revision > 0 ? `修订 ${revision}` : ''].filter(Boolean).join(' · ') || '草稿');
+      attach(row, meta);
+      const chev = h('span', { class: 'dsh-artifact-chev', 'aria-hidden': 'true' });
+      attach(chev, icon('chev', 14));
+      attach(row, chev);
+      row.setAttribute('data-dsh-act', 'open-artifact');
+      row.setAttribute('data-artifact-id', artifactId);
+      row.setAttribute('data-artifact-conversation', conversationId);
+      row.setAttribute('role', 'button');
+      row.setAttribute('tabindex', '0');
+      attach(card, row);
+    }
+    return card;
+  }
+
   /* ---- 回合状态行（turnStatus 渐变字） ----
      参考里运行中的那一行是：橙色星芒 + `12m 59s · 3.6k tokens · Almost done
      thinking…`。计时是前缀，阶段名是句尾——所以这里给计时留一个空槽，
@@ -907,6 +961,7 @@ const DshChat = (() => {
     at?: number;
     conversationId?: string;
     turnIndex?: number;
+    artifacts?: Array<Record<string, unknown>>;
   }
 
   interface TurnChip {
@@ -1182,6 +1237,11 @@ const DshChat = (() => {
       turn.at,
       { align: 'assistant' },
     ));
+    /* 产物卡挂在这一轮的末尾：它是这一轮的产出，所以出现在下一条用户消息
+       之前，也就是参考里那个位置。 */
+    const artifacts = Array.isArray(turn.artifacts) ? turn.artifacts : [];
+    const artifactCard = artifactCardNode(artifacts, String(turn.conversationId || ''));
+    if (artifactCard) attach(root, artifactCard);
     items.push(root);
     return items;
   }
@@ -1317,6 +1377,13 @@ const DshChat = (() => {
         const question = act.getAttribute('data-dsh-retry') || '';
         if (!question) return;
         DOC.dispatchEvent(new CustomEvent('mp:retry-question', { detail: { question } }));
+      } else if (kind === 'open-artifact') {
+        const artifactId = act.getAttribute('data-artifact-id') || '';
+        const conversationId = act.getAttribute('data-artifact-conversation') || '';
+        if (!artifactId) return;
+        DOC.dispatchEvent(new CustomEvent('mp:open-artifact', {
+          detail: { artifactId, conversationId },
+        }));
       } else if (kind === 'branch') {
         const conversationId = act.getAttribute('data-dsh-branch-conversation') || '';
         const turnIndex = Number(act.getAttribute('data-dsh-branch-turn'));
@@ -1346,6 +1413,7 @@ const DshChat = (() => {
     toolRowModel,
     liveActivityNode,
     permissionAnswerNode,
+    artifactCardNode,
     formatRunMeta,
     stateDot,
     bindDelegation,

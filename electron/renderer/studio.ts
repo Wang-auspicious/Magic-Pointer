@@ -1911,6 +1911,7 @@ async function openConversation(id: string) {
       activities: t.activities,
       trajectory: t.trajectory,
       modelUsage: t.modelUsage,
+      artifacts: (t as { artifacts?: Array<Record<string, unknown>> }).artifacts,
       failed: t.failed,
       at: t.at,
       conversationId: c.id,
@@ -2751,6 +2752,15 @@ document.addEventListener('mp:retry-question', (event: Event) => {
   fitComposer(textarea);
   syncComposerSubmitState();
   form.requestSubmit();
+});
+
+/* 产物卡上的 Open 和箭头都走这里：打开右侧的产物编辑器，落在那一份上。 */
+document.addEventListener('mp:open-artifact', (event: Event) => {
+  const detail = (event as CustomEvent<{ artifactId?: string; conversationId?: string }>).detail;
+  const artifactId = String(detail?.artifactId || '');
+  const conversationId = String(detail?.conversationId || '') || String(activeConversationId || '');
+  if (!artifactId) return;
+  void openArtifactEditor(conversationId, artifactId);
 });
 
 document.addEventListener('mp:branch-conversation', (event: Event) => {

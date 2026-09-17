@@ -568,6 +568,99 @@
 }
 
 /* 卡上方的工具名。它不是标题（标题是上面那一行动作），只是「谁跑的」。 */
+/* ---- 产物卡 ----
+   两行一张卡：上行「发布了什么」+ 描边的 Open，下行产物本体 + 可点进去的箭头。
+   行间一条 hairline，和工具组的容器同一套语言。 */
+.dsh-artifact-card {
+  /* 回合体是 flex column + align-items:flex-start，块级子元素会缩到内容宽，
+     卡就变成一小片。参考里它和正文一样宽。 */
+  width: 100%;
+  overflow: hidden;
+  margin-top: 6px;
+  border: 1px solid var(--mp-rule);
+  border-radius: var(--mp-r7);
+  background: var(--mp-panel);
+}
+
+.dsh-artifact-card > * + * {
+  border-top: 1px solid var(--mp-rule);
+}
+
+.dsh-artifact-head {
+  display: flex;
+  min-height: 42px;
+  align-items: center;
+  gap: 10px;
+  padding: 0 8px 0 14px;
+}
+
+.dsh-artifact-label {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--mp-text);
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-artifact-label-prefix {
+  margin-right: 7px;
+  color: var(--mp-text-muted);
+}
+
+.dsh-artifact-open {
+  flex: none;
+  margin-left: auto;
+  padding: 4px 12px;
+  border: 1px solid var(--mp-rule-strong);
+  border-radius: var(--mp-r4);
+  color: var(--mp-text);
+  font-size: 13px;
+  line-height: 18px;
+  transition: background-color var(--mp-dur-fast);
+}
+
+.dsh-artifact-open:hover {
+  background: var(--mp-hover);
+}
+
+.dsh-artifact-row {
+  display: flex;
+  min-height: 40px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px 0 14px;
+  color: var(--mp-text-secondary);
+  font-size: 14px;
+  cursor: pointer;
+  transition: background-color var(--mp-dur-fast);
+}
+
+.dsh-artifact-row:hover {
+  background: var(--mp-hover);
+}
+
+.dsh-artifact-mark {
+  display: inline-flex;
+  flex: none;
+  color: var(--mp-text-muted);
+}
+
+.dsh-artifact-meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dsh-artifact-chev {
+  display: inline-flex;
+  flex: none;
+  margin-left: auto;
+  color: var(--mp-text-muted);
+  transform: rotate(-90deg);
+}
+
 .dsh-tool-tag {
   margin-top: 8px;
   color: var(--mp-focus);
