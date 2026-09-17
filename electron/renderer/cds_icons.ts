@@ -68,7 +68,11 @@ function html(name: unknown, size: unknown = 'large'): string {
   const value = codepoint(name);
   if (value === null) return '';
   const resolved = SIZES.includes(size as string) ? (size as string) : 'large';
-  return `<span class="cds-icon" data-size="${resolved}" aria-hidden="true">&#x${value.toString(16).toUpperCase()};</span>`;
+  // 字形挂在 data-glyph 上、由 CSS 的 ::before 取出，而不是当文本节点放进去。
+  // 文本节点会进 textContent：菜单行的可读文本会变成长度含一个私有区字符的
+  // 「No folder」，按文本找行的代码和读屏都会跟着错。生成内容不计入
+  // textContent，所以用它承载装饰。
+  return `<span class="cds-icon" data-size="${resolved}" aria-hidden="true" data-glyph="&#x${value.toString(16).toUpperCase()};"></span>`;
 }
 
 function names(): string[] {

@@ -1676,9 +1676,8 @@
   white-space: nowrap;
 }
 
+/* 勾是字体字形，尺寸由 .cds-icon 的字号档决定，这里只负责颜色和不被压缩。 */
 .mp-workspace-menu-check {
-  width: 14px;
-  height: 14px;
   flex: none;
   color: var(--mp-focus);
 }
@@ -2275,7 +2274,9 @@
 .dshw-perm-menu,
 .dshw-model-menu {
   min-width: 200px;
-  max-width: min(360px, calc(100vw - 24px));
+  /* 上限要放得下模型菜单量出来的 408，否则上面那条 width 会被这里截到 360，
+     看起来像是照做了其实没生效。 */
+  max-width: min(408px, calc(100vw - 24px));
   padding: 4px;
 }
 
@@ -2380,11 +2381,16 @@
   white-space: normal;
 }
 
+/* 勾是字体字形，尺寸由 .cds-icon 的字号档决定；退回 svg 时给它一个尺寸，
+   自绘的勾没有 intrinsic size。 */
 .dshw-perm-check {
   display: block;
+  color: var(--mp-text);
+}
+
+.dshw-perm-check svg {
   width: 16px;
   height: 16px;
-  color: var(--mp-text);
 }
 
 .mp-effort-menu {

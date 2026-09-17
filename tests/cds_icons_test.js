@@ -62,10 +62,15 @@ assert.strictEqual(codepoint('toString'), null, 'inherited object keys must not 
 const send = html('send');
 assert.ok(send.includes('class="cds-icon"'), send);
 assert.ok(send.includes('data-size="large"'), send);
-assert.ok(send.includes('&#xE013;'), send);
+assert.ok(send.includes('data-glyph="&#xE013;"'), send);
 assert.ok(send.includes('aria-hidden="true"'), send);
 assert.ok(!send.includes(String.fromCharCode(0xe013)),
   'the codepoint must be an entity, never a raw PUA character');
+/* 字形不能是元素的内容：内容会进 textContent，带图标的菜单行读出来就会多一个
+   私有区字符。CSS 从 data-glyph 取出来画，元素本身必须是空的。 */
+const sendContent = send.slice(send.indexOf('>') + 1, send.lastIndexOf('<'));
+assert.strictEqual(sendContent, '',
+  'the span must carry no text content; the glyph is drawn from data-glyph');
 
 assert.ok(html('send', 'bogus').includes('data-size="large"'), 'an unknown size must fall back to large');
 assert.ok(html('send', 'micro').includes('data-size="micro"'));

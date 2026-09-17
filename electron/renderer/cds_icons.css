@@ -28,6 +28,7 @@
   speak: never;
   user-select: none;
   flex: none;
+  position: relative;
 }
 
 .cds-icon[data-size="small"] {
@@ -43,4 +44,13 @@
 .cds-icon[data-size="large"] {
   font-size: 20px;
   font-weight: 433.3;
+}
+
+/* 字形由生成内容承载。生成内容不进 textContent，所以带图标的行读出来仍然
+   只有文字——装饰不该出现在它的文本里。 */
+.cds-icon::before {
+  content: attr(data-glyph);
+  font-family: inherit;
+  font-weight: inherit;
+  line-height: 1;
 }

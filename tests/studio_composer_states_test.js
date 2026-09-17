@@ -94,8 +94,11 @@ for (const selector of [
 ]) {
   assert(css.includes(selector), `missing complete model popup style: ${selector}`);
 }
-assert.match(css, /\.dshw-perm-check\s*\{[^}]*width:\s*16px[^}]*height:\s*16px/s,
-  'selected checks have explicit SVG dimensions');
+/* 勾现在优先用 Claude 的字体字形（check U+E03B），尺寸由 .cds-icon 的字号档
+   决定；只有在字体模块缺失、退回自绘 svg 时才需要一个显式尺寸。
+   所以钉的是「退回路径仍有尺寸」，而不是「这个类永远写死 16」。 */
+assert.match(css, /\.dshw-perm-check svg\s*\{[^}]*width:\s*16px[^}]*height:\s*16px/s,
+  'the svg fallback check keeps explicit dimensions; the glyph sizes itself');
 assert.match(css, /\.dshw-perm-row-glyph\s*\{[^}]*width:\s*20px[^}]*height:\s*20px/s,
   'permission glyphs cannot fall back to intrinsic SVG dimensions');
 /* 408 是抓到的模型菜单宽度（computed.json 的 popover.menuRow __rect.width）。

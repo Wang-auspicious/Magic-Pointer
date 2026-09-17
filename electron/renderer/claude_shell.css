@@ -110,7 +110,9 @@
   width: 100%;
   height: 28px;
   padding: 1px;
-  border-radius: var(--mp-r7);
+  /* 抓到的 SegmentedControl：padding 1px、圆角 7px、槽是白 5%。7 是量出来的，
+     不是我们的 --mp-r7（10）——这枚控件的圆角比卡片小一档。 */
+  border-radius: 7px;
   background: color-mix(in srgb, var(--mp-text) 4%, transparent);
 }
 

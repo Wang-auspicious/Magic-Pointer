@@ -1070,12 +1070,8 @@ function workspaceMenuRow(
   text.textContent = label;
   row.appendChild(text);
   if (options.selected) {
-    const check = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    check.setAttribute('aria-hidden', 'true');
+    const check = checkGlyph();
     check.classList.add('mp-workspace-menu-check');
-    const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
-    use.setAttribute('href', '#ic-check');
-    check.appendChild(use);
     row.appendChild(check);
   }
   row.addEventListener('click', onClick);
@@ -4134,13 +4130,30 @@ function closeEffortMenu() {
   closeAnchoredPopover('composer-effort-menu', 'composer-effort');
 }
 
-function selectedCheck(): SVGSVGElement {
-  const check = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  check.setAttribute('aria-hidden', 'true');
-  check.classList.add('dshw-perm-check');
+/* 菜单里的选中勾现在是 Claude 自己的字形（`check` U+E03B，20px 那档），
+   不再是一枚自绘的描边勾——参考里菜单内的勾和别处的图标是同一套字形，
+   自绘的那个笔画粗细跟旁边的字体图标对不上。
+   取不到字体模块时退回原来的 svg：少一个勾比少一整个菜单严重。 */
+function checkGlyph(): Element {
+  const api = globalThis as unknown as { CdsIcons?: { html?: (name: string, size?: string) => string } };
+  const markup = typeof api.CdsIcons?.html === 'function' ? api.CdsIcons.html('check') : '';
+  if (markup) {
+    const host = document.createElement('span');
+    host.setAttribute('aria-hidden', 'true');
+    host.innerHTML = markup;
+    return host;
+  }
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('aria-hidden', 'true');
   const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
   use.setAttribute('href', '#ic-check');
-  check.appendChild(use);
+  svg.appendChild(use);
+  return svg;
+}
+
+function selectedCheck(): Element {
+  const check = checkGlyph();
+  check.classList.add('dshw-perm-check');
   return check;
 }
 
