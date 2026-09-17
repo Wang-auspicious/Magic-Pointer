@@ -408,8 +408,16 @@
   white-space: nowrap;
 }
 
+/* 分组标题：抓到的 [data-sidebar-group-label] 是 12px / 500 / secondary，
+   字号比组内的会话行小一档——它是「这一堆属于谁」，不是另一个可点的条目。 */
 .dshw-project-name {
-  font-weight: var(--mp-weight-medium);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+/* 组与组之间空 14px，第一组不空（margin-top: 14px，:first-child 归零）。 */
+.dshw-project + .dshw-project {
+  margin-top: 14px;
 }
 
 .dshw-project-sessions {
@@ -417,6 +425,8 @@
   flex-direction: column;
   min-width: 0;
   padding-left: 0;
+  /* 标题和它的第一条会话之间留 2px（抓到的 padding-bottom）。 */
+  padding-top: 2px;
 }
 
 .dshw-project[data-open="false"] .dshw-project-sessions {
