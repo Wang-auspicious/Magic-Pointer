@@ -412,6 +412,25 @@ declare global {
     groups?: MagicPointerModelGroup[];
   }
 
+  /* 一行账户配额。provider 报的是窗口就带 percent，报的是余额就没有——
+     `detail` 放「充值/赠送」「N 小时后重置」这类同源补充。 */
+  interface MagicPointerQuotaRow {
+    id: string;
+    label: string;
+    value: string;
+    percent: number | null;
+    detail: string;
+  }
+
+  interface MagicPointerQuotaReport {
+    adapter: string | null;
+    label: string;
+    rows: MagicPointerQuotaRow[];
+    error: string;
+    source: string;
+    fetchedAt: number;
+  }
+
   interface MagicPointerUpdateState {
     state: string;
     checkedAt?: number;
@@ -437,6 +456,7 @@ declare global {
     modelsCatalog?(): Promise<{ ok?: boolean; catalog?: MagicPointerModelCatalog; error?: string }>;
     slashDirectory?(): Promise<MagicPointerSlashDirectory | { ok?: boolean; error?: string }>;
     selectModel?(model: unknown): Promise<{ ok?: boolean; model?: string; error?: string }>;
+    modelQuota?(options?: { force?: unknown }): Promise<{ ok?: boolean; quota?: MagicPointerQuotaReport; error?: string }>;
     projects?: {
       list(): Promise<MagicPointerProject[]>;
       open(): Promise<{ ok?: boolean; canceled?: boolean; project?: MagicPointerProject; error?: string }>;
@@ -646,6 +666,7 @@ declare global {
     models(): Promise<MagicPointerModelCatalog | null>;
     slashDirectory(): Promise<MagicPointerSlashDirectory | null>;
     selectModel(model: string): Promise<{ ok?: boolean; model?: string; error?: string }>;
+    modelQuota(options?: { force?: boolean }): Promise<MagicPointerQuotaReport | null>;
     timeline(): Promise<MagicPointerTimelineDay[]>;
     memories(): Promise<unknown[]>;
     artifacts(): Promise<unknown[]>;
@@ -1158,6 +1179,18 @@ const Data: MagicPointerDataApi = {
       return (await bridge()!.selectModel?.(model)) || { ok: false, error: '模型切换通道不可用。' };
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  },
+
+  /* 账户配额。返回 null 表示「问不到」——调用方据此不画配额分组，
+     而不是退回到一个自己算的数。 */
+  async modelQuota(options: { force?: boolean } = {}): Promise<MagicPointerQuotaReport | null> {
+    if (!hasBridge()) return null;
+    try {
+      const response = await bridge()!.modelQuota?.({ force: options.force === true });
+      return response?.ok ? (response.quota ?? null) : null;
+    } catch {
+      return null;
     }
   },
 

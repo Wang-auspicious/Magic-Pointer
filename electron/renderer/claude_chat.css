@@ -50,9 +50,8 @@
   position: relative;
   display: flex;
   width: 100%;
-  align-items: flex-start;
-  justify-content: flex-end;
-  gap: 4px;
+  flex-direction: column;
+  align-items: flex-end;
 }
 
 .dsh-user-stack {
@@ -243,16 +242,20 @@
   line-height: 17px;
 }
 
-/* 动作行属于消息，不属于消息上面的空白：它是这条消息的脚注，和正文同一个
-   左边界（用户气泡则是同一个右边界）。常驻显示，静止时用弱一点的颜色，
-   悬停才提亮——只在 hover 时才存在的话，用户永远不知道这里能点。 */
+/* 动作行是这条消息的脚注：位置在消息正下方（用户靠右、助手靠左），鼠标离开
+   消息就收起来——参考里它不是常驻装饰。收起用 opacity 不用 display，行高一直
+   占着，出现和消失都不会把下面的内容顶来顶去。
+   padding-top 而不是 margin-top：留出视觉间距，同时让这一行的盒子紧贴上面的
+   气泡。中间若有一条缝，鼠标从气泡挪到图标上时会先经过缝、行先消失再出现。
+   悬停区域取气泡本身（:has）+ 这一行本身，所以「离开气泡」就是真的离开。 */
 .dsh-actions {
   display: flex;
   align-items: center;
   gap: 2px;
-  margin-top: 2px;
+  padding-top: 6px;
+  opacity: 0;
   color: var(--mp-text-muted);
-  transition: color var(--mp-dur-fast);
+  transition: opacity var(--mp-dur-fast), color var(--mp-dur-fast);
 }
 
 .dsh-actions[data-align='user'] {
@@ -263,9 +266,12 @@
   justify-content: flex-start;
 }
 
-.dsh-user:hover > .dsh-actions,
-.dsh-assistant:hover > .dsh-actions,
+.dsh-user:has(> .dsh-user-stack:hover) > .dsh-actions,
+.dsh-user > .dsh-actions:hover,
+.dsh-assistant:has(> .dsh-assistant-body:hover) > .dsh-actions,
+.dsh-assistant > .dsh-actions:hover,
 .dsh-actions:focus-within {
+  opacity: 1;
   color: var(--mp-text-secondary);
 }
 
@@ -1885,6 +1891,23 @@
 .mp-usage-row-value {
   color: var(--mp-text-secondary);
   font-variant-numeric: tabular-nums;
+}
+
+/* 配额行的补充说明（充值/赠送、N 小时后重置）。和进度条一样占满整行，
+   排在值的下面。 */
+.mp-usage-row-detail {
+  grid-column: 1 / -1;
+  margin-top: 3px;
+  color: var(--mp-text-muted);
+  font-size: 12px;
+}
+
+/* 适配器认出来了但没读到数——原因是真信息，用灰字说清楚，不留空白也不编数。 */
+.mp-usage-note {
+  margin-top: 10px;
+  color: var(--mp-text-muted);
+  font-size: 12px;
+  line-height: 17px;
 }
 
 .mp-usage-row-track {

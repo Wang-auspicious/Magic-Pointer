@@ -192,6 +192,7 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
   getFabricSettings: () => ipcRenderer.invoke('dashboard:settings:get'),
   modelsCatalog: () => ipcRenderer.invoke('models:catalog'),
   selectModel: (model: unknown) => ipcRenderer.invoke('models:select', { model }),
+  modelQuota: (options: { force?: unknown } = {}) => ipcRenderer.invoke('models:quota', { force: options?.force === true }),
   slashDirectory: () => ipcRenderer.invoke('slash:directory'),
   requestState: () => ipcRenderer.send('dashboard:request-state'),
   setChecked: (payload: unknown) => ipcRenderer.send('dashboard:set-checked', payload),

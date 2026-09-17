@@ -1149,7 +1149,25 @@ function compactTokenCount(value: number): string {
   return `${Math.round(value / 1000)}k`;
 }
 
+/* 账户配额只问一次：这张卡是「点开看一眼」，不是仪表盘。主进程那边还有
+   60 秒缓存，所以即使这里被重建也不会重复打接口。 */
+let composerQuota: MagicPointerQuotaReport | null = null;
+let composerQuotaPending = false;
+let usageMeterTurns: MagicPointerTurn[] = [];
+
+function ensureComposerQuota() {
+  if (composerQuota || composerQuotaPending) return;
+  composerQuotaPending = true;
+  void Data.modelQuota().then((report) => {
+    composerQuotaPending = false;
+    if (!report) return;
+    composerQuota = report;
+    renderUsageMeter(usageMeterTurns);
+  });
+}
+
 function renderUsageMeter(turns: MagicPointerTurn[]) {
+  usageMeterTurns = turns;
   const button = document.getElementById('composer-context') as HTMLButtonElement | null;
   const label = document.getElementById('composer-usage-label');
   const popover = document.getElementById('composer-usage-popover');
@@ -1244,6 +1262,33 @@ function renderUsageMeter(turns: MagicPointerTurn[]) {
     popover.append(row);
   }
 
+  /* 账户配额。数字来自 provider 自己的接口（见 electron/quota_probe.ts），
+     这里只负责画。没有适配器就整段不出现——「少一行」和「编一个数」的区别，
+     用户是看不出来的，所以宁可少一行。适配器认出来了但请求失败时会留一行
+     灰色的原因，那是真信息，不是装饰。 */
+  if (composerQuota && (composerQuota.rows.length > 0 || composerQuota.error)) {
+    popover.append(el('div', 'mp-usage-divider'));
+    const quotaSection = el('div', 'mp-usage-section');
+    quotaSection.append(el('span', 'mp-usage-section-label',
+      composerQuota.label ? `配额 · ${composerQuota.label}` : '配额'));
+    popover.append(quotaSection);
+    for (const row of composerQuota.rows) {
+      const node = el('div', 'mp-usage-row');
+      node.append(el('span', 'mp-usage-row-label', row.label));
+      node.append(el('span', 'mp-usage-row-value', row.value));
+      if (row.detail) node.append(el('span', 'mp-usage-row-detail', row.detail));
+      if (row.percent !== null && row.percent !== undefined) {
+        const track = el('div', 'mp-usage-row-track');
+        const fill = el('div', 'mp-usage-row-fill');
+        fill.style.width = `${Math.max(0, Math.min(100, Number(row.percent)))}%`;
+        track.append(fill);
+        node.append(track);
+      }
+      popover.append(node);
+    }
+    if (composerQuota.error) popover.append(el('div', 'mp-usage-note', composerQuota.error));
+  }
+
   popover.append(el('div', 'mp-usage-divider'));
   const foot = document.createElement('button');
   foot.type = 'button';
@@ -1262,8 +1307,12 @@ document.getElementById('composer-context')?.addEventListener('click', (event) =
   const popover = document.getElementById('composer-usage-popover');
   if (!popover) return;
   const open = popover.hidden;
-  if (open) positionAnchoredPopover('composer-usage-popover', 'composer-context');
-  else closeAnchoredPopover('composer-usage-popover', 'composer-context');
+  if (open) {
+    positionAnchoredPopover('composer-usage-popover', 'composer-context');
+    // 配额不是每个回合都会变，但也不该在启动时就打一次接口——等这张卡被
+    // 真正打开再问，然后原地补上那几行。
+    ensureComposerQuota();
+  } else closeAnchoredPopover('composer-usage-popover', 'composer-context');
   button.setAttribute('aria-expanded', String(open));
 });
 
