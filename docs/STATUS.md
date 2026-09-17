@@ -1,10 +1,12 @@
 # 当前状态
 
+2026-09-17 工具加载基础批（**1.0.46，已同步安装版并重启**）：回读 Pi/DeepSeek 历史后完成工具目录、精确批量加载及基于成功回执的已注册工具跨压缩/重启恢复；删除 14 个 recipe 包装工具，保留真实桌面/感知/Recall/MCP，MCP 远端仍需按懒启动契约重新发现。fresh lint/typecheck 全绿、Node **217 个测试文件**、Python **2129 passed / 1 条既有 Pillow warning**。真实默认 Provider 已完成批量加载→真实 find_roots→最终答案，3 次模型请求、桥内 **18.08s**；首次尝试曾在工具成功后的最终模型请求超时。`npm run sync` 成功，安装版本核对为 **1.0.46**，11 个关键文件逐字节相同，安装版自带 Python 的加载器调用通过，5 个运行进程来自安装目录；同步覆盖复制留下的退役模块已单独清除。完整记录与边界在 `docs/research/2026-09-17-tool-loading-handoff.md`。
+
 2026-09-15 DSH 多厂家模型 Profile 批（1.0.45，已同步安装版）：在旧配置迁移基础上，profile 支持任意 route/provider、OpenAI Completions/Responses、Anthropic Messages 协议别名、profile headers、显式模型目录、context/max tokens 默认值和 transport；声明式模型目录优先于网关 `/models`，设置页、模型选择和对话 Runtime 从同一 profile 解析。Studio 普通脚本残留 ESM export 一并修复。Node 201 个测试文件通过，Python fresh 全量曾通过 1869 项；后续同步复跑时出现两个与本批无关的 flaky 测试（frame worker epoch、tool scheduler peak），单独重跑 frame worker 通过。已完成手动安装目录同步并重启，开发树和安装目录均为 **1.0.45**；真实默认模型回环仍通过。
 
 2026-09-12 模型接入与恢复修复批（1.0.43，已同步安装版）：修复 active profile 模型菜单切换未影响真实请求、切换后沿用旧模型能力探测、provider-qualified model ID 被拒绝、Messages 模型目录认证/端点错误；补齐 Responses 的请求、工具历史、视觉输入、流式解析与错误终态，原生 reasoning item 可随任务持久保存并在恢复后回传；local profile 免密 Runtime 路径接通，澄清时跳过的同轮工具记录未派发的 operation 回执。真实默认 OpenCode Go / mimo-v2.5 原返回 `MissingSessionID`，按官方契约补入 MP 会话 ID 与自有 User-Agent 后，真实流式“模型→只读 fixture_echo→模型”两轮通过：`usedBackend=magic_pointer.messages_multiturn_streaming`、firstDelta **4422ms**、总耗时 **11140ms**、最终 `OK`，证据在 `data/runtime/model-loop-smoke-20260912.json`。fresh 全门：Python **1868 passed / 1 个既有 Pillow warning / 320.92s**、Node **201 test files passed**、lint/typecheck 全绿。`npm run sync` 成功构建 `release/sync-1.0.43-20260912-124312-42776/Magic-Pointer-1.0.43-x64.exe`（383,288,752 bytes）并同步、重启；开发树和安装目录版本均为 **1.0.43**，6 个运行进程均来自安装目录，已确认安装代码含会话头修复。保留接手前的桌面状态工具与 Studio 统计改动。Responses/local 等协议回归使用确定性响应，本批未宣称这些服务商的真实端点或 Office/Figma 应用验收完成。
 
-> 最后核实：2026-09-12（模型接入与恢复修复批 1.0.43 已完成全量验证并同步安装版，当前默认模型真实两轮工具回环通过；尚不宣称全部 provider 或真实 Office/微信 transient-root 全平台验收完成）。
+> 最后核实：2026-09-17（工具加载基础批 1.0.46 已完成全量验证、真实默认模型三轮工具回环和本机安装核对；尚不宣称全部 Provider、Office/Figma 编辑或微信 transient-root 全平台验收完成）。
 
 2026-09-07 Pi computer-use 对照接线（1.0.41，已同步安装版）：已克隆并逐文件研读 `injaneity/pi-computer-use`（MIT，`4b8dbd7`，0.5.1），完成 `find_roots`、state-scoped `observe_ui/search_ui/expand_ui/inspect_ui/read_text`、有界 `wait_for` 与同状态 `act_ui` successor diff；不复制 Pi native helper，MP 继续持有 FrameLease/ActionLease/Effect/Receipt 执行权。新增 parity 测试先红后绿；Python **1841 passed / 1 个既有 Pillow warning**、Node **201 test files passed**、lint/typecheck 全绿；`npm run sync` 已同步安装版并核对版本 **1.0.41**。真实 Office/微信 transient-root 真机验收仍未完成，不能把本批称为全平台 parity 完成。
 

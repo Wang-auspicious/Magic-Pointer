@@ -148,6 +148,7 @@ from app.agent_runtime.model_client import (
 )
 from app.agent_runtime.perception_tools import evidence_to_text
 from app.agent_runtime.token_estimate import estimate_text_tokens
+from app.agent_runtime.tool_discovery import tool_directory
 from app.agent_runtime.permission_modes import (
     PermissionDecision,
     PermissionDecisionResult,
@@ -166,7 +167,7 @@ from app.agent_runtime.tool_guardrails import (
     ToolGuardrailDecision,
     append_toolguard_guidance,
 )
-from app.agent_runtime.tool_registry import Effect, ToolRegistry, spec_effect
+from app.agent_runtime.tool_registry import FIND_CAPABILITY_TOOL, Effect, ToolRegistry, spec_effect
 from app.agent_runtime.types import (
     ORIGIN_DATA,
     ORIGIN_INSTRUCTION,
@@ -871,10 +872,6 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
     context_overflow_recoveries = 0
     empty_response_recoveries = 0
     backend_recovery_attempts = 0
-    tool_schemas, dropped_tools = _select_tool_schemas_with_dropped(params)
-    reported_dropped_tools = dropped_tools
-    tool_schema_tokens = estimate_text_tokens(str(tool_schemas))
-    loaded_extra: list[str] = []
     stop_hooks = tuple(params.stop_hooks)
     keepalive = params.keepalive
 
@@ -907,6 +904,10 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
         initial_messages = params.session.derive_messages()
     else:
         initial_messages = list(first_messages)
+    loaded_extra = _restored_tool_names(params)
+    tool_schemas, dropped_tools = _select_tool_schemas_with_dropped(params, extra_names=loaded_extra)
+    reported_dropped_tools = dropped_tools
+    tool_schema_tokens = estimate_text_tokens(str(tool_schemas))
     state = TurnState(
         messages=initial_messages,
         tool_calls_pending=[],
@@ -2090,6 +2091,32 @@ def validate_messages(messages: Sequence[AgentMessage]) -> None:
             )
 
 
+def _restored_tool_names(params: LoopParams) -> list[str]:
+    """Reuse successful discovery/execution receipts, even after compaction.
+
+    Old model requests included every eager schema; that is not evidence a
+    tool was needed. Only names actually discovered or used carry forward.
+    Current registrations supply the schema and permission contract.
+    """
+    if params.session is None:
+        return []
+    loaded: dict[str, None] = {}
+    for event in params.session.events:
+        if event.type != "operation/settled" or event.data.get("outcome") != "succeeded":
+            continue
+        message = event.data["message"]
+        try:
+            spec = params.registry.get(message.get("name") or "")
+        except KeyError:
+            continue
+        if spec.deferred:
+            loaded[spec.name] = None
+        if spec.discovers_tools:
+            for name in _discovered_tool_names(message.get("content") or ""):
+                loaded[name] = None
+    return list(loaded)
+
+
 def _select_tool_schemas(
     params: LoopParams,
     *,
@@ -2113,7 +2140,8 @@ def _select_tool_schemas_with_dropped(
     """Select the model tool surface and report names hidden by the limit."""
     registry = params.registry
     specs = {spec.name: spec for spec in registry.list()}
-    selected: list[str] = []
+    # Never truncate the only route to omitted tools, even at a small limit.
+    selected: list[str] = [FIND_CAPABILITY_TOOL] if FIND_CAPABILITY_TOOL in specs else []
     for name in extra_names:
         if name in specs and name not in selected:
             selected.append(name)
@@ -2128,6 +2156,11 @@ def _select_tool_schemas_with_dropped(
 
     def describe(spec) -> str:
         text = spec.description
+        if spec.name == FIND_CAPABILITY_TOOL:
+            text += tool_directory(
+                item for item in specs.values()
+                if item.deferred or item.name in dropped
+            )
         if spec.examples:
             samples = "\n".join(
                 json.dumps(example, ensure_ascii=False)

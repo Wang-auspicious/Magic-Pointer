@@ -438,6 +438,9 @@ class ToolRegistry:
         raw = str(keyword or "").casefold().strip()
         if not raw:
             return []
+        for spec in self.list():
+            if spec.name.casefold() == raw:
+                return [spec] if limit > 0 else []
         ascii_tokens = re.findall(r"[a-z0-9_]+", raw)
         cjk_tokens = re.findall(r"[\u4e00-\u9fff]+", raw)
         if not ascii_tokens and not cjk_tokens:

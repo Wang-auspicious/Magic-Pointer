@@ -868,6 +868,16 @@ DOM、COM、UIA、Fabric等现有模块也不自动保留，只优先保存经�
 
 ## 18. 进度账本
 
+### 2026-09-17：工具目录、精确按需加载与恢复（1.0.46，已同步安装版）
+
+- [x] 回读 Pi 的 9·16/9·17 JSONL、DeepSeek v4.1 的 Claude JSONL 与现有提交。最后停点是工具加载方案尚未实现，并非工具加载代码卡死。详细接手记录：`docs/research/2026-09-17-tool-loading-handoff.md`。
+- [x] 删除 14 个面向模型的 recipe 包装工具及无调用价值的旧模块；保留真实桌面、感知、Recall、MCP 和显式应用动作。工具目录来自实际 ToolRegistry，`Tools(names=[...])` 精确批量加载；未知名字诚实报错，keyword 保留为找不到名字时的搜索入口。完整参数只在后续请求的 tool schemas 中提供，不重复写进工具结果。
+- [x] 普通文件、搜索、规划和 ListApps/Observe 保持直接可用，专用桌面/本地工具按需加载；Tools 不被注册顺序或额外工具挤出。按成功 discovery/execution 的 operation 回执恢复已加载名称，覆盖压缩、重启和旧 eager 会话，继续使用当前注册表的权限/参数契约。
+- [x] TDD 先红后绿；相关回归初轮 359 passed，随后补充精确批量恢复和只读模式拒绝写入，定向 21 passed。相同 advanced-tools 配置估算完整 schemas 41→18，包含目录的 schema tokens 4995→3794（−24.0%）；本地选择均值 0.084→0.145ms。该估算不等于整项任务账单或耗时降幅。
+- [x] 当前真实默认 Provider 经 conversation bridge 完成 `Tools(names=[find_roots, inspect_ui]) → find_roots → 中文答案`，3 次模型请求，`usedBackend=magic_pointer.messages_multiturn_streaming`，桥内 18077.95ms，桌面调用 4.06ms；回执确认首请求未含两项 schemas，第二请求才加载。首次尝试在工具执行成功后的最终模型请求超出 180s；重试完成，不据此声称供应商延迟已解决。
+- [x] `npm run sync` 的 fresh 全量验证通过：lint/typecheck 全绿、Node **217 个测试文件**、Python **2129 passed / 1 条既有 Pillow warning / 232.80s**；Electron/Figma bundle 构建完成。接手前 ai_client/subagent/icons 及相关测试的未提交改动保留。
+- [x] `npm run sync` 成功构建 `release/sync-1.0.46-20260917-224339-40812/Magic-Pointer-1.0.46-x64.exe`、同步并重启；独立确认开发树/安装版同为 **1.0.46**、11 个关键文件逐字节一致、安装版自带 Python 的工具加载调用通过、5 个进程来自安装目录。覆盖复制遗留的已退役 capability_tools.py 及其缓存已单独清除。日志：`data/runtime/tool-loading-sync-1.0.46.log`。
+
 ### 2026-09-15：Legacy 模型配置收敛到 Profile（1.0.44，待安装同步）
 
 - [x] 发现并修复安装版仍以 `secrets/*.txt` 为事实源、而设置页/模型菜单使用空 `models.profiles` 的配置分叉。新增幂等 `promoteLegacyProfile`：首次启动将旧模型、provider/base URL/API mode 转成 versioned profile，并将旧密钥迁入 Electron safeStorage credential reference。

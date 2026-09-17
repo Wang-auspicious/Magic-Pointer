@@ -160,6 +160,7 @@ class WaitTool:
     def register(self, registry: ToolRegistry) -> None:
         registry.register(ToolSpec(
             name="wait",
+            deferred=True,
             description=(
                 "等一个条件成立再继续（最多 120 秒）：窗口标题出现 "
                 "(window_title)、界面元素文本出现 (element_text，可配 "

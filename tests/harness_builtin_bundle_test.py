@@ -1,7 +1,7 @@
 """Builtin bundle tests (plugin-kernel batch, plan T4).
 
 Pins the composed plugin tree inventory (perception + local actions +
-Kimi CU 13 desktop tools + capability tools), the plugin-contributed
+Kimi CU 13 desktop tools + tool discovery), the plugin-contributed
 services, legacy env knobs, and isolation of a broken user plugin.
 """
 
@@ -21,7 +21,7 @@ from app.agent_runtime.system_prompt import default_builder, default_sections
 # + 13 legacy desktop CU tools
 # + AskUser/Todo + Search/Fetch
 # + Recall (BashRead only mounts with a workspace)
-# + 16 capability tools + Tools.
+# + Tools (the old recipe wrappers are deliberately absent).
 EXPECTED_TOOLS = sorted([
     "Act", "Around", "AskUser",
     "act_ui", "expand_ui", "find_roots", "inspect_ui", "observe_ui", "read_text", "search_ui", "wait_for",
@@ -30,11 +30,8 @@ EXPECTED_TOOLS = sorted([
     "ListApps", "ListWindows", "Look", "Observe",
     "Recall", "Scroll", "Search",
     "Select", "SetValue", "Todo", "Tools",
-    "Tree", "Type", "agent_handoff", "canvas_transform",
-    "clipboard_text", "compare_objects", "copy_selected_text", "data_export",
-    "image_ops", "place_route", "recipe_scale", "research_card",
-    "save_screenshot", "screen_help", "show_source", "table_merge",
-    "task_route", "text_transform", "turn_ended", "vision_bridge",
+    "Tree", "Type", "copy_selected_text",
+    "save_screenshot", "show_source", "turn_ended",
     "wait",
 ])
 WRITE_TOOLS = {
@@ -503,7 +500,7 @@ def test_rows_report_active_and_dump_is_complete():
         "harness-tools", "web-tools", "memory-tools", "computer-agent",
         "perception-tools", "look-tool", "context-tools",
         "local-action-tools", "desktop-action-tools", "coding-tools",
-        "delegate-tool", "capability-tools", "guard", "system-prompt",
+        "delegate-tool", "tool-discovery", "guard", "system-prompt",
         "llm-provider", "session-store", "learning-review", "model-client",
     }
     assert all(row["status"] == "active" for row in dump)
@@ -589,15 +586,12 @@ def test_streaming_env_flag_selects_backend(monkeypatch):
 def test_env_knobs_flow_into_resolved_config(monkeypatch):
     monkeypatch.setenv("MAGIC_POINTER_PERMISSION_MODE", "plan")
     monkeypatch.setenv("MAGIC_POINTER_CONTEXT_TOKENS", "9999")
-    monkeypatch.setenv("MAGIC_POINTER_INLOOP_REVERSIBLE", "1")
     report = boot_loop_context(_runtime())
     model_row = next(row for row in report.rows if row.id == "model-client")
     assert model_row.resolved_config["permission_mode"] == "plan"
     assert model_row.resolved_config["context_budget_tokens"] == 9999
     llm_row = next(row for row in report.rows if row.id == "llm-provider")
     assert llm_row.resolved_config["streaming"] is True
-    cap_row = next(row for row in report.rows if row.id == "capability-tools")
-    assert cap_row.resolved_config["inloop_reversible"] is True
     report.ctx.unload()
 
 

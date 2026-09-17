@@ -9,7 +9,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -1102,7 +1102,9 @@ def register_desktop_action_tools(
         ),
     )
     for spec in specs:
-        registry.register(spec)
+        # Observation starts without a discovery round. Specialized actions
+        # keep their complete contracts, loaded together when needed.
+        registry.register(replace(spec, deferred=spec.name not in {"ListApps", "Observe"}))
     # 旧名别名（一个版本）：历史授权/旧调用仍路由到规范工具；别名不进 schema。
     registry.register_alias("list_apps", "ListApps")
     registry.register_alias("launch_app", "Launch")

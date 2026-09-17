@@ -284,12 +284,10 @@ function createConversationStore(
   let persistTimer: ReturnType<typeof setTimeout> | null = null;
 
   // --- failure reporting ---------------------------------------------------
-  let failureCount = 0;
   let failureReports = 0;
   let lastFailureReportAt = 0;
 
   function reportPersistFailure(error: unknown, context: string): void {
-    failureCount += 1;
     if (failureReports >= MAX_PERSIST_FAILURE_REPORTS) return;
     const at = now();
     if (failureReports > 0 && at - lastFailureReportAt < PERSIST_FAILURE_REPORT_INTERVAL_MS) return;

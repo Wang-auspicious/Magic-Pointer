@@ -2,12 +2,10 @@
 
 Covers the seams the review called out:
 (a) loop x guard factory (fail-closed + passing chain),
-(b) loop x permission mode (already partly in loop tests; here the
-    capability in-loop write path end to end),
+(b) loop x permission mode (including discovered write tools),
 (c) streaming backend auto-fallback (HTTP failure + empty SSE),
 (d) evidence hard fence + explicit truncation + gesture-centered window,
-(e) a scripted fake model running the full loop chain over the real
-    capability registry, asserting final answer + proposal shape.
+(e) a scripted fake model discovering and executing a guarded write.
 
 Nothing real is called: no network, no desktop, no probe.
 """
@@ -18,6 +16,8 @@ import json
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -453,100 +453,43 @@ def test_streaming_token_limit_reaches_agent_recovery_without_http_fallback(
     ] == ["max_output_tokens"]
 
 
-def test_scripted_model_end_to_end_over_real_capability_registry():
-    """Golden path: a scripted fake model runs the full loop over the real
-    capability registry, proposes translate, then answers (review Q9b)."""
+@pytest.mark.parametrize("allow_write", [True, False])
+def test_loaded_reversible_tool_still_executes_under_guards(allow_write):
+    """Deferred exposure does not change the real write permission boundary."""
     import asyncio
 
-    from app.fabric.capability_tools import register_capability_tools
-
-    proposals: list = []
-
-    def propose(recipe_id, args):
-        proposals.append((recipe_id, args))
-        return {
-            "ok": True,
-            "recipeId": recipe_id,
-            "requiresConfirmation": True,
-            "plan": {
-                "id": "plan-1",
-                "recipeId": recipe_id,
-                "command": "翻译",
-                "risk": "local_write",
-                "provider": "model.text",
-                "objectIds": ["o1"],
-                "parameters": dict(args or {}),
-                "preview": {"title": "原位翻译"},
-                "requiresConfirmation": True,
-                "idempotencyKey": "k1",
-                "integrityToken": "t1",
-            },
-        }
-
-    registry = ToolRegistry()
-    register_capability_tools(registry, propose)
-    backend = ScriptedBackend(
-        [
-            ToolCallArrived(call=ToolCall(
-                id="c1",
-                name="text_transform",
-                arguments={"operation": "translate", "language": "英文"},
-            )),
-            TurnDone(usage=None, raw_text=None),
-        ],
-        [TurnDone(usage=None, raw_text="已生成翻译方案。")],
-    )
-    client = LoopModelClient(backend)
-    params = LoopParams(
-        user_input="把这段翻译成英文",
-        registry=registry,
-        client=client,
-        allowed_effects=(Effect.READ, Effect.REVERSIBLE_WRITE),
-    )
-
-    events, terminal = asyncio.run(_collect(params))
-
-    assert terminal.reason.value == "completed"
-    assert terminal.message == "已生成翻译方案。"
-    assert len(terminal.results) == 1
-    payload = json.loads(terminal.results[0].value)
-    assert payload["ok"] is True
-    assert payload["recipeId"] == "text.translate_in_place"
-    assert payload["plan"]["id"] == "plan-1"
-    assert proposals == [("text.translate_in_place", {"language": "英文"})]
-
-
-def test_inloop_reversible_executes_via_execute_plan_under_guards():
-    """In-loop write path: REVERSIBLE_WRITE tool + passing guards -> execute_plan."""
-    import asyncio
-
-    from app.fabric.capability_tools import register_capability_tools
+    from app.agent_runtime.tool_discovery import register_find_capability
 
     receipts: list = []
 
-    def execute_plan(recipe_id, args):
-        receipts.append((recipe_id, args))
-        return {"status": "executed", "verified": True, "recipeId": recipe_id}
+    def execute(scope=None):
+        receipts.append("written")
+        return "written"
 
     registry = ToolRegistry()
-    register_capability_tools(
-        registry,
-        lambda *a: {"ok": True},
-        execute_plan=execute_plan,
-        inloop_reversible=True,
-    )
+    registry.register(ToolSpec(
+        name="FixtureWrite",
+        description="Write the bound fixture.",
+        input_schema={"type": "object", "properties": {}, "required": []},
+        execute=execute,
+        effect=Effect.REVERSIBLE_WRITE,
+        preconditions=(ResolvedExact(), TargetFocused(), ContentUnchanged()),
+        deferred=True,
+    ))
+    register_find_capability(registry)
     factory = build_context_factory(
         FakeProbe(), lambda args: anchor_from_arguments(args, fallback_anchor=_anchor())
     )
     backend = ScriptedBackend(
         [
             ToolCallArrived(call=ToolCall(
-                id="c1",
-                name="text_transform",
-                arguments={"operation": "rewrite", "style": "更简洁"},
+                id="load",
+                name="Tools",
+                arguments={"names": ["FixtureWrite"]},
             )),
             TurnDone(usage=None, raw_text=None),
         ],
+        [ToolCallArrived(call=ToolCall(id="write", name="FixtureWrite", arguments={})), TurnDone(usage=None, raw_text=None)],
         [TurnDone(usage=None, raw_text="done")],
     )
     client = LoopModelClient(backend)
@@ -554,13 +497,11 @@ def test_inloop_reversible_executes_via_execute_plan_under_guards():
         user_input="改写",
         registry=registry,
         client=client,
-        allowed_effects=(Effect.READ, Effect.REVERSIBLE_WRITE),
+        allowed_effects=(Effect.READ, Effect.REVERSIBLE_WRITE) if allow_write else (Effect.READ,),
         precondition_context_factory=factory,
     )
 
-    events, terminal = asyncio.run(_collect(params))
+    _, terminal = asyncio.run(_collect(params))
 
-    assert terminal.results[0].is_error is False
-    payload = json.loads(terminal.results[0].value)
-    assert payload["status"] == "executed"
-    assert receipts == [("text.rewrite_in_place", {"style": "更简洁"})]
+    assert any(result.is_error for result in terminal.results) is (not allow_write)
+    assert receipts == (["written"] if allow_write else [])

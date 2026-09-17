@@ -73,10 +73,7 @@ from app.computer_operator import (
     WindowsComputerOperatorBackend,
 )
 from app.desktop_actions import default_session, register_desktop_action_tools
-from app.fabric.capability_tools import (
-    register_capability_tools,
-    register_find_capability,
-)
+from app.agent_runtime.tool_discovery import register_find_capability
 from app.fabric.mcp_client import load_server_configs
 from app.harness.composition import BootReport, BundleRow, boot, load_patch_file
 from app.harness.plugin import PluginSpec
@@ -279,6 +276,7 @@ def _apply_local_action_tools(fork, config: dict[str, Any]) -> None:
 
     registry.register(ToolSpec(
         name="copy_selected_text",
+        deferred=True,
         description="把圈选对象的结构化文本复制到剪贴板。",
         input_schema=empty_schema,
         execute=copy_execute,
@@ -290,6 +288,7 @@ def _apply_local_action_tools(fork, config: dict[str, Any]) -> None:
     ))
     registry.register(ToolSpec(
         name="save_screenshot",
+        deferred=True,
         description="保存当前选区的截图。",
         input_schema=empty_schema,
         execute=screenshot_execute,
@@ -299,6 +298,7 @@ def _apply_local_action_tools(fork, config: dict[str, Any]) -> None:
     ))
     registry.register(ToolSpec(
         name="show_source",
+        deferred=True,
         description="说明当前圈选对象的来源窗口。",
         input_schema=empty_schema,
         execute=source_execute,
@@ -501,17 +501,9 @@ def _apply_memory_tools(fork, config: dict[str, Any]) -> None:
     register_history_search(fork.get("tools"), sessions_root=Path(session_root))
 
 
-def _apply_capability_tools(fork, config: dict[str, Any]) -> None:
-    """Recipe capabilities as model-facing tools (propose-only by default)."""
-    registry = fork.get("tools")
-    register_capability_tools(
-        registry,
-        config["propose"],
-        enabled_recipes=config.get("enabled_recipes"),
-        execute_plan=config.get("execute_plan"),
-        inloop_reversible=bool(config.get("inloop_reversible")),
-    )
-    register_find_capability(registry)
+def _apply_tool_discovery(fork, config: dict[str, Any]) -> None:
+    """Discovery exposes real registered tools, without recipe wrappers."""
+    register_find_capability(fork.get("tools"))
 
 
 def _apply_guard(fork, config: dict[str, Any]) -> None:
@@ -767,7 +759,7 @@ BUILTIN_PLUGINS: dict[str, PluginSpec] = {
         _spec("coding-tools", ("tools",), _apply_coding_tools),
         _spec("delegate-tool", ("tools", "llm"), _apply_delegate_tool),
         _spec("memory-tools", ("tools", "sessions"), _apply_memory_tools),
-        _spec("capability-tools", ("tools",), _apply_capability_tools),
+        _spec("tool-discovery", ("tools",), _apply_tool_discovery),
         _spec("guard", ("guard_probe", "selection_anchor"), _apply_guard),
         _spec("system-prompt", ("prompt",), _apply_system_prompt),
         _spec("llm-provider", (), _apply_llm_provider),
@@ -797,7 +789,7 @@ BUILTIN_ROW_IDS: tuple[str, ...] = (
     "coding-tools",
     "delegate-tool",
     "memory-tools",
-    "capability-tools",
+    "tool-discovery",
     "guard",
     "system-prompt",
     "llm-provider",
@@ -1057,18 +1049,7 @@ def _run_loop_rows(runtime: dict[str, Any], root: Path) -> list[BundleRow]:
                 "inbox": runtime.get("session_inbox"),
             },
         ),
-        BundleRow(
-            "capability-tools",
-            "capability-tools",
-            {
-                "propose": runtime.get("propose"),
-                "execute_plan": runtime.get("execute_plan"),
-                "enabled_recipes": runtime.get("enabled_recipes"),
-                "inloop_reversible": _env_flag(
-                    "MAGIC_POINTER_INLOOP_REVERSIBLE", False
-                ),
-            },
-        ),
+        BundleRow("tool-discovery", "tool-discovery"),
         BundleRow("guard", "guard"),
         BundleRow(
             "model-client",
@@ -1212,16 +1193,7 @@ def boot_loop_context(
             "coding-tools",
             {"workspace_root": workspace_root},
         ),
-        BundleRow(
-            "capability-tools",
-            "capability-tools",
-            {
-                "propose": runtime.get("propose"),
-                "execute_plan": runtime.get("execute_plan"),
-                "enabled_recipes": runtime.get("enabled_recipes"),
-                "inloop_reversible": _env_flag("MAGIC_POINTER_INLOOP_REVERSIBLE", False),
-            },
-        ),
+        BundleRow("tool-discovery", "tool-discovery"),
         BundleRow("guard", "guard"),
         BundleRow("system-prompt", "system-prompt"),
         BundleRow(
