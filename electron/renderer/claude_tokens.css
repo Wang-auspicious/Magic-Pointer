@@ -125,6 +125,13 @@
   --mp-r-pill: 999px;
 
   --mp-dur-fast: 120ms;
+  /* 消息动作行的显隐时序，取自抓到的 --cds-message-actions-reveal-*：
+     入场 120ms 且延迟 100ms，出场 60ms 且不延迟。曲线的用意是「快出慢收」——
+     扫过消息时行先不动，真要收的时候立刻收干净。 */
+  --mp-actions-in: .12s;
+  --mp-actions-in-delay: .1s;
+  --mp-actions-out: 60ms;
+  --mp-actions-ease: cubic-bezier(.32, .72, 0, 1);
   --mp-dur-normal: 180ms;
   --mp-dur-structure: 300ms;
   --mp-ease-out: cubic-bezier(.32,.72,0,1);

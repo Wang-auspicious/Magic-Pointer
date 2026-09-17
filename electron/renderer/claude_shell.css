@@ -297,16 +297,23 @@
   min-width: 0;
 }
 
+/* 侧栏行：抓到的 --df-row-h 是 32px、--df-radius-pill 8px、
+   --df-row-font 14px（行高 21）。行高给够，侧栏才是「一排可点的条目」而不是
+   一排挤在一起的文字。左右内边距没跟着改成 2px——参考的 2px 是配
+   --df-leading-slot: 28px 那个图标槽的，我们的行首是一个 6px 的状态点，
+   照搬会把点贴到边上。 */
 .dshw-project-row,
 .side-item {
   display: flex;
   align-items: center;
   width: 100%;
-  height: 26px;
+  height: 32px;
   min-width: 0;
   padding: 0 6px;
-  border-radius: var(--mp-r5);
+  border-radius: 8px;
   color: var(--mp-text-secondary);
+  font-size: 14px;
+  line-height: 21px;
   text-align: left;
   transition: color var(--mp-dur-fast), background-color var(--mp-dur-fast);
 }

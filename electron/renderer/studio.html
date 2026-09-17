@@ -6,7 +6,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Magic Pointer</title>
   <script src="theme_boot.js?v=26"></script>
-  <link rel="stylesheet" href="claude_tokens.css?v=34" />
+  <link rel="stylesheet" href="cds_icons.css?v=1" />
+  <link rel="stylesheet" href="claude_tokens.css?v=35" />
   <link rel="stylesheet" href="claude_shell.css?v=34" />
   <link rel="stylesheet" href="claude_chat.css?v=34" />
 </head>
@@ -47,15 +48,15 @@
         </div>
 
         <button class="dshw-new-session" id="nav-new-chat" data-goto="chat">
-          <svg aria-hidden="true"><use href="#ic-plus" /></svg><span class="dshw-new-session-label">New</span>
+          <span class="cds-icon" data-size="small" aria-hidden="true">&#xE001;</span><span class="dshw-new-session-label">New</span>
         </button>
         <!-- `dshw-customize` 这个名字是历史遗留，它现在的实际含义是「侧栏导航
              行」——New / Artifacts / Customize 共用一套排版，所以三行同一个类。 -->
         <button class="dshw-customize" id="nav-artifacts" data-goto="artifacts">
-          <svg aria-hidden="true"><use href="#ic-docs" /></svg><span>Artifacts</span>
+          <span class="cds-icon" data-size="large" aria-hidden="true">&#xE017;</span><span>Artifacts</span>
         </button>
         <button class="dshw-customize" id="settings-open" data-goto="settings" aria-haspopup="dialog">
-          <svg aria-hidden="true"><use href="#ic-briefcase" /></svg><span>Customize</span>
+          <span class="cds-icon" data-size="large" aria-hidden="true">&#xE100;</span><span>Customize</span>
         </button>
 
         <nav class="mp-design-nav" aria-label="Cowork">
@@ -278,7 +279,7 @@
                           placeholder="Describe a task or ask a question" aria-label="Continue conversation"></textarea>
                       </div>
                       <button type="submit" class="dshw-primary" title="Send" aria-label="Send" disabled>
-                        <svg width="16" height="16" aria-hidden="true"><use href="#ic-corner-down-left" /></svg>
+                        <span class="cds-icon" data-size="large" aria-hidden="true">&#xE013;</span>
                       </button>
                     </div>
                     <div class="mp-composer-attachments" id="composer-attachments" hidden aria-label="附件"></div>
@@ -286,7 +287,7 @@
                     <div class="dshw-row">
                       <div class="dshw-tools">
                         <button type="button" class="dshw-add" id="composer-add" aria-label="添加附件" aria-haspopup="menu" aria-expanded="false" title="添加附件">
-                          <svg width="17" height="17" aria-hidden="true"><use href="#ic-plus" /></svg>
+                          <span class="cds-icon" data-size="large" aria-hidden="true">&#xE001;</span>
                         </button>
                         <div class="dshw-add-menu dshw-slash-menu" id="composer-add-menu" hidden role="menu" aria-label="命令与技能">
                           <input type="search" id="composer-slash-search" placeholder="搜索命令与技能…" autocomplete="off" aria-label="搜索命令与技能" />
@@ -296,7 +297,7 @@
                           <svg width="17" height="17" aria-hidden="true"><use href="#ic-at" /></svg>
                         </button>
                         <button type="button" class="dshw-add mp-voice" id="composer-voice" aria-label="Voice input" title="Voice input">
-                          <svg width="16" height="16" aria-hidden="true"><use href="#ic-mic" /></svg>
+                          <span class="cds-icon" data-size="large" aria-hidden="true">&#xE0AB;</span>
                         </button>
                         <button type="button" class="dshw-perm mp-permission-seat" id="composer-permission" aria-haspopup="listbox" aria-expanded="false" title="本轮 Agent 权限">
                           <svg class="dshw-perm-chev" width="12" height="12" aria-hidden="true"><use href="#ic-chev" /></svg>
@@ -604,6 +605,8 @@
   <script defer src="live_cards.js?v=23"></script>
   <script defer src="dsh_markdown.js?v=24"></script>
   <script defer src="dsh_icons.js?v=25"></script>
+  <script defer src="claude_marks.js?v=1"></script>
+  <script defer src="cds_icons.js?v=1"></script>
   <script defer src="dsh_highlight.js?v=1"></script>
   <script defer src="dsh_chat.js?v=27"></script>
   <script defer src="dsh_trajectory.js?v=25"></script>

@@ -254,8 +254,13 @@
   gap: 2px;
   padding-top: 6px;
   opacity: 0;
+  transform-origin: top;
   color: var(--mp-text-muted);
-  transition: opacity var(--mp-dur-fast), color var(--mp-dur-fast);
+  /* 出场 60ms、无延迟：手一离开就收，不能拖泥带水——抓取到的
+     --cds-message-actions-reveal-out-* 就是这个值。 */
+  transition:
+    opacity var(--mp-actions-out) var(--mp-actions-ease),
+    color var(--mp-dur-fast);
 }
 
 .dsh-actions[data-align='user'] {
@@ -266,13 +271,26 @@
   justify-content: flex-start;
 }
 
+/* 入场 120ms 但**延迟 100ms**：鼠标只是扫过一条消息时，动作行不该闪一下。
+   这是参考里 hover 触发的时序（in-duration .12s / in-delay .1s），
+   focus-within 那条路没有延迟——键盘用户已经在等它了。 */
 .dsh-user:has(> .dsh-user-stack:hover) > .dsh-actions,
 .dsh-user > .dsh-actions:hover,
 .dsh-assistant:has(> .dsh-assistant-body:hover) > .dsh-actions,
-.dsh-assistant > .dsh-actions:hover,
+.dsh-assistant > .dsh-actions:hover {
+  opacity: 1;
+  color: var(--mp-text-secondary);
+  transition-duration: var(--mp-actions-in), var(--mp-dur-fast);
+  transition-delay: var(--mp-actions-in-delay), 0s;
+  transition-timing-function: var(--mp-actions-ease), var(--mp-ease-out);
+}
+
 .dsh-actions:focus-within {
   opacity: 1;
   color: var(--mp-text-secondary);
+  transition-duration: var(--mp-actions-in), var(--mp-dur-fast);
+  transition-delay: 0s, 0s;
+  transition-timing-function: var(--mp-actions-ease), var(--mp-ease-out);
 }
 
 .dsh-action {
@@ -1428,13 +1446,24 @@
   color: var(--mp-text-muted);
 }
 
+/* 星芒现在是 Claude 自己的 spark.svg（claude_marks.ts 原样收的），不再用
+   clip-path 拼一个近似多边形——近似的形状无论怎么调都差一口气，而这个是有
+   原始路径的。它自带 fill（--cds-clay 回落到 #d97757，就是 --mp-clay），
+   所以这里不管颜色，只管尺寸和旋转。 */
 .dsh-thinking-mark {
+  display: inline-flex;
   width: 18px;
   height: 18px;
   flex: 0 0 18px;
-  background: var(--mp-clay);
-  clip-path: polygon(45% 0,55% 0,58% 34%,82% 9%,89% 16%,65% 42%,100% 45%,100% 55%,65% 58%,89% 84%,82% 91%,58% 66%,55% 100%,45% 100%,42% 66%,18% 91%,11% 84%,35% 58%,0 55%,0 45%,35% 42%,11% 16%,18% 9%,42% 34%);
+  align-items: center;
+  justify-content: center;
   animation: mp-thinking-spin 1400ms linear infinite;
+}
+
+.dsh-thinking-mark svg {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .dsh-turn-status-copy {
@@ -1743,15 +1772,18 @@
   display: contents;
 }
 
+/* 输入框的外壳。54px / 384px / 14px 圆角都是抓到的
+   [data-cds=ChatComposerEditor] 值（min-height / max-height /
+   --cds-radius-composer = .875rem）。54 = 上 5 + 行 44 + 下 5。 */
 .dshw-scroll {
   position: relative;
   display: flex;
-  min-height: 42px;
-  max-height: 190px;
+  min-height: 54px;
+  max-height: 384px;
   align-items: stretch;
   overflow: hidden;
   border: 1px solid var(--mp-rule-strong);
-  border-radius: var(--mp-r8);
+  border-radius: 14px;
   background: var(--mp-composer);
   transition: border-color var(--mp-dur-fast), box-shadow var(--mp-dur-fast), background-color var(--mp-dur-fast);
 }
@@ -1767,18 +1799,24 @@
   flex: 1;
 }
 
+/* 正文 16/22、字重轴 360、内边距 5px 0 5px 8px —— 全是抓到的
+   ChatComposerEditor 值。字重不是 400：参考把它压到 360，输入框里的字
+   比正文轻一档，读起来更像「待写的草稿」而不是「已定稿的回答」。
+   右侧 46px 是我们自己的：参考的发送键在网格的尾列，我们的浮在右上角，
+   不留出这段文字会从它底下穿过去。 */
 .dshw-input {
   width: 100%;
-  min-height: 40px;
-  max-height: 188px;
-  padding: 10px 42px 8px 12px;
+  min-height: 44px;
+  max-height: 374px;
+  padding: 5px 46px 5px 8px;
   overflow: auto;
   border: 0;
   resize: none;
   background: transparent;
   color: var(--mp-text);
-  font-size: 13px;
-  line-height: 20px;
+  font-size: 16px;
+  line-height: 22px;
+  font-variation-settings: "wght" 360;
 }
 
 .dshw-input::placeholder {
@@ -1921,17 +1959,29 @@
   background: var(--mp-hover);
 }
 
+/* 发送键：32×32、圆角 8、**透明底**。参考里它不是一颗实心按钮，是一个
+   着色字形（抓到的 background-color 是 rgba(0,0,0,0)），空输入时整颗
+   opacity .4。11px = (54 - 32) / 2，让它在外壳里垂直居中。 */
 .dshw-primary {
   position: absolute;
-  top: 6px;
-  right: 6px;
+  top: 11px;
+  right: 11px;
   bottom: auto;
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   padding: 0;
-  border-radius: var(--mp-r5);
-  color: var(--mp-page);
-  background: var(--mp-text);
+  border-radius: 8px;
+  color: var(--mp-text);
+  background: transparent;
+  transition: color var(--mp-dur-fast), background-color var(--mp-dur-fast);
+}
+
+.dshw-primary:hover:not(:disabled) {
+  background: var(--mp-hover);
+}
+
+.dshw-primary:disabled {
+  opacity: .4;
 }
 
 .dshw-primary:hover:not(:disabled) {
@@ -1942,18 +1992,22 @@
   transform: scale(.96);
 }
 
+/* 空输入时整颗压到 .4，不是换一个颜色——参考就是这么做的
+   （computed.json 的 composer.send: "空输入禁用态 opacity .4"）。 */
 .dshw-primary:disabled {
-  opacity: 1;
-  color: var(--mp-text-muted);
+  opacity: .4;
+  color: var(--mp-text);
   background: transparent;
 }
 
+/* 底部这一排图标是 20px：抓到的 sizeScale 里 20px/433.3 是「大」档，而
+   send / attach / dictate 三个都落在这一档。 */
 .dshw-primary svg,
 .dshw-add svg,
 .dshw-ring svg,
 .dshw-perm svg {
-  width: 16px;
-  height: 16px;
+  width: 20px;
+  height: 20px;
 }
 
 .dshw-ring {
@@ -2191,16 +2245,20 @@
 
 .dshw-slash-row,
 .dshw-perm-menu > button,
+/* 菜单行：抓到的 popover.menuRow 是 padding 6/10/7/10、gap 8、radius 8、
+   14px/20px、行高 50px（含上下 padding）。四个数里最要紧的是左右 10px——
+   菜单行的文字和菜单边缘之间隔着 10px 才不显得挤。 */
 .dshw-model-menu button,
 .dshw-perm-row {
   display: flex;
   width: 100%;
-  min-height: 30px;
   align-items: center;
   gap: 8px;
-  padding: 5px 8px;
-  border-radius: var(--mp-r4);
+  padding: 6px 10px 7px;
+  border-radius: 8px;
   color: var(--mp-text-secondary);
+  font-size: 14px;
+  line-height: 20px;
   text-align: left;
 }
 
@@ -2222,13 +2280,12 @@
 }
 
 .dshw-model-menu {
-  width: 280px;
+  width: 408px;
 }
 
 .dshw-model-row {
   display: grid !important;
-  min-height: 34px !important;
-  grid-template-columns: minmax(0, 1fr) 16px;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
 }

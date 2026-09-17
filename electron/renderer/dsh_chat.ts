@@ -909,9 +909,25 @@ const DshChat = (() => {
      参考里运行中的那一行是：橙色星芒 + `12m 59s · 3.6k tokens · Almost done
      thinking…`。计时是前缀，阶段名是句尾——所以这里给计时留一个空槽，
      由渲染层按秒原地写进去（写空槽不重建节点，星芒的旋转动画不会被打断）。 */
+  /* 运行态那颗星芒用的是 Claude 自己的 Spark（claude_marks.ts 里原样收的
+     spark.svg），不再是 CSS clip-path 拼出来的近似多边形——那个形状无论怎么
+     调都差一口气，而参考里的这个是有原始路径的。
+     取不到 ClaudeMarks 时留一个空壳：星芒是装饰，它缺席不该让整行塌掉。 */
+  function sparkMark(): DshNode {
+    const root = h('span', { class: 'dsh-thinking-mark', 'aria-hidden': 'true' });
+    const api = typeof globalThis !== 'undefined'
+      ? (globalThis as unknown as { ClaudeMarks?: { svg?: (name: string) => string } }).ClaudeMarks
+      : undefined;
+    const markup = api && typeof api.svg === 'function' ? api.svg('spark') : '';
+    if (markup && 'innerHTML' in root) {
+      (root as unknown as HTMLElement).innerHTML = markup;
+    }
+    return root;
+  }
+
   function turnStatusNode(label: string): DshNode {
     const root = h('div', { class: 'dsh-turn-status', role: 'status', 'aria-label': label });
-    attach(root, h('span', { class: 'dsh-thinking-mark', 'aria-hidden': 'true' }));
+    attach(root, sparkMark());
     /* 计时与阶段名是同一条句子的两段，中间的分隔符由 CSS 生成：
        计时为空时整段消失，不留下一个孤零零的「·」。 */
     const copy = h('span', { class: 'dsh-turn-status-copy' });

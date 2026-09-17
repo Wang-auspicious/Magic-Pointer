@@ -1,0 +1,46 @@
+/* Anthropicons-Variable —— Claude 的界面图标是字体字形，不是 SVG。
+   三档「字号 / 字重」配对（20px/433.3 large、16px/533.3 small、12px/577.8 micro）
+   抄自 参考claude设计/scraped/icons/manifest.json 的 sizeScale：它是可变字体，
+   同一字形在三档下描边粗细由字重补偿，只改 font-size 会让图标看起来忽胖忽瘦。
+   woff2 就地 vendor 在 assets/fonts/ 下而不热链上游 CDN：图标字体属于本机界面
+   的一部分，热链会让离线窗口和冷启动都多一次外网往返，且上游换哈希就整体失效。 */
+
+@font-face {
+  font-family: Anthropicons;
+  src: url("./assets/fonts/Anthropicons-Variable.woff2") format("woff2-variations");
+  font-weight: 400 700;
+  font-display: block;
+}
+
+.cds-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1em;
+  height: 1em;
+  font-family: Anthropicons, sans-serif;
+  font-style: normal;
+  font-weight: 433.3;
+  font-feature-settings: "liga" 0;
+  font-variant-ligatures: none;
+  line-height: 1;
+  font-size: 20px;
+  speak: never;
+  user-select: none;
+  flex: none;
+}
+
+.cds-icon[data-size="small"] {
+  font-size: 16px;
+  font-weight: 533.3;
+}
+
+.cds-icon[data-size="micro"] {
+  font-size: 12px;
+  font-weight: 577.8;
+}
+
+.cds-icon[data-size="large"] {
+  font-size: 20px;
+  font-weight: 433.3;
+}

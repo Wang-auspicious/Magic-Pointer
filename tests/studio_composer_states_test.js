@@ -33,7 +33,11 @@ assert(source.includes('await steerActiveConversation(question, textarea)'));
 assert(html.includes('class="dshw-primary" title="Send" aria-label="Send" disabled'));
 assert(source.includes('function syncComposerSubmitState()'));
 assert(source.includes("submit.disabled = !studioComposerBusy && !textarea.value.trim()"));
-assert.match(css, /\.dshw-primary:disabled\s*\{[^}]*opacity:\s*1[^}]*background:\s*transparent/s);
+/* 空输入时发送键整颗压到 .4，底色保持透明。这条以前钉的是 opacity: 1
+   （把图标本身换成弱色），2026-09-17 抓到的 claude.ai composer.send 明确是
+   「空输入禁用态 opacity .4」，以抓到的为准。 */
+assert.match(css, /\.dshw-primary:disabled\s*\{[^}]*opacity:\s*\.4[^}]*background:\s*transparent/s,
+  'an empty composer dims the whole send button rather than recolouring its glyph');
 /* 参考的左半边读作 `＋ 🎤 ⌄ Auto`：附件和语音先出现，模式名跟在它们后面，
    前面带一个 chevron。所以模式触发器不再被提到行首。 */
 assert.match(css, /#composer-permission \.dshw-perm-chev\s*\{[^}]*order:\s*-1/s,
@@ -94,10 +98,14 @@ assert.match(css, /\.dshw-perm-check\s*\{[^}]*width:\s*16px[^}]*height:\s*16px/s
   'selected checks have explicit SVG dimensions');
 assert.match(css, /\.dshw-perm-row-glyph\s*\{[^}]*width:\s*20px[^}]*height:\s*20px/s,
   'permission glyphs cannot fall back to intrinsic SVG dimensions');
-assert.match(css, /\.dshw-model-menu\s*\{[^}]*width:\s*280px/s,
-  'model names and capability tags receive the measured non-overlapping menu width');
-assert.match(css, /\.dshw-model-row\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) 16px/s,
-  'model rows reserve a stable trailing slot for the selected check');
+/* 408 是抓到的模型菜单宽度（computed.json 的 popover.menuRow __rect.width）。
+   以前钉的 280 是量自己的截图量出来的，比参考窄了一整档。 */
+assert.match(css, /\.dshw-model-menu\s*\{[^}]*width:\s*408px/s,
+  'the model menu uses the measured reference width, not a narrower local guess');
+/* 尾列不再写死 16px：选中勾现在是字体字形（20px 那档），写死 16 会把它压扁。
+   用 auto，让槽跟着字形走。 */
+assert.match(css, /\.dshw-model-row\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) auto/s,
+  'model rows reserve a trailing slot that follows the glyph rather than a fixed 16px');
 assert(html.includes('class="mp-context-track"') && html.includes('class="mp-context-value"'));
 assert(source.includes('const contextWindow = Number(currentModel?.contextWindow) || 0'));
 assert(source.includes("button.style.setProperty('--mp-context-progress', String(contextProgress))"));
