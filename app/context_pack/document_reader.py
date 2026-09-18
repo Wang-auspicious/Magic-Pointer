@@ -1,8 +1,8 @@
 """Task-scoped, structure-preserving readers for local documents.
 
-The reader deliberately builds a small transient index per call.  It does not
-watch the filesystem or create a machine-wide knowledge base: a SourceRef is
-the authorization and its revision remains visible in every returned fragment.
+Each task reader reuses a bounded set of parsed documents until their file
+metadata or source revision changes. It does not watch the filesystem or
+create a machine-wide knowledge base: a SourceRef remains the authorization.
 """
 
 from __future__ import annotations
@@ -11,9 +11,11 @@ import json
 import mimetypes
 import re
 import time
+from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Lock
 from typing import Any
 
 import fitz
@@ -125,6 +127,8 @@ class DocumentReader:
         self.max_fragment_chars = max(256, int(max_fragment_chars))
         self.max_result_chars = max(4_096, int(max_result_chars))
         self.ocr_page = ocr_page
+        self._documents: OrderedDict[tuple, _ParsedDocument] = OrderedDict()
+        self._documents_lock = Lock()
 
     def _parse(self, source: SourceRef) -> _ParsedDocument:
         path = _path_for(source)
@@ -132,6 +136,26 @@ class DocumentReader:
             raise FileNotFoundError(path)
         if path.is_dir():
             return self._parse_directory(path)
+        stat = path.stat()
+        key = (path, stat.st_mtime_ns, stat.st_size,
+               json.dumps(source.revision, sort_keys=True, ensure_ascii=False))
+        with self._documents_lock:
+            cached = self._documents.get(key)
+            if cached is not None:
+                self._documents.move_to_end(key)
+                return cached
+        # Parsing unrelated files can overlap; only cache bookkeeping is locked.
+        parsed = self._parse_file(path, source)
+        with self._documents_lock:
+            for old_key in list(self._documents):
+                if old_key[0] == path:
+                    del self._documents[old_key]
+            self._documents[key] = parsed
+            while len(self._documents) > 8:
+                self._documents.popitem(last=False)
+        return parsed
+
+    def _parse_file(self, path: Path, source: SourceRef) -> _ParsedDocument:
         suffix = path.suffix.casefold()
         if suffix == ".pdf":
             return self._parse_pdf(path)
@@ -998,7 +1022,11 @@ class DocumentReader:
                 citations=fragment.citations,
             ))
             used += len(text)
+        # A preview may end inside a unit. Resume at that unit so its unread
+        # suffix is still reachable through the ordinary unit cursor.
         next_index = len(kept)
+        if kept and len(kept[-1].text) < len(result.fragments[next_index - 1].text):
+            next_index -= 1
         return ReadResult(
             source_id=result.source_id,
             fragments=tuple(kept),
