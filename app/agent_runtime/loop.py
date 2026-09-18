@@ -2876,9 +2876,11 @@ def _record_loop_receipt(
 
 
 def _result_value_text(value: Any) -> str:
-    """One text channel for the model: Evidence -> readable JSON, else str."""
+    """Preserve structured receipts as JSON at the model/session boundary."""
     if isinstance(value, Evidence):
         return evidence_to_text(value)
+    if isinstance(value, (dict, list, tuple)):
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
     return "" if value is None else str(value)
 
 

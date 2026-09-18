@@ -6,6 +6,20 @@ from app.agent_runtime.model_client import _messages_payload
 from app.agent_runtime.types import AgentMessage, Role
 
 
+def test_registry_dict_receipt_reaches_projection_as_json():
+    from app.agent_runtime.loop import _normalize_result
+    from app.agent_runtime.tool_registry import ToolResult
+    from app.agent_runtime.types import ToolCall
+
+    full = read_message()
+    normalized = _normalize_result(ToolResult(value=json.loads(full.content)),
+                                   ToolCall("native-read", "Context.read", {}))
+    assert json.loads(normalized.value)["fragments"][-1]["text"] == "Decisive fact 11"
+    message = AgentMessage(Role.TOOL, normalized.value, "native-read", "Context.read", origin="data")
+    request = _messages_payload("model", [message], [], 2000, "chat-completions")
+    assert len(results(request, "chat-completions")[0]) < len(normalized.value) * .60
+
+
 def read_message(call_id="read-1", latency=123):
     source_id = "source:report"
     locators = [{"kind": "pdf-region", "value": {"pageIndex": i, "blockIndex": 0,

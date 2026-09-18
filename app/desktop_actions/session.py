@@ -197,6 +197,7 @@ class DesktopActionSession:
         payload["root_ref"] = snap.root_ref
         payload["mode"] = str(mode or "fused")
         payload["outline"] = [self._outline_node(item) for item in snap.elements]
+        payload.pop("elements", None)
         return _dump(payload)
 
     def search_ui(
@@ -272,15 +273,12 @@ class DesktopActionSession:
         found = False
         latest = snap
         while True:
-            rows = list(self.elements_probe(int(snap.window.get("hwnd") or 0)) or [])
-            latest_rows, _ = _compress_elements(rows)
-            found = self._condition_matches(latest_rows, text=text, role=role, value=value)
+            payload = json.loads(self.get_app_state(window_id=target_window_id, mode="ax"))
+            latest = self._snapshots[str(payload["snapshot_id"])]
+            found = self._condition_matches(latest.elements, text=text, role=role, value=value)
             if str(until or "present") == "absent":
                 found = not found
             if found or time.monotonic() >= deadline:
-                if found:
-                    payload = json.loads(self.get_app_state(window_id=target_window_id, mode="ax"))
-                    latest = self._snapshots[str(payload["snapshot_id"])]
                 break
             time.sleep(min(0.15, max(0.0, deadline - time.monotonic())))
         return _dump({"state_id": latest.snapshot_id, "base_state_id": snap.snapshot_id, "found": found, "timed_out": not found, "text": text, "role": role, "value": value})
@@ -315,11 +313,19 @@ class DesktopActionSession:
                 raise ActionFailure(FailureType.TOOL_ERROR, f"unsupported act_ui action {op!r}")
             executed.append({"action": op, "ref": ref})
         condition = dict(expect or {})
-        post = (json.loads(self.wait_for(snap.snapshot_id, timeout_ms=int(condition.get("timeout_ms") or 100), text=condition.get("text"), role=condition.get("role"), value=condition.get("value"), until=str(condition.get("until") or "present"))) if condition else {"found": True, "state_id": snap.snapshot_id})
-        successor = json.loads(self.get_app_state(window_id=_window_id(snap.window), mode="ax"))
-        successor_snap = self._snapshots[str(successor["snapshot_id"])]
+        if condition:
+            post = json.loads(self.wait_for(snap.snapshot_id, timeout_ms=int(condition.get("timeout_ms") or 100), text=condition.get("text"), role=condition.get("role"), value=condition.get("value"), until=str(condition.get("until") or "present")))
+            successor_snap = self._snapshots[str(post["state_id"])]
+        else:
+            successor = json.loads(self.get_app_state(window_id=_window_id(snap.window), mode="ax"))
+            successor_snap = self._snapshots[str(successor["snapshot_id"])]
+            post = {"status": "unavailable", "matched": False,
+                    "state_id": successor_snap.snapshot_id, "reason": "no postcondition supplied"}
         changes = _snapshot_changes(snap.elements, successor_snap.elements)
-        return _dump({"state_id": successor_snap.snapshot_id, "base_state_id": snap.snapshot_id, "view": "diff" if changes else "full", "changes": changes[:32], "executed": executed, "verification": post})
+        result = {"state_id": successor_snap.snapshot_id, "base_state_id": snap.snapshot_id, "view": "diff" if changes else "full", "changes": changes[:32], "executed": executed, "verification": post}
+        if not changes:
+            result["outline"] = [self._outline_node(item) for item in successor_snap.elements]
+        return _dump(result)
 
     def _outline_node(self, item: dict[str, Any], *, ref: str | None = None) -> dict[str, Any]:
         return {"ref": ref or self._element_ref(item), "index": int(item.get("index") or 0), "role": str(item.get("role") or ""), "name": str(item.get("name") or ""), "value": str(item.get("value") or ""), "rect": item.get("rect"), "patterns": list(item.get("patterns") or [])}
