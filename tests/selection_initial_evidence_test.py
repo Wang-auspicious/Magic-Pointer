@@ -52,3 +52,14 @@ def test_long_initial_evidence_is_bounded_without_claiming_complete():
     assert evidence["coverage"]["complete"] is False
     assert evidence["truncated"] is True
     assert evidence["readFromStart"] is True
+
+
+def test_initial_preview_does_not_repeat_all_native_coordinate_ranges():
+    from app.context_pack.initial_evidence import available_content
+    identity = {"initialRead": {"text": "already read text", "coverage": {
+        "extent": "document", "complete": False, "totalUnits": 100,
+        "nextCursor": "unit:100", "readRanges": [{"rectPt": [1, 2, 3, 4]}] * 100}}}
+    projected = available_content(identity, max_chars=4000)
+    assert len(json.dumps(projected)) < 500
+    assert projected["coverage"]["nextCursor"] == "unit:100"
+    assert len(identity["initialRead"]["coverage"]["readRanges"]) == 100

@@ -352,7 +352,7 @@ def register_context_tools(
         input_schema=_object_schema({
             "source_id": {"type": "string", "description": "使用来源目录 readArgs 中的短标签（如 A/B/C），或完整 sourceId"},
             "locator": {"type": "object"},
-            "cursor": {"type": "string"},
+            "cursor": {"type": "string", "description": "仅续读时原样复制 coverage.nextCursor；初次读取或 readFromStart=true 时省略。不是 JSON，不得猜测。"},
             "view": {"type": "string", "enum": ["text", "structured"], "description": "默认 text；structured 保留精确块结构"},
             "limit": {"type": "integer", "minimum": 1, "maximum": 100},
         }, ("source_id",)),

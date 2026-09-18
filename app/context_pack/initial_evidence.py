@@ -11,6 +11,9 @@ def available_content(identity: dict[str, Any], *, max_chars: int) -> dict[str, 
     if not text.strip():
         return None
     coverage = dict(material.get("coverage") or {})
+    # Coordinates remain in the durable source and reference bindings. The
+    # preview only needs extent, completeness and its continuation contract.
+    coverage.pop("readRanges", None)
     truncated = bool(material.get("truncated")) or len(text) > max_chars
     if truncated:
         # A unit cursor from the full preview would skip text omitted here.
