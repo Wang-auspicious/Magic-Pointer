@@ -123,6 +123,8 @@ def normalize_elements(
             "rect": rect,
             "patterns": patterns,
         }
+        if "value" in node:
+            item["value"] = str(node["value"] or "")
         runtime_id = node.get("runtime_id") or node.get("runtimeId")
         if runtime_id:
             item["runtime_id"] = [int(part) for part in runtime_id]
@@ -420,6 +422,15 @@ def _dump_element(element: int, hwnd: int) -> dict[str, Any]:
     }
     if runtime:
         node["runtime_id"] = runtime
+    if "Value" in patterns:
+        held: list[int] = []
+        try:
+            ok, _, value = _read_value(element, held)
+            if ok:
+                node["value"] = value
+        finally:
+            for pointer in reversed(held):
+                _release(pointer)
     return node
 
 

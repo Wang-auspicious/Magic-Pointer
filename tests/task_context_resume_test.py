@@ -147,6 +147,7 @@ def test_interrupted_task_restores_plan_context_artifact_steer_and_unknown_actio
         "title": "proposal.pptx",
         "capabilities": ["read", "patch"],
         "parentSourceId": None,
+        "readTool": "Context.read",
     }]
     assert summary["references"][0]["role"] == "target"
     assert summary["references"][0]["locator"]["value"] == {
