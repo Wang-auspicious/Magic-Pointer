@@ -71,6 +71,17 @@ def register_context_tools(
         active = current_session()
         return {source.source_id: source for source in task_sources(active.events)}
 
+    def read_source(source_id: str):
+        active = current_session()
+        known = sources_by_id()
+        if source_id in known:
+            return known[source_id]
+        matches = [ref for ref in task_references(active.events)
+                   if ref.active and ref.label == source_id]
+        if len(matches) == 1:
+            return resolve_source(active.events, matches[0].source_id)
+        return resolve_source(active.events, source_id)
+
     def requested_source_ids(args: dict[str, object]) -> tuple[str, ...]:
         raw = args.get("source_ids")
         if isinstance(raw, list) and raw:
@@ -93,17 +104,23 @@ def register_context_tools(
         source_id: str,
         locator: dict[str, Any] | None = None,
         cursor: str | None = None,
-        limit: int = 8,
+        limit: int = 32,
+        view: str = "text",
         scope: object = None,
     ) -> dict[str, Any]:
         active = current_session()
-        source = resolve_source(active.events, str(source_id))
+        source = read_source(str(source_id))
         parsed_locator = FragmentLocator.from_dict(locator) if locator else None
-        result = readers.for_source(source).read(
+        reader = readers.for_source(source)
+        from .document_reader import DocumentReader
+
+        read_options = {"view": view} if isinstance(reader, DocumentReader) else {}
+        result = reader.read(
             source,
             parsed_locator,
             str(cursor) if cursor else None,
             max(1, min(int(limit), 100)),
+            **read_options,
         )
         if result.source_id != source.source_id:
             raise ValueError("reader returned a result for another source")
@@ -331,11 +348,12 @@ def register_context_tools(
     ))
     registry.register(ToolSpec(
         name="Context.read",
-        description="按 sourceId 和可选局部 locator 读取当前任务材料；聊天来源从目标消息读取语义邻域，结果保留 locator、coverage 与 backend。",
+        description="读取任务来源正文。PDF 默认 text 视图按页读取，默认最多 32 页；精确修改前用 structured 视图或 locator 读取坐标块。已取得的 availableContent 可直接使用；缺失部分用本工具。cursor 只能原样使用返回的 nextCursor，不能自行构造。保留来源、coverage 和 backend。",
         input_schema=_object_schema({
-            "source_id": {"type": "string"},
+            "source_id": {"type": "string", "description": "使用来源目录 readArgs 中的短标签（如 A/B/C），或完整 sourceId"},
             "locator": {"type": "object"},
             "cursor": {"type": "string"},
+            "view": {"type": "string", "enum": ["text", "structured"], "description": "默认 text；structured 保留精确块结构"},
             "limit": {"type": "integer", "minimum": 1, "maximum": 100},
         }, ("source_id",)),
         execute=read_execute,
@@ -343,7 +361,7 @@ def register_context_tools(
         is_concurrency_safe=True,
         used_backend="task_source.reader",
         access_for=lambda args: AccessRequest(
-            action="read", source_ids=(str(args.get("source_id") or ""),),
+            action="read", source_ids=(read_source(str(args.get("source_id") or "")).source_id,),
         ),
     ))
     registry.register(ToolSpec(

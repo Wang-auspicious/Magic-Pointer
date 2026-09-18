@@ -220,6 +220,14 @@ class InputArtifact:
         raw provider payloads, display prose and the full observation trace are
         also excluded.
         """
+        catalog = []
+        for source in self.sources:
+            entry = source.to_model_dict(max_content_chars=min(4_000, 16_000 // max(1, len(self.sources))))
+            labels = [r.label for r in self.references if r.active and r.source_id == source.source_id]
+            label = next((label for label in labels if sum(r.active and r.label == label for r in self.references) == 1), None)
+            if "read" in source.capabilities:
+                entry["readArgs"] = {"source_id": label or source.source_id}
+            catalog.append(entry)
         return {
             "schemaVersion": 1,
             "inputArtifactId": self.id,
@@ -231,9 +239,7 @@ class InputArtifact:
             "sourceIds": list(self.source_ids),
             "referenceIds": list(self.reference_ids),
             "coverage": self.coverage.to_dict() if self.coverage is not None else None,
-            "sourceCatalog": [source.to_model_dict(
-                max_content_chars=min(4_000, 16_000 // max(1, len(self.sources))),
-            ) for source in self.sources],
+            "sourceCatalog": catalog,
             "references": [reference.to_model_dict() for reference in self.references],
         }
 
