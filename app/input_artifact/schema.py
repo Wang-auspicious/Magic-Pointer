@@ -231,7 +231,9 @@ class InputArtifact:
             "sourceIds": list(self.source_ids),
             "referenceIds": list(self.reference_ids),
             "coverage": self.coverage.to_dict() if self.coverage is not None else None,
-            "sourceCatalog": [source.to_model_dict() for source in self.sources],
+            "sourceCatalog": [source.to_model_dict(
+                max_content_chars=min(4_000, 16_000 // max(1, len(self.sources))),
+            ) for source in self.sources],
             "references": [reference.to_model_dict() for reference in self.references],
         }
 

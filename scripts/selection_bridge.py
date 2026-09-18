@@ -2300,6 +2300,15 @@ def _selection_source_identity(
     local_file = artifacts.get("local_file")
     if isinstance(local_file, dict) and str(local_file.get("path") or "").strip():
         identity["absolutePath"] = str(Path(str(local_file["path"])).resolve())
+    preview = artifacts.get("local_file_context")
+    if isinstance(preview, dict) and preview.get("content") and not preview.get("error"):
+        text = str(preview["content"])
+        identity["initialRead"] = {
+            "text": text[:16_000],
+            "truncated": len(text) > 16_000,
+            "coverage": dict(preview.get("coverage") or {}),
+            "usedBackend": str(preview.get("method") or "document"),
+        }
     source_identity = artifacts.get("source_identity")
     if isinstance(source_identity, dict):
         absolute_path = str(source_identity.get("absolutePath") or "").strip()

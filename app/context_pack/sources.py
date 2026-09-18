@@ -159,14 +159,22 @@ class SourceRef:
             "parentSourceId": self.parent_source_id,
         }
 
-    def to_model_dict(self) -> dict[str, Any]:
-        return {
+    def to_model_dict(self, *, max_content_chars: int = 4_000) -> dict[str, Any]:
+        from .initial_evidence import available_content
+
+        result = {
             "sourceId": self.source_id,
             "kind": self.kind,
             "title": self.title,
             "capabilities": list(self.capabilities),
             "parentSourceId": self.parent_source_id,
         }
+        if "read" in self.capabilities:
+            result["readTool"] = "Context.read"
+        material = available_content(self.identity, max_chars=max_content_chars)
+        if material is not None:
+            result["availableContent"] = material
+        return result
 
 
 @dataclass(frozen=True, slots=True)
