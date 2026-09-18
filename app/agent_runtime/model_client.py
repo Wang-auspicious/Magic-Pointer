@@ -44,6 +44,7 @@ from typing import Any, Protocol
 
 from app import ai_client as _ai_client
 from app.agent_runtime.effort import normalize_effort
+from app.agent_runtime.context_projection import project_context_messages
 from app.agent_runtime.errors import (
     CONTEXT_OVERFLOW_REASON,
     MAX_OUTPUT_TOKENS_RECOVERY_LIMIT,
@@ -1091,6 +1092,7 @@ def _messages_payload(
     system_prompt: str | None = None,
     effort: object | None = None,
 ) -> dict:
+    messages = project_context_messages(messages)
     if api_mode == "responses":
         payload: dict[str, Any] = {
             "model": model,
