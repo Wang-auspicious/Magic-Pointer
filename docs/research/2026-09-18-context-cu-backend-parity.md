@@ -1,11 +1,12 @@
 # 上下文、成本与 CU 底层对照（2026-09-18）
 
-本批只改 Runtime、来源读取、模型请求投影及 CU 执行状态，不改 GUI。按用户要求保留 **1.0.48**，分批本地 Git 提交；安装同步结果在验收后补录。
+本批只改 Runtime、来源读取、模型请求投影及 CU 执行状态，不改 GUI。按用户要求保留 **1.0.48**，分批本地 Git 提交；已完成全量验证、同版本安装同步和安装目录实测。
 
 ## 事实源及比较边界
 
 - 本地 `C:/Users/zjz65/PycharmProjects/claude-code-main` 的 README 自述为 2026-03-31 source-map 暴露源码的研究镜像，非官方仓库。本批学习实现机制，自行用 Python 实现，不复制其 TypeScript 实现，也不把该快照等同于当前 Claude Code。
 - `Vida.md`、`docs/research/2026-09-16-vida-circle-point.md`、`docs/planning/vida-active-layer.md`、`docs/design/VIDA_PROMPTRESCUE_MEASURED.md` 及其引用的五段本地演示，是产品行为参照。演示经过剪辑/镜头推拉，不能作为端到端延迟实测；Vida 的矩形截图也不能证明 MP 的多笔圈选正确。
+- 本批还逐张复核 `data/runtime/vida-analysis/{PromptRescue,ReplyRescue,ResumeRescue,WorkspaceCleanup,DailyWrap}-1s-contact.jpg`（五段原片的既有逐秒画面）：PromptRescue 在不同窗口查看来源后生成目标输入框草稿；ReplyRescue 展示来源事实与回复草稿；ResumeRescue 使用跨窗口资料形成文档；WorkspaceCleanup 先呈现文件夹方案、批准后展示实际文件夹；DailyWrap 从跨应用工作记录生成日报并写回。可观察的共同契约是“来源证据→产物→目标结果”，画面本身不证明底层 API、后台执行方式或未剪辑延迟。
 - [OpenAI Astra 官方介绍](https://openai.com/index/gpt-6-astra/) 报告模型和 Codex harness 结合后，Mind2Web 任务完成速度相对 Sol 提升 1.9 倍；OSWorld 2.0 的 47% 时间下降属于延迟模拟。文章还说明跨上下文笔记及旧窗口检索机制。它没有公开完整的 CU 内部优化实现，本批不能据此承诺相同模型/准确率/速度。
 - [Astra 工作场景介绍](https://openai.com/index/gpt-6-astra-next-generation-work/) 的 Excel 比赛示例与 MP 用户工作流不是同一测试，不能直接作 MP 的验收数字。
 
@@ -25,11 +26,16 @@ Claude 路径均相对于上述本地源码目录；MP 路径相对于本仓库�
 | `src/services/tools/StreamingToolExecutor.ts`：并发安全工具、独占动作 | `app/agent_runtime/tool_scheduler.py` | MP 已有有界并行、资源冲突和按模型顺序提交。保留。Claude 快照能在完整工具块到达时提前调度；MP 当前仍在整轮解析完成后派发。这属于后续可量化的延迟差异，本批未实施早派发，避免破坏现有截断/权限语义。 |
 | Astra 官方：早期窗口可检索，不只依赖摘要 | `app/agent_runtime/memory_tools.py` | Recall 原先命中长 JSON 行却只返回行首，可能丢掉真正命中的文字；先截断匹配再做每会话限制，也会吞掉其他会话。现在返回命中附近 700 字，按会话限制后再限制总数，并支持 session_id/event_seq/offset 精确分页读回，无需工作区 Read 权限。 |
 | Pi/Kimi CU 状态契约（`docs/REFERENCE_PROJECTS_20260810.md`） | `app/desktop_actions/session.py:181`、`:260`、`:286` | observe_ui 原来重复发 elements/outline；wait_for 判定后重抓一份状态；act_ui 又抓一份，验证和状态 ID 不一致。现在只投影一份可操作树，条件判断和返回状态同源，act_ui 复用已验证 successor；无 postcondition 不宣称验证成功；full 视图实际带可操作 outline。 |
+| 原生 Windows UIA ValuePattern 读回契约 | `app/desktop_actions/uia.py` | 真机验收发现：写入成功，但观察树从未读取 Value，normalization 也丢弃 value，导致 expect.value 必然超时。现在提取并保留控件当前值，释放所取 COM pattern；名称和值分别保留。两个红灯回归后转绿，原生控件验证已通过。 |
 | Vida PromptRescue：已有证据直接进入任务，显示读取事实而后交付 | `app/context_pack/initial_evidence.py`、`scripts/selection_bridge.py` | 冻结文字/native 文件预览直接进入数据通道；不增加首轮摘要模型，不靠再问视觉才能确认文字存在。短标签 A/B/C 仅确定性解析到当前活动来源，权限门使用真实 source ID。 |
 
 ## 测试与失败见证
 
-新增回归均先观察失败：重复解析 4 次而非 1 次；预览后漏掉段尾；首轮缺少第二处微信和 PDF 已读证据；dict 结果不能 JSON 解码；模型请求重复 metadata；CU 重抓/状态 ID 不一致；Recall 丢命中文字及第二个会话；PDF 默认读取无法覆盖 21 页；短标签未解析。修复后定向回归通过，完整门结果待本机 sync 完成补录。
+新增回归均先观察失败：重复解析 4 次而非 1 次；预览后漏掉段尾；首轮缺少第二处微信和 PDF 已读证据；dict 结果不能 JSON 解码；模型请求重复 metadata；CU 重抓/状态 ID 不一致；Recall 丢命中文字及第二个会话；PDF 默认读取无法覆盖 21 页；短标签未解析。修复后定向回归通过。最终 `npm run sync` 内置完整门：lint、TypeScript typecheck（含 Figma）、**228 个 Node 测试文件**、Python **2190 passed / 1 条既有 Pillow warning / 225.00 s**。
+
+`python scripts/verify_context_cu_native.py` 在本机创建临时 Win32 Edit，真实 UIA Observe → SetValue → expect.value → read_text 通过，`usedBackend=uia_value`，**271 ms**，三次树探测分别 **77.85 / 24.29 / 65.99 ms**，successor 与 verification state ID 相同，无物理键鼠、无模型，finally 关闭临时窗口。它不是微信/Office 验收。最初脚本在建窗口后才开启 DPI 感知，造成自建窗口缩放、触发 stale 校验；脚本按产品原生桥顺序提前初始化 DPI 后解决，未削弱产品 stale 校验。
+
+第一次完整门曾为 **2187 passed / 1 failed**：`task_context_resume_test` 的旧来源投影期望缺少新增 `readTool` 字段，已更新契约并通过该组 7 项。该失败记录保留在 `data/backend-20260918/sync-same-version.log`，最终门另存 `sync-same-version-final.log`。
 
 ## 真实默认模型回放
 
@@ -57,4 +63,8 @@ Claude 路径均相对于上述本地源码目录；MP 路径相对于本仓库�
 
 ## 交付
 
-版本维持 1.0.48。已完成本地分批提交；保留接手时的大量未提交 GUI/后端工作，只暂存本批差异。全量验证、安装目录核对及最终提交号待下方交付记录补齐。
+版本维持 **1.0.48**。`npm run sync` 已成功（exit 0），安装器为 `release/sync-1.0.48-20260918-155441-47940/Magic-Pointer-1.0.48-x64.exe`，安装版重启后 7 个进程均来自 `%LOCALAPPDATA%/Programs/Magic Pointer`。
+
+安装目录实测 `data/backend-20260918/verify_installed.py` 使用安装包自带 Python、导入安装目录模块：**13 个本批关键文件逐字节相同**，`document.pdf.pymupdf` 在 text 视图一次读完 **21 页、complete=true**。相同原生 Edit 验收在安装版 **317 ms** 通过，`usedBackend=uia_value`，三次探测 **109.82 / 31.50 / 58.39 ms**，无物理输入，successor state 与 verification 相同。结果保存在 `installed-verification.json`；开发树的 271 ms 结果保存在 `native-cu-development.json`。
+
+实现已分批提交：`35c2ecd`、`74c3e9c`、`80f4705`、`6ea6433`、`70f3a06`、`e5c9986`、`fd3d0e6`、`4852906`。保留接手时的大量未提交 GUI/后端工作，只暂存本批差异。最终交付文档另作本地提交；未升级版本。

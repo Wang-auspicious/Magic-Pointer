@@ -868,6 +868,17 @@ DOM、COM、UIA、Fabric等现有模块也不自动保留，只优先保存经�
 
 ## 18. 进度账本
 
+### 2026-09-18：上下文与 CU 底层对照（保持 1.0.48，已同步安装）
+
+- 对照用户指定 Claude Code 本地源码快照中的 context、FileReadTool、toolResultStorage、query/microCompact、ToolSearchTool、StreamingToolExecutor，与 Vida 本地演示拆解和 Astra 官方公开材料逐项映射；未复制不明许可证实现。
+- DocumentReader 任务内有界复用解析，文件变更后重读；PDF 总结按页读取，精确编辑仍用 structured/locator；修复预览游标跳过段尾。
+- 首轮逐来源已读文字及 native 预览进入数据通道；短标签经当前活动绑定解析后进入真实 source 权限校验。结构化回执用 JSON，provider 请求合并重复 metadata/citation，重复读引用仍在同一请求中的原文，完整日志保留。
+- Recall 返回命中附近摘录、按会话后按总量限额，支持原事件分页；CU 观察只传一份树，等待判定和 successor 共用观察，无 postcondition 不报验证成功。
+- 原生 Win32 Edit 验收查出 UIA 未提取/保留 value、写入后条件判断必超时。补齐 ValuePattern 快照后实际 Observe→SetValue→验证→read_text **271 ms** 通过，无物理输入；未弱化 stale 校验。
+- 最终默认 Provider 历史材料回放：40.047 s、2 轮、33,562 输入 token、1 次 Context.read、0 失败/视觉；已读完整 21 页 PDF。中间 284,534 输入 token 的低效回放亦保留，最终缓存变化不能换算成账单降幅。
+- 全量及交付：`npm run sync` 成功，lint/typecheck、Node 228 个测试文件、Python 2190 passed / 1 条既有 Pillow warning / 225.00 s；版本保持 1.0.48。安装目录 13 个关键文件逐字节相同，自带 Python 读取完整 21 页 PDF；原生 Edit 写入/验证/读回 317 ms，无物理输入，7 个应用进程来自安装目录。
+- 限制：200 字仍未遵守；微信 HTML 正文未取得；没有完成 CU 全应用真机验收或流内工具提前执行。逐文件对照与全部回放见 `docs/research/2026-09-18-context-cu-backend-parity.md`。
+
 ### 2026-09-17：工具目录、精确按需加载与恢复（1.0.46，已同步安装版）
 
 - [x] 回读 Pi 的 9·16/9·17 JSONL、DeepSeek v4.1 的 Claude JSONL 与现有提交。最后停点是工具加载方案尚未实现，并非工具加载代码卡死。详细接手记录：`docs/research/2026-09-17-tool-loading-handoff.md`。
