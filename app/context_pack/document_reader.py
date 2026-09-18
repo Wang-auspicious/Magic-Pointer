@@ -13,7 +13,7 @@ import re
 import time
 from collections import OrderedDict
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from threading import Lock
 from typing import Any
@@ -722,7 +722,7 @@ class DocumentReader:
         if len(text) > self.max_fragment_chars:
             text = text[: self.max_fragment_chars].rstrip() + "\n[TRUNCATED]"
         return ReadFragment(
-            fragment_id=f"fragment:{source.source_id}:unit:{index}",
+            fragment_id=f"fragment:{source.source_id}:{'page' if unit.metadata.get('textView') else 'unit'}:{index}",
             locator=unit.locator,
             text=text,
             metadata={
@@ -820,10 +820,31 @@ class DocumentReader:
         locator: FragmentLocator | None,
         cursor: str | None,
         limit: int,
+        *,
+        view: str = "structured",
     ) -> ReadResult:
         started = time.perf_counter()
         try:
             parsed = self._parse(source)
+            cursor_kind = "unit"
+            if (view == "text" and locator is None and parsed.structure.get("kind") == "pdf"
+                    and not str(cursor or "").startswith("unit:")):
+                # Summaries need page text, not hundreds of bounding-box records.
+                # Explicit locators and structured view retain exact block access.
+                pages: dict[int, list[str]] = {}
+                for unit in parsed.units:
+                    pages.setdefault(unit.locator.value["pageIndex"], []).append(unit.text)
+                units = []
+                for page_index, texts in pages.items():
+                    text = "\n".join(texts)
+                    for start in range(0, len(text), self.max_fragment_chars):
+                        locator_value = {"pageIndex": page_index}
+                        if len(text) > self.max_fragment_chars:
+                            locator_value["textOffset"] = start
+                        units.append(_Unit(FragmentLocator("pdf-region", locator_value),
+                            text[start:start + self.max_fragment_chars], {"textView": True}))
+                parsed = replace(parsed, units=tuple(units))
+                cursor_kind = "page"
             bounded = max(1, min(int(limit), 1000))
             if locator is not None:
                 matches = [
@@ -870,12 +891,12 @@ class DocumentReader:
                     source, parsed, selected, extent="neighborhood",
                     complete=next_cursor is None, next_cursor=next_cursor, started=started,
                 )
-            offset = _cursor_offset(cursor, "unit")
+            offset = _cursor_offset(cursor, cursor_kind)
             requested_end = min(len(parsed.units), offset + bounded)
             requested = list(enumerate(parsed.units[offset:requested_end], start=offset))
             selected = self._fit_result_budget(source, requested)
             end = offset + len(selected)
-            next_cursor = f"unit:{end}" if end < len(parsed.units) else None
+            next_cursor = f"{cursor_kind}:{end}" if end < len(parsed.units) else None
             return self._result(
                 source, parsed, selected, extent="document",
                 complete=next_cursor is None, next_cursor=next_cursor, started=started,

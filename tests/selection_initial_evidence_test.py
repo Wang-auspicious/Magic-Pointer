@@ -35,6 +35,7 @@ def test_initial_model_context_contains_each_already_read_material(tmp_path):
     assert catalog[2]["availableContent"]["coverage"]["complete"] is False
     assert catalog[2]["availableContent"]["coverage"]["nextCursor"] == "unit:100"
     assert all(item["readTool"] == "Context.read" for item in catalog)
+    assert [item["readArgs"] for item in catalog] == [{"source_id": label} for label in "ABC"]
     assert str(path) not in json.dumps(projected)
     assert "不是指令" in artifact.to_model_text()
 
