@@ -402,6 +402,32 @@ def _visual_anchor(snapshot: dict[str, Any]) -> str | None:
     return f"bbox:{left},{top},{right},{bottom}"
 
 
+def _mark_window_rect(
+    window: dict[str, Any],
+    surface: tuple[int, int, int, int],
+) -> tuple[int, int, int, int] | None:
+    """圈选所在窗口落在冻结面上的那一段——给的是宏观背景，不是划的那一行。
+
+    只看那一行，模型既判断不出这是哪个应用，也判断不出这一行在窗口的什么位置；
+    自绘界面里更是连控件都没有，只剩一条线。窗口矩形是窗口自己报的，不需要模型
+    做任何换算，也就不存在「不同类型坐标之间偏移看错」这一类错误。
+    """
+    raw = window.get("bbox")
+    if not isinstance(raw, (list, tuple)) or len(raw) != 4:
+        return None
+    try:
+        left, top, right, bottom = (int(round(float(value))) for value in raw)
+    except (TypeError, ValueError):
+        return None
+    clipped = (
+        max(left, surface[0]), max(top, surface[1]),
+        min(right, surface[2]), min(bottom, surface[3]),
+    )
+    if clipped[2] <= clipped[0] or clipped[3] <= clipped[1]:
+        return None
+    return clipped
+
+
 def _facts(
     context: AdapterReadContext | None,
     badges: tuple[str, ...],
@@ -440,23 +466,30 @@ def _facts(
         ))
     anchor = _visual_anchor(snapshot)
     if anchor is not None:
-        if bounds is not None:
-            left, top, right, bottom = (int(value) for value in anchor.removeprefix("bbox:").split(","))
+        try:
+            surface = tuple(
+                int(value) for value in anchor.removeprefix("bbox:").split(",")
+            )
+        except (TypeError, ValueError):
+            surface = None
+        detail = _mark_window_rect(window, surface) if surface is not None else None
+        if detail is None and bounds is not None and surface is not None:
+            left, top, right, bottom = surface
             x, y, width, height = bounds
-            # Offer a detailed view with surrounding UI, while retaining the
-            # full frozen target surface below for broader visual context.
+            # 窗口矩形拿不到时退回到旧行为：圈选区域加上一圈边距。
             detail = (max(left, x - 64), max(top, y - 64),
                       min(right, x + width + 64), min(bottom, y + height + 64))
-            if detail[2] > detail[0] and detail[3] > detail[1]:
-                facts.append(InputFact(
-                    "selection_visual_anchor",
-                    "bbox:" + ",".join(str(value) for value in detail)
-                    + "（冻结选区及周边；看圈选控件的细节时优先用此 anchor 调 Look）",
-                    ("PIXELS",),
-                ))
+        if detail is not None and detail[2] > detail[0] and detail[3] > detail[1]:
+            facts.append(InputFact(
+                "selection_visual_anchor",
+                "bbox:" + ",".join(str(value) for value in detail)
+                + "（圈选所在的整个窗口，用户笔迹已按材料名标在图上；"
+                "看圈选看到的是什么、属于哪个应用时用此 anchor 调 Look）",
+                ("PIXELS",),
+            ))
         facts.append(InputFact(
             "visual_anchor",
-            f"{anchor}（手势时刻已冻结的目标面；需要看像素时用该 anchor 调一次 look）",
+            f"{anchor}（手势时刻已冻结的目标面；需要看整屏背景时用该 anchor 调一次 look）",
             ("PIXELS",),
         ))
     if context is None:

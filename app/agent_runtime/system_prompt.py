@@ -10,12 +10,13 @@ session-specific parts. Pure Python.
 
 from __future__ import annotations
 
-import re
+import hashlib
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Any, Protocol
 
 from app.agent_runtime.effort import effort_instruction
+from app.agent_runtime.session import _canonical_bytes
 
 __all__ = ["PromptSection", "SystemPromptBuilder", "DELIVER_SYSTEM_PROMPT"]
 
@@ -44,6 +45,14 @@ class Section:
         return f"# {self.title}\n{body.strip()}"
 
 
+@dataclass(frozen=True)
+class BuiltSystemPrompt:
+    """Exact rendered text and the ordered identity of its non-empty blocks."""
+
+    text: str
+    sections: tuple[tuple[str, str], ...]
+
+
 class SystemPromptBuilder:
     """Ordered section list; static sections first, dynamic after the boundary."""
 
@@ -69,13 +78,15 @@ class SystemPromptBuilder:
         """Return a plugin-scope view whose additions auto-unwind."""
         return _ScopedSystemPromptBuilder(self, context)
 
-    def build(self, context: dict[str, Any]) -> str:
+    def build(self, context: dict[str, Any]) -> BuiltSystemPrompt:
         blocks: list[str] = []
+        sections: list[tuple[str, str]] = []
         for section in self._sections:
             text = section.to_text(context)
             if text:
                 blocks.append(text)
-        return "\n\n".join(blocks)
+                sections.append((section.id, hashlib.sha256(_canonical_bytes(text)).hexdigest()))
+        return BuiltSystemPrompt("\n\n".join(blocks), tuple(sections))
 
 
 class _ScopedSystemPromptBuilder:
@@ -164,6 +175,10 @@ def default_sections() -> list[Section]:
         if ctx.get("has_selection"):
             items.append(
                 "2. Look/Around/Tree 读的是手势时刻的冻结帧（historical，画面可能已过期），不得据此点击或判断当前状态；判断当前状态用 Observe，并把当前任务里已绑定表面的 source_id 与要回答的 question 明确传入。若证据里已有 look_once 或已覆盖手势的内容，直接回答，勿重复 Look。没有覆盖手势的内容且没有视觉结果时，才把 visual_anchor 原样传给 Look 一次；empty/error/unsupported 就换来源或说明缺什么。"
+                "用户问圈选的‘这是啥’时，先解释选区内的控件或对象；会话日志只能补充背景，不能替代选区内容。"
+                "应用身份以 window 事实里的进程和标题为依据，选区位置结合其中的窗口与选区坐标；不能只凭相似的控件文字猜成另一款应用。"
+                "需要看圈选的是什么、属于哪个应用时优先用 selection_visual_anchor——它给的是圈选所在的整个窗口，用户的笔迹已经按材料名（A、B、C……）画在图上，图上的字母和证据里的材料一一对应；visual_anchor 是整块冻结面，只在需要看窗口之外的背景时才用。"
+                "冻结帧读取失败后若改用 Observe，明确说明哪些信息来自当前画面；当前状态或计数不得当作圈选时刻的数字，原画面未读出的细节保持未知。"
             )
         else:
             items.append(

@@ -693,6 +693,62 @@ def _gesture_points(gesture: dict[str, Any] | None) -> list[tuple[int, int]]:
     ]
 
 
+def _gesture_stroke_points(gesture: dict[str, Any] | None) -> list[list[tuple[int, int]]]:
+    """每一笔各自的点，按手势顺序，一笔一项（没有点的那笔也占一个位置）。
+
+    位置就是名字：材料是一个笔画一份（`_capture_stroke_materials` 用
+    `enumerate` 发 `stroke_index`），标注也用同一个下标取字母。中间省掉一笔
+    会让后面每一笔的字母整体前移，图和材料从此对不上，而且是对不上的时候
+    看起来完全正常。
+    """
+    if not isinstance(gesture, dict):
+        return []
+    strokes = gesture.get("strokes") if isinstance(gesture.get("strokes"), list) else []
+    lines: list[list[tuple[int, int]]] = []
+    for stroke in strokes:
+        if not isinstance(stroke, dict):
+            lines.append([])
+            continue
+        lines.append([
+            (int(point["x"]), int(point["y"]))
+            for point in list(stroke.get("points") or [])
+            if isinstance(point, dict) and "x" in point and "y" in point
+        ])
+    return lines
+
+
+def _annotate_frozen_surface(
+    raw_path: Path,
+    surface_bounds: tuple[int, int, int, int],
+    stroke_polylines: list[list[tuple[int, int]]],
+) -> str | None:
+    """把用户的笔迹画到冻结的那张面上，另存一份；画不出来就返回 None。
+
+    没有这一份，模型拿到的是一张整屏裸图加一句「用户圈了这里」：自绘应用里它
+    既认不出圈的是什么，也没有任何东西告诉它圈在哪，只能自己在 3120×2080 里
+    找。画在**整张冻结面**上而不裁到笔迹那一小块——只截那一行的代价是连「这是
+    微信还是网页」都丢了，业务先验全部归零。
+
+    标注是证据的注脚，不是证据本身，所以这一份允许失败：失败就返回 None，调用
+    方照旧用没标注的原图，快照的形状不变。
+    """
+    if not stroke_polylines:
+        return None
+    try:
+        annotated = raw_path.with_name(f"{raw_path.stem}.pointer.png")
+        make_pointer_annotated_image(
+            raw_path,
+            annotated,
+            surface_bounds,
+            [point for line in stroke_polylines for point in line],
+            style="locator",
+            stroke_polylines=stroke_polylines,
+        )
+        return str(annotated.resolve())
+    except (OSError, ValueError, RuntimeError):
+        return None
+
+
 # Wall-clock ceiling for the per-sample fallback cascade. Measured 2026-08-04:
 # one cascade costs 0.3-3.7s depending on the window (Chromium's devtools
 # adapter alone is ~2.1s), so nine in series can reach 13s. 3.5s buys the first
@@ -2254,6 +2310,17 @@ def capture_snapshot(
         and bool(perception_trace.get("selectedLayer"))
         and mark_coverage.covers
     )
+    if not structured_succeeded:
+        # 结构化没读到，像素层马上要被派上去。它最贵的一次不是识别图片，是
+        # 把 RapidOCR 引擎加载起来（本机实测 11.2s，和图片多大无关），而且谁
+        # 先请求谁付。此刻用户还没打完那句话——这笔钱应该花在那段等待里，不
+        # 该花在答案前面。worker 是 detached 进程，这里只负责叫它起来，不等。
+        try:
+            from app.perception.pixel_ocr import prewarm_ocr_worker
+
+            prewarm_ocr_worker()
+        except Exception:
+            pass
     if app_ctx is not None and not mark_coverage.covers:
         # Say it in the trace rather than only in the outcome: the diagnostics
         # page has to be able to show *why* pixels were needed.
@@ -2335,6 +2402,20 @@ def capture_snapshot(
         visual_attempt_recorded = True
         capture_attestation = visual["capture_attestation"]
         mark("visual_saved", got=True)
+        if gesture_points:
+            # 冻结面上本来就该有用户的笔迹。这一条只在「有 frame lease」这条路上
+            # 跑过，所以直到现在为止，正常手势拿到的都还是没有标注的原图——而
+            # 兜底那次现场抓拍反倒一直是有标注的。
+            surface = visual.get("bbox")
+            if isinstance(surface, (list, tuple)) and len(surface) == 4:
+                annotated_path = _annotate_frozen_surface(
+                    Path(visual["path"]),
+                    tuple(int(value) for value in surface),
+                    _gesture_stroke_points(normalized_gesture),
+                )
+                if annotated_path is not None:
+                    visual["annotated_path"] = annotated_path
+                    mark("annotated_on_frozen_surface")
         if gesture_selection_bbox is None and gesture_points:
             raw_bbox = dict((normalized_gesture or {}).get("bbox") or {})
             width = max(0, int(raw_bbox.get("width") or 0))

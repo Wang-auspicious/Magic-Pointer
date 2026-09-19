@@ -632,9 +632,15 @@ def test_gesture_snapshot_consumes_frozen_surface_instead_of_live_capture(tmp_pa
     assert artifacts["selection_rectangles"] == [[520, 470, 180, 64]]
     assert artifacts["selection_geometry_kind"] == "gesture_region"
     assert Path(snapshot["capture_path"]).is_file()
-    # The frozen lease artifact is consumed as-is; the live-grab annotated
-    # copy does not apply to a committed frame.
-    assert snapshot["annotated_path"] is None
+    # 冻结的那份原样保留；标注画在它的副本上，仍然不碰实时屏幕（上面 assert
+    # calls == [] 已经证明没有重抓）。没有笔迹的整屏图，模型只能自己在里面猜
+    # 「用户圈的是哪」。
+    annotated = Path(snapshot["annotated_path"])
+    assert annotated.is_file()
+    assert annotated.parent == Path(snapshot["capture_path"]).parent
+    with Image.open(snapshot["capture_path"]) as original, Image.open(annotated) as marked:
+        assert marked.size == original.size
+        assert marked.convert("RGB").tobytes() != original.convert("RGB").tobytes()
 
 
 class _WholeWindowContainerAdapter:

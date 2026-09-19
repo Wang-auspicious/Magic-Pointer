@@ -140,7 +140,15 @@ def test_bridge_consumes_the_frozen_frame_without_recapture(tmp_path: Path) -> N
     assert result["ok"] is True
     # The committed artifact is the sole visual evidence.
     assert snapshot["capture_path"] == str(frozen_path.resolve())
-    assert snapshot["annotated_path"] is None
+    # 标注是在**冻结的那张图**上画的，不是又抓了一次屏幕：它和原图同目录、同尺寸，
+    # 笔迹真的落上去了。模型拿到的整屏图如果没有笔迹，它就只能自己在 320×200 里
+    # 找「用户圈的是哪」。
+    annotated_path = Path(str(snapshot["annotated_path"]))
+    assert annotated_path.is_file()
+    assert annotated_path.parent == frozen_path.parent
+    with Image.open(frozen_path) as original, Image.open(annotated_path) as marked:
+        assert marked.size == original.size
+        assert marked.convert("RGB").tobytes() != original.convert("RGB").tobytes()
     # Full-surface bounds come from the lease, not from a fresh grab.
     assert snapshot["capture_bbox"] == FROZEN_BBOX
     assert snapshot["frame_lease"]["frameLeaseId"] == "frame-1"

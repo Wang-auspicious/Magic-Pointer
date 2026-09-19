@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import os
 import platform as _platform
+from urllib.parse import urlparse
 from collections.abc import Callable
 from datetime import datetime as _datetime
 from pathlib import Path
@@ -76,6 +77,11 @@ from app.desktop_actions import default_session, register_desktop_action_tools
 from app.agent_runtime.tool_discovery import register_find_capability
 from app.fabric.mcp_client import load_server_configs
 from app.harness.composition import BootReport, BundleRow, boot, load_patch_file
+from app.harness.extension_paths import (
+    mcp_config_path as _mcp_config_path,
+    user_extension_root as _user_extension_root,
+    user_plugin_dir as _user_plugin_dir,
+)
 from app.harness.plugin import PluginSpec
 from app.harness.runtime_host import HarnessRuntimeHost, RuntimeScope
 from app.harness.services import LlmProvider
@@ -171,11 +177,24 @@ def _apply_perception_tools(fork, config: dict[str, Any]) -> None:
 
 def _apply_look_tool(fork, config: dict[str, Any]) -> None:
     """The look escape hatch over the vision seam and the frozen frame."""
+    from app.agent_runtime.vision_backend import FileVisionBackend
+
+    backend = fork.get("vision")
+    captured_at = str(config.get("captured_at") or "gesture time")
+    # 随每一次 Look 一起发出去的那张「整块冻结面」用带笔迹的那一份：它的职责
+    # 就是给宏观上下文，而「圈的是哪儿」正是这块上下文里最容易丢、丢了以后
+    # 模型只能自己猜的那一项。两份图同尺寸同原点，标注只是画在原图上的副本。
+    context_path = str(
+        config.get("annotated_path") or config.get("capture_path") or ""
+    ).strip()
+    if isinstance(backend, FileVisionBackend) and context_path:
+        backend = backend.for_frozen_frame(Path(context_path), captured_at)
     LookTool(
-        backend=fork.get("vision"),
+        backend=backend,
         timeout_ms=int(config.get("timeout_ms") or 30000),
         capture=config.get("capture"),
-        captured_at=str(config.get("captured_at") or "gesture time"),
+        captured_at=captured_at,
+        resolver=config.get("resolver"),
     ).register(fork.get("tools"))
 
 
@@ -575,7 +594,7 @@ def _apply_model_client(fork, config: dict[str, Any]) -> None:
     ).load()
     user_data_dir = Path(config.get("user_data_dir") or str(_FALLBACK_ROOT))
     from app.agent_runtime.model_profiles import context_budget_for
-    from app.ai_client import get_ai_config
+    from app.ai_client import get_ai_config, get_ai_context_window
 
     _api_key, _base_url, configured_model = get_ai_config()
     model_name = str(configured_model or "")
@@ -601,7 +620,16 @@ def _apply_model_client(fork, config: dict[str, Any]) -> None:
         "effort": effort,
         "pointing_instruction": str(config.get("pointing_instruction") or ""),
     }
-    system_prompt = fork.get("prompt").build(context)
+    rendered = fork.get("prompt").build(context)
+    prompt_header = {
+        "systemPrompt": rendered.text,
+        "systemPromptSections": [list(section) for section in rendered.sections],
+    }
+    session_id = str(config.get("session_id") or "")
+    if session_id:
+        session = fork.get("sessions").open_or_create(session_id, repair=False)
+        prompt_header = session.freeze_system_prompt(rendered.text, rendered.sections)
+    system_prompt = prompt_header["systemPrompt"]
     provider = fork.get("llm")
     if not isinstance(provider, LlmProvider):
         raise TypeError("llm service does not implement LlmProvider")
@@ -614,7 +642,9 @@ def _apply_model_client(fork, config: dict[str, Any]) -> None:
     fork.provide_up(
         "model_request_header",
         {
-            "systemPrompt": system_prompt,
+            **prompt_header,
+            "model": model_name,
+            "providerHost": urlparse(_base_url).hostname or "",
             "usedBackend": str(provider.used_backend),
             "maxTokens": int(config.get("max_tokens") or DEFAULT_MAX_OUTPUT_TOKENS),
             "effort": effort,
@@ -629,7 +659,7 @@ def _apply_model_client(fork, config: dict[str, Any]) -> None:
 
     context_budget = context_budget_for(
         model_name,
-        config.get("context_budget_tokens"),
+        config.get("context_budget_tokens") or get_ai_context_window(model_name),
     )
 
     def compactor(messages, *, force: bool = False):
@@ -767,7 +797,7 @@ BUILTIN_PLUGINS: dict[str, PluginSpec] = {
         _spec("mcp-provider", ("tools",), _apply_mcp_provider),
         _spec("learning-review", ("sessions",), _apply_learning_review),
         _spec("computer-agent", ("computer_operators",), _apply_computer_agent),
-        _spec("model-client", ("prompt", "llm", "todo_store"), _apply_model_client),
+        _spec("model-client", ("prompt", "llm", "todo_store", "sessions"), _apply_model_client),
         _spec(
             "surface-wechat",
             ("surface_adapters",),
@@ -863,16 +893,6 @@ def _git_branch(root: str) -> str:
     return head[len(prefix):].strip() if head.startswith(prefix) else ""
 
 
-def _user_plugin_dir(root: Path) -> Path:
-    override = os.environ.get("MAGIC_POINTER_PLUGIN_DIR")
-    if override:
-        return Path(override)
-    user_data = os.environ.get("MAGIC_POINTER_USER_DATA_DIR")
-    if user_data:
-        return Path(user_data) / "data" / "plugins"
-    return root / "data" / "plugins"
-
-
 def _runtime_root(root: Path) -> Path:
     user_data = os.environ.get("MAGIC_POINTER_USER_DATA_DIR")
     return Path(user_data) if user_data else root / "data" / "runtime"
@@ -905,11 +925,6 @@ def _computer_operator_registry(root: Path) -> ComputerOperatorRegistry:
     return registry
 
 
-def _user_extension_root(root: Path) -> Path:
-    user_data = os.environ.get("MAGIC_POINTER_USER_DATA_DIR")
-    return (Path(user_data) / "data") if user_data else root / "data"
-
-
 def _harness_patch_path(root: Path) -> Path:
     override = os.environ.get("MAGIC_POINTER_HARNESS_CONFIG")
     if override:
@@ -918,13 +933,6 @@ def _harness_patch_path(root: Path) -> Path:
     if user_data:
         return Path(user_data) / "data" / "harness.patch.json"
     return root / "data" / "harness.patch.json"
-
-
-def _mcp_config_path(root: Path) -> Path:
-    override = os.environ.get("MAGIC_POINTER_MCP_CONFIG")
-    if override:
-        return Path(override)
-    return _user_extension_root(root) / "mcp.json"
 
 
 def _layered_patch(
@@ -1006,6 +1014,8 @@ def _run_loop_rows(runtime: dict[str, Any], root: Path) -> list[BundleRow]:
             "look-tool",
             {
                 "capture": runtime.get("frame_crop"),
+                "resolver": runtime.get("frame_resolver"),
+                "capture_path": runtime.get("capture_path"),
                 "timeout_ms": 30000,
                 "captured_at": runtime.get("frame_captured_at"),
             },
@@ -1063,6 +1073,7 @@ def _run_loop_rows(runtime: dict[str, Any], root: Path) -> list[BundleRow]:
                 "summarize": runtime.get("summarize"),
                 "session_getter": runtime.get("source_session_getter"),
                 "user_data_dir": str(_user_extension_root(root)),
+                "session_id": runtime.get("session_id"),
                 "command": str(runtime.get("command") or ""),
                 "workspace_root": workspace_root,
                 "permission_preset": str(runtime.get("permission_preset") or ""),
@@ -1158,6 +1169,8 @@ def boot_loop_context(
             "look-tool",
             {
                 "capture": runtime.get("frame_crop"),
+                "resolver": runtime.get("frame_resolver"),
+                "capture_path": runtime.get("capture_path"),
                 "timeout_ms": 30000,
                 "captured_at": runtime.get("frame_captured_at"),
             },
@@ -1237,6 +1250,7 @@ def boot_loop_context(
                 "summarize": runtime.get("summarize"),
                 "session_getter": runtime.get("source_session_getter"),
                 "user_data_dir": str(_user_extension_root(root)),
+                "session_id": runtime.get("session_id"),
                 "command": command,
                 "workspace_root": workspace_root,
                 "permission_preset": str(runtime.get("permission_preset") or ""),

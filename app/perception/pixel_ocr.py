@@ -32,8 +32,6 @@ from app.perception.providers import (
     ProviderDescriptor,
     ProviderResult,
 )
-from app.process.job_object import attach_kill_on_close
-
 ROOT = Path(__file__).resolve().parents[2]
 OCR_WORKER_PORT_FILE = ROOT / "data" / "runtime" / "ocr_worker.port"
 OCR_WORKER_SCRIPT = ROOT / "scripts" / "ocr_resident_worker.py"
@@ -55,6 +53,13 @@ def gesture_strokes(gesture: Any) -> list[list[tuple[int, int]]]:
     strokes: list[list[tuple[int, int]]] = []
     for stroke in list(gesture.get("strokes") or [])[:8]:
         raw_points = list(stroke.get("points") or []) if isinstance(stroke, dict) else []
+        geometry = stroke.get("geometry") if isinstance(stroke, dict) else None
+        if (isinstance(geometry, dict) and geometry.get("type") == "polygon_region"
+                and geometry.get("coordinateSpace") == "physical_screen_pixels"):
+            # The capture UI has already classified the loose circle. Its closed
+            # region must reach both worker selection and postfilter unchanged;
+            # reclassifying raw endpoints with a pixel threshold loses interiors.
+            raw_points = list(geometry.get("ring") or raw_points)
         points: list[tuple[int, int]] = []
         for raw in raw_points[:256]:
             if not isinstance(raw, dict):
@@ -326,7 +331,16 @@ def _worker_connect(timeout: float = 3.0) -> Any:
 
 def _spawn_worker() -> None:
     try:
-        proc = subprocess.Popen(
+        # 不加进 kill-on-close 的 job：会来叫它起床的多半是一次性的桥进程
+        # （处理完这一次请求就退出），而加载一次 RapidOCR 引擎要 ~11s，是引擎
+        # 热着时的十倍以上。挂在 job 上等于每次手势都重新加载一遍引擎，把
+        # 「常驻」变回「每次冷启」。
+        #
+        # 它的生命周期由它自己管：`IDLE_TIMEOUT_S` 空闲自退（默认半小时），退出
+        # 时 `_remove_owned_port_file` 只删自己写的端口文件，`_worker_startup_
+        # lock` 保证不会同时活两个引擎。MCP 客户端那类「父死子必须死」的进程
+        # 仍然走 job。
+        subprocess.Popen(
             [sys.executable, str(OCR_WORKER_SCRIPT)],
             cwd=str(ROOT),
             stdout=subprocess.DEVNULL,
@@ -334,9 +348,54 @@ def _spawn_worker() -> None:
             stdin=subprocess.DEVNULL,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
-        attach_kill_on_close(proc)
     except Exception:
         pass
+
+
+def _worker_reachable(timeout: float = 0.2) -> bool:
+    """端口文件在、而且真的有人接，才算已经起来了。
+
+    不用 ``_worker_connect``：那个循环每次尝试都按 2s 连，撞上一个上次被硬杀的
+    worker 留下的死端口文件时要白等两秒。预热是顺手做的事，不能因为这个变慢。
+    """
+    try:
+        meta = json.loads(OCR_WORKER_PORT_FILE.read_text(encoding="utf-8"))
+        port = int(meta.get("port") or 0)
+    except Exception:
+        return False
+    if port <= 0:
+        return False
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=max(0.05, timeout)):
+            return True
+    except OSError:
+        return False
+
+
+def prewarm_ocr_worker(*, wait_s: float = 0.0) -> bool:
+    """把常驻 OCR worker 提前叫起来；返回它是否已经可以接活。
+
+    这台机器上冷启一次要 ~11s，几乎全是进程起来 + RapidOCR 引擎加载——和图片
+    多大没关系（800×600 的小图和整屏 3120×2080 一样要 11s），而引擎热了以后同
+    一次读取是 0.6–2.8s。也就是说这笔钱谁先请求谁付，且只付一次。
+
+    手势路径在用户还在打字的时候就已经知道「马上要读一次像素」了，所以这笔钱该
+    花在那段等待里。``wait_s=0`` 只负责把 worker 叫起来：它是 detached 进程，本
+    进程退出后它继续加载。
+    """
+    if _worker_reachable():
+        return True
+    _spawn_worker()
+    if wait_s <= 0:
+        return False
+    import time
+
+    deadline = time.time() + max(0.0, float(wait_s))
+    while time.time() < deadline:
+        if _worker_reachable():
+            return True
+        time.sleep(0.1)
+    return False
 
 
 def _worker_request(
@@ -355,7 +414,12 @@ def _worker_request(
     sock = _worker_connect(timeout=2.0)
     if sock is None:
         _spawn_worker()
-        sock = _worker_connect(timeout=15.0)
+        # The worker publishes its port only after the engine is loaded, so this
+        # budget has to cover the cold load itself. Measured 2026-09-19 on this
+        # machine: 11.2s for the load regardless of image size. 15s cleared it by
+        # four seconds — a deadline that only just contains the thing it is
+        # waiting for is how a working endpoint gets reported as unreachable.
+        sock = _worker_connect(timeout=30.0)
     if sock is None:
         return None
     try:
@@ -566,7 +630,20 @@ class FrozenFrameOcrProvider:
                 reason="ocr_worker_busy",
             )
         blocks = _blocks_to_screen(list(blocks), offset_x, offset_y)
-        if strokes_screen:
+        unlocated = any(
+            str(block.get("text") or "").strip() and _rect_of(block) is None
+            for block in blocks
+        )
+        if unlocated:
+            # Text-only fallback (e.g. Tesseract) read the surface but cannot
+            # attribute its words to the mark. Keep the evidence without
+            # claiming that filtering located it or that the mark was empty.
+            selected_blocks, segments = [], []
+            text = "\n".join(
+                str(block.get("text") or "").strip()
+                for block in blocks if str(block.get("text") or "").strip()
+            )
+        elif strokes_screen:
             selected_blocks, segments = filter_blocks_by_strokes(blocks, strokes_screen)
             segment_texts = [
                 text for text in (ocr_blocks_to_text(segment) for segment in segments if segment)
@@ -613,7 +690,8 @@ class FrozenFrameOcrProvider:
             "ocr_full_screen": True,
             "ocr_block_count_total": len(blocks),
             "ocr_block_count_selected": len(selected_blocks),
-            "ocr_stroke_filter": bool(strokes_screen),
+            "ocr_stroke_filter": bool(strokes_screen) and not unlocated,
+            "ocr_text_scope": "unlocated" if unlocated else "mark",
             "ocr_segment_count": len(segments),
             "ocr_selection_bbox": (
                 list(request.mark_bbox) if request.mark_bbox is not None else None
@@ -631,6 +709,8 @@ class FrozenFrameOcrProvider:
             "selection_rectangles_coordinate_space": "physical_screen_pixels",
         }
         return ProviderResult(
+            status=EvidenceStatus.DEGRADED if unlocated else None,
+            reason="ocr_geometry_unavailable" if unlocated else "",
             context=AdapterReadContext(
                 adapter="local_ocr",
                 app="screen",
@@ -647,7 +727,10 @@ class FrozenFrameOcrProvider:
                 "segmentCount": len(segments),
                 "edgeClipped": edge_clipped,
             },
-            limitations=("edge_clipped",) if edge_clipped else (),
+            limitations=(
+                (("ocr_geometry_unavailable",) if unlocated else ())
+                + (("edge_clipped",) if edge_clipped else ())
+            ),
         )
 
 

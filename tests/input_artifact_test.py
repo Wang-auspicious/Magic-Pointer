@@ -430,6 +430,73 @@ def test_without_a_frozen_surface_no_visual_anchor_is_offered() -> None:
     assert [fact.kind for fact in artifact.facts if fact.kind == "visual_anchor"] == []
 
 
+def test_marked_panel_keeps_os_window_identity_and_position_in_model_evidence() -> None:
+    snapshot = _gesture_snapshot()
+    snapshot["selection_bbox"] = [2505, 206, 598, 482]
+    snapshot["frame_lease"]["surfaceBoundsPx"] = [0, 0, 3120, 2080]
+    window = {
+        "title": "ChatGPT", "process_name": "ChatGPT.exe",
+        "bbox": [0, 0, 3120, 1985],
+    }
+    context = AdapterReadContext(
+        adapter="local_ocr", app="screen", window=window, label="THIS",
+        content="Environment\nChanges +17,726 -1,227\nLocal\nmain",
+        method="ocr:frozen-frame",
+    )
+    model = compile_input_artifact("这是啥", window, context, snapshot).to_model_dict()
+    facts = {fact["kind"]: fact for fact in model["facts"]}
+    identity = json.loads(facts["window"]["value"])
+    assert identity == {
+        "title": "ChatGPT", "processName": "ChatGPT.exe",
+        "boundsLTRB": [0, 0, 3120, 1985],
+        "coordinateSpace": "physical_screen_pixels",
+        "selectionBoundsXYWH": [2505, 206, 598, 482],
+        "selectionLocation": "top-right",
+    }
+    assert facts["window"]["sources"] == ["WINDOW"]
+    # 细节 anchor 给的是**圈选所在的窗口**，不是「选区加一圈边距」：只把划的那一行
+    # 剪下来，模型就不知道这是哪个应用、这一行在窗口的什么位置。
+    assert "bbox:0,0,3120,1985" in facts["selection_visual_anchor"]["value"]
+    assert "bbox:0,0,3120,2080" in facts["visual_anchor"]["value"]
+
+
+def test_window_fact_is_available_without_ocr_and_preserves_monitor_offsets() -> None:
+    snapshot = _gesture_snapshot()
+    snapshot["selection_bbox"] = [-1700, 200, 100, 48]
+    snapshot["frame_lease"]["surfaceBoundsPx"] = [-1920, 0, 0, 1080]
+    window = {"title": "Files", "process_name": "explorer.exe", "bbox": [-1800, 100, -200, 1000]}
+    artifact = compile_input_artifact("这是啥", window, None, snapshot)
+    facts = {fact.kind: fact.value for fact in artifact.facts}
+    identity = json.loads(facts["window"])
+    assert identity["processName"] == "explorer.exe"
+    assert identity["boundsLTRB"] == [-1800, 100, -200, 1000]
+    assert identity["selectionBoundsXYWH"] == [-1700, 200, 100, 48]
+    assert identity["selectionLocation"] == "top-left"
+    # 负坐标显示器上的窗口矩形照原样带出来，不需要任何换算。
+    assert "bbox:-1800,100,-200,1000" in facts["selection_visual_anchor"]
+
+
+def test_the_visual_anchor_falls_back_to_the_mark_when_the_window_is_unknown() -> None:
+    """窗口矩形拿不到时退回旧行为，而不是给出一个不存在的锚点。"""
+    snapshot = _gesture_snapshot()
+    snapshot["selection_bbox"] = [2505, 206, 598, 482]
+    snapshot["frame_lease"]["surfaceBoundsPx"] = [0, 0, 3120, 2080]
+    artifact = compile_input_artifact("这是啥", None, None, snapshot)
+    facts = {fact.kind: fact.value for fact in artifact.facts}
+    assert "bbox:2441,142,3120,752" in facts["selection_visual_anchor"]
+
+
+def test_a_window_outside_the_frozen_surface_is_not_used_as_the_anchor() -> None:
+    """窗口已经被移走/缩到冻结面之外时，裁剪只会得到空白，退回笔迹那一块。"""
+    snapshot = _gesture_snapshot()
+    snapshot["selection_bbox"] = [2505, 206, 598, 482]
+    snapshot["frame_lease"]["surfaceBoundsPx"] = [0, 0, 3120, 2080]
+    window = {"title": "Moved", "process_name": "demo.exe", "bbox": [5000, 5000, 5400, 5400]}
+    artifact = compile_input_artifact("这是啥", window, None, snapshot)
+    facts = {fact.kind: fact.value for fact in artifact.facts}
+    assert "bbox:2441,142,3120,752" in facts["selection_visual_anchor"]
+
+
 def test_long_selected_content_is_bounded_with_an_explicit_notice() -> None:
     context = _context()
     context = AdapterReadContext(
@@ -499,12 +566,13 @@ def test_terminal_input_keeps_the_bounded_error_window_not_only_the_anchor() -> 
     assert "FAILED tests/runtime_test.py::test_resume" in artifact.to_model_text()
 
 
-def test_loop_router_consumes_input_artifact_as_separate_data_message(monkeypatch) -> None:
+def test_loop_router_consumes_input_artifact_as_separate_data_message(monkeypatch, tmp_path) -> None:
     from app.agent_runtime.tool_registry import Effect
     from app.agent_runtime.types import Terminal, TransitionReason
     from app.fabric import engine as engine_module
     from scripts import selection_bridge
 
+    monkeypatch.setenv("MAGIC_POINTER_USER_DATA_DIR", str(tmp_path))
     recorded: dict[str, object] = {}
 
     def fake_run(user_input, objects=None, registry=None, *, client, **kwargs):

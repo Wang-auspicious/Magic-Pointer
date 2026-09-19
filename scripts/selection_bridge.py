@@ -2860,6 +2860,11 @@ def _loop_router(
         or (snapshot or {}).get("annotated_path")
         or ""
     ).strip()
+    # 视觉裁的是**带笔迹**的那一份：模型的提示里永远有「用户圈了什么」，让它
+    # 自己在图里找「用户圈的是哪」是它做不好的那件事。两份图同尺寸、同原点
+    # （标注是画在原图副本上的），所以镜像裁剪坐标不变；标注那份缺了就退回
+    # 原图，绝不因为标注失败而让 Look 变成读不到。
+    annotated_path = str((snapshot or {}).get("annotated_path") or "").strip()
 
     lease = (snapshot or {}).get("frame_lease")
     surface_bounds = (
@@ -2871,6 +2876,10 @@ def _loop_router(
     def crop_bytes(box: tuple[int, int, int, int]) -> bytes:
         if not capture_path or not isinstance(surface_bounds, (list, tuple)):
             return b""
+        if annotated_path:
+            annotated = _crop_frozen_frame_bytes(annotated_path, box, surface_bounds)
+            if annotated:
+                return annotated
         return _crop_frozen_frame_bytes(capture_path, box, surface_bounds)
 
     def summarize_history(history_text: str) -> str:
@@ -2907,6 +2916,7 @@ def _loop_router(
         "summarize": summarize_history,
         "content": _evidence_content(app_ctx) if app_ctx is not None else "",
         "capture_path": capture_path,
+        "annotated_path": annotated_path,
         "target_window": target_window or {},
         "command": command,
         # A screen gesture authorizes the pointed material, not the persisted

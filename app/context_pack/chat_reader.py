@@ -17,7 +17,9 @@ import copy
 import json
 import re
 import time
+from collections import OrderedDict
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -28,6 +30,30 @@ class ChatHistoryBackend(Protocol):
     """One public-surface page read, optionally after app-level navigation."""
 
     def read_chat_page(self, **request: Any) -> Mapping[str, Any]: ...
+
+
+def _window_xywh(window: Mapping[str, Any]) -> tuple[int, int, int, int] | None:
+    """会话窗口的 (x, y, width, height)。
+
+    `_live_windows` 发出来的 `rect` / `bbox` 是 `GetWindowRect` 与 DWM 扩展边框
+    的 `(left, top, right, bottom)`。同一个名字在别处（选区、元素句柄）指的是
+    `(x, y, width, height)`，所以这里必须按 LTRB 解、解完再换算。
+
+    不换算的后果不是「差一点」：一个 1130..2626 的窗口会被读成 1130..3756，
+    滚动点落到窗口外，`target_region` 也落到窗口外——探针拿一个屏幕上根本不存在
+    的区域去读，读回来的是「没东西」，而调用方看到的是「这个会话没有内容」。
+    """
+    raw = window.get("rect") or window.get("bbox")
+    if not isinstance(raw, (list, tuple)) or len(raw) != 4:
+        return None
+    try:
+        left, top, right, bottom = (int(round(float(item))) for item in raw)
+    except (TypeError, ValueError):
+        return None
+    width, height = right - left, bottom - top
+    if width <= 0 or height <= 0:
+        return None
+    return left, top, width, height
 
 
 class DesktopChatNavigator:
@@ -57,10 +83,10 @@ class DesktopChatNavigator:
             actual_window = dict((state.get("windows") or [{}])[0] or {})
             if int(actual_window.get("hwnd") or 0) != hwnd:
                 return {"ok": False, "error": "bound-chat-window-changed"}
-            raw_rect = actual_window.get("rect") or actual_window.get("bbox")
-            if not isinstance(raw_rect, (list, tuple)) or len(raw_rect) != 4:
+            bounds = _window_xywh(actual_window)
+            if bounds is None:
                 return {"ok": False, "error": "bound-chat-window-bounds-unavailable"}
-            left, top, width, height = (int(round(float(item))) for item in raw_rect)
+            left, top, width, height = bounds
             receipt = json.loads(self._session.scroll(
                 snapshot_id=str(state.get("snapshot_id") or ""),
                 x=left + max(1, width // 2),
@@ -106,15 +132,10 @@ class SurfaceChatHistoryBackend:
 
     @staticmethod
     def _window_region(window: Mapping[str, Any]) -> dict[str, int] | None:
-        raw = window.get("rect") or window.get("bbox")
-        if not isinstance(raw, (list, tuple)) or len(raw) != 4:
+        bounds = _window_xywh(window)
+        if bounds is None:
             return None
-        try:
-            x, y, width, height = (int(round(float(item))) for item in raw)
-        except (TypeError, ValueError):
-            return None
-        if width <= 0 or height <= 0:
-            return None
+        x, y, width, height = bounds
         return {"x": x, "y": y, "width": width, "height": height}
 
     def read_chat_page(self, **request: Any) -> Mapping[str, Any]:
@@ -439,6 +460,21 @@ class ChatReader:
         self._backend = backend
         self._max_pages = int(max_pages)
         self._followed: dict[tuple[str, str], tuple[SourceRef, ...]] = {}
+        self._result_pages: OrderedDict[str, tuple[Any, ReadResult]] = OrderedDict()
+        self._result_sequence = 0
+
+    @staticmethod
+    def _result_page(result: ReadResult, key: str, offset: int, limit: int) -> ReadResult:
+        end = min(len(result.fragments), offset + limit)
+        more = end < len(result.fragments)
+        return replace(
+            result, fragments=result.fragments[offset:end],
+            coverage=replace(
+                result.coverage,
+                complete=result.coverage.complete and not more,
+                next_cursor=f"chat-results:{key}:{end}" if more else result.coverage.next_cursor,
+            ),
+        )
 
     @staticmethod
     def _empty(
@@ -587,6 +623,22 @@ class ChatReader:
     ) -> ReadResult:
         started = time.perf_counter()
         default_backend = "public-chat-surface"
+        wanted = max(1, min(int(limit), 100))
+        page_scope = (source.to_dict(), query, locator.to_dict() if locator else None)
+        if str(cursor or "").startswith("chat-results:"):
+            try:
+                _, key, raw_offset = str(cursor).split(":")
+                previous_scope, previous = self._result_pages[key]
+                offset = int(raw_offset)
+                if previous_scope != page_scope or not 0 <= offset < len(previous.fragments):
+                    raise ValueError("cursor scope changed")
+                page = self._result_page(previous, key, offset, wanted)
+                return replace(page, latency_ms=(time.perf_counter() - started) * 1000.0)
+            except (KeyError, ValueError):
+                return self._empty(
+                    source, started=started, backend=default_backend, status="error",
+                    reason="chat-result-cursor-unavailable-or-mismatched:restart-read-or-search",
+                )
         try:
             expected = _conversation_identity(source)
         except Exception as exc:
@@ -598,7 +650,6 @@ class ChatReader:
                 status="error",
             )
 
-        wanted = max(1, min(int(limit), 100))
         current_cursor = str(cursor).strip() if cursor else None
         next_cursor = current_cursor
         seen_cursors: set[str] = set()
@@ -734,8 +785,6 @@ class ChatReader:
                 expected_identity=expected,
             )
             fragments.append(fragment)
-            if len(fragments) >= wanted:
-                break
 
         used_backend = "+".join(backends) or default_backend
         if missing_reason:
@@ -746,7 +795,7 @@ class ChatReader:
             status = "empty_confirmed"
         else:
             status = "degraded"
-        return ReadResult(
+        result = ReadResult(
             source_id=source.source_id,
             fragments=tuple(fragments),
             coverage=Coverage(
@@ -761,6 +810,16 @@ class ChatReader:
             used_backend=used_backend,
             latency_ms=(time.perf_counter() - started) * 1000.0,
         )
+        if len(fragments) <= wanted:
+            return result
+        # Retain the already acquired viewport/history. Scrolling again to
+        # recover discarded hits would change the public application surface.
+        self._result_sequence += 1
+        key = str(self._result_sequence)
+        self._result_pages[key] = (page_scope, result)
+        while len(self._result_pages) > 8:
+            self._result_pages.popitem(last=False)
+        return self._result_page(result, key, 0, wanted)
 
     def describe(self, source: SourceRef) -> ReadResult:
         # A bounded first-page read is a useful description: it reports the
