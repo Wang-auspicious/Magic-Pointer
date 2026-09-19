@@ -474,6 +474,33 @@ COLD_TREE_DENY_CLASSES = (
 )
 
 
+# 自绘窗口：UIA 树里**永远**没有用户看得见的文字，探针只会白跑一趟。
+#
+# 2026-09-19 本机实测：微信（Qt51514QWindowIcon）documents=0，探针 415ms 空手而归；
+# 向日葵（FLUTTER_RUNNER_WIN32_WINDOW）同样 documents=0；Obsidian 更糟，探针直接在
+# 里面挂住。用户对 Qt 的裁决是明确的：「QT 就明确不要 uia 了」。
+#
+# 这张表就是 `COLD_TREE_DENY_CLASSES`——「这些窗口的树永远长成冷树的样子，等多久都
+# 不会变」——减去那两个**有专门读取器**的终端类。Windows Terminal / conhost 的终端
+# 缓冲区是真读得出来的（tests/terminal_structured_read_test.py 钉着），把它们一起跳掉
+# 是拿一个能用的功能换一点时间。
+#
+# 代价是明确的：这些类别的窗口从此只走像素层，`structured_gap_reason` 会从
+# `no_structured_text` 变成 `no_structured_provider`。要找回某个应用的 UIA，把它的
+# 类名从这张表里删掉，或者整个关掉这个快速通道：
+# `MAGIC_POINTER_UIA_WINDOW_SCOPE=whitelist` 回到白名单制。
+SELF_DRAWN_WINDOW_CLASSES = tuple(
+    name
+    for name in COLD_TREE_DENY_CLASSES
+    if name not in {"CASCADIA_HOSTING_WINDOW_CLASS", "ConsoleWindowClass"}
+)
+
+
+def _is_self_drawn_window(class_name: str) -> bool:
+    """这张表按前缀匹配，和 `is_cold_tree` 用的是同一套写法（`Qt5` 盖住 `Qt51514QWindowIcon`）。"""
+    return any(str(class_name).startswith(prefix) for prefix in SELF_DRAWN_WINDOW_CLASSES)
+
+
 def is_cold_tree(
     class_chain: Sequence[str] | None,
     document_count: int,
@@ -540,6 +567,11 @@ class UiaTextSelectionAdapter(AppAdapter):
         if not class_name:
             # No class name means the enumeration itself is suspect; the probe
             # needs a real HWND anyway and read_context checks that separately.
+            return False
+        if _is_self_drawn_window(class_name):
+            # 自绘窗口不探：探针在它们身上只会花掉一次进程往返（实测 415ms 起）再
+            # 空手而归，而它返回的「没有文字」还可能被当成一次成功的结构读取。
+            # 直接不认领，让下面的融合把这块地方判给像素层。
             return False
         return True
 
