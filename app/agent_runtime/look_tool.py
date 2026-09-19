@@ -88,6 +88,7 @@ class LookTool:
         capture: Callable[[tuple[int, int, int, int]], bytes] | None = None,
         max_calls: int | None = 12,
         captured_at: str | None = None,
+        resolver: Callable[[str], Sequence[int] | None] | None = None,
     ) -> None:
         self._backend = backend
         self._max_box_side = max_box_side
@@ -97,6 +98,7 @@ class LookTool:
         self._max_calls = max_calls
         self._calls_used = 0
         self._captured_at = str(captured_at or "gesture time")
+        self._resolver = resolver
 
     # -- look ----------------------------------------------------------------
 
@@ -135,7 +137,7 @@ class LookTool:
 
         if box_ltrb is None:
             try:
-                box = self._anchor_box(anchor, resolver)
+                box = self._anchor_box(anchor, resolver or self._resolver)
             except ValueError as exc:
                 return failed_evidence(
                     EvidenceSource.VISION, EvidenceStatus.ERROR, str(exc)
@@ -179,11 +181,11 @@ class LookTool:
         text_prompt = prompt if prompt is not None else DEFAULT_PROMPT
         try:
             result = self._backend.describe(image_bytes, text_prompt, self._timeout_ms)
-        except VisionUnavailable:
+        except VisionUnavailable as exc:
             return failed_evidence(
                 EvidenceSource.VISION,
                 EvidenceStatus.UNSUPPORTED,
-                "vision_unavailable",
+                f"vision_unavailable: {exc}" if str(exc) else "vision_unavailable",
             )
         except VisionTimeout:
             return failed_evidence(
@@ -233,7 +235,7 @@ class LookTool:
                 return tuple(int(part) for part in parts)  # type: ignore[return-value]
             except ValueError:
                 raise ValueError("invalid_anchor_format") from None
-        if anchor.startswith("element:"):
+        if anchor.startswith(("element:", "reference:")):
             if len(anchor) == len("element:"):
                 raise ValueError("invalid_anchor_format")
             if resolver is None or not callable(resolver):
@@ -280,7 +282,14 @@ class LookTool:
                     "properties": {
                         "anchor": {
                             "type": "string",
-                            "description": "'bbox:l,t,r,b' or 'element:<id>'",
+                            "description": (
+                                "An exact referenceId from InputArtifact/Context.list "
+                                "(reference:<snapshotId>:<index>), an element handle from "
+                                "the element_handles fact (element:<ref>), or an explicit "
+                                "'bbox:l,t,r,b' in physical screen pixels. Prefer a "
+                                "reference or a handle: both come from what was actually "
+                                "read, while a bbox is a coordinate you wrote down."
+                            ),
                         },
                         "box": {
                             "type": "array",

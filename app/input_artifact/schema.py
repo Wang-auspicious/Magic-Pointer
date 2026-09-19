@@ -406,10 +406,54 @@ def _facts(
     context: AdapterReadContext | None,
     badges: tuple[str, ...],
     snapshot: dict[str, Any],
+    window: dict[str, Any],
+    bounds: tuple[int, int, int, int] | None,
 ) -> tuple[InputFact, ...]:
     facts: list[InputFact] = []
+    if window:
+        # OS identity is independent of what OCR/UIA managed to read inside it.
+        # Keep the coordinate formats explicit so a panel's position is not
+        # inferred from familiar labels such as Changes / main / Compare.
+        identity = {
+            "title": str(window.get("title") or "")[:500],
+            "processName": str(window.get("process_name") or "")[:200],
+            "boundsLTRB": window.get("bbox"),
+            "coordinateSpace": "physical_screen_pixels",
+            "selectionBoundsXYWH": list(bounds) if bounds is not None else None,
+        }
+        window_bounds = window.get("bbox")
+        if bounds is not None and isinstance(window_bounds, (list, tuple)) and len(window_bounds) == 4:
+            left, top, right, bottom = window_bounds
+            if right > left and bottom > top:
+                x, y, width, height = bounds
+                cx = (x + width / 2 - left) / (right - left)
+                cy = (y + height / 2 - top) / (bottom - top)
+                if 0 <= cx <= 1 and 0 <= cy <= 1:
+                    horizontal = "left" if cx < 1 / 3 else "right" if cx > 2 / 3 else "center"
+                    vertical = "top" if cy < 1 / 3 else "bottom" if cy > 2 / 3 else "middle"
+                    # Coordinates and this coarse geometric description have
+                    # one deterministic owner; the model need not do DPI math.
+                    identity["selectionLocation"] = f"{vertical}-{horizontal}"
+        facts.append(InputFact(
+            "window", json.dumps(identity, ensure_ascii=False, separators=(",", ":")),
+            ("WINDOW",),
+        ))
     anchor = _visual_anchor(snapshot)
     if anchor is not None:
+        if bounds is not None:
+            left, top, right, bottom = (int(value) for value in anchor.removeprefix("bbox:").split(","))
+            x, y, width, height = bounds
+            # Offer a detailed view with surrounding UI, while retaining the
+            # full frozen target surface below for broader visual context.
+            detail = (max(left, x - 64), max(top, y - 64),
+                      min(right, x + width + 64), min(bottom, y + height + 64))
+            if detail[2] > detail[0] and detail[3] > detail[1]:
+                facts.append(InputFact(
+                    "selection_visual_anchor",
+                    "bbox:" + ",".join(str(value) for value in detail)
+                    + "（冻结选区及周边；看圈选控件的细节时优先用此 anchor 调 Look）",
+                    ("PIXELS",),
+                ))
         facts.append(InputFact(
             "visual_anchor",
             f"{anchor}（手势时刻已冻结的目标面；需要看像素时用该 anchor 调一次 look）",
@@ -420,7 +464,12 @@ def _facts(
     full_content = str(context.content or "")
     content, window_notice = _content_window(full_content, snapshot)
     if content.strip():
-        facts.append(InputFact("selected_text", content, badges))
+        kind = (
+            "unlocated_text"
+            if (context.artifacts or {}).get("ocr_text_scope") == "unlocated"
+            else "selected_text"
+        )
+        facts.append(InputFact(kind, content, badges))
     if window_notice:
         facts.append(InputFact("content_window", window_notice, badges))
     artifacts = dict(context.artifacts or {})
@@ -445,7 +494,46 @@ def _facts(
             json.dumps(structure, ensure_ascii=False, separators=(",", ":"))[:4_000],
             badges,
         ))
+    handles = _element_handle_facts(artifacts)
+    if handles:
+        facts.append(InputFact("element_handles", handles, badges))
     return tuple(facts)
+
+
+def _element_handle_facts(artifacts: dict[str, Any], *, cap: int = 4_000) -> str:
+    """结构化元素句柄，作为模型可以**拿来当锚点**的地址清单。
+
+    这些句柄本来就是为「圈选后在屏幕上回放框 + 标签」发的，语法见
+    `app/perception/element_handles.py`（`A#<automation_id>` → `<TYPE>-<slug>`
+    → 冲突加 `-2`）。把它们交给模型，Look 就能按控件地址取图，而不是让模型
+    从截图里记住一组像素坐标再自己写 bbox——后者正是「看错、偏移」的来源。
+
+    收尾按**整条句柄**裁剪而不是截字符串：structure 那条是真被截断过的 JSON，
+    这条不行，模型读到的必须是能解析的清单。
+    """
+    raw = artifacts.get("element_handles")
+    if not isinstance(raw, list):
+        return ""
+    cleaned: list[dict[str, Any]] = []
+    for handle in raw:
+        if not isinstance(handle, dict):
+            continue
+        ref = str(handle.get("ref") or "").strip()
+        rect = handle.get("rect")
+        if not ref or not isinstance(rect, (list, tuple)) or len(rect) != 4:
+            continue
+        cleaned.append({
+            "ref": ref[:120],
+            "role": str(handle.get("role") or "")[:60],
+            "name": str(handle.get("name") or "")[:120],
+            "rect": [int(value) for value in rect],
+        })
+    while cleaned:
+        encoded = json.dumps(cleaned, ensure_ascii=False, separators=(",", ":"))
+        if len(encoded) <= cap:
+            return encoded
+        cleaned.pop()
+    return ""
 
 
 def _conflicts(trace: dict[str, Any]) -> tuple[InputConflict, ...]:
@@ -519,7 +607,7 @@ def compile_input_artifact(
             sources=badges,
         )
 
-    facts = _facts(app_ctx, badges, snap)
+    facts = _facts(app_ctx, badges, snap, window, bounds)
     summary_source = next(
         (fact.value for fact in facts if fact.kind == "selected_text"),
         "",

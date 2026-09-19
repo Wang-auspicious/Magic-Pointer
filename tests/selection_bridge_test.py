@@ -628,13 +628,13 @@ def test_reviewed_bridges_reject_oversized_utf8_payload_with_bounded_read(
     monkeypatch,
     reader,
 ) -> None:
-    max_payload_bytes = 64 * 1024
+    max_payload_bytes = selection_bridge.MAX_SELECTION_PAYLOAD_BYTES if reader is selection_bridge.read_payload else 64 * 1024
     encoded = b'{"command":"' + ("\u754c" * max_payload_bytes).encode("utf-8") + b'"}'
 
     stdin = _GuardedStdin(encoded, max_payload_bytes + 1)
     monkeypatch.setattr(selection_bridge.sys, "stdin", stdin)
 
-    with pytest.raises(ValueError, match="65536 UTF-8 bytes"):
+    with pytest.raises(ValueError, match=f"{max_payload_bytes} UTF-8 bytes"):
         reader()
 
     assert stdin.buffer.tell() == len(encoded)
@@ -651,7 +651,7 @@ def test_reviewed_bridge_main_reports_payload_limit_without_processing(
     capsys,
     bridge,
 ) -> None:
-    max_payload_bytes = 64 * 1024
+    max_payload_bytes = selection_bridge.MAX_SELECTION_PAYLOAD_BYTES if bridge is selection_bridge else 64 * 1024
     encoded = b'{"command":"' + ("\u754c" * max_payload_bytes).encode("utf-8") + b'"}'
 
     stdin = _GuardedStdin(encoded, max_payload_bytes + 1)
@@ -825,7 +825,12 @@ def test_screen_region_enrich_falls_back_to_full_capture_without_selection_bbox(
     assert context is not None
     assert context.content == "FULL TEXT"
     assert context.artifacts.get("ocr_full_screen") is True
-    assert context.artifacts.get("ocr_block_count_selected") == 1
+    # 这行识别结果没有矩形（Tesseract 那条路）。文字要保住，但位置不能编：
+    # 块数按「定位到的块」计，所以是 0，并且明确写成 unlocated，
+    # 于是证据以 unlocated_text 的身份进模型，而不是假装我们圈中了它。
+    assert context.artifacts.get("ocr_block_count_selected") == 0
+    assert context.artifacts.get("ocr_text_scope") == "unlocated"
+    assert context.artifacts.get("captured_rects") == []
     assert seen == [capture]
 
 
@@ -1109,6 +1114,79 @@ def test_loop_router_maps_terminal_to_answer(monkeypatch):
     assert result["selectionSessionId"] == "sess-1"
 
 
+def test_selection_runtime_publishes_complete_progress_and_keeps_final_projection(monkeypatch, tmp_path):
+    import base64
+    from app.fabric import engine as engine_module
+    from app.agent_runtime.loop import (
+        ModelChunk, ReasoningChunk, TurnStarted, ToolCallStarted, ToolCallFinished,
+        Steered, FollowupContinued, BackendRecovery,
+    )
+    from app.agent_runtime.types import ToolResult
+
+    monkeypatch.setenv("MAGIC_POINTER_USER_DATA_DIR", str(tmp_path))
+    stream = io.StringIO()
+    clock = selection_bridge.PhaseClock("test", stream=stream)
+
+    def fake_run(_input, **kwargs):
+        sink = kwargs["event_sink"]
+        sink(TurnStarted(turn=1))
+        sink(ReasoningChunk(text="读取选中的卡片"))
+        sink(ModelChunk(text="先核对内容。"))
+        sink(ToolCallStarted(id="read-card", name="Look"))
+        sink(ToolCallFinished(result=ToolResult(
+            tool_call_id="read-card", tool_name="Look", value="Changes / Local / main",
+            arguments={"anchor": "bbox:2505,206,3103,688"},
+            used_backend="frozen-vision", latency_ms=42, is_error=False, failure_type=None,
+        )))
+        sink(Steered(turn=1, texts=("补充",), input_ids=("input-1",), reference_revision=2))
+        sink(FollowupContinued(turn=2, texts=("继续",), input_ids=("input-2",), reference_revision=3))
+        sink(BackendRecovery(turn=2, attempt=1, delay_s=0.5, reason="busy"))
+        return _fake_terminal(message="这是环境卡片")
+
+    monkeypatch.setattr(engine_module, "run_agent_turn", fake_run)
+    result = selection_bridge._loop_router(
+        "这是什么", [], None, None, None, None, "complete-progress", "snap", clock=clock,
+    )
+    assert result["ok"] is True
+    lines = [dict(token.split("=", 1) for token in line.split()[1:]) for line in stream.getvalue().splitlines()]
+    reasoning = "".join(base64.b64decode(line["b64"]).decode() for line in lines if line["phase"] == "reasoning_chunk")
+    assert reasoning == "读取选中的卡片"
+    tool_result = next(line for line in lines if line["phase"] == "tool_result")
+    tool_result = json.loads(base64.b64decode(tool_result["b64"]))
+    assert tool_result["id"] == "read-card"
+    assert tool_result["backend"] == "frozen-vision"
+    assert tool_result["latency_ms"] == 42.0
+    assert {"steer_absorbed", "followup_continued", "backend_recovery"} <= {line["phase"] for line in lines}
+    assert result["thinking"] == reasoning
+    assert result["activities"][-1]["usedBackend"] == "frozen-vision"
+    tool = next(item for item in result["trajectory"] if item["kind"] == "tool")
+    assert tool["result"] == "Changes / Local / main"
+    assert json.loads(tool["text"])["anchor"] == "bbox:2505,206,3103,688"
+    metadata = selection_bridge._loop_interaction_metadata(result)
+    for key in ("agentSessionId", "thinking", "trajectory", "activities", "usedBackend", "timingMs"):
+        assert metadata[key] == result[key]
+    assert result["timingMs"] >= 0
+
+
+def test_selection_metadata_keeps_all_reported_usage_buckets():
+    usage = {"inputTokens": 12, "outputTokens": 4, "totalTokens": 16,
+             "cacheReadTokens": 8, "cacheWriteTokens": 2, "reasoningTokens": 3}
+    assert selection_bridge._loop_interaction_metadata({"modelUsage": usage})["modelUsage"] == usage
+
+
+def test_selection_metadata_preserves_runtime_permission_suspension_and_receipts():
+    pending = {"kind": "permission", "question": "Allow this command?", "tool": "Bash",
+               "prefix": "npm run"}
+    result = {"awaitingUserInput": True, "pendingInput": pending, "hasPendingWork": True,
+              "receipts": [{"tool": "Read", "status": "ok"}],
+              "events": [{"type": "permission_requested", "tool": "Bash"}]}
+
+    metadata = selection_bridge._loop_interaction_metadata(result)
+
+    for key, value in result.items():
+        assert metadata[key] == value
+
+
 def test_loop_router_persists_frozen_source_and_locator_before_model(
     monkeypatch, tmp_path
 ) -> None:
@@ -1171,8 +1249,7 @@ def test_loop_router_persists_frozen_source_and_locator_before_model(
     assert seen["context_tools"] == [
         "Context.list", "Context.read", "Context.search", "Context.follow", "Context.bind",
     ]
-    assert seen["context_read"].is_error is False
-    assert seen["context_read"].value["sourceId"] == "source:snapshot-w01"
+    assert seen["context_read"].is_error is True, "an unread frozen image is not successful text evidence"
 
     # Opening the same Runtime task again must replay, not duplicate, its
     # authoritative source/reference binding.

@@ -94,6 +94,40 @@ const stroke = (strokeIndex: number, at: number, label = '', referenceId = `ref-
   assert.strictEqual(snapshot.selection_gesture.strokes.length, 3, 'snapshot stays immutable');
 }
 
+// 删除一笔时，那一笔的材料必须一起走。
+//
+// 每笔的材料被 reference:<snapshotId>:<index> 按位置寻址，材料留在数组里
+// 就等于那条锚点还活着：已删那笔的窗口、证据和 Look 锚点照样进入任务，
+// 用户会看到模型读了他刚刚删掉的东西。
+{
+  const snapshot = {
+    selection_gesture: { strokes: [{ id: 'A' }, { id: 'B' }, { id: 'C' }] },
+    selection_materials: [
+      { stroke_index: 0, source_window: { hwnd: 11 }, perception_trace: { readState: 'resolved' } },
+      { stroke_index: 1, source_window: { hwnd: 22 }, perception_trace: { readState: 'unread' } },
+      { stroke_index: 2, source_window: { hwnd: 33 }, perception_trace: { readState: 'resolved' } },
+    ],
+    selection_bbox: [0, 0, 10, 10],
+  };
+  const narrowed = withKeptStrokes(snapshot, [0, 2]);
+  assert.deepStrictEqual(
+    narrowed.selection_materials.map((material: { source_window: { hwnd: number } }) => material.source_window.hwnd),
+    [11, 33],
+    'the removed stroke material is gone, the others keep their windows',
+  );
+  assert.deepStrictEqual(
+    narrowed.selection_materials.map((material: { stroke_index: number }) => material.stroke_index),
+    [0, 1],
+    'materials are addressed by position, so indexes follow the kept order',
+  );
+  assert.strictEqual(narrowed.selection_materials.length, narrowed.selection_gesture.strokes.length);
+  assert.strictEqual(snapshot.selection_materials.length, 3, 'snapshot stays immutable');
+
+  // 单笔快照没有材料数组，narrowing 仍然是原来的行为。
+  const single = { selection_gesture: { strokes: [{ id: 'A' }] } };
+  assert.strictEqual(withKeptStrokes(single, [0]), single);
+}
+
 // 代词绑到它前面最近的一笔；句子说完之后才画的那一笔不能反过来变成主语。
 {
   const entries = [stroke(0, 1000), word('这个', 1100), stroke(1, 5000)];

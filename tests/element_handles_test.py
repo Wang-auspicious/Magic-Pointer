@@ -93,3 +93,76 @@ def test_snapshot_bridge_attaches_handles_to_structured_context():
     # 自绘应用（无 region_elements）原样返回，不造假框。
     bare = {"adapter": "screen_region", "artifacts": {"capture_path": "x.png"}}
     assert _context_with_element_handles(bare) is bare
+
+
+def test_element_handles_are_resolvable_as_look_anchors():
+    """句柄不只是画给人看的：它必须真的能当锚点去取图。
+
+    模型从截图里记住一组像素坐标再自己写 bbox，就是「看错、偏移」的来源。
+    按控件地址取图，用的是窗口自己给的几何。
+    """
+    from scripts.selection_bridge import _frozen_reference_resolver
+
+    snapshot = {
+        "snapshot_id": "selection-abc",
+        "context": {
+            "artifacts": {
+                "element_handles": [
+                    {"ref": "A#copy-btn", "role": "Button", "name": "复制", "rect": [100, 200, 48, 32]},
+                    {"ref": "TXT-标题", "role": "Text", "name": "标题", "rect": [10, 10, 0, 0]},
+                ],
+                "element_handles_format": "xywh",
+                "element_handles_coordinate_space": "physical_screen_pixels",
+            },
+        },
+    }
+    resolve = _frozen_reference_resolver((), snapshot)
+    assert resolve("element:A#copy-btn") == (100, 200, 148, 232)
+    # 没有面积的句柄不发框，画不出框的就不该被解析成一个位置。
+    assert resolve("element:TXT-标题") is None
+    assert resolve("element:A#missing") is None
+    # 没有句柄的快照（自绘应用）照旧诚实失败，不猜一个位置出来。
+    assert _frozen_reference_resolver((), {"snapshot_id": "s", "context": {}})("element:A#copy-btn") is None
+    assert _frozen_reference_resolver((), None)("element:A#copy-btn") is None
+
+
+def test_element_handles_reach_the_model_as_addressable_facts():
+    import json
+
+    from app.adapters.base import AdapterReadContext
+    from app.input_artifact import compile_input_artifact
+
+    window = {"hwnd": 42, "title": "记事本", "process_name": "notepad.exe", "bbox": [0, 0, 900, 700]}
+    context = AdapterReadContext(
+        adapter="uia_text_selection",
+        app="application",
+        window=window,
+        content="正文一段",
+        method="uia:region-elements",
+        artifacts={
+            "element_handles": [
+                {"ref": "A#copy-btn", "role": "Button", "name": "复制", "rect": [100, 200, 48, 32]},
+            ],
+        },
+    )
+    artifact = compile_input_artifact(
+        "把这个按钮指给我看", window, context, {"perception_trace": {"readState": "resolved"}},
+    )
+    facts = artifact.to_model_dict()["facts"]
+    handle_fact = next(fact for fact in facts if fact["kind"] == "element_handles")
+    parsed = json.loads(handle_fact["value"])
+    assert parsed == [{"ref": "A#copy-btn", "role": "Button", "name": "复制", "rect": [100, 200, 48, 32]}]
+
+    # 句柄太多时按整条裁剪，模型读到的永远是能解析的清单，不是半截 JSON。
+    many = AdapterReadContext(
+        adapter="uia_text_selection", app="application", window=window, content="正文一段",
+        artifacts={"element_handles": [
+            {"ref": f"A#button-{index}", "role": "Button", "name": "很长的按钮名字" * 8, "rect": [index, index, 40, 20]}
+            for index in range(64)
+        ]},
+    )
+    wide = compile_input_artifact("看这些按钮", window, many, {"perception_trace": {"readState": "resolved"}})
+    wide_fact = next(fact for fact in wide.to_model_dict()["facts"] if fact["kind"] == "element_handles")
+    decoded = json.loads(wide_fact["value"])
+    assert 0 < len(decoded) < 64
+    assert len(wide_fact["value"]) <= 4_000

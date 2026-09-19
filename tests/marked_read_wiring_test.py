@@ -150,6 +150,112 @@ def test_a_snapshot_without_the_coverage_field_is_judged_by_its_own_content(
     assert enriched.content == "LINE-ALPHA 第一行 hello"
 
 
+def test_unbound_text_does_not_claim_the_mark() -> None:
+    """「有文字、没有矩形」过去直接算命中，于是像素兜底被关掉。
+
+    一段没有几何的文字，没有任何证据说明它是圈中的那一行、而不是整篇正文。
+    """
+    from app.grounding.marked_read import structured_read_covers_mark
+
+    coverage = structured_read_covers_mark(
+        content="第一段\n第二段\n第三段",
+        window={"title": "草稿.docx"},
+        element_rects=[],
+        mark_bbox=[100, 200, 300, 20],
+        has_explicit_binding=False,
+    )
+    assert coverage.covers is False
+    assert coverage.reason == "unbound_text"
+
+
+def test_a_read_that_named_something_still_covers_without_geometry() -> None:
+    """Word COM / DOM 这类有真文本没几何的读取不能被误伤。"""
+    from app.grounding.marked_read import structured_read_covers_mark
+
+    coverage = structured_read_covers_mark(
+        content="被选中的那一段",
+        window={"title": "草稿.docx"},
+        element_rects=[],
+        mark_bbox=[100, 200, 300, 20],
+        has_explicit_binding=True,
+    )
+    assert coverage.covers is True
+
+
+def test_the_binding_flag_defaults_to_the_previous_answer() -> None:
+    """没有意见的调用方（手势接地、终端行判定）行为不变。"""
+    from app.grounding.marked_read import structured_read_covers_mark
+
+    assert structured_read_covers_mark(
+        content="某段文字", window={"title": "任意窗口"},
+        element_rects=[], mark_bbox=[100, 200, 300, 20],
+    ).covers is True
+    # 没有圈选对象时无法判断，谁都不降级。
+    assert structured_read_covers_mark(
+        content="某段文字", window={"title": "任意窗口"},
+        element_rects=[], mark_bbox=None, has_explicit_binding=False,
+    ).covers is True
+
+
+def test_only_reads_that_name_an_object_count_as_bound() -> None:
+    from app.adapters.base import AdapterReadContext
+    from app.perception.providers import context_is_explicitly_bound
+
+    def context(**artifacts):
+        return AdapterReadContext(
+            adapter="x", app="y", window={}, content="文字", artifacts=artifacts,
+        )
+
+    assert context_is_explicitly_bound(context(path="D:/Desktop/报告.pdf")) is True
+    assert context_is_explicitly_bound(context(local_file={"path": "D:/a.html"})) is True
+    assert context_is_explicitly_bound(context(cell="B7")) is True
+    assert context_is_explicitly_bound(context(dom_selector="#submit")) is True
+    assert context_is_explicitly_bound(context(perception_result_kind="point_element")) is True
+    assert context_is_explicitly_bound(context(perception_result_kind="terminal_buffer")) is True
+    # 只有一段文字：没指名任何对象。
+    assert context_is_explicitly_bound(context()) is False
+    assert context_is_explicitly_bound(context(selection_text_chars=42)) is False
+    assert context_is_explicitly_bound(None) is False
+
+
+def test_an_unbound_structured_read_hands_the_mark_to_the_pixel_tier() -> None:
+    """接线检查：降级必须真的让像素层被派上去，否则只是换了个说法。"""
+    from app.adapters.base import AdapterReadContext
+    from app.evidence.contract import EvidenceStatus
+    from app.perception.providers import (
+        ProviderDescriptor,
+        ProviderResult,
+        PerceptionRequest,
+        observation_from_result,
+    )
+    from app.perception.fusion import pixel_tier_warranted
+
+    request = PerceptionRequest(
+        window={"title": "草稿.docx", "bbox": [0, 0, 1200, 900]},
+        mark_bbox=(100, 200, 300, 20),
+    )
+    observation = observation_from_result(
+        ProviderDescriptor(id="uia_region", layer="uia"),
+        ProviderResult(context=AdapterReadContext(
+            adapter="uia_text_selection",
+            app="application",
+            window={"title": "草稿.docx"},
+            content="一整篇文章的正文，恰好非空",
+            method="uia:region-elements",
+            artifacts={},
+        )),
+        request,
+        index=0,
+        latency_ms=12.0,
+    )
+    assert observation.status is EvidenceStatus.OK
+    assert observation.covers_mark is False
+    assert observation.coverage_reason == "unbound_text"
+    warranted, reason = pixel_tier_warranted([observation])
+    assert warranted is True
+    assert reason == "structured_did_not_cover_mark"
+
+
 # --- 快照桥一侧 -------------------------------------------------------------
 
 

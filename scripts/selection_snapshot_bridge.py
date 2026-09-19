@@ -42,6 +42,7 @@ from app.perception import (
     ProviderDescriptor,
     ProviderResult,
 )
+from app.perception.providers import context_is_explicitly_bound
 from app.evidence.contract import EvidenceStatus
 from app.review import ReviewSessionError, ReviewSessionStore
 from app.fabric.settings import FabricSettings, SettingsError, SettingsStore
@@ -49,7 +50,11 @@ from scripts.bridge_progress import PhaseClock
 from scripts.frame_lease import FrameLeaseError, normalize_frame_lease
 from app.system_context import enable_dpi_awareness, get_foreground_window_handle, list_visible_windows
 from app.visual_annotation import make_pointer_annotated_image
-from scripts._bridge_common import PayloadTooLargeError, read_bounded_json_payload
+from scripts._bridge_common import (
+    MAX_SELECTION_PAYLOAD_BYTES,
+    PayloadTooLargeError,
+    read_bounded_json_payload,
+)
 
 enable_dpi_awareness()
 
@@ -129,8 +134,14 @@ def _same_window_geometry(expected: dict[str, Any], actual: dict[str, Any]) -> b
 
 def read_payload() -> dict[str, Any]:
     # Bounded like every other bridge: an oversized payload (a corrupt gesture,
-    # a malicious caller) must be rejected, not buffered without limit.
-    return read_bounded_json_payload()
+    # a malicious caller) must be rejected, not buffered without limit — but a
+    # selection is bounded by the selection budget, not by the 64 KiB that
+    # ordinary control commands use. A completed gesture carries the frozen
+    # frame's lease, the window table and one structured observation per stroke;
+    # three ordinary windows already exceed the control-command ceiling, and the
+    # rejection surfaced to the user as "shrink your selection", which was never
+    # what went wrong.
+    return read_bounded_json_payload(MAX_SELECTION_PAYLOAD_BYTES)
 
 
 def _window_dicts(
@@ -166,6 +177,9 @@ def _window_dicts(
         ), None)
         if pointed is not None:
             return [pointed]
+        desktop = _desktop_window()
+        if desktop is not None:
+            return [desktop]
     foreground_hwnd = get_foreground_window_handle()
     if foreground_hwnd:
         foreground = next(
@@ -174,6 +188,64 @@ def _window_dicts(
         )
         return [foreground] if foreground is not None else []
     return []
+
+
+def _desktop_window() -> dict[str, Any] | None:
+    """Desktop is a shell surface even though normal window lists omit it."""
+    if os.name != "nt":
+        return None
+    from ctypes import wintypes
+    from app.system_context import process_name_for_pid
+    user32 = ctypes.windll.user32
+    hwnd = user32.FindWindowW("Progman", None)
+    # Windows 11 can host the icon view under WorkerW instead of Progman.
+    worker = 0
+    while True:
+        worker = user32.FindWindowExW(0, worker, "WorkerW", None)
+        if not worker:
+            break
+        if user32.FindWindowExW(worker, 0, "SHELLDLL_DefView", None):
+            hwnd = worker
+            break
+    if not hwnd:
+        return None
+    rect, pid = wintypes.RECT(), wintypes.DWORD()
+    user32.GetWindowRect(hwnd, ctypes.byref(rect))
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    return {"hwnd": int(hwnd), "title": "Desktop", "class_name": "WorkerW" if worker else "Progman",
+            "pid": int(pid.value), "process_name": process_name_for_pid(pid.value),
+            "bbox": [rect.left, rect.top, rect.right, rect.bottom]}
+
+
+def _capture_stroke_materials(windows, gesture, *, registry=None, policy=None):
+    """Bind every stroke to its own surface; all pixels stay in the one lease."""
+    from concurrent.futures import ThreadPoolExecutor
+    def read(item):
+        index, stroke = item
+        one = _normalized_gesture({"schemaVersion": 2, "strokes": [stroke]})
+        bbox = one["bbox"]
+        point = {"x": bbox["x"] + bbox["width"] // 2, "y": bbox["y"] + bbox["height"] // 2}
+        one["semanticPoint"] = point
+        if windows is None:
+            selected = _window_dicts(0, point)
+        else:
+            selected = [win for win in windows if len(win.get("bbox", [])) == 4
+                        and win["bbox"][0] <= point["x"] < win["bbox"][2]
+                        and win["bbox"][1] <= point["y"] < win["bbox"][3]][:1]
+        win = selected[0] if selected else None
+        decision = policy.decide({"id": f"stroke:{index}", "kind": "foreground_window", "source": {
+            "processName": str((win or {}).get("process_name") or ""), "title": str((win or {}).get("title") or "")}}) if policy else None
+        if decision is not None and decision.mode == "deny":
+            ctx, trace = None, {"policyMode": "deny", "fallbackReason": "capture_policy_deny"}
+        else:
+            win, ctx, trace, _, _ = _fuse_snapshot_perception(selected, registry=registry, gesture=one, fallback_point=point, fallback_window=win)
+            trace["policyMode"] = decision.mode if decision else "unconfigured"
+        return {"stroke_index": index, "source_window": win, "context": ctx.to_dict() if ctx else None,
+                "selection_gesture": one, "selection_bbox": [bbox[k] for k in ("x", "y", "width", "height")],
+                "perception_trace": trace}
+    strokes = list((gesture or {}).get("strokes") or [])
+    with ThreadPoolExecutor(max_workers=min(4, max(1, len(strokes)))) as executor:
+        return list(executor.map(read, enumerate(strokes)))
 
 
 def _read_target_context(
@@ -2013,6 +2085,19 @@ def capture_snapshot(
     live_window_source = windows is None
     normalized_target_point = _normalized_point(target_point)
     normalized_gesture = _normalized_gesture(gesture)
+    # Establish every stroke's owner before slow UIA reads. The user's capsule
+    # and IME may appear while those readers run; they are not historical
+    # targets and must not replace the desktop/chat surface under a mark.
+    material_windows = None
+    if normalized_gesture and len(normalized_gesture.get("strokes") or []) > 1:
+        material_windows = list(windows) if windows is not None else [
+            dict(item) for item in list_visible_windows()
+            if str(item.get("title") or "") not in MAGIC_WINDOW_TITLES
+        ]
+        if windows is None:
+            desktop = _desktop_window()
+            if desktop and not any(item.get("hwnd") == desktop["hwnd"] for item in material_windows):
+                material_windows.append(desktop)
     requested_hwnd = int(target_hwnd or 0)
     available_windows = (
         _window_dicts(requested_hwnd, normalized_target_point)
@@ -2153,6 +2238,11 @@ def capture_snapshot(
         window=target_window,
         element_rects=_context_rectangles(app_ctx) if app_ctx is not None else [],
         mark_bbox=_gesture_mark_bbox(normalized_gesture),
+        # 一段没有几何、也没有指名任何对象的文字，不能因为「非空」就被当成
+        # 圈中的那一行：那正是把像素兜底关掉、然后告诉用户「我知道是哪个窗口，
+        # 但没读到你划的那一行」的原因。指了对象（路径/单元格/范围/DOM 节点/
+        # 原生选区）的读取不受影响。
+        has_explicit_binding=context_is_explicitly_bound(app_ctx),
     )
     if normalized_gesture is not None and not mark_coverage.covers:
         # The structured candidate can be useful as a clue and still be too
@@ -2524,6 +2614,9 @@ def capture_snapshot(
         "gesture_grounding": gesture_grounding,
         "frame_lease": frozen_lease,
     }
+    if normalized_gesture and len(normalized_gesture.get("strokes") or []) > 1:
+        policy = CapturePolicyEngine(upload_screenshots is True, default_capture_mode, sensitive_apps or (), app_capture_modes or {}) if default_capture_mode else None
+        snapshot["selection_materials"] = _capture_stroke_materials(material_windows, normalized_gesture, registry=registry, policy=policy)
     if audit_store is not None:
         try:
             audit_store.append("perception.resolved", {

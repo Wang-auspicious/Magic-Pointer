@@ -6,6 +6,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import sys
 import uuid
 from pathlib import Path
@@ -20,6 +21,18 @@ from app.ai_client import request_ai_config  # noqa: E402
 from scripts import selection_bridge  # noqa: E402
 
 _MAX_LINE_CHARS = 8 * 1024 * 1024
+
+# The client writes the request id first, so it survives even a line we refuse
+# to parse. Recovering it is what keeps a payload error from becoming silence:
+# electron/selection_worker_client.ts drops every reply whose id does not match
+# the request it is waiting on, so an id-less error is indistinguishable from a
+# worker that never answered, and the caller only sees its own timeout.
+_REQUEST_ID = re.compile(r'"id"\s*:\s*"([^"\\]{1,200})"')
+
+
+def _request_id_from_line(raw_line: str) -> str | None:
+    match = _REQUEST_ID.search(raw_line[:512])
+    return match.group(1) if match else None
 
 
 class _PayloadStdin:
@@ -70,12 +83,18 @@ def main() -> int:
     try:
         for raw_line in sys.stdin:
             if len(raw_line) > _MAX_LINE_CHARS:
-                _write({"id": None, "result": {"ok": False, "error": "payload_too_large"}})
+                _write({
+                    "id": _request_id_from_line(raw_line),
+                    "result": {"ok": False, "error": "payload_too_large"},
+                })
                 continue
             try:
                 request = json.loads(raw_line)
             except json.JSONDecodeError:
-                _write({"id": None, "result": {"ok": False, "error": "invalid_json"}})
+                _write({
+                    "id": _request_id_from_line(raw_line),
+                    "result": {"ok": False, "error": "invalid_json"},
+                })
                 continue
             request_id = str(request.get("id") or "") if isinstance(request, dict) else ""
             operation = str(request.get("op") or "run") if isinstance(request, dict) else ""

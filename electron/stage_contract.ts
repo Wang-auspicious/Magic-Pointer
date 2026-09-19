@@ -14,6 +14,9 @@ function recordOf(value: unknown): UnknownRecord {
 function pendingInputFromBridge(value: unknown): UnknownRecord | null {
   const pending = recordOf(value);
   const question = String(pending.question || '').trim().slice(0, 1000);
+  if (pending.kind === 'permission' && String(pending.tool || '').trim()) {
+    return { kind: 'permission', question, tool: String(pending.tool), prefix: String(pending.prefix || '') };
+  }
   const options = Array.isArray(pending.options)
     ? pending.options.map(String).map((item) => item.trim().slice(0, 200)).filter(Boolean).slice(0, 4)
     : [];
@@ -23,7 +26,7 @@ function pendingInputFromBridge(value: unknown): UnknownRecord | null {
 function modelUsageFromBridge(value: unknown): UnknownRecord | null {
   const raw = recordOf(value);
   const usage: UnknownRecord = {};
-  for (const key of ['inputTokens', 'outputTokens', 'totalTokens', 'turnsReported']) {
+  for (const key of ['inputTokens', 'outputTokens', 'totalTokens', 'turnsReported', 'cacheReadTokens', 'cacheWriteTokens', 'reasoningTokens']) {
     const count = Number(raw[key]);
     if (Number.isFinite(count) && count >= 0) usage[key] = Math.floor(count);
   }
@@ -221,7 +224,10 @@ const ERROR_MESSAGES = Object.freeze({
   bridge_stdin_error: '本地处理进程中断了。已完成的部分记录在会话里；请再试一次。',
   bridge_invalid_json: '本地处理返回了看不懂的结果，已停下。已完成的部分记录在会话里。',
   bridge_output_limit: '结果太大了，为了不卡住已经停下。已完成的部分记录在会话里；请缩小选区再试。',
-  payload_too_large: '这次选中的内容太大了。请缩小范围再试。',
+  // 「选中的内容太大」是错的诊断，用户照着它去缩小选区，而真正的上限在本地
+  // 传输层（Electron ↔ Python），与选区大小无关，也从未走到模型。实话实说，
+  // 并让用户知道重试是有意义的。
+  payload_too_large: '这次请求在本地传递时超出了上限，已经停下，没有发出任何动作，也没有交给模型。请重试一次；如果反复出现，请保留这次的会话记录。',
   capture_missing: '没有拿到这块屏幕的画面，因此没有把任何内容交给模型。',
   capture_policy_denied: '当前隐私设置不允许截取这块内容，已停下。可在「隐私与权限」里调整。',
   structured_context_unavailable: '没能从这个窗口读到可靠的文字，已停下没有猜测内容。',
@@ -300,7 +306,7 @@ function captureProofFromBridge(value: unknown) {
   });
 }
 
-function stageEventFromBridge(value: unknown) {
+function stagePresentationFromBridge(value: unknown) {
   const parsed = recordOf(value);
   if (!value || typeof value !== 'object') {
     return { type: 'ERROR', error: { message: '未收到可用结果。' } };
@@ -388,6 +394,28 @@ function stageEventFromBridge(value: unknown) {
     },
     ...proofFields,
   };
+}
+
+// The surface presentation and the durable turn carry the same runtime facts.
+// In particular COMPLETE is not a license to replace a real answer with a stock
+// sentence, and a failed tool can still have useful partial work to preserve.
+function stageEventFromBridge(value: unknown) {
+  const event = stagePresentationFromBridge(value);
+  const parsed = recordOf(value);
+  const runtime: UnknownRecord = {};
+  for (const key of [
+    'answer', 'agentSessionId', 'hasPendingWork', 'thinking', 'trajectory',
+    'activities', 'events', 'receipts', 'usedBackend', 'timingMs', 'taskContext',
+  ]) {
+    if (parsed[key] !== undefined) runtime[key] = parsed[key];
+  }
+  const usage = modelUsageFromBridge(parsed.modelUsage);
+  if (usage) runtime.modelUsage = usage;
+  const pendingInput = pendingInputFromBridge(parsed.pendingInput);
+  if (pendingInput) runtime.pendingInput = pendingInput;
+  return Object.keys(runtime).length
+    ? { ...event, result: { ...recordOf('result' in event ? event.result : null), ...runtime } }
+    : event;
 }
 
 module.exports = {

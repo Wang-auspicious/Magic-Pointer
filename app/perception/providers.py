@@ -88,6 +88,31 @@ _MEANINGFUL_ARTIFACT_KEYS = frozenset({
 # geometry that swallows the window, and content that is the app's own name.
 _CONTAINER_COVERAGE_REASONS = frozenset({"container_not_selection", "identity_only"})
 
+# Artifacts that name the object a read is about. See
+# ``context_is_explicitly_bound``: these are what let a geometry-less read
+# still answer about the mark.
+_BINDING_ARTIFACT_KEYS = frozenset({
+    "address",
+    "cell",
+    "css_selector",
+    "dom_selector",
+    "local_file",
+    "node",
+    "object",
+    "path",
+    "range",
+    "rows",
+})
+
+# UIA result kinds that are a selection or an element by construction, so the
+# read is about one object even when it reports no rectangles.
+_BOUND_RESULT_KINDS = frozenset({
+    "document_text",
+    "point_element",
+    "point_region",
+    "terminal_buffer",
+})
+
 
 def perception_layer(source: Any, context: AdapterReadContext | None = None) -> str:
     """Name the evidence layer a reader belongs to.
@@ -409,6 +434,22 @@ def context_rectangles(context: Any, *, limit: int = 32) -> list[list[int]]:
     return result
 
 
+def context_is_explicitly_bound(context: AdapterReadContext | None) -> bool:
+    """Did this read name a thing, or did it just return text?
+
+    A path, a cell, a range, a DOM node, a local file — those say which object
+    the read is about, and a read carrying one has answered about the mark
+    without needing geometry. Everything else is a paragraph, and a paragraph
+    cannot prove it is the marked line rather than the whole document.
+    """
+    artifacts = dict(getattr(context, "artifacts", {}) or {})
+    for key in _BINDING_ARTIFACT_KEYS:
+        if artifacts.get(key) not in (None, "", [], {}, ()):
+            return True
+    kind = str(artifacts.get("perception_result_kind") or "").strip()
+    return kind in _BOUND_RESULT_KINDS
+
+
 def _coverage(
     context: AdapterReadContext,
     request: PerceptionRequest,
@@ -420,6 +461,7 @@ def _coverage(
         window=request.window,
         element_rects=context_rectangles(context),
         mark_bbox=list(request.mark_bbox) if request.mark_bbox is not None else None,
+        has_explicit_binding=context_is_explicitly_bound(context),
     )
     return coverage.covers, coverage.reason
 
@@ -455,6 +497,8 @@ def observation_from_result(
 
     if usable and context is not None:
         covers_mark, coverage_reason = _coverage(context, request)
+        if "ocr_geometry_unavailable" in result.limitations:
+            covers_mark, coverage_reason = False, "ocr_geometry_unavailable"
         status = result.status or (
             EvidenceStatus.DEGRADED if error else EvidenceStatus.OK
         )

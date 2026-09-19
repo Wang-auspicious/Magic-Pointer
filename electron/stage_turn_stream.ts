@@ -183,11 +183,28 @@ function withKeptStrokes(snapshotValue: unknown, keptStrokeIndexesValue: unknown
   );
   const kept = strokes.filter((_stroke, index) => keep.has(index));
   if (kept.length === 0 || kept.length === strokes.length) return snapshotValue;
-  return {
+  const narrowed: UnknownRecord = {
     ...snapshot,
     selection_gesture: { ...gesture, strokes: kept },
     selection_bbox: null,
   };
+  // 每一笔的材料按位置跟在笔画旁边，并被 reference:<snapshotId>:<index> 这样
+  // 的锚点按位置寻址。删掉一笔却不删它的材料，那条锚点就还活着——它会带着
+  // 已删那笔的窗口、证据和 Look 锚点进入任务，用户删掉的材料照样被读。
+  // 位置重排后 stroke_index 要跟着改回新位置，两个数组才不会各说各话。
+  // 按原始位置逐个搬，位置即新下标：材料数永远等于留下的笔数，缺一个也不会
+  // 让后面所有材料整体错位。
+  const materials = snapshot.selection_materials;
+  if (Array.isArray(materials)) {
+    narrowed.selection_materials = strokes
+      .map((_stroke, index) => index)
+      .filter((index) => keep.has(index))
+      .map((originalIndex, position) => ({
+        ...(recordOf(materials[originalIndex]) || {}),
+        stroke_index: position,
+      }));
+  }
+  return narrowed;
 }
 
 /**

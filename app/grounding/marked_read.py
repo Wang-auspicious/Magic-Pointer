@@ -119,6 +119,7 @@ def structured_read_covers_mark(
     window: dict | None = None,
     element_rects: object = (),
     mark_bbox: object = None,
+    has_explicit_binding: bool | None = None,
 ) -> MarkCoverage:
     """Judge a structured read against the region the user marked.
 
@@ -126,6 +127,15 @@ def structured_read_covers_mark(
     pixels. Both are optional: adapters like Word COM and the DOM reader return
     real text with no geometry, and refusing those would trade one wrong answer
     for another. Geometry only ever *removes* confidence, never adds it.
+
+    ``has_explicit_binding`` is the other half of that trade, and it is opt-in:
+    a caller that knows whether the read named a *thing* (a path, a cell, a
+    range, a DOM node, a native selection) can say so, and a read that named
+    nothing is then not allowed to claim the mark merely for returning text.
+    Without geometry there is no evidence that the paragraph is the marked line
+    rather than the whole document, and calling that a hit is what switches the
+    pixel tier off. ``None`` keeps the previous behaviour, so callers with no
+    opinion are unaffected.
     """
     if not str(content or "").strip():
         return MarkCoverage(False, "no_structured_text")
@@ -135,6 +145,10 @@ def structured_read_covers_mark(
     mark = _rect(mark_bbox)
     rects = [rect for rect in (_rect(item) for item in list(element_rects or [])) if rect]
     if mark is None or not rects:
+        if mark is not None and has_explicit_binding is False:
+            # There is a mark to answer about and nothing here says which part
+            # of it was answered, so this stays context, not a hit.
+            return MarkCoverage(False, "unbound_text")
         return MarkCoverage(True, "structured_text")
 
     crossed = [rect for rect in rects if _intersects(rect, mark)]

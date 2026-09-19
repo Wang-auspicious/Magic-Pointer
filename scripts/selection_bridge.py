@@ -19,7 +19,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.bridge_progress import PhaseClock, StreamChunkBuffer
+from scripts.bridge_progress import PhaseClock, null_clock
+from app.agent_runtime.activity_projection import RuntimeActivitySink, completed_trajectory
 from app.actions.history import ActionHistoryStore, make_word_undo_proposal
 from app.actions.office import clean_replacement_text, make_word_replace_selection_proposal, wants_word_rewrite
 from app.actions.shopping_list import (
@@ -113,6 +114,7 @@ from app.fabric.settings import SettingsStore
 from app.file_context import format_local_file_context, read_local_file_context, wants_file_content
 from app.grounding.ocr_mark_selection import select_open_stroke_rect_indexes
 from scripts._bridge_common import (
+    MAX_SELECTION_PAYLOAD_BYTES,
     PayloadTooLargeError,
     read_bounded_json_payload,
 )
@@ -154,7 +156,7 @@ def _capture_settings():
 
 
 def read_payload() -> dict[str, Any]:
-    return read_bounded_json_payload()
+    return read_bounded_json_payload(MAX_SELECTION_PAYLOAD_BYTES)
 
 
 def _window_dicts() -> list[dict[str, Any]]:
@@ -889,6 +891,15 @@ def _fuse_pixel_tier(
         policy_mode=trace.get("policyMode"),
     )
     fused_trace = {**trace, **result.trace}
+    # Only the selected payload crosses the process boundary. The second
+    # fusion cannot recompute relations between the other structured reads;
+    # adding pixel evidence must not erase those first-stage facts.
+    for key in ("conflicts", "corroborations", "notes"):
+        records: list[dict[str, Any]] = []
+        for record in [*(trace.get(key) or []), *(result.trace.get(key) or [])]:
+            if isinstance(record, dict) and record not in records:
+                records.append(dict(record))
+        fused_trace[key] = records
     selected = result.selected
     if selected is None or selected.context is None:
         return app_ctx, fused_trace
@@ -907,6 +918,16 @@ def _fuse_pixel_tier(
         window=dict(target_window or selected.context.window or {}),
         artifacts=merged,
     ), fused_trace
+
+
+def _enrich_selection_materials(command: str, snapshot: dict[str, Any] | None) -> None:
+    for material in (snapshot or {}).get("selection_materials") or []:
+        child = {**snapshot, **material, "selection_materials": []}
+        context = AdapterReadContext.from_dict(material["context"]) if material.get("context") else None
+        context, trace = _fuse_pixel_tier(material.get("source_window"), context, child)
+        context = _enrich_local_file_context(command, context, child)
+        material["context"] = context.to_dict() if context else None
+        material["perception_trace"] = trace or {}
 
 
 # 用户是不是在问「哪里/怎么找到」——是的话回答要能指点（[POINT]）。
@@ -2393,6 +2414,38 @@ def _initial_task_context(
     snapshot_id = str(snap.get("snapshot_id") or "").strip()
     if not snapshot_id:
         return (), (), None, None
+    materials = snap.get("selection_materials") or []
+    if materials:
+        sources, updates, coverages = [], [], []
+        timeline = []
+        base_input = None
+        for index, material in enumerate(materials):
+            child = {**snap, **material, "selection_materials": []}
+            context_data = child.get("context")
+            context = AdapterReadContext.from_dict(context_data) if context_data else None
+            child_sources, child_updates, coverage, child_input = _initial_task_context(
+                task_id, instruction, selection_session_id, child.get("source_window"), context, child)
+            source = replace_dataclass(child_sources[0], source_id=f"{child_sources[0].source_id}:{index}")
+            binding = child_updates[0].binding
+            locator = FragmentLocator(binding.locator.kind, {**binding.locator.value, "strokeIndex": index,
+                "snapshotId": snapshot_id, "bbox": list(child["selection_bbox"])})
+            binding = replace_dataclass(binding, reference_id=f"{binding.reference_id}:{index}", source_id=source.source_id,
+                                        locator=locator, label=chr(ord("A") + index), ordinal=index + 1)
+            if "frozenSelection" in source.identity:
+                source = replace_dataclass(source, identity={**source.identity, "frozenSelection": {
+                    **source.identity["frozenSelection"], "locator": locator.to_dict()}})
+            sources.append(source)
+            updates.append(ReferenceUpdate("add", binding))
+            coverages.append(coverage)
+            base_input = child_input
+            timeline.append({"eventId": f"point:{binding.reference_id}", "kind": "point", "startMs": binding.captured_at_ms,
+                             "endMs": binding.captured_at_ms, "referenceId": binding.reference_id})
+        task_input = TaskInput.from_dict({**base_input.to_dict(), "inputId": f"input:{snapshot_id}:1",
+            "sourceIds": [s.source_id for s in sources], "referenceUpdates": [u.to_dict() for u in updates], "timeline": timeline})
+        coverage = Coverage(extent="selection", read_ranges=tuple(u.binding.locator.value for u in updates),
+                            total_units=len(sources), complete=all(c.complete for c in coverages), next_cursor=None,
+                            missing_reason=None if all(c.complete for c in coverages) else "some-materials-not-read")
+        return tuple(sources), tuple(updates), coverage, task_input
     safe = re.sub(r"[^A-Za-z0-9._:-]+", "-", snapshot_id).strip("-.")
     source_id = f"source:{safe}"
     context = dict(snap.get("context") or {})
@@ -2499,7 +2552,7 @@ def _initial_task_context(
         for index, item in enumerate(locators)
     )
     content = str(getattr(app_ctx, "content", "") or "") if app_ctx is not None else ""
-    complete = len(content) <= 12_000
+    complete = bool(content.strip()) and len(content) <= 12_000 and not getattr(app_ctx, "error", None)
     coverage = Coverage(
         extent="selection",
         read_ranges=tuple(item.value for item in locators),
@@ -2508,6 +2561,11 @@ def _initial_task_context(
         next_cursor=None,
         missing_reason=None if complete else "bounded-preview-only",
     )
+    if content.strip() and not identity.get("absolutePath") and source_kind in {"capture", "chat"}:
+        source = replace_dataclass(source, identity={**source.identity, "frozenSelection": {
+            "text": content[:12_000], "locator": locator.to_dict(), "coverage": coverage.to_dict(),
+            "usedBackend": str(getattr(app_ctx, "method", "") or "selection_snapshot"),
+        }})
     updates = tuple(ReferenceUpdate("add", binding) for binding in bindings)
     timeline = [{
         "eventId": f"point:{binding.reference_id}:{captured_ms}",
@@ -2527,6 +2585,58 @@ def _initial_task_context(
         "capturedAtMs": captured_ms,
     })
     return (source,), updates, coverage, task_input
+
+
+def _snapshot_element_boxes(snapshot: dict | None) -> dict[str, tuple[int, int, int, int]]:
+    """把快照发布的元素句柄变成 ``element:<ref>`` 可解析的矩形（LTRB）。
+
+    句柄是结构化读取**真的拿到过**的控件的应用自身几何（`element_handles.py`
+    的 `A#<id>` / `<TYPE>-<slug>` / 冲突 `-2`），所以按句柄去 Look，用的是窗口
+    给的坐标，而不是模型从截图里记住的坐标——「看错、偏移」那一类错误正是从
+    后者来的。快照没发句柄（例如自绘应用走 OCR）时这里就是空的，`element:`
+    锚点照旧诚实地解析失败。
+    """
+    artifacts = ((snapshot or {}).get("context") or {}).get("artifacts")
+    handles = (artifacts or {}).get("element_handles")
+    if not isinstance(handles, list):
+        return {}
+    boxes: dict[str, tuple[int, int, int, int]] = {}
+    for handle in handles:
+        if not isinstance(handle, dict):
+            continue
+        ref = str(handle.get("ref") or "").strip()
+        rect = handle.get("rect")
+        if not ref or not isinstance(rect, (list, tuple)) or len(rect) != 4:
+            continue
+        try:
+            x, y, width, height = (int(round(float(value))) for value in rect)
+        except (TypeError, ValueError):
+            continue
+        if width <= 0 or height <= 0:
+            continue
+        boxes[f"element:{ref}"] = (x, y, x + width, y + height)
+    return boxes
+
+
+def _frozen_reference_resolver(updates, snapshot):
+    boxes = {}
+    for update in updates:
+        binding = update.binding
+        value = binding.locator.value
+        if value.get("snapshotId") != snapshot.get("snapshot_id"):
+            continue
+        bbox = value.get("bbox")
+        if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+            continue
+        x, y, width, height = (int(v) for v in bbox)
+        # Supported underline gestures can be thinner than the vision crop's
+        # minimum; include their immediate context without changing the anchor.
+        pad_x, pad_y = max(0, 32 - width) // 2, max(0, 32 - height) // 2
+        boxes[binding.reference_id] = (x - pad_x, y - pad_y, x + width + pad_x, y + height + pad_y)
+    # 同一个对象只有一次定位：圈选引用和元素句柄都解析到这一张表上，模型不必
+    # 自己编 bbox。两者键名前缀不同（`reference:` / `element:`），不会互相顶掉。
+    boxes.update(_snapshot_element_boxes(snapshot))
+    return boxes.get
 
 
 def _persist_initial_task_context(
@@ -2674,27 +2784,8 @@ def _loop_router(
             source.source_id,
             FigmaSourceReader(figma_client),
         )
-    if initial_sources and initial_coverage is not None and initial_updates:
-        has_local_file = bool(initial_sources[0].identity.get("absolutePath"))
-        fallback_reader = (
-            document_reader if has_local_file
-            else browser_reader if initial_sources[0].kind == "web"
-            else chat_reader if initial_sources[0].kind == "chat"
-            else None
-        )
-        frozen_reader = FrozenSelectionReader((FrozenSelectionMaterial(
-            source_id=initial_sources[0].source_id,
-            text=_evidence_content(app_ctx) if app_ctx is not None else "",
-            locator=initial_updates[0].binding.locator,
-            coverage=initial_coverage,
-            used_backend=str(getattr(app_ctx, "method", "") or "selection_snapshot"),
-        ),), fallback=fallback_reader)
-        for source in initial_sources:
-            # Chat is an ongoing surface: the frozen gesture remains in the
-            # InputArtifact/reference, while Context.read must be allowed to
-            # inspect the current semantic neighborhood and later history.
-            if source.kind not in {"chat", "figma"}:
-                source_readers.register_source(source.source_id, frozen_reader)
+    # SourceReaderRegistry reopens durable frozen selections per source.
+    # Local files use DocumentReader, never the filename-only selection text.
 
     active_engine = FabricEngine(model_transform=_local_model_transform)
 
@@ -2800,9 +2891,11 @@ def _loop_router(
         # 后台 job 完成推送：cell 先进 runtime，durable session 打开后回填。
         "session_inbox": lambda text: (_inbox_cell["fn"] or (lambda _t: None))(text),
         "source_session_getter": lambda: _source_session_cell["value"],
+        "session_id": agent_session_id,
         "source_readers": source_readers,
         "vision_backend": FileVisionBackend(),
         "frame_crop": crop_bytes,
+        "frame_resolver": _frozen_reference_resolver(initial_updates, snapshot or {}),
         "frame_captured_at": str((snapshot or {}).get("captured_at") or "gesture time"),
         "guard_probe": _BridgeGuardProbe(target_window),
         "selection_anchor": _build_selection_anchor(
@@ -2901,103 +2994,36 @@ def _loop_router(
     first_input = command
     evidence_block = "[本次圈选对象证据]\n" + input_artifact.to_model_text()
 
-    # 流式正文的发送端。electron/main.ts 的 onProgress 一直在等
-    # phase=answer_chunk，收到就 appendStageLiveAnswer 把增量画进当前回合；
-    # 这条通道的接收端从建好那天起就是通的，发送端却从来没写过——于是圈点
-    # 这条主路径上，答案只在整轮结束时一次性出现，用户看到的是一段没有反馈的
-    # 等待。Studio 那条路径（conversation_bridge）一直在发，所以同一个模型、
-    # 同一轮对话，两个界面的"快"完全不同。
-    #
-    # 攒到一个刷新间隔再发，而不是每个 token 发一次：进度通道是行协议，逐
-    # token 发会把 stderr 打爆，而 120ms 一次在视觉上已经是连续的。缓冲和
-    # 节流逻辑与 conversation_bridge 共用同一个实现，避免两条路径再次分叉。
-    _answer_stream = StreamChunkBuffer(clock, "answer_chunk")
+    # The same projection feeds both surfaces: answer_chunk/reasoning_chunk,
+    # tool_result, activities and trajectory are identical runtime facts.
+    activity_sink = RuntimeActivitySink(clock or null_clock("selection"), request_header=request_header)
 
     def progress_sink(event) -> None:
-        """Loop events -> bridge progress phases (UI heartbeat, review T1).
+        from app.agent_runtime.loop import BackendRecovery, FollowupContinued, Steered
 
-        Each model round becomes a visible step; a budget renewal shows as
-        a heartbeat so a long productive loop reads as progress instead of
-        a hang. The first event also carries the durable agent session id so
-        the GUI can address steer/cancel at the session while the bridge is
-        still running. Steer/follow-up absorption and compaction are visible
-        too (O7): a course correction or a context reset must not look like
-        the loop silently ignored it.
-
-        Model text deltas are the exception to "a mark per event": they are
-        buffered and flushed on an interval, because there is one per token."""
-        from app.agent_runtime.loop import (
-            BackendRecovery,
-            BudgetRenewed,
-            FollowupContinued,
-            LoopStart,
-            LoopStopped,
-            ModelChunk,
-            Steered,
-            ToolCallFinished,
-            ToolCallStarted,
-            ToolsTruncated,
-            TurnFinished,
-            TurnStarted,
-        )
-        from app.agent_runtime.types import TransitionReason
-
+        activity_sink(event)
         if clock is None:
             return
-        if isinstance(event, ModelChunk):
-            _answer_stream.append(str(getattr(event, "text", "") or ""))
-            return
-        # A turn boundary or the end of the loop must not strand the tail of
-        # the answer in the buffer: whatever is left belongs on screen now.
-        if isinstance(event, (TurnFinished, LoopStopped)):
-            _answer_stream.flush()
-        if isinstance(event, LoopStart):
+        kind = str(getattr(event, "kind", ""))
+        if kind == "loop_start":
             clock.mark("loop_started", session=agent_session_id)
-        elif isinstance(event, ToolsTruncated):
-            dropped_count = len(event.dropped)
-            names = ",".join(str(name) for name in event.dropped[:4])[:120]
+        elif kind == "tools_truncated":
+            dropped = tuple(getattr(event, "dropped", ()))
             clock.mark(
-                "tools_truncated",
-                count=event.limit + dropped_count,
-                limit=event.limit,
-                dropped=dropped_count,
-                names=names,
+                "tools_truncated", count=event.limit + len(dropped),
+                limit=event.limit, dropped=len(dropped),
+                names=",".join(str(name) for name in dropped[:4])[:120],
             )
-        elif isinstance(event, TurnStarted):
-            clock.mark("model_request", turn=event.turn)
-        elif isinstance(event, TurnFinished):
-            if event.state.transition is TransitionReason.COMPACT_TRIGGERED:
+        elif kind == "turn_finished":
+            transition = getattr(getattr(event, "state", None), "transition", None)
+            if getattr(transition, "value", "") == "compact_triggered":
                 clock.mark("context_compacted", turn=event.state.turn_count)
-            else:
-                clock.mark("model_response", turn=event.state.turn_count)
-        elif isinstance(event, BudgetRenewed):
+        elif kind == "budget_renewed":
             clock.mark("loop_progress", turn=event.turn, renewals=event.renewals_used)
-        elif isinstance(event, ToolCallStarted):
-            clock.mark("tool_call", name=event.name, id=event.id)
-        elif isinstance(event, ToolCallFinished):
-            result = event.result
-            clock.mark_blob("tool_activity", _encode_activity({
-                "id": str(getattr(result, "tool_call_id", "") or ""),
-                **tool_activity_line(
-                    getattr(result, "tool_name", None) or "",
-                    getattr(result, "arguments", None),
-                    is_error=bool(getattr(result, "is_error", False)),
-                    error_message=getattr(result, "failure_type", None),
-                    value=getattr(result, "value", None),
-                ),
-            }))
-        elif isinstance(event, Steered):
+        elif isinstance(event, (Steered, FollowupContinued)):
             clock.mark(
-                "steer_absorbed",
-                turn=event.turn,
-                input=",".join(event.input_ids)[:200],
-                referenceRevision=event.reference_revision,
-            )
-        elif isinstance(event, FollowupContinued):
-            clock.mark(
-                "followup_continued",
-                turn=event.turn,
-                input=",".join(event.input_ids)[:200],
+                "steer_absorbed" if isinstance(event, Steered) else "followup_continued",
+                turn=event.turn, input=",".join(event.input_ids)[:200],
                 referenceRevision=event.reference_revision,
             )
         elif isinstance(event, BackendRecovery):
@@ -3139,6 +3165,12 @@ def _loop_router(
         mapped["selectionSessionId"] = selection_session_id or None
         mapped["selectionSnapshotId"] = selection_snapshot_id
         mapped["agentSessionId"] = agent_session_id
+        mapped["activities"] = activity_sink.activities
+        mapped["trajectory"] = completed_trajectory(
+            mapped, activity_sink.trajectory, question=command,
+        )
+        mapped["thinking"] = "".join(activity_sink.turn_reasoning).strip()
+        mapped["timingMs"] = activity_sink.clock.mark("runtime_completed")
         mapped["inputArtifact"] = input_artifact_public
         if selection_todo_store is not None and selection_todo_store.has_items():
             mapped["plan"] = {"steps": selection_todo_store.read()}
@@ -3193,7 +3225,8 @@ def _loop_interaction_metadata(result: dict[str, Any] | None) -> dict[str, Any]:
     if isinstance(raw_usage, dict):
         normalized_usage = {
             key: max(0, int(raw_usage[key]))
-            for key in ("inputTokens", "outputTokens", "totalTokens", "turnsReported")
+            for key in ("inputTokens", "outputTokens", "totalTokens", "turnsReported",
+                        "cacheReadTokens", "cacheWriteTokens", "reasoningTokens")
             if isinstance(raw_usage.get(key), (int, float))
             and not isinstance(raw_usage.get(key), bool)
         }
@@ -3203,16 +3236,27 @@ def _loop_interaction_metadata(result: dict[str, Any] | None) -> dict[str, Any]:
     if isinstance(raw_pending, dict):
         question = str(raw_pending.get("question") or "").strip()[:1000]
         raw_options = raw_pending.get("options")
+        if question and raw_pending.get("kind") == "permission":
+            pending = {"question": question, "kind": "permission"}
+            for key in ("tool", "prefix"):
+                if str(raw_pending.get(key) or "").strip():
+                    pending[key] = str(raw_pending[key]).strip()
         if question and isinstance(raw_options, list):
             options = [
                 str(option).strip()[:200]
                 for option in raw_options[:4]
                 if str(option).strip()
             ]
-            if len(options) >= 2:
+            if pending is not None:
+                pending["options"] = options
+            elif len(options) >= 2:
                 pending = {"question": question, "options": options}
     awaiting = value.get("awaitingUserInput") is True and pending is not None
     return {
+        **{key: value[key] for key in (
+            "agentSessionId", "trajectory", "activities", "thinking", "usedBackend", "timingMs",
+            "hasPendingWork", "receipts", "loopReceipts", "events",
+        ) if key in value},
         "modelUsage": usage,
         "awaitingUserInput": awaiting,
         "pendingInput": pending if awaiting else None,
@@ -3449,6 +3493,7 @@ def main() -> int:
     _enrich_interaction_episode_ocr(payload, app_ctx)
     clock.mark("enrich_screen_region")
     app_ctx = _enrich_local_file_context(command, app_ctx, snapshot)
+    _enrich_selection_materials(command, snapshot)
     clock.mark("enrich_local_file")
 
     exact_readback = _exact_readback_response(payload, app_ctx, snapshot)
