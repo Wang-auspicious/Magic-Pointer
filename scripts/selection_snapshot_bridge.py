@@ -65,7 +65,7 @@ MAGIC_WINDOW_TITLES = {"Magic Pointer Overlay", "Magic Pointer Panel", "Magic Po
 # being true. Nothing gates a question on it — the 120s gate that used to live
 # in selection_bridge is gone, because it failed second questions on evidence
 # that was still on disk.
-SNAPSHOT_TTL_SECONDS = 3 * 86400  # matches the default capture retain_days
+SNAPSHOT_TTL_SECONDS = 7 * 86400  # matches the default capture retain_days
 VISUAL_REGION_WIDTH = 640
 VISUAL_REGION_HEIGHT = 420
 POINTER_ANCHOR_SIZE = 16
@@ -1786,18 +1786,36 @@ def _prune_capture_dir(
     retain_days: int,
     *,
     now: datetime | None = None,
+    pattern: str = "screen-*.png",
+    keep: Path | str | None = None,
 ) -> int:
-    """Remove only expired Magic Pointer screen captures from one known directory."""
+    """Remove only expired Magic Pointer captures from one known directory.
+
+    删除范围必须**点名**：`pattern` 由调用方给出，这个函数绝不按目录扫。冻结帧
+    目录（`frame-leases/`）里放的是每个手势一张整屏 PNG 加上一份带笔迹的副本，
+    没有这一道就会一直涨——实测一下午 44 个文件、约 64 MB。
+
+    ``keep`` 是这一次正在用的那一份。按 mtime 它本来就删不到，但「正在用的证据
+    不会被自己删掉」不该依赖时钟对不对。
+    """
     output_dir = Path(capture_dir).resolve()
     if not output_dir.is_dir():
         return 0
     keep_days = max(0, int(retain_days))
     cutoff = (now or datetime.now(timezone.utc)).timestamp() - (keep_days * 86400)
+    protected: Path | None = None
+    if keep is not None:
+        try:
+            protected = Path(keep).resolve()
+        except OSError:
+            protected = None
     removed = 0
-    for candidate in output_dir.glob("screen-*.png"):
+    for candidate in output_dir.glob(pattern):
         try:
             resolved = candidate.resolve()
             if resolved.parent != output_dir or not resolved.is_file():
+                continue
+            if protected is not None and resolved == protected:
                 continue
             if resolved.stat().st_mtime < cutoff:
                 resolved.unlink()
@@ -1872,7 +1890,7 @@ def _capture_visual_region(
     capture_bbox: tuple[int, int, int, int] | None = None,
     visual_capture: Any | None = None,
     capture_dir: Path | str | None = None,
-    retain_days: int = 3,
+    retain_days: int = 7,
     identity_probe: Any | None = None,
     gesture_points: list[tuple[int, int]] | None = None,
     clock: PhaseClock | None = None,
@@ -2085,7 +2103,7 @@ def capture_snapshot(
     allow_visual_fallback: bool = True,
     sensitive_apps: list[str] | tuple[str, ...] | None = None,
     foreground_app: str = "",
-    retain_captures_days: int = 3,
+    retain_captures_days: int = 7,
     identity_probe: Any | None = None,
     upload_screenshots: bool | None = None,
     default_capture_mode: str | None = None,
@@ -2138,6 +2156,17 @@ def capture_snapshot(
                 "phase": "complete",
             },
         }
+        # 冻结帧目录也按同一个保留天数清理。它以前没人管：每个手势一张整屏 PNG，
+        # 加上这一版新增的带笔迹副本，只增不减。
+        try:
+            _prune_capture_dir(
+                Path(frozen_visual["path"]).parent,
+                retain_captures_days,
+                pattern="frame-*.png",
+                keep=frozen_visual["path"],
+            )
+        except OSError:
+            pass
     live_window_source = windows is None
     normalized_target_point = _normalized_point(target_point)
     normalized_gesture = _normalized_gesture(gesture)

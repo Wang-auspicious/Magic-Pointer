@@ -29,6 +29,11 @@ interface ModelProfile {
   provider: string;
   resolved: Record<string, string>;
   schemaVersion: number;
+  defaultContextWindow?: number;
+  defaultMaxTokens?: number;
+  transport?: string;
+  headers?: Record<string, string>;
+  models?: Record<string, unknown>[];
 }
 
 interface ScopedGrant {
@@ -152,7 +157,7 @@ function defaultSettings() {
       background_learning_enabled: false,
       default_capture_mode: 'follow_global',
       app_capture_modes: {},
-      retain_captures_days: 3,
+      retain_captures_days: 7,
       retain_artifacts_days: 30,
       retain_audit_days: 30,
       sensitive_apps: ['1password', 'keepass', 'bitwarden', 'wallet', '银行'],
@@ -230,7 +235,7 @@ function validateModels(value: ReturnType<typeof defaultSettings>['models'], def
       const normalizedKey = String(key).replace(/[^a-z0-9]/gi, '').toLowerCase();
       const containsSecret = ['apikey', 'token', 'secret', 'credential', 'password', 'authorization']
         .some((token) => normalizedKey.includes(token));
-      if (containsSecret && normalizedKey !== 'credentialref') {
+      if (containsSecret && !['credentialref', 'defaultmaxtokens'].includes(normalizedKey)) {
         throw new Error('credential values must not be stored in model profiles');
       }
     }
@@ -247,12 +252,12 @@ function validateModels(value: ReturnType<typeof defaultSettings>['models'], def
     }
     const inputOverrides = raw.overrides && typeof raw.overrides === 'object' ? raw.overrides : {};
     const inputResolved = raw.resolved && typeof raw.resolved === 'object' ? raw.resolved : {};
-    const overrides = Object.fromEntries(['visionInput', 'audioInput', 'toolCalls'].map((name) => {
+    const overrides = Object.fromEntries(['audioInput', 'toolCalls'].map((name) => {
       const resolved = String(inputOverrides[name] || 'auto').trim().toLowerCase();
       if (!overrideValues.has(resolved)) throw new Error(`model profile override ${name} is invalid`);
       return [name, resolved];
     }));
-    const resolved = Object.fromEntries(['visionInput', 'audioInput', 'toolCalls'].map((name) => {
+    const resolved = Object.fromEntries(['audioInput', 'toolCalls'].map((name) => {
       const capability = String(inputResolved[name] || 'unknown').trim().toLowerCase();
       if (!capabilityValues.has(capability)) throw new Error(`model profile resolved ${name} is invalid`);
       return [name, capability];
@@ -270,6 +275,11 @@ function validateModels(value: ReturnType<typeof defaultSettings>['models'], def
       apiMode,
       credentialRef: String(raw.credentialRef || '').trim(),
       enabled: raw.enabled !== false,
+      ...(raw.defaultContextWindow !== undefined ? { defaultContextWindow: Number(raw.defaultContextWindow) } : {}),
+      ...(raw.defaultMaxTokens !== undefined ? { defaultMaxTokens: Number(raw.defaultMaxTokens) } : {}),
+      ...(raw.transport !== undefined ? { transport: String(raw.transport) } : {}),
+      ...(raw.headers && typeof raw.headers === 'object' ? { headers: { ...raw.headers } } : {}),
+      ...(Array.isArray(raw.models) ? { models: raw.models.map((entry) => ({ ...entry })) } : {}),
       overrides,
       resolved,
     };

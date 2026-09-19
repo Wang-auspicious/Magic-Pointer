@@ -112,6 +112,8 @@ def request_ai_config(value: object, *, session_id: str | None = None) -> Iterat
         }
     if isinstance(raw.get("models"), list):
         request_config["models"] = [dict(item) for item in raw["models"] if isinstance(item, dict)]
+    if raw.get("defaultContextWindow"):
+        request_config["defaultContextWindow"] = raw["defaultContextWindow"]
     _REQUEST_AI_CONFIG = request_config if any(request_config.values()) else None
     try:
         yield
@@ -158,6 +160,33 @@ def get_ai_model_catalog() -> list[dict]:
     return [dict(item) for item in _REQUEST_AI_CONFIG["models"] if isinstance(item, dict)]
 
 
+def get_ai_context_window(model_name: str | None = None, metadata: dict | None = None) -> int:
+    """Per-model metadata wins; known families precede the profile fallback.
+
+    Compatible gateways use several spellings for the same context limit.
+    Keep the catalog display and the Runtime compaction budget on this path.
+    """
+    from app.agent_runtime.model_profiles import context_window_for
+
+    name = model_name or get_ai_config()[2]
+    row = metadata if metadata is not None else next((
+        item for item in get_ai_model_catalog()
+        if str(item.get("id") or item.get("model") or "").strip() == name
+    ), {})
+    top_provider = row.get("top_provider") or {}
+    for value in (
+        row.get("contextWindow"), row.get("context_length"), row.get("context_window"),
+        top_provider.get("context_length") if isinstance(top_provider, dict) else None,
+    ):
+        try:
+            if value is not None and int(value) > 0:
+                return int(value)
+        except (TypeError, ValueError):
+            continue
+    default = int((_REQUEST_AI_CONFIG or {}).get("defaultContextWindow") or 64_000)
+    return context_window_for(name, default=default)
+
+
 def get_ai_api_mode(base_url: str | None = None) -> str:
     """Protocol for the configured gateway; legacy installs stay OpenAI-compatible."""
     if _REQUEST_AI_CONFIG:
@@ -182,90 +211,11 @@ def get_ai_effort() -> str:
     return "high"
 
 
-def get_vision_model(text_model: str) -> str:
-    """Vision calls may use a different model than the text path.
-
-    The default text model is often text-only; a separate vision model is
-    configured via MAGIC_POINTER_VISION_MODEL or secrets/vision_model.txt.
-    """
-    return os.getenv("MAGIC_POINTER_VISION_MODEL") or read_local_secret("vision_model.txt") or text_model
-
-
-def get_vision_base_url(text_base_url: str | None) -> str | None:
-    """Vision may live on a different gateway than the text model.
-
-    Configured via MAGIC_POINTER_VISION_BASE_URL or secrets/vision_base_url.txt;
-    falls back to the text-path gateway.
-    """
-    return os.getenv("MAGIC_POINTER_VISION_BASE_URL") or read_local_secret("vision_base_url.txt") or text_base_url
-
-
-def get_vision_key(text_api_key: str | None) -> str | None:
-    """Vision may use its own credential (e.g. a Google AI Studio key).
-
-    Configured via MAGIC_POINTER_VISION_KEY or secrets/vision_key.txt;
-    falls back to the text-path key.
-    """
-    return os.getenv("MAGIC_POINTER_VISION_KEY") or read_local_secret("vision_key.txt") or text_api_key
-
-
-# ── vision capability classification ─────────────────────────────────
-# Adapted from external/claude-code-vision-skill/vision/vision.py
-# (TEXT_ONLY_MODEL_PATTERNS). A text-only model that receives an image
-# usually returns HTTP 200 with empty content: one wasted request plus a
-# confusing empty answer. Classifying upfront lets the vision path refuse
-# honestly instead of guessing. Unknown models are never refused.
-# Measured on OpenCode Go 2026-08-07 (data/runtime/probe_go_vision.py):
-#   vision OK: kimi-k3, qwen3.7-plus   |   text-only: deepseek-*, glm-5.1/5.2,
-#   hy3, mimo-v2-omni (unserved)       |   glm-5v / glm-4.6v are the vision lines.
-_TEXT_ONLY_MODEL_PATTERNS = (
-    re.compile(r"deepseek"),
-    re.compile(r"gpt-oss"),
-    re.compile(r"llama-3\.[13]-"),
-    re.compile(r"glm-4\.[56](?!v)"),
-    re.compile(r"glm-5(?!v)"),
-    re.compile(r"kimi-k2-"),
-    re.compile(r"qwen3-coder"),
-    re.compile(r"devstral"),
-    re.compile(r"hy3"),
-)
-
-_VISION_MODEL_PATTERNS = (
-    re.compile(r"kimi-k3"),
-    re.compile(r"kimi-k2\.[5-9]"),
-    re.compile(r"qwen3\.[5-9]-plus"),
-    re.compile(r"qwen3\.8-max"),
-)
-
-
-def classify_vision_capability(model: str) -> bool | None:
-    """True = known vision model; False = known text-only; None = unknown.
-
-    Only an explicit False refuses the call; None and True both proceed
-    (unknown may still see images — a mislabeled model is cheaper than a
-    blocked call).
-    """
-    m = str(model or "").casefold()
-    for pattern in _TEXT_ONLY_MODEL_PATTERNS:
-        if pattern.search(m):
-            return False
-    for pattern in _VISION_MODEL_PATTERNS:
-        if pattern.search(m):
-            return True
-    return None
-
-
-def get_vision_api_mode(base_url: str | None = None) -> str:
-    """Protocol for the vision model; falls back to the text-path detection."""
-    explicit = os.getenv("MAGIC_POINTER_VISION_API_MODE") or read_local_secret("vision_api_mode.txt")
-    mode = str(explicit or "").strip().casefold()
-    if mode in {"messages", "anthropic"}:
-        return "messages"
-    if mode in {"chat-completions", "openai"}:
-        return "chat-completions"
-    if mode in {"responses", "local"}:
-        return mode
-    return get_ai_api_mode(base_url)
+# 没有「文字模型 / 视觉模型」这一分：一个模型就是一个模型。图像和文字走同一条
+# 已被选中的 profile，能不能看图由那次请求的结果回答，不由一张模型名模式表预先
+# 判定。曾经这里有 `classify_vision_capability`：它用正则给模型名分类，命中
+# text-only 就**在发请求之前**拒绝读图，于是「OCR 明明读到了但那行还是答不出来」
+# 这类问题会被伪装成「模型不支持」。
 
 
 def _completion_endpoint(base_url: str | None, api_mode: str) -> str:
@@ -714,6 +664,31 @@ def ask_text_model(
                 record_success(model=model, base_url=base_url)
                 answer = _text_completion_response(data, api_mode)
                 if not answer:
+                    # HTTP 200 with nothing visible is the quiet twin of the
+                    # 400 above: the gateway took an optional reasoning
+                    # control it did not understand and spent the whole
+                    # budget on it. Measured on mimo-v2.5 (2026-09-16, same
+                    # prompt, one variable): with `thinking: disabled` it
+                    # answered finish=length / content=None in 53.0s, and
+                    # without it answered in 31.0s. So the quiet twin gets
+                    # the same one stripped retry the loud one already got,
+                    # before we tell the user we failed.
+                    stripped = _without_optional_request_fields(payload)
+                    if stripped is not None:
+                        try:
+                            with _httpx_client(httpx, timeout=budget) as client:
+                                retry = client.post(
+                                    endpoint, headers=headers, json=stripped
+                                )
+                        except httpx.TimeoutException:
+                            request_timed_out = True
+                            continue
+                        if retry.status_code < 400:
+                            data = retry.json()
+                            answer = _text_completion_response(data, api_mode)
+                            if answer:
+                                return answer
+                if not answer:
                     detail = _empty_answer_evidence(data, api_mode)
                     record_failure(
                         status=None,
@@ -907,26 +882,11 @@ def ask_vision_model(
     """Ask an OpenAI-compatible multimodal model about the screenshot."""
 
     api_key, base_url, model = get_ai_config()
-    model = get_vision_model(model)
-    api_key = get_vision_key(api_key)
-    base_url = get_vision_base_url(base_url)
-    api_mode = get_vision_api_mode(base_url)
-    if classify_vision_capability(model) is False:
-        # A local configuration verdict, not a gateway failure: writing it
-        # into the shared health store would open the circuit for the text
-        # endpoint too (and it may be a different gateway entirely). Refuse
-        # honestly and leave every endpoint's health untouched.
-        return (
-            f"AI 视觉调用失败：当前模型 {model} 是纯文本模型，无法读图。\n\n"
-            f"截图已保存在本地：{image_path}\n\n"
-            "配置视觉模型：secrets/vision_model.txt（如 qwen3.7-plus）+ "
-            "secrets/vision_api_mode.txt（messages），或用环境变量 "
-            "MAGIC_POINTER_VISION_MODEL / MAGIC_POINTER_VISION_API_MODE。"
-        )
+    api_mode = get_ai_api_mode(base_url)
     if not api_key and api_mode != "local":
         record_unconfigured()
         return (
-            "已完成截图与对象登记，但未检测到 OPENAI_API_KEY 或 secrets/openai_key.txt，所以没有调用多模态模型。\n\n"
+            f"{AI_FAILURE_PREFIX}未检测到 OPENAI_API_KEY 或 secrets/openai_key.txt，所以没有调用多模态模型。\n\n"
             f"截图已保存：{image_path}\n\n"
             "可通过环境变量或 secrets/openai_key.txt 配置 key。"
         )
@@ -947,7 +907,7 @@ def ask_vision_model(
             if callable(checker):
                 checker()
 
-        api_mode = get_vision_api_mode(base_url)
+        api_mode = get_ai_api_mode(base_url)
         endpoint = _completion_endpoint(base_url, api_mode)
         headers = _completion_headers(api_key, api_mode, base_url=base_url)
         def normalize_labeled_extras() -> list[LabeledImage]:
@@ -1066,7 +1026,7 @@ def ask_vision_model(
         raise
     except Exception as exc:
         return (
-            "AI \u8c03\u7528\u5931\u8d25\uff0c\u4f46\u622a\u56fe\u548c\u5bf9\u8c61\u5df2\u4fdd\u7559\u3002\n\n"
+            f"{AI_FAILURE_PREFIX}截图和对象已保留。\n\n"
             f"\u9519\u8bef\uff1a{type(exc).__name__}: {exc}\n\n"
             "\u6211\u5df2\u5bf9\u517c\u5bb9\u7f51\u5173\u7684 SSL/\u65ad\u8fde\u95ee\u9898\u505a\u4e86\u91cd\u8bd5\u548c\u964d\u7ea7\u5904\u7406\u3002\u5982\u679c\u4ecd\u7136\u5931\u8d25\uff0c\u901a\u5e38\u662f\u670d\u52a1\u7aef\u6216\u7f51\u7edc\u77ed\u65f6\u4e0d\u7a33\uff0c\u53ef\u7a0d\u540e\u91cd\u8bd5\uff0c\u6216\u68c0\u67e5 secrets/openai_base_url.txt / secrets/model.txt\u3002"
         )

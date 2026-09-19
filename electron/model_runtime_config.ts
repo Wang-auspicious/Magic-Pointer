@@ -26,9 +26,8 @@ function groqProfile(): UnknownRecord {
     apiMode: 'chat-completions',
     credentialRef: GROQ_CREDENTIAL_REF,
     enabled: true,
-    overrides: { visionInput: 'no', audioInput: 'no', toolCalls: 'auto' },
+    overrides: { audioInput: 'no', toolCalls: 'auto' },
     resolved: {
-      visionInput: 'no',
       audioInput: 'no',
       toolCalls: 'unknown',
       source: 'groq_production_catalog',
@@ -159,8 +158,8 @@ function promoteLegacyProfile(settings: UnknownRecord, legacy: UnknownRecord): U
     defaultContextWindow: 262144,
     defaultMaxTokens: 32768,
     transport: 'auto',
-    overrides: { visionInput: 'auto', audioInput: 'auto', toolCalls: 'auto' },
-    resolved: { visionInput: 'unknown', audioInput: 'unknown', toolCalls: 'unknown', source: 'legacy_migration', evidence: '', checkedAt: '' },
+    overrides: { audioInput: 'auto', toolCalls: 'auto' },
+    resolved: { audioInput: 'unknown', toolCalls: 'unknown', source: 'legacy_migration', evidence: '', checkedAt: '' },
   };
   return { ...settings, models: { ...currentModels, schemaVersion: 1, defaultProfileId: LEGACY_PROFILE_ID, profiles: [profile] } };
 }
@@ -174,13 +173,16 @@ function promoteLegacyProfile(settings: UnknownRecord, legacy: UnknownRecord): U
  * active. Keep this transformation pure so the IPC handler can persist it
  * through the normal settings validation path.
  */
-function selectActiveProfileModel(settings: UnknownRecord | null, model: unknown): UnknownRecord | null {
+function selectActiveProfileModel(settings: UnknownRecord | null, model: unknown, requestedProfileId?: unknown): UnknownRecord | null {
   const name = String(model || '').trim();
   if (!name) return null;
-  const profile = activeProfile(settings);
-  if (!profile || profile.enabled === false) return null;
   const models = settings?.models;
   const profiles: UnknownRecord[] = Array.isArray(models?.profiles) ? models.profiles : [];
+  const requested = String(requestedProfileId || '').trim().toLowerCase();
+  const profile = requested
+    ? profiles.find(item => String(item.id || '').trim().toLowerCase() === requested)
+    : activeProfile(settings);
+  if (!profile || profile.enabled === false) return null;
   const profileId = String(profile.id || '').trim().toLowerCase();
   const nextProfiles = profiles.map((item) => (
     String(item?.id || '').trim().toLowerCase() === profileId
@@ -194,7 +196,6 @@ function selectActiveProfileModel(settings: UnknownRecord | null, model: unknown
             && String(item?.resolved?.source || '').trim().toLowerCase() === 'explicit_probe'
             ? {
                 resolved: {
-                  visionInput: 'unknown',
                   audioInput: 'unknown',
                   toolCalls: 'unknown',
                   source: 'unknown',
@@ -210,12 +211,48 @@ function selectActiveProfileModel(settings: UnknownRecord | null, model: unknown
     ...(settings || {}),
     models: {
       ...(models || {}),
+      defaultProfileId: profile.id,
       profiles: nextProfiles,
     },
   };
 }
 
+/** Each profile owns its protocol, credentials and model metadata. A failure
+ * in one compatible endpoint must leave the other catalogs usable. */
+async function collectModelCatalog(
+  settings: UnknownRecord | null,
+  credentialStore: CredentialReader | null,
+  query: (runtime: UnknownRecord | null) => Promise<UnknownRecord>,
+): Promise<UnknownRecord> {
+  const profiles: UnknownRecord[] = (settings?.models?.profiles || []).filter((item: UnknownRecord) => item.enabled !== false);
+  if (!profiles.length) return query(null);
+  const active = activeProfile(settings);
+  const catalogs = await Promise.all(profiles.map(async profile => {
+    const runtime = resolveActiveModelRuntimeConfig({ ...settings, models: { ...settings?.models, defaultProfileId: profile.id } }, credentialStore);
+    let catalog: UnknownRecord;
+    try {
+      catalog = await query(runtime);
+    } catch (error) {
+      catalog = { source: 'config', error: error instanceof Error ? error.message : String(error),
+        groups: [{ models: [{ id: profile.model }] }] };
+    }
+    return { profile, catalog };
+  }));
+  return {
+    current: active?.model || '', currentProfileId: active?.id || '',
+    provider: active?.provider || '', source: 'profiles',
+    groups: catalogs.flatMap(({ profile, catalog }) => (catalog.groups || []).map((group: UnknownRecord) => ({
+      id: `${profile.id}:${group.id || 'models'}`, profileId: profile.id,
+      name: profile.displayName || profile.provider || profile.id,
+      provider: catalog.provider || profile.provider || profile.id,
+      source: catalog.source, error: catalog.error || '',
+      models: (group.models || []).map((entry: UnknownRecord) => ({ ...entry, profileId: profile.id })),
+    }))),
+  };
+}
+
 module.exports = {
+  collectModelCatalog,
   activeModelRuntimeStatus,
   GROQ_CREDENTIAL_REF,
   GROQ_PROFILE_ID,

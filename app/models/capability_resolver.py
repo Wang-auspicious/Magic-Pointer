@@ -7,7 +7,7 @@ from app.models.catalog import ModelCapabilityCatalog
 from app.models.profiles import CAPABILITY_VALUES, ModelProfile
 
 
-_CAPABILITIES = ("visionInput", "audioInput", "toolCalls")
+_CAPABILITIES = ("audioInput", "toolCalls")
 
 
 def _value(source: dict[str, Any] | None, name: str) -> str | None:

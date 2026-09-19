@@ -12,8 +12,6 @@ Tests:
 3. Legacy single-object health files (v1) are migrated to the per-endpoint map.
 4. read_health() with no argument prefers the currently configured text
    endpoint when several endpoints have entries.
-5. ask_vision_model on a classified text-only model refuses honestly and
-   writes nothing into the health store.
 """
 
 from __future__ import annotations
@@ -24,7 +22,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app import ai_client, model_health  # noqa: E402
-from app.ai_client import ask_vision_model  # noqa: E402
 
 
 def test_failure_on_endpoint_a_does_not_block_endpoint_b(monkeypatch, tmp_path: Path) -> None:
@@ -95,33 +92,6 @@ def test_read_health_no_arg_prefers_configured_text_endpoint(monkeypatch, tmp_pa
     assert model_health.read_health().state == "ok"
     assert model_health.read_health().circuit_open is False
     assert model_health.short_circuit_message() is None
-
-
-def test_vision_classification_refusal_writes_no_health(monkeypatch) -> None:
-    monkeypatch.setattr(
-        ai_client,
-        "get_ai_config",
-        lambda: ("key", None, "deepseek-v4-flash"),
-    )
-    monkeypatch.setenv("MAGIC_POINTER_VISION_MODEL", "deepseek-v4-flash")
-    monkeypatch.setattr(
-        model_health,
-        "record_failure",
-        lambda **_kwargs: (_ for _ in ()).throw(
-            AssertionError("vision classification refusal must not write health")
-        ),
-    )
-    monkeypatch.setattr(
-        model_health,
-        "record_unconfigured",
-        lambda: (_ for _ in ()).throw(
-            AssertionError("vision classification refusal must not mark unconfigured")
-        ),
-    )
-
-    answer = ask_vision_model(Path("does-not-exist.png"), "这是什么")
-
-    assert "纯文本模型" in answer
 
 
 def test_single_transient_failure_does_not_open_the_circuit(monkeypatch, tmp_path):

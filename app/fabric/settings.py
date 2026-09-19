@@ -513,7 +513,9 @@ class PrivacySettings:
     background_learning_enabled: bool = False
     default_capture_mode: str = "follow_global"
     app_capture_modes: dict[str, str] = field(default_factory=dict)
-    retain_captures_days: int = 3
+    # 冻结帧、选区截图活多久。7 天是默认：够回看一周内的工作，又不至于
+    # 让 data/runtime 无限长——每个手势是一张整屏 PNG（还有一份带笔迹的副本）。
+    retain_captures_days: int = 7
     retain_artifacts_days: int = 30
     retain_audit_days: int = 30
     sensitive_apps: list[str] = field(default_factory=lambda: [
@@ -590,6 +592,8 @@ class FabricSettings:
     shortcuts: ShortcutSettings = field(default_factory=ShortcutSettings)
     appearance: AppearanceSettings = field(default_factory=AppearanceSettings)
     accessibility: AccessibilitySettings = field(default_factory=AccessibilitySettings)
+    stash: dict[str, Any] = field(default_factory=dict)
+    context_trackers: list[dict[str, Any]] = field(default_factory=list)
     recipe_enabled: dict[str, bool] = field(default_factory=dict)
 
     @classmethod
@@ -672,6 +676,8 @@ class FabricSettings:
             "shortcuts": asdict(self.shortcuts),
             "appearance": asdict(self.appearance),
             "accessibility": asdict(self.accessibility),
+            "stash": dict(self.stash),
+            "context_trackers": [dict(tracker) for tracker in self.context_trackers],
             "recipe_enabled": dict(self.recipe_enabled),
         }
 
@@ -713,6 +719,8 @@ class FabricSettings:
                 shortcuts=ShortcutSettings(**shortcut_value),
                 appearance=AppearanceSettings(**appearance_value),
                 accessibility=AccessibilitySettings(**dict(value.get("accessibility") or {})),
+                stash=dict(value.get("stash") or {}),
+                context_trackers=[dict(tracker) for tracker in value.get("context_trackers") or []],
                 recipe_enabled={
                     str(key): bool(enabled)
                     for key, enabled in dict(value.get("recipe_enabled") or {}).items()

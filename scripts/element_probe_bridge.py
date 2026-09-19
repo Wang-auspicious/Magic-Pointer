@@ -39,7 +39,14 @@ MAGIC_WINDOW_TITLES = {"Magic Pointer Overlay", "Magic Pointer Panel", "Magic Po
 
 # The pointer moves while we work, so a stale answer is worthless. Better to
 # return nothing than to outline where the cursor used to be.
-PROBE_TIMEOUT_S = 0.9
+#
+# 但它不能短于探针自己的预算：探针的点探测相在自绘窗口上会挂住，等的是它自己的
+# 1200ms 上限（`uia_selection_probe.cs` 的 `UiaProbeHardTimeoutMs`），Python 这
+# 边先掐就是**把一个正在正常作答的探针杀掉**，报成读取失败，然后掉进像素兜底。
+# 2026-09-19 实测：微信 797ms、ChatGPT 843ms、资源管理器 344ms、Edge 453ms——
+# 0.9s 会把前两个直接切死。2.5s 与适配器默认值一致，且高于探针的每一个上限。
+# 真正管「过期」的是探针内部那道 400ms 的点探测预算，不是这里。
+PROBE_TIMEOUT_S = 2.5
 
 
 def _window_at(x: int, y: int, preferred_hwnd: int = 0) -> dict[str, Any] | None:

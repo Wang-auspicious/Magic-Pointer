@@ -991,6 +991,48 @@ def test_capture_retention_removes_only_expired_owned_pngs(tmp_path) -> None:
     assert nested_capture.exists()
 
 
+def test_frozen_frames_are_pruned_by_the_same_retention_setting(tmp_path) -> None:
+    """冻结帧目录以前没人清理：每个手势一张整屏 PNG，只增不减。
+
+    它清的是 `frame-*.png`——包括这一版新增的带笔迹副本；`screen-*.png` 属于另一个
+    目录，碰都不该碰。
+    """
+    old_frame = tmp_path / "frame-old.png"
+    old_marked = tmp_path / "frame-old.pointer.png"
+    recent_frame = tmp_path / "frame-recent.png"
+    other_kind = tmp_path / "screen-other.png"
+    for path in (old_frame, old_marked, recent_frame, other_kind):
+        path.write_bytes(b"test")
+    reference = datetime(2026, 9, 19, tzinfo=timezone.utc)
+    stale = reference.timestamp() - (10 * 86400)
+    for path in (old_frame, old_marked, other_kind):
+        os.utime(path, (stale, stale))
+
+    removed = _prune_capture_dir(tmp_path, 7, now=reference, pattern="frame-*.png")
+
+    assert removed == 2
+    assert not old_frame.exists()
+    assert not old_marked.exists()
+    assert recent_frame.exists()
+    assert other_kind.exists(), "另一个目录的命名不属于这次清理"
+
+
+def test_the_frame_in_use_is_never_pruned(tmp_path) -> None:
+    """正在用的那一份不能被自己删掉——这不该依赖它的 mtime 恰好是新的。"""
+    current = tmp_path / "frame-current.png"
+    current.write_bytes(b"test")
+    reference = datetime(2026, 9, 19, tzinfo=timezone.utc)
+    stale = reference.timestamp() - (30 * 86400)
+    os.utime(current, (stale, stale))
+
+    removed = _prune_capture_dir(
+        tmp_path, 7, now=reference, pattern="frame-*.png", keep=current,
+    )
+
+    assert removed == 0
+    assert current.exists()
+
+
 def test_browser_selection_summary_stays_read_only() -> None:
     context = AdapterReadContext(
         adapter="uia_text_selection",

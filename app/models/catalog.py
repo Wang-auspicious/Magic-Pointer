@@ -43,7 +43,7 @@ class ModelCapabilityCatalog:
                 continue
             capabilities = {
                 name: str(dict(raw.get("capabilities") or {}).get(name) or "unknown").casefold()
-                for name in ("visionInput", "audioInput", "toolCalls")
+                for name in ("audioInput", "toolCalls")
             }
             if not all(item in CAPABILITY_VALUES for item in capabilities.values()):
                 continue

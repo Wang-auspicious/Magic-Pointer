@@ -87,7 +87,7 @@ const SETTINGS_PAGES: SettingsPage[] = [
   { id: 'perception-privacy', group: 'Agent', icon: 'ic-eye', title: 'Perception & privacy', description: 'Control what the Agent can inspect, what may leave the device, and which apps remain private.', sections: [
     { title: 'Reading', rows: [
       { path: 'privacy.default_capture_mode', control: 'select', label: 'Default capture mode', options: [option('follow_global', 'Auto'), option('structured_only', 'Structured only'), option('local_screenshot', 'Local screenshot only'), option('deny', 'Deny')] },
-      { path: 'privacy.upload_screenshots', control: 'toggle', label: 'Allow screenshots to reach the vision model' },
+      { path: 'privacy.upload_screenshots', control: 'toggle', label: 'Allow screenshots to reach the model' },
     ] },
     { title: 'Boundaries', rows: [
       { path: 'privacy.sensitive_apps', control: 'tags', label: 'Apps Magic Pointer never reads', description: 'No reading, capture, or memory.' },
@@ -127,7 +127,7 @@ const SETTINGS_PAGES: SettingsPage[] = [
       { path: 'stash.burst_window_ms', control: 'select', label: 'Group within', options: [option(30000, '30 seconds'), option(120000, '2 minutes'), option(600000, '10 minutes')] },
     ] },
     { title: 'Retention', rows: [
-      { path: 'privacy.retain_captures_days', control: 'select', label: 'Captures and selections', options: [option(1, '1 day'), option(3, '3 days'), option(7, '7 days'), option(0, 'Forever')] },
+      { path: 'privacy.retain_captures_days', control: 'select', label: 'Captures and frozen frames', description: 'Screenshots taken at the moment of a gesture, and the selections drawn on them. Older ones are deleted.', options: [option(1, '1 day'), option(3, '3 days'), option(7, '7 days'), option(0, 'Forever')] },
       { path: 'privacy.retain_artifacts_days', control: 'select', label: 'Generated artifacts', options: [option(7, '7 days'), option(30, '30 days'), option(90, '90 days'), option(0, 'Forever')] },
     ] },
   ] },

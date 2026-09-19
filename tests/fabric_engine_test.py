@@ -281,27 +281,33 @@ def test_visual_agent_attachment_requires_enabled_privacy_setting_and_confirmati
     assert starts[0]["privacy"]["screenshotUploadAllowed"] is True
 
 
-def test_text_only_default_model_gets_visual_relay_and_zero_image_attachments(tmp_path: Path) -> None:
+def test_a_blocked_upload_gets_a_visual_relay_and_zero_image_attachments(tmp_path: Path) -> None:
+    """上传被挡住时，交接仍然给结构化中继，但一张图都不带。
+
+    这条以前叫「纯文本模型…」，中继模式由 profile 的 visionInput 决定，隐私
+    开关反而排在它后面——于是「关掉上传」也能被一次模型能力判定绕过。文字/
+    视觉两分取消之后，唯一的闸门就是隐私开关本身。
+    """
     image = tmp_path / "pointer-region.png"
     image.write_bytes(b"fixture")
     starts: list[dict] = []
     settings = FabricSettings.defaults()
-    settings.privacy.upload_screenshots = True
+    settings.privacy.upload_screenshots = False
     settings.permissions.recipe_overrides["vision.prompt_bridge"] = "allow"
     settings.permissions.recipe_overrides["agent.handoff"] = "allow"
     profile = ModelProfile.from_dict({
         "schemaVersion": 1,
-        "id": "text-only",
-        "displayName": "Local text model",
+        "id": "local-default",
+        "displayName": "Local model",
         "provider": "local",
         "baseUrl": "http://127.0.0.1:11434/v1",
         "model": "text-model",
         "apiMode": "local",
         "credentialRef": "",
         "enabled": True,
-        "overrides": {"visionInput": "no", "audioInput": "auto", "toolCalls": "auto"},
+        "overrides": {"audioInput": "auto", "toolCalls": "auto"},
     })
-    settings.models = ModelProfileStore(profiles=(profile,), default_profile_id="text-only")
+    settings.models = ModelProfileStore(profiles=(profile,), default_profile_id="local-default")
     engine = FabricEngine(
         root=tmp_path,
         settings=settings,
@@ -338,7 +344,7 @@ def test_text_only_default_model_gets_visual_relay_and_zero_image_attachments(tm
     receipt = engine.execute(plan, confirmed=True)
     assert receipt["status"] == "accepted"
     assert starts[0]["attachments"] == []
-    assert "Visual relay for text-only models" in starts[0]["prompt"]
+    assert "Visual relay" in starts[0]["prompt"]
     assert "rounded-rectangle" in starts[0]["prompt"]
 
 
@@ -359,7 +365,7 @@ def test_visual_default_model_gets_allowed_crop_and_concise_locator(tmp_path: Pa
         "apiMode": "responses",
         "credentialRef": "credential:model:visual",
         "enabled": True,
-        "overrides": {"visionInput": "yes", "audioInput": "auto", "toolCalls": "auto"},
+        "overrides": {"audioInput": "auto", "toolCalls": "auto"},
     })
     settings.models = ModelProfileStore(profiles=(profile,), default_profile_id="visual")
     engine = FabricEngine(

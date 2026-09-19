@@ -14,15 +14,20 @@ def _profile(*, mode: str = "chat-completions", base_url: str = "https://opencod
         api_mode=mode,
         credential_ref="credential:model:go",
         enabled=True,
-        overrides={"visionInput": "auto", "audioInput": "auto", "toolCalls": "auto"},
+        overrides={"audioInput": "auto", "toolCalls": "auto"},
         resolved={
-            "visionInput": "unknown", "audioInput": "unknown", "toolCalls": "unknown",
+            "audioInput": "unknown", "toolCalls": "unknown",
             "source": "unknown", "evidence": "", "checkedAt": "",
         },
     )
 
 
-def test_profile_runtime_uses_shared_headers_for_text_and_vision(monkeypatch) -> None:
+def test_profile_runtime_uses_the_profile_headers(monkeypatch) -> None:
+    """一个 profile 一条头部路径。选中哪个模型，文字和图像就走哪个。
+
+    这个测试以前叫「text and vision 共用头部」，那时候还有 `probe_vision` 这条
+    单独的 1x1 图像探针；那套文字/视觉两分的代码已经取消。
+    """
     calls: list[tuple[str, str, str]] = []
 
     def headers(api_key: str, api_mode: str, *, base_url: str | None = None):
@@ -34,18 +39,13 @@ def test_profile_runtime_uses_shared_headers_for_text_and_vision(monkeypatch) ->
 
     def transport(request):
         requests.append(request)
-        if "image" in str(request["json"]):
-            return {"status": 200, "json": {"choices": [{"message": {"content": "OK"}}]}}
         return {"status": 200, "json": {"choices": [{"message": {"content": "done"}}]}}
 
     client = ModelRuntimeClient(transport=transport)
     profile = _profile()
     assert client.complete_text(profile, credential="key", user_text="hello")["ok"] is True
-    assert client.probe_vision(profile, credential="key")["ok"] is True
 
-    assert calls == [
-        ("key", "chat-completions", "https://opencode.ai/zen/go/v1"),
-        ("key", "chat-completions", "https://opencode.ai/zen/go/v1"),
-    ]
+    assert calls == [("key", "chat-completions", "https://opencode.ai/zen/go/v1")]
     assert all(request["headers"]["x-opencode-session"] == "conversation-17" for request in requests)
+    assert not hasattr(client, "probe_vision"), "文字/视觉两分的探针不该回来"
 

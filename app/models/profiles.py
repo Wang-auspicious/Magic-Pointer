@@ -9,7 +9,7 @@ CAPABILITY_VALUES = frozenset({"yes", "no", "unknown"})
 OVERRIDE_VALUES = frozenset({"auto", "yes", "no"})
 _PROFILE_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 _SECRET_FIELDS = frozenset({"apikey", "token", "secret", "credential", "password", "authorization"})
-_SECRET_REFERENCE_FIELDS = frozenset({"credentialref"})
+_NON_SECRET_FIELDS = frozenset({"credentialref", "defaultmaxtokens"})
 
 
 class ModelProfileError(ValueError):
@@ -43,7 +43,7 @@ def _reject_secret_fields(value: dict[str, Any]) -> None:
     for key in value:
         normalized = re.sub(r"[^a-z0-9]", "", str(key).casefold())
         is_secret = any(token in normalized for token in _SECRET_FIELDS)
-        if is_secret and normalized not in _SECRET_REFERENCE_FIELDS:
+        if is_secret and normalized not in _NON_SECRET_FIELDS:
             raise ModelProfileError("credential values must not be stored in model profiles")
 
 
@@ -96,7 +96,6 @@ class ModelProfile:
         if not isinstance(raw_resolved, dict):
             raise ModelProfileError("resolved must be an object")
         resolved = {
-            "visionInput": _capability(raw_resolved.get("visionInput"), name="resolved.visionInput"),
             "audioInput": _capability(raw_resolved.get("audioInput"), name="resolved.audioInput"),
             "toolCalls": _capability(raw_resolved.get("toolCalls"), name="resolved.toolCalls"),
             "source": _text(raw_resolved.get("source"), name="resolved.source", limit=80) or "unknown",
@@ -129,7 +128,6 @@ class ModelProfile:
             credential_ref=_text(value.get("credentialRef"), name="credentialRef", limit=160),
             enabled=value.get("enabled") is not False,
             overrides={
-                "visionInput": _override(raw_overrides.get("visionInput"), name="overrides.visionInput"),
                 "audioInput": _override(raw_overrides.get("audioInput"), name="overrides.audioInput"),
                 "toolCalls": _override(raw_overrides.get("toolCalls"), name="overrides.toolCalls"),
             },

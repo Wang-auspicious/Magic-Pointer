@@ -671,7 +671,7 @@ def build_agent_prompt(
             )
     relays = [dict(item) for item in packet.get("visualRelays") or [] if isinstance(item, dict)]
     if relays:
-        lines.extend(["", "## Visual relay for text-only models and visual-capable targets"])
+        lines.extend(["", "## Visual relay (direct image when upload is allowed, structured text otherwise)"])
         for index, relay in enumerate(relays, 1):
             target = dict(relay.get("target") or {})
             lines.append(

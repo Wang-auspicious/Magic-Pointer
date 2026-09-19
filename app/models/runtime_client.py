@@ -7,9 +7,6 @@ from app.models.profiles import ModelProfile
 
 
 Transport = Callable[[dict[str, Any]], dict[str, Any]]
-_ONE_PIXEL_PNG = (
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl9sAAAAASUVORK5CYII="
-)
 
 
 class ModelRuntimeClient:
@@ -95,111 +92,6 @@ class ModelRuntimeClient:
         if not text:
             return {"ok": False, "state": "failed", "error": "runtime_empty_response", "evidence": {"apiMode": profile.api_mode}}
         return {"ok": True, "state": "completed", "text": text, "evidence": {"apiMode": profile.api_mode}}
-
-    def probe_vision(
-        self,
-        profile: ModelProfile,
-        *,
-        credential: str | None,
-    ) -> dict[str, Any]:
-        """User-triggered 1x1 image probe. Network or auth failures remain unknown."""
-        evidence = {"apiMode": profile.api_mode, "probe": "user_requested_1x1_image"}
-        if not profile.enabled:
-            return {
-                "ok": False,
-                "state": "failed",
-                "visionInput": "unknown",
-                "error": "model_profile_disabled",
-                "evidence": evidence,
-            }
-        if profile.api_mode != "local" and not str(credential or "").strip():
-            return {
-                "ok": False,
-                "state": "failed",
-                "visionInput": "unknown",
-                "error": "credential_missing",
-                "evidence": evidence,
-            }
-        data_url = f"data:image/png;base64,{_ONE_PIXEL_PNG}"
-        if profile.api_mode == "responses":
-            body: dict[str, Any] = {
-                "model": profile.model,
-                "input": [{
-                    "role": "user",
-                    "content": [
-                        {"type": "input_text", "text": "Reply with exactly OK."},
-                        {"type": "input_image", "image_url": data_url},
-                    ],
-                }],
-            }
-            headers = self._headers(profile, credential)
-        elif profile.api_mode == "messages":
-            body = {
-                "model": profile.model,
-                "max_tokens": 8,
-                "messages": [{
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": "Reply with exactly OK."},
-                        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": _ONE_PIXEL_PNG}},
-                    ],
-                }],
-            }
-            headers = self._headers(profile, credential)
-        else:
-            body = {
-                "model": profile.model,
-                "messages": [{
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": "Reply with exactly OK."},
-                        {"type": "image_url", "image_url": {"url": data_url}},
-                    ],
-                }],
-                "max_tokens": 8,
-            }
-            headers = self._headers(profile, credential)
-        request = {"url": self._endpoint(profile), "headers": headers, "json": body}
-        try:
-            response = self.transport(request)
-        except Exception as exc:
-            return {
-                "ok": False,
-                "state": "failed",
-                "visionInput": "unknown",
-                "error": f"vision_probe_transport_failed:{type(exc).__name__}",
-                "evidence": evidence,
-            }
-        status = int(response.get("status") or 0)
-        if 200 <= status < 300:
-            return {
-                "ok": True,
-                "state": "completed",
-                "visionInput": "yes",
-                "evidence": evidence,
-            }
-        diagnostic = " ".join((
-            str(response.get("text") or ""),
-            str(response.get("json") or ""),
-        )).casefold()[:2000]
-        names_image = any(token in diagnostic for token in ("image", "vision", "multimodal"))
-        says_unsupported = any(token in diagnostic for token in (
-            "not support", "unsupported", "does not support", "text-only", "text only",
-        ))
-        if status in {400, 404, 415, 422} and names_image and says_unsupported:
-            return {
-                "ok": True,
-                "state": "completed",
-                "visionInput": "no",
-                "evidence": evidence,
-            }
-        return {
-            "ok": False,
-            "state": "failed",
-            "visionInput": "unknown",
-            "error": f"vision_probe_inconclusive_http_{status or 'unknown'}",
-            "evidence": evidence,
-        }
 
     @staticmethod
     def _response_text(api_mode: str, body: dict[str, Any]) -> str:

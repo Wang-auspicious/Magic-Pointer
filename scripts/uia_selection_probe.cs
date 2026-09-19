@@ -26,10 +26,16 @@ internal static class UiaSelectionProbe
     // really "nothing is selected here" - and a read failure sends the caller
     // down the OCR fallback instead of staying silent.
     //
-    // 1200ms clears the slowest measured window with headroom. It is a ceiling
-    // for pathological trees, not a latency budget: a window with a selection
-    // answers far sooner, and the Python caller applies its own shorter timeout.
-    private const int UiaProbeHardTimeoutMs = 1200;
+    // 它是天花板不是预算：有选区的窗口答得快得多，Python 调用方另有自己的超时。
+    //
+    // 1600 这个数由下面三道 `PhaseBudgetMs` 反推：前置几相实测 100-180ms，加
+    // 3 × 350 = 1050，再加结果序列化和进程收尾。取 1600 是留出约 400ms 余量。
+    //
+    // 为什么不是 1200：三道预算吃满时正好落在 1200 上，于是探针**仍然**以
+    // `uia_probe_timeout_1200ms` 收场——Obsidian 实测 1224ms。有界不等于不撞上限，
+    // 除非上限比它们的和大。改动任何一道预算都要一起改这里，见
+    // tests/uia_probe_budget_test.py 的那条算式。
+    private const int UiaProbeHardTimeoutMs = 1600;
     // 区域遍历模式（TryRegionElements）：有界 BFS（6000 节点上限 + 区域剪枝），
     // Chromium 冷树首跑要跨进程读数千节点，1200ms 会掐死正在正确作答的探针。
     // 仍是天花板不是预算：正常命中远快于此。Python 侧调用超时须高于它。
@@ -135,8 +141,10 @@ internal static class UiaSelectionProbe
         {
             Task readTask = Task.Run(() => RunProbeCore(hwndValue, targetPoint, targetRegion, result));
             int hardTimeoutMs = targetRegion.HasValue ? RegionHardTimeoutMs : UiaProbeHardTimeoutMs;
-            if (!readTask.Wait(hardTimeoutMs))
+            if (!readTask.Wait(hardTimeoutMs) && !result.Ok)
             {
+                // 只有还没拿到答案时才把它写成超时。前面几相挣来的结果被一句
+                // timeout 覆盖掉，就是「能读到的窗口报成读不到」。
                 result.Error = "uia_probe_timeout_" + hardTimeoutMs + "ms";
             }
         }
@@ -261,7 +269,7 @@ internal static class UiaSelectionProbe
 
                     if (!result.Ok)
                     {
-                        FindDocumentSelection(root, result);
+                        RunDocumentScanWithBudget(root, result);
                         if (targetPoint.HasValue)
                         {
                             RejectSelectionOutsideTargetPoint(result, targetPoint.Value);
@@ -269,22 +277,29 @@ internal static class UiaSelectionProbe
                     }
                     TracePhase("document_scan");
 
-                    if (!result.Ok && targetPoint.HasValue)
-                    {
-                        TryPointElement(root, targetPoint.Value, result);
-                    }
-                    TracePhase("point_element");
-
                     // Editors without an active text selection (Notepad,
                     // WordPad, RichEdit Documents) expose the whole document
                     // through TextPattern. A stroke over unselected text must
                     // still yield the file content instead of an empty
                     // structured layer that silently degrades to pixels.
+                    //
+                    // 这一相排在点探测**前面**：点探测在自绘窗口上会挂住
+                    // （见 TryPointElement 的注释），而它一挂，能给出答案的这一相
+                    // 就再也轮不到——Notepad 那种有正文的窗口会跟着一起变空。
                     if (!result.Ok)
                     {
-                        TryDocumentTextFallback(root, result);
+                        RunDocumentFallbackWithBudget(root, result);
                     }
                     TracePhase("document_text_fallback");
+
+                    // 点探测放最后，并且自带预算。它是唯一会无限期挂住的相：
+                    // 一旦超预算就带着已经拿到的答案返回，绝不让「探针整体超时」
+                    // 把前面几相挣来的结果覆盖成 timeout。
+                    if (!result.Ok && targetPoint.HasValue)
+                    {
+                        RunPointPhaseWithBudget(root, targetPoint.Value, result);
+                    }
+                    TracePhase("point_element");
                 }
 
                 if (!result.Ok && string.IsNullOrEmpty(result.Error))
@@ -397,6 +412,72 @@ internal static class UiaSelectionProbe
                 break;
             }
         }
+    }
+
+    // 文档扫描也一样会挂住，而且它挂在**更早**的一相。
+    //
+    // 下面那段 A/B（FindAll 对比有界 TreeWalker）说的是它通常更快——115-227ms，
+    // 不是 1.5s。但「通常更快」不等于「有界」：2026-09-19 实测，Obsidian 与
+    // Token Monitor 的 phase trace 停在 root_element(at=28)，这一相再没回来，
+    // 整个探针撞满 1200ms 上限。所以给它一道预算；超了就当这棵树没有 Document，
+    // 让后面几相继续——`document_text_fallback` 排在点探测之前，它才是能给出
+    // 正文的那一相。
+    // 三道预算之和必须留在探针上限以内，否则"有界"只是把超时挪了个位置。
+    // 上限 1200，这一层留够前置几相的开销（实测 100-180ms）。
+    private const int PhaseBudgetMs = 350;
+    private const string DocumentScanAbandoned = "uia_document_scan_abandoned";
+    private const string DocumentFallbackAbandoned = "uia_document_fallback_abandoned";
+
+    /// <summary>
+    /// Run one phase under its own wall clock budget.
+    ///
+    /// 超时之后**不再做任何 UIA 调用**是调用方的事——那个任务可能还在跑，两个线程
+    /// 同时调 UI Automation 才是真正危险的事。三次调用点都遵守这一条。
+    /// </summary>
+    private static bool RunPhaseWithBudget(Action phase)
+    {
+        try
+        {
+            return Task.Run(() =>
+            {
+                try
+                {
+                    phase();
+                }
+                catch
+                {
+                }
+            }).Wait(PhaseBudgetMs);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static void RunDocumentScanWithBudget(AutomationElement root, SelectionResult result)
+    {
+        if (RunPhaseWithBudget(() => FindDocumentSelection(root, result)))
+        {
+            return;
+        }
+        result.Ok = false;
+        // -1 是这套探针里「这一趟没量过」的既有取值（区域路径一直这么用）。
+        // 留一个 0 会被读成「这棵树里确实没有文档」，那是另一个意思。
+        result.DocumentCount = -1;
+        result.Error = DocumentScanAbandoned;
+    }
+
+    // 正文兜底（TextPattern）同样会挂住：Obsidian 在文档扫描被压到 455ms 之后，
+    // 就是卡在这一相直到撞满上限的。
+    private static void RunDocumentFallbackWithBudget(AutomationElement root, SelectionResult result)
+    {
+        if (RunPhaseWithBudget(() => TryDocumentTextFallback(root, result)))
+        {
+            return;
+        }
+        result.Ok = false;
+        result.Error = DocumentFallbackAbandoned;
     }
 
     private static void FindDocumentSelection(AutomationElement root, SelectionResult result)
@@ -1048,8 +1129,11 @@ internal static class UiaSelectionProbe
             try
             {
                 AutomationElement atPoint = AutomationElement.FromPoint(RegionCenter(region));
-                AutomationElement cursor = atPoint;
-                AutomationElement smallest = atPoint;
+                // FromPoint can hit our capsule, an IME, or another app in a
+                // cross-window gesture. Never let that change the bound root.
+                AutomationElement cursor = atPoint != null && BelongsToWindowTree(atPoint, root)
+                    ? atPoint : null;
+                AutomationElement smallest = null;
                 for (int hop = 0; hop < 32 && cursor != null; hop++)
                 {
                     Rect cursorRect = SafeBoundingRectangle(cursor);
@@ -1059,6 +1143,7 @@ internal static class UiaSelectionProbe
                         && cursorRect.Bottom >= region.Bottom)
                     {
                         smallest = cursor;
+                        break;
                     }
                     AutomationElement parent = TreeWalker.ControlViewWalker.GetParent(cursor);
                     if (parent == null || root.Equals(parent))
@@ -1237,11 +1322,64 @@ internal static class UiaSelectionProbe
         result.Error = "";
     }
 
+    // 点探测的自有预算。
+    //
+    // 这一相是整条探针里唯一会**无限期挂住**的：它内部先问桌面 ElementFromPoint，
+    // 再沿目标树逐层下探，两者都是跨进程 UI Automation 调用，在自绘窗口上都不回来。
+    // 2026-09-19 实测（phase trace 打点，微信 Qt51514QWindowIcon）：
+    //     document_scan at=126 之后，point_element 这一相永远打不出来
+    //     带 point  → 1215ms 撞满 1200ms 上限，报成读取失败
+    //     不带 point → 320ms 诚实答完
+    //     ChatGPT(Chromium) / Clash(Tauri) 同样卡在这一相
+    //
+    // 所以给它一道墙钟预算，超了就带着已经拿到的答案返回。超时之后**不再做任何
+    // UIA 调用**——那个任务可能还在跑，两个线程同时调 UI Automation 才是真正危险
+    // 的事。一次性探针进程随后就退出，任务跟着消失。
+    private const string PointPhaseAbandoned = "uia_point_probe_abandoned";
+
+    private static void RunPointPhaseWithBudget(
+        AutomationElement root,
+        Point point,
+        SelectionResult result)
+    {
+        if (RunPhaseWithBudget(() => TryPointElement(root, point, result)))
+        {
+            return;
+        }
+        {
+            // 放弃这次点探测的**任何**结果：它可能正写到一半。留一个能认出来的
+            // 理由，比留一个半真半假的 element_rect 强。
+            result.Ok = false;
+            result.Error = PointPhaseAbandoned;
+        }
+    }
+
     private static void TryPointElement(
         AutomationElement root,
         Point point,
         SelectionResult result)
     {
+        // 顺序是**先走目标窗口自己的树，再去问桌面**。
+        //
+        // ElementFromPoint 是一次桌面级的跨进程查询：它得从最顶层窗口一路问下来，
+        // 而最顶层通常就是 Magic Pointer 自己的全屏透明 overlay——2026-08-04 那次
+        // 就是因为拿到它，让 Notepad 的选区读成了背后 CMD 窗口的文字。
+        //
+        // 更糟的是它不返回。2026-09-19 实测，phase trace 停在 document_scan
+        // (at=126)，`point_element.from_point` 这一条永远打不出来，整个探针撞满
+        // 1200ms 上限、报成读取失败：
+        //     微信 Qt51514QWindowIcon  point 1215ms → uia_probe_timeout_1200ms
+        //     ChatGPT(Chromium) / Clash(Tauri) 同样卡在这一相
+        //     同一个微信窗口**不传 point** 320ms 就诚实答完
+        //
+        // 目标 hwnd 是已知且可信的，从它自己的树往下走根本不需要问桌面。所以
+        // ElementFromPoint 退成兜底：只有目标树里找不到任何有界元素时才去问。
+        AutomationElement descended = FindDeepestElementAtPoint(root, point);
+        if (descended != null && TryAcceptPointChain(descended, root, point, result))
+        {
+            return;
+        }
+
         AutomationElement element = null;
         try
         {
@@ -1251,24 +1389,9 @@ internal static class UiaSelectionProbe
         {
             element = null;
         }
-
-        // ElementFromPoint asks the desktop what is painted on top at this
-        // pixel, and what is on top is us: Magic Pointer's own full-screen
-        // transparent overlay. On the 2026-08-04 acceptance machine that made
-        // every structured read fail with "outside the target window tree",
-        // which pushed every command down the full-screen OCR fallback -- the
-        // reason a Notepad selection came back holding the text of a CMD window
-        // behind it. The target hwnd is known and trusted, so when the top-most
-        // answer is not usable, descend the target's own tree instead. This also
-        // covers other apps' overlays, IME candidate windows and tooltips.
+        TracePhase("point_element.from_point");
         bool insideTree = element != null && BelongsToWindowTree(element, root);
         if (insideTree && TryAcceptPointChain(element, root, point, result))
-        {
-            return;
-        }
-
-        AutomationElement descended = FindDeepestElementAtPoint(root, point);
-        if (descended != null && !SameElement(descended, element) && TryAcceptPointChain(descended, root, point, result))
         {
             return;
         }
@@ -1405,6 +1528,17 @@ internal static class UiaSelectionProbe
     // nothing — the caller only needs a bounded, meaningful element.
     private const int PointDescentMaxDepth = 24;
     private const int PointDescentMaxSiblings = 256;
+    // 深度和宽度是**乘积**，各自有上限不等于总量有上限：24 层 × 256 个兄弟最坏
+    // 是六千多次跨进程 BoundingRectangle 往返。2026-09-19 实测，这一相在自绘
+    // 窗口上把整个 1200ms 预算吃光还回不来——phase trace 停在 document_scan
+    // (at=142)，下一个 phase 永远不打印：
+    //     微信 Qt51514QWindowIcon  point 1213-1224ms  → uia_probe_timeout_1200ms
+    //     同一个窗口**不传 point**  320ms             → 诚实答"这里没有选中文字"
+    //     ChatGPT / Clash(Tauri)    同样卡在 document_scan 之后
+    // 所以再压一道总量预算 + 一道墙钟截止。超预算就返回已经走到的最深元素：
+    // 部分答案有用，"整个探针超时"没用。
+    private const int PointDescentMaxNodes = 600;
+    private const int PointDescentBudgetMs = 250;
 
     private static AutomationElement FindDeepestElementAtPoint(AutomationElement root, Point point)
     {
@@ -1421,9 +1555,19 @@ internal static class UiaSelectionProbe
         AutomationElement best = root;
         AutomationElement current = root;
         TreeWalker walker = TreeWalker.ControlViewWalker;
+        Stopwatch budget = Stopwatch.StartNew();
+        int visited = 0;
 
         for (int depth = 0; depth < PointDescentMaxDepth; depth++)
         {
+            if (
+                visited >= PointDescentMaxNodes
+                || budget.ElapsedMilliseconds >= PointDescentBudgetMs
+            )
+            {
+                break;
+            }
+
             AutomationElement child;
             try
             {
@@ -1438,6 +1582,14 @@ internal static class UiaSelectionProbe
             double chosenArea = double.MaxValue;
             for (int seen = 0; child != null && seen < PointDescentMaxSiblings; seen++)
             {
+                if (
+                    visited >= PointDescentMaxNodes
+                    || budget.ElapsedMilliseconds >= PointDescentBudgetMs
+                )
+                {
+                    break;
+                }
+                visited++;
                 Rect rectangle = SafeBoundingRectangle(child);
                 if (
                     !rectangle.IsEmpty
@@ -2186,7 +2338,7 @@ internal static class UiaSelectionProbe
         {
             Task readTask = Task.Run(() => RunProbeCore(hwnd, targetPoint, targetRegion, result));
             int hardTimeoutMs2 = targetRegion.HasValue ? RegionHardTimeoutMs : UiaProbeHardTimeoutMs;
-            if (!readTask.Wait(hardTimeoutMs2))
+            if (!readTask.Wait(hardTimeoutMs2) && !result.Ok)
             {
                 result.Error = "uia_probe_timeout_" + hardTimeoutMs2 + "ms";
             }

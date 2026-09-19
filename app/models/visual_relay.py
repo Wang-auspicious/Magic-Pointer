@@ -119,9 +119,6 @@ class VisualRelayPlanner:
                 "evidence": {"mode": "deny"},
             }
         source = _source(target)
-        vision_input = _text(resolved_capabilities.get("visionInput") or "unknown", 20).casefold()
-        if vision_input not in {"yes", "no", "unknown"}:
-            vision_input = "unknown"
         title = _text(source.get("title") or source.get("windowTitle"), 1000)
         app = _text(source.get("app") or target.get("app"), 300)
         label = _text(target.get("label") or target.get("content") or target.get("text"), 1000)
@@ -164,7 +161,9 @@ class VisualRelayPlanner:
             "profileId": profile.id,
         }
         visual_paths = _visual_paths(target)
-        if vision_input == "yes" and capture.allow_upload and visual_paths:
+        # 只有一个模型，就没有「这个模型能不能看图」这一问：能不能由策略回答
+        # （`capture.allow_upload` 是隐私开关），不由能力表回答。
+        if capture.allow_upload and visual_paths:
             relay = {
                 **base,
                 "mode": "direct_visual",
@@ -177,17 +176,14 @@ class VisualRelayPlanner:
                 )),
             }
             return {"ok": True, "state": "planned", "relay": relay}
-        if vision_input == "unknown":
-            notice = "vision_capability_unconfirmed"
-        elif vision_input == "no":
-            notice = "vision_input_not_supported"
-        else:
-            notice = "visual_attachment_blocked_by_policy"
+        # 到这一步只剩一个原因：策略没放行这张图（`allow_upload` 是隐私开关，
+        # 或者是那条路径不在白名单上）。以前这里还会说「这个模型可能没有视觉能
+        # 力」——那个区分已经取消，剩下的理由必须是真的理由。
         relay = {
             **base,
             "mode": "structured_text",
             "attachments": [],
-            "capabilityNotice": notice,
+            "capabilityNotice": "visual_attachment_blocked_by_policy",
         }
         relay["structuredText"] = _structured_text(relay)
         return {"ok": True, "state": "planned", "relay": relay}

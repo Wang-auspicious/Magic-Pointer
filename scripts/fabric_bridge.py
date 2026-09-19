@@ -5,7 +5,6 @@ import sys
 import uuid
 import webbrowser
 from dataclasses import replace
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -215,38 +214,18 @@ def _test_model_profile(
             "error": str(text_probe.get("error") or "model_test_failed"),
             "evidence": {"profileId": profile.id, "apiMode": profile.api_mode},
         }
-    vision_probe = client.probe_vision(profile, credential=credential)
-    checked_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    vision_input = str(vision_probe.get("visionInput") or "unknown")
-    persisted = profile
-    if vision_probe.get("ok") is True and vision_input in {"yes", "no"}:
-        resolved = resolver.resolve(profile, explicit_probe={
-            "visionInput": vision_input,
-            "evidence": "user-requested 1x1 image capability probe",
-            "checkedAt": checked_at,
-        })
-        persisted = replace(profile, resolved=resolved)
-        settings.models = ModelProfileStore(
-            profiles=tuple(
-                persisted if item.id == persisted.id else item
-                for item in settings.models.profiles
-            ),
-            default_profile_id=settings.models.default_profile_id,
-        )
-        store.save(settings)
+    # 模型就是一个模型：能连上、能回话，就够资格处理这个任务里的文字和图像。
+    # 这里以前还会再打一次 1x1 图像的探针，给每个 profile 记一个 visionInput
+    # 判定——那套「文字模型 / 视觉模型」的区分已经取消了。
     return {
         "ok": True,
         "state": "completed",
         "text": text_probe["text"],
-        "visionInput": vision_input,
-        "profile": persisted.to_dict(),
+        "profile": profile.to_dict(),
         "evidence": {
             "profileId": profile.id,
             "apiMode": profile.api_mode,
-            "probe": "text_connection_and_user_requested_1x1_image",
-            "visionProbeState": str(vision_probe.get("state") or "failed"),
-            "visionProbeError": str(vision_probe.get("error") or ""),
-            "checkedAt": checked_at,
+            "probe": "text_connection",
         },
     }
 
@@ -257,7 +236,11 @@ def main() -> int:
         operation = str(payload.get("operation") or "catalog")
         user_root = Path(os.environ.get("MAGIC_POINTER_USER_DATA_DIR") or ROOT / "data" / "runtime")
         store = SettingsStore(user_root / "fabric-settings.json")
-        if operation == "runtime.snapshot":
+        if operation == "extensions.inventory":
+            from app.harness.extensions_inventory import extensions_inventory
+
+            result = extensions_inventory(ROOT)
+        elif operation == "runtime.snapshot":
             settings = store.load()
             result = {
                 "ok": True,

@@ -21,8 +21,8 @@ const settings = {
       apiMode: 'chat-completions',
       credentialRef: 'credential:model:groq-main',
       enabled: true,
-      overrides: { visionInput: 'no', audioInput: 'no', toolCalls: 'auto' },
-      resolved: { visionInput: 'no', audioInput: 'no', toolCalls: 'unknown' },
+      overrides: { audioInput: 'no', toolCalls: 'auto' },
+      resolved: { audioInput: 'no', toolCalls: 'unknown' },
     }],
   },
 };
@@ -97,14 +97,14 @@ const probedSettings = {
   models: {
     defaultProfileId: 'groq-main',
     profiles: [{ ...settings.models.profiles[0], resolved: {
-      visionInput: 'yes', audioInput: 'no', toolCalls: 'yes', source: 'explicit_probe',
+      audioInput: 'no', toolCalls: 'yes', source: 'explicit_probe',
       evidence: 'probe for old model', checkedAt: '2026-09-12T00:00:00Z',
     } }],
   },
 };
 const reprobed = selectActiveProfileModel(probedSettings, 'new-model');
 assert.deepStrictEqual(reprobed.models.profiles[0].resolved, {
-  visionInput: 'unknown', audioInput: 'unknown', toolCalls: 'unknown',
+  audioInput: 'unknown', toolCalls: 'unknown',
   source: 'unknown', evidence: '', checkedAt: '',
 });
 

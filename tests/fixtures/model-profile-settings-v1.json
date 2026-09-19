@@ -15,12 +15,10 @@
         "credentialRef": "credential:model:primary",
         "enabled": true,
         "overrides": {
-          "visionInput": "auto",
           "audioInput": "auto",
           "toolCalls": "auto"
         },
         "resolved": {
-          "visionInput": "unknown",
           "audioInput": "unknown",
           "toolCalls": "unknown",
           "source": "unknown",

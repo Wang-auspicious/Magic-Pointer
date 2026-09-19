@@ -664,7 +664,6 @@ class FabricEngine:
         if selected_profile is not None and resolved_model_capabilities is not None:
             params["visualRelayProfile"] = {
                 "profileId": selected_profile.id,
-                "visionInput": resolved_model_capabilities.get("visionInput") or "unknown",
                 "source": resolved_model_capabilities.get("source") or "unknown",
             }
         params["objects"] = clean_objects
