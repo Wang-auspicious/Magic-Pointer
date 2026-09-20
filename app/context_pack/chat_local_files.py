@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from pathlib import Path
@@ -101,15 +102,177 @@ def _app_roots(process_name: str) -> list[Path]:
 
 
 def chat_data_roots(process_name: str) -> tuple[Path, ...]:
-    """这个应用**确实存在**的数据根，按上面那张表找出来的。"""
+    """这个应用**确实存在**的数据根。
+
+    先看扫描缓存，缓存里没有这个应用就去扫一次再回答。每台电脑的仓库位置都不一样
+    ——用户可以在安装时挑任意一个盘——所以候选表只当起点，真正的答案是扫出来的。
+    """
+    cached = _cached_roots(process_name)
+    if cached:
+        return cached
+    discovered = discover_chat_stores()
+    cached = _matching_roots(discovered.get(_store_key(process_name), ()))
+    if cached:
+        return cached
+    return _matching_roots(_app_roots(process_name))
+
+
+def _matching_roots(candidates: Iterable[Path]) -> tuple[Path, ...]:
     seen: list[Path] = []
-    for root in _app_roots(process_name):
+    for root in candidates:
         try:
             if root.is_dir() and root not in seen:
                 seen.append(root)
         except OSError:
             continue
     return tuple(seen)
+
+
+# ── 安装时扫描 ────────────────────────────────────────────────────────────────
+#
+# 每台电脑的仓库位置都不一样：微信安装时就让人挑一个盘，钉钉/飞书各有各的默认。
+# 靠一张候选表等于赌对方和你一样。所以在**首次运行**扫一遍，把结果落盘，之后每次
+# 直接读缓存；查不到东西时再扫一次（用户可能中途换了位置）。
+#
+# 扫描范围是每个固定盘的**前两层**目录名。不做全盘遍历：一是慢，二是深挖到别人的
+# 目录里翻文件夹这件事本身就不该做。仓库建在更深处的人，用
+# `python scripts/discover_chat_stores.py --root <路径>` 手动补一条即可。
+
+_STORE_DIR_NAMES: dict[str, tuple[str, ...]] = {
+    "wechat": ("xwechat_files", "WeChat Files"),
+    "dingtalk": ("DingTalk", "DingTalk Files"),
+    "feishu": ("Feishu", "Lark", ".feishu"),
+}
+
+_CACHE_SCHEMA = 1
+
+
+def _store_key(process_name: str) -> str:
+    name = str(process_name or "").casefold()
+    if name in WECHAT_PROCESSES:
+        return "wechat"
+    if name in DINGTALK_PROCESSES:
+        return "dingtalk"
+    if name in FEISHU_PROCESSES:
+        return "feishu"
+    return ""
+
+
+def discovery_cache_path() -> Path:
+    root = Path(os.environ.get("MAGIC_POINTER_USER_DATA_DIR") or Path(__file__).resolve().parents[2] / "data" / "runtime")
+    return root / "chat-stores.json"
+
+
+def _fixed_drives() -> tuple[Path, ...]:
+    """本机有哪几个固定盘。可移动盘和网络盘不扫：那不是仓库该待的地方。"""
+    drives: list[Path] = []
+    for letter in "CDEFGHIJKLMNOPQRSTUVWXYZ":
+        drive = Path(f"{letter}:/")
+        try:
+            if drive.is_dir():
+                drives.append(drive)
+        except OSError:
+            continue
+    return tuple(drives)
+
+
+def _scan_for_store_names(root: Path) -> list[Path]:
+    """在 ``root`` 的前两层里找已知的仓库目录名。"""
+    found: list[Path] = []
+    try:
+        level_one = [item for item in root.iterdir() if item.is_dir()]
+    except OSError:
+        return found
+    for candidate in level_one:
+        if candidate.name in _all_store_names():
+            found.append(candidate)
+            continue
+        # 第二层：用户常建一个自己的目录再往里放（Tencent 目录套 xwechat_files
+        # 这种）。只到这一层为止——再往下翻别人的目录，收益低而冒犯大。
+        try:
+            for nested in candidate.iterdir():
+                if nested.is_dir() and nested.name in _all_store_names():
+                    found.append(nested)
+        except OSError:
+            continue
+    return found
+
+
+def _all_store_names() -> frozenset[str]:
+    return frozenset(name for names in _STORE_DIR_NAMES.values() for name in names)
+
+
+def discover_chat_stores(*, extra_roots: Iterable[Path] = (), write_cache: bool = True) -> dict[str, tuple[Path, ...]]:
+    """扫一遍这台机器，回答「聊天软件的仓库在哪」。
+
+    首次运行时跑一次，结果落盘；之后 :func:`chat_data_roots` 直接读缓存。
+    找不到不编：没有的键就是空的，调用方据此说「没找到」而不是给一个不存在的路径。
+    """
+    discovered: dict[str, list[Path]] = {key: [] for key in _STORE_DIR_NAMES}
+
+    def add(key: str, path: Path) -> None:
+        try:
+            if path.is_dir() and path not in discovered[key]:
+                discovered[key].append(path)
+        except OSError:
+            pass
+
+    # 一、应用自己记着的位置（最准：用户装的时候就是在这儿选的）。
+    for path in wechat_data_roots():
+        add("wechat", path)
+
+    # 二、本机各固定盘的前两层目录名。
+    for drive in (*_fixed_drives(), *tuple(extra_roots)):
+        for path in _scan_for_store_names(drive):
+            for key, names in _STORE_DIR_NAMES.items():
+                if path.name in names:
+                    add(key, path)
+
+    result = {key: tuple(paths) for key, paths in discovered.items()}
+    if write_cache:
+        _write_cache(result)
+    return result
+
+
+def _write_cache(result: dict[str, tuple[Path, ...]]) -> None:
+    try:
+        path = discovery_cache_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "schemaVersion": _CACHE_SCHEMA,
+            "stores": {key: [str(item) for item in paths] for key, paths in result.items()},
+        }
+        temporary = path.with_suffix(".json.tmp")
+        temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8")
+        os.replace(temporary, path)
+    except OSError:
+        # 缓存写不下去只影响下次还要再扫一遍，不影响这次的回答。
+        pass
+
+
+def _read_cache() -> dict[str, tuple[Path, ...]]:
+    try:
+        raw = json.loads(discovery_cache_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(raw, dict) or raw.get("schemaVersion") != _CACHE_SCHEMA:
+        return {}
+    stores = raw.get("stores")
+    if not isinstance(stores, dict):
+        return {}
+    result: dict[str, tuple[Path, ...]] = {}
+    for key, paths in stores.items():
+        if not isinstance(paths, list):
+            continue
+        result[str(key)] = tuple(Path(str(item)) for item in paths if str(item).strip())
+    return result
+
+
+def _cached_roots(process_name: str) -> tuple[Path, ...]:
+    key = _store_key(process_name)
+    if not key:
+        return ()
+    return _matching_roots(_read_cache().get(key, ()))
 
 
 def _candidate_files(root: Path) -> Iterable[Path]:

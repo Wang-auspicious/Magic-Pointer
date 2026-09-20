@@ -86,3 +86,65 @@ def test_the_data_drive_is_read_not_assumed(tmp_path, monkeypatch) -> None:
     assert Path("E:/xwechat_files") in wechat_data_roots()
     # 只报真的存在的根：不存在的不该出现在「查过哪里」那句话里。
     assert Path("E:/xwechat_files") not in chat_data_roots("Weixin.exe")
+
+
+# --- 安装时扫描 -------------------------------------------------------------
+
+def test_the_scan_finds_a_store_on_another_drive(tmp_path, monkeypatch) -> None:
+    """别人的电脑上仓库在哪个盘是安装时选的，候选表赌不中——所以扫。"""
+    from app.context_pack.chat_local_files import _scan_for_store_names
+
+    store = tmp_path / "xwechat_files"
+    store.mkdir()
+    assert store in _scan_for_store_names(tmp_path)
+
+
+def test_the_scan_also_looks_one_level_down(tmp_path) -> None:
+    """有人先建一个自己的目录再往里放。"""
+    from app.context_pack.chat_local_files import _scan_for_store_names
+
+    nested = tmp_path / "Tencent" / "xwechat_files"
+    nested.mkdir(parents=True)
+    assert nested in _scan_for_store_names(tmp_path)
+
+
+def test_the_scan_stops_at_two_levels(tmp_path) -> None:
+    """再往下翻别人的目录，收益低而冒犯大。"""
+    from app.context_pack.chat_local_files import _scan_for_store_names
+
+    deep = tmp_path / "a" / "b" / "xwechat_files"
+    deep.mkdir(parents=True)
+    assert _scan_for_store_names(tmp_path) == []
+
+
+def test_the_cache_is_what_answers_afterwards(tmp_path, monkeypatch) -> None:
+    """扫一次，之后每次读缓存——不是每个手势都重扫一遍盘。"""
+    from app.context_pack import chat_local_files as module
+
+    monkeypatch.setenv("MAGIC_POINTER_USER_DATA_DIR", str(tmp_path))
+    store = tmp_path / "xwechat_files"
+    (store / "wxid_demo_aa11" / "msg" / "file" / "2026-09").mkdir(parents=True)
+    (store / "wxid_demo_aa11" / "msg" / "file" / "2026-09" / "b.pdf").write_bytes(b"x")
+
+    # 仓库在盘根或盘根下一层；这个测试的仓库在临时目录里，所以显式指给它——
+    # 这也正是「仓库建在更深处」的人手动补一条的入口。
+    found = module.discover_chat_stores(extra_roots=[tmp_path])
+    assert store in found["wechat"]
+    assert module.discovery_cache_path().is_file()
+
+    monkeypatch.setattr(module, "discover_chat_stores", lambda **kwargs: (_ for _ in ()).throw(AssertionError("不该重扫")))
+    roots = module.chat_data_roots("Weixin.exe")
+    assert store in roots
+    assert all(path.is_dir() for path in roots)
+
+
+def test_an_empty_scan_is_reported_as_empty(tmp_path, monkeypatch) -> None:
+    """找不到就说找不到，不编一个路径出来。"""
+    from app.context_pack import chat_local_files as module
+
+    monkeypatch.setenv("MAGIC_POINTER_USER_DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("APPDATA", raising=False)
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "nobody"))
+    found = module.discover_chat_stores()
+    assert found["dingtalk"] == ()
+    assert found["feishu"] == ()
