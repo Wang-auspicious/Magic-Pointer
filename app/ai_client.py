@@ -561,6 +561,24 @@ def is_ai_failure(value: object) -> bool:
     return str(value or "").lstrip().startswith(AI_FAILURE_PREFIX)
 
 
+def _incomplete_text_response(data: dict, api_mode: str) -> str | None:
+    """Provider completion state is authoritative even when text is nonempty."""
+    if api_mode == "responses":
+        status = data.get("status")
+        if status and status != "completed":
+            return str(status)
+    elif api_mode == "messages":
+        reason = data.get("stop_reason")
+        if reason and reason not in {"end_turn", "stop_sequence"}:
+            return str(reason)
+    else:
+        choices = data.get("choices") or []
+        reason = choices[0].get("finish_reason") if choices else None
+        if reason and reason != "stop":
+            return str(reason)
+    return None
+
+
 def ask_text_model(
     user_prompt: str,
     context_text: str | None = None,
@@ -591,11 +609,11 @@ def ask_text_model(
         if _REQUEST_AI_CONFIG:
             provider = str(_REQUEST_AI_CONFIG.get("provider") or "当前").strip().capitalize()
             return (
-                f"{provider} 模型档案没有可用密钥，因此没有调用文本模型。\n\n"
+                f"{AI_FAILURE_PREFIX}{provider} 模型档案没有可用密钥，因此没有调用文本模型。\n\n"
                 f"当前读取到的上下文：{excerpt}"
             )
         return (
-            "未检测到 OPENAI_API_KEY 或 secrets/openai_key.txt，因此没有调用文本模型。\n\n"
+            f"{AI_FAILURE_PREFIX}未检测到 OPENAI_API_KEY 或 secrets/openai_key.txt，因此没有调用文本模型。\n\n"
             f"当前读取到的上下文：{excerpt}"
         )
 
@@ -687,7 +705,8 @@ def ask_text_model(
                             data = retry.json()
                             answer = _text_completion_response(data, api_mode)
                             if answer:
-                                return answer
+                                incomplete = _incomplete_text_response(data, api_mode)
+                                return f"{AI_FAILURE_PREFIX}模型输出未完成（{incomplete}）" if incomplete else answer
                 if not answer:
                     detail = _empty_answer_evidence(data, api_mode)
                     record_failure(
@@ -702,6 +721,9 @@ def ask_text_model(
                         + (f"（{detail}）。" if detail else "。")
                         + "\n\n截图和对象已保存在本地，稍后可以直接重试。"
                     )
+                incomplete = _incomplete_text_response(data, api_mode)
+                if incomplete:
+                    return f"{AI_FAILURE_PREFIX}模型输出未完成（{incomplete}）"
                 return answer
             except httpx.ConnectTimeout as exc:
                 last_exc = exc

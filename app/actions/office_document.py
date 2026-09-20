@@ -136,10 +136,14 @@ class PowerShellLiveOfficeGateway:
         expected_text: str,
         replacement: str,
     ) -> Mapping[str, Any]:
+        offset, length, changed = _minimal_change(expected_text, replacement)
+        change_start = start + len(expected_text[:offset].encode("utf-16-le")) // 2
+        change_end = change_start + len(expected_text[offset:offset + length].encode("utf-16-le")) // 2
         return self._run("word", self._WORD_BIND + r'''
   $range = $document.Range([int]$p.start, [int]$p.end)
   if (-not [string]::Equals([string]$range.Text, [string]$p.expected, [StringComparison]::Ordinal)) { throw "base_mismatch" }
-  $range.Text = [string]$p.after
+  $changedRange = $document.Range([int]$p.changeStart, [int]$p.changeEnd)
+  $changedRange.Text = [string]$p.replacement
   $result.ok = $true; $result.wrote = $true
 ''', {
             "path": path,
@@ -148,6 +152,9 @@ class PowerShellLiveOfficeGateway:
             "end": end,
             "expected": expected_text,
             "after": replacement,
+            "changeStart": change_start,
+            "changeEnd": change_end,
+            "replacement": changed,
         })
 
     def read_excel(
@@ -180,6 +187,13 @@ class PowerShellLiveOfficeGateway:
         expected: list[list[Any]],
         after: list[list[Any]],
     ) -> Mapping[str, Any]:
+        min_col, min_row, max_col, max_row = range_boundaries(address)
+        rows, columns = max_row - min_row + 1, max_col - min_col + 1
+        for matrix in (expected, after):
+            if not isinstance(matrix, list) or len(matrix) != rows or any(
+                not isinstance(row, list) or len(row) != columns for row in matrix
+            ):
+                raise ValueError("Excel matrix shape must match target range")
         return self._run("excel", self._EXCEL_BIND + r'''
   if ([int]$range.Rows.Count -ne [int]$p.expected.Count) { throw "base_mismatch" }
   for ($r=1; $r -le [int]$range.Rows.Count; $r++) {
@@ -196,6 +210,7 @@ class PowerShellLiveOfficeGateway:
       $next = $p.after[$r-1][$c-1]
       if ($next -is [string] -and $next.StartsWith("=")) { $range.Cells.Item($r,$c).Formula = $next }
       else { $range.Cells.Item($r,$c).Value2 = $next }
+      $result.wrote = $true
     }
   }
   $result.ok = $true; $result.wrote = $true
@@ -306,7 +321,7 @@ def _replace_paragraph_range(
     found_start = False
     for index, run in enumerate(runs):
         next_cursor = cursor + len(run.text)
-        if not found_start and start <= next_cursor:
+        if not found_start and (start < next_cursor or (length == 0 and start == next_cursor)):
             start_index = index
             start_offset = max(0, start - cursor)
             found_start = True

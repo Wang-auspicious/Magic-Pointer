@@ -262,10 +262,22 @@ class PowerPointComGateway:
     ) -> Mapping[str, Any]:
         body = r'''
   if ([int]$shape.Locked -eq -1) { throw "shape_locked" }
-  if ($null -ne $p.expected.fillRgb -and [int64]$shape.Fill.ForeColor.RGB -ne [int64]$p.expected.fillRgb) { throw "base_mismatch" }
-  if ($null -ne $p.expected.lineRgb -and [int64]$shape.Line.ForeColor.RGB -ne [int64]$p.expected.lineRgb) { throw "base_mismatch" }
-  if ($null -ne $p.after.fillRgb) { $shape.Fill.ForeColor.RGB = [int64]$p.after.fillRgb }
-  if ($null -ne $p.after.lineRgb) { $shape.Line.ForeColor.RGB = [int64]$p.after.lineRgb }
+  foreach ($name in @("fill", "line")) {
+    $native = $shape.$name
+    $key = $name + "Rgb"
+    $actual = if ([int]$native.Visible -eq -1) { [int64]$native.ForeColor.RGB } else { $null }
+    if ($actual -ne $p.expected.$key) { throw "base_mismatch" }
+  }
+  foreach ($name in @("fill", "line")) {
+    $native = $shape.$name
+    $key = $name + "Rgb"
+    if ($null -eq $p.after.$key) {
+      $native.Visible = 0; $result.wrote = $true
+    } else {
+      $native.ForeColor.RGB = [int64]$p.after.$key; $result.wrote = $true
+      $native.Visible = -1
+    }
+  }
   $result.ok = $true; $result.wrote = $true
 '''
         return self._write(body, path, hwnd, slide_id, shape_id, {
@@ -288,7 +300,7 @@ class PowerPointComGateway:
     if ($null -ne $p.expected.$name -and [Math]::Abs([double]$shape.$name - [double]$p.expected.$name) -gt 0.01) { throw "base_mismatch" }
   }
   foreach ($name in @("left", "top", "width", "height")) {
-    if ($null -ne $p.after.$name) { $shape.$name = [double]$p.after.$name }
+    if ($null -ne $p.after.$name) { $shape.$name = [double]$p.after.$name; $result.wrote = $true }
   }
   $result.ok = $true; $result.wrote = $true
 '''

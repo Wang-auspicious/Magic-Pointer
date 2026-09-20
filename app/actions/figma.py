@@ -16,6 +16,7 @@ from app.context_pack.sources import SourceRef
 class FigmaActionHandler:
     def __init__(self, client: Any | None) -> None:
         self._client = client
+        self._verified_text: dict[str, str] = {}
 
     def _ensure(self, source: SourceRef, operation: PatchOperation) -> tuple[Any, str]:
         if self._client is None:
@@ -40,11 +41,11 @@ class FigmaActionHandler:
         raise RuntimeError(f"figma-node-not-found:{node_id}")
 
     @staticmethod
-    def _current(node: Mapping[str, Any], operation: PatchOperation) -> Any:
+    def _current(node: Mapping[str, Any], operation: PatchOperation, *, after: bool = False) -> Any:
         if operation.operation == "replace_text":
             characters = str(node.get("characters") or "")
             start = int(operation.locator.value.get("textStart", 0))
-            end = int(operation.locator.value.get("textEnd", len(characters)))
+            end = start + len(str(operation.after)) if after else int(operation.locator.value.get("textEnd", len(characters)))
             return characters[start:end]
         if operation.operation == "set_figma_fill":
             fills = node.get("fills")
@@ -83,7 +84,7 @@ class FigmaActionHandler:
                 "op": "replace_text",
                 "nodeId": node_id,
                 "start": int(operation.locator.value.get("textStart", 0)),
-                "end": int(operation.locator.value.get("textEnd", 0)),
+                "end": int(operation.locator.value.get("textEnd", len(str((node or {}).get("characters", operation.before))))),
                 "before": operation.before,
                 "after": operation.after,
             }
@@ -121,6 +122,8 @@ class FigmaActionHandler:
         try:
             client, node_id = self._ensure(source, operation)
             node = self._node(client.request("read_nodes", {"nodeIds": [node_id]}), node_id)
+            if operation.operation == "replace_text" and self._verified_text.get(operation.operation_id) == node.get("characters"):
+                return OperationReadResult(True, operation.after, "figma-plugin-loopback")
             return OperationReadResult(
                 True,
                 self._current(node, operation),
@@ -138,7 +141,7 @@ class FigmaActionHandler:
         try:
             client, node_id = self._ensure(source, operation)
             node = None
-            if operation.operation == "set_figma_fill":
+            if operation.operation in {"set_figma_fill", "replace_text"}:
                 node = self._node(
                     client.request("read_nodes", {"nodeIds": [node_id]}),
                     node_id,
@@ -147,14 +150,22 @@ class FigmaActionHandler:
                 "operations": [self._plugin_operation(operation, node_id, node)],
             })
             applied = True
+            expected_full = None
+            if operation.operation == "replace_text" and node is not None:
+                original = str(node.get("characters") or "")
+                start = int(operation.locator.value.get("textStart", 0))
+                end = int(operation.locator.value.get("textEnd", len(original)))
+                expected_full = original[:start] + str(operation.after) + original[end:]
             node = self._node(client.request("readback", {"nodeIds": [node_id]}), node_id)
-            if self._current(node, operation) != operation.after:
+            if (expected_full is not None and node.get("characters") != expected_full) or self._current(node, operation, after=True) != operation.after:
                 return OperationWriteResult(
                     False,
                     True,
                     "figma-plugin-loopback",
                     "figma-readback-mismatch",
                 )
+            if expected_full is not None:
+                self._verified_text[operation.operation_id] = expected_full
             return OperationWriteResult(True, True, "figma-plugin-loopback")
         except Exception as exc:
             return OperationWriteResult(

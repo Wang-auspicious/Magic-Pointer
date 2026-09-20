@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import uuid
 from collections.abc import Mapping, Sequence
 from contextlib import suppress
@@ -92,18 +93,31 @@ def _create_docx(path: Path, content: Mapping[str, Any], references: Sequence[Ma
     document.save(path)
 
 
-def _create_xlsx(path: Path, content: Mapping[str, Any], references: Sequence[Mapping[str, Any]]) -> None:
-    workbook = Workbook()
-    default = workbook.active
+def _sheet_specs(content: Mapping[str, Any], references: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     sheets = content.get("sheets") or []
     if not isinstance(sheets, list) or not sheets:
         raise ValueError("xlsx content requires at least one sheet")
+    result = []
+    used = {"_sources"} if references else set()
     for index, sheet_spec in enumerate(sheets):
         if not isinstance(sheet_spec, Mapping):
             raise ValueError("xlsx sheet must be an object")
-        name = str(sheet_spec.get("name") or f"Sheet{index + 1}")[:31]
-        sheet = default if index == 0 else workbook.create_sheet()
-        sheet.title = name
+        base = re.sub(r"[\\/*?:\[\]]", "_", str(sheet_spec.get("name") or f"Sheet{index + 1}")).strip("'")[:31] or f"Sheet{index + 1}"
+        name, suffix = base, 1
+        while name.casefold() in used:
+            tail = f" ({suffix})"
+            name = base[:31 - len(tail)] + tail
+            suffix += 1
+        used.add(name.casefold())
+        result.append({**sheet_spec, "name": name})
+    return result
+
+
+def _create_xlsx(path: Path, content: Mapping[str, Any], references: Sequence[Mapping[str, Any]]) -> None:
+    workbook = Workbook()
+    workbook.remove(workbook.active)
+    for sheet_spec in _sheet_specs(content, references):
+        sheet = workbook.create_sheet(sheet_spec["name"])
         rows = sheet_spec.get("rows") or []
         if not isinstance(rows, list):
             raise ValueError("xlsx sheet rows must be an array")
@@ -122,14 +136,34 @@ def _create_xlsx(path: Path, content: Mapping[str, Any], references: Sequence[Ma
     workbook.save(path)
 
 
-def _create_pptx(path: Path, content: Mapping[str, Any], references: Sequence[Mapping[str, Any]]) -> None:
-    presentation = Presentation()
+def _slide_specs(content: Mapping[str, Any]) -> list[dict[str, Any]]:
     slides = content.get("slides") or []
     if not isinstance(slides, list) or not slides:
         raise ValueError("pptx content requires at least one slide")
+    result = []
     for slide_spec in slides:
         if not isinstance(slide_spec, Mapping):
             raise ValueError("pptx slide must be an object")
+        result.append({**slide_spec, "tables": [], "images": []})
+        title = str(slide_spec.get("title") or "")
+        for table in slide_spec.get("tables") or []:
+            if not isinstance(table, Mapping) or not isinstance(table.get("rows"), list):
+                raise ValueError("pptx table requires rows")
+            rows = table["rows"]
+            if any(not isinstance(row, list) for row in rows):
+                raise ValueError("pptx table rows must be arrays")
+            for start in range(0, len(rows), 10):
+                result.append({"title": title, "body": "", "tables": [{"rows": rows[start:start + 10]}], "images": []})
+        for image in slide_spec.get("images") or []:
+            if not isinstance(image, Mapping):
+                raise ValueError("pptx image must be an object")
+            result.append({"title": title, "body": "", "tables": [], "images": [image]})
+    return result
+
+
+def _create_pptx(path: Path, content: Mapping[str, Any], references: Sequence[Mapping[str, Any]]) -> None:
+    presentation = Presentation()
+    for slide_spec in _slide_specs(content):
         slide = presentation.slides.add_slide(presentation.slide_layouts[1])
         title = slide.shapes.title
         if title is not None:
@@ -140,7 +174,7 @@ def _create_pptx(path: Path, content: Mapping[str, Any], references: Sequence[Ma
         tables = slide_spec.get("tables") or []
         if not isinstance(tables, list):
             raise ValueError("pptx tables must be an array")
-        top = 4.0
+        top = 1.7
         for table_spec in tables:
             if not isinstance(table_spec, Mapping) or not isinstance(table_spec.get("rows"), list):
                 raise ValueError("pptx table requires rows")
@@ -149,7 +183,7 @@ def _create_pptx(path: Path, content: Mapping[str, Any], references: Sequence[Ma
             if not rows or not columns:
                 continue
             table = slide.shapes.add_table(
-                len(rows), columns, Inches(0.7), Inches(top), Inches(8.6), Inches(1.6)
+                len(rows), columns, Inches(0.7), Inches(top), Inches(8.6), Inches(max(0.5, len(rows) * 0.45))
             ).table
             for row_index, row in enumerate(rows):
                 for column_index, value in enumerate(row):
@@ -162,12 +196,16 @@ def _create_pptx(path: Path, content: Mapping[str, Any], references: Sequence[Ma
             if not isinstance(image, Mapping):
                 raise ValueError("pptx image must be an object")
             image_path = Path(str(image.get("path") or "")).expanduser().resolve()
-            slide.shapes.add_picture(
+            picture = slide.shapes.add_picture(
                 str(image_path),
                 Inches(float(image.get("leftIn") or 0.7)),
-                Inches(float(image.get("topIn") or 4.0)),
+                Inches(float(image.get("topIn") or 1.7)),
                 width=Inches(float(image.get("widthIn") or 3.0)),
             )
+            available = presentation.slide_height - picture.top - Inches(0.5)
+            if picture.height > available > 0 and "widthIn" not in image:
+                picture.width = int(picture.width * available / picture.height)
+                picture.height = available
     if references:
         source_slide = presentation.slides.add_slide(presentation.slide_layouts[1])
         if source_slide.shapes.title is not None:
@@ -207,7 +245,7 @@ def _verify_docx(path: Path, content: Mapping[str, Any], references: Sequence[Ma
 def _verify_xlsx(path: Path, content: Mapping[str, Any], references: Sequence[Mapping[str, Any]]) -> bool:
     workbook = load_workbook(path, data_only=False)
     try:
-        for spec in content.get("sheets") or []:
+        for spec in _sheet_specs(content, references):
             name = str(spec.get("name") or "")
             if name not in workbook.sheetnames:
                 return False
@@ -223,7 +261,7 @@ def _verify_xlsx(path: Path, content: Mapping[str, Any], references: Sequence[Ma
 
 def _verify_pptx(path: Path, content: Mapping[str, Any], references: Sequence[Mapping[str, Any]]) -> bool:
     presentation = Presentation(path)
-    expected = list(content.get("slides") or [])
+    expected = _slide_specs(content)
     if len(presentation.slides) != len(expected) + (1 if references else 0):
         return False
     for slide, spec in zip(presentation.slides, expected, strict=False):
@@ -232,6 +270,24 @@ def _verify_pptx(path: Path, content: Mapping[str, Any], references: Sequence[Ma
         body = str(spec.get("body") or "")
         if title not in texts or (body and body not in texts):
             return False
+        tables = [shape.table for shape in slide.shapes if shape.has_table]
+        wanted_tables = spec.get("tables") or []
+        if len(tables) != len(wanted_tables):
+            return False
+        for table, wanted in zip(tables, wanted_tables):
+            rows = wanted["rows"]
+            if len(table.rows) != len(rows):
+                return False
+            for row_index, row in enumerate(rows):
+                if [table.cell(row_index, column).text for column in range(len(row))] != [str(value) for value in row]:
+                    return False
+        pictures = [shape for shape in slide.shapes if shape.shape_type == 13]
+        if len(pictures) != len(spec.get("images") or []):
+            return False
+        for shape in slide.shapes:
+            if shape.has_table or shape.shape_type == 13:
+                if shape.left < 0 or shape.top < 0 or shape.left + shape.width > presentation.slide_width or shape.top + shape.height > presentation.slide_height:
+                    return False
     if references:
         source_text = "\n".join(
             shape.text

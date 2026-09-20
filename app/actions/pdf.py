@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import json
 import uuid
 from collections.abc import Mapping
 from contextlib import suppress
@@ -77,6 +78,38 @@ def _find_annotation(page: fitz.Page, annotation_id: str) -> fitz.Annot | None:
     return None
 
 
+def _binding(source: SourceRef) -> str:
+    return json.dumps([source.task_id, source.source_id, str(_source_path(source))], ensure_ascii=False)
+
+
+def _is_bound(document: fitz.Document, source: SourceRef) -> bool:
+    return document.xref_get_key(document.pdf_catalog(), "MagicPointerSource")[1] == _binding(source)
+
+
+def _observed(annotation: fitz.Annot, page: fitz.Page, operation: PatchOperation) -> dict[str, Any]:
+    state = _annotation_state(operation, after=True)
+    state["present"] = True
+    actual_text = annotation.info.get("content", "")
+    if "text" in state or actual_text:
+        state["text"] = actual_text
+    state["kind"] = {0: "text-note", 2: "visual-overlay", 8: "highlight"}.get(annotation.type[0], annotation.type[1])
+    _, rect, space = _locator(operation)
+    target = rect * page.derotation_matrix if space == "rotated-page-points" else rect
+    if state["kind"] == "highlight":
+        points = annotation.vertices or []
+        actual = fitz.Rect(min(p[0] for p in points), min(p[1] for p in points), max(p[0] for p in points), max(p[1] for p in points)) if points else annotation.rect
+        matches = all(abs(a - b) < 0.1 for a, b in zip(actual, target))
+    elif state["kind"] == "text-note":
+        actual = annotation.rect
+        matches = abs(actual.x0 - target.x0) <= 1.1 and abs(actual.y0 - target.y0) <= 1.1
+    else:
+        actual = annotation.rect
+        matches = all(abs(a - b) < 0.1 for a, b in zip(actual, target))
+    if not matches:
+        state["actualRectPt"] = list(actual)
+    return state
+
+
 class PdfActionHandler:
     used_backend = "pdf.pymupdf"
 
@@ -102,22 +135,19 @@ class PdfActionHandler:
                 return OperationReadResult(True, before, self.used_backend)
             page_index, _, _ = _locator(operation)
             with fitz.open(output) as document:
+                if not _is_bound(document, source):
+                    return OperationReadResult(True, {"outputPath": str(output), "conflict": "output_exists"}, self.used_backend)
                 if page_index >= document.page_count:
                     return OperationReadResult(
                         True,
                         {"outputPath": str(output), "conflict": "page_missing"},
                         self.used_backend,
                     )
-                found = _find_annotation(
-                    document[page_index], str(after["annotationId"])
-                )
+                page = document[page_index]
+                found = _find_annotation(page, str(after["annotationId"]))
                 if found is not None:
-                    return OperationReadResult(True, after, self.used_backend)
-            return OperationReadResult(
-                True,
-                {"outputPath": str(output), "conflict": "output_exists"},
-                self.used_backend,
-            )
+                    return OperationReadResult(True, _observed(found, page, operation), self.used_backend)
+            return OperationReadResult(True, before, self.used_backend)
         except Exception as exc:
             return OperationReadResult(
                 False,
@@ -141,9 +171,9 @@ class PdfActionHandler:
             if output == original:
                 raise ValueError("PDF annotations require an explicit output copy")
             if output.exists():
-                return OperationWriteResult(
-                    False, False, self.used_backend, "output_path_exists"
-                )
+                with fitz.open(output) as existing:
+                    if not _is_bound(existing, source):
+                        return OperationWriteResult(False, False, self.used_backend, "output_path_exists")
             if not original.is_file():
                 return OperationWriteResult(
                     False, False, self.used_backend, "source_pdf_missing"
@@ -151,10 +181,13 @@ class PdfActionHandler:
             output.parent.mkdir(parents=True, exist_ok=True)
             temporary = output.with_name(f".{output.name}.{uuid.uuid4().hex}.tmp")
             page_index, rect, coordinate_space = _locator(operation)
-            with fitz.open(original) as document:
+            with fitz.open(output if output.exists() else original) as document:
+                document.xref_set_key(document.pdf_catalog(), "MagicPointerSource", fitz.get_pdf_str(_binding(source)))
                 if page_index >= document.page_count:
                     raise ValueError("PDF page no longer exists")
                 page = document[page_index]
+                if _find_annotation(page, str(after["annotationId"])) is not None:
+                    raise ValueError("annotation_already_exists")
                 target = rect * page.derotation_matrix if coordinate_space == "rotated-page-points" else rect
                 kind = str(after["kind"])
                 text = str(after.get("text") or "")
@@ -180,10 +213,10 @@ class PdfActionHandler:
                 annotation.update()
                 document.save(temporary, garbage=3, deflate=True)
             with fitz.open(temporary) as verification:
-                if _find_annotation(
-                    verification[page_index], str(after["annotationId"])
-                ) is None:
-                    raise RuntimeError("annotation_readback_missing")
+                page = verification[page_index]
+                observed = _find_annotation(page, str(after["annotationId"]))
+                if observed is None or _observed(observed, page, operation) != after:
+                    raise RuntimeError("annotation_readback_mismatch")
             os.replace(temporary, output)
             temporary = None
             return OperationWriteResult(True, True, self.used_backend)
