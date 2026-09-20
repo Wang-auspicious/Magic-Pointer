@@ -153,12 +153,13 @@ def _parse_update_body(lines: list[str], index: int, hunk: Hunk) -> int:
     while index < len(lines):
         raw = lines[index]
         line = raw.strip()
+        if line.startswith(MOVE_TO_MARKER.strip()) and hunk.move_path is None and not hunk.chunks:
+            hunk.move_path = line[len(MOVE_TO_MARKER.strip()):].strip()
+            index += 1
+            continue
         if line == END_PATCH_MARKER or (line.startswith("*** ") and line != EOF_MARKER):
             return index
         index += 1
-        if line.startswith(MOVE_TO_MARKER.strip()) and hunk.move_path is None and not hunk.chunks:
-            hunk.move_path = line[len(MOVE_TO_MARKER.strip()):].strip()
-            continue
         if line == EMPTY_CHANGE_CONTEXT_MARKER:
             hunk.chunks.append(UpdateFileChunk())
             continue
@@ -247,21 +248,116 @@ def seek_sequence(
 # ---------------------------------------------------------------------------
 
 
+def _line_number(line_index: int) -> int:
+    return line_index + 1
+
+
+def _near_miss_lines(
+    original_lines: list[str],
+    pattern: list[str],
+    limit: int = 3,
+) -> list[tuple[int, int]]:
+    """Best guesses for where ``pattern`` was meant to go: ``(line, score)``.
+
+    A failed chunk currently reports the expected text and nothing about the
+    file, so the model has to re-read the whole file to find out what moved.
+    Scoring every offset by how many leading lines still match — under the same
+    whitespace tolerance ``seek_sequence`` uses — turns that into one line
+    number it can act on immediately. Scores are counted on the first line of
+    each non-empty pattern line so a single stale line early in the block does
+    not sink an otherwise obvious location.
+    """
+    if not pattern or not original_lines:
+        return []
+    probe = next((line for line in pattern if line.strip()), pattern[0])
+    scored: list[tuple[int, int]] = []
+    for index, line in enumerate(original_lines):
+        score = 0
+        for mode in (0, 1, 2, 3):
+            # Same mode on both sides: comparing a normalized file line against
+            # the raw probe would call "x  " and "x" different at mode 0.
+            if _match_mode(mode, line) == _match_mode(mode, probe):
+                score = 4 - mode
+                break
+        if not score:
+            # Fall back to the longest shared prefix, ignoring whitespace and
+            # case, so the hint survives a word edited inside the line
+            # ("beta" vs "betta"). Requiring half the shorter string keeps a
+            # coincidental two-character opener from matching everything.
+            left = line.strip().casefold()
+            right = probe.strip().casefold()
+            shortest = min(len(left), len(right))
+            shared = 0
+            while shared < shortest and left[shared] == right[shared]:
+                shared += 1
+            score = 1 if shared >= 3 and shared * 2 >= shortest else 0
+        if score:
+            scored.append((index, score))
+    scored.sort(key=lambda item: (-item[1], item[0]))
+    return scored[:limit]
+
+
+def _locate_hint(
+    original_lines: list[str],
+    pattern: list[str],
+) -> str:
+    misses = _near_miss_lines(original_lines, pattern)
+    if not misses:
+        return " No similar lines in the current file; re-read it before retrying."
+    parts = [f"line {_line_number(index)}: {original_lines[index]}" for index, _ in misses]
+    return " Closest lines in the current file:\n" + "\n".join(parts)
+
+
+def _other_match_lines(
+    original_lines: list[str],
+    pattern: list[str],
+    start: int,
+    stop_at: int,
+    eof: bool,
+    limit: int = 3,
+) -> list[int]:
+    """Line numbers of further matches for an already-applied chunk pattern."""
+    if not pattern:
+        return []
+    found: list[int] = []
+    cursor = start
+    while len(found) < limit:
+        hit = seek_sequence(original_lines, pattern, cursor, eof)
+        if hit is None or hit >= stop_at:
+            break
+        found.append(_line_number(hit))
+        cursor = hit + 1
+    return found
+
+
 def _compute_replacements(
     original_lines: list[str],
     display_path: str,
     chunks: list[UpdateFileChunk],
-) -> list[tuple[int, int, list[str]]]:
+) -> tuple[list[tuple[int, int, list[str]]], list[str]]:
+    """Locate every chunk. Returns replacements plus ambiguity notes.
+
+    ``seek_sequence`` takes the first match at or after the cursor, which is the
+    Codex contract and usually right: earlier chunks move the cursor past text
+    that has already been used. It is a guess when a chunk carries no
+    ``change_context`` and its block occurs again later in the file — the patch
+    then edits one of several identical regions with nothing in the patch
+    saying which. That case is reported rather than silently resolved, so the
+    caller can confirm the intended region without re-reading the file.
+    """
     replacements: list[tuple[int, int, list[str]]] = []
+    notes: list[str] = []
     line_index = 0
-    for chunk in chunks:
+    for position, chunk in enumerate(chunks):
+        where = f"chunk {position + 1}/{len(chunks)}"
         if chunk.change_context is not None:
             found = seek_sequence(
                 original_lines, [chunk.change_context], line_index, False
             )
             if found is None:
                 raise ApplyPatchError(
-                    f"Failed to find context {chunk.change_context!r} in {display_path}"
+                    f"Failed to find context {chunk.change_context!r} in {display_path} ({where})."
+                    + _locate_hint(original_lines, [chunk.change_context])
                 )
             line_index = found + 1
         if not chunk.old_lines:
@@ -276,12 +372,24 @@ def _compute_replacements(
             found = seek_sequence(original_lines, pattern, line_index, chunk.is_end_of_file)
         if found is None:
             raise ApplyPatchError(
-                f"Failed to find expected lines in {display_path}:\n"
+                f"Failed to find expected lines in {display_path} ({where}, "
+                f"searched from line {_line_number(line_index)}):\n"
                 + "\n".join(chunk.old_lines[:8])
+                + _locate_hint(original_lines, pattern)
             )
+        if chunk.change_context is None:
+            others = _other_match_lines(
+                original_lines, pattern, found + 1, len(original_lines), chunk.is_end_of_file
+            )
+            if others:
+                notes.append(
+                    f"{display_path} {where} also matches at line(s) "
+                    + ", ".join(str(line) for line in others)
+                    + f"; applied at line {_line_number(found)}."
+                )
         replacements.append((found, len(pattern), list(chunk.new_lines)))
         line_index = found + len(pattern)
-    return replacements
+    return replacements, notes
 
 
 def _apply_replacements(
@@ -298,43 +406,69 @@ def _apply_replacements(
     return "\n".join(new_lines) + ("\n" if new_lines else "")
 
 
-def apply_patch_text(patch: str, root: Path) -> str:
+def apply_patch_text(patch: str, root: Path, *, before_write=None) -> str:
     """Parse and apply ``patch`` confined to ``root``; return a summary."""
     from app.agent_runtime.coding_tools import WorkspaceSpace
 
     space = WorkspaceSpace(root)
     hunks = parse_patch(patch)
     reports: list[str] = []
+    ambiguity: list[str] = []
+    changes: dict[Path, bytes | None] = {}
+
+    def current(path: Path) -> bytes | None:
+        return changes[path] if path in changes else path.read_bytes() if path.is_file() else None
+
     for hunk in hunks:
         target = space.resolve(hunk.path)
         display = space.display(target)
         if hunk.kind == "add":
-            if target.exists():
+            if current(target) is not None:
                 raise ApplyPatchError(f"{display} already exists; use Update File")
-            target.parent.mkdir(parents=True, exist_ok=True)
             content = "\n".join(hunk.contents or []) + "\n"
-            target.write_text(content, encoding="utf-8", newline="\n")
+            changes[target] = content.encode("utf-8")
             reports.append(f"Add {display}: {len(hunk.contents or [])} lines")
         elif hunk.kind == "delete":
-            if not target.is_file():
+            if current(target) is None:
                 raise FileNotFoundError(f"not found: {display}")
-            target.unlink()
+            changes[target] = None
             reports.append(f"Delete {display}")
         else:
-            if not target.is_file():
+            original = current(target)
+            if original is None:
                 raise FileNotFoundError(f"not found: {display}")
-            raw = target.read_text(encoding="utf-8")
+            newline = "\r\n" if b"\r\n" in original else "\r" if b"\r" in original else "\n"
+            bom = original.startswith(b"\xef\xbb\xbf")
+            raw = original.decode("utf-8-sig").replace("\r\n", "\n").replace("\r", "\n")
             original_lines = raw.split("\n")
             if original_lines and original_lines[-1] == "":
                 original_lines.pop()
-            replacements = _compute_replacements(original_lines, display, hunk.chunks)
+            replacements, notes = _compute_replacements(original_lines, display, hunk.chunks)
+            ambiguity.extend(notes)
             updated = _apply_replacements(original_lines, replacements)
+            if not raw.endswith("\n"):
+                updated = updated.removesuffix("\n")
             final_target = space.resolve(hunk.move_path) if hunk.move_path else target
-            final_target.parent.mkdir(parents=True, exist_ok=True)
-            final_target.write_text(updated, encoding="utf-8", newline="\n")
+            if final_target != target and current(final_target) is not None:
+                raise ApplyPatchError(f"move destination already exists: {space.display(final_target)}")
+            changes[final_target] = (("\ufeff" if bom else "") + updated.replace("\n", newline)).encode("utf-8")
             if hunk.move_path and final_target != target:
-                target.unlink()
+                changes[target] = None
                 reports.append(f"Update {display} -> {space.display(final_target)}")
             else:
                 reports.append(f"Update {display}: {len(hunk.chunks)} chunk(s)")
-    return "Success. " + "; ".join(reports)
+    # Parse and resolve every hunk before recording undo history or changing files.
+    for path, content in changes.items():
+        if before_write is not None:
+            before_write(path, existed=path.exists())
+        if content is None:
+            path.unlink()
+        else:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+    summary = "Success. " + "; ".join(reports)
+    if ambiguity:
+        summary += "\nAmbiguous placement (the patch did not say which region; verify):\n" + "\n".join(
+            f"- {note}" for note in ambiguity
+        )
+    return summary

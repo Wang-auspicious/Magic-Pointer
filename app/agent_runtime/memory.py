@@ -213,10 +213,6 @@ def compact_messages(
         )
 
     source = _source_from(head)
-    if len(source) > COMPACTION_SOURCE_LIMIT_CHARS:
-        prefix = source[:40000]
-        suffix = source[-(COMPACTION_SOURCE_LIMIT_CHARS - 40000):]
-        source = prefix + "\n[older compaction source truncated]\n" + suffix
     if not source.strip():
         return list(messages)
     # Pruning may already have solved the problem. Duplicate tool results and
@@ -232,20 +228,18 @@ def compact_messages(
         and len(source) <= int(model_free_below_chars)
     ):
         return [*head, *tail]
-    summary = str(summarize(source) or "").strip()
-    if not summary and len(head) > 2:
-        # Codex compact window-collision retry: the summarizer produced
-        # nothing for the full source (its own request hit the model's
-        # window or the backend hiccuped). Drop the oldest half of the head
-        # and try once more before giving up the round.
-        retried_head = _prune_duplicate_tool_results(messages[len(head) // 2 : cutoff])
-        retried_source = _source_from(retried_head)
-        if len(retried_source) > COMPACTION_SOURCE_LIMIT_CHARS:
-            retried_source = retried_source[:COMPACTION_SOURCE_LIMIT_CHARS]
-        if retried_source.strip():
-            summary = str(summarize(retried_source) or "").strip()
-    if not summary:
-        return list(messages)
+    from app.agent_runtime.compaction_prompt import COMPACT_SOURCE_MODEL_CAP_CHARS
+    summaries = []
+    for start in range(0, len(source), COMPACT_SOURCE_MODEL_CAP_CHARS):
+        part = source[start:start + COMPACT_SOURCE_MODEL_CAP_CHARS]
+        summary = str(summarize(part) or "").strip()
+        if not summary and len(head) > 2:
+            # Retry the same facts; removing them would falsely accept a partial summary.
+            summary = str(summarize(part) or "").strip()
+        if not summary:
+            return list(messages)
+        summaries.append(summary)
+    summary = "\n\n".join(summaries)
     # The summarizer is a model: it can faithfully repeat imperative text
     # found in tool results or screen content. Re-wrap its output with the
     # same data fence as fresh evidence so an injection cannot be upgraded
@@ -373,8 +367,6 @@ def _tail_cut_by_tokens(
 def _compaction_source_line(message: AgentMessage) -> str:
     """Render one bounded, provenance-labelled item for the summarizer."""
     content = (message.content or "").strip()
-    if len(content) > COMPACTION_MESSAGE_LIMIT_CHARS:
-        content = content[:COMPACTION_MESSAGE_LIMIT_CHARS] + "\n[message truncated]"
     if message.role is Role.TOOL:
         return (
             "[tool_result untrusted_data "

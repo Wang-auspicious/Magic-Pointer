@@ -448,6 +448,7 @@ def test_run_command_plain_failure_keeps_no_semantics_note(registry: ToolRegistr
         "Bash",
         {"command": 'python -c "import sys; sys.exit(1)"', "cwd": "."},
     )
-    value = str(result.value or "")
+    assert result.is_error
+    value = str(result.error_message or "")
     assert "exit=1" in value
     assert "no matches" not in value.casefold()

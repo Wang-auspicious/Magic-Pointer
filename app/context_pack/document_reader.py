@@ -23,7 +23,7 @@ from docx import Document
 from docx.table import Table
 from docx.text.paragraph import Paragraph
 from openpyxl import load_workbook
-from openpyxl.utils import get_column_letter
+from openpyxl.utils import get_column_letter, range_boundaries
 from pptx import Presentation
 
 from .sources import Coverage, FragmentLocator, ReadFragment, ReadResult, SourceRef
@@ -590,8 +590,8 @@ class DocumentReader:
     ) -> list[tuple[bool, int, int, _Unit]]:
         """Search names first, then the readable content of each direct child.
 
-        A directory result keeps the directory entry index as its fragment id,
-        so ``follow`` can turn the hit into an independently readable SourceRef.
+        A directory result binds its fragment id to the entry name, so adding
+        another file cannot make ``follow`` reinterpret an old array index.
         The precise locator inside the child remains attached to the hit.
         """
         matches: list[tuple[bool, int, int, _Unit]] = []
@@ -608,7 +608,7 @@ class DocumentReader:
                     matches.append((False, entry_score, index, entry))
                 continue
             child_path = Path(absolute_path)
-            child_source = self._child_source(source, index, child_path)
+            child_source = self._child_source(source, child_path)
             try:
                 child = self._parse(child_source)
             except (OSError, ValueError):
@@ -682,6 +682,8 @@ class DocumentReader:
     def _locator_matches(requested: FragmentLocator, actual: FragmentLocator) -> bool:
         if requested.kind != actual.kind:
             return False
+        if "textOffset" in requested.value and requested.value["textOffset"] != actual.value.get("textOffset", 0):
+            return False
         if requested.kind == "pdf-region":
             page_index = requested.value.get("pageIndex")
             if not isinstance(page_index, int):
@@ -696,9 +698,21 @@ class DocumentReader:
                 return False
             shape_id = requested.value.get("shapeId")
             return shape_id is None or actual.value.get("shapeId") == shape_id
-        return actual.value == requested.value
+        if requested.kind == "cell-range":
+            if requested.value.get("sheet") != actual.value.get("sheet"):
+                return False
+            try:
+                left, top, right, bottom = range_boundaries(str(requested.value.get("range") or ""))
+                x1, y1, x2, y2 = range_boundaries(str(actual.value.get("range") or ""))
+                return left <= x1 <= x2 <= right and top <= y1 <= y2 <= bottom
+            except (TypeError, ValueError):
+                return False
+        return (
+            {key: value for key, value in actual.value.items() if key != "textOffset"}
+            == {key: value for key, value in requested.value.items() if key != "textOffset"}
+        )
 
-    def _child_source(self, source: SourceRef, index: int, path: Path) -> SourceRef:
+    def _child_source(self, source: SourceRef, path: Path) -> SourceRef:
         suffix = path.suffix.casefold()
         capabilities = ["read"]
         if path.is_dir() or suffix in (_OFFICE_EXTENSIONS | _TEXT_EXTENSIONS):
@@ -706,7 +720,7 @@ class DocumentReader:
         if path.is_dir() or suffix in _OFFICE_EXTENSIONS:
             capabilities.append("patch")
         return SourceRef(
-            source_id=f"{source.source_id}:entry:{index}",
+            source_id=f"{source.source_id}:entry:{path.name}",
             task_id=source.task_id,
             kind="document" if suffix in _OFFICE_EXTENSIONS else "file",
             title=path.name,
@@ -721,8 +735,13 @@ class DocumentReader:
         text = unit.text
         if len(text) > self.max_fragment_chars:
             text = text[: self.max_fragment_chars].rstrip() + "\n[TRUNCATED]"
+        entry_name = unit.metadata.get("relativePath")
+        fragment_id = (
+            f"fragment:{source.source_id}:entry:{entry_name}" if entry_name is not None
+            else f"fragment:{source.source_id}:{'page' if unit.metadata.get('textView') else 'unit'}:{index}"
+        )
         return ReadFragment(
-            fragment_id=f"fragment:{source.source_id}:{'page' if unit.metadata.get('textView') else 'unit'}:{index}",
+            fragment_id=fragment_id,
             locator=unit.locator,
             text=text,
             metadata={
@@ -845,6 +864,22 @@ class DocumentReader:
                             text[start:start + self.max_fragment_chars], {"textView": True}))
                 parsed = replace(parsed, units=tuple(units))
                 cursor_kind = "page"
+            else:
+                # A long paragraph/line remains a real document unit. Split
+                # its read surface, not its stored text, so a terminal cursor
+                # never conceals a permanently inaccessible [TRUNCATED] tail.
+                units = []
+                for unit in parsed.units:
+                    if len(unit.text) <= self.max_fragment_chars:
+                        units.append(unit)
+                        continue
+                    for start in range(0, len(unit.text), self.max_fragment_chars):
+                        units.append(_Unit(
+                            FragmentLocator(unit.locator.kind, {**unit.locator.value, "textOffset": start}),
+                            unit.text[start:start + self.max_fragment_chars],
+                            {**unit.metadata, "textOffset": start, "totalTextChars": len(unit.text)},
+                        ))
+                parsed = replace(parsed, units=tuple(units))
             bounded = max(1, min(int(limit), 1000))
             if locator is not None:
                 matches = [
@@ -876,8 +911,12 @@ class DocumentReader:
                 else:
                     start = max(0, target - 1)
                     candidates = list(enumerate(parsed.units[start:target + 2], start=start))
-                if (target, target_unit) not in candidates:
-                    candidates.insert(0, (target, target_unit))
+                # An explicit locator names the object the caller needs now.
+                # Returning earlier neighbors first can exhaust a small budget
+                # before the requested object is ever read.
+                candidates = [(target, target_unit), *(
+                    item for item in candidates if item[0] != target
+                )]
                 neighborhood_offset = _cursor_offset(cursor, "neighborhood")
                 requested = candidates[neighborhood_offset:neighborhood_offset + bounded]
                 selected = self._fit_result_budget(source, requested)
@@ -1007,6 +1046,17 @@ class DocumentReader:
 
     def follow(self, source: SourceRef, fragment_id: str) -> tuple[SourceRef, ...]:
         parsed = self._parse(source)
+        if parsed.structure.get("kind") == "directory":
+            prefix = f"fragment:{source.source_id}:entry:"
+            if not fragment_id.startswith(prefix):
+                # An old positional ID cannot prove which file was observed.
+                return ()
+            name = fragment_id[len(prefix):]
+            unit = next((item for item in parsed.units
+                         if item.metadata.get("relativePath") == name), None)
+            if unit is None:
+                return ()
+            return (self._child_source(source, Path(unit.metadata["absolutePath"])),)
         prefix = f"fragment:{source.source_id}:unit:"
         if not fragment_id.startswith(prefix):
             return ()
@@ -1019,7 +1069,7 @@ class DocumentReader:
         if not isinstance(path_value, str):
             return ()
         path = Path(path_value)
-        return (self._child_source(source, index, path),)
+        return (self._child_source(source, path),)
 
     def preview(self, source: SourceRef, *, max_chars: int = 16_000) -> ReadResult:
         """Return a bounded first reading; callers retain the cursor to continue."""

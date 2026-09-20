@@ -42,6 +42,15 @@ def _tool_failure(message: str) -> ActionFailure:
     return ActionFailure(FailureType.PERMISSION_DENIED, message)
 
 
+def _reference_label(ordinal: int) -> str:
+    """Use the same A..Z, AA.. sequence as the desktop task source contract."""
+    label = ""
+    while ordinal:
+        ordinal, digit = divmod(ordinal - 1, 26)
+        label = chr(ord("A") + digit) + label
+    return label
+
+
 def register_context_tools(
     registry: ToolRegistry,
     *,
@@ -111,6 +120,9 @@ def register_context_tools(
         active = current_session()
         source = read_source(str(source_id))
         parsed_locator = FragmentLocator.from_dict(locator) if locator else None
+        if source.identity.get("absolutePath") and parsed_locator is not None and parsed_locator.kind == "visual-region":
+            # A desktop/Explorer icon locates the file, not a page inside it.
+            parsed_locator = None
         reader = readers.for_source(source)
         from .document_reader import DocumentReader
 
@@ -124,6 +136,11 @@ def register_context_tools(
         )
         if result.source_id != source.source_id:
             raise ValueError("reader returned a result for another source")
+        if result.evidence_status in {"error", "unsupported", "timeout"}:
+            raise ActionFailure(
+                FailureType.TOOL_ERROR,
+                json.dumps(result.to_dict(), ensure_ascii=False),
+            )
         for fragment in result.fragments:
             observed.add(_locator_key(source.source_id, fragment.locator))
         return result.to_dict()
@@ -151,7 +168,11 @@ def register_context_tools(
             for fragment in result.fragments:
                 observed.add(_locator_key(source.source_id, fragment.locator))
             results.append(result.to_dict())
-        return {"query": str(query), "results": results}
+        failures = [item for item in results if item.get("evidenceStatus") in {"error", "unsupported", "timeout"}]
+        if failures and len(failures) == len(results):
+            raise ActionFailure(FailureType.TOOL_ERROR, json.dumps({"query": str(query), "results": results}, ensure_ascii=False))
+        return {"query": str(query), "results": results,
+                "evidenceStatus": "degraded" if failures else "ok"}
 
     def follow_execute(
         source_id: str,
@@ -199,7 +220,7 @@ def register_context_tools(
         ) + 1
         binding = ReferenceBinding(
             reference_id=str(reference_id),
-            label=current.label if current else chr(ord("A") + min(ordinal - 1, 25)),
+            label=current.label if current else _reference_label(ordinal),
             source_id=source.source_id,
             locator=parsed_locator,
             role=str(role),
@@ -360,6 +381,9 @@ def register_context_tools(
         effect=Effect.READ,
         is_concurrency_safe=True,
         used_backend="task_source.reader",
+        # Chat readers can navigate the bound public UI to obtain history.
+        # They must not share the scheduler's parallel lane with desktop input.
+        is_concurrency_safe_for=lambda args: read_source(str(args.get("source_id") or "")).kind != "chat",
         access_for=lambda args: AccessRequest(
             action="read", source_ids=(read_source(str(args.get("source_id") or "")).source_id,),
         ),
@@ -377,6 +401,10 @@ def register_context_tools(
         effect=Effect.READ,
         is_concurrency_safe=True,
         used_backend="task_source.search",
+        is_concurrency_safe_for=lambda args: all(
+            read_source(source_id).kind != "chat"
+            for source_id in requested_source_ids(args)
+        ),
         access_for=lambda args: AccessRequest(
             action="read", source_ids=requested_source_ids(args),
         ),

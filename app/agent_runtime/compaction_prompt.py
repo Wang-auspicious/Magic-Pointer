@@ -90,9 +90,17 @@ def summarize_history_text(history_text: str) -> str:
     """
     from app.ai_client import ask_text_model, is_ai_failure
 
-    source = str(history_text or "")[:COMPACT_SOURCE_MODEL_CAP_CHARS]
+    source = str(history_text or "")
     if not source.strip():
         return ""
+    if len(source) > COMPACT_SOURCE_MODEL_CAP_CHARS:
+        summaries = []
+        for start in range(0, len(source), COMPACT_SOURCE_MODEL_CAP_CHARS):
+            summary = summarize_history_text(source[start:start + COMPACT_SOURCE_MODEL_CAP_CHARS])
+            if not summary:
+                return ""
+            summaries.append(summary)
+        return "\n\n".join(summaries)
     try:
         summary = ask_text_model(
             compaction_instructions(),

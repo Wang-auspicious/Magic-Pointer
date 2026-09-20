@@ -420,6 +420,9 @@ def _attachment_identity(attachment: Mapping[str, Any]) -> tuple[Any, ...]:
 
 
 def _message_overlap_key(message: Mapping[str, Any]) -> tuple[Any, ...]:
+    native_id = str(message.get("nativeMessageId") or "").strip()
+    if native_id:
+        return ("native-message", native_id)
     attachments = tuple(
         _attachment_identity(_mapping(item))
         for item in list(message.get("attachments") or ())
@@ -542,7 +545,9 @@ class ChatReader:
             # is not yet readable.  A public URL/local path makes it followable
             # by the normal document/file channel; downloading remains an
             # explicit desktop action and is not hidden inside Context.follow.
-            readable = bool(identity.get("absolutePath") or identity.get("url"))
+            readable = bool(identity.get("absolutePath"))
+            if not readable and identity.get("url"):
+                identity["downloadState"] = "requires-download"
             capabilities = ("read", "search", "follow") if readable else ("follow",)
             children.append(SourceRef(
                 source_id=source_id,

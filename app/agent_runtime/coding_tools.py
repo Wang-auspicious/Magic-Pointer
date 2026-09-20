@@ -26,11 +26,13 @@ from pathlib import Path
 from typing import Any
 
 from app.agent_runtime.tool_registry import Effect, ToolRegistry, ToolSpec
+from app.governance.cancellation import CancellationToken
 
 __all__ = ["WorkspaceSpace", "FileCheckpointStore", "register_coding_tools"]
 
 _MAX_READ_CHARS = 50_000
 _MAX_READ_LINES = 2_000
+_DEFAULT_READ_LINES = 200
 _MAX_OUTPUT_CHARS = 64_000
 _MAX_GREP_RESULTS = 200
 _MAX_GLOB_RESULTS = 500
@@ -72,7 +74,7 @@ def _text(result_value: Any) -> str:
     return "" if inner is None else str(inner)
 
 
-def _numbered(path: Path, offset: int, limit: int) -> tuple[str, bool]:
+def _numbered(path: Path, offset: int, limit: int, max_chars: int = _MAX_READ_CHARS) -> tuple[str, bool]:
     """返回 (渲染文本, 是否截断)。截断 = 模型没看到完整范围（帽截断或越界）。"""
     raw = path.read_text(encoding="utf-8", errors="replace")
     lines = raw.splitlines()
@@ -84,10 +86,17 @@ def _numbered(path: Path, offset: int, limit: int) -> tuple[str, bool]:
     truncated = False
     if start > total:
         truncated = True
-    if len(body) > _MAX_READ_CHARS:
-        body = body[:_MAX_READ_CHARS] + (
-            f"\n[Read output truncated at {_MAX_READ_CHARS} chars: "
-            "re-read with a smaller limit or use offset to page through the file]"
+    if len(body) > max_chars:
+        # End on a complete line so the next offset can recover everything.
+        boundary = body.rfind("\n", 0, max_chars)
+        if boundary > 0:
+            end = start + body[:boundary].count("\n")
+            body = body[:boundary]
+        else:
+            body = body[:max_chars]
+        body += (
+            f"\n[Read output truncated at {max_chars} chars: "
+            "use offset for lines, or char_offset/char_limit for a long single line]"
         )
         truncated = True
     note = ""
@@ -274,17 +283,54 @@ def _render_search(
     return "\n".join(rows) + suffix
 
 
-def _walk_files(root: Path, glob_filter: str):
+def _walk_files(root: Path, glob_filter: str, scope: CancellationToken | None = None):
     for dirpath, dirnames, filenames in os.walk(root):
+        if scope is not None:
+            scope.raise_if_cancelled()
         dirnames[:] = [
             name
             for name in dirnames
-            if name not in {".git", "__pycache__", "node_modules", ".venv", "venv", "dist", "build"}
+            if name not in {".git", "__pycache__", "node_modules", ".venv", "venv", "dist", "build", "release", ".pytest-tmp", ".mp"}
         ]
         for filename in filenames:
             if glob_filter and not fnmatch.fnmatch(filename, glob_filter):
                 continue
             yield Path(dirpath) / filename
+
+
+def _glob_files(root: Path, scope: CancellationToken | None):
+    if scope is not None:
+        scope.raise_if_cancelled()
+    rg = shutil.which("rg")
+    if rg is None:
+        yield from _walk_files(root, "", scope)
+        return
+    # Filter the paths after enumeration: a positive rg -g would override
+    # .gitignore and reintroduce release bundles into a workspace search.
+    process = subprocess.Popen(
+        [rg, "--files", "--hidden", "--no-require-git", "-g", "!.git", "-g", "!node_modules"],
+        cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    try:
+        while True:
+            if scope is not None:
+                scope.raise_if_cancelled()
+            try:
+                output, error = process.communicate(timeout=0.1)
+                break
+            except subprocess.TimeoutExpired:
+                continue
+        if process.returncode not in (0, 1):
+            raise OSError(error.decode("utf-8", errors="replace"))
+        for line in output.decode("utf-8", errors="replace").splitlines():
+            if scope is not None:
+                scope.raise_if_cancelled()
+            yield root / line
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.communicate()
 
 
 def _do_search(
@@ -910,7 +956,7 @@ this set; anything chained (| / ; / && / || / $( / backtick) falls back to
 LOCAL_IRREVERSIBLE because the static check cannot prove the right-hand
 side is also benign."""
 
-_CHAIN_OPERATORS = re.compile(r"[|&;]|&&|\|\||`|\$\(")
+_CHAIN_OPERATORS = re.compile(r"[|&;<>`\r\n]|\$\(")
 
 
 def _classify_command_effect(arguments: dict) -> "Effect":
@@ -931,8 +977,21 @@ def _classify_command_effect(arguments: dict) -> "Effect":
         return Effect.LOCAL_IRREVERSIBLE
     tokens = command.split()
     first = tokens[0].lower()
-    if first == "git" and len(tokens) > 1 and tokens[1].lower() in _GIT_READ_SUBCOMMANDS:
-        return Effect.READ
+    if first == "git" and len(tokens) > 1:
+        subcommand, args = tokens[1].lower(), tokens[2:]
+        if subcommand in {"branch", "tag"}:
+            read = not args or args[0] in {"--list", "-l", "--show-current", "-a", "-r", "--all", "--remotes"}
+        elif subcommand == "config":
+            read = bool(args) and args[0] in {"--get", "--get-all", "--get-regexp", "--list", "-l"}
+        elif subcommand == "remote":
+            read = not args or args == ["-v"] or args[:1] == ["get-url"]
+        else:
+            read = subcommand in _GIT_READ_SUBCOMMANDS
+        return Effect.READ if read else Effect.LOCAL_IRREVERSIBLE
+    if first in {"find", "date", "set", "env"} and len(tokens) > 1:
+        return Effect.LOCAL_IRREVERSIBLE
+    if first == "rg" and any(arg == "--pre" or arg.startswith("--pre=") for arg in tokens[1:]):
+        return Effect.LOCAL_IRREVERSIBLE
     if first in _READ_ONLY_COMMANDS:
         return Effect.READ
     return Effect.LOCAL_IRREVERSIBLE
@@ -967,8 +1026,11 @@ def _resolve_cd_target(
     一次持久化，不会改错目录。
     """
     current: Path | None = None
-    for segment in _CD_SPLIT.split(str(command or "")):
-        tokens = segment.strip().split()
+    # Only a standalone cd has a statically knowable executed destination.
+    if _CHAIN_OPERATORS.search(command):
+        return None
+    for segment in [str(command or "")]:
+        tokens = re.findall(r'"[^"\r\n]*"|\S+', segment.strip())
         if not tokens:
             continue
         if tokens[0].casefold() != "cd":
@@ -1123,8 +1185,12 @@ class FileCheckpointStore:
     so an agent that went down the wrong path is one call from clean.
     """
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, *, session_id: str | None = None) -> None:
         self.dir = Path(root).resolve() / ".mp" / "backups"
+        if session_id:
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", session_id):
+                raise ValueError("invalid checkpoint session id")
+            self.dir /= session_id
         self.manifest = self.dir / "manifest.jsonl"
         # seq must continue across processes, not from 0 every boot. The
         # manifest is append-only and the backups are per-seq files (000001.bak,
@@ -1152,8 +1218,13 @@ class FileCheckpointStore:
         return largest
 
     def record(self, path: Path, *, existed: bool) -> None:
+        from app.agent_runtime.session import _exclusive_file_lock
+        with _exclusive_file_lock(self.dir / "checkpoint.lock"):
+            self._record(path, existed=existed)
+
+    def _record(self, path: Path, *, existed: bool) -> None:
         self.dir.mkdir(parents=True, exist_ok=True)
-        self._seq += 1
+        self._seq = self._max_recorded_seq() + 1
         entry = {
             "seq": self._seq,
             "path": str(path),
@@ -1168,6 +1239,11 @@ class FileCheckpointStore:
             handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
     def restore(self, steps: int = 0) -> str:
+        from app.agent_runtime.session import _exclusive_file_lock
+        with _exclusive_file_lock(self.dir / "checkpoint.lock"):
+            return self._restore(steps)
+
+    def _restore(self, steps: int = 0) -> str:
         """Undo the last ``steps`` mutations (0 = every recorded one)."""
         if not self.manifest.is_file():
             return "no file edits recorded to restore"
@@ -1204,13 +1280,16 @@ def register_coding_tools(
     *,
     workspace_root: Path | str,
     inbox: Callable[[str], None] | None = None,
+    session_id: str | None = None,
 ) -> None:
     """``inbox``：后台 job 完成时推一条 durable 消息（Hermes
     notify_on_complete 契约）。桥接线在 builtin_bundle 的 coding-tools 行。"""
     """Register the file/shell tool set, confined to ``workspace_root``."""
     space = WorkspaceSpace(Path(workspace_root))
-    checkpoints = FileCheckpointStore(space.root)
-    read_store = _read_state_for(space.root)
+    import uuid
+    owner = session_id or uuid.uuid4().hex
+    checkpoints = FileCheckpointStore(space.root, session_id=owner)
+    read_store = _FileReadState()
     try:
         registry.add_execution_listener(
             lambda name: None if name == "Read" else _read_guard_reset(read_store)
@@ -1219,7 +1298,8 @@ def register_coding_tools(
         pass
 
     def read_file(
-        path: str, offset: int = 1, limit: int = _MAX_READ_LINES, force: bool = False,
+        path: str, offset: int = 1, limit: int = _DEFAULT_READ_LINES, force: bool = False,
+        char_offset: int | None = None, char_limit: int = 12000,
         **_: Any,
     ) -> str:
         target = space.resolve(path)
@@ -1230,7 +1310,15 @@ def register_coding_tools(
                 f"{_similar_file_hint(space, target)}"
             )
         _binary_guard(target)
-        store = _read_state_for(space.root)
+        store = read_store
+        if char_offset is not None:
+            raw = target.read_text(encoding="utf-8", errors="replace")
+            start = max(0, int(char_offset))
+            end = min(len(raw), start + max(1, min(int(char_limit), _MAX_READ_CHARS)))
+            _state_mark_read(store, target, offset=1, limit=limit, truncated=start > 0 or end < len(raw))
+            return json.dumps({"path": space.display(target), "content": raw[start:end],
+                               "charOffset": start, "nextCharOffset": end if end < len(raw) else None,
+                               "totalChars": len(raw)}, ensure_ascii=False)
         key = f"{space.display(target)}#{int(offset or 1)}#{int(limit or _MAX_READ_LINES)}"
         streak = _read_guard_bump(store, key)
         if streak >= _READ_LOOP_BLOCK_AT and not force:
@@ -1262,7 +1350,8 @@ def register_coding_tools(
                     "use the information you already have.]\n" + stub
                 )
             return stub
-        text, truncated = _numbered(target, int(offset or 1), int(limit or _MAX_READ_LINES))
+        text, truncated = _numbered(target, int(offset or 1), int(limit or _MAX_READ_LINES),
+                                    max_chars=12_000 if limit == _DEFAULT_READ_LINES else _MAX_READ_CHARS)
         _state_mark_read(
             store, target, offset=int(offset or 1),
             limit=int(limit or _MAX_READ_LINES), truncated=truncated,
@@ -1280,7 +1369,7 @@ def register_coding_tools(
     def write_file(path: str, content: str, **_: Any) -> str:
         target = space.resolve(path)
         _device_guard(target)
-        store = _read_state_for(space.root)
+        store = read_store
         if target.exists():
             freshness = _state_freshness(store, target)
             if freshness != "fresh":
@@ -1309,7 +1398,7 @@ def register_coding_tools(
                 f"File does not exist: {space.display(target)}. "
                 f"{_similar_file_hint(space, target)}"
             )
-        store = _read_state_for(space.root)
+        store = read_store
         freshness = _state_freshness(store, target)
         if freshness != "fresh":
             raise ValueError(f"Edit refused: {_gate_message(freshness, space.display(target))}")
@@ -1371,7 +1460,7 @@ def register_coding_tools(
         return f"edited {space.display(target)} ({len(planned)} replacement(s)){suffix}"
 
     def apply_patch(patch: str | list[str], **_: Any) -> str:
-        from app.agent_runtime.apply_patch import ApplyPatchError, apply_patch_text, parse_patch
+        from app.agent_runtime.apply_patch import ApplyPatchError, apply_patch_text
 
         if isinstance(patch, (list, tuple)):
             blocks = [str(p) for p in patch if str(p).strip()]
@@ -1379,30 +1468,31 @@ def register_coding_tools(
             blocks = [str(patch or "")]
         if not blocks:
             raise ValueError("patch is required")
-        store = _read_state_for(space.root)
+        store = read_store
         touched: list[Path] = []
+        summaries: list[str] = []
         try:
             for block in blocks:
                 text = str(block).strip()
                 if not text:
                     continue
-                for hunk in parse_patch(text):
-                    if hunk.kind == "delete":
-                        checkpoints.record(space.resolve(hunk.path), existed=True)
-                        continue
-                    target = space.resolve(hunk.path)
-                    checkpoints.record(target, existed=target.exists())
+                def checkpoint(target, *, existed):
+                    checkpoints.record(target, existed=existed)
                     touched.append(target)
-                    if hunk.kind == "update" and hunk.move_path:
-                        checkpoints.record(space.resolve(hunk.move_path), existed=False)
-                apply_patch_text(text, space.root)
+                # apply_patch_text 的返回里带着「同一段在别处也匹配」的位置提示；
+                # 丢掉它等于把唯一的歧义信号吃掉，模型下一轮会以为自己改对了。
+                summaries.append(apply_patch_text(text, space.root, before_write=checkpoint))
         except ApplyPatchError as exc:
             raise ValueError(f"Patch failed: {exc}") from exc
         for target in dict.fromkeys(touched):
             # patch 成功 = 补丁内容模型刚写的，视为已读最新，省一轮重读。
             if target.is_file():
                 _state_mark_written(store, target)
-        return f"applied {len(blocks)} patch block(s)"
+        detail = "\n".join(summaries)
+        return (
+            f"applied {len(blocks)} patch block(s)\n{detail}" if detail
+            else f"applied {len(blocks)} patch block(s)"
+        )
 
     def restore_files(steps: int = 0, **_: Any) -> str:
         try:
@@ -1412,30 +1502,24 @@ def register_coding_tools(
         result = checkpoints.restore(bounded)
         if "nothing" not in result:
             # 回滚是 harness 动的文件：读状态全部作废，后续编辑必须重读。
-            _read_state_for(space.root).entries.clear()
-            _read_guard_reset(_read_state_for(space.root))
+            read_store.entries.clear()
+            _read_guard_reset(read_store)
         return result
 
-    def glob(pattern: str, **_: Any) -> str:
+    def glob(pattern: str, scope: CancellationToken | None = None, **_: Any) -> str:
         pattern = str(pattern or "").strip()
         if not pattern:
             raise ValueError("pattern is required")
         matches: list[tuple[str, float]] = []
-        for dirpath, dirnames, filenames in os.walk(space.root):
-            dirnames[:] = [
-                name
-                for name in dirnames
-                if name not in {".git", "__pycache__", "node_modules", ".venv", "venv"}
-            ]
-            for filename in filenames:
-                full = Path(dirpath) / filename
-                rel = _display(space.root, full)
-                if fnmatch.fnmatch(rel, pattern) or fnmatch.fnmatch(filename, pattern):
-                    try:
-                        mtime = full.stat().st_mtime
-                    except OSError:
-                        mtime = 0.0
-                    matches.append((rel, mtime))
+        patterns = [pattern, pattern[3:]] if pattern.startswith("**/") else [pattern]
+        for full in _glob_files(space.root, scope):
+            rel = _display(space.root, full)
+            if any(fnmatch.fnmatch(rel, item) or fnmatch.fnmatch(full.name, item) for item in patterns):
+                try:
+                    mtime = full.stat().st_mtime
+                except OSError:
+                    mtime = 0.0
+                matches.append((rel, mtime))
         if not matches:
             return f"no files match {pattern!r}"
         # mtime 降序：模型找"刚才那个文件"时最近的排前（CC Glob 同款）。
@@ -1457,6 +1541,7 @@ def register_coding_tools(
         path: str = ".",
         case_sensitive: bool = False,
         output_mode: str = "content",
+        glob: str = "",
         **_: Any,
     ) -> str:
         base = space.resolve(path or ".")
@@ -1471,7 +1556,7 @@ def register_coding_tools(
             space,
             base,
             str(pattern or ""),
-            str(glob_filter or ""),
+            str(glob_filter or glob or ""),
             max(1, min(int(max_results or _MAX_GREP_RESULTS), _MAX_GREP_RESULTS)),
             context=max(0, min(int(context or 0), 5)),
             offset=max(0, int(offset or 0)),
@@ -1527,7 +1612,8 @@ def register_coding_tools(
             )
         except subprocess.TimeoutExpired:
             raise TimeoutError(f"command timed out after {bounded:.0f}s: {text[:120]}")
-        shell.cwd = _resolve_cd_target(text, workdir, space) or shell.cwd
+        if completed.returncode == 0:
+            shell.cwd = _resolve_cd_target(text, workdir, space) or shell.cwd
         out = (completed.stdout or "")[-_MAX_OUTPUT_CHARS:]
         err = (completed.stderr or "")[-8000:]
         header = f"exit={completed.returncode}"
@@ -1542,7 +1628,10 @@ def register_coding_tools(
             parts.append(f"stdout:\n{out}")
         if err.strip():
             parts.append(f"stderr:\n{err}")
-        return "\n".join(parts)
+        result = "\n".join(parts)
+        if completed.returncode != 0 and not semantic:
+            raise RuntimeError(result)
+        return result
 
     # 旧名别名（一个版本）：历史授权/旧调用仍路由到规范工具；别名不进 schema。
     registry.register_alias("read_file", "Read")
@@ -1565,6 +1654,8 @@ def register_coding_tools(
             "properties": {
                 "path": {"type": "string"},
                 "offset": {"type": "integer", "description": "起始行，从 1 开始"},
+                "char_offset": {"type": "integer", "minimum": 0, "description": "按字符续读，0 起始；用于单行超长文件，返回 nextCharOffset"},
+                "char_limit": {"type": "integer", "minimum": 1, "maximum": 50000, "description": "字符分页长度，默认 12000"},
                 "limit": {"type": "integer", "description": "最多读多少行"},
                 "force": {
                     "type": "boolean",
@@ -1671,6 +1762,7 @@ def register_coding_tools(
             "properties": {
                 "pattern": {"type": "string"},
                 "glob_filter": {"type": "string", "description": "如 *.py，可选"},
+                "glob": {"type": "string"},
                 "max_results": {"type": "integer"},
                 "context": {
                     "type": "integer",
