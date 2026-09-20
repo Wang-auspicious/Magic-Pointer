@@ -1,8 +1,7 @@
 """UIA tree and native patterns behind the Kimi 13 tools.
 
 Walker and actor are injectable. Production uses COM IUIAutomation
-(ctypes, no comtypes). A failed walk is an empty list; a missing pattern
-is ``ok: false``. Neither pretends to be a click.
+(ctypes, no comtypes). A failed walk raises; a missing pattern is ``ok: false``.
 """
 
 from __future__ import annotations
@@ -125,6 +124,8 @@ def normalize_elements(
         }
         if "value" in node:
             item["value"] = str(node["value"] or "")
+        if "text" in node:
+            item["text"] = str(node["text"] or "")
         runtime_id = node.get("runtime_id") or node.get("runtimeId")
         if runtime_id:
             item["runtime_id"] = [int(part) for part in runtime_id]
@@ -138,14 +139,11 @@ def normalize_elements(
 
 
 def walk_window(hwnd: int) -> list[dict[str, Any]]:
-    """Live ControlView dump. Empty on non-Windows, hwnd 0, or COM failure."""
+    """Live ControlView dump. Failure is distinct from a confirmed empty tree."""
     handle = int(hwnd or 0)
     if handle <= 0 or os.name != "nt":
         return []
-    try:
-        return _com_walk(handle)
-    except Exception:
-        return []
+    return _com_walk(handle)
 
 
 def act_on_element(
@@ -263,6 +261,11 @@ def _oleaut32():
 
 
 def _ensure_com() -> None:
+    # The selection frame and DWM window bounds use physical pixels. Without
+    # this, UIA returns a 1560px tree for a 3120px window at 200% scaling.
+    from app.system_context import enable_dpi_awareness
+
+    enable_dpi_awareness()
     ole32 = ctypes.windll.ole32
     ole32.CoInitializeEx.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
     ole32.CoInitializeEx.restype = ctypes.HRESULT
@@ -431,6 +434,15 @@ def _dump_element(element: int, hwnd: int) -> dict[str, Any]:
         finally:
             for pointer in reversed(held):
                 _release(pointer)
+    if "Text" in patterns:
+        held = []
+        try:
+            ok, _, text = _read_text(element, held)
+            if ok:
+                node["text"] = text
+        finally:
+            for pointer in reversed(held):
+                _release(pointer)
     return node
 
 
@@ -573,10 +585,24 @@ def _dispatch(
     return False, "unsupported_action", {}
 
 
-def _read_value(element: int, held: list[int]) -> tuple[bool, str, str]:
+def _read_value(element: int, held: list[int]) -> tuple[bool, str, str | float]:
     punk = _pattern(element, 10002)
     if not punk:
-        return False, "no_pattern", ""
+        ranged = _pattern(element, 10003)
+        if not ranged:
+            return False, "no_pattern", ""
+        held.append(ranged)
+        number = ctypes.c_double()
+        hr = int(_call(
+            ranged,
+            4,
+            ctypes.HRESULT,
+            ctypes.byref(number),
+            argtypes=(ctypes.POINTER(ctypes.c_double),),
+        ))
+        if hr < 0:
+            return False, "pattern_failed", ""
+        return True, "", number.value
     held.append(punk)
     out = ctypes.c_void_p()
     hr = int(_call(
@@ -595,6 +621,27 @@ def _read_value(element: int, held: list[int]) -> tuple[bool, str, str]:
         return True, "", ctypes.wstring_at(out.value)
     finally:
         oleaut.SysFreeString(out.value)
+
+
+def _read_text(element: int, held: list[int]) -> tuple[bool, str, str]:
+    pattern = _pattern(element, 10014)
+    if not pattern:
+        return False, "no_pattern", ""
+    held.append(pattern)
+    document = _ptr_out(pattern, 7)  # IUIAutomationTextPattern.DocumentRange
+    if not document:
+        return False, "text_range_unavailable", ""
+    held.append(document)
+    out = ctypes.c_void_p()
+    hr = int(_call(document, 12, ctypes.HRESULT, ctypes.c_int(-1), ctypes.byref(out),
+                   argtypes=(ctypes.c_int, ctypes.POINTER(ctypes.c_void_p))))
+    if hr < 0:
+        return False, "text_read_failed", ""
+    try:
+        return True, "", ctypes.wstring_at(out.value) if out.value else ""
+    finally:
+        if out.value:
+            _oleaut32().SysFreeString(out.value)
 
 
 def _invoke(

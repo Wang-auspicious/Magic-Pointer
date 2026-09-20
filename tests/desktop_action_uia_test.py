@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from app.agent_runtime.tool_registry import ToolRegistry
 from app.desktop_actions import DesktopActionSession, register_desktop_action_tools
 from app.desktop_actions.uia import UiaBridge, normalize_elements
@@ -93,7 +95,7 @@ def test_set_value_goes_through_the_bridge_actor_not_a_click() -> None:
 
     def actor(action, element, value=None):
         acted.append((action, element["index"], value))
-        return {"ok": True, "backend": "uia_value"}
+        return {"ok": True, "backend": "uia_value", "value": "hello"}
 
     bridge = UiaBridge(walker=lambda hwnd: _raw_nodes(), actor=actor)
     driver_calls: list = []
@@ -122,7 +124,8 @@ def test_set_value_goes_through_the_bridge_actor_not_a_click() -> None:
         "value": "hello",
     }).value)
     assert result["used_backend"] == "uia_value"
-    assert acted == [("value", 2, "hello")]
+    assert acted == [("value", 2, "hello"), ("read_value", 2, None)]
+    assert result["verification"]["matched"] is True
     assert driver_calls == []
 
 
@@ -168,3 +171,66 @@ def test_walk_window_is_honest_when_there_is_no_tree() -> None:
     from app.desktop_actions.uia import walk_window
 
     assert walk_window(0) == []
+
+
+def test_uia_initializes_physical_coordinates_before_com(monkeypatch):
+    from types import SimpleNamespace
+    from app.desktop_actions import uia
+    from app import system_context
+
+    calls = []
+    monkeypatch.setattr(system_context, "enable_dpi_awareness", lambda: calls.append("physical"))
+
+    def initialize(*_args):
+        calls.append("com")
+        return 0
+
+    monkeypatch.setattr(uia.ctypes, "windll", SimpleNamespace(ole32=SimpleNamespace(CoInitializeEx=initialize)))
+    uia._ensure_com()
+    assert calls == ["physical", "com"]
+
+
+@pytest.mark.parametrize("value", ["42", "42.0", "4.2e1", "12.5"])
+def test_range_value_native_write_is_verified_by_numeric_readback(monkeypatch, value):
+    from app.desktop_actions import uia
+
+    current = {"value": 0.0}
+    calls = []
+    monkeypatch.setattr(uia, "_pattern", lambda element, pattern: 99 if pattern == 10003 else 0)
+
+    def com_call(obj, method, restype, *args, argtypes=()):
+        calls.append(method)
+        if method == 3:
+            current["value"] = args[0].value
+        elif method == 4:
+            args[0]._obj.value = current["value"]
+        return 0
+
+    monkeypatch.setattr(uia, "_call", com_call)
+
+    def actor(action, element, supplied=None):
+        ok, reason, extra = uia._dispatch(123, action, supplied, [])
+        return {"ok": ok, "reason": reason, "backend": "uia_range_value", **extra}
+
+    bridge = UiaBridge(walker=lambda hwnd: _raw_nodes(), actor=actor)
+    session = DesktopActionSession(
+        driver=object(), windows_probe=_windows, elements_probe=bridge.list_elements,
+        launcher=lambda app: {"ok": True}, uia_act=bridge.act, session_id="range-test",
+    )
+    snapshot_id = json.loads(session.get_app_state(window_id="w-42"))["snapshot_id"]
+
+    result = json.loads(session.set_value(snapshot_id=snapshot_id, index=2, value=value))
+
+    assert result["verification"]["matched"] is True
+    assert calls == [3, 4]
+
+
+def test_range_value_failed_native_readback_stays_unverified(monkeypatch):
+    from app.desktop_actions import uia
+
+    monkeypatch.setattr(uia, "_pattern", lambda element, pattern: 99 if pattern == 10003 else 0)
+    monkeypatch.setattr(uia, "_call", lambda *_args, **_kwargs: -1)
+    ok, reason, extra = uia._dispatch(123, "read_value", None, [])
+    assert ok is False
+    assert reason == "pattern_failed"
+    assert extra == {}

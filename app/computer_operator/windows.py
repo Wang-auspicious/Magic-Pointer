@@ -137,7 +137,7 @@ _KEYS = {
 
 
 class Win32InputDriver:
-    """Small SendInput wrapper; no clipboard and no generated code."""
+    """Native input; literal multiline text is pasted without submission keys."""
 
     def __init__(self, *, approach_observer: ApproachObserver | None = None) -> None:
         if os.name != "nt":
@@ -193,6 +193,14 @@ class Win32InputDriver:
     def foreground_window(self) -> int:
         value = self._user32.GetForegroundWindow()
         return int(self._user32.GetAncestor(value, 2) or value or 0)
+
+    def activate(self, hwnd: int) -> None:
+        """Restore and focus the requested window, then verify Windows accepted it."""
+        if self._user32.IsIconic(hwnd):
+            self._user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        self._user32.SetForegroundWindow(hwnd)
+        if self.foreground_window() != int(hwnd):
+            raise RuntimeError("window_focus_failed")
 
     def _position(self, point: tuple[int, int]) -> None:
         if not self._user32.SetCursorPos(int(point[0]), int(point[1])):
@@ -361,13 +369,34 @@ class Win32InputDriver:
             # not ask for, which is the worst failure mode in this file.
             self._mouse(0x0004)
 
-    def scroll(self, point: tuple[int, int], *, delta: int) -> None:
+    def scroll(self, point: tuple[int, int], *, delta: int, horizontal_delta: int = 0) -> None:
         self._position(point)
-        self._mouse(0x0800, int(delta) * 120)
+        if delta:
+            self._mouse(0x0800, int(delta) * 120)
+        if horizontal_delta:
+            self._mouse(0x1000, int(horizontal_delta) * 120)
 
-    def type_text(self, value: str) -> None:
+    def _paste_text(self, value: str) -> None:
+        import pyperclip
+
+        # Paste keeps newlines and tabs as field content. Synthesizing their
+        # virtual keys submits chat messages or moves focus to another field.
+        pyperclip.copy(value)
+        pressed: list[str] = []
+        try:
+            for key in ("ctrl", "v"):
+                self.key_down(key)
+                pressed.append(key)
+        finally:
+            for key in reversed(pressed):
+                self.key_up(key)
+
+    def type_text(self, value: str) -> str:
         entries: list[_Input] = []
         text = str(value)
+        if any(char in text for char in "\r\n\t"):
+            self._paste_text(text)
+            return "foreground_clipboard_paste"
         index = 0
         while index < len(text):
             char = text[index]
@@ -389,6 +418,7 @@ class Win32InputDriver:
                     ])
             index += 1
         self._send(entries)
+        return "foreground_unicode_input"
 
     def key_down(self, key: str) -> None:
         self._send([_Input(type=1, ki=_KeyboardInput(self._vk(key), 0, 0, 0, 0))])

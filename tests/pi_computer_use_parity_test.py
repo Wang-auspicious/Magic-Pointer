@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from app.agent_runtime.tool_registry import ToolRegistry
 from app.desktop_actions import DesktopActionSession, register_desktop_action_tools
 
@@ -129,3 +131,44 @@ def test_pi_wait_for_is_bounded_and_reports_found_without_polling_capture() -> N
     assert result["found"] is True
     assert result["state_id"]
     assert calls["n"] >= 2
+
+
+@pytest.mark.parametrize("field", ["name", "value"])
+def test_read_text_preserves_full_snapshot_text_beyond_the_outline(field) -> None:
+    full_text = "x" * 100 + "完整尾部"
+    rows = _elements()
+    rows[1] = {**rows[1], "value": "", field: full_text}
+    registry, _session, _driver = _registry(elements_probe=lambda _hwnd: rows)
+    observed = _payload(registry.execute_tool("observe_ui", {"root": "@r1"}))
+    assert len(observed["outline"][1][field]) < len(full_text)
+    rows[1][field] = "changed after observation"
+
+    result = _payload(registry.execute_tool("read_text", {
+        "state_id": observed["state_id"], "ref": "@e2",
+    }))
+
+    assert result["text"] == full_text
+    assert result["used_backend"] == "uia.snapshot"
+
+
+@pytest.mark.parametrize("condition", [{"text": "完整尾部"}, {"value": "x" * 100 + "完整尾部"}])
+def test_wait_for_matches_full_text_beyond_the_outline(condition) -> None:
+    calls = []
+
+    def elements(_hwnd):
+        calls.append(True)
+        rows = _elements()
+        if len(calls) >= 2:
+            rows[1]["value"] = "x" * 100 + "完整尾部"
+        return rows
+
+    registry, _session, _driver = _registry(elements_probe=elements)
+    observed = _payload(registry.execute_tool("observe_ui", {"root": "@r1"}))
+
+    result = _payload(registry.execute_tool("wait_for", {
+        "state_id": observed["state_id"], "timeout_ms": 100, **condition,
+    }))
+
+    assert result["found"] is True
+    assert result["timed_out"] is False
+    assert len(calls) == 2

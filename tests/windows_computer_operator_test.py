@@ -204,24 +204,15 @@ def test_windows_operator_propagates_cancellation_without_input(tmp_path: Path) 
     assert driver.calls == []
 
 
-def test_windows_unicode_typing_maps_newline_and_tab_to_real_keys() -> None:
+def test_windows_multiline_text_pastes_without_enter_or_tab_keys(monkeypatch) -> None:
     driver = object.__new__(Win32InputDriver)
-    batches = []
-    driver._send = batches.append  # type: ignore[method-assign]
-
-    driver.type_text("A\r\n\tB")
-
-    entries = batches[0]
-    assert [(entry.type, entry.ki.wVk, entry.ki.wScan, entry.ki.dwFlags) for entry in entries] == [
-        (1, 0, ord("A"), 0x0004),
-        (1, 0, ord("A"), 0x0006),
-        (1, 0x0D, 0, 0),
-        (1, 0x0D, 0, 0x0002),
-        (1, 0x09, 0, 0),
-        (1, 0x09, 0, 0x0002),
-        (1, 0, ord("B"), 0x0004),
-        (1, 0, ord("B"), 0x0006),
-    ]
+    copied, keys = [], []
+    monkeypatch.setattr("pyperclip.copy", copied.append)
+    driver.key_down = lambda key: keys.append(("down", key))
+    driver.key_up = lambda key: keys.append(("up", key))
+    assert driver.type_text("A\r\n\tB") == "foreground_clipboard_paste"
+    assert copied == ["A\r\n\tB"]
+    assert keys == [("down", "ctrl"), ("down", "v"), ("up", "v"), ("up", "ctrl")]
 
 
 def test_windows_hotkey_attempts_to_release_every_key_after_release_error(

@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from app.agent_runtime.errors import FailureType
 from app.agent_runtime.tool_registry import Effect, ToolRegistry
 from app.desktop_actions import DesktopActionSession, register_desktop_action_tools
@@ -89,7 +91,13 @@ def _session(**overrides) -> DesktopActionSession:
         launched.append(app)
         return {"ok": True, "app": app}
 
+    values = {}
+
     def uia(action: str, element: dict, value: str | None = None) -> dict:
+        if action == "value":
+            values[element["index"]] = value
+        elif action == "read_value":
+            value = values.get(element["index"])
         return {"ok": True, "backend": f"uia_{action}", "value": value, "element": element}
 
     kwargs = dict(
@@ -163,7 +171,7 @@ def test_get_app_state_issues_a_snapshot_that_click_must_present() -> None:
         "index": 2,
     }))
     assert clicked["used_backend"] == "foreground_click"
-    assert clicked["verification"]["matched"] is True
+    assert clicked["verification"] == {"matched": False, "status": "unavailable"}
     assert session.driver.calls[0][0] == "click"
     assert session.driver.calls[0][1] == (240, 382)
 
@@ -216,6 +224,114 @@ def test_index_and_coordinates_must_not_be_mixed() -> None:
     })
     assert mixed.is_error
     assert "index" in (mixed.error_message or "")
+
+
+@pytest.mark.parametrize(("name", "arguments"), [
+    ("Click", {"x": 700, "y": 200}),
+    ("Click", {"x": 500, "y": 200}),
+    ("Scroll", {"x": 700, "y": 200, "dy": -120}),
+    ("Drag", {"x": 150, "y": 200, "to_x": 700, "to_y": 200}),
+])
+def test_pointer_coordinates_must_stay_inside_the_observed_window(name, arguments) -> None:
+    registry, session = _registry()
+    snapshot_id = _payload(_exec(registry, "Observe", {"window_id": "w-42"}))["snapshot_id"]
+
+    result = _exec(registry, name, {"snapshot_id": snapshot_id, **arguments})
+
+    assert result.is_error
+    assert result.failure_type is FailureType.STALE_SNAPSHOT
+    assert session.driver.calls == []
+
+
+@pytest.mark.parametrize(("name", "arguments"), [
+    ("Key", {"keys": "ctrl+s"}),
+    ("Type", {"text": "should not reach another window", "clear": True}),
+])
+def test_keyboard_input_requires_the_snapshot_window_to_be_foreground(name, arguments) -> None:
+    driver = _Driver()
+    driver.foreground_window = lambda: 7
+    registry, _ = _registry(_session(driver=driver))
+    snapshot_id = _payload(_exec(registry, "Observe", {"window_id": "w-42"}))["snapshot_id"]
+
+    result = _exec(registry, name, {"snapshot_id": snapshot_id, **arguments})
+
+    assert result.is_error
+    assert result.failure_type is FailureType.FOCUS_LOST
+    assert "Focus" in result.error_message
+    assert driver.calls == []
+
+
+def test_foreground_keyboard_input_keeps_working() -> None:
+    driver = _Driver()
+    driver.foreground_window = lambda: 42
+    registry, _ = _registry(_session(driver=driver))
+    snapshot_id = _payload(_exec(registry, "Observe", {"window_id": "w-42"}))["snapshot_id"]
+
+    result = _exec(registry, "Type", {"snapshot_id": snapshot_id, "text": "hello"})
+
+    assert not result.is_error
+    assert driver.calls == [("type", "hello")]
+
+
+@pytest.mark.parametrize(("name", "arguments"), [
+    ("Click", {"index": 1}),
+    ("Click", {"x": 300, "y": 200}),
+    ("Scroll", {"x": 300, "y": 200, "dy": -120}),
+    ("Drag", {"x": 150, "y": 200, "to_x": 300, "to_y": 200}),
+    ("Type", {"index": 1, "text": "must not hit overlay"}),
+    ("select_text", {"index": 1}),
+])
+def test_physical_input_refuses_a_window_covering_the_target(name, arguments) -> None:
+    driver = _Driver()
+    driver.window_at = lambda point: 42 if point[0] == 150 else 7
+    registry, _ = _registry(_session(
+        driver=driver, uia_act=lambda *_args: {"ok": False, "reason": "no_pattern"},
+    ))
+    snapshot_id = _payload(_exec(registry, "Observe", {"window_id": "w-42"}))["snapshot_id"]
+
+    result = _exec(registry, name, {"snapshot_id": snapshot_id, **arguments})
+
+    assert result.is_error
+    assert result.failure_type is FailureType.FOCUS_LOST
+    assert "Focus" in result.error_message
+    assert driver.calls == []
+
+
+def test_uncovered_pointer_input_and_covered_native_selection_still_work() -> None:
+    driver = _Driver()
+    driver.window_at = lambda point: 42
+    registry, _ = _registry(_session(driver=driver))
+    snapshot_id = _payload(_exec(registry, "Observe", {"window_id": "w-42"}))["snapshot_id"]
+    assert not _exec(registry, "Click", {"snapshot_id": snapshot_id, "index": 1}).is_error
+    assert driver.calls == [("click", (300, 260), "left", 1)]
+
+    driver.window_at = lambda point: 7
+    native = _payload(_exec(registry, "select_text", {"snapshot_id": snapshot_id, "index": 1}))
+    assert native["used_backend"] == "uia_select"
+    assert len(driver.calls) == 1
+
+
+@pytest.mark.parametrize(("readback", "matched"), [
+    ({"ok": True, "value": "hello"}, True),
+    ({"ok": True, "value": "old value"}, False),
+    ({"ok": False, "reason": "no_pattern"}, False),
+])
+def test_set_value_verification_uses_readback_not_only_operation_success(readback, matched) -> None:
+    calls = []
+
+    def uia(action, element, value=None):
+        calls.append(action)
+        return readback if action == "read_value" else {"ok": True, "backend": "uia_value"}
+
+    registry, _ = _registry(_session(uia_act=uia))
+    snapshot_id = _payload(_exec(registry, "Observe", {"window_id": "w-42"}))["snapshot_id"]
+
+    result = _payload(_exec(registry, "SetValue", {
+        "snapshot_id": snapshot_id, "index": 1, "value": "hello",
+    }))
+
+    assert calls == ["value", "read_value"]
+    assert result["verification"]["matched"] is matched
 
 
 def test_real_input_is_busy_but_reads_still_work() -> None:
@@ -306,7 +422,7 @@ def test_type_text_confirms_by_reading_current_value_not_setting() -> None:
     def uia(action, element, value=None):
         actions.append((action, value))
         if action == "read_value":
-            return {"ok": True, "backend": "uia_value", "value": "hello"}
+            return {"ok": True, "backend": "uia_value", "value": "" if len(actions) == 1 else "hello"}
         return {"ok": True, "backend": "uia_value"}
 
     registry, session = _registry(session=_session(uia_act=uia))
@@ -319,7 +435,7 @@ def test_type_text_confirms_by_reading_current_value_not_setting() -> None:
         "index": 1,
         "text": "hello",
     }))
-    assert [item[0] for item in actions] == ["read_value"]
+    assert [item[0] for item in actions] == ["read_value", "read_value"]
     assert result["verification"]["matched"] is True
     assert any(call[0] == "type" for call in session.driver.calls)
 
@@ -357,7 +473,7 @@ def test_type_text_reports_unavailable_when_uia_cannot_confirm() -> None:
         "index": 1,
         "text": "hello",
     }))
-    assert result["used_backend"] == "foreground_clipboard_paste"
+    assert result["used_backend"] == "foreground_text_input"
     assert result["verification"]["matched"] is False
     assert result["verification"]["status"] == "unavailable"
     assert any(call[0] == "type" for call in session.driver.calls)
@@ -458,13 +574,13 @@ def test_click_reports_changes_after() -> None:
     """点完必须再观察——Click 直接带回元素变化摘要，省一轮 Observe。"""
     calls = {"n": 0}
     before = [
-        {"index": 1, "role": "button", "name": "打开", "rect": [0, 0, 60, 20]},
-        {"index": 2, "role": "edit", "name": "旧值", "rect": [0, 30, 120, 50]},
+        {"index": 1, "role": "button", "name": "打开", "rect": [100, 100, 160, 120]},
+        {"index": 2, "role": "edit", "name": "旧值", "rect": [100, 130, 220, 150]},
     ]
     after = [
-        {"index": 1, "role": "button", "name": "打开", "rect": [0, 0, 60, 20]},
-        {"index": 2, "role": "edit", "name": "新值", "rect": [0, 30, 120, 50]},
-        {"index": 3, "role": "list", "name": "下拉项", "rect": [0, 60, 120, 90]},
+        {"index": 1, "role": "button", "name": "打开", "rect": [100, 100, 160, 120]},
+        {"index": 2, "role": "edit", "name": "新值", "rect": [100, 130, 220, 150]},
+        {"index": 3, "role": "list", "name": "下拉项", "rect": [100, 160, 220, 190]},
     ]
 
     def elements(hwnd: int):

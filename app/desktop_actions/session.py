@@ -75,6 +75,7 @@ class _Snapshot:
     window: dict[str, Any]
     windows: list[dict[str, Any]]
     elements: list[dict[str, Any]]
+    raw_elements: list[dict[str, Any]]
     mode: str
     root_ref: str = ""
 
@@ -213,7 +214,7 @@ class DesktopActionSession:
         role_query = str(role or "").strip().casefold()
         cap_query = str(capability or "").strip().casefold()
         ranked: list[tuple[int, dict[str, Any]]] = []
-        for item in snap.elements:
+        for item in snap.raw_elements:
             label = " ".join(str(item.get(key) or "") for key in ("name", "value", "role"))
             haystack = label.casefold()
             if role_query and str(item.get("role") or "").casefold() != role_query:
@@ -240,11 +241,11 @@ class DesktopActionSession:
     def expand_ui(self, state_id: str, ref: str, depth: int = 3, **_: Any) -> str:
         snap = self._require_snapshot(state_id)
         item = self._element_for_ref(snap, ref)
-        index = snap.elements.index(item)
+        index = snap.raw_elements.index(item)
         radius = max(0, min(8, int(depth or 3)))
         start = max(0, index - radius)
-        end = min(len(snap.elements), index + radius + 1)
-        return _dump({"state_id": snap.snapshot_id, "target": {"ref": self._element_ref(item), **self._outline_node(item)}, "outline": [self._outline_node(row, ref=self._element_ref(row)) for row in snap.elements[start:end]]})
+        end = min(len(snap.raw_elements), index + radius + 1)
+        return _dump({"state_id": snap.snapshot_id, "target": {"ref": self._element_ref(item), **self._outline_node(item)}, "outline": [self._outline_node(row, ref=self._element_ref(row)) for row in snap.raw_elements[start:end]]})
 
     def inspect_ui(self, state_id: str, ref: str, **_: Any) -> str:
         snap = self._require_snapshot(state_id)
@@ -254,7 +255,8 @@ class DesktopActionSession:
     def read_text(self, state_id: str, ref: str, **_: Any) -> str:
         snap = self._require_snapshot(state_id)
         item = self._element_for_ref(snap, ref)
-        text = str(item.get("value") or item.get("name") or "")
+        item = _element_by_index(snap.raw_elements, int(item["index"]))
+        text = str(item.get("text") or item.get("value") or item.get("name") or "")
         return _dump({"state_id": snap.snapshot_id, "ref": self._element_ref(item), "text": text, "used_backend": "uia.snapshot"})
 
     def wait_for(
@@ -275,7 +277,7 @@ class DesktopActionSession:
         while True:
             payload = json.loads(self.get_app_state(window_id=target_window_id, mode="ax"))
             latest = self._snapshots[str(payload["snapshot_id"])]
-            found = self._condition_matches(latest.elements, text=text, role=role, value=value)
+            found = self._condition_matches(latest.raw_elements, text=text, role=role, value=value)
             if str(until or "present") == "absent":
                 found = not found
             if found or time.monotonic() >= deadline:
@@ -313,8 +315,9 @@ class DesktopActionSession:
                 raise ActionFailure(FailureType.TOOL_ERROR, f"unsupported act_ui action {op!r}")
             executed.append({"action": op, "ref": ref})
         condition = dict(expect or {})
-        if condition:
+        if condition.get("text") or condition.get("role") or condition.get("value") is not None:
             post = json.loads(self.wait_for(snap.snapshot_id, timeout_ms=int(condition.get("timeout_ms") or 100), text=condition.get("text"), role=condition.get("role"), value=condition.get("value"), until=str(condition.get("until") or "present")))
+            post.update(_matched() if post.get("found") is True else _unavailable())
             successor_snap = self._snapshots[str(post["state_id"])]
         else:
             successor = json.loads(self.get_app_state(window_id=_window_id(snap.window), mode="ax"))
@@ -342,7 +345,7 @@ class DesktopActionSession:
                 index = -1
         else:
             index = int(clean) if clean.isdigit() else -1
-        for item in snap.elements:
+        for item in snap.raw_elements:
             if int(item.get("index") or 0) == index:
                 return item
         raise ActionFailure(FailureType.STALE_SNAPSHOT, f"element ref {ref!r} is stale", recovery_hint="call observe_ui again")
@@ -386,8 +389,12 @@ class DesktopActionSession:
             raise ActionFailure(FailureType.TOOL_ERROR, "window not found")
         hwnd = int(target.get("hwnd") or 0)
         activate = getattr(self.driver, "activate", None)
-        if callable(activate):
-            activate(hwnd)
+        if not callable(activate):
+            raise ActionFailure(FailureType.TOOL_ERROR, "window activation is unavailable")
+        activate(hwnd)
+        foreground = getattr(self.driver, "foreground_window", None)
+        if callable(foreground) and int(foreground() or 0) != hwnd:
+            raise ActionFailure(FailureType.FOCUS_LOST, "window focus was not acquired")
         return _dump({"ok": True, "hwnd": hwnd, "window_id": _window_id(target)})
 
     def get_app_state(
@@ -425,9 +432,12 @@ class DesktopActionSession:
             window=dict(target),
             windows=list(windows),
             elements=elements,
+            raw_elements=[dict(item) for item in raw_elements],
             mode=resolved,
             root_ref=root_ref,
         )
+        while len(self._snapshots) > 32:
+            del self._snapshots[next(iter(self._snapshots))]
         payload: dict[str, Any] = {
             "snapshot_id": snapshot_id,
             "root_ref": root_ref,
@@ -458,8 +468,9 @@ class DesktopActionSession:
         snap = self._require_snapshot(snapshot_id, index=index)
         self._require_input()
         point, _element = self._target_point(snap, index=index, x=x, y=y)
+        self._require_unobscured(snap, point)
         self.driver.click(point, button=button or "left", count=int(count or 1))
-        result = _acted("foreground_click", matched=True, point=list(point))
+        result = _acted("foreground_click", matched=False, point=list(point))
         return self._with_changes_after(snap, result)
 
     def type_text(
@@ -478,15 +489,26 @@ class DesktopActionSession:
         element = None
         if index is not None or x is not None or y is not None:
             point, element = self._target_point(snap, index=index, x=x, y=y)
+            self._require_unobscured(snap, point)
             self.driver.click(point, button="left", count=1)
+        self._require_foreground(snap)
+        before = self.uia_act("read_value", element) if element is not None and not clear else {}
         if clear:
             self._chord(("ctrl", "a"))
             self._tap("backspace")
-        self.driver.type_text(str(text))
+        backend = self.driver.type_text(str(text))
         verification = _unavailable()
         if element is not None:
             confirm = self.uia_act("read_value", element)
-            if confirm.get("ok") and str(confirm.get("value") or "") == str(text):
+            actual = str(confirm.get("value") or "")
+            previous = str(before.get("value") or "")
+            inserted = str(text)
+            insertion_matches = before.get("ok") and any(
+                actual[:offset] + actual[offset + len(inserted):] == previous
+                for offset in range(len(actual) - len(inserted) + 1)
+                if actual.startswith(inserted, offset)
+            )
+            if confirm.get("ok") and ((clear and actual == inserted) or insertion_matches):
                 verification = _matched()
         submitted = False
         submit_skip_reason = None
@@ -497,14 +519,14 @@ class DesktopActionSession:
             else:
                 submit_skip_reason = "verification_unavailable"
         return _dump({
-            "used_backend": "foreground_clipboard_paste",
+            "used_backend": backend if isinstance(backend, str) else "foreground_text_input",
             "verification": verification,
             "submitted": submitted,
             "submit_skip_reason": submit_skip_reason,
         })
 
     def press_key(self, snapshot_id: str | None = None, keys: str = "", **_: Any) -> str:
-        self._require_snapshot(snapshot_id)
+        snap = self._require_snapshot(snapshot_id)
         self._require_input()
         tokens = _split_keys(keys)
         if any(_is_win_token(token) for token in tokens):
@@ -513,8 +535,9 @@ class DesktopActionSession:
                 "Win/Meta/Super chords are rejected",
                 recovery_hint="use app-level shortcuts without the Win key",
             )
+        self._require_foreground(snap)
         self._chord(tokens)
-        return _acted("foreground_key", matched=True, keys=keys)
+        return _acted("foreground_key", matched=False, keys=keys)
 
     def scroll(
         self,
@@ -526,12 +549,15 @@ class DesktopActionSession:
         dy: int = 0,
         **_: Any,
     ) -> str:
-        del dx
         snap = self._require_snapshot(snapshot_id, index=index)
         self._require_input()
         point, _element = self._target_point(snap, index=index, x=x, y=y)
-        self.driver.scroll(point, delta=int(dy or 0))
-        return _acted("foreground_wheel", matched=True, point=list(point), dy=int(dy or 0))
+        self._require_unobscured(snap, point)
+        if dx:
+            self.driver.scroll(point, delta=int(dy or 0), horizontal_delta=int(dx))
+        else:
+            self.driver.scroll(point, delta=int(dy or 0))
+        return _acted("foreground_wheel", matched=False, point=list(point), dx=int(dx or 0), dy=int(dy or 0))
 
     def set_value(
         self,
@@ -542,7 +568,7 @@ class DesktopActionSession:
     ) -> str:
         snap = self._require_snapshot(snapshot_id, index=index)
         self._require_input()
-        element = _element_by_index(snap.elements, index)
+        element = _element_by_index(snap.raw_elements, index)
         result = self.uia_act("value", element, str(value))
         if not result or not result.get("ok"):
             raise ActionFailure(
@@ -551,7 +577,21 @@ class DesktopActionSession:
                 recovery_hint="do not fake a click; use type_text if the field accepts keystrokes",
             )
         backend = str(result.get("backend") or "uia_value")
-        return _acted(backend, matched=True)
+        confirm = self.uia_act("read_value", element)
+        observed_value = confirm.get("value")
+        if isinstance(observed_value, float):
+            # RangeValue uses doubles; ValuePattern remains exact text.
+            try:
+                value_matches = observed_value == float(value)
+            except (TypeError, ValueError):
+                value_matches = False
+        else:
+            value_matches = observed_value is not None and str(observed_value) == str(value)
+        matched = bool(
+            confirm.get("ok")
+            and value_matches
+        )
+        return _acted(backend, matched=matched)
 
     def perform_secondary_action(
         self,
@@ -562,7 +602,7 @@ class DesktopActionSession:
     ) -> str:
         snap = self._require_snapshot(snapshot_id, index=index)
         self._require_input()
-        element = _element_by_index(snap.elements, index)
+        element = _element_by_index(snap.raw_elements, index)
         name = str(action or "invoke")
         result = self.uia_act(name, element, None)
         if not result or not result.get("ok"):
@@ -572,7 +612,7 @@ class DesktopActionSession:
                 recovery_hint="fall back to click/scroll/press_key only after this tool says unsupported",
             )
         backend = str(result.get("backend") or f"uia_{name}")
-        return _acted(backend, matched=True)
+        return _acted(backend, matched=False)
 
     def select_text(
         self,
@@ -588,10 +628,12 @@ class DesktopActionSession:
         if element is not None:
             result = self.uia_act("select", element, None)
             if result.get("ok"):
-                return _acted(str(result.get("backend") or "uia_text"), matched=True)
+                return _acted(str(result.get("backend") or "uia_text"), matched=False)
+        self._require_unobscured(snap, point)
         self.driver.click(point, button="left", count=1)
+        self._require_foreground(snap)
         self._chord(("ctrl", "a"))
-        return _acted("foreground_ctrl_a", matched=True)
+        return _acted("foreground_ctrl_a", matched=False)
 
     def drag(
         self,
@@ -612,8 +654,10 @@ class DesktopActionSession:
         self._require_input()
         start, _ = self._target_point(snap, index=index, x=x, y=y)
         end, _ = self._target_point(snap, index=to_index, x=to_x, y=to_y)
+        self._require_unobscured(snap, start)
+        self._require_unobscured(snap, end)
         self.driver.drag(start, end, duration_ms=int(duration_ms or 0))
-        return _acted("foreground_drag", matched=True, start=list(start), end=list(end))
+        return _acted("foreground_drag", matched=False, start=list(start), end=list(end))
 
     def turn_ended(self, **_: Any) -> str:
         self.ownership.release(self.session_id)
@@ -628,6 +672,44 @@ class DesktopActionSession:
                 FailureType.COMPUTER_USE_BUSY,
                 "computer_use_busy: another session holds real input",
                 recovery_hint="retry after the other session calls turn_ended; do not bypass with shell",
+            )
+
+    def _require_unobscured(self, snap: _Snapshot, point: tuple[int, int]) -> None:
+        probe = getattr(self.driver, "window_at", None)
+        if probe is None:
+            return
+        try:
+            hwnd = int(probe(point) or 0)
+        except Exception as exc:
+            raise ActionFailure(
+                FailureType.FOCUS_LOST,
+                "the window at the target point could not be read",
+                recovery_hint="call Focus for the target window, then Observe again",
+            ) from exc
+        if hwnd != int(snap.window.get("hwnd") or 0):
+            raise ActionFailure(
+                FailureType.FOCUS_LOST,
+                "another window covers the target point",
+                recovery_hint="call Focus for the target window, then Observe again",
+            )
+
+    def _require_foreground(self, snap: _Snapshot) -> None:
+        probe = getattr(self.driver, "foreground_window", None)
+        if probe is None:
+            return
+        try:
+            foreground = int(probe() or 0)
+        except Exception as exc:
+            raise ActionFailure(
+                FailureType.FOCUS_LOST,
+                "the foreground window could not be read; call Focus for the target window, then Observe again",
+                recovery_hint="call Focus for the target window, then Observe again",
+            ) from exc
+        if foreground != int(snap.window.get("hwnd") or 0):
+            raise ActionFailure(
+                FailureType.FOCUS_LOST,
+                "the observed window is no longer foreground; call Focus for the target window, then Observe again",
+                recovery_hint="call Focus for the target window, then Observe again",
             )
 
     def _require_snapshot(
@@ -652,7 +734,7 @@ class DesktopActionSession:
                 recovery_hint="call Observe again",
             )
         targets = tuple(indexes) if indexes else ((index,) if index is not None else ())
-        if targets and snap.elements:
+        if targets and snap.raw_elements:
             for target_index in targets:
                 self._require_unchanged_element(snap, live, int(target_index))
         return snap
@@ -675,7 +757,7 @@ class DesktopActionSession:
         snapshotted = next(
             (
                 item
-                for item in snap.elements
+                for item in snap.raw_elements
                 if int(item.get("index") or 0) == index
             ),
             None,
@@ -701,11 +783,9 @@ class DesktopActionSession:
         )
         # 指纹比较用同一视图：快照侧存的是压缩元素（长文本截断），live 侧
         # 不过同一把压缩就会在截断差异上报假 stale。
-        current_view = _compress_elements([current])[0] if current else []
         if (
             current is None
-            or not current_view
-            or _element_fingerprint(current_view[0]) != _element_fingerprint(snapshotted)
+            or _element_fingerprint(current) != _element_fingerprint(snapshotted)
         ):
             raise ActionFailure(
                 FailureType.STALE_SNAPSHOT,
@@ -729,14 +809,23 @@ class DesktopActionSession:
                 "pass exactly one of index or x/y coordinates",
             )
         if has_index:
-            element = _element_by_index(snap.elements, index)
-            return _rect_center(element["rect"]), element
-        if x is None or y is None:
+            element = _element_by_index(snap.raw_elements, index)
+            point = _rect_center(element["rect"])
+        elif x is None or y is None:
             raise ActionFailure(
                 FailureType.TOOL_ERROR,
                 "pass index or both x and y",
             )
-        return (int(x), int(y)), None
+        else:
+            point, element = (int(x), int(y)), None
+        left, top, right, bottom = _bounds(snap.window)
+        if not (left <= point[0] < right and top <= point[1] < bottom):
+            raise ActionFailure(
+                FailureType.STALE_SNAPSHOT,
+                "target point is outside the observed window",
+                recovery_hint="call Observe for the intended target window again",
+            )
+        return point, element
 
     def _with_changes_after(self, snap: _Snapshot, result: str) -> str:
         """点完必须再观察：click 直接带回元素变化摘要（省一轮 Observe）。
@@ -789,10 +878,20 @@ class DesktopActionSession:
 
     def _chord(self, keys: tuple[str, ...] | list[str]) -> None:
         tokens = [str(key) for key in keys if str(key).strip()]
-        for token in tokens:
-            self.driver.key_down(token)
-        for token in reversed(tokens):
-            self.driver.key_up(token)
+        held: list[str] = []
+        try:
+            for token in tokens:
+                self.driver.key_down(token)
+                held.append(token)
+        finally:
+            release_error = None
+            for token in reversed(held):
+                try:
+                    self.driver.key_up(token)
+                except Exception as exc:
+                    release_error = release_error or exc
+            if release_error is not None:
+                raise release_error
 
     def _tap(self, key: str) -> None:
         self.driver.key_down(key)
@@ -1340,7 +1439,7 @@ def _element_by_index(elements: list[dict[str, Any]], index: int | None) -> dict
     raise ActionFailure(FailureType.TOOL_ERROR, f"unknown index {index}")
 
 
-def _element_fingerprint(element: dict[str, Any]) -> tuple[str, str, tuple[int, ...]]:
+def _element_fingerprint(element: dict[str, Any]) -> tuple[Any, ...]:
     """Semantic identity of one observed element (P4): role + name + rect.
 
     A replaced element at the same index (list refresh, renamed button)
@@ -1355,6 +1454,7 @@ def _element_fingerprint(element: dict[str, Any]) -> tuple[str, str, tuple[int, 
         str(element.get("role") or element.get("type") or ""),
         str(element.get("name") or ""),
         rect,
+        tuple(element.get("runtime_id") or element.get("runtimeId") or ()),
     )
 
 
@@ -1404,6 +1504,7 @@ def _compress_elements(
             continue
         seen.add(key)
         slim = dict(item)
+        slim.pop("text", None)  # Full TextPattern content stays addressable by read_text.
         if len(name) > _COMPRESS_TEXT_CAP:
             slim["name"] = name[:_COMPRESS_TEXT_CAP] + "…"
         value = slim.get("value")
@@ -1460,6 +1561,7 @@ def _unavailable() -> dict[str, Any]:
 
 
 def _acted(backend: str, *, matched: bool, **extra: Any) -> str:
+    """Report result verification, never mere input or UIA dispatch success."""
     payload = {
         "used_backend": backend,
         "verification": _matched() if matched else _unavailable(),
