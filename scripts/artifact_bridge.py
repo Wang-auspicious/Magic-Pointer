@@ -130,6 +130,15 @@ def _latest_apply(session: EventSession, artifact_id: str) -> dict[str, Any] | N
 
 
 def _wire_artifact(session: EventSession, artifact: DraftArtifact) -> dict[str, Any]:
+    applied = next((event.data for event in reversed(session.events)
+        if event.type == "artifact/applied" and event.data.get("artifactId") == artifact.artifact_id
+        and event.data.get("artifactRevision") == artifact.revision
+        and event.data.get("result", {}).get("inverseRecords")), None)
+    undone_ids = {str(identity) for event in session.events
+        if event.type == "artifact/undone" and applied and event.data.get("forwardReceiptId") == applied.get("receiptId")
+        for identity in event.data.get("result", {}).get("succeededOperationIds", [])}
+    undo_available = bool(applied and any(record.get("strategy") != "retain_created_file"
+        and record.get("operationId") not in undone_ids for record in applied.get("result", {}).get("inverseRecords", [])))
     return {
         "artifactId": artifact.artifact_id,
         "revision": artifact.revision,
@@ -149,6 +158,7 @@ def _wire_artifact(session: EventSession, artifact: DraftArtifact) -> dict[str, 
             for item in artifact.history
         ],
         "latestApply": _latest_apply(session, artifact.artifact_id),
+        "undoAvailable": undo_available,
     }
 
 
@@ -424,7 +434,8 @@ def handle_request(
                 return {"ok": False, "error": "undo_confirmation_required"}
             applied = next((event.data for event in reversed(session.events)
                 if event.type == "artifact/applied" and event.data.get("artifactId") == artifact_id
-                and event.data.get("artifactRevision") == revision), None)
+                and event.data.get("artifactRevision") == revision
+                and event.data.get("result", {}).get("inverseRecords")), None)
             if not applied:
                 return {"ok": False, "error": "no_recorded_write_to_undo"}
             undo_receipt_id = applied.get("receiptId")
@@ -484,6 +495,7 @@ def handle_request(
         if action == "undo":
             apply_event["forwardReceiptId"] = undo_receipt_id
         session.append("artifact/undone" if action == "undo" else "artifact/applied", apply_event)
+        result_data["undoAvailable"] = _wire_artifact(session, current)["undoAvailable"]
         return {
             "ok": True,
             "result": result_data,

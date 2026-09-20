@@ -129,6 +129,7 @@ def test_figma_reads_changed_range_length(tmp_path, after):
     handler = FigmaActionHandler(client)
     assert handler.execute(source(tmp_path / "x", documentSessionId="d"), operation).ok
     assert client.text == "abc" + after + "ghi"
+    assert handler.read_current(source(tmp_path / "x", documentSessionId="d"), operation).value == after
 
 
 def test_figma_missing_end_means_remaining_text(tmp_path):

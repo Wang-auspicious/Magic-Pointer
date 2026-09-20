@@ -25,11 +25,13 @@ def prepared(tmp_path):
 
 def test_undo_survives_bridge_restart_and_is_not_repeated(tmp_path):
     store, request, backend = prepared(tmp_path)
+    assert handle_request({**request, "action": "read"}, session_store=store)["artifact"]["undoAvailable"]
     restarted = FileSessionStore(store.root) if hasattr(store, "root") else FileSessionStore(tmp_path / "sessions")
     result = handle_request({**request, "action": "undo", "confirmed": True}, session_store=restarted, operation_backend=backend)
     assert result["ok"], result
     assert result["result"]["verified"]
     assert backend.value == "old"
+    assert not handle_request({**request, "action": "read"}, session_store=restarted)["artifact"]["undoAvailable"]
     count = len(backend.writes)
     again = handle_request({**request, "action": "undo", "confirmed": True}, session_store=restarted, operation_backend=backend)
     assert not again["ok"]

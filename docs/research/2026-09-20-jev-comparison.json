@@ -1,0 +1,176 @@
+{
+  "cases": [
+    {
+      "case": "exact-save",
+      "target": "Save",
+      "labels": [
+        "Save",
+        "Send",
+        "Cancel"
+      ],
+      "expected": "@e0",
+      "localExact": "@e0",
+      "jev": {
+        "state_id": "exact-save",
+        "ref": "@e0",
+        "usedBackend": "uia.exact-label",
+        "elapsedMs": 0.0,
+        "fallbackReason": null,
+        "confidence": 1.0,
+        "candidateCount": 3,
+        "candidates": []
+      },
+      "correct": true
+    },
+    {
+      "case": "archive",
+      "target": "Keep the message, but remove it from the inbox",
+      "labels": [
+        "Delete forever",
+        "Archive",
+        "Mark unread"
+      ],
+      "expected": "@e1",
+      "localExact": null,
+      "jev": {
+        "state_id": "archive",
+        "ref": "@e1",
+        "usedBackend": "opencode.jev-1.13-free",
+        "elapsedMs": 1891.0,
+        "fallbackReason": null,
+        "confidence": 0.99,
+        "candidateCount": 3,
+        "candidates": []
+      },
+      "correct": true
+    },
+    {
+      "case": "negative",
+      "target": "Close the dialog without applying my edits",
+      "labels": [
+        "Apply changes",
+        "Discard changes",
+        "Save as"
+      ],
+      "expected": "@e1",
+      "localExact": null,
+      "jev": {
+        "state_id": "negative",
+        "ref": "@e1",
+        "usedBackend": "opencode.jev-1.13-free",
+        "elapsedMs": 625.0,
+        "fallbackReason": null,
+        "confidence": 0.95,
+        "candidateCount": 3,
+        "candidates": []
+      },
+      "correct": true
+    },
+    {
+      "case": "sheet-scope",
+      "target": "Only print this worksheet, not the entire workbook",
+      "labels": [
+        "Print active sheets",
+        "Print entire workbook",
+        "Export PDF"
+      ],
+      "expected": "@e0",
+      "localExact": null,
+      "jev": {
+        "state_id": "sheet-scope",
+        "ref": "@e0",
+        "usedBackend": "opencode.jev-1.13-free",
+        "elapsedMs": 734.0,
+        "fallbackReason": null,
+        "confidence": 0.88,
+        "candidateCount": 3,
+        "candidates": []
+      },
+      "correct": true
+    },
+    {
+      "case": "chinese",
+      "target": "把邮件留着，以后再看，不要删除",
+      "labels": [
+        "删除",
+        "稍后提醒",
+        "立即回复"
+      ],
+      "expected": "@e1",
+      "localExact": null,
+      "jev": {
+        "state_id": "chinese",
+        "ref": null,
+        "usedBackend": "uia.candidates",
+        "elapsedMs": 703.0,
+        "fallbackReason": "uncertain",
+        "confidence": 0.66,
+        "candidateCount": 3,
+        "candidates": [
+          {
+            "ref": "@e0",
+            "name": "删除",
+            "role": "button"
+          },
+          {
+            "ref": "@e1",
+            "name": "稍后提醒",
+            "role": "button"
+          },
+          {
+            "ref": "@e2",
+            "name": "立即回复",
+            "role": "button"
+          }
+        ]
+      },
+      "correct": false
+    },
+    {
+      "case": "abstain",
+      "target": "Turn on dark mode",
+      "labels": [
+        "Save",
+        "Delete",
+        "Reply"
+      ],
+      "expected": null,
+      "localExact": null,
+      "jev": {
+        "state_id": "abstain",
+        "ref": null,
+        "usedBackend": "uia.candidates",
+        "elapsedMs": 594.0,
+        "fallbackReason": "uncertain",
+        "confidence": 1.0,
+        "candidateCount": 3,
+        "candidates": [
+          {
+            "ref": "@e0",
+            "name": "Save",
+            "role": "button"
+          },
+          {
+            "ref": "@e1",
+            "name": "Delete",
+            "role": "button"
+          },
+          {
+            "ref": "@e2",
+            "name": "Reply",
+            "role": "button"
+          }
+        ]
+      },
+      "correct": true
+    }
+  ],
+  "mainModelBatch": {
+    "model": "deepseek-v4.1-flash",
+    "endpoint": "https://opencode.ai/zen/go/v1",
+    "elapsedMs": 6031.0,
+    "answer": "{\"exact-save\":0,\"archive\":1,\"negative\":1,\"sheet-scope\":0,\"chinese\":1,\"abstain\":null}",
+    "failed": false
+  },
+  "scope": "Synthetic text candidates; not end-to-end visual accuracy. Jev limited to free model; no paid fallback."
+}
