@@ -25,7 +25,7 @@ jobs:
       - name: Generate CycloneDX (npm)
         run: npx --yes @cyclonedx/cyclonedx-npm --output-file sbom.npm.cdx.json
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Generate CycloneDX (pip)
