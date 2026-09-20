@@ -429,6 +429,18 @@ def handle_request(
         except ValueError as exc:
             return {"ok": False, "error": f"invalid_document_patch:{exc}"}
         undo_receipt_id = None
+        pending_undo_writes: set[str] = set()
+        if action == "apply":
+            previous = next((event.data for event in reversed(session.events)
+                if event.type == "artifact/applied" and event.data.get("artifactId") == artifact_id
+                and event.data.get("artifactRevision") == revision
+                and event.data.get("result", {}).get("inverseRecords")), None)
+            if previous:
+                restored = {str(identity) for event in session.events
+                    if event.type == "artifact/undone" and event.data.get("forwardReceiptId") == previous.get("receiptId")
+                    for identity in event.data.get("result", {}).get("succeededOperationIds", [])}
+                if any(record.get("operationId") not in restored for record in previous["result"]["inverseRecords"]):
+                    return {"ok": False, "error": "patch_has_unreverted_writes", "receiptId": previous.get("receiptId")}
         if action == "undo":
             if payload.get("confirmed") is not True:
                 return {"ok": False, "error": "undo_confirmation_required"}
@@ -442,6 +454,7 @@ def handle_request(
             undone = [event.data for event in session.events if event.type == "artifact/undone"
                 and event.data.get("forwardReceiptId") == undo_receipt_id]
             completed_ids = {str(identity) for data in undone for identity in data.get("result", {}).get("succeededOperationIds", [])}
+            pending_undo_writes = {str(identity) for data in undone for identity in data.get("result", {}).get("writtenOperationIds", [])} - completed_ids
             records = [record for record in applied.get("result", {}).get("inverseRecords", [])
                 if record.get("operationId") not in completed_ids]
             if not records:
@@ -462,13 +475,34 @@ def handle_request(
             except ValueError as exc:
                 return {"ok": False, "error": f"invalid_figma_runtime:{exc}"}
         scope = scope_from_events(session.events, task_id=session.id)
+
+        def read_operation(operation):
+            if operation.operation_id in pending_undo_writes and operation.operation == "replace_text":
+                # The original inverse locator describes the pre-undo length.
+                # To verify an already-written inverse, inspect the restored
+                # length even when the old range was an empty insertion point.
+                from dataclasses import replace
+                from app.context_pack.sources import FragmentLocator
+
+                value = dict(operation.locator.value)
+                text = operation.after if isinstance(operation.after, str) else str(operation.after.get("text", ""))
+                if operation.locator.kind == "figma-node" and "textEnd" in value:
+                    value["textEnd"] = int(value.get("textStart", 0)) + len(text)
+                elif "start" in value and "end" in value:
+                    value["end"] = int(value["start"]) + len(text.encode("utf-16-le")) // 2
+                probe = replace(operation, locator=FragmentLocator(operation.locator.kind, value),
+                                before=operation.after, after=operation.after)
+                return operation_backend.read_current(probe)
+            return operation_backend.read_current(operation)
+
         result = apply_document_patch(
             patch,
             current_artifact_revision=current.revision,
             accepted_revision=current.accepted_revision,
             authorize=lambda request: authorize_access(scope, request),
-            read_current=operation_backend.read_current,
+            read_current=read_operation,
             execute=operation_backend.execute,
+            allow_already_applied=action == "undo",
             state_probe=lambda: _fresh_artifact_state(
                 store,
                 session_id,

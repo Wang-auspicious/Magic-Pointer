@@ -24,7 +24,9 @@
 
 撤销遵循已有`retain_created_file`策略：新创建的整个文件保留，不擅自删除；PDF撤销仅删除本次且当前状态仍匹配的批注。部分写入后状态不匹配会停在冲突，不能把未恢复状态宣称已恢复。
 
-原生Office验收已通过，结果见 [2026-09-20-office-native-results.json](2026-09-20-office-native-results.json)：Word混合格式最小替换后文字和三种格式均正确；Excel受保护第二格失败，第一格实际变更且wrote=true；PowerPoint填充从无→红色可见→无，原生Visible读回分别为-1和0。入口为 `scripts/verify_office_audit_native.py`，仅创建独立验收文档，最近文件保存在 `data/acceptance-office-20260920-144914`，没有修改用户原有文档。
+原生Office验收已通过，结果见 [2026-09-20-office-native-results.json](2026-09-20-office-native-results.json)：Word混合格式最小替换后文字和三种格式均正确；Excel受保护第二格失败，第一格实际变更且wrote=true；PowerPoint填充从无→红色可见→无，原生Visible读回分别为-1和0。入口为 `scripts/verify_office_audit_native.py`，仅创建独立验收文档。Word撤销路径补修后已重新运行全部三项并通过，最新文件保存在 `data/acceptance-office-20260920-151206`，没有修改用户原有文档。
+
+OP11整合复核另外实际复现并修复了零长Word删除后的逆插入、前缀扩写/UTF-16长度读回、撤销已写但读回暂失败后的重试，以及同一修订重复apply造成重复扩写。撤销重试只核验已恢复内容，不再次插入；未撤销的同修订不能重复apply，完整撤销后仍可再应用。新增 `artifact_undo_lifecycle_review_test.py` 六例，与相关旧回归合计35项通过，原有Word/Excel动作12项另行通过。
 
 验收期间修正了两个探针问题：初次误调用不存在的`pythoncom.CLSIDFromProgID`，其“未注册”判断已撤回；PowerPoint DocumentWindow没有可用HWND成员，探针改用实际原生窗口枚举并通过生产gateway的完整路径绑定验证，才执行样例写入。生产PowerPoint本来就通过NativeWindow绑定，并未因探针错误被改成前台窗口猜测。
 

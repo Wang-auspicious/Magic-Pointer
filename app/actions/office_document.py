@@ -256,7 +256,7 @@ def _word_range(operation: PatchOperation) -> tuple[int, int]:
         end = int(value["end"])
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError("live Word locator requires start and end") from exc
-    if start < 0 or end <= start:
+    if start < 0 or end < start:
         raise ValueError("live Word range is invalid")
     return start, end
 
@@ -416,6 +416,7 @@ class OfficeDocumentActionHandler:
 
     def __init__(self, *, gateway: LiveOfficeGateway | None = None) -> None:
         self.gateway = gateway or PowerShellLiveOfficeGateway()
+        self._word_readback_end: dict[str, int] = {}
 
     def read_current(
         self,
@@ -427,17 +428,18 @@ class OfficeDocumentActionHandler:
             hwnd = _live_hwnd(source)
             if operation.operation == "replace_text" and path.suffix.casefold() == ".docx" and hwnd is not None:
                 start, end = _word_range(operation)
+                end = self._word_readback_end.get(operation.operation_id, end)
                 current = self.gateway.read_word(
                     path=str(path), hwnd=hwnd, start=start, end=end
                 )
                 value = _wrap_text(operation, current)
-                if value != operation.before:
+                if value != operation.before and operation.operation_id not in self._word_readback_end:
                     after_text = _text_state(operation.after)
                     current = self.gateway.read_word(
                         path=str(path),
                         hwnd=hwnd,
                         start=start,
-                        end=start + len(after_text),
+                        end=start + len(after_text.encode("utf-16-le")) // 2,
                     )
                     value = _wrap_text(operation, current)
             elif operation.operation == "set_cell_values" and path.suffix.casefold() == ".xlsx" and hwnd is not None:
@@ -470,6 +472,7 @@ class OfficeDocumentActionHandler:
     ) -> OperationWriteResult:
         temporary: Path | None = None
         try:
+            self._word_readback_end.pop(operation.operation_id, None)
             path = _source_path(source)
             hwnd = _live_hwnd(source)
             if hwnd is None and not path.is_file():
@@ -493,6 +496,8 @@ class OfficeDocumentActionHandler:
                     expected_text=_text_state(operation.before),
                     replacement=_text_state(operation.after),
                 )
+                if result.get("wrote"):
+                    self._word_readback_end[operation.operation_id] = start + len(_text_state(operation.after).encode("utf-16-le")) // 2
                 return OperationWriteResult(
                     bool(result.get("ok")),
                     bool(result.get("wrote")),

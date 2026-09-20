@@ -405,6 +405,7 @@ def apply_document_patch(
     read_current: Callable[[PatchOperation], OperationReadResult],
     execute: Callable[[PatchOperation], OperationWriteResult],
     state_probe: Callable[[], tuple[int, int | None]] | None = None,
+    allow_already_applied: bool = False,
 ) -> PatchApplyResult:
     """Apply an approved patch sequentially, stopping at the first uncertainty."""
 
@@ -508,6 +509,11 @@ def apply_document_patch(
                 unexecuted_from=index,
             )
         backends.append(before.used_backend)
+        if allow_already_applied and before.value == operation.after:
+            # A prior undo wrote successfully but its readback was unavailable.
+            # Confirm the restored value without repeating the mutation.
+            succeeded.append(operation.operation_id)
+            continue
         if before.value != operation.before:
             status = "partial" if written else "conflict"
             return result(
