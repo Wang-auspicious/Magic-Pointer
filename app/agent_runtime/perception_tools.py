@@ -186,6 +186,67 @@ class PerceptionTools:
         )
         return apply_container_heuristic(evidence, CONTAINER_LIKE_TEXTS)
 
+    def locate_chat_file(
+        self,
+        file_name: str,
+        process_name: str = "",
+        scope: object = None,
+    ) -> Evidence:
+        """圈里的文件卡片，在本机的哪个位置。
+
+        这是本地文件系统查询，不经过 perception backend —— 它要回答的不是「屏幕上
+        有什么」，而是「卡片上那个文件躺在硬盘的哪里」。
+
+        只按确切文件名查：猜错一个字符就是把另一个文件交出去读。查不到回
+        `empty_confirmed` 并说清楚找过哪些根目录，模型据此可以改问用户，而不是
+        自己编一个路径。
+        """
+        del scope
+        from app.context_pack.chat_local_files import (
+            WECHAT_PROCESSES, DINGTALK_PROCESSES, FEISHU_PROCESSES,
+            chat_data_roots, locate_chat_file, looks_like_filename,
+        )
+        name = str(file_name or "").strip()
+        if not looks_like_filename(name):
+            return empty_confirmed(
+                self.source,
+                note=(
+                    "这不是一个文件名。" if name else "没有给出文件名。"
+                ) + "只按完整文件名精确查找，不做模糊匹配。",
+            )
+        requested = str(process_name or "").strip().casefold()
+        known = WECHAT_PROCESSES + DINGTALK_PROCESSES + FEISHU_PROCESSES
+        processes = [requested] if requested else list(known)
+        searched: list[str] = []
+        found: list[str] = []
+        for process in processes:
+            roots = chat_data_roots(process)
+            if not roots:
+                continue
+            for root in roots:
+                # 同一份仓库会被多个进程名命中（weixin.exe / wechat.exe 是同一个
+                # 数据根），列两遍只会让「查过哪里」这句话变长。
+                text = str(root)
+                if text not in searched:
+                    searched.append(text)
+            for path in locate_chat_file(process, name, roots=roots):
+                if path not in found:
+                    found.append(path)
+        if not found:
+            return empty_confirmed(
+                self.source,
+                note=(
+                    f"没有在本机找到 {name!r}。查过："
+                    + ("、".join(searched) if searched else "没有任何已知的聊天文件仓库")
+                    + "。这个文件可能没下载到本机，或者被用户改过名字——不要猜路径。"
+                ),
+            )
+        return ok_evidence(
+            json.dumps({"fileName": name, "localPaths": found}, ensure_ascii=False),
+            self.source,
+            note=f"{len(found)} 个匹配（同名文件可能不止一个，用修改时间区分）",
+        )
+
     def get_focused(self, scope: object = None) -> Evidence:
         try:
             focused = self._backend.get_focused()
@@ -286,6 +347,31 @@ class PerceptionTools:
                 is_concurrency_safe=True,
                 used_backend="perception_backend",
                 execute=self.find_in_window,
+                deferred=True,
+            )
+        )
+        registry.register(
+            ToolSpec(
+                name="LocateFile",
+                description=(
+                    "Find where a file the user pointed at actually lives on this "
+                    "machine. Use it with the exact file name you read off a chat "
+                    "file card (微信 / 钉钉 / 飞书) — the card shows a name, the file "
+                    "is in the app's own store. Exact name only: never guess a path, "
+                    "and if it returns nothing, say so instead of inventing one."
+                ),
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "file_name": {"type": "string", "description": "the exact file name, extension included"},
+                        "process_name": {"type": "string", "description": "optional: Weixin.exe / DingTalk.exe / Feishu.exe to search one app only"},
+                    },
+                    "required": ["file_name"],
+                },
+                effect=Effect.READ,
+                is_concurrency_safe=True,
+                used_backend="local_filesystem",
+                execute=self.locate_chat_file,
                 deferred=True,
             )
         )

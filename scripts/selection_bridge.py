@@ -72,7 +72,7 @@ from app.agent_runtime.compaction_prompt import (
 from app.agent_runtime.system_prompt import (
     DELIVER_SYSTEM_PROMPT,
 )
-from app.agent_runtime.vision_backend import FileVisionBackend
+from app.agent_runtime.vision_backend import FileVisionBackend, UploadDeniedVisionBackend
 from app.governance.latency_budget import (
     BudgetPolicy,
     Stage,
@@ -2891,6 +2891,21 @@ def _loop_router(
         # 分叉的代价是把「AI 调用失败：…」当成了摘要。
         return summarize_history_text(history_text)
 
+    # 用户的截图上传开关（`privacy.upload_screenshots`）决定这一轮能不能把像素发出去。
+    # 快照里带了策略判定就照它办；没有判定的（没有冻结帧的纯文字回合）本来也没有图可发。
+    #
+    # 这个是**发图的唯一闸门**：Look 和 Observe 共用同一个 `vision_backend`，堵在这里
+    # 两条路一起堵住。以前它只管 fabric 那条中继，Look 照样把冻结帧发走——开关写着
+    # 关，图还是出去了。
+    capture_policy = (snapshot or {}).get("capture_policy")
+    vision_upload_allowed = bool(
+        isinstance(capture_policy, dict) and capture_policy.get("allowUpload")
+    )
+    vision_backend: Any = (
+        FileVisionBackend() if vision_upload_allowed
+        else UploadDeniedVisionBackend()
+    )
+
     _inbox_cell: dict = {"fn": None}
     _source_session_cell: dict[str, Any] = {"value": None}
     runtime = {
@@ -2902,7 +2917,7 @@ def _loop_router(
         "source_session_getter": lambda: _source_session_cell["value"],
         "session_id": agent_session_id,
         "source_readers": source_readers,
-        "vision_backend": FileVisionBackend(),
+        "vision_backend": vision_backend,
         "frame_crop": crop_bytes,
         "frame_resolver": _frozen_reference_resolver(initial_updates, snapshot or {}),
         "frame_captured_at": str((snapshot or {}).get("captured_at") or "gesture time"),
@@ -2995,7 +3010,7 @@ def _loop_router(
         snapshot=snapshot or {},
         look=_look_once,
         has_frozen_capture=bool(capture_path) and callable(runtime.get("frame_crop")),
-        has_vision=runtime.get("vision_backend") is not None,
+        has_vision=vision_upload_allowed,
     )
     input_artifact_public = input_artifact.to_public_dict()
 

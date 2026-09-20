@@ -56,6 +56,7 @@ def test_frozen_frame_perception_trio_is_deferred() -> None:
         "Find": True,
         "ListWindows": True,
         "GetFocus": True,
+        "LocateFile": True,
     }
 
 

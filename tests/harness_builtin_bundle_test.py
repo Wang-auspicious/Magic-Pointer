@@ -27,7 +27,7 @@ EXPECTED_TOOLS = sorted([
     "act_ui", "expand_ui", "find_roots", "inspect_ui", "observe_ui", "read_text", "search_ui", "wait_for",
     "Click", "Drag", "Fetch", "Find",
     "Focus", "GetFocus", "Key", "Launch",
-    "ListApps", "ListWindows", "Look", "Observe",
+    "ListApps", "ListWindows", "LocateFile", "Look", "Observe",
     "Recall", "Scroll", "Search",
     "Select", "SetValue", "Todo", "Tools",
     "Tree", "Type", "copy_selected_text",
@@ -118,12 +118,12 @@ def test_unload_removes_plugin_tools_and_prompt_sections() -> None:
     registry = report.ctx.get("tools")
     prompt = report.ctx.get("prompt")
     assert registry.list()
-    assert prompt.build({"permission_mode": "default", "language": "中文"})
+    assert prompt.build({"permission_mode": "default", "language": "中文"}).text
 
     report.ctx.unload()
 
     assert registry.list() == ()
-    assert prompt.build({"permission_mode": "default", "language": "中文"}) == ""
+    assert prompt.build({"permission_mode": "default", "language": "中文"}).text == ""
 
 
 def test_plugin_contributed_services_exist():
@@ -319,7 +319,8 @@ def _bulky_history() -> list[AgentMessage]:
     ]
 
 
-def test_the_unfinished_plan_survives_compaction():
+def test_the_unfinished_plan_survives_compaction(monkeypatch):
+    monkeypatch.setenv("MAGIC_POINTER_CONTEXT_TOKENS", "64000")
     # A long job's progress must not depend on the summariser remembering it.
     report = boot_loop_context(_runtime(summarize=lambda text: "早期步骤的摘要"))
     report.ctx.get("tools").get("Todo").execute(todos=[
@@ -340,7 +341,8 @@ def test_the_unfinished_plan_survives_compaction():
     report.ctx.unload()
 
 
-def test_compaction_without_a_plan_adds_nothing():
+def test_compaction_without_a_plan_adds_nothing(monkeypatch):
+    monkeypatch.setenv("MAGIC_POINTER_CONTEXT_TOKENS", "64000")
     report = boot_loop_context(_runtime(summarize=lambda text: "摘要"))
     history = _bulky_history()
     compacted = report.ctx.get("compactor")(history)
@@ -371,7 +373,8 @@ def test_failed_plan_persistence_rolls_back_the_in_memory_plan():
     report.ctx.unload()
 
 
-def test_compaction_keeps_bounded_source_entries_and_active_references(tmp_path):
+def test_compaction_keeps_bounded_source_entries_and_active_references(tmp_path, monkeypatch):
+    monkeypatch.setenv("MAGIC_POINTER_CONTEXT_TOKENS", "64000")
     from app.agent_runtime.session import FileSessionStore
     from app.context_pack.source_store import apply_reference_updates, register_source
     from app.context_pack.sources import ReferenceUpdate, SourceRef
@@ -832,14 +835,14 @@ def test_environment_section_is_dynamic_and_precedes_coding() -> None:
         "platform": "Windows 11",
         "workspace_root": r"D:\work\project",
         "git_branch": "codex/harness-reconstruction",
-    })
+    }).text
     assert "# Environment" in prompt
     assert "2026-09-01（Tuesday）" in prompt
     assert "Windows 11" in prompt
     assert r"D:\work\project" in prompt
     assert "codex/harness-reconstruction" in prompt
     assert prompt.count(r"D:\work\project") == 1
-    assert "# Environment" not in default_builder().build({})
+    assert "# Environment" not in default_builder().build({}).text
 
 
 def test_git_branch_reads_symbolic_head_and_ignores_detached_head(tmp_path: Path) -> None:

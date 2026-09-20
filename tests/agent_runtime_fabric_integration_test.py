@@ -685,7 +685,7 @@ def test_fabric_and_perception_tools_coexist_in_one_registry() -> None:
     register_fabric_tools(registry)
 
     names = [spec.name for spec in registry.list()]
-    assert len(names) == 23
+    assert len(names) == 24
     assert len(set(names)) == len(names)
     assert "Around" in names
     assert "rewrite_in_place" in names
@@ -707,8 +707,9 @@ def test_fabric_and_perception_tools_coexist_in_one_registry() -> None:
         "task-store",
     )
 
+    # 再注册一次不会新增：fabric 的工具已经在上面那一批里了。
     register_fabric_tools(registry)
-    assert len(registry.list()) == 23
+    assert len(registry.list()) == 24
 
 
 def test_fabric_unverified_receipt_is_not_reported_as_tool_success() -> None:

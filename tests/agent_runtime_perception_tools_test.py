@@ -253,7 +253,7 @@ class TestRegisterAll:
         registry = ToolRegistry()
         tools.register_all(registry)
         names = {spec.name for spec in registry.list()}
-        assert names == {"Around", "Tree", "Find", "ListWindows", "GetFocus"}
+        assert names == {"Around", "Tree", "Find", "ListWindows", "GetFocus", "LocateFile"}
         for spec in registry.list():
             assert spec.effect is Effect.READ
             assert spec.is_concurrency_safe is True
@@ -263,7 +263,7 @@ class TestRegisterAll:
         registry = ToolRegistry()
         tools.register_all(registry)
         emitted = registry.schemas_for_model()
-        assert len(emitted) == 5
+        assert len(emitted) == 6
         for entry in emitted:
             assert {"name", "description", "parameters"} <= set(entry)
             assert entry["parameters"]["type"] == "object"
