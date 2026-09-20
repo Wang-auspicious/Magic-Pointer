@@ -2,7 +2,7 @@
 
 日期：2026-09-20。对应原审计 [2026-09-20-project-audit-and-jev.md](2026-09-20-project-audit-and-jev.md)，原问题编号保持不变。本报告记录代码修复和验证，原审计保留为修复前证据。
 
-85 项代码修复及完整串行验证已完成，随后唯一一次升级开发版本至 **1.0.50**，目前执行本机安装同步。
+**85 项代码修复、Jev 免费接入与对照、完整验证、本机安装同步均已完成。** 全部修复后唯一一次升版：**1.0.49→1.0.50**。安装版本已独立核对，应用已经从安装目录重启；过程分批推送 main。
 
 | 范围 | 数量 | 逐项修改与证据 |
 |---|---:|---|
@@ -41,4 +41,10 @@ Figma 插件事务和桥接通过确定性与回环测试，尚缺真实插件 I
 
 最终 `npm run verify` 已退出0：Python **2495 passed / 6 条旧Pillow弃用提示 / 239.30s**，Node **257 test files**，lint、全部TypeScript与Electron/Figma bundle构建通过。日志 `data/verify-audit-final-20260920.log`。之后 package.json/package-lock.json 只升一次版本：**1.0.49→1.0.50**。
 
-`npm run sync`、安装目录检查和最终 main 提交结果将在完成后补记。过程已经分批推送 main，没有发布 GitHub release 或推送版本 tag。
+`npm run sync` 已退出0，其中复测再次通过：Python **2495 passed / 6 warnings / 253.12s**，Node **257 test files**，lint/typecheck/build通过。生成安装器 `release/Magic-Pointer-1.0.50-x64.exe`，大小 **392419017 bytes**。同步过程清理了安装器拥有目录的旧代码/字节码，保留用户数据；日志 `data/sync-1.0.50-20260920.log`。
+
+独立安装核对见 [2026-09-20-installed-verification.json](2026-09-20-installed-verification.json)：安装package版本1.0.50，7个应用进程均来自安装目录；安装版Python3.12.8、Pillow12.3.0，window截图参数可用，Jev/UIA worker/background worker、恢复确认方法和逆向补丁模块导入正常，已有OpenCode认证可读。模块探针没有额外调用模型，也没有输出认证内容。进程存在不等同于逐个GUI场景验收。
+
+main上的分批提交包括输入/UIA、检查点与上下文、Office、撤销与交付管线、Jev、子任务/后台工作、原生验收、完整CU、撤销长度变化、桌面整合与最终版本。版本提交为 `82054cd`；本报告和安装证据在随后文档提交落盘。没有发布 GitHub release 或推送版本 tag。参考项目、运行产物、外部会话与其他未纳入本次交付的已有文件保持原位，未整体加入提交。
+
+测试期间的实际副作用也保留记录：早期旧输入测试遗漏剪贴板替身，曾将系统剪贴板写入字面测试字符串 `A\r\n\tB`，没有真实键盘/鼠标操作或发送；夹具随后已修正，原剪贴板未知，未宣称恢复。详见CU报告。

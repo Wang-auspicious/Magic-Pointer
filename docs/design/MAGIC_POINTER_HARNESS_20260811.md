@@ -868,10 +868,11 @@ DOM、COM、UIA、Fabric等现有模块也不自动保留，只优先保存经�
 
 ## 18. 进度账本
 
-### 2026-09-20：85 项审计修复与 Jev 候选接口（开发完成 1.0.50，安装同步中）
+### 2026-09-20：85 项审计修复与 Jev 候选接口（1.0.50 已交付）
 
 - 审计编号以 `docs/research/2026-09-20-project-audit-and-jev.md` 为准；分批修复并 push main，最后统一升版本与 sync。
-- CU 27项、Runtime 22项、桌面/Figma 21项、Office/交付15项已逐条落地，闭环报告见 `docs/research/2026-09-20-audit-fix-delivery.md`。完整串行验证：Python **2495 passed / 6 条旧Pillow弃用提示 / 239.30s**，Node **257 test files**，lint/typecheck/build全绿。全部修复后只升一次版本至1.0.50，正在sync；这行尚不表示安装完成。
+- [x] CU 27项、Runtime 22项、桌面/Figma 21项、Office/交付15项逐条落地，闭环报告见 `docs/research/2026-09-20-audit-fix-delivery.md`。完整串行验证：Python **2495 passed / 6 条旧Pillow弃用提示 / 239.30s**，Node **257 test files**，lint/typecheck/build全绿。
+- [x] 全部修复后只升一次版本至 **1.0.50**，`npm run sync` 再次全绿（Python2495/253.12s、Node257、lint/typecheck/build），构建 `release/sync-1.0.50-20260920-152420-32964/Magic-Pointer-1.0.50-x64.exe`（392419017 bytes）并成功同步/重启。独立核对安装版本1.0.50及7个安装目录进程，随包Python3.12.8/Pillow12.3.0导入新增模块成功，Jev现有认证可读；安装证据见 `docs/research/2026-09-20-installed-verification.json`。
 - Word、Excel、PowerPoint实际临时文档验收通过，最后一次为 `data/acceptance-office-20260920-151206`；Figma仍缺真实插件ID/原生应用验收，未把协议回归当成通过。
 - Jev：官方 `https://opencode.ai/zen/v1/systemone`、固定免费模型 `jev-1.13-free`，复用 OpenCode 本机认证；真实请求费用字段为0。六例合成候选对照与主模型结果存于 `docs/research/2026-09-20-jev-comparison.json`。英文语义暖请求625/734ms，中文低置信度退回；不把模型选择当成权限、坐标或执行证据。
 

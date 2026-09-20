@@ -1,6 +1,6 @@
 # 当前状态
 
-2026-09-20 当前工作边界：CU01–27、RT-01–22、D01–21、OP01–15 共 **85 项已落地修复并分批推送 main**，Jev 免费候选接口已接入。完整串行 `npm run verify` 通过：Python **2495 passed / 6 条既有 Pillow 弃用提示 / 239.30s**，Node **257 test files**，lint、全部 TypeScript 与构建通过。全部修复后仅升一次版本至 **1.0.50**，现在执行本机 sync；安装验证完成前不宣称安装版交付。详见 `docs/research/2026-09-20-audit-fix-delivery.md`。以下“不 bump / 不 sync”仅是历史交付约束。
+2026-09-20 **1.0.50 已安装交付**：CU01–27、RT-01–22、D01–21、OP01–15 共 **85 项落地修复**，Jev 免费候选接口接入并完成六例小对照；过程中分批推送 main，全部修复后只升一次版本（1.0.49→1.0.50）。`npm run verify` 与 `npm run sync` 内复测均通过：Python **2495 passed / 6 条旧Pillow弃用提示**（239.30s / 253.12s），Node **257 test files**，lint、全部TypeScript与构建通过。sync退出0，安装目录独立核对为1.0.50，7个进程均来自安装目录；随包Python能导入Jev/UIA worker/background worker/逆向补丁/恢复确认，且可读取既有OpenCode认证。Word/Excel/PPT临时文档原生验收通过；Figma仍未宣称原生验收。详见 `docs/research/2026-09-20-audit-fix-delivery.md`。以下“不 bump / 不 sync”仅是历史交付约束。
 
 现行产品决定：所有短任务、长任务均由 MP 自有 Runtime 执行；外部客户端仅是文本投递目标。文字与视觉沿用用户选中的模型，Jev `jev-1.13-free` 仅增加有限候选判断工具，使用独立 900 ms 等待预算、连接复用与低置信度退回；不更换用户主模型。当前回滚/长任务预算/模型席位以本段与 canonical 最新账本为准。下面的 1.0.32、L0/L1/L2、多模型席位、固定长任务天花板属于历史状态，已被后续实现取代。
 
