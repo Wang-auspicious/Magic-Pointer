@@ -21,6 +21,27 @@ def test_exact_label_avoids_network():
     assert not requests
 
 
+def test_exact_label_does_not_initialize_http_client(monkeypatch):
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("local target selection must not initialize HTTP/TLS")
+    monkeypatch.setattr(httpx, "Client", forbidden)
+    selector = JevTargetSelector(api_key="test")
+    assert selector.select("Archive", CANDIDATES, state_id="s")["ref"] == "@e1"
+
+
+def test_http_initialization_is_inside_remote_wait_budget(monkeypatch):
+    original_client = httpx.Client
+    def slow_factory(*_args, **_kwargs):
+        time.sleep(0.25)
+        return original_client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json={})))
+    monkeypatch.setattr(httpx, "Client", slow_factory)
+    start = time.monotonic()
+    selector = JevTargetSelector(api_key="test", budget_s=0.025)
+    result = selector.select("Keep this in archive", CANDIDATES, state_id="s")
+    assert time.monotonic() - start < 0.15
+    assert result["fallbackReason"] == "deadline"
+
+
 def test_structured_choice_uses_free_model_and_only_known_refs():
     requests = []
     c = client({"answers": {"target": {"choice": "c0", "confidence": 0.98, "probabilities": {"c0": 0.98, "c1": 0.01, "none": 0.01}}}, "cost": "0"}, requests)

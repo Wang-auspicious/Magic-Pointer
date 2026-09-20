@@ -46,7 +46,7 @@ def _cancelled(scope: Any) -> bool:
 class JevTargetSelector:
     def __init__(self, *, api_key: str | None = None, client: Any = None, budget_s: float = 0.9) -> None:
         self._key = opencode_key() if api_key is None else api_key
-        self._client = client or httpx.Client(timeout=httpx.Timeout(5.0, connect=3.0), follow_redirects=False)
+        self._client = client
         self.budget_s = max(0.01, min(5.0, budget_s))
         self._busy = threading.Lock()
 
@@ -78,6 +78,8 @@ class JevTargetSelector:
         completed: queue.Queue = queue.Queue(maxsize=1)
         def request():
             try:
+                if self._client is None:
+                    self._client = httpx.Client(timeout=httpx.Timeout(5.0, connect=3.0), follow_redirects=False)
                 response = self._client.post(ENDPOINT, json=payload, headers={"Authorization": f"Bearer {self._key}", "User-Agent": "MagicPointer/1.0"})
                 response.raise_for_status()
                 completed.put((response.json(), None))

@@ -24,4 +24,8 @@
 
 撤销遵循已有`retain_created_file`策略：新创建的整个文件保留，不擅自删除；PDF撤销仅删除本次且当前状态仍匹配的批注。部分写入后状态不匹配会停在冲突，不能把未恢复状态宣称已恢复。
 
-本机`CLSIDFromProgID`检查Word.Application、Excel.Application、PowerPoint.Application均未注册，因此本批没有原生Office应用验收结论。Figma实际插件安装/应用连接亦须依真实可用环境区分；Python和插件事务回归不能代替该结论。
+原生Office验收已通过，结果见 [2026-09-20-office-native-results.json](2026-09-20-office-native-results.json)：Word混合格式最小替换后文字和三种格式均正确；Excel受保护第二格失败，第一格实际变更且wrote=true；PowerPoint填充从无→红色可见→无，原生Visible读回分别为-1和0。入口为 `scripts/verify_office_audit_native.py`，仅创建独立验收文档，最近文件保存在 `data/acceptance-office-20260920-144914`，没有修改用户原有文档。
+
+验收期间修正了两个探针问题：初次误调用不存在的`pythoncom.CLSIDFromProgID`，其“未注册”判断已撤回；PowerPoint DocumentWindow没有可用HWND成员，探针改用实际原生窗口枚举并通过生产gateway的完整路径绑定验证，才执行样例写入。生产PowerPoint本来就通过NativeWindow绑定，并未因探针错误被改成前台窗口猜测。
+
+Figma实际插件安装/应用连接仍须按桌面分区的真实环境证据区分；Python和插件事务回归不代替该结论。
