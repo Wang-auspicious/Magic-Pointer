@@ -6,7 +6,7 @@ import pytest
 
 from app.agent_runtime.errors import ActionFailure, FailureType
 from app.agent_runtime.live_observer import LiveObserver, SurfaceCapture
-from app.agent_runtime.look_tool import LookTool
+from app.agent_runtime.look_tool import LookTool, VisionUnavailable
 from app.agent_runtime.vision_backend import FileVisionBackend
 from app.context_pack.sources import FragmentLocator, SourceRef
 
@@ -82,7 +82,8 @@ def test_look_keeps_old_frame_while_observe_sends_new_pixels_to_vision() -> None
     assert current["observedAtMs"] == 2_000
     assert current["locator"] == locator.to_dict()
     assert current["vision"]["text"] == "new current content"
-    assert current["coverage"]["complete"] is True
+    assert current["coverage"]["complete"] is False
+    assert current["coverage"]["missingReason"] == "viewport_only"
     assert current["evidenceStatus"] == "ok"
     assert current["usedBackend"] == "uia.live+gdi.test+vision.fake"
 
@@ -128,3 +129,20 @@ def test_file_vision_backend_forwards_timeout_and_removes_transient_file(tmp_pat
     assert observed["timeoutS"] == 12.5
     assert observed["attempts"] == 1
     assert not Path(observed["path"]).exists()
+
+
+@pytest.mark.parametrize("response", [
+    "AI 调用失败：模型端点限流中（HTTP 429）。约 30 秒后可重试。",
+    "AI 调用失败：HTTP 503。截图已保存。",
+    "",
+])
+def test_failed_vision_is_never_successful_screen_evidence(tmp_path, response):
+    backend = FileVisionBackend(ask=lambda *_args, **_kwargs: response, temporary_directory=tmp_path)
+    with pytest.raises(VisionUnavailable):
+        backend.describe(b"pixels", "explain the Environment sidebar", 1000)
+    assert list(tmp_path.iterdir()) == []
+    evidence = LookTool(backend, capture=lambda _box: b"pixels").look("bbox:0,0,300,300")
+    assert evidence.status.value != "ok"
+    assert evidence.confidence == 0
+    if response:
+        assert response in evidence.note, "the model must see the real provider failure, not an opaque unsupported code"

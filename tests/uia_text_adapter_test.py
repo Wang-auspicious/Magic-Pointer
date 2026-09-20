@@ -356,7 +356,7 @@ def test_chromium_pdf_uses_verified_visible_text_and_context(monkeypatch) -> Non
     monkeypatch.setattr(
         uia_module,
         "recover_local_pdf_selection",
-        lambda data: PdfSelectionRecovery(
+        lambda data, **kwargs: PdfSelectionRecovery(
             True,
             text="A multi-task learning framework for carotid",
             context=(
@@ -372,7 +372,7 @@ def test_chromium_pdf_uses_verified_visible_text_and_context(monkeypatch) -> Non
         ),
     )
 
-    ctx = UiaTextSelectionAdapter().read_context(_pdf_window())
+    ctx = UiaTextSelectionAdapter().read_context(_pdf_window(), screen_capture=(object(), (0, 0)))
 
     assert ctx.content == "A multi-task learning framework for carotid"
     assert ctx.method == "pdf:screen-highlight+local-text-layer"
@@ -404,7 +404,7 @@ def test_chromium_pdf_fails_closed_when_visible_text_cannot_be_verified(
     monkeypatch.setattr(
         uia_module,
         "recover_local_pdf_selection",
-        lambda data: PdfSelectionRecovery(
+        lambda data, **kwargs: PdfSelectionRecovery(
             False,
             document_path=r"D:\paper.pdf",
             page_number=1,
@@ -412,7 +412,7 @@ def test_chromium_pdf_fails_closed_when_visible_text_cannot_be_verified(
         ),
     )
 
-    ctx = UiaTextSelectionAdapter().read_context(_pdf_window())
+    ctx = UiaTextSelectionAdapter().read_context(_pdf_window(), screen_capture=(object(), (0, 0)))
 
     assert ctx.content is None
     assert ctx.method == "pdf:verified-visible-selection"

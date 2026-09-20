@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import json
+import ctypes
+import ctypes.wintypes
 import os
 import subprocess
 import threading
 import time
 import uuid
+from copy import deepcopy
+from contextvars import ContextVar
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -35,14 +39,55 @@ KIMI_WINDOWS_TOOLS = (
 _EMPTY_SCHEMA = {"type": "object", "properties": {}, "required": []}
 _WIN_TOKENS = frozenset({"win", "meta", "super", "lwin", "rwin", "lmeta", "rmeta"})
 _REAL_INPUT_LOCK: InputOwnershipLock | None = None
+_ACTION_SCOPE: ContextVar[object] = ContextVar("desktop_action_scope", default=None)
 
 
 class InputOwnershipLock:
     """One session may hold real mouse/keyboard/clipboard at a time."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, mutex_name: str | None = None) -> None:
         self._holder: str | None = None
         self._guard = threading.Lock()
+        self._mutex_name = mutex_name
+        self._native_release: threading.Event | None = None
+        self._native_thread: threading.Thread | None = None
+
+    def _acquire_native(self) -> bool:
+        if not self._mutex_name or os.name != "nt":
+            return True
+        ready, release = threading.Event(), threading.Event()
+        acquired = []
+
+        def hold() -> None:
+            # A Win32 mutex belongs to its acquiring thread. Keep that thread
+            # asleep while the session owns input; tool workers may change.
+            kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.wintypes.BOOL, ctypes.wintypes.LPCWSTR]
+            kernel.CreateMutexW.restype = ctypes.wintypes.HANDLE
+            kernel.WaitForSingleObject.argtypes = [ctypes.wintypes.HANDLE, ctypes.wintypes.DWORD]
+            kernel.ReleaseMutex.argtypes = [ctypes.wintypes.HANDLE]
+            kernel.CloseHandle.argtypes = [ctypes.wintypes.HANDLE]
+            handle = kernel.CreateMutexW(None, False, self._mutex_name)
+            owned = bool(handle and kernel.WaitForSingleObject(handle, 0) in (0, 0x80))
+            acquired.append(owned)
+            ready.set()
+            try:
+                if owned:
+                    release.wait()
+            finally:
+                if owned:
+                    kernel.ReleaseMutex(handle)
+                if handle:
+                    kernel.CloseHandle(handle)
+
+        thread = threading.Thread(target=hold, daemon=True, name="mp-input-owner")
+        thread.start()
+        ready.wait()
+        if not acquired[0]:
+            thread.join()
+            return False
+        self._native_release, self._native_thread = release, thread
+        return True
 
     @property
     def holder(self) -> str | None:
@@ -51,7 +96,9 @@ class InputOwnershipLock:
     def acquire(self, session_id: str, action: str | None = None) -> bool:
         del action
         with self._guard:
-            if self._holder is None or self._holder == session_id:
+            if self._holder == session_id:
+                return True
+            if self._holder is None and self._acquire_native():
                 self._holder = session_id
                 return True
             return False
@@ -59,13 +106,17 @@ class InputOwnershipLock:
     def release(self, session_id: str | None = None) -> None:
         with self._guard:
             if session_id is None or self._holder == session_id:
+                if self._native_release is not None:
+                    self._native_release.set()
+                    self._native_thread.join()
+                    self._native_release, self._native_thread = None, None
                 self._holder = None
 
 
 def process_input_lock() -> InputOwnershipLock:
     global _REAL_INPUT_LOCK
     if _REAL_INPUT_LOCK is None:
-        _REAL_INPUT_LOCK = InputOwnershipLock()
+        _REAL_INPUT_LOCK = InputOwnershipLock(mutex_name="Local\\MagicPointer.RealInput")
     return _REAL_INPUT_LOCK
 
 
@@ -78,6 +129,7 @@ class _Snapshot:
     raw_elements: list[dict[str, Any]]
     mode: str
     root_ref: str = ""
+    surface: Any = None
 
 
 class DesktopActionSession:
@@ -98,6 +150,7 @@ class DesktopActionSession:
         session_id: str,
         ownership: InputOwnershipLock | None = None,
         origin_window_hwnd: int | None = None,
+        surface_probe: Callable[[dict[str, Any]], Any] | None = None,
     ) -> None:
         self.driver = driver
         self.windows_probe = windows_probe
@@ -105,6 +158,7 @@ class DesktopActionSession:
         self.launcher = launcher
         self.uia_act = uia_act
         self.session_id = session_id
+        self.surface_probe = surface_probe
         self.ownership = ownership or InputOwnershipLock()
         # 这一轮是围绕哪个窗口发生的。用户划线圈的是终端里的一行，那么
         # 「不带参数地观察一下」就必须是观察那个终端——而不是此刻碰巧在前台
@@ -207,6 +261,7 @@ class DesktopActionSession:
         text: str | None = None,
         role: str | None = None,
         capability: str | None = None,
+        scope: object = None,
         **_: Any,
     ) -> str:
         snap = self._require_snapshot(state_id)
@@ -236,7 +291,68 @@ class DesktopActionSession:
             ranked.append((score, item))
         ranked.sort(key=lambda pair: (pair[0], int(pair[1].get("index") or 0)))
         matches = [{"ref": self._element_ref(item), **self._outline_node(item)} for _, item in ranked[:32]]
-        return _dump({"state_id": snap.snapshot_id, "matches": matches, "total_matches": len(ranked), "returned": len(matches)})
+        result = {"state_id": snap.snapshot_id, "matches": matches, "total_matches": len(ranked), "returned": len(matches)}
+        if query and not ranked:
+            from app.desktop_actions.jev import suggest_target
+
+            candidates = self.candidate_pool(snap.snapshot_id)
+            if role_query:
+                candidates = [row for row in candidates if str(row.get("role") or "").casefold() == role_query]
+            if cap_query:
+                candidates = [row for row in candidates if any(cap_query in str(value).casefold() for value in row.get("patterns") or [])]
+            result["suggested_target"] = suggest_target(str(text), candidates, state_id=snap.snapshot_id, scope=scope)
+        return _dump(result)
+
+    def candidate_pool(self, state_id: str) -> list[dict[str, Any]]:
+        """Complete snapshot candidates for deterministic or model-assisted ranking.
+
+        Ranking does not create refs: execution still revalidates this state.
+        """
+        snap = self._require_snapshot(state_id)
+        return [{**deepcopy(item), "ref": self._element_ref(item)} for item in snap.raw_elements]
+
+    def action_effect(self, name: str, args: dict[str, Any]) -> Effect:
+        """Classify from the bound target and explicit operation, without I/O."""
+        if name == "act_ui":
+            effects = []
+            for action in args.get("actions") or []:
+                mapped = {"click": "Click", "press": "Click", "keypress": "Key", "typeText": "Type"}.get(action.get("action"), "SetValue")
+                item = {**action, "snapshot_id": args.get("state_id")}
+                if str(action.get("ref") or "").startswith("@e"):
+                    item["index"] = int(action["ref"][2:])
+                if isinstance(item.get("keys"), list):
+                    item["keys"] = "+".join(item["keys"])
+                effects.append(self.action_effect(mapped, item))
+            return max(effects or [Effect.REVERSIBLE_WRITE], key=lambda effect: list(Effect).index(effect))
+        declared = {"send": Effect.EXTERNAL_SEND, "submit": Effect.EXTERNAL_SEND, "delete": Effect.DESTRUCTIVE, "run": Effect.LOCAL_IRREVERSIBLE, "purchase": Effect.PURCHASE}.get(str(args.get("intent") or ""), Effect.REVERSIBLE_WRITE)
+        observed = Effect.REVERSIBLE_WRITE
+        if name == "Type" and args.get("submit"):
+            observed = Effect.EXTERNAL_SEND
+        if name == "Key":
+            keys = [key.casefold() for key in _split_keys(str(args.get("keys") or ""))]
+            if any(key in {"delete", "del"} for key in keys):
+                observed = Effect.DESTRUCTIVE
+            elif any(key in {"enter", "return"} for key in keys) and "shift" not in keys:
+                observed = Effect.EXTERNAL_SEND
+        if name in {"Click", "Act"}:
+            snap = self._snapshots.get(str(args.get("snapshot_id") or ""))
+            rows = snap.raw_elements if snap else []
+            index = args.get("index")
+            candidates = [row for row in rows if row.get("index") == index] if index is not None else [row for row in rows if args.get("x") is not None and args.get("y") is not None and len(row.get("rect") or []) == 4 and row["rect"][0] <= args["x"] < row["rect"][2] and row["rect"][1] <= args["y"] < row["rect"][3]]
+            labels = " ".join(str(row.get("name") or "").casefold() for row in candidates)
+            if any(word in labels for word in ("delete", "remove", "删除", "永久移除", "清空")):
+                observed = Effect.DESTRUCTIVE
+            elif any(word in labels for word in ("send", "submit", "发送", "提交", "发布")):
+                observed = Effect.EXTERNAL_SEND
+        return max((declared, observed), key=lambda effect: list(Effect).index(effect))
+
+    def action_access(self, name: str, args: dict[str, Any]):
+        from app.context_pack.source_scope import AccessRequest
+
+        effect = self.action_effect(name, args)
+        action = {Effect.EXTERNAL_SEND: "send", Effect.DESTRUCTIVE: "delete", Effect.LOCAL_IRREVERSIBLE: "run", Effect.PURCHASE: "send"}.get(effect, "patch")
+        snap = self._snapshots.get(str(args.get("snapshot_id") or args.get("state_id") or ""))
+        return AccessRequest(action=action, window_ids=(_window_id(snap.window) if snap else "unbound-live-surface",))
 
     def expand_ui(self, state_id: str, ref: str, depth: int = 3, **_: Any) -> str:
         snap = self._require_snapshot(state_id)
@@ -290,30 +406,53 @@ class DesktopActionSession:
         if not isinstance(actions, list) or not actions or len(actions) > 20:
             raise ActionFailure(FailureType.TOOL_ERROR, "act_ui.actions must contain 1..20 actions")
         executed: list[dict[str, Any]] = []
-        for action in actions:
-            op = str(action.get("action") or "")
-            ref = action.get("ref")
-            index = self._index_for_ref(snap, str(ref)) if ref else None
-            if op in {"click", "press"}:
-                self.click(snapshot_id=snap.snapshot_id, index=index, x=action.get("x"), y=action.get("y"), button=str(action.get("button") or "left"), count=int(action.get("click_count") or 1))
-            elif op == "setText":
-                if index is None:
-                    raise ActionFailure(FailureType.TOOL_ERROR, "setText requires ref")
-                self.set_value(snapshot_id=snap.snapshot_id, index=index, value=str(action.get("text") or ""))
-            elif op == "typeText":
-                self.type_text(snapshot_id=snap.snapshot_id, text=str(action.get("text") or ""), index=index)
-            elif op == "keypress":
-                self.press_key(snapshot_id=snap.snapshot_id, keys="+".join(str(key) for key in action.get("keys") or []))
-            elif op == "scroll":
-                self.scroll(snapshot_id=snap.snapshot_id, index=index, x=action.get("x"), y=action.get("y"), dx=int(action.get("scroll_x") or 0), dy=int(action.get("scroll_y") or 0))
-            elif op == "drag":
-                path = action.get("path") or []
-                if len(path) < 2:
-                    raise ActionFailure(FailureType.TOOL_ERROR, "drag.path must contain 2 points")
-                self.drag(snapshot_id=snap.snapshot_id, x=path[0].get("x"), y=path[0].get("y"), to_x=path[-1].get("x"), to_y=path[-1].get("y"))
-            else:
-                raise ActionFailure(FailureType.TOOL_ERROR, f"unsupported act_ui action {op!r}")
-            executed.append({"action": op, "ref": ref})
+        for action_index, action in enumerate(actions):
+            try:
+                receipt = self._execute_ui_action(snap, action)
+            except Exception as exc:
+                failure_type = exc.failure_type if isinstance(exc, ActionFailure) else FailureType.TOOL_ERROR
+                raise ActionFailure(failure_type, str(exc), partial_result={
+                    "ok": False, "base_state_id": snap.snapshot_id,
+                    "executed": executed, "failed_index": action_index,
+                    "not_executed_indexes": list(range(action_index + 1, len(actions))),
+                    "verification": _unavailable(),
+                }) from exc
+            executed.append({"action": str(action.get("action") or ""), "ref": action.get("ref"), "receipt": json.loads(receipt)})
+        try:
+            return self._finish_ui_actions(snap, executed, expect)
+        except Exception as exc:
+            failure_type = exc.failure_type if isinstance(exc, ActionFailure) else FailureType.TOOL_ERROR
+            raise ActionFailure(failure_type, str(exc), partial_result={
+                "ok": False, "base_state_id": snap.snapshot_id,
+                "executed": executed, "failed_index": None,
+                "not_executed_indexes": [], "verification": _unavailable(),
+                "post_observation_error": str(exc),
+            }) from exc
+
+    def _execute_ui_action(self, snap: _Snapshot, action: dict[str, Any]) -> str:
+        op = str(action.get("action") or "")
+        ref = action.get("ref")
+        index = self._index_for_ref(snap, str(ref)) if ref else None
+        if op in {"click", "press"}:
+            return self.click(snapshot_id=snap.snapshot_id, index=index, x=action.get("x"), y=action.get("y"), button=str(action.get("button") or "left"), count=int(action.get("click_count") or 1))
+        if op == "setText":
+            if index is None:
+                raise ActionFailure(FailureType.TOOL_ERROR, "setText requires ref")
+            return self.set_value(snapshot_id=snap.snapshot_id, index=index, value=str(action.get("text") or ""))
+        if op == "typeText":
+            return self.type_text(snapshot_id=snap.snapshot_id, text=str(action.get("text") or ""), index=index, submit=bool(action.get("submit")))
+        if op == "keypress":
+            return self.press_key(snapshot_id=snap.snapshot_id, keys="+".join(str(key) for key in action.get("keys") or []))
+        if op == "scroll":
+            return self.scroll(snapshot_id=snap.snapshot_id, index=index, x=action.get("x"), y=action.get("y"), dx=int(action.get("scroll_x") or 0), dy=int(action.get("scroll_y") or 0))
+        if op == "drag":
+            path = action.get("path") or []
+            if len(path) < 2:
+                raise ActionFailure(FailureType.TOOL_ERROR, "drag.path must contain 2 points")
+            return self.drag(snapshot_id=snap.snapshot_id, x=path[0].get("x"), y=path[0].get("y"), to_x=path[-1].get("x"), to_y=path[-1].get("y"), path=path)
+        raise ActionFailure(FailureType.TOOL_ERROR, f"unsupported act_ui action {op!r}")
+
+    def _finish_ui_actions(self, snap: _Snapshot, executed: list[dict[str, Any]], expect: dict[str, Any] | None) -> str:
         condition = dict(expect or {})
         if condition.get("text") or condition.get("role") or condition.get("value") is not None:
             post = json.loads(self.wait_for(snap.snapshot_id, timeout_ms=int(condition.get("timeout_ms") or 100), text=condition.get("text"), role=condition.get("role"), value=condition.get("value"), until=str(condition.get("until") or "present")))
@@ -406,7 +545,6 @@ class DesktopActionSession:
         ax_filter: str | None = None,
         **_: Any,
     ) -> str:
-        del ax_filter
         resolved = str(mode or "ax")
         if resolved == "all":
             raise ActionFailure(FailureType.TOOL_ERROR, "mode 'all' is illegal")
@@ -424,6 +562,9 @@ class DesktopActionSession:
         if resolved in {"ax", "full", "text"}:
             raw_elements = list(self.elements_probe(hwnd) or [])
         elements, truncated = _compress_elements(raw_elements)
+        if ax_filter:
+            needle = str(ax_filter).casefold()
+            elements = [item for item in elements if needle in (str(item.get("role") or "") + " " + str(item.get("name") or "")).casefold()]
         snapshot_id = uuid.uuid4().hex
         root_ref = self._root_refs.setdefault(str(hwnd), f"@r{len(self._root_refs) + 1}")
         self._root_by_ref[root_ref] = str(hwnd)
@@ -435,9 +576,12 @@ class DesktopActionSession:
             raw_elements=[dict(item) for item in raw_elements],
             mode=resolved,
             root_ref=root_ref,
+            surface=self.surface_probe(target) if self.surface_probe and resolved in {"full", "image"} else None,
         )
         while len(self._snapshots) > 32:
             del self._snapshots[next(iter(self._snapshots))]
+        for expired in list(self._snapshots.values())[:-8]:
+            expired.surface = None
         payload: dict[str, Any] = {
             "snapshot_id": snapshot_id,
             "root_ref": root_ref,
@@ -645,6 +789,7 @@ class DesktopActionSession:
         to_x: float | None = None,
         to_y: float | None = None,
         duration_ms: int = 0,
+        path: list[dict[str, Any]] | None = None,
         **_: Any,
     ) -> str:
         snap = self._require_snapshot(
@@ -656,7 +801,13 @@ class DesktopActionSession:
         end, _ = self._target_point(snap, index=to_index, x=to_x, y=to_y)
         self._require_unobscured(snap, start)
         self._require_unobscured(snap, end)
-        self.driver.drag(start, end, duration_ms=int(duration_ms or 0))
+        if path and len(path) > 2:
+            points = [self._target_point(snap, index=None, x=item.get("x"), y=item.get("y"))[0] for item in path]
+            for point in points:
+                self._require_unobscured(snap, point)
+            self.driver.drag_path(points, duration_ms=int(duration_ms or 0))
+        else:
+            self.driver.drag(start, end, duration_ms=int(duration_ms or 0))
         return _acted("foreground_drag", matched=False, start=list(start), end=list(end))
 
     def turn_ended(self, **_: Any) -> str:
@@ -818,6 +969,22 @@ class DesktopActionSession:
             )
         else:
             point, element = (int(x), int(y)), None
+            if snap.mode != "image":
+                live_rows = list(self.elements_probe(int(snap.window.get("hwnd") or 0)) or [])
+                if live_rows != snap.raw_elements:
+                    raise ActionFailure(FailureType.STALE_SNAPSHOT, "window contents changed since the coordinate snapshot", recovery_hint="call Observe again")
+            if self.surface_probe is not None:
+                if snap.surface is None:
+                    raise ActionFailure(FailureType.STALE_SNAPSHOT, "coordinate actions require a recent Observe(mode=full) pixel snapshot")
+                live_surface = self.surface_probe(snap.window)
+                left, top, right, bottom = _bounds(snap.window)
+                # Compare the actual target neighborhood, not unrelated clocks
+                # or animations elsewhere in the window. No image hashes.
+                px = round((point[0] - left) * snap.surface.width / max(1, right - left))
+                py = round((point[1] - top) * snap.surface.height / max(1, bottom - top))
+                box = (max(0, px - 32), max(0, py - 32), min(snap.surface.width, px + 33), min(snap.surface.height, py + 33))
+                if live_surface.size != snap.surface.size or live_surface.crop(box).tobytes() != snap.surface.crop(box).tobytes():
+                    raise ActionFailure(FailureType.STALE_SNAPSHOT, "target pixels changed since the coordinate snapshot", recovery_hint="call Observe(mode=full) again")
         left, top, right, bottom = _bounds(snap.window)
         if not (left <= point[0] < right and top <= point[1] < bottom):
             raise ActionFailure(
@@ -1207,9 +1374,25 @@ def register_desktop_action_tools(
         ),
     )
     for spec in specs:
+        if spec.name in {"Click", "Type", "Key", "Act", "act_ui"}:
+            properties = dict(spec.input_schema.get("properties") or {})
+            properties["intent"] = {"type": "string", "enum": ["input", "send", "submit", "delete", "run", "purchase"], "description": "实际动作效果；发送/删除/执行必须声明，不能用 input 降低已识别目标的效果。"}
+            spec = replace(spec, input_schema={**spec.input_schema, "properties": properties}, effect_for=lambda args, name=spec.name: session.action_effect(name, args), access_for=lambda args, name=spec.name: session.action_access(name, args))
         # Observation starts without a discovery round. Specialized actions
         # keep their complete contracts, loaded together when needed.
-        registry.register(replace(spec, deferred=spec.name not in {"ListApps", "Observe"}))
+        def scoped_execute(*, scope=None, _execute=spec.execute, **args):
+            token = _ACTION_SCOPE.set(scope)
+            check = getattr(scope, "raise_if_cancelled", None) or getattr(getattr(scope, "token", None), "raise_if_cancelled", None)
+            binder = getattr(session.driver, "bind_cancel_check", None)
+            if callable(binder):
+                binder(check)
+            try:
+                if callable(check):
+                    check()
+                return _execute(scope=scope, **args)
+            finally:
+                _ACTION_SCOPE.reset(token)
+        registry.register(replace(spec, execute=scoped_execute, deferred=spec.name not in {"ListApps", "Observe"}))
     # 旧名别名（一个版本）：历史授权/旧调用仍路由到规范工具；别名不进 schema。
     registry.register_alias("list_apps", "ListApps")
     registry.register_alias("launch_app", "Launch")
@@ -1233,7 +1416,7 @@ def register_desktop_action_tools(
 
 def default_session(
     *,
-    session_id: str = "loop",
+    session_id: str | None = None,
     origin_window_hwnd: int | None = None,
 ) -> DesktopActionSession:
     """Production session: live window list, COM UIA tree/act, Win32 driver."""
@@ -1243,9 +1426,10 @@ def default_session(
         elements_probe=_live_elements,
         launcher=_live_launch,
         uia_act=_live_uia,
-        session_id=session_id,
+        session_id=session_id or uuid.uuid4().hex,
         ownership=process_input_lock(),
         origin_window_hwnd=origin_window_hwnd,
+        surface_probe=_live_surface,
     )
 
 
@@ -1323,10 +1507,16 @@ def _live_windows() -> list[dict[str, Any]]:
     return rows
 
 
-def _live_elements(hwnd: int) -> list[dict[str, Any]]:
-    from app.desktop_actions.uia import UiaBridge
+def _live_surface(window: dict[str, Any]):
+    from app.capture import capture_window
 
-    return UiaBridge().list_elements(int(hwnd or 0))
+    return capture_window(int(window.get("hwnd") or 0))
+
+
+def _live_elements(hwnd: int) -> list[dict[str, Any]]:
+    from app.desktop_actions.uia_worker import request
+
+    return request({"operation": "tree", "hwnd": int(hwnd or 0)}, scope=_ACTION_SCOPE.get())
 
 
 def _live_launch(app: str) -> dict[str, Any]:
@@ -1336,9 +1526,9 @@ def _live_launch(app: str) -> dict[str, Any]:
 
 
 def _live_uia(action: str, element: dict[str, Any], value: str | None = None) -> dict[str, Any]:
-    from app.desktop_actions.uia import UiaBridge
+    from app.desktop_actions.uia_worker import request
 
-    return UiaBridge().act(action, element, value)
+    return request({"operation": "act", "action": action, "element": element, "value": value}, scope=_ACTION_SCOPE.get())
 
 
 def _known_app(name: str) -> bool:

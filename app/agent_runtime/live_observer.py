@@ -9,6 +9,8 @@ Raw pixels never enter the model-visible result.
 from __future__ import annotations
 
 import time
+import os
+from pathlib import Path
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -19,6 +21,51 @@ from app.context_pack.source_scope import AccessRequest
 from app.context_pack.sources import Coverage, FragmentLocator, SourceRef
 
 from .look_tool import VisionTimeout, VisionUnavailable
+from app.governance.cancellation import CancelledError
+
+
+def _check_cancelled(scope: object) -> None:
+    checker = getattr(scope, "raise_if_cancelled", None) or getattr(getattr(scope, "token", None), "raise_if_cancelled", None)
+    if callable(checker):
+        checker()
+
+
+def validate_live_source(source: SourceRef, window: dict[str, Any], *, surface_registry: Any = None, adapter_registry: Any = None) -> None:
+    """Re-resolve the current surface through its registered identity provider."""
+    identity = source.identity
+    if source.kind == "capture":
+        return
+    if identity.get("conversationIdentity"):
+        from app.surface_adapter.registry import get_surface_registry
+        from app.context_pack.chat_reader import _same_conversation
+
+        expected = dict(identity["conversationIdentity"])
+        if not expected.get("nativeConversationId") and expected.get("keyProvenance") == "window-surface":
+            raise ActionFailure(FailureType.STALE_SNAPSHOT, "conversation identity_unavailable; rebind the current surface")
+        result = (surface_registry or get_surface_registry()).try_resolve(window, None, None)
+        conversation = next((obj for obj in getattr(result, "objects", ()) if obj.kind == "conversation"), None)
+        actual = dict(conversation.fields.get("conversationIdentity") or {}) if conversation else {}
+        if not actual or not _same_conversation(expected, actual):
+            raise ActionFailure(FailureType.STALE_SNAPSHOT, "conversation identity changed; rebind the current surface")
+        return
+    from app.adapters.registry import default_adapter_registry
+
+    registry = adapter_registry or default_adapter_registry()
+    bounds = window.get("rect") or window.get("bbox") or [0, 0, 1, 1]
+    point = {"x": (int(bounds[0]) + int(bounds[2])) // 2, "y": (int(bounds[1]) + int(bounds[3])) // 2}
+    context = registry.read_first_context([window], target_point=point) if identity.get("targetId") else registry.read_first_context([window])
+    artifacts = dict(getattr(context, "artifacts", {}) or {})
+    if identity.get("targetId"):
+        browser = dict(artifacts.get("browser_context") or {})
+        actual = dict(browser.get("provenance") or {})
+        if any(not identity.get(key) or str(actual.get(key) or "") != str(identity[key]) for key in ("browserInstanceId", "targetId", "documentEpoch")):
+            raise ActionFailure(FailureType.STALE_SNAPSHOT, "browser identity changed or unavailable; rebind the current tab")
+    elif identity.get("absolutePath"):
+        actual = str(dict(artifacts.get("source_identity") or {}).get("absolutePath") or artifacts.get("pdf_document_path") or "")
+        if not actual or os.path.normcase(str(Path(actual).resolve())) != os.path.normcase(str(Path(identity["absolutePath"]).resolve())):
+            raise ActionFailure(FailureType.STALE_SNAPSHOT, "document identity changed or unavailable; rebind the current document")
+    else:
+        raise ActionFailure(FailureType.STALE_SNAPSHOT, "source identity_unavailable; bind the current window as a capture source")
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,7 +105,7 @@ class LiveObserver:
         locator: dict[str, Any] | None = None,
         scope: object = None,
     ) -> dict[str, Any]:
-        del scope
+        _check_cancelled(scope)
         started = time.perf_counter()
         key = str(source_id or "").strip()
         try:
@@ -72,9 +119,11 @@ class LiveObserver:
             )
         parsed_locator = FragmentLocator.from_dict(locator) if locator is not None else None
         state = dict(self._state_reader(source, parsed_locator) or {})
+        _check_cancelled(scope)
         if not state:
             raise ActionFailure(FailureType.TOOL_ERROR, "live surface state is unavailable")
         capture = self._capture(source, state, parsed_locator)
+        _check_cancelled(scope)
         if not capture.image_bytes:
             raise ActionFailure(FailureType.TOOL_ERROR, "live surface capture is empty")
 
@@ -97,7 +146,9 @@ class LiveObserver:
                     capture.image_bytes,
                     str(question or "Describe the current surface state."),
                     self._timeout_ms,
+                    **({"scope": scope} if scope is not None else {}),
                 ) or {})
+                _check_cancelled(scope)
                 vision_backend_name = str(raw_vision.get("backend") or "vision")
                 vision = {
                     "status": "ok",
@@ -109,6 +160,8 @@ class LiveObserver:
                     evidence_status = "degraded"
                     missing_reason = "vision_returned_empty"
                     vision["status"] = "empty_confirmed"
+            except CancelledError:
+                raise
             except VisionUnavailable:
                 evidence_status = "degraded"
                 missing_reason = "vision_unavailable"
@@ -128,12 +181,12 @@ class LiveObserver:
             used_backends.append(vision_backend_name)
         used_backend = "+".join(dict.fromkeys(item for item in used_backends if item))
         coverage = Coverage(
-            extent="selection" if parsed_locator is not None else "document",
+            extent="selection" if parsed_locator is not None else "neighborhood",
             read_ranges=(parsed_locator.to_dict(),) if parsed_locator is not None else ({},),
-            total_units=1,
-            complete=missing_reason is None,
+            total_units=None,
+            complete=False,
             next_cursor=None,
-            missing_reason=missing_reason,
+            missing_reason=missing_reason or "viewport_only",
         )
         return {
             "sourceId": source.source_id,

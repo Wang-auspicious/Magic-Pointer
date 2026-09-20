@@ -560,6 +560,15 @@ class SourceReaderRegistry:
         live = self._source_readers.get(source.source_id)
         if live is not None:
             return live
+        frozen = source.identity.get("frozenSelection")
+        if isinstance(frozen, dict):
+            from .selection_reader import FrozenSelectionMaterial, FrozenSelectionReader
+            return FrozenSelectionReader((FrozenSelectionMaterial(
+                source_id=source.source_id, text=str(frozen.get("text") or ""),
+                locator=FragmentLocator.from_dict(frozen["locator"]),
+                coverage=Coverage.from_dict(frozen["coverage"]),
+                used_backend=str(frozen.get("usedBackend") or "selection_snapshot"),
+            ),), fallback=self._readers.get(source.kind))
         try:
             return self._readers[source.kind]
         except KeyError as exc:

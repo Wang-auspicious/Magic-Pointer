@@ -805,13 +805,23 @@ class UiaTextSelectionAdapter(AppAdapter):
                 ).hexdigest(),
                 "terminal_anchor_available": bool(data.get("terminal_anchor_text")),
             }
+        frozen_screen = kwargs.get("screen_capture")
+        if app == "pdf" and frozen_screen is None and kwargs.get("frozen_frame_path"):
+            from PIL import Image
+
+            bbox = kwargs.get("frozen_frame_bbox") or [0, 0]
+            with Image.open(kwargs["frozen_frame_path"]) as frozen:
+                frozen_screen = (frozen.convert("RGB"), (int(bbox[0]), int(bbox[1])))
+        if app == "pdf" and frozen_screen is None:
+            recovery_artifacts["pdf_visual_verification"] = "not_attempted_no_frozen_pixels"
         if (
             result_kind not in {"point_element", "point_region", "terminal_buffer"}
             and
             app == "pdf"
             and str(window.get("class_name") or "") == "Chrome_WidgetWin_1"
+            and frozen_screen is not None
         ):
-            recovery = recover_local_pdf_selection(data)
+            recovery = recover_local_pdf_selection(data, screen_capture=frozen_screen)
             raw_text_sha256 = hashlib.sha256(
                 raw_text.encode("utf-8", errors="surrogatepass")
             ).hexdigest()

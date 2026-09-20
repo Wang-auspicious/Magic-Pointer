@@ -130,3 +130,136 @@ def test_append_input_verifies_whole_field_delta():
 def test_text_pattern_document_read_uses_document_text():
     s = session([element(role="document", name="Title", value="", patterns=["Text"], text="Actual body")])
     assert json.loads(s.read_text(observe(s), "@e1"))["text"] == "Actual body"
+
+
+def test_coordinate_action_rejects_changed_content_in_same_window():
+    rows = [element()]
+    s = session(rows)
+    state = observe(s)
+    rows[0] = element(value="another conversation")
+    with pytest.raises(ActionFailure, match="changed"): s.click(state, x=50, y=50)
+    assert not s.driver.calls
+
+
+def test_candidate_pool_exposes_all_full_nodes_as_copies():
+    s = session([element(i, name="x" * 200) for i in range(1, 151)])
+    state = observe(s)
+    pool = s.candidate_pool(state)
+    assert len(pool) == 150 and len(pool[-1]["name"]) == 200
+    pool[-1]["name"] = "mutated"
+    assert s.candidate_pool(state)[-1]["name"] != "mutated"
+
+
+def test_act_ui_failure_keeps_executed_prefix_receipt():
+    s = session()
+    with pytest.raises(ActionFailure) as failure:
+        s.act_ui(observe(s), [{"action": "typeText", "text": "already written"}, {"action": "keypress", "keys": ["unsupported"]}])
+    partial = failure.value.partial_result
+    assert partial["failed_index"] == 1
+    assert partial["executed"][0]["receipt"]["used_backend"] == "foreground_text_input"
+    assert s.driver.calls == [("type", "already written")]
+
+
+def test_act_ui_preserves_entire_drag_path():
+    s = session()
+    paths = []
+    s.driver.drag_path = lambda points, **kwargs: paths.append(points)
+    s.act_ui(observe(s), [{"action": "drag", "path": [{"x": 20, "y": 30}, {"x": 300, "y": 400}, {"x": 500, "y": 600}]}])
+    assert paths == [[(20, 30), (300, 400), (500, 600)]]
+
+
+def test_default_sessions_get_distinct_input_owners(monkeypatch):
+    from app.desktop_actions import session as module
+    monkeypatch.setattr(module, "_live_driver", Driver)
+    assert module.default_session().session_id != module.default_session().session_id
+
+
+def test_real_input_ownership_excludes_another_process():
+    import os
+    import subprocess
+    import sys
+    import uuid
+    if os.name != "nt": pytest.skip("Windows named mutex")
+    from app.desktop_actions.session import InputOwnershipLock
+    name = "Local\\MP-CU-test-" + uuid.uuid4().hex
+    lock = InputOwnershipLock(mutex_name=name)
+    assert lock.acquire("first")
+    code = "from app.desktop_actions.session import InputOwnershipLock; lock=InputOwnershipLock(mutex_name=" + repr(name) + "); print(lock.acquire('second')); lock.release()"
+    try:
+        assert subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True).stdout.strip() == "False"
+    finally:
+        lock.release("first")
+    assert subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True).stdout.strip() == "True"
+
+
+def test_send_delete_and_batch_effects_use_resolved_targets():
+    from app.agent_runtime.tool_registry import Effect, ToolRegistry, spec_effect
+    from app.desktop_actions.session import register_desktop_action_tools
+    s = session([element(1, name="发送", role="button"), element(2, name="删除", role="button"), element(3, name="Name", role="edit")])
+    state = observe(s)
+    registry = ToolRegistry()
+    register_desktop_action_tools(registry, s)
+    cases = [("Click", {"index": 1}, Effect.EXTERNAL_SEND), ("Act", {"index": 2, "action": "invoke"}, Effect.DESTRUCTIVE), ("Type", {"text": "hello", "submit": True}, Effect.EXTERNAL_SEND), ("Key", {"keys": "enter"}, Effect.EXTERNAL_SEND), ("Click", {"index": 3}, Effect.REVERSIBLE_WRITE), ("act_ui", {"actions": [{"action": "click", "ref": "@e1"}]}, Effect.EXTERNAL_SEND)]
+    for name, arguments, effect in cases:
+        spec = registry.get(name)
+        args = {"snapshot_id": state, "state_id": state, **arguments}
+        assert spec_effect(spec, args) == effect
+        access = spec.access_for(args)
+        assert access.window_ids == ("w-42",)
+        assert access.action == ("send" if effect == Effect.EXTERNAL_SEND else "delete" if effect == Effect.DESTRUCTIVE else "patch")
+
+
+def test_opaque_coordinate_rechecks_local_pixels_and_ax_stays_pixel_free():
+    from PIL import Image
+    pixels = Image.new("RGB", (1000, 1000), "white")
+    captures = []
+    def capture(window): captures.append(window); return pixels.copy()
+    s = session([], surface_probe=capture)
+    state = observe(s)
+    assert not captures
+    with pytest.raises(ActionFailure, match="full"): s.click(state, x=50, y=50)
+    state = json.loads(s.get_app_state(mode="full"))["snapshot_id"]
+    pixels.putpixel((50, 50), (0, 0, 0))
+    with pytest.raises(ActionFailure, match="changed"): s.click(state, x=50, y=50)
+
+
+def test_search_calls_jev_only_for_no_literal_matches(monkeypatch):
+    from app.desktop_actions import jev
+    calls = []
+    def suggest(text, candidates, **kwargs):
+        calls.append((text, candidates, kwargs))
+        return {"ref": "@e1", "confidence": 0.9}
+    monkeypatch.setattr(jev, "suggest_target", suggest, raising=False)
+    s = session()
+    state = observe(s)
+    assert json.loads(s.search_ui(state, text="Body"))["total_matches"] == 1
+    assert not calls
+    result = json.loads(s.search_ui(state, text="message composer"))
+    assert result["total_matches"] == 0 and result["matches"] == []
+    assert result["suggested_target"]["ref"] == "@e1"
+    assert calls[0][2]["state_id"] == state
+
+
+def test_successful_actions_keep_receipts_when_post_observation_fails():
+    s = session()
+    state = observe(s)
+    s.elements_probe = lambda _: (_ for _ in ()).throw(RuntimeError("provider hung"))
+    with pytest.raises(ActionFailure) as failure:
+        s.act_ui(state, [{"action": "typeText", "text": "written"}])
+    assert failure.value.partial_result["executed"][0]["receipt"]["used_backend"] == "foreground_text_input"
+    assert failure.value.partial_result["failed_index"] is None
+
+
+def test_image_only_observation_can_use_unchanged_coordinates():
+    from PIL import Image
+    s = session(surface_probe=lambda _: Image.new("RGB", (1000, 1000), "white"))
+    state = json.loads(s.get_app_state(mode="image"))["snapshot_id"]
+    s.click(state, x=50, y=50)
+    assert s.driver.calls == [("click", (50, 50))]
+
+
+def test_key_effect_is_case_insensitive_like_native_driver():
+    from app.agent_runtime.tool_registry import Effect
+    s = session()
+    assert s.action_effect("Key", {"keys": "CTRL+ENTER"}) == Effect.EXTERNAL_SEND
+    assert s.action_effect("Key", {"keys": "DELETE"}) == Effect.DESTRUCTIVE

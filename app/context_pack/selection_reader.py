@@ -14,6 +14,8 @@ from .sources import (
     SourceRef,
 )
 
+_SEARCH_REMAINDER = "frozen-selection:search-remainder"
+
 
 @dataclass(frozen=True, slots=True)
 class FrozenSelectionMaterial:
@@ -93,8 +95,18 @@ class FrozenSelectionReader:
         limit: int,
     ) -> ReadResult:
         material = self._material(source)
-        if locator is not None and locator != material.locator and self._fallback is not None:
-            return self._fallback.read(source, locator, cursor, limit)
+        if cursor or (locator is not None and locator != material.locator):
+            if self._fallback is not None:
+                return self._fallback.read(source, locator, cursor, limit)
+            return ReadResult(
+                source_id=source.source_id,
+                fragments=(),
+                coverage=Coverage("neighborhood", (), None, False, None,
+                                  "requested-content-not-in-frozen-selection"),
+                evidence_status="unsupported",
+                used_backend=material.used_backend,
+                latency_ms=0.0,
+            )
         return self._result(
             source,
             material,
@@ -110,7 +122,12 @@ class FrozenSelectionReader:
         limit: int,
     ) -> ReadResult:
         material = self._material(source)
-        text = material.text if str(query).casefold() in material.text.casefold() else ""
+        if not str(query).strip():
+            raise ValueError("query must be non-empty")
+        bounded = max(1, int(limit))
+        # The frozen hit occupies a slot only on the first page. Advancing the
+        # disk cursor and then slicing a merged page used to silently drop hits.
+        text = material.text if not cursor and str(query).casefold() in material.text.casefold() else ""
         live = self._result(
             source,
             material,
@@ -120,22 +137,33 @@ class FrozenSelectionReader:
         )
         if self._fallback is None:
             return live
-        disk = self._fallback.search(source, query, cursor, limit)
+        if live.fragments and bounded == 1:
+            return ReadResult(
+                source_id=source.source_id, fragments=live.fragments,
+                coverage=Coverage("query-results", (material.locator.to_dict(),),
+                                  None, False, _SEARCH_REMAINDER, "disk-search-pending"),
+                evidence_status="ok", used_backend=material.used_backend,
+                latency_ms=live.latency_ms,
+            )
+        disk = self._fallback.search(
+            source, query, None if cursor == _SEARCH_REMAINDER else cursor,
+            bounded - len(live.fragments),
+        )
         if not live.fragments:
             return disk
-        locators = {fragment.locator.to_dict().__repr__() for fragment in live.fragments}
+        locators = [fragment.locator for fragment in live.fragments]
         merged = live.fragments + tuple(
             fragment for fragment in disk.fragments
-            if fragment.locator.to_dict().__repr__() not in locators
+            if fragment.locator not in locators
         )
         return ReadResult(
             source_id=source.source_id,
-            fragments=merged[: max(1, int(limit))],
+            fragments=merged,
             coverage=Coverage(
                 extent="query-results",
-                read_ranges=tuple(fragment.locator.to_dict() for fragment in merged[: max(1, int(limit))]),
+                read_ranges=tuple(fragment.locator.to_dict() for fragment in merged),
                 total_units=disk.coverage.total_units,
-                complete=disk.coverage.complete and len(merged) <= max(1, int(limit)),
+                complete=disk.coverage.complete,
                 next_cursor=disk.coverage.next_cursor,
                 missing_reason="live-selection-overlays-disk-revision",
             ),

@@ -349,13 +349,22 @@ class Win32InputDriver:
         *,
         duration_ms: int,
     ) -> None:
+        self.drag_path([start, end], duration_ms=duration_ms)
+
+    def drag_path(self, points: list[tuple[int, int]], *, duration_ms: int) -> None:
+        start = points[0]
         self._position(start)
         self._mouse(0x0002)
         try:
-            self._glide(start, end, motion.flight_duration_ms(
-                motion.distance_between(start, end),
+            distances = [motion.distance_between(a, b) for a, b in zip(points, points[1:])]
+            distance = sum(distances)
+            total_ms = motion.flight_duration_ms(
+                distance,
                 requested_ms=duration_ms,
-            ))
+            )
+            for a, b, segment in zip(points, points[1:], distances):
+                self._check_cancelled()
+                self._glide(a, b, int(total_ms * segment / distance) if distance else 0)
             # Settle before the drop, for the same reason click settles before
             # the press: SetCursorPos only queues the final move, and a drop
             # delivered before the target window has processed it lands at the

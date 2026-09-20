@@ -58,7 +58,8 @@ class WaitTool:
             raise ValueError("wait requires at least one condition: window_title / element_text / file_exists")
         bounded_timeout = max(0.05, min(float(timeout_s or DEFAULT_TIMEOUT_S), MAX_TIMEOUT_S))
         interval = max(0.01, min(float(poll_ms or 250), 2000.0)) / 1000.0
-        deadline = time.monotonic() + bounded_timeout
+        started = time.monotonic()
+        deadline = started + bounded_timeout
         scan_tick = 0
         last_error: str | None = None
         while True:
@@ -70,22 +71,22 @@ class WaitTool:
                     if scan_tick % _ELEMENT_SCAN_EVERY == 0 and self._element_ready(
                         element_text, window_title
                     ):
-                        return self._satisfied("element_text", bounded_timeout, last_error)
+                        return self._satisfied("element_text", time.monotonic() - started, last_error)
                 elif window_title and self._window_ready(window_title):
-                    return self._satisfied("window_title", bounded_timeout, last_error)
+                    return self._satisfied("window_title", time.monotonic() - started, last_error)
                 if file_exists and self._file_ready(file_exists):
-                    return self._satisfied("file_exists", bounded_timeout, last_error)
+                    return self._satisfied("file_exists", time.monotonic() - started, last_error)
             except Exception as exc:  # noqa: BLE001 - 探针瞬时失败继续等到超时
                 last_error = f"{type(exc).__name__}: {exc}"
             if time.monotonic() >= deadline:
                 return {
                     "satisfied": False,
                     "condition": (
-                        window_title and "window_title"
-                        or element_text and "element_text"
+                        element_text and "element_text"
+                        or window_title and "window_title"
                         or "file_exists"
                     ),
-                    "elapsed_s": round(bounded_timeout, 3),
+                    "elapsed_s": round(time.monotonic() - started, 3),
                     "note": (
                         "timeout waiting for condition"
                         + (f"; last probe error: {last_error}" if last_error else "")
@@ -93,12 +94,12 @@ class WaitTool:
                 }
             time.sleep(interval)
 
-    def _satisfied(self, condition: str, timeout: float, last_error: str | None) -> dict[str, Any]:
+    def _satisfied(self, condition: str, elapsed: float, last_error: str | None) -> dict[str, Any]:
         note = None if last_error is None else f"condition met after earlier probe errors: {last_error}"
         return {
             "satisfied": True,
             "condition": condition,
-            "elapsed_s": round(timeout, 3),
+            "elapsed_s": round(elapsed, 3),
             **({"note": note} if note else {}),
         }
 

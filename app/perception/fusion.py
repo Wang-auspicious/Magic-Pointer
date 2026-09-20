@@ -26,7 +26,7 @@ from app.perception.providers import TIER_ORDER, TIER_PIXEL, PerceptionObservati
 # imperfectly" stops being a plausible explanation.
 AGREEMENT_RATIO = 0.6
 
-_NUMBER_RE = re.compile(r"\d+(?:[.,]\d+)*")
+_NUMBER_RE = re.compile(r"[+\-−]?\d+(?:[.,]\d+)*")
 
 _UNREAD_STATUSES = frozenset({
     EvidenceStatus.BUSY,
@@ -41,7 +41,12 @@ def _normalized(text: str) -> str:
 
 
 def _numbers(text: str) -> tuple[str, ...]:
-    return tuple(sorted(match.group(0) for match in _NUMBER_RE.finditer(text)))
+    # Keep signs and reading order: swapping two amounts between fields is a
+    # disagreement even when both reads contain the same set of digits.
+    return tuple(
+        match.group(0).replace("−", "-").removeprefix("+")
+        for match in _NUMBER_RE.finditer(text)
+    )
 
 
 def _bigrams(text: str) -> set[str]:
@@ -60,10 +65,12 @@ def texts_agree(left: str, right: str) -> bool:
     first, second = _normalized(left), _normalized(right)
     if not first or not second:
         return True
-    if first == second or first in second or second in first:
+    if first == second:
         return True
     if _numbers(first) != _numbers(second):
         return False
+    if first in second or second in first:
+        return True
     left_grams, right_grams = _bigrams(first), _bigrams(second)
     if not left_grams or not right_grams:
         return False

@@ -25,6 +25,19 @@ from typing import Any, Protocol
 
 ROOT = Path(__file__).resolve().parents[2]
 
+
+def capture_window(hwnd: int) -> Any:
+    """Capture the bound HWND itself, even when another window covers it.
+
+    Pillow's Windows window mode uses PrintWindow; a desktop bbox fallback
+    would silently substitute the occluder's pixels and is not equivalent.
+    """
+    from PIL import ImageGrab
+
+    if not int(hwnd):
+        raise ValueError("window capture requires hwnd")
+    return ImageGrab.grab(window=int(hwnd)).convert("RGB")
+
 __all__ = [
     "CaptureProvider",
     "GdiFallbackCaptureProvider",

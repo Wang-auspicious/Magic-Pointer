@@ -141,6 +141,7 @@ class BrowserContextReader:
                 "documentEpoch": actual_epoch,
                 "nodeId": node_id,
                 "selector": selector,
+                **{key: node[key] for key in ("characterStart", "characterEnd") if key in node},
             })
             fragments.append(ReadFragment(
                 fragment_id=f"fragment:{source.source_id}:dom:{node_id}",

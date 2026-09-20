@@ -196,8 +196,8 @@ class OfficeAdapter(AppAdapter):
                 region = None
         if region is not None:
             script = _EXCEL_REGION_SCRIPT
-            for key, value in region.items():
-                script = script.replace("{" + key + "}", str(value))
+            for key, token in (("x", "region_x"), ("y", "region_y"), ("width", "region_w"), ("height", "region_h")):
+                script = script.replace("{" + token + "}", str(region[key]))
         else:
             script = _EXCEL_SELECTION_SCRIPT
         script = script.replace("__TARGET_HWND__", str(requested_hwnd))

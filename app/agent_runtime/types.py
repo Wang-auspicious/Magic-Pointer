@@ -222,7 +222,7 @@ class Terminal:
     results: tuple[ToolResult, ...]
     local_action: str | None = None
     pending_input: dict[str, Any] | None = None
-    model_usage: dict[str, int] | None = None
+    model_usage: dict[str, int | float] | None = None
     failure_kind: str | None = None
     """§12.3：INVARIANT_FAILED 的细分（runaway_rounds / output_truncation），
     其余 reason 为 None。用户文案据此给出下一步该做什么。"""

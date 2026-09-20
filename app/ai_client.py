@@ -925,9 +925,37 @@ def ask_vision_model(
         import httpx
 
         def check_cancelled() -> None:
-            checker = getattr(cancellation_scope, "raise_if_cancelled", None)
+            checker = getattr(cancellation_scope, "raise_if_cancelled", None) or getattr(getattr(cancellation_scope, "token", None), "raise_if_cancelled", None)
             if callable(checker):
                 checker()
+
+        def post_vision(client, payload):
+            if cancellation_scope is None:
+                return client.post(endpoint, headers=headers, json=payload)
+            import threading
+
+            finished = threading.Event()
+            outcome = {}
+            def request():
+                try:
+                    outcome["response"] = client.post(endpoint, headers=headers, json=payload)
+                except Exception as exc:
+                    outcome["error"] = exc
+                finally:
+                    finished.set()
+            worker = threading.Thread(target=request, daemon=True, name="mp-vision-request")
+            worker.start()
+            try:
+                while not finished.wait(0.05):
+                    check_cancelled()
+                check_cancelled()
+            except CancelledError:
+                client.close()
+                worker.join(timeout=0.2)
+                raise
+            if "error" in outcome:
+                raise outcome["error"]
+            return outcome["response"]
 
         api_mode = get_ai_api_mode(base_url)
         endpoint = _completion_endpoint(base_url, api_mode)
@@ -1004,11 +1032,14 @@ def ask_vision_model(
         for include_extras, delay in attempt_plan:
             check_cancelled()
             if delay:
-                time.sleep(delay)
+                deadline = time.monotonic() + delay
+                while time.monotonic() < deadline:
+                    check_cancelled()
+                    time.sleep(min(0.05, max(0, deadline - time.monotonic())))
             try:
                 payload = build_payload(include_extras=include_extras)
                 with _httpx_client(httpx, timeout=max(1.0, float(timeout_s))) as client:
-                    response = client.post(endpoint, headers=headers, json=payload)
+                    response = post_vision(client, payload)
                 check_cancelled()
                 if response.status_code >= 500:
                     last_http_error = (response.status_code, _plain_error_excerpt(response.text))

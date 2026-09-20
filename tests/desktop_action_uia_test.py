@@ -157,11 +157,12 @@ def test_missing_pattern_is_unsupported_not_a_fake_click() -> None:
     assert "unsupported" in (result.error_message or "").lower()
 
 
-def test_live_elements_uses_the_module_walker(monkeypatch) -> None:
-    from app.desktop_actions import uia as uia_mod
+def test_live_elements_uses_the_isolated_worker(monkeypatch) -> None:
+    from app.desktop_actions import uia_worker
+    from app.desktop_actions.uia import normalize_elements
     from app.desktop_actions.session import _live_elements
 
-    monkeypatch.setattr(uia_mod, "walk_window", lambda hwnd: _raw_nodes())
+    monkeypatch.setattr(uia_worker, "request", lambda payload, **kwargs: normalize_elements(_raw_nodes()))
     items = _live_elements(42)
     assert [item["name"] for item in items] == ["记事本", "正文", "保存"]
     assert items[1]["index"] == 2

@@ -44,7 +44,7 @@ def _key(hwnd: int, window_bbox: Any) -> str:
     return f"{_CACHE_VERSION}:{int(hwnd)}:{','.join(str(int(v)) for v in bbox)}" if bbox else f"{_CACHE_VERSION}:{int(hwnd)}"
 
 
-def read_cached(hwnd: int, window_bbox: Any, *, now: float | None = None) -> list[dict[str, Any]] | None:
+def read_cached(hwnd: int, window_bbox: Any, *, now: float | None = None, content_key: str = "") -> list[dict[str, Any]] | None:
     """Elements for this window if they were computed recently, else None."""
     moment = time.time() if now is None else now
     try:
@@ -53,6 +53,8 @@ def read_cached(hwnd: int, window_bbox: Any, *, now: float | None = None) -> lis
         return None
     entry = raw.get(_key(hwnd, window_bbox)) if isinstance(raw, dict) else None
     if not isinstance(entry, dict):
+        return None
+    if str(entry.get("contentKey") or "") != content_key:
         return None
     try:
         if moment - float(entry.get("at") or 0) > CACHE_TTL_S:
@@ -63,7 +65,7 @@ def read_cached(hwnd: int, window_bbox: Any, *, now: float | None = None) -> lis
     return elements if isinstance(elements, list) else None
 
 
-def write_cached(hwnd: int, window_bbox: Any, elements: list[dict[str, Any]], *, now: float | None = None) -> None:
+def write_cached(hwnd: int, window_bbox: Any, elements: list[dict[str, Any]], *, now: float | None = None, content_key: str = "") -> None:
     """Record this window's elements. Failure to cache is never fatal."""
     moment = time.time() if now is None else now
     path = _cache_path()
@@ -79,7 +81,7 @@ def write_cached(hwnd: int, window_bbox: Any, elements: list[dict[str, Any]], *,
         for key, value in raw.items()
         if isinstance(value, dict) and moment - float(value.get("at") or 0) <= CACHE_TTL_S
     }
-    raw[_key(hwnd, window_bbox)] = {"at": moment, "elements": elements[:60]}
+    raw[_key(hwnd, window_bbox)] = {"at": moment, "elements": elements[:60], "contentKey": content_key}
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         temp = path.with_suffix(".json.tmp")

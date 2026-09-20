@@ -30,7 +30,7 @@ EXPECTED_TOOLS = sorted([
     "ListApps", "ListWindows", "LocateFile", "Look", "Observe",
     "Recall", "Scroll", "Search",
     "Select", "SetValue", "Todo", "Tools",
-    "Tree", "Type", "copy_selected_text",
+    "Tree", "Type", "choose_ui_target", "copy_selected_text",
     "save_screenshot", "show_source", "turn_ended",
     "wait",
 ])

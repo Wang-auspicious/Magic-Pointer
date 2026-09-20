@@ -13,7 +13,6 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from app import ai_client
-from app.agent_runtime.model_profiles import context_window_for
 
 __all__ = ["list_models", "provider_label", "select_model"]
 
@@ -39,7 +38,12 @@ def _http_get_models(url: str, headers: dict | None = None, timeout: float | Non
 
 
 def provider_label(base_url: str | None) -> str:
-    host = urlsplit(str(base_url or "")).hostname or ""
+    url = urlsplit(str(base_url or ""))
+    host = url.hostname or ""
+    if host == "opencode.ai":
+        service = url.path.strip("/").split("/", 1)[0]
+        if service in {"go", "zen"}:
+            return f"opencode-{service}"
     return host or "本地"
 
 
@@ -48,7 +52,7 @@ def _gateway_models(
     api_key: str | None,
     timeout_s: float,
     api_mode: str | None = None,
-) -> list[str]:
+) -> list[dict]:
     mode = str(api_mode or "").strip().casefold()
     if mode == "messages":
         # Anthropic's Messages API exposes its model list under /v1/models,
@@ -56,31 +60,27 @@ def _gateway_models(
         base = base_url.rstrip("/")
         url = base if base.endswith("/v1") else f"{base}/v1"
         url += "/models"
-        headers = {
-            "x-api-key": str(api_key or ""),
-            "anthropic-version": "2023-06-01",
-        }
     else:
         url = base_url.rstrip("/") + "/models"
-        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    headers = ai_client._completion_headers(api_key, mode, base_url=base_url)
     response = _http_get_models(url, headers=headers, timeout=timeout_s)
     if response.status_code != 200:
         raise RuntimeError(f"gateway /models HTTP {response.status_code}")
     payload = response.json()
     rows = payload.get("data") if isinstance(payload, dict) else None
-    names = [str(row.get("id")).strip() for row in rows if isinstance(row, dict) and row.get("id")]
-    return [name for name in names if name]
+    if not isinstance(rows, list):
+        raise RuntimeError("gateway /models missing data array")
+    return [dict(row, id=str(row["id"]).strip()) for row in rows
+            if isinstance(row, dict) and str(row.get("id") or "").strip()]
 
 
 def list_models(timeout_s: float = GATEWAY_TIMEOUT_S) -> dict:
     """当前网关的模型目录（DSH provider group 形状）。
 
     - ``source``: ``gateway``（/models 成功）或 ``config``（回落到当前配置）；
-    - ``groups``: 单组（文本网关）；``vision`` 标记该模型是否视觉档；
-    - 独立视觉模型作为 ``visionModel`` 字段带出（它可能在不同网关上）。
+    - ``groups``: 当前服务商模型，文字和图像共用用户选中的模型。
     """
     api_key, base_url, model = ai_client.get_ai_config()
-    vision_model = ai_client.get_vision_model(model)
     provider = provider_label(base_url)
 
     entries: list[dict] = []
@@ -88,48 +88,32 @@ def list_models(timeout_s: float = GATEWAY_TIMEOUT_S) -> dict:
     error = ""
     declared = ai_client.get_ai_model_catalog()
     if declared:
-        names = [str(item.get("id") or item.get("model") or "").strip() for item in declared]
-        names = [name for name in names if name]
-        if model not in names:
-            names.insert(0, model)
-        entries = [{
-            "id": name,
-            "vision": next((bool(item.get("vision")) for item in declared if str(item.get("id") or item.get("model") or "").strip() == name), name == vision_model),
-            "contextWindow": next((int(item.get("contextWindow") or 0) for item in declared if str(item.get("id") or item.get("model") or "").strip() == name), context_window_for(name)),
-        } for name in names]
+        entries = declared
         source = "profile"
     elif base_url:
         try:
-            names = _gateway_models(
+            entries = _gateway_models(
                 base_url,
                 api_key,
                 timeout_s,
                 ai_client.get_ai_api_mode(base_url),
             )
-            if model not in names:
-                names.insert(0, model)
-            entries = [
-                {
-                    "id": name,
-                    "vision": name == vision_model,
-                    "contextWindow": context_window_for(name),
-                }
-                for name in names
-            ]
             source = "gateway"
         except Exception as exc:  # noqa: BLE001 - 目录失败回落到配置，不阻断 UI
             error = f"网关模型列表不可用：{exc}"
-    if not entries:
-        entries = [{
-            "id": model,
-            "vision": model == vision_model,
-            "contextWindow": context_window_for(model),
-        }]
+    by_id = {str(item.get("id") or item.get("model") or "").strip(): item for item in entries}
+    by_id.pop("", None)
+    if model not in by_id:
+        by_id = {model: {}, **by_id}
+    entries = [{
+        "id": name,
+        "vision": bool(item.get("vision", False)),
+        "contextWindow": ai_client.get_ai_context_window(name, item),
+    } for name, item in by_id.items()]
 
     return {
         "ok": True,
         "current": model,
-        "visionModel": vision_model,
         "provider": provider,
         "source": source,
         "error": error,

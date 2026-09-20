@@ -1,11 +1,11 @@
 """turn 端验证门：改了却没验证就想收工时，拦一次。
 
 Hermes ``agent/verification_stop.py`` 的 MP 最小版（policy-only，自己不跑
-任何检查）：本回合执行过写入类效果（REVERSIBLE_WRITE 及更强）、又没有
-任何新鲜验证证据时，模型试图以 completed 收尾 → 拒绝一次并注入 nudge。
+任何检查）：本回合执行过写入类效果（REVERSIBLE_WRITE 及更强），最后一次
+写入之后没有新鲜验证证据时，模型试图以 completed 收尾 → 拒绝一次并注入 nudge。
 证据是：通过 ``verify_result`` 的回执、写入工具 JSON 里
-``verification.matched is true``（``click`` 除外——点成功不是任务完成）、
-或写之后又成功跑过一次 ``get_app_state``。已经 nudge 过一次就放行，防死循环。
+``verification.matched is true``（``Click``/``click`` 除外——点成功不是任务完成）。
+普通 Observe/get_app_state 只提供观察，不构成已通过的验证。已经 nudge 过一次就放行，防死循环。
 纯读回合永远不拦。
 """
 
@@ -49,11 +49,9 @@ class VerificationGate:
         """记录一次成功执行的工具调用。"""
         if effect in _GATED_EFFECTS:
             self._wrote = True
+            self._verified = False
         name = str(tool_name or "")
-        if name == "click":
-            return
-        if name == "get_app_state" and self._wrote:
-            self._verified = True
+        if name in {"Click", "click"}:
             return
         if verified:
             self._verified = True

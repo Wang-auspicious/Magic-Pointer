@@ -67,11 +67,11 @@ _CONTEXT_WINDOWS: tuple[tuple[str, int], ...] = (
     ("minimax", 200_000),
 )
 
-def context_window_for(model_name: str | None) -> int:
+def context_window_for(model_name: str | None, default: int = _DEFAULT_CONTEXT_WINDOW) -> int:
     """Best-known context window using a real longest-prefix match."""
     name = str(model_name or "").casefold().strip()
     if not name:
-        return _DEFAULT_CONTEXT_WINDOW
+        return default
     candidates = (name, name.rsplit("/", 1)[-1]) if "/" in name else (name,)
     best: tuple[int, int] | None = None
     for prefix, window in _CONTEXT_WINDOWS:
@@ -79,7 +79,7 @@ def context_window_for(model_name: str | None) -> int:
             best is None or len(prefix) > best[0]
         ):
             best = (len(prefix), window)
-    return best[1] if best is not None else _DEFAULT_CONTEXT_WINDOW
+    return best[1] if best is not None else default
 
 
 def context_budget_for(model_name: str | None, configured: int | None = None) -> int:

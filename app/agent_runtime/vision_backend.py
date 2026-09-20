@@ -23,6 +23,7 @@ def _configured_vision_request(
     attempts: int,
     labeled_extra_images: list[tuple[str, Path]] | None = None,
     system_prompt: str | None = None,
+    cancellation_scope: object = None,
 ) -> str:
     return ask_vision_model(
         image_path,
@@ -31,6 +32,7 @@ def _configured_vision_request(
         attempts=attempts,
         labeled_extra_images=labeled_extra_images,
         system_prompt=system_prompt,
+        cancellation_scope=cancellation_scope,
     )
 
 
@@ -50,7 +52,7 @@ class UploadDeniedVisionBackend:
     def __init__(self, reason: str = "screenshot_upload_disabled") -> None:
         self._reason = str(reason or "screenshot_upload_disabled")
 
-    def describe(self, image_bytes: bytes, prompt: str, timeout_ms: int) -> dict[str, Any]:
+    def describe(self, image_bytes: bytes, prompt: str, timeout_ms: int, *, scope: object = None) -> dict[str, Any]:
         raise VisionUnavailable(self._reason)
 
 
@@ -87,7 +89,7 @@ class FileVisionBackend:
             frozen_captured_at=captured_at,
         )
 
-    def describe(self, image_bytes: bytes, prompt: str, timeout_ms: int) -> dict[str, Any]:
+    def describe(self, image_bytes: bytes, prompt: str, timeout_ms: int, *, scope: object = None) -> dict[str, Any]:
         if not image_bytes:
             raise VisionUnavailable("image bytes are empty")
         started = time.perf_counter()
@@ -99,8 +101,10 @@ class FileVisionBackend:
         try:
             try:
                 context_options: dict[str, Any] = {}
+                if scope is not None:
+                    context_options["cancellation_scope"] = scope
                 if self._frozen_context_path is not None:
-                    context_options = {
+                    context_options.update({
                         "labeled_extra_images": [(
                             "FROZEN_FRAME_CONTEXT / same historical frame captured at "
                             f"{self._frozen_captured_at} / context only, not another target",
@@ -114,7 +118,7 @@ class FileVisionBackend:
                             "the detail's host application, location and surrounding UI; answer about IMAGE A. "
                             "Both images show the frozen gesture time, never the live screen."
                         ),
-                    }
+                    })
                 text = self._ask(
                     path,
                     str(prompt),

@@ -5,7 +5,7 @@ import json
 import os
 import re
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
@@ -40,7 +40,19 @@ def _match_key(value: str) -> str:
     return " ".join(value.split())
 
 
-EXPLORER_CLASSES = {"CabinetWClass", "ExploreWClass"}
+DESKTOP_CLASSES = {"Progman", "WorkerW"}
+EXPLORER_CLASSES = {"CabinetWClass", "ExploreWClass", *DESKTOP_CLASSES}
+
+
+def desktop_directories() -> tuple[str, ...]:
+    """The shell's actual user/public Desktop folders, including redirection."""
+    import ctypes
+    paths = []
+    for folder_id in (0x10, 0x19):
+        buffer = ctypes.create_unicode_buffer(260)
+        if ctypes.windll.shell32.SHGetFolderPathW(None, folder_id, None, 0, buffer) == 0:
+            paths.append(buffer.value)
+    return tuple(paths)
 
 
 @dataclass(frozen=True)
@@ -179,19 +191,25 @@ def resolve_child_path(folder_path: str | None, visible_name: str | None) -> str
         normalized = name.casefold()
         trimmed = name.rstrip("." + chr(0x2026)).casefold()
         normalized_key = _match_key(name)
-        for child in folder.iterdir():
+        children = list(folder.iterdir())
+        exact = [child for child in children if normalized in {child.name.casefold(), child.stem.casefold()}]
+        if exact:
+            return str(exact[0]) if len(exact) == 1 else None
+        if name.endswith(("...", chr(0x2026))):
+            prefixes = [child for child in children if trimmed and child.name.casefold().startswith(trimmed)]
+            return str(prefixes[0]) if len(prefixes) == 1 else None
+        normalized_matches = []
+        for child in children:
             child_name = child.name.casefold()
             child_stem = child.stem.casefold()
             child_key = _match_key(child.name)
             child_stem_key = _match_key(child.stem)
             if child_name == normalized or child_stem == normalized:
                 return str(child)
-            if trimmed and (child_name.startswith(trimmed) or child_stem.startswith(trimmed)):
-                return str(child)
             if normalized_key and (normalized_key == child_key or normalized_key == child_stem_key):
-                return str(child)
-            if len(normalized_key) >= 12 and (normalized_key in child_key or child_key in normalized_key):
-                return str(child)
+                normalized_matches.append(child)
+        if len(normalized_matches) == 1:
+            return str(normalized_matches[0])
     except OSError:
         return None
     return None
@@ -250,9 +268,15 @@ class ExplorerFileGrounder(BaseGrounder):
         window = explorer_windows[0]
         hwnd = int(window.get("hwnd") or 0)
         folder_path, selected_paths, com_messages = self._read_shell_window(hwnd)
+        desktop_paths = desktop_directories() if window.get("class_name") in DESKTOP_CLASSES else ()
+        if desktop_paths and not folder_path:
+            folder_path = desktop_paths[0]
         traces.append(GroundingTrace(self.name + ":com", com_messages, {"hwnd": hwnd, "folder_path": folder_path, "selected_paths": selected_paths}))
 
         ui_items, uia_messages = self._read_uia_items(hwnd, folder_path)
+        if desktop_paths and not ui_items:
+            ui_items, shell_messages = self._read_desktop_shell_items()
+            uia_messages.extend(shell_messages)
         traces.append(GroundingTrace(self.name + ":uia", uia_messages, {"item_count": len(ui_items)}))
 
         # pywin32/pywinauto are often absent on user machines. PowerShell can
@@ -274,6 +298,9 @@ class ExplorerFileGrounder(BaseGrounder):
                 )
             )
 
+        if desktop_paths:
+            ui_items = [replace(item, path=item.path or next((path for folder in desktop_paths
+                        if (path := resolve_child_path(folder, item.name))), None)) for item in ui_items]
         scored_items: list[tuple[float, ExplorerItem]] = []
         if selection.bbox:
             for item in ui_items:
@@ -321,6 +348,35 @@ class ExplorerFileGrounder(BaseGrounder):
                 )
             )
         return GroundingBundle(selection=selection, objects=objects, primary_object_id=objects[0].id if objects else None, traces=traces)
+
+    def _read_desktop_shell_items(self) -> tuple[list[ExplorerItem], list[str]]:
+        """Public IFolderView exposes paths/positions when Desktop UIA is empty."""
+        import pythoncom
+        import win32com.client
+        from win32com.shell import shell, shellcon
+        pythoncom.CoInitialize()
+        desktop = view = folder = None
+        try:
+            desktop = win32com.client.Dispatch("Shell.Application").Windows().FindWindowSW(0, 0, 8, 0, 1)
+            view = desktop._oleobj_.QueryInterface(pythoncom.IID_IServiceProvider).QueryService(
+                shell.SID_STopLevelBrowser, shell.IID_IShellBrowser,
+            ).QueryActiveShellView().QueryInterface(shell.IID_IFolderView)
+            folder = view.GetFolder(shell.IID_IShellFolder)
+            width, height = view.GetSpacing(0, 0)
+            items = []
+            for index in range(view.ItemCount(shellcon.SVGIO_ALLVIEW)):
+                pidl = view.Item(index)
+                path = folder.GetDisplayNameOf([pidl], shellcon.SHGDN_FORPARSING)
+                if not Path(path).is_file() and not Path(path).is_dir():
+                    continue
+                x, y = view.GetItemPosition(pidl)
+                items.append(ExplorerItem(Path(path).name, path=path, bbox=(x, y, x + width, y + height), source="shell:desktop-folder-view"))
+            return items, [f"desktop shell items read: {len(items)}"]
+        except Exception as exc:
+            return [], [f"desktop shell view unavailable: {type(exc).__name__}: {exc}"]
+        finally:
+            folder = view = desktop = None
+            pythoncom.CoUninitialize()
 
     def _object_from_item(
         self,

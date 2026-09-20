@@ -518,17 +518,26 @@ request => {
     const selector = selectorFor(node);
     if (!selector) continue;
     const rect = node.getBoundingClientRect();
-    rows.push({
-      nodeId: selector,
+    const starts = needle
+      ? [Math.max(0, text.toLocaleLowerCase().indexOf(needle) - 4000)]
+      : Array.from({length: Math.ceil(text.length / 12000)}, (_, index) => index * 12000);
+    for (const start of starts) {
+      const chunk = text.slice(start, start + Math.max(12000, needle.length + 4000));
+      rows.push({
+      nodeId: selector + ':chars:' + start,
       selector,
       parentSelector: selectorFor(node.parentElement),
       tag: node.tagName.toLowerCase(),
       role: node.getAttribute('role') || node.tagName.toLowerCase(),
-      text: text.slice(0, 12000),
+      text: chunk,
+      characterStart: start,
+      characterEnd: start + chunk.length,
+      totalCharacters: text.length,
       inViewport: rect.bottom > 0 && rect.right > 0
         && rect.top < window.innerHeight && rect.left < window.innerWidth,
       rectCss: {x: rect.x, y: rect.y, width: rect.width, height: rect.height},
     });
+    }
   }
   const rawCursor = String(request.cursor || '');
   const offset = rawCursor.startsWith('dom:') ? Math.max(0, Number(rawCursor.slice(4)) || 0) : 0;

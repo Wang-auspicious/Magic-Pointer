@@ -332,9 +332,9 @@ def _apply_desktop_action_tools(fork, config: dict[str, Any]) -> None:
     import io
     import json
 
-    from app.agent_runtime.live_observer import LiveObserver, SurfaceCapture
+    from app.agent_runtime.live_observer import LiveObserver, SurfaceCapture, validate_live_source
     from app.agent_runtime.wait_tool import WaitTool
-    from app.capture import GdiFallbackCaptureProvider, provider_for
+    from app.capture import capture_window
     from app.context_pack.source_store import resolve_source, task_sources
     from app.desktop_actions.session import _live_elements, _live_windows
 
@@ -371,7 +371,7 @@ def _apply_desktop_action_tools(fork, config: dict[str, Any]) -> None:
         ]
         return matches[-1] if matches else ""
 
-    def read_live_state(source, locator):
+    def read_live_state(source, locator, *, mode="ax", ax_filter=None, pid=None, app=None, scope=None):
         del locator
         hwnd = int(source.identity.get("hwnd") or 0)
         if not hwnd:
@@ -379,10 +379,11 @@ def _apply_desktop_action_tools(fork, config: dict[str, Any]) -> None:
                 FailureType.PERMISSION_DENIED,
                 f"source has no bound live window: {source.source_id}",
             )
-        payload = json.loads(session.get_app_state(window_id=f"w-{hwnd}", mode="full"))
+        payload = json.loads(session.get_app_state(window_id=f"w-{hwnd}", mode=mode, ax_filter=ax_filter, pid=pid, app=app, scope=scope))
         actual = int(((payload.get("windows") or [{}])[0]).get("hwnd") or 0)
         if actual != hwnd:
             raise ActionFailure(FailureType.STALE_SNAPSHOT, "bound source window changed")
+        validate_live_source(source, dict((payload.get("windows") or [{}])[0]))
         payload["used_backend"] = "uia.live"
         return payload
 
@@ -393,15 +394,11 @@ def _apply_desktop_action_tools(fork, config: dict[str, Any]) -> None:
         if not isinstance(raw_bounds, (list, tuple)) or len(raw_bounds) != 4:
             raise ActionFailure(FailureType.TOOL_ERROR, "live window bounds unavailable")
         bounds = tuple(int(value) for value in raw_bounds)
-        provider = provider_for(None)
-        if not provider.available():
-            provider = GdiFallbackCaptureProvider()
-        if not provider.available():
-            raise ActionFailure(FailureType.TOOL_ERROR, provider.unavailable_reason)
-        image = provider.capture(bounds)
+        image = capture_window(int(window.get("hwnd") or 0))
+        session._snapshots[str(state["snapshot_id"])].surface = image.copy()
         encoded = io.BytesIO()
         image.save(encoded, format="PNG")
-        return SurfaceCapture(encoded.getvalue(), provider.source)
+        return SurfaceCapture(encoded.getvalue(), "win32-printwindow")
 
     observer = LiveObserver(
         source_resolver=resolve_task_source,
@@ -431,6 +428,11 @@ def _apply_desktop_action_tools(fork, config: dict[str, Any]) -> None:
                     "Observe requires a live source bound to the current task",
                 )
         if resolved_source_id:
+            if mode in {"ax", "text"} and not str(question or "").strip():
+                source = resolve_task_source(resolved_source_id)
+                if source is None or "read" not in source.capabilities:
+                    raise ActionFailure(FailureType.PERMISSION_DENIED, "source is not bound to this task")
+                return read_live_state(source, locator, mode=mode, ax_filter=ax_filter, pid=pid, app=app, scope=scope)
             return observer.observe(resolved_source_id, question, locator, scope=scope)
         # Existing computer-use calls can still request a structural snapshot.
         # Fresh pixels are captured only through a task-bound source.
@@ -463,6 +465,8 @@ def _apply_desktop_action_tools(fork, config: dict[str, Any]) -> None:
         observe_execute=observe_execute,
         observe_access_for=observe_access,
     )
+    from app.desktop_actions.jev import register_jev_target_tool
+    register_jev_target_tool(fork.get("tools"), session)
     # Wait：确定性条件等待（点开菜单→等它渲染→点菜单项）。三家都没有，
     # MP 的桌面 agent 刚需；探针与 Observe 同源（真实 UIA）。
     WaitTool(
@@ -488,6 +492,8 @@ def _apply_coding_tools(fork, config: dict[str, Any]) -> None:
         fork.get("tools"),
         workspace_root=Path(raw_root),
         inbox=config.get("inbox"),
+        session_id=str(config.get("session_id") or "") or None,
+        session_getter=config.get("session_getter"),
     )
 
 
@@ -504,6 +510,7 @@ def _apply_delegate_tool(fork, config: dict[str, Any]) -> None:
         workspace_root=Path(raw_root),
         permission_mode=str(config.get("permission_mode") or "default"),
         subagent_event_sink=config.get("subagent_event_sink"),
+        parent_session_getter=config.get("session_getter"),
     )
 
 
@@ -1057,6 +1064,8 @@ def _run_loop_rows(runtime: dict[str, Any], root: Path) -> list[BundleRow]:
                 # 后台 job 完成推送（Hermes notify_on_complete）：桥在
                 # runtime 里带 session_inbox=enqueue_inbox 回调。
                 "inbox": runtime.get("session_inbox"),
+                "session_id": runtime.get("session_id"),
+                "session_getter": runtime.get("source_session_getter"),
             },
         ),
         BundleRow("tool-discovery", "tool-discovery"),
@@ -1204,7 +1213,7 @@ def boot_loop_context(
         BundleRow(
             "coding-tools",
             "coding-tools",
-            {"workspace_root": workspace_root},
+            {"workspace_root": workspace_root, "session_id": runtime.get("session_id"), "inbox": runtime.get("session_inbox"), "session_getter": runtime.get("source_session_getter")},
         ),
         BundleRow("tool-discovery", "tool-discovery"),
         BundleRow("guard", "guard"),
@@ -1236,6 +1245,7 @@ def boot_loop_context(
                 "workspace_root": workspace_root,
                 "permission_mode": str(runtime.get("permission_mode") or "default"),
                 "subagent_event_sink": runtime.get("subagent_event_sink"),
+                "session_getter": runtime.get("source_session_getter"),
             },
         ),
         BundleRow(

@@ -146,12 +146,17 @@ class SkillCatalog:
                 continue
             if user_only and data.get("userInvocable") is False:
                 continue
+            try:
+                modified_at = path.stat().st_mtime_ns // 1_000_000
+            except OSError:
+                modified_at = None
             rows.append({
                 "name": name,
                 "description": str(data.get("description") or ""),
                 **({"whenToUse": data["whenToUse"]} if data.get("whenToUse") else {}),
                 "source": root.source,
                 "path": str(path),
+                **({"modifiedAt": modified_at} if modified_at is not None else {}),
             })
         return rows
 
