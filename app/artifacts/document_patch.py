@@ -359,6 +359,34 @@ def document_patch_paths(patch: DocumentPatch) -> tuple[str, ...]:
     return tuple(paths)
 
 
+def inverse_document_patch(patch: DocumentPatch, records: list[dict[str, Any]]) -> DocumentPatch | None:
+    """Reconstruct only recorded writes, reversing their original order."""
+    operations = []
+    references = []
+    forward = {operation.operation_id: operation for operation in patch.operations}
+    for record in reversed(records):
+        if record.get("strategy") == "retain_created_file":
+            continue
+        original = forward[str(record["forwardOperationId"])]
+        locator = copy.deepcopy(record["locator"])
+        current = copy.deepcopy(record["expectedCurrent"])
+        value = locator["value"]
+        if original.operation == "replace_text":
+            text = current if isinstance(current, str) else str(current.get("text", ""))
+            if locator["kind"] == "figma-node" and "textEnd" in value:
+                value["textEnd"] = int(value.get("textStart", 0)) + len(text)
+            elif "start" in value and "end" in value:
+                value["end"] = int(value["start"]) + len(text.encode("utf-16-le")) // 2
+        ref_id = str(record["operationId"])
+        references.append({"referenceId": ref_id, "sourceId": original.source_id, "locator": locator, "role": "target"})
+        operations.append({"operationId": ref_id, "operation": original.operation, "referenceId": ref_id,
+            "sourceId": original.source_id, "locator": locator, "before": current, "after": copy.deepcopy(record["restore"])})
+    if not operations:
+        return None
+    return DocumentPatch.from_dict({"patchId": f"inverse:{patch.patch_id}", "artifactId": patch.artifact_id,
+        "artifactRevision": patch.artifact_revision, "references": references, "operations": operations})
+
+
 def _backend_name(names: list[str]) -> str:
     unique: list[str] = []
     for name in names:

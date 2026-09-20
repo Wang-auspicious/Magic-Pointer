@@ -1,0 +1,2 @@
+pytest>=8,<9
+pyflakes==3.4.0

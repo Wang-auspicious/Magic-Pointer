@@ -1,6 +1,6 @@
 {
   "name": "magic-pointer",
-  "version": "1.0.46",
+  "version": "1.0.49",
   "description": "Magic Pointer Open - cross-platform AI pointer overlay",
   "main": "build/electron/main.js",
   "scripts": {
@@ -19,6 +19,7 @@
     "model:groq": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/configure_groq.ps1",
     "model:status": "npm run build:electron && electron scripts/model_cli.js status",
     "model:test": "npm run build:electron && electron scripts/model_cli.js test",
+    "pretest": "npm run build:electron",
     "test": "tsx scripts/run-node-tests.ts",
     "test:python": "python -m pytest tests/ -q",
     "verify": "npm run lint && npm run typecheck && npm test && npm run test:python",

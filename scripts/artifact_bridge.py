@@ -38,6 +38,7 @@ from app.artifacts.document_patch import (  # noqa: E402
     PatchOperation,
     apply_document_patch,
     document_patch_paths,
+    inverse_document_patch,
 )
 from app.artifacts.projection import project_artifacts  # noqa: E402
 from app.artifacts.schema import DraftArtifact  # noqa: E402
@@ -401,7 +402,7 @@ def handle_request(
             "artifact": _wire_artifact(session, accepted),
         }
 
-    if action == "apply":
+    if action in {"apply", "undo"}:
         revision = _integer(payload.get("revision"))
         if revision is None:
             return {"ok": False, "error": "revision_required"}
@@ -417,6 +418,26 @@ def handle_request(
             patch = DocumentPatch.from_dict(current.patch_payload)
         except ValueError as exc:
             return {"ok": False, "error": f"invalid_document_patch:{exc}"}
+        undo_receipt_id = None
+        if action == "undo":
+            if payload.get("confirmed") is not True:
+                return {"ok": False, "error": "undo_confirmation_required"}
+            applied = next((event.data for event in reversed(session.events)
+                if event.type == "artifact/applied" and event.data.get("artifactId") == artifact_id
+                and event.data.get("artifactRevision") == revision), None)
+            if not applied:
+                return {"ok": False, "error": "no_recorded_write_to_undo"}
+            undo_receipt_id = applied.get("receiptId")
+            undone = [event.data for event in session.events if event.type == "artifact/undone"
+                and event.data.get("forwardReceiptId") == undo_receipt_id]
+            completed_ids = {str(identity) for data in undone for identity in data.get("result", {}).get("succeededOperationIds", [])}
+            records = [record for record in applied.get("result", {}).get("inverseRecords", [])
+                if record.get("operationId") not in completed_ids]
+            if not records:
+                return {"ok": False, "error": "already_undone"}
+            patch = inverse_document_patch(patch, records)
+            if patch is None:
+                return {"ok": False, "error": "undo_retains_created_files"}
         if operation_backend is None:
             try:
                 operation_backend = DocumentOperationBackend(
@@ -445,7 +466,7 @@ def handle_request(
         )
         receipt = _receipt_for(result)
         session.record_receipt(receipt)
-        registered_artifacts, registry_errors = _register_written_artifacts(
+        registered_artifacts, registry_errors = ([], []) if action == "undo" else _register_written_artifacts(
             store,
             session,
             patch,
@@ -460,7 +481,9 @@ def handle_request(
             "receiptId": receipt.receipt_id,
             "result": result_data,
         }
-        session.append("artifact/applied", apply_event)
+        if action == "undo":
+            apply_event["forwardReceiptId"] = undo_receipt_id
+        session.append("artifact/undone" if action == "undo" else "artifact/applied", apply_event)
         return {
             "ok": True,
             "result": result_data,

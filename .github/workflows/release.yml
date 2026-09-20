@@ -51,10 +51,12 @@ jobs:
           node node_modules/electron/install.js
 
       - name: Install Python test dependencies
-        run: python -m pip install --disable-pip-version-check pytest -r requirements.lock.txt
+        run: python -m pip install --disable-pip-version-check -r requirements-dev.txt -r requirements.lock.txt
 
       - name: Verify source
         run: |
+          npm run lint
+          npm run typecheck
           npm test
           python -m pytest -q --basetemp "${{ runner.temp }}\magic-pointer-pytest"
 
@@ -108,10 +110,12 @@ jobs:
           node node_modules/electron/install.js
 
       - name: Install Python test dependencies
-        run: python -m pip install --disable-pip-version-check pytest -r requirements.lock.txt
+        run: python -m pip install --disable-pip-version-check -r requirements-dev.txt -r requirements.lock.txt
 
       - name: Verify source
         run: |
+          npm run lint
+          npm run typecheck
           npm test
           python -m pytest -q --basetemp "$RUNNER_TEMP/magic-pointer-pytest"
 
@@ -175,10 +179,12 @@ jobs:
           node node_modules/electron/install.js
 
       - name: Install Python test dependencies
-        run: python -m pip install --disable-pip-version-check pytest -r requirements.lock.txt
+        run: python -m pip install --disable-pip-version-check -r requirements-dev.txt -r requirements.lock.txt
 
       - name: Verify source
         run: |
+          npm run lint
+          npm run typecheck
           npm test
           python -m pytest -q --basetemp "$RUNNER_TEMP/magic-pointer-pytest"
 

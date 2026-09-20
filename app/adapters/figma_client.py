@@ -144,6 +144,7 @@ class FigmaClient:
             "taskId": self.task_id,
             "documentSessionId": self.document_session_id,
             "operation": normalized,
+            "timeoutMs": max(100, int(self._config.result_timeout_s * 1000)),
             "arguments": dict(arguments),
         })
         command_id = str(queued.get("commandId") or "").strip()

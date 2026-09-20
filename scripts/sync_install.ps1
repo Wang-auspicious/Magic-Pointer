@@ -43,14 +43,17 @@ Start-Sleep 1
 & robocopy.exe $unpackedDir $installedDir /E /COPY:DAT /DCOPY:DAT /R:2 /W:1 /NFL /NDL /NJH /NJS /NP
 $copyExitCode = $LASTEXITCODE
 if ($copyExitCode -ge 8) { throw "robocopy sync failed with exit code $copyExitCode" }
+& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'sync_owned_runtime.ps1') -SourceRoot $unpackedDir -InstalledRoot $installedDir
+if ($LASTEXITCODE -ne 0) { throw 'Owned runtime cleanup failed' }
 Start-Sleep 1
 
 $installedPackage = "$installedDir\resources\app\package.json"
 if (Test-Path $installedPackage) {
     $installedVersion = (Get-Content $installedPackage | ConvertFrom-Json).version
+    if ($installedVersion -ne $packageVersion) { throw "Installed version $installedVersion differs from $packageVersion" }
     Write-Host "installed version: $installedVersion"
 } else {
-    Write-Host "installed: $($installer.Name) (version file not found at $installedPackage)"
+    throw "Installed version file missing: $installedPackage"
 }
 
 # 本机 secrets（gitignored、不进安装包）：拷到用户数据目录，安装版模型 key 从那里读。
@@ -62,5 +65,5 @@ if (Test-Path "secrets") {
 }
 
 Write-Host "== relaunch =="
-Start-Process -FilePath "$env:LOCALAPPDATA\Programs\Magic Pointer\Magic Pointer.exe"
+Start-Process -FilePath "$env:LOCALAPPDATA\Programs\Magic Pointer\Magic Pointer.exe" -WindowStyle Hidden
 Write-Host "sync done"

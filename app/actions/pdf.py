@@ -124,15 +124,15 @@ class PdfActionHandler:
             original = _source_path(source)
             before = _annotation_state(operation, after=False)
             after = _annotation_state(operation, after=True)
-            if before.get("present") is not False or after.get("present") is not True:
-                raise ValueError("PDF annotation must transition present false to true")
+            if before["present"] == after["present"]:
+                raise ValueError("PDF annotation presence must change")
             if before.get("annotationId") != after.get("annotationId"):
                 raise ValueError("PDF annotation identity cannot change")
             output = Path(str(after["outputPath"])).expanduser().resolve(strict=False)
             if output == original:
                 raise ValueError("PDF annotations require an explicit output copy")
             if not output.exists():
-                return OperationReadResult(True, before, self.used_backend)
+                return OperationReadResult(True, before if not before["present"] else after, self.used_backend)
             page_index, _, _ = _locator(operation)
             with fitz.open(output) as document:
                 if not _is_bound(document, source):
@@ -147,7 +147,7 @@ class PdfActionHandler:
                 found = _find_annotation(page, str(after["annotationId"]))
                 if found is not None:
                     return OperationReadResult(True, _observed(found, page, operation), self.used_backend)
-            return OperationReadResult(True, before, self.used_backend)
+            return OperationReadResult(True, before if not before["present"] else after, self.used_backend)
         except Exception as exc:
             return OperationReadResult(
                 False,
@@ -165,8 +165,8 @@ class PdfActionHandler:
             original = _source_path(source)
             before = _annotation_state(operation, after=False)
             after = _annotation_state(operation, after=True)
-            if before.get("present") is not False or after.get("present") is not True:
-                raise ValueError("PDF annotation must transition present false to true")
+            if before["present"] == after["present"]:
+                raise ValueError("PDF annotation presence must change")
             output = Path(str(after["outputPath"])).expanduser().resolve(strict=False)
             if output == original:
                 raise ValueError("PDF annotations require an explicit output copy")
@@ -178,6 +178,24 @@ class PdfActionHandler:
                 return OperationWriteResult(
                     False, False, self.used_backend, "source_pdf_missing"
                 )
+            if not after["present"]:
+                current = self.read_current(source, operation)
+                if not current.ok or current.value != before:
+                    return OperationWriteResult(False, False, self.used_backend, "annotation_changed_before_undo")
+                temporary = output.with_name(f".{output.name}.{uuid.uuid4().hex}.tmp")
+                with fitz.open(output) as document:
+                    page_index, _, _ = _locator(operation)
+                    page = document[page_index]
+                    found = _find_annotation(page, str(before["annotationId"]))
+                    if found is None:
+                        raise ValueError("annotation_missing_before_undo")
+                    page.delete_annot(found)
+                    document.save(temporary, garbage=3, deflate=True)
+                os.replace(temporary, output)
+                temporary = None
+                verified = self.read_current(source, operation)
+                return OperationWriteResult(verified.ok and verified.value == after, True, self.used_backend,
+                    None if verified.ok and verified.value == after else "annotation_undo_readback_mismatch")
             output.parent.mkdir(parents=True, exist_ok=True)
             temporary = output.with_name(f".{output.name}.{uuid.uuid4().hex}.tmp")
             page_index, rect, coordinate_space = _locator(operation)
