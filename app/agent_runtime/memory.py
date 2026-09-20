@@ -35,8 +35,6 @@ SKILL_FILE_NAME = "SKILL.md"
 SKILL_COUNT_LIMIT = 6
 SKILL_FILE_LIMIT_CHARS = 3500
 SKILL_TOTAL_LIMIT_CHARS = 12000
-COMPACTION_MESSAGE_LIMIT_CHARS = 12000
-COMPACTION_SOURCE_LIMIT_CHARS = 160000
 
 SummarizeFn = Callable[[str], str]
 
@@ -365,7 +363,7 @@ def _tail_cut_by_tokens(
 
 
 def _compaction_source_line(message: AgentMessage) -> str:
-    """Render one bounded, provenance-labelled item for the summarizer."""
+    """Render one complete, provenance-labelled item; callers batch the source."""
     content = (message.content or "").strip()
     if message.role is Role.TOOL:
         return (
@@ -388,6 +386,6 @@ def _compaction_source_line(message: AgentMessage) -> str:
                     sort_keys=True,
                     separators=(",", ":"),
                     default=str,
-                )[:COMPACTION_MESSAGE_LIMIT_CHARS]
+                )
             )
     return "\n".join(parts)

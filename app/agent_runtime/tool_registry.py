@@ -497,11 +497,14 @@ class ToolRegistry:
             if spec.verify_result is not None:
                 spec.verify_result(value)
         except ActionFailure as exc:
+            message = str(exc)
+            if exc.recovery_hint and exc.recovery_hint not in message:
+                message += f"; recovery: {exc.recovery_hint}"
             return result(
-                None,
+                exc.partial_result,
                 True,
                 failure_type=exc.failure_type,
-                error_message=f"Error calling tool ({name}): {exc}",
+                error_message=f"Error calling tool ({name}): {message}",
             )
         except Exception as exc:
             return result(

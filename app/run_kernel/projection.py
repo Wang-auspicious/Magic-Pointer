@@ -66,6 +66,12 @@ def project_operations(events: Iterable[Any]) -> tuple[OperationSnapshot, ...]:
             by_id[operation_id] = len(ordered)
             ordered.append(snapshot)
             continue
+        if event_type == "operation/recovery_resolved":
+            index = by_id.get(str(data.get("operationId") or ""))
+            if index is None:
+                raise RunProjectionError("recovery resolution has no operation")
+            ordered[index] = replace(ordered[index], recovery_policy=RecoveryPolicy.NONE)
+            continue
         if event_type != "operation/settled":
             continue
         operation_id = str(data.get("operationId") or "")

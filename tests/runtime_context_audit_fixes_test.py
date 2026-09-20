@@ -1,6 +1,4 @@
 """RT14–RT18 data preservation regressions, no models or network."""
-import json
-from dataclasses import replace
 from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -43,6 +41,12 @@ def test_failed_compaction_batch_preserves_all_messages():
         calls.append(text)
         return 'summary' if len(calls) == 1 else ''
     assert compact_messages(messages, summarize, force=True) == messages
+
+
+def test_compaction_preserves_long_tool_arguments():
+    from app.agent_runtime.memory import _compaction_source_line
+    message = AgentMessage(Role.ASSISTANT, '', None, None, tool_calls=({'id': 'write', 'name': 'Write', 'arguments': {'content': 'x' * 13000 + 'LAST_ARGUMENT_FACT'}},))
+    assert 'LAST_ARGUMENT_FACT' in _compaction_source_line(message)
 
 
 def test_native_message_ids_prevent_false_overlap():

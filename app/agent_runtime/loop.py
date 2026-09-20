@@ -131,6 +131,7 @@ from app.agent_runtime.errors import (
     FailureType,
 )
 from app.agent_runtime.inbox import Inbox
+from app.agent_runtime.usage_cost import estimate_cost_usd
 from app.agent_runtime.turn_verification import (
     VerificationGate,
     should_nudge_before_completion,
@@ -181,7 +182,7 @@ from app.agent_runtime.types import (
     with_transition,
 )
 from app.artifacts.projection import project_artifacts
-from app.evidence.contract import Evidence
+from app.evidence.contract import Evidence, EvidenceStatus
 from app.receipts.projection import compose_receipt
 from app.run_kernel import RecoveryPolicy, project_operations
 from app.governance.cancellation import (
@@ -257,6 +258,40 @@ def _over_compact_threshold(
         return False
     estimated = params.token_estimator(list(messages)) + tool_schema_tokens
     return estimated >= _PROACTIVE_COMPACT_RATIO * params.context_budget_tokens
+
+
+def _grounded_request_tokens(
+    params: LoopParams,
+    messages: Sequence[AgentMessage],
+    real_prompt_tokens: int,
+    real_prompt_index: int | None,
+) -> int:
+    """Provider-reported prompt size plus everything appended since.
+
+    ``real_prompt_tokens`` is measured on the request that was actually sent, so
+    it covers exactly ``messages[:real_prompt_index]``. Everything the loop
+    appended afterwards — the assistant reply and its tool results, which can be
+    a whole file read — is not in that number. Comparing it against the current
+    threshold on its own therefore under-counts by precisely the newest and
+    usually largest block, which is the same "compaction fires a round late"
+    failure the estimator already had once.
+
+    The provider number already covers the system prompt and tool schemas of
+    that request, so only the appended messages are added — re-adding the
+    schemas would count them twice.
+
+    Falls back to the provider number alone when the prefix no longer exists
+    (history replaced by compaction or recovery): a count of a prefix that has
+    been rewritten describes nothing.
+    """
+    if real_prompt_tokens <= 0:
+        return 0
+    if real_prompt_index is None or params.token_estimator is None:
+        return real_prompt_tokens
+    if real_prompt_index >= len(messages):
+        return real_prompt_tokens
+    tail = list(messages)[real_prompt_index:]
+    return real_prompt_tokens + params.token_estimator(tail)
 
 
 #: How much lighter the history must have become before a compaction that
@@ -462,6 +497,12 @@ class ModelChunk:
 
 
 @dataclass(frozen=True, slots=True)
+class ModelUsage:
+    kind = "model_usage"
+    usage: dict[str, int | float]
+
+
+@dataclass(frozen=True, slots=True)
 class ReasoningChunk:
     """模型思考流增量（ReasoningDelta 的 loop 层事件）。
 
@@ -478,6 +519,7 @@ class ToolCallStarted:
     kind = "tool_call_started"
     name: str
     id: str
+    arguments: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -620,6 +662,21 @@ async def _run_agent_loop_impl(params: LoopParams) -> AsyncIterator[Any]:
     rebuild state and continue, or terminate.
     """
     _validate_loop_params(params)
+    if params.interrupt_check is not None:
+        original_interrupt_check = params.interrupt_check
+        interrupt_latched = False
+        interrupt_lock = threading.Lock()
+
+        def interrupt_requested() -> bool:
+            # Durable Stop polling consumes its request once. Tool workers and
+            # the next model boundary must still see that same Stop afterward.
+            nonlocal interrupt_latched
+            with interrupt_lock:
+                if not interrupt_latched:
+                    interrupt_latched = bool(original_interrupt_check())
+                return interrupt_latched
+
+        params = replace(params, interrupt_check=interrupt_requested)
     sink = params.event_sink
     try:
         async for event in _run_agent_loop(params):
@@ -913,8 +970,12 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
         tool_calls_pending=[],
     )
     results: list[ToolResult] = []
-    model_usage: dict[str, int] = {}
+    model_usage: dict[str, int | float] = {}
     last_real_prompt_tokens = 0
+    #: How many messages had been sent when ``last_real_prompt_tokens`` was
+    #: measured. The provider's number describes that prefix and nothing after
+    #: it, so anything appended since has to be estimated separately.
+    last_real_prompt_index: int | None = None
     last_transition: TransitionReason | None = None
     turn_number = 1
     hook_notes: list[str] = []
@@ -1018,7 +1079,12 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                     # CJK-heavy contexts defeat char-rate estimates, and a
                     # late compaction costs whole rounds of duplicated tool
                     # output (or a context-window rejection).
-                    or last_real_prompt_tokens
+                    or _grounded_request_tokens(
+                        params,
+                        state.messages,
+                        last_real_prompt_tokens,
+                        last_real_prompt_index,
+                    )
                     >= _PROACTIVE_COMPACT_RATIO * params.context_budget_tokens
                 )
             ):
@@ -1037,6 +1103,12 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                             reason="proactive_context_compaction",
                         )
                         compacted_messages = params.session.derive_messages()
+                    # The measured prefix no longer exists in this history, so
+                    # the provider's count describes nothing in it. Keeping it
+                    # would keep the grounded check true and compact again on
+                    # the very next round.
+                    last_real_prompt_tokens = 0
+                    last_real_prompt_index = None
                     state = with_transition(
                         state,
                         TransitionReason.COMPACT_TRIGGERED,
@@ -1111,6 +1183,21 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                     reference_revision=steer_claim.reference_revision,
                 )
 
+            if params.token_estimator is not None:
+                model_usage["contextTokens"] = params.token_estimator(list(state.messages)) + tool_schema_tokens
+                model_usage["contextEstimated"] = 1
+                model_usage["systemTokensEstimate"] = params.token_estimator([])
+                model_usage["toolSchemaTokensEstimate"] = tool_schema_tokens
+                model_usage["messageTokensEstimate"] = max(0, params.token_estimator([
+                    message for message in state.messages if message.role is not Role.TOOL
+                ]) - model_usage["systemTokensEstimate"])
+                model_usage["toolResultTokensEstimate"] = max(0, params.token_estimator([
+                    message for message in state.messages if message.role is Role.TOOL
+                ]) - model_usage["systemTokensEstimate"])
+                model_usage["contextWindow"] = params.context_budget_tokens or 0
+                for key in ("lastOutputTokens", "lastCacheReadTokens", "lastCacheWriteTokens"):
+                    model_usage.pop(key, None)
+                yield ModelUsage(dict(model_usage))
             if params.session is not None:
                 params.session.record_model_request(
                     state.messages,
@@ -1119,6 +1206,7 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                     step=turn_number,
                 )
             events: list[ModelTurnEvent] = []
+            request_started_at = time.time()
             for event in client.stream_turn(
                 state.messages,
                 tool_schemas,
@@ -1134,7 +1222,20 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                 raise CancelledError("cancelled during model call")
             calls, text = client.parse_tool_calls(events)
             _merge_model_usage(model_usage, client.last_usage)
+            if client.last_usage and model_usage.get("contextEstimated") == 0:
+                header = params.request_header or {}
+                cost = estimate_cost_usd(model_usage, str(header.get("model") or ""),
+                                         str(header.get("providerHost") or ""), request_started_at)
+                if cost is not None:
+                    model_usage["estimatedCostUsd"] = model_usage.get("estimatedCostUsd", 0) + cost
+                    model_usage["pricedRequests"] = model_usage.get("pricedRequests", 0) + 1
+            if model_usage:
+                yield ModelUsage(dict(model_usage))
             last_real_prompt_tokens = _real_prompt_tokens(client.last_usage)
+            # ``state.messages`` is still exactly what was sent: the assistant
+            # reply is appended further down. Remembering the length lets the
+            # next round add only what came after this measurement.
+            last_real_prompt_index = len(state.messages)
             if params.session is not None:
                 params.session.record_model_response(
                     step=turn_number,
@@ -1210,6 +1311,8 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                             reason="context_overflow_recovery",
                         )
                         compacted_messages = params.session.derive_messages()
+                    last_real_prompt_tokens = 0
+                    last_real_prompt_index = None
                     state = with_transition(
                         state,
                         TransitionReason.COMPACT_TRIGGERED,
@@ -1559,6 +1662,23 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                 turn_number += 1
                 continue
 
+            # Finalize hook input before scheduling, permissions and the durable
+            # operation journal all make decisions about that same call.
+            if params.hook_manager is not None:
+                effective_calls = []
+                for call in calls:
+                    if call.argument_error is not None:
+                        effective_calls.append(call)
+                        continue
+                    pre = params.hook_manager.run_pre_tool_use(call.name, call.arguments)
+                    effective_calls.append(ToolCall(
+                        id=call.id, name=call.name,
+                        arguments=pre.input if isinstance(pre.input, dict) else call.arguments,
+                        argument_error=(None if pre.allowed and isinstance(pre.input, dict)
+                                        else pre.reason or "post-hook input invalid"),
+                    ))
+                calls = effective_calls
+
             # A clarification request is a turn boundary, not one more tool in
             # a speculative batch. If the model emitted actions beside it,
             # retain only the question: executing work before the answer would
@@ -1695,6 +1815,7 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                     keepalive=keepalive,
                     persist_dir=params.tool_result_dir,
                     source_scope=params.source_scope,
+                    pre_hook_applied=True,
                 )
 
             def block_mutation_with_pending_input(call: ToolCall) -> ToolResult | None:
@@ -1709,7 +1830,8 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                         project_operations(params.session.events)
                     ):
                         if (
-                            operation.tool_name != call.name
+                            registry.canonical_name(operation.tool_name)
+                            != registry.canonical_name(call.name)
                             or operation.arguments != dict(call.arguments)
                             or operation.recovery_policy
                             not in {
@@ -1794,7 +1916,7 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                         )
                         operation_ids[id(call)] = str(prepared.data["operationId"])
                     if scheduled.dispatched:
-                        yield ToolCallStarted(name=call.name, id=call.id)
+                        yield ToolCallStarted(name=call.name, id=call.id, arguments=call.arguments)
                     continue
 
                 if not isinstance(scheduled, ScheduledCallCommitted):
@@ -1868,6 +1990,19 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                     and _tool_suspends_for_user_input(registry, call.name)
                 ):
                     pending_input = _pending_user_input(normalized.value)
+
+            # Settle every prepared call before stopping, then let Stop take
+            # precedence over failure guardrails or a pending input prompt.
+            if params.interrupt_check is not None and params.interrupt_check():
+                terminal = Terminal(
+                    reason=TransitionReason.USER_INTERRUPT,
+                    message="user interrupt",
+                    turns=turn_number,
+                    results=tuple(results),
+                    model_usage=_model_usage_snapshot(model_usage),
+                )
+                yield _stop(terminal)
+                return
 
             if round_progress:
                 last_progress_turn = turn_number
@@ -2202,7 +2337,7 @@ def _tool_suspends_for_user_input(registry: ToolRegistry, name: str) -> bool:
 
 
 def _merge_model_usage(
-    aggregate: dict[str, int], raw_usage: Mapping[str, Any] | None
+    aggregate: dict[str, int | float], raw_usage: Mapping[str, Any] | None
 ) -> None:
     """Merge OpenAI- and Messages-style counters into one vocabulary."""
     if not isinstance(raw_usage, Mapping):
@@ -2241,13 +2376,17 @@ def _merge_model_usage(
             return max(0, int(value))
         return None
 
-    input_tokens = count("input_tokens", "prompt_tokens")
+    input_tokens = (
+        _real_prompt_tokens(raw_usage)
+        if count("prompt_tokens", "input_tokens") is not None else None
+    )
     output_tokens = count("output_tokens", "completion_tokens")
     total_tokens = count("total_tokens")
     if total_tokens is None and (input_tokens is not None or output_tokens is not None):
         total_tokens = (input_tokens or 0) + (output_tokens or 0)
     if input_tokens is not None:
         aggregate["inputTokens"] = aggregate.get("inputTokens", 0) + input_tokens
+        aggregate["contextEstimated"] = 0
     if output_tokens is not None:
         aggregate["outputTokens"] = aggregate.get("outputTokens", 0) + output_tokens
     if total_tokens is not None:
@@ -2264,11 +2403,19 @@ def _merge_model_usage(
         cache_write = nested("prompt_tokens_details", "cache_write_tokens")
     if cache_write is not None:
         aggregate["cacheWriteTokens"] = aggregate.get("cacheWriteTokens", 0) + cache_write
+    # Last request counters are a snapshot, never another accumulated total.
+    for key, value in (
+        ("contextTokens", input_tokens), ("lastOutputTokens", output_tokens),
+        ("lastCacheReadTokens", cache_read), ("lastCacheWriteTokens", cache_write),
+    ):
+        aggregate.pop(key, None)
+        if value is not None:
+            aggregate[key] = value
     if any(value is not None for value in (input_tokens, output_tokens, total_tokens)):
         aggregate["turnsReported"] = aggregate.get("turnsReported", 0) + 1
 
 
-def _model_usage_snapshot(aggregate: Mapping[str, int]) -> dict[str, int] | None:
+def _model_usage_snapshot(aggregate: Mapping[str, int | float]) -> dict[str, int | float] | None:
     return dict(aggregate) if aggregate else None
 
 
@@ -2423,6 +2570,7 @@ def _execute_one(
     keepalive: Callable[[str], None] | None = None,
     persist_dir: str | None = None,
     source_scope: Any = None,
+    pre_hook_applied: bool = False,
 ) -> ToolResult:
     """Validate, gate, execute and normalize one tool call.
 
@@ -2499,7 +2647,7 @@ def _execute_one(
     if loop_scope.is_cancelled:
         raise CancelledError(f"cancelled before tool {call.name!r} ({call.id})")
     execution_args = call.arguments
-    if hook_manager is not None:
+    if hook_manager is not None and not pre_hook_applied:
         pre = hook_manager.run_pre_tool_use(call.name, call.arguments)
         if not pre.allowed:
             # CC semantics: a blocking PreToolUse hook is fed back to the
@@ -2672,7 +2820,7 @@ def _execute_one(
     # the user's stop, not the wall-clock (CC: stop kills the next tool,
     # not the model). Returning a cancelled result (rather than raising)
     # lets the loop's existing turn-boundary interrupt check convert the
-    # observation into a USER_INTERRUPT terminal on the very next round.
+    # observation into a USER_INTERRUPT terminal once the batch settles.
     if interrupt_check is not None and interrupt_check():
         return ToolResult(
             tool_call_id=call.id,
@@ -2700,6 +2848,15 @@ def _execute_one(
         beat_tick = threading.Event()
         beat_stop = threading.Event()
 
+        def cancel_worker() -> None:
+            while not beat_stop.wait(timeout=0.05):
+                if loop_scope.is_cancelled or (interrupt_check is not None and interrupt_check()):
+                    scope.cancel_all()
+                    return
+
+        cancel_thread = threading.Thread(target=cancel_worker, daemon=True)
+        cancel_thread.start()
+
         def beat_worker() -> None:
             while not beat_stop.wait(timeout=20.0):
                 try:
@@ -2724,6 +2881,7 @@ def _execute_one(
             beat_stop.set()
             beat_tick.set()
             timeout_timer.cancel()
+            cancel_thread.join(timeout=0.2)
     if loop_scope.is_cancelled:
         raise CancelledError(f"cancelled during tool {call.name!r} ({call.id})")
     if timeout_fired.is_set():
@@ -2817,18 +2975,34 @@ def _normalize_result(executed: Any, call: ToolCall, persist_dir: str | None = N
     """
     if executed.is_error:
         value = executed.error_message
-        if value is None:
+        if value is not None and executed.value is not None:
+            value = json.dumps({"error": value, "partialResult": executed.value}, ensure_ascii=False, default=str)
+        elif value is None:
             value = _result_value_text(executed.value)
     else:
         value = _result_value_text(executed.value)
     value = _bounded_tool_result(
         value, persist_dir=persist_dir, tool_call_id=call.id
     )
+    failure_type = executed.failure_type
+    is_error = executed.is_error
+    if not is_error and isinstance(executed.value, Evidence):
+        # A reader can return normally while reporting it could not read.
+        # Carry that failure through the model message, receipts and both UIs;
+        # keep the full Evidence JSON rather than replacing it with a label.
+        failure_type = {
+            EvidenceStatus.ERROR: FailureType.TOOL_ERROR,
+            EvidenceStatus.UNSUPPORTED: FailureType.TOOL_ERROR,
+            EvidenceStatus.TIMEOUT: FailureType.TIMEOUT,
+            EvidenceStatus.BUSY: FailureType.COMPUTER_USE_BUSY,
+            EvidenceStatus.DENIED: FailureType.PERMISSION_DENIED,
+        }.get(executed.value.status)
+        is_error = failure_type is not None
     return ToolResult(
         tool_call_id=call.id,
         value=value,
-        is_error=executed.is_error,
-        failure_type=executed.failure_type,
+        is_error=is_error,
+        failure_type=failure_type,
         used_backend=executed.used_backend,
         latency_ms=executed.latency_ms,
     )

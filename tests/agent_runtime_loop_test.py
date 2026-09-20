@@ -403,6 +403,9 @@ def test_model_usage_is_aggregated_across_agent_rounds() -> None:
 
     assert terminal.model_usage == {
         "inputTokens": 10,
+        "contextTokens": 10,
+        "contextEstimated": 0,
+        "lastOutputTokens": 3,
         "outputTokens": 3,
         "totalTokens": 13,
         "turnsReported": 1,
@@ -796,7 +799,7 @@ def test_post_tool_block_is_visible_as_non_retryable_error_after_execution():
     assert "policy rejected disclosure" in result.value
 
 
-def test_pre_tool_hook_cannot_change_dynamic_resource_ownership():
+def test_pre_tool_hook_resource_change_is_scheduled_before_execution():
     tool, state = make_counting_tool(
         "edit_path",
         schema={
@@ -829,12 +832,12 @@ def test_pre_tool_hook_cannot_change_dynamic_resource_ownership():
         hook_manager=hooks,
     )))
 
-    assert state["calls"] == 0
-    assert terminal.results[0].failure_type is FailureType.PERMISSION_DENIED
-    assert "resource ownership" in terminal.results[0].value
+    assert state["calls"] == 1
+    assert terminal.results[0].is_error is False
+    assert terminal.results[0].arguments == {"path": "other.txt"}
 
 
-def test_pre_tool_hook_nested_mutation_cannot_hide_resource_change():
+def test_pre_tool_hook_nested_resource_change_is_scheduled_before_execution():
     tool, state = make_counting_tool(
         "edit_nested_path",
         schema={
@@ -880,9 +883,9 @@ def test_pre_tool_hook_nested_mutation_cannot_hide_resource_change():
         hook_manager=hooks,
     )))
 
-    assert state["calls"] == 0
-    assert terminal.results[0].failure_type is FailureType.PERMISSION_DENIED
-    assert "resource ownership" in terminal.results[0].value
+    assert state["calls"] == 1
+    assert terminal.results[0].is_error is False
+    assert terminal.results[0].arguments == {"target": {"path": "other.txt"}}
 
 
 def test_validate_input_failure_skips_execute():
@@ -2215,7 +2218,7 @@ def test_interrupt_check_stops_before_model_call():
     assert len(backend.received) == 1
     assert terminal.reason is TransitionReason.USER_INTERRUPT
     assert terminal.message == "user interrupt"
-    assert terminal.turns == 2
+    assert terminal.turns == 1
     assert isinstance(events[-1], LoopStopped)
 
 

@@ -1,6 +1,4 @@
 """Regression cases for RT05–RT13 and RT19; all writes use tmp_path."""
-import json
-import re
 import subprocess
 from pathlib import Path
 import sys
@@ -96,7 +94,7 @@ def test_quoted_cd_and_conditional_cd(tmp_path):
 
 
 def test_failed_shell_command_is_error(monkeypatch, tmp_path):
-    monkeypatch.setattr(coding.subprocess, 'run', lambda *a, **k: subprocess.CompletedProcess(a, 2, '', 'build failed'))
+    monkeypatch.setattr(coding, '_run_shell', lambda *a, **k: subprocess.CompletedProcess(a, 2, '', 'build failed'))
     result = registry(tmp_path).execute_tool('Bash', {'command': 'build'})
     assert result.is_error
     assert 'exit=2' in result.error_message and 'build failed' in result.error_message
@@ -111,3 +109,11 @@ def test_long_line_is_fully_reachable(tmp_path):
     tail = tools.execute_tool('Read', {'path': 'long.json', 'char_offset': 60000, 'char_limit': 10000})
     assert 'TAIL' in tail.value
     assert 'nextCharOffset' in first.value
+
+
+def test_character_page_does_not_mark_unseen_line_range_as_read(tmp_path):
+    (tmp_path / 'file.txt').write_text('one\ntwo\nthree')
+    tools = registry(tmp_path)
+    tools.execute_tool('Read', {'path': 'file.txt', 'char_offset': 0, 'char_limit': 3})
+    later = tools.execute_tool('Read', {'path': 'file.txt'})
+    assert 'three' in later.value

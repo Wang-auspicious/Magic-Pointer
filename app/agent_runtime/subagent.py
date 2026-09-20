@@ -17,10 +17,16 @@ import uuid
 from pathlib import Path
 from typing import Any, Callable
 
-from app.agent_runtime.errors import DEFAULT_MAX_OUTPUT_TOKENS
+from app.agent_runtime.errors import ActionFailure, DEFAULT_MAX_OUTPUT_TOKENS, FailureType
 from app.agent_runtime.tool_registry import Effect, ToolRegistry, ToolSpec
 
 __all__ = ["register_delegate_tool"]
+
+#: Tool schemas offered to a child turn. Matches the ceiling both production
+#: bridges pass (selection_bridge / conversation_bridge): high enough that the
+#: registry is never silently truncated, while still bounded so a runaway
+#: plugin cannot flood the model's context with schemas.
+_CHILD_TOOL_SCHEMA_LIMIT = 128
 
 _SUBAGENT_SYSTEM_PROMPT = (
     "你是 Magic Pointer 的编码子代理，独立完成父代理委派的一个具体任务。\n"
@@ -43,6 +49,7 @@ def register_delegate_tool(
     max_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
     subagent_event_sink: Callable[[dict[str, Any]], None] | None = None,
     id_factory: Callable[[], str] | None = None,
+    parent_session_getter: Callable[[], Any] | None = None,
 ) -> None:
     """Register ``delegate_task``; the child runs the same loop kernel."""
     # 旧名别名（一个版本）：历史授权/旧调用仍路由到规范工具；别名不进 schema。
@@ -78,7 +85,7 @@ def register_delegate_tool(
                 text = str(value)
         return text if len(text) <= limit else f"{text[:limit]}…"
 
-    def delegate_task(task: str, context: str = "", readonly: bool = False, **_: Any) -> str:
+    def delegate_task(task: str, context: str = "", readonly: bool = False, resume_id: str = "", scope: Any = None, **_: Any) -> str:
         prompt = str(task or "").strip()
         if not prompt:
             raise ValueError("task is required")
@@ -86,7 +93,34 @@ def register_delegate_tool(
         if extra:
             prompt = f"{prompt}\n\n背景上下文：\n{extra}"
 
-        child_id = str((id_factory or (lambda: uuid.uuid4().hex[:12]))())
+        from app.agent_runtime.session import FileSessionStore
+        from app.agent_runtime.memory import compact_messages
+        from app.agent_runtime.compaction_prompt import summarize_history_text
+        from app.agent_runtime.token_estimate import estimate_request_tokens
+        from app.ai_client import get_ai_context_window
+        from app.governance import BudgetPolicy, Stage, TimeoutAction
+
+        parent = parent_session_getter() if parent_session_getter else None
+        store = FileSessionStore(parent.path.parent if parent else root / ".mp" / "agent-sessions")
+        child_id = str(resume_id or (id_factory or (lambda: uuid.uuid4().hex[:12]))())
+        if resume_id:
+            child_session = store.resume(child_id, repair=True)
+            if child_session.header.parent_session_id != (parent.id if parent else None):
+                raise ValueError("resume_id does not belong to this parent task")
+            saved = next((e.data for e in child_session.events if e.type == "subagent/configured"), {})
+            if bool(saved.get("readonly")) and not readonly:
+                raise ValueError("a readonly child must resume with readonly=true")
+        else:
+            child_session = store.create(child_id, parent_session_id=parent.id if parent else None)
+            child_session.append("subagent/configured", {"task": prompt, "readonly": bool(readonly)})
+            if parent:
+                parent.append("subagent/created", {"childSessionId": child_id, "task": prompt, "readonly": bool(readonly)})
+
+        def interrupted() -> bool:
+            return bool((scope is not None and scope.is_cancelled()) or (parent is not None and parent.pending_cancel_request()))
+
+        if interrupted():
+            raise ActionFailure(FailureType.TOOL_ERROR, f"subagent {child_id} stopped before dispatch")
         steps: list[dict[str, Any]] = []
         active_steps: dict[str, dict[str, Any]] = {}
 
@@ -156,7 +190,8 @@ def register_delegate_tool(
         child_registry = ToolRegistry()
         from app.agent_runtime.coding_tools import register_coding_tools
 
-        register_coding_tools(child_registry, workspace_root=root)
+        register_coding_tools(child_registry, workspace_root=root, session_id=child_id,
+                              session_getter=lambda: child_session)
         child_effects = (
             Effect.READ,
             Effect.REVERSIBLE_WRITE,
@@ -186,20 +221,45 @@ def register_delegate_tool(
                 client=child_client,
                 allowed_effects=child_effects,
                 permission_mode=permission_mode,
-                tool_limit=max_tool_calls,
+                # Two different quantities, kept apart on purpose. The child's
+                # visible tool surface is the same ceiling both production
+                # bridges use; its *work* budget is the turn fuse below.
+                # Passing the work budget as `tool_limit` truncated the child's
+                # schemas by registration order, and the tool registered last
+                # is `Tools` (FIND_CAPABILITY_TOOL) — the only route to
+                # everything past the limit. A child on a small budget lost its
+                # tools and its way of asking for them.
+                tool_limit=_CHILD_TOOL_SCHEMA_LIMIT,
+                # The loop counts turns, not individual calls (a turn may carry
+                # up to eight parallel ones), so this is the honest place to
+                # spend a call budget. It bounds a runaway child; it is not an
+                # exact call count, and the name should not promise one.
+                emergency_turn_fuse=max(1, int(max_tool_calls)),
                 lang="zh",
                 event_sink=child_event,
+                session=child_session,
+                budgets={Stage.FULL_ANSWER: BudgetPolicy(stage=Stage.FULL_ANSWER, budget_ms=3_600_000, on_timeout=TimeoutAction.STASH_BACKGROUND)},
+                compactor=lambda messages: compact_messages(messages, summarize_history_text),
+                context_budget_tokens=get_ai_context_window(),
+                token_estimator=lambda messages: estimate_request_tokens(messages, system_prompt=_SUBAGENT_SYSTEM_PROMPT),
+                tool_result_dir=str(root / ".mp" / "tool-results" / child_id),
+                interrupt_check=interrupted,
             )
         except Exception as exc:
             publish("failed", summary=str(exc))
             raise
         summary = str(terminal.message or "").strip()
+        if parent:
+            parent.append("subagent/finished", {"childSessionId": child_id, "status": terminal.reason.value, "summary": summary})
         publish(terminal.reason.value, summary=summary)
         header = (
             f"[subagent id={child_id} status={terminal.reason.value} "
             f"steps={len(steps)}]"
         )
-        return f"{header}\n{summary or '(no summary)'}"
+        result = f"{header}\n{summary or '(no summary)'}"
+        if terminal.reason.value not in {"completed", "stop_hook", "local_action"}:
+            raise ActionFailure(FailureType.TOOL_ERROR, result)
+        return result
 
     registry.register(ToolSpec(
         name="Agent",
@@ -215,6 +275,7 @@ def register_delegate_tool(
             "properties": {
                 "task": {"type": "string", "description": "自包含的任务描述"},
                 "context": {"type": "string", "description": "可选背景（已知线索、文件路径等）"},
+                "resume_id": {"type": "string", "description": "继续未完成子任务的持久 session id；沿用其历史和检查点"},
                 "readonly": {
                     "type": "boolean",
                     "description": "true=只读子代理（无写工具），可并行",

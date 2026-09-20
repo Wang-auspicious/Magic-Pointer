@@ -20,7 +20,9 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import time
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -468,9 +470,8 @@ def _exit_code_semantics(command: str, returncode: int) -> str | None:
 # ---------------------------------------------------------------------------
 # 读状态（readFileState，CC FileReadTool/FileEditTool 契约）
 #
-# 工具按"本轮"重注册，闭包级状态活不过一轮——而未读先写门、读去重、连读
-# 熔断都要求跨轮记忆。状态按 workspace 根放模块级（进程寿命），与
-# FileCheckpointStore 的跨进程 seq 同一个理由。
+# 读去重必须属于当前 Agent 的可见上下文。每次注册有自己的状态；新回合
+# 或子代理重新读文件，不能把另一个 Agent 的 Read 当作已见证据。
 # ---------------------------------------------------------------------------
 
 _READ_LOOP_WARN_AT = 3
@@ -483,27 +484,12 @@ _READ_FINGERPRINT_CAP = 4_000_000
 
 
 class _FileReadState:
-    """一个 workspace 的读状态：条目 + 连读守卫。"""
+    """当前工具注册所服务的 Agent 读状态：条目 + 连读守卫。"""
 
     def __init__(self) -> None:
         self.entries: dict[str, dict[str, Any]] = {}
         self.last_key: str | None = None
         self.last_count: int = 0
-
-
-_READ_STATES: dict[str, _FileReadState] = {}
-
-
-def _read_state_for(root: Path) -> _FileReadState:
-    key = str(root)
-    store = _READ_STATES.get(key)
-    if store is None:
-        store = _READ_STATES[key] = _FileReadState()
-    # 有界： workspace 切换累积的旧条目按插入序淘汰。
-    if len(_READ_STATES) > 8:
-        for stale in list(_READ_STATES)[:-8]:
-            _READ_STATES.pop(stale, None)
-    return store
 
 
 def _file_fingerprint(path: Path) -> tuple[int, int, str | None]:
@@ -1066,40 +1052,72 @@ def _shell_session_for(root: Path) -> _ShellSession:
     return session
 
 
+def _run_shell(command: str, cwd: Path, timeout: float, scope: CancellationToken | None):
+    if scope is not None:
+        scope.raise_if_cancelled()
+    process = subprocess.Popen(command, shell=True, cwd=str(cwd), stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
+                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                               start_new_session=os.name != "nt")
+    deadline = time.monotonic() + timeout
+    try:
+        while True:
+            if scope is not None:
+                scope.raise_if_cancelled()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(command, timeout)
+            try:
+                out, err = process.communicate(timeout=min(.1, remaining))
+                return subprocess.CompletedProcess(command, process.returncode, out, err)
+            except subprocess.TimeoutExpired:
+                continue
+    finally:
+        if process.poll() is None:
+            if os.name == "nt":
+                subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                               creationflags=subprocess.CREATE_NO_WINDOW, timeout=5)
+            else:
+                import signal
+                os.killpg(process.pid, signal.SIGKILL)
+            if process.poll() is None:
+                process.kill()
+        process.communicate()
+
+
 class BackgroundJobs:
     """Detached child processes owned by one coding-tools registration."""
 
-    def __init__(self, root: Path, notify: Callable[[str], None] | None = None) -> None:
+    def __init__(self, root: Path, notify: Callable[[str], None] | None = None,
+                 session_getter: Callable[[], Any] | None = None) -> None:
         self.dir = Path(root) / ".mp" / "background"
         self._seq = 0
         self._notify = notify
+        self._session_getter = session_getter
 
     def start(self, command: str, cwd: Path) -> int:
         self.dir.mkdir(parents=True, exist_ok=True)
-        self._seq += 1
-        job_id = int(time.time()) % 100000 * 100 + self._seq
+        job_id = uuid.uuid4().int % (2 ** 48)
         log_path = self.dir / f"{job_id}.log"
         meta_path = self.dir / f"{job_id}.json"
-        creationflags = 0
-        if os.name == "nt":
-            creationflags = subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
-        with log_path.open("wb") as log:
-            process = subprocess.Popen(
-                command,
-                shell=True,
-                cwd=str(cwd),
-                stdout=log,
-                stderr=subprocess.STDOUT,
-                stdin=subprocess.DEVNULL,
-                creationflags=creationflags,
-            )
+        session = self._session_getter() if self._session_getter else None
         meta_path.write_text(json.dumps({
             "id": job_id,
-            "pid": process.pid,
             "log": str(log_path),
-            "command": command[:500],
+            "command": command,
+            "cwd": str(cwd),
             "started": time.time(),
+            "sessionPath": str(session.path) if session is not None else None,
         }, ensure_ascii=False), encoding="utf-8")
+        process = subprocess.Popen(
+            [sys.executable, str(Path(__file__).with_name("background_job.py")), str(meta_path)],
+            cwd=str(cwd), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+                           | getattr(subprocess, "CREATE_NO_WINDOW", 0)),
+            start_new_session=os.name != "nt",
+        )
 
         def watch() -> None:
             """Hermes notify_on_complete：结束时记录 exit code 并推一次消息。
@@ -1108,19 +1126,17 @@ class BackgroundJobs:
             即携带；loop 已结束则随会话留到下一次运行，不丢。
             """
             try:
-                code = process.wait()
+                process.wait()
             except Exception:  # noqa: BLE001 - watcher 死了不连累工具
                 return
             try:
                 meta = json.loads(meta_path.read_text(encoding="utf-8"))
-                meta["exit"] = code
-                meta["finished"] = time.time()
-                meta_path.write_text(
-                    json.dumps(meta, ensure_ascii=False), encoding="utf-8"
-                )
+                code = meta["exit"]
             except (OSError, ValueError):
-                pass
-            if self._notify is not None:
+                return
+            # A durable session is notified by the independent worker, once.
+            # The callback serves non-durable embedders while they are alive.
+            if self._notify is not None and session is None:
                 try:
                     self._notify(
                         f"background job {job_id} finished (exit={code}); "
@@ -1145,8 +1161,8 @@ class BackgroundJobs:
         except OSError:
             pass
         alive = _pid_alive(int(meta.get("pid") or 0))
-        state = "RUNNING" if alive else "FINISHED"
-        if not alive and meta.get("exit") is not None:
+        state = "RUNNING" if alive or not meta.get("pid") else "OUTCOME UNKNOWN"
+        if meta.get("exit") is not None:
             state = f"FINISHED (exit={meta['exit']})"
         header = f"job {job_id}: {state} — {str(meta.get('command'))[:120]}"
         return f"{header}\n{tail or '(no output yet)'}"
@@ -1281,12 +1297,12 @@ def register_coding_tools(
     workspace_root: Path | str,
     inbox: Callable[[str], None] | None = None,
     session_id: str | None = None,
+    session_getter: Callable[[], Any] | None = None,
 ) -> None:
     """``inbox``：后台 job 完成时推一条 durable 消息（Hermes
     notify_on_complete 契约）。桥接线在 builtin_bundle 的 coding-tools 行。"""
     """Register the file/shell tool set, confined to ``workspace_root``."""
     space = WorkspaceSpace(Path(workspace_root))
-    import uuid
     owner = session_id or uuid.uuid4().hex
     checkpoints = FileCheckpointStore(space.root, session_id=owner)
     read_store = _FileReadState()
@@ -1564,7 +1580,7 @@ def register_coding_tools(
             output_mode=mode,
         )
 
-    backgrounds = BackgroundJobs(space.root, notify=inbox)
+    backgrounds = BackgroundJobs(space.root, notify=inbox, session_getter=session_getter)
 
     def read_background(id: int, **_: Any) -> str:
         return backgrounds.status(int(id or 0))
@@ -1574,6 +1590,7 @@ def register_coding_tools(
         cwd: str = ".",
         timeout_s: float = _DEFAULT_COMMAND_TIMEOUT_S,
         background: bool = False,
+        scope: CancellationToken | None = None,
         **_: Any,
     ) -> str:
         text = str(command or "").strip()
@@ -1600,16 +1617,7 @@ def register_coding_tools(
                 )
         bounded = max(1.0, min(float(timeout_s or _DEFAULT_COMMAND_TIMEOUT_S), _MAX_COMMAND_TIMEOUT_S))
         try:
-            completed = subprocess.run(
-                text,
-                shell=True,
-                cwd=str(workdir),
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=bounded,
-            )
+            completed = _run_shell(text, workdir, bounded, scope)
         except subprocess.TimeoutExpired:
             raise TimeoutError(f"command timed out after {bounded:.0f}s: {text[:120]}")
         if completed.returncode == 0:

@@ -25,12 +25,7 @@ __all__ = [
 ]
 
 COMPACT_SOURCE_MODEL_CAP_CHARS = 48_000
-"""Upper bound on the history text sent to the summarizer model.
-
-The compaction source itself is bounded by ``COMPACTION_SOURCE_LIMIT_CHARS``
-in ``app.agent_runtime.memory``; this cap must stay above the useful part of
-that source or the summarizer is asked to summarize text it never sees.
-"""
+"""Upper bound per model request; longer sources are summarized in full in batches."""
 
 
 def compaction_instructions() -> str:

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 from types import SimpleNamespace
 
 from app.agent_runtime.subagent import register_delegate_tool
@@ -8,7 +7,7 @@ from app.agent_runtime.tool_registry import ToolRegistry
 from app.agent_runtime.types import Terminal, TransitionReason
 
 
-def test_delegate_emits_truthful_child_progress(monkeypatch) -> None:
+def test_delegate_emits_truthful_child_progress(monkeypatch, tmp_path) -> None:
     from app.fabric import engine as engine_module
 
     emitted: list[dict] = []
@@ -49,7 +48,7 @@ def test_delegate_emits_truthful_child_progress(monkeypatch) -> None:
     register_delegate_tool(
         registry,
         llm_provider=Provider(),
-        workspace_root=Path("."),
+        workspace_root=tmp_path,
         subagent_event_sink=emitted.append,
         id_factory=lambda: "child-fixed",
     )

@@ -112,11 +112,14 @@ class ActionFailure(Exception):
         failure_type: FailureType,
         message: str,
         recovery_hint: str | None = None,
+        *,
+        partial_result: object = None,
     ) -> None:
         super().__init__(message)
         self.failure_type = failure_type
         self.message = message
         self.recovery_hint = recovery_hint
+        self.partial_result = partial_result
 
     def is_retryable(self) -> bool:
         """True only for timeout / focus_lost; the rest never auto-retry."""

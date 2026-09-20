@@ -17,6 +17,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import logging
 import math
 import os
 import re
@@ -754,6 +755,13 @@ class EventSession:
                 for event in self._events
             ):
                 raise RuntimeError(f"duplicate operation id {operation_id!r}")
+        if event_type == "operation/recovery_resolved":
+            operation_id = str(data.get("operationId") or "")
+            pending = next((item for item in self.pending_recovery() if item["operationId"] == operation_id), None)
+            if data.get("confirmed") is not True or pending is None:
+                raise ValueError("recovery resolution requires a pending operation and explicit confirmation")
+            if not any(item["callId"] == data.get("verificationCallId") for item in pending["verificationCandidates"]):
+                raise ValueError("recovery resolution requires a successful read after the unknown operation")
         if event_type == "interaction/start":
             opened = self.open_turn
             if any(
@@ -1076,6 +1084,78 @@ class EventSession:
         except ModelSurfaceMismatch:
             return None
 
+    def freeze_system_prompt(
+        self,
+        text: str,
+        sections: Sequence[tuple[str, str]],
+    ) -> dict[str, Any]:
+        """Select once before client creation; a resume reports drift, never replaces it.
+
+        Existing request headers are also authoritative evidence. Old sessions
+        cannot recover section identities that were never recorded.
+        """
+        current = {
+            "systemPrompt": text,
+            "systemPromptHash": hashlib.sha256(_canonical_bytes(text)).hexdigest(),
+            "systemPromptSections": [list(section) for section in sections],
+        }
+        saved = next(
+            (copy.deepcopy(event.data) for event in self._events if event.type == "prompt/frozen"),
+            None,
+        )
+        if saved is None:
+            previous = next((
+                event for event in reversed(self._events)
+                if event.type == "model/request"
+                and isinstance(event.data.get("header", {}).get("systemPrompt"), str)
+            ), None)
+            if previous is not None:
+                old_text = previous.data["header"]["systemPrompt"]
+                saved = {
+                    "systemPrompt": old_text,
+                    "systemPromptHash": hashlib.sha256(_canonical_bytes(old_text)).hexdigest(),
+                    "systemPromptSections": previous.data.get("systemPromptSections"),
+                }
+                if saved["systemPromptSections"] is None:
+                    message = "Using the saved system prompt; its section ledger is unavailable."
+                    self.append("prompt/missing", {"message": message, "requestSeq": previous.seq})
+                    logging.getLogger(__name__).warning("Session %s: %s", self.id, message)
+            else:
+                saved = current
+                if len(self._events) > 1:
+                    message = "No saved system prompt is available; freezing the current render."
+                    self.append("prompt/missing", {"message": message})
+                    logging.getLogger(__name__).warning("Session %s: %s", self.id, message)
+            self.append("prompt/frozen", saved)
+
+        if saved["systemPrompt"] != text or (
+            saved["systemPromptSections"] is not None
+            and saved["systemPromptSections"] != current["systemPromptSections"]
+        ):
+            old_sections = saved["systemPromptSections"]
+            changed = None
+            if old_sections is not None:
+                ids = dict.fromkeys(row[0] for row in [*old_sections, *sections])
+                changed = [section_id for section_id in ids if
+                           [row[1] for row in old_sections if row[0] == section_id] !=
+                           [row[1] for row in sections if row[0] == section_id]]
+            message = (
+                "Current system prompt differs from the session snapshot. "
+                "Using the saved system prompt; start a new session to use the current render."
+            )
+            self.append("prompt/drift", {
+                "message": message,
+                "savedHash": saved["systemPromptHash"],
+                "currentHash": current["systemPromptHash"],
+                "changedSections": changed,
+                "currentSections": current["systemPromptSections"],
+            })
+            logging.getLogger(__name__).warning(
+                "Session %s: %s changedSections=%s savedHash=%s currentHash=%s",
+                self.id, message, changed, saved["systemPromptHash"], current["systemPromptHash"],
+            )
+        return copy.deepcopy(saved)
+
     def record_model_request(
         self,
         messages: Sequence[AgentMessage],
@@ -1099,6 +1179,11 @@ class EventSession:
                 "step": int(step),
                 "messageCount": len(projected),
                 "messagesHash": hashlib.sha256(_canonical_bytes(projected)).hexdigest(),
+                "systemPromptHash": (
+                    hashlib.sha256(_canonical_bytes(header["systemPrompt"])).hexdigest()
+                    if isinstance(header.get("systemPrompt"), str) else None
+                ),
+                "systemPromptSections": header.get("systemPromptSections"),
                 "tools": [dict(tool) for tool in tools],
                 "header": dict(header),
             },
@@ -1197,6 +1282,38 @@ class EventSession:
             },
             surface_op="append",
         )
+
+    def pending_recovery(self) -> list[dict[str, Any]]:
+        operations = project_operations(self._events)
+        results = []
+        for operation in operations:
+            if operation.recovery_policy not in {RecoveryPolicy.VERIFY_BEFORE_RETRY, RecoveryPolicy.NEVER_REPLAY}:
+                continue
+            candidates = []
+            for read in operations:
+                if read.effect != "read" or str(read.outcome) != "succeeded" or read.prepared_seq <= operation.prepared_seq:
+                    continue
+                settlement = next((e for e in self._events if e.seq == read.settled_seq), None)
+                candidates.append({"callId": read.call_id, "tool": read.tool_name,
+                                   "arguments": copy.deepcopy(read.arguments),
+                                   "result": (settlement.data.get("message", {}).get("content") if settlement else "")})
+            results.append({"operationId": operation.operation_id, "tool": operation.tool_name,
+                            "arguments": copy.deepcopy(operation.arguments),
+                            "recoveryPolicy": str(operation.recovery_policy),
+                            "verificationCandidates": candidates})
+        return results
+
+    def resolve_operation_recovery(self, operation_id: str, verification_call_id: str, *, confirmed: bool) -> SessionEvent:
+        """Record a human decision after showing actual readback evidence.
+
+        This is deliberately a UI/session command, never a model tool. The
+        original unknown outcome remains in the log; only its retry barrier
+        is resolved. A new interrupted attempt creates its own barrier.
+        """
+        return self.append("operation/recovery_resolved", {
+            "operationId": str(operation_id), "verificationCallId": str(verification_call_id),
+            "confirmed": confirmed is True,
+        })
 
     def enqueue_inbox(
         self,
@@ -1854,9 +1971,15 @@ class FileSessionStore:
                 # log instead of failing a perfectly valid user turn.
                 return self.resume(session_id, repair=repair)
 
-    def fork(self, source_id: str, child_id: str) -> EventSession:
+    def fork(self, source_id: str, child_id: str, *, through_turn: int | None = None) -> EventSession:
         source = self.resume(source_id, repair=False)
-        if source.open_turn is not None:
+        if through_turn is not None:
+            boundary = next((index for index, event in enumerate(source.events)
+                             if event.type == "turn/end" and event.data.get("turn") == through_turn), None)
+            if boundary is None:
+                raise SessionForkError(f"turn {through_turn!r} has no completed boundary")
+            source = EventSession(source.path, source.header, list(source.events[:boundary + 1]))
+        elif source.open_turn is not None:
             raise SessionForkError(
                 f"cannot fork session {source_id!r} with an open turn"
             )
@@ -1866,7 +1989,38 @@ class FileSessionStore:
             seed_length=len(source.events),
         )
         for event in source.events[1:]:
-            child.append(event.type, event.data, surface_op=event.surface_op)
+            data = copy.deepcopy(event.data)
+            context_update = None
+            if event.type == "plan/updated":
+                data["taskId"] = child.id
+            elif event.type == "context/updated":
+                context_update = data
+            elif event.type == "inbox/message" and data.get("payload") is not None:
+                data["payload"]["taskId"] = child.id
+            elif event.type == "inbox/consumed":
+                context_update = data["contextUpdate"]
+                selected = tuple(
+                    item for item in child.pending_inbox(data["target"])
+                    if item.message_id in data["messageIds"]
+                )
+                messages, _, _ = _task_input_messages(selected)
+                data["messages"] = [message.to_dict() for message in messages]
+            elif event.type == "model/request":
+                # Rebound TaskInput messages belong to the child's surface.
+                # Its request audit must describe that surface as well.
+                messages = child.derive_messages()
+                data["messageCount"] = len(messages)
+                data["messagesHash"] = _surface_hash(messages)
+            if context_update is not None:
+                context_update["taskId"] = child.id
+                # Only task ownership changes. Source/document IDs, reference
+                # ordinals and grant restrictions keep their original meaning.
+                for item in (
+                    *context_update.get("sources", []),
+                    *context_update.get("scopeGrants", []),
+                ):
+                    item["taskId"] = child.id
+            child.append(event.type, data, surface_op=event.surface_op)
         return child
 
     def _load(

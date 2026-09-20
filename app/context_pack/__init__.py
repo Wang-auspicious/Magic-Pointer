@@ -9,7 +9,6 @@ from .capture_policy import (
     stored_pointer_object,
 )
 from .compiler import compile_context_prompt, detect_agent_profile, write_context_prompt_artifact
-from .document_reader import DocumentReader
 from .intent import ContextIntent, ContextIntentKind, parse_context_intent
 from .session import ContextSessionConflict, ContextSessionError, ContextSessionStore
 from .source_scope import (
@@ -36,6 +35,16 @@ from .sources import (
     TaskInput,
     TimelineEvent,
 )
+
+
+def __getattr__(name: str):
+    # EventSession needs source value objects, not Office parsers. Background
+    # completion workers must not import numpy/openpyxl merely to enqueue text.
+    if name == "DocumentReader":
+        from .document_reader import DocumentReader
+        globals()[name] = DocumentReader
+        return DocumentReader
+    raise AttributeError(name)
 
 __all__ = [
     "ContextIntent",
