@@ -1,0 +1,92 @@
+{
+  "unconfigured_model_accepted_as_summary": {
+    "summary": "未检测到 OPENAI_API_KEY 或 secrets/openai_key.txt，因此没有调用文本模型。\n\n当前读取到的上下文：Original task history: preserve the final correction.",
+    "is_failure": false,
+    "nonempty_summary": true
+  },
+  "word_run_boundary": {
+    "result": {
+      "ok": true,
+      "wrote": true,
+      "used_backend": "office-document.python-docx+openpyxl",
+      "error": null
+    },
+    "runs": [
+      {
+        "text": "Keep new",
+        "bold": true,
+        "italic": null,
+        "underline": null
+      },
+      {
+        "text": "",
+        "bold": null,
+        "italic": true,
+        "underline": null
+      },
+      {
+        "text": " ending",
+        "bold": null,
+        "italic": null,
+        "underline": true
+      }
+    ]
+  },
+  "pdf_two_annotations_one_copy": {
+    "first": {
+      "ok": true,
+      "wrote": true,
+      "used_backend": "pdf.pymupdf",
+      "error": null
+    },
+    "second_pre_read": {
+      "ok": true,
+      "value": {
+        "outputPath": "C:\\Users\\zjz65\\AppData\\Local\\Temp\\mp-audit-20260920-wmdzjy66\\annotated.pdf",
+        "conflict": "output_exists"
+      },
+      "used_backend": "pdf.pymupdf",
+      "error": null
+    },
+    "second": {
+      "ok": false,
+      "wrote": false,
+      "used_backend": "pdf.pymupdf",
+      "error": "output_path_exists"
+    }
+  },
+  "pdf_readback_ignores_content": {
+    "readback_equals_requested_after": true,
+    "actual_content": "different actual content"
+  },
+  "figma_length_changing_readback": {
+    "actual": "abcLONGERghi",
+    "result": {
+      "ok": false,
+      "wrote": true,
+      "used_backend": "figma-plugin-loopback",
+      "error": "figma-readback-mismatch"
+    }
+  },
+  "xlsx_supported_default_sheet_name": {
+    "ok": false,
+    "wrote": false,
+    "used_backend": "document-output.python-office",
+    "error": "document_output_write_failed:RuntimeError:reopen_verification_failed"
+  },
+  "pptx_verified_off_slide_table": {
+    "result": {
+      "ok": true,
+      "wrote": true,
+      "used_backend": "document-output.python-office",
+      "error": null
+    },
+    "slide_height": 6858000,
+    "table_bottoms": [
+      5120640,
+      6766560,
+      8412480
+    ],
+    "off_slide": true
+  }
+}
