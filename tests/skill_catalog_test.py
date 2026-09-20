@@ -53,6 +53,18 @@ def test_project_overrides_user_on_name_clash(tmp_path: Path) -> None:
     assert entries[0]["source"] == "project-dsh"
 
 
+def test_skill_directory_exposes_actual_file_modified_time(tmp_path: Path) -> None:
+    import os
+
+    catalog = _catalog(tmp_path)
+    root = catalog.project_root / ".dsh" / "skills"
+    _write_skill(root, "dated-skill", "Real file metadata")
+    skill = root / "dated-skill" / "SKILL.md"
+    os.utime(skill, (1700000000, 1700000010))
+    entry = catalog.list_skills()[0]
+    assert entry["modifiedAt"] == 1700000010000
+
+
 def test_invalid_skills_are_skipped_not_fatal(tmp_path: Path) -> None:
     catalog = _catalog(tmp_path)
     skills = catalog.user_home / ".agents" / "skills"

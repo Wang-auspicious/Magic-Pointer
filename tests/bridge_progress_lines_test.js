@@ -9,6 +9,22 @@ const {
 
 assert.strictEqual(PROGRESS_PREFIX, '@@mp ');
 
+// Real tool output is structured data, not a 120-character phase token.
+{
+  const result = '工具输出\n'.repeat(6000);
+  const payload = { id: 'look-1', name: 'Look', args: '{"target":"右侧区域"}', result, state: 'done', latency_ms: 412 };
+  const blob = Buffer.from(JSON.stringify(payload)).toString('base64');
+  const wire = `@@mp phase=tool_result ms=419 b64=${blob}\n`;
+  const seen = [];
+  const feed = createProgressLineSplitter((record) => seen.push(record));
+  for (let offset = 0; offset < wire.length; offset += 16384) feed(wire.slice(offset, offset + 16384));
+  assert.strictEqual(seen.length, 1, 'a legitimate long tool output must survive stdout chunk boundaries');
+  assert.strictEqual(seen[0].fields.result, result);
+  assert.strictEqual(seen[0].fields.args, payload.args);
+  assert.strictEqual(seen[0].fields.latency_ms, '412');
+  assert.strictEqual(seen[0].fields.b64, undefined, 'decoded output is not duplicated in every live snapshot');
+}
+
 // --- parseProgressLine ---
 assert.deepStrictEqual(
   parseProgressLine('@@mp phase=pixels_frozen ms=412 d=90 scope=selection_snapshot w=2950'),

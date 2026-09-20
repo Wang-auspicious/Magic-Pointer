@@ -61,7 +61,9 @@ function githubPullRequestUrl(remoteValue: string, branchValue: string): string 
 
 function parseGitEnvironment(input: ProjectEnvironmentInput): ProjectEnvironment {
   const root = path.resolve(String(input.root || ''));
-  const lines = String(input.branchOutput || '').split(/\r?\n/).filter(Boolean);
+  const output = String(input.branchOutput || '');
+  const nulTerminated = output.includes('\0');
+  const lines = output.split(nulTerminated ? '\0' : /\r?\n/).filter(Boolean);
   const header = lines[0]?.replace(/^##\s*/, '') || '';
   const branchPart = header.split('...')[0]?.replace(/^No commits yet on\s+/, '').trim() || '';
   const upstreamMatch = header.match(/\.\.\.([^\s[]+)/);
@@ -75,14 +77,18 @@ function parseGitEnvironment(input: ProjectEnvironmentInput): ProjectEnvironment
     if (/^\d+$/.test(deleted || '')) deletedLines += Number(deleted);
   }
   const remoteUrl = normalizeGitRemoteUrl(String(input.remoteUrl || ''));
-  const fileChanges = lines.slice(header ? 1 : 0).map((line) => {
+  const fileChanges: ProjectEnvironment['fileChanges'] = [];
+  for (let index = header ? 1 : 0; index < lines.length; index += 1) {
+    const line = lines[index];
     const x = line[0] || ' ';
     const y = line[1] || ' ';
-    const rawPath = line.slice(3).trim();
-    const changedPath = rawPath.includes(' -> ') ? rawPath.split(' -> ').pop() || rawPath : rawPath;
+    const rawPath = nulTerminated ? line.slice(3) : line.slice(3).trim();
+    const changedPath = !nulTerminated && rawPath.includes(' -> ')
+      ? rawPath.split(' -> ').pop() || rawPath : rawPath;
     const status = x === '?' && y === '?' ? '?' : `${x}${y}`.trim();
-    return { path: changedPath.replace(/^"|"$/g, ''), status, staged: x !== ' ' && x !== '?' };
-  }).filter((entry) => entry.path).slice(0, 200);
+    if (changedPath) fileChanges.push({ path: nulTerminated ? changedPath : changedPath.replace(/^"|"$/g, ''), status, staged: x !== ' ' && x !== '?' });
+    if (nulTerminated && /[RC]/.test(`${x}${y}`)) index += 1;
+  }
   return {
     root,
     name: path.basename(root),

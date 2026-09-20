@@ -35,6 +35,7 @@ const {
   LEGACY_CREDENTIAL_REF,
   resolveActiveModelRuntimeConfig,
   selectActiveProfileModel,
+  collectModelCatalog,
 } = require('./model_runtime_config');
 const { probeQuota } = require('./quota_probe');
 const { createBufferedLog } = require('./append_log');
@@ -44,6 +45,7 @@ const { buildAsyncPreflightChecks } = require('./preflight_checks');
 const { resolvePythonRuntime, pythonInvocationArgs, pythonSpawnEnvironment } = require('./python_runtime');
 const {
   isConversationSender,
+  appendTranscript,
   planConversationStop,
   planConversationSteer,
   sanitizePermissionRule,
@@ -697,13 +699,6 @@ function takePendingActionProposal(token: string, selectionSessionToken: string 
   return safeClone(entry.proposal);
 }
 
-function invalidateActionProposalsForSession(selectionSessionToken: string | null) {
-  if (!selectionSessionToken) return;
-  for (const [token, entry] of pendingActionProposals.entries()) {
-    if (entry?.selectionSessionToken === selectionSessionToken) pendingActionProposals.delete(token);
-  }
-}
-
 function cancelSessionChild(selectionSessionToken: string | null) {
   const child = activeSessionChildren.get(selectionSessionToken);
   activeSessionChildren.delete(selectionSessionToken);
@@ -790,23 +785,13 @@ function requestGracefulAgentCancel(agentSessionId: string) {
   );
 }
 
-function invalidateSelectionSession(selectionSessionToken: string | null = null) {
-  if (!selectionSessionToken) return;
-  if (voiceRuntime?.active && activeSelectionSessionToken === selectionSessionToken) {
-    appendVoiceAudit({
-      eventType: 'voice.cancel', sessionToken: selectionSessionToken, surface: voiceRuntime.active.surface,
-      outcome: 'cancelled', cancellationReason: 'selection_session_invalidated',
-    });
-    voiceRuntime.stop(voiceRuntime.active.requestId, { cancel: true });
-  }
-  if (voiceFocusGuards.has(selectionSessionToken)) {
-    finishVoiceFocusGuard('dismissed', selectionSessionToken);
-  }
-  cancelSessionChild(selectionSessionToken);
-  invalidateActionProposalsForSession(selectionSessionToken);
-  selectionSessions.cancel(selectionSessionToken);
-  if (activeSelectionSessionToken === selectionSessionToken) activeSelectionSessionToken = null;
-}
+ipcMain.handle('stage:stop-selection-command', (event: Electron.IpcMainInvokeEvent, payload: any) => {
+  if (!isSurfaceSender(event, 'stage', resultTargetWindow)) return { ok: false, error: 'unauthorized_stage_sender' };
+  const token = String(payload?.selectionSessionToken || '');
+  if (!stageLiveTurns.has(token)) return { ok: false, error: 'no_request' };
+  cancelSessionChild(token);
+  return { ok: true };
+});
 
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
@@ -1188,7 +1173,8 @@ function stageVisualTuningForStage() {
   };
 }
 
-function showStage(payload = {}) {
+function showStage(payload: any = {}) {
+  if (payload.selectionSessionToken && selectionSessions.get(payload.selectionSessionToken)?.stageAttached === false) return;
   const win = createStageWindow();
   armTemporaryDismissShortcut();
   const trustedPayload = {
@@ -1201,6 +1187,7 @@ function showStage(payload = {}) {
   };
   const send = () => {
     if (!win || win.isDestroyed()) return;
+    if (payload.selectionSessionToken && selectionSessions.get(payload.selectionSessionToken)?.stageAttached === false) return;
     win.webContents.send('stage:show', trustedPayload);
     if (!win.isVisible()) win.showInactive();
     kickTaskWatch();
@@ -1269,6 +1256,7 @@ function updateStage(payload: StageUpdatePayload = {}) {
   // 「已受理」不是「已完成」。后台任务这时候才刚起来，卡上要继续动——
   // 底层早就能查状态了，缺的一直是这边没在看。
   watchTaskFromEvent(payload);
+  if (payload.selectionSessionToken && selectionSessions.get(payload.selectionSessionToken)?.stageAttached === false) return;
   // Clicky 式引导：回答里带了 [POINT] 指点，就把目标点给蓝边光标所在的
   // overlay——小三角默认不出现，只有回答要「指给你看」时才飞过去。
   const event: { screenPoints?: Array<{ x: number; y: number }> } = payload?.event || {};
@@ -1415,6 +1403,7 @@ function conversations() {
         log(`conversation store persist failed context=${context} ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
       },
     });
+    conversationStore.recoverInterruptedTurns();
   }
   return conversationStore;
 }
@@ -1464,9 +1453,9 @@ function answerTextFrom(event: {
   result?: { answer?: string; prompt?: string; text?: string; detail?: string };
 } = {}) {
   const r: { answer?: string; prompt?: string; text?: string; detail?: string } = event.result || {};
-  if (event.type === 'ERROR') return String(event.error?.message || '这次没能完成。');
+  if (event.type === 'ERROR') return String(r.answer || event.error?.message || '这次没能完成。');
   if (event.type === 'COMPLETE') {
-    return event.outcome?.verified ? '已完成，并回读确认过。' : '已完成。';
+    return String(r.answer || (event.outcome?.verified ? '已完成，并回读确认过。' : '已完成。'));
   }
   return String(r.answer || r.prompt || r.text || r.detail || '').trim();
 }
@@ -1477,16 +1466,29 @@ function answerTextFrom(event: {
 // 提交的一瞬间 GUI 里就有这条对话（pending 占位），模型输出的每个
 // answer_chunk 流式补进同一条 turn，完成后 recordConversationTurn 只做
 // 收口更新。之前是整轮跑完才一次性入库——小窗和 GUI 两个世界。
-const stageLiveTurns = new Map<string, { conversationId: string; turnIndex: number }>();
-const stageLiveAnswers = new Map<string, string>();
+type SelectionLiveProgress = {
+  answer: string;
+  thinking: string;
+  records: Array<{ phase: string; fields?: Record<string, unknown> }>;
+  requestId: string;
+  agentSessionId: string;
+  trajectory: Array<Record<string, unknown>>;
+};
+const stageLiveTurns = new Map<string, {
+  conversationId: string; turnIndex: number; progress: SelectionLiveProgress;
+}>();
 const stageLiveFlushTimers = new Map<string, NodeJS.Timeout>();
 
-function notifyConversationChanged(conversationId: string): void {
+function notifyConversationChanged(conversationId: string, live?: { turnIndex: number; progress: SelectionLiveProgress }): void {
+  const payload = {
+    id: conversationId,
+    ...(live ? { turnIndex: live.turnIndex, liveProgress: live.progress } : {}),
+  };
   if (dashboardWindow && !dashboardWindow.isDestroyed()) {
-    dashboardWindow.webContents.send('conversations:turn', { id: conversationId });
+    dashboardWindow.webContents.send('conversations:turn', payload);
   }
   if (companionWindow && !companionWindow.isDestroyed()) {
-    companionWindow.webContents.send('conversations:turn', { id: conversationId });
+    companionWindow.webContents.send('conversations:turn', payload);
   }
 }
 
@@ -1500,6 +1502,8 @@ function beginStageLiveTurn(token: string, payload: any): void {
       question,
       answer: '',
       outcome: '进行中',
+      agentSessionId: entry?.taskId,
+      hasPendingWork: true,
       workspaceRoot: profileWorkspaceRoot(ROOT) || undefined,
       object: {
         app: object.app || '',
@@ -1512,8 +1516,12 @@ function beginStageLiveTurn(token: string, payload: any): void {
     stageLiveTurns.set(token, {
       conversationId: conversation.id,
       turnIndex: Math.max(0, (Array.isArray(conversation.turns) ? conversation.turns.length : 1) - 1),
+      progress: {
+        answer: '', thinking: '', records: [], trajectory: [],
+        requestId: String(entry?.activeRequestId || ''),
+        agentSessionId: String(entry?.taskId || ''),
+      },
     });
-    stageLiveAnswers.set(token, '');
     notifyConversationChanged(conversation.id);
     log(`conversation live-start ${conversation.id} token=${token} q_len=${question.length}`);
   } catch (error) {
@@ -1521,38 +1529,43 @@ function beginStageLiveTurn(token: string, payload: any): void {
   }
 }
 
-function appendStageLiveAnswer(token: string, b64: string): void {
+function appendStageLiveProgress(token: string, record: any): void {
   const live = stageLiveTurns.get(token);
   if (!live) return;
   try {
-    const chunk = Buffer.from(String(b64 || ''), 'base64').toString('utf8');
-    if (!chunk) return;
-    const answer = (stageLiveAnswers.get(token) || '') + chunk;
-    stageLiveAnswers.set(token, answer);
+    const phase = String(record.phase || '');
+    const fields = record.fields || {};
+    appendTranscript(live.progress, record);
+    if (phase === 'answer_chunk' || phase === 'reasoning_chunk') {
+      const chunk = Buffer.from(String(fields.b64 || ''), 'base64').toString('utf8');
+      if (!chunk) return;
+    } else if (phase === 'loop_started' || phase === 'session_ready') {
+      live.progress.agentSessionId = String(fields.sid || fields.session || live.progress.agentSessionId);
+    } else if (['tool_call', 'tool_result', 'model_request', 'model_response', 'model_first_chunk', 'plan', 'subagent'].includes(phase)) {
+      const key = (item: any) => item.phase === 'tool_call' || item.phase === 'tool_result'
+        ? `tool:${String(item.fields?.id || item.fields?.name || '')}`
+        : item.phase === 'subagent' || item.phase === 'plan' ? item.phase : 'status';
+      const index = live.progress.records.findIndex((item) => key(item) === key(record));
+      if (index < 0) live.progress.records.push(record);
+      else live.progress.records[index] = record;
+    } else return;
     if (stageLiveFlushTimers.has(token)) return;
     stageLiveFlushTimers.set(token, setTimeout(() => {
       stageLiveFlushTimers.delete(token);
       const current = stageLiveTurns.get(token);
       if (!current) return;
-      const live = stageLiveAnswers.get(token) || '';
       const result = conversations().updateTurn({
         conversationId: current.conversationId,
         turnIndex: current.turnIndex,
-        answer: live,
+        answer: current.progress.answer,
+        thinking: current.progress.thinking,
+        trajectory: current.progress.trajectory,
+        agentSessionId: current.progress.agentSessionId,
       });
-      if (result.ok) notifyConversationChanged(current.conversationId);
-      // The stage is the surface the user is actually looking at, and
-      // notifyConversationChanged only reaches the dashboard and companion
-      // windows — so the streaming text landed everywhere except the one window
-      // in front of them, and the on-screen card showed nothing until the turn
-      // ended. Push the same text to it through the card-patch channel the
-      // stage already subscribes to (stage.ts:2399 → patchRunningCard →
-      // CardModel.applyPatch, which copies arbitrary keys including `answer`).
-      // applyPatch no-ops unless the card is still running, so a late flush
-      // after the terminal update cannot overwrite a finished answer.
+      if (result.ok) notifyConversationChanged(current.conversationId, current);
       safeSurfaceSend('stage', 'stage:card-patch', {
         selectionSessionToken: token,
-        patch: { answer: live },
+        patch: { liveProgress: current.progress },
       });
     }, 300));
   } catch (error) {
@@ -1594,7 +1607,12 @@ function recordConversationTurn(payload: StageUpdatePayload = {}, type: string |
             conversationId: live.conversationId,
             turnIndex: live.turnIndex,
             answer,
-            outcome: type === 'ERROR' ? '失败' : (type === 'COMPLETE' ? '已完成' : String(eventResult?.route?.tier || '')),
+            outcome: type === 'ERROR' ? '失败' : eventResult?.pendingInput ? '等待输入' : eventResult?.loopTerminated ? '失败' : '已完成',
+            agentSessionId: eventResult.agentSessionId || live.progress.agentSessionId,
+            runtimeTurn: eventResult.runtimeTurn,
+            hasPendingWork: eventResult.hasPendingWork === true || Boolean(eventResult.pendingInput),
+            taskContext: eventResult.taskContext,
+            pendingInput: eventResult.pendingInput || null,
             artifacts: Array.isArray(eventResult?.actions)
               ? eventResult.actions.filter((a: any) => a?.artifact).map((a: any) => ({ name: a.label || a.artifact, kind: 'file' }))
               : undefined,
@@ -1608,11 +1626,16 @@ function recordConversationTurn(payload: StageUpdatePayload = {}, type: string |
             thinking: eventResult?.thinking,
             evidence,
           });
+          const timer = stageLiveFlushTimers.get(token);
+          if (timer) clearTimeout(timer);
+          stageLiveFlushTimers.delete(token);
           stageLiveTurns.delete(token || '');
-          stageLiveAnswers.delete(token || '');
           return updated.conversation || null;
         })()
       : store.appendTurn({
+      agentSessionId: (result as any).agentSessionId,
+      runtimeTurn: (result as any).runtimeTurn,
+      taskContext: (result as any).taskContext,
       question,
       answer,
       outcome: type === 'ERROR' ? '失败' : (type === 'COMPLETE' ? '已完成' : String(result.route?.tier || '')),
@@ -1633,13 +1656,9 @@ function recordConversationTurn(payload: StageUpdatePayload = {}, type: string |
       },
     });
 
+    if (!conversation) return;
     log(`conversation + ${conversation.id} type=${type} q_len=${question.length} a_len=${answer.length}`);
-    if (dashboardWindow && !dashboardWindow.isDestroyed()) {
-      dashboardWindow.webContents.send('conversations:turn', { id: conversation.id });
-    }
-    if (companionWindow && !companionWindow.isDestroyed()) {
-      companionWindow.webContents.send('conversations:turn', { id: conversation.id });
-    }
+    notifyConversationChanged(conversation.id);
   } catch (error) {
     log(`conversation record failed ${error instanceof Error ? error.name : 'Error'}`);
   }
@@ -1813,7 +1832,7 @@ ipcMain.handle('projects:environment', async (event: Electron.IpcMainInvokeEvent
   const root = knownProjectRoot(raw?.projectRoot);
   if (!root) return { ok: false, error: '请先打开项目。' };
   const [branchOutput, unstagedNumstat, stagedNumstat, remoteUrl] = await Promise.all([
-    runGitCapture(root, ['status', '--porcelain=v1', '--branch']),
+    runGitCapture(root, ['status', '--porcelain=v1', '--branch', '-z']),
     runGitCapture(root, ['diff', '--numstat']),
     runGitCapture(root, ['diff', '--cached', '--numstat']),
     runGitCapture(root, ['remote', 'get-url', 'origin']),
@@ -2008,6 +2027,7 @@ function ensureDashboardBrowserView() {
     },
   });
   dashboardWindow.contentView.addChildView(view);
+  securityHardening.registerBrowserContents(view.webContents);
   dashboardBrowserView = view;
   view.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#292927' : '#f7f6f2');
   view.webContents.setWindowOpenHandler(({ url }: { url: string }) => {
@@ -2133,16 +2153,86 @@ ipcMain.handle('projects:run-command', async (event: Electron.IpcMainInvokeEvent
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
 });
-ipcMain.handle('conversations:get', (event: Electron.IpcMainInvokeEvent, id: string) => {
+const restoredContextUsage = new Map<string, { mtimeMs: number; usage: Promise<any> }>();
+
+async function restoreConversationContext(conversation: any) {
+  const turn = conversation.turns?.at(-1);
+  if (!turn || !conversation.agentSessionId || typeof turn.modelUsage?.contextTokens === 'number') return conversation;
+  const sessionId = conversation.agentSessionId;
+  const sessionPath = path.join(FABRIC_DATA_DIR, 'agent-sessions', `${sessionId}.jsonl`);
+  let mtimeMs: number;
+  try { mtimeMs = (await fs.promises.stat(sessionPath)).mtimeMs; } catch { return conversation; }
+  let cached = restoredContextUsage.get(sessionId);
+  if (!cached || cached.mtimeMs !== mtimeMs) {
+    cached = { mtimeMs, usage: runPythonBridgePromise(
+      { action: 'usage', sessionId }, 'scripts/agent_session_bridge.py', { target: null, timeoutMs: 8_000 },
+    ).then((result: any) => result?.ok ? result.contextUsage : null) };
+    restoredContextUsage.set(sessionId, cached);
+  }
+  const usage = await cached.usage;
+  if (!usage) return conversation;
+  return { ...conversation, turns: [...conversation.turns.slice(0, -1), {
+    ...turn, modelUsage: { ...turn.modelUsage, ...usage },
+  }] };
+}
+
+ipcMain.handle('conversations:get', async (event: Electron.IpcMainInvokeEvent, id: string) => {
   if (!isDashboardSender(event) && !isCompanionSender(event)) return null;
-  try { return conversations().get(id); } catch (_) { return null; }
+  try {
+    const conversation = conversations().get(id);
+    if (!conversation) return null;
+    const live = [...stageLiveTurns.values(), ...activeConversations.values()]
+      .find((run) => run.conversationId === id);
+    if (!live) return await restoreConversationContext(conversation);
+    return {
+      ...conversation,
+      turns: conversation.turns.map((turn: any, index: number) => index === live.turnIndex
+        ? { ...turn, answer: live.progress.answer, thinking: live.progress.thinking, liveProgress: live.progress }
+        : turn),
+    };
+  } catch (_) { return null; }
 });
-ipcMain.handle('conversations:branch', (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+ipcMain.handle('conversations:set-project', (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_renderer' };
+  const id = String(raw.id || '');
+  const conversation = conversations().get(id);
+  if (!conversation) return { ok: false, error: '找不到这条对话。' };
+  if ([...stageLiveTurns.values()].some((run) => run.conversationId === id)
+    || [...activeConversations.values()].some((run: any) => run.agentSessionId === conversation.agentSessionId)) {
+    return { ok: false, error: '请等当前任务停止后再切换项目。' };
+  }
+  const root = String(raw.root || '').trim();
+  const registered = root ? knownProjectRoot(root) : '';
+  if (root && !registered) return { ok: false, error: '请先打开目标项目文件夹。' };
+  try {
+    const result = conversations().setProject(id, registered);
+    if (result.ok) notifyConversationChanged(id);
+    return result;
+  } catch (error) { return { ok: false, error: error instanceof Error ? error.message : String(error) }; }
+});
+ipcMain.handle('conversations:branch', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
   if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_renderer' };
   const id = String(raw?.id || '').slice(0, 120);
   const turnIndex = Number(raw?.turnIndex);
   try {
-    const conversation = conversations().branch(id, turnIndex);
+    const source = conversations().get(id);
+    const turn = source?.turns?.[turnIndex];
+    if (!turn || !Number.isInteger(turnIndex)) return { ok: false, error: 'invalid_conversation_or_turn' };
+    let runtime: { agentSessionId: string; taskContext?: unknown } | undefined;
+    if (source?.agentSessionId) {
+      const throughTurn = Number(turn.runtimeTurn);
+      if (!Number.isInteger(throughTurn) && turnIndex !== source.turns.length - 1) {
+        return { ok: false, error: '这条旧记录未保存执行轮号；请从最后一轮创建完整分支。' };
+      }
+      const childSessionId = `agent-${crypto.randomUUID()}`;
+      const forked = await new Promise<any>((resolve) => runPythonBridge({
+        action: 'fork', sessionId: source.agentSessionId, childSessionId,
+        ...(Number.isInteger(throughTurn) && throughTurn > 0 ? { throughTurn } : {}),
+      }, 'scripts/agent_session_bridge.py', 'dashboard', { onComplete: resolve }));
+      if (forked?.ok !== true) return forked;
+      runtime = { agentSessionId: forked.sessionId, taskContext: forked.taskContext };
+    }
+    const conversation = conversations().branch(id, turnIndex, runtime);
     if (!conversation) return { ok: false, error: 'invalid_conversation_or_turn' };
     if (dashboardWindow && !dashboardWindow.isDestroyed()) {
       dashboardWindow.webContents.send('conversations:turn', { id: conversation.id });
@@ -2185,8 +2275,9 @@ ipcMain.handle('conversations:send', async (event: Electron.IpcMainInvokeEvent, 
 });
 
 async function sendConversation(raw: any = {}, sender?: Electron.WebContents): Promise<any> {
-  const question = String(raw?.question || '').trim().slice(0, 4000);
+  const question = String(raw?.question || '').trim();
   if (!question) return { ok: false, error: '问题不能为空。' };
+  if (question.length > 12000) return { ok: false, error: '问题最多 12000 字，请缩短后重试。' };
   const conversationId = String(raw?.conversationId || '').trim().slice(0, 120);
   const permissionPreset = String(raw?.permissionPreset || 'workspace-write').trim().slice(0, 40);
   const effort = normalizeConversationEffort(raw?.effort);
@@ -2265,6 +2356,7 @@ async function sendConversation(raw: any = {}, sender?: Electron.WebContents): P
     return { ok: false, error: `invalid_task_input: ${String(error?.message || error)}` };
   }
   const modelRuntime = activeModelRuntimeConfig();
+  const hadPendingWork = existing?.hasPendingWork === true;
   const payload = {
     question,
     turns: Array.isArray(existing?.turns) ? existing.turns.slice(-12) : [],
@@ -2288,7 +2380,83 @@ async function sendConversation(raw: any = {}, sender?: Electron.WebContents): P
     ...(threadDenials.length ? { permissionDenials: threadDenials } : {}),
     ...(onceNow ? { permissionGrantOnce: [onceNow] } : {}),
   };
+  const conversation = conversations().appendTurn({
+    conversationId: existing?.id,
+    newConversation: !existing,
+    capturedAt: capturedAtMs,
+    question,
+    answer: '',
+    outcome: '进行中',
+    agentSessionId: effectiveAgentSessionId,
+    hasPendingWork: true,
+    modelId: String(modelRuntime?.model || '').trim() || undefined,
+    object: existing?.object || {},
+    workspaceRoot: effectiveWorkspaceRoot || undefined,
+    permissionGrant: grantNow || undefined,
+    permissionDeny: denyNow || undefined,
+    permissionGrantOnce: onceNow || undefined,
+  });
+  const turnIndex = conversation.turns.length - 1;
+  const progress: SelectionLiveProgress = {
+    answer: '', thinking: '', trajectory: [], records: [],
+    requestId, agentSessionId: effectiveAgentSessionId,
+  };
+  let progressTimer: ReturnType<typeof setTimeout> | null = null;
+  const flushProgress = () => {
+    progressTimer = null;
+    conversations().updateTurn({ conversationId: conversation.id, turnIndex,
+      answer: progress.answer, thinking: progress.thinking, trajectory: progress.trajectory,
+      agentSessionId: progress.agentSessionId });
+    notifyConversationChanged(conversation.id, { turnIndex, progress });
+  };
+  notifyConversationChanged(conversation.id);
   return new Promise((resolve) => {
+    let finished = false;
+    const finish = (parsed: any) => {
+      if (finished) return;
+      finished = true;
+      if (activeConversations.get(requestId)?.forcedStop) {
+        parsed = { ...parsed, ok: false, loopTerminated: true,
+          loopTerminatedReason: 'user_interrupt', hasPendingWork: true };
+      }
+      activeConversations.delete(requestId);
+      if (progressTimer !== null) clearTimeout(progressTimer);
+      progressTimer = null;
+      const failed = parsed?.ok !== true || !String(parsed?.answer || '').trim();
+      const terminated = parsed?.loopTerminated === true || Boolean(parsed?.loopTerminatedReason);
+      const stopped = parsed?.loopTerminatedReason === 'user_interrupt';
+      const error = failed ? conversationFailureMessage(parsed) : '';
+      const settled = {
+        ...parsed,
+        ok: !failed,
+        conversationId: conversation.id,
+        agentSessionId: parsed?.agentSessionId || progress.agentSessionId,
+        hasPendingWork: typeof parsed?.hasPendingWork === 'boolean'
+          ? parsed.hasPendingWork : failed || terminated || Boolean(parsed?.pendingInput),
+        answer: String(parsed?.answer || progress.answer || ''),
+        thinking: String(parsed?.thinking || progress.thinking || ''),
+        trajectory: Array.isArray(parsed?.trajectory) ? parsed.trajectory : progress.trajectory,
+        ...(failed ? { error, errorCode: parsed?.error || (parsed?.ok === true ? 'empty_answer' : 'missing_bridge_error'), exitCode: parsed?.code } : {}),
+      };
+      conversations().updateTurn({
+        ...settled, turnIndex,
+        outcome: stopped ? '已停止' : failed || terminated ? '失败' : parsed?.pendingInput ? '等待输入' : '已完成',
+        failed: failed || terminated,
+        error: error || (terminated ? String(parsed?.loopTerminatedReason || '') : ''),
+        pendingInput: parsed?.pendingInput || null,
+      });
+      conversations().flush();
+      notifyConversationChanged(conversation.id);
+      resolve(settled);
+    };
+    const modelCommand = /^\/model +(\S[\s\S]*)$/i.exec(question);
+    if (modelCommand) {
+      void selectRuntimeModel(modelCommand[1]).then((selected) => finish(selected?.ok === true
+        ? { ...selected, command: { type: 'model', model: selected.model },
+          answer: `默认模型已切换为 ${selected.model}，下一次发送即生效。`, hasPendingWork: hadPendingWork }
+        : selected));
+      return;
+    }
     const child = runPythonBridge(payload, 'scripts/conversation_bridge.py', 'dashboard', {
       timeoutMs: 120_000,
       onProgress: (record: any) => {
@@ -2297,52 +2465,17 @@ async function sendConversation(raw: any = {}, sender?: Electron.WebContents): P
         const sid = sessionIdFromRecord(record);
         const entry = sid ? activeConversations.get(requestId) : null;
         if (sid && entry) entry.agentSessionId = sid;
+        if (sid) progress.agentSessionId = sid;
+        if (appendTranscript(progress, record) && progressTimer === null) {
+          progressTimer = setTimeout(flushProgress, 300);
+        }
         if (sender && !sender.isDestroyed()) sender.send('conversations:progress', { requestId, record });
       },
-      onComplete: (parsed: any) => {
-        activeConversations.delete(requestId);
-        if (!parsed?.ok || !String(parsed?.answer || '').trim()) {
-          resolve({
-            ok: false,
-            error: conversationFailureMessage(parsed),
-            errorCode: parsed?.error || (parsed?.ok === true ? 'empty_answer' : 'missing_bridge_error'),
-            exitCode: parsed?.code,
-            usedBackend: parsed?.usedBackend,
-            timingMs: parsed?.timingMs,
-          });
-          return;
-        }
-        const conversation = conversations().appendTurn({
-          conversationId: existing?.id,
-          newConversation: !existing,
-          question,
-          answer: String(parsed.answer),
-          events: Array.isArray(parsed.events) ? parsed.events : [],
-          activities: Array.isArray(parsed.activities) ? parsed.activities : [],
-          trajectory: Array.isArray(parsed.trajectory) ? parsed.trajectory : [],
-          receipts: Array.isArray(parsed.receipts) ? parsed.receipts : [],
-          artifacts: Array.isArray(parsed.artifacts) ? parsed.artifacts : [],
-          modelUsage: parsed.modelUsage && typeof parsed.modelUsage === 'object' ? parsed.modelUsage : {},
-          modelId: String(modelRuntime?.model || '').trim() || undefined,
-          timingMs: parsed.timingMs,
-          usedBackend: parsed.usedBackend,
-          agentSessionId: parsed.agentSessionId,
-          taskContext: parsed.taskContext,
-          hasPendingWork: parsed.hasPendingWork === true,
-          pendingInput: parsed.pendingInput && typeof parsed.pendingInput === 'object' ? parsed.pendingInput : undefined,
-          outcome: '模型',
-          object: existing?.object || {},
-          workspaceRoot: effectiveWorkspaceRoot || undefined,
-          permissionGrant: grantNow || undefined,
-          permissionDeny: denyNow || undefined,
-          permissionGrantOnce: onceNow || undefined,
-        });
-        notifyConversationChanged(conversation.id);
-        resolve({ ...parsed, conversationId: conversation.id });
-      },
+      onComplete: finish,
     });
-    if (!child) resolve({ ok: false, error: '对话服务没有启动。' });
-    else activeConversations.set(requestId, { child, agentSessionId: effectiveAgentSessionId });
+    if (!child) finish({ ok: false, error: '对话服务没有启动。' });
+    else if (!finished) activeConversations.set(requestId, { child, agentSessionId: effectiveAgentSessionId,
+      conversationId: conversation.id, turnIndex, progress });
   });
 }
 
@@ -2360,6 +2493,27 @@ function initializeContextTrackers() {
   void contextTrackerRuntime.start().catch((error: unknown) => log(`material trackers: ${String(error)}`));
 }
 
+ipcMain.handle('context-trackers:list', (event: Electron.IpcMainInvokeEvent) => {
+  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_renderer' };
+  if (!contextTrackerRuntime) return { ok: false, error: '材料关注尚未就绪。' };
+  return { ok: true, trackers: contextTrackerRuntime.list() };
+});
+ipcMain.handle('context-trackers:set-enabled', (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_renderer' };
+  if (!contextTrackerRuntime) return { ok: false, error: '材料关注尚未就绪。' };
+  try {
+    const tracker = contextTrackerRuntime.setEnabled(String(raw.trackerId || ''), raw.enabled === true);
+    return tracker ? { ok: true, tracker } : { ok: false, error: '找不到这项任务。' };
+  } catch (error) { return { ok: false, error: error instanceof Error ? error.message : String(error) }; }
+});
+ipcMain.handle('context-trackers:remove', (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_renderer' };
+  if (!contextTrackerRuntime) return { ok: false, error: '材料关注尚未就绪。' };
+  try {
+    return contextTrackerRuntime.remove(String(raw.trackerId || ''))
+      ? { ok: true } : { ok: false, error: '找不到这项任务。' };
+  } catch (error) { return { ok: false, error: error instanceof Error ? error.message : String(error) }; }
+});
 ipcMain.handle('context-trackers:material', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
   if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_renderer' };
   if (!contextTrackerRuntime) return { ok: false, error: '材料关注尚未就绪。' };
@@ -2396,6 +2550,11 @@ ipcMain.handle('conversations:stop', async (event: Electron.IpcMainInvokeEvent, 
     return { ok: false, error: 'unauthorized_renderer' };
   }
   const requestId = String(raw?.requestId || '').trim().slice(0, 120);
+  const selectionRun = [...stageLiveTurns.entries()].find(([, run]) => run.progress.requestId === requestId);
+  if (selectionRun) {
+    cancelSessionChild(selectionRun[0]);
+    return { ok: true, sessionId: selectionRun[1].progress.agentSessionId };
+  }
   const entry = activeConversations.get(requestId);
   const plan = planConversationStop({ requestId, agentSessionId: entry?.agentSessionId });
   if (plan.action !== 'cancel') return { ok: false, error: plan.reason };
@@ -2403,7 +2562,10 @@ ipcMain.handle('conversations:stop', async (event: Electron.IpcMainInvokeEvent, 
   // 优雅路径失败兑底：与 Stage 同款宽限后强杀，crash repair 会诚实结算。
   setTimeout(() => {
     try {
-      if (entry?.child && !entry.child.killed) entry.child.kill();
+      if (activeConversations.get(requestId) === entry && entry?.child && !entry.child.killed) {
+        entry.forcedStop = true;
+        entry.child.kill();
+      }
     } catch (_) {}
   }, GRACEFUL_CANCEL_GRACE_MS);
   log(`conversation stop requested id=${requestId} session=${plan.sessionId}`);
@@ -2546,6 +2708,22 @@ ipcMain.handle('artifacts:accept', async (event: Electron.IpcMainInvokeEvent, ra
 ipcMain.handle('artifacts:apply', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
   if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_renderer' };
   return artifactCommands().apply(raw);
+});
+ipcMain.handle('artifacts:undo', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_renderer' };
+  return artifactCommands().undo(raw);
+});
+ipcMain.handle('conversations:recovery', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
+  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_renderer' };
+  const conversation = conversations().get(String(raw.conversationId || ''));
+  if (!conversation?.agentSessionId) return { ok: true, pendingRecovery: [] };
+  const result = await runPythonBridgePromise({
+    action: raw.action === 'resolve' ? 'recovery-resolve' : 'status',
+    sessionId: conversation.agentSessionId, operationId: raw.operationId,
+    verificationCallId: raw.verificationCallId, confirmed: raw.confirmed === true,
+  }, 'scripts/agent_session_bridge.py', { target: null, timeoutMs: 8000 });
+  if (raw.action === 'resolve' && result?.ok === true) notifyConversationChanged(conversation.id);
+  return result;
 });
 
 function figmaTaskForConversation(rawConversationId: unknown): { conversationId: string; taskId: string } {
@@ -2720,7 +2898,9 @@ function setStageMouseCapture(enabled: boolean, requestFocus = false, rawRegions
 // Render-safe delivery: the stage receives only the contract projection of a
 // bridge payload (no prompts, no raw parameters, no screenshots).
 function deliverStageBridgeResult(selectionSessionToken: string | null, parsed: any) {
-  lastStageResult = { token: selectionSessionToken || null, parsed: safeClone(parsed) };
+  if (!selectionSessionToken || selectionSessions.get(selectionSessionToken)?.stageAttached !== false) {
+    lastStageResult = { token: selectionSessionToken || null, parsed: safeClone(parsed) };
+  }
   updateStage({
     selectionSessionToken: selectionSessionToken || null,
     event: stageEventFromBridge(parsed),
@@ -3411,7 +3591,7 @@ function dismissTemporarySurfaces({ invalidateSession = true, hideObserver = fal
     overlayWindow.setIgnoreMouseEvents(true, { forward: true });
     overlayOwnsPointerInput = false;
   }
-  if (invalidateSession) invalidateSelectionSession(sessionToken);
+  if (invalidateSession) detachSelectionSurface(sessionToken);
   disarmTemporaryDismissShortcut();
   lastStageResult = null;
   if (hideObserver) hideOverlay();
@@ -4509,6 +4689,12 @@ function stageWindowRect(sourceWindow: any, stageBounds: { x: number; y: number;
 }
 
 function stageAppLabel(snapshot: any) {
+  const materials = Array.isArray(snapshot?.selection_materials) ? snapshot.selection_materials : [];
+  if (materials.length > 1) {
+    return [...new Set(materials.map((material: any) => String(
+      material.source_window?.title || material.context?.window?.title || material.context?.label || '屏幕区域',
+    )))].join(' + ');
+  }
   const context = (snapshot && snapshot.context) || {};
   const window = (snapshot && snapshot.source_window) || {};
   const app = String(context.app || '');
@@ -4549,7 +4735,7 @@ function stageSessionPayload(entry: any) {
   };
 }
 
-function episodeObjectForSession(entry: any) {
+function episodeObjectForSession(entry: any): any {
   const snapshot = entry?.snapshot || {};
   const context = snapshot.context || {};
   const sourceWindow = snapshot.source_window || {};
@@ -4566,6 +4752,10 @@ function episodeObjectForSession(entry: any) {
     return [{
       strokeIndex,
       bbox: [left, top, Math.max(...xs) - left, Math.max(...ys) - top],
+      object: snapshot.selection_materials?.[strokeIndex] ? episodeObjectForSession({
+        ...entry,
+        snapshot: { ...snapshot, ...snapshot.selection_materials[strokeIndex], selection_materials: [] },
+      }) : undefined,
     }];
   });
   return {
@@ -4584,7 +4774,7 @@ function episodeObjectForSession(entry: any) {
     source: {
       app: String(context.app || entry?.summary?.app || ''),
       title: String(sourceWindow.title || context?.window?.title || ''),
-      path: String(context.document_path || context.path || snapshot.capture_path || ''),
+      path: String(context.artifacts?.local_file?.path || context.document_path || context.path || snapshot.capture_path || ''),
       annotatedPath: String(snapshot.annotated_path || ''),
       captureAttestation: snapshot.capture_attestation || null,
       perceptionTrace: snapshot.perception_trace || null,
@@ -4634,6 +4824,7 @@ function runningTaskContinuation(excludeToken: string | null = null) {
 
 function detachSelectionSurface(selectionSessionToken: string | null) {
   if (!selectionSessionToken) return;
+  selectionSessions.detach(selectionSessionToken);
   if (voiceRuntime?.active && activeSelectionSessionToken === selectionSessionToken) {
     voiceRuntime.stop(voiceRuntime.active.requestId, { cancel: true });
   }
@@ -4653,13 +4844,7 @@ type SelectionGesture = {
 function beginSelectionSession(reason = 'manual', gesture: SelectionGesture | null = null, frameLease: any = null) {
   const continuation = runningTaskContinuation();
   if (activeSelectionSessionToken) {
-    if (continuation?.token === activeSelectionSessionToken) {
-      // A new point is input to the live task. Retire only the old surface;
-      // its bridge child must keep running so the new TaskInput can be claimed.
-      detachSelectionSurface(activeSelectionSessionToken);
-    } else {
-      invalidateSelectionSession(activeSelectionSessionToken);
-    }
+    detachSelectionSurface(activeSelectionSessionToken);
   }
   lastStageResult = null;
 
@@ -5318,6 +5503,7 @@ ipcMain.on('overlay:guide-finished', (event: Electron.IpcMainEvent) => {
 ipcMain.on('stage:show', (event: Electron.IpcMainEvent) => {
   // Renderer re-asserts visibility once it has content to paint.
   if (!isSurfaceSender(event, 'stage', resultTargetWindow)) return;
+  if (!activeSelectionSessionToken || selectionSessions.get(activeSelectionSessionToken)?.stageAttached === false) return;
   if (stageWindow && !stageWindow.isDestroyed() && !stageWindow.isVisible()) stageWindow.showInactive();
   kickTaskWatch();
 });
@@ -5334,7 +5520,7 @@ ipcMain.on('stage:state', (event: Electron.IpcMainEvent, payload: any) => {
   } else if (state === 'dismissing') {
     finishVoiceFocusGuard();
     const token = String(payload?.selectionSessionToken || '');
-    if (token) invalidateSelectionSession(token);
+    if (token) detachSelectionSurface(token);
   }
 });
 ipcMain.on('stage:hidden', (event: Electron.IpcMainEvent) => {
@@ -5344,7 +5530,7 @@ ipcMain.on('stage:hidden', (event: Electron.IpcMainEvent) => {
   hideStage();
 });
 ipcMain.on('stage:dismiss', (event: Electron.IpcMainEvent) => {
-  // User-initiated dismissal (Escape / outside click) tears the session down.
+  // Dismiss the temporary surface; its running task remains owned by the GUI.
   if (!isSurfaceSender(event, 'stage', resultTargetWindow)) return;
   dismissTemporarySurfaces({ invalidateSession: true, hideObserver: true });
 });
@@ -5609,6 +5795,8 @@ function resultTargetWindow(target: string | null | undefined) {
 }
 
 function safeSurfaceSend(surface: string | null | undefined, channel: string, payload: any) {
+  if (surface === 'stage' && payload?.selectionSessionToken
+    && selectionSessions.get(payload.selectionSessionToken)?.stageAttached === false) return false;
   const win = resultTargetWindow(surface);
   if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return false;
   win.webContents.send(channel, payload);
@@ -5708,7 +5896,7 @@ function runPythonBridge(payload: any, scriptPath = 'scripts/electron_bridge.py'
     },
     input: payload,
     timeoutMs: Math.max(1000, Number(options.timeoutMs) || defaultTimeoutMs),
-    maxStdoutBytes: Math.max(4096, Number(options.maxStdoutBytes) || 1024 * 1024),
+    maxStdoutBytes: Math.max(4096, Number(options.maxStdoutBytes) || 32 * 1024 * 1024),
     maxStderrBytes: Math.max(4096, Number(options.maxStderrBytes) || 256 * 1024),
     signal: options.signal || null,
     logger: log,
@@ -5928,8 +6116,20 @@ function modelCredentialRef(profileId: unknown) {
   return ref;
 }
 
+const discoveredModelCatalogs = new Map<string, { baseUrl: string; apiMode: string; models: any[] }>();
+let legacyModelCatalog: any[] = [];
+
 function activeModelRuntimeConfig() {
-  return resolveActiveModelRuntimeConfig(fabricSettings, credentialStore);
+  const runtime = resolveActiveModelRuntimeConfig(fabricSettings, credentialStore);
+  // Legacy secret-file installs still resolve credentials/model in Python.
+  // Metadata alone must not replace that configuration, but must reach the loop.
+  if (!runtime) return legacyModelCatalog.length ? { models: legacyModelCatalog } : null;
+  const discovered = runtime && discoveredModelCatalogs.get(runtime.profileId);
+  if (runtime && !runtime.models.length && discovered
+    && discovered.baseUrl === runtime.baseUrl && discovered.apiMode === runtime.apiMode) {
+    runtime.models = discovered.models;
+  }
+  return runtime;
 }
 
 function migrateLegacyModelProfile() {
@@ -6258,17 +6458,6 @@ function submitSelectionCommandWhenGrounded(payload: any, startedAt: number, not
   pendingQuestions.set(selectionSessionToken, String(payload?.command || '').trim());
   beginStageLiveTurn(selectionSessionToken, payload);
   log(`stage:submit-selection-command token=${selectionSessionToken} request=${requestId} command_len=${String(enriched.command || '').length}`);
-  // 本地首反馈（零模型）：感知材料里已有的「我看到了：X · N 字」先
-  // 作为第一步贴到等待卡上，再让模型慢慢跑——用户立刻知道它看见的是
-  // 不是自己圈的那个东西（review Q4）。
-  const perceived = CardModel.perceivedStep(session.summary);
-  if (perceived) {
-    safeSurfaceSend('stage', 'stage:card-patch', {
-      selectionSessionToken,
-      requestId,
-      patch: { steps: [perceived] },
-    });
-  }
   let child: ReturnType<typeof runPythonBridge> | null = null;
   activeSessionAgentIds.set(selectionSessionToken, session.taskId);
   child = runPythonBridge(enriched, 'scripts/selection_bridge.py', 'stage', {
@@ -6285,16 +6474,7 @@ function submitSelectionCommandWhenGrounded(payload: any, startedAt: number, not
       if (record.phase === 'loop_started' && typeof record.fields?.session === 'string' && record.fields.session && record.fields.session !== '-') {
         activeSessionAgentIds.set(selectionSessionToken, record.fields.session);
       }
-      if (record.phase === 'answer_chunk' && typeof record.fields?.b64 === 'string' && record.fields.b64) {
-        appendStageLiveAnswer(selectionSessionToken, record.fields.b64);
-      }
-      const step = CardModel.phaseStep(record);
-      if (!step) return;
-      safeSurfaceSend('stage', 'stage:card-patch', {
-        selectionSessionToken,
-        requestId,
-        patch: { steps: [step] },
-      });
+      appendStageLiveProgress(selectionSessionToken, record);
     },
     onComplete: (parsed: any) => {
       if (activeSessionChildren.get(selectionSessionToken) === child) activeSessionChildren.delete(selectionSessionToken);
@@ -6770,6 +6950,14 @@ ipcMain.handle('runtime-snapshot:get', async (event: Electron.IpcMainInvokeEvent
   if (!isDashboardSender(event)) throw new Error('unauthorized_runtime_snapshot_sender');
   return runtimeSnapshot.get({ force: options?.force === true });
 });
+ipcMain.handle('extensions:inventory', async (event: Electron.IpcMainInvokeEvent) => {
+  if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_extensions_reader' };
+  return runPythonBridgePromise(
+    { operation: 'extensions.inventory' },
+    'scripts/fabric_bridge.py',
+    { target: null, timeoutMs: 10_000 },
+  );
+});
 ipcMain.handle('dashboard:settings:get', async (event: Electron.IpcMainInvokeEvent) => {
   if (!isDashboardSender(event)) throw new Error('unauthorized_settings_reader');
   if (!fabricSettings) {
@@ -6877,12 +7065,25 @@ ipcMain.handle('slash:directory', async (event: Electron.IpcMainInvokeEvent) => 
 ipcMain.handle('models:catalog', async (event: Electron.IpcMainInvokeEvent) => {
   if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_catalog_reader' };
   try {
-    const parsed = await runPythonBridgePromise(
-      { operation: 'model.catalog', modelRuntime: activeModelRuntimeConfig() },
-      'scripts/fabric_bridge.py',
-      { target: 'fabric-dashboard', timeoutMs: 12000 },
-    );
-    return { ok: true, catalog: parsed?.catalog ?? null };
+    const catalog = await collectModelCatalog(fabricSettings, credentialStore, async (runtime: any) => {
+      const parsed = await runPythonBridgePromise(
+        { operation: 'model.catalog', modelRuntime: runtime },
+        'scripts/fabric_bridge.py',
+        { target: 'fabric-dashboard', timeoutMs: 12000 },
+      );
+      const result = parsed?.catalog;
+      if (!result) throw new Error('model_catalog_missing');
+      if (runtime && !runtime.models.length && result.source === 'gateway') {
+        discoveredModelCatalogs.set(runtime.profileId, {
+          baseUrl: runtime.baseUrl, apiMode: runtime.apiMode,
+          models: (result.groups || []).flatMap((group: any) => group.models || []),
+        });
+      } else if (!runtime && result.source === 'gateway') {
+        legacyModelCatalog = (result.groups || []).flatMap((group: any) => group.models || []);
+      }
+      return result;
+    });
+    return { ok: true, catalog };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
@@ -6914,30 +7115,41 @@ ipcMain.handle('models:quota', async (event: Electron.IpcMainInvokeEvent, raw: a
 
 ipcMain.handle('models:select', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
   if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_model_select' };
-  const model = String(raw?.model || '').trim().slice(0, 120);
-  if (!model) return { ok: false, error: '模型名不能为空。' };
+  return selectRuntimeModel(raw?.model, raw?.profileId);
+});
+
+async function selectRuntimeModel(raw: unknown, profileId?: unknown): Promise<{ ok: boolean; model?: string; profileId?: string | null; error?: string }> {
+  const model = String(raw || '').trim().slice(0, 120);
+  if (!model || [...model].some(char => char === '\\' || char.charCodeAt(0) < 32)) {
+    return { ok: false, error: '模型名无效。' };
+  }
   try {
     // Conversations send the resolved model profile on every request. Once a
     // profile is active, writing the legacy secrets/model.txt file would make
     // the menu claim success while the bridge keeps using profile.model.
-    const selectedSettings = selectActiveProfileModel(fabricSettings, model);
+    const selectedSettings = selectActiveProfileModel(fabricSettings, model, profileId);
     if (selectedSettings) {
       const saved = await saveFabricSettingsPatch({ models: selectedSettings.models });
       if (saved?.ok !== true) return saved;
       invalidateRuntimeState('model_selected');
       return { ok: true, model, profileId: selectedSettings.models?.defaultProfileId || null };
     }
-    const parsed = await runPythonBridgePromise(
-      { operation: 'model.select', model },
-      'scripts/fabric_bridge.py',
-      { target: 'fabric-dashboard', timeoutMs: 8000 },
-    );
-    if (parsed?.ok === true) invalidateRuntimeState('model_selected');
-    return parsed ?? { ok: false, error: 'model_select_failed' };
+    if (profileId) return { ok: false, error: '所选模型的服务商配置不可用。' };
+    if (process.env.MAGIC_POINTER_MODEL) {
+      return { ok: false, error: '环境变量 MAGIC_POINTER_MODEL 覆盖模型文件，请先移除该覆盖。' };
+    }
+    // Same precedence as ai_client.read_local_secret / models_catalog.select_model.
+    // A one-line local preference must not cold-start Fabric and its desktop stack.
+    const secretsDir = fs.existsSync(path.join(ROOT, 'secrets'))
+      ? path.join(ROOT, 'secrets') : path.join(FABRIC_DATA_DIR, 'secrets');
+    fs.mkdirSync(secretsDir, { recursive: true });
+    fs.writeFileSync(path.join(secretsDir, 'model.txt'), `${model}\n`, 'utf8');
+    invalidateRuntimeState('model_selected');
+    return { ok: true, model };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
-});
+}
 
 ipcMain.handle('dashboard:settings:save', async (event: Electron.IpcMainInvokeEvent, payload: any = {}) => {
   if (!isDashboardSender(event)) throw new Error('unauthorized_settings_writer');

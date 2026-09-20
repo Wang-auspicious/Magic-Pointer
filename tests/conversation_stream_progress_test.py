@@ -155,3 +155,34 @@ def test_tool_truncation_is_projected_as_a_visible_notice() -> None:
     assert "已注册 5 个工具" in notices[0]["text"]
     assert "超过本轮上限 3" in notices[0]["text"]
     assert "mcp_alpha" in notices[0]["text"]
+
+
+def test_completed_trajectory_keeps_full_tool_event_result_over_receipt_preview():
+    from app.agent_runtime.activity_projection import completed_trajectory
+
+    full_result = "Recognized content\n" * 100
+    result = completed_trajectory(
+        {"loopReceipts": [{"toolCallId": "c1", "valuePreview": full_result[:120]}]},
+        [{"kind": "tool", "callId": "c1", "text": '{"path":"frame.png"}',
+          "result": full_result}],
+    )
+
+    assert result[0]["result"] == full_result
+
+
+def test_tool_result_stream_preserves_full_arguments_and_output_once():
+    clock, stream = _clock_with_stream()
+    sink = conversation_bridge._ConversationActivitySink(clock)
+    args = {"command": "echo " + "selection detail " * 50}
+    output = "Tool output\n" * 100
+    sink(SimpleNamespace(kind="tool_call_finished", result=SimpleNamespace(
+        tool_call_id="c1", tool_name="Bash", is_error=False, used_backend="local",
+        latency_ms=42.0, arguments=args, value=output,
+    )))
+
+    blobs = _phase_chunks(stream, "tool_result")
+    assert len(blobs) == 1
+    result = json.loads(base64.b64decode(blobs[0]))
+    assert json.loads(result["args"]) == args
+    assert result["result"] == output
+    assert result["latency_ms"] == 42.0

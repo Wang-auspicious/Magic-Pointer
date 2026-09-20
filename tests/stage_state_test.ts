@@ -102,6 +102,12 @@ const cancelled = transition(text, { type: 'DISMISS' });
 assert.strictEqual(cancelled.name, 'dismissing');
 
 const completedSilently = transition(text, { type: 'COMPLETE' });
+const completedWithAnswer = transition(text, { type: 'COMPLETE', result: {
+  kind: 'inline', answer: '修改已经写入并回读确认。', trajectory: [{ kind: 'tool', name: 'Write' }],
+} });
+assert.strictEqual(completedWithAnswer.name, 'result', 'a real completed turn stays readable on both surfaces');
+assert.strictEqual(completedWithAnswer.turns.at(-1).result.answer, '修改已经写入并回读确认。');
+assert.strictEqual(completedWithAnswer.turns.at(-1).status, 'done');
 assert.strictEqual(completedSilently.name, 'dismissing',
   'verified execution collapses the capsule without entering result state');
 
@@ -206,10 +212,13 @@ assert.strictEqual(thread.turns.length, 2, 'the follow-up appends');
 assert.strictEqual(thread.turns[1].ask, '第二句什么意思');
 assert.notStrictEqual(thread.turns[0].id, thread.turns[1].id, 'turn ids must be distinct');
 
-thread = transition(thread, { type: 'ERROR', error: { message: 'nope' } });
+thread = transition(thread, { type: 'ERROR', error: { message: 'nope' },
+  result: { answer: '已检查选区，但后续读取失败。', trajectory: [{ kind: 'tool', name: 'Look', state: 'error' }] } });
 assert.strictEqual(thread.turns.length, 2);
 assert.strictEqual(thread.turns[1].status, 'failed', 'a failed follow-up settles as failed');
 assert.deepStrictEqual(thread.turns[1].error, { message: 'nope' });
+assert.strictEqual(thread.turns[1].result.answer, '已检查选区，但后续读取失败。');
+assert.strictEqual(thread.turns[1].result.trajectory[0].name, 'Look');
 assert.strictEqual(thread.turns[0].status, 'done', 'an earlier success is untouched by a later failure');
 
 // Chip actions run against the same thread.

@@ -260,6 +260,16 @@ def test_registry_execute_look_returns_tool_result():
     assert res_box.is_error is False
     assert res_box.used_backend == "vision"
 
+
+def test_registered_look_resolves_task_reference_without_model_guessing_coordinates():
+    registry = ToolRegistry()
+    backend = FakeVisionBackend()
+    tool = LookTool(backend, resolver=lambda anchor: (361, 1351, 510, 1427) if anchor == "reference:selection:2" else None)
+    tool.register(registry)
+    result = registry.execute_tool("Look", {"anchor": "reference:selection:2"})
+    assert result.value.status is EvidenceStatus.OK
+    assert backend.calls[0]["image_bytes"] == b"crop:361,1351,510,1427"
+
 def test_look_quota_is_honest_about_exhaustion():
     """Each look is a real vision call (seconds + money). A model that spams
     it must get an honest unsupported receipt, not an infinite budget."""

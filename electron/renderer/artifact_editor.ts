@@ -24,9 +24,11 @@ interface ArtifactClient {
   edit(payload: Record<string, unknown>): Promise<ArtifactResponse>;
   accept(payload: Record<string, unknown>): Promise<ArtifactResponse>;
   apply(payload: Record<string, unknown>): Promise<ArtifactResponse>;
+  undo?(payload: Record<string, unknown>): Promise<ArtifactResponse>;
 }
 
 interface EditorState {
+  undoAvailable: boolean;
   conversationId: string;
   artifactId: string;
   revision: number;
@@ -42,6 +44,7 @@ interface EditorState {
 }
 
 const emptyState = (): EditorState => ({
+  undoAvailable: false,
   conversationId: '',
   artifactId: '',
   revision: 0,
@@ -193,23 +196,32 @@ function retargetFigmaPatch(
 function createArtifactEditor(client: ArtifactClient) {
   let current = emptyState();
   let selectionGeneration = 0;
+  let savedPatchPayload: Record<string, unknown> | null = null;
 
-  function adopt(artifact: ArtifactRecord, options: { keepContent?: boolean } = {}) {
+  function hasUnsavedPatch(): boolean {
+    return JSON.stringify(current.patchPayload) !== JSON.stringify(savedPatchPayload);
+  }
+
+  function adopt(artifact: ArtifactRecord, options: { keepContent?: boolean; keepPatch?: boolean } = {}) {
     const priorContent = current.content;
-    const priorDirty = current.dirty;
+    const priorPatch = current.patchPayload;
+    savedPatchPayload = cloneValue(artifact.patchPayload);
     current = {
       ...current,
       artifactId: artifact.artifactId,
+      undoAvailable: artifact.undoAvailable === true,
       revision: artifact.revision,
-      content: options.keepContent && priorDirty ? priorContent : artifact.content,
+      content: options.keepContent ? priorContent : artifact.content,
       savedContent: artifact.content,
       kind: artifact.kind,
-      patchPayload: artifact.patchPayload,
+      patchPayload: options.keepPatch ? priorPatch : artifact.patchPayload,
       acceptedRevision: artifact.acceptedRevision,
-      dirty: options.keepContent && priorDirty ? priorContent !== artifact.content : false,
+      dirty: false,
       status: 'ready',
       error: '',
     };
+    current.dirty = current.content !== current.savedContent || hasUnsavedPatch();
+    if (current.dirty) current.acceptedRevision = null;
   }
 
   function fail(error: unknown): ArtifactResponse {
@@ -253,7 +265,7 @@ function createArtifactEditor(client: ArtifactClient) {
     current = {
       ...current,
       content: value,
-      dirty: value !== current.savedContent,
+      dirty: value !== current.savedContent || hasUnsavedPatch(),
       acceptedRevision: value === current.savedContent ? current.acceptedRevision : null,
       status: 'ready',
       error: '',
@@ -266,7 +278,8 @@ function createArtifactEditor(client: ArtifactClient) {
     current = {
       ...current,
       patchPayload,
-      dirty: true,
+      dirty: current.content !== current.savedContent
+        || JSON.stringify(patchPayload) !== JSON.stringify(savedPatchPayload),
       acceptedRevision: null,
       status: 'ready',
       error: '',
@@ -279,6 +292,7 @@ function createArtifactEditor(client: ArtifactClient) {
     if (!current.dirty) return { ok: true, artifact: undefined };
     const generation = selectionGeneration;
     const submittedContent = current.content;
+    const submittedPatch = current.patchPayload;
     current = { ...current, status: 'saving', error: '' };
     try {
       const response = await client.edit({
@@ -286,14 +300,17 @@ function createArtifactEditor(client: ArtifactClient) {
         artifactId: current.artifactId,
         expectedRevision: current.revision,
         content: submittedContent,
-        patchPayload: current.patchPayload,
+        patchPayload: submittedPatch,
       });
       if (generation !== selectionGeneration) return { ok: false, error: 'selection_changed' };
       const artifact = artifactValue(response?.artifact);
       if (response?.ok !== true || artifact === null) {
         return fail(response?.error || 'artifact_save_failed');
       }
-      adopt(artifact, { keepContent: current.content !== submittedContent });
+      adopt(artifact, {
+        keepContent: current.content !== submittedContent,
+        keepPatch: current.patchPayload !== submittedPatch,
+      });
       return response;
     } catch (error) {
       if (generation !== selectionGeneration) return { ok: false, error: 'selection_changed' };
@@ -348,12 +365,27 @@ function createArtifactEditor(client: ArtifactClient) {
           ? ''
           : String(response.result.error || response.result.status || 'artifact_apply_failed'),
         applyResult: response.result,
+        undoAvailable: response.result.undoAvailable === true,
       };
       return response;
     } catch (error) {
       if (generation !== selectionGeneration) return { ok: false, error: 'selection_changed' };
       return fail(error instanceof Error ? error.message : error);
     }
+  }
+
+  async function undo(confirmed: boolean): Promise<ArtifactResponse> {
+    if (!confirmed || !current.undoAvailable || !client.undo) return fail('artifact_undo_unavailable');
+    const generation = selectionGeneration;
+    current = { ...current, status: 'applying', error: '' };
+    try {
+      const response = await client.undo({ conversationId: current.conversationId,
+        artifactId: current.artifactId, revision: current.revision, confirmed: true });
+      if (generation !== selectionGeneration) return { ok: false, error: 'selection_changed' };
+      if (response.ok !== true || response.result?.status !== 'succeeded' || response.result?.verified !== true) return fail(response.error || response.result?.error || 'artifact_undo_failed');
+      current = { ...current, status: 'ready', undoAvailable: false, applyResult: { ...response.result, undone: true } };
+      return response;
+    } catch (error) { return generation !== selectionGeneration ? { ok: false, error: 'selection_changed' } : fail(error); }
   }
 
   return {
@@ -363,11 +395,12 @@ function createArtifactEditor(client: ArtifactClient) {
     save,
     accept,
     apply,
+    undo,
     clear: () => {
       selectionGeneration += 1;
       current = emptyState();
     },
-    state: () => ({ ...current }),
+    state: () => ({ ...current, selectionGeneration }),
   };
 }
 

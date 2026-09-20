@@ -135,7 +135,7 @@ assert(html.includes('../clarification_chips.js'),
   'stage must load the clarification helper as a classic script');
 assert(!source.includes("threadEyebrow.querySelector('use')"),
   'the hidden status node carries text only; there is no header glyph left to swap');
-assert(source.includes("threadClose.setAttribute('aria-label', pending ? '停止' : '关闭')"),
+assert(source.includes("threadClose.setAttribute('aria-label', '关闭')"),
   'the fixed work panel must provide the processing stop affordance');
 assert(source.includes("const resultOwnsComposer = (name === 'result' || name === 'error')"),
   'a settled card must own follow-up and approval instead of leaving a duplicate capsule beside it');

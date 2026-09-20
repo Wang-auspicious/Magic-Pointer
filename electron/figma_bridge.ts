@@ -39,6 +39,7 @@ interface CommandRecord {
   pluginToken: string;
   status: 'queued' | 'dispatched' | 'completed' | 'failed' | 'cancelled';
   createdAt: number;
+  expiresAt: number;
   dispatchedAt?: number;
   completedAt?: number;
   ok?: boolean;
@@ -159,6 +160,10 @@ export class FigmaLoopbackBridge {
     const [token] = entry;
     this.connections.delete(token);
     for (const command of this.commands.values()) {
+      if (command.pluginToken === token && ['completed', 'failed', 'cancelled'].includes(command.status)) {
+        this.commands.delete(command.commandId);
+        continue;
+      }
       if (command.pluginToken === token && command.status === 'queued') {
         command.status = 'cancelled';
         command.completedAt = this.now();
@@ -239,9 +244,7 @@ export class FigmaLoopbackBridge {
     this.server = null;
     this.pairing = null;
     this.connections.clear();
-    for (const command of this.commands.values()) {
-      if (command.status === 'queued') command.status = 'cancelled';
-    }
+    this.commands.clear();
     if (!server) return;
     await new Promise<void>((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()));
@@ -265,7 +268,8 @@ export class FigmaLoopbackBridge {
     const queuedResponse = await fetch(`${baseUrl}/requests`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ taskId, documentSessionId, operation, arguments: args }),
+      body: JSON.stringify({ taskId, documentSessionId, operation, arguments: args,
+        timeoutMs: Math.max(100, options.timeoutMs ?? 15_000) }),
     });
     const queued = await queuedResponse.json() as Record<string, unknown>;
     if (!queuedResponse.ok) throw new Error(String(queued.error || `figma_request_${queuedResponse.status}`));
@@ -293,6 +297,12 @@ export class FigmaLoopbackBridge {
         throw new Error(nonEmpty(result.error) || `figma_command_${status}`);
       }
       await new Promise<void>((resolve) => { setTimeout(resolve, pollIntervalMs); });
+    }
+    const command = this.commands.get(commandId);
+    if (command?.status === 'queued') {
+      this.commands.delete(commandId);
+    } else if (command?.status === 'dispatched') {
+      throw new Error(`figma_command_result_unknown:${commandId}`);
     }
     throw new Error(`figma_command_timed_out:${commandId}`);
   }
@@ -423,6 +433,18 @@ export class FigmaLoopbackBridge {
       reply(response, 401, { ok: false, error: 'figma_plugin_unauthorized' });
       return;
     }
+    for (const command of this.commands.values()) {
+      if (command.completedAt !== undefined && this.now() - command.completedAt > 60_000) {
+        this.commands.delete(command.commandId);
+        continue;
+      }
+      if (command.status === 'queued' && command.expiresAt <= this.now()) {
+        command.status = 'cancelled';
+        command.completedAt = this.now();
+        command.error = `figma_command_timed_out:${command.commandId}`;
+        command.arguments = {};
+      }
+    }
     const commands = [...this.commands.values()]
       .filter((command) => command.pluginToken === token && command.status === 'queued')
       .slice(0, 20);
@@ -466,6 +488,7 @@ export class FigmaLoopbackBridge {
     command.ok = body.ok === true;
     command.status = command.ok ? 'completed' : 'failed';
     command.result = body.result;
+    command.arguments = {};
     command.error = nonEmpty(body.error) || undefined;
     command.completedAt = this.now();
     reply(response, 200, { ok: true });
@@ -507,6 +530,7 @@ export class FigmaLoopbackBridge {
       pluginToken: connection.pluginToken,
       status: 'queued',
       createdAt: this.now(),
+      expiresAt: this.now() + Math.max(100, Number(body.timeoutMs) || 15_000),
     });
     reply(response, 202, { ok: true, commandId, status: 'queued' });
   }
@@ -535,6 +559,9 @@ export class FigmaLoopbackBridge {
       result: command.result,
       error: command.error,
     });
+    if (['completed', 'failed', 'cancelled'].includes(command.status)) {
+      this.commands.delete(commandId);
+    }
   }
 }
 

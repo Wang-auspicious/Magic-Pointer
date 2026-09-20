@@ -4,6 +4,7 @@ const {
   physicalDisplayBounds,
   physicalGestureBoundingBox,
   physicalScreenPoint,
+  physicalGestureTraceResult,
   normalizeGroundingGeometry,
 } = require('../electron/coordinate_space');
 
@@ -40,6 +41,26 @@ const mixedDpiScreen = {
     };
   },
 };
+
+// The gesture UI's circle verdict must survive the bridge; reclassifying its
+// almost-closed raw stroke later turns a region into a narrow text underline.
+const ring = [{ x: 10, y: 10 }, { x: 180, y: 10 }, { x: 180, y: 160 }, { x: 10, y: 160 }, { x: 10, y: 10 }];
+for (const coordinateSpace of ['electron_dip', 'physical_screen_pixels']) {
+  const physical = coordinateSpace === 'physical_screen_pixels';
+  const trace = physicalGestureTraceResult(mixedDpiScreen, {
+    coordinateSpace,
+    strokes: [{ points: ring.slice(0, -1), kind: 'circle',
+      shapeVerdict: { kind: 'circle', closedness: 0.18 },
+      geometry: { type: 'polygon_region', ring, coordinateSpace },
+    }],
+  });
+  assert.strictEqual(trace.ok, true);
+  assert.strictEqual(trace.trace.strokes[0].geometry?.type, 'polygon_region');
+  assert.deepStrictEqual(trace.trace.strokes[0].geometry.ring,
+    physical ? ring : ring.map((point) => mixedDpiScreen.dipToScreenPoint(point)));
+  assert.strictEqual(trace.trace.strokes[0].geometry.coordinateSpace, 'physical_screen_pixels');
+  assert.strictEqual(trace.trace.strokes[0].kind, 'circle');
+}
 
 assert.deepStrictEqual(
   physicalScreenPoint(mixedDpiScreen, { x: -800, y: 200 }),

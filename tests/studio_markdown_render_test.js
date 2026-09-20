@@ -59,4 +59,26 @@ const quoted = html(DshMarkdown.render(['```py', 'print("hi")', '```'].join('\n'
 assert(quoted.includes('data-dsh-copy="print(&quot;hi&quot;)"'),
   'copy payload must escape double quotes so the attribute stays intact');
 
+const images = html(DshMarkdown.render([
+  '![Source photo](https://example.com/photo.png "Original photo")',
+  '',
+  '![Local capture](<D:\\Project Files\\capture.png>)',
+  '![Inline pixel](data:image/png;base64,aGVsbG8=)',
+  '',
+  'This is an inline image ![chart](http://localhost:8080/chart.png), with its original source.',
+].join('\n')));
+assert(images.includes('<img'), 'Markdown images must become actual image nodes');
+assert(images.includes('src="https://example.com/photo.png"'), 'remote image sources must be preserved');
+assert(images.includes('alt="Source photo"'), 'image alternative text must be preserved');
+assert(images.includes('title="Original photo"'), 'image titles must remain metadata');
+assert(images.includes('src="file:///D:/Project%20Files/capture.png"'), 'supported local paths with spaces must become file URLs');
+assert(images.includes('src="data:image/png;base64,aGVsbG8="'), 'image data URLs must retain their supplied payload');
+assert(images.includes('class="dsh-image-grid"'), 'consecutive actual images must share a gallery');
+assert(images.includes('src="http://localhost:8080/chart.png"'), 'HTTP image URLs must work alongside HTTPS');
+assert(!images.includes('</img>'), 'the shim must preserve the image void-element contract');
+const unsafeImages = html(DshMarkdown.render('![bad](javascript:run) ![html](data:text/html;base64,aGVsbG8=)'));
+assert(!unsafeImages.includes('<img'), 'non-image executable URL schemes must remain literal text');
+assert(html(DshMarkdown.render('`![literal](https://example.com/a.png)`')).includes('<code>![literal]'), 'inline code must keep image syntax literal');
+assert(html(DshMarkdown.render('![balanced](https://example.com/a(2).png)')).includes('src="https://example.com/a(2).png"'), 'ordinary parenthesized filenames must retain their full source');
+
 console.log('studio markdown render test ok');

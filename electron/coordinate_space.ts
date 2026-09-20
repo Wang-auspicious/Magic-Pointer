@@ -1,3 +1,5 @@
+const { toPhysicalGeometry } = require('./geometry_space');
+
 type UnknownRecord = Record<string, unknown>;
 
 interface Point {
@@ -160,6 +162,9 @@ function physicalGestureTraceResult(
     const strokes = rawStrokes.slice(0, 8).map((value) => {
       const stroke = recordOf(value);
       return {
+      ...(stroke?.kind ? { kind: stroke.kind } : {}),
+      ...(stroke?.shapeVerdict ? { shapeVerdict: stroke.shapeVerdict } : {}),
+      ...(stroke?.geometry ? { geometry: toPhysicalGeometry(stroke.geometry, (point: Point) => point) } : {}),
       points: (Array.isArray(stroke?.points) ? stroke.points : []).slice(0, 512).map((point) => {
         const x = Number(point?.x);
         const y = Number(point?.y);
@@ -208,6 +213,10 @@ function physicalGestureTraceResult(
   const strokes = rawStrokes.slice(0, 8).map((value) => {
     const stroke = recordOf(value);
     return {
+    ...(stroke?.kind ? { kind: stroke.kind } : {}),
+    ...(stroke?.shapeVerdict ? { shapeVerdict: stroke.shapeVerdict } : {}),
+    ...(stroke?.geometry ? { geometry: toPhysicalGeometry(stroke.geometry,
+      (point: Point) => physicalScreenPoint(screenApi, point)) } : {}),
     points: (Array.isArray(stroke?.points) ? stroke.points : []).slice(0, 512).map((point) => {
       const physical = physicalScreenPoint(screenApi, point);
       const t = Number(point?.t);

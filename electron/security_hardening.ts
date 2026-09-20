@@ -49,6 +49,11 @@ const FATAL_RELAUNCH_MARKER = 'fatal-relaunch.json';
 const DEFAULT_FATAL_RELAUNCH_WINDOW_MS = 5 * 60 * 1000;
 const hardenedSessions = new WeakSet<WebContents['session']>();
 const installedApps = new WeakSet<App>();
+const browserContents = new WeakSet<WebContents>();
+
+function registerBrowserContents(contents: WebContents): void {
+  browserContents.add(contents);
+}
 
 function recordOf(value: unknown): UnknownRecord | null {
   return value !== null && typeof value === 'object' ? (value as UnknownRecord) : null;
@@ -91,6 +96,11 @@ function attachContentsHardening(
   contents.on('will-navigate', (event, url) => {
     const current = contents.getURL();
     if (!url || url === current) return;
+    if (browserContents.has(contents)) {
+      try {
+        if (['http:', 'https:'].includes(new URL(url).protocol)) return;
+      } catch (_) {}
+    }
     event.preventDefault();
     if (isAllowedExternalUrl(url)) {
       Promise.resolve(shell.openExternal(url)).catch((error) => {
@@ -238,6 +248,7 @@ module.exports = {
   ALLOWED_EXTERNAL_SCHEMES,
   FATAL_RELAUNCH_MARKER,
   attachContentsHardening,
+  registerBrowserContents,
   createFatalRecoveryGuard,
   install,
   isAllowedExternalUrl,

@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 
 const TOKEN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,121}$/;
 const STUDIO_TOKEN = /^agent-studio-(?:new|conv)-[A-Za-z0-9][A-Za-z0-9._-]{0,95}$/;
+const SELECTION_TOKEN = /^agent-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 
 function agentSessionId(selectionSessionId: unknown): string {
   const raw = String(selectionSessionId || '').trim();
@@ -24,7 +25,7 @@ function studioConversationSessionId({
   idFactory?: () => string;
 } = {}): string {
   const current = String(existing || '').trim();
-  if (STUDIO_TOKEN.test(current)) return current;
+  if (STUDIO_TOKEN.test(current) || SELECTION_TOKEN.test(current)) return current;
   const conversation = String(conversationId || '').trim();
   if (conversation) {
     return `agent-studio-conv-${crypto.createHash('sha256').update(conversation, 'utf8').digest('hex').slice(0, 32)}`;

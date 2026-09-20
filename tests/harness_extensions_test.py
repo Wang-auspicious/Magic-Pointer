@@ -138,7 +138,7 @@ class TestPromptSections:
         builder = SystemPromptBuilder()
         for section in default_sections():
             builder.add(section)
-        text = builder.build({"language": "中文"})
+        text = builder.build({"language": "中文"}).text
         assert "# Effort" in text
         assert "balanced" in text.casefold()
         assert "# Style" not in text
@@ -152,12 +152,12 @@ class TestPromptSections:
         for section in default_sections():
             builder.add(section)
 
-        extra_text = builder.build({"language": "中文", "effort": "xhigh"})
+        extra_text = builder.build({"language": "中文", "effort": "xhigh"}).text
         assert "# Effort" in extra_text
         assert "thorough" in extra_text.casefold()
         assert "caveman" not in extra_text.casefold()
 
-        max_text = builder.build({"language": "中文", "effort": "max"})
+        max_text = builder.build({"language": "中文", "effort": "max"}).text
         assert "deepest available analysis" in max_text.casefold()
 
     def test_unknown_effort_falls_back_to_high(self) -> None:
@@ -167,7 +167,7 @@ class TestPromptSections:
         builder = SystemPromptBuilder()
         for section in default_sections():
             builder.add(section)
-        text = builder.build({"language": "中文", "effort": "galactic"})
+        text = builder.build({"language": "中文", "effort": "galactic"}).text
         assert "# Effort" in text
         assert "balanced" in text.casefold()
 
@@ -181,8 +181,8 @@ class TestPromptSections:
         for section in default_sections():
             builder.add(section)
 
-        plain = builder.build({"language": "中文", "has_selection": False})
-        selected = builder.build({"language": "中文", "has_selection": True})
+        plain = builder.build({"language": "中文", "has_selection": False}).text
+        selected = builder.build({"language": "中文", "has_selection": True}).text
         assert "圈选" not in plain
         assert "圈选" in selected
         assert "没有屏幕选区对象" in plain
@@ -196,14 +196,19 @@ class TestPromptSections:
         for section in default_sections():
             builder.add(section)
 
-        plain = builder.build({"language": "中文", "has_selection": False})
-        selected = builder.build({"language": "中文", "has_selection": True})
+        plain = builder.build({"language": "中文", "has_selection": False}).text
+        selected = builder.build({"language": "中文", "has_selection": True}).text
         assert "冻结帧" not in plain
         assert "visual_anchor" not in plain
         assert "冻结帧" in selected
         assert "visual_anchor" in selected
         assert "source_id" in selected
         assert "question" in selected
+        assert "会话日志只能补充背景，不能替代选区内容" in selected
+        assert "来自当前画面" in selected
+        assert "不得当作圈选时刻的数字" in selected
+        assert "应用身份以 window 事实里的进程和标题为依据" in selected
+        assert "selection_visual_anchor" in selected
 
     def test_plugin_unload_waits_for_inflight_section_render(self) -> None:
         from app.harness.context import Context
@@ -319,12 +324,12 @@ class TestVoiceSection:
         for section in default_sections():
             builder.add(section)
 
-        text = builder.build({"language": "中文", "has_selection": False})
+        text = builder.build({"language": "中文", "has_selection": False}).text
         assert "# Voice" in text
         assert "结论" in text
         assert "套话" in text
         # 与无选区身份约束一致：人格层不得重新引入「圈选」身份。
         assert "圈选" not in text
         # 静态 section：不随 ctx 变化，保住 system prompt 前缀缓存。
-        again = builder.build({"language": "英文", "has_selection": False})
+        again = builder.build({"language": "英文", "has_selection": False}).text
         assert "# Voice" in again

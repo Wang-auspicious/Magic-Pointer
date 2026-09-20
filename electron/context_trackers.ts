@@ -211,7 +211,10 @@ function createMaterialTracker({ source, task, cadence, nowMs = Date.now(), trac
 
 async function readFileObservation(paths: string[], now = Date.now): Promise<FileObservation> {
   const entries: Record<string, FileObservationEntry> = {};
-  for (const watchedPath of paths) {
+  const pending = [...paths];
+  for (let index = 0; index < pending.length; index += 1) {
+    const watchedPath = pending[index];
+    if (Object.prototype.hasOwnProperty.call(entries, watchedPath)) continue;
     try {
       const info = await fs.promises.stat(watchedPath);
       entries[watchedPath] = {
@@ -221,21 +224,9 @@ async function readFileObservation(paths: string[], now = Date.now): Promise<Fil
         mtimeMs: info.mtimeMs,
       };
       if (info.isDirectory()) {
-        const children = (await fs.promises.readdir(watchedPath, { withFileTypes: true }))
-          .slice(0, 4096);
+        const children = await fs.promises.readdir(watchedPath, { withFileTypes: true });
         for (const child of children) {
-          const childPath = cleanPath(path.join(watchedPath, child.name));
-          try {
-            const childInfo = await fs.promises.stat(childPath);
-            entries[childPath] = {
-              exists: true,
-              kind: childInfo.isFile() ? 'file' : childInfo.isDirectory() ? 'directory' : 'other',
-              size: childInfo.size,
-              mtimeMs: childInfo.mtimeMs,
-            };
-          } catch (_) {
-            entries[childPath] = { exists: false };
-          }
+          if (child.isFile() || child.isDirectory()) pending.push(cleanPath(path.join(watchedPath, child.name)));
         }
       }
     } catch (_) {
@@ -246,7 +237,12 @@ async function readFileObservation(paths: string[], now = Date.now): Promise<Fil
 }
 
 function watchFilePath(watchedPath: string, onEvent: (event: { eventType: string; filename?: string }) => void): WatchHandle {
-  const watcher = fs.watch(watchedPath, { persistent: false }, (eventType: string, filename: string | Buffer | null) => {
+  let isDirectory = false;
+  try { isDirectory = fs.statSync(watchedPath).isDirectory(); } catch (_) {}
+  // Parent watches survive deleted files and the atomic replacement used by editors.
+  const root = isDirectory ? watchedPath : path.dirname(watchedPath);
+  const watcher = fs.watch(root, { persistent: false, recursive: isDirectory }, (eventType: string, filename: string | Buffer | null) => {
+    if (!isDirectory && filename && String(filename) !== path.basename(watchedPath)) return;
     onEvent({ eventType, ...(filename ? { filename: String(filename) } : {}) });
   });
   return { close: () => watcher.close() };
@@ -554,7 +550,8 @@ function createContextTrackerRuntime({
       scheduleNext(trackerId);
       return;
     }
-    if (!tracker.lastObserved) {
+    const hasPriorObservation = Boolean(tracker.lastObserved);
+    if (!hasPriorObservation) {
       tracker.lastObserved = normalizedObservation(await readObservation(tracker.trigger.paths));
       persist();
     }
@@ -564,6 +561,7 @@ function createContextTrackerRuntime({
         watchedPath,
         () => onFilesystemEvent(trackerId),
       ));
+      if (hasPriorObservation) await fireFilesystem(trackerId);
     } catch (error) {
       clearResources(trackerId);
       onError(error, trackerId);

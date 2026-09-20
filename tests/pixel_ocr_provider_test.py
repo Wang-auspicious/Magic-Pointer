@@ -5,9 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import pytest
 from PIL import Image
 
 from app.evidence.contract import EvidenceStatus
+from app.input_artifact import compile_input_artifact
 from app.perception.broker import PerceptionBroker
 from app.perception.pixel_ocr import OCR_WORKER_BUSY_ENGINE, FrozenFrameOcrProvider
 from app.perception.providers import PerceptionRequest
@@ -101,6 +103,46 @@ def test_recognised_text_away_from_the_mark_is_not_the_answer(tmp_path: Path) ->
     assert result.trace["readState"] == "empty_confirmed"
 
 
+@pytest.mark.parametrize("use_strokes", [True, False])
+def test_text_only_ocr_is_preserved_without_claiming_a_location(
+    tmp_path: Path, use_strokes: bool,
+) -> None:
+    content = "联系人\n明天下午三点开会\n另一个会话"
+    provider = FrozenFrameOcrProvider(reader=_reader(
+        [{"text": content, "rect": None, "conf": None}], "tesseract",
+    ))
+    request = _request(tmp_path)
+    if not use_strokes:
+        request = _request(tmp_path, gesture=None)
+
+    result = PerceptionBroker().resolve(request, [provider])
+
+    assert result.context is not None
+    assert result.context.content == content
+    assert result.selected is not None
+    assert result.selected.status is EvidenceStatus.DEGRADED
+    assert result.selected.covers_mark is False
+    assert result.selected.coverage_reason == "ocr_geometry_unavailable"
+    assert result.context.artifacts["captured_rects"] == []
+    assert result.context.artifacts["ocr_stroke_filter"] is False
+    assert result.context.artifacts["ocr_block_count_selected"] == 0
+    artifact = compile_input_artifact("读一下圈中的文字", WINDOW, result.context, {
+        "perception_trace": result.trace,
+    })
+    facts = artifact.to_model_dict()["facts"]
+    assert {"kind": "unlocated_text", "value": content, "sources": ["OCR"]} in facts
+    assert not any(fact["kind"] == "selected_text" for fact in facts)
+
+
+def test_no_ocr_text_is_still_confirmed_empty(tmp_path: Path) -> None:
+    result = PerceptionBroker().resolve(
+        _request(tmp_path), [FrozenFrameOcrProvider(reader=_reader([]))],
+    )
+
+    assert result.context is None
+    assert result.observations[0].status is EvidenceStatus.EMPTY_CONFIRMED
+
+
 def test_block_geometry_is_reported_in_screen_pixels_not_artifact_pixels(
     tmp_path: Path,
 ) -> None:
@@ -134,3 +176,45 @@ def test_without_a_frozen_artifact_the_recogniser_is_never_reached(tmp_path: Pat
     assert reader.calls == []
     assert result.observations[0].status is EvidenceStatus.UNSUPPORTED
     assert result.observations[0].reason == "frozen_pixels_unavailable"
+
+
+def test_canonical_circle_selects_interior_through_worker_and_provider(tmp_path: Path) -> None:
+    """A loose circle accepted by the gesture UI must not become an open line."""
+    from scripts.ocr_resident_worker import _select_boxes
+    from scripts.selection_snapshot_bridge import _normalized_gesture
+
+    blocks = [
+        {"text": "Environment", "rect": [360, 250, 180, 24]},
+        {"text": "Local", "rect": [360, 340, 120, 24]},
+        {"text": "main", "rect": [360, 410, 120, 24]},
+        {"text": "Unrelated conversation", "rect": [20, 340, 140, 24]},
+    ]
+    boxes = [
+        [[x, y], [x + width, y], [x + width, y + height], [x, y + height]]
+        for x, y, width, height in (block["rect"] for block in blocks)
+    ]
+    read_paths = []
+
+    def read(path, *, strokes_local=None, selection_local=None):
+        read_paths.append(path)
+        selected = _select_boxes(boxes, strokes_local, selection_local)
+        return [block for block, box in zip(blocks, boxes) if box in selected], "rapidocr-onnx"
+
+    raw_points = [(300, 180), (600, 180), (650, 320), (600, 520), (300, 520), (260, 320), (300, 260)]
+    ring = [(300, 180), (600, 180), (650, 320), (600, 520), (300, 520), (260, 320), (300, 180)]
+    gesture = _normalized_gesture({
+        "schemaVersion": 2, "coordinateSpace": "physical_screen_pixels",
+        "strokes": [{
+            "points": [{"x": x, "y": y} for x, y in raw_points],
+            "geometry": {"type": "polygon_region", "coordinateSpace": "physical_screen_pixels",
+                         "ring": [{"x": x, "y": y} for x, y in ring]},
+        }],
+    })
+    request = _request(tmp_path, gesture=gesture, mark_bbox=(260, 180, 390, 340))
+
+    result = PerceptionBroker().resolve(request, [FrozenFrameOcrProvider(reader=read)])
+
+    assert result.context is not None
+    assert result.context.content == "Environment\nLocal\nmain"
+    assert read_paths == [request.frozen_artifact_path]
+    assert Image.open(read_paths[0]).size == (1200, 900)

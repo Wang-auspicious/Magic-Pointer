@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data: file:;" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data: file: http: https:;" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Magic Pointer</title>
   <script src="theme_boot.js?v=26"></script>
@@ -11,6 +11,8 @@
   <link rel="stylesheet" href="claude_shell.css?v=34" />
   <link rel="stylesheet" href="claude_chat.css?v=34" />
   <link rel="stylesheet" href="studio_artifacts.css?v=1" />
+  <link rel="stylesheet" href="assets/claude-reference/artifact-previews.css" />
+  <link rel="stylesheet" href="studio_libraries.css?v=1" />
 </head>
 <body class="studio">
   <div class="dshw-frame mp-shell" id="shell" data-view="chat" data-sidebar="expanded">
@@ -40,27 +42,41 @@
         <div class="dshw-logo-row">
           <div class="mp-mode-segment" id="mode-switch" role="tablist" aria-label="工作模式">
             <button type="button" id="mode-work" data-product-mode="design" role="tab" aria-selected="false">
-              <svg class="codex-icon" aria-hidden="true"><use href="#ic-list-checks" /></svg><span>Cowork</span>
+              <svg class="codex-icon" aria-hidden="true"><use href="#ic-list-checks" /></svg><span>Home</span>
             </button>
             <button type="button" id="mode-design" data-product-mode="walker" role="tab" aria-selected="true">
-              <svg class="codex-icon" aria-hidden="true"><use href="#ic-code" /></svg><span>Code</span>
+              <span class="cds-icon" data-size="small" data-cds-anim="ANIM ANM2" data-glyph="&#xE048;" aria-hidden="true"></span><span>Code</span>
             </button>
           </div>
         </div>
 
+        <nav class="mp-main-navigation" aria-label="Main navigation">
         <button class="dshw-new-session" id="nav-new-chat" data-goto="chat">
-          <span class="cds-icon" data-size="small" aria-hidden="true">&#xE001;</span><span class="dshw-new-session-label">New</span>
+          <span class="mp-nav-leading"><span class="mp-new-circle"><span class="cds-icon" data-size="small" data-glyph="&#xE001;" aria-hidden="true"></span></span></span><span class="mp-nav-label dshw-new-session-label">New</span>
         </button>
         <!-- `dshw-customize` 这个名字是历史遗留，它现在的实际含义是「侧栏导航
              行」——New / Artifacts / Customize 共用一套排版，所以三行同一个类。 -->
-        <button class="dshw-customize" id="nav-artifacts" data-goto="artifacts">
-          <span class="cds-icon" data-size="large" aria-hidden="true">&#xE017;</span><span>Artifacts</span>
+        <button class="dshw-customize" id="nav-projects" data-goto="projects" data-library-nav="projects">
+          <span class="mp-nav-leading"><span class="cds-icon" data-size="large" data-cds-anim="ANIM" data-glyph="&#xE0C9;" aria-hidden="true"></span></span><span class="mp-nav-label">Projects</span>
         </button>
-        <button class="dshw-customize" id="settings-open" data-goto="settings" aria-haspopup="dialog">
-          <span class="cds-icon" data-size="large" aria-hidden="true">&#xE100;</span><span>Customize</span>
+        <div class="mp-nav-row"><button class="dshw-customize" id="nav-artifacts" data-goto="artifacts" data-library-nav="artifacts">
+          <span class="mp-nav-leading"><span class="cds-icon" data-size="large" data-cds-anim="ANIM" data-glyph="&#xE017;" aria-hidden="true"></span></span><span class="mp-nav-label">Artifacts</span>
+        </button><button type="button" class="mp-nav-create" id="nav-artifact-create" aria-label="创建产物" title="创建产物"><span class="cds-icon" data-size="small" data-glyph="&#xE001;" aria-hidden="true"></span></button></div>
+        <button class="dshw-customize" id="nav-scheduled" data-goto="scheduled" data-library-nav="scheduled">
+          <span class="mp-nav-leading"><span class="cds-icon" data-size="large" data-glyph="&#xE043;" aria-hidden="true"></span></span><span class="mp-nav-label">Scheduled</span>
         </button>
+        <button class="dshw-customize" id="nav-designs" data-goto="designs" data-library-nav="designs">
+          <span class="mp-nav-leading"><span class="cds-icon" data-size="large" data-cds-anim="ANIM" data-glyph="&#xE0B8;" aria-hidden="true"></span></span><span class="mp-nav-label">Design</span>
+        </button>
+        <button class="dshw-customize" id="nav-customize" data-goto="customize" data-library-nav="customize">
+          <span class="mp-nav-leading"><span class="cds-icon" data-size="large" data-cds-anim="ANIM" data-glyph="&#xE100;" aria-hidden="true"></span></span><span class="mp-nav-label">Customize</span>
+        </button>
+        <button class="dshw-customize" id="sidebar-more" aria-haspopup="menu" aria-expanded="false">
+          <span class="mp-nav-leading"><span class="cds-icon" data-size="small" data-glyph="&#xE027;" aria-hidden="true"></span></span><span class="mp-nav-label">More</span>
+        </button>
+        </nav>
 
-        <nav class="mp-design-nav" aria-label="Cowork">
+        <nav class="mp-design-nav" aria-label="Cowork" hidden>
           <button type="button" data-goto="design"><svg class="codex-icon" aria-hidden="true"><use href="#ic-layout-grid" /></svg><span>Overview</span></button>
           <button type="button" data-goto="stash" data-design-layout="canvas"><svg class="codex-icon" aria-hidden="true"><use href="#ic-stash" /></svg><span>Canvas</span></button>
           <button type="button" data-goto="stash" data-design-layout="list"><svg class="codex-icon" aria-hidden="true"><use href="#ic-img" /></svg><span>Assets</span></button>
@@ -68,6 +84,7 @@
         </nav>
 
         <section class="dshw-workspace-browser" aria-label="对话浏览器">
+          <div class="mp-session-heading"><span>Projects</span><button type="button" data-goto="chats" aria-label="View all chats and tasks" title="View all"><span class="cds-icon" data-size="small" data-glyph="&#xE015;" aria-hidden="true"></span></button><button type="button" id="sidebar-group-sort" aria-label="Group and sort" title="Group and sort" aria-haspopup="menu" aria-expanded="false"><span class="cds-icon" data-size="small" data-glyph="&#xE070;" aria-hidden="true"></span></button></div>
           <div class="dshw-workspace-header">
             <span class="mp-projects-label">项目</span>
             <div class="dshw-workspace-search">
@@ -103,14 +120,16 @@
             <span class="mp-account-mark" aria-hidden="true"></span><span><strong>zjz65</strong><small>Gateway</small></span><span class="cds-icon" data-size="micro" aria-hidden="true">&#xE027;</span>
           </button>
           <div class="mp-account-menu" id="account-menu" hidden role="menu" aria-label="Magic Pointer menu">
-            <div class="mp-account-menu-header"><strong>zjz65</strong><small>Gateway</small></div>
-            <button type="button" role="menuitem" data-account-command="settings"><span class="mp-menu-icon"><svg aria-hidden="true"><use href="#ic-sliders" /></svg></span><span>Settings</span><kbd>Ctrl+,</kbd></button>
-            <button type="button" role="menuitem" data-account-command="models"><span class="mp-menu-icon"><svg aria-hidden="true"><use href="#ic-spark" /></svg></span><span>Models &amp; runtime</span></button>
-            <button type="button" role="menuitem" data-account-command="updates"><span class="mp-menu-icon"><svg aria-hidden="true"><use href="#ic-refresh" /></svg></span><span>Check for updates</span></button>
-            <button type="button" role="menuitem" data-account-command="changelog"><span class="mp-menu-icon"><svg aria-hidden="true"><use href="#ic-open" /></svg></span><span>View changelog</span></button>
+            <p class="mp-account-menu-header">zjz65 · Gateway</p>
+            <button type="button" role="menuitem" data-account-command="settings"><span class="cds-icon" data-size="large" data-glyph="&#xE0D6;" aria-hidden="true"></span><span>Settings</span><kbd>Ctrl+,</kbd></button>
+            <button type="button" role="menuitem" data-account-command="usage"><span class="cds-icon" data-size="large" data-glyph="&#xE130;" aria-hidden="true"></span><span>Usage</span></button>
+            <button type="button" role="menuitem" data-account-command="language" aria-haspopup="menu" aria-expanded="false"><span class="cds-icon" data-size="large" data-glyph="&#xE082;" aria-hidden="true"></span><span>Language</span></button>
+            <button type="button" role="menuitem" data-account-command="models"><span class="cds-icon" data-size="large" data-glyph="&#xE10D;" aria-hidden="true"></span><span>Inference configuration</span></button>
+            <button type="button" role="menuitem" data-account-command="help"><span class="cds-icon" data-size="large" data-glyph="&#xE088;" aria-hidden="true"></span><span>Get help</span></button>
             <hr />
-            <button type="button" role="menuitem" data-account-command="shortcuts"><span class="mp-menu-icon"><svg aria-hidden="true"><use href="#ic-command-line" /></svg></span><span>Keyboard shortcuts</span><kbd>Ctrl+/</kbd></button>
-            <button type="button" role="menuitem" data-account-command="about"><span class="mp-menu-icon"><svg aria-hidden="true"><use href="#ic-brain" /></svg></span><span>About Magic Pointer</span></button>
+            <button type="button" role="menuitem" data-account-command="changelog"><span class="cds-icon" data-size="large" data-glyph="&#xE0D2;" aria-hidden="true"></span><span>View changelog</span></button>
+            <button type="button" role="menuitem" data-account-command="learn-more" aria-haspopup="menu" aria-expanded="false"><span class="cds-icon" data-size="large" data-glyph="&#xE08F;" aria-hidden="true"></span><span>Learn more</span><span class="cds-icon" data-size="small" data-glyph="&#xE02A;" aria-hidden="true"></span></button>
+            <div class="mp-compact-menu mp-account-submenu" id="account-submenu" hidden role="menu"></div>
           </div>
           <button type="button" class="mp-theme-toggle" id="theme-toggle" aria-label="切换到深色主题" title="切换主题">
             <svg aria-hidden="true"><use id="theme-toggle-icon" href="#ic-moon" /></svg>
@@ -134,6 +153,7 @@
         <header class="dshw-header">
           <div class="dshw-title-row">
             <div class="dshw-title-cluster">
+              <span class="cds-icon" data-size="small" data-glyph="&#xE093;" aria-hidden="true"></span>
               <b class="dshw-title" id="chat-title">新对话</b>
               <span class="mp-chat-project"><span id="chat-project-label">Local</span></span>
             </div>
@@ -217,6 +237,7 @@
           <button type="button" class="dshw-scroll-pill" id="scroll-pill" hidden aria-label="回到底部">
             <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M8 11.5L2.5 6l1-1L8 9.5 12.5 5l1 1z" fill="currentColor"/></svg>
           </button>
+          <div id="conversation-recovery" hidden></div>
           <div class="dshw-stream" id="stream">
             <div class="dshw-blank" aria-hidden="true"></div>
           </div>
@@ -268,10 +289,10 @@
                   <svg aria-hidden="true"><use href="#ic-folder" /></svg><span id="composer-workspace-label">Select folder…</span>
                 </button>
                 <div class="mp-workspace-menu" id="composer-workspace-menu" hidden role="menu" aria-label="选择工作目录"></div>
-                <button type="button" class="mp-composer-worktree" id="composer-worktree" role="switch" aria-checked="false"
+                <button type="button" class="mp-composer-worktree" id="composer-worktree" role="checkbox" aria-checked="false"
                   aria-label="在独立的 git worktree 中工作" title="在独立的 git worktree 中工作" hidden>
                   <span class="mp-worktree-box" aria-hidden="true"><svg aria-hidden="true"><use href="#ic-check" /></svg></span>
-                  <span>worktree</span>
+                  <span>Worktree</span>
                 </button>
               </div>
               <form class="dshw-input-form mp-compact-composer" id="composer-form">
@@ -283,7 +304,7 @@
                           placeholder="Describe a task or ask a question" aria-label="Continue conversation"></textarea>
                       </div>
                       <button type="submit" class="dshw-primary" title="Send" aria-label="Send" disabled>
-                        <span class="cds-icon" data-size="large" aria-hidden="true">&#xE013;</span>
+                        <span class="cds-icon" data-size="large" data-glyph="&#xE00F;" aria-hidden="true"></span>
                       </button>
                     </div>
                     <div class="mp-composer-attachments" id="composer-attachments" hidden aria-label="附件"></div>
@@ -293,6 +314,7 @@
                         <button type="button" class="dshw-add" id="composer-add" aria-label="添加附件" aria-haspopup="menu" aria-expanded="false" title="添加附件">
                           <span class="cds-icon" data-size="large" aria-hidden="true">&#xE001;</span>
                         </button>
+                        <div class="mp-compact-menu" id="composer-attach-menu" hidden role="menu" aria-label="Add"></div>
                         <div class="dshw-add-menu dshw-slash-menu" id="composer-add-menu" hidden role="menu" aria-label="命令与技能">
                           <input type="search" id="composer-slash-search" placeholder="搜索命令与技能…" autocomplete="off" aria-label="搜索命令与技能" />
                           <div class="dshw-slash-rows" id="composer-slash-rows"></div>
@@ -327,6 +349,7 @@
                           <span class="mp-visually-hidden" id="composer-usage-label"></span>
                         </button>
                         <div class="mp-usage-popover" id="composer-usage-popover" role="dialog" aria-label="本会话模型用量" hidden></div>
+                        <div class="mp-usage-popover mp-usage-breakdown" id="composer-usage-breakdown" role="dialog" aria-label="Context window 明细" hidden></div>
                       </div>
                     </div>
                   </div>
@@ -366,6 +389,12 @@
         </div>
       </section>
 
+      <section class="dshw-view mp-library-view" id="view-projects" hidden><div class="mp-library" id="library-projects"></div></section>
+      <section class="dshw-view mp-library-view" id="view-scheduled" hidden><div class="mp-library" id="library-scheduled"></div></section>
+      <section class="dshw-view mp-library-view" id="view-customize" hidden><div class="mp-library" id="library-customize"></div></section>
+      <section class="dshw-view mp-library-view" id="view-chats" hidden><div class="mp-library" id="library-chats"></div></section>
+      <section class="dshw-view mp-library-view" id="view-designs" hidden><div class="mp-library" id="library-designs"></div></section>
+
       <!-- ===== 收藏箱（保留原画布/列表机制，外壳换 DSH 令牌） ===== -->
       <section class="dshw-view" id="view-stash" hidden>
         <div class="page-toolbar">
@@ -401,7 +430,7 @@
           <div class="mp-artifacts-bar">
             <div class="mp-artifacts-tabs" role="group" aria-label="产物范围">
               <button type="button" class="mp-artifact-tab is-on" data-artifact-scope="all" aria-pressed="true">全部</button>
-              <button type="button" class="mp-artifact-tab" data-artifact-scope="mine" aria-pressed="false">我的</button>
+              <button type="button" class="mp-artifact-tab" data-artifact-scope="mine" aria-pressed="false">可编辑草稿</button>
             </div>
             <div class="mp-artifacts-tools">
               <button type="button" class="mp-artifact-tool" id="artifact-search-toggle" aria-label="搜索产物" title="搜索产物" aria-expanded="false" aria-controls="artifact-search-field">
@@ -421,6 +450,14 @@
             <span class="mp-artifact-search-glyph" aria-hidden="true"><svg><use href="#ic-search" /></svg></span>
             <input type="search" id="artifact-search-input" autocomplete="off" placeholder="搜索产物名称或来源" aria-label="搜索产物名称或来源" />
           </label>
+          <div class="mp-artifact-create">
+            <h2>Make something new</h2>
+            <div class="mp-artifact-templates">
+              <button type="button" data-artifact-create="帮我创建一份文档。先确认主题、受众和需要使用的材料。"><span><strong>Docs</strong><small>文档与可编辑草稿</small></span><span class="mp-original-preview" data-original-preview="docs" aria-hidden="true"></span></button>
+              <button type="button" data-artifact-create="帮我制作一份演示文稿。先确认主题、受众、页数和参考材料。"><span><strong>Slides</strong><small>从主题和材料开始</small></span><span class="mp-original-preview" data-original-preview="slides" aria-hidden="true"></span></button>
+              <button type="button" data-artifact-create="帮我完成一项设计。先确认目标应用、设计目标和参考材料。"><span><strong>Design</strong><small>界面、图像与设计方案</small></span><span class="mp-original-preview" data-original-preview="design" aria-hidden="true"></span></button>
+            </div>
+          </div>
           <div class="view-body" id="art-list" data-layout="list"></div>
         </div>
       </section>
@@ -491,7 +528,7 @@
       </section>
       <section class="mp-inspector-panel is-on" id="inspector-files" data-inspector-panel="files">
         <label class="mp-inspector-filter"><svg aria-hidden="true"><use href="#ic-search" /></svg><input id="file-tree-filter" type="search" placeholder="筛选文件…" autocomplete="off" /></label>
-        <div class="mp-file-tree" id="project-file-tree" role="tree"><p class="mp-inspector-empty">打开项目后显示文件。</p></div>
+        <div class="mp-file-tree" id="project-file-tree" role="tree" tabindex="0"><p class="mp-inspector-empty">打开项目后显示文件。</p></div>
         <article class="mp-file-preview" id="project-file-preview" hidden>
           <header>
             <span id="project-file-name"></span>
@@ -540,6 +577,7 @@
             <button type="button" id="artifact-editor-save">保存版本</button>
             <button type="button" id="artifact-editor-accept">接受当前版本</button>
             <button type="button" class="is-primary" id="artifact-editor-apply">应用并验证</button>
+            <button type="button" id="artifact-editor-undo" hidden>撤销本次应用</button>
           </footer>
         </div>
       </section>
@@ -648,6 +686,8 @@
   <script defer src="../slash_trigger.js?v=23"></script>
   <script defer src="permission_presets.js?v=23"></script>
   <script defer src="effort_levels.js?v=33"></script>
+  <script defer src="assets/claude/effort-shaders.js"></script>
+  <script defer src="effort_particles.js"></script>
   <script defer src="popover_position.js?v=33"></script>
   <script defer src="sidebar_groups.js?v=23"></script>
   <script defer src="studio_search.js?v=33"></script>
@@ -658,6 +698,7 @@
   <script defer src="../task_sources.js"></script>
   <script defer src="../task_input_transport.js"></script>
   <script defer src="data.js?v=23"></script>
+  <script defer src="studio_libraries.js?v=1"></script>
   <script defer src="settings_model.js?v=23"></script>
   <script defer src="settings.js?v=23"></script>
   <script defer src="studio.js?v=26"></script>

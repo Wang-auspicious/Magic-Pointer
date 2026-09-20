@@ -269,14 +269,17 @@ function setActiveProject(root: unknown) {
    `base` 记住切出去之前是哪个项目，关掉开关要切回去。 */
 interface ComposerWorktree { path: string; branch: string; base: string }
 let composerWorktree: ComposerWorktree | null = null;
-let composerWorktreeBusy = false;
+let composerWorktreeEnabled = false;
 try {
   const stored = JSON.parse(localStorage.getItem('mp:composer-worktree') || 'null') as ComposerWorktree | null;
   if (stored?.path && stored?.base) composerWorktree = stored;
+  composerWorktreeEnabled = localStorage.getItem('mp:composer-worktree-enabled') === 'true'
+    || (localStorage.getItem('mp:composer-worktree-enabled') === null && Boolean(composerWorktree));
 } catch { /* storage unavailable */ }
 
 function persistComposerWorktree() {
   try {
+    localStorage.setItem('mp:composer-worktree-enabled', String(composerWorktreeEnabled));
     if (composerWorktree) localStorage.setItem('mp:composer-worktree', JSON.stringify(composerWorktree));
     else localStorage.removeItem('mp:composer-worktree');
   } catch { /* storage unavailable */ }
@@ -285,14 +288,12 @@ function persistComposerWorktree() {
 function renderComposerWorktree() {
   const button = document.getElementById('composer-worktree') as HTMLButtonElement | null;
   if (!button) return;
-  const base = composerWorktree?.base || activeProjectRoot;
-  button.hidden = !base;
-  button.setAttribute('aria-checked', composerWorktree ? 'true' : 'false');
-  button.disabled = composerWorktreeBusy;
-  if (composerWorktree) {
-    button.title = `${composerWorktree.branch} · ${composerWorktree.path}`;
-    button.removeAttribute('data-error');
-  }
+  button.hidden = !activeProjectRoot;
+  button.setAttribute('aria-checked', String(composerWorktreeEnabled));
+  button.disabled = false;
+  button.title = composerWorktreeEnabled
+    ? 'Work in an isolated copy of your repository so you can keep working without conflicts.'
+    : 'Work in an isolated copy of your repository to work on multiple tasks at the same time.';
 }
 
 /* 失败必须说出来：git 拒绝（不是仓库、有未提交改动、分支占用了）时开关弹回
@@ -303,48 +304,41 @@ function failComposerWorktree(button: HTMLElement | null, message: string) {
 }
 
 document.getElementById('composer-worktree')?.addEventListener('click', (event) => {
-  void (async () => {
-    const button = event.currentTarget as HTMLButtonElement;
-    if (composerWorktreeBusy) return;
-    if (!composerWorktree && !activeProjectRoot) return;
-    composerWorktreeBusy = true;
-    button.disabled = true;
-    try {
-      if (composerWorktree) {
-        const closing = composerWorktree;
-        const result = await Data.projectWorktree({
-          action: 'remove',
-          projectRoot: closing.base,
-          path: closing.path,
-        });
-        if (!result?.ok) {
-          failComposerWorktree(button, String(result?.error || '无法移除 worktree。'));
-          return;
-        }
-        composerWorktree = null;
-        persistComposerWorktree();
-        setActiveProject(closing.base);
-      } else {
-        const base = activeProjectRoot;
-        const result = await Data.projectWorktree({
-          action: 'create',
-          projectRoot: base,
-          conversationId: activeConversationId || '',
-        });
-        if (!result?.ok || !result.path) {
-          failComposerWorktree(button, String(result?.error || '无法创建 worktree。'));
-          return;
-        }
-        composerWorktree = { path: String(result.path), branch: String(result.branch || 'worktree'), base };
-        persistComposerWorktree();
-        setActiveProject(result.path);
-      }
-    } finally {
-      composerWorktreeBusy = false;
-      renderComposerWorktree();
-    }
-  })();
+  if (!activeProjectRoot) return;
+  composerWorktreeEnabled = !composerWorktreeEnabled;
+  (event.currentTarget as HTMLElement).removeAttribute('data-error');
+  if (!composerWorktreeEnabled && composerWorktree
+      && normalizedProjectRoot(activeProjectRoot) === normalizedProjectRoot(composerWorktree.path)) {
+    setActiveProject(composerWorktree.base);
+  }
+  persistComposerWorktree();
+  renderComposerWorktree();
 });
+
+// Like Claude's checkbox, choosing a worktree is immediate. Git only runs when
+// sending a task; deselecting never deletes a checkout or its uncommitted work.
+async function prepareComposerWorktree(): Promise<string> {
+  const base = activeProjectRoot;
+  if (!composerWorktreeEnabled || !base) return base;
+  if (composerWorktree && [composerWorktree.base, composerWorktree.path]
+    .some(root => normalizedProjectRoot(root) === normalizedProjectRoot(base))) {
+    setActiveProject(composerWorktree.path);
+    return composerWorktree.path;
+  }
+  const result = await Data.projectWorktree({ action: 'create', projectRoot: base, conversationId: activeConversationId || '' });
+  if (!result?.ok || !result.path) {
+    const message = String(result?.error || '无法创建 worktree。');
+    failComposerWorktree(document.getElementById('composer-worktree'), message);
+    throw new Error(message);
+  }
+  composerWorktree = { path: result.path, branch: result.branch || 'worktree', base };
+  persistComposerWorktree();
+  // A user may cancel the checkbox while Git is running. Keep the created
+  // checkout for reuse, and run the task in the originally selected folder.
+  if (!composerWorktreeEnabled) return base;
+  setActiveProject(result.path);
+  return result.path;
+}
 
 function renderProjectContext() {
   renderComposerWorktree();
@@ -447,6 +441,7 @@ interface SidebarGroupModule {
   groupByWorkspace(rows: readonly MagicPointerConversation[]): SidebarWorkspaceGroup[];
 }
 const sidebarGroups = (globalThis as { SidebarGroups?: SidebarGroupModule }).SidebarGroups!;
+const studioLibraries = (globalThis as any).StudioLibraries;
 interface StudioHomeModule {
   render(options: {
     stats: MagicPointerHomeStats | null;
@@ -498,21 +493,34 @@ interface PopoverPositionModule {
 }
 const effortLevels = (globalThis as { EffortLevels?: EffortLevelsModule }).EffortLevels!;
 const popoverPosition = (globalThis as { PopoverPosition?: PopoverPositionModule }).PopoverPosition!;
+let effortParticleController: { setMax(value: boolean): void; dispose(): void } | null = null;
 
 const STUDIO_POPOVERS = [
   ['composer-permission-menu', 'composer-permission'],
   ['composer-model-menu', 'composer-model'],
   ['composer-effort-menu', 'composer-effort'],
+  ['composer-attach-menu', 'composer-add'],
   ['composer-usage-popover', 'composer-context'],
   ['account-menu', 'account-footer'],
 ] as const;
 
 function closeAnchoredPopover(popupId: string, triggerId: string) {
+  if (popupId === 'composer-effort-menu') {
+    effortParticleController?.dispose();
+    effortParticleController = null;
+  }
+  if (popupId === 'account-menu') {
+    const submenu = document.getElementById('account-submenu');
+    if (submenu) submenu.hidden = true;
+    document.querySelectorAll('[data-account-command][aria-haspopup]').forEach(row => row.setAttribute('aria-expanded', 'false'));
+  }
+  if (popupId === 'composer-usage-popover') setUsageDetailsOpen(false);
   const popup = document.getElementById(popupId);
   if (popup) {
     popup.hidden = true;
     popup.style.removeProperty('left');
     popup.style.removeProperty('top');
+    popup.style.removeProperty('width');
     popup.style.removeProperty('visibility');
   }
   document.getElementById(triggerId)?.setAttribute('aria-expanded', 'false');
@@ -540,6 +548,9 @@ function positionAnchoredPopover(popupId: string, triggerId: string): HTMLElemen
   popup.style.left = `${point.left}px`;
   popup.style.top = `${point.top}px`;
   popup.style.removeProperty('visibility');
+  if (popupId === 'composer-permission-menu') {
+    popup.style.left = `${Math.max(12, Math.min(trigger.getBoundingClientRect().left, innerWidth - popup.offsetWidth - 12))}px`;
+  }
   trigger.setAttribute('aria-expanded', 'true');
   return popup;
 }
@@ -635,32 +646,222 @@ function conversationNode(c: {
   return row;
 }
 
-/* 会话动作菜单：挂在行内，打开时才可见；点击外部由全局委托收起。 */
-function buildSessionMenu(c: { id?: string; title?: string }): HTMLElement {
+/* 会话动作菜单：挂在行内，打开时才可见；点击外部由全局委托收起。
+   结构照参考：图标 + 文案 +（P/R/D 快捷键），子菜单带右尖角，置顶后换成
+   「取消固定 / 移除出项目 / 上移 / 下移」——固定过的项靠手动顺序排，不再按分组。 */
+function buildSessionMenu(c: { id?: string; title?: string; workspaceRoot?: string }): HTMLElement {
+  const id = String(c.id || '');
   const menu = document.createElement('span');
   menu.className = 'side-session-menu';
   menu.hidden = true;
-  menu.dataset.forSession = String(c.id || '');
-  const makeItem = (label: string, danger: boolean, action: () => void) => {
-    const item = document.createElement('button');
-    item.type = 'button';
-    item.className = 'side-session-menu-item' + (danger ? ' is-danger' : '');
-    item.textContent = label;
-    item.addEventListener('click', (e) => {
-      e.stopPropagation();
-      menu.hidden = true;
-      action();
-    });
-    return item;
+  menu.dataset.forSession = id;
+  const glyph = (globalThis as unknown as { CdsIcons: { html: (name: string, size?: string) => string } }).CdsIcons.html;
+  type MenuItem = { icon: string; key?: string; danger?: boolean; submenu?: boolean };
+  const item = (name: string, label: string, options: MenuItem) => {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'side-session-menu-item' + (options.danger ? ' is-danger' : '');
+    row.dataset.sessionAction = name;
+    row.innerHTML = `<span class="side-menu-icon" aria-hidden="true">${glyph(options.icon)}</span><span class="side-menu-label">${esc(label)}</span>`
+      + (options.key ? `<kbd>${options.key}</kbd>` : options.submenu ? '<span class="side-menu-chevron" aria-hidden="true">›</span>' : '');
+    return row;
   };
-  menu.append(
-    makeItem('重命名', false, () => openRenameDialog(String(c.id || ''), String(c.title || ''))),
-    makeItem('删除对话', true, () => {
-      if (String(c.id || '') === activeConversationId) startNewChat();
-      void Data.deleteConversation(String(c.id || '')).then(() => renderSidebar());
-    }),
-  );
+  const divider = () => { const line = document.createElement('hr'); return line; };
+  const local = studioLibraries.sessionPreference(id);
+  const inProject = Boolean(String(c.workspaceRoot || '').trim());
+  const close = (event: Event) => { event.stopPropagation(); menu.hidden = true; };
+  const run = (name: string) => (event: Event) => {
+    close(event);
+    if (name === 'pin') {
+      studioLibraries.setSessionPreference(id, { pinned: !local.pinned, order: Date.now() });
+      void renderSidebar();
+      return;
+    }
+    if (name === 'rename') { openRenameDialog(id, String(c.title || '')); return; }
+    if (name === 'archive') {
+      studioLibraries.setSessionPreference(id, { archived: !local.archived });
+      void renderSidebar();
+      return;
+    }
+    if (name === 'remove-project') { void Data.setConversationProject(id, '').then(() => renderSidebar()); return; }
+    if (name === 'up') { studioLibraries.movePinned(id, -1); void renderSidebar(); return; }
+    if (name === 'down') { studioLibraries.movePinned(id, 1); void renderSidebar(); return; }
+    if (name === 'delete') {
+      if (id === activeConversationId) startNewChat();
+      void Data.deleteConversation(id).then(() => renderSidebar());
+    }
+  };
+  const pin = item('pin', local.pinned ? 'Unpin' : 'Pin', { icon: local.pinned ? 'unpin' : 'pinned-star', key: 'P' });
+  pin.dataset.sessionPinned = String(local.pinned);
+  pin.addEventListener('click', run('pin'));
+  menu.append(pin);
+  const rename = item('rename', 'Rename', { icon: 'mode-write', key: 'R' });
+  rename.addEventListener('click', run('rename'));
+  menu.append(rename);
+  const project = item('project', inProject ? 'Change project' : 'Add to project', { icon: 'box', submenu: true });
+  // 不能先藏菜单再传 anchor：元素一 hidden，getBoundingClientRect() 全归零，
+  // 项目选择器会被摆到窗口左上角。菜单留着，选择器自己按外部点击收起。
+  project.addEventListener('click', (event) => { event.stopPropagation(); void openProjectAssignment(id, project); });
+  menu.append(project);
+  if (inProject) {
+    const removeProject = item('remove-project', 'Remove from project', { icon: 'arrow-out' });
+    removeProject.addEventListener('click', run('remove-project'));
+    menu.append(removeProject);
+  }
+  if (!local.pinned) {
+    // 「移至分组」是个真子菜单：列出现有分组名，加一条新建。
+    const parent = item('group', 'Move to group', { icon: 'folder', submenu: true });
+    const apply = (group: string | null) => {
+      if (group === null) {
+        void requestStudioText('分组名称', local.group || '', 60).then(name => {
+          if (name === null) return;
+          studioLibraries.setSessionGroup(id, name);
+          studioLibraries.setFilter('group', 'custom');
+          void renderSidebar();
+        });
+        return;
+      }
+      studioLibraries.setSessionGroup(id, group);
+      studioLibraries.setFilter('group', 'custom');
+      void renderSidebar();
+    };
+    const show = () => openGroupSubmenu(parent, studioLibraries.sessionGroups(), local.group || '', apply);
+    parent.addEventListener('mouseenter', () => { closeGroupSubmenu?.(); show(); });
+    parent.addEventListener('focusin', show);
+    parent.addEventListener('click', (event) => { event.stopPropagation(); show(); });
+    menu.append(parent);
+  }
+  const archive = item('archive', local.archived ? 'Unarchive' : 'Archive', { icon: 'archive' });
+  archive.addEventListener('click', run('archive'));
+  menu.append(archive);
+  menu.append(divider());
+  if (local.pinned) {
+    const up = item('up', 'Move up', { icon: 'send' });
+    up.addEventListener('click', run('up'));
+    const down = item('down', 'Move down', { icon: 'arrow-down' });
+    down.addEventListener('click', run('down'));
+    menu.append(up, down, divider());
+  }
+  const remove = item('delete', 'Delete', { icon: 'trash', key: 'D', danger: true });
+  remove.addEventListener('click', run('delete'));
+  menu.append(remove);
   return menu;
+}
+
+/* 「移至分组」的子菜单必须挂到 body 上：侧栏列表是 overflow:auto 的滚动容器，
+   留在行内的绝对定位子菜单会被它整块裁掉，右侧只剩一个白角。
+   位置按父行算，右边界放不下就翻到左侧；鼠标移开父行进到面板里不算离开。 */
+let closeGroupSubmenu: (() => void) | null = null;
+function openGroupSubmenu(anchor: HTMLElement, groups: readonly string[], current: string, pick: (group: string | null) => void): void {
+  closeGroupSubmenu?.();
+  const glyph = (globalThis as unknown as { CdsIcons: { html: (name: string, size?: string) => string } }).CdsIcons.html;
+  const panel = document.createElement('div');
+  panel.className = 'side-session-submenu is-floating';
+  panel.setAttribute('role', 'menu');
+  panel.setAttribute('aria-label', 'Move to group');
+  panel.innerHTML = groups.map((group: string) => `<button type="button" role="menuitemradio" aria-checked="${current === group}" data-session-group="${esc(group)}"><span>${esc(group)}</span>${current === group ? glyph('check') : ''}</button>`).join('')
+    + `<button type="button" data-session-group-new><span>New group…</span></button>`;
+  document.body.append(panel);
+  const rect = anchor.getBoundingClientRect();
+  const width = panel.offsetWidth;
+  const height = panel.offsetHeight;
+  const left = rect.right + 4 + width <= window.innerWidth - 8 ? rect.right + 4 : Math.max(8, rect.left - width - 4);
+  panel.style.left = `${Math.round(left)}px`;
+  panel.style.top = `${Math.round(Math.max(8, Math.min(rect.top - 4, window.innerHeight - height - 8)))}px`;
+  let hideTimer: number | undefined;
+  const close = () => {
+    if (hideTimer !== undefined) window.clearTimeout(hideTimer);
+    panel.remove();
+    if (closeGroupSubmenu === close) closeGroupSubmenu = null;
+  };
+  const scheduleClose = () => { hideTimer = window.setTimeout(close, 180); };
+  const cancelClose = () => { if (hideTimer !== undefined) window.clearTimeout(hideTimer); };
+  anchor.addEventListener('mouseleave', scheduleClose);
+  anchor.addEventListener('focusout', scheduleClose);
+  panel.addEventListener('mouseenter', cancelClose);
+  panel.addEventListener('mouseleave', scheduleClose);
+  panel.addEventListener('click', (event) => {
+    event.stopPropagation();
+    const target = (event.target as Element).closest<HTMLElement>('[data-session-group], [data-session-group-new]');
+    if (!target) return;
+    const value = target.dataset.sessionGroup;
+    close();
+    pick(value === undefined ? null : String(value));
+  });
+  closeGroupSubmenu = close;
+}
+
+/* 菜单打开时按 P / R / D 直接执行对应行——参考里写在行右端的字母要是按不动，
+   就只是装饰。和模型菜单的 1..9 一样：菜单关掉就解绑。 */
+function bindSessionMenuKeys(menu: HTMLElement): void {
+  const onKey = (event: KeyboardEvent) => {
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    const key = event.key.toLocaleLowerCase();
+    const name = key === 'p' ? 'pin' : key === 'r' ? 'rename' : key === 'd' ? 'delete' : '';
+    if (!name) return;
+    const row = menu.querySelector<HTMLElement>(`[data-session-action="${name}"]`);
+    if (!row) return;
+    event.preventDefault();
+    event.stopPropagation();
+    row.click();
+  };
+  const observer = new MutationObserver(() => {
+    if (menu.hidden) { document.removeEventListener('keydown', onKey, true); observer.disconnect(); }
+  });
+  observer.observe(menu, { attributes: true, attributeFilter: ['hidden'] });
+  document.addEventListener('keydown', onKey, true);
+}
+
+let projectAssignmentRequest = 0;
+let closeProjectAssignment: (() => void) | null = null;
+async function openProjectAssignment(id: string, anchor: HTMLElement) {
+  const request = ++projectAssignmentRequest;
+  closeProjectAssignment?.();
+  const parentMenu = anchor.closest<HTMLElement>('.side-session-menu, .mp-library-popover');
+  const bounds = (parentMenu || anchor).getBoundingClientRect();
+  const anchorBounds = anchor.getBoundingClientRect();
+  const [projects, conversation] = await Promise.all([Data.projects(), Data.conversation(id)]);
+  if (!conversation || request !== projectAssignmentRequest) return;
+  const popover = document.createElement('div'); popover.className = 'mp-library-popover mp-project-assignment';
+  popover.setAttribute('role', 'menu'); popover.setAttribute('aria-label', 'Change project');
+  const glyph = (globalThis as any).CdsIcons.html;
+  popover.innerHTML = `<label class="mp-library-search">${glyph('search')}<input type="search" data-project-search placeholder="Search projects" aria-label="Search projects" /></label><div class="mp-project-options">${studioLibraries.projectOptionsMarkup(projects, conversation.workspaceRoot || '')}</div><button type="button" data-project-picker>${glyph('attach')}<span>Start new project…</span></button><p class="mp-library-error" role="status"></p>`;
+  const left = bounds.right + 240 <= window.innerWidth - 8 ? bounds.right - 3 : bounds.left - 237;
+  popover.style.left = `${Math.max(8, Math.min(left, window.innerWidth - 248))}px`;
+  document.body.append(popover);
+  popover.style.top = `${Math.max(8, Math.min(anchorBounds.top - 4, window.innerHeight - popover.offsetHeight - 8))}px`;
+  anchor.setAttribute('aria-expanded', 'true');
+  const listeners = new AbortController();
+  const close = () => { popover.remove(); anchor.setAttribute('aria-expanded', 'false'); listeners.abort(); if (closeProjectAssignment === close) closeProjectAssignment = null; };
+  closeProjectAssignment = close;
+  document.addEventListener('pointerdown', event => { if (!popover.contains(event.target as Node) && !parentMenu?.contains(event.target as Node)) close(); }, {signal:listeners.signal});
+  document.addEventListener('keydown', event => { if (event.key === 'Escape') { close(); anchor.focus(); } }, {signal:listeners.signal});
+  const report = (reason: unknown) => { popover.querySelector('.mp-library-error')!.textContent = reason instanceof Error ? reason.message : String(reason); };
+  let busy = false;
+  async function move(root: string) {
+    if (busy) return; busy = true;
+    popover.querySelectorAll<HTMLButtonElement>('button').forEach(button => { button.disabled = true; });
+    try {
+      const result = await Data.setConversationProject(id, root);
+      if (!result.ok) throw new Error(result.error || '项目没有更改。');
+      if (activeConversationId === id) setActiveProject(root);
+      close(); if (parentMenu) parentMenu.hidden = true; await renderSidebar();
+    } catch (reason) { report(reason); busy = false; popover.querySelectorAll<HTMLButtonElement>('button').forEach(button => { button.disabled = false; }); }
+  }
+  popover.addEventListener('input', event => {
+    const input = event.target as HTMLInputElement;
+    if (input.matches('[data-project-search]')) popover.querySelector('.mp-project-options')!.innerHTML = studioLibraries.projectOptionsMarkup(projects, conversation.workspaceRoot || '', input.value);
+  });
+  popover.addEventListener('click', event => {
+    event.stopPropagation();
+    const button = (event.target as Element).closest<HTMLElement>('button');
+    if (button?.hasAttribute('data-project-root')) void move(String(button.dataset.projectRoot || ''));
+    if (button?.hasAttribute('data-project-picker')) void Data.openProject().then(result => {
+      if (result.ok && result.project) return move(result.project.root);
+      if (!result.ok && !result.canceled) report(result.error || '项目没有创建。');
+    }).catch(report);
+  });
+  popover.querySelector<HTMLInputElement>('input')?.focus();
 }
 
 /* 重命名对话框：Electron 不支持 window.prompt，用内联覆盖层。 */
@@ -779,12 +980,14 @@ function openRenameDialog(id: string, currentTitle: string) {
           if (m !== host) (m as HTMLElement).hidden = true;
         });
         host.hidden = !host.hidden;
+        if (!host.hidden) bindSessionMenuKeys(host);
       }
       return;
     }
     document.querySelectorAll('.side-session-menu:not([hidden])').forEach((m) => {
-      if (!target.closest('.side-session-menu')) (m as HTMLElement).hidden = true;
+      if (!target.closest('.side-session-menu, .mp-project-assignment')) (m as HTMLElement).hidden = true;
     });
+    if (!target.closest('.side-session-menu, .side-session-submenu.is-floating, .mp-project-assignment')) closeGroupSubmenu?.();
   });
 })();
 
@@ -869,7 +1072,7 @@ async function renderSidebar() {
     ?? activeConversationId
     ?? undefined;
   const nodes: HTMLElement[] = [];
-  let filtered = sidebarGroups.filterConversations(list, sidebarQuery);
+  let filtered = studioLibraries.filterRows(sidebarGroups.filterConversations(list, sidebarQuery)) as MagicPointerConversation[];
   if (sidebarRecentOnly) {
     const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
     filtered = filtered.filter((conversation) => Number(conversation.updatedAt) >= cutoff);
@@ -890,9 +1093,10 @@ async function renderSidebar() {
     ...projectGroups,
     ...(localGroup ? [{ key: '', label: localGroup.label, items: localGroup.items as MagicPointerConversation[] }] : []),
   ];
+  const displayGroups = studioLibraries.sections(filtered, groups) as Array<{ key: string; label: string; items: MagicPointerConversation[]; virtual?: boolean }>;
   const browser = host.closest<HTMLElement>('.dshw-workspace-browser');
-  browser?.classList.toggle('is-empty', groups.length === 0);
-  if (!groups.length) {
+  browser?.classList.toggle('is-empty', displayGroups.length === 0);
+  if (!displayGroups.length) {
     const empty = document.createElement('div');
     empty.className = 'side-empty';
     const label = document.createElement('span');
@@ -902,7 +1106,7 @@ async function renderSidebar() {
     if (!projects.length) empty.append(emptySessionsPictogram());
     nodes.push(empty);
   }
-  for (const group of groups) {
+  for (const group of displayGroups) {
     const project = document.createElement('section');
     project.className = 'dshw-project';
     const open = expandedWorkspaces.get(group.key) !== false;
@@ -915,6 +1119,7 @@ async function renderSidebar() {
     toggle.type = 'button';
     toggle.className = 'dshw-project-toggle';
     toggle.dataset.workspaceToggle = group.key;
+    if (group.virtual) toggle.dataset.virtualGroup = 'true';
     toggle.dataset.projectSelect = group.key;
     toggle.setAttribute('aria-expanded', String(open));
     const projectName = document.createElement('span');
@@ -923,7 +1128,7 @@ async function renderSidebar() {
     toggle.appendChild(projectName);
     const actions = document.createElement('span');
     actions.className = 'dshw-project-actions';
-    if (group.key) {
+    if (group.key && !group.virtual) {
       const add = document.createElement('button');
       add.type = 'button';
       add.dataset.projectNew = group.key;
@@ -942,12 +1147,6 @@ async function renderSidebar() {
     for (const c of group.items) {
       const node = conversationNode(c, active);
       sessions.appendChild(node);
-    }
-    if (!group.items.length) {
-      const empty = document.createElement('span');
-      empty.className = 'dshw-project-empty';
-      empty.textContent = 'No sessions';
-      sessions.appendChild(empty);
     }
     project.append(head, sessions);
     nodes.push(project);
@@ -1141,8 +1340,8 @@ document.getElementById('workspace-filter')?.addEventListener('click', (event) =
 
 function compactTokenCount(value: number): string {
   if (value < 1000) return String(value);
-  if (value < 10000) return `${(value / 1000).toFixed(1)}k`;
-  return `${Math.round(value / 1000)}k`;
+  if (value >= 1_000_000) return `${Number((value / 1_000_000).toFixed(2))}M`;
+  return `${Number((value / 1000).toFixed(1))}k`;
 }
 
 /* ---- 左上角的跳转条 ----
@@ -1380,13 +1579,18 @@ function quotedSelection(text: string): string {
 let composerQuota: MagicPointerQuotaReport | null = null;
 let composerQuotaPending = false;
 let usageMeterTurns: MagicPointerTurn[] = [];
+let usageDetailsOpen = false;
+let composerQuotaKey = '';
 
-function ensureComposerQuota() {
-  if (composerQuota || composerQuotaPending) return;
+function ensureComposerQuota(force = false) {
+  const key = `${modelCatalog?.provider || ''}:${modelCatalog?.source || ''}:${modelCatalog?.current || ''}`;
+  if (composerQuotaKey !== key) { composerQuota = null; composerQuotaKey = key; }
+  if (composerQuotaPending || (!force && composerQuota && Date.now() - composerQuota.fetchedAt < 60_000)) return;
   composerQuotaPending = true;
-  void Data.modelQuota().then((report) => {
+  void Data.modelQuota({ force }).then((report) => {
     composerQuotaPending = false;
     if (!report) return;
+    if (key !== `${modelCatalog?.provider || ''}:${modelCatalog?.source || ''}:${modelCatalog?.current || ''}`) return;
     composerQuota = report;
     renderUsageMeter(usageMeterTurns);
   });
@@ -1449,39 +1653,86 @@ function usageSegmentShare(value: number, contextWindow: number): string {
   return `${Math.max(0, Math.min(100, value / contextWindow * 100))}%`;
 }
 
+function contextCategoryRows(usage: MagicPointerModelUsage | undefined): Array<{kind: string; label: string; value: number}> {
+  if (!usage?.contextTokens) return [];
+  const estimates = [
+    { kind: 'system', label: '系统提示词', value: usage.systemTokensEstimate || 0 },
+    { kind: 'tools', label: '工具定义', value: usage.toolSchemaTokensEstimate || 0 },
+    { kind: 'messages', label: '对话消息', value: usage.messageTokensEstimate || 0 },
+    { kind: 'results', label: '工具结果', value: usage.toolResultTokensEstimate || 0 },
+  ].filter(row => row.value > 0);
+  const sum = estimates.reduce((total, row) => total + row.value, 0);
+  if (sum === 0) return [{ kind: 'input', label: '请求输入', value: usage.contextTokens }];
+  return estimates.map(row => ({ ...row, value: row.value / sum * usage.contextTokens! }));
+}
+
+function latestContextUsage(turns: MagicPointerTurn[]): MagicPointerModelUsage | undefined {
+  for (const turn of [...turns].reverse()) {
+    const records = turn.liveProgress?.trajectory || turn.trajectory || [];
+    const current = [...records].reverse().find(record => record.kind === 'message'
+      && typeof (record.modelUsage as MagicPointerModelUsage)?.contextTokens === 'number')?.modelUsage as MagicPointerModelUsage | undefined;
+    if (current) return current;
+    if (typeof turn.modelUsage?.contextTokens === 'number') return turn.modelUsage;
+    // Older saved turns contain only the sum of their model calls.
+    if (turn.modelUsage) return undefined;
+  }
+  return undefined;
+}
+
+function positionUsageBreakdown() {
+  const main = document.getElementById('composer-usage-popover');
+  const detail = document.getElementById('composer-usage-breakdown');
+  if (!main || main.hidden || !detail || detail.hidden) return;
+  const rect = main.getBoundingClientRect();
+  const gap = 8;
+  detail.style.width = `${Math.min(320, Math.max(120, rect.left - gap - 12))}px`;
+  detail.style.left = `${Math.max(12, rect.left - detail.offsetWidth - gap)}px`;
+  detail.style.top = `${Math.max(12, Math.min(rect.top, window.innerHeight - detail.offsetHeight - 12))}px`;
+}
+
+function setUsageDetailsOpen(open: boolean) {
+  usageDetailsOpen = open;
+  const detail = document.getElementById('composer-usage-breakdown');
+  if (detail) detail.hidden = !open;
+  document.querySelectorAll('#composer-usage-popover [aria-controls="composer-usage-breakdown"]')
+    .forEach(node => node.setAttribute('aria-expanded', String(open)));
+  if (open) positionUsageBreakdown();
+}
+
 function renderUsageMeter(turns: MagicPointerTurn[]) {
   usageMeterTurns = turns;
   const button = document.getElementById('composer-context') as HTMLButtonElement | null;
   const label = document.getElementById('composer-usage-label');
   const popover = document.getElementById('composer-usage-popover');
   if (!button || !label || !popover) return;
-  const inputTokens = turns.reduce((total, turn) => total + (Number(turn.modelUsage?.inputTokens) || 0), 0);
-  const outputTokens = turns.reduce((total, turn) => total + (Number(turn.modelUsage?.outputTokens) || 0), 0);
+  const inputTokens = turns.reduce((total, turn) => total + (Number((latestContextUsage([turn]) || turn.modelUsage)?.inputTokens) || 0), 0);
+  const outputTokens = turns.reduce((total, turn) => total + (Number((latestContextUsage([turn]) || turn.modelUsage)?.outputTokens) || 0), 0);
   const totalTokens = inputTokens + outputTokens;
   const currentModel = modelCatalog?.groups?.flatMap((group) => group.models || [])
-    .find((entry) => entry.id === modelCatalog?.current);
-  const contextWindow = Number(currentModel?.contextWindow) || 0;
-  const latestUsage = [...turns].reverse().find((turn) => turn.modelUsage && typeof turn.modelUsage === 'object')?.modelUsage;
+    .find((entry) => entry.id === modelCatalog?.current
+      && (!modelCatalog?.currentProfileId || entry.profileId === modelCatalog.currentProfileId));
+  const latestUsage = latestContextUsage(turns);
+  const contextWindow = Number(latestUsage?.contextWindow) || Number(currentModel?.contextWindow) || 0;
   /* 「上下文占了多少」问的是**这一次请求送进去多少**，所以只数输入。
      以前把输出也加了进来：输出还没被送回去，把它算进窗口占用既说不通，
      又会把百分比顶到 100%，看上去像一条越界的实心色块。
      比例本身不夹：真超过窗口就该看得见超过，夹掉的数字是在替数据圆谎。
      夹的只有进度条的宽度——那条画不出超过 100%。 */
-  const contextTokens = Number(latestUsage?.inputTokens) || 0;
+  const contextTokens = Number(latestUsage?.contextTokens) || 0;
+  const measured = latestUsage?.contextEstimated === 0 || turns.length === 0;
+  const known = typeof latestUsage?.contextTokens === 'number' || turns.length === 0;
   const contextRatio = contextWindow > 0 ? contextTokens / contextWindow * 100 : 0;
   const contextProgress = Math.max(0, Math.min(100, Math.round(contextRatio)));
   button.hidden = false;
   button.style.setProperty('--mp-context-progress', String(contextProgress));
-  label.textContent = contextWindow > 0
-    ? `${Math.round(contextRatio)}% context used`
-    : `${compactTokenCount(totalTokens)} tokens used`;
+  label.textContent = known && contextWindow > 0
+    ? `${measured ? '' : '≈'}${Math.round(contextRatio)}% context used`
+    : 'Context usage unavailable';
   button.title = contextWindow > 0
     ? `Context ${contextTokens.toLocaleString()} / ${contextWindow.toLocaleString()} tokens`
     : `Session usage: ${totalTokens.toLocaleString()} tokens`;
-  /* 参考的这张卡是一行标题 + 一条彩色分段条 + 分组 + 几行 + 页脚链接。
-     形状照搬，数字换成我们真有的：Claude 那几行是套餐限额（5 小时 / 每周），
-     Magic Pointer 没有配额这回事，所以分组里放的是这个会话真实的几个类别。
-     宁可少一行，也不画一个没有来源的百分比。 */
+  /* Context is the latest request. Account windows come from the provider;
+     cumulative billing counters are available in the expanded details. */
   popover.replaceChildren();
   const el = (tag: string, className: string, text?: string) => {
     const node = document.createElement(tag);
@@ -1489,12 +1740,20 @@ function renderUsageMeter(turns: MagicPointerTurn[]) {
     if (text !== undefined) node.textContent = text;
     return node;
   };
-  const head = el('div', 'mp-usage-head');
+  const head = el('button', 'mp-usage-head') as HTMLButtonElement;
+  head.type = 'button';
+  head.setAttribute('aria-expanded', String(usageDetailsOpen));
+  const toggleDetails = (event: Event) => {
+    event.stopPropagation();
+    setUsageDetailsOpen(!usageDetailsOpen);
+  };
+  head.setAttribute('aria-controls', 'composer-usage-breakdown');
+  head.addEventListener('click', toggleDetails);
   head.append(el('span', 'mp-usage-head-label', 'Context window'));
   const headValue = el('span', 'mp-usage-head-value',
-    contextWindow > 0
-      ? `${compactTokenCount(contextTokens)} / ${compactTokenCount(contextWindow)} (${Math.round(contextRatio)}%)`
-      : `${compactTokenCount(totalTokens)} tokens`);
+    known && contextWindow > 0
+      ? `${measured ? '' : '≈'}${compactTokenCount(contextTokens)} / ${compactTokenCount(contextWindow)} (${Math.round(contextRatio)}%)`
+      : `${known ? compactTokenCount(contextTokens) : '—'} / ${contextWindow > 0 ? compactTokenCount(contextWindow) : '—'}`);
   const chev = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   chev.setAttribute('aria-hidden', 'true');
   chev.classList.add('mp-usage-chev');
@@ -1504,27 +1763,54 @@ function renderUsageMeter(turns: MagicPointerTurn[]) {
   head.append(headValue, chev);
   popover.append(head);
 
-  /* 分段条：这一轮的用量按类别切成相邻的几段，一段一个颜色，剩下的空位就是
-     窗口里没用的部分——那是底色，不是第五段。宽度都按同一个窗口算，所以几段
-     里输入侧那三段加起来正是标头那个百分比；输出也画在同一条上，按同一个
-     尺度，只是它还没被送回窗口里去。某家 provider 不报的类别不出现：条上只
-     剩两段是实情，不是没画完。 */
-  const latestRows = usageCategoryRows(latestUsage);
+  /* The composition is provider-independent. Component proportions are local
+     estimates; their sum is calibrated to the measured request input. */
+  const latestRows = contextCategoryRows(latestUsage);
   const bar = el('div', 'mp-usage-bar');
   if (contextWindow > 0) {
     for (const row of latestRows) {
       const segment = el('span', `mp-usage-seg is-${row.kind}`);
       segment.setAttribute('data-kind', row.kind);
+      segment.title = `${row.label}：约 ${Math.round(row.value).toLocaleString()} tokens`;
       segment.style.width = usageSegmentShare(row.value, contextWindow);
       bar.append(segment);
     }
   }
   popover.append(bar);
 
-  popover.append(el('div', 'mp-usage-divider'));
+  const details = document.getElementById('composer-usage-breakdown') || el('div', 'mp-usage-breakdown');
+  details.replaceChildren();
+  details.hidden = !usageDetailsOpen;
+  const detailHead = el('div', 'mp-usage-head');
+  detailHead.append(el('span', '', 'Context window'));
+  detailHead.append(el('span', 'mp-usage-head-value', headValue.textContent || ''));
+  details.append(detailHead);
+  const contextRows = [...latestRows, ...(contextWindow > 0 ? [{
+    kind: 'available', label: '剩余空间', value: Math.max(0, contextWindow - contextTokens),
+  }] : [])];
+  for (const row of contextRows) {
+    const node = el('div', 'mp-usage-row mp-usage-context-row');
+    node.dataset.kind = row.kind;
+    const rowLabel = el('span', 'mp-usage-row-label');
+    const swatch = el('span', 'mp-usage-swatch');
+    swatch.dataset.kind = row.kind;
+    rowLabel.append(swatch, document.createTextNode(row.label));
+    node.append(rowLabel, el('span', 'mp-usage-row-value', `${row.kind === 'available' ? '' : '≈'}${Math.round(row.value).toLocaleString()}`));
+    const track = el('div', 'mp-usage-row-track');
+    const fill = el('div', 'mp-usage-row-fill');
+    fill.dataset.kind = row.kind;
+    fill.style.width = usageSegmentShare(row.value, contextWindow);
+    track.append(fill);
+    node.append(track);
+    details.append(node);
+  }
+  if (latestRows.length) details.append(el('div', 'mp-usage-note', measured
+    ? '总量为服务端计量；各项占比为本地估算。' : '本地估算 · 收到服务端用量后更新。'));
+  details.append(el('div', 'mp-usage-divider'));
   const section = el('div', 'mp-usage-section');
-  section.append(el('span', 'mp-usage-section-label', '本会话用量'));
+  section.append(el('span', 'mp-usage-section-label', `本会话累计 · ${totalTokens.toLocaleString()} tokens`));
   const arrow = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  arrow.setAttribute('viewBox', '0 0 20 20');
   arrow.setAttribute('aria-hidden', 'true');
   arrow.classList.add('mp-usage-arrow');
   const arrowPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
@@ -1535,15 +1821,14 @@ function renderUsageMeter(turns: MagicPointerTurn[]) {
   arrowPath.setAttribute('stroke-linecap', 'round');
   arrowPath.setAttribute('stroke-linejoin', 'round');
   arrow.appendChild(arrowPath);
-  section.append(arrow);
-  popover.append(section);
+  details.append(section);
 
   /* 本会话的类别合计。一行一个类别，每行的条用这一类别自己的颜色——四行四个
      色，不是四行一个色。这一段的尺度和上面那条不一样：上面问的是「这一轮占
      了窗口多少」，这里问的是「整个会话花在哪」，所以各算各的，不硬凑成一个数。 */
   const sessionTotals: Record<string, number> = {};
   for (const turn of turns) {
-    for (const row of usageCategoryRows(turn.modelUsage)) {
+    for (const row of usageCategoryRows(latestContextUsage([turn]) || turn.modelUsage)) {
       sessionTotals[row.kind] = (sessionTotals[row.kind] || 0) + row.value;
     }
   }
@@ -1554,18 +1839,11 @@ function renderUsageMeter(turns: MagicPointerTurn[]) {
       value: sessionTotals[category.kind] || 0,
     }))
     .filter((row) => row.value > 0);
-  const sessionTotal = Math.max(1, sessionRows.reduce((total, row) => total + row.value, 0));
   for (const row of sessionRows) {
     const node = el('div', 'mp-usage-row');
     node.append(el('span', 'mp-usage-row-label', row.label));
     node.append(el('span', 'mp-usage-row-value', compactTokenCount(row.value)));
-    const track = el('div', 'mp-usage-row-track');
-    const fill = el('div', 'mp-usage-row-fill');
-    fill.setAttribute('data-kind', row.kind);
-    fill.style.width = `${Math.round(row.value / sessionTotal * 100)}%`;
-    track.append(fill);
-    node.append(track);
-    popover.append(node);
+    details.append(node);
   }
 
   /* 账户配额。数字来自 provider 自己的接口（见 electron/quota_probe.ts），
@@ -1574,15 +1852,24 @@ function renderUsageMeter(turns: MagicPointerTurn[]) {
      灰色的原因，那是真信息，不是装饰。 */
   if (composerQuota && (composerQuota.rows.length > 0 || composerQuota.error)) {
     popover.append(el('div', 'mp-usage-divider'));
-    const quotaSection = el('div', 'mp-usage-section');
+    const quotaSection = el('button', 'mp-usage-section mp-usage-quota-head');
+    quotaSection.setAttribute('aria-expanded', String(usageDetailsOpen));
+    quotaSection.setAttribute('aria-controls', 'composer-usage-breakdown');
+    const quotaTitle = composerQuota.rows.some(row => row.percent !== null) ? 'Plan usage limits' : 'Usage';
     quotaSection.append(el('span', 'mp-usage-section-label',
-      composerQuota.label ? `配额 · ${composerQuota.label}` : '配额'));
+      composerQuota.label ? `${quotaTitle} · ${composerQuota.label}` : quotaTitle));
+    const quotaArrow = arrow.cloneNode(true);
+    quotaSection.append(quotaArrow);
+    quotaSection.addEventListener('click', toggleDetails);
     popover.append(quotaSection);
+    const quotaRows = el('div', 'mp-usage-quota-rows');
     for (const row of composerQuota.rows) {
       const node = el('div', 'mp-usage-row');
       node.append(el('span', 'mp-usage-row-label', row.label));
-      node.append(el('span', 'mp-usage-row-value', row.value));
-      if (row.detail) node.append(el('span', 'mp-usage-row-detail', row.detail));
+      const value = el('span', 'mp-usage-row-value');
+      if (row.detail) value.append(el('span', 'mp-usage-row-detail', row.detail));
+      value.append(el('span', '', row.value));
+      node.append(value);
       if (row.percent !== null && row.percent !== undefined) {
         const track = el('div', 'mp-usage-row-track');
         const fill = el('div', 'mp-usage-row-fill');
@@ -1590,21 +1877,43 @@ function renderUsageMeter(turns: MagicPointerTurn[]) {
         track.append(fill);
         node.append(track);
       }
-      popover.append(node);
+      quotaRows.append(node);
+    }
+    popover.append(quotaRows);
+    if (composerQuota.adapter === 'deepseek') {
+      let cost = 0;
+      let priced = 0;
+      let reported = 0;
+      for (const turn of turns) {
+        const usage = latestContextUsage([turn]) || turn.modelUsage;
+        cost += usage?.estimatedCostUsd || 0;
+        priced += usage?.pricedRequests || 0;
+        reported += usage?.turnsReported || 0;
+      }
+      const row = el('div', 'mp-usage-row');
+      row.append(el('span', 'mp-usage-row-label', '本会话费用 (USD)'));
+      row.append(el('span', 'mp-usage-row-value', priced > 0 ? `≈$${cost.toFixed(6)}` : '—'));
+      quotaRows.append(row);
+      details.append(el('div', 'mp-usage-note', `已计价 ${priced}/${reported} 次请求。按 DeepSeek 官方 2026-09-19 价格、缓存与峰谷时段估算；以厂家账单为准。`));
     }
     if (composerQuota.error) popover.append(el('div', 'mp-usage-note', composerQuota.error));
+    details.append(el('div', 'mp-usage-note', `额度更新于 ${new Date(composerQuota.fetchedAt).toLocaleTimeString()} · ${composerQuota.source}`));
+  } else {
+    popover.append(el('div', 'mp-usage-divider'));
+    popover.append(el('div', 'mp-usage-section', composerQuotaPending ? 'Loading usage…' : 'Usage · 当前服务未提供额度接口'));
   }
 
   popover.append(el('div', 'mp-usage-divider'));
   const foot = document.createElement('button');
   foot.type = 'button';
   foot.className = 'mp-usage-foot';
-  foot.textContent = '查看完整统计';
-  foot.addEventListener('click', () => {
-    closeAnchoredPopover('composer-usage-popover', 'composer-context');
-    void renderStudioHome();
-  });
+  foot.textContent = 'See detailed breakdown';
+  foot.setAttribute('aria-controls', 'composer-usage-breakdown');
+  foot.setAttribute('aria-expanded', String(usageDetailsOpen));
+  foot.addEventListener('click', toggleDetails);
   popover.append(foot);
+  if (!popover.hidden) positionAnchoredPopover('composer-usage-popover', 'composer-context');
+  positionUsageBreakdown();
 }
 
 document.getElementById('composer-context')?.addEventListener('click', (event) => {
@@ -1617,16 +1926,25 @@ document.getElementById('composer-context')?.addEventListener('click', (event) =
     positionAnchoredPopover('composer-usage-popover', 'composer-context');
     // 配额不是每个回合都会变，但也不该在启动时就打一次接口——等这张卡被
     // 真正打开再问，然后原地补上那几行。
-    ensureComposerQuota();
+    ensureComposerQuota(true);
   } else closeAnchoredPopover('composer-usage-popover', 'composer-context');
   button.setAttribute('aria-expanded', String(open));
 });
+
+window.setInterval(() => {
+  if (!document.hidden && !document.getElementById('composer-usage-popover')?.hidden) ensureComposerQuota();
+}, 15_000);
 
 /* ---- 打开一条对话 ---- */
 let activeConversationId: string | null = null;
 let activeConversationTab: 'chat' | 'trajectory' = 'chat';
 let activeConversationTurnCount = 0;
 let activeConversationTurns: Record<string, unknown>[] = [];
+let activeConversationView: ReturnType<typeof DshChat.createConversationView> | null = null;
+let activeConversationRecord: MagicPointerConversation | null = null;
+let conversationRefreshSequence = 0;
+let conversationNotificationSequence = 0;
+let externalConversationRun: { requestId: string; agentSessionId: string; body: HTMLElement } | null = null;
 /* 这条对话挂着的屏幕对象：联想词要读它，否则模型只看到半截上下文。 */
 let activeConversationObject: Record<string, unknown> = {};
 let activeTaskContext: MagicPointerTaskContext | null = null;
@@ -1935,6 +2253,7 @@ function setConversationTab(tab: 'chat' | 'trajectory') {
 }
 
 async function openConversation(id: string) {
+  const notificationSequence = conversationNotificationSequence;
   const c = await Data.conversation(id);
   if (!c) return;
   const switchedTask = activeConversationId !== c.id;
@@ -1945,6 +2264,15 @@ async function openConversation(id: string) {
   }
   if (activeConversationId !== c.id) repositoryContextDismissedFor = '';
   activeConversationId = c.id;
+  activeConversationRecord = c;
+  void renderConversationRecovery(c.id);
+  activeConversationView = null;
+  conversationRefreshSequence += 1;
+  if (externalConversationRun) {
+    externalConversationRun = null;
+    studioComposerBusy = Boolean(pendingConversation);
+    setComposerRunningState(studioComposerBusy);
+  }
   setActiveTaskContext(c.taskContext, switchedTask);
   void refreshFigmaConnection();
   activeConversationTurnCount = Array.isArray(c.turns) ? c.turns.length : 0;
@@ -1992,6 +2320,7 @@ async function openConversation(id: string) {
   dshCardNodes.clear();
   const turns = c.turns || [];
   activeConversationTurns = turns as Record<string, unknown>[];
+  syncConversationPendingInput(turns);
   activeConversationObject = (c as { object?: Record<string, unknown> }).object || {};
   /* 换了对话，上一条的建议就不再是关于「这里」的了。 */
   clearComposerSuggestion();
@@ -2007,33 +2336,10 @@ async function openConversation(id: string) {
   // 每轮使用稳定的工具/思考结构；消息本身保持克制，操作在悬停时出现。
   const flow = document.createElement('div');
   flow.className = 'dsh-flow';
+  activeConversationView = DshChat.createConversationView(flow);
+  activeConversationView.update(c);
   for (const [turnIndex, t] of turns.entries()) {
-    const branchTarget = { conversationId: c.id, turnIndex };
-    /* 回答权限门的那一轮不带用户气泡：用户点的是卡上的选项，不是发了消息。
-       回执保留了「授权了什么」，所以信息没丢，只是不再是「用户说了这句话」。 */
-    const permissionAnswer = (t as { permissionAnswer?: { decision?: string; rule?: string } }).permissionAnswer;
-    if (permissionAnswer) {
-      flow.appendChild(DshChat.permissionAnswerNode(permissionAnswer));
-    } else if (t.question) {
-      flow.appendChild(DshChat.userNode(String(t.question), t.at, branchTarget));
-    }
-    const host = document.createElement('div');
-    host.className = 'dsh-flow-item';
-    for (const node of DshChat.assistantTurnNode({
-      answer: t.answer,
-      thinking: t.thinking,
-      trace: t.trace,
-      events: t.events,
-      activities: t.activities,
-      trajectory: t.trajectory,
-      modelUsage: t.modelUsage,
-      artifacts: (t as { artifacts?: Array<Record<string, unknown>> }).artifacts,
-      failed: t.failed,
-      at: t.at,
-      conversationId: c.id,
-      turnIndex,
-    })) host.appendChild(node);
-    flow.appendChild(host);
+    const host = flow.querySelector<HTMLElement>(`.dsh-flow-item[data-turn-index="${turnIndex}"]`)!;
     // 后台任务补丁按舞台同款 cardId 就地落到这个节点：登记代理卡，
     // 补丁来了 replaceWith 重画，不重建整条流。
     const proxy = LiveCards.track(CardModel.normalizeCard({
@@ -2041,7 +2347,7 @@ async function openConversation(id: string) {
       kind: 'prose',
       state: t.failed ? 'failed' : 'done',
       answer: t.answer || '',
-      error: t.failed ? (t.answer || '这次没能完成。') : '',
+      error: t.failed ? String(t.error || '这次没能完成。') : '',
       steps: (t.trace || []).map((x) => (typeof x === 'string'
         ? { label: x, state: 'done' }
         : { label: x.label, note: x.note || '', state: 'done' })),
@@ -2051,48 +2357,80 @@ async function openConversation(id: string) {
   stream.replaceChildren(flow);
   stream.scrollTop = stream.scrollHeight;
   DshChat.bindDelegation(stream);
+  syncExternalConversationRun(c);
   scheduleStreamRail();
   renderUsageMeter(turns);
-  /* 会话重开后审批卡要能 reconstruct：最后一条 turn 若带着未消化的
-     pendingInput（等待输入被打断/重启），卡重新长在 composer 上沿。
-     已被回答过的旧提问不复活——只有最后一轮还在等才亮。 */
-  const lastTurn = turns[turns.length - 1] as {
-    pendingInput?: {
-      question?: unknown;
-      options?: unknown;
-      kind?: unknown;
-      tool?: unknown;
-      prefix?: unknown;
-    } | null;
-    failed?: boolean;
-  } | undefined;
-  const lastPending = lastTurn && !lastTurn.failed && lastTurn.pendingInput && typeof lastTurn.pendingInput === 'object'
-    ? lastTurn.pendingInput
-    : null;
-  const lastOptions = lastPending && Array.isArray(lastPending.options)
-    ? (lastPending.options as unknown[]).map((o) => String(o)).filter(Boolean)
-    : [];
-  if (
-    lastPending?.kind === 'permission'
-    && String(lastPending.tool || '').trim()
-  ) {
-    pendingPermissionAsk = {
-      tool: String(lastPending.tool),
-      prefix: String(lastPending.prefix || '').trim() || undefined,
-    };
-    pendingAskInput = null;
-    renderPermissionAsk();
-  } else if (lastOptions.length >= 2) {
-    pendingAskInput = {
-      question: String(lastPending?.question || '需要你的决定'),
-      options: lastOptions,
-    };
-    pendingPermissionAsk = null;
-    renderPermissionAsk();
-  }
   const trajectory = document.getElementById('trajectory');
   if (trajectory) trajectory.replaceChildren(DshTrajectory.render(DshTrajectory.project(turns)));
   setConversationTab(activeConversationTab);
+  if (notificationSequence !== conversationNotificationSequence) void refreshOpenConversation({ id: c.id });
+}
+
+/* The last turn owns the composer question for both reopening and external
+   task updates. Replacing that turn must also clear any previous question. */
+function syncConversationPendingInput(turns: MagicPointerTurn[]) {
+  const last = turns.at(-1);
+  const pending = last && !last.failed && !last.liveProgress ? last.pendingInput : null;
+  const options = Array.isArray(pending?.options) ? pending.options.map(String).filter(Boolean) : [];
+  pendingPermissionAsk = null;
+  pendingAskInput = null;
+  if (pending?.kind === 'permission' && String(pending.tool || '').trim()) {
+    pendingPermissionAsk = {
+      tool: String(pending.tool),
+      prefix: String(pending.prefix || '').trim() || undefined,
+      question: String(pending.question || '').trim() || undefined,
+      options: options.length ? options : undefined,
+    };
+  } else if (options.length >= 2) {
+    pendingAskInput = { question: String(pending?.question || '需要你的决定'), options };
+  }
+  renderPermissionAsk();
+}
+
+function syncExternalConversationRun(conversation: MagicPointerConversation) {
+  if (pendingConversation) return;
+  const turns = conversation.turns || [];
+  const live = turns.at(-1)?.liveProgress;
+  const body = document.querySelector<HTMLElement>(`.dsh-flow-item[data-turn-index="${turns.length - 1}"]`);
+  const wasRunning = Boolean(externalConversationRun);
+  const next = live?.requestId && body ? {
+    requestId: live.requestId,
+    agentSessionId: live.agentSessionId || conversation.agentSessionId || conversation.taskContext?.taskId || '',
+    body,
+  } : null;
+  if (next && externalConversationRun?.requestId === next.requestId) Object.assign(externalConversationRun, next);
+  else externalConversationRun = next;
+  studioComposerBusy = Boolean(externalConversationRun);
+  if (wasRunning !== studioComposerBusy) setComposerRunningState(studioComposerBusy);
+}
+
+async function refreshOpenConversation(change?: MagicPointerConversationChange) {
+  const id = activeConversationId;
+  if (!id || !change?.id || change.id !== id || !activeConversationView || pendingConversation) return;
+  const sequence = ++conversationRefreshSequence;
+  let conversation: MagicPointerConversation | null;
+  const index = change.turnIndex;
+  if (change.liveProgress && Number.isInteger(index) && activeConversationTurns[Number(index)] && activeConversationRecord) {
+    const turns = activeConversationTurns.slice() as MagicPointerTurn[];
+    turns[Number(index)] = { ...turns[Number(index)], outcome: '进行中', liveProgress: change.liveProgress };
+    conversation = { ...activeConversationRecord, turns };
+  } else conversation = (await Data.conversation(id)) || null;
+  if (!conversation || activeConversationId !== id || sequence !== conversationRefreshSequence || !activeConversationView) return;
+  activeConversationRecord = conversation;
+  activeConversationTurns = conversation.turns || [];
+  activeConversationTurnCount = activeConversationTurns.length;
+  if (conversation.taskContext) setActiveTaskContext(conversation.taskContext);
+  const stream = document.getElementById('stream');
+  if (stream) followIfNearBottom(stream, () => activeConversationView?.update(conversation!));
+  syncExternalConversationRun(conversation);
+  if (!change.liveProgress) {
+    void renderConversationRecovery(conversation.id);
+    syncConversationPendingInput(conversation.turns || []);
+    renderUsageMeter(conversation.turns || []);
+    renderProjectTasks();
+    const trajectory = document.getElementById('trajectory');
+    if (trajectory) trajectory.replaceChildren(DshTrajectory.render(DshTrajectory.project(conversation.turns || [])));
+  }
 }
 
 /* 代理卡 → DSH 节点：后台任务补丁（进度/步骤/终态）就地换掉那一轮。 */
@@ -2130,6 +2468,12 @@ let artifactKind = '';
 let artifactQuery = '';
 let artifactLayout: 'list' | 'grid' = 'list';
 let artifactViewBound = false;
+const artifactPreviews = new Map<string, string>();
+const artifactPreviewPending = new Set<string>();
+
+function artifactGlyph(name: string, size = 'small') {
+  return (globalThis as unknown as { CdsIcons: { html(name: string, size: string): string } }).CdsIcons.html(name, size);
+}
 
 /* kind 是桥端透传的自由字符串（现网见过 file / text / document_patch）。
    只给认得的 kind 配中文名和图标，认不得的原样显示——不编类型。 */
@@ -2146,11 +2490,9 @@ function artifactKindLabel(kind: string) {
 }
 
 function artifactKindIcon(kind: string) {
-  if (kind === 'code') return 'ic-code';
-  if (kind === 'document_patch') return 'ic-file-text';
-  if (kind === 'image') return 'ic-img';
-  if (kind === 'text') return 'ic-docs';
-  return 'ic-file';
+  if (kind === 'code') return 'code';
+  if (kind === 'image') return 'image';
+  return 'document';
 }
 
 /* 产物名是落盘内容的第一行，模型经常写成 `**验证结果：已通过。**`。列表里一行
@@ -2202,23 +2544,26 @@ function artifactRowMarkup(entry: ArtifactEntry) {
   const kind = String(entry.kind || '');
   const name = artifactPlainLine(entry.name) || artifactPlainLine(entry.summary) || '未命名产物';
   const meta = [
-    entry.from ? `来自「${entry.from}」` : '',
-    Number(entry.revision) > 0 ? `revision ${Number(entry.revision)}` : '',
     formatTime(entry.at),
   ].filter(Boolean).join(' · ');
   const openAttrs = entry.artifactId
     ? `data-artifact-id="${esc(entry.artifactId)}" data-artifact-conversation="${esc(entry.conversationId)}"`
     : `data-open="${esc(entry.conversationId)}"`;
-  return `<button type="button" class="mp-artifact-row" ${openAttrs}>
-      <span class="mp-artifact-tile" data-kind="${esc(kind)}" aria-hidden="true">${icon(artifactKindIcon(kind))}</span>
+  const excerpt = artifactPreviews.get(`${entry.artifactId}:${entry.revision || 0}`) || entry.summary || name;
+  return `<div class="mp-artifact-item"><button type="button" class="mp-artifact-row" ${openAttrs} title="${esc(entry.from ? `${name} · ${entry.from}` : name)}">
+      <span class="mp-artifact-preview" aria-hidden="true">${studioLibraries.artifactPreviewMarkup({ ...entry, name }, excerpt)}</span>
+      <span class="mp-artifact-tile" data-kind="${esc(kind)}" aria-hidden="true">${artifactGlyph(artifactKindIcon(kind))}</span>
       <span class="mp-artifact-name">${esc(name)}</span>
       <span class="mp-artifact-meta">${esc(meta)}</span>
-    </button>`;
+    </button><details class="mp-artifact-actions"><summary aria-label="产物操作">${artifactGlyph('more-horizontal')}</summary>
+      <div class="mp-artifact-action-menu"><button type="button" ${openAttrs}>${artifactGlyph('external')}打开产物</button>
+      ${entry.conversationId ? `<button type="button" data-open="${esc(entry.conversationId)}">${artifactGlyph('composer-aux1')}查看来源对话</button>` : ''}</div>
+    </details></div>`;
 }
 
 /* 空态照参考的克制写法：只有一行灰字，没有插画、没有那颗撑满页面的图标。 */
 function artifactEmptyMarkup(message: string) {
-  return `<p class="mp-artifact-empty">${esc(message)}</p>`;
+  return `<div class="mp-artifact-empty-state">${studioLibraries.pictogram('HandShapes')}<p class="mp-artifact-empty">${esc(message)}</p></div>`;
 }
 
 function closeArtifactKindMenu() {
@@ -2236,7 +2581,7 @@ function paintArtifactToolbar(list: ArtifactEntry[]) {
       const label = kind ? artifactKindLabel(kind) : '全部类型';
       const count = kind ? list.filter((entry) => String(entry.kind || '') === kind).length : list.length;
       return `<button type="button" role="menuitemradio" aria-checked="${kind === artifactKind ? 'true' : 'false'}"
-        data-artifact-kind="${esc(kind || '__all__')}"><span>${esc(label)}</span><em>${count}</em></button>`;
+        data-artifact-kind="${esc(kind || '__all__')}"><span class="mp-kind-label">${kind ? `<span class="mp-artifact-kind-icon" data-kind="${esc(kind)}">${artifactGlyph(artifactKindIcon(kind))}</span>` : ''}${esc(label)}</span><span class="mp-kind-tail">${kind === artifactKind ? artifactGlyph('check') : `<em>${count}</em>`}</span></button>`;
     }).join('');
   }
   const kindLabel = document.getElementById('artifact-kind-label');
@@ -2253,6 +2598,7 @@ function paintArtifactToolbar(list: ArtifactEntry[]) {
     layout.setAttribute('aria-pressed', String(grid));
     layout.setAttribute('aria-label', text);
     layout.setAttribute('title', text);
+    layout.innerHTML = artifactGlyph(grid ? 'layout-list' : 'layout-grid');
   }
   const host = document.getElementById('art-list');
   if (host) host.dataset.layout = artifactLayout;
@@ -2290,6 +2636,25 @@ function paintArtifacts() {
     <div class="mp-artifact-group-label">${esc(group.label)}</div>
     ${group.items.map((entry) => artifactRowMarkup(entry)).join('')}
   </div>`).join('');
+  if (artifactLayout === 'grid') void loadArtifactPreviews(filtered);
+}
+
+async function loadArtifactPreviews(entries: ArtifactEntry[]) {
+  const pending = entries.slice(0, 24).filter((entry) => {
+    const key = `${entry.artifactId}:${entry.revision || 0}`;
+    return entry.artifactId && entry.conversationId && !artifactPreviews.has(key) && !artifactPreviewPending.has(key);
+  });
+  if (!pending.length) return;
+  await Promise.all(pending.map(async (entry) => {
+    const key = `${entry.artifactId}:${entry.revision || 0}`;
+    artifactPreviewPending.add(key);
+    try {
+      const response = await Data.readArtifact(entry.conversationId!, entry.artifactId!);
+      artifactPreviews.set(key, response.ok ? String(response.artifact?.content || '') : '');
+    } catch { artifactPreviews.set(key, ''); }
+    finally { artifactPreviewPending.delete(key); }
+  }));
+  if (artifactLayout === 'grid') paintArtifacts();
 }
 
 /* 工具条是真的在筛东西：tab / 类型 / 搜索 / 布局四种状态都落到同一份缓存上。
@@ -2320,6 +2685,13 @@ function bindArtifactView() {
 
   view.addEventListener('click', (event) => {
     const target = event.target as Element | null;
+    const create = target?.closest<HTMLElement>('[data-artifact-create]');
+    if (create) {
+      document.getElementById('nav-new-chat')?.click();
+      const input = document.querySelector<HTMLTextAreaElement>('#composer-form textarea');
+      if (input) { input.value = String(create.dataset.artifactCreate || ''); fitComposer(input); input.focus(); }
+      return;
+    }
     const scope = target?.closest<HTMLElement>('[data-artifact-scope]');
     if (scope) {
       artifactScope = scope.dataset.artifactScope === 'mine' ? 'mine' : 'all';
@@ -2371,11 +2743,12 @@ function bindArtifactView() {
   });
 }
 
-async function renderArtifacts(force = false) {
+async function renderArtifacts(_force = false) {
   bindArtifactView();
   const host = document.getElementById('art-list');
-  if (!host || (host.childElementCount && !force)) return;
-  const list = (await Data.artifacts()) as ArtifactEntry[];
+  if (!host) return;
+  const [list] = await Promise.all([Data.artifacts() as Promise<ArtifactEntry[]>, studioLibraries.loadPictograms()]);
+  studioLibraries.mountPreviews(document.getElementById('v-artifacts') || document);
   artifactCache = list.slice().sort((left, right) => (Number(right.at) || 0) - (Number(left.at) || 0));
   paintArtifacts();
 }
@@ -2404,6 +2777,7 @@ const artifactEditor = ArtifactEditor.createArtifactEditor({
     String(payload.artifactId || ''),
     Number(payload.revision),
   ),
+  undo: (payload) => Data.undoArtifact(String(payload.conversationId || ''), String(payload.artifactId || ''), Number(payload.revision), payload.confirmed === true),
 });
 
 type FigmaArtifactPreview = {
@@ -2504,6 +2878,9 @@ async function retargetFigmaArtifact(index: number): Promise<void> {
     state.conversationId,
     coordinates.documentSessionId,
   );
+  const current = artifactEditor.state();
+  if (current.selectionGeneration !== state.selectionGeneration
+    || current.revision !== state.revision || current.patchPayload !== state.patchPayload) return;
   const result = response.result && typeof response.result === 'object'
     ? response.result as Record<string, unknown>
     : {};
@@ -2598,10 +2975,12 @@ function renderArtifactEditor() {
   const save = document.getElementById('artifact-editor-save') as HTMLButtonElement | null;
   const accept = document.getElementById('artifact-editor-accept') as HTMLButtonElement | null;
   const apply = document.getElementById('artifact-editor-apply') as HTMLButtonElement | null;
+  const undo = document.getElementById('artifact-editor-undo') as HTMLButtonElement | null;
   if (content && document.activeElement !== content) content.value = state.content;
   if (kind) kind.textContent = state.kind === 'document_patch' ? 'Document patch' : 'Draft';
   if (revision) revision.textContent = state.revision ? `revision ${state.revision}` : 'revision —';
   const busy = ['loading', 'saving', 'accepting', 'applying'].includes(state.status);
+  if (undo) { undo.hidden = !state.undoAvailable; undo.disabled = busy || state.dirty; }
   if (content) content.disabled = busy || !state.artifactId;
   if (save) save.disabled = busy || !state.dirty;
   if (accept) {
@@ -2619,7 +2998,7 @@ function renderArtifactEditor() {
         : state.status === 'saving' ? '正在保存新版本…'
           : state.status === 'accepting' ? '正在绑定批准版本…'
             : state.status === 'applying' ? '正在写入并读回验证…'
-              : resultStatus === 'succeeded' ? '已写入并通过读回验证。'
+              : resultStatus === 'succeeded' ? (state.applyResult?.undone ? '已撤销并通过读回验证。' : '已写入并通过读回验证。')
                 : state.acceptedRevision === state.revision && state.revision > 0
                   ? '当前版本已接受，可以应用。'
                   : state.dirty ? '有尚未保存的编辑。' : '');
@@ -2659,7 +3038,8 @@ document.getElementById('artifact-patch-changes')?.addEventListener('change', (e
   const index = Number(field.dataset.artifactOperationIndex);
   if (!Number.isInteger(index) || index < 0 || index >= operations.length) return;
   try {
-    const after = JSON.parse(field.value) as unknown;
+    const after = typeof operations[index].after === 'string'
+      ? field.value : JSON.parse(field.value) as unknown;
     field.setCustomValidity('');
     artifactEditor.updatePatchPayload({
       ...state.patchPayload,
@@ -2708,6 +3088,56 @@ document.getElementById('artifact-editor-apply')?.addEventListener('click', asyn
   void refreshFigmaArtifactPreviews();
 });
 
+document.getElementById('artifact-editor-undo')?.addEventListener('click', async () => {
+  if (!window.confirm('撤销本次应用？只有当前内容仍与应用结果匹配的部分会恢复，创建的文件会保留。')) return;
+  const pending = artifactEditor.undo(true);
+  renderArtifactEditor();
+  await pending;
+  renderArtifactEditor();
+  void refreshFigmaArtifactPreviews(true);
+});
+
+let recoveryRenderGeneration = 0;
+async function renderConversationRecovery(conversationId: string): Promise<void> {
+  const generation = ++recoveryRenderGeneration;
+  const host = document.getElementById('conversation-recovery');
+  if (!host) return;
+  host.replaceChildren(); host.hidden = true;
+  const response = await Data.recovery({ conversationId });
+  if (activeConversationId !== conversationId || generation !== recoveryRenderGeneration) return;
+  const operations = Array.isArray(response.pendingRecovery) ? response.pendingRecovery : [];
+  for (const operation of operations) {
+    const section = document.createElement('section');
+    const title = document.createElement('strong');
+    title.textContent = `需要核对执行结果：${String(operation.tool || '')}`;
+    const details = document.createElement('pre');
+    details.textContent = JSON.stringify(operation.arguments, null, 2);
+    const candidates = Array.isArray(operation.verificationCandidates) ? operation.verificationCandidates : [];
+    const select = document.createElement('select');
+    select.setAttribute('aria-label', '选择用于核对的读取记录');
+    candidates.forEach((candidate: any, index: number) => {
+      const option = document.createElement('option'); option.value = String(index);
+      option.textContent = `${String(candidate.tool)} · ${String(candidate.callId)}`; select.appendChild(option);
+    });
+    const readback = document.createElement('pre');
+    const showReadback = () => { const candidate = candidates[Number(select.value) || 0];
+      readback.textContent = candidate ? JSON.stringify({ arguments: candidate.arguments, result: candidate.result }, null, 2)
+        : '请先让 Agent 读取目标并核对现场，再允许重新执行。'; };
+    select.addEventListener('change', showReadback); showReadback();
+    const allow = document.createElement('button'); allow.textContent = '核对后允许重新执行'; allow.disabled = !candidates.length;
+    allow.addEventListener('click', async () => {
+      const candidate = candidates[Number(select.value) || 0];
+      if (!candidate || !window.confirm('确认已核对显示的读回内容，并允许重新执行这项操作？')) return;
+      allow.disabled = true;
+      const result = await Data.recovery({ conversationId, action: 'resolve', operationId: operation.operationId, verificationCallId: candidate.callId, confirmed: true });
+      if (result.ok) { await renderConversationRecovery(conversationId); }
+      else { readback.textContent = String(result.error || '恢复失败'); allow.disabled = false; }
+    });
+    section.append(title, details, select, readback, allow); host.appendChild(section);
+  }
+  host.hidden = operations.length === 0;
+}
+
 function esc(v: unknown) {
   return String(v == null ? '' : v)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -2732,6 +3162,23 @@ const SIDEBAR_COLLAPSE_KEY = 'mp:studio-sidebar-collapsed';
 const VIEWS: Record<string, string> = Object.fromEntries(
   studioShell.STUDIO_VIEWS.map((view: { id: string }) => [view.id, `view-${view.id}`]),
 );
+const libraryUi = studioLibraries.createController({
+  data: Data,
+  show,
+  compose: (prompt: string) => {
+    startNewChat(); show('chat');
+    const input = document.querySelector<HTMLTextAreaElement>('#composer-form textarea');
+    if (input) { input.value = prompt; fitComposer(input); input.focus(); }
+  },
+  openProject: openProjectFromPicker,
+  selectProject: setActiveProject,
+  renameConversation: openRenameDialog,
+  changeProject: (id: string, anchor: HTMLElement) => { void openProjectAssignment(id, anchor); },
+  refreshSidebar: renderSidebar,
+  requestText: requestStudioText,
+  connectFigma: () => { show('chat'); setInspector(true, 'files'); void refreshFigmaConnection(true); },
+  conversationId: () => activeConversationId,
+});
 
 function show(view: string) {
   const current = studioShell.shellState(view);
@@ -2751,6 +3198,7 @@ function show(view: string) {
   if (view === 'stash') { renderStash(true); bindCanvas(); }
   if (view === 'artifacts') renderArtifacts();
   if (view === 'settings') renderSettings();
+  void libraryUi.render(view);
   if (view !== 'chat') {
     closeAux();
     if (shell.dataset.inspector === 'open') setInspector(false);
@@ -2987,15 +3435,38 @@ async function executeWindowMenuCommand(command: string, origin?: HTMLElement) {
 }
 
 function closeAccountMenu() {
+  const submenu = document.getElementById('account-submenu');
+  if (submenu) submenu.hidden = true;
   closeAnchoredPopover('account-menu', 'account-footer');
 }
 
+/* 参考里的账户浮层不是贴着触发按钮的窄菜单：它左右各留 8px、铺满整个侧栏宽度，
+   底边压在账户行上方，所以宽度跟着侧栏走，不跟按钮走。 */
 function openAccountMenu() {
-  const menu = positionAnchoredPopover('account-menu', 'account-footer');
-  requestAnimationFrame(() => menu?.querySelector<HTMLButtonElement>('button')?.focus());
+  const menu = document.getElementById('account-menu');
+  const sidebar = document.querySelector<HTMLElement>('.dshw-sidebar-col');
+  const footer = document.getElementById('account-footer');
+  if (!menu || !sidebar || !footer) return;
+  closeStudioPopovers('account-menu');
+  menu.style.visibility = 'hidden';
+  menu.hidden = false;
+  const sidebarRect = sidebar.getBoundingClientRect();
+  const footerRect = footer.getBoundingClientRect();
+  const left = sidebarRect.left + 8;
+  const width = Math.min(272, window.innerWidth - 16);
+  menu.style.width = `${width}px`;
+  menu.style.left = `${Math.round(left)}px`;
+  menu.style.top = `${Math.max(36, Math.round(footerRect.top - 8 - menu.offsetHeight))}px`;
+  menu.style.removeProperty('visibility');
+  footer.setAttribute('aria-expanded', 'true');
+  requestAnimationFrame(() => menu.querySelector<HTMLButtonElement>('button')?.focus());
 }
 
 async function executeAccountCommand(command: string) {
+  if (command === 'learn-more' || command === 'language') {
+    openAccountSubmenu(command);
+    return;
+  }
   closeAccountMenu();
   if (command === 'settings') { show('settings'); return; }
   if (command === 'models') {
@@ -3007,6 +3478,8 @@ async function executeAccountCommand(command: string) {
     return;
   }
   if (command === 'updates') { await Data.checkForUpdates(); return; }
+  if (command === 'usage') { setProductMode('walker'); setStudioHomeVisible(true); return; }
+  if (command === 'help') { await Data.openProjectUrl('https://github.com/Wang-auspicious/Magic-Pointer#readme'); return; }
   if (command === 'changelog') { await Data.windowCommand('changelog'); return; }
   if (command === 'shortcuts' || command === 'about') {
     await executeWindowMenuCommand(command);
@@ -3025,6 +3498,42 @@ document.getElementById('account-menu')?.addEventListener('click', (event) => {
   if (!row) return;
   event.stopPropagation();
   void executeAccountCommand(row.dataset.accountCommand || '');
+});
+
+document.getElementById('account-menu')?.addEventListener('pointerover', (event) => {
+  const row = (event.target as Element)?.closest<HTMLElement>('[data-account-command]');
+  if (row?.dataset.accountCommand === 'learn-more') openAccountSubmenu('learn-more');
+  else if (row) {
+    const submenu = document.getElementById('account-submenu');
+    if (submenu) submenu.hidden = true;
+  }
+});
+
+document.addEventListener('keydown', (event) => {
+  if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'u'
+      && document.getElementById('composer-form')?.getClientRects().length) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    closeStudioPopovers();
+    void executeWindowMenuCommand('add-files');
+    return;
+  }
+  const target = event.target as HTMLElement;
+  const menu = target?.closest<HTMLElement>('.mp-compact-menu, #account-menu');
+  if (!menu || menu.hidden) return;
+  const rows = [...menu.querySelectorAll<HTMLButtonElement>(':scope > button:not(:disabled)')];
+  const index = rows.indexOf(target.closest('button') as HTMLButtonElement);
+  if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+    event.preventDefault();
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? rows.length - 1
+      : (index + (event.key === 'ArrowDown' ? 1 : -1) + rows.length) % rows.length;
+    rows[next]?.focus();
+  } else if (event.key === 'Escape') {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    closeStudioPopovers();
+    (menu.id.startsWith('account') ? document.getElementById('account-footer') : document.getElementById('composer-add'))?.focus();
+  }
 });
 
 document.getElementById('window-menu-popover')?.addEventListener('click', (event) => {
@@ -3068,12 +3577,10 @@ document.addEventListener('keydown', (event) => {
     const brain = document.getElementById('magic-brain-popover');
     if (brain) brain.hidden = true;
     document.getElementById('magic-brain-toggle')?.setAttribute('aria-expanded', 'false');
-    const usagePopover = document.getElementById('composer-usage-popover');
-    if (usagePopover) usagePopover.hidden = true;
-    document.getElementById('composer-context')?.setAttribute('aria-expanded', 'false');
+    closeAnchoredPopover('composer-usage-popover', 'composer-context');
     document.querySelectorAll<HTMLElement>('.side-session-menu:not([hidden])')
       .forEach((menu) => { menu.hidden = true; });
-    if (!menuWasOpen && studioComposerBusy && pendingConversation) {
+    if (!menuWasOpen && studioComposerBusy && (pendingConversation || externalConversationRun)) {
       void stopActiveConversation();
     }
     return;
@@ -3285,9 +3792,13 @@ function renderProjectFileTree() {
       row.dataset.projectPath = entry.path;
       row.dataset.projectKind = entry.kind;
       row.dataset.depth = String(depth);
-      row.style.setProperty('--tree-depth', String(depth));
-      row.style.setProperty('--tree-guide-left', `${14 + Math.max(0, depth - 1) * 20}px`);
-      row.style.paddingLeft = `${depth * 20}px`;
+      // 官方树行：data-tree-row + role=treeitem + aria-level=depth+1，缩进是
+      // 内联 paddingLeft = 8 + depth * 8（不是每层 20px、也不再画引导线）。
+      row.dataset.treeRow = 'true';
+      row.setAttribute('role', 'treeitem');
+      row.setAttribute('aria-level', String(depth + 1));
+      row.tabIndex = -1;
+      row.style.paddingLeft = `${8 + depth * 8}px`;
       const expanded = entry.kind === 'directory' && expandedProjectDirectories.has(entry.path);
       if (entry.kind === 'directory') row.setAttribute('aria-expanded', String(expanded));
       row.innerHTML = `${entry.kind === 'directory'
@@ -3846,6 +4357,63 @@ document.getElementById('project-file-tree')?.addEventListener('contextmenu', (e
     }
   });
 });
+/* 文件树的键盘导航：官方树行是 tabIndex=-1（键盘只从树容器进来），靠 ←/→/↑/↓
+   Home/End 在行之间移动焦点。行本身是 button，Enter/Space 走原生 click。
+   ↑ 在第一行时回到过滤框——官方也是这么收回去的。 */
+(function bindFileTreeKeyboard() {
+  const host = document.getElementById('project-file-tree');
+  if (!host) return;
+  const rows = () => [...host.querySelectorAll<HTMLElement>('[data-tree-row]')];
+  const visible = (row: HTMLElement) => {
+    const box = host.getBoundingClientRect();
+    const rect = row.getBoundingClientRect();
+    return rect.bottom > box.top && rect.top < box.bottom;
+  };
+  const focusRow = (row: HTMLElement | undefined | null) => { row?.focus(); row?.scrollIntoView({ block: 'nearest' }); };
+  const currentRow = () => {
+    const active = document.activeElement as HTMLElement | null;
+    const all = rows();
+    return active && all.includes(active) ? active : all.find(row => row.classList.contains('is-on') && visible(row)) || all.find(visible) || all[0];
+  };
+  host.addEventListener('focus', (event) => {
+    if (event.target !== host) return;
+    focusRow(currentRow());
+  });
+  host.addEventListener('keydown', (event) => {
+    const all = rows();
+    if (!all.length) return;
+    const row = currentRow();
+    const index = row ? all.indexOf(row) : -1;
+    const go = (next: number) => {
+      event.preventDefault();
+      focusRow(all[Math.max(0, Math.min(all.length - 1, next))]);
+    };
+    if (event.key === 'ArrowDown') { go(index < 0 ? 0 : index + 1); return; }
+    if (event.key === 'ArrowUp') {
+      if (index <= 0) { event.preventDefault(); document.getElementById('file-tree-filter')?.focus(); return; }
+      go(index - 1);
+      return;
+    }
+    if (event.key === 'Home') { go(0); return; }
+    if (event.key === 'End') { go(all.length - 1); return; }
+    if (!row) return;
+    if (event.key === 'ArrowRight') {
+      event.preventDefault();
+      if (row.dataset.projectKind === 'directory' && row.getAttribute('aria-expanded') === 'false') row.click();
+      else go(index + 1);
+      return;
+    }
+    if (event.key === 'ArrowLeft') {
+      if (row.getAttribute('aria-expanded') === 'true') { event.preventDefault(); row.click(); return; }
+      const depth = Number(row.dataset.depth || '0');
+      if (depth <= 0) return;
+      event.preventDefault();
+      for (let i = index - 1; i >= 0; i -= 1) {
+        if (Number(all[i].dataset.depth || '0') < depth) { focusRow(all[i]); return; }
+      }
+    }
+  });
+})();
 document.getElementById('file-tree-filter')?.addEventListener('input', renderProjectFileTree);
 document.getElementById('project-file-back')?.addEventListener('click', () => {
   const preview = document.getElementById('project-file-preview');
@@ -4086,17 +4654,16 @@ document.addEventListener('click', e => {
     closeEffortMenu();
   }
 
-  /* 纸夹是真附件；斜杠目录由输入 `/` 唤起。 */
+  /* + opens Claude's attachment menu; / keeps the command directory. */
   const addBtn = target.closest<HTMLElement>('#composer-add');
   const addMenu = document.getElementById('composer-add-menu');
   if (addBtn) {
-    void Data.pickProjectFiles(activeProjectRoot).then((picked) => {
-      if (!picked?.ok || !Array.isArray(picked.paths)) return;
-      composerAttachments = [...new Set([...composerAttachments, ...picked.paths.map(String)])];
-      renderComposerAttachments();
-    });
+    const attach = document.getElementById('composer-attach-menu');
+    if (attach?.hidden) openAttachMenu();
+    else closeAnchoredPopover('composer-attach-menu', 'composer-add');
     return;
   }
+  if (!target.closest('#composer-attach-menu')) closeAnchoredPopover('composer-attach-menu', 'composer-add');
   if (addMenu && !addMenu.hidden && !target.closest('#composer-add-menu')) {
     closeSlashMenu();
   }
@@ -4135,6 +4702,12 @@ document.addEventListener('click', e => {
     const project = projectToggle.closest<HTMLElement>('.dshw-project');
     const alreadyActive = normalizedProjectRoot(key) === normalizedProjectRoot(activeProjectRoot);
     const open = project?.dataset.open !== 'false';
+    if (projectToggle.dataset.virtualGroup === 'true') {
+      expandedWorkspaces.set(key, !open);
+      if (project) project.dataset.open = String(!open);
+      projectToggle.setAttribute('aria-expanded', String(!open));
+      return;
+    }
     setActiveProject(key);
     expandedWorkspaces.set(key, alreadyActive ? !open : true);
     if (project) project.dataset.open = String(alreadyActive ? !open : true);
@@ -4158,13 +4731,15 @@ document.addEventListener('click', e => {
 
   const usagePopover = document.getElementById('composer-usage-popover');
   if (usagePopover && !usagePopover.hidden && !target.closest('#composer-context')
-      && !target.closest('#composer-usage-popover')) {
-    usagePopover.hidden = true;
-    document.getElementById('composer-context')?.setAttribute('aria-expanded', 'false');
+      && !target.closest('#composer-usage-popover, #composer-usage-breakdown')) {
+    closeAnchoredPopover('composer-usage-popover', 'composer-context');
   }
 
   const open = target.closest<HTMLElement>('[data-open]');
-  if (open && open.dataset.open) { openConversation(open.dataset.open); return; }
+  if (open && open.dataset.open) {
+    studioLibraries.setSessionPreference(open.dataset.open, { seenAt: Date.now() });
+    openConversation(open.dataset.open); return;
+  }
 
   const artifact = target.closest<HTMLElement>('[data-artifact-id]');
   if (artifact?.dataset.artifactId && artifact.dataset.artifactConversation) {
@@ -4535,10 +5110,12 @@ function openEffortMenu() {
   const headValue = document.createElement('strong');
   headValue.className = 'mp-effort-head-value';
   headValue.textContent = levels[currentIndex].label;
-  const help = document.createElement('span');
+  const help = document.createElement('button');
+  help.type = 'button';
   help.className = 'mp-effort-help';
+  help.setAttribute('aria-label', 'About effort');
   help.setAttribute('title', levels[currentIndex].description);
-  help.textContent = '?';
+  help.innerHTML = menuGlyph('help');
   head.append(headLabel, headValue, help);
 
   const scale = document.createElement('div');
@@ -4562,6 +5139,10 @@ function openEffortMenu() {
   fill.className = 'mp-effort-fill';
   const thumb = document.createElement('div');
   thumb.className = 'mp-effort-thumb';
+  const particles = document.createElement('canvas');
+  particles.className = 'mp-effort-particles';
+  particles.setAttribute('aria-hidden', 'true');
+  fill.append(particles);
   track.append(fill, thumb);
   /* 位置一律内缩半个滑块宽：不内缩的话第一档和最后一档的方块各有一半悬在
      槽外，参考里两端都是完整落在槽里的。 */
@@ -4569,7 +5150,7 @@ function openEffortMenu() {
   for (let index = 0; index < levels.length; index += 1) {
     const tick = document.createElement('i');
     tick.className = 'mp-effort-tick';
-    tick.style.left = position(index / (levels.length - 1));
+    tick.style.left = `calc(10px + ${index / (levels.length - 1)} * (100% - 20px))`;
     track.append(tick);
   }
 
@@ -4577,6 +5158,8 @@ function openEffortMenu() {
     const ratio = index / (levels.length - 1);
     fill.style.width = `calc(var(--mp-effort-inset) + ${ratio} * (100% - 2 * var(--mp-effort-inset)))`;
     thumb.style.left = position(ratio);
+    track.dataset.max = String(index === levels.length - 1);
+    effortParticleController?.setMax(index === levels.length - 1);
   };
   paint(currentIndex);
 
@@ -4594,13 +5177,14 @@ function openEffortMenu() {
   };
   const indexFromPointer = (clientX: number) => {
     const rect = track.getBoundingClientRect();
-    const inset = 11; // = --mp-effort-inset，即滑块半宽
+    const inset = 8; // Claude compact control: (24 - 8) / 2
     const usable = rect.width - inset * 2;
     if (usable <= 0) return activeIndex;
     const ratio = (clientX - rect.left - inset) / usable;
     return Math.round(ratio * (levels.length - 1));
   };
   track.addEventListener('pointerdown', (event) => {
+    track.dataset.dragging = 'true';
     /* 先选档再捕获：捕获对合成事件（探针的 sendInputEvent）会抛 NotFoundError，
        放在前面会让整个处理器在那一次点击里直接中止——档位看着像点不动。 */
     select(indexFromPointer(event.clientX));
@@ -4609,15 +5193,29 @@ function openEffortMenu() {
   track.addEventListener('pointermove', (event) => {
     if (track.hasPointerCapture(event.pointerId)) select(indexFromPointer(event.clientX));
   });
+  const endDrag = () => { delete track.dataset.dragging; };
+  track.addEventListener('pointerup', endDrag);
+  track.addEventListener('pointercancel', endDrag);
+  track.addEventListener('lostpointercapture', endDrag);
   track.addEventListener('keydown', (event) => {
+    if (event.key === 'Home' || event.key === 'End') {
+      event.preventDefault(); select(event.key === 'Home' ? 0 : levels.length - 1); return;
+    }
     const delta = event.key === 'ArrowLeft' ? -1 : event.key === 'ArrowRight' ? 1 : 0;
     if (!delta) return;
     event.preventDefault();
     select(activeIndex + delta);
   });
 
-  menu.replaceChildren(head, scale, track);
+  const body = document.createElement('div');
+  body.className = 'mp-effort-body';
+  body.append(scale, track);
+  effortParticleController?.dispose();
+  menu.replaceChildren(head, body);
   const opened = positionAnchoredPopover('composer-effort-menu', 'composer-effort');
+  const particleApi = (globalThis as { EffortParticles?: { mount(canvas: HTMLCanvasElement): NonNullable<typeof effortParticleController> } }).EffortParticles;
+  effortParticleController = particleApi?.mount(particles) || null;
+  effortParticleController?.setMax(currentIndex === levels.length - 1);
   requestAnimationFrame(() => opened?.querySelector<HTMLElement>('.mp-effort-track')?.focus());
 }
 
@@ -5186,7 +5784,7 @@ function renderPermissionAsk() {
 
 bindEffortChip();
 bindPermissionChip();
-/* DSH 输入卡：textarea 随内容长高，14 行封顶（336px，InputBar 同款上限） */
+/* textarea 随内容长高，上限由当前 composer 的 CSS 决定。 */
 let composerFitRaf: number | null = null;
 let composerFitTarget: HTMLTextAreaElement | null = null;
 
@@ -5208,13 +5806,14 @@ function fitComposer(ta: HTMLTextAreaElement) {
     composerFitTarget = null;
     if (!target) return;
     target.style.height = 'auto';
-    target.style.height = `${Math.min(336, target.scrollHeight)}px`;
+    const maxHeight = Number.parseFloat(getComputedStyle(target).maxHeight);
+    target.style.height = `${Math.min(Number.isFinite(maxHeight) ? maxHeight : 384, target.scrollHeight)}px`;
   });
 }
 
 /* ---- 输入框联想词 ----
-   回合结束后问一次「用户下一步最可能说什么」，把它当成 placeholder 显示。
-   它是纯装饰：拉取失败、模型没给建议、通道缺失，都退回本来的静态提示语，
+   回合结束后问一次「用户下一步最可能说什么」，空草稿以 placeholder 显示，
+   Tab 接受为可编辑草稿，再由用户提交。拉取失败或模型没给建议时退回静态提示语，
    不写任何错误提示——输入框不是一个报告错误的地方。 */
 let composerSuggestion = '';
 let composerSuggestionRequest = 0;
@@ -5229,6 +5828,8 @@ function applyComposerPlaceholder(ta?: HTMLTextAreaElement | null) {
   const home = !document.getElementById('studio-home')?.hidden;
   const base = home ? COMPOSER_PLACEHOLDER_HOME : COMPOSER_PLACEHOLDER_THREAD;
   textarea.placeholder = !home && composerSuggestion ? composerSuggestion : base;
+  if (!home && composerSuggestion) textarea.setAttribute('aria-description', 'Press Tab to use the suggested follow-up. Edit it before sending.');
+  else textarea.removeAttribute('aria-description');
 }
 
 function clearComposerSuggestion() {
@@ -5257,23 +5858,29 @@ function syncComposerSubmitState() {
 /* 模型切换器：DSH ModelSelect 同款——真实网关目录（fabric_bridge model.catalog），
    选中即更新当前模型档案（没有档案时才写 legacy secrets/model.txt），下次发送就生效。 */
 let modelCatalog: MagicPointerModelCatalog | null = null;
+let modelCatalogRequest = 0;
 
 async function refreshComposerModel() {
+  const request = ++modelCatalogRequest;
+  let catalog: MagicPointerModelCatalog | null = null;
+  try {
+    catalog = await Data.models();
+  } catch {
+    catalog = null;
+  }
+  if (request !== modelCatalogRequest) return;
+  modelCatalog = catalog;
+  renderComposerModel();
+}
+
+function renderComposerModel() {
   const label = document.getElementById('composer-model-label');
   const btn = document.getElementById('composer-model');
-  try {
-    modelCatalog = await Data.models();
-  } catch {
-    modelCatalog = null;
-  }
   const current = modelCatalog?.current || '';
+  composerQuota = null;
+  if (!document.getElementById('composer-usage-popover')?.hidden) ensureComposerQuota();
   if (label) label.textContent = current || '默认模型';
-  if (btn instanceof HTMLButtonElement) {
-    btn.title = current
-      ? (modelCatalog?.visionModel && modelCatalog.visionModel !== current
-        ? `文本 ${current} · 视觉 ${modelCatalog.visionModel}` : current)
-      : '模型';
-  }
+  btn?.removeAttribute('title');
   renderUsageMeter(activeConversationTurns as MagicPointerTurn[]);
 }
 
@@ -5284,17 +5891,20 @@ function closeModelMenu() {
 async function openModelMenu() {
   const menu = document.getElementById('composer-model-menu');
   if (!menu) return;
+  modelMoreOpen = false;
   // 先把浮层画出来，再刷新目录。模型目录是 I/O，不能挟持一次点击的
   // 可见反馈；否则网关慢半秒，用户就会连续点击并在返回瞬间把菜单关掉。
   menu.replaceChildren(...modelMenuRows(modelCatalog));
   positionAnchoredPopover('composer-model-menu', 'composer-model');
   bindDigitShortcuts(menu, 'modelKey');
+  const request = ++modelCatalogRequest;
   let catalog: MagicPointerModelCatalog | null = null;
   try {
     catalog = await Data.models();
   } catch {
     catalog = null;
   }
+  if (request !== modelCatalogRequest) return;
   // 用户可能在请求期间主动关掉菜单；只更新缓存，不把它强行弹回来。
   if (menu.hidden) {
     modelCatalog = catalog;
@@ -5305,8 +5915,7 @@ async function openModelMenu() {
     return;
   }
   modelCatalog = catalog;
-  menu.replaceChildren(...modelMenuRows(catalog));
-  positionAnchoredPopover('composer-model-menu', 'composer-model');
+  renderModelMenu();
 }
 
 /* 菜单打开时按 1..9 直接选中对应模型——行右端写着的那个数字要是按不动，
@@ -5317,7 +5926,8 @@ function bindDigitShortcuts(menu: HTMLElement, attribute: 'modelKey' | 'permKey'
   const onKey = (event: KeyboardEvent) => {
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     if (!/^[1-9]$/.test(event.key)) return;
-    const row = menu.querySelector<HTMLElement>(`[data-${attribute}="${event.key}"]`);
+    const row = Array.from(menu.querySelectorAll<HTMLElement>('button'))
+      .find(item => item.dataset[attribute] === event.key);
     if (!row) return;
     event.preventDefault();
     event.stopPropagation();
@@ -5333,55 +5943,320 @@ function bindDigitShortcuts(menu: HTMLElement, attribute: 'modelKey' | 'permKey'
   document.addEventListener('keydown', onKey, true);
 }
 
-/* 模型目录里前九个带数字快捷键；再多就不该用单键了。 */
-const MODEL_SHORTCUT_LIMIT = 9;
+/* 参考里的模型菜单只露固定几个：外面一排是「已固定」的席位（行尾写数字快捷键，
+   当前那个写勾），其余全部收进 More models 子菜单，在子菜单里勾选决定谁占席位。
+   勾满 MODEL_PIN_LIMIT 个以后要先取消一个才能勾下一个——席位是有上限的，
+   否则子菜单里的每一行都会同时说「已勾选」和「不显示」，那是自相矛盾的状态。 */
+const MODEL_PIN_LIMIT = 4;
+const MODEL_PIN_STORAGE = 'mp:model-pins';
+let modelMoreOpen = false;
+
+type ModelMenuEntry = MagicPointerModelEntry & { key: string; provider: string };
+
+function modelEntries(catalog: MagicPointerModelCatalog | null): ModelMenuEntry[] {
+  const entries: ModelMenuEntry[] = [];
+  for (const group of catalog?.groups || []) {
+    for (const entry of group.models || []) {
+      const profileId = entry.profileId || group.profileId;
+      entries.push({ ...entry, profileId, provider: group.provider || group.name,
+        key: profileId ? JSON.stringify([profileId, entry.id]) : entry.id });
+    }
+  }
+  return entries;
+}
+
+let modelPinsCache: string[] | null = null;
+
+function readModelPins(): string[] | null {
+  try {
+    const saved = localStorage.getItem(MODEL_PIN_STORAGE);
+    if (saved === null) return modelPinsCache;
+    const raw: unknown = JSON.parse(saved);
+    return Array.isArray(raw) ? raw.map(id => typeof id === 'string' ? id : '') : null;
+  } catch {
+    return modelPinsCache;
+  }
+}
+
+function writeModelPins(ids: string[]): void {
+  modelPinsCache = [...ids];
+  try {
+    localStorage.setItem(MODEL_PIN_STORAGE, JSON.stringify(ids));
+  } catch { /* 浏览器存储只读时，本次会话内仍然生效 */ }
+}
+
+/* 只在首次使用时给出四个默认项。空字符串保留用户腾出的席位，下一次
+   勾选填回原位置；取消当前模型的固定不会改变 Runtime 的活动模型。 */
+function resolveModelPins(catalog: MagicPointerModelCatalog | null): string[] {
+  const entries = modelEntries(catalog);
+  const known = new Set(entries.map(entry => entry.key));
+  const saved = readModelPins();
+  if (saved !== null) {
+    const seen = new Set<string>();
+    return Array.from({ length: MODEL_PIN_LIMIT }, (_, index) => {
+      const raw = saved[index] || '';
+      // Preferences written before provider-qualified catalogs used the id.
+      const id = known.has(raw) ? raw : entries.find(entry => entry.id === raw
+        && entry.profileId === catalog?.currentProfileId)?.key
+        || entries.find(entry => entry.id === raw)?.key || '';
+      if (!known.has(id) || seen.has(id)) return '';
+      seen.add(id);
+      return id;
+    });
+  }
+  const pins: string[] = [];
+  const current = entries.find(entry => entry.id === catalog?.current
+    && (!catalog.currentProfileId || entry.profileId === catalog.currentProfileId))?.key || '';
+  if (current && known.has(current) && !pins.includes(current)) {
+    pins.unshift(current);
+    pins.length = Math.min(pins.length, MODEL_PIN_LIMIT);
+  }
+  for (const entry of entries) {
+    if (pins.length >= MODEL_PIN_LIMIT) break;
+    if (!pins.includes(entry.key)) pins.push(entry.key);
+  }
+  if (entries.length) writeModelPins(pins);
+  return pins;
+}
+
+function modelMenuDivider(): HTMLElement {
+  const line = document.createElement('hr');
+  line.className = 'dshw-model-divider';
+  return line;
+}
+
+function modelMenuRow(id: string, _vision: boolean, index: number, selected: boolean): HTMLElement {
+  const row = document.createElement('button');
+  row.type = 'button';
+  row.className = 'dshw-model-row' + (selected ? ' is-active' : '');
+  row.setAttribute('role', 'option');
+  row.dataset.modelId = id;
+  const name = document.createElement('span');
+  name.className = 'dshw-model-name';
+  name.textContent = id;
+  row.appendChild(name);
+  row.setAttribute('aria-selected', String(selected));
+  /* 参考里每行右端有一个数字，是**真的快捷键**（按 1 直接选中第一个）。
+     只画数字不接键盘就成了骗人的提示，所以两边一起给：编号写进
+     data-model-key，打开菜单时挂一次按键监听。
+     当前那一行右端画勾、不画数字——勾和数字同时出现会挤成第三列。 */
+  row.dataset.modelKey = String(index + 1);
+  if (selected) row.appendChild(selectedCheck());
+  else {
+    const key = document.createElement('kbd');
+    key.className = 'dshw-model-key';
+    key.textContent = String(index + 1);
+    row.appendChild(key);
+  }
+  return row;
+}
+
+function modelMoreRow(open: boolean): HTMLElement {
+  const row = document.createElement('button');
+  row.type = 'button';
+  row.className = 'dshw-model-row dshw-model-more';
+  row.dataset.modelMore = 'true';
+  row.setAttribute('aria-expanded', String(open));
+  const label = document.createElement('span');
+  label.className = 'dshw-model-name';
+  label.textContent = 'More models';
+  row.appendChild(label);
+  const chevron = document.createElement('span');
+  chevron.className = 'dshw-model-chevron';
+  chevron.setAttribute('aria-hidden', 'true');
+  chevron.innerHTML = (globalThis as unknown as { CdsIcons: { html(name: string, size: string): string } }).CdsIcons.html('chevron-section', 'small');
+  row.appendChild(chevron);
+  return row;
+}
+
+function modelSourceBadge(provider: string): HTMLElement {
+  const badge = document.createElement('span');
+  badge.className = 'dshw-model-source';
+  badge.textContent = provider;
+  badge.title = provider;
+  return badge;
+}
+
+function modelMorePanel(entries: ModelMenuEntry[], pins: string[]): HTMLElement {
+  const panel = document.createElement('div');
+  panel.className = 'dshw-model-more-panel';
+  panel.setAttribute('role', 'group');
+  panel.setAttribute('aria-label', 'More models');
+  for (const entry of entries) {
+    const pinned = pins.includes(entry.key);
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'dshw-model-pin-row';
+    row.setAttribute('role', 'menuitemcheckbox');
+    row.setAttribute('aria-checked', String(pinned));
+    row.dataset.modelPin = entry.key;
+    row.title = `${entry.id}${entry.provider ? ` · ${entry.provider}` : ''}${entry.contextWindow ? ` · ${entry.contextWindow.toLocaleString()} tokens` : ''}`;
+    if (!pinned && pins.filter(Boolean).length >= MODEL_PIN_LIMIT) {
+      row.setAttribute('aria-disabled', 'true');
+    }
+    const box = document.createElement('span');
+    box.className = 'dshw-model-pin-box';
+    box.setAttribute('aria-hidden', 'true');
+    if (pinned) box.appendChild(checkGlyph());
+    const name = document.createElement('span');
+    name.className = 'dshw-model-name';
+    const label = document.createElement('span');
+    label.className = 'dshw-model-label';
+    label.textContent = entry.id;
+    name.append(label, modelSourceBadge(entry.provider));
+    row.append(box, name);
+    panel.appendChild(row);
+  }
+  return panel;
+}
 
 function modelMenuRows(catalog: MagicPointerModelCatalog | null): HTMLElement[] {
   if (!catalog) return [modelMenuNote('正在读取模型…')];
   const rows: HTMLElement[] = [];
-  let shortcutIndex = 0;
   if (catalog.error) rows.push(modelMenuNote(catalog.error));
-  for (const group of catalog.groups || []) {
-    if ((catalog.groups || []).length > 1) {
-      const head = document.createElement('div');
-      head.className = 'dshw-model-group';
-      head.textContent = group.name || group.id;
-      rows.push(head);
-    }
-    for (const entry of group.models || []) {
-      const row = document.createElement('button');
-      row.type = 'button';
-      row.className = 'dshw-model-row' + (entry.id === catalog.current ? ' is-active' : '');
-      row.setAttribute('role', 'option');
-      row.dataset.modelId = entry.id;
-      const name = document.createElement('span');
-      name.className = 'dshw-model-name';
-      name.textContent = entry.id;
-      if (entry.vision) {
-        const tag = document.createElement('em');
-        tag.className = 'dshw-model-tag';
-        tag.textContent = '视觉';
-        name.appendChild(tag);
-      }
-      row.appendChild(name);
-      const selected = entry.id === catalog.current;
-      row.setAttribute('aria-selected', String(selected));
-      /* 参考里每行右端有一个数字，是**真的快捷键**（按 1 直接选中第一个）。
-         只画数字不接键盘就成了骗人的提示，所以两边一起给：编号写进
-         data-model-key，打开菜单时挂一次按键监听。 */
-      const index = shortcutIndex++;
-      if (index < MODEL_SHORTCUT_LIMIT) {
-        row.dataset.modelKey = String(index + 1);
-        const key = document.createElement('kbd');
-        key.className = 'dshw-model-key';
-        key.textContent = String(index + 1);
-        row.appendChild(key);
-      }
-      if (selected) row.appendChild(selectedCheck());
-      rows.push(row);
+  const entries = modelEntries(catalog);
+  if (!entries.length) return rows.length ? rows : [modelMenuNote('没有可用模型。')];
+  const byKey = new Map(entries.map(entry => [entry.key, entry]));
+  const pins = resolveModelPins(catalog);
+  pins.forEach((key, index) => {
+    const entry = byKey.get(key);
+    if (!entry) return;
+    const row = modelMenuRow(entry.id, Boolean(entry.vision), index, entry.id === catalog.current
+      && (!catalog.currentProfileId || entry.profileId === catalog.currentProfileId));
+    const name = row.querySelector('.dshw-model-name');
+    const label = document.createElement('span');
+    label.className = 'dshw-model-label';
+    label.textContent = entry.id;
+    name?.replaceChildren(label, modelSourceBadge(entry.provider));
+    if (entry.profileId) row.dataset.modelProfileId = entry.profileId;
+    row.title = `${entry.id}${entry.provider ? ` · ${entry.provider}` : ''}${entry.contextWindow ? ` · ${entry.contextWindow.toLocaleString()} tokens` : ''}`;
+    rows.push(row);
+  });
+  rows.push(modelMenuDivider());
+  rows.push(modelMoreRow(modelMoreOpen));
+  if (modelMoreOpen) rows.push(modelMorePanel(entries, pins));
+  if (modelMoreOpen) {
+    const panel = rows[rows.length - 1];
+    for (const group of catalog.groups || []) {
+      if (group.error) panel.appendChild(modelMenuNote(`${group.name}：${group.error}`));
     }
   }
-  return rows.length ? rows : [modelMenuNote('没有可用模型。')];
+  return rows;
+}
+
+/* 子菜单默认开在菜单右侧；模型菜单贴着输入框右下角，右边往往不够，
+   所以量一次视口再决定翻到左侧——开在屏幕外的菜单等于没开。 */
+function renderModelMenu(): void {
+  const menu = document.getElementById('composer-model-menu');
+  if (!menu) return;
+  const scrollTop = menu.querySelector('.dshw-model-more-panel')?.scrollTop || 0;
+  const focused = document.activeElement instanceof HTMLElement ? document.activeElement.dataset.modelPin : undefined;
+  menu.replaceChildren(...modelMenuRows(modelCatalog));
+  positionAnchoredPopover('composer-model-menu', 'composer-model');
+  positionModelMorePanel();
+  const panel = menu.querySelector<HTMLElement>('.dshw-model-more-panel');
+  if (panel) {
+    panel.scrollTop = scrollTop;
+    if (focused) Array.from(panel.querySelectorAll<HTMLElement>('[data-model-pin]'))
+      .find(row => row.dataset.modelPin === focused)?.focus({ preventScroll: true });
+  }
+}
+
+function positionModelMorePanel(): void {
+  const menu = document.getElementById('composer-model-menu');
+  const panel = menu?.querySelector<HTMLElement>('.dshw-model-more-panel');
+  if (!menu || menu.hidden || !panel) return;
+  const rect = menu.getBoundingClientRect();
+  const margin = 8;
+  const top = Math.max(margin, (document.getElementById('window-titlebar')?.getBoundingClientRect().bottom || 0) + margin);
+  panel.style.maxHeight = `${Math.max(24, Math.min(216, window.innerHeight - top - margin))}px`;
+  const right = rect.right + 4;
+  const left = right + panel.offsetWidth <= window.innerWidth - margin
+    ? right : rect.left - 4 - panel.offsetWidth;
+  panel.style.left = `${Math.max(margin, Math.min(left, window.innerWidth - margin - panel.offsetWidth))}px`;
+  panel.style.top = `${Math.max(top, Math.min(rect.bottom - panel.offsetHeight, window.innerHeight - margin - panel.offsetHeight))}px`;
+}
+
+window.addEventListener('resize', () => {
+  const menu = document.getElementById('composer-model-menu');
+  if (menu && !menu.hidden) {
+    positionAnchoredPopover('composer-model-menu', 'composer-model');
+    positionModelMorePanel();
+  }
+});
+
+function menuGlyph(name: string, size = 'small'): string {
+  return (globalThis as { CdsIcons?: { html(name: string, size: string): string } }).CdsIcons?.html(name, size) || '';
+}
+
+function compactMenuItem(label: string, icon: string, action: () => void, trailing = ''): HTMLButtonElement {
+  const row = document.createElement('button');
+  row.type = 'button';
+  row.className = 'mp-compact-menu-row';
+  row.setAttribute('role', 'menuitem');
+  if (icon) {
+    const glyph = document.createElement('span');
+    glyph.className = 'mp-menu-icon';
+    glyph.innerHTML = menuGlyph(icon);
+    row.append(glyph);
+  }
+  const text = document.createElement('span');
+  text.className = 'mp-compact-menu-label';
+  text.textContent = label;
+  row.append(text);
+  if (trailing) {
+    const key = document.createElement('kbd'); key.textContent = trailing; row.append(key);
+  }
+  row.addEventListener('click', (event) => { event.stopPropagation(); action(); });
+  return row;
+}
+
+function openAccountSubmenu(kind: string) {
+  const menu = document.getElementById('account-submenu');
+  const trigger = document.querySelector<HTMLElement>(`[data-account-command="${kind}"]`);
+  if (!menu || !trigger) return;
+  const run = (command: string) => () => { void executeAccountCommand(command); };
+  const rows = kind === 'language'
+    ? [compactMenuItem('English', '', () => { document.documentElement.lang = 'en'; closeAccountMenu(); }, '✓')]
+    : [compactMenuItem('About Magic Pointer', '', run('about')),
+      compactMenuItem('Documentation', '', run('help')),
+      compactMenuItem('Check for updates', '', run('updates')),
+      compactMenuItem('Keyboard shortcuts', '', run('shortcuts'), 'Ctrl+/')];
+  menu.replaceChildren(...rows);
+  menu.hidden = false;
+  const rect = trigger.getBoundingClientRect();
+  menu.style.left = `${Math.max(8, Math.min(rect.right + 4, innerWidth - menu.offsetWidth - 8))}px`;
+  menu.style.top = `${Math.max(36, Math.min(rect.top, innerHeight - menu.offsetHeight - 8))}px`;
+  document.querySelectorAll('[data-account-command][aria-haspopup]').forEach(row => row.setAttribute('aria-expanded', String(row === trigger)));
+  rows[0].focus();
+}
+
+function openSettingsPage(page: string) {
+  show('settings');
+  requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-settings-page="${page}"]`)?.click());
+}
+
+function openAttachMenu() {
+  closeSlashMenu();
+  const menu = document.getElementById('composer-attach-menu');
+  if (!menu) return;
+  const action = (run: () => void) => () => { closeAnchoredPopover('composer-attach-menu', 'composer-add'); run(); };
+  const entries = [
+    { id: 'files', label: 'Add files or photos', icon: 'attach-file', key: 'Ctrl+U', run: () => { void executeWindowMenuCommand('add-files'); } },
+    { id: 'folder', label: 'Add folder', icon: 'folder', run: () => { void openProjectFromPicker(); } },
+    { id: 'slash', label: 'Slash commands', icon: 'attach-skills', run: () => { void openSlashMenu(); } },
+    { id: 'connectors', label: 'Add connectors', icon: 'attach-connector', run: () => openSettingsPage('connectors') },
+    { id: 'plugins', label: 'Add plugins', icon: 'attach-plugins', run: () => openSettingsPage('plugins') },
+  ];
+  menu.replaceChildren(...entries.map(entry => {
+    const row = compactMenuItem(entry.label, entry.icon, action(entry.run), entry.key);
+    row.dataset.attachCommand = entry.id;
+    return row;
+  }));
+  positionAnchoredPopover('composer-attach-menu', 'composer-add');
+  const trigger = document.getElementById('composer-add')!.getBoundingClientRect();
+  menu.style.left = `${Math.max(8, Math.min(trigger.left, innerWidth - menu.offsetWidth - 8))}px`;
+  menu.querySelector<HTMLButtonElement>('button')?.focus();
 }
 
 function modelMenuNote(text: string): HTMLElement {
@@ -5399,20 +6274,43 @@ function bindModelSeat() {
     else closeModelMenu();
   });
   document.getElementById('composer-model-menu')?.addEventListener('click', async e => {
-    const row = (e.target as Element | null)?.closest<HTMLElement>('[data-model-id]');
+    const target = e.target as Element | null;
+    const menu = document.getElementById('composer-model-menu');
+    const more = target?.closest<HTMLElement>('[data-model-more]');
+    if (more) {
+      e.stopPropagation();
+      modelMoreOpen = !modelMoreOpen;
+      renderModelMenu();
+      return;
+    }
+    const pin = target?.closest<HTMLElement>('[data-model-pin]');
+    if (pin) {
+      e.stopPropagation();
+      const id = pin.dataset.modelPin || '';
+      const pins = resolveModelPins(modelCatalog);
+      const index = pins.includes(id) ? pins.indexOf(id) : pins.indexOf('');
+      if (index < 0) return;
+      pins[index] = pins[index] === id ? '' : id;
+      writeModelPins(pins);
+      renderModelMenu();
+      return;
+    }
+    const row = target?.closest<HTMLElement>('[data-model-id]');
     if (!row) return;
     e.stopPropagation();
     const modelId = row.dataset.modelId || '';
-    if (modelId === modelCatalog?.current) { closeModelMenu(); return; }
-    const menu = document.getElementById('composer-model-menu');
-    if (menu) menu.replaceChildren(modelMenuNote('正在切换…'));
-    const result = await Data.selectModel(modelId);
+    const profileId = row.dataset.modelProfileId;
+    if (modelId === modelCatalog?.current && profileId === modelCatalog?.currentProfileId) { closeModelMenu(); return; }
+    ++modelCatalogRequest;
+    closeModelMenu();
+    const result = await Data.selectModel(modelId, profileId);
     if (!result?.ok) {
       if (menu) menu.replaceChildren(modelMenuNote(result?.error || '切换失败。'));
+      positionAnchoredPopover('composer-model-menu', 'composer-model');
       return;
     }
-    closeModelMenu();
-    await refreshComposerModel();
+    modelCatalog = { ...modelCatalog, current: modelId, currentProfileId: profileId };
+    renderComposerModel();
   });
 }
 bindModelSeat();
@@ -5421,15 +6319,11 @@ interface PendingConversation {
   requestId: string;
   body: HTMLElement;
   records: Map<string, Record<string, unknown>>;
-  /** 已渲染的活动行，key=progressKey；签名变了才重建，保住用户展开的行。 */
-  nodes: Map<string, { sig: string; el: HTMLElement }>;
+  renderer: MagicPointerLiveTurn;
   agentSessionId: string | null;
   streamText: string;
-  streamNode: HTMLElement | null;
-  /** 已经贴进 streamNode 的正文（追加式渲染的游标）。 */
-  streamRendered: string;
   reasoningText: string;
-  reasoningNode: HTMLElement | null;
+  transcript: ReturnType<typeof ConversationControl.createTranscript>;
   /** 运行中已产出的 token 数——只有进度记录真的带了才填，否则时间行只报时长。 */
   liveTokens: number | null;
 }
@@ -5448,6 +6342,7 @@ function progressKey(record: Record<string, unknown>): string {
 
 function renderConversationProgress(record: Record<string, unknown>) {
   if (!pendingConversation) return;
+  ConversationControl.appendTranscript(pendingConversation.transcript, record);
   /* session_ready：拿到 durable session id —— 停止/插话都指向它。 */
   const sid = ConversationControl.sessionIdFromRecord(record);
   if (sid) {
@@ -5461,6 +6356,11 @@ function renderConversationProgress(record: Record<string, unknown>) {
   const reportedTokens = Number(tokenFields.total_tokens ?? tokenFields.tokens ?? tokenFields.output_tokens);
   if (Number.isFinite(reportedTokens) && reportedTokens > 0) {
     pendingConversation.liveTokens = reportedTokens;
+  }
+  if (String(record.phase || '') === 'model_usage') {
+    const usage = latestContextUsage([{ liveProgress: pendingConversation.transcript }]);
+    if (usage?.totalTokens !== undefined) pendingConversation.liveTokens = usage.totalTokens;
+    return;
   }
   if (String(record.phase || '') === 'plan') {
     const snapshot = ConversationControl.planStepsFromRecord(record);
@@ -5498,102 +6398,21 @@ function renderConversationProgress(record: Record<string, unknown>) {
   followIfNearBottom(pendingConversation.body, renderPendingBody);
 }
 
-function recordSignature(record: Record<string, unknown>): string {
-  const phase = String(record.phase || '');
-  const fields = record.fields && typeof record.fields === 'object'
-    ? record.fields as Record<string, unknown> : {};
-  return `${phase}|${String(fields.state || '')}|${String(fields.turn || '')}|${String(fields.name || '')}`;
-}
-
-/* 活动行按 key 增量渲染：签名没变的行绝不重建——否则用户展开的工具行
-   在每条进度记录到达时都被拍回折叠态（DSH 的行内局部状态模型）。 */
 function renderPendingBody() {
   const pending = pendingConversation;
   if (!pending) return;
-  const seen = new Set<string>();
-  const els: HTMLElement[] = [];
-  for (const [key, item] of pending.records) {
-    if (String(item.phase || '') === 'total') continue;
-    seen.add(key);
-    const sig = recordSignature(item);
-    const cached = pending.nodes.get(key);
-    if (cached && cached.sig === sig) {
-      els.push(cached.el);
-      continue;
-    }
-    const el = DshChat.liveActivityNode(item) as HTMLElement;
-    if (cached) cached.el.replaceWith(el);
-    pending.nodes.set(key, { sig, el });
-    els.push(el);
-  }
-  for (const [key, cached] of [...pending.nodes]) {
-    if (!seen.has(key)) {
-      cached.el.remove();
-      pending.nodes.delete(key);
-    }
-  }
-  const desired = [...els, ...renderLiveReasoningNode(), ...renderLiveStreamNode()];
-  /* 状态行可能刚被重建（签名叫变），计时槽此刻是空的——立刻补一次，
-     不让那一行在两次 tick 之间空着。 */
+  pending.renderer.update({ ...pending.transcript, records: [...pending.records.values()] });
   pendingClockWrite?.();
-  // replaceChildren 会把每个已有节点 detach 再 append，整段正文的样式/布局/
-  // 绘制因此全部失效。签名没变时 els 里拿到的就是同一批节点对象，所以只要
-  // 「目标列表和当前子节点逐个同一」就直接返回——纯增量正文的回合（没有活动
-  // 行、没有思考流）因此完全不碰 DOM 结构，只更新 stream 节点的文本。
-  const current = pending.body.children;
-  if (current.length === desired.length) {
-    let identical = true;
-    for (let index = 0; index < desired.length; index += 1) {
-      if (current[index] !== desired[index]) {
-        identical = false;
-        break;
-      }
-    }
-    if (identical) return;
-  }
-  pending.body.replaceChildren(...desired);
 }
 
-/* 流式正文：边收边画（纯文本 pre-wrap），回合完成后 openConversation 用
-   markdown 重画正式版本。空文本不建节点。 */
-function renderLiveStreamNode(): Element[] {
-  const pending = pendingConversation;
-  if (!pending || !pending.streamText) return [];
-  if (!pending.streamNode) {
-    const node = document.createElement('div');
-    node.className = 'dsh-stream-live';
-    node.setAttribute('aria-live', 'polite');
-    pending.streamNode = node;
-    pending.streamRendered = '';
-  }
-  const rendered = pending.streamRendered;
-  if (pending.streamText === rendered) return [pending.streamNode];
-  if (pending.streamText.startsWith(rendered)) {
-    // 只把新增的那一段接上去。原来是每次 chunk 都把整条已收到的正文重新赋值
-    // 一遍（textContent = streamText），一个 2000 chunk 的回答就是 O(n^2) 的
-    // 字符串构建 + 一次全节点替换；这里每个 chunk 只处理增量。
-    pending.streamNode.appendChild(document.createTextNode(pending.streamText.slice(rendered.length)));
-    if (pending.streamNode.childNodes.length > 32) {
-      // 文本节点攒多了会让布局多走几趟，到 32 段就合并回一个（每 32 个 chunk
-      // 才做一次 O(n) 合并，均摊仍是 O(n)）。
-      pending.streamNode.textContent = pending.streamText;
-    }
-  } else {
-    // 正文被替换（不是追加）时才整体重写。
-    pending.streamNode.textContent = pending.streamText;
-  }
-  pending.streamRendered = pending.streamText;
-  return [pending.streamNode];
-}
-
-/* 思考流：DSH Think 行边想边画（running 态摘要跟随最后一行）。模型不吐
-   reasoning 时整个节点不出现，与没有思考流的行为完全一致。 */
-function renderLiveReasoningNode(): Element[] {
-  const pending = pendingConversation;
-  if (!pending || !pending.reasoningText) return [];
-  const node = DshChat.thinkNode(pending.reasoningText, true) as HTMLElement;
-  pending.reasoningNode = node;
-  return [node];
+function acceptComposerSuggestion(textarea: HTMLTextAreaElement): boolean {
+  if (textarea.value || !composerSuggestion || studioComposerBusy
+      || !document.getElementById('studio-home')?.hidden) return false;
+  textarea.value = composerSuggestion;
+  textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+  clearComposerSuggestion();
+  textarea.dispatchEvent(new Event('input', { bubbles: true }));
+  return true;
 }
 
 const SCROLL_FOLLOW_THRESHOLD_PX = 48;
@@ -5732,7 +6551,7 @@ function setComposerRunningState(running: boolean) {
         submit.appendChild(stop);
       } else {
         const api = globalThis as unknown as { CdsIcons?: { html?: (name: string, size?: string) => string } };
-        const markup = typeof api.CdsIcons?.html === 'function' ? api.CdsIcons.html('send') : '';
+        const markup = typeof api.CdsIcons?.html === 'function' ? api.CdsIcons.html('code-send') : '';
         if (markup) submit.insertAdjacentHTML('afterbegin', markup);
       }
     }
@@ -5744,7 +6563,7 @@ function setComposerRunningState(running: boolean) {
 }
 
 async function stopActiveConversation() {
-  const pending = pendingConversation;
+  const pending = pendingConversation || externalConversationRun;
   if (!studioComposerBusy || !pending || pending.body.dataset.stopRequested === 'true') return;
   pending.body.dataset.stopRequested = 'true';
   const note = document.createElement('div');
@@ -5754,7 +6573,7 @@ async function stopActiveConversation() {
   const result = await ConversationControl.callConversationAction(
     () => Data.stopConversation(pending.requestId),
   );
-  if (!result.ok && pendingConversation === pending) {
+  if (!result.ok && (pendingConversation === pending || externalConversationRun === pending)) {
     delete pending.body.dataset.stopRequested;
     note.textContent = result.error;
   }
@@ -5768,7 +6587,7 @@ Data.onConversationProgress((payload) => {
 /* 忙态插话：文本写入 durable inbox（next-step），下一轮模型请求即携带。
    界面立即给一条排队的用户气泡，不假装它已经影响本轮。 */
 async function steerActiveConversation(question: string, textarea: HTMLTextAreaElement): Promise<void> {
-  const pending = pendingConversation;
+  const pending = pendingConversation || externalConversationRun;
   const sessionId = pending?.agentSessionId || '';
   if (!sessionId) return; // runtime 还没就绪：保持输入，不打断用户。
   const attachmentPaths = [...composerAttachments];
@@ -5815,7 +6634,7 @@ async function steerActiveConversation(question: string, textarea: HTMLTextAreaE
 /* 忙态下点发送钮 = 停止本回合：优雅取消优先（Receipt + 部分结果）。
    停止后 openConversation 会用会话里的最终状态重画。 */
 document.getElementById('composer-form')?.querySelector('button[type="submit"]')?.addEventListener('click', (e) => {
-  if (!studioComposerBusy || !pendingConversation) return;
+  if (!studioComposerBusy || !(pendingConversation || externalConversationRun)) return;
   e.preventDefault();
   e.stopPropagation();
   void stopActiveConversation();
@@ -5851,6 +6670,10 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
             return;
           }
         }
+      }
+      if (e.key === 'Tab' && !e.shiftKey && !e.isComposing && acceptComposerSuggestion(ta)) {
+        e.preventDefault();
+        return;
       }
       if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
       e.preventDefault();
@@ -5920,15 +6743,16 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
       activeTaskContext?.taskId || 'studio-pending',
       attachmentPaths,
     );
-    pendingConversation = { requestId, body: pendingBody, records: new Map(), nodes: new Map(), agentSessionId: activeTaskContext?.taskId || null, streamText: '', streamNode: null, streamRendered: '', reasoningText: '', reasoningNode: null, liveTokens: null };
+    pendingConversation = { requestId, body: pendingBody, records: new Map(), renderer: DshChat.createLiveTurn(pendingBody), agentSessionId: activeTaskContext?.taskId || null, streamText: '', reasoningText: '', transcript: ConversationControl.createTranscript(), liveTokens: null };
     renderConversationProgress({ phase: 'runtime_boot', fields: {} });
     try {
+      const workspaceRoot = await prepareComposerWorktree();
       const response = await Data.sendConversation(
         activeConversationId,
         question,
         composerPreset,
         requestId,
-        activeProjectRoot,
+        workspaceRoot,
         composerEffort,
         pendingPermissionChoice || undefined,
         attachmentPaths,
@@ -5938,12 +6762,18 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
       pendingPermissionAsk = null;
       pendingAskInput = null;
       renderPermissionAsk();
-      if (!response?.ok || !response.conversationId) throw new Error(response?.error || '这次没有答完。');
+      if (response?.conversationId) activeConversationId = String(response.conversationId);
+      if (!response?.ok || !response.conversationId) {
+        if (response?.conversationId) {
+          await openConversation(String(response.conversationId));
+          await renderSidebar();
+        }
+        throw new Error(response?.error || '这次没有答完。');
+      }
       composerAttachments = [];
       composerSelectedSourceIds.clear();
       renderComposerAttachments();
       renderComposerMaterials();
-      activeConversationId = String(response.conversationId);
       /* 命令结算的副作用：/permission 落芯片，/model 刷新目录标签 */
       const command = (response as { command?: { type?: string; preset?: string } }).command;
       if (command?.type === 'permission' && command.preset) {
@@ -5982,7 +6812,7 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
         };
         renderPermissionAsk();
       }
-      await openConversation(activeConversationId);
+      await openConversation(String(response.conversationId));
       await renderSidebar();
       setComposerSettledState('success');
       /* 联想词在回合彻底结束之后才问——它读的是这一轮的最终结果，不是中间态。
@@ -6040,6 +6870,15 @@ function startNewChat() {
     if (activeInspectorTab === 'artifact') setInspector(false);
   }
   activeConversationId = null;
+  activeConversationView = null;
+  activeConversationRecord = null;
+  conversationRefreshSequence += 1;
+  syncConversationPendingInput([]);
+  if (externalConversationRun) {
+    externalConversationRun = null;
+    studioComposerBusy = Boolean(pendingConversation);
+    setComposerRunningState(studioComposerBusy);
+  }
   setActiveTaskContext(null, true);
   composerAttachments = [];
   renderComposerAttachments();
@@ -6200,13 +7039,17 @@ void boot(initialView === 'chat' && productMode === 'design' ? 'design' : initia
 // 各自都要一次整库的 IPC 往返、renderArtifacts(true) 还要整份 innerHTML 重建。
 // 合并到一帧的尾部：同一个 rAF 窗口里收到 N 次通知，只重建一次列表。
 let conversationChangeRaf: number | null = null;
-Data.onChange(() => {
+Data.onChange((change) => {
+  if (change?.id) conversationNotificationSequence += 1;
+  void refreshOpenConversation(change);
+  if (change?.liveProgress) return;
   if (conversationChangeRaf !== null) return;
   conversationChangeRaf = window.requestAnimationFrame(() => {
     conversationChangeRaf = null;
     renderSidebar();
     if (document.getElementById('studio-home')?.hidden === false) void renderStudioHome();
     renderArtifacts(true);
+    void libraryUi.render(shell.dataset.view || 'chat');
     refreshStashSummaries();
   });
 });

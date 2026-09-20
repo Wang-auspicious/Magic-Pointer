@@ -229,7 +229,10 @@ async function runElectron() {
       renderUsageMeter([]);
       const empty = document.querySelectorAll('#composer-usage-popover .mp-usage-seg').length;
       renderUsageMeter([{
-        modelUsage: { inputTokens: 61234, outputTokens: 417, totalTokens: 61651 },
+        modelUsage: { inputTokens: 61234, outputTokens: 417, totalTokens: 61651,
+          contextTokens: 61234, contextEstimated: 0, lastOutputTokens: 417,
+          systemTokensEstimate: 1000, toolSchemaTokensEstimate: 2000,
+          messageTokensEstimate: 3000, toolResultTokensEstimate: 55234 },
       }]);
       return empty;
     })()`);
@@ -248,9 +251,28 @@ async function runElectron() {
     /* 只数带类别的填充：配额那几行也会画 .mp-usage-row-fill，但它们不属于
        上下文的类别，混进来会让这条断言在接上配额适配器之后莫名其妙地红。 */
     const usageRowKinds = await window.webContents.executeJavaScript(
-      `Array.from(document.querySelectorAll('#composer-usage-popover .mp-usage-row-fill[data-kind]')).map((node) => node.dataset.kind || '')`,
+      `Array.from(document.querySelectorAll('#composer-usage-breakdown .mp-usage-context-row')).map((node) => node.dataset.kind || '')`,
     );
     await captureWitness('usage');
+    await realClick(window, '#composer-usage-popover .mp-usage-foot');
+    const usageDetailBounds = await visibleBounds(window.webContents, '#composer-usage-breakdown');
+    const usageAfterClick = await visibleBounds(window.webContents, '#composer-usage-popover');
+    if (!usageAfterClick) throw new Error('one click on details closed the main usage card');
+    if (!usageDetailBounds || usageDetailBounds.right > usageAfterClick.left - 4) {
+      throw new Error('usage details must open outside the main card on its left');
+    }
+    const colorsMatch = await window.webContents.executeJavaScript(`Array.from(
+      document.querySelectorAll('#composer-usage-popover .mp-usage-seg')).every(segment => {
+        const fill = document.querySelector('#composer-usage-breakdown .mp-usage-row-fill[data-kind="' + segment.dataset.kind + '"]');
+        const swatch = document.querySelector('#composer-usage-breakdown .mp-usage-swatch[data-kind="' + segment.dataset.kind + '"]');
+        return fill && swatch && getComputedStyle(segment).backgroundColor === getComputedStyle(fill).backgroundColor
+          && getComputedStyle(segment).backgroundColor === getComputedStyle(swatch).backgroundColor;
+      })`);
+    if (!colorsMatch) throw new Error('context segment, detail bar and legend colors differ');
+    await captureWitness('usage-breakdown');
+    await realClick(window, '#composer-usage-popover .mp-usage-head');
+    if (await visibleBounds(window.webContents, '#composer-usage-breakdown')) throw new Error('context arrow must close the left detail only');
+    if (!await visibleBounds(window.webContents, '#composer-usage-popover')) throw new Error('context arrow closed the main card');
     await realClick(window, '#composer-context');
 
     /* 工作目录小卡：参考里点文件夹先出「No folder / Recent / <项目> ✓ /
@@ -346,9 +368,9 @@ async function runElectron() {
       || !usageHead
       /* 有数的时候一条一段：这一轮的输入总量（唯一到过的类别）加上输出。
          空会话那一条相反，一段都不该有——零宽的彩色段看着像「这里有东西」。 */
-      || usageSegments !== 2
-      || usageSegmentKinds.join(',') !== 'input,output'
-      || usageRowKinds.join(',') !== 'input,output'
+      || usageSegments !== 4
+      || usageSegmentKinds.join(',') !== 'system,tools,messages,results'
+      || usageRowKinds.join(',') !== 'system,tools,messages,results,available'
       || usageEmptySegments !== 0
       || !workspaceBounds
       || !workspaceItems.includes('No folder')

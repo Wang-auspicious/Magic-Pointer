@@ -62,9 +62,20 @@ function svg(name: string, options: MarkOptions = {}): string {
   return tag + source.slice(tagEnd);
 }
 
-const ClaudeMarks = { MARKS, names, svg };
+/** Original Claude 2.110 frame strips; metadata and timing are from Spark. */
+function spark(state: 'idle' | 'thinking' | 'writing' = 'idle'): string {
+  const still = svg('spark');
+  if (state === 'idle') return still;
+  const frames = state === 'thinking' ? 9 : 8;
+  return `<span class="claude-spark-animation" data-cds="Spark" aria-hidden="true">${still}<span data-cds-spark-strip="true" style="height:${frames * 100}%;mask-image:url('assets/claude/spark-${state}.svg');--spark-end:-${100 * (frames - 1) / frames}%;animation:claude-spark-frames ${90 * frames}ms steps(${frames}, jump-none) infinite"></span></span>`;
+}
+
+const ClaudeMarks = { MARKS, names, svg, spark };
 if (typeof module !== 'undefined' && module.exports) module.exports = ClaudeMarks;
 if (typeof globalThis !== 'undefined') {
   (globalThis as typeof globalThis & { ClaudeMarks?: typeof ClaudeMarks }).ClaudeMarks =
     ClaudeMarks;
+}
+if (typeof document !== 'undefined') {
+  document.querySelectorAll('.mp-account-mark').forEach(node => { node.innerHTML = spark(); });
 }

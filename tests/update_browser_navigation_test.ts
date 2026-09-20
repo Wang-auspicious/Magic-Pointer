@@ -1,0 +1,32 @@
+import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
+import { createUpdateManager } from '../electron/update_manager';
+const { attachContentsHardening, registerBrowserContents } = require('../electron/security_hardening');
+async function main() {
+  const updater: any = new EventEmitter();
+  let installs = 0;
+  updater.quitAndInstall = () => { installs += 1; };
+  updater.checkForUpdates = async () => ({}); updater.downloadUpdate = async () => {};
+  const manager = createUpdateManager({ app: { isPackaged: true, getVersion: () => '1.0.49' }, updater, dialog: { showMessageBox: async () => ({ response: 1 }) } });
+  manager.start({ automatic: false });
+  updater.emit('update-downloaded', { version: '1.0.50' });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(updater.autoInstallOnAppQuit, true, 'choosing next startup installs the downloaded update on normal quit');
+  assert.equal(installs, 0, 'deferred installation does not interrupt the current task');
+  manager.dispose();
+  const contents: any = new EventEmitter();
+  contents.getURL = () => 'https://example.test/first';
+  contents.setWindowOpenHandler = () => {};
+  contents.session = {};
+  const external: string[] = [];
+  attachContentsHardening(contents, () => {}, { shell: { openExternal: async (url: string) => { external.push(url); } } });
+  registerBrowserContents(contents);
+  let prevented = false;
+  contents.emit('will-navigate', { preventDefault() { prevented = true; } }, 'https://example.test/next');
+  assert.equal(prevented, false, 'the owned browser surface keeps normal web navigation inside its view');
+  assert.deepEqual(external, []);
+  contents.emit('will-navigate', { preventDefault() { prevented = true; } }, 'file:///C:/private.txt');
+  assert.equal(prevented, true);
+  console.log('update_browser_navigation_test: passed');
+}
+main().catch((error) => { console.error(error); process.exitCode = 1; });

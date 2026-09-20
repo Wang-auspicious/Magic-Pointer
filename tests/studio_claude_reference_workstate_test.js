@@ -78,7 +78,7 @@ assert(icons.includes('id="ic-warning"'), 'failed session rows need the Claude w
 assert(studio.includes("dot.classList.toggle('is-error'"),
   'sidebar state must derive an error marker from real conversation data');
 
-assert(dshChat.includes("class: 'dsh-thinking-mark'"),
+assert(dshChat.includes("'dsh-thinking-mark'"),
   'an active turn must render the compact Claude-style working mark');
 assert.match(chat, /\.dsh-turn-status\s*\{[^}]*min-height:\s*28px/s,
   'active-turn status owns a stable one-line slot');

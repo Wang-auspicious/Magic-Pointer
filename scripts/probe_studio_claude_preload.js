@@ -64,7 +64,7 @@ const referenceConversations = [
       },
     ],
   },
-  // 本机会话：参考图只展示当前项目下的 Greeting，避免额外历史行污染像素夹具。
+  // Chats 组（未绑定项目的会话）：参考图只展示当前项目下的 Greeting，避免额外历史行污染像素夹具。
 ];
 
 const magicPointerQuestion = '继续找我这个项目的代码里的错误。任何小细节不要放过。“D:\\Desktop\\Magic Pointer\\AGENTS.md”先读一下。然后开工。尽可能少的浪费时间。精准命中所有错误并快速修改。我现在连一个完整的agent闭环，用我这个harness处理一个负责的项目任务，完全做不了。差距到底在哪里。全部补齐。然后我们独特的感知层现在面临什么问题到底一直体验很差，识别不好。这里也重点排查。不开subagent。快速的做。';

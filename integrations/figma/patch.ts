@@ -207,15 +207,21 @@ function prepareText(
   }
   const fonts = fontsForRange(node, fontStart, fontEnd);
   if (!fonts.length && operation.after) fail('font_identity_unavailable', node.id);
+  let deleted = false;
+  let lengthAfterDelete = 0;
   return {
     node,
     fonts,
     apply() {
-      node.deleteCharacters?.(operation.start, operation.end);
+      if (operation.end > operation.start) node.deleteCharacters?.(operation.start, operation.end);
+      deleted = true;
+      lengthAfterDelete = node.characters!.length;
       if (operation.after) node.insertCharacters?.(operation.start, operation.after, 'BEFORE');
     },
     revert() {
-      node.deleteCharacters?.(operation.start, operation.start + operation.after.length);
+      if (!deleted) return;
+      const insertedLength = node.characters!.length - lengthAfterDelete;
+      if (insertedLength > 0) node.deleteCharacters?.(operation.start, operation.start + insertedLength);
       if (operation.before) node.insertCharacters?.(operation.start, operation.before, 'BEFORE');
     },
   };
@@ -318,6 +324,11 @@ async function prepare(
 ): Promise<PreparedChange> {
   const node = await context.getNodeById(operation.nodeId);
   if (!node) fail('node_not_found', operation.nodeId);
+  return prepareNode(node, operation);
+}
+
+function prepareNode(node: FigmaNodeLike, operation: FigmaPatchOperation): PreparedChange {
+  if (node.removed) fail('node_not_found', node.id);
   if (node.locked) fail('node_locked', node.id);
   switch (operation.op) {
     case 'replace_text': return prepareText(node, operation);
@@ -342,7 +353,24 @@ export async function applyFigmaNodePatch(
   }
 
   const prepared: PreparedChange[] = [];
-  for (const operation of request.operations) prepared.push(await prepare(context, operation));
+  const textByNode = new Map<string, Extract<FigmaPatchOperation, { op: 'replace_text' }>[]>();
+  for (const operation of request.operations) {
+    if (operation.op !== 'replace_text') continue;
+    const group = textByNode.get(operation.nodeId) || [];
+    group.push(operation);
+    textByNode.set(operation.nodeId, group);
+  }
+  for (const [nodeId, group] of textByNode) {
+    group.sort((left, right) => right.start - left.start);
+    for (let index = 1; index < group.length; index += 1) {
+      if (group[index].end > group[index - 1].start || group[index].start === group[index - 1].start) {
+        fail('overlapping_text_ranges', nodeId);
+      }
+    }
+  }
+  const operations = request.operations.map((operation) => operation.op === 'replace_text'
+    ? textByNode.get(operation.nodeId)!.shift()! : operation);
+  for (const operation of operations) prepared.push(await prepare(context, operation));
 
   const uniqueFonts = new Map<string, { font: FigmaFontName; nodeId: string }>();
   for (const change of prepared) {
@@ -356,18 +384,31 @@ export async function applyFigmaNodePatch(
     }
   }
 
+  // Font loading yields to the Figma document. Recheck every base together,
+  // then perform the transaction without another asynchronous boundary.
+  for (let index = 0; index < prepared.length; index += 1) {
+    const change = prepareNode(prepared[index].node, operations[index]);
+    if (change.fonts.some((font) => !uniqueFonts.has(fontKey(font)))) {
+      fail('font_identity_changed', change.node.id);
+    }
+    prepared[index] = change;
+  }
+
   const applied: PreparedChange[] = [];
   try {
     for (const change of prepared) {
-      change.apply();
       applied.push(change);
+      change.apply();
     }
   } catch (error) {
+    const rollbackErrors: string[] = [];
     for (const change of applied.reverse()) {
-      try { change.revert(); } catch { /* retain the original write error */ }
+      try { change.revert(); } catch (rollbackError) {
+        rollbackErrors.push(`${change.node.id}:${String(rollbackError)}`);
+      }
     }
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`figma_patch_apply_failed:${message}`);
+    throw new Error(`figma_patch_apply_failed:${message}${rollbackErrors.length ? `;rollback_failed:${rollbackErrors.join(';')}` : ''}`);
   }
 
   const nodes = [...new Map(prepared.map((change) => [change.node.id, change.node])).values()];

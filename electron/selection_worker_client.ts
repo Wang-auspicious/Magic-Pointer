@@ -181,7 +181,7 @@ class SelectionWorkerClient {
 
   _consumeStdout(chunk: string): void {
     this.stdoutBuffer += chunk;
-    if (Buffer.byteLength(this.stdoutBuffer, 'utf8') > 1024 * 1024) {
+    if (Buffer.byteLength(this.stdoutBuffer, 'utf8') > 32 * 1024 * 1024) {
       this._stopWorker({ ok: false, error: 'bridge_output_limit', stream: 'stdout' });
       return;
     }

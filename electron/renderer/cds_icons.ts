@@ -21,8 +21,16 @@ const GLYPHS: Readonly<Record<string, number>> = Object.freeze({
   customize: 0xe100,
   'chevron-section': 0xe02a,
   'pinned-star': 0xe0bd,
+  // 侧栏会话菜单用的几个：官方 catalog 里的 PinSlash / Box / Trash / ArrowDown / ArrowOutSquare。
+  unpin: 0xe0bf,
+  box: 0xe020,
+  trash: 0xe101,
+  'arrow-down': 0xe009,
+  'arrow-out': 0xe00e,
+  archive: 0xe008,
   'view-all': 0xe015,
   'group-sort': 0xe070,
+  sort: 0xe0e3,
   'import-memory': 0xe0a8,
   dismiss: 0xe10f,
   'customize-suggestion': 0xe086,
@@ -35,6 +43,7 @@ const GLYPHS: Readonly<Record<string, number>> = Object.freeze({
   'composer-aux1': 0xe037,
   'composer-aux2': 0xe0f1,
   send: 0xe013,
+  'code-send': 0xe00f,
   dictate: 0xe0ab,
   'mode-write': 0xe064,
   'mode-learn': 0xe083,
@@ -49,9 +58,38 @@ const GLYPHS: Readonly<Record<string, number>> = Object.freeze({
   'attach-design': 0xe0b8,
   'attach-plugins': 0xe0c5,
   'attach-websearch': 0xe082,
+  // Visually identified in the vendored fonts/zoom/layout-cands.png atlas.
+  home: 0xe08a,
+  'layout-list': 0xe09c,
+  'layout-grid': 0xe084,
+  calendar: 0xe024,
+  document: 0xe06c,
+  folder: 0xe072,
+  'more-horizontal': 0xe061,
+  settings: 0xe0d6,
+  laptop: 0xe093,
+  sunrise: 0xe0f0,
+  mailbox: 0xe0a5,
+  checklist: 0xe03f,
+  lightbulb: 0xe097,
+  binoculars: 0xe01c,
+  user: 0xe104,
+  slides: 0xe0e2,
+  image: 0xe08c,
+  help: 0xe088,
+  globe: 0xe082,
+  info: 0xe08f,
+  scroll: 0xe0d2,
+  keyboard: 0xe092,
+  chart: 0xe02f,
 });
 
 const SIZES: readonly string[] = Object.freeze(['large', 'small', 'micro']);
+// Verified against the vendored font's gvar table, not inferred from icon names.
+const ANIMATION_AXES: Readonly<Record<string, string>> = Object.freeze({
+  artifacts: 'ANIM', customize: 'ANIM', projects: 'ANIM', design: 'ANIM',
+  'attach-design': 'ANIM', code: 'ANIM ANM2', lightbulb: 'ANIM',
+});
 
 // 名字来自调用方，可能是任意输入：逐层退让到 null / 'large'，
 // 好过让一个拼错的图标名在渲染中途抛异常、把整块界面带走。
@@ -72,7 +110,8 @@ function html(name: unknown, size: unknown = 'large'): string {
   // 文本节点会进 textContent：菜单行的可读文本会变成长度含一个私有区字符的
   // 「No folder」，按文本找行的代码和读屏都会跟着错。生成内容不计入
   // textContent，所以用它承载装饰。
-  return `<span class="cds-icon" data-size="${resolved}" aria-hidden="true" data-glyph="&#x${value.toString(16).toUpperCase()};"></span>`;
+  const axes = typeof name === 'string' ? ANIMATION_AXES[name] : '';
+  return `<span class="cds-icon" data-size="${resolved}"${axes ? ` data-cds-anim="${axes}"` : ''} aria-hidden="true" data-glyph="&#x${value.toString(16).toUpperCase()};"></span>`;
 }
 
 function names(): string[] {

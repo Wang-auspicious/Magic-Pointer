@@ -14,7 +14,7 @@ interface ArtifactRuntimeOptions {
   runBridge(payload: Record<string, unknown>): Promise<Record<string, unknown>>;
 }
 
-type ArtifactAction = 'read' | 'edit' | 'accept' | 'apply';
+type ArtifactAction = 'read' | 'edit' | 'accept' | 'apply' | 'undo';
 
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
@@ -80,7 +80,11 @@ function createArtifactRuntime(options: ArtifactRuntimeOptions) {
       payload.content = content;
       if (raw.patchPayload !== undefined) payload.patchPayload = raw.patchPayload;
     }
-    if (action === 'accept' || action === 'apply') {
+    if (action === 'undo') {
+      if (raw.confirmed !== true) return { ok: false, error: 'artifact_undo_confirmation_required' };
+      payload.confirmed = true;
+    }
+    if (action === 'accept' || action === 'apply' || action === 'undo') {
       const currentRevision = revision(raw.revision);
       if (currentRevision === null) {
         return { ok: false, error: 'artifact_revision_invalid' };
@@ -102,6 +106,7 @@ function createArtifactRuntime(options: ArtifactRuntimeOptions) {
     edit: (raw: Record<string, unknown> = {}) => invoke('edit', raw),
     accept: (raw: Record<string, unknown> = {}) => invoke('accept', raw),
     apply: (raw: Record<string, unknown> = {}) => invoke('apply', raw),
+    undo: (raw: Record<string, unknown> = {}) => invoke('undo', raw),
   };
 }
 

@@ -254,6 +254,7 @@ def _read_target_context(
     registry: Any | None = None,
     target_point: dict[str, int] | None = None,
     target_region: dict[str, int] | None = None,
+    frozen_evidence: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any] | None, Any, dict[str, Any]]:
     target_window = windows[0] if windows else None
     if target_window is None:
@@ -285,6 +286,7 @@ def _read_target_context(
         # ZCode 圈两行只识别一行、句柄回放不发。OCR 兜底路径实测 5.7s，
         # 4s 的结构化额度完全在既有延迟包络内。
         deadline_ms=6000,
+        **(frozen_evidence or {}),
     )
     return target_window, resolution.context, resolution.trace
 
@@ -1173,10 +1175,11 @@ def _read_gesture_target_context(
     registry: Any | None,
     gesture: dict[str, Any] | None,
     fallback_point: dict[str, int] | None,
+    frozen_evidence: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any] | None, Any, dict[str, Any], dict[str, Any] | None, list[int] | None]:
     points = _gesture_points(gesture)
     if not points or str((gesture or {}).get("coordinateSpace") or "") != "physical_screen_pixels":
-        window, context, trace = _read_target_context(windows, registry=registry, target_point=fallback_point)
+        window, context, trace = _read_target_context(windows, registry=registry, target_point=fallback_point, **({"frozen_evidence": frozen_evidence} if frozen_evidence else {}))
         return window, context, trace, None, None
 
     raw_bbox = dict((gesture or {}).get("bbox") or {})
@@ -1193,6 +1196,7 @@ def _read_gesture_target_context(
             registry=registry,
             target_point=semantic if isinstance(semantic, dict) else fallback_point,
             target_region=target_region,
+            **({"frozen_evidence": frozen_evidence} if frozen_evidence else {}),
         )
         region_artifacts = dict(getattr(region_context, "artifacts", {}) or {})
         region_rectangles = _context_rectangles(region_context) if region_context is not None else []
@@ -1367,7 +1371,7 @@ def _read_gesture_target_context(
             unresolved_trace["sampleBudgetExhausted"] = True
             break
         samples_attempted += 1
-        window, context, trace = _read_target_context(windows, registry=registry, target_point=sample)
+        window, context, trace = _read_target_context(windows, registry=registry, target_point=sample, **({"frozen_evidence": frozen_evidence} if frozen_evidence else {}))
         if window is not None:
             target_window = window
         unresolved_trace["attempts"].extend(list(trace.get("attempts") or [])[:2])
@@ -1502,6 +1506,7 @@ def _fuse_snapshot_perception(
     gesture: dict[str, Any] | None,
     fallback_point: dict[str, int] | None,
     fallback_window: dict[str, Any] | None,
+    frozen_evidence: dict[str, Any] | None = None,
 ) -> tuple[
     dict[str, Any] | None,
     Any,
@@ -1542,6 +1547,7 @@ def _fuse_snapshot_perception(
             registry=registry,
             gesture=gesture,
             fallback_point=fallback_point,
+            **({"frozen_evidence": frozen_evidence} if frozen_evidence else {}),
         )
         resolved_windows["structured-gesture"] = window
         status, reason = _composite_read_status(trace)
@@ -2266,6 +2272,7 @@ def capture_snapshot(
             gesture=normalized_gesture,
             fallback_point=normalized_target_point,
             fallback_window=target_window,
+            frozen_evidence={"frozen_frame_path": frozen_visual["path"], "frozen_frame_bbox": frozen_visual["bbox"]} if frozen_visual and (capture_decision is None or capture_decision.allow_local_pixels) else None,
         )
         perception_trace["policyMode"] = (
             capture_decision.mode if capture_decision is not None else "unconfigured"
@@ -2424,7 +2431,8 @@ def capture_snapshot(
         and not summary["hasActiveContext"]
         and not summary["hasActiveReview"]
     )
-    if frozen_lease is not None and frozen_visual is not None:
+    pixels_allowed = bool(not sensitive_target and (capture_decision is None or capture_decision.allow_local_pixels))
+    if frozen_lease is not None and frozen_visual is not None and pixels_allowed:
         # The committed artifact is the only visual evidence; the current
         # screen is never grabbed for this snapshot.
         visual = dict(frozen_visual)
@@ -2722,7 +2730,7 @@ def capture_snapshot(
         "pointer_anchor_bbox": pointer_anchor,
         "selection_gesture": normalized_gesture,
         "gesture_grounding": gesture_grounding,
-        "frame_lease": frozen_lease,
+        "frame_lease": frozen_lease if pixels_allowed else None,
     }
     if normalized_gesture and len(normalized_gesture.get("strokes") or []) > 1:
         policy = CapturePolicyEngine(upload_screenshots is True, default_capture_mode, sensitive_apps or (), app_capture_modes or {}) if default_capture_mode else None

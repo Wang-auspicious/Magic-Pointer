@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
+import numpy as np
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -17,6 +19,7 @@ from scripts.ocr_resident_worker import (
     _stroke_is_closed,
     boxes_to_xywh,
 )
+from scripts import ocr_resident_worker as worker
 
 
 class _BusyLock:
@@ -121,3 +124,38 @@ def test_select_boxes_underline_does_not_recognize_the_next_row() -> None:
     kept = _select_boxes(boxes, [[[32, 90], [832, 90]]], None)
 
     assert kept == [boxes[0]]
+
+
+def test_small_mark_on_hidpi_frame_gets_detail_detection_without_losing_full_frame(tmp_path):
+    image = tmp_path / 'hidpi.png'
+    Image.new('RGB', (3120, 2080), '#252525').save(image)
+    original = image.read_bytes()
+
+    class Engine:
+        calls = 0
+
+        def __call__(self, pixels, **_options):
+            self.calls += 1
+            assert pixels.shape == (512, 640, 3), 'detail detection reuses the warmed detector shape'
+            if self.calls == 1:
+                return SimpleNamespace(boxes=None)  # small text vanished in whole-frame downscale
+            return SimpleNamespace(boxes=np.array([[[100, 110], [480, 110], [480, 145], [100, 145]]]))
+
+        def crop_text_regions(self, pixels, boxes):
+            assert pixels.shape == (2080, 3120, 3), 'recognition always reads the original historical pixels'
+            self.recognized_boxes = boxes
+            return [pixels]
+
+        def recognize_txt(self, _crops):
+            return SimpleNamespace(txts=['Changes +17,726 -1,227'], scores=[0.99])
+
+    engine = Engine()
+    payload = {'path': str(image), 'selection_bbox_local': [2505, 206, 598, 482]}
+    result = worker.process(engine, payload)
+    assert [block['text'] for block in result['blocks']] == ['Changes +17,726 -1,227']
+    assert engine.calls == 2, 'one global pass plus a bounded detail pass'
+    assert 2505 <= result['blocks'][0]['rect'][0] < 3103
+    assert 206 <= result['blocks'][0]['rect'][1] < 688
+    assert worker.process(engine, payload) == result
+    assert engine.calls == 2, 'repeated questions about the same frozen region reuse both detections'
+    assert image.read_bytes() == original

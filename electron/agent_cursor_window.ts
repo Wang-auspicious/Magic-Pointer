@@ -19,9 +19,7 @@
  *    自己的截图里应该看得到它在哪里。
  *
  * 窗口复用 renderer/index.html：不新增渲染页面，所以不需要动 electron/renderer。
- * 这些窗口不接受任何手势/结果 IPC（main.ts 的 isSurfaceSender 是按
- * webContents 身份严格比对的，见 electron/ipc_surface_policy.ts:18），因此除
- * 了多一份空闲渲染进程外没有副作用。
+ * 没有代理光标时窗口隐藏；装饰层不接收原生鼠标消息，位置仅由采样 IPC 提供。
  */
 
 import path from 'node:path';
@@ -143,12 +141,11 @@ export class AgentCursorSurfaces {
     });
     window.setAlwaysOnTop(true, 'screen-saver');
     window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-    // 点击穿透，但仍然转发 mousemove——代理光标不能吃掉用户对下层应用的点击
-    // （OverlayWindow.swift:3184-3189 的同一课）。
-    window.setIgnoreMouseEvents(true, { forward: true });
+    // The shared renderer hides the native cursor. Forwarding WM_MOUSEMOVE to
+    // this decorative layer lets that CSS cursor compete with the app below.
+    // Coordinates already arrive through overlay:cursor; no native forwarding.
+    window.setIgnoreMouseEvents(true);
     window.loadFile(this.rendererFile);
-    // showInactive，绝不用 show()：show() 可能激活窗口。
-    window.showInactive();
     this.logLine(`agent cursor surface ${surface.display.displayId} ${bounds.width}x${bounds.height}@${bounds.x},${bounds.y}`);
     return window;
   }
@@ -167,7 +164,7 @@ export class AgentCursorSurfaces {
     const routed = agentSurfaceForPoint(displays, point, TASKBAR_SHAVE_PX);
     if (!routed) return false;
     const surface = this.surfaces.get(routed.surface.displayId);
-    if (!surface || !surface.window || surface.window.isDestroyed()) return false;
+    if (!surface || !surface.window || surface.window.isDestroyed() || !surface.window.isVisible()) return false;
     if (!surface.gate.accept(point)) return false;
     surface.window.webContents.send('overlay:cursor', {
       x: routed.localX,
@@ -201,6 +198,7 @@ export class AgentCursorSurfaces {
       if (!window || window.isDestroyed()) continue;
       if (command.kind === 'clear' || command.kind === 'release' || command.kind === 'hold') {
         window.webContents.send('overlay:agent-cursor', command);
+        if (command.kind === 'clear') window.hide();
         delivered = true;
         continue;
       }
@@ -208,6 +206,7 @@ export class AgentCursorSurfaces {
       const displays = [...this.surfaces.values()].map((entry) => entry.display);
       const routed = agentSurfaceForPoint(displays, { x: command.x, y: command.y }, TASKBAR_SHAVE_PX);
       if (!routed || routed.surface.displayId !== surface.display.displayId) continue;
+      if (!window.isVisible()) window.showInactive();
       window.webContents.send('overlay:agent-cursor', {
         ...command,
         x: routed.localX,
@@ -215,12 +214,15 @@ export class AgentCursorSurfaces {
       });
       delivered = true;
     }
+    if (command.kind === 'clear') this.stopSampling();
+    else if (delivered) this.startSampling();
     return delivered;
   }
 
   /** 起一个独立的 16ms 采样定时器。 */
   startSampling(): void {
     if (this.sampleTimer) return;
+    if (![...this.surfaces.values()].some(surface => surface.window?.isVisible())) return;
     this.sampleTimer = setInterval(() => {
       this.sample(screen.getCursorScreenPoint());
     }, SAMPLE_INTERVAL_MS);

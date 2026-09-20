@@ -37,7 +37,7 @@ assert(symbolLine('ic-tree-folder-open').includes('M2 10h20'), 'open folder carr
     'theme toggle swaps to the sun glyph at runtime');
 }
 
-/* 树行图标 16px(源 size-4) */
-assert.match(shellCss, /\.mp-file-tree-row svg\s*\{[^}]*width:\s*16px/s, 'tree icons render at 16px like the source');
+/* 树行图标 12px：官方文件树用 size="xs"（--cds-icon--sm = .75rem） */
+assert.match(shellCss, /\.mp-file-tree-row svg\s*\{[^}]*width:\s*12px/s, 'tree icons render at the official 12px xs size');
 
 console.log('studio_sv_icons_contract ok');

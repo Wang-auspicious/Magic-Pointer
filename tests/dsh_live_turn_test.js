@@ -1,0 +1,150 @@
+'use strict';
+
+const assert = require('node:assert/strict');
+
+class TestNode {
+  constructor(tag = '', text = '') {
+    this.tagName = tag.toUpperCase(); this.nodeType = tag ? 1 : 3;
+    this.childNodes = []; this.attrs = {}; this.dataset = {}; this.data = text;
+    this.parentNode = null; this.scrollTop = 0; this.structuralChanges = 0;
+  }
+  get children() { return this.childNodes.filter(n => n.nodeType === 1); }
+  get firstChild() { return this.childNodes[0] || null; }
+  get textContent() { return this.nodeType === 3 ? this.data : this.childNodes.map(n => n.textContent).join(''); }
+  set textContent(value) { this.replaceChildren(new TestNode('', String(value))); }
+  get className() { return this.attrs.class || ''; }
+  set className(value) { this.setAttribute('class', value); }
+  setAttribute(key, value) { this.attrs[key] = String(value); }
+  getAttribute(key) { return this.attrs[key] ?? null; }
+  removeAttribute(key) { delete this.attrs[key]; }
+  appendChild(node) { return this.insertBefore(node, null); }
+  insertBefore(node, before) {
+    if (node.parentNode) node.remove();
+    const index = before ? this.childNodes.indexOf(before) : this.childNodes.length;
+    this.childNodes.splice(index, 0, node); node.parentNode = this; this.structuralChanges++;
+    return node;
+  }
+  remove() {
+    if (!this.parentNode) return;
+    const parent = this.parentNode; parent.childNodes.splice(parent.childNodes.indexOf(this), 1);
+    parent.structuralChanges++; this.parentNode = null;
+  }
+  replaceChildren(...nodes) {
+    this.childNodes.slice().forEach(node => node.remove()); nodes.forEach(node => this.appendChild(node));
+  }
+  querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
+  querySelectorAll(selector) {
+    const matches = (node) => selector.startsWith('.')
+      ? node.className.split(' ').includes(selector.slice(1))
+      : selector.startsWith('[') ? node.getAttribute(selector.slice(1, -1)) !== null
+        : node.tagName.toLowerCase() === selector;
+    const found = [];
+    for (const child of this.children) {
+      if (matches(child)) found.push(child);
+      found.push(...child.querySelectorAll(selector));
+    }
+    return found;
+  }
+  addEventListener() {}
+}
+
+global.document = {
+  createElement: tag => new TestNode(tag),
+  createElementNS: (_ns, tag) => new TestNode(tag),
+  createTextNode: text => new TestNode('', text),
+};
+const DshChat = require('../electron/renderer/dsh_chat');
+assert.equal(typeof DshChat.createLiveTurn, 'function', 'Stage and Studio need the same incremental turn renderer');
+
+const host = new TestNode('div');
+const live = DshChat.createLiveTurn(host);
+const call = { phase: 'tool_call', fields: { id: 'r1', name: 'Read', args: '{"path":"notes.txt"}' } };
+live.update({ answer: 'First', thinking: 'Reading', records: [call] });
+const answer = host.querySelector('.dsh-stream-live');
+const think = host.querySelector('.dsh-think');
+const thinkBody = host.querySelector('.dsh-think-body');
+const tool = host.querySelector('.dsh-tool');
+think.setAttribute('data-open', 'true'); thinkBody.scrollTop = 19;
+const structure = host.structuralChanges;
+live.update({ answer: 'First answer', thinking: 'Reading\nComparing', records: [call] });
+assert.equal(host.querySelector('.dsh-stream-live'), answer, 'answer node must survive chunks');
+assert.equal(host.querySelector('.dsh-think'), think, 'reasoning node must survive chunks');
+assert.equal(host.querySelector('.dsh-think-body'), thinkBody, 'expanded reasoning body must survive chunks');
+assert.equal(think.getAttribute('data-open'), 'true');
+assert.equal(thinkBody.scrollTop, 19);
+assert.equal(host.structuralChanges, structure, 'chunks must not detach the turn children');
+assert.equal(answer.textContent, 'First answer');
+assert.equal(thinkBody.textContent, 'Reading\nComparing');
+tool.querySelector('.dsh-disclosure').setAttribute('data-open', 'true');
+live.update({ answer: 'First answer', thinking: 'Reading\nComparing', records: [
+  { phase: 'tool_result', fields: { ...call.fields, state: 'ok', result: 'read the actual contents' } },
+] });
+assert.equal(host.querySelector('.dsh-tool'), tool, 'settling the call retains its root');
+assert.equal(tool.querySelector('.dsh-disclosure').getAttribute('data-open'), 'true');
+assert.match(tool.textContent, /read the actual contents/, 'tool output must show real result content');
+
+assert.equal(typeof DshChat.createConversationView, 'function');
+const flow = new TestNode('div');
+const view = DshChat.createConversationView(flow);
+view.update({ id: 'c1', turns: [{ question: 'What is here?', outcome: '进行中', liveProgress: {
+  answer: 'Partial', thinking: 'Inspecting', records: [call],
+} }] });
+const user = flow.querySelector('.dsh-user');
+const liveAnswer = flow.querySelector('.dsh-stream-live');
+view.update({ id: 'c1', turns: [{ question: 'What is here?', outcome: '进行中', liveProgress: {
+  answer: 'Partial answer', thinking: 'Inspecting', records: [call],
+} }] });
+assert.equal(flow.querySelector('.dsh-user'), user);
+assert.equal(flow.querySelector('.dsh-stream-live'), liveAnswer);
+view.update({ id: 'c1', turns: [{ question: 'What is here?', answer: 'Final saved answer', thinking: 'Inspected' }] });
+assert.equal(flow.querySelector('.dsh-user'), user, 'final notification must preserve the question node');
+assert.match(flow.textContent, /Final saved answer/, 'current conversation must show the completed answer');
+assert.doesNotMatch(flow.textContent, /Partial answer/);
+console.log('shared live turn incremental renderer tests ok');
+
+const trace = [
+  { kind: 'message', turn: 1, text: 'I will inspect the files.', reasoning: 'First reasoning', state: 'done' },
+  { kind: 'tool', callId: 'a', name: 'Read', text: '{"path":"a.pdf"}', result: 'file missing', isError: true, state: 'error' },
+  { kind: 'message', turn: 2, text: 'Trying the original source.', reasoning: 'Second reasoning', state: 'running' },
+  { kind: 'tool', callId: 'b', name: 'Read', text: '{"path":"b.pdf"}', state: 'running' },
+];
+const transcriptHost = new TestNode('div');
+const transcript = DshChat.createLiveTurn(transcriptHost);
+transcript.update({ trajectory: trace, answer: 'Trying the original source.', thinking: 'Second reasoning' });
+assert.equal(transcriptHost.querySelectorAll('.dsh-tool-group-body').length, 2, 'every live tool run has the reference border, including a single failed Read');
+assert.equal(transcriptHost.querySelectorAll('.dsh-think').length, 2, 'reasoning survives the next model round');
+assert.match(transcriptHost.textContent, /I will inspect the files/);
+assert.match(transcriptHost.querySelectorAll('.dsh-tool')[0].querySelector('.dsh-row').textContent, /a.pdf/, 'failure must not replace the selected file with an error dump');
+const before = transcriptHost.querySelectorAll('.dsh-tool-group')[0];
+before.setAttribute('open', '');
+transcript.update({ trajectory: trace, answer: 'Trying the original source.' });
+assert.equal(transcriptHost.querySelectorAll('.dsh-tool-group')[0], before, 'stream updates preserve the expanded work record');
+transcript.finish({ trajectory: trace.map(r => ({ ...r, state: 'done' })), answer: 'Complete.' });
+assert.equal(transcriptHost.querySelectorAll('.dsh-think').length, 2, 'completed history retains all reasoning');
+assert.equal(transcriptHost.querySelectorAll('.dsh-tool-group').length, 2);
+assert(transcriptHost.querySelectorAll('.dsh-tool-group').every(n => n.getAttribute('open') === null), 'all completed tool runs start collapsed, even single calls');
+assert.match(transcriptHost.textContent, /file missing/, 'collapsed history retains the complete error for reopening');
+
+const groupHost = new TestNode('div');
+const groupLive = DshChat.createLiveTurn(groupHost);
+const firstTool = { kind: 'tool', callId: '1', name: 'Read', text: '{"path":"a.pdf"}', state: 'running' };
+groupLive.update({ trajectory: [firstTool] });
+assert.equal(groupHost.querySelector('.dsh-tool-group').getAttribute('data-single'), 'true');
+groupLive.update({ trajectory: [firstTool, { ...firstTool, callId: '2', text: '{"path":"b.pdf"}' }] });
+assert.equal(groupHost.querySelector('.dsh-tool-group').getAttribute('data-single'), null,
+  'a second tool restores the individual rows instead of keeping singleton CSS');
+const editHost = new TestNode('div');
+DshChat.createLiveTurn(editHost).update({ trajectory: [
+  { kind: 'tool', callId: 'e', name: 'Edit', text: '{"file_path":"a.py","old_string":"old","new_string":"new"}', state: 'running' },
+] });
+assert.match(editHost.querySelector('.dsh-tool-group-header').textContent, /\+1.*−1/,
+  'single edit summary keeps the reference added/removed line counts visible');
+const finishedHost = new TestNode('div');
+DshChat.createLiveTurn(finishedHost).finish({ answer: 'Done.', trajectory: [
+  firstTool, { kind: 'message', turn: 2, reasoning: 'Use the other file.', state: 'done' },
+  { ...firstTool, callId: '2' },
+] });
+assert.equal(finishedHost.querySelectorAll('.dsh-tool-group').length, 1,
+  'completion folds one uninterrupted work sequence into one reference summary');
+assert.match(finishedHost.querySelector('.dsh-tool-group-body').textContent, /Use the other file/,
+  'the folded work sequence keeps its intermediate reasoning available');

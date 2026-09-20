@@ -93,7 +93,7 @@ function createPythonBridgeRunner({
     spawnOptions = {},
     input = {},
     timeoutMs = 60_000,
-    maxStdoutBytes = 1024 * 1024,
+    maxStdoutBytes = 32 * 1024 * 1024,
     maxStderrBytes = 256 * 1024,
     signal = null,
     onComplete,
@@ -115,7 +115,6 @@ function createPythonBridgeRunner({
     let stdout = '';
     let stderr = '';
     let stdoutBytes = 0;
-    let stderrBytes = 0;
     let delivered = false;
     let timer: TimerHandle | null = null;
 
@@ -164,13 +163,10 @@ function createPythonBridgeRunner({
         }
         stdout += text;
       } else {
-        stderrBytes += bytes;
         if (feedProgress) feedProgress(text);
-        if (stderrBytes > maxStderrBytes) {
-          stop({ ok: false, error: 'bridge_output_limit', stream: 'stderr' });
-          return;
-        }
-        stderr += text;
+        // Progress has already been consumed. Retain a bounded diagnostic tail
+        // rather than imposing a lifetime byte quota on a long-running task.
+        stderr = Buffer.from(stderr + text, 'utf8').subarray(-maxStderrBytes).toString('utf8');
       }
     };
     const onStdout = (chunk: unknown): void => append('stdout', chunk);

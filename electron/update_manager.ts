@@ -209,11 +209,12 @@ function createUpdateManager({
         cancelId: 1,
         title: 'Magic Pointer 更新',
         message: `Magic Pointer ${version} 已下载完成`,
-        detail: '重启只关闭 Magic Pointer，不会关闭其他应用。',
+        detail: '重启只关闭 Magic Pointer，不会关闭其他应用。选择稍后安装时，将在正常退出后安装，下次启动使用新版。',
         noLink: true,
       });
       downloadedPromptOpen = false;
       if (answer.response === 0) updater.quitAndInstall(false, true);
+      else updater.autoInstallOnAppQuit = true;
     });
     updater.on('error', (error) => {
       publish(lastCheckWasManual

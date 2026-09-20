@@ -560,6 +560,23 @@ class TestExecuteToolFailure:
         assert result.failure_type is FailureType.CONTENT_CHANGED
         assert "not verified" in (result.error_message or "")
 
+    def test_action_failure_preserves_recovery_hint_in_model_visible_error(self) -> None:
+        def fail(text):
+            raise ActionFailure(
+                FailureType.STALE_SNAPSHOT,
+                "snapshot expired",
+                recovery_hint="call Observe again before writing",
+            )
+
+        registry = ToolRegistry()
+        registry.register(make_spec(execute=fail))
+        result = registry.execute_tool("echo_tool", {"text": "ignored"})
+
+        assert result.is_error
+        assert result.failure_type is FailureType.STALE_SNAPSHOT
+        assert "snapshot expired" in result.error_message
+        assert "call Observe again before writing" in result.error_message
+
     def test_ordinary_exception_wrapped_as_tool_error(self) -> None:
         def broken_execute(text: str) -> str:
             raise ValueError("boom")

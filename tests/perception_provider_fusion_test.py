@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import threading
 
+import pytest
+
 from app.adapters.base import AdapterReadContext
 from app.evidence.contract import EvidenceStatus
 from app.perception.broker import PerceptionBroker
@@ -237,6 +239,43 @@ def test_same_shape_different_numbers_stay_a_conflict() -> None:
         "Get-ChildItem failed because the path does not exist",
         "Get-Childltem failed because the path does not exist",
     ) is True
+
+
+@pytest.mark.parametrize(("left", "right"), [
+    ("金额120", "金额1200"),
+    ("Invoice total: 120", "Invoice total: 120.50"),
+    ("Balance: -120", "Balance: 120"),
+    ("Balance: −120", "Balance: +120"),
+    ("收入120，支出210", "收入210，支出120"),
+])
+def test_numeric_facts_cannot_be_hidden_by_substring_or_text_similarity(
+    left: str, right: str,
+) -> None:
+    assert texts_agree(left, right) is False
+    assert texts_agree(right, left) is False
+
+
+def test_same_numeric_facts_still_allow_partial_text_and_recognition_noise() -> None:
+    assert texts_agree("金额120", "本次金额120元") is True
+    assert texts_agree("Invoice total: 120", "lnvoice total: 120") is True
+    assert texts_agree("Balance: −120", "Balance: -120") is True
+
+
+def test_numeric_disagreement_is_projected_as_conflict_not_corroboration() -> None:
+    observations = (
+        _observation(_structured("uia-line", "金额120", rects=[LINE_RECT]), index=0),
+        _observation(_pixel("frozen-ocr", "金额1200", rects=[LINE_RECT]), index=1),
+    )
+
+    fused = fuse_observations(observations)
+
+    assert fused.selected is observations[0]
+    assert fused.observations == observations
+    assert fused.corroborations == ()
+    assert fused.trace["conflicts"] == [{
+        "kind": "content_disagreement",
+        "sources": ["uia-line", "frozen-ocr"],
+    }]
 
 
 def test_unread_structured_sources_start_the_pixel_tier_without_faking_empty() -> None:

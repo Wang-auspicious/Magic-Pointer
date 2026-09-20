@@ -348,6 +348,7 @@ function taskSourceForObject(taskId: string, object: NormalizedObject): UnknownR
       identity[field] = source[field];
     }
   }
+  if (source.path) identity.absolutePath = source.path;
   const capabilities = ['read'];
   if (String(source.path || source.url || '').trim()) capabilities.push('search');
   return TaskSources.normalizeSourceRef({
@@ -535,12 +536,16 @@ class InteractionEpisodeStore {
 
     const object = normalizeObject(input);
     if (!object) return null;
-    const source: any = taskSourceForObject(taskId, object);
     const rawRegions = Array.isArray(input.regions)
       ? input.regions.filter((item) => item && typeof item === 'object').slice(0, 12)
       : [];
     const regions = rawRegions.length > 1 ? rawRegions : [null];
     const basePart = stableSelectionPart(object);
+    const sources: any[] = regions.map((region: any, index: number) => {
+      const material = region?.object ? normalizeObject(region.object) : null;
+      const source = taskSourceForObject(taskId, material || object);
+      return material ? { ...source, sourceId: `source:${basePart}:${index}` } : source;
+    }).filter((source: any, index: number, all: any[]) => all.findIndex(item => item.sourceId === source.sourceId) === index);
     const currentReferences = taskContext.references as UnknownRecord;
     const nextOrdinal = Math.max(
       0,
@@ -553,7 +558,7 @@ class InteractionEpisodeStore {
       const binding = TaskSources.normalizeReferenceBinding({
         referenceId,
         label: existing?.label || TaskSources.referenceLabel(ordinal),
-        sourceId: source.sourceId,
+        sourceId: sources.length > 1 ? sources[index].sourceId : sources[0].sourceId,
         locator: rawRegion ? {
           kind: 'visual-region',
           value: {
@@ -578,7 +583,7 @@ class InteractionEpisodeStore {
     const revision = Number(taskContext.referenceRevision || 0) + 1;
     episode.taskContext = TaskSources.reduceTaskContext(taskContext, {
       type: 'context/updated',
-      data: { taskId, sources: [source], referenceUpdates: updates, referenceRevision: revision },
+      data: { taskId, sources, referenceUpdates: updates, referenceRevision: revision },
     });
     const timeline: UnknownRecord[] = [];
     if (utterance) timeline.push({
@@ -599,7 +604,7 @@ class InteractionEpisodeStore {
       target: 'next-step',
       instruction: utterance,
       referenceUpdates: updates,
-      sourceIds: [source.sourceId],
+      sourceIds: sources.map(source => source.sourceId),
       timeline,
       capturedAtMs: now,
     });

@@ -85,6 +85,7 @@ declare global {
     question?: string;
     answer?: string;
     thinking?: string;
+    liveProgress?: MagicPointerLiveProgress;
     failed?: boolean;
     trace?: (string | { label: string; note?: string })[];
     facts?: { label?: string; value?: string; tone?: string }[];
@@ -105,6 +106,26 @@ declare global {
       prefix?: string;
     };
     [key: string]: unknown;
+  }
+
+  interface MagicPointerLiveProgress {
+    answer?: string;
+    thinking?: string;
+    records?: Record<string, unknown>[];
+    requestId?: string;
+    agentSessionId?: string;
+    trajectory?: Array<Record<string, unknown>>;
+  }
+
+  interface MagicPointerConversationChange {
+    id?: string;
+    turnIndex?: number;
+    liveProgress?: MagicPointerLiveProgress;
+  }
+
+  interface MagicPointerLiveTurn {
+    update(snapshot: MagicPointerLiveProgress): void;
+    finish(turn: Record<string, unknown>): void;
   }
 
   interface MagicPointerArtifact {
@@ -219,6 +240,8 @@ declare global {
     turnErrorNode(message: string, code?: string, tone?: 'error' | 'warning'): Element;
     bindDelegation(scope?: Element): void;
     liveActivityNode(record: Record<string, unknown>): Element;
+    createLiveTurn(host: HTMLElement): MagicPointerLiveTurn;
+    createConversationView(flow: HTMLElement): { update(conversation: MagicPointerConversation): void };
     thinkNode(reasoning: string, running?: boolean): Element;
     permissionAnswerNode(answer: { decision?: string; rule?: string }): Element;
     formatRunMeta(ms: number, tokens: number | null): string;
@@ -230,6 +253,8 @@ declare global {
   };
   /* Studio 会话控制（流式/停止/插话）的纯决策层全局。 */
   interface MagicPointerConversationControlApi {
+    createTranscript(): { answer: string; thinking: string; trajectory: Array<Record<string, unknown>> };
+    appendTranscript(transcript: ReturnType<MagicPointerConversationControlApi['createTranscript']>, record: unknown): boolean;
     SESSION_READY_PHASE: string;
     ANSWER_CHUNK_PHASE: string;
     PLAN_PHASE: string;
@@ -264,6 +289,8 @@ declare global {
   const LiveCards: MagicPointerLiveCardsApi;
 
   interface MagicPointerArtifactEditorState {
+    undoAvailable: boolean;
+    selectionGeneration: number;
     conversationId: string;
     artifactId: string;
     revision: number;
@@ -284,6 +311,7 @@ declare global {
     save(): Promise<Record<string, any>>;
     accept(): Promise<Record<string, any>>;
     apply(): Promise<Record<string, any>>;
+    undo(confirmed: boolean): Promise<Record<string, any>>;
     clear(): void;
     state(): MagicPointerArtifactEditorState;
   }
@@ -293,6 +321,7 @@ declare global {
       edit(payload: Record<string, unknown>): Promise<Record<string, any>>;
       accept(payload: Record<string, unknown>): Promise<Record<string, any>>;
       apply(payload: Record<string, unknown>): Promise<Record<string, any>>;
+      undo?(payload: Record<string, unknown>): Promise<Record<string, any>>;
     }): MagicPointerArtifactEditorController;
     retargetFigmaPatch(
       patchPayload: Record<string, unknown>,
@@ -395,12 +424,16 @@ declare global {
   }
   interface MagicPointerModelEntry {
     id: string;
+    profileId?: string;
     vision?: boolean;
     contextWindow?: number;
   }
   interface MagicPointerModelGroup {
     id: string;
     name: string;
+    provider?: string;
+    profileId?: string;
+    error?: string;
     models: MagicPointerModelEntry[];
   }
   interface MagicPointerSlashEntry {
@@ -409,6 +442,7 @@ declare global {
     whenToUse?: string;
     source?: string;
     path?: string;
+    modifiedAt?: number;
   }
   interface MagicPointerSlashDirectory {
     ok?: boolean;
@@ -418,7 +452,7 @@ declare global {
   }
   interface MagicPointerModelCatalog {
     current?: string;
-    visionModel?: string;
+    currentProfileId?: string;
     provider?: string;
     source?: string;
     error?: string;
@@ -468,7 +502,7 @@ declare global {
     getFabricSettings?(): Promise<Record<string, unknown>>;
     modelsCatalog?(): Promise<{ ok?: boolean; catalog?: MagicPointerModelCatalog; error?: string }>;
     slashDirectory?(): Promise<MagicPointerSlashDirectory | { ok?: boolean; error?: string }>;
-    selectModel?(model: unknown): Promise<{ ok?: boolean; model?: string; error?: string }>;
+    selectModel?(model: unknown, profileId?: string): Promise<{ ok?: boolean; model?: string; error?: string }>;
     modelQuota?(options?: { force?: unknown }): Promise<{ ok?: boolean; quota?: MagicPointerQuotaReport; error?: string }>;
     projects?: {
       list(): Promise<MagicPointerProject[]>;
@@ -498,6 +532,7 @@ declare global {
       onStatus(callback: (state: MagicPointerUpdateState) => void): void;
     };
     conversations: {
+      recovery?(payload: Record<string, unknown>): Promise<Record<string, any>>;
       list(): Promise<MagicPointerConversation[]>;
       stats?(): Promise<MagicPointerHomeStats | null>;
       get(id: unknown): Promise<MagicPointerConversation | undefined>;
@@ -507,6 +542,7 @@ declare global {
       export?(id: unknown): Promise<{ ok?: boolean; canceled?: boolean; path?: string; error?: string }>;
       rename?(payload: { id?: unknown; title?: unknown }): Promise<{ ok?: boolean; title?: string; error?: string }>;
       delete?(id: unknown): Promise<{ ok?: boolean; error?: string }>;
+      setProject?(id: string, root: string): Promise<{ ok?: boolean; error?: string }>;
       /* 输入框联想词：一次只读请求，返回 "" 表示「没有建议」。 */
       suggest?(payload: { turns?: unknown; object?: unknown }): Promise<{ ok?: boolean; suggestion?: string; error?: string }>;
       stop?(requestId: unknown): Promise<{ ok?: boolean; sessionId?: string; error?: string }>;
@@ -515,13 +551,18 @@ declare global {
       eventSummaries?(payload: Record<string, unknown>): Promise<Record<string, any>>;
       memories(): Promise<unknown[]>;
       artifacts(): Promise<unknown[]>;
-      onTurn?(cb: () => void): void;
+      onTurn?(cb: (change?: MagicPointerConversationChange) => void): void;
       onProgress?(cb: (payload: { requestId?: string; record?: Record<string, unknown> }) => void): void;
     };
     contextTrackers?: {
+      list(): Promise<Record<string, any>>;
+      setEnabled(trackerId: string, enabled: boolean): Promise<Record<string, any>>;
+      remove(trackerId: string): Promise<Record<string, any>>;
       material(payload: Record<string, unknown>): Promise<Record<string, any>>;
     };
+    extensions?: { inventory(): Promise<Record<string, any>> };
     artifacts?: {
+      undo?(payload: { conversationId: string; artifactId: string; revision: number; confirmed: boolean }): Promise<Record<string, any>>;
       read(payload: { conversationId: string; artifactId?: string }): Promise<Record<string, any>>;
       edit(payload: { conversationId: string; artifactId: string; expectedRevision: number; content: string; patchPayload?: Record<string, unknown> | null }): Promise<Record<string, any>>;
       accept(payload: { conversationId: string; artifactId: string; revision: number }): Promise<Record<string, any>>;
@@ -672,13 +713,14 @@ declare global {
     exportConversation(id: string): Promise<{ ok?: boolean; canceled?: boolean; path?: string; error?: string }>;
     renameConversation(id: string, title: string): Promise<{ ok?: boolean; title?: string; error?: string }>;
     deleteConversation(id: string): Promise<{ ok?: boolean; error?: string }>;
+    setConversationProject(id: string, root: string): Promise<{ ok?: boolean; error?: string }>;
     suggestNextPrompt(turns: unknown, object?: unknown): Promise<string>;
     stopConversation(requestId: string): Promise<{ ok?: boolean; sessionId?: string; error?: string }>;
     steerConversation(agentSessionId: string, input: string | MagicPointerTaskInput, sources?: Record<string, unknown>[]): Promise<{ ok?: boolean; inputId?: string; status?: string; error?: string }>;
     onConversationProgress(callback: (payload: { requestId?: string; record?: Record<string, unknown> }) => void): void;
     models(): Promise<MagicPointerModelCatalog | null>;
     slashDirectory(): Promise<MagicPointerSlashDirectory | null>;
-    selectModel(model: string): Promise<{ ok?: boolean; model?: string; error?: string }>;
+    selectModel(model: string, profileId?: string): Promise<{ ok?: boolean; model?: string; error?: string }>;
     modelQuota(options?: { force?: boolean }): Promise<MagicPointerQuotaReport | null>;
     timeline(): Promise<MagicPointerTimelineDay[]>;
     memories(): Promise<unknown[]>;
@@ -688,6 +730,8 @@ declare global {
     editArtifact(payload: { conversationId: string; artifactId: string; expectedRevision: number; content: string; patchPayload?: Record<string, unknown> | null }): Promise<Record<string, any>>;
     acceptArtifact(conversationId: string, artifactId: string, revision: number): Promise<Record<string, any>>;
     applyArtifact(conversationId: string, artifactId: string, revision: number): Promise<Record<string, any>>;
+    undoArtifact(conversationId: string, artifactId: string, revision: number, confirmed: boolean): Promise<Record<string, any>>;
+    recovery(payload: Record<string, unknown>): Promise<Record<string, any>>;
     pairFigma(conversationId: string): Promise<Record<string, any>>;
     figmaStatus(conversationId: string): Promise<Record<string, any>>;
     disconnectFigma(conversationId: string, documentSessionId: string): Promise<Record<string, any>>;
@@ -701,7 +745,7 @@ declare global {
     updateStashCategory(id: string, category: string): Promise<Record<string, any>>;
     removeStashEntry(id: string): Promise<Record<string, any>>;
     describeStashImage(src: string): Promise<string | null | undefined>;
-    onChange(callback: () => void): void;
+    onChange(callback: (change?: MagicPointerConversationChange) => void): void;
   }
   const Data: MagicPointerDataApi;
 
@@ -829,6 +873,7 @@ declare global {
     dismiss(): void;
     submitSelectionCommand(payload: unknown): void;
     steerSelectionCommand(payload: unknown): Promise<any>;
+    stopSelectionCommand(payload: unknown): Promise<any>;
     executeAction(payload: unknown): void;
     undoAction?(payload: Record<string, unknown>): Promise<Record<string, unknown>>;
     contextAction(payload: unknown): void;
@@ -1135,6 +1180,11 @@ const Data: MagicPointerDataApi = {
     if (!hasBridge() || !bridge()!.conversations.delete) return { ok: false, error: '删除通道不可用。' };
     return bridge()!.conversations.delete!(id);
   },
+  async setConversationProject(id: string, root: string): Promise<{ ok?: boolean; error?: string }> {
+    const api = bridge()?.conversations;
+    if (!api?.setProject) return { ok: false, error: '项目切换通道不可用。' };
+    return api.setProject(id, root);
+  },
 
   /* 联想词永远只返回一个字符串：通道缺失、请求失败、模型没建议，都是空串。
      调用方不需要为它写错误分支——没有建议就是没有建议。 */
@@ -1186,10 +1236,10 @@ const Data: MagicPointerDataApi = {
     }
   },
 
-  async selectModel(model: string): Promise<{ ok?: boolean; model?: string; error?: string }> {
+  async selectModel(model: string, profileId?: string): Promise<{ ok?: boolean; model?: string; error?: string }> {
     if (!hasBridge()) return { ok: false, error: '请在 Magic Pointer 应用里切换。' };
     try {
-      return (await bridge()!.selectModel?.(model)) || { ok: false, error: '模型切换通道不可用。' };
+      return (await bridge()!.selectModel?.(model, profileId)) || { ok: false, error: '模型切换通道不可用。' };
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
@@ -1245,6 +1295,14 @@ const Data: MagicPointerDataApi = {
     const artifacts = bridge()?.artifacts;
     if (!hasBridge() || !artifacts?.read) return { ok: false, error: '产物读取通道不可用。' };
     return artifacts.read({ conversationId, artifactId });
+  },
+  async undoArtifact(conversationId: string, artifactId: string, revision: number, confirmed: boolean): Promise<Record<string, any>> {
+    const undo = bridge()?.artifacts?.undo;
+    return undo ? undo({ conversationId, artifactId, revision, confirmed }) : { ok: false, error: '撤销通道不可用。' };
+  },
+  async recovery(payload: Record<string, unknown>): Promise<Record<string, any>> {
+    const recovery = bridge()?.conversations?.recovery;
+    return recovery ? recovery(payload) : { ok: false, error: '恢复通道不可用。' };
   },
 
   async editArtifact(payload): Promise<Record<string, any>> {
@@ -1416,8 +1474,8 @@ const Data: MagicPointerDataApi = {
     }
   },
 
-  onChange(callback: () => void) {
-    bridge()?.conversations?.onTurn?.(() => callback());
+  onChange(callback: (change?: MagicPointerConversationChange) => void) {
+    bridge()?.conversations?.onTurn?.((change) => callback(change));
     bridge()?.stash?.onEntry?.(() => callback());
   },
 };

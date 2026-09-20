@@ -42,7 +42,7 @@ def test_system_prompt_builder_sections_and_dynamic_boundary() -> None:
         "permission_mode": "plan",
         "memory": "用户习惯：总结要带要点编号。",
         "language": "用中文",
-    })
+    }).text
     assert "Magic Pointer" in prompt
     assert "权限模式：plan" in prompt
     assert "用户习惯" in prompt

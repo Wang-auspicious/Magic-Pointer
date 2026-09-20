@@ -2,6 +2,23 @@ const assert = require('assert');
 const { InteractionEpisodeStore, inferReferenceLabel, normalizeObject } = require('../electron/interaction_episode');
 
 {
+  const store = new InteractionEpisodeStore();
+  store.bindCommandTarget({
+    snapshotId: 'selection-three', app: 'application', windowTitle: '微信',
+    regions: [
+      { strokeIndex: 0, bbox: [700, 600, 80, 50], object: { snapshotId: 'selection-three', app: 'wechat', windowTitle: '微信', source: { hwnd: 10, title: '微信' } } },
+      { strokeIndex: 1, bbox: [900, 300, 80, 50], object: { snapshotId: 'selection-three', app: 'wechat', windowTitle: '微信', source: { hwnd: 10, title: '微信' } } },
+      { strokeIndex: 2, bbox: [100, 700, 80, 50], object: { snapshotId: 'selection-three', app: 'explorer', windowTitle: 'Desktop', source: { hwnd: 20, title: 'Desktop', path: 'D:/Desktop/selected.pdf' } } },
+    ],
+  }, '总结200字', { taskId: 'task-three' });
+  const payload = store.contextPayload();
+  assert.strictEqual(payload.sources.length, 3, 'each marked material needs its own source');
+  assert.strictEqual(payload.sources[2].kind, 'document');
+  assert.strictEqual(payload.sources[2].identity.absolutePath, 'D:/Desktop/selected.pdf');
+  assert.strictEqual(new Set(payload.references.map(ref => ref.sourceId)).size, 3);
+}
+
+{
   const object = normalizeObject({
     objectId: 'terminal-1',
     source: {

@@ -21,7 +21,7 @@ for (const id of [
   assert(html.includes(`id="${id}"`), `navigation control missing: ${id}`);
 }
 
-for (const command of ['settings', 'models', 'updates', 'changelog', 'shortcuts', 'about']) {
+for (const command of ['settings', 'models', 'usage', 'language', 'help', 'changelog', 'learn-more']) {
   assert(html.includes(`data-account-command="${command}"`), `account action missing: ${command}`);
 }
 assert(source.includes("document.getElementById('account-footer')?.addEventListener('click'"),
@@ -30,8 +30,19 @@ assert(source.includes("document.getElementById('account-menu')?.addEventListene
   'account actions are delegated through one real menu binding');
 assert(source.includes("if (command === 'updates')"));
 assert(source.includes("if (command === 'changelog')"));
-assert.match(shellCss, /\.mp-account-menu\s*\{[^}]*min-width:\s*208px/s,
-  'account popup uses Claude compact menu width');
+/* 官方账户浮层不是贴着触发按钮的窄菜单：左右各留 8px、铺满侧栏宽度。
+   宽度由 openAccountMenu 按侧栏量出来，所以 CSS 里不能再留 min/max 夹子把它夹回去。 */
+assert.match(shellCss, /\.mp-account-menu\s*\{[^}]*padding:\s*4px/s,
+  'account popup keeps the menu container padding');
+assert.ok(!/\.mp-account-menu\s*\{[^}]*min-width/s.test(shellCss),
+  'account popup width must not be clamped by a CSS min-width');
+assert.match(source, /Math\.min\(272, window\.innerWidth - 16\)/,
+  'Claude Desktop account popup is 17rem and stays within the viewport');
+for (const command of ['updates', 'shortcuts', 'about']) {
+  assert(source.includes(`run('${command}')`), `${command} remains reachable in Learn more`);
+}
+assert.match(source, /const sidebar = document\.querySelector<HTMLElement>\('\.dshw-sidebar-col'\)/,
+  'account popup is measured against the real sidebar column');
 
 assert(html.includes('src="studio_search.js'));
 assert(source.includes('function openGlobalSearch('));
@@ -44,8 +55,8 @@ assert(source.includes("kind === 'conversation'"));
 assert(source.includes("kind === 'project'"));
 assert(source.includes("kind === 'route'"));
 assert(html.includes('role="tablist"') && html.includes('role="tab"'));
-assert.match(html, /id="mode-work" data-product-mode="design" role="tab" aria-selected="false"[\s\S]*?<span>Cowork<\/span>/,
-  'Cowork is the left MP design/collaboration surface');
+assert.match(html, /id="mode-work" data-product-mode="design" role="tab" aria-selected="false"[\s\S]*?<span>Home<\/span>/,
+  'Home is the left desktop navigation surface in the supplied Code reference');
 assert.match(html, /id="mode-design" data-product-mode="walker" role="tab" aria-selected="true"[\s\S]*?<span>Code<\/span>/,
   'Code is the default right-side Agent work surface');
 assert(source.includes("document.getElementById('mode-work')?.addEventListener('click', () => setProductMode('design'))"));
@@ -55,7 +66,7 @@ assert(source.includes("document.getElementById('header-preview-toggle')?.addEve
 assert(source.includes("make('Conversation', () => setConversationTab('chat'))"));
 assert(source.includes("make('Trajectory', () => setConversationTab('trajectory'))"));
 assert(source.includes("make('Open project folder', () =>"));
-assert(source.includes("browser?.classList.toggle('is-empty', groups.length === 0)"));
+assert(source.includes("browser?.classList.toggle('is-empty', displayGroups.length === 0)"));
 assert(source.includes("empty.className = 'side-empty'"));
 assert(source.includes("label.className = 'side-empty-label'"));
 assert(source.includes("'Sessions you start will show up here'"));

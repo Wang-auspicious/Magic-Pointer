@@ -102,3 +102,11 @@ assert.ok(
 );
 
 console.log('claude marks contract ok');
+
+const animation = ClaudeMarks.spark('thinking');
+assert.match(animation, /data-cds-spark-strip/);
+assert.match(animation, /spark-thinking\.svg/);
+assert.doesNotMatch(animation, /rotate/);
+assert.match(ClaudeMarks.spark('idle'), /m19\.6 66\.5/);
+const animationCss = fs.readFileSync('electron/renderer/claude_chat.css', 'utf8');
+assert.doesNotMatch(animationCss, /mp-thinking-spin|rotate\(360deg\)/, 'the Claude Spark is a frame strip, never a spinner');

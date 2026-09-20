@@ -4,6 +4,9 @@ const assert = require('assert');
 const { agentSessionId, studioConversationSessionId } = require('../electron/agent_session_id');
 
 assert.strictEqual(agentSessionId('abc-123'), 'agent-abc-123');
+const selectionTask = 'agent-a3618dc7-e244-4894-b2a6-2157f77a05d9';
+assert.strictEqual(studioConversationSessionId({ existing: selectionTask, conversationId: 'c-selection' }), selectionTask,
+  'a selection continued in Studio is the same durable task');
 
 const weird = `token with spaces/${'x'.repeat(200)}`;
 const first = agentSessionId(weird);

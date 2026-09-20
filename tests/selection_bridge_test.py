@@ -1749,6 +1749,7 @@ def test_loop_router_keeps_ordinary_selection_out_of_profile_coding_workspace(mo
                     def open_or_create(self, *a, **k):
                         class _Sess:
                             events = ()
+                            open_turn = None
 
                             def interrupted_turn_summary(self):
                                 return None
@@ -1838,6 +1839,7 @@ def test_loop_router_nudges_unfinished_plan_before_completion(monkeypatch):
             return SimpleNamespace()  # model_client/compactor/estimator/hooks/...
 
     class _StubAgentSession:
+        open_turn = None
         events = (SimpleNamespace(
             type="plan/updated",
             data={
@@ -2085,7 +2087,7 @@ def test_loop_router_does_not_create_relative_tool_result_dir_without_workspace(
                 return _T()
             if key == "sessions":
                 return SimpleNamespace(open_or_create=lambda sid, *a, **k: SimpleNamespace(
-                    events=(), interrupted_turn_summary=lambda: None,
+                    events=(), open_turn=None, interrupted_turn_summary=lambda: None,
                     enqueue_inbox=lambda *a, **k: None, claim_inbox=lambda *a, **k: [],
                 ))
             if key == "context_budget":

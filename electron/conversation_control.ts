@@ -19,9 +19,9 @@ const ConversationControl = (() => {
   const PLAN_PHASE = 'plan';
 
   /** 与 conversation_bridge 当前签发语义一致；旧共享 id 明确不再信任。 */
-  const SESSION_ID_PATTERN = /^agent-studio-(?:new|conv)-[0-9a-f]{32}$/;
+  const SESSION_ID_PATTERN = /^(?:agent-studio-(?:new|conv)-[0-9a-f]{32}|agent-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$/;
   /** 与 scripts/agent_session_bridge.py 的 MAX_TEXT_CHARS 一致。 */
-  const MAX_STEER_CHARS = 4000;
+  const MAX_STEER_CHARS = 12000;
 
   function fieldsOf(record: unknown): Record<string, string> {
     if (!record || typeof record !== 'object') return {};
@@ -78,6 +78,51 @@ const ConversationControl = (() => {
   /** answer_chunk 增量文本；坏数据一律空串——展示通道不能炸 UI。 */
   function decodeChunkBlob(fields: Record<string, string>): string {
     return decodeBlob(fields);
+  }
+
+  function createTranscript(): { answer: string; thinking: string; trajectory: Array<Record<string, unknown>> } {
+    return { answer: '', thinking: '', trajectory: [] };
+  }
+
+  /** Keep each model message in its original position, across tool boundaries. */
+  function appendTranscript(transcript: ReturnType<typeof createTranscript>, record: unknown): boolean {
+    const phase = phaseOf(record);
+    const fields = fieldsOf(record);
+    const at = Number((record as { ms?: number })?.ms) || 0;
+    let message = [...transcript.trajectory].reverse().find(item => item.kind === 'message');
+    if (phase === 'model_request') {
+      if (message) message.state = 'done';
+      transcript.answer = '';
+      transcript.thinking = '';
+      transcript.trajectory.push({ kind: 'message', turn: Number(fields.turn) || 1, text: '', reasoning: '', state: 'running', startedAt: at });
+    } else if (phase === 'answer_chunk' || phase === 'reasoning_chunk') {
+      const text = decodeChunkBlob(fields);
+      if (!text) return false;
+      if (!message) {
+        message = { kind: 'message', turn: 1, text: '', reasoning: '', state: 'running', startedAt: at };
+        transcript.trajectory.push(message);
+      }
+      const field = phase === 'answer_chunk' ? 'text' : 'reasoning';
+      message[field] = String(message[field] || '') + text;
+      transcript[phase === 'answer_chunk' ? 'answer' : 'thinking'] = String(message[field]);
+    } else if (phase === 'model_usage') {
+      try {
+        const usage = JSON.parse(decodeBlob(fields));
+        if (message) message.modelUsage = usage;
+      } catch { return false; }
+    } else if (phase === 'tool_call' || phase === 'tool_result') {
+      const id = String(fields.id || fields.name || '');
+      let tool = transcript.trajectory.find(item => item.kind === 'tool' && item.callId === id);
+      if (!tool) {
+        tool = { kind: 'tool', callId: id, name: fields.name, turn: message?.turn || 1, startedAt: at };
+        transcript.trajectory.push(tool);
+      }
+      Object.assign(tool, { state: phase === 'tool_call' ? 'running' : fields.state, text: fields.args || tool.text || '' });
+      if (phase === 'tool_result') Object.assign(tool, { result: fields.result || '', isError: fields.state === 'error', completedAt: at, usedBackend: fields.backend, latencyMs: Number(fields.latency_ms) || 0 });
+    } else if (phase === 'model_response') {
+      if (message) Object.assign(message, { state: 'done', completedAt: at });
+    } else return false;
+    return true;
   }
 
   interface PlanSteps {
@@ -193,6 +238,8 @@ const ConversationControl = (() => {
     PLAN_PHASE,
     sessionIdFromRecord,
     decodeChunkBlob,
+    createTranscript,
+    appendTranscript,
     failedDraftValue,
     isConversationSender,
     callConversationAction,

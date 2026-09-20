@@ -1,6 +1,28 @@
 # 当前状态
 
+2026-09-20 当前工作边界：按 `docs/research/2026-09-20-project-audit-and-jev.md` 的 CU01–27、RT01–22、D01–21、OP01–15 共 85 项逐批修复并推送 main。当前开发版本仍为 **1.0.49**；用户要求全部完成后只升一次版本再同步安装版，下面各历史条目的“不 bump / 不 sync”仅适用于当次交付，不覆盖本次指令。尚未完成本批全量验证与安装交付，不能将阶段回归当成 85 项全部验收。
+
+现行产品决定：所有短任务、长任务均由 MP 自有 Runtime 执行；外部客户端仅是文本投递目标。文字与视觉沿用用户选中的模型，Jev `jev-1.13-free` 仅增加有限候选判断工具，使用独立 900 ms 等待预算、连接复用与低置信度退回；不更换用户主模型。当前回滚/长任务预算/模型席位以本段与 canonical 最新账本为准。下面的 1.0.32、L0/L1/L2、多模型席位、固定长任务天花板属于历史状态，已被后续实现取代。
+
+2026-09-19 三处圈选误报过大与跨窗口来源（**开发树 1.0.49，不 bump / 不 sync**）：定位到 selection 本地 64 KiB 请求限额、UIA FromPoint 跨目标窗口读取及慢读取后输入法抢来源；selection 单独采用8 MiB限额，UIA约束目标树，提前保存窗口清单，各笔分别绑定微信/桌面文件，未覆盖材料逐笔调用同一个模型的冻结视觉。真实冻结画面回放解析三处材料并取得桌面PDF真实路径；`kimi-k3` 经真实main/worker/Runtime **40.607s**完成PDF正文补读与答案，`usedBackend=magic_pointer.messages_multiturn_streaming`，errors为空；独立真实Look **9.083s**认出微信HTML卡文件名及87.3K。用户后来选择的deepseek-v4.1-flash为纯文本，保留其选择。最终Node **239文件通过**、TypeScript、lint、构建通过；Python **2321 passed / 1项既有感知失败 / 318.01s**。HTML正文与严格200字尚未验收通过；删除单笔材料的既有过滤问题另行记录。详见`docs/research/2026-09-19-selection-multisource-delivery.md`。
+
+2026-09-19 Composer 控件与账户菜单（**开发树 1.0.49，不 bump / 不 sync**）：直接读取本机 Claude Desktop 2.110 编译组件/CSS和已存图标，effort **220×111**，最高档显示紫色颗粒；Mode **244×236.5**，账户卡 **272×276**，`+` 打开 Code 附件/目录/命令/连接器/插件菜单。Worktree 选择立即生效，创建推迟到提交，取消不删除工作区；真实开发版两次切换实测 **2.6ms**。全量 Node **238文件通过**、TypeScript、lint、构建通过；Python **2318 passed / 1项既有感知失败 / 344.55s**。真实 main/preload/IPC 与 Chromium 小窗口、动效、关闭清理验收通过，最新开发窗口已打开，原偏好已恢复。具体来源、账户功能边界与证据见 `docs/research/2026-09-19-composer-menu-delivery.md`。
+
+2026-09-19 模型菜单、来源标签与快速切换（**开发树 1.0.49，不 bump / 不 sync**）：按本机 Claude Desktop 参数实现244px宽四项菜单，More最多216px高、约八行滚动，避开标题栏并保证首尾可点击；来源灰色标签按真实目录显示（本机为`opencode-zen`）。固定项支持取消第三项再原位替换，已补齐本机四个默认位置。切换改为本地保存、不冷启动Fabric或重读目录，真实main/preload/IPC验收**57ms**（含40ms观测等待）；删除两处多余悬停提示及独立视觉模型/地址/密钥/协议覆盖入口，文字和读图共用所选模型。Pi式provider身份与上下文元数据进入实际Runtime预算。最终Python **2318 passed / 1项既有感知失败 / 325.70s**，Node **237文件通过**，TypeScript、lint、构建通过；真实37模型目录、四项替换和选择持久化通过，恢复用户原模型。未修改安装版；详情与证据见`docs/research/2026-09-19-model-menu-delivery.md`。
+
+2026-09-19 GUI 用量弹层纠正与鼠标修复（**开发树 1.0.49，不 bump / 不 sync**）：明细独立在主卡左侧展开，点击箭头/页脚不重建主卡、不再被外部点击关闭；真实旧 JEV 会话经现有事件日志恢复最后请求 **42085** 输入，与累计 **92304** 分开。主卡恢复完整 `42.1k / 128k (33%)`，分段/明细/图例四种颜色一致，去掉“旧记录只有累计消耗”文字，修复 k/M 格式。双生鼠标窗口空闲时隐藏并停止采样，装饰层取消原生鼠标转发；**用户在打开的修复版 GUI 中明确确认“现在已恢复正常”**。实际 main/preload/IPC/历史会话验证通过（替代之前独立离屏夹具），Python **2319 passed / 1 个已知感知失败 / 329.16s**；Node **234 文件通过**，TypeScript/构建/定向 ESLint 通过。真实开发版 GUI 保留打开，安装目录未替换。证据与验证范围见 `docs/research/2026-09-19-usage-popover-correction.md`；本条取代下面早先的“原地明细/离屏验收”结论。
+
+2026-09-19 GUI 工具与上下文用量修复（**开发树 1.0.49，沿用不 bump / 不 sync 约束**）：实际 JEV 会话定位 Glob 200s 取消不响应、Bash 扫 release、Grep 字段不匹配，以及累计 90823 输入被误当上下文（最后请求实测 42085）。Glob 尊重忽略规则并响应取消，Read 默认 200 行/约12k字符；运行中立即发送工具参数，工具组默认折叠。新增每次请求的实时计量，明确本地估算/服务端实测、当前上下文/累计消耗；按本机 Claude Code 360px 内容宽、12/15 字体、4px 条实现弹层与原地明细，刷新 provider 配额，DeepSeek 支持官方费率费用估算。最终 Python **2318 passed / 1 个已知感知失败 / 308.74s**；Node **233 文件通过**、TypeScript/构建通过；真实工作区 Glob **361ms**，Electron 离屏尺寸与展开验收通过。未使用真实模型重跑计费、未替换安装版；详见 `docs/research/2026-09-19-context-usage-delivery.md`。
+
+2026-09-19 提示词身份与会话冻结（**开发树 1.0.49，按用户要求不升版本、不 sync**）：assembler 返回原文及有序分段 SHA-256；`model/request` 在 `messagesHash` 旁记录 `systemPromptHash/systemPromptSections`，沿用现有 canonical JSON。创建客户端前在 EventSession 固定快照，恢复遇当前渲染差异记录 `prompt/drift` 并继续使用旧文本，日志、实际请求和 token 估算一致；旧会话缺少的分段信息或全文如实标注。核心冷启动/常驻恢复测试先失败后通过；fresh Python **2310 passed / 1 failed / 1 个既有 Pillow warning / 359.63s**，唯一失败为用户预先豁免的感知层 `test_screen_region_enrich_falls_back_to_full_capture_without_selection_bbox`，未改动；Node **232 文件通过**、TypeScript 全配置通过、Ruff 无新增告警。未修改任何提示词文案，未做真实模型或 Electron 真机验收。实现、真实请求 JSON 和红绿日志见 `docs/research/2026-09-19-prompt-versioning-delivery.md`。
+
+2026-09-18 代码审读与确定性修复批（**1.0.49，已同步安装并重启**）：按用户要求取消 MP 内的 Jev 接入，仅做产品主链审读及真实缺陷修复。覆盖材料分页/目录引用/长文本、感知数值冲突与未定位 OCR、写后验证/取消/恢复别名/fork、CU 原文深读与目标窗口校验、模型配置往返、Studio 失败持久化与启动恢复、`/model` 活动 profile 切换。遵守本轮**不跑全量测试**的要求，改用明确失败场景的定向回归与编译；最终 NSIS 构建 exit 0，安装器 392,342,147 bytes。安装目录24个本批Python/JS交付文件逐字节相同，包内Python在临时原生Win32 Edit中完成295字符写入→后置条件→完整读回（405.12ms），当前7个应用进程均来自安装目录。没有宣称全仓逐行无遗漏或 Office/Figma/微信全链验收；具体阅读范围、失败见证、定向检查和安装器记录见 `docs/research/2026-09-18-code-audit.md`。
+
 2026-09-18 上下文与 CU 底层批（按用户要求 **保持 1.0.48，已同步安装并重启**）：已修原生文档重复解析、PDF 按小块造成的多轮翻读、首轮漏已读材料、工具结果 Python repr、重复模型证据、历史检索漏命中文字/跨会话结果、CU 双份树/验证状态不一致，以及原生 UIA 未读取/保留控件 value 导致写入后误判超时。新增按页 text 读取、短标签且权限仍绑定真实来源、Recall 原事件分页。最终原始三处材料的默认 Provider 回放 **40.047 s / 2 轮 / 33,562 输入 token / 1 次工具 / 0 失败 / 0 视觉**，上批基线 190.719 s / 4 轮 / 45,012 输入 token；完整 21 页 PDF 已读取。fresh sync 内置 lint/typecheck、Node **228 文件**、Python **2190 passed / 1 条既有 Pillow warning / 225.00 s** 全通过。安装目录 **13 个关键文件逐字节相同**，自带 Python 实读 PDF 21 页 complete=true；临时原生 Win32 Edit 的 UIA 写入、条件判定、读回在开发树 **271 ms**、安装版 **317 ms** 通过，无物理输入；7 个运行进程均来自安装目录。单次回放不作统计保证，缓存不同也不能推导账单降幅；**200 字约束仍未通过、微信 HTML 仅有卡片**。逐文件对照、全部中间回放与边界见 `docs/research/2026-09-18-context-cu-backend-parity.md`。
+
+2026-09-18 三处圈选与工具历史修复批（**1.0.48，已同步安装并重启**）：每笔圈选独立绑定窗口/source，桌面 PDF 经原生 IFolderView 定位并用 DocumentReader 读取；修复 Look(reference) 无效锚点、空读取假成功、逐轮过程丢失、失败工具方框与结束折叠，使用 Claude 原始 Spark 帧资源及静态标志。合并并保留 **30 个会话、63 轮**，原任务 **12 次工具调用、10 段思考**可恢复。修复 profile 中 defaultMaxTokens 被误判为凭据导致的启动异常，并补齐安装运行时 pywin32 依赖。最终 `npm run sync` 内置 lint/typecheck、Node **228 文件**、Python **2169 passed / 1 条既有 warning / 238.14s**；安装目录版本核对 **1.0.48**，9 个关键交付文件逐字节相同，包内 Python 从安装目录实际定位原桌面 PDF 并读取 21 页结构，应用启动/模型健康检查通过。真实 Runtime 回放能在视觉 HTTP429 后改用 Context.read/search 返回答案，但**微信 HTML 附件正文未取得、200 字限制未严格遵守**；工具过程与星芒已对照五张指定参考，尚不能宣称全 GUI 所有页面逐像素一致。完整记录：`docs/research/2026-09-18-selection-transcript-repair.md`。
+
+2026-09-18 圈选证据、双窗任务连续性与 Claude 参考界面批（**1.0.47，已同步安装版并重启**）：修复视觉 429 被当作成功、HiDPI 坐标及选区 geometry 丢失、OCR 全图缩放漏字、窗口身份缺失；Look 使用选区细节和同一冻结全景，感知失败进入真实工具错误。Stage/GUI 共用持久任务及完整实时过程，关闭小窗只 detach，终态和权限卡自动进入 GUI，节点增量更新保留展开状态。逐张核对 47 张参考图，接入原字体动效、SVG 与模板关键帧，补齐 Artifacts 实际预览、Projects/Scheduled/Customize/Design/Chats 及搜索/排序/项目菜单/批量操作。最终双窗验收 **6.178s**、库页 **24.189s**，均全绿且 consoleErrors 为空；它们使用明确记录的模型/目录 fixture，真实存储与 IPC 不替换。fresh 全量及 sync 复验均通过：lint/typecheck、Node **228 个测试文件**、Python **2164 passed / 1 条既有 Pillow warning**（同步复验 214.50s）。`npm run sync` 成功；开发树/安装版均 **1.0.47**，**308 个交付文件逐字节一致**，安装版自带 Python 核对通过，5 个应用进程来自安装目录。诚实边界：最后真实模型回放仍遇视觉 HTTP429，虽已正确识别应用及增删行数，仍无依据猜测 PR 状态原因，不能称为完整识别通过；像素宠物、无实际步骤契约的交互卡及 Claude 专属账户/云端服务未伪造。完整记录：`docs/research/2026-09-18-selection-continuity-delivery.md`，逐图对照：`docs/research/2026-09-17-claude-reference-parity.md`。
 
 2026-09-17 工具加载基础批（**1.0.46，已同步安装版并重启**）：回读 Pi/DeepSeek 历史后完成工具目录、精确批量加载及基于成功回执的已注册工具跨压缩/重启恢复；删除 14 个 recipe 包装工具，保留真实桌面/感知/Recall/MCP，MCP 远端仍需按懒启动契约重新发现。fresh lint/typecheck 全绿、Node **217 个测试文件**、Python **2129 passed / 1 条既有 Pillow warning**。真实默认 Provider 已完成批量加载→真实 find_roots→最终答案，3 次模型请求、桥内 **18.08s**；首次尝试曾在工具成功后的最终模型请求超时。`npm run sync` 成功，安装版本核对为 **1.0.46**，11 个关键文件逐字节相同，安装版自带 Python 的加载器调用通过，5 个运行进程来自安装目录；同步覆盖复制留下的退役模块已单独清除。完整记录与边界在 `docs/research/2026-09-17-tool-loading-handoff.md`。
 
@@ -127,7 +149,7 @@
 
 2026-08-15 Studio 对话 = 真实 agent 回合 + 权限门（`79b92c5` 控制栏/回车、`5e96be7` agent 化，开发树未交付）：`conversation_bridge.py` 改为 boot 插件树跑 `run_agent_turn`（多轮+工具），历史走 data 通道、无锚点 guard fail-closed、写动作只 propose；作曲家补 `+` 菜单/模型切换/上下文环/权限下拉（5 档，逐工具门），回车发送（IME+Shift 守卫）。验证：Python **1286 passed**、Node **143 passed**、typecheck 过。端到端模型回合待真机；未升版本未 sync。
 
-## 一句话
+## 历史摘要（1.0.32 时点，已被文件顶部当前状态取代）
 
 **本机安装版为 1.0.32；开发树与安装版同源。** Magic Pointer 的路线是完整自有 Agent：Studio 保留已交付的 DSH 高保真工作面，自有 Runtime 承担**全部任务（短任务与长程任务，时长不是边界）**，确定性感知/权限/执行边界归 MP；Hermes/Pi/Codex 只作为持续对照和资产语义来源，不是底座。感知能读（冻结/实时语义硬隔离），主 loop 能按 snapshot 绑定去 click/type/set_value（元素级失效），点完必须再观察，收工必须发票；运行中可插话（durable inbox）、可优雅停止（cancel/request → USER_INTERRUPT + Receipt）、看得见真实轮数，崩了能从会话记录知道有活没干完。最新 fresh 验证：**Python 1710 过 / Node 180 过 / 五套 typecheck、ESLint、diff check 干净**。真机 300 步长任务基准、steer/取消 GUI 人工实测、ledger 完整可视化仍是明确后续（见 `docs/research/2026-08-19-codex-harness-study-and-audit.md` §3）。
 
@@ -141,7 +163,7 @@ FrameLease 捕获地基（8·11 计划 Phase A）已全量落地并过自动化�
 
 结构化应用（记事本、Edge、Office、终端）的划线读取链路已经可用；自绘应用（微信 4.x、Qt、Flutter）的 SurfaceAdapter SDK + 微信样例已落地（容器 UIA 暴露则用，否则诚实像素锚点），但**"首笔手势像素候选框"仍需真机验证**。**不能宣称"任意 Windows 软件里随手一划都能稳定理解完整对象"。**
 
-## 能用
+## 历史能力矩阵（2026-08 至 09 月初；现行结论见顶部）
 
 | 能力 | 状态 |
 |---|---|

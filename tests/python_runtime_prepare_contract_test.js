@@ -63,7 +63,7 @@ assert(/& \$stagePython\s+-I\s+-c\s+'import base64,sys;exec\(base64\.b64decode\(
   'staged interpreter must be independently validated');
 assert(script.includes('function Test-RuntimeImports'),
   'runtime preparation and cache reuse must share a real dependency import probe');
-for (const moduleName of ['PIL', 'fitz', 'docx', 'pptx', 'openpyxl', 'openai', 'onnxruntime', 'rapidocr', 'sounddevice', 'whisper', 'torch', 'opencc']) {
+for (const moduleName of ['PIL', 'fitz', 'docx', 'pptx', 'openpyxl', 'openai', 'onnxruntime', 'rapidocr', 'sounddevice', 'whisper', 'torch', 'opencc', 'pythoncom', 'win32com.shell']) {
   assert(script.includes(`import ${moduleName}`), `runtime import probe must load ${moduleName}`);
 }
 assert(script.includes('runtime_document_smoke.py'),
@@ -88,7 +88,7 @@ const lockedEntries = lock
 assert(lockedEntries.length > 0, 'lock must contain package entries');
 assert(lockedEntries.every((entry) => entry.includes('--hash=sha256:')),
   'every locked package must carry a sha256 hash');
-for (const packageName of ['openai', 'pillow', 'pymupdf', 'python-docx', 'python-pptx', 'openpyxl', 'pyperclip', 'onnxruntime', 'rapidocr', 'openai-whisper', 'sounddevice', 'opencc', 'torch']) {
+for (const packageName of ['openai', 'pillow', 'pymupdf', 'python-docx', 'python-pptx', 'openpyxl', 'pyperclip', 'onnxruntime', 'rapidocr', 'openai-whisper', 'sounddevice', 'opencc', 'torch', 'pywin32']) {
   assert(new RegExp(`^${packageName}==`, 'mi').test(lock), `lock must include ${packageName}`);
 }
 

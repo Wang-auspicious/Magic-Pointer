@@ -18,10 +18,8 @@
  *   deepseek    documented  https://api-docs.deepseek.com/api/get-user-balance
  *   openrouter  documented  https://openrouter.ai/docs/api-reference/limits
  *   moonshot    documented  https://platform.kimi.ai/docs/api/balance
- *   opencode    UNDOCUMENTED. The OpenCode Go plan publishes
- *               /zen/go/v1/usage and tools consume it, but it is not in the
- *               vendor's API reference. Treated as best-effort: any non-2xx
- *               or unexpected shape yields an error row, never a guess.
+ *   opencode    Official source verified 2026-09-19:
+ *               anomalyco/opencode packages/console/app/src/routes/zen/go/v1/usage.ts
  */
 
 type UnknownRecord = Record<string, any>;
@@ -215,7 +213,7 @@ const QUOTA_ADAPTERS: QuotaAdapter[] = [
     matches: (host, provider) => provider === 'opencode' || host.endsWith('opencode.ai'),
     url: (origin) => `${origin}/zen/go/v1/usage`,
     headers: (credential) => ({ Authorization: `Bearer ${credential}` }),
-    /* Undocumented. Shape observed in the wild:
+    /* Shape returned by the official route's formatUsage():
        {"usage":{"rolling":{"status":"ok","percent":4,"resetsAt":"…"},
                  "weekly":{…},"monthly":{…}}}
        `percent` is the share already spent. */

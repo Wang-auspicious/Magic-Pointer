@@ -178,7 +178,8 @@ function toResult(state: StageMachineState, event: UnknownRecord): StageMachineS
 
 function toError(state: StageMachineState, event: UnknownRecord): StageMachineState {
   const error = event.error == null ? { message: 'unknown error' } : event.error;
-  return { ...state, name: 'error', error, notice: null, ...closeTurn(state, { error }) };
+  const result = event.result == null ? null : event.result;
+  return { ...state, name: 'error', result, error, notice: null, ...closeTurn(state, { result, error }) };
 }
 
 function transition(
@@ -254,7 +255,7 @@ function transition(
     }
 
     case 'processing':
-      if (type === 'COMPLETE') return toDismissing(state);
+      if (type === 'COMPLETE') return candidate.result ? toResult(state, candidate) : toDismissing(state);
       if (type === 'RESULT') return toResult(state, candidate);
       if (type === 'ERROR') return toError(state, candidate);
       if (type === 'DELIVERY_PROGRESS') {

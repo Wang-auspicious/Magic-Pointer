@@ -33,11 +33,12 @@ assert(row.includes('class="dsh-title">Wrote</span>'),
   'row title is the completed action ("Wrote a.txt"), never the bare noun');
 /* 展开体是「一张代码卡 + 卡下面的原文输出」，不是 IN/OUT 分栏：人读的是
    「跑了什么」和「回了什么」，标签把这两件事摆成了两个格子。 */
-assert(row.includes('class="dsh-code"'), 'the expanded body renders as a code card');
+assert(row.includes('class="dsh-diff"'), 'the expanded write body renders its actual added lines');
 assert(row.includes('class="dsh-tool-output"'), 'the result renders as plain output text below the card');
 assert(!row.includes('dsh-io-label'), 'the IN/OUT gutter labels are gone');
 assert(row.includes('data-dsh-act="toggle"'), 'the row must be expandable via the shared delegation');
-assert(row.includes('data-dsh-act="copy"'), 'the command card carries its own copy action');
+assert(html(DshChat.toolRowNode(DshChat.toolRowModel('Read', '{"path":"a.txt"}'))).includes('data-dsh-act="copy"'),
+  'a non-diff command card carries its own copy action');
 
 const collapsedByDefault = DshChat.toolRowNode(model).outerHTML;
 assert(collapsedByDefault.includes('data-open="false"'), 'tool rows start collapsed');
@@ -62,9 +63,9 @@ assert(!css.includes('.dsh-tool[data-state=\'running\'] .dsh-row::after'),
   'the Claude-fidelity activity row must not use a perpetual sweep glare');
 
 const failed = html(DshChat.toolRowNode(DshChat.toolRowModel('read', JSON.stringify({ path: 'b.txt' }), { text: 'no such file\nmore', isError: true })));
-assert(failed.includes('class="dsh-dot"'), 'an error row must show the state dot');
+assert(failed.includes('dsh-tool-caret'), 'failed tools retain the same disclosure caret as successful tools');
 assert(failed.includes('data-state="error"'), 'error state must ride the root');
-assert(failed.includes('dsh-error-summary'), 'the collapsed error summary must use the error color');
+assert(failed.includes('b.txt'), 'a failed read keeps the requested file visible');
 assert(failed.includes('no such file'));
 assert(failed.includes('class="dsh-tool-output"'),
   'a tool result renders as plain output text, not as an OUT gutter label');
@@ -80,6 +81,13 @@ assert(/dsh-diff-line[^>]*data-kind="add"/.test(editDiff), 'added lines must car
 assert(editDiff.includes('- x = 1'), 'deleted lines show their literal content');
 assert(editDiff.includes('+ x = 42'), 'added lines show their literal content');
 assert(!editDiff.includes('old_string'), 'raw argument names must not leak into the diff view');
+
+const canonicalEdit = DshChat.toolRowNode(DshChat.toolRowModel('Edit', editArgs)).outerHTML;
+assert(canonicalEdit.includes('class="dsh-diff"') && canonicalEdit.includes('- x = 1'),
+  'the production Edit tool must render the same removed and added lines');
+const canonicalWrite = DshChat.toolRowNode(DshChat.toolRowModel('Write', JSON.stringify({ path: 'a.txt', content: 'written' }))).outerHTML;
+assert(canonicalWrite.includes('class="dsh-diff"') && canonicalWrite.includes('+ written'),
+  'the production Write tool must render its actual new content');
 
 const writeDiff = DshChat.toolRowNode(DshChat.toolRowModel('write_file', JSON.stringify({ path: 'n.txt', content: 'a\nb' }))).outerHTML;
 assert(/dsh-diff-line[^>]*data-kind="add"/.test(writeDiff) && writeDiff.includes('+ a'), 'write_file renders as an all-add diff');
@@ -165,7 +173,7 @@ assert(flowingTurn.indexOf('我先看看目录结构。') < flowingTurn.indexOf(
   'narration precedes the first tool chip it introduces');
 assert(flowingTurn.indexOf('找到文件了，我读一下。') > flowingTurn.indexOf('obsidian-daily-log/README.md'),
   'the second narration comes after the first tool chip');
-assert(flowingTurn.indexOf('找到文件了，我读一下。') < flowingTurn.indexOf('dsh-tool-group'),
+assert(flowingTurn.indexOf('找到文件了，我读一下。') < flowingTurn.indexOf('Read 2 files'),
   'the second narration precedes the tool group it introduces');
 // 展开证据保留：参数在芯片展开体里（这个 fixture 的 trajectory 工具没带结果，
 // 结果文本另有一条用例覆盖）。
@@ -223,8 +231,8 @@ assert(referenceFlow.includes('Listed files in working directory'),
   'directory listing uses the completed-action label from the reference');
 assert(referenceFlow.includes('Read') && referenceFlow.includes('VisLexicon-完整方案.md') && referenceFlow.includes('rebuttal.md'),
   'read chips preserve both exact reference filenames');
-assert(/<details[^>]*class="dsh-tool-group"[^>]*\sopen(?:=|\s|>)/.test(referenceFlow),
-  'two-item Claude groups start expanded so their child rows are visible');
+assert(!/<details[^>]*class="dsh-tool-group"[^>]*\sopen(?:=|\s|>)/.test(referenceFlow),
+  'completed groups collapse as in the final user reference, including two-item groups');
 assert(referenceFlow.indexOf('读完了。') < referenceFlow.indexOf('1m 7s · 417 tokens'),
   'the final answer appears before the run meta, as in the reference transcript');
 assert(referenceFlow.includes('dsh-tool-caret'),

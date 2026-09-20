@@ -73,7 +73,7 @@ from app.governance.latency_budget import (  # noqa: E402
 from app.system_context import list_visible_windows  # noqa: E402
 from scripts.bridge_progress import PhaseClock  # noqa: E402
 
-MAX_QUESTION_CHARS = 4000
+MAX_QUESTION_CHARS = 12000
 MAX_TURNS = 12
 
 # Agent session 身份前缀。
@@ -86,7 +86,7 @@ MAX_TURNS = 12
 # 别的对话、并发两条对话往同一条哈希链里追加。
 #
 # 现在身份钉在 conversationId 上。两个前缀让"线程自己的 session"和"旧的
-# 共享 session"可区分：只有带这两个前缀的 id 才会被信任并复用，历史遗留的
+# 共享 session"可区分；圈选入口签发的 agent-UUID 也在切换到 Studio 后原样复用。历史遗留的
 # ``agent-studio-<sha>`` 一律重新派生，不把旧的共享状态带进新语义。
 CONV_SESSION_PREFIX = "agent-studio-conv-"
 NEW_SESSION_PREFIX = "agent-studio-new-"
@@ -108,268 +108,10 @@ CONVERSATION_BUDGETS = {
 from app.agent_runtime.slash_directory import SLASH_COMMANDS  # noqa: E402
 
 
-def _trajectory_text(value: Any) -> str:
-    """Serialize structured runtime facts as the JSON DSH's tool rows display."""
-    if isinstance(value, (dict, list)):
-        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-    return str(value or "")
-
-
-class _ConversationActivitySink:
-    """Project loop events into honest Studio lifecycle rows and phase marks."""
-
-    #: 流式正文增量的节流窗口：太密会淹没 stderr，太久会让用户看着空屏。
-    CHUNK_FLUSH_INTERVAL_S = 0.12
-
-    def __init__(
-        self,
-        clock: PhaseClock,
-        request_header: Mapping[str, Any] | None = None,
-    ) -> None:
-        self.clock = clock
-        raw_header = request_header if isinstance(request_header, Mapping) else {}
-        try:
-            max_tokens = max(0, int(raw_header.get("maxTokens") or 0))
-        except (TypeError, ValueError):
-            max_tokens = 0
-        self._request_header = {
-            "promptCache": bool(raw_header.get("promptCache")),
-            **(
-                {"usedBackend": str(raw_header.get("usedBackend") or "")[:160]}
-                if str(raw_header.get("usedBackend") or "").strip()
-                else {}
-            ),
-            **({"maxTokens": max_tokens} if max_tokens else {}),
-        }
-        self.activities: list[dict[str, Any]] = []
-        self.trajectory: list[dict[str, Any]] = []
-        self._active_model: dict[str, Any] | None = None
-        self._active_message: dict[str, Any] | None = None
-        self._tools: dict[str, dict[str, Any]] = {}
-        self._trajectory_tools: dict[str, dict[str, Any]] = {}
-        self._first_chunk_seen = False
-        self._pending_chunk_text: list[str] = []
-        self._last_chunk_flush = 0.0
-        # 思考流（reasoning）：trajectory message record 逐轮累计 + 进度行
-        # 边想边画；turn_reasoning 供终态载荷的 thinking 字段（Think 行）。
-        self._pending_reasoning_text: list[str] = []
-        self._last_reasoning_flush = 0.0
-        self.turn_reasoning: list[str] = []
-
-    def _flush_answer_chunks(self) -> None:
-        if not self._pending_chunk_text:
-            return
-        text = "".join(self._pending_chunk_text)
-        self._pending_chunk_text.clear()
-        blob = base64.b64encode(text.encode("utf-8")).decode("ascii")
-        self._last_chunk_flush = time.perf_counter()
-        try:
-            self.clock.mark_blob("answer_chunk", blob)
-        except Exception:  # noqa: BLE001 - 流式展示永远不能弄坏回合本身
-            self._pending_chunk_text.clear()
-
-    def _flush_reasoning_chunks(self) -> None:
-        if not self._pending_reasoning_text:
-            return
-        text = "".join(self._pending_reasoning_text)
-        self._pending_reasoning_text.clear()
-        blob = base64.b64encode(text.encode("utf-8")).decode("ascii")
-        self._last_reasoning_flush = time.perf_counter()
-        try:
-            self.clock.mark_blob("reasoning_chunk", blob)
-        except Exception:  # noqa: BLE001 - 流式展示永远不能弄坏回合本身
-            self._pending_reasoning_text.clear()
-
-    def _append_record(self, record: dict[str, Any]) -> dict[str, Any]:
-        record["seq"] = len(self.trajectory) + 1
-        self.trajectory.append(record)
-        return record
-
-    def __call__(self, event: Any) -> None:
-        kind = str(getattr(event, "kind", ""))
-        if kind == "loop_start":
-            self.clock.mark("agent_start")
-            return
-        if kind == "tools_truncated":
-            dropped = tuple(str(name) for name in getattr(event, "dropped", ()) if str(name))
-            limit = int(getattr(event, "limit", 0) or 0)
-            self._append_record({
-                "kind": "notice",
-                "state": "done",
-                "text": (
-                    f"已注册 {limit + len(dropped)} 个工具，超过本轮上限 {limit}；"
-                    "本轮未暴露："
-                    + "、".join(dropped)
-                    + "。需要时可用 Tools 搜索加载。"
-                ),
-            })
-            return
-        if kind == "turn_started":
-            self._flush_answer_chunks()
-            self._flush_reasoning_chunks()
-            self.turn_reasoning.clear()
-            turn = int(getattr(event, "turn", 0) or 0)
-            started_ms = self.clock.mark("model_request", turn=turn)
-            self._append_record({
-                "kind": "request-header",
-                "turn": turn,
-                "step": turn,
-                "startedAt": started_ms,
-                **self._request_header,
-            })
-            self._active_message = self._append_record({
-                "kind": "message",
-                "turn": turn,
-                "step": turn,
-                "state": "running",
-                "text": "",
-                "startedAt": started_ms,
-            })
-            self._active_model = {
-                "kind": "model",
-                "turn": turn,
-                "state": "running",
-                "startedMs": started_ms,
-            }
-            self.activities.append(self._active_model)
-            self._first_chunk_seen = False
-            return
-        if kind == "model_chunk":
-            text = str(getattr(event, "text", "") or "")
-            if self._active_message is not None and text:
-                self._active_message["text"] = str(self._active_message.get("text") or "") + text
-            if not self._first_chunk_seen:
-                self._first_chunk_seen = True
-                at_ms = self.clock.mark("model_first_chunk")
-                if self._active_model is not None:
-                    self._active_model["firstTokenMs"] = max(
-                        0.0, at_ms - float(self._active_model.get("startedMs") or 0.0)
-                    )
-                if self._active_message is not None:
-                    self._active_message["firstTokenAt"] = at_ms
-            if text:
-                # Studio 流式正文：增量 base64 上线，渲染层边收边画。
-                self._pending_chunk_text.append(text)
-                if time.perf_counter() - self._last_chunk_flush >= self.CHUNK_FLUSH_INTERVAL_S:
-                    self._flush_answer_chunks()
-            return
-        if kind == "reasoning_chunk":
-            # 思考流：记进 message record（正式渲染）+ 进度行（边想边画）。
-            text = str(getattr(event, "text", "") or "")
-            if not text:
-                return
-            self.turn_reasoning.append(text)
-            if self._active_message is not None:
-                self._active_message["reasoning"] = (
-                    str(self._active_message.get("reasoning") or "") + text
-                )
-            self._pending_reasoning_text.append(text)
-            if time.perf_counter() - self._last_reasoning_flush >= self.CHUNK_FLUSH_INTERVAL_S:
-                self._flush_reasoning_chunks()
-            return
-        if kind == "tool_call_started":
-            # 工具边界前把持有的正文尾巴冲出去：模型先说话再调工具时，
-            # 文本必须落在工具行之前，不能被节流窗口吞到下一轮。
-            self._flush_answer_chunks()
-            self._flush_reasoning_chunks()
-            call_id = str(getattr(event, "id", ""))
-            name = str(getattr(event, "name", "") or "tool")
-            started_ms = self.clock.mark("tool_call", id=call_id, name=name)
-            activity = {
-                "kind": "tool",
-                "id": call_id,
-                "name": name,
-                "state": "running",
-            }
-            self.activities.append(activity)
-            self._tools[call_id] = activity
-            record = self._append_record({
-                "kind": "tool",
-                "turn": int(self._active_message.get("turn", 0)) if self._active_message else 0,
-                "callId": call_id,
-                "name": name,
-                "state": "running",
-                "text": "",
-                "startedAt": started_ms,
-            })
-            self._trajectory_tools[call_id] = record
-            return
-        if kind == "tool_call_finished":
-            result = getattr(event, "result", None)
-            call_id = str(getattr(result, "tool_call_id", ""))
-            name = str(getattr(result, "tool_name", "") or "tool")
-            failed = bool(getattr(result, "is_error", False))
-            backend = str(getattr(result, "used_backend", "") or "")
-            latency = float(getattr(result, "latency_ms", 0.0) or 0.0)
-            # args 一起过桥：工具行要能写成「Ran curl -L -o x.pdf …」而不是光
-            # 一个动词。tool_call 那一刻还没有参数（ToolCallStarted 只带
-            # name/id），所以参数只能跟着结果回来。_token 会截断，前缀足够
-            # 认出这条命令。
-            completed_ms = self.clock.mark(
-                "tool_result", id=call_id, name=name,
-                state="error" if failed else "done", backend=backend or "-",
-                latency_ms=latency,
-                args=_trajectory_text(getattr(result, "arguments", "")),
-            )
-            activity = self._tools.get(call_id)
-            if activity is None:
-                activity = {"kind": "tool", "id": call_id, "name": name}
-                self.activities.append(activity)
-            activity.update({
-                "state": "error" if failed else "done",
-                "latencyMs": latency,
-                "usedBackend": backend,
-            })
-            record = self._trajectory_tools.get(call_id)
-            if record is None:
-                record = self._append_record({
-                    "kind": "tool",
-                    "turn": int(self._active_message.get("turn", 0)) if self._active_message else 0,
-                    "callId": call_id,
-                    "name": name,
-                    "startedAt": max(0.0, completed_ms - latency),
-                })
-            record.update({
-                "state": "error" if failed else "done",
-                "completedAt": completed_ms,
-                "latencyMs": latency,
-                "usedBackend": backend,
-                "text": _trajectory_text(getattr(result, "arguments", "")),
-                "result": _trajectory_text(getattr(result, "value", "")),
-                "isError": failed,
-            })
-            return
-        if kind == "turn_finished":
-            # 回合正文结束：把节流窗口里持有的尾巴全部冲出去，不能丢字。
-            self._flush_answer_chunks()
-            self._flush_reasoning_chunks()
-            state = getattr(event, "state", None)
-            transition = getattr(state, "transition", None)
-            state_value = str(
-                getattr(transition, "value", None)
-                or getattr(state, "value", None)
-                or "done"
-            )
-            at_ms = self.clock.mark("model_response", state=state_value)
-            if self._active_model is not None:
-                self._active_model["state"] = (
-                    "error" if state_value not in {"done", "completed", "tool_result"} else "done"
-                )
-                self._active_model["latencyMs"] = max(
-                    0.0, at_ms - float(self._active_model.pop("startedMs", at_ms))
-                )
-            if self._active_message is not None:
-                self._active_message["state"] = (
-                    "error" if state_value not in {"done", "completed", "tool_result"} else "done"
-                )
-                self._active_message["completedAt"] = at_ms
-            return
-        if kind == "budget_renewed":
-            self.clock.mark(
-                "budget_renewed",
-                turn=getattr(event, "turn", 0),
-                renewals=getattr(event, "renewals_used", 0),
-            )
+from app.agent_runtime.activity_projection import (  # noqa: E402
+    RuntimeActivitySink as _ConversationActivitySink,
+    completed_trajectory,
+)
 
 
 def _emit_subagent_progress(clock: PhaseClock, payload: dict[str, Any]) -> None:
@@ -424,54 +166,13 @@ def _completed_result(
     answer = clean_replacement_text(str(mapped.get("answer") or ""))
     model_usage = mapped.get("modelUsage") or {}
     used_backend = mapped.get("usedBackend") or client_backend or "agent_runtime"
-    records = [dict(record) for record in trajectory]
-    if question:
-        records = [{
-            "seq": 1,
-            "kind": "user",
-            "turn": 1,
-            "state": "done",
-            "text": question,
-            "startedAt": 0.0,
-        }] + [{**record, "seq": int(record.get("seq", 0) or 0) + 1} for record in records]
-    messages = [record for record in records if record.get("kind") == "message"]
-    if messages:
-        last_message = messages[-1]
-        if not str(last_message.get("text") or "").strip():
-            last_message["text"] = answer
-        last_message["usedBackend"] = used_backend
-        # 输入侧和缓存侧也要一起带上：卡片要按类别分段着色，只有输出这一项
-        # 就画不出「上下文花在哪」。缺的键保持缺失（不补 0），渲染层才知道
-        # 该不该画那一段。
-        for source, target in (
-            ("inputTokens", "inputTokens"),
-            ("cacheReadTokens", "cacheReadTokens"),
-            ("cacheWriteTokens", "cacheWriteTokens"),
-            ("outputTokens", "outputTokens"),
-            ("reasoningTokens", "reasoningTokens"),
-        ):
-            value = model_usage.get(source) if isinstance(model_usage, dict) else None
-            if isinstance(value, (int, float)):
-                last_message[target] = value
-    receipts_by_id = {
-        str(receipt.get("toolCallId") or ""): receipt
-        for receipt in mapped.get("loopReceipts") or []
-        if isinstance(receipt, dict)
-    }
-    for record in records:
-        if record.get("kind") != "tool":
-            continue
-        receipt = receipts_by_id.get(str(record.get("callId") or ""))
-        if receipt is None:
-            continue
-        record["text"] = _trajectory_text(receipt.get("arguments") or record.get("text") or "")
-        record["result"] = _trajectory_text(receipt.get("valuePreview") or record.get("result") or "")
-        record["usedBackend"] = str(receipt.get("usedBackend") or record.get("usedBackend") or "")
-        if isinstance(receipt.get("latencyMs"), (int, float)):
-            record["latencyMs"] = receipt["latencyMs"]
+    records = completed_trajectory(mapped, trajectory, question=question, used_backend=used_backend)
     _completed_payload = {
-        "ok": True,
+        "ok": mapped.get("ok") is not False,
         "answer": answer,
+        "error": mapped.get("error"),
+        "loopTerminated": mapped.get("loopTerminated") is True,
+        "loopTerminatedReason": mapped.get("loopTerminatedReason"),
         "usedBackend": used_backend,
         "permissionPreset": permission_preset or "workspace-write",
         "receipts": mapped.get("loopReceipts") or [],
@@ -578,6 +279,8 @@ def resolve_agent_session_id(
     绝不回退到常量：一个共享 id 会把断点状态、取消请求和哈希链写入混在一起。
     """
     explicit = str(explicit or "").strip()
+    if re.fullmatch(r"agent-[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", explicit):
+        return explicit
     if explicit.startswith((CONV_SESSION_PREFIX, NEW_SESSION_PREFIX)):
         # session id 会变成文件名，越界的一律重新派生而不是让 store 抛错。
         if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", explicit):
@@ -1224,7 +927,12 @@ def answer_conversation(
     source_readers.register("figma", FigmaSourceReader(None))
     from app.agent_runtime.vision_backend import FileVisionBackend
 
+    resolved_session_id = resolve_agent_session_id(
+        explicit=agent_session_id,
+        conversation_id=conversation_id,
+    )
     runtime: dict[str, Any] = {
+        "session_id": resolved_session_id,
         # Durable user/assistant messages live in EventSession. Perception and
         # local context retain only object/scene facts so an established
         # session cannot rediscover a truncated duplicate history via tools.
@@ -1321,11 +1029,9 @@ def answer_conversation(
             "继续执行；每做完一步调用 todo_write 把该步标为 completed、"
             "正在做的标为 in_progress。全部完成后正常给出最终回答。"
         )
+    agent_session = None
+    activity_sink = None
     try:
-        resolved_session_id = resolve_agent_session_id(
-            explicit=agent_session_id,
-            conversation_id=conversation_id,
-        )
         # 渲染层由此拿到停止/插话要指向的 durable session（Studio stop/steer）。
         emit_session_ready(conversation_clock, resolved_session_id)
         agent_session = sessions.open_or_create(resolved_session_id, repair=True)
@@ -1532,12 +1238,26 @@ def answer_conversation(
         )
     except Exception as exc:  # noqa: BLE001 - loop crash must never kill the answer path
         timing_ms = conversation_clock.total("total", ok=0)
-        return {
+        records = activity_sink.trajectory if activity_sink is not None else []
+        partial = next((str(item.get("text") or "") for item in reversed(records)
+                        if item.get("kind") == "message" and item.get("text")), "")
+        result = _completed_result({
             "ok": False,
+            "answer": partial,
             "error": f"Agent 运行失败：{type(exc).__name__}",
-            "usedBackend": "agent_runtime",
-            "timingMs": timing_ms,
-        }
+            "loopTerminated": True,
+            "loopTerminatedReason": "runtime_error",
+        }, client_backend=getattr(client, "used_backend", "") or "agent_runtime",
+            permission_preset=permission_preset,
+            activities=activity_sink.activities if activity_sink is not None else [],
+            trajectory=records, timing_ms=timing_ms, question=question,
+            agent_session_id=resolved_session_id, has_pending_work=True)
+        if agent_session is not None:
+            result["taskContext"] = _task_context_payload(agent_session)
+            result["runtimeTurn"] = (None if agent_session.open_turn is not None else
+                next((event.data.get("turn") for event in reversed(agent_session.events)
+                      if event.type == "turn/end"), None))
+        return result
     finally:
         # 这一轮结束了，下一轮没有光标就不该继承这一条通道。
         from app.desktop_actions.session import set_agent_cursor_sink
@@ -1546,20 +1266,22 @@ def answer_conversation(
 
     mapped = terminal_to_answer(terminal, agent_prompt)
     answer = clean_replacement_text(str(mapped.get("answer") or ""))
-    if mapped.get("ok") is False or not answer or answer.startswith("AI 调用失败"):
+    failed = mapped.get("ok") is False or not answer or answer.startswith("AI 调用失败")
+    if failed:
         failure = str(
             mapped.get("error")
             or mapped.get("loopTerminatedReason")
             or ("empty_answer" if not answer else answer)
         ).strip()
-        return {
+        answer = next((str(item.get("text") or "") for item in reversed(activity_sink.trajectory)
+                       if item.get("kind") == "message" and item.get("text")), "")
+        mapped = {**mapped,
             "ok": False,
+            "answer": answer,
             "error": failure,
-            "loopTerminatedReason": mapped.get("loopTerminatedReason"),
-            "usedBackend": getattr(client, "used_backend", "") or "agent_runtime",
-            "timingMs": conversation_clock.total("total", ok=0),
+            "loopTerminated": True,
         }
-    timing_ms = conversation_clock.total("total", ok=1)
+    timing_ms = conversation_clock.total("total", ok=0 if failed else 1)
     from app.telemetry.interaction_ledger import InteractionLedger
 
     ledger_entries = InteractionLedger.from_session(agent_session).query()
@@ -1576,13 +1298,16 @@ def answer_conversation(
         question=question,
         agent_session_id=resolved_session_id,
         has_pending_work=bool(
-            getattr(agent_session, "has_pending_work", lambda: False)()
+            getattr(agent_session, "has_pending_work", lambda: failed)()
         ),
         interaction_ledger=interaction_ledger,
     )
     result["answer"] = answer
     result["artifacts"] = _latest_turn_artifact_summaries(agent_session)
     result["taskContext"] = _task_context_payload(agent_session)
+    result["runtimeTurn"] = (None if agent_session.open_turn is not None else
+        next((event.data.get("turn") for event in reversed(agent_session.events)
+              if event.type == "turn/end"), None))
     # 思考流（用户裁决：思考流一定要有）：turn 级 thinking 供 Think 行渲染；
     # 逐轮 reasoning 已在 trajectory message record 里。
     turn_thinking = "".join(activity_sink.turn_reasoning).strip()

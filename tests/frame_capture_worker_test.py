@@ -385,15 +385,19 @@ def test_real_subprocess_protocol_without_desktop_capture(tmp_path: Path) -> Non
         assert armed["id"] == "arm-1"
         assert armed["result"]["epochId"] == "epoch-1"
 
-        # Give the resident thread a beat to buffer frames; the worker captures
-        # the first frame immediately after arm.
-        deadline = time.monotonic() + 1.0
+        # A commit consumes its epoch even when the first frame is not ready.
+        # Scheduling/cold image initialization is outside this protocol test's
+        # contract: retry a NEW armed epoch instead of committing a stopped one.
+        deadline = time.monotonic() + 5.0
         committed = None
         while time.monotonic() < deadline:
             time.sleep(0.02)
             committed = rpc("commit-1", "commit", _commit_params())
             if "result" in committed:
                 break
+            assert committed["error"]["code"] == "no_frame_buffered", committed
+            armed = rpc("arm-retry", "arm", _arm_params())
+            assert "result" in armed, armed
         assert committed is not None and "result" in committed, committed
         assert committed["id"] == "commit-1"
         lease = committed["result"]

@@ -3190,6 +3190,9 @@ def _loop_router(
         mapped["selectionSessionId"] = selection_session_id or None
         mapped["selectionSnapshotId"] = selection_snapshot_id
         mapped["agentSessionId"] = agent_session_id
+        mapped["runtimeTurn"] = (None if agent_session.open_turn is not None else
+            next((event.data.get("turn") for event in reversed(agent_session.events)
+                  if event.type == "turn/end"), None))
         mapped["activities"] = activity_sink.activities
         mapped["trajectory"] = completed_trajectory(
             mapped, activity_sink.trajectory, question=command,
@@ -3279,7 +3282,7 @@ def _loop_interaction_metadata(result: dict[str, Any] | None) -> dict[str, Any]:
     awaiting = value.get("awaitingUserInput") is True and pending is not None
     return {
         **{key: value[key] for key in (
-            "agentSessionId", "trajectory", "activities", "thinking", "usedBackend", "timingMs",
+            "agentSessionId", "runtimeTurn", "trajectory", "activities", "thinking", "usedBackend", "timingMs",
             "hasPendingWork", "receipts", "loopReceipts", "events",
         ) if key in value},
         "modelUsage": usage,

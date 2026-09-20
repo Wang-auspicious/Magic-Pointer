@@ -25,9 +25,10 @@ assert.ok(fs.existsSync(vendored), 'the woff2 must be vendored locally, not hotl
 assert.strictEqual(fs.statSync(vendored).size, 94528,
   'the vendored woff2 must be the byte-for-byte scraped copy');
 
-const GLYPH_COUNT = 38;
+const GLYPH_COUNT = 69;
 const SPOT_CHECKS = {
   send: 0xe013,
+  'code-send': 0xe00f,
   check: 0xe03b,
   search: 0xe0d3,
   artifacts: 0xe017,
@@ -37,6 +38,21 @@ const SPOT_CHECKS = {
   'new-chat': 0xe001,
   dictate: 0xe0ab,
   'sidebar-panel': 0xe0dd,
+  // Projects 页头那个排序图标：官方 icon-catalog 里 Sort 的码位。
+  sort: 0xe0e3,
+  // 侧栏会话菜单用的：PinSlash / Box / Trash / ArrowDown / ArrowOutSquare / Archive。
+  unpin: 0xe0bf,
+  box: 0xe020,
+  trash: 0xe101,
+  'arrow-down': 0xe009,
+  'arrow-out': 0xe00e,
+  archive: 0xe008,
+  help: 0xe088,
+  globe: 0xe082,
+  info: 0xe08f,
+  scroll: 0xe0d2,
+  keyboard: 0xe092,
+  chart: 0xe02f,
 };
 
 const known = names();

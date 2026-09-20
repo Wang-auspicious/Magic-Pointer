@@ -14,6 +14,9 @@ from typing import Any
 
 
 MAX_BRIDGE_PAYLOAD_BYTES = 64 * 1024
+# A selection carries several structured observations, gestures and source
+# bindings. Its local transport is not a user-text or model-context budget.
+MAX_SELECTION_PAYLOAD_BYTES = 8 * 1024 * 1024
 
 
 class PayloadTooLargeError(ValueError):

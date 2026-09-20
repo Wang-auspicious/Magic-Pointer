@@ -143,8 +143,11 @@ def test_vision_request_uses_responses_input_format(monkeypatch, tmp_path) -> No
     monkeypatch.setattr(ai_client, "_image_data_url", lambda _path: "data:image/png;base64,YWJj")
     monkeypatch.setattr(ai_client, "short_circuit_message", lambda _base_url: None)
     monkeypatch.setattr(ai_client, "record_success", lambda **_kwargs: None)
-    for name in ("MAGIC_POINTER_VISION_MODEL", "MAGIC_POINTER_VISION_BASE_URL", "MAGIC_POINTER_VISION_KEY", "MAGIC_POINTER_VISION_API_MODE"):
-        monkeypatch.delenv(name, raising=False)
+    # Old split-vision settings must never hijack the selected model's request.
+    monkeypatch.setenv("MAGIC_POINTER_VISION_MODEL", "gemini-2.5-flash")
+    monkeypatch.setenv("MAGIC_POINTER_VISION_BASE_URL", "https://wrong.example/v1")
+    monkeypatch.setenv("MAGIC_POINTER_VISION_KEY", "wrong-key")
+    monkeypatch.setenv("MAGIC_POINTER_VISION_API_MODE", "messages")
     with ai_client.request_ai_config({
         "provider": "openai", "model": "gpt-5", "credential": "key",
         "baseUrl": "https://api.openai.com/v1", "apiMode": "responses",
@@ -154,6 +157,7 @@ def test_vision_request_uses_responses_input_format(monkeypatch, tmp_path) -> No
     assert answer == "image read"
     assert calls[0][0] == "https://api.openai.com/v1/responses"
     payload = calls[0][1]
+    assert payload["model"] == "gpt-5"
     assert "messages" not in payload
     assert payload["input"][0]["content"][0]["type"] == "input_text"
     assert payload["input"][0]["content"][1] == {"type": "input_image", "image_url": "data:image/png;base64,YWJj"}

@@ -16,7 +16,7 @@ const DATA = path.resolve('C:/Users/example/.magic-pointer');
 
 /* ---- slug：只含 [a-z0-9-]，因为它是目录名也是分支名 ---- */
 assert.strictEqual(worktreeSlug('01a0a92c-e545-741f-851b-9f3d88efa0e9'), 'mp-01a0a92c-e545-741f-851b-');
-assert.strictEqual(worktreeSlug(''), worktreeSlug('   '), 'blank ids fall back the same way');
+assert.strictEqual(worktreeSlug('', 1000), worktreeSlug('   ', 1000), 'blank ids at the same time fall back the same way');
 assert.match(worktreeSlug(''), /^mp-[a-z0-9]+$/, 'the timestamp fallback is still a valid ref name');
 assert.strictEqual(worktreeSlug('../../etc/passwd'), 'mp-etcpasswd',
   'a hostile conversation id cannot climb out of the managed directory');

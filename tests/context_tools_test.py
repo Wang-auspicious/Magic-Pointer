@@ -114,6 +114,20 @@ def test_context_search_returns_reopenable_fragments_and_coverage(tmp_path: Path
     assert result["usedBackend"] == "fake.document.reader"
 
 
+def test_context_read_empty_failed_evidence_is_a_failed_tool(tmp_path: Path) -> None:
+    from dataclasses import replace
+    session = FileSessionStore(tmp_path / "sessions").open_or_create("task-empty-read")
+    source = _source(session.id, "chat")
+    register_source(session, source)
+    reader = _Reader(session.id)
+    reader.read = lambda *args: replace(_result(source.source_id, "", reader.locator, complete=False), fragments=(), evidence_status="error")
+    readers = SourceReaderRegistry()
+    readers.register("document", reader)
+    registry = ToolRegistry()
+    register_context_tools(registry, session=session, readers=readers)
+    assert registry.execute_tool("Context.read", {"source_id": source.source_id}).is_error
+
+
 def test_context_bind_requires_a_locator_observed_by_context_read_or_search(tmp_path: Path) -> None:
     session = FileSessionStore(tmp_path / "sessions").open_or_create("task-bind")
     source = _source(session.id, "source-contract")

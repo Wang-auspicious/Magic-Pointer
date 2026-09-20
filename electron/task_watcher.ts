@@ -323,8 +323,8 @@ function createTaskWatcher({
     if (task) {
       const status = String(task.status || '');
       const patch = cardPatchFromTask(task, CardModel);
-      // 状态没变、也没有新步骤时不重复推——每一次推都会让界面重画。
-      const signature = `${status}|${(patch.steps || []).length}|${patch.progress ?? ''}`;
+      // Deduplicate the visible patch, including changes within existing steps.
+      const signature = JSON.stringify(patch);
       if (signature !== entry.lastSignature) {
         entry.lastSignature = signature;
         onPatch({

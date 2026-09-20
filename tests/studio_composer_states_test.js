@@ -25,8 +25,8 @@ assert(source.includes("form?.setAttribute('aria-busy', 'true')")
    字体里没有停止的码位，所以只有这一态走 svg。两态外形差别够大，值得留这个例外。 */
 assert(source.includes("submit.querySelector('use[href=\"#ic-stop\"]')"),
   'the send button swaps glyph markup per state instead of only retargeting a <use>');
-assert(source.includes("api.CdsIcons.html('send')"),
-  'the idle state restores the font send glyph');
+assert(source.includes("api.CdsIcons.html('code-send')"),
+  'the idle state restores the original Code ArrowReturn font glyph');
 assert(source.includes("document.getElementById('composer-context')?.setAttribute('data-state', running ? 'running' : 'idle')"),
   'the usage ring must switch to its running state with the turn');
 assert(source.includes("setComposerSettledState('success')"));
@@ -52,7 +52,7 @@ assert(source.includes('contextRow.hidden = !visible && Boolean(activeProjectRoo
 assert(source.includes("const COMPOSER_PLACEHOLDER_HOME = 'Describe a task or ask a question'"));
 assert(source.includes("const COMPOSER_PLACEHOLDER_THREAD = 'Type / for commands'"));
 assert(source.includes('textarea.placeholder = !home && composerSuggestion ? composerSuggestion : base'),
-  'the suggestion is a placeholder override, never a value in the textarea');
+  'the unaccepted suggestion stays a placeholder until the user explicitly accepts it');
 assert(source.includes('void refreshComposerSuggestion('),
   'the suggestion is fetched after the turn settles and does not block the composer');
 assert(source.includes('clearComposerSuggestion();'), 'a consumed or stale suggestion is dropped');
@@ -106,16 +106,13 @@ for (const selector of [
 assert.match(css, /\.dshw-perm-check svg\s*\{[^}]*width:\s*16px[^}]*height:\s*16px/s,
   'the svg fallback check keeps explicit dimensions; the glyph sizes itself');
 
-/* 408 是抓到的模型菜单宽度（computed.json 的 popover.menuRow __rect.width）。
-   以前钉的 280 是量自己的截图量出来的，比参考窄了一整档。 */
-assert.match(css, /\.dshw-model-menu\s*\{[^}]*width:\s*408px/s,
-  'the model menu uses the measured reference width, not a narrower local guess');
+// Actual Chromium size and input regression: scripts/probe_model_menu.cjs.
 /* 尾列不再写死 16px：选中勾现在是字体字形（20px 那档），写死 16 会把它压扁。
    用 auto，让槽跟着字形走。 */
 assert.match(css, /\.dshw-model-row\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\) auto/s,
   'model rows reserve a trailing slot that follows the glyph rather than a fixed 16px');
 assert(html.includes('class="mp-context-track"') && html.includes('class="mp-context-value"'));
-assert(source.includes('const contextWindow = Number(currentModel?.contextWindow) || 0'));
+assert(source.includes('Number(latestUsage?.contextWindow) || Number(currentModel?.contextWindow) || 0'));
 assert(source.includes("button.style.setProperty('--mp-context-progress', String(contextProgress))"));
 assert(source.includes('button.hidden = false'));
 assert.match(css, /\.mp-context-value\s*\{[^}]*stroke-dasharray:\s*var\(--mp-context-progress\) 100/s);

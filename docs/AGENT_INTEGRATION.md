@@ -72,14 +72,10 @@ Magic Pointer Extension：
 integrations/pi/magic_pointer_extension.ts
 ```
 
-它提供：
-
-- `magic_pointer_current`：读取冻结 Episode，不重新捕获；
-- `magic_pointer_recipes`：列 30 个 Recipe；
-- `magic_pointer_plan`：生成签名计划；
-- `magic_pointer_execute`：只有显式 `confirmed=true` 才能越过确认门；
-- `/pointer <instruction>`：把当前对象作为真实用户 turn 发给 Pi；
-- `before_agent_start`：普通 prompt 说“这个 / @pointer”时注入现场。
+它提供显式提示词交付命令：`/pointer "已审阅提示词文件的绝对路径"`。
+用户先在 MP 中准备提示词文件，再选择交付到 Pi；该命令逐字发送文件内容。
+Pi 扩展不注册冻结对象读取、计划、执行工具，也不向普通 turn 自动注入现场。
+Magic Pointer 的任务始终由 MPAgentRuntime 执行；外部客户端只承担用户主动选择的交付渠道。
 
 临时加载：
 
@@ -88,8 +84,7 @@ $env:MAGIC_POINTER_ROOT="D:\Desktop\Magic Pointer"
 pi --extension "D:\Desktop\Magic Pointer\integrations\pi\magic_pointer_extension.ts"
 ```
 
-后台任务使用真实 `pi --mode rpc` JSONL：初始 `prompt`、运行中
-`streamingBehavior=steer`，收到 `agent_settled` 才写终态。排队不等于完成。
+历史 Pi RPC 后台执行形态不再属于当前产品运行链。
 
 上游协议依据：
 

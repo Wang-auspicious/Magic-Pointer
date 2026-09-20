@@ -3,7 +3,8 @@
 
 Loads the RapidOCR engine once and serves JSON requests over a local TCP
 socket. Each request runs full-screen text detection (on a downscaled copy for
-speed), then only recognizes the blocks near the user's mark (stroke polylines
+speed), plus a padded detail pass when a HiDPI mark would lose small text,
+then only recognizes the blocks near the user's mark (stroke polylines
 or a selection rectangle in capture-local coordinates). Coordinates in the
 response are capture-local pixels, matching the screenshot the caller saved.
 
@@ -317,16 +318,16 @@ def _merge_recognized_pieces(parts: list[str]) -> str:
 # read; recognition only touches the boxes the user's mark selects. A capture
 # never changes once written, so a second command about the same object (the
 # common case in a multi-turn conversation) can reuse the boxes outright.
-_DETECTION_CACHE: "OrderedDict[tuple[str, int, int], list]" = OrderedDict()
+_DETECTION_CACHE: "OrderedDict[tuple, list]" = OrderedDict()
 _DETECTION_CACHE_MAX = 8
 
 
-def _detect_boxes(engine, image_path: Path) -> list:
+def _detect_boxes(engine, image_path: Path, region: tuple[int, int, int, int] | None = None) -> list:
     from PIL import Image
 
     try:
         stat = image_path.stat()
-        key = (str(image_path.resolve()), stat.st_size, stat.st_mtime_ns)
+        key = (str(image_path.resolve()), stat.st_size, stat.st_mtime_ns, region)
     except OSError:
         key = None
     if key is not None and key in _DETECTION_CACHE:
@@ -334,14 +335,18 @@ def _detect_boxes(engine, image_path: Path) -> list:
         return _DETECTION_CACHE[key]
 
     with Image.open(image_path).convert("RGB") as source:
+        if region is not None:
+            source = source.crop(region)
         detection_array, detection_scale = _detection_canvas(source)
+    offset_x, offset_y = region[:2] if region else (0, 0)
     det = engine(detection_array, use_cls=False, use_rec=False)
     raw_boxes = det.boxes
     full_boxes = (
         []
         if raw_boxes is None or len(raw_boxes) == 0
         else [
-            [[float(point[0]) / detection_scale, float(point[1]) / detection_scale] for point in box]
+            [[float(point[0]) / detection_scale + offset_x,
+              float(point[1]) / detection_scale + offset_y] for point in box]
             for box in raw_boxes.tolist()
         ]
     )
@@ -350,6 +355,33 @@ def _detect_boxes(engine, image_path: Path) -> list:
         while len(_DETECTION_CACHE) > _DETECTION_CACHE_MAX:
             _DETECTION_CACHE.popitem(last=False)
     return full_boxes
+
+
+def _detail_region(size, strokes, selection) -> tuple[int, int, int, int] | None:
+    """Keep the global pass and add readable pixels around a small HiDPI mark.
+
+    The 640px global detector can shrink ordinary UI labels to 5px. A padded
+    local view uses the same warmed shapes without discarding the full frame.
+    """
+    width, height = size
+    if not selection:
+        points = [point for stroke in strokes for point in stroke]
+        selection = _stroke_xywh(points) if points else None
+    if not selection or len(selection) != 4:
+        return None
+    x, y, mark_width, mark_height = (float(value) for value in selection)
+    if mark_width < 0 or mark_height < 0:
+        return None
+    crop_width = min(width, max(640, int(round(mark_width + 128))))
+    crop_height = min(height, max(512, int(round(mark_height + 128))))
+    def scale(w, h):
+        canvas_w, canvas_h = DETECTION_WIDE_SIZE if w / max(1, h) >= 3 else DETECTION_STANDARD_SIZE
+        return min(canvas_w / max(1, w), canvas_h / max(1, h))
+    if scale(width, height) >= 1 or scale(crop_width, crop_height) <= scale(width, height):
+        return None
+    left = min(max(0, int(round(x + mark_width / 2 - crop_width / 2))), width - crop_width)
+    top = min(max(0, int(round(y + mark_height / 2 - crop_height / 2))), height - crop_height)
+    return left, top, left + crop_width, top + crop_height
 
 
 def process(engine, payload: dict) -> dict:
@@ -364,6 +396,18 @@ def process(engine, payload: dict) -> dict:
         import numpy as np
 
         full_boxes = _detect_boxes(engine, image_path)
+        with Image.open(image_path) as source:
+            detail_region = _detail_region(source.size, strokes_local, selection_local)
+        if detail_region is not None:
+            detailed_boxes = _detect_boxes(engine, image_path, detail_region)
+            if detailed_boxes:
+                left, top, right, bottom = detail_region
+                region_xywh = [left, top, right - left, bottom - top]
+                # Fine boxes supersede coarse fragments within the detail view;
+                # whole-frame boxes outside it (including crossing lines) stay.
+                full_boxes = [box for box in full_boxes
+                              if _block_overlap_ratio(boxes_to_xywh(box), region_xywh) < 1.0]
+                full_boxes.extend(detailed_boxes)
         if not full_boxes:
             return {"ok": True, "blocks": [], "engine": "rapidocr-onnx"}
         candidates = _select_boxes(full_boxes, strokes_local, selection_local)

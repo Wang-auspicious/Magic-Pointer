@@ -94,7 +94,7 @@ function groupByWorkspace(
   if (localItems.length) {
     result.push({
       key: '__local__',
-      label: '本机会话',
+      label: 'Chats',
       workspaceRoot: '',
       items: localItems,
     });

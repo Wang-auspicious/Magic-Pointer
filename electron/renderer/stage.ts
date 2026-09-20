@@ -56,6 +56,7 @@
   const threadSend = document.getElementById('thread-send') as HTMLButtonElement;
   const threadRetry = document.getElementById('thread-retry') as HTMLButtonElement;
   const threadClose = document.getElementById('thread-close') as HTMLButtonElement;
+  const threadStop = document.getElementById('thread-stop') as HTMLButtonElement;
   const consentBox = document.getElementById('capsule-consent') as HTMLElement;
   const consentTarget = document.getElementById('consent-target') as HTMLElement;
   const consentReject = document.getElementById('consent-reject') as HTMLButtonElement;
@@ -120,9 +121,6 @@
   // Signature of the turns currently in the DOM, so an unchanged thread is
   // never rebuilt (see renderThread).
   let renderedTurnSignature = '';
-  // Wall clock for the pending turn's elapsed label.
-  let waitTimer: ReturnType<typeof setTimeout> | null = null;
-  let waitStartedAt = 0;
   // Live wiring context from main (stage:show / stage:update payloads).
   const session: {
     token: string | null;
@@ -1350,6 +1348,7 @@
   // the reader on screen, and the wait dots are not content at all.
   function resultPlainText(container: HTMLElement) {
     const clone = container.cloneNode(true) as HTMLElement;
+    clone.querySelectorAll<HTMLElement>('.turn-answer[data-answer]').forEach((node) => { node.textContent = node.dataset.answer || ''; });
     clone.querySelectorAll('button, .turn-ask, .turn-wait').forEach((node) => node.remove());
     return (clone.textContent || '')
       .split('\n')
@@ -1608,6 +1607,14 @@
     api.insertResultText({ text, selectionSessionToken: session.token });
   });
   threadClose.addEventListener('click', requestDismiss);
+  threadStop.addEventListener('click', async () => {
+    if (threadStop.disabled || !api?.stopSelectionCommand) return;
+    threadStop.disabled = true;
+    try {
+      const response = await api.stopSelectionCommand({ selectionSessionToken: session.token });
+      if (response?.ok !== true) threadStop.disabled = false;
+    } catch { threadStop.disabled = false; }
+  });
   // 重问一次：把上一轮问过的那句话原样再提交一遍。参考图里那张提案卡左下角
   // 那个重跑图标就是这件事——不满意的时候，最省事的动作是「再来一次」，
   // 而不是把问题重新打一遍。
@@ -1627,15 +1634,35 @@
   //
   // agent-prompt-draft 留在原地：它不是一张卡，是一个带会话选择器和自己那套
   // IPC 的控件。硬塞进卡片契约只会两头不讨好。
-  function renderStructured(container: HTMLElement, payload: any, processSteps?: any[]) {
+  function renderStructured(container: HTMLElement, payload: any) {
     container.replaceChildren();
-    // 终态不丢过程：等的那张卡上长出来的步骤，收进一个默认折叠的组跟在
-    // 答案前面。出答案是折叠起来，而不是消失（用户裁决）。
-    const folded = renderFoldedProcess(processSteps);
     const kind = payload && typeof payload === 'object' ? payload.kind : null;
     container.dataset.kind = kind || 'inline';
     if (kind === 'agent-prompt-draft') {
       renderAgentPromptDraft(container, payload);
+      return;
+    }
+    if (!kind || kind === 'inline' || kind === 'prose' || kind === 'text') {
+      const turn = payload && typeof payload === 'object' ? payload : { answer: String(payload || '') };
+      container.replaceChildren(...DshChat.assistantTurnNode(turn));
+      container.dataset.answer = String(turn.answer || '');
+      const actions = Array.isArray(payload?.actions) ? payload.actions : [];
+      if (actions.length) {
+        const footer = document.createElement('footer');
+        footer.className = 'mcard-acts';
+        actions.forEach((action: any) => {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'btn btn-quiet';
+          button.dataset.act = 'action';
+          button.dataset.actionId = String(action.id || '');
+          button.textContent = String(action.label || '执行');
+          footer.appendChild(button);
+        });
+        container.appendChild(footer);
+        bindCardActions(container, payload);
+      }
+      DshChat.bindDelegation(container);
       return;
     }
     const card = CardModel.normalizeCard(payload && typeof payload === 'object'
@@ -1650,7 +1677,7 @@
       : { allowMarkdown: true };
     card.plainText = shape.allowMarkdown === false;
     container.dataset.shape = shape.allowMarkdown === false ? 'deliver' : 'inspect';
-    container.replaceChildren(...([folded, renderCard(card, { density: 'capsule' })].filter(Boolean) as Node[]));
+    container.replaceChildren(renderCard(card, { density: 'capsule' }));
     bindCardActions(container, payload);
   }
 
@@ -1693,25 +1720,23 @@
   // 版式，只是 state 还是 running。所以结果到了不是「换一张卡」，是这张卡
   // 自己长出身子来。上一版这里是一个通用的转圈加一个秒数，那是在告诉用户
   // 「我不打算让你知道我在干什么」。
-  const runningCards = new Map();   // turnId -> card
+  const runningCards = new Map<string, { snapshot: MagicPointerLiveProgress; renderer?: MagicPointerLiveTurn }>();
 
   function runningCardFor(turn: any) {
     const id = `t${turn.id}`;
     if (!runningCards.has(id)) {
-      runningCards.set(id, CardModel.normalizeCard({
-        id,
-        kind: turn.expectKind || 'prose',
-        state: 'running',
-        startedAt: Date.now(),
-      }, { id }));
+      runningCards.set(id, { snapshot: { answer: '', thinking: '', records: [] } });
     }
     return runningCards.get(id)!;
   }
 
   function paintRunningCard(container: HTMLElement, turn: any) {
     const card = runningCardFor(turn);
-    card.runningLabel = CardModel.runningLabel(card);
-    container.replaceChildren(renderCard(card, { density: 'capsule' }));
+    if (!card.renderer) {
+      card.renderer = DshChat.createLiveTurn(container);
+      DshChat.bindDelegation(container);
+    }
+    card.renderer.update(card.snapshot);
   }
 
   // 桥报上来一步，就给正在等的那张卡打一个补丁并重画。
@@ -1721,9 +1746,14 @@
     const id = `t${turn.id}`;
     const current = runningCards.get(id);
     if (!current) return;
-    runningCards.set(id, CardModel.applyPatch(current, patch));
+    if (!patch.liveProgress) return;
+    current.snapshot = patch.liveProgress;
     const node = resultCard.querySelector<HTMLElement>(`.thread-turn[data-turn-id="${turn.id}"] .turn-answer`);
-    if (node) paintRunningCard(node, turn);
+    if (node) {
+      const follow = workPanelScroller.scrollHeight - workPanelScroller.scrollTop - workPanelScroller.clientHeight <= 48;
+      paintRunningCard(node, turn);
+      if (follow) workPanelScroller.scrollTop = workPanelScroller.scrollHeight;
+    }
   }
 
   function buildTurn(turn: any) {
@@ -1739,35 +1769,13 @@
     } else if (turn.status === 'failed') {
       runningCards.delete(`t${turn.id}`);
       answer.dataset.kind = 'error';
-      renderFailure(answer, turn.error);
+      if (turn.result?.answer) renderStructured(answer, turn.result);
+      else renderFailure(answer, turn.error);
     } else {
-      const steps = runningCards.get(`t${turn.id}`)?.steps;
       runningCards.delete(`t${turn.id}`);
-      renderStructured(answer, turn.result, steps);
+      renderStructured(answer, turn.result);
     }
     return node;
-  }
-
-  // 秒数仍然要走——一个两分钟的卡死和一个两秒的等待，只靠步骤行是分不出来的。
-  // 但它现在只是卡上的一个附注，不再是唯一的信息。
-  function syncWaitClock(hasPending: boolean) {
-    if (!hasPending) {
-      if (waitTimer) clearInterval(waitTimer);
-      waitTimer = null;
-      waitStartedAt = 0;
-      return;
-    }
-    if (!waitStartedAt) waitStartedAt = Date.now();
-    const paint = () => {
-      const label = resultCard.querySelector<HTMLElement>('.thread-turn[data-status="pending"] [data-elapsed]');
-      if (!label) return;
-      const seconds = Math.max(0, Math.round((Date.now() - waitStartedAt) / 1000));
-      label.textContent = seconds >= 1 ? `${seconds}s` : '';
-      label.dataset.slow = seconds >= 8 ? 'true' : 'false';
-    };
-    paint();
-    if (waitTimer) return;
-    waitTimer = setInterval(paint, 500);
   }
 
   // Turns are rebuilt only when one is added or settles. Skipping the no-op
@@ -1790,8 +1798,9 @@
     threadCount.textContent = turns.length > 1 ? `${turns.length} 轮` : '';
     threadCount.hidden = turns.length <= 1;
     const pending = turns.some((turn) => turn.status === 'pending');
+    threadStop.hidden = !pending;
+    if (!pending) threadStop.disabled = false;
     threadPanel.dataset.turnCount = String(turns.length);
-    syncWaitClock(pending);
     // 标题说的是「这个窗口是谁」，不是你问了什么。你问的那句话是一条消息，
     // 它属于对话流里靠右的那一条——把它抬进标题，就等于每问一句都在改窗口
     // 名，而且第一轮的问题永远读不到第二遍。
@@ -1806,8 +1815,8 @@
     // 也没有增加任何信息。节点留着只为 ARIA 播报。
     threadEyebrow.hidden = true;
     threadPanel.dataset.phase = pending ? 'running' : awaiting ? 'awaiting' : failed ? 'failed' : 'finished';
-    threadClose.setAttribute('aria-label', pending ? '停止' : '关闭');
-    threadClose.title = pending ? '停止' : '关闭';
+    threadClose.setAttribute('aria-label', '关闭');
+    threadClose.title = pending ? '关闭小窗，任务在主界面继续' : '关闭';
     threadEyebrow.dataset.state = pending || awaiting ? 'running' : failed ? 'failed' : 'done';
     threadEyebrowText.textContent = pending
       ? '正在处理'
@@ -1936,6 +1945,7 @@
   }
 
   function clearAll() {
+    runningCards.clear();
     clearTranscript();
     clearChips();
     resetDeliveryBox();
@@ -1962,7 +1972,6 @@
     });
     resultCard.replaceChildren();
     renderedTurnSignature = '';
-    syncWaitClock(false);
   }
 
   function render() {
@@ -2087,7 +2096,6 @@
       threadPanel.hidden = true;
       renderedTurnSignature = '';
       resultCard.replaceChildren();
-      syncWaitClock(false);
     }
     // Idle canned chips only while the capsule is open. Clarification chips
     // still render when the newest turn is awaiting (closeTurn → `result`).

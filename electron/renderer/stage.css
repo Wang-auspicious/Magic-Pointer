@@ -588,9 +588,7 @@ body {
   height: 17px;
 }
 
-.thread-stop-icon { display: none; }
-.stage-thread[data-phase='running'] .thread-close-icon { display: none; }
-.stage-thread[data-phase='running'] .thread-stop-icon { display: block; }
+.thread-stop-icon { display: block; }
 
 .thread-icon:hover {
   background: rgba(19, 22, 27, 0.05);

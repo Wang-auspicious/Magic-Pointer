@@ -15,8 +15,8 @@ assert.match(main, /ipcMain\.handle\('conversations:send'/,
 assert(main.includes("runPythonBridge(payload, 'scripts/conversation_bridge.py', 'dashboard'"),
   'Studio follow-ups must use the configured model runtime through a bounded bridge');
 assert(data.includes('sendConversation('), 'Studio data must expose the live send operation');
-assert.match(studio, /Data\.sendConversation\(\s*activeConversationId,\s*question,\s*composerPreset,\s*requestId,\s*activeProjectRoot,[\s\S]*?attachmentPaths/,
-  'submitting the visible composer must carry structured attachments, permission preset, and the selected project');
+assert.match(studio, /const workspaceRoot = await prepareComposerWorktree\(\);\s*const response = await Data\.sendConversation\(\s*activeConversationId,\s*question,\s*composerPreset,\s*requestId,\s*workspaceRoot,[\s\S]*?attachmentPaths/,
+  'submission must await the selected worktree and send its root with structured attachments and permission preset');
 assert(preload.includes('attachments: Array.isArray(payload?.attachments)'),
   'preload must preserve attachments as a bounded structured field');
 assert.match(main, /const payload = \{[\s\S]*?requestId,\s*attachments,/,
@@ -50,11 +50,11 @@ assert.strictEqual((studio.match(/Data\.stopConversation\(/g) || []).length, 1,
   'only the shared stop path may cross the conversation stop boundary');
 assert(studio.includes('ConversationControl.callConversationAction'),
   'the shared stop path must normalize rejected IPC and ok:false results');
-assert.match(studio, /const menuWasOpen[\s\S]*if \(!menuWasOpen && studioComposerBusy && pendingConversation\)/,
-  'Escape must snapshot open menus before deciding whether to stop the turn');
+assert.match(studio, /const menuWasOpen[\s\S]*if \(!menuWasOpen && studioComposerBusy && \(pendingConversation \|\| externalConversationRun\)\)/,
+  'Escape must snapshot open menus before deciding whether to stop a GUI or external selection turn');
 assert(studio.includes("note.textContent = '正在停止…'"),
   'the shared stop path must show honest stopping feedback');
-assert.match(studio, /if \(!result\.ok && pendingConversation === pending\)[\s\S]*delete pending\.body\.dataset\.stopRequested[\s\S]*note\.textContent = result\.error/,
+assert.match(studio, /if \(!result\.ok && \(pendingConversation === pending \|\| externalConversationRun === pending\)\)[\s\S]*delete pending\.body\.dataset\.stopRequested[\s\S]*note\.textContent = result\.error/,
   'a normalized stop failure must clear the guard and leave an honest retryable error');
 assert.match(studio, /if \(e\.key === 'Escape'\) \{ e\.preventDefault\(\); e\.stopPropagation\(\); closeSlashMenu\(\); return; \}/,
   'Escape used to close the slash menu must not bubble and stop the active turn');

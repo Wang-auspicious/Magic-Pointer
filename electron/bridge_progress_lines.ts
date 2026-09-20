@@ -12,7 +12,9 @@
 // rather than thrown: a malformed diagnostic must never take down a capture.
 
 const PROGRESS_PREFIX = '@@mp ';
-const MAX_PENDING_BYTES = 8192;
+// A supported tool result holds 64,000 characters, plus arguments, UTF-8 and
+// base64 framing. 8 KiB discarded normal Read/Look results between chunks.
+const MAX_PENDING_BYTES = 1024 * 1024;
 
 type ProgressRecord = {
   phase: string;
@@ -33,6 +35,15 @@ function parseProgressLine(line: unknown): ProgressRecord | null {
   }
   const phase = String(fields.phase || '').trim();
   if (!phase) return null;
+  if ((phase === 'tool_result' || phase === 'tool_call') && fields.b64) {
+    try {
+      const tool = JSON.parse(Buffer.from(fields.b64, 'base64').toString('utf8'));
+      for (const key of ['id', 'name', 'state', 'backend', 'latency_ms', 'args', 'result']) {
+        if (tool[key] !== undefined) fields[key] = String(tool[key]);
+      }
+      delete fields.b64;
+    } catch { return null; }
+  }
   const ms = Number(fields.ms);
   return { phase, ms: Number.isFinite(ms) ? ms : null, fields };
 }

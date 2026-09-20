@@ -105,6 +105,8 @@ import sounddevice
 import whisper
 import torch
 import opencc
+import pythoncom
+import win32com.shell
 import runpy
 import sys
 document_smoke = runpy.run_path(sys.argv[2])['verify_document_dependencies']()

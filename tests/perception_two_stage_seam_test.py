@@ -11,13 +11,17 @@ observations, adds one more, and re-runs the same ranking.
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+import pytest
 from PIL import Image
 
 import app.perception.pixel_ocr as pixel_ocr
 from app.adapters.base import AdapterReadContext
+from app.grounding.perception_cascade import resolve_structured_perception
+from app.input_artifact import compile_input_artifact
 from scripts.selection_bridge import _fuse_pixel_tier
 from scripts.selection_snapshot_bridge import capture_snapshot
 
@@ -239,3 +243,54 @@ def test_without_a_capture_the_pixel_tier_reports_unsupported_and_reads_nothing(
     assert [item["status"] for item in pixel] == ["unsupported"]
     assert [item["reason"] for item in pixel] == ["frozen_pixels_unavailable"]
     assert trace["readState"] == "unavailable"
+
+
+@pytest.mark.parametrize(("other_amount", "record_key"), [
+    ("1200", "conflicts"),
+    ("120", "corroborations"),
+])
+def test_structured_evidence_relations_survive_the_answer_process(
+    monkeypatch, other_amount, record_key,
+) -> None:
+    class AmountAdapter(_ExactLineAdapter):
+        def __init__(self, name: str, amount: str) -> None:
+            self.name = name
+            self.amount = amount
+
+        def read_context(self, window, **kwargs):
+            return replace(
+                super().read_context(window, **kwargs),
+                adapter=self.name,
+                content=f"金额{self.amount}",
+            )
+
+    class AmountRegistry:
+        def matching_adapters(self, _window):
+            return [AmountAdapter("dom", "120"), AmountAdapter("uia", other_amount)]
+
+    initial = resolve_structured_perception(
+        dict(CONSOLE), AmountRegistry(), mark_bbox=(429, 286, 1175, 30),
+    )
+    assert initial.trace[record_key], "the first stage must establish the relation"
+    snapshot = {
+        "snapshot_id": "numeric-evidence",
+        "perception_trace": initial.trace,
+        "context": initial.context.to_dict(),
+        "selection_gesture": UNDERLINE,
+        "frame_lease": {"frameLeaseId": "frame-console"},
+    }
+    calls = _ocr(monkeypatch, [])
+
+    context, trace = _fuse_pixel_tier(
+        dict(CONSOLE), _second_stage_context(snapshot), snapshot,
+    )
+
+    assert calls == []
+    assert trace[record_key] == initial.trace[record_key]
+    if record_key == "conflicts":
+        artifact = compile_input_artifact(
+            "这笔金额多少", dict(CONSOLE), context,
+            {**snapshot, "perception_trace": trace},
+        )
+        assert artifact.to_model_dict()["conflicts"]
+        assert artifact.display.needs_confirmation is True

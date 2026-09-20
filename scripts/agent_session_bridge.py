@@ -25,13 +25,13 @@ except ModuleNotFoundError:  # direct script execution
 
 ensure_root_on_path()
 
-from app.agent_runtime.session import FileSessionStore  # noqa: E402
+from app.agent_runtime.session import EventSession, FileSessionStore  # noqa: E402
 from app.context_pack.source_store import register_source, task_sources  # noqa: E402
 from app.context_pack.sources import SourceRef, TaskInput  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGETS = frozenset({"next-step", "next-turn"})
-MAX_TEXT_CHARS = 4000
+MAX_TEXT_CHARS = 12000
 MAX_PENDING_MESSAGES = 100
 
 
@@ -39,6 +39,39 @@ def _session_root() -> Path:
     configured = str(os.environ.get("MAGIC_POINTER_USER_DATA_DIR") or "").strip()
     runtime_root = Path(configured) if configured else ROOT / "data" / "runtime"
     return runtime_root / "agent-sessions"
+
+
+def _context_usage(session: EventSession) -> dict[str, int] | None:
+    """Read the last measured request and replay only its input surface."""
+    # Steer/cancel do not need to import the model loop; only this read does.
+    from app.agent_runtime.loop import _real_prompt_tokens  # noqa: PLC0415
+    from app.agent_runtime.token_estimate import estimate_request_tokens  # noqa: PLC0415
+    from app.agent_runtime.types import Role  # noqa: PLC0415
+
+    events = list(session.events)
+    response = next((event for event in reversed(events)
+                     if event.type == "model/response" and _real_prompt_tokens(event.data.get("usage")) > 0), None)
+    if response is None:
+        return None
+    request_index = next((index for index in range(len(events) - 1, -1, -1)
+                          if events[index].type == "model/request"
+                          and events[index].data.get("turn") == response.data.get("turn")
+                          and events[index].data.get("step") == response.data.get("step")), None)
+    if request_index is None:
+        return None
+    request = events[request_index].data
+    usage = response.data["usage"]
+    messages = EventSession(session.path, session.header, events[:request_index]).derive_messages()
+    result = {
+        "contextTokens": _real_prompt_tokens(usage),
+        "contextEstimated": 0,
+        "lastOutputTokens": int(usage.get("completion_tokens") or usage.get("output_tokens") or 0),
+        "systemTokensEstimate": estimate_request_tokens([], system_prompt=request.get("header", {}).get("systemPrompt", "")),
+        "toolSchemaTokensEstimate": estimate_request_tokens([], tools=request.get("tools", [])),
+        "messageTokensEstimate": estimate_request_tokens([m for m in messages if m.role != Role.TOOL]),
+        "toolResultTokensEstimate": estimate_request_tokens([m for m in messages if m.role == Role.TOOL]),
+    }
+    return result
 
 
 def handle_request(payload: dict[str, Any]) -> dict[str, Any]:
@@ -56,7 +89,7 @@ def handle_request(payload: dict[str, Any]) -> dict[str, Any]:
     target = str(
         task_input.target if task_input is not None else payload.get("target") or ""
     ).strip()
-    if action not in {"cancel", "status"} and target not in TARGETS:
+    if action not in {"cancel", "status", "usage", "fork", "recovery-resolve"} and target not in TARGETS:
         return {"ok": False, "error": "invalid_target"}
     try:
         session = FileSessionStore(_session_root()).resume(session_id, repair=False)
@@ -65,6 +98,29 @@ def handle_request(payload: dict[str, Any]) -> dict[str, Any]:
     except ValueError:
         return {"ok": False, "error": "invalid_session_id"}
 
+    if action == "fork":
+        through_turn = payload.get("throughTurn")
+        if through_turn is not None and (type(through_turn) is not int or through_turn < 1):
+            return {"ok": False, "error": "invalid_turn_boundary"}
+        try:
+            child = FileSessionStore(_session_root()).fork(
+                session.id, str(payload.get("childSessionId") or ""), through_turn=through_turn,
+            )
+            from scripts.conversation_bridge import _task_context_payload
+            return {"ok": True, "sessionId": child.id, "taskContext": _task_context_payload(child)}
+        except (ValueError, RuntimeError, OSError) as exc:
+            return {"ok": False, "error": f"fork_failed: {exc}"}
+    if action == "recovery-resolve":
+        try:
+            session.resolve_operation_recovery(
+                str(payload.get("operationId") or ""), str(payload.get("verificationCallId") or ""),
+                confirmed=payload.get("confirmed") is True,
+            )
+            return {"ok": True, "sessionId": session.id, "pendingRecovery": session.pending_recovery()}
+        except (ValueError, RuntimeError) as exc:
+            return {"ok": False, "error": f"recovery_rejected: {exc}"}
+    if action == "usage":
+        return {"ok": True, "sessionId": session.id, "contextUsage": _context_usage(session)}
     if action == "cancel":
         # Graceful stop (O3): the running loop polls this at the next round
         # boundary and terminates with a Receipt instead of being killed.
@@ -98,6 +154,7 @@ def handle_request(payload: dict[str, Any]) -> dict[str, Any]:
             "hasPendingWork": session.has_pending_work(),
             "lastTurnReason": last_reason,
             "openTurn": session.open_turn,
+            "pendingRecovery": session.pending_recovery(),
         }
     if action == "put":
         text = str(

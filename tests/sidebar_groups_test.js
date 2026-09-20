@@ -46,8 +46,8 @@ const wsRows = [
 const wsGroups = groupByWorkspace(wsRows);
 assert.deepStrictEqual(
   wsGroups.map(g => g.label),
-  ['alpha', 'beta', '本机会话'],
-  '真实项目保持分组；未绑定记录进入明确的本机会话组',
+  ['alpha', 'beta', 'Chats'],
+  '真实项目保持分组；未绑定记录进入明确的Chats组',
 );
 assert.deepStrictEqual(
   wsGroups.map(g => [g.workspaceRoot, g.items.map(i => i.id)]),
@@ -56,7 +56,7 @@ assert.deepStrictEqual(
     ['C:/repos/beta', ['w3']],
     ['', ['w4']],
   ],
-  '组内新→旧，root 原样携带；本机会话明确使用空 root',
+  '组内新→旧，root 原样携带；Chats明确使用空 root',
 );
 assert.strictEqual(wsGroups.at(-1).key, '__local__');
 assert.deepStrictEqual(groupByWorkspace([]), [], '空列表不出空组');

@@ -72,7 +72,7 @@ def test_click_matched_is_not_task_completion() -> None:
     assert should_nudge_before_completion(gate) is not None
 
 
-def test_click_then_get_app_state_counts_as_observed() -> None:
+def test_click_then_get_app_state_still_needs_verified_postcondition() -> None:
     gate = VerificationGate()
     gate.record_executed(
         effect=Effect.REVERSIBLE_WRITE,
@@ -84,7 +84,7 @@ def test_click_then_get_app_state_counts_as_observed() -> None:
         verified=False,
         tool_name="get_app_state",
     )
-    assert should_nudge_before_completion(gate) is None
+    assert should_nudge_before_completion(gate) is not None
 
 
 def test_observe_before_click_does_not_count() -> None:

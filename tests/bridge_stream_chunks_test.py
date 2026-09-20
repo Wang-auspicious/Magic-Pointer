@@ -127,19 +127,22 @@ class TestStreamChunkBuffer:
 
 
 class TestBothBridgesPublishStreamingAnswer:
-    """Contract: the two loop-driven bridges must both feed this channel.
-
-    Checked statically because the sinks are closures inside multi-thousand
-    line functions and cannot be instantiated in isolation. It is not a
-    substitute for the behavioural tests above — it is a tripwire for the
-    specific regression where one bridge has the wiring and the other does
-    not, which is exactly what happened.
-    """
+    """Both bridges use the same directly testable event projection."""
 
     @pytest.mark.parametrize(
-        "path",
-        ["scripts/selection_bridge.py", "scripts/conversation_bridge.py"],
+        "bridge_name",
+        ["selection_bridge", "conversation_bridge"],
     )
-    def test_bridge_emits_answer_chunks(self, path: str) -> None:
-        source = open(path, encoding="utf-8").read()
-        assert "answer_chunk" in source, f"{path} never publishes the streaming answer"
+    def test_bridge_emits_answer_chunks(self, bridge_name: str) -> None:
+        import importlib
+        from types import SimpleNamespace
+        from app.agent_runtime.activity_projection import RuntimeActivitySink
+
+        bridge = importlib.import_module(f"scripts.{bridge_name}")
+        sink_type = getattr(bridge, "RuntimeActivitySink", None) or bridge._ConversationActivitySink
+        assert sink_type is RuntimeActivitySink
+        stream = io.StringIO()
+        sink = sink_type(_clock(stream))
+        sink(SimpleNamespace(kind="model_chunk", text="同一条进度流"))
+        sink(SimpleNamespace(kind="loop_stopped"))
+        assert "phase=answer_chunk" in stream.getvalue()

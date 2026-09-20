@@ -51,7 +51,13 @@ function readProjectText(root: string, relativePath: string, maxBytes = 384 * 10
   truncated: boolean;
 } {
   const filePath = projectPath(root, relativePath);
-  const data = fs.readFileSync(filePath);
+  const descriptor = fs.openSync(filePath, 'r');
+  let data: Buffer;
+  try {
+    const buffer = Buffer.alloc(Math.max(0, Math.floor(maxBytes)) + 1);
+    const bytesRead = fs.readSync(descriptor, buffer, 0, buffer.length, 0);
+    data = buffer.subarray(0, bytesRead);
+  } finally { fs.closeSync(descriptor); }
   if (data.subarray(0, Math.min(data.length, 8192)).includes(0)) {
     throw new Error('binary_project_file');
   }

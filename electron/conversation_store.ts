@@ -14,7 +14,6 @@ const path = require('node:path');
 const { projectStudioHomeStats } = require('./studio_home_stats');
 
 const MAX_CONVERSATIONS = 500;
-const MAX_TURNS = 200;
 const TITLE_MAX = 28;
 
 interface ReferencedObject {
@@ -28,6 +27,7 @@ interface ReferencedObject {
 type Artifact = Record<string, unknown>;
 
 interface TurnEntry {
+  runtimeTurn?: number;
   id: string;
   at: number;
   startedAt: number;
@@ -38,6 +38,8 @@ interface TurnEntry {
   facts: unknown[];
   artifacts: Artifact[];
   outcome: string;
+  failed?: boolean;
+  error?: string;
   events?: unknown[];
   thinking?: string;
   activities: unknown[];
@@ -97,6 +99,7 @@ interface Conversation {
 }
 
 interface TurnInput {
+  runtimeTurn?: unknown;
   capturedAt?: number;
   conversationId?: string;
   newConversation?: boolean;
@@ -107,6 +110,8 @@ interface TurnInput {
   facts?: unknown;
   artifacts?: unknown;
   outcome?: unknown;
+  failed?: unknown;
+  error?: unknown;
   events?: unknown;
   thinking?: unknown;
   activities?: unknown;
@@ -357,7 +362,7 @@ function createConversationStore(
       dirtyConversations.delete(conversation);
       parts.push(json);
     }
-    // Dropped conversations (remove/clear/MAX_CONVERSATIONS trim) must not keep
+    // Dropped conversations (remove/clear) must not keep
     // their JSON alive.
     for (const id of [...serializedConversations.keys()]) {
       if (!live.has(id)) serializedConversations.delete(id);
@@ -403,6 +408,7 @@ function createConversationStore(
    */
   function writeNowAsync(): void {
     if (asyncWritePending) return;
+    dirty = false;
     asyncWritePending = true;
     const startedAtSyncWrite = syncWriteCount;
     let payload: string;
@@ -419,6 +425,7 @@ function createConversationStore(
       asyncWritePending = false;
       if (!error) {
         asyncRetryBudget = ASYNC_WRITE_RETRY_BUDGET;
+        if (dirty) writeNowAsync();
         return;
       }
       dirty = true;
@@ -431,7 +438,6 @@ function createConversationStore(
         persistTimer = setTimeout(() => {
           persistTimer = null;
           if (!dirty) return;
-          dirty = false;
           writeNowAsync();
         }, persistDebounceMs);
         if (typeof persistTimer === 'object' && persistTimer !== null && 'unref' in persistTimer) {
@@ -446,12 +452,12 @@ function createConversationStore(
         if (syncWriteCount !== startedAtSyncWrite) {
           // A synchronous flush already replaced the file with newer data.
           // Drop this payload instead of renaming stale bytes over it.
-          asyncWritePending = false;
+          finish(null);
           return;
         }
         fs.rename(tmp, file, (renameError: NodeJS.ErrnoException | null) => {
           if (renameError) { finish(renameError); return; }
-          asyncWritePending = false;
+          finish(null);
         });
       });
     });
@@ -490,7 +496,6 @@ function createConversationStore(
     persistTimer = setTimeout(() => {
       persistTimer = null;
       if (!dirty) return;
-      dirty = false;
       writeNowAsync();
     }, persistDebounceMs);
     // Node 在只有定时器挂着的进程里会一直活着；这里不应该拖住退出。
@@ -633,10 +638,12 @@ function createConversationStore(
       facts: Array.isArray(turn.facts) ? turn.facts.slice(0, 24) : [],
       artifacts: Array.isArray(turn.artifacts) ? (turn.artifacts.slice(0, 12) as Artifact[]) : [],
       outcome: String(turn.outcome || ''),
+      ...(typeof turn.failed === 'boolean' ? { failed: turn.failed } : {}),
+      ...(turn.error ? { error: String(turn.error) } : {}),
       events: Array.isArray(turn.events) ? turn.events.slice(0, 48) : [],
       thinking: turn.thinking !== undefined ? String(turn.thinking) : undefined,
       activities: Array.isArray(turn.activities) ? turn.activities.slice(0, 96) : [],
-      trajectory: Array.isArray(turn.trajectory) ? turn.trajectory.slice(0, 256) : [],
+      trajectory: Array.isArray(turn.trajectory) ? turn.trajectory.slice() : [],
       receipts: Array.isArray(turn.receipts) ? turn.receipts.slice(0, 48) : [],
       modelUsage: turn.modelUsage && typeof turn.modelUsage === 'object' && !Array.isArray(turn.modelUsage)
         ? Object.fromEntries(Object.entries(turn.modelUsage as Record<string, unknown>)
@@ -644,6 +651,7 @@ function createConversationStore(
           .map(([key, value]) => [key, Number(value)]))
         : {},
       modelId: String(turn.modelId || '').trim() || undefined,
+      runtimeTurn: Number.isInteger(Number(turn.runtimeTurn)) && Number(turn.runtimeTurn) > 0 ? Number(turn.runtimeTurn) : undefined,
       timingMs: Number.isFinite(Number(turn.timingMs)) ? Number(turn.timingMs) : undefined,
       usedBackend: turn.usedBackend !== undefined ? String(turn.usedBackend) : undefined,
       // 划线轮次的现场证据与结构化提问随轮存档：追问时桥把它们带回上下文，
@@ -656,7 +664,6 @@ function createConversationStore(
     if (target) {
       if (!Array.isArray(target.turns)) target.turns = [];
       target.turns.push(entry);
-      if (target.turns.length > MAX_TURNS) target.turns.splice(0, target.turns.length - MAX_TURNS);
       // Codex thread semantics: the thread keeps its workspace across
       // follow-ups; an explicit root on this turn moves THIS thread only.
       const explicitRoot = String(turn.workspaceRoot || '').trim();
@@ -709,9 +716,6 @@ function createConversationStore(
       ...(String(turn.permissionDeny || '').trim() ? { permissionDenials: [String(turn.permissionDeny).trim()] } : {}),
     };
     conversations.unshift(created);
-    if (conversations.length > MAX_CONVERSATIONS) {
-      conversations.length = MAX_CONVERSATIONS;
-    }
     markDirty(created);
     persist();
     return created;
@@ -747,10 +751,16 @@ function createConversationStore(
   }
 
   function updateTurn(input: {
+    runtimeTurn?: unknown;
     conversationId?: unknown;
     turnIndex?: unknown;
+    agentSessionId?: unknown;
+    hasPendingWork?: unknown;
     answer?: unknown;
+    taskContext?: unknown;
     outcome?: unknown;
+    failed?: unknown;
+    error?: unknown;
     events?: unknown;
     activities?: unknown;
     trajectory?: unknown;
@@ -775,11 +785,18 @@ function createConversationStore(
       : target.turns.length - 1;
     const turn = target.turns[index];
     if (!turn) return { ok: false };
+    if (input.agentSessionId !== undefined) target.agentSessionId = String(input.agentSessionId || '');
+    if (Number.isInteger(Number(input.runtimeTurn)) && Number(input.runtimeTurn) > 0) turn.runtimeTurn = Number(input.runtimeTurn);
+    if (typeof input.hasPendingWork === 'boolean') target.hasPendingWork = input.hasPendingWork;
+    const taskContext = sanitizeTaskContext(input.taskContext);
+    if (taskContext) target.taskContext = taskContext;
     if (input.answer !== undefined) turn.answer = String(input.answer || '').slice(0, 200000);
     if (input.outcome !== undefined) turn.outcome = String(input.outcome || '').slice(0, 40);
+    if (typeof input.failed === 'boolean') turn.failed = input.failed;
+    if (input.error !== undefined) turn.error = String(input.error || '');
     if (Array.isArray(input.events)) turn.events = input.events.slice(0, 48);
     if (Array.isArray(input.activities)) turn.activities = input.activities.slice(0, 96);
-    if (Array.isArray(input.trajectory)) turn.trajectory = input.trajectory.slice(0, 256);
+    if (Array.isArray(input.trajectory)) turn.trajectory = input.trajectory.slice();
     if (Array.isArray(input.receipts)) turn.receipts = input.receipts.slice(0, 48);
     if (Array.isArray(input.artifacts)) turn.artifacts = input.artifacts.slice(0, 12);
     if (input.modelUsage && typeof input.modelUsage === 'object' && !Array.isArray(input.modelUsage)) {
@@ -836,18 +853,45 @@ function createConversationStore(
     return { ok: true, conversation: target };
   }
 
+  /** Called once when the owning client starts, before it can create live turns. */
+  function recoverInterruptedTurns(): void {
+    let changed = false;
+    for (const conversation of load()) {
+      let recovered = false;
+      const turns = conversation.turns || [];
+      for (const [index, turn] of turns.entries()) {
+        if (turn.outcome !== '进行中') continue;
+        turn.outcome = '可恢复';
+        turn.failed = true;
+        turn.error = '上次客户端会话已中断，可以继续此任务。此前操作结果需恢复后核实。';
+        // Neither restart time nor a missing client owner proves when a tool
+        // finished, or whether an external operation completed. Keep evidence
+        // and timestamps intact; only the latest turn owns pending work.
+        if (index === turns.length - 1) conversation.hasPendingWork = true;
+        recovered = true;
+      }
+      if (recovered) {
+        markDirty(conversation);
+        changed = true;
+      }
+    }
+    if (changed) persist();
+  }
+
   // 侧栏用：只要摘要，不要把全部 turn 塞进 IPC
-  function list(limit = 60) {
+  function list(limit = Number.POSITIVE_INFINITY) {
     const conversations = load();
     return conversations.slice(0, limit).map((c) => ({
       id: c.id,
       title: c.title,
       subtitle: c.subtitle,
       object: c.object,
+      createdAt: c.createdAt,
       updatedAt: c.updatedAt,
       workspaceRoot: c.workspaceRoot || '',
       agentSessionId: c.agentSessionId || '',
       hasPendingWork: c.hasPendingWork === true,
+      taskContext: sanitizeTaskContext(c.taskContext),
       permissionGrants: Array.isArray(c.permissionGrants) ? c.permissionGrants : [],
       permissionDenials: Array.isArray(c.permissionDenials) ? c.permissionDenials : [],
       // 磁盘上的旧文件可能没有 turns 字段（早期版本/手改），逐条判空，
@@ -866,7 +910,7 @@ function createConversationStore(
    * 分支保留该回合及之前的上下文，但清空运行时 session / 待续状态，
    * 避免两个对话继续写进同一个 Agent session。
    */
-  function branch(id: unknown, turnIndex: unknown): Conversation | null {
+  function branch(id: unknown, turnIndex: unknown, runtime?: { agentSessionId: string; taskContext?: unknown }): Conversation | null {
     const conversations = load();
     const source = conversations.find((conversation) => conversation.id === id);
     const index = Number(turnIndex);
@@ -889,12 +933,12 @@ function createConversationStore(
       closed: false,
       turns: structuredClone(sourceTurns.slice(0, index + 1)),
       workspaceRoot: source.workspaceRoot,
+      ...(runtime ? { agentSessionId: runtime.agentSessionId, taskContext: sanitizeTaskContext(runtime.taskContext) } : {}),
       hasPendingWork: false,
       permissionGrants: structuredClone(source.permissionGrants || []),
       permissionDenials: structuredClone(source.permissionDenials || []),
     };
     conversations.unshift(created);
-    if (conversations.length > MAX_CONVERSATIONS) conversations.length = MAX_CONVERSATIONS;
     markDirty(created);
     persist();
     return created;
@@ -1078,15 +1122,28 @@ function createConversationStore(
     return { ok: true };
   }
 
+  function setProject(id: unknown, rawRoot: unknown): { ok: boolean; conversation?: Conversation } {
+    const target = load().find((conversation) => conversation.id === id);
+    if (!target) return { ok: false };
+    const root = String(rawRoot || '').trim();
+    target.workspaceRoot = root ? registerProject(root)?.root : undefined;
+    target.updatedAt = now();
+    markDirty(target);
+    persist();
+    return { ok: true, conversation: target };
+  }
+
   return {
     appendTurn,
     updateTurn,
     recordPermissionDecision,
+    recoverInterruptedTurns,
     list,
     get,
     branch,
     rename,
     remove,
+    setProject,
     timeline,
     memories,
     artifacts,

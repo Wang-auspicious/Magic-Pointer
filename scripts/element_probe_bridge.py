@@ -146,9 +146,17 @@ def _visual_element_at(window: dict[str, Any], x: int, y: int) -> dict[str, Any]
 
     hwnd = int(window.get("hwnd") or 0)
     bbox = window.get("bbox")
-    cached = read_cached(hwnd, bbox)
+    image = _capture_visual_image(window)
+    if image is None:
+        return None
+    import hashlib
+
+    # This comparison replaces a much more expensive OCR call, and is the
+    # decision that prevents a scroll/tab switch from reusing obsolete boxes.
+    content_key = hashlib.sha256(image.convert("RGB").tobytes()).hexdigest()
+    cached = read_cached(hwnd, bbox, content_key=content_key)
     if cached is None:
-        blocks = _ocr_window_blocks(window)
+        blocks = _ocr_window_blocks(window, image=image)
         if blocks is None:
             return None
         elements = group_blocks_into_elements(blocks, window_bbox=bbox)
@@ -156,7 +164,7 @@ def _visual_element_at(window: dict[str, Any], x: int, y: int) -> dict[str, Any]
             {"rect": element.rect, "text": element.text[:200], "lineCount": element.line_count}
             for element in elements
         ]
-        write_cached(hwnd, bbox, cached)
+        write_cached(hwnd, bbox, cached, content_key=content_key)
     restored = [
         VisualElement(
             rect=list(item.get("rect") or []),
@@ -177,11 +185,22 @@ def _visual_element_at(window: dict[str, Any], x: int, y: int) -> dict[str, Any]
     }
 
 
-def _ocr_window_blocks(window: dict[str, Any]) -> list[dict[str, Any]] | None:
+def _capture_visual_image(window: dict[str, Any]):
+    from app.capture import capture_window
+
+    try:
+        image = capture_window(int(window.get("hwnd") or 0))
+        bbox = window.get("bbox") or []
+        if len(bbox) == 4:
+            image = image.resize((int(bbox[2]) - int(bbox[0]), int(bbox[3]) - int(bbox[1])))
+        return image
+    except (OSError, ValueError, TypeError):
+        return None
+
+
+def _ocr_window_blocks(window: dict[str, Any], *, image: Any = None) -> list[dict[str, Any]] | None:
     """Capture this window and read its text blocks. Never raises."""
     import tempfile
-
-    from scripts.selection_snapshot_bridge import _grab_capture_image
 
     bbox = window.get("bbox")
     if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
@@ -189,7 +208,7 @@ def _ocr_window_blocks(window: dict[str, Any]) -> list[dict[str, Any]] | None:
     region = (int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3]))
     path = None
     try:
-        image = _grab_capture_image(region, target_window=window, visual_capture=None)
+        image = image if image is not None else _capture_visual_image(window)
         if image is None:
             return None
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as handle:

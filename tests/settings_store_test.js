@@ -9,6 +9,15 @@ const settingsPath = path.join(root, 'fabric-settings.json');
 const store = new ElectronSettingsStore(settingsPath);
 
 const defaults = store.load();
+const { promoteLegacyProfile } = require('../electron/model_runtime_config');
+const migrated = promoteLegacyProfile(defaultSettings(), {
+  model: 'mimo-v2.5', provider: 'opencode', baseUrl: 'https://example.test', apiMode: 'messages',
+});
+assert.doesNotThrow(() => validate(migrated), 'normal token limits must survive the actual profile persistence validator');
+assert.equal(validate(migrated).models.profiles[0].defaultMaxTokens, 32768);
+assert.throws(() => validate({ ...migrated, models: { ...migrated.models,
+  profiles: [{ ...migrated.models.profiles[0], apiToken: 'never-store-this' }],
+} }), /credential/);
 assert.strictEqual(defaults.schema_version, 1);
 assert.strictEqual(defaults.activation.wiggle_enabled, true);
 assert.strictEqual(defaults.activation.fallback_hotkey_enabled, true);

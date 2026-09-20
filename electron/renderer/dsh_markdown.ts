@@ -18,7 +18,7 @@ const DshMarkdown = (() => {
   type MdChild = string | number | MdNode | null | undefined | false;
 
   const DOC = typeof document !== 'undefined' ? document : null;
-  const VOID_TAGS = new Set(['br', 'hr', 'input']);
+  const VOID_TAGS = new Set(['br', 'hr', 'input', 'img']);
   const ESCAPES: Record<string, string> = {
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
   };
@@ -72,6 +72,17 @@ const DshMarkdown = (() => {
     return null;
   }
 
+  function safeImageSource(raw: string): string | null {
+    const value = raw.trim();
+    if (/^(https?:\/\/|file:\/\/)/i.test(value)) return value;
+    if (/^data:image\/(?:png|jpe?g|gif|webp|bmp);base64,[a-z0-9+/=]+$/i.test(value)) return value;
+    if (/^(?:[a-z]:[\\/]|\/)/i.test(value)) {
+      const slashed = value.replace(/\\/g, '/');
+      return encodeURI(slashed.startsWith('/') ? `file://${slashed}` : `file:///${slashed}`);
+    }
+    return null;
+  }
+
   /* 复制图标：有 DshIcons 用原 glyph，否则退化为文字。 */
   function codeCopyIcon(): MdChild {
     const icons = typeof DshIcons !== 'undefined'
@@ -91,6 +102,14 @@ const DshMarkdown = (() => {
 
     let match = /`([^`\n]+)`/.exec(text);
     add(match, match ? [h('code', {}, match[1])] : []);
+
+    match = /!\[([^\]\n]*)\]\((?:<([^>\n]+)>|((?:[^()\s]|\([^()\s]*\))+))(?:\s+"([^"\n]*)")?\)/.exec(text);
+    if (match) {
+      const src = safeImageSource(match[2] || match[3]);
+      const attrs: Record<string, string> = { class: 'dsh-image', src: src || '', alt: match[1], loading: 'lazy', decoding: 'async' };
+      if (match[4]) attrs.title = match[4];
+      add(match, src ? [h('img', attrs)] : [match[0]]);
+    }
 
     match = /\[([^\]]+)\]\(([^\s)]+)(?:\s+"[^"]*")?\)/.exec(text);
     if (match) {
@@ -146,6 +165,14 @@ const DshMarkdown = (() => {
     return line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((cell) => cell.trim());
   }
 
+  function imageLineNodes(line: string): MdNode[] | null {
+    if (!line.trim().startsWith('![')) return null;
+    const nodes = inlineNodes(line.trim());
+    if (nodes.some(node => typeof node === 'string' ? Boolean(node.trim()) : !node || typeof node === 'number' || node.tagName.toLowerCase() !== 'img')) return null;
+    const images = nodes.filter(node => typeof node !== 'string') as MdNode[];
+    return images.length ? images : null;
+  }
+
   function isTableDivider(line: string): boolean {
     const cells = splitTableRow(line);
     return cells.length > 0 && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
@@ -168,6 +195,19 @@ const DshMarkdown = (() => {
     while (index < lines.length) {
       const line = lines[index];
       if (!line.trim()) { index += 1; continue; }
+
+      const images = imageLineNodes(line);
+      if (images) {
+        index += 1;
+        while (index < lines.length) {
+          if (!lines[index].trim() && imageLineNodes(lines[index + 1] || '')) { index += 1; continue; }
+          const nextImages = imageLineNodes(lines[index]);
+          if (!nextImages) break;
+          images.push(...nextImages); index += 1;
+        }
+        blocks.push(h('div', { class: 'dsh-image-grid', 'data-count': String(images.length) }, ...images));
+        continue;
+      }
 
       const fence = /^\s*```\s*([^\s`]*)\s*$/.exec(line);
       if (fence) {
@@ -279,7 +319,7 @@ const DshMarkdown = (() => {
     return root;
   }
 
-  return { render, __test: { inlineNodes, safeHref, splitTableRow } };
+  return { render, __test: { inlineNodes, safeHref, safeImageSource, splitTableRow } };
 })();
 
 if (typeof module !== 'undefined' && module.exports) module.exports = DshMarkdown;

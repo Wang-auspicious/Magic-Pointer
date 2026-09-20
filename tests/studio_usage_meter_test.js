@@ -156,13 +156,13 @@ for (const [theme, block] of [['light', lightBlock], ['dark', darkBlock]]) {
 assert(source.includes('mp-usage-seg is-${row.kind}'), 'bar segments are classed per category');
 assert(source.includes("segment.setAttribute('data-kind', row.kind)"), 'each segment names its category');
 assert(source.includes('usageSegmentShare(row.value, contextWindow)'), 'segment width comes from the shared formula');
-assert(source.includes("fill.setAttribute('data-kind', row.kind)"), 'each legend row names its category');
+assert(source.includes('fill.dataset.kind = row.kind'), 'each legend row names its category');
 assert(!source.includes("['input', '读取上下文', inputTokens]"),
   'the two hardcoded rows are gone; the legend follows the categories that arrived');
 assert(!source.includes("el('span', 'mp-usage-seg is-input')"),
   'the bar no longer draws a fixed input segment before looking at the numbers');
 /* 标头的百分比和夹取没动：最新一轮的输入，比例不夹、只有宽度夹。 */
-assert(source.includes('const contextTokens = Number(latestUsage?.inputTokens) || 0;'));
+assert(source.includes('const contextTokens = Number(latestUsage?.contextTokens) || 0;'));
 assert(source.includes('const contextProgress = Math.max(0, Math.min(100, Math.round(contextRatio)));'));
 
 console.log('studio usage meter test ok');

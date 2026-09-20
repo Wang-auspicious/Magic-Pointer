@@ -12,6 +12,8 @@
   align-items: flex-end;
   padding: 32px 40px 8px;
   border-bottom: 0;
+  width: min(100%, 1120px);
+  margin-inline: auto;
 }
 
 .mp-shell[data-view="artifacts"] .workspace-header h1 {
@@ -29,6 +31,9 @@
   flex: 1 1 auto;
   flex-direction: column;
   padding: 0 40px 48px;
+  width: min(100%, 1120px);
+  margin-inline: auto;
+  box-sizing: border-box;
 }
 
 /* ---- tab 行 + 工具条 ---- */
@@ -159,13 +164,13 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 6px 8px;
+  padding: 6px 10px 7px;
   border: 0;
   border-radius: var(--mp-r5);
   background: transparent;
   color: var(--mp-text);
   font: inherit;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 20px;
   text-align: left;
   cursor: pointer;
@@ -184,6 +189,22 @@
   color: var(--mp-text-muted);
   font-style: normal;
 }
+
+.mp-kind-label, .mp-kind-tail { display: inline-flex; align-items: center; gap: 8px; }
+.mp-kind-tail { min-width: 20px; justify-content: flex-end; }
+.mp-artifact-kind-icon { display: inline-flex; color: var(--mp-text-secondary); }
+.mp-artifact-kind-icon[data-kind="code"] { color: var(--mp-focus); }
+.mp-artifact-kind-icon[data-kind="text"] { color: var(--mp-clay); }
+.mp-artifact-kind-icon[data-kind="document_patch"] { color: var(--mp-success); }
+
+.mp-artifact-create { margin: 22px 0 18px; }
+.mp-artifact-create h2 { margin: 0 0 12px; font-size: 14px; font-weight: 500; }
+.mp-artifact-templates { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.mp-artifact-templates button { display: flex; min-height: 76px; padding: 16px; align-items: center; gap: 12px; border: 1px solid var(--mp-rule); border-radius: 12px; text-align: left; background: var(--mp-panel); color: var(--mp-text); transition: background-color 120ms; }
+.mp-artifact-templates button:hover { background: var(--mp-hover); }
+.mp-artifact-templates strong, .mp-artifact-templates small { display: block; }
+.mp-artifact-templates strong { font-size: 14px; font-weight: 500; }
+.mp-artifact-templates small { margin-top: 4px; color: var(--mp-text-muted); font-size: 12px; }
 
 /* ---- 搜索行：点搜索图标才出现，是同一排工具的真展开，不是装饰 ---- */
 .mp-artifact-search {
@@ -256,7 +277,7 @@
   /* 名字列有下限，灰字列下限为 0：来源那一串可以很长，空间不够时先截灰字，
      不是把标题挤没。 */
   grid-template-columns: 32px minmax(120px, 1fr) minmax(0, auto);
-  padding: 8px 12px;
+  padding: 8px 42px 8px 12px;
   border: 0;
   border-radius: var(--mp-r6);
   background: transparent;
@@ -265,6 +286,17 @@
   text-align: left;
   cursor: pointer;
 }
+
+.mp-artifact-item { position: relative; min-width: 0; }
+.mp-artifact-preview { display: none; }
+.mp-artifact-actions { position: absolute; top: 12px; right: 6px; z-index: 2; }
+.mp-artifact-actions summary { display: flex; width: 28px; height: 28px; align-items: center; justify-content: center; border-radius: 6px; list-style: none; cursor: pointer; color: var(--mp-text-muted); opacity: 0; transition: opacity 120ms; }
+.mp-artifact-actions summary::-webkit-details-marker { display: none; }
+.mp-artifact-item:is(:hover, :focus-within) .mp-artifact-actions summary, .mp-artifact-actions[open] summary { opacity: 1; }
+.mp-artifact-actions summary:hover { background: var(--mp-hover); }
+.mp-artifact-action-menu { position: absolute; top: 30px; right: 0; min-width: 170px; padding: 4px; border: 1px solid var(--mp-rule); border-radius: 8px; background: var(--mp-panel); box-shadow: var(--mp-shadow-menu); }
+.mp-artifact-action-menu button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 10px; border-radius: 6px; font-size: 14px; text-align: left; }
+.mp-artifact-action-menu button:hover { background: var(--mp-hover); }
 
 .mp-artifact-row:hover {
   background: var(--mp-hover);
@@ -325,8 +357,8 @@ body[data-ds-dark-theme] .mp-artifact-tile[data-kind="code"] { background: rgba(
 /* 网格布局：同一个列表换一种读法，不是第二份内容。 */
 #art-list[data-layout="grid"] {
   display: grid;
-  gap: 8px;
-  grid-template-columns: repeat(auto-fill, minmax(232px, 1fr));
+  gap: 18px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 #art-list[data-layout="grid"] .mp-artifact-group {
@@ -342,17 +374,32 @@ body[data-ds-dark-theme] .mp-artifact-tile[data-kind="code"] { background: rgba(
   min-height: 0;
   overflow: hidden;
   align-content: start;
-  grid-template-columns: 32px minmax(0, 1fr);
-  grid-template-rows: auto auto;
-  padding: 12px;
-  border: 1px solid var(--mp-rule);
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 210px auto auto;
+  gap: 5px;
+  padding: 0 0 8px;
+  border: 0;
+  overflow: visible;
 }
 
+#art-list[data-layout="grid"] .mp-artifact-preview { display: flex; flex-direction: column; align-self: stretch; overflow: hidden; gap: 16px; padding: 22px 24px; border: 1px solid var(--mp-rule); border-radius: 12px; background: var(--mp-panel); color: var(--mp-text-secondary); font-size: 10px; line-height: 1.65; white-space: pre-wrap; }
+#art-list[data-layout="grid"] .mp-artifact-preview strong { font-family: var(--mp-font-serif); color: var(--mp-text); font-size: 15px; font-weight: 500; }
+#art-list[data-layout="grid"] .mp-artifact-tile { position: absolute; top: 190px; left: 12px; border: 3px solid var(--mp-page); border-radius: 8px; }
+#art-list[data-layout="grid"] .mp-artifact-name { margin-top: 18px; padding-inline: 2px; }
+#art-list[data-layout="grid"] .mp-artifact-actions { top: auto; bottom: 7px; }
+
 #art-list[data-layout="grid"] .mp-artifact-meta {
-  grid-column: 2;
+  grid-column: 1;
   overflow-wrap: anywhere;
   text-align: left;
   white-space: normal;
+}
+
+@media (max-width: 1100px) {
+  .mp-artifacts { padding-inline: 24px; }
+  .mp-artifact-templates { gap: 8px; }
+  .mp-artifact-templates button { padding: 12px; }
+  .mp-artifact-templates small { display: none; }
 }
 
 /* ---- 空态：参考里只有一行灰字，没有插画 ---- */

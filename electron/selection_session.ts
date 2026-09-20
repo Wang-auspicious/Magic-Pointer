@@ -28,6 +28,7 @@ interface SelectionSession {
   panelPlacement: unknown;
   agentPromptDraft: AgentPromptDraft | null;
   activeRequestId: string | null;
+  stageAttached: boolean;
   createdAt: number;
   expiresAt: number;
 }
@@ -133,7 +134,7 @@ class SelectionSessionStore {
   // keep the newest `maxFrozen` captures and drop the oldest beyond that.
   evictOverflow(): void {
     const frozen = [...this.sessions.entries()].filter(([, entry]) =>
-      SelectionSessionStore.isFrozen(entry),
+      SelectionSessionStore.isFrozen(entry) && entry.state !== 'running',
     );
     if (frozen.length <= this.maxFrozen) return;
     frozen.sort((a, b) => a[1].createdAt - b[1].createdAt);
@@ -162,6 +163,7 @@ class SelectionSessionStore {
       panelPlacement: null,
       agentPromptDraft: null,
       activeRequestId: null,
+      stageAttached: true,
       createdAt: now,
       expiresAt: now + this.ttlMs,
     };
@@ -283,6 +285,11 @@ class SelectionSessionStore {
   isCurrentRequest(token: unknown, requestId: unknown, now = Date.now()): boolean {
     const entry = this.get(token, now);
     return Boolean(entry && entry.activeRequestId === requestId);
+  }
+
+  detach(token: string): void {
+    const entry = this.sessions.get(token);
+    if (entry) entry.stageAttached = false;
   }
 
   cancel(token: string): boolean {

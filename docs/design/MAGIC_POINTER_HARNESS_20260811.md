@@ -857,7 +857,7 @@ DOM、COM、UIA、Fabric等现有模块也不自动保留，只优先保存经�
 - 默认模型只做语义和少量规划。
 - 模型默认拿结构化对象和必要视觉，不拿全桌面垃圾上下文。
 - 工具动态选择，默认3–8个。
-- 长任务不偷偷转为内部无限 Agent loop。
+- 长任务由 MP 自有 Runtime 执行，使用滚动活动预算、压缩、持久化与恢复；用户可以中断或接管。旧的“长任务外包给其他 harness”解释已被当前产品边界取代。1000 轮为应急熔断，不是任务长度边界。
 
 ### 17.4 人类控制
 
@@ -867,6 +867,66 @@ DOM、COM、UIA、Fabric等现有模块也不自动保留，只优先保存经�
 - Reject保留可编辑产物，不丢上下文。
 
 ## 18. 进度账本
+
+### 2026-09-20：85 项审计修复与 Jev 候选接口（进行中，版本仍为 1.0.49）
+
+- 审计编号以 `docs/research/2026-09-20-project-audit-and-jev.md` 为准；分批修复并 push main，最后统一升版本与 sync。
+- 阶段回归：CU 输入/UIA首批116通过；RT05–19相关112通过；办公真实临时文件/摘要40通过；原生PowerShell写回执4通过；artifact撤销与办公组合36通过。这里只记录已运行的定向证据，不替代最终全量验证或原生应用验收。
+- Jev：官方 `https://opencode.ai/zen/v1/systemone`、固定免费模型 `jev-1.13-free`，复用 OpenCode 本机认证；真实请求费用字段为0。六例合成候选对照与主模型结果存于 `docs/research/2026-09-20-jev-comparison.json`。英文语义暖请求625/734ms，中文低置信度退回；不把模型选择当成权限、坐标或执行证据。
+
+### 2026-09-19：多材料请求、来源与冻结视觉修复（开发树1.0.49，未sync）
+
+- 原始三笔微信/桌面任务在本地selection请求64 KiB边界失败，未到模型。selection单独放宽至8 MiB，保留普通桥限额与完整材料；不伪装为模型上下文超限。
+- UIA区域读取限制在指定窗口树，最小包含祖先读取；原生双窗口正反控制证明原来的跨窗口文本泄漏被消除、本窗口按钮仍正常读取。慢读取之前固定多笔来源窗口列表，防止随后输入法候选窗抢目标。
+- Stage显示微信+Desktop，各笔独立SourceRef并保留桌面真实文件路径；未覆盖材料逐筆冻结Look补读，遵守Look非并发额度，继续共用所选模型。
+- 用户冻结画面与重建三笔回放：真实native Shell解析桌面PDF；真实main/worker/Runtime用kimi-k3两回合40.607s读PDF并回答，errors=[]；独立Look9.083s识别微信HTML文件名及87.3K。保留用户后来选择的纯文本deepseek-v4.1-flash，不增加独立视觉配置。
+- 新回归先红后绿，最终Node239文件、TypeScript、lint、构建通过；Python2321通过/1项此前已记录的无OCR几何失败（318.01s）。HTML正文、严格200字及既有删除笔触未同步过滤materials问题有明确记录，未虚称通过。按用户要求只交付开发树，版本不变。详情与本地证据见`docs/research/2026-09-19-selection-multisource-delivery.md`。
+
+### 2026-09-19：Composer 原生参数、颗粒动效与 Worktree 选择（开发树1.0.49，未sync）
+
+- 从本机 Claude Desktop 2.110 编译组件和 CSS 读取 effort、Mode、Code 附件菜单、账户和 Worktree 参数，复用已保存图标。effort 220×111，最高档激活原始紫色颗粒 shader，关闭/后台/reduced-motion 停止绘制；不将编译 JS 称为原始 TS。
+- Mode 244×236.5、40.5px 双行项；账户 272×276、32px 行，Language/Learn more 子菜单和对应 MP 操作接通。`+` 先展开五项 Code 菜单，支持文件选择和 Ctrl+U，原斜杠命令目录保留。未虚构 Claude 专属订阅或身份服务。
+- Worktree 用独立布尔状态选择，取消即时、保留工作区与修改，Git 创建延后到任务提交；覆盖复用、准备中取消和错误。真实项目连续切换2.6ms，不创建/删除实际工作区。
+- 新回归先红后绿；fresh Node238文件、完整TypeScript、lint和构建通过，Python2318通过/1项既有感知失败（344.55s）。真实main/preload/IPC、Chromium原生输入、GPU帧变化/清理及720×480边界验收通过，模型菜单四项/More回归通过。按用户要求不升版本、不sync，恢复偏好并保留最新开发窗口。详见`docs/research/2026-09-19-composer-menu-delivery.md`。
+
+### 2026-09-19：紧凑四项模型菜单与统一模型调用（开发树1.0.49，未sync）
+
+- 本机Claude Desktop编译组件/CSS提取24px行高、13/19字体、4px内边距、勾色与阴影，图2校准244px主菜单；按用户后续要求将More限制为320×最多216px并滚动，各模型后显示真实来源灰色标签。本机来源为opencode-zen。
+- 四项有序位置持久化，取消后保留空位、替换填回原位置；不强制固定当前调用模型。实际本机偏好补齐四项；More首尾均可点击且避开标题栏。
+- Provider+model联合身份贯通目录和IPC选择；gateway逐模型上下文元数据进入实际compaction预算，显式预算仍优先。旧secret配置仅补充元数据，保留原凭据读取边界。
+- 修复点击切换冷启动Fabric并等待远程目录的卡顿：本地保存后使用既有目录更新标签，旧异步响应不能覆盖新选择，实机main/preload/IPC切换57ms（含40ms观测等待）。删掉等待卡、取消勾选提示及外部按钮的文本/视觉提示。
+- 按用户要求删除独立视觉模型、base URL、key和API mode覆盖函数及visionModel目录字段，文字和图像都使用当前所选模型；未伪造不支持图像的模型能力。旧视觉配置不能劫持所选模型的请求，回归先红后绿。
+- Fresh验证：Python2318通过/1项原有感知失败（325.70s），Node237文件、TypeScript、lint、构建通过。实际37项网关目录、四项替换、重开持久化及Runtime元数据一致通过；不升版本、不sync，不做远程模型生成验收。详见`docs/research/2026-09-19-model-menu-delivery.md`。
+
+### 2026-09-19：用量弹层实际 GUI 纠正与鼠标恢复（开发树 1.0.49，未 sync）
+
+- 真实鼠标点击回归先复现“明细按钮重建 DOM → 冒泡误判外部点击 → 主卡关闭”，再验证一次点击在主卡左侧打开独立明细；头部/页脚切换仅控制明细显隐。
+- 旧会话只读恢复已有 model/request、model/response 及消息事件，最后输入 42085、累计 92304 各归其位；未改写历史、未调用模型。Context 完整标注、k/M 格式、四种组成颜色及明细一一对应已在实际 Studio 页核对。
+- 双生鼠标装饰窗口空闲隐藏、无 16ms 采样、不转发原生鼠标移动；用户在实际修复版明确确认鼠标“现在已恢复正常”。原生移动短测 160 次无隐藏，不能单凭该短测证明原症状；用户确认与代码行为测试共同记录。
+- Python 2319 passed / 1 个用户预告且未改动的感知失败（329.16s），Node 234 文件通过，TypeScript/构建通过。真实主进程 + preload + IPC + JEV 存档验收通过，开发版 GUI 保留打开；不升版本、不 sync。详情 `docs/research/2026-09-19-usage-popover-correction.md`，取代早先独立离屏夹具的交互验收结论。
+
+### 2026-09-19：GUI 工具与上下文用量修复（开发树 1.0.49，未 sync）
+
+- 实际 JEV 会话证明 200s Glob 取消不响应、release 递归噪声、Grep 参数不匹配、STATUS 50k 字符倾倒；按受支持调用修复，生产工作区 Glob 361ms，默认 Read 限200行/约12k字符并保留分页。
+- 工具开始事件即携带命令，运行中可展开；工具组默认折叠。每次请求独立计量，Anthropic 缓存正确计入输入；服务端计数、估算、累计消耗与账户额度分离。Context 弹层按本机 Claude Code 源码参数及图3校准，头部箭头/页脚原地展开，provider 配额刷新，DeepSeek 官方费率估算单独标识。
+- 新用例先红后绿；完整 Python 2318 passed/1个用户已知感知失败（308.74s），Node233文件、TypeScript及构建通过；Electron离屏尺寸/交互与真实工作区工具调用已验证。未将fixture额度或本地token估算宣称为账户/真实模型计费验收；继续遵守不升版本、不sync。完整证据见 `docs/research/2026-09-19-context-usage-delivery.md`。
+
+### 2026-09-19：提示词身份与会话冻结（开发树 1.0.49，未 sync）
+
+- 复用现有 Section assembler 和 EventSession；`build()` 返回不可变全文与有序 `(section_id, sha256)`，不改标题、段序、拼接或提示词文案。`model/request` 新增 `systemPromptHash/systemPromptSections`，哈希使用现有 canonical bytes；不因哈希差异拒绝执行。
+- 普通对话、选择桥冷启动及常驻宿主在 provider client 创建前按 durable session ID 冻结。每轮模型请求、日志与 token 估算读同一份；恢复比较当前候选，差异写 `prompt/drift` 并明确继续使用保存快照。既有日志优先沿用最近实际请求全文，缺失账目/全文写 `prompt/missing`，不伪造历史身份，不引入迁移框架。
+- 关键冷启动/常驻恢复断言先观察新文本替换旧文本失败，再通过全部 7 项新测试；fresh Python **2310 passed / 1 failed / 1 warning / 359.63s**，唯一失败是用户预先说明且要求不动的感知层测试。Node **232 文件**和 TypeScript 全配置通过，Ruff 无新增告警。真实落盘请求与红绿见证在 `docs/research/2026-09-19-prompt-versioning-delivery.md`。
+- 按本任务明确要求保留 **1.0.49**、不执行 `npm run sync`，安装版未更新；没有真实供应商或 Electron 应用验收声明。
+
+### 2026-09-18：主链代码审读与证据/状态修复（1.0.49，已同步安装）
+
+- [x] 用户本轮撤销 MP 内 Jev 集成；没有新增 Jev API、密钥设置或模型依赖。独立 Pi/Codex 插件另开用户任务，不进入 MP Runtime。
+- [x] 材料连续性：冻结选区与全文混合搜索不漏页，未知 locator 不冒充选区，目录 follow 绑定条目名，精确定位目标先返回，长单元可继续读取，聊天已取得结果可分页，聊天导航不再声明并发安全，引用标签支持 AA 以后。
+- [x] 感知与动作：数字含符号/顺序参与冲突判断，两阶段保留先前证据关系；无几何 OCR 明确 unlocated/degraded。CU 保存完整 snapshot 原文供深读与等待；物理输入核对窗口边界、遮挡和前台，Value/RangeValue 写后真实读回，恢复提示穿过工具边界。
+- [x] Runtime：新写入使旧验证失效，输入成功不等于结果验证，明确后置条件才产生 matched；Stop 单次消费在当次运行锁存，先结算再中断；恢复屏障规范化工具别名；fork 重绑定 child 任务归属；Wait 记录实际耗时与真实等待条件。
+- [x] 设置与 Studio：合法模型 token 上限及目录可往返，Python 保存不丢 stash/context_trackers；普通发送预存任务、失败和停止保留身份/部分文本/轨迹，重启遗留轮次标可恢复且不虚构物理动作结果；`/model` 与菜单共用活动 profile 保存。
+- [x] 交付按用户**不跑全量测试**的当前指示执行：指定失败场景先红后绿、相关 Node/Python 定向检查与编译通过，安装目录为 **1.0.49**，24个交付文件逐字节相同，包内Python原生295字符写入/条件/读回验收 **405.12ms**，已重启安装版。完整命令范围与打包记录见 `docs/research/2026-09-18-code-audit.md`。
+- [ ] 诚实边界：本轮为核心跨模块调用链审读，并非全仓每行无遗漏保证；真实 Office/Figma/微信端到端验收及 Figma plugin ID 缺口仍未闭合。真机验收仅为临时原生 Win32 Edit，不泛化为全部应用。
 
 ### 2026-09-18：上下文与 CU 底层对照（保持 1.0.48，已同步安装）
 
@@ -878,6 +938,29 @@ DOM、COM、UIA、Fabric等现有模块也不自动保留，只优先保存经�
 - 最终默认 Provider 历史材料回放：40.047 s、2 轮、33,562 输入 token、1 次 Context.read、0 失败/视觉；已读完整 21 页 PDF。中间 284,534 输入 token 的低效回放亦保留，最终缓存变化不能换算成账单降幅。
 - 全量及交付：`npm run sync` 成功，lint/typecheck、Node 228 个测试文件、Python 2190 passed / 1 条既有 Pillow warning / 225.00 s；版本保持 1.0.48。安装目录 13 个关键文件逐字节相同，自带 Python 读取完整 21 页 PDF；原生 Edit 写入/验证/读回 317 ms，无物理输入，7 个应用进程来自安装目录。
 - 限制：200 字仍未遵守；微信 HTML 正文未取得；没有完成 CU 全应用真机验收或流内工具提前执行。逐文件对照与全部回放见 `docs/research/2026-09-18-context-cu-backend-parity.md`。
+
+### 2026-09-18：三处材料与完整工具历史（1.0.48）
+
+- [x] 用户实际任务取证：三个 reference 误共用微信窗口、桌面文件无原生路径、Look 不接受 reference、空 Context.read 假成功；历史尚在但逐轮思考被渲染丢失。安装版 profile 校验把 defaultMaxTokens 误判为凭据，开发版/安装版又使用不同会话目录。
+- [x] 每笔手势独立定位窗口和 source，复用历史冻结帧；桌面 UIA 空树时经原生 IFolderView 定位文件。Look(reference) 解析原帧区域；文档用真实 DocumentReader；冻结文字持久恢复；错误读取不再算成功。
+- [x] 共享实时轨迹、失败工具方框、动作标题与完整展开详情；结束后连续工具/中间思考折叠成一条摘要。原任务 12 工具、10 思考经 Chromium 重建/展开/切换回放保留。Spark 用 Claude 原始 SVG 帧条与 90ms/帧，不旋转；结束和账户标志用原始路径。
+- [x] 实机本地 OCR 读到微信原句与文件卡片；桌面 PDF 原生路径及 21 页/630 片段/22,606 字符读取通过。原始历史备份后合并到安装版：30 会话、63 轮、3 项目，补入 3 个缺失 Agent 日志。
+- [x] Fresh lint/typecheck、Node 228 文件、Python 2169 passed/1 条既有 Pillow warning/222.85s；最终折叠调整后另跑 lint/typecheck/Node 228 文件全绿。
+- [x] 真实默认 Runtime 回放 190.719s，视觉服务 HTTP429 后成功走 Context.read/search 并产生答案，usedBackend=magic_pointer.messages_multiturn_streaming，无停滞终止。答案未严格遵守 200 字，微信 HTML 附件只取得卡片文字，不能称为三份全文及答案质量全部验收通过。
+- [x] 打包验收发现并补齐原生 COM 依赖：pywin32 311 纳入 Windows requirements/既有锁定文件，构建与缓存检查实际导入 pythoncom/win32com.shell。重新完整验证 Node 228 文件、Python 2169 passed/1 条原有 warning/238.14s，最终打包树自带 Python 原生定位同一 PDF 通过。
+- [x] 最终 `npm run sync` 完成：本机已安装并重启 1.0.48，9 个关键交付文件逐字节一致；安装版自带 Python 从安装目录实际定位原桌面 PDF、读取 21 页结构；30 会话/63 轮及原任务 12 工具/10 思考保留。启动完成、模型健康 ok，原 profile 启动异常消失。GitHub 未发布版本的自动更新提示仍是既有通道配置边界。详见 `docs/research/2026-09-18-selection-transcript-repair.md`。
+
+### 2026-09-18：圈选证据与双窗口任务连续性（1.0.47，已同步安装版）
+
+- [x] 根据用户冻结帧和原始 agent JSONL 修复实际故障：HTTP 429 不再被当成成功视觉；UIA 使用物理坐标；逐笔 canonical geometry 保留，OCR 正确消费闭合选区。Look 失败保留真实原因，圈选对象优先于会话背景，实时 Observe 与历史画面的数字必须区分。
+- [x] selection/conversation 共用 RuntimeActivitySink 与 DshChat 实时投影；完整 tool result、thinking、trajectory、usage、taskContext、agent UUID、pendingInput 跨 bridge/Stage/store 保留。GUI 自动刷新当前正文及权限卡；COMPLETE/ERROR 不丢真实回答，轨迹不再静默截掉 256 条之后的记录。
+- [x] Stage 关闭只 detach，显式 Stop/GUI运行态Escape 才取消请求；新手势不淘汰运行任务；晚到进度/结果不重新弹窗。真实编译 main+preload+两扇离屏 Chromium 验收确认 requestSurvived=true、killRequests=0、两端内容一致、DOM 节点稳定、终态和权限卡自动显示、consoleErrors=[]。模型进度使用只读 fixture，未将此项称为真实模型验收。
+- [x] 原冻结图真实视觉调用识别 Environment/+17,726/−1,227/Local/main，12.48s；生产 Runtime 回放59.10s能识别面板，但该轮冻结视觉失败后使用当前屏幕，不能称为完整历史画面验收。详见 `docs/research/2026-09-18-selection-continuity-delivery.md`。
+- [x] 47张用户参考图逐张查看并形成对照表；本机 Claude 2.110.0.0 ion-dist 补采原字体动效、原始空态路径、Scheduled微预览和Artifacts模板关键帧，来源存于 `参考claude设计/scraped/extras/desktop-2.110.0.0/README.md`。本机资源提取不等于有登录态的全部页面验收。
+- [x] 修复全图缩放漏字：保留全帧并补局部细读，生产OCR已读全八项；InputArtifact保留OS窗口身份、坐标与运行时计算的位置；Look携带同帧全景上下文，Observe不混历史图。循环外层感知失败标志同步修正。真实回放仍遇视觉429，并有PR状态原因臆测，严格识别尚未全面通过，不以OCR/协议测试代替模型准确性。
+- [x] Code composer预测可接受为草稿、长文高度、真实Edit/Write差异、GUI Stop以及原发送/标题glyph已补修；Markdown支持实际图片。Chats同行工具栏、Plugins紧凑列表、可搜索项目子菜单也已完成。最终真实main/preload/Chromium双窗验收6178ms、库页24189ms，全绿且consoleErrors=[]，覆盖Artifacts实际预览、排序/批量操作/原字体悬停轴与项目持久分配。模型和目录选择返回值为隔离fixture，未伪称外部服务验收。
+- [x] 最后三项补修并冻结后的fresh全量通过：lint/全部typecheck、Node228个文件、Python2164passed/1条原有Pillow warning/227.51s，退出码0。日志为 `data/runtime/selection-parity-delivery-verify-20260918.log`。
+- [x] `npm run sync` 成功，内置复验再次通过Node228个文件/Python2164passed/1条原有warning/214.50s，构建 `release/sync-1.0.47-20260918-013049-44572/Magic-Pointer-1.0.47-x64.exe`（384179519 bytes），同步并重启。独立核对开发树/安装目录均1.0.47，308个交付文件逐字节一致，安装版自带Python从安装目录导入6个关键模块并验证选区身份、细读坐标、真实失败标志与历史/实时视觉实例隔离；5个应用进程来自安装目录。STATUS已更新，真实模型限流及界面未取得的资源/服务边界如实保留。
 
 ### 2026-09-17：工具目录、精确按需加载与恢复（1.0.46，已同步安装版）
 

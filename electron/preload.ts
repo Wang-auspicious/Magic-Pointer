@@ -124,6 +124,10 @@ contextBridge.exposeInMainWorld('magicPointerStage', {
     actionId: String(payload?.actionId || '').slice(0, 200),
   }),
   contextAction: (payload: unknown) => ipcRenderer.send('stage:context-action', payload),
+  stopSelectionCommand: (payload: { selectionSessionToken?: unknown }) =>
+    ipcRenderer.invoke('stage:stop-selection-command', {
+      selectionSessionToken: String(payload?.selectionSessionToken || ''),
+    }),
   // Mid-run steer: a distinct IPC from submit so it can never start a second
   // loop — it only writes the durable inbox the running loop already claims.
   steerSelectionCommand: (payload: { selectionSessionToken?: unknown; text?: unknown; taskInput?: unknown }) =>
@@ -191,7 +195,7 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
   saveFabricSettings: (settings: unknown) => ipcRenderer.invoke('dashboard:settings:save', { settings }),
   getFabricSettings: () => ipcRenderer.invoke('dashboard:settings:get'),
   modelsCatalog: () => ipcRenderer.invoke('models:catalog'),
-  selectModel: (model: unknown) => ipcRenderer.invoke('models:select', { model }),
+  selectModel: (model: unknown, profileId?: string) => ipcRenderer.invoke('models:select', { model, profileId }),
   modelQuota: (options: { force?: unknown } = {}) => ipcRenderer.invoke('models:quota', { force: options?.force === true }),
   slashDirectory: () => ipcRenderer.invoke('slash:directory'),
   requestState: () => ipcRenderer.send('dashboard:request-state'),
@@ -310,6 +314,11 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
     onStatus: (callback: PayloadCallback) => onPayload('dashboard:update-status', callback),
   },
   conversations: {
+    recovery: (payload: Record<string, unknown>) => ipcRenderer.invoke('conversations:recovery', {
+      conversationId: String(payload.conversationId || ''), action: payload.action,
+      operationId: payload.operationId, verificationCallId: payload.verificationCallId,
+      confirmed: payload.confirmed === true,
+    }),
     list: () => ipcRenderer.invoke('conversations:list'),
     stats: () => ipcRenderer.invoke('conversations:stats'),
     get: (id: unknown) => ipcRenderer.invoke('conversations:get', id),
@@ -320,7 +329,7 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
     pickWorkspace: () => ipcRenderer.invoke('conversations:pick-workspace'),
     send: (payload: { conversationId?: unknown; question?: unknown; attachments?: unknown; taskInput?: unknown; permissionPreset?: unknown; requestId?: unknown; workspaceRoot?: unknown; effort?: unknown; permissionGrant?: unknown; permissionDeny?: unknown; permissionGrantOnce?: unknown }) => ipcRenderer.invoke('conversations:send', {
       conversationId: String(payload?.conversationId || '').slice(0, 120),
-      question: String(payload?.question || '').slice(0, MAX_COMMAND_CHARS),
+      question: String(payload?.question || ''),
       attachments: Array.isArray(payload?.attachments)
         ? [...new Set(payload.attachments.map((item) => String(item || '').trim()).filter(Boolean))].slice(0, 32).map((item) => item.slice(0, 1000))
         : [],
@@ -347,6 +356,7 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
       title: String(payload?.title || '').slice(0, 200),
     }),
     delete: (id: unknown) => ipcRenderer.invoke('conversations:delete', { id: String(id || '').slice(0, 120) }),
+    setProject: (id: string, root: string) => ipcRenderer.invoke('conversations:set-project', { id, root }),
     suggest: (payload: { turns?: unknown; object?: unknown } = {}) => ipcRenderer.invoke('conversations:suggest', {
       turns: Array.isArray(payload?.turns) ? payload.turns.slice(-12) : [],
       object: payload?.object && typeof payload.object === 'object' ? payload.object : {},
@@ -354,7 +364,7 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
     stop: (requestId: unknown) => ipcRenderer.invoke('conversations:stop', { requestId: String(requestId || '').slice(0, 120) }),
     steer: (payload: { agentSessionId?: unknown; text?: unknown; taskInput?: unknown; sources?: unknown }) => ipcRenderer.invoke('conversations:steer', {
       agentSessionId: String(payload?.agentSessionId || '').slice(0, 120),
-      text: String(payload?.text || '').slice(0, MAX_COMMAND_CHARS),
+      text: String(payload?.text || ''),
       taskInput: boundedTaskInput(payload?.taskInput),
       sources: Array.isArray(payload?.sources) ? payload.sources.slice(0, 32) : [],
     }),
@@ -373,6 +383,9 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
     onProgress: (callback: PayloadCallback) => onPayload('conversations:progress', callback),
   },
   contextTrackers: {
+    list: () => ipcRenderer.invoke('context-trackers:list'),
+    setEnabled: (trackerId: string, enabled: boolean) => ipcRenderer.invoke('context-trackers:set-enabled', { trackerId, enabled }),
+    remove: (trackerId: string) => ipcRenderer.invoke('context-trackers:remove', { trackerId }),
     material: (payload: { conversationId: string; sourceId: string; action: string; task?: string; cadence?: string }) => ipcRenderer.invoke('context-trackers:material', {
       conversationId: String(payload.conversationId || '').slice(0, 120),
       sourceId: String(payload.sourceId || '').slice(0, 4096),
@@ -381,7 +394,14 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
       cadence: String(payload.cadence || 'filesystem'),
     }),
   },
+  extensions: {
+    inventory: () => ipcRenderer.invoke('extensions:inventory'),
+  },
   artifacts: {
+    undo: (payload: { conversationId?: unknown; artifactId?: unknown; revision?: unknown; confirmed?: unknown }) => ipcRenderer.invoke('artifacts:undo', {
+      conversationId: String(payload.conversationId || ''), artifactId: String(payload.artifactId || ''),
+      revision: payload.revision, confirmed: payload.confirmed === true,
+    }),
     read: (payload: { conversationId?: unknown; artifactId?: unknown }) => ipcRenderer.invoke('artifacts:read', {
       conversationId: String(payload?.conversationId || '').slice(0, 120),
       artifactId: String(payload?.artifactId || '').slice(0, 128),

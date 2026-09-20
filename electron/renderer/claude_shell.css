@@ -148,11 +148,11 @@
   align-items: center;
   gap: 8px;
   width: 100%;
-  height: 26px;
-  padding: 0 10px;
-  border-radius: var(--mp-r5);
+  height: 32px;
+  padding: 0 2px;
+  border-radius: var(--mp-r6);
   color: var(--mp-text-secondary);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: var(--mp-weight-regular);
   text-align: left;
   transition: color var(--mp-dur-fast), background-color var(--mp-dur-fast);
@@ -166,13 +166,28 @@
   flex: none;
 }
 
-.dshw-new-session:not(.is-on) svg {
-  width: 20px;
-  height: 20px;
-  padding: 3px;
-  border-radius: 50%;
-  background: var(--mp-hover);
+.mp-nav-leading {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
 }
+
+.mp-new-circle {
+  display: inline-flex;
+  width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--mp-text-muted) 15%, transparent);
+}
+
+.mp-new-circle .cds-icon { font-weight: 700; }
+.dshw-new-session:hover .mp-new-circle { background: color-mix(in srgb, var(--mp-text-muted) 25%, transparent); }
+.mp-nav-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .dshw-new-session:hover,
 .dshw-customize:hover,
@@ -190,7 +205,7 @@
 }
 
 .dshw-customize {
-  margin-bottom: 18px;
+  margin-bottom: 2px;
 }
 
 .mp-design-nav {
@@ -408,10 +423,10 @@
   white-space: nowrap;
 }
 
-/* 分组标题：抓到的 [data-sidebar-group-label] 是 12px / 500 / secondary，
-   字号比组内的会话行小一档——它是「这一堆属于谁」，不是另一个可点的条目。 */
+/* 项目标题：参考里它和组内的会话行是同一个字号，靠字重和颜色分层，
+   不是靠缩小一档——缩小的写法在长项目名上会先于会话行变得难读。 */
 .dshw-project-name {
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 500;
 }
 
@@ -488,12 +503,14 @@
   opacity: 1;
 }
 
+/* 会话动作菜单：行高、图标槽、快捷键列都按参考的 [role=menu] 行来
+   （32px 行、20px 图标、右端 kbd/尖角）。 */
 .side-session-menu {
   position: absolute;
   z-index: 90;
   top: 24px;
   right: 2px;
-  min-width: 128px;
+  min-width: 208px;
   padding: 4px;
   border: 1px solid var(--mp-rule);
   border-radius: var(--mp-r6);
@@ -501,12 +518,21 @@
   box-shadow: var(--mp-shadow-menu);
 }
 
+.side-session-menu > hr {
+  height: 1px;
+  margin: 4px 10px;
+  border: 0;
+  background: var(--mp-rule);
+}
+
 .side-session-menu-item {
-  display: flex;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
   align-items: center;
+  gap: 8px;
   width: 100%;
-  height: 28px;
-  padding: 0 8px;
+  height: 32px;
+  padding: 0 10px;
   border-radius: var(--mp-r4);
   color: var(--mp-text-secondary);
   text-align: left;
@@ -521,12 +547,66 @@
   color: var(--mp-danger);
 }
 
-.dshw-project-empty {
-  display: block;
-  padding: 5px 10px;
-  color: var(--mp-text-muted);
-  font-size: 12px;
+.side-menu-icon,
+.side-menu-icon .cds-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
 }
+
+.side-menu-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.side-session-menu-item kbd {
+  color: var(--mp-text-muted);
+  font-family: var(--mp-font-ui);
+  font-size: 13px;
+}
+
+.side-menu-chevron {
+  color: var(--mp-text-muted);
+  font-size: 16px;
+  line-height: 1;
+}
+
+/* 「移至分组」的子菜单：挂在 body 上的浮层（侧栏滚动容器会裁掉行内绝对定位），
+   位置由 JS 算，右边界放不下时翻到左侧。 */
+.side-session-submenu {
+  width: 190px;
+  padding: 4px;
+  border: 1px solid var(--mp-rule);
+  border-radius: var(--mp-r6);
+  background: var(--mp-panel);
+  box-shadow: var(--mp-shadow-menu);
+}
+
+.side-session-submenu.is-floating {
+  position: fixed;
+  z-index: 96;
+}
+
+.side-session-submenu button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: var(--mp-r4);
+  color: var(--mp-text-secondary);
+  font-size: 14px;
+  text-align: left;
+}
+
+.side-session-submenu button:hover { color: var(--mp-text); background: var(--mp-hover); }
 
 .dshw-workspace-browser.is-empty .dshw-workspace-header {
   display: none;
@@ -677,50 +757,43 @@
   background: var(--mp-hover);
 }
 
+/* 账户浮层：宽度由 JS 按侧栏宽度算（侧栏宽 - 16），行高字号对齐官方 [role=menu] 行
+   （32px 行、14px/20px、图标 20px、gap 8px、内边距 4px + 行内 10px）。 */
 .mp-account-menu {
   position: fixed;
   z-index: 180;
-  width: max-content;
-  min-width: 208px;
-  max-width: min(320px, calc(100vw - 24px));
+  width: 272px;
+  max-height: calc(100vh - 52px);
   padding: 4px;
   border: 1px solid var(--mp-rule);
-  border-radius: var(--mp-r6);
+  border-radius: 12px;
   background: var(--mp-panel);
-  box-shadow: var(--mp-shadow-menu);
+  box-shadow: 0 8px 24px #0000001f, 0 2px 6px #00000014;
 }
 
 .mp-account-menu-header {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  padding: 7px 9px 8px;
-}
-
-.mp-account-menu-header strong {
   overflow: hidden;
+  margin: 0;
+  padding: 7px 10px 8px;
+  color: var(--mp-text-muted);
   font-size: 13px;
-  font-weight: var(--mp-weight-medium);
+  line-height: 18px;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.mp-account-menu-header small {
-  color: var(--mp-text-muted);
-  font-size: 11px;
 }
 
 .mp-account-menu button {
   display: grid;
   width: 100%;
-  min-height: 30px;
-  grid-template-columns: 18px minmax(0, 1fr) auto;
+  height: 32px;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
   align-items: center;
-  gap: 7px;
-  padding: 4px 8px;
-  border-radius: var(--mp-r4);
-  color: var(--mp-text-secondary);
-  font-size: 13px;
+  gap: 8px;
+  padding: 0 10px;
+  border-radius: 6px;
+  color: var(--mp-text);
+  font-size: 14px;
+  line-height: 20px;
   text-align: left;
 }
 
@@ -733,19 +806,19 @@
 .mp-account-menu .mp-menu-icon,
 .mp-account-menu .mp-menu-icon svg {
   display: block;
-  width: 16px;
-  height: 16px;
+  width: 20px;
+  height: 20px;
 }
 
 .mp-account-menu kbd {
   color: var(--mp-text-muted);
   font-family: var(--mp-font-ui);
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .mp-account-menu hr {
   height: 1px;
-  margin: 4px 3px;
+  margin: 4px 10px;
   border: 0;
   background: var(--mp-rule);
 }
@@ -753,8 +826,7 @@
 .mp-account-mark {
   width: 16px;
   height: 16px;
-  background: var(--mp-clay);
-  clip-path: polygon(45% 0,55% 0,58% 34%,82% 9%,89% 16%,65% 42%,100% 45%,100% 55%,65% 58%,89% 84%,82% 91%,58% 66%,55% 100%,45% 100%,42% 66%,18% 91%,11% 84%,35% 58%,0 55%,0 45%,35% 42%,11% 16%,18% 9%,42% 34%);
+  display: inline-flex;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1599,20 +1671,24 @@
   display: none;
 }
 
+/* 文件面板按 Claude Desktop 的 Code 视图面板取值：过滤行是 h-8 + px-md，
+   没有下边框也没有底色；行是 h-control(24px)、px-xs(2px)、gap-1(4px)、
+   rounded(8px)、text-body(13px)，目录每深一层多缩进 8px（官方
+   paddingLeft = 8 + depth * 8）。 */
 .mp-inspector-filter {
   display: flex;
   height: 32px;
+  flex: none;
   align-items: center;
   gap: 8px;
-  padding: 0 12px;
-  border-bottom: 1px solid var(--mp-rule);
+  padding: 0 6px;
   color: var(--mp-text-muted);
-  background: var(--mp-panel-subtle);
 }
 
 .mp-inspector-filter svg {
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
+  flex: none;
 }
 
 .mp-inspector-filter input {
@@ -1620,13 +1696,15 @@
   flex: 1;
   border: 0;
   background: transparent;
+  font-size: 13px;
 }
 
 .mp-file-tree {
   min-height: 0;
   flex: 1 1 auto;
   overflow: auto;
-  padding: 6px 8px 12px;
+  /* 官方虚拟列表的 scrollMargin / scrollPaddingStart / scrollPaddingEnd 都是 5。 */
+  padding: 5px 0;
 }
 
 .mp-inspector-panel.is-previewing .mp-inspector-filter,
@@ -1637,33 +1715,38 @@
 .mp-file-tree-row {
   position: relative;
   display: flex;
+  box-sizing: border-box;
   width: 100%;
-  min-height: 26px;
+  height: 24px;
   align-items: center;
   gap: 4px;
-  padding: 4px 7px;
+  padding: 0 2px;
   overflow: hidden;
   border: 0;
-  border-radius: var(--mp-r4);
-  color: var(--mp-text-secondary);
+  border-radius: 8px;
+  /* 官方行常态是 bg-alpha-0 + text-primary，hover 才是 bg-fill-ghost-hover。 */
+  color: var(--mp-text);
   background: transparent;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 18px;
   text-align: left;
   transition: color var(--mp-dur-fast), background-color var(--mp-dur-fast);
 }
 
-.mp-file-tree-row:hover,
-.mp-file-tree-row.is-on {
-  color: var(--mp-text);
+.mp-file-tree-row:hover {
   background: var(--mp-hover);
 }
 
+/* 当前打开的那一行：官方用 bg-fill-control（比 hover 再深一档）。 */
+.mp-file-tree-row.is-on {
+  background: var(--mp-selected);
+}
+
 .mp-file-tree-row svg {
-  width: 16px;
-  height: 16px;
+  width: 12px;
+  height: 12px;
   flex: none;
-  color: currentColor;
+  color: var(--mp-text-muted);
 }
 
 .mp-file-tree-row span {
@@ -1671,17 +1754,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.mp-file-tree-row[data-depth]:not([data-depth="0"])::after {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: var(--tree-guide-left);
-  width: 1px;
-  background: var(--mp-rule);
-  content: '';
-  pointer-events: none;
 }
 
 .mp-file-row {
@@ -2901,8 +2973,8 @@
 }
 
 .mp-shell[data-sidebar="collapsed"] .mp-mode-segment,
-.mp-shell[data-sidebar="collapsed"] .dshw-customize span,
-.mp-shell[data-sidebar="collapsed"] .dshw-new-session span,
+.mp-shell[data-sidebar="collapsed"] .dshw-customize .mp-nav-label,
+.mp-shell[data-sidebar="collapsed"] .dshw-new-session .mp-nav-label,
 .mp-shell[data-sidebar="collapsed"] .dshw-workspace-browser,
 .mp-shell[data-sidebar="collapsed"] .mp-account-footer span,
 .mp-shell[data-sidebar="collapsed"] .mp-account-footer > svg,
@@ -2947,8 +3019,8 @@
   }
 
   .mp-mode-segment,
-  .dshw-customize span,
-  .dshw-new-session span,
+  .dshw-customize .mp-nav-label,
+  .dshw-new-session .mp-nav-label,
   .dshw-workspace-browser,
   .mp-account-footer span,
   .mp-account-footer > svg,

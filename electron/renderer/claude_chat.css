@@ -1,4 +1,20 @@
 /* Conversation and composer grammar: quiet transcript, truthful activity rows. */
+.dsh-live-turn {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
+
+.dsh-stream-live {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--mp-text);
+  font-size: 14px;
+  line-height: 20px;
+}
+
 .dshw-scrollbody {
   position: relative;
   display: flex;
@@ -150,6 +166,36 @@
 
 .dsh-markdown > :last-child {
   margin-bottom: 0;
+}
+
+.dsh-image {
+  display: inline-block;
+  max-width: 100%;
+  max-height: 480px;
+  height: auto;
+  object-fit: contain;
+  border-radius: 12px;
+  vertical-align: middle;
+}
+
+.dsh-image-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr));
+  gap: 8px;
+  margin: 0 0 12px;
+}
+
+.dsh-image-grid > .dsh-image {
+  width: 100%;
+  align-self: center;
+}
+
+.dsh-image-grid[data-count="1"] {
+  display: block;
+}
+
+.dsh-image-grid[data-count="1"] > .dsh-image {
+  width: auto;
 }
 
 .dsh-markdown p,
@@ -479,6 +525,14 @@
   transform: translateY(2px);
 }
 
+.dsh-tool-group[data-single='true'] > .dsh-tool-group-header {
+  flex-direction: row-reverse;
+  justify-content: flex-end;
+}
+.dsh-tool-group[data-single='true'] > .dsh-tool-group-body > .dsh-tool > .dsh-disclosure > .dsh-row {
+  display: none;
+}
+
 .dsh-tool-group-header::-webkit-details-marker,
 .dsh-disclosure > summary::-webkit-details-marker {
   display: none;
@@ -576,7 +630,7 @@
   margin: 10px 0;
   border: 1px solid var(--mp-rule);
   border-radius: var(--mp-r7);
-  background: var(--mp-markdown-cell);
+  background: var(--mp-code-surface);
 }
 
 /* 展开体在组内要和行文字同一个左边界，否则卡片会贴到容器的边框上——参考里
@@ -718,15 +772,18 @@
    换行照原样保留，出错时红字。 */
 .dsh-tool-output {
   padding: 8px 10px 2px;
-  color: var(--mp-text);
-  font-size: 14px;
-  line-height: 21px;
+  color: var(--mp-text-secondary);
+  font-family: var(--mp-font-mono);
+  font-size: 12.5px;
+  line-height: 1.55;
+  max-height: 360px;
+  overflow: auto;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
 
 .dsh-tool-output[data-error='true'] {
-  color: var(--mp-danger);
+  color: var(--mp-text-secondary);
 }
 
 /* 终端卡：单行命令的回执和命令在同一张卡里，输出放在卡体、等宽、封顶滚动。
@@ -746,7 +803,7 @@
 }
 
 .dsh-code-body[data-error='true'] {
-  color: var(--mp-danger);
+  color: var(--mp-text-secondary);
 }
 
 .dsh-code-line {
@@ -952,11 +1009,9 @@
 }
 
 .dsh-run-meta-mark {
-  width: 12px;
-  height: 12px;
-  flex: 0 0 12px;
-  background: var(--mp-clay);
-  clip-path: polygon(45% 0,55% 0,58% 34%,82% 9%,89% 16%,65% 42%,100% 45%,100% 55%,65% 58%,89% 84%,82% 91%,58% 66%,55% 100%,45% 100%,42% 66%,18% 91%,11% 84%,35% 58%,0 55%,0 45%,35% 42%,11% 16%,18% 9%,42% 34%);
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
 }
 
 .dsh-notice,
@@ -1492,7 +1547,6 @@
   flex: 0 0 18px;
   align-items: center;
   justify-content: center;
-  animation: mp-thinking-spin 1400ms linear infinite;
 }
 
 .dsh-thinking-mark svg {
@@ -1534,12 +1588,40 @@
   clip: rect(0 0 0 0);
 }
 
-@keyframes mp-thinking-spin {
-  to { transform: rotate(360deg); }
+.claude-spark-animation {
+  position: relative;
+  display: inline-block;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  color: var(--mp-clay, #d97757);
+}
+
+.dsh-run-meta-mark svg,
+.mp-account-mark svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  fill: var(--mp-clay);
+}
+.claude-spark-animation > .spark { display: none; }
+.claude-spark-animation > [data-cds-spark-strip] {
+  display: block;
+  position: absolute;
+  top: 0;
+  inset-inline: 0;
+  background: currentColor;
+  mask-size: 100% 100%;
+  mask-repeat: no-repeat;
+}
+@keyframes claude-spark-frames {
+  from { transform: translateY(0); }
+  to { transform: translateY(var(--spark-end)); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .dsh-thinking-mark { animation: none; }
+  .claude-spark-animation > [data-cds-spark-strip] { display: none; }
+  .claude-spark-animation > .spark { display: block; }
 
   .dsh-disclosure[data-open='true'] > .dsh-body-wrap { animation: none; }
 
@@ -1588,53 +1670,60 @@
    滑块 + 刻度点是参考里最容易被忽略、也最容易被认出来的那一处。 */
 .mp-effort-head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
-  padding: 10px 10px 0;
+  height: 19px;
 }
 
 .mp-effort-head-label {
   color: var(--mp-text-secondary);
-  font-size: 15px;
+  font-size: 13px;
+  line-height: 19px;
 }
 
 .mp-effort-head-value {
   color: var(--mp-text);
-  font-size: 15px;
-  font-weight: var(--mp-weight-medium);
+  font-size: 13px;
+  line-height: 19px;
+  font-weight: 400;
 }
 
 .mp-effort-help {
   display: grid;
-  width: 15px;
-  height: 15px;
+  width: 16px;
+  height: 16px;
   margin-left: auto;
   place-items: center;
-  border: 1px solid var(--mp-rule-strong);
-  border-radius: 50%;
   color: var(--mp-text-muted);
   font-size: 10px;
   line-height: 1;
 }
 
+.mp-effort-body { display: flex; flex-direction: column; gap: 8px; }
+
 .mp-effort-scale {
   display: flex;
   justify-content: space-between;
-  padding: 10px 12px 6px;
   color: var(--mp-text-muted);
-  font-size: 14px;
+  font-size: 11px;
+  line-height: 16px;
 }
 
 .mp-effort-track {
-  --mp-effort-inset: 11px;
+  --mp-effort-inset: 8px;
 
   position: relative;
-  height: 28px;
-  margin: 0 12px 12px;
-  border-radius: var(--mp-r6);
-  background: var(--mp-hover);
+  height: 24px;
   cursor: pointer;
   touch-action: none;
+}
+
+.mp-effort-track::before {
+  content: '';
+  position: absolute;
+  inset: 2px 0;
+  border-radius: 6px;
+  background: var(--mp-hover);
 }
 
 .mp-effort-track:focus-visible {
@@ -1644,21 +1733,46 @@
 
 .mp-effort-fill {
   position: absolute;
-  inset: 0 auto 0 0;
-  border-radius: var(--mp-r6);
-  background: color-mix(in srgb, var(--mp-text) 18%, transparent);
+  inset: 2px auto 2px 0;
+  overflow: hidden;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--mp-text) 12%, transparent);
+  transition: width 120ms ease-out;
+}
+
+.mp-effort-particles {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  mask-image: linear-gradient(to right, transparent 0%, black 45%);
+}
+
+[data-theme='dark'] .mp-effort-particles {
+  mask-image: linear-gradient(to right, transparent 0%, black 60%);
+  mix-blend-mode: plus-lighter;
+  opacity: .65;
 }
 
 .mp-effort-thumb {
   position: absolute;
   top: 50%;
-  width: 22px;
-  height: 34px;
+  width: 16px;
+  height: 20px;
   /* 参考里的滑块是方块，不是圆的：它标的是一个可拖的位置，不是一个焦点。 */
-  border-radius: var(--mp-r5);
-  background: var(--mp-panel);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, .22);
+  border-radius: 6px;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(20,20,19,.04), 0 0 12px rgba(20,20,19,.06);
   transform: translate(-50%, -50%);
+  transition: left 120ms ease-out, scale 120ms cubic-bezier(.34,1.3,.64,1);
+  z-index: 1;
+}
+
+.mp-effort-track[data-dragging='true'] .mp-effort-thumb { scale: 1.12; }
+@media (prefers-reduced-motion: reduce) {
+  .mp-effort-fill, .mp-effort-thumb { transition: none; }
+  .mp-effort-particles { display: none; }
 }
 
 .mp-effort-tick {
@@ -1733,12 +1847,15 @@
    量，读起来应该是「开/关」，不是「一个叫 worktree 的按钮」。 */
 .mp-composer-worktree {
   display: inline-flex;
-  height: 28px;
+  height: 20px;
   align-items: center;
-  gap: 7px;
-  padding: 0 9px;
-  border-radius: var(--mp-r5);
-  color: var(--mp-text-muted);
+  gap: 6px;
+  padding: 0 6px;
+  border-radius: 4px;
+  color: var(--mp-text);
+  font-size: 11px;
+  line-height: 16px;
+  cursor: pointer;
   white-space: nowrap;
   transition: color var(--mp-dur-fast), background-color var(--mp-dur-fast);
 }
@@ -1754,8 +1871,8 @@
 
 .mp-worktree-box {
   display: grid;
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
   flex: none;
   place-items: center;
   border: 1px solid var(--mp-rule-strong);
@@ -1771,8 +1888,9 @@
 }
 
 .mp-composer-worktree[aria-checked="true"] .mp-worktree-box {
-  border-color: var(--mp-text);
-  color: var(--mp-text);
+  border-color: var(--mp-focus);
+  background: var(--mp-focus);
+  color: #fff;
 }
 
 .mp-composer-worktree[aria-checked="true"] .mp-worktree-box svg {
@@ -1935,7 +2053,7 @@
 }
 
 #composer-mention {
-  display: inline-flex;
+  display: none;
 }
 
 #composer-permission .dshw-perm-glyph {
@@ -2286,6 +2404,71 @@
   color: var(--mp-focus);
 }
 
+/* Claude Desktop 2.110 Code usage: c360a9e1c + c2d611398.
+   360px popup, compact CDS 12/15 type, 12px horizontal/4px row padding,
+   6px section gap and 4px bars. Reference screenshot is at 2x scale. */
+:is(#composer-usage-popover, #composer-usage-breakdown).mp-usage-popover {
+  display: flex;
+  flex-direction: column;
+  box-sizing: content-box;
+  width: min(360px, calc(100vw - 32px));
+  max-height: min(640px, calc(100vh - 32px));
+  padding: 6px 0;
+  border: 1px solid var(--mp-rule);
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 15px;
+}
+
+:root:not([data-theme='dark']) :is(#composer-usage-popover, #composer-usage-breakdown) {
+  --mp-panel: #fff;
+  --mp-rule: #e3e3e3;
+  border-color: #cfcfce;
+  background: #fff;
+}
+
+:is(#composer-usage-popover, #composer-usage-breakdown) .mp-usage-head,
+:is(#composer-usage-popover, #composer-usage-breakdown) .mp-usage-section,
+:is(#composer-usage-popover, #composer-usage-breakdown) .mp-usage-foot {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 20px;
+  margin: 0;
+  padding: 4px 12px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  font: inherit;
+  color: var(--mp-text-muted);
+}
+
+:is(#composer-usage-popover, #composer-usage-breakdown) .mp-usage-head { cursor: pointer; gap: 8px; }
+:is(#composer-usage-popover, #composer-usage-breakdown) .mp-usage-head-value { color: inherit; }
+:is(#composer-usage-popover, #composer-usage-breakdown) .mp-usage-chev { width: 12px; height: 12px; }
+:is(#composer-usage-popover, #composer-usage-breakdown) .mp-usage-head[aria-expanded='true'] .mp-usage-chev { transform: rotate(90deg); }
+:is(#composer-usage-popover, #composer-usage-breakdown) .mp-usage-arrow { width: 12px; height: 12px; }
+:is(#composer-usage-popover, #composer-usage-breakdown) .mp-usage-bar { height: 4px; margin: 4px 12px; border-radius: 3px; }
+:is(#composer-usage-popover, #composer-usage-breakdown) .mp-usage-bar, :is(#composer-usage-popover, #composer-usage-breakdown) .mp-usage-divider { flex-shrink: 0; }
+:is(#composer-usage-popover, #composer-usage-breakdown) .mp-usage-seg + .mp-usage-seg { border-left: 1px solid var(--mp-panel); }
+:is(#composer-usage-popover, #composer-usage-breakdown) .mp-usage-seg.is-system { background: #2b7bdc; }
+:is(#composer-usage-popover, #composer-usage-breakdown) .mp-usage-seg.is-tools { background: #f26b38; }
+:is(#composer-usage-popover, #composer-usage-breakdown) .mp-usage-seg.is-messages { background: #13bb84; }
+:is(#composer-usage-popover, #composer-usage-breakdown) .mp-usage-seg.is-results { background: #c5c5bc; }
+:is(#composer-usage-popover, #composer-usage-breakdown) .mp-usage-divider { margin: 6px 12px; height: 1px; }
+:is(#composer-usage-popover, #composer-usage-breakdown) .mp-usage-quota-head { margin-bottom: 6px; cursor: pointer; }
+:is(#composer-usage-popover, #composer-usage-breakdown) .mp-usage-quota-rows { padding-bottom: 4px; }
+:is(#composer-usage-popover, #composer-usage-breakdown) .mp-usage-row { padding: 0 12px; gap: 0 8px; font: inherit; }
+:is(#composer-usage-popover, #composer-usage-breakdown) .mp-usage-row + .mp-usage-row { margin-top: 8px; }
+:is(#composer-usage-popover, #composer-usage-breakdown) .mp-usage-row-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:is(#composer-usage-popover, #composer-usage-breakdown) .mp-usage-row-value { display: flex; align-items: baseline; gap: 6px; color: var(--mp-text-muted); }
+:is(#composer-usage-popover, #composer-usage-breakdown) .mp-usage-row-detail { margin: 0; font: inherit; white-space: nowrap; }
+:is(#composer-usage-popover, #composer-usage-breakdown) .mp-usage-row-track { height: 4px; margin-top: 4px; border-radius: 3px; }
+:is(#composer-usage-popover, #composer-usage-breakdown) .mp-usage-row-fill { background: #2b7bdc; border-radius: 3px; }
+:is(#composer-usage-popover, #composer-usage-breakdown) .mp-usage-note { margin: 4px 12px; font-size: 12px; line-height: 17px; overflow-wrap: anywhere; }
+:is(#composer-usage-popover, #composer-usage-breakdown) .mp-usage-foot { color: var(--mp-text-secondary); cursor: pointer; }
+:is(#composer-usage-popover, #composer-usage-breakdown) button:hover { color: var(--mp-text); }
+:is(#composer-usage-popover, #composer-usage-breakdown) button:focus-visible { outline: 2px solid var(--mp-focus); outline-offset: -2px; }
+
 .dshw-add-menu {
   position: absolute;
   right: auto;
@@ -2335,19 +2518,132 @@
 .dshw-perm-menu,
 .dshw-model-menu {
   min-width: 200px;
-  /* 上限要放得下模型菜单量出来的 408，否则上面那条 width 会被这里截到 360，
-     看起来像是照做了其实没生效。 */
   max-width: min(408px, calc(100vw - 24px));
   padding: 4px;
 }
 
 .dshw-model-menu {
-  width: 408px;
+  /* Claude Desktop compact Menu: p-1, h-control 24, body 13/19.
+     244px follows the supplied Code menu, not the 408px Chat selector. */
+  width: 244px;
+  min-width: 128px;
+  max-width: calc(100vw - 16px);
+  max-height: none;
+  overflow: visible;
+}
+
+.dshw-model-menu,
+.dshw-model-more-panel {
+  border: 1px solid var(--mp-rule);
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 8px 24px #0000001f, 0 2px 6px #00000014;
+}
+
+:root[data-theme="dark"] .dshw-model-menu,
+:root[data-theme="dark"] .dshw-model-more-panel,
+body[data-ds-dark-theme] .dshw-model-menu,
+body[data-ds-dark-theme] .dshw-model-more-panel {
+  background: var(--mp-panel);
+  box-shadow: 0 8px 24px #00000052, 0 2px 6px #0003;
+}
+
+.dshw-model-menu button {
+  min-height: 24px;
+  height: 24px;
+  padding: 2.5px 8px;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 19px;
+}
+
+.dshw-model-menu .dshw-model-name {
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.dshw-model-row.is-active .dshw-perm-check,
+.dshw-model-pin-row[aria-checked="true"] .dshw-model-pin-box { color: #2a78d6; }
+
+.dshw-model-menu .dshw-perm-check,
+.dshw-model-menu .cds-icon { width: 16px; height: 16px; font-size: 16px; }
+
+.dshw-model-divider {
+  height: 1px;
+  margin: 4px 8px;
+  border: 0;
+  background: var(--mp-rule);
+}
+
+.dshw-model-more .dshw-model-chevron {
+  display: inline-flex;
+  color: var(--mp-text-muted);
+  font-size: 16px;
+  line-height: 1;
+}
+
+/* 子菜单：勾选决定哪几个模型占外面的席位，勾满上限后其余行不再接受勾选。 */
+.dshw-model-more-panel {
+  position: fixed;
+  z-index: 1;
+  width: 320px;
+  max-height: min(216px, calc(100vh - 16px));
+  max-width: calc(100vw - 16px);
+  padding: 4px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.dshw-model-chevron svg { width: 16px; height: 16px; }
+.dshw-model-pin-row[aria-disabled="true"] { opacity: .5; }
+
+.dshw-model-pin-row {
+  display: grid !important;
+  grid-template-columns: 16px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.dshw-model-pin-box {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--mp-text);
+}
+
+.dshw-model-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dshw-model-source {
+  flex: 0 0 auto;
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 4px;
+  border-radius: 4px;
+  color: var(--mp-text-secondary);
+  background: var(--mp-panel-subtle);
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 400;
+}
+
+.dshw-model-pin-row[aria-checked="false"] .dshw-model-pin-box {
+  border: 1px solid var(--mp-rule);
+  border-radius: 4px;
 }
 
 /* Mode 菜单比普通菜单窄：它是两行文字的行，宽度由描述长度定，不是由模型名定。 */
 #composer-permission-menu {
-  width: 320px;
+  width: max-content;
+  min-width: 244px;
+  max-width: min(320px, calc(100vw - 24px));
 }
 
 .dshw-model-row {
@@ -2399,12 +2695,12 @@
 
 /* 参考里的 Mode 菜单：行首不放图标，行尾是「勾 + 数字」，整行两行文字，
    行距和字号都比普通菜单行大一档——它是一枚需要读的菜单，不是一串命令。 */
-.dshw-perm-row {
+#composer-permission-menu .dshw-perm-row {
   display: flex;
-  min-height: 47px;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 10px 8px;
+  min-height: 40.5px;
+  align-items: center;
+  gap: 6px;
+  padding: 2.5px 8px 3px;
 }
 
 .dshw-perm-row.is-active {
@@ -2412,10 +2708,10 @@
 }
 
 .dshw-perm-heading {
-  padding: 10px 8px 4px;
+  padding: 4px 8px;
   color: var(--mp-text-muted);
-  font-size: 13px;
-  line-height: 18px;
+  font-size: 11px;
+  line-height: 16px;
 }
 
 /* 行尾：勾、数字编号，或者一个动作词（Bypass 那行是 Enable）。三者都在同一
@@ -2440,42 +2736,42 @@
 
 .dshw-perm-action {
   color: var(--mp-text);
-  font-size: 15px;
-  line-height: 20px;
+  font-size: 13px;
+  line-height: 19px;
 }
 
 .dshw-perm-badge {
-  margin-left: 8px;
-  padding: 1px 7px;
-  border-radius: 6px;
+  margin-left: 6px;
+  padding: 0 4px;
+  border-radius: 4px;
   background: color-mix(in srgb, var(--mp-focus) 14%, transparent);
   color: var(--mp-focus);
-  font-size: 13px;
-  line-height: 18px;
+  font-size: 11px;
+  line-height: 16px;
 }
 
 .dshw-perm-row-text {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 1px;
+  gap: 0;
 }
 
 .dshw-perm-row-text > span {
   overflow: hidden;
   color: var(--mp-text);
-  font-size: 15px;
-  line-height: 20px;
+  font-size: 13px;
+  line-height: 19px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .dshw-perm-row-text > small {
-  margin-top: 2px;
+  margin-top: 0;
   color: var(--mp-text-muted);
-  font-size: 13px;
-  line-height: 18px;
-  white-space: normal;
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
 }
 
 /* 勾是字体字形，尺寸由 .cds-icon 的字号档决定；退回 svg 时给它一个尺寸，
@@ -2491,7 +2787,12 @@
 }
 
 .mp-effort-menu {
-  width: 284px;
+  width: 220px;
+  padding: 12px;
+  border: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
 }
 
 .mp-effort-menu .dshw-perm-row {
@@ -2565,3 +2866,54 @@
     display: none;
   }
 }
+/* The legend, detail bars and composite context bar share these exact colors. */
+:is(#composer-usage-popover, #composer-usage-breakdown) [data-kind='system'] { --usage-color: #2b7bdc; }
+:is(#composer-usage-popover, #composer-usage-breakdown) [data-kind='tools'] { --usage-color: #f26b38; }
+:is(#composer-usage-popover, #composer-usage-breakdown) [data-kind='messages'] { --usage-color: #13bb84; }
+:is(#composer-usage-popover, #composer-usage-breakdown) [data-kind='results'] { --usage-color: #c5c5bc; }
+:is(#composer-usage-popover, #composer-usage-breakdown) [data-kind='input'] { --usage-color: var(--mp-usage-input); }
+:is(#composer-usage-popover, #composer-usage-breakdown) [data-kind='available'] { --usage-color: var(--mp-hover); }
+#composer-usage-breakdown .mp-usage-row-fill[data-kind],
+#composer-usage-breakdown .mp-usage-swatch { background: var(--usage-color); }
+#composer-usage-breakdown .mp-usage-row-label { display: flex; align-items: center; gap: 6px; }
+#composer-usage-breakdown .mp-usage-swatch { width: 7px; height: 7px; border-radius: 2px; flex: none; }
+#composer-usage-breakdown .mp-usage-head { margin-bottom: 10px; }
+#composer-usage-breakdown .mp-usage-section { margin-bottom: 6px; }
+
+/* Claude Code compact Menu / Menu.Item, shared-frame-C5qE0AlO. */
+.mp-compact-menu {
+  position: fixed;
+  z-index: 190;
+  width: max-content;
+  min-width: 208px;
+  max-width: min(320px, calc(100vw - 16px));
+  max-height: calc(100vh - 52px);
+  overflow-y: auto;
+  padding: 4px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--mp-panel);
+  box-shadow: 0 0 0 1px var(--mp-rule), 0 8px 24px #0000001f, 0 2px 6px #00000014;
+}
+.mp-compact-menu-row,
+.mp-account-menu .mp-account-submenu button {
+  display: flex;
+  width: 100%;
+  height: 24px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  border-radius: 6px;
+  color: var(--mp-text);
+  font-size: 13px;
+  line-height: 19px;
+  text-align: left;
+  white-space: nowrap;
+}
+.mp-compact-menu-row:hover,
+.mp-compact-menu-row:focus-visible { background: var(--mp-hover); outline: none; }
+.mp-compact-menu-label { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.mp-compact-menu-row .mp-menu-icon { display: flex; flex: none; width: 16px; height: 16px; }
+.mp-compact-menu-row kbd { margin-left: 8px; color: var(--mp-text-muted); font: inherit; }
+#composer-permission-menu .dshw-perm-check { color: var(--mp-focus); }
+#composer-permission-menu .dshw-perm-check .cds-icon { --cds-icon-size: 16px; font-size: 16px; width: 16px; height: 16px; }

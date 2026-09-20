@@ -11,16 +11,18 @@ const preload = fs.readFileSync('electron/preload.ts', 'utf8');
 // Codex Desktop shell anatomy: primary destinations, project-owned threads,
 // a thread header, and an inspector with the three working surfaces.
 for (const id of [
-  'nav-new-chat', 'settings-open', 'app-menu', 'global-search-toggle',
+  'nav-new-chat', 'nav-customize', 'nav-projects', 'nav-scheduled', 'app-menu', 'global-search-toggle',
   'thread-more', 'inspector-toggle', 'project-inspector',
   'inspector-files', 'inspector-browser', 'inspector-terminal',
   'composer-voice',
 ]) {
   assert(html.includes(`id="${id}"`), `Claude workbench control is missing: ${id}`);
 }
-for (const removed of ['nav-pull-requests', 'nav-sites', 'nav-scheduled', 'nav-plugins']) {
+for (const removed of ['nav-pull-requests', 'nav-sites', 'nav-plugins']) {
   assert(!html.includes(`id="${removed}"`), `${removed} must not occupy permanent sidebar space`);
 }
+assert(html.includes('data-account-command="settings"'), 'Settings remains available from the account menu');
+assert(source.includes("if (view === 'settings') renderSettings()"), 'Settings still mounts the real editor');
 
 // A click must paint a visible menu immediately. Network/catalog refresh may
 // continue afterwards, but it may never hold the popover hostage.

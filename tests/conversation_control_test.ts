@@ -23,6 +23,28 @@ assert.strictEqual(PLAN_PHASE, 'plan');
 const NEW_SESSION_ID = 'agent-studio-new-' + 'a'.repeat(32);
 const CONVERSATION_SESSION_ID = 'agent-studio-conv-' + 'b'.repeat(32);
 const RETIRED_SHARED_SESSION_ID = 'agent-studio-' + 'c'.repeat(32);
+const SELECTION_SESSION_ID = 'agent-a3618dc7-e244-4894-b2a6-2157f77a05d9';
+const transcriptApi = require('../electron/conversation_control');
+const transcript = transcriptApi.createTranscript();
+const append = (phase: string, fields: Record<string, unknown>) => transcriptApi.appendTranscript(transcript, { phase, fields });
+append('model_request', { turn: '1' });
+append('reasoning_chunk', { b64: Buffer.from('first thought').toString('base64') });
+append('answer_chunk', { b64: Buffer.from('Checking A.').toString('base64') });
+append('tool_call', { id: 'a', name: 'Read' });
+append('tool_result', { id: 'a', name: 'Read', args: '{"path":"a.pdf"}', result: 'missing', state: 'error' });
+append('model_request', { turn: '2' });
+append('answer_chunk', { b64: Buffer.from('Trying B.').toString('base64') });
+assert.equal(transcript.answer, 'Trying B.');
+assert.equal(transcript.trajectory.length, 3);
+assert.equal(transcript.trajectory[0].text, 'Checking A.');
+assert.equal(transcript.trajectory[0].reasoning, 'first thought');
+assert.equal(transcript.trajectory[1].result, 'missing');
+assert.equal(transcript.trajectory[1].isError, true);
+assert.equal(transcript.trajectory[2].turn, 2);
+assert.deepStrictEqual(planConversationStop({ requestId: 'selection-request', agentSessionId: SELECTION_SESSION_ID }),
+  { action: 'cancel', sessionId: SELECTION_SESSION_ID });
+assert.deepStrictEqual(planConversationSteer({ text: '继续看右侧', agentSessionId: SELECTION_SESSION_ID }),
+  { action: 'steer', sessionId: SELECTION_SESSION_ID, text: '继续看右侧' });
 
 // session_ready：渲染层只接受 Python 当前签发的 new/conv 两种 durable id。
 assert.strictEqual(
@@ -95,9 +117,9 @@ assert.deepStrictEqual(
   { action: 'none', reason: 'no_session' },
 );
 
-// steer：文本有界（桥端 MAX_TEXT_CHARS=4000），没起来时明确不可插话。
+// steer：与输入框及桥端一致，最多 12000 字；没起来时明确不可插话。
 assert.deepStrictEqual(planConversationSteer({ text: '  ', agentSessionId: 's' }), { action: 'none', reason: 'empty_text' });
-assert.deepStrictEqual(planConversationSteer({ text: 'x'.repeat(4001), agentSessionId: 's' }), { action: 'none', reason: 'text_too_long' });
+assert.deepStrictEqual(planConversationSteer({ text: 'x'.repeat(12001), agentSessionId: 's' }), { action: 'none', reason: 'text_too_long' });
 assert.deepStrictEqual(planConversationSteer({ text: '先别删文件', agentSessionId: null }), { action: 'none', reason: 'no_session' });
 assert.deepStrictEqual(
   planConversationSteer({ text: '先别删文件', agentSessionId: CONVERSATION_SESSION_ID }),

@@ -54,10 +54,18 @@ assert.match(html, /id="inspector-toggle"[\s\S]*?<use href="#ic-file-add"/,
   'Claude FileAdd glyph opens the file browser');
 assert(html.includes('class="mp-conversation-view" aria-label="对话视图" hidden'),
   'the old permanent Chat/Trajectory buttons move into the more menu');
-assert.match(shellCss, /\.dshw-new-session:not\(\.is-on\) svg\s*\{[^}]*border-radius:\s*50%[^}]*background:\s*var\(--mp-hover\)/s,
-  'the unselected light conversation state keeps Claude\'s small circular plus surface');
+assert.match(shellCss, /\.mp-new-circle\s*\{[^}]*width:\s*22px[^}]*border-radius:\s*50%[^}]*background:\s*color-mix/s,
+  'the original font plus keeps the captured 22px circle rather than an SVG-only style');
+assert.match(html, /class="mp-new-circle"[\s\S]*?data-glyph="&#xE001;"/);
 
 assert(html.includes('id="chat-source-thumb"'), 'the source thumbnail remains a useful header affordance');
+assert.match(html, /class="dshw-title-cluster"[\s\S]*?data-glyph="&#xE093;"[\s\S]*?id="chat-title"/,
+  'the Code conversation title starts with the original laptop glyph');
+assert.match(html, /class="dshw-primary"[\s\S]*?data-glyph="&#xE00F;"/,
+  'the Code composer uses the original ArrowReturn glyph');
+assert(studio.includes("api.CdsIcons.html('code-send')"), 'settling a run must restore the same Code send glyph');
+assert.match(fs.readFileSync('electron/renderer/claude_chat.css', 'utf8'), /#composer-mention\s*\{\s*display:\s*none;/,
+  'the reference composer has no permanent extra @ button');
 assert(!html.includes('#ic-dsh-'), 'the visible Studio shell must not mix in legacy filled DSH symbols');
 assert(!html.includes('id="mp-context-tag"'), 'the meaningless product context pill must stay removed');
 assert(!html.includes('id="session-log"'), 'the download pill must stay removed');

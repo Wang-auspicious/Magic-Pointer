@@ -1442,12 +1442,22 @@ def test_discovery_tool_loads_newly_registered_tools_for_next_model_turn():
     assert terminal.reason is TransitionReason.COMPLETED
 
 
-def test_parallel_safe_slow_tools_total_wall_time_below_serial():
+def test_parallel_safe_tools_overlap_before_either_can_finish():
+    rendezvous = threading.Barrier(2, timeout=5.0)
+    overlapped: list[str] = []
+
+    def meet(name):
+        # Both callbacks must be executing at the same time. A sequential
+        # scheduler breaks the barrier and returns error results; elapsed loop
+        # time (imports, telemetry and host load) is irrelevant to this proof.
+        rendezvous.wait()
+        overlapped.append(name)
+
     slow_a, state_a = make_counting_tool(
-        "slow_a", delay=0.15, concurrency_safe=True
+        "slow_a", on_call=lambda: meet("slow_a"), concurrency_safe=True
     )
     slow_b, state_b = make_counting_tool(
-        "slow_b", delay=0.15, concurrency_safe=True
+        "slow_b", on_call=lambda: meet("slow_b"), concurrency_safe=True
     )
     registry = ToolRegistry()
     registry.register(slow_a)
@@ -1462,15 +1472,11 @@ def test_parallel_safe_slow_tools_total_wall_time_below_serial():
     )
     client = LoopModelClient(backend)
 
-    started = time.perf_counter()
     events, terminal = asyncio.run(
         collect(make_params(client=client, registry=registry))
     )
-    elapsed = time.perf_counter() - started
-
-    assert elapsed < 0.30, (
-        f"parallel batch took {elapsed:.3f}s (serial would be >= 0.30)"
-    )
+    assert sorted(overlapped) == ["slow_a", "slow_b"]
+    assert not any(result.is_error for result in terminal.results)
     assert state_a["calls"] == 1
     assert state_b["calls"] == 1
     starts = [e for e in events if isinstance(e, ToolCallStarted)]

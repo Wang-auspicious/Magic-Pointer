@@ -149,7 +149,7 @@ def main() -> int:
 
     import os
 
-    os.environ["MAGIC_POINTER_VISION_MODEL"] = args.model
+    os.environ["MAGIC_POINTER_MODEL"] = args.model
 
     fullscreen = BENCH_DIR / "fullscreen.png"
     fullscreen.parent.mkdir(parents=True, exist_ok=True)
@@ -203,7 +203,7 @@ def main() -> int:
     report = {
         "model": args.model,
         "api_mode": os.environ.get("MAGIC_POINTER_VISION_API_MODE") or "default",
-        "base_url": os.environ.get("MAGIC_POINTER_VISION_BASE_URL") or "default(go-gateway)",
+        "base_url": os.environ.get("OPENAI_BASE_URL") or "configured-gateway",
         "captured_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "image": {"path": str(fullscreen), "size_px": [width, height], "source": "gdi-ImageGrab"},
         "pre_agent_info": inventory,

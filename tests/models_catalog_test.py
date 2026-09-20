@@ -27,12 +27,10 @@ def _configured(monkeypatch, base_url="https://opencode.ai/zen/go/v1", model="de
     monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("MAGIC_POINTER_MODEL", raising=False)
-    monkeypatch.delenv("MAGIC_POINTER_VISION_MODEL", raising=False)
-    monkeypatch.setattr(ai_client, "get_vision_model", lambda text: "gemini-2.5-flash")
 
 
 def test_provider_label_from_base_url() -> None:
-    assert provider_label("https://opencode.ai/zen/go/v1") == "opencode.ai"
+    assert provider_label("https://opencode.ai/zen/go/v1") == "opencode-zen"
     assert provider_label("https://api.groq.com/openai/v1") == "api.groq.com"
     assert provider_label(None) == "本地"
 
@@ -50,12 +48,12 @@ def test_list_models_from_gateway(monkeypatch) -> None:
     assert seen["url"].endswith("/models")
     assert catalog["source"] == "gateway"
     assert catalog["current"] == "deepseek-v4-flash"
-    assert catalog["visionModel"] == "gemini-2.5-flash"
+    assert "visionModel" not in catalog
     group = catalog["groups"][0]
-    assert group["id"] == "opencode.ai"
+    assert group["id"] == "opencode-zen"
     assert [m["id"] for m in group["models"]] == ["deepseek-v4-flash", "kimi-k3", "qwen3.7-plus"]
     assert [m["contextWindow"] for m in group["models"]] == [128_000, 256_000, 128_000]
-    # 目录条目标记视觉档（独立视觉模型不在同组也标出来）
+    # 不凭当前选择捏造视觉能力；只保留网关或配置提供的能力元数据。
     assert next(m for m in group["models"] if m["id"] == "deepseek-v4-flash")["vision"] is False
 
 

@@ -178,3 +178,47 @@ def test_delegate_readonly_child_has_no_write_tools(monkeypatch) -> None:
     from app.agent_runtime.tool_registry import Effect
 
     assert captured["effects"] == (Effect.READ,)
+
+
+def test_delegate_child_tool_surface_is_not_its_work_budget(monkeypatch) -> None:
+    """``max_tool_calls`` must not shrink the tools the child can see.
+
+    ``tool_limit`` is how many tool *schemas* reach the model; ``max_tool_calls``
+    is how much work the child may do. Wiring one into the other meant a small
+    work budget silently deleted tools from the end of the registration order —
+    and the tool registered last is ``Tools`` (``FIND_CAPABILITY_TOOL``), the
+    only way to reach anything beyond the limit. A child with a budget of 4
+    would have been left with 4 tools and no way to discover the rest.
+    """
+    from app.fabric import engine as engine_module
+
+    captured: dict = {}
+
+    def fake_run(prompt, registry=None, client=None, **kw):
+        captured.update(kw)
+        from app.agent_runtime.types import Terminal, TransitionReason
+
+        return Terminal(reason=TransitionReason.COMPLETED, message="好", turns=1, results=())
+
+    monkeypatch.setattr(engine_module, "run_agent_turn", fake_run)
+    registry = ToolRegistry()
+
+    class _Provider:
+        def create_client(self, **kw):
+            return object()
+
+    from app.agent_runtime.subagent import register_delegate_tool
+
+    register_delegate_tool(
+        registry,
+        llm_provider=_Provider(),
+        workspace_root=Path("."),
+        max_tool_calls=4,
+    )
+    registry.execute_tool("delegate_task", {"task": "调研", "readonly": True})
+
+    # The schema ceiling is the parent's, not the work budget.
+    assert captured["tool_limit"] >= 128
+    # The work budget still binds the child, through the count the loop
+    # actually keeps.
+    assert captured["emergency_turn_fuse"] == 4

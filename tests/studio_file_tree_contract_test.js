@@ -18,9 +18,16 @@ assert(!source.includes('sv-tree-branch'));
 assert(!source.includes('pendingTreeCollapseTimer'));
 assert(!source.includes('lastExpandedTreeDirectory'));
 
-assert.match(css, /\.mp-file-tree-row\s*\{[^}]*min-height:\s*26px/s);
-assert.match(css, /\.mp-file-tree-row svg\s*\{[^}]*width:\s*16px[^}]*height:\s*16px/s);
-assert.match(css, /\.mp-file-tree-row\[data-depth\]:not\(\[data-depth="0"\]\)::after\s*\{[^}]*width:\s*1px/s);
+/* 行几何来自 Claude Desktop Code 视图的文件面板：h-control(24px)、图标 xs(12px)、
+   缩进 paddingLeft = 8 + depth * 8，没有引导线。 */
+assert.match(css, /\.mp-file-tree-row\s*\{[^}]*height:\s*24px/s);
+assert.match(css, /\.mp-file-tree-row svg\s*\{[^}]*width:\s*12px[^}]*height:\s*12px/s);
+assert(!/mp-file-tree-row\[data-depth\][^}]*::after/s.test(css),
+  'the old guide line is gone; the official tree only indents');
+assert.match(source, /row\.style\.paddingLeft = `\$\{8 \+ depth \* 8\}px`/,
+  'indent must be 8 + depth * 8, the official paddingLeft');
+assert.match(source, /row\.setAttribute\('role', 'treeitem'\)/);
+assert.match(source, /row\.dataset\.treeRow = 'true'/);
 assert(!/\.mp-file-tree-row[^}]*animation:/s.test(css), 'file rows must not replay decorative entrance motion');
 
 for (const id of ['project-file-code', 'project-file-search', 'project-file-back', 'project-file-copy']) {

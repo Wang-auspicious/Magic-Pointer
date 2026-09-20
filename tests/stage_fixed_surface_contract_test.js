@@ -42,8 +42,10 @@ assert(source.includes("const capsuleOpen = name === 'capsule-voice' || name ===
   'the entry composer must only exist while accepting input');
 assert(!source.includes("name === 'capsule-text' || name === 'processing'\n      || ((name === 'result'"),
   'processing must not leave a second composer beside the fixed work panel');
-assert(source.includes("threadClose.setAttribute('aria-label', pending ? '停止' : '关闭')"),
-  'the panel close control must honestly become Stop while work is running');
+assert(source.includes("threadClose.setAttribute('aria-label', '关闭')"),
+  'closing the panel must remain distinct from stopping its task');
+assert(html.includes('id="thread-stop"') && source.includes('api.stopSelectionCommand('),
+  'the running panel must keep a separate explicit Stop action');
 assert(source.includes("const anchorEl = name === 'processing' ? threadPanel"),
   'real delivery progress must stay attached to the single processing panel');
 assert(capture.includes('const PANEL_ANCHOR = Object.freeze({ x: 672, y: 108 });'),

@@ -21,6 +21,8 @@
   font-family: Anthropicons, sans-serif;
   font-style: normal;
   font-weight: 433.3;
+  --cds-wght: 433.3;
+  --cds-opsz: 20;
   font-feature-settings: "liga" 0;
   font-variant-ligatures: none;
   line-height: 1;
@@ -34,11 +36,15 @@
 .cds-icon[data-size="small"] {
   font-size: 16px;
   font-weight: 533.3;
+  --cds-wght: 533.3;
+  --cds-opsz: 16;
 }
 
 .cds-icon[data-size="micro"] {
   font-size: 12px;
   font-weight: 577.8;
+  --cds-wght: 577.8;
+  --cds-opsz: 12;
 }
 
 .cds-icon[data-size="large"] {
@@ -53,4 +59,52 @@
   font-family: inherit;
   font-weight: inherit;
   line-height: 1;
+}
+
+/* Claude 2.110 desktop shared-frame icon component + shared-styles CSS.
+   Exact axes, spring, Palette timing, Code loop and active interruption;
+   button/a selectors are MP's equivalent of the original .group wrapper. */
+@property --cds-anim { syntax: "<number>"; inherits: false; initial-value: 0; }
+@property --cds-anim2 { syntax: "<number>"; inherits: false; initial-value: 0; }
+.cds-icon[data-cds-anim] {
+  --cds-anim: 0;
+  --cds-anim2: 0;
+  font-variation-settings: "opsz" var(--cds-opsz, 20), "wght" var(--cds-wght, 400), "ANIM" var(--cds-anim), "ANM2" var(--cds-anim2);
+  transition: --cds-anim var(--cds-anim-dur-out, var(--cds-anim-dur, .3s)) var(--cds-anim-ease, cubic-bezier(.34, 1.3, .64, 1));
+}
+.cds-icon[data-glyph="\E0B8"] { --cds-anim-dur: .8s; --cds-anim-dur-out: 0s; --cds-anim-ease: ease-out; }
+@keyframes cds-anim-loop {
+  0%, 49.99% { --cds-anim2: 0; }
+  50%, to { --cds-anim2: 100; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  :is(button, a):focus-within .cds-icon[data-cds-anim], .cds-icon[data-cds-anim]:focus-visible {
+    --cds-anim: 100; transition-duration: var(--cds-anim-dur, .3s);
+  }
+  :is(button, a):focus-within .cds-icon[data-cds-anim="ANIM ANM2"] { animation: 1s linear .1s infinite cds-anim-loop; }
+  @media (hover: hover) {
+    :is(button, a):hover .cds-icon[data-cds-anim] { --cds-anim: 100; transition-duration: var(--cds-anim-dur, .3s); }
+    :is(button, a):hover .cds-icon[data-cds-anim="ANIM ANM2"] { animation: 1s linear .1s infinite cds-anim-loop; }
+  }
+  :is(button, a):active .cds-icon[data-cds-anim] { --cds-anim: 0; transition-duration: 80ms; animation: none; }
+}
+
+.cds-icon[data-cds-anim]::before { font-variation-settings: inherit; }
+
+@media (prefers-reduced-motion: reduce) {
+  .cds-icon[data-cds-anim],
+  :is(button, a):is(:hover, :focus-visible) .cds-icon[data-cds-anim] {
+    --cds-anim: 0;
+    --cds-anim2: 0;
+    animation: none;
+    transition: none;
+  }
+}
+
+[data-reduce-motion="true"] .cds-icon[data-cds-anim],
+[data-reduce-motion="true"] :is(button, a):is(:hover, :focus-visible) .cds-icon[data-cds-anim] {
+  --cds-anim: 0;
+  --cds-anim2: 0;
+  animation: none;
+  transition: none;
 }

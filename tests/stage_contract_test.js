@@ -119,7 +119,8 @@ const executed = stageEventFromBridge({
 assert.deepStrictEqual(executed, {
   type: 'COMPLETE',
   outcome: { status: 'succeeded', verified: true },
-}, 'verified execution finishes without opening a reply card');
+  result: { answer: '已加入购物清单。' },
+}, 'verified execution retains its real answer for the shared conversation');
 
 const question = stageEventFromBridge({
   ok: true,

@@ -27,7 +27,7 @@ assert(stage.includes("window.addEventListener('mousemove'"),
   'forwarded mouse movement must toggle capture only over interactive controls');
 assert(!stage.includes("document.addEventListener('pointerdown'"),
   'an invisible full-screen document must never consume the first outside click');
-assert(main.includes('function showStage(payload = {})') && main.includes('armTemporaryDismissShortcut();'),
-  'every stage result path must arm the global Escape cancellation contract');
+assert(main.includes('function showStage(') && main.includes('armTemporaryDismissShortcut();'),
+  'visible stage paths retain the global Escape dismissal shortcut');
 
 console.log('stage_native_hit_region_test: all assertions passed');

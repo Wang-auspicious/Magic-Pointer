@@ -394,8 +394,9 @@ def test_conversation_activity_sink_projects_live_model_and_tool_events() -> Non
 
     assert [phase for phase, _ in clock.marks] == [
         "agent_start", "model_request", "model_first_chunk",
-        "tool_call", "tool_result", "model_response",
+        "model_response",
     ]
+    assert [phase for phase, _ in clock.blobs] == ["answer_chunk", "tool_call", "tool_result"]
     assert sink.activities[0]["kind"] == "model"
     assert sink.activities[0]["state"] == "done"
     assert sink.activities[0]["firstTokenMs"] == 100.0
@@ -467,7 +468,7 @@ def test_conversation_result_carries_every_usage_bucket_the_provider_reported() 
         trajectory=[{"seq": 1, "kind": "message", "state": "done"}],
         timing_ms=10,
     )
-    message = result["trajectory"][0]
+    message = result["modelUsage"]
     assert message["inputTokens"] == 900
     assert message["cacheReadTokens"] == 700
     assert message["cacheWriteTokens"] == 120
@@ -485,7 +486,7 @@ def test_conversation_result_leaves_absent_usage_buckets_absent() -> None:
         trajectory=[{"seq": 1, "kind": "message", "state": "done"}],
         timing_ms=10,
     )
-    message = result["trajectory"][0]
+    message = result["modelUsage"]
     assert message["inputTokens"] == 12
     assert "cacheReadTokens" not in message
     assert "cacheWriteTokens" not in message
@@ -527,6 +528,7 @@ class _FakeSession:
     def __init__(self, session_id="fake-session"):
         self.id = session_id
         self.events = []
+        self.open_turn = None
 
     def append(self, event_type, data):
         event = SimpleNamespace(type=event_type, data=data)
@@ -674,6 +676,33 @@ def test_provider_failure_is_not_saved_as_a_successful_assistant_answer(monkeypa
     assert result["ok"] is False
     assert result["error"] == "provider_unavailable"
     assert result["loopTerminatedReason"] == "provider_unavailable"
+    assert result["agentSessionId"] == "agent-studio-new-provider-failure"
+    assert result["hasPendingWork"] is True
+    assert "trajectory" in result
+
+
+def test_failed_runtime_keeps_streamed_text_and_session_identity(monkeypatch):
+    captured = {}
+    _install_workspace_boot_stubs(monkeypatch, captured)
+    import app.fabric.engine as engine_module
+
+    def crash_after_progress(*args, **kwargs):
+        sink = kwargs["event_sink"]
+        sink(SimpleNamespace(kind="turn_started", turn=1))
+        sink(SimpleNamespace(kind="model_chunk", text="Read the first page."))
+        raise RuntimeError("fixture provider crash")
+
+    monkeypatch.setattr(engine_module, "run_agent_turn", crash_after_progress)
+    result = conversation_bridge.answer_conversation(
+        "Read the notes", [], {}, "read-only", clock=_FakeClock(),
+        agent_session_id="agent-studio-new-provider-crash",
+    )
+
+    assert result["ok"] is False
+    assert result["agentSessionId"] == "agent-studio-new-provider-crash"
+    assert result["hasPendingWork"] is True
+    assert result["answer"] == "Read the first page."
+    assert any(item.get("text") == "Read the first page." for item in result["trajectory"])
 
 
 def _install_runtime_service_stubs(
@@ -733,9 +762,11 @@ def _install_runtime_service_stubs(
     )
 
 
+@pytest.mark.parametrize("from_selection", [False, True])
 def test_conversation_hydrates_and_persists_plan_before_running(
     monkeypatch,
     tmp_path,
+    from_selection,
 ) -> None:
     from app.agent_runtime.session import FileSessionStore, project_plan
     from app.agent_runtime.todo_store import TodoStore
@@ -743,8 +774,11 @@ def test_conversation_hydrates_and_persists_plan_before_running(
     from app.agent_runtime.types import Terminal, TransitionReason
 
     sessions = FileSessionStore(tmp_path / "sessions")
-    session_id = conversation_bridge.resolve_agent_session_id(
-        conversation_id="conversation-plan-resume"
+    session_id = (
+        "agent-a3618dc7-e244-4894-b2a6-2157f77a05d9"
+        if from_selection else conversation_bridge.resolve_agent_session_id(
+            conversation_id="conversation-plan-resume"
+        )
     )
     session = sessions.create(session_id)
     original = [{"content": "恢复原计划", "status": "in_progress"}]
@@ -786,6 +820,7 @@ def test_conversation_hydrates_and_persists_plan_before_running(
     )
 
     assert result["ok"] is True
+    assert result["agentSessionId"] == session_id
     assert observed["before_run"] == original
     assert project_plan(sessions.resume(session_id).events) == [
         {"content": "完成恢复步骤", "status": "completed"}

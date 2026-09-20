@@ -74,3 +74,9 @@ python -m pytest tests/runtime_coding_audit_fixes_test.py tests/runtime_context_
 - 同一个已接受修订有未撤销的记录时拒绝重复 apply。旧行为的最小例会把 `cat suffix` 第二次改成 `caterpillarerpillar suffix`。完整撤销后重新 apply 仍成功。
 
 修改范围为 `app/actions/office_document.py`、`app/artifacts/document_patch.py`、`scripts/artifact_bridge.py`。新增六个用例加 artifact / patch / office audit 旧测试共 **35 passed in 14.40s**。Word 范围测试模拟 COM 的 UTF-16 位置与实际字符串变动；PDF/文件逆操作继续运行已有真实临时文件测试。生产 Word 路径发生变化，主代理会重跑 native 验收；这里不沿用修改前的 native 结果宣称新代码已经验收。
+
+## 最后整合收口
+
+- D11 的回合分支编号：`conversation_bridge.py` 两处、`selection_bridge.py` 一处在 EventSession 仍有 `open_turn` 时返回 `runtimeTurn=None`。新增 `runtime_turn_boundary_test.py` 使用真实持久会话，覆盖正常完成、异常退出及仍未结束的回合；先观察到三例把上一回合 1 错当本轮编号的失败，两个正常完成对照通过，再修复三个返回位置。
+- 并行测试预检失败是整轮耗时 0.317 秒超过旧的 0.30 秒阈值。没有修改生产调度器；`test_parallel_safe_tools_overlap_before_either_can_finish` 用双工具 Barrier 证明双方在任何一方结束前同时执行，并断言没有错误工具结果。5 秒只用于避免真实串行回归时死等，不用于判断是否并行。单目标测试通过。
+- 两个 bridge 与 Loop 的四文件整合运行得到 241 passed / 3 failed，三个失败仅为旧的 selection Session 桩缺少真实 EventSession 的 `open_turn` 属性；补齐桩后，新边界/并行/三个旧桩目标共 **9 passed in 10.12s**。生产逻辑仅改三处 `runtimeTurn` 条件，最终完整验证由主代理接续。

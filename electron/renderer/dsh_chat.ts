@@ -350,16 +350,16 @@ const DshChat = (() => {
     if (typeof parsed !== 'object' || parsed === null) return null;
     const args = parsed as Record<string, unknown>;
     const view: DiffView = { lines: [], hidden: 0 };
-    if (name === 'edit_file') {
-      const oldText = typeof args.old_string === 'string' ? args.old_string : '';
-      const newText = typeof args.new_string === 'string' ? args.new_string : '';
+    if (name === 'Edit' || name === 'edit_file' || name === 'edit') {
+      const oldText = firstString(args, ['old_string', 'oldText', 'old_str']);
+      const newText = firstString(args, ['new_string', 'newText', 'new_str']);
       if (!oldText && !newText) return null;
       view.hidden += diffLinesFrom(oldText, 'del', view.lines);
       view.hidden += diffLinesFrom(newText, 'add', view.lines);
       return view;
     }
-    if (name === 'write_file') {
-      const content = typeof args.content === 'string' ? args.content : '';
+    if (name === 'Write' || name === 'write_file' || name === 'write') {
+      const content = firstString(args, ['content', 'text', 'new_string']);
       if (!content) return null;
       view.hidden += diffLinesFrom(content, 'add', view.lines);
       return view;
@@ -603,8 +603,7 @@ const DshChat = (() => {
     root.setAttribute('data-tool', '');
     root.setAttribute('data-state', model.state);
 
-    const failureLine = model.state === 'error' ? model.errorSummary : null;
-    const summaryText = failureLine ?? model.summary;
+    const summaryText = model.summary;
     const status = model.state === 'running' ? '运行中' : model.state === 'error' ? '失败' : model.state === 'stopped' ? '已停止' : '';
 
     if (status) {
@@ -620,7 +619,7 @@ const DshChat = (() => {
       const sep = h('span', { class: 'dsh-tool-sep', 'aria-hidden': 'true' });
       attach(sep, ' ');
       collapsed.push(sep);
-      const summary = h('span', { class: failureLine !== null ? 'dsh-summary dsh-error-summary' : 'dsh-summary' });
+      const summary = h('span', { class: 'dsh-summary' });
       attach(summary, summaryText);
       collapsed.push(summary);
     }
@@ -658,9 +657,11 @@ const DshChat = (() => {
     } else if (command !== null) {
       /* 参考里卡片上方另起一行写工具名（`Bash`，蓝色）。它回答的是「这是谁跑的」，
          和卡里的命令不是一回事，所以不并进卡头。 */
-      const tag = h('div', { class: 'dsh-tool-tag' });
-      attach(tag, model.name);
-      body.push(tag);
+      if (singleLine) {
+        const tag = h('div', { class: 'dsh-tool-tag' });
+        attach(tag, model.name);
+        body.push(tag);
+      }
       body.push(commandCardNode(command, commandPrompt(model), command.full, {
         output: singleLine ? model.output : null,
         error: model.state === 'error',
@@ -677,13 +678,9 @@ const DshChat = (() => {
       body.push(output);
     }
 
-    const leadingOverride = model.state === 'error' ? stateDot('error')
-      : model.state === 'stopped' ? stateDot('warning') : undefined;
-
     const isSubagent = SUBAGENT_TOOLS.has(model.name) && Boolean(model.callId);
     const { root: disclosure, row: disclosureAction } = disclosureRow({
       iconName: undefined,
-      leadingOverride,
       leadingClass: 'dsh-tool-caret',
       title: model.title,
       collapsed,
@@ -913,12 +910,12 @@ const DshChat = (() => {
      spark.svg），不再是 CSS clip-path 拼出来的近似多边形——那个形状无论怎么
      调都差一口气，而参考里的这个是有原始路径的。
      取不到 ClaudeMarks 时留一个空壳：星芒是装饰，它缺席不该让整行塌掉。 */
-  function sparkMark(): DshNode {
-    const root = h('span', { class: 'dsh-thinking-mark', 'aria-hidden': 'true' });
+  function sparkMark(running = true): DshNode {
+    const root = h('span', { class: running ? 'dsh-thinking-mark' : 'dsh-run-meta-mark', 'aria-hidden': 'true' });
     const api = typeof globalThis !== 'undefined'
-      ? (globalThis as unknown as { ClaudeMarks?: { svg?: (name: string) => string } }).ClaudeMarks
+      ? (globalThis as unknown as { ClaudeMarks?: { spark?: (state: 'thinking' | 'idle') => string } }).ClaudeMarks
       : undefined;
-    const markup = api && typeof api.svg === 'function' ? api.svg('spark') : '';
+    const markup = api && typeof api.spark === 'function' ? api.spark(running ? 'thinking' : 'idle') : '';
     if (markup && 'innerHTML' in root) {
       (root as unknown as HTMLElement).innerHTML = markup;
     }
@@ -973,6 +970,7 @@ const DshChat = (() => {
     trajectory?: Array<Record<string, unknown>>;
     modelUsage?: Record<string, unknown> | null;
     failed?: boolean;
+    error?: string;
     running?: boolean;
     at?: number;
     conversationId?: string;
@@ -991,6 +989,7 @@ const DshChat = (() => {
 
   type FlowItem =
     | { type: 'narration'; text: string }
+    | { type: 'reasoning'; text: string }
     | { type: 'notice'; text: string }
     | { type: 'chip'; chip: TurnChip };
 
@@ -1026,20 +1025,41 @@ const DshChat = (() => {
      chevron，默认展开露出组内芯片，点击收起只留组头。混合工具也成组——
      参考的 Found files, ran a command 就是一个混合串，按工具种类硬拆是
      上一版模仿不到位的原因。 */
-  function toolGroupNode(chips: TurnChip[]): DshNode {
+  function toolGroupNode(chips: TurnChip[], _running = false, work?: FlowItem[]): DshNode {
     const root = h('details', { class: 'dsh-tool-group' });
-    /* Claude keeps the short, two-action groups open so the user can scan the
-       concrete actions immediately; longer runs stay compact until requested. */
-    if (chips.length <= 2) root.setAttribute('open', '');
     const summary = h('summary', { class: 'dsh-tool-group-header' });
     const label = h('span', { class: 'dsh-tool-group-title' });
-    attach(label, toolGroupLabel(chips));
+    const single = chips.length === 1 && !work?.some(item => item.type === 'reasoning');
+    if (single) root.setAttribute('data-single', 'true');
+    const model = single ? toolRowModel(chips[0].name, chips[0].argsRaw, chips[0].result, chips[0].callId) : null;
+    attach(label, model ? (chips[0].displayLabel || [model.title, model.summary].filter(Boolean).join(' ')) : toolGroupLabel(chips));
+    if (model?.diffStat) {
+      const stat = h('span', { class: 'dsh-diff-stat', 'aria-hidden': 'true' });
+      if (model.diffStat.added) attach(stat, h('span', { class: 'dsh-diff-add' }, `+${model.diffStat.added}`));
+      if (model.diffStat.removed) attach(stat, h('span', { class: 'dsh-diff-del' }, `−${model.diffStat.removed}`));
+      attach(label, stat);
+    }
     const chev = h('span', { class: 'dsh-tool-group-chev', 'aria-hidden': 'true' });
     attach(chev, icon('chev', 14));
     attach(summary, label);
     attach(summary, chev);
     const body = h('div', { class: 'dsh-tool-group-body' });
-    chips.forEach((chip) => attach(body, chipNode(chip)));
+    const entries: FlowItem[] = work || chips.map(chip => ({ type: 'chip', chip }));
+    entries.forEach((entry) => {
+      if (entry.type === 'reasoning') {
+        attach(body, thinkNode(entry.text));
+        return;
+      }
+      if (entry.type !== 'chip') return;
+      const chip = entry.chip;
+      const node = chipNode(chip);
+      if (single) {
+        const disclosure = DOC ? (node as Element).querySelector('.dsh-disclosure')
+          : (node as ShimNode).children.find(child => typeof child !== 'string' && child.attrs.class === 'dsh-disclosure') as ShimNode | undefined;
+        disclosure?.setAttribute('data-open', 'true');
+      }
+      attach(body, node);
+    });
     attach(root, summary);
     attach(root, body);
     return root;
@@ -1096,11 +1116,6 @@ const DshChat = (() => {
       .join(', ');
   }
 
-  function chipRunNode(chips: TurnChip[]): DshNode {
-    if (chips.length < 2) return chipNode(chips[0]);
-    return toolGroupNode(chips);
-  }
-
   function formatRunMeta(ms: number, tokens: number | null): string {
     const seconds = Math.max(0, Math.round(ms / 1000));
     const time = seconds >= 60
@@ -1113,7 +1128,7 @@ const DshChat = (() => {
 
   function runMetaNode(meta: string): DshNode {
     const root = h('div', { class: 'dsh-run-meta', role: 'status' });
-    const mark = h('span', { class: 'dsh-run-meta-mark', 'aria-hidden': 'true' });
+    const mark = sparkMark(false);
     const copy = h('span', { class: 'dsh-run-meta-copy' });
     attach(copy, meta);
     attach(root, mark);
@@ -1130,6 +1145,8 @@ const DshChat = (() => {
     const items: FlowItem[] = [];
     for (const record of usable) {
       if (record.kind === 'message') {
+        const reasoning = String(record.reasoning || '').trim();
+        if (reasoning) items.push({ type: 'reasoning', text: reasoning });
         const text = String(record.text || '').trim();
         // 最后一轮叙述通常就是最终答案：答案存在且相等时不重复渲染。
         if (!text || (answerText && text === answerText)) continue;
@@ -1191,20 +1208,25 @@ const DshChat = (() => {
     const root = h('div', { class: 'dsh-assistant' });
     const bodyHost = h('div', { class: 'dsh-assistant-body' });
 
-    if (turn.thinking) attach(bodyHost, thinkNode(turn.thinking, Boolean(turn.running)));
+    if (turn.thinking && !turn.trajectory?.some(record => record.reasoning)) attach(bodyHost, thinkNode(turn.thinking, Boolean(turn.running)));
 
     /* CC 折叠协议：模型的轮间叙述是可见的散文，工具调用是单行可扫描的
        芯片（动词 + 最有辨识度的参数），证据保留在展开体里。没有内容的
        "模型轮次"不再画成行——耗时与 token 进尾部 meta。 */
     const flow = trajectoryFlowItems(turn) ?? eventFlowItems(turn);
     let chipRun: TurnChip[] = [];
+    let workRun: FlowItem[] = [];
     const flushChips = () => {
       if (!chipRun.length) return;
-      attach(bodyHost, chipRunNode(chipRun));
+      attach(bodyHost, toolGroupNode(chipRun, false, workRun));
       chipRun = [];
+      workRun = [];
     };
     for (const item of flow) {
-      if (item.type === 'narration') {
+      if (item.type === 'reasoning') {
+        if (chipRun.length) workRun.push(item);
+        else attach(bodyHost, thinkNode(item.text));
+      } else if (item.type === 'narration') {
         flushChips();
         attach(bodyHost, narrationNode(item.text));
       } else if (item.type === 'notice') {
@@ -1212,6 +1234,7 @@ const DshChat = (() => {
         attach(bodyHost, noticeNode(item.text));
       } else {
         chipRun.push(item.chip);
+        workRun.push(item);
       }
     }
     flushChips();
@@ -1236,8 +1259,8 @@ const DshChat = (() => {
       attach(bodyHost, runMetaNode(formatRunMeta(elapsed, totalTokens || null)));
     }
 
-    if (turn.failed && !turn.answer) {
-      attach(bodyHost, turnErrorNode('这次没能完成。'));
+    if (turn.failed) {
+      attach(bodyHost, turnErrorNode(turn.error || '这次没能完成。'));
     }
 
     if (turn.running && !turn.answer && !turn.thinking) {
@@ -1271,7 +1294,7 @@ const DshChat = (() => {
       const done = phase === 'tool_result';
       /* 参数跟着结果回来（tool_call 那一刻运行时还没有参数），所以这一行在
          完成时才能写成「Ran curl -L -o x.pdf」。 */
-      const argsRaw = done ? String(fields.args || '') : '';
+      const argsRaw = String(fields.args || '');
       /* 后端是「它是怎么做到的」，对排障有用；耗时不是——参考的工具行不报
          毫秒，而且被权限门拦下的工具耗时是 0.0，写出来只是一行「0.0ms」。
          亚毫秒本来就量不出东西，一并丢掉。 */
@@ -1283,13 +1306,208 @@ const DshChat = (() => {
         ].filter(Boolean).join(' · ')
         : '';
       return toolRowNode(toolRowModel(name, argsRaw, done ? {
-        text: detail,
+        text: fields.result !== undefined ? String(fields.result) : detail,
         isError: fields.state === 'error',
-      } : undefined));
+      } : undefined, String(fields.id || '')));
     }
     /* 非工具阶段 = 单行运行状态(CC/DSH 金标准):StateDot 渐变字,原地更新,
        绝不逐条堆叠成 Think 行;内部管道细节在轨迹视图里看。 */
     return turnStatusNode(liveStatusLabel(phase, fields));
+  }
+
+  interface LiveTurnSnapshot {
+    answer?: string;
+    thinking?: string;
+    records?: Array<Record<string, unknown>>;
+    requestId?: string;
+    agentSessionId?: string;
+    trajectory?: Array<Record<string, unknown>>;
+  }
+
+  /* Both task surfaces keep the same DOM for an active turn. Text growth never
+     detaches disclosures, resets their scroll, or restarts status animations. */
+  function createLiveTurn(host: HTMLElement) {
+    const rows = new Map<string, { node: HTMLElement; record: string }>();
+    let answer: HTMLElement | null = null;
+    let thinking: HTMLElement | null = null;
+    let answerText = '';
+    let thinkingText = '';
+    const traceNodes = new Map<string, { node: HTMLElement; signature: string }>();
+    let traceStatus: HTMLElement | null = null;
+    const appendText = (node: HTMLElement, previous: string, next: string) => {
+      if (previous === next) return;
+      if (next.startsWith(previous)) {
+        node.appendChild(document.createTextNode(next.slice(previous.length)));
+        if (node.childNodes.length > 32) node.textContent = next;
+      } else node.textContent = next;
+    };
+    return {
+      update(snapshot: LiveTurnSnapshot) {
+        if (!host.className.split(' ').includes('dsh-live-turn')) host.className += ' dsh-live-turn';
+        if (snapshot.trajectory?.length) {
+          const desired: HTMLElement[] = [];
+          const render = (key: string, value: unknown, make: () => DshNode) => {
+            const signature = JSON.stringify(value);
+            let entry = traceNodes.get(key);
+            if (!entry) {
+              entry = { node: make() as HTMLElement, signature };
+              traceNodes.set(key, entry);
+            } else if (entry.signature !== signature) {
+              if (key.startsWith('message:') || key.startsWith('reasoning:')) {
+                const target = key.startsWith('reasoning:') ? entry.node.querySelector<HTMLElement>('.dsh-think-body')! : entry.node;
+                appendText(target, target.textContent || '', String(value));
+                if (key.startsWith('reasoning:')) entry.node.querySelector('.dsh-summary')!.textContent = latestLine(String(value));
+              } else {
+                const open = entry.node.getAttribute('open') !== null;
+                const expanded = Array.from(entry.node.querySelectorAll('.dsh-disclosure')).map(n => n.getAttribute('data-open'));
+                const replacement = make() as HTMLElement;
+                entry.node.replaceChildren(...Array.from(replacement.childNodes));
+                if (replacement.getAttribute('data-single') === 'true') entry.node.setAttribute('data-single', 'true');
+                else entry.node.removeAttribute('data-single');
+                if (open) entry.node.setAttribute('open', '');
+                else entry.node.removeAttribute('open');
+                entry.node.querySelectorAll('.dsh-disclosure').forEach((n, i) => {
+                  if (expanded[i] === 'true') {
+                    n.setAttribute('data-open', 'true');
+                    n.querySelector('.dsh-row')?.setAttribute('aria-expanded', 'true');
+                  }
+                });
+              }
+              entry.signature = signature;
+            }
+            desired.push(entry.node);
+          };
+          let chips: TurnChip[] = [];
+          const flush = () => {
+            if (!chips.length) return;
+            const current = chips;
+            render(`tools:${current[0].callId}`, current, () => toolGroupNode(current, true));
+            chips = [];
+          };
+          snapshot.trajectory.forEach((record, index) => {
+            if (record.kind === 'tool') {
+              chips.push({ name: String(record.name || 'tool'), callId: String(record.callId || index), argsRaw: String(record.text || ''),
+                result: record.result == null ? undefined : { text: String(record.result), isError: Boolean(record.isError) } });
+            } else if (record.kind === 'message') {
+              if (!record.text && !record.reasoning) return;
+              flush();
+              const key = String(record.turn || index);
+              if (record.reasoning) render(`reasoning:${key}`, String(record.reasoning), () => thinkNode(String(record.reasoning), record.state === 'running'));
+              if (record.text) render(`message:${key}`, String(record.text), () => h('div', { class: 'dsh-stream-live' }, String(record.text)));
+            } else if (record.kind === 'notice') {
+              flush();
+              render(`notice:${index}`, record, () => noticeNode(String(record.text || '')));
+            }
+          });
+          flush();
+          if (!traceStatus) traceStatus = turnStatusNode('Thinking') as HTMLElement;
+          desired.push(traceStatus);
+          for (const child of Array.from(host.children)) if (!desired.includes(child as HTMLElement)) child.remove();
+          desired.forEach((node, index) => { if (host.children[index] !== node) host.insertBefore(node, host.children[index] || null); });
+          return;
+        }
+        const latest = new Map<string, Record<string, unknown>>();
+        for (const record of snapshot.records || []) {
+          const phase = String(record.phase || '');
+          const fields = record.fields && typeof record.fields === 'object'
+            ? record.fields as Record<string, unknown> : {};
+          if (phase === 'tool_call' || phase === 'tool_result') {
+            latest.set(`tool:${String(fields.id || fields.name || '')}`, record);
+          } else if (['model_request', 'model_response', 'model_first_chunk', 'runtime_boot', 'agent_turn', 'agent_start', 'budget_renewed'].includes(phase)) {
+            latest.set('status', record);
+          }
+        }
+        if (!latest.has('status')) latest.set('status', { phase: 'model_request', fields: {} });
+        const desired: HTMLElement[] = [];
+        for (const [key, record] of latest) {
+          const signature = JSON.stringify(record);
+          let row = rows.get(key);
+          if (!row) {
+            row = { node: liveActivityNode(record) as HTMLElement, record: signature };
+            rows.set(key, row);
+          } else if (row.record !== signature) {
+            if (key === 'status') {
+              const label = liveStatusLabel(String(record.phase || ''), (record.fields || {}) as Record<string, unknown>);
+              const copy = row.node.querySelector('.dsh-turn-status-label');
+              if (copy && copy.textContent !== label) copy.textContent = label;
+              row.node.setAttribute('aria-label', label);
+            } else {
+              const expanded = row.node.querySelector('.dsh-disclosure')?.getAttribute('data-open') === 'true';
+              const replacement = liveActivityNode(record) as HTMLElement;
+              row.node.setAttribute('data-state', replacement.getAttribute('data-state') || 'running');
+              row.node.replaceChildren(...Array.from(replacement.childNodes));
+              if (expanded) {
+                row.node.querySelector('.dsh-disclosure')?.setAttribute('data-open', 'true');
+                row.node.querySelector('.dsh-row')?.setAttribute('aria-expanded', 'true');
+              }
+            }
+            row.record = signature;
+          }
+          desired.push(row.node);
+        }
+        const nextThinking = String(snapshot.thinking || '');
+        if (nextThinking) {
+          if (!thinking) thinking = thinkNode('', true) as HTMLElement;
+          const body = thinking.querySelector<HTMLElement>('.dsh-think-body')!;
+          appendText(body, thinkingText, nextThinking);
+          const summary = thinking.querySelector('.dsh-summary')!;
+          const latestSummary = latestLine(nextThinking);
+          if (summary.textContent !== latestSummary) summary.textContent = latestSummary;
+          thinkingText = nextThinking;
+          desired.push(thinking);
+        }
+        const nextAnswer = String(snapshot.answer || '');
+        if (nextAnswer) {
+          if (!answer) {
+            answer = document.createElement('div');
+            answer.className = 'dsh-stream-live';
+            answer.setAttribute('aria-live', 'polite');
+          }
+          appendText(answer, answerText, nextAnswer);
+          answerText = nextAnswer;
+          desired.push(answer);
+        }
+        for (const child of Array.from(host.children)) {
+          if (!desired.includes(child as HTMLElement)) child.remove();
+        }
+        desired.forEach((node, index) => {
+          if (host.children[index] !== node) host.insertBefore(node, host.children[index] || null);
+        });
+      },
+      finish(turn: AssistantTurnInput) {
+        host.className = host.className.split(' ').filter(name => name !== 'dsh-live-turn').join(' ');
+        host.replaceChildren(...assistantTurnNode(turn) as HTMLElement[]);
+      },
+    };
+  }
+
+  function createConversationView(flow: HTMLElement) {
+    const turns = new Map<number, { host: HTMLElement; live: ReturnType<typeof createLiveTurn>; final: string | null }>();
+    return {
+      update(conversation: { id: string; turns?: Array<AssistantTurnInput & { question?: string; outcome?: string; liveProgress?: LiveTurnSnapshot; permissionAnswer?: { decision?: string; rule?: string } }> }) {
+        for (const [turnIndex, turn] of (conversation.turns || []).entries()) {
+          let current = turns.get(turnIndex);
+          if (!current) {
+            if (turn.permissionAnswer) flow.appendChild(permissionAnswerNode(turn.permissionAnswer) as HTMLElement);
+            else if (turn.question) flow.appendChild(userNode(turn.question, turn.at, { conversationId: conversation.id, turnIndex }) as HTMLElement);
+            const host = document.createElement('div');
+            host.className = 'dsh-flow-item';
+            host.dataset.turnIndex = String(turnIndex);
+            flow.appendChild(host);
+            current = { host, live: createLiveTurn(host), final: null };
+            turns.set(turnIndex, current);
+          }
+          if (turn.liveProgress || turn.outcome === '进行中') {
+            current.live.update(turn.liveProgress || { answer: turn.answer, thinking: turn.thinking });
+            current.final = null;
+          } else {
+            const signature = JSON.stringify(turn);
+            if (signature !== current.final) current.live.finish({ ...turn, conversationId: conversation.id, turnIndex });
+            current.final = signature;
+          }
+        }
+      },
+    };
   }
 
   function liveStatusLabel(phase: string, fields: Record<string, unknown>): string {
@@ -1428,6 +1646,8 @@ const DshChat = (() => {
     toolRowNode,
     toolRowModel,
     liveActivityNode,
+    createLiveTurn,
+    createConversationView,
     permissionAnswerNode,
     artifactCardNode,
     formatRunMeta,

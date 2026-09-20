@@ -46,6 +46,7 @@
   --mp-panel: #FDFDFC;
   --mp-panel-subtle: #F3F3F2;
   --mp-markdown-cell: #F2F2F1;
+  --mp-code-surface: #FFFFFF;
   --mp-repository-surface: #F2F2F1;
   --mp-composer: #FEFEFE;
   --mp-user-bubble: #F0F0EF;
@@ -72,11 +73,11 @@
   /* 展开的工具卡里那段命令的着色。取的是 PowerShell ISE 那套读惯了的分配：
      命令蓝、变量红、字符串绿、数字红、关键字橙。不是为了还原某个编辑器，
      是为了让一行命令里的「动词」「参数」「值」在扫一眼时分开。 */
-  --mp-syn-command: #2566D0;
-  --mp-syn-keyword: #A15C00;
-  --mp-syn-variable: #B42318;
-  --mp-syn-number: #B42318;
-  --mp-syn-string: #2E7D4F;
+  --mp-syn-command: #0073E6;
+  --mp-syn-keyword: #C5621B;
+  --mp-syn-variable: #737373;
+  --mp-syn-number: #E3116C;
+  --mp-syn-string: #1E9E3C;
   --mp-syn-comment: #6E7B6E;
   --mp-syn-operator: #52514E;
 
@@ -178,6 +179,7 @@ body[data-ds-dark-theme] {
   --mp-panel: #1E1E1E;
   --mp-panel-subtle: #303030;
   --mp-markdown-cell: #30302F;
+  --mp-code-surface: #30302F;
   --mp-repository-surface: #292928;
   --mp-composer: #20201F;
   --mp-user-bubble: #30302F;

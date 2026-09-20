@@ -92,7 +92,9 @@ for (const state of [
 for (const method of ['list', 'stats', 'get', 'onProgress', 'tree', 'readFile', 'environment']) {
   assert(preload.includes(`${method}:`), `fixture bridge is missing ${method}`);
 }
-assert(preload.includes('本机会话'));
+assert(preload.includes('本机会话') === false,
+  'the sidebar local-sessions group is called Chats now, not 本机会话');
+assert(preload.includes('exactConversationRows'), 'fixture keeps its explicit row table');
 assert(preload.includes("contextWindow: 128_000"), 'fixture ring uses the same real model-window contract as production');
 assert(preload.includes("contextWindow: 1_000_000"), 'Claude Opus reference model keeps its measured million-token window');
 for (const copy of [

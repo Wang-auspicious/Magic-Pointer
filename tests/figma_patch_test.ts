@@ -194,7 +194,9 @@ async function main() {
     }],
   });
   assert.equal(appendNode.characters, 'AB');
-  assert.deepEqual(requestedRanges, [[0, 1]], 'append inherits the last character font');
+  assert.ok(requestedRanges.length > 0);
+  assert.ok(requestedRanges.every((range) => range[0] === 0 && range[1] === 1),
+    'append inherits the last character font, including final base revalidation');
 
   console.log('figma patch test ok');
 }
