@@ -2,7 +2,7 @@
 
 日期：2026-09-20。对应原审计 [2026-09-20-project-audit-and-jev.md](2026-09-20-project-audit-and-jev.md)，原问题编号保持不变。本报告记录代码修复和验证，原审计保留为修复前证据。
 
-当前处于最终串行验证阶段，开发版本仍为 1.0.49；未在此阶段宣称安装交付完成。
+85 项代码修复及完整串行验证已完成，随后唯一一次升级开发版本至 **1.0.50**，目前执行本机安装同步。
 
 | 范围 | 数量 | 逐项修改与证据 |
 |---|---:|---|
@@ -39,4 +39,6 @@ Figma 插件事务和桥接通过确定性与回环测试，尚缺真实插件 I
 
 ## 最终验证与发布记录
 
-最终 `npm run verify`、唯一一次版本升级、`npm run sync`、安装目录检查和最终 main 提交结果将在完成后写入此处。过程已经分批推送 main，没有发布 GitHub release 或推送版本 tag。
+最终 `npm run verify` 已退出0：Python **2495 passed / 6 条旧Pillow弃用提示 / 239.30s**，Node **257 test files**，lint、全部TypeScript与Electron/Figma bundle构建通过。日志 `data/verify-audit-final-20260920.log`。之后 package.json/package-lock.json 只升一次版本：**1.0.49→1.0.50**。
+
+`npm run sync`、安装目录检查和最终 main 提交结果将在完成后补记。过程已经分批推送 main，没有发布 GitHub release 或推送版本 tag。
