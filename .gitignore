@@ -40,6 +40,11 @@ external/
 external_zip/
 *.zip
 
+# Third-party checkouts kept at the root while comparing compaction approaches
+/fast-jev-compaction-codex/
+/fast-jev-compaction-pi/
+/pi-session-*.html
+
 # Local reference/demo media not part of source release
 demo/recordings/
 
@@ -76,6 +81,7 @@ data/runtime/uia-smoke.txt
 
 # Agent runtime state written into whatever directory it runs in
 /.mp/
+**/.mp/
 
 # Acceptance runs leave scratch profiles and intermediate workbooks behind.
 # Keep the reported results, drop the browser caches and per-run temp copies.
