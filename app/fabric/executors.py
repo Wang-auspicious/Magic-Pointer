@@ -258,9 +258,9 @@ class FabricExecutors:
     def _default_ocr(self, image_path: Path) -> str:
         rapid_error: Exception | None = None
         try:
-            from rapidocr import RapidOCR
+            from app.perception.ocr_engine import create_ocr_engine
 
-            result = RapidOCR()(str(image_path))
+            result = create_ocr_engine()(str(image_path))
             text = "\n".join(str(item).strip() for item in (result.txts or ()) if str(item).strip())
             if text:
                 self.last_ocr_engine = "rapidocr-onnx"

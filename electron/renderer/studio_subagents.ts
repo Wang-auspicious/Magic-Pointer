@@ -7,6 +7,9 @@
     status: string;
     usedBackend?: string;
     latencyMs?: number;
+    callId?: string;
+    input?: string;
+    output?: string;
   }
 
   interface SubagentTask {
@@ -21,6 +24,11 @@
     steps: SubagentStep[];
     startedAt: number;
     completedAt: number;
+    reasoning?: string;
+    answer?: string;
+    phase?: string;
+    elapsedMs?: number;
+    turn?: number;
   }
 
   interface LiveSubagentLike extends Partial<SubagentTask> {
@@ -126,6 +134,11 @@
       steps,
       startedAt: finite(live.startedAt) || base?.startedAt || 0,
       completedAt: finite(live.completedAt) || base?.completedAt || 0,
+      reasoning: live.reasoning ?? base?.reasoning ?? '',
+      answer: live.answer ?? base?.answer ?? '',
+      phase: live.phase ?? base?.phase ?? '',
+      elapsedMs: live.elapsedMs ?? base?.elapsedMs ?? 0,
+      turn: live.turn ?? base?.turn ?? 0,
     };
   }
 
@@ -137,12 +150,14 @@
     const byParent = new Map<string, string>();
     let index = 0;
     for (const turn of turns || []) {
-      const records = Array.isArray(turn.trajectory)
+      const progress = objectOf(turn.liveProgress);
+      const records = Array.isArray(progress.trajectory) ? progress.trajectory as Record<string, unknown>[] : Array.isArray(turn.trajectory)
         ? turn.trajectory as Record<string, unknown>[]
         : Array.isArray(turn.events) ? turn.events as Record<string, unknown>[] : [];
       for (const record of records) {
-        const task = taskFromRecord(record, index++);
-        if (!task) continue;
+        const base = taskFromRecord(record, index++);
+        if (!base) continue;
+        const task = record.subagent ? mergeLive(base, objectOf(record.subagent), index) : base;
         byId.set(task.id, task);
         if (task.parentCallId) byParent.set(task.parentCallId, task.id);
       }

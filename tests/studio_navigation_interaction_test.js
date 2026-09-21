@@ -55,12 +55,12 @@ assert(source.includes("kind === 'conversation'"));
 assert(source.includes("kind === 'project'"));
 assert(source.includes("kind === 'route'"));
 assert(html.includes('role="tablist"') && html.includes('role="tab"'));
-assert.match(html, /id="mode-work" data-product-mode="design" role="tab" aria-selected="false"[\s\S]*?<span>Home<\/span>/,
-  'Home is the left desktop navigation surface in the supplied Code reference');
-assert.match(html, /id="mode-design" data-product-mode="walker" role="tab" aria-selected="true"[\s\S]*?<span>Code<\/span>/,
-  'Code is the default right-side Agent work surface');
-assert(source.includes("document.getElementById('mode-work')?.addEventListener('click', () => setProductMode('design'))"));
-assert(source.includes("document.getElementById('mode-design')?.addEventListener('click', () => setProductMode('walker'))"));
+assert.match(html, /id="mode-work" data-product-mode="walker" role="tab" aria-selected="true"[\s\S]*?<span>Work<\/span>/,
+  'Work is the default Agent work surface');
+assert.match(html, /id="mode-design" data-product-mode="design" role="tab" aria-selected="false"[\s\S]*?<span>Design<\/span>/,
+  'Design opens the visual workspace');
+assert(source.includes("document.getElementById('mode-work')?.addEventListener('click', () => setProductMode('walker'))"));
+assert(source.includes("document.getElementById('mode-design')?.addEventListener('click', () => setProductMode('design'))"));
 assert(source.includes("document.getElementById('nav-new-chat')?.classList.toggle('is-on', visible)"));
 assert(source.includes("document.getElementById('header-preview-toggle')?.addEventListener('click', () => setInspector(true, 'browser'))"));
 assert(source.includes("make('Conversation', () => setConversationTab('chat'))"));

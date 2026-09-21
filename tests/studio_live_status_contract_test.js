@@ -31,10 +31,9 @@ assert(/return 'status'/.test(studio), 'non-tool progress collapses into one sta
 assert(!studio.includes("return 'runtime'"), 'old runtime bucket must be gone');
 assert(studio.includes("String(record.phase || '') === 'subagent'"));
 assert(studio.includes('ConversationControl.decodeChunkBlob(fields)'));
-assert(studio.includes('liveSubagentTasks.set('));
+assert(studio.includes('pendingConversation.transcript.trajectory'), 'tasks must project the current persisted transcript');
 assert(studio.includes('renderProjectTasks()'));
-assert(studio.includes('studioSubagentGlobals.activeSubagentParentCallId('),
-  'a live child snapshot must inherit the active parent Agent call id');
-assert(studio.includes("payload.parentCallId = parentCallId"));
+assert(!studio.includes('studioSubagentGlobals.activeSubagentParentCallId('),
+  'parallel children must use runtime identity, never guess the last active parent');
 
 console.log('studio_live_status_contract ok');

@@ -958,6 +958,28 @@
   position: relative;
 }
 
+.dsh-think:not([data-long="true"]) .dsh-think-fade,
+.dsh-think:not([data-long="true"]) .dsh-think-more {
+  display: none;
+}
+
+.dsh-think[data-state="running"] .dsh-think-viewport {
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.dsh-subagent-heartbeat {
+  margin: 0 0 8px 22px;
+  color: var(--mp-text-muted);
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dsh-subagent-heartbeat:empty { display: none; }
+
 .dsh-think[data-long="true"][data-expanded="false"] .dsh-think-viewport {
   max-height: 200px;
   overflow: hidden;

@@ -2189,6 +2189,25 @@
   padding: 0 8px 8px 36px;
 }
 
+.mp-subagent-thinking,
+.mp-subagent-step-evidence { min-width: 0; }
+.mp-subagent-thinking > summary { color: var(--mp-text-muted); cursor: pointer; font-size: 12px; }
+.mp-subagent-thinking pre,
+.mp-subagent-step-evidence pre,
+.mp-subagent-answer {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 240px;
+  overflow-y: auto;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 6px 0 10px;
+}
+.mp-subagent-step-evidence pre:empty { display: none; }
+.mp-subagent-step-evidence > summary { cursor: pointer; }
+.mp-subagent-step-evidence > summary::-webkit-details-marker { display: none; }
+
 .mp-subagent-step {
   display: grid;
   min-height: 26px;

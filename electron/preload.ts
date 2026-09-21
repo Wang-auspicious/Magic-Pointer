@@ -194,7 +194,7 @@ contextBridge.exposeInMainWorld('magicPointerDashboard', {
   fabricRequest: (operation: unknown, payload: UnknownRecord = {}) => ipcRenderer.send('dashboard:fabric-request', { operation, ...payload }),
   saveFabricSettings: (settings: unknown) => ipcRenderer.invoke('dashboard:settings:save', { settings }),
   getFabricSettings: () => ipcRenderer.invoke('dashboard:settings:get'),
-  modelsCatalog: () => ipcRenderer.invoke('models:catalog'),
+  modelsCatalog: (options: { refresh?: boolean } = {}) => ipcRenderer.invoke('models:catalog', { refresh: options.refresh === true }),
   selectModel: (model: unknown, profileId?: string) => ipcRenderer.invoke('models:select', { model, profileId }),
   modelQuota: (options: { force?: unknown } = {}) => ipcRenderer.invoke('models:quota', { force: options?.force === true }),
   slashDirectory: () => ipcRenderer.invoke('slash:directory'),

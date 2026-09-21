@@ -75,3 +75,12 @@ assert.strictEqual(activeSubagentParentCallId([
   { phase: 'tool_call', fields: { id: 'read-1', name: 'Read' } },
 ]), '');
 console.log('studio subagent projection test ok');
+
+const restored = projectSubagentTasks([{ trajectory: [{
+  kind: 'tool', callId: 'persisted-parent', name: 'Agent', state: 'done',
+  subagent: { id: 'persisted-child', parentCallId: 'persisted-parent', status: 'completed', reasoning: 'Checked source', answer: 'Found the cause', elapsedMs: 321, phase: 'completed' },
+}] }]);
+assert.equal(restored.length, 1);
+assert.equal(restored[0].id, 'persisted-child');
+assert.equal(restored[0].reasoning, 'Checked source');
+assert.equal(restored[0].answer, 'Found the cause');

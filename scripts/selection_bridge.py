@@ -2908,7 +2908,9 @@ def _loop_router(
 
     _inbox_cell: dict = {"fn": None}
     _source_session_cell: dict[str, Any] = {"value": None}
+    child_progress_cell: dict[str, Any] = {"sink": None}
     runtime = {
+        "subagent_event_sink": lambda payload: child_progress_cell["sink"](payload) if child_progress_cell["sink"] else None,
         "perception_backend": _BridgePerceptionBackend(
             app_ctx, target_window, snapshot
         ),
@@ -3022,6 +3024,7 @@ def _loop_router(
     # The same projection feeds both surfaces: answer_chunk/reasoning_chunk,
     # tool_result, activities and trajectory are identical runtime facts.
     activity_sink = RuntimeActivitySink(clock or null_clock("selection"), request_header=request_header)
+    child_progress_cell["sink"] = activity_sink.subagent_progress
 
     def progress_sink(event) -> None:
         from app.agent_runtime.loop import BackendRecovery, FollowupContinued, Steered

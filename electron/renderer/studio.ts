@@ -95,10 +95,8 @@ function layoutBurst(b: MagicPointerStashEntry): LaidBurst {
     const imageH = it.t === 'shot' ? Math.max(130, Math.min(210, Number(it.h) || 160)) : 0;
     const summaryHeight = it.summary ? 66 : 0;
     const iw = imageW;
-    // 只有截图有说明行（+34）。文字节点不渲染 desc，给它 +34 只是把行高凭空
-    // 撑高 14px，簇之间因此出现来路不明的空隙。上一版写成
-    // `it.desc || it.t === 'shot' ? 34 : 20`，|| 把三元整体绑错。
-    const ih = (it.t === 'shot' ? imageH + 34 + summaryHeight : 82);
+    // Caption + description + border; reserve summary space only when present.
+    const ih = (it.t === 'shot' ? imageH + 58 + summaryHeight : 104);
     if (x > PAD && x + iw > ROW_MAX) { x = PAD; y += rowH + GAP; rowH = 0; }
     const node = { ...it, x, y, w: iw, h: ih, imageW, imageH };
     x += iw + GAP; rowH = Math.max(rowH, ih); w = Math.max(w, x - GAP + PAD);
@@ -560,6 +558,9 @@ interface StudioSubagentStep {
   status: string;
   usedBackend?: string;
   latencyMs?: number;
+  callId?: string;
+  input?: string;
+  output?: string;
 }
 interface StudioSubagentTask {
   id: string;
@@ -573,6 +574,11 @@ interface StudioSubagentTask {
   steps: StudioSubagentStep[];
   startedAt: number;
   completedAt: number;
+  reasoning?: string;
+  answer?: string;
+  phase?: string;
+  elapsedMs?: number;
+  turn?: number;
 }
 interface StudioSubagentsModule {
   activeSubagentParentCallId(records: ReadonlyArray<Record<string, unknown>>): string;
@@ -2423,6 +2429,7 @@ async function refreshOpenConversation(change?: MagicPointerConversationChange) 
   const stream = document.getElementById('stream');
   if (stream) followIfNearBottom(stream, () => activeConversationView?.update(conversation!));
   syncExternalConversationRun(conversation);
+  if (change.liveProgress && inspectorState.open && activeInspectorTab === 'tasks') renderProjectTasks();
   if (!change.liveProgress) {
     void renderConversationRecovery(conversation.id);
     syncConversationPendingInput(conversation.turns || []);
@@ -3193,7 +3200,9 @@ function show(view: string) {
     if (element) element.hidden = (k !== view);
   });
   document.querySelectorAll<HTMLElement>('[data-goto]').forEach((item) => {
-    item.classList.toggle('is-on', item.dataset.goto === view);
+    const layout = document.querySelector<HTMLElement>('#stash-mode .is-on')?.dataset.mode;
+    item.classList.toggle('is-on', item.dataset.goto === view
+      && (!item.dataset.designLayout || item.dataset.designLayout === layout));
   });
   if (view === 'stash') { renderStash(true); bindCanvas(); }
   if (view === 'artifacts') renderArtifacts();
@@ -3249,6 +3258,10 @@ let productMode: ProductMode = 'walker';
 function setProductMode(mode: ProductMode, navigate = true) {
   productMode = mode;
   shell.dataset.productMode = mode;
+  const designNav = document.querySelector<HTMLElement>('.mp-design-nav');
+  const workNav = document.querySelector<HTMLElement>('.mp-main-navigation');
+  if (designNav) designNav.hidden = mode !== 'design';
+  if (workNav) workNav.hidden = mode !== 'walker';
   document.querySelectorAll<HTMLElement>('[data-product-mode]').forEach((button) => {
     const selected = button.dataset.productMode === mode;
     button.classList.toggle('is-on', selected);
@@ -3266,8 +3279,8 @@ function setProductMode(mode: ProductMode, navigate = true) {
 (function bindProductMode() {
   try { productMode = localStorage.getItem('mp:product-mode') === 'design' ? 'design' : 'walker'; } catch { productMode = 'walker'; }
   setProductMode(productMode, false);
-  document.getElementById('mode-work')?.addEventListener('click', () => setProductMode('design'));
-  document.getElementById('mode-design')?.addEventListener('click', () => setProductMode('walker'));
+  document.getElementById('mode-work')?.addEventListener('click', () => setProductMode('walker'));
+  document.getElementById('mode-design')?.addEventListener('click', () => setProductMode('design'));
 })();
 
 (function bindDesignHome() {
@@ -3744,7 +3757,6 @@ let selectedProjectFileText = '';
 let selectedProjectFileMarkdown = false;
 let projectFileCodeView = false;
 let activeInspectorTab = 'files';
-const liveSubagentTasks = new Map<string, Partial<StudioSubagentTask>>();
 let focusedSubagentId = '';
 interface InspectorState {
   open: boolean;
@@ -4094,13 +4106,16 @@ function subagentStatusLabel(status: string): string {
   return 'Completed';
 }
 
+function currentSubagentTasks() {
+  return studioSubagentGlobals.projectSubagentTasks(pendingConversation
+    ? [...activeConversationTurns, { trajectory: pendingConversation.transcript.trajectory }]
+    : activeConversationTurns);
+}
+
 function renderProjectTasks() {
   const host = document.getElementById('project-tasks');
   if (!host) return;
-  const tasks = studioSubagentGlobals.projectSubagentTasks(
-    activeConversationTurns,
-    [...liveSubagentTasks.values()],
-  );
+  const tasks = currentSubagentTasks();
   if (!tasks.length) {
     const empty = document.createElement('p');
     empty.className = 'mp-inspector-empty';
@@ -4108,62 +4123,73 @@ function renderProjectTasks() {
     host.replaceChildren(empty);
     return;
   }
+  const rows = new Map(Array.from(host.querySelectorAll<HTMLDetailsElement>('.mp-subagent-task')).map(row => [row.dataset.taskId, row]));
+  const setText = (node: Element, text: string) => { if (node.textContent !== text) node.textContent = text; };
+  host.querySelector('.mp-inspector-empty')?.remove();
   const makeSection = (label: string, items: StudioSubagentTask[]) => {
-    const section = document.createElement('section');
-    section.className = 'mp-subagent-section';
-    const heading = document.createElement('h3');
-    heading.textContent = label;
-    section.appendChild(heading);
+    let section = host.querySelector<HTMLElement>(`[data-task-section="${label}"]`);
+    if (!section) {
+      section = document.createElement('section');
+      section.className = 'mp-subagent-section';
+      section.dataset.taskSection = label;
+      const heading = document.createElement('h3');
+      heading.textContent = label;
+      section.appendChild(heading);
+    }
     for (const task of items) {
-      const row = document.createElement('details');
-      row.className = 'mp-subagent-task';
-      row.dataset.taskId = task.id;
+      let row = rows.get(task.id);
+      if (!row) {
+        row = document.createElement('details');
+        row.className = 'mp-subagent-task';
+        row.dataset.taskId = task.id;
+        row.open = task.id === focusedSubagentId;
+        row.innerHTML = '<summary><span class="mp-subagent-glyph"><svg aria-hidden="true"><use href="#ic-agent-workflow" /></svg></span>'
+          + '<span class="mp-subagent-copy"><strong></strong><small></small></span>'
+          + '<svg class="mp-subagent-caret" aria-hidden="true"><use href="#ic-chev" /></svg></summary>'
+          + '<div class="mp-subagent-body"><details class="mp-subagent-thinking"><summary>Thinking</summary><pre></pre></details>'
+          + '<div class="mp-subagent-answer"></div><div class="mp-subagent-steps"></div><p class="mp-subagent-result"></p></div>';
+      }
       row.dataset.status = task.status;
-      row.open = task.id === focusedSubagentId;
-      const summary = document.createElement('summary');
-      const glyph = document.createElement('span');
-      glyph.className = 'mp-subagent-glyph';
-      glyph.innerHTML = '<svg aria-hidden="true"><use href="#ic-agent-workflow" /></svg>';
-      const copy = document.createElement('span');
-      copy.className = 'mp-subagent-copy';
-      const title = document.createElement('strong');
-      title.textContent = task.description;
-      const meta = document.createElement('small');
-      meta.textContent = [
+      setText(row.querySelector('strong')!, task.description);
+      setText(row.querySelector('.mp-subagent-copy small')!, [
         subagentStatusLabel(task.status),
         task.stepCount ? `${task.stepCount} ${task.stepCount === 1 ? 'step' : 'steps'}` : '',
-        task.currentTool,
-      ].filter(Boolean).join(' · ');
-      copy.append(title, meta);
-      const caret = document.createElement('svg');
-      caret.className = 'mp-subagent-caret';
-      caret.setAttribute('aria-hidden', 'true');
-      caret.innerHTML = '<use href="#ic-chev" />';
-      summary.append(glyph, copy, caret);
-      const body = document.createElement('div');
-      body.className = 'mp-subagent-body';
+        task.currentTool || (task.status === 'running' ? task.phase === 'writing' ? 'Writing' : 'Thinking' : ''),
+        task.elapsedMs ? DshChat.formatRunMeta(task.elapsedMs, null) : '',
+      ].filter(Boolean).join(' · '));
+      const thinking = row.querySelector<HTMLDetailsElement>('.mp-subagent-thinking')!;
+      thinking.hidden = !task.reasoning;
+      setText(thinking.querySelector('summary')!, task.status === 'running' && task.phase === 'thinking' ? 'Thinking…' : 'Thought');
+      setText(thinking.querySelector('pre')!, task.reasoning || '');
+      const answer = row.querySelector<HTMLElement>('.mp-subagent-answer')!;
+      answer.hidden = !task.answer;
+      setText(answer, task.answer || '');
+      const stepsHost = row.querySelector<HTMLElement>('.mp-subagent-steps')!;
+      const stepRows = new Map(Array.from(stepsHost.children).map(item => [(item as HTMLElement).dataset.stepId, item as HTMLElement]));
+      const wantedSteps: HTMLElement[] = [];
       for (const step of task.steps) {
-        const item = document.createElement('div');
-        item.className = 'mp-subagent-step';
+        const stepId = step.callId || String(step.index);
+        let item = stepRows.get(stepId);
+        if (!item) {
+          item = document.createElement('details');
+          item.className = 'mp-subagent-step-evidence';
+          item.dataset.stepId = stepId;
+          item.innerHTML = '<summary class="mp-subagent-step"><span class="mp-subagent-step-marker"></span><span class="mp-subagent-step-name"></span><small></small></summary><pre class="mp-subagent-step-input"></pre><pre class="mp-subagent-step-output"></pre>';
+        }
         item.dataset.status = step.status;
-        const marker = document.createElement('span');
-        marker.className = 'mp-subagent-step-marker';
-        marker.textContent = step.status === 'completed' ? '✓' : step.status === 'failed' ? '!' : '·';
-        const text = document.createElement('span');
-        text.textContent = step.tool || `Step ${step.index}`;
-        const detail = document.createElement('small');
-        detail.textContent = [step.usedBackend, step.latencyMs ? `${Math.round(step.latencyMs)}ms` : ''].filter(Boolean).join(' · ');
-        item.append(marker, text, detail);
-        body.appendChild(item);
+        item.querySelector<HTMLElement>('summary')!.dataset.status = step.status;
+        setText(item.querySelector('.mp-subagent-step-marker')!, step.status === 'completed' ? '✓' : step.status === 'failed' ? '!' : '·');
+        setText(item.querySelector('.mp-subagent-step-name')!, step.tool || `Step ${step.index}`);
+        setText(item.querySelector('small')!, [step.usedBackend, step.latencyMs ? `${Math.round(step.latencyMs)}ms` : ''].filter(Boolean).join(' · '));
+        setText(item.querySelector('.mp-subagent-step-input')!, step.input || '');
+        setText(item.querySelector('.mp-subagent-step-output')!, step.output || '');
+        wantedSteps.push(item);
       }
-      if (task.summary) {
-        const result = document.createElement('p');
-        result.className = 'mp-subagent-result';
-        result.textContent = task.summary;
-        body.appendChild(result);
-      }
-      row.append(summary, body);
-      section.appendChild(row);
+      for (const child of Array.from(stepsHost.children)) if (!wantedSteps.includes(child as HTMLElement)) child.remove();
+      wantedSteps.forEach((item, i) => { if (stepsHost.children[i] !== item) stepsHost.insertBefore(item, stepsHost.children[i] || null); });
+      setText(row.querySelector('.mp-subagent-result')!, task.summary);
+      const index = items.indexOf(task) + 1;
+      if (section.children[index] !== row) section.insertBefore(row, section.children[index] || null);
     }
     return section;
   };
@@ -4172,17 +4198,16 @@ function renderProjectTasks() {
   const sections: HTMLElement[] = [];
   if (running.length) sections.push(makeSection('Running', running));
   if (finished.length) sections.push(makeSection('Finished', finished));
-  host.replaceChildren(...sections);
+  for (const row of rows.values()) if (!tasks.some(task => task.id === row.dataset.taskId)) row.remove();
+  for (const section of Array.from(host.children)) if (!sections.includes(section as HTMLElement)) section.remove();
+  sections.forEach((section, index) => { if (host.children[index] !== section) host.insertBefore(section, host.children[index] || null); });
 }
 
 document.addEventListener('mp:open-subagent', (event) => {
   const detail = (event as CustomEvent<{ id?: string; parentCallId?: string }>).detail;
   const requestedId = String(detail?.id || '');
   const parentCallId = String(detail?.parentCallId || '');
-  const tasks = studioSubagentGlobals.projectSubagentTasks(
-    activeConversationTurns,
-    [...liveSubagentTasks.values()],
-  );
+  const tasks = currentSubagentTasks();
   const matchingTask = tasks.find((task) => task.id === requestedId || task.parentCallId === parentCallId);
   focusedSubagentId = matchingTask?.id || requestedId;
   setInspector(true, 'tasks');
@@ -4190,6 +4215,7 @@ document.addEventListener('mp:open-subagent', (event) => {
   if (focusedSubagentId) {
     requestAnimationFrame(() => {
       const taskRow = document.querySelector<HTMLElement>(`.mp-subagent-task[data-task-id="${CSS.escape(focusedSubagentId)}"]`);
+      if (taskRow) (taskRow as HTMLDetailsElement).open = true;
       taskRow?.scrollIntoView({ block: 'nearest' });
       taskRow?.querySelector<HTMLElement>('summary')?.focus({ preventScroll: true });
     });
@@ -4856,7 +4882,9 @@ document.addEventListener('click', e => {
     const canvas = mode.dataset.mode === 'canvas';
     document.getElementById('canvas')!.hidden = !canvas;
     document.getElementById('stash-list')!.hidden = canvas;
-    if (canvas) fitCanvas();
+    document.querySelectorAll<HTMLElement>('.mp-design-nav [data-design-layout]').forEach(button => {
+      button.classList.toggle('is-on', button.dataset.designLayout === mode.dataset.mode);
+    });
     return;
   }
   const seg = target.closest<HTMLElement>('.seg-toggle button');
@@ -5653,7 +5681,8 @@ function renderPlanCard() {
   const title = document.getElementById('composer-plan-title');
   if (title) title.textContent = 'Plan';
   const count = document.getElementById('composer-plan-count');
-  if (count) count.textContent = `${done}/${steps.length}`;
+  const blocked = steps.filter(s => s.status === 'blocked').length;
+  if (count) count.textContent = `${done}/${steps.length}${blocked ? ` · ${blocked} blocked` : ''}`;
   const list = document.getElementById('composer-plan-steps');
   if (!list) return;
   list.replaceChildren(...steps.map(step => {
@@ -5667,7 +5696,8 @@ function renderPlanCard() {
     check.innerHTML = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="m5.25 10.5 3 3 6.5-7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
     const content = document.createElement('span');
     content.className = 'mp-plan-step-label';
-    content.textContent = step.content;
+    content.textContent = `${step.status === 'blocked' ? '受阻：' : step.status === 'cancelled' ? '已取消：' : ''}${step.content}`;
+    if (step.status === 'blocked' || step.status === 'cancelled') check.textContent = step.status === 'blocked' ? '!' : '–';
     li.append(check, content);
     return li;
   }));
@@ -5869,7 +5899,7 @@ async function refreshComposerModel() {
     catalog = null;
   }
   if (request !== modelCatalogRequest) return;
-  modelCatalog = catalog;
+  if (catalog) modelCatalog = catalog;
   renderComposerModel();
 }
 
@@ -5900,21 +5930,20 @@ async function openModelMenu() {
   const request = ++modelCatalogRequest;
   let catalog: MagicPointerModelCatalog | null = null;
   try {
-    catalog = await Data.models();
+    catalog = await Data.models(true);
   } catch {
     catalog = null;
   }
   if (request !== modelCatalogRequest) return;
-  // 用户可能在请求期间主动关掉菜单；只更新缓存，不把它强行弹回来。
-  if (menu.hidden) {
-    modelCatalog = catalog;
-    return;
-  }
   if (!catalog) {
+    if (menu.hidden || modelCatalog) return;
     menu.replaceChildren(modelMenuNote('模型目录不可用（本机未接入 Electron 桥）。'));
     return;
   }
   modelCatalog = catalog;
+  renderComposerModel();
+  // 更新同一个模型状态，但不重新打开用户已关闭的菜单。
+  if (menu.hidden) return;
   renderModelMenu();
 }
 
@@ -6367,19 +6396,7 @@ function renderConversationProgress(record: Record<string, unknown>) {
     if (snapshot) { composerPlan = snapshot; renderPlanCard(); }
   }
   if (String(record.phase || '') === 'subagent') {
-    const fields = record.fields && typeof record.fields === 'object'
-      ? record.fields as Record<string, string> : {};
-    try {
-      const payload = JSON.parse(ConversationControl.decodeChunkBlob(fields)) as Partial<StudioSubagentTask>;
-      const id = String(payload.id || '').trim();
-      if (id) {
-        const parentCallId = String(payload.parentCallId || '').trim()
-          || studioSubagentGlobals.activeSubagentParentCallId([...pendingConversation.records.values()]);
-        if (parentCallId) payload.parentCallId = parentCallId;
-        liveSubagentTasks.set(id, payload);
-        renderProjectTasks();
-      }
-    } catch { /* malformed diagnostics never affect the parent turn */ }
+    schedulePendingRender();
     return;
   }
   if (String(record.phase || '') === 'answer_chunk') {
@@ -6395,7 +6412,19 @@ function renderConversationProgress(record: Record<string, unknown>) {
     return; // 思考流增量同样不进 records，画成 Think 行。
   }
   pendingConversation.records.set(progressKey(record), record);
-  followIfNearBottom(pendingConversation.body, renderPendingBody);
+  schedulePendingRender();
+}
+
+let pendingRenderTimer: number | null = null;
+function schedulePendingRender() {
+  if (pendingRenderTimer !== null || !pendingConversation) return;
+  const scheduled = pendingConversation;
+  pendingRenderTimer = window.setTimeout(() => {
+    pendingRenderTimer = null;
+    if (pendingConversation !== scheduled) return;
+    followIfNearBottom(scheduled.body, renderPendingBody);
+    if (inspectorState.open && activeInspectorTab === 'tasks') renderProjectTasks();
+  }, document.hidden ? 200 : 33);
 }
 
 function renderPendingBody() {
@@ -6486,14 +6515,14 @@ function appendLiveStreamText(text: string) {
   const pending = pendingConversation;
   if (!pending || !text) return;
   pending.streamText += text;
-  followIfNearBottom(pending.body, renderPendingBody);
+  schedulePendingRender();
 }
 
 function appendLiveReasoningText(text: string) {
   const pending = pendingConversation;
   if (!pending || !text) return;
   pending.reasoningText += text;
-  followIfNearBottom(pending.body, renderPendingBody);
+  schedulePendingRender();
 }
 
 /* 作曲家忙态：发送钮变停止钮（DSH InputBar 同款形态）。
@@ -6827,6 +6856,8 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
       fitComposer(textarea);
       setComposerSettledState('error');
     } finally {
+      if (pendingRenderTimer !== null) window.clearTimeout(pendingRenderTimer);
+      pendingRenderTimer = null;
       pendingConversation = null;
       studioComposerBusy = false;
       stopPendingClock();
@@ -6851,8 +6882,8 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
    在此之前 #stream 里是一份静态样例——它只该在没有任何记录时用来占位，
    绝不能在有真实记录时还挂在那儿骗人。 */
 async function boot(initialView: string) {
-  await renderSidebar();
   void refreshComposerModel();
+  await renderSidebar();
   if (initialView !== 'chat') {
     show(initialView);
     return;

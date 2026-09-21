@@ -5,20 +5,20 @@ each child gets a fresh conversation (no parent history), a restricted
 toolset (coding tools only — no desktop actions, no user interaction, no
 recursive delegation), a focused system prompt, and its own budget cap.
 The parent sees one tool call and one summary result, never the child's
-intermediate rounds. Children run sequentially through the loop's exclusive
-tool lane: parallel children editing one workspace is a conflict MP refuses
-by construction rather than by hope.
+intermediate rounds. The GUI receives bounded progress snapshots independently.
+Readonly children may run concurrently; editing children use the exclusive lane.
 """
 
 from __future__ import annotations
 
 import json
+import time
 import uuid
 from pathlib import Path
 from typing import Any, Callable
 
 from app.agent_runtime.errors import ActionFailure, DEFAULT_MAX_OUTPUT_TOKENS, FailureType
-from app.agent_runtime.tool_registry import Effect, ToolRegistry, ToolSpec
+from app.agent_runtime.tool_registry import Effect, ToolRegistry, ToolSpec, current_tool_call_id
 
 __all__ = ["register_delegate_tool"]
 
@@ -123,13 +123,30 @@ def register_delegate_tool(
             raise ActionFailure(FailureType.TOOL_ERROR, f"subagent {child_id} stopped before dispatch")
         steps: list[dict[str, Any]] = []
         active_steps: dict[str, dict[str, Any]] = {}
+        parent_call_id = current_tool_call_id.get()
+        started_at = time.time() * 1000
+        started_clock = time.perf_counter()
+        last_publish = 0.0
+        phase = "starting"
+        reasoning = ""
+        answer = ""
+        turn = 0
 
         def publish(status: str, *, summary: str = "") -> None:
+            nonlocal last_publish
+            last_publish = time.perf_counter()
             payload: dict[str, Any] = {
                 "id": child_id,
+                "parentCallId": parent_call_id,
                 "description": str(task or "").strip(),
                 "readonly": bool(readonly),
                 "status": status,
+                "phase": phase if status == "running" else status,
+                "turn": turn,
+                "reasoning": reasoning,
+                "answer": answer,
+                "startedAt": started_at,
+                "elapsedMs": round((last_publish - started_clock) * 1000),
                 "stepCount": len(steps),
                 "currentTool": next(
                     (
@@ -143,11 +160,37 @@ def register_delegate_tool(
             }
             if summary:
                 payload["summary"] = summary
+            if status != "running":
+                payload["completedAt"] = time.time() * 1000
             emit(payload)
 
         def child_event(event: Any) -> None:
+            nonlocal phase, reasoning, answer, turn
             kind = str(getattr(event, "kind", "") or "")
+            if kind == "turn_started":
+                turn = int(getattr(event, "turn", 0) or 0)
+                phase, reasoning, answer = "thinking", "", ""
+                publish("running")
+                return
+            if kind in {"reasoning_chunk", "model_chunk"}:
+                text = str(getattr(event, "text", "") or "")
+                if not text:
+                    return
+                next_phase = "thinking" if kind == "reasoning_chunk" else "writing"
+                first = not (reasoning if kind == "reasoning_chunk" else answer)
+                changed = phase != next_phase
+                phase = next_phase
+                if kind == "reasoning_chunk":
+                    reasoning = (reasoning + text)[-6000:]
+                else:
+                    answer = (answer + text)[-6000:]
+                # First content and phase transitions paint immediately; bursts
+                # share one snapshot, with an unconditional final flush below.
+                if first or changed or time.perf_counter() - last_publish >= 0.12:
+                    publish("running")
+                return
             if kind == "tool_call_started":
+                phase = "tool"
                 call_id = str(getattr(event, "id", "") or f"step-{len(steps) + 1}")
                 step = {
                     "index": len(steps) + 1,
@@ -185,6 +228,7 @@ def register_delegate_tool(
                     "latencyMs": float(getattr(result, "latency_ms", 0.0) or 0.0),
                 }
             )
+            phase = "tool" if active_steps else "thinking"
             publish("running")
 
         child_registry = ToolRegistry()

@@ -2871,7 +2871,7 @@ def _execute_one(
         beat_thread.start()
         try:
             executed = registry.execute_tool(
-                call.name, execution_args, scope=scope.token
+                call.name, execution_args, scope=scope.token, tool_call_id=call.id
             )
             # 工具家族的跨工具状态机信号（如 coding 工具的连读熔断：
             # 任何其他工具的执行都打断连读计数）。执行没发生（取消/拒绝/

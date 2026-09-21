@@ -36,12 +36,17 @@ import re
 import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
+from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:  # pragma: no cover - annotation-only
     from app.action_guard.preconditions import Precondition
 
 from app.agent_runtime.errors import ActionFailure, FailureType
+
+# Execution identity belongs to the runtime, never to model-supplied arguments.
+# Context-local storage keeps simultaneous readonly Agent calls independent.
+current_tool_call_id: ContextVar[str] = ContextVar("current_tool_call_id", default="")
 
 
 class Effect(enum.StrEnum):
@@ -466,7 +471,7 @@ class ToolRegistry:
         return [spec for _, spec in results[:limit]]
 
     def execute_tool(
-        self, name: str, args: dict[str, object], scope: object = None
+        self, name: str, args: dict[str, object], scope: object = None, *, tool_call_id: str = ""
     ) -> ToolResult:
         """Execute the registered tool and wrap the outcome.
 
@@ -489,6 +494,7 @@ class ToolRegistry:
                 **extra,
             )
 
+        identity = current_tool_call_id.set(tool_call_id)
         try:
             if scope is None:
                 value = spec.execute(**args)
@@ -513,6 +519,8 @@ class ToolRegistry:
                 failure_type=FailureType.TOOL_ERROR,
                 error_message=f"Error calling tool ({name}): {exc}",
             )
+        finally:
+            current_tool_call_id.reset(identity)
         return result(value, False)
 
 

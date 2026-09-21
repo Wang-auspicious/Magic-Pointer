@@ -23,6 +23,7 @@ assert.ok(start >= 0, 'conversation changes must update the current open convers
 const end = studio.indexOf('\n}\n', start) + 2;
 const calls = [];
 const recoveryCalls = [];
+let taskPaints = 0;
 let diskTurn = { question: 'What is here?', answer: 'Final disk answer' };
 const context = {
   activeConversationId: 'selection-c1',
@@ -32,10 +33,11 @@ const context = {
   conversationRefreshSequence: 0,
   pendingConversation: null,
   activeConversationTurnCount: 1,
+  inspectorState: { open: true }, activeInspectorTab: 'tasks',
   Data: { conversation: async id => ({ id, turns: [diskTurn] }) },
   followIfNearBottom: (_body, mutate) => mutate(),
   document: { getElementById: id => id === 'stream' ? {} : null },
-  syncExternalConversationRun() {}, renderUsageMeter() {}, renderProjectTasks() {},
+  syncExternalConversationRun() {}, renderUsageMeter() {}, renderProjectTasks() { taskPaints++; },
   renderConversationRecovery: async id => { recoveryCalls.push(id); },
   setActiveTaskContext() {},
   pendingPermissionAsk: null, pendingAskInput: null, renderPermissionAsk() {},
@@ -50,6 +52,10 @@ if (pendingStart >= 0) {
   await context.refreshOpenConversation(event);
   assert.equal(calls.at(-1).turns[0].liveProgress.answer, 'partial');
   assert.equal(recoveryCalls.length, 0, 'streaming chunks must not query recovery state');
+  assert.equal(taskPaints, 1, 'external child progress must refresh the visible Tasks panel');
+  context.inspectorState.open = false;
+  await context.refreshOpenConversation(event);
+  assert.equal(taskPaints, 1, 'hidden Tasks panel must not paint each external snapshot');
   await context.refreshOpenConversation({ id: 'selection-c1' });
   assert.equal(calls.at(-1).turns[0].answer, 'Final disk answer');
   assert.deepEqual(recoveryCalls, ['selection-c1'], 'a settled task refreshes its recovery panel');

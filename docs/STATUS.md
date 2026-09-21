@@ -1,5 +1,11 @@
 # 当前状态
 
+2026-09-20 **子 Agent 实时渲染修复已同步安装 1.0.50（沿用不升版本要求）**：思考/回答/工具活动绑定真实父调用ID，Studio与圈选共用持久trajectory；父调用行实时显示子任务活动，Tasks按稳定ID更新并保留展开态、展示工具输入输出/backend/耗时，思考结束正确更新长文预览。Chromium离线回归100块文字101次绘制→首批1次（含两子任务及后续更新总3次）；Node **262文件**、Python **2509 passed / 6条既有Pillow提示 / 218.24s**、lint/typecheck/build通过。`npm run sync` exit 0，21文件与开发树相同、7个进程来自安装目录，模型 deepseek-v4.1-flash；随包Python3.12.8导入校验通过。真实DS4.1多Agent联调被HTTP429阻断，未宣称成功；用户确认仅有云API，C2C尚无可执行的KV后端。Claude已取证真实编译JS，未取得原始TS/sourcemap。详情及边界：`docs/research/2026-09-20-subagent-streaming-delivery.md`、`docs/research/2026-09-20-c2c-feasibility.md`、`docs/research/2026-09-20-claude-streaming-reference.md`。
+
+2026-09-20 **启动 / 模型 / Work / Design 修复已同步安装 1.0.50（按用户要求不升版本）**：取消启动 OCR 与后台 Python 健康轮询，OCR 原生线程受控；模型标签使用 TS 本地配置并修复菜单竞态，安装 profile 对齐 deepseek-v4.1-flash；恢复 Canvas / Assets 样式及 100% 默认缩放。全量 Node 261 文件、Python 2507 passed、lint/typecheck/build 通过，sync done 且安装目录/进程独立核对通过。真实库147节点99ms，OCR CPU 时间38.22s→8.61s；不宣称全机OOM已复现。详见 `docs/research/2026-09-20-startup-model-canvas-fixes.md`。随后的子 Agent 实时渲染批次另行记录，C2C 在仅有云模型 API 的当前环境尚不能执行。
+
+2026-09-20 **1.0.50 复杂任务实机验收未全通过**：native computer use 操作已安装MP与真实Excel，执行四组场景，确认安装版会话桥在 `-I` 下导入失败（插话/优雅停止失效）、普通续问超过64 KiB、写后验证与重复读取保护冲突导致stalled；原生Excel工作流未生成xlsx，实际CSV打开出现乱码/循环引用H10。订单数值、文件读写、停止后持久上下文恢复及两版排期12项日期/依赖/费用核对通过，另有关键路径与UI状态表述错误。本轮仅验收定位，未改生产代码/未bump/未sync，安装版仍为1.0.50；完整证据与原始产物见 `docs/research/2026-09-20-desktop-complex-acceptance.md`。
+
 2026-09-20 **1.0.50 已安装交付**：CU01–27、RT-01–22、D01–21、OP01–15 共 **85 项落地修复**，Jev 免费候选接口接入并完成六例小对照；过程中分批推送 main，全部修复后只升一次版本（1.0.49→1.0.50）。`npm run verify` 与 `npm run sync` 内复测均通过：Python **2495 passed / 6 条旧Pillow弃用提示**（239.30s / 253.12s），Node **257 test files**，lint、全部TypeScript与构建通过。sync退出0，安装目录独立核对为1.0.50，7个进程均来自安装目录；随包Python能导入Jev/UIA worker/background worker/逆向补丁/恢复确认，且可读取既有OpenCode认证。Word/Excel/PPT临时文档原生验收通过；Figma仍未宣称原生验收。详见 `docs/research/2026-09-20-audit-fix-delivery.md`。以下“不 bump / 不 sync”仅是历史交付约束。
 
 现行产品决定：所有短任务、长任务均由 MP 自有 Runtime 执行；外部客户端仅是文本投递目标。文字与视觉沿用用户选中的模型，Jev `jev-1.13-free` 仅增加有限候选判断工具，使用独立 900 ms 等待预算、连接复用与低置信度退回；不更换用户主模型。当前回滚/长任务预算/模型席位以本段与 canonical 最新账本为准。下面的 1.0.32、L0/L1/L2、多模型席位、固定长任务天花板属于历史状态，已被后续实现取代。

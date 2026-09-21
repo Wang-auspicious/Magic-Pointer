@@ -102,6 +102,31 @@ assert.match(flow.textContent, /Final saved answer/, 'current conversation must 
 assert.doesNotMatch(flow.textContent, /Partial answer/);
 console.log('shared live turn incremental renderer tests ok');
 
+const thoughtHost = new TestNode('div');
+const thoughtLive = DshChat.createLiveTurn(thoughtHost);
+const longThought = 'Source inspection\n'.repeat(80);
+thoughtLive.update({ trajectory: [{ kind: 'message', turn: 1, reasoning: longThought, state: 'running' }] });
+const thoughtRoot = thoughtHost.querySelector('.dsh-think');
+thoughtRoot.setAttribute('data-open', 'true');
+thoughtLive.update({ trajectory: [{ kind: 'message', turn: 1, reasoning: longThought, state: 'done' }] });
+assert.equal(thoughtHost.querySelector('.dsh-think'), thoughtRoot);
+assert.equal(thoughtRoot.getAttribute('data-state'), 'ok', 'unchanged text must still settle thinking state');
+assert.equal(thoughtRoot.getAttribute('data-long'), 'true', 'completed streamed thought needs bounded preview');
+assert.equal(thoughtRoot.getAttribute('data-open'), 'true');
+assert.ok(thoughtRoot.querySelector('.dsh-think-more'));
+
+const agentHost = new TestNode('div');
+const agentLive = DshChat.createLiveTurn(agentHost);
+const agentRecord = { kind: 'tool', callId: 'pa', name: 'Agent', text: '{"task":"Check source"}', state: 'running',
+  subagent: { id: 'ca', parentCallId: 'pa', status: 'running', phase: 'thinking', reasoning: 'Tracing event source', stepCount: 0 } };
+agentLive.update({ trajectory: [agentRecord] });
+assert.match(agentHost.textContent, /Tracing event source/);
+const heartbeat = agentHost.querySelector('.dsh-subagent-heartbeat');
+agentRecord.subagent.reasoning += '\nFound the handler';
+agentLive.update({ trajectory: [agentRecord] });
+assert.equal(agentHost.querySelector('.dsh-subagent-heartbeat'), heartbeat, 'child token updates preserve the parent row');
+assert.match(agentHost.textContent, /Found the handler/);
+
 const trace = [
   { kind: 'message', turn: 1, text: 'I will inspect the files.', reasoning: 'First reasoning', state: 'done' },
   { kind: 'tool', callId: 'a', name: 'Read', text: '{"path":"a.pdf"}', result: 'file missing', isError: true, state: 'error' },

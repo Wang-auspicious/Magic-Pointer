@@ -114,42 +114,6 @@ from app.agent_runtime.activity_projection import (  # noqa: E402
 )
 
 
-def _emit_subagent_progress(clock: PhaseClock, payload: dict[str, Any]) -> None:
-    """Send one truthful, bounded child snapshot over the existing progress line."""
-    safe = dict(payload or {})
-    safe["id"] = str(safe.get("id") or "")[:120]
-    safe["description"] = str(safe.get("description") or "")[:600]
-    safe["currentTool"] = str(safe.get("currentTool") or "")[:120]
-    if "summary" in safe:
-        safe["summary"] = str(safe.get("summary") or "")[:1200]
-    steps = safe.get("steps") if isinstance(safe.get("steps"), list) else []
-    bounded_steps: list[dict[str, Any]] = []
-    for raw in steps[-12:]:
-        if not isinstance(raw, dict):
-            continue
-        step = {
-            "index": int(raw.get("index") or 0),
-            "tool": str(raw.get("tool") or "")[:120],
-            "status": str(raw.get("status") or "")[:40],
-        }
-        for key, limit in (
-            ("callId", 120),
-            ("input", 400),
-            ("output", 400),
-            ("usedBackend", 120),
-        ):
-            if raw.get(key):
-                step[key] = str(raw[key])[:limit]
-        if raw.get("latencyMs"):
-            step["latencyMs"] = float(raw["latencyMs"])
-        bounded_steps.append(step)
-    safe["steps"] = bounded_steps
-    blob = base64.b64encode(
-        json.dumps(safe, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    ).decode("ascii")
-    clock.mark_blob("subagent", blob)
-
-
 def _completed_result(
     mapped: dict[str, Any],
     *,
@@ -956,6 +920,12 @@ def answer_conversation(
             "process_name": str(window.get("app") or ""),
         },
         "command": agent_prompt,
+        # Permission answers / "continue" may name no app. Retain the user's
+        # task scope across turns, without promoting assistant/tool claims.
+        "task_instruction": "\n".join([
+            *(str(turn.get("question") or "") for turn in safe_turns if isinstance(turn, dict)),
+            prompt,
+        ]),
         "effort": normalize_effort(effort),
         "source_session_getter": lambda: source_session_cell["value"],
         "source_readers": source_readers,
@@ -1019,7 +989,7 @@ def answer_conversation(
 
     def _plan_completion_gate():
         steps = todo_store.read()
-        pending = [s for s in steps if s.get("status") != "completed"]
+        pending = [s for s in steps if s.get("status") in {"pending", "in_progress"}]
         if not pending or plan_nudges["count"] >= 2:
             return None
         plan_nudges["count"] += 1
@@ -1027,7 +997,8 @@ def answer_conversation(
         return (
             f"（计划门）计划还有 {len(pending)} 步未完成：{names}。"
             "继续执行；每做完一步调用 todo_write 把该步标为 completed、"
-            "正在做的标为 in_progress。全部完成后正常给出最终回答。"
+            "正在做的标为 in_progress。失败或缺少授权的步骤标blocked并说明原因，"
+            "用户取消的标cancelled，不要把尝试失败标为completed。"
         )
     agent_session = None
     activity_sink = None
@@ -1181,10 +1152,7 @@ def answer_conversation(
             conversation_clock,
             request_header=request_header,
         )
-        subagent_sink_cell["fn"] = lambda payload: _emit_subagent_progress(
-            conversation_clock,
-            payload,
-        )
+        subagent_sink_cell["fn"] = activity_sink.subagent_progress
         from app.agent_runtime.session import cancel_interrupt_check
         from app.desktop_actions.session import set_agent_cursor_sink
 
@@ -1321,7 +1289,9 @@ def answer_conversation(
 def main() -> int:
     force_utf8_stdio()
     try:
-        payload = read_bounded_json_payload()
+        # Conversation payloads carry retained scene evidence and legacy history;
+        # their local transport budget is distinct from a short control message.
+        payload = read_bounded_json_payload(max_bytes=8 * 1024 * 1024)
     except (PayloadTooLargeError, ValueError) as exc:
         write_json({"ok": False, "error": f"请求格式不对：{exc}"})
         return 2

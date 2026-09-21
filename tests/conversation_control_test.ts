@@ -41,6 +41,11 @@ assert.equal(transcript.trajectory[0].reasoning, 'first thought');
 assert.equal(transcript.trajectory[1].result, 'missing');
 assert.equal(transcript.trajectory[1].isError, true);
 assert.equal(transcript.trajectory[2].turn, 2);
+append('tool_call', { id: 'parent-a', name: 'Agent' });
+append('tool_call', { id: 'parent-b', name: 'Agent' });
+append('subagent', { b64: Buffer.from(JSON.stringify({ id: 'child-a', parentCallId: 'parent-a', reasoning: 'Inspecting A', status: 'running' })).toString('base64') });
+assert.equal(transcript.trajectory.find((r: any) => r.callId === 'parent-a').subagent.reasoning, 'Inspecting A');
+assert.equal(transcript.trajectory.find((r: any) => r.callId === 'parent-b').subagent, undefined);
 assert.deepStrictEqual(planConversationStop({ requestId: 'selection-request', agentSessionId: SELECTION_SESSION_ID }),
   { action: 'cancel', sessionId: SELECTION_SESSION_ID });
 assert.deepStrictEqual(planConversationSteer({ text: '继续看右侧', agentSessionId: SELECTION_SESSION_ID }),

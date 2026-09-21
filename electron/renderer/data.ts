@@ -500,7 +500,7 @@ declare global {
     onDictationResult?(cb: (payload: MagicPointerDictationResultPayload) => void): void;
     saveFabricSettings?(settings: unknown): Promise<unknown>;
     getFabricSettings?(): Promise<Record<string, unknown>>;
-    modelsCatalog?(): Promise<{ ok?: boolean; catalog?: MagicPointerModelCatalog; error?: string }>;
+    modelsCatalog?(options?: { refresh?: boolean }): Promise<{ ok?: boolean; catalog?: MagicPointerModelCatalog; error?: string }>;
     slashDirectory?(): Promise<MagicPointerSlashDirectory | { ok?: boolean; error?: string }>;
     selectModel?(model: unknown, profileId?: string): Promise<{ ok?: boolean; model?: string; error?: string }>;
     modelQuota?(options?: { force?: unknown }): Promise<{ ok?: boolean; quota?: MagicPointerQuotaReport; error?: string }>;
@@ -718,7 +718,7 @@ declare global {
     stopConversation(requestId: string): Promise<{ ok?: boolean; sessionId?: string; error?: string }>;
     steerConversation(agentSessionId: string, input: string | MagicPointerTaskInput, sources?: Record<string, unknown>[]): Promise<{ ok?: boolean; inputId?: string; status?: string; error?: string }>;
     onConversationProgress(callback: (payload: { requestId?: string; record?: Record<string, unknown> }) => void): void;
-    models(): Promise<MagicPointerModelCatalog | null>;
+    models(refresh?: boolean): Promise<MagicPointerModelCatalog | null>;
     slashDirectory(): Promise<MagicPointerSlashDirectory | null>;
     selectModel(model: string, profileId?: string): Promise<{ ok?: boolean; model?: string; error?: string }>;
     modelQuota(options?: { force?: boolean }): Promise<MagicPointerQuotaReport | null>;
@@ -1215,10 +1215,10 @@ const Data: MagicPointerDataApi = {
     bridge()?.conversations?.onProgress?.(callback);
   },
 
-  async models(): Promise<MagicPointerModelCatalog | null> {
+  async models(refresh = false): Promise<MagicPointerModelCatalog | null> {
     if (!hasBridge()) return null;
     try {
-      const response = await bridge()!.modelsCatalog?.();
+      const response = await bridge()!.modelsCatalog?.({ refresh });
       return response?.ok ? (response.catalog ?? null) : null;
     } catch {
       return null;

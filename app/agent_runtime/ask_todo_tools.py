@@ -114,7 +114,7 @@ def register_todo_write(
     """Register the CC-style plan tool; ``sink`` persists the plan (UI/log)."""
     registry.register_alias("todo_write", "Todo")
 
-    valid_statuses = ("pending", "in_progress", "completed")
+    valid_statuses = ("pending", "in_progress", "completed", "blocked", "cancelled")
 
     def execute(todos: list, scope: object = None) -> str:
         entries = []
@@ -139,7 +139,9 @@ def register_todo_write(
         name="Todo",
         description=(
             "维护本次任务的步骤清单。todos 是 [{content, status}]，"
-            "status 为 pending/in_progress/completed。用于多步任务时保持计划可见。"
+            "status 为 pending/in_progress/completed/blocked/cancelled。"
+            "只有目标实际完成才能标completed；工具失败或缺授权时标blocked，并在content写明阻塞原因。"
+            "用户取消的步骤标cancelled。不要为了结束回合把未完成步骤标completed。"
         ),
         input_schema={
             "type": "object",
@@ -150,7 +152,7 @@ def register_todo_write(
                         "type": "object",
                         "properties": {
                             "content": {"type": "string"},
-                            "status": {"type": "string"},
+                            "status": {"type": "string", "enum": list(valid_statuses)},
                         },
                         "required": ["content", "status"],
                     },

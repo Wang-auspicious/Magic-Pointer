@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import threading
 from pathlib import Path
 
@@ -882,6 +883,10 @@ def test_disabled_recipe_fails_closed_before_plan_creation(tmp_path: Path) -> No
 
 
 def test_plan_composes_target_lease_capture_policy_packet_and_bounded_capabilities(tmp_path: Path) -> None:
+    # A repo-local pytest temp directory otherwise inherits the entire developer
+    # repository, making component discovery scan unrelated real source files.
+    subprocess.run(["git", "init", "--quiet", str(tmp_path)], check=True, capture_output=True)
+    (tmp_path / ".gitignore").write_text("screen.png\n", encoding="utf-8")
     image = tmp_path / "screen.png"
     image.write_bytes(b"pixels")
     engine = FabricEngine(

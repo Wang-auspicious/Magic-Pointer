@@ -485,14 +485,14 @@ def main() -> int:
         if _published_worker_port() is not None:
             return 0
 
-        from rapidocr import RapidOCR
+        from app.perception.ocr_engine import create_ocr_engine
 
         # Model files may still be held by a previous worker process being torn
         # down; retry the engine load so a kill/restart race does not kill us.
         engine = None
         for attempt in range(6):
             try:
-                engine = RapidOCR()
+                engine = create_ocr_engine()
                 break
             except Exception as exc:
                 if attempt >= 5:

@@ -1521,8 +1521,9 @@ def _live_elements(hwnd: int) -> list[dict[str, Any]]:
 
 def _live_launch(app: str) -> dict[str, Any]:
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    subprocess.Popen([app], creationflags=flags)
-    return {"ok": True, "app": app}
+    executable = _resolve_app(app) or app
+    subprocess.Popen([executable], creationflags=flags)
+    return {"ok": True, "app": app, "executable": executable}
 
 
 def _live_uia(action: str, element: dict[str, Any], value: str | None = None) -> dict[str, Any]:
@@ -1531,13 +1532,45 @@ def _live_uia(action: str, element: dict[str, Any], value: str | None = None) ->
     return request({"operation": "act", "action": action, "element": element, "value": value}, scope=_ACTION_SCOPE.get())
 
 
+def _registered_app_path(name: str) -> str | None:
+    if os.name != "nt":
+        return None
+    import winreg
+
+    key = rf"Software\Microsoft\Windows\CurrentVersion\App Paths\{name}"
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        for view in (winreg.KEY_WOW64_64KEY, winreg.KEY_WOW64_32KEY):
+            try:
+                with winreg.OpenKey(hive, key, 0, winreg.KEY_READ | view) as entry:
+                    raw, _ = winreg.QueryValueEx(entry, "")
+                path = os.path.expandvars(str(raw).strip().strip('"'))
+                if Path(path).is_file():
+                    return path
+            except OSError:
+                continue
+    return None
+
+
+def _resolve_app(name: str) -> str | None:
+    import shutil
+
+    if Path(name).is_file():
+        return str(Path(name).resolve())
+    executable = shutil.which(name)
+    if executable:
+        return executable
+    if Path(name).name != name:
+        return None
+    return _registered_app_path(name if name.lower().endswith(".exe") else name + ".exe")
+
+
 def _known_app(name: str) -> bool:
     if not name:
         return False
     path = Path(name)
     if path.suffix.lower() == ".exe":
         return True
-    return path.is_file()
+    return _resolve_app(name) is not None
 
 
 def _window_id(window: dict[str, Any]) -> str:
@@ -1549,6 +1582,7 @@ def _window_id(window: dict[str, Any]) -> str:
 
 def _public_window(window: dict[str, Any]) -> dict[str, Any]:
     return {
+        **({"source_id": window["source_id"]} if window.get("source_id") else {}),
         "window_id": _window_id(window),
         "hwnd": window.get("hwnd"),
         "title": window.get("title"),

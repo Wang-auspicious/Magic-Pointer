@@ -868,6 +868,31 @@ DOM、COM、UIA、Fabric等现有模块也不自动保留，只优先保存经�
 
 ## 18. 进度账本
 
+### 2026-09-20：子 Agent 实时活动与思考渲染（1.0.50）
+
+- [x] 读取本机 Claude 2.110.0.0 真实编译JS，核实33/100/200ms合并调度、父工具ID关联与展开状态。未取得原始TS/sourcemap；生产实现独立编写。
+- [x] 子模型思考/输出/工具快照绑定 Runtime call.id，保存到父 trajectory，Studio/selection 共用投影；父行显示活动，Tasks 节点按稳定ID复用并显示工具证据，思考结束正确结算长文预览。
+- [x] 先红后绿与 Chromium 离线事件测试：100块增量101次绘制→首批1次；两子任务及后续更新总3次，内容完整，展开状态和DOM保持。证据 `docs/research/2026-09-20-subagent-streaming-delivery.md`。
+- [ ] 真实云模型协作验收：DS4.1 返回HTTP429，本批未宣称成功。C2C 官方KV融合要求自托管模型及匹配fuser，用户明确目前只有云API；未加入伪C2C能力。研究及实际接入条件见 `docs/research/2026-09-20-c2c-feasibility.md`。
+- [x] 最终 fresh 全门 lint / TypeScript / build 通过；Node **262 test files**，Python **2509 passed / 6条既有Pillow弃用提示 / 218.24s**。
+- [x] `npm run sync` exit 0，安装并重启 **1.0.50**；21个关键交付文件与开发树相同、7个进程来自安装目录、实际模型 deepseek-v4.1-flash。随包Python3.12.8导入校验通过，安装核对见 `data/runtime/subagent-streaming-20260920/installed-verification.json`。
+
+### 2026-09-20：启动资源、模型标签及 Work / Design 修复（1.0.50）
+
+- [x] 读取用户三张截图与上一任务 rollout JSONL，保留已有复杂任务修复。模型菜单刷新遗漏按钮投影、并发请求互相失效的竞态已有 Chromium 红绿回归；初始标签由 TS 读取本地配置，远程目录仅在打开菜单后获取，同步请求合并及短时复用，失败保留选择并报告错误。
+- [x] 删除启动 OCR 热身与每分钟 Python 健康轮询，保留显式识别及主动探测。三个 OCR 入口统一 ONNX 2 / 1、OpenCV 1 线程配置；本机单次对照峰值线程 72→26，累计 CPU 38.22s→8.61s。真实启动及打开 Studio 的测量不再产生 OCR / Fabric Python 子进程；不据此宣称整机所有卡顿或 OOM 已验证消失。
+- [x] Home / Code 改为 Work / Design，使用本地 Claude 原始 Workspace / Palette 字形。恢复缺失的收藏画布与列表样式，默认 100% 缩放，单一导航高亮，标题与说明不裁切。真实收藏库 147 节点通过生产 IPC 读取并渲染，99ms；未修改原材料。
+- [x] fresh 全量 lint / TypeScript / build 通过，Node **261 test files**，Python **2507 passed / 6 条既有 Pillow 弃用提示 / 341.86s**。真实截图 OCR 返回13块、4700ms，`usedBackend=rapidocr-onnx`，errors为空。安装版模型档案按用户选择对齐 `deepseek-v4.1-flash`。
+- [x] 沿用用户上一任务不升版本要求，`npm run sync` 已完成，开发树与安装版均 **1.0.50**；独立核对包内 OCR 工厂/worker 与开发树相同、收藏 CSS 存在、运行进程来自安装目录。详情及验证边界：`docs/research/2026-09-20-startup-model-canvas-fixes.md`。
+
+### 2026-09-20：1.0.50 安装版复杂任务实机验收（发现未闭环问题）
+
+- native computer use 实际操作 MP 与 Excel，执行订单对账/正常续问修复/停止恢复与原生 Excel/预算修订排期四组场景。使用独立合成文件，原始产物保存在 `artifacts/desktop-cu-20260920/originals/`。
+- 已确认安装版 `agent_session_bridge.py` 在 `-I` 下导入失败，插话与优雅停止失效；普通两回合会话打包后134499 bytes超出64 KiB，正常续问进不了模型；写后读回受验证门要求再次读取，随后重复证据保护使A4以stalled收尾。
+- 原生Excel工作流仍未闭环：Observe来源未授权、Focus/Launch失败，xlsx未生成；实际打开MP生成的CSV出现乱码与循环引用H10。不能以此前原生API临时文档验收推导此端到端场景通过。
+- 通过项：订单数值推导、文件落盘、crash repair后读取上下文恢复；两版排期12项的日期/依赖/费用独立核对通过。另发现关键路径遗漏、计划完成与失败结果冲突、工具活动归类及权限控制消息覆盖标题。
+- 本轮只验收定位，未改生产代码、未bump/sync，安装版仍1.0.50。复现、事件序号、timing/usedBackend与修复边界见 `docs/research/2026-09-20-desktop-complex-acceptance.md`。四组端到端场景均不能标记完全通过。
+
 ### 2026-09-20：85 项审计修复与 Jev 候选接口（1.0.50 已交付）
 
 - 审计编号以 `docs/research/2026-09-20-project-audit-and-jev.md` 为准；分批修复并 push main，最后统一升版本与 sync。

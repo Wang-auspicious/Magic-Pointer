@@ -73,3 +73,19 @@ data/runtime/uia-smoke.txt
 
 # Local reference/demo media not part of source release (design screenshots, videos)
 /参考/
+
+# Agent runtime state written into whatever directory it runs in
+/.mp/
+
+# Acceptance runs leave scratch profiles and intermediate workbooks behind.
+# Keep the reported results, drop the browser caches and per-run temp copies.
+data/acceptance-*/transcript-probe-profile/
+data/acceptance-*/Cache/
+data/acceptance-*/GPUCache/
+data/acceptance-*/DawnWebGPUCache/
+data/acceptance-*/DawnGraphiteCache/
+data/acceptance-*/Local Storage/
+
+# Unpacked Claude Desktop bundle kept only as read-only local reference.
+# It is third-party compiled code, not ours to redistribute in the repo.
+/参考claude设计/scraped/extras/

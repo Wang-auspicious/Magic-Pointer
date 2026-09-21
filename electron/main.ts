@@ -46,6 +46,7 @@ const { resolvePythonRuntime, pythonInvocationArgs, pythonSpawnEnvironment } = r
 const {
   isConversationSender,
   appendTranscript,
+  bridgeHistoryTurns,
   planConversationStop,
   planConversationSteer,
   sanitizePermissionRule,
@@ -2359,7 +2360,7 @@ async function sendConversation(raw: any = {}, sender?: Electron.WebContents): P
   const hadPendingWork = existing?.hasPendingWork === true;
   const payload = {
     question,
-    turns: Array.isArray(existing?.turns) ? existing.turns.slice(-12) : [],
+    turns: bridgeHistoryTurns(existing?.turns),
     object: existing?.object || {},
     modelRuntime,
     permissionPreset,
@@ -2637,7 +2638,7 @@ ipcMain.handle('conversations:rename', (event: Electron.IpcMainInvokeEvent, raw:
    空串：没有建议就是没有建议，绝不把报错画进输入框。 */
 ipcMain.handle('conversations:suggest', (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
   if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_renderer' };
-  const turns = Array.isArray(raw?.turns) ? raw.turns.slice(-12) : [];
+  const turns = bridgeHistoryTurns(raw?.turns);
   if (!turns.length) return { ok: true, suggestion: '' };
   const payload = {
     operation: 'suggest_next',
@@ -5146,8 +5147,8 @@ if (gotLock) app.whenReady().then(() => {
   });
   onboardingRequired = !onboardingReadiness.ready;
   initializeContextTrackers();
-  startModelHealthWatch();
-  setTimeout(warmUpOcrWorker, 2500);
+  // OCR starts only after explicit selection/task demand. Gateway checks are
+  // user-triggered; an idle desktop must not load models or spawn polling bridges.
   // 收藏箱要在应用就绪时就开始收，而不是等用户打开工作室。
   // 挂在 `stash:list` 上等于说「你不来看，我就不收」——而用户在微信里截图的
   // 那一刻，界面本来就不该开着。
@@ -5975,7 +5976,6 @@ let modelHealth = {
   baseUrl: '',
   checkedAt: 0,
 };
-let modelHealthTimer: NodeJS.Timeout | null = null;
 
 function broadcastModelHealth() {
   const payload = { ...modelHealth };
@@ -6006,13 +6006,6 @@ async function refreshModelHealth({ probe = false } = {}) {
   return modelHealth;
 }
 
-function startModelHealthWatch() {
-  if (modelHealthTimer) return;
-  setTimeout(() => { refreshModelHealth({ probe: true }); }, 1500);
-  modelHealthTimer = setInterval(() => { refreshModelHealth({ probe: false }); }, 60_000);
-  modelHealthTimer.unref?.();
-}
-
 ipcMain.handle('dashboard:session-timeline', async (event: Electron.IpcMainInvokeEvent) => {
   if (!isDashboardSender(event)) throw new Error('unauthorized_dashboard_sender');
   return {
@@ -6026,31 +6019,6 @@ ipcMain.handle('dashboard:model-health-refresh', async (event: Electron.IpcMainI
   const health = await refreshModelHealth({ probe: true });
   return { ok: true, health };
 });
-
-// Loading the OCR models is seconds; serving a request is milliseconds. Paying
-// that on the user's first command is the single largest avoidable chunk of
-// perceived latency, so the worker warms up while the app is still settling.
-let ocrWarmupStarted = false;
-
-function warmUpOcrWorker() {
-  if (ocrWarmupStarted) return;
-  ocrWarmupStarted = true;
-  const script = path.join(ROOT, 'scripts', 'ocr_resident_worker.py');
-  if (!fs.existsSync(script)) return;
-  try {
-    const child = spawn(PYTHON_EXECUTABLE, [script], {
-      cwd: ROOT,
-      detached: false,
-      windowsHide: true,
-      stdio: 'ignore',
-    });
-    child.on('error', (error: Error) => log(`ocr warmup failed ${error.name}: ${error.message}`));
-    child.unref?.();
-    log('ocr worker warmup started');
-  } catch (error) {
-    log(`ocr warmup spawn failed ${error instanceof Error ? error.name : 'Error'}`);
-  }
-}
 
 function runtimePermissionEvidence() {
   if (process.platform !== 'darwin') {
@@ -6099,6 +6067,7 @@ const quotaCache = new Map<string, { at: number; report: any }>();
 
 function invalidateRuntimeState(reason: string | null = null) {
   quotaCache.clear();
+  if (reason && /model|settings/.test(reason)) modelCatalogRefreshedAt = 0;
   const generation = runtimeSnapshot.invalidate(reason);
   safeSurfaceSend('dashboard', 'runtime-snapshot:changed', {
     generation,
@@ -6118,6 +6087,69 @@ function modelCredentialRef(profileId: unknown) {
 
 const discoveredModelCatalogs = new Map<string, { baseUrl: string; apiMode: string; models: any[] }>();
 let legacyModelCatalog: any[] = [];
+let modelCatalogRefresh: Promise<void> | null = null;
+let modelCatalogRefreshedAt = 0;
+const modelCatalogErrors = new Map<string, string>();
+
+function configuredModelCatalog(runtime: any) {
+  const read = (name: string) => {
+    if (process.env.MAGIC_POINTER_DISABLE_LOCAL_SECRETS === '1') return '';
+    for (const root of [ROOT, FABRIC_DATA_DIR]) {
+      try { return fs.readFileSync(path.join(root, 'secrets', name), 'utf8').replace(/^\uFEFF/, '').trim(); }
+      catch { /* Try the same next location as ai_client.read_local_secret. */ }
+    }
+    return '';
+  };
+  const current = runtime?.model || process.env.MAGIC_POINTER_MODEL || read('model.txt') || 'gpt-4o-mini';
+  const baseUrl = runtime?.baseUrl || process.env.OPENAI_BASE_URL || read('openai_base_url.txt');
+  let provider = runtime?.provider || '本地';
+  try {
+    const url = new URL(baseUrl);
+    const service = url.pathname.split('/').filter(Boolean)[0];
+    provider = url.hostname === 'opencode.ai' && ['go', 'zen'].includes(service)
+      ? `opencode-${service}` : url.hostname;
+  } catch { /* Local endpoints may have no URL. */ }
+  const discovered = runtime ? discoveredModelCatalogs.get(runtime.profileId) : null;
+  const cached = discovered?.baseUrl === runtime?.baseUrl && discovered?.apiMode === runtime?.apiMode
+    ? discovered?.models || [] : [];
+  const entries = runtime ? (runtime.models?.length ? runtime.models : cached) : legacyModelCatalog;
+  const models = entries.some((item: any) => item.id === current) ? entries : [{ id: current }, ...entries];
+  return { current, provider, source: 'config', error: modelCatalogErrors.get(runtime?.profileId || 'legacy') || '',
+    groups: [{ id: provider, name: provider, models }] };
+}
+
+async function getStudioModelCatalog(refresh = false) {
+  if (refresh && (modelCatalogRefresh || Date.now() - modelCatalogRefreshedAt > 60_000)) {
+    if (!modelCatalogRefresh) {
+      modelCatalogRefresh = collectModelCatalog(fabricSettings, credentialStore, async (runtime: any) => {
+        if (runtime?.models?.length) return configuredModelCatalog(runtime);
+        const key = runtime?.profileId || 'legacy';
+        try {
+          const parsed = await runPythonBridgePromise(
+            { operation: 'model.catalog', modelRuntime: runtime }, 'scripts/fabric_bridge.py',
+            { target: 'fabric-dashboard', timeoutMs: 12000 },
+          );
+          const result = parsed?.catalog;
+          if (!result) throw new Error('model_catalog_missing');
+          modelCatalogErrors.set(key, result.error || '');
+          const models = (result.groups || []).flatMap((group: any) => group.models || []);
+          if (result.source === 'gateway') {
+            if (runtime) discoveredModelCatalogs.set(runtime.profileId, { baseUrl: runtime.baseUrl, apiMode: runtime.apiMode, models });
+            else legacyModelCatalog = models;
+          }
+          return result;
+        } catch (error) {
+          modelCatalogErrors.set(key, error instanceof Error ? error.message : String(error));
+          return configuredModelCatalog(runtime);
+        }
+      }).then(() => { modelCatalogRefreshedAt = Date.now(); }).finally(() => { modelCatalogRefresh = null; });
+    }
+    await modelCatalogRefresh;
+  }
+  // Read the current selection after discovery settles; it may have changed
+  // while a directory request was in flight. Startup uses this local path only.
+  return collectModelCatalog(fabricSettings, credentialStore, async (runtime: any) => configuredModelCatalog(runtime));
+}
 
 function activeModelRuntimeConfig() {
   const runtime = resolveActiveModelRuntimeConfig(fabricSettings, credentialStore);
@@ -7062,27 +7094,10 @@ ipcMain.handle('slash:directory', async (event: Electron.IpcMainInvokeEvent) => 
   }
 });
 
-ipcMain.handle('models:catalog', async (event: Electron.IpcMainInvokeEvent) => {
+ipcMain.handle('models:catalog', async (event: Electron.IpcMainInvokeEvent, options: any = {}) => {
   if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_catalog_reader' };
   try {
-    const catalog = await collectModelCatalog(fabricSettings, credentialStore, async (runtime: any) => {
-      const parsed = await runPythonBridgePromise(
-        { operation: 'model.catalog', modelRuntime: runtime },
-        'scripts/fabric_bridge.py',
-        { target: 'fabric-dashboard', timeoutMs: 12000 },
-      );
-      const result = parsed?.catalog;
-      if (!result) throw new Error('model_catalog_missing');
-      if (runtime && !runtime.models.length && result.source === 'gateway') {
-        discoveredModelCatalogs.set(runtime.profileId, {
-          baseUrl: runtime.baseUrl, apiMode: runtime.apiMode,
-          models: (result.groups || []).flatMap((group: any) => group.models || []),
-        });
-      } else if (!runtime && result.source === 'gateway') {
-        legacyModelCatalog = (result.groups || []).flatMap((group: any) => group.models || []);
-      }
-      return result;
-    });
+    const catalog = await getStudioModelCatalog(options.refresh === true);
     return { ok: true, catalog };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : String(error) };

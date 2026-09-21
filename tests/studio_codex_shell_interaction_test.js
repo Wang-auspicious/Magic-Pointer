@@ -30,7 +30,9 @@ const openModel = source.slice(source.indexOf('async function openModelMenu'), s
 const positionPopover = source.slice(source.indexOf('function positionAnchoredPopover'), source.indexOf('interface StudioSubagentStep'));
 assert(positionPopover.indexOf('popup.hidden = false') >= 0, 'anchored popovers must become visible synchronously');
 assert(positionPopover.indexOf("aria-expanded', 'true") >= 0, 'popover triggers must expose their open state synchronously');
-assert(openModel.indexOf("positionAnchoredPopover('composer-model-menu', 'composer-model')") < openModel.indexOf('await Data.models()'),
+const catalogRead = openModel.indexOf('await Data.models(true)');
+assert(catalogRead >= 0, 'opening the menu must request remote discovery');
+assert(openModel.indexOf("positionAnchoredPopover('composer-model-menu', 'composer-model')") < catalogRead,
   'model menu visibility must not wait for the provider catalog');
 assert(!openModel.includes('btn.disabled = true'), 'model selector must remain responsive while the catalog refreshes');
 

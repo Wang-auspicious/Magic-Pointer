@@ -213,6 +213,10 @@ const DshChat = (() => {
   };
 
   const TOOL_TITLES: Record<string, string> = {
+    Todo: 'Updated plan', todo_write: 'Updated plan',
+    AskUser: 'Asked user', ask_user_question: 'Asked user',
+    Observe: 'Observed', get_app_state: 'Observed',
+    ListApps: 'Listed windows', ListWindows: 'Listed windows',
     pwsh: 'Ran',
     search: 'Searched',
     list_dir: 'Listed files in working directory',
@@ -224,8 +228,8 @@ const DshChat = (() => {
     bash: 'bash', pwsh: 'bash', read: 'read', web_fetch: 'read',
     web_search: 'search', grep: 'search', glob: 'search',
     write: 'write', edit: 'edit', run_code: 'code',
-    read_around: 'read', dump_subtree: 'read', get_focused: 'read', list_windows: 'read',
-    find_in_window: 'search', look: 'read', propose: 'code', execute_plan: 'code',
+    read_around: 'code', dump_subtree: 'code', get_focused: 'code', list_windows: 'code',
+    find_in_window: 'search', look: 'code', propose: 'code', execute_plan: 'code',
     // 生产 coding/delegate 工具名（图1 里模型真实调用的那些）。
     read_file: 'read', write_file: 'write', edit_file: 'edit',
     apply_patch: 'edit', run_command: 'bash', search: 'search',
@@ -233,12 +237,13 @@ const DshChat = (() => {
     // B5 改名后的规范名（旧名保留渲染历史会话的 replay）。
     Read: 'read', Write: 'write', Edit: 'edit', Patch: 'edit',
     Grep: 'search', Glob: 'search', Bash: 'bash', BashRead: 'bash',
-    Search: 'search', Fetch: 'read', Agent: 'code', Wait: 'read',
-    Observe: 'read', Look: 'read', Tree: 'read', Around: 'read',
-    Find: 'search', ListApps: 'read', ListWindows: 'read', GetFocus: 'read',
+    Search: 'search', Fetch: 'code', Agent: 'code', Wait: 'code',
+    Observe: 'code', Look: 'code', Tree: 'code', Around: 'code',
+    Find: 'search', ListApps: 'code', ListWindows: 'code', GetFocus: 'code',
     Launch: 'code', Focus: 'code', Click: 'code', Type: 'code',
     Key: 'code', Scroll: 'code', Drag: 'code', SetValue: 'code',
-    Act: 'code', Select: 'code', AskUser: 'read', Todo: 'read',
+    Act: 'code', Select: 'code', AskUser: 'code', Todo: 'code',
+    todo_write: 'code', ask_user_question: 'code', get_app_state: 'code',
     Recall: 'search', SaveSkill: 'write', Tools: 'search',
   };
 
@@ -432,7 +437,7 @@ const DshChat = (() => {
     const base = argsRaw === '' ? name : deriveSummary(variant, argsRaw);
     // 认不出的工具直接用自己的名字当标题——「Tool call ·」这种前缀和
     // 「· {}」这种尾巴都不提供任何信息，只是把行撑长。
-    const title = SUBAGENT_TOOLS.has(name)
+    const title = isBlockedResult(result) ? 'Blocked' : SUBAGENT_TOOLS.has(name)
       ? state === 'running' ? 'Running subagent' : 'Subagent'
       : TOOL_TITLES[name] ?? (variant === 'others' ? name : VARIANT_TITLES[variant]);
     const summary = variant === 'others' || name === 'list_dir' ? '' : base;
@@ -713,9 +718,9 @@ const DshChat = (() => {
     const viewport = h('div', { class: 'dsh-think-viewport' });
     attach(viewport, body);
     const isLong = !running && (reasoning.length > 420 || reasoning.split('\n').length > 8);
-    if (isLong) attach(viewport, h('span', { class: 'dsh-think-fade', 'aria-hidden': 'true' }));
+    attach(viewport, h('span', { class: 'dsh-think-fade', 'aria-hidden': 'true' }));
     const expandedBody: DshNode[] = [viewport];
-    if (isLong) {
+    {
       const more = h('button', { type: 'button', class: 'dsh-think-more' });
       more.setAttribute('data-dsh-act', 'think-more');
       attach(more, 'Show more');
@@ -737,6 +742,18 @@ const DshChat = (() => {
       root.setAttribute('data-expanded', 'false');
     }
     return root;
+  }
+
+  function updateThinkingState(node: HTMLElement, text: string, running: boolean): void {
+    node.setAttribute('data-state', running ? 'running' : 'ok');
+    node.querySelector('.dsh-title')!.textContent = running ? 'Thinking…' : 'Thought';
+    const summary = node.querySelector('.dsh-summary')!;
+    const preview = running ? latestLine(text) : firstLine(text);
+    if (summary.textContent !== preview) summary.textContent = preview;
+    if (running) summary.setAttribute('data-follow-end', 'true');
+    else summary.removeAttribute('data-follow-end');
+    node.setAttribute('data-long', String(!running && (text.length > 420 || text.split('\n').length > 8)));
+    if (node.getAttribute('data-expanded') === null) node.setAttribute('data-expanded', 'false');
   }
 
   /* ---- 消息动作行（悬停后才出现：时间 + 分支 + 复制） ---- */
@@ -985,6 +1002,7 @@ const DshChat = (() => {
     groupLabel?: string;
     displayLabel?: string;
     result?: { text: string; isError: boolean; interrupted?: boolean };
+    subagent?: Record<string, unknown>;
   }
 
   type FlowItem =
@@ -1017,7 +1035,21 @@ const DshChat = (() => {
       model.title = chip.displayLabel.trim();
       model.summary = '';
     }
-    return toolRowNode(model);
+    const node = toolRowNode(model);
+    if (SUBAGENT_TOOLS.has(chip.name)) {
+      attach(node, h('div', { class: 'dsh-subagent-heartbeat' }, subagentHeartbeat(chip.subagent)));
+    }
+    return node;
+  }
+
+  function subagentHeartbeat(child?: Record<string, unknown>): string {
+    if (!child) return '';
+    const phase = child.status !== 'running' ? String(child.status || '')
+      : child.currentTool ? String(child.currentTool) : child.phase === 'writing' ? 'Writing' : 'Thinking';
+    const preview = child.phase === 'writing' ? child.answer : child.reasoning;
+    return [phase, Number(child.stepCount) ? `${child.stepCount} tools` : '',
+      Number(child.elapsedMs) >= 1000 ? `${Math.floor(Number(child.elapsedMs) / 1000)}s` : '',
+      latestLine(String(preview || child.summary || ''))].filter(Boolean).join(' · ');
   }
 
   /* 连续同类读取/搜索折成一条组头（CC "Read 2 files" 契约）。 */
@@ -1080,11 +1112,21 @@ const DshChat = (() => {
 
   const GROUP_ORDER: readonly ToolVariant[] = ['bash', 'read', 'search', 'edit', 'write', 'code', 'others'];
 
+  function isBlockedResult(result?: { text?: string; isError?: boolean }): boolean {
+    return result?.isError === true && /permission[_ ](?:denied|required)|source access denied|not allowed/i.test(result.text || '');
+  }
+
   function failedCount(chips: TurnChip[]): number {
     return chips.filter((chip) => chip.result?.isError === true).length;
   }
 
   function toolGroupLabel(chips: TurnChip[]): string {
+    const blocked = chips.filter(chip => isBlockedResult(chip.result));
+    if (blocked.length) {
+      const executed = chips.filter(chip => !isBlockedResult(chip.result));
+      return `Blocked ${blocked.length} tool${blocked.length === 1 ? '' : 's'}`
+        + (executed.length ? `, ${toolGroupLabel(executed)}` : '');
+    }
     const explicit = chips.find((chip) => typeof chip.groupLabel === 'string' && chip.groupLabel.trim());
     if (explicit?.groupLabel) return explicit.groupLabel.trim();
     const counts = new Map<ToolVariant, number>();
@@ -1164,6 +1206,7 @@ const DshChat = (() => {
           name: String(record.name || 'tool'),
           argsRaw: String(record.text || ''),
           callId: String(record.callId || ''),
+          subagent: record.subagent as Record<string, unknown> | undefined,
           groupLabel: typeof record.groupLabel === 'string' ? record.groupLabel : undefined,
           displayLabel: typeof record.summary === 'string' ? record.summary : undefined,
           result: record.result !== undefined && record.result !== null
@@ -1386,13 +1429,26 @@ const DshChat = (() => {
           };
           snapshot.trajectory.forEach((record, index) => {
             if (record.kind === 'tool') {
-              chips.push({ name: String(record.name || 'tool'), callId: String(record.callId || index), argsRaw: String(record.text || ''),
-                result: record.result == null ? undefined : { text: String(record.result), isError: Boolean(record.isError) } });
+              const chip: TurnChip = { name: String(record.name || 'tool'), callId: String(record.callId || index), argsRaw: String(record.text || ''),
+                result: record.result == null ? undefined : { text: String(record.result), isError: Boolean(record.isError) } };
+              if (SUBAGENT_TOOLS.has(chip.name)) {
+                flush();
+                const key = `agent:${chip.callId}`;
+                render(key, chip, () => chipNode(chip));
+                const child = record.subagent as Record<string, unknown> | undefined;
+                const heartbeat = traceNodes.get(key)!.node.querySelector('.dsh-subagent-heartbeat')!;
+                const text = subagentHeartbeat(child);
+                if (heartbeat.textContent !== text) heartbeat.textContent = text;
+              } else chips.push(chip);
             } else if (record.kind === 'message') {
               if (!record.text && !record.reasoning) return;
               flush();
               const key = String(record.turn || index);
-              if (record.reasoning) render(`reasoning:${key}`, String(record.reasoning), () => thinkNode(String(record.reasoning), record.state === 'running'));
+              if (record.reasoning) {
+                const running = record.state === 'running' && !record.text;
+                render(`reasoning:${key}`, String(record.reasoning), () => thinkNode(String(record.reasoning), running));
+                updateThinkingState(traceNodes.get(`reasoning:${key}`)!.node, String(record.reasoning), running);
+              }
               if (record.text) render(`message:${key}`, String(record.text), () => h('div', { class: 'dsh-stream-live' }, String(record.text)));
             } else if (record.kind === 'notice') {
               flush();
@@ -1401,6 +1457,12 @@ const DshChat = (() => {
           });
           flush();
           if (!traceStatus) traceStatus = turnStatusNode('Thinking') as HTMLElement;
+          const activeChildren = snapshot.trajectory.filter(r => r.kind === 'tool' && SUBAGENT_TOOLS.has(String(r.name)) && r.state === 'running').length;
+          const activeTools = snapshot.trajectory.filter(r => r.kind === 'tool' && r.state === 'running').length;
+          const statusText = activeChildren ? `${activeChildren} subagent${activeChildren === 1 ? '' : 's'} working`
+            : activeTools ? 'Running tools' : snapshot.answer ? 'Writing' : 'Thinking';
+          const statusLabel = traceStatus.querySelector('.dsh-turn-status-label');
+          if (statusLabel && statusLabel.textContent !== statusText) statusLabel.textContent = statusText;
           desired.push(traceStatus);
           for (const child of Array.from(host.children)) if (!desired.includes(child as HTMLElement)) child.remove();
           desired.forEach((node, index) => { if (host.children[index] !== node) host.insertBefore(node, host.children[index] || null); });
@@ -1454,6 +1516,7 @@ const DshChat = (() => {
           const latestSummary = latestLine(nextThinking);
           if (summary.textContent !== latestSummary) summary.textContent = latestSummary;
           thinkingText = nextThinking;
+          updateThinkingState(thinking, nextThinking, !snapshot.answer);
           desired.push(thinking);
         }
         const nextAnswer = String(snapshot.answer || '');

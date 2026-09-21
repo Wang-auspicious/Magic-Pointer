@@ -18,7 +18,7 @@ assert(main.includes("operation: 'model.catalog'"), 'catalog must hit the fabric
 assert(main.includes("fs.writeFileSync(path.join(secretsDir, 'model.txt')"), 'legacy model selection must persist locally without a bridge cold start');
 assert(preload.includes('modelsCatalog'), 'preload must expose the catalog');
 assert(preload.includes('selectModel'), 'preload must expose the select');
-assert(data.includes('async models()'), 'Data facade must expose models()');
+assert(data.includes('async models(refresh = false)'), 'Data facade must expose a local catalog read with optional remote refresh');
 assert(data.includes('async selectModel('), 'Data facade must expose selectModel()');
 assert(studio.includes('openModelMenu'), 'the composer model seat must render the real directory');
 assert(studio.includes('Data.selectModel(modelId, profileId)'), 'picking a row must select its model and provider');

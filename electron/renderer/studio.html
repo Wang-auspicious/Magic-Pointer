@@ -13,6 +13,7 @@
   <link rel="stylesheet" href="studio_artifacts.css?v=1" />
   <link rel="stylesheet" href="assets/claude-reference/artifact-previews.css" />
   <link rel="stylesheet" href="studio_libraries.css?v=1" />
+  <link rel="stylesheet" href="studio_stash.css?v=1" />
 </head>
 <body class="studio">
   <div class="dshw-frame mp-shell" id="shell" data-view="chat" data-sidebar="expanded">
@@ -41,11 +42,11 @@
       <div class="dshw-sidebar">
         <div class="dshw-logo-row">
           <div class="mp-mode-segment" id="mode-switch" role="tablist" aria-label="工作模式">
-            <button type="button" id="mode-work" data-product-mode="design" role="tab" aria-selected="false">
-              <svg class="codex-icon" aria-hidden="true"><use href="#ic-list-checks" /></svg><span>Home</span>
+            <button type="button" id="mode-work" data-product-mode="walker" role="tab" aria-selected="true">
+              <span class="cds-icon" data-size="small" data-glyph="&#xE10C;" aria-hidden="true"></span><span>Work</span>
             </button>
-            <button type="button" id="mode-design" data-product-mode="walker" role="tab" aria-selected="true">
-              <span class="cds-icon" data-size="small" data-cds-anim="ANIM ANM2" data-glyph="&#xE048;" aria-hidden="true"></span><span>Code</span>
+            <button type="button" id="mode-design" data-product-mode="design" role="tab" aria-selected="false">
+              <span class="cds-icon" data-size="small" data-cds-anim="ANIM" data-glyph="&#xE0B8;" aria-hidden="true"></span><span>Design</span>
             </button>
           </div>
         </div>
@@ -76,7 +77,7 @@
         </button>
         </nav>
 
-        <nav class="mp-design-nav" aria-label="Cowork" hidden>
+        <nav class="mp-design-nav" aria-label="Design" hidden>
           <button type="button" data-goto="design"><svg class="codex-icon" aria-hidden="true"><use href="#ic-layout-grid" /></svg><span>Overview</span></button>
           <button type="button" data-goto="stash" data-design-layout="canvas"><svg class="codex-icon" aria-hidden="true"><use href="#ic-stash" /></svg><span>Canvas</span></button>
           <button type="button" data-goto="stash" data-design-layout="list"><svg class="codex-icon" aria-hidden="true"><use href="#ic-img" /></svg><span>Assets</span></button>

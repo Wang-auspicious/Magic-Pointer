@@ -3,8 +3,14 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 from typing import Any
+
+# Packaged Python runs with -I, which excludes the script directory.
+_BRIDGE_ROOT = Path(__file__).resolve().parents[1]
+if str(_BRIDGE_ROOT) not in sys.path:
+    sys.path.insert(0, str(_BRIDGE_ROOT))
 
 try:
     from scripts._bridge_common import (

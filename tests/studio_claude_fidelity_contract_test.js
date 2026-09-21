@@ -51,8 +51,8 @@ assert(html.includes('id="mode-work"') && html.includes('id="mode-design"'));
 assert(html.includes('id="studio-home"'));
 assert(html.includes('id="composer-workspace"'));
 for (const copy of [
-  'Cowork',
-  'Code',
+  'Work',
+  'Design',
   'New',
   'Customize',
   "What's up next, zjz65?",

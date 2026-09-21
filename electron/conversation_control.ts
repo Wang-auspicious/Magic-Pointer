@@ -105,6 +105,13 @@ const ConversationControl = (() => {
       const field = phase === 'answer_chunk' ? 'text' : 'reasoning';
       message[field] = String(message[field] || '') + text;
       transcript[phase === 'answer_chunk' ? 'answer' : 'thinking'] = String(message[field]);
+    } else if (phase === 'subagent') {
+      try {
+        const child = JSON.parse(decodeBlob(fields));
+        const parent = transcript.trajectory.find(item => item.kind === 'tool' && item.callId === child.parentCallId);
+        if (!parent || !child.id) return false;
+        parent.subagent = child;
+      } catch { return false; }
     } else if (phase === 'model_usage') {
       try {
         const usage = JSON.parse(decodeBlob(fields));
@@ -219,6 +226,16 @@ const ConversationControl = (() => {
       : currentText;
   }
 
+  /** Runtime owns the lossless transcript; only legacy text and scene evidence cross here. */
+  function bridgeHistoryTurns(turns: unknown): Array<Record<string, unknown>> {
+    if (!Array.isArray(turns)) return [];
+    return turns.slice(-12).map(turn => ({
+      question: String(turn?.question || ''),
+      answer: String(turn?.answer || ''),
+      ...(turn?.evidence && typeof turn.evidence === 'object' ? { evidence: turn.evidence } : {}),
+    }));
+  }
+
   async function callConversationAction(
     action: () => Promise<{ ok?: boolean; error?: string }>,
   ): Promise<{ ok: boolean; error: string }> {
@@ -241,6 +258,7 @@ const ConversationControl = (() => {
     createTranscript,
     appendTranscript,
     failedDraftValue,
+    bridgeHistoryTurns,
     isConversationSender,
     callConversationAction,
     planStepsFromRecord,

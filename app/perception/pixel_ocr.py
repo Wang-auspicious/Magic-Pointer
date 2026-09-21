@@ -467,9 +467,9 @@ def _rapid_ocr() -> Any:
     """Reuse one RapidOCR engine across calls; model init costs ~9s."""
     global _RAPID_OCR_INSTANCE
     if _RAPID_OCR_INSTANCE is None:
-        from rapidocr import RapidOCR
+        from app.perception.ocr_engine import create_ocr_engine
 
-        _RAPID_OCR_INSTANCE = RapidOCR()
+        _RAPID_OCR_INSTANCE = create_ocr_engine()
     return _RAPID_OCR_INSTANCE
 
 

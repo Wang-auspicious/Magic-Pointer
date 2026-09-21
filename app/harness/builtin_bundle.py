@@ -342,6 +342,20 @@ def _apply_desktop_action_tools(fork, config: dict[str, Any]) -> None:
         origin_window_hwnd=int(config.get("origin_window_hwnd") or 0) or None,
     )
     source_session_getter = config.get("source_session_getter")
+    original_windows_probe = session.windows_probe
+
+    def task_windows():
+        from app.context_pack.desktop_binding import bind_named_windows
+
+        windows = original_windows_probe()
+        active = source_session_getter() if callable(source_session_getter) else None
+        if active is None:
+            return windows
+        sources = bind_named_windows(active, str(config.get("task_instruction") or ""), windows)
+        by_hwnd = {source.identity["hwnd"]: source.source_id for source in sources}
+        return [{**window, **({"source_id": by_hwnd[window["hwnd"]]} if window.get("hwnd") in by_hwnd else {})} for window in windows]
+
+    session.windows_probe = task_windows
 
     def resolve_task_source(source_id: str):
         active = source_session_getter() if callable(source_session_getter) else None
@@ -446,6 +460,10 @@ def _apply_desktop_action_tools(fork, config: dict[str, Any]) -> None:
         )
 
     def observe_access(args: dict[str, Any]):
+        # Enumerate metadata to bind a named target even when Observe is the
+        # first desktop tool call; deep reads still occur after scope checks.
+        if callable(source_session_getter):
+            session.windows_probe()
         source_id = str(args.get("source_id") or "").strip()
         if not source_id and callable(source_session_getter):
             source_id = infer_bound_source_id(str(args.get("window_id") or "") or None)
@@ -1054,6 +1072,7 @@ def _run_loop_rows(runtime: dict[str, Any], root: Path) -> list[BundleRow]:
                 # 否则一旦气泡抢走前台，"观察一下"读到的是桌面。
                 "origin_window_hwnd": int(window.get("hwnd") or 0),
                 "source_session_getter": runtime.get("source_session_getter"),
+                "task_instruction": runtime.get("task_instruction", ""),
             },
         ),
         BundleRow(
@@ -1208,6 +1227,7 @@ def boot_loop_context(
             {
                 "origin_window_hwnd": int(window.get("hwnd") or 0),
                 "source_session_getter": runtime.get("source_session_getter"),
+                "task_instruction": runtime.get("task_instruction", ""),
             },
         ),
         BundleRow(

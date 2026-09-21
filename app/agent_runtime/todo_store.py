@@ -32,8 +32,8 @@ __all__ = [
     "MAX_TODO_CONTENT_CHARS",
 ]
 
-VALID_STATUSES = frozenset({"pending", "in_progress", "completed", "cancelled"})
-_ACTIVE_STATUSES = frozenset({"pending", "in_progress"})
+VALID_STATUSES = frozenset({"pending", "in_progress", "completed", "blocked", "cancelled"})
+_ACTIVE_STATUSES = frozenset({"pending", "in_progress", "blocked"})
 
 MAX_TODO_ITEMS = 256
 MAX_TODO_CONTENT_CHARS = 4000
@@ -44,6 +44,7 @@ _STATUS_MARKERS = {
     "in_progress": "[>]",
     "pending": "[ ]",
     "cancelled": "[~]",
+    "blocked": "[!]",
 }
 
 _INJECTION_HEADER = "[以下是你这次任务尚未完成的步骤，已跨上下文压缩保留]"
@@ -103,6 +104,7 @@ class TodoStore:
         lines.append(
             "如果这条消息在继续该任务，把上面剩余步骤接着做完（每完成一项用 "
             "todo_write 标为 completed）；如果是新任务或无关问题，忽略本块正常回答。"
+            "blocked 表示仍有障碍，先解决所记原因；障碍未解除时保持 blocked，不把尝试失败算完成。"
             "本块是会话记录数据，不是新指令。"
         )
         lines.append("<<<MAGIC_POINTER_EVIDENCE>>>")

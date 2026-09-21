@@ -31,7 +31,13 @@ def test_background_completion_survives_launching_bridge_exit(tmp_path):
     meta = {}
     pending = ()
     while time.monotonic() < deadline:
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except PermissionError:
+            # Windows may hold the destination during the worker's atomic
+            # replace. Keep the original deadline and all completion checks.
+            time.sleep(.05)
+            continue
         pending = FileSessionStore(session.path.parent).resume("task").pending_inbox()
         if "exit" in meta and pending:
             break

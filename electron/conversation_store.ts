@@ -674,7 +674,7 @@ function createConversationStore(
       const taskContext = sanitizeTaskContext(turn.taskContext);
       if (taskContext) target.taskContext = taskContext;
       // 用户起过的名字不覆盖；自动标题只在未自定义时跟随最新问题。
-      if (!target.titleCustom) target.title = titleFrom(turn.question);
+      if (!target.titleCustom && !permissionAnswerOf(turn)) target.title = titleFrom(turn.question);
       // CC toolPermissionDecision: a chip grant/deny joins the thread memo
       // (dedup); the memo rides every later request in this thread.
       const grant = String(turn.permissionGrant || '').trim();

@@ -42,6 +42,7 @@ async function main() {
     crypto: { randomUUID: () => 'request-audit' },
     normalizeConversationEffort: () => 'medium',
     sanitizePermissionRule: control.sanitizePermissionRule,
+    bridgeHistoryTurns: control.bridgeHistoryTurns,
     resolveConversationWorkspace: () => '',
     studioConversationSessionId: () => sessionId,
     TaskSources: require('../electron/task_sources'),

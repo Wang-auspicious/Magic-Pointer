@@ -13,6 +13,8 @@ are reversible_write (allowed in default), shell is local_irreversible
 from __future__ import annotations
 
 import difflib
+import csv
+import io
 import fnmatch
 import hashlib
 import json
@@ -1382,6 +1384,26 @@ def register_coding_tools(
             )
         return text
 
+    def encoded_file_content(target: Path, text: str) -> bytes:
+        if target.suffix.lower() != ".csv":
+            return text.encode("utf-8")
+        rows = list(csv.reader(io.StringIO(text.lstrip("\ufeff"), newline=""), strict=True))
+        width = next((len(row) for row in rows if row), 0)
+        for index, row in enumerate(rows, 1):
+            if row and len(row) != width:
+                raise ValueError(f"CSV row {index} has {len(row)} columns; expected {width}. "
+                                 "Keep empty cells and quote fields containing commas before writing.")
+        output = io.StringIO(newline="")
+        csv.writer(output, lineterminator="\r\n").writerows(rows)
+        return output.getvalue().encode("utf-8-sig")
+
+    def write_receipt(target: Path, expected: bytes, message: str) -> str:
+        if target.read_bytes() != expected:
+            raise OSError(f"File readback did not match written bytes: {space.display(target)}")
+        return json.dumps({"message": message, "path": space.display(target),
+                           "verification": {"matched": True, "method": "file_bytes_readback",
+                                            "scope": "persistence_only"}}, ensure_ascii=False)
+
     def write_file(path: str, content: str, **_: Any) -> str:
         target = space.resolve(path)
         _device_guard(target)
@@ -1392,12 +1414,12 @@ def register_coding_tools(
                 raise ValueError(
                     f"Write refused: {_gate_message(freshness, space.display(target))}"
                 )
+        encoded = encoded_file_content(target, str(content or ""))
         checkpoints.record(target, existed=target.exists())
         target.parent.mkdir(parents=True, exist_ok=True)
-        text = str(content or "")
-        target.write_text(text, encoding="utf-8", newline="\n")
+        target.write_bytes(encoded)
         _state_mark_written(store, target)
-        return f"wrote {len(text.encode('utf-8'))} bytes to {space.display(target)}"
+        return write_receipt(target, encoded, f"wrote {len(encoded)} bytes to {space.display(target)}")
 
     def edit_file(
         path: str,
@@ -1468,12 +1490,13 @@ def register_coding_tools(
             raw = raw[:span_start] + replacement + raw[span_end:]
         if newline != "\n":
             raw = raw.replace("\n", newline)
-        with target.open("w", encoding="utf-8", newline="") as handle:
-            handle.write(("\ufeff" + raw) if bom else raw)
+        encoded = encoded_file_content(target, ("\ufeff" + raw) if bom else raw)
+        target.write_bytes(encoded)
         _state_mark_written(store, target)
         _read_guard_reset(store)
         suffix = f" [{note}]" if note else ""
-        return f"edited {space.display(target)} ({len(planned)} replacement(s)){suffix}"
+        return write_receipt(target, encoded,
+                             f"edited {space.display(target)} ({len(planned)} replacement(s)){suffix}")
 
     def apply_patch(patch: str | list[str], **_: Any) -> str:
         from app.agent_runtime.apply_patch import ApplyPatchError, apply_patch_text
@@ -1686,6 +1709,8 @@ def register_coding_tools(
         description=(
             "在工作区内创建或整体覆盖一个文本文件。修改现有文件优先用 "
             "Edit（精确替换），整体重写才用这个。"
+            "CSV会检查列数并保存为UTF-8 BOM/CRLF，便于Excel直接打开。"
+            "返回的验证只证明内容已落盘，不证明计算、公式或应用内显示正确；后者仍须按任务核对。"
         ),
         input_schema={
             "type": "object",

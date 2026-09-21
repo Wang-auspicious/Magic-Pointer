@@ -62,7 +62,9 @@ def test_delegate_emits_truthful_child_progress(monkeypatch, tmp_path) -> None:
     assert str(result.value).startswith(
         "[subagent id=child-fixed status=completed steps=1]"
     )
-    assert emitted[0] == {
+    assert {key: emitted[0][key] for key in (
+        "id", "description", "readonly", "status", "stepCount", "currentTool", "steps"
+    )} == {
         "id": "child-fixed",
         "description": "审查设置页",
         "readonly": True,
@@ -114,3 +116,46 @@ def test_builtin_delegate_row_forwards_visual_progress_sink(monkeypatch, tmp_pat
     )
 
     assert captured["subagent_event_sink"] is sink
+
+
+def test_parallel_children_stream_before_tools_and_keep_parent_identity(monkeypatch, tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    from app.fabric import engine as engine_module
+
+    barrier = Barrier(2)
+    emitted = []
+
+    def run(prompt, event_sink, **kwargs):
+        barrier.wait(timeout=5)
+        event_sink(SimpleNamespace(kind="turn_started", turn=1))
+        event_sink(SimpleNamespace(kind="reasoning_chunk", text=f"thinking {prompt}"))
+        assert any(p.get("reasoning") == f"thinking {prompt}" for p in emitted)
+        for _ in range(100):
+            event_sink(SimpleNamespace(kind="model_chunk", text="x"))
+        return Terminal(reason=TransitionReason.COMPLETED, message=prompt, turns=1, results=())
+
+    monkeypatch.setattr(engine_module, "run_agent_turn", run)
+    provider = SimpleNamespace(create_client=lambda **_: SimpleNamespace(model="test-model"))
+    registry = ToolRegistry()
+    register_delegate_tool(registry, llm_provider=provider, workspace_root=tmp_path, subagent_event_sink=emitted.append)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda task: registry.execute_tool("Agent", {"task": task, "readonly": True}, tool_call_id=task), ["a", "b"]))
+    assert all(not r.is_error for r in results)
+    assert len(emitted) < 20, "token bursts must coalesce instead of serializing every snapshot"
+    for task in ("a", "b"):
+        child = [p for p in emitted if p["description"] == task]
+        assert child and all(p["parentCallId"] == task for p in child)
+        assert child[-1]["answer"] == "x" * 100, "terminal snapshot must flush the last tokens"
+        assert child[-1]["reasoning"] == f"thinking {task}"
+        assert child[-1]["elapsedMs"] >= 0
+
+
+def test_child_progress_survives_completed_parent_trajectory():
+    from app.agent_runtime.activity_projection import RuntimeActivitySink, completed_trajectory
+    clock = SimpleNamespace(mark=lambda *a, **k: 0, mark_blob=lambda *a: 0)
+    sink = RuntimeActivitySink(clock)
+    sink(SimpleNamespace(kind="tool_call_started", id="parent", name="Agent", arguments={"task": "audit"}))
+    sink.subagent_progress({"id": "child", "parentCallId": "parent", "status": "completed", "reasoning": "Read sources"})
+    records = completed_trajectory({"answer": "done"}, sink.trajectory)
+    assert next(r for r in records if r.get("callId") == "parent")["subagent"]["reasoning"] == "Read sources"

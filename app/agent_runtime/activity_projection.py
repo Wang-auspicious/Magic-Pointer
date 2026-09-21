@@ -139,6 +139,27 @@ class RuntimeActivitySink:
         self.trajectory.append(record)
         return record
 
+    def subagent_progress(self, payload: dict[str, Any]) -> None:
+        """Attach child telemetry to its real parent, also in the saved trace."""
+        parent = self._trajectory_tools.get(str(payload.get("parentCallId") or ""))
+        safe = dict(payload)
+        for key, limit in (("id", 120), ("parentCallId", 120), ("description", 600),
+                           ("currentTool", 120), ("summary", 1200)):
+            if key in safe:
+                safe[key] = str(safe[key] or "")[:limit]
+        for key in ("reasoning", "answer"):
+            if key in safe:
+                safe[key] = str(safe[key] or "")[-6000:]
+        safe["steps"] = [{
+            **step,
+            **{key: str(step[key])[:limit] for key, limit in
+               (("input", 400), ("output", 400), ("usedBackend", 120)) if key in step},
+        } for step in payload.get("steps", [])[-12:] if isinstance(step, dict)]
+        if parent is not None:
+            parent["subagent"] = safe
+        blob = base64.b64encode(json.dumps(safe, ensure_ascii=False, separators=(",", ":")).encode("utf-8")).decode("ascii")
+        self.clock.mark_blob("subagent", blob)
+
     def __call__(self, event: Any) -> None:
         kind = str(getattr(event, "kind", ""))
         if kind == "loop_stopped":

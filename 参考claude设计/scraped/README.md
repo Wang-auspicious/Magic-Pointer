@@ -1,5 +1,7 @@
 # scraped — claude.ai 抓取产物（2026-09-17）
 
+> 2026-09-18 补采：Claude Desktop **2.110.0.0** 的完整页面资源位于 `resources/ion-dist`，并不在 `app.asar`。已取得精确图标 hover/active/Code loop 参数、完整 310 名字→码点目录、Projects/Artifacts/Scheduled 原始矢量插画、Scheduled 悬停微界面与 Artifacts 动态缩略图源码。见 [补采来源与参数](extras/desktop-2.110.0.0/README.md)。原字体逐字节一致。下文对旧安装包“业务内容不在本地包”的结论不适用于新版；页面实时访问/付费边界仍未由这次本地提取消除。
+
 - viewport 1037×879，dpr 2，系统缩放 100%（Windows Chrome 152）。
 - 页面：https://claude.ai/new（Free 账号；`/code` 对 Free 付费墙，见下）。
 - 账号：用户自有账号空会话；文本已脱敏（`«text»`/`«redacted»`），无 cookie/token/org id/对话内容。

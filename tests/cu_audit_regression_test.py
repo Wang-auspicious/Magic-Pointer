@@ -52,6 +52,7 @@ def test_native_focus_restores_window_and_checks_actual_foreground():
     driver.activate(42)
     assert calls == [("restore", 42, 9), ("focus", 42)]
     driver.foreground_window = lambda: 99
+    driver._activate_with_input_thread = lambda hwnd: None
     with pytest.raises(RuntimeError, match="focus"): driver.activate(42)
 
 

@@ -38,7 +38,7 @@ def test_subagent_progress_uses_lossless_bounded_blob() -> None:
         "currentTool": "Read",
         "steps": [{"index": 1, "tool": "Read", "status": "running"}],
     }
-    conversation_bridge._emit_subagent_progress(clock, payload)
+    conversation_bridge._ConversationActivitySink(clock).subagent_progress(payload)
     assert clock.blobs[0][0] == "subagent"
     decoded = json.loads(base64.b64decode(clock.blobs[0][1]).decode("utf-8"))
     assert decoded == payload
@@ -587,6 +587,7 @@ def _install_workspace_boot_stubs(
         builtin_bundle, "boot_loop_context", lambda runtime, root=None: captured.update(
             workspace_root=runtime.get("workspace_root"),
             advanced_tools=runtime.get("advanced_tools"),
+            task_instruction=runtime.get("task_instruction"),
         ) or report
     )
 
@@ -603,6 +604,19 @@ def _install_workspace_boot_stubs(
 
     import app.fabric.loop_answer as loop_answer
     monkeypatch.setattr(loop_answer, "terminal_to_answer", lambda terminal, prompt: {"answer": "好了"})
+
+
+def test_permission_continuation_retains_the_users_named_desktop_target(monkeypatch):
+    captured = {}
+    _install_workspace_boot_stubs(monkeypatch, captured)
+    result = conversation_bridge.answer_conversation(
+        "Allow Launch and continue",
+        [{"question": "用Excel创建工作簿", "answer": "Maybe use Notepad instead"}],
+        {}, "workspace-write", clock=_FakeClock(), permission_grant_once=("Launch",),
+    )
+    assert result["ok"]
+    assert "Excel" in captured["task_instruction"]
+    assert "Notepad" not in captured["task_instruction"]
 
 
 def test_resume_projection_failure_is_visible_and_stops_the_new_turn(monkeypatch):
@@ -1158,7 +1172,7 @@ def test_permission_grants_from_the_payload_reach_the_loop(monkeypatch, tmp_path
     monkeypatch.setattr(
         conversation_bridge,
         "read_bounded_json_payload",
-        lambda: {
+        lambda *, max_bytes: {
             "question": "跑测试",
             "permissionPreset": "workspace-write",
             "permissionGrants": ["run_command"],
@@ -1194,7 +1208,7 @@ def test_effort_from_payload_reaches_conversation_runtime(monkeypatch) -> None:
     monkeypatch.setattr(
         conversation_bridge,
         "read_bounded_json_payload",
-        lambda: {
+        lambda *, max_bytes: {
             "question": "认真分析",
             "permissionPreset": "workspace-write",
             "effort": "xhigh",

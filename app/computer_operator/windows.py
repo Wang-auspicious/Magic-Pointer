@@ -145,6 +145,12 @@ class Win32InputDriver:
         self._approach_observer = approach_observer
         self._cancel_check: Callable[[], None] | None = None
         self._user32 = ctypes.windll.user32
+        self._kernel32 = ctypes.windll.kernel32
+        self._user32.SetForegroundWindow.argtypes = [ctypes.wintypes.HWND]
+        self._user32.GetWindowThreadProcessId.argtypes = [ctypes.wintypes.HWND, ctypes.POINTER(ctypes.wintypes.DWORD)]
+        self._user32.GetWindowThreadProcessId.restype = ctypes.wintypes.DWORD
+        self._user32.AttachThreadInput.argtypes = [ctypes.wintypes.DWORD, ctypes.wintypes.DWORD, ctypes.wintypes.BOOL]
+        self._user32.BringWindowToTop.argtypes = [ctypes.wintypes.HWND]
         self._user32.SendInput.argtypes = [
             ctypes.wintypes.UINT,
             ctypes.POINTER(_Input),
@@ -200,7 +206,24 @@ class Win32InputDriver:
             self._user32.ShowWindow(hwnd, 9)  # SW_RESTORE
         self._user32.SetForegroundWindow(hwnd)
         if self.foreground_window() != int(hwnd):
+            self._activate_with_input_thread(hwnd)
+        if self.foreground_window() != int(hwnd):
             raise RuntimeError("window_focus_failed")
+
+    def _activate_with_input_thread(self, hwnd: int) -> None:
+        """Temporarily share the foreground input queue for a focus handoff."""
+        current = self._kernel32.GetCurrentThreadId()
+        foreground = self._user32.GetWindowThreadProcessId(self.foreground_window(), None)
+        if not foreground or foreground == current:
+            return
+        attached = self._user32.AttachThreadInput(current, foreground, True)
+        if not attached:
+            return
+        try:
+            self._user32.BringWindowToTop(hwnd)
+            self._user32.SetForegroundWindow(hwnd)
+        finally:
+            self._user32.AttachThreadInput(current, foreground, False)
 
     def _position(self, point: tuple[int, int]) -> None:
         if not self._user32.SetCursorPos(int(point[0]), int(point[1])):
