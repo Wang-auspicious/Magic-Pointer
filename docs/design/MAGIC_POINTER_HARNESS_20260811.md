@@ -87,7 +87,7 @@ Magic Pointer 的鼠标唤醒、划线、圈选、多选、短录屏，不是聊
 6. GPU 帧缓冲、OCR、CDP 和应用深度读取只在鼠标唤醒、快捷键或明确任务出现后临时启用。
 7. UIA、OCR、模型、Connector 都要尽可能快、低成本；速度不能靠返回错误上下文换取。
 8. 规则用于确定性不变量和完全匹配的快路径；模型用于语义、组合和不确定规划；证据不足时交给人。
-9. 最终文本是可编辑产物，用户可以手工修改，也可以选中小段让 Agent 局部编辑。
+9. 用户需要单独保存、编辑或复用的交付物是可编辑产物，用户可以手工修改，也可以选中小段让 Agent 局部编辑；普通回答不自动创建产物（2026-09-21 用户裁决）。
 10. 不受现有实现约束。允许跨模块重写和大改，只要新设计更正确、更可扩展且通过验证。
 11. 现成 Pi、Kimi CU、Clicky、Everywhere、OpenCLI、OfficeCLI、MCP、Skill 代码和机制优先审计复用，禁止无意义重造。
 12. 复用前必须审查实现、性能、许可证、失败语义和扩展边界；不能只看模块名字或现有测试数量。
@@ -596,7 +596,7 @@ lease/observe -> act -> stabilize -> verify -> receipt
 
 ### 12.3 DraftArtifact
 
-文本结果必须是版本化可编辑产物：
+独立文本交付物使用版本化可编辑产物。普通问答、解释、进度、计划更新、澄清和权限请求留在对话或其专用交互中，不因一轮结束自动生成产物。Agent 通过显式 `Artifact.create/read/update` 创建或修改用户需要的独立稿件；实际文件继续由文件工具交付。读取产物不产生新卡片，修改沿用同一 artifactId 并校验当前 revision；本地创建不等于发布。
 
 ```ts
 interface DraftArtifact {
@@ -867,6 +867,15 @@ DOM、COM、UIA、Fabric等现有模块也不自动保留，只优先保存经�
 - Reject保留可编辑产物，不丢上下文。
 
 ## 18. 进度账本
+
+### 2026-09-21：审批、反问、计划与产物交互修复（1.0.50 开发树）
+
+- [x] 按用户新裁决更正 §12.3：只有独立交付物使用 DraftArtifact；移除最终回复自动生成产物，提供显式 Artifact.create/read/update，当前轮创建/修改才呈现产物卡，读取不造新产物，版本冲突保留用户修改。
+- [x] AskUser 多题与专用结构化回答写入原 requestId，模型投影替换原工具结果。Skip 明确记录，无需新用户消息；一次授权绑定实际调用，指定 Bash 前缀拒绝生效。接受成功与之后模型成功分开记录，恢复不复活已回答卡。
+- [x] Studio/Stage 共用审批/多题回答状态，原位续接、提交锁、失败重试、已接受即清卡、导航与选区隔离。普通新消息关闭旧问题，失败恢复以持久 pending 为准。用户纠正后 Studio 改用随对话滚动的 inline 反问；Plan 单独在右 rail，六步窗口/展开恢复，正文删除重复 Todo；子 Agent 详情集中 Background tasks。按用户实际 Code 截图区分两种右栏尺寸，输入区改为 Code 的 44px、14/18px。产物卡不冒充发布。
+- [x] Background tasks 支持 View transcript、Finished 折叠与会话内 Clear；单个子任务 Stop 写入该 child 的 durable cancel，核验父归属，父任务/兄弟不受影响。接收后显示 Stopping，等真实中断终态，失败可重试。流式更新保留详情节点与展开。
+- [x] 用户三张 Code 参考图同窗口复测：浅色 1199×991 正文/composer 均 x359.5、宽768；深色 1560×992 Tasks 宽416、任务卡394×77、正文x338/composer x328。导航/会话行26px、间隔0.5px、文字13/19.5；项目标题12/16。修复正文内层字体覆盖与滚动条导致的居中偏移，深色各层填色按原图取值；真实 Chromium 无 renderer 错误、无横向溢出。
+- [x] Fresh 全量：Python **2545 passed / 6条既有Pillow提示 / 286.00s**、Node **278文件**、ESLint/全部TypeScript/build通过，Studio/Stage实际Chromium原请求/流式/导航回归通过。验证和参考详见 `docs/research/2026-09-21-interactive-workflow-delivery.md` 与 `2026-09-21-claude-interactive-cards-reference.md`。保持1.0.50，不sync、不改安装版；未宣称真实云模型长任务或原生应用验收。
 
 ### 2026-09-21：接续中午 Claude，修复 Agent 流程稳定性（1.0.50 开发树）
 
