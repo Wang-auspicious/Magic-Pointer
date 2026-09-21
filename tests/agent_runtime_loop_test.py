@@ -1731,6 +1731,7 @@ def test_allowed_effects_expansion_permits_external_send():
             TurnDone(usage=None, raw_text=None),
         ],
         [TurnDone(usage=None, raw_text="sent!")],
+        [TurnDone(usage=None, raw_text="Sent; no independent readback is available.")],
     )
     client = LoopModelClient(backend)
 
@@ -3146,6 +3147,7 @@ def test_thread_grant_upgrades_ask_tool_in_the_loop() -> None:
             TurnDone(usage=None, raw_text=None),
         ],
         [TurnDone(usage=None, raw_text="done")],
+        [TurnDone(usage=None, raw_text="Command ran; no independent readback is available.")],
     )
     client = LoopModelClient(backend)
     events, terminal = asyncio.run(collect(
@@ -3217,16 +3219,15 @@ def test_transient_http_500_on_fresh_turn_waits_and_retries():
     凭据缺失类错误不重试——立即终止把真实原因交给用户。"""
     # LoopModelClient 自带 2 次内部重试；关掉它，才能测到 loop 层的
     # BackendRecovery 分支（客户端重试穷尽后 withheld 才会浮到 loop）。
-    backend = ScriptedBackend([
-        TurnWithheld(reason="backend_error:http_500"),
-        TurnWithheld(reason="backend_error:http_500"),
-        TurnWithheld(reason="backend_error:http_500"),
-        TurnDone(usage=None, raw_text="好了"),
-    ])
+    backend = ScriptedBackend(
+        withheld_scene("backend_error:http_500"),
+        [TurnDone(usage=None, raw_text="好了")],
+    )
     events, terminal = asyncio.run(collect(make_params(
         client=LoopModelClient(backend, max_provider_retries=0),
     )))
     assert terminal.reason is TransitionReason.COMPLETED, terminal.reason
+    assert terminal.message == "好了"
     assert any(isinstance(event, BackendRecovery) for event in events)
 
 

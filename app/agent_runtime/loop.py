@@ -120,6 +120,7 @@ import math
 import threading
 import time
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from contextlib import closing
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -1207,19 +1208,37 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                 )
             events: list[ModelTurnEvent] = []
             request_started_at = time.time()
-            for event in client.stream_turn(
+            with closing(client.stream_turn(
                 state.messages,
                 tool_schemas,
                 budget_ms=remaining_ms,
                 cancel_scope=loop_scope.token,
-            ):
-                events.append(event)
-                if isinstance(event, MessageDelta):
-                    yield ModelChunk(text=event.text)
-                elif isinstance(event, ReasoningDelta):
-                    yield ReasoningChunk(text=event.text)
+            )) as model_events:
+                for event in model_events:
+                    # GUI Stop is a durable request, separate from the token.
+                    # Check while streaming so a pure-text final round cannot
+                    # bypass the tool boundary and commit after the user stops.
+                    if params.interrupt_check is not None and params.interrupt_check():
+                        break
+                    events.append(event)
+                    if isinstance(event, MessageDelta):
+                        yield ModelChunk(text=event.text)
+                    elif isinstance(event, ReasoningDelta):
+                        yield ReasoningChunk(text=event.text)
             if loop_scope.is_cancelled:
                 raise CancelledError("cancelled during model call")
+            # Also covers cancellation immediately before EOF, when the model
+            # has no further event on which to run the streaming check.
+            if params.interrupt_check is not None and params.interrupt_check():
+                terminal = Terminal(
+                    reason=TransitionReason.USER_INTERRUPT,
+                    message="user interrupt",
+                    turns=turn_number,
+                    results=tuple(results),
+                    model_usage=_model_usage_snapshot(model_usage),
+                )
+                yield _stop(terminal)
+                return
             calls, text = client.parse_tool_calls(events)
             _merge_model_usage(model_usage, client.last_usage)
             if client.last_usage and model_usage.get("contextEstimated") == 0:
@@ -1616,6 +1635,16 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                     yield TurnFinished(state)
                     turn_number += 1
                     continue
+                if not str(text or "").strip():
+                    terminal = Terminal(
+                        reason=TransitionReason.PROVIDER_UNAVAILABLE,
+                        message="backend_error:empty_response",
+                        turns=turn_number,
+                        results=tuple(results),
+                        model_usage=_model_usage_snapshot(model_usage),
+                    )
+                    yield _stop(terminal)
+                    return
                 final_state = with_transition(
                     state,
                     TransitionReason.COMPLETED,
@@ -1947,7 +1976,9 @@ async def _run_agent_loop(params: LoopParams) -> AsyncIterator[Any]:
                             effect=spec_effect(committed_spec, call.arguments),
                             verified=(
                                 committed_spec.verify_result is not None
-                                or _json_verification_matched(normalized.value)
+                                # Guardrail guidance is model-visible prose appended
+                                # to JSON; verification consumes the original receipt.
+                                or _json_verification_matched(scheduled.result.value)
                             ),
                             tool_name=call.name,
                         )

@@ -170,6 +170,12 @@ class ToolCallGuardrailController:
                     action_count,
                     signature,
                 )
+            # Reads made before a successful state change cannot demonstrate
+            # that a later readback is stalled, even when the bytes match.
+            # Repeated actions above keep their existing warning/stop history.
+            self._read_results.clear()
+            self._seen_read_result_hashes.clear()
+            self._consecutive_duplicate_reads = 0
             return ToolGuardrailDecision(
                 count=action_count,
                 made_progress=True,
