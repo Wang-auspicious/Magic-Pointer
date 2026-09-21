@@ -428,6 +428,9 @@ function onAgentCursorCommand(payload: Record<string, unknown> | null | undefine
   if (kind === 'clear') {
     agentCursors.clear();
     scheduleRender();
+    // clear 之后 main.ts 会 hide() 这扇窗口，而 hide() 不走 overlay:hide，
+    // 所以在这里把显存还回去，别指望 onHide 那条路径。
+    releaseCanvas();
     return;
   }
   const id = String(payload.id || 'primary');
@@ -487,6 +490,8 @@ function onAgentCursorCommand(payload: Record<string, unknown> | null | undefine
       );
     }
   }
+  // 双子光标是画在 canvas 上的（drawAgentCursor），所以这条路径同样需要画布。
+  allocateCanvas();
   scheduleRender();
   ensureAgentCursorLoop();
 }
@@ -497,6 +502,8 @@ function onAgentCursorSample(payload: Record<string, unknown> | null | undefined
   const y = Number(payload.y);
   if (!Number.isFinite(x) || !Number.isFinite(y)) return;
   agentPointer = { x, y, seen: true };
+  // 采样本身不画东西：没有光标对象时下面不会分配画布，光挪指针不该付全屏显存。
+  if (agentCursors.size) allocateCanvas();
   scheduleRender();
   ensureAgentCursorLoop();
 }
@@ -595,6 +602,41 @@ function updateGuideTriangle() {
   guideTriangle.style.transform = `translate3d(${px - 24}px, ${py - 24}px, 0)`;
 }
 
+/* 画布后备存储按需分配。
+ *
+ * 两件事以前是绑在一起的：窗口建出来 ↔ 全屏画布已分配。但 index.html 同时
+ * 被两扇窗口加载——手势 overlay 和双子光标表面（electron/agent_cursor_window.ts）
+ * ——两扇都常驻，而各自只在被用上时才需要画布：手势 overlay 等 overlay:show，
+ * 双子光标等 overlay:agent-cursor（它的光标确实画在 canvas 上，走 drawAgentCursor，
+ * 不是 CSS 光标；CSS 光标那条契约只管 capture/observer 模式）。
+ *
+ * 同机实测：三扇全屏透明窗隐藏时 GPU 进程 106MB，应用启动后 267MB，差额 161MB
+ * 正是这两扇窗口里按 innerWidth×innerHeight×dpr 预分配的一份 2D + 一份 WebGL2
+ * 后备存储——《probe_bare_electron.cjs》确认隐藏的全屏透明窗本身几乎不花 GPU。
+ *
+ * 所以分配推迟到真正要画的那一刻，隐藏时再还回去。窗口本身仍然常驻：这里只动
+ * 显存，不动 main.ts 那套"窗口建一次、别再销毁重建"的约定。
+ */
+let canvasAllocated = false;
+
+function allocateCanvas() {
+  if (canvasAllocated) return;
+  canvasAllocated = true;
+  resize();
+}
+
+/** 还回全屏后备存储。隐藏后留着它只是让一张空画布占着显存。 */
+function releaseCanvas() {
+  if (!canvasAllocated) return;
+  canvasAllocated = false;
+  if (renderRaf) cancelAnimationFrame(renderRaf);
+  renderRaf = null;
+  canvas.width = 0;
+  canvas.height = 0;
+  // WebGL 的 drawing buffer 跟着 canvas 尺寸走，1×1 就足以释放那一大块。
+  sweepRenderer.resize(0, 0, 1);
+}
+
 function resize() {
   dpr = window.devicePixelRatio || 1;
   canvas.width = Math.round(window.innerWidth * dpr);
@@ -610,12 +652,13 @@ function resize() {
 }
 
 function clear() {
+  if (!canvasAllocated) return;
   ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
   sweepRenderer.clear();
 }
 
 function scheduleRender() {
-  if (renderRaf) return;
+  if (!canvasAllocated || renderRaf) return;
   renderRaf = requestAnimationFrame(() => {
     renderRaf = null;
     render();
@@ -688,6 +731,9 @@ function drawHitTestPixel(p: OverlayPoint | null) {
 }
 
 function render() {
+  // 画布没分配就没有可画的表面。agentCursorLoop 直接调 render()，不经过
+  // scheduleRender()，所以这道闸放在这里而不是那里。
+  if (!canvasAllocated) return;
   if (gestureMode) {
     // 唤醒瞬间（gestureAcceptAt 之前）不可画：不清屏直接返回——
     // 清了又不画就是黑屏闪一帧，三角在唤醒时「闪现」的根源。
@@ -929,7 +975,7 @@ function pointMarkerAnchor(point: OverlayPoint | null | undefined): { x: number;
      render），脉冲只是额外每秒 30 次清屏 + 重画 WebGL，纯重复劳动。
    - 采集态（captureMode）不画任何东西，同样不该跑。 */
 function pulseAllowed() {
-  return document.visibilityState !== 'hidden' && !captureMode && !gestureMode;
+  return canvasAllocated && document.visibilityState !== 'hidden' && !captureMode && !gestureMode;
 }
 
 function startPulseLoop() {
@@ -960,7 +1006,7 @@ document.addEventListener('visibilitychange', () => {
   else startPulseLoop();
 });
 
-window.addEventListener('resize', resize);
+window.addEventListener('resize', () => { if (canvasAllocated) resize(); });
 window.addEventListener('contextmenu', (e) => { e.preventDefault(); window.magicPointer?.hide(); });
 
 window.addEventListener('pointerdown', (e) => {
@@ -1095,6 +1141,9 @@ window.addEventListener('keydown', (e) => {
 
 window.magicPointer?.onShow((payload) => {
   resetOverlay();
+  // 唯一会让这扇窗口画画的入口（手势 reveal、guide-point 指点都发 overlay:show），
+  // 所以画布在这里分配。resetOverlay() 已经跑完，不存在拿旧尺寸继续画的问题。
+  allocateCanvas();
   observerMode = payload?.observerMode === true;
   gestureMode = payload?.gestureMode === true;
   gestureToken = payload?.selectionGestureToken ? String(payload.selectionGestureToken) : null;
@@ -1189,6 +1238,7 @@ window.magicPointer?.onHide(() => {
   hintTimer = null;
   stopPulseLoop();
   resetOverlay();
+  releaseCanvas();
   gestureMode = false;
   gestureToken = null;
   gestureAcceptAt = 0;
@@ -1196,5 +1246,6 @@ window.magicPointer?.onHide(() => {
   gestureInteractionMode = 'exclusive_overlay';
 });
 
-resize();
+// 刻意不在这里 resize()：窗口建出来不等于要画东西。没有 overlay:show 之前，
+// 这两扇窗口（overlay 与双子光标表面）一个像素都不画，不该占全屏显存。
 window.magicPointer?.ready?.();

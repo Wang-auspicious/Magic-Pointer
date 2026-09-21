@@ -868,6 +868,17 @@ DOM、COM、UIA、Fabric等现有模块也不自动保留，只优先保存经�
 
 ## 18. 进度账本
 
+### 2026-09-21：启动卡顿归因与启动内存削减
+
+- [x] 用整机性能计数器而非主线程延迟复现：构建峰值 1,513 页/s、裸 Electron 1,377，真 App 启动 59,607 页/s + 磁盘 170%，窗口就是 electron 进程 7→14 那 4 秒。空载对照（什么都不启动）130s 内仍有 9 次抖动，元凶 registry/MsMpEng/深信服/ChatGPT。证据 `scripts/measure_overlay_launch.ps1`、`scripts/measure_page_storm.ps1`。
+- [x] 逐进程逐窗口归因：`scripts/probe_window_memory.cjs` 给出 GPU 267MB/私有 249MB 与三扇窗口；`scripts/probe_bare_electron.cjs` 对照出隐藏的全屏透明窗 GPU≈0，成本在渲染内容而非窗口形状。`gpu_compositing=enabled`，排除软件渲染回退。
+- [x] 定位到 `overlay.ts` 模块末尾无条件 `resize()` 的全屏 2D + WebGL2 后备存储，且 `index.html` 被 overlay 与双子光标表面两扇窗口加载。改成按需分配（`overlay:show` / `overlay:agent-cursor`）与隐藏释放（`overlay:hide` / agent cursor `clear`），`render`/`scheduleRender`/`clear`/`pulseAllowed`/resize 监听全部加闸。
+- [x] `whenReady` 不再预建 overlay 与 stage：`armSelectionGesture()` 每次都销毁重建 overlay 并自建 stage，`queueActivationUntilSurfacesReady()` 同样两扇都建，启动那份第一眼就被丢掉。
+- [x] 启动增量 **工作集 +709→+406MB、commit +773→+476MB**，进程 7→5，探针峰值 646→369MB，GPU 267→137MB。新增静态契约 `tests/overlay_canvas_lifecycle_static_test.js`。
+- [ ] 未做真机手势走查：首次手势多一次窗口创建（约几百毫秒），readiness 门控兜底但无实机计时。双子光标窗口本身仍常驻（加载 index.html，~74MB 渲染进程），本轮只改了它的画布。
+- 代价是搬家不是消失：`--create-surfaces` 实测启动后常驻 1 窗 371MB，补建另外两扇后 549MB（+178MB）。画布那 ~127MB 要到真发 `overlay:show` 才分配——稳态与修前接近，改的是不再在启动那一刻付。
+- [ ] 机器基本面未变：commit 常在 29–31GB/32.5–34GB，可用 1.3–3.0GB，两套端点防护同时在跑；空载抖动仍会发生，属环境问题。
+
 ### 2026-09-20：子 Agent 实时活动与思考渲染（1.0.50）
 
 - [x] 读取本机 Claude 2.110.0.0 真实编译JS，核实33/100/200ms合并调度、父工具ID关联与展开状态。未取得原始TS/sourcemap；生产实现独立编写。

@@ -5194,8 +5194,19 @@ if (gotLock) app.whenReady().then(() => {
     }
     return;
   }
-  createOverlayWindow();
-  createStageWindow();
+  // 这两扇全屏透明窗刻意不在这里建。
+  //
+  // 它们在被用上之前没有任何用途：armSelectionGesture() 第一步就调
+  // ensureFreshGestureOverlay() 把 overlay 销毁重建（main.ts:1022），并且自己
+  // 调 createStageWindow() 在宽限期里预热 capsule；冷启动的唤醒则先经过
+  // queueActivationUntilSurfacesReady()，那里同样两扇都建（main.ts:3644）。
+  // 所以在 whenReady 里建出来的第一份，第一次手势就被丢掉。
+  //
+  // 代价不是抽象的：index.html 在模块末尾无条件 resize()（现已随本批改为
+  // 按需分配），按 innerWidth×innerHeight×dpr 分配一份 2D 画布加一份 WebGL2
+  // 画布，按显示分辨率折合每扇窗口约 77MB GPU 后备存储——而空载时这份显存只
+  // 用来托着一个空画布。实测同机：三扇隐藏的全屏透明窗 GPU 进程 106MB，应用
+  // 启动后 267MB，差额 161MB 与这两扇窗口里预分配的画布吻合。
   createTray();
   registerConfigurableHotkeys();
   const deliveryHotkeyOk = globalShortcut.register('Control+Alt+Enter', () => {
