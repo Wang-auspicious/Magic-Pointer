@@ -1,0 +1,40 @@
+{
+  "version": "1.0.49",
+  "python": "C:\\Users\\zjz65\\AppData\\Local\\Programs\\Magic Pointer\\resources\\python-runtime\\python.exe",
+  "module": "C:\\Users\\zjz65\\AppData\\Local\\Programs\\Magic Pointer\\resources\\app\\app\\desktop_actions\\session.py",
+  "byteIdenticalFiles": [
+    "app/context_pack/selection_reader.py",
+    "app/context_pack/document_reader.py",
+    "app/context_pack/chat_reader.py",
+    "app/context_pack/tools.py",
+    "app/agent_runtime/turn_verification.py",
+    "app/agent_runtime/loop.py",
+    "app/agent_runtime/session.py",
+    "app/agent_runtime/tool_registry.py",
+    "app/agent_runtime/wait_tool.py",
+    "app/perception/fusion.py",
+    "app/perception/pixel_ocr.py",
+    "app/perception/providers.py",
+    "app/input_artifact/schema.py",
+    "app/desktop_actions/session.py",
+    "app/desktop_actions/uia.py",
+    "app/models/profiles.py",
+    "app/fabric/settings.py",
+    "scripts/selection_bridge.py",
+    "scripts/conversation_bridge.py",
+    "build/electron/main.js",
+    "build/electron/conversation_store.js",
+    "build/electron/settings_store.js",
+    "build/electron/renderer/studio.js",
+    "build/electron/renderer/dsh_chat.js"
+  ],
+  "native": {
+    "ok": true,
+    "backend": "production UIA / native Win32 Edit",
+    "valueChars": 295,
+    "fullValueReadBack": true,
+    "conditionMatched": true,
+    "physicalInputUsed": false,
+    "elapsedMs": 405.12
+  }
+}

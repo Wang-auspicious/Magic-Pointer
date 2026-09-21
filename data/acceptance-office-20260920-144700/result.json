@@ -1,0 +1,34 @@
+{
+  "word": {
+    "gateway": {
+      "ok": true,
+      "wrote": true,
+      "error": null,
+      "value": null
+    },
+    "text": "Keep longer ending",
+    "formats": [
+      -1,
+      -1,
+      1
+    ],
+    "passed": true
+  },
+  "excel": {
+    "gateway": {
+      "ok": false,
+      "wrote": true,
+      "error": "您试图更改的单元格或图表位于受保护的工作表中。若要进行更改，请取消工作表保护。您可能需要输入密码。",
+      "value": null
+    },
+    "values": [
+      1.0,
+      0.0
+    ],
+    "passed": true
+  },
+  "powerpoint": {
+    "passed": false,
+    "error": "(-2147352573, '找不到成员。', None, None)"
+  }
+}

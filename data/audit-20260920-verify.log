@@ -1,0 +1,8 @@
+
+> magic-pointer@1.0.49 verify
+> npm run lint && npm run typecheck && npm test && npm run test:python
+
+
+> magic-pointer@1.0.49 lint
+> eslint electron scripts tests integrations/figma eslint.config.mjs --max-warnings=0
+

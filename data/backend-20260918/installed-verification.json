@@ -1,0 +1,36 @@
+{
+  "version": "1.0.48",
+  "executable": "C:\\Users\\zjz65\\AppData\\Local\\Programs\\Magic Pointer\\resources\\python-runtime\\python.exe",
+  "module": "C:\\Users\\zjz65\\AppData\\Local\\Programs\\Magic Pointer\\resources\\app\\app\\desktop_actions\\uia.py",
+  "byteIdenticalFiles": [
+    "app/context_pack/document_reader.py",
+    "app/context_pack/initial_evidence.py",
+    "app/context_pack/sources.py",
+    "app/context_pack/tools.py",
+    "app/input_artifact/schema.py",
+    "app/agent_runtime/context_projection.py",
+    "app/agent_runtime/model_client.py",
+    "app/agent_runtime/loop.py",
+    "app/agent_runtime/memory_tools.py",
+    "app/agent_runtime/system_prompt.py",
+    "app/desktop_actions/session.py",
+    "app/desktop_actions/uia.py",
+    "scripts/selection_bridge.py"
+  ],
+  "pdfPages": 21,
+  "pdfBackend": "document.pdf.pymupdf",
+  "pdfComplete": true,
+  "nativeCU": {
+    "ok": true,
+    "method": "real Win32 Edit + production UIA probe/SetValue + readback",
+    "usedBackend": "uia_value",
+    "physicalInputUsed": false,
+    "elapsedMs": 317,
+    "probeTimesMs": [
+      109.82,
+      31.5,
+      58.39
+    ],
+    "matchingSuccessorState": true
+  }
+}

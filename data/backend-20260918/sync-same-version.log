@@ -1,0 +1,490 @@
+
+> magic-pointer@1.0.48 sync
+> powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sync_install.ps1
+
+== verify ==
+
+> magic-pointer@1.0.48 verify
+> npm run lint && npm run typecheck && npm test && npm run test:python
+
+
+> magic-pointer@1.0.48 lint
+> eslint electron scripts tests integrations/figma eslint.config.mjs --max-warnings=0
+
+
+> magic-pointer@1.0.48 typecheck
+> npm run typecheck:figma && tsc -p tsconfig.electron.json --noEmit && tsc -p tsconfig.browser-globals.json --noEmit && tsc -p tsconfig.renderer.json --noEmit && tsc -p tsconfig.tools.json --noEmit && tsc -p tsconfig.tests.json --noEmit
+
+
+> magic-pointer@1.0.48 typecheck:figma
+> tsc -p integrations/figma/tsconfig.json --noEmit
+
+
+> magic-pointer@1.0.48 test
+> tsx scripts/run-node-tests.ts
+
+activation gate test ok
+agent cursor policy test ok
+agent session id test ok
+answer shape policy test ok
+append_log_test: log() performs no file I/O
+append_log_test: lines batch into a single append
+append_log_test: order is preserved
+append_log_test: flush() is immediate and idempotent
+append_log_test: a burst cannot grow the buffer without bound
+append_log_test: a failing append never throws and never accumulates
+append_log_test: a throwing clock is swallowed
+append_log_test: the directory is recreated after a failed write
+append_log_test: dispose() cancels the timer without discarding
+append_log_test: all assertions passed
+artifact editor test ok
+artifact runtime test ok
+background_learning_wiring_test: all assertions passed
+background task card test ok
+bootstrap runner async test ok
+bootstrap runner test ok
+bridge_progress_lines_test ok
+browser view policy test ok
+capture commit coordinator test ok
+capture_proof_policy_test: all assertions passed
+capture_proof_wiring_test: all assertions passed
+capture stage fixture test ok
+card render test ok
+card render scope test ok
+card render slot test ok
+card render highlight test ok
+cards contract test ok
+cds icon contract ok
+clarification_chips_test: all assertions passed
+claude marks contract ok
+Claude reference parity behavior ok
+composer surface test ok
+context tracker library IPC test ok
+context trackers test ok
+continuous gesture episode contract test ok
+conversation branch test ok
+conversation control test ok
+conversation error test ok
+conversation session identity test ok
+conversation_store_deferred_persist_test: default stays synchronous
+conversation_store_deferred_persist_test: mutations coalesce, no write on the hot path
+conversation_store_deferred_persist_test: flush() writes all pending changes
+conversation_store_deferred_persist_test: the debounce window eventually writes
+conversation_store_deferred_persist_test: flush() is idempotent
+conversation_store_deferred_persist_test: clear() flushes to an empty store
+conversation_store_deferred_persist_test: flushed state reloads
+conversation_store_deferred_persist_test: all assertions passed
+conversation_store_incremental_persist_test: mutations land, neighbours untouched
+conversation_store_incremental_persist_test: a frozen clock cannot strand a mutation
+conversation_store_incremental_persist_test: direct mutations still invalidate
+conversation_store_incremental_persist_test: only the changed conversation is serialised
+conversation_store_incremental_persist_test: failures are reported, bounded and non-fatal
+conversation_store_incremental_persist_test: all assertions passed
+conversation store lifecycle test ok
+conversation store test ok
+conversation store test ok (permission memo)
+conversation store permission answer ok
+conversation workspace policy test ok
+coordinate space canonical test ok
+coordinate space test ok
+credential store test ok
+desktop_lifecycle_test: all assertions passed
+diagnostics collection test ok
+dictation_correction_policy_test: PASS
+dictation static test ok
+dsh highlight test ok
+shared live turn incremental renderer tests ok
+effort levels render contract ok
+electron builder runtime test ok
+electron-only runtime test ok
+element ghost policy test ok
+extensions inventory IPC test ok
+fabric bridge wiring static test ok
+fabric panel static test ok
+fabric runtime workspace static test ok
+figma bridge test ok
+figma build contract test ok
+figma main wiring test ok
+figma patch test ok
+figma runtime test ok
+first-run onboarding desktop verifier static test ok
+first-run onboarding test ok
+[frame-capture-worker] start, ping for readiness
+[frame-capture-worker] start, ping for readiness
+[frame-capture-worker] start, ping for readiness
+[frame-capture-worker] start, ping for readiness
+[frame-capture-worker] start, ping for readiness
+[frame-capture-worker] start, ping for readiness
+[frame-capture-worker] start, ping for readiness
+frame capture worker client test ok
+[frame-capture-worker] commit ok, lease validated
+[frame-capture-worker] commit ok, lease validated
+[frame-capture-worker] request rpc-2 method=arm timed out, sending cancel
+[frame-capture-worker] request rpc-4 method=shutdown timed out, sending cancel
+[frame-capture-worker] shutdown failed: frame_capture_worker_timeout:shutdown
+[frame-capture-worker] request rpc-4 method=shutdown timed out, sending cancel
+[frame-capture-worker] shutdown failed: frame_capture_worker_timeout:shutdown
+[frame-capture-worker] request rpc-3 method=shutdown timed out, sending cancel
+[frame-capture-worker] shutdown failed: frame_capture_worker_timeout:shutdown
+[frame-capture-worker] request rpc-3 method=shutdown timed out, sending cancel
+[frame-capture-worker] shutdown failed: frame_capture_worker_timeout:shutdown
+[frame-capture-worker] request rpc-5 method=shutdown timed out, sending cancel
+[frame-capture-worker] shutdown failed: frame_capture_worker_timeout:shutdown
+frame lease contract test ok
+geometry_space_test: polygon ring converts and re-declares its space
+geometry_space_test: the source geometry is not mutated
+geometry_space_test: corridor converts both arrays
+geometry_space_test: a missing corridor array is tolerated
+geometry_space_test: point target converts
+geometry_space_test: unrecognised geometry is refused, not passed through
+geometry_space_test: a bad vertex refuses the whole geometry
+geometry_space_test: a missing mapper refuses rather than half-converts
+geometry_space_test: space predicate
+geometry_space_test: all assertions passed
+geometry_space_test: a one-element array is converted, not dropped
+geometry_space_test: multi-stroke arrays convert entry by entry
+geometry_space_test: a bad array entry refuses the whole array
+geometry_space_test: an empty array is refused
+gesture activation integration test ok
+gesture capture test ok
+gesture_interaction_mode_contract_test: all assertions passed
+gesture runtime settings test ok
+grounding geometry integration test ok
+guide flight test ok
+interaction episode test ok
+internal action policy test ok
+ipc surface policy test ok
+model cli contract test ok
+model_health_headless_bridge_static_test: OK
+model runtime config test ok
+model runtime wiring test ok
+model seat contract test ok
+model settings fixture test ok
+mouse activation test ok
+multi stroke chain contract test ok
+N19 voice trigger desktop verifier static test ok
+N20 resident desktop verifier static test ok
+native_pointer_hook_contract_test: all assertions passed
+node test runner test ok
+observability_event_log_rotation_test: PASS
+observability_test: PASS
+onboarding cancellation test ok
+onboarding readiness test ok
+onboarding surface test ok
+overlay static test ok
+packaged_user_data_static_test: all assertions passed
+panel static test ok
+pass_through_gesture_test: all assertions passed
+permission_presets render mirror: PASS
+picked_element_wiring_test: all assertions passed
+point_markers_wiring_test: all assertions passed
+pointer dismiss policy test ok
+pointer polling policy test ok
+popover placement contract ok
+preflight checks async test ok
+preflight checks test ok
+preload signal bridge test ok
+proactive rules test ok
+profile workspace root test ok
+project environment test ok
+project inspector test ok
+python bridge runner test ok
+python_runtime_isolation_test: host injection rejected
+python runtime prepare contract test ok
+python runtime resolver test ok
+quota probe test ok
+release workflow contract test ok
+renderer readiness test ok
+result surface policy test ok
+route policy test ok
+runtime issue hotkeys test ok
+runtime paths test ok
+runtime snapshot test ok
+security hardening test ok
+selection shared progress and durable completion test ok
+selection session test ok
+selection explicit stop test ok
+selection_stretch_wiring_test: all assertions passed
+selection task lifecycle test ok
+selection_visual_contract_test: all assertions passed
+selection_worker_client_test: all assertions passed
+selection_worker_client idle-timeout test ok
+session_timeline_test: all assertions passed
+session timeline wiring test ok
+session worktree test ok
+settings save contract test ok
+settings store test ok
+settings surface contract test ok
+settings UI model test ok
+sidebar groups test ok
+single-instance startup contract passed
+slash menu contract test ok
+slash trigger test ok
+stage agent prompt static test ok
+stage anchor test ok
+stage_browser_script_namespace_test: all assertions passed
+stage_chips_policy_test: all assertions passed
+stage_contract_test: all assertions passed
+stage contract human error test ok
+stage_delivery_ready_test: all assertions passed
+stage_display_static_test: all assertions passed
+stage fixed surface contract test ok
+stage_hit_policy_test: all assertions passed
+stage_hit_region_transition_test: all assertions passed
+stage_hit_test_capture_test: all assertions passed
+stage insert result text test ok
+Stage shared live progress tests ok
+stage_native_hit_region_test: all assertions passed
+stage_observer_handoff_test: all assertions passed
+stage_pick_policy_test: all assertions passed
+stage result history test ok
+stage_shape_scaling_test: all assertions passed
+stage state test ok
+stage static test ok
+stage steer static test ok
+stage_stretch_policy_test: all assertions passed
+stage_stretch_policy_test: selection-side assertions passed
+stage accent token test ok
+stage surface policy test ok
+stage_turn_stream_test: all assertions passed
+stage vida card test ok
+stash_clipboard_change_detector_test ok
+stash management contract test ok
+stash runtime test ok
+stash store test ok
+studio artifacts contract test ok
+studio_bento_contract ok
+studio Claude fidelity contract ok
+studio Claude reference work-state contract ok
+studio Codex chrome contract ok
+studio Codex shell interaction contract ok
+studio composer contract test ok
+Studio editable suggestion and external Stop interaction tests ok
+studio composer states test ok
+studio dsh chat contract test ok
+Studio external turn refresh tests ok
+studio file tree contract ok
+studio home render test ok
+studio home stats test ok
+studio home stats wiring test ok
+studio icon system test ok
+studio inspector state test ok
+studio interaction probe test ok
+Studio library data behavior ok
+studio_live_status_contract ok
+studio markdown render test ok
+studio navigation interaction test ok
+studio plan checkbox contract ok
+studio plugin directory contract ok
+studio project gate contract test ok
+studio render probe contract ok
+studio search test ok
+studio shell test ok
+studio subagent projection test ok
+studio_sv_icons_contract ok
+studio trajectory test ok
+studio update card contract ok
+studio usage meter test ok
+submit_gating_policy_test: all assertions passed
+sweep_visual_incremental_test: 1024-step growth rebuild incremental=12177us full=155364us (12.8x)
+sweep_visual_incremental_test: all assertions passed
+sweep_visual_test: all assertions passed
+sync install contract test ok
+task input transport test ok
+task sources test ok
+task watcher test ok
+temporary_surface_dismiss_static_test: all assertions passed
+test hooks isolation static test ok
+tool activity line test ok
+typescript build contract test ok
+update manager test ok
+vida promptrescue geometry test ok
+voice_focus_guard_test: PASS
+voice_focus_invariance_static_test: PASS
+voice_residency_settings_test: all assertions passed
+voice_resident_main_static_test: all assertions passed
+voice_resident_runtime_test: all assertions passed
+voice text settings static test ok
+voice trigger integration static test ok
+voice_trigger_policy_test: PASS
+voice_worker_client_test: all assertions passed
+wiggle activation integration test ok
+wiggle detector test ok
+wiggle reliability integration test ok
+wiggle reliability test ok
+windows installer contract test ok
+windows_package_contract_test: static package contracts passed
+node suite passed: 228 test files
+
+> magic-pointer@1.0.48 test:python
+> python -m pytest tests/ -q
+
+........................................................................ [  3%]
+........................................................................ [  6%]
+........................................................................ [  9%]
+........................................................................ [ 13%]
+........................................................................ [ 16%]
+........................................................................ [ 19%]
+........................................................................ [ 23%]
+........................................................................ [ 26%]
+........................................................................ [ 29%]
+........................................................................ [ 32%]
+........................................................................ [ 36%]
+........................................................................ [ 39%]
+........................................................................ [ 42%]
+........................................................................ [ 46%]
+........................................................................ [ 49%]
+........................................................................ [ 52%]
+........................................................................ [ 55%]
+........................................................................ [ 59%]
+........................................................................ [ 62%]
+........................................................................ [ 65%]
+........................................................................ [ 69%]
+........................................................................ [ 72%]
+........................................................................ [ 75%]
+........................................................................ [ 78%]
+........................................................................ [ 82%]
+........................................................................ [ 85%]
+........................................................................ [ 88%]
+.......................................................................F [ 92%]
+........................................................................ [ 95%]
+........................................................................ [ 98%]
+............................                                             [100%]
+================================== FAILURES ===================================
+_ test_interrupted_task_restores_plan_context_artifact_steer_and_unknown_action _
+
+tmp_path = WindowsPath('D:/Desktop/Magic Pointer/.pytest-tmp/basetemp/test_interrupted_task_restores0')
+
+    def test_interrupted_task_restores_plan_context_artifact_steer_and_unknown_action(
+        tmp_path: Path,
+    ) -> None:
+        material = tmp_path / "proposal.pptx"
+        material.write_bytes(b"fixture")
+        sessions = FileSessionStore(tmp_path / "sessions")
+        session = sessions.create("resume-everything")
+        turn = session.start_turn()
+        session.append_message(AgentMessage(
+            role=Role.USER,
+            content="按讨论修改提案并给我草稿",
+            tool_call_id=None,
+            name=None,
+        ))
+        session.record_plan_updated([
+            {"content": "核对材料", "status": "completed"},
+            {"content": "修改目标形状", "status": "in_progress"},
+            {"content": "确认后再发送", "status": "pending"},
+        ])
+    
+        source = _source(
+            session.id,
+            source_id="source-ppt",
+            kind="document",
+            path=material,
+        )
+        register_source(session, source)
+        apply_reference_updates(session, [ReferenceUpdate.from_dict({
+            "operation": "add",
+            "binding": {
+                "referenceId": "ref-b",
+                "label": "B",
+                "sourceId": source.source_id,
+                "locator": {
+                    "kind": "slide-shape",
+                    "value": {"slideId": "slide-4", "shapeId": "shape-9"},
+                },
+                "role": "target",
+                "frameLeaseId": "frame-1",
+                "capturedAtMs": 12,
+                "ordinal": 1,
+                "active": True,
+            },
+        })])
+        grant_source_scope(session, grants=(ScopeGrant(
+            grant_id="proposal-edit",
+            task_id=session.id,
+            source_ids=(source.source_id,),
+            folder_roots=(),
+            window_ids=(),
+            recipients=(),
+            actions=("read", "patch"),
+            expires_at_ms=None,
+        ),))
+    
+        generated = session.record_artifact_generated("第一版草稿")
+        artifact_id = str(generated.data["artifactId"])
+        session.record_artifact_patched(
+            artifact_id,
+            "用户修订后的第二版草稿",
+            author="user",
+            expected_revision=1,
+        )
+        pending = TaskInput.from_dict({
+            "inputId": "steer-latest",
+            "taskId": session.id,
+            "target": "next-step",
+            "instruction": "先别发送，标题再短一点",
+            "referenceUpdates": [],
+            "sourceIds": [source.source_id],
+            "timeline": [{
+                "eventId": "utterance-1",
+                "kind": "utterance",
+                "startMs": 20,
+                "endMs": 21,
+                "text": "先别发送，标题再短一点",
+            }],
+            "capturedAtMs": 21,
+        })
+        session.enqueue_inbox(
+            pending.instruction,
+            pending.target,
+            message_id=pending.input_id,
+            payload=pending.to_dict(),
+        )
+        operation = session.record_tool_call(
+            "send-call",
+            "send_message",
+            {"recipient": "project-group"},
+            step=7,
+            effect=Effect.EXTERNAL_SEND,
+            dispatched=True,
+        )
+        session.end_turn(turn, reason="user_interrupt", detail="desktop restart")
+    
+        resumed = sessions.resume(session.id)
+        summary = resumed.interrupted_turn_summary()
+    
+        assert summary is not None
+        assert summary["plan"] == [
+            {"content": "核对材料", "status": "completed"},
+            {"content": "修改目标形状", "status": "in_progress"},
+            {"content": "确认后再发送", "status": "pending"},
+        ]
+>       assert summary["sources"] == [{
+            "sourceId": "source-ppt",
+            "kind": "document",
+            "title": "proposal.pptx",
+            "capabilities": ["read", "patch"],
+            "parentSourceId": None,
+        }]
+E       AssertionError: assert [{'capabiliti...t.read', ...}] == [{'capabiliti...ce-ppt', ...}]
+E         
+E         At index 0 diff: {'sourceId': 'source-ppt', 'kind': 'document', 'title': 'proposal.pptx', 'capabilities': ['read', 'patch'], 'parentSourceId': None, 'readTool': 'Context.read'} != {'sourceId': 'source-ppt', 'kind': 'document', 'title': 'proposal.pptx', 'capabilities': ['read', 'patch'], 'parentSourceId': None}
+E         Use -v to get more diff
+
+tests\task_context_resume_test.py:144: AssertionError
+============================== warnings summary ===============================
+tests/selection_snapshot_bridge_test.py::test_unsupported_foreground_becomes_local_visual_object_at_pointer
+  D:\Desktop\Magic Pointer\tests\selection_snapshot_bridge_test.py:574: DeprecationWarning: Image.Image.getdata is deprecated and will be removed in Pillow 14 (2027-10-15). Use get_flattened_data instead.
+    assert any(pixel != (255, 255, 255) for pixel in pointer_area.getdata())
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/task_context_resume_test.py::test_interrupted_task_restores_plan_context_artifact_steer_and_unknown_action
+1 failed, 2187 passed, 1 warning in 269.07s (0:04:29)
+verification failed
+At D:\Desktop\Magic Pointer\scripts\sync_install.ps1:15 char:28
++ if ($LASTEXITCODE -ne 0) { throw 'verification failed' }
++                            ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : OperationStopped: (verification failed:String) [], RuntimeException
+    + FullyQualifiedErrorId : verification failed
+ 

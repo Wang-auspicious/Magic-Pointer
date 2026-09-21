@@ -1,0 +1,874 @@
+{
+  "method": "production Runtime on original frozen OCR selections plus native desktop PDF source; no expected answer supplied",
+  "limitations": [
+    "WeChat attachment body was not acquired; card text only",
+    "gesture rectangles reconstructed from original persisted references"
+  ],
+  "elapsedMs": 190719,
+  "result": {
+    "ok": true,
+    "prompt": "基于这些信息，总结200字讲清楚你推荐的最合适选题。",
+    "answer": "根据你圈选的三块内容，综合整理如下：\n\n**你微信里那句话**（小样本脱敏后给通用/专项AI判别）是新冒出来的想法，但不属于 Program Manager 里已核验过的 8 个选题。它更像\"数据脱敏+模型鲁棒性\"方向，和这 8 篇的主线（长程视觉 Agent 的裂缝）没有直接承接关系，CVPR 2027 的 CFP 里也没有精确对应的 topic 池，风险偏高。\n\n**文档明确推荐的组合是选题 01 + 07 并行：**\n\n- **01「屏幕信念账本」** 做主投——直接回应 OSWorld 2.0 论文点名的第一个失败模式（信念静默腐坏），novelty 和天花板都最高，故事性强，AC 一眼能懂。风险在差异句，写不准会被 reviewer 归到 memory/critic 那堆。\n- **07「最小证据集交接」** 做并行——数据几乎免费（用失败轨迹就能生成），不抢 01 的算力，指标无歧义，万一 01 的诊断实验不显著，07 可以顶上成为主投。两个选题风险不相关。\n\n如果让我只给一个结论：**押 01 主投、07 兜底**，是这份材料里风险收益比最优的选择。你微信里那条新想法可以留着，但不适合作为 CVPR 2027 的主攻方向。",
+    "error": null,
+    "answerShape": "answer",
+    "loopTerminated": false,
+    "loopTerminatedReason": null,
+    "route": {
+      "tier": "L2",
+      "action": "model_loop",
+      "turns": 4
+    },
+    "loopReceipts": [
+      {
+        "toolCallId": "call_3707cbb72ba44438b83d9d6e",
+        "toolName": "Look",
+        "arguments": {
+          "anchor": "reference:acceptance-3eda8e3511304b2abba464dc13be1983:0",
+          "prompt": "读取圈选区域内的完整文字内容"
+        },
+        "isError": true,
+        "failureType": "tool_error",
+        "usedBackend": "vision",
+        "latencyMs": 3776.808099995833,
+        "valuePreview": "{\"status\": \"unsupported\", \"confidence\": 0.0, \"value\": null, \"note\": \"vision_unavailable: AI 调用失败：模型端点限流中（HTTP 429）。已跳过模型调用，稍后会自动重试。 约 30 秒后可重试。\\n\\n截图和对象已保存在本地。\"}"
+      },
+      {
+        "toolCallId": "call_5b44bbe1c0cb4cbea9b5c2f0",
+        "toolName": "Look",
+        "arguments": {
+          "anchor": "reference:acceptance-3eda8e3511304b2abba464dc13be1983:1",
+          "prompt": "读取圈选区域内的完整文字内容"
+        },
+        "isError": true,
+        "failureType": "tool_error",
+        "usedBackend": "vision",
+        "latencyMs": 159.9681999941822,
+        "valuePreview": "{\"status\": \"unsupported\", \"confidence\": 0.0, \"value\": null, \"note\": \"vision_unavailable: AI 调用失败：模型端点限流中（HTTP 429）。已跳过模型调用，稍后会自动重试。 约 30 秒后可重试。\\n\\n截图已保存在本地：C:\\\\Users\\\\zjz65\\\\AppData\\\\Local\\\\Temp\\\\tmpn"
+      },
+      {
+        "toolCallId": "call_043a8ad02a95433180008982",
+        "toolName": "Look",
+        "arguments": {
+          "anchor": "reference:acceptance-3eda8e3511304b2abba464dc13be1983:2",
+          "prompt": "读取圈选区域内的完整文字内容"
+        },
+        "isError": true,
+        "failureType": "tool_error",
+        "usedBackend": "vision",
+        "latencyMs": 129.2535999964457,
+        "valuePreview": "{\"status\": \"unsupported\", \"confidence\": 0.0, \"value\": null, \"note\": \"vision_unavailable: AI 调用失败：模型端点限流中（HTTP 429）。已跳过模型调用，稍后会自动重试。 约 30 秒后可重试。\\n\\n截图已保存在本地：C:\\\\Users\\\\zjz65\\\\AppData\\\\Local\\\\Temp\\\\tmp1"
+      },
+      {
+        "toolCallId": "call_5066d66ae8b4483aa8ca1154",
+        "toolName": "Context.read",
+        "arguments": {
+          "source_id": "source:acceptance-3eda8e3511304b2abba464dc13be1983:0"
+        },
+        "isError": false,
+        "failureType": null,
+        "usedBackend": "task_source.reader",
+        "latencyMs": 3.3136999991256744,
+        "valuePreview": "{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:0', 'fragments': [{'fragmentId': 'fragment:source:acceptance-3eda8e3511304b2abba464dc13be1983:0:selection', 'locator': {'kind': 'messag"
+      },
+      {
+        "toolCallId": "call_8b869d7cde724fbd84c7a1ce",
+        "toolName": "Context.read",
+        "arguments": {
+          "source_id": "source:acceptance-3eda8e3511304b2abba464dc13be1983:1"
+        },
+        "isError": false,
+        "failureType": null,
+        "usedBackend": "task_source.reader",
+        "latencyMs": 1.7989999905694276,
+        "valuePreview": "{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:1', 'fragments': [{'fragmentId': 'fragment:source:acceptance-3eda8e3511304b2abba464dc13be1983:1:selection', 'locator': {'kind': 'messag"
+      },
+      {
+        "toolCallId": "call_c1e2426b21b948cbbec46cc8",
+        "toolName": "Context.read",
+        "arguments": {
+          "source_id": "source:acceptance-3eda8e3511304b2abba464dc13be1983:2"
+        },
+        "isError": false,
+        "failureType": null,
+        "usedBackend": "task_source.reader",
+        "latencyMs": 1445.4242000065278,
+        "valuePreview": "{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:2', 'fragments': [{'fragmentId': 'fragment:source:acceptance-3eda8e3511304b2abba464dc13be1983:2:unit:0', 'locator': {'kind': 'pdf-regio"
+      },
+      {
+        "toolCallId": "call_4c7c2c3b478849d19c8967b4",
+        "toolName": "Context.search",
+        "arguments": {
+          "query": "选题 推荐 小样本 脱敏 通用人工智能 专项人工智能",
+          "source_ids": [
+            "source:acceptance-3eda8e3511304b2abba464dc13be1983:2"
+          ]
+        },
+        "isError": false,
+        "failureType": null,
+        "usedBackend": "task_source.search",
+        "latencyMs": 1422.6765999919735,
+        "valuePreview": "{'query': '选题 推荐 小样本 脱敏 通用人工智能 专项人工智能', 'results': [{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:2', 'fragments': [{'fragmentId': 'fragment:source:acceptance-3eda8e3511304b2abba464"
+      }
+    ],
+    "events": [
+      {
+        "name": "Look",
+        "arguments": {
+          "anchor": "reference:acceptance-3eda8e3511304b2abba464dc13be1983:0",
+          "prompt": "读取圈选区域内的完整文字内容"
+        },
+        "result": "{\"status\": \"unsupported\", \"confidence\": 0.0, \"value\": null, \"note\": \"vision_unavailable: AI 调用失败：模型端点限流中（HTTP 429）。已跳过模型调用，稍后会自动重试。 约 30 秒后可重试。\\n\\n截图和对象已保存在本地。\"}",
+        "isError": true,
+        "usedBackend": "vision",
+        "latencyMs": 3776.808099995833
+      },
+      {
+        "name": "Look",
+        "arguments": {
+          "anchor": "reference:acceptance-3eda8e3511304b2abba464dc13be1983:1",
+          "prompt": "读取圈选区域内的完整文字内容"
+        },
+        "result": "{\"status\": \"unsupported\", \"confidence\": 0.0, \"value\": null, \"note\": \"vision_unavailable: AI 调用失败：模型端点限流中（HTTP 429）。已跳过模型调用，稍后会自动重试。 约 30 秒后可重试。\\n\\n截图已保存在本地：C:\\\\Users\\\\zjz65\\\\AppData\\\\Local\\\\Temp\\\\tmpnn7auv6i.png\\n端点恢复后可以直接重试。\"}",
+        "isError": true,
+        "usedBackend": "vision",
+        "latencyMs": 159.9681999941822
+      },
+      {
+        "name": "Look",
+        "arguments": {
+          "anchor": "reference:acceptance-3eda8e3511304b2abba464dc13be1983:2",
+          "prompt": "读取圈选区域内的完整文字内容"
+        },
+        "result": "{\"status\": \"unsupported\", \"confidence\": 0.0, \"value\": null, \"note\": \"vision_unavailable: AI 调用失败：模型端点限流中（HTTP 429）。已跳过模型调用，稍后会自动重试。 约 30 秒后可重试。\\n\\n截图已保存在本地：C:\\\\Users\\\\zjz65\\\\AppData\\\\Local\\\\Temp\\\\tmp1sjfybge.png\\n端点恢复后可以直接重试。\"}\n\n[Tool loop warning: same_tool_failure_warning; count=3; Look failed 3 times. Diagnose the latest error, change capability, or report the blocker.]",
+        "isError": true,
+        "usedBackend": "vision",
+        "latencyMs": 129.2535999964457
+      },
+      {
+        "name": "Context.read",
+        "arguments": {
+          "source_id": "source:acceptance-3eda8e3511304b2abba464dc13be1983:0"
+        },
+        "result": "{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:0', 'fragments': [{'fragmentId': 'fragment:source:acceptance-3eda8e3511304b2abba464dc13be1983:0:selection', 'locator': {'kind': 'message', 'value': {'adapterId': 'wechat', 'bbox': [2136, 1373, 611, 32], 'conversationKey': 'wechat:window:7277804:surface:root', 'coordinateSpace': 'physical_screen_pixels', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983', 'strokeIndex': 0}}, 'text': '小样本脱敏后给通用人工智能和专项人工智能，判别', 'metadata': {'title': '微信', 'revision': {'capturedAt': '', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983'}}, 'citations': [{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:0', 'locator': {'kind': 'message', 'value': {'adapterId': 'wechat', 'bbox': [2136, 1373, 611, 32], 'conversationKey': 'wechat:window:7277804:surface:root', 'coordinateSpace': 'physical_screen_pixels', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983', 'strokeIndex': 0}}}]}], 'coverage': {'extent': 'selection', 'readRanges': [{'adapterId': 'wechat', 'bbox': [2136, 1373, 611, 32], 'conversationKey': 'wechat:window:7277804:surface:root', 'coordinateSpace': 'physical_screen_pixels', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983'}], 'totalUnits': 23, 'complete': True, 'nextCursor': None, 'missingReason': None}, 'evidenceStatus': 'ok', 'usedBackend': 'local:rapidocr-onnx', 'latencyMs': 0.021400017431005836}",
+        "isError": false,
+        "usedBackend": "task_source.reader",
+        "latencyMs": 3.3136999991256744
+      },
+      {
+        "name": "Context.read",
+        "arguments": {
+          "source_id": "source:acceptance-3eda8e3511304b2abba464dc13be1983:1"
+        },
+        "result": "{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:1', 'fragments': [{'fragmentId': 'fragment:source:acceptance-3eda8e3511304b2abba464dc13be1983:1:selection', 'locator': {'kind': 'message', 'value': {'adapterId': 'wechat', 'bbox': [2314, 486, 408, 205], 'conversationKey': 'wechat:window:7277804:surface:root', 'coordinateSpace': 'physical_screen_pixels', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983', 'strokeIndex': 1}}, 'text': 'cvpr2027-verified-\\ntop5.html HTML\\n87.3K\\n微信电脑版', 'metadata': {'title': '微信', 'revision': {'capturedAt': '', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983'}}, 'citations': [{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:1', 'locator': {'kind': 'message', 'value': {'adapterId': 'wechat', 'bbox': [2314, 486, 408, 205], 'conversationKey': 'wechat:window:7277804:surface:root', 'coordinateSpace': 'physical_screen_pixels', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983', 'strokeIndex': 1}}}]}], 'coverage': {'extent': 'selection', 'readRanges': [{'adapterId': 'wechat', 'bbox': [2314, 486, 408, 205], 'conversationKey': 'wechat:window:7277804:surface:root', 'coordinateSpace': 'physical_screen_pixels', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983'}], 'totalUnits': 45, 'complete': True, 'nextCursor': None, 'missingReason': None}, 'evidenceStatus': 'ok', 'usedBackend': 'local:rapidocr-onnx', 'latencyMs': 0.01659998088143766}",
+        "isError": false,
+        "usedBackend": "task_source.reader",
+        "latencyMs": 1.7989999905694276
+      },
+      {
+        "name": "Context.read",
+        "arguments": {
+          "source_id": "source:acceptance-3eda8e3511304b2abba464dc13be1983:2"
+        },
+        "result": "{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:2', 'fragments': [{'fragmentId': 'fragment:source:acceptance-3eda8e3511304b2abba464dc13be1983:2:unit:0', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [447.375, 59.409, 546.568, 70.622], 'blockIndex': 0}}, 'text': '核验日期 \\xa02026-09-16', 'metadata': {'pageIndex': 0, 'sizePt': [594.96, 841.92], 'rotation': 0, 'blockIndex': 0, 'ocr': False, 'sourceTitle': 'Program Manager', 'sourceRevision': {'capturedAt': '', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983'}}, 'citations': [{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:2', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [447.375, 59.409, 546.568, 70.622], 'blockIndex': 0}}}]}, {'fragmentId': 'fragment:source:acceptance-3eda8e3511304b2abba464dc13be1983:2:unit:1', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [388.559, 75.159, 546.574, 86.372], 'blockIndex': 1}}, 'text': '投稿目标 \\xa0CVPR 2027 · 11/16 AOE', 'metadata': {'pageIndex': 0, 'sizePt': [594.96, 841.92], 'rotation': 0, 'blockIndex': 1, 'ocr': False, 'sourceTitle': 'Program Manager', 'sourceRevision': {'capturedAt': '', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983'}}, 'citations': [{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:2', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [388.559, 75.159, 546.574, 86.372], 'blockIndex': 1}}}]}, {'fragmentId': 'fragment:source:acceptance-3eda8e3511304b2abba464dc13be1983:2:unit:2', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [346.465, 91.659, 546.57, 102.872], 'blockIndex': 2}}, 'text': '核验对象 \\xa02 份 AI 调研 · 21 个 arXiv 编号', 'metadata': {'pageIndex': 0, 'sizePt': [594.96, 841.92], 'rotation': 0, 'blockIndex': 2, 'ocr': False, 'sourceTitle': 'Program Manager', 'sourceRevision': {'capturedAt': '', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983'}}, 'citations': [{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:2', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [346.465, 91.659, 546.57, 102.872], 'blockIndex': 2}}}]}, {'fragmentId': 'fragment:source:acceptance-3eda8e3511304b2abba464dc13be1983:2:unit:3', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [369.75, 107.409, 546.573, 118.622], 'blockIndex': 3}}, 'text': '判定 \\xa0编号 21/21 命中 · 事实更正 5 处', 'metadata': {'pageIndex': 0, 'sizePt': [594.96, 841.92], 'rotation': 0, 'blockIndex': 3, 'ocr': False, 'sourceTitle': 'Program Manager', 'sourceRevision': {'capturedAt': '', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983'}}, 'citations': [{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:2', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [369.75, 107.409, 546.573, 118.622], 'blockIndex': 3}}}]}, {'fragmentId': 'fragment:source:acceptance-3eda8e3511304b2abba464dc13be1983:2:unit:4', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [438.926, 123.159, 546.577, 134.372], 'blockIndex': 4}}, 'text': '交付 \\xa08 个选题 · 两条线', 'metadata': {'pageIndex': 0, 'sizePt': [594.96, 841.92], 'rotation': 0, 'blockIndex': 4, 'ocr': False, 'sourceTitle': 'Program Manager', 'sourceRevision': {'capturedAt': '', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983'}}, 'citations': [{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:2', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [438.926, 123.159, 546.577, 134.372], 'blockIndex': 4}}}]}, {'fragmentId': 'fragment:source:acceptance-3eda8e3511304b2abba464dc13be1983:2:unit:5', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [49.5, 65.201, 250.562, 135.256], 'blockIndex': 5}}, 'text': '长程视觉 Agent\\n的裂缝在哪', 'metadata': {'pageIndex': 0, 'sizePt': [594.96, 841.92], 'rotation': 0, 'blockIndex': 5, 'ocr': False, 'sourceTitle': 'Program Manager', 'sourceRevision': {'capturedAt': '', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983'}}, 'citations': [{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:2', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [49.5, 65.201, 250.562, 135.256], 'blockIndex': 5}}}]}, {'fragmentId': 'fragment:source:acceptance-3eda8e3511304b2abba464dc13be1983:2:unit:6', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [49.5, 171.732, 75.33, 179.607], 'blockIndex': 6}}, 'text': '一句话', 'metadata': {'pageIndex': 0, 'sizePt': [594.96, 841.92], 'rotation': 0, 'blockIndex': 6, 'ocr': False, 'sourceTitle': 'Program Manager', 'sourceRevision': {'capturedAt': '', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983'}}, 'citations': [{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:2', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [49.5, 171.732, 75.33, 179.607], 'blockIndex': 6}}}]}, {'fragmentId': 'fragment:source:acceptance-3eda8e3511304b2abba464dc13be1983:2:unit:7', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [49.5, 192.0, 545.76, 208.385], 'blockIndex': 7}}, 'text': '一个比人快两倍、但每两次只能真正完成一次的 agent，在经济上无法交付。原因分', 'metadata': {'pageIndex': 0, 'sizePt': [594.96, 841.92], 'rotation': 0, 'blockIndex': 7, 'ocr': False, 'sourceTitle': 'Program Manager', 'sourceRevision': {'capturedAt': '', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983'}}, 'citations': [{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:2', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [49.5, 192.0, 545.76, 208.385], 'blockIndex': 7}}}]}], 'coverage': {'extent': 'document', 'readRanges': [{'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [447.375, 59.409, 546.568, 70.622], 'blockIndex': 0}}, {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [388.559, 75.159, 546.574, 86.372], 'blockIndex': 1}}, {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [346.465, 91.659, 546.57, 102.872], 'blockIndex': 2}}, {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [369.75, 107.409, 546.573, 118.622], 'blockIndex': 3}}, {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [438.926, 123.159, 546.577, 134.372], 'blockIndex': 4}}, {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [49.5, 65.201, 250.562, 135.256], 'blockIndex': 5}}, {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [49.5, 171.732, 75.33, 179.607], 'blockIndex': 6}}, {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [49.5, 192.0, 545.76, 208.385], 'blockIndex': 7}}], 'totalUnits': 21, 'complete': False, 'nextCursor': 'unit:8', 'missingReason': None}, 'evidenceStatus': 'ok', 'usedBackend': 'document.pdf.pymupdf', 'latencyMs': 1442.0326999970712}",
+        "isError": false,
+        "usedBackend": "task_source.reader",
+        "latencyMs": 1445.4242000065278
+      },
+      {
+        "name": "Context.search",
+        "arguments": {
+          "query": "选题 推荐 小样本 脱敏 通用人工智能 专项人工智能",
+          "source_ids": [
+            "source:acceptance-3eda8e3511304b2abba464dc13be1983:2"
+          ]
+        },
+        "result": "{'query': '选题 推荐 小样本 脱敏 通用人工智能 专项人工智能', 'results': [{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:2', 'fragments': [{'fragmentId': 'fragment:source:acceptance-3eda8e3511304b2abba464dc13be1983:2:unit:68', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 2, 'rectPt': [49.5, 37.805, 535.413, 759.872]}}, 'text': '断言\\n判定\\n实据\\n更正\\nCFP 把 Data synthesis, datasets and benchmarks\\n「CVPR 硬性要求贡献是训练出来的视觉\\n单列为正式 topic。这是一条正确的投稿策略判断，不\\n模块」\\n是规则。准确说法：纯 prompt 编排不足以形成视觉贡\\n献；可训练的视觉状态估计 / 时空证据 / 后果预测 / 风\\n险建模 / 新 benchmark 都算。\\n错误\\n官方 Author Guidelines 原文：AC 推荐 → Findings 组\\n「CVPR 2026 Findings 是 opt-in 全收、\\n委邀请作者 → 作者决定是否投 → 进 workshop\\n独立 proceedings」\\nproceedings。不是 opt-in，也不是独立\\nproceedings。CVPR 2027 CFP 未承诺沿用，不能当\\n保底。\\nDeskCraft 538 任务，GPT-5.4 31.6%\\n属实\\n2606.03103  属实，且补充两点两份材料都漏了：\\ninteractive 子集只有 27.6%，原文明写「persistent\\nfailures in long horizon workflow delivery and\\nproactive clarification」。这是选题 03 的现成战场。\\nStarDojo 是 ECCV 2026、benchmark、\\n属实\\n2507.07445  标题含 Stardew Valley，2025-07 上\\n线。定位判断正确：它是面向视觉交互与长程规划的\\n10 类高层技能绕开键鼠、GPT-4.1\\n游戏 agent benchmark，不是严格的 pixel-only\\n12.7%\\ncomputer-use benchmark。\\n§ 地皮\\n谁已经把坑占了\\n这一节的作用是止损。下面每条都实搜过 arXiv，标注了占用程度和精确的占用边界\\n——边界比「已占」三个字有用得多，因为差异句要写进 intro 第一段。\\n对原 HTML 最大的一处更正\\n原文把「连续 GUI 操作 / 把 GUI 当 visuomotor control」列为方案 B，新颖度打了满分，说「没\\n人把 GUI 操作当作 visuomotor control 来建模」。这条已经不成立。\\nDragOn\\n2606.06322  已经是拖拽 GUI 交互的 benchmark + 数据集；ShowUI-π\\n2512.24965  的\\n副标题就是「Flow-based Generative Models as GUI Dexterous Hands」，即流匹配生成模型做\\nGUI 连续控制；Covering Human Action Space for Computer Use\\n2605.12501  做的正是完整人\\n类动作空间的数据合成与 benchmark；再加 Beyond Clicking\\n2601.06031 （text dragging\\ngrounding）与 ShowUI-Aloha\\n2601.07181 。', 'metadata': {'pageIndex': 2, 'sizePt': [594.96, 841.92], 'rotation': 0, 'blockIndex': 0, 'ocr': False, 'searchAggregate': 'pdf-page', 'blockIndices': [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36], 'sourceTitle': 'Program Manager', 'sourceRevision': {'capturedAt': '', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983'}}, 'citations': [{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:2', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 2, 'rectPt': [49.5, 37.805, 535.413, 759.872]}}}]}, {'fragmentId': 'fragment:source:acceptance-3eda8e3511304b2abba464dc13be1983:2:unit:523', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 17, 'rectPt': [49.5, 53.445, 517.215, 780.555]}}, 'text': '最值得押注的论文主张，不是「我们的 agent 更聪\\n明」，而是：我们识别出一个可测量的视觉变量，设\\n计了一个视觉模块，让 agent 在固定成本下减少该变\\n量的损害，并且在新任务与反事实扰动下依然成立。\\n这个写法对得起 CVPR 的三种评审：它有可训练的视觉模块（对 AC），有一个别人可以复\\n现和推翻的可测量（对 reviewer），而且不会因为下一次模型发布而作废（对 2027 年 1 月\\n的你）。八个选题只是把这个变量取成了不同的东西。\\n线 A 的变量\\n线 A 的数学\\n部分可观测下的有代价主动感知与信息价\\n信念腐坏——账本过期率、观测的因果收\\n益、错误信念半衰期\\n值。屏幕（01–04）与显微镜（05）是同一\\n套数学的两个竞技场\\n线 B 的变量\\n线 B 的数学\\n时序稳定性预测、不变表征学习、目标导向\\n接触面损耗——过早动手率、外观变化下的\\n同一性丢失、交接时的状态重建误差\\n压缩。三个都是经典 CV 问题换了载体\\n两条线合起来回答同一个问题的两半——为什么一个比人快两倍的 agent 仍然不能交付。线 A\\n说：因为它脑子里那份世界模型坏了。线 B 说：因为它撞上的世界和它交还给的人，都不在\\n它的模型里。\\n四条不可违背的实验纪律\\n01\\nbinary 与 partial 永远同时报，并注明步数预算。整份材料里最容易出事的地方就是口径\\n——同一个模型在榜单和原论文上能差三十个点。自己复现一遍基线，不要引榜单。\\n02\\n固定 step、token 和时间预算。否则「加了模块所以变好」和「多调用了几次所以变好」\\n分不开，这是 agent 论文最常见的致命伤。\\n03\\n至少 3 个随机种子，给误差棒。agent 评测方差极大，单次运行不报方差是 2027 年评审\\n最容易抓的死穴。\\n04\\n主实验开跑前把杀死条件写下来。上面每个选题都给了，不是形式——它决定你在第几周知\\n道自己该换题。', 'metadata': {'pageIndex': 17, 'sizePt': [594.96, 841.92], 'rotation': 0, 'blockIndex': 0, 'ocr': False, 'searchAggregate': 'pdf-page', 'blockIndices': [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28], 'sourceTitle': 'Program Manager', 'sourceRevision': {'capturedAt': '', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983'}}, 'citations': [{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:2', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 17, 'rectPt': [49.5, 53.445, 517.215, 780.555]}}}]}, {'fragmentId': 'fragment:source:acceptance-3eda8e3511304b2abba464dc13be1983:2:unit:0', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [49.5, 59.409, 546.577, 804.751]}}, 'text': '核验日期 \\xa02026-09-16\\n投稿目标 \\xa0CVPR 2027 · 11/16 AOE\\n核验对象 \\xa02 份 AI 调研 · 21 个 arXiv 编号\\n判定 \\xa0编号 21/21 命中 · 事实更正 5 处\\n交付 \\xa08 个选题 · 两条线\\n长程视觉 Agent\\n的裂缝在哪\\n一句话\\n一个比人快两倍、但每两次只能真正完成一次的 agent，在经济上无法交付。原因分\\n两半：一，它的信念坏了——世界模型在三百步里静默腐坏，它丢约束、漏中途信\\n息、宁可猜也不问、不回头验证（这不是我的推测，是 OSWorld 2.0 作者写在摘要\\n里的原话）；二，它撞上的世界和它交还给的人，都不在它的模型里——界面会加\\n载、会换皮、会改版，而人接手时只拿到一张截图和一堆日志。\\n§ 基准事实\\n那 34.2 个点\\n整份报告压在一个数字上：在 OSWorld 2.0 的 108 个长程任务上，最强配置（Claude\\nOpus 4.8，最大思考，批量工具调用，500 步预算）拿到 54.8% 的部分完成分，但严\\n格二元完成率只有 20.6%。\\nOSWORLD 2.0 · 108 长程任务 · 500 步 · CLAUDE OPUS 4.8 MAX-THINKING\\nARXIV 2606.29537\\n20.6%\\n54.8%\\n100%\\n二元完成\\n部分完成\\n人类\\n中间那片斜线区是 34.2 个点：任务的大部分都做对了，却总会漏掉一两件事而归零。\\n同一 benchmark 上 GPT-5.5 更省 token，但在 13% 附近就平了。每个任务人类中位耗\\n时约 1.6 小时，Opus 4.7 平均需要 318 次工具调用——OSWorld 1.0 是约 30 次。\\n原文摘要的最后一句 · 逐字核对\\n当前 agent 远未达到专业级计算机使用：它们并非栽在基础 GUI 控制或写代码上，而是丢失约\\n束、错过任务中途到达的信息、宁可猜也不询问用户、跳过验证，并且在任务取决于必须自行恢', 'metadata': {'pageIndex': 0, 'sizePt': [594.96, 841.92], 'rotation': 0, 'blockIndex': 0, 'ocr': False, 'searchAggregate': 'pdf-page', 'blockIndices': [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29], 'sourceTitle': 'Program Manager', 'sourceRevision': {'capturedAt': '', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983'}}, 'citations': [{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:2', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [49.5, 59.409, 546.577, 804.751]}}}]}, {'fragmentId': 'fragment:source:acceptance-3eda8e3511304b2abba464dc13be1983:2:unit:30', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 1, 'rectPt': [49.5, 31.68, 539.006, 715.125]}}, 'text': '复的隐藏状态时最为吃力。\\n这一句话点名了五个失败模式。下面五个选题，逐一对应其中一个——这就是它们的排序依据。\\n§ 核验台\\n哪些站得住，哪些得改\\n两份材料的 21 个 arXiv 编号我逐条打了 arXiv API，全部命中，无一伪造——这点值得\\n说，因为跨年份编号（2602–2609）看上去很像编的。真正需要改的是下面几处。\\n断言\\n判定\\n实据\\n属实\\nCFP 正式 topic 明列 Agentic AI、Physical AI（World\\nCVPR 2027 收 agentic AI，范围远大于\\nModels/VLA/Planning/Simulation）、Embodied\\ncomputer use\\nvision and robotics、Reasoning & RL、Trustworthy\\nvision、AI for Science and Scientific Discovery、\\nMedical and biological vision, cell microscopy、\\nData synthesis/datasets/benchmarks。\\n属实\\n官方 Dates 与 CFP 双向核对一致。另：评审释放\\n截稿 11/16 AOE，注册 11/10，补材\\n1/25，终审 2/25，会期 6/22–25，workshop 6/20–\\n11/23，contemporaneous 分界 2026-\\n21。CFP 另写明所有作者必须承诺审稿，且 CVPR\\n09-15\\n2027 将在评审流程部分环节使用 LLM（细则未定）。\\nOSWorld 2.0：108 任务 / 318 工具调用\\n属实\\n与 2606.29537  摘要逐字一致。GPT-5.5 更省 token\\n但平在 ~13%。\\n/ 人类中位 1.6h / 20.6% binary / 54.8%\\npartial\\n更正\\n论文口径下最高二元完成率是 20.6%。45% 来自厂\\n「OSWorld 2.0 上最强模型二元完成率\\n商/talk 转述，不能与论文并列。凡引用必须同时标\\n约 45%」\\n注：benchmark 版本、是否 offline、binary 还是\\npartial、步数预算、harness。\\n更正\\n92.7 是 ScreenSpot-Pro，72.6 是 OSWorld 2.0 的\\nAstra「ScreenSpot-Pro 92.7 / OSWorld\\npartial，两者被混用了。且 openai.com 官方页当前\\n超人类 13 点」\\n对抓取返回 403，第三方复现未见——所有厂商数字在\\n论文里都必须标为自报。', 'metadata': {'pageIndex': 1, 'sizePt': [594.96, 841.92], 'rotation': 0, 'blockIndex': 0, 'ocr': False, 'searchAggregate': 'pdf-page', 'blockIndices': [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37], 'sourceTitle': 'Program Manager', 'sourceRevision': {'capturedAt': '', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983'}}, 'citations': [{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:2', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 1, 'rectPt': [49.5, 31.68, 539.006, 715.125]}}}]}, {'fragmentId': 'fragment:source:acceptance-3eda8e3511304b2abba464dc13be1983:2:unit:135', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 4, 'rectPt': [49.5, 30.75, 546.748, 786.225]}}, 'text': 'GUI 动作的前置条件 / 后置条件验证\\n空\\narXiv 全库检索 postcondition + agent + GUI：零命中。stale + observation + agent + screenshot：仅 1 篇，还\\n是 transition benchmark（Desktop-Delta 2607.26041 ）。\\n视觉 agent「什么时候该问而不是该猜」\\n近乎空\\nwhen to ask + agent + multimodal 全库仅 1 篇，还是回合制 RPG（StarBench 2510.18483 ）。AmbiBench\\n2602.11750  做的是移动端一次性指令歧义，不是不可逆风险下的决策。SafePred 2602.01725  是 world-model 护\\n栏，不建模询问成本。\\n假设驱动的主动显微观测\\n空\\nmicroscopy + active learning + experimental design：零命中。hypothesis + microscopy + agent 仅 3 篇，全\\n是 2025 年的工具/benchmark。EAA 2602.15294  与 Agentic-J 2606.02080  都是工具编排，不是采集策略。\\n§ 档案\\n八个选题\\n两条线\\n排序依据三条，按优先级：（一）是否直接对应 OSWorld 2.0 作者亲口点名的失败模\\n式；（二）空白是否被实搜证实，而不是想当然；（三）视觉内核能否撑住一个 CVPR\\nAC 的第一反应。成本、算力、时间不参与排序。\\n线 A · 01–05 · 信念与决策\\n线 B · 06–08 · 摩擦与交接\\n机制性的。问题是「agent 脑子里那份世界模型\\n需求驱动的。问题是「agent 撞上的真实世界，\\n和它交还给的真实用户」。共同特点：一句话能说\\n为什么会坏」。novelty 高、天花板高，但题目本\\n清、AC 一眼就懂、数据几乎免费、评估无歧\\n身需要一段话才讲得清，intro 第一段必须写得极\\n准，否则 reviewer 会归到 memory / critic 那一\\n义。这三个是你问的「特别实际、AC 觉得有趣」\\n堆里去。\\n的那一类。\\n线 A 信念与决策\\n机制性 · novelty 与天花板更高 · 差异句是生死线\\nBeliefs, Not Screenshots — Evidence-Bound State Tracking for Long-\\n01 屏幕信念账本\\nHorizon Computer Use', 'metadata': {'pageIndex': 4, 'sizePt': [594.96, 841.92], 'rotation': 0, 'blockIndex': 0, 'ocr': False, 'searchAggregate': 'pdf-page', 'blockIndices': [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29], 'sourceTitle': 'Program Manager', 'sourceRevision': {'capturedAt': '', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983'}}, 'citations': [{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:2', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 4, 'rectPt': [49.5, 30.75, 546.748, 786.225]}}}]}, {'fragmentId': 'fragment:source:acceptance-3eda8e3511304b2abba464dc13be1983:2:unit:197', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 6, 'rectPt': [69.75, 30.375, 528.249, 772.574]}}, 'text': '至少一个前沿 API 模型 + 一个开源模型（Qwen-UI-Agent\\n2607.28227 ）。只在 7B 上出结果等于死。\\n对照组：无记忆 / 全图记忆 / AGMem / MementoGUI / PAL-UI / ATMem /\\n「只是多截几张图」。最后一个对照是审稿人一定会问的。\\n注入扰动：过期截图、像素-结构冲突、任务中途新增约束、必须回头取\\n的隐藏状态。\\nbinary + partial 双报\\nconstraint recall / F1\\nviolation rate\\nstaleness AUC\\nrecovery rate\\n不可逆错误率\\nECE\\n每成功任务 token/步数\\n杀死条件\\n在固定 token 与步数预算下，binary 没有显著提升——即收益全部来自「多\\n调用了几次」——则这个方向证伪，停。这是本选题唯一的止损点，必须在跑\\n主实验前预先写死。\\nThe Screen Is a Stream — Asynchronous Visual Monitoring for\\n02 并发中断感知\\nComputer-Use Agents\\n新颖度最高\\n对应：漏掉中途到达的信息\\n检索 0 命中\\n异步 HARNESS 是工程大头\\n人话\\nAgent 盯着一张截图想 20 秒，等它想完，世界早变了——弹窗跳出来\\n了、列表刷新了、按钮挪位了。再挂一只「眼睛」一直睁着，看到变化\\n就喊停：你正要点的那个东西，已经不在那儿了。\\n主张\\n屏幕是视频流，不是截图序列。跑一个高频、廉价、常开的视觉变化监测\\n器，与慢速策略并发；当它检测到某个变化会让在途动作失效时，中断、作\\n废、或强制重新接地。\\n核心研究问题不是「怎么看得更快」，而是：什么样的屏幕变化会让一个已经\\n决定但尚未落地的动作失效——这是一个可训练的视觉预测问题。\\n为什么现在\\nOSWorld 2.0 把 streaming interaction and dynamic environments 明确\\n列为它刻意针对的 challenge phenomenon，把「错过任务中途到达的信息」\\n列为失败模式。系统侧的数字也齐了：每步推理 20 秒以上、反思环节吃掉\\n76–96% 的任务时延 2609.02309 。而 DynamicGUIBench 上最好的方法只\\n有 22.1%。', 'metadata': {'pageIndex': 6, 'sizePt': [594.96, 841.92], 'rotation': 0, 'blockIndex': 0, 'ocr': False, 'searchAggregate': 'pdf-page', 'blockIndices': [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27], 'sourceTitle': 'Program Manager', 'sourceRevision': {'capturedAt': '', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983'}}, 'citations': [{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:2', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 6, 'rectPt': [69.75, 30.375, 528.249, 772.574]}}}]}, {'fragmentId': 'fragment:source:acceptance-3eda8e3511304b2abba464dc13be1983:2:unit:315', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 10, 'rectPt': [69.75, 30.375, 526.418, 763.751]}}, 'text': '实验闭环\\n三个长程环境：OSWorld 2.0 / WeaveBench / DeskCraft × 至少 6 个模\\n型。\\n对照 2608.06270  的单轮结论——如果长程 VEG 与单轮 VEG 结构相同，这\\n篇就没有新东西。\\n预算实验：在固定 token 预算下用预测器分配观测，报 binary 提升。\\n长程 VEG\\ncompounding factor\\n错误信念半衰期\\n必要性预测器 AUC\\n固定预算下 binary 提升\\n杀死条件\\n长程 VEG 与单轮 VEG 没有结构差异，且必要性预测器在固定预算下不涨点\\n——降级成 workshop，不浪费主会名额。\\nMeasure What Matters Next — Budgeted Hypothesis Discrimination for\\n05 预算约束下的假设驱动主动显微\\nAutonomous Microscopy\\n天花板最高\\nCFP 两个 TOPIC 同时对口\\n检索 0 命中\\n仿真-真实域差距\\n人话\\n显微镜下细胞不正常，可能是机制 A 也可能是机制 B。光毒性摆在那，\\n你只能再拍二十张。那就问一个很硬的问题：这二十张该拍哪儿、拍哪\\n个焦面、什么曝光，才能最快把 A 和 B 分开？\\n为什么它在榜上\\nCVPR 2027 CFP 同时明列 AI for Science and Scientific Discovery 与\\nMedical and biological vision, cell microscopy 两个 topic。这是整份\\n清单里最不拥挤的 AC 池——而前四个选题都要挤 agentic / embodied 那几个\\n池子。\\n主张\\n现有的 microscopy agent——EAA 2602.15294 、Agentic-J 2606.02080 ——\\n都是工具编排：调 ImageJ、调显微镜、调分析流程。真正缺的是一句话就\\n能说清的问题：\\n在有限观测次数、时间和光剂量下，下一次该测什么，才能最大程度区分竞\\n争性的科学假设？\\n不是「这张图里有什么」，而是「为了分辨机制 A 和机制 B，我下一步该换位\\n置、换焦面、换曝光，还是继续跟踪这一个细胞」。', 'metadata': {'pageIndex': 10, 'sizePt': [594.96, 841.92], 'rotation': 0, 'blockIndex': 0, 'ocr': False, 'searchAggregate': 'pdf-page', 'blockIndices': [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26], 'sourceTitle': 'Program Manager', 'sourceRevision': {'capturedAt': '', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983'}}, 'citations': [{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:2', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 10, 'rectPt': [69.75, 30.375, 526.418, 763.751]}}}]}, {'fragmentId': 'fragment:source:acceptance-3eda8e3511304b2abba464dc13be1983:2:unit:497', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 16, 'rectPt': [49.5, 31.68, 526.473, 790.39]}}, 'text': '的真实状态，可程序化生成。摘要好不好，看它能不能让一个模型或一个人\\n答对这些题。人类研究只作外部验证，不承担主张。\\n实验闭环\\n轨迹来源：OSWorld 2.0 与 DeskCraft 上的失败轨迹——这是全场唯一一个\\n「agent 越弱数据越多」的选题。\\n朴素基线必须打赢：最后 K 帧、均匀采样、让模型自己写一段文字总结。\\n第三条是最强的对手。\\n人类研究作外部验证：重建时间、重建准确率、接管后任务完成率。\\n状态重建准确率\\n证据集大小 / 压缩率\\n误导率\\n人类重建时间\\n接管后完成率\\n压缩-准确率权衡曲线\\n空白证据\\nGUI agent + handoff → 0 命中\\nhuman + takeover + computer-use agent → 0 命中\\ncomputer use agent + interruption + human → 0 命中\\nGUI + summarization + trajectory + human → 仅 2 篇，均为 agent 自用的\\nmemory（Mem-W、PAL-UI），不是给人看的\\n杀死条件\\n最小证据集在状态重建问答上赢不了「最后 K 帧」或「模型自己写的文字总\\n结」——说明视觉证据选择没有带来文本摘要之外的东西。停。\\n跨线的一句实话\\n如果只看 novelty 天花板，押 01 和 02。如果看「跑得完、评得清、AC 会笑着读完」，06\\n和 07 的期望值其实比 04 和 05 更高——它们标注免费、指标无歧义、朴素基线明确、问题\\n陈述自带说服力。08 是这八个里最有趣的一个，但它也是唯一一个需要你主动防守「这是\\n不是 CV 论文」的。\\n真要选一对并行：01 做主投（天花板与故事性），07 做并行（数据几乎免费，不抢 01 的算\\n力，且万一 01 的诊断不显著，07 可以顶上成为主投）。这两个共用的东西很少，风险不相\\n关。\\n§ 内核\\n串起八篇的那一句', 'metadata': {'pageIndex': 16, 'sizePt': [594.96, 841.92], 'rotation': 0, 'blockIndex': 0, 'ocr': False, 'searchAggregate': 'pdf-page', 'blockIndices': [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25], 'sourceTitle': 'Program Manager', 'sourceRevision': {'capturedAt': '', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983'}}, 'citations': [{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:2', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 16, 'rectPt': [49.5, 31.68, 526.473, 790.39]}}}]}], 'coverage': {'extent': 'query-results', 'readRanges': [{'kind': 'pdf-region', 'value': {'pageIndex': 2, 'rectPt': [49.5, 37.805, 535.413, 759.872]}}, {'kind': 'pdf-region', 'value': {'pageIndex': 17, 'rectPt': [49.5, 53.445, 517.215, 780.555]}}, {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [49.5, 59.409, 546.577, 804.751]}}, {'kind': 'pdf-region', 'value': {'pageIndex': 1, 'rectPt': [49.5, 31.68, 539.006, 715.125]}}, {'kind': 'pdf-region', 'value': {'pageIndex': 4, 'rectPt': [49.5, 30.75, 546.748, 786.225]}}, {'kind': 'pdf-region', 'value': {'pageIndex': 6, 'rectPt': [69.75, 30.375, 528.249, 772.574]}}, {'kind': 'pdf-region', 'value': {'pageIndex': 10, 'rectPt': [69.75, 30.375, 526.418, 763.751]}}, {'kind': 'pdf-region', 'value': {'pageIndex': 16, 'rectPt': [49.5, 31.68, 526.473, 790.39]}}], 'totalUnits': 21, 'complete': False, 'nextCursor': 'match:8', 'missingReason': None}, 'evidenceStatus': 'ok', 'usedBackend': 'document.pdf.pymupdf', 'latencyMs': 1419.470699998783}]}",
+        "isError": false,
+        "usedBackend": "task_source.search",
+        "latencyMs": 1422.6765999919735
+      }
+    ],
+    "modelUsage": {
+      "inputTokens": 45012,
+      "outputTokens": 1429,
+      "totalTokens": 46441,
+      "cacheReadTokens": 24320,
+      "cacheWriteTokens": 0,
+      "turnsReported": 4
+    },
+    "usedBackend": "magic_pointer.messages_multiturn_streaming",
+    "actionProposals": [],
+    "selectionSessionId": "c12f2fee-a25e-49c1-af6e-d0562e31791a",
+    "selectionSnapshotId": "acceptance-3eda8e3511304b2abba464dc13be1983",
+    "agentSessionId": "agent-c12f2fee-a25e-49c1-af6e-d0562e31791a",
+    "activities": [
+      {
+        "kind": "model",
+        "turn": 1,
+        "state": "error",
+        "latencyMs": 32282.731499988586
+      },
+      {
+        "kind": "tool",
+        "id": "call_3707cbb72ba44438b83d9d6e",
+        "name": "Look",
+        "state": "error",
+        "latencyMs": 3776.808099995833,
+        "usedBackend": "vision"
+      },
+      {
+        "kind": "tool",
+        "id": "call_5b44bbe1c0cb4cbea9b5c2f0",
+        "name": "Look",
+        "state": "error",
+        "latencyMs": 159.9681999941822,
+        "usedBackend": "vision"
+      },
+      {
+        "kind": "tool",
+        "id": "call_043a8ad02a95433180008982",
+        "name": "Look",
+        "state": "error",
+        "latencyMs": 129.2535999964457,
+        "usedBackend": "vision"
+      },
+      {
+        "kind": "model",
+        "turn": 2,
+        "state": "done",
+        "latencyMs": 51104.039900004864
+      },
+      {
+        "kind": "tool",
+        "id": "call_5066d66ae8b4483aa8ca1154",
+        "name": "Context.read",
+        "state": "done",
+        "latencyMs": 3.3136999991256744,
+        "usedBackend": "task_source.reader"
+      },
+      {
+        "kind": "tool",
+        "id": "call_8b869d7cde724fbd84c7a1ce",
+        "name": "Context.read",
+        "state": "done",
+        "latencyMs": 1.7989999905694276,
+        "usedBackend": "task_source.reader"
+      },
+      {
+        "kind": "tool",
+        "id": "call_c1e2426b21b948cbbec46cc8",
+        "name": "Context.read",
+        "state": "done",
+        "latencyMs": 1445.4242000065278,
+        "usedBackend": "task_source.reader"
+      },
+      {
+        "kind": "model",
+        "turn": 3,
+        "state": "done",
+        "latencyMs": 68421.82729998603
+      },
+      {
+        "kind": "tool",
+        "id": "call_4c7c2c3b478849d19c8967b4",
+        "name": "Context.search",
+        "state": "done",
+        "latencyMs": 1422.6765999919735,
+        "usedBackend": "task_source.search"
+      },
+      {
+        "kind": "model",
+        "turn": 4,
+        "state": "done",
+        "firstTokenMs": 34868.74809997971,
+        "latencyMs": 38013.381999975536
+      }
+    ],
+    "trajectory": [
+      {
+        "seq": 1,
+        "kind": "user",
+        "turn": 1,
+        "state": "done",
+        "text": "基于这些信息，总结200字讲清楚你推荐的最合适选题。",
+        "startedAt": 0.0
+      },
+      {
+        "kind": "request-header",
+        "turn": 1,
+        "step": 1,
+        "startedAt": 873.5212000028696,
+        "promptCache": false,
+        "usedBackend": "magic_pointer.messages_multiturn_streaming",
+        "maxTokens": 8192,
+        "seq": 2
+      },
+      {
+        "kind": "message",
+        "turn": 1,
+        "step": 1,
+        "state": "error",
+        "text": "",
+        "startedAt": 873.5212000028696,
+        "seq": 3,
+        "reasoning": "The user wants me to summarize in 200 words the most suitable topic selection based on the evidence. The evidence is from a WeChat selection containing text about \"小样本脱敏后给通用人工智能和专项人工智能，判别\".\n\nLet me look at the three sources more carefully to understand the context.",
+        "completedAt": 33156.252699991455
+      },
+      {
+        "kind": "tool",
+        "turn": 1,
+        "callId": "call_3707cbb72ba44438b83d9d6e",
+        "name": "Look",
+        "state": "error",
+        "text": "{\"anchor\":\"reference:acceptance-3eda8e3511304b2abba464dc13be1983:0\",\"prompt\":\"读取圈选区域内的完整文字内容\"}",
+        "startedAt": 29050.50349998055,
+        "seq": 4,
+        "completedAt": 32837.16110000387,
+        "latencyMs": 3776.808099995833,
+        "usedBackend": "vision",
+        "result": "{\"status\": \"unsupported\", \"confidence\": 0.0, \"value\": null, \"note\": \"vision_unavailable: AI 调用失败：模型端点限流中（HTTP 429）。已跳过模型调用，稍后会自动重试。 约 30 秒后可重试。\\n\\n截图和对象已保存在本地。\"}",
+        "isError": true
+      },
+      {
+        "kind": "tool",
+        "turn": 1,
+        "callId": "call_5b44bbe1c0cb4cbea9b5c2f0",
+        "name": "Look",
+        "state": "error",
+        "text": "{\"anchor\":\"reference:acceptance-3eda8e3511304b2abba464dc13be1983:1\",\"prompt\":\"读取圈选区域内的完整文字内容\"}",
+        "startedAt": 32840.098399989074,
+        "seq": 5,
+        "completedAt": 33009.64619999286,
+        "latencyMs": 159.9681999941822,
+        "usedBackend": "vision",
+        "result": "{\"status\": \"unsupported\", \"confidence\": 0.0, \"value\": null, \"note\": \"vision_unavailable: AI 调用失败：模型端点限流中（HTTP 429）。已跳过模型调用，稍后会自动重试。 约 30 秒后可重试。\\n\\n截图已保存在本地：C:\\\\Users\\\\zjz65\\\\AppData\\\\Local\\\\Temp\\\\tmpnn7auv6i.png\\n端点恢复后可以直接重试。\"}",
+        "isError": true
+      },
+      {
+        "kind": "tool",
+        "turn": 1,
+        "callId": "call_043a8ad02a95433180008982",
+        "name": "Look",
+        "state": "error",
+        "text": "{\"anchor\":\"reference:acceptance-3eda8e3511304b2abba464dc13be1983:2\",\"prompt\":\"读取圈选区域内的完整文字内容\"}",
+        "startedAt": 33014.15599999018,
+        "seq": 6,
+        "completedAt": 33155.83030000562,
+        "latencyMs": 129.2535999964457,
+        "usedBackend": "vision",
+        "result": "{\"status\": \"unsupported\", \"confidence\": 0.0, \"value\": null, \"note\": \"vision_unavailable: AI 调用失败：模型端点限流中（HTTP 429）。已跳过模型调用，稍后会自动重试。 约 30 秒后可重试。\\n\\n截图已保存在本地：C:\\\\Users\\\\zjz65\\\\AppData\\\\Local\\\\Temp\\\\tmp1sjfybge.png\\n端点恢复后可以直接重试。\"}\n\n[Tool loop warning: same_tool_failure_warning; count=3; Look failed 3 times. Diagnose the latest error, change capability, or report the blocker.]",
+        "isError": true
+      },
+      {
+        "kind": "request-header",
+        "turn": 2,
+        "step": 2,
+        "startedAt": 33156.3314999803,
+        "promptCache": false,
+        "usedBackend": "magic_pointer.messages_multiturn_streaming",
+        "maxTokens": 8192,
+        "seq": 7
+      },
+      {
+        "kind": "message",
+        "turn": 2,
+        "step": 2,
+        "state": "done",
+        "text": "",
+        "startedAt": 33156.3314999803,
+        "seq": 8,
+        "reasoning": "The look tool failed due to rate limiting. Let me try reading the sources directly.",
+        "completedAt": 84260.37139998516
+      },
+      {
+        "kind": "tool",
+        "turn": 2,
+        "callId": "call_5066d66ae8b4483aa8ca1154",
+        "name": "Context.read",
+        "state": "done",
+        "text": "{\"source_id\":\"source:acceptance-3eda8e3511304b2abba464dc13be1983:0\"}",
+        "startedAt": 82776.2487999862,
+        "seq": 9,
+        "completedAt": 82800.7558999816,
+        "latencyMs": 3.3136999991256744,
+        "usedBackend": "task_source.reader",
+        "result": "{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:0', 'fragments': [{'fragmentId': 'fragment:source:acceptance-3eda8e3511304b2abba464dc13be1983:0:selection', 'locator': {'kind': 'message', 'value': {'adapterId': 'wechat', 'bbox': [2136, 1373, 611, 32], 'conversationKey': 'wechat:window:7277804:surface:root', 'coordinateSpace': 'physical_screen_pixels', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983', 'strokeIndex': 0}}, 'text': '小样本脱敏后给通用人工智能和专项人工智能，判别', 'metadata': {'title': '微信', 'revision': {'capturedAt': '', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983'}}, 'citations': [{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:0', 'locator': {'kind': 'message', 'value': {'adapterId': 'wechat', 'bbox': [2136, 1373, 611, 32], 'conversationKey': 'wechat:window:7277804:surface:root', 'coordinateSpace': 'physical_screen_pixels', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983', 'strokeIndex': 0}}}]}], 'coverage': {'extent': 'selection', 'readRanges': [{'adapterId': 'wechat', 'bbox': [2136, 1373, 611, 32], 'conversationKey': 'wechat:window:7277804:surface:root', 'coordinateSpace': 'physical_screen_pixels', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983'}], 'totalUnits': 23, 'complete': True, 'nextCursor': None, 'missingReason': None}, 'evidenceStatus': 'ok', 'usedBackend': 'local:rapidocr-onnx', 'latencyMs': 0.021400017431005836}",
+        "isError": false
+      },
+      {
+        "kind": "tool",
+        "turn": 2,
+        "callId": "call_8b869d7cde724fbd84c7a1ce",
+        "name": "Context.read",
+        "state": "done",
+        "text": "{\"source_id\":\"source:acceptance-3eda8e3511304b2abba464dc13be1983:1\"}",
+        "startedAt": 82782.13740000501,
+        "seq": 10,
+        "completedAt": 82807.52020000364,
+        "latencyMs": 1.7989999905694276,
+        "usedBackend": "task_source.reader",
+        "result": "{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:1', 'fragments': [{'fragmentId': 'fragment:source:acceptance-3eda8e3511304b2abba464dc13be1983:1:selection', 'locator': {'kind': 'message', 'value': {'adapterId': 'wechat', 'bbox': [2314, 486, 408, 205], 'conversationKey': 'wechat:window:7277804:surface:root', 'coordinateSpace': 'physical_screen_pixels', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983', 'strokeIndex': 1}}, 'text': 'cvpr2027-verified-\\ntop5.html HTML\\n87.3K\\n微信电脑版', 'metadata': {'title': '微信', 'revision': {'capturedAt': '', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983'}}, 'citations': [{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:1', 'locator': {'kind': 'message', 'value': {'adapterId': 'wechat', 'bbox': [2314, 486, 408, 205], 'conversationKey': 'wechat:window:7277804:surface:root', 'coordinateSpace': 'physical_screen_pixels', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983', 'strokeIndex': 1}}}]}], 'coverage': {'extent': 'selection', 'readRanges': [{'adapterId': 'wechat', 'bbox': [2314, 486, 408, 205], 'conversationKey': 'wechat:window:7277804:surface:root', 'coordinateSpace': 'physical_screen_pixels', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983'}], 'totalUnits': 45, 'complete': True, 'nextCursor': None, 'missingReason': None}, 'evidenceStatus': 'ok', 'usedBackend': 'local:rapidocr-onnx', 'latencyMs': 0.01659998088143766}",
+        "isError": false
+      },
+      {
+        "kind": "tool",
+        "turn": 2,
+        "callId": "call_c1e2426b21b948cbbec46cc8",
+        "name": "Context.read",
+        "state": "done",
+        "text": "{\"source_id\":\"source:acceptance-3eda8e3511304b2abba464dc13be1983:2\"}",
+        "startedAt": 82793.43510000035,
+        "seq": 11,
+        "completedAt": 84259.55610000528,
+        "latencyMs": 1445.4242000065278,
+        "usedBackend": "task_source.reader",
+        "result": "{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:2', 'fragments': [{'fragmentId': 'fragment:source:acceptance-3eda8e3511304b2abba464dc13be1983:2:unit:0', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [447.375, 59.409, 546.568, 70.622], 'blockIndex': 0}}, 'text': '核验日期 \\xa02026-09-16', 'metadata': {'pageIndex': 0, 'sizePt': [594.96, 841.92], 'rotation': 0, 'blockIndex': 0, 'ocr': False, 'sourceTitle': 'Program Manager', 'sourceRevision': {'capturedAt': '', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983'}}, 'citations': [{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:2', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [447.375, 59.409, 546.568, 70.622], 'blockIndex': 0}}}]}, {'fragmentId': 'fragment:source:acceptance-3eda8e3511304b2abba464dc13be1983:2:unit:1', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [388.559, 75.159, 546.574, 86.372], 'blockIndex': 1}}, 'text': '投稿目标 \\xa0CVPR 2027 · 11/16 AOE', 'metadata': {'pageIndex': 0, 'sizePt': [594.96, 841.92], 'rotation': 0, 'blockIndex': 1, 'ocr': False, 'sourceTitle': 'Program Manager', 'sourceRevision': {'capturedAt': '', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983'}}, 'citations': [{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:2', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [388.559, 75.159, 546.574, 86.372], 'blockIndex': 1}}}]}, {'fragmentId': 'fragment:source:acceptance-3eda8e3511304b2abba464dc13be1983:2:unit:2', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [346.465, 91.659, 546.57, 102.872], 'blockIndex': 2}}, 'text': '核验对象 \\xa02 份 AI 调研 · 21 个 arXiv 编号', 'metadata': {'pageIndex': 0, 'sizePt': [594.96, 841.92], 'rotation': 0, 'blockIndex': 2, 'ocr': False, 'sourceTitle': 'Program Manager', 'sourceRevision': {'capturedAt': '', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983'}}, 'citations': [{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:2', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [346.465, 91.659, 546.57, 102.872], 'blockIndex': 2}}}]}, {'fragmentId': 'fragment:source:acceptance-3eda8e3511304b2abba464dc13be1983:2:unit:3', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [369.75, 107.409, 546.573, 118.622], 'blockIndex': 3}}, 'text': '判定 \\xa0编号 21/21 命中 · 事实更正 5 处', 'metadata': {'pageIndex': 0, 'sizePt': [594.96, 841.92], 'rotation': 0, 'blockIndex': 3, 'ocr': False, 'sourceTitle': 'Program Manager', 'sourceRevision': {'capturedAt': '', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983'}}, 'citations': [{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:2', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [369.75, 107.409, 546.573, 118.622], 'blockIndex': 3}}}]}, {'fragmentId': 'fragment:source:acceptance-3eda8e3511304b2abba464dc13be1983:2:unit:4', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [438.926, 123.159, 546.577, 134.372], 'blockIndex': 4}}, 'text': '交付 \\xa08 个选题 · 两条线', 'metadata': {'pageIndex': 0, 'sizePt': [594.96, 841.92], 'rotation': 0, 'blockIndex': 4, 'ocr': False, 'sourceTitle': 'Program Manager', 'sourceRevision': {'capturedAt': '', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983'}}, 'citations': [{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:2', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [438.926, 123.159, 546.577, 134.372], 'blockIndex': 4}}}]}, {'fragmentId': 'fragment:source:acceptance-3eda8e3511304b2abba464dc13be1983:2:unit:5', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [49.5, 65.201, 250.562, 135.256], 'blockIndex': 5}}, 'text': '长程视觉 Agent\\n的裂缝在哪', 'metadata': {'pageIndex': 0, 'sizePt': [594.96, 841.92], 'rotation': 0, 'blockIndex': 5, 'ocr': False, 'sourceTitle': 'Program Manager', 'sourceRevision': {'capturedAt': '', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983'}}, 'citations': [{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:2', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [49.5, 65.201, 250.562, 135.256], 'blockIndex': 5}}}]}, {'fragmentId': 'fragment:source:acceptance-3eda8e3511304b2abba464dc13be1983:2:unit:6', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [49.5, 171.732, 75.33, 179.607], 'blockIndex': 6}}, 'text': '一句话', 'metadata': {'pageIndex': 0, 'sizePt': [594.96, 841.92], 'rotation': 0, 'blockIndex': 6, 'ocr': False, 'sourceTitle': 'Program Manager', 'sourceRevision': {'capturedAt': '', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983'}}, 'citations': [{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:2', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [49.5, 171.732, 75.33, 179.607], 'blockIndex': 6}}}]}, {'fragmentId': 'fragment:source:acceptance-3eda8e3511304b2abba464dc13be1983:2:unit:7', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [49.5, 192.0, 545.76, 208.385], 'blockIndex': 7}}, 'text': '一个比人快两倍、但每两次只能真正完成一次的 agent，在经济上无法交付。原因分', 'metadata': {'pageIndex': 0, 'sizePt': [594.96, 841.92], 'rotation': 0, 'blockIndex': 7, 'ocr': False, 'sourceTitle': 'Program Manager', 'sourceRevision': {'capturedAt': '', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983'}}, 'citations': [{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:2', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [49.5, 192.0, 545.76, 208.385], 'blockIndex': 7}}}]}], 'coverage': {'extent': 'document', 'readRanges': [{'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [447.375, 59.409, 546.568, 70.622], 'blockIndex': 0}}, {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [388.559, 75.159, 546.574, 86.372], 'blockIndex': 1}}, {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [346.465, 91.659, 546.57, 102.872], 'blockIndex': 2}}, {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [369.75, 107.409, 546.573, 118.622], 'blockIndex': 3}}, {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [438.926, 123.159, 546.577, 134.372], 'blockIndex': 4}}, {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [49.5, 65.201, 250.562, 135.256], 'blockIndex': 5}}, {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [49.5, 171.732, 75.33, 179.607], 'blockIndex': 6}}, {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [49.5, 192.0, 545.76, 208.385], 'blockIndex': 7}}], 'totalUnits': 21, 'complete': False, 'nextCursor': 'unit:8', 'missingReason': None}, 'evidenceStatus': 'ok', 'usedBackend': 'document.pdf.pymupdf', 'latencyMs': 1442.0326999970712}",
+        "isError": false
+      },
+      {
+        "kind": "request-header",
+        "turn": 3,
+        "step": 3,
+        "startedAt": 84260.47760000802,
+        "promptCache": false,
+        "usedBackend": "magic_pointer.messages_multiturn_streaming",
+        "maxTokens": 8192,
+        "seq": 12
+      },
+      {
+        "kind": "message",
+        "turn": 3,
+        "step": 3,
+        "state": "done",
+        "text": "",
+        "startedAt": 84260.47760000802,
+        "seq": 13,
+        "reasoning": "Now I have the context. Let me piece together what I'm seeing:\n\n1. Source A (微信消息): \"小样本脱敏后给通用人工智能和专项人工智能，判别\" — This is a message about a topic idea involving small sample data de-identification for general AI and specialized AI\n2. Source B (微信文件): \"cvpr2027-verified-top5.html\" — An HTML file with top 5 verified CVPR 2027 topics\n3. Source C (PDF: Program Manager): This is a project management document for CVPR 2027 submission (deadline 11/16 AOE), verifying 2 AI research reports with 21 arXiv IDs, delivering 8 topics across two lines. One visible topic is \"长程视觉 Agent 的裂缝在哪\" (Where are the cracks in long-horizon visual agents), with the insight that \"一个比人快两倍、但每两次只能真正完成一次的 agent，在经济上无法交付\"\n\n\n4. The user is asking for a summary of which topic they should recommend based on this evidence, but I'm only seeing one complete topic in the PDF and a fragment from the WeChat message. I need to search through the project materials for more context on the available topics and the full discussion around them.",
+        "completedAt": 152682.30489999405
+      },
+      {
+        "kind": "tool",
+        "turn": 3,
+        "callId": "call_4c7c2c3b478849d19c8967b4",
+        "name": "Context.search",
+        "state": "done",
+        "text": "{\"query\":\"选题 推荐 小样本 脱敏 通用人工智能 专项人工智能\",\"source_ids\":[\"source:acceptance-3eda8e3511304b2abba464dc13be1983:2\"]}",
+        "startedAt": 151245.3534999804,
+        "seq": 14,
+        "completedAt": 152681.48470000597,
+        "latencyMs": 1422.6765999919735,
+        "usedBackend": "task_source.search",
+        "result": "{'query': '选题 推荐 小样本 脱敏 通用人工智能 专项人工智能', 'results': [{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:2', 'fragments': [{'fragmentId': 'fragment:source:acceptance-3eda8e3511304b2abba464dc13be1983:2:unit:68', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 2, 'rectPt': [49.5, 37.805, 535.413, 759.872]}}, 'text': '断言\\n判定\\n实据\\n更正\\nCFP 把 Data synthesis, datasets and benchmarks\\n「CVPR 硬性要求贡献是训练出来的视觉\\n单列为正式 topic。这是一条正确的投稿策略判断，不\\n模块」\\n是规则。准确说法：纯 prompt 编排不足以形成视觉贡\\n献；可训练的视觉状态估计 / 时空证据 / 后果预测 / 风\\n险建模 / 新 benchmark 都算。\\n错误\\n官方 Author Guidelines 原文：AC 推荐 → Findings 组\\n「CVPR 2026 Findings 是 opt-in 全收、\\n委邀请作者 → 作者决定是否投 → 进 workshop\\n独立 proceedings」\\nproceedings。不是 opt-in，也不是独立\\nproceedings。CVPR 2027 CFP 未承诺沿用，不能当\\n保底。\\nDeskCraft 538 任务，GPT-5.4 31.6%\\n属实\\n2606.03103  属实，且补充两点两份材料都漏了：\\ninteractive 子集只有 27.6%，原文明写「persistent\\nfailures in long horizon workflow delivery and\\nproactive clarification」。这是选题 03 的现成战场。\\nStarDojo 是 ECCV 2026、benchmark、\\n属实\\n2507.07445  标题含 Stardew Valley，2025-07 上\\n线。定位判断正确：它是面向视觉交互与长程规划的\\n10 类高层技能绕开键鼠、GPT-4.1\\n游戏 agent benchmark，不是严格的 pixel-only\\n12.7%\\ncomputer-use benchmark。\\n§ 地皮\\n谁已经把坑占了\\n这一节的作用是止损。下面每条都实搜过 arXiv，标注了占用程度和精确的占用边界\\n——边界比「已占」三个字有用得多，因为差异句要写进 intro 第一段。\\n对原 HTML 最大的一处更正\\n原文把「连续 GUI 操作 / 把 GUI 当 visuomotor control」列为方案 B，新颖度打了满分，说「没\\n人把 GUI 操作当作 visuomotor control 来建模」。这条已经不成立。\\nDragOn\\n2606.06322  已经是拖拽 GUI 交互的 benchmark + 数据集；ShowUI-π\\n2512.24965  的\\n副标题就是「Flow-based Generative Models as GUI Dexterous Hands」，即流匹配生成模型做\\nGUI 连续控制；Covering Human Action Space for Computer Use\\n2605.12501  做的正是完整人\\n类动作空间的数据合成与 benchmark；再加 Beyond Clicking\\n2601.06031 （text dragging\\ngrounding）与 ShowUI-Aloha\\n2601.07181 。', 'metadata': {'pageIndex': 2, 'sizePt': [594.96, 841.92], 'rotation': 0, 'blockIndex': 0, 'ocr': False, 'searchAggregate': 'pdf-page', 'blockIndices': [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36], 'sourceTitle': 'Program Manager', 'sourceRevision': {'capturedAt': '', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983'}}, 'citations': [{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:2', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 2, 'rectPt': [49.5, 37.805, 535.413, 759.872]}}}]}, {'fragmentId': 'fragment:source:acceptance-3eda8e3511304b2abba464dc13be1983:2:unit:523', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 17, 'rectPt': [49.5, 53.445, 517.215, 780.555]}}, 'text': '最值得押注的论文主张，不是「我们的 agent 更聪\\n明」，而是：我们识别出一个可测量的视觉变量，设\\n计了一个视觉模块，让 agent 在固定成本下减少该变\\n量的损害，并且在新任务与反事实扰动下依然成立。\\n这个写法对得起 CVPR 的三种评审：它有可训练的视觉模块（对 AC），有一个别人可以复\\n现和推翻的可测量（对 reviewer），而且不会因为下一次模型发布而作废（对 2027 年 1 月\\n的你）。八个选题只是把这个变量取成了不同的东西。\\n线 A 的变量\\n线 A 的数学\\n部分可观测下的有代价主动感知与信息价\\n信念腐坏——账本过期率、观测的因果收\\n益、错误信念半衰期\\n值。屏幕（01–04）与显微镜（05）是同一\\n套数学的两个竞技场\\n线 B 的变量\\n线 B 的数学\\n时序稳定性预测、不变表征学习、目标导向\\n接触面损耗——过早动手率、外观变化下的\\n同一性丢失、交接时的状态重建误差\\n压缩。三个都是经典 CV 问题换了载体\\n两条线合起来回答同一个问题的两半——为什么一个比人快两倍的 agent 仍然不能交付。线 A\\n说：因为它脑子里那份世界模型坏了。线 B 说：因为它撞上的世界和它交还给的人，都不在\\n它的模型里。\\n四条不可违背的实验纪律\\n01\\nbinary 与 partial 永远同时报，并注明步数预算。整份材料里最容易出事的地方就是口径\\n——同一个模型在榜单和原论文上能差三十个点。自己复现一遍基线，不要引榜单。\\n02\\n固定 step、token 和时间预算。否则「加了模块所以变好」和「多调用了几次所以变好」\\n分不开，这是 agent 论文最常见的致命伤。\\n03\\n至少 3 个随机种子，给误差棒。agent 评测方差极大，单次运行不报方差是 2027 年评审\\n最容易抓的死穴。\\n04\\n主实验开跑前把杀死条件写下来。上面每个选题都给了，不是形式——它决定你在第几周知\\n道自己该换题。', 'metadata': {'pageIndex': 17, 'sizePt': [594.96, 841.92], 'rotation': 0, 'blockIndex': 0, 'ocr': False, 'searchAggregate': 'pdf-page', 'blockIndices': [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28], 'sourceTitle': 'Program Manager', 'sourceRevision': {'capturedAt': '', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983'}}, 'citations': [{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:2', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 17, 'rectPt': [49.5, 53.445, 517.215, 780.555]}}}]}, {'fragmentId': 'fragment:source:acceptance-3eda8e3511304b2abba464dc13be1983:2:unit:0', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [49.5, 59.409, 546.577, 804.751]}}, 'text': '核验日期 \\xa02026-09-16\\n投稿目标 \\xa0CVPR 2027 · 11/16 AOE\\n核验对象 \\xa02 份 AI 调研 · 21 个 arXiv 编号\\n判定 \\xa0编号 21/21 命中 · 事实更正 5 处\\n交付 \\xa08 个选题 · 两条线\\n长程视觉 Agent\\n的裂缝在哪\\n一句话\\n一个比人快两倍、但每两次只能真正完成一次的 agent，在经济上无法交付。原因分\\n两半：一，它的信念坏了——世界模型在三百步里静默腐坏，它丢约束、漏中途信\\n息、宁可猜也不问、不回头验证（这不是我的推测，是 OSWorld 2.0 作者写在摘要\\n里的原话）；二，它撞上的世界和它交还给的人，都不在它的模型里——界面会加\\n载、会换皮、会改版，而人接手时只拿到一张截图和一堆日志。\\n§ 基准事实\\n那 34.2 个点\\n整份报告压在一个数字上：在 OSWorld 2.0 的 108 个长程任务上，最强配置（Claude\\nOpus 4.8，最大思考，批量工具调用，500 步预算）拿到 54.8% 的部分完成分，但严\\n格二元完成率只有 20.6%。\\nOSWORLD 2.0 · 108 长程任务 · 500 步 · CLAUDE OPUS 4.8 MAX-THINKING\\nARXIV 2606.29537\\n20.6%\\n54.8%\\n100%\\n二元完成\\n部分完成\\n人类\\n中间那片斜线区是 34.2 个点：任务的大部分都做对了，却总会漏掉一两件事而归零。\\n同一 benchmark 上 GPT-5.5 更省 token，但在 13% 附近就平了。每个任务人类中位耗\\n时约 1.6 小时，Opus 4.7 平均需要 318 次工具调用——OSWorld 1.0 是约 30 次。\\n原文摘要的最后一句 · 逐字核对\\n当前 agent 远未达到专业级计算机使用：它们并非栽在基础 GUI 控制或写代码上，而是丢失约\\n束、错过任务中途到达的信息、宁可猜也不询问用户、跳过验证，并且在任务取决于必须自行恢', 'metadata': {'pageIndex': 0, 'sizePt': [594.96, 841.92], 'rotation': 0, 'blockIndex': 0, 'ocr': False, 'searchAggregate': 'pdf-page', 'blockIndices': [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29], 'sourceTitle': 'Program Manager', 'sourceRevision': {'capturedAt': '', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983'}}, 'citations': [{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:2', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [49.5, 59.409, 546.577, 804.751]}}}]}, {'fragmentId': 'fragment:source:acceptance-3eda8e3511304b2abba464dc13be1983:2:unit:30', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 1, 'rectPt': [49.5, 31.68, 539.006, 715.125]}}, 'text': '复的隐藏状态时最为吃力。\\n这一句话点名了五个失败模式。下面五个选题，逐一对应其中一个——这就是它们的排序依据。\\n§ 核验台\\n哪些站得住，哪些得改\\n两份材料的 21 个 arXiv 编号我逐条打了 arXiv API，全部命中，无一伪造——这点值得\\n说，因为跨年份编号（2602–2609）看上去很像编的。真正需要改的是下面几处。\\n断言\\n判定\\n实据\\n属实\\nCFP 正式 topic 明列 Agentic AI、Physical AI（World\\nCVPR 2027 收 agentic AI，范围远大于\\nModels/VLA/Planning/Simulation）、Embodied\\ncomputer use\\nvision and robotics、Reasoning & RL、Trustworthy\\nvision、AI for Science and Scientific Discovery、\\nMedical and biological vision, cell microscopy、\\nData synthesis/datasets/benchmarks。\\n属实\\n官方 Dates 与 CFP 双向核对一致。另：评审释放\\n截稿 11/16 AOE，注册 11/10，补材\\n1/25，终审 2/25，会期 6/22–25，workshop 6/20–\\n11/23，contemporaneous 分界 2026-\\n21。CFP 另写明所有作者必须承诺审稿，且 CVPR\\n09-15\\n2027 将在评审流程部分环节使用 LLM（细则未定）。\\nOSWorld 2.0：108 任务 / 318 工具调用\\n属实\\n与 2606.29537  摘要逐字一致。GPT-5.5 更省 token\\n但平在 ~13%。\\n/ 人类中位 1.6h / 20.6% binary / 54.8%\\npartial\\n更正\\n论文口径下最高二元完成率是 20.6%。45% 来自厂\\n「OSWorld 2.0 上最强模型二元完成率\\n商/talk 转述，不能与论文并列。凡引用必须同时标\\n约 45%」\\n注：benchmark 版本、是否 offline、binary 还是\\npartial、步数预算、harness。\\n更正\\n92.7 是 ScreenSpot-Pro，72.6 是 OSWorld 2.0 的\\nAstra「ScreenSpot-Pro 92.7 / OSWorld\\npartial，两者被混用了。且 openai.com 官方页当前\\n超人类 13 点」\\n对抓取返回 403，第三方复现未见——所有厂商数字在\\n论文里都必须标为自报。', 'metadata': {'pageIndex': 1, 'sizePt': [594.96, 841.92], 'rotation': 0, 'blockIndex': 0, 'ocr': False, 'searchAggregate': 'pdf-page', 'blockIndices': [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37], 'sourceTitle': 'Program Manager', 'sourceRevision': {'capturedAt': '', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983'}}, 'citations': [{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:2', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 1, 'rectPt': [49.5, 31.68, 539.006, 715.125]}}}]}, {'fragmentId': 'fragment:source:acceptance-3eda8e3511304b2abba464dc13be1983:2:unit:135', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 4, 'rectPt': [49.5, 30.75, 546.748, 786.225]}}, 'text': 'GUI 动作的前置条件 / 后置条件验证\\n空\\narXiv 全库检索 postcondition + agent + GUI：零命中。stale + observation + agent + screenshot：仅 1 篇，还\\n是 transition benchmark（Desktop-Delta 2607.26041 ）。\\n视觉 agent「什么时候该问而不是该猜」\\n近乎空\\nwhen to ask + agent + multimodal 全库仅 1 篇，还是回合制 RPG（StarBench 2510.18483 ）。AmbiBench\\n2602.11750  做的是移动端一次性指令歧义，不是不可逆风险下的决策。SafePred 2602.01725  是 world-model 护\\n栏，不建模询问成本。\\n假设驱动的主动显微观测\\n空\\nmicroscopy + active learning + experimental design：零命中。hypothesis + microscopy + agent 仅 3 篇，全\\n是 2025 年的工具/benchmark。EAA 2602.15294  与 Agentic-J 2606.02080  都是工具编排，不是采集策略。\\n§ 档案\\n八个选题\\n两条线\\n排序依据三条，按优先级：（一）是否直接对应 OSWorld 2.0 作者亲口点名的失败模\\n式；（二）空白是否被实搜证实，而不是想当然；（三）视觉内核能否撑住一个 CVPR\\nAC 的第一反应。成本、算力、时间不参与排序。\\n线 A · 01–05 · 信念与决策\\n线 B · 06–08 · 摩擦与交接\\n机制性的。问题是「agent 脑子里那份世界模型\\n需求驱动的。问题是「agent 撞上的真实世界，\\n和它交还给的真实用户」。共同特点：一句话能说\\n为什么会坏」。novelty 高、天花板高，但题目本\\n清、AC 一眼就懂、数据几乎免费、评估无歧\\n身需要一段话才讲得清，intro 第一段必须写得极\\n准，否则 reviewer 会归到 memory / critic 那一\\n义。这三个是你问的「特别实际、AC 觉得有趣」\\n堆里去。\\n的那一类。\\n线 A 信念与决策\\n机制性 · novelty 与天花板更高 · 差异句是生死线\\nBeliefs, Not Screenshots — Evidence-Bound State Tracking for Long-\\n01 屏幕信念账本\\nHorizon Computer Use', 'metadata': {'pageIndex': 4, 'sizePt': [594.96, 841.92], 'rotation': 0, 'blockIndex': 0, 'ocr': False, 'searchAggregate': 'pdf-page', 'blockIndices': [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29], 'sourceTitle': 'Program Manager', 'sourceRevision': {'capturedAt': '', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983'}}, 'citations': [{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:2', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 4, 'rectPt': [49.5, 30.75, 546.748, 786.225]}}}]}, {'fragmentId': 'fragment:source:acceptance-3eda8e3511304b2abba464dc13be1983:2:unit:197', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 6, 'rectPt': [69.75, 30.375, 528.249, 772.574]}}, 'text': '至少一个前沿 API 模型 + 一个开源模型（Qwen-UI-Agent\\n2607.28227 ）。只在 7B 上出结果等于死。\\n对照组：无记忆 / 全图记忆 / AGMem / MementoGUI / PAL-UI / ATMem /\\n「只是多截几张图」。最后一个对照是审稿人一定会问的。\\n注入扰动：过期截图、像素-结构冲突、任务中途新增约束、必须回头取\\n的隐藏状态。\\nbinary + partial 双报\\nconstraint recall / F1\\nviolation rate\\nstaleness AUC\\nrecovery rate\\n不可逆错误率\\nECE\\n每成功任务 token/步数\\n杀死条件\\n在固定 token 与步数预算下，binary 没有显著提升——即收益全部来自「多\\n调用了几次」——则这个方向证伪，停。这是本选题唯一的止损点，必须在跑\\n主实验前预先写死。\\nThe Screen Is a Stream — Asynchronous Visual Monitoring for\\n02 并发中断感知\\nComputer-Use Agents\\n新颖度最高\\n对应：漏掉中途到达的信息\\n检索 0 命中\\n异步 HARNESS 是工程大头\\n人话\\nAgent 盯着一张截图想 20 秒，等它想完，世界早变了——弹窗跳出来\\n了、列表刷新了、按钮挪位了。再挂一只「眼睛」一直睁着，看到变化\\n就喊停：你正要点的那个东西，已经不在那儿了。\\n主张\\n屏幕是视频流，不是截图序列。跑一个高频、廉价、常开的视觉变化监测\\n器，与慢速策略并发；当它检测到某个变化会让在途动作失效时，中断、作\\n废、或强制重新接地。\\n核心研究问题不是「怎么看得更快」，而是：什么样的屏幕变化会让一个已经\\n决定但尚未落地的动作失效——这是一个可训练的视觉预测问题。\\n为什么现在\\nOSWorld 2.0 把 streaming interaction and dynamic environments 明确\\n列为它刻意针对的 challenge phenomenon，把「错过任务中途到达的信息」\\n列为失败模式。系统侧的数字也齐了：每步推理 20 秒以上、反思环节吃掉\\n76–96% 的任务时延 2609.02309 。而 DynamicGUIBench 上最好的方法只\\n有 22.1%。', 'metadata': {'pageIndex': 6, 'sizePt': [594.96, 841.92], 'rotation': 0, 'blockIndex': 0, 'ocr': False, 'searchAggregate': 'pdf-page', 'blockIndices': [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27], 'sourceTitle': 'Program Manager', 'sourceRevision': {'capturedAt': '', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983'}}, 'citations': [{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:2', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 6, 'rectPt': [69.75, 30.375, 528.249, 772.574]}}}]}, {'fragmentId': 'fragment:source:acceptance-3eda8e3511304b2abba464dc13be1983:2:unit:315', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 10, 'rectPt': [69.75, 30.375, 526.418, 763.751]}}, 'text': '实验闭环\\n三个长程环境：OSWorld 2.0 / WeaveBench / DeskCraft × 至少 6 个模\\n型。\\n对照 2608.06270  的单轮结论——如果长程 VEG 与单轮 VEG 结构相同，这\\n篇就没有新东西。\\n预算实验：在固定 token 预算下用预测器分配观测，报 binary 提升。\\n长程 VEG\\ncompounding factor\\n错误信念半衰期\\n必要性预测器 AUC\\n固定预算下 binary 提升\\n杀死条件\\n长程 VEG 与单轮 VEG 没有结构差异，且必要性预测器在固定预算下不涨点\\n——降级成 workshop，不浪费主会名额。\\nMeasure What Matters Next — Budgeted Hypothesis Discrimination for\\n05 预算约束下的假设驱动主动显微\\nAutonomous Microscopy\\n天花板最高\\nCFP 两个 TOPIC 同时对口\\n检索 0 命中\\n仿真-真实域差距\\n人话\\n显微镜下细胞不正常，可能是机制 A 也可能是机制 B。光毒性摆在那，\\n你只能再拍二十张。那就问一个很硬的问题：这二十张该拍哪儿、拍哪\\n个焦面、什么曝光，才能最快把 A 和 B 分开？\\n为什么它在榜上\\nCVPR 2027 CFP 同时明列 AI for Science and Scientific Discovery 与\\nMedical and biological vision, cell microscopy 两个 topic。这是整份\\n清单里最不拥挤的 AC 池——而前四个选题都要挤 agentic / embodied 那几个\\n池子。\\n主张\\n现有的 microscopy agent——EAA 2602.15294 、Agentic-J 2606.02080 ——\\n都是工具编排：调 ImageJ、调显微镜、调分析流程。真正缺的是一句话就\\n能说清的问题：\\n在有限观测次数、时间和光剂量下，下一次该测什么，才能最大程度区分竞\\n争性的科学假设？\\n不是「这张图里有什么」，而是「为了分辨机制 A 和机制 B，我下一步该换位\\n置、换焦面、换曝光，还是继续跟踪这一个细胞」。', 'metadata': {'pageIndex': 10, 'sizePt': [594.96, 841.92], 'rotation': 0, 'blockIndex': 0, 'ocr': False, 'searchAggregate': 'pdf-page', 'blockIndices': [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26], 'sourceTitle': 'Program Manager', 'sourceRevision': {'capturedAt': '', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983'}}, 'citations': [{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:2', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 10, 'rectPt': [69.75, 30.375, 526.418, 763.751]}}}]}, {'fragmentId': 'fragment:source:acceptance-3eda8e3511304b2abba464dc13be1983:2:unit:497', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 16, 'rectPt': [49.5, 31.68, 526.473, 790.39]}}, 'text': '的真实状态，可程序化生成。摘要好不好，看它能不能让一个模型或一个人\\n答对这些题。人类研究只作外部验证，不承担主张。\\n实验闭环\\n轨迹来源：OSWorld 2.0 与 DeskCraft 上的失败轨迹——这是全场唯一一个\\n「agent 越弱数据越多」的选题。\\n朴素基线必须打赢：最后 K 帧、均匀采样、让模型自己写一段文字总结。\\n第三条是最强的对手。\\n人类研究作外部验证：重建时间、重建准确率、接管后任务完成率。\\n状态重建准确率\\n证据集大小 / 压缩率\\n误导率\\n人类重建时间\\n接管后完成率\\n压缩-准确率权衡曲线\\n空白证据\\nGUI agent + handoff → 0 命中\\nhuman + takeover + computer-use agent → 0 命中\\ncomputer use agent + interruption + human → 0 命中\\nGUI + summarization + trajectory + human → 仅 2 篇，均为 agent 自用的\\nmemory（Mem-W、PAL-UI），不是给人看的\\n杀死条件\\n最小证据集在状态重建问答上赢不了「最后 K 帧」或「模型自己写的文字总\\n结」——说明视觉证据选择没有带来文本摘要之外的东西。停。\\n跨线的一句实话\\n如果只看 novelty 天花板，押 01 和 02。如果看「跑得完、评得清、AC 会笑着读完」，06\\n和 07 的期望值其实比 04 和 05 更高——它们标注免费、指标无歧义、朴素基线明确、问题\\n陈述自带说服力。08 是这八个里最有趣的一个，但它也是唯一一个需要你主动防守「这是\\n不是 CV 论文」的。\\n真要选一对并行：01 做主投（天花板与故事性），07 做并行（数据几乎免费，不抢 01 的算\\n力，且万一 01 的诊断不显著，07 可以顶上成为主投）。这两个共用的东西很少，风险不相\\n关。\\n§ 内核\\n串起八篇的那一句', 'metadata': {'pageIndex': 16, 'sizePt': [594.96, 841.92], 'rotation': 0, 'blockIndex': 0, 'ocr': False, 'searchAggregate': 'pdf-page', 'blockIndices': [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25], 'sourceTitle': 'Program Manager', 'sourceRevision': {'capturedAt': '', 'snapshotId': 'acceptance-3eda8e3511304b2abba464dc13be1983'}}, 'citations': [{'sourceId': 'source:acceptance-3eda8e3511304b2abba464dc13be1983:2', 'locator': {'kind': 'pdf-region', 'value': {'pageIndex': 16, 'rectPt': [49.5, 31.68, 526.473, 790.39]}}}]}], 'coverage': {'extent': 'query-results', 'readRanges': [{'kind': 'pdf-region', 'value': {'pageIndex': 2, 'rectPt': [49.5, 37.805, 535.413, 759.872]}}, {'kind': 'pdf-region', 'value': {'pageIndex': 17, 'rectPt': [49.5, 53.445, 517.215, 780.555]}}, {'kind': 'pdf-region', 'value': {'pageIndex': 0, 'rectPt': [49.5, 59.409, 546.577, 804.751]}}, {'kind': 'pdf-region', 'value': {'pageIndex': 1, 'rectPt': [49.5, 31.68, 539.006, 715.125]}}, {'kind': 'pdf-region', 'value': {'pageIndex': 4, 'rectPt': [49.5, 30.75, 546.748, 786.225]}}, {'kind': 'pdf-region', 'value': {'pageIndex': 6, 'rectPt': [69.75, 30.375, 528.249, 772.574]}}, {'kind': 'pdf-region', 'value': {'pageIndex': 10, 'rectPt': [69.75, 30.375, 526.418, 763.751]}}, {'kind': 'pdf-region', 'value': {'pageIndex': 16, 'rectPt': [49.5, 31.68, 526.473, 790.39]}}], 'totalUnits': 21, 'complete': False, 'nextCursor': 'match:8', 'missingReason': None}, 'evidenceStatus': 'ok', 'usedBackend': 'document.pdf.pymupdf', 'latencyMs': 1419.470699998783}]}",
+        "isError": false
+      },
+      {
+        "kind": "request-header",
+        "turn": 4,
+        "step": 4,
+        "startedAt": 152682.38690000726,
+        "promptCache": false,
+        "usedBackend": "magic_pointer.messages_multiturn_streaming",
+        "maxTokens": 8192,
+        "seq": 15
+      },
+      {
+        "kind": "message",
+        "turn": 4,
+        "step": 4,
+        "state": "done",
+        "text": "根据你圈选的三块内容，综合整理如下：\n\n**你微信里那句话**（小样本脱敏后给通用/专项AI判别）是新冒出来的想法，但不属于 Program Manager 里已核验过的 8 个选题。它更像\"数据脱敏+模型鲁棒性\"方向，和这 8 篇的主线（长程视觉 Agent 的裂缝）没有直接承接关系，CVPR 2027 的 CFP 里也没有精确对应的 topic 池，风险偏高。\n\n**文档明确推荐的组合是选题 01 + 07 并行：**\n\n- **01「屏幕信念账本」** 做主投——直接回应 OSWorld 2.0 论文点名的第一个失败模式（信念静默腐坏），novelty 和天花板都最高，故事性强，AC 一眼能懂。风险在差异句，写不准会被 reviewer 归到 memory/critic 那堆。\n- **07「最小证据集交接」** 做并行——数据几乎免费（用失败轨迹就能生成），不抢 01 的算力，指标无歧义，万一 01 的诊断实验不显著，07 可以顶上成为主投。两个选题风险不相关。\n\n如果让我只给一个结论：**押 01 主投、07 兜底**，是这份材料里风险收益比最优的选择。你微信里那条新想法可以留着，但不适合作为 CVPR 2027 的主攻方向。",
+        "startedAt": 152682.38690000726,
+        "seq": 16,
+        "reasoning": "Now I have comprehensive context. The PDF is a Program Manager document for CVPR 2027 submission, with 8 topics across two lines (Line A: Beliefs & Decisions01-05, Line B: Friction & Handoff 06-08). The user's WeChat message mentions \"小样本脱敏后给通用人工智能和专项人工智能，判别\" which seems like a topic idea the user is considering.\n\nThe document's explicit recommendation is: 01 as main submission, 07 as parallel. Let me summarize based on the evidence.\n\nThe user's WeChat message about \"小样本脱敏后给通用人工智能和专项人工智能，判别\" seems like a separate idea they're floating - not one of the 8 topics in the PDF. \n\nSo they're asking which topic aligns best with this concept they've sketched out about small-sample privacy-preserving data feeding into general and specialized AI systems.\n\nBut looking at the evidence more carefully, the document's actual recommendation is different—it's suggesting Topic 01 and Topic 07 as the strongest candidates for CVPR 2027 submission. The user's idea doesn't appear to be one of the eight validated topics in the document. I should clarify this distinction when I respond.",
+        "firstTokenAt": 187551.13499998697,
+        "completedAt": 190695.7688999828,
+        "usedBackend": "magic_pointer.messages_multiturn_streaming",
+        "inputTokens": 45012,
+        "cacheReadTokens": 24320,
+        "cacheWriteTokens": 0,
+        "outputTokens": 1429
+      }
+    ],
+    "thinking": "Now I have comprehensive context. The PDF is a Program Manager document for CVPR 2027 submission, with 8 topics across two lines (Line A: Beliefs & Decisions01-05, Line B: Friction & Handoff 06-08). The user's WeChat message mentions \"小样本脱敏后给通用人工智能和专项人工智能，判别\" which seems like a topic idea the user is considering.\n\nThe document's explicit recommendation is: 01 as main submission, 07 as parallel. Let me summarize based on the evidence.\n\nThe user's WeChat message about \"小样本脱敏后给通用人工智能和专项人工智能，判别\" seems like a separate idea they're floating - not one of the 8 topics in the PDF. \n\nSo they're asking which topic aligns best with this concept they've sketched out about small-sample privacy-preserving data feeding into general and specialized AI systems.\n\nBut looking at the evidence more carefully, the document's actual recommendation is different—it's suggesting Topic 01 and Topic 07 as the strongest candidates for CVPR 2027 submission. The user's idea doesn't appear to be one of the eight validated topics in the document. I should clarify this distinction when I respond.",
+    "timingMs": 190712.46079998673,
+    "inputArtifact": {
+      "schemaVersion": 1,
+      "id": "input-acceptance-3eda8e3511304b2abba464dc13be1983",
+      "revision": 1,
+      "createdAtUtc": "2026-09-18T06:24:24.057220+00:00",
+      "utterance": "基于这些信息，总结200字讲清楚你推荐的最合适选题。",
+      "sourceSnapshotId": "acceptance-3eda8e3511304b2abba464dc13be1983",
+      "frameLeaseId": null,
+      "gestureKind": null,
+      "target": {
+        "label": "微信选区 1",
+        "kind": "wechat",
+        "bounds": null,
+        "confidence": 0.7,
+        "sources": []
+      },
+      "facts": [
+        {
+          "kind": "window",
+          "value": "{\"title\":\"微信\",\"processName\":\"Weixin.exe\",\"boundsLTRB\":[1454,129,2950,1901],\"coordinateSpace\":\"physical_screen_pixels\",\"selectionBoundsXYWH\":null}",
+          "sources": [
+            "WINDOW"
+          ]
+        },
+        {
+          "kind": "selected_text",
+          "value": "小样本脱敏后给通用人工智能和专项人工智能，判别",
+          "sources": []
+        }
+      ],
+      "conflicts": [],
+      "attachments": [
+        "D:\\Desktop\\Magic Pointer\\data\\runtime\\frame-leases\\frame-b26c8a995dff44a1.png"
+      ],
+      "routeHint": "agent_loop",
+      "display": {
+        "title": "微信选区 1",
+        "summary": "小样本脱敏后给通用人工智能和专项人工智能，判别",
+        "sourceBadges": [],
+        "confidence": 0.7,
+        "needsConfirmation": false,
+        "previewArtifact": "D:\\Desktop\\Magic Pointer\\data\\runtime\\frame-leases\\frame-b26c8a995dff44a1.png",
+        "conflictCount": 0
+      },
+      "sourceIds": [
+        "source:acceptance-3eda8e3511304b2abba464dc13be1983:0",
+        "source:acceptance-3eda8e3511304b2abba464dc13be1983:1",
+        "source:acceptance-3eda8e3511304b2abba464dc13be1983:2"
+      ],
+      "referenceIds": [
+        "reference:acceptance-3eda8e3511304b2abba464dc13be1983:0",
+        "reference:acceptance-3eda8e3511304b2abba464dc13be1983:1",
+        "reference:acceptance-3eda8e3511304b2abba464dc13be1983:2"
+      ],
+      "coverage": {
+        "extent": "selection",
+        "readRanges": [
+          {
+            "adapterId": "wechat",
+            "conversationKey": "wechat:window:7277804:surface:root",
+            "snapshotId": "acceptance-3eda8e3511304b2abba464dc13be1983",
+            "bbox": [
+              2136,
+              1373,
+              611,
+              32
+            ],
+            "coordinateSpace": "physical_screen_pixels",
+            "strokeIndex": 0
+          },
+          {
+            "adapterId": "wechat",
+            "conversationKey": "wechat:window:7277804:surface:root",
+            "snapshotId": "acceptance-3eda8e3511304b2abba464dc13be1983",
+            "bbox": [
+              2314,
+              486,
+              408,
+              205
+            ],
+            "coordinateSpace": "physical_screen_pixels",
+            "strokeIndex": 1
+          },
+          {
+            "snapshotId": "acceptance-3eda8e3511304b2abba464dc13be1983",
+            "bbox": [
+              361,
+              1351,
+              149,
+              76
+            ],
+            "coordinateSpace": "physical_screen_pixels",
+            "strokeIndex": 2
+          }
+        ],
+        "totalUnits": 3,
+        "complete": false,
+        "nextCursor": null,
+        "missingReason": "some-materials-not-read"
+      },
+      "sources": [
+        {
+          "sourceId": "source:acceptance-3eda8e3511304b2abba464dc13be1983:0",
+          "taskId": "agent-c12f2fee-a25e-49c1-af6e-d0562e31791a",
+          "kind": "chat",
+          "title": "微信",
+          "identity": {
+            "snapshotId": "acceptance-3eda8e3511304b2abba464dc13be1983",
+            "selectionSessionId": "c12f2fee-a25e-49c1-af6e-d0562e31791a",
+            "hwnd": 7277804,
+            "conversationIdentity": {
+              "adapterId": "wechat",
+              "conversationKey": "wechat:window:7277804:surface:root",
+              "keyProvenance": "window-surface",
+              "nativeConversationId": null,
+              "accountKey": null,
+              "windowHwnd": 7277804,
+              "processId": null,
+              "surfaceRuntimeId": null,
+              "title": "微信",
+              "type": null
+            },
+            "frozenSelection": {
+              "text": "小样本脱敏后给通用人工智能和专项人工智能，判别",
+              "locator": {
+                "kind": "message",
+                "value": {
+                  "adapterId": "wechat",
+                  "conversationKey": "wechat:window:7277804:surface:root",
+                  "snapshotId": "acceptance-3eda8e3511304b2abba464dc13be1983",
+                  "bbox": [
+                    2136,
+                    1373,
+                    611,
+                    32
+                  ],
+                  "coordinateSpace": "physical_screen_pixels",
+                  "strokeIndex": 0
+                }
+              },
+              "coverage": {
+                "extent": "selection",
+                "readRanges": [
+                  {
+                    "adapterId": "wechat",
+                    "conversationKey": "wechat:window:7277804:surface:root",
+                    "snapshotId": "acceptance-3eda8e3511304b2abba464dc13be1983",
+                    "bbox": [
+                      2136,
+                      1373,
+                      611,
+                      32
+                    ],
+                    "coordinateSpace": "physical_screen_pixels"
+                  }
+                ],
+                "totalUnits": 23,
+                "complete": true,
+                "nextCursor": null,
+                "missingReason": null
+              },
+              "usedBackend": "local:rapidocr-onnx"
+            }
+          },
+          "revision": {
+            "capturedAt": "",
+            "snapshotId": "acceptance-3eda8e3511304b2abba464dc13be1983"
+          },
+          "capabilities": [
+            "read",
+            "search",
+            "follow"
+          ],
+          "origin": "user-pointed",
+          "parentSourceId": null
+        },
+        {
+          "sourceId": "source:acceptance-3eda8e3511304b2abba464dc13be1983:1",
+          "taskId": "agent-c12f2fee-a25e-49c1-af6e-d0562e31791a",
+          "kind": "chat",
+          "title": "微信",
+          "identity": {
+            "snapshotId": "acceptance-3eda8e3511304b2abba464dc13be1983",
+            "selectionSessionId": "c12f2fee-a25e-49c1-af6e-d0562e31791a",
+            "hwnd": 7277804,
+            "conversationIdentity": {
+              "adapterId": "wechat",
+              "conversationKey": "wechat:window:7277804:surface:root",
+              "keyProvenance": "window-surface",
+              "nativeConversationId": null,
+              "accountKey": null,
+              "windowHwnd": 7277804,
+              "processId": null,
+              "surfaceRuntimeId": null,
+              "title": "微信",
+              "type": null
+            },
+            "frozenSelection": {
+              "text": "cvpr2027-verified-\ntop5.html HTML\n87.3K\n微信电脑版",
+              "locator": {
+                "kind": "message",
+                "value": {
+                  "adapterId": "wechat",
+                  "conversationKey": "wechat:window:7277804:surface:root",
+                  "snapshotId": "acceptance-3eda8e3511304b2abba464dc13be1983",
+                  "bbox": [
+                    2314,
+                    486,
+                    408,
+                    205
+                  ],
+                  "coordinateSpace": "physical_screen_pixels",
+                  "strokeIndex": 1
+                }
+              },
+              "coverage": {
+                "extent": "selection",
+                "readRanges": [
+                  {
+                    "adapterId": "wechat",
+                    "conversationKey": "wechat:window:7277804:surface:root",
+                    "snapshotId": "acceptance-3eda8e3511304b2abba464dc13be1983",
+                    "bbox": [
+                      2314,
+                      486,
+                      408,
+                      205
+                    ],
+                    "coordinateSpace": "physical_screen_pixels"
+                  }
+                ],
+                "totalUnits": 45,
+                "complete": true,
+                "nextCursor": null,
+                "missingReason": null
+              },
+              "usedBackend": "local:rapidocr-onnx"
+            }
+          },
+          "revision": {
+            "capturedAt": "",
+            "snapshotId": "acceptance-3eda8e3511304b2abba464dc13be1983"
+          },
+          "capabilities": [
+            "read",
+            "search",
+            "follow"
+          ],
+          "origin": "user-pointed",
+          "parentSourceId": null
+        },
+        {
+          "sourceId": "source:acceptance-3eda8e3511304b2abba464dc13be1983:2",
+          "taskId": "agent-c12f2fee-a25e-49c1-af6e-d0562e31791a",
+          "kind": "document",
+          "title": "Program Manager",
+          "identity": {
+            "snapshotId": "acceptance-3eda8e3511304b2abba464dc13be1983",
+            "selectionSessionId": "c12f2fee-a25e-49c1-af6e-d0562e31791a",
+            "absolutePath": "D:\\Desktop\\CVPR 2027 选题核验.pdf"
+          },
+          "revision": {
+            "capturedAt": "",
+            "snapshotId": "acceptance-3eda8e3511304b2abba464dc13be1983"
+          },
+          "capabilities": [
+            "read",
+            "search",
+            "patch"
+          ],
+          "origin": "user-pointed",
+          "parentSourceId": null
+        }
+      ],
+      "references": [
+        {
+          "referenceId": "reference:acceptance-3eda8e3511304b2abba464dc13be1983:0",
+          "label": "A",
+          "sourceId": "source:acceptance-3eda8e3511304b2abba464dc13be1983:0",
+          "locator": {
+            "kind": "message",
+            "value": {
+              "adapterId": "wechat",
+              "conversationKey": "wechat:window:7277804:surface:root",
+              "snapshotId": "acceptance-3eda8e3511304b2abba464dc13be1983",
+              "bbox": [
+                2136,
+                1373,
+                611,
+                32
+              ],
+              "coordinateSpace": "physical_screen_pixels",
+              "strokeIndex": 0
+            }
+          },
+          "role": "target",
+          "frameLeaseId": null,
+          "capturedAtMs": 1789712664056,
+          "ordinal": 1,
+          "active": true
+        },
+        {
+          "referenceId": "reference:acceptance-3eda8e3511304b2abba464dc13be1983:1",
+          "label": "B",
+          "sourceId": "source:acceptance-3eda8e3511304b2abba464dc13be1983:1",
+          "locator": {
+            "kind": "message",
+            "value": {
+              "adapterId": "wechat",
+              "conversationKey": "wechat:window:7277804:surface:root",
+              "snapshotId": "acceptance-3eda8e3511304b2abba464dc13be1983",
+              "bbox": [
+                2314,
+                486,
+                408,
+                205
+              ],
+              "coordinateSpace": "physical_screen_pixels",
+              "strokeIndex": 1
+            }
+          },
+          "role": "target",
+          "frameLeaseId": null,
+          "capturedAtMs": 1789712664056,
+          "ordinal": 2,
+          "active": true
+        },
+        {
+          "referenceId": "reference:acceptance-3eda8e3511304b2abba464dc13be1983:2",
+          "label": "C",
+          "sourceId": "source:acceptance-3eda8e3511304b2abba464dc13be1983:2",
+          "locator": {
+            "kind": "visual-region",
+            "value": {
+              "snapshotId": "acceptance-3eda8e3511304b2abba464dc13be1983",
+              "bbox": [
+                361,
+                1351,
+                149,
+                76
+              ],
+              "coordinateSpace": "physical_screen_pixels",
+              "strokeIndex": 2
+            }
+          },
+          "role": "target",
+          "frameLeaseId": null,
+          "capturedAtMs": 1789712664057,
+          "ordinal": 3,
+          "active": true
+        }
+      ]
+    },
+    "interactionLedger": {
+      "interactionId": "agent-c12f2fee-a25e-49c1-af6e-d0562e31791a:1",
+      "startedAtUtc": "2026-09-18T06:24:24.807000+00:00",
+      "endedAtUtc": "2026-09-18T06:27:34.651000+00:00",
+      "appName": "Weixin.exe",
+      "turns": 4,
+      "tokensText": 46441,
+      "tokensVision": 0,
+      "stageLatencyMs": {
+        "model": 182726.0,
+        "tool": 6939.243399974657,
+        "e2e": 189844
+      },
+      "evidenceLayerHit": null,
+      "confidence": 0.7,
+      "usedLook": true,
+      "succeeded": true,
+      "failureType": null,
+      "egressEventIds": [],
+      "inputArtifactId": "input-acceptance-3eda8e3511304b2abba464dc13be1983"
+    },
+    "learningReview": {
+      "requested": true,
+      "sessionId": "agent-c12f2fee-a25e-49c1-af6e-d0562e31791a",
+      "terminalReason": "completed"
+    }
+  }
+}

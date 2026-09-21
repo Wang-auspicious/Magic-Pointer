@@ -1,0 +1,42 @@
+{
+  "ok": true,
+  "version": "1.0.47",
+  "installedRoot": "C:\\Users\\zjz65\\AppData\\Local\\Programs\\Magic Pointer\\resources\\app",
+  "python": "C:\\Users\\zjz65\\AppData\\Local\\Programs\\Magic Pointer\\resources\\python-runtime\\python.exe",
+  "moduleOrigins": [
+    "C:\\Users\\zjz65\\AppData\\Local\\Programs\\Magic Pointer\\resources\\app\\app\\agent_runtime\\activity_projection.py",
+    "C:\\Users\\zjz65\\AppData\\Local\\Programs\\Magic Pointer\\resources\\app\\app\\agent_runtime\\vision_backend.py",
+    "C:\\Users\\zjz65\\AppData\\Local\\Programs\\Magic Pointer\\resources\\app\\app\\agent_runtime\\loop.py",
+    "C:\\Users\\zjz65\\AppData\\Local\\Programs\\Magic Pointer\\resources\\app\\app\\harness\\extensions_inventory.py",
+    "C:\\Users\\zjz65\\AppData\\Local\\Programs\\Magic Pointer\\resources\\app\\app\\input_artifact\\schema.py",
+    "C:\\Users\\zjz65\\AppData\\Local\\Programs\\Magic Pointer\\resources\\app\\scripts\\ocr_resident_worker.py"
+  ],
+  "windowIdentity": {
+    "title": "ChatGPT",
+    "processName": "ChatGPT.exe",
+    "boundsLTRB": [
+      0,
+      0,
+      3120,
+      1985
+    ],
+    "coordinateSpace": "physical_screen_pixels",
+    "selectionBoundsXYWH": [
+      2505,
+      206,
+      598,
+      482
+    ],
+    "selectionLocation": "top-right"
+  },
+  "selectionAnchor": "bbox:2441,142,3120,752\uff08\u51bb\u7ed3\u9009\u533a\u53ca\u5468\u8fb9\uff1b\u770b\u5708\u9009\u63a7\u4ef6\u7684\u7ec6\u8282\u65f6\u4f18\u5148\u7528\u6b64 anchor \u8c03 Look\uff09",
+  "ocrDetailRegion": [
+    2394,
+    142,
+    3120,
+    752
+  ],
+  "perceptionFailureIsError": true,
+  "frozenAndLiveBackendsSeparated": true,
+  "networkRequests": 0
+}

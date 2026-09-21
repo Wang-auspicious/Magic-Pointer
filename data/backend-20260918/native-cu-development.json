@@ -1,0 +1,13 @@
+{
+  "ok": true,
+  "method": "real Win32 Edit + production UIA probe/SetValue + readback",
+  "usedBackend": "uia_value",
+  "physicalInputUsed": false,
+  "elapsedMs": 271,
+  "probeTimesMs": [
+    77.85,
+    24.29,
+    65.99
+  ],
+  "matchingSuccessorState": true
+}

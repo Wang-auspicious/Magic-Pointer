@@ -1,0 +1,125 @@
+{
+  "kind": "actual-main-preload-two-renderer-acceptance",
+  "provider": "recorded read-only progress fixture; no AI/network request",
+  "usedBackend": "recorded.fixture.read_only",
+  "surfaceMode": "two real offscreen BrowserWindows; native visibility and focus suppressed",
+  "imageBoundary": "HTTP/HTTPS image responses are local recorded PNG bytes supplied by Electron protocol handlers; no network.",
+  "skippedStartup": 1,
+  "externalBoundaries": [
+    "models:catalog",
+    "models:quota",
+    "slash:directory",
+    "runtime-snapshot:get",
+    "dashboard:model-health-refresh",
+    "projects:environment",
+    "projects:tree",
+    "stash:list",
+    "figma:status",
+    "conversations:suggest"
+  ],
+  "profile": "D:\\Desktop\\Magic Pointer\\data\\runtime\\acceptance\\selection-live-24424",
+  "screenshots": [
+    "D:\\Desktop\\Magic Pointer\\artifacts\\selection-live-acceptance\\stage-midrun.png",
+    "D:\\Desktop\\Magic Pointer\\artifacts\\selection-live-acceptance\\studio-midrun.png",
+    "D:\\Desktop\\Magic Pointer\\artifacts\\selection-live-acceptance\\studio-completed-after-stage-close.png",
+    "D:\\Desktop\\Magic Pointer\\artifacts\\selection-live-acceptance\\studio-tab-suggestion.png",
+    "D:\\Desktop\\Magic Pointer\\artifacts\\selection-live-acceptance\\studio-long-composer.png",
+    "D:\\Desktop\\Magic Pointer\\artifacts\\selection-live-acceptance\\studio-permission-after-stage-close.png"
+  ],
+  "checks": {
+    "live": [
+      {
+        "answer": "材料显示：项目负责人已确认当前范围。",
+        "thinking": "先核对材料中的日期和任务归属。\n日期一致，继续整理结论并保留引用。",
+        "status": "第 1 轮推理中",
+        "statusMeta": "",
+        "sharedSpark": true,
+        "stableAnswer": true,
+        "stableThink": true,
+        "stableThinkBody": true,
+        "thinkOpen": true,
+        "toolResult": true,
+        "visible": true
+      },
+      {
+        "answer": "材料显示：项目负责人已确认当前范围。",
+        "thinking": "先核对材料中的日期和任务归属。\n日期一致，继续整理结论并保留引用。",
+        "status": "第 1 轮推理中",
+        "statusMeta": "",
+        "sharedSpark": true,
+        "stableAnswer": true,
+        "stableThink": true,
+        "stableThinkBody": true,
+        "thinkOpen": true,
+        "toolResult": true,
+        "visible": true
+      }
+    ],
+    "failedEdit": {
+      "headerDiffCounts": true,
+      "expandedDiff": true,
+      "fullErrorVisible": true,
+      "bothSurfaces": true
+    },
+    "close": {
+      "detached": true,
+      "requestSurvived": true,
+      "killRequests": 0,
+      "latePatchDidNotReopen": true
+    },
+    "final": {
+      "finalVisible": true,
+      "streamingNodes": 0,
+      "questionCount": 1,
+      "busy": null
+    },
+    "persistedAnswer": "最终答案：项目负责人已确认当前范围，日期为 2026-09-18。小窗关闭后任务仍已完成。\n\n![HTTPS fixture](https://acceptance.invalid/fixture.png)\n![HTTP fixture](http://acceptance.invalid/fixture.png)\n![Local fixture](<D:\\Desktop\\Magic Pointer\\data\\runtime\\acceptance\\selection-live-24424\\recorded image.png>)\n![Data fixture](data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j6f8AAAAASUVORK5CYII=)",
+    "markdownImages": [
+      {
+        "alt": "HTTPS fixture",
+        "source": "https",
+        "naturalWidth": 1
+      },
+      {
+        "alt": "HTTP fixture",
+        "source": "http",
+        "naturalWidth": 1
+      },
+      {
+        "alt": "Local fixture",
+        "source": "file",
+        "naturalWidth": 1
+      },
+      {
+        "alt": "Data fixture",
+        "source": "data",
+        "naturalWidth": 1
+      }
+    ],
+    "composer": {
+      "tabAcceptsEditableText": true,
+      "noSubmission": true,
+      "longComposer": {
+        "height": 374,
+        "maxHeight": 374,
+        "scrollHeight": 1000,
+        "clientHeight": 374
+      }
+    },
+    "pendingPermission": {
+      "question": "允许保存这份笔记吗？",
+      "buttonCount": 3,
+      "streamingNodes": 0,
+      "busy": null
+    },
+    "explicitGuiStop": {
+      "requestId": "2295bc55-fba1-4bb1-b49f-32d58a943757",
+      "routedToSelectionChild": true
+    }
+  },
+  "consoleErrors": [],
+  "conversationId": "c1789665893404",
+  "requestId": "69c4698c-e8ab-42b4-84e0-8235a2294e23",
+  "ok": true,
+  "timingMs": 6178
+}

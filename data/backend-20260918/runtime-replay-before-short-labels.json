@@ -1,0 +1,1431 @@
+{
+  "method": "production Runtime/provider on original frozen OCR plus native desktop PDF",
+  "limitations": [
+    "WeChat HTML body is absent; only its attachment card was captured",
+    "model/provider timings vary; single replay is not a latency distribution"
+  ],
+  "preparationMs": 1468,
+  "elapsedMs": 84329,
+  "result": {
+    "ok": true,
+    "prompt": "基于这些信息，总结200字讲清楚你推荐的最合适选题。",
+    "answer": "综合你圈选的微信讨论和这份 CVPR 2027 选题核验报告，我推荐**选题 01：屏幕信念账本（Beliefs, Not Screenshots）**作为主投。\n\n核心理由三条：\n\n**一、问题精准对标。** OSWorld 2.0 摘要明确点名\"丢失约束\"和\"隐藏状态\"两个失败模式，选题 01 将它们统一为\"信念腐坏\"——agent 干到第 300 步时，早已忘了第 30 步的约束和任务初始条件。2607.04334 已量化后果：一次错源信念后自我恢复率不超过 3%，面对陈旧快照跟随过时信息的概率高达 88%。这就是那 34.2 个点的机制解释。\n\n**二、空白经实搜确认。** 前置条件检索零命中。最近邻 ATMem 是移动端文本级执行状态，没有像素证据绑定、没有时效性建模、没有冲突检测，不在桌面长程尺度评估。\n\n**三、实验可执行。** 主场 OSWorld 2.0 全量加 WeaveBench 泛化，对照组明确（无记忆、全图记忆、AGMem、ATMem），杀死条件预设——固定预算下 binary 无显著提升则停。数据和 harness 与选题 04、06 共用，不额外增加工程负担。\n\n并行可押**选题 07（Widget Re-Identification）**：数据几乎免费（开源软件程序化渲染），CVPR ReID 评审语言成熟，万一 01 诊断不显著，07 可顶上成为主投。",
+    "error": null,
+    "answerShape": "answer",
+    "loopTerminated": false,
+    "loopTerminatedReason": null,
+    "route": {
+      "tier": "L2",
+      "action": "model_loop",
+      "turns": 3
+    },
+    "loopReceipts": [
+      {
+        "toolCallId": "call_6df99c3f3b7b416790583e03",
+        "toolName": "Context.read",
+        "arguments": {
+          "source_id": "source:benchmark-00b38db8e4c42bb8bc5f6ee4e88da03:2"
+        },
+        "isError": true,
+        "failureType": "permission_denied",
+        "usedBackend": null,
+        "latencyMs": null,
+        "valuePreview": "source access denied: source_not_granted:source:benchmark-00b38db8e4c42bb8bc5f6ee4e88da03:2"
+      },
+      {
+        "toolCallId": "call_c7365ada6fcc4db8b70edc8a",
+        "toolName": "Context.read",
+        "arguments": {
+          "source_id": "source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2"
+        },
+        "isError": false,
+        "failureType": null,
+        "usedBackend": "task_source.reader",
+        "latencyMs": 1440.6770000059623,
+        "valuePreview": "{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"fragments\":[{\"fragmentId\":\"fragment:source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2:page:0\",\"locator\":{\"kind\":\"pdf-region\",\"value"
+      }
+    ],
+    "events": [
+      {
+        "name": "Context.read",
+        "arguments": {
+          "source_id": "source:benchmark-00b38db8e4c42bb8bc5f6ee4e88da03:2"
+        },
+        "result": "source access denied: source_not_granted:source:benchmark-00b38db8e4c42bb8bc5f6ee4e88da03:2",
+        "isError": true,
+        "usedBackend": null,
+        "latencyMs": null
+      },
+      {
+        "name": "Context.read",
+        "arguments": {
+          "source_id": "source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2"
+        },
+        "result": "{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"fragments\":[{\"fragmentId\":\"fragment:source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2:page:0\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":0}},\"text\":\"核验日期  2026-09-16\\n投稿目标  CVPR 2027 · 11/16 AOE\\n核验对象  2 份 AI 调研 · 21 个 arXiv 编号\\n判定  编号 21/21 命中 · 事实更正 5 处\\n交付  8 个选题 · 两条线\\n长程视觉 Agent\\n的裂缝在哪\\n一句话\\n一个比人快两倍、但每两次只能真正完成一次的 agent，在经济上无法交付。原因分\\n两半：一，它的信念坏了——世界模型在三百步里静默腐坏，它丢约束、漏中途信\\n息、宁可猜也不问、不回头验证（这不是我的推测，是 OSWorld 2.0 作者写在摘要\\n里的原话）；二，它撞上的世界和它交还给的人，都不在它的模型里——界面会加\\n载、会换皮、会改版，而人接手时只拿到一张截图和一堆日志。\\n§ 基准事实\\n那 34.2 个点\\n整份报告压在一个数字上：在 OSWorld 2.0 的 108 个长程任务上，最强配置（Claude\\nOpus 4.8，最大思考，批量工具调用，500 步预算）拿到 54.8% 的部分完成分，但严\\n格二元完成率只有 20.6%。\\nOSWORLD 2.0 · 108 长程任务 · 500 步 · CLAUDE OPUS 4.8 MAX-THINKING\\nARXIV 2606.29537\\n20.6%\\n54.8%\\n100%\\n二元完成\\n部分完成\\n人类\\n中间那片斜线区是 34.2 个点：任务的大部分都做对了，却总会漏掉一两件事而归零。\\n同一 benchmark 上 GPT-5.5 更省 token，但在 13% 附近就平了。每个任务人类中位耗\\n时约 1.6 小时，Opus 4.7 平均需要 318 次工具调用——OSWorld 1.0 是约 30 次。\\n原文摘要的最后一句 · 逐字核对\\n当前 agent 远未达到专业级计算机使用：它们并非栽在基础 GUI 控制或写代码上，而是丢失约\\n束、错过任务中途到达的信息、宁可猜也不询问用户、跳过验证，并且在任务取决于必须自行恢\",\"metadata\":{\"textView\":true,\"sourceTitle\":\"Program Manager\",\"sourceRevision\":{\"capturedAt\":\"\",\"snapshotId\":\"benchmark-00b38db86e4c42bb8bc5f6ee4e88da03\"}},\"citations\":[{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":0}}}]},{\"fragmentId\":\"fragment:source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2:page:1\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":1}},\"text\":\"复的隐藏状态时最为吃力。\\n这一句话点名了五个失败模式。下面五个选题，逐一对应其中一个——这就是它们的排序依据。\\n§ 核验台\\n哪些站得住，哪些得改\\n两份材料的 21 个 arXiv 编号我逐条打了 arXiv API，全部命中，无一伪造——这点值得\\n说，因为跨年份编号（2602–2609）看上去很像编的。真正需要改的是下面几处。\\n断言\\n判定\\n实据\\n属实\\nCFP 正式 topic 明列 Agentic AI、Physical AI（World\\nCVPR 2027 收 agentic AI，范围远大于\\nModels/VLA/Planning/Simulation）、Embodied\\ncomputer use\\nvision and robotics、Reasoning & RL、Trustworthy\\nvision、AI for Science and Scientific Discovery、\\nMedical and biological vision, cell microscopy、\\nData synthesis/datasets/benchmarks。\\n属实\\n官方 Dates 与 CFP 双向核对一致。另：评审释放\\n截稿 11/16 AOE，注册 11/10，补材\\n1/25，终审 2/25，会期 6/22–25，workshop 6/20–\\n11/23，contemporaneous 分界 2026-\\n21。CFP 另写明所有作者必须承诺审稿，且 CVPR\\n09-15\\n2027 将在评审流程部分环节使用 LLM（细则未定）。\\nOSWorld 2.0：108 任务 / 318 工具调用\\n属实\\n与 2606.29537  摘要逐字一致。GPT-5.5 更省 token\\n但平在 ~13%。\\n/ 人类中位 1.6h / 20.6% binary / 54.8%\\npartial\\n更正\\n论文口径下最高二元完成率是 20.6%。45% 来自厂\\n「OSWorld 2.0 上最强模型二元完成率\\n商/talk 转述，不能与论文并列。凡引用必须同时标\\n约 45%」\\n注：benchmark 版本、是否 offline、binary 还是\\npartial、步数预算、harness。\\n更正\\n92.7 是 ScreenSpot-Pro，72.6 是 OSWorld 2.0 的\\nAstra「ScreenSpot-Pro 92.7 / OSWorld\\npartial，两者被混用了。且 openai.com 官方页当前\\n超人类 13 点」\\n对抓取返回 403，第三方复现未见——所有厂商数字在\\n论文里都必须标为自报。\",\"metadata\":{\"textView\":true,\"sourceTitle\":\"Program Manager\",\"sourceRevision\":{\"capturedAt\":\"\",\"snapshotId\":\"benchmark-00b38db86e4c42bb8bc5f6ee4e88da03\"}},\"citations\":[{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":1}}}]},{\"fragmentId\":\"fragment:source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2:page:2\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":2}},\"text\":\"断言\\n判定\\n实据\\n更正\\nCFP 把 Data synthesis, datasets and benchmarks\\n「CVPR 硬性要求贡献是训练出来的视觉\\n单列为正式 topic。这是一条正确的投稿策略判断，不\\n模块」\\n是规则。准确说法：纯 prompt 编排不足以形成视觉贡\\n献；可训练的视觉状态估计 / 时空证据 / 后果预测 / 风\\n险建模 / 新 benchmark 都算。\\n错误\\n官方 Author Guidelines 原文：AC 推荐 → Findings 组\\n「CVPR 2026 Findings 是 opt-in 全收、\\n委邀请作者 → 作者决定是否投 → 进 workshop\\n独立 proceedings」\\nproceedings。不是 opt-in，也不是独立\\nproceedings。CVPR 2027 CFP 未承诺沿用，不能当\\n保底。\\nDeskCraft 538 任务，GPT-5.4 31.6%\\n属实\\n2606.03103  属实，且补充两点两份材料都漏了：\\ninteractive 子集只有 27.6%，原文明写「persistent\\nfailures in long horizon workflow delivery and\\nproactive clarification」。这是选题 03 的现成战场。\\nStarDojo 是 ECCV 2026、benchmark、\\n属实\\n2507.07445  标题含 Stardew Valley，2025-07 上\\n线。定位判断正确：它是面向视觉交互与长程规划的\\n10 类高层技能绕开键鼠、GPT-4.1\\n游戏 agent benchmark，不是严格的 pixel-only\\n12.7%\\ncomputer-use benchmark。\\n§ 地皮\\n谁已经把坑占了\\n这一节的作用是止损。下面每条都实搜过 arXiv，标注了占用程度和精确的占用边界\\n——边界比「已占」三个字有用得多，因为差异句要写进 intro 第一段。\\n对原 HTML 最大的一处更正\\n原文把「连续 GUI 操作 / 把 GUI 当 visuomotor control」列为方案 B，新颖度打了满分，说「没\\n人把 GUI 操作当作 visuomotor control 来建模」。这条已经不成立。\\nDragOn\\n2606.06322  已经是拖拽 GUI 交互的 benchmark + 数据集；ShowUI-π\\n2512.24965  的\\n副标题就是「Flow-based Generative Models as GUI Dexterous Hands」，即流匹配生成模型做\\nGUI 连续控制；Covering Human Action Space for Computer Use\\n2605.12501  做的正是完整人\\n类动作空间的数据合成与 benchmark；再加 Beyond Clicking\\n2601.06031 （text dragging\\ngrounding）与 ShowUI-Aloha\\n2601.07181 。\",\"metadata\":{\"textView\":true,\"sourceTitle\":\"Program Manager\",\"sourceRevision\":{\"capturedAt\":\"\",\"snapshotId\":\"benchmark-00b38db86e4c42bb8bc5f6ee4e88da03\"}},\"citations\":[{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":2}}}]},{\"fragmentId\":\"fragment:source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2:page:3\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":3}},\"text\":\"「VLA for GUIs」这个 framing 依然好卖，但它不再是无人区，而且它是本次最容易被 reviewer\\n用四篇 prior work 砸死的选项。因此不进 top 5。\\nGUI agent 的记忆压缩 / 选择 / 检索\\n饱和\\nMementoGUI 2605.18652 （学出来的记忆控制器）· AGMem 2606.14106 （动作接地的区域裁剪，OSWorld 上比全图\\n记忆高 33.3%）· ATMem\\n2606.31612 （值+角色+状态的主动执行状态，配 STR-GRPO 在线 RL）· PAL-UI 2510.00413\\n（主动回看）· TRACE 2609.10297 （视觉 token 不可逆准入）。五篇，且 ATMem 离「约束账本」最近——差异必须写\\n死。\\n单步 critic：前后截图差异判断这一步成没成\\n已占\\nVisCritic 2606.24525 （Siamese ViT + action-aware critic head）。\\n终点 judge：视觉判断整个任务是否完成\\n已占\\n“Are We Done Yet?” 2511.20067 。注意它和 VisCritic 之间那一层——过程中持续维护的可核查清单——才是空的。\\n诊断 agent 信像素还是信 DOM\\n大部分已占\\n2607.04334  做得比原 HTML 描述的彻底得多：735 个探针、225 个来自线上站点的零编辑分歧、Perception-Fusion\\nGap 指标、白盒消融定位到单个被复制的结构值、四种缓解手段对照。它同时留下两个金子般的数字：在线上陈旧快照\\n上模型跟随过时结构的比例高达 0.88；多步环境里第一步一个错源信念，自我恢复率 不超过 0.03。\\n视觉 tool-use 的因果审计\\n半占\\nThe Illusion of Visual Tool-Use 2608.06270 ：三级干预、Visual Evidence Gain 估计量、两类失配（Calling Without\\nLooking / Looking Without Planning）、代码已开源。但只做到单轮 VQA，没碰长程轨迹。\\n动态界面 benchmark 与方法\\n半占\\nDynamicGUIBench / DynamicUI 2604.25380  吃的是录屏视频做帧选择（聚类帧→生成 caption→迭代选最有信息量的\\n帧），是事后离线的。AAPT 2607.28399  吃的是空闲时预编译策略树，靠轻量 observer 匹配已枚举分支，作者自己在\\n摘要里承认动作无法预先枚举时失效。在途中断这一块仍然是空的。\\nVLA 的失败恢复 / 可恢复性\\n比想象中拥挤\\nB2FF 2606.09258  已经有「recoverability-aware selector」，在 failure-injected LIBERO 上把 56.3% 抬到 74.0%；\\n另有 DLS 2609.06114 （失败边界学习）、ActFovea 2607.29169 （运行时安全护栏）、RedFlow 2607.27782 （动作\\n级纠正）。「动作可恢复性证书」这个方向比第二份材料给的评估拥挤得多，不进 top 5。\\n屏幕的并发 / 异步流式感知\\n空\\narXiv 全库检索 GUI agent + asynchronous、screen + streaming perception + agent：零相关命中。而\\nStreamArena 的 StreamMind 2608.05703  已经在视频上证明了前后端双层异步架构可行——存在性证明摆在那，没人\\n搬到屏幕上。\",\"metadata\":{\"textView\":true,\"sourceTitle\":\"Program Manager\",\"sourceRevision\":{\"capturedAt\":\"\",\"snapshotId\":\"benchmark-00b38db86e4c42bb8bc5f6ee4e88da03\"}},\"citations\":[{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":3}}}]},{\"fragmentId\":\"fragment:source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2:page:4\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":4}},\"text\":\"GUI 动作的前置条件 / 后置条件验证\\n空\\narXiv 全库检索 postcondition + agent + GUI：零命中。stale + observation + agent + screenshot：仅 1 篇，还\\n是 transition benchmark（Desktop-Delta 2607.26041 ）。\\n视觉 agent「什么时候该问而不是该猜」\\n近乎空\\nwhen to ask + agent + multimodal 全库仅 1 篇，还是回合制 RPG（StarBench 2510.18483 ）。AmbiBench\\n2602.11750  做的是移动端一次性指令歧义，不是不可逆风险下的决策。SafePred 2602.01725  是 world-model 护\\n栏，不建模询问成本。\\n假设驱动的主动显微观测\\n空\\nmicroscopy + active learning + experimental design：零命中。hypothesis + microscopy + agent 仅 3 篇，全\\n是 2025 年的工具/benchmark。EAA 2602.15294  与 Agentic-J 2606.02080  都是工具编排，不是采集策略。\\n§ 档案\\n八个选题\\n两条线\\n排序依据三条，按优先级：（一）是否直接对应 OSWorld 2.0 作者亲口点名的失败模\\n式；（二）空白是否被实搜证实，而不是想当然；（三）视觉内核能否撑住一个 CVPR\\nAC 的第一反应。成本、算力、时间不参与排序。\\n线 A · 01–05 · 信念与决策\\n线 B · 06–08 · 摩擦与交接\\n机制性的。问题是「agent 脑子里那份世界模型\\n需求驱动的。问题是「agent 撞上的真实世界，\\n和它交还给的真实用户」。共同特点：一句话能说\\n为什么会坏」。novelty 高、天花板高，但题目本\\n清、AC 一眼就懂、数据几乎免费、评估无歧\\n身需要一段话才讲得清，intro 第一段必须写得极\\n准，否则 reviewer 会归到 memory / critic 那一\\n义。这三个是你问的「特别实际、AC 觉得有趣」\\n堆里去。\\n的那一类。\\n线 A 信念与决策\\n机制性 · novelty 与天花板更高 · 差异句是生死线\\nBeliefs, Not Screenshots — Evidence-Bound State Tracking for Long-\\n01 屏幕信念账本\\nHorizon Computer Use\",\"metadata\":{\"textView\":true,\"sourceTitle\":\"Program Manager\",\"sourceRevision\":{\"capturedAt\":\"\",\"snapshotId\":\"benchmark-00b38db86e4c42bb8bc5f6ee4e88da03\"}},\"citations\":[{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":4}}}]},{\"fragmentId\":\"fragment:source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2:page:5\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":5}},\"text\":\"主投\\n对应：丢约束 + 隐藏状态\\n前置条件检索 0 命中\\n最近邻 ATMEM\\n人话\\nAgent 干到第 300 步，早就忘了第 30 步看到的那个数字，也忘了你一\\n开始说「别改分辨率」。给它一本会过期的记事本：过期了就滚回去重\\n看一眼，对不上就别动手。\\n主张\\n把「约束追踪」和「主动再观察」合并成同一个对象：一本带证据、带时\\n效、带置信度的信念账本。每条账本条目绑定截图区域、时间戳与来源通道\\n（像素 / 结构 / 先验）。条目过期就触发有代价的再观察，条目冲突就触发拒\\n绝行动。\\n这不是两个模块的拼接，而是一个判断：约束丢失和隐藏状态丢失是同一个\\n病——信念腐坏——的两种表现。前者是账本条目失效，后者是账本条目从没\\n被写进去。\\n为什么现在\\nOSWorld 2.0 摘要同时点名 lose track of constraints 与 hidden state\\nthey must recover——两件事，同一句话。而 2607.04334  已经把后果量化\\n了：一次错源信念之后，自我恢复率不超过 0.03；面对线上陈旧快照，模型\\n跟随过时信息的概率高达 0.88。也就是说信念一旦坏掉，agent 基本不会自\\n己修好。这正是那 34.2 个点的机制解释。\\n差异句\\nATMem 2606.31612  是最近邻，必须在 intro 第一段拆开：它是移动端、以\\n文本值为单位的执行状态（值 + 角色 + 已用/待用），解决的是重复与遗漏操\\n作。它没有像素级证据绑定，没有时效性建模，没有冲突检测，没有把再观\\n察当作动作，也不在 500 步桌面尺度上评估。本工作的四个词是：像素接\\n地、可失效、可冲突、可付费重取。\\n视觉内核\\n截图→约束接地器：把自然语言里的抽象约束落到屏幕区域。本质是\\nreferring expression 的长程版本，CVPR AC 天然读得懂。\\n账本状态更新器：在动作流上维护条目的值、置信度与年龄。\\n动作条件后置条件预测器：动作执行前预测「执行后账本应该长什么\\n样」，执行后比对。\\n证据时效与冲突检测头：判断当前截图对某条目是否仍然有效、像素与结\\n构是否互相矛盾。\\n实验闭环\\n主场 OSWorld 2.0 全量，150 / 300 / 500 步三档都报。\\n外部泛化 WeaveBench 2606.09426 （114 个 GUI+CLI+代码混合长程任\\n务，最强 PassRate 仅 41.2%，且自带轨迹感知 judge 能抓伪造视觉证\\n据）。\",\"metadata\":{\"textView\":true,\"sourceTitle\":\"Program Manager\",\"sourceRevision\":{\"capturedAt\":\"\",\"snapshotId\":\"benchmark-00b38db86e4c42bb8bc5f6ee4e88da03\"}},\"citations\":[{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":5}}}]},{\"fragmentId\":\"fragment:source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2:page:6\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":6}},\"text\":\"至少一个前沿 API 模型 + 一个开源模型（Qwen-UI-Agent\\n2607.28227 ）。只在 7B 上出结果等于死。\\n对照组：无记忆 / 全图记忆 / AGMem / MementoGUI / PAL-UI / ATMem /\\n「只是多截几张图」。最后一个对照是审稿人一定会问的。\\n注入扰动：过期截图、像素-结构冲突、任务中途新增约束、必须回头取\\n的隐藏状态。\\nbinary + partial 双报\\nconstraint recall / F1\\nviolation rate\\nstaleness AUC\\nrecovery rate\\n不可逆错误率\\nECE\\n每成功任务 token/步数\\n杀死条件\\n在固定 token 与步数预算下，binary 没有显著提升——即收益全部来自「多\\n调用了几次」——则这个方向证伪，停。这是本选题唯一的止损点，必须在跑\\n主实验前预先写死。\\nThe Screen Is a Stream — Asynchronous Visual Monitoring for\\n02 并发中断感知\\nComputer-Use Agents\\n新颖度最高\\n对应：漏掉中途到达的信息\\n检索 0 命中\\n异步 HARNESS 是工程大头\\n人话\\nAgent 盯着一张截图想 20 秒，等它想完，世界早变了——弹窗跳出来\\n了、列表刷新了、按钮挪位了。再挂一只「眼睛」一直睁着，看到变化\\n就喊停：你正要点的那个东西，已经不在那儿了。\\n主张\\n屏幕是视频流，不是截图序列。跑一个高频、廉价、常开的视觉变化监测\\n器，与慢速策略并发；当它检测到某个变化会让在途动作失效时，中断、作\\n废、或强制重新接地。\\n核心研究问题不是「怎么看得更快」，而是：什么样的屏幕变化会让一个已经\\n决定但尚未落地的动作失效——这是一个可训练的视觉预测问题。\\n为什么现在\\nOSWorld 2.0 把 streaming interaction and dynamic environments 明确\\n列为它刻意针对的 challenge phenomenon，把「错过任务中途到达的信息」\\n列为失败模式。系统侧的数字也齐了：每步推理 20 秒以上、反思环节吃掉\\n76–96% 的任务时延 2609.02309 。而 DynamicGUIBench 上最好的方法只\\n有 22.1%。\",\"metadata\":{\"textView\":true,\"sourceTitle\":\"Program Manager\",\"sourceRevision\":{\"capturedAt\":\"\",\"snapshotId\":\"benchmark-00b38db86e4c42bb8bc5f6ee4e88da03\"}},\"citations\":[{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":6}}}]},{\"fragmentId\":\"fragment:source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2:page:7\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":7}},\"text\":\"差异句\\n三者机制必须在 intro 第一段拆干净，因为它们会同时成为你的基线：\\nDynamicUI\\n2604.25380  = 事后的帧选择。吃录屏视频，聚类帧、生成\\ncaption、迭代挑选最有信息量的帧。它在看过去。\\nAAPT\\n2607.28399  = 事前的预编译。空闲时用同一个冻结模型建带守卫\\n条件的策略树，事件到来时由轻量 observer 匹配已枚举分支直接执行。\\n作者自己写明：动作无法预先枚举时失效。它在赌未来。\\n本工作 = 执行中的中断。不枚举、不回看，只判断「我正要做的这件事，\\n现在还成立吗」。\\nStreamMind 2608.05703  是你的存在性证明：它把延迟敏感的交互与主动监\\n控交给独立调度的前端 worker，把持久记忆与检索交给后端 worker，在小\\n时级视频上四项能力全面超过流式基线。同一架构在屏幕上无人做过。\\n视觉内核\\n低分辨率高帧率的 GUI 变化监测器——本身就是一个流式视觉模型，CVPR\\n对 streaming perception 极其买账。\\n动作失效预测器：给定在途动作与当前帧差，预测该动作是否已经失去目\\n标 / 目标已移位 / 前置条件已破。\\n中断策略：在假阳性代价（白白打断）与假阴性代价（做了无效动作）之\\n间的阈值学习。\\n实验闭环\\nDynamicGUIBench + OSWorld 2.0 的 streaming / dynamic 子集 + 自建\\n「争夺窗口」任务（AAPT 的配对试验协议可以直接借，它用了 McNemar\\n精确检验和预注册终点，方法学很干净）。\\n对照 DynamicUI、AAPT、reactive、open-loop 四条线。\\n关键的负面对照：在非动态任务上跑一遍，证明监测器不造成净损失。\\ncontested-window success\\nstale-action rate\\n中断 precision / recall\\n无效动作数\\n端到端时延\\nbinary + partial\\n杀死条件\\n监测器在非动态任务上造成净损失（假阳性中断的代价高于动态任务上的收\\n益），说明「中断」这个机制不成立，而不只是阈值没调好。停。\\nGuessing Is a Choice — Risk-Sensitive Visual Interaction under\\n03 问 / 做 / 弃\\nIrreversible Uncertainty\\n战场现成\\n对应：宁可猜也不问\\n检索 1 命中且不相关\\nDESKCRAFT 协议可直接用\",\"metadata\":{\"textView\":true,\"sourceTitle\":\"Program Manager\",\"sourceRevision\":{\"capturedAt\":\"\",\"snapshotId\":\"benchmark-00b38db86e4c42bb8bc5f6ee4e88da03\"}},\"citations\":[{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":7}}}]},{\"fragmentId\":\"fragment:source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2:page:8\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":8}},\"text\":\"人话\\n屏幕上有三个长得差不多的「删除」，agent 不问，直接猜一个点下去。\\n教它算一笔账：问你一句要花多少，猜错一次要赔多少，赔不起就闭嘴\\n问。\\n主张\\nOSWorld 2.0 原文写的是 guess rather than ask the user。缺的不是更\\n强的识别能力，是一个视觉风险决策器：在当前像素证据下，该执行、该\\n问、还是该弃掉当前计划重规划。\\n目标函数不是 accuracy，是\\nmax  E[task utility] − λ·E[irreversible harm] − c_ask·(询问次数)\\n为什么它不是「安全\\n2607.04334  已经把四种缓解手段在同一批探针上比过：prompt 级提示在动\\n提示器」\\n作层面失效；证书式检查用拒答换安全——代价很大；只有 training-free 的\\n一致性门同时降低了劫持率和任务错误率。\\n换句话说：拒绝的代价函数还没有人建模。这就是研究问题本身，也是为什\\n么这不是一篇 safety 小论文——它是 selective prediction 在视觉动作空间上\\n的首次形式化。\\n战场\\nDeskCraft 2606.03103  已经把人机协作形式化成交互协议：mid-turn 的\\nagent 主动澄清与用户主动打断、post-turn 的完成后反馈。538 个任务、18\\n个 agent、长程任务超 50 步。GPT-5.4 标准 31.6%、interactive 27.6%，\\n原文明写失败持续集中在 proactive clarification。testbed 是现成的，\\n且原作者已承诺开源。\\n自建补充：视觉分叉集——同一句指令配不同截图语义、多个视觉近似实例、\\n过期截图、以及删除/发送/提交/支付这类不可逆动作。\\n视觉内核\\n视觉证据充分性判别器：这张截图够不够支持这个动作——注意这不是普\\n通 confidence，是「证据对动作的支持度」。\\n后果可逆性预测器：从像素预测这一步是否可撤销。屏幕上有大量可逆性\\n线索（对话框措辞、撤销按钮、是否已提交），这是一个真实的视觉识别\\n问题。\\n指标\\n核心是 risk–coverage 曲线，而不是单点 accuracy——因为一个只会拒绝的\\n系统在单点上会很好看。\\nselective risk–coverage\\n不可逆错误率\\nclarification precision / recall\\n每次询问换来的成功率增量\\nECE\\ntask success\\nDeskCraft interactive 分项\",\"metadata\":{\"textView\":true,\"sourceTitle\":\"Program Manager\",\"sourceRevision\":{\"capturedAt\":\"\",\"snapshotId\":\"benchmark-00b38db86e4c42bb8bc5f6ee4e88da03\"}},\"citations\":[{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":8}}}]},{\"fragmentId\":\"fragment:source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2:page:9\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":9}},\"text\":\"杀死条件\\nrisk–coverage 曲线不优于「拿模型自身 confidence 做阈值」这条朴素基线\\n——说明风险决策器只是把成功率换成了拒绝率，没有学到任何关于后果的东\\n西。停。\\nDoes the Screenshot Matter? — Causal Audit of Visual Evidence in\\n04 三百步上的因果审计\\nLong-Horizon Trajectories\\n风险最低\\n对应：跳过验证\\n与 01/02 共用 HARNESS\\n须加方法贡献才敢投主会\\n人话\\nAgent 一路截了三百张图，但这些图到底有没有真的影响它的决定？把\\n某几张换掉、糊掉、删掉，看它会不会做出不同的动作。答案大概率\\n是：大部分图白截了。然后训一个「这一步值不值得看」的预测器，把\\n省下的 token 花在真该看的地方。\\n主张\\n两篇前作各证明了半边：2608.06270  证明在单轮 VQA 上，crop-and-zoom\\n的收益集中在一小撮「校准正确」的少数样本里，其余分成 Calling Without\\nLooking 与 Looking Without Planning；2607.04334  证明 GUI agent 在单步\\n冲突探针上会背叛自己的眼睛。\\n没人做的是：在 318 次工具调用的长程轨迹上，截图到底在多大程度上因果\\n地决定了动作，以及一次错误如何复利。这是一个量级差异，不是增量。\\n关键升级\\nCVPR 对纯 analysis 论文是运气活。所以不要只交审计——同时交一个训练出\\n来的「截图必要性预测器」：在动作前预测这一步的视觉观测是否会因果地改\\n变决策，并用它做观测预算分配（该看的时候看，不该看的时候省 token）。\\n审计给你 insight，预测器给你方法贡献和一张能涨点的表。\\n方法\\n沿用 CauAudit 的三级干预（policy / trajectory / step）与 Visual\\nEvidence Gain 估计量——代码已开源，起步快。\\n推广到长程：定义 per-step VEG 的时间衰减曲线与复利系数——一次无效\\n观测在 300 步后放大多少倍。\\n结合 2607.04334  的 0.03 自我恢复率，给出「错误信念的半衰期」这个\\n可测量。\",\"metadata\":{\"textView\":true,\"sourceTitle\":\"Program Manager\",\"sourceRevision\":{\"capturedAt\":\"\",\"snapshotId\":\"benchmark-00b38db86e4c42bb8bc5f6ee4e88da03\"}},\"citations\":[{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":9}}}]},{\"fragmentId\":\"fragment:source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2:page:10\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":10}},\"text\":\"实验闭环\\n三个长程环境：OSWorld 2.0 / WeaveBench / DeskCraft × 至少 6 个模\\n型。\\n对照 2608.06270  的单轮结论——如果长程 VEG 与单轮 VEG 结构相同，这\\n篇就没有新东西。\\n预算实验：在固定 token 预算下用预测器分配观测，报 binary 提升。\\n长程 VEG\\ncompounding factor\\n错误信念半衰期\\n必要性预测器 AUC\\n固定预算下 binary 提升\\n杀死条件\\n长程 VEG 与单轮 VEG 没有结构差异，且必要性预测器在固定预算下不涨点\\n——降级成 workshop，不浪费主会名额。\\nMeasure What Matters Next — Budgeted Hypothesis Discrimination for\\n05 预算约束下的假设驱动主动显微\\nAutonomous Microscopy\\n天花板最高\\nCFP 两个 TOPIC 同时对口\\n检索 0 命中\\n仿真-真实域差距\\n人话\\n显微镜下细胞不正常，可能是机制 A 也可能是机制 B。光毒性摆在那，\\n你只能再拍二十张。那就问一个很硬的问题：这二十张该拍哪儿、拍哪\\n个焦面、什么曝光，才能最快把 A 和 B 分开？\\n为什么它在榜上\\nCVPR 2027 CFP 同时明列 AI for Science and Scientific Discovery 与\\nMedical and biological vision, cell microscopy 两个 topic。这是整份\\n清单里最不拥挤的 AC 池——而前四个选题都要挤 agentic / embodied 那几个\\n池子。\\n主张\\n现有的 microscopy agent——EAA 2602.15294 、Agentic-J 2606.02080 ——\\n都是工具编排：调 ImageJ、调显微镜、调分析流程。真正缺的是一句话就\\n能说清的问题：\\n在有限观测次数、时间和光剂量下，下一次该测什么，才能最大程度区分竞\\n争性的科学假设？\\n不是「这张图里有什么」，而是「为了分辨机制 A 和机制 B，我下一步该换位\\n置、换焦面、换曝光，还是继续跟踪这一个细胞」。\",\"metadata\":{\"textView\":true,\"sourceTitle\":\"Program Manager\",\"sourceRevision\":{\"capturedAt\":\"\",\"snapshotId\":\"benchmark-00b38db86e4c42bb8bc5f6ee4e88da03\"}},\"citations\":[{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":10}}}]},{\"fragmentId\":\"fragment:source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2:page:11\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":11}},\"text\":\"和前四个的同一个内\\n01 是「该不该回去再看一眼」，02 是「该不该现在打断去看」，03 是「证据\\n核\\n够不够支持动作」，04 是「这次观测到底有没有用」，05 是「下一次该测什\\n么」。五个都是同一套数学：部分可观测下的有代价主动感知与信息价值。屏\\n幕和显微镜只是它的两个竞技场。这个 framing 本身就是论文的卖点，也是\\n把五篇串成一条研究线的东西。\\n视觉内核\\n一个动作条件的视觉信息增益预测器：从当前视野图像直接预测「换位置 /\\n换焦面 / 换曝光 / 继续跟踪」各自能带来多少假设辨别力，并把采集时间、\\n光毒性、设备切换成本折进去。停止准则由假设后验的置信阈值决定，而不\\n是跑完固定轮次。\\n实验闭环\\n合成显微环境先行——这是唯一能拿到「哪个假设为真」的 ground truth\\n的地方，必须是主实验。\\nBBBC / LiveCell / Cell Tracking Challenge 做离线 replay，证明策略在真\\n实图像分布上不崩。\\n真实设备数据只作外部验证，不作主张依据。\\n对照：随机采样、固定网格、uncertainty sampling、通用 VLM agent。\\nuncertainty sampling 是真正的对手——如果赢不了它，说明假设层建模\\n没带来东西。\\n假设辨别准确率\\n稀有事件召回\\n每次观测信息效率\\n每单位光剂量信息效率\\n停止时机质量\\n校准\\n跨显微镜 OOD\\nfalse discovery rate\\n杀死条件\\n在合成环境（信息最完备、最有利的情形）上都显著赢不了 uncertainty\\nsampling，则假设层建模无效。停。\\n线 B 摩擦与交接\\n需求驱动 · 一句话能说清 · 数据几乎免费 · 评估无歧义\\n这三个的共同点：问题陈述本身就是论文的一半。AC 读到标题就点头，不需要你先花两段解\\n释为什么这事值得研究。而且三个都有同一个隐藏优势——标注几乎不要钱：标签可以从 agent\\n轨迹自动挖掘，或者从程序化渲染自动生成。这对 61 天窗口是决定性的，尽管它不参与排\\n序。\\nLook Before You Click — Visual Readiness Estimation for Computer-Use\\n06 界面稳了吗\\nAgents\",\"metadata\":{\"textView\":true,\"sourceTitle\":\"Program Manager\",\"sourceRevision\":{\"capturedAt\":\"\",\"snapshotId\":\"benchmark-00b38db86e4c42bb8bc5f6ee4e88da03\"}},\"citations\":[{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":11}}}]},{\"fragmentId\":\"fragment:source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2:page:12\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":12}},\"text\":\"线 B 首推\\n六个检索串全零命中\\n标签自动挖掘\\n每一步都要用\\n人话\\n页面还在转圈、骨架屏还没填、下拉菜单还在展开动画里——agent 已经\\n点下去了。点空，或者点到了 300 毫秒后会挪走的那个位置。这是自动\\n化里最老、最蠢、也最致命的一类失败，人人都撞过，没人写成过论\\n文。\\n问题\\n把「现在能动手了吗」变成一个可训练的视觉时序判断：给定最近几帧低分\\n辨率截图，预测（a）界面是否已经稳定，（b）还要多久稳定，（c）哪些区\\n域仍在变化因而不可信。\\n注意这是 agent 每一步都要做一次的判断——不是某类特殊任务的边角问题，\\n而是乘在整条轨迹上的系数。318 次工具调用意味着 318 次这个判断。\\n边界\\n时序问题在 CU 里已经有人碰，但碰的是另外两个方向，必须拆清楚：\\nAAPT\\n2607.28399  研究的是「对了但太晚」——解码占住决策关键路径，\\n窗口关了才输出动作。它的问题是 agent 太慢。\\nVLAA-GUI\\n2604.21375  里的 premature 指的是「过早宣布任务完成」\\n——早停，是任务级的终止判断。\\n本工作是「动手太早」——步级的、在界面物理稳定之前就落下的那一\\n击。和上面两个正交，而且可以同时作为基线共存。\\n视觉内核\\n一个极廉价的界面稳定性预测器：低分辨率、少帧、高频。输出稳定性概率\\n+ 剩余稳定时间回归 + 逐区域可信度掩码。这是视频上的时序稳定性预测，\\n纯视觉，而且因为它必须便宜，效率本身成为方法的一部分（CVPR 吃\\nefficient vision）。\\n顺带的副产品很漂亮：那张逐区域可信度掩码可以直接喂给 grounding 模\\n型，告诉它「这块还在动，别在这儿定位」。\\n数据为什么几乎免费\\n标签可以自动挖掘，完全不需要人标：任何 agent 轨迹里「点了之后屏幕没\\n有按预期变化」「同一个动作连点两次」「点完立刻撤销」的片段，都是天然\\n的正样本。加上主动注入——限速网络、人为插入 spinner 与骨架屏、放慢\\nCSS 过渡——就能得到一个带精确时间戳的可控数据集。\\n实验闭环\\nOSWorld 2.0（作者已明说 streaming interaction 是它刻意针对的\\nchallenge phenomenon）+ DynamicGUIBench 2604.25380  + 自建加载\\n扰动集。\",\"metadata\":{\"textView\":true,\"sourceTitle\":\"Program Manager\",\"sourceRevision\":{\"capturedAt\":\"\",\"snapshotId\":\"benchmark-00b38db86e4c42bb8bc5f6ee4e88da03\"}},\"citations\":[{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":12}}}]},{\"fragmentId\":\"fragment:source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2:page:13\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":13}},\"text\":\"朴素基线必须打赢两条：固定 sleep，和像素差阈值。这两条是所有工程\\n实践里真正在用的方案，打不赢它们这篇没意义。\\n净收益要双向算：省下的无效动作 减去 多等的时间。\\npremature-action rate\\n无效/重复动作数\\n等待时间浪费\\n每任务净步数\\n稳定性预测 AUC\\n剩余时间回归 MAE\\nbinary + partial\\n空白证据\\nGUI agent + loading → 0 相关\\nagent + page + stability + wait → 0 命中\\nscreenshot + animation + agent + click → 0 命中\\nrendering + settle + agent + screenshot → 0 命中\\nweb agent + flaky → 0 命中\\nabs:\\\"wait action\\\" + agent + GUI → 0 命中\\n杀死条件\\n在固定步数与时间预算下，学出来的等待策略赢不了「固定 sleep + 像素差\\n阈值」——说明这件事不需要学，工程手段就够了。停。\\nWidget Re-Identification — Appearance-Invariant Interface Element\\n07 这是不是同一个按钮\\nEmbeddings\\nAC 秒懂\\n六个检索串全零命中\\n程序化 GROUND TRUTH\\nREID 的评审语言\\n人话\\n同一个软件，换成深色主题、换成日语、换台 4K 屏、升一个版本——\\nagent 就不认识那个「导出」按钮了。所有缓存的定位全废，得重来一\\n遍。这是真实部署里最贵的一笔运维账。\\n为什么这个\\n因为它不是「又一个鲁棒性 benchmark」，它是 re-identification：在跨主\\nFRAMING 值钱\\n题、跨语言、跨 DPI、跨版本的外观变化下，判定两个界面元素是否是同一\\n个功能实体。\\nCVPR 有十年的行人重识别积累。AC 看到这个题目，立刻知道该用什么指标\\n评审、该问什么问题、该要哪张消融表——mAP、Rank-1、跨域泛化矩阵，\\n全是现成的评审语言。把一个成熟的 CV 问题范式搬到一个全新的、需求极\\n硬的载体上，这是最容易让审稿人觉得「这人挺聪明」的那类动作。\\n边界\\nWinDeskGround 2605.16402  是最近的邻居，但它走的是空间轴：多窗口堆\\n叠、遮挡、布局密度、语义相似度，1,356 对指令-目标，结论是遮挡下\",\"metadata\":{\"textView\":true,\"sourceTitle\":\"Program Manager\",\"sourceRevision\":{\"capturedAt\":\"\",\"snapshotId\":\"benchmark-00b38db86e4c42bb8bc5f6ee4e88da03\"}},\"citations\":[{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":13}}}]},{\"fragmentId\":\"fragment:source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2:page:14\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":14}},\"text\":\"grounding 掉点。本工作走的是同一性轴：外观变了、位置没变，这个东西\\n还是不是它。两者正交，且 WinDeskGround 恰好证明了「桌面鲁棒性」这\\n条线在 2026 年已经有人认真在看——你不是在一个没人关心的问题上孤军奋\\n战。\\n视觉内核\\n学一个外观不变的界面元素嵌入：同一个功能控件在 N 种外观下映射到嵌入\\n空间的同一点。四个变化轴各自独立可控——主题（浅/深/高对比/自定义配\\n色）、语言（字形宽度、文字长度、RTL）、DPI 与缩放、软件版本（图标改\\n版、菜单重组）。\\n这个方向还自带一张会被放进 teaser 的图：六种皮肤下的同一个按钮在嵌入\\n空间聚成一簇，而六个不同功能的同色按钮散开。CVPR 论文需要这样的\\n图。\\n数据为什么几乎免费\\n挑开源软件——GIMP、Blender、VS Code、LibreOffice、Krita——它们的主\\n题、语言包、缩放、历史版本全部可以程序化切换并自动渲染。同一个控件\\n在不同渲染下的对应关系来自软件自己的控件树，是免费且精确的 ground\\ntruth。不需要一个人工标注。这是整份清单里数据成本最低的一个。\\n实验闭环\\n自建 Widget-ReID benchmark：四个变化轴各自独立评估 + 组合评估\\n（换主题又换语言）。\\n下游才是说服力所在：把嵌入接到现成 grounding 模型上，看\\nScreenSpot-Pro 与 OSWorld 2.0 在扰动版本上的掉点能补回多少百分\\n比。只报 ReID 指标不够，必须报下游。\\n额外一个很有说服力的实验：跨版本定位缓存复用率——软件升一个大版\\n本后，旧的定位还能复用多少。这个数字直接对应真实运维成本。\\nmAP / Rank-1\\n跨轴泛化矩阵\\n下游 grounding 掉点恢复率\\n跨版本缓存复用率\\n组合扰动退化曲线\\n空白证据\\nUI element + re-identification → 0 命中\\nwidget + matching + across versions → 0 命中\\nGUI agent + theme + robustness → 0 命中\\nGUI grounding + dark mode → 0 命中\\nGUI + visual + invariance + agent → 0 命中\\nGUI agent + multilingual + localization → 0 命中\\n杀死条件\\n不变嵌入在下游 grounding 上补不回掉点——说明它学到的是外观相似度，不\\n是功能同一性，ReID 指标再好看也没用。停。\",\"metadata\":{\"textView\":true,\"sourceTitle\":\"Program Manager\",\"sourceRevision\":{\"capturedAt\":\"\",\"snapshotId\":\"benchmark-00b38db86e4c42bb8bc5f6ee4e88da03\"}},\"citations\":[{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":14}}}]},{\"fragmentId\":\"fragment:source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2:page:15\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":15}},\"text\":\"The Handoff — What a Human Needs to See When an Agent Gives Up\\n08 接管的那十秒\\n最有趣\\n四个检索串全零命中\\n主实验可自动评分\\n须防被读成 HCI 论文\\n人话\\nAgent 干到一半卡住了，把控制权还给你。你面前是一张截图和一堆日\\n志，你得花几分钟搞清楚：它到底做了什么？现在在哪一步？它改了哪\\n些东西？哪一步开始错的？——binary 只有 20.6%，意味着这件事每五\\n次里有四次都会发生。它是常态，不是例外，而目前完全没人研究。\\n问题\\n从一条三百步的屏幕轨迹里，选出最小充分视觉证据集——哪几帧、哪几个区\\n域、哪些前后差异——使一个人能在十秒内正确重建系统状态。\\n这是一个压缩问题，而且是目标导向的压缩：不是「摘要这段视频」，而是\\n「让接手的人能答对关于当前状态的问题」。压缩率与重建准确率之间的权衡\\n曲线，就是这篇论文的主图。\\n为什么现在有需求\\n三个数字叠起来就是理由：OSWorld 2.0 binary 20.6%（接管是常态）；\\nDeskCraft 2606.03103  已经把 post-turn 人类反馈写进协议，interactive 子\\n集只有 27.6%；而 Dark Patterns 那篇 2509.10723  实测出人类监督本身有\\n代价——注意力隧道化与认知负荷。\\n最后这条很关键：它说明「让人盯着」不是免费兜底。降低接管的理解成\\n本，是把 CU 从演示推向交付的那一步，而这一步是个视觉问题。\\n视觉内核\\n这是让它成为 CVPR 论文而不是 HCI 论文的关键，必须写死在 intro：\\n目标导向的长程关键帧选择：video summarization 的长程、任务条件版\\n本——选择标准不是「有代表性」，而是「能支撑对状态的正确回答」。\\n跨帧变更归因：agent 改了什么、什么是它碰过但改回来了、什么是它从\\n没碰过。这是屏幕上的长时程 change detection。\\n误导性检测：一个摘要可能既简短又给人错误印象。把「误导率」作为一\\n等指标，这在摘要类工作里很少见，是个亮点。\\n评估的巧妙处\\n主实验不依赖人类研究——这是它在 61 天窗口里可控的原因，也是它能顶住\\n「这不科学」质疑的原因。\\n做法：对每条中断轨迹自动构造一组状态重建问答（当前哪个文件被改过？\\n金额被设成了多少？哪一步引入了错误？哪些设置被动过？），答案来自环境\",\"metadata\":{\"textView\":true,\"sourceTitle\":\"Program Manager\",\"sourceRevision\":{\"capturedAt\":\"\",\"snapshotId\":\"benchmark-00b38db86e4c42bb8bc5f6ee4e88da03\"}},\"citations\":[{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":15}}}]},{\"fragmentId\":\"fragment:source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2:page:16\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":16}},\"text\":\"的真实状态，可程序化生成。摘要好不好，看它能不能让一个模型或一个人\\n答对这些题。人类研究只作外部验证，不承担主张。\\n实验闭环\\n轨迹来源：OSWorld 2.0 与 DeskCraft 上的失败轨迹——这是全场唯一一个\\n「agent 越弱数据越多」的选题。\\n朴素基线必须打赢：最后 K 帧、均匀采样、让模型自己写一段文字总结。\\n第三条是最强的对手。\\n人类研究作外部验证：重建时间、重建准确率、接管后任务完成率。\\n状态重建准确率\\n证据集大小 / 压缩率\\n误导率\\n人类重建时间\\n接管后完成率\\n压缩-准确率权衡曲线\\n空白证据\\nGUI agent + handoff → 0 命中\\nhuman + takeover + computer-use agent → 0 命中\\ncomputer use agent + interruption + human → 0 命中\\nGUI + summarization + trajectory + human → 仅 2 篇，均为 agent 自用的\\nmemory（Mem-W、PAL-UI），不是给人看的\\n杀死条件\\n最小证据集在状态重建问答上赢不了「最后 K 帧」或「模型自己写的文字总\\n结」——说明视觉证据选择没有带来文本摘要之外的东西。停。\\n跨线的一句实话\\n如果只看 novelty 天花板，押 01 和 02。如果看「跑得完、评得清、AC 会笑着读完」，06\\n和 07 的期望值其实比 04 和 05 更高——它们标注免费、指标无歧义、朴素基线明确、问题\\n陈述自带说服力。08 是这八个里最有趣的一个，但它也是唯一一个需要你主动防守「这是\\n不是 CV 论文」的。\\n真要选一对并行：01 做主投（天花板与故事性），07 做并行（数据几乎免费，不抢 01 的算\\n力，且万一 01 的诊断不显著，07 可以顶上成为主投）。这两个共用的东西很少，风险不相\\n关。\\n§ 内核\\n串起八篇的那一句\",\"metadata\":{\"textView\":true,\"sourceTitle\":\"Program Manager\",\"sourceRevision\":{\"capturedAt\":\"\",\"snapshotId\":\"benchmark-00b38db86e4c42bb8bc5f6ee4e88da03\"}},\"citations\":[{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":16}}}]},{\"fragmentId\":\"fragment:source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2:page:17\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":17}},\"text\":\"最值得押注的论文主张，不是「我们的 agent 更聪\\n明」，而是：我们识别出一个可测量的视觉变量，设\\n计了一个视觉模块，让 agent 在固定成本下减少该变\\n量的损害，并且在新任务与反事实扰动下依然成立。\\n这个写法对得起 CVPR 的三种评审：它有可训练的视觉模块（对 AC），有一个别人可以复\\n现和推翻的可测量（对 reviewer），而且不会因为下一次模型发布而作废（对 2027 年 1 月\\n的你）。八个选题只是把这个变量取成了不同的东西。\\n线 A 的变量\\n线 A 的数学\\n部分可观测下的有代价主动感知与信息价\\n信念腐坏——账本过期率、观测的因果收\\n益、错误信念半衰期\\n值。屏幕（01–04）与显微镜（05）是同一\\n套数学的两个竞技场\\n线 B 的变量\\n线 B 的数学\\n时序稳定性预测、不变表征学习、目标导向\\n接触面损耗——过早动手率、外观变化下的\\n同一性丢失、交接时的状态重建误差\\n压缩。三个都是经典 CV 问题换了载体\\n两条线合起来回答同一个问题的两半——为什么一个比人快两倍的 agent 仍然不能交付。线 A\\n说：因为它脑子里那份世界模型坏了。线 B 说：因为它撞上的世界和它交还给的人，都不在\\n它的模型里。\\n四条不可违背的实验纪律\\n01\\nbinary 与 partial 永远同时报，并注明步数预算。整份材料里最容易出事的地方就是口径\\n——同一个模型在榜单和原论文上能差三十个点。自己复现一遍基线，不要引榜单。\\n02\\n固定 step、token 和时间预算。否则「加了模块所以变好」和「多调用了几次所以变好」\\n分不开，这是 agent 论文最常见的致命伤。\\n03\\n至少 3 个随机种子，给误差棒。agent 评测方差极大，单次运行不报方差是 2027 年评审\\n最容易抓的死穴。\\n04\\n主实验开跑前把杀死条件写下来。上面每个选题都给了，不是形式——它决定你在第几周知\\n道自己该换题。\",\"metadata\":{\"textView\":true,\"sourceTitle\":\"Program Manager\",\"sourceRevision\":{\"capturedAt\":\"\",\"snapshotId\":\"benchmark-00b38db86e4c42bb8bc5f6ee4e88da03\"}},\"citations\":[{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":17}}}]},{\"fragmentId\":\"fragment:source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2:page:18\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":18}},\"text\":\"不要做（每条都有实据）\\n又一个 GUI memory。五篇占着，其中 ATMem 已经做到「主动维护的执行状态 + 在线\\nRL」。\\n把 GUI 当 visuomotor control 的连续操作。DragOn、ShowUI-π、Covering Human\\nAction Space、Beyond Clicking 四篇占着。framing 好卖，但是最容易被砸的一个。\\nVLA 的可恢复性 / 动作证书。B2FF 已经有 recoverability-aware selector，另有 DLS、\\nActFovea、RedFlow。\\n又一个 active video seeking。CVPR 2026 一次录了三篇，加 StreamArena，拥挤。\\n纯 pixel-vs-DOM 诊断。2607.04334  用 735 个探针做完了，还顺手比了四种缓解手\\n段。\\n又一个 GUI grounding 鲁棒性 benchmark。WinDeskGround 2605.16402  已经占了空\\n间轴（遮挡、堆叠、密度）。选题 07 的活路不在于再建一个 benchmark，而在于 re-\\nidentification 这个框架加上下游掉点恢复率——只交 benchmark 会被砍。\\n纯 prompt 编排的 agent 框架，哪怕它刷到 SOTA。VLAA-GUI 2604.21375  靠三个模块\\n化组件在 OSWorld 上做到 77.5%，五个 backbone 里三个超过人类 72.4%——分数很好\\n看，但没有训练出来的视觉模块。这条路在 CVPR 走不通，而且它顺带证实了 OSWorld\\n1.0 已经饱和，别再往那上面投人力。\\n以「更快」为卖点的效率论文。墙钟这条线被厂商吃了，改用步数与固定预算下的完成\\n率。\\n只在 7B 开源模型上出结果。2027 年 2 月的审稿人一定会问换强模型还成不成立。\\n把 StarDojo 那类 10 类高层技能接口当 computer use。它绕开了键鼠，审稿人会指出\\n这不是同一个问题。它适合当失败诊断的数据发生器，不适合当论文的 novelty。\\n§ 索引\\n全部已核验\\n下列每个编号都经 arXiv API 逐条回查，标题与日期取自返回的元数据；CVPR 页面取\\n自官网抓取。\\n2606.29537 OSWorld 2.0: Benchmarking Computer Use Agents on Long-Horizon Real-World Tasks · 2026-06-28\\n2506.16042 OSWorld-Human: Benchmarking the Efficiency of Computer-Use Agents\\n2606.09426 WeaveBench: Long-Horizon Real-World Benchmark with Hybrid Interfaces · 2026-06-08\\n2606.03103 DeskCraft: Professional Workflows and Human-in-the-Loop Collaboration · 2026-06-02\",\"metadata\":{\"textView\":true,\"sourceTitle\":\"Program Manager\",\"sourceRevision\":{\"capturedAt\":\"\",\"snapshotId\":\"benchmark-00b38db86e4c42bb8bc5f6ee4e88da03\"}},\"citations\":[{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":18}}}]},{\"fragmentId\":\"fragment:source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2:page:19\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":19}},\"text\":\"2607.04334 Do GUI Agents Believe Their Eyes? Diagnosing State-Belief Reliance · 2026-07-05\\n2608.06270 The Illusion of Visual Tool-Use: A Causal Audit of Thinking with Images · 2026-08-06\\n2604.25380 Benchmarking and Improving GUI Agents in High-Dynamic Environments · 2026-04-28\\n2607.28399 Why Are GUI Agents Correct but Late? (AAPT) · 2026-07-30\\n2608.05703 StreamArena / StreamMind · 2026-08-06\\n2606.31612 What Memory Do GUI Agents Really Need? (ATMem) · 2026-06-30\\n2605.18652 MementoGUI: Agentic Multimodal Memory Control · 2026-05-18\\n2606.14106 Naive Visual Memory is Not Enough (AGMem) · 2026-06-12\\n2609.10297 TRACE: Trajectory-robust Admission with Evidence Ordering · 2026-09-09\\n2510.00413 PAL-UI: Planning with Active Look-back\\n2606.24525 VisCritic: Visual State Comparison as Process Reward · 2026-06-23\\n2511.20067 \\\"Are We Done Yet?\\\" A Vision-Based Judge for Task Completion\\n2607.28227 Qwen-UI-Agent Technical Report · 2026-07-30\\n2609.02309 Efficient GUI Agents: A Systems Survey · 2026-09-02\\n2606.06322 DragOn: Benchmark and Dataset for Drag-Based GUI Interactions · 2026-06-04\\n2512.24965 ShowUI-π: Flow-based Generative Models as GUI Dexterous Hands\\n2605.12501 Covering Human Action Space for Computer Use · 2026-05-12\\n2601.06031 Beyond Clicking: Generalist GUI Grounding via Text Dragging\\n2601.07181 ShowUI-Aloha: Human-Taught GUI Agent\\n2607.26041 Desktop-Delta Bench: Do Models Understand Desktop GUI Transitions? · 2026-07-28\\n2602.11750 AmbiBench: Mobile GUI Agents Beyond One-Shot Instructions · 2026-02-12\\n2602.01725 SafePred: A Predictive Guardrail for Computer-Using Agents · 2026-02-02\\n2606.09258 Back to the Familiar Future (B2FF) · 2026-06-08\\n2609.06114 Where Success Breaks: Failure-Boundary Learning for VLA · 2026-09-05\\n2607.29169 ActFovea: Runtime Safeguarding for VLA Policies · 2026-07-31\\n2607.27782 RedFlow: Action-Level Corrections for Flow-matching VLA · 2026-07-30\\n2507.07445 StarDojo (Stardew Valley) · ECCV 2026\\n2603.20185 VideoSeek: Long-Horizon Video Agent with Tool-Guided Seeking\\n2602.15294 EAA: Automating materials characterization with VLM agents · 2026-02-17\\n2606.02080 Agentic-J: An AI Agent for Biological Microscopy Image Analysis · 2026-06-01\\n2510.18483 StarBench: Turn-Based RPG Benchmark for Information Seeking\\n2604.21375 VLAA-GUI: Knowing When to Stop, Recover, and Search · 2026-04-23\",\"metadata\":{\"textView\":true,\"sourceTitle\":\"Program Manager\",\"sourceRevision\":{\"capturedAt\":\"\",\"snapshotId\":\"benchmark-00b38db86e4c42bb8bc5f6ee4e88da03\"}},\"citations\":[{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":19}}}]},{\"fragmentId\":\"fragment:source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2:page:20\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":20}},\"text\":\"2605.16402 WinDeskGround: Robust GUI Grounding in Multi-Window Desktops · 2026-05-13\\n2509.10723 Dark Patterns Meet GUI Agents: Susceptibility and Human Oversight\\n2606.16802 LabOSBench: Computer Use Agents for Scientific Instrument Control · 2026-06-15\\n2605.09317 Mem-W: Latent Memory-Native GUI Agents · 2026-05-10\\n2606.25705 GUI Agent: Guided Exploration of User-Sensitive Screens · 2026-06-24\\nCVPR 2027 Call for Papers · cvpr.thecvf.com/Conferences/2027/CallForPapers\\nCVPR 2027 Dates and Deadlines · cvpr.thecvf.com/Conferences/2027/Dates\\nCVPR 2026 Author Guidelines（Findings Track 原文）· cvpr.thecvf.com/Conferences/2026/AuthorGuidelines\\n核验方法。两份材料的 21 个 arXiv 编号经 export.arxiv.org API 逐条回查标题与提交日\\n期，全部命中；线 B 三个选题的空白性判断来自对 arXiv 检索接口的 16 个定向查询，查询串在\\n各自档案里原样给出，可复现；CVPR 页面为官网直接抓取。\\n零命中的含义。arXiv API 的检索是关键词级的，零命中说明没有论文把这件事当作标题级的主\\n张，不等于绝对无人做过。投稿前仍应按各自档案里的差异句去 Google Scholar 和\\nCVPR/ICCV/ECCV 近三年 proceedings 复查一遍。\\n一处抓不到。openai.com/index/gpt-6-astra 当前对抓取返回 403，Astra 的数字仍为厂商\\n自报、第三方未复现——论文中引用必须如实标注。\\n本页不含任何时间安排。按要求，排序只看 idea 本身的分量。\",\"metadata\":{\"textView\":true,\"sourceTitle\":\"Program Manager\",\"sourceRevision\":{\"capturedAt\":\"\",\"snapshotId\":\"benchmark-00b38db86e4c42bb8bc5f6ee4e88da03\"}},\"citations\":[{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":20}}}]}],\"coverage\":{\"extent\":\"document\",\"readRanges\":[{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":0}},{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":1}},{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":2}},{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":3}},{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":4}},{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":5}},{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":6}},{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":7}},{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":8}},{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":9}},{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":10}},{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":11}},{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":12}},{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":13}},{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":14}},{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":15}},{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":16}},{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":17}},{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":18}},{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":19}},{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":20}}],\"totalUnits\":21,\"complete\":true,\"nextCursor\":null,\"missingReason\":null},\"evidenceStatus\":\"ok\",\"usedBackend\":\"document.pdf.pymupdf\",\"latencyMs\":1437.577600008808}",
+        "isError": false,
+        "usedBackend": "task_source.reader",
+        "latencyMs": 1440.6770000059623
+      }
+    ],
+    "modelUsage": {
+      "inputTokens": 52675,
+      "outputTokens": 2161,
+      "totalTokens": 54836,
+      "cacheReadTokens": 26496,
+      "cacheWriteTokens": 0,
+      "turnsReported": 3
+    },
+    "usedBackend": "magic_pointer.messages_multiturn_streaming",
+    "actionProposals": [],
+    "selectionSessionId": "9453ac9c-6331-4b1d-bd15-be33e77b98b5",
+    "selectionSnapshotId": "benchmark-00b38db86e4c42bb8bc5f6ee4e88da03",
+    "agentSessionId": "agent-9453ac9c-6331-4b1d-bd15-be33e77b98b5",
+    "activities": [
+      {
+        "kind": "model",
+        "turn": 1,
+        "state": "error",
+        "latencyMs": 26813.727600005222
+      },
+      {
+        "kind": "tool",
+        "id": "call_6df99c3f3b7b416790583e03",
+        "name": "Context.read",
+        "state": "error",
+        "latencyMs": 0.0,
+        "usedBackend": ""
+      },
+      {
+        "kind": "model",
+        "turn": 2,
+        "state": "done",
+        "latencyMs": 13262.01599999331
+      },
+      {
+        "kind": "tool",
+        "id": "call_c7365ada6fcc4db8b70edc8a",
+        "name": "Context.read",
+        "state": "done",
+        "latencyMs": 1440.6770000059623,
+        "usedBackend": "task_source.reader"
+      },
+      {
+        "kind": "model",
+        "turn": 3,
+        "state": "done",
+        "firstTokenMs": 38407.952100009425,
+        "latencyMs": 43399.78440001141
+      }
+    ],
+    "trajectory": [
+      {
+        "seq": 1,
+        "kind": "user",
+        "turn": 1,
+        "state": "done",
+        "text": "基于这些信息，总结200字讲清楚你推荐的最合适选题。",
+        "startedAt": 0.0
+      },
+      {
+        "kind": "request-header",
+        "turn": 1,
+        "step": 1,
+        "startedAt": 826.9069999805652,
+        "promptCache": false,
+        "usedBackend": "magic_pointer.messages_multiturn_streaming",
+        "maxTokens": 8192,
+        "seq": 2
+      },
+      {
+        "kind": "message",
+        "turn": 1,
+        "step": 1,
+        "state": "error",
+        "text": "",
+        "startedAt": 826.9069999805652,
+        "seq": 3,
+        "reasoning": "The user is asking me to summarize and recommend the most suitable research topic based on the selected evidence. Let me analyze what I have:\n\n1. From the chat (WeChat), there's a message mentioning: \"小样本脱敏后给通用人工智能和专项人工智能，判别\" - This seems to be about small-sample data sanitization for general AI vs specialized AI.\n\n2. There's a file attachment: \"cvpr2027-verified-top5.html\" - HTML file, 87.3K, from WeChat PC.\n\n3. A PDF document (Program Manager) that contains a detailed report about:\n   - CVPR 2027 submission (deadline 11/16 AOE)\n   - Verification of 2 AI surveys with 21 arXiv references\n   - 8 topics delivered in2 tracks\n   - The main topic visible is about \"长程视觉 Agent 的裂缝在哪\" (Where are the cracks in long-horizon vision agents)\n   - OSWorld 2.0 benchmark showing that even the strongest AI (Claude Opus 4.8) only achieves 20.6% strict binary completion rate on long-horizon tasks, while partial completion is 54.8%\n   - The document identifies 5 failure modes from the paper's abstract\n   - The page is truncated, so I need to read more to see all 8 topics and make a proper recommendation\n\nThe user mentioned \"小样本脱敏后给通用人工智能和专项人工智能，判别\" from WeChat, which suggests comparing sanitized small-sample data between general and specialized AI. But the PDF document is the main source about CVPR 2027 topics. Let me read the rest of the PDF to see all 8 topics and understand the context better before making a recommendation.\n\nI have the source ID for the PDF, so I can read more content to get the complete list of topics.",
+        "completedAt": 27640.634599985788
+      },
+      {
+        "kind": "tool",
+        "turn": 1,
+        "callId": "call_6df99c3f3b7b416790583e03",
+        "name": "Context.read",
+        "state": "error",
+        "text": "{\"source_id\":\"source:benchmark-00b38db8e4c42bb8bc5f6ee4e88da03:2\"}",
+        "startedAt": 27632.13429998723,
+        "seq": 4,
+        "completedAt": 27640.172699990217,
+        "latencyMs": 0.0,
+        "usedBackend": "",
+        "result": "source access denied: source_not_granted:source:benchmark-00b38db8e4c42bb8bc5f6ee4e88da03:2",
+        "isError": true
+      },
+      {
+        "kind": "request-header",
+        "turn": 2,
+        "step": 2,
+        "startedAt": 27640.732100000605,
+        "promptCache": false,
+        "usedBackend": "magic_pointer.messages_multiturn_streaming",
+        "maxTokens": 8192,
+        "seq": 5
+      },
+      {
+        "kind": "message",
+        "turn": 2,
+        "step": 2,
+        "state": "done",
+        "text": "",
+        "startedAt": 27640.732100000605,
+        "seq": 6,
+        "reasoning": "The source access was denied. Let me try with the correct source ID from the evidence.",
+        "completedAt": 40902.748099993914
+      },
+      {
+        "kind": "tool",
+        "turn": 2,
+        "callId": "call_c7365ada6fcc4db8b70edc8a",
+        "name": "Context.read",
+        "state": "done",
+        "text": "{\"source_id\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\"}",
+        "startedAt": 39443.45449999673,
+        "seq": 7,
+        "completedAt": 40901.969700003974,
+        "latencyMs": 1440.6770000059623,
+        "usedBackend": "task_source.reader",
+        "result": "{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"fragments\":[{\"fragmentId\":\"fragment:source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2:page:0\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":0}},\"text\":\"核验日期  2026-09-16\\n投稿目标  CVPR 2027 · 11/16 AOE\\n核验对象  2 份 AI 调研 · 21 个 arXiv 编号\\n判定  编号 21/21 命中 · 事实更正 5 处\\n交付  8 个选题 · 两条线\\n长程视觉 Agent\\n的裂缝在哪\\n一句话\\n一个比人快两倍、但每两次只能真正完成一次的 agent，在经济上无法交付。原因分\\n两半：一，它的信念坏了——世界模型在三百步里静默腐坏，它丢约束、漏中途信\\n息、宁可猜也不问、不回头验证（这不是我的推测，是 OSWorld 2.0 作者写在摘要\\n里的原话）；二，它撞上的世界和它交还给的人，都不在它的模型里——界面会加\\n载、会换皮、会改版，而人接手时只拿到一张截图和一堆日志。\\n§ 基准事实\\n那 34.2 个点\\n整份报告压在一个数字上：在 OSWorld 2.0 的 108 个长程任务上，最强配置（Claude\\nOpus 4.8，最大思考，批量工具调用，500 步预算）拿到 54.8% 的部分完成分，但严\\n格二元完成率只有 20.6%。\\nOSWORLD 2.0 · 108 长程任务 · 500 步 · CLAUDE OPUS 4.8 MAX-THINKING\\nARXIV 2606.29537\\n20.6%\\n54.8%\\n100%\\n二元完成\\n部分完成\\n人类\\n中间那片斜线区是 34.2 个点：任务的大部分都做对了，却总会漏掉一两件事而归零。\\n同一 benchmark 上 GPT-5.5 更省 token，但在 13% 附近就平了。每个任务人类中位耗\\n时约 1.6 小时，Opus 4.7 平均需要 318 次工具调用——OSWorld 1.0 是约 30 次。\\n原文摘要的最后一句 · 逐字核对\\n当前 agent 远未达到专业级计算机使用：它们并非栽在基础 GUI 控制或写代码上，而是丢失约\\n束、错过任务中途到达的信息、宁可猜也不询问用户、跳过验证，并且在任务取决于必须自行恢\",\"metadata\":{\"textView\":true,\"sourceTitle\":\"Program Manager\",\"sourceRevision\":{\"capturedAt\":\"\",\"snapshotId\":\"benchmark-00b38db86e4c42bb8bc5f6ee4e88da03\"}},\"citations\":[{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":0}}}]},{\"fragmentId\":\"fragment:source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2:page:1\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":1}},\"text\":\"复的隐藏状态时最为吃力。\\n这一句话点名了五个失败模式。下面五个选题，逐一对应其中一个——这就是它们的排序依据。\\n§ 核验台\\n哪些站得住，哪些得改\\n两份材料的 21 个 arXiv 编号我逐条打了 arXiv API，全部命中，无一伪造——这点值得\\n说，因为跨年份编号（2602–2609）看上去很像编的。真正需要改的是下面几处。\\n断言\\n判定\\n实据\\n属实\\nCFP 正式 topic 明列 Agentic AI、Physical AI（World\\nCVPR 2027 收 agentic AI，范围远大于\\nModels/VLA/Planning/Simulation）、Embodied\\ncomputer use\\nvision and robotics、Reasoning & RL、Trustworthy\\nvision、AI for Science and Scientific Discovery、\\nMedical and biological vision, cell microscopy、\\nData synthesis/datasets/benchmarks。\\n属实\\n官方 Dates 与 CFP 双向核对一致。另：评审释放\\n截稿 11/16 AOE，注册 11/10，补材\\n1/25，终审 2/25，会期 6/22–25，workshop 6/20–\\n11/23，contemporaneous 分界 2026-\\n21。CFP 另写明所有作者必须承诺审稿，且 CVPR\\n09-15\\n2027 将在评审流程部分环节使用 LLM（细则未定）。\\nOSWorld 2.0：108 任务 / 318 工具调用\\n属实\\n与 2606.29537  摘要逐字一致。GPT-5.5 更省 token\\n但平在 ~13%。\\n/ 人类中位 1.6h / 20.6% binary / 54.8%\\npartial\\n更正\\n论文口径下最高二元完成率是 20.6%。45% 来自厂\\n「OSWorld 2.0 上最强模型二元完成率\\n商/talk 转述，不能与论文并列。凡引用必须同时标\\n约 45%」\\n注：benchmark 版本、是否 offline、binary 还是\\npartial、步数预算、harness。\\n更正\\n92.7 是 ScreenSpot-Pro，72.6 是 OSWorld 2.0 的\\nAstra「ScreenSpot-Pro 92.7 / OSWorld\\npartial，两者被混用了。且 openai.com 官方页当前\\n超人类 13 点」\\n对抓取返回 403，第三方复现未见——所有厂商数字在\\n论文里都必须标为自报。\",\"metadata\":{\"textView\":true,\"sourceTitle\":\"Program Manager\",\"sourceRevision\":{\"capturedAt\":\"\",\"snapshotId\":\"benchmark-00b38db86e4c42bb8bc5f6ee4e88da03\"}},\"citations\":[{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":1}}}]},{\"fragmentId\":\"fragment:source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2:page:2\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":2}},\"text\":\"断言\\n判定\\n实据\\n更正\\nCFP 把 Data synthesis, datasets and benchmarks\\n「CVPR 硬性要求贡献是训练出来的视觉\\n单列为正式 topic。这是一条正确的投稿策略判断，不\\n模块」\\n是规则。准确说法：纯 prompt 编排不足以形成视觉贡\\n献；可训练的视觉状态估计 / 时空证据 / 后果预测 / 风\\n险建模 / 新 benchmark 都算。\\n错误\\n官方 Author Guidelines 原文：AC 推荐 → Findings 组\\n「CVPR 2026 Findings 是 opt-in 全收、\\n委邀请作者 → 作者决定是否投 → 进 workshop\\n独立 proceedings」\\nproceedings。不是 opt-in，也不是独立\\nproceedings。CVPR 2027 CFP 未承诺沿用，不能当\\n保底。\\nDeskCraft 538 任务，GPT-5.4 31.6%\\n属实\\n2606.03103  属实，且补充两点两份材料都漏了：\\ninteractive 子集只有 27.6%，原文明写「persistent\\nfailures in long horizon workflow delivery and\\nproactive clarification」。这是选题 03 的现成战场。\\nStarDojo 是 ECCV 2026、benchmark、\\n属实\\n2507.07445  标题含 Stardew Valley，2025-07 上\\n线。定位判断正确：它是面向视觉交互与长程规划的\\n10 类高层技能绕开键鼠、GPT-4.1\\n游戏 agent benchmark，不是严格的 pixel-only\\n12.7%\\ncomputer-use benchmark。\\n§ 地皮\\n谁已经把坑占了\\n这一节的作用是止损。下面每条都实搜过 arXiv，标注了占用程度和精确的占用边界\\n——边界比「已占」三个字有用得多，因为差异句要写进 intro 第一段。\\n对原 HTML 最大的一处更正\\n原文把「连续 GUI 操作 / 把 GUI 当 visuomotor control」列为方案 B，新颖度打了满分，说「没\\n人把 GUI 操作当作 visuomotor control 来建模」。这条已经不成立。\\nDragOn\\n2606.06322  已经是拖拽 GUI 交互的 benchmark + 数据集；ShowUI-π\\n2512.24965  的\\n副标题就是「Flow-based Generative Models as GUI Dexterous Hands」，即流匹配生成模型做\\nGUI 连续控制；Covering Human Action Space for Computer Use\\n2605.12501  做的正是完整人\\n类动作空间的数据合成与 benchmark；再加 Beyond Clicking\\n2601.06031 （text dragging\\ngrounding）与 ShowUI-Aloha\\n2601.07181 。\",\"metadata\":{\"textView\":true,\"sourceTitle\":\"Program Manager\",\"sourceRevision\":{\"capturedAt\":\"\",\"snapshotId\":\"benchmark-00b38db86e4c42bb8bc5f6ee4e88da03\"}},\"citations\":[{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":2}}}]},{\"fragmentId\":\"fragment:source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2:page:3\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":3}},\"text\":\"「VLA for GUIs」这个 framing 依然好卖，但它不再是无人区，而且它是本次最容易被 reviewer\\n用四篇 prior work 砸死的选项。因此不进 top 5。\\nGUI agent 的记忆压缩 / 选择 / 检索\\n饱和\\nMementoGUI 2605.18652 （学出来的记忆控制器）· AGMem 2606.14106 （动作接地的区域裁剪，OSWorld 上比全图\\n记忆高 33.3%）· ATMem\\n2606.31612 （值+角色+状态的主动执行状态，配 STR-GRPO 在线 RL）· PAL-UI 2510.00413\\n（主动回看）· TRACE 2609.10297 （视觉 token 不可逆准入）。五篇，且 ATMem 离「约束账本」最近——差异必须写\\n死。\\n单步 critic：前后截图差异判断这一步成没成\\n已占\\nVisCritic 2606.24525 （Siamese ViT + action-aware critic head）。\\n终点 judge：视觉判断整个任务是否完成\\n已占\\n“Are We Done Yet?” 2511.20067 。注意它和 VisCritic 之间那一层——过程中持续维护的可核查清单——才是空的。\\n诊断 agent 信像素还是信 DOM\\n大部分已占\\n2607.04334  做得比原 HTML 描述的彻底得多：735 个探针、225 个来自线上站点的零编辑分歧、Perception-Fusion\\nGap 指标、白盒消融定位到单个被复制的结构值、四种缓解手段对照。它同时留下两个金子般的数字：在线上陈旧快照\\n上模型跟随过时结构的比例高达 0.88；多步环境里第一步一个错源信念，自我恢复率 不超过 0.03。\\n视觉 tool-use 的因果审计\\n半占\\nThe Illusion of Visual Tool-Use 2608.06270 ：三级干预、Visual Evidence Gain 估计量、两类失配（Calling Without\\nLooking / Looking Without Planning）、代码已开源。但只做到单轮 VQA，没碰长程轨迹。\\n动态界面 benchmark 与方法\\n半占\\nDynamicGUIBench / DynamicUI 2604.25380  吃的是录屏视频做帧选择（聚类帧→生成 caption→迭代选最有信息量的\\n帧），是事后离线的。AAPT 2607.28399  吃的是空闲时预编译策略树，靠轻量 observer 匹配已枚举分支，作者自己在\\n摘要里承认动作无法预先枚举时失效。在途中断这一块仍然是空的。\\nVLA 的失败恢复 / 可恢复性\\n比想象中拥挤\\nB2FF 2606.09258  已经有「recoverability-aware selector」，在 failure-injected LIBERO 上把 56.3% 抬到 74.0%；\\n另有 DLS 2609.06114 （失败边界学习）、ActFovea 2607.29169 （运行时安全护栏）、RedFlow 2607.27782 （动作\\n级纠正）。「动作可恢复性证书」这个方向比第二份材料给的评估拥挤得多，不进 top 5。\\n屏幕的并发 / 异步流式感知\\n空\\narXiv 全库检索 GUI agent + asynchronous、screen + streaming perception + agent：零相关命中。而\\nStreamArena 的 StreamMind 2608.05703  已经在视频上证明了前后端双层异步架构可行——存在性证明摆在那，没人\\n搬到屏幕上。\",\"metadata\":{\"textView\":true,\"sourceTitle\":\"Program Manager\",\"sourceRevision\":{\"capturedAt\":\"\",\"snapshotId\":\"benchmark-00b38db86e4c42bb8bc5f6ee4e88da03\"}},\"citations\":[{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":3}}}]},{\"fragmentId\":\"fragment:source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2:page:4\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":4}},\"text\":\"GUI 动作的前置条件 / 后置条件验证\\n空\\narXiv 全库检索 postcondition + agent + GUI：零命中。stale + observation + agent + screenshot：仅 1 篇，还\\n是 transition benchmark（Desktop-Delta 2607.26041 ）。\\n视觉 agent「什么时候该问而不是该猜」\\n近乎空\\nwhen to ask + agent + multimodal 全库仅 1 篇，还是回合制 RPG（StarBench 2510.18483 ）。AmbiBench\\n2602.11750  做的是移动端一次性指令歧义，不是不可逆风险下的决策。SafePred 2602.01725  是 world-model 护\\n栏，不建模询问成本。\\n假设驱动的主动显微观测\\n空\\nmicroscopy + active learning + experimental design：零命中。hypothesis + microscopy + agent 仅 3 篇，全\\n是 2025 年的工具/benchmark。EAA 2602.15294  与 Agentic-J 2606.02080  都是工具编排，不是采集策略。\\n§ 档案\\n八个选题\\n两条线\\n排序依据三条，按优先级：（一）是否直接对应 OSWorld 2.0 作者亲口点名的失败模\\n式；（二）空白是否被实搜证实，而不是想当然；（三）视觉内核能否撑住一个 CVPR\\nAC 的第一反应。成本、算力、时间不参与排序。\\n线 A · 01–05 · 信念与决策\\n线 B · 06–08 · 摩擦与交接\\n机制性的。问题是「agent 脑子里那份世界模型\\n需求驱动的。问题是「agent 撞上的真实世界，\\n和它交还给的真实用户」。共同特点：一句话能说\\n为什么会坏」。novelty 高、天花板高，但题目本\\n清、AC 一眼就懂、数据几乎免费、评估无歧\\n身需要一段话才讲得清，intro 第一段必须写得极\\n准，否则 reviewer 会归到 memory / critic 那一\\n义。这三个是你问的「特别实际、AC 觉得有趣」\\n堆里去。\\n的那一类。\\n线 A 信念与决策\\n机制性 · novelty 与天花板更高 · 差异句是生死线\\nBeliefs, Not Screenshots — Evidence-Bound State Tracking for Long-\\n01 屏幕信念账本\\nHorizon Computer Use\",\"metadata\":{\"textView\":true,\"sourceTitle\":\"Program Manager\",\"sourceRevision\":{\"capturedAt\":\"\",\"snapshotId\":\"benchmark-00b38db86e4c42bb8bc5f6ee4e88da03\"}},\"citations\":[{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":4}}}]},{\"fragmentId\":\"fragment:source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2:page:5\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":5}},\"text\":\"主投\\n对应：丢约束 + 隐藏状态\\n前置条件检索 0 命中\\n最近邻 ATMEM\\n人话\\nAgent 干到第 300 步，早就忘了第 30 步看到的那个数字，也忘了你一\\n开始说「别改分辨率」。给它一本会过期的记事本：过期了就滚回去重\\n看一眼，对不上就别动手。\\n主张\\n把「约束追踪」和「主动再观察」合并成同一个对象：一本带证据、带时\\n效、带置信度的信念账本。每条账本条目绑定截图区域、时间戳与来源通道\\n（像素 / 结构 / 先验）。条目过期就触发有代价的再观察，条目冲突就触发拒\\n绝行动。\\n这不是两个模块的拼接，而是一个判断：约束丢失和隐藏状态丢失是同一个\\n病——信念腐坏——的两种表现。前者是账本条目失效，后者是账本条目从没\\n被写进去。\\n为什么现在\\nOSWorld 2.0 摘要同时点名 lose track of constraints 与 hidden state\\nthey must recover——两件事，同一句话。而 2607.04334  已经把后果量化\\n了：一次错源信念之后，自我恢复率不超过 0.03；面对线上陈旧快照，模型\\n跟随过时信息的概率高达 0.88。也就是说信念一旦坏掉，agent 基本不会自\\n己修好。这正是那 34.2 个点的机制解释。\\n差异句\\nATMem 2606.31612  是最近邻，必须在 intro 第一段拆开：它是移动端、以\\n文本值为单位的执行状态（值 + 角色 + 已用/待用），解决的是重复与遗漏操\\n作。它没有像素级证据绑定，没有时效性建模，没有冲突检测，没有把再观\\n察当作动作，也不在 500 步桌面尺度上评估。本工作的四个词是：像素接\\n地、可失效、可冲突、可付费重取。\\n视觉内核\\n截图→约束接地器：把自然语言里的抽象约束落到屏幕区域。本质是\\nreferring expression 的长程版本，CVPR AC 天然读得懂。\\n账本状态更新器：在动作流上维护条目的值、置信度与年龄。\\n动作条件后置条件预测器：动作执行前预测「执行后账本应该长什么\\n样」，执行后比对。\\n证据时效与冲突检测头：判断当前截图对某条目是否仍然有效、像素与结\\n构是否互相矛盾。\\n实验闭环\\n主场 OSWorld 2.0 全量，150 / 300 / 500 步三档都报。\\n外部泛化 WeaveBench 2606.09426 （114 个 GUI+CLI+代码混合长程任\\n务，最强 PassRate 仅 41.2%，且自带轨迹感知 judge 能抓伪造视觉证\\n据）。\",\"metadata\":{\"textView\":true,\"sourceTitle\":\"Program Manager\",\"sourceRevision\":{\"capturedAt\":\"\",\"snapshotId\":\"benchmark-00b38db86e4c42bb8bc5f6ee4e88da03\"}},\"citations\":[{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":5}}}]},{\"fragmentId\":\"fragment:source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2:page:6\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":6}},\"text\":\"至少一个前沿 API 模型 + 一个开源模型（Qwen-UI-Agent\\n2607.28227 ）。只在 7B 上出结果等于死。\\n对照组：无记忆 / 全图记忆 / AGMem / MementoGUI / PAL-UI / ATMem /\\n「只是多截几张图」。最后一个对照是审稿人一定会问的。\\n注入扰动：过期截图、像素-结构冲突、任务中途新增约束、必须回头取\\n的隐藏状态。\\nbinary + partial 双报\\nconstraint recall / F1\\nviolation rate\\nstaleness AUC\\nrecovery rate\\n不可逆错误率\\nECE\\n每成功任务 token/步数\\n杀死条件\\n在固定 token 与步数预算下，binary 没有显著提升——即收益全部来自「多\\n调用了几次」——则这个方向证伪，停。这是本选题唯一的止损点，必须在跑\\n主实验前预先写死。\\nThe Screen Is a Stream — Asynchronous Visual Monitoring for\\n02 并发中断感知\\nComputer-Use Agents\\n新颖度最高\\n对应：漏掉中途到达的信息\\n检索 0 命中\\n异步 HARNESS 是工程大头\\n人话\\nAgent 盯着一张截图想 20 秒，等它想完，世界早变了——弹窗跳出来\\n了、列表刷新了、按钮挪位了。再挂一只「眼睛」一直睁着，看到变化\\n就喊停：你正要点的那个东西，已经不在那儿了。\\n主张\\n屏幕是视频流，不是截图序列。跑一个高频、廉价、常开的视觉变化监测\\n器，与慢速策略并发；当它检测到某个变化会让在途动作失效时，中断、作\\n废、或强制重新接地。\\n核心研究问题不是「怎么看得更快」，而是：什么样的屏幕变化会让一个已经\\n决定但尚未落地的动作失效——这是一个可训练的视觉预测问题。\\n为什么现在\\nOSWorld 2.0 把 streaming interaction and dynamic environments 明确\\n列为它刻意针对的 challenge phenomenon，把「错过任务中途到达的信息」\\n列为失败模式。系统侧的数字也齐了：每步推理 20 秒以上、反思环节吃掉\\n76–96% 的任务时延 2609.02309 。而 DynamicGUIBench 上最好的方法只\\n有 22.1%。\",\"metadata\":{\"textView\":true,\"sourceTitle\":\"Program Manager\",\"sourceRevision\":{\"capturedAt\":\"\",\"snapshotId\":\"benchmark-00b38db86e4c42bb8bc5f6ee4e88da03\"}},\"citations\":[{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":6}}}]},{\"fragmentId\":\"fragment:source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2:page:7\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":7}},\"text\":\"差异句\\n三者机制必须在 intro 第一段拆干净，因为它们会同时成为你的基线：\\nDynamicUI\\n2604.25380  = 事后的帧选择。吃录屏视频，聚类帧、生成\\ncaption、迭代挑选最有信息量的帧。它在看过去。\\nAAPT\\n2607.28399  = 事前的预编译。空闲时用同一个冻结模型建带守卫\\n条件的策略树，事件到来时由轻量 observer 匹配已枚举分支直接执行。\\n作者自己写明：动作无法预先枚举时失效。它在赌未来。\\n本工作 = 执行中的中断。不枚举、不回看，只判断「我正要做的这件事，\\n现在还成立吗」。\\nStreamMind 2608.05703  是你的存在性证明：它把延迟敏感的交互与主动监\\n控交给独立调度的前端 worker，把持久记忆与检索交给后端 worker，在小\\n时级视频上四项能力全面超过流式基线。同一架构在屏幕上无人做过。\\n视觉内核\\n低分辨率高帧率的 GUI 变化监测器——本身就是一个流式视觉模型，CVPR\\n对 streaming perception 极其买账。\\n动作失效预测器：给定在途动作与当前帧差，预测该动作是否已经失去目\\n标 / 目标已移位 / 前置条件已破。\\n中断策略：在假阳性代价（白白打断）与假阴性代价（做了无效动作）之\\n间的阈值学习。\\n实验闭环\\nDynamicGUIBench + OSWorld 2.0 的 streaming / dynamic 子集 + 自建\\n「争夺窗口」任务（AAPT 的配对试验协议可以直接借，它用了 McNemar\\n精确检验和预注册终点，方法学很干净）。\\n对照 DynamicUI、AAPT、reactive、open-loop 四条线。\\n关键的负面对照：在非动态任务上跑一遍，证明监测器不造成净损失。\\ncontested-window success\\nstale-action rate\\n中断 precision / recall\\n无效动作数\\n端到端时延\\nbinary + partial\\n杀死条件\\n监测器在非动态任务上造成净损失（假阳性中断的代价高于动态任务上的收\\n益），说明「中断」这个机制不成立，而不只是阈值没调好。停。\\nGuessing Is a Choice — Risk-Sensitive Visual Interaction under\\n03 问 / 做 / 弃\\nIrreversible Uncertainty\\n战场现成\\n对应：宁可猜也不问\\n检索 1 命中且不相关\\nDESKCRAFT 协议可直接用\",\"metadata\":{\"textView\":true,\"sourceTitle\":\"Program Manager\",\"sourceRevision\":{\"capturedAt\":\"\",\"snapshotId\":\"benchmark-00b38db86e4c42bb8bc5f6ee4e88da03\"}},\"citations\":[{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":7}}}]},{\"fragmentId\":\"fragment:source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2:page:8\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":8}},\"text\":\"人话\\n屏幕上有三个长得差不多的「删除」，agent 不问，直接猜一个点下去。\\n教它算一笔账：问你一句要花多少，猜错一次要赔多少，赔不起就闭嘴\\n问。\\n主张\\nOSWorld 2.0 原文写的是 guess rather than ask the user。缺的不是更\\n强的识别能力，是一个视觉风险决策器：在当前像素证据下，该执行、该\\n问、还是该弃掉当前计划重规划。\\n目标函数不是 accuracy，是\\nmax  E[task utility] − λ·E[irreversible harm] − c_ask·(询问次数)\\n为什么它不是「安全\\n2607.04334  已经把四种缓解手段在同一批探针上比过：prompt 级提示在动\\n提示器」\\n作层面失效；证书式检查用拒答换安全——代价很大；只有 training-free 的\\n一致性门同时降低了劫持率和任务错误率。\\n换句话说：拒绝的代价函数还没有人建模。这就是研究问题本身，也是为什\\n么这不是一篇 safety 小论文——它是 selective prediction 在视觉动作空间上\\n的首次形式化。\\n战场\\nDeskCraft 2606.03103  已经把人机协作形式化成交互协议：mid-turn 的\\nagent 主动澄清与用户主动打断、post-turn 的完成后反馈。538 个任务、18\\n个 agent、长程任务超 50 步。GPT-5.4 标准 31.6%、interactive 27.6%，\\n原文明写失败持续集中在 proactive clarification。testbed 是现成的，\\n且原作者已承诺开源。\\n自建补充：视觉分叉集——同一句指令配不同截图语义、多个视觉近似实例、\\n过期截图、以及删除/发送/提交/支付这类不可逆动作。\\n视觉内核\\n视觉证据充分性判别器：这张截图够不够支持这个动作——注意这不是普\\n通 confidence，是「证据对动作的支持度」。\\n后果可逆性预测器：从像素预测这一步是否可撤销。屏幕上有大量可逆性\\n线索（对话框措辞、撤销按钮、是否已提交），这是一个真实的视觉识别\\n问题。\\n指标\\n核心是 risk–coverage 曲线，而不是单点 accuracy——因为一个只会拒绝的\\n系统在单点上会很好看。\\nselective risk–coverage\\n不可逆错误率\\nclarification precision / recall\\n每次询问换来的成功率增量\\nECE\\ntask success\\nDeskCraft interactive 分项\",\"metadata\":{\"textView\":true,\"sourceTitle\":\"Program Manager\",\"sourceRevision\":{\"capturedAt\":\"\",\"snapshotId\":\"benchmark-00b38db86e4c42bb8bc5f6ee4e88da03\"}},\"citations\":[{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":8}}}]},{\"fragmentId\":\"fragment:source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2:page:9\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":9}},\"text\":\"杀死条件\\nrisk–coverage 曲线不优于「拿模型自身 confidence 做阈值」这条朴素基线\\n——说明风险决策器只是把成功率换成了拒绝率，没有学到任何关于后果的东\\n西。停。\\nDoes the Screenshot Matter? — Causal Audit of Visual Evidence in\\n04 三百步上的因果审计\\nLong-Horizon Trajectories\\n风险最低\\n对应：跳过验证\\n与 01/02 共用 HARNESS\\n须加方法贡献才敢投主会\\n人话\\nAgent 一路截了三百张图，但这些图到底有没有真的影响它的决定？把\\n某几张换掉、糊掉、删掉，看它会不会做出不同的动作。答案大概率\\n是：大部分图白截了。然后训一个「这一步值不值得看」的预测器，把\\n省下的 token 花在真该看的地方。\\n主张\\n两篇前作各证明了半边：2608.06270  证明在单轮 VQA 上，crop-and-zoom\\n的收益集中在一小撮「校准正确」的少数样本里，其余分成 Calling Without\\nLooking 与 Looking Without Planning；2607.04334  证明 GUI agent 在单步\\n冲突探针上会背叛自己的眼睛。\\n没人做的是：在 318 次工具调用的长程轨迹上，截图到底在多大程度上因果\\n地决定了动作，以及一次错误如何复利。这是一个量级差异，不是增量。\\n关键升级\\nCVPR 对纯 analysis 论文是运气活。所以不要只交审计——同时交一个训练出\\n来的「截图必要性预测器」：在动作前预测这一步的视觉观测是否会因果地改\\n变决策，并用它做观测预算分配（该看的时候看，不该看的时候省 token）。\\n审计给你 insight，预测器给你方法贡献和一张能涨点的表。\\n方法\\n沿用 CauAudit 的三级干预（policy / trajectory / step）与 Visual\\nEvidence Gain 估计量——代码已开源，起步快。\\n推广到长程：定义 per-step VEG 的时间衰减曲线与复利系数——一次无效\\n观测在 300 步后放大多少倍。\\n结合 2607.04334  的 0.03 自我恢复率，给出「错误信念的半衰期」这个\\n可测量。\",\"metadata\":{\"textView\":true,\"sourceTitle\":\"Program Manager\",\"sourceRevision\":{\"capturedAt\":\"\",\"snapshotId\":\"benchmark-00b38db86e4c42bb8bc5f6ee4e88da03\"}},\"citations\":[{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":9}}}]},{\"fragmentId\":\"fragment:source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2:page:10\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":10}},\"text\":\"实验闭环\\n三个长程环境：OSWorld 2.0 / WeaveBench / DeskCraft × 至少 6 个模\\n型。\\n对照 2608.06270  的单轮结论——如果长程 VEG 与单轮 VEG 结构相同，这\\n篇就没有新东西。\\n预算实验：在固定 token 预算下用预测器分配观测，报 binary 提升。\\n长程 VEG\\ncompounding factor\\n错误信念半衰期\\n必要性预测器 AUC\\n固定预算下 binary 提升\\n杀死条件\\n长程 VEG 与单轮 VEG 没有结构差异，且必要性预测器在固定预算下不涨点\\n——降级成 workshop，不浪费主会名额。\\nMeasure What Matters Next — Budgeted Hypothesis Discrimination for\\n05 预算约束下的假设驱动主动显微\\nAutonomous Microscopy\\n天花板最高\\nCFP 两个 TOPIC 同时对口\\n检索 0 命中\\n仿真-真实域差距\\n人话\\n显微镜下细胞不正常，可能是机制 A 也可能是机制 B。光毒性摆在那，\\n你只能再拍二十张。那就问一个很硬的问题：这二十张该拍哪儿、拍哪\\n个焦面、什么曝光，才能最快把 A 和 B 分开？\\n为什么它在榜上\\nCVPR 2027 CFP 同时明列 AI for Science and Scientific Discovery 与\\nMedical and biological vision, cell microscopy 两个 topic。这是整份\\n清单里最不拥挤的 AC 池——而前四个选题都要挤 agentic / embodied 那几个\\n池子。\\n主张\\n现有的 microscopy agent——EAA 2602.15294 、Agentic-J 2606.02080 ——\\n都是工具编排：调 ImageJ、调显微镜、调分析流程。真正缺的是一句话就\\n能说清的问题：\\n在有限观测次数、时间和光剂量下，下一次该测什么，才能最大程度区分竞\\n争性的科学假设？\\n不是「这张图里有什么」，而是「为了分辨机制 A 和机制 B，我下一步该换位\\n置、换焦面、换曝光，还是继续跟踪这一个细胞」。\",\"metadata\":{\"textView\":true,\"sourceTitle\":\"Program Manager\",\"sourceRevision\":{\"capturedAt\":\"\",\"snapshotId\":\"benchmark-00b38db86e4c42bb8bc5f6ee4e88da03\"}},\"citations\":[{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":10}}}]},{\"fragmentId\":\"fragment:source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2:page:11\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":11}},\"text\":\"和前四个的同一个内\\n01 是「该不该回去再看一眼」，02 是「该不该现在打断去看」，03 是「证据\\n核\\n够不够支持动作」，04 是「这次观测到底有没有用」，05 是「下一次该测什\\n么」。五个都是同一套数学：部分可观测下的有代价主动感知与信息价值。屏\\n幕和显微镜只是它的两个竞技场。这个 framing 本身就是论文的卖点，也是\\n把五篇串成一条研究线的东西。\\n视觉内核\\n一个动作条件的视觉信息增益预测器：从当前视野图像直接预测「换位置 /\\n换焦面 / 换曝光 / 继续跟踪」各自能带来多少假设辨别力，并把采集时间、\\n光毒性、设备切换成本折进去。停止准则由假设后验的置信阈值决定，而不\\n是跑完固定轮次。\\n实验闭环\\n合成显微环境先行——这是唯一能拿到「哪个假设为真」的 ground truth\\n的地方，必须是主实验。\\nBBBC / LiveCell / Cell Tracking Challenge 做离线 replay，证明策略在真\\n实图像分布上不崩。\\n真实设备数据只作外部验证，不作主张依据。\\n对照：随机采样、固定网格、uncertainty sampling、通用 VLM agent。\\nuncertainty sampling 是真正的对手——如果赢不了它，说明假设层建模\\n没带来东西。\\n假设辨别准确率\\n稀有事件召回\\n每次观测信息效率\\n每单位光剂量信息效率\\n停止时机质量\\n校准\\n跨显微镜 OOD\\nfalse discovery rate\\n杀死条件\\n在合成环境（信息最完备、最有利的情形）上都显著赢不了 uncertainty\\nsampling，则假设层建模无效。停。\\n线 B 摩擦与交接\\n需求驱动 · 一句话能说清 · 数据几乎免费 · 评估无歧义\\n这三个的共同点：问题陈述本身就是论文的一半。AC 读到标题就点头，不需要你先花两段解\\n释为什么这事值得研究。而且三个都有同一个隐藏优势——标注几乎不要钱：标签可以从 agent\\n轨迹自动挖掘，或者从程序化渲染自动生成。这对 61 天窗口是决定性的，尽管它不参与排\\n序。\\nLook Before You Click — Visual Readiness Estimation for Computer-Use\\n06 界面稳了吗\\nAgents\",\"metadata\":{\"textView\":true,\"sourceTitle\":\"Program Manager\",\"sourceRevision\":{\"capturedAt\":\"\",\"snapshotId\":\"benchmark-00b38db86e4c42bb8bc5f6ee4e88da03\"}},\"citations\":[{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":11}}}]},{\"fragmentId\":\"fragment:source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2:page:12\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":12}},\"text\":\"线 B 首推\\n六个检索串全零命中\\n标签自动挖掘\\n每一步都要用\\n人话\\n页面还在转圈、骨架屏还没填、下拉菜单还在展开动画里——agent 已经\\n点下去了。点空，或者点到了 300 毫秒后会挪走的那个位置。这是自动\\n化里最老、最蠢、也最致命的一类失败，人人都撞过，没人写成过论\\n文。\\n问题\\n把「现在能动手了吗」变成一个可训练的视觉时序判断：给定最近几帧低分\\n辨率截图，预测（a）界面是否已经稳定，（b）还要多久稳定，（c）哪些区\\n域仍在变化因而不可信。\\n注意这是 agent 每一步都要做一次的判断——不是某类特殊任务的边角问题，\\n而是乘在整条轨迹上的系数。318 次工具调用意味着 318 次这个判断。\\n边界\\n时序问题在 CU 里已经有人碰，但碰的是另外两个方向，必须拆清楚：\\nAAPT\\n2607.28399  研究的是「对了但太晚」——解码占住决策关键路径，\\n窗口关了才输出动作。它的问题是 agent 太慢。\\nVLAA-GUI\\n2604.21375  里的 premature 指的是「过早宣布任务完成」\\n——早停，是任务级的终止判断。\\n本工作是「动手太早」——步级的、在界面物理稳定之前就落下的那一\\n击。和上面两个正交，而且可以同时作为基线共存。\\n视觉内核\\n一个极廉价的界面稳定性预测器：低分辨率、少帧、高频。输出稳定性概率\\n+ 剩余稳定时间回归 + 逐区域可信度掩码。这是视频上的时序稳定性预测，\\n纯视觉，而且因为它必须便宜，效率本身成为方法的一部分（CVPR 吃\\nefficient vision）。\\n顺带的副产品很漂亮：那张逐区域可信度掩码可以直接喂给 grounding 模\\n型，告诉它「这块还在动，别在这儿定位」。\\n数据为什么几乎免费\\n标签可以自动挖掘，完全不需要人标：任何 agent 轨迹里「点了之后屏幕没\\n有按预期变化」「同一个动作连点两次」「点完立刻撤销」的片段，都是天然\\n的正样本。加上主动注入——限速网络、人为插入 spinner 与骨架屏、放慢\\nCSS 过渡——就能得到一个带精确时间戳的可控数据集。\\n实验闭环\\nOSWorld 2.0（作者已明说 streaming interaction 是它刻意针对的\\nchallenge phenomenon）+ DynamicGUIBench 2604.25380  + 自建加载\\n扰动集。\",\"metadata\":{\"textView\":true,\"sourceTitle\":\"Program Manager\",\"sourceRevision\":{\"capturedAt\":\"\",\"snapshotId\":\"benchmark-00b38db86e4c42bb8bc5f6ee4e88da03\"}},\"citations\":[{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":12}}}]},{\"fragmentId\":\"fragment:source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2:page:13\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":13}},\"text\":\"朴素基线必须打赢两条：固定 sleep，和像素差阈值。这两条是所有工程\\n实践里真正在用的方案，打不赢它们这篇没意义。\\n净收益要双向算：省下的无效动作 减去 多等的时间。\\npremature-action rate\\n无效/重复动作数\\n等待时间浪费\\n每任务净步数\\n稳定性预测 AUC\\n剩余时间回归 MAE\\nbinary + partial\\n空白证据\\nGUI agent + loading → 0 相关\\nagent + page + stability + wait → 0 命中\\nscreenshot + animation + agent + click → 0 命中\\nrendering + settle + agent + screenshot → 0 命中\\nweb agent + flaky → 0 命中\\nabs:\\\"wait action\\\" + agent + GUI → 0 命中\\n杀死条件\\n在固定步数与时间预算下，学出来的等待策略赢不了「固定 sleep + 像素差\\n阈值」——说明这件事不需要学，工程手段就够了。停。\\nWidget Re-Identification — Appearance-Invariant Interface Element\\n07 这是不是同一个按钮\\nEmbeddings\\nAC 秒懂\\n六个检索串全零命中\\n程序化 GROUND TRUTH\\nREID 的评审语言\\n人话\\n同一个软件，换成深色主题、换成日语、换台 4K 屏、升一个版本——\\nagent 就不认识那个「导出」按钮了。所有缓存的定位全废，得重来一\\n遍。这是真实部署里最贵的一笔运维账。\\n为什么这个\\n因为它不是「又一个鲁棒性 benchmark」，它是 re-identification：在跨主\\nFRAMING 值钱\\n题、跨语言、跨 DPI、跨版本的外观变化下，判定两个界面元素是否是同一\\n个功能实体。\\nCVPR 有十年的行人重识别积累。AC 看到这个题目，立刻知道该用什么指标\\n评审、该问什么问题、该要哪张消融表——mAP、Rank-1、跨域泛化矩阵，\\n全是现成的评审语言。把一个成熟的 CV 问题范式搬到一个全新的、需求极\\n硬的载体上，这是最容易让审稿人觉得「这人挺聪明」的那类动作。\\n边界\\nWinDeskGround 2605.16402  是最近的邻居，但它走的是空间轴：多窗口堆\\n叠、遮挡、布局密度、语义相似度，1,356 对指令-目标，结论是遮挡下\",\"metadata\":{\"textView\":true,\"sourceTitle\":\"Program Manager\",\"sourceRevision\":{\"capturedAt\":\"\",\"snapshotId\":\"benchmark-00b38db86e4c42bb8bc5f6ee4e88da03\"}},\"citations\":[{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":13}}}]},{\"fragmentId\":\"fragment:source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2:page:14\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":14}},\"text\":\"grounding 掉点。本工作走的是同一性轴：外观变了、位置没变，这个东西\\n还是不是它。两者正交，且 WinDeskGround 恰好证明了「桌面鲁棒性」这\\n条线在 2026 年已经有人认真在看——你不是在一个没人关心的问题上孤军奋\\n战。\\n视觉内核\\n学一个外观不变的界面元素嵌入：同一个功能控件在 N 种外观下映射到嵌入\\n空间的同一点。四个变化轴各自独立可控——主题（浅/深/高对比/自定义配\\n色）、语言（字形宽度、文字长度、RTL）、DPI 与缩放、软件版本（图标改\\n版、菜单重组）。\\n这个方向还自带一张会被放进 teaser 的图：六种皮肤下的同一个按钮在嵌入\\n空间聚成一簇，而六个不同功能的同色按钮散开。CVPR 论文需要这样的\\n图。\\n数据为什么几乎免费\\n挑开源软件——GIMP、Blender、VS Code、LibreOffice、Krita——它们的主\\n题、语言包、缩放、历史版本全部可以程序化切换并自动渲染。同一个控件\\n在不同渲染下的对应关系来自软件自己的控件树，是免费且精确的 ground\\ntruth。不需要一个人工标注。这是整份清单里数据成本最低的一个。\\n实验闭环\\n自建 Widget-ReID benchmark：四个变化轴各自独立评估 + 组合评估\\n（换主题又换语言）。\\n下游才是说服力所在：把嵌入接到现成 grounding 模型上，看\\nScreenSpot-Pro 与 OSWorld 2.0 在扰动版本上的掉点能补回多少百分\\n比。只报 ReID 指标不够，必须报下游。\\n额外一个很有说服力的实验：跨版本定位缓存复用率——软件升一个大版\\n本后，旧的定位还能复用多少。这个数字直接对应真实运维成本。\\nmAP / Rank-1\\n跨轴泛化矩阵\\n下游 grounding 掉点恢复率\\n跨版本缓存复用率\\n组合扰动退化曲线\\n空白证据\\nUI element + re-identification → 0 命中\\nwidget + matching + across versions → 0 命中\\nGUI agent + theme + robustness → 0 命中\\nGUI grounding + dark mode → 0 命中\\nGUI + visual + invariance + agent → 0 命中\\nGUI agent + multilingual + localization → 0 命中\\n杀死条件\\n不变嵌入在下游 grounding 上补不回掉点——说明它学到的是外观相似度，不\\n是功能同一性，ReID 指标再好看也没用。停。\",\"metadata\":{\"textView\":true,\"sourceTitle\":\"Program Manager\",\"sourceRevision\":{\"capturedAt\":\"\",\"snapshotId\":\"benchmark-00b38db86e4c42bb8bc5f6ee4e88da03\"}},\"citations\":[{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":14}}}]},{\"fragmentId\":\"fragment:source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2:page:15\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":15}},\"text\":\"The Handoff — What a Human Needs to See When an Agent Gives Up\\n08 接管的那十秒\\n最有趣\\n四个检索串全零命中\\n主实验可自动评分\\n须防被读成 HCI 论文\\n人话\\nAgent 干到一半卡住了，把控制权还给你。你面前是一张截图和一堆日\\n志，你得花几分钟搞清楚：它到底做了什么？现在在哪一步？它改了哪\\n些东西？哪一步开始错的？——binary 只有 20.6%，意味着这件事每五\\n次里有四次都会发生。它是常态，不是例外，而目前完全没人研究。\\n问题\\n从一条三百步的屏幕轨迹里，选出最小充分视觉证据集——哪几帧、哪几个区\\n域、哪些前后差异——使一个人能在十秒内正确重建系统状态。\\n这是一个压缩问题，而且是目标导向的压缩：不是「摘要这段视频」，而是\\n「让接手的人能答对关于当前状态的问题」。压缩率与重建准确率之间的权衡\\n曲线，就是这篇论文的主图。\\n为什么现在有需求\\n三个数字叠起来就是理由：OSWorld 2.0 binary 20.6%（接管是常态）；\\nDeskCraft 2606.03103  已经把 post-turn 人类反馈写进协议，interactive 子\\n集只有 27.6%；而 Dark Patterns 那篇 2509.10723  实测出人类监督本身有\\n代价——注意力隧道化与认知负荷。\\n最后这条很关键：它说明「让人盯着」不是免费兜底。降低接管的理解成\\n本，是把 CU 从演示推向交付的那一步，而这一步是个视觉问题。\\n视觉内核\\n这是让它成为 CVPR 论文而不是 HCI 论文的关键，必须写死在 intro：\\n目标导向的长程关键帧选择：video summarization 的长程、任务条件版\\n本——选择标准不是「有代表性」，而是「能支撑对状态的正确回答」。\\n跨帧变更归因：agent 改了什么、什么是它碰过但改回来了、什么是它从\\n没碰过。这是屏幕上的长时程 change detection。\\n误导性检测：一个摘要可能既简短又给人错误印象。把「误导率」作为一\\n等指标，这在摘要类工作里很少见，是个亮点。\\n评估的巧妙处\\n主实验不依赖人类研究——这是它在 61 天窗口里可控的原因，也是它能顶住\\n「这不科学」质疑的原因。\\n做法：对每条中断轨迹自动构造一组状态重建问答（当前哪个文件被改过？\\n金额被设成了多少？哪一步引入了错误？哪些设置被动过？），答案来自环境\",\"metadata\":{\"textView\":true,\"sourceTitle\":\"Program Manager\",\"sourceRevision\":{\"capturedAt\":\"\",\"snapshotId\":\"benchmark-00b38db86e4c42bb8bc5f6ee4e88da03\"}},\"citations\":[{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":15}}}]},{\"fragmentId\":\"fragment:source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2:page:16\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":16}},\"text\":\"的真实状态，可程序化生成。摘要好不好，看它能不能让一个模型或一个人\\n答对这些题。人类研究只作外部验证，不承担主张。\\n实验闭环\\n轨迹来源：OSWorld 2.0 与 DeskCraft 上的失败轨迹——这是全场唯一一个\\n「agent 越弱数据越多」的选题。\\n朴素基线必须打赢：最后 K 帧、均匀采样、让模型自己写一段文字总结。\\n第三条是最强的对手。\\n人类研究作外部验证：重建时间、重建准确率、接管后任务完成率。\\n状态重建准确率\\n证据集大小 / 压缩率\\n误导率\\n人类重建时间\\n接管后完成率\\n压缩-准确率权衡曲线\\n空白证据\\nGUI agent + handoff → 0 命中\\nhuman + takeover + computer-use agent → 0 命中\\ncomputer use agent + interruption + human → 0 命中\\nGUI + summarization + trajectory + human → 仅 2 篇，均为 agent 自用的\\nmemory（Mem-W、PAL-UI），不是给人看的\\n杀死条件\\n最小证据集在状态重建问答上赢不了「最后 K 帧」或「模型自己写的文字总\\n结」——说明视觉证据选择没有带来文本摘要之外的东西。停。\\n跨线的一句实话\\n如果只看 novelty 天花板，押 01 和 02。如果看「跑得完、评得清、AC 会笑着读完」，06\\n和 07 的期望值其实比 04 和 05 更高——它们标注免费、指标无歧义、朴素基线明确、问题\\n陈述自带说服力。08 是这八个里最有趣的一个，但它也是唯一一个需要你主动防守「这是\\n不是 CV 论文」的。\\n真要选一对并行：01 做主投（天花板与故事性），07 做并行（数据几乎免费，不抢 01 的算\\n力，且万一 01 的诊断不显著，07 可以顶上成为主投）。这两个共用的东西很少，风险不相\\n关。\\n§ 内核\\n串起八篇的那一句\",\"metadata\":{\"textView\":true,\"sourceTitle\":\"Program Manager\",\"sourceRevision\":{\"capturedAt\":\"\",\"snapshotId\":\"benchmark-00b38db86e4c42bb8bc5f6ee4e88da03\"}},\"citations\":[{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":16}}}]},{\"fragmentId\":\"fragment:source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2:page:17\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":17}},\"text\":\"最值得押注的论文主张，不是「我们的 agent 更聪\\n明」，而是：我们识别出一个可测量的视觉变量，设\\n计了一个视觉模块，让 agent 在固定成本下减少该变\\n量的损害，并且在新任务与反事实扰动下依然成立。\\n这个写法对得起 CVPR 的三种评审：它有可训练的视觉模块（对 AC），有一个别人可以复\\n现和推翻的可测量（对 reviewer），而且不会因为下一次模型发布而作废（对 2027 年 1 月\\n的你）。八个选题只是把这个变量取成了不同的东西。\\n线 A 的变量\\n线 A 的数学\\n部分可观测下的有代价主动感知与信息价\\n信念腐坏——账本过期率、观测的因果收\\n益、错误信念半衰期\\n值。屏幕（01–04）与显微镜（05）是同一\\n套数学的两个竞技场\\n线 B 的变量\\n线 B 的数学\\n时序稳定性预测、不变表征学习、目标导向\\n接触面损耗——过早动手率、外观变化下的\\n同一性丢失、交接时的状态重建误差\\n压缩。三个都是经典 CV 问题换了载体\\n两条线合起来回答同一个问题的两半——为什么一个比人快两倍的 agent 仍然不能交付。线 A\\n说：因为它脑子里那份世界模型坏了。线 B 说：因为它撞上的世界和它交还给的人，都不在\\n它的模型里。\\n四条不可违背的实验纪律\\n01\\nbinary 与 partial 永远同时报，并注明步数预算。整份材料里最容易出事的地方就是口径\\n——同一个模型在榜单和原论文上能差三十个点。自己复现一遍基线，不要引榜单。\\n02\\n固定 step、token 和时间预算。否则「加了模块所以变好」和「多调用了几次所以变好」\\n分不开，这是 agent 论文最常见的致命伤。\\n03\\n至少 3 个随机种子，给误差棒。agent 评测方差极大，单次运行不报方差是 2027 年评审\\n最容易抓的死穴。\\n04\\n主实验开跑前把杀死条件写下来。上面每个选题都给了，不是形式——它决定你在第几周知\\n道自己该换题。\",\"metadata\":{\"textView\":true,\"sourceTitle\":\"Program Manager\",\"sourceRevision\":{\"capturedAt\":\"\",\"snapshotId\":\"benchmark-00b38db86e4c42bb8bc5f6ee4e88da03\"}},\"citations\":[{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":17}}}]},{\"fragmentId\":\"fragment:source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2:page:18\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":18}},\"text\":\"不要做（每条都有实据）\\n又一个 GUI memory。五篇占着，其中 ATMem 已经做到「主动维护的执行状态 + 在线\\nRL」。\\n把 GUI 当 visuomotor control 的连续操作。DragOn、ShowUI-π、Covering Human\\nAction Space、Beyond Clicking 四篇占着。framing 好卖，但是最容易被砸的一个。\\nVLA 的可恢复性 / 动作证书。B2FF 已经有 recoverability-aware selector，另有 DLS、\\nActFovea、RedFlow。\\n又一个 active video seeking。CVPR 2026 一次录了三篇，加 StreamArena，拥挤。\\n纯 pixel-vs-DOM 诊断。2607.04334  用 735 个探针做完了，还顺手比了四种缓解手\\n段。\\n又一个 GUI grounding 鲁棒性 benchmark。WinDeskGround 2605.16402  已经占了空\\n间轴（遮挡、堆叠、密度）。选题 07 的活路不在于再建一个 benchmark，而在于 re-\\nidentification 这个框架加上下游掉点恢复率——只交 benchmark 会被砍。\\n纯 prompt 编排的 agent 框架，哪怕它刷到 SOTA。VLAA-GUI 2604.21375  靠三个模块\\n化组件在 OSWorld 上做到 77.5%，五个 backbone 里三个超过人类 72.4%——分数很好\\n看，但没有训练出来的视觉模块。这条路在 CVPR 走不通，而且它顺带证实了 OSWorld\\n1.0 已经饱和，别再往那上面投人力。\\n以「更快」为卖点的效率论文。墙钟这条线被厂商吃了，改用步数与固定预算下的完成\\n率。\\n只在 7B 开源模型上出结果。2027 年 2 月的审稿人一定会问换强模型还成不成立。\\n把 StarDojo 那类 10 类高层技能接口当 computer use。它绕开了键鼠，审稿人会指出\\n这不是同一个问题。它适合当失败诊断的数据发生器，不适合当论文的 novelty。\\n§ 索引\\n全部已核验\\n下列每个编号都经 arXiv API 逐条回查，标题与日期取自返回的元数据；CVPR 页面取\\n自官网抓取。\\n2606.29537 OSWorld 2.0: Benchmarking Computer Use Agents on Long-Horizon Real-World Tasks · 2026-06-28\\n2506.16042 OSWorld-Human: Benchmarking the Efficiency of Computer-Use Agents\\n2606.09426 WeaveBench: Long-Horizon Real-World Benchmark with Hybrid Interfaces · 2026-06-08\\n2606.03103 DeskCraft: Professional Workflows and Human-in-the-Loop Collaboration · 2026-06-02\",\"metadata\":{\"textView\":true,\"sourceTitle\":\"Program Manager\",\"sourceRevision\":{\"capturedAt\":\"\",\"snapshotId\":\"benchmark-00b38db86e4c42bb8bc5f6ee4e88da03\"}},\"citations\":[{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":18}}}]},{\"fragmentId\":\"fragment:source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2:page:19\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":19}},\"text\":\"2607.04334 Do GUI Agents Believe Their Eyes? Diagnosing State-Belief Reliance · 2026-07-05\\n2608.06270 The Illusion of Visual Tool-Use: A Causal Audit of Thinking with Images · 2026-08-06\\n2604.25380 Benchmarking and Improving GUI Agents in High-Dynamic Environments · 2026-04-28\\n2607.28399 Why Are GUI Agents Correct but Late? (AAPT) · 2026-07-30\\n2608.05703 StreamArena / StreamMind · 2026-08-06\\n2606.31612 What Memory Do GUI Agents Really Need? (ATMem) · 2026-06-30\\n2605.18652 MementoGUI: Agentic Multimodal Memory Control · 2026-05-18\\n2606.14106 Naive Visual Memory is Not Enough (AGMem) · 2026-06-12\\n2609.10297 TRACE: Trajectory-robust Admission with Evidence Ordering · 2026-09-09\\n2510.00413 PAL-UI: Planning with Active Look-back\\n2606.24525 VisCritic: Visual State Comparison as Process Reward · 2026-06-23\\n2511.20067 \\\"Are We Done Yet?\\\" A Vision-Based Judge for Task Completion\\n2607.28227 Qwen-UI-Agent Technical Report · 2026-07-30\\n2609.02309 Efficient GUI Agents: A Systems Survey · 2026-09-02\\n2606.06322 DragOn: Benchmark and Dataset for Drag-Based GUI Interactions · 2026-06-04\\n2512.24965 ShowUI-π: Flow-based Generative Models as GUI Dexterous Hands\\n2605.12501 Covering Human Action Space for Computer Use · 2026-05-12\\n2601.06031 Beyond Clicking: Generalist GUI Grounding via Text Dragging\\n2601.07181 ShowUI-Aloha: Human-Taught GUI Agent\\n2607.26041 Desktop-Delta Bench: Do Models Understand Desktop GUI Transitions? · 2026-07-28\\n2602.11750 AmbiBench: Mobile GUI Agents Beyond One-Shot Instructions · 2026-02-12\\n2602.01725 SafePred: A Predictive Guardrail for Computer-Using Agents · 2026-02-02\\n2606.09258 Back to the Familiar Future (B2FF) · 2026-06-08\\n2609.06114 Where Success Breaks: Failure-Boundary Learning for VLA · 2026-09-05\\n2607.29169 ActFovea: Runtime Safeguarding for VLA Policies · 2026-07-31\\n2607.27782 RedFlow: Action-Level Corrections for Flow-matching VLA · 2026-07-30\\n2507.07445 StarDojo (Stardew Valley) · ECCV 2026\\n2603.20185 VideoSeek: Long-Horizon Video Agent with Tool-Guided Seeking\\n2602.15294 EAA: Automating materials characterization with VLM agents · 2026-02-17\\n2606.02080 Agentic-J: An AI Agent for Biological Microscopy Image Analysis · 2026-06-01\\n2510.18483 StarBench: Turn-Based RPG Benchmark for Information Seeking\\n2604.21375 VLAA-GUI: Knowing When to Stop, Recover, and Search · 2026-04-23\",\"metadata\":{\"textView\":true,\"sourceTitle\":\"Program Manager\",\"sourceRevision\":{\"capturedAt\":\"\",\"snapshotId\":\"benchmark-00b38db86e4c42bb8bc5f6ee4e88da03\"}},\"citations\":[{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":19}}}]},{\"fragmentId\":\"fragment:source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2:page:20\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":20}},\"text\":\"2605.16402 WinDeskGround: Robust GUI Grounding in Multi-Window Desktops · 2026-05-13\\n2509.10723 Dark Patterns Meet GUI Agents: Susceptibility and Human Oversight\\n2606.16802 LabOSBench: Computer Use Agents for Scientific Instrument Control · 2026-06-15\\n2605.09317 Mem-W: Latent Memory-Native GUI Agents · 2026-05-10\\n2606.25705 GUI Agent: Guided Exploration of User-Sensitive Screens · 2026-06-24\\nCVPR 2027 Call for Papers · cvpr.thecvf.com/Conferences/2027/CallForPapers\\nCVPR 2027 Dates and Deadlines · cvpr.thecvf.com/Conferences/2027/Dates\\nCVPR 2026 Author Guidelines（Findings Track 原文）· cvpr.thecvf.com/Conferences/2026/AuthorGuidelines\\n核验方法。两份材料的 21 个 arXiv 编号经 export.arxiv.org API 逐条回查标题与提交日\\n期，全部命中；线 B 三个选题的空白性判断来自对 arXiv 检索接口的 16 个定向查询，查询串在\\n各自档案里原样给出，可复现；CVPR 页面为官网直接抓取。\\n零命中的含义。arXiv API 的检索是关键词级的，零命中说明没有论文把这件事当作标题级的主\\n张，不等于绝对无人做过。投稿前仍应按各自档案里的差异句去 Google Scholar 和\\nCVPR/ICCV/ECCV 近三年 proceedings 复查一遍。\\n一处抓不到。openai.com/index/gpt-6-astra 当前对抓取返回 403，Astra 的数字仍为厂商\\n自报、第三方未复现——论文中引用必须如实标注。\\n本页不含任何时间安排。按要求，排序只看 idea 本身的分量。\",\"metadata\":{\"textView\":true,\"sourceTitle\":\"Program Manager\",\"sourceRevision\":{\"capturedAt\":\"\",\"snapshotId\":\"benchmark-00b38db86e4c42bb8bc5f6ee4e88da03\"}},\"citations\":[{\"sourceId\":\"source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2\",\"locator\":{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":20}}}]}],\"coverage\":{\"extent\":\"document\",\"readRanges\":[{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":0}},{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":1}},{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":2}},{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":3}},{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":4}},{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":5}},{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":6}},{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":7}},{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":8}},{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":9}},{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":10}},{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":11}},{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":12}},{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":13}},{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":14}},{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":15}},{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":16}},{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":17}},{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":18}},{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":19}},{\"kind\":\"pdf-region\",\"value\":{\"pageIndex\":20}}],\"totalUnits\":21,\"complete\":true,\"nextCursor\":null,\"missingReason\":null},\"evidenceStatus\":\"ok\",\"usedBackend\":\"document.pdf.pymupdf\",\"latencyMs\":1437.577600008808}",
+        "isError": false
+      },
+      {
+        "kind": "request-header",
+        "turn": 3,
+        "step": 3,
+        "startedAt": 40902.89289999055,
+        "promptCache": false,
+        "usedBackend": "magic_pointer.messages_multiturn_streaming",
+        "maxTokens": 8192,
+        "seq": 8
+      },
+      {
+        "kind": "message",
+        "turn": 3,
+        "step": 3,
+        "state": "done",
+        "text": "综合你圈选的微信讨论和这份 CVPR 2027 选题核验报告，我推荐**选题 01：屏幕信念账本（Beliefs, Not Screenshots）**作为主投。\n\n核心理由三条：\n\n**一、问题精准对标。** OSWorld 2.0 摘要明确点名\"丢失约束\"和\"隐藏状态\"两个失败模式，选题 01 将它们统一为\"信念腐坏\"——agent 干到第 300 步时，早已忘了第 30 步的约束和任务初始条件。2607.04334 已量化后果：一次错源信念后自我恢复率不超过 3%，面对陈旧快照跟随过时信息的概率高达 88%。这就是那 34.2 个点的机制解释。\n\n**二、空白经实搜确认。** 前置条件检索零命中。最近邻 ATMem 是移动端文本级执行状态，没有像素证据绑定、没有时效性建模、没有冲突检测，不在桌面长程尺度评估。\n\n**三、实验可执行。** 主场 OSWorld 2.0 全量加 WeaveBench 泛化，对照组明确（无记忆、全图记忆、AGMem、ATMem），杀死条件预设——固定预算下 binary 无显著提升则停。数据和 harness 与选题 04、06 共用，不额外增加工程负担。\n\n并行可押**选题 07（Widget Re-Identification）**：数据几乎免费（开源软件程序化渲染），CVPR ReID 评审语言成熟，万一 01 诊断不显著，07 可顶上成为主投。",
+        "startedAt": 40902.89289999055,
+        "seq": 9,
+        "reasoning": "Now I have the full picture. Let me also check the WeChat message about \"小样本脱敏后给通用人工智能和专项人工智能，判别\" to understand the user's context.\n\nThe user seems to be in a discussion about selecting a CVPR 2027 paper topic. The WeChat message mentions \"小样本脱敏后给通用人工智能和专项人工智能，判别\" which seems to be about small-sample data sanitization for general vs specialized AI, and a \"判别\" (discrimination) task.\n\nBut wait - looking more carefully, the user's selection includes:\n1. A WeChat message about \"小样本脱敏后给通用人工智能和专项人工智能，判别\"\n2. A file attachment \"cvpr2027-verified-top5.html\"  \n3. A PDF document with 8 CVPR 2027 topics\n\nThe user is asking me to summarize and recommend the most suitable topic based on \"these information\" (这些信息).\n\nThe PDF document is a comprehensive analysis of 8 CVPR 2027 paper topics about \"long-horizon computer use agents\" - specifically about why agents fail at long-horizon tasks. The document covers:\n\n**Line A (Belief & Decision):**\n01. Screen Belief Ledger - Evidence-bound state tracking\n02. Concurrent Interrupt Perception - Asynchronous visual monitoring\n03. Ask/Do/Abandon - Risk-sensitive visual interaction\n04. Causal Audit of Visual Evidence on300-step trajectories\n05. Budget-constrained hypothesis-driven active microscopy\n\n**Line B (Friction & Handoff):**\n06. Is the Interface Stable? - Visual readiness estimation\n07. Widget Re-Identification - Appearance-invariant embeddings\n08. The Handoff - What humans need to see when agent gives up\n\nThe document recommends: 01 as primary submission (highest ceiling & storytelling), 07 as parallel (almost free data, doesn't compete for compute with 01).\n\nNow, the WeChat message mentions \"小样本脱敏后给通用人工智能和专项人工智能，判别\" - this seems to be about:\n- Small sample data sanitization\n- Feeding to general AI vs specialized AI\n- Discrimination/judgment task\n\nThis is a different context from the CVPR topics. The user seems to be asking me to synthesize information from both the WeChat discussion and the PDF document to recommend a topic.\n\nWait, let me re-read the user's request: \"基于这些信息，总结200字讲清楚你推荐的最合适选题。\" - \"Based on this information, summarize in 200 words to clearly explain your recommended most suitable topic.\"\n\nThe user wants me to:\n1. Synthesize the WeChat discussion context (small sample sanitization for general vs specialized AI)\n2. The PDF document's 8 CVPR 2027 topics\n3. Recommend the most suitable topic\n\nBut the WeChat message is quite vague - \"小样本脱敏后给通用人工智能和专项人工智能，判别\" - it could mean:\n- After small sample data sanitization, feed to general AI and specialized AI, and discriminate/judge\n- This might be the user's research direction or interest area\n\nLet me think about which topic best fits:\n- The user seems interested in small sample data, sanitization, and the distinction between general vs specialized AI\n- Looking at the 8 topics, Topic 05 (Budget-constrained hypothesis-driven active microscopy) seems most related to specialized AI and scientific discovery\n- Topic 01 (Screen Belief Ledger) is about evidence-bound state tracking which could relate to data integrity\n- Topic 07 (Widget Re-Identification) is about appearance-invariant embeddings which could relate to data sanitization/normalization\n\nActually, I think I'm overcomplicating this. The WeChat message is just the user's conversation context, and the main content is the PDF document with 8 CVPR topics. The user wants me to recommend the best topic from those 8.\n\nLooking at the document's own recommendation:\n- Primary: 01 (Screen Belief Ledger) - highest ceiling, storytelling\n- Parallel: 07 (Widget Re-Identification) - almost free data, doesn't compete for compute\n\nThe document also says:\n- If looking at novelty ceiling: bet on 01 and 02\n- If looking at \"can finish, can evaluate clearly, AC will smile reading it\": 06 and 07 have higher expected value than 04 and 05\n- 08 is the most interesting but needs to defend \"is this a CV paper\"\n\nGiven the user's context about \"小样本脱敏后给通用人工智能和专项人工智能，判别\" (small sample sanitization for general vs specialized AI discrimination), I think:\n\n1. The user might be interested in topics related to data quality, sanitization, or the distinction between general and specialized AI\n2. Topic 01 (Screen Belief Ledger) is about evidence-bound state tracking - this relates to data integrity and belief maintenance\n3. Topic 07 (Widget Re-Identification) is about appearance-invariant embeddings - this relates to data normalization and robustness\n\nBut actually, I think the most direct recommendation based on the document's analysis is:\n\n**Topic 01: Screen Belief Ledger (屏幕信念账本)**\n\nReasons:\n1. Directly corresponds to OSWorld 2.0's identified failure mode: \"lose track of constraints\" + \"hidden state\"\n2. Zero prior art in precondition retrieval\n3. Nearest neighbor ATMem is significantly different (mobile, text-value based, no pixel evidence binding)\n4. Clear visual core: referring expression grounding + belief state updater + conflict detection\n5. Strong experimental setup with multiple benchmarks and ablation studies\n6. The document's own recommendation as primary submission\n\nLet me write a 200-word summary in Chinese.",
+        "firstTokenAt": 79310.84499999997,
+        "completedAt": 84302.67730000196,
+        "usedBackend": "magic_pointer.messages_multiturn_streaming",
+        "inputTokens": 52675,
+        "cacheReadTokens": 26496,
+        "cacheWriteTokens": 0,
+        "outputTokens": 2161
+      }
+    ],
+    "thinking": "Now I have the full picture. Let me also check the WeChat message about \"小样本脱敏后给通用人工智能和专项人工智能，判别\" to understand the user's context.\n\nThe user seems to be in a discussion about selecting a CVPR 2027 paper topic. The WeChat message mentions \"小样本脱敏后给通用人工智能和专项人工智能，判别\" which seems to be about small-sample data sanitization for general vs specialized AI, and a \"判别\" (discrimination) task.\n\nBut wait - looking more carefully, the user's selection includes:\n1. A WeChat message about \"小样本脱敏后给通用人工智能和专项人工智能，判别\"\n2. A file attachment \"cvpr2027-verified-top5.html\"  \n3. A PDF document with 8 CVPR 2027 topics\n\nThe user is asking me to summarize and recommend the most suitable topic based on \"these information\" (这些信息).\n\nThe PDF document is a comprehensive analysis of 8 CVPR 2027 paper topics about \"long-horizon computer use agents\" - specifically about why agents fail at long-horizon tasks. The document covers:\n\n**Line A (Belief & Decision):**\n01. Screen Belief Ledger - Evidence-bound state tracking\n02. Concurrent Interrupt Perception - Asynchronous visual monitoring\n03. Ask/Do/Abandon - Risk-sensitive visual interaction\n04. Causal Audit of Visual Evidence on300-step trajectories\n05. Budget-constrained hypothesis-driven active microscopy\n\n**Line B (Friction & Handoff):**\n06. Is the Interface Stable? - Visual readiness estimation\n07. Widget Re-Identification - Appearance-invariant embeddings\n08. The Handoff - What humans need to see when agent gives up\n\nThe document recommends: 01 as primary submission (highest ceiling & storytelling), 07 as parallel (almost free data, doesn't compete for compute with 01).\n\nNow, the WeChat message mentions \"小样本脱敏后给通用人工智能和专项人工智能，判别\" - this seems to be about:\n- Small sample data sanitization\n- Feeding to general AI vs specialized AI\n- Discrimination/judgment task\n\nThis is a different context from the CVPR topics. The user seems to be asking me to synthesize information from both the WeChat discussion and the PDF document to recommend a topic.\n\nWait, let me re-read the user's request: \"基于这些信息，总结200字讲清楚你推荐的最合适选题。\" - \"Based on this information, summarize in 200 words to clearly explain your recommended most suitable topic.\"\n\nThe user wants me to:\n1. Synthesize the WeChat discussion context (small sample sanitization for general vs specialized AI)\n2. The PDF document's 8 CVPR 2027 topics\n3. Recommend the most suitable topic\n\nBut the WeChat message is quite vague - \"小样本脱敏后给通用人工智能和专项人工智能，判别\" - it could mean:\n- After small sample data sanitization, feed to general AI and specialized AI, and discriminate/judge\n- This might be the user's research direction or interest area\n\nLet me think about which topic best fits:\n- The user seems interested in small sample data, sanitization, and the distinction between general vs specialized AI\n- Looking at the 8 topics, Topic 05 (Budget-constrained hypothesis-driven active microscopy) seems most related to specialized AI and scientific discovery\n- Topic 01 (Screen Belief Ledger) is about evidence-bound state tracking which could relate to data integrity\n- Topic 07 (Widget Re-Identification) is about appearance-invariant embeddings which could relate to data sanitization/normalization\n\nActually, I think I'm overcomplicating this. The WeChat message is just the user's conversation context, and the main content is the PDF document with 8 CVPR topics. The user wants me to recommend the best topic from those 8.\n\nLooking at the document's own recommendation:\n- Primary: 01 (Screen Belief Ledger) - highest ceiling, storytelling\n- Parallel: 07 (Widget Re-Identification) - almost free data, doesn't compete for compute\n\nThe document also says:\n- If looking at novelty ceiling: bet on 01 and 02\n- If looking at \"can finish, can evaluate clearly, AC will smile reading it\": 06 and 07 have higher expected value than 04 and 05\n- 08 is the most interesting but needs to defend \"is this a CV paper\"\n\nGiven the user's context about \"小样本脱敏后给通用人工智能和专项人工智能，判别\" (small sample sanitization for general vs specialized AI discrimination), I think:\n\n1. The user might be interested in topics related to data quality, sanitization, or the distinction between general and specialized AI\n2. Topic 01 (Screen Belief Ledger) is about evidence-bound state tracking - this relates to data integrity and belief maintenance\n3. Topic 07 (Widget Re-Identification) is about appearance-invariant embeddings - this relates to data normalization and robustness\n\nBut actually, I think the most direct recommendation based on the document's analysis is:\n\n**Topic 01: Screen Belief Ledger (屏幕信念账本)**\n\nReasons:\n1. Directly corresponds to OSWorld 2.0's identified failure mode: \"lose track of constraints\" + \"hidden state\"\n2. Zero prior art in precondition retrieval\n3. Nearest neighbor ATMem is significantly different (mobile, text-value based, no pixel evidence binding)\n4. Clear visual core: referring expression grounding + belief state updater + conflict detection\n5. Strong experimental setup with multiple benchmarks and ablation studies\n6. The document's own recommendation as primary submission\n\nLet me write a 200-word summary in Chinese.",
+    "timingMs": 84316.45329997991,
+    "inputArtifact": {
+      "schemaVersion": 1,
+      "id": "input-benchmark-00b38db86e4c42bb8bc5f6ee4e88da03",
+      "revision": 1,
+      "createdAtUtc": "2026-09-18T07:31:25.746879+00:00",
+      "utterance": "基于这些信息，总结200字讲清楚你推荐的最合适选题。",
+      "sourceSnapshotId": "benchmark-00b38db86e4c42bb8bc5f6ee4e88da03",
+      "frameLeaseId": null,
+      "gestureKind": null,
+      "target": {
+        "label": "微信选区 1",
+        "kind": "wechat",
+        "bounds": null,
+        "confidence": 0.7,
+        "sources": []
+      },
+      "facts": [
+        {
+          "kind": "window",
+          "value": "{\"title\":\"微信\",\"processName\":\"Weixin.exe\",\"boundsLTRB\":[1454,129,2950,1901],\"coordinateSpace\":\"physical_screen_pixels\",\"selectionBoundsXYWH\":null}",
+          "sources": [
+            "WINDOW"
+          ]
+        },
+        {
+          "kind": "selected_text",
+          "value": "小样本脱敏后给通用人工智能和专项人工智能，判别",
+          "sources": []
+        }
+      ],
+      "conflicts": [],
+      "attachments": [
+        "D:\\Desktop\\Magic Pointer\\data\\runtime\\frame-leases\\frame-b26c8a995dff44a1.png"
+      ],
+      "routeHint": "agent_loop",
+      "display": {
+        "title": "微信选区 1",
+        "summary": "小样本脱敏后给通用人工智能和专项人工智能，判别",
+        "sourceBadges": [],
+        "confidence": 0.7,
+        "needsConfirmation": false,
+        "previewArtifact": "D:\\Desktop\\Magic Pointer\\data\\runtime\\frame-leases\\frame-b26c8a995dff44a1.png",
+        "conflictCount": 0
+      },
+      "sourceIds": [
+        "source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:0",
+        "source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:1",
+        "source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2"
+      ],
+      "referenceIds": [
+        "reference:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:0",
+        "reference:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:1",
+        "reference:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2"
+      ],
+      "coverage": {
+        "extent": "selection",
+        "readRanges": [
+          {
+            "adapterId": "wechat",
+            "conversationKey": "wechat:window:7277804:surface:root",
+            "snapshotId": "benchmark-00b38db86e4c42bb8bc5f6ee4e88da03",
+            "bbox": [
+              2136,
+              1373,
+              611,
+              32
+            ],
+            "coordinateSpace": "physical_screen_pixels",
+            "strokeIndex": 0
+          },
+          {
+            "adapterId": "wechat",
+            "conversationKey": "wechat:window:7277804:surface:root",
+            "snapshotId": "benchmark-00b38db86e4c42bb8bc5f6ee4e88da03",
+            "bbox": [
+              2314,
+              486,
+              408,
+              205
+            ],
+            "coordinateSpace": "physical_screen_pixels",
+            "strokeIndex": 1
+          },
+          {
+            "snapshotId": "benchmark-00b38db86e4c42bb8bc5f6ee4e88da03",
+            "bbox": [
+              361,
+              1351,
+              149,
+              76
+            ],
+            "coordinateSpace": "physical_screen_pixels",
+            "strokeIndex": 2
+          }
+        ],
+        "totalUnits": 3,
+        "complete": false,
+        "nextCursor": null,
+        "missingReason": "some-materials-not-read"
+      },
+      "sources": [
+        {
+          "sourceId": "source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:0",
+          "taskId": "agent-9453ac9c-6331-4b1d-bd15-be33e77b98b5",
+          "kind": "chat",
+          "title": "微信",
+          "identity": {
+            "snapshotId": "benchmark-00b38db86e4c42bb8bc5f6ee4e88da03",
+            "selectionSessionId": "9453ac9c-6331-4b1d-bd15-be33e77b98b5",
+            "hwnd": 7277804,
+            "conversationIdentity": {
+              "adapterId": "wechat",
+              "conversationKey": "wechat:window:7277804:surface:root",
+              "keyProvenance": "window-surface",
+              "nativeConversationId": null,
+              "accountKey": null,
+              "windowHwnd": 7277804,
+              "processId": null,
+              "surfaceRuntimeId": null,
+              "title": "微信",
+              "type": null
+            },
+            "frozenSelection": {
+              "text": "小样本脱敏后给通用人工智能和专项人工智能，判别",
+              "locator": {
+                "kind": "message",
+                "value": {
+                  "adapterId": "wechat",
+                  "conversationKey": "wechat:window:7277804:surface:root",
+                  "snapshotId": "benchmark-00b38db86e4c42bb8bc5f6ee4e88da03",
+                  "bbox": [
+                    2136,
+                    1373,
+                    611,
+                    32
+                  ],
+                  "coordinateSpace": "physical_screen_pixels",
+                  "strokeIndex": 0
+                }
+              },
+              "coverage": {
+                "extent": "selection",
+                "readRanges": [
+                  {
+                    "adapterId": "wechat",
+                    "conversationKey": "wechat:window:7277804:surface:root",
+                    "snapshotId": "benchmark-00b38db86e4c42bb8bc5f6ee4e88da03",
+                    "bbox": [
+                      2136,
+                      1373,
+                      611,
+                      32
+                    ],
+                    "coordinateSpace": "physical_screen_pixels"
+                  }
+                ],
+                "totalUnits": 23,
+                "complete": true,
+                "nextCursor": null,
+                "missingReason": null
+              },
+              "usedBackend": "local:rapidocr-onnx"
+            }
+          },
+          "revision": {
+            "capturedAt": "",
+            "snapshotId": "benchmark-00b38db86e4c42bb8bc5f6ee4e88da03"
+          },
+          "capabilities": [
+            "read",
+            "search",
+            "follow"
+          ],
+          "origin": "user-pointed",
+          "parentSourceId": null
+        },
+        {
+          "sourceId": "source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:1",
+          "taskId": "agent-9453ac9c-6331-4b1d-bd15-be33e77b98b5",
+          "kind": "chat",
+          "title": "微信",
+          "identity": {
+            "snapshotId": "benchmark-00b38db86e4c42bb8bc5f6ee4e88da03",
+            "selectionSessionId": "9453ac9c-6331-4b1d-bd15-be33e77b98b5",
+            "hwnd": 7277804,
+            "conversationIdentity": {
+              "adapterId": "wechat",
+              "conversationKey": "wechat:window:7277804:surface:root",
+              "keyProvenance": "window-surface",
+              "nativeConversationId": null,
+              "accountKey": null,
+              "windowHwnd": 7277804,
+              "processId": null,
+              "surfaceRuntimeId": null,
+              "title": "微信",
+              "type": null
+            },
+            "frozenSelection": {
+              "text": "cvpr2027-verified-\ntop5.html HTML\n87.3K\n微信电脑版",
+              "locator": {
+                "kind": "message",
+                "value": {
+                  "adapterId": "wechat",
+                  "conversationKey": "wechat:window:7277804:surface:root",
+                  "snapshotId": "benchmark-00b38db86e4c42bb8bc5f6ee4e88da03",
+                  "bbox": [
+                    2314,
+                    486,
+                    408,
+                    205
+                  ],
+                  "coordinateSpace": "physical_screen_pixels",
+                  "strokeIndex": 1
+                }
+              },
+              "coverage": {
+                "extent": "selection",
+                "readRanges": [
+                  {
+                    "adapterId": "wechat",
+                    "conversationKey": "wechat:window:7277804:surface:root",
+                    "snapshotId": "benchmark-00b38db86e4c42bb8bc5f6ee4e88da03",
+                    "bbox": [
+                      2314,
+                      486,
+                      408,
+                      205
+                    ],
+                    "coordinateSpace": "physical_screen_pixels"
+                  }
+                ],
+                "totalUnits": 45,
+                "complete": true,
+                "nextCursor": null,
+                "missingReason": null
+              },
+              "usedBackend": "local:rapidocr-onnx"
+            }
+          },
+          "revision": {
+            "capturedAt": "",
+            "snapshotId": "benchmark-00b38db86e4c42bb8bc5f6ee4e88da03"
+          },
+          "capabilities": [
+            "read",
+            "search",
+            "follow"
+          ],
+          "origin": "user-pointed",
+          "parentSourceId": null
+        },
+        {
+          "sourceId": "source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2",
+          "taskId": "agent-9453ac9c-6331-4b1d-bd15-be33e77b98b5",
+          "kind": "document",
+          "title": "Program Manager",
+          "identity": {
+            "snapshotId": "benchmark-00b38db86e4c42bb8bc5f6ee4e88da03",
+            "selectionSessionId": "9453ac9c-6331-4b1d-bd15-be33e77b98b5",
+            "absolutePath": "D:\\Desktop\\CVPR 2027 选题核验.pdf",
+            "initialRead": {
+              "text": "[pdf-region {'pageIndex': 0, 'rectPt': [447.375, 59.409, 546.568, 70.622], 'blockIndex': 0}]\n核验日期  2026-09-16\n\n[pdf-region {'pageIndex': 0, 'rectPt': [388.559, 75.159, 546.574, 86.372], 'blockIndex': 1}]\n投稿目标  CVPR 2027 · 11/16 AOE\n\n[pdf-region {'pageIndex': 0, 'rectPt': [346.465, 91.659, 546.57, 102.872], 'blockIndex': 2}]\n核验对象  2 份 AI 调研 · 21 个 arXiv 编号\n\n[pdf-region {'pageIndex': 0, 'rectPt': [369.75, 107.409, 546.573, 118.622], 'blockIndex': 3}]\n判定  编号 21/21 命中 · 事实更正 5 处\n\n[pdf-region {'pageIndex': 0, 'rectPt': [438.926, 123.159, 546.577, 134.372], 'blockIndex': 4}]\n交付  8 个选题 · 两条线\n\n[pdf-region {'pageIndex': 0, 'rectPt': [49.5, 65.201, 250.562, 135.256], 'blockIndex': 5}]\n长程视觉 Agent\n的裂缝在哪\n\n[pdf-region {'pageIndex': 0, 'rectPt': [49.5, 171.732, 75.33, 179.607], 'blockIndex': 6}]\n一句话\n\n[pdf-region {'pageIndex': 0, 'rectPt': [49.5, 192.0, 545.76, 208.385], 'blockIndex': 7}]\n一个比人快两倍、但每两次只能真正完成一次的 agent，在经济上无法交付。原因分\n\n[pdf-region {'pageIndex': 0, 'rectPt': [49.5, 216.87, 529.57, 231.635], 'blockIndex': 8}]\n两半：一，它的信念坏了——世界模型在三百步里静默腐坏，它丢约束、漏中途信\n\n[pdf-region {'pageIndex': 0, 'rectPt': [49.5, 237.75, 537.214, 254.135], 'blockIndex': 9}]\n息、宁可猜也不问、不回头验证（这不是我的推测，是 OSWorld 2.0 作者写在摘要\n\n[pdf-region {'pageIndex': 0, 'rectPt': [49.5, 261.87, 529.56, 276.635], 'blockIndex': 10}]\n里的原话）；二，它撞上的世界和它交还给的人，都不在它的模型里——界面会加\n\n[pdf-region {'pageIndex': 0, 'rectPt': [49.5, 284.37, 427.5, 298.423], 'blockIndex': 11}]\n载、会换皮、会改版，而人接手时只拿到一张截图和一堆日志。\n\n[pdf-region {'pageIndex': 0, 'rectPt': [49.5, 360.178, 130.765, 397.598], 'blockIndex': 12}]\n§ 基准事实\n那 34.2 个点\n\n[pdf-region {'pageIndex': 0, 'rectPt': [49.5, 409.125, 541.989, 424.929], 'blockIndex': 13}]\n整份报告压在一个数字上：在 OSWorld 2.0 的 108 个长程任务上，最强配置（Claude\n\n[pdf-region {'pageIndex': 0, 'rectPt': [49.5, 431.625, 543.574, 447.429], 'blockIndex': 14}]\nOpus 4.8，最大思考，批量工具调用，500 步预算）拿到 54.8% 的部分完成分，但严\n\n[pdf-region {'pageIndex': 0, 'rectPt': [49.5, 454.125, 211.207, 469.061], 'blockIndex': 15}]\n格二元完成率只有 20.6%。\n\n[pdf-region {'pageIndex': 0, 'rectPt': [68.25, 513.178, 421.374, 523.416], 'blockIndex': 16}]\nOSWORLD 2.0 · 108 长程任务 · 500 步 · CLAUDE OPUS 4.8 MAX-THINKING\n\n[pdf-region {'pageIndex': 0, 'rectPt': [68.25, 537.159, 169.391, 548.372], 'blockIndex': 17}]\nARXIV 2606.29537\n\n[pdf-region {'pageIndex': 0, 'rectPt': [69.0, 607.219, 102.75, 621.844], 'blockIndex': 18}]\n20.6%\n\n[pdf-region {'pageIndex': 0, 'rectPt': [303.234, 607.219, 336.984, 621.844], 'blockIndex': 19}]\n54.8%\n\n[pdf-region {'pageIndex': 0, 'rectPt': [500.25, 607.219, 527.25, 621.844], 'blockIndex': 20}]\n100%\n\n[pdf-region {'pageIndex': 0, 'rectPt': [69.0, 627.41, 102.0, 635.66], 'blockIndex': 21}]\n二元完成\n\n[pdf-region {'pageIndex': 0, 'rectPt': [303.234, 627.41, 336.234, 635.66], 'blockIndex': 22}]\n部分完成\n\n[pdf-region {'pageIndex': 0, 'rectPt': [510.75, 627.41, 527.25, 635.66], 'blockIndex': 23}]\n人类\n\n[pdf-region {'pageIndex': 0, 'rectPt': [68.25, 649.875, 448.664, 661.215], 'blockIndex': 24}]\n中间那片斜线区是 34.2 个点：任务的大部分都做对了，却总会漏掉一两件事而归零。\n\n[pdf-region {'pageIndex': 0, 'rectPt': [68.25, 667.875, 454.264, 680.164], 'blockIndex': 25}]\n同一 benchmark 上 GPT-5.5 更省 token，但在 13% 附近就平了。每个任务人类中位耗\n\n[pdf-region {'pageIndex': 0, 'rectPt': [68.25, 685.125, 429.366, 697.414], 'blockIndex': 26}]\n时约 1.6 小时，Opus 4.7 平均需要 318 次工具调用——OSWorld 1.0 是约 30 次。\n\n[pdf-region {'pageIndex': 0, 'rectPt': [66.75, 755.062, 194.275, 764.812], 'blockIndex': 27}]\n原文摘要的最后一句 · 逐字核对\n\n[pdf-region {'pageIndex': 0, 'rectPt': [66.75, 773.625, 516.037, 786.824], 'blockIndex': 28}]\n当前 agent 远未达到专业级计算机使用：它们并非栽在基础 GUI 控制或写代码上，而是丢失约\n\n[pdf-region {'pageIndex': 0, 'rectPt': [66.75, 793.68, 523.5, 804.751], 'blockIndex': 29}]\n束、错过任务中途到达的信息、宁可猜也不询问用户、跳过验证，并且在任务取决于必须自行恢\n\n[pdf-region {'pageIndex': 1, 'rectPt': [66.75, 31.68, 197.25, 42.751], 'blockIndex': 0}]\n复的隐藏状态时最为吃力。\n\n[pdf-region {'pageIndex': 1, 'rectPt': [66.75, 69.18, 518.715, 81.074], 'blockIndex': 1}]\n这一句话点名了五个失败模式。下面五个选题，逐一对应其中一个——这就是它们的排序依据。\n\n[pdf-region {'pageIndex': 1, 'rectPt': [49.5, 184.678, 222.0, 220.39], 'blockIndex': 2}]\n§ 核验台\n哪些站得住，哪些得改\n\n[pdf-region {'pageIndex': 1, 'rectPt': [49.5, 234.375, 539.006, 250.179], 'blockIndex': 3}]\n两份材料的 21 个 arXiv 编号我逐条打了 arXiv API，全部命中，无一伪造——这点值得\n\n[pdf-region {'pageIndex': 1, 'rectPt': [49.5, 258.45, 527.092, 272.679], 'blockIndex': 4}]\n说，因为跨年份编号（2602–2609）看上去很像编的。真正需要改的是下面几处。\n\n[pdf-region {'pageIndex': 1, 'rectPt': [60.75, 297.305, 328.526, 304.805], 'blockIndex': 5}]\n断言\n判定\n实据\n\n[pdf-region {'pageIndex': 1, 'rectPt': [268.758, 325.875, 530.707, 337.254], 'blockIndex': 6}]\n属实\nCFP 正式 topic 明列 Agentic AI、Physical AI（World\n\n[pdf-region {'pageIndex': 1, 'rectPt': [60.75, 325.125, 234.272, 337.414], 'blockIndex': 7}]\nCVPR 2027 收 agentic AI，范围远大于\n\n[pdf-region {'pageIndex': 1, 'rectPt': [312.551, 342.0, 509.051, 352.254], 'blockIndex': 8}]\nModels/VLA/Planning/Simulation）、Embodied\n\n[pdf-region {'pageIndex': 1, 'rectPt': [60.75, 340.875, 123.333, 353.164], 'blockIndex': 9}]\ncomputer use\n\n[pdf-region {'pageIndex': 1, 'rectPt': [312.551, 355.875, 526.179, 367.254], 'blockIndex': 10}]\nvision and robotics、Reasoning & RL、Trustworthy\n\n[pdf-region {'pageIndex': 1, 'rectPt': [312.551, 370.875, 525.105, 382.254], 'blockIndex': 11}]\nvision、AI for Science and Scientific Discovery、\n\n[pdf-region {'pageIndex': 1, 'rectPt': [312.551, 385.875, 521.59, 397.254], 'blockIndex': 12}]\nMedical and biological vision, cell microscopy、\n\n[pdf-region {'pageIndex': 1, 'rectPt': [312.551, 400.875, 478.704, 412.254], 'blockIndex': 13}]\nData synthesis/datasets/benchmarks。\n\n[pdf-region {'pageIndex': 1, 'rectPt': [268.758, 434.625, 512.407, 446.004], 'blockIndex': 14}]\n属实\n官方 Dates 与 CFP 双向核对一致。另：评审释放\n\n[pdf-region {'pageIndex': 1, 'rectPt': [60.75, 433.875, 224.684, 446.164], 'blockIndex': 15}]\n截稿 11/16 AOE，注册 11/10，补材\n\n[pdf-region {'pageIndex': 1, 'rectPt': [312.551, 449.625, 530.22, 461.004], 'blockIndex': 16}]\n1/25，终审 2/25，会期 6/22–25，workshop 6/20–\n\n[pdf-region {'pageIndex': 1, 'rectPt': [60.75, 449.625, 235.072, 461.914], 'blockIndex': 17}]\n11/23，contemporaneous 分界 2026-\n\n[pdf-region {'pageIndex': 1, 'rectPt': [312.551, 464.625, 518.187, 476.004], 'blockIndex': 18}]\n21。CFP 另写明所有作者必须承诺审稿，且 CVPR\n\n[pdf-region {'pageIndex': 1, 'rectPt': [60.75, 468.289, 89.09, 478.414], 'blockIndex': 19}]\n09-15\n\n[pdf-region {'pageIndex': 1, 'rectPt': [312.551, 479.625, 529.919, 491.004], 'blockIndex': 20}]\n2027 将在评审流程部分环节使用 LLM（细则未定）。\n\n[pdf-region {'pageIndex': 1, 'rectPt': [60.75, 512.625, 238.768, 524.914], 'blockIndex': 21}]\nOSWorld 2.0：108 任务 / 318 工具调用\n\n[pdf-region {'pageIndex': 1, 'rectPt': [268.758, 513.375, 534.291, 525.122], 'blockIndex': 22}]\n属实\n与 2606.29537  摘要逐字一致。GPT-5.5 更省 token\n\n[pdf-region {'pageIndex': 1, 'rectPt': [312.551, 528.375, 377.829, 539.754], 'blockIndex': 23}]\n但平在 ~13%。\n\n[pdf-region {'pageIndex': 1, 'rectPt': [60.75, 528.375, 239.426, 540.664], 'blockIndex': 24}]\n/ 人类中位 1.6h / 20.6% binary / 54.8%\n\n[pdf-region {'pageIndex': 1, 'rectPt': [60.75, 547.039, 90.031, 557.164], 'blockIndex': 25}]\npartial\n\n[pdf-region {'pageIndex': 1, 'rectPt': [268.758, 580.875, 525.216, 592.254], 'blockIndex': 26}]\n更正\n论文口径下最高二元完成率是 20.6%。45% 来自厂\n\n[pdf-region {'pageIndex': 1, 'rectPt': [60.75, 580.125, 231.771, 592.414], 'blockIndex': 27}]\n「OSWorld 2.0 上最强模型二元完成率\n\n[pdf-region {'pageIndex': 1, 'rectPt': [312.551, 595.875, 521.641, 607.254], 'blockIndex': 28}]\n商/talk 转述，不能与论文并列。凡引用必须同时标\n\n[pdf-region {'pageIndex': 1, 'rectPt': [60.75, 595.875, 104.925, 608.164], 'blockIndex': 29}]\n约 45%」\n\n[pdf-region {'pageIndex': 1, 'rectPt': [312.551, 610.875, 513.419, 622.254], 'blockIndex': 30}]\n注：benchmark 版本、是否 offline、binary 还是\n\n[pdf-region {'pageIndex': 1, 'rectPt': [312.551, 627.0, 438.607, 637.254], 'blockIndex': 31}]\npartial、步数预算、harness。",
+              "truncated": false,
+              "coverage": {
+                "extent": "document",
+                "readRanges": [
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 0,
+                      "rectPt": [
+                        447.375,
+                        59.409,
+                        546.568,
+                        70.622
+                      ],
+                      "blockIndex": 0
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 0,
+                      "rectPt": [
+                        388.559,
+                        75.159,
+                        546.574,
+                        86.372
+                      ],
+                      "blockIndex": 1
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 0,
+                      "rectPt": [
+                        346.465,
+                        91.659,
+                        546.57,
+                        102.872
+                      ],
+                      "blockIndex": 2
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 0,
+                      "rectPt": [
+                        369.75,
+                        107.409,
+                        546.573,
+                        118.622
+                      ],
+                      "blockIndex": 3
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 0,
+                      "rectPt": [
+                        438.926,
+                        123.159,
+                        546.577,
+                        134.372
+                      ],
+                      "blockIndex": 4
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 0,
+                      "rectPt": [
+                        49.5,
+                        65.201,
+                        250.562,
+                        135.256
+                      ],
+                      "blockIndex": 5
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 0,
+                      "rectPt": [
+                        49.5,
+                        171.732,
+                        75.33,
+                        179.607
+                      ],
+                      "blockIndex": 6
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 0,
+                      "rectPt": [
+                        49.5,
+                        192.0,
+                        545.76,
+                        208.385
+                      ],
+                      "blockIndex": 7
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 0,
+                      "rectPt": [
+                        49.5,
+                        216.87,
+                        529.57,
+                        231.635
+                      ],
+                      "blockIndex": 8
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 0,
+                      "rectPt": [
+                        49.5,
+                        237.75,
+                        537.214,
+                        254.135
+                      ],
+                      "blockIndex": 9
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 0,
+                      "rectPt": [
+                        49.5,
+                        261.87,
+                        529.56,
+                        276.635
+                      ],
+                      "blockIndex": 10
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 0,
+                      "rectPt": [
+                        49.5,
+                        284.37,
+                        427.5,
+                        298.423
+                      ],
+                      "blockIndex": 11
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 0,
+                      "rectPt": [
+                        49.5,
+                        360.178,
+                        130.765,
+                        397.598
+                      ],
+                      "blockIndex": 12
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 0,
+                      "rectPt": [
+                        49.5,
+                        409.125,
+                        541.989,
+                        424.929
+                      ],
+                      "blockIndex": 13
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 0,
+                      "rectPt": [
+                        49.5,
+                        431.625,
+                        543.574,
+                        447.429
+                      ],
+                      "blockIndex": 14
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 0,
+                      "rectPt": [
+                        49.5,
+                        454.125,
+                        211.207,
+                        469.061
+                      ],
+                      "blockIndex": 15
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 0,
+                      "rectPt": [
+                        68.25,
+                        513.178,
+                        421.374,
+                        523.416
+                      ],
+                      "blockIndex": 16
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 0,
+                      "rectPt": [
+                        68.25,
+                        537.159,
+                        169.391,
+                        548.372
+                      ],
+                      "blockIndex": 17
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 0,
+                      "rectPt": [
+                        69.0,
+                        607.219,
+                        102.75,
+                        621.844
+                      ],
+                      "blockIndex": 18
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 0,
+                      "rectPt": [
+                        303.234,
+                        607.219,
+                        336.984,
+                        621.844
+                      ],
+                      "blockIndex": 19
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 0,
+                      "rectPt": [
+                        500.25,
+                        607.219,
+                        527.25,
+                        621.844
+                      ],
+                      "blockIndex": 20
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 0,
+                      "rectPt": [
+                        69.0,
+                        627.41,
+                        102.0,
+                        635.66
+                      ],
+                      "blockIndex": 21
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 0,
+                      "rectPt": [
+                        303.234,
+                        627.41,
+                        336.234,
+                        635.66
+                      ],
+                      "blockIndex": 22
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 0,
+                      "rectPt": [
+                        510.75,
+                        627.41,
+                        527.25,
+                        635.66
+                      ],
+                      "blockIndex": 23
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 0,
+                      "rectPt": [
+                        68.25,
+                        649.875,
+                        448.664,
+                        661.215
+                      ],
+                      "blockIndex": 24
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 0,
+                      "rectPt": [
+                        68.25,
+                        667.875,
+                        454.264,
+                        680.164
+                      ],
+                      "blockIndex": 25
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 0,
+                      "rectPt": [
+                        68.25,
+                        685.125,
+                        429.366,
+                        697.414
+                      ],
+                      "blockIndex": 26
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 0,
+                      "rectPt": [
+                        66.75,
+                        755.062,
+                        194.275,
+                        764.812
+                      ],
+                      "blockIndex": 27
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 0,
+                      "rectPt": [
+                        66.75,
+                        773.625,
+                        516.037,
+                        786.824
+                      ],
+                      "blockIndex": 28
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 0,
+                      "rectPt": [
+                        66.75,
+                        793.68,
+                        523.5,
+                        804.751
+                      ],
+                      "blockIndex": 29
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 1,
+                      "rectPt": [
+                        66.75,
+                        31.68,
+                        197.25,
+                        42.751
+                      ],
+                      "blockIndex": 0
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 1,
+                      "rectPt": [
+                        66.75,
+                        69.18,
+                        518.715,
+                        81.074
+                      ],
+                      "blockIndex": 1
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 1,
+                      "rectPt": [
+                        49.5,
+                        184.678,
+                        222.0,
+                        220.39
+                      ],
+                      "blockIndex": 2
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 1,
+                      "rectPt": [
+                        49.5,
+                        234.375,
+                        539.006,
+                        250.179
+                      ],
+                      "blockIndex": 3
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 1,
+                      "rectPt": [
+                        49.5,
+                        258.45,
+                        527.092,
+                        272.679
+                      ],
+                      "blockIndex": 4
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 1,
+                      "rectPt": [
+                        60.75,
+                        297.305,
+                        328.526,
+                        304.805
+                      ],
+                      "blockIndex": 5
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 1,
+                      "rectPt": [
+                        268.758,
+                        325.875,
+                        530.707,
+                        337.254
+                      ],
+                      "blockIndex": 6
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 1,
+                      "rectPt": [
+                        60.75,
+                        325.125,
+                        234.272,
+                        337.414
+                      ],
+                      "blockIndex": 7
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 1,
+                      "rectPt": [
+                        312.551,
+                        342.0,
+                        509.051,
+                        352.254
+                      ],
+                      "blockIndex": 8
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 1,
+                      "rectPt": [
+                        60.75,
+                        340.875,
+                        123.333,
+                        353.164
+                      ],
+                      "blockIndex": 9
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 1,
+                      "rectPt": [
+                        312.551,
+                        355.875,
+                        526.179,
+                        367.254
+                      ],
+                      "blockIndex": 10
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 1,
+                      "rectPt": [
+                        312.551,
+                        370.875,
+                        525.105,
+                        382.254
+                      ],
+                      "blockIndex": 11
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 1,
+                      "rectPt": [
+                        312.551,
+                        385.875,
+                        521.59,
+                        397.254
+                      ],
+                      "blockIndex": 12
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 1,
+                      "rectPt": [
+                        312.551,
+                        400.875,
+                        478.704,
+                        412.254
+                      ],
+                      "blockIndex": 13
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 1,
+                      "rectPt": [
+                        268.758,
+                        434.625,
+                        512.407,
+                        446.004
+                      ],
+                      "blockIndex": 14
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 1,
+                      "rectPt": [
+                        60.75,
+                        433.875,
+                        224.684,
+                        446.164
+                      ],
+                      "blockIndex": 15
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 1,
+                      "rectPt": [
+                        312.551,
+                        449.625,
+                        530.22,
+                        461.004
+                      ],
+                      "blockIndex": 16
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 1,
+                      "rectPt": [
+                        60.75,
+                        449.625,
+                        235.072,
+                        461.914
+                      ],
+                      "blockIndex": 17
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 1,
+                      "rectPt": [
+                        312.551,
+                        464.625,
+                        518.187,
+                        476.004
+                      ],
+                      "blockIndex": 18
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 1,
+                      "rectPt": [
+                        60.75,
+                        468.289,
+                        89.09,
+                        478.414
+                      ],
+                      "blockIndex": 19
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 1,
+                      "rectPt": [
+                        312.551,
+                        479.625,
+                        529.919,
+                        491.004
+                      ],
+                      "blockIndex": 20
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 1,
+                      "rectPt": [
+                        60.75,
+                        512.625,
+                        238.768,
+                        524.914
+                      ],
+                      "blockIndex": 21
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 1,
+                      "rectPt": [
+                        268.758,
+                        513.375,
+                        534.291,
+                        525.122
+                      ],
+                      "blockIndex": 22
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 1,
+                      "rectPt": [
+                        312.551,
+                        528.375,
+                        377.829,
+                        539.754
+                      ],
+                      "blockIndex": 23
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 1,
+                      "rectPt": [
+                        60.75,
+                        528.375,
+                        239.426,
+                        540.664
+                      ],
+                      "blockIndex": 24
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 1,
+                      "rectPt": [
+                        60.75,
+                        547.039,
+                        90.031,
+                        557.164
+                      ],
+                      "blockIndex": 25
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 1,
+                      "rectPt": [
+                        268.758,
+                        580.875,
+                        525.216,
+                        592.254
+                      ],
+                      "blockIndex": 26
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 1,
+                      "rectPt": [
+                        60.75,
+                        580.125,
+                        231.771,
+                        592.414
+                      ],
+                      "blockIndex": 27
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 1,
+                      "rectPt": [
+                        312.551,
+                        595.875,
+                        521.641,
+                        607.254
+                      ],
+                      "blockIndex": 28
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 1,
+                      "rectPt": [
+                        60.75,
+                        595.875,
+                        104.925,
+                        608.164
+                      ],
+                      "blockIndex": 29
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 1,
+                      "rectPt": [
+                        312.551,
+                        610.875,
+                        513.419,
+                        622.254
+                      ],
+                      "blockIndex": 30
+                    }
+                  },
+                  {
+                    "kind": "pdf-region",
+                    "value": {
+                      "pageIndex": 1,
+                      "rectPt": [
+                        312.551,
+                        627.0,
+                        438.607,
+                        637.254
+                      ],
+                      "blockIndex": 31
+                    }
+                  }
+                ],
+                "totalUnits": 21,
+                "complete": false,
+                "nextCursor": "unit:62",
+                "missingReason": null
+              },
+              "usedBackend": "document.pdf.pymupdf"
+            }
+          },
+          "revision": {
+            "capturedAt": "",
+            "snapshotId": "benchmark-00b38db86e4c42bb8bc5f6ee4e88da03"
+          },
+          "capabilities": [
+            "read",
+            "search",
+            "patch"
+          ],
+          "origin": "user-pointed",
+          "parentSourceId": null
+        }
+      ],
+      "references": [
+        {
+          "referenceId": "reference:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:0",
+          "label": "A",
+          "sourceId": "source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:0",
+          "locator": {
+            "kind": "message",
+            "value": {
+              "adapterId": "wechat",
+              "conversationKey": "wechat:window:7277804:surface:root",
+              "snapshotId": "benchmark-00b38db86e4c42bb8bc5f6ee4e88da03",
+              "bbox": [
+                2136,
+                1373,
+                611,
+                32
+              ],
+              "coordinateSpace": "physical_screen_pixels",
+              "strokeIndex": 0
+            }
+          },
+          "role": "target",
+          "frameLeaseId": null,
+          "capturedAtMs": 1789716685744,
+          "ordinal": 1,
+          "active": true
+        },
+        {
+          "referenceId": "reference:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:1",
+          "label": "B",
+          "sourceId": "source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:1",
+          "locator": {
+            "kind": "message",
+            "value": {
+              "adapterId": "wechat",
+              "conversationKey": "wechat:window:7277804:surface:root",
+              "snapshotId": "benchmark-00b38db86e4c42bb8bc5f6ee4e88da03",
+              "bbox": [
+                2314,
+                486,
+                408,
+                205
+              ],
+              "coordinateSpace": "physical_screen_pixels",
+              "strokeIndex": 1
+            }
+          },
+          "role": "target",
+          "frameLeaseId": null,
+          "capturedAtMs": 1789716685744,
+          "ordinal": 2,
+          "active": true
+        },
+        {
+          "referenceId": "reference:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2",
+          "label": "C",
+          "sourceId": "source:benchmark-00b38db86e4c42bb8bc5f6ee4e88da03:2",
+          "locator": {
+            "kind": "visual-region",
+            "value": {
+              "snapshotId": "benchmark-00b38db86e4c42bb8bc5f6ee4e88da03",
+              "bbox": [
+                361,
+                1351,
+                149,
+                76
+              ],
+              "coordinateSpace": "physical_screen_pixels",
+              "strokeIndex": 2
+            }
+          },
+          "role": "target",
+          "frameLeaseId": null,
+          "capturedAtMs": 1789716685745,
+          "ordinal": 3,
+          "active": true
+        }
+      ]
+    },
+    "interactionLedger": {
+      "interactionId": "agent-9453ac9c-6331-4b1d-bd15-be33e77b98b5:1",
+      "startedAtUtc": "2026-09-18T07:31:26.454000+00:00",
+      "endedAtUtc": "2026-09-18T07:32:49.948000+00:00",
+      "appName": "Weixin.exe",
+      "turns": 3,
+      "tokensText": 54836,
+      "tokensVision": 0,
+      "stageLatencyMs": {
+        "model": 81956.0,
+        "tool": 1440.6770000059623,
+        "e2e": 83494
+      },
+      "evidenceLayerHit": null,
+      "confidence": 0.7,
+      "usedLook": false,
+      "succeeded": true,
+      "failureType": null,
+      "egressEventIds": [],
+      "inputArtifactId": "input-benchmark-00b38db86e4c42bb8bc5f6ee4e88da03"
+    },
+    "learningReview": {
+      "requested": true,
+      "sessionId": "agent-9453ac9c-6331-4b1d-bd15-be33e77b98b5",
+      "terminalReason": "completed"
+    }
+  }
+}
