@@ -145,12 +145,17 @@ const DshChat = (() => {
      这里按稳定 id 存：行用 tool call id / reasoning key，组用组内第一个 callId。
      重建时读的是这个 Map，DOM 里那点状态丢了也不影响。 */
   const ROW_EXPANSION = new Map<string, boolean>();
-  const GROUP_EXPANSION = new Map<string, boolean>();
+  const GROUP_EXPANSION = new Map<string, { open: boolean; members: string[] }>();
   let liveTurnSequence = 0;
 
   function rememberExpansion(store: Map<string, boolean>, id: string, open: boolean): void {
     if (!id) return;
     store.set(id, open);
+  }
+
+  function rememberGroupExpansion(id: string, open: boolean): void {
+    if (!id) return;
+    GROUP_EXPANSION.set(id, { open, members: GROUP_EXPANSION.get(id)?.members || [] });
   }
 
   /* 参考里默认展开的工具只有一个：Ef(name) 展开就是 `name === "PushNotification"`。
@@ -1133,9 +1138,28 @@ const DshChat = (() => {
        组 id 取组内第一个调用——顺序在这一轮里不变。组是原生 <details>，
        展开态是 open 属性；用户点击由 bindDelegation 的 toggle 监听写回。 */
     const groupId = `group:${scope ? `${scope}:` : ''}${chips[0]?.callId || ''}`;
-    const remembered = GROUP_EXPANSION.get(groupId);
-    if (remembered === true) root.setAttribute('open', '');
-    summary.setAttribute('aria-expanded', remembered === true ? 'true' : 'false');
+    const previous = GROUP_EXPANSION.get(groupId);
+    const members = entries.flatMap(entry => entry.type === 'chip'
+      ? [`group:${scope ? `${scope}:` : ''}${entry.chip.callId || ''}`]
+      : entry.type === 'reasoning' ? [`think:${scope}:r${entry.id ?? '0'}`] : []);
+    const previousMembers = new Set(previous?.members || []);
+    // Only newly folded rows carry their visibility into this group. Once the
+    // user closes the merged group, old child choices cannot reopen it again.
+    const open = previous?.open === true || members.some(id => !previousMembers.has(id)
+      && (GROUP_EXPANSION.get(id)?.open === true || ROW_EXPANSION.get(id) === true));
+    if (!single) {
+      for (const id of members) {
+        const source = GROUP_EXPANSION.get(id);
+        if (source?.open && source.members.length === 1
+          && (!previousMembers.has(id) || previousMembers.size === 1)) {
+          // A singleton's open group was also its visible result body.
+          rememberExpansion(ROW_EXPANSION, `tool:${id.slice('group:'.length)}`, true);
+        }
+      }
+    }
+    GROUP_EXPANSION.set(groupId, { open, members });
+    if (open) root.setAttribute('open', '');
+    summary.setAttribute('aria-expanded', open ? 'true' : 'false');
     summary.setAttribute('data-group-id', groupId);
 
     entries.forEach((entry) => {
@@ -1697,7 +1721,7 @@ const DshChat = (() => {
     const summary = target.querySelector(':scope > .dsh-tool-group-header');
     const groupId = summary?.getAttribute('data-group-id');
     if (!groupId) return;
-    rememberExpansion(GROUP_EXPANSION, groupId, target.hasAttribute('open'));
+    rememberGroupExpansion(groupId, target.hasAttribute('open'));
     summary?.setAttribute('aria-expanded', target.hasAttribute('open') ? 'true' : 'false');
   }
 
@@ -1816,8 +1840,8 @@ const DshChat = (() => {
     expansion: {
       row: (id: string) => ROW_EXPANSION.get(id),
       setRow: (id: string, open: boolean) => rememberExpansion(ROW_EXPANSION, id, open),
-      group: (id: string) => GROUP_EXPANSION.get(id),
-      setGroup: (id: string, open: boolean) => rememberExpansion(GROUP_EXPANSION, id, open),
+      group: (id: string) => GROUP_EXPANSION.get(id)?.open,
+      setGroup: (id: string, open: boolean) => rememberGroupExpansion(id, open),
       clear: () => { ROW_EXPANSION.clear(); GROUP_EXPANSION.clear(); },
     },
     __test: { firstLine, latestLine, classifyTool, deriveSummary, deriveDiff, formatClock, relativeTime },

@@ -83,6 +83,26 @@ app.whenReady().then(async () => {
       const settledThought = continuityHost.querySelector('.dsh-think');
       check(settledThought.dataset.rowId === thoughtId && settledThought.dataset.open === 'true', 'folding the transcript lost the opened thought');
       check(continuityHost.querySelector('.dsh-tool-group').open, 'completion closed the opened tool group');
+      const mergeHost = document.createElement('div');
+      flow.appendChild(mergeHost);
+      const merged = DshChat.createLiveTurn(mergeHost, 'merge-later#0');
+      merged.update({ trajectory });
+      mergeHost.querySelectorAll('.dsh-tool-group-header')[1].click();
+      await wait(0);
+      check(!mergeHost.querySelector('.dsh-tool-group').open, 'merge fixture accidentally opened the first group');
+      const mergedTurn = { conversationId: 'merge-later', turnIndex: 0, trajectory, answer: 'Merged.' };
+      merged.finish(mergedTurn);
+      check(mergeHost.querySelectorAll('.dsh-tool-group').length === 1 && mergeHost.querySelector('.dsh-tool-group').open,
+        'completion hid the opened second group inside the merged group');
+      check(mergeHost.querySelectorAll('.dsh-tool')[1].querySelector('.dsh-disclosure').dataset.open === 'true',
+        'merging the second singleton group hid its visible result body');
+      await wait(0);
+      if (mergeHost.querySelector('.dsh-tool-group').open) mergeHost.querySelector('.dsh-tool-group-header').click();
+      await wait(0);
+      check(!mergeHost.querySelector('.dsh-tool-group').open, 'merged group did not close on click');
+      merged.finish(mergedTurn);
+      await wait(0);
+      check(!mergeHost.querySelector('.dsh-tool-group').open, 'rebuilding a merged group undid the user collapse');
       const otherHost = document.createElement('div');
       flow.appendChild(otherHost);
       DshChat.createConversationView(otherHost).update({ id: 'other-session', turns: [{ trajectory, answer: 'Other answer.' }] });
@@ -93,6 +113,7 @@ app.whenReady().then(async () => {
       standalone.finish({ thinking: 'Inspect selection.', answer: 'Selected answer.' });
       check(otherHost.querySelector('.dsh-think').dataset.open === 'true', 'standalone Stage completion lost expansion');
       continuityHost.remove();
+      mergeHost.remove();
       otherHost.remove();
       return { paints, children: document.querySelectorAll('.mp-subagent-task').length, transcriptContinuity: true, failures };
     })()`);

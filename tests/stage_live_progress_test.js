@@ -14,12 +14,14 @@ const end = source.indexOf('  function buildTurn(', start);
 const host = { replaceChildren() { throw new Error('progress must not clear the live card'); } };
 const updates = [];
 let creates = 0;
+let liveScope;
 const context = {
+  session: { token: 'selection-one' },
   state: { turns: [{ id: 7, status: 'pending' }] },
   resultCard: { querySelector: () => host },
   workPanelScroller: { scrollHeight: 1000, scrollTop: 80, clientHeight: 300 },
   DshChat: {
-    createLiveTurn(node) { assert.equal(node, host); creates++; return { update: value => updates.push(value) }; },
+    createLiveTurn(node, scope) { assert.equal(node, host); liveScope = scope; creates++; return { update: value => updates.push(value) }; },
     bindDelegation() {},
   },
 };
@@ -40,10 +42,11 @@ assert.equal(context.workPanelScroller.scrollTop, 1000, 'following the bottom ke
 assert.ok(!source.includes('renderFoldedProcess('), 'normal answers must not revive fabricated preliminary steps');
 assert.ok(!source.includes('syncWaitClock('), 'Stage must not add an independent elapsed/status projection over the shared live renderer');
 const rendered = [];
+const settledScopes = [];
 const turnHost = { dataset: {}, querySelector: () => ({ dataset: {} }) };
 Object.assign(context, {
   tplThreadTurn: { content: { firstElementChild: { cloneNode: () => turnHost } } },
-  renderStructured: (_node, value) => rendered.push(value),
+  renderStructured: (_node, value, scope) => { rendered.push(value); settledScopes.push(scope); },
   renderFailure: () => { throw new Error('a failed turn with a real answer must retain its shared transcript'); },
 });
 vm.runInNewContext(ts.transpileModule(source.slice(end, source.indexOf('  function renderThread(', end)), {
@@ -52,4 +55,19 @@ vm.runInNewContext(ts.transpileModule(source.slice(end, source.indexOf('  functi
 const failedResult = { answer: '已检查选区，但后续读取失败。', trajectory: [{ kind: 'tool', name: 'Look', state: 'error' }] };
 context.buildTurn({ id: 7, status: 'failed', ask: '这是什么？', result: failedResult, error: { message: 'Provider unavailable' } });
 assert.deepEqual(rendered, [failedResult]);
+context.buildTurn({ id: 7, status: 'complete', ask: '这是什么？', result: failedResult });
+assert.equal(typeof liveScope, 'string', 'Stage must bind live rendering to its selection session and turn');
+assert.ok(liveScope.includes('selection-one'));
+assert.ok(settledScopes.every(scope => scope === liveScope), 'successful and failed rebuilds must use the live expansion scope');
+const structuredStart = source.indexOf('  function renderStructured(');
+const structuredEnd = source.indexOf('  function bindCardActions(', structuredStart);
+let finalScope;
+const structuredContext = {
+  DshChat: { assistantTurnNode: (_turn, scope) => { finalScope = scope; return []; }, bindDelegation() {} },
+};
+vm.runInNewContext(ts.transpileModule(source.slice(structuredStart, structuredEnd), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022 },
+}).outputText, structuredContext);
+structuredContext.renderStructured({ replaceChildren() {}, dataset: {} }, failedResult, liveScope);
+assert.equal(finalScope, liveScope, 'Stage must pass the scope through the production settled renderer');
 console.log('Stage shared live progress tests ok');

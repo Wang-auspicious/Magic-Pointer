@@ -218,6 +218,34 @@ test('intermediate thinking keeps its identity when completion folds it into a t
   const settled = target.querySelector('.dsh-think');
   assert.equal(settled.getAttribute('data-row-id'), id);
   assert.equal(settled.getAttribute('data-open'), 'true');
+  assert.equal(target.querySelector('.dsh-tool-group').getAttribute('open'), '',
+    'the opened thought must remain visible inside the merged group');
+});
+
+test('merging an opened later tool group preserves visibility once and honors a later collapse', () => {
+  DshChat.expansion.clear();
+  const target = new TestNode('div');
+  const renderer = DshChat.createLiveTurn(target, 'merged#0');
+  const trajectory = [
+    { kind: 'tool', callId: 'first', name: 'Read', text: '{"path":"a.md"}', result: 'A', state: 'done' },
+    { kind: 'message', turn: 2, reasoning: 'Compare the sources.', state: 'done' },
+    { kind: 'tool', callId: 'second', name: 'Read', text: '{"path":"b.md"}', result: 'B', state: 'done' },
+  ];
+  renderer.update({ trajectory });
+  const laterId = target.querySelectorAll('.dsh-tool-group-header')[1].getAttribute('data-group-id');
+  DshChat.expansion.setGroup(laterId, true);
+  const turn = { conversationId: 'merged', turnIndex: 0, trajectory, answer: 'Compared.' };
+  renderer.finish(turn);
+  assert.equal(target.querySelectorAll('.dsh-tool-group').length, 1);
+  assert.equal(target.querySelector('.dsh-tool-group').getAttribute('open'), '',
+    'an opened later group must stay visible after merging into the first group');
+  assert.equal(target.querySelectorAll('.dsh-tool')[1].querySelector('.dsh-disclosure').getAttribute('data-open'), 'true',
+    'the result visible in a singleton group must stay visible when it becomes a row');
+  const mergedId = target.querySelector('.dsh-tool-group-header').getAttribute('data-group-id');
+  DshChat.expansion.setGroup(mergedId, false);
+  renderer.finish(turn);
+  assert.equal(target.querySelector('.dsh-tool-group').getAttribute('open'), null,
+    'an old child expansion must not override the user closing the merged group');
 });
 
 test('a standalone Stage turn preserves expansion through finish without conversation metadata', () => {

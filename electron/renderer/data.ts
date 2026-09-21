@@ -235,12 +235,12 @@ declare global {
   /* DSH 聊天渲染器（deepseek-harness 100% 移植）：classic script 暴露的全局。 */
   interface MagicPointerDshChatApi {
     userNode(question: string, timeMs?: number, branch?: { conversationId: string; turnIndex: number }): Element;
-    assistantTurnNode(turn: Record<string, unknown>): Element[];
+    assistantTurnNode(turn: Record<string, unknown>, scope?: string): Element[];
     turnStatusNode(label: string): Element;
     turnErrorNode(message: string, code?: string, tone?: 'error' | 'warning'): Element;
     bindDelegation(scope?: Element): void;
     liveActivityNode(record: Record<string, unknown>): Element;
-    createLiveTurn(host: HTMLElement): MagicPointerLiveTurn;
+    createLiveTurn(host: HTMLElement, scope?: string): MagicPointerLiveTurn;
     createConversationView(flow: HTMLElement): { update(conversation: MagicPointerConversation): void };
     thinkNode(reasoning: string, running?: boolean): Element;
     permissionAnswerNode(answer: { decision?: string; rule?: string }): Element;
@@ -552,7 +552,7 @@ declare global {
       memories(): Promise<unknown[]>;
       artifacts(): Promise<unknown[]>;
       onTurn?(cb: (change?: MagicPointerConversationChange) => void): void;
-      onProgress?(cb: (payload: { requestId?: string; record?: Record<string, unknown> }) => void): void;
+      onProgress?(cb: (payload: { requestId?: string; conversationId?: string; turnIndex?: number; record?: Record<string, unknown> }) => void): void;
     };
     contextTrackers?: {
       list(): Promise<Record<string, any>>;
@@ -717,7 +717,7 @@ declare global {
     suggestNextPrompt(turns: unknown, object?: unknown): Promise<string>;
     stopConversation(requestId: string): Promise<{ ok?: boolean; sessionId?: string; error?: string }>;
     steerConversation(agentSessionId: string, input: string | MagicPointerTaskInput, sources?: Record<string, unknown>[]): Promise<{ ok?: boolean; inputId?: string; status?: string; error?: string }>;
-    onConversationProgress(callback: (payload: { requestId?: string; record?: Record<string, unknown> }) => void): void;
+    onConversationProgress(callback: (payload: { requestId?: string; conversationId?: string; turnIndex?: number; record?: Record<string, unknown> }) => void): void;
     models(refresh?: boolean): Promise<MagicPointerModelCatalog | null>;
     slashDirectory(): Promise<MagicPointerSlashDirectory | null>;
     selectModel(model: string, profileId?: string): Promise<{ ok?: boolean; model?: string; error?: string }>;
@@ -1211,7 +1211,7 @@ const Data: MagicPointerDataApi = {
     });
   },
 
-  onConversationProgress(callback: (payload: { requestId?: string; record?: Record<string, unknown> }) => void): void {
+  onConversationProgress(callback: (payload: { requestId?: string; conversationId?: string; turnIndex?: number; record?: Record<string, unknown> }) => void): void {
     bridge()?.conversations?.onProgress?.(callback);
   },
 

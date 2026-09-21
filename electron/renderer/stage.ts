@@ -1634,7 +1634,7 @@
   //
   // agent-prompt-draft 留在原地：它不是一张卡，是一个带会话选择器和自己那套
   // IPC 的控件。硬塞进卡片契约只会两头不讨好。
-  function renderStructured(container: HTMLElement, payload: any) {
+  function renderStructured(container: HTMLElement, payload: any, scope?: string) {
     container.replaceChildren();
     const kind = payload && typeof payload === 'object' ? payload.kind : null;
     container.dataset.kind = kind || 'inline';
@@ -1644,7 +1644,7 @@
     }
     if (!kind || kind === 'inline' || kind === 'prose' || kind === 'text') {
       const turn = payload && typeof payload === 'object' ? payload : { answer: String(payload || '') };
-      container.replaceChildren(...DshChat.assistantTurnNode(turn));
+      container.replaceChildren(...DshChat.assistantTurnNode(turn, scope));
       container.dataset.answer = String(turn.answer || '');
       const actions = Array.isArray(payload?.actions) ? payload.actions : [];
       if (actions.length) {
@@ -1722,6 +1722,10 @@
   // 「我不打算让你知道我在干什么」。
   const runningCards = new Map<string, { snapshot: MagicPointerLiveProgress; renderer?: MagicPointerLiveTurn }>();
 
+  function stageTurnScope(turn: any): string {
+    return `stage:${session.token}#${turn.id}`;
+  }
+
   function runningCardFor(turn: any) {
     const id = `t${turn.id}`;
     if (!runningCards.has(id)) {
@@ -1733,7 +1737,7 @@
   function paintRunningCard(container: HTMLElement, turn: any) {
     const card = runningCardFor(turn);
     if (!card.renderer) {
-      card.renderer = DshChat.createLiveTurn(container);
+      card.renderer = DshChat.createLiveTurn(container, stageTurnScope(turn));
       DshChat.bindDelegation(container);
     }
     card.renderer.update(card.snapshot);
@@ -1769,11 +1773,11 @@
     } else if (turn.status === 'failed') {
       runningCards.delete(`t${turn.id}`);
       answer.dataset.kind = 'error';
-      if (turn.result?.answer) renderStructured(answer, turn.result);
+      if (turn.result?.answer) renderStructured(answer, turn.result, stageTurnScope(turn));
       else renderFailure(answer, turn.error);
     } else {
       runningCards.delete(`t${turn.id}`);
-      renderStructured(answer, turn.result);
+      renderStructured(answer, turn.result, stageTurnScope(turn));
     }
     return node;
   }

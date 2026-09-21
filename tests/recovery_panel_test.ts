@@ -37,6 +37,13 @@ async function main() {
   const sent = calls.find((payload) => payload.action === 'resolve');
   assert.equal(sent.operationId, 'operation-a'); assert.equal(sent.verificationCallId, 'read-a'); assert.equal(sent.confirmed, true);
   assert.equal(host.hidden, true, 'resolved barriers disappear after authoritative refresh');
+  sandbox.Data.recovery = async () => { throw new Error('bridge_no_output'); };
+  await sandbox.renderConversationRecovery('c');
+  assert.equal(host.hidden, false, 'a failed recovery read must not look like a clean recovery state');
+  assert.ok(host.children.some((element: Element) => element.textContent.includes('bridge_no_output')));
+  sandbox.Data.recovery = async () => ({ ok: false, error: 'session_not_found' });
+  await sandbox.renderConversationRecovery('c');
+  assert.ok(host.children.some((element: Element) => element.textContent.includes('运行记录')));
   console.log('recovery_panel_test: passed');
 }
 main().catch((error) => { console.error(error); process.exitCode = 1; });

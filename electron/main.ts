@@ -2470,7 +2470,9 @@ async function sendConversation(raw: any = {}, sender?: Electron.WebContents): P
         if (appendTranscript(progress, record) && progressTimer === null) {
           progressTimer = setTimeout(flushProgress, 300);
         }
-        if (sender && !sender.isDestroyed()) sender.send('conversations:progress', { requestId, record });
+        if (sender && !sender.isDestroyed()) sender.send('conversations:progress', {
+          requestId, conversationId: conversation.id, turnIndex, record,
+        });
       },
       onComplete: finish,
     });
@@ -2714,17 +2716,36 @@ ipcMain.handle('artifacts:undo', async (event: Electron.IpcMainInvokeEvent, raw:
   if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_renderer' };
   return artifactCommands().undo(raw);
 });
+const conversationRecoveryQueries = new Map<string, { mtimeMs: number; result: Promise<any> }>();
 ipcMain.handle('conversations:recovery', async (event: Electron.IpcMainInvokeEvent, raw: any = {}) => {
   if (!isDashboardSender(event)) return { ok: false, error: 'unauthorized_renderer' };
   const conversation = conversations().get(String(raw.conversationId || ''));
   if (!conversation?.agentSessionId) return { ok: true, pendingRecovery: [] };
-  const result = await runPythonBridgePromise({
-    action: raw.action === 'resolve' ? 'recovery-resolve' : 'status',
-    sessionId: conversation.agentSessionId, operationId: raw.operationId,
-    verificationCallId: raw.verificationCallId, confirmed: raw.confirmed === true,
-  }, 'scripts/agent_session_bridge.py', { target: null, timeoutMs: 8000 });
-  if (raw.action === 'resolve' && result?.ok === true) notifyConversationChanged(conversation.id);
-  return result;
+  const sessionId = conversation.agentSessionId;
+  try {
+    const sessionPath = path.join(FABRIC_DATA_DIR, 'agent-sessions', `${sessionId}.jsonl`);
+    const { mtimeMs } = await fs.promises.stat(sessionPath);
+    if (raw.action === 'resolve') {
+      const result = await runPythonBridgePromise({
+        action: 'recovery-resolve', sessionId, operationId: raw.operationId,
+        verificationCallId: raw.verificationCallId, confirmed: raw.confirmed === true,
+      }, 'scripts/agent_session_bridge.py', { target: null, timeoutMs: 8000 });
+      conversationRecoveryQueries.delete(sessionId);
+      if (result?.ok === true) notifyConversationChanged(conversation.id);
+      return result;
+    }
+    let cached = conversationRecoveryQueries.get(sessionId);
+    if (!cached || cached.mtimeMs !== mtimeMs) {
+      cached = { mtimeMs, result: runPythonBridgePromise({ action: 'status', sessionId },
+        'scripts/agent_session_bridge.py', { target: null, timeoutMs: 8000 }) };
+      conversationRecoveryQueries.set(sessionId, cached);
+    }
+    return await cached.result;
+  } catch (error: any) {
+    conversationRecoveryQueries.delete(sessionId);
+    return { ok: false, pendingRecovery: [], error: error?.code === 'ENOENT'
+      ? 'session_not_found' : String(error?.message || error) };
+  }
 });
 
 function figmaTaskForConversation(rawConversationId: unknown): { conversationId: string; taskId: string } {

@@ -1948,6 +1948,7 @@ let activeConversationTurnCount = 0;
 let activeConversationTurns: Record<string, unknown>[] = [];
 let activeConversationView: ReturnType<typeof DshChat.createConversationView> | null = null;
 let activeConversationRecord: MagicPointerConversation | null = null;
+let conversationOpenGeneration = 0;
 let conversationRefreshSequence = 0;
 let conversationNotificationSequence = 0;
 let externalConversationRun: { requestId: string; agentSessionId: string; body: HTMLElement } | null = null;
@@ -2259,10 +2260,17 @@ function setConversationTab(tab: 'chat' | 'trajectory') {
 }
 
 async function openConversation(id: string) {
+  const generation = ++conversationOpenGeneration;
   const notificationSequence = conversationNotificationSequence;
   const c = await Data.conversation(id);
-  if (!c) return;
+  if (!c || generation !== conversationOpenGeneration) return;
   const switchedTask = activeConversationId !== c.id;
+  if (switchedTask) {
+    detachPendingConversation();
+    pendingPermissionChoice = null;
+    composerPlan = null;
+    renderPlanCard();
+  }
   if (artifactEditor.state().conversationId && artifactEditor.state().conversationId !== c.id) {
     artifactEditor.clear();
     renderArtifactEditor();
@@ -2293,6 +2301,7 @@ async function openConversation(id: string) {
   if (head) head.textContent = String(c.title);
   renderProjectContext();
   await renderRepositoryContextBar(true);
+  if (generation !== conversationOpenGeneration) return;
   const preview = document.getElementById('chat-source-preview');
   const sourceThumb = document.getElementById('chat-source-thumb') as HTMLImageElement | null;
   const peek = document.getElementById('chat-peek');
@@ -3110,8 +3119,19 @@ async function renderConversationRecovery(conversationId: string): Promise<void>
   const host = document.getElementById('conversation-recovery');
   if (!host) return;
   host.replaceChildren(); host.hidden = true;
-  const response = await Data.recovery({ conversationId });
+  const response: Record<string, any> = await Data.recovery({ conversationId }).catch((error: unknown) => ({
+    ok: false, error: error instanceof Error ? error.message : String(error),
+  }));
   if (activeConversationId !== conversationId || generation !== recoveryRenderGeneration) return;
+  if (response.ok === false) {
+    const message = document.createElement('p');
+    message.textContent = response.error === 'session_not_found'
+      ? '找不到此任务的运行记录，暂时无法核对执行恢复状态。已保存的对话仍可查看。'
+      : `无法读取执行恢复状态：${String(response.error || '未知错误')}`;
+    host.appendChild(message);
+    host.hidden = false;
+    return;
+  }
   const operations = Array.isArray(response.pendingRecovery) ? response.pendingRecovery : [];
   for (const operation of operations) {
     const section = document.createElement('section');
@@ -6346,6 +6366,7 @@ bindModelSeat();
 
 interface PendingConversation {
   requestId: string;
+  scope?: string;
   body: HTMLElement;
   records: Map<string, Record<string, unknown>>;
   renderer: MagicPointerLiveTurn;
@@ -6610,6 +6631,11 @@ async function stopActiveConversation() {
 
 Data.onConversationProgress((payload) => {
   if (!pendingConversation || payload.requestId !== pendingConversation.requestId || !payload.record) return;
+  if (!pendingConversation.scope && payload.conversationId && Number.isInteger(payload.turnIndex)) {
+    pendingConversation.scope = `${payload.conversationId}#${payload.turnIndex}`;
+    pendingConversation.body.replaceChildren();
+    pendingConversation.renderer = DshChat.createLiveTurn(pendingConversation.body, pendingConversation.scope);
+  }
   renderConversationProgress(payload.record);
 });
 
@@ -6641,6 +6667,7 @@ async function steerActiveConversation(question: string, textarea: HTMLTextAreaE
   });
   await transport.submit(taskInput, {
     onAccepted: () => {
+      if (pending !== pendingConversation && pending !== externalConversationRun) return;
       if (textarea.value.trim() === question) {
         textarea.value = '';
         fitComposer(textarea);
@@ -6773,20 +6800,29 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
       attachmentPaths,
     );
     pendingConversation = { requestId, body: pendingBody, records: new Map(), renderer: DshChat.createLiveTurn(pendingBody), agentSessionId: activeTaskContext?.taskId || null, streamText: '', reasoningText: '', transcript: ConversationControl.createTranscript(), liveTokens: null };
+    const submittedConversation = pendingConversation;
+    const conversationId = activeConversationId;
+    const permissionChoice = pendingPermissionChoice || undefined;
+    const permissionPreset = composerPreset;
+    const effort = composerEffort;
     renderConversationProgress({ phase: 'runtime_boot', fields: {} });
     try {
       const workspaceRoot = await prepareComposerWorktree();
       const response = await Data.sendConversation(
-        activeConversationId,
+        conversationId,
         question,
-        composerPreset,
+        permissionPreset,
         requestId,
         workspaceRoot,
-        composerEffort,
-        pendingPermissionChoice || undefined,
+        effort,
+        permissionChoice,
         attachmentPaths,
         taskInput,
       );
+      if (pendingConversation !== submittedConversation) {
+        await renderSidebar();
+        return;
+      }
       pendingPermissionChoice = null;
       pendingPermissionAsk = null;
       pendingAskInput = null;
@@ -6810,6 +6846,7 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
         renderPermissionChip();
       } else if (command?.type === 'model') {
         await refreshComposerModel();
+        if (pendingConversation !== submittedConversation) return;
       } else if ((response as { plan?: unknown }).plan && typeof (response as { plan?: unknown }).plan === 'object') {
         composerPlan = (response as { plan: { steps: Array<{ content: string; status: string }> } }).plan;
         renderPlanCard();
@@ -6843,6 +6880,7 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
       }
       await openConversation(String(response.conversationId));
       await renderSidebar();
+      if (pendingConversation !== submittedConversation) return;
       setComposerSettledState('success');
       /* 联想词在回合彻底结束之后才问——它读的是这一轮的最终结果，不是中间态。
          故意不 await：输入框不该等一个建议。 */
@@ -6851,18 +6889,13 @@ document.querySelectorAll('form.dshw-input-form').forEach(form => {
         activeConversationObject,
       );
     } catch (error) {
+      if (pendingConversation !== submittedConversation) return;
       pending.replaceChildren(DshChat.turnErrorNode(error instanceof Error ? error.message : String(error)));
       textarea.value = ConversationControl.failedDraftValue(textarea.value, question);
       fitComposer(textarea);
       setComposerSettledState('error');
     } finally {
-      if (pendingRenderTimer !== null) window.clearTimeout(pendingRenderTimer);
-      pendingRenderTimer = null;
-      pendingConversation = null;
-      studioComposerBusy = false;
-      stopPendingClock();
-      form.removeAttribute('aria-busy');
-      setComposerRunningState(false);
+      if (pendingConversation === submittedConversation) detachPendingConversation();
     }
   });
 });
@@ -6894,7 +6927,20 @@ async function boot(initialView: string) {
 
 /* 新对话：清空当前这一屏，把焦点交回输入框。
    不新建记录——记录在第一次真的问出去之后才产生。 */
+function detachPendingConversation() {
+  if (pendingRenderTimer !== null) window.clearTimeout(pendingRenderTimer);
+  pendingRenderTimer = null;
+  pendingConversation = null;
+  externalConversationRun = null;
+  studioComposerBusy = false;
+  stopPendingClock();
+  document.getElementById('composer-form')?.removeAttribute('aria-busy');
+  setComposerRunningState(false);
+}
+
 function startNewChat() {
+  conversationOpenGeneration += 1;
+  detachPendingConversation();
   if (artifactEditor.state().artifactId) {
     artifactEditor.clear();
     renderArtifactEditor();
@@ -6903,13 +6949,18 @@ function startNewChat() {
   activeConversationId = null;
   activeConversationView = null;
   activeConversationRecord = null;
+  activeConversationTurns = [];
+  activeConversationObject = {};
   conversationRefreshSequence += 1;
+  recoveryRenderGeneration += 1;
+  const recovery = document.getElementById('conversation-recovery');
+  if (recovery) { recovery.replaceChildren(); recovery.hidden = true; }
+  pendingPermissionChoice = null;
   syncConversationPendingInput([]);
-  if (externalConversationRun) {
-    externalConversationRun = null;
-    studioComposerBusy = Boolean(pendingConversation);
-    setComposerRunningState(studioComposerBusy);
-  }
+  composerPlan = null;
+  renderPlanCard();
+  clearComposerSuggestion();
+  renderProjectTasks();
   setActiveTaskContext(null, true);
   composerAttachments = [];
   renderComposerAttachments();

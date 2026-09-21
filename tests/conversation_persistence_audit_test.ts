@@ -30,6 +30,10 @@ async function main() {
   const runs = new Map();
   let stopped: any;
   let bridgeCalls = 0;
+  const deliveredProgress: any[] = [];
+  const sender = { isDestroyed: () => false, send: (channel: string, value: any) => {
+    if (channel === 'conversations:progress') deliveredProgress.push(value);
+  } };
   const { defaultSettings } = require('../electron/settings_store');
   const { selectActiveProfileModel, resolveActiveModelRuntimeConfig } = require('../electron/model_runtime_config');
   const settings = defaultSettings();
@@ -76,13 +80,15 @@ async function main() {
   const send = vm.runInNewContext(`${selectCode}\n${stopCode}\n${code}\nsendConversation`, context);
   try {
     for (const reason of ['provider_unavailable', 'user_interrupt', 'stalled', null]) {
-      const pending = send({ question: 'Read the notes', requestId: `request-${now}` });
+      const pending = send({ question: 'Read the notes', requestId: `request-${now}` }, sender);
       const conversation = store.list()[0];
       assert.ok(conversation, 'the task must exist before provider completion so failure and restart retain its identity');
       assert.equal(conversation.agentSessionId, sessionId);
       assert.equal(store.get(conversation.id).turns[0].outcome, '进行中');
       assert.equal(payload.turns.length, 0, 'the new in-flight turn must not be sent back as its own history');
       callbacks.onProgress({ phase: 'model_request', fields: { turn: '1' } });
+      assert.equal(deliveredProgress.at(-1).conversationId, conversation.id, 'first progress must identify the persisted task before rendering its tools');
+      assert.equal(deliveredProgress.at(-1).turnIndex, 0);
       callbacks.onProgress({ phase: 'answer_chunk', fields: { b64: Buffer.from('Read the first page.').toString('base64') } });
       for (const callback of timers.values()) callback();
       timers.clear();

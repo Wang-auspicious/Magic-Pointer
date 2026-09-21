@@ -15,7 +15,7 @@ assert.match(main, /ipcMain\.handle\('conversations:send'/,
 assert(main.includes("runPythonBridge(payload, 'scripts/conversation_bridge.py', 'dashboard'"),
   'Studio follow-ups must use the configured model runtime through a bounded bridge');
 assert(data.includes('sendConversation('), 'Studio data must expose the live send operation');
-assert.match(studio, /const workspaceRoot = await prepareComposerWorktree\(\);\s*const response = await Data\.sendConversation\(\s*activeConversationId,\s*question,\s*composerPreset,\s*requestId,\s*workspaceRoot,[\s\S]*?attachmentPaths/,
+assert.match(studio, /const workspaceRoot = await prepareComposerWorktree\(\);\s*const response = await Data\.sendConversation\(\s*conversationId,\s*question,\s*permissionPreset,\s*requestId,\s*workspaceRoot,[\s\S]*?attachmentPaths/,
   'submission must await the selected worktree and send its root with structured attachments and permission preset');
 assert(preload.includes('attachments: Array.isArray(payload?.attachments)'),
   'preload must preserve attachments as a bounded structured field');
